@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem -Path \"D:\\\\Tidecanvas\\\\services\" -Recurse -Directory | Select-Object FullName | ForEach-Object {$_.FullName.Replace\\('D:\\\\Tidecanvas\\\\', ''\\)})",
+      "Bash(Get-ChildItem -Path \"D:\\\\Tidecanvas\\\\services\\\\mode\" -Recurse -File)",
+      "Bash(Select-Object Name)",
+      "Bash(xargs wc -l)"
+    ]
+  }
+}
