@@ -1,0 +1,87 @@
+services:
+  # ========== MySQL ==========
+  mysql:
+    image: mysql:8.0
+    container_name: tc-mysql
+    restart: unless-stopped
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123}
+      MYSQL_DATABASE: tide_canvas
+      MYSQL_CHARSET: utf8mb4
+      MYSQL_COLLATION: utf8mb4_general_ci
+      TZ: Asia/Shanghai
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_general_ci
+      - --init-connect=SET NAMES utf8mb4
+      - --skip-character-set-client-handshake
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root123}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ========== Redis ==========
+  redis:
+    image: redis:7-alpine
+    container_name: tc-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ========== Spring Boot 后端 ==========
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tc-backend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: tide_canvas
+      DB_USERNAME: root
+      DB_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET:-TideCanvasSecretKey2026ForJwtTokenGenerationAndValidation}
+      JAVA_OPTS: "-Xms256m -Xmx512m"
+      # 文件存储默认走 OSS（见 application.yml storage.*）。如需用环境变量覆盖密钥，
+      # 取消下面注释并在 .env 填值（application.yml 已用 ${ENV:默认} 接收）：
+      # STORAGE_KIND: ${STORAGE_KIND:-oss}
+      # OSS_ENDPOINT: ${OSS_ENDPOINT:-https://oss-cn-shanghai.aliyuncs.com}
+      # OSS_ACCESS_KEY_ID: ${OSS_ACCESS_KEY_ID:-}
+      # OSS_ACCESS_KEY_SECRET: ${OSS_ACCESS_KEY_SECRET:-}
+      # OSS_BUCKET: ${OSS_BUCKET:-scaecrowtoken}
+      # OSS_PREFIX: ${OSS_PREFIX:-uploads/}
+      # OSS_CDN_DOMAIN: ${OSS_CDN_DOMAIN:-}
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local
+  uploads_data:
+    driver: local

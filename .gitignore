@@ -1,7 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
+**/node_modules
 /.pnp
 .pnp.*
 .yarn/*
@@ -11,14 +11,14 @@
 !.yarn/versions
 
 # testing
-/coverage
+**/coverage
 
 # next.js
-/.next/
-/out/
+**/.next/
+**/out/
 
 # production
-/build
+**/build
 
 # misc
 .DS_Store
@@ -33,9 +33,23 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# Spring Boot config (use *-sample.yml as template)
+tide-canvas-server/src/main/resources/application.yml
+tide-canvas-server/src/main/resources/application-docker.yml
+
 # vercel
 .vercel
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# IDE / editor
+.idea/
+.claude/
+
+# java build
+tide-canvas-server/target/
+
+# build logs
+be-build.log
