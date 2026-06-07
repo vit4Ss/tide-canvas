@@ -163,6 +163,7 @@ CREATE TABLE `ai_generation_log` (
     `user_id`          BIGINT        DEFAULT NULL COMMENT '用户ID',
     `project_id`       BIGINT        DEFAULT NULL COMMENT '画布项目ID',
     `handler_name`     VARCHAR(64)   DEFAULT NULL COMMENT 'handler',
+    `operation_type`   VARCHAR(32)   NOT NULL DEFAULT 'ai_generate' COMMENT '操作大类(ai_generate/file_upload/file_delete/asset_save)',
     `model`            VARCHAR(128)  DEFAULT NULL COMMENT '上游模型',
     `operation`        VARCHAR(32)   DEFAULT NULL COMMENT '操作(generation/edits/video)',
     `request_url`      VARCHAR(512)  DEFAULT NULL COMMENT '上游请求地址',
@@ -179,8 +180,32 @@ CREATE TABLE `ai_generation_log` (
     KEY `idx_task_id` (`task_id`),
     KEY `idx_user_id` (`user_id`),
     KEY `idx_project_id` (`project_id`),
+    KEY `idx_operation_type` (`operation_type`),
     KEY `idx_create_time` (`create_time`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI生成日志表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='操作日志表(AI生成/文件上传等)';
+
+-- ----------------------------
+-- 兑换码表
+-- ----------------------------
+DROP TABLE IF EXISTS `redeem_code`;
+CREATE TABLE `redeem_code` (
+    `id`          BIGINT       NOT NULL COMMENT '主键',
+    `code`        VARCHAR(32)  NOT NULL COMMENT '兑换码',
+    `points`      INT          NOT NULL DEFAULT 0 COMMENT '兑换积分',
+    `status`      TINYINT      NOT NULL DEFAULT 0 COMMENT '状态(0未使用,1已使用,2已停用)',
+    `used_by`     BIGINT       DEFAULT NULL COMMENT '使用者用户ID',
+    `used_time`   DATETIME     DEFAULT NULL COMMENT '使用时间',
+    `expire_time` DATETIME     DEFAULT NULL COMMENT '有效期(空=永久)',
+    `batch_no`    VARCHAR(32)  DEFAULT NULL COMMENT '批次号',
+    `remark`      VARCHAR(255) DEFAULT NULL COMMENT '备注',
+    `create_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `deleted`     TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_code` (`code`),
+    KEY `idx_status` (`status`),
+    KEY `idx_used_by` (`used_by`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='兑换码表';
 
 -- ----------------------------
 -- 文件表
@@ -435,6 +460,7 @@ INSERT INTO `ai_handler_config` (`id`, `handler_name`, `display_name`, `descript
 (3, 'text_to_video',      '文生视频',   '从文字描述生成视频',           1, 1, 3,  0),
 (4, 'image_to_video',     '图生视频',   '从图片生成视频',              1, 1, 4,  0),
 (5, 'start_end_to_video', '首尾帧视频', '从首尾帧生成过渡视频',         1, 1, 5,  0),
+(12, 'reference_to_video', '参考生视频', '图片/视频/文字参考综合生成视频', 1, 1, 6,  0),
 (6, 'creative_desc',      '创意描述',   'AI增强提示词',               0, 1, 6,  0),
 (7, 'storyboard',         '分镜生成',   'AI编排多镜头故事板',           0, 1, 7,  0),
 (8, 'panorama_360',       '全景图',     '生成360度全景图片',            1, 1, 8,  0),

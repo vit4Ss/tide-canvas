@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
@@ -26,14 +27,55 @@ public class LocalStorageStrategy implements StorageStrategy {
         try {
             Path dirPath = Paths.get(props.getLocalDir(), directory);
             Files.createDirectories(dirPath);
-            String fileName = System.currentTimeMillis() + "_" + file.getOriginalFilename();
-            Path filePath = dirPath.resolve(fileName);
+            String fileName = System.currentTimeMillis() + "_" + sanitize(file.getOriginalFilename());
+            Path filePath = resolveSafely(dirPath, fileName);
             file.transferTo(filePath.toFile());
             return directory + "/" + fileName;
         } catch (IOException e) {
             log.error("文件上传失败", e);
             throw new RuntimeException("文件上传失败", e);
         }
+    }
+
+    @Override
+    public String uploadBytes(byte[] data, String filename, String contentType, String directory) {
+        try {
+            Path dirPath = Paths.get(props.getLocalDir(), directory);
+            Files.createDirectories(dirPath);
+            String fileName = System.currentTimeMillis() + "_" + sanitize(filename);
+            Path filePath = resolveSafely(dirPath, fileName);
+            Files.write(filePath, data);
+            return directory + "/" + fileName;
+        } catch (IOException e) {
+            log.error("文件上传失败", e);
+            throw new RuntimeException("文件上传失败", e);
+        }
+    }
+
+    /** 文件名安全化：剥离目录部分、上跳与特殊字符，避免路径穿越/覆盖 */
+    private String sanitize(String name) {
+        if (!StringUtils.hasText(name)) {
+            return "file";
+        }
+        String base = name.replace('\\', '/');
+        int slash = base.lastIndexOf('/');
+        if (slash >= 0) {
+            base = base.substring(slash + 1);
+        }
+        base = base.replaceAll("[^a-zA-Z0-9._-]", "_");
+        if (base.isEmpty() || ".".equals(base) || "..".equals(base)) {
+            return "file";
+        }
+        return base;
+    }
+
+    /** 落地路径必须落在目标目录内（防御性，sanitize 后正常已无穿越可能） */
+    private Path resolveSafely(Path dir, String fileName) {
+        Path resolved = dir.resolve(fileName).normalize();
+        if (!resolved.startsWith(dir.normalize())) {
+            throw new RuntimeException("非法文件名");
+        }
+        return resolved;
     }
 
     @Override

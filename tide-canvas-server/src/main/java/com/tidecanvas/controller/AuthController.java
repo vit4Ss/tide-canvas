@@ -2,11 +2,14 @@ package com.tidecanvas.controller;
 
 import com.tidecanvas.common.Result;
 import com.tidecanvas.model.dto.RefreshTokenDTO;
+import com.tidecanvas.model.dto.SendEmailCodeDTO;
 import com.tidecanvas.model.dto.UpdatePasswordDTO;
 import com.tidecanvas.model.dto.UserLoginDTO;
 import com.tidecanvas.model.dto.UserRegisterDTO;
 import com.tidecanvas.model.vo.LoginVO;
 import com.tidecanvas.model.vo.UserVO;
+import com.tidecanvas.annotation.RateLimit;
+import com.tidecanvas.annotation.LimitDimension;
 import com.tidecanvas.security.SecurityUtils;
 import com.tidecanvas.service.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -23,13 +26,23 @@ public class AuthController {
 
     private final AuthService authService;
 
+    @Operation(summary = "发送邮箱注册验证码")
+    @RateLimit(name = "email_code", limit = 3, period = 60, dimension = LimitDimension.IP, banThreshold = 8, banSeconds = 600)
+    @PostMapping("/email-code")
+    public Result<Void> emailCode(@Valid @RequestBody SendEmailCodeDTO dto) {
+        authService.sendEmailCode(dto.getEmail());
+        return Result.success();
+    }
+
     @Operation(summary = "用户注册")
+    @RateLimit(name = "register", limit = 5, period = 60, dimension = LimitDimension.IP, banThreshold = 3, banSeconds = 1800)
     @PostMapping("/register")
     public Result<UserVO> register(@Valid @RequestBody UserRegisterDTO dto) {
         return Result.success(authService.register(dto));
     }
 
     @Operation(summary = "用户登录")
+    @RateLimit(name = "login", limit = 10, period = 60, dimension = LimitDimension.IP, banThreshold = 5, banSeconds = 900)
     @PostMapping("/login")
     public Result<LoginVO> login(@Valid @RequestBody UserLoginDTO dto) {
         return Result.success(authService.login(dto));

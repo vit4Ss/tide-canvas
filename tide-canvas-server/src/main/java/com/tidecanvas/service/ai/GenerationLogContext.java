@@ -14,6 +14,8 @@ public final class GenerationLogContext {
     }
 
     private static final ThreadLocal<Ctx> HOLDER = new ThreadLocal<>();
+    // 本次执行是否已产生过上游调用日志（recordLog 时置位）；任务结束时据此判断要不要补记任务级日志
+    private static final ThreadLocal<Boolean> RECORDED = new ThreadLocal<>();
 
     private GenerationLogContext() {
     }
@@ -26,7 +28,16 @@ public final class GenerationLogContext {
         return HOLDER.get();
     }
 
+    public static void markRecorded() {
+        RECORDED.set(Boolean.TRUE);
+    }
+
+    public static boolean isRecorded() {
+        return Boolean.TRUE.equals(RECORDED.get());
+    }
+
     public static void clear() {
         HOLDER.remove();
+        RECORDED.remove();
     }
 }

@@ -6,6 +6,7 @@ import com.tidecanvas.common.PageResult;
 import com.tidecanvas.common.Result;
 import com.tidecanvas.mapper.AiGenerationLogMapper;
 import com.tidecanvas.model.dto.AiGenerateDTO;
+import com.tidecanvas.model.dto.GridSplitDTO;
 import com.tidecanvas.model.entity.AiGenerationLogDO;
 import com.tidecanvas.model.query.AiGenerationLogQuery;
 import com.tidecanvas.model.query.AiTaskQuery;
@@ -13,8 +14,11 @@ import com.tidecanvas.model.vo.AiGenerationLogVO;
 import com.tidecanvas.model.vo.AiHandlerVO;
 import com.tidecanvas.model.vo.AiModelVO;
 import com.tidecanvas.model.vo.AiTaskVO;
+import com.tidecanvas.annotation.RateLimit;
+import com.tidecanvas.annotation.LimitDimension;
 import com.tidecanvas.security.SecurityUtils;
 import com.tidecanvas.service.AiService;
+import com.tidecanvas.service.ImageGridService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -31,13 +35,21 @@ import java.util.List;
 public class AiController {
 
     private final AiService aiService;
+    private final ImageGridService imageGridService;
     private final AiGenerationLogMapper logMapper;
 
     @Operation(summary = "统一生成入口")
+    @RateLimit(name = "ai_generate", limit = 30, period = 60, dimension = LimitDimension.USER_AND_IP, banThreshold = 3, banSeconds = 600)
     @PostMapping("/generate")
     public Result<AiTaskVO> generate(@Valid @RequestBody AiGenerateDTO dto) {
         Long userId = SecurityUtils.getCurrentUserId();
         return Result.success(aiService.generate(userId, dto));
+    }
+
+    @Operation(summary = "图片宫格切分")
+    @PostMapping("/grid-split")
+    public Result<List<String>> gridSplit(@Valid @RequestBody GridSplitDTO dto) {
+        return Result.success(imageGridService.split(dto));
     }
 
     @Operation(summary = "查询任务状态")

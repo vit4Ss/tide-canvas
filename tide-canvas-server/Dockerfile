@@ -2,6 +2,8 @@
 FROM maven:3.9-eclipse-temurin-17 AS builder
 
 WORKDIR /build
+# 用阿里云镜像拉依赖，规避容器内直连 Maven Central 的证书/网络问题
+COPY settings.xml /root/.m2/settings.xml
 COPY pom.xml .
 RUN mvn dependency:go-offline -B
 

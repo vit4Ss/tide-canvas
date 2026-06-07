@@ -29,6 +29,10 @@ public enum ResultCode {
     NOT_AUTHOR(2012, "非签约作者，无法发布博客"),
     BLOG_ALREADY_PURCHASED(2013, "已购买该博客"),
     ORDER_STATUS_ERROR(2014, "订单状态异常"),
+    REDEEM_CODE_INVALID(2020, "兑换码无效"),
+    REDEEM_CODE_USED(2021, "兑换码已被使用"),
+    REDEEM_CODE_EXPIRED(2022, "兑换码已过期"),
+    REDEEM_CODE_DISABLED(2023, "兑换码已停用"),
 
     FILE_TYPE_NOT_ALLOWED(3001, "文件类型不允许"),
     FILE_SIZE_EXCEEDED(3002, "文件大小超限"),

@@ -31,6 +31,7 @@ public class JwtTokenProvider {
                 .subject(String.valueOf(userId))
                 .claim("username", username)
                 .claim("role", role)
+                .claim("type", "access")
                 .issuedAt(now)
                 .expiration(new Date(now.getTime() + accessTokenExpiration))
                 .signWith(key)
@@ -67,6 +68,19 @@ public class JwtTokenProvider {
 
     public Long getUserIdFromToken(String token) {
         return Long.parseLong(parseToken(token).getSubject());
+    }
+
+    /** 令牌类型：access / refresh（旧版 access token 无该声明，返回 null） */
+    public String getTokenType(String token) {
+        try {
+            return parseToken(token).get("type", String.class);
+        } catch (JwtException | IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    public boolean isRefreshToken(String token) {
+        return "refresh".equals(getTokenType(token));
     }
 
     public long getAccessTokenExpiration() {

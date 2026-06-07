@@ -9,6 +9,9 @@ import com.tidecanvas.model.vo.UserVO;
 
 public interface AuthService {
 
+    /** 发送邮箱注册验证码 */
+    void sendEmailCode(String email);
+
     UserVO register(UserRegisterDTO dto);
 
     LoginVO login(UserLoginDTO dto);

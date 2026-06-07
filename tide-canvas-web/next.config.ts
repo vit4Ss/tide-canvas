@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Next 16 的 typedRoutes 生成器在跨路由组的动态段(community/[id] 同时存在于 (public) 与 (auth))
+  // 上会生成损坏的 .next/dev/types/routes.d.ts，导致路由表注册失败、全站 404。关闭以规避该 bug。
+  typedRoutes: false,
   images: {
     remotePatterns: [
       {
@@ -8,6 +11,11 @@ const nextConfig: NextConfig = {
         hostname: "**",
       },
     ],
+  },
+  experimental: {
+    // rewrites() 代理上传时 Next 会缓冲请求体，默认上限仅 10MB，超出会被截断
+    // 导致后端 multipart 解析 EOFException。提到与后端 max-request-size(100MB) 对齐。
+    proxyClientMaxBodySize: "100mb",
   },
   async rewrites() {
     return [

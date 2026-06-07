@@ -16,6 +16,7 @@ import {
   ShoppingCart,
   BookOpen,
   Sparkles,
+  Ticket,
 } from "lucide-react";
 
 export default function UserPage() {
@@ -31,6 +32,7 @@ export default function UserPage() {
       : []),
     { href: "/user/points", label: "积分中心", desc: "余额、签到、流水明细", icon: Coins },
     { href: "/user/recharge", label: "充值积分", desc: "购买积分套餐", icon: ShoppingCart },
+    { href: "/user/recharge", label: "兑换码", desc: "充值或输入兑换码兑换积分", icon: Ticket },
     { href: "/user/orders", label: "我的订单", desc: "充值订单记录", icon: ShoppingCart },
     { href: "/user/assets", label: "我的素材", desc: "上传和管理素材", icon: ImagePlus },
     { href: "/user/settings", label: "账户设置", desc: "密码、通知偏好", icon: Settings },

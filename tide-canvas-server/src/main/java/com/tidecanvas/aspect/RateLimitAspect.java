@@ -1,36 +1,45 @@
 package com.tidecanvas.aspect;
 
 import com.tidecanvas.annotation.RateLimit;
-import com.tidecanvas.common.ResultCode;
-import com.tidecanvas.exception.BusinessException;
 import com.tidecanvas.security.SecurityUtils;
+import com.tidecanvas.service.security.AbuseGuard;
+import com.tidecanvas.util.ClientIpUtils;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
-import java.util.concurrent.TimeUnit;
-
+/**
+ * {@link RateLimit} 切面：解析当前用户/IP，委托 {@link AbuseGuard} 执行限流与冷却封禁。
+ *
+ * @author tidecanvas
+ */
 @Aspect
 @Component
 @RequiredArgsConstructor
 public class RateLimitAspect {
 
-    private final RedisTemplate<String, Object> redisTemplate;
+    private final AbuseGuard abuseGuard;
 
     @Around("@annotation(rateLimit)")
     public Object around(ProceedingJoinPoint point, RateLimit rateLimit) throws Throwable {
-        Long userId = SecurityUtils.getCurrentUserId();
-        String key = "rate_limit:" + point.getSignature().toShortString() + ":" + userId;
-        Long count = redisTemplate.opsForValue().increment(key);
-        if (count != null && count == 1) {
-            redisTemplate.expire(key, rateLimit.period(), TimeUnit.SECONDS);
-        }
-        if (count != null && count > rateLimit.limit()) {
-            throw new BusinessException(ResultCode.RATE_LIMIT);
-        }
+        Long userId = SecurityUtils.getCurrentUserIdOrNull();
+        String ip = currentIp();
+        String name = rateLimit.name().isEmpty() ? point.getSignature().toShortString() : rateLimit.name();
+        abuseGuard.enforce(name, userId, ip, rateLimit.dimension(),
+                rateLimit.limit(), rateLimit.period(), rateLimit.banThreshold(), rateLimit.banSeconds());
         return point.proceed();
+    }
+
+    private String currentIp() {
+        if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attrs) {
+            HttpServletRequest request = attrs.getRequest();
+            return ClientIpUtils.getClientIp(request);
+        }
+        return null;
     }
 }

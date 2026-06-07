@@ -25,6 +25,12 @@ import {
   ConfirmDialog,
 } from "@/components/shared";
 
+/** 文件名过长时中间省略，保留头部与尾部（含扩展名），用于弹窗等空间受限处 */
+function ellipsisMiddle(name: string, head = 14, tail = 12): string {
+  if (!name || name.length <= head + tail + 1) return name;
+  return name.slice(0, head) + "…" + name.slice(-tail);
+}
+
 function formatFileSize(bytes: number): string {
   if (bytes === 0) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -280,7 +286,7 @@ export default function AdminFilesPage() {
       <ConfirmDialog
         open={deleteTarget !== null}
         title="删除文件"
-        message={deleteTarget ? `确定删除文件「${deleteTarget.name}」？此操作不可撤销。` : ""}
+        message={deleteTarget ? `确定删除文件「${ellipsisMiddle(deleteTarget.name)}」？此操作不可撤销。` : ""}
         danger
         confirmText="删除"
         onConfirm={handleConfirmDelete}

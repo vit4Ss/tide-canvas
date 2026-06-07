@@ -30,8 +30,9 @@ export interface LoginVO {
 }
 
 export interface UserRegisterDTO {
-  username: string;
+  username?: string;
   email: string;
+  code: string;
   password: string;
   nickname?: string;
   phone?: string;

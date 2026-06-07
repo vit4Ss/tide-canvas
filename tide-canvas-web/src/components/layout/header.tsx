@@ -6,9 +6,6 @@ import { useAuthStore } from "@/stores/use-auth-store";
 import { useRouter } from "next/navigation";
 import {
   Layers,
-  ImagePlus,
-  FolderOpen,
-  Compass,
   LogOut,
   User,
   Settings,
@@ -24,7 +21,7 @@ const navLinks = [
   { href: "/user/projects", label: "画布", icon: Layers },
   { href: "/community", label: "社区", icon: MessageSquare },
   { href: "/blogs", label: "博客", icon: BookOpen },
-  { href: "/explore", label: "发现", icon: Compass },
+  // 「发现」功能开发中，暂时隐藏：{ href: "/explore", label: "发现", icon: Compass },
 ];
 
 export function Header() {

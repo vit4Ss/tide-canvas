@@ -13,7 +13,8 @@ public enum PointsTransactionTypeEnum {
     TIP_OUT(5, "打赏支出"),
     TIP_IN(6, "收到打赏"),
     ADMIN_ADJUST(7, "管理员调整"),
-    AI_REFUND(8, "AI生成失败返还");
+    AI_REFUND(8, "AI生成失败返还"),
+    REDEEM(9, "兑换码兑换");
 
     private final int code;
     private final String desc;

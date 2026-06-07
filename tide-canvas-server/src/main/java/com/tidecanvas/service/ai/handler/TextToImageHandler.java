@@ -1,5 +1,6 @@
 package com.tidecanvas.service.ai.handler;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tidecanvas.model.entity.AiProviderDO;
 import com.tidecanvas.service.ai.AiHandler;
 import com.tidecanvas.service.ai.AiHandlerResult;
@@ -8,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -22,8 +24,11 @@ import java.util.Map;
 public class TextToImageHandler implements AiHandler {
 
     private final AiRelayClient imageClient;
+    private final ObjectMapper objectMapper;
 
-    private static final String PLACEHOLDER = "https://placeholder.com/generated-image.png";
+    // 内联 1x1 透明 PNG，避免浏览器因外部假 URL 报 "Unsafe asset URL"
+    private static final String PLACEHOLDER =
+            "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
     @Override
     public String getHandlerName() {
@@ -46,11 +51,25 @@ public class TextToImageHandler implements AiHandler {
             return AiHandlerResult.ok(PLACEHOLDER);
         }
         try {
-            return AiHandlerResult.ok(imageClient.generate(provider, modelId, prompt, input));
+            return buildResult(imageClient.generate(provider, modelId, prompt, input), input);
         } catch (Exception e) {
             log.error("文生图调用失败: {}", e.getMessage(), e);
             return AiHandlerResult.fail("图像生成失败: " + e.getMessage());
         }
+    }
+
+    /** 把图片 URL 列表封装为结果：首张作主结果 URL，多张时把全部写入 resultMeta.urls 供前端铺多个节点 */
+    private AiHandlerResult buildResult(List<String> urls, Map<String, Object> input) {
+        if (urls == null || urls.isEmpty()) {
+            return AiHandlerResult.fail("未返回任何图片");
+        }
+        AiHandlerResult r = AiHandlerResult.ok(urls.get(0));
+        try {
+            r.setResultMeta(objectMapper.writeValueAsString(Map.of("urls", urls, "input", input)));
+        } catch (Exception ignore) {
+            // meta 失败不影响主结果
+        }
+        return r;
     }
 
     @Override

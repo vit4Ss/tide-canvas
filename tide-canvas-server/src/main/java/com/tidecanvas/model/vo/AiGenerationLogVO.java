@@ -16,6 +16,7 @@ public class AiGenerationLogVO {
     private Long userId;
     private Long projectId;
     private String handlerName;
+    private String operationType;
     private String model;
     private String operation;
     private String requestUrl;
@@ -28,4 +29,9 @@ public class AiGenerationLogVO {
     private String errorMsg;
     private Long durationMs;
     private LocalDateTime createTime;
+
+    // 关联展示字段（后端按 id 回填，非日志表本身列）
+    private String userName;
+    private String projectName;
+    private Integer taskStatus;
 }

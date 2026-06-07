@@ -108,7 +108,7 @@ export default function AdminLogsPage() {
           {error}
         </div>
       )}
-      <PageHeader title="操作日志" description={`共 ${total} 条记录`} />
+      <PageHeader title="系统日志" description={`共 ${total} 条记录`} />
 
       {/* 搜索和筛选 */}
       <div className="flex flex-wrap gap-3">

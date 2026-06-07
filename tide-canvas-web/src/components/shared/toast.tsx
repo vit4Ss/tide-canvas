@@ -43,7 +43,7 @@ export function ToastContainer() {
   useEffect(() => {
     const listener = (item: ToastItem) => {
       setItems((prev) => [...prev, item]);
-      setTimeout(() => setItems((prev) => prev.filter((i) => i.id !== item.id)), 3000);
+      setTimeout(() => setItems((prev) => prev.filter((i) => i.id !== item.id)), 1800);
     };
     listeners.push(listener);
     return () => {
@@ -55,7 +55,7 @@ export function ToastContainer() {
   const remove = (id: number) => setItems((prev) => prev.filter((i) => i.id !== id));
 
   return (
-    <div className="pointer-events-none fixed bottom-4 right-4 z-50 flex flex-col gap-2">
+    <div className="pointer-events-none fixed left-1/2 top-6 z-50 flex -translate-x-1/2 flex-col items-center gap-2">
       {items.map((item) => {
         const Icon = ICONS[item.type];
         return (

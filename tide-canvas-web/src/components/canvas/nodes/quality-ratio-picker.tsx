@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, Monitor } from "lucide-react";
+import { ChevronDown, RectangleHorizontal } from "lucide-react";
 
 export interface QualityRatioValue {
   quality: "low" | "standard" | "high";
@@ -55,9 +55,10 @@ interface Props {
   qualities?: string[];
   clarities?: string[];
   ratios?: string[];
+  compact?: boolean;
 }
 
-export function QualityRatioPicker({ value, onChange, qualities, clarities, ratios }: Props) {
+export function QualityRatioPicker({ value, onChange, qualities, clarities, ratios, compact = false }: Props) {
   const [open, setOpen] = useState(false);
   const [openUp, setOpenUp] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -75,7 +76,8 @@ export function QualityRatioPicker({ value, onChange, qualities, clarities, rati
   }, [open]);
 
   const qualityLabel = QUALITY_OPTIONS.find((q) => q.value === value.quality)?.label || "标准画质";
-  const summary = `${value.ratio === "auto" ? "自适应" : value.ratio} · ${qualityLabel} · ${value.clarity}`;
+  const ratioLabel = value.ratio === "auto" ? "自适应" : value.ratio;
+  const summary = compact ? `${ratioLabel} · ${value.clarity}` : `${ratioLabel} · ${qualityLabel} · ${value.clarity}`;
 
   const qualityOpts = qualities && qualities.length ? QUALITY_OPTIONS.filter((q) => qualities.includes(q.value)) : QUALITY_OPTIONS;
   const clarityOpts = clarities && clarities.length ? CLARITY_OPTIONS.filter((c) => clarities.includes(c)) : CLARITY_OPTIONS;
@@ -101,7 +103,7 @@ export function QualityRatioPicker({ value, onChange, qualities, clarities, rati
         onClick={toggle}
         className="flex items-center gap-1 rounded-md px-2 py-1 text-xs hover:bg-neutral-100 dark:hover:bg-neutral-800"
       >
-        <Monitor className="h-3 w-3" />
+        <RectangleHorizontal className="h-3 w-3" />
         {summary}
         <ChevronDown className="h-3 w-3" />
       </button>

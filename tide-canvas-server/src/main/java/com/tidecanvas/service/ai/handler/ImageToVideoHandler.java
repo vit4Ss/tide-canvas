@@ -4,6 +4,7 @@ import com.tidecanvas.model.entity.AiProviderDO;
 import com.tidecanvas.service.ai.AiHandler;
 import com.tidecanvas.service.ai.AiHandlerResult;
 import com.tidecanvas.service.ai.AiRelayClient;
+import com.tidecanvas.service.ai.util.PromptRefUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -23,7 +24,9 @@ public class ImageToVideoHandler implements AiHandler {
 
     private final AiRelayClient relayClient;
 
-    private static final String PLACEHOLDER = "https://placeholder.com/generated-video.mp4";
+    // 内联 1x1 透明 PNG（演示模式），避免浏览器因外部假 URL 报 "Unsafe asset URL"
+    private static final String PLACEHOLDER =
+            "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
     @Override
     public String getHandlerName() {
@@ -42,7 +45,7 @@ public class ImageToVideoHandler implements AiHandler {
 
     @Override
     public AiHandlerResult execute(String modelId, Map<String, Object> input) {
-        String prompt = String.valueOf(input.get("prompt"));
+        String prompt = PromptRefUtils.normalizeInlineImageRefs(String.valueOf(input.get("prompt")));
         AiProviderDO provider = relayClient.resolveProvider(modelId);
         if (!relayClient.isUsable(provider)) {
             log.warn("未配置可用的 AI 供应商（baseUrl/apiKey），返回占位视频");

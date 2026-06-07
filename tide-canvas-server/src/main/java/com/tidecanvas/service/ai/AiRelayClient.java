@@ -8,8 +8,10 @@ import com.tidecanvas.mapper.AiProviderMapper;
 import com.tidecanvas.model.entity.AiGenerationLogDO;
 import com.tidecanvas.model.entity.AiModelDO;
 import com.tidecanvas.model.entity.AiProviderDO;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -20,7 +22,9 @@ import org.springframework.web.client.RestClient;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * AI 中转站（ScarecrowToken Relay）客户端。
@@ -42,13 +46,37 @@ public class AiRelayClient {
     private final ObjectMapper objectMapper;
     private final GenerationLogRecorder logRecorder;
 
+    // ===== 轮询 / 重试 / 超时参数：默认值如下，可在 application.yml 的 ai.relay.* 覆盖（无需改代码） =====
     /** 轮询间隔（毫秒） */
-    private static final long POLL_INTERVAL_MILLIS = 3_000L;
-    /** 轮询最长时间（毫秒）—— 视频任务可能较慢，给足时间确保结果最终落库 */
-    private static final long MAX_POLL_MILLIS = 6 * 60 * 1000L;
+    @Value("${ai.relay.poll-interval-ms:3000}")
+    private long pollIntervalMs;
+    /**
+     * 轮询最长时间（毫秒）—— 视频任务（如 seedance 15s 720P + face 参考）常需 6~12 分钟，
+     * 过短会在上游仍 processing 时误判超时失败。默认 12 分钟，应小于 {@code AiTaskRecoveryRunner}
+     * 的 15 分钟兜底，避免轮询期间被恢复器抢先判失败。
+     */
+    @Value("${ai.relay.poll-timeout-ms:720000}")
+    private long pollTimeoutMs;
+    /** 502/503 瞬态故障最大重试次数 */
+    @Value("${ai.relay.max-retries:2}")
+    private int maxRetries;
+    /** 重试初始等待（毫秒，指数退避基数：第 n 次等待 retryDelayMs * 2^(n-1)） */
+    @Value("${ai.relay.retry-delay-ms:1500}")
+    private long retryDelayMs;
+    /** 上游连接超时（毫秒） */
+    @Value("${ai.relay.connect-timeout-ms:15000}")
+    private int connectTimeoutMs;
+    /**
+     * 上游读超时（毫秒）—— 中转站对部分模型（如 gpt-image-2 2k）可能同步阻塞返回 200（实测可达 130s+），
+     * 过短会在上游已成功时误判失败；异步 202 场景下 POST 快速返回、由轮询负责等待，不受此值影响。
+     */
+    @Value("${ai.relay.read-timeout-ms:300000}")
+    private int readTimeoutMs;
+    /** edits 接口允许的参考图数量（上游协议固定限制，非调优项，保留为常量） */
+    private static final int MAX_EDIT_IMAGE_URLS = 16;
 
-    /** 共享 RestClient（不可变、线程安全，构建一次复用） */
-    private final RestClient http = buildClient();
+    /** 共享 RestClient（不可变、线程安全；因超时取自 @Value，故在 @PostConstruct 注入完成后构建） */
+    private RestClient http;
 
     /** 供应商是否可用（已配置 baseUrl + apiKey） */
     public boolean isUsable(AiProviderDO provider) {
@@ -78,23 +106,26 @@ public class AiRelayClient {
 
     // ==================== 业务接口 ====================
 
-    /** 文生图：POST {baseUrl}/images/generations，返回最终图片 URL */
-    public String generate(AiProviderDO provider, String modelId, String prompt, Map<String, Object> input) throws Exception {
+    /** 文生图：POST {baseUrl}/images/generations，返回最终图片 URL 列表（n>1 时一次多张） */
+    public List<String> generate(AiProviderDO provider, String modelId, String prompt, Map<String, Object> input) throws Exception {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", resolveModelName(modelId, provider, "gpt-image-2"));
         body.put("prompt", prompt);
         applyImageParams(body, input);
-        return submitAndResolve(provider, "/images/generations", body);
+        applyBatchCount(body, input);
+        return submitAndResolveMulti(provider, "/images/generations", body);
     }
 
-    /** 图生图编辑：POST {baseUrl}/images/edits（JSON image_urls），返回最终图片 URL */
-    public String edit(AiProviderDO provider, String modelId, String prompt, List<String> imageUrls, Map<String, Object> input) throws Exception {
+    /** 图生图编辑：POST {baseUrl}/images/edits（JSON image_urls），返回最终图片 URL 列表（n>1 时一次多张） */
+    public List<String> edit(AiProviderDO provider, String modelId, String prompt, List<String> imageUrls, Map<String, Object> input) throws Exception {
+        List<String> normalizedImageUrls = normalizeEditImageUrls(imageUrls);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", resolveModelName(modelId, provider, "gpt-image-2"));
         body.put("prompt", prompt);
-        body.put("image_urls", imageUrls);
-        applyImageParams(body, input);
-        return submitAndResolve(provider, "/images/edits", body);
+        body.put("image_urls", normalizedImageUrls);
+        applyEditParams(body, input);
+        applyBatchCount(body, input);
+        return submitAndResolveMulti(provider, "/images/edits", body);
     }
 
     /** 视频任务：POST {baseUrl}/contents/generations/tasks（多模态 content[]），返回最终视频 URL */
@@ -103,11 +134,12 @@ public class AiRelayClient {
         body.put("model", resolveModelName(modelId, provider, "seedance-v2"));
         body.put("content", buildVideoContent(prompt, input));
         String ratio = ratioOf(input);
-        if (StringUtils.hasText(ratio) && !"auto".equals(ratio)) {
-            body.put("ratio", ratio);
+        if (StringUtils.hasText(ratio)) {
+            // 文档比例集含 adaptive（自适应）；前端的 auto 归一为 adaptive
+            body.put("ratio", "auto".equals(ratio) ? "adaptive" : ratio);
         }
         putIfText(body, "resolution", resolutionOf(input));
-        putIfText(body, "duration", strOf(input.get("duration")));
+        putIfText(body, "duration", durationOf(input));
         putIfText(body, "fps", strOf(input.get("fps")));
         putIfText(body, "mode", strOf(input.get("mode")));
         return submitAndResolve(provider, "/contents/generations/tasks", body);
@@ -116,43 +148,76 @@ public class AiRelayClient {
     // ==================== 协议处理 ====================
 
     /**
-     * 提交请求并解析结果：兼容「200 同步」与「202 异步 + 轮询」两种形态。
+     * 提交请求并解析结果（多图）：兼容「200 同步」与「202 异步 + 轮询」两种形态。
+     * 遇到 502/503 时自动重试（relay 上游瞬时不可达），最多重试 maxRetries 次。
      */
-    private String submitAndResolve(AiProviderDO provider, String path, Map<String, Object> body) throws Exception {
+    private List<String> submitAndResolveMulti(AiProviderDO provider, String path, Map<String, Object> body) throws Exception {
         long start = System.currentTimeMillis();
         String fullUrl = baseUrl(provider) + path;
-        ResponseEntity<String> resp = http.post()
-                .uri(fullUrl)
-                .header("Authorization", "Bearer " + provider.getApiKey())
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(body)
-                .retrieve()
-                .onStatus(status -> true, (req, res) -> { /* 不抛异常，自行按状态码解析 */ })
-                .toEntity(String.class);
+        Exception lastEx = null;
+        String lastRaw = null;
 
-        int code = resp.getStatusCode().value();
-        String raw = resp.getBody();
-        JsonNode root = tryParse(raw);
-        String upstreamTaskId = root != null ? root.path("id").asText(null) : null;
-        try {
-            String url = resolveResult(provider, code, raw, root);
-            recordLog(operationOf(path), fullUrl, body, code, raw, upstreamTaskId, true, url, null, start);
-            return url;
-        } catch (Exception e) {
-            recordLog(operationOf(path), fullUrl, body, code, raw, upstreamTaskId, false, null, e.getMessage(), start);
-            throw e;
+        for (int attempt = 0; attempt <= maxRetries; attempt++) {
+            if (attempt > 0) {
+                long delay = retryDelayMs * (1L << (attempt - 1));  // 退避：1.5s, 3s, ...
+                log.warn("上游 {} 返回瞬态错误，第 {} 次重试（等待 {}ms）", path, attempt, delay);
+                sleep(delay);
+            }
+            // 响应按字节读取再转 UTF-8 文本：部分中转站会把 JSON 响应错标成 application/octet-stream，
+            // 用 String 解码会因「无 octet-stream→String 转换器」直接报错；读 byte[] 可绕过 content-type 限制。
+            // 同时带上 Accept: application/json，引导上游返回 JSON（而非二进制流）。
+            ResponseEntity<byte[]> resp = http.post()
+                    .uri(fullUrl)
+                    .header("Authorization", "Bearer " + provider.getApiKey())
+                    .header("Accept", "application/json")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body)
+                    .retrieve()
+                    .onStatus(status -> true, (req, res) -> { })
+                    .toEntity(byte[].class);
+
+            int code = resp.getStatusCode().value();
+            byte[] bytes = resp.getBody();
+            String raw = bytes != null ? new String(bytes, java.nio.charset.StandardCharsets.UTF_8) : null;
+            lastRaw = raw;
+            JsonNode root = tryParseSse(raw); // 兼容 SSE 格式：先尝试解析 data: {...} 行
+            if (root == null) root = tryParse(raw);
+            String upstreamTaskId = root != null ? root.path("id").asText(null) : null;
+            try {
+                List<String> urls = resolveResult(provider, code, raw, root);
+                recordLog(operationOf(path), fullUrl, body, code, raw, upstreamTaskId, true, first(urls), null, start);
+                return urls;
+            } catch (Exception e) {
+                lastEx = e;
+                // 502/503 可重试，其他错误直接抛
+                if ((code == 502 || code == 503) && attempt < maxRetries) {
+                    continue;
+                }
+                recordLog(operationOf(path), fullUrl, body, code, raw, upstreamTaskId, false, null, e.getMessage(), start);
+                throw e;
+            }
         }
+        // 理论上不会到这里（最后一次迭代的 catch 会 throw）
+        recordLog(operationOf(path), fullUrl, body, 502, lastRaw, null, false, null, lastEx != null ? lastEx.getMessage() : "重试耗尽", start);
+        throw lastEx != null ? lastEx : new IllegalStateException("上游 502 重试耗尽");
     }
 
-    /** 解析上游响应：同步媒体地址 / 失败信封 / 202 异步轮询 */
-    private String resolveResult(AiProviderDO provider, int code, String raw, JsonNode root) throws Exception {
+    /** 单图包装：取结果列表首个（视频 / 单图场景复用） */
+    private String submitAndResolve(AiProviderDO provider, String path, Map<String, Object> body) throws Exception {
+        return first(submitAndResolveMulti(provider, path, body));
+    }
+
+    /** 解析上游响应：同步媒体地址（可多张）/ 失败信封 / 202 异步轮询 */
+    private List<String> resolveResult(AiProviderDO provider, int code, String raw, JsonNode root) throws Exception {
         if (root == null) {
-            // 非 JSON 响应（如 400 纯文本 "model is required"，或网关 HTML 错误页）
-            throw new IllegalStateException(StringUtils.hasText(raw) ? raw : ("上游返回异常: HTTP " + code));
+            // 非 JSON 响应：截取前 200 字符，避免日志刷屏
+            String snippet = StringUtils.hasText(raw) ? raw.strip().replace("\n", " | ") : "(empty)";
+            if (snippet.length() > 200) snippet = snippet.substring(0, 200) + "...";
+            throw new IllegalStateException(snippet);
         }
-        String url = extractUrl(root);
-        if (url != null) {
-            return url;
+        List<String> urls = extractUrls(root);
+        if (!urls.isEmpty()) {
+            return urls;
         }
         if (isFailed(root) || code >= 400) {
             throw new IllegalStateException(errorMessage(root, code));
@@ -169,6 +234,7 @@ public class AiRelayClient {
                            String upstreamTaskId, boolean success, String resultUrl, String error, long start) {
         AiGenerationLogDO lg = new AiGenerationLogDO();
         lg.setOperation(operation);
+        lg.setOperationType("ai_generate");
         lg.setRequestUrl(url);
         lg.setModel(body != null && body.get("model") != null ? String.valueOf(body.get("model")) : null);
         try {
@@ -184,6 +250,7 @@ public class AiRelayClient {
         lg.setErrorMsg(error);
         lg.setDurationMs(System.currentTimeMillis() - start);
         logRecorder.save(lg);
+        GenerationLogContext.markRecorded();
     }
 
     private String operationOf(String path) {
@@ -199,19 +266,21 @@ public class AiRelayClient {
     /**
      * 轮询任意异步任务状态：GET {baseUrl}/tasks/{id}，直到 succeeded / failed 或超时。
      */
-    private String pollTask(AiProviderDO provider, String taskId) throws Exception {
-        long deadline = System.currentTimeMillis() + MAX_POLL_MILLIS;
+    private List<String> pollTask(AiProviderDO provider, String taskId) throws Exception {
+        long deadline = System.currentTimeMillis() + pollTimeoutMs;
         String path = "/tasks/" + taskId;
         while (System.currentTimeMillis() < deadline) {
-            ResponseEntity<String> resp = http.get()
+            ResponseEntity<byte[]> resp = http.get()
                     .uri(baseUrl(provider) + path)
                     .header("Authorization", "Bearer " + provider.getApiKey())
+                    .header("Accept", "application/json")
                     .retrieve()
                     .onStatus(status -> true, (req, res) -> { })
-                    .toEntity(String.class);
+                    .toEntity(byte[].class);
 
             int code = resp.getStatusCode().value();
-            JsonNode root = tryParse(resp.getBody());
+            byte[] bytes = resp.getBody();
+            JsonNode root = tryParse(bytes != null ? new String(bytes, java.nio.charset.StandardCharsets.UTF_8) : null);
             if (code == 404) {
                 throw new IllegalStateException("上游任务不存在: " + taskId);
             }
@@ -221,9 +290,9 @@ public class AiRelayClient {
             if (root != null) {
                 String status = root.path("status").asText("");
                 if ("succeeded".equalsIgnoreCase(status)) {
-                    String url = extractUrl(root);
-                    if (url != null) {
-                        return url;
+                    List<String> urls = extractUrls(root);
+                    if (!urls.isEmpty()) {
+                        return urls;
                     }
                     throw new IllegalStateException("任务成功但未返回结果地址: " + taskId);
                 }
@@ -232,27 +301,28 @@ public class AiRelayClient {
                 }
                 // queued / processing → 继续轮询
             }
-            sleep(POLL_INTERVAL_MILLIS);
+            sleep(pollIntervalMs);
         }
         throw new IllegalStateException("上游任务超时未完成: " + taskId);
     }
 
-    /** 从响应中提取媒体地址：data[0].url / data[0].b64_json / output_url */
-    private String extractUrl(JsonNode root) {
+    /** 从响应中提取媒体地址列表：data[].url / data[].b64_json（全部）/ output_url */
+    private List<String> extractUrls(JsonNode root) {
+        List<String> urls = new ArrayList<>();
         JsonNode data = root.path("data");
-        if (data.isArray() && !data.isEmpty()) {
-            JsonNode first = data.get(0);
-            if (first.hasNonNull("url")) {
-                return first.get("url").asText();
-            }
-            if (first.hasNonNull("b64_json")) {
-                return "data:image/png;base64," + first.get("b64_json").asText();
+        if (data.isArray()) {
+            for (JsonNode item : data) {
+                if (item.hasNonNull("url")) {
+                    urls.add(item.get("url").asText());
+                } else if (item.hasNonNull("b64_json")) {
+                    urls.add("data:image/png;base64," + item.get("b64_json").asText());
+                }
             }
         }
-        if (root.hasNonNull("output_url") && StringUtils.hasText(root.get("output_url").asText())) {
-            return root.get("output_url").asText();
+        if (urls.isEmpty() && root.hasNonNull("output_url") && StringUtils.hasText(root.get("output_url").asText())) {
+            urls.add(root.get("output_url").asText());
         }
-        return null;
+        return urls;
     }
 
     /** 是否为失败响应（OpenAI 错误信封 或 status=failed） */
@@ -266,8 +336,12 @@ public class AiRelayClient {
     /** 解析错误信息：error.message / error_message / 原始文本 / 兜底 */
     private String errorMessage(JsonNode root, int code) {
         JsonNode err = root.path("error");
-        if (err.isObject() && err.hasNonNull("message")) {
-            return err.get("message").asText();
+        if (err.isObject()) {
+            String msg = err.path("message").asText(null);
+            String type = err.path("type").asText(null);
+            if (StringUtils.hasText(msg)) {
+                return StringUtils.hasText(type) ? type + ": " + msg : msg;
+            }
         }
         if (root.hasNonNull("error_message") && StringUtils.hasText(root.get("error_message").asText())) {
             return root.get("error_message").asText();
@@ -280,12 +354,26 @@ public class AiRelayClient {
 
     // ==================== 参数构建 ====================
 
-    /** 透传图像通用参数：aspect_ratio / quality / resolution（按中转站 params_schema） */
+    /** 文生图参数：aspect_ratio + quality + resolution */
     private void applyImageParams(Map<String, Object> body, Map<String, Object> input) {
-        String aspect = ratioOf(input);
+        applyAspectParam(body, input, "1:1");
+        applyCommonParams(body, input);
+    }
+
+    /** 图生图/编辑参数：aspect_ratio + quality + resolution */
+    private void applyEditParams(Map<String, Object> body, Map<String, Object> input) {
+        applyAspectParam(body, input, null);
+        applyCommonParams(body, input);
+    }
+
+    private void applyAspectParam(Map<String, Object> body, Map<String, Object> input, String defaultValue) {
+        String aspect = aspectOf(input, defaultValue);
         if (StringUtils.hasText(aspect) && !"auto".equals(aspect)) {
             body.put("aspect_ratio", aspect);
         }
+    }
+
+    private void applyCommonParams(Map<String, Object> body, Map<String, Object> input) {
         String quality = strOf(input.get("quality"));
         if (StringUtils.hasText(quality)) {
             body.put("quality", mapQuality(quality));
@@ -293,7 +381,53 @@ public class AiRelayClient {
         String resolution = resolutionOf(input);
         if (StringUtils.hasText(resolution)) {
             body.put("resolution", resolution);
+            String model = strOf(body.get("model"));
+            if (StringUtils.hasText(model) && model.toLowerCase(Locale.ROOT).contains("seedream")) {
+                body.put("quality", resolution.toUpperCase(Locale.ROOT));
+            }
         }
+    }
+
+    /** 出图张数 n：取 input.batchCount / input.n，clamp 到 [1,4]，仅 >1 时下发（OpenAI images 默认 n=1） */
+    private void applyBatchCount(Map<String, Object> body, Map<String, Object> input) {
+        Object bc = input.get("batchCount");
+        if (bc == null) {
+            bc = input.get("n");
+        }
+        if (bc == null) {
+            return;
+        }
+        int n;
+        try {
+            n = Integer.parseInt(String.valueOf(bc).trim());
+        } catch (NumberFormatException e) {
+            return;
+        }
+        n = Math.max(1, Math.min(4, n));
+        if (n > 1) {
+            body.put("n", n);
+        }
+    }
+
+    /** 取列表首个，空则 null */
+    private String first(List<String> list) {
+        return list == null || list.isEmpty() ? null : list.get(0);
+    }
+
+    private List<String> normalizeEditImageUrls(List<String> imageUrls) {
+        if (imageUrls == null) {
+            throw new IllegalArgumentException("image_urls不能为空");
+        }
+        List<String> urls = imageUrls.stream()
+                .filter(StringUtils::hasText)
+                .map(String::strip)
+                .distinct()
+                .limit(MAX_EDIT_IMAGE_URLS)
+                .collect(Collectors.toList());
+        if (urls.isEmpty()) {
+            throw new IllegalArgumentException("image_urls不能为空");
+        }
+        return urls;
     }
 
     /** 构建视频多模态 content[]：文本 + 可选首/尾帧/参考图 */
@@ -313,6 +447,20 @@ public class AiRelayClient {
         addImageContent(content, first, "first_frame");
         addImageContent(content, input.get("lastFrame"), "last_frame");
         addImageContent(content, input.get("referenceImage"), "reference_image");
+        // 多张参考图（图片参考 / 全能参考模式）：每张作为一个 reference_image
+        Object refs = input.get("references");
+        if (refs instanceof List<?> list) {
+            for (Object r : list) {
+                addImageContent(content, r, "reference_image");
+            }
+        }
+        // 视频参考（全能参考模式）：每个视频作为一个 reference_video
+        Object videoRefs = input.get("videoReferences");
+        if (videoRefs instanceof List<?> vlist) {
+            for (Object v : vlist) {
+                addVideoContent(content, v, "reference_video");
+            }
+        }
         return content;
     }
 
@@ -324,6 +472,18 @@ public class AiRelayClient {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("type", "image_url");
         item.put("image_url", Map.of("url", s));
+        item.put("role", role);
+        content.add(item);
+    }
+
+    private void addVideoContent(List<Map<String, Object>> content, Object url, String role) {
+        String s = strOf(url);
+        if (!StringUtils.hasText(s)) {
+            return;
+        }
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("type", "video_url");
+        item.put("video_url", Map.of("url", s));
         item.put("role", role);
         content.add(item);
     }
@@ -344,10 +504,20 @@ public class AiRelayClient {
         return fallback;
     }
 
-    /** 比例：input.aspectRatio，缺省 1:1 */
+    /** 比例：input.aspectRatio / input.aspect_ratio / input.aspect */
     private String ratioOf(Map<String, Object> input) {
+        return aspectOf(input, "1:1");
+    }
+
+    private String aspectOf(Map<String, Object> input, String defaultValue) {
         Object r = input.get("aspectRatio");
-        return r != null ? String.valueOf(r) : "1:1";
+        if (r == null) {
+            r = input.get("aspect_ratio");
+        }
+        if (r == null) {
+            r = input.get("aspect");
+        }
+        return r != null ? String.valueOf(r) : defaultValue;
     }
 
     /** 清晰度：input.resolution 优先，其次 input.clarity（如 2K → 2k） */
@@ -357,6 +527,19 @@ public class AiRelayClient {
             r = input.get("clarity");
         }
         return r == null ? null : String.valueOf(r).toLowerCase();
+    }
+
+    /** 视频时长：归一为「Ns」格式（文档取值 5s/10s/15s）。前端传数字 5 → "5s"，"5.0" → "5s"，已带 s 则原样 */
+    private String durationOf(Map<String, Object> input) {
+        Object d = input.get("duration");
+        if (d == null) {
+            return null;
+        }
+        String s = String.valueOf(d).trim();
+        if (s.isEmpty()) {
+            return null;
+        }
+        return s.matches("\\d+(\\.\\d+)?") ? s.replaceAll("\\.0+$", "") + "s" : s;
     }
 
     /** 前端画质 {low, standard, high} → 中转站 {low, medium, high} */
@@ -380,13 +563,47 @@ public class AiRelayClient {
         return o == null ? null : String.valueOf(o);
     }
 
+    /**
+     * 尽力从各种畸形响应中提取 JSON：SSE data: 行 → MYAPI: 前缀行 → 原始 JSON → 子串中的 JSON 对象。
+     * 返回提取到的首个有效 JSON，都没有则返回 null。
+     */
+    private JsonNode tryParseSse(String body) {
+        if (!StringUtils.hasText(body)) return null;
+        // 1) 标准 SSE：data: {...} 或 data: [...]
+        try {
+            for (String line : body.split("\\R")) {
+                String t = line.strip();
+                if (t.startsWith("data:")) {
+                    String json = t.substring(5).strip();
+                    if (json.startsWith("{") || json.startsWith("[")) {
+                        JsonNode n = objectMapper.readTree(json);
+                        if (n != null) return n;
+                    }
+                }
+                // 2) 混合前缀行：MYAPI: 502 BAD_GATEWAY {"error":{...}}
+                int brace = t.indexOf('{');
+                if (brace > 0) {
+                    String maybeJson = t.substring(brace);
+                    try {
+                        JsonNode n = objectMapper.readTree(maybeJson);
+                        if (n != null && n.has("error")) return n;
+                    } catch (Exception ignore) { }
+                }
+            }
+        } catch (Exception ignore) { }
+        return null;
+    }
+
     private JsonNode tryParse(String body) {
-        if (!StringUtils.hasText(body)) {
-            return null;
-        }
+        if (!StringUtils.hasText(body)) return null;
         try {
             return objectMapper.readTree(body);
         } catch (Exception e) {
+            // 尝试在字符串任意位置查找 JSON 对象（如 relay 返回 HTML 中内嵌的 JSON）
+            int s = body.indexOf('{');
+            if (s >= 0) {
+                try { return objectMapper.readTree(body.substring(s)); } catch (Exception e2) { }
+            }
             return null;
         }
     }
@@ -404,13 +621,12 @@ public class AiRelayClient {
         return provider.getBaseUrl().replaceAll("/+$", "");
     }
 
-    private static RestClient buildClient() {
+    /** 依赖注入完成后构建共享 RestClient（@Value 超时此时已就绪） */
+    @PostConstruct
+    private void initHttpClient() {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(15_000);
-        // 读超时放宽到 5 分钟：中转站对部分模型（如 gpt-image-2 2k）可能同步阻塞
-        // 返回 200（实测可达 130s+），超时过短会在上游已成功时误判为失败。
-        // 异步 202 场景下该 POST 会快速返回，由 pollTask 负责等待，不受此值影响。
-        factory.setReadTimeout(300_000);
-        return RestClient.builder().requestFactory(factory).build();
+        factory.setConnectTimeout(connectTimeoutMs);
+        factory.setReadTimeout(readTimeoutMs);
+        http = RestClient.builder().requestFactory(factory).build();
     }
 }

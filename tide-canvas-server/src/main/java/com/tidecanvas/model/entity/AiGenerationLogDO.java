@@ -29,6 +29,9 @@ public class AiGenerationLogDO {
 
     private String handlerName;
 
+    /** 操作大类：ai_generate / file_upload / file_delete / asset_save */
+    private String operationType;
+
     /** 上游模型 */
     private String model;
 

@@ -12,6 +12,7 @@
         <result column="avatar" property="avatar"/>
         <result column="role" property="role"/>
         <result column="status" property="status"/>
+        <result column="points" property="points"/>
         <result column="api_quota" property="apiQuota"/>
         <result column="storage_quota" property="storageQuota"/>
         <result column="last_login_time" property="lastLoginTime"/>
@@ -22,7 +23,7 @@
 
     <sql id="Base_Column_List">
         id, username, email, phone, password, nickname, avatar, role, status,
-        api_quota, storage_quota, last_login_time, create_time, update_time, deleted
+        points, api_quota, storage_quota, last_login_time, create_time, update_time, deleted
     </sql>
 
     <!-- 今日新增用户数 -->

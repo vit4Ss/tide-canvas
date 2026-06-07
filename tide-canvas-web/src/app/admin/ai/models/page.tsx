@@ -13,6 +13,10 @@ import {
   Coins,
 } from "lucide-react";
 import { QUALITY_OPTIONS, CLARITY_OPTIONS, RATIO_OPTIONS } from "@/components/canvas/nodes/quality-ratio-picker";
+import { VIDEO_RATIOS, RESOLUTIONS, DURATION_OPTIONS } from "@/components/canvas/nodes/video-param-picker";
+
+// 视频模型可勾选的时长档位池（秒，4~15）；模型勾选后驱动画布视频节点的「视频时长」选项与计费
+const DURATION_CHOICES = Array.from({ length: 12 }, (_, i) => i + 4);
 
 interface AdminAiModelVO {
   id: number;
@@ -48,10 +52,16 @@ interface ModelForm {
   // 供应商 id 为雪花长整型、后端以字符串返回，前端全程按字符串处理，避免 Number() 精度丢失
   providerId: string;
   pointCost: number;
+  // 图片维度
   qualities: string[];
   clarities: string[];
+  // 比例：图片/视频共用此字段，渲染时按 type 用不同选项源（RATIO_OPTIONS / VIDEO_RATIOS）
   ratios: string[];
-  // 画质×清晰度差异化定价：quality -> clarity -> 积分；未配置的格回退到 pointCost
+  // 视频维度
+  resolutions: string[];
+  durations: number[];
+  audio: boolean;
+  // 差异化定价矩阵：图片 = pricing[quality][clarity]；视频 = pricing[resolution][duration]
   pricing: Record<string, Record<string, number>>;
 }
 
@@ -65,6 +75,9 @@ const emptyForm: ModelForm = {
   qualities: QUALITY_OPTIONS.map((q) => q.value),
   clarities: [...CLARITY_OPTIONS],
   ratios: RATIO_OPTIONS.map((r) => r.value),
+  resolutions: [...RESOLUTIONS],
+  durations: [...DURATION_OPTIONS],
+  audio: true,
   pricing: {},
 };
 
@@ -81,6 +94,89 @@ function Chip({ active, onClick, children }: { active: boolean; onClick: () => v
     >
       {children}
     </button>
+  );
+}
+
+/** 一组多选 Chip（支持画质 / 清晰度 / 比例 / …） */
+function ChipGroup({
+  label,
+  options,
+  selected,
+  onToggle,
+}: {
+  label: string;
+  options: { value: string; label: string }[];
+  selected: string[];
+  onToggle: (value: string) => void;
+}) {
+  return (
+    <div>
+      <label className="block text-sm font-medium">{label}</label>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {options.map((o) => (
+          <Chip key={o.value} active={selected.includes(o.value)} onClick={() => onToggle(o.value)}>
+            {o.label}
+          </Chip>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** 差异化定价矩阵（行维度 × 列维度）；行列 key 即下发 input 的原值，须与计费端一致 */
+function PricingMatrix({
+  corner,
+  rows,
+  cols,
+  pricing,
+  onSet,
+}: {
+  corner: string;
+  rows: { key: string; label: string }[];
+  cols: { key: string; label: string }[];
+  pricing: Record<string, Record<string, number>>;
+  onSet: (row: string, col: string, val: string) => void;
+}) {
+  return (
+    <div>
+      <label className="block text-sm font-medium">积分定价（{corner.replace("＼", " × ")}）</label>
+      <p className="mt-0.5 text-xs text-neutral-400">不同档位可设不同积分；留空或 0 的格回退到上方「消耗积分」。</p>
+      {rows.length === 0 || cols.length === 0 ? (
+        <p className="mt-2 text-xs text-neutral-400">请先选择上方的两个维度</p>
+      ) : (
+        <div className="mt-2 inline-block overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-700">
+          <table className="text-xs">
+            <thead>
+              <tr className="bg-neutral-50 dark:bg-neutral-900">
+                <th className="px-3 py-2 text-left font-medium text-neutral-400">{corner}</th>
+                {cols.map((c) => (
+                  <th key={c.key} className="px-3 py-2 text-center font-medium">{c.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.key} className="border-t border-neutral-100 dark:border-neutral-800">
+                  <td className="whitespace-nowrap px-3 py-1.5 font-medium">{r.label}</td>
+                  {cols.map((c) => (
+                    <td key={c.key} className="px-1.5 py-1.5">
+                      <input
+                        type="number"
+                        min={0}
+                        value={pricing[r.key]?.[c.key] ?? ""}
+                        onChange={(e) => onSet(r.key, c.key, e.target.value)}
+                        placeholder="—"
+                        className="w-16 rounded-md border border-neutral-200 px-2 py-1 text-center outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
+                      />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -124,6 +220,18 @@ export default function AdminAiModelsPage() {
     void loadProviders();
   }, [loadModels, loadProviders]);
 
+  // 按模型类型序列化 config：图片存 qualities/clarities/ratios，视频存 resolutions/ratios/durations/audio
+  const buildConfig = (): string => {
+    const pricing = Object.keys(form.pricing).length ? { pricing: form.pricing } : {};
+    if (form.type === "image") {
+      return JSON.stringify({ qualities: form.qualities, clarities: form.clarities, ratios: form.ratios, ...pricing });
+    }
+    if (form.type === "video") {
+      return JSON.stringify({ resolutions: form.resolutions, ratios: form.ratios, durations: form.durations, audio: form.audio, ...pricing });
+    }
+    return "{}";
+  };
+
   const handleSave = async () => {
     if (!form.name || !form.modelId) return;
     setSaving(true);
@@ -134,12 +242,7 @@ export default function AdminAiModelsPage() {
         modelId: form.modelId,
         type: form.type,
         pointCost: form.pointCost,
-        config: JSON.stringify({
-          qualities: form.qualities,
-          clarities: form.clarities,
-          ratios: form.ratios,
-          ...(Object.keys(form.pricing).length ? { pricing: form.pricing } : {}),
-        }),
+        config: buildConfig(),
         ...(form.providerId !== "" ? { providerId: form.providerId } : {}),
       };
 
@@ -197,28 +300,45 @@ export default function AdminAiModelsPage() {
     loadModels();
   };
 
-  const toggleArr = (field: "qualities" | "clarities" | "ratios", val: string) => {
+  const toggleArr = (field: "qualities" | "clarities" | "ratios" | "resolutions", val: string) => {
     setForm((prev) => {
       const arr = prev[field];
       return { ...prev, [field]: arr.includes(val) ? arr.filter((x) => x !== val) : [...arr, val] };
     });
   };
 
-  // 设置某「画质×清晰度」格的积分；空或 ≤0 则删除该格（回退到固定 pointCost）
-  const setPricing = (q: string, c: string, val: string) => {
+  const toggleDuration = (d: number) => {
+    setForm((prev) => ({
+      ...prev,
+      durations: prev.durations.includes(d) ? prev.durations.filter((x) => x !== d) : [...prev.durations, d].sort((a, b) => a - b),
+    }));
+  };
+
+  // 切换类型：比例字段重置为该类型默认选项，并清空定价矩阵（维度变了，旧 key 不再匹配）
+  const handleTypeChange = (type: string) => {
+    setForm((prev) => ({
+      ...prev,
+      type,
+      ratios: type === "video" ? VIDEO_RATIOS.map((r) => r.value) : RATIO_OPTIONS.map((r) => r.value),
+      pricing: {},
+    }));
+  };
+
+  // 设置某「行×列」格的积分；空或 ≤0 则删除该格（回退到固定 pointCost）
+  const setPricing = (row: string, col: string, val: string) => {
     setForm((prev) => {
       const n = Number(val);
       const pricing = { ...prev.pricing };
-      const row = { ...(pricing[q] ?? {}) };
+      const r = { ...(pricing[row] ?? {}) };
       if (val === "" || !Number.isFinite(n) || n <= 0) {
-        delete row[c];
+        delete r[col];
       } else {
-        row[c] = n;
+        r[col] = n;
       }
-      if (Object.keys(row).length === 0) {
-        delete pricing[q];
+      if (Object.keys(r).length === 0) {
+        delete pricing[row];
       } else {
-        pricing[q] = row;
+        pricing[row] = r;
       }
       return { ...prev, pricing };
     });
@@ -227,7 +347,15 @@ export default function AdminAiModelsPage() {
   const startEdit = (model: AdminAiModelVO) => {
     setEditingId(model.id);
     setShowForm(false);
-    let cfg: { qualities?: string[]; clarities?: string[]; ratios?: string[]; pricing?: Record<string, Record<string, number>> } = {};
+    let cfg: {
+      qualities?: string[];
+      clarities?: string[];
+      ratios?: string[];
+      resolutions?: string[];
+      durations?: number[];
+      audio?: boolean;
+      pricing?: Record<string, Record<string, number>>;
+    } = {};
     if (model.config) {
       try {
         cfg = JSON.parse(model.config);
@@ -244,7 +372,10 @@ export default function AdminAiModelsPage() {
       pointCost: model.pointCost ?? 0,
       qualities: cfg.qualities ?? QUALITY_OPTIONS.map((q) => q.value),
       clarities: cfg.clarities ?? [...CLARITY_OPTIONS],
-      ratios: cfg.ratios ?? RATIO_OPTIONS.map((r) => r.value),
+      ratios: cfg.ratios ?? (model.type === "video" ? VIDEO_RATIOS.map((r) => r.value) : RATIO_OPTIONS.map((r) => r.value)),
+      resolutions: cfg.resolutions ?? [...RESOLUTIONS],
+      durations: cfg.durations ?? [...DURATION_OPTIONS],
+      audio: cfg.audio ?? true,
       pricing: cfg.pricing ?? {},
     });
   };
@@ -330,7 +461,7 @@ export default function AdminAiModelsPage() {
               <label className="block text-sm font-medium">类型</label>
               <select
                 value={form.type}
-                onChange={(e) => setForm({ ...form, type: e.target.value })}
+                onChange={(e) => handleTypeChange(e.target.value)}
                 className="mt-1 w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
               >
                 {MODEL_TYPES.map((t) => (
@@ -393,80 +524,79 @@ export default function AdminAiModelsPage() {
             </div>
           </div>
 
-          {/* 支持的格式 */}
-          <div className="mt-5 space-y-4 border-t border-neutral-100 pt-5 dark:border-neutral-800">
-            <div>
-              <label className="block text-sm font-medium">支持画质</label>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {QUALITY_OPTIONS.map((q) => (
-                  <Chip key={q.value} active={form.qualities.includes(q.value)} onClick={() => toggleArr("qualities", q.value)}>
-                    {q.label}
-                  </Chip>
-                ))}
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium">支持清晰度</label>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {CLARITY_OPTIONS.map((c) => (
-                  <Chip key={c} active={form.clarities.includes(c)} onClick={() => toggleArr("clarities", c)}>
-                    {c}
-                  </Chip>
-                ))}
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium">支持比例</label>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {RATIO_OPTIONS.map((r) => (
-                  <Chip key={r.value} active={form.ratios.includes(r.value)} onClick={() => toggleArr("ratios", r.value)}>
-                    {r.label}
-                  </Chip>
-                ))}
-              </div>
-            </div>
-
-            {/* 积分定价矩阵：画质 × 清晰度 */}
-            <div>
-              <label className="block text-sm font-medium">积分定价（画质 × 清晰度）</label>
-              <p className="mt-0.5 text-xs text-neutral-400">不同画质 / 清晰度可设不同积分；留空或 0 的格回退到上方「消耗积分」。</p>
-              {form.qualities.length === 0 || form.clarities.length === 0 ? (
-                <p className="mt-2 text-xs text-neutral-400">请先选择支持的画质与清晰度</p>
+          {/* 支持的格式：按模型类型显示对应维度（文本类型无格式配置） */}
+          {form.type !== "text" && (
+            <div className="mt-5 space-y-4 border-t border-neutral-100 pt-5 dark:border-neutral-800">
+              {form.type === "image" ? (
+                <>
+                  <ChipGroup
+                    label="支持画质"
+                    options={QUALITY_OPTIONS.map((q) => ({ value: q.value, label: q.label }))}
+                    selected={form.qualities}
+                    onToggle={(v) => toggleArr("qualities", v)}
+                  />
+                  <ChipGroup
+                    label="支持清晰度"
+                    options={CLARITY_OPTIONS.map((c) => ({ value: c, label: c }))}
+                    selected={form.clarities}
+                    onToggle={(v) => toggleArr("clarities", v)}
+                  />
+                  <ChipGroup
+                    label="支持比例"
+                    options={RATIO_OPTIONS.map((r) => ({ value: r.value, label: r.label }))}
+                    selected={form.ratios}
+                    onToggle={(v) => toggleArr("ratios", v)}
+                  />
+                  <PricingMatrix
+                    corner="画质＼清晰度"
+                    rows={form.qualities.map((q) => ({ key: q, label: QUALITY_OPTIONS.find((o) => o.value === q)?.label ?? q }))}
+                    cols={form.clarities.map((c) => ({ key: c, label: c }))}
+                    pricing={form.pricing}
+                    onSet={setPricing}
+                  />
+                </>
               ) : (
-                <div className="mt-2 inline-block overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-700">
-                  <table className="text-xs">
-                    <thead>
-                      <tr className="bg-neutral-50 dark:bg-neutral-900">
-                        <th className="px-3 py-2 text-left font-medium text-neutral-400">画质＼清晰度</th>
-                        {form.clarities.map((c) => (
-                          <th key={c} className="px-3 py-2 text-center font-medium">{c}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {form.qualities.map((q) => (
-                        <tr key={q} className="border-t border-neutral-100 dark:border-neutral-800">
-                          <td className="whitespace-nowrap px-3 py-1.5 font-medium">{QUALITY_OPTIONS.find((o) => o.value === q)?.label ?? q}</td>
-                          {form.clarities.map((c) => (
-                            <td key={c} className="px-1.5 py-1.5">
-                              <input
-                                type="number"
-                                min={0}
-                                value={form.pricing[q]?.[c] ?? ""}
-                                onChange={(e) => setPricing(q, c, e.target.value)}
-                                placeholder="—"
-                                className="w-16 rounded-md border border-neutral-200 px-2 py-1 text-center outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
-                              />
-                            </td>
-                          ))}
-                        </tr>
+                <>
+                  <ChipGroup
+                    label="支持清晰度"
+                    options={RESOLUTIONS.map((r) => ({ value: r, label: r }))}
+                    selected={form.resolutions}
+                    onToggle={(v) => toggleArr("resolutions", v)}
+                  />
+                  <ChipGroup
+                    label="支持比例"
+                    options={VIDEO_RATIOS.map((r) => ({ value: r.value, label: r.label }))}
+                    selected={form.ratios}
+                    onToggle={(v) => toggleArr("ratios", v)}
+                  />
+                  <div>
+                    <label className="block text-sm font-medium">支持时长（秒）</label>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {DURATION_CHOICES.map((d) => (
+                        <Chip key={d} active={form.durations.includes(d)} onClick={() => toggleDuration(d)}>
+                          {d}s
+                        </Chip>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium">生成音频</label>
+                    <div className="mt-2 flex gap-2">
+                      <Chip active={form.audio} onClick={() => setForm({ ...form, audio: true })}>支持</Chip>
+                      <Chip active={!form.audio} onClick={() => setForm({ ...form, audio: false })}>不支持</Chip>
+                    </div>
+                  </div>
+                  <PricingMatrix
+                    corner="清晰度＼时长"
+                    rows={form.resolutions.map((r) => ({ key: r, label: r }))}
+                    cols={[...form.durations].sort((a, b) => a - b).map((d) => ({ key: String(d), label: `${d}s` }))}
+                    pricing={form.pricing}
+                    onSet={setPricing}
+                  />
+                </>
               )}
             </div>
-          </div>
+          )}
           <div className="mt-5 flex gap-2">
             <button
               onClick={handleSave}

@@ -14,7 +14,7 @@ export interface AiTaskVO {
   status: AiTaskStatus;
   progress: number;
   resultUrl: string;
-  resultMeta: Record<string, unknown>;
+  resultMeta: Record<string, unknown> | string;
   errorMsg: string;
   createTime: string;
   completeTime: string;
@@ -52,7 +52,9 @@ export interface AiGenerationLogVO {
   id: number;
   taskId: number;
   userId: number;
+  projectId: number;
   handlerName: string;
+  operationType: string;
   model: string;
   operation: string;
   requestUrl: string;
@@ -65,12 +67,18 @@ export interface AiGenerationLogVO {
   errorMsg: string;
   durationMs: number;
   createTime: string;
+  // 关联展示字段（后端按 id 回填）
+  userName?: string;
+  projectName?: string;
+  taskStatus?: number;
 }
 
 export interface AiGenerationLogQuery extends PageQuery {
   taskId?: number;
+  userId?: number;
   projectId?: string | number;
   handlerName?: string;
+  operationType?: string;
   success?: number;
 }
 

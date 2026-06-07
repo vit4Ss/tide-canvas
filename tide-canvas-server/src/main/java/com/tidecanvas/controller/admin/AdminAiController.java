@@ -12,10 +12,16 @@ import com.tidecanvas.mapper.AiGenerationLogMapper;
 import com.tidecanvas.mapper.AiHandlerConfigMapper;
 import com.tidecanvas.mapper.AiModelMapper;
 import com.tidecanvas.mapper.AiProviderMapper;
+import com.tidecanvas.mapper.AiTaskMapper;
+import com.tidecanvas.mapper.CanvasProjectMapper;
+import com.tidecanvas.mapper.SysUserMapper;
 import com.tidecanvas.model.entity.AiGenerationLogDO;
 import com.tidecanvas.model.entity.AiHandlerConfigDO;
 import com.tidecanvas.model.entity.AiModelDO;
 import com.tidecanvas.model.entity.AiProviderDO;
+import com.tidecanvas.model.entity.AiTaskDO;
+import com.tidecanvas.model.entity.CanvasProjectDO;
+import com.tidecanvas.model.entity.SysUserDO;
 import com.tidecanvas.model.query.AiGenerationLogQuery;
 import com.tidecanvas.model.vo.AiGenerationLogVO;
 import com.tidecanvas.model.vo.AiHandlerVO;
@@ -31,8 +37,10 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestClient;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Tag(name = "管理后台-AI管理")
@@ -45,6 +53,9 @@ public class AdminAiController {
     private final AiModelMapper modelMapper;
     private final AiHandlerConfigMapper handlerConfigMapper;
     private final AiGenerationLogMapper logMapper;
+    private final SysUserMapper userMapper;
+    private final CanvasProjectMapper projectMapper;
+    private final AiTaskMapper taskMapper;
     private final ObjectMapper objectMapper;
 
     // ========== Provider ==========
@@ -282,7 +293,7 @@ public class AdminAiController {
 
     // ========== 生成日志 ==========
 
-    @Operation(summary = "生成日志列表")
+    @Operation(summary = "操作日志列表")
     @GetMapping("/logs")
     public Result<PageResult<AiGenerationLogVO>> listLogs(AiGenerationLogQuery query) {
         Page<AiGenerationLogDO> page = new Page<>(query.getPageNum(), query.getPageSize());
@@ -290,26 +301,73 @@ public class AdminAiController {
                 .eq(query.getTaskId() != null, AiGenerationLogDO::getTaskId, query.getTaskId())
                 .eq(query.getUserId() != null, AiGenerationLogDO::getUserId, query.getUserId())
                 .eq(StringUtils.hasText(query.getHandlerName()), AiGenerationLogDO::getHandlerName, query.getHandlerName())
+                .eq(StringUtils.hasText(query.getOperationType()), AiGenerationLogDO::getOperationType, query.getOperationType())
                 .eq(query.getSuccess() != null, AiGenerationLogDO::getSuccess, query.getSuccess())
                 .orderByDesc(AiGenerationLogDO::getId);
         logMapper.selectPage(page, wrapper);
-        List<AiGenerationLogVO> records = page.getRecords().stream().map(this::toLogVO).toList();
+        List<AiGenerationLogVO> records = page.getRecords().stream().map(this::toLogVO).collect(Collectors.toList());
+        enrich(records);
         return Result.success(PageResult.of(records, page));
     }
 
-    @Operation(summary = "生成日志详情")
+    @Operation(summary = "操作日志详情")
     @GetMapping("/logs/{id}")
     public Result<AiGenerationLogVO> getLog(@PathVariable Long id) {
         AiGenerationLogDO logDO = logMapper.selectById(id);
         if (logDO == null) {
             throw new BusinessException(ResultCode.NOT_FOUND);
         }
-        return Result.success(toLogVO(logDO));
+        List<AiGenerationLogVO> single = new ArrayList<>(List.of(toLogVO(logDO)));
+        enrich(single);
+        return Result.success(single.get(0));
     }
 
     private AiGenerationLogVO toLogVO(AiGenerationLogDO d) {
         AiGenerationLogVO vo = new AiGenerationLogVO();
         BeanUtils.copyProperties(d, vo);
         return vo;
+    }
+
+    /**
+     * 批量回填关联展示字段（用户名 / 画布名 / 任务状态），按本页 id 集合一次性查询，避免逐行 N+1。
+     */
+    private void enrich(List<AiGenerationLogVO> list) {
+        if (list.isEmpty()) {
+            return;
+        }
+        Set<Long> userIds = list.stream().map(AiGenerationLogVO::getUserId).filter(id -> id != null).collect(Collectors.toSet());
+        Set<Long> projectIds = list.stream().map(AiGenerationLogVO::getProjectId).filter(id -> id != null).collect(Collectors.toSet());
+        Set<Long> taskIds = list.stream().map(AiGenerationLogVO::getTaskId).filter(id -> id != null).collect(Collectors.toSet());
+
+        Map<Long, String> userNames = new HashMap<>();
+        if (!userIds.isEmpty()) {
+            for (SysUserDO u : userMapper.selectBatchIds(userIds)) {
+                userNames.put(u.getId(), StringUtils.hasText(u.getUsername()) ? u.getUsername() : u.getNickname());
+            }
+        }
+        Map<Long, String> projectNames = new HashMap<>();
+        if (!projectIds.isEmpty()) {
+            for (CanvasProjectDO p : projectMapper.selectBatchIds(projectIds)) {
+                projectNames.put(p.getId(), p.getName());
+            }
+        }
+        Map<Long, Integer> taskStatuses = new HashMap<>();
+        if (!taskIds.isEmpty()) {
+            for (AiTaskDO t : taskMapper.selectBatchIds(taskIds)) {
+                taskStatuses.put(t.getId(), t.getStatus());
+            }
+        }
+
+        for (AiGenerationLogVO vo : list) {
+            if (vo.getUserId() != null) {
+                vo.setUserName(userNames.get(vo.getUserId()));
+            }
+            if (vo.getProjectId() != null) {
+                vo.setProjectName(projectNames.get(vo.getProjectId()));
+            }
+            if (vo.getTaskId() != null) {
+                vo.setTaskStatus(taskStatuses.get(vo.getTaskId()));
+            }
+        }
     }
 }

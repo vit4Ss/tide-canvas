@@ -9,13 +9,19 @@ import com.tidecanvas.config.StorageProperties;
 import com.tidecanvas.enums.FileTypeEnum;
 import com.tidecanvas.exception.BusinessException;
 import com.tidecanvas.mapper.SysFileMapper;
+import com.tidecanvas.model.dto.FilePresignDTO;
+import com.tidecanvas.model.dto.FileRegisterDTO;
 import com.tidecanvas.model.entity.SysFileDO;
 import com.tidecanvas.model.query.FileQuery;
+import com.tidecanvas.model.vo.FilePresignVO;
 import com.tidecanvas.model.vo.FileVO;
 import com.tidecanvas.service.FileService;
+import com.tidecanvas.service.ai.GenerationLogRecorder;
+import com.tidecanvas.service.storage.DirectUploadTicket;
 import com.tidecanvas.service.storage.StorageStrategy;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.BeanUtils;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -26,6 +32,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 @Service
 @RequiredArgsConstructor
@@ -34,35 +41,49 @@ public class FileServiceImpl implements FileService {
     private final SysFileMapper fileMapper;
     private final StorageStrategy storageStrategy;
     private final StorageProperties storageProperties;
+    private final GenerationLogRecorder generationLogRecorder;
+    private final RedisTemplate<String, Object> redisTemplate;
+
+    /** 直传预签名 URL 有效期（秒）：仅约束 PUT 请求发起时刻，足够覆盖 presign 到上传开始的间隔 */
+    private static final long PRESIGN_EXPIRE_SECONDS = 3600L;
+    /** 直传票据前缀：记录某 key 由哪个用户申请、其内容类型，登记时闭环校验 */
+    private static final String PRESIGN_TICKET_PREFIX = "presign:";
 
     @Override
     public FileVO upload(Long userId, MultipartFile file) {
-        validateFile(file);
-
         String originalName = file.getOriginalFilename();
-        String mimeType = file.getContentType();
-        String fileType = FileTypeEnum.fromMimeType(mimeType).getCode();
-        String storedName = UUID.randomUUID() + getExtension(originalName);
-        String directory = fileType + "/" + LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy/MM/dd"));
-        String filePath = storageStrategy.upload(file, directory);
-        String fileUrl = storageStrategy.getAccessUrl(filePath);
-        String hash = computeHash(file);
+        try {
+            validateFile(file);
 
-        SysFileDO fileDO = new SysFileDO();
-        fileDO.setUserId(userId);
-        fileDO.setOriginalName(originalName);
-        fileDO.setStoredName(storedName);
-        fileDO.setFilePath(filePath);
-        fileDO.setFileUrl(fileUrl);
-        fileDO.setFileSize(file.getSize());
-        fileDO.setFileType(fileType);
-        fileDO.setMimeType(mimeType);
-        fileDO.setHash(hash);
-        fileDO.setStorageType(storageStrategy.type());
-        fileDO.setDeleted(0);
-        fileMapper.insert(fileDO);
+            String mimeType = file.getContentType();
+            String fileType = FileTypeEnum.fromMimeType(mimeType).getCode();
+            String storedName = UUID.randomUUID() + getExtension(originalName);
+            String directory = fileType + "/" + LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy/MM/dd"));
+            String filePath = storageStrategy.upload(file, directory);
+            String fileUrl = storageStrategy.getAccessUrl(filePath);
+            String hash = computeHash(file);
 
-        return toFileVO(fileDO);
+            SysFileDO fileDO = new SysFileDO();
+            fileDO.setUserId(userId);
+            fileDO.setOriginalName(originalName);
+            fileDO.setStoredName(storedName);
+            fileDO.setFilePath(filePath);
+            fileDO.setFileUrl(fileUrl);
+            fileDO.setFileSize(file.getSize());
+            fileDO.setFileType(fileType);
+            fileDO.setMimeType(mimeType);
+            fileDO.setHash(hash);
+            fileDO.setStorageType(storageStrategy.type());
+            fileDO.setDeleted(0);
+            fileMapper.insert(fileDO);
+
+            generationLogRecorder.recordOperation("file_upload", userId, null, originalName, true, fileUrl, null);
+            return toFileVO(fileDO);
+        } catch (RuntimeException e) {
+            // 失败也落一条操作日志（大小超限/类型不允许/OSS异常等），便于后台排查；随后原样抛出由全局处理返回客户端
+            generationLogRecorder.recordOperation("file_upload", userId, null, originalName, false, null, e.getMessage());
+            throw e;
+        }
     }
 
     @Override
@@ -93,6 +114,7 @@ public class FileServiceImpl implements FileService {
         fileDO.setStorageType(url.startsWith("http") ? "oss" : "local");
         fileDO.setDeleted(0);
         fileMapper.insert(fileDO);
+        generationLogRecorder.recordOperation("asset_save", userId, null, name, true, url, null);
         return toFileVO(fileDO);
     }
 
@@ -125,6 +147,94 @@ public class FileServiceImpl implements FileService {
     }
 
     @Override
+    public FilePresignVO presignDirectUpload(Long userId, FilePresignDTO dto) {
+        FilePresignVO vo = new FilePresignVO();
+        // 本地存储不支持直传 → 返回 direct=false，前端回退中转上传
+        if (!storageStrategy.supportsDirectUpload()) {
+            vo.setDirect(false);
+            return vo;
+        }
+        String contentType = StringUtils.hasText(dto.getContentType()) ? dto.getContentType() : "application/octet-stream";
+        // 类型白名单：不允许的类型直接拒签（与中转上传 validateFile 一致）
+        assertTypeAllowed(contentType);
+        String fileType = StringUtils.hasText(dto.getFileType()) ? dto.getFileType() : FileTypeEnum.fromMimeType(contentType).getCode();
+        String directory = fileType + "/" + LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy/MM/dd"));
+        String name = StringUtils.hasText(dto.getFilename()) ? dto.getFilename() : "file";
+        DirectUploadTicket ticket = storageStrategy.presignDirectUpload(name, contentType, directory, PRESIGN_EXPIRE_SECONDS);
+        // 存票据（key → 申请用户 | 内容类型 | 文件大类），供 register 闭环校验；有效期略大于预签名
+        redisTemplate.opsForValue().set(PRESIGN_TICKET_PREFIX + ticket.key(),
+                userId + "|" + contentType + "|" + fileType, PRESIGN_EXPIRE_SECONDS + 600, TimeUnit.SECONDS);
+        vo.setDirect(true);
+        vo.setUploadUrl(ticket.uploadUrl());
+        vo.setKey(ticket.key());
+        vo.setFileUrl(ticket.fileUrl());
+        vo.setContentType(contentType);
+        return vo;
+    }
+
+    @Override
+    public FileVO registerDirectUpload(Long userId, FileRegisterDTO dto) {
+        String key = dto.getKey();
+        // 闭环校验①：该 key 必须由本用户申请过预签名（防伪造/冒用他人 key）
+        Object ticketObj = redisTemplate.opsForValue().get(PRESIGN_TICKET_PREFIX + key);
+        if (ticketObj == null) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "上传凭据无效或已过期");
+        }
+        String[] parts = ticketObj.toString().split("\\|", 3);
+        if (parts.length < 3 || !parts[0].equals(String.valueOf(userId))) {
+            throw new BusinessException(ResultCode.FORBIDDEN, "无权登记该文件");
+        }
+        // 类型以票据为准（不信任 register 传入的 contentType/fileType，防绕过白名单）
+        String contentType = parts[1];
+        String fileType = parts[2];
+        String originalName = StringUtils.hasText(dto.getOriginalName()) ? dto.getOriginalName() : keyFileName(key);
+
+        long size;
+        try {
+            // 校验对象确已上传、取真实大小、设公网可读
+            size = storageStrategy.finalizeDirectUpload(key, contentType);
+        } catch (Exception e) {
+            generationLogRecorder.recordOperation("file_upload", userId, null, originalName, false, null, "直传对象校验失败:" + e.getMessage());
+            throw new BusinessException(ResultCode.BAD_REQUEST, "文件未完成上传或不存在");
+        }
+        // 闭环校验②：用 OSS 上报的真实大小卡上限；超限则删对象 + 作废票据
+        if (size > storageProperties.getMaxSize()) {
+            storageStrategy.delete(key);
+            redisTemplate.delete(PRESIGN_TICKET_PREFIX + key);
+            generationLogRecorder.recordOperation("file_upload", userId, null, originalName, false, null, "文件超出大小限制");
+            throw new BusinessException(ResultCode.FILE_SIZE_EXCEEDED);
+        }
+        // 闭环校验③：类型白名单兜底
+        assertTypeAllowed(contentType);
+
+        String fileUrl = storageStrategy.getAccessUrl(key);
+        SysFileDO fileDO = new SysFileDO();
+        fileDO.setUserId(userId);
+        fileDO.setOriginalName(originalName);
+        fileDO.setStoredName(keyFileName(key));
+        fileDO.setFilePath(key);
+        fileDO.setFileUrl(fileUrl);
+        fileDO.setFileSize(size);
+        fileDO.setFileType(fileType);
+        fileDO.setMimeType(contentType);
+        fileDO.setHash("");
+        fileDO.setStorageType(storageStrategy.type());
+        fileDO.setDeleted(0);
+        fileMapper.insert(fileDO);
+
+        // 一次性票据：登记后作废，防重复登记
+        redisTemplate.delete(PRESIGN_TICKET_PREFIX + key);
+        generationLogRecorder.recordOperation("file_upload", userId, null, originalName, true, fileUrl, null);
+        return toFileVO(fileDO);
+    }
+
+    /** 从对象键取末段作为存储文件名 */
+    private String keyFileName(String key) {
+        int slash = key == null ? -1 : key.lastIndexOf('/');
+        return slash >= 0 ? key.substring(slash + 1) : (key == null ? "file" : key);
+    }
+
+    @Override
     public PageResult<FileVO> listFiles(Long userId, FileQuery query) {
         Page<SysFileDO> page = new Page<>(query.getPageNum(), query.getPageSize());
         LambdaQueryWrapper<SysFileDO> wrapper = new LambdaQueryWrapper<SysFileDO>()
@@ -138,10 +248,14 @@ public class FileServiceImpl implements FileService {
     }
 
     @Override
-    public FileVO getFile(Long id) {
+    public FileVO getFile(Long userId, Long id) {
         SysFileDO file = fileMapper.selectById(id);
         if (file == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "文件不存在");
+        }
+        // 越权防护：只能查看本人文件
+        if (file.getUserId() == null || !file.getUserId().equals(userId)) {
+            throw new BusinessException(ResultCode.FORBIDDEN, "无权访问该文件");
         }
         return toFileVO(file);
     }
@@ -157,6 +271,7 @@ public class FileServiceImpl implements FileService {
         }
         storageStrategy.delete(file.getFilePath());
         fileMapper.deleteById(id);
+        generationLogRecorder.recordOperation("file_delete", userId, null, file.getOriginalName(), true, file.getFileUrl(), null);
     }
 
     private void validateFile(MultipartFile file) {
@@ -166,7 +281,12 @@ public class FileServiceImpl implements FileService {
         if (file.getSize() > storageProperties.getMaxSize()) {
             throw new BusinessException(ResultCode.FILE_SIZE_EXCEEDED);
         }
-        if (storageProperties.getAllowedTypes() != null && !storageProperties.getAllowedTypes().contains(file.getContentType())) {
+        assertTypeAllowed(file.getContentType());
+    }
+
+    /** 内容类型白名单校验（allowedTypes 未配置则不限制） */
+    private void assertTypeAllowed(String contentType) {
+        if (storageProperties.getAllowedTypes() != null && !storageProperties.getAllowedTypes().contains(contentType)) {
             throw new BusinessException(ResultCode.FILE_TYPE_NOT_ALLOWED);
         }
     }

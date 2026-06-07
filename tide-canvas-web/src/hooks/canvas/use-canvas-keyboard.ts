@@ -33,8 +33,8 @@ export function useCanvasKeyboard({ onEscape }: Options = {}) {
       store.selectAll();
       return;
     }
-    // Delete/Backspace 删除选中节点或连接
-    if (e.key === "Delete" || e.key === "Backspace") {
+    // Delete 删除选中节点或连接
+    if (e.key === "Delete") {
       const nodeIds = Array.from(store.selectedNodeIds);
       if (nodeIds.length > 0) {
         e.preventDefault();

@@ -13,12 +13,15 @@ import com.tidecanvas.model.vo.LoginVO;
 import com.tidecanvas.model.vo.UserVO;
 import com.tidecanvas.security.JwtTokenProvider;
 import com.tidecanvas.service.AuthService;
+import com.tidecanvas.service.security.VerificationCodeService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.BeanUtils;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Service
 @RequiredArgsConstructor
@@ -27,17 +30,20 @@ public class AuthServiceImpl implements AuthService {
     private final SysUserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
+    private final VerificationCodeService verificationCodeService;
 
     private static final int DEFAULT_API_QUOTA = 100;
     private static final long DEFAULT_STORAGE_QUOTA = 1073741824L;
 
     @Override
+    public void sendEmailCode(String email) {
+        verificationCodeService.sendEmailCode(email);
+    }
+
+    @Override
     public UserVO register(UserRegisterDTO dto) {
-        Long usernameCount = userMapper.selectCount(
-                new LambdaQueryWrapper<SysUserDO>().eq(SysUserDO::getUsername, dto.getUsername()));
-        if (usernameCount > 0) {
-            throw new BusinessException(ResultCode.USERNAME_EXISTS);
-        }
+        // 先校验邮箱验证码
+        verificationCodeService.verifyEmailCode(dto.getEmail(), dto.getCode());
 
         Long emailCount = userMapper.selectCount(
                 new LambdaQueryWrapper<SysUserDO>().eq(SysUserDO::getEmail, dto.getEmail()));
@@ -45,11 +51,24 @@ public class AuthServiceImpl implements AuthService {
             throw new BusinessException(ResultCode.EMAIL_EXISTS);
         }
 
+        // 用户名：显式提供则校验唯一；未提供则由邮箱前缀推导唯一用户名
+        String username;
+        if (StringUtils.hasText(dto.getUsername())) {
+            Long usernameCount = userMapper.selectCount(
+                    new LambdaQueryWrapper<SysUserDO>().eq(SysUserDO::getUsername, dto.getUsername()));
+            if (usernameCount > 0) {
+                throw new BusinessException(ResultCode.USERNAME_EXISTS);
+            }
+            username = dto.getUsername();
+        } else {
+            username = deriveUsername(dto.getEmail());
+        }
+
         SysUserDO user = new SysUserDO();
-        user.setUsername(dto.getUsername());
+        user.setUsername(username);
         user.setEmail(dto.getEmail());
         user.setPassword(passwordEncoder.encode(dto.getPassword()));
-        user.setNickname(dto.getNickname() != null ? dto.getNickname() : dto.getUsername());
+        user.setNickname(StringUtils.hasText(dto.getNickname()) ? dto.getNickname() : username);
         user.setPhone(dto.getPhone());
         user.setRole(0);
         user.setStatus(1);
@@ -92,7 +111,9 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public LoginVO refreshToken(RefreshTokenDTO dto) {
-        if (!jwtTokenProvider.validateToken(dto.getRefreshToken())) {
+        // 只接受 refresh token：access token 不能用于刷新（令牌分层）
+        if (!jwtTokenProvider.validateToken(dto.getRefreshToken())
+                || !jwtTokenProvider.isRefreshToken(dto.getRefreshToken())) {
             throw new BusinessException(ResultCode.UNAUTHORIZED, "RefreshToken无效或已过期");
         }
 
@@ -133,6 +154,26 @@ public class AuthServiceImpl implements AuthService {
         }
         user.setPassword(passwordEncoder.encode(dto.getNewPassword()));
         userMapper.updateById(user);
+    }
+
+    /** 由邮箱前缀推导唯一用户名（冲突则追加随机数字） */
+    private String deriveUsername(String email) {
+        String base = email.contains("@") ? email.substring(0, email.indexOf('@')) : email;
+        base = base.replaceAll("[^a-zA-Z0-9_]", "");
+        if (base.length() < 3) {
+            base = "user" + base;
+        }
+        if (base.length() > 50) {
+            base = base.substring(0, 50);
+        }
+        String candidate = base;
+        int tries = 0;
+        while (tries < 20 && userMapper.selectCount(
+                new LambdaQueryWrapper<SysUserDO>().eq(SysUserDO::getUsername, candidate)) > 0) {
+            candidate = base + ThreadLocalRandom.current().nextInt(1000, 10000);
+            tries++;
+        }
+        return candidate;
     }
 
     private UserVO toUserVO(SysUserDO user) {

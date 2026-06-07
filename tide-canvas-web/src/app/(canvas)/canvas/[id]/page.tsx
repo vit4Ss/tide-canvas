@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useParams, notFound } from "next/navigation";
+import { useParams, notFound, useRouter } from "next/navigation";
 import { projectApi } from "@/lib/api";
 import { useCanvasStore } from "@/stores/use-canvas-store";
+import { useAuth } from "@/hooks/use-auth";
+import { useAuthStore } from "@/stores/use-auth-store";
 import { CanvasView } from "@/components/canvas/canvas-view";
-import { ArrowLeft, Save, Share2, Loader2, Check, Pencil } from "lucide-react";
+import { ArrowLeft, Share2, Loader2, Check, Pencil, Coins, User, LogOut, Settings, LayoutDashboard } from "lucide-react";
 import Link from "next/link";
 import { toast } from "@/components/shared/toast";
 
@@ -23,6 +25,11 @@ export default function CanvasEditorPage() {
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+
+  const { user, isAdmin } = useAuth();
+  const logout = useAuthStore((s) => s.logout);
+  const router = useRouter();
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
 
   const nodes = useCanvasStore((s) => s.nodes);
   const connections = useCanvasStore((s) => s.connections);
@@ -95,6 +102,11 @@ export default function CanvasEditorPage() {
     }
   };
 
+  const handleLogout = async () => {
+    await logout();
+    router.push("/");
+  };
+
   const handleStartEditName = () => {
     setEditingNameValue(projectName);
     setEditingName(true);
@@ -117,16 +129,19 @@ export default function CanvasEditorPage() {
   if (missing) notFound();
 
   return (
-    <div className="flex h-screen flex-col">
-      {/* Top bar */}
-      <div className="flex h-12 shrink-0 items-center justify-between border-b border-neutral-200 bg-white px-3 dark:border-neutral-800 dark:bg-neutral-950">
-        <div className="flex items-center gap-3">
-          <Link
-            href="/user/projects"
-            className="rounded-lg p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Link>
+    <div className="relative h-screen w-screen overflow-hidden">
+      <CanvasView />
+
+      {/* 左上浮层：返回 + 项目名（点按重命名） + 保存状态 */}
+      <div className="absolute left-4 top-4 z-20 flex items-center gap-2">
+        <Link
+          href="/user/projects"
+          title="返回项目列表"
+          className="flex h-9 w-9 items-center justify-center rounded-xl border border-neutral-200 bg-white text-neutral-500 shadow-sm transition-colors hover:bg-neutral-100 hover:text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800"
+        >
+          <ArrowLeft className="h-4 w-4" />
+        </Link>
+        <div className="flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 py-2 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
           {editingName ? (
             <input
               autoFocus
@@ -137,49 +152,68 @@ export default function CanvasEditorPage() {
                 if (e.key === "Enter") handleConfirmName();
                 if (e.key === "Escape") setEditingName(false);
               }}
-              className="rounded border border-neutral-300 px-2 py-0.5 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-900"
+              className="w-44 rounded-md border border-neutral-300 px-2 py-0.5 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-800"
             />
           ) : (
-            <button onClick={handleStartEditName} className="group flex items-center gap-1.5">
-              <span className="text-sm font-medium">{projectName}</span>
-              <Pencil className="h-3 w-3 text-neutral-300 opacity-0 transition-opacity group-hover:opacity-100" />
+            <button onClick={handleStartEditName} title="点击重命名" className="group flex items-center gap-1.5">
+              <span className="max-w-[220px] truncate text-sm font-medium">{projectName}</span>
+              <Pencil className="h-3 w-3 shrink-0 text-neutral-400 opacity-0 transition-opacity group-hover:opacity-100" />
             </button>
           )}
-          {saving && (
-            <span className="flex items-center gap-1 text-xs text-neutral-400">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              保存中
+          {saving ? (
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-neutral-400" />
+          ) : lastSaved ? (
+            <span title={`已保存 ${lastSaved}`} className="flex h-4 w-4 shrink-0 items-center justify-center">
+              <Check className="h-3.5 w-3.5 text-green-500" />
             </span>
-          )}
-          {!saving && lastSaved && (
-            <span className="flex items-center gap-1 text-xs text-neutral-400">
-              <Check className="h-3 w-3 text-green-500" />
-              已保存 {lastSaved}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => save(false)}
-            disabled={saving}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-200 disabled:opacity-50 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700"
-          >
-            <Save className="h-3.5 w-3.5" />
-            保存
-          </button>
-          <button
-            onClick={handleShare}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-          >
-            <Share2 className="h-3.5 w-3.5" />
-            分享
-          </button>
+          ) : null}
         </div>
       </div>
 
-      {/* Canvas */}
-      <div className="flex-1">
-        <CanvasView />
+      {/* 右上浮层：积分余额 + 订购积分 + 头像菜单 + 分享 */}
+      <div className="absolute right-4 top-4 z-20 flex items-center gap-2">
+        {/* 积分余额 + 订购积分 */}
+        <div className="flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+          <Coins className="h-4 w-4 text-amber-500" />
+          <span className="font-medium tabular-nums">{user?.points ?? 0}</span>
+          <span className="h-3.5 w-px bg-neutral-200 dark:bg-neutral-700" />
+          <Link href="/user/recharge" className="text-neutral-600 transition-colors hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white">
+            订购积分
+          </Link>
+        </div>
+
+        {/* 头像 + 账户菜单 */}
+        <div className="relative" onMouseEnter={() => setUserMenuOpen(true)} onMouseLeave={() => setUserMenuOpen(false)}>
+          <button className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+            {user?.avatar ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={user.avatar} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <User className="h-4 w-4 text-neutral-500" />
+            )}
+          </button>
+          {userMenuOpen && (
+            <div className="absolute right-0 top-full z-50 w-44 pt-1">
+              <div className="rounded-lg border border-neutral-200 bg-white py-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-900">
+                <div className="truncate px-4 py-2 text-xs text-neutral-400">{user?.nickname || user?.username || "未登录"}</div>
+                <div className="my-1 border-t border-neutral-200 dark:border-neutral-700" />
+                <Link href="/user" onClick={() => setUserMenuOpen(false)} className="flex items-center gap-2 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"><User className="h-4 w-4" />个人中心</Link>
+                <Link href="/user/recharge" onClick={() => setUserMenuOpen(false)} className="flex items-center gap-2 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"><Coins className="h-4 w-4" />订购积分</Link>
+                <Link href="/user/settings" onClick={() => setUserMenuOpen(false)} className="flex items-center gap-2 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"><Settings className="h-4 w-4" />账户设置</Link>
+                {isAdmin && (
+                  <Link href="/admin" onClick={() => setUserMenuOpen(false)} className="flex items-center gap-2 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"><LayoutDashboard className="h-4 w-4" />管理后台</Link>
+                )}
+                <div className="my-1 border-t border-neutral-200 dark:border-neutral-700" />
+                <button onClick={handleLogout} className="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"><LogOut className="h-4 w-4" />退出登录</button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 分享 */}
+        <button onClick={handleShare} title="分享" className="flex h-9 w-9 items-center justify-center rounded-full bg-neutral-900 text-white shadow-sm transition-colors hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200">
+          <Share2 className="h-4 w-4" />
+        </button>
       </div>
     </div>
   );

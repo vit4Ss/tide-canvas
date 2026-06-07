@@ -20,7 +20,7 @@ import { CanvasSideToolbar } from "./canvas-side-toolbar";
 import { MyAssetsPanel } from "./my-assets-panel";
 import { CanvasHistoryPanel } from "./canvas-history-panel";
 import { FileType, type FileVO } from "@/types/file";
-import { fileApi } from "@/lib/api";
+import { fileApi, uploadFileSmart } from "@/lib/api";
 import { toast } from "@/components/shared/toast";
 import { CanvasMinimap } from "./canvas-minimap";
 import { CanvasQuickAddMenu } from "./canvas-quick-add-menu";
@@ -48,6 +48,7 @@ export function CanvasView() {
   const [assetsRefreshKey, setAssetsRefreshKey] = useState(0);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
 
   const panZoom = useCanvasPanZoom({ containerRef });
@@ -165,8 +166,9 @@ export function CanvasView() {
   }, [panZoom, nodeDrag]);
 
   const handleArrange = useCallback(() => {
-    useCanvasStore.getState().pushHistory();
-    autoArrangeNodes(nodes, useCanvasStore.getState().updateNode);
+    const st = useCanvasStore.getState();
+    st.pushHistory();
+    autoArrangeNodes(nodes, st.connections, st.updateNode);
   }, [nodes]);
 
   const handleConnectionClick = useCallback((id: string) => {
@@ -189,6 +191,60 @@ export function CanvasView() {
     connection.clearQuickAdd();
   }, [connection, nodes, addNode, addConnection, selectNode]);
 
+  // 从系统拖入文件到画布：上传图片/视频，并在落点生成对应节点（多文件错开排列）
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes("Files")) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      setIsDraggingFile(true);
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    // 仅在真正离开画布容器（而非进入子元素）时取消高亮
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsDraggingFile(false);
+    }
+  }, []);
+
+  const handleFileDrop = useCallback(async (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    setIsDraggingFile(false);
+    const files = Array.from(e.dataTransfer.files).filter(
+      (f) => f.type.startsWith("image/") || f.type.startsWith("video/")
+    );
+    if (files.length === 0) {
+      if (e.dataTransfer.files.length > 0) toast.error("仅支持拖入图片或视频");
+      return;
+    }
+    const world = panZoom.screenToWorld(e.clientX, e.clientY);
+    toast.info(files.length > 1 ? `正在上传 ${files.length} 个文件…` : "正在上传…");
+    let ok = 0;
+    await Promise.all(
+      files.map(async (file, i) => {
+        const isVideo = file.type.startsWith("video/");
+        try {
+          const res = await uploadFileSmart(file);
+          if (res.success && res.data?.fileUrl) {
+            const node = createNode(isVideo ? "video" : "image", world.x + i * 48, world.y + i * 48, useCanvasStore.getState().nodes);
+            if (isVideo) node.videoSrc = res.data.fileUrl;
+            else node.imageSrc = res.data.fileUrl;
+            node.status = "success";
+            if (file.name) node.title = file.name;
+            addNode(node);
+            ok++;
+          } else {
+            toast.error(`上传失败：${res.message || file.name}`);
+          }
+        } catch (err) {
+          toast.error(`上传失败：${(err as Error)?.message || file.name}`);
+        }
+      })
+    );
+    if (ok > 0) toast.success(ok > 1 ? `已添加 ${ok} 个节点` : "已添加到画布");
+  }, [panZoom, addNode]);
+
   return (
     <div className="relative h-full w-full overflow-hidden bg-neutral-50 dark:bg-neutral-900">
       <div
@@ -199,6 +255,9 @@ export function CanvasView() {
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
         onContextMenu={handleContextMenu}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleFileDrop}
         data-canvas="true"
       >
         <CanvasGridBackground transform={panZoom.transform} />
@@ -215,6 +274,7 @@ export function CanvasView() {
             connections={connections}
             temp={connection.connecting}
             selectedConnectionId={selectedConnectionId}
+            selectedNodeIds={selectedNodeIds}
             onConnectionClick={handleConnectionClick}
           />
           {nodes.map((node) => (
@@ -241,8 +301,17 @@ export function CanvasView() {
 
       {nodes.length === 0 && <CanvasEmptyState />}
 
+      {isDraggingFile && (
+        <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-blue-500/10 backdrop-blur-[1px]">
+          <div className="rounded-2xl border-2 border-dashed border-blue-400 bg-white/90 px-8 py-6 text-center shadow-xl dark:bg-neutral-900/90">
+            <p className="text-sm font-medium text-blue-600 dark:text-blue-400">释放以上传到画布</p>
+            <p className="mt-1 text-xs text-neutral-500">支持图片、视频，自动在落点生成节点</p>
+          </div>
+        </div>
+      )}
+
       {minimapVisible && (
-        <div className="absolute bottom-4 right-4">
+        <div className="absolute bottom-16 left-4">
           <CanvasMinimap
             nodes={nodes}
             transform={panZoom.transform}

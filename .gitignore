@@ -47,6 +47,7 @@ next-env.d.ts
 # IDE / editor
 .idea/
 .claude/
+.reasonix/
 
 # java build
 tide-canvas-server/target/

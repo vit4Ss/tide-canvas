@@ -34,10 +34,14 @@ export function useCanvasConnection({ containerRef }: Options) {
   const [connecting, setConnecting] = useState<ConnectingState | null>(null);
   const [quickAdd, setQuickAdd] = useState<QuickAddState | null>(null);
   const connectingRef = useRef<ConnectingState | null>(null);
-  connectingRef.current = connecting;
   const clearQuickAdd = useCallback(() => setQuickAdd(null), []);
   const transformRef = useRef(transform);
-  transformRef.current = transform;
+  // 渲染期不直接写 ref：用 effect 把最新值镜像进 ref，供 window 事件回调（onMove/onUp）
+  // 与 screenToWorld 异步读取最新值（满足 react-hooks/refs；事件总在 commit 后触发，时序安全）。
+  useEffect(() => {
+    connectingRef.current = connecting;
+    transformRef.current = transform;
+  });
 
   const screenToWorld = useCallback((sx: number, sy: number) => {
     const rect = containerRef.current?.getBoundingClientRect();
@@ -53,9 +57,11 @@ export function useCanvasConnection({ containerRef }: Options) {
   const startConnection = useCallback((nodeId: string, side: PortSide, clientX: number, clientY: number) => {
     const node = useCanvasStore.getState().nodes.find((n) => n.id === nodeId);
     if (!node) return;
-    // 端口的世界坐标（左端口或右端口的中点）
-    const portWorldX = side === "input" ? node.x : node.x + node.width;
-    const portWorldY = node.y + node.height / 2;
+    // 端口的世界坐标：卡片左/右缘的垂直中点（与连线端点、端口“+”图标一致）
+    const cw = node.contentW ?? node.width;
+    const ch = node.contentH ?? node.height;
+    const portWorldX = side === "input" ? node.x + (node.width - cw) / 2 : node.x + (node.width + cw) / 2;
+    const portWorldY = node.y + ch / 2;
     const cur = screenToWorld(clientX, clientY);
     setConnecting({
       sourceNodeId: nodeId,
@@ -78,11 +84,14 @@ export function useCanvasConnection({ containerRef }: Options) {
       const world = screenToWorld(e.clientX, e.clientY);
       // 检测是否悬停在某节点上（用于高亮目标）
       const nodes = useCanvasStore.getState().nodes;
-      const hover = nodes.find((n) =>
-        n.id !== c.sourceNodeId &&
-        world.x >= n.x && world.x <= n.x + n.width &&
-        world.y >= n.y && world.y <= n.y + n.height
-      );
+      const hover = nodes.find((n) => {
+        if (n.id === c.sourceNodeId) return false;
+        // 命中区按卡片实际渲染区域（竖图卡片比名义框窄/高，更精确）
+        const cw = n.contentW ?? n.width;
+        const ch = n.contentH ?? n.height;
+        const left = n.x + (n.width - cw) / 2;
+        return world.x >= left && world.x <= left + cw && world.y >= n.y && world.y <= n.y + ch;
+      });
       setConnecting({ ...c, currentWorldX: world.x, currentWorldY: world.y, hoverTargetNodeId: hover?.id ?? null });
     };
 

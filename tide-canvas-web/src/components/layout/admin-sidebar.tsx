@@ -16,6 +16,7 @@ import {
   Coins,
   PenTool,
   ShoppingCart,
+  Ticket,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -26,13 +27,14 @@ const sidebarItems = [
   { href: "/admin/points", label: "积分管理", icon: Coins },
   { href: "/admin/authors", label: "作者管理", icon: PenTool },
   { href: "/admin/orders", label: "订单管理", icon: ShoppingCart },
+  { href: "/admin/redeem", label: "兑换码", icon: Ticket },
   { href: "/admin/ai/providers", label: "AI 供应商", icon: Bot },
   { href: "/admin/ai/models", label: "模型管理", icon: Bot },
   { href: "/admin/ai/handlers", label: "Handler 积分", icon: Coins },
-  { href: "/admin/ai/logs", label: "生成日志", icon: ScrollText },
+  { href: "/admin/ai/logs", label: "操作日志", icon: ScrollText },
   { href: "/admin/banners", label: "Banner 管理", icon: Image },
   { href: "/admin/files", label: "文件管理", icon: FolderOpen },
-  { href: "/admin/logs", label: "操作日志", icon: ScrollText },
+  { href: "/admin/logs", label: "系统日志", icon: ScrollText },
   { href: "/admin/settings", label: "系统设置", icon: Settings },
 ];
 

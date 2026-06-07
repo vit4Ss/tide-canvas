@@ -2,224 +2,193 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { X, Mail, ShieldCheck, Sparkles, Loader2 } from "lucide-react";
+import { authApi } from "@/lib/api";
 import { useAuthStore } from "@/stores/use-auth-store";
-import { Layers, Eye, EyeOff, Check, X } from "lucide-react";
+import { toast } from "@/components/shared/toast";
 
-function PasswordStrength({ password }: { password: string }) {
-  const checks = [
-    { label: "至少 6 个字符", ok: password.length >= 6 },
-    { label: "包含数字", ok: /\d/.test(password) },
-    { label: "包含字母", ok: /[a-zA-Z]/.test(password) },
-  ];
-  if (!password) return null;
-
-  return (
-    <div className="mt-2 space-y-1">
-      {checks.map((check) => (
-        <div key={check.label} className="flex items-center gap-1.5 text-xs">
-          {check.ok ? (
-            <Check className="h-3 w-3 text-green-500" />
-          ) : (
-            <X className="h-3 w-3 text-neutral-400" />
-          )}
-          <span className={check.ok ? "text-green-600 dark:text-green-400" : "text-neutral-500"}>
-            {check.label}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function RegisterPage() {
   const router = useRouter();
-  const { register, loading } = useAuthStore();
-  const [form, setForm] = useState({
-    username: "",
-    email: "",
-    password: "",
-    confirmPassword: "",
-    nickname: "",
-  });
-  const [showPassword, setShowPassword] = useState(false);
-  const [agreed, setAgreed] = useState(false);
+  const { login } = useAuthStore();
+  const [tab, setTab] = useState<"phone" | "email">("email");
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [password, setPassword] = useState("");
+  const [nickname, setNickname] = useState("");
   const [error, setError] = useState("");
+  const [sending, setSending] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
 
-  const updateField = (field: string, value: string) => {
-    setForm((prev) => ({ ...prev, [field]: value }));
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
+
+  const handleSendCode = async () => {
+    if (!EMAIL_RE.test(email)) { setError("请输入有效的邮箱地址"); return; }
+    if (cooldown > 0 || sending) return;
+    setError("");
+    setSending(true);
+    try {
+      const res = await authApi.emailCode({ email });
+      if (res.success) {
+        toast.success("验证码已发送，请查收邮箱");
+        setCooldown(60);
+      } else {
+        toast.error(res.message || "验证码发送失败");
+      }
+    } catch {
+      toast.error("验证码发送失败，请稍后重试");
+    } finally {
+      setSending(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-
-    if (form.password !== form.confirmPassword) {
-      setError("两次输入的密码不一致");
-      return;
-    }
-    if (form.password.length < 6) {
-      setError("密码至少 6 个字符");
-      return;
-    }
-    if (!agreed) {
-      setError("请同意服务协议");
-      return;
-    }
-
+    if (password.length < 8) { setError("密码至少 8 位"); return; }
+    setSubmitting(true);
     try {
-      await register({
-        username: form.username,
-        email: form.email,
-        password: form.password,
-        nickname: form.nickname || undefined,
-      });
-      router.push("/login?registered=1");
+      const res = await authApi.register({ email, code, password, nickname: nickname.trim() || undefined });
+      if (!res.success) {
+        setError(res.message || "注册失败");
+        return;
+      }
+      // 完成注册并进入：自动登录
+      await login({ account: email, password, rememberMe: true });
+      router.push("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "注册失败，请重试");
+    } finally {
+      setSubmitting(false);
     }
   };
 
+  const tabBtn = (active: boolean) =>
+    `flex-1 rounded-lg py-2 text-sm font-medium transition-colors ${active ? "bg-white/10 text-white" : "text-neutral-400 hover:text-white"}`;
+  const inputCls =
+    "mt-1.5 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white placeholder-neutral-500 outline-none transition-colors focus:border-white/30";
+
   return (
-    <div className="flex min-h-[calc(100vh-8rem)] items-center justify-center px-4 py-12">
-      <div className="w-full max-w-md">
-        <div className="text-center">
-          <Link href="/" className="inline-flex items-center gap-2">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-neutral-900 dark:bg-white">
-              <Layers className="h-5 w-5 text-white dark:text-neutral-900" />
-            </div>
-          </Link>
-          <h1 className="mt-6 text-2xl font-bold">创建 TideCanvas 账号</h1>
-          <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-            已有账号？
-            <Link href="/login" className="ml-1 font-medium text-neutral-900 underline underline-offset-4 hover:text-neutral-700 dark:text-white dark:hover:text-neutral-300">
-              立即登录
-            </Link>
-          </p>
+    <div className="fixed inset-0 z-[100] flex bg-black text-white">
+      <button
+        onClick={() => router.push("/")}
+        title="关闭"
+        className="absolute right-6 top-6 z-10 rounded-full p-2 text-neutral-400 transition-colors hover:bg-white/10 hover:text-white"
+      >
+        <X className="h-5 w-5" />
+      </button>
+
+      {/* 左：品牌区 */}
+      <div className="hidden flex-1 flex-col justify-center px-10 xl:px-24 lg:flex">
+        <h1 className="text-5xl font-bold leading-[1.1] xl:text-6xl">
+          TideCanvas
+          <br />
+          <span className="text-4xl xl:text-5xl">无限画布创作空间</span>
+        </h1>
+        <p className="mt-8 max-w-md text-sm leading-relaxed text-neutral-400">
+          新一代由 AI 驱动的多模态创作工作流。从单次生成到连续推演，让创意在无限画布上自由生长。
+        </p>
+        <div className="mt-8 flex flex-wrap gap-3">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/15 px-4 py-2 text-sm text-neutral-300">
+            <ShieldCheck className="h-4 w-4" /> 极简账户接驳
+          </span>
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/15 px-4 py-2 text-sm text-neutral-300">
+            <Sparkles className="h-4 w-4" /> 无缝跳转生成台
+          </span>
         </div>
+      </div>
 
-        <form onSubmit={handleSubmit} className="mt-8 space-y-5">
-          {error && (
-            <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600 dark:bg-red-950/30 dark:text-red-400">
-              {error}
-            </div>
-          )}
-
-          <div className="grid gap-5 sm:grid-cols-2">
-            <div>
-              <label htmlFor="username" className="block text-sm font-medium">
-                用户名 <span className="text-red-500">*</span>
-              </label>
-              <input
-                id="username"
-                type="text"
-                required
-                value={form.username}
-                onChange={(e) => updateField("username", e.target.value)}
-                placeholder="用户名"
-                className="mt-1.5 w-full rounded-lg border border-neutral-300 bg-white px-4 py-2.5 text-sm outline-none transition-colors focus:border-neutral-900 focus:ring-1 focus:ring-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:focus:border-white dark:focus:ring-white"
-              />
-            </div>
-            <div>
-              <label htmlFor="nickname" className="block text-sm font-medium">
-                昵称
-              </label>
-              <input
-                id="nickname"
-                type="text"
-                value={form.nickname}
-                onChange={(e) => updateField("nickname", e.target.value)}
-                placeholder="显示名称（可选）"
-                className="mt-1.5 w-full rounded-lg border border-neutral-300 bg-white px-4 py-2.5 text-sm outline-none transition-colors focus:border-neutral-900 focus:ring-1 focus:ring-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:focus:border-white dark:focus:ring-white"
-              />
-            </div>
+      {/* 右：注册卡 */}
+      <div className="flex w-full items-center justify-center px-6 lg:w-[560px] lg:justify-end lg:pr-24">
+        <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-neutral-900/80 p-7 shadow-2xl">
+          <div className="flex gap-1 rounded-xl bg-white/5 p-1">
+            <button onClick={() => setTab("phone")} className={tabBtn(tab === "phone")}>手机登录</button>
+            <button onClick={() => setTab("email")} className={tabBtn(tab === "email")}>邮箱账户</button>
           </div>
 
-          <div>
-            <label htmlFor="email" className="block text-sm font-medium">
-              邮箱 <span className="text-red-500">*</span>
-            </label>
-            <input
-              id="email"
-              type="email"
-              required
-              value={form.email}
-              onChange={(e) => updateField("email", e.target.value)}
-              placeholder="your@email.com"
-              className="mt-1.5 w-full rounded-lg border border-neutral-300 bg-white px-4 py-2.5 text-sm outline-none transition-colors focus:border-neutral-900 focus:ring-1 focus:ring-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:focus:border-white dark:focus:ring-white"
-            />
-          </div>
+          {tab === "phone" ? (
+            <div className="py-12 text-center text-sm text-neutral-500">
+              手机验证码登录即将开放，<br />请先使用邮箱注册
+            </div>
+          ) : (
+            <form onSubmit={handleSubmit} className="mt-6">
+              <div className="mb-5 flex items-center gap-2 text-base font-semibold">
+                <Mail className="h-4 w-4" /> 新邮箱注册
+              </div>
 
-          <div>
-            <label htmlFor="password" className="block text-sm font-medium">
-              密码 <span className="text-red-500">*</span>
-            </label>
-            <div className="relative mt-1.5">
+              {error && (
+                <div className="mb-4 rounded-lg bg-red-500/15 px-3 py-2 text-xs text-red-400">{error}</div>
+              )}
+
+              <label className="text-xs text-neutral-400">邮箱</label>
               <input
-                id="password"
-                type={showPassword ? "text" : "password"}
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                type="email"
                 required
-                value={form.password}
-                onChange={(e) => updateField("password", e.target.value)}
-                placeholder="至少 6 个字符"
-                className="w-full rounded-lg border border-neutral-300 bg-white px-4 py-2.5 pr-10 text-sm outline-none transition-colors focus:border-neutral-900 focus:ring-1 focus:ring-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:focus:border-white dark:focus:ring-white"
+                placeholder="您的企业或个人邮箱"
+                className={inputCls}
               />
+
+              <label className="mt-4 block text-xs text-neutral-400">验证码</label>
+              <div className="mt-1.5 flex gap-2">
+                <input
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  required
+                  placeholder="邮件验证码"
+                  className="flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white placeholder-neutral-500 outline-none transition-colors focus:border-white/30"
+                />
+                <button
+                  type="button"
+                  onClick={handleSendCode}
+                  disabled={sending || cooldown > 0}
+                  className="flex w-28 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-neutral-300 transition-colors hover:bg-white/10 disabled:opacity-50"
+                >
+                  {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : cooldown > 0 ? `${cooldown}s` : "获取验证码"}
+                </button>
+              </div>
+
+              <label className="mt-4 block text-xs text-neutral-400">创建密码</label>
+              <input
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                type="password"
+                required
+                placeholder="至少 8 位密码"
+                className={inputCls}
+              />
+
+              <label className="mt-4 block text-xs text-neutral-400">配置昵称（可选）</label>
+              <input
+                value={nickname}
+                onChange={(e) => setNickname(e.target.value)}
+                placeholder="您的称呼"
+                className={inputCls}
+              />
+
+              <div className="mt-3 text-right text-xs text-neutral-400">
+                <Link href="/login" className="transition-colors hover:text-white">← 已有账号? 返回登录</Link>
+              </div>
+
               <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
+                type="submit"
+                disabled={submitting}
+                className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-white py-3 text-sm font-semibold text-neutral-900 transition-colors hover:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                完成注册并进入
               </button>
-            </div>
-            <PasswordStrength password={form.password} />
-          </div>
-
-          <div>
-            <label htmlFor="confirmPassword" className="block text-sm font-medium">
-              确认密码 <span className="text-red-500">*</span>
-            </label>
-            <input
-              id="confirmPassword"
-              type="password"
-              required
-              value={form.confirmPassword}
-              onChange={(e) => updateField("confirmPassword", e.target.value)}
-              placeholder="再次输入密码"
-              className="mt-1.5 w-full rounded-lg border border-neutral-300 bg-white px-4 py-2.5 text-sm outline-none transition-colors focus:border-neutral-900 focus:ring-1 focus:ring-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:focus:border-white dark:focus:ring-white"
-            />
-            {form.confirmPassword && form.password !== form.confirmPassword && (
-              <p className="mt-1 text-xs text-red-500">两次输入的密码不一致</p>
-            )}
-          </div>
-
-          <label className="flex cursor-pointer items-start gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={agreed}
-              onChange={(e) => setAgreed(e.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded border-neutral-300 accent-neutral-900"
-            />
-            <span className="text-neutral-600 dark:text-neutral-400">
-              我已阅读并同意
-              <Link href="#" className="font-medium text-neutral-900 underline underline-offset-2 dark:text-white">
-                服务协议
-              </Link>
-              和
-              <Link href="#" className="font-medium text-neutral-900 underline underline-offset-2 dark:text-white">
-                隐私政策
-              </Link>
-            </span>
-          </label>
-
-          <button
-            type="submit"
-            disabled={loading || !agreed}
-            className="w-full rounded-lg bg-neutral-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-          >
-            {loading ? "注册中..." : "创建账号"}
-          </button>
-        </form>
+            </form>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -12,6 +12,13 @@ export interface CanvasNode {
   imageSrc?: string;
   videoSrc?: string;
   status?: "idle" | "generating" | "success" | "error";
+  /** 生成时选择的目标画幅；有值时图片节点按该画幅展示，避免结果卡片被自然尺寸改成其它比例 */
+  aspectRatio?: string;
+  /** 卡片实际渲染尺寸（按图片比例计算）；供连线层把端点锚定到卡片真实边缘中点，实现默认居中对齐 */
+  contentW?: number;
+  contentH?: number;
+  /** 是否为 360° 全景扩图（image 节点）；为 true 时「全景」按钮直接进 360 查看而非重新生成 */
+  is360?: boolean;
 }
 
 export interface Connection {
@@ -247,7 +254,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   setTransform: (transform) => set({ transform }),
 
   loadCanvas: (nodes, connections) => set({
-    nodes,
+    // 统一图片/视频节点为标准大小 608×342（清掉旧 contentW/contentH，由渲染按图片比例重算）
+    nodes: nodes.map((n) =>
+      n.type === "image" || n.type === "video"
+        ? { ...n, width: 608, height: 342, contentW: undefined, contentH: undefined }
+        : n
+    ),
     connections,
     selectedNodeIds: new Set(),
     selectedNodeId: null,

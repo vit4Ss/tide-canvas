@@ -7,13 +7,17 @@ import lombok.Data;
 
 @Data
 public class UserRegisterDTO {
-    @NotBlank(message = "用户名不能为空")
+    /** 可选；不填则由邮箱前缀自动推导唯一用户名 */
     @Size(min = 3, max = 64, message = "用户名长度3-64位")
     private String username;
 
     @NotBlank(message = "邮箱不能为空")
     @Email(message = "邮箱格式不正确")
     private String email;
+
+    /** 邮箱验证码 */
+    @NotBlank(message = "验证码不能为空")
+    private String code;
 
     @NotBlank(message = "密码不能为空")
     @Size(min = 6, max = 32, message = "密码长度6-32位")

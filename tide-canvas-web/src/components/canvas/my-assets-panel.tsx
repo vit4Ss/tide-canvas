@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { fileApi } from "@/lib/api";
 import { FileType, type FileVO } from "@/types/file";
-import { X, RefreshCw, Inbox, Video, Loader2 } from "lucide-react";
+import { X, RefreshCw, Inbox, Video, Loader2, Trash2 } from "lucide-react";
+import { toast } from "@/components/shared/toast";
 
 interface Props {
   open: boolean;
@@ -25,6 +26,27 @@ export function MyAssetsPanel({ open, onClose, onPick, refreshKey }: Props) {
   const [files, setFiles] = useState<FileVO[]>([]);
   const [tab, setTab] = useState<string>("");
   const [loaded, setLoaded] = useState(false);
+  const [deleting, setDeleting] = useState<FileVO["id"] | null>(null);
+
+  // 删除素材：确认后调后端删除，成功即从列表移除
+  const handleDelete = useCallback(async (f: FileVO) => {
+    if (deleting) return;
+    if (!window.confirm(`确定删除素材「${f.originalName}」？该操作不可恢复。`)) return;
+    setDeleting(f.id);
+    try {
+      const res = await fileApi.delete(f.id);
+      if (res.success) {
+        setFiles((prev) => prev.filter((x) => x.id !== f.id));
+        toast.success("已删除");
+      } else {
+        toast.error(res.message || "删除失败");
+      }
+    } catch {
+      toast.error("删除失败，请稍后重试");
+    } finally {
+      setDeleting(null);
+    }
+  }, [deleting]);
 
   // setState 均在 await 之后（不在同步路径置加载态，避免 effect 内同步 setState）
   const load = useCallback(async () => {
@@ -85,11 +107,11 @@ export function MyAssetsPanel({ open, onClose, onPick, refreshKey }: Props) {
         ) : (
           <div className="grid grid-cols-2 gap-2">
             {files.map((f) => (
-              <button
+              <div
                 key={f.id}
                 onClick={() => onPick(f)}
                 title={f.originalName}
-                className="group relative aspect-square overflow-hidden rounded-lg border border-neutral-200 bg-neutral-50 transition-shadow hover:shadow-md dark:border-neutral-700 dark:bg-neutral-800"
+                className="group relative aspect-square cursor-pointer overflow-hidden rounded-lg border border-neutral-200 bg-neutral-50 transition-shadow hover:shadow-md dark:border-neutral-700 dark:bg-neutral-800"
               >
                 {f.fileType === FileType.VIDEO ? (
                   <>
@@ -102,10 +124,19 @@ export function MyAssetsPanel({ open, onClose, onPick, refreshKey }: Props) {
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={f.fileUrl} alt={f.originalName} className="h-full w-full object-cover" />
                 )}
+                {/* 删除：hover 显示右上角 */}
+                <button
+                  onClick={(e) => { e.stopPropagation(); void handleDelete(f); }}
+                  disabled={deleting === f.id}
+                  title="删除素材"
+                  className="absolute right-1 top-1 z-10 flex h-6 w-6 items-center justify-center rounded-md bg-black/50 text-white opacity-0 transition-all hover:bg-red-500 group-hover:opacity-100 disabled:opacity-100"
+                >
+                  {deleting === f.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                </button>
                 <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-1.5 text-left text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100">
                   点击添加到画布
                 </span>
-              </button>
+              </div>
             ))}
           </div>
         )}

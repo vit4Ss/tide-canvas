@@ -9,10 +9,12 @@ import com.tidecanvas.common.ResultCode;
 import com.tidecanvas.enums.AiTaskStatusEnum;
 import com.tidecanvas.enums.PointsTransactionTypeEnum;
 import com.tidecanvas.exception.BusinessException;
+import com.tidecanvas.mapper.AiGenerationLogMapper;
 import com.tidecanvas.mapper.AiHandlerConfigMapper;
 import com.tidecanvas.mapper.AiModelMapper;
 import com.tidecanvas.mapper.AiTaskMapper;
 import com.tidecanvas.model.dto.AiGenerateDTO;
+import com.tidecanvas.model.entity.AiGenerationLogDO;
 import com.tidecanvas.model.entity.AiHandlerConfigDO;
 import com.tidecanvas.model.entity.AiModelDO;
 import com.tidecanvas.model.entity.AiTaskDO;
@@ -49,6 +51,7 @@ public class AiServiceImpl implements AiService {
     private final AiTaskMapper taskMapper;
     private final AiModelMapper modelMapper;
     private final AiHandlerConfigMapper handlerConfigMapper;
+    private final AiGenerationLogMapper logMapper;
     private final AiHandlerRegistry handlerRegistry;
     private final ObjectMapper objectMapper;
     private final PointsService pointsService;
@@ -62,8 +65,9 @@ public class AiServiceImpl implements AiService {
         AiHandler handler = handlerRegistry.getHandler(dto.getHandler());
         handler.validate(dto.getInput());
 
-        // 积分消耗：优先按「画质×清晰度」差异化定价，其次模型固定价 / Handler 配置 / 默认值
-        int pointCost = resolvePointCost(dto.getModelId(), dto.getHandler(), dto.getInput());
+        // 积分消耗：单价（优先按「画质×清晰度」差异化定价，其次模型固定价 / Handler 配置 / 默认值）× 出图张数
+        int pointCost = resolvePointCost(dto.getModelId(), dto.getHandler(), dto.getInput())
+                * batchCountOf(dto.getInput());
 
         // 创建任务记录
         AiTaskDO task = new AiTaskDO();
@@ -72,6 +76,7 @@ public class AiServiceImpl implements AiService {
         task.setHandlerName(dto.getHandler());
         task.setStatus(AiTaskStatusEnum.PROCESSING.getCode());
         task.setProgress(0);
+        task.setCost(java.math.BigDecimal.valueOf(pointCost));
         task.setDeleted(0);
         try {
             task.setInputParams(objectMapper.writeValueAsString(dto.getInput()));
@@ -96,27 +101,56 @@ public class AiServiceImpl implements AiService {
 
     private void executeSync(AiTaskDO task, AiHandler handler, String modelId, java.util.Map<String, Object> input, int pointCost) {
         GenerationLogContext.set(task.getId(), task.getUserId(), task.getProjectId(), task.getHandlerName());
+        long startMs = System.currentTimeMillis();
         boolean failed = false;
+        String resultUrl = null;
+        String errorMsg = null;
         try {
             AiHandlerResult result = handler.execute(modelId, input);
             failed = !result.isSuccess();
+            resultUrl = result.getResultUrl();
+            errorMsg = result.getErrorMsg();
             task.setStatus(result.isSuccess() ? AiTaskStatusEnum.SUCCESS.getCode() : AiTaskStatusEnum.FAILED.getCode());
-            task.setResultUrl(result.getResultUrl());
+            task.setResultUrl(resultUrl);
             task.setResultMeta(result.getResultMeta());
-            task.setErrorMsg(result.getErrorMsg());
+            task.setErrorMsg(errorMsg);
             task.setProgress(100);
             task.setCompleteTime(LocalDateTime.now());
         } catch (Exception e) {
             failed = true;
+            errorMsg = e.getMessage();
             task.setStatus(AiTaskStatusEnum.FAILED.getCode());
-            task.setErrorMsg(e.getMessage());
+            task.setErrorMsg(errorMsg);
             task.setCompleteTime(LocalDateTime.now());
         } finally {
+            // 兜底记录生成日志：仅当本次未产生上游调用日志时补记，避免与 recordLog 的详细日志重复
+            if (!GenerationLogContext.isRecorded()) {
+                recordSummarySyncLog(task, !failed, resultUrl, errorMsg, startMs);
+            }
             GenerationLogContext.clear();
         }
         taskMapper.updateById(task);
         if (failed) {
             refundPoints(task.getUserId(), pointCost, task.getId());
+        }
+    }
+
+    private void recordSummarySyncLog(AiTaskDO task, boolean success, String resultUrl, String errorMsg, long startMs) {
+        try {
+            AiGenerationLogDO lg = new AiGenerationLogDO();
+            lg.setTaskId(task.getId());
+            lg.setUserId(task.getUserId());
+            lg.setProjectId(task.getProjectId());
+            lg.setHandlerName(task.getHandlerName());
+            lg.setOperationType("ai_generate");
+            lg.setSuccess(success ? 1 : 0);
+            lg.setResultUrl(org.springframework.util.StringUtils.hasText(resultUrl) ? resultUrl : null);
+            lg.setErrorMsg(org.springframework.util.StringUtils.hasText(errorMsg) ? errorMsg : null);
+            lg.setDurationMs(System.currentTimeMillis() - startMs);
+            lg.setCreateTime(LocalDateTime.now());
+            logMapper.insert(lg);
+        } catch (Exception e) {
+            log.warn("记录同步生成日志失败: taskId={}", task.getId(), e);
         }
     }
 
@@ -128,8 +162,8 @@ public class AiServiceImpl implements AiService {
             AiModelDO model = modelMapper.selectOne(
                     new LambdaQueryWrapper<AiModelDO>().eq(AiModelDO::getModelId, modelId));
             if (model != null) {
-                // 1) 画质×清晰度差异化定价（config.pricing[quality][clarity]）
-                Integer matrix = pricingFromConfig(model.getConfig(), input);
+                // 1) 差异化定价：图片 config.pricing[quality][clarity]，视频 config.pricing[resolution][duration]
+                Integer matrix = pricingFromConfig(model.getConfig(), input, model.getType());
                 if (matrix != null) {
                     return matrix;
                 }
@@ -147,8 +181,28 @@ public class AiServiceImpl implements AiService {
         return DEFAULT_POINT_COST;
     }
 
-    /** 从模型 config.pricing 按 input 的 quality/clarity 取差异化积分；未配置/未命中返回 null */
-    private Integer pricingFromConfig(String config, java.util.Map<String, Object> input) {
+    /** 出图张数（1~4），用于积分按张数计费；缺省 1 */
+    private int batchCountOf(java.util.Map<String, Object> input) {
+        if (input == null) {
+            return 1;
+        }
+        Object bc = input.getOrDefault("batchCount", input.get("n"));
+        if (bc == null) {
+            return 1;
+        }
+        try {
+            return Math.max(1, Math.min(4, Integer.parseInt(String.valueOf(bc).trim())));
+        } catch (NumberFormatException e) {
+            return 1;
+        }
+    }
+
+    /**
+     * 从模型 config.pricing 取差异化积分；未配置/未命中返回 null。
+     * 定价维度按模型类型而异：视频 = pricing[resolution][duration]，图片/其他 = pricing[quality][clarity]。
+     * 行列 key 直接取 input 原值，须与前端模型管理里配置的 key 一致（如 resolution "720P"、duration "5"）。
+     */
+    private Integer pricingFromConfig(String config, java.util.Map<String, Object> input, String modelType) {
         if (!StringUtils.hasText(config) || input == null) {
             return null;
         }
@@ -157,9 +211,16 @@ public class AiServiceImpl implements AiService {
             if (!pricing.isObject()) {
                 return null;
             }
-            String quality = String.valueOf(input.getOrDefault("quality", ""));
-            String clarity = String.valueOf(input.getOrDefault("clarity", ""));
-            JsonNode cell = pricing.path(quality).path(clarity);
+            String rowKey;
+            String colKey;
+            if ("video".equals(modelType)) {
+                rowKey = String.valueOf(input.getOrDefault("resolution", ""));
+                colKey = String.valueOf(input.getOrDefault("duration", ""));
+            } else {
+                rowKey = String.valueOf(input.getOrDefault("quality", ""));
+                colKey = String.valueOf(input.getOrDefault("clarity", ""));
+            }
+            JsonNode cell = pricing.path(rowKey).path(colKey);
             if (cell.isNumber()) {
                 return cell.asInt();
             }

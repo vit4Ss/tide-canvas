@@ -29,7 +29,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
         String token = resolveToken(request);
-        if (StringUtils.hasText(token) && jwtTokenProvider.validateToken(token)) {
+        // 只接受 access token：refresh token 不能当访问凭证（令牌分层）
+        if (StringUtils.hasText(token) && jwtTokenProvider.validateToken(token)
+                && !jwtTokenProvider.isRefreshToken(token)) {
             Long userId = jwtTokenProvider.getUserIdFromToken(token);
             UserDetails userDetails = userDetailsService.loadUserById(userId);
             if (userDetails != null) {
