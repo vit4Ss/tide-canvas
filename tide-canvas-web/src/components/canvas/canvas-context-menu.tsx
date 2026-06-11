@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   AlignLeft, ImageIcon, Video, Scissors, Layers, AudioLines, FileCode2,
   Upload as UploadIcon, History,
-  ChevronRight, ChevronLeft, Trash2, Copy,
+  ChevronRight, ChevronLeft, Trash2, Copy, Group,
 } from "lucide-react";
 
 export interface ContextMenuState {
@@ -42,10 +42,12 @@ interface Props {
   canUndo?: boolean;
   canRedo?: boolean;
   canPaste?: boolean;
+  selectedCount?: number;
   onClose: () => void;
   onAddNode: (type: string, worldX: number, worldY: number) => void;
   onDeleteNode: (nodeId: string) => void;
   onCopyNode: (nodeId: string) => void;
+  onCreateGroup?: () => void;
   onUpload?: () => void;
   onSaveAsset?: () => void;
   onUndo?: () => void;
@@ -54,16 +56,20 @@ interface Props {
 }
 
 export function CanvasContextMenu({
-  menu, canUndo = false, canRedo = false, canPaste = false,
-  onClose, onAddNode, onDeleteNode, onCopyNode,
+  menu, canUndo = false, canRedo = false, canPaste = false, selectedCount = 0,
+  onClose, onAddNode, onDeleteNode, onCopyNode, onCreateGroup,
   onUpload, onSaveAsset, onUndo, onRedo, onPaste,
 }: Props) {
   const menuRef = useRef<HTMLDivElement>(null);
   // 两级视图：主菜单 / 添加节点目录（点击下钻替换，而非并排子菜单）
   const [view, setView] = useState<"main" | "nodes">("main");
 
-  // 每次菜单(重新)打开都回到主视图
-  useEffect(() => { setView("main"); }, [menu]);
+  // 每次菜单(重新)打开都回到主视图：用 React 推荐的「渲染期对比上次值重置」替代 effect 内 setState
+  const [prevMenu, setPrevMenu] = useState(menu);
+  if (menu !== prevMenu) {
+    setPrevMenu(menu);
+    setView("main");
+  }
 
   useEffect(() => {
     const onMouseDown = (e: MouseEvent) => {
@@ -181,6 +187,21 @@ export function CanvasContextMenu({
         )
       ) : (
         <>
+          {selectedCount >= 2 && (
+            <>
+              <button
+                onClick={() => { onCreateGroup?.(); onClose(); }}
+                className={itemClass}
+              >
+                <span className="flex items-center gap-2">
+                  <Group className="h-4 w-4 text-neutral-500" />
+                  创建分组
+                </span>
+                <kbd className="text-xs text-neutral-400">⌘G</kbd>
+              </button>
+              <div className="my-1.5 mx-3 border-t border-neutral-100 dark:border-neutral-800" />
+            </>
+          )}
           <button
             onClick={() => { if (menu.nodeId) onCopyNode(menu.nodeId); onClose(); }}
             className={itemClass}

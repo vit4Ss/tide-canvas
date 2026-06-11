@@ -2,6 +2,7 @@ package com.tidecanvas.model.vo;
 
 import lombok.Data;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
@@ -28,6 +29,8 @@ public class AiGenerationLogVO {
     private String resultUrl;
     private String errorMsg;
     private Long durationMs;
+    /** 上游成本（USD）；中转站无此字段时为空 */
+    private BigDecimal cost;
     private LocalDateTime createTime;
 
     // 关联展示字段（后端按 id 回填，非日志表本身列）

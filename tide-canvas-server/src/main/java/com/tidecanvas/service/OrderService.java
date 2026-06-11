@@ -23,11 +23,22 @@ public interface OrderService {
     RechargeOrderVO createOrder(Long userId, RechargeCreateDTO dto);
 
     /**
-     * 支付订单
+     * 支付订单（管理端手动标记，订单非待支付时抛出异常）
      *
      * @param orderId 订单ID
      */
     void payOrder(Long orderId);
+
+    /**
+     * 幂等确认订单已支付：仅当订单处于待支付时标记已支付并发放积分。
+     * 用于支付回调/查单补偿，重复调用安全。
+     *
+     * @param orderId       订单ID
+     * @param paymentNo     第三方支付流水号（可空）
+     * @param paymentMethod 实际支付方式（可空，空则保留原值）
+     * @return true=本次完成支付确认；false=订单已不在待支付状态（未做任何变更）
+     */
+    boolean confirmOrderPaid(Long orderId, String paymentNo, String paymentMethod);
 
     /**
      * 取消订单

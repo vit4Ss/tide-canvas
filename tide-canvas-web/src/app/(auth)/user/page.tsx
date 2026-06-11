@@ -35,6 +35,8 @@ export default function UserPage() {
     { href: "/user/recharge", label: "兑换码", desc: "充值或输入兑换码兑换积分", icon: Ticket },
     { href: "/user/orders", label: "我的订单", desc: "充值订单记录", icon: ShoppingCart },
     { href: "/user/assets", label: "我的素材", desc: "上传和管理素材", icon: ImagePlus },
+    // 团队功能暂时隐藏（保留路由 /user/team 与后端，恢复时取消注释即可）：
+    // { href: "/user/team", label: "我的团队", desc: "创建或加入团队，共享素材与项目", icon: Users },
     { href: "/user/settings", label: "账户设置", desc: "密码、通知偏好", icon: Settings },
   ];
 

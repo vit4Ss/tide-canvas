@@ -30,11 +30,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
-/**
- * 订单服务实现类
- *
- * @author tidecanvas
- */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -51,15 +46,9 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public RechargeOrderVO createOrder(Long userId, RechargeCreateDTO dto) {
-        // 生成订单号
         String orderNo = generateOrderNo();
-
-        // 获取充值比例
-        int rechargeRatio = getRechargeRatio();
-
-        // 计算积分数量
         int pointsAmount = dto.getAmount()
-                .multiply(BigDecimal.valueOf(rechargeRatio))
+                .multiply(BigDecimal.valueOf(getRechargeRatio()))
                 .setScale(0, RoundingMode.DOWN)
                 .intValue();
 
@@ -73,7 +62,7 @@ public class OrderServiceImpl implements OrderService {
         order.setDeleted(0);
         orderMapper.insert(order);
 
-        log.info("充值订单创建成功: orderNo={}, userId={}, amount={}, pointsAmount={}",
+        log.info("Recharge order created: orderNo={}, userId={}, amount={}, pointsAmount={}",
                 orderNo, userId, dto.getAmount(), pointsAmount);
         return toOrderVO(order);
     }
@@ -81,25 +70,40 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void payOrder(Long orderId) {
+        if (!doConfirmPaid(orderId, null, "manual")) {
+            throw new BusinessException(ResultCode.ORDER_STATUS_ERROR);
+        }
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean confirmOrderPaid(Long orderId, String paymentNo, String paymentMethod) {
+        return doConfirmPaid(orderId, paymentNo, paymentMethod);
+    }
+
+    /**
+     * 条件更新「待支付→已支付」保证并发/重复调用下只发放一次积分;
+     * 私有实现供两个事务入口共享(同类自调用不经代理,事务注解须落在公开入口上)。
+     */
+    private boolean doConfirmPaid(Long orderId, String paymentNo, String paymentMethod) {
         RechargeOrderDO order = orderMapper.selectById(orderId);
         if (order == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "订单不存在");
         }
-        if (order.getStatus() != OrderStatusEnum.PENDING.getCode()) {
-            throw new BusinessException(ResultCode.ORDER_STATUS_ERROR);
+
+        int updated = orderMapper.markPaidIfPending(
+                orderId, OrderStatusEnum.PENDING.getCode(), OrderStatusEnum.PAID.getCode(),
+                paymentNo, paymentMethod);
+        if (updated == 0) {
+            return false;
         }
 
-        // 更新订单状态为已支付
-        order.setStatus(OrderStatusEnum.PAID.getCode());
-        order.setPaidTime(LocalDateTime.now());
-        orderMapper.updateById(order);
-
-        // 增加用户积分
         pointsService.addPoints(order.getUserId(), order.getPointsAmount(),
                 PointsTransactionTypeEnum.RECHARGE, order.getId(), "充值订单: " + order.getOrderNo());
 
-        log.info("充值订单支付成功: orderNo={}, userId={}, pointsAmount={}",
-                order.getOrderNo(), order.getUserId(), order.getPointsAmount());
+        log.info("Recharge order paid: orderNo={}, userId={}, pointsAmount={}, paymentNo={}",
+                order.getOrderNo(), order.getUserId(), order.getPointsAmount(), paymentNo);
+        return true;
     }
 
     @Override
@@ -112,14 +116,14 @@ public class OrderServiceImpl implements OrderService {
         if (!order.getUserId().equals(userId)) {
             throw new BusinessException(ResultCode.FORBIDDEN, "无权操作该订单");
         }
-        if (order.getStatus() != OrderStatusEnum.PENDING.getCode()) {
+
+        // 条件更新防并发:避免「取消」与「支付回调」竞态时覆盖已支付状态
+        int updated = orderMapper.markCancelledIfPending(
+                orderId, OrderStatusEnum.PENDING.getCode(), OrderStatusEnum.CANCELLED.getCode());
+        if (updated == 0) {
             throw new BusinessException(ResultCode.ORDER_STATUS_ERROR);
         }
-
-        order.setStatus(OrderStatusEnum.CANCELLED.getCode());
-        orderMapper.updateById(order);
-
-        log.info("充值订单已取消: orderNo={}, userId={}", order.getOrderNo(), userId);
+        log.info("Recharge order cancelled: orderNo={}, userId={}", order.getOrderNo(), userId);
     }
 
     @Override
@@ -146,7 +150,6 @@ public class OrderServiceImpl implements OrderService {
     @Override
     public PageResult<RechargeOrderVO> listOrders(Long userId, OrderQuery query) {
         Page<RechargeOrderDO> page = new Page<>(query.getPageNum(), query.getPageSize());
-
         LambdaQueryWrapper<RechargeOrderDO> wrapper = new LambdaQueryWrapper<RechargeOrderDO>()
                 .eq(RechargeOrderDO::getUserId, userId)
                 .eq(query.getStatus() != null, RechargeOrderDO::getStatus, query.getStatus())
@@ -164,7 +167,6 @@ public class OrderServiceImpl implements OrderService {
     @Override
     public PageResult<RechargeOrderVO> listAllOrders(AdminOrderQuery query) {
         Page<RechargeOrderDO> page = new Page<>(query.getPageNum(), query.getPageSize());
-
         LambdaQueryWrapper<RechargeOrderDO> wrapper = new LambdaQueryWrapper<RechargeOrderDO>()
                 .eq(query.getUserId() != null, RechargeOrderDO::getUserId, query.getUserId())
                 .eq(query.getStatus() != null, RechargeOrderDO::getStatus, query.getStatus())
@@ -180,36 +182,23 @@ public class OrderServiceImpl implements OrderService {
         return PageResult.of(records, page);
     }
 
-    // ============================= 私有方法 =============================
-
-    /**
-     * 生成订单号: TC + 时间戳 + 4位随机数
-     */
     private String generateOrderNo() {
-        int randomNum = ThreadLocalRandom.current().nextInt(1000, 10000);
-        return "TC" + System.currentTimeMillis() + randomNum;
+        return "TC" + System.currentTimeMillis() + ThreadLocalRandom.current().nextInt(1000, 10000);
     }
 
-    /**
-     * 从系统配置获取充值比例
-     */
     private int getRechargeRatio() {
         SysConfigDO config = configMapper.selectOne(
-                new LambdaQueryWrapper<SysConfigDO>()
-                        .eq(SysConfigDO::getConfigKey, RECHARGE_RATIO_KEY));
+                new LambdaQueryWrapper<SysConfigDO>().eq(SysConfigDO::getConfigKey, RECHARGE_RATIO_KEY));
         if (config != null && StringUtils.hasText(config.getConfigValue())) {
             try {
                 return Integer.parseInt(config.getConfigValue());
             } catch (NumberFormatException e) {
-                log.warn("充值比例配置格式异常, 使用默认值: {}", DEFAULT_RECHARGE_RATIO);
+                log.warn("Invalid recharge ratio config, using default {}", DEFAULT_RECHARGE_RATIO);
             }
         }
         return DEFAULT_RECHARGE_RATIO;
     }
 
-    /**
-     * 将订单DO转换为VO
-     */
     private RechargeOrderVO toOrderVO(RechargeOrderDO order) {
         RechargeOrderVO vo = new RechargeOrderVO();
         vo.setId(order.getId());
@@ -217,6 +206,7 @@ public class OrderServiceImpl implements OrderService {
         vo.setAmount(order.getAmount());
         vo.setPointsAmount(order.getPointsAmount());
         vo.setPaymentMethod(order.getPaymentMethod());
+        vo.setPaymentNo(order.getPaymentNo());
         vo.setStatus(order.getStatus());
         vo.setPaidTime(order.getPaidTime());
         vo.setCreateTime(order.getCreateTime());

@@ -7,6 +7,7 @@ import { useCanvasStore } from "@/stores/use-canvas-store";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { CanvasView } from "@/components/canvas/canvas-view";
+import { RechargeDialog } from "@/components/canvas/recharge-dialog";
 import { ArrowLeft, Share2, Loader2, Check, Pencil, Coins, User, LogOut, Settings, LayoutDashboard } from "lucide-react";
 import Link from "next/link";
 import { toast } from "@/components/shared/toast";
@@ -25,14 +26,17 @@ export default function CanvasEditorPage() {
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [thumbnail, setThumbnail] = useState<string | null>(null);
 
   const { user, isAdmin } = useAuth();
   const logout = useAuthStore((s) => s.logout);
   const router = useRouter();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [rechargeOpen, setRechargeOpen] = useState(false);
 
   const nodes = useCanvasStore((s) => s.nodes);
   const connections = useCanvasStore((s) => s.connections);
+  const groups = useCanvasStore((s) => s.groups);
   const loadCanvas = useCanvasStore((s) => s.loadCanvas);
   const setCurrentProjectId = useCanvasStore((s) => s.setCurrentProjectId);
 
@@ -47,10 +51,11 @@ export default function CanvasEditorPage() {
         setProjectId(String(res.data.id));
         setCurrentProjectId(String(res.data.id));
         setProjectName(res.data.name);
+        setThumbnail(res.data.thumbnail || null);
         if (res.data.canvasData && res.data.canvasData !== "{}") {
           try {
             const data = JSON.parse(res.data.canvasData);
-            loadCanvas(data.nodes || [], data.connections || []);
+            loadCanvas(data.nodes || [], data.connections || [], data.groups || []);
           } catch {
             loadCanvas([], []);
           }
@@ -69,8 +74,10 @@ export default function CanvasEditorPage() {
     if (saving || !projectId) return;
     setSaving(true);
     try {
-      const canvasData = JSON.stringify({ nodes, connections });
-      const res = await projectApi.saveCanvas(projectId, { canvasData });
+      const canvasData = JSON.stringify({ nodes, connections, groups });
+      // 封面兜底：未手动设封面时，自动用画布中第一张图片（saveCanvas 仅在有值时更新 thumbnail）
+      const cover = thumbnail || nodes.find((n) => n.type === "image" && n.imageSrc)?.imageSrc || null;
+      const res = await projectApi.saveCanvas(projectId, { canvasData, ...(cover ? { thumbnail: cover } : {}) });
       if (res.success) {
         setLastSaved(new Date().toLocaleTimeString("zh-CN"));
         if (!silent) toast.success("已保存");
@@ -80,9 +87,9 @@ export default function CanvasEditorPage() {
     } finally {
       setSaving(false);
     }
-  }, [saving, nodes, connections, projectId]);
+  }, [saving, nodes, connections, groups, projectId, thumbnail]);
 
-  // 自动保存：监听 nodes/connections 变化
+  // 自动保存：监听 nodes/connections/groups 变化
   useEffect(() => {
     if (!loaded) return;
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
@@ -90,7 +97,7 @@ export default function CanvasEditorPage() {
     return () => {
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     };
-  }, [nodes, connections, loaded, save]);
+  }, [nodes, connections, groups, loaded, save]);
 
   const handleShare = async () => {
     if (!projectId) return;
@@ -177,9 +184,9 @@ export default function CanvasEditorPage() {
           <Coins className="h-4 w-4 text-amber-500" />
           <span className="font-medium tabular-nums">{user?.points ?? 0}</span>
           <span className="h-3.5 w-px bg-neutral-200 dark:bg-neutral-700" />
-          <Link href="/user/recharge" className="text-neutral-600 transition-colors hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white">
+          <button onClick={() => setRechargeOpen(true)} className="text-neutral-600 transition-colors hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white">
             订购积分
-          </Link>
+          </button>
         </div>
 
         {/* 头像 + 账户菜单 */}
@@ -198,7 +205,7 @@ export default function CanvasEditorPage() {
                 <div className="truncate px-4 py-2 text-xs text-neutral-400">{user?.nickname || user?.username || "未登录"}</div>
                 <div className="my-1 border-t border-neutral-200 dark:border-neutral-700" />
                 <Link href="/user" onClick={() => setUserMenuOpen(false)} className="flex items-center gap-2 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"><User className="h-4 w-4" />个人中心</Link>
-                <Link href="/user/recharge" onClick={() => setUserMenuOpen(false)} className="flex items-center gap-2 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"><Coins className="h-4 w-4" />订购积分</Link>
+                <button onClick={() => { setUserMenuOpen(false); setRechargeOpen(true); }} className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"><Coins className="h-4 w-4" />订购积分</button>
                 <Link href="/user/settings" onClick={() => setUserMenuOpen(false)} className="flex items-center gap-2 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"><Settings className="h-4 w-4" />账户设置</Link>
                 {isAdmin && (
                   <Link href="/admin" onClick={() => setUserMenuOpen(false)} className="flex items-center gap-2 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"><LayoutDashboard className="h-4 w-4" />管理后台</Link>
@@ -215,6 +222,8 @@ export default function CanvasEditorPage() {
           <Share2 className="h-4 w-4" />
         </button>
       </div>
+
+      <RechargeDialog open={rechargeOpen} onOpenChange={setRechargeOpen} />
     </div>
   );
 }

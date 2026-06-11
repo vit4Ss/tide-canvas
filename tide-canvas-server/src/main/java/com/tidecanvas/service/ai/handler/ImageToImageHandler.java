@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tidecanvas.model.entity.AiProviderDO;
 import com.tidecanvas.service.ai.AiHandler;
 import com.tidecanvas.service.ai.AiHandlerResult;
-import com.tidecanvas.service.ai.AiRelayClient;
+import com.tidecanvas.service.ai.AiMediaGateway;
 import com.tidecanvas.service.ai.util.PromptRefUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,7 +26,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class ImageToImageHandler implements AiHandler {
 
-    private final AiRelayClient imageClient;
+    private final AiMediaGateway imageClient;
     private final ObjectMapper objectMapper;
 
     // 内联 1x1 透明 PNG，避免浏览器因外部假 URL 报 "Unsafe asset URL"

@@ -26,7 +26,10 @@ interface AdminAiModelVO {
   type: string;
   providerId?: number;
   providerName?: string;
+  /** 消耗积分（支持小数，结算按总价向上取整） */
   pointCost: number;
+  /** 上游成本价（USD，仅管理端参考） */
+  costPerCall?: number;
   config?: string;
   status: number;
   createTime?: string;
@@ -36,12 +39,14 @@ const MODEL_TYPES = [
   { value: "image", label: "图片生成" },
   { value: "video", label: "视频生成" },
   { value: "text", label: "文本生成" },
+  { value: "audio", label: "语音合成" },
 ];
 
 const TYPE_BADGE: Record<string, string> = {
   image: "bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400",
   video: "bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400",
   text: "bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400",
+  audio: "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400",
 };
 
 interface ModelForm {
@@ -52,6 +57,11 @@ interface ModelForm {
   // 供应商 id 为雪花长整型、后端以字符串返回，前端全程按字符串处理，避免 Number() 精度丢失
   providerId: string;
   pointCost: number;
+  // 上游成本价（USD）：Runware 等供应商响应里的 cost 可直接抄录于此，仅作毛利参考，不参与计费
+  costPerCall: number;
+  // 模型选择列表展示用：描述（名称下方副标题）+ 预计耗时（秒，右侧徽标）。存入 config，无需后端改动
+  description: string;
+  estSeconds: number;
   // 图片维度
   qualities: string[];
   clarities: string[];
@@ -61,6 +71,10 @@ interface ModelForm {
   resolutions: string[];
   durations: number[];
   audio: boolean;
+  // Runware 视频参数结构：v2(Seedance 2.0 等) 需把 frameImages/referenceImages 嵌进 inputs 对象
+  videoInputs: boolean;
+  // 语音模型音色列表（每个供应商每个模型各不相同）：id 为上游音色标识，name 为画布下拉显示名
+  voices: { id: string; name: string }[];
   // 差异化定价矩阵：图片 = pricing[quality][clarity]；视频 = pricing[resolution][duration]
   pricing: Record<string, Record<string, number>>;
 }
@@ -72,12 +86,17 @@ const emptyForm: ModelForm = {
   type: "image",
   providerId: "",
   pointCost: 0,
+  costPerCall: 0,
+  description: "",
+  estSeconds: 0,
   qualities: QUALITY_OPTIONS.map((q) => q.value),
   clarities: [...CLARITY_OPTIONS],
   ratios: RATIO_OPTIONS.map((r) => r.value),
   resolutions: [...RESOLUTIONS],
   durations: [...DURATION_OPTIONS],
   audio: true,
+  videoInputs: false,
+  voices: [],
   pricing: {},
 };
 
@@ -163,6 +182,7 @@ function PricingMatrix({
                       <input
                         type="number"
                         min={0}
+                        step={0.1}
                         value={pricing[r.key]?.[c.key] ?? ""}
                         onChange={(e) => onSet(r.key, c.key, e.target.value)}
                         placeholder="—"
@@ -193,6 +213,8 @@ export default function AdminAiModelsPage() {
   const [remoteModels, setRemoteModels] = useState<string[]>([]);
   const [fetchingModels, setFetchingModels] = useState(false);
   const [fetchModelsError, setFetchModelsError] = useState("");
+  // Runware 模型搜索关键词（modelSearch 协议按关键词检索 AIR 标识）
+  const [remoteSearch, setRemoteSearch] = useState("");
 
   // setState 均在 await 之后；loading 初值即 true，不在同步路径置位
   const loadModels = useCallback(async () => {
@@ -223,13 +245,22 @@ export default function AdminAiModelsPage() {
   // 按模型类型序列化 config：图片存 qualities/clarities/ratios，视频存 resolutions/ratios/durations/audio
   const buildConfig = (): string => {
     const pricing = Object.keys(form.pricing).length ? { pricing: form.pricing } : {};
+    // description / estSeconds 仅供模型选择列表展示，随 config 持久化（后端透传，不需改 schema）
+    const meta = {
+      ...(form.description.trim() ? { description: form.description.trim() } : {}),
+      ...(form.estSeconds > 0 ? { estSeconds: form.estSeconds } : {}),
+    };
     if (form.type === "image") {
-      return JSON.stringify({ qualities: form.qualities, clarities: form.clarities, ratios: form.ratios, ...pricing });
+      return JSON.stringify({ qualities: form.qualities, clarities: form.clarities, ratios: form.ratios, ...pricing, ...meta });
     }
     if (form.type === "video") {
-      return JSON.stringify({ resolutions: form.resolutions, ratios: form.ratios, durations: form.durations, audio: form.audio, ...pricing });
+      return JSON.stringify({ resolutions: form.resolutions, ratios: form.ratios, durations: form.durations, audio: form.audio, ...(form.videoInputs ? { videoInputs: true } : {}), ...pricing, ...meta });
     }
-    return "{}";
+    if (form.type === "audio") {
+      const voices = form.voices.filter((v) => v.id.trim()).map((v) => ({ id: v.id.trim(), name: v.name.trim() || v.id.trim() }));
+      return JSON.stringify({ voices, ...meta });
+    }
+    return JSON.stringify({ ...meta });
   };
 
   const handleSave = async () => {
@@ -242,6 +273,7 @@ export default function AdminAiModelsPage() {
         modelId: form.modelId,
         type: form.type,
         pointCost: form.pointCost,
+        costPerCall: form.costPerCall,
         config: buildConfig(),
         ...(form.providerId !== "" ? { providerId: form.providerId } : {}),
       };
@@ -268,10 +300,16 @@ export default function AdminAiModelsPage() {
 
   const handleFetchRemoteModels = async () => {
     if (!form.providerId) return;
+    // Runware 的 modelSearch 协议要求必填搜索词（按关键词检索 AIR 模型标识）
+    const isRunware = providers.find((p) => String(p.id) === form.providerId)?.providerType === "runware";
+    if (isRunware && !remoteSearch.trim()) {
+      setFetchModelsError("Runware 需要输入搜索关键词再拉取，如 flux / kling / seedream");
+      return;
+    }
     setFetchingModels(true);
     setFetchModelsError("");
     try {
-      const res = await adminApi.ai.providers.remoteModels(form.providerId);
+      const res = await adminApi.ai.providers.remoteModels(form.providerId, remoteSearch.trim() || undefined);
       if (res.success) {
         setRemoteModels(res.data ?? []);
         if (!res.data || res.data.length === 0) {
@@ -354,7 +392,11 @@ export default function AdminAiModelsPage() {
       resolutions?: string[];
       durations?: number[];
       audio?: boolean;
+      videoInputs?: boolean;
+      voices?: { id: string; name: string }[];
       pricing?: Record<string, Record<string, number>>;
+      description?: string;
+      estSeconds?: number;
     } = {};
     if (model.config) {
       try {
@@ -370,12 +412,17 @@ export default function AdminAiModelsPage() {
       type: model.type,
       providerId: model.providerId == null ? "" : String(model.providerId),
       pointCost: model.pointCost ?? 0,
+      costPerCall: model.costPerCall ?? 0,
+      description: cfg.description ?? "",
+      estSeconds: cfg.estSeconds ?? 0,
       qualities: cfg.qualities ?? QUALITY_OPTIONS.map((q) => q.value),
       clarities: cfg.clarities ?? [...CLARITY_OPTIONS],
       ratios: cfg.ratios ?? (model.type === "video" ? VIDEO_RATIOS.map((r) => r.value) : RATIO_OPTIONS.map((r) => r.value)),
       resolutions: cfg.resolutions ?? [...RESOLUTIONS],
       durations: cfg.durations ?? [...DURATION_OPTIONS],
       audio: cfg.audio ?? true,
+      videoInputs: cfg.videoInputs ?? false,
+      voices: cfg.voices ?? [],
       pricing: cfg.pricing ?? {},
     });
   };
@@ -485,14 +532,24 @@ export default function AdminAiModelsPage() {
                   </option>
                 ))}
               </select>
-              <button
-                type="button"
-                onClick={handleFetchRemoteModels}
-                disabled={!form.providerId || fetchingModels}
-                className="mt-1.5 inline-flex items-center gap-1 rounded-lg border border-neutral-200 px-2.5 py-1 text-xs text-neutral-600 transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800"
-              >
-                {fetchingModels ? "拉取中..." : "从该供应商拉取模型"}
-              </button>
+              <div className="mt-1.5 flex items-center gap-1.5">
+                {providers.find((p) => String(p.id) === form.providerId)?.providerType === "runware" && (
+                  <input
+                    value={remoteSearch}
+                    onChange={(e) => setRemoteSearch(e.target.value)}
+                    placeholder="搜索关键词，如 flux"
+                    className="w-32 rounded-lg border border-neutral-200 px-2 py-1 text-xs outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={handleFetchRemoteModels}
+                  disabled={!form.providerId || fetchingModels}
+                  className="inline-flex items-center gap-1 rounded-lg border border-neutral-200 px-2.5 py-1 text-xs text-neutral-600 transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800"
+                >
+                  {fetchingModels ? "拉取中..." : "从该供应商拉取模型"}
+                </button>
+              </div>
               {fetchModelsError && <p className="mt-1 text-xs text-red-500">{fetchModelsError}</p>}
               {remoteModels.length > 0 && (
                 <p className="mt-1 text-xs text-green-600 dark:text-green-400">
@@ -505,12 +562,26 @@ export default function AdminAiModelsPage() {
               <input
                 type="number"
                 min={0}
+                step={0.1}
                 value={form.pointCost}
                 onChange={(e) => setForm({ ...form, pointCost: Number(e.target.value) })}
-                placeholder="每次调用消耗积分数"
+                placeholder="每次调用消耗积分数（支持小数）"
                 className="mt-1 w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
               />
-              <p className="mt-1 text-xs text-neutral-400">每次调用该模型消耗的积分数量</p>
+              <p className="mt-1 text-xs text-neutral-400">支持小数；结算按「单价×张数×团队系数」总价向上取整</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium">成本价（USD）</label>
+              <input
+                type="number"
+                min={0}
+                step={0.0001}
+                value={form.costPerCall}
+                onChange={(e) => setForm({ ...form, costPerCall: Number(e.target.value) })}
+                placeholder="如 Runware 返回的 cost：0.0013"
+                className="mt-1 w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
+              />
+              <p className="mt-1 text-xs text-neutral-400">上游单次成本，仅后台参考毛利用，不参与计费、不对用户暴露</p>
             </div>
             <div>
               <label className="block text-sm font-medium">图标</label>
@@ -521,6 +592,28 @@ export default function AdminAiModelsPage() {
                 className="mt-1 w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
               />
               <p className="mt-1 text-xs text-neutral-400">显示在「Lib Image」模型选择处</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium">描述</label>
+              <input
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                placeholder="如：动漫高审美模型，风格多样"
+                className="mt-1 w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
+              />
+              <p className="mt-1 text-xs text-neutral-400">模型选择列表中名称下方的副标题（选填）</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium">预计耗时（秒）</label>
+              <input
+                type="number"
+                min={0}
+                value={form.estSeconds}
+                onChange={(e) => setForm({ ...form, estSeconds: Number(e.target.value) })}
+                placeholder="如：60"
+                className="mt-1 w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
+              />
+              <p className="mt-1 text-xs text-neutral-400">模型选择列表右侧的耗时徽标（0 = 不显示）</p>
             </div>
           </div>
 
@@ -555,6 +648,45 @@ export default function AdminAiModelsPage() {
                     onSet={setPricing}
                   />
                 </>
+              ) : form.type === "audio" ? (
+                <div>
+                  <label className="block text-sm font-medium">音色列表</label>
+                  <p className="mt-0.5 text-xs text-neutral-400">
+                    音色ID 来自该模型供应商的文档（如 MiniMax 的 Chinese (Mandarin)_Lovely_Girl）；显示名是画布音频节点下拉里看到的名字
+                  </p>
+                  <div className="mt-2 space-y-2">
+                    {form.voices.map((v, i) => (
+                      <div key={i} className="flex items-center gap-2">
+                        <input
+                          value={v.id}
+                          onChange={(e) => setForm((prev) => ({ ...prev, voices: prev.voices.map((x, j) => (j === i ? { ...x, id: e.target.value } : x)) }))}
+                          placeholder="音色ID（上游标识）"
+                          className="flex-1 rounded-lg border border-neutral-200 px-3 py-2 font-mono text-xs outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
+                        />
+                        <input
+                          value={v.name}
+                          onChange={(e) => setForm((prev) => ({ ...prev, voices: prev.voices.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) }))}
+                          placeholder="显示名（如：少女音色）"
+                          className="w-48 rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setForm((prev) => ({ ...prev, voices: prev.voices.filter((_, j) => j !== i) }))}
+                          className="rounded-lg p-2 text-neutral-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/30"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setForm((prev) => ({ ...prev, voices: [...prev.voices, { id: "", name: "" }] }))}
+                    className="mt-2 inline-flex items-center gap-1 rounded-lg border border-neutral-200 px-2.5 py-1.5 text-xs text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> 添加音色
+                  </button>
+                </div>
               ) : (
                 <>
                   <ChipGroup
@@ -585,6 +717,17 @@ export default function AdminAiModelsPage() {
                       <Chip active={form.audio} onClick={() => setForm({ ...form, audio: true })}>支持</Chip>
                       <Chip active={!form.audio} onClick={() => setForm({ ...form, audio: false })}>不支持</Chip>
                     </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium">Runware 参数结构</label>
+                    <div className="mt-2 flex gap-2">
+                      <Chip active={form.videoInputs} onClick={() => setForm({ ...form, videoInputs: true })}>v2（inputs 嵌套）</Chip>
+                      <Chip active={!form.videoInputs} onClick={() => setForm({ ...form, videoInputs: false })}>旧版（顶层平铺）</Chip>
+                    </div>
+                    <p className="mt-1 text-xs text-neutral-400">
+                      Runware 新版视频模型（Seedance 2.0 等，支持全能参考/首尾帧）须选 v2，参数会嵌入 inputs 对象；
+                      非 Runware 或旧版模型保持「顶层平铺」
+                    </p>
                   </div>
                   <PricingMatrix
                     corner="清晰度＼时长"

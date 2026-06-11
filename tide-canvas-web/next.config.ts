@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Docker 部署：构建产出 .next/standalone 自包含产物（无需携带完整 node_modules）
+  output: "standalone",
   // Next 16 的 typedRoutes 生成器在跨路由组的动态段(community/[id] 同时存在于 (public) 与 (auth))
   // 上会生成损坏的 .next/dev/types/routes.d.ts，导致路由表注册失败、全站 404。关闭以规避该 bug。
   typedRoutes: false,

@@ -19,6 +19,7 @@ import com.tidecanvas.annotation.LimitDimension;
 import com.tidecanvas.security.SecurityUtils;
 import com.tidecanvas.service.AiService;
 import com.tidecanvas.service.ImageGridService;
+import com.tidecanvas.service.TeamService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -37,6 +38,7 @@ public class AiController {
     private final AiService aiService;
     private final ImageGridService imageGridService;
     private final AiGenerationLogMapper logMapper;
+    private final TeamService teamService;
 
     @Operation(summary = "统一生成入口")
     @RateLimit(name = "ai_generate", limit = 30, period = 60, dimension = LimitDimension.USER_AND_IP, banThreshold = 3, banSeconds = 600)
@@ -92,7 +94,7 @@ public class AiController {
         Long userId = SecurityUtils.getCurrentUserId();
         Page<AiGenerationLogDO> page = new Page<>(query.getPageNum(), query.getPageSize());
         LambdaQueryWrapper<AiGenerationLogDO> wrapper = new LambdaQueryWrapper<AiGenerationLogDO>()
-                .eq(AiGenerationLogDO::getUserId, userId)
+                .in(AiGenerationLogDO::getUserId, teamService.getTeamMemberIds(userId)) // 团队共享生成历史
                 .eq(query.getProjectId() != null, AiGenerationLogDO::getProjectId, query.getProjectId())
                 .orderByDesc(AiGenerationLogDO::getId);
         logMapper.selectPage(page, wrapper);

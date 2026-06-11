@@ -33,6 +33,13 @@ export function useCanvasKeyboard({ onEscape }: Options = {}) {
       store.selectAll();
       return;
     }
+    // Ctrl+G 把当前多选(≥2)创建为分组
+    if (ctrl && e.key.toLowerCase() === "g") {
+      e.preventDefault();
+      const ids = Array.from(store.selectedNodeIds);
+      if (ids.length >= 2) store.createGroup(ids);
+      return;
+    }
     // Delete 删除选中节点或连接
     if (e.key === "Delete") {
       const nodeIds = Array.from(store.selectedNodeIds);

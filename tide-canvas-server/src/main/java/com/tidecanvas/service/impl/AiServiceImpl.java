@@ -13,17 +13,20 @@ import com.tidecanvas.mapper.AiGenerationLogMapper;
 import com.tidecanvas.mapper.AiHandlerConfigMapper;
 import com.tidecanvas.mapper.AiModelMapper;
 import com.tidecanvas.mapper.AiTaskMapper;
+import com.tidecanvas.mapper.CanvasProjectMapper;
 import com.tidecanvas.model.dto.AiGenerateDTO;
 import com.tidecanvas.model.entity.AiGenerationLogDO;
 import com.tidecanvas.model.entity.AiHandlerConfigDO;
 import com.tidecanvas.model.entity.AiModelDO;
 import com.tidecanvas.model.entity.AiTaskDO;
+import com.tidecanvas.model.entity.CanvasProjectDO;
 import com.tidecanvas.model.query.AiTaskQuery;
 import com.tidecanvas.model.vo.AiHandlerVO;
 import com.tidecanvas.model.vo.AiModelVO;
 import com.tidecanvas.model.vo.AiTaskVO;
 import com.tidecanvas.service.AiService;
 import com.tidecanvas.service.PointsService;
+import com.tidecanvas.service.TeamService;
 import com.tidecanvas.service.ai.AiHandler;
 import com.tidecanvas.service.ai.AiHandlerRegistry;
 import com.tidecanvas.service.ai.AiHandlerResult;
@@ -33,16 +36,14 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
-/**
- * AI服务实现类
- *
- * @author tidecanvas
- */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -52,45 +53,58 @@ public class AiServiceImpl implements AiService {
     private final AiModelMapper modelMapper;
     private final AiHandlerConfigMapper handlerConfigMapper;
     private final AiGenerationLogMapper logMapper;
+    private final CanvasProjectMapper projectMapper;
     private final AiHandlerRegistry handlerRegistry;
     private final ObjectMapper objectMapper;
     private final PointsService pointsService;
+    private final TeamService teamService;
     private final AiTaskRunner aiTaskRunner;
+    private final TransactionTemplate transactionTemplate;
 
-    /** 默认积分消耗 */
-    private static final int DEFAULT_POINT_COST = 10;
+    private static final java.math.BigDecimal DEFAULT_POINT_COST = java.math.BigDecimal.TEN;
 
     @Override
     public AiTaskVO generate(Long userId, AiGenerateDTO dto) {
+        assertProjectOwned(userId, dto.getProjectId());
         AiHandler handler = handlerRegistry.getHandler(dto.getHandler());
         handler.validate(dto.getInput());
 
-        // 积分消耗：单价（优先按「画质×清晰度」差异化定价，其次模型固定价 / Handler 配置 / 默认值）× 出图张数
-        int pointCost = resolvePointCost(dto.getModelId(), dto.getHandler(), dto.getInput())
-                * batchCountOf(dto.getInput());
+        AiModelDO selectedModel = findModel(dto.getModelId());
+        // 单价支持小数（Runware 等按 USD 计价的供应商换算后常为小数积分），
+        // 总价 = 单价 × 张数 × 团队系数，最后一步向上取整为整数积分（积分账本为整数，且不收 0 积分单）。
+        java.math.BigDecimal unitCost = resolvePointCost(selectedModel, dto.getHandler(), dto.getInput());
+        java.math.BigDecimal teamFactor = teamService.getPriceFactor(userId);
+        java.math.BigDecimal total = unitCost
+                .multiply(java.math.BigDecimal.valueOf(batchCountOf(dto.getInput())))
+                .multiply(teamFactor);
+        // 须在 lambda 之前算出最终值（pointCost 被 lambda 捕获，需 effectively final）。
+        int pointCost = total.signum() <= 0 ? 0 : total.setScale(0, java.math.RoundingMode.CEILING).intValue();
 
-        // 创建任务记录
-        AiTaskDO task = new AiTaskDO();
-        task.setUserId(userId);
-        task.setProjectId(dto.getProjectId());
-        task.setHandlerName(dto.getHandler());
-        task.setStatus(AiTaskStatusEnum.PROCESSING.getCode());
-        task.setProgress(0);
-        task.setCost(java.math.BigDecimal.valueOf(pointCost));
-        task.setDeleted(0);
-        try {
-            task.setInputParams(objectMapper.writeValueAsString(dto.getInput()));
-        } catch (Exception e) {
-            task.setInputParams("{}");
-        }
-        taskMapper.insert(task);
+        AiTaskDO task = transactionTemplate.execute(status -> {
+            AiTaskDO created = new AiTaskDO();
+            created.setUserId(userId);
+            created.setProjectId(dto.getProjectId());
+            created.setHandlerName(dto.getHandler());
+            created.setModelId(selectedModel == null ? null : selectedModel.getId());
+            created.setStatus(AiTaskStatusEnum.PROCESSING.getCode());
+            created.setProgress(0);
+            created.setCost(java.math.BigDecimal.valueOf(pointCost));
+            created.setDeleted(0);
+            try {
+                created.setInputParams(objectMapper.writeValueAsString(dto.getInput()));
+            } catch (Exception e) {
+                created.setInputParams("{}");
+            }
+            taskMapper.insert(created);
 
-        // 使用积分系统扣减积分（替代原有apiQuota扣减）
-        pointsService.deductPoints(userId, pointCost, PointsTransactionTypeEnum.AI_CONSUME,
-                task.getId(), "AI生成: " + dto.getHandler());
+            if (pointCost > 0) {
+                pointsService.deductPoints(userId, pointCost, PointsTransactionTypeEnum.AI_CONSUME,
+                        created.getId(), "AI生成: " + dto.getHandler());
+            }
+            return created;
+        });
 
         if (handler.isAsync()) {
-            // 通过独立 Bean 调用，确保 @Async 经 Spring 代理真正异步执行（不能自调用）
             aiTaskRunner.run(task.getId(), handler, dto.getModelId(), dto.getInput(), pointCost);
         } else {
             executeSync(task, handler, dto.getModelId(), dto.getInput(), pointCost);
@@ -99,7 +113,20 @@ public class AiServiceImpl implements AiService {
         return toTaskVO(task);
     }
 
-    private void executeSync(AiTaskDO task, AiHandler handler, String modelId, java.util.Map<String, Object> input, int pointCost) {
+    private void assertProjectOwned(Long userId, Long projectId) {
+        if (projectId == null) {
+            return;
+        }
+        // 团队共享：成员可在队友的项目内生成（计费仍扣本人积分）
+        Long count = projectMapper.selectCount(new LambdaQueryWrapper<CanvasProjectDO>()
+                .eq(CanvasProjectDO::getId, projectId)
+                .in(CanvasProjectDO::getUserId, teamService.getTeamMemberIds(userId)));
+        if (count == null || count == 0) {
+            throw new BusinessException(ResultCode.FORBIDDEN, "无权在该项目下创建任务");
+        }
+    }
+
+    private void executeSync(AiTaskDO task, AiHandler handler, String modelId, Map<String, Object> input, int pointCost) {
         GenerationLogContext.set(task.getId(), task.getUserId(), task.getProjectId(), task.getHandlerName());
         long startMs = System.currentTimeMillis();
         boolean failed = false;
@@ -123,7 +150,6 @@ public class AiServiceImpl implements AiService {
             task.setErrorMsg(errorMsg);
             task.setCompleteTime(LocalDateTime.now());
         } finally {
-            // 兜底记录生成日志：仅当本次未产生上游调用日志时补记，避免与 recordLog 的详细日志重复
             if (!GenerationLogContext.isRecorded()) {
                 recordSummarySyncLog(task, !failed, resultUrl, errorMsg, startMs);
             }
@@ -144,45 +170,42 @@ public class AiServiceImpl implements AiService {
             lg.setHandlerName(task.getHandlerName());
             lg.setOperationType("ai_generate");
             lg.setSuccess(success ? 1 : 0);
-            lg.setResultUrl(org.springframework.util.StringUtils.hasText(resultUrl) ? resultUrl : null);
-            lg.setErrorMsg(org.springframework.util.StringUtils.hasText(errorMsg) ? errorMsg : null);
+            lg.setResultUrl(StringUtils.hasText(resultUrl) ? resultUrl : null);
+            lg.setErrorMsg(StringUtils.hasText(errorMsg) ? errorMsg : null);
             lg.setDurationMs(System.currentTimeMillis() - startMs);
             lg.setCreateTime(LocalDateTime.now());
             logMapper.insert(lg);
         } catch (Exception e) {
-            log.warn("记录同步生成日志失败: taskId={}", task.getId(), e);
+            log.warn("Failed to record sync AI log: taskId={}", task.getId(), e);
         }
     }
 
-    /**
-     * 解析积分消耗：优先按所选模型价格（每个模型价格不同），其次按 Handler(能力) 配置，最后默认值
-     */
-    private int resolvePointCost(String modelId, String handlerName, java.util.Map<String, Object> input) {
-        if (StringUtils.hasText(modelId) && !"default".equals(modelId)) {
-            AiModelDO model = modelMapper.selectOne(
-                    new LambdaQueryWrapper<AiModelDO>().eq(AiModelDO::getModelId, modelId));
-            if (model != null) {
-                // 1) 差异化定价：图片 config.pricing[quality][clarity]，视频 config.pricing[resolution][duration]
-                Integer matrix = pricingFromConfig(model.getConfig(), input, model.getType());
-                if (matrix != null) {
-                    return matrix;
-                }
-                // 2) 模型固定积分
-                if (model.getPointCost() != null) {
-                    return model.getPointCost();
-                }
+    private AiModelDO findModel(String modelId) {
+        if (!StringUtils.hasText(modelId) || "default".equals(modelId)) {
+            return null;
+        }
+        return modelMapper.selectOne(new LambdaQueryWrapper<AiModelDO>().eq(AiModelDO::getModelId, modelId));
+    }
+
+    private java.math.BigDecimal resolvePointCost(AiModelDO model, String handlerName, Map<String, Object> input) {
+        if (model != null) {
+            java.math.BigDecimal matrix = pricingFromConfig(model.getConfig(), input, model.getType());
+            if (matrix != null) {
+                return matrix;
+            }
+            if (model.getPointCost() != null) {
+                return model.getPointCost();
             }
         }
         AiHandlerConfigDO handlerConfig = handlerConfigMapper.selectOne(
                 new LambdaQueryWrapper<AiHandlerConfigDO>().eq(AiHandlerConfigDO::getHandlerName, handlerName));
         if (handlerConfig != null && handlerConfig.getPointCost() != null) {
-            return handlerConfig.getPointCost();
+            return java.math.BigDecimal.valueOf(handlerConfig.getPointCost());
         }
         return DEFAULT_POINT_COST;
     }
 
-    /** 出图张数（1~4），用于积分按张数计费；缺省 1 */
-    private int batchCountOf(java.util.Map<String, Object> input) {
+    private int batchCountOf(Map<String, Object> input) {
         if (input == null) {
             return 1;
         }
@@ -197,12 +220,7 @@ public class AiServiceImpl implements AiService {
         }
     }
 
-    /**
-     * 从模型 config.pricing 取差异化积分；未配置/未命中返回 null。
-     * 定价维度按模型类型而异：视频 = pricing[resolution][duration]，图片/其他 = pricing[quality][clarity]。
-     * 行列 key 直接取 input 原值，须与前端模型管理里配置的 key 一致（如 resolution "720P"、duration "5"）。
-     */
-    private Integer pricingFromConfig(String config, java.util.Map<String, Object> input, String modelType) {
+    private java.math.BigDecimal pricingFromConfig(String config, Map<String, Object> input, String modelType) {
         if (!StringUtils.hasText(config) || input == null) {
             return null;
         }
@@ -222,17 +240,14 @@ public class AiServiceImpl implements AiService {
             }
             JsonNode cell = pricing.path(rowKey).path(colKey);
             if (cell.isNumber()) {
-                return cell.asInt();
+                return cell.decimalValue();
             }
         } catch (Exception e) {
-            log.warn("解析模型差异化定价失败: {}", e.getMessage());
+            log.warn("Failed to parse AI pricing config: {}", e.getMessage());
         }
         return null;
     }
 
-    /**
-     * 生成失败时返还已扣减的积分
-     */
     private void refundPoints(Long userId, int pointCost, Long taskId) {
         if (pointCost <= 0) {
             return;
@@ -240,31 +255,34 @@ public class AiServiceImpl implements AiService {
         try {
             pointsService.addPoints(userId, pointCost, PointsTransactionTypeEnum.AI_REFUND,
                     taskId, "AI生成失败返还");
-            log.info("AI生成失败已返还积分: userId={}, taskId={}, points={}", userId, taskId, pointCost);
+            log.info("AI points refunded: userId={}, taskId={}, points={}", userId, taskId, pointCost);
         } catch (Exception e) {
-            log.error("返还积分失败: taskId={}", taskId, e);
+            log.error("Failed to refund AI points: taskId={}", taskId, e);
         }
     }
 
     @Override
     public AiTaskVO getTask(Long userId, Long taskId) {
         AiTaskDO task = taskMapper.selectById(taskId);
-        if (task == null || !task.getUserId().equals(userId)) {
+        // 团队共享：成员可查看/轮询队友任务结果
+        if (task == null || !teamService.getTeamMemberIds(userId).contains(task.getUserId())) {
             throw new BusinessException(ResultCode.NOT_FOUND, "任务不存在");
         }
         return toTaskVO(task);
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public void cancelTask(Long userId, Long taskId) {
         AiTaskDO task = taskMapper.selectById(taskId);
         if (task == null || !task.getUserId().equals(userId)) {
             throw new BusinessException(ResultCode.NOT_FOUND, "任务不存在");
         }
-        if (task.getStatus() == AiTaskStatusEnum.PROCESSING.getCode()) {
-            task.setStatus(AiTaskStatusEnum.CANCELLED.getCode());
-            task.setCompleteTime(LocalDateTime.now());
-            taskMapper.updateById(task);
+        int updated = taskMapper.cancelIfProcessing(
+                taskId, userId, AiTaskStatusEnum.PROCESSING.getCode(), AiTaskStatusEnum.CANCELLED.getCode());
+        if (updated > 0) {
+            int pointCost = task.getCost() == null ? 0 : task.getCost().intValue();
+            refundPoints(userId, pointCost, taskId);
         }
     }
 
@@ -272,7 +290,7 @@ public class AiServiceImpl implements AiService {
     public PageResult<AiTaskVO> listTasks(Long userId, AiTaskQuery query) {
         Page<AiTaskDO> page = new Page<>(query.getPageNum(), query.getPageSize());
         LambdaQueryWrapper<AiTaskDO> wrapper = new LambdaQueryWrapper<AiTaskDO>()
-                .eq(AiTaskDO::getUserId, userId)
+                .in(AiTaskDO::getUserId, teamService.getTeamMemberIds(userId))
                 .eq(StringUtils.hasText(query.getHandler()), AiTaskDO::getHandlerName, query.getHandler())
                 .eq(query.getStatus() != null, AiTaskDO::getStatus, query.getStatus())
                 .eq(query.getProjectId() != null, AiTaskDO::getProjectId, query.getProjectId())
@@ -289,6 +307,8 @@ public class AiServiceImpl implements AiService {
         return models.stream().map(m -> {
             AiModelVO vo = new AiModelVO();
             BeanUtils.copyProperties(m, vo);
+            // 上游成本价为商业敏感信息，仅管理端可见，用户侧脱敏
+            vo.setCostPerCall(null);
             return vo;
         }).toList();
     }

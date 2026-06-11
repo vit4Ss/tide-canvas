@@ -10,6 +10,8 @@ import { VideoParamPicker, type VideoParamValue } from "./video-param-picker";
 import { ModelPicker } from "./model-picker";
 import { useAiGeneration } from "@/hooks/canvas/use-ai-generation";
 import { aiApi, uploadFileSmart } from "@/lib/api";
+import { useAuth } from "@/hooks/use-auth";
+import { applyTeamFactor } from "@/lib/points";
 import { AiModelType, type AiModelVO } from "@/types/ai";
 import { NodeHeader } from "./base/node-header";
 import { NodePorts } from "./base/node-ports";
@@ -121,6 +123,7 @@ async function fetchAndCacheVideo(url: string): Promise<string | null> {
 
 export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging = false, isConnectTarget = false, onNodeMouseDown, onPortMouseDown }: Props) {
   const updateNode = useCanvasStore((s) => s.updateNode);
+  const { user } = useAuth(); // 团队价：消耗按 inTeam 系数加价显示
   // 当前画布缩放：外置组件按 1/zoom 反向缩放，保持恒定屏幕尺寸
   const zoom = useCanvasStore((s) => s.transform.k);
   const [videoParam, setVideoParam] = useState<VideoParamValue>({ ratio: "16:9", resolution: "720P", duration: 5, audio: true });
@@ -150,6 +153,12 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   const resolvingRef = useRef(false);
   const { generate, isGenerating } = useAiGeneration();
   const generating = isGenerating(node.id) || node.status === "generating";
+
+  useEffect(() => {
+    if (node.videoSrc && node.status === "error" && !generating) {
+      updateNode(node.id, { status: "success" });
+    }
+  }, [generating, node.id, node.status, node.videoSrc, updateNode]);
   const isMultiSelect = useCanvasStore((s) => s.selectedNodeIds.size > 1);
   const showAuxUI = isSelected && !isDragging && !isMultiSelect;
 
@@ -460,6 +469,13 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
 
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
+  const handlePromptChange = (value: string) => {
+    updateNode(node.id, {
+      prompt: value,
+      ...(node.status === "error" ? { status: node.videoSrc ? "success" : "idle" } : {}),
+    });
+  };
+
   const handleGenerate = () => {
     const st = useCanvasStore.getState();
     const incoming = st.connections.filter((c) => c.targetId === node.id);
@@ -524,6 +540,9 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       }
       st.selectNode(newId);
       targetNodeId = newId;
+      if (node.status === "error") {
+        updateNode(node.id, { status: node.videoSrc ? "success" : "idle" });
+      }
     }
 
     generate({ nodeId: targetNodeId, handler, modelId: selectedModelId || "default", input });
@@ -538,9 +557,9 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     >
       <div className="relative">
         <div
-          className={`relative overflow-hidden rounded-2xl border bg-white transition-all dark:bg-neutral-950 ${
-            isConnectTarget ? "border-blue-500 ring-2 ring-blue-500/40" :
-            isSelected ? "border-blue-400 dark:border-blue-400" : "border-neutral-200 dark:border-neutral-800"
+          className={`relative overflow-hidden rounded-2xl bg-white shadow-sm ring-1 transition-all dark:bg-neutral-950 ${
+            isConnectTarget ? "ring-2 ring-blue-500/70" :
+            isSelected ? "ring-2 ring-blue-400" : "ring-neutral-200 hover:ring-neutral-300 dark:ring-neutral-800 dark:hover:ring-neutral-700"
           }`}
           style={{ height: cardHeight }}
         >
@@ -564,7 +583,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
               </div>
             </div>
           )}
-          {node.status === "error" && !generating && (
+          {node.status === "error" && !generating && !node.videoSrc && (
             <div className="absolute right-3 top-3 z-[5] rounded-full bg-red-100 px-2.5 py-1 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400">
               生成失败
             </div>
@@ -574,9 +593,13 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
             <div className="relative h-full w-full cursor-grab" onMouseEnter={handleVidEnter} onMouseLeave={handleVidLeave}>
               <video
                 ref={videoRef}
-                src={srcToUse}
+                // 空串会触发浏览器重新下载整页（React 警告）；未就绪时传 undefined 不渲染 src 属性
+                src={srcToUse || undefined}
                 preload="metadata"
                 playsInline
+                // 禁用浏览器/扩展注入的视频悬浮按钮（画中画浮标、下载/翻译工具条）
+                disablePictureInPicture
+                controlsList="nodownload noremoteplayback"
                 className="h-full w-full bg-black object-contain"
                 onLoadedMetadata={(e) => { setVideoDims({ w: e.currentTarget.videoWidth, h: e.currentTarget.videoHeight }); setDuration(e.currentTarget.duration || 0); }}
                 onDurationChange={(e) => setDuration(e.currentTarget.duration || 0)}
@@ -586,9 +609,9 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                 onEnded={() => setPlaying(false)}
               />
               {/* 自定义控制条 */}
-              <div className="absolute inset-x-0 bottom-0 flex select-none items-center gap-2 bg-gradient-to-t from-black/70 to-transparent px-3 pb-2 pt-6">
+              <div className="absolute inset-x-3 bottom-3 flex h-8 select-none items-center gap-2 rounded-full bg-black/55 px-2.5 text-white shadow-lg backdrop-blur-sm">
                 <button onMouseDown={stop} onClick={togglePlay} title={playing ? "暂停" : "播放"}
-                  className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full bg-black/50 text-white transition-colors hover:bg-black/70">
+                  className="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-white/15">
                   {playing ? <Pause className="h-3.5 w-3.5" fill="currentColor" /> : <Play className="h-3.5 w-3.5" fill="currentColor" />}
                 </button>
                 <span className="shrink-0 text-xs tabular-nums text-white">{fmtSec(currentTime)}</span>
@@ -730,7 +753,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                 refs={refs}
                 zoom={zoom}
                 value={node.prompt || ""}
-                onChange={(v) => updateNode(node.id, { prompt: v })}
+                onChange={handlePromptChange}
                 onSubmit={() => { if (node.prompt?.trim() && !generating) handleGenerate(); }}
                 placeholder="描述你想要生成的画面内容，@ 引用已连接图片（图片1/图片2…）"
                 leading={[{ icon: MapPin, label: "标记" }, { icon: Camera, label: "运镜" }, { icon: Shield, label: "角色库" }].map(({ icon: Icon, label }) => (
@@ -744,7 +767,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                 open={promptExpanded}
                 onClose={() => setPromptExpanded(false)}
                 value={node.prompt || ""}
-                onChange={(v) => updateNode(node.id, { prompt: v })}
+                onChange={handlePromptChange}
                 refs={refs}
                 placeholder="描述你想要生成的画面内容，@ 引用已连接图片（图片1/图片2…）"
               />
@@ -767,7 +790,8 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                   </button>
                   <span className="flex items-center gap-0.5 px-0.5">
                     <Zap className="h-3 w-3 text-amber-500" fill="currentColor" />
-                    {pointCost}
+                    {applyTeamFactor(pointCost, user)}
+                    {user?.inTeam && <span className="text-[10px] font-medium text-amber-500">团队价</span>}
                   </span>
                   <button
                     onMouseDown={stop}
@@ -795,6 +819,8 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
               src={node.videoSrc}
               controls
               autoPlay
+              disablePictureInPicture
+              controlsList="nodownload noremoteplayback"
               className="max-h-[92vh] max-w-[92vw] rounded-xl shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             />

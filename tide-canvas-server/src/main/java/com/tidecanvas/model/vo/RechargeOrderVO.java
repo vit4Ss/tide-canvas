@@ -21,6 +21,8 @@ public class RechargeOrderVO {
 
     private String paymentMethod;
 
+    private String paymentNo;
+
     private Integer status;
 
     private String statusName;

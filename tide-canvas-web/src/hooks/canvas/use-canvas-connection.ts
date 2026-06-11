@@ -82,15 +82,17 @@ export function useCanvasConnection({ containerRef }: Options) {
       const c = connectingRef.current;
       if (!c) return;
       const world = screenToWorld(e.clientX, e.clientY);
-      // 检测是否悬停在某节点上（用于高亮目标）
+      // 检测是否悬停在某节点上（用于高亮目标）。命中区按卡片实际渲染区域
+      // 外扩一圈容差：拖到卡片边缘附近松手也算命中，避免差几像素落空弹出快捷新建
+      const HIT_MARGIN = 28;
       const nodes = useCanvasStore.getState().nodes;
       const hover = nodes.find((n) => {
         if (n.id === c.sourceNodeId) return false;
-        // 命中区按卡片实际渲染区域（竖图卡片比名义框窄/高，更精确）
         const cw = n.contentW ?? n.width;
         const ch = n.contentH ?? n.height;
         const left = n.x + (n.width - cw) / 2;
-        return world.x >= left && world.x <= left + cw && world.y >= n.y && world.y <= n.y + ch;
+        return world.x >= left - HIT_MARGIN && world.x <= left + cw + HIT_MARGIN
+          && world.y >= n.y - HIT_MARGIN && world.y <= n.y + ch + HIT_MARGIN;
       });
       setConnecting({ ...c, currentWorldX: world.x, currentWorldY: world.y, hoverTargetNodeId: hover?.id ?? null });
     };

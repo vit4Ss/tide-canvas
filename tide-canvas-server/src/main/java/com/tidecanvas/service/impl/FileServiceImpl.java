@@ -16,6 +16,7 @@ import com.tidecanvas.model.query.FileQuery;
 import com.tidecanvas.model.vo.FilePresignVO;
 import com.tidecanvas.model.vo.FileVO;
 import com.tidecanvas.service.FileService;
+import com.tidecanvas.service.TeamService;
 import com.tidecanvas.service.ai.GenerationLogRecorder;
 import com.tidecanvas.service.storage.DirectUploadTicket;
 import com.tidecanvas.service.storage.StorageStrategy;
@@ -43,6 +44,7 @@ public class FileServiceImpl implements FileService {
     private final StorageProperties storageProperties;
     private final GenerationLogRecorder generationLogRecorder;
     private final RedisTemplate<String, Object> redisTemplate;
+    private final TeamService teamService;
 
     /** 直传预签名 URL 有效期（秒）：仅约束 PUT 请求发起时刻，足够覆盖 presign 到上传开始的间隔 */
     private static final long PRESIGN_EXPIRE_SECONDS = 3600L;
@@ -238,7 +240,7 @@ public class FileServiceImpl implements FileService {
     public PageResult<FileVO> listFiles(Long userId, FileQuery query) {
         Page<SysFileDO> page = new Page<>(query.getPageNum(), query.getPageSize());
         LambdaQueryWrapper<SysFileDO> wrapper = new LambdaQueryWrapper<SysFileDO>()
-                .eq(SysFileDO::getUserId, userId)
+                .in(SysFileDO::getUserId, teamService.getTeamMemberIds(userId)) // 团队共享素材库
                 .eq(StringUtils.hasText(query.getFileType()), SysFileDO::getFileType, query.getFileType())
                 .like(StringUtils.hasText(query.getKeyword()), SysFileDO::getOriginalName, query.getKeyword())
                 .orderByDesc(SysFileDO::getCreateTime);
@@ -253,8 +255,8 @@ public class FileServiceImpl implements FileService {
         if (file == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "文件不存在");
         }
-        // 越权防护：只能查看本人文件
-        if (file.getUserId() == null || !file.getUserId().equals(userId)) {
+        // 越权防护：本人或同团队成员可访问
+        if (file.getUserId() == null || !teamService.getTeamMemberIds(userId).contains(file.getUserId())) {
             throw new BusinessException(ResultCode.FORBIDDEN, "无权访问该文件");
         }
         return toFileVO(file);
@@ -266,7 +268,8 @@ public class FileServiceImpl implements FileService {
         if (file == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "文件不存在");
         }
-        if (!file.getUserId().equals(userId)) {
+        // 删除仅限所有者或团队管理员（成员只能用/看队友素材，不能删）
+        if (!file.getUserId().equals(userId) && !teamService.isTeamAdminOf(userId, file.getUserId())) {
             throw new BusinessException(ResultCode.FORBIDDEN, "无权删除该文件");
         }
         storageStrategy.delete(file.getFilePath());
@@ -309,6 +312,7 @@ public class FileServiceImpl implements FileService {
     private FileVO toFileVO(SysFileDO file) {
         FileVO vo = new FileVO();
         BeanUtils.copyProperties(file, vo);
+        vo.setOwnerId(file.getUserId()); // 字段名不同，需显式设置
         return vo;
     }
 }

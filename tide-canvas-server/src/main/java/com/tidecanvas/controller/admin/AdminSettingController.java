@@ -41,6 +41,13 @@ public class AdminSettingController {
             if (config != null) {
                 config.setConfigValue(entry.getValue());
                 configMapper.updateById(config);
+            } else {
+                // 不存在则插入,保证新增配置项(如支付配置)无需手工建行即可保存
+                config = new SysConfigDO();
+                config.setConfigKey(entry.getKey());
+                config.setConfigValue(entry.getValue());
+                config.setDeleted(0);
+                configMapper.insert(config);
             }
         }
         return Result.success();

@@ -14,6 +14,7 @@ import {
   Layers,
   ChevronLeft,
   Coins,
+  Mail,
   PenTool,
   ShoppingCart,
   Ticket,
@@ -35,6 +36,7 @@ const sidebarItems = [
   { href: "/admin/banners", label: "Banner 管理", icon: Image },
   { href: "/admin/files", label: "文件管理", icon: FolderOpen },
   { href: "/admin/logs", label: "系统日志", icon: ScrollText },
+  { href: "/admin/email-templates", label: "邮件模板", icon: Mail },
   { href: "/admin/settings", label: "系统设置", icon: Settings },
 ];
 

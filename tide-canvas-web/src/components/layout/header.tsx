@@ -93,6 +93,7 @@ export function Header() {
                       <User className="h-4 w-4" />
                       个人中心
                     </Link>
+                    {/* 团队功能暂时隐藏（保留路由与后端，恢复时还原此链接即可） */}
                     <Link
                       href="/user/settings"
                       className="flex items-center gap-2 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"

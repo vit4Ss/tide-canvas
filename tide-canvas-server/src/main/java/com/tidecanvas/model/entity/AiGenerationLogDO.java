@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
@@ -64,6 +65,9 @@ public class AiGenerationLogDO {
 
     /** 耗时（毫秒） */
     private Long durationMs;
+
+    /** 上游成本（USD）—— Runware 等供应商 includeCost 返回；中转站无此字段时为空 */
+    private BigDecimal cost;
 
     private LocalDateTime createTime;
 }

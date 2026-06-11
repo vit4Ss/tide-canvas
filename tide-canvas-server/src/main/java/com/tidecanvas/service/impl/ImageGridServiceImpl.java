@@ -1,14 +1,18 @@
 package com.tidecanvas.service.impl;
 
+import com.tidecanvas.common.ResultCode;
+import com.tidecanvas.exception.BusinessException;
 import com.tidecanvas.model.dto.GridSplitDTO;
 import com.tidecanvas.service.ImageGridService;
 import com.tidecanvas.service.storage.StorageStrategy;
+import com.tidecanvas.util.SafeUrl;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.URI;
@@ -20,11 +24,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.IntStream;
 
-/**
- * 图片宫格切分实现：服务端下载源图（规避浏览器画布跨域 taint），按网格裁剪后逐块上传。
- *
- * @author tidecanvas
- */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -32,8 +31,12 @@ public class ImageGridServiceImpl implements ImageGridService {
 
     private final StorageStrategy storageStrategy;
 
+    private static final long MAX_SOURCE_BYTES = 50L * 1024 * 1024;
+    private static final long MAX_PIXELS = 36_000_000L;
+
     private final HttpClient http = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(15))
+            .followRedirects(HttpClient.Redirect.NEVER)
             .build();
 
     @Override
@@ -44,7 +47,6 @@ public class ImageGridServiceImpl implements ImageGridService {
         int w = src.getWidth();
         int h = src.getHeight();
 
-        // 确定要切的格子（行优先 0-based 索引）：指定 cells 则只切这些，否则全部
         List<Integer> order;
         if (dto.getCells() != null && !dto.getCells().isEmpty()) {
             order = dto.getCells().stream()
@@ -59,45 +61,59 @@ public class ImageGridServiceImpl implements ImageGridService {
         for (int idx : order) {
             int r = idx / cols;
             int c = idx % cols;
-            // 按整数边界切分，末行/末列吸收余数像素，避免漏边或越界
             int x = c * w / cols;
             int y = r * h / rows;
             int cw = (c + 1) * w / cols - x;
             int ch = (r + 1) * h / rows - y;
             byte[] bytes = toPng(src.getSubimage(x, y, cw, ch));
-            String key = storageStrategy.uploadBytes(
-                    bytes, "grid_" + (idx + 1) + ".png", "image/png", "grid");
+            String key = storageStrategy.uploadBytes(bytes, "grid_" + (idx + 1) + ".png", "image/png", "grid");
             urls.add(storageStrategy.getAccessUrl(key));
         }
-        log.info("宫格切分完成: {}x{} 选 {} 块, 源图 {}x{}", rows, cols, urls.size(), w, h);
+        log.info("Grid split completed: rows={}, cols={}, tiles={}, source={}x{}",
+                rows, cols, urls.size(), w, h);
         return urls;
     }
 
-    /** 下载远程图片为 BufferedImage（服务端发起，无浏览器跨域限制）。 */
     private BufferedImage download(String url) {
+        SafeUrl.assertPublicHttp(url);
         try {
             HttpRequest req = HttpRequest.newBuilder(URI.create(url))
                     .timeout(Duration.ofSeconds(30))
-                    .GET().build();
+                    .GET()
+                    .build();
             HttpResponse<InputStream> resp = http.send(req, HttpResponse.BodyHandlers.ofInputStream());
             if (resp.statusCode() / 100 != 2) {
-                throw new RuntimeException("下载源图失败，HTTP " + resp.statusCode());
+                throw new BusinessException(ResultCode.BAD_REQUEST, "下载源图失败，HTTP " + resp.statusCode());
             }
-            try (InputStream in = resp.body()) {
-                BufferedImage img = ImageIO.read(in);
-                if (img == null) {
-                    throw new RuntimeException("无法解析图片内容（不支持的格式或文件损坏）");
+            byte[] body;
+            try (InputStream in = resp.body(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+                byte[] buf = new byte[8192];
+                long total = 0;
+                int n;
+                while ((n = in.read(buf)) != -1) {
+                    total += n;
+                    if (total > MAX_SOURCE_BYTES) {
+                        throw new BusinessException(ResultCode.FILE_SIZE_EXCEEDED, "源图过大");
+                    }
+                    out.write(buf, 0, n);
                 }
-                return img;
+                body = out.toByteArray();
             }
-        } catch (RuntimeException e) {
+            BufferedImage img = ImageIO.read(new ByteArrayInputStream(body));
+            if (img == null) {
+                throw new BusinessException(ResultCode.BAD_REQUEST, "无法解析图片内容");
+            }
+            if ((long) img.getWidth() * img.getHeight() > MAX_PIXELS) {
+                throw new BusinessException(ResultCode.FILE_SIZE_EXCEEDED, "源图像素过大");
+            }
+            return img;
+        } catch (BusinessException e) {
             throw e;
         } catch (Exception e) {
-            throw new RuntimeException("下载源图失败: " + e.getMessage(), e);
+            throw new BusinessException(ResultCode.BAD_REQUEST, "下载源图失败: " + e.getMessage());
         }
     }
 
-    /** 将裁剪块编码为 PNG 字节。getSubimage 与源图共享栅格，先复制为独立图再编码。 */
     private byte[] toPng(BufferedImage tile) {
         try {
             BufferedImage copy = new BufferedImage(tile.getWidth(), tile.getHeight(), BufferedImage.TYPE_INT_ARGB);
@@ -106,7 +122,7 @@ public class ImageGridServiceImpl implements ImageGridService {
             ImageIO.write(copy, "png", out);
             return out.toByteArray();
         } catch (Exception e) {
-            throw new RuntimeException("图片编码失败", e);
+            throw new BusinessException(ResultCode.SERVER_ERROR, "图片编码失败");
         }
     }
 }

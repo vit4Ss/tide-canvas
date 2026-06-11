@@ -28,11 +28,6 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 
-/**
- * 积分服务实现类
- *
- * @author tidecanvas
- */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -47,33 +42,25 @@ public class PointsServiceImpl implements PointsService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void addPoints(Long userId, int amount, PointsTransactionTypeEnum type, Long bizId, String remark) {
-        // 原子更新积分：points = points + amount
+        assertPositiveAmount(amount);
+        SysUserDO user = userMapper.selectForUpdate(userId);
+        if (user == null) {
+            throw new BusinessException(ResultCode.ACCOUNT_NOT_FOUND);
+        }
         userMapper.update(null, new UpdateWrapper<SysUserDO>()
                 .setSql("points = points + " + amount)
                 .eq("id", userId));
 
-        // 重新读取用户积分作为交易后余额
-        SysUserDO user = userMapper.selectById(userId);
-        int balanceAfter = user.getPoints();
-
-        // 插入积分交易记录
-        PointsTransactionDO transaction = new PointsTransactionDO();
-        transaction.setUserId(userId);
-        transaction.setAmount(amount);
-        transaction.setBalanceAfter(balanceAfter);
-        transaction.setType(type.getCode());
-        transaction.setBizId(bizId);
-        transaction.setRemark(remark);
-        transaction.setDeleted(0);
-        transactionMapper.insert(transaction);
-
-        log.info("积分增加: userId={}, amount={}, type={}, balanceAfter={}", userId, amount, type.getDesc(), balanceAfter);
+        int balanceAfter = user.getPoints() + amount;
+        insertTransaction(userId, amount, balanceAfter, type, bizId, remark);
+        log.info("Points added: userId={}, amount={}, type={}, balanceAfter={}",
+                userId, amount, type.getDesc(), balanceAfter);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void deductPoints(Long userId, int amount, PointsTransactionTypeEnum type, Long bizId, String remark) {
-        // 悲观锁锁定用户行，防止并发超扣
+        assertPositiveAmount(amount);
         SysUserDO user = userMapper.selectForUpdate(userId);
         if (user == null) {
             throw new BusinessException(ResultCode.ACCOUNT_NOT_FOUND);
@@ -82,36 +69,19 @@ public class PointsServiceImpl implements PointsService {
             throw new BusinessException(ResultCode.POINTS_INSUFFICIENT);
         }
 
-        // 原子扣减积分
         userMapper.update(null, new UpdateWrapper<SysUserDO>()
                 .setSql("points = points - " + amount)
                 .eq("id", userId));
 
-        // 计算交易后余额
         int balanceAfter = user.getPoints() - amount;
-
-        // 插入积分交易记录（扣减记为负数）
-        PointsTransactionDO transaction = new PointsTransactionDO();
-        transaction.setUserId(userId);
-        transaction.setAmount(-amount);
-        transaction.setBalanceAfter(balanceAfter);
-        transaction.setType(type.getCode());
-        transaction.setBizId(bizId);
-        transaction.setRemark(remark);
-        transaction.setDeleted(0);
-        transactionMapper.insert(transaction);
-
-        log.info("积分扣减: userId={}, amount={}, type={}, balanceAfter={}", userId, amount, type.getDesc(), balanceAfter);
+        insertTransaction(userId, -amount, balanceAfter, type, bizId, remark);
+        log.info("Points deducted: userId={}, amount={}, type={}, balanceAfter={}",
+                userId, amount, type.getDesc(), balanceAfter);
     }
 
     @Override
     public PointsBalanceVO getBalance(Long userId) {
-        SysUserDO user = userMapper.selectById(userId);
-        if (user == null) {
-            throw new BusinessException(ResultCode.ACCOUNT_NOT_FOUND);
-        }
-
-        // 检查今日是否已签到
+        SysUserDO user = requireUser(userId);
         LocalDate today = LocalDate.now();
         Long checkinCount = checkinRecordMapper.selectCount(
                 new LambdaQueryWrapper<CheckinRecordDO>()
@@ -127,42 +97,58 @@ public class PointsServiceImpl implements PointsService {
     @Override
     public PageResult<PointsTransactionVO> listTransactions(Long userId, PointsTransactionQuery query) {
         Page<PointsTransactionDO> page = new Page<>(query.getPageNum(), query.getPageSize());
-
-        LambdaQueryWrapper<PointsTransactionDO> wrapper = new LambdaQueryWrapper<PointsTransactionDO>()
-                .eq(PointsTransactionDO::getUserId, userId)
-                .eq(query.getType() != null, PointsTransactionDO::getType, query.getType())
-                .ge(StringUtils.hasText(query.getStartTime()), PointsTransactionDO::getCreateTime,
-                        StringUtils.hasText(query.getStartTime()) ? LocalDateTime.parse(query.getStartTime(), DATE_TIME_FORMATTER) : null)
-                .le(StringUtils.hasText(query.getEndTime()), PointsTransactionDO::getCreateTime,
-                        StringUtils.hasText(query.getEndTime()) ? LocalDateTime.parse(query.getEndTime(), DATE_TIME_FORMATTER) : null)
-                .orderByDesc(PointsTransactionDO::getCreateTime);
-
+        LambdaQueryWrapper<PointsTransactionDO> wrapper = baseQuery(query)
+                .eq(PointsTransactionDO::getUserId, userId);
         transactionMapper.selectPage(page, wrapper);
-        List<PointsTransactionVO> records = page.getRecords().stream().map(this::toTransactionVO).toList();
-        return PageResult.of(records, page);
+        return PageResult.of(page.getRecords().stream().map(this::toTransactionVO).toList(), page);
     }
 
     @Override
     public PageResult<PointsTransactionVO> listAllTransactions(PointsTransactionQuery query) {
         Page<PointsTransactionDO> page = new Page<>(query.getPageNum(), query.getPageSize());
+        LambdaQueryWrapper<PointsTransactionDO> wrapper = baseQuery(query)
+                .eq(query.getUserId() != null, PointsTransactionDO::getUserId, query.getUserId());
+        transactionMapper.selectPage(page, wrapper);
+        return PageResult.of(page.getRecords().stream().map(this::toTransactionVO).toList(), page);
+    }
 
-        LambdaQueryWrapper<PointsTransactionDO> wrapper = new LambdaQueryWrapper<PointsTransactionDO>()
-                .eq(query.getUserId() != null, PointsTransactionDO::getUserId, query.getUserId())
+    private LambdaQueryWrapper<PointsTransactionDO> baseQuery(PointsTransactionQuery query) {
+        return new LambdaQueryWrapper<PointsTransactionDO>()
                 .eq(query.getType() != null, PointsTransactionDO::getType, query.getType())
                 .ge(StringUtils.hasText(query.getStartTime()), PointsTransactionDO::getCreateTime,
                         StringUtils.hasText(query.getStartTime()) ? LocalDateTime.parse(query.getStartTime(), DATE_TIME_FORMATTER) : null)
                 .le(StringUtils.hasText(query.getEndTime()), PointsTransactionDO::getCreateTime,
                         StringUtils.hasText(query.getEndTime()) ? LocalDateTime.parse(query.getEndTime(), DATE_TIME_FORMATTER) : null)
                 .orderByDesc(PointsTransactionDO::getCreateTime);
-
-        transactionMapper.selectPage(page, wrapper);
-        List<PointsTransactionVO> records = page.getRecords().stream().map(this::toTransactionVO).toList();
-        return PageResult.of(records, page);
     }
 
-    /**
-     * 将积分交易DO转换为VO
-     */
+    private void assertPositiveAmount(int amount) {
+        if (amount <= 0) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "积分变动金额必须大于0");
+        }
+    }
+
+    private SysUserDO requireUser(Long userId) {
+        SysUserDO user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new BusinessException(ResultCode.ACCOUNT_NOT_FOUND);
+        }
+        return user;
+    }
+
+    private void insertTransaction(Long userId, int amount, int balanceAfter,
+                                   PointsTransactionTypeEnum type, Long bizId, String remark) {
+        PointsTransactionDO transaction = new PointsTransactionDO();
+        transaction.setUserId(userId);
+        transaction.setAmount(amount);
+        transaction.setBalanceAfter(balanceAfter);
+        transaction.setType(type.getCode());
+        transaction.setBizId(bizId);
+        transaction.setRemark(remark);
+        transaction.setDeleted(0);
+        transactionMapper.insert(transaction);
+    }
+
     private PointsTransactionVO toTransactionVO(PointsTransactionDO transaction) {
         PointsTransactionVO vo = new PointsTransactionVO();
         vo.setId(transaction.getId());

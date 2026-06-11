@@ -1,6 +1,7 @@
 "use client";
 
-import { useRef, useState, useCallback, useEffect } from "react";
+import { useRef, useState, useCallback, useEffect, useMemo } from "react";
+import { Group } from "lucide-react";
 import { useCanvasStore } from "@/stores/use-canvas-store";
 import { useCanvasPanZoom } from "@/hooks/canvas/use-canvas-pan-zoom";
 import { useCanvasNodeDrag } from "@/hooks/canvas/use-canvas-node-drag";
@@ -13,6 +14,7 @@ import { CanvasGridBackground } from "./canvas-grid-background";
 import { CanvasEmptyState } from "./canvas-empty-state";
 import { CanvasNodeComponent } from "./canvas-node";
 import { ConnectionsLayer } from "./connections-layer";
+import { CanvasGroupsLayer } from "./canvas-groups-layer";
 import { CanvasSelectionBox } from "./canvas-selection-box";
 import { CanvasContextMenu, type ContextMenuState } from "./canvas-context-menu";
 import { CanvasBottomToolbar } from "./canvas-bottom-toolbar";
@@ -29,6 +31,7 @@ export function CanvasView() {
   const containerRef = useRef<HTMLDivElement>(null);
   const nodes = useCanvasStore((s) => s.nodes);
   const connections = useCanvasStore((s) => s.connections);
+  const groups = useCanvasStore((s) => s.groups);
   const selectedNodeIds = useCanvasStore((s) => s.selectedNodeIds);
   const selectedConnectionId = useCanvasStore((s) => s.selectedConnectionId);
   const addNode = useCanvasStore((s) => s.addNode);
@@ -50,6 +53,8 @@ export function CanvasView() {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+  // 容器在屏幕中的原点（用于把世界坐标换算成 fixed 屏幕坐标；在 effect 里更新，避免 render 读 ref）
+  const [containerOrigin, setContainerOrigin] = useState({ left: 0, top: 0 });
 
   const panZoom = useCanvasPanZoom({ containerRef });
   const nodeDrag = useCanvasNodeDrag({ gridSnap });
@@ -63,11 +68,16 @@ export function CanvasView() {
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    const update = () => setViewportSize({ width: el.clientWidth, height: el.clientHeight });
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      setViewportSize({ width: r.width, height: r.height });
+      setContainerOrigin({ left: r.left, top: r.top });
+    };
     update();
     const ro = new ResizeObserver(update);
     ro.observe(el);
-    return () => ro.disconnect();
+    window.addEventListener("scroll", update, true);
+    return () => { ro.disconnect(); window.removeEventListener("scroll", update, true); };
   }, []);
 
   const handleAddNode = useCallback((type: string, worldX: number, worldY: number) => {
@@ -167,9 +177,35 @@ export function CanvasView() {
 
   const handleArrange = useCallback(() => {
     const st = useCanvasStore.getState();
+    if (st.nodes.length === 0) return;
     st.pushHistory();
-    autoArrangeNodes(nodes, st.connections, st.updateNode);
-  }, [nodes]);
+    // 纯函数算位 → 单次批量落位（一次渲染），随后视口适配新布局
+    st.updateNodePositions(autoArrangeNodes(st.nodes, st.connections, st.groups));
+    panZoom.fitView();
+  }, [panZoom]);
+
+  // 把当前多选节点创建为一个分组
+  const handleCreateGroup = useCallback(() => {
+    const ids = Array.from(useCanvasStore.getState().selectedNodeIds);
+    if (ids.length < 2) { toast.info("请先选择至少 2 个节点再成组"); return; }
+    const gid = useCanvasStore.getState().createGroup(ids);
+    if (gid) toast.success("已创建分组");
+  }, []);
+
+  // 多选时（≥2）计算包围盒顶部中点 → 供浮动「创建分组」按钮定位
+  const selectionBox = useMemo(() => {
+    if (selectedNodeIds.size < 2) return null;
+    const sel = nodes.filter((n) => selectedNodeIds.has(n.id));
+    if (sel.length < 2) return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity;
+    for (const n of sel) {
+      const w = n.contentW ?? n.width;
+      if (n.x < minX) minX = n.x;
+      if (n.y < minY) minY = n.y;
+      if (n.x + w > maxX) maxX = n.x + w;
+    }
+    return { cx: (minX + maxX) / 2, top: minY };
+  }, [nodes, selectedNodeIds]);
 
   const handleConnectionClick = useCallback((id: string) => {
     clearSelection();
@@ -246,7 +282,9 @@ export function CanvasView() {
   }, [panZoom, addNode]);
 
   return (
-    <div className="relative h-full w-full overflow-hidden bg-neutral-50 dark:bg-neutral-900">
+    // translate="no" + notranslate：告知浏览器/翻译类扩展（如「沉浸式翻译」）整块画布勿翻译，
+    // 抑制其在节点（尤其视频）上注入的悬浮翻译工具条。彻底关闭仍需在扩展侧将本站设为「永不翻译」。
+    <div translate="no" className="notranslate relative h-full w-full overflow-hidden bg-neutral-50 dark:bg-neutral-900">
       <div
         ref={containerRef}
         className="h-full w-full cursor-grab active:cursor-grabbing"
@@ -269,6 +307,7 @@ export function CanvasView() {
           }}
           className="absolute"
         >
+          <CanvasGroupsLayer groups={groups} nodes={nodes} selectedNodeIds={selectedNodeIds} />
           <ConnectionsLayer
             nodes={nodes}
             connections={connections}
@@ -301,6 +340,20 @@ export function CanvasView() {
 
       {nodes.length === 0 && <CanvasEmptyState />}
 
+      {/* 多选浮动操作：在选区顶部上方居中显示「创建分组」（拖动/框选/连线时隐藏） */}
+      {selectionBox && !nodeDrag.draggingNodeId && !boxSelect.isBoxSelecting && !connection.connecting && (
+        <button
+          onClick={handleCreateGroup}
+          style={{
+            left: containerOrigin.left + panZoom.transform.x + selectionBox.cx * panZoom.transform.k,
+            top: containerOrigin.top + panZoom.transform.y + selectionBox.top * panZoom.transform.k - 12,
+          }}
+          className="fixed z-30 flex -translate-x-1/2 -translate-y-full items-center gap-1.5 rounded-lg bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white shadow-lg transition-colors hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+        >
+          <Group className="h-3.5 w-3.5" /> 创建分组 <kbd className="ml-0.5 opacity-60">⌘G</kbd>
+        </button>
+      )}
+
       {isDraggingFile && (
         <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-blue-500/10 backdrop-blur-[1px]">
           <div className="rounded-2xl border-2 border-dashed border-blue-400 bg-white/90 px-8 py-6 text-center shadow-xl dark:bg-neutral-900/90">
@@ -332,10 +385,12 @@ export function CanvasView() {
         canPaste={clipboard.canPaste}
         canUndo={canUndo}
         canRedo={canRedo}
+        selectedCount={selectedNodeIds.size}
         onClose={() => setContextMenu(null)}
         onAddNode={handleAddNode}
         onDeleteNode={removeNode}
         onCopyNode={clipboard.copyNode}
+        onCreateGroup={handleCreateGroup}
         onPaste={clipboard.pasteNode}
         onUndo={undo}
         onRedo={redo}

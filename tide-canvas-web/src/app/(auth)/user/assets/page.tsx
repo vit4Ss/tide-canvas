@@ -2,8 +2,9 @@
 
 import { useEffect, useState, useRef } from "react";
 import { fileApi } from "@/lib/api";
+import { useAuth } from "@/hooks/use-auth";
 import type { FileVO, FileQuery } from "@/types/file";
-import { Upload, Trash2, Image, Film, FileIcon, X } from "lucide-react";
+import { Upload, Trash2, Image, Film, FileIcon, X, Users } from "lucide-react";
 import { formatFileSize, formatDate } from "@/lib/utils";
 
 const typeIcons: Record<string, typeof Image> = {
@@ -13,6 +14,7 @@ const typeIcons: Record<string, typeof Image> = {
 };
 
 export default function UserAssetsPage() {
+  const { user } = useAuth();
   const [files, setFiles] = useState<FileVO[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -76,7 +78,9 @@ export default function UserAssetsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">我的素材</h1>
-          <p className="mt-1 text-sm text-neutral-500">管理上传的图片、视频和其他文件</p>
+          <p className="mt-1 text-sm text-neutral-500">
+            管理上传的图片、视频和其他文件{user?.inTeam ? "（含团队共享素材）" : ""}
+          </p>
         </div>
         <div>
           <input
@@ -126,11 +130,17 @@ export default function UserAssetsPage() {
         <div className="mt-8 grid gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {files.map((file) => {
             const Icon = typeIcons[file.fileType] || FileIcon;
+            const isMine = !file.ownerId || file.ownerId === user?.id;
             return (
               <div
                 key={file.id}
                 className="group relative overflow-hidden rounded-xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950"
               >
+                {user?.inTeam && !isMine && (
+                  <span className="absolute left-2 top-2 z-10 inline-flex items-center gap-1 rounded-md bg-black/55 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm">
+                    <Users className="h-3 w-3" /> 团队共享
+                  </span>
+                )}
                 <button onClick={() => setPreview(file)} className="block w-full">
                   <div className="aspect-square bg-neutral-50 dark:bg-neutral-900">
                     {file.fileType === "image" ? (
@@ -146,12 +156,14 @@ export default function UserAssetsPage() {
                   <p className="truncate text-xs font-medium">{file.originalName}</p>
                   <p className="mt-0.5 text-xs text-neutral-400">{formatFileSize(file.fileSize)}</p>
                 </div>
-                <button
-                  onClick={() => handleDelete(file.id)}
-                  className="absolute right-2 top-2 rounded-lg bg-black/50 p-1.5 text-white opacity-0 transition-opacity hover:bg-black/70 group-hover:opacity-100"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+                {isMine && (
+                  <button
+                    onClick={() => handleDelete(file.id)}
+                    className="absolute right-2 top-2 rounded-lg bg-black/50 p-1.5 text-white opacity-0 transition-opacity hover:bg-black/70 group-hover:opacity-100"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </div>
             );
           })}

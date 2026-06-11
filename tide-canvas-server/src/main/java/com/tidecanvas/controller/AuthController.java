@@ -27,7 +27,8 @@ public class AuthController {
     private final AuthService authService;
 
     @Operation(summary = "发送邮箱注册验证码")
-    @RateLimit(name = "email_code", limit = 3, period = 60, dimension = LimitDimension.IP, banThreshold = 8, banSeconds = 600)
+    // 单 IP 长窗总量上限(防换邮箱轮刷);同邮箱 60s 重发冷却在 VerificationCodeService 内
+    @RateLimit(name = "email_code", limit = 10, period = 600, dimension = LimitDimension.IP, banThreshold = 3, banSeconds = 600)
     @PostMapping("/email-code")
     public Result<Void> emailCode(@Valid @RequestBody SendEmailCodeDTO dto) {
         authService.sendEmailCode(dto.getEmail());

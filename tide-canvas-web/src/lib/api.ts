@@ -29,10 +29,18 @@ import type {
 } from "@/types/blog";
 import type {
   RechargeOrderVO, RechargeCreateDTO, OrderQuery,
+  PaymentInitiateVO, RechargeConfigVO,
 } from "@/types/order";
 import type {
   RedeemCodeVO, RedeemCodeQuery, RedeemResultVO, GenerateRedeemDTO,
 } from "@/types/redeem";
+import type {
+  TeamVO, TeamCreateDTO, TeamJoinDTO,
+} from "@/types/team";
+import type {
+  EmailTemplateVO, EmailTemplateUpdateDTO, EmailTemplatePreviewDTO,
+  EmailRenderVO, EmailTemplateSendTestDTO,
+} from "@/types/email-template";
 
 export const authApi = {
   emailCode: (data: { email: string }) =>
@@ -49,6 +57,15 @@ export const authApi = {
     http.put<void>("/api/auth/password", data),
   updateProfile: (data: UpdateProfileDTO) =>
     http.put<UserVO>("/api/auth/profile", data),
+};
+
+export const teamApi = {
+  me: () => http.get<TeamVO | null>("/api/teams/me"),
+  create: (data: TeamCreateDTO) => http.post<TeamVO>("/api/teams", data),
+  join: (data: TeamJoinDTO) => http.post<TeamVO>("/api/teams/join", data),
+  leave: () => http.post<void>("/api/teams/leave"),
+  disband: () => http.post<void>("/api/teams/disband"),
+  removeMember: (userId: number) => http.delete<void>(`/api/teams/members/${userId}`),
 };
 
 export const projectApi = {
@@ -130,10 +147,11 @@ export async function uploadFileSmart(file: File, onProgress?: (pct: number) => 
     const pre = await fileApi.presign({ filename: file.name, contentType });
     if (pre.success && pre.data?.direct && pre.data.uploadUrl && pre.data.key) {
       const put = await http.putProgress(pre.data.uploadUrl, file, { "Content-Type": pre.data.contentType || contentType }, onProgress);
-      if (!put.ok) {
-        return { success: false, code: put.status, message: "直传 OSS 失败（请检查存储桶 CORS 跨域配置）", data: undefined as unknown as FileVO, timestamp: Date.now() };
+      if (put.ok) {
+        return fileApi.register({ key: pre.data.key, originalName: file.name, contentType });
       }
-      return fileApi.register({ key: pre.data.key, originalName: file.name, contentType });
+      // 直传 PUT 失败（多为 OSS 桶未配 CORS，浏览器预检被拦）→ 不报错，落到下方服务器中转上传，保证上传始终可用。
+      // 如需启用直传(省后端带宽/大文件友好)，请为 OSS 桶配置 CORS：来源=站点域名，方法=PUT/GET/HEAD，允许头=*，暴露头=ETag。
     }
   } catch {
     // presign 异常 → 回退中转上传
@@ -191,8 +209,9 @@ export const adminApi = {
       create: (data: AiProviderCreateDTO) => http.post<AiProviderVO>("/api/admin/ai/providers", data),
       update: (id: number, data: AiProviderUpdateDTO) => http.put<void>(`/api/admin/ai/providers/${id}`, data),
       delete: (id: number) => http.delete<void>(`/api/admin/ai/providers/${id}`),
-      // 从供应商接口拉取可用模型 ID 列表（id 为雪花长整型字符串）
-      remoteModels: (id: string) => http.get<string[]>(`/api/admin/ai/providers/${id}/models`),
+      // 从供应商接口拉取可用模型 ID 列表（id 为雪花长整型字符串）；runware 供应商支持 search 关键词
+      remoteModels: (id: string, search?: string) =>
+        http.get<string[]>(`/api/admin/ai/providers/${id}/models${search ? `?search=${encodeURIComponent(search)}` : ""}`),
     },
     models: {
       list: () => http.get<AiModelVO[]>("/api/admin/ai/models"),
@@ -208,6 +227,9 @@ export const adminApi = {
       list: (query: AiGenerationLogQuery) =>
         http.get<PageData<AiGenerationLogVO>>("/api/admin/ai/logs", toParams(query)),
       get: (id: number) => http.get<AiGenerationLogVO>(`/api/admin/ai/logs/${id}`),
+      // 当前筛选条件下的上游成本汇总（USD）
+      costSum: (query: AiGenerationLogQuery) =>
+        http.get<number>("/api/admin/ai/logs/cost-sum", toParams(query)),
     },
   },
   redeem: {
@@ -219,6 +241,16 @@ export const adminApi = {
   settings: {
     get: () => http.get<Record<string, unknown>>("/api/admin/settings"),
     update: (data: Record<string, unknown>) => http.put<void>("/api/admin/settings", data),
+  },
+  emailTemplates: {
+    list: () => http.get<EmailTemplateVO[]>("/api/admin/email-templates"),
+    get: (id: number) => http.get<EmailTemplateVO>(`/api/admin/email-templates/${id}`),
+    update: (id: number, data: EmailTemplateUpdateDTO) =>
+      http.put<void>(`/api/admin/email-templates/${id}`, data),
+    preview: (data: EmailTemplatePreviewDTO) =>
+      http.post<EmailRenderVO>("/api/admin/email-templates/preview", data),
+    sendTest: (id: number, data: EmailTemplateSendTestDTO) =>
+      http.post<void>(`/api/admin/email-templates/${id}/send-test`, data),
   },
   logs: {
     list: (query: LogQuery) =>
@@ -328,4 +360,10 @@ export const orderApi = {
     http.get<RechargeOrderVO>(`/api/orders/${id}`),
   cancel: (id: number) =>
     http.post<void>(`/api/orders/${id}/cancel`),
+  rechargeConfig: () =>
+    http.get<RechargeConfigVO>("/api/orders/recharge-config"),
+  pay: (id: number, payType?: string) =>
+    http.post<PaymentInitiateVO>(`/api/orders/${id}/pay`, payType ? { payType } : {}),
+  sync: (id: number) =>
+    http.post<RechargeOrderVO>(`/api/orders/${id}/sync`),
 };

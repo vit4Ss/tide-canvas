@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, Suspense } from "react";
-import { X, Mail, ShieldCheck, Sparkles, Loader2 } from "lucide-react";
+import { X, Mail, Loader2 } from "lucide-react";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { OAuthCallbackHandler } from "@/components/auth/oauth-callback-handler";
 
@@ -38,7 +38,7 @@ function LoginContent() {
   const tabBtn = (active: boolean) =>
     `flex-1 rounded-lg py-2 text-sm font-medium transition-colors ${active ? "bg-white/10 text-white" : "text-neutral-400 hover:text-white"}`;
   const inputCls =
-    "mt-1.5 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white placeholder-neutral-500 outline-none transition-colors focus:border-white/30";
+    "mt-1.5 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white placeholder-neutral-500 outline-none transition duration-200 hover:border-white/20 focus:bg-white/[0.06]";
 
   return (
     <div className="fixed inset-0 z-[100] flex bg-black text-white">
@@ -60,14 +60,6 @@ function LoginContent() {
         <p className="mt-8 max-w-md text-sm leading-relaxed text-neutral-400">
           新一代由 AI 驱动的多模态创作工作流。从单次生成到连续推演，让创意在无限画布上自由生长。
         </p>
-        <div className="mt-8 flex flex-wrap gap-3">
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/15 px-4 py-2 text-sm text-neutral-300">
-            <ShieldCheck className="h-4 w-4" /> 极简账户接驳
-          </span>
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/15 px-4 py-2 text-sm text-neutral-300">
-            <Sparkles className="h-4 w-4" /> 无缝跳转生成台
-          </span>
-        </div>
       </div>
 
       {/* 右：登录卡 */}

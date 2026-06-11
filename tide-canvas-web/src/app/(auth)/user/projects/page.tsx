@@ -1,36 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { projectApi } from "@/lib/api";
+import { useAuth } from "@/hooks/use-auth";
 import type { ProjectVO } from "@/types/canvas";
-import { Plus, MoreHorizontal, Trash2, ExternalLink, ArrowLeft, FolderPlus } from "lucide-react";
+import { Plus, ArrowLeft, FolderPlus, Users } from "lucide-react";
 import { formatDateTime, displayProjectName } from "@/lib/utils";
+import { ProjectCardMenu } from "@/components/project/project-card-menu";
 
 export default function UserProjectsPage() {
+  const { user } = useAuth();
   const [projects, setProjects] = useState<ProjectVO[]>([]);
   const [loading, setLoading] = useState(true);
-  const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    loadProjects();
-  }, []);
-
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpenId(null);
-      }
-    };
-    if (menuOpenId !== null) {
-      document.addEventListener("mousedown", handleClickOutside);
-      return () => document.removeEventListener("mousedown", handleClickOutside);
-    }
-  }, [menuOpenId]);
-
-  const loadProjects = async () => {
-    setLoading(true);
+  const loadProjects = useCallback(async () => {
     try {
       const res = await projectApi.list({ pageNum: 1, pageSize: 50 });
       if (res.success && res.data) {
@@ -39,16 +23,11 @@ export default function UserProjectsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const handleDelete = async (id: number) => {
-    setMenuOpenId(null);
-    if (!confirm("确定要删除该项目吗？")) return;
-    const res = await projectApi.delete(id);
-    if (res.success) {
-      setProjects((prev) => prev.filter((p) => p.id !== id));
-    }
-  };
+  useEffect(() => {
+    loadProjects();
+  }, [loadProjects]);
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
@@ -68,7 +47,7 @@ export default function UserProjectsPage() {
       <div className="mt-8 grid grid-cols-2 gap-x-5 gap-y-7 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
         {/* 开始创作 */}
         <Link href="/canvas/new" className="flex flex-col gap-2">
-          <div className="flex aspect-[4/3] flex-col items-center justify-center gap-3 rounded-2xl border border-cyan-200 bg-gradient-to-br from-cyan-50 to-blue-50 transition-all hover:shadow-md dark:border-cyan-900 dark:from-cyan-950/40 dark:to-blue-950/40">
+          <div className="flex aspect-video flex-col items-center justify-center gap-3 rounded-2xl border border-cyan-200 bg-gradient-to-br from-cyan-50 to-blue-50 transition-all hover:shadow-md dark:border-cyan-900 dark:from-cyan-950/40 dark:to-blue-950/40">
             <Plus className="h-7 w-7 text-cyan-600 dark:text-cyan-400" />
             <span className="text-sm font-medium text-cyan-700 dark:text-cyan-300">开始创作</span>
           </div>
@@ -81,7 +60,7 @@ export default function UserProjectsPage() {
         {loading ? (
           Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="flex flex-col gap-2">
-              <div className="aspect-[4/3] animate-pulse rounded-2xl bg-neutral-100 dark:bg-neutral-800/50" />
+              <div className="aspect-video animate-pulse rounded-2xl bg-neutral-100 dark:bg-neutral-800/50" />
               <div className="space-y-1.5 px-1">
                 <div className="h-4 w-3/4 animate-pulse rounded bg-neutral-100 dark:bg-neutral-800/50" />
                 <div className="h-3 w-1/3 animate-pulse rounded bg-neutral-100 dark:bg-neutral-800/50" />
@@ -93,9 +72,14 @@ export default function UserProjectsPage() {
             <div key={project.id} className="group flex flex-col gap-2">
               <Link
                 href={`/canvas/${project.urlToken}`}
-                className="overflow-hidden rounded-2xl bg-neutral-100 transition-all hover:shadow-md dark:bg-neutral-800"
+                className="relative overflow-hidden rounded-2xl bg-neutral-100 transition-all hover:shadow-md dark:bg-neutral-800"
               >
-                <div className="aspect-[4/3]">
+                {user?.inTeam && project.ownerId != null && project.ownerId !== user?.id && (
+                  <span className="absolute left-2 top-2 z-10 inline-flex items-center gap-1 rounded-md bg-black/55 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm">
+                    <Users className="h-3 w-3" /> 团队共享
+                  </span>
+                )}
+                <div className="aspect-video">
                   {project.thumbnail ? (
                     <img src={project.thumbnail} alt={project.name} className="h-full w-full object-cover" />
                   ) : (
@@ -107,31 +91,12 @@ export default function UserProjectsPage() {
                   )}
                 </div>
               </Link>
-              <div className="flex items-start justify-between gap-2 px-1">
+              <div className="flex items-center justify-between gap-2 px-1">
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">{displayProjectName(project.name)}</p>
                   <p className="mt-0.5 text-xs text-neutral-400">{formatDateTime(project.updateTime)}</p>
                 </div>
-                <div className="relative" ref={menuOpenId === project.id ? menuRef : null}>
-                  <button
-                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setMenuOpenId(menuOpenId === project.id ? null : project.id); }}
-                    className="rounded-md p-1 text-neutral-400 opacity-0 transition-opacity hover:bg-neutral-100 hover:text-neutral-600 group-hover:opacity-100 dark:hover:bg-neutral-800"
-                  >
-                    <MoreHorizontal className="h-4 w-4" />
-                  </button>
-                  {menuOpenId === project.id && (
-                    <div className="absolute right-0 top-7 z-10 w-32 rounded-lg border border-neutral-200 bg-white py-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-900">
-                      <Link href={`/canvas/${project.urlToken}`} className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50 dark:text-neutral-300 dark:hover:bg-neutral-800">
-                        <ExternalLink className="h-3.5 w-3.5" />
-                        打开
-                      </Link>
-                      <button onClick={() => handleDelete(project.id)} className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30">
-                        <Trash2 className="h-3.5 w-3.5" />
-                        删除
-                      </button>
-                    </div>
-                  )}
-                </div>
+                <ProjectCardMenu project={project} onChanged={loadProjects} />
               </div>
             </div>
           ))

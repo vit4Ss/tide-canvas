@@ -20,7 +20,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(rateLimitInterceptor)
                 .addPathPatterns("/api/**")
-                // 文档与下载代理不计入兜底
-                .excludePathPatterns("/api/files/download", "/doc.html", "/webjars/**", "/v3/api-docs/**", "/swagger-resources/**");
+                // 文档与下载代理不计入兜底;支付网关回调来自固定出口 IP 且会重试,不可被限流误伤
+                .excludePathPatterns("/api/files/download", "/api/orders/notify/**", "/doc.html", "/webjars/**", "/v3/api-docs/**", "/swagger-resources/**");
     }
 }

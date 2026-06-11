@@ -11,6 +11,12 @@ export interface UserVO {
   points: number;
   isAuthor: number;
   storageQuota: number;
+  /** 所属团队ID；null 表示未加入团队 */
+  teamId?: number | null;
+  /** 是否在团队中（团队价/共享标识据此显示） */
+  inTeam?: boolean;
+  /** 团队模式 AI 消耗加价系数（不在团队为 1） */
+  teamPriceFactor?: number;
   createTime: string;
   lastLoginTime: string;
 }

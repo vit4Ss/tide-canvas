@@ -6,6 +6,8 @@ import java.time.LocalDateTime;
 @Data
 public class ProjectVO {
     private Long id;
+    /** 归属用户ID（团队共享时前端据此区分自己/队友的项目） */
+    private Long ownerId;
     private String name;
     private String description;
     private String thumbnail;

@@ -1,4 +1,4 @@
-import { generateNodeId, type CanvasNode, type Connection } from "@/stores/use-canvas-store";
+import { generateNodeId, type CanvasNode, type CanvasGroup, type Connection } from "@/stores/use-canvas-store";
 
 export const NODE_TYPE_TITLES: Record<string, string> = {
   text: "文本",
@@ -148,19 +148,71 @@ function layoutLayeredGrid(
 }
 
 /**
- * 自动整理：先按连线求「连通分量」，每条真正有连线的链路各占一条横向 band（内部用分层网格布局，
- * 源在左衍生在右），所有孤立（无连线）节点合并成一个网格 band。各 band 竖向堆叠、留明显间距。
- * 这样**没有连线的节点绝不会与某条链路在同一水平线上对齐**，避免「看起来相连其实没连」的误读。
+ * 孤立节点的素材网格：按阅读顺序（原 y、x）贪心填入当前最矮的列，列数取「网格接近 16:10 视口形状」，
+ * 避免列优先堆叠把几张图摞成一条 1800px 的竖带。返回相对坐标与包围盒。
+ */
+function layoutMasonryGrid(
+  ids: string[],
+  nodeMap: Map<string, CanvasNode>,
+  gaps: LayoutGaps,
+): { pos: Map<string, { x: number; y: number }>; width: number; height: number } {
+  const { colGap, rowGap } = gaps;
+  const realW = (n: CanvasNode) => n.contentW ?? n.width;
+  const realH = (n: CanvasNode) => n.contentH ?? n.height;
+  const n = ids.length;
+  const colW = Math.max(...ids.map((id) => realW(nodeMap.get(id)!)));
+  const avgH = ids.reduce((s, id) => s + realH(nodeMap.get(id)!), 0) / n;
+  // 列数²·colW ≈ 16:10 · n·avgH·colW → 网格宽高比接近常见视口
+  const nCols = Math.max(1, Math.min(n, Math.round(Math.sqrt((1.6 * n * avgH) / Math.max(1, colW)))));
+
+  const colHs = new Array<number>(nCols).fill(0);
+  const pos = new Map<string, { x: number; y: number }>();
+  for (const id of ids) {
+    let ci = 0;
+    for (let c = 1; c < nCols; c++) if (colHs[c] < colHs[ci]) ci = c;
+    const node = nodeMap.get(id)!;
+    const w = realW(node);
+    // 卡片在列宽内水平居中，并补偿卡片相对 node.width 容器的居中偏移
+    pos.set(id, { x: ci * (colW + colGap) + (colW - w) / 2 - (node.width - w) / 2, y: colHs[ci] });
+    colHs[ci] += realH(node) + rowGap;
+  }
+  return {
+    pos,
+    width: nCols * colW + colGap * (nCols - 1),
+    height: Math.max(0, ...colHs) - rowGap,
+  };
+}
+
+/**
+ * 自动整理（纯函数，返回批量位置，调用方单次 set 落库）：
+ * <ul>
+ *   <li><b>连通分量分 band</b>：每条有连线的链路各占一条横向 band（分层网格，源在左衍生在右），
+ *       孤立节点不会与链路在同一水平线上对齐，避免「看起来相连其实没连」的误读。</li>
+ *   <li><b>分组不拆散</b>：同组成员并入同一连通分量，整理后仍聚在同一 band，组框不会被拉穿全图。</li>
+ *   <li><b>顺序稳定</b>：链路 band 按整理前的垂直位置排序，多次整理不乱跳；孤立节点排成素材网格置底。</li>
+ *   <li><b>原地整理</b>：整体包围盒中心对齐整理前的中心，不把内容搬去世界原点。</li>
+ * </ul>
  */
 export function autoArrangeNodes(
   nodes: CanvasNode[],
   connections: Connection[],
-  updateNode: (id: string, data: Partial<CanvasNode>) => void,
-) {
-  if (nodes.length === 0) return;
+  groups: CanvasGroup[] = [],
+): Array<{ id: string; x: number; y: number }> {
+  if (nodes.length === 0) return [];
   const gaps: LayoutGaps = { layerGap: 160, colGap: 40, rowGap: 40 };
   const bandGap = 140; // 不同连通分量（独立链路 / 孤立节点组）之间的竖向间距，强调彼此无关
   const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+  const realW = (n: CanvasNode) => n.contentW ?? n.width;
+  const realH = (n: CanvasNode) => n.contentH ?? n.height;
+
+  // 整理前内容包围盒中心：整理后整体对齐回来，保持「原地整理」
+  let oldMinX = Infinity, oldMinY = Infinity, oldMaxX = -Infinity, oldMaxY = -Infinity;
+  for (const n of nodes) {
+    oldMinX = Math.min(oldMinX, n.x);
+    oldMinY = Math.min(oldMinY, n.y);
+    oldMaxX = Math.max(oldMaxX, n.x + realW(n));
+    oldMaxY = Math.max(oldMaxY, n.y + realH(n));
+  }
 
   // 有向：children + parents + indeg（分层/重心排序用）；并查集：求无向连通分量
   const children = new Map<string, string[]>(nodes.map((n) => [n.id, []]));
@@ -177,15 +229,23 @@ export function autoArrangeNodes(
     }
     return r;
   };
+  const union = (a: string, b: string) => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
   for (const c of connections) {
     if (nodeMap.has(c.sourceId) && nodeMap.has(c.targetId) && c.sourceId !== c.targetId) {
       children.get(c.sourceId)!.push(c.targetId);
       parents.get(c.targetId)!.push(c.sourceId);
       indeg.set(c.targetId, (indeg.get(c.targetId) ?? 0) + 1);
-      const ra = find(c.sourceId);
-      const rb = find(c.targetId);
-      if (ra !== rb) parent.set(ra, rb);
+      union(c.sourceId, c.targetId);
     }
+  }
+  // 分组成员强制同一连通分量：整理不把组拆散（组框由成员位置实时计算，拆散会拉穿全图）
+  for (const g of groups) {
+    const members = g.nodeIds.filter((id) => nodeMap.has(id));
+    for (let i = 1; i < members.length; i++) union(members[0], members[i]);
   }
 
   // 最长路径分层（Kahn 拓扑序）；连通分量间边不相交，全局计算即可得各分量内正确层级
@@ -210,29 +270,56 @@ export function autoArrangeNodes(
     compMap.get(r)!.push(n.id);
   }
   const comps = [...compMap.values()];
-  const linked = comps.filter((c) => c.length >= 2); // 真正有连线的链路
-  const singletons = comps.filter((c) => c.length === 1).map((c) => c[0]); // 孤立节点
+  // 链路 band 按整理前的垂直位置排序（顶部优先），多次整理顺序稳定、不乱跳
+  const compTop = (c: string[]) => Math.min(...c.map((id) => nodeMap.get(id)!.y));
+  const compLeft = (c: string[]) => Math.min(...c.map((id) => nodeMap.get(id)!.x));
+  const linked = comps
+    .filter((c) => c.length >= 2)
+    .sort((a, b) => compTop(a) - compTop(b) || compLeft(a) - compLeft(b));
+  // 孤立节点按阅读顺序（y 优先、x 次之）排成素材网格，置于所有链路之下
+  const singletons = comps
+    .filter((c) => c.length === 1)
+    .map((c) => c[0])
+    .sort((a, b) => {
+      const na = nodeMap.get(a)!;
+      const nb = nodeMap.get(b)!;
+      return na.y - nb.y || na.x - nb.x;
+    });
 
   const depthOf = (id: string) => depth.get(id) ?? 0;
 
-  // 组装各 band：孤立节点合并成一个网格 band 放最上方（视作同一层做换行），随后每条链路各一条
+  // 组装各 band：每条链路（含成组的素材簇）一条，孤立节点素材网格垫底
   const bands: { ids: string[]; pos: Map<string, { x: number; y: number }>; height: number }[] = [];
-  if (singletons.length) {
-    const { pos, height } = layoutLayeredGrid(singletons, () => 0, nodeMap, gaps, children, parents);
-    bands.push({ ids: singletons, pos, height });
-  }
   for (const comp of linked) {
     const { pos, height } = layoutLayeredGrid(comp, depthOf, nodeMap, gaps, children, parents);
     bands.push({ ids: comp, pos, height });
   }
+  if (singletons.length) {
+    const { pos, height } = layoutMasonryGrid(singletons, nodeMap, gaps);
+    bands.push({ ids: singletons, pos, height });
+  }
 
-  // 竖向堆叠各 band；band 内相对坐标 + band 偏移
+  // 竖向堆叠各 band（相对坐标），同时统计新布局包围盒
+  const placed = new Map<string, { x: number; y: number }>();
   let offsetY = 0;
+  let totalW = 0;
   for (const band of bands) {
+    let bandW = 0;
     for (const id of band.ids) {
       const p = band.pos.get(id)!;
-      updateNode(id, { x: p.x, y: offsetY + p.y });
+      placed.set(id, { x: p.x, y: offsetY + p.y });
+      bandW = Math.max(bandW, p.x + realW(nodeMap.get(id)!));
     }
+    totalW = Math.max(totalW, bandW);
     offsetY += band.height + bandGap;
   }
+  const totalH = offsetY - bandGap;
+
+  // 原地整理：新包围盒中心对齐旧中心
+  const dx = (oldMinX + oldMaxX) / 2 - totalW / 2;
+  const dy = (oldMinY + oldMaxY) / 2 - totalH / 2;
+  return nodes.map((n) => {
+    const p = placed.get(n.id)!;
+    return { id: n.id, x: Math.round(p.x + dx), y: Math.round(p.y + dy) };
+  });
 }

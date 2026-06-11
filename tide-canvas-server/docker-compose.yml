@@ -60,7 +60,12 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       JWT_SECRET: ${JWT_SECRET:-TideCanvasSecretKey2026ForJwtTokenGenerationAndValidation}
-      JAVA_OPTS: "-Xms256m -Xmx512m"
+      TZ: Asia/Shanghai
+      JAVA_OPTS: "-Xms256m -Xmx512m -Duser.timezone=Asia/Shanghai"
+      # SMTP 走宿主机代理（仅发信生效）：本机 Clash TUN/fake-ip 下容器直连 Gmail 会黑洞，
+      # 经 host.docker.internal 走宿主机混合端口即可。服务器可直连 SMTP 时把 MAIL_SOCKS_HOST 置空。
+      MAIL_SOCKS_HOST: ${MAIL_SOCKS_HOST:-host.docker.internal}
+      MAIL_SOCKS_PORT: ${MAIL_SOCKS_PORT:-7897}
       # 文件存储默认走 OSS（见 application.yml storage.*）。如需用环境变量覆盖密钥，
       # 取消下面注释并在 .env 填值（application.yml 已用 ${ENV:默认} 接收）：
       # STORAGE_KIND: ${STORAGE_KIND:-oss}

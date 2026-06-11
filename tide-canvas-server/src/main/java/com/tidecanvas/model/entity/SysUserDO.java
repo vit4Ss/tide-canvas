@@ -22,5 +22,7 @@ public class SysUserDO extends BaseEntity {
     private Integer points;
     private Integer isAuthor;
     private Long storageQuota;
+    /** 所属团队ID（冗余缓存，真值以 team_member 为准；null 表示未加入团队） */
+    private Long teamId;
     private LocalDateTime lastLoginTime;
 }

@@ -8,16 +8,19 @@ import {
   Camera, ArrowUp, ChevronDown, ChevronRight, Zap, Download, X,
   ArrowLeft, LayoutGrid, Layers,
   Images, Orbit, Sun, Table, Brush, FlipHorizontal2,
-  Focus, Languages, SlidersHorizontal,
+  Focus, Grid2x2, Hash, RotateCcw,
 } from "lucide-react";
-import { QualityRatioPicker, parseRatio, type QualityRatioValue } from "./quality-ratio-picker";
+import { QualityRatioPicker, parseRatio, RATIO_OPTIONS, type QualityRatioValue } from "./quality-ratio-picker";
 import { ModelPicker } from "./model-picker";
 import { PromptRefEditor, PromptEditorModal } from "./prompt-ref-editor";
 import { PanoramaViewer } from "./panorama-viewer";
+import { InlinePanorama, type InlinePanoramaApi } from "./inline-panorama";
 import { type RefItem } from "./prompt-ref-utils";
 import { NodeChrome } from "./base/node-chrome";
 import { useAiGeneration } from "@/hooks/canvas/use-ai-generation";
 import { aiApi, uploadFileSmart } from "@/lib/api";
+import { useAuth } from "@/hooks/use-auth";
+import { applyTeamFactor } from "@/lib/points";
 import { AiModelType, type AiModelVO } from "@/types/ai";
 import { toast } from "@/components/shared/toast";
 import { Loader2 } from "lucide-react";
@@ -33,18 +36,51 @@ interface Props {
 
 // 自定义宫格选择器的最大行列（N×N 网格）
 const CUSTOM_MAX = 8;
+const IMAGE_CARD_BASE_WIDTH = 608;
+
+/** 是否为比例选择器里存在的明确比例（排除 auto/空值），用于比例继承判断 */
+function isStandardRatio(r?: string | null): r is string {
+  return !!r && r !== "auto" && RATIO_OPTIONS.some((o) => o.value === r);
+}
 
 // 提示词面板比图片卡片左右各宽出的总量（仅未生成图片时显示），居中伸出让底部控件更宽松
 const PANEL_EXTRA = 80;
 
-// 全景扩图提示词：让模型把当前图扩展为可环绕的 360° 等距柱状全景（2:1）
-const PANORAMA_PROMPT =
-  "将这张图扩展生成 360° 等距柱状全景图（equirectangular panorama，宽高比 2:1），向四周自然无缝延展场景，保持主体、风格与光照一致，适合球面环绕观看";
+// 全景扩图提示词：让模型把当前图扩展为可环绕的 360° 全景（比例跟随源图节点）
+const panoramaPrompt = (ratio: string) =>
+  `将这张图扩展生成 360° 环绕全景图（equirectangular panorama，宽高比 ${ratio}）。必须让画面最左边缘与最右边缘无缝闭合，纹理、光照、颜色和透视连续，不能出现垂直拼接线、色块断层或重复硬边。向四周自然延展场景，保持主体、风格与光照一致，适合球面环绕观看。`;
+
+const MULTI_ANGLE_DEFAULT = { yaw: -28, pitch: -8, zoom: 0, wideLens: false };
+const ANGLE_CUBE = { w: 164, h: 92, d: 92 };
+const MULTI_ANGLE_PRESETS = [
+  { label: "自定义", ...MULTI_ANGLE_DEFAULT },
+  { label: "鱼眼视角", yaw: -42, pitch: 6, zoom: -12, wideLens: true },
+  { label: "倾斜视角", yaw: -36, pitch: -22, zoom: 8, wideLens: false },
+  { label: "正面俯拍", yaw: 0, pitch: -32, zoom: 4, wideLens: false },
+  { label: "正面仰拍", yaw: 0, pitch: 24, zoom: 6, wideLens: false },
+  { label: "全景俯拍", yaw: -54, pitch: -36, zoom: -8, wideLens: true },
+];
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const COMMON_RATIOS = [
+  { label: "1:1", value: 1 },
+  { label: "4:3", value: 4 / 3 },
+  { label: "3:4", value: 3 / 4 },
+  { label: "16:9", value: 16 / 9 },
+  { label: "9:16", value: 9 / 16 },
+  { label: "3:2", value: 3 / 2 },
+  { label: "2:3", value: 2 / 3 },
+  { label: "2:1", value: 2 },
+];
+
+const closestRatioLabel = (aspect: number) =>
+  COMMON_RATIOS.reduce((best, item) => (Math.abs(item.value - aspect) < Math.abs(best.value - aspect) ? item : best), COMMON_RATIOS[0]).label;
 
 // memo 化：仅当自身 props（node / 选中 / 拖拽 / 连接目标）变化时重渲染，
 // 画布平移、其他节点拖动都不会触发本节点重渲染。
 export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging = false, isConnectTarget = false, onNodeMouseDown, onPortMouseDown }: Props) {
   const updateNode = useCanvasStore((s) => s.updateNode);
+  const { user } = useAuth(); // 团队价：消耗按 inTeam 系数加价显示
   // 当前画布缩放：外置组件按 1/zoom 反向缩放，保持恒定屏幕尺寸
   const zoom = useCanvasStore((s) => s.transform.k);
   // 多选时隐藏单节点辅助 UI（工具栏/端口/输入框等），仅保留选中边框
@@ -65,6 +101,16 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   // 360° 全景查看器（src 为生成出的全景扩图地址）
   const [panoramaOpen, setPanoramaOpen] = useState(false);
   const [panoramaSrc, setPanoramaSrc] = useState<string | null>(null);
+  // 内嵌全景：三分网格开关 + 复位视角（由卡片上方专用工具栏控制）
+  const [panoGrid, setPanoGrid] = useState(false);
+  const panoApiRef = useRef<InlinePanoramaApi | null>(null);
+  const [angleOpen, setAngleOpen] = useState(false);
+  const [anglePreset, setAnglePreset] = useState("自定义");
+  const [angleYaw, setAngleYaw] = useState(MULTI_ANGLE_DEFAULT.yaw);
+  const [anglePitch, setAnglePitch] = useState(MULTI_ANGLE_DEFAULT.pitch);
+  const [angleZoom, setAngleZoom] = useState(MULTI_ANGLE_DEFAULT.zoom);
+  const [wideLens, setWideLens] = useState(MULTI_ANGLE_DEFAULT.wideLens);
+  const angleDragRef = useRef<{ x: number; y: number; yaw: number; pitch: number } | null>(null);
   const [promptExpanded, setPromptExpanded] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [uploadPct, setUploadPct] = useState(0);
@@ -73,11 +119,34 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const [handlerCosts, setHandlerCosts] = useState<Record<string, number>>({});
   const [imageModels, setImageModels] = useState<AiModelVO[]>([]);
   const [selectedModelId, setSelectedModelId] = useState("");
+  // ===== 比例默认值：与上游连接节点统一 =====
+  // 优先级：本节点钉死的比例（如 720° 全景节点 aspectRatio="2:1"）→ 第一个有明确比例的
+  // 上游连接节点（全景源按 2:1）→ 兜底 16:9。仅作默认值：用户手动改过比例后不再跟随。
+  const upstreamRatio = useCanvasStore((s) => {
+    for (const c of s.connections) {
+      if (c.targetId !== node.id) continue;
+      const src = s.nodes.find((n) => n.id === c.sourceId);
+      if (!src) continue;
+      if (src.is360) return "2:1";
+      if (isStandardRatio(src.aspectRatio)) return src.aspectRatio;
+    }
+    return null;
+  });
+  const defaultRatio = (isStandardRatio(node.aspectRatio) ? node.aspectRatio : null) ?? upstreamRatio;
+  const ratioTouchedRef = useRef(false);
   const [qualityRatio, setQualityRatio] = useState<QualityRatioValue>({
     quality: "standard",
     clarity: "2K",
-    ratio: "16:9",
+    ratio: defaultRatio ?? "16:9",
   });
+  // 默认比例变化（如事后连入全景图）且用户未手动改过 → 渲染期同步跟随（官方「props 变化调整 state」模式）
+  const [lastDefaultRatio, setLastDefaultRatio] = useState(defaultRatio);
+  if (defaultRatio !== lastDefaultRatio) {
+    setLastDefaultRatio(defaultRatio);
+    if (defaultRatio && !ratioTouchedRef.current) {
+      setQualityRatio((s) => ({ ...s, ratio: defaultRatio }));
+    }
+  }
   // 一次出图张数（批量）：首张写回本节点，其余铺成新节点
   const [batchCount, setBatchCount] = useState(1);
   const [batchOpen, setBatchOpen] = useState(false);
@@ -86,6 +155,32 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const imgAspect = imgAspectState && imgAspectState.src === node.imageSrc ? imgAspectState.aspect : null;
   const { generate, isGenerating } = useAiGeneration();
   const generating = isGenerating(node.id) || node.status === "generating";
+  const panoramaSig = useCanvasStore((s) =>
+    s.connections
+      .filter((c) => c.sourceId === node.id)
+      .map((c) => {
+        const target = s.nodes.find((n) => n.id === c.targetId);
+        return target?.is360 ? `${target.id}~${target.imageSrc || ""}~${target.status || ""}` : "";
+      })
+      .filter(Boolean)
+      .join("|")
+  );
+  const existingPanorama = useMemo(() => {
+    const st = useCanvasStore.getState();
+    const conn = st.connections.find((c) => {
+      if (c.sourceId !== node.id) return false;
+      const target = st.nodes.find((n) => n.id === c.targetId);
+      return target?.type === "image" && target.is360;
+    });
+    return conn ? st.nodes.find((n) => n.id === conn.targetId) : undefined;
+  }, [node.id, panoramaSig]);
+  const panoramaGenerating = existingPanorama ? isGenerating(existingPanorama.id) || existingPanorama.status === "generating" : false;
+
+  useEffect(() => {
+    if (node.imageSrc && node.status === "error" && !generating) {
+      updateNode(node.id, { status: "success" });
+    }
+  }, [generating, node.id, node.imageSrc, node.status, updateNode]);
 
   // ===== 引用（@ 提及）系统 =====
   // 取入边连接对应的源节点图片，编号 图片1/图片2…。用字符串签名做选择器，
@@ -118,10 +213,10 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   }, [refsSig, node.id, node.imageSrc]);
 
   // 卡片比例：生成结果优先沿用本次选择的目标画幅，避免返回图自然尺寸把 16:9 卡片改成竖图。
-  const requestedRatio = node.aspectRatio || qualityRatio.ratio;
+  const requestedRatio = node.aspectRatio || (!node.imageSrc ? qualityRatio.ratio : "auto");
   const ratioParsed = parseRatio(requestedRatio);
   const cardAspect = ratioParsed ? ratioParsed.w / ratioParsed.h : (node.imageSrc && imgAspect ? imgAspect : 4 / 3);
-  const CARD_MAX = node.width;
+  const CARD_MAX = IMAGE_CARD_BASE_WIDTH;
   const cardW = cardAspect >= 1 ? CARD_MAX : Math.round(CARD_MAX * cardAspect);
   const cardH = cardAspect >= 1 ? Math.round(CARD_MAX / cardAspect) : CARD_MAX;
   const selectedModel = imageModels.find((m) => m.modelId === selectedModelId);
@@ -170,15 +265,29 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     });
   }, [generate, node.id, node.prompt, node.imageSrc, qualityRatio, selectedModelId, refs, batchCount]);
 
-  // 全景：先 AI 生成 360° 全景扩图（新建 2:1 图片节点并连线），完成后自动打开 360 查看器
+  const handlePromptChange = useCallback((value: string) => {
+    updateNode(node.id, {
+      prompt: value,
+      ...(node.status === "error" ? { status: node.imageSrc ? "success" : "idle" } : {}),
+    });
+  }, [node.id, node.imageSrc, node.status, updateNode]);
+
+  // 全景：先 AI 生成 360° 全景扩图（新建图片节点并连线），完成后自动打开 360 查看器。
+  // 比例跟随源图节点：源图钉死比例 → 当前面板选的比例 → 16:9 托底（16:9 源出 16:9、9:16 源出 9:16）。
   const generatePanorama = useCallback(() => {
     if (!node.imageSrc) { toast.error("请先生成或上传图片"); return; }
     const st = useCanvasStore.getState();
     const nid = generateNodeId();
-    const cw = node.contentW ?? node.width;
-    const ph = Math.round(cw / 2); // 等距柱状全景 2:1
+    const panoRatio = (isStandardRatio(node.aspectRatio) ? node.aspectRatio : null)
+      ?? (isStandardRatio(qualityRatio.ratio) ? qualityRatio.ratio : null)
+      ?? "16:9";
+    const pr = parseRatio(panoRatio);
+    const panoAspect = pr ? pr.w / pr.h : 16 / 9;
+    // 卡片尺寸与图片节点渲染规则一致：横图限宽、竖图限高
+    const cw = panoAspect >= 1 ? IMAGE_CARD_BASE_WIDTH : Math.round(IMAGE_CARD_BASE_WIDTH * panoAspect);
+    const ph = panoAspect >= 1 ? Math.round(IMAGE_CARD_BASE_WIDTH / panoAspect) : IMAGE_CARD_BASE_WIDTH;
     // 放到右侧列下方，避免与已有节点堆叠
-    const targetX = node.x + cw + 80;
+    const targetX = node.x + IMAGE_CARD_BASE_WIDTH + 80;
     const colNodes = st.nodes.filter((n) => {
       const nw = n.contentW ?? n.width;
       return n.x < targetX + cw && n.x + nw > targetX;
@@ -195,31 +304,198 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       height: ph,
       contentW: cw,
       contentH: ph,
-      title: "全景图",
+      title: "720° 全景图",
       status: "idle",
       is360: true,
-      aspectRatio: "2:1",
+      aspectRatio: panoRatio,
     }, true);
     st.addConnection({ id: `conn_${node.id}_${nid}`, sourceId: node.id, targetId: nid }, false);
     st.selectNode(nid);
+    toast.info(`正在生成 ${panoRatio} 的 360 全景图`);
     generate({
       nodeId: nid,
       handler: "image_to_image",
       modelId: selectedModelId || "default",
       input: {
-        prompt: PANORAMA_PROMPT,
+        prompt: panoramaPrompt(panoRatio),
         imageList: [node.imageSrc],
         sourceImage: node.imageSrc,
-        aspectRatio: "2:1",
-        aspect_ratio: "2:1",
-        ratio: "2:1",
+        aspectRatio: panoRatio,
+        aspect_ratio: panoRatio,
+        ratio: panoRatio,
         quality: qualityRatio.quality,
         clarity: qualityRatio.clarity,
         resolution: qualityRatio.clarity,
       },
-      onSuccess: (url) => { setPanoramaSrc(url); setPanoramaOpen(true); },
+      // 生成后不自动弹全屏：结果已在新的 720° 节点内嵌环视；需要全屏再点工具栏全屏/「查看全景」
     });
-  }, [generate, node.id, node.x, node.y, node.width, node.contentW, node.imageSrc, qualityRatio, selectedModelId]);
+  }, [generate, node.id, node.x, node.y, node.width, node.aspectRatio, node.imageSrc, qualityRatio, selectedModelId]);
+
+  const handlePanorama = useCallback(() => {
+    if (!node.imageSrc) {
+      toast.error("请先生成或上传图片");
+      return;
+    }
+    if (node.is360) {
+      setPanoramaSrc(node.imageSrc);
+      setPanoramaOpen(true);
+      return;
+    }
+    if (existingPanorama?.imageSrc) {
+      setPanoramaSrc(existingPanorama.imageSrc);
+      setPanoramaOpen(true);
+      return;
+    }
+    if (existingPanorama && panoramaGenerating) {
+      useCanvasStore.getState().selectNode(existingPanorama.id);
+      toast.info("全景图正在生成中");
+      return;
+    }
+    generatePanorama();
+  }, [existingPanorama, generatePanorama, node.imageSrc, node.is360, panoramaGenerating]);
+
+  // 全景「当前视角截图」→ 上传 → 右侧生成一个连线图片节点
+  const handlePanoCapture = useCallback(async () => {
+    const dataUrl = panoApiRef.current?.capture();
+    if (!dataUrl) { toast.error("截图失败，请重试"); return; }
+    const blob = await (await fetch(dataUrl)).blob();
+    const res = await uploadFileSmart(new File([blob], "全景截图.png", { type: "image/png" }));
+    if (!res.success) { toast.error(res.message || "截图上传失败"); return; }
+    const st = useCanvasStore.getState();
+    const capH = Math.round(node.width / 2);
+    const nid = generateNodeId();
+    st.addNode({ id: nid, type: "image", x: node.x + node.width + 80, y: node.y, width: node.width, height: capH, contentW: node.width, contentH: capH, title: "全景截图", imageSrc: res.data.fileUrl, status: "success" }, true);
+    st.addConnection({ id: `conn_${node.id}_${nid}_c`, sourceId: node.id, targetId: nid }, false);
+    st.selectNode(nid);
+    toast.success("已截取当前视角");
+  }, [node.id, node.x, node.y, node.width]);
+
+  // 全景「4 大视角截图」→ 当前/+90/+180/+270 平视各截一张 → 各上传 → 右侧竖排 4 个连线图片节点
+  const handlePanoCapture4 = useCallback(async () => {
+    const urls = panoApiRef.current?.capture4();
+    if (!urls || urls.length === 0) { toast.error("截图失败，请重试"); return; }
+    toast.info("正在截取 4 个视角…");
+    const st = useCanvasStore.getState();
+    const capH = Math.round(node.width / 2);
+    const baseX = node.x + node.width + 80;
+    let ok = 0;
+    for (let i = 0; i < urls.length; i++) {
+      const blob = await (await fetch(urls[i])).blob();
+      const res = await uploadFileSmart(new File([blob], `全景视角${i + 1}.png`, { type: "image/png" }));
+      if (!res.success) continue;
+      const nid = generateNodeId();
+      st.addNode({ id: nid, type: "image", x: baseX, y: node.y + i * (capH + 24), width: node.width, height: capH, contentW: node.width, contentH: capH, title: `全景视角 ${i + 1}`, imageSrc: res.data.fileUrl, status: "success" }, i === 0);
+      st.addConnection({ id: `conn_${node.id}_${nid}_${i}`, sourceId: node.id, targetId: nid }, false);
+      ok++;
+    }
+    if (ok > 0) toast.success(`已截取 ${ok} 个视角`); else toast.error("截图失败");
+  }, [node.id, node.x, node.y, node.width]);
+
+  const multiAngleRatio = useMemo(() => {
+    if (node.aspectRatio && parseRatio(node.aspectRatio)) return node.aspectRatio;
+    if (node.imageSrc) return closestRatioLabel(cardAspect);
+    if (qualityRatio.ratio && qualityRatio.ratio !== "auto") return qualityRatio.ratio;
+    return closestRatioLabel(cardAspect);
+  }, [cardAspect, node.aspectRatio, node.imageSrc, qualityRatio.ratio]);
+
+  const applyAnglePreset = useCallback((label: string) => {
+    setAnglePreset(label);
+    const preset = MULTI_ANGLE_PRESETS.find((item) => item.label === label);
+    if (!preset || label === "自定义") return;
+    setAngleYaw(preset.yaw);
+    setAnglePitch(preset.pitch);
+    setAngleZoom(preset.zoom);
+    setWideLens(preset.wideLens);
+  }, []);
+
+  const resetMultiAngle = useCallback(() => {
+    setAnglePreset("自定义");
+    setAngleYaw(MULTI_ANGLE_DEFAULT.yaw);
+    setAnglePitch(MULTI_ANGLE_DEFAULT.pitch);
+    setAngleZoom(MULTI_ANGLE_DEFAULT.zoom);
+    setWideLens(MULTI_ANGLE_DEFAULT.wideLens);
+  }, []);
+
+  const buildMultiAnglePrompt = useCallback(() => {
+    const yawText = angleYaw < -6 ? `镜头向左旋转约 ${Math.abs(angleYaw)} 度` : angleYaw > 6 ? `镜头向右旋转约 ${angleYaw} 度` : "镜头保持正面";
+    const pitchText = anglePitch < -6 ? `从上方向下俯拍约 ${Math.abs(anglePitch)} 度` : anglePitch > 6 ? `从下方向上仰拍约 ${anglePitch} 度` : "垂直角度保持平视";
+    const zoomText = angleZoom < -5 ? "镜头略微拉远，保留更多环境" : angleZoom > 5 ? "镜头略微推进，主体更突出" : "主体大小保持接近原图";
+    const lensText = wideLens ? "使用广角镜头效果，边缘透视自然扩展但不要畸变主体。" : "使用自然标准镜头，避免夸张畸变。";
+    return [
+      "基于参考图生成同一主体的多角度图片，必须保持主体身份、服饰/材质、色彩、光照、背景风格和细节一致，只改变摄像机角度与构图。",
+      `${yawText}，${pitchText}，${zoomText}。`,
+      lensText,
+      `输出画幅保持 ${multiAngleRatio}，不要生成 360 全景图，不要改变为 2:1，画面边缘完整自然。`,
+    ].join(" ");
+  }, [anglePitch, angleYaw, angleZoom, multiAngleRatio, wideLens]);
+
+  const handleGenerateMultiAngle = useCallback(() => {
+    if (!node.imageSrc) {
+      toast.error("请先生成或上传图片");
+      return;
+    }
+    const st = useCanvasStore.getState();
+    const nid = generateNodeId();
+    const targetX = node.x + cardW + 80;
+    const colNodes = st.nodes.filter((n) => {
+      const nw = n.contentW ?? n.width;
+      return n.x < targetX + cardW && n.x + nw > targetX;
+    });
+    const targetY = colNodes.length
+      ? Math.max(...colNodes.map((n) => n.y + (n.contentH ?? n.height ?? 0))) + 24
+      : node.y;
+
+    st.addNode({
+      id: nid,
+      type: "image",
+      x: targetX,
+      y: targetY,
+      width: IMAGE_CARD_BASE_WIDTH,
+      height: cardH,
+      contentW: cardW,
+      contentH: cardH,
+      title: "多角度",
+      status: "idle",
+      aspectRatio: multiAngleRatio,
+    }, true);
+    st.addConnection({ id: `conn_${node.id}_${nid}`, sourceId: node.id, targetId: nid }, false);
+    st.selectNode(nid);
+    setAngleOpen(false);
+    generate({
+      nodeId: nid,
+      handler: "image_to_image",
+      modelId: selectedModelId || "default",
+      input: {
+        prompt: buildMultiAnglePrompt(),
+        imageList: [node.imageSrc],
+        sourceImage: node.imageSrc,
+        aspectRatio: multiAngleRatio,
+        aspect_ratio: multiAngleRatio,
+        ratio: multiAngleRatio,
+        quality: qualityRatio.quality,
+        clarity: qualityRatio.clarity,
+        resolution: qualityRatio.clarity,
+      },
+    });
+  }, [buildMultiAnglePrompt, cardH, cardW, generate, multiAngleRatio, node.id, node.imageSrc, node.x, node.y, qualityRatio.clarity, qualityRatio.quality, selectedModelId]);
+
+  const beginAngleDrag = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    angleDragRef.current = { x: e.clientX, y: e.clientY, yaw: angleYaw, pitch: anglePitch };
+    setAnglePreset("自定义");
+  }, [anglePitch, angleYaw]);
+
+  const updateAngleDrag = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!angleDragRef.current) return;
+    e.stopPropagation();
+    const drag = angleDragRef.current;
+    setAngleYaw(clamp(Math.round(drag.yaw + (e.clientX - drag.x) * 0.45), -90, 90));
+    setAnglePitch(clamp(Math.round(drag.pitch - (e.clientY - drag.y) * 0.35), -90, 90));
+  }, []);
+
+  const endAngleDrag = useCallback(() => {
+    angleDragRef.current = null;
+  }, []);
 
   // 宫格切分：调后端把当前图切成 rows×cols 块，每块作为新图片节点铺在原节点右侧
   const handleGridSplit = useCallback(async (rows: number, cols: number, cells: number[] | null = null) => {
@@ -417,6 +693,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       setGridMenuOpen(false);
       setCustomHover(null);
       setBatchOpen(false);
+      setAngleOpen(false);
     }
   }, [showAuxUI]);
 
@@ -473,20 +750,19 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         )}
         {/* 已生成 + 非预览：顶部操作工具栏（恒定大小独立胶囊，吸附卡片左上方）。
             zIndex 抬到端口(默认 10)之上，避免「宫格切分」下拉被端口 + 盖住 */}
-        {showAuxUI && node.imageSrc && !gridPreview && (
+        {showAuxUI && node.imageSrc && !gridPreview && !node.is360 && (
           <NodeChrome zoom={zoom} placement="top-center" gap={10} zIndex={20}>
             <div
               onMouseDown={stop}
               className="flex items-center gap-0.5 whitespace-nowrap rounded-[18px] border border-neutral-200/80 bg-white px-2 py-1.5 text-sm text-neutral-700 shadow-lg dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
             >
-              {/* 全景（NEW）：普通图先 AI 生成全景扩图再 360 环视；已是全景图则直接环视 */}
-              <button onMouseDown={stop} onClick={(e) => { stop(e); if (!node.imageSrc) { toast.error("请先生成或上传图片"); } else if (node.is360) { setPanoramaSrc(node.imageSrc); setPanoramaOpen(true); } else { generatePanorama(); } }} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800">
-                <Images className="h-4 w-4" />
-                全景
-                <span className="rounded-md bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-blue-600 dark:bg-blue-500/20 dark:text-blue-300">NEW</span>
+              {/* 360 全景：普通图生成 2:1 equirectangular 全景；已有结果时直接打开查看器。 */}
+              <button onMouseDown={stop} onClick={(e) => { stop(e); handlePanorama(); }} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800">
+                {panoramaGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Images className="h-4 w-4" />}
+                {panoramaGenerating ? "生成中" : node.is360 || existingPanorama?.imageSrc ? "查看全景" : "720°全景"}
               </button>
               {/* 多角度 */}
-              <button onMouseDown={stop} onClick={(e) => { stop(e); toast.info("「多角度」功能即将上线"); }} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800">
+              <button onMouseDown={stop} onClick={(e) => { stop(e); setAngleOpen((v) => !v); }} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800">
                 <Orbit className="h-4 w-4" /> 多角度
               </button>
               {/* 打光 */}
@@ -572,6 +848,19 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
             </div>
           </NodeChrome>
         )}
+        {/* 720° 全景：专用顶部工具栏（网格 / 复位 / 查看全景 / 下载）—— 浮在卡片上方，不压住画面 */}
+        {showAuxUI && node.imageSrc && node.is360 && !gridPreview && (
+          <NodeChrome zoom={zoom} placement="top-center" gap={10} zIndex={20}>
+            <div onMouseDown={stop} className="flex items-center gap-0.5 whitespace-nowrap rounded-[18px] border border-neutral-200/80 bg-white px-2 py-1.5 text-sm text-neutral-700 shadow-lg dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
+              <button onMouseDown={stop} onClick={(e) => { stop(e); handlePanoCapture(); }} title="当前视角截图" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800"><Camera className="h-4 w-4" /></button>
+              <button onMouseDown={stop} onClick={(e) => { stop(e); handlePanoCapture4(); }} title="4大视角截图" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800"><Grid2x2 className="h-4 w-4" /></button>
+              <button onMouseDown={stop} onClick={(e) => { stop(e); setPanoGrid((v) => !v); }} title="构图参考线" className={`rounded-xl p-2 transition-colors ${panoGrid ? "bg-neutral-100 text-blue-600 dark:bg-neutral-800 dark:text-blue-400" : "hover:bg-neutral-100 dark:hover:bg-neutral-800"}`}><Hash className="h-4 w-4" /></button>
+              <button onMouseDown={stop} onClick={(e) => { stop(e); panoApiRef.current?.reset(); }} title="复位视角" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800"><RotateCcw className="h-4 w-4" /></button>
+              <button onMouseDown={stop} onClick={(e) => { stop(e); handlePanorama(); }} title="全屏查看" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800"><Maximize2 className="h-4 w-4" /></button>
+              <button onMouseDown={stop} onClick={handleDownload} disabled={downloading} title="下载" className="rounded-xl p-2 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">{downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}</button>
+            </div>
+          </NodeChrome>
+        )}
         {/* 已生成 + 预览模式：切分操作栏（恒定大小独立胶囊） */}
         {showAuxUI && node.imageSrc && gridPreview && (
           <NodeChrome zoom={zoom} placement="top-center" gap={10}>
@@ -610,6 +899,171 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
           <PanoramaViewer src={panoramaSrc} title={node.title} onClose={() => setPanoramaOpen(false)} />
         )}
 
+        {/* 多角度：跟随图片节点的内联控制面板 */}
+        {showAuxUI && angleOpen && node.imageSrc && !gridPreview && (
+          <NodeChrome zoom={zoom} placement="bottom-center" gap={18} zIndex={30}>
+            <div
+              onMouseDown={stop}
+              className="w-[562px] overflow-hidden rounded-[14px] bg-white p-5 text-neutral-800 shadow-2xl ring-1 ring-neutral-200/80 dark:bg-[#29292b] dark:text-white dark:ring-white/8"
+            >
+              <div className="mb-5 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-neutral-900 dark:text-white">拖动立方体调整角度</h3>
+                <button
+                  onMouseDown={stop}
+                  onClick={(e) => { stop(e); setAngleOpen(false); }}
+                  className="flex h-7 w-7 items-center justify-center rounded-full text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700 dark:text-white/45 dark:hover:bg-white/8 dark:hover:text-white/80"
+                  title="关闭"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-[240px_1fr] gap-4">
+                <div
+                  className="relative flex h-[240px] cursor-grab items-center justify-center overflow-hidden rounded-[13px] border border-neutral-200 bg-neutral-50 active:cursor-grabbing dark:border-white/8 dark:bg-[#2f2f31]"
+                  onMouseDown={beginAngleDrag}
+                  onMouseMove={updateAngleDrag}
+                  onMouseUp={endAngleDrag}
+                  onMouseLeave={endAngleDrag}
+                >
+                  <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_42%,rgba(15,23,42,0.08),transparent_38%)] dark:bg-[radial-gradient(circle_at_50%_42%,rgba(255,255,255,0.08),transparent_38%)]" />
+                  <div
+                    className="relative"
+                    style={{ width: ANGLE_CUBE.w, height: ANGLE_CUBE.h, perspective: 680, transform: `scale(${1 + angleZoom / 140})` }}
+                  >
+                    <div
+                      className="absolute left-1/2 top-1/2 shadow-xl"
+                      style={{
+                        width: ANGLE_CUBE.w,
+                        height: ANGLE_CUBE.h,
+                        transformStyle: "preserve-3d",
+                        transform: `translate(-50%, -50%) rotateX(${anglePitch}deg) rotateY(${angleYaw}deg)`,
+                        transition: angleDragRef.current ? "none" : "transform 180ms ease",
+                      }}
+                    >
+                      <div
+                        className="absolute left-1/2 top-1/2 overflow-hidden rounded-md bg-neutral-900 ring-1 ring-black/10 [backface-visibility:hidden] dark:ring-white/18"
+                        style={{
+                          width: ANGLE_CUBE.w,
+                          height: ANGLE_CUBE.h,
+                          transform: `translate(-50%, -50%) translateZ(${ANGLE_CUBE.d / 2}px)`,
+                        }}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={node.imageSrc} alt="" className="h-full w-full object-cover" draggable={false} />
+                      </div>
+                      {/* 其余 5 个面（同色）：各面渲染时比真实尺寸大 2px，相邻面在公共棱边互相重叠 1px，
+                          消除透视下面与面之间露出背景底色的「裂缝」 */}
+                      {[
+                        { label: "后", transform: `translate(-50%, -50%) rotateY(180deg) translateZ(${ANGLE_CUBE.d / 2}px)`, width: ANGLE_CUBE.w, height: ANGLE_CUBE.h },
+                        { label: "上", transform: `translate(-50%, -50%) rotateX(90deg) translateZ(${ANGLE_CUBE.h / 2}px)`, width: ANGLE_CUBE.w, height: ANGLE_CUBE.d },
+                        { label: "下", transform: `translate(-50%, -50%) rotateX(-90deg) translateZ(${ANGLE_CUBE.h / 2}px)`, width: ANGLE_CUBE.w, height: ANGLE_CUBE.d },
+                        { label: "左", transform: `translate(-50%, -50%) rotateY(-90deg) translateZ(${ANGLE_CUBE.w / 2}px)`, width: ANGLE_CUBE.d, height: ANGLE_CUBE.h },
+                        { label: "右", transform: `translate(-50%, -50%) rotateY(90deg) translateZ(${ANGLE_CUBE.w / 2}px)`, width: ANGLE_CUBE.d, height: ANGLE_CUBE.h },
+                      ].map((face) => (
+                        <div
+                          key={face.label}
+                          className="absolute left-1/2 top-1/2 flex items-center justify-center bg-[#d8d8d8] text-xs font-semibold text-neutral-500 [backface-visibility:hidden] dark:bg-[#626262] dark:text-white/55"
+                          style={{ width: face.width + 2, height: face.height + 2, transform: face.transform }}
+                        >
+                          {face.label}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex min-w-0 flex-col">
+                  <div className="mb-5 flex flex-wrap gap-2">
+                    {MULTI_ANGLE_PRESETS.map((preset) => (
+                      <button
+                        key={preset.label}
+                        onMouseDown={stop}
+                        onClick={(e) => { stop(e); applyAnglePreset(preset.label); }}
+                        className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-colors ${
+                          anglePreset === preset.label
+                            ? "bg-neutral-900 text-white dark:bg-white/28 dark:text-white"
+                            : "bg-neutral-100 text-neutral-700 hover:bg-neutral-200 hover:text-neutral-950 dark:bg-white/12 dark:text-white/82 dark:hover:bg-white/20 dark:hover:text-white"
+                        }`}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="space-y-5">
+                    {[
+                      { label: "左右旋转", value: angleYaw, min: -90, max: 90, unit: "°", onChange: setAngleYaw },
+                      { label: "垂直角度", value: anglePitch, min: -90, max: 90, unit: "°", onChange: setAnglePitch },
+                      { label: "缩放", value: angleZoom, min: -30, max: 30, unit: "", onChange: setAngleZoom },
+                    ].map((item) => (
+                      <label key={item.label} className="grid grid-cols-[66px_1fr_30px] items-center gap-3 text-xs">
+                        <span className="text-neutral-500 dark:text-white/45">{item.label}</span>
+                        <input
+                          type="range"
+                          min={item.min}
+                          max={item.max}
+                          value={item.value}
+                          onMouseDown={stop}
+                          onChange={(e) => {
+                            setAnglePreset("自定义");
+                            item.onChange(Number(e.target.value));
+                          }}
+                          className="slider-thin"
+                          style={{ "--pct": `${((item.value - item.min) / (item.max - item.min)) * 100}%` } as React.CSSProperties}
+                        />
+                        <span className="text-right font-semibold tabular-nums text-neutral-600 dark:text-white/65">{item.value > 0 ? "+" : ""}{item.value}{item.unit}</span>
+                      </label>
+                    ))}
+                  </div>
+
+                  <button
+                    onMouseDown={stop}
+                    onClick={(e) => {
+                      stop(e);
+                      setAnglePreset("自定义");
+                      setWideLens((v) => !v);
+                    }}
+                    className="mt-5 grid grid-cols-[66px_1fr_34px] items-center gap-3 text-left text-xs"
+                  >
+                    <span className="font-medium text-neutral-600 dark:text-white/62">广角镜头</span>
+                    <span />
+                    <span className={`flex h-5 w-8 items-center rounded-full p-0.5 transition-colors ${wideLens ? "bg-neutral-900 dark:bg-neutral-900" : "bg-neutral-200 ring-1 ring-neutral-300 dark:bg-neutral-700 dark:ring-neutral-600"}`}>
+                      <span className={`h-4 w-4 rounded-full transition-transform ${wideLens ? "translate-x-3 bg-white" : "bg-white dark:bg-neutral-300"}`} />
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-5 flex items-center justify-between">
+                <button
+                  onMouseDown={stop}
+                  onClick={(e) => { stop(e); resetMultiAngle(); }}
+                  className="flex items-center gap-1.5 rounded-md px-1 py-1 text-xs text-neutral-400 transition-colors hover:text-neutral-700 dark:text-white/42 dark:hover:text-white/75"
+                >
+                  <span className="text-base leading-none">↻</span>
+                  重置
+                </button>
+                <div className="flex items-center gap-4">
+                  <span className="flex items-center gap-1 text-xs text-neutral-400 dark:text-white/38">
+                    <Zap className="h-3.5 w-3.5" fill="currentColor" />
+                    {applyTeamFactor(pointCost, user)}
+                    {user?.inTeam && <span className="text-[10px] font-medium text-amber-500">团队价</span>}
+                  </span>
+                  <button
+                    onMouseDown={stop}
+                    onClick={(e) => { stop(e); handleGenerateMultiAngle(); }}
+                    className="flex h-8 w-8 items-center justify-center rounded-full bg-neutral-900 text-white shadow-lg shadow-neutral-950/20 transition-colors hover:bg-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800"
+                    title="生成"
+                  >
+                    <ArrowUp className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </NodeChrome>
+        )}
+
         {/* 查看大图：全屏 lightbox（Portal 到 body，脱离画布缩放层） */}
         {previewOpen && node.imageSrc && createPortal(
           <div
@@ -637,15 +1091,15 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
 
         {/* 主图片区 - 始终显示（作为容器内唯一在流元素，决定容器尺寸） */}
         <div
-          className={`relative rounded-2xl border bg-white transition-all dark:bg-neutral-950 ${
-            isConnectTarget ? "border-blue-500 ring-2 ring-blue-500/40" :
-            isSelected ? "border-blue-400 dark:border-blue-400" : "border-neutral-200 dark:border-neutral-800"
+          className={`relative overflow-hidden rounded-2xl bg-white shadow-sm ring-1 transition-all dark:bg-neutral-950 ${
+            isConnectTarget ? "ring-2 ring-blue-500/70" :
+            isSelected ? "ring-2 ring-blue-400" : "ring-neutral-200 dark:ring-neutral-800"
           }`}
           style={{ width: cardW, height: cardH }}
         >
           {/* 生成中遮罩 */}
           {generating && (
-            <div className="absolute inset-0 z-[5] flex items-center justify-center rounded-2xl bg-white/70 backdrop-blur-sm dark:bg-neutral-900/70">
+            <div className="absolute inset-0 z-[5] flex items-center justify-center bg-white/70 backdrop-blur-sm dark:bg-neutral-900/70">
               <div className="flex flex-col items-center gap-2">
                 <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
                 <p className="text-sm text-neutral-600 dark:text-neutral-400">AI 生成中...</p>
@@ -654,7 +1108,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
           )}
           {/* 上传中遮罩：模糊预览 + 百分比 */}
           {uploading && (
-            <div className="absolute inset-0 z-[6] overflow-hidden rounded-2xl">
+            <div className="absolute inset-0 z-[6] overflow-hidden">
               {localPreview ? (
                 <img src={localPreview} alt="" className="h-full w-full scale-110 object-cover blur-xl" />
               ) : (
@@ -666,7 +1120,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
             </div>
           )}
           {/* 错误状态 */}
-          {node.status === "error" && !generating && (
+          {node.status === "error" && !generating && !node.imageSrc && (
             <div className="absolute right-3 top-3 z-[5] rounded-full bg-red-100 px-2.5 py-1 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400">
               生成失败
             </div>
@@ -695,19 +1149,23 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
             </div>
           )}
           {node.imageSrc ? (
-            <img
-              src={node.imageSrc}
-              alt=""
-              draggable={false}
-              onLoad={(e) => {
-                const t = e.currentTarget;
-                if (t.naturalWidth > 0 && t.naturalHeight > 0) {
-                  setImgAspectState({ src: node.imageSrc || "", aspect: t.naturalWidth / t.naturalHeight });
-                  setImageDims({ w: t.naturalWidth, h: t.naturalHeight });
-                }
-              }}
-              className="h-full w-full rounded-2xl object-contain"
-            />
+            node.is360 ? (
+              <InlinePanorama src={node.imageSrc} gridOn={panoGrid} apiRef={panoApiRef} interactive={showAuxUI} />
+            ) : (
+              <img
+                src={node.imageSrc}
+                alt=""
+                draggable={false}
+                onLoad={(e) => {
+                  const t = e.currentTarget;
+                  if (t.naturalWidth > 0 && t.naturalHeight > 0) {
+                    setImgAspectState({ src: node.imageSrc || "", aspect: t.naturalWidth / t.naturalHeight });
+                    setImageDims({ w: t.naturalWidth, h: t.naturalHeight });
+                  }
+                }}
+                className="h-full w-full object-contain"
+              />
+            )
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-5 p-5">
               <svg className="h-10 w-10 text-neutral-300 dark:text-neutral-700" viewBox="0 0 24 24" fill="currentColor">
@@ -781,7 +1239,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                 refs={refs}
                 zoom={zoom}
                 value={node.prompt || ""}
-                onChange={(v) => updateNode(node.id, { prompt: v })}
+                onChange={handlePromptChange}
                 onSubmit={() => { if (!generating && node.prompt?.trim()) handleGenerate(); }}
                 placeholder="根据图片1的主体或位置参考，输入你的生成描述；输入 @ 可引用已连接图片"
                 leading={
@@ -809,7 +1267,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                 open={promptExpanded}
                 onClose={() => setPromptExpanded(false)}
                 value={node.prompt || ""}
-                onChange={(v) => updateNode(node.id, { prompt: v })}
+                onChange={handlePromptChange}
                 refs={refs}
                 placeholder="输入你的生成描述；输入 @ 可引用已连接图片"
               />
@@ -818,7 +1276,11 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                   <ModelPicker models={imageModels} value={selectedModelId} onChange={setSelectedModelId} />
                   <QualityRatioPicker
                     value={qualityRatio}
-                    onChange={setQualityRatio}
+                    onChange={(v) => {
+                      // 用户手动改过比例后，不再跟随上游连接节点的默认比例
+                      if (v.ratio !== qualityRatio.ratio) ratioTouchedRef.current = true;
+                      setQualityRatio(v);
+                    }}
                     qualities={formatConfig.qualities}
                     clarities={formatConfig.clarities}
                     ratios={formatConfig.ratios}
@@ -828,16 +1290,8 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                     <Camera className="h-3.5 w-3.5" />
                     摄像机
                   </button>
-                  <button onMouseDown={stop} className="flex items-center gap-1 rounded-md px-2 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-800">
-                    <Maximize2 className="h-3.5 w-3.5" />
-                    全景
-                  </button>
-                  <button onMouseDown={stop} className="rounded-md p-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800" title="翻译/润色">
-                    <Languages className="h-3.5 w-3.5" />
-                  </button>
-                  <button onMouseDown={stop} className="rounded-md p-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800" title="高级参数">
-                    <SlidersHorizontal className="h-3.5 w-3.5" />
-                  </button>
+                </div>
+                <div className="flex shrink-0 items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
                   <div className="relative">
                     <button onMouseDown={stop} onClick={(e) => { stop(e); setBatchOpen((v) => !v); }} className="flex items-center gap-1 rounded-md px-2 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-800">
                       {batchCount}张
@@ -858,11 +1312,10 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                       </div>
                     )}
                   </div>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
                   <span className="flex items-center gap-0.5 text-xs text-neutral-500">
                     <Zap className="h-3 w-3 text-amber-500" fill="currentColor" />
-                    {pointCost * batchCount}
+                    {applyTeamFactor(pointCost * batchCount, user)}
+                    {user?.inTeam && <span className="text-[10px] font-medium text-amber-500">团队价</span>}
                   </span>
                   <button
                     onMouseDown={stop}

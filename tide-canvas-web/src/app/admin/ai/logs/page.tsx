@@ -60,6 +60,7 @@ export default function AdminAiLogsPage() {
   const [taskId, setTaskId] = useState<number | undefined>();
   const [userId, setUserId] = useState<number | undefined>();
   const [loading, setLoading] = useState(true);
+  const [costSum, setCostSum] = useState(0);
   const [detail, setDetail] = useState<AiGenerationLogVO | null>(null);
 
   const [refundTarget, setRefundTarget] = useState<AiGenerationLogVO | null>(null);
@@ -77,18 +78,24 @@ export default function AdminAiLogsPage() {
 
   // 不在同步路径 setLoading(true)（避免 effect 内同步 setState）；仅 await 之后落数据
   const load = useCallback(async () => {
+    const filters = {
+      ...(operationType ? { operationType } : {}),
+      ...(success !== "" ? { success: Number(success) } : {}),
+      ...(taskId != null ? { taskId } : {}),
+      ...(userId != null ? { userId } : {}),
+    };
     try {
-      const res = await adminApi.ai.logs.list({
-        pageNum,
-        pageSize: PAGE_SIZE,
-        ...(operationType ? { operationType } : {}),
-        ...(success !== "" ? { success: Number(success) } : {}),
-        ...(taskId != null ? { taskId } : {}),
-        ...(userId != null ? { userId } : {}),
-      });
+      // 列表 + 当前筛选条件下的上游成本汇总并行拉取
+      const [res, sumRes] = await Promise.all([
+        adminApi.ai.logs.list({ pageNum, pageSize: PAGE_SIZE, ...filters }),
+        adminApi.ai.logs.costSum({ pageNum: 1, pageSize: 1, ...filters }),
+      ]);
       if (res.success) {
         setLogs(res.data.records);
         setTotal(res.data.total);
+      }
+      if (sumRes.success) {
+        setCostSum(Number(sumRes.data) || 0);
       }
     } finally {
       setLoading(false);
@@ -160,6 +167,11 @@ export default function AdminAiLogsPage() {
         <ScrollText className="h-5 w-5" />
         <h1 className="text-lg font-bold">操作日志</h1>
         <span className="text-sm text-neutral-400">共 {total} 条</span>
+        {costSum > 0 && (
+          <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400" title="当前筛选条件下全部记录的上游成本合计">
+            上游成本 ${costSum.toFixed(4)}
+          </span>
+        )}
       </div>
 
       {/* 筛选栏 */}
@@ -236,14 +248,15 @@ export default function AdminAiLogsPage() {
               <th className="px-4 py-3">内容</th>
               <th className="px-4 py-3">状态</th>
               <th className="px-4 py-3">耗时</th>
+              <th className="px-4 py-3">成本</th>
               <th className="px-4 py-3" />
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800">
             {loading ? (
-              <tr><td colSpan={9} className="px-4 py-10 text-center text-neutral-400">加载中…</td></tr>
+              <tr><td colSpan={10} className="px-4 py-10 text-center text-neutral-400">加载中…</td></tr>
             ) : logs.length === 0 ? (
-              <tr><td colSpan={9} className="px-4 py-10 text-center text-neutral-400">暂无日志</td></tr>
+              <tr><td colSpan={10} className="px-4 py-10 text-center text-neutral-400">暂无日志</td></tr>
             ) : logs.map((l) => {
               const isAi = l.operationType === "ai_generate" || !l.operationType;
               const canRefund = isAi && l.taskId != null;
@@ -279,6 +292,7 @@ export default function AdminAiLogsPage() {
                     )}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-xs text-neutral-500">{l.durationMs != null ? `${(l.durationMs / 1000).toFixed(1)}s` : "-"}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-xs">{l.cost != null ? <span className="font-mono text-emerald-600 dark:text-emerald-400">${Number(l.cost).toFixed(4)}</span> : <span className="text-neutral-400">-</span>}</td>
                   <td className="whitespace-nowrap px-4 py-3 text-right">
                     {canRefund && (
                       <button
@@ -418,6 +432,7 @@ export default function AdminAiLogsPage() {
               <Field label="HTTP" value={String(detail.httpStatus ?? "-")} />
               <Field label="上游任务ID" value={detail.upstreamTaskId || "-"} />
               <Field label="耗时" value={detail.durationMs != null ? `${detail.durationMs} ms` : "-"} />
+              <Field label="成本(USD)" value={detail.cost != null ? `$${Number(detail.cost).toFixed(4)}` : "-"} />
             </dl>
             {detail.requestUrl ? <Block label="请求地址" text={detail.requestUrl} /> : null}
             <Block label="请求体" text={pretty(detail.requestBody)} mono />

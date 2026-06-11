@@ -3,6 +3,8 @@ import type { UserSimpleVO } from "./user";
 
 export interface ProjectVO {
   id: number;
+  /** 归属用户ID（团队共享时区分自己/队友的项目） */
+  ownerId?: number;
   name: string;
   description: string;
   thumbnail: string;

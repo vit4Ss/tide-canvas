@@ -1,30 +1,70 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Coins, Loader2, Check, Info, Ticket, Headphones } from "lucide-react";
+import { ArrowLeft, Coins, Loader2, Check, Ticket, Headphones } from "lucide-react";
 import { orderApi, redeemApi } from "@/lib/api";
+import { submitPayForm } from "@/lib/pay";
 import { toast } from "@/components/shared/toast";
+import { PAY_TYPE_NAMES, type RechargeConfigVO } from "@/types/order";
 
-// 与后端 points.recharge.ratio 默认一致：1 元 = 100 积分（实际到账由后端按此比例计算）
-const RATIO = 100;
-const AMOUNTS = [10, 100, 500, 1000, 2000, 5000, 10000];
+// 兜底充值比例（实际以后端 recharge-config 返回为准）
+const DEFAULT_RATIO = 100;
+const AMOUNTS = [10, 100, 500, 1000, 2000, 5000];
+// 自定义金额上限（后端单笔上限 100000 元）
+const CUSTOM_MAX = 99999;
 
 export default function RechargePage() {
   const router = useRouter();
   const [tab, setTab] = useState<"member" | "points">("points");
-  const [buying, setBuying] = useState<number | null>(null);
+  const [buying, setBuying] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [redeemCode, setRedeemCode] = useState("");
   const [redeeming, setRedeeming] = useState(false);
+  const [config, setConfig] = useState<RechargeConfigVO | null>(null);
+  const [payType, setPayType] = useState<string>("");
+  const [customInput, setCustomInput] = useState("");
 
-  const handleBuy = async (amount: number) => {
+  const ratio = config?.ratio ?? DEFAULT_RATIO;
+  const onlinePay = config?.onlinePayEnabled ?? false;
+  const payTypes = config?.payTypes ?? [];
+
+  const customAmount = Number.parseInt(customInput, 10);
+  const customValid = Number.isInteger(customAmount) && customAmount >= 1 && customAmount <= CUSTOM_MAX;
+
+  useEffect(() => {
+    orderApi.rechargeConfig().then((res) => {
+      if (res.success && res.data) {
+        setConfig(res.data);
+        if (res.data.payTypes.length > 0) setPayType(res.data.payTypes[0]);
+      }
+    }).catch(() => {
+      // 配置加载失败时保持兜底比例，不阻塞页面
+    });
+  }, []);
+
+  const handleBuy = async (amount: number, key: string) => {
     if (buying !== null) return;
-    setBuying(amount);
+    setBuying(key);
     try {
-      const res = await orderApi.create({ amount, paymentMethod: "alipay" });
-      if (res.success) setSuccess(true);
-      else toast.error(res.message || "创建订单失败");
+      const res = await orderApi.create({ amount, paymentMethod: onlinePay ? payType : "alipay" });
+      if (!res.success) {
+        toast.error(res.message || "创建订单失败");
+        return;
+      }
+      if (!onlinePay) {
+        // 在线支付未启用：保留人工确认流程
+        setSuccess(true);
+        return;
+      }
+      const payRes = await orderApi.pay(res.data.id, payType || undefined);
+      if (payRes.success && payRes.data) {
+        // form POST 跳转网关收银台，支付完成后由 return_url 跳回
+        submitPayForm(payRes.data);
+      } else {
+        toast.error(payRes.message || "发起支付失败，可在我的订单中重试");
+        router.push("/user/orders");
+      }
     } catch {
       toast.error("网络错误，请稍后重试");
     } finally {
@@ -97,11 +137,25 @@ export default function RechargePage() {
         <div className="py-20 text-center text-sm text-neutral-400">会员功能即将上线，敬请期待</div>
       ) : (
         <>
-          {/* 温馨提示 */}
-          <div className="mb-6 flex items-center gap-2 rounded-xl bg-neutral-100 px-4 py-3 text-sm text-neutral-500 dark:bg-neutral-800/60">
-            <Info className="h-4 w-4 shrink-0 text-neutral-400" />
-            温馨提示：积分自购入之日起，有效期 2 年
-          </div>
+          {/* 支付方式选择 */}
+          {onlinePay && payTypes.length > 0 && (
+            <div className="mb-6 flex flex-wrap items-center gap-2">
+              <span className="text-sm text-neutral-500">支付方式：</span>
+              {payTypes.map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setPayType(t)}
+                  className={`rounded-lg border px-4 py-1.5 text-sm font-medium transition-colors ${
+                    payType === t
+                      ? "border-red-500 bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-400"
+                      : "border-neutral-200 text-neutral-600 hover:border-neutral-400 dark:border-neutral-700 dark:text-neutral-300"
+                  }`}
+                >
+                  {PAY_TYPE_NAMES[t] || t}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* 积分套餐网格 */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -109,18 +163,53 @@ export default function RechargePage() {
               <div key={amount} className="rounded-2xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
                 <div className="flex items-center gap-1.5 text-base font-semibold">
                   <Coins className="h-4 w-4 text-amber-500" />
-                  {(amount * RATIO).toLocaleString()} 积分
+                  {(amount * ratio).toLocaleString()} 积分
                 </div>
                 <div className="mt-3 text-3xl font-bold">¥{amount}</div>
                 <button
-                  onClick={() => handleBuy(amount)}
+                  onClick={() => handleBuy(amount, String(amount))}
                   disabled={buying !== null}
                   className="mt-5 flex w-full items-center justify-center gap-1.5 rounded-lg bg-red-500 py-2 text-sm font-medium text-white transition-colors hover:bg-red-600 disabled:opacity-60"
                 >
-                  {buying === amount ? <Loader2 className="h-4 w-4 animate-spin" /> : "立即购买"}
+                  {buying === String(amount) ? <Loader2 className="h-4 w-4 animate-spin" /> : "立即购买"}
                 </button>
               </div>
             ))}
+
+            {/* 自定义金额 */}
+            <div className="rounded-2xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+              <div className="flex items-center gap-1.5 text-base font-semibold">
+                <Coins className="h-4 w-4 text-amber-500" />
+                {customValid ? (
+                  `${(customAmount * ratio).toLocaleString()} 积分`
+                ) : customInput ? (
+                  <span className="text-sm font-normal text-red-500">金额需为 1 ~ {CUSTOM_MAX.toLocaleString()} 的整数</span>
+                ) : (
+                  "自定义金额"
+                )}
+              </div>
+              <div className="mt-3 flex items-baseline gap-1">
+                <span className="text-3xl font-bold">¥</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={CUSTOM_MAX}
+                  step={1}
+                  value={customInput}
+                  onChange={(e) => setCustomInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && customValid) handleBuy(customAmount, "custom"); }}
+                  placeholder="输入金额"
+                  className="w-full min-w-0 border-b border-neutral-300 bg-transparent pb-0.5 text-3xl font-bold outline-none placeholder:text-base placeholder:font-normal placeholder:text-neutral-400 focus:border-red-500 dark:border-neutral-600 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                />
+              </div>
+              <button
+                onClick={() => handleBuy(customAmount, "custom")}
+                disabled={buying !== null || !customValid}
+                className="mt-5 flex w-full items-center justify-center gap-1.5 rounded-lg bg-red-500 py-2 text-sm font-medium text-white transition-colors hover:bg-red-600 disabled:opacity-60"
+              >
+                {buying === "custom" ? <Loader2 className="h-4 w-4 animate-spin" /> : "立即购买"}
+              </button>
+            </div>
 
             {/* 更大额充值 */}
             <div className="flex flex-col justify-between rounded-2xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">

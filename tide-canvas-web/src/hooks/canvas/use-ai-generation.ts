@@ -20,6 +20,7 @@ const POLL_INTERVAL = 2000; // 2 秒轮询
 const MAX_POLL_TIME = 5 * 60 * 1000; // 图片等快任务：最多 5 分钟
 // 视频较慢（后端轮询可达 10min+），前端上限须 ≥ 后端，否则前端会先放弃、把已成功的任务误标失败、且不回填结果
 const MAX_POLL_TIME_VIDEO = 30 * 60 * 1000;
+const IMAGE_CARD_BASE_WIDTH = 608;
 
 function parseAspectRatio(value: unknown): number | null {
   if (typeof value !== "string" || value === "auto") return null;
@@ -30,7 +31,7 @@ function parseAspectRatio(value: unknown): number | null {
 function imageSizeForAspect(node: CanvasNode, aspectRatio: unknown) {
   const aspect = parseAspectRatio(aspectRatio);
   if (!aspect) return {};
-  const width = node.width;
+  const width = IMAGE_CARD_BASE_WIDTH;
   const height = Math.round(width / aspect);
   return {
     height,
@@ -85,12 +86,18 @@ export function useAiGeneration() {
   const [activeTaskIds, setActiveTaskIds] = useState<Set<string>>(new Set());
   const pollTimersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
 
+  const markGenerationFailed = useCallback((nodeId: string) => {
+    const node = useCanvasStore.getState().nodes.find((n) => n.id === nodeId);
+    const nextStatus: CanvasNode["status"] = node?.imageSrc || node?.videoSrc || node?.audioSrc ? "success" : "error";
+    updateNode(nodeId, { status: nextStatus });
+  }, [updateNode]);
+
   /** 轮询任务状态直到完成 */
   const pollTask = useCallback((nodeId: string, taskId: string | number, startTime: number, input: Record<string, unknown>, maxPollMs: number, onSuccess?: (resultUrl: string) => void) => {
     const poll = async () => {
       // 超时检查
       if (Date.now() - startTime > maxPollMs) {
-        updateNode(nodeId, { status: "error" });
+        markGenerationFailed(nodeId);
         toast.error("生成超时，请重试");
         setActiveTaskIds((prev) => {
           const next = new Set(prev);
@@ -103,7 +110,12 @@ export function useAiGeneration() {
       try {
         const res = await aiApi.getTask(taskId as number);
         if (!res.success) {
-          updateNode(nodeId, { status: "error" });
+          markGenerationFailed(nodeId);
+          setActiveTaskIds((prev) => {
+            const next = new Set(prev);
+            next.delete(nodeId);
+            return next;
+          });
           toast.error(res.message || "生成失败");
           return;
         }
@@ -114,24 +126,27 @@ export function useAiGeneration() {
             !!u && (u.startsWith("https://") || u.startsWith("http://") || u.startsWith("data:"));
           const primary = task.resultUrl;
           if (!isValid(primary)) {
-            updateNode(nodeId, { status: "error" });
+            markGenerationFailed(nodeId);
             toast.error("生成结果无效，可能未配置 AI 供应商");
           } else {
             const store = useCanvasStore.getState();
             const node = store.nodes.find((n) => n.id === nodeId);
             const isVideo = node?.type === "video";
+            const isAudio = node?.type === "audio";
             const requestedAspect = input.aspectRatio ?? input.aspect_ratio ?? input.ratio;
             const imageSize = node ? imageSizeForAspect(node, requestedAspect) : {};
-            // 视频写 videoSrc、图片写 imageSrc
+            // 视频写 videoSrc、音频写 audioSrc、图片写 imageSrc
             updateNode(
               nodeId,
-              isVideo ? { status: "success", videoSrc: primary } : { status: "success", imageSrc: primary, ...imageSize },
+              isVideo ? { status: "success", videoSrc: primary }
+                : isAudio ? { status: "success", audioSrc: primary }
+                : { status: "success", imageSrc: primary, ...imageSize },
             );
             // 批量多图：resultMeta.urls 的其余张铺成新图片节点（仅图片）
             const taskMeta = parseTaskMeta(task.resultMeta);
             const rawUrls = taskMeta.urls;
             const urls = Array.isArray(rawUrls) ? rawUrls.filter((u): u is string => isValid(u as string)) : [];
-            if (!isVideo && node && urls.length > 1) {
+            if (!isVideo && !isAudio && node && urls.length > 1) {
               spreadBatchNodes(store, node, urls.slice(1), requestedAspect);
             }
             toast.success("生成成功");
@@ -143,7 +158,7 @@ export function useAiGeneration() {
             return next;
           });
         } else if (task.status === AiTaskStatus.FAILED) {
-          updateNode(nodeId, { status: "error" });
+          markGenerationFailed(nodeId);
           toast.error(task.errorMsg || "生成失败");
           setActiveTaskIds((prev) => {
             const next = new Set(prev);
@@ -163,7 +178,7 @@ export function useAiGeneration() {
           pollTimersRef.current.set(nodeId, timer);
         }
       } catch {
-        updateNode(nodeId, { status: "error" });
+        markGenerationFailed(nodeId);
         toast.error("网络错误");
         setActiveTaskIds((prev) => {
           const next = new Set(prev);
@@ -173,7 +188,7 @@ export function useAiGeneration() {
       }
     };
     poll();
-  }, [updateNode]);
+  }, [markGenerationFailed, updateNode]);
 
   /** 开始生成 */
   const generate = useCallback(async ({ nodeId, handler, modelId, input, onSuccess }: GenerateParams) => {
@@ -194,7 +209,7 @@ export function useAiGeneration() {
     try {
       const res = await aiApi.generate(dto);
       if (!res.success) {
-        updateNode(nodeId, { status: "error" });
+        markGenerationFailed(nodeId);
         toast.error(res.message || "生成请求失败");
         setActiveTaskIds((prev) => {
           const next = new Set(prev);
@@ -208,7 +223,7 @@ export function useAiGeneration() {
       const maxPollMs = startedNode?.type === "video" ? MAX_POLL_TIME_VIDEO : MAX_POLL_TIME;
       pollTask(nodeId, res.data.id, Date.now(), input, maxPollMs, onSuccess);
     } catch {
-      updateNode(nodeId, { status: "error" });
+      markGenerationFailed(nodeId);
       toast.error("网络错误");
       setActiveTaskIds((prev) => {
         const next = new Set(prev);
@@ -216,7 +231,7 @@ export function useAiGeneration() {
         return next;
       });
     }
-  }, [activeTaskIds, updateNode, pollTask, currentProjectId]);
+  }, [activeTaskIds, updateNode, markGenerationFailed, pollTask, currentProjectId]);
 
   const isGenerating = useCallback((nodeId: string) => activeTaskIds.has(nodeId), [activeTaskIds]);
 

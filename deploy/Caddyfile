@@ -1,0 +1,10 @@
+# SITE_ADDRESS 为域名(如 canvas.example.com)时 Caddy 自动申请并续期 Let's Encrypt 证书;
+# 为 ":80" 时仅 HTTP(无域名按 IP 访问的临时形态)。
+{$SITE_ADDRESS} {
+	encode gzip
+
+	# 上传等大请求直接透传给 Next(其 /api/* rewrites 再代理到后端)
+	reverse_proxy frontend:3000 {
+		flush_interval -1
+	}
+}

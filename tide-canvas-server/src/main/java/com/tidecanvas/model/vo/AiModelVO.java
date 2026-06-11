@@ -2,6 +2,7 @@ package com.tidecanvas.model.vo;
 
 import lombok.Data;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Data
@@ -13,7 +14,10 @@ public class AiModelVO {
     private String type;
     private String supportedHandlers;
     private String config;
-    private Integer pointCost;
+    /** 每次调用消耗积分（支持小数定价；结算按总价向上取整） */
+    private BigDecimal pointCost;
+    /** 单次调用上游成本（USD）——仅管理端返回，用户侧接口置空脱敏 */
+    private BigDecimal costPerCall;
     /** 状态(0:禁用,1:启用) —— 管理列表需要，缺失会导致前端永远显示禁用 */
     private Integer status;
     private Long providerId;

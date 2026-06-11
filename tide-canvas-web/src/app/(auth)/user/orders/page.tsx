@@ -3,9 +3,10 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
-  ArrowLeft, ShoppingCart, Loader2, XCircle,
+  ArrowLeft, ShoppingCart, Loader2, XCircle, CreditCard, RefreshCw,
 } from "lucide-react";
 import { orderApi } from "@/lib/api";
+import { submitPayForm } from "@/lib/pay";
 import { formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import type { RechargeOrderVO } from "@/types/order";
@@ -25,9 +26,13 @@ export default function MyOrdersPage() {
   const [orders, setOrders] = useState<RechargeOrderVO[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [pageNum, setPageNum] = useState(1);
   const [total, setTotal] = useState(0);
   const [cancellingId, setCancellingId] = useState<number | null>(null);
+  const [payingId, setPayingId] = useState<number | null>(null);
+  const [syncingId, setSyncingId] = useState<number | null>(null);
+  const [onlinePay, setOnlinePay] = useState(false);
 
   const fetchOrders = useCallback(async () => {
     setLoading(true);
@@ -51,6 +56,12 @@ export default function MyOrdersPage() {
     fetchOrders();
   }, [fetchOrders]);
 
+  useEffect(() => {
+    orderApi.rechargeConfig().then((res) => {
+      if (res.success && res.data) setOnlinePay(res.data.onlinePayEnabled);
+    }).catch(() => {});
+  }, []);
+
   const handleCancel = async (id: number) => {
     if (cancellingId) return;
     setCancellingId(id);
@@ -65,6 +76,47 @@ export default function MyOrdersPage() {
       setError("网络错误，请稍后重试");
     } finally {
       setCancellingId(null);
+    }
+  };
+
+  const handlePay = async (id: number) => {
+    if (payingId) return;
+    setPayingId(id);
+    setError("");
+    try {
+      const res = await orderApi.pay(id);
+      if (res.success && res.data) {
+        submitPayForm(res.data);
+        return; // 跳转网关，无需复位状态
+      }
+      setError(res.message || "发起支付失败");
+    } catch {
+      setError("网络错误，请稍后重试");
+    }
+    setPayingId(null);
+  };
+
+  const handleSync = async (id: number) => {
+    if (syncingId) return;
+    setSyncingId(id);
+    setError("");
+    setNotice("");
+    try {
+      const res = await orderApi.sync(id);
+      if (res.success && res.data) {
+        if (res.data.status === OrderStatus.PAID) {
+          setNotice(`订单 ${res.data.orderNo} 已支付，积分已到账`);
+        } else {
+          setNotice("暂未查询到支付结果，若已扣款请稍后再试或联系客服");
+        }
+        await fetchOrders();
+      } else {
+        setError(res.message || "同步失败");
+      }
+    } catch {
+      setError("网络错误，请稍后重试");
+    } finally {
+      setSyncingId(null);
     }
   };
 
@@ -83,6 +135,11 @@ export default function MyOrdersPage() {
       {error && (
         <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600 dark:border-red-900 dark:bg-red-950 dark:text-red-400">
           {error}
+        </div>
+      )}
+      {notice && (
+        <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-600 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-400">
+          {notice}
         </div>
       )}
 
@@ -141,19 +198,51 @@ export default function MyOrdersPage() {
                   </td>
                   <td className="py-3">
                     {order.status === OrderStatus.PENDING && (
-                      <Button
-                        variant="destructive"
-                        size="xs"
-                        onClick={() => handleCancel(order.id)}
-                        disabled={cancellingId === order.id}
-                      >
-                        {cancellingId === order.id ? (
-                          <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                        ) : (
-                          <XCircle className="mr-1 h-3 w-3" />
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {onlinePay && (
+                          <>
+                            <Button
+                              size="xs"
+                              onClick={() => handlePay(order.id)}
+                              disabled={payingId === order.id}
+                            >
+                              {payingId === order.id ? (
+                                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                              ) : (
+                                <CreditCard className="mr-1 h-3 w-3" />
+                              )}
+                              去支付
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="xs"
+                              onClick={() => handleSync(order.id)}
+                              disabled={syncingId === order.id}
+                              title="已完成支付但状态未更新时，点击向支付平台核实"
+                            >
+                              {syncingId === order.id ? (
+                                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                              ) : (
+                                <RefreshCw className="mr-1 h-3 w-3" />
+                              )}
+                              同步状态
+                            </Button>
+                          </>
                         )}
-                        取消
-                      </Button>
+                        <Button
+                          variant="destructive"
+                          size="xs"
+                          onClick={() => handleCancel(order.id)}
+                          disabled={cancellingId === order.id}
+                        >
+                          {cancellingId === order.id ? (
+                            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                          ) : (
+                            <XCircle className="mr-1 h-3 w-3" />
+                          )}
+                          取消
+                        </Button>
+                      </div>
                     )}
                   </td>
                 </tr>

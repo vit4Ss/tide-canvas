@@ -27,6 +27,7 @@ CREATE TABLE `sys_user` (
     `points`          INT          NOT NULL DEFAULT 0 COMMENT '积分余额',
     `is_author`       TINYINT      NOT NULL DEFAULT 0 COMMENT '是否签约作者(0:否,1:是)',
     `storage_quota`   BIGINT       NOT NULL DEFAULT 1073741824 COMMENT '存储额度(bytes)',
+    `team_id`         BIGINT       DEFAULT NULL COMMENT '所属团队ID(冗余缓存,真值见team_member)',
     `last_login_time` DATETIME     DEFAULT NULL COMMENT '最后登录时间',
     `create_time`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -95,7 +96,7 @@ CREATE TABLE `ai_model` (
     `supported_handlers` JSON          DEFAULT NULL COMMENT '支持的handler列表',
     `config`             JSON          DEFAULT NULL COMMENT '模型参数配置',
     `cost_per_call`      DECIMAL(10,4) DEFAULT 0.0000 COMMENT '单次调用成本(货币)',
-    `point_cost`         INT           NOT NULL DEFAULT 10 COMMENT '每次调用消耗积分',
+    `point_cost`         DECIMAL(10,2) NOT NULL DEFAULT 10.00 COMMENT '每次调用消耗积分(支持小数,结算按总价向上取整)',
     `status`             TINYINT       NOT NULL DEFAULT 1 COMMENT '状态',
     `create_time`        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -175,6 +176,7 @@ CREATE TABLE `ai_generation_log` (
     `result_url`       VARCHAR(1024) DEFAULT NULL COMMENT '结果地址',
     `error_msg`        TEXT          DEFAULT NULL COMMENT '错误信息',
     `duration_ms`      BIGINT        DEFAULT NULL COMMENT '耗时(ms)',
+    `cost`             DECIMAL(10,4) DEFAULT NULL COMMENT '上游成本(USD,如Runware includeCost返回;中转站无此字段则为空)',
     `create_time`      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     PRIMARY KEY (`id`),
     KEY `idx_task_id` (`task_id`),
@@ -263,6 +265,26 @@ CREATE TABLE `sys_config` (
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_config_key` (`config_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统配置表';
+
+-- ----------------------------
+-- 邮件模板表(模板编码系统内置,后台仅编辑内容)
+-- ----------------------------
+DROP TABLE IF EXISTS `email_template`;
+CREATE TABLE `email_template` (
+    `id`            BIGINT        NOT NULL COMMENT '主键',
+    `template_code` VARCHAR(64)   NOT NULL COMMENT '模板编码(系统内置)',
+    `template_name` VARCHAR(64)   NOT NULL COMMENT '模板名称',
+    `subject`       VARCHAR(256)  NOT NULL COMMENT '邮件主题(支持{{变量}})',
+    `content`       MEDIUMTEXT    NOT NULL COMMENT '邮件正文HTML(支持{{变量}})',
+    `variables`     VARCHAR(1024) DEFAULT NULL COMMENT '可用变量JSON[{name,description,sample}]',
+    `enabled`       TINYINT       NOT NULL DEFAULT 1 COMMENT '是否启用(0停用时回退内置文案)',
+    `remark`        VARCHAR(256)  DEFAULT NULL COMMENT '备注',
+    `create_time`   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `deleted`       TINYINT       NOT NULL DEFAULT 0 COMMENT '逻辑删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_template_code` (`template_code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='邮件模板表';
 
 -- ----------------------------
 -- 操作日志表
@@ -445,6 +467,41 @@ CREATE TABLE `recharge_order` (
     KEY `idx_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='充值订单表';
 
+-- ----------------------------
+-- 团队表
+-- ----------------------------
+DROP TABLE IF EXISTS `team`;
+CREATE TABLE `team` (
+    `id`           BIGINT      NOT NULL COMMENT '主键',
+    `name`         VARCHAR(64) NOT NULL COMMENT '团队名称',
+    `owner_id`     BIGINT      NOT NULL COMMENT '团队管理员(创建者)用户ID',
+    `invite_code`  VARCHAR(16) NOT NULL COMMENT '加入邀请码',
+    `member_count` INT         NOT NULL DEFAULT 1 COMMENT '成员数(冗余,含管理员)',
+    `create_time`  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `deleted`      TINYINT     NOT NULL DEFAULT 0 COMMENT '逻辑删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_invite_code` (`invite_code`),
+    KEY `idx_owner_id` (`owner_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='团队表';
+
+-- ----------------------------
+-- 团队成员表
+-- ----------------------------
+DROP TABLE IF EXISTS `team_member`;
+CREATE TABLE `team_member` (
+    `id`          BIGINT   NOT NULL COMMENT '主键',
+    `team_id`     BIGINT   NOT NULL COMMENT '团队ID',
+    `user_id`     BIGINT   NOT NULL COMMENT '成员用户ID',
+    `role`        TINYINT  NOT NULL DEFAULT 0 COMMENT '团队内角色(0:成员,1:管理员)',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '加入时间',
+    `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `deleted`     TINYINT  NOT NULL DEFAULT 0 COMMENT '逻辑删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_user_id` (`user_id`),
+    KEY `idx_team_id` (`team_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='团队成员表';
+
 -- =============================================
 -- 初始数据
 -- =============================================
@@ -466,7 +523,8 @@ INSERT INTO `ai_handler_config` (`id`, `handler_name`, `display_name`, `descript
 (8, 'panorama_360',       '全景图',     '生成360度全景图片',            1, 1, 8,  0),
 (9, 'nine_grid',          '九宫格变体', '一键生成9种图片变体',           1, 1, 9,  0),
 (10, 'split_grid_hd',     '分割高清',   '图片分割后独立放大',            1, 1, 10, 0),
-(11, 'upscale',           '图片放大',   '图片超分辨率放大',             1, 1, 11, 0);
+(11, 'upscale',           '图片放大',   '图片超分辨率放大',             1, 1, 11, 0),
+(13, 'text_to_audio',     '语音合成',   '文本转语音(TTS)',              1, 1, 12, 0);
 
 -- 默认系统配置
 INSERT INTO `sys_config` (`id`, `config_key`, `config_value`, `description`, `deleted`) VALUES
@@ -479,4 +537,37 @@ INSERT INTO `sys_config` (`id`, `config_key`, `config_value`, `description`, `de
 (7,  'points.checkin.base',      '5',                '每日签到基础积分',         0),
 (8,  'points.checkin.streak_bonus','2',              '连续签到每天额外积分',      0),
 (9,  'points.checkin.streak_cap','20',               '连续签到额外积分上限',      0),
-(10, 'points.recharge.ratio',    '10',               '充值比例(1元=N积分)',      0);
+(10, 'points.recharge.ratio',    '100',              '充值比例(1元=N积分)',      0),
+(11, 'team.price.factor',        '1.5',              '团队模式AI消耗加价系数(>1)', 0),
+(12, 'pay.epay.enabled',              'false',               '易支付:是否启用在线支付',                                          0),
+(13, 'pay.epay.gateway',              'https://api.ndow.cn', '易支付:网关地址',                                                 0),
+(14, 'pay.epay.pid',                  '',                    '易支付:商户ID',                                                   0),
+(15, 'pay.epay.merchant_private_key', '',                    '易支付:商户RSA私钥(商户后台生成,Base64,可带PEM头尾)',              0),
+(16, 'pay.epay.platform_public_key',  '',                    '易支付:平台RSA公钥(用于回调验签)',                                 0),
+(17, 'pay.epay.notify_url',           '',                    '易支付:异步通知地址(公网可达,如 https://你的域名/api/orders/notify/epay)', 0),
+(18, 'pay.epay.return_url',           '',                    '易支付:支付完成跳转地址(如 https://你的域名/user/orders)',          0),
+(19, 'pay.epay.pay_types',            'alipay,wxpay',        '易支付:启用的支付方式(逗号分隔)',                                  0);
+
+-- 默认邮件模板(编码系统内置,内容可在管理后台编辑/预览)
+INSERT INTO `email_template` (`id`, `template_code`, `template_name`, `subject`, `content`, `variables`, `enabled`, `remark`, `deleted`) VALUES
+(1, 'register_code', '注册验证码', '{{siteName}} 注册验证码',
+'<div style="margin:0;padding:24px;background-color:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;">
+  <div style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e5e5;">
+    <div style="background:#171717;padding:20px 28px;">
+      <span style="color:#ffffff;font-size:18px;font-weight:700;">{{siteName}}</span>
+    </div>
+    <div style="padding:28px;">
+      <p style="margin:0 0 8px;font-size:16px;color:#171717;font-weight:600;">您好，</p>
+      <p style="margin:0 0 20px;font-size:14px;color:#525252;line-height:1.6;">您正在注册 {{siteName}} 账号（{{email}}），本次验证码为：</p>
+      <div style="text-align:center;margin:0 0 20px;">
+        <span style="display:inline-block;padding:12px 32px;background:#fafafa;border:1px dashed #d4d4d4;border-radius:8px;font-size:30px;font-weight:700;letter-spacing:8px;color:#171717;">{{code}}</span>
+      </div>
+      <p style="margin:0;font-size:13px;color:#737373;line-height:1.6;">验证码 {{ttlMinutes}} 分钟内有效，请勿泄露给他人。如非本人操作，请忽略本邮件。</p>
+    </div>
+    <div style="padding:16px 28px;background:#fafafa;border-top:1px solid #f0f0f0;">
+      <p style="margin:0;font-size:12px;color:#a3a3a3;">此邮件由系统自动发送，请勿直接回复。</p>
+    </div>
+  </div>
+</div>',
+'[{"name":"code","description":"6位数字验证码","sample":"123456"},{"name":"siteName","description":"站点名称","sample":"TideCanvas"},{"name":"ttlMinutes","description":"有效期(分钟)","sample":"5"},{"name":"email","description":"收件人邮箱","sample":"user@example.com"}]',
+1, '用户注册时发送的邮箱验证码邮件', 0);

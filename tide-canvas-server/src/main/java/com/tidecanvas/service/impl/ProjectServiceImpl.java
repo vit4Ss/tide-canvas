@@ -15,6 +15,7 @@ import com.tidecanvas.model.query.ProjectQuery;
 import com.tidecanvas.model.vo.ProjectDetailVO;
 import com.tidecanvas.model.vo.ProjectVO;
 import com.tidecanvas.service.ProjectService;
+import com.tidecanvas.service.TeamService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
@@ -28,6 +29,7 @@ import java.util.List;
 public class ProjectServiceImpl implements ProjectService {
 
     private final CanvasProjectMapper projectMapper;
+    private final TeamService teamService;
 
     /** URL token 字符集，剔除易混淆字符（0/O/1/l/I） */
     private static final char[] TOKEN_ALPHABET =
@@ -39,7 +41,7 @@ public class ProjectServiceImpl implements ProjectService {
     public PageResult<ProjectVO> listProjects(Long userId, ProjectQuery query) {
         Page<CanvasProjectDO> page = new Page<>(query.getPageNum(), query.getPageSize());
         LambdaQueryWrapper<CanvasProjectDO> wrapper = new LambdaQueryWrapper<CanvasProjectDO>()
-                .eq(CanvasProjectDO::getUserId, userId)
+                .in(CanvasProjectDO::getUserId, teamService.getTeamMemberIds(userId)) // 团队共享项目
                 .like(StringUtils.hasText(query.getKeyword()), CanvasProjectDO::getName, query.getKeyword())
                 .eq(query.getStatus() != null, CanvasProjectDO::getStatus, query.getStatus())
                 .orderByDesc(CanvasProjectDO::getUpdateTime);
@@ -82,7 +84,7 @@ public class ProjectServiceImpl implements ProjectService {
         if (project == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "项目不存在");
         }
-        if (!project.getUserId().equals(userId)) {
+        if (!teamService.getTeamMemberIds(userId).contains(project.getUserId())) {
             throw new BusinessException(ResultCode.FORBIDDEN, "无权访问该项目");
         }
         ProjectDetailVO vo = new ProjectDetailVO();
@@ -112,7 +114,14 @@ public class ProjectServiceImpl implements ProjectService {
 
     @Override
     public void deleteProject(Long userId, Long projectId) {
-        getAndCheck(userId, projectId);
+        CanvasProjectDO project = projectMapper.selectById(projectId);
+        if (project == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND, "项目不存在");
+        }
+        // 删除仅限所有者或团队管理员（成员可看/编辑共享项目，但不能删）
+        if (!project.getUserId().equals(userId) && !teamService.isTeamAdminOf(userId, project.getUserId())) {
+            throw new BusinessException(ResultCode.FORBIDDEN, "无权删除该项目");
+        }
         projectMapper.deleteById(projectId);
     }
 
@@ -142,12 +151,13 @@ public class ProjectServiceImpl implements ProjectService {
         return project.getShareToken();
     }
 
+    /** 取项目并校验访问权：本人或同团队成员（团队共享 → 成员可看/编辑；删除另在 deleteProject 单独限所有者/管理员） */
     private CanvasProjectDO getAndCheck(Long userId, Long projectId) {
         CanvasProjectDO project = projectMapper.selectById(projectId);
         if (project == null) {
             throw new BusinessException(ResultCode.NOT_FOUND, "项目不存在");
         }
-        if (!project.getUserId().equals(userId)) {
+        if (!teamService.getTeamMemberIds(userId).contains(project.getUserId())) {
             throw new BusinessException(ResultCode.FORBIDDEN, "无权访问该项目");
         }
         return project;
@@ -174,6 +184,7 @@ public class ProjectServiceImpl implements ProjectService {
     private ProjectVO toProjectVO(CanvasProjectDO project) {
         ProjectVO vo = new ProjectVO();
         BeanUtils.copyProperties(project, vo);
+        vo.setOwnerId(project.getUserId()); // 字段名不同，需显式设置
         vo.setIsPublic(project.getIsPublic() == 1);
         return vo;
     }

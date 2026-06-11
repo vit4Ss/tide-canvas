@@ -32,10 +32,14 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.prod.example
 
 # Spring Boot config (use *-sample.yml as template)
 tide-canvas-server/src/main/resources/application.yml
 tide-canvas-server/src/main/resources/application-docker.yml
+
+# local API token notes
+tide-canvas-server/ScarecrowToken.md
 
 # vercel
 .vercel

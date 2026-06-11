@@ -13,6 +13,7 @@ import com.tidecanvas.model.vo.LoginVO;
 import com.tidecanvas.model.vo.UserVO;
 import com.tidecanvas.security.JwtTokenProvider;
 import com.tidecanvas.service.AuthService;
+import com.tidecanvas.service.TeamService;
 import com.tidecanvas.service.security.VerificationCodeService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.BeanUtils;
@@ -20,6 +21,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -31,6 +33,7 @@ public class AuthServiceImpl implements AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
     private final VerificationCodeService verificationCodeService;
+    private final TeamService teamService;
 
     private static final int DEFAULT_API_QUOTA = 100;
     private static final long DEFAULT_STORAGE_QUOTA = 1073741824L;
@@ -178,7 +181,11 @@ public class AuthServiceImpl implements AuthService {
 
     private UserVO toUserVO(SysUserDO user) {
         UserVO vo = new UserVO();
-        BeanUtils.copyProperties(user, vo);
+        BeanUtils.copyProperties(user, vo); // teamId 同名自动拷贝
+        boolean inTeam = user.getTeamId() != null;
+        vo.setInTeam(inTeam);
+        // 仅团队用户多查一次配置；非团队用户系数恒为 1，避免额外查询
+        vo.setTeamPriceFactor(inTeam ? teamService.getPriceFactor(user.getId()) : BigDecimal.ONE);
         return vo;
     }
 }

@@ -7,6 +7,8 @@ import { Plus, Trash2, Edit, Save, Zap, Globe } from "lucide-react";
 
 const PROVIDER_TYPES = [
   { value: "openai", label: "OpenAI" },
+  // runware 走 Runware 原生任务数组协议（baseUrl 填 https://api.runware.ai/v1，模型ID 用 AIR 标识）；其余类型走中转站统一协议
+  { value: "runware", label: "Runware" },
   { value: "gemini", label: "Google Gemini" },
   { value: "doubao", label: "字节豆包" },
   { value: "qwen", label: "阿里通义" },
@@ -35,8 +37,8 @@ export default function AdminAiProvidersPage() {
   const [form, setForm] = useState<ProviderForm>(emptyForm);
   const [saving, setSaving] = useState(false);
 
+  // loading 初值即 true，不在同步路径置位（避免 effect 内同步 setState 触发级联渲染）
   const loadProviders = async () => {
-    setLoading(true);
     try {
       const res = await adminApi.ai.providers.list();
       if (res.success) setProviders(res.data);

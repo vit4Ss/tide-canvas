@@ -27,6 +27,8 @@ import com.tidecanvas.model.vo.AiGenerationLogVO;
 import com.tidecanvas.model.vo.AiHandlerVO;
 import com.tidecanvas.model.vo.AiModelVO;
 import com.tidecanvas.model.vo.AiProviderVO;
+import com.tidecanvas.service.ai.AiMediaGateway;
+import com.tidecanvas.service.ai.RunwareClient;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -57,6 +59,7 @@ public class AdminAiController {
     private final CanvasProjectMapper projectMapper;
     private final AiTaskMapper taskMapper;
     private final ObjectMapper objectMapper;
+    private final RunwareClient runwareClient;
 
     // ========== Provider ==========
 
@@ -96,15 +99,27 @@ public class AdminAiController {
         return Result.success(vo);
     }
 
-    @Operation(summary = "从供应商拉取可用模型列表")
+    @Operation(summary = "从供应商拉取可用模型列表（runware 走 modelSearch，可带 search 关键词）")
     @GetMapping("/providers/{id}/models")
-    public Result<List<String>> listRemoteModels(@PathVariable Long id) {
+    public Result<List<String>> listRemoteModels(@PathVariable Long id,
+                                                 @RequestParam(required = false) String search) {
         AiProviderDO provider = providerMapper.selectById(id);
         if (provider == null) {
             throw new BusinessException(ResultCode.NOT_FOUND);
         }
         if (!StringUtils.hasText(provider.getBaseUrl()) || !StringUtils.hasText(provider.getApiKey())) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "供应商未配置 baseUrl 或 apiKey");
+        }
+        // Runware 无 OpenAI 风格 /models，走原生 modelSearch（AIR 标识，name 拼进展示文本由前端截取）
+        if (AiMediaGateway.isRunware(provider)) {
+            try {
+                return Result.success(runwareClient.searchModels(provider, search).stream()
+                        .map(m -> m.get("air"))
+                        .sorted(String::compareToIgnoreCase)
+                        .toList());
+            } catch (Exception e) {
+                throw new BusinessException(ResultCode.SERVER_ERROR, "拉取模型失败：" + e.getMessage());
+            }
         }
         String endpoint = provider.getBaseUrl().replaceAll("/+$", "") + "/models";
         try {
@@ -147,6 +162,9 @@ public class AdminAiController {
         }
         if (body.containsKey("name")) {
             provider.setName((String) body.get("name"));
+        }
+        if (body.containsKey("providerType")) {
+            provider.setProviderType((String) body.get("providerType"));
         }
         if (body.containsKey("apiKey")) {
             provider.setApiKey((String) body.get("apiKey"));
@@ -204,7 +222,10 @@ public class AdminAiController {
             model.setConfig(body.get("config").toString());
         }
         if (body.containsKey("pointCost")) {
-            model.setPointCost(Integer.valueOf(body.get("pointCost").toString()));
+            model.setPointCost(new java.math.BigDecimal(body.get("pointCost").toString()));
+        }
+        if (body.containsKey("costPerCall") && body.get("costPerCall") != null) {
+            model.setCostPerCall(new java.math.BigDecimal(body.get("costPerCall").toString()));
         }
         model.setStatus(1);
         model.setDeleted(0);
@@ -237,7 +258,10 @@ public class AdminAiController {
             model.setConfig(body.get("config").toString());
         }
         if (body.containsKey("pointCost")) {
-            model.setPointCost(Integer.valueOf(body.get("pointCost").toString()));
+            model.setPointCost(new java.math.BigDecimal(body.get("pointCost").toString()));
+        }
+        if (body.containsKey("costPerCall") && body.get("costPerCall") != null) {
+            model.setCostPerCall(new java.math.BigDecimal(body.get("costPerCall").toString()));
         }
         if (body.containsKey("providerId")) {
             model.setProviderId(Long.valueOf(body.get("providerId").toString()));
@@ -297,17 +321,29 @@ public class AdminAiController {
     @GetMapping("/logs")
     public Result<PageResult<AiGenerationLogVO>> listLogs(AiGenerationLogQuery query) {
         Page<AiGenerationLogDO> page = new Page<>(query.getPageNum(), query.getPageSize());
-        LambdaQueryWrapper<AiGenerationLogDO> wrapper = new LambdaQueryWrapper<AiGenerationLogDO>()
-                .eq(query.getTaskId() != null, AiGenerationLogDO::getTaskId, query.getTaskId())
-                .eq(query.getUserId() != null, AiGenerationLogDO::getUserId, query.getUserId())
-                .eq(StringUtils.hasText(query.getHandlerName()), AiGenerationLogDO::getHandlerName, query.getHandlerName())
-                .eq(StringUtils.hasText(query.getOperationType()), AiGenerationLogDO::getOperationType, query.getOperationType())
-                .eq(query.getSuccess() != null, AiGenerationLogDO::getSuccess, query.getSuccess())
-                .orderByDesc(AiGenerationLogDO::getId);
-        logMapper.selectPage(page, wrapper);
+        logMapper.selectPage(page, logFilter(query).orderByDesc("id"));
         List<AiGenerationLogVO> records = page.getRecords().stream().map(this::toLogVO).collect(Collectors.toList());
         enrich(records);
         return Result.success(PageResult.of(records, page));
+    }
+
+    @Operation(summary = "操作日志上游成本汇总(USD)：按当前筛选条件统计全部匹配记录")
+    @GetMapping("/logs/cost-sum")
+    public Result<java.math.BigDecimal> logsCostSum(AiGenerationLogQuery query) {
+        List<Object> rows = logMapper.selectObjs(logFilter(query).select("COALESCE(SUM(cost),0)"));
+        Object v = rows.isEmpty() ? null : rows.get(0);
+        return Result.success(v == null ? java.math.BigDecimal.ZERO : new java.math.BigDecimal(v.toString()));
+    }
+
+    /** 构建操作日志查询条件（列表与成本汇总共用，保证两处筛选完全一致） */
+    private com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<AiGenerationLogDO> logFilter(AiGenerationLogQuery query) {
+        return new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<AiGenerationLogDO>()
+                .eq(query.getTaskId() != null, "task_id", query.getTaskId())
+                .eq(query.getUserId() != null, "user_id", query.getUserId())
+                .eq(query.getProjectId() != null, "project_id", query.getProjectId())
+                .eq(StringUtils.hasText(query.getHandlerName()), "handler_name", query.getHandlerName())
+                .eq(StringUtils.hasText(query.getOperationType()), "operation_type", query.getOperationType())
+                .eq(query.getSuccess() != null, "success", query.getSuccess());
     }
 
     @Operation(summary = "操作日志详情")

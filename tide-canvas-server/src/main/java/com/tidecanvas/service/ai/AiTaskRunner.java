@@ -16,14 +16,6 @@ import org.springframework.util.StringUtils;
 import java.time.LocalDateTime;
 import java.util.Map;
 
-/**
- * AI 任务异步执行器。
- * <p>
- * 必须作为独立 Bean：{@code @Async} 只在通过 Spring 代理调用时生效，
- * 若在 {@code AiServiceImpl} 内部自调用（this.xxx）会退化为同步执行。
- *
- * @author tidecanvas
- */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -37,9 +29,14 @@ public class AiTaskRunner {
     public void run(Long taskId, AiHandler handler, String modelId, Map<String, Object> input, int pointCost) {
         AiTaskDO task = taskMapper.selectById(taskId);
         if (task == null) {
-            log.error("AI任务不存在: taskId={}", taskId);
+            log.error("AI task not found: taskId={}", taskId);
             return;
         }
+        if (task.getStatus() == AiTaskStatusEnum.CANCELLED.getCode()) {
+            log.info("AI task already cancelled before execution: taskId={}", taskId);
+            return;
+        }
+
         GenerationLogContext.set(taskId, task.getUserId(), task.getProjectId(), task.getHandlerName());
         long startMs = System.currentTimeMillis();
         boolean failed = false;
@@ -57,38 +54,39 @@ public class AiTaskRunner {
             task.setProgress(100);
             task.setCompleteTime(LocalDateTime.now());
         } catch (Exception e) {
-            log.error("AI任务执行失败: taskId={}", taskId, e);
+            log.error("AI task execution failed: taskId={}", taskId, e);
             failed = true;
             errorMsg = e.getMessage();
             task.setStatus(AiTaskStatusEnum.FAILED.getCode());
             task.setErrorMsg(errorMsg);
             task.setCompleteTime(LocalDateTime.now());
         } finally {
-            // 兜底记录生成日志：仅当本次未产生上游调用日志（占位/调用前异常等）时补记，避免与 recordLog 的详细日志重复
             if (!GenerationLogContext.isRecorded()) {
-                recordSummaryLog(task, input, !failed, resultUrl, errorMsg, startMs);
+                recordSummaryLog(task, !failed, resultUrl, errorMsg, startMs);
             }
             GenerationLogContext.clear();
         }
+
+        AiTaskDO latest = taskMapper.selectById(taskId);
+        if (latest != null && latest.getStatus() == AiTaskStatusEnum.CANCELLED.getCode()) {
+            log.info("AI task completed after cancellation, preserving cancelled status: taskId={}", taskId);
+            return;
+        }
+
         taskMapper.updateById(task);
         if (failed && pointCost > 0) {
             try {
                 pointsService.addPoints(task.getUserId(), pointCost, PointsTransactionTypeEnum.AI_REFUND,
                         taskId, "AI生成失败返还");
-                log.info("AI生成失败已返还积分: userId={}, taskId={}, points={}", task.getUserId(), taskId, pointCost);
+                log.info("AI points refunded: userId={}, taskId={}, points={}", task.getUserId(), taskId, pointCost);
             } catch (Exception e) {
-                log.error("返还积分失败: taskId={}", taskId, e);
+                log.error("Failed to refund AI points: taskId={}", taskId, e);
             }
         }
     }
 
-    /**
-     * 记录一条兜底日志（best-effort，重复插入不影响排查）。
-     * 如果 handler 内部已经通过 AiRelayClient.recordLog 记录了详细 HTTP 日志，会存在两条记录：
-     * 一条含详细请求/响应，一条为摘要 — 管理后台都能查到。
-     */
-    private void recordSummaryLog(AiTaskDO task, Map<String, Object> input, boolean success,
-                                   String resultUrl, String errorMsg, long startMs) {
+    private void recordSummaryLog(AiTaskDO task, boolean success,
+                                  String resultUrl, String errorMsg, long startMs) {
         try {
             AiGenerationLogDO lg = new AiGenerationLogDO();
             lg.setTaskId(task.getId());
@@ -103,7 +101,7 @@ public class AiTaskRunner {
             lg.setCreateTime(LocalDateTime.now());
             logMapper.insert(lg);
         } catch (Exception e) {
-            log.warn("记录兜底生成日志失败: taskId={}", task.getId(), e);
+            log.warn("Failed to record fallback AI log: taskId={}", task.getId(), e);
         }
     }
 }

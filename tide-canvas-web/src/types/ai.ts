@@ -66,6 +66,8 @@ export interface AiGenerationLogVO {
   resultUrl: string;
   errorMsg: string;
   durationMs: number;
+  /** 上游成本（USD）；中转站无此字段时为空 */
+  cost?: number;
   createTime: string;
   // 关联展示字段（后端按 id 回填）
   userName?: string;
@@ -93,4 +95,5 @@ export enum AiModelType {
   IMAGE = "image",
   VIDEO = "video",
   TEXT = "text",
+  AUDIO = "audio",
 }

@@ -17,7 +17,9 @@ public class AiModelDO extends BaseEntity {
     private String type;
     private String supportedHandlers;
     private String config;
+    /** 单次调用上游成本（USD，参考字段，仅后台可见） */
     private BigDecimal costPerCall;
-    private Integer pointCost;
+    /** 每次调用消耗积分（支持小数；结算按「单价×张数×团队系数」总价向上取整） */
+    private BigDecimal pointCost;
     private Integer status;
 }
