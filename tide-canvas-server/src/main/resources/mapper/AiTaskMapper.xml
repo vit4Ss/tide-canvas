@@ -59,11 +59,11 @@
         ORDER BY date
     </select>
 
-    <!-- 模型使用排行 -->
+    <!-- 模型使用排行(已删除/失联的模型不参与排行) -->
     <select id="modelUsageRank" resultType="java.util.Map">
         SELECT m.name AS modelName, COUNT(t.id) AS callCount
         FROM ai_task t
-        LEFT JOIN ai_model m ON t.model_id = m.id
+        INNER JOIN ai_model m ON t.model_id = m.id
         WHERE t.deleted = 0
         GROUP BY m.name
         ORDER BY callCount DESC

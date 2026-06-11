@@ -56,4 +56,14 @@
         ORDER BY date
     </select>
 
+    <!-- 按日期范围统计活跃用户(当日有登录) -->
+    <select id="countActiveByDateRange" resultType="java.util.Map">
+        SELECT DATE(last_login_time) AS date, COUNT(*) AS count
+        FROM sys_user
+        WHERE deleted = 0 AND status = 1
+          AND last_login_time BETWEEN #{startDate} AND #{endDate}
+        GROUP BY DATE(last_login_time)
+        ORDER BY date
+    </select>
+
 </mapper>

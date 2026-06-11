@@ -8,24 +8,32 @@ export interface DashboardOverviewVO {
   totalApiCalls: number;
   todayApiCalls: number;
   totalProjects: number;
+  todayNewProjects: number;
   totalStorageBytes: number;
 }
 
-export interface TrendItemVO {
+export interface DailyTrendVO {
   date: string;
+  newUsers: number;
+  activeUsers: number;
+}
+
+export interface DailyCreationVO {
+  date: string;
+  projects: number;
+  aiCalls: number;
+}
+
+export interface NameValueVO {
+  name: string;
   value: number;
 }
 
-export interface ModelUsageVO {
-  modelName: string;
-  callCount: number;
-}
-
-export interface DashboardTrendVO {
-  userTrend: TrendItemVO[];
-  apiCallTrend: TrendItemVO[];
-  projectTrend: TrendItemVO[];
-  modelUsageRank: ModelUsageVO[];
+export interface DashboardChartsVO {
+  userTrend: DailyTrendVO[];
+  aiDistribution: NameValueVO[];
+  dailyCreation: DailyCreationVO[];
+  modelUsage: NameValueVO[];
 }
 
 export interface AdminUserVO extends UserVO {
@@ -65,7 +73,7 @@ export interface BannerCreateDTO {
   status?: number;
 }
 
-export interface BannerUpdateDTO extends Partial<BannerCreateDTO> {}
+export type BannerUpdateDTO = Partial<BannerCreateDTO>;
 
 export interface AiProviderVO {
   id: number;
@@ -127,8 +135,3 @@ export interface ContentQuery extends PageQuery {
   status?: number;
 }
 
-export interface TrendQuery {
-  startDate: string;
-  endDate: string;
-  granularity?: "day" | "week" | "month";
-}

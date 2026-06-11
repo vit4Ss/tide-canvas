@@ -10,5 +10,6 @@ public class DashboardOverviewVO {
     private Long totalApiCalls;
     private Long todayApiCalls;
     private Long totalProjects;
+    private Long todayNewProjects;
     private Long totalStorageBytes;
 }

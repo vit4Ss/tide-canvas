@@ -45,4 +45,10 @@
         ORDER BY date
     </select>
 
+    <!-- 今日新建项目数 -->
+    <select id="countTodayNew" resultType="java.lang.Long">
+        SELECT COUNT(*) FROM canvas_project
+        WHERE deleted = 0 AND DATE(create_time) = CURDATE()
+    </select>
+
 </mapper>

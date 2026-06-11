@@ -20,4 +20,6 @@ public interface SysUserMapper extends BaseMapper<SysUserDO> {
     SysUserDO selectForUpdate(@Param("id") Long id);
 
     List<Map<String, Object>> countByDateRange(@Param("startDate") String startDate, @Param("endDate") String endDate);
+
+    List<Map<String, Object>> countActiveByDateRange(@Param("startDate") String startDate, @Param("endDate") String endDate);
 }

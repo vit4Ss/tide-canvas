@@ -13,10 +13,10 @@ import type {
 } from "@/types/ai";
 import type { FileVO, FileQuery } from "@/types/file";
 import type {
-  DashboardOverviewVO, DashboardTrendVO, AdminUserVO, AdminUserQuery,
+  DashboardOverviewVO, DashboardChartsVO, AdminUserVO, AdminUserQuery,
   AdminUserUpdateDTO, BannerVO, BannerCreateDTO, BannerUpdateDTO,
   AiProviderVO, AiProviderCreateDTO, AiProviderUpdateDTO,
-  LogVO, LogQuery, ContentVO, ContentQuery, TrendQuery,
+  LogVO, LogQuery, ContentVO, ContentQuery,
 } from "@/types/admin";
 import type {
   PointsBalanceVO, PointsTransactionVO, PointsTransactionQuery, CheckinStatusVO, CheckinCalendarVO,
@@ -176,8 +176,8 @@ export const adminApi = {
   dashboard: {
     overview: () =>
       http.get<DashboardOverviewVO>("/api/admin/dashboard/overview"),
-    trend: (query: TrendQuery) =>
-      http.get<DashboardTrendVO>("/api/admin/dashboard/trend", toParams(query)),
+    charts: () =>
+      http.get<DashboardChartsVO>("/api/admin/dashboard/charts"),
   },
   users: {
     list: (query: AdminUserQuery) =>

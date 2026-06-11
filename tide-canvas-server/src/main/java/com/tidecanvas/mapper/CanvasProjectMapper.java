@@ -14,4 +14,6 @@ public interface CanvasProjectMapper extends BaseMapper<CanvasProjectDO> {
     Long countByUserId(@Param("userId") Long userId);
 
     List<Map<String, Object>> countByDateRange(@Param("startDate") String startDate, @Param("endDate") String endDate);
+
+    Long countTodayNew();
 }
