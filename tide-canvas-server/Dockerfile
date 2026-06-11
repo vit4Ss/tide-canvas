@@ -8,6 +8,8 @@ COPY pom.xml .
 RUN mvn dependency:go-offline -B
 
 COPY src ./src
+RUN cp src/main/resources/application-sample.yml src/main/resources/application.yml \
+    && cp src/main/resources/application-docker-sample.yml src/main/resources/application-docker.yml
 RUN mvn package -DskipTests -B
 
 # ====== Stage 2: Run ======

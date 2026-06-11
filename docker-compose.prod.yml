@@ -1,22 +1,14 @@
-# ============================================================
-# TideCanvas 生产部署编排（服务器上使用）
-#   docker compose -f docker-compose.prod.yml --env-file .env up -d --build
-# 架构：Caddy(80/443, 自动HTTPS) → frontend(Next.js) → /api/* 内网代理 → backend(8080)
-# 后端/MySQL/Redis 均不暴露公网；后端仅绑定服务器回环口便于调试。
-# ============================================================
-
 services:
   mysql:
     image: mysql:8.0
     container_name: tc-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在 .env 设置 MYSQL_ROOT_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
       MYSQL_DATABASE: tide_canvas
       TZ: Asia/Shanghai
     volumes:
       - mysql_data:/var/lib/mysql
-      # 仅首次初始化（空数据卷）时自动执行
       - ./tide-canvas-server/sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     command:
       - --character-set-server=utf8mb4
@@ -48,37 +40,55 @@ services:
     container_name: tc-backend
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8080:8080"   # 仅服务器本机可达，便于 curl 调试；公网流量一律走 Caddy→frontend 代理
+      - "127.0.0.1:8080:8080"
     environment:
       SPRING_PROFILES_ACTIVE: docker
+      SERVER_PORT: 8080
       DB_HOST: mysql
       DB_PORT: 3306
       DB_NAME: tide_canvas
       DB_USERNAME: root
       DB_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      DB_USE_SSL: "false"
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      JWT_SECRET: ${JWT_SECRET:?请在 .env 设置 JWT_SECRET（强随机串）}
+      REDIS_DATABASE: 0
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
       CORS_ALLOWED_ORIGINS: ${SITE_URL:-http://localhost:3000}
-      TZ: Asia/Shanghai
-      JAVA_OPTS: "-Xms256m -Xmx1024m -Duser.timezone=Asia/Shanghai"
-      # 邮件：默认直连 SMTP（spring.mail.* 的默认值在 application.yml）。
-      # 服务器无法直连 Gmail（如大陆机房）时，要么配 MAIL_SOCKS_HOST 走代理，要么换 SMTP 服务商。
-      MAIL_SOCKS_HOST: ${MAIL_SOCKS_HOST:-}
-      MAIL_SOCKS_PORT: ${MAIL_SOCKS_PORT:-7897}
-      # SMTP 账号默认取 application.yml 内置值(该文件不入库,部署时单独上传);.env 可覆盖
+      CORS_ALLOW_CREDENTIALS: "true"
+      MAX_FILE_SIZE: ${MAX_FILE_SIZE:-100MB}
+      MAX_REQUEST_SIZE: ${MAX_REQUEST_SIZE:-100MB}
+      MAIL_ENABLED: ${MAIL_ENABLED:-true}
       MAIL_HOST: ${MAIL_HOST:-}
-      MAIL_PORT: ${MAIL_PORT:-}
+      MAIL_PORT: ${MAIL_PORT:-587}
       MAIL_USERNAME: ${MAIL_USERNAME:-}
       MAIL_PASSWORD: ${MAIL_PASSWORD:-}
-      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-}
-      # OAuth 第三方登录(可选)
+      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-TideCanvas}
+      MAIL_REPLY_TO: ${MAIL_REPLY_TO:-}
+      MAIL_SMTP_AUTH: ${MAIL_SMTP_AUTH:-true}
+      MAIL_STARTTLS: ${MAIL_STARTTLS:-true}
+      MAIL_SSL: ${MAIL_SSL:-false}
+      MAIL_SOCKS_HOST: ${MAIL_SOCKS_HOST:-}
+      MAIL_SOCKS_PORT: ${MAIL_SOCKS_PORT:-7897}
+      STORAGE_KIND: ${STORAGE_KIND:-local}
+      STORAGE_DIR: /app/uploads
+      STORAGE_MAX_SIZE: ${STORAGE_MAX_SIZE:-52428800}
+      STORAGE_ALLOWED_TYPES: ${STORAGE_ALLOWED_TYPES:-image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm}
+      OSS_ENDPOINT: ${OSS_ENDPOINT:-}
+      OSS_ACCESS_KEY_ID: ${OSS_ACCESS_KEY_ID:-}
+      OSS_ACCESS_KEY_SECRET: ${OSS_ACCESS_KEY_SECRET:-}
+      OSS_BUCKET: ${OSS_BUCKET:-}
+      OSS_PREFIX: ${OSS_PREFIX:-uploads/}
+      OSS_CDN_DOMAIN: ${OSS_CDN_DOMAIN:-}
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       WECHAT_APP_ID: ${WECHAT_APP_ID:-}
       WECHAT_APP_SECRET: ${WECHAT_APP_SECRET:-}
+      TZ: Asia/Shanghai
+      JAVA_OPTS: "-Xms256m -Xmx1024m -Duser.timezone=Asia/Shanghai"
     volumes:
       - uploads_data:/app/uploads
     depends_on:
@@ -92,7 +102,6 @@ services:
       context: ./tide-canvas-web
       dockerfile: Dockerfile
       args:
-        # SSR 直连与 /api/* 代理目标：指向编排内后端服务（构建期固化）
         NEXT_PUBLIC_API_BASE_URL: http://backend:8080
         NEXT_PUBLIC_OAUTH_REDIRECT_BASE: ${SITE_URL:-}
         NEXT_PUBLIC_GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
@@ -111,8 +120,7 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      # 填域名（如 canvas.example.com）则自动签发 HTTPS；无域名临时用 ":80" 以 IP 访问
-      SITE_ADDRESS: ${SITE_ADDRESS:?请在 .env 设置 SITE_ADDRESS（域名或 :80）}
+      SITE_ADDRESS: ${SITE_ADDRESS:?Set SITE_ADDRESS in .env}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
