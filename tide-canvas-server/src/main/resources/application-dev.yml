@@ -8,6 +8,8 @@ spring:
     redis:
       host: localhost
       port: 6379
+      # 本地 Docker Redis 已启用 requirepass：IDE 直跑需在运行配置里设 REDIS_PASSWORD(值见 tide-canvas-server/.env)
+      password: ${REDIS_PASSWORD:}
       database: 0
 
 logging:

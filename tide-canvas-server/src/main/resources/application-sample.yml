@@ -46,8 +46,10 @@ mybatis-plus:
     map-underscore-to-camel-case: true
     log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
 
+# 默认关闭：knife4j 4.5.0 的 OpenApiCustomizer 与 springdoc 2.7+ 不兼容，开启会把 /v3/api-docs 打成 500；
+# 生产环境也不应将 API 文档暴露公网。本地调试需要时以 KNIFE4J_ENABLE=true 临时开启。
 knife4j:
-  enable: ${KNIFE4J_ENABLE:true}
+  enable: ${KNIFE4J_ENABLE:false}
   setting:
     language: zh_cn
 

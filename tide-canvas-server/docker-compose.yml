@@ -33,6 +33,10 @@ services:
     restart: unless-stopped
     ports:
       - "6379:6379"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis123}
+      REDISCLI_AUTH: ${REDIS_PASSWORD:-redis123}
+    command: ["sh", "-c", "redis-server --appendonly yes --requirepass \"$${REDIS_PASSWORD}\""]
     volumes:
       - redis_data:/data
     healthcheck:
@@ -59,6 +63,7 @@ services:
       DB_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis123}
       JWT_SECRET: ${JWT_SECRET:-TideCanvasSecretKey2026ForJwtTokenGenerationAndValidation}
       TZ: Asia/Shanghai
       JAVA_OPTS: "-Xms256m -Xmx512m -Duser.timezone=Asia/Shanghai"
@@ -66,15 +71,20 @@ services:
       # 经 host.docker.internal 走宿主机混合端口即可。服务器可直连 SMTP 时把 MAIL_SOCKS_HOST 置空。
       MAIL_SOCKS_HOST: ${MAIL_SOCKS_HOST:-host.docker.internal}
       MAIL_SOCKS_PORT: ${MAIL_SOCKS_PORT:-7897}
-      # 文件存储默认走 OSS（见 application.yml storage.*）。如需用环境变量覆盖密钥，
-      # 取消下面注释并在 .env 填值（application.yml 已用 ${ENV:默认} 接收）：
-      # STORAGE_KIND: ${STORAGE_KIND:-oss}
-      # OSS_ENDPOINT: ${OSS_ENDPOINT:-https://oss-cn-shanghai.aliyuncs.com}
-      # OSS_ACCESS_KEY_ID: ${OSS_ACCESS_KEY_ID:-}
-      # OSS_ACCESS_KEY_SECRET: ${OSS_ACCESS_KEY_SECRET:-}
-      # OSS_BUCKET: ${OSS_BUCKET:-scaecrowtoken}
-      # OSS_PREFIX: ${OSS_PREFIX:-uploads/}
-      # OSS_CDN_DOMAIN: ${OSS_CDN_DOMAIN:-}
+      # 邮件与存储真实值放本目录 .env（已被 git 忽略），镜像内配置由 env-only sample 生成
+      MAIL_HOST: ${MAIL_HOST:-}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-TideCanvas}
+      STORAGE_KIND: ${STORAGE_KIND:-local}
+      OSS_ENDPOINT: ${OSS_ENDPOINT:-}
+      OSS_ACCESS_KEY_ID: ${OSS_ACCESS_KEY_ID:-}
+      OSS_ACCESS_KEY_SECRET: ${OSS_ACCESS_KEY_SECRET:-}
+      OSS_BUCKET: ${OSS_BUCKET:-}
+      OSS_PREFIX: ${OSS_PREFIX:-uploads/}
+      OSS_CDN_DOMAIN: ${OSS_CDN_DOMAIN:-}
     volumes:
       - uploads_data:/app/uploads
     depends_on:

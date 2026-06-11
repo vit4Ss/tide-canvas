@@ -39,6 +39,7 @@ cd tide-canvas
 cp .env.prod.example .env
 openssl rand -base64 32
 openssl rand -base64 32
+openssl rand -base64 32
 vim .env
 ```
 
@@ -49,6 +50,7 @@ SITE_ADDRESS=tide.tcmzhan.com
 SITE_URL=https://tide.tcmzhan.com
 MYSQL_ROOT_PASSWORD=<first random value>
 JWT_SECRET=<second random value>
+REDIS_PASSWORD=<third random value>
 ```
 
 Without a domain, use this temporary HTTP-only setup:
