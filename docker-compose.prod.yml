@@ -3,6 +3,9 @@ services:
     image: mysql:8.0
     container_name: tc-mysql
     restart: unless-stopped
+    ports:
+      # 仅绑定服务器回环口：配合 SSH 隧道远程管理数据库,绝不直接暴露 3306 到公网
+      - "127.0.0.1:3306:3306"
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
       MYSQL_DATABASE: tide_canvas
