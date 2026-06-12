@@ -19,6 +19,7 @@ import { type RefItem } from "./prompt-ref-utils";
 import { NodeChrome } from "./base/node-chrome";
 import { useAiGeneration } from "@/hooks/canvas/use-ai-generation";
 import { aiApi, uploadFileSmart } from "@/lib/api";
+import { sliceImageGrid } from "@/lib/image-slice";
 import { useAuth } from "@/hooks/use-auth";
 import { applyTeamFactor } from "@/lib/points";
 import { AiModelType, type AiModelVO } from "@/types/ai";
@@ -529,55 +530,62 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     angleDragRef.current = null;
   }, []);
 
-  // 宫格切分：调后端把当前图切成 rows×cols 块，每块作为新图片节点铺在原节点右侧
+  // 宫格切分：前端 canvas 秒切立即铺节点(本地 blob 即时显示)，随后后台静默上传、无感替换为远端地址
   const handleGridSplit = useCallback(async (rows: number, cols: number, cells: number[] | null = null) => {
     if (!node.imageSrc || splitting) return;
     setGridMenuOpen(false);
     setSplitting(true);
     try {
-      const res = await aiApi.gridSplit(node.imageSrc, rows, cols, cells ?? undefined);
-      if (res.success && res.data?.length) {
-        const urls = res.data;
-        // urls 顺序对应所切格子：指定 cells 时即 cells，否则行优先 0..N-1
-        const cellList = cells ?? urls.map((_, i) => i);
-        const store = useCanvasStore.getState();
-        // 每块宽高比 = 原图比例 × rows/cols；据此排成紧凑网格，按原格子位置摆放
-        const origAR = (node.contentW ?? node.width) / ((node.contentH ?? node.height) || 1);
-        const cellAR = (origAR * rows) / cols;
-        // 切片节点与源节点保持一致大小（同宽）
-        const CELL_W = node.contentW ?? node.width;
-        const CELL_H = Math.max(60, Math.round(CELL_W / (cellAR || 1)));
-        const gap = 24;
-        const startX = node.x + (node.contentW ?? node.width) + 100;
-        urls.forEach((url, i) => {
-          const cellIdx = cellList[i];
-          const r = Math.floor(cellIdx / cols);
-          const c = cellIdx % cols;
-          const nid = generateNodeId();
-          store.addNode(
-            {
-              id: nid,
-              type: "image",
-              x: startX + c * (CELL_W + gap),
-              y: node.y + r * (CELL_H + gap),
-              width: CELL_W,
-              height: CELL_H,
-              title: `切片 ${cellIdx + 1}`,
-              imageSrc: url,
-              status: "idle",
-            },
-            i === 0, // 仅首块记入历史，整批一次撤销
-          );
-          // 切片连回原节点，标明来源
-          store.addConnection(
-            { id: `conn_${nid}_${node.id}`, sourceId: node.id, targetId: nid },
-            false,
-          );
-        });
-        toast.success(`已切分为 ${urls.length} 块`);
-      } else {
-        toast.error(res.message || "切分失败");
-      }
+      const slices = await sliceImageGrid(node.imageSrc, rows, cols, cells);
+      const store = useCanvasStore.getState();
+      // 每块宽高比 = 原图比例 × rows/cols；据此排成紧凑网格，按原格子位置摆放
+      const origAR = (node.contentW ?? node.width) / ((node.contentH ?? node.height) || 1);
+      const cellAR = (origAR * rows) / cols;
+      // 切片节点与源节点保持一致大小（同宽）
+      const CELL_W = node.contentW ?? node.width;
+      const CELL_H = Math.max(60, Math.round(CELL_W / (cellAR || 1)));
+      const gap = 24;
+      const startX = node.x + (node.contentW ?? node.width) + 100;
+      const placed = slices.map((s, i) => {
+        const r = Math.floor(s.cellIndex / cols);
+        const c = s.cellIndex % cols;
+        const nid = generateNodeId();
+        const blobUrl = URL.createObjectURL(s.blob);
+        store.addNode(
+          {
+            id: nid,
+            type: "image",
+            x: startX + c * (CELL_W + gap),
+            y: node.y + r * (CELL_H + gap),
+            width: CELL_W,
+            height: CELL_H,
+            title: `切片 ${s.cellIndex + 1}`,
+            imageSrc: blobUrl,
+            status: "idle",
+          },
+          i === 0, // 仅首块记入历史，整批一次撤销
+        );
+        // 切片连回原节点，标明来源
+        store.addConnection(
+          { id: `conn_${nid}_${node.id}`, sourceId: node.id, targetId: nid },
+          false,
+        );
+        return { nid, blobUrl, slice: s };
+      });
+      toast.success(`已切分为 ${slices.length} 块`);
+      // 后台静默上传：成功后把节点 imageSrc 从本地 blob 换成远端地址(刷新/引用/保存均依赖远端 URL)
+      placed.forEach(async ({ nid, blobUrl, slice }) => {
+        try {
+          const up = await uploadFileSmart(
+            new File([slice.blob], `grid_${slice.cellIndex + 1}.png`, { type: "image/png" }));
+          if (!up.success || !up.data?.fileUrl) throw new Error(up.message || "upload failed");
+          useCanvasStore.getState().updateNode(nid, { imageSrc: up.data.fileUrl });
+          // 延迟回收 blob，等 React 用远端地址完成重渲，避免替换瞬间闪裂
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+        } catch {
+          toast.error(`切片 ${slice.cellIndex + 1} 上传失败，该切片刷新后将丢失`);
+        }
+      });
     } catch {
       toast.error("切分失败，请稍后重试");
     } finally {

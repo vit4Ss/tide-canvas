@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { aiApi, uploadFileSmart } from "@/lib/api";
+import { sliceImageGrid } from "@/lib/image-slice";
 import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
 import type { AiTaskVO, AiGenerateDTO } from "@/types/ai";
 import { AiTaskStatus } from "@/types/ai";
@@ -57,52 +58,33 @@ function parseTaskMeta(meta: unknown): Record<string, unknown> {
 }
 
 /**
- * 把单张 2×2 四宫格(如 Midjourney 原生输出)切成 4 张独立图并上传，完成后写回节点组图。
- * 图片经后端下载代理取回(同源 blob)，规避上游无 CORS 头导致的 canvas 污染；
- * 任一步失败则静默保持原四宫格单图展示。
+ * 把单张 2×2 四宫格(如 Midjourney 原生输出)切成 4 张独立图并以组图展示：
+ * 切块后先用本地 blob 立即升级为组图(秒显)，再后台静默上传，完成后无感替换为远端地址；
+ * 上传失败回退为原四宫格单图(本地 blob 不可持久化)。
  */
 async function sliceGridAndApply(nodeId: string, gridUrl: string) {
-  let objUrl: string | null = null;
+  let blobUrls: string[] = [];
   try {
-    const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
-    const res = await fetch(`/api/files/download?url=${encodeURIComponent(gridUrl)}&name=grid`,
-        { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-    if (!res.ok) return;
-    objUrl = URL.createObjectURL(await res.blob());
+    const slices = await sliceImageGrid(gridUrl, 2, 2);
+    if (slices.length !== 4) return;
+    blobUrls = slices.map((s) => URL.createObjectURL(s.blob));
+    useCanvasStore.getState().updateNode(nodeId, { images: blobUrls, imageSrc: blobUrls[0] });
 
-    const img = new Image();
-    await new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve();
-      img.onerror = () => reject(new Error("grid image load failed"));
-      img.src = objUrl as string;
-    });
-    const w = Math.floor(img.naturalWidth / 2);
-    const h = Math.floor(img.naturalHeight / 2);
-    if (!w || !h) return;
-
-    const urls: string[] = [];
-    for (let r = 0; r < 2; r++) {
-      for (let c = 0; c < 2; c++) {
-        const canvas = document.createElement("canvas");
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-        ctx.drawImage(img, c * w, r * h, w, h, 0, 0, w, h);
-        const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
-        if (!blob) return;
-        const up = await uploadFileSmart(new File([blob], `grid-${r * 2 + c + 1}.png`, { type: "image/png" }));
-        if (!up.success || !up.data?.fileUrl) return;
-        urls.push(up.data.fileUrl);
-      }
+    const remote: string[] = [];
+    for (const s of slices) {
+      const up = await uploadFileSmart(
+          new File([s.blob], `grid-${s.cellIndex + 1}.png`, { type: "image/png" }));
+      if (!up.success || !up.data?.fileUrl) throw new Error("upload failed");
+      remote.push(up.data.fileUrl);
     }
-    if (urls.length === 4) {
-      useCanvasStore.getState().updateNode(nodeId, { images: urls, imageSrc: urls[0] });
-    }
+    useCanvasStore.getState().updateNode(nodeId, { images: remote, imageSrc: remote[0] });
+    const toRevoke = blobUrls;
+    blobUrls = [];
+    setTimeout(() => toRevoke.forEach((u) => URL.revokeObjectURL(u)), 5000);
   } catch {
-    // 取图/切图/上传失败：保持原四宫格单图
-  } finally {
-    if (objUrl) URL.revokeObjectURL(objUrl);
+    // 取图/切图失败：保持原四宫格单图；上传失败：回退单图(blob 刷新即失效,不可保留)
+    useCanvasStore.getState().updateNode(nodeId, { images: undefined, imageSrc: gridUrl });
+    blobUrls.forEach((u) => URL.revokeObjectURL(u));
   }
 }
 
