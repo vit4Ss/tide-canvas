@@ -84,6 +84,8 @@ interface ModelForm {
   clarities: string[];
   // 出图张数档位(1~4)：Midjourney 等一组固定 4 张的模型只勾 4；空 = 画布用默认档位(1/2/4)
   batchSizes: number[];
+  // 上游返回单张 2×2 四宫格(如 Midjourney 原生输出)：开启后前端自动切成 4 张独立图组图展示
+  gridOutput: boolean;
   // 比例：图片/视频共用此字段，渲染时按 type 用不同选项源（RATIO_OPTIONS / VIDEO_RATIOS）
   ratios: string[];
   // 视频维度
@@ -113,6 +115,7 @@ const emptyForm: ModelForm = {
   qualities: QUALITY_OPTIONS.map((q) => q.value),
   clarities: [...CLARITY_OPTIONS],
   batchSizes: [1, 2, 4],
+  gridOutput: false,
   ratios: RATIO_OPTIONS.map((r) => r.value),
   resolutions: [...RESOLUTIONS],
   durations: [...DURATION_OPTIONS],
@@ -274,7 +277,7 @@ export default function AdminAiModelsPage() {
       ...(form.estSeconds > 0 ? { estSeconds: form.estSeconds } : {}),
     };
     if (form.type === "image") {
-      return JSON.stringify({ qualities: form.qualities, clarities: form.clarities, ratios: form.ratios, batchSizes: form.batchSizes, ...pricing, ...meta });
+      return JSON.stringify({ qualities: form.qualities, clarities: form.clarities, ratios: form.ratios, batchSizes: form.batchSizes, ...(form.gridOutput ? { gridOutput: true } : {}), ...pricing, ...meta });
     }
     if (form.type === "video") {
       return JSON.stringify({ resolutions: form.resolutions, ratios: form.ratios, durations: form.durations, audio: form.audio, ...(form.videoInputs ? { videoInputs: true } : {}), ...pricing, ...meta });
@@ -421,6 +424,7 @@ export default function AdminAiModelsPage() {
       clarities?: string[];
       ratios?: string[];
       batchSizes?: number[];
+      gridOutput?: boolean;
       resolutions?: string[];
       durations?: number[];
       audio?: boolean;
@@ -450,6 +454,7 @@ export default function AdminAiModelsPage() {
       qualities: cfg.qualities ?? QUALITY_OPTIONS.map((q) => q.value),
       clarities: cfg.clarities ?? [...CLARITY_OPTIONS],
       batchSizes: cfg.batchSizes ?? [1, 2, 4],
+      gridOutput: cfg.gridOutput ?? false,
       ratios: cfg.ratios ?? (model.type === "video" ? VIDEO_RATIOS.map((r) => r.value) : RATIO_OPTIONS.map((r) => r.value)),
       resolutions: cfg.resolutions ?? [...RESOLUTIONS],
       durations: cfg.durations ?? [...DURATION_OPTIONS],
@@ -676,6 +681,16 @@ export default function AdminAiModelsPage() {
                     </div>
                     <p className="mt-1 text-xs text-neutral-400">
                       画布张数下拉只显示所勾档位；Midjourney 等一组固定 4 张的模型只勾「4张」，不勾则用默认档位(1/2/4)
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium">上游四宫格输出</label>
+                    <div className="mt-2 flex gap-2">
+                      <Chip active={form.gridOutput} onClick={() => setForm({ ...form, gridOutput: true })}>是（返回单张 2×2 合图）</Chip>
+                      <Chip active={!form.gridOutput} onClick={() => setForm({ ...form, gridOutput: false })}>否（返回独立多张）</Chip>
+                    </div>
+                    <p className="mt-1 text-xs text-neutral-400">
+                      Midjourney 原生输出为一张 2×2 合图时选「是」：生成后自动切成 4 张独立图，节点内组图展示
                     </p>
                   </div>
                   <ChipGroup

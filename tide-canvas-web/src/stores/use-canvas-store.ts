@@ -10,6 +10,8 @@ export interface CanvasNode {
   title: string;
   prompt?: string;
   imageSrc?: string;
+  /** 组图：一次生成的全部图片(如 Midjourney 一组 4 张)；imageSrc 始终等于其中的「主图」 */
+  images?: string[];
   videoSrc?: string;
   /** 语音合成结果（audio 节点） */
   audioSrc?: string;

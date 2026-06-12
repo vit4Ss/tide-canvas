@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { aiApi } from "@/lib/api";
-import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-canvas-store";
+import { aiApi, uploadFileSmart } from "@/lib/api";
+import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
 import type { AiTaskVO, AiGenerateDTO } from "@/types/ai";
 import { AiTaskStatus } from "@/types/ai";
 import { toast } from "@/components/shared/toast";
@@ -12,6 +12,8 @@ interface GenerateParams {
   handler: string;
   modelId: string;
   input: Record<string, unknown>;
+  /** 上游返回单张 2×2 四宫格(如 Midjourney)：成功后前端切成 4 张独立图并以组图展示 */
+  gridOutput?: boolean;
   /** 生成成功回调，参数为结果地址（如全景生成后用于打开 360 查看器） */
   onSuccess?: (resultUrl: string) => void;
 }
@@ -54,32 +56,57 @@ function parseTaskMeta(meta: unknown): Record<string, unknown> {
   return typeof meta === "object" && !Array.isArray(meta) ? meta as Record<string, unknown> : {};
 }
 
-/** 把批量生成的多余图片（首张已写回原节点）铺成新图片节点，排在原节点右侧，整批一次撤销 */
-function spreadBatchNodes(store: ReturnType<typeof useCanvasStore.getState>, node: CanvasNode, extraUrls: string[], aspectRatio: unknown) {
-  const imageSize = imageSizeForAspect(node, aspectRatio);
-  const baseW = imageSize.contentW ?? node.contentW ?? node.width;
-  const baseH = imageSize.contentH ?? node.contentH ?? node.height ?? baseW;
-  const gap = 24;
-  const startX = node.x + baseW + gap;
-  extraUrls.forEach((url, i) => {
-    store.addNode(
-      {
-        id: generateNodeId(),
-        type: "image",
-        x: startX + i * (baseW + gap),
-        y: node.y,
-        width: node.width,
-        height: baseH,
-        title: `${node.title || "图片"} ${i + 2}`,
-        imageSrc: url,
-        status: "success",
-        ...imageSize,
-      },
-      i === 0,
-    );
-  });
+/**
+ * 把单张 2×2 四宫格(如 Midjourney 原生输出)切成 4 张独立图并上传，完成后写回节点组图。
+ * 图片经后端下载代理取回(同源 blob)，规避上游无 CORS 头导致的 canvas 污染；
+ * 任一步失败则静默保持原四宫格单图展示。
+ */
+async function sliceGridAndApply(nodeId: string, gridUrl: string) {
+  let objUrl: string | null = null;
+  try {
+    const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+    const res = await fetch(`/api/files/download?url=${encodeURIComponent(gridUrl)}&name=grid`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (!res.ok) return;
+    objUrl = URL.createObjectURL(await res.blob());
+
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("grid image load failed"));
+      img.src = objUrl as string;
+    });
+    const w = Math.floor(img.naturalWidth / 2);
+    const h = Math.floor(img.naturalHeight / 2);
+    if (!w || !h) return;
+
+    const urls: string[] = [];
+    for (let r = 0; r < 2; r++) {
+      for (let c = 0; c < 2; c++) {
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+        ctx.drawImage(img, c * w, r * h, w, h, 0, 0, w, h);
+        const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+        if (!blob) return;
+        const up = await uploadFileSmart(new File([blob], `grid-${r * 2 + c + 1}.png`, { type: "image/png" }));
+        if (!up.success || !up.data?.fileUrl) return;
+        urls.push(up.data.fileUrl);
+      }
+    }
+    if (urls.length === 4) {
+      useCanvasStore.getState().updateNode(nodeId, { images: urls, imageSrc: urls[0] });
+    }
+  } catch {
+    // 取图/切图/上传失败：保持原四宫格单图
+  } finally {
+    if (objUrl) URL.revokeObjectURL(objUrl);
+  }
 }
 
+/** 把批量生成的多余图片（首张已写回原节点）铺成新图片节点，排在原节点右侧，整批一次撤销 */
 export function useAiGeneration() {
   const updateNode = useCanvasStore((s) => s.updateNode);
   const currentProjectId = useCanvasStore((s) => s.currentProjectId);
@@ -93,7 +120,7 @@ export function useAiGeneration() {
   }, [updateNode]);
 
   /** 轮询任务状态直到完成 */
-  const pollTask = useCallback((nodeId: string, taskId: string | number, startTime: number, input: Record<string, unknown>, maxPollMs: number, onSuccess?: (resultUrl: string) => void) => {
+  const pollTask = useCallback((nodeId: string, taskId: string | number, startTime: number, input: Record<string, unknown>, maxPollMs: number, gridOutput?: boolean, onSuccess?: (resultUrl: string) => void) => {
     const poll = async () => {
       // 超时检查
       if (Date.now() - startTime > maxPollMs) {
@@ -135,19 +162,21 @@ export function useAiGeneration() {
             const isAudio = node?.type === "audio";
             const requestedAspect = input.aspectRatio ?? input.aspect_ratio ?? input.ratio;
             const imageSize = node ? imageSizeForAspect(node, requestedAspect) : {};
-            // 视频写 videoSrc、音频写 audioSrc、图片写 imageSrc
+            // 批量多图(如 Midjourney 一组 4 张)：全部存入本节点 images，节点内组图交互展示
+            const taskMeta = parseTaskMeta(task.resultMeta);
+            const rawUrls = taskMeta.urls;
+            const urls = Array.isArray(rawUrls) ? rawUrls.filter((u): u is string => isValid(u as string)) : [];
+            const isBatch = !isVideo && !isAudio && urls.length > 1;
+            // 视频写 videoSrc、音频写 audioSrc、图片写 imageSrc(+组图 images)
             updateNode(
               nodeId,
               isVideo ? { status: "success", videoSrc: primary }
                 : isAudio ? { status: "success", audioSrc: primary }
-                : { status: "success", imageSrc: primary, ...imageSize },
+                : { status: "success", imageSrc: primary, images: isBatch ? urls : undefined, ...imageSize },
             );
-            // 批量多图：resultMeta.urls 的其余张铺成新图片节点（仅图片）
-            const taskMeta = parseTaskMeta(task.resultMeta);
-            const rawUrls = taskMeta.urls;
-            const urls = Array.isArray(rawUrls) ? rawUrls.filter((u): u is string => isValid(u as string)) : [];
-            if (!isVideo && !isAudio && node && urls.length > 1) {
-              spreadBatchNodes(store, node, urls.slice(1), requestedAspect);
+            // 四宫格模型(如 Midjourney)返回单张合图：异步切成 4 张独立图后升级为组图
+            if (!isVideo && !isAudio && gridOutput && urls.length <= 1) {
+              void sliceGridAndApply(nodeId, primary);
             }
             toast.success("生成成功");
             onSuccess?.(primary);
@@ -191,7 +220,7 @@ export function useAiGeneration() {
   }, [markGenerationFailed, updateNode]);
 
   /** 开始生成 */
-  const generate = useCallback(async ({ nodeId, handler, modelId, input, onSuccess }: GenerateParams) => {
+  const generate = useCallback(async ({ nodeId, handler, modelId, input, gridOutput, onSuccess }: GenerateParams) => {
     // 防止重复触发
     if (activeTaskIds.has(nodeId)) {
       toast.info("生成中，请稍候");
@@ -221,7 +250,7 @@ export function useAiGeneration() {
       // 启动轮询：视频任务后端可能需 10min+，前端上限按节点类型放宽，避免早于后端放弃而误判失败
       const startedNode = useCanvasStore.getState().nodes.find((n) => n.id === nodeId);
       const maxPollMs = startedNode?.type === "video" ? MAX_POLL_TIME_VIDEO : MAX_POLL_TIME;
-      pollTask(nodeId, res.data.id, Date.now(), input, maxPollMs, onSuccess);
+      pollTask(nodeId, res.data.id, Date.now(), input, maxPollMs, gridOutput, onSuccess);
     } catch {
       markGenerationFailed(nodeId);
       toast.error("网络错误");

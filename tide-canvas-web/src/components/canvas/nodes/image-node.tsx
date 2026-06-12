@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-canvas-store";
 import {
   Image as ImageIcon, Upload, Plus, Maximize2, Box, MapPin, Copy,
-  Camera, ArrowUp, ChevronDown, ChevronRight, Zap, Download, X,
+  Camera, ArrowUp, ChevronDown, ChevronRight, Zap, Download, X, Minimize2,
   ArrowLeft, LayoutGrid, Layers,
   Images, Orbit, Sun, Table, Brush, FlipHorizontal2,
   Focus, Grid2x2, Hash, RotateCcw,
@@ -147,9 +147,12 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       setQualityRatio((s) => ({ ...s, ratio: defaultRatio }));
     }
   }
-  // 一次出图张数（批量）：首张写回本节点，其余铺成新节点
+  // 一次出图张数（批量）：全部存入本节点 images，组图交互展示
   const [batchCount, setBatchCount] = useState(1);
   const [batchOpen, setBatchOpen] = useState(false);
+  // 组图展开态(收起=主图+堆叠徽标，展开=2×2 网格可换主图)
+  const [groupOpen, setGroupOpen] = useState(false);
+  const groupImages = node.images && node.images.length > 1 ? node.images : null;
   // 已生成图片的真实宽高比（onLoad 时测量），用于让卡片严丝合缝贴合图片
   const [imgAspectState, setImgAspectState] = useState<{ src: string; aspect: number } | null>(null);
   const imgAspect = imgAspectState && imgAspectState.src === node.imageSrc ? imgAspectState.aspect : null;
@@ -220,7 +223,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const cardW = cardAspect >= 1 ? CARD_MAX : Math.round(CARD_MAX * cardAspect);
   const cardH = cardAspect >= 1 ? Math.round(CARD_MAX / cardAspect) : CARD_MAX;
   const selectedModel = imageModels.find((m) => m.modelId === selectedModelId);
-  const formatConfig: { qualities?: string[]; clarities?: string[]; ratios?: string[]; batchSizes?: number[]; pricing?: Record<string, Record<string, number>> } = (() => {
+  const formatConfig: { qualities?: string[]; clarities?: string[]; ratios?: string[]; batchSizes?: number[]; gridOutput?: boolean; pricing?: Record<string, Record<string, number>> } = (() => {
     if (!selectedModel?.config) return {};
     try {
       return JSON.parse(selectedModel.config);
@@ -280,6 +283,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       nodeId: node.id,
       handler: hasImage ? "image_to_image" : "text_to_image",
       modelId: selectedModelId || "default",
+      gridOutput: formatConfig.gridOutput,
       input: {
         prompt: node.prompt,
         ...(imageList.length ? { imageList, sourceImage: imageList[0], references: imageList.slice(1) } : {}),
@@ -608,31 +612,46 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   }, [gridPreview, selectedCells, handleGridSplit]);
 
   // 下载图片：经后端代理拉取（同源、无跨域），转 blob 触发浏览器下载，全程不导航刷新
+  const downloadUrl = useCallback(async (url: string, name: string) => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+    const api = `/api/files/download?url=${encodeURIComponent(url)}&name=${encodeURIComponent(name)}`;
+    const res = await fetch(api, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (!res.ok) throw new Error("download failed");
+    const blob = await res.blob();
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = objUrl;
+    a.download = `${name}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(objUrl);
+  }, []);
+
   const handleDownload = useCallback(async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     if (!node.imageSrc || downloading) return;
     setDownloading(true);
     try {
-      const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
-      const api = `/api/files/download?url=${encodeURIComponent(node.imageSrc)}&name=${encodeURIComponent(node.title || "image")}`;
-      const res = await fetch(api, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-      if (!res.ok) throw new Error("download failed");
-      const blob = await res.blob();
-      const objUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = objUrl;
-      a.download = `${node.title || "image"}.png`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(objUrl);
+      await downloadUrl(node.imageSrc, node.title || "image");
     } catch {
       toast.error("下载失败，请稍后重试");
     } finally {
       setDownloading(false);
     }
-  }, [node.imageSrc, node.title, downloading]);
+  }, [node.imageSrc, node.title, downloading, downloadUrl]);
+
+  // 组图单张下载（展开网格内的格子按钮）
+  const handleDownloadOne = useCallback(async (e: React.MouseEvent, url: string, index: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      await downloadUrl(url, `${node.title || "image"}-${index + 1}`);
+    } catch {
+      toast.error("下载失败，请稍后重试");
+    }
+  }, [downloadUrl, node.title]);
 
   // 大图预览：Esc 关闭
   useEffect(() => {
@@ -1117,6 +1136,16 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
           document.body,
         )}
 
+        {/* 组图收起态：右侧堆叠纸张效果（置于主卡之下） */}
+        {groupImages && !groupOpen && (
+          <>
+            <div className="absolute rounded-2xl bg-white shadow-sm ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-800"
+                 style={{ left: 16, right: -16, top: 8, height: cardH - 16 }} />
+            <div className="absolute rounded-2xl bg-white shadow-sm ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-800"
+                 style={{ left: 8, right: -8, top: 4, height: cardH - 8 }} />
+          </>
+        )}
+
         {/* 主图片区 - 始终显示（作为容器内唯一在流元素，决定容器尺寸） */}
         <div
           className={`relative overflow-hidden rounded-2xl bg-white shadow-sm ring-1 transition-all dark:bg-neutral-950 ${
@@ -1125,6 +1154,18 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
           }`}
           style={{ width: cardW, height: cardH }}
         >
+          {/* 组图徽标：收起态点击展开 2×2 网格 */}
+          {groupImages && !groupOpen && !generating && (
+            <button
+              onMouseDown={stop}
+              onClick={(e) => { stop(e); setGroupOpen(true); }}
+              title="展开组图"
+              className="absolute right-3 top-3 z-[7] flex items-center gap-1 rounded-lg bg-black/60 px-2.5 py-1.5 text-xs font-medium text-white backdrop-blur-sm transition-colors hover:bg-black/75"
+            >
+              <Maximize2 className="h-3.5 w-3.5" />
+              {groupImages.length}张
+            </button>
+          )}
           {/* 生成中遮罩 */}
           {generating && (
             <div className="absolute inset-0 z-[5] flex items-center justify-center bg-white/70 backdrop-blur-sm dark:bg-neutral-900/70">
@@ -1176,7 +1217,46 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
               </div>
             </div>
           )}
-          {node.imageSrc ? (
+          {groupImages && groupOpen ? (
+            /* 组图展开态：2×2 网格，每张可下载/设为主图，主图格提供收起 */
+            <div className="grid h-full w-full grid-cols-2 grid-rows-2 gap-1 bg-neutral-100 p-1 dark:bg-neutral-900">
+              {groupImages.slice(0, 4).map((url, i) => (
+                <div key={url} className="group/cell relative overflow-hidden rounded-lg bg-neutral-200 dark:bg-neutral-800">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={url} alt="" draggable={false} className="h-full w-full object-cover" />
+                  <div className="absolute right-1.5 top-1.5 z-10 hidden gap-1 group-hover/cell:flex">
+                    <button
+                      onMouseDown={stop}
+                      onClick={(e) => handleDownloadOne(e, url, i)}
+                      className="flex items-center gap-1 rounded-md bg-black/65 px-2 py-1 text-[11px] font-medium text-white backdrop-blur-sm hover:bg-black/80"
+                    >
+                      <Download className="h-3 w-3" /> 下载
+                    </button>
+                    {url === node.imageSrc ? (
+                      <button
+                        onMouseDown={stop}
+                        onClick={(e) => { stop(e); setGroupOpen(false); }}
+                        className="flex items-center gap-1 rounded-md bg-black/65 px-2 py-1 text-[11px] font-medium text-white backdrop-blur-sm hover:bg-black/80"
+                      >
+                        <Minimize2 className="h-3 w-3" /> 收起
+                      </button>
+                    ) : (
+                      <button
+                        onMouseDown={stop}
+                        onClick={(e) => { stop(e); updateNode(node.id, { imageSrc: url }); }}
+                        className="rounded-md bg-black/65 px-2 py-1 text-[11px] font-medium text-white backdrop-blur-sm hover:bg-black/80"
+                      >
+                        设为主图
+                      </button>
+                    )}
+                  </div>
+                  {url === node.imageSrc && (
+                    <span className="absolute left-1.5 top-1.5 rounded bg-blue-500/90 px-1.5 py-0.5 text-[10px] font-medium text-white">主图</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : node.imageSrc ? (
             node.is360 ? (
               <InlinePanorama src={node.imageSrc} gridOn={panoGrid} apiRef={panoApiRef} interactive={showAuxUI} />
             ) : (
