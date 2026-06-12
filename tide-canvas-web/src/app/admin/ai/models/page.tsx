@@ -82,6 +82,8 @@ interface ModelForm {
   // 图片维度
   qualities: string[];
   clarities: string[];
+  // 出图张数档位(1~4)：Midjourney 等一组固定 4 张的模型只勾 4；空 = 画布用默认档位(1/2/4)
+  batchSizes: number[];
   // 比例：图片/视频共用此字段，渲染时按 type 用不同选项源（RATIO_OPTIONS / VIDEO_RATIOS）
   ratios: string[];
   // 视频维度
@@ -110,6 +112,7 @@ const emptyForm: ModelForm = {
   estSeconds: 0,
   qualities: QUALITY_OPTIONS.map((q) => q.value),
   clarities: [...CLARITY_OPTIONS],
+  batchSizes: [1, 2, 4],
   ratios: RATIO_OPTIONS.map((r) => r.value),
   resolutions: [...RESOLUTIONS],
   durations: [...DURATION_OPTIONS],
@@ -271,7 +274,7 @@ export default function AdminAiModelsPage() {
       ...(form.estSeconds > 0 ? { estSeconds: form.estSeconds } : {}),
     };
     if (form.type === "image") {
-      return JSON.stringify({ qualities: form.qualities, clarities: form.clarities, ratios: form.ratios, ...pricing, ...meta });
+      return JSON.stringify({ qualities: form.qualities, clarities: form.clarities, ratios: form.ratios, batchSizes: form.batchSizes, ...pricing, ...meta });
     }
     if (form.type === "video") {
       return JSON.stringify({ resolutions: form.resolutions, ratios: form.ratios, durations: form.durations, audio: form.audio, ...(form.videoInputs ? { videoInputs: true } : {}), ...pricing, ...meta });
@@ -373,6 +376,13 @@ export default function AdminAiModelsPage() {
     }));
   };
 
+  const toggleBatchSize = (n: number) => {
+    setForm((prev) => ({
+      ...prev,
+      batchSizes: prev.batchSizes.includes(n) ? prev.batchSizes.filter((x) => x !== n) : [...prev.batchSizes, n].sort((a, b) => a - b),
+    }));
+  };
+
   // 切换类型：比例字段重置为该类型默认选项，并清空定价矩阵（维度变了，旧 key 不再匹配）
   const handleTypeChange = (type: string) => {
     setForm((prev) => ({
@@ -410,6 +420,7 @@ export default function AdminAiModelsPage() {
       qualities?: string[];
       clarities?: string[];
       ratios?: string[];
+      batchSizes?: number[];
       resolutions?: string[];
       durations?: number[];
       audio?: boolean;
@@ -438,6 +449,7 @@ export default function AdminAiModelsPage() {
       estSeconds: cfg.estSeconds ?? 0,
       qualities: cfg.qualities ?? QUALITY_OPTIONS.map((q) => q.value),
       clarities: cfg.clarities ?? [...CLARITY_OPTIONS],
+      batchSizes: cfg.batchSizes ?? [1, 2, 4],
       ratios: cfg.ratios ?? (model.type === "video" ? VIDEO_RATIOS.map((r) => r.value) : RATIO_OPTIONS.map((r) => r.value)),
       resolutions: cfg.resolutions ?? [...RESOLUTIONS],
       durations: cfg.durations ?? [...DURATION_OPTIONS],
@@ -652,6 +664,19 @@ export default function AdminAiModelsPage() {
                       onToggle={(v) => toggleArr("supportedHandlers", v)}
                     />
                     <p className="mt-1 text-xs text-neutral-400">不勾选 = 不限制（画布显示全部模式）</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium">出图张数档位</label>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {[1, 2, 3, 4].map((n) => (
+                        <Chip key={n} active={form.batchSizes.includes(n)} onClick={() => toggleBatchSize(n)}>
+                          {n}张
+                        </Chip>
+                      ))}
+                    </div>
+                    <p className="mt-1 text-xs text-neutral-400">
+                      画布张数下拉只显示所勾档位；Midjourney 等一组固定 4 张的模型只勾「4张」，不勾则用默认档位(1/2/4)
+                    </p>
                   </div>
                   <ChipGroup
                     label="支持画质"

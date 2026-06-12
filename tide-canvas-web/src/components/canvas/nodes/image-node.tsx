@@ -220,7 +220,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const cardW = cardAspect >= 1 ? CARD_MAX : Math.round(CARD_MAX * cardAspect);
   const cardH = cardAspect >= 1 ? Math.round(CARD_MAX / cardAspect) : CARD_MAX;
   const selectedModel = imageModels.find((m) => m.modelId === selectedModelId);
-  const formatConfig: { qualities?: string[]; clarities?: string[]; ratios?: string[]; pricing?: Record<string, Record<string, number>> } = (() => {
+  const formatConfig: { qualities?: string[]; clarities?: string[]; ratios?: string[]; batchSizes?: number[]; pricing?: Record<string, Record<string, number>> } = (() => {
     if (!selectedModel?.config) return {};
     try {
       return JSON.parse(selectedModel.config);
@@ -231,6 +231,17 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   // 积分消耗：优先按「画质×清晰度」矩阵价，其次模型固定价，其次 Handler 配置，最后兜底 18
   const matrixCost = formatConfig.pricing?.[qualityRatio.quality]?.[qualityRatio.clarity];
   const pointCost = matrixCost ?? selectedModel?.pointCost ?? handlerCosts[node.imageSrc ? "image_to_image" : "text_to_image"] ?? 18;
+
+  // 出图张数选项：由模型 config.batchSizes 驱动(如 Midjourney 固定一组 4 张配 [4])，未配置用默认档位
+  const batchOptions = formatConfig.batchSizes?.length ? formatConfig.batchSizes : [1, 2, 4];
+  // 切换模型后当前张数不在该模型的可选档位 → 自动校正为其首个档位
+  useEffect(() => {
+    if (!batchOptions.includes(batchCount)) {
+      setBatchCount(batchOptions[0]);
+    }
+    // batchOptions 由 selectedModelId 派生(数组引用每次渲染变化)，不列入依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedModelId, batchCount]);
 
   // 把卡片实际渲染尺寸同步到 store，供连线层将端点锚定到卡片真实边缘中点（默认对节点居中）。
   // updateNode 默认不记历史；条件守卫确保仅在值变化时写入，自然收敛、不会循环。
@@ -1299,7 +1310,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                     </button>
                     {batchOpen && (
                       <div onMouseDown={stop} className="absolute bottom-full left-0 z-30 mb-1 w-20 rounded-lg border border-neutral-200 bg-white py-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-900">
-                        {[1, 2, 4].map((n) => (
+                        {batchOptions.map((n) => (
                           <button
                             key={n}
                             onMouseDown={stop}
