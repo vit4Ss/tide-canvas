@@ -21,7 +21,10 @@ public class AiGenerationLogVO {
     private String model;
     private String operation;
     private String requestUrl;
+    /** 上游请求体：后端实际发送给供应商/中转站的 payload */
     private String requestBody;
+    /** 用户输入参数：前端发给后端的原始参数(取自 ai_task.input_params,仅详情接口回填) */
+    private String inputParams;
     private Integer httpStatus;
     private String responseBody;
     private String upstreamTaskId;

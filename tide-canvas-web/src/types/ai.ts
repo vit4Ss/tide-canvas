@@ -58,7 +58,10 @@ export interface AiGenerationLogVO {
   model: string;
   operation: string;
   requestUrl: string;
+  /** 上游请求体:后端实际发给供应商/中转站的 payload */
   requestBody: string;
+  /** 用户输入参数:前端发给后端的原始参数(仅详情接口返回) */
+  inputParams?: string;
   httpStatus: number;
   responseBody: string;
   upstreamTaskId: string;

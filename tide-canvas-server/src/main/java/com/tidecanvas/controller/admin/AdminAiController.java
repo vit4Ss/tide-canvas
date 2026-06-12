@@ -355,7 +355,15 @@ public class AdminAiController {
         }
         List<AiGenerationLogVO> single = new ArrayList<>(List.of(toLogVO(logDO)));
         enrich(single);
-        return Result.success(single.get(0));
+        AiGenerationLogVO vo = single.get(0);
+        // 回填用户输入参数,与上游请求体对照排查(前端→后端 vs 后端→供应商)
+        if (logDO.getTaskId() != null) {
+            AiTaskDO task = taskMapper.selectById(logDO.getTaskId());
+            if (task != null) {
+                vo.setInputParams(task.getInputParams());
+            }
+        }
+        return Result.success(vo);
     }
 
     private AiGenerationLogVO toLogVO(AiGenerationLogDO d) {

@@ -434,9 +434,12 @@ export default function AdminAiLogsPage() {
               <Field label="耗时" value={detail.durationMs != null ? `${detail.durationMs} ms` : "-"} />
               <Field label="成本(USD)" value={detail.cost != null ? `$${Number(detail.cost).toFixed(4)}` : "-"} />
             </dl>
-            {detail.requestUrl ? <Block label="请求地址" text={detail.requestUrl} /> : null}
-            <Block label="请求体" text={pretty(detail.requestBody)} mono />
-            <Block label="响应体" text={pretty(detail.responseBody)} mono />
+            {detail.requestUrl ? <Block label="上游请求地址" text={detail.requestUrl} /> : null}
+            {detail.inputParams ? (
+              <Block label="用户输入参数（前端 → 后端）" text={pretty(detail.inputParams)} mono />
+            ) : null}
+            <Block label="上游请求体（后端 → 供应商）" text={pretty(detail.requestBody)} mono />
+            <Block label="上游响应体" text={pretty(detail.responseBody)} mono />
             {detail.errorMsg ? <Block label="错误" text={detail.errorMsg} mono danger /> : null}
             {detail.resultUrl ? <Block label="结果地址" text={detail.resultUrl} /> : null}
           </div>
