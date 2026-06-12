@@ -101,7 +101,7 @@ public class ImageGridServiceImpl implements ImageGridService {
             }
             BufferedImage img = ImageIO.read(new ByteArrayInputStream(body));
             if (img == null) {
-                throw new BusinessException(ResultCode.BAD_REQUEST, "无法解析图片内容");
+                throw new BusinessException(ResultCode.BAD_REQUEST, "无法解析图片内容(服务端不支持该图片格式)");
             }
             if ((long) img.getWidth() * img.getHeight() > MAX_PIXELS) {
                 throw new BusinessException(ResultCode.FILE_SIZE_EXCEEDED, "源图像素过大");

@@ -51,6 +51,12 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-aop</artifactId>
         </dependency>
+        <!-- ImageIO WebP 解码插件(SPI 自动注册)：宫格切分需读取 Midjourney/中转站输出的 WebP 源图 -->
+        <dependency>
+            <groupId>com.twelvemonkeys.imageio</groupId>
+            <artifactId>imageio-webp</artifactId>
+            <version>3.10.1</version>
+        </dependency>
 
         <!-- MyBatis-Plus -->
         <dependency>
