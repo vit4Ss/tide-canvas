@@ -10,7 +10,7 @@ import {
   Images, Orbit, Sun, Table, Brush, FlipHorizontal2,
   Focus, Grid2x2, Hash, RotateCcw,
 } from "lucide-react";
-import { QualityRatioPicker, parseRatio, RATIO_OPTIONS, type QualityRatioValue } from "./quality-ratio-picker";
+import { QualityRatioPicker, parseRatio, RATIO_OPTIONS, QUALITY_OPTIONS, CLARITY_OPTIONS, type QualityRatioValue } from "./quality-ratio-picker";
 import { ModelPicker } from "./model-picker";
 import { PromptRefEditor, PromptEditorModal } from "./prompt-ref-editor";
 import { PanoramaViewer } from "./panorama-viewer";
@@ -234,12 +234,30 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
 
   // 出图张数选项：由模型 config.batchSizes 驱动(如 Midjourney 固定一组 4 张配 [4])，未配置用默认档位
   const batchOptions = formatConfig.batchSizes?.length ? formatConfig.batchSizes : [1, 2, 4];
-  // 切换模型后当前张数不在该模型的可选档位 → 自动校正为其首个档位
+  // 各维度可选值：undefined(模型未配置) = 默认全集；空数组(后台明确全不勾) = 模型无此维度，选择器隐藏且参数不下发
+  const qualityValues = formatConfig.qualities ?? QUALITY_OPTIONS.map((q) => q.value);
+  const clarityValues = formatConfig.clarities ?? [...CLARITY_OPTIONS];
+  const ratioValues = formatConfig.ratios;
+  const hasRatioDim = !ratioValues || ratioValues.length > 0;
+  // 切换模型后当前张数/画质/清晰度/比例不在该模型的可选档位 → 自动校正为其首个档位
   useEffect(() => {
     if (!batchOptions.includes(batchCount)) {
       setBatchCount(batchOptions[0]);
     }
-    // batchOptions 由 selectedModelId 派生(数组引用每次渲染变化)，不列入依赖
+    setQualityRatio((s) => {
+      let next = s;
+      if (qualityValues.length && !qualityValues.includes(s.quality)) {
+        next = { ...next, quality: qualityValues[0] as QualityRatioValue["quality"] };
+      }
+      if (clarityValues.length && !clarityValues.includes(s.clarity)) {
+        next = { ...next, clarity: clarityValues[0] as QualityRatioValue["clarity"] };
+      }
+      if (ratioValues?.length && !ratioValues.includes(s.ratio)) {
+        next = { ...next, ratio: ratioValues[0] };
+      }
+      return next;
+    });
+    // 各可选数组由 selectedModelId 派生(引用每次渲染变化)，不列入依赖
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedModelId, batchCount]);
 
@@ -265,15 +283,14 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       input: {
         prompt: node.prompt,
         ...(imageList.length ? { imageList, sourceImage: imageList[0], references: imageList.slice(1) } : {}),
-        aspectRatio: qualityRatio.ratio,
-        aspect_ratio: qualityRatio.ratio,
-        ratio: qualityRatio.ratio,
-        quality: qualityRatio.quality,
-        clarity: qualityRatio.clarity,
-        resolution: qualityRatio.clarity,
+        // 模型无某维度(后台全不勾)时该参数不下发，避免上游收到其不支持的字段
+        ...(hasRatioDim ? { aspectRatio: qualityRatio.ratio, aspect_ratio: qualityRatio.ratio, ratio: qualityRatio.ratio } : {}),
+        ...(qualityValues.length ? { quality: qualityRatio.quality } : {}),
+        ...(clarityValues.length ? { clarity: qualityRatio.clarity, resolution: qualityRatio.clarity } : {}),
         ...(batchCount > 1 ? { batchCount } : {}),
       },
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [generate, node.id, node.prompt, node.imageSrc, qualityRatio, selectedModelId, refs, batchCount]);
 
   const handlePromptChange = useCallback((value: string) => {

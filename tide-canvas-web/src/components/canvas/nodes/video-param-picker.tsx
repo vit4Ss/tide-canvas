@@ -68,15 +68,19 @@ export function VideoParamPicker({ value, onChange, resolutions, ratios, duratio
     setOpen(!open);
   };
 
-  // 按模型配置过滤可选项；未配置则显示全部
-  const ratioOpts = ratios && ratios.length ? VIDEO_RATIOS.filter((r) => ratios.includes(r.value)) : VIDEO_RATIOS;
-  const resolutionOpts = resolutions && resolutions.length ? RESOLUTIONS.filter((r) => resolutions.includes(r)) : RESOLUTIONS;
-  const durationOpts = durations && durations.length ? [...durations].sort((a, b) => a - b) : DURATION_OPTIONS;
+  // 维度语义：undefined(模型未配置) = 显示全部；空数组(后台明确全不勾) = 该模型无此维度，隐藏区块
+  const ratioOpts = ratios ? VIDEO_RATIOS.filter((r) => ratios.includes(r.value)) : VIDEO_RATIOS;
+  const resolutionOpts = resolutions ? RESOLUTIONS.filter((r) => resolutions.includes(r)) : RESOLUTIONS;
+  const durationOpts = durations ? [...durations].sort((a, b) => a - b) : DURATION_OPTIONS;
   const showAudio = allowAudio !== false;
   const durIdx = Math.max(0, durationOpts.indexOf(value.duration));
   const durPct = durationOpts.length > 1 ? Math.round((durIdx / (durationOpts.length - 1)) * 100) : 0;
 
-  const summary = `${value.ratio === "auto" ? "Auto" : value.ratio} · ${value.resolution} · ${value.duration}s`;
+  const summaryParts: string[] = [];
+  if (ratioOpts.length) summaryParts.push(value.ratio === "auto" ? "Auto" : value.ratio);
+  if (resolutionOpts.length) summaryParts.push(value.resolution);
+  if (durationOpts.length) summaryParts.push(`${value.duration}s`);
+  const summary = summaryParts.join(" · ") || "默认";
   const cellBase = "rounded-lg border px-3 py-2 text-xs transition-colors";
   const cellOn = "border-neutral-900 bg-white text-neutral-900 dark:border-white dark:bg-neutral-900 dark:text-white";
   const cellOff = "border-neutral-200 text-neutral-600 hover:border-neutral-300 dark:border-neutral-700 dark:text-neutral-400";
@@ -101,6 +105,7 @@ export function VideoParamPicker({ value, onChange, resolutions, ratios, duratio
           }`}
         >
           {/* 比例 */}
+          {ratioOpts.length > 0 && (
           <div>
             <p className="mb-2 text-xs text-neutral-500">比例</p>
             <div className="grid grid-cols-5 gap-2">
@@ -131,9 +136,11 @@ export function VideoParamPicker({ value, onChange, resolutions, ratios, duratio
               })}
             </div>
           </div>
+          )}
 
           {/* 清晰度 */}
-          <div className="mt-4">
+          {resolutionOpts.length > 0 && (
+          <div className="mt-4 first:mt-0">
             <p className="mb-2 text-xs text-neutral-500">清晰度</p>
             <div className="grid grid-cols-3 gap-2">
               {resolutionOpts.map((res) => (
@@ -147,9 +154,11 @@ export function VideoParamPicker({ value, onChange, resolutions, ratios, duratio
               ))}
             </div>
           </div>
+          )}
 
           {/* 视频时长：档位轴（滑块按档位索引吸附；连续秒数=均匀刻度，非连续=按档位停靠） */}
-          <div className="mt-4">
+          {durationOpts.length > 0 && (
+          <div className="mt-4 first:mt-0">
             <div className="flex items-center justify-between">
               <p className="text-xs text-neutral-500">视频时长</p>
               <span className="text-xs text-neutral-400">{value.duration}s</span>
@@ -175,6 +184,7 @@ export function VideoParamPicker({ value, onChange, resolutions, ratios, duratio
               </>
             )}
           </div>
+          )}
 
           {/* 生成音频（模型支持时才显示） */}
           {showAudio && (

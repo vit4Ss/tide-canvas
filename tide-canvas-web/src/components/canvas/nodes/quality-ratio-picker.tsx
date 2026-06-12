@@ -75,13 +75,18 @@ export function QualityRatioPicker({ value, onChange, qualities, clarities, rati
     return () => document.removeEventListener("mousedown", onMouseDown);
   }, [open]);
 
+  // 维度语义：undefined(模型未配置) = 显示全部；空数组(后台明确全不勾) = 该模型无此维度，隐藏区块
+  const qualityOpts = qualities ? QUALITY_OPTIONS.filter((q) => qualities.includes(q.value)) : [...QUALITY_OPTIONS];
+  const clarityOpts = clarities ? CLARITY_OPTIONS.filter((c) => clarities.includes(c)) : [...CLARITY_OPTIONS];
+  const ratioOpts = ratios ? RATIO_OPTIONS.filter((r) => ratios.includes(r.value)) : RATIO_OPTIONS;
+
   const qualityLabel = QUALITY_OPTIONS.find((q) => q.value === value.quality)?.label || "标准画质";
   const ratioLabel = value.ratio === "auto" ? "自适应" : value.ratio;
-  const summary = compact ? `${ratioLabel} · ${value.clarity}` : `${ratioLabel} · ${qualityLabel} · ${value.clarity}`;
-
-  const qualityOpts = qualities && qualities.length ? QUALITY_OPTIONS.filter((q) => qualities.includes(q.value)) : QUALITY_OPTIONS;
-  const clarityOpts = clarities && clarities.length ? CLARITY_OPTIONS.filter((c) => clarities.includes(c)) : CLARITY_OPTIONS;
-  const ratioOpts = ratios && ratios.length ? RATIO_OPTIONS.filter((r) => ratios.includes(r.value)) : RATIO_OPTIONS;
+  const summaryParts: string[] = [];
+  if (ratioOpts.length) summaryParts.push(ratioLabel);
+  if (!compact && qualityOpts.length) summaryParts.push(qualityLabel);
+  if (clarityOpts.length) summaryParts.push(value.clarity);
+  const summary = summaryParts.join(" · ") || "默认";
 
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
@@ -115,6 +120,7 @@ export function QualityRatioPicker({ value, onChange, qualities, clarities, rati
           }`}
         >
           {/* 画质 */}
+          {qualityOpts.length > 0 && (
           <div>
             <p className="mb-2 text-xs text-neutral-500">画质</p>
             <div className="grid grid-cols-3 gap-2">
@@ -133,9 +139,11 @@ export function QualityRatioPicker({ value, onChange, qualities, clarities, rati
               ))}
             </div>
           </div>
+          )}
 
           {/* 清晰度 */}
-          <div className="mt-4">
+          {clarityOpts.length > 0 && (
+          <div className="mt-4 first:mt-0">
             <p className="mb-2 text-xs text-neutral-500">清晰度</p>
             <div className="grid grid-cols-3 gap-2">
               {clarityOpts.map((c) => (
@@ -153,9 +161,11 @@ export function QualityRatioPicker({ value, onChange, qualities, clarities, rati
               ))}
             </div>
           </div>
+          )}
 
           {/* 比例 */}
-          <div className="mt-4">
+          {ratioOpts.length > 0 && (
+          <div className="mt-4 first:mt-0">
             <p className="mb-2 text-xs text-neutral-500">比例</p>
             <div className="grid grid-cols-5 gap-2">
               {ratioOpts.map((r) => {
@@ -195,6 +205,7 @@ export function QualityRatioPicker({ value, onChange, qualities, clarities, rati
               })}
             </div>
           </div>
+          )}
         </div>
       )}
     </div>

@@ -236,6 +236,20 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   const matrixCost = formatConfig.pricing?.[videoParam.resolution]?.[String(videoParam.duration)];
   const pointCost = matrixCost ?? selectedModel?.pointCost ?? 135;
 
+  // 切换模型后当前比例/清晰度/时长不在该模型的可选档位 → 自动校正为其首个档位
+  useEffect(() => {
+    setVideoParam((p) => {
+      let next = p;
+      const { ratios, resolutions, durations } = formatConfig;
+      if (ratios?.length && !ratios.includes(p.ratio)) next = { ...next, ratio: ratios[0] };
+      if (resolutions?.length && !resolutions.includes(p.resolution)) next = { ...next, resolution: resolutions[0] };
+      if (durations?.length && !durations.includes(p.duration)) next = { ...next, duration: [...durations].sort((a, b) => a - b)[0] };
+      return next;
+    });
+    // formatConfig 由 selectedModelId 派生(引用每次渲染变化)，不列入依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedModelId]);
+
   // 视频卡片按所选比例渲染，缩放时维持比例
   const ratioParsed = parseRatio(videoParam.ratio);
   const cardAspect = ratioParsed ? ratioParsed.w / ratioParsed.h : 16 / 9;
@@ -520,8 +534,14 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       return;
     }
 
-    // 按模式选 handler，把图片/视频/文字喂给生成
-    const base: Record<string, unknown> = { prompt: node.prompt, aspectRatio: videoParam.ratio, resolution: videoParam.resolution, duration: videoParam.duration, audio: videoParam.audio };
+    // 按模式选 handler，把图片/视频/文字喂给生成；模型无某维度(后台全不勾)时该参数不下发
+    const base: Record<string, unknown> = {
+      prompt: node.prompt,
+      ...(!formatConfig.ratios || formatConfig.ratios.length ? { aspectRatio: videoParam.ratio } : {}),
+      ...(!formatConfig.resolutions || formatConfig.resolutions.length ? { resolution: videoParam.resolution } : {}),
+      ...(!formatConfig.durations || formatConfig.durations.length ? { duration: videoParam.duration } : {}),
+      ...(formatConfig.audio !== false ? { audio: videoParam.audio } : {}),
+    };
     let handler = "text_to_video";
     let input: Record<string, unknown> = base;
     if (videoTab === "图生视频") {
