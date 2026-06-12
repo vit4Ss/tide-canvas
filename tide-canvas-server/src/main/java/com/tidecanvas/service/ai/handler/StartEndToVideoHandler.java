@@ -55,7 +55,7 @@ public class StartEndToVideoHandler implements AiHandler {
             return AiHandlerResult.ok(PLACEHOLDER);
         }
         try {
-            return AiHandlerResult.ok(relayClient.generateVideo(provider, modelId, prompt, input));
+            return AiHandlerResult.ok(relayClient.generateVideo(provider, modelId, prompt, input, "keyframe"));
         } catch (Exception e) {
             log.error("首尾帧视频调用失败: {}", e.getMessage(), e);
             return AiHandlerResult.fail("视频生成失败: " + e.getMessage());

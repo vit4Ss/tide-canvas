@@ -49,7 +49,7 @@ public class TextToVideoHandler implements AiHandler {
             return AiHandlerResult.ok(PLACEHOLDER);
         }
         try {
-            return AiHandlerResult.ok(relayClient.generateVideo(provider, modelId, prompt, input));
+            return AiHandlerResult.ok(relayClient.generateVideo(provider, modelId, prompt, input, "t2v"));
         } catch (Exception e) {
             log.error("文生视频调用失败: {}", e.getMessage(), e);
             return AiHandlerResult.fail("视频生成失败: " + e.getMessage());

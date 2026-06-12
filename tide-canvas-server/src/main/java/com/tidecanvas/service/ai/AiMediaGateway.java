@@ -54,11 +54,15 @@ public class AiMediaGateway {
                 : relayClient.edit(provider, modelId, prompt, imageUrls, input);
     }
 
-    /** 视频任务：返回最终视频 URL */
-    public String generateVideo(AiProviderDO provider, String modelId, String prompt, Map<String, Object> input) throws Exception {
+    /**
+     * 视频任务：返回最终视频 URL。
+     * mode 为中转站新版协议的形态标识（t2v/i2v/keyframe/omni_ref，由各 Handler 按自身语义传入）；
+     * Runware 原生协议不使用该字段。
+     */
+    public String generateVideo(AiProviderDO provider, String modelId, String prompt, Map<String, Object> input, String mode) throws Exception {
         return isRunware(provider)
                 ? runwareClient.generateVideo(provider, modelId, prompt, input)
-                : relayClient.generateVideo(provider, modelId, prompt, input);
+                : relayClient.generateVideo(provider, modelId, prompt, input, mode);
     }
 
     /** 语音合成：返回音频 URL（目前仅 Runware 协议支持） */

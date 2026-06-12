@@ -121,23 +121,39 @@ public class AiRelayClient {
         return submitAndResolveMulti(provider, "/images/generations", body);
     }
 
-    /** 图生图编辑：POST {baseUrl}/images/edits（JSON image_urls），返回最终图片 URL 列表（n>1 时一次多张） */
+    /**
+     * 图生图：新版协议并入 POST {baseUrl}/images/generations（operation=generation + mode=i2i），
+     * 图片仍以 image_urls 传递，返回最终图片 URL 列表（n>1 时一次多张）。
+     */
     public List<String> edit(AiProviderDO provider, String modelId, String prompt, List<String> imageUrls, Map<String, Object> input) throws Exception {
         List<String> normalizedImageUrls = normalizeEditImageUrls(imageUrls);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", resolveModelName(modelId, provider, "gpt-image-2"));
+        body.put("operation", "generation");
+        body.put("mode", "i2i");
         body.put("prompt", prompt);
         body.put("image_urls", normalizedImageUrls);
         applyEditParams(body, input);
         applyBatchCount(body, input);
-        return submitAndResolveMulti(provider, "/images/edits", body);
+        return submitAndResolveMulti(provider, "/images/generations", body);
     }
 
-    /** 视频任务：POST {baseUrl}/contents/generations/tasks（多模态 content[]），返回最终视频 URL */
-    public String generateVideo(AiProviderDO provider, String modelId, String prompt, Map<String, Object> input) throws Exception {
+    /**
+     * 视频任务：POST {baseUrl}/contents/generations/tasks，返回最终视频 URL。
+     * 新版协议：prompt 提升为顶层字段，operation=generation + mode 区分形态
+     * （t2v 文生视频 / i2v 图生视频 / keyframe 首尾帧 / omni_ref 全能参考）；
+     * 首尾帧/参考图等媒体输入仍以 content[] 携带（仅媒体项，不再含 text）。
+     */
+    public String generateVideo(AiProviderDO provider, String modelId, String prompt, Map<String, Object> input, String mode) throws Exception {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", resolveModelName(modelId, provider, "seedance-v2"));
-        body.put("content", buildVideoContent(prompt, input));
+        body.put("operation", "generation");
+        putIfText(body, "mode", mode);
+        body.put("prompt", prompt);
+        List<Map<String, Object>> media = buildVideoContent(input);
+        if (!media.isEmpty()) {
+            body.put("content", media);
+        }
         String ratio = ratioOf(input);
         if (StringUtils.hasText(ratio)) {
             // 文档比例集含 adaptive（自适应）；前端的 auto 归一为 adaptive
@@ -146,7 +162,6 @@ public class AiRelayClient {
         putIfText(body, "resolution", resolutionOf(input));
         putIfText(body, "duration", durationOf(input));
         putIfText(body, "fps", strOf(input.get("fps")));
-        putIfText(body, "mode", strOf(input.get("mode")));
         return submitAndResolve(provider, "/contents/generations/tasks", body);
     }
 
@@ -190,7 +205,7 @@ public class AiRelayClient {
             String upstreamTaskId = root != null ? root.path("id").asText(null) : null;
             try {
                 List<String> urls = resolveResult(provider, code, raw, root);
-                recordLog(operationOf(path), fullUrl, body, code, raw, upstreamTaskId, true, first(urls), null, start);
+                recordLog(operationOf(path, body), fullUrl, body, code, raw, upstreamTaskId, true, first(urls), null, start);
                 return urls;
             } catch (Exception e) {
                 lastEx = e;
@@ -198,12 +213,12 @@ public class AiRelayClient {
                 if ((code == 502 || code == 503) && attempt < maxRetries) {
                     continue;
                 }
-                recordLog(operationOf(path), fullUrl, body, code, raw, upstreamTaskId, false, null, e.getMessage(), start);
+                recordLog(operationOf(path, body), fullUrl, body, code, raw, upstreamTaskId, false, null, e.getMessage(), start);
                 throw e;
             }
         }
         // 理论上不会到这里（最后一次迭代的 catch 会 throw）
-        recordLog(operationOf(path), fullUrl, body, 502, lastRaw, null, false, null, lastEx != null ? lastEx.getMessage() : "重试耗尽", start);
+        recordLog(operationOf(path, body), fullUrl, body, 502, lastRaw, null, false, null, lastEx != null ? lastEx.getMessage() : "重试耗尽", start);
         throw lastEx != null ? lastEx : new IllegalStateException("上游 502 重试耗尽");
     }
 
@@ -258,7 +273,12 @@ public class AiRelayClient {
         GenerationLogContext.markRecorded();
     }
 
-    private String operationOf(String path) {
+    /** 日志操作类型：新版协议优先取 body.mode（t2i/i2i/t2v/i2v/keyframe/omni_ref），无 mode 时按路径归类 */
+    private String operationOf(String path, Map<String, Object> body) {
+        Object mode = body != null ? body.get("mode") : null;
+        if (mode != null && StringUtils.hasText(String.valueOf(mode))) {
+            return String.valueOf(mode);
+        }
         if (path.contains("/edits")) {
             return "edits";
         }
@@ -366,9 +386,9 @@ public class AiRelayClient {
         applyCommonParams(body, input);
     }
 
-    /** 图生图/编辑参数（仍为旧版协议字段）：aspect_ratio + quality + resolution */
+    /** 图生图参数（新版协议）：aspect + quality + resolution */
     private void applyEditParams(Map<String, Object> body, Map<String, Object> input) {
-        applyAspectParam(body, input, null, "aspect_ratio");
+        applyAspectParam(body, input, null, "aspect");
         applyCommonParams(body, input);
     }
 
@@ -436,15 +456,9 @@ public class AiRelayClient {
         return urls;
     }
 
-    /** 构建视频多模态 content[]：文本 + 可选首/尾帧/参考图 */
-    private List<Map<String, Object>> buildVideoContent(String prompt, Map<String, Object> input) {
+    /** 构建视频媒体 content[]：可选首/尾帧/参考图/参考视频（新版协议 prompt 在顶层，content 仅媒体项） */
+    private List<Map<String, Object>> buildVideoContent(Map<String, Object> input) {
         List<Map<String, Object>> content = new ArrayList<>();
-        if (StringUtils.hasText(prompt)) {
-            Map<String, Object> text = new LinkedHashMap<>();
-            text.put("type", "text");
-            text.put("text", prompt);
-            content.add(text);
-        }
         // 首帧：优先 firstFrame，其次 sourceImage（图生视频）
         Object first = input.get("firstFrame");
         if (first == null) {

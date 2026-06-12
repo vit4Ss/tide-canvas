@@ -34,6 +34,14 @@ const OP_TYPE_STYLE: Record<string, string> = {
 
 /** AI 生成细分操作 */
 const OP_LABEL: Record<string, string> = {
+  // 新版协议按 mode 记录
+  t2i: "文生图",
+  i2i: "图生图",
+  t2v: "文生视频",
+  i2v: "图生视频",
+  keyframe: "首尾帧",
+  omni_ref: "全能参考",
+  // 旧版历史日志按路径归类
   generation: "文生图",
   edits: "图生图",
   video: "视频",
