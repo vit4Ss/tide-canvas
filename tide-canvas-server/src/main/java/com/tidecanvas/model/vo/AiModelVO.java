@@ -4,6 +4,7 @@ import lombok.Data;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 public class AiModelVO {
@@ -12,7 +13,8 @@ public class AiModelVO {
     private String icon;
     private String modelId;
     private String type;
-    private String supportedHandlers;
+    /** 支持的生成方式(handler 名列表)；空/缺省表示不限制(支持全部) */
+    private List<String> supportedHandlers;
     private String config;
     /** 每次调用消耗积分（支持小数定价；结算按总价向上取整） */
     private BigDecimal pointCost;

@@ -307,10 +307,24 @@ public class AiServiceImpl implements AiService {
         return models.stream().map(m -> {
             AiModelVO vo = new AiModelVO();
             BeanUtils.copyProperties(m, vo);
+            vo.setSupportedHandlers(parseSupportedHandlers(m.getSupportedHandlers()));
             // 上游成本价为商业敏感信息，仅管理端可见，用户侧脱敏
             vo.setCostPerCall(null);
             return vo;
         }).toList();
+    }
+
+    /** supported_handlers JSON 字符串 → List<String>;空/解析失败返回 null(语义「不限制」) */
+    private List<String> parseSupportedHandlers(String json) {
+        if (!org.springframework.util.StringUtils.hasText(json)) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(json, new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {
+            });
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     @Override

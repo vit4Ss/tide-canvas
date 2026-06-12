@@ -18,6 +18,21 @@ import { VIDEO_RATIOS, RESOLUTIONS, DURATION_OPTIONS } from "@/components/canvas
 // 视频模型可勾选的时长档位池（秒，4~15）；模型勾选后驱动画布视频节点的「视频时长」选项与计费
 const DURATION_CHOICES = Array.from({ length: 12 }, (_, i) => i + 4);
 
+// 模型可勾选的「支持生成方式」(handler)；不勾 = 不限制(画布显示全部模式)。
+// reference_to_video 同时承载画布的「全能参考」与「图片参考」两个 Tab。
+const HANDLER_CHOICES: Record<string, { value: string; label: string }[]> = {
+  video: [
+    { value: "text_to_video", label: "文生视频" },
+    { value: "image_to_video", label: "图生视频" },
+    { value: "start_end_to_video", label: "首尾帧" },
+    { value: "reference_to_video", label: "全能参考/图片参考" },
+  ],
+  image: [
+    { value: "text_to_image", label: "文生图" },
+    { value: "image_to_image", label: "图生图" },
+  ],
+};
+
 interface AdminAiModelVO {
   id: number;
   name: string;
@@ -31,6 +46,8 @@ interface AdminAiModelVO {
   /** 上游成本价（USD，仅管理端参考） */
   costPerCall?: number;
   config?: string;
+  /** 支持的生成方式(handler 列表)；空/缺省 = 不限制 */
+  supportedHandlers?: string[] | null;
   status: number;
   createTime?: string;
 }
@@ -73,6 +90,8 @@ interface ModelForm {
   audio: boolean;
   // Runware 视频参数结构：v2(Seedance 2.0 等) 需把 frameImages/referenceImages 嵌进 inputs 对象
   videoInputs: boolean;
+  // 支持的生成方式(handler)；空数组 = 不限制(画布显示全部模式)
+  supportedHandlers: string[];
   // 语音模型音色列表（每个供应商每个模型各不相同）：id 为上游音色标识，name 为画布下拉显示名
   voices: { id: string; name: string }[];
   // 差异化定价矩阵：图片 = pricing[quality][clarity]；视频 = pricing[resolution][duration]
@@ -96,6 +115,7 @@ const emptyForm: ModelForm = {
   durations: [...DURATION_OPTIONS],
   audio: true,
   videoInputs: false,
+  supportedHandlers: [],
   voices: [],
   pricing: {},
 };
@@ -275,6 +295,7 @@ export default function AdminAiModelsPage() {
         pointCost: form.pointCost,
         costPerCall: form.costPerCall,
         config: buildConfig(),
+        supportedHandlers: form.supportedHandlers,
         ...(form.providerId !== "" ? { providerId: form.providerId } : {}),
       };
 
@@ -338,7 +359,7 @@ export default function AdminAiModelsPage() {
     loadModels();
   };
 
-  const toggleArr = (field: "qualities" | "clarities" | "ratios" | "resolutions", val: string) => {
+  const toggleArr = (field: "qualities" | "clarities" | "ratios" | "resolutions" | "supportedHandlers", val: string) => {
     setForm((prev) => {
       const arr = prev[field];
       return { ...prev, [field]: arr.includes(val) ? arr.filter((x) => x !== val) : [...arr, val] };
@@ -422,6 +443,7 @@ export default function AdminAiModelsPage() {
       durations: cfg.durations ?? [...DURATION_OPTIONS],
       audio: cfg.audio ?? true,
       videoInputs: cfg.videoInputs ?? false,
+      supportedHandlers: model.supportedHandlers ?? [],
       voices: cfg.voices ?? [],
       pricing: cfg.pricing ?? {},
     });
@@ -622,6 +644,15 @@ export default function AdminAiModelsPage() {
             <div className="mt-5 space-y-4 border-t border-neutral-100 pt-5 dark:border-neutral-800">
               {form.type === "image" ? (
                 <>
+                  <div>
+                    <ChipGroup
+                      label="支持的生成方式"
+                      options={HANDLER_CHOICES.image}
+                      selected={form.supportedHandlers}
+                      onToggle={(v) => toggleArr("supportedHandlers", v)}
+                    />
+                    <p className="mt-1 text-xs text-neutral-400">不勾选 = 不限制（画布显示全部模式）</p>
+                  </div>
                   <ChipGroup
                     label="支持画质"
                     options={QUALITY_OPTIONS.map((q) => ({ value: q.value, label: q.label }))}
@@ -689,6 +720,17 @@ export default function AdminAiModelsPage() {
                 </div>
               ) : (
                 <>
+                  <div>
+                    <ChipGroup
+                      label="支持的生成方式"
+                      options={HANDLER_CHOICES.video}
+                      selected={form.supportedHandlers}
+                      onToggle={(v) => toggleArr("supportedHandlers", v)}
+                    />
+                    <p className="mt-1 text-xs text-neutral-400">
+                      不勾选 = 不限制（画布显示全部模式）；勾选后画布视频节点只显示所选模式 Tab
+                    </p>
+                  </div>
                   <ChipGroup
                     label="支持清晰度"
                     options={RESOLUTIONS.map((r) => ({ value: r, label: r }))}

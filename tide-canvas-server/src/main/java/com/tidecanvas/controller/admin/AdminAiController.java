@@ -200,6 +200,7 @@ public class AdminAiController {
         return Result.success(list.stream().map(m -> {
             AiModelVO vo = new AiModelVO();
             BeanUtils.copyProperties(m, vo);
+            vo.setSupportedHandlers(parseSupportedHandlers(m.getSupportedHandlers()));
             if (m.getProviderId() != null) {
                 vo.setProviderName(providerNames.get(m.getProviderId()));
             }
@@ -227,11 +228,15 @@ public class AdminAiController {
         if (body.containsKey("costPerCall") && body.get("costPerCall") != null) {
             model.setCostPerCall(new java.math.BigDecimal(body.get("costPerCall").toString()));
         }
+        if (body.containsKey("supportedHandlers")) {
+            model.setSupportedHandlers(toSupportedHandlersJson(body.get("supportedHandlers")));
+        }
         model.setStatus(1);
         model.setDeleted(0);
         modelMapper.insert(model);
         AiModelVO vo = new AiModelVO();
         BeanUtils.copyProperties(model, vo);
+        vo.setSupportedHandlers(parseSupportedHandlers(model.getSupportedHandlers()));
         return Result.success(vo);
     }
 
@@ -270,7 +275,38 @@ public class AdminAiController {
             model.setStatus((Integer) body.get("status"));
         }
         modelMapper.updateById(model);
+        if (body.containsKey("supportedHandlers")) {
+            // 单独以 UpdateWrapper 写入:空列表/null 落库为 NULL(语义「不限制」),updateById 的 NOT_NULL 策略写不进 null
+            modelMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<AiModelDO>()
+                    .eq(AiModelDO::getId, model.getId())
+                    .set(AiModelDO::getSupportedHandlers, toSupportedHandlersJson(body.get("supportedHandlers"))));
+        }
         return Result.success();
+    }
+
+    /** 前端传入的 supportedHandlers(List) → JSON 字符串;空集合归一为 null(不限制) */
+    private String toSupportedHandlersJson(Object value) {
+        if (!(value instanceof List<?> list) || list.isEmpty()) {
+            return null;
+        }
+        try {
+            return objectMapper.writeValueAsString(list.stream().map(String::valueOf).toList());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** JSON 字符串 → List<String>;解析失败按未配置处理 */
+    private List<String> parseSupportedHandlers(String json) {
+        if (!StringUtils.hasText(json)) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(json, new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {
+            });
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     @Operation(summary = "删除模型")

@@ -26,7 +26,8 @@ export interface AiModelVO {
   icon: string;
   modelId: string;
   type: AiModelType;
-  supportedHandlers: string[];
+  /** 支持的生成方式(handler 列表)；空/缺省 = 不限制(支持全部) */
+  supportedHandlers?: string[] | null;
   config: string;
   pointCost: number;
 }

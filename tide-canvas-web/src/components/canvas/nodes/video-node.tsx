@@ -36,6 +36,16 @@ const TAB_LIMITS: Record<string, { hint: string; min: number; max: number; types
   "图片参考": { hint: "需要连接图片节点（1~9 个）", min: 1, max: 9, types: ["image"] },
 };
 
+// 全部模式 Tab 及其对应后端 handler；模型在后台勾选了 supportedHandlers 时只显示对应 Tab
+const ALL_TABS: string[] = ["文生视频", "全能参考", "图生视频", "首尾帧", "图片参考"];
+const TAB_HANDLER: Record<string, string> = {
+  "文生视频": "text_to_video",
+  "图生视频": "image_to_video",
+  "首尾帧": "start_end_to_video",
+  "图片参考": "reference_to_video",
+  "全能参考": "reference_to_video",
+};
+
 /** 秒数显示：保留 1 位小数，如 1.9s */
 function fmtSec(t: number): string {
   return `${(t || 0).toFixed(1)}s`;
@@ -210,6 +220,11 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   };
   // 当前选中视频模型 → 解析 config（限定清晰度/比例/时长/音频）→ 差异化计费
   const selectedModel = videoModels.find((m) => m.modelId === selectedModelId);
+  // 模型支持的模式 Tab：后台对模型勾选了 supportedHandlers 时只显示对应模式；未配置 = 全部
+  const modelHandlers = selectedModel?.supportedHandlers;
+  const visibleTabs = ALL_TABS.filter(
+    (t) => !modelHandlers || modelHandlers.length === 0 || modelHandlers.includes(TAB_HANDLER[t])
+  );
   const formatConfig: { resolutions?: string[]; ratios?: string[]; durations?: number[]; audio?: boolean; pricing?: Record<string, Record<string, number>> } = (() => {
     if (!selectedModel?.config) return {};
     try {
@@ -267,6 +282,15 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     }
   }, [imgCount, vidCount, videoTab]);
 
+  // 切换模型后当前模式不被该模型支持 → 回退到其第一个可用模式
+  useEffect(() => {
+    if (!visibleTabs.includes(videoTab)) {
+      setVideoTab(visibleTabs[0] ?? "文生视频");
+    }
+    // visibleTabs 由 selectedModelId 派生，避免数组引用作为依赖反复触发
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedModelId, videoTab]);
+
   // 上升沿自动升级：从「无连接素材」变为「有素材」时，若仍停留在默认的「文生视频」，自动切到
   // 「全能参考」——否则 text_to_video 不会把连上的参考图喂给上游，参考图形同虚设。仅在 0→有 的
   // 跳变时切换，故用户之后手动改回「文生视频」不会被反复纠正。
@@ -274,10 +298,13 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   useEffect(() => {
     const material = imgCount + vidCount;
     const hasMaterial = material > 0;
-    if (hasMaterial && !prevHasMaterialRef.current && videoTab === "文生视频" && material <= 15) {
+    if (hasMaterial && !prevHasMaterialRef.current && videoTab === "文生视频" && material <= 15
+        && visibleTabs.includes("全能参考")) {
       setVideoTab("全能参考");
     }
     prevHasMaterialRef.current = hasMaterial;
+    // visibleTabs 为派生数组(引用每次渲染变化)，上升沿 guard 已防止重复切换，不列入依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imgCount, vidCount, videoTab]);
 
   // 大图预览：Esc 关闭
@@ -719,7 +746,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                   </div>
                 )}
                 <div className="flex items-center gap-0.5 overflow-x-auto text-xs">
-                  {["文生视频", "全能参考", "图生视频", "首尾帧", "图片参考"].map((t) => {
+                  {visibleTabs.map((t) => {
                     const enabled = tabEnabled(t);
                     return (
                       <button
