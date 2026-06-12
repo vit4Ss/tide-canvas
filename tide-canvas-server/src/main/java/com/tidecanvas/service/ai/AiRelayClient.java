@@ -106,10 +106,15 @@ public class AiRelayClient {
 
     // ==================== 业务接口 ====================
 
-    /** 文生图：POST {baseUrl}/images/generations，返回最终图片 URL 列表（n>1 时一次多张） */
+    /**
+     * 文生图：POST {baseUrl}/images/generations，返回最终图片 URL 列表（n>1 时一次多张）。
+     * 中转站新版协议：携带 operation=generation + mode=t2i 标识，比例字段为 aspect（旧版为 aspect_ratio）。
+     */
     public List<String> generate(AiProviderDO provider, String modelId, String prompt, Map<String, Object> input) throws Exception {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", resolveModelName(modelId, provider, "gpt-image-2"));
+        body.put("operation", "generation");
+        body.put("mode", "t2i");
         body.put("prompt", prompt);
         applyImageParams(body, input);
         applyBatchCount(body, input);
@@ -355,21 +360,22 @@ public class AiRelayClient {
     // ==================== 参数构建 ====================
 
     /** 文生图参数：aspect_ratio + quality + resolution */
+    /** 文生图参数（新版协议）：aspect + quality + resolution */
     private void applyImageParams(Map<String, Object> body, Map<String, Object> input) {
-        applyAspectParam(body, input, "1:1");
+        applyAspectParam(body, input, "1:1", "aspect");
         applyCommonParams(body, input);
     }
 
-    /** 图生图/编辑参数：aspect_ratio + quality + resolution */
+    /** 图生图/编辑参数（仍为旧版协议字段）：aspect_ratio + quality + resolution */
     private void applyEditParams(Map<String, Object> body, Map<String, Object> input) {
-        applyAspectParam(body, input, null);
+        applyAspectParam(body, input, null, "aspect_ratio");
         applyCommonParams(body, input);
     }
 
-    private void applyAspectParam(Map<String, Object> body, Map<String, Object> input, String defaultValue) {
+    private void applyAspectParam(Map<String, Object> body, Map<String, Object> input, String defaultValue, String fieldName) {
         String aspect = aspectOf(input, defaultValue);
         if (StringUtils.hasText(aspect) && !"auto".equals(aspect)) {
-            body.put("aspect_ratio", aspect);
+            body.put(fieldName, aspect);
         }
     }
 
