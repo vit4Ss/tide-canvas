@@ -181,6 +181,34 @@ summary,
   outline-offset: 2px;
 }
 
+/* Ant Design 交互元素的指针：覆盖上面为画布设的全局 cursor 强制。
+   antd 类名只出现在 antd 组件上，全局命中是安全的；下拉/弹窗用 portal 渲染到 body，
+   必须用全局选择器才能命中（admin 容器作用域选不到这些浮层）。 */
+.ant-btn,
+.ant-select-selector,
+.ant-select-item,
+.ant-tag-checkable,
+.ant-switch,
+.ant-pagination-item,
+.ant-pagination-item-link,
+.ant-pagination-options-quick-jumper,
+.ant-checkbox-wrapper,
+.ant-checkbox,
+.ant-radio-wrapper,
+.ant-modal-close,
+.ant-picker,
+.ant-segmented-item,
+.ant-upload,
+.ant-table-column-has-sorters,
+.ant-dropdown-menu-item,
+.ant-popconfirm-buttons .ant-btn {
+  cursor: pointer !important;
+}
+/* 不可搜索的 Select：内部隐藏 input 应跟随选择框用 pointer（而非全局 input 的 text 光标） */
+.ant-select:not(.ant-select-show-search) .ant-select-selection-search-input {
+  cursor: pointer !important;
+}
+
 /* 细轨道滑块：2px 轨道 + 10px 圆点，按 --pct 显示已选(深)/未选(浅)进度色（视频时长等用） */
 .slider-thin {
   -webkit-appearance: none;
