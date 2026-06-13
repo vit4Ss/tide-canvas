@@ -9,6 +9,8 @@ import {
 import { pointsApi, checkinApi, redeemApi } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Table, Tag } from "antd";
+import type { ColumnsType } from "antd/es/table";
 import { toast } from "@/components/shared/toast";
 import type { PointsBalanceVO, PointsTransactionVO, CheckinStatusVO } from "@/types/points";
 import { POINTS_TYPE_NAMES } from "@/types/points";
@@ -103,8 +105,6 @@ export default function PointsDashboardPage() {
     }
   };
 
-  const totalPages = Math.ceil(total / PAGE_SIZE);
-
   if (loading && !balance) {
     return (
       <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
@@ -119,6 +119,21 @@ export default function PointsDashboardPage() {
       </div>
     );
   }
+
+  const txColumns: ColumnsType<PointsTransactionVO> = [
+    { title: "类型", dataIndex: "type", key: "type", render: (t: number, tx) => <Tag>{tx.typeName || POINTS_TYPE_NAMES[t] || "未知"}</Tag> },
+    {
+      title: "金额", dataIndex: "amount", key: "amount", render: (v: number) => (
+        <span className={`inline-flex items-center gap-0.5 font-semibold ${v >= 0 ? "text-green-600" : "text-red-500"}`}>
+          {v >= 0 ? <ArrowDownLeft className="h-3 w-3" /> : <ArrowUpRight className="h-3 w-3" />}
+          {v >= 0 ? `+${v}` : v}
+        </span>
+      ),
+    },
+    { title: "余额", dataIndex: "balanceAfter", key: "balanceAfter", responsive: ["sm"], render: (v: number) => <span className="text-neutral-500">{v}</span> },
+    { title: "备注", dataIndex: "remark", key: "remark", responsive: ["md"], render: (v) => <span className="text-neutral-500">{v || "-"}</span> },
+    { title: "时间", dataIndex: "createTime", key: "createTime", render: (v: string) => <span className="text-neutral-400">{formatDate(v)}</span> },
+  ];
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
@@ -224,83 +239,16 @@ export default function PointsDashboardPage() {
       {/* Transaction History */}
       <div className="mt-8">
         <h2 className="text-lg font-semibold">交易记录</h2>
-        {transactions.length === 0 && !loading ? (
-          <div className="mt-6 flex flex-col items-center justify-center py-12 text-neutral-400">
-            <History className="h-10 w-10" />
-            <p className="mt-3">暂无交易记录</p>
-          </div>
-        ) : (
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-neutral-200 dark:border-neutral-800">
-                  <th className="pb-3 pr-4 font-medium text-neutral-500">类型</th>
-                  <th className="pb-3 pr-4 font-medium text-neutral-500">金额</th>
-                  <th className="hidden pb-3 pr-4 font-medium text-neutral-500 sm:table-cell">余额</th>
-                  <th className="hidden pb-3 pr-4 font-medium text-neutral-500 md:table-cell">备注</th>
-                  <th className="pb-3 font-medium text-neutral-500">时间</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800">
-                {transactions.map((tx) => (
-                  <tr key={tx.id}>
-                    <td className="py-3 pr-4">
-                      <span className="inline-flex items-center rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium dark:bg-neutral-800">
-                        {tx.typeName || POINTS_TYPE_NAMES[tx.type] || "未知"}
-                      </span>
-                    </td>
-                    <td className="py-3 pr-4">
-                      <span
-                        className={`inline-flex items-center gap-0.5 font-semibold ${
-                          tx.amount >= 0 ? "text-green-600" : "text-red-500"
-                        }`}
-                      >
-                        {tx.amount >= 0 ? (
-                          <ArrowDownLeft className="h-3 w-3" />
-                        ) : (
-                          <ArrowUpRight className="h-3 w-3" />
-                        )}
-                        {tx.amount >= 0 ? `+${tx.amount}` : tx.amount}
-                      </span>
-                    </td>
-                    <td className="hidden py-3 pr-4 text-neutral-500 sm:table-cell">
-                      {tx.balanceAfter}
-                    </td>
-                    <td className="hidden py-3 pr-4 text-neutral-500 md:table-cell">
-                      {tx.remark || "-"}
-                    </td>
-                    <td className="py-3 text-neutral-400">{formatDate(tx.createTime)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <div className="mt-6 flex items-center justify-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={pageNum <= 1}
-              onClick={() => setPageNum((p) => p - 1)}
-            >
-              上一页
-            </Button>
-            <span className="text-sm text-neutral-500">
-              {pageNum} / {totalPages}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={pageNum >= totalPages}
-              onClick={() => setPageNum((p) => p + 1)}
-            >
-              下一页
-            </Button>
-          </div>
-        )}
+        <Table<PointsTransactionVO>
+          rowKey="id"
+          columns={txColumns}
+          dataSource={transactions}
+          loading={loading}
+          scroll={{ x: "max-content" }}
+          locale={{ emptyText: "暂无交易记录" }}
+          className="mt-4"
+          pagination={{ current: pageNum, pageSize: PAGE_SIZE, total, showSizeChanger: false, showTotal: (t) => `共 ${t} 条`, onChange: setPageNum }}
+        />
       </div>
     </div>
   );

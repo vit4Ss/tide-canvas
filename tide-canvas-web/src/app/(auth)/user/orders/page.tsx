@@ -9,17 +9,19 @@ import { orderApi } from "@/lib/api";
 import { submitPayForm } from "@/lib/pay";
 import { formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Table, Tag } from "antd";
+import type { ColumnsType } from "antd/es/table";
 import type { RechargeOrderVO } from "@/types/order";
 import { ORDER_STATUS_NAMES, OrderStatus } from "@/types/order";
 
 const PAGE_SIZE = 15;
 
-const statusColorMap: Record<number, string> = {
-  [OrderStatus.PENDING]: "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
-  [OrderStatus.PAID]: "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300",
-  [OrderStatus.CANCELLED]: "bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400",
-  [OrderStatus.REFUNDED]: "bg-red-100 text-red-600 dark:bg-red-900 dark:text-red-400",
-  [OrderStatus.TIMEOUT]: "bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400",
+const STATUS_COLOR: Record<number, string> = {
+  [OrderStatus.PENDING]: "gold",
+  [OrderStatus.PAID]: "green",
+  [OrderStatus.CANCELLED]: "default",
+  [OrderStatus.REFUNDED]: "red",
+  [OrderStatus.TIMEOUT]: "default",
 };
 
 export default function MyOrdersPage() {
@@ -121,7 +123,36 @@ export default function MyOrdersPage() {
     }
   };
 
-  const totalPages = Math.ceil(total / PAGE_SIZE);
+  const orderColumns: ColumnsType<RechargeOrderVO> = [
+    { title: "订单号", dataIndex: "orderNo", key: "orderNo", render: (v: string) => <span className="font-mono text-xs">{v}</span> },
+    { title: "金额", dataIndex: "amount", key: "amount", render: (v: number) => <span className="font-medium">{v} 元</span> },
+    { title: "积分", dataIndex: "pointsAmount", key: "pointsAmount", render: (v: number) => <span className="text-blue-600 dark:text-blue-400">{v}</span> },
+    { title: "状态", dataIndex: "status", key: "status", render: (s: number, o) => <Tag color={STATUS_COLOR[s] ?? "default"}>{o.statusName || ORDER_STATUS_NAMES[s] || "未知"}</Tag> },
+    { title: "时间", dataIndex: "createTime", key: "createTime", responsive: ["sm"], render: (v: string) => <span className="text-neutral-400">{formatDate(v)}</span> },
+    {
+      title: "操作", key: "action", render: (_, order) =>
+        order.status === OrderStatus.PENDING ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {onlinePay && (
+              <>
+                <Button size="xs" onClick={() => handlePay(order.id)} disabled={payingId === order.id}>
+                  {payingId === order.id ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <CreditCard className="mr-1 h-3 w-3" />}
+                  去支付
+                </Button>
+                <Button variant="outline" size="xs" onClick={() => handleSync(order.id)} disabled={syncingId === order.id} title="已完成支付但状态未更新时，点击向支付平台核实">
+                  {syncingId === order.id ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <RefreshCw className="mr-1 h-3 w-3" />}
+                  同步状态
+                </Button>
+              </>
+            )}
+            <Button variant="destructive" size="xs" onClick={() => handleCancel(order.id)} disabled={cancellingId === order.id}>
+              {cancellingId === order.id ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <XCircle className="mr-1 h-3 w-3" />}
+              取消
+            </Button>
+          </div>
+        ) : null,
+    },
+  ];
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
@@ -163,118 +194,14 @@ export default function MyOrdersPage() {
           </Button>
         </div>
       ) : (
-        <div className="mt-6 overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-neutral-200 dark:border-neutral-800">
-                <th className="pb-3 pr-4 font-medium text-neutral-500">订单号</th>
-                <th className="pb-3 pr-4 font-medium text-neutral-500">金额</th>
-                <th className="pb-3 pr-4 font-medium text-neutral-500">积分</th>
-                <th className="pb-3 pr-4 font-medium text-neutral-500">状态</th>
-                <th className="hidden pb-3 pr-4 font-medium text-neutral-500 sm:table-cell">时间</th>
-                <th className="pb-3 font-medium text-neutral-500">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800">
-              {orders.map((order) => (
-                <tr key={order.id}>
-                  <td className="py-3 pr-4">
-                    <span className="font-mono text-xs">{order.orderNo}</span>
-                  </td>
-                  <td className="py-3 pr-4 font-medium">{order.amount} 元</td>
-                  <td className="py-3 pr-4 text-blue-600 dark:text-blue-400">
-                    {order.pointsAmount}
-                  </td>
-                  <td className="py-3 pr-4">
-                    <span
-                      className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
-                        statusColorMap[order.status] || "bg-neutral-100 text-neutral-500"
-                      }`}
-                    >
-                      {order.statusName || ORDER_STATUS_NAMES[order.status] || "未知"}
-                    </span>
-                  </td>
-                  <td className="hidden py-3 pr-4 text-neutral-400 sm:table-cell">
-                    {formatDate(order.createTime)}
-                  </td>
-                  <td className="py-3">
-                    {order.status === OrderStatus.PENDING && (
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {onlinePay && (
-                          <>
-                            <Button
-                              size="xs"
-                              onClick={() => handlePay(order.id)}
-                              disabled={payingId === order.id}
-                            >
-                              {payingId === order.id ? (
-                                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                              ) : (
-                                <CreditCard className="mr-1 h-3 w-3" />
-                              )}
-                              去支付
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="xs"
-                              onClick={() => handleSync(order.id)}
-                              disabled={syncingId === order.id}
-                              title="已完成支付但状态未更新时，点击向支付平台核实"
-                            >
-                              {syncingId === order.id ? (
-                                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                              ) : (
-                                <RefreshCw className="mr-1 h-3 w-3" />
-                              )}
-                              同步状态
-                            </Button>
-                          </>
-                        )}
-                        <Button
-                          variant="destructive"
-                          size="xs"
-                          onClick={() => handleCancel(order.id)}
-                          disabled={cancellingId === order.id}
-                        >
-                          {cancellingId === order.id ? (
-                            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                          ) : (
-                            <XCircle className="mr-1 h-3 w-3" />
-                          )}
-                          取消
-                        </Button>
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="mt-6 flex items-center justify-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={pageNum <= 1}
-            onClick={() => setPageNum((p) => p - 1)}
-          >
-            上一页
-          </Button>
-          <span className="text-sm text-neutral-500">
-            {pageNum} / {totalPages}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={pageNum >= totalPages}
-            onClick={() => setPageNum((p) => p + 1)}
-          >
-            下一页
-          </Button>
+        <div className="mt-6">
+          <Table<RechargeOrderVO>
+            rowKey="id"
+            columns={orderColumns}
+            dataSource={orders}
+            scroll={{ x: "max-content" }}
+            pagination={{ current: pageNum, pageSize: PAGE_SIZE, total, showSizeChanger: false, showTotal: (t) => `共 ${t} 条`, onChange: setPageNum }}
+          />
         </div>
       )}
     </div>
