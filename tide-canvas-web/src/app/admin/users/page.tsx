@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { adminApi } from "@/lib/api";
+import { toast } from "@/components/shared/toast";
 import type { UserVO } from "@/types/user";
 import type { PageData } from "@/types/api";
-import { User, Ban, Save } from "lucide-react";
+import { User, Ban, Save, Coins, Loader2, X } from "lucide-react";
 import {
   PageHeader,
   SearchBar,
@@ -34,6 +35,11 @@ export default function AdminUsersPage() {
   const [editForm, setEditForm] = useState({ role: 0, status: 1, points: 0, apiQuota: 0 });
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  // 调整积分弹窗：自动带入目标用户，免手输 ID
+  const [adjustTarget, setAdjustTarget] = useState<UserVO | null>(null);
+  const [adjustAmount, setAdjustAmount] = useState("");
+  const [adjustRemark, setAdjustRemark] = useState("");
+  const [adjusting, setAdjusting] = useState(false);
   const pageSize = 15;
 
   const loadUsers = async (page = pageNum, search = keyword) => {
@@ -84,6 +90,41 @@ export default function AdminUsersPage() {
       }
     } finally {
       setSaving(false);
+    }
+  };
+
+  const openAdjust = (user: UserVO) => {
+    setAdjustTarget(user);
+    setAdjustAmount("");
+    setAdjustRemark("");
+  };
+
+  const handleAdjust = async () => {
+    if (!adjustTarget) return;
+    const amount = Number(adjustAmount);
+    if (!Number.isFinite(amount) || amount === 0) {
+      toast.error("请输入有效金额（正数增加，负数扣减）");
+      return;
+    }
+    setAdjusting(true);
+    try {
+      // 走积分调整接口（生成积分流水，可在积分管理中审计），而非直接改 points 字段
+      const res = await adminApi.points.adjust({
+        userId: adjustTarget.id,
+        amount,
+        remark: adjustRemark || undefined,
+      });
+      if (res.success) {
+        toast.success(`已为 ${adjustTarget.nickname || adjustTarget.username} 调整 ${amount > 0 ? "+" : ""}${amount} 积分`);
+        setAdjustTarget(null);
+        loadUsers();
+      } else {
+        toast.error(res.message || "调整失败");
+      }
+    } catch {
+      toast.error("网络错误，请稍后重试");
+    } finally {
+      setAdjusting(false);
     }
   };
 
@@ -203,10 +244,16 @@ export default function AdminUsersPage() {
                             </button>
                           </div>
                         ) : (
-                          <button onClick={() => startEdit(user)}
-                            className="rounded-lg px-3 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800">
-                            编辑
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => openAdjust(user)}
+                              className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium text-amber-600 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-950/30">
+                              <Coins className="h-3.5 w-3.5" /> 调积分
+                            </button>
+                            <button onClick={() => startEdit(user)}
+                              className="rounded-lg px-3 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800">
+                              编辑
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -219,6 +266,75 @@ export default function AdminUsersPage() {
 
         <Pagination pageNum={pageNum} pageSize={pageSize} total={total} onChange={handlePageChange} />
       </div>
+
+      {/* 调整积分弹窗 */}
+      {adjustTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => !adjusting && setAdjustTarget(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl dark:bg-neutral-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="flex items-center gap-2 text-lg font-semibold">
+                <Coins className="h-5 w-5 text-amber-500" /> 调整积分
+              </h3>
+              <button onClick={() => setAdjustTarget(null)} className="rounded-lg p-1 text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="mt-3 text-sm text-neutral-500">
+              用户：<span className="font-medium text-neutral-800 dark:text-neutral-200">{adjustTarget.nickname || adjustTarget.username}</span>
+              <span className="text-neutral-400"> @{adjustTarget.username}</span>
+              　当前积分 <span className="font-medium text-amber-600">{adjustTarget.points ?? 0}</span>
+            </p>
+
+            <div className="mt-4 space-y-3">
+              <div>
+                <label className="mb-1 block text-sm font-medium">金额（+/-）</label>
+                <input
+                  type="number"
+                  autoFocus
+                  value={adjustAmount}
+                  onChange={(e) => setAdjustAmount(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleAdjust(); }}
+                  placeholder="正数增加，负数扣减"
+                  className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">备注</label>
+                <input
+                  value={adjustRemark}
+                  onChange={(e) => setAdjustRemark(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleAdjust(); }}
+                  placeholder="调整原因（可选）"
+                  className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
+                />
+              </div>
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={() => setAdjustTarget(null)}
+                className="rounded-lg px-4 py-2 text-sm text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleAdjust}
+                disabled={adjusting || !adjustAmount}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+              >
+                {adjusting && <Loader2 className="h-4 w-4 animate-spin" />}
+                提交
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

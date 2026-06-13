@@ -2,14 +2,13 @@
 
 import { useEffect, useState, useCallback } from "react";
 import {
-  Coins, TrendingUp, Users, ArrowUpRight, ArrowDownLeft, Loader2, Search, SlidersHorizontal,
+  Coins, TrendingUp, Users, ArrowUpRight, ArrowDownLeft,
 } from "lucide-react";
 import { adminApi } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import type { PointsTransactionVO } from "@/types/points";
 import { POINTS_TYPE_NAMES } from "@/types/points";
 
@@ -23,13 +22,6 @@ export default function AdminPointsPage() {
   const [total, setTotal] = useState(0);
   const [filterType, setFilterType] = useState<number | undefined>();
   const [filterUserId, setFilterUserId] = useState("");
-
-  // Adjust form
-  const [adjustUserId, setAdjustUserId] = useState("");
-  const [adjustAmount, setAdjustAmount] = useState("");
-  const [adjustRemark, setAdjustRemark] = useState("");
-  const [adjusting, setAdjusting] = useState(false);
-  const [adjustSuccess, setAdjustSuccess] = useState("");
 
   const fetchTransactions = useCallback(async () => {
     setLoading(true);
@@ -57,36 +49,6 @@ export default function AdminPointsPage() {
   useEffect(() => {
     fetchTransactions();
   }, [fetchTransactions]);
-
-  const handleAdjust = async () => {
-    if (!adjustUserId || !adjustAmount) {
-      setError("请填写用户ID和金额");
-      return;
-    }
-    setAdjusting(true);
-    setError("");
-    setAdjustSuccess("");
-    try {
-      const res = await adminApi.points.adjust({
-        userId: Number(adjustUserId),
-        amount: Number(adjustAmount),
-        remark: adjustRemark || undefined,
-      });
-      if (res.success) {
-        setAdjustSuccess("积分调整成功");
-        setAdjustUserId("");
-        setAdjustAmount("");
-        setAdjustRemark("");
-        fetchTransactions();
-      } else {
-        setError(res.message || "调整失败");
-      }
-    } catch {
-      setError("网络错误，请稍后重试");
-    } finally {
-      setAdjusting(false);
-    }
-  };
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
@@ -139,53 +101,10 @@ export default function AdminPointsPage() {
           {error}
         </div>
       )}
-      {adjustSuccess && (
-        <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-600 dark:border-green-900 dark:bg-green-950 dark:text-green-400">
-          {adjustSuccess}
-        </div>
-      )}
 
-      {/* Manual Adjust Form */}
-      <div className="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
-        <h3 className="font-semibold">手动调整积分</h3>
-        <p className="mt-1 text-sm text-neutral-500">为指定用户增加或扣减积分</p>
-        <div className="mt-4 grid gap-4 sm:grid-cols-4">
-          <div className="space-y-1">
-            <Label htmlFor="adjustUserId">用户 ID</Label>
-            <Input
-              id="adjustUserId"
-              placeholder="输入用户ID"
-              value={adjustUserId}
-              onChange={(e) => setAdjustUserId(e.target.value)}
-              type="number"
-            />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="adjustAmount">金额（+/-）</Label>
-            <Input
-              id="adjustAmount"
-              placeholder="正数增加，负数扣减"
-              value={adjustAmount}
-              onChange={(e) => setAdjustAmount(e.target.value)}
-              type="number"
-            />
-          </div>
-          <div className="space-y-1 sm:col-span-2">
-            <Label htmlFor="adjustRemark">备注</Label>
-            <div className="flex gap-2">
-              <Input
-                id="adjustRemark"
-                placeholder="调整原因（可选）"
-                value={adjustRemark}
-                onChange={(e) => setAdjustRemark(e.target.value)}
-              />
-              <Button onClick={handleAdjust} disabled={adjusting}>
-                {adjusting && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
-                提交
-              </Button>
-            </div>
-          </div>
-        </div>
+      {/* 提示：调整积分已移至用户管理 */}
+      <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900/50">
+        手动调整积分已移至「用户管理」——在用户列表中点击对应用户的「调积分」即可。
       </div>
 
       {/* Filters */}
