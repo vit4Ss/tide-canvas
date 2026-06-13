@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-canvas-store";
 import {
   Image as ImageIcon, Upload, Plus, Maximize2, Box, MapPin, Copy,
-  Camera, ArrowUp, ChevronDown, ChevronRight, Zap, Download, X,
+  Camera, ArrowUp, ChevronDown, ChevronRight, Zap, Download, X, Minimize2,
   ArrowLeft, LayoutGrid, Layers,
   Images, Orbit, Sun, Table, Brush, FlipHorizontal2,
   Focus, Grid2x2, Hash, RotateCcw,
@@ -153,6 +153,13 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const [batchOpen, setBatchOpen] = useState(false);
   // 组图：展示主图+堆叠徽标，点徽标「展开」拆成多个独立图片节点
   const groupImages = node.images && node.images.length > 1 ? node.images : null;
+  // 已展开的子节点 id（${node.id}_g{n}），响应式 —— 徽标据此在「展开 / 收起」间切换
+  const expandedChildIds = useCanvasStore((s) => {
+    if (!groupImages) return "";
+    const prefix = `${node.id}_g`;
+    return s.nodes.filter((n) => n.id.startsWith(prefix) && /^\d+$/.test(n.id.slice(prefix.length))).map((n) => n.id).join(",");
+  });
+  const isGroupExpanded = expandedChildIds.length > 0;
   // 已生成图片的真实宽高比（onLoad 时测量），用于让卡片严丝合缝贴合图片
   const [imgAspectState, setImgAspectState] = useState<{ src: string; aspect: number } | null>(null);
   const imgAspect = imgAspectState && imgAspectState.src === node.imageSrc ? imgAspectState.aspect : null;
@@ -649,19 +656,23 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     }
   }, [node.imageSrc, node.title, downloading, downloadUrl]);
 
-  // 组图展开：把 node.images 拆成多个独立图片节点(右侧网格铺开、各自连回源节点)，与「宫格切分」一致
+  // 组图展开：把 node.images 拆成多个独立图片节点(右侧网格铺开、各自连回源节点)，与「宫格切分」一致。
+  // 子节点用确定性 ID(${源id}_g${i})，已存在则跳过 —— 保证幂等：重复点击不再叠加覆盖，删掉某张还能补建。
   const handleExpandGroup = useCallback(() => {
     if (!groupImages) return;
     const store = useCanvasStore.getState();
+    const existing = new Set(store.nodes.map((n) => n.id));
     const cols = groupImages.length <= 3 ? groupImages.length : 2;
     const CELL_W = node.contentW ?? node.width;
     const CELL_H = node.contentH ?? node.height ?? CELL_W;
     const gap = 24;
     const startX = node.x + (node.contentW ?? node.width) + 100;
+    let created = 0;
     groupImages.forEach((url, i) => {
+      const nid = `${node.id}_g${i}`;
+      if (existing.has(nid)) return; // 已展开过则跳过，避免重复创建导致多层覆盖
       const r = Math.floor(i / cols);
       const c = i % cols;
-      const nid = generateNodeId();
       store.addNode({
         id: nid,
         type: "image",
@@ -674,11 +685,25 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         title: `组图 ${i + 1}`,
         imageSrc: url,
         status: "success",
-      }, i === 0); // 仅首个记入历史，整批一次撤销
+      }, created === 0); // 本批首个记入历史，整批一次撤销
       store.addConnection({ id: `conn_${node.id}_${nid}`, sourceId: node.id, targetId: nid }, false);
+      created++;
     });
-    toast.success(`已展开为 ${groupImages.length} 个节点`);
+    if (created > 0) toast.success(`已展开为 ${created} 个节点`);
+    else toast.info("已展开");
   }, [groupImages, node.id, node.x, node.y, node.width, node.height, node.contentW, node.contentH]);
+
+  // 组图收起：删除展开出的子节点(连带删边、一步撤销)，回到组图态
+  const handleCollapseGroup = useCallback(() => {
+    const store = useCanvasStore.getState();
+    const prefix = `${node.id}_g`;
+    const ids = store.nodes
+      .filter((n) => n.id.startsWith(prefix) && /^\d+$/.test(n.id.slice(prefix.length)))
+      .map((n) => n.id);
+    if (!ids.length) return;
+    store.removeNodes(ids);
+    toast.info("已收起");
+  }, [node.id]);
 
   // 大图预览：Esc 关闭
   useEffect(() => {
@@ -1181,16 +1206,16 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
           }`}
           style={{ width: cardW, height: cardH }}
         >
-          {/* 组图徽标：点击展开为多个独立节点 */}
+          {/* 组图徽标：在「展开为多个节点 / 收起」之间切换 */}
           {groupImages && !generating && (
             <button
               onMouseDown={stop}
-              onClick={(e) => { stop(e); handleExpandGroup(); }}
-              title="展开为多个节点"
+              onClick={(e) => { stop(e); if (isGroupExpanded) handleCollapseGroup(); else handleExpandGroup(); }}
+              title={isGroupExpanded ? "收起展开的节点" : "展开为多个节点"}
               className="absolute right-3 top-3 z-[7] flex items-center gap-1 rounded-lg bg-black/60 px-2.5 py-1.5 text-xs font-medium text-white backdrop-blur-sm transition-colors hover:bg-black/75"
             >
-              <Maximize2 className="h-3.5 w-3.5" />
-              展开 {groupImages.length} 张
+              {isGroupExpanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+              {isGroupExpanded ? "收起" : `展开 ${groupImages.length} 张`}
             </button>
           )}
           {/* 生成中遮罩 */}
