@@ -456,7 +456,7 @@ CREATE TABLE `recharge_order` (
     `points_amount`   INT           NOT NULL COMMENT '充值积分数量',
     `payment_method`  VARCHAR(16)   DEFAULT NULL COMMENT '支付方式(alipay/wechat/manual)',
     `payment_no`      VARCHAR(128)  DEFAULT NULL COMMENT '第三方支付流水号',
-    `status`          TINYINT       NOT NULL DEFAULT 0 COMMENT '状态(0:待支付,1:已支付,2:已取消,3:已退款)',
+    `status`          TINYINT       NOT NULL DEFAULT 0 COMMENT '状态(0:待支付,1:已支付,2:已取消,3:已退款,4:已超时)',
     `paid_time`       DATETIME      DEFAULT NULL COMMENT '支付时间',
     `create_time`     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',

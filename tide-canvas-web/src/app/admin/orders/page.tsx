@@ -17,6 +17,7 @@ const STATUS_TAG: Record<number, { color: string; text: string }> = {
   [OrderStatus.PAID]: { color: "green", text: "已支付" },
   [OrderStatus.CANCELLED]: { color: "default", text: "已取消" },
   [OrderStatus.REFUNDED]: { color: "red", text: "已退款" },
+  [OrderStatus.TIMEOUT]: { color: "default", text: "已超时" },
 };
 
 function payMethodLabel(m?: string) {
@@ -79,7 +80,8 @@ export default function AdminOrdersPage() {
     { title: "时间", dataIndex: "createTime", key: "createTime", responsive: ["lg"], render: (v: string) => formatDate(v) },
     {
       title: "操作", key: "action", render: (_, o) =>
-        o.status === OrderStatus.PENDING ? (
+        // 待支付可确认；已超时也允许手动确认(用户实际已付时管理员可补入账)
+        o.status === OrderStatus.PENDING || o.status === OrderStatus.TIMEOUT ? (
           <Button type="primary" size="small" icon={<CheckCircleOutlined />} loading={payingId === o.id} onClick={() => handleConfirmPay(o.id)}>
             确认支付
           </Button>

@@ -19,6 +19,7 @@ const statusColorMap: Record<number, string> = {
   [OrderStatus.PAID]: "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300",
   [OrderStatus.CANCELLED]: "bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400",
   [OrderStatus.REFUNDED]: "bg-red-100 text-red-600 dark:bg-red-900 dark:text-red-400",
+  [OrderStatus.TIMEOUT]: "bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400",
 };
 
 export default function MyOrdersPage() {

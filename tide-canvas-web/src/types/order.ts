@@ -53,6 +53,7 @@ export enum OrderStatus {
   PAID = 1,
   CANCELLED = 2,
   REFUNDED = 3,
+  TIMEOUT = 4,
 }
 
 export const ORDER_STATUS_NAMES: Record<number, string> = {
@@ -60,4 +61,5 @@ export const ORDER_STATUS_NAMES: Record<number, string> = {
   1: "已支付",
   2: "已取消",
   3: "已退款",
+  4: "已超时",
 };

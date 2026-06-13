@@ -91,9 +91,9 @@ public class OrderServiceImpl implements OrderService {
             throw new BusinessException(ResultCode.NOT_FOUND, "订单不存在");
         }
 
-        int updated = orderMapper.markPaidIfPending(
-                orderId, OrderStatusEnum.PENDING.getCode(), OrderStatusEnum.PAID.getCode(),
-                paymentNo, paymentMethod);
+        int updated = orderMapper.markPaidIfPayable(
+                orderId, OrderStatusEnum.PENDING.getCode(), OrderStatusEnum.TIMEOUT.getCode(),
+                OrderStatusEnum.PAID.getCode(), paymentNo, paymentMethod);
         if (updated == 0) {
             return false;
         }
