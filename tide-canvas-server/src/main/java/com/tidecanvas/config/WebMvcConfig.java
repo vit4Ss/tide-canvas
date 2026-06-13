@@ -29,7 +29,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
                 // 排除：日志查询接口与数据面板(避免后台自身浏览日志/面板轮询造成自噬式噪声)、文档、下载代理
                 .excludePathPatterns(
                         "/api/admin/access-logs/**", "/api/admin/login-logs/**",
-                        "/api/admin/dashboard/**", "/api/admin/logs/**",
+                        "/api/admin/dashboard/**", "/api/admin/logs/**", "/api/admin/monitor/**",
                         "/api/files/download", "/api/orders/notify/**",
                         "/doc.html", "/webjars/**", "/v3/api-docs/**", "/swagger-resources/**");
     }

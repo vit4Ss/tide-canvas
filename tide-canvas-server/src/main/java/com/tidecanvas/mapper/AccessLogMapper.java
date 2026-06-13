@@ -2,12 +2,16 @@ package com.tidecanvas.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.tidecanvas.model.entity.AccessLogDO;
+import com.tidecanvas.model.vo.SessionVO;
 import org.apache.ibatis.annotations.Param;
 
 import java.util.List;
 import java.util.Map;
 
 public interface AccessLogMapper extends BaseMapper<AccessLogDO> {
+
+    /** 最近在线会话：按 IP+用户 聚合，取最后活动时间，倒序取前 N */
+    List<SessionVO> recentSessions(@Param("limit") int limit);
 
     /** 今日访问量 PV */
     Long countTodayPv();

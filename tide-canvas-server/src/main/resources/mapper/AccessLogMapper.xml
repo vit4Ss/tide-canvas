@@ -45,4 +45,13 @@
         DELETE FROM access_log WHERE create_time &lt; #{before}
     </delete>
 
+    <!-- 最近在线会话：按 IP+用户聚合 -->
+    <select id="recentSessions" resultType="com.tidecanvas.model.vo.SessionVO">
+        SELECT username, ip, MAX(user_agent) AS userAgent, MAX(create_time) AS lastActiveTime
+        FROM access_log
+        GROUP BY ip, username
+        ORDER BY lastActiveTime DESC
+        LIMIT #{limit}
+    </select>
+
 </mapper>

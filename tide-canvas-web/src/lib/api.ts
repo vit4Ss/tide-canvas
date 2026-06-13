@@ -19,6 +19,7 @@ import type {
   LogVO, LogQuery, ContentVO, ContentQuery,
   AccessLogVO, AccessLogQuery, LoginLogVO, LoginLogQuery, ActiveUserVO,
 } from "@/types/admin";
+import type { SystemMetricsVO, RedisInfoVO, SessionVO } from "@/types/monitor";
 import type {
   PointsBalanceVO, PointsTransactionVO, PointsTransactionQuery, CheckinStatusVO, CheckinCalendarVO,
 } from "@/types/points";
@@ -181,6 +182,11 @@ export const adminApi = {
       http.get<DashboardChartsVO>("/api/admin/dashboard/charts"),
     activeUsers: () =>
       http.get<ActiveUserVO[]>("/api/admin/dashboard/active-users"),
+  },
+  monitor: {
+    system: () => http.get<SystemMetricsVO>("/api/admin/monitor/system"),
+    redis: () => http.get<RedisInfoVO>("/api/admin/monitor/redis"),
+    sessions: () => http.get<SessionVO[]>("/api/admin/monitor/sessions"),
   },
   users: {
     list: (query: AdminUserQuery) =>
