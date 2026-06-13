@@ -1,18 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { adminApi } from "@/lib/api";
+import { adminApi, uploadFileSmart } from "@/lib/api";
+import { toast } from "@/components/shared/toast";
 import type { BannerVO, BannerCreateDTO } from "@/types/admin";
 import {
   Plus,
   Trash2,
   Edit,
   Save,
-  Image,
+  Image as ImageIcon,
   Eye,
   EyeOff,
   GripVertical,
   ExternalLink,
+  Upload,
+  Loader2,
   X,
 } from "lucide-react";
 import {
@@ -49,8 +52,30 @@ export default function AdminBannersPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<BannerForm>(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; title: string } | null>(null);
+
+  const handleUpload = async (file: File) => {
+    if (!file.type.startsWith("image/")) {
+      toast.error("请选择图片文件");
+      return;
+    }
+    setUploading(true);
+    try {
+      const res = await uploadFileSmart(file);
+      if (res.success && res.data?.fileUrl) {
+        setForm((prev) => ({ ...prev, imageUrl: res.data!.fileUrl }));
+        toast.success("图片已上传");
+      } else {
+        toast.error(res.message || "上传失败");
+      }
+    } catch {
+      toast.error("上传失败，请重试");
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const loadBanners = async () => {
     setLoading(true);
@@ -165,13 +190,30 @@ export default function AdminBannersPage() {
               onChange={(v) => setForm({ ...form, title: v })}
               placeholder="Banner 标题"
             />
-            <TextField
-              label="图片 URL"
-              required
-              value={form.imageUrl}
-              onChange={(v) => setForm({ ...form, imageUrl: v })}
-              placeholder="https://example.com/banner.jpg"
-            />
+            <div>
+              <TextField
+                label="图片 URL"
+                required
+                value={form.imageUrl}
+                onChange={(v) => setForm({ ...form, imageUrl: v })}
+                placeholder="https://example.com/banner.jpg 或点击下方上传"
+              />
+              <label className="mt-1.5 inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800">
+                {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                {uploading ? "上传中..." : "上传图片"}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  disabled={uploading}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleUpload(file);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+            </div>
             <TextField
               label="跳转链接"
               value={form.linkUrl}
@@ -236,7 +278,7 @@ export default function AdminBannersPage() {
         <CardSkeleton count={3} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" />
       ) : banners.length === 0 ? (
         <EmptyState
-          icon={Image}
+          icon={ImageIcon}
           title="暂无 Banner"
           description="点击上方按钮添加第一个 Banner"
           className="h-64 rounded-xl border-2 border-dashed border-neutral-300 dark:border-neutral-700"
@@ -263,7 +305,7 @@ export default function AdminBannersPage() {
                   />
                 ) : (
                   <div className="flex h-full items-center justify-center">
-                    <Image className="h-8 w-8 text-neutral-400" />
+                    <ImageIcon className="h-8 w-8 text-neutral-400" />
                   </div>
                 )}
                 {/* 排序标签 */}

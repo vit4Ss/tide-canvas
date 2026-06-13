@@ -40,7 +40,7 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/login", "/api/auth/register", "/api/auth/email-code", "/api/auth/refresh", "/api/auth/oauth/**").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/posts/**", "/api/blogs/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/posts/**", "/api/blogs/**", "/api/banners").permitAll()
                         .requestMatchers("/api/orders/notify/**").permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .requestMatchers("/doc.html", "/webjars/**", "/v3/api-docs/**", "/swagger-resources/**").permitAll()

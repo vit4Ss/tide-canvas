@@ -350,6 +350,11 @@ export const blogApi = {
     http.get<PageData<BlogVO>>("/api/blogs/my", toParams(query)),
 };
 
+// ========== Banner（首页轮播，公开） ==========
+export const bannerApi = {
+  list: () => http.get<BannerVO[]>("/api/banners"),
+};
+
 // ========== 订单 ==========
 export const orderApi = {
   create: (data: RechargeCreateDTO) =>
