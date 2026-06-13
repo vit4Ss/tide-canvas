@@ -1,35 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Table, Input, Segmented, Tag, Button, Space, Alert, Image as AntdImage, Popconfirm } from "antd";
+import type { ColumnsType } from "antd/es/table";
+import { DownloadOutlined, DeleteOutlined, FileOutlined, HddOutlined } from "@ant-design/icons";
 import { http, toParams } from "@/lib/http";
+import { AdminPageHead } from "@/components/admin/page-head";
 import type { PageData } from "@/types/api";
 import type { FileVO } from "@/types/file";
-import {
-  Trash2,
-  FileImage,
-  FileVideo,
-  File,
-  HardDrive,
-  X,
-  Download,
-  Eye,
-} from "lucide-react";
-import {
-  PageHeader,
-  SearchBar,
-  FilterTabs,
-  Pagination,
-  StatusBadge,
-  TableSkeleton,
-  EmptyState,
-  ConfirmDialog,
-} from "@/components/shared";
 
-/** 文件名过长时中间省略，保留头部与尾部（含扩展名），用于弹窗等空间受限处 */
-function ellipsisMiddle(name: string, head = 14, tail = 12): string {
-  if (!name || name.length <= head + tail + 1) return name;
-  return name.slice(0, head) + "…" + name.slice(-tail);
-}
+const PAGE_SIZE = 15;
 
 function formatFileSize(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -38,17 +18,10 @@ function formatFileSize(bytes: number): string {
   return (bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1) + " " + units[i];
 }
 
-const FILE_TYPE_OPTIONS = [
-  { value: "", label: "全部" },
-  { value: "image", label: "图片" },
-  { value: "video", label: "视频" },
-  { value: "other", label: "其他" },
-];
-
-const FILE_TYPE_BADGE: Record<string, { icon: typeof FileImage; variant: "success" | "warning" | "danger" | "info" | "neutral"; label: string }> = {
-  image: { icon: FileImage, variant: "info", label: "图片" },
-  video: { icon: FileVideo, variant: "info", label: "视频" },
-  other: { icon: File, variant: "neutral", label: "其他" },
+const TYPE_TAG: Record<string, { label: string; color: string }> = {
+  image: { label: "图片", color: "blue" },
+  video: { label: "视频", color: "purple" },
+  other: { label: "其他", color: "default" },
 };
 
 export default function AdminFilesPage() {
@@ -60,27 +33,18 @@ export default function AdminFilesPage() {
   const [fileType, setFileType] = useState("");
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState<number | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
   const [error, setError] = useState("");
-  const pageSize = 15;
 
   const loadFiles = async (page = pageNum, search = keyword, type = fileType) => {
     setLoading(true);
     setError("");
     try {
-      const params = toParams({
-        pageNum: page,
-        pageSize,
-        keyword: search || undefined,
-        fileType: type || undefined,
-      });
+      const params = toParams({ pageNum: page, pageSize: PAGE_SIZE, keyword: search || undefined, fileType: type || undefined });
       const res = await http.get<PageData<FileVO>>("/api/admin/files", params);
       if (res.success && res.data) {
         const data = res.data as unknown as PageData<FileVO>;
         setFiles(data.records);
         setTotal(data.total);
-        // Calculate total storage used from returned records (approximate)
         const storageSum = data.records.reduce((sum, f) => sum + (f.fileSize || 0), 0);
         setTotalStorageUsed((prev) => (page === 1 ? storageSum : prev));
       }
@@ -91,229 +55,75 @@ export default function AdminFilesPage() {
     }
   };
 
-  useEffect(() => {
-    loadFiles(1);
-  }, []);
+  useEffect(() => { loadFiles(1); }, []);
 
-  const handleSearch = () => {
-    setPageNum(1);
-    loadFiles(1, keyword, fileType);
-  };
-
-  const handleFileTypeFilter = (type: string) => {
-    setFileType(type);
-    setPageNum(1);
-    loadFiles(1, keyword, type);
-  };
-
-  const handlePageChange = (newPage: number) => {
-    setPageNum(newPage);
-    loadFiles(newPage);
-  };
-
-  const handleConfirmDelete = async () => {
-    if (!deleteTarget) return;
-    setDeleting(deleteTarget.id);
+  const handleDelete = async (id: number) => {
+    setDeleting(id);
     try {
-      const res = await http.delete<void>(`/api/admin/files/${deleteTarget.id}`);
-      if (res.success) {
-        loadFiles();
-      }
+      const res = await http.delete<void>(`/api/admin/files/${id}`);
+      if (res.success) loadFiles();
     } finally {
       setDeleting(null);
-      setDeleteTarget(null);
     }
   };
 
-  const isImage = (file: FileVO) => {
-    return file.fileType === "image" || file.mimeType?.startsWith("image/");
-  };
+  const isImage = (f: FileVO) => f.fileType === "image" || f.mimeType?.startsWith("image/");
+
+  const columns: ColumnsType<FileVO> = [
+    {
+      title: "文件名", key: "name", render: (_, f) => (
+        <Space>
+          {isImage(f) && f.fileUrl
+            ? <AntdImage src={f.fileUrl} alt={f.originalName} width={32} height={32} style={{ objectFit: "cover", borderRadius: 4 }} />
+            : <span style={{ width: 32, height: 32, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "#f5f5f5", borderRadius: 4 }}><FileOutlined style={{ color: "#bfbfbf" }} /></span>}
+          <span style={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }} title={f.originalName}>{f.originalName}</span>
+        </Space>
+      ),
+    },
+    { title: "类型", dataIndex: "fileType", key: "fileType", render: (t: string) => { const tag = TYPE_TAG[t] ?? TYPE_TAG.other; return <Tag color={tag.color}>{tag.label}</Tag>; } },
+    { title: "大小", dataIndex: "fileSize", key: "fileSize", render: (v: number) => <span style={{ color: "#8c8c8c" }}>{formatFileSize(v)}</span> },
+    { title: "存储", dataIndex: "storageType", key: "storageType", responsive: ["md"], render: (v) => <Tag>{v ?? "local"}</Tag> },
+    { title: "上传时间", dataIndex: "createTime", key: "createTime", responsive: ["lg"], render: (v: string) => v ? new Date(v).toLocaleDateString("zh-CN") : "-" },
+    {
+      title: "操作", key: "action", render: (_, f) => (
+        <Space size={0}>
+          {f.fileUrl && <Button type="text" size="small" icon={<DownloadOutlined />} href={f.fileUrl} target="_blank" title="下载" />}
+          <Popconfirm title="确定删除该文件？此操作不可撤销。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => handleDelete(f.id)}>
+            <Button type="text" size="small" danger icon={<DeleteOutlined />} loading={deleting === f.id} />
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ];
 
   return (
-    <div className="space-y-6">
-      {error && (
-        <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600 dark:bg-red-950/30 dark:text-red-400">
-          {error}
-        </div>
-      )}
-      <PageHeader
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <AdminPageHead
         title="文件管理"
-        description={`共 ${total} 个文件`}
-        actions={
-          <div className="flex items-center gap-2 rounded-lg bg-neutral-100 px-4 py-2.5 dark:bg-neutral-800">
-            <HardDrive className="h-4 w-4 text-neutral-500" />
-            <span className="text-sm text-neutral-600 dark:text-neutral-300">
-              已用空间: <strong>{formatFileSize(totalStorageUsed)}</strong>
-            </span>
-          </div>
-        }
+        desc={`共 ${total} 个文件`}
+        extra={<Tag icon={<HddOutlined />} style={{ padding: "4px 10px", fontSize: 13 }}>本页已用 {formatFileSize(totalStorageUsed)}</Tag>}
       />
+      {error && <Alert type="error" message={error} showIcon closable onClose={() => setError("")} />}
 
-      {/* 搜索和筛选 */}
-      <div className="flex flex-wrap items-center gap-3">
-        <SearchBar
-          value={keyword}
-          onChange={setKeyword}
-          onSearch={handleSearch}
-          placeholder="搜索文件名..."
-        />
-        <FilterTabs<string>
+      <Space wrap>
+        <Input.Search placeholder="搜索文件名..." allowClear enterButton style={{ width: 260 }}
+          onSearch={(v) => { setKeyword(v); setPageNum(1); loadFiles(1, v, fileType); }} />
+        <Segmented
           value={fileType}
-          options={FILE_TYPE_OPTIONS}
-          onChange={handleFileTypeFilter}
+          options={[{ label: "全部", value: "" }, { label: "图片", value: "image" }, { label: "视频", value: "video" }, { label: "其他", value: "other" }]}
+          onChange={(v) => { const t = String(v); setFileType(t); setPageNum(1); loadFiles(1, keyword, t); }}
         />
-        <button
-          onClick={handleSearch}
-          className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900"
-        >
-          搜索
-        </button>
-      </div>
+      </Space>
 
-      {/* 文件表格 */}
-      <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-neutral-100 bg-neutral-50 text-left text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900">
-                <th className="px-4 py-3 font-medium">文件名</th>
-                <th className="px-4 py-3 font-medium">类型</th>
-                <th className="px-4 py-3 font-medium">大小</th>
-                <th className="px-4 py-3 font-medium">存储</th>
-                <th className="px-4 py-3 font-medium">上传时间</th>
-                <th className="px-4 py-3 font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <TableSkeleton rows={5} columns={6} />
-              ) : files.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-0 py-0">
-                    <EmptyState icon={File} title="暂无文件数据" />
-                  </td>
-                </tr>
-              ) : (
-                files.map((file) => {
-                  const badge = FILE_TYPE_BADGE[file.fileType] ?? FILE_TYPE_BADGE["other"];
-                  const IconComp = badge.icon;
-                  return (
-                    <tr
-                      key={file.id}
-                      className="border-b border-neutral-50 last:border-0 hover:bg-neutral-50/50 dark:border-neutral-900 dark:hover:bg-neutral-900/30"
-                    >
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2 max-w-[300px]">
-                          {isImage(file) && file.fileUrl ? (
-                            <button
-                              onClick={() => setPreviewUrl(file.fileUrl)}
-                              className="flex-shrink-0"
-                            >
-                              <img
-                                src={file.fileUrl}
-                                alt={file.originalName}
-                                className="h-8 w-8 rounded object-cover border border-neutral-200 dark:border-neutral-700 hover:opacity-80 transition-opacity"
-                              />
-                            </button>
-                          ) : (
-                            <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded bg-neutral-100 dark:bg-neutral-800">
-                              <IconComp className="h-4 w-4 text-neutral-400" />
-                            </div>
-                          )}
-                          <span className="truncate font-medium" title={file.originalName}>
-                            {file.originalName}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <StatusBadge label={badge.label} variant={badge.variant} />
-                      </td>
-                      <td className="px-4 py-3 text-neutral-500">{formatFileSize(file.fileSize)}</td>
-                      <td className="px-4 py-3">
-                        <span className="rounded-md bg-neutral-100 px-2 py-0.5 text-xs text-neutral-500 dark:bg-neutral-800">
-                          {file.storageType ?? "local"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-xs text-neutral-400">
-                        {file.createTime
-                          ? new Date(file.createTime).toLocaleDateString("zh-CN")
-                          : "-"}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-1">
-                          {isImage(file) && file.fileUrl && (
-                            <button
-                              onClick={() => setPreviewUrl(file.fileUrl)}
-                              className="rounded-lg p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800"
-                              title="预览"
-                            >
-                              <Eye className="h-4 w-4" />
-                            </button>
-                          )}
-                          {file.fileUrl && (
-                            <a
-                              href={file.fileUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="rounded-lg p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800"
-                              title="下载"
-                            >
-                              <Download className="h-4 w-4" />
-                            </a>
-                          )}
-                          <button
-                            onClick={() => setDeleteTarget({ id: file.id, name: file.originalName })}
-                            disabled={deleting === file.id}
-                            className="rounded-lg p-1.5 text-neutral-400 hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-950/30"
-                            title="删除"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <Pagination pageNum={pageNum} pageSize={pageSize} total={total} onChange={handlePageChange} />
-      </div>
-
-      {/* 删除确认 */}
-      <ConfirmDialog
-        open={deleteTarget !== null}
-        title="删除文件"
-        message={deleteTarget ? `确定删除文件「${ellipsisMiddle(deleteTarget.name)}」？此操作不可撤销。` : ""}
-        danger
-        confirmText="删除"
-        onConfirm={handleConfirmDelete}
-        onCancel={() => setDeleteTarget(null)}
+      <Table<FileVO>
+        rowKey="id"
+        columns={columns}
+        dataSource={files}
+        loading={loading}
+        scroll={{ x: "max-content" }}
+        locale={{ emptyText: "暂无文件数据" }}
+        pagination={{ current: pageNum, pageSize: PAGE_SIZE, total, showSizeChanger: false, showTotal: (t) => `共 ${t} 条`, onChange: (p) => { setPageNum(p); loadFiles(p); } }}
       />
-
-      {/* 图片预览弹窗 */}
-      {previewUrl && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-          onClick={() => setPreviewUrl(null)}
-        >
-          <div className="relative max-h-[80vh] max-w-[80vw]" onClick={(e) => e.stopPropagation()}>
-            <img
-              src={previewUrl}
-              alt="预览"
-              className="max-h-[80vh] max-w-[80vw] rounded-lg object-contain"
-            />
-            <button
-              onClick={() => setPreviewUrl(null)}
-              className="absolute -right-3 -top-3 flex h-8 w-8 items-center justify-center rounded-full bg-white text-neutral-600 shadow-lg hover:bg-neutral-100 dark:bg-neutral-800 dark:text-neutral-300"
-            >
-              <X className="h-5 w-5" />
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
