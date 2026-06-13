@@ -16,6 +16,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
 import java.util.Map;
 
 @Tag(name = "项目管理")
@@ -82,7 +83,10 @@ public class ProjectController {
     public Result<Map<String, String>> getCanvas(@PathVariable Long id) {
         Long userId = SecurityUtils.getCurrentUserId();
         String data = projectService.getCanvasData(userId, id);
-        return Result.success(Map.of("canvasData", data));
+        // 新建未保存的画布 canvas_data 为 NULL，Map.of 不接受 null value 会 NPE→500；用 HashMap 兜底空对象
+        Map<String, String> result = new HashMap<>();
+        result.put("canvasData", data != null ? data : "{}");
+        return Result.success(result);
     }
 
     @Operation(summary = "生成分享链接")

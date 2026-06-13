@@ -129,8 +129,13 @@ public class ProjectServiceImpl implements ProjectService {
     public void saveCanvas(Long userId, Long projectId, CanvasSaveDTO dto) {
         CanvasProjectDO project = getAndCheck(userId, projectId);
         project.setCanvasData(dto.getCanvasData());
-        if (StringUtils.hasText(dto.getThumbnail())) {
-            project.setThumbnail(dto.getThumbnail());
+        // thumbnail 列为 VARCHAR(512)；前端兜底封面可能传入 data:/blob: 等超长或不可持久 URL，
+        // 直接落库会触发 Data too long 异常→500。仅接受合理长度的 http(s) 地址，其余忽略不覆盖原值。
+        String thumbnail = dto.getThumbnail();
+        if (StringUtils.hasText(thumbnail)
+                && thumbnail.length() <= 512
+                && (thumbnail.startsWith("http://") || thumbnail.startsWith("https://"))) {
+            project.setThumbnail(thumbnail);
         }
         projectMapper.updateById(project);
     }

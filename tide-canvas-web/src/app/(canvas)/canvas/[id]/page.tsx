@@ -75,8 +75,13 @@ export default function CanvasEditorPage() {
     setSaving(true);
     try {
       const canvasData = JSON.stringify({ nodes, connections, groups });
-      // 封面兜底：未手动设封面时，自动用画布中第一张图片（saveCanvas 仅在有值时更新 thumbnail）
-      const cover = thumbnail || nodes.find((n) => n.type === "image" && n.imageSrc)?.imageSrc || null;
+      // 封面兜底：未手动设封面时，自动用画布中第一张图片。
+      // 仅取可持久化的 http(s) 地址——data:base64 会超出后端 thumbnail(VARCHAR 512) 导致保存 500，
+      // blob: 本地地址刷新即失效（如刚切分尚未上传完成的切片），都不能当封面。
+      const persistable = (u?: string): u is string => !!u && /^https?:\/\//.test(u);
+      const cover = (persistable(thumbnail ?? undefined) ? thumbnail : null)
+        ?? nodes.find((n) => n.type === "image" && persistable(n.imageSrc))?.imageSrc
+        ?? null;
       const res = await projectApi.saveCanvas(projectId, { canvasData, ...(cover ? { thumbnail: cover } : {}) });
       if (res.success) {
         setLastSaved(new Date().toLocaleTimeString("zh-CN"));
