@@ -49,6 +49,26 @@ function clearTokens() {
   localStorage.removeItem("refresh_token");
 }
 
+/**
+ * 安全解析响应为统一 Result：网关 502/504、纯文本 "Internal Server Error" 等非 JSON 响应
+ * 不再抛 SyntaxError，而是归一为失败 Result，由调用方按 success 分支提示。
+ */
+async function parseResult<T>(res: Response): Promise<Result<T>> {
+  const text = await res.text();
+  if (text) {
+    try {
+      return JSON.parse(text) as Result<T>;
+    } catch {
+      // 非 JSON：网关/代理错误页，落到下方兜底
+    }
+  }
+  return {
+    success: false,
+    code: res.status || 500,
+    message: `服务暂时不可用 (HTTP ${res.status || "?"})，请稍后重试`,
+  } as Result<T>;
+}
+
 async function refreshAccessToken(): Promise<string | null> {
   const refreshToken = localStorage.getItem("refresh_token");
   if (!refreshToken) {
@@ -60,15 +80,19 @@ async function refreshAccessToken(): Promise<string | null> {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refreshToken }),
     });
-    const result: Result<{ accessToken: string; refreshToken: string }> = await res.json();
+    const result = await parseResult<{ accessToken: string; refreshToken: string }>(res);
     if (result.success) {
       setTokens(result.data.accessToken, result.data.refreshToken);
       return result.data.accessToken;
     }
+    // 后端明确拒绝(refresh token 失效/被吊销)才清凭据；
+    // 服务不可用(5xx/非 JSON)时保留 token，等服务恢复后下次请求再续期，避免部署窗口把用户踢下线
+    if (result.code === 401 || result.code === 403) {
+      clearTokens();
+    }
   } catch {
-    // refresh failed
+    // 网络异常：保留 token
   }
-  clearTokens();
   return null;
 }
 
@@ -95,7 +119,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<R
   };
 
   let res = await fetch(url, config);
-  let result: Result<T> = await res.json();
+  let result: Result<T> = await parseResult<T>(res);
 
   if (result.code === 401 && token) {
     if (!refreshPromise) {
@@ -107,8 +131,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<R
     if (newToken) {
       headers["Authorization"] = `Bearer ${newToken}`;
       res = await fetch(url, { ...config, headers });
-      result = await res.json();
-    } else {
+      result = await parseResult<T>(res);
+    } else if (!getAccessToken()) {
+      // 凭据已被明确清除(refresh token 失效)才跳登录；服务暂不可用时保留会话、把失败结果交给页面提示
       if (typeof window !== "undefined") {
         window.location.href = "/login";
       }
@@ -136,7 +161,7 @@ async function uploadFile<T>(path: string, file: File | FormData): Promise<Resul
     headers,
     body: formData,
   });
-  let result: Result<T> = await res.json();
+  let result: Result<T> = await parseResult<T>(res);
 
   // 401 时尝试刷新 token 后重试
   if (result.code === 401 && token) {
@@ -153,8 +178,8 @@ async function uploadFile<T>(path: string, file: File | FormData): Promise<Resul
         headers,
         body: formData,
       });
-      result = await res.json();
-    } else {
+      result = await parseResult<T>(res);
+    } else if (!getAccessToken()) {
       if (typeof window !== "undefined") {
         window.location.href = "/login";
       }
