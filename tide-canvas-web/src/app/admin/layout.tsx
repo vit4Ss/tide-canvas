@@ -1,6 +1,7 @@
 import { AdminGuard } from "@/components/layout/admin-guard";
 import { AdminAntdProvider } from "@/components/admin/antd-provider";
 import { AdminShell } from "@/components/admin/admin-shell";
+import { ThemeModeProvider } from "@/components/shared/theme-mode";
 
 export default function AdminLayout({
   children,
@@ -9,9 +10,11 @@ export default function AdminLayout({
 }) {
   return (
     <AdminGuard>
-      <AdminAntdProvider>
-        <AdminShell>{children}</AdminShell>
-      </AdminAntdProvider>
+      <ThemeModeProvider>
+        <AdminAntdProvider>
+          <AdminShell>{children}</AdminShell>
+        </AdminAntdProvider>
+      </ThemeModeProvider>
     </AdminGuard>
   );
 }
