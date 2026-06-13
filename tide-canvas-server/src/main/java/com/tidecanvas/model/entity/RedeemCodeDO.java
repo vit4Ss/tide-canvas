@@ -23,6 +23,9 @@ public class RedeemCodeDO extends BaseEntity {
     /** 兑换积分 */
     private Integer points;
 
+    /** 生成者（管理员）用户ID */
+    private Long createdBy;
+
     /** 0未使用 / 1已使用 / 2已停用 */
     private Integer status;
 

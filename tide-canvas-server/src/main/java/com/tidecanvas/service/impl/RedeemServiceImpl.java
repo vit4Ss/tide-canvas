@@ -13,6 +13,8 @@ import com.tidecanvas.model.query.RedeemCodeQuery;
 import com.tidecanvas.model.vo.PointsBalanceVO;
 import com.tidecanvas.model.vo.RedeemCodeVO;
 import com.tidecanvas.model.vo.RedeemResultVO;
+import com.tidecanvas.security.SecurityUserDetails;
+import com.tidecanvas.security.SecurityUtils;
 import com.tidecanvas.service.PointsService;
 import com.tidecanvas.service.RedeemService;
 import lombok.RequiredArgsConstructor;
@@ -91,12 +93,16 @@ public class RedeemServiceImpl implements RedeemService {
         int count = dto.getCount() == null ? 1 : Math.min(Math.max(dto.getCount(), 1), 1000);
         int points = dto.getPoints() == null ? 0 : dto.getPoints();
         String batchNo = "B" + System.currentTimeMillis();
+        // 记录生成者(当前管理员)ID
+        SecurityUserDetails admin = SecurityUtils.getCurrentUser();
+        Long creatorId = admin != null ? admin.getUserId() : null;
         List<String> codes = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             String code = uniqueCode();
             RedeemCodeDO rc = new RedeemCodeDO();
             rc.setCode(code);
             rc.setPoints(points);
+            rc.setCreatedBy(creatorId);
             rc.setStatus(0);
             rc.setExpireTime(dto.getExpireTime());
             rc.setBatchNo(batchNo);

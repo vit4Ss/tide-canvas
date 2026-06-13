@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type Key } from "react";
 import { Table, Tag, Button, Modal, Input, InputNumber, DatePicker, Select, Space, Typography, Popconfirm } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { PlusOutlined, ReloadOutlined, CopyOutlined, DeleteOutlined, StopOutlined, PoweroffOutlined } from "@ant-design/icons";
 import { adminApi } from "@/lib/api";
 import { toast } from "@/components/shared/toast";
 import { AdminPageHead } from "@/components/admin/page-head";
+import { formatDate } from "@/lib/utils";
 import type { RedeemCodeVO } from "@/types/redeem";
 
 const PAGE_SIZE = 20;
@@ -22,6 +23,7 @@ export default function AdminRedeemPage() {
   const [pageNum, setPageNum] = useState(1);
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [loading, setLoading] = useState(true);
+  const [selectedKeys, setSelectedKeys] = useState<Key[]>([]);
 
   const [showGen, setShowGen] = useState(false);
   const [genCount, setGenCount] = useState<number | null>(10);
@@ -69,6 +71,13 @@ export default function AdminRedeemPage() {
     try { await navigator.clipboard.writeText(text); toast.success("已复制"); } catch { toast.error("复制失败"); }
   };
 
+  // 批量复制：复制当前已勾选行的兑换码(换行分隔)
+  const copySelected = () => {
+    const codes = list.filter((r) => selectedKeys.includes(r.id)).map((r) => r.code);
+    if (!codes.length) { toast.info("请先勾选兑换码"); return; }
+    void copyText(codes.join("\n"));
+  };
+
   const toggleStatus = async (r: RedeemCodeVO) => {
     if (r.status === 1) { toast.info("已使用的兑换码不可更改"); return; }
     const res = await adminApi.redeem.updateStatus(r.id, r.status === 2 ? 0 : 2);
@@ -84,9 +93,11 @@ export default function AdminRedeemPage() {
     { title: "兑换码", dataIndex: "code", key: "code", render: (v: string) => <Button type="link" size="small" style={{ fontFamily: "monospace", padding: 0 }} icon={<CopyOutlined />} onClick={() => copyText(v)}>{v}</Button> },
     { title: "积分", dataIndex: "points", key: "points", render: (v: number) => <span style={{ color: "#d97706", fontWeight: 500 }}>+{v}</span> },
     { title: "状态", dataIndex: "status", key: "status", render: (s: number) => { const t = STATUS_TAG[s] ?? { label: String(s), color: "default" }; return <Tag color={t.color}>{t.label}</Tag>; } },
-    { title: "有效期", dataIndex: "expireTime", key: "expireTime", responsive: ["md"], render: (v) => v ? v.replace("T", " ").slice(0, 16) : "永久" },
+    { title: "生成者ID", dataIndex: "createdBy", key: "createdBy", responsive: ["md"], render: (v: number | undefined) => v != null ? <span style={{ fontFamily: "monospace", fontSize: 12 }}>{v}</span> : <span style={{ color: "#bfbfbf" }}>-</span> },
+    { title: "使用者ID", dataIndex: "usedBy", key: "usedBy", responsive: ["md"], render: (v: number | undefined) => v != null ? <span style={{ fontFamily: "monospace", fontSize: 12 }}>{v}</span> : <span style={{ color: "#bfbfbf" }}>-</span> },
+    { title: "有效期", dataIndex: "expireTime", key: "expireTime", responsive: ["md"], render: (v) => v ? formatDate(v) : "永久" },
     { title: "备注", dataIndex: "remark", key: "remark", responsive: ["lg"], ellipsis: true, render: (v) => v || "-" },
-    { title: "创建时间", dataIndex: "createTime", key: "createTime", responsive: ["lg"], render: (v) => v?.replace("T", " ").slice(0, 16) },
+    { title: "创建时间", dataIndex: "createTime", key: "createTime", responsive: ["lg"], render: (v) => v ? formatDate(v) : "-" },
     {
       title: "操作", key: "action", align: "right", render: (_, r) => (
         <Space size={0}>
@@ -112,6 +123,9 @@ export default function AdminRedeemPage() {
           <Space>
             <Select style={{ width: 130 }} value={statusFilter} onChange={(v) => { setPageNum(1); setStatusFilter(v); }}
               options={[{ value: "", label: "全部状态" }, { value: "0", label: "未使用" }, { value: "1", label: "已使用" }, { value: "2", label: "已停用" }]} />
+            <Button icon={<CopyOutlined />} disabled={selectedKeys.length === 0} onClick={copySelected}>
+              复制选中{selectedKeys.length > 0 ? ` (${selectedKeys.length})` : ""}
+            </Button>
             <Button icon={<ReloadOutlined />} onClick={() => void load()} />
             <Button type="primary" icon={<PlusOutlined />} onClick={() => { setShowGen(true); setGeneratedCodes(null); }}>生成兑换码</Button>
           </Space>
@@ -123,6 +137,7 @@ export default function AdminRedeemPage() {
         columns={columns}
         dataSource={list}
         loading={loading}
+        rowSelection={{ selectedRowKeys: selectedKeys, onChange: setSelectedKeys }}
         scroll={{ x: "max-content" }}
         locale={{ emptyText: "暂无兑换码，点击右上角生成" }}
         pagination={{ current: pageNum, pageSize: PAGE_SIZE, total, showSizeChanger: false, showTotal: (t) => `共 ${t} 条`, onChange: setPageNum }}

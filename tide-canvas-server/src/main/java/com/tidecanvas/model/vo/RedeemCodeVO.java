@@ -14,6 +14,7 @@ public class RedeemCodeVO {
     private Long id;
     private String code;
     private Integer points;
+    private Long createdBy;
     private Integer status;
     private Long usedBy;
     private LocalDateTime usedTime;

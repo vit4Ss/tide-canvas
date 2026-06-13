@@ -4,6 +4,8 @@ export interface RedeemCodeVO {
   id: number;
   code: string;
   points: number;
+  /** 生成者（管理员）用户ID */
+  createdBy?: number;
   /** 0未使用 / 1已使用 / 2已停用 */
   status: number;
   usedBy?: number;

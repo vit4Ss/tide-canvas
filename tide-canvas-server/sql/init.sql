@@ -194,6 +194,7 @@ CREATE TABLE `redeem_code` (
     `id`          BIGINT       NOT NULL COMMENT '主键',
     `code`        VARCHAR(32)  NOT NULL COMMENT '兑换码',
     `points`      INT          NOT NULL DEFAULT 0 COMMENT '兑换积分',
+    `created_by`  BIGINT       DEFAULT NULL COMMENT '生成者(管理员)用户ID',
     `status`      TINYINT      NOT NULL DEFAULT 0 COMMENT '状态(0未使用,1已使用,2已停用)',
     `used_by`     BIGINT       DEFAULT NULL COMMENT '使用者用户ID',
     `used_time`   DATETIME     DEFAULT NULL COMMENT '使用时间',
