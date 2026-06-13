@@ -70,12 +70,6 @@ export default function AdminPointsPage() {
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <AdminPageHead title="积分管理" desc="查看积分交易记录" />
 
-      <Alert
-        type="info"
-        showIcon
-        message="手动调整积分已移至「用户管理」——在用户列表中点击对应用户的「调积分」即可。"
-      />
-
       {error && <Alert type="error" message={error} showIcon closable onClose={() => setError("")} />}
 
       {/* 筛选 */}
