@@ -1,5 +1,6 @@
 package com.tidecanvas.model.dto;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
@@ -25,6 +26,7 @@ public class GenerateRedeemDTO {
     private Integer points;
 
     /** 有效期（留空=永久），格式 yyyy-MM-dd HH:mm:ss */
+    @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime expireTime;
 
     private String remark;
