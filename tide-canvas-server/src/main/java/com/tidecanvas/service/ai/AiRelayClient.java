@@ -122,20 +122,20 @@ public class AiRelayClient {
     }
 
     /**
-     * 图生图：新版协议并入 POST {baseUrl}/images/generations（operation=generation + mode=i2i），
-     * 图片仍以 image_urls 传递，返回最终图片 URL 列表（n>1 时一次多张）。
+     * 图生图：POST {baseUrl}/images/edits（operation=edits + mode=i2i），
+     * 图片以 image_urls 传递，返回最终图片 URL 列表（n>1 时一次多张）。
      */
     public List<String> edit(AiProviderDO provider, String modelId, String prompt, List<String> imageUrls, Map<String, Object> input) throws Exception {
         List<String> normalizedImageUrls = normalizeEditImageUrls(imageUrls);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", resolveModelName(modelId, provider, "gpt-image-2"));
-        body.put("operation", "generation");
+        body.put("operation", "edits");
         body.put("mode", "i2i");
         body.put("prompt", prompt);
         body.put("image_urls", normalizedImageUrls);
         applyEditParams(body, input);
         applyBatchCount(body, input);
-        return submitAndResolveMulti(provider, "/images/generations", body);
+        return submitAndResolveMulti(provider, "/images/edits", body);
     }
 
     /**
