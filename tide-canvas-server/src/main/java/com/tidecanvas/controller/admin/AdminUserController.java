@@ -34,7 +34,11 @@ public class AdminUserController {
     public Result<PageResult<UserVO>> list(AdminUserQuery query) {
         Page<SysUserDO> page = new Page<>(query.getPageNum(), query.getPageSize());
         LambdaQueryWrapper<SysUserDO> wrapper = new LambdaQueryWrapper<SysUserDO>()
-                .like(StringUtils.hasText(query.getKeyword()), SysUserDO::getUsername, query.getKeyword())
+                // 关键词匹配 用户名/邮箱/昵称（前端提示「搜索用户名、邮箱」），用 and 包裹 or 避免与角色/状态条件串联
+                .and(StringUtils.hasText(query.getKeyword()), w -> w
+                        .like(SysUserDO::getUsername, query.getKeyword())
+                        .or().like(SysUserDO::getEmail, query.getKeyword())
+                        .or().like(SysUserDO::getNickname, query.getKeyword()))
                 .eq(query.getRole() != null, SysUserDO::getRole, query.getRole())
                 .eq(query.getStatus() != null, SysUserDO::getStatus, query.getStatus())
                 .orderByDesc(SysUserDO::getCreateTime);
