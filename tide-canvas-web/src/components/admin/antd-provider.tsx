@@ -23,9 +23,19 @@ export function AdminAntdProvider({ children }: { children: ReactNode }) {
           theme={{
             algorithm: theme.defaultAlgorithm,
             token: {
-              colorPrimary: "#171717",
+              // 专业蓝主色：菜单选中态、按钮、链接、focus 等统一派生，配色和谐
+              colorPrimary: "#1677ff",
               borderRadius: 8,
               fontFamily: "inherit",
+            },
+            components: {
+              Menu: {
+                // 选中项：浅蓝底 + 蓝字（清爽高亮，替代原黑色主色派生的深灰底）
+                itemSelectedBg: "#e6f0ff",
+                itemSelectedColor: "#1677ff",
+                itemHoverBg: "#f5f5f5",
+                itemBorderRadius: 8,
+              },
             },
           }}
         >
