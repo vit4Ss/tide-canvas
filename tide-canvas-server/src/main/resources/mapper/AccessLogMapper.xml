@@ -2,9 +2,10 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.tidecanvas.mapper.AccessLogMapper">
 
-    <!-- 今日访问量 PV -->
+    <!-- 今日访问量：按 IP+半小时会话去重，避免单页多次 API 调用导致虚高 -->
     <select id="countTodayPv" resultType="java.lang.Long">
-        SELECT COUNT(*) FROM access_log WHERE DATE(create_time) = CURDATE()
+        SELECT COUNT(DISTINCT CONCAT(ip, '-', FLOOR(UNIX_TIMESTAMP(create_time) / 1800)))
+        FROM access_log WHERE DATE(create_time) = CURDATE()
     </select>
 
     <!-- 今日独立访客 UV(按 IP 去重) -->
@@ -12,9 +13,10 @@
         SELECT COUNT(DISTINCT ip) FROM access_log WHERE DATE(create_time) = CURDATE()
     </select>
 
-    <!-- 每日 PV -->
+    <!-- 每日访问量（按 IP+半小时会话去重，与今日访问口径一致） -->
     <select id="pvByDateRange" resultType="java.util.Map">
-        SELECT DATE(create_time) AS date, COUNT(*) AS count
+        SELECT DATE(create_time) AS date,
+               COUNT(DISTINCT CONCAT(ip, '-', FLOOR(UNIX_TIMESTAMP(create_time) / 1800))) AS count
         FROM access_log
         WHERE create_time BETWEEN #{startDate} AND #{endDate}
         GROUP BY DATE(create_time)
