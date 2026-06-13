@@ -1,22 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Table, Input, Select, DatePicker, Space, Tag, Alert, Tooltip } from "antd";
+import type { ColumnsType } from "antd/es/table";
 import { adminApi } from "@/lib/api";
+import { AdminPageHead } from "@/components/admin/page-head";
 import type { LogVO, LogQuery } from "@/types/admin";
 import type { PageData } from "@/types/api";
-import {
-  Filter,
-  ScrollText,
-  Calendar,
-  Info,
-} from "lucide-react";
-import {
-  PageHeader,
-  SearchBar,
-  Pagination,
-  TableSkeleton,
-  EmptyState,
-} from "@/components/shared";
+
+const { RangePicker } = DatePicker;
+const PAGE_SIZE = 20;
 
 const ACTION_OPTIONS = [
   { value: "", label: "全部操作" },
@@ -38,30 +31,20 @@ export default function AdminLogsPage() {
   const [pageNum, setPageNum] = useState(1);
   const [keyword, setKeyword] = useState("");
   const [actionFilter, setActionFilter] = useState("");
-  const [startTime, setStartTime] = useState("");
-  const [endTime, setEndTime] = useState("");
+  const [range, setRange] = useState<{ start?: string; end?: string }>({});
   const [loading, setLoading] = useState(true);
-  const [expandedId, setExpandedId] = useState<number | null>(null);
   const [error, setError] = useState("");
-  const pageSize = 20;
 
-  const loadLogs = async (
-    page = pageNum,
-    search = keyword,
-    action = actionFilter,
-    start = startTime,
-    end = endTime
-  ) => {
+  const loadLogs = async (page = pageNum, search = keyword, action = actionFilter, r = range) => {
     setLoading(true);
     setError("");
     try {
       const query: LogQuery = {
-        pageNum: page,
-        pageSize,
+        pageNum: page, pageSize: PAGE_SIZE,
         keyword: search || undefined,
         action: action || undefined,
-        startTime: start || undefined,
-        endTime: end || undefined,
+        startTime: r.start || undefined,
+        endTime: r.end || undefined,
       };
       const res = await adminApi.logs.list(query);
       if (res.success && res.data) {
@@ -76,177 +59,47 @@ export default function AdminLogsPage() {
     }
   };
 
-  useEffect(() => {
-    loadLogs(1);
-  }, []);
+  useEffect(() => { loadLogs(1); }, []);
 
-  const handleSearch = () => {
-    setPageNum(1);
-    loadLogs(1, keyword, actionFilter, startTime, endTime);
-  };
-
-  const handleActionFilter = (action: string) => {
-    setActionFilter(action);
-    setPageNum(1);
-    loadLogs(1, keyword, action, startTime, endTime);
-  };
-
-  const handlePageChange = (newPage: number) => {
-    setPageNum(newPage);
-    loadLogs(newPage);
-  };
-
-  const truncateDetail = (detail: string, maxLen = 60) => {
-    if (!detail) return "-";
-    return detail.length > maxLen ? detail.slice(0, maxLen) + "..." : detail;
-  };
+  const columns: ColumnsType<LogVO> = [
+    { title: "用户", dataIndex: "username", key: "username", render: (v) => <span style={{ fontWeight: 500 }}>{v || "-"}</span> },
+    { title: "操作", dataIndex: "action", key: "action", render: (v: string) => <Tag>{v}</Tag> },
+    { title: "目标", dataIndex: "target", key: "target", ellipsis: true, render: (v) => v || "-" },
+    {
+      title: "详情", dataIndex: "detail", key: "detail", responsive: ["md"], render: (v: string) =>
+        v ? <Tooltip title={v}><span style={{ display: "inline-block", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#8c8c8c" }}>{v}</span></Tooltip> : <span style={{ color: "#bfbfbf" }}>-</span>,
+    },
+    { title: "IP", dataIndex: "ip", key: "ip", responsive: ["lg"], render: (v) => <span style={{ fontFamily: "monospace", fontSize: 12, color: "#bfbfbf" }}>{v || "-"}</span> },
+    { title: "时间", dataIndex: "createTime", key: "createTime", render: (v: string) => v ? new Date(v).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "-" },
+  ];
 
   return (
-    <div className="space-y-6">
-      {error && (
-        <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600 dark:bg-red-950/30 dark:text-red-400">
-          {error}
-        </div>
-      )}
-      <PageHeader title="系统日志" description={`共 ${total} 条记录`} />
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <AdminPageHead title="系统日志" desc={`共 ${total} 条记录`} />
+      {error && <Alert type="error" message={error} showIcon closable onClose={() => setError("")} />}
 
-      {/* 搜索和筛选 */}
-      <div className="flex flex-wrap gap-3">
-        <SearchBar
-          value={keyword}
-          onChange={setKeyword}
-          onSearch={handleSearch}
-          placeholder="搜索操作详情..."
-          className="max-w-sm flex-1"
+      <Space wrap>
+        <Input.Search placeholder="搜索操作详情..." allowClear enterButton style={{ width: 260 }}
+          onSearch={(v) => { setKeyword(v); setPageNum(1); loadLogs(1, v, actionFilter, range); }} />
+        <Select style={{ width: 140 }} value={actionFilter} options={ACTION_OPTIONS}
+          onChange={(v) => { setActionFilter(v); setPageNum(1); loadLogs(1, keyword, v, range); }} />
+        <RangePicker
+          onChange={(_, ds) => {
+            const r = { start: ds?.[0] ? `${ds[0]} 00:00:00` : undefined, end: ds?.[1] ? `${ds[1]} 23:59:59` : undefined };
+            setRange(r); setPageNum(1); loadLogs(1, keyword, actionFilter, r);
+          }}
         />
-        <div className="relative">
-          <Filter className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
-          <select
-            value={actionFilter}
-            onChange={(e) => handleActionFilter(e.target.value)}
-            className="rounded-lg border border-neutral-200 bg-white py-2 pl-10 pr-8 text-sm outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
-          >
-            {ACTION_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <Calendar className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
-            <input
-              type="date"
-              value={startTime}
-              onChange={(e) => setStartTime(e.target.value)}
-              className="rounded-lg border border-neutral-200 bg-white py-2 pl-10 pr-3 text-sm outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
-              placeholder="开始日期"
-            />
-          </div>
-          <span className="text-neutral-400">-</span>
-          <input
-            type="date"
-            value={endTime}
-            onChange={(e) => setEndTime(e.target.value)}
-            className="rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
-            placeholder="结束日期"
-          />
-        </div>
-        <button
-          onClick={handleSearch}
-          className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900"
-        >
-          搜索
-        </button>
-      </div>
+      </Space>
 
-      {/* 日志表格 */}
-      <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-neutral-100 bg-neutral-50 text-left text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900">
-                <th className="px-4 py-3 font-medium">用户</th>
-                <th className="px-4 py-3 font-medium">操作</th>
-                <th className="px-4 py-3 font-medium">目标</th>
-                <th className="px-4 py-3 font-medium">详情</th>
-                <th className="px-4 py-3 font-medium">IP</th>
-                <th className="px-4 py-3 font-medium">时间</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <TableSkeleton rows={8} columns={6} />
-              ) : logs.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-0 py-0">
-                    <EmptyState icon={ScrollText} title="暂无日志记录" />
-                  </td>
-                </tr>
-              ) : (
-                logs.map((log) => (
-                  <tr
-                    key={log.id}
-                    className="border-b border-neutral-50 last:border-0 hover:bg-neutral-50/50 dark:border-neutral-900 dark:hover:bg-neutral-900/30"
-                  >
-                    <td className="px-4 py-3">
-                      <span className="font-medium">{log.username || "-"}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="rounded-md bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400">
-                        {log.action}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-neutral-500 max-w-[150px] truncate">
-                      {log.target || "-"}
-                    </td>
-                    <td className="px-4 py-3 max-w-[250px]">
-                      {log.detail ? (
-                        <div>
-                          <button
-                            onClick={() =>
-                              setExpandedId(expandedId === log.id ? null : log.id)
-                            }
-                            className="inline-flex items-center gap-1 text-left text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
-                          >
-                            <span
-                              className={
-                                expandedId === log.id ? "" : "truncate max-w-[200px] inline-block"
-                              }
-                            >
-                              {expandedId === log.id ? log.detail : truncateDetail(log.detail)}
-                            </span>
-                            {log.detail.length > 60 && (
-                              <Info className="h-3.5 w-3.5 flex-shrink-0 text-neutral-400" />
-                            )}
-                          </button>
-                        </div>
-                      ) : (
-                        <span className="text-neutral-400">-</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-neutral-400">{log.ip || "-"}</td>
-                    <td className="px-4 py-3 text-xs text-neutral-400 whitespace-nowrap">
-                      {log.createTime
-                        ? new Date(log.createTime).toLocaleString("zh-CN", {
-                            month: "2-digit",
-                            day: "2-digit",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                            second: "2-digit",
-                          })
-                        : "-"}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <Pagination pageNum={pageNum} pageSize={pageSize} total={total} onChange={handlePageChange} />
-      </div>
+      <Table<LogVO>
+        rowKey="id"
+        columns={columns}
+        dataSource={logs}
+        loading={loading}
+        scroll={{ x: "max-content" }}
+        locale={{ emptyText: "暂无日志记录" }}
+        pagination={{ current: pageNum, pageSize: PAGE_SIZE, total, showSizeChanger: false, showTotal: (t) => `共 ${t} 条`, onChange: (p) => { setPageNum(p); loadLogs(p); } }}
+      />
     </div>
   );
 }

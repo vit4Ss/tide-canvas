@@ -1,28 +1,26 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Table, Input, Tag, Button, Modal, Select, InputNumber, Avatar, Space, Alert } from "antd";
+import type { ColumnsType } from "antd/es/table";
+import { UserOutlined, EditOutlined } from "@ant-design/icons";
+import { Coins } from "lucide-react";
 import { adminApi } from "@/lib/api";
 import { toast } from "@/components/shared/toast";
+import { AdminPageHead } from "@/components/admin/page-head";
 import type { UserVO } from "@/types/user";
 import type { PageData } from "@/types/api";
-import { User, Ban, Save, Coins, Loader2, X } from "lucide-react";
-import {
-  PageHeader,
-  SearchBar,
-  Pagination,
-  StatusBadge,
-  TableSkeleton,
-} from "@/components/shared";
 
-const ROLE_VARIANTS: Record<number, { label: string; variant: "success" | "warning" | "danger" | "info" | "neutral" }> = {
-  0: { label: "普通用户", variant: "neutral" },
-  1: { label: "VIP", variant: "warning" },
-  9: { label: "管理员", variant: "danger" },
+const PAGE_SIZE = 15;
+
+const ROLE_TAG: Record<number, { label: string; color: string }> = {
+  0: { label: "普通用户", color: "default" },
+  1: { label: "VIP", color: "gold" },
+  9: { label: "管理员", color: "red" },
 };
-
-const STATUS_VARIANTS: Record<number, { label: string; variant: "success" | "warning" | "danger" | "info" | "neutral" }> = {
-  0: { label: "禁用", variant: "danger" },
-  1: { label: "正常", variant: "success" },
+const STATUS_TAG: Record<number, { label: string; color: string }> = {
+  0: { label: "禁用", color: "red" },
+  1: { label: "正常", color: "green" },
 };
 
 export default function AdminUsersPage() {
@@ -31,22 +29,24 @@ export default function AdminUsersPage() {
   const [pageNum, setPageNum] = useState(1);
   const [keyword, setKeyword] = useState("");
   const [loading, setLoading] = useState(true);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [editForm, setEditForm] = useState({ role: 0, status: 1, points: 0, apiQuota: 0 });
   const [error, setError] = useState("");
+
+  // 编辑弹窗
+  const [editTarget, setEditTarget] = useState<UserVO | null>(null);
+  const [editForm, setEditForm] = useState({ role: 0, status: 1, apiQuota: 0 });
   const [saving, setSaving] = useState(false);
-  // 调整积分弹窗：自动带入目标用户，免手输 ID
+
+  // 调积分弹窗
   const [adjustTarget, setAdjustTarget] = useState<UserVO | null>(null);
-  const [adjustAmount, setAdjustAmount] = useState("");
+  const [adjustAmount, setAdjustAmount] = useState<number | null>(null);
   const [adjustRemark, setAdjustRemark] = useState("");
   const [adjusting, setAdjusting] = useState(false);
-  const pageSize = 15;
 
   const loadUsers = async (page = pageNum, search = keyword) => {
     setLoading(true);
     setError("");
     try {
-      const res = await adminApi.users.list({ pageNum: page, pageSize, keyword: search || undefined });
+      const res = await adminApi.users.list({ pageNum: page, pageSize: PAGE_SIZE, keyword: search || undefined });
       if (res.success && res.data) {
         const data = res.data as unknown as PageData<UserVO>;
         setUsers(data.records);
@@ -61,42 +61,29 @@ export default function AdminUsersPage() {
 
   useEffect(() => { loadUsers(1); }, []);
 
-  const handleSearch = () => {
-    setPageNum(1);
-    loadUsers(1, keyword);
+  const handleSearch = (v: string) => { setKeyword(v); setPageNum(1); loadUsers(1, v); };
+  const handlePageChange = (p: number) => { setPageNum(p); loadUsers(p); };
+
+  const openEdit = (user: UserVO) => {
+    setEditTarget(user);
+    setEditForm({ role: user.role, status: user.status, apiQuota: user.apiQuota });
   };
 
-  const handlePageChange = (newPage: number) => {
-    setPageNum(newPage);
-    loadUsers(newPage);
-  };
-
-  const startEdit = (user: UserVO) => {
-    setEditingId(user.id);
-    setEditForm({ role: user.role, status: user.status, points: user.points ?? 0, apiQuota: user.apiQuota });
-  };
-
-  const handleSave = async (userId: number) => {
+  const handleSave = async () => {
+    if (!editTarget) return;
     setSaving(true);
     try {
-      const res = await adminApi.users.update(userId, {
-        role: editForm.role,
-        status: editForm.status,
-        apiQuota: editForm.apiQuota,
-      });
+      const res = await adminApi.users.update(editTarget.id, editForm);
       if (res.success) {
-        setEditingId(null);
+        toast.success("已保存");
+        setEditTarget(null);
         loadUsers();
+      } else {
+        toast.error(res.message || "保存失败");
       }
     } finally {
       setSaving(false);
     }
-  };
-
-  const openAdjust = (user: UserVO) => {
-    setAdjustTarget(user);
-    setAdjustAmount("");
-    setAdjustRemark("");
   };
 
   const handleAdjust = async () => {
@@ -108,12 +95,7 @@ export default function AdminUsersPage() {
     }
     setAdjusting(true);
     try {
-      // 走积分调整接口（生成积分流水，可在积分管理中审计），而非直接改 points 字段
-      const res = await adminApi.points.adjust({
-        userId: adjustTarget.id,
-        amount,
-        remark: adjustRemark || undefined,
-      });
+      const res = await adminApi.points.adjust({ userId: adjustTarget.id, amount, remark: adjustRemark || undefined });
       if (res.success) {
         toast.success(`已为 ${adjustTarget.nickname || adjustTarget.username} 调整 ${amount > 0 ? "+" : ""}${amount} 积分`);
         setAdjustTarget(null);
@@ -128,213 +110,104 @@ export default function AdminUsersPage() {
     }
   };
 
+  const columns: ColumnsType<UserVO> = [
+    { title: "ID", dataIndex: "id", key: "id", render: (v) => <span style={{ fontFamily: "monospace", fontSize: 12, color: "#8c8c8c" }}>{String(v).slice(-6)}</span> },
+    {
+      title: "用户", key: "user", render: (_, u) => (
+        <Space>
+          <Avatar src={u.avatar || undefined} icon={<UserOutlined />} size="small" />
+          <div>
+            <div style={{ fontWeight: 500 }}>{u.nickname || u.username}</div>
+            <div style={{ fontSize: 12, color: "#bfbfbf" }}>@{u.username}</div>
+          </div>
+        </Space>
+      ),
+    },
+    { title: "邮箱", dataIndex: "email", key: "email", responsive: ["md"], render: (v) => <span style={{ color: "#8c8c8c" }}>{v}</span> },
+    { title: "角色", dataIndex: "role", key: "role", render: (r: number) => { const t = ROLE_TAG[r] ?? ROLE_TAG[0]; return <Tag color={t.color}>{t.label}</Tag>; } },
+    { title: "状态", dataIndex: "status", key: "status", render: (s: number) => { const t = STATUS_TAG[s] ?? STATUS_TAG[1]; return <Tag color={t.color}>{t.label}</Tag>; } },
+    { title: "积分", dataIndex: "points", key: "points", render: (v) => <span style={{ fontWeight: 500 }}>{v ?? 0}</span> },
+    { title: "签约作者", dataIndex: "isAuthor", key: "isAuthor", responsive: ["lg"], render: (v: number) => (v === 1 ? <Tag color="gold">是</Tag> : <span style={{ color: "#bfbfbf" }}>否</span>) },
+    { title: "注册时间", dataIndex: "createTime", key: "createTime", responsive: ["lg"], render: (v: string) => (v ? new Date(v).toLocaleDateString("zh-CN") : "-") },
+    {
+      title: "操作", key: "action", render: (_, u) => (
+        <Space size={4}>
+          <Button size="small" type="text" icon={<Coins size={14} />} style={{ color: "#d97706" }} onClick={() => { setAdjustTarget(u); setAdjustAmount(null); setAdjustRemark(""); }}>调积分</Button>
+          <Button size="small" type="text" icon={<EditOutlined />} onClick={() => openEdit(u)}>编辑</Button>
+        </Space>
+      ),
+    },
+  ];
+
   return (
-    <div className="space-y-6">
-      <PageHeader title="用户管理" description={`共 ${total} 个用户`} />
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <AdminPageHead title="用户管理" desc={`共 ${total} 个用户`} />
+      {error && <Alert type="error" message={error} showIcon closable onClose={() => setError("")} />}
 
-      {error && (
-        <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600 dark:bg-red-950/30 dark:text-red-400">
-          {error}
-        </div>
-      )}
+      <Input.Search placeholder="搜索用户名、邮箱、昵称..." allowClear enterButton style={{ maxWidth: 360 }} onSearch={handleSearch} />
 
-      {/* 搜索栏 */}
-      <div className="flex gap-3">
-        <SearchBar
-          value={keyword}
-          onChange={setKeyword}
-          onSearch={handleSearch}
-          placeholder="搜索用户名、邮箱..."
-        />
-        <button onClick={handleSearch} className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900">
-          搜索
-        </button>
-      </div>
+      <Table<UserVO>
+        rowKey="id"
+        columns={columns}
+        dataSource={users}
+        loading={loading}
+        scroll={{ x: "max-content" }}
+        locale={{ emptyText: "暂无用户数据" }}
+        pagination={{ current: pageNum, pageSize: PAGE_SIZE, total, showSizeChanger: false, showTotal: (t) => `共 ${t} 条`, onChange: handlePageChange }}
+      />
 
-      {/* 用户表格 */}
-      <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-neutral-100 bg-neutral-50 text-left text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900">
-                <th className="px-4 py-3 font-medium">ID</th>
-                <th className="px-4 py-3 font-medium">用户</th>
-                <th className="px-4 py-3 font-medium">邮箱</th>
-                <th className="px-4 py-3 font-medium">角色</th>
-                <th className="px-4 py-3 font-medium">状态</th>
-                <th className="px-4 py-3 font-medium">积分</th>
-                <th className="px-4 py-3 font-medium">签约作者</th>
-                <th className="px-4 py-3 font-medium">注册时间</th>
-                <th className="px-4 py-3 font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <TableSkeleton rows={5} columns={9} />
-              ) : users.length === 0 ? (
-                <tr><td colSpan={9} className="px-4 py-12 text-center text-neutral-400">暂无用户数据</td></tr>
-              ) : (
-                users.map((user) => {
-                  const isEditing = editingId === user.id;
-                  const role = ROLE_VARIANTS[user.role] ?? ROLE_VARIANTS[0];
-                  const status = STATUS_VARIANTS[user.status] ?? STATUS_VARIANTS[1];
-                  return (
-                    <tr key={user.id} className="border-b border-neutral-50 last:border-0 hover:bg-neutral-50/50 dark:border-neutral-900 dark:hover:bg-neutral-900/30">
-                      <td className="px-4 py-3 font-mono text-xs text-neutral-400">{String(user.id).slice(-6)}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-neutral-100 dark:bg-neutral-800">
-                            {user.avatar ? (
-                              <img src={user.avatar} alt="" className="h-8 w-8 rounded-full object-cover" />
-                            ) : (
-                              <User className="h-4 w-4 text-neutral-400" />
-                            )}
-                          </div>
-                          <div>
-                            <p className="font-medium">{user.nickname || user.username}</p>
-                            <p className="text-xs text-neutral-400">@{user.username}</p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-neutral-500">{user.email}</td>
-                      <td className="px-4 py-3">
-                        {isEditing ? (
-                          <select value={editForm.role} onChange={(e) => setEditForm({ ...editForm, role: Number(e.target.value) })}
-                            className="rounded border border-neutral-200 px-2 py-1 text-xs dark:border-neutral-700 dark:bg-neutral-900">
-                            <option value={0}>普通用户</option>
-                            <option value={1}>VIP</option>
-                            <option value={9}>管理员</option>
-                          </select>
-                        ) : (
-                          <StatusBadge label={role.label} variant={role.variant} />
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        {isEditing ? (
-                          <select value={editForm.status} onChange={(e) => setEditForm({ ...editForm, status: Number(e.target.value) })}
-                            className="rounded border border-neutral-200 px-2 py-1 text-xs dark:border-neutral-700 dark:bg-neutral-900">
-                            <option value={1}>正常</option>
-                            <option value={0}>禁用</option>
-                          </select>
-                        ) : (
-                          <StatusBadge label={status.label} variant={status.variant} />
-                        )}
-                      </td>
-                      <td className="px-4 py-3 font-medium">{user.points ?? 0}</td>
-                      <td className="px-4 py-3">
-                        {user.isAuthor === 1 ? (
-                          <StatusBadge label="是" variant="warning" />
-                        ) : (
-                          <span className="text-xs text-neutral-400">否</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-xs text-neutral-400">
-                        {user.createTime ? new Date(user.createTime).toLocaleDateString("zh-CN") : "-"}
-                      </td>
-                      <td className="px-4 py-3">
-                        {isEditing ? (
-                          <div className="flex gap-1">
-                            <button onClick={() => handleSave(user.id)} disabled={saving}
-                              className="rounded-lg bg-green-500 p-1.5 text-white hover:bg-green-600 disabled:opacity-50">
-                              <Save className="h-3.5 w-3.5" />
-                            </button>
-                            <button onClick={() => setEditingId(null)}
-                              className="rounded-lg bg-neutral-200 p-1.5 text-neutral-600 hover:bg-neutral-300 dark:bg-neutral-700 dark:text-neutral-300">
-                              <Ban className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-1">
-                            <button onClick={() => openAdjust(user)}
-                              className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium text-amber-600 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-950/30">
-                              <Coins className="h-3.5 w-3.5" /> 调积分
-                            </button>
-                            <button onClick={() => startEdit(user)}
-                              className="rounded-lg px-3 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800">
-                              编辑
-                            </button>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <Pagination pageNum={pageNum} pageSize={pageSize} total={total} onChange={handlePageChange} />
-      </div>
-
-      {/* 调整积分弹窗 */}
-      {adjustTarget && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          onClick={() => !adjusting && setAdjustTarget(null)}
-        >
-          <div
-            className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl dark:bg-neutral-900"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between">
-              <h3 className="flex items-center gap-2 text-lg font-semibold">
-                <Coins className="h-5 w-5 text-amber-500" /> 调整积分
-              </h3>
-              <button onClick={() => setAdjustTarget(null)} className="rounded-lg p-1 text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800">
-                <X className="h-5 w-5" />
-              </button>
+      {/* 编辑用户 */}
+      <Modal title="编辑用户" open={!!editTarget} onCancel={() => setEditTarget(null)} onOk={handleSave} confirmLoading={saving} okText="保存" cancelText="取消">
+        {editTarget && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16, paddingTop: 8 }}>
+            <div style={{ color: "#8c8c8c" }}>{editTarget.nickname || editTarget.username} <span style={{ color: "#bfbfbf" }}>@{editTarget.username}</span></div>
+            <div>
+              <div style={{ marginBottom: 6 }}>角色</div>
+              <Select style={{ width: "100%" }} value={editForm.role} onChange={(v) => setEditForm({ ...editForm, role: v })}
+                options={[{ value: 0, label: "普通用户" }, { value: 1, label: "VIP" }, { value: 9, label: "管理员" }]} />
             </div>
-            <p className="mt-3 text-sm text-neutral-500">
-              用户：<span className="font-medium text-neutral-800 dark:text-neutral-200">{adjustTarget.nickname || adjustTarget.username}</span>
-              <span className="text-neutral-400"> @{adjustTarget.username}</span>
-              　当前积分 <span className="font-medium text-amber-600">{adjustTarget.points ?? 0}</span>
-            </p>
-
-            <div className="mt-4 space-y-3">
-              <div>
-                <label className="mb-1 block text-sm font-medium">金额（+/-）</label>
-                <input
-                  type="number"
-                  autoFocus
-                  value={adjustAmount}
-                  onChange={(e) => setAdjustAmount(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") handleAdjust(); }}
-                  placeholder="正数增加，负数扣减"
-                  className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium">备注</label>
-                <input
-                  value={adjustRemark}
-                  onChange={(e) => setAdjustRemark(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") handleAdjust(); }}
-                  placeholder="调整原因（可选）"
-                  className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
-                />
-              </div>
+            <div>
+              <div style={{ marginBottom: 6 }}>状态</div>
+              <Select style={{ width: "100%" }} value={editForm.status} onChange={(v) => setEditForm({ ...editForm, status: v })}
+                options={[{ value: 1, label: "正常" }, { value: 0, label: "禁用" }]} />
             </div>
-
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                onClick={() => setAdjustTarget(null)}
-                className="rounded-lg px-4 py-2 text-sm text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
-              >
-                取消
-              </button>
-              <button
-                onClick={handleAdjust}
-                disabled={adjusting || !adjustAmount}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
-              >
-                {adjusting && <Loader2 className="h-4 w-4 animate-spin" />}
-                提交
-              </button>
+            <div>
+              <div style={{ marginBottom: 6 }}>API 额度</div>
+              <InputNumber style={{ width: "100%" }} min={0} value={editForm.apiQuota} onChange={(v) => setEditForm({ ...editForm, apiQuota: v ?? 0 })} />
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
+
+      {/* 调整积分 */}
+      <Modal
+        title={<Space><Coins size={18} color="#d97706" /> 调整积分</Space>}
+        open={!!adjustTarget}
+        onCancel={() => setAdjustTarget(null)}
+        onOk={handleAdjust}
+        confirmLoading={adjusting}
+        okText="提交"
+        cancelText="取消"
+        okButtonProps={{ disabled: !adjustAmount }}
+      >
+        {adjustTarget && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16, paddingTop: 8 }}>
+            <div style={{ color: "#8c8c8c" }}>
+              用户：<b style={{ color: "#262626" }}>{adjustTarget.nickname || adjustTarget.username}</b>
+              <span style={{ color: "#bfbfbf" }}> @{adjustTarget.username}</span>
+              　当前积分 <b style={{ color: "#d97706" }}>{adjustTarget.points ?? 0}</b>
+            </div>
+            <div>
+              <div style={{ marginBottom: 6 }}>金额（+/-）</div>
+              <InputNumber style={{ width: "100%" }} placeholder="正数增加，负数扣减" autoFocus value={adjustAmount} onChange={setAdjustAmount} onPressEnter={handleAdjust} />
+            </div>
+            <div>
+              <div style={{ marginBottom: 6 }}>备注</div>
+              <Input placeholder="调整原因（可选）" value={adjustRemark} onChange={(e) => setAdjustRemark(e.target.value)} onPressEnter={handleAdjust} />
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
