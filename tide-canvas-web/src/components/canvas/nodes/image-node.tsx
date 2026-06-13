@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-canvas-store";
 import {
   Image as ImageIcon, Upload, Plus, Maximize2, Box, MapPin, Copy,
-  Camera, ArrowUp, ChevronDown, ChevronRight, Zap, Download, X, Minimize2,
+  Camera, ArrowUp, ChevronDown, ChevronRight, Zap, Download, X,
   ArrowLeft, LayoutGrid, Layers,
   Images, Orbit, Sun, Table, Brush, FlipHorizontal2,
   Focus, Grid2x2, Hash, RotateCcw,
@@ -151,8 +151,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   // 一次出图张数（批量）：全部存入本节点 images，组图交互展示
   const [batchCount, setBatchCount] = useState(1);
   const [batchOpen, setBatchOpen] = useState(false);
-  // 组图展开态(收起=主图+堆叠徽标，展开=2×2 网格可换主图)
-  const [groupOpen, setGroupOpen] = useState(false);
+  // 组图：展示主图+堆叠徽标，点徽标「展开」拆成多个独立图片节点
   const groupImages = node.images && node.images.length > 1 ? node.images : null;
   // 已生成图片的真实宽高比（onLoad 时测量），用于让卡片严丝合缝贴合图片
   const [imgAspectState, setImgAspectState] = useState<{ src: string; aspect: number } | null>(null);
@@ -650,16 +649,36 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     }
   }, [node.imageSrc, node.title, downloading, downloadUrl]);
 
-  // 组图单张下载（展开网格内的格子按钮）
-  const handleDownloadOne = useCallback(async (e: React.MouseEvent, url: string, index: number) => {
-    e.preventDefault();
-    e.stopPropagation();
-    try {
-      await downloadUrl(url, `${node.title || "image"}-${index + 1}`);
-    } catch {
-      toast.error("下载失败，请稍后重试");
-    }
-  }, [downloadUrl, node.title]);
+  // 组图展开：把 node.images 拆成多个独立图片节点(右侧网格铺开、各自连回源节点)，与「宫格切分」一致
+  const handleExpandGroup = useCallback(() => {
+    if (!groupImages) return;
+    const store = useCanvasStore.getState();
+    const cols = groupImages.length <= 3 ? groupImages.length : 2;
+    const CELL_W = node.contentW ?? node.width;
+    const CELL_H = node.contentH ?? node.height ?? CELL_W;
+    const gap = 24;
+    const startX = node.x + (node.contentW ?? node.width) + 100;
+    groupImages.forEach((url, i) => {
+      const r = Math.floor(i / cols);
+      const c = i % cols;
+      const nid = generateNodeId();
+      store.addNode({
+        id: nid,
+        type: "image",
+        x: startX + c * (CELL_W + gap),
+        y: node.y + r * (CELL_H + gap),
+        width: CELL_W,
+        height: CELL_H,
+        contentW: CELL_W,
+        contentH: CELL_H,
+        title: `组图 ${i + 1}`,
+        imageSrc: url,
+        status: "success",
+      }, i === 0); // 仅首个记入历史，整批一次撤销
+      store.addConnection({ id: `conn_${node.id}_${nid}`, sourceId: node.id, targetId: nid }, false);
+    });
+    toast.success(`已展开为 ${groupImages.length} 个节点`);
+  }, [groupImages, node.id, node.x, node.y, node.width, node.height, node.contentW, node.contentH]);
 
   // 大图预览：Esc 关闭
   useEffect(() => {
@@ -1144,8 +1163,8 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
           document.body,
         )}
 
-        {/* 组图收起态：右侧堆叠纸张效果（置于主卡之下） */}
-        {groupImages && !groupOpen && (
+        {/* 组图：右侧堆叠纸张效果（置于主卡之下） */}
+        {groupImages && (
           <>
             <div className="absolute rounded-2xl bg-white shadow-sm ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-800"
                  style={{ left: 16, right: -16, top: 8, height: cardH - 16 }} />
@@ -1162,16 +1181,16 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
           }`}
           style={{ width: cardW, height: cardH }}
         >
-          {/* 组图徽标：收起态点击展开 2×2 网格 */}
-          {groupImages && !groupOpen && !generating && (
+          {/* 组图徽标：点击展开为多个独立节点 */}
+          {groupImages && !generating && (
             <button
               onMouseDown={stop}
-              onClick={(e) => { stop(e); setGroupOpen(true); }}
-              title="展开组图"
+              onClick={(e) => { stop(e); handleExpandGroup(); }}
+              title="展开为多个节点"
               className="absolute right-3 top-3 z-[7] flex items-center gap-1 rounded-lg bg-black/60 px-2.5 py-1.5 text-xs font-medium text-white backdrop-blur-sm transition-colors hover:bg-black/75"
             >
               <Maximize2 className="h-3.5 w-3.5" />
-              {groupImages.length}张
+              展开 {groupImages.length} 张
             </button>
           )}
           {/* 生成中遮罩 */}
@@ -1225,46 +1244,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
               </div>
             </div>
           )}
-          {groupImages && groupOpen ? (
-            /* 组图展开态：2×2 网格，每张可下载/设为主图，主图格提供收起 */
-            <div className="grid h-full w-full grid-cols-2 grid-rows-2 gap-1 bg-neutral-100 p-1 dark:bg-neutral-900">
-              {groupImages.slice(0, 4).map((url, i) => (
-                <div key={url} className="group/cell relative overflow-hidden rounded-lg bg-neutral-200 dark:bg-neutral-800">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={url} alt="" draggable={false} className="h-full w-full object-cover" />
-                  <div className="absolute right-1.5 top-1.5 z-10 hidden gap-1 group-hover/cell:flex">
-                    <button
-                      onMouseDown={stop}
-                      onClick={(e) => handleDownloadOne(e, url, i)}
-                      className="flex items-center gap-1 rounded-md bg-black/65 px-2 py-1 text-[11px] font-medium text-white backdrop-blur-sm hover:bg-black/80"
-                    >
-                      <Download className="h-3 w-3" /> 下载
-                    </button>
-                    {url === node.imageSrc ? (
-                      <button
-                        onMouseDown={stop}
-                        onClick={(e) => { stop(e); setGroupOpen(false); }}
-                        className="flex items-center gap-1 rounded-md bg-black/65 px-2 py-1 text-[11px] font-medium text-white backdrop-blur-sm hover:bg-black/80"
-                      >
-                        <Minimize2 className="h-3 w-3" /> 收起
-                      </button>
-                    ) : (
-                      <button
-                        onMouseDown={stop}
-                        onClick={(e) => { stop(e); updateNode(node.id, { imageSrc: url }); }}
-                        className="rounded-md bg-black/65 px-2 py-1 text-[11px] font-medium text-white backdrop-blur-sm hover:bg-black/80"
-                      >
-                        设为主图
-                      </button>
-                    )}
-                  </div>
-                  {url === node.imageSrc && (
-                    <span className="absolute left-1.5 top-1.5 rounded bg-blue-500/90 px-1.5 py-0.5 text-[10px] font-medium text-white">主图</span>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : node.imageSrc ? (
+          {node.imageSrc ? (
             node.is360 ? (
               <InlinePanorama src={node.imageSrc} gridOn={panoGrid} apiRef={panoApiRef} interactive={showAuxUI} />
             ) : (
