@@ -24,5 +24,5 @@ export default function CanvasLayout({ children }: { children: React.ReactNode }
 
   if (!isLoggedIn) return null;
 
-  return <div className="h-screen w-screen overflow-hidden">{children}</div>;
+  return <div className="canvas-app h-screen w-screen overflow-hidden">{children}</div>;
 }

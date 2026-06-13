@@ -132,43 +132,37 @@
   }
 }
 
-/* 光标控制 */
-*,
-*::before,
-*::after {
+/* 光标控制：仅限画布区域（.canvas-app），Electron 风格——禁文本选择、统一光标，
+   避免拖拽节点/连线时误选中文字。画布外（管理后台、用户侧页面）恢复标准 web 行为。 */
+.canvas-app,
+.canvas-app *,
+.canvas-app *::before,
+.canvas-app *::after {
   caret-color: transparent !important;
   cursor: default !important;
   -webkit-user-select: none !important;
   user-select: none !important;
 }
 
-input,
-textarea,
-[contenteditable="true"] {
+.canvas-app input,
+.canvas-app textarea,
+.canvas-app [contenteditable="true"] {
   caret-color: auto !important;
   cursor: text !important;
   -webkit-user-select: text !important;
   user-select: text !important;
 }
 
-p, span, h1, h2, h3, h4, h5, h6, li, td, th, pre, code, blockquote {
+.canvas-app :is(p, span, h1, h2, h3, h4, h5, h6, li, td, th, pre, code, blockquote) {
   -webkit-user-select: text !important;
   user-select: text !important;
 }
 
-a,
-button,
-[role="button"],
-label,
-select,
-summary,
-[type="checkbox"],
-[type="radio"],
-[tabindex]:not([tabindex="-1"]) {
+.canvas-app :is(a, button, [role="button"], label, select, summary, [type="checkbox"], [type="radio"], [tabindex]:not([tabindex="-1"])) {
   cursor: pointer !important;
 }
 
-[aria-disabled="true"] {
+.canvas-app [aria-disabled="true"] {
   cursor: not-allowed !important;
 }
 
