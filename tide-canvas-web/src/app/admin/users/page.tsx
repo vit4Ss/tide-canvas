@@ -112,7 +112,7 @@ export default function AdminUsersPage() {
   };
 
   const columns: ColumnsType<UserVO> = [
-    { title: "ID", dataIndex: "id", key: "id", render: (v) => <span style={{ fontFamily: "monospace", fontSize: 12, color: "#8c8c8c" }}>{String(v).slice(-6)}</span> },
+    { title: "ID", dataIndex: "id", key: "id", render: (v) => <span style={{ fontFamily: "monospace", fontSize: 12, color: "var(--ant-color-text-secondary, #8c8c8c)" }}>{String(v).slice(-6)}</span> },
     {
       title: "用户", key: "user", render: (_, u) => (
         <Space>
@@ -124,7 +124,7 @@ export default function AdminUsersPage() {
         </Space>
       ),
     },
-    { title: "邮箱", dataIndex: "email", key: "email", responsive: ["md"], render: (v) => <span style={{ color: "#8c8c8c" }}>{v}</span> },
+    { title: "邮箱", dataIndex: "email", key: "email", responsive: ["md"], render: (v) => <span style={{ color: "var(--ant-color-text-secondary, #8c8c8c)" }}>{v}</span> },
     { title: "角色", dataIndex: "role", key: "role", render: (r: number) => { const t = ROLE_TAG[r] ?? ROLE_TAG[0]; return <Tag color={t.color}>{t.label}</Tag>; } },
     { title: "状态", dataIndex: "status", key: "status", render: (s: number) => { const t = STATUS_TAG[s] ?? STATUS_TAG[1]; return <Tag color={t.color}>{t.label}</Tag>; } },
     { title: "积分", dataIndex: "points", key: "points", render: (v) => <span style={{ fontWeight: 500 }}>{v ?? 0}</span> },
@@ -161,7 +161,7 @@ export default function AdminUsersPage() {
       <Modal title="编辑用户" open={!!editTarget} onCancel={() => setEditTarget(null)} onOk={handleSave} confirmLoading={saving} okText="保存" cancelText="取消">
         {editTarget && (
           <div style={{ display: "flex", flexDirection: "column", gap: 16, paddingTop: 8 }}>
-            <div style={{ color: "#8c8c8c" }}>{editTarget.nickname || editTarget.username} <span style={{ color: "#bfbfbf" }}>@{editTarget.username}</span></div>
+            <div style={{ color: "var(--ant-color-text-secondary, #8c8c8c)" }}>{editTarget.nickname || editTarget.username} <span style={{ color: "#bfbfbf" }}>@{editTarget.username}</span></div>
             <div>
               <div style={{ marginBottom: 6 }}>角色</div>
               <Select style={{ width: "100%" }} value={editForm.role} onChange={(v) => setEditForm({ ...editForm, role: v })}
@@ -193,7 +193,7 @@ export default function AdminUsersPage() {
       >
         {adjustTarget && (
           <div style={{ display: "flex", flexDirection: "column", gap: 16, paddingTop: 8 }}>
-            <div style={{ color: "#8c8c8c" }}>
+            <div style={{ color: "var(--ant-color-text-secondary, #8c8c8c)" }}>
               用户：<b style={{ color: "#262626" }}>{adjustTarget.nickname || adjustTarget.username}</b>
               <span style={{ color: "#bfbfbf" }}> @{adjustTarget.username}</span>
               　当前积分 <b style={{ color: "#d97706" }}>{adjustTarget.points ?? 0}</b>

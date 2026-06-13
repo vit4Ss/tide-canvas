@@ -62,7 +62,7 @@ export default function AdminPointsPage() {
         </span>
       ),
     },
-    { title: "余额", dataIndex: "balanceAfter", key: "balanceAfter", render: (v) => <span style={{ color: "#8c8c8c" }}>{v}</span> },
+    { title: "余额", dataIndex: "balanceAfter", key: "balanceAfter", render: (v) => <span style={{ color: "var(--ant-color-text-secondary, #8c8c8c)" }}>{v}</span> },
     { title: "备注", dataIndex: "remark", key: "remark", responsive: ["md"], render: (v) => v || "-" },
     { title: "时间", dataIndex: "createTime", key: "createTime", render: (v: string) => formatDate(v) },
   ];

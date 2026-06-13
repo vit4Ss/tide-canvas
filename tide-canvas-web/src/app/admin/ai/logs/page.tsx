@@ -40,7 +40,7 @@ function CodeBlock({ label, text, danger }: { label: string; text?: string; dang
   return (
     <div style={{ marginTop: 12 }}>
       <div style={{ fontSize: 12, color: "#bfbfbf", marginBottom: 4 }}>{label}</div>
-      <pre style={{ maxHeight: 240, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all", borderRadius: 8, padding: 12, fontSize: 12, margin: 0, fontFamily: "monospace", border: `1px solid ${danger ? "#ffccc7" : "#f0f0f0"}`, background: danger ? "#fff2f0" : "#fafafa", color: danger ? "#cf1322" : undefined }}>{text}</pre>
+      <pre style={{ maxHeight: 240, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all", borderRadius: 8, padding: 12, fontSize: 12, margin: 0, fontFamily: "monospace", border: `1px solid ${danger ? "#ffccc7" : "var(--ant-color-border-secondary, #f0f0f0)"}`, background: danger ? "#fff2f0" : "var(--ant-color-fill-quaternary, #fafafa)", color: danger ? "#cf1322" : undefined }}>{text}</pre>
     </div>
   );
 }
@@ -135,11 +135,11 @@ export default function AdminAiLogsPage() {
   };
 
   const columns: ColumnsType<AiGenerationLogVO> = [
-    { title: "时间", dataIndex: "createTime", key: "createTime", render: (v: string) => <span style={{ fontSize: 12, color: "#8c8c8c", whiteSpace: "nowrap" }}>{v ? formatDate(v) : "-"}</span> },
+    { title: "时间", dataIndex: "createTime", key: "createTime", render: (v: string) => <span style={{ fontSize: 12, color: "var(--ant-color-text-secondary, #8c8c8c)", whiteSpace: "nowrap" }}>{v ? formatDate(v) : "-"}</span> },
     { title: "类型", dataIndex: "operationType", key: "operationType", render: (t: string) => <Tag color={OP_TYPE_COLOR[t] || "default"}>{OP_TYPE_LABEL[t] || t || "AI 生成"}</Tag> },
     { title: "用户", key: "user", render: (_, l) => <span style={{ fontSize: 12 }}>{l.userName || "-"}{l.userId != null && <span style={{ color: "#bfbfbf" }}> #{l.userId}</span>}</span> },
     { title: "画布", dataIndex: "projectName", key: "projectName", responsive: ["lg"], ellipsis: true, render: (v) => v || "-" },
-    { title: "任务ID", dataIndex: "taskId", key: "taskId", responsive: ["md"], render: (v) => <span style={{ fontFamily: "monospace", fontSize: 12, color: "#8c8c8c" }}>{v ?? "-"}</span> },
+    { title: "任务ID", dataIndex: "taskId", key: "taskId", responsive: ["md"], render: (v) => <span style={{ fontFamily: "monospace", fontSize: 12, color: "var(--ant-color-text-secondary, #8c8c8c)" }}>{v ?? "-"}</span> },
     {
       title: "内容", key: "operation", render: (_, l) => { const isAi = l.operationType === "ai_generate" || !l.operationType; return isAi ? <span style={{ fontSize: 12 }}>{OP_LABEL[l.operation] || l.operation || "-"}{l.model && <span style={{ fontFamily: "monospace", color: "#bfbfbf" }}> {l.model}</span>}</span> : (l.operation || "-"); },
     },
@@ -224,7 +224,7 @@ export default function AdminAiLogsPage() {
       <Modal title="退还积分" open={!!refundTarget} onCancel={() => setRefundTarget(null)} onOk={handleRefund} confirmLoading={refunding} okText="确认退还" cancelText="取消" okButtonProps={{ style: { background: "#d97706", borderColor: "#d97706" } }}>
         {refundTarget && (
           <div style={{ paddingTop: 8 }}>
-            <p style={{ color: "#8c8c8c" }}>将按任务 <b style={{ fontFamily: "monospace" }}>#{refundTarget.taskId}</b> 的实际扣分<b>全额退还</b>给用户{refundTarget.userName ? ` ${refundTarget.userName}` : ""}。重复退款会被自动拦截。</p>
+            <p style={{ color: "var(--ant-color-text-secondary, #8c8c8c)" }}>将按任务 <b style={{ fontFamily: "monospace" }}>#{refundTarget.taskId}</b> 的实际扣分<b>全额退还</b>给用户{refundTarget.userName ? ` ${refundTarget.userName}` : ""}。重复退款会被自动拦截。</p>
             <Input.TextArea rows={3} placeholder="退款原因（可选，将记入积分流水）" value={refundReason} onChange={(e) => setRefundReason(e.target.value)} style={{ marginTop: 12 }} />
           </div>
         )}

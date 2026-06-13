@@ -162,7 +162,7 @@ export default function AdminRedeemPage() {
       >
         <Button size="small" icon={<CopyOutlined />} style={{ marginBottom: 8 }} onClick={() => copyText((generatedCodes ?? []).join("\n"))}>复制全部</Button>
         <Typography.Paragraph>
-          <pre style={{ maxHeight: 280, overflow: "auto", background: "#fafafa", border: "1px solid #f0f0f0", borderRadius: 8, padding: 12, fontFamily: "monospace", fontSize: 12, margin: 0 }}>
+          <pre style={{ maxHeight: 280, overflow: "auto", background: "var(--ant-color-fill-quaternary, #fafafa)", border: "1px solid var(--ant-color-border-secondary, #f0f0f0)", borderRadius: 8, padding: 12, fontFamily: "monospace", fontSize: 12, margin: 0 }}>
             {(generatedCodes ?? []).join("\n")}
           </pre>
         </Typography.Paragraph>

@@ -93,7 +93,7 @@ export default function AdminLogsPage() {
     { title: "目标", dataIndex: "target", key: "target", ellipsis: true, render: (v) => v || "-" },
     {
       title: "详情", dataIndex: "detail", key: "detail", responsive: ["md"], render: (v: string) =>
-        v ? <Tooltip title={v}><span style={{ display: "inline-block", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#8c8c8c" }}>{v}</span></Tooltip> : <span style={{ color: "#bfbfbf" }}>-</span>,
+        v ? <Tooltip title={v}><span style={{ display: "inline-block", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--ant-color-text-secondary, #8c8c8c)" }}>{v}</span></Tooltip> : <span style={{ color: "#bfbfbf" }}>-</span>,
     },
     { title: "IP", dataIndex: "ip", key: "ip", responsive: ["lg"], render: (v) => <span style={{ fontFamily: "monospace", fontSize: 12, color: "#bfbfbf" }}>{v || "-"}</span> },
     { title: "时间", dataIndex: "createTime", key: "createTime", render: (v: string) => v ? formatDate(v) : "-" },

@@ -164,7 +164,7 @@ export default function AdminEmailTemplatesPage() {
               return (
                 <button key={t.id} onClick={() => handleSwitch(t)}
                   style={{ textAlign: "left", padding: "10px 12px", borderRadius: 8, border: "1px solid", cursor: "pointer",
-                    borderColor: active ? "#1677ff" : "#f0f0f0", background: active ? "#e6f0ff" : "#fff", display: "flex", gap: 8, alignItems: "center" }}>
+                    borderColor: active ? "#1677ff" : "var(--ant-color-border-secondary, #f0f0f0)", background: active ? "#e6f0ff" : "#fff", display: "flex", gap: 8, alignItems: "center" }}>
                   <MailOutlined style={{ color: active ? "#1677ff" : "#bfbfbf" }} />
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span style={{ display: "block", fontWeight: 500, color: active ? "#1677ff" : undefined, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.templateName}</span>
@@ -216,10 +216,10 @@ export default function AdminEmailTemplatesPage() {
                     </div>
                   )}
                   {missingVars.length > 0 && <Alert type="warning" showIcon message={`以下变量未提供测试值（渲染时保留原样）：${missingVars.join("、")}`} />}
-                  <div><div style={{ marginBottom: 6 }}>主题预览</div><div style={{ background: "#fafafa", padding: "8px 12px", borderRadius: 8, fontWeight: 500 }}>{previewSubject || "（空）"}</div></div>
+                  <div><div style={{ marginBottom: 6 }}>主题预览</div><div style={{ background: "var(--ant-color-fill-quaternary, #fafafa)", padding: "8px 12px", borderRadius: 8, fontWeight: 500 }}>{previewSubject || "（空）"}</div></div>
                   <div>
                     <div style={{ marginBottom: 6 }}>正文预览</div>
-                    <iframe title="邮件预览" sandbox="" srcDoc={previewHtml} style={{ width: "100%", height: 360, border: "1px solid #f0f0f0", borderRadius: 8, background: "#fff" }} />
+                    <iframe title="邮件预览" sandbox="" srcDoc={previewHtml} style={{ width: "100%", height: 360, border: "1px solid var(--ant-color-border-secondary, #f0f0f0)", borderRadius: 8, background: "#fff" }} />
                   </div>
                   <div>
                     <div style={{ marginBottom: 6 }}>发送测试邮件（使用已保存内容与上方测试值）</div>

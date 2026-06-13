@@ -77,10 +77,10 @@ export default function AdminLoginLogsPage() {
           : <Tag color="red" icon={<CloseCircleOutlined />}>失败</Tag>,
     },
     { title: "失败原因", dataIndex: "failReason", key: "failReason", render: (v) => v || <span style={{ color: "#bfbfbf" }}>-</span> },
-    { title: "IP", dataIndex: "ip", key: "ip", render: (v) => <span style={{ fontFamily: "monospace", fontSize: 12, color: "#8c8c8c" }}>{v || "-"}</span> },
+    { title: "IP", dataIndex: "ip", key: "ip", render: (v) => <span style={{ fontFamily: "monospace", fontSize: 12, color: "var(--ant-color-text-secondary, #8c8c8c)" }}>{v || "-"}</span> },
     {
       title: "UA", dataIndex: "userAgent", key: "userAgent", responsive: ["lg"], render: (v: string) =>
-        v ? <Tooltip title={v}><span style={{ display: "inline-block", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#8c8c8c" }}>{v}</span></Tooltip> : <span style={{ color: "#bfbfbf" }}>-</span>,
+        v ? <Tooltip title={v}><span style={{ display: "inline-block", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--ant-color-text-secondary, #8c8c8c)" }}>{v}</span></Tooltip> : <span style={{ color: "#bfbfbf" }}>-</span>,
     },
     { title: "时间", dataIndex: "createTime", key: "createTime", render: (v: string) => v ? formatDate(v) : "-" },
     {

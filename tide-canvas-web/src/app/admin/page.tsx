@@ -60,14 +60,14 @@ export default function AdminDashboardPage() {
   const loginTrendData = (charts?.loginTrend ?? []).map((d) => ({ date: d.date, 登录: Number(d.count) }));
 
   const cards: StatCard[] = [
-    { title: "用户总数", value: overview?.totalUsers ?? 0, today: overview?.todayNewUsers, icon: <Users size={18} />, color: "#2563eb" },
-    { title: "今日新增", value: overview?.todayNewUsers ?? 0, icon: <UserPlus size={18} />, color: "#16a34a" },
-    { title: "活跃用户", value: overview?.activeUsers ?? 0, sub: `周活 ${overview?.activeWeek ?? 0} · 月活 ${overview?.activeMonth ?? 0}`, icon: <Activity size={18} />, color: "#9333ea" },
-    { title: "今日登录", value: overview?.todayLogins ?? 0, icon: <LogIn size={18} />, color: "#0d9488" },
-    { title: "今日访问", value: overview?.todayVisits ?? 0, sub: `独立访客 ${overview?.todayVisitors ?? 0}`, icon: <Eye size={18} />, color: "#4f46e5" },
-    { title: "API 调用", value: overview?.totalApiCalls ?? 0, today: overview?.todayApiCalls, icon: <Zap size={18} />, color: "#d97706" },
-    { title: "项目总数", value: overview?.totalProjects ?? 0, today: overview?.todayNewProjects, icon: <FolderOpen size={18} />, color: "#e11d48" },
-    { title: "存储使用", value: overview?.totalStorageBytes ? `${(overview.totalStorageBytes / 1073741824).toFixed(1)} GB` : "0 GB", icon: <HardDrive size={18} />, color: "#0891b2" },
+    { title: "用户总数", value: overview?.totalUsers ?? 0, today: overview?.todayNewUsers, icon: <Users size={15} />, color: "#2563eb" },
+    { title: "今日新增", value: overview?.todayNewUsers ?? 0, icon: <UserPlus size={15} />, color: "#16a34a" },
+    { title: "活跃用户", value: overview?.activeUsers ?? 0, sub: `周活 ${overview?.activeWeek ?? 0} · 月活 ${overview?.activeMonth ?? 0}`, icon: <Activity size={15} />, color: "#9333ea" },
+    { title: "今日登录", value: overview?.todayLogins ?? 0, icon: <LogIn size={15} />, color: "#0d9488" },
+    { title: "今日访问", value: overview?.todayVisits ?? 0, sub: `独立访客 ${overview?.todayVisitors ?? 0}`, icon: <Eye size={15} />, color: "#4f46e5" },
+    { title: "API 调用", value: overview?.totalApiCalls ?? 0, today: overview?.todayApiCalls, icon: <Zap size={15} />, color: "#d97706" },
+    { title: "项目总数", value: overview?.totalProjects ?? 0, today: overview?.todayNewProjects, icon: <FolderOpen size={15} />, color: "#e11d48" },
+    { title: "存储使用", value: overview?.totalStorageBytes ? `${(overview.totalStorageBytes / 1073741824).toFixed(1)} GB` : "0 GB", icon: <HardDrive size={15} />, color: "#0891b2" },
   ];
 
   const logColumns: ColumnsType<LogVO> = [
@@ -87,24 +87,24 @@ export default function AdminDashboardPage() {
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div>
         <h2 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>数据面板</h2>
-        <p style={{ marginTop: 4, color: "#8c8c8c", fontSize: 14 }}>平台整体运营数据概览</p>
+        <p style={{ marginTop: 4, color: "var(--ant-color-text-secondary, #8c8c8c)", fontSize: 14 }}>平台整体运营数据概览</p>
       </div>
 
       {error && <Alert type="error" message={error} showIcon />}
 
       {/* 概览卡片 */}
-      <Row gutter={[16, 16]}>
+      <Row gutter={[12, 12]}>
         {cards.map((card) => (
-          <Col key={card.title} xs={24} sm={12} lg={6}>
-            <Card>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <Col key={card.title} xs={12} sm={8} md={6} xl={3}>
+            <Card styles={{ body: { padding: 14 } }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                 <Statistic title={card.title} value={card.value} />
-                <span style={{ display: "inline-flex", height: 44, width: 44, alignItems: "center", justifyContent: "center", borderRadius: 12, background: `${card.color}14`, color: card.color }}>
+                <span style={{ display: "inline-flex", height: 32, width: 32, alignItems: "center", justifyContent: "center", borderRadius: 8, background: `${card.color}14`, color: card.color, flexShrink: 0 }}>
                   {card.icon}
                 </span>
               </div>
               {card.sub ? (
-                <div style={{ marginTop: 8, fontSize: 13, color: "#8c8c8c", fontWeight: 500 }}>{card.sub}</div>
+                <div style={{ marginTop: 8, fontSize: 13, color: "var(--ant-color-text-secondary, #8c8c8c)", fontWeight: 500 }}>{card.sub}</div>
               ) : card.today !== undefined ? (
                 <div style={{ marginTop: 8, fontSize: 13, color: "#16a34a", fontWeight: 500 }}>今日 +{card.today}</div>
               ) : null}

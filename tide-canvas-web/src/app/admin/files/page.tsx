@@ -82,7 +82,7 @@ export default function AdminFilesPage() {
       ),
     },
     { title: "类型", dataIndex: "fileType", key: "fileType", render: (t: string) => { const tag = TYPE_TAG[t] ?? TYPE_TAG.other; return <Tag color={tag.color}>{tag.label}</Tag>; } },
-    { title: "大小", dataIndex: "fileSize", key: "fileSize", render: (v: number) => <span style={{ color: "#8c8c8c" }}>{formatFileSize(v)}</span> },
+    { title: "大小", dataIndex: "fileSize", key: "fileSize", render: (v: number) => <span style={{ color: "var(--ant-color-text-secondary, #8c8c8c)" }}>{formatFileSize(v)}</span> },
     { title: "存储", dataIndex: "storageType", key: "storageType", responsive: ["md"], render: (v) => <Tag>{v ?? "local"}</Tag> },
     { title: "上传时间", dataIndex: "createTime", key: "createTime", responsive: ["lg"], render: (v: string) => v ? formatDate(v) : "-" },
     {

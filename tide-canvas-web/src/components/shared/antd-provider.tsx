@@ -25,6 +25,7 @@ export function AntdProvider({ children }: { children: ReactNode }) {
         <ConfigProvider
           locale={zhCN}
           theme={{
+            cssVar: { key: "tide" },
             algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
             token: {
               colorPrimary: "#1677ff",

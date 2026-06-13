@@ -81,11 +81,11 @@ export default function AdminAccessLogsPage() {
         <span style={{ fontFamily: "monospace", fontSize: 12 }}>{v}</span>,
     },
     { title: "状态", dataIndex: "status", key: "status", width: 80, render: (v: number) => <Tag color={statusColor(v)}>{v}</Tag> },
-    { title: "耗时", dataIndex: "durationMs", key: "durationMs", width: 90, render: (v: number) => <span style={{ color: v > 1000 ? "#ef4444" : "#8c8c8c" }}>{v}ms</span> },
+    { title: "耗时", dataIndex: "durationMs", key: "durationMs", width: 90, render: (v: number) => <span style={{ color: v > 1000 ? "#ef4444" : "var(--ant-color-text-secondary, #8c8c8c)" }}>{v}ms</span> },
     { title: "IP", dataIndex: "ip", key: "ip", responsive: ["lg"], render: (v) => <span style={{ fontFamily: "monospace", fontSize: 12, color: "#bfbfbf" }}>{v || "-"}</span> },
     {
       title: "UA", dataIndex: "userAgent", key: "userAgent", responsive: ["xl"], render: (v: string) =>
-        v ? <Tooltip title={v}><span style={{ display: "inline-block", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#8c8c8c" }}>{v}</span></Tooltip> : <span style={{ color: "#bfbfbf" }}>-</span>,
+        v ? <Tooltip title={v}><span style={{ display: "inline-block", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--ant-color-text-secondary, #8c8c8c)" }}>{v}</span></Tooltip> : <span style={{ color: "#bfbfbf" }}>-</span>,
     },
     { title: "时间", dataIndex: "createTime", key: "createTime", render: (v: string) => v ? formatDate(v) : "-" },
     {

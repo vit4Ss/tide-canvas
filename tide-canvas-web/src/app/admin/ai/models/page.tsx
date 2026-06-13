@@ -100,17 +100,17 @@ function PricingMatrix({ corner, rows, cols, pricing, onSet }: {
       {rows.length === 0 || cols.length === 0 ? (
         <div style={{ fontSize: 12, color: "#bfbfbf" }}>请先选择上方的两个维度</div>
       ) : (
-        <div style={{ overflowX: "auto", border: "1px solid #f0f0f0", borderRadius: 8, display: "inline-block" }}>
+        <div style={{ overflowX: "auto", border: "1px solid var(--ant-color-border-secondary, #f0f0f0)", borderRadius: 8, display: "inline-block" }}>
           <table style={{ fontSize: 12, borderCollapse: "collapse" }}>
             <thead>
-              <tr style={{ background: "#fafafa" }}>
+              <tr style={{ background: "var(--ant-color-fill-quaternary, #fafafa)" }}>
                 <th style={{ padding: "8px 12px", textAlign: "left", color: "#bfbfbf", fontWeight: 500 }}>{corner}</th>
                 {cols.map((c) => <th key={c.key} style={{ padding: "8px 12px", textAlign: "center", fontWeight: 500 }}>{c.label}</th>)}
               </tr>
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.key} style={{ borderTop: "1px solid #f0f0f0" }}>
+                <tr key={r.key} style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)" }}>
                   <td style={{ padding: "6px 12px", fontWeight: 500, whiteSpace: "nowrap" }}>{r.label}</td>
                   {cols.map((c) => (
                     <td key={c.key} style={{ padding: 6 }}>
@@ -310,7 +310,7 @@ export default function AdminAiModelsPage() {
 
           {/* 按类型的维度配置 */}
           {form.type !== "text" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 16, borderTop: "1px solid #f0f0f0", paddingTop: 16 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 16, borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 16 }}>
               {form.type === "image" && (
                 <>
                   <TagGroup label="支持的生成方式" hint="不勾选 = 不限制（画布显示全部模式）" options={HANDLER_CHOICES.image} selected={form.supportedHandlers} onToggle={(v) => toggleArr("supportedHandlers", v)} />

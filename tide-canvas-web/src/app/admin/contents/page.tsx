@@ -65,7 +65,7 @@ export default function AdminContentsPage() {
           : <div style={{ width: 64, height: 40, display: "flex", alignItems: "center", justifyContent: "center", background: "#f5f5f5", borderRadius: 4 }}><FileImageOutlined style={{ color: "#bfbfbf" }} /></div>,
     },
     { title: "作品名称", dataIndex: "name", key: "name", ellipsis: true, render: (v) => <span style={{ fontWeight: 500 }}>{v}</span> },
-    { title: "创建者", dataIndex: "ownerName", key: "ownerName", responsive: ["md"], render: (v) => <span style={{ color: "#8c8c8c" }}>{v}</span> },
+    { title: "创建者", dataIndex: "ownerName", key: "ownerName", responsive: ["md"], render: (v) => <span style={{ color: "var(--ant-color-text-secondary, #8c8c8c)" }}>{v}</span> },
     { title: "状态", dataIndex: "status", key: "status", render: (s: number) => { const t = STATUS_TAG[s] ?? STATUS_TAG[0]; return <Tag color={t.color}>{t.label}</Tag>; } },
     { title: "创建时间", dataIndex: "createTime", key: "createTime", responsive: ["lg"], render: (v: string) => v ? formatDate(v) : "-" },
     {

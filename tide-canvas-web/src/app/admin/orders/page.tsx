@@ -72,7 +72,7 @@ export default function AdminOrdersPage() {
 
   const columns: ColumnsType<RechargeOrderVO> = [
     { title: "订单号", dataIndex: "orderNo", key: "orderNo", render: (v: string) => <span style={{ fontFamily: "monospace", fontSize: 12 }}>{v}</span> },
-    { title: "用户ID", dataIndex: "userId", key: "userId", responsive: ["sm"], render: (v) => <span style={{ fontFamily: "monospace", fontSize: 12, color: "#8c8c8c" }}>{v ?? "-"}</span> },
+    { title: "用户ID", dataIndex: "userId", key: "userId", responsive: ["sm"], render: (v) => <span style={{ fontFamily: "monospace", fontSize: 12, color: "var(--ant-color-text-secondary, #8c8c8c)" }}>{v ?? "-"}</span> },
     { title: "金额", dataIndex: "amount", key: "amount", render: (v: number) => `${v} 元` },
     { title: "积分", dataIndex: "pointsAmount", key: "pointsAmount", render: (v: number) => <span style={{ color: "#1677ff" }}>{v}</span> },
     { title: "支付方式", dataIndex: "paymentMethod", key: "paymentMethod", responsive: ["md"], render: payMethodLabel },
