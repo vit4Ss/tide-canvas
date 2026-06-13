@@ -1,25 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Table, Modal, Input, InputNumber, Select, Button, Tag, Space, AutoComplete, Alert, Popconfirm } from "antd";
+import type { ColumnsType } from "antd/es/table";
+import { PlusOutlined, EditOutlined, DeleteOutlined, SaveOutlined } from "@ant-design/icons";
 import { adminApi } from "@/lib/api";
+import { toast } from "@/components/shared/toast";
+import { AdminPageHead } from "@/components/admin/page-head";
 import type { AiProviderVO } from "@/types/admin";
-import {
-  Plus,
-  Trash2,
-  Edit,
-  Save,
-  Cpu,
-  Search,
-  Coins,
-} from "lucide-react";
 import { QUALITY_OPTIONS, CLARITY_OPTIONS, RATIO_OPTIONS } from "@/components/canvas/nodes/quality-ratio-picker";
 import { VIDEO_RATIOS, RESOLUTIONS, DURATION_OPTIONS } from "@/components/canvas/nodes/video-param-picker";
 
-// 视频模型可勾选的时长档位池（秒，4~15）；模型勾选后驱动画布视频节点的「视频时长」选项与计费
+const { CheckableTag } = Tag;
 const DURATION_CHOICES = Array.from({ length: 12 }, (_, i) => i + 4);
 
-// 模型可勾选的「支持生成方式」(handler)；不勾 = 不限制(画布显示全部模式)。
-// reference_to_video 同时承载画布的「全能参考」与「图片参考」两个 Tab。
 const HANDLER_CHOICES: Record<string, { value: string; label: string }[]> = {
   video: [
     { value: "text_to_video", label: "文生视频" },
@@ -41,12 +35,9 @@ interface AdminAiModelVO {
   type: string;
   providerId?: number;
   providerName?: string;
-  /** 消耗积分（支持小数，结算按总价向上取整） */
   pointCost: number;
-  /** 上游成本价（USD，仅管理端参考） */
   costPerCall?: number;
   config?: string;
-  /** 支持的生成方式(handler 列表)；空/缺省 = 不限制 */
   supportedHandlers?: string[] | null;
   status: number;
   createTime?: string;
@@ -58,162 +49,73 @@ const MODEL_TYPES = [
   { value: "text", label: "文本生成" },
   { value: "audio", label: "语音合成" },
 ];
-
-const TYPE_BADGE: Record<string, string> = {
-  image: "bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400",
-  video: "bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400",
-  text: "bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400",
-  audio: "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400",
-};
+const TYPE_COLOR: Record<string, string> = { image: "purple", video: "blue", text: "gold", audio: "green" };
 
 interface ModelForm {
-  name: string;
-  icon: string;
-  modelId: string;
-  type: string;
-  // 供应商 id 为雪花长整型、后端以字符串返回，前端全程按字符串处理，避免 Number() 精度丢失
-  providerId: string;
-  pointCost: number;
-  // 上游成本价（USD）：Runware 等供应商响应里的 cost 可直接抄录于此，仅作毛利参考，不参与计费
-  costPerCall: number;
-  // 模型选择列表展示用：描述（名称下方副标题）+ 预计耗时（秒，右侧徽标）。存入 config，无需后端改动
-  description: string;
-  estSeconds: number;
-  // 图片维度
-  qualities: string[];
-  clarities: string[];
-  // 出图张数档位(1~4)：Midjourney 等一组固定 4 张的模型只勾 4；空 = 画布用默认档位(1/2/4)
-  batchSizes: number[];
-  // 上游返回单张 2×2 四宫格(如 Midjourney 原生输出)：开启后前端自动切成 4 张独立图组图展示
-  gridOutput: boolean;
-  // 比例：图片/视频共用此字段，渲染时按 type 用不同选项源（RATIO_OPTIONS / VIDEO_RATIOS）
-  ratios: string[];
-  // 视频维度
-  resolutions: string[];
-  durations: number[];
-  audio: boolean;
-  // Runware 视频参数结构：v2(Seedance 2.0 等) 需把 frameImages/referenceImages 嵌进 inputs 对象
-  videoInputs: boolean;
-  // 支持的生成方式(handler)；空数组 = 不限制(画布显示全部模式)
-  supportedHandlers: string[];
-  // 语音模型音色列表（每个供应商每个模型各不相同）：id 为上游音色标识，name 为画布下拉显示名
+  name: string; icon: string; modelId: string; type: string; providerId: string;
+  pointCost: number; costPerCall: number; description: string; estSeconds: number;
+  qualities: string[]; clarities: string[]; batchSizes: number[]; gridOutput: boolean;
+  ratios: string[]; resolutions: string[]; durations: number[]; audio: boolean;
+  videoInputs: boolean; supportedHandlers: string[];
   voices: { id: string; name: string }[];
-  // 差异化定价矩阵：图片 = pricing[quality][clarity]；视频 = pricing[resolution][duration]
   pricing: Record<string, Record<string, number>>;
 }
 
 const emptyForm: ModelForm = {
-  name: "",
-  icon: "",
-  modelId: "",
-  type: "image",
-  providerId: "",
-  pointCost: 0,
-  costPerCall: 0,
-  description: "",
-  estSeconds: 0,
-  qualities: QUALITY_OPTIONS.map((q) => q.value),
-  clarities: [...CLARITY_OPTIONS],
-  batchSizes: [1, 2, 4],
-  gridOutput: false,
-  ratios: RATIO_OPTIONS.map((r) => r.value),
-  resolutions: [...RESOLUTIONS],
-  durations: [...DURATION_OPTIONS],
-  audio: true,
-  videoInputs: false,
-  supportedHandlers: [],
-  voices: [],
-  pricing: {},
+  name: "", icon: "", modelId: "", type: "image", providerId: "", pointCost: 0, costPerCall: 0,
+  description: "", estSeconds: 0,
+  qualities: QUALITY_OPTIONS.map((q) => q.value), clarities: [...CLARITY_OPTIONS], batchSizes: [1, 2, 4], gridOutput: false,
+  ratios: RATIO_OPTIONS.map((r) => r.value), resolutions: [...RESOLUTIONS], durations: [...DURATION_OPTIONS],
+  audio: true, videoInputs: false, supportedHandlers: [], voices: [], pricing: {},
 };
 
-function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-lg border px-2.5 py-1 text-xs transition-colors ${
-        active
-          ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
-          : "border-neutral-200 text-neutral-600 hover:border-neutral-400 dark:border-neutral-700 dark:text-neutral-400"
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
-/** 一组多选 Chip（支持画质 / 清晰度 / 比例 / …） */
-function ChipGroup({
-  label,
-  options,
-  selected,
-  onToggle,
-}: {
-  label: string;
-  options: { value: string; label: string }[];
-  selected: string[];
-  onToggle: (value: string) => void;
+/** 多选标签组（画质/清晰度/比例/生成方式/张数/时长 等） */
+function TagGroup({ label, hint, options, selected, onToggle }: {
+  label: string; hint?: string; options: { value: string; label: string }[]; selected: string[]; onToggle: (v: string) => void;
 }) {
   return (
     <div>
-      <label className="block text-sm font-medium">{label}</label>
-      <div className="mt-2 flex flex-wrap gap-2">
+      <div style={{ fontWeight: 500, marginBottom: 8 }}>{label}</div>
+      <Space wrap size={[6, 6]}>
         {options.map((o) => (
-          <Chip key={o.value} active={selected.includes(o.value)} onClick={() => onToggle(o.value)}>
+          <CheckableTag key={o.value} checked={selected.includes(o.value)} onChange={() => onToggle(o.value)} style={{ border: "1px solid #d9d9d9", padding: "2px 10px" }}>
             {o.label}
-          </Chip>
+          </CheckableTag>
         ))}
-      </div>
+      </Space>
+      {hint && <div style={{ fontSize: 12, color: "#bfbfbf", marginTop: 4 }}>{hint}</div>}
     </div>
   );
 }
 
-/** 差异化定价矩阵（行维度 × 列维度）；行列 key 即下发 input 的原值，须与计费端一致 */
-function PricingMatrix({
-  corner,
-  rows,
-  cols,
-  pricing,
-  onSet,
-}: {
-  corner: string;
-  rows: { key: string; label: string }[];
-  cols: { key: string; label: string }[];
-  pricing: Record<string, Record<string, number>>;
-  onSet: (row: string, col: string, val: string) => void;
+/** 差异化定价矩阵（行维度 × 列维度） */
+function PricingMatrix({ corner, rows, cols, pricing, onSet }: {
+  corner: string; rows: { key: string; label: string }[]; cols: { key: string; label: string }[];
+  pricing: Record<string, Record<string, number>>; onSet: (row: string, col: string, val: number | null) => void;
 }) {
   return (
     <div>
-      <label className="block text-sm font-medium">积分定价（{corner.replace("＼", " × ")}）</label>
-      <p className="mt-0.5 text-xs text-neutral-400">不同档位可设不同积分；留空或 0 的格回退到上方「消耗积分」。</p>
+      <div style={{ fontWeight: 500 }}>积分定价（{corner.replace("＼", " × ")}）</div>
+      <div style={{ fontSize: 12, color: "#bfbfbf", margin: "2px 0 8px" }}>不同档位可设不同积分；留空或 0 的格回退到上方「消耗积分」。</div>
       {rows.length === 0 || cols.length === 0 ? (
-        <p className="mt-2 text-xs text-neutral-400">请先选择上方的两个维度</p>
+        <div style={{ fontSize: 12, color: "#bfbfbf" }}>请先选择上方的两个维度</div>
       ) : (
-        <div className="mt-2 inline-block overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-700">
-          <table className="text-xs">
+        <div style={{ overflowX: "auto", border: "1px solid #f0f0f0", borderRadius: 8, display: "inline-block" }}>
+          <table style={{ fontSize: 12, borderCollapse: "collapse" }}>
             <thead>
-              <tr className="bg-neutral-50 dark:bg-neutral-900">
-                <th className="px-3 py-2 text-left font-medium text-neutral-400">{corner}</th>
-                {cols.map((c) => (
-                  <th key={c.key} className="px-3 py-2 text-center font-medium">{c.label}</th>
-                ))}
+              <tr style={{ background: "#fafafa" }}>
+                <th style={{ padding: "8px 12px", textAlign: "left", color: "#bfbfbf", fontWeight: 500 }}>{corner}</th>
+                {cols.map((c) => <th key={c.key} style={{ padding: "8px 12px", textAlign: "center", fontWeight: 500 }}>{c.label}</th>)}
               </tr>
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.key} className="border-t border-neutral-100 dark:border-neutral-800">
-                  <td className="whitespace-nowrap px-3 py-1.5 font-medium">{r.label}</td>
+                <tr key={r.key} style={{ borderTop: "1px solid #f0f0f0" }}>
+                  <td style={{ padding: "6px 12px", fontWeight: 500, whiteSpace: "nowrap" }}>{r.label}</td>
                   {cols.map((c) => (
-                    <td key={c.key} className="px-1.5 py-1.5">
-                      <input
-                        type="number"
-                        min={0}
-                        step={0.1}
-                        value={pricing[r.key]?.[c.key] ?? ""}
-                        onChange={(e) => onSet(r.key, c.key, e.target.value)}
-                        placeholder="—"
-                        className="w-16 rounded-md border border-neutral-200 px-2 py-1 text-center outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
-                      />
+                    <td key={c.key} style={{ padding: 6 }}>
+                      <InputNumber size="small" min={0} step={0.1} controls={false} style={{ width: 64 }} placeholder="—"
+                        value={pricing[r.key]?.[c.key] ?? null} onChange={(v) => onSet(r.key, c.key, v)} />
                     </td>
                   ))}
                 </tr>
@@ -230,96 +132,73 @@ export default function AdminAiModelsPage() {
   const [models, setModels] = useState<AdminAiModelVO[]>([]);
   const [providers, setProviders] = useState<AiProviderVO[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<ModelForm>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState("");
-  // 从供应商接口拉取到的模型 ID 列表（供「模型ID」输入框自动补全）
   const [remoteModels, setRemoteModels] = useState<string[]>([]);
   const [fetchingModels, setFetchingModels] = useState(false);
   const [fetchModelsError, setFetchModelsError] = useState("");
-  // Runware 模型搜索关键词（modelSearch 协议按关键词检索 AIR 标识）
   const [remoteSearch, setRemoteSearch] = useState("");
 
-  // setState 均在 await 之后；loading 初值即 true，不在同步路径置位
   const loadModels = useCallback(async () => {
     try {
       const res = await adminApi.ai.models.list();
-      if (res.success) {
-        setModels(res.data as unknown as AdminAiModelVO[]);
-      }
+      if (res.success) setModels(res.data as unknown as AdminAiModelVO[]);
     } finally {
       setLoading(false);
     }
   }, []);
-
   const loadProviders = useCallback(async () => {
-    try {
-      const res = await adminApi.ai.providers.list();
-      if (res.success) setProviders(res.data);
-    } catch { /* ignore */ }
+    try { const res = await adminApi.ai.providers.list(); if (res.success) setProviders(res.data); } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => {
-    void loadModels();
-    // loadProviders 与 loadModels 同构，setState 均在 await 之后，规则对二者判定不一致，此处豁免
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void loadProviders();
-  }, [loadModels, loadProviders]);
+  useEffect(() => { void loadModels(); void loadProviders(); }, [loadModels, loadProviders]);
 
-  // 按模型类型序列化 config：图片存 qualities/clarities/ratios，视频存 resolutions/ratios/durations/audio
   const buildConfig = (): string => {
     const pricing = Object.keys(form.pricing).length ? { pricing: form.pricing } : {};
-    // description / estSeconds 仅供模型选择列表展示，随 config 持久化（后端透传，不需改 schema）
-    const meta = {
-      ...(form.description.trim() ? { description: form.description.trim() } : {}),
-      ...(form.estSeconds > 0 ? { estSeconds: form.estSeconds } : {}),
-    };
-    if (form.type === "image") {
-      return JSON.stringify({ qualities: form.qualities, clarities: form.clarities, ratios: form.ratios, batchSizes: form.batchSizes, ...(form.gridOutput ? { gridOutput: true } : {}), ...pricing, ...meta });
-    }
-    if (form.type === "video") {
-      return JSON.stringify({ resolutions: form.resolutions, ratios: form.ratios, durations: form.durations, audio: form.audio, ...(form.videoInputs ? { videoInputs: true } : {}), ...pricing, ...meta });
-    }
-    if (form.type === "audio") {
-      const voices = form.voices.filter((v) => v.id.trim()).map((v) => ({ id: v.id.trim(), name: v.name.trim() || v.id.trim() }));
-      return JSON.stringify({ voices, ...meta });
-    }
+    const meta = { ...(form.description.trim() ? { description: form.description.trim() } : {}), ...(form.estSeconds > 0 ? { estSeconds: form.estSeconds } : {}) };
+    if (form.type === "image") return JSON.stringify({ qualities: form.qualities, clarities: form.clarities, ratios: form.ratios, batchSizes: form.batchSizes, ...(form.gridOutput ? { gridOutput: true } : {}), ...pricing, ...meta });
+    if (form.type === "video") return JSON.stringify({ resolutions: form.resolutions, ratios: form.ratios, durations: form.durations, audio: form.audio, ...(form.videoInputs ? { videoInputs: true } : {}), ...pricing, ...meta });
+    if (form.type === "audio") return JSON.stringify({ voices: form.voices.filter((v) => v.id.trim()).map((v) => ({ id: v.id.trim(), name: v.name.trim() || v.id.trim() })), ...meta });
     return JSON.stringify({ ...meta });
   };
 
+  const openCreate = () => { setEditingId(null); setForm(emptyForm); setRemoteModels([]); setFetchModelsError(""); setFormOpen(true); };
+
+  const startEdit = (model: AdminAiModelVO) => {
+    let cfg: Record<string, unknown> = {};
+    if (model.config) { try { cfg = JSON.parse(model.config); } catch { cfg = {}; } }
+    const c = cfg as { qualities?: string[]; clarities?: string[]; ratios?: string[]; batchSizes?: number[]; gridOutput?: boolean; resolutions?: string[]; durations?: number[]; audio?: boolean; videoInputs?: boolean; voices?: { id: string; name: string }[]; pricing?: Record<string, Record<string, number>>; description?: string; estSeconds?: number };
+    setEditingId(model.id);
+    setForm({
+      name: model.name, icon: model.icon ?? "", modelId: model.modelId, type: model.type,
+      providerId: model.providerId == null ? "" : String(model.providerId),
+      pointCost: model.pointCost ?? 0, costPerCall: model.costPerCall ?? 0,
+      description: c.description ?? "", estSeconds: c.estSeconds ?? 0,
+      qualities: c.qualities ?? QUALITY_OPTIONS.map((q) => q.value), clarities: c.clarities ?? [...CLARITY_OPTIONS],
+      batchSizes: c.batchSizes ?? [1, 2, 4], gridOutput: c.gridOutput ?? false,
+      ratios: c.ratios ?? (model.type === "video" ? VIDEO_RATIOS.map((r) => r.value) : RATIO_OPTIONS.map((r) => r.value)),
+      resolutions: c.resolutions ?? [...RESOLUTIONS], durations: c.durations ?? [...DURATION_OPTIONS],
+      audio: c.audio ?? true, videoInputs: c.videoInputs ?? false,
+      supportedHandlers: model.supportedHandlers ?? [], voices: c.voices ?? [], pricing: c.pricing ?? {},
+    });
+    setRemoteModels([]); setFetchModelsError(""); setFormOpen(true);
+  };
+
   const handleSave = async () => {
-    if (!form.name || !form.modelId) return;
+    if (!form.name || !form.modelId) { toast.error("请填写名称和模型ID"); return; }
     setSaving(true);
     try {
       const payload: Record<string, unknown> = {
-        name: form.name,
-        icon: form.icon,
-        modelId: form.modelId,
-        type: form.type,
-        pointCost: form.pointCost,
-        costPerCall: form.costPerCall,
-        config: buildConfig(),
-        supportedHandlers: form.supportedHandlers,
-        ...(form.providerId !== "" ? { providerId: form.providerId } : {}),
+        name: form.name, icon: form.icon, modelId: form.modelId, type: form.type,
+        pointCost: form.pointCost, costPerCall: form.costPerCall, config: buildConfig(),
+        supportedHandlers: form.supportedHandlers, ...(form.providerId !== "" ? { providerId: form.providerId } : {}),
       };
-
-      if (editingId) {
-        const res = await adminApi.ai.models.update(editingId, payload);
-        if (res.success) {
-          setEditingId(null);
-          setForm(emptyForm);
-          loadModels();
-        }
-      } else {
-        const res = await adminApi.ai.models.create(payload);
-        if (res.success) {
-          setShowForm(false);
-          setForm(emptyForm);
-          loadModels();
-        }
-      }
+      const res = editingId ? await adminApi.ai.models.update(editingId, payload) : await adminApi.ai.models.create(payload);
+      if (res.success) { toast.success("已保存"); setFormOpen(false); setEditingId(null); setForm(emptyForm); loadModels(); }
+      else toast.error(res.message || "保存失败");
     } finally {
       setSaving(false);
     }
@@ -327,638 +206,183 @@ export default function AdminAiModelsPage() {
 
   const handleFetchRemoteModels = async () => {
     if (!form.providerId) return;
-    // Runware 的 modelSearch 协议要求必填搜索词（按关键词检索 AIR 模型标识）
     const isRunware = providers.find((p) => String(p.id) === form.providerId)?.providerType === "runware";
-    if (isRunware && !remoteSearch.trim()) {
-      setFetchModelsError("Runware 需要输入搜索关键词再拉取，如 flux / kling / seedream");
-      return;
-    }
-    setFetchingModels(true);
-    setFetchModelsError("");
+    if (isRunware && !remoteSearch.trim()) { setFetchModelsError("Runware 需要输入搜索关键词再拉取，如 flux / kling / seedream"); return; }
+    setFetchingModels(true); setFetchModelsError("");
     try {
       const res = await adminApi.ai.providers.remoteModels(form.providerId, remoteSearch.trim() || undefined);
-      if (res.success) {
-        setRemoteModels(res.data ?? []);
-        if (!res.data || res.data.length === 0) {
-          setFetchModelsError("该供应商未返回模型");
-        }
-      } else {
-        setRemoteModels([]);
-        setFetchModelsError(res.message || "拉取失败");
-      }
+      if (res.success) { setRemoteModels(res.data ?? []); if (!res.data || res.data.length === 0) setFetchModelsError("该供应商未返回模型"); }
+      else { setRemoteModels([]); setFetchModelsError(res.message || "拉取失败"); }
     } catch {
-      setRemoteModels([]);
-      setFetchModelsError("拉取失败");
+      setRemoteModels([]); setFetchModelsError("拉取失败");
     } finally {
       setFetchingModels(false);
     }
   };
 
-  const handleDelete = async (id: number, name: string) => {
-    if (!confirm(`确定删除模型「${name}」？此操作不可撤销。`)) return;
-    const res = await adminApi.ai.models.delete(id);
-    if (res.success) loadModels();
-  };
+  const handleDelete = async (id: number) => { const res = await adminApi.ai.models.delete(id); if (res.success) loadModels(); };
+  const handleToggleStatus = async (m: AdminAiModelVO) => { await adminApi.ai.models.update(m.id, { status: m.status === 1 ? 0 : 1 }); loadModels(); };
 
-  const handleToggleStatus = async (model: AdminAiModelVO) => {
-    await adminApi.ai.models.update(model.id, { status: model.status === 1 ? 0 : 1 });
-    loadModels();
-  };
-
-  const toggleArr = (field: "qualities" | "clarities" | "ratios" | "resolutions" | "supportedHandlers", val: string) => {
-    setForm((prev) => {
-      const arr = prev[field];
-      return { ...prev, [field]: arr.includes(val) ? arr.filter((x) => x !== val) : [...arr, val] };
-    });
-  };
-
-  const toggleDuration = (d: number) => {
-    setForm((prev) => ({
-      ...prev,
-      durations: prev.durations.includes(d) ? prev.durations.filter((x) => x !== d) : [...prev.durations, d].sort((a, b) => a - b),
-    }));
-  };
-
-  const toggleBatchSize = (n: number) => {
-    setForm((prev) => ({
-      ...prev,
-      batchSizes: prev.batchSizes.includes(n) ? prev.batchSizes.filter((x) => x !== n) : [...prev.batchSizes, n].sort((a, b) => a - b),
-    }));
-  };
-
-  // 切换类型：比例字段重置为该类型默认选项，并清空定价矩阵（维度变了，旧 key 不再匹配）
-  const handleTypeChange = (type: string) => {
-    setForm((prev) => ({
-      ...prev,
-      type,
-      ratios: type === "video" ? VIDEO_RATIOS.map((r) => r.value) : RATIO_OPTIONS.map((r) => r.value),
-      pricing: {},
-    }));
-  };
-
-  // 设置某「行×列」格的积分；空或 ≤0 则删除该格（回退到固定 pointCost）
-  const setPricing = (row: string, col: string, val: string) => {
-    setForm((prev) => {
-      const n = Number(val);
-      const pricing = { ...prev.pricing };
-      const r = { ...(pricing[row] ?? {}) };
-      if (val === "" || !Number.isFinite(n) || n <= 0) {
-        delete r[col];
-      } else {
-        r[col] = n;
-      }
-      if (Object.keys(r).length === 0) {
-        delete pricing[row];
-      } else {
-        pricing[row] = r;
-      }
-      return { ...prev, pricing };
-    });
-  };
-
-  const startEdit = (model: AdminAiModelVO) => {
-    setEditingId(model.id);
-    setShowForm(false);
-    let cfg: {
-      qualities?: string[];
-      clarities?: string[];
-      ratios?: string[];
-      batchSizes?: number[];
-      gridOutput?: boolean;
-      resolutions?: string[];
-      durations?: number[];
-      audio?: boolean;
-      videoInputs?: boolean;
-      voices?: { id: string; name: string }[];
-      pricing?: Record<string, Record<string, number>>;
-      description?: string;
-      estSeconds?: number;
-    } = {};
-    if (model.config) {
-      try {
-        cfg = JSON.parse(model.config);
-      } catch {
-        cfg = {};
-      }
-    }
-    setForm({
-      name: model.name,
-      icon: model.icon ?? "",
-      modelId: model.modelId,
-      type: model.type,
-      providerId: model.providerId == null ? "" : String(model.providerId),
-      pointCost: model.pointCost ?? 0,
-      costPerCall: model.costPerCall ?? 0,
-      description: cfg.description ?? "",
-      estSeconds: cfg.estSeconds ?? 0,
-      qualities: cfg.qualities ?? QUALITY_OPTIONS.map((q) => q.value),
-      clarities: cfg.clarities ?? [...CLARITY_OPTIONS],
-      batchSizes: cfg.batchSizes ?? [1, 2, 4],
-      gridOutput: cfg.gridOutput ?? false,
-      ratios: cfg.ratios ?? (model.type === "video" ? VIDEO_RATIOS.map((r) => r.value) : RATIO_OPTIONS.map((r) => r.value)),
-      resolutions: cfg.resolutions ?? [...RESOLUTIONS],
-      durations: cfg.durations ?? [...DURATION_OPTIONS],
-      audio: cfg.audio ?? true,
-      videoInputs: cfg.videoInputs ?? false,
-      supportedHandlers: model.supportedHandlers ?? [],
-      voices: cfg.voices ?? [],
-      pricing: cfg.pricing ?? {},
-    });
-  };
-
-  const isFormOpen = showForm || editingId !== null;
+  const toggleArr = (field: "qualities" | "clarities" | "ratios" | "resolutions" | "supportedHandlers", val: string) =>
+    setForm((prev) => { const arr = prev[field]; return { ...prev, [field]: arr.includes(val) ? arr.filter((x) => x !== val) : [...arr, val] }; });
+  const toggleDuration = (d: number) => setForm((prev) => ({ ...prev, durations: prev.durations.includes(d) ? prev.durations.filter((x) => x !== d) : [...prev.durations, d].sort((a, b) => a - b) }));
+  const toggleBatchSize = (n: number) => setForm((prev) => ({ ...prev, batchSizes: prev.batchSizes.includes(n) ? prev.batchSizes.filter((x) => x !== n) : [...prev.batchSizes, n].sort((a, b) => a - b) }));
+  const handleTypeChange = (type: string) => setForm((prev) => ({ ...prev, type, ratios: type === "video" ? VIDEO_RATIOS.map((r) => r.value) : RATIO_OPTIONS.map((r) => r.value), pricing: {} }));
+  const setPricing = (row: string, col: string, val: number | null) => setForm((prev) => {
+    const pricing = { ...prev.pricing }; const r = { ...(pricing[row] ?? {}) };
+    if (val == null || !Number.isFinite(val) || val <= 0) delete r[col]; else r[col] = val;
+    if (Object.keys(r).length === 0) delete pricing[row]; else pricing[row] = r;
+    return { ...prev, pricing };
+  });
 
   const filteredModels = searchKeyword
-    ? models.filter(
-        (m) =>
-          m.name.toLowerCase().includes(searchKeyword.toLowerCase()) ||
-          m.modelId.toLowerCase().includes(searchKeyword.toLowerCase())
-      )
+    ? models.filter((m) => m.name.toLowerCase().includes(searchKeyword.toLowerCase()) || m.modelId.toLowerCase().includes(searchKeyword.toLowerCase()))
     : models;
 
+  const isRunwareProvider = providers.find((p) => String(p.id) === form.providerId)?.providerType === "runware";
+
+  const columns: ColumnsType<AdminAiModelVO> = [
+    { title: "名称", dataIndex: "name", key: "name", render: (v, m) => <Space>{m.icon && /^https?:/.test(m.icon) ? null : m.icon ? <span>{m.icon}</span> : null}<span style={{ fontWeight: 500 }}>{v}</span></Space> },
+    { title: "模型ID", dataIndex: "modelId", key: "modelId", responsive: ["md"], render: (v) => <span style={{ fontFamily: "monospace", fontSize: 12, color: "#8c8c8c" }}>{v}</span> },
+    { title: "类型", dataIndex: "type", key: "type", render: (t: string) => <Tag color={TYPE_COLOR[t] || "default"}>{MODEL_TYPES.find((x) => x.value === t)?.label || t}</Tag> },
+    { title: "供应商", dataIndex: "providerName", key: "providerName", responsive: ["lg"], render: (v) => v || "-" },
+    { title: "消耗积分", dataIndex: "pointCost", key: "pointCost", render: (v) => <span style={{ color: "#d97706", fontWeight: 500 }}>{v}</span> },
+    { title: "状态", dataIndex: "status", key: "status", render: (s: number) => s === 1 ? <Tag color="green">启用</Tag> : <Tag color="red">禁用</Tag> },
+    {
+      title: "操作", key: "action", render: (_, m) => (
+        <Space size={0}>
+          <Button type="text" size="small" onClick={() => handleToggleStatus(m)} style={{ color: m.status === 1 ? "#ef4444" : "#16a34a" }}>{m.status === 1 ? "禁用" : "启用"}</Button>
+          <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(m)}>编辑</Button>
+          <Popconfirm title={`删除模型「${m.name}」？`} okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => handleDelete(m.id)}>
+            <Button type="text" size="small" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ];
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold">模型管理</h2>
-          <p className="mt-1 text-sm text-neutral-500">
-            共 {models.length} 个模型
-          </p>
-        </div>
-        {!isFormOpen && (
-          <button
-            onClick={() => {
-              setShowForm(true);
-              setEditingId(null);
-              setForm(emptyForm);
-            }}
-            className="inline-flex items-center gap-2 rounded-lg bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900"
-          >
-            <Plus className="h-4 w-4" /> 新增模型
-          </button>
-        )}
-      </div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <AdminPageHead title="模型管理" desc={`共 ${models.length} 个模型`} extra={<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增模型</Button>} />
 
-      {/* 搜索栏 */}
-      <div className="flex gap-3">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
-          <input
-            value={searchKeyword}
-            onChange={(e) => setSearchKeyword(e.target.value)}
-            placeholder="搜索模型名称、模型ID..."
-            className="w-full rounded-lg border border-neutral-200 bg-white py-2 pl-10 pr-4 text-sm outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
-          />
-        </div>
-      </div>
+      <Input.Search placeholder="搜索模型名称、模型ID..." allowClear style={{ maxWidth: 360 }} value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} />
 
-      {/* 新增/编辑表单 */}
-      {isFormOpen && (
-        <div className="rounded-xl border border-neutral-200 bg-white p-6 dark:border-neutral-800 dark:bg-neutral-950">
-          <h3 className="font-semibold">{editingId ? "编辑模型" : "新增模型"}</h3>
-          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <div>
-              <label className="block text-sm font-medium">名称 *</label>
-              <input
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder="如：DALL-E 3"
-                className="mt-1 w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium">模型ID *</label>
-              <input
-                value={form.modelId}
-                onChange={(e) => setForm({ ...form, modelId: e.target.value })}
-                placeholder="如：dall-e-3"
-                list="remote-model-ids"
-                className="mt-1 w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
-              />
-              {remoteModels.length > 0 && (
-                <datalist id="remote-model-ids">
-                  {remoteModels.map((m) => (
-                    <option key={m} value={m} />
-                  ))}
-                </datalist>
-              )}
-            </div>
-            <div>
-              <label className="block text-sm font-medium">类型</label>
-              <select
-                value={form.type}
-                onChange={(e) => handleTypeChange(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
-              >
-                {MODEL_TYPES.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium">供应商</label>
-              <select
-                value={form.providerId}
-                onChange={(e) => setForm({ ...form, providerId: e.target.value })}
-                className="mt-1 w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
-              >
-                <option value="">请选择供应商</option>
-                {providers.map((p) => (
-                  <option key={String(p.id)} value={String(p.id)}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-              <div className="mt-1.5 flex items-center gap-1.5">
-                {providers.find((p) => String(p.id) === form.providerId)?.providerType === "runware" && (
-                  <input
-                    value={remoteSearch}
-                    onChange={(e) => setRemoteSearch(e.target.value)}
-                    placeholder="搜索关键词，如 flux"
-                    className="w-32 rounded-lg border border-neutral-200 px-2 py-1 text-xs outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
-                  />
-                )}
-                <button
-                  type="button"
-                  onClick={handleFetchRemoteModels}
-                  disabled={!form.providerId || fetchingModels}
-                  className="inline-flex items-center gap-1 rounded-lg border border-neutral-200 px-2.5 py-1 text-xs text-neutral-600 transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800"
-                >
-                  {fetchingModels ? "拉取中..." : "从该供应商拉取模型"}
-                </button>
-              </div>
-              {fetchModelsError && <p className="mt-1 text-xs text-red-500">{fetchModelsError}</p>}
-              {remoteModels.length > 0 && (
-                <p className="mt-1 text-xs text-green-600 dark:text-green-400">
-                  已拉取 {remoteModels.length} 个模型，可在「模型ID」输入框中选择
-                </p>
-              )}
-            </div>
-            <div>
-              <label className="block text-sm font-medium">消耗积分</label>
-              <input
-                type="number"
-                min={0}
-                step={0.1}
-                value={form.pointCost}
-                onChange={(e) => setForm({ ...form, pointCost: Number(e.target.value) })}
-                placeholder="每次调用消耗积分数（支持小数）"
-                className="mt-1 w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
-              />
-              <p className="mt-1 text-xs text-neutral-400">支持小数；结算按「单价×张数×团队系数」总价向上取整</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium">成本价（USD）</label>
-              <input
-                type="number"
-                min={0}
-                step={0.0001}
-                value={form.costPerCall}
-                onChange={(e) => setForm({ ...form, costPerCall: Number(e.target.value) })}
-                placeholder="如 Runware 返回的 cost：0.0013"
-                className="mt-1 w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
-              />
-              <p className="mt-1 text-xs text-neutral-400">上游单次成本，仅后台参考毛利用，不参与计费、不对用户暴露</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium">图标</label>
-              <input
-                value={form.icon}
-                onChange={(e) => setForm({ ...form, icon: e.target.value })}
-                placeholder="emoji 或图片 URL"
-                className="mt-1 w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
-              />
-              <p className="mt-1 text-xs text-neutral-400">显示在「Lib Image」模型选择处</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium">描述</label>
-              <input
-                value={form.description}
-                onChange={(e) => setForm({ ...form, description: e.target.value })}
-                placeholder="如：动漫高审美模型，风格多样"
-                className="mt-1 w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
-              />
-              <p className="mt-1 text-xs text-neutral-400">模型选择列表中名称下方的副标题（选填）</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium">预计耗时（秒）</label>
-              <input
-                type="number"
-                min={0}
-                value={form.estSeconds}
-                onChange={(e) => setForm({ ...form, estSeconds: Number(e.target.value) })}
-                placeholder="如：60"
-                className="mt-1 w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
-              />
-              <p className="mt-1 text-xs text-neutral-400">模型选择列表右侧的耗时徽标（0 = 不显示）</p>
-            </div>
+      <Table<AdminAiModelVO>
+        rowKey="id" columns={columns} dataSource={filteredModels} loading={loading}
+        scroll={{ x: "max-content" }} locale={{ emptyText: "暂无模型数据，点击右上角添加" }}
+        pagination={{ pageSize: 15, showTotal: (t) => `共 ${t} 条` }}
+      />
+
+      <Modal
+        title={editingId ? "编辑模型" : "新增模型"} open={formOpen} onCancel={() => setFormOpen(false)}
+        onOk={handleSave} confirmLoading={saving} okText="保存" cancelText="取消" width={760}
+        styles={{ body: { maxHeight: "70vh", overflowY: "auto" } }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 16, paddingTop: 8 }}>
+          {/* 基础字段 */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+            <Field label="名称 *"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="如：DALL-E 3" /></Field>
+            <Field label="模型ID *">
+              <AutoComplete style={{ width: "100%" }} value={form.modelId} onChange={(v) => setForm({ ...form, modelId: v })}
+                options={remoteModels.map((m) => ({ value: m }))} placeholder="如：dall-e-3" filterOption={(i, o) => (o?.value ?? "").toLowerCase().includes(i.toLowerCase())} />
+            </Field>
+            <Field label="类型"><Select style={{ width: "100%" }} value={form.type} onChange={handleTypeChange} options={MODEL_TYPES} /></Field>
+            <Field label="供应商">
+              <Select style={{ width: "100%" }} value={form.providerId || undefined} onChange={(v) => setForm({ ...form, providerId: v ?? "" })} placeholder="请选择供应商" allowClear
+                options={providers.map((p) => ({ value: String(p.id), label: p.name }))} />
+            </Field>
+            <Field label="消耗积分" hint="支持小数；按「单价×张数×团队系数」总价向上取整"><InputNumber style={{ width: "100%" }} min={0} step={0.1} value={form.pointCost} onChange={(v) => setForm({ ...form, pointCost: v ?? 0 })} /></Field>
+            <Field label="成本价（USD）" hint="上游单次成本，仅后台参考毛利，不计费、不对用户暴露"><InputNumber style={{ width: "100%" }} min={0} step={0.0001} value={form.costPerCall} onChange={(v) => setForm({ ...form, costPerCall: v ?? 0 })} /></Field>
+            <Field label="图标" hint="显示在「Lib Image」模型选择处"><Input value={form.icon} onChange={(e) => setForm({ ...form, icon: e.target.value })} placeholder="emoji 或图片 URL" /></Field>
+            <Field label="描述" hint="模型选择列表名称下的副标题（选填）"><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="如：动漫高审美模型" /></Field>
+            <Field label="预计耗时（秒）" hint="模型选择列表右侧耗时徽标（0=不显示）"><InputNumber style={{ width: "100%" }} min={0} value={form.estSeconds} onChange={(v) => setForm({ ...form, estSeconds: v ?? 0 })} /></Field>
           </div>
 
-          {/* 支持的格式：按模型类型显示对应维度（文本类型无格式配置） */}
+          {/* 从供应商拉取模型 */}
+          {form.providerId && (
+            <Space wrap>
+              {isRunwareProvider && <Input size="small" style={{ width: 160 }} value={remoteSearch} onChange={(e) => setRemoteSearch(e.target.value)} placeholder="搜索关键词，如 flux" />}
+              <Button size="small" loading={fetchingModels} onClick={handleFetchRemoteModels}>从该供应商拉取模型</Button>
+              {fetchModelsError && <span style={{ fontSize: 12, color: "#ef4444" }}>{fetchModelsError}</span>}
+              {remoteModels.length > 0 && <span style={{ fontSize: 12, color: "#16a34a" }}>已拉取 {remoteModels.length} 个，可在「模型ID」中选择</span>}
+            </Space>
+          )}
+
+          {/* 按类型的维度配置 */}
           {form.type !== "text" && (
-            <div className="mt-5 space-y-4 border-t border-neutral-100 pt-5 dark:border-neutral-800">
-              {form.type === "image" ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16, borderTop: "1px solid #f0f0f0", paddingTop: 16 }}>
+              {form.type === "image" && (
                 <>
+                  <TagGroup label="支持的生成方式" hint="不勾选 = 不限制（画布显示全部模式）" options={HANDLER_CHOICES.image} selected={form.supportedHandlers} onToggle={(v) => toggleArr("supportedHandlers", v)} />
+                  <TagGroup label="出图张数档位" hint="Midjourney 等固定 4 张只勾「4张」，不勾用默认(1/2/4)" options={[1, 2, 3, 4].map((n) => ({ value: String(n), label: `${n}张` }))} selected={form.batchSizes.map(String)} onToggle={(v) => toggleBatchSize(Number(v))} />
                   <div>
-                    <ChipGroup
-                      label="支持的生成方式"
-                      options={HANDLER_CHOICES.image}
-                      selected={form.supportedHandlers}
-                      onToggle={(v) => toggleArr("supportedHandlers", v)}
-                    />
-                    <p className="mt-1 text-xs text-neutral-400">不勾选 = 不限制（画布显示全部模式）</p>
+                    <div style={{ fontWeight: 500, marginBottom: 8 }}>上游四宫格输出</div>
+                    <Space>
+                      <CheckableTag checked={form.gridOutput} onChange={() => setForm({ ...form, gridOutput: true })} style={{ border: "1px solid #d9d9d9", padding: "2px 10px" }}>是（单张 2×2 合图）</CheckableTag>
+                      <CheckableTag checked={!form.gridOutput} onChange={() => setForm({ ...form, gridOutput: false })} style={{ border: "1px solid #d9d9d9", padding: "2px 10px" }}>否（独立多张）</CheckableTag>
+                    </Space>
+                    <div style={{ fontSize: 12, color: "#bfbfbf", marginTop: 4 }}>Midjourney 原生输出为一张 2×2 合图时选「是」，生成后自动切成 4 张组图</div>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium">出图张数档位</label>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {[1, 2, 3, 4].map((n) => (
-                        <Chip key={n} active={form.batchSizes.includes(n)} onClick={() => toggleBatchSize(n)}>
-                          {n}张
-                        </Chip>
-                      ))}
-                    </div>
-                    <p className="mt-1 text-xs text-neutral-400">
-                      画布张数下拉只显示所勾档位；Midjourney 等一组固定 4 张的模型只勾「4张」，不勾则用默认档位(1/2/4)
-                    </p>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium">上游四宫格输出</label>
-                    <div className="mt-2 flex gap-2">
-                      <Chip active={form.gridOutput} onClick={() => setForm({ ...form, gridOutput: true })}>是（返回单张 2×2 合图）</Chip>
-                      <Chip active={!form.gridOutput} onClick={() => setForm({ ...form, gridOutput: false })}>否（返回独立多张）</Chip>
-                    </div>
-                    <p className="mt-1 text-xs text-neutral-400">
-                      Midjourney 原生输出为一张 2×2 合图时选「是」：生成后自动切成 4 张独立图，节点内组图展示
-                    </p>
-                  </div>
-                  <ChipGroup
-                    label="支持画质"
-                    options={QUALITY_OPTIONS.map((q) => ({ value: q.value, label: q.label }))}
-                    selected={form.qualities}
-                    onToggle={(v) => toggleArr("qualities", v)}
-                  />
-                  <ChipGroup
-                    label="支持清晰度"
-                    options={CLARITY_OPTIONS.map((c) => ({ value: c, label: c }))}
-                    selected={form.clarities}
-                    onToggle={(v) => toggleArr("clarities", v)}
-                  />
-                  <ChipGroup
-                    label="支持比例"
-                    options={RATIO_OPTIONS.map((r) => ({ value: r.value, label: r.label }))}
-                    selected={form.ratios}
-                    onToggle={(v) => toggleArr("ratios", v)}
-                  />
-                  <PricingMatrix
-                    corner="画质＼清晰度"
-                    rows={form.qualities.map((q) => ({ key: q, label: QUALITY_OPTIONS.find((o) => o.value === q)?.label ?? q }))}
-                    cols={form.clarities.map((c) => ({ key: c, label: c }))}
-                    pricing={form.pricing}
-                    onSet={setPricing}
-                  />
+                  <TagGroup label="支持画质" options={QUALITY_OPTIONS.map((q) => ({ value: q.value, label: q.label }))} selected={form.qualities} onToggle={(v) => toggleArr("qualities", v)} />
+                  <TagGroup label="支持清晰度" options={CLARITY_OPTIONS.map((c) => ({ value: c, label: c }))} selected={form.clarities} onToggle={(v) => toggleArr("clarities", v)} />
+                  <TagGroup label="支持比例" options={RATIO_OPTIONS.map((r) => ({ value: r.value, label: r.label }))} selected={form.ratios} onToggle={(v) => toggleArr("ratios", v)} />
+                  <PricingMatrix corner="画质＼清晰度" rows={form.qualities.map((q) => ({ key: q, label: QUALITY_OPTIONS.find((o) => o.value === q)?.label ?? q }))} cols={form.clarities.map((c) => ({ key: c, label: c }))} pricing={form.pricing} onSet={setPricing} />
                 </>
-              ) : form.type === "audio" ? (
+              )}
+              {form.type === "video" && (
+                <>
+                  <TagGroup label="支持的生成方式" hint="不勾选 = 不限制；勾选后画布视频节点只显示所选模式 Tab" options={HANDLER_CHOICES.video} selected={form.supportedHandlers} onToggle={(v) => toggleArr("supportedHandlers", v)} />
+                  <TagGroup label="支持清晰度" options={RESOLUTIONS.map((r) => ({ value: r, label: r }))} selected={form.resolutions} onToggle={(v) => toggleArr("resolutions", v)} />
+                  <TagGroup label="支持比例" options={VIDEO_RATIOS.map((r) => ({ value: r.value, label: r.label }))} selected={form.ratios} onToggle={(v) => toggleArr("ratios", v)} />
+                  <TagGroup label="支持时长（秒）" options={DURATION_CHOICES.map((d) => ({ value: String(d), label: `${d}s` }))} selected={form.durations.map(String)} onToggle={(v) => toggleDuration(Number(v))} />
+                  <div>
+                    <div style={{ fontWeight: 500, marginBottom: 8 }}>生成音频</div>
+                    <Space>
+                      <CheckableTag checked={form.audio} onChange={() => setForm({ ...form, audio: true })} style={{ border: "1px solid #d9d9d9", padding: "2px 10px" }}>支持</CheckableTag>
+                      <CheckableTag checked={!form.audio} onChange={() => setForm({ ...form, audio: false })} style={{ border: "1px solid #d9d9d9", padding: "2px 10px" }}>不支持</CheckableTag>
+                    </Space>
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 500, marginBottom: 8 }}>Runware 参数结构</div>
+                    <Space>
+                      <CheckableTag checked={form.videoInputs} onChange={() => setForm({ ...form, videoInputs: true })} style={{ border: "1px solid #d9d9d9", padding: "2px 10px" }}>v2（inputs 嵌套）</CheckableTag>
+                      <CheckableTag checked={!form.videoInputs} onChange={() => setForm({ ...form, videoInputs: false })} style={{ border: "1px solid #d9d9d9", padding: "2px 10px" }}>旧版（顶层平铺）</CheckableTag>
+                    </Space>
+                    <div style={{ fontSize: 12, color: "#bfbfbf", marginTop: 4 }}>Runware 新版视频模型（Seedance 2.0 等）须选 v2；非 Runware 或旧版保持「顶层平铺」</div>
+                  </div>
+                  <PricingMatrix corner="清晰度＼时长" rows={form.resolutions.map((r) => ({ key: r, label: r }))} cols={[...form.durations].sort((a, b) => a - b).map((d) => ({ key: String(d), label: `${d}s` }))} pricing={form.pricing} onSet={setPricing} />
+                </>
+              )}
+              {form.type === "audio" && (
                 <div>
-                  <label className="block text-sm font-medium">音色列表</label>
-                  <p className="mt-0.5 text-xs text-neutral-400">
-                    音色ID 来自该模型供应商的文档（如 MiniMax 的 Chinese (Mandarin)_Lovely_Girl）；显示名是画布音频节点下拉里看到的名字
-                  </p>
-                  <div className="mt-2 space-y-2">
+                  <div style={{ fontWeight: 500 }}>音色列表</div>
+                  <div style={{ fontSize: 12, color: "#bfbfbf", margin: "2px 0 8px" }}>音色ID 来自供应商文档；显示名是画布音频节点下拉里的名字</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {form.voices.map((v, i) => (
-                      <div key={i} className="flex items-center gap-2">
-                        <input
-                          value={v.id}
-                          onChange={(e) => setForm((prev) => ({ ...prev, voices: prev.voices.map((x, j) => (j === i ? { ...x, id: e.target.value } : x)) }))}
-                          placeholder="音色ID（上游标识）"
-                          className="flex-1 rounded-lg border border-neutral-200 px-3 py-2 font-mono text-xs outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
-                        />
-                        <input
-                          value={v.name}
-                          onChange={(e) => setForm((prev) => ({ ...prev, voices: prev.voices.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) }))}
-                          placeholder="显示名（如：少女音色）"
-                          className="w-48 rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setForm((prev) => ({ ...prev, voices: prev.voices.filter((_, j) => j !== i) }))}
-                          className="rounded-lg p-2 text-neutral-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/30"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
+                      <Space key={i}>
+                        <Input style={{ width: 220, fontFamily: "monospace", fontSize: 12 }} placeholder="音色ID（上游标识）" value={v.id} onChange={(e) => setForm((p) => ({ ...p, voices: p.voices.map((x, j) => j === i ? { ...x, id: e.target.value } : x) }))} />
+                        <Input style={{ width: 180 }} placeholder="显示名（如：少女音色）" value={v.name} onChange={(e) => setForm((p) => ({ ...p, voices: p.voices.map((x, j) => j === i ? { ...x, name: e.target.value } : x) }))} />
+                        <Button type="text" danger icon={<DeleteOutlined />} onClick={() => setForm((p) => ({ ...p, voices: p.voices.filter((_, j) => j !== i) }))} />
+                      </Space>
                     ))}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setForm((prev) => ({ ...prev, voices: [...prev.voices, { id: "", name: "" }] }))}
-                    className="mt-2 inline-flex items-center gap-1 rounded-lg border border-neutral-200 px-2.5 py-1.5 text-xs text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800"
-                  >
-                    <Plus className="h-3.5 w-3.5" /> 添加音色
-                  </button>
+                  <Button size="small" icon={<PlusOutlined />} style={{ marginTop: 8 }} onClick={() => setForm((p) => ({ ...p, voices: [...p.voices, { id: "", name: "" }] }))}>添加音色</Button>
                 </div>
-              ) : (
-                <>
-                  <div>
-                    <ChipGroup
-                      label="支持的生成方式"
-                      options={HANDLER_CHOICES.video}
-                      selected={form.supportedHandlers}
-                      onToggle={(v) => toggleArr("supportedHandlers", v)}
-                    />
-                    <p className="mt-1 text-xs text-neutral-400">
-                      不勾选 = 不限制（画布显示全部模式）；勾选后画布视频节点只显示所选模式 Tab
-                    </p>
-                  </div>
-                  <ChipGroup
-                    label="支持清晰度"
-                    options={RESOLUTIONS.map((r) => ({ value: r, label: r }))}
-                    selected={form.resolutions}
-                    onToggle={(v) => toggleArr("resolutions", v)}
-                  />
-                  <ChipGroup
-                    label="支持比例"
-                    options={VIDEO_RATIOS.map((r) => ({ value: r.value, label: r.label }))}
-                    selected={form.ratios}
-                    onToggle={(v) => toggleArr("ratios", v)}
-                  />
-                  <div>
-                    <label className="block text-sm font-medium">支持时长（秒）</label>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {DURATION_CHOICES.map((d) => (
-                        <Chip key={d} active={form.durations.includes(d)} onClick={() => toggleDuration(d)}>
-                          {d}s
-                        </Chip>
-                      ))}
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium">生成音频</label>
-                    <div className="mt-2 flex gap-2">
-                      <Chip active={form.audio} onClick={() => setForm({ ...form, audio: true })}>支持</Chip>
-                      <Chip active={!form.audio} onClick={() => setForm({ ...form, audio: false })}>不支持</Chip>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium">Runware 参数结构</label>
-                    <div className="mt-2 flex gap-2">
-                      <Chip active={form.videoInputs} onClick={() => setForm({ ...form, videoInputs: true })}>v2（inputs 嵌套）</Chip>
-                      <Chip active={!form.videoInputs} onClick={() => setForm({ ...form, videoInputs: false })}>旧版（顶层平铺）</Chip>
-                    </div>
-                    <p className="mt-1 text-xs text-neutral-400">
-                      Runware 新版视频模型（Seedance 2.0 等，支持全能参考/首尾帧）须选 v2，参数会嵌入 inputs 对象；
-                      非 Runware 或旧版模型保持「顶层平铺」
-                    </p>
-                  </div>
-                  <PricingMatrix
-                    corner="清晰度＼时长"
-                    rows={form.resolutions.map((r) => ({ key: r, label: r }))}
-                    cols={[...form.durations].sort((a, b) => a - b).map((d) => ({ key: String(d), label: `${d}s` }))}
-                    pricing={form.pricing}
-                    onSet={setPricing}
-                  />
-                </>
               )}
             </div>
           )}
-          <div className="mt-5 flex gap-2">
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="inline-flex items-center gap-1 rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
-            >
-              <Save className="h-4 w-4" /> {saving ? "保存中..." : "保存"}
-            </button>
-            <button
-              onClick={() => {
-                setShowForm(false);
-                setEditingId(null);
-                setForm(emptyForm);
-              }}
-              className="rounded-lg px-4 py-2 text-sm text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
-            >
-              取消
-            </button>
-          </div>
         </div>
-      )}
+      </Modal>
+    </div>
+  );
+}
 
-      {/* 模型表格 */}
-      <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-neutral-100 bg-neutral-50 text-left text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900">
-                <th className="px-4 py-3 font-medium">名称</th>
-                <th className="px-4 py-3 font-medium">模型ID</th>
-                <th className="px-4 py-3 font-medium">类型</th>
-                <th className="px-4 py-3 font-medium">供应商</th>
-                <th className="px-4 py-3 font-medium">消耗积分</th>
-                <th className="px-4 py-3 font-medium">状态</th>
-                <th className="px-4 py-3 font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                Array.from({ length: 5 }).map((_, i) => (
-                  <tr key={i} className="border-b border-neutral-50 dark:border-neutral-900">
-                    {Array.from({ length: 7 }).map((_, j) => (
-                      <td key={j} className="px-4 py-3">
-                        <div className="h-4 w-20 animate-pulse rounded bg-neutral-100 dark:bg-neutral-800" />
-                      </td>
-                    ))}
-                  </tr>
-                ))
-              ) : filteredModels.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="px-4 py-12 text-center">
-                    <Cpu className="mx-auto h-10 w-10 text-neutral-300" />
-                    <p className="mt-3 text-neutral-400">暂无模型数据</p>
-                    <p className="text-sm text-neutral-400">点击上方按钮添加第一个 AI 模型</p>
-                  </td>
-                </tr>
-              ) : (
-                filteredModels.map((model) => {
-                  const typeBadge = TYPE_BADGE[model.type] ?? TYPE_BADGE["text"];
-                  const typeLabel = MODEL_TYPES.find((t) => t.value === model.type)?.label ?? model.type;
-                  return (
-                    <tr
-                      key={model.id}
-                      className="border-b border-neutral-50 last:border-0 hover:bg-neutral-50/50 dark:border-neutral-900 dark:hover:bg-neutral-900/30"
-                    >
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <div
-                            className={`flex h-8 w-8 items-center justify-center rounded-lg ${
-                              model.status === 1
-                                ? "bg-green-50 text-green-600 dark:bg-green-950 dark:text-green-400"
-                                : "bg-neutral-100 text-neutral-400 dark:bg-neutral-800"
-                            }`}
-                          >
-                            <Cpu className="h-4 w-4" />
-                          </div>
-                          <span className="font-medium">{model.name}</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 font-mono text-xs text-neutral-500">{model.modelId}</td>
-                      <td className="px-4 py-3">
-                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${typeBadge}`}>
-                          {typeLabel}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-neutral-500">{model.providerName ?? "-"}</td>
-                      <td className="px-4 py-3">
-                        <div className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
-                          <Coins className="h-3.5 w-3.5" />
-                          <span className="font-medium">{model.pointCost ?? 0}</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                            model.status === 1
-                              ? "bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400"
-                              : "bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400"
-                          }`}
-                        >
-                          {model.status === 1 ? "启用" : "禁用"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => handleToggleStatus(model)}
-                            className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                              model.status === 1
-                                ? "text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
-                                : "text-green-600 hover:bg-green-50 dark:hover:bg-green-950/30"
-                            }`}
-                          >
-                            {model.status === 1 ? "禁用" : "启用"}
-                          </button>
-                          <button
-                            onClick={() => startEdit(model)}
-                            className="rounded-lg p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800"
-                          >
-                            <Edit className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(model.id, model.name)}
-                            className="rounded-lg p-1.5 text-neutral-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/30"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 6 }}>{label}</div>
+      {children}
+      {hint && <div style={{ fontSize: 11, color: "#bfbfbf", marginTop: 2 }}>{hint}</div>}
     </div>
   );
 }
