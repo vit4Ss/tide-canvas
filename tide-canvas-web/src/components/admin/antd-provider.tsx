@@ -11,13 +11,15 @@ import { AntdRegistry } from "@ant-design/nextjs-registry";
 /**
  * 管理后台 antd 上下文：仅包裹 /admin 区域，不影响用户侧 Tailwind 页面。
  * - AntdRegistry：App Router SSR 首屏样式注入，防止刷新闪烁
- * - StyleProvider layer：antd 样式进 CSS @layer，优先级低于 Tailwind utility，二者共存不打架
+ * - StyleProvider hashPriority="high"：antd 样式用高优先级（去掉 :where 包裹），覆盖 Tailwind v4
+ *   preflight 对 input/button 的全局重置，避免输入框出现「框中框」。不能用 layer——Tailwind v4 的
+ *   原生 @layer 会让 antd 样式优先级低于 preflight，导致内部原生 input 样式被覆盖。
  * - ConfigProvider：中文 locale + 与原品牌一致的主色/圆角
  */
 export function AdminAntdProvider({ children }: { children: ReactNode }) {
   return (
     <AntdRegistry>
-      <StyleProvider layer>
+      <StyleProvider hashPriority="high">
         <ConfigProvider
           locale={zhCN}
           theme={{
