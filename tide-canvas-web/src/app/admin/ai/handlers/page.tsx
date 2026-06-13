@@ -1,8 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Table, InputNumber, Button, Space } from "antd";
+import type { ColumnsType } from "antd/es/table";
+import { CoinsIcon } from "lucide-react";
+import { SaveOutlined, CheckOutlined } from "@ant-design/icons";
 import { adminApi } from "@/lib/api";
-import { Bot, Coins, Save, Check } from "lucide-react";
+import { AdminPageHead } from "@/components/admin/page-head";
 
 interface HandlerRow {
   handlerName: string;
@@ -27,23 +31,17 @@ export default function AdminAiHandlersPage() {
     }
   };
 
-  useEffect(() => {
-    load();
-  }, []);
+  useEffect(() => { load(); }, []);
 
-  const setCost = (name: string, cost: number) => {
-    setHandlers((prev) =>
-      prev.map((h) => (h.handlerName === name ? { ...h, pointCost: cost } : h))
-    );
+  const setCost = (name: string, cost: number | null) => {
+    setHandlers((prev) => prev.map((h) => (h.handlerName === name ? { ...h, pointCost: cost ?? 0 } : h)));
   };
 
   const handleSave = async (h: HandlerRow) => {
     setSavingName(h.handlerName);
     setSavedName(null);
     try {
-      const res = await adminApi.ai.handlers.update(h.handlerName, {
-        pointCost: Math.max(0, h.pointCost ?? 0),
-      });
+      const res = await adminApi.ai.handlers.update(h.handlerName, { pointCost: Math.max(0, h.pointCost ?? 0) });
       if (res.success) {
         setSavedName(h.handlerName);
         setTimeout(() => setSavedName((cur) => (cur === h.handlerName ? null : cur)), 2000);
@@ -53,100 +51,47 @@ export default function AdminAiHandlersPage() {
     }
   };
 
-  return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold">Handler 积分配置</h2>
-        <p className="mt-1 text-sm text-neutral-500">
-          配置各 AI 能力每次调用消耗的积分，前台生成时按此扣减
-        </p>
-      </div>
+  const columns: ColumnsType<HandlerRow> = [
+    {
+      title: "能力", key: "displayName", render: (_, h) => (
+        <Space>
+          <span style={{ width: 32, height: 32, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: 8, background: "#fff7e6", color: "#d97706" }}>
+            <CoinsIcon size={16} />
+          </span>
+          <div>
+            <div style={{ fontWeight: 500 }}>{h.displayName}</div>
+            {h.description && <div style={{ fontSize: 12, color: "#bfbfbf" }}>{h.description}</div>}
+          </div>
+        </Space>
+      ),
+    },
+    { title: "标识", dataIndex: "handlerName", key: "handlerName", render: (v) => <span style={{ fontFamily: "monospace", fontSize: 12, color: "#8c8c8c" }}>{v}</span> },
+    {
+      title: "消耗积分", key: "pointCost", render: (_, h) => (
+        <InputNumber min={0} value={h.pointCost ?? 0} onChange={(v) => setCost(h.handlerName, v)} style={{ width: 120 }} prefix={<CoinsIcon size={13} color="#f59e0b" />} />
+      ),
+    },
+    {
+      title: "操作", key: "action", render: (_, h) => (
+        savedName === h.handlerName
+          ? <Button size="small" type="primary" icon={<CheckOutlined />} ghost>已保存</Button>
+          : <Button size="small" type="primary" icon={<SaveOutlined />} loading={savingName === h.handlerName} onClick={() => handleSave(h)}>保存</Button>
+      ),
+    },
+  ];
 
-      <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-neutral-100 bg-neutral-50 text-left text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900">
-                <th className="px-4 py-3 font-medium">能力</th>
-                <th className="px-4 py-3 font-medium">标识</th>
-                <th className="px-4 py-3 font-medium">消耗积分</th>
-                <th className="px-4 py-3 font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                Array.from({ length: 6 }).map((_, i) => (
-                  <tr key={i} className="border-b border-neutral-50 dark:border-neutral-900">
-                    {Array.from({ length: 4 }).map((_, j) => (
-                      <td key={j} className="px-4 py-3">
-                        <div className="h-4 w-24 animate-pulse rounded bg-neutral-100 dark:bg-neutral-800" />
-                      </td>
-                    ))}
-                  </tr>
-                ))
-              ) : handlers.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="px-4 py-12 text-center">
-                    <Bot className="mx-auto h-10 w-10 text-neutral-300" />
-                    <p className="mt-3 text-neutral-400">暂无 Handler 数据</p>
-                  </td>
-                </tr>
-              ) : (
-                handlers.map((h) => (
-                  <tr
-                    key={h.handlerName}
-                    className="border-b border-neutral-50 last:border-0 hover:bg-neutral-50/50 dark:border-neutral-900 dark:hover:bg-neutral-900/30"
-                  >
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-50 text-amber-600 dark:bg-amber-950 dark:text-amber-400">
-                          <Coins className="h-4 w-4" />
-                        </div>
-                        <div>
-                          <p className="font-medium">{h.displayName}</p>
-                          {h.description && (
-                            <p className="text-xs text-neutral-400">{h.description}</p>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-neutral-500">{h.handlerName}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-1.5">
-                        <Coins className="h-3.5 w-3.5 text-amber-500" />
-                        <input
-                          type="number"
-                          min={0}
-                          value={h.pointCost ?? 0}
-                          onChange={(e) => setCost(h.handlerName, Number(e.target.value))}
-                          className="w-24 rounded-lg border border-neutral-200 px-3 py-1.5 text-sm outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900"
-                        />
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <button
-                        onClick={() => handleSave(h)}
-                        disabled={savingName === h.handlerName}
-                        className="inline-flex items-center gap-1 rounded-lg bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
-                      >
-                        {savedName === h.handlerName ? (
-                          <>
-                            <Check className="h-3.5 w-3.5" /> 已保存
-                          </>
-                        ) : (
-                          <>
-                            <Save className="h-3.5 w-3.5" /> {savingName === h.handlerName ? "保存中" : "保存"}
-                          </>
-                        )}
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <AdminPageHead title="Handler 积分配置" desc="配置各 AI 能力每次调用消耗的积分，前台生成时按此扣减" />
+      <Table<HandlerRow>
+        rowKey="handlerName"
+        columns={columns}
+        dataSource={handlers}
+        loading={loading}
+        pagination={false}
+        scroll={{ x: "max-content" }}
+        locale={{ emptyText: "暂无 Handler 数据" }}
+      />
     </div>
   );
 }
