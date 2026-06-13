@@ -204,9 +204,10 @@ public class AiRelayClient {
             if (root == null) root = tryParse(raw);
             String upstreamTaskId = root != null ? root.path("id").asText(null) : null;
             try {
-                List<String> urls = resolveResult(provider, code, raw, root);
-                recordLog(operationOf(path, body), fullUrl, body, code, raw, upstreamTaskId, true, first(urls), null, start);
-                return urls;
+                // 异步任务(202→轮询)记录「最终完成响应」(带图片资源)，而非初始受理响应(status=processing)
+                ResolveResult result = resolveResult(provider, code, raw, root);
+                recordLog(operationOf(path, body), fullUrl, body, code, result.finalRaw(), upstreamTaskId, true, first(result.urls()), null, start);
+                return result.urls();
             } catch (Exception e) {
                 lastEx = e;
                 // 502/503 可重试，其他错误直接抛
@@ -227,8 +228,12 @@ public class AiRelayClient {
         return first(submitAndResolveMulti(provider, path, body));
     }
 
+    /** 解析结果：媒体地址 + 产生它的最终响应原文（同步=初始响应；异步=轮询完成响应，含图片资源结构体） */
+    private record ResolveResult(List<String> urls, String finalRaw) {
+    }
+
     /** 解析上游响应：同步媒体地址（可多张）/ 失败信封 / 202 异步轮询 */
-    private List<String> resolveResult(AiProviderDO provider, int code, String raw, JsonNode root) throws Exception {
+    private ResolveResult resolveResult(AiProviderDO provider, int code, String raw, JsonNode root) throws Exception {
         if (root == null) {
             // 非 JSON 响应：截取前 200 字符，避免日志刷屏
             String snippet = StringUtils.hasText(raw) ? raw.strip().replace("\n", " | ") : "(empty)";
@@ -237,7 +242,7 @@ public class AiRelayClient {
         }
         List<String> urls = extractUrls(root);
         if (!urls.isEmpty()) {
-            return urls;
+            return new ResolveResult(urls, raw);
         }
         if (isFailed(root) || code >= 400) {
             throw new IllegalStateException(errorMessage(root, code));
@@ -290,8 +295,9 @@ public class AiRelayClient {
 
     /**
      * 轮询任意异步任务状态：GET {baseUrl}/tasks/{id}，直到 succeeded / failed 或超时。
+     * 返回结果时携带「完成响应原文」(带图片资源的结构体)，供日志记录最终响应而非初始受理响应。
      */
-    private List<String> pollTask(AiProviderDO provider, String taskId) throws Exception {
+    private ResolveResult pollTask(AiProviderDO provider, String taskId) throws Exception {
         long deadline = System.currentTimeMillis() + pollTimeoutMs;
         String path = "/tasks/" + taskId;
         while (System.currentTimeMillis() < deadline) {
@@ -305,7 +311,8 @@ public class AiRelayClient {
 
             int code = resp.getStatusCode().value();
             byte[] bytes = resp.getBody();
-            JsonNode root = tryParse(bytes != null ? new String(bytes, java.nio.charset.StandardCharsets.UTF_8) : null);
+            String raw = bytes != null ? new String(bytes, java.nio.charset.StandardCharsets.UTF_8) : null;
+            JsonNode root = tryParse(raw);
             if (code == 404) {
                 throw new IllegalStateException("上游任务不存在: " + taskId);
             }
@@ -317,7 +324,7 @@ public class AiRelayClient {
                 if ("succeeded".equalsIgnoreCase(status)) {
                     List<String> urls = extractUrls(root);
                     if (!urls.isEmpty()) {
-                        return urls;
+                        return new ResolveResult(urls, raw);
                     }
                     throw new IllegalStateException("任务成功但未返回结果地址: " + taskId);
                 }
@@ -331,9 +338,15 @@ public class AiRelayClient {
         throw new IllegalStateException("上游任务超时未完成: " + taskId);
     }
 
-    /** 从响应中提取媒体地址列表：data[].url / data[].b64_json（全部）/ output_url */
+    /**
+     * 从响应中提取媒体地址列表，兼容多种「带资源」结构体：
+     * OpenAI 风格 {@code data[].url / b64_json}；任务完成响应的资源数组
+     * {@code urls / image_urls / results / attachments / output.image_urls}；
+     * 单图兜底 {@code output_url}。优先取独立多资源(可直接铺组图，免前端切图)，合图兜底。
+     */
     private List<String> extractUrls(JsonNode root) {
         List<String> urls = new ArrayList<>();
+        // 1) OpenAI 风格 data[]
         JsonNode data = root.path("data");
         if (data.isArray()) {
             for (JsonNode item : data) {
@@ -344,10 +357,33 @@ public class AiRelayClient {
                 }
             }
         }
+        // 2) 任务完成响应常见的资源数组字段（字符串数组 或 对象数组取 url）
+        if (urls.isEmpty()) {
+            collectUrlArray(root.path("urls"), urls);
+            collectUrlArray(root.path("image_urls"), urls);
+            collectUrlArray(root.path("results"), urls);
+            collectUrlArray(root.path("attachments"), urls);
+            collectUrlArray(root.path("output").path("image_urls"), urls);
+        }
+        // 3) 单图兜底：output_url（如 Midjourney merged 四宫格合图）
         if (urls.isEmpty() && root.hasNonNull("output_url") && StringUtils.hasText(root.get("output_url").asText())) {
             urls.add(root.get("output_url").asText());
         }
         return urls;
+    }
+
+    /** 从数组节点收集媒体地址：兼容字符串数组 ["url1","url2"] 与对象数组 [{"url":...}] */
+    private void collectUrlArray(JsonNode node, List<String> urls) {
+        if (!node.isArray()) {
+            return;
+        }
+        for (JsonNode item : node) {
+            if (item.isTextual() && StringUtils.hasText(item.asText())) {
+                urls.add(item.asText());
+            } else if (item.hasNonNull("url") && StringUtils.hasText(item.get("url").asText())) {
+                urls.add(item.get("url").asText());
+            }
+        }
     }
 
     /** 是否为失败响应（OpenAI 错误信封 或 status=failed） */
