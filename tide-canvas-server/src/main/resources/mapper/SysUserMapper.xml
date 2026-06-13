@@ -66,4 +66,19 @@
         ORDER BY date
     </select>
 
+    <!-- 自指定时间以来活跃用户数(最近登录在窗口内),用于 WAU/MAU -->
+    <select id="countActiveSince" resultType="java.lang.Long">
+        SELECT COUNT(*) FROM sys_user
+        WHERE deleted = 0 AND status = 1 AND last_login_time >= #{since}
+    </select>
+
+    <!-- 最近活跃用户列表(按最后登录时间倒序) -->
+    <select id="selectActiveUsers" resultType="com.tidecanvas.model.vo.ActiveUserVO">
+        SELECT id, username, nickname, avatar, points, last_login_time AS lastLoginTime
+        FROM sys_user
+        WHERE deleted = 0 AND status = 1 AND last_login_time IS NOT NULL
+        ORDER BY last_login_time DESC
+        LIMIT #{limit}
+    </select>
+
 </mapper>

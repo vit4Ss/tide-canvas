@@ -13,7 +13,9 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.BeanUtils;
 import org.springframework.util.StringUtils;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -43,5 +45,19 @@ public class AdminLogController {
             return vo;
         }).toList();
         return Result.success(PageResult.of(records, page));
+    }
+
+    @Operation(summary = "删除日志")
+    @DeleteMapping("/{id}")
+    public Result<Void> delete(@PathVariable Long id) {
+        logMapper.deleteById(id);
+        return Result.success();
+    }
+
+    @Operation(summary = "清空全部日志")
+    @DeleteMapping
+    public Result<Void> clear() {
+        logMapper.delete(null);
+        return Result.success();
     }
 }

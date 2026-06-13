@@ -1,6 +1,7 @@
 package com.tidecanvas.controller.admin;
 
 import com.tidecanvas.common.Result;
+import com.tidecanvas.annotation.OperateLog;
 import com.tidecanvas.mapper.SysConfigMapper;
 import com.tidecanvas.model.entity.SysConfigDO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -32,6 +33,7 @@ public class AdminSettingController {
     }
 
     @Operation(summary = "更新系统配置")
+    @OperateLog(action = "更新配置", target = "系统设置")
     @PutMapping
     public Result<Void> update(@RequestBody Map<String, String> settings) {
         for (Map.Entry<String, String> entry : settings.entrySet()) {

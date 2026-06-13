@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.tidecanvas.common.PageResult;
 import com.tidecanvas.common.Result;
+import com.tidecanvas.annotation.OperateLog;
 import com.tidecanvas.mapper.CanvasProjectMapper;
 import com.tidecanvas.model.entity.CanvasProjectDO;
 import com.tidecanvas.model.vo.ProjectVO;
@@ -49,6 +50,7 @@ public class AdminContentController {
     }
 
     @Operation(summary = "审核内容")
+    @OperateLog(action = "审核内容", target = "内容管理")
     @PutMapping("/{id}")
     public Result<Void> audit(@PathVariable Long id, @RequestBody Map<String, Integer> body) {
         CanvasProjectDO project = projectMapper.selectById(id);

@@ -4,6 +4,7 @@ import com.tidecanvas.common.PageResult;
 import com.tidecanvas.common.Result;
 import com.tidecanvas.model.query.AdminUserQuery;
 import com.tidecanvas.model.vo.UserVO;
+import com.tidecanvas.annotation.OperateLog;
 import com.tidecanvas.service.AdminAuthorService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -30,6 +31,7 @@ public class AdminAuthorController {
     }
 
     @Operation(summary = "授予作者权限")
+    @OperateLog(action = "授予作者", target = "作者管理")
     @PostMapping("/{userId}/grant")
     public Result<Void> grant(@PathVariable Long userId) {
         adminAuthorService.grantAuthor(userId);
@@ -37,6 +39,7 @@ public class AdminAuthorController {
     }
 
     @Operation(summary = "撤销作者权限")
+    @OperateLog(action = "撤销作者", target = "作者管理")
     @PostMapping("/{userId}/revoke")
     public Result<Void> revoke(@PathVariable Long userId) {
         adminAuthorService.revokeAuthor(userId);

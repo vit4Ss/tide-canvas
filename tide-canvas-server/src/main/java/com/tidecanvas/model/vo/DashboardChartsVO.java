@@ -26,6 +26,12 @@ public class DashboardChartsVO {
     /** 模型使用排行 Top5 */
     private List<NameValueVO> modelUsage;
 
+    /** 近7天访问趋势(PV/UV) */
+    private List<DailyVisitVO> visitTrend;
+
+    /** 近7天登录趋势(成功登录次数) */
+    private List<DailyCountVO> loginTrend;
+
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
@@ -59,5 +65,29 @@ public class DashboardChartsVO {
         private String name;
 
         private Long value;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class DailyVisitVO {
+
+        private String date;
+
+        /** 访问量 PV */
+        private Long pv;
+
+        /** 独立访客 UV */
+        private Long uv;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class DailyCountVO {
+
+        private String date;
+
+        private Long count;
     }
 }

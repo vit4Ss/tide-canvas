@@ -18,12 +18,16 @@ import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 
 @Slf4j
 @Aspect
 @Component
 @RequiredArgsConstructor
 public class OperateLogAspect {
+
+    /** 操作日志统一记录北京时间，避免受 JVM 默认时区影响 */
+    private static final ZoneId BEIJING_ZONE = ZoneId.of("Asia/Shanghai");
 
     private final SysLogMapper logMapper;
 
@@ -45,7 +49,7 @@ public class OperateLogAspect {
                 HttpServletRequest request = attrs.getRequest();
                 logDO.setIp(IpUtil.getClientIp(request));
             }
-            logDO.setCreateTime(LocalDateTime.now());
+            logDO.setCreateTime(LocalDateTime.now(BEIJING_ZONE));
             logMapper.insert(logDO);
         } catch (Exception e) {
             log.warn("记录操作日志失败", e);

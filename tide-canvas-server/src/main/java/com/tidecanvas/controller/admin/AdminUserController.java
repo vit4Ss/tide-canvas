@@ -7,6 +7,7 @@ import com.tidecanvas.common.Result;
 import com.tidecanvas.common.ResultCode;
 import com.tidecanvas.exception.BusinessException;
 import com.tidecanvas.mapper.SysUserMapper;
+import com.tidecanvas.annotation.OperateLog;
 import com.tidecanvas.model.dto.AdminUserUpdateDTO;
 import com.tidecanvas.model.entity.SysUserDO;
 import com.tidecanvas.model.query.AdminUserQuery;
@@ -64,6 +65,7 @@ public class AdminUserController {
     }
 
     @Operation(summary = "编辑用户")
+    @OperateLog(action = "编辑用户", target = "用户管理")
     @PutMapping("/{id}")
     public Result<Void> update(@PathVariable Long id, @Valid @RequestBody AdminUserUpdateDTO dto) {
         SysUserDO user = userMapper.selectById(id);

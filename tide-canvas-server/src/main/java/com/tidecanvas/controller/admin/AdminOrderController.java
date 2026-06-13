@@ -5,6 +5,7 @@ import com.tidecanvas.common.Result;
 import com.tidecanvas.model.query.AdminOrderQuery;
 import com.tidecanvas.model.vo.RechargeOrderVO;
 import com.tidecanvas.service.OrderService;
+import com.tidecanvas.annotation.OperateLog;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -36,6 +37,7 @@ public class AdminOrderController {
     }
 
     @Operation(summary = "手动标记已支付")
+    @OperateLog(action = "确认订单支付", target = "订单管理")
     @PostMapping("/{id}/pay")
     public Result<Void> markPaid(@PathVariable Long id) {
         orderService.payOrder(id);

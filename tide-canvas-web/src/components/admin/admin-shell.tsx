@@ -7,6 +7,7 @@ import { Layout, Menu } from "antd";
 import {
   LayoutDashboard, Users, FileImage, Bot, Image as ImageIcon, FolderOpen,
   ScrollText, Settings, Layers, Coins, PenTool, ShoppingCart, Ticket, Mail,
+  Activity, LogIn,
 } from "lucide-react";
 
 const { Sider, Header, Content } = Layout;
@@ -27,6 +28,8 @@ const MENU = [
   { key: "/admin/banners", icon: <ImageIcon size={16} />, label: "Banner 管理" },
   { key: "/admin/files", icon: <FolderOpen size={16} />, label: "文件管理" },
   { key: "/admin/logs", icon: <ScrollText size={16} />, label: "系统日志" },
+  { key: "/admin/access-logs", icon: <Activity size={16} />, label: "访问日志" },
+  { key: "/admin/login-logs", icon: <LogIn size={16} />, label: "登录日志" },
   { key: "/admin/email-templates", icon: <Mail size={16} />, label: "邮件模板" },
   { key: "/admin/settings", icon: <Settings size={16} />, label: "系统设置" },
 ];

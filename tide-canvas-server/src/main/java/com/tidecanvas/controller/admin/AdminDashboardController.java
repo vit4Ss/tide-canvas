@@ -3,6 +3,7 @@ package com.tidecanvas.controller.admin;
 import com.tidecanvas.common.Result;
 import com.tidecanvas.mapper.*;
 import com.tidecanvas.model.entity.AiHandlerConfigDO;
+import com.tidecanvas.model.vo.ActiveUserVO;
 import com.tidecanvas.model.vo.DashboardChartsVO;
 import com.tidecanvas.model.vo.DashboardOverviewVO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -20,6 +21,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -40,6 +42,8 @@ public class AdminDashboardController {
     private final AiTaskMapper taskMapper;
     private final SysFileMapper fileMapper;
     private final AiHandlerConfigMapper handlerConfigMapper;
+    private final AccessLogMapper accessLogMapper;
+    private final LoginLogMapper loginLogMapper;
 
     @Operation(summary = "数据概览")
     @GetMapping("/overview")
@@ -79,6 +83,29 @@ public class AdminDashboardController {
             log.warn("查询总存储量失败", e);
             vo.setTotalStorageBytes(0L);
         }
+        try {
+            vo.setTodayVisits(nz(accessLogMapper.countTodayPv()));
+            vo.setTodayVisitors(nz(accessLogMapper.countTodayUv()));
+        } catch (Exception e) {
+            log.warn("查询今日访问量失败", e);
+            vo.setTodayVisits(0L);
+            vo.setTodayVisitors(0L);
+        }
+        try {
+            vo.setTodayLogins(nz(loginLogMapper.countTodayLogins()));
+        } catch (Exception e) {
+            log.warn("查询今日登录数失败", e);
+            vo.setTodayLogins(0L);
+        }
+        try {
+            LocalDate today = LocalDate.now();
+            vo.setActiveWeek(nz(userMapper.countActiveSince(today.minusDays(6) + " 00:00:00")));
+            vo.setActiveMonth(nz(userMapper.countActiveSince(today.minusDays(29) + " 00:00:00")));
+        } catch (Exception e) {
+            log.warn("查询活跃用户(周/月)失败", e);
+            vo.setActiveWeek(0L);
+            vo.setActiveMonth(0L);
+        }
         return Result.success(vo);
     }
 
@@ -94,10 +121,15 @@ public class AdminDashboardController {
         Map<String, Long> activeUsersByDay = toDateCountMap(userMapper.countActiveByDateRange(start, end));
         Map<String, Long> projectsByDay = toDateCountMap(projectMapper.countByDateRange(start, end));
         Map<String, Long> aiCallsByDay = toDateCountMap(taskMapper.countByDateRange(start, end));
+        Map<String, Long> pvByDay = safeDateCountMap(() -> accessLogMapper.pvByDateRange(start, end));
+        Map<String, Long> uvByDay = safeDateCountMap(() -> accessLogMapper.uvByDateRange(start, end));
+        Map<String, Long> loginByDay = safeDateCountMap(() -> loginLogMapper.loginByDateRange(start, end));
 
         // 逐日补零,保证图表横轴连续
         List<DashboardChartsVO.DailyTrendVO> userTrend = new ArrayList<>();
         List<DashboardChartsVO.DailyCreationVO> dailyCreation = new ArrayList<>();
+        List<DashboardChartsVO.DailyVisitVO> visitTrend = new ArrayList<>();
+        List<DashboardChartsVO.DailyCountVO> loginTrend = new ArrayList<>();
         for (int i = 0; i < TREND_DAYS; i++) {
             LocalDate day = startDay.plusDays(i);
             String key = day.toString();
@@ -106,6 +138,9 @@ public class AdminDashboardController {
                     newUsersByDay.getOrDefault(key, 0L), activeUsersByDay.getOrDefault(key, 0L)));
             dailyCreation.add(new DashboardChartsVO.DailyCreationVO(label,
                     projectsByDay.getOrDefault(key, 0L), aiCallsByDay.getOrDefault(key, 0L)));
+            visitTrend.add(new DashboardChartsVO.DailyVisitVO(label,
+                    pvByDay.getOrDefault(key, 0L), uvByDay.getOrDefault(key, 0L)));
+            loginTrend.add(new DashboardChartsVO.DailyCountVO(label, loginByDay.getOrDefault(key, 0L)));
         }
 
         DashboardChartsVO vo = new DashboardChartsVO();
@@ -113,7 +148,20 @@ public class AdminDashboardController {
         vo.setDailyCreation(dailyCreation);
         vo.setAiDistribution(buildAiDistribution());
         vo.setModelUsage(buildModelUsage());
+        vo.setVisitTrend(visitTrend);
+        vo.setLoginTrend(loginTrend);
         return Result.success(vo);
+    }
+
+    @Operation(summary = "最近活跃用户")
+    @GetMapping("/active-users")
+    public Result<List<ActiveUserVO>> activeUsers() {
+        try {
+            return Result.success(userMapper.selectActiveUsers(10));
+        } catch (Exception e) {
+            log.warn("查询活跃用户列表失败", e);
+            return Result.success(new ArrayList<>());
+        }
     }
 
     /**
@@ -152,6 +200,20 @@ public class AdminDashboardController {
                             name != null ? name.toString() : "未知模型", readCount(row, "callCount"));
                 })
                 .collect(Collectors.toList());
+    }
+
+    private long nz(Long value) {
+        return value != null ? value : 0L;
+    }
+
+    /** 包一层 try/catch：迁移前 access_log/login_log 表可能尚未建,聚合失败时返回空 map 不影响整体面板 */
+    private Map<String, Long> safeDateCountMap(Supplier<List<Map<String, Object>>> supplier) {
+        try {
+            return toDateCountMap(supplier.get());
+        } catch (Exception e) {
+            log.warn("查询每日趋势失败", e);
+            return new HashMap<>();
+        }
     }
 
     private Map<String, Long> toDateCountMap(List<Map<String, Object>> rows) {

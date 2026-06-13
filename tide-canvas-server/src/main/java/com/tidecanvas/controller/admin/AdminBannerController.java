@@ -9,6 +9,7 @@ import com.tidecanvas.model.dto.BannerCreateDTO;
 import com.tidecanvas.model.dto.BannerUpdateDTO;
 import com.tidecanvas.model.entity.SysBannerDO;
 import com.tidecanvas.model.vo.BannerVO;
+import com.tidecanvas.annotation.OperateLog;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -40,6 +41,7 @@ public class AdminBannerController {
     }
 
     @Operation(summary = "新增Banner")
+    @OperateLog(action = "新增Banner", target = "Banner管理")
     @PostMapping
     public Result<BannerVO> create(@Valid @RequestBody BannerCreateDTO dto) {
         SysBannerDO banner = new SysBannerDO();
@@ -84,6 +86,7 @@ public class AdminBannerController {
     }
 
     @Operation(summary = "删除Banner")
+    @OperateLog(action = "删除Banner", target = "Banner管理")
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
         bannerMapper.deleteById(id);

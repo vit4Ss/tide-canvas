@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Table, Input, Select, DatePicker, Space, Tag, Alert, Tooltip } from "antd";
+import { Table, Input, Select, DatePicker, Space, Tag, Alert, Tooltip, Button, Popconfirm } from "antd";
 import type { ColumnsType } from "antd/es/table";
+import { DeleteOutlined, ClearOutlined } from "@ant-design/icons";
 import { adminApi } from "@/lib/api";
+import { toast } from "@/components/shared/toast";
 import { AdminPageHead } from "@/components/admin/page-head";
 import type { LogVO, LogQuery } from "@/types/admin";
 import type { PageData } from "@/types/api";
@@ -11,18 +13,20 @@ import type { PageData } from "@/types/api";
 const { RangePicker } = DatePicker;
 const PAGE_SIZE = 20;
 
+// 选项值需与后端 @OperateLog(action=...) 记录的中文完全一致（后端按 action 精确匹配筛选）
 const ACTION_OPTIONS = [
   { value: "", label: "全部操作" },
-  { value: "LOGIN", label: "登录" },
-  { value: "LOGOUT", label: "登出" },
-  { value: "CREATE", label: "创建" },
-  { value: "UPDATE", label: "更新" },
-  { value: "DELETE", label: "删除" },
-  { value: "UPLOAD", label: "上传" },
-  { value: "DOWNLOAD", label: "下载" },
-  { value: "AI_GENERATE", label: "AI生成" },
-  { value: "AUDIT", label: "审核" },
-  { value: "EXPORT", label: "导出" },
+  { value: "编辑用户", label: "编辑用户" },
+  { value: "调整积分", label: "调整积分" },
+  { value: "退还积分", label: "退还积分" },
+  { value: "审核内容", label: "审核内容" },
+  { value: "授予作者", label: "授予作者" },
+  { value: "撤销作者", label: "撤销作者" },
+  { value: "确认订单支付", label: "确认订单支付" },
+  { value: "生成兑换码", label: "生成兑换码" },
+  { value: "新增Banner", label: "新增Banner" },
+  { value: "删除Banner", label: "删除Banner" },
+  { value: "更新配置", label: "更新配置" },
 ];
 
 export default function AdminLogsPage() {
@@ -61,6 +65,27 @@ export default function AdminLogsPage() {
 
   useEffect(() => { loadLogs(1); }, []);
 
+  const handleDelete = async (id: number) => {
+    const res = await adminApi.logs.remove(id);
+    if (res.success) {
+      toast.success("已删除");
+      loadLogs();
+    } else {
+      toast.error(res.message || "删除失败");
+    }
+  };
+
+  const handleClear = async () => {
+    const res = await adminApi.logs.clear();
+    if (res.success) {
+      toast.success("已清空日志");
+      setPageNum(1);
+      loadLogs(1);
+    } else {
+      toast.error(res.message || "清空失败");
+    }
+  };
+
   const columns: ColumnsType<LogVO> = [
     { title: "用户", dataIndex: "username", key: "username", render: (v) => <span style={{ fontWeight: 500 }}>{v || "-"}</span> },
     { title: "操作", dataIndex: "action", key: "action", render: (v: string) => <Tag>{v}</Tag> },
@@ -71,6 +96,13 @@ export default function AdminLogsPage() {
     },
     { title: "IP", dataIndex: "ip", key: "ip", responsive: ["lg"], render: (v) => <span style={{ fontFamily: "monospace", fontSize: 12, color: "#bfbfbf" }}>{v || "-"}</span> },
     { title: "时间", dataIndex: "createTime", key: "createTime", render: (v: string) => v ? new Date(v).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "-" },
+    {
+      title: "操作", key: "actions", fixed: "right", width: 70, render: (_, row) => (
+        <Popconfirm title="确定删除该日志？" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => handleDelete(row.id)}>
+          <Button type="text" size="small" danger icon={<DeleteOutlined />} />
+        </Popconfirm>
+      ),
+    },
   ];
 
   return (
@@ -78,18 +110,23 @@ export default function AdminLogsPage() {
       <AdminPageHead title="系统日志" desc={`共 ${total} 条记录`} />
       {error && <Alert type="error" message={error} showIcon closable onClose={() => setError("")} />}
 
-      <Space wrap>
-        <Input.Search placeholder="搜索操作详情..." allowClear enterButton style={{ width: 260 }}
-          onSearch={(v) => { setKeyword(v); setPageNum(1); loadLogs(1, v, actionFilter, range); }} />
-        <Select style={{ width: 140 }} value={actionFilter} options={ACTION_OPTIONS}
-          onChange={(v) => { setActionFilter(v); setPageNum(1); loadLogs(1, keyword, v, range); }} />
-        <RangePicker
-          onChange={(_, ds) => {
-            const r = { start: ds?.[0] ? `${ds[0]} 00:00:00` : undefined, end: ds?.[1] ? `${ds[1]} 23:59:59` : undefined };
-            setRange(r); setPageNum(1); loadLogs(1, keyword, actionFilter, r);
-          }}
-        />
-      </Space>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <Space wrap>
+          <Input.Search placeholder="搜索操作详情..." allowClear enterButton style={{ width: 260 }}
+            onSearch={(v) => { setKeyword(v); setPageNum(1); loadLogs(1, v, actionFilter, range); }} />
+          <Select style={{ width: 150 }} value={actionFilter} options={ACTION_OPTIONS}
+            onChange={(v) => { setActionFilter(v); setPageNum(1); loadLogs(1, keyword, v, range); }} />
+          <RangePicker
+            onChange={(_, ds) => {
+              const r = { start: ds?.[0] ? `${ds[0]} 00:00:00` : undefined, end: ds?.[1] ? `${ds[1]} 23:59:59` : undefined };
+              setRange(r); setPageNum(1); loadLogs(1, keyword, actionFilter, r);
+            }}
+          />
+        </Space>
+        <Popconfirm title="确定清空全部日志？此操作不可恢复" okText="清空" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={handleClear}>
+          <Button danger icon={<ClearOutlined />} disabled={total === 0}>清空日志</Button>
+        </Popconfirm>
+      </div>
 
       <Table<LogVO>
         rowKey="id"

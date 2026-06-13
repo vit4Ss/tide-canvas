@@ -17,6 +17,7 @@ import type {
   AdminUserUpdateDTO, BannerVO, BannerCreateDTO, BannerUpdateDTO,
   AiProviderVO, AiProviderCreateDTO, AiProviderUpdateDTO,
   LogVO, LogQuery, ContentVO, ContentQuery,
+  AccessLogVO, AccessLogQuery, LoginLogVO, LoginLogQuery, ActiveUserVO,
 } from "@/types/admin";
 import type {
   PointsBalanceVO, PointsTransactionVO, PointsTransactionQuery, CheckinStatusVO, CheckinCalendarVO,
@@ -178,6 +179,8 @@ export const adminApi = {
       http.get<DashboardOverviewVO>("/api/admin/dashboard/overview"),
     charts: () =>
       http.get<DashboardChartsVO>("/api/admin/dashboard/charts"),
+    activeUsers: () =>
+      http.get<ActiveUserVO[]>("/api/admin/dashboard/active-users"),
   },
   users: {
     list: (query: AdminUserQuery) =>
@@ -255,6 +258,20 @@ export const adminApi = {
   logs: {
     list: (query: LogQuery) =>
       http.get<PageResult<LogVO>["data"]>("/api/admin/logs", toParams(query)),
+    remove: (id: number) => http.delete<void>(`/api/admin/logs/${id}`),
+    clear: () => http.delete<void>("/api/admin/logs"),
+  },
+  accessLogs: {
+    list: (query: AccessLogQuery) =>
+      http.get<PageResult<AccessLogVO>["data"]>("/api/admin/access-logs", toParams(query)),
+    remove: (id: number) => http.delete<void>(`/api/admin/access-logs/${id}`),
+    clear: () => http.delete<void>("/api/admin/access-logs"),
+  },
+  loginLogs: {
+    list: (query: LoginLogQuery) =>
+      http.get<PageResult<LoginLogVO>["data"]>("/api/admin/login-logs", toParams(query)),
+    remove: (id: number) => http.delete<void>(`/api/admin/login-logs/${id}`),
+    clear: () => http.delete<void>("/api/admin/login-logs"),
   },
   points: {
     transactions: (query: PointsTransactionQuery) =>

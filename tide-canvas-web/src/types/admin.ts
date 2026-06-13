@@ -10,6 +10,11 @@ export interface DashboardOverviewVO {
   totalProjects: number;
   todayNewProjects: number;
   totalStorageBytes: number;
+  todayVisits: number;
+  todayVisitors: number;
+  todayLogins: number;
+  activeWeek: number;
+  activeMonth: number;
 }
 
 export interface DailyTrendVO {
@@ -29,11 +34,33 @@ export interface NameValueVO {
   value: number;
 }
 
+export interface DailyVisitVO {
+  date: string;
+  pv: number;
+  uv: number;
+}
+
+export interface DailyCountVO {
+  date: string;
+  count: number;
+}
+
 export interface DashboardChartsVO {
   userTrend: DailyTrendVO[];
   aiDistribution: NameValueVO[];
   dailyCreation: DailyCreationVO[];
   modelUsage: NameValueVO[];
+  visitTrend: DailyVisitVO[];
+  loginTrend: DailyCountVO[];
+}
+
+export interface ActiveUserVO {
+  id: number;
+  username: string;
+  nickname: string;
+  avatar: string;
+  points: number;
+  lastLoginTime: string;
 }
 
 export interface AdminUserVO extends UserVO {
@@ -117,6 +144,46 @@ export interface LogQuery extends PageQuery {
   userId?: number;
   action?: string;
   keyword?: string;
+  startTime?: string;
+  endTime?: string;
+}
+
+export interface AccessLogVO {
+  id: number;
+  userId: number | null;
+  username: string | null;
+  method: string;
+  path: string;
+  query: string | null;
+  status: number;
+  durationMs: number;
+  ip: string;
+  userAgent: string | null;
+  createTime: string;
+}
+
+export interface AccessLogQuery extends PageQuery {
+  userId?: number;
+  path?: string;
+  keyword?: string;
+  startTime?: string;
+  endTime?: string;
+}
+
+export interface LoginLogVO {
+  id: number;
+  userId: number | null;
+  username: string;
+  status: number;
+  failReason: string | null;
+  ip: string;
+  userAgent: string | null;
+  createTime: string;
+}
+
+export interface LoginLogQuery extends PageQuery {
+  keyword?: string;
+  status?: number;
   startTime?: string;
   endTime?: string;
 }

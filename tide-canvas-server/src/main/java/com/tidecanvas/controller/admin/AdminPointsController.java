@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.tidecanvas.common.PageResult;
 import com.tidecanvas.common.Result;
 import com.tidecanvas.common.ResultCode;
+import com.tidecanvas.annotation.OperateLog;
 import com.tidecanvas.enums.PointsTransactionTypeEnum;
 import com.tidecanvas.exception.BusinessException;
 import com.tidecanvas.mapper.AiTaskMapper;
@@ -46,6 +47,7 @@ public class AdminPointsController {
     }
 
     @Operation(summary = "手动调整用户积分")
+    @OperateLog(action = "调整积分", target = "积分管理")
     @PostMapping("/adjust")
     public Result<Void> adjust(@Valid @RequestBody AdminPointsAdjustDTO dto) {
         if (dto.getAmount() == Integer.MIN_VALUE) {
@@ -62,6 +64,7 @@ public class AdminPointsController {
     }
 
     @Operation(summary = "对失败任务退还积分")
+    @OperateLog(action = "退还积分", target = "积分管理")
     @PostMapping("/refund-task")
     @Transactional(rollbackFor = Exception.class)
     public Result<Integer> refundTask(@Valid @RequestBody AdminTaskRefundDTO dto) {

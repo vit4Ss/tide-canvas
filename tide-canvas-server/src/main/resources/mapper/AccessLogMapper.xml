@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.tidecanvas.mapper.AccessLogMapper">
+
+    <!-- 今日访问量 PV -->
+    <select id="countTodayPv" resultType="java.lang.Long">
+        SELECT COUNT(*) FROM access_log WHERE DATE(create_time) = CURDATE()
+    </select>
+
+    <!-- 今日独立访客 UV(按 IP 去重) -->
+    <select id="countTodayUv" resultType="java.lang.Long">
+        SELECT COUNT(DISTINCT ip) FROM access_log WHERE DATE(create_time) = CURDATE()
+    </select>
+
+    <!-- 每日 PV -->
+    <select id="pvByDateRange" resultType="java.util.Map">
+        SELECT DATE(create_time) AS date, COUNT(*) AS count
+        FROM access_log
+        WHERE create_time BETWEEN #{startDate} AND #{endDate}
+        GROUP BY DATE(create_time)
+        ORDER BY date
+    </select>
+
+    <!-- 每日 UV(按 IP 去重) -->
+    <select id="uvByDateRange" resultType="java.util.Map">
+        SELECT DATE(create_time) AS date, COUNT(DISTINCT ip) AS count
+        FROM access_log
+        WHERE create_time BETWEEN #{startDate} AND #{endDate}
+        GROUP BY DATE(create_time)
+        ORDER BY date
+    </select>
+
+    <!-- 热门接口 Top N -->
+    <select id="topPaths" resultType="java.util.Map">
+        SELECT path AS name, COUNT(*) AS value
+        FROM access_log
+        WHERE create_time BETWEEN #{startDate} AND #{endDate}
+        GROUP BY path
+        ORDER BY value DESC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 清理过期访问日志 -->
+    <delete id="deleteBefore">
+        DELETE FROM access_log WHERE create_time &lt; #{before}
+    </delete>
+
+</mapper>

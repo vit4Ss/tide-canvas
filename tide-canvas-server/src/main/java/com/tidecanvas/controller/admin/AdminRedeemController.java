@@ -6,6 +6,7 @@ import com.tidecanvas.model.dto.GenerateRedeemDTO;
 import com.tidecanvas.model.query.RedeemCodeQuery;
 import com.tidecanvas.model.vo.RedeemCodeVO;
 import com.tidecanvas.service.RedeemService;
+import com.tidecanvas.annotation.OperateLog;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -24,6 +25,7 @@ public class AdminRedeemController {
     private final RedeemService redeemService;
 
     @Operation(summary = "批量生成兑换码")
+    @OperateLog(action = "生成兑换码", target = "兑换码")
     @PostMapping("/generate")
     public Result<List<String>> generate(@Valid @RequestBody GenerateRedeemDTO dto) {
         return Result.success(redeemService.generate(dto));
