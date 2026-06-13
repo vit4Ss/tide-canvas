@@ -7,6 +7,7 @@ import { DeleteOutlined, ClearOutlined } from "@ant-design/icons";
 import { adminApi } from "@/lib/api";
 import { toast } from "@/components/shared/toast";
 import { AdminPageHead } from "@/components/admin/page-head";
+import { formatDate } from "@/lib/utils";
 import type { LogVO, LogQuery } from "@/types/admin";
 import type { PageData } from "@/types/api";
 
@@ -95,7 +96,7 @@ export default function AdminLogsPage() {
         v ? <Tooltip title={v}><span style={{ display: "inline-block", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#8c8c8c" }}>{v}</span></Tooltip> : <span style={{ color: "#bfbfbf" }}>-</span>,
     },
     { title: "IP", dataIndex: "ip", key: "ip", responsive: ["lg"], render: (v) => <span style={{ fontFamily: "monospace", fontSize: 12, color: "#bfbfbf" }}>{v || "-"}</span> },
-    { title: "时间", dataIndex: "createTime", key: "createTime", render: (v: string) => v ? new Date(v).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "-" },
+    { title: "时间", dataIndex: "createTime", key: "createTime", render: (v: string) => v ? formatDate(v) : "-" },
     {
       title: "操作", key: "actions", fixed: "right", width: 70, render: (_, row) => (
         <Popconfirm title="确定删除该日志？" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => handleDelete(row.id)}>

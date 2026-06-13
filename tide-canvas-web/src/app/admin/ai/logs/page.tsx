@@ -7,6 +7,7 @@ import { ReloadOutlined, RollbackOutlined, StopOutlined } from "@ant-design/icon
 import { adminApi, type BanInfo } from "@/lib/api";
 import { toast } from "@/components/shared";
 import { AdminPageHead } from "@/components/admin/page-head";
+import { formatDate } from "@/lib/utils";
 import type { AiGenerationLogVO } from "@/types/ai";
 
 const PAGE_SIZE = 20;
@@ -134,7 +135,7 @@ export default function AdminAiLogsPage() {
   };
 
   const columns: ColumnsType<AiGenerationLogVO> = [
-    { title: "时间", dataIndex: "createTime", key: "createTime", render: (v: string) => <span style={{ fontSize: 12, color: "#8c8c8c", whiteSpace: "nowrap" }}>{v?.replace("T", " ").slice(0, 19)}</span> },
+    { title: "时间", dataIndex: "createTime", key: "createTime", render: (v: string) => <span style={{ fontSize: 12, color: "#8c8c8c", whiteSpace: "nowrap" }}>{v ? formatDate(v) : "-"}</span> },
     { title: "类型", dataIndex: "operationType", key: "operationType", render: (t: string) => <Tag color={OP_TYPE_COLOR[t] || "default"}>{OP_TYPE_LABEL[t] || t || "AI 生成"}</Tag> },
     { title: "用户", key: "user", render: (_, l) => <span style={{ fontSize: 12 }}>{l.userName || "-"}{l.userId != null && <span style={{ color: "#bfbfbf" }}> #{l.userId}</span>}</span> },
     { title: "画布", dataIndex: "projectName", key: "projectName", responsive: ["lg"], ellipsis: true, render: (v) => v || "-" },

@@ -6,6 +6,7 @@ import type { ColumnsType } from "antd/es/table";
 import { DownloadOutlined, DeleteOutlined, FileOutlined, HddOutlined } from "@ant-design/icons";
 import { http, toParams } from "@/lib/http";
 import { AdminPageHead } from "@/components/admin/page-head";
+import { formatDate } from "@/lib/utils";
 import type { PageData } from "@/types/api";
 import type { FileVO } from "@/types/file";
 
@@ -83,7 +84,7 @@ export default function AdminFilesPage() {
     { title: "类型", dataIndex: "fileType", key: "fileType", render: (t: string) => { const tag = TYPE_TAG[t] ?? TYPE_TAG.other; return <Tag color={tag.color}>{tag.label}</Tag>; } },
     { title: "大小", dataIndex: "fileSize", key: "fileSize", render: (v: number) => <span style={{ color: "#8c8c8c" }}>{formatFileSize(v)}</span> },
     { title: "存储", dataIndex: "storageType", key: "storageType", responsive: ["md"], render: (v) => <Tag>{v ?? "local"}</Tag> },
-    { title: "上传时间", dataIndex: "createTime", key: "createTime", responsive: ["lg"], render: (v: string) => v ? new Date(v).toLocaleDateString("zh-CN") : "-" },
+    { title: "上传时间", dataIndex: "createTime", key: "createTime", responsive: ["lg"], render: (v: string) => v ? formatDate(v) : "-" },
     {
       title: "操作", key: "action", render: (_, f) => (
         <Space size={0}>

@@ -8,6 +8,7 @@ import { Coins } from "lucide-react";
 import { adminApi } from "@/lib/api";
 import { toast } from "@/components/shared/toast";
 import { AdminPageHead } from "@/components/admin/page-head";
+import { formatDate } from "@/lib/utils";
 import type { UserVO } from "@/types/user";
 import type { PageData } from "@/types/api";
 
@@ -128,7 +129,7 @@ export default function AdminUsersPage() {
     { title: "状态", dataIndex: "status", key: "status", render: (s: number) => { const t = STATUS_TAG[s] ?? STATUS_TAG[1]; return <Tag color={t.color}>{t.label}</Tag>; } },
     { title: "积分", dataIndex: "points", key: "points", render: (v) => <span style={{ fontWeight: 500 }}>{v ?? 0}</span> },
     { title: "签约作者", dataIndex: "isAuthor", key: "isAuthor", responsive: ["lg"], render: (v: number) => (v === 1 ? <Tag color="gold">是</Tag> : <span style={{ color: "#bfbfbf" }}>否</span>) },
-    { title: "注册时间", dataIndex: "createTime", key: "createTime", responsive: ["lg"], render: (v: string) => (v ? new Date(v).toLocaleDateString("zh-CN") : "-") },
+    { title: "注册时间", dataIndex: "createTime", key: "createTime", responsive: ["lg"], render: (v: string) => (v ? formatDate(v) : "-") },
     {
       title: "操作", key: "action", render: (_, u) => (
         <Space size={4}>

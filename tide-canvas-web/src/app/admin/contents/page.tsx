@@ -6,6 +6,7 @@ import type { ColumnsType } from "antd/es/table";
 import { CheckOutlined, StopOutlined, FileImageOutlined } from "@ant-design/icons";
 import { adminApi } from "@/lib/api";
 import { AdminPageHead } from "@/components/admin/page-head";
+import { formatDate } from "@/lib/utils";
 import type { ContentVO, ContentQuery } from "@/types/admin";
 import type { PageData } from "@/types/api";
 
@@ -66,7 +67,7 @@ export default function AdminContentsPage() {
     { title: "作品名称", dataIndex: "name", key: "name", ellipsis: true, render: (v) => <span style={{ fontWeight: 500 }}>{v}</span> },
     { title: "创建者", dataIndex: "ownerName", key: "ownerName", responsive: ["md"], render: (v) => <span style={{ color: "#8c8c8c" }}>{v}</span> },
     { title: "状态", dataIndex: "status", key: "status", render: (s: number) => { const t = STATUS_TAG[s] ?? STATUS_TAG[0]; return <Tag color={t.color}>{t.label}</Tag>; } },
-    { title: "创建时间", dataIndex: "createTime", key: "createTime", responsive: ["lg"], render: (v: string) => v ? new Date(v).toLocaleDateString("zh-CN") : "-" },
+    { title: "创建时间", dataIndex: "createTime", key: "createTime", responsive: ["lg"], render: (v: string) => v ? formatDate(v) : "-" },
     {
       title: "操作", key: "action", render: (_, item) => (
         <Space size={4}>
