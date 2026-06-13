@@ -152,6 +152,7 @@ public class PointsServiceImpl implements PointsService {
     private PointsTransactionVO toTransactionVO(PointsTransactionDO transaction) {
         PointsTransactionVO vo = new PointsTransactionVO();
         vo.setId(transaction.getId());
+        vo.setUserId(transaction.getUserId());
         vo.setAmount(transaction.getAmount());
         vo.setBalanceAfter(transaction.getBalanceAfter());
         vo.setType(transaction.getType());

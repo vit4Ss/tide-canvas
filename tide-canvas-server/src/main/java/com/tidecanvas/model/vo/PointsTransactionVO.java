@@ -12,6 +12,8 @@ public class PointsTransactionVO {
 
     private Long id;
 
+    private Long userId;
+
     private Integer amount;
 
     private Integer balanceAfter;

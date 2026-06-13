@@ -53,6 +53,7 @@ export default function AdminPointsPage() {
 
   const columns: ColumnsType<PointsTransactionVO> = [
     { title: "ID", dataIndex: "id", key: "id", render: (v) => <span style={{ fontFamily: "monospace", fontSize: 12 }}>{v}</span> },
+    { title: "用户ID", dataIndex: "userId", key: "userId", render: (v) => <span style={{ fontFamily: "monospace", fontSize: 12 }}>{v}</span> },
     { title: "类型", dataIndex: "type", key: "type", render: (t: number, row) => <Tag>{row.typeName || POINTS_TYPE_NAMES[t] || "未知"}</Tag> },
     {
       title: "金额", dataIndex: "amount", key: "amount", render: (v: number) => (

@@ -7,6 +7,7 @@ export interface PointsBalanceVO {
 
 export interface PointsTransactionVO {
   id: number;
+  userId: number;
   amount: number;
   balanceAfter: number;
   type: number;
