@@ -5,6 +5,7 @@ import { Table, Input, DatePicker, Space, Tag, Alert, Tooltip, Button, Popconfir
 import type { ColumnsType } from "antd/es/table";
 import { DeleteOutlined, ClearOutlined } from "@ant-design/icons";
 import { adminApi } from "@/lib/api";
+import { useHasPerm } from "@/stores/use-permission-store";
 import { toast } from "@/components/shared/toast";
 import { AdminPageHead } from "@/components/admin/page-head";
 import { formatDate } from "@/lib/utils";
@@ -26,6 +27,7 @@ function statusColor(status: number): string {
 }
 
 export default function AdminAccessLogsPage() {
+  const can = useHasPerm();
   const [logs, setLogs] = useState<AccessLogVO[]>([]);
   const [total, setTotal] = useState(0);
   const [pageNum, setPageNum] = useState(1);
@@ -90,9 +92,11 @@ export default function AdminAccessLogsPage() {
     { title: "时间", dataIndex: "createTime", key: "createTime", render: (v: string) => v ? formatDate(v) : "-" },
     {
       title: "操作", key: "actions", fixed: "right", width: 70, render: (_, row) => (
-        <Popconfirm title="确定删除该条记录？" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => handleDelete(row.id)}>
-          <Button type="text" size="small" danger icon={<DeleteOutlined />} />
-        </Popconfirm>
+        can("accesslog:delete") && (
+          <Popconfirm title="确定删除该条记录？" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => handleDelete(row.id)}>
+            <Button type="text" size="small" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
+        )
       ),
     },
   ];
@@ -115,9 +119,11 @@ export default function AdminAccessLogsPage() {
             }}
           />
         </Space>
-        <Popconfirm title="确定清空全部访问日志？此操作不可恢复" okText="清空" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={handleClear}>
-          <Button danger icon={<ClearOutlined />} disabled={total === 0}>清空日志</Button>
-        </Popconfirm>
+        {can("accesslog:delete") && (
+          <Popconfirm title="确定清空全部访问日志？此操作不可恢复" okText="清空" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={handleClear}>
+            <Button danger icon={<ClearOutlined />} disabled={total === 0}>清空日志</Button>
+          </Popconfirm>
+        )}
       </div>
 
       <Table<AccessLogVO>

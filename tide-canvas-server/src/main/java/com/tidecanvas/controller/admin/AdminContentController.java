@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.tidecanvas.common.PageResult;
 import com.tidecanvas.common.Result;
+import com.tidecanvas.annotation.RequiresPermission;
 import com.tidecanvas.annotation.OperateLog;
 import com.tidecanvas.mapper.CanvasProjectMapper;
 import com.tidecanvas.model.entity.CanvasProjectDO;
@@ -27,6 +28,7 @@ public class AdminContentController {
     private final CanvasProjectMapper projectMapper;
 
     @Operation(summary = "内容列表")
+    @RequiresPermission("content:view")
     @GetMapping
     public Result<PageResult<ProjectVO>> list(
             @RequestParam(defaultValue = "1") Integer pageNum,
@@ -50,6 +52,7 @@ public class AdminContentController {
     }
 
     @Operation(summary = "审核内容")
+    @RequiresPermission("content:audit")
     @OperateLog(action = "审核内容", target = "内容管理")
     @PutMapping("/{id}")
     public Result<Void> audit(@PathVariable Long id, @RequestBody Map<String, Integer> body) {

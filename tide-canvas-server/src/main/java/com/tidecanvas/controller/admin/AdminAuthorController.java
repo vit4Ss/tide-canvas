@@ -2,6 +2,7 @@ package com.tidecanvas.controller.admin;
 
 import com.tidecanvas.common.PageResult;
 import com.tidecanvas.common.Result;
+import com.tidecanvas.annotation.RequiresPermission;
 import com.tidecanvas.model.query.AdminUserQuery;
 import com.tidecanvas.model.vo.UserVO;
 import com.tidecanvas.annotation.OperateLog;
@@ -25,12 +26,14 @@ public class AdminAuthorController {
     private final AdminAuthorService adminAuthorService;
 
     @Operation(summary = "作者列表")
+    @RequiresPermission("author:view")
     @GetMapping
     public Result<PageResult<UserVO>> list(AdminUserQuery query) {
         return Result.success(adminAuthorService.listAuthors(query));
     }
 
     @Operation(summary = "授予作者权限")
+    @RequiresPermission("author:manage")
     @OperateLog(action = "授予作者", target = "作者管理")
     @PostMapping("/{userId}/grant")
     public Result<Void> grant(@PathVariable Long userId) {
@@ -39,6 +42,7 @@ public class AdminAuthorController {
     }
 
     @Operation(summary = "撤销作者权限")
+    @RequiresPermission("author:manage")
     @OperateLog(action = "撤销作者", target = "作者管理")
     @PostMapping("/{userId}/revoke")
     public Result<Void> revoke(@PathVariable Long userId) {

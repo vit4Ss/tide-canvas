@@ -5,6 +5,7 @@ import { Table, Tag, Button, Modal, Input, InputNumber, DatePicker, Select, Spac
 import type { ColumnsType } from "antd/es/table";
 import { PlusOutlined, ReloadOutlined, CopyOutlined, DeleteOutlined, StopOutlined, PoweroffOutlined } from "@ant-design/icons";
 import { adminApi } from "@/lib/api";
+import { useHasPerm } from "@/stores/use-permission-store";
 import { toast } from "@/components/shared/toast";
 import { AdminPageHead } from "@/components/admin/page-head";
 import { formatDate } from "@/lib/utils";
@@ -18,6 +19,7 @@ const STATUS_TAG: Record<number, { label: string; color: string }> = {
 };
 
 export default function AdminRedeemPage() {
+  const can = useHasPerm();
   const [list, setList] = useState<RedeemCodeVO[]>([]);
   const [total, setTotal] = useState(0);
   const [pageNum, setPageNum] = useState(1);
@@ -95,20 +97,23 @@ export default function AdminRedeemPage() {
     { title: "状态", dataIndex: "status", key: "status", render: (s: number) => { const t = STATUS_TAG[s] ?? { label: String(s), color: "default" }; return <Tag color={t.color}>{t.label}</Tag>; } },
     { title: "生成者ID", dataIndex: "createdBy", key: "createdBy", responsive: ["md"], render: (v: number | undefined) => v != null ? <span style={{ fontFamily: "monospace", fontSize: 12 }}>{v}</span> : <span style={{ color: "#bfbfbf" }}>-</span> },
     { title: "使用者ID", dataIndex: "usedBy", key: "usedBy", responsive: ["md"], render: (v: number | undefined) => v != null ? <span style={{ fontFamily: "monospace", fontSize: 12 }}>{v}</span> : <span style={{ color: "#bfbfbf" }}>-</span> },
+    { title: "兑换时间", dataIndex: "usedTime", key: "usedTime", responsive: ["lg"], render: (v) => v ? formatDate(v) : <span style={{ color: "#bfbfbf" }}>-</span> },
     { title: "有效期", dataIndex: "expireTime", key: "expireTime", responsive: ["md"], render: (v) => v ? formatDate(v) : "永久" },
     { title: "备注", dataIndex: "remark", key: "remark", responsive: ["lg"], ellipsis: true, render: (v) => v || "-" },
     { title: "创建时间", dataIndex: "createTime", key: "createTime", responsive: ["lg"], render: (v) => v ? formatDate(v) : "-" },
     {
       title: "操作", key: "action", align: "right", render: (_, r) => (
         <Space size={0}>
-          {r.status !== 1 && (
+          {can("redeem:update") && r.status !== 1 && (
             <Button type="text" size="small" title={r.status === 2 ? "启用" : "停用"}
               icon={r.status === 2 ? <PoweroffOutlined style={{ color: "#16a34a" }} /> : <StopOutlined />}
               onClick={() => toggleStatus(r)} />
           )}
-          <Popconfirm title="确定删除该兑换码？" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => del(r.id)}>
-            <Button type="text" size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
+          {can("redeem:delete") && (
+            <Popconfirm title="确定删除该兑换码？" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => del(r.id)}>
+              <Button type="text" size="small" danger icon={<DeleteOutlined />} />
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -127,7 +132,9 @@ export default function AdminRedeemPage() {
               复制选中{selectedKeys.length > 0 ? ` (${selectedKeys.length})` : ""}
             </Button>
             <Button icon={<ReloadOutlined />} onClick={() => void load()} />
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => { setShowGen(true); setGeneratedCodes(null); }}>生成兑换码</Button>
+            {can("redeem:generate") && (
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => { setShowGen(true); setGeneratedCodes(null); }}>生成兑换码</Button>
+            )}
           </Space>
         }
       />

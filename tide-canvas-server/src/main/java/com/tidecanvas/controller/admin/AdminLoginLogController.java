@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.tidecanvas.common.PageResult;
 import com.tidecanvas.common.Result;
+import com.tidecanvas.annotation.RequiresPermission;
 import com.tidecanvas.mapper.LoginLogMapper;
 import com.tidecanvas.model.entity.LoginLogDO;
 import com.tidecanvas.model.query.LoginLogQuery;
@@ -30,6 +31,7 @@ public class AdminLoginLogController {
     private final LoginLogMapper loginLogMapper;
 
     @Operation(summary = "登录日志列表")
+    @RequiresPermission("loginlog:view")
     @GetMapping
     public Result<PageResult<LoginLogVO>> list(LoginLogQuery query) {
         Page<LoginLogDO> page = new Page<>(query.getPageNum(), query.getPageSize());
@@ -51,6 +53,7 @@ public class AdminLoginLogController {
     }
 
     @Operation(summary = "删除登录日志")
+    @RequiresPermission("loginlog:delete")
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
         loginLogMapper.deleteById(id);
@@ -58,6 +61,7 @@ public class AdminLoginLogController {
     }
 
     @Operation(summary = "清空全部登录日志")
+    @RequiresPermission("loginlog:delete")
     @DeleteMapping
     public Result<Void> clear() {
         loginLogMapper.delete(null);

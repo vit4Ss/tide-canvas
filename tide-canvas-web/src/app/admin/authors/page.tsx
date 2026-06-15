@@ -5,12 +5,14 @@ import { Table, Input, Button, Modal, Tag, Avatar, Space, Alert, InputNumber, Po
 import type { ColumnsType } from "antd/es/table";
 import { UserAddOutlined, UserOutlined, CheckCircleOutlined } from "@ant-design/icons";
 import { adminApi } from "@/lib/api";
+import { useHasPerm } from "@/stores/use-permission-store";
 import { AdminPageHead } from "@/components/admin/page-head";
 import type { AdminUserVO } from "@/types/admin";
 
 const PAGE_SIZE = 20;
 
 export default function AdminAuthorsPage() {
+  const can = useHasPerm();
   const [authors, setAuthors] = useState<AdminUserVO[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -86,9 +88,11 @@ export default function AdminAuthorsPage() {
     { title: "邮箱", dataIndex: "email", key: "email", responsive: ["md"], render: (v) => <span style={{ color: "#8c8c8c" }}>{v}</span> },
     {
       title: "操作", key: "action", align: "right", render: (_, a) => (
-        <Popconfirm title="撤销该作者的签约权限？" okText="撤销" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => handleRevoke(a.id)}>
-          <Button danger size="small" loading={revokingId === a.id}>撤销</Button>
-        </Popconfirm>
+        can("author:manage") && (
+          <Popconfirm title="撤销该作者的签约权限？" okText="撤销" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => handleRevoke(a.id)}>
+            <Button danger size="small" loading={revokingId === a.id}>撤销</Button>
+          </Popconfirm>
+        )
       ),
     },
   ];
@@ -98,7 +102,7 @@ export default function AdminAuthorsPage() {
       <AdminPageHead
         title="作者管理"
         desc="管理签约作者的权限"
-        extra={<Button type="primary" icon={<UserAddOutlined />} onClick={() => setGrantOpen(true)}>授权作者</Button>}
+        extra={can("author:manage") && <Button type="primary" icon={<UserAddOutlined />} onClick={() => setGrantOpen(true)}>授权作者</Button>}
       />
       {error && <Alert type="error" message={error} showIcon closable onClose={() => setError("")} />}
 

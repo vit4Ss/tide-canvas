@@ -3,6 +3,7 @@ package com.tidecanvas.controller.admin;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.tidecanvas.common.PageResult;
 import com.tidecanvas.common.Result;
+import com.tidecanvas.annotation.RequiresPermission;
 import com.tidecanvas.common.ResultCode;
 import com.tidecanvas.annotation.OperateLog;
 import com.tidecanvas.enums.PointsTransactionTypeEnum;
@@ -39,6 +40,7 @@ public class AdminPointsController {
     private final PointsTransactionMapper transactionMapper;
 
     @Operation(summary = "积分交易记录列表")
+    @RequiresPermission("points:view")
     @GetMapping("/transactions")
     public Result<PageResult<PointsTransactionVO>> listTransactions(AdminPointsQuery query) {
         PointsTransactionQuery transactionQuery = new PointsTransactionQuery();
@@ -47,6 +49,7 @@ public class AdminPointsController {
     }
 
     @Operation(summary = "手动调整用户积分")
+    @RequiresPermission("points:adjust")
     @OperateLog(action = "调整积分", target = "积分管理")
     @PostMapping("/adjust")
     public Result<Void> adjust(@Valid @RequestBody AdminPointsAdjustDTO dto) {
@@ -64,6 +67,7 @@ public class AdminPointsController {
     }
 
     @Operation(summary = "对失败任务退还积分")
+    @RequiresPermission("points:refund")
     @OperateLog(action = "退还积分", target = "积分管理")
     @PostMapping("/refund-task")
     @Transactional(rollbackFor = Exception.class)

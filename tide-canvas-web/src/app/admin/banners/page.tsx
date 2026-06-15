@@ -5,6 +5,7 @@ import { Table, Button, Modal, Input, InputNumber, Select, Tag, Space, Image as 
 import type { ColumnsType } from "antd/es/table";
 import { PlusOutlined, EditOutlined, DeleteOutlined, EyeInvisibleOutlined, EyeOutlined, UploadOutlined, LinkOutlined } from "@ant-design/icons";
 import { adminApi, uploadFileSmart } from "@/lib/api";
+import { useHasPerm } from "@/stores/use-permission-store";
 import { toast } from "@/components/shared/toast";
 import { AdminPageHead } from "@/components/admin/page-head";
 import type { BannerVO, BannerCreateDTO } from "@/types/admin";
@@ -20,6 +21,7 @@ interface BannerForm {
 const emptyForm: BannerForm = { title: "", imageUrl: "", linkUrl: "", sortOrder: 0, status: 1 };
 
 export default function AdminBannersPage() {
+  const can = useHasPerm();
   const [banners, setBanners] = useState<BannerVO[]>([]);
   const [loading, setLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(false);
@@ -93,11 +95,13 @@ export default function AdminBannersPage() {
     {
       title: "操作", key: "action", render: (_, b) => (
         <Space size={0}>
-          <Button type="text" size="small" icon={b.status === 1 ? <EyeInvisibleOutlined /> : <EyeOutlined />} onClick={() => handleToggle(b)}>{b.status === 1 ? "隐藏" : "显示"}</Button>
-          <Button type="text" size="small" icon={<EditOutlined />} onClick={() => openEdit(b)}>编辑</Button>
-          <Popconfirm title={`删除 Banner「${b.title}」？`} okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => handleDelete(b.id)}>
-            <Button type="text" size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
+          {can("banner:manage") && <Button type="text" size="small" icon={b.status === 1 ? <EyeInvisibleOutlined /> : <EyeOutlined />} onClick={() => handleToggle(b)}>{b.status === 1 ? "隐藏" : "显示"}</Button>}
+          {can("banner:manage") && <Button type="text" size="small" icon={<EditOutlined />} onClick={() => openEdit(b)}>编辑</Button>}
+          {can("banner:manage") && (
+            <Popconfirm title={`删除 Banner「${b.title}」？`} okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => handleDelete(b.id)}>
+              <Button type="text" size="small" danger icon={<DeleteOutlined />} />
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -108,7 +112,7 @@ export default function AdminBannersPage() {
       <AdminPageHead
         title="Banner 管理"
         desc={`共 ${banners.length} 个 Banner，${banners.filter((b) => b.status === 1).length} 个显示中`}
-        extra={<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增 Banner</Button>}
+        extra={can("banner:manage") && <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增 Banner</Button>}
       />
 
       <Table<BannerVO>

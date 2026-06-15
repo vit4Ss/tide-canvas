@@ -5,6 +5,7 @@ import { Table, Input, Segmented, Tag, Button, Space, Alert, Image as AntdImage,
 import type { ColumnsType } from "antd/es/table";
 import { DownloadOutlined, DeleteOutlined, FileOutlined, HddOutlined } from "@ant-design/icons";
 import { http, toParams } from "@/lib/http";
+import { useHasPerm } from "@/stores/use-permission-store";
 import { AdminPageHead } from "@/components/admin/page-head";
 import { formatDate } from "@/lib/utils";
 import type { PageData } from "@/types/api";
@@ -26,6 +27,7 @@ const TYPE_TAG: Record<string, { label: string; color: string }> = {
 };
 
 export default function AdminFilesPage() {
+  const can = useHasPerm();
   const [files, setFiles] = useState<FileVO[]>([]);
   const [total, setTotal] = useState(0);
   const [totalStorageUsed, setTotalStorageUsed] = useState(0);
@@ -89,9 +91,11 @@ export default function AdminFilesPage() {
       title: "操作", key: "action", render: (_, f) => (
         <Space size={0}>
           {f.fileUrl && <Button type="text" size="small" icon={<DownloadOutlined />} href={f.fileUrl} target="_blank" title="下载" />}
-          <Popconfirm title="确定删除该文件？此操作不可撤销。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => handleDelete(f.id)}>
-            <Button type="text" size="small" danger icon={<DeleteOutlined />} loading={deleting === f.id} />
-          </Popconfirm>
+          {can("file:delete") && (
+            <Popconfirm title="确定删除该文件？此操作不可撤销。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => handleDelete(f.id)}>
+              <Button type="text" size="small" danger icon={<DeleteOutlined />} loading={deleting === f.id} />
+            </Popconfirm>
+          )}
         </Space>
       ),
     },

@@ -5,6 +5,7 @@ import { Table, Modal, Input, InputNumber, Select, Button, Tag, Space, AutoCompl
 import type { ColumnsType } from "antd/es/table";
 import { PlusOutlined, EditOutlined, DeleteOutlined, SaveOutlined } from "@ant-design/icons";
 import { adminApi } from "@/lib/api";
+import { useHasPerm } from "@/stores/use-permission-store";
 import { toast } from "@/components/shared/toast";
 import { AdminPageHead } from "@/components/admin/page-head";
 import type { AiProviderVO } from "@/types/admin";
@@ -129,6 +130,7 @@ function PricingMatrix({ corner, rows, cols, pricing, onSet }: {
 }
 
 export default function AdminAiModelsPage() {
+  const can = useHasPerm();
   const [models, setModels] = useState<AdminAiModelVO[]>([]);
   const [providers, setProviders] = useState<AiProviderVO[]>([]);
   const [loading, setLoading] = useState(true);
@@ -251,11 +253,13 @@ export default function AdminAiModelsPage() {
     {
       title: "操作", key: "action", render: (_, m) => (
         <Space size={0}>
-          <Button type="text" size="small" onClick={() => handleToggleStatus(m)} style={{ color: m.status === 1 ? "#ef4444" : "#16a34a" }}>{m.status === 1 ? "禁用" : "启用"}</Button>
-          <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(m)}>编辑</Button>
-          <Popconfirm title={`删除模型「${m.name}」？`} okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => handleDelete(m.id)}>
-            <Button type="text" size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
+          {can("model:manage") && <Button type="text" size="small" onClick={() => handleToggleStatus(m)} style={{ color: m.status === 1 ? "#ef4444" : "#16a34a" }}>{m.status === 1 ? "禁用" : "启用"}</Button>}
+          {can("model:manage") && <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(m)}>编辑</Button>}
+          {can("model:manage") && (
+            <Popconfirm title={`删除模型「${m.name}」？`} okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => handleDelete(m.id)}>
+              <Button type="text" size="small" danger icon={<DeleteOutlined />} />
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -263,7 +267,7 @@ export default function AdminAiModelsPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <AdminPageHead title="模型管理" desc={`共 ${models.length} 个模型`} extra={<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增模型</Button>} />
+      <AdminPageHead title="模型管理" desc={`共 ${models.length} 个模型`} extra={can("model:manage") && <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增模型</Button>} />
 
       <Input.Search placeholder="搜索模型名称、模型ID..." allowClear style={{ maxWidth: 360 }} value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} />
 

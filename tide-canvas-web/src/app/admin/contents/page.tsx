@@ -5,6 +5,7 @@ import { Table, Input, Select, Button, Tag, Space, Alert, Image as AntdImage } f
 import type { ColumnsType } from "antd/es/table";
 import { CheckOutlined, StopOutlined, FileImageOutlined } from "@ant-design/icons";
 import { adminApi } from "@/lib/api";
+import { useHasPerm } from "@/stores/use-permission-store";
 import { AdminPageHead } from "@/components/admin/page-head";
 import { formatDate } from "@/lib/utils";
 import type { ContentVO, ContentQuery } from "@/types/admin";
@@ -18,6 +19,7 @@ const STATUS_TAG: Record<number, { label: string; color: string }> = {
 };
 
 export default function AdminContentsPage() {
+  const can = useHasPerm();
   const [contents, setContents] = useState<ContentVO[]>([]);
   const [total, setTotal] = useState(0);
   const [pageNum, setPageNum] = useState(1);
@@ -71,8 +73,8 @@ export default function AdminContentsPage() {
     {
       title: "操作", key: "action", render: (_, item) => (
         <Space size={4}>
-          {item.status !== 1 && <Button type="text" size="small" icon={<CheckOutlined />} style={{ color: "#16a34a" }} loading={auditing === item.id} onClick={() => handleAudit(item.id, 1)}>通过</Button>}
-          {item.status !== 2 && <Button type="text" size="small" danger icon={<StopOutlined />} loading={auditing === item.id} onClick={() => handleAudit(item.id, 2)}>下架</Button>}
+          {can("content:audit") && item.status !== 1 && <Button type="text" size="small" icon={<CheckOutlined />} style={{ color: "#16a34a" }} loading={auditing === item.id} onClick={() => handleAudit(item.id, 1)}>通过</Button>}
+          {can("content:audit") && item.status !== 2 && <Button type="text" size="small" danger icon={<StopOutlined />} loading={auditing === item.id} onClick={() => handleAudit(item.id, 2)}>下架</Button>}
         </Space>
       ),
     },

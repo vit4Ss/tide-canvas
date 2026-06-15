@@ -6,6 +6,7 @@ import type { ColumnsType } from "antd/es/table";
 import { CoinsIcon } from "lucide-react";
 import { SaveOutlined, CheckOutlined } from "@ant-design/icons";
 import { adminApi } from "@/lib/api";
+import { useHasPerm } from "@/stores/use-permission-store";
 import { AdminPageHead } from "@/components/admin/page-head";
 
 interface HandlerRow {
@@ -16,6 +17,7 @@ interface HandlerRow {
 }
 
 export default function AdminAiHandlersPage() {
+  const can = useHasPerm();
   const [handlers, setHandlers] = useState<HandlerRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingName, setSavingName] = useState<string | null>(null);
@@ -73,9 +75,11 @@ export default function AdminAiHandlersPage() {
     },
     {
       title: "操作", key: "action", render: (_, h) => (
-        savedName === h.handlerName
-          ? <Button size="small" type="primary" icon={<CheckOutlined />} ghost>已保存</Button>
-          : <Button size="small" type="primary" icon={<SaveOutlined />} loading={savingName === h.handlerName} onClick={() => handleSave(h)}>保存</Button>
+        can("handler:manage") && (
+          savedName === h.handlerName
+            ? <Button size="small" type="primary" icon={<CheckOutlined />} ghost>已保存</Button>
+            : <Button size="small" type="primary" icon={<SaveOutlined />} loading={savingName === h.handlerName} onClick={() => handleSave(h)}>保存</Button>
+        )
       ),
     },
   ];

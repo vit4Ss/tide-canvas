@@ -6,10 +6,12 @@ import type { ColumnsType } from "antd/es/table";
 import { UserOutlined, EditOutlined } from "@ant-design/icons";
 import { Coins } from "lucide-react";
 import { adminApi } from "@/lib/api";
+import { useHasPerm } from "@/stores/use-permission-store";
 import { toast } from "@/components/shared/toast";
 import { AdminPageHead } from "@/components/admin/page-head";
 import { formatDate } from "@/lib/utils";
 import type { UserVO } from "@/types/user";
+import type { RoleVO } from "@/types/role";
 import type { PageData } from "@/types/api";
 
 const PAGE_SIZE = 15;
@@ -25,16 +27,18 @@ const STATUS_TAG: Record<number, { label: string; color: string }> = {
 };
 
 export default function AdminUsersPage() {
+  const can = useHasPerm();
   const [users, setUsers] = useState<UserVO[]>([]);
   const [total, setTotal] = useState(0);
   const [pageNum, setPageNum] = useState(1);
   const [keyword, setKeyword] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [roles, setRoles] = useState<RoleVO[]>([]);
 
   // 编辑弹窗
   const [editTarget, setEditTarget] = useState<UserVO | null>(null);
-  const [editForm, setEditForm] = useState({ role: 0, status: 1, apiQuota: 0 });
+  const [editForm, setEditForm] = useState<{ role: number; status: number; apiQuota: number; roleId?: number }>({ role: 0, status: 1, apiQuota: 0 });
   const [saving, setSaving] = useState(false);
 
   // 调积分弹窗
@@ -61,13 +65,14 @@ export default function AdminUsersPage() {
   };
 
   useEffect(() => { loadUsers(1); }, []);
+  useEffect(() => { adminApi.roles.list().then((r) => { if (r.success) setRoles(r.data ?? []); }).catch(() => {}); }, []);
 
   const handleSearch = (v: string) => { setKeyword(v); setPageNum(1); loadUsers(1, v); };
   const handlePageChange = (p: number) => { setPageNum(p); loadUsers(p); };
 
   const openEdit = (user: UserVO) => {
     setEditTarget(user);
-    setEditForm({ role: user.role, status: user.status, apiQuota: user.apiQuota });
+    setEditForm({ role: user.role, status: user.status, apiQuota: user.apiQuota, roleId: user.roleId });
   };
 
   const handleSave = async () => {
@@ -126,6 +131,13 @@ export default function AdminUsersPage() {
     },
     { title: "邮箱", dataIndex: "email", key: "email", responsive: ["md"], render: (v) => <span style={{ color: "var(--ant-color-text-secondary, #8c8c8c)" }}>{v}</span> },
     { title: "角色", dataIndex: "role", key: "role", render: (r: number) => { const t = ROLE_TAG[r] ?? ROLE_TAG[0]; return <Tag color={t.color}>{t.label}</Tag>; } },
+    {
+      title: "管理角色", dataIndex: "roleId", key: "roleId", responsive: ["md"], render: (rid: number | undefined, u) => {
+        if (u.role !== 9) return <span style={{ color: "#bfbfbf" }}>-</span>;
+        const role = roles.find((r) => r.id === rid);
+        return <Tag color="blue">{role?.name ?? "超级管理员"}</Tag>;
+      },
+    },
     { title: "状态", dataIndex: "status", key: "status", render: (s: number) => { const t = STATUS_TAG[s] ?? STATUS_TAG[1]; return <Tag color={t.color}>{t.label}</Tag>; } },
     { title: "积分", dataIndex: "points", key: "points", render: (v) => <span style={{ fontWeight: 500 }}>{v ?? 0}</span> },
     { title: "签约作者", dataIndex: "isAuthor", key: "isAuthor", responsive: ["lg"], render: (v: number) => (v === 1 ? <Tag color="gold">是</Tag> : <span style={{ color: "#bfbfbf" }}>否</span>) },
@@ -133,8 +145,12 @@ export default function AdminUsersPage() {
     {
       title: "操作", key: "action", render: (_, u) => (
         <Space size={4}>
-          <Button size="small" type="text" icon={<Coins size={14} />} style={{ color: "#d97706" }} onClick={() => { setAdjustTarget(u); setAdjustAmount(null); setAdjustRemark(""); }}>调积分</Button>
-          <Button size="small" type="text" icon={<EditOutlined />} onClick={() => openEdit(u)}>编辑</Button>
+          {can("points:adjust") && (
+            <Button size="small" type="text" icon={<Coins size={14} />} style={{ color: "#d97706" }} onClick={() => { setAdjustTarget(u); setAdjustAmount(null); setAdjustRemark(""); }}>调积分</Button>
+          )}
+          {can("user:edit") && (
+            <Button size="small" type="text" icon={<EditOutlined />} onClick={() => openEdit(u)}>编辑</Button>
+          )}
         </Space>
       ),
     },
@@ -167,6 +183,14 @@ export default function AdminUsersPage() {
               <Select style={{ width: "100%" }} value={editForm.role} onChange={(v) => setEditForm({ ...editForm, role: v })}
                 options={[{ value: 0, label: "普通用户" }, { value: 1, label: "VIP" }, { value: 9, label: "管理员" }]} />
             </div>
+            {editForm.role === 9 && (
+              <div>
+                <div style={{ marginBottom: 6 }}>管理角色（决定后台操作权限）</div>
+                <Select style={{ width: "100%" }} value={editForm.roleId} placeholder="选择角色（未选=超级管理员）"
+                  onChange={(v) => setEditForm({ ...editForm, roleId: v })}
+                  options={roles.map((r) => ({ value: r.id, label: r.name }))} />
+              </div>
+            )}
             <div>
               <div style={{ marginBottom: 6 }}>状态</div>
               <Select style={{ width: "100%" }} value={editForm.status} onChange={(v) => setEditForm({ ...editForm, status: v })}

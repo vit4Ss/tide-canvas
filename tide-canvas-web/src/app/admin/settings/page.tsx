@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Card, Input, InputNumber, Switch, Button, Space, Skeleton } from "antd";
 import { SaveOutlined } from "@ant-design/icons";
 import { adminApi } from "@/lib/api";
+import { useHasPerm } from "@/stores/use-permission-store";
 import { toast } from "@/components/shared/toast";
 import { AdminPageHead } from "@/components/admin/page-head";
 
@@ -58,6 +59,7 @@ const SETTING_GROUPS: SettingGroup[] = [
 const ALL_FIELDS = SETTING_GROUPS.flatMap((g) => g.fields);
 
 export default function AdminSettingsPage() {
+  const can = useHasPerm();
   const [settings, setSettings] = useState<Record<string, unknown>>({});
   const [originalSettings, setOriginalSettings] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
@@ -113,7 +115,7 @@ export default function AdminSettingsPage() {
     return <Input style={{ width: 320, maxWidth: "100%" }} placeholder={f.placeholder} value={String(value ?? "")} onChange={(e) => handleChange(f.key, e.target.value)} />;
   };
 
-  const saveBtn = <Button type="primary" icon={<SaveOutlined />} loading={saving} disabled={!hasChanges()} onClick={handleSave}>保存设置</Button>;
+  const saveBtn = can("setting:edit") && <Button type="primary" icon={<SaveOutlined />} loading={saving} disabled={!hasChanges()} onClick={handleSave}>保存设置</Button>;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>

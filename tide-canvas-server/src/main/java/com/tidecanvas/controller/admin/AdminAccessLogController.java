@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.tidecanvas.common.PageResult;
 import com.tidecanvas.common.Result;
+import com.tidecanvas.annotation.RequiresPermission;
 import com.tidecanvas.mapper.AccessLogMapper;
 import com.tidecanvas.model.entity.AccessLogDO;
 import com.tidecanvas.model.query.AccessLogQuery;
@@ -30,6 +31,7 @@ public class AdminAccessLogController {
     private final AccessLogMapper accessLogMapper;
 
     @Operation(summary = "访问日志列表")
+    @RequiresPermission("accesslog:view")
     @GetMapping
     public Result<PageResult<AccessLogVO>> list(AccessLogQuery query) {
         Page<AccessLogDO> page = new Page<>(query.getPageNum(), query.getPageSize());
@@ -52,6 +54,7 @@ public class AdminAccessLogController {
     }
 
     @Operation(summary = "删除访问日志")
+    @RequiresPermission("accesslog:delete")
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
         accessLogMapper.deleteById(id);
@@ -59,6 +62,7 @@ public class AdminAccessLogController {
     }
 
     @Operation(summary = "清空全部访问日志")
+    @RequiresPermission("accesslog:delete")
     @DeleteMapping
     public Result<Void> clear() {
         accessLogMapper.delete(null);

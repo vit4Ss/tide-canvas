@@ -1,6 +1,7 @@
 package com.tidecanvas.controller.admin;
 
 import com.tidecanvas.common.Result;
+import com.tidecanvas.annotation.RequiresPermission;
 import com.tidecanvas.model.dto.EmailTemplatePreviewDTO;
 import com.tidecanvas.model.dto.EmailTemplateSendTestDTO;
 import com.tidecanvas.model.dto.EmailTemplateUpdateDTO;
@@ -29,18 +30,21 @@ public class AdminEmailTemplateController {
     private final EmailTemplateService emailTemplateService;
 
     @Operation(summary = "模板列表")
+    @RequiresPermission("email:view")
     @GetMapping
     public Result<List<EmailTemplateVO>> list() {
         return Result.success(emailTemplateService.listTemplates());
     }
 
     @Operation(summary = "模板详情")
+    @RequiresPermission("email:view")
     @GetMapping("/{id}")
     public Result<EmailTemplateVO> get(@PathVariable Long id) {
         return Result.success(emailTemplateService.getTemplate(id));
     }
 
     @Operation(summary = "更新模板")
+    @RequiresPermission("email:edit")
     @PutMapping("/{id}")
     public Result<Void> update(@PathVariable Long id, @Valid @RequestBody EmailTemplateUpdateDTO dto) {
         emailTemplateService.updateTemplate(id, dto);
@@ -48,12 +52,14 @@ public class AdminEmailTemplateController {
     }
 
     @Operation(summary = "预览渲染（编辑中内容+变量测试值，不落库）")
+    @RequiresPermission("email:view")
     @PostMapping("/preview")
     public Result<EmailRenderVO> preview(@Valid @RequestBody EmailTemplatePreviewDTO dto) {
         return Result.success(emailTemplateService.preview(dto));
     }
 
     @Operation(summary = "发送测试邮件（使用已保存内容）")
+    @RequiresPermission("email:edit")
     @PostMapping("/{id}/send-test")
     public Result<Void> sendTest(@PathVariable Long id, @Valid @RequestBody EmailTemplateSendTestDTO dto) {
         emailTemplateService.sendTest(id, dto);

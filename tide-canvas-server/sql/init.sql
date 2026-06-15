@@ -22,6 +22,7 @@ CREATE TABLE `sys_user` (
     `nickname`        VARCHAR(64)  DEFAULT NULL COMMENT '昵称',
     `avatar`          VARCHAR(512) DEFAULT NULL COMMENT '头像URL',
     `role`            TINYINT      NOT NULL DEFAULT 0 COMMENT '角色(0:普通用户,1:VIP,9:管理员)',
+    `role_id`         BIGINT       DEFAULT NULL COMMENT '管理角色ID(RBAC,NULL=超级管理员)',
     `status`          TINYINT      NOT NULL DEFAULT 1 COMMENT '状态(0:禁用,1:正常)',
     `api_quota`       INT          NOT NULL DEFAULT 100 COMMENT 'AI API调用额度(已废弃)',
     `points`          INT          NOT NULL DEFAULT 0 COMMENT '积分余额',
@@ -613,3 +614,24 @@ CREATE TABLE `login_log` (
     KEY `idx_user_id` (`user_id`),
     KEY `idx_username` (`username`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='登录日志表';
+
+-- ----------------------------
+-- 管理角色表（RBAC 粒度权限）
+-- ----------------------------
+DROP TABLE IF EXISTS `sys_role`;
+CREATE TABLE `sys_role` (
+    `id`          BIGINT       NOT NULL COMMENT '主键',
+    `name`        VARCHAR(64)  NOT NULL COMMENT '角色名',
+    `code`        VARCHAR(64)  NOT NULL COMMENT '角色编码',
+    `permissions` TEXT         DEFAULT NULL COMMENT '权限码,逗号分隔; * 表示全部',
+    `builtin`     TINYINT      NOT NULL DEFAULT 0 COMMENT '内置角色(不可删/改编码)',
+    `remark`      VARCHAR(255) DEFAULT NULL COMMENT '备注',
+    `create_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `deleted`     TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_code` (`code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='管理角色表';
+
+INSERT INTO `sys_role` (`id`, `name`, `code`, `permissions`, `builtin`, `remark`)
+VALUES (1, '超级管理员', 'super', '*', 1, '拥有全部权限，不可删除');

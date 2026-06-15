@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.tidecanvas.common.PageResult;
 import com.tidecanvas.common.Result;
+import com.tidecanvas.annotation.RequiresPermission;
 import com.tidecanvas.mapper.SysFileMapper;
 import com.tidecanvas.model.entity.SysFileDO;
 import com.tidecanvas.model.vo.FileVO;
@@ -27,6 +28,7 @@ public class AdminFileController {
     private final StorageStrategy storageStrategy;
 
     @Operation(summary = "文件列表")
+    @RequiresPermission("file:view")
     @GetMapping
     public Result<PageResult<FileVO>> list(
             @RequestParam(defaultValue = "1") Integer pageNum,
@@ -48,6 +50,7 @@ public class AdminFileController {
     }
 
     @Operation(summary = "删除文件")
+    @RequiresPermission("file:delete")
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
         SysFileDO file = fileMapper.selectById(id);

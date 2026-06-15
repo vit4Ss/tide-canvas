@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tidecanvas.common.PageResult;
 import com.tidecanvas.common.Result;
+import com.tidecanvas.annotation.RequiresPermission;
 import com.tidecanvas.common.ResultCode;
 import com.tidecanvas.exception.BusinessException;
 import com.tidecanvas.mapper.AiGenerationLogMapper;
@@ -64,6 +65,7 @@ public class AdminAiController {
     // ========== Provider ==========
 
     @Operation(summary = "供应商列表")
+    @RequiresPermission("provider:view")
     @GetMapping("/providers")
     public Result<List<AiProviderVO>> listProviders() {
         List<AiProviderDO> list = providerMapper.selectList(
@@ -82,6 +84,7 @@ public class AdminAiController {
     }
 
     @Operation(summary = "新增供应商")
+    @RequiresPermission("provider:manage")
     @PostMapping("/providers")
     public Result<AiProviderVO> createProvider(@RequestBody Map<String, Object> body) {
         AiProviderDO provider = new AiProviderDO();
@@ -100,6 +103,7 @@ public class AdminAiController {
     }
 
     @Operation(summary = "从供应商拉取可用模型列表（runware 走 modelSearch，可带 search 关键词）")
+    @RequiresPermission("provider:view")
     @GetMapping("/providers/{id}/models")
     public Result<List<String>> listRemoteModels(@PathVariable Long id,
                                                  @RequestParam(required = false) String search) {
@@ -154,6 +158,7 @@ public class AdminAiController {
     }
 
     @Operation(summary = "更新供应商")
+    @RequiresPermission("provider:manage")
     @PutMapping("/providers/{id}")
     public Result<Void> updateProvider(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         AiProviderDO provider = providerMapper.selectById(id);
@@ -183,6 +188,7 @@ public class AdminAiController {
     }
 
     @Operation(summary = "删除供应商")
+    @RequiresPermission("provider:manage")
     @DeleteMapping("/providers/{id}")
     public Result<Void> deleteProvider(@PathVariable Long id) {
         providerMapper.deleteById(id);
@@ -192,6 +198,7 @@ public class AdminAiController {
     // ========== Model ==========
 
     @Operation(summary = "模型列表")
+    @RequiresPermission("model:view")
     @GetMapping("/models")
     public Result<List<AiModelVO>> listModels() {
         List<AiModelDO> list = modelMapper.selectList(null);
@@ -209,6 +216,7 @@ public class AdminAiController {
     }
 
     @Operation(summary = "新增模型")
+    @RequiresPermission("model:manage")
     @PostMapping("/models")
     public Result<AiModelVO> createModel(@RequestBody Map<String, Object> body) {
         AiModelDO model = new AiModelDO();
@@ -241,6 +249,7 @@ public class AdminAiController {
     }
 
     @Operation(summary = "更新模型")
+    @RequiresPermission("model:manage")
     @PutMapping("/models/{id}")
     public Result<Void> updateModel(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         AiModelDO model = modelMapper.selectById(id);
@@ -310,6 +319,7 @@ public class AdminAiController {
     }
 
     @Operation(summary = "删除模型")
+    @RequiresPermission("model:manage")
     @DeleteMapping("/models/{id}")
     public Result<Void> deleteModel(@PathVariable Long id) {
         modelMapper.deleteById(id);
@@ -319,6 +329,7 @@ public class AdminAiController {
     // ========== Handler ==========
 
     @Operation(summary = "Handler列表")
+    @RequiresPermission("handler:view")
     @GetMapping("/handlers")
     public Result<List<AiHandlerVO>> listHandlers() {
         List<AiHandlerConfigDO> list = handlerConfigMapper.selectList(
@@ -331,6 +342,7 @@ public class AdminAiController {
     }
 
     @Operation(summary = "更新Handler配置")
+    @RequiresPermission("handler:manage")
     @PutMapping("/handlers/{name}")
     public Result<Void> updateHandler(@PathVariable String name, @RequestBody Map<String, Object> body) {
         AiHandlerConfigDO config = handlerConfigMapper.selectOne(
@@ -354,6 +366,7 @@ public class AdminAiController {
     // ========== 生成日志 ==========
 
     @Operation(summary = "操作日志列表")
+    @RequiresPermission("ailog:view")
     @GetMapping("/logs")
     public Result<PageResult<AiGenerationLogVO>> listLogs(AiGenerationLogQuery query) {
         Page<AiGenerationLogDO> page = new Page<>(query.getPageNum(), query.getPageSize());
@@ -364,6 +377,7 @@ public class AdminAiController {
     }
 
     @Operation(summary = "操作日志上游成本汇总(USD)：按当前筛选条件统计全部匹配记录")
+    @RequiresPermission("ailog:view")
     @GetMapping("/logs/cost-sum")
     public Result<java.math.BigDecimal> logsCostSum(AiGenerationLogQuery query) {
         List<Object> rows = logMapper.selectObjs(logFilter(query).select("COALESCE(SUM(cost),0)"));
@@ -383,6 +397,7 @@ public class AdminAiController {
     }
 
     @Operation(summary = "操作日志详情")
+    @RequiresPermission("ailog:view")
     @GetMapping("/logs/{id}")
     public Result<AiGenerationLogVO> getLog(@PathVariable Long id) {
         AiGenerationLogDO logDO = logMapper.selectById(id);

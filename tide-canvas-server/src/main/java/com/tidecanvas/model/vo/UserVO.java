@@ -13,6 +13,8 @@ public class UserVO {
     private String nickname;
     private String avatar;
     private Integer role;
+    /** 管理角色ID(RBAC) */
+    private Long roleId;
     private Integer status;
     private Integer apiQuota;
     private Integer points;

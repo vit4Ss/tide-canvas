@@ -1,6 +1,7 @@
 package com.tidecanvas.controller.admin;
 
 import com.tidecanvas.common.Result;
+import com.tidecanvas.annotation.RequiresPermission;
 import com.tidecanvas.model.dto.ManualBanDTO;
 import com.tidecanvas.model.vo.BanInfoVO;
 import com.tidecanvas.service.security.AbuseGuard;
@@ -27,12 +28,14 @@ public class AdminSecurityController {
     private final AbuseGuard abuseGuard;
 
     @Operation(summary = "当前活跃封禁列表")
+    @RequiresPermission("security:view")
     @GetMapping("/bans")
     public Result<List<BanInfoVO>> bans() {
         return Result.success(abuseGuard.listBans());
     }
 
     @Operation(summary = "手动封禁用户 / IP")
+    @RequiresPermission("security:manage")
     @PostMapping("/ban")
     public Result<Void> ban(@Valid @RequestBody ManualBanDTO dto) {
         abuseGuard.manualBan(dto.getType(), dto.getValue(), dto.getSeconds(), dto.getReason());
@@ -40,6 +43,7 @@ public class AdminSecurityController {
     }
 
     @Operation(summary = "解封")
+    @RequiresPermission("security:manage")
     @PostMapping("/unban")
     public Result<Void> unban(@RequestBody Map<String, String> body) {
         abuseGuard.unban(body.get("actor"));

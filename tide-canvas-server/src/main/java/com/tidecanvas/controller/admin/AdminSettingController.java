@@ -1,6 +1,7 @@
 package com.tidecanvas.controller.admin;
 
 import com.tidecanvas.common.Result;
+import com.tidecanvas.annotation.RequiresPermission;
 import com.tidecanvas.annotation.OperateLog;
 import com.tidecanvas.mapper.SysConfigMapper;
 import com.tidecanvas.model.entity.SysConfigDO;
@@ -22,6 +23,7 @@ public class AdminSettingController {
     private final SysConfigMapper configMapper;
 
     @Operation(summary = "获取系统配置")
+    @RequiresPermission("setting:view")
     @GetMapping
     public Result<Map<String, String>> get() {
         List<SysConfigDO> configs = configMapper.selectList(null);
@@ -33,6 +35,7 @@ public class AdminSettingController {
     }
 
     @Operation(summary = "更新系统配置")
+    @RequiresPermission("setting:edit")
     @OperateLog(action = "更新配置", target = "系统设置")
     @PutMapping
     public Result<Void> update(@RequestBody Map<String, String> settings) {

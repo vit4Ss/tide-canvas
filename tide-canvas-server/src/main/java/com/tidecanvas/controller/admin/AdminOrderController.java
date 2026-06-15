@@ -2,6 +2,7 @@ package com.tidecanvas.controller.admin;
 
 import com.tidecanvas.common.PageResult;
 import com.tidecanvas.common.Result;
+import com.tidecanvas.annotation.RequiresPermission;
 import com.tidecanvas.model.query.AdminOrderQuery;
 import com.tidecanvas.model.vo.RechargeOrderVO;
 import com.tidecanvas.service.OrderService;
@@ -25,18 +26,21 @@ public class AdminOrderController {
     private final OrderService orderService;
 
     @Operation(summary = "订单列表")
+    @RequiresPermission("order:view")
     @GetMapping
     public Result<PageResult<RechargeOrderVO>> list(AdminOrderQuery query) {
         return Result.success(orderService.listAllOrders(query));
     }
 
     @Operation(summary = "订单详情")
+    @RequiresPermission("order:view")
     @GetMapping("/{id}")
     public Result<RechargeOrderVO> get(@PathVariable Long id) {
         return Result.success(orderService.getOrderById(id));
     }
 
     @Operation(summary = "手动标记已支付")
+    @RequiresPermission("order:pay")
     @OperateLog(action = "确认订单支付", target = "订单管理")
     @PostMapping("/{id}/pay")
     public Result<Void> markPaid(@PathVariable Long id) {

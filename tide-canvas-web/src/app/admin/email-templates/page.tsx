@@ -5,6 +5,7 @@ import { Card, Input, Switch, Button, Tag, Alert, Space, Empty, Skeleton } from 
 import type { TextAreaRef } from "antd/es/input/TextArea";
 import { MailOutlined, SaveOutlined, SendOutlined, EyeOutlined } from "@ant-design/icons";
 import { adminApi } from "@/lib/api";
+import { useHasPerm } from "@/stores/use-permission-store";
 import { toast } from "@/components/shared/toast";
 import { AdminPageHead } from "@/components/admin/page-head";
 import type { EmailTemplateVO } from "@/types/email-template";
@@ -16,6 +17,7 @@ function initialParams(template: EmailTemplateVO): Record<string, string> {
 }
 
 export default function AdminEmailTemplatesPage() {
+  const can = useHasPerm();
   const [templates, setTemplates] = useState<EmailTemplateVO[]>([]);
   const [loading, setLoading] = useState(true);
   const [current, setCurrent] = useState<EmailTemplateVO | null>(null);
@@ -148,7 +150,7 @@ export default function AdminEmailTemplatesPage() {
       <AdminPageHead
         title="邮件模板"
         desc="编辑系统邮件的主题与正文，支持 {{变量}} 占位符，右侧实时预览"
-        extra={<Button type="primary" icon={<SaveOutlined />} loading={saving} disabled={!dirty || !current} onClick={handleSave}>保存模板</Button>}
+        extra={can("email:edit") && <Button type="primary" icon={<SaveOutlined />} loading={saving} disabled={!dirty || !current} onClick={handleSave}>保存模板</Button>}
       />
 
       {loading ? (
@@ -225,7 +227,7 @@ export default function AdminEmailTemplatesPage() {
                     <div style={{ marginBottom: 6 }}>发送测试邮件（使用已保存内容与上方测试值）</div>
                     <Space.Compact style={{ width: "100%" }}>
                       <Input placeholder="test@example.com" value={testEmail} onChange={(e) => setTestEmail(e.target.value)} />
-                      <Button icon={<SendOutlined />} loading={sendingTest} disabled={!testEmail.trim()} onClick={handleSendTest}>发送</Button>
+                      {can("email:edit") && <Button icon={<SendOutlined />} loading={sendingTest} disabled={!testEmail.trim()} onClick={handleSendTest}>发送</Button>}
                     </Space.Compact>
                   </div>
                 </div>

@@ -1,6 +1,7 @@
 package com.tidecanvas.controller.admin;
 
 import com.tidecanvas.common.Result;
+import com.tidecanvas.annotation.RequiresPermission;
 import com.tidecanvas.mapper.*;
 import com.tidecanvas.model.entity.AiHandlerConfigDO;
 import com.tidecanvas.model.vo.ActiveUserVO;
@@ -46,6 +47,7 @@ public class AdminDashboardController {
     private final LoginLogMapper loginLogMapper;
 
     @Operation(summary = "数据概览")
+    @RequiresPermission("dashboard:view")
     @GetMapping("/overview")
     public Result<DashboardOverviewVO> overview() {
         DashboardOverviewVO vo = new DashboardOverviewVO();
@@ -110,6 +112,7 @@ public class AdminDashboardController {
     }
 
     @Operation(summary = "图表数据(近7天趋势/AI调用分布/模型排行)")
+    @RequiresPermission("dashboard:view")
     @GetMapping("/charts")
     public Result<DashboardChartsVO> charts() {
         LocalDate today = LocalDate.now();
@@ -154,6 +157,7 @@ public class AdminDashboardController {
     }
 
     @Operation(summary = "最近活跃用户")
+    @RequiresPermission("dashboard:view")
     @GetMapping("/active-users")
     public Result<List<ActiveUserVO>> activeUsers() {
         try {

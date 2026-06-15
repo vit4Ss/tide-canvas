@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Layout, Menu, Breadcrumb, Dropdown, Avatar, Tooltip, Button, theme, type MenuProps } from "antd";
+import { Layout, Menu, Breadcrumb, Dropdown, Avatar, Tooltip, Button, Result, Spin, theme, type MenuProps } from "antd";
 import {
   MenuFoldOutlined, MenuUnfoldOutlined, SearchOutlined, ExpandOutlined,
   CompressOutlined, CloseOutlined, LogoutOutlined,
@@ -12,18 +12,11 @@ import { Layers, Moon, Sun } from "lucide-react";
 import { useThemeMode } from "@/components/shared/theme-mode";
 import { useAdminTabs } from "@/stores/use-admin-tabs";
 import { useAuthStore } from "@/stores/use-auth-store";
-import { ADMIN_GROUPS, PAGE_META, resolveSelectedKey } from "./admin-menu";
+import { ADMIN_GROUPS, ALL_PAGES, PAGE_META, resolveSelectedKey } from "./admin-menu";
 import { AdminCommandPalette } from "./admin-command-palette";
+import { usePermissionStore, useHasPerm } from "@/stores/use-permission-store";
 
 const { Sider, Header, Content } = Layout;
-
-const menuItems: MenuProps["items"] = ADMIN_GROUPS.map((g) => ({
-  key: g.key,
-  icon: g.icon,
-  label: g.label,
-  children: g.items.map((it) => ({ key: it.key, label: <Link href={it.key}>{it.label}</Link> })),
-}));
-const ALL_GROUP_KEYS = ADMIN_GROUPS.map((g) => g.key);
 
 export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
@@ -42,6 +35,31 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
   const selectedKey = resolveSelectedKey(pathname);
   const meta = PAGE_META[selectedKey];
+
+  // 拉取当前管理员权限，按视图权限过滤菜单
+  const can = useHasPerm();
+  const loaded = usePermissionStore((s) => s.loaded);
+  const fetchPerms = usePermissionStore((s) => s.fetchPerms);
+  useEffect(() => { fetchPerms(); }, [fetchPerms]);
+
+  const visibleGroups = ADMIN_GROUPS
+    .map((g) => ({ ...g, items: g.items.filter((it) => can(it.perm)) }))
+    .filter((g) => g.items.length > 0);
+  const menuItems: MenuProps["items"] = visibleGroups.map((g) => ({
+    key: g.key, icon: g.icon, label: g.label,
+    children: g.items.map((it) => ({ key: it.key, label: <Link href={it.key}>{it.label}</Link> })),
+  }));
+  const openGroupKeys = visibleGroups.map((g) => g.key);
+
+  // 直链路由守卫：无权访问当前页则跳转首个可访问页，全无可访问页时显示 403
+  const currentPerm = ALL_PAGES.find((p) => p.key === selectedKey)?.perm;
+  const pageAllowed = !currentPerm || can(currentPerm);
+  const firstAccessibleKey = visibleGroups[0]?.items[0]?.key;
+  useEffect(() => {
+    if (loaded && !pageAllowed && firstAccessibleKey && firstAccessibleKey !== selectedKey) {
+      router.replace(firstAccessibleKey);
+    }
+  }, [loaded, pageAllowed, firstAccessibleKey, selectedKey, router]);
 
   // 当前页加入标签
   useEffect(() => {
@@ -103,10 +121,11 @@ export function AdminShell({ children }: { children: ReactNode }) {
           {!collapsed && <span style={{ fontSize: 15, fontWeight: 700, color: token.colorText, whiteSpace: "nowrap" }}>TideCanvas</span>}
         </Link>
         <Menu
+          key={loaded ? "perm-loaded" : "perm-loading"}
           theme={sidebarTheme}
           mode="inline"
           selectedKeys={[selectedKey]}
-          defaultOpenKeys={ALL_GROUP_KEYS}
+          defaultOpenKeys={openGroupKeys}
           items={menuItems}
           style={{ borderInlineEnd: "none" }}
         />
@@ -159,7 +178,13 @@ export function AdminShell({ children }: { children: ReactNode }) {
         </div>
 
         <Content style={{ padding: 20, overflow: "auto", background: token.colorBgLayout }}>
-          {children}
+          {!loaded ? (
+            <div style={{ display: "flex", justifyContent: "center", paddingTop: 80 }}><Spin /></div>
+          ) : pageAllowed ? (
+            children
+          ) : (
+            <Result status="403" title="403" subTitle="您没有访问该页面的权限" />
+          )}
         </Content>
       </Layout>
 

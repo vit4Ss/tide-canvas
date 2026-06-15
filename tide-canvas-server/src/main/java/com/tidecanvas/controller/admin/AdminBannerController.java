@@ -2,6 +2,7 @@ package com.tidecanvas.controller.admin;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.tidecanvas.common.Result;
+import com.tidecanvas.annotation.RequiresPermission;
 import com.tidecanvas.common.ResultCode;
 import com.tidecanvas.exception.BusinessException;
 import com.tidecanvas.mapper.SysBannerMapper;
@@ -28,6 +29,7 @@ public class AdminBannerController {
     private final SysBannerMapper bannerMapper;
 
     @Operation(summary = "Banner列表")
+    @RequiresPermission("banner:view")
     @GetMapping
     public Result<List<BannerVO>> list() {
         List<SysBannerDO> banners = bannerMapper.selectList(
@@ -41,6 +43,7 @@ public class AdminBannerController {
     }
 
     @Operation(summary = "新增Banner")
+    @RequiresPermission("banner:manage")
     @OperateLog(action = "新增Banner", target = "Banner管理")
     @PostMapping
     public Result<BannerVO> create(@Valid @RequestBody BannerCreateDTO dto) {
@@ -60,6 +63,7 @@ public class AdminBannerController {
     }
 
     @Operation(summary = "更新Banner")
+    @RequiresPermission("banner:manage")
     @PutMapping("/{id}")
     public Result<Void> update(@PathVariable Long id, @Valid @RequestBody BannerUpdateDTO dto) {
         SysBannerDO banner = bannerMapper.selectById(id);
@@ -86,6 +90,7 @@ public class AdminBannerController {
     }
 
     @Operation(summary = "删除Banner")
+    @RequiresPermission("banner:manage")
     @OperateLog(action = "删除Banner", target = "Banner管理")
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {

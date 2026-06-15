@@ -2,6 +2,7 @@ package com.tidecanvas.controller.admin;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.tidecanvas.common.Result;
+import com.tidecanvas.annotation.RequiresPermission;
 import com.tidecanvas.mapper.AccessLogMapper;
 import com.tidecanvas.mapper.LoginLogMapper;
 import com.tidecanvas.model.entity.LoginLogDO;
@@ -50,6 +51,7 @@ public class AdminMonitorController {
     private final LoginLogMapper loginLogMapper;
 
     @Operation(summary = "服务器系统指标")
+    @RequiresPermission("monitor:view")
     @GetMapping("/system")
     public Result<SystemMetricsVO> system() {
         SystemMetricsVO vo = new SystemMetricsVO();
@@ -149,6 +151,7 @@ public class AdminMonitorController {
     }
 
     @Operation(summary = "Redis 监控信息")
+    @RequiresPermission("monitor:view")
     @GetMapping("/redis")
     public Result<RedisInfoVO> redis() {
         RedisInfoVO vo = new RedisInfoVO();
@@ -173,6 +176,7 @@ public class AdminMonitorController {
     }
 
     @Operation(summary = "最近在线会话")
+    @RequiresPermission("monitor:view")
     @GetMapping("/sessions")
     public Result<List<SessionVO>> sessions() {
         try {

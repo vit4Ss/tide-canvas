@@ -5,6 +5,7 @@ import { Table, Input, Tag, Button, Alert } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { CheckCircleOutlined } from "@ant-design/icons";
 import { adminApi } from "@/lib/api";
+import { useHasPerm } from "@/stores/use-permission-store";
 import { formatDate } from "@/lib/utils";
 import { AdminPageHead } from "@/components/admin/page-head";
 import type { RechargeOrderVO } from "@/types/order";
@@ -27,6 +28,7 @@ function payMethodLabel(m?: string) {
 }
 
 export default function AdminOrdersPage() {
+  const can = useHasPerm();
   const [orders, setOrders] = useState<RechargeOrderVO[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -81,7 +83,7 @@ export default function AdminOrdersPage() {
     {
       title: "操作", key: "action", render: (_, o) =>
         // 待支付可确认；已超时也允许手动确认(用户实际已付时管理员可补入账)
-        o.status === OrderStatus.PENDING || o.status === OrderStatus.TIMEOUT ? (
+        can("order:pay") && (o.status === OrderStatus.PENDING || o.status === OrderStatus.TIMEOUT) ? (
           <Button type="primary" size="small" icon={<CheckCircleOutlined />} loading={payingId === o.id} onClick={() => handleConfirmPay(o.id)}>
             确认支付
           </Button>

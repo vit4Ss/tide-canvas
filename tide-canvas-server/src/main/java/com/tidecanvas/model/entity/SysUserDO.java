@@ -17,6 +17,8 @@ public class SysUserDO extends BaseEntity {
     private String nickname;
     private String avatar;
     private Integer role;
+    /** 管理角色ID(RBAC,NULL=超级管理员) */
+    private Long roleId;
     private Integer status;
     private Integer apiQuota;
     private Integer points;

@@ -71,6 +71,7 @@ export interface AdminUserVO extends UserVO {
 
 export interface AdminUserUpdateDTO {
   role?: number;
+  roleId?: number;
   status?: number;
   apiQuota?: number;
   storageQuota?: number;

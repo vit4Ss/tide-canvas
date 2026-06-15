@@ -8,6 +8,7 @@ import com.tidecanvas.common.ResultCode;
 import com.tidecanvas.exception.BusinessException;
 import com.tidecanvas.mapper.SysUserMapper;
 import com.tidecanvas.annotation.OperateLog;
+import com.tidecanvas.annotation.RequiresPermission;
 import com.tidecanvas.model.dto.AdminUserUpdateDTO;
 import com.tidecanvas.model.entity.SysUserDO;
 import com.tidecanvas.model.query.AdminUserQuery;
@@ -31,6 +32,7 @@ public class AdminUserController {
     private final SysUserMapper userMapper;
 
     @Operation(summary = "用户列表")
+    @RequiresPermission("user:view")
     @GetMapping
     public Result<PageResult<UserVO>> list(AdminUserQuery query) {
         Page<SysUserDO> page = new Page<>(query.getPageNum(), query.getPageSize());
@@ -53,6 +55,7 @@ public class AdminUserController {
     }
 
     @Operation(summary = "用户详情")
+    @RequiresPermission("user:view")
     @GetMapping("/{id}")
     public Result<UserVO> get(@PathVariable Long id) {
         SysUserDO user = userMapper.selectById(id);
@@ -65,6 +68,7 @@ public class AdminUserController {
     }
 
     @Operation(summary = "编辑用户")
+    @RequiresPermission("user:edit")
     @OperateLog(action = "编辑用户", target = "用户管理")
     @PutMapping("/{id}")
     public Result<Void> update(@PathVariable Long id, @Valid @RequestBody AdminUserUpdateDTO dto) {
@@ -74,6 +78,9 @@ public class AdminUserController {
         }
         if (dto.getRole() != null) {
             user.setRole(dto.getRole());
+        }
+        if (dto.getRoleId() != null) {
+            user.setRoleId(dto.getRoleId());
         }
         if (dto.getStatus() != null) {
             user.setStatus(dto.getStatus());

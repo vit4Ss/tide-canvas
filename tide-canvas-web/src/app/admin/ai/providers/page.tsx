@@ -5,6 +5,7 @@ import { Table, Button, Modal, Input, InputNumber, Select, Tag, Space, Alert, Po
 import type { ColumnsType } from "antd/es/table";
 import { PlusOutlined, EditOutlined, DeleteOutlined } from "@ant-design/icons";
 import { adminApi } from "@/lib/api";
+import { useHasPerm } from "@/stores/use-permission-store";
 import { toast } from "@/components/shared/toast";
 import { AdminPageHead } from "@/components/admin/page-head";
 import type { AiProviderVO } from "@/types/admin";
@@ -33,6 +34,7 @@ interface ProviderForm {
 const emptyForm: ProviderForm = { name: "", providerType: "openai", apiKey: "", baseUrl: "", priority: 0, rateLimit: 60 };
 
 export default function AdminAiProvidersPage() {
+  const can = useHasPerm();
   const [providers, setProviders] = useState<AiProviderVO[]>([]);
   const [loading, setLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(false);
@@ -89,11 +91,13 @@ export default function AdminAiProvidersPage() {
     {
       title: "操作", key: "action", render: (_, p) => (
         <Space size={0}>
-          <Button type="text" size="small" onClick={() => handleToggle(p)} style={{ color: p.status === 1 ? "#ef4444" : "#16a34a" }}>{p.status === 1 ? "禁用" : "启用"}</Button>
-          <Button type="text" size="small" icon={<EditOutlined />} onClick={() => openEdit(p)}>编辑</Button>
-          <Popconfirm title={`删除供应商「${p.name}」？`} okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => handleDelete(p.id)}>
-            <Button type="text" size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
+          {can("provider:manage") && <Button type="text" size="small" onClick={() => handleToggle(p)} style={{ color: p.status === 1 ? "#ef4444" : "#16a34a" }}>{p.status === 1 ? "禁用" : "启用"}</Button>}
+          {can("provider:manage") && <Button type="text" size="small" icon={<EditOutlined />} onClick={() => openEdit(p)}>编辑</Button>}
+          {can("provider:manage") && (
+            <Popconfirm title={`删除供应商「${p.name}」？`} okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => handleDelete(p.id)}>
+              <Button type="text" size="small" danger icon={<DeleteOutlined />} />
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -101,7 +105,7 @@ export default function AdminAiProvidersPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <AdminPageHead title="AI 供应商管理" desc="管理 AI 服务供应商、API Key 和调用限制" extra={<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增供应商</Button>} />
+      <AdminPageHead title="AI 供应商管理" desc="管理 AI 服务供应商、API Key 和调用限制" extra={can("provider:manage") && <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增供应商</Button>} />
 
       <Table<AiProviderVO>
         rowKey="id"

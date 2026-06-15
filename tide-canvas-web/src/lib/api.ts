@@ -20,6 +20,7 @@ import type {
   AccessLogVO, AccessLogQuery, LoginLogVO, LoginLogQuery, ActiveUserVO,
 } from "@/types/admin";
 import type { SystemMetricsVO, RedisInfoVO, SessionVO } from "@/types/monitor";
+import type { RoleVO, RoleSaveDTO, PermissionGroup } from "@/types/role";
 import type {
   PointsBalanceVO, PointsTransactionVO, PointsTransactionQuery, CheckinStatusVO, CheckinCalendarVO,
 } from "@/types/points";
@@ -187,6 +188,14 @@ export const adminApi = {
     system: () => http.get<SystemMetricsVO>("/api/admin/monitor/system"),
     redis: () => http.get<RedisInfoVO>("/api/admin/monitor/redis"),
     sessions: () => http.get<SessionVO[]>("/api/admin/monitor/sessions"),
+  },
+  roles: {
+    list: () => http.get<RoleVO[]>("/api/admin/roles"),
+    catalog: () => http.get<PermissionGroup[]>("/api/admin/roles/catalog"),
+    myPermissions: () => http.get<string[]>("/api/admin/roles/my-permissions"),
+    create: (data: RoleSaveDTO) => http.post<void>("/api/admin/roles", data),
+    update: (id: number, data: RoleSaveDTO) => http.put<void>(`/api/admin/roles/${id}`, data),
+    remove: (id: number) => http.delete<void>(`/api/admin/roles/${id}`),
   },
   users: {
     list: (query: AdminUserQuery) =>

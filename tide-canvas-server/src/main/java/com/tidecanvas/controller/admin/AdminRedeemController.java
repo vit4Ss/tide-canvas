@@ -2,6 +2,7 @@ package com.tidecanvas.controller.admin;
 
 import com.tidecanvas.common.PageResult;
 import com.tidecanvas.common.Result;
+import com.tidecanvas.annotation.RequiresPermission;
 import com.tidecanvas.model.dto.GenerateRedeemDTO;
 import com.tidecanvas.model.query.RedeemCodeQuery;
 import com.tidecanvas.model.vo.RedeemCodeVO;
@@ -25,6 +26,7 @@ public class AdminRedeemController {
     private final RedeemService redeemService;
 
     @Operation(summary = "批量生成兑换码")
+    @RequiresPermission("redeem:generate")
     @OperateLog(action = "生成兑换码", target = "兑换码")
     @PostMapping("/generate")
     public Result<List<String>> generate(@Valid @RequestBody GenerateRedeemDTO dto) {
@@ -32,12 +34,14 @@ public class AdminRedeemController {
     }
 
     @Operation(summary = "兑换码列表")
+    @RequiresPermission("redeem:view")
     @GetMapping
     public Result<PageResult<RedeemCodeVO>> list(RedeemCodeQuery query) {
         return Result.success(redeemService.list(query));
     }
 
     @Operation(summary = "启用/停用")
+    @RequiresPermission("redeem:update")
     @PutMapping("/{id}/status")
     public Result<Void> updateStatus(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         redeemService.updateStatus(id, Integer.valueOf(String.valueOf(body.get("status"))));
@@ -45,6 +49,7 @@ public class AdminRedeemController {
     }
 
     @Operation(summary = "删除兑换码")
+    @RequiresPermission("redeem:delete")
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
         redeemService.delete(id);
