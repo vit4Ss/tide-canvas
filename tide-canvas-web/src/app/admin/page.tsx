@@ -96,18 +96,21 @@ export default function AdminDashboardPage() {
       <Row gutter={[12, 12]}>
         {cards.map((card) => (
           <Col key={card.title} xs={12} sm={8} md={6} xl={3}>
-            <Card styles={{ body: { padding: 14 } }}>
+            <Card style={{ height: "100%" }} styles={{ body: { padding: 14 } }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                 <Statistic title={card.title} value={card.value} />
                 <span style={{ display: "inline-flex", height: 32, width: 32, alignItems: "center", justifyContent: "center", borderRadius: 8, background: `${card.color}14`, color: card.color, flexShrink: 0 }}>
                   {card.icon}
                 </span>
               </div>
-              {card.sub ? (
-                <div style={{ marginTop: 8, fontSize: 13, color: "var(--ant-color-text-secondary, #8c8c8c)", fontWeight: 500 }}>{card.sub}</div>
-              ) : card.today !== undefined ? (
-                <div style={{ marginTop: 8, fontSize: 13, color: "#16a34a", fontWeight: 500 }}>今日 +{card.today}</div>
-              ) : null}
+              {/* 底部信息行：始终占位（即使无内容），保证整排卡片等高对齐 */}
+              <div style={{ marginTop: 8, minHeight: 20, lineHeight: "20px", fontSize: 13, fontWeight: 500 }}>
+                {card.sub ? (
+                  <span style={{ color: "var(--ant-color-text-secondary, #8c8c8c)" }}>{card.sub}</span>
+                ) : card.today !== undefined ? (
+                  <span style={{ color: "#16a34a" }}>今日 +{card.today}</span>
+                ) : null}
+              </div>
             </Card>
           </Col>
         ))}

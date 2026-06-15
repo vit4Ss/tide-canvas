@@ -138,7 +138,7 @@ export default function AdminAiLogsPage() {
     { title: "时间", dataIndex: "createTime", key: "createTime", render: (v: string) => <span style={{ fontSize: 12, color: "var(--ant-color-text-secondary, #8c8c8c)", whiteSpace: "nowrap" }}>{v ? formatDate(v) : "-"}</span> },
     { title: "类型", dataIndex: "operationType", key: "operationType", render: (t: string) => <Tag color={OP_TYPE_COLOR[t] || "default"}>{OP_TYPE_LABEL[t] || t || "AI 生成"}</Tag> },
     { title: "用户", key: "user", render: (_, l) => <span style={{ fontSize: 12 }}>{l.userName || "-"}{l.userId != null && <span style={{ color: "#bfbfbf" }}> #{l.userId}</span>}</span> },
-    { title: "画布", dataIndex: "projectName", key: "projectName", responsive: ["lg"], ellipsis: true, render: (v) => v || "-" },
+    { title: "画布ID", dataIndex: "projectId", key: "projectId", responsive: ["lg"], render: (v) => v != null ? <span style={{ fontFamily: "monospace", fontSize: 12, color: "var(--ant-color-text-secondary, #8c8c8c)" }}>{v}</span> : <span style={{ color: "#bfbfbf" }}>-</span> },
     { title: "任务ID", dataIndex: "taskId", key: "taskId", responsive: ["md"], render: (v) => <span style={{ fontFamily: "monospace", fontSize: 12, color: "var(--ant-color-text-secondary, #8c8c8c)" }}>{v ?? "-"}</span> },
     {
       title: "内容", key: "operation", render: (_, l) => { const isAi = l.operationType === "ai_generate" || !l.operationType; return isAi ? <span style={{ fontSize: 12 }}>{OP_LABEL[l.operation] || l.operation || "-"}{l.model && <span style={{ fontFamily: "monospace", color: "#bfbfbf" }}> {l.model}</span>}</span> : (l.operation || "-"); },
