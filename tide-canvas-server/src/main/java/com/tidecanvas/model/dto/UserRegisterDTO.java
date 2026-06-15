@@ -7,7 +7,8 @@ import lombok.Data;
 
 @Data
 public class UserRegisterDTO {
-    /** 可选；不填则由邮箱前缀自动推导唯一用户名 */
+    /** 必填，全站唯一 */
+    @NotBlank(message = "用户名不能为空")
     @Size(min = 3, max = 64, message = "用户名长度3-64位")
     private String username;
 

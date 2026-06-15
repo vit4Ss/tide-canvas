@@ -14,6 +14,7 @@ export default function RegisterPage() {
   const router = useRouter();
   const { login } = useAuthStore();
   const [tab, setTab] = useState<"phone" | "email">("email");
+  const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
@@ -52,10 +53,11 @@ export default function RegisterPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    if (username.trim().length < 3) { setError("用户名至少 3 位"); return; }
     if (password.length < 8) { setError("密码至少 8 位"); return; }
     setSubmitting(true);
     try {
-      const res = await authApi.register({ email, code, password, nickname: nickname.trim() || undefined });
+      const res = await authApi.register({ username: username.trim(), email, code, password, nickname: nickname.trim() || undefined });
       if (!res.success) {
         setError(res.message || "注册失败");
         return;
@@ -119,7 +121,16 @@ export default function RegisterPage() {
                 <div className="mb-4 rounded-lg bg-red-500/15 px-3 py-2 text-xs text-red-400">{error}</div>
               )}
 
-              <label className="text-xs text-neutral-400">邮箱</label>
+              <label className="text-xs text-neutral-400">用户名</label>
+              <input
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                required
+                placeholder="3-64 位，全站唯一"
+                className={inputCls}
+              />
+
+              <label className="mt-4 block text-xs text-neutral-400">邮箱</label>
               <input
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
