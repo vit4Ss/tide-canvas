@@ -18,6 +18,7 @@ import (
 	"github.com/tidecanvas/tide-canvas-go/internal/module/blog"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/canvas"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/community"
+	"github.com/tidecanvas/tide-canvas-go/internal/module/content"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/email"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/file"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/im"
@@ -28,6 +29,7 @@ import (
 	"github.com/tidecanvas/tide-canvas-go/internal/module/recharge"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/redeem"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/security"
+	"github.com/tidecanvas/tide-canvas-go/internal/module/setting"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/team"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/user"
 	appjwt "github.com/tidecanvas/tide-canvas-go/pkg/jwt"
@@ -131,6 +133,12 @@ func New(db *gorm.DB, conf *viper.Viper, logger *logrus.Logger, rdb *redis.Clien
 
 	// admin 后台管理（用户/角色/作者/邮件模板/积分/数据面板），全程 JWTAuth + AdminOnly + RBAC 按钮级权限。
 	admin.NewHandler(admin.NewRepository(db), pointsSvc, admin.NoopMailSender{Logger: logger}, jwtProvider, logger).RegisterRoutes(api, jwtProvider, permLoader)
+
+	// content 内容审核（管理端：公开作品分页 + 审核改状态），权限码 content:view / content:audit。
+	content.NewHandler(db, logger).RegisterRoutes(api, jwtProvider, permLoader)
+
+	// setting 系统设置（管理端：sys_config 读取 + 批量保存），权限码 setting:view / setting:edit。
+	setting.NewHandler(db).RegisterRoutes(api, jwtProvider, permLoader)
 
 	// ai 模块（平台最核心）：统一生成入口 / 任务轮询 / 取消 / 历史 / 宫格切分 + 管理端 provider/model/handler CRUD。
 	//   - 扣/退积分注入 pointsSvc；团队共享口径 + 加价系数注入 teamSvc（同时满足 TeamMemberProvider/TeamPriceProvider）。
