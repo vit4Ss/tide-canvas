@@ -43,7 +43,7 @@ export const ADMIN_GROUPS: AdminGroup[] = [
     key: "messages", label: "消息", icon: <MessageSquare size={16} />,
     items: [
       // 后端 IM/客服接口仅 AdminOnly、无细粒度权限码 → 省略 perm，所有管理员可见
-      { key: "/admin/messages", label: "客服消息" },
+      { key: "/admin/messages", label: "消息" },
     ],
   },
   {
