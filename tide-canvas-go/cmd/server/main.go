@@ -44,11 +44,14 @@ func main() {
 		sqlDB.SetMaxOpenConns(conf.GetInt("db.max_open_conns"))
 	}
 
-	// ---- Redis（多副本的限流/验证码/在线状态共享；连不上则回退单机内存）----
+	// ---- Redis（必需：限流/验证码/直传票据/IM 在线状态与跨实例推送的共享后端）----
+	// 强制依赖 Redis：连不上直接退出，不再静默回退内存（务必配好 REDIS_ADDR / REDIS_PASSWORD）。
 	rdb, rerr := redisx.New(conf, logg)
 	if rerr != nil {
-		logg.Warnf("redis 连接失败，回退单机内存实现: %v", rerr)
-		rdb = nil
+		logg.Fatalf("Redis 连接失败（请检查 REDIS_ADDR / REDIS_PASSWORD）: %v", rerr)
+	}
+	if rdb == nil {
+		logg.Fatalf("Redis 未配置：请设置 REDIS_ADDR")
 	}
 
 	// ---- 路由 ----
