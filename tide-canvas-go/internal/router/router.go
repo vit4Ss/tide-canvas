@@ -209,6 +209,9 @@ func New(db *gorm.DB, conf *viper.Viper, logger *logrus.Logger, rdb *redis.Clien
 	imSvc.SetHub(imHub)
 	imWS := im.NewWSHandler(imHub, imSvc, jwtProvider, logger, conf.GetStringSlice("cors.allowed_origins"))
 	im.NewHandler(imSvc, imWS).RegisterRoutes(api, jwtProvider)
+	// 通知实时推送：复用 IM 的 WS 通道。hub 构造晚于 notificationSvc（其在文件顶部先构造以作 Notifier 注入），
+	// 故此处 hub 就绪后回填为 notification 的 Pusher（*im.Hub 满足 notification.Pusher 接口，不引入 im→notification 依赖）。
+	notificationSvc.SetPusher(imHub)
 
 	return r
 }

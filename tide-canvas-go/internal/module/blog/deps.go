@@ -22,12 +22,12 @@ type PointsService interface {
 	DeductPointsTx(tx *gorm.DB, userID int64, amount, txType int, bizID *int64, remark string) error
 }
 
-// Notifier 通知投递（跨模块可选依赖）：点赞博客成功后给作者发通知。
+// Notifier 通知投递（跨模块可选依赖）：点赞 / 打赏博客成功后给作者发通知。
 // 由 notification.Service 实现，router.New 装配时注入；nil 安全（不发通知）。
 // 方法签名对齐 notification.Service.CreateNotification。
 //
-// 说明：博客无评论功能；打赏(tip)不在通知类型枚举(follow/comment/like)内，前端类型筛选也不含打赏，
-// 故本阶段仅接入「点赞博客」(type=like, targetType=blog)，与社区点赞口径一致。
+// 说明：博客无评论功能。已接入「点赞博客」(type=like) 与「打赏博客」(type=tip)，targetType 均为 blog，
+// actor==作者(自赞/自赏) 时由通知层自动跳过。
 type Notifier interface {
 	CreateNotification(receiverID, actorID int64, typ, targetType string, targetID int64, content string) error
 }

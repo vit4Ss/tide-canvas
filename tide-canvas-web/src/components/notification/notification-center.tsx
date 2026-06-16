@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bell, Heart, MessageSquare, UserPlus, User, Loader2, CheckCheck } from "lucide-react";
+import { Bell, Heart, MessageSquare, UserPlus, User, Gift, Loader2, CheckCheck } from "lucide-react";
 import { notificationApi, followApi } from "@/lib/api";
+import { useImStore } from "@/stores/use-im-store";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -15,6 +16,7 @@ const TYPE_FILTERS: { value: "" | NotificationType; label: string }[] = [
   { value: "follow", label: "关注" },
   { value: "comment", label: "评论" },
   { value: "like", label: "点赞" },
+  { value: "tip", label: "打赏" },
 ];
 
 /** 类型 → 图标（无文案时的兜底展示）。 */
@@ -22,6 +24,7 @@ const TYPE_ICON: Record<NotificationType, typeof Bell> = {
   follow: UserPlus,
   comment: MessageSquare,
   like: Heart,
+  tip: Gift,
 };
 
 /** 相对时间：刚刚 / N分钟前 / N小时前 / N天前 / 更早显示 月-日。 */
@@ -56,18 +59,22 @@ function targetHref(n: NotificationVO): string | null {
 export function NotificationCenter() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [unread, setUnread] = useState(0);
   const [filter, setFilter] = useState<"" | NotificationType>("");
   const [items, setItems] = useState<NotificationVO[]>([]);
   const [loading, setLoading] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // 挂载拉未读数。
+  // 角标未读数：以 IM store 的 notifUnread 为单一数据源（REST 初始化 + WS 实时 +1）。
+  const unread = useImStore((s) => s.notifUnread);
+  const setNotifUnread = useImStore((s) => s.setNotifUnread);
+  const resetNotif = useImStore((s) => s.resetNotif);
+
+  // 挂载拉未读数，写入 store 作为角标初值（之后由 WS notification 事件实时 +1）。
   useEffect(() => {
     notificationApi.unreadCount().then((res) => {
-      if (res.success) setUnread(res.data.count);
+      if (res.success) setNotifUnread(res.data.count);
     });
-  }, []);
+  }, [setNotifUnread]);
 
   // 拉列表（按当前筛选）。
   const loadList = useCallback((type: "" | NotificationType) => {
@@ -85,11 +92,11 @@ export function NotificationCenter() {
     setOpen(true);
     loadList(filter);
     if (unread > 0) {
-      setUnread(0);
+      resetNotif();
       void notificationApi.markAllRead();
       setItems((prev) => prev.map((n) => ({ ...n, isRead: true })));
     }
-  }, [filter, unread, loadList]);
+  }, [filter, unread, loadList, resetNotif]);
 
   // 点击面板外区域关闭。
   useEffect(() => {
@@ -111,13 +118,15 @@ export function NotificationCenter() {
 
   // 「全部已读」按钮：标记已读并本地置已读。
   const markAll = async () => {
-    setUnread(0);
+    resetNotif();
     setItems((prev) => prev.map((n) => ({ ...n, isRead: true })));
     await notificationApi.markAllRead();
   };
 
-  // 回关：调 followApi.follow(actor.id)，成功后本地标记该 actor 已回关（按钮置灰）。
+  // 本会话内已回关的 actor 集合：作为后端 followedByMe 的本地乐观覆盖层
+  // （后端给出持久态基线，会话内点「回关」成功后再叠加，避免重开面板前按钮回退）。
   const [followedActors, setFollowedActors] = useState<Set<string>>(new Set());
+  // 回关：调 followApi.follow(actor.id)，成功后本地标记该 actor 已回关（按钮置灰）。
   const followBack = async (actorId: string) => {
     if (!actorId || followedActors.has(actorId)) return;
     setFollowedActors((prev) => new Set(prev).add(actorId));
@@ -211,7 +220,8 @@ export function NotificationCenter() {
                     const href = targetHref(n);
                     const clickable = !!href;
                     const showFollowBack = n.type === "follow" && !!n.actor.id;
-                    const alreadyFollowed = followedActors.has(n.actor.id);
+                    // 已关注 = 后端持久态(followedByMe) 或 本会话内已点回关。
+                    const alreadyFollowed = n.followedByMe || followedActors.has(n.actor.id);
                     return (
                       <li
                         key={n.id}
@@ -256,7 +266,7 @@ export function NotificationCenter() {
                               void followBack(n.actor.id);
                             }}
                           >
-                            {alreadyFollowed ? "已回关" : "回关"}
+                            {alreadyFollowed ? "已关注" : "回关"}
                           </Button>
                         )}
                       </li>

@@ -315,6 +315,8 @@ func (s *Service) TipBlog(userID int64, publicID string, req *BlogTipReq) error 
 	}
 
 	s.logf("博客打赏成功: userId=%d, blogId=%d, amount=%d", userID, blog.ID, amount)
+	// 打赏成功（事务已提交）→ 异步给作者发「打赏了你的博客」通知（actor==author 即自赏时由通知层自动跳过）。
+	s.notify(blog.AuthorID, userID, model.NotificationTypeTip, model.NotificationTargetBlog, blog.ID, "打赏了你的博客")
 	return nil
 }
 

@@ -5,6 +5,7 @@ const (
 	NotificationTypeFollow  = "follow"  // 关注
 	NotificationTypeComment = "comment" // 评论
 	NotificationTypeLike    = "like"    // 点赞
+	NotificationTypeTip     = "tip"     // 博客打赏
 )
 
 // 通知目标类型（target_type 列，varchar；空串表示无具体目标，如关注通知）。

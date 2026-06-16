@@ -77,3 +77,24 @@ func (r *Repository) MarkAllRead(receiverID int64) error {
 		Where("receiver_id = ? AND is_read = 0", receiverID).
 		UpdateColumn("is_read", 1).Error
 }
+
+// FollowedSet 在给定候选用户集合中，筛出 follower 已关注的那些（用于关注类通知批量标注 followedByMe）。
+// 直接查 sys_follow（follower_id = follower AND followee_id IN followees），避免耦合 follow 模块。
+// 返回 已被 follower 关注的 followee_id 集合；followees 为空返回空集。
+func (r *Repository) FollowedSet(follower int64, followees []int64) (map[int64]bool, error) {
+	set := make(map[int64]bool, len(followees))
+	if len(followees) == 0 {
+		return set, nil
+	}
+	var ids []int64
+	err := r.db.Model(&model.SysFollow{}).
+		Where("follower_id = ? AND followee_id IN ?", follower, followees).
+		Pluck("followee_id", &ids).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		set[id] = true
+	}
+	return set, nil
+}

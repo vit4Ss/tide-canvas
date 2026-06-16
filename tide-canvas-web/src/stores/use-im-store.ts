@@ -29,9 +29,13 @@ interface ImState {
   onlineIds: Set<string>;
   loadingConvs: boolean;
   loadingMsgs: boolean;
+  notifUnread: number; // 站内通知未读数（通知中心角标的单一数据源；REST 初始化 + WS 实时 +1）
 
   connect: () => void;
   disconnect: () => void;
+  setNotifUnread: (n: number) => void; // 用 REST unreadCount 结果初始化角标
+  bumpNotif: () => void; // 收到通知 WS 事件时角标 +1
+  resetNotif: () => void; // 全部已读后角标清零
   loadConversations: (type?: ConversationType) => Promise<void>;
   refreshStatus: (userIds: string[]) => Promise<void>;
   setActive: (id: string | null) => void;
@@ -93,6 +97,10 @@ export const useImStore = create<ImState>((set, get) => {
       case "offline":
         if (ev.userId) set((s) => { const n = new Set(s.onlineIds); n.delete(ev.userId!); return { onlineIds: n }; });
         break;
+      case "notification":
+        // 新站内通知到达：角标 +1（信封不带正文；打开通知中心时另行 REST 拉全量）。
+        set((s) => ({ notifUnread: s.notifUnread + 1 }));
+        break;
       default:
         break; // read / system 暂不特殊处理
     }
@@ -106,6 +114,11 @@ export const useImStore = create<ImState>((set, get) => {
     onlineIds: new Set<string>(),
     loadingConvs: false,
     loadingMsgs: false,
+    notifUnread: 0,
+
+    setNotifUnread: (n) => set({ notifUnread: Math.max(0, n) }),
+    bumpNotif: () => set((s) => ({ notifUnread: s.notifUnread + 1 })),
+    resetNotif: () => set({ notifUnread: 0 }),
 
     connect: () => {
       if (typeof window === "undefined") return;

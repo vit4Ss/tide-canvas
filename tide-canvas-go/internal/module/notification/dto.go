@@ -5,7 +5,8 @@
 // 触发者(actor)以 public_id 暴露，关联内容以 targetPublicId（帖子/博客 public_id）暴露，
 // 绝不泄漏内部雪花主键（遵循对外ID规范）。
 //
-// 实时推送（WebSocket）为后续加分项，本阶段走 REST：前端挂载拉未读数、打开通知中心拉列表。
+// 实时推送：新通知落库后经可选 Pusher（复用 IM 的 WS 通道，由 router 回填 *im.Hub）向接收者推一条
+// {"type":"notification"} 信封，触发前端角标实时 +1；Pusher 未注入时回退纯 REST（前端挂载拉未读数、打开拉列表）。
 package notification
 
 import "time"
@@ -51,6 +52,8 @@ type ActorVO struct {
 //   - content：通知摘要文案。
 //   - isRead：是否已读。
 //   - createTime：通知时间（列表按此倒序）。
+//   - followedByMe：仅关注类(type=follow)有意义——当前用户是否已回关该 actor；
+//     用于前端「回关 / 已关注」按钮的持久态。非关注类通知恒为 false。
 type NotificationVO struct {
 	ID             int64     `json:"id"`
 	Actor          ActorVO   `json:"actor"`
@@ -59,6 +62,7 @@ type NotificationVO struct {
 	TargetPublicID string    `json:"targetPublicId"`
 	Content        string    `json:"content"`
 	IsRead         bool      `json:"isRead"`
+	FollowedByMe   bool      `json:"followedByMe"`
 	CreateTime     time.Time `json:"createTime"`
 }
 

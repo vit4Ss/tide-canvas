@@ -15,6 +15,7 @@ type Service struct {
 	repo    *Repository
 	users   UserFinder
 	targets TargetFinder
+	pusher  Pusher // 可选：新通知落库后经 WS 推送角标信封；nil 表示未接入实时推送（nil 安全）。
 	logger  *logrus.Logger
 }
 
@@ -24,6 +25,15 @@ type Service struct {
 func NewService(repo *Repository, users UserFinder, targets TargetFinder, logger *logrus.Logger) *Service {
 	return &Service{repo: repo, users: users, targets: targets, logger: logger}
 }
+
+// SetPusher 注入 WebSocket 实时推送（可选，nil 安全）。
+// 由 router.New 在 im.Hub 就绪后回填（hub 构造晚于 notification.Service，故走 setter 而非构造参数）。
+// 注入后，CreateNotification 落库成功会向接收者推 {"type":"notification"} 信封触发前端角标 +1。
+func (s *Service) SetPusher(p Pusher) { s.pusher = p }
+
+// wsNotificationEnvelope 通知实时推送信封：仅 type=notification 触发前端拉取/角标 +1，
+// 不携带通知正文（前端打开面板时另行 REST 拉全量列表）。对齐前端 WSEvent.type。
+var wsNotificationEnvelope = []byte(`{"type":"notification"}`)
 
 // CreateNotification 投递一条通知（Notifier 接口实现）。
 //
@@ -50,7 +60,24 @@ func (s *Service) CreateNotification(receiverID, actorID int64, typ, targetType 
 		s.logWarnf("写入通知失败: receiver=%d actor=%d type=%s: %v", receiverID, actorID, typ, err)
 		return err
 	}
+	// 落库成功 → WS 推一条角标信封给接收者（仅触发前端 +1，不带正文）。
+	// pusher 为 nil 或推送出错均不影响通知主流程；CreateNotification 已在调用方 goroutine 内，无需再起 go。
+	s.pushBadge(receiverID)
 	return nil
+}
+
+// pushBadge 向接收者推送通知角标信封（{"type":"notification"}）。
+// pusher 未注入(nil)直接返回；推送为非阻塞尽力而为，失败仅依赖底层日志，不向上传播。
+func (s *Service) pushBadge(receiverID int64) {
+	if s.pusher == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			s.logWarnf("推送通知角标 panic: receiver=%d: %v", receiverID, r)
+		}
+	}()
+	s.pusher.SendToUser(receiverID, wsNotificationEnvelope)
 }
 
 // pageData 服务层分页载荷，由 handler 转交 response.Page 输出。
@@ -68,7 +95,7 @@ func (s *Service) List(receiverID int64, query *NotificationQuery) (*pageData, e
 	if err != nil {
 		return nil, err
 	}
-	vos, err := s.buildVOs(rows)
+	vos, err := s.buildVOs(receiverID, rows)
 	if err != nil {
 		return nil, err
 	}
@@ -90,17 +117,19 @@ func (s *Service) MarkAllRead(receiverID int64) error {
 	return s.repo.MarkAllRead(receiverID)
 }
 
-// buildVOs 把通知行批量转为 VO：批量取 actor 用户摘要、批量按目标类型反解 target public_id。
-func (s *Service) buildVOs(rows []model.SysNotification) ([]NotificationVO, error) {
+// buildVOs 把通知行批量转为 VO：批量取 actor 用户摘要、批量按目标类型反解 target public_id，
+// 并对关注类(follow)通知批量标注 followedByMe（当前用户 receiverID 是否已回关该 actor）。
+func (s *Service) buildVOs(receiverID int64, rows []model.SysNotification) ([]NotificationVO, error) {
 	out := make([]NotificationVO, 0, len(rows))
 	if len(rows) == 0 {
 		return out, nil
 	}
 
-	// 收集 actor 内部ID、按目标类型分别收集 target 内部ID。
+	// 收集 actor 内部ID、按目标类型分别收集 target 内部ID、单独收集关注类通知的 actor 内部ID（用于回关判定）。
 	actorIDs := make([]int64, 0, len(rows))
 	postIDs := make([]int64, 0)
 	blogIDs := make([]int64, 0)
+	followActorIDs := make([]int64, 0)
 	for i := range rows {
 		actorIDs = append(actorIDs, rows[i].ActorID)
 		switch rows[i].TargetType {
@@ -113,6 +142,9 @@ func (s *Service) buildVOs(rows []model.SysNotification) ([]NotificationVO, erro
 				blogIDs = append(blogIDs, rows[i].TargetID)
 			}
 		}
+		if rows[i].Type == model.NotificationTypeFollow {
+			followActorIDs = append(followActorIDs, rows[i].ActorID)
+		}
 	}
 
 	users, err := s.users.FindUsers(actorIDs)
@@ -124,6 +156,11 @@ func (s *Service) buildVOs(rows []model.SysNotification) ([]NotificationVO, erro
 		return nil, err
 	}
 	blogPublic, err := s.targets.BlogPublicIDs(blogIDs)
+	if err != nil {
+		return nil, err
+	}
+	// 当前用户已回关的 actor 集合（仅关注类通知需要；followActorIDs 为空时返回空集，无额外查询开销）。
+	followedSet, err := s.repo.FollowedSet(receiverID, followActorIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -152,6 +189,10 @@ func (s *Service) buildVOs(rows []model.SysNotification) ([]NotificationVO, erro
 			vo.TargetPublicID = postPublic[n.TargetID]
 		case model.NotificationTargetBlog:
 			vo.TargetPublicID = blogPublic[n.TargetID]
+		}
+		// 关注类通知：标注当前用户是否已回关该 actor（非关注类恒 false）。
+		if n.Type == model.NotificationTypeFollow {
+			vo.FollowedByMe = followedSet[n.ActorID]
 		}
 		out = append(out, vo)
 	}

@@ -12,8 +12,8 @@ export type MessageContentType = "text" | "image" | "file" | "system";
 // 消息状态（对齐 model：0 正常 / 1 已撤回）
 export const MessageStatus = { NORMAL: 0, RECALLED: 1 } as const;
 
-// WebSocket 下行事件类型
-export type WSEventType = "message" | "read" | "online" | "offline" | "system";
+// WebSocket 下行事件类型（notification：站内通知到达，仅触发前端角标 +1，不带正文）
+export type WSEventType = "message" | "read" | "online" | "offline" | "system" | "notification";
 
 // 用户摘要（对外 public_id + 在线状态）
 export interface UserBriefVO {

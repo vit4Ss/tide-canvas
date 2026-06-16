@@ -14,6 +14,14 @@ type UserFinder interface {
 	FindUsers(ids []int64) (map[int64]*model.SysUser, error)
 }
 
+// Pusher WebSocket 实时推送（跨模块可选依赖）：新通知落库后向接收者推一条信封，
+// 触发前端通知角标实时 +1。由 im.Hub 天然满足（方法签名对齐 (*im.Hub).SendToUser）；
+// 此处以接口注入，避免 notification 直接 import im 包（防重依赖 / 潜在循环）。nil 安全。
+type Pusher interface {
+	// SendToUser 向某用户的所有在线连接推送 payload（多副本下经 Redis 广播）。非阻塞、尽力而为。
+	SendToUser(userID int64, payload []byte)
+}
+
 // TargetFinder 目标内容(帖子/博客)对外ID反解：把内部雪花主键批量映射为 public_id。
 // 用于把通知的 target_id 转为前端可跳转的 targetPublicId；转不到（已删/不存在）则不在结果中（VO 留空串）。
 type TargetFinder interface {

@@ -1,7 +1,7 @@
 import type { PageQuery } from "./api";
 
-/** 通知类型：关注 / 评论 / 点赞。 */
-export type NotificationType = "follow" | "comment" | "like";
+/** 通知类型：关注 / 评论 / 点赞 / 打赏。 */
+export type NotificationType = "follow" | "comment" | "like" | "tip";
 
 /** 通知目标类型：社区帖子 / 博客（关注类为空串）。 */
 export type NotificationTargetType = "post" | "blog" | "";
@@ -31,6 +31,8 @@ export interface NotificationVO {
   content: string;
   /** 是否已读 */
   isRead: boolean;
+  /** 仅关注类(type=follow)有意义：当前用户是否已回关该 actor（用于「回关 / 已关注」持久态）。非关注类恒 false。 */
+  followedByMe: boolean;
   /** 通知时间 */
   createTime: string;
 }
