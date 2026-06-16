@@ -1,0 +1,101 @@
+# TideCanvas 生产编排：MySQL + Redis + Go 后端，一键起停。
+#
+# 用法（在本文件所在目录 tide-canvas-go/ 执行）：
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# 配置来源：同目录 .env —— compose 用它做 ${} 变量插值（MySQL/Redis 密码、端口），
+#           backend 容器同时挂载它给 godotenv 读（解析含空格引号的 MAIL_PASSWORD）。
+# ⚠️ .env 未进 git，需先从本机 scp 到云端 tide-canvas-go/.env。
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: tc-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD 必须在 .env 中设置}
+      MYSQL_DATABASE: ${DB_NAME:-tide_canvas}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "${DB_PORT:-3306}:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${DB_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+    networks: [tcnet]
+
+  redis:
+    image: redis:7-alpine
+    container_name: tc-redis
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+    networks: [tcnet]
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tide-canvas-go:latest
+    container_name: tc-go
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # 容器内走 compose 服务名连库/缓存。系统环境变量优先级高于 .env，
+      # 会覆盖 .env 里的 127.0.0.1（godotenv.Load 不覆盖已存在的环境变量）。
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      REDIS_ADDR: redis:6379
+      TZ: Asia/Shanghai
+    volumes:
+      # 挂载 .env 给 godotenv 读（正确解析含空格引号的 MAIL_PASSWORD）；logs 落宿主机。
+      - ./.env:/app/.env:ro
+      - ./logs:/app/logs
+    ports:
+      - "${SERVER_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+    networks: [tcnet]
+
+volumes:
+  mysql_data:
+    name: tc_mysql_data     # 复用现有数据：把此名改成你现有 tc-mysql 的卷名（见说明）
+  redis_data:
+    name: tc_redis_data
+
+networks:
+  tcnet:
+    driver: bridge
+    name: tc_net
