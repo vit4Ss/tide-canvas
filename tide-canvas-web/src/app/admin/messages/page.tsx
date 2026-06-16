@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Alert, Avatar, Badge, Button, Empty, Form, Input, List, Select, Spin, Tabs, Tag, theme,
+  Alert, Avatar, Badge, Button, Empty, Form, Input, List, Segmented, Select, Spin, Tabs, Tag, theme,
 } from "antd";
 import { CustomerServiceOutlined, MessageOutlined, UsergroupAddOutlined, ReloadOutlined } from "@ant-design/icons";
 import { AdminPageHead } from "@/components/admin/page-head";
@@ -221,25 +221,41 @@ function MyConversations() {
   const loadingConvs = useImStore((s) => s.loadingConvs);
   const setActive = useImStore((s) => s.setActive);
   const activeId = useImStore((s) => s.activeId);
+  const [scope, setScope] = useState<"user" | "staff">("user");
 
   useEffect(() => {
     void loadConversations(); // 全部类型
   }, [loadConversations]);
 
+  // 用户私信：与用户/客户的会话（私信 + 客服）；员工私信：后台同事会话
+  const userConvs = useMemo(() => conversations.filter((c) => c.type !== "staff"), [conversations]);
+  const staffConvs = useMemo(() => conversations.filter((c) => c.type === "staff"), [conversations]);
+  const shown = scope === "staff" ? staffConvs : userConvs;
+
   const activeConv = useMemo(() => conversations.find((c) => c.id === activeId) ?? null, [conversations, activeId]);
 
   const left = (
     <div>
-      <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px solid ${token.colorBorderSecondary}` }}>
-        <span style={{ fontSize: 13, fontWeight: 600 }}>全部会话</span>
+      <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: 8, borderBottom: `1px solid ${token.colorBorderSecondary}` }}>
+        <Segmented
+          block
+          size="small"
+          value={scope}
+          onChange={(v) => setScope(v as "user" | "staff")}
+          style={{ flex: 1 }}
+          options={[
+            { label: `用户私信${userConvs.length ? ` ${userConvs.length}` : ""}`, value: "user" },
+            { label: `员工私信${staffConvs.length ? ` ${staffConvs.length}` : ""}`, value: "staff" },
+          ]}
+        />
         <Button type="text" size="small" icon={<ReloadOutlined />} onClick={() => loadConversations()} loading={loadingConvs} />
       </div>
       {loadingConvs && conversations.length === 0 ? (
         <div style={{ display: "flex", justifyContent: "center", padding: 24 }}><Spin /></div>
-      ) : conversations.length === 0 ? (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无会话" style={{ padding: "24px 0" }} />
+      ) : shown.length === 0 ? (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={scope === "staff" ? "暂无员工会话" : "暂无用户会话"} style={{ padding: "24px 0" }} />
       ) : (
-        conversations.map((c) => <ConvListItem key={c.id} conv={c} active={c.id === activeId} onClick={() => setActive(c.id)} />)
+        shown.map((c) => <ConvListItem key={c.id} conv={c} active={c.id === activeId} onClick={() => setActive(c.id)} />)
       )}
     </div>
   );
@@ -370,7 +386,7 @@ export default function AdminMessagesPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <AdminPageHead title="客服消息" desc="接待用户客服、与后台同事沟通" />
+      <AdminPageHead title="消息" desc="接待用户客服、与后台同事沟通" />
       <Tabs
         activeKey={tab}
         onChange={onTabChange}
