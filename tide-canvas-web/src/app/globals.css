@@ -245,6 +245,26 @@
   background: rgba(255, 255, 255, 0.35);
 }
 
+/* 细滚动条：白底/暗底通用（中性灰 thumb），用于 antd Modal 等浅色容器的滚动区 */
+.thin-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(120, 120, 120, 0.4) transparent;
+}
+.thin-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.thin-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.thin-scroll::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background: rgba(120, 120, 120, 0.35);
+}
+.thin-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(120, 120, 120, 0.55);
+}
+
 /* ===== 抑制浏览器扩展注入的视频悬浮工具（沉浸式翻译等，宿主元素带 immersive-translate 前缀） ===== */
 [id^="immersive-translate"],
 [class*="immersive-translate"] {

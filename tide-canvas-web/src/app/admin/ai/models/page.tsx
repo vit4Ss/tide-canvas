@@ -279,8 +279,9 @@ export default function AdminAiModelsPage() {
 
       <Modal
         title={editingId ? "编辑模型" : "新增模型"} open={formOpen} onCancel={() => setFormOpen(false)}
-        onOk={handleSave} confirmLoading={saving} okText="保存" cancelText="取消" width={760}
-        styles={{ body: { maxHeight: "70vh", overflowY: "auto" } }}
+        onOk={handleSave} confirmLoading={saving} okText="保存" cancelText="取消" width={960}
+        styles={{ body: { maxHeight: "74vh", overflowY: "auto", paddingRight: 12 } }}
+        classNames={{ body: "thin-scroll" }}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 16, paddingTop: 8 }}>
           {/* 基础字段 */}
