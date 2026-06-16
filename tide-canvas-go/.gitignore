@@ -1,0 +1,29 @@
+# 构建产物
+/bin/
+/dist/
+*.exe
+*.out
+
+# 环境变量
+.env
+.env.local
+
+# 实际运行配置（含密钥，勿提交；模板见 configs/config.example.yaml）
+/configs/config.yaml
+/config.yaml
+
+# 依赖缓存（如使用 vendor）
+/vendor/
+
+# IDE
+.idea/
+.vscode/
+
+# 日志与临时
+*.log
+/tmp/
+
+# 生产数据导出（含真实用户/IP/日志数据，切勿提交；需要时单独 scp 传输）
+/sql/tide_canvas.sql
+/sql/*_backup*.sql
+/sql/*.dump

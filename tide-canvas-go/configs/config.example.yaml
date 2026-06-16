@@ -1,0 +1,89 @@
+# 复制为 configs/config.yaml 或项目根 config.yaml 后修改（main.go 用 viper 读取）。
+# 所有键也可用环境变量覆盖（viper.AutomaticEnv）。
+
+debug: true
+
+server:
+  port: "8080"
+
+# 雪花节点ID [0,1023]，多实例部署时每实例唯一
+snowflake:
+  node_id: 1
+
+# MySQL（GORM DSN；parseTime 让 DATETIME 映射 time.Time，loc 对齐后端时区）
+db:
+  dsn: "root:password@tcp(127.0.0.1:3306)/tide_canvas?charset=utf8mb4&parseTime=True&loc=Asia%2FShanghai"
+  max_idle_conns: 10
+  max_open_conns: 100
+
+# JWT（对齐旧后端：access 2h，refresh 7d）
+jwt:
+  secret: "TideCanvasSecretKey-change-me-in-production"
+  access_ttl: 7200      # 秒
+  refresh_ttl: 604800   # 秒
+
+# Redis（限流 / 邮箱验证码 / 缓存）
+redis:
+  addr: "127.0.0.1:6379"
+  password: ""
+  db: 0
+
+# 邮件 SMTP（host 留空或 enabled=false 时走开发模式，验证码打日志）
+mail:
+  enabled: false
+  host: "smtp.gmail.com"
+  port: 587
+  username: ""
+  password: ""
+  from_address: ""
+  from_name: "TideCanvas"
+  code_ttl_seconds: 600
+
+# 文件存储
+storage:
+  kind: "local"          # local | oss
+  local_dir: "./uploads"
+  max_size: 52428800     # 单文件大小上限（字节），默认 50MB；<=0 时按默认 50MB
+  # 允许的 MIME 类型白名单；留空(不配置)则不限制类型（对齐旧后端 allowedTypes==null）
+  allowed_types: []
+  #   - "image/png"
+  #   - "image/jpeg"
+  #   - "video/mp4"
+  oss:
+    endpoint: "https://oss-cn-shanghai.aliyuncs.com"
+    access_key_id: ""
+    access_key_secret: ""
+    bucket: ""
+    prefix: "uploads/"
+    cdn_domain: ""
+
+# CORS
+cors:
+  allowed_origins:
+    - "http://localhost:3000"
+  allow_credentials: true
+
+# 限流（全局兜底，对齐旧后端 security.rate-limit）
+rate_limit:
+  enabled: true
+  global_ip_limit: 600
+  global_user_limit: 300
+  global_period: 60
+
+# AI 上游（中转站 OpenAI 风格 + Runware 原生协议）轮询/重试/超时；均可省略，省略时用代码默认值。
+# 供应商 baseUrl / apiKey 不在此处配置：由管理端「AI 管理 → 供应商」录入并存库（ai_provider 表）。
+ai:
+  relay:
+    poll-interval-ms: 3000      # 异步任务轮询间隔
+    poll-timeout-ms: 720000     # 轮询最长时间(12 分钟)，应小于任务超时收尾的 15 分钟
+    max-retries: 2              # 502/503 瞬态故障最大重试次数
+    retry-delay-ms: 1500        # 重试初始等待(指数退避基数)
+    connect-timeout-ms: 15000   # 连接超时
+    read-timeout-ms: 300000     # 读超时(部分模型同步阻塞返回可达 130s+)
+  runware:
+    poll-interval-ms: 3000
+    poll-timeout-ms: 720000
+    connect-timeout-ms: 15000
+    read-timeout-ms: 300000
+  task:
+    timeout-scan-ms: 300000     # 处理中任务超时收尾扫描周期(默认每 5 分钟)
