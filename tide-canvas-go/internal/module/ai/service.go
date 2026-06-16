@@ -2,6 +2,7 @@ package ai
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -108,14 +109,18 @@ func (s *Service) Generate(userID int64, dto *GenerateDTO) (*TaskVO, error) {
 		return nil, err
 	}
 
-	// 1.5) 并发上限：单用户同时「进行中」的 AI 任务数（全局配置 ai.user_max_concurrency，0=不限）。
-	if limit := s.repo.GetConfigInt("ai.user_max_concurrency", 0); limit > 0 {
-		active, cErr := s.repo.CountActiveTasksByUser(userID, TaskProcessing)
-		if cErr != nil {
-			return nil, cErr
-		}
-		if active >= int64(limit) {
-			return nil, ecode.RateLimit.WithMessage(fmt.Sprintf("当前进行中的 AI 任务已达上限 %d 个，请等待已有任务完成后再试", limit))
+	// 1.5) 并发上限：按用户等级（团队 > VIP > 普通）取一档上限；管理员(role=9)与白名单用户豁免。0=不限。
+	if role, inTeam, uname := s.repo.GetUserTier(userID); role != 9 {
+		if !inWhitelist(uname, s.repo.GetConfigStr("ai.concurrency_whitelist")) {
+			if limit := s.resolveConcurrencyLimit(role, inTeam); limit > 0 {
+				active, cErr := s.repo.CountActiveTasksByUser(userID, TaskProcessing)
+				if cErr != nil {
+					return nil, cErr
+				}
+				if active >= int64(limit) {
+					return nil, ecode.RateLimit.WithMessage(fmt.Sprintf("当前进行中的 AI 任务已达上限 %d 个，请等待已有任务完成后再试", limit))
+				}
+			}
 		}
 	}
 
@@ -192,6 +197,30 @@ func (s *Service) Generate(userID int64, dto *GenerateDTO) (*TaskVO, error) {
 	}
 
 	return s.toTaskVO(task, modelName), nil
+}
+
+// resolveConcurrencyLimit 按用户等级取并发上限：团队成员 > VIP > 普通，各自独立配置（0=不限）。
+func (s *Service) resolveConcurrencyLimit(role int, inTeam bool) int {
+	if inTeam {
+		return s.repo.GetConfigInt("ai.user_max_concurrency_team", 0)
+	}
+	if role == 1 { // VIP
+		return s.repo.GetConfigInt("ai.user_max_concurrency_vip", 0)
+	}
+	return s.repo.GetConfigInt("ai.user_max_concurrency", 0)
+}
+
+// inWhitelist 判断用户名是否在并发白名单（逗号分隔，大小写不敏感）内。
+func inWhitelist(username, whitelist string) bool {
+	if strings.TrimSpace(whitelist) == "" || username == "" {
+		return false
+	}
+	for _, w := range strings.Split(whitelist, ",") {
+		if strings.EqualFold(strings.TrimSpace(w), username) {
+			return true
+		}
+	}
+	return false
 }
 
 // GetTask 按 public_id 查任务状态（前端轮询；团队共享：成员可查队友任务，对齐 getTask）。

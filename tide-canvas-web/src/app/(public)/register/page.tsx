@@ -18,7 +18,6 @@ export default function RegisterPage() {
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
-  const [nickname, setNickname] = useState("");
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
   const [cooldown, setCooldown] = useState(0);
@@ -57,7 +56,7 @@ export default function RegisterPage() {
     if (password.length < 8) { setError("密码至少 8 位"); return; }
     setSubmitting(true);
     try {
-      const res = await authApi.register({ username: username.trim(), email, code, password, nickname: nickname.trim() || undefined });
+      const res = await authApi.register({ username: username.trim(), email, code, password });
       if (!res.success) {
         setError(res.message || "注册失败");
         return;
@@ -166,14 +165,6 @@ export default function RegisterPage() {
                 type="password"
                 required
                 placeholder="至少 8 位密码"
-                className={inputCls}
-              />
-
-              <label className="mt-4 block text-xs text-neutral-400">配置昵称（可选）</label>
-              <input
-                value={nickname}
-                onChange={(e) => setNickname(e.target.value)}
-                placeholder="您的称呼"
                 className={inputCls}
               />
 

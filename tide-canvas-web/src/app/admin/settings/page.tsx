@@ -56,9 +56,13 @@ const SETTING_GROUPS: SettingGroup[] = [
     ],
   },
   {
-    title: "AI 设置",
+    title: "AI 并发限制",
+    description: "限制单用户同时「进行中」的 AI 生成任务数（0=不限）。按等级取一档：团队成员 > VIP > 普通；白名单用户与管理员不受限。任务完成/失败/取消后自动释放名额。",
     fields: [
-      { key: "ai.user_max_concurrency", label: "单用户 AI 并发上限", type: "number", description: "单个用户同时进行中的 AI 生成任务数上限（0 = 不限制）；超出时提示等待已有任务完成" },
+      { key: "ai.user_max_concurrency", label: "普通用户并发上限", type: "number", description: "普通用户（含未分级）的上限，0=不限" },
+      { key: "ai.user_max_concurrency_vip", label: "VIP 并发上限", type: "number", description: "VIP 用户（role=1）的上限，0=不限" },
+      { key: "ai.user_max_concurrency_team", label: "团队成员并发上限", type: "number", description: "团队成员的上限，0=不限；团队优先于 VIP" },
+      { key: "ai.concurrency_whitelist", label: "并发白名单（用户名）", type: "text", description: "逗号分隔的用户名，名单内用户不受并发限制", placeholder: "alice,bob" },
     ],
   },
 ];

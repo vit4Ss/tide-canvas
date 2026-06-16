@@ -47,6 +47,24 @@ func (r *Repository) GetConfigInt(key string, def int) int {
 	return n
 }
 
+// GetConfigStr 读取 sys_config 字符串配置；未配置返回空串。
+func (r *Repository) GetConfigStr(key string) string {
+	var cfg model.SysConfig
+	if err := r.db.Where("config_key = ?", key).First(&cfg).Error; err != nil {
+		return ""
+	}
+	return cfg.ConfigValue
+}
+
+// GetUserTier 取用户等级信息（role / 是否在团队 / username），用于并发上限分档与白名单。
+func (r *Repository) GetUserTier(userID int64) (role int, inTeam bool, username string) {
+	var u model.SysUser
+	if err := r.db.Select("role", "team_id", "username").First(&u, userID).Error; err != nil {
+		return 0, false, ""
+	}
+	return u.Role, u.TeamID != nil, u.Username
+}
+
 // DB 暴露底层连接（供上层做事务）。
 func (r *Repository) DB() *gorm.DB { return r.db }
 
