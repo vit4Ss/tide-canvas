@@ -20,6 +20,9 @@ import type {
   AccessLogVO, AccessLogQuery, LoginLogVO, LoginLogQuery, ActiveUserVO,
 } from "@/types/admin";
 import type { SystemMetricsVO, RedisInfoVO, SessionVO } from "@/types/monitor";
+import type {
+  ConversationVO, MessageVO, UserStatusVO, SendMessageDTO, OpenStaffDTO, ConversationType,
+} from "@/types/im";
 import type { RoleVO, RoleSaveDTO, PermissionGroup } from "@/types/role";
 import type {
   PointsBalanceVO, PointsTransactionVO, PointsTransactionQuery, CheckinStatusVO, CheckinCalendarVO,
@@ -403,4 +406,33 @@ export const orderApi = {
     http.post<PaymentInitiateVO>(`/api/orders/${id}/pay`, payType ? { payType } : {}),
   sync: (id: number) =>
     http.post<RechargeOrderVO>(`/api/orders/${id}/sync`),
+};
+
+export const imApi = {
+  // ---- 会话 ----
+  conversations: (type?: ConversationType, page?: { pageNum?: number; pageSize?: number }) =>
+    http.get<PageData<ConversationVO>>("/api/im/conversations", toParams({ type, ...(page ?? {}) })),
+  openPrivate: (peerId: string) =>
+    http.post<ConversationVO>("/api/im/conversations/private", { peerId }),
+  openSupport: () =>
+    http.post<ConversationVO>("/api/im/conversations/support"),
+  openStaff: (data: OpenStaffDTO) =>
+    http.post<ConversationVO>("/api/im/conversations/staff", data),
+  // ---- 消息 ----
+  messages: (conversationId: string, params?: { before?: string; limit?: number }) =>
+    http.get<MessageVO[]>(`/api/im/conversations/${conversationId}/messages`, toParams(params ?? {})),
+  send: (data: SendMessageDTO) =>
+    http.post<MessageVO>("/api/im/messages", data),
+  markRead: (conversationId: string, lastReadMessageId?: string) =>
+    http.post<void>("/api/im/messages/read", { conversationId, lastReadMessageId }),
+  recall: (messageId: string) =>
+    http.post<void>(`/api/im/messages/${messageId}/recall`),
+  // ---- 在线状态 ----
+  status: (ids: string[]) =>
+    http.get<UserStatusVO[]>("/api/im/status", { ids: ids.join(",") }),
+  // ---- 客服台（管理员）----
+  supportWaiting: (page?: { pageNum?: number; pageSize?: number }) =>
+    http.get<PageData<ConversationVO>>("/api/im/support/waiting", toParams(page ?? {})),
+  supportAccept: (conversationId: string) =>
+    http.post<ConversationVO>(`/api/im/support/${conversationId}/accept`),
 };

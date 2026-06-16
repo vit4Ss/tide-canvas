@@ -43,7 +43,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
   useEffect(() => { fetchPerms(); }, [fetchPerms]);
 
   const visibleGroups = ADMIN_GROUPS
-    .map((g) => ({ ...g, items: g.items.filter((it) => can(it.perm)) }))
+    // perm 省略表示所有管理员可见（如客服消息：后端仅 AdminOnly、无细粒度权限码）
+    .map((g) => ({ ...g, items: g.items.filter((it) => !it.perm || can(it.perm)) }))
     .filter((g) => g.items.length > 0);
   const menuItems: MenuProps["items"] = visibleGroups.map((g) => ({
     key: g.key, icon: g.icon, label: g.label,

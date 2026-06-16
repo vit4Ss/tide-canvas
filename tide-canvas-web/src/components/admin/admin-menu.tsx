@@ -1,13 +1,16 @@
 import type { ReactNode } from "react";
 import {
-  LayoutDashboard, Users, Wallet, Bot, Settings, ScrollText,
+  LayoutDashboard, Users, Wallet, Bot, Settings, ScrollText, MessageSquare,
 } from "lucide-react";
 
 export interface AdminPage {
   key: string;
   label: string;
-  /** 访问该页所需的查看权限码 */
-  perm: string;
+  /**
+   * 访问该页所需的查看权限码。
+   * 省略表示「所有管理员可见」（后端该模块仅 AdminOnly、无细粒度权限码，如消息工作台）。
+   */
+  perm?: string;
 }
 
 export interface AdminGroup {
@@ -34,6 +37,13 @@ export const ADMIN_GROUPS: AdminGroup[] = [
       { key: "/admin/authors", label: "作者管理", perm: "author:view" },
       { key: "/admin/banners", label: "Banner 管理", perm: "banner:view" },
       { key: "/admin/files", label: "文件管理", perm: "file:view" },
+    ],
+  },
+  {
+    key: "messages", label: "消息", icon: <MessageSquare size={16} />,
+    items: [
+      // 后端 IM/客服接口仅 AdminOnly、无细粒度权限码 → 省略 perm，所有管理员可见
+      { key: "/admin/messages", label: "客服消息" },
     ],
   },
   {

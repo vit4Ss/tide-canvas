@@ -16,6 +16,7 @@ import {
   BookOpen,
 } from "lucide-react";
 import { useState } from "react";
+import { MessageEntry } from "@/components/im";
 
 const navLinks = [
   { href: "/user/projects", label: "画布", icon: Layers },
@@ -63,6 +64,8 @@ export function Header() {
 
         <div className="flex items-center gap-3">
           {isLoggedIn ? (
+            <>
+            <MessageEntry />
             <div
               className="relative"
               onMouseEnter={() => setUserMenuOpen(true)}
@@ -124,6 +127,7 @@ export function Header() {
                 </div>
               )}
             </div>
+            </>
           ) : (
             <div className="flex items-center gap-2">
               <Link
