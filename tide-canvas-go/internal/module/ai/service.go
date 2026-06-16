@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -105,6 +106,17 @@ func (s *Service) Generate(userID int64, dto *GenerateDTO) (*TaskVO, error) {
 	projectID, err := s.assertProjectOwned(userID, dto.ProjectID)
 	if err != nil {
 		return nil, err
+	}
+
+	// 1.5) 并发上限：单用户同时「进行中」的 AI 任务数（全局配置 ai.user_max_concurrency，0=不限）。
+	if limit := s.repo.GetConfigInt("ai.user_max_concurrency", 0); limit > 0 {
+		active, cErr := s.repo.CountActiveTasksByUser(userID, TaskProcessing)
+		if cErr != nil {
+			return nil, cErr
+		}
+		if active >= int64(limit) {
+			return nil, ecode.RateLimit.WithMessage(fmt.Sprintf("当前进行中的 AI 任务已达上限 %d 个，请等待已有任务完成后再试", limit))
+		}
 	}
 
 	// 2) handler + 入参校验

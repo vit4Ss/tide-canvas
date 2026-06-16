@@ -2,6 +2,8 @@ package ai
 
 import (
 	"errors"
+	"strconv"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -17,6 +19,33 @@ type Repository struct {
 
 // NewRepository 构造。
 func NewRepository(db *gorm.DB) *Repository { return &Repository{db: db} }
+
+// CountActiveTasksByUser 统计某用户「进行中」的 AI 任务数（用于并发上限校验）。
+// deleted 由模型自动过滤；processingStatus 传 TaskProcessing。
+func (r *Repository) CountActiveTasksByUser(userID int64, processingStatus int) (int64, error) {
+	var n int64
+	err := r.db.Model(&model.AiTask{}).
+		Where("user_id = ? AND status = ?", userID, processingStatus).
+		Count(&n).Error
+	return n, err
+}
+
+// GetConfigInt 读取 sys_config 的整数配置；未配置 / 空值 / 非法时返回 def。
+func (r *Repository) GetConfigInt(key string, def int) int {
+	var cfg model.SysConfig
+	if err := r.db.Where("config_key = ?", key).First(&cfg).Error; err != nil {
+		return def
+	}
+	v := strings.TrimSpace(cfg.ConfigValue)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
+}
 
 // DB 暴露底层连接（供上层做事务）。
 func (r *Repository) DB() *gorm.DB { return r.db }

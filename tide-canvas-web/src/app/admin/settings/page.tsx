@@ -55,6 +55,12 @@ const SETTING_GROUPS: SettingGroup[] = [
       { key: "pay.epay.pay_types", label: "启用的支付方式", type: "text", description: "逗号分隔，可选：alipay(支付宝)、wxpay(微信)", placeholder: "alipay,wxpay" },
     ],
   },
+  {
+    title: "AI 设置",
+    fields: [
+      { key: "ai.user_max_concurrency", label: "单用户 AI 并发上限", type: "number", description: "单个用户同时进行中的 AI 生成任务数上限（0 = 不限制）；超出时提示等待已有任务完成" },
+    ],
+  },
 ];
 const ALL_FIELDS = SETTING_GROUPS.flatMap((g) => g.fields);
 
