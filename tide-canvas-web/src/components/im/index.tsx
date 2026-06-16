@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { MessageCircle } from "lucide-react";
 import { ChatDrawer } from "@/components/im/chat-drawer";
+import { SupportWidget } from "@/components/im/support-widget";
 import { useImStore } from "@/stores/use-im-store";
 
 /**
@@ -44,8 +45,10 @@ export function MessageEntry() {
       </button>
 
       <ChatDrawer open={open} onOpenChange={setOpen} />
+      <SupportWidget />
     </>
   );
 }
 
 export { ChatDrawer } from "@/components/im/chat-drawer";
+export { SupportWidget } from "@/components/im/support-widget";
