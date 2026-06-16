@@ -2,12 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { ConversationList } from "@/components/im/conversation-list";
 import { ChatWindow } from "@/components/im/chat-window";
 import { useImStore } from "@/stores/use-im-store";
@@ -19,7 +19,8 @@ interface ChatDrawerProps {
   onOpenChange: (open: boolean) => void;
 }
 
-// 用户端「私信」抽屉。客服已独立为右下角悬浮窗（SupportWidget）。
+// 用户端「私信」弹窗：抖音式居中大模态框（左会话列表 + 右聊天窗）。
+// 客服已独立为右下角悬浮窗（SupportWidget）。
 export function ChatDrawer({ open, onOpenChange }: ChatDrawerProps) {
   const conversations = useImStore((s) => s.conversations);
   const activeId = useImStore((s) => s.activeId);
@@ -39,12 +40,12 @@ export function ChatDrawer({ open, onOpenChange }: ChatDrawerProps) {
   const currentUserIdStr =
     currentUserId === undefined || currentUserId === null ? null : String(currentUserId);
 
-  // 打开抽屉即拉取会话列表。
+  // 打开弹窗即拉取会话列表。
   useEffect(() => {
     if (open) void loadConversations();
   }, [open, loadConversations]);
 
-  // 抽屉只展示私信；客服在右下角悬浮窗。
+  // 弹窗只展示私信；客服在右下角悬浮窗。
   const privateConvs = useMemo(
     () => conversations.filter((c) => c.type === "private"),
     [conversations],
@@ -70,16 +71,12 @@ export function ChatDrawer({ open, onOpenChange }: ChatDrawerProps) {
   };
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        side="right"
-        showCloseButton={false}
-        className="w-full gap-0 p-0 sm:max-w-md data-[side=right]:sm:max-w-3xl"
-      >
-        <SheetHeader className="border-b border-border p-3">
-          <SheetTitle>私信</SheetTitle>
-          <SheetDescription className="sr-only">用户私信会话</SheetDescription>
-        </SheetHeader>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex h-[78vh] max-h-[620px] w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl md:max-w-4xl">
+        <DialogHeader className="shrink-0 border-b border-border px-4 py-3">
+          <DialogTitle>私信</DialogTitle>
+          <DialogDescription className="sr-only">用户私信会话</DialogDescription>
+        </DialogHeader>
 
         <div className="flex min-h-0 flex-1">
           {/* 左列：私信会话列表 */}
@@ -119,7 +116,7 @@ export function ChatDrawer({ open, onOpenChange }: ChatDrawerProps) {
             />
           </div>
         </div>
-      </SheetContent>
-    </Sheet>
+      </DialogContent>
+    </Dialog>
   );
 }
