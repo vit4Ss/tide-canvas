@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -109,6 +110,53 @@ func (l *RedisLimiter) IsBanned(key string) bool {
 		return false // 降级：不误判封禁
 	}
 	return n > 0
+}
+
+// ListBans 枚举当前所有未过期封禁：SCAN 匹配 rlBanPrefix+"*" 收集封禁键（不用 KEYS，避免阻塞 Redis），
+// 对每个键 GET 取原因、TTL 取剩余秒数。剥掉 rlBanPrefix 前缀作为 Actor 返回。
+// Redis 故障或单键读取失败时降级跳过该键（不影响其余），整体返回已成功读取的部分。
+func (l *RedisLimiter) ListBans() []BanRecord {
+	ctx := context.Background()
+	out := make([]BanRecord, 0, 16)
+	var cursor uint64
+	for {
+		keys, next, err := l.client.Scan(ctx, cursor, rlBanPrefix+"*", 100).Result()
+		if err != nil {
+			l.warn("[ratelimit-redis] ListBans SCAN 失败 cursor=%d: %v", cursor, err)
+			break
+		}
+		for _, key := range keys {
+			reason, err := l.client.Get(ctx, key).Result()
+			if err == redis.Nil {
+				continue // 键已过期/被删，跳过
+			}
+			if err != nil {
+				l.warn("[ratelimit-redis] ListBans GET 失败 key=%s: %v", key, err)
+				continue
+			}
+			var remain int64
+			if ttl, err := l.client.TTL(ctx, key).Result(); err == nil && ttl > 0 {
+				remain = int64(ttl.Seconds())
+			}
+			out = append(out, BanRecord{
+				Actor:         strings.TrimPrefix(key, rlBanPrefix),
+				Reason:        reason,
+				ExpireSeconds: remain,
+			})
+		}
+		cursor = next
+		if cursor == 0 {
+			break // 游标归零：遍历结束
+		}
+	}
+	return out
+}
+
+// Unban 解除对 actor 的封禁：DEL rlBanPrefix+actor（actor 不带前缀）。
+func (l *RedisLimiter) Unban(actor string) {
+	if err := l.client.Del(context.Background(), rlBanPrefix+actor).Err(); err != nil {
+		l.warn("[ratelimit-redis] Unban 失败 actor=%s: %v", actor, err)
+	}
 }
 
 // 编译期断言：RedisLimiter 必须实现 Limiter 接口。

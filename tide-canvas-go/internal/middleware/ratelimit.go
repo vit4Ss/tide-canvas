@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,18 +41,38 @@ const (
 	rlBanPrefix       = "rlban:" // 封禁：rlban:<actor>
 )
 
+// BanKey 由不带前缀的 actor（u<id>/ip<addr>）拼出封禁键（rlBanPrefix+actor），
+// 供管理端（security 模块）调用 Limiter.Ban / IsBanned 时与限流中间件保持同一键空间。
+// Unban / ListBans 自行处理前缀，无需本函数。
+func BanKey(actor string) string { return rlBanPrefix + actor }
+
 // Limiter 限流后端抽象：计数（固定窗口）+ 封禁。
-// 默认 MemoryLimiter（单机内存）；分布式部署应换 Redis 实现，见 RedisLimiter（TODO）。
+// 默认 MemoryLimiter（单机内存）；分布式部署应换 Redis 实现，见 RedisLimiter。
 type Limiter interface {
 	// Allow 在 period 窗口内对 key 计数加一；未超过 limit 返回 true，超过返回 false。
 	// key 由调用方拼好（含维度前缀），如 rl:ai-generate:u123。
 	Allow(key string, limit int, period time.Duration) bool
 	// Incr 自增并返回当前计数（用于违规累计判定阈值）；首次写入时设置 period 过期。
 	Incr(key string, period time.Duration) int64
-	// Ban 对 key 封禁 d 时长并记录原因。
+	// Ban 对 key 封禁 d 时长并记录原因。key 须含封禁前缀（rlBanPrefix+actor）。
 	Ban(key string, d time.Duration, reason string)
-	// IsBanned key 是否处于封禁冷却中。
+	// IsBanned key 是否处于封禁冷却中。key 须含封禁前缀（rlBanPrefix+actor）。
 	IsBanned(key string) bool
+	// ListBans 枚举当前所有未过期封禁（供管理端查看）。
+	// 返回的 BanRecord.Actor 为剥掉 rlBanPrefix 前缀的 actor（如 u123 / ip1.2.3.4）。
+	ListBans() []BanRecord
+	// Unban 解除对 actor 的封禁。入参 actor 不带前缀（u<id>/ip<addr>），内部补 rlBanPrefix 后删除。
+	Unban(actor string)
+}
+
+// BanRecord 一条封禁记录（供管理端枚举 / 解封）。
+type BanRecord struct {
+	// Actor 被封禁的主体，已剥掉 rlBanPrefix 前缀（如 u123 / ip1.2.3.4）。
+	Actor string
+	// Reason 封禁原因（自动封禁时为接口+违规说明；手动封禁为管理员填写）。
+	Reason string
+	// ExpireSeconds 距解封剩余秒数（>=0）。
+	ExpireSeconds int64
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +162,33 @@ func (l *MemoryLimiter) IsBanned(key string) bool {
 	return true
 }
 
+// ListBans 枚举当前所有未过期封禁（剥掉 rlBanPrefix 前缀，计算剩余秒数）。
+func (l *MemoryLimiter) ListBans() []BanRecord {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	out := make([]BanRecord, 0, len(l.bans))
+	for k, e := range l.bans {
+		remain := e.expireAt.Sub(now)
+		if remain <= 0 {
+			continue // 已过期：跳过（由 cleanupLoop / IsBanned 惰性清理）
+		}
+		out = append(out, BanRecord{
+			Actor:         strings.TrimPrefix(k, rlBanPrefix),
+			Reason:        e.reason,
+			ExpireSeconds: int64(remain.Seconds()),
+		})
+	}
+	return out
+}
+
+// Unban 解除对 actor 的封禁（actor 不带前缀，内部补 rlBanPrefix 后删除）。
+func (l *MemoryLimiter) Unban(actor string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.bans, rlBanPrefix+actor)
+}
+
 // cleanupLoop 周期回收已过期的计数与封禁项，避免内存无限增长。
 func (l *MemoryLimiter) cleanupLoop(interval time.Duration) {
 	ticker := time.NewTicker(interval)
@@ -162,17 +210,8 @@ func (l *MemoryLimiter) cleanupLoop(interval time.Duration) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// RedisLimiter：分布式实现占位（多实例共享 / 持久 / 原子计数）。
-// ---------------------------------------------------------------------------
-
-// TODO(redis): 实现基于 Redis 的 Limiter，使旧 AbuseGuard 的语义在多实例下成立：
-//   - Allow：INCR rl:<name>:<actor>，首次（==1）EXPIRE period；返回值 <= limit 即放行（原子）。
-//   - Incr ：INCR rlv:<name>:<actor>，首次 EXPIRE banWindow。
-//   - Ban  ：SET rlban:<actor> reason EX banSeconds。
-//   - IsBanned：EXISTS rlban:<actor>。
-// 需注入 *redis.Client（go.mod 增加 github.com/redis/go-redis/v9）。在 router.New 用
-// RedisLimiter 替换 NewMemoryLimiter 注入即可，无需改动各路由的挂载方式。
+// 编译期断言：MemoryLimiter 必须实现 Limiter 接口（多实例共享 / 持久版见 RedisLimiter，ratelimit_redis.go）。
+var _ Limiter = (*MemoryLimiter)(nil)
 
 // ---------------------------------------------------------------------------
 // RateLimit 中间件工厂
@@ -264,9 +303,9 @@ func RateLimit(opts RateLimitOptions) gin.HandlerFunc {
 			return
 		}
 
-		// 1) 已封禁直接拒绝（任一 actor 命中即拒）。
+		// 1) 已封禁直接拒绝（任一 actor 命中即拒）。封禁键统一加 rlBanPrefix 前缀（便于管理端枚举）。
 		for _, a := range actors {
-			if limiter.IsBanned(a) {
+			if limiter.IsBanned(rlBanPrefix + a) {
 				abortRateLimited(c, "操作过于频繁，已被暂时限制，请稍后再试")
 				return
 			}
@@ -291,10 +330,11 @@ func onViolation(limiter Limiter, name, actor string, banThreshold int, banDurat
 		return
 	}
 	v := limiter.Incr(rlViolationPrefix+name+":"+actor, banWindow)
-	if v >= int64(banThreshold) && !limiter.IsBanned(actor) {
+	// 封禁键统一加 rlBanPrefix 前缀（IsBanned 与 Ban 须成对使用同一前缀，便于管理端枚举/解封）。
+	if v >= int64(banThreshold) && !limiter.IsBanned(rlBanPrefix+actor) {
 		reason := "接口[" + name + "] " + strconv.Itoa(int(banWindow.Seconds())) + "s 内违规 " +
 			strconv.FormatInt(v, 10) + " 次，自动封禁 " + strconv.Itoa(int(banDuration.Seconds())) + "s"
-		limiter.Ban(actor, banDuration, reason)
+		limiter.Ban(rlBanPrefix+actor, banDuration, reason)
 	}
 }
 

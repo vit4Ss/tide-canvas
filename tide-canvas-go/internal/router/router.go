@@ -22,10 +22,12 @@ import (
 	"github.com/tidecanvas/tide-canvas-go/internal/module/file"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/im"
 	logmod "github.com/tidecanvas/tide-canvas-go/internal/module/log"
+	"github.com/tidecanvas/tide-canvas-go/internal/module/monitor"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/oauth"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/points"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/recharge"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/redeem"
+	"github.com/tidecanvas/tide-canvas-go/internal/module/security"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/team"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/user"
 	appjwt "github.com/tidecanvas/tide-canvas-go/pkg/jwt"
@@ -51,11 +53,21 @@ func New(db *gorm.DB, conf *viper.Viper, logger *logrus.Logger, rdb *redis.Clien
 	// 共享 repository
 	userRepo := user.NewRepository(db)
 
-	// Redis 可用时启用分布式限流/验证码/直传票据（多副本必需）；rdb 为 nil 时回退单机内存实现。
+	// 限流后端：Redis 可用 → 分布式 RedisLimiter（多副本共享封禁）；否则单机 MemoryLimiter。
+	// 显式构造后既设为限流中间件的包级默认（SetDefaultLimiter），又注入 security 管理端模块，
+	// 使「自动封禁(限流违规)」与「管理端手动封禁/解封」操作同一份封禁数据。
+	var limiter middleware.Limiter
+	if rdb != nil {
+		limiter = middleware.NewRedisLimiter(rdb).WithLogger(logger)
+	} else {
+		limiter = middleware.NewMemoryLimiter()
+	}
+	middleware.SetDefaultLimiter(limiter)
+
+	// Redis 可用时启用分布式验证码/直传票据（多副本必需）；rdb 为 nil 时回退单机内存实现。
 	var codeStore email.CodeStore
 	ticketStore := file.TicketStore(file.NewMemoryTicketStore())
 	if rdb != nil {
-		middleware.SetDefaultLimiter(middleware.NewRedisLimiter(rdb).WithLogger(logger))
 		codeStore = email.NewRedisCodeStore(rdb).WithLogger(logger)
 		ticketStore = file.NewRedisTicketStore(rdb).WithLogger(logger)
 	}
@@ -146,6 +158,14 @@ func New(db *gorm.DB, conf *viper.Viper, logger *logrus.Logger, rdb *redis.Clien
 
 	// log 日志查询（管理端：访问/登录/操作日志分页 + PV/UV 统计），JWTAuth + AdminOnly + RBAC 按钮级权限。
 	logmod.NewHandler(logmod.NewService(logmod.NewRepository(db), logger)).RegisterRoutes(api, jwtProvider, permLoader)
+
+	// monitor 监控总览（管理端：系统指标/Redis 状态/在线会话），权限码 monitor:view。
+	//   系统指标用 gopsutil 采集（CPU/内存/磁盘/网卡），JVM 堆以 Go runtime 近似；rdb 为 nil 时 redis 接口回退未连接。
+	monitor.NewHandler(db, rdb, logger).RegisterRoutes(api, jwtProvider, permLoader)
+
+	// security 安全封禁（管理端：查看/手动封禁/解封），权限码 security:view / security:manage。
+	//   注入与限流中间件同一 limiter 实例，使自动封禁与管理端手动封禁/解封共用一份数据。
+	security.NewHandler(limiter).RegisterRoutes(api, jwtProvider, permLoader)
 
 	// 社区模块（自研：帖子/评论/点赞）挂载到 /api/community/
 	community.Mount(db, api.Group("/community"), conf, logger)
