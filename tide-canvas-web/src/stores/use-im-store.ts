@@ -33,6 +33,7 @@ interface ImState {
   connect: () => void;
   disconnect: () => void;
   loadConversations: (type?: ConversationType) => Promise<void>;
+  refreshStatus: (userIds: string[]) => Promise<void>;
   setActive: (id: string | null) => void;
   loadMessages: (convId: string) => Promise<void>;
   send: (convId: string, content: string, contentType?: string) => Promise<boolean>;
@@ -141,8 +142,33 @@ export const useImStore = create<ImState>((set, get) => {
     loadConversations: async (type) => {
       set({ loadingConvs: true });
       const res = await imApi.conversations(type, { pageSize: 100 });
-      if (res.success) set({ conversations: res.data.records });
+      if (res.success) {
+        set({ conversations: res.data.records });
+        // 主动拉一次对端在线状态：online 事件只在"上线那刻"广播，对端在本端连接
+        // 之前就在线时收不到，故进入会话列表时按 peer/members 查当前在线状态。
+        const ids = new Set<string>();
+        for (const c of res.data.records) {
+          if (c.peer) ids.add(c.peer.id);
+          c.members?.forEach((m) => ids.add(m.id));
+        }
+        if (ids.size > 0) void get().refreshStatus([...ids]);
+      }
       set({ loadingConvs: false });
+    },
+
+    refreshStatus: async (userIds) => {
+      if (userIds.length === 0) return;
+      const res = await imApi.status(userIds);
+      if (res.success && res.data) {
+        set((s) => {
+          const next = new Set(s.onlineIds);
+          for (const st of res.data) {
+            if (st.online) next.add(st.id);
+            else next.delete(st.id);
+          }
+          return { onlineIds: next };
+        });
+      }
     },
 
     setActive: (id) => {
