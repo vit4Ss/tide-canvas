@@ -111,11 +111,11 @@ func New(db *gorm.DB, conf *viper.Viper, logger *logrus.Logger, rdb *redis.Clien
 	blogSvc := blog.NewService(blog.NewRepository(db), blog.NewDBUserFinder(db), pointsSvc, logger)
 	blog.NewHandler(blogSvc).RegisterRoutes(api, jwtProvider)
 
-	// recharge 充值订单 + 易支付（notify 回调为公开路由），注入积分服务
-	recharge.NewHandler(recharge.NewService(recharge.NewRepository(db), pointsSvc, logger), jwtProvider).RegisterRoutes(api, jwtProvider)
-
-	// RBAC 按钮级权限加载器：读 sys_user+sys_role 解析权限串，注入后在 admin / ai / log 各管理端路由上由 RequiresPermission 复用。
+	// RBAC 按钮级权限加载器：读 sys_user+sys_role 解析权限串，admin / ai / log / recharge 管理端路由由 RequiresPermission 复用。
 	permLoader := middleware.NewDBPermissionLoader(db)
+
+	// recharge 充值订单 + 易支付（notify 回调公开 / 管理端订单 /api/admin/orders 挂 RBAC），注入积分服务
+	recharge.NewHandler(recharge.NewService(recharge.NewRepository(db), pointsSvc, logger), jwtProvider).RegisterRoutes(api, jwtProvider, permLoader)
 
 	// admin 后台管理（用户/角色/作者/邮件模板/积分/数据面板），全程 JWTAuth + AdminOnly + RBAC 按钮级权限。
 	admin.NewHandler(admin.NewRepository(db), pointsSvc, admin.NoopMailSender{Logger: logger}, jwtProvider, logger).RegisterRoutes(api, jwtProvider, permLoader)

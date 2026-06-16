@@ -159,6 +159,36 @@ func (s *Service) ListAllOrders(q *AdminOrderQuery) ([]RechargeOrderVO, int64, e
 	return toOrderVOList(records), total, nil
 }
 
+// GetOrderForAdmin 管理端按 public_id 查订单详情（不校验所属用户，对齐管理端 selectById）。
+func (s *Service) GetOrderForAdmin(publicID string) (*RechargeOrderVO, error) {
+	order, err := s.requireOrder(publicID)
+	if err != nil {
+		return nil, err
+	}
+	return toOrderVO(order), nil
+}
+
+// AdminConfirmPaid 管理端手动确认订单已支付（线下/未收到回调时人工入账）。
+// 复用 confirmOrderPaid 的幂等条件更新 + 发积分（paymentMethod 记为 manual），返回入账后的最新订单。
+func (s *Service) AdminConfirmPaid(publicID string) (*RechargeOrderVO, error) {
+	order, err := s.requireOrder(publicID)
+	if err != nil {
+		return nil, err
+	}
+	method := "manual"
+	if _, err := s.confirmOrderPaid(order.ID, nil, &method); err != nil {
+		return nil, err
+	}
+	latest, err := s.repo.FindByID(order.ID)
+	if err != nil {
+		return nil, err
+	}
+	if latest == nil {
+		return nil, ecode.NotFound.WithMessage("订单不存在")
+	}
+	return toOrderVO(latest), nil
+}
+
 // confirmOrderPaid 幂等确认订单已支付：仅当订单处于「待支付/已超时」时标记已支付并发放积分（对齐 doConfirmPaid）。
 //
 // 幂等核心是条件更新 markPaidIfPayable：WHERE status IN(待支付,已超时) 的影响行数为 1 时才发积分，

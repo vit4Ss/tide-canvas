@@ -29,13 +29,13 @@ func NewHandler(svc *Service, jwtProvider *appjwt.Provider) *Handler {
 //	GET|POST /api/orders/notify/epay
 //
 // 其余全部需登录（对齐 SecurityUtils.getCurrentUserId）。
-func (h *Handler) RegisterRoutes(api gin.IRouter, jwtProvider *appjwt.Provider) {
+func (h *Handler) RegisterRoutes(api gin.IRouter, jwtProvider *appjwt.Provider, permLoader middleware.PermissionLoader) {
 	// 公开回调组（不挂 JWT 中间件）。
 	pub := api.Group("/orders")
 	pub.GET("/notify/epay", h.notify)
 	pub.POST("/notify/epay", h.notify)
 
-	// 需登录组。
+	// 需登录组（用户侧）。
 	g := api.Group("/orders")
 	g.Use(middleware.JWTAuth(jwtProvider))
 	g.POST("/recharge", middleware.RateLimit(middleware.RateLimitOptions{
@@ -47,6 +47,13 @@ func (h *Handler) RegisterRoutes(api gin.IRouter, jwtProvider *appjwt.Provider) 
 	g.POST("/:id/pay", h.pay)
 	g.POST("/:id/sync", h.sync)
 	g.POST("/:id/cancel", h.cancel)
+
+	// 管理端订单（/api/admin/orders）：JWTAuth + AdminOnly + 按钮级权限（对齐 AdminOrderController）。
+	adminG := api.Group("/admin/orders")
+	adminG.Use(middleware.JWTAuth(jwtProvider), middleware.AdminOnly())
+	adminG.GET("", middleware.RequiresPermission(permLoader, "order:view"), h.adminList)
+	adminG.GET("/:id", middleware.RequiresPermission(permLoader, "order:view"), h.adminGet)
+	adminG.POST("/:id/pay", middleware.RequiresPermission(permLoader, "order:pay"), h.adminConfirmPay)
 }
 
 // createRecharge POST /api/orders/recharge 创建充值订单。
@@ -129,6 +136,41 @@ func (h *Handler) cancel(c *gin.Context) {
 		return
 	}
 	response.OK(c, nil)
+}
+
+// adminList GET /api/admin/orders 管理端订单列表（全部用户，可按 userId/状态/单号/时间过滤）。
+func (h *Handler) adminList(c *gin.Context) {
+	var q AdminOrderQuery
+	if err := c.ShouldBindQuery(&q); err != nil {
+		response.Fail(c, ecode.BadRequest)
+		return
+	}
+	records, total, err := h.svc.ListAllOrders(&q)
+	if err != nil {
+		response.FailErr(c, err)
+		return
+	}
+	response.OK(c, response.Page(records, total, q.PageNum, q.PageSize))
+}
+
+// adminGet GET /api/admin/orders/:id 管理端订单详情（不校验所属）。
+func (h *Handler) adminGet(c *gin.Context) {
+	vo, err := h.svc.GetOrderForAdmin(c.Param("id"))
+	if err != nil {
+		response.FailErr(c, err)
+		return
+	}
+	response.OK(c, vo)
+}
+
+// adminConfirmPay POST /api/admin/orders/:id/pay 管理端手动确认支付（线下入账，幂等发积分）。
+func (h *Handler) adminConfirmPay(c *gin.Context) {
+	vo, err := h.svc.AdminConfirmPaid(c.Param("id"))
+	if err != nil {
+		response.FailErr(c, err)
+		return
+	}
+	response.OK(c, vo)
 }
 
 // notify GET|POST /api/orders/notify/epay 易支付异步通知（免登录）。
