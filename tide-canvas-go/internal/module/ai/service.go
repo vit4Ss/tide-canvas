@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -109,10 +110,10 @@ func (s *Service) Generate(userID int64, dto *GenerateDTO) (*TaskVO, error) {
 		return nil, err
 	}
 
-	// 1.5) 并发上限：按用户等级（团队 > VIP > 普通）取一档上限；管理员(role=9)与白名单用户豁免。0=不限。
-	if role, inTeam, uname := s.repo.GetUserTier(userID); role != 9 {
+	// 1.5) 并发上限：按用户会员等级(vip_level)取并发上限；管理员(role=9)与白名单用户豁免。0=不限。
+	if role, vipLevel, uname := s.repo.GetUserTier(userID); role != 9 {
 		if !inWhitelist(uname, s.repo.GetConfigStr("ai.concurrency_whitelist")) {
-			if limit := s.resolveConcurrencyLimit(role, inTeam); limit > 0 {
+			if limit := s.resolveConcurrencyLimit(vipLevel); limit > 0 {
 				active, cErr := s.repo.CountActiveTasksByUser(userID, TaskProcessing)
 				if cErr != nil {
 					return nil, cErr
@@ -199,15 +200,30 @@ func (s *Service) Generate(userID int64, dto *GenerateDTO) (*TaskVO, error) {
 	return s.toTaskVO(task, modelName), nil
 }
 
-// resolveConcurrencyLimit 按用户等级取并发上限：团队成员 > VIP > 普通，各自独立配置（0=不限）。
-func (s *Service) resolveConcurrencyLimit(role int, inTeam bool) int {
-	if inTeam {
-		return s.repo.GetConfigInt("ai.user_max_concurrency_team", 0)
+// vipLevelConfig 会员等级配置项（存 sys_config 的 vip.levels，JSON 数组）。
+type vipLevelConfig struct {
+	Level       int    `json:"level"`
+	Name        string `json:"name"`
+	Concurrency int    `json:"concurrency"` // 该等级 AI 并发上限，0=不限
+}
+
+// resolveConcurrencyLimit 按会员等级取并发上限：解析 sys_config 的 vip.levels，匹配 level 取 concurrency。
+// 未配置 / 解析失败 / 找不到该等级 → 0（不限）。
+func (s *Service) resolveConcurrencyLimit(vipLevel int) int {
+	raw := s.repo.GetConfigStr("vip.levels")
+	if strings.TrimSpace(raw) == "" {
+		return 0
 	}
-	if role == 1 { // VIP
-		return s.repo.GetConfigInt("ai.user_max_concurrency_vip", 0)
+	var levels []vipLevelConfig
+	if err := json.Unmarshal([]byte(raw), &levels); err != nil {
+		return 0
 	}
-	return s.repo.GetConfigInt("ai.user_max_concurrency", 0)
+	for _, lv := range levels {
+		if lv.Level == vipLevel {
+			return lv.Concurrency
+		}
+	}
+	return 0
 }
 
 // inWhitelist 判断用户名是否在并发白名单（逗号分隔，大小写不敏感）内。

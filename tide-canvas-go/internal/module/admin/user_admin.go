@@ -54,6 +54,9 @@ func (s *UserAdminService) Update(publicID string, dto *UserUpdateDTO) error {
 	if dto.Role != nil {
 		columns["role"] = *dto.Role
 	}
+	if dto.VipLevel != nil {
+		columns["vip_level"] = *dto.VipLevel
+	}
 	if dto.RoleID != nil {
 		columns["role_id"] = *dto.RoleID
 	}
@@ -79,6 +82,7 @@ func toUserVO(u *model.SysUser) UserVO {
 		Nickname:      u.Nickname,
 		Avatar:        u.Avatar,
 		Role:          u.Role,
+		VipLevel:      u.VipLevel,
 		RoleID:        u.RoleID,
 		Status:        u.Status,
 		APIQuota:      u.APIQuota,

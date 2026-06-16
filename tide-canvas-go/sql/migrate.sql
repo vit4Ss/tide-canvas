@@ -468,6 +468,10 @@ CREATE TABLE IF NOT EXISTS `im_user_status` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='IM用户在线状态表';
 
 
+-- 会员等级体系：sys_user 加 vip_level；原 VIP(role=1) 迁移为 普通用户(role=0) + 会员等级2。
+ALTER TABLE `sys_user` ADD COLUMN `vip_level` INT NOT NULL DEFAULT 1 COMMENT '会员等级(1起)' AFTER `role`;
+UPDATE `sys_user` SET `vip_level` = 2, `role` = 0 WHERE `role` = 1;
+
 SET FOREIGN_KEY_CHECKS = 1;
 
 -- =============================================================

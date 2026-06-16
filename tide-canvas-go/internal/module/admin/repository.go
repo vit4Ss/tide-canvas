@@ -411,3 +411,29 @@ func (r *Repository) SelectActiveUsers(limit int) ([]model.SysUser, error) {
 		Order("last_login_time DESC").Limit(limit).Find(&users).Error
 	return users, err
 }
+
+// =====================================================================
+// 系统配置（sys_config）
+// =====================================================================
+
+// GetConfigStr 读取 sys_config 字符串配置；未配置返回空串。
+func (r *Repository) GetConfigStr(key string) string {
+	var cfg model.SysConfig
+	if err := r.db.Where("config_key = ?", key).First(&cfg).Error; err != nil {
+		return ""
+	}
+	return cfg.ConfigValue
+}
+
+// UpsertConfig 写入单个配置项：存在则更新 value，否则插入。
+func (r *Repository) UpsertConfig(key, value string) error {
+	var cfg model.SysConfig
+	err := r.db.Where("config_key = ?", key).First(&cfg).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return r.db.Create(&model.SysConfig{ConfigKey: key, ConfigValue: value}).Error
+	}
+	if err != nil {
+		return err
+	}
+	return r.db.Model(&model.SysConfig{}).Where("id = ?", cfg.ID).Update("config_value", value).Error
+}

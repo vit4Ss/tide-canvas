@@ -12,6 +12,7 @@ type SysUser struct {
 	Nickname      string     `json:"nickname" gorm:"column:nickname"`
 	Avatar        string     `json:"avatar" gorm:"column:avatar"`
 	Role          int        `json:"role" gorm:"column:role"`
+	VipLevel      int        `json:"vipLevel" gorm:"column:vip_level"`
 	RoleID        *int64     `json:"-" gorm:"column:role_id"`
 	Status        int        `json:"status" gorm:"column:status"`
 	APIQuota      int        `json:"-" gorm:"column:api_quota"`

@@ -57,6 +57,7 @@ type UserQuery struct {
 // UserUpdateDTO 编辑用户（对齐 AdminUserUpdateDTO）。所有字段可选，非空才更新。
 type UserUpdateDTO struct {
 	Role         *int   `json:"role"`
+	VipLevel     *int   `json:"vipLevel"`
 	RoleID       *int64 `json:"roleId"` // 管理角色ID(RBAC)；null 表示不分配
 	Status       *int   `json:"status"`
 	APIQuota     *int   `json:"apiQuota"`
@@ -72,6 +73,7 @@ type UserVO struct {
 	Nickname      string     `json:"nickname"`
 	Avatar        string     `json:"avatar"`
 	Role          int        `json:"role"`
+	VipLevel      int        `json:"vipLevel"`
 	RoleID        *int64     `json:"roleId"`
 	Status        int        `json:"status"`
 	APIQuota      int        `json:"apiQuota"`

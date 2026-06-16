@@ -28,6 +28,7 @@ type Handler struct {
 	emailSvc    *EmailTemplateAdminService
 	pointsSvc   *PointsAdminService
 	overviewSvc *OverviewService
+	vipLevelSvc *VipLevelAdminService
 }
 
 // NewHandler 构造后台管理 Handler。
@@ -52,6 +53,7 @@ func NewHandler(
 		emailSvc:    NewEmailTemplateAdminService(repo, mailSender, logger),
 		pointsSvc:   NewPointsAdminService(repo, pointsSvc),
 		overviewSvc: NewOverviewService(repo, logger),
+		vipLevelSvc: NewVipLevelAdminService(repo),
 	}
 }
 
@@ -105,4 +107,9 @@ func (h *Handler) RegisterRoutes(api gin.IRouter, jwtProvider *appjwt.Provider, 
 	dashboard.GET("/overview", middleware.RequiresPermission(permLoader, "dashboard:view"), h.overview)
 	dashboard.GET("/charts", middleware.RequiresPermission(permLoader, "dashboard:view"), h.charts)
 	dashboard.GET("/active-users", middleware.RequiresPermission(permLoader, "dashboard:view"), h.dashboardActiveUsers)
+
+	// 会员等级配置 /api/admin/vip-levels（读 setting:view / 写 setting:edit）
+	vip := admin.Group("/vip-levels")
+	vip.GET("", middleware.RequiresPermission(permLoader, "setting:view"), h.listVipLevels)
+	vip.PUT("", middleware.RequiresPermission(permLoader, "setting:edit"), h.saveVipLevels)
 }
