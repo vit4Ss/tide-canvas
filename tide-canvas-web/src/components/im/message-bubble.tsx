@@ -15,13 +15,6 @@ interface MessageBubbleProps {
   onRecall?: (msgId: string) => void;
 }
 
-/** 仅显示时:分（消息列表内联时间戳） */
-function shortTime(raw: string): string {
-  const m = /\d{4}-\d{2}-\d{2}[T ](\d{2}):(\d{2})/.exec(raw);
-  if (m) return `${m[1]}:${m[2]}`;
-  return "";
-}
-
 export function MessageBubble({ message, isSelf, onRecall }: MessageBubbleProps) {
   const [hovered, setHovered] = useState(false);
   const recalled = message.status === MessageStatus.RECALLED;
@@ -76,21 +69,16 @@ export function MessageBubble({ message, isSelf, onRecall }: MessageBubbleProps)
         >
           {message.content}
         </div>
-        <div className="flex items-center gap-2 px-1">
-          <span className="text-[10px] text-muted-foreground">
-            {shortTime(message.createTime)}
-          </span>
-          {canRecall && hovered && (
-            <button
-              type="button"
-              onClick={() => onRecall?.(message.id)}
-              className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground transition-colors hover:text-foreground"
-            >
-              <RotateCcw className="size-2.5" />
-              撤回
-            </button>
-          )}
-        </div>
+        {canRecall && hovered && (
+          <button
+            type="button"
+            onClick={() => onRecall?.(message.id)}
+            className="inline-flex items-center gap-0.5 px-1 text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <RotateCcw className="size-2.5" />
+            撤回
+          </button>
+        )}
       </div>
     </div>
   );

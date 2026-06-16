@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Avatar, AvatarBadge, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,6 +8,28 @@ import { MessageBubble } from "@/components/im/message-bubble";
 import { cn } from "@/lib/utils";
 import type { ConversationVO, MessageVO } from "@/types/im";
 import { ArrowLeft, Headset, MessageCircle, Send, User } from "lucide-react";
+
+// ---- 微信式消息时间分隔：与上一条间隔 >5 分钟、或首条时显示一次时间 ----
+function parseMs(raw: string): number {
+  const t = new Date(raw.replace(" ", "T")).getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
+function shouldShowTime(curr: string, prev?: string): boolean {
+  if (!prev) return true;
+  return parseMs(curr) - parseMs(prev) > 5 * 60 * 1000;
+}
+function formatMsgTime(raw: string): string {
+  const d = new Date(raw.replace(" ", "T"));
+  if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  if (d.toDateString() === now.toDateString()) return hm;
+  const yest = new Date(now);
+  yest.setDate(now.getDate() - 1);
+  if (d.toDateString() === yest.toDateString()) return `昨天 ${hm}`;
+  if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`;
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${hm}`;
+}
 
 interface ChatWindowProps {
   conversation: ConversationVO | null;
@@ -135,16 +157,24 @@ export function ChatWindow({
             还没有消息，发送第一条吧
           </div>
         ) : (
-          messages.map((msg) => {
-            const isSelf =
-              !!currentUserId && msg.sender?.id === currentUserId;
+          messages.map((msg, i) => {
+            const isSelf = !!currentUserId && msg.sender?.id === currentUserId;
+            const showTime = shouldShowTime(msg.createTime, messages[i - 1]?.createTime);
             return (
-              <MessageBubble
-                key={msg.id}
-                message={msg}
-                isSelf={isSelf}
-                onRecall={isSelf ? onRecall : undefined}
-              />
+              <Fragment key={msg.id}>
+                {showTime && (
+                  <div className="flex justify-center py-1">
+                    <span className="rounded-full bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground">
+                      {formatMsgTime(msg.createTime)}
+                    </span>
+                  </div>
+                )}
+                <MessageBubble
+                  message={msg}
+                  isSelf={isSelf}
+                  onRecall={isSelf ? onRecall : undefined}
+                />
+              </Fragment>
             );
           })
         )}
