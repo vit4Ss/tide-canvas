@@ -4,9 +4,14 @@ This production setup uses Docker Compose:
 
 ```text
 Internet -> Caddy(80/443 HTTPS) -> frontend(Next.js :3000)
-                                   -> /api/* proxy -> backend(Spring Boot :8080)
+                                   -> /api/* proxy -> backend(Go :8080)
                                                       -> mysql/redis internal only
 ```
+
+Backend now runs the Go service (`tide-canvas-go`) via `docker-compose.prod.yml`.
+The previous Spring Boot stack is kept as `docker-compose.java.yml` for rollback;
+both files share identical mysql/redis/frontend/caddy definitions, so running
+either one only rebuilds the `backend` service.
 
 The server only needs the Git repository and one `.env` file. Do not upload
 local `application.yml`, `application-docker.yml`, or `.env.local`.
@@ -127,3 +132,13 @@ docker exec tc-mysql sh -c 'mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --single-t
 - Real local config files are ignored by Git and excluded from Docker build
   context.
 - Keep `.env` private and never commit it.
+
+## Rollback to the Java backend
+
+The Java stack is preserved as `docker-compose.java.yml`. To switch back, just
+bring it up — only the `backend` container is rebuilt, data volumes are untouched:
+
+```bash
+cd ~/tide-canvas
+docker compose --env-file .env -f docker-compose.java.yml up -d --build
+```
