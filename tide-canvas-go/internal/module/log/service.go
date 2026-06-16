@@ -122,6 +122,15 @@ func (s *Service) DeleteLoginLog(id int64) error { return s.repo.DeleteLoginLog(
 // DeleteSysLog 删除一条操作日志（对齐 AdminLogController.delete）。
 func (s *Service) DeleteSysLog(id int64) error { return s.repo.DeleteSysLog(id) }
 
+// ClearAccessLogs 清空访问日志（对齐前端「清空」按钮）。
+func (s *Service) ClearAccessLogs() error { return s.repo.ClearAccessLogs() }
+
+// ClearLoginLogs 清空登录日志。
+func (s *Service) ClearLoginLogs() error { return s.repo.ClearLoginLogs() }
+
+// ClearSysLogs 清空操作日志。
+func (s *Service) ClearSysLogs() error { return s.repo.ClearSysLogs() }
+
 // =====================================================================
 // 统计（PV / UV / 登录）
 // =====================================================================

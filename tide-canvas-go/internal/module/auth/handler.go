@@ -43,6 +43,7 @@ func (h *Handler) RegisterRoutes(api gin.IRouter) {
 	authed.Use(middleware.JWTAuth(h.jwt))
 	authed.GET("/me", h.me)
 	authed.PUT("/password", h.updatePassword)
+	authed.PUT("/profile", h.updateProfile)
 }
 
 func (h *Handler) emailCode(c *gin.Context) {
@@ -120,6 +121,20 @@ func (h *Handler) updatePassword(c *gin.Context) {
 		return
 	}
 	response.OK(c, nil)
+}
+
+func (h *Handler) updateProfile(c *gin.Context) {
+	var req UpdateProfileReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, ecode.BadRequest)
+		return
+	}
+	vo, err := h.svc.UpdateProfile(middleware.MustUserID(c), &req)
+	if err != nil {
+		response.FailErr(c, err)
+		return
+	}
+	response.OK(c, vo)
 }
 
 func (h *Handler) logout(c *gin.Context) {

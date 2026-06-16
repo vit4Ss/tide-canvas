@@ -157,6 +157,30 @@ func (s *Service) UpdatePassword(userID int64, req *UpdatePasswordReq) error {
 	return s.users.UpdateColumns(userID, map[string]interface{}{"password": hashed})
 }
 
+// UpdateProfile 修改个人资料（昵称 / 手机号，非空字段才更新），返回更新后的用户信息。
+func (s *Service) UpdateProfile(userID int64, req *UpdateProfileReq) (*UserVO, error) {
+	u, err := s.users.FindByID(userID)
+	if err != nil {
+		return nil, err
+	}
+	if u == nil {
+		return nil, ecode.AccountNotFound
+	}
+	updates := map[string]interface{}{}
+	if req.Nickname != "" {
+		updates["nickname"] = req.Nickname
+	}
+	if req.Phone != "" {
+		updates["phone"] = req.Phone
+	}
+	if len(updates) > 0 {
+		if err := s.users.UpdateColumns(userID, updates); err != nil {
+			return nil, err
+		}
+	}
+	return s.CurrentUser(userID)
+}
+
 func (s *Service) buildLoginVO(u *model.SysUser) (*LoginVO, error) {
 	access, err := s.jwt.GenerateAccessToken(u.ID, u.Username, u.Role)
 	if err != nil {

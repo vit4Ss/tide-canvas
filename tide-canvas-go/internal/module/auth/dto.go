@@ -39,6 +39,12 @@ type UpdatePasswordReq struct {
 	NewPassword string `json:"newPassword" binding:"required,min=6,max=32"`
 }
 
+// UpdateProfileReq 修改个人资料请求（昵称 / 手机号，均可选，非空才更新）。
+type UpdateProfileReq struct {
+	Nickname string `json:"nickname"`
+	Phone    string `json:"phone"`
+}
+
 // UserVO 用户信息视图。对外以 public_id 作为 id，不暴露内部雪花关联ID（roleId/teamId）。
 type UserVO struct {
 	ID              string          `json:"id"`

@@ -27,22 +27,27 @@ func NewHandler(svc *Service) *Handler {
 // 各接口的权限码忠实迁移旧 AdminAccessLogController / AdminLoginLogController / AdminLogController
 // 上的 @RequiresPermission。permLoader 由 router 注入一次后在全部路由复用（middleware.NewDBPermissionLoader(db)）。
 func (h *Handler) RegisterRoutes(api gin.IRouter, jwtProvider *appjwt.Provider, permLoader middleware.PermissionLoader) {
+	// 访问日志 /api/admin/access-logs（对齐前端 adminApi.accessLogs）
+	access := api.Group("/admin/access-logs")
+	access.Use(middleware.JWTAuth(jwtProvider), middleware.AdminOnly())
+	access.GET("", middleware.RequiresPermission(permLoader, "accesslog:view"), h.listAccessLogs)
+	access.DELETE("/:id", middleware.RequiresPermission(permLoader, "accesslog:delete"), h.deleteAccessLog)
+	access.DELETE("", middleware.RequiresPermission(permLoader, "accesslog:delete"), h.clearAccessLogs)
+
+	// 登录日志 /api/admin/login-logs（对齐前端 adminApi.loginLogs）
+	login := api.Group("/admin/login-logs")
+	login.Use(middleware.JWTAuth(jwtProvider), middleware.AdminOnly())
+	login.GET("", middleware.RequiresPermission(permLoader, "loginlog:view"), h.listLoginLogs)
+	login.DELETE("/:id", middleware.RequiresPermission(permLoader, "loginlog:delete"), h.deleteLoginLog)
+	login.DELETE("", middleware.RequiresPermission(permLoader, "loginlog:delete"), h.clearLoginLogs)
+
+	// 操作日志 /api/admin/logs（sys_log，对齐前端 adminApi.logs）+ 访问统计
 	logs := api.Group("/admin/logs")
 	logs.Use(middleware.JWTAuth(jwtProvider), middleware.AdminOnly())
-
-	// 访问日志 /api/admin/logs/access
-	logs.GET("/access", middleware.RequiresPermission(permLoader, "accesslog:view"), h.listAccessLogs)
-	logs.DELETE("/access/:id", middleware.RequiresPermission(permLoader, "accesslog:delete"), h.deleteAccessLog)
-
-	// 登录日志 /api/admin/logs/login
-	logs.GET("/login", middleware.RequiresPermission(permLoader, "loginlog:view"), h.listLoginLogs)
-	logs.DELETE("/login/:id", middleware.RequiresPermission(permLoader, "loginlog:delete"), h.deleteLoginLog)
-
-	// 操作日志 /api/admin/logs/operation（sys_log）
-	logs.GET("/operation", middleware.RequiresPermission(permLoader, "syslog:view"), h.listSysLogs)
-	logs.DELETE("/operation/:id", middleware.RequiresPermission(permLoader, "syslog:delete"), h.deleteSysLog)
-
-	// 访问统计（PV/UV/登录） /api/admin/logs/stats（沿用访问日志查看权限）
+	logs.GET("", middleware.RequiresPermission(permLoader, "syslog:view"), h.listSysLogs)
+	logs.DELETE("/:id", middleware.RequiresPermission(permLoader, "syslog:delete"), h.deleteSysLog)
+	logs.DELETE("", middleware.RequiresPermission(permLoader, "syslog:delete"), h.clearSysLogs)
+	// 访问统计（PV/UV/登录），沿用访问日志查看权限（前端暂未调用，保留能力）
 	logs.GET("/stats", middleware.RequiresPermission(permLoader, "accesslog:view"), h.stats)
 }
 
@@ -127,6 +132,33 @@ func (h *Handler) deleteSysLog(c *gin.Context) {
 		return
 	}
 	if err := h.svc.DeleteSysLog(id); err != nil {
+		response.FailErr(c, err)
+		return
+	}
+	response.OK(c, nil)
+}
+
+// clearAccessLogs DELETE /api/admin/access-logs 清空访问日志（权限码 accesslog:delete）。
+func (h *Handler) clearAccessLogs(c *gin.Context) {
+	if err := h.svc.ClearAccessLogs(); err != nil {
+		response.FailErr(c, err)
+		return
+	}
+	response.OK(c, nil)
+}
+
+// clearLoginLogs DELETE /api/admin/login-logs 清空登录日志（权限码 loginlog:delete）。
+func (h *Handler) clearLoginLogs(c *gin.Context) {
+	if err := h.svc.ClearLoginLogs(); err != nil {
+		response.FailErr(c, err)
+		return
+	}
+	response.OK(c, nil)
+}
+
+// clearSysLogs DELETE /api/admin/logs 清空操作日志（权限码 syslog:delete）。
+func (h *Handler) clearSysLogs(c *gin.Context) {
+	if err := h.svc.ClearSysLogs(); err != nil {
 		response.FailErr(c, err)
 		return
 	}

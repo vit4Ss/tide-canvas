@@ -133,6 +133,25 @@ func (r *Repository) DeleteLoginLog(id int64) error {
 }
 
 // =====================================================================
+// 清空（对齐前端各日志页「清空」按钮，物理删除全表）
+// =====================================================================
+
+// ClearAccessLogs 清空全部访问日志。
+func (r *Repository) ClearAccessLogs() error {
+	return r.db.Where("1 = 1").Delete(&model.AccessLog{}).Error
+}
+
+// ClearLoginLogs 清空全部登录日志。
+func (r *Repository) ClearLoginLogs() error {
+	return r.db.Where("1 = 1").Delete(&model.LoginLog{}).Error
+}
+
+// ClearSysLogs 清空全部操作日志。
+func (r *Repository) ClearSysLogs() error {
+	return r.db.Where("1 = 1").Delete(&model.SysLog{}).Error
+}
+
+// =====================================================================
 // 统计（PV / UV / 登录），对齐 AccessLogMapper / LoginLogMapper 的聚合
 // =====================================================================
 
