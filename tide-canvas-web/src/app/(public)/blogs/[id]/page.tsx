@@ -16,6 +16,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { Markdown } from "@/components/shared/markdown";
+import { FollowButton } from "@/components/user/follow-button";
 import type { BlogDetailVO } from "@/types/blog";
 
 export default function BlogDetailPage() {
@@ -231,10 +232,12 @@ export default function BlogDetailPage() {
             {blog.authorAvatar && <AvatarImage src={blog.authorAvatar} />}
             <AvatarFallback>{blog.authorName?.[0] || "A"}</AvatarFallback>
           </Avatar>
-          <div>
+          <div className="flex-1">
             <p className="text-sm font-medium">{blog.authorName}</p>
             <p className="text-xs text-neutral-400">{formatDate(blog.createTime)}</p>
           </div>
+          {/* authorId 运行时为作者 public_id；按钮内部已处理「未登录/自己不显示」 */}
+          <FollowButton targetUserId={String(blog.authorId)} />
         </div>
 
         {/* Stats */}
@@ -329,6 +332,7 @@ export default function BlogDetailPage() {
             <h3 className="font-semibold">{blog.authorName}</h3>
             <p className="text-sm text-neutral-500">博客作者</p>
           </div>
+          <FollowButton targetUserId={String(blog.authorId)} size="default" />
           {user && (
             <Button variant="outline" onClick={() => setTipOpen(true)}>
               <Gift className="mr-1 h-4 w-4" />

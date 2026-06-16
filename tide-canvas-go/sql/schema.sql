@@ -706,6 +706,21 @@ CREATE TABLE `im_user_status` (
     UNIQUE KEY `uk_user` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='IM用户在线状态表';
 
+-- ----------------------------
+-- 关注关系表(中间表,内部:无public_id)
+-- ----------------------------
+DROP TABLE IF EXISTS `sys_follow`;
+CREATE TABLE `sys_follow` (
+    `id`          BIGINT   NOT NULL COMMENT '主键(雪花ID,应用层生成)',
+    `follower_id` BIGINT   NOT NULL COMMENT '关注者用户ID',
+    `followee_id` BIGINT   NOT NULL COMMENT '被关注者用户ID',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_follower_followee` (`follower_id`, `followee_id`),
+    KEY `idx_followee` (`followee_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='关注关系表';
+
 -- =============================================================
 -- 二、初始化种子数据
 -- =============================================================

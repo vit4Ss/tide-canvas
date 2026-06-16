@@ -21,6 +21,7 @@ import (
 	"github.com/tidecanvas/tide-canvas-go/internal/module/content"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/email"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/file"
+	"github.com/tidecanvas/tide-canvas-go/internal/module/follow"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/im"
 	logmod "github.com/tidecanvas/tide-canvas-go/internal/module/log"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/monitor"
@@ -124,6 +125,11 @@ func New(db *gorm.DB, conf *viper.Viper, logger *logrus.Logger, rdb *redis.Clien
 	// blog 博客（发布/付费阅读/打赏/点赞），注入积分服务与作者信息查询
 	blogSvc := blog.NewService(blog.NewRepository(db), blog.NewDBUserFinder(db), pointsSvc, logger)
 	blog.NewHandler(blogSvc).RegisterRoutes(api, jwtProvider)
+
+	// follow 关注（关注/取关/状态/我关注的/关注我的），通知系统前置。
+	// 入参用对方 public_id，内部解析雪花主键；用户摘要与 public_id 映射用 DBUserFinder 直读 sys_user。
+	followSvc := follow.NewService(follow.NewRepository(db), follow.NewDBUserFinder(db), logger)
+	follow.NewHandler(followSvc).RegisterRoutes(api, jwtProvider)
 
 	// RBAC 按钮级权限加载器：读 sys_user+sys_role 解析权限串，admin / ai / log / recharge 管理端路由由 RequiresPermission 复用。
 	permLoader := middleware.NewDBPermissionLoader(db)

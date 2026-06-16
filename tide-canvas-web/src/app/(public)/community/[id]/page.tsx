@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Markdown } from "@/components/shared/markdown";
+import { FollowButton } from "@/components/user/follow-button";
 import type { PostDetailVO, CommentVO } from "@/types/community";
 
 export default function PostDetailPage() {
@@ -229,6 +230,8 @@ export default function PostDetailPage() {
               <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">{post.nickname}</p>
               <p className="text-xs text-neutral-400">{formatDate(post.createTime)}</p>
             </div>
+            {/* userId 运行时为作者 public_id；按钮内部已处理「未登录/自己不显示」 */}
+            <FollowButton targetUserId={String(post.userId)} />
             {post.category && (
               <span className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-medium text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
                 <Hash className="h-3 w-3" />

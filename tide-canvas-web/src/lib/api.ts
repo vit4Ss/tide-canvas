@@ -35,6 +35,9 @@ import type {
   BlogVO, BlogDetailVO, BlogCreateDTO, BlogUpdateDTO, BlogTipDTO, BlogQuery,
 } from "@/types/blog";
 import type {
+  FollowUserVO, FollowStatusVO, FollowQuery,
+} from "@/types/follow";
+import type {
   RechargeOrderVO, RechargeCreateDTO, OrderQuery,
   PaymentInitiateVO, RechargeConfigVO,
 } from "@/types/order";
@@ -388,6 +391,25 @@ export const blogApi = {
     http.post<boolean>(`/api/blogs/${id}/like`),
   my: (query: BlogQuery) =>
     http.get<PageData<BlogVO>>("/api/blogs/my", toParams(query)),
+};
+
+// ========== 关注（通知系统前置） ==========
+export const followApi = {
+  /** 关注对方（userId 为对方 public_id） */
+  follow: (userId: string) =>
+    http.post<void>(`/api/follow/${userId}`),
+  /** 取关 */
+  unfollow: (userId: string) =>
+    http.delete<void>(`/api/follow/${userId}`),
+  /** 关注状态 {following, followedBy} */
+  status: (userId: string) =>
+    http.get<FollowStatusVO>(`/api/follow/${userId}/status`),
+  /** 我关注的人（分页） */
+  following: (query?: FollowQuery) =>
+    http.get<PageData<FollowUserVO>>("/api/follow/following", toParams(query ?? {})),
+  /** 关注我的人（分页） */
+  followers: (query?: FollowQuery) =>
+    http.get<PageData<FollowUserVO>>("/api/follow/followers", toParams(query ?? {})),
 };
 
 // ========== Banner（首页轮播，公开） ==========

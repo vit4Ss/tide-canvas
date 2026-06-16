@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useAuth } from "@/hooks/use-auth";
 import { useEffect, useState } from "react";
-import { checkinApi } from "@/lib/api";
+import { checkinApi, followApi } from "@/lib/api";
 import {
   FolderOpen,
   ImagePlus,
@@ -17,6 +17,8 @@ import {
   BookOpen,
   Sparkles,
   Ticket,
+  UserPlus,
+  Users,
 } from "lucide-react";
 
 export default function UserPage() {
@@ -24,6 +26,8 @@ export default function UserPage() {
   const [checkedIn, setCheckedIn] = useState(false);
   const [checkinLoading, setCheckinLoading] = useState(false);
   const [streak, setStreak] = useState(0);
+  const [followingCount, setFollowingCount] = useState(0);
+  const [followerCount, setFollowerCount] = useState(0);
 
   const menuItems = [
     { href: "/user/projects", label: "我的项目", desc: "管理画布项目", icon: FolderOpen },
@@ -46,6 +50,13 @@ export default function UserPage() {
         setCheckedIn(res.data.checkedInToday);
         setStreak(res.data.streakDays);
       }
+    });
+    // 关注/粉丝数：只取分页 total，pageSize=1 省流量
+    followApi.following({ pageNum: 1, pageSize: 1 }).then((res) => {
+      if (res.success) setFollowingCount(res.data.total);
+    });
+    followApi.followers({ pageNum: 1, pageSize: 1 }).then((res) => {
+      if (res.success) setFollowerCount(res.data.total);
     });
   }, []);
 
@@ -84,6 +95,23 @@ export default function UserPage() {
               签约作者
             </span>
           )}
+        </div>
+        {/* 关注 / 粉丝 数（点击进列表） */}
+        <div className="flex items-center gap-6">
+          <Link href="/user/following" className="text-center transition-opacity hover:opacity-70">
+            <p className="text-xl font-bold">{followingCount}</p>
+            <p className="mt-0.5 flex items-center gap-1 text-xs text-neutral-500">
+              <UserPlus className="h-3 w-3" />
+              关注
+            </p>
+          </Link>
+          <Link href="/user/followers" className="text-center transition-opacity hover:opacity-70">
+            <p className="text-xl font-bold">{followerCount}</p>
+            <p className="mt-0.5 flex items-center gap-1 text-xs text-neutral-500">
+              <Users className="h-3 w-3" />
+              粉丝
+            </p>
+          </Link>
         </div>
       </div>
 
