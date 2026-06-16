@@ -71,6 +71,7 @@ export interface AdminUserVO extends UserVO {
 
 export interface AdminUserUpdateDTO {
   role?: number;
+  vipLevel?: number;
   roleId?: number;
   status?: number;
   apiQuota?: number;
@@ -201,5 +202,12 @@ export interface ContentVO {
 export interface ContentQuery extends PageQuery {
   keyword?: string;
   status?: number;
+}
+
+// 会员等级配置项（对齐后端 /api/admin/vip-levels）
+export interface VipLevelVO {
+  level: number;
+  name: string;
+  concurrency: number; // 该等级 AI 并发上限，0=不限
 }
 

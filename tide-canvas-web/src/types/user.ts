@@ -6,6 +6,7 @@ export interface UserVO {
   nickname: string;
   avatar: string;
   role: UserRole;
+  vipLevel?: number;
   roleId?: number;
   status: UserStatus;
   apiQuota: number;

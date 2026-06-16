@@ -18,6 +18,7 @@ import type {
   AiProviderVO, AiProviderCreateDTO, AiProviderUpdateDTO,
   LogVO, LogQuery, ContentVO, ContentQuery,
   AccessLogVO, AccessLogQuery, LoginLogVO, LoginLogQuery, ActiveUserVO,
+  VipLevelVO,
 } from "@/types/admin";
 import type { SystemMetricsVO, RedisInfoVO, SessionVO } from "@/types/monitor";
 import type {
@@ -262,6 +263,10 @@ export const adminApi = {
   settings: {
     get: () => http.get<Record<string, unknown>>("/api/admin/settings"),
     update: (data: Record<string, unknown>) => http.put<void>("/api/admin/settings", data),
+  },
+  vipLevels: {
+    list: () => http.get<VipLevelVO[]>("/api/admin/vip-levels"),
+    save: (data: VipLevelVO[]) => http.put<void>("/api/admin/vip-levels", data),
   },
   emailTemplates: {
     list: () => http.get<EmailTemplateVO[]>("/api/admin/email-templates"),

@@ -33,6 +33,7 @@ export const ADMIN_GROUPS: AdminGroup[] = [
     key: "user", label: "用户与内容", icon: <Users size={16} />,
     items: [
       { key: "/admin/users", label: "用户管理", perm: "user:view" },
+      { key: "/admin/vip-levels", label: "会员等级", perm: "setting:view" },
       { key: "/admin/contents", label: "内容管理", perm: "content:view" },
       { key: "/admin/authors", label: "作者管理", perm: "author:view" },
       { key: "/admin/banners", label: "Banner 管理", perm: "banner:view" },

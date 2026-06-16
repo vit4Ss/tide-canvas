@@ -12,13 +12,13 @@ import { AdminPageHead } from "@/components/admin/page-head";
 import { formatDate } from "@/lib/utils";
 import type { UserVO } from "@/types/user";
 import type { RoleVO } from "@/types/role";
+import type { VipLevelVO } from "@/types/admin";
 import type { PageData } from "@/types/api";
 
 const PAGE_SIZE = 15;
 
 const ROLE_TAG: Record<number, { label: string; color: string }> = {
   0: { label: "普通用户", color: "default" },
-  1: { label: "VIP", color: "gold" },
   9: { label: "管理员", color: "red" },
 };
 const STATUS_TAG: Record<number, { label: string; color: string }> = {
@@ -35,10 +35,11 @@ export default function AdminUsersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [roles, setRoles] = useState<RoleVO[]>([]);
+  const [vipLevels, setVipLevels] = useState<VipLevelVO[]>([]);
 
   // 编辑弹窗
   const [editTarget, setEditTarget] = useState<UserVO | null>(null);
-  const [editForm, setEditForm] = useState<{ role: number; status: number; apiQuota: number; roleId?: number }>({ role: 0, status: 1, apiQuota: 0 });
+  const [editForm, setEditForm] = useState<{ role: number; vipLevel: number; status: number; apiQuota: number; roleId?: number }>({ role: 0, vipLevel: 1, status: 1, apiQuota: 0 });
   const [saving, setSaving] = useState(false);
 
   // 调积分弹窗
@@ -66,13 +67,14 @@ export default function AdminUsersPage() {
 
   useEffect(() => { loadUsers(1); }, []);
   useEffect(() => { adminApi.roles.list().then((r) => { if (r.success) setRoles(r.data ?? []); }).catch(() => {}); }, []);
+  useEffect(() => { adminApi.vipLevels.list().then((r) => { if (r.success) setVipLevels(r.data ?? []); }).catch(() => {}); }, []);
 
   const handleSearch = (v: string) => { setKeyword(v); setPageNum(1); loadUsers(1, v); };
   const handlePageChange = (p: number) => { setPageNum(p); loadUsers(p); };
 
   const openEdit = (user: UserVO) => {
     setEditTarget(user);
-    setEditForm({ role: user.role, status: user.status, apiQuota: user.apiQuota, roleId: user.roleId });
+    setEditForm({ role: user.role, vipLevel: user.vipLevel ?? 1, status: user.status, apiQuota: user.apiQuota, roleId: user.roleId });
   };
 
   const handleSave = async () => {
@@ -131,6 +133,7 @@ export default function AdminUsersPage() {
     },
     { title: "邮箱", dataIndex: "email", key: "email", responsive: ["md"], render: (v) => <span style={{ color: "var(--ant-color-text-secondary, #8c8c8c)" }}>{v}</span> },
     { title: "角色", dataIndex: "role", key: "role", render: (r: number) => { const t = ROLE_TAG[r] ?? ROLE_TAG[0]; return <Tag color={t.color}>{t.label}</Tag>; } },
+    { title: "会员等级", dataIndex: "vipLevel", key: "vipLevel", responsive: ["md"], render: (lv: number | undefined, u) => { if (u.role === 9) return <span style={{ color: "#bfbfbf" }}>-</span>; const level = lv ?? 1; const cfg = vipLevels.find((v) => v.level === level); return <Tag color="purple">{cfg?.name ?? `VIP${level}`}</Tag>; } },
     {
       title: "管理角色", dataIndex: "roleId", key: "roleId", responsive: ["md"], render: (rid: number | undefined, u) => {
         if (u.role !== 9) return <span style={{ color: "#bfbfbf" }}>-</span>;
@@ -181,8 +184,16 @@ export default function AdminUsersPage() {
             <div>
               <div style={{ marginBottom: 6 }}>角色</div>
               <Select style={{ width: "100%" }} value={editForm.role} onChange={(v) => setEditForm({ ...editForm, role: v })}
-                options={[{ value: 0, label: "普通用户" }, { value: 1, label: "VIP" }, { value: 9, label: "管理员" }]} />
+                options={[{ value: 0, label: "普通用户" }, { value: 9, label: "管理员" }]} />
             </div>
+            {editForm.role !== 9 && (
+              <div>
+                <div style={{ marginBottom: 6 }}>会员等级</div>
+                <Select style={{ width: "100%" }} value={editForm.vipLevel} onChange={(v) => setEditForm({ ...editForm, vipLevel: v })}
+                  options={vipLevels.map((v) => ({ value: v.level, label: `${v.name}（并发 ${v.concurrency === 0 ? "不限" : v.concurrency}）` }))}
+                  notFoundContent="请先在「会员等级」页配置等级" />
+              </div>
+            )}
             {editForm.role === 9 && (
               <div>
                 <div style={{ marginBottom: 6 }}>管理角色（决定后台操作权限）</div>
