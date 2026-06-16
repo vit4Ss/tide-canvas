@@ -721,6 +721,26 @@ CREATE TABLE `sys_follow` (
     KEY `idx_followee` (`followee_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='关注关系表';
 
+-- ----------------------------
+-- 站内通知表(中间/流水表,内部:无public_id)
+-- ----------------------------
+DROP TABLE IF EXISTS `sys_notification`;
+CREATE TABLE `sys_notification` (
+    `id`          BIGINT       NOT NULL COMMENT '主键(雪花ID,应用层生成)',
+    `receiver_id` BIGINT       NOT NULL COMMENT '收通知者用户ID',
+    `actor_id`    BIGINT       NOT NULL COMMENT '触发通知者用户ID',
+    `type`        VARCHAR(16)  NOT NULL COMMENT '通知类型(follow/comment/like)',
+    `target_type` VARCHAR(16)  NOT NULL DEFAULT '' COMMENT '目标类型(post/blog;关注类为空)',
+    `target_id`   BIGINT       NOT NULL DEFAULT 0 COMMENT '目标内容内部主键(0=无目标)',
+    `content`     VARCHAR(255) NOT NULL DEFAULT '' COMMENT '通知摘要文案',
+    `is_read`     TINYINT      NOT NULL DEFAULT 0 COMMENT '是否已读(0未读,1已读)',
+    `create_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_receiver_time` (`receiver_id`, `create_time`),
+    KEY `idx_receiver_read` (`receiver_id`, `is_read`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='站内通知表';
+
 -- =============================================================
 -- 二、初始化种子数据
 -- =============================================================

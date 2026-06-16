@@ -15,12 +15,16 @@ import (
 
 // Service 博客业务逻辑（对齐 BlogServiceImpl）。
 type Service struct {
-	repo   *Repository
-	users  UserFinder
-	points PointsService
-	db     *gorm.DB
-	logger *logrus.Logger
+	repo     *Repository
+	users    UserFinder
+	points   PointsService
+	db       *gorm.DB
+	notifier Notifier // 可选：点赞博客成功后给作者发通知；nil 安全。
+	logger   *logrus.Logger
 }
+
+// SetNotifier 注入通知投递（可选）。由 router.New 在 notification 模块装配后调用；不调用则不发通知。
+func (s *Service) SetNotifier(n Notifier) { s.notifier = n }
 
 // NewService 构造博客服务。
 // users / points 为跨模块依赖（见 deps.go）：users 注入 NewDBUserFinder(db)；
@@ -358,7 +362,27 @@ func (s *Service) ToggleLikeBlog(userID int64, publicID string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	// 新增点赞 → 异步给博客作者发「赞了你的博客」通知（actor==author 时由通知层自动跳过）。
+	s.notify(blog.AuthorID, userID, model.NotificationTypeLike, model.NotificationTargetBlog, blog.ID, "赞了你的博客")
 	return true, nil
+}
+
+// notify 异步投递一条通知（点赞博客）。go + recover 包裹，写通知失败/panic 仅告警，
+// 绝不影响博客动作主流程（对齐 log.RecordOperation）。notifier 为 nil 时直接返回。
+func (s *Service) notify(receiverID, actorID int64, typ, targetType string, targetID int64, content string) {
+	if s.notifier == nil {
+		return
+	}
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s.logf("发送博客通知 panic: %v", r)
+			}
+		}()
+		if err := s.notifier.CreateNotification(receiverID, actorID, typ, targetType, targetID, content); err != nil {
+			s.logf("发送博客通知失败: %v", err)
+		}
+	}()
 }
 
 // ============================= 私有方法 =============================

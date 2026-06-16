@@ -7,12 +7,20 @@ import (
 	"strings"
 
 	"github.com/microcosm-cc/bluemonday"
+	"github.com/sirupsen/logrus"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 
 	"github.com/tidecanvas/tide-canvas-go/internal/model"
 	"github.com/tidecanvas/tide-canvas-go/pkg/ecode"
 )
+
+// Notifier 通知投递（跨模块可选依赖）：评论/点赞帖子成功后给帖子作者发通知。
+// 由 notification.Service 实现，router/Mount 装配时注入；nil 安全（不发通知）。
+// 方法签名对齐 notification.Service.CreateNotification。
+type Notifier interface {
+	CreateNotification(receiverID, actorID int64, typ, targetType string, targetID int64, content string) error
+}
 
 // contentPreviewLength 列表/详情预览截取长度（对齐 CONTENT_PREVIEW_LENGTH=200）。
 const contentPreviewLength = 200
@@ -39,11 +47,20 @@ type Service struct {
 	db   *gorm.DB
 	// sanitizer 富文本/Markdown 正文清洗策略（UGC：放行常见富文本、剥离脚本与危险属性）。
 	sanitizer *bluemonday.Policy
+	// notifier 可选：评论/点赞帖子成功后给帖子作者发通知；nil 表示未接入通知系统（nil 安全）。
+	notifier Notifier
+	logger   *logrus.Logger
 }
 
 // NewService 构造社区服务。
 func NewService(repo *Repository) *Service {
 	return &Service{repo: repo, db: repo.DB(), sanitizer: bluemonday.UGCPolicy()}
+}
+
+// SetNotifier 注入通知投递与日志（可选）。由 router/Mount 在 notification 模块装配后调用；不调用则不发通知。
+func (s *Service) SetNotifier(n Notifier, logger *logrus.Logger) {
+	s.notifier = n
+	s.logger = logger
 }
 
 // CreatePost 创建帖子（对齐 createPost）：正文清洗 → 写入（默认计数为0、status=1）。
@@ -209,6 +226,10 @@ func (s *Service) ToggleLikePost(userID int64, publicID string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	// 仅新增点赞时通知（取消点赞不发）；异步给帖子作者发「赞了你的帖子」通知。
+	if liked {
+		s.notify(post.UserID, userID, model.NotificationTypeLike, model.NotificationTargetPost, post.ID, "赞了你的帖子")
+	}
 	return liked, nil
 }
 
@@ -259,6 +280,8 @@ func (s *Service) AddComment(userID int64, postPublicID string, req *CommentCrea
 	if err != nil {
 		return nil, err
 	}
+	// 评论成功 → 异步给帖子作者发「评论了你的帖子」通知（actor==author 时由通知层自动跳过）。
+	s.notify(post.UserID, userID, model.NotificationTypeComment, model.NotificationTargetPost, post.ID, "评论了你的帖子")
 	return s.toCommentVO(comment, s.singleUser(comment.UserID)), nil
 }
 
@@ -340,6 +363,31 @@ func (s *Service) DeleteComment(userID int64, commentPublicID string) error {
 }
 
 // ============================= 私有方法 =============================
+
+// notify 异步投递一条通知（评论/点赞帖子）。go + recover 包裹，写通知失败/panic 仅告警，
+// 绝不影响社区动作主流程（对齐 log.RecordOperation）。notifier 为 nil 时直接返回。
+func (s *Service) notify(receiverID, actorID int64, typ, targetType string, targetID int64, content string) {
+	if s.notifier == nil {
+		return
+	}
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s.logWarnf("发送社区通知 panic: %v", r)
+			}
+		}()
+		if err := s.notifier.CreateNotification(receiverID, actorID, typ, targetType, targetID, content); err != nil {
+			s.logWarnf("发送社区通知失败: %v", err)
+		}
+	}()
+}
+
+// logWarnf 告警日志（logger 为 nil 时静默）。
+func (s *Service) logWarnf(format string, args ...interface{}) {
+	if s.logger != nil {
+		s.logger.Warnf(format, args...)
+	}
+}
 
 // getAndCheckOwnership 取帖子并校验所有权（对齐 getAndCheckOwnership）：不存在 404，非本人 403。
 func (s *Service) getAndCheckOwnership(userID int64, publicID string) (*model.CommunityPost, error) {

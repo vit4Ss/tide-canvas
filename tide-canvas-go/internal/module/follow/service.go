@@ -11,9 +11,10 @@ import (
 
 // Service 关注业务逻辑。入参用对方 public_id，内部解析为雪花主键；业务错误返回 *ecode.Error。
 type Service struct {
-	repo   *Repository
-	users  UserFinder
-	logger *logrus.Logger
+	repo     *Repository
+	users    UserFinder
+	notifier Notifier // 可选：关注成功后发通知；nil 表示未接入通知系统（nil 安全）。
+	logger   *logrus.Logger
 }
 
 // NewService 构造关注服务。
@@ -21,6 +22,9 @@ type Service struct {
 func NewService(repo *Repository, users UserFinder, logger *logrus.Logger) *Service {
 	return &Service{repo: repo, users: users, logger: logger}
 }
+
+// SetNotifier 注入通知投递（可选）。由 router.New 在 notification 模块装配后调用；不调用则不发通知。
+func (s *Service) SetNotifier(n Notifier) { s.notifier = n }
 
 // pageData 服务层分页载荷，由 handler 转交 response.Page 输出。
 type pageData struct {
@@ -39,7 +43,37 @@ func (s *Service) Follow(userID int64, targetPublicID string) error {
 	if targetID == userID {
 		return ecode.BadRequest.WithMessage("不能关注自己")
 	}
-	return s.repo.Follow(userID, targetID)
+	if err := s.repo.Follow(userID, targetID); err != nil {
+		return err
+	}
+	// 关注成功 → 异步给被关注者发「关注了你」通知（失败不影响主流程）。
+	s.notifyFollow(targetID, userID)
+	return nil
+}
+
+// notifyFollow 异步投递关注通知（receiver=被关注者, actor=关注者）。
+// go + recover 包裹，写通知失败/panic 仅告警，绝不影响关注主流程（对齐 log.RecordOperation）。
+func (s *Service) notifyFollow(followeeID, followerID int64) {
+	if s.notifier == nil {
+		return
+	}
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s.logWarnf("发送关注通知 panic: %v", r)
+			}
+		}()
+		if err := s.notifier.CreateNotification(followeeID, followerID, model.NotificationTypeFollow, "", 0, "关注了你"); err != nil {
+			s.logWarnf("发送关注通知失败: %v", err)
+		}
+	}()
+}
+
+// logWarnf 告警日志（logger 为 nil 时静默）。
+func (s *Service) logWarnf(format string, args ...interface{}) {
+	if s.logger != nil {
+		s.logger.Warnf(format, args...)
+	}
 }
 
 // Unfollow 取关：targetPublicID 为对方对外 public_id。幂等（未关注也返回成功）。

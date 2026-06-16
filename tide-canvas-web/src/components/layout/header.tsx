@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { MessageEntry } from "@/components/im";
+import { NotificationCenter } from "@/components/notification";
 
 const navLinks = [
   { href: "/user/projects", label: "画布", icon: Layers },
@@ -65,6 +66,7 @@ export function Header() {
         <div className="flex items-center gap-3">
           {isLoggedIn ? (
             <>
+            <NotificationCenter />
             <MessageEntry />
             <div
               className="relative"

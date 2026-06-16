@@ -31,7 +31,8 @@ type Module struct {
 //
 // Mount 内部自构造 repository / service / handler 并注册真实路由：
 //   - 因签名未携带 jwtProvider，按约定用 conf 构造（与 router.New 一致）。
-func Mount(db *gorm.DB, parent gin.IRouter, conf *viper.Viper, logger *logrus.Logger) {
+//   - notifier 为可选通知投递（评论/点赞帖子后给作者发通知）；传 nil 表示不接入通知系统（nil 安全）。
+func Mount(db *gorm.DB, parent gin.IRouter, conf *viper.Viper, logger *logrus.Logger, notifier Notifier) {
 	mod := &Module{DB: db, Conf: conf, Logger: logger}
 
 	// JWT 提供者（密钥与有效期来自配置，与 router.New 装配口径一致）。
@@ -44,5 +45,8 @@ func Mount(db *gorm.DB, parent gin.IRouter, conf *viper.Viper, logger *logrus.Lo
 	// 分层装配：repository → service → handler。
 	repo := NewRepository(mod.DB)
 	svc := NewService(repo)
+	if notifier != nil {
+		svc.SetNotifier(notifier, logger)
+	}
 	NewHandler(svc).RegisterRoutes(parent, jwtProvider)
 }

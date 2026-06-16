@@ -38,6 +38,9 @@ import type {
   FollowUserVO, FollowStatusVO, FollowQuery,
 } from "@/types/follow";
 import type {
+  NotificationVO, NotificationQuery, UnreadCountVO,
+} from "@/types/notification";
+import type {
   RechargeOrderVO, RechargeCreateDTO, OrderQuery,
   PaymentInitiateVO, RechargeConfigVO,
 } from "@/types/order";
@@ -410,6 +413,22 @@ export const followApi = {
   /** 关注我的人（分页） */
   followers: (query?: FollowQuery) =>
     http.get<PageData<FollowUserVO>>("/api/follow/followers", toParams(query ?? {})),
+};
+
+// ========== 通知（站内通知，需登录） ==========
+export const notificationApi = {
+  /** 通知列表（分页，可按 type 过滤） */
+  list: (query?: NotificationQuery) =>
+    http.get<PageData<NotificationVO>>("/api/notifications", toParams(query ?? {})),
+  /** 未读通知数 {count} */
+  unreadCount: () =>
+    http.get<UnreadCountVO>("/api/notifications/unread-count"),
+  /** 标记指定通知为已读 */
+  markRead: (ids: number[]) =>
+    http.post<void>("/api/notifications/read", { ids }),
+  /** 全部标记为已读 */
+  markAllRead: () =>
+    http.post<void>("/api/notifications/read-all"),
 };
 
 // ========== Banner（首页轮播，公开） ==========

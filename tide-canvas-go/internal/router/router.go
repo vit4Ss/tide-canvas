@@ -25,6 +25,7 @@ import (
 	"github.com/tidecanvas/tide-canvas-go/internal/module/im"
 	logmod "github.com/tidecanvas/tide-canvas-go/internal/module/log"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/monitor"
+	"github.com/tidecanvas/tide-canvas-go/internal/module/notification"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/oauth"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/points"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/recharge"
@@ -55,6 +56,17 @@ func New(db *gorm.DB, conf *viper.Viper, logger *logrus.Logger, rdb *redis.Clien
 
 	// 共享 repository
 	userRepo := user.NewRepository(db)
+
+	// notification 通知模块（关注/评论/点赞产生站内通知）。先于 follow/community/blog 构造，
+	// 作为可选 Notifier 注入这三者，使其在动作成功后异步发通知（nil 安全，失败不影响主流程）。
+	// 列表的 actor 用户摘要与 target(帖子/博客) public_id 反解用 DBUserFinder / DBTargetFinder 直读。
+	// 路由在 api 组就绪后注册（见下方 /api/notifications 装配）。
+	notificationSvc := notification.NewService(
+		notification.NewRepository(db),
+		notification.NewDBUserFinder(db),
+		notification.NewDBTargetFinder(db),
+		logger,
+	)
 
 	// 限流后端：Redis 可用 → 分布式 RedisLimiter（多副本共享封禁）；否则单机 MemoryLimiter。
 	// 显式构造后既设为限流中间件的包级默认（SetDefaultLimiter），又注入 security 管理端模块，
@@ -122,13 +134,18 @@ func New(db *gorm.DB, conf *viper.Viper, logger *logrus.Logger, rdb *redis.Clien
 	// redeem 兑换码（用户兑换 + 管理端生成/列表/停用），注入积分服务
 	redeem.NewHandler(redeem.NewService(redeem.NewRepository(db), pointsSvc, logger), jwtProvider).RegisterRoutes(api, jwtProvider)
 
-	// blog 博客（发布/付费阅读/打赏/点赞），注入积分服务与作者信息查询
+	// notification 通知模块路由（/api/notifications：列表/未读数/标记已读/全部已读），需登录。
+	notification.NewHandler(notificationSvc).RegisterRoutes(api, jwtProvider)
+
+	// blog 博客（发布/付费阅读/打赏/点赞），注入积分服务与作者信息查询；点赞博客后异步发通知。
 	blogSvc := blog.NewService(blog.NewRepository(db), blog.NewDBUserFinder(db), pointsSvc, logger)
+	blogSvc.SetNotifier(notificationSvc)
 	blog.NewHandler(blogSvc).RegisterRoutes(api, jwtProvider)
 
-	// follow 关注（关注/取关/状态/我关注的/关注我的），通知系统前置。
+	// follow 关注（关注/取关/状态/我关注的/关注我的），通知系统前置；关注成功后异步发通知。
 	// 入参用对方 public_id，内部解析雪花主键；用户摘要与 public_id 映射用 DBUserFinder 直读 sys_user。
 	followSvc := follow.NewService(follow.NewRepository(db), follow.NewDBUserFinder(db), logger)
+	followSvc.SetNotifier(notificationSvc)
 	follow.NewHandler(followSvc).RegisterRoutes(api, jwtProvider)
 
 	// RBAC 按钮级权限加载器：读 sys_user+sys_role 解析权限串，admin / ai / log / recharge 管理端路由由 RequiresPermission 复用。
@@ -181,8 +198,8 @@ func New(db *gorm.DB, conf *viper.Viper, logger *logrus.Logger, rdb *redis.Clien
 	//   注入与限流中间件同一 limiter 实例，使自动封禁与管理端手动封禁/解封共用一份数据。
 	security.NewHandler(limiter).RegisterRoutes(api, jwtProvider, permLoader)
 
-	// 社区模块（自研：帖子/评论/点赞）挂载到 /api/community/
-	community.Mount(db, api.Group("/community"), conf, logger)
+	// 社区模块（自研：帖子/评论/点赞）挂载到 /api/community/；评论/点赞帖子后异步发通知。
+	community.Mount(db, api.Group("/community"), conf, logger, notificationSvc)
 
 	// IM 即时通讯（私信/客服/后台三类会话 + WebSocket 实时推送 + 在线状态）。
 	//   hub↔service 循环依赖经 SetHub 解开；WS 握手自鉴权(query token)，REST 走 JWTAuth。

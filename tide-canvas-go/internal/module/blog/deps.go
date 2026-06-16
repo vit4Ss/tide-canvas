@@ -22,6 +22,16 @@ type PointsService interface {
 	DeductPointsTx(tx *gorm.DB, userID int64, amount, txType int, bizID *int64, remark string) error
 }
 
+// Notifier 通知投递（跨模块可选依赖）：点赞博客成功后给作者发通知。
+// 由 notification.Service 实现，router.New 装配时注入；nil 安全（不发通知）。
+// 方法签名对齐 notification.Service.CreateNotification。
+//
+// 说明：博客无评论功能；打赏(tip)不在通知类型枚举(follow/comment/like)内，前端类型筛选也不含打赏，
+// 故本阶段仅接入「点赞博客」(type=like, targetType=blog)，与社区点赞口径一致。
+type Notifier interface {
+	CreateNotification(receiverID, actorID int64, typ, targetType string, targetID int64, content string) error
+}
+
 // UserFinder 用户只读查询（跨模块只读依赖，避免直接耦合 user 模块实现）。
 // 博客 VO 需作者昵称/头像，并把作者内部 user_id 映射为对外 public_id；列表按作者过滤时
 // 还需将 public_id 反解为内部主键。仅读取，绝不向外暴露雪花主键，也不写入。

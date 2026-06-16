@@ -8,6 +8,13 @@ import (
 	"github.com/tidecanvas/tide-canvas-go/internal/model"
 )
 
+// Notifier 通知投递（跨模块可选依赖）：关注成功后给被关注者发一条「关注了你」通知。
+// 由 notification.Service 实现，router.New 装配时注入；nil 表示未接入通知系统（nil 安全，不发通知）。
+// 方法签名对齐 notification.Service.CreateNotification。
+type Notifier interface {
+	CreateNotification(receiverID, actorID int64, typ, targetType string, targetID int64, content string) error
+}
+
 // UserFinder 用户只读查询（跨模块只读依赖，避免直接耦合 user 模块实现）。
 // 关注/粉丝列表需用户昵称/头像，并把内部 user_id 映射为对外 public_id；
 // 关注/取关按对方 public_id 操作时还需反解为内部主键。仅读取，绝不向外暴露雪花主键，也不写入。
