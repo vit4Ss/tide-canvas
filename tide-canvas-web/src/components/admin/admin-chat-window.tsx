@@ -11,8 +11,9 @@ import type { ConversationVO, MessageVO, UserBriefVO } from "@/types/im";
 
 /** 取会话标题（私信/客服优先对端昵称，群聊用 title 或成员名拼接） */
 export function convTitle(c: ConversationVO): string {
-  if (c.title) return c.title;
+  // 私信/客服：优先对端用户昵称——客服端据此区分不同用户，而非统一的「客服咨询」标题。
   if (c.peer?.nickname) return c.peer.nickname;
+  if (c.title) return c.title;
   if (c.members && c.members.length > 0) return c.members.map((m) => m.nickname).join("、");
   return "会话";
 }

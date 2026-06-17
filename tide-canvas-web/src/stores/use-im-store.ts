@@ -76,6 +76,25 @@ export const useImStore = create<ImState>((set, get) => {
     });
   };
 
+  // 用后端会话里的实时在线字段（peer/members.online）同步 onlineIds。
+  // 后端在返回会话那一刻按真实 WS 连接计算，避免本地集合漏更新导致误显示离线。
+  const syncOnlineFromConvs = (convs: ConversationVO[]) => {
+    set((s) => {
+      const next = new Set(s.onlineIds);
+      for (const c of convs) {
+        if (c.peer) {
+          if (c.peer.online) next.add(c.peer.id);
+          else next.delete(c.peer.id);
+        }
+        for (const m of c.members ?? []) {
+          if (m.online) next.add(m.id);
+          else next.delete(m.id);
+        }
+      }
+      return { onlineIds: next };
+    });
+  };
+
   // 处理 WebSocket 下行事件。
   const handleEvent = (ev: WSEvent) => {
     switch (ev.type) {
@@ -157,14 +176,9 @@ export const useImStore = create<ImState>((set, get) => {
       const res = await imApi.conversations(type, { pageSize: 100 });
       if (res.success) {
         set({ conversations: res.data.records });
-        // 主动拉一次对端在线状态：online 事件只在"上线那刻"广播，对端在本端连接
-        // 之前就在线时收不到，故进入会话列表时按 peer/members 查当前在线状态。
-        const ids = new Set<string>();
-        for (const c of res.data.records) {
-          if (c.peer) ids.add(c.peer.id);
-          c.members?.forEach((m) => ids.add(m.id));
-        }
-        if (ids.size > 0) void get().refreshStatus([...ids]);
+        // 直接用后端返回的实时在线字段同步 onlineIds：后端在返回那一刻按真实
+        // WS 连接计算，比额外发一次 status 请求更可靠，且无时序漏更新问题。
+        syncOnlineFromConvs(res.data.records);
       }
       set({ loadingConvs: false });
     },
@@ -225,12 +239,15 @@ export const useImStore = create<ImState>((set, get) => {
       }
     },
 
-    upsertConversation: (c) =>
+    upsertConversation: (c) => {
+      // 同步对端在线状态：刚接入/新建的会话也能立即显示正确的在线/离线。
+      syncOnlineFromConvs([c]);
       set((s) => {
         const idx = s.conversations.findIndex((x) => x.id === c.id);
         if (idx >= 0) { const next = [...s.conversations]; next[idx] = c; return { conversations: next }; }
         return { conversations: [c, ...s.conversations] };
-      }),
+      });
+    },
 
     isOnline: (userId) => (userId ? get().onlineIds.has(userId) : false),
     totalUnread: () => get().conversations.reduce((sum, c) => sum + (c.unread || 0), 0),
