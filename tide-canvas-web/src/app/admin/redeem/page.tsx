@@ -86,7 +86,7 @@ export default function AdminRedeemPage() {
     if (res.success) void load();
   };
 
-  const del = async (id: number) => {
+  const del = async (id: string) => {
     const res = await adminApi.redeem.delete(id);
     if (res.success) void load();
   };
@@ -95,8 +95,8 @@ export default function AdminRedeemPage() {
     { title: "兑换码", dataIndex: "code", key: "code", render: (v: string) => <Button type="link" size="small" style={{ fontFamily: "monospace", padding: 0 }} icon={<CopyOutlined />} onClick={() => copyText(v)}>{v}</Button> },
     { title: "积分", dataIndex: "points", key: "points", render: (v: number) => <span style={{ color: "#d97706", fontWeight: 500 }}>+{v}</span> },
     { title: "状态", dataIndex: "status", key: "status", render: (s: number) => { const t = STATUS_TAG[s] ?? { label: String(s), color: "default" }; return <Tag color={t.color}>{t.label}</Tag>; } },
-    { title: "生成者ID", dataIndex: "createdBy", key: "createdBy", responsive: ["md"], render: (v: number | undefined) => v != null ? <span style={{ fontFamily: "monospace", fontSize: 12 }}>{v}</span> : <span style={{ color: "#bfbfbf" }}>-</span> },
-    { title: "使用者ID", dataIndex: "usedBy", key: "usedBy", responsive: ["md"], render: (v: number | undefined) => v != null ? <span style={{ fontFamily: "monospace", fontSize: 12 }}>{v}</span> : <span style={{ color: "#bfbfbf" }}>-</span> },
+    { title: "生成者ID", dataIndex: "createdBy", key: "createdBy", responsive: ["md"], render: (v: string | undefined) => v != null ? <span style={{ fontFamily: "monospace", fontSize: 12 }}>{v}</span> : <span style={{ color: "#bfbfbf" }}>-</span> },
+    { title: "使用者ID", dataIndex: "usedBy", key: "usedBy", responsive: ["md"], render: (v: string | undefined) => v != null ? <span style={{ fontFamily: "monospace", fontSize: 12 }}>{v}</span> : <span style={{ color: "#bfbfbf" }}>-</span> },
     { title: "兑换时间", dataIndex: "usedTime", key: "usedTime", responsive: ["lg"], render: (v) => v ? formatDate(v) : <span style={{ color: "#bfbfbf" }}>-</span> },
     { title: "有效期", dataIndex: "expireTime", key: "expireTime", responsive: ["md"], render: (v) => v ? formatDate(v) : "永久" },
     { title: "备注", dataIndex: "remark", key: "remark", responsive: ["lg"], ellipsis: true, render: (v) => v || "-" },

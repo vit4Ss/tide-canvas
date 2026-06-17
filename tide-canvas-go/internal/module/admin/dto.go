@@ -59,7 +59,7 @@ type UserUpdateDTO struct {
 	Role                 *int   `json:"role"`
 	VipLevel             *int   `json:"vipLevel"`
 	ConcurrencyUnlimited *int   `json:"concurrencyUnlimited"` // 免AI并发限制(0否1是)；null 表示不更新
-	RoleID               *int64 `json:"roleId"`               // 管理角色ID(RBAC)；null 表示不分配
+	RoleID               *int64 `json:"roleId,string"`        // 管理角色ID(RBAC)；雪花id以字符串传输避免JS精度丢失；null 表示不分配
 	Status               *int   `json:"status"`
 	APIQuota             *int   `json:"apiQuota"`
 	StorageQuota         *int64 `json:"storageQuota"`
@@ -76,7 +76,7 @@ type UserVO struct {
 	Role                 int        `json:"role"`
 	VipLevel             int        `json:"vipLevel"`
 	ConcurrencyUnlimited int        `json:"concurrencyUnlimited"`
-	RoleID               *int64     `json:"roleId"`
+	RoleID               *int64     `json:"roleId,string"`
 	Status               int        `json:"status"`
 	APIQuota             int        `json:"apiQuota"`
 	Points               int        `json:"points"`
@@ -100,7 +100,7 @@ type RoleSaveDTO struct {
 
 // RoleVO 角色视图（对齐 RoleVO）。id 为角色主键 int64（SysRole 无 public_id）。
 type RoleVO struct {
-	ID          int64     `json:"id"`
+	ID          int64     `json:"id,string"`
 	Name        string    `json:"name"`
 	Code        string    `json:"code"`
 	Permissions []string  `json:"permissions"`

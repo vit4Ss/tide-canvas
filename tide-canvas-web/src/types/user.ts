@@ -9,7 +9,7 @@ export interface UserVO {
   vipLevel?: number;
   /** 免 AI 并发限制(0否1是) */
   concurrencyUnlimited?: number;
-  roleId?: number;
+  roleId?: string; // 管理角色雪花主键，字符串传输避免 JS 精度丢失
   status: UserStatus;
   apiQuota: number;
   points: number;

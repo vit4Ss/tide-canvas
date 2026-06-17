@@ -204,8 +204,8 @@ export const adminApi = {
     catalog: () => http.get<PermissionGroup[]>("/api/admin/roles/catalog"),
     myPermissions: () => http.get<string[]>("/api/admin/roles/my-permissions"),
     create: (data: RoleSaveDTO) => http.post<void>("/api/admin/roles", data),
-    update: (id: number, data: RoleSaveDTO) => http.put<void>(`/api/admin/roles/${id}`, data),
-    remove: (id: number) => http.delete<void>(`/api/admin/roles/${id}`),
+    update: (id: string, data: RoleSaveDTO) => http.put<void>(`/api/admin/roles/${id}`, data),
+    remove: (id: string) => http.delete<void>(`/api/admin/roles/${id}`),
   },
   users: {
     list: (query: AdminUserQuery) =>
@@ -226,9 +226,9 @@ export const adminApi = {
       http.get<BannerVO[]>("/api/admin/banners"),
     create: (data: BannerCreateDTO) =>
       http.post<BannerVO>("/api/admin/banners", data),
-    update: (id: number, data: BannerUpdateDTO) =>
+    update: (id: string, data: BannerUpdateDTO) =>
       http.put<void>(`/api/admin/banners/${id}`, data),
-    delete: (id: number) =>
+    delete: (id: string) =>
       http.delete<void>(`/api/admin/banners/${id}`),
   },
   ai: {
@@ -263,8 +263,8 @@ export const adminApi = {
   redeem: {
     generate: (data: GenerateRedeemDTO) => http.post<string[]>("/api/admin/redeem/generate", data),
     list: (query: RedeemCodeQuery) => http.get<PageData<RedeemCodeVO>>("/api/admin/redeem", toParams(query)),
-    updateStatus: (id: number, status: number) => http.put<void>(`/api/admin/redeem/${id}/status`, { status }),
-    delete: (id: number) => http.delete<void>(`/api/admin/redeem/${id}`),
+    updateStatus: (id: string, status: number) => http.put<void>(`/api/admin/redeem/${id}/status`, { status }),
+    delete: (id: string) => http.delete<void>(`/api/admin/redeem/${id}`),
   },
   settings: {
     get: () => http.get<Record<string, unknown>>("/api/admin/settings"),

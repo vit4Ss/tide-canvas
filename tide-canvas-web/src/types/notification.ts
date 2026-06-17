@@ -16,8 +16,8 @@ export interface NotificationActorVO {
 
 /** 通知列表项。 */
 export interface NotificationVO {
-  /** 通知自身ID（用于按条标记已读，前端仅回传不展示） */
-  id: number;
+  /** 通知自身ID（用于按条标记已读，前端仅回传不展示）。后端雪花主键，字符串传输避免精度丢失 */
+  id: string;
   /** 触发者用户摘要（账号已删时各字段为空） */
   actor: NotificationActorVO;
   /** 通知类型 */

@@ -39,7 +39,7 @@ export default function AdminUsersPage() {
 
   // 编辑弹窗
   const [editTarget, setEditTarget] = useState<UserVO | null>(null);
-  const [editForm, setEditForm] = useState<{ role: number; vipLevel: number; concurrencyUnlimited: number; status: number; apiQuota: number; roleId?: number }>({ role: 0, vipLevel: 1, concurrencyUnlimited: 0, status: 1, apiQuota: 0 });
+  const [editForm, setEditForm] = useState<{ role: number; vipLevel: number; concurrencyUnlimited: number; status: number; apiQuota: number; roleId?: string }>({ role: 0, vipLevel: 1, concurrencyUnlimited: 0, status: 1, apiQuota: 0 });
   const [saving, setSaving] = useState(false);
 
   // 积分调整（并入编辑弹窗）
@@ -121,7 +121,7 @@ export default function AdminUsersPage() {
     { title: "会员等级", dataIndex: "vipLevel", key: "vipLevel", responsive: ["md"], render: (lv: number | undefined, u) => { if (u.role === 9) return <span style={{ color: "#bfbfbf" }}>-</span>; const level = lv ?? 1; const cfg = vipLevels.find((v) => v.level === level); return <Tag color="purple">{cfg?.name ?? `VIP${level}`}</Tag>; } },
     { title: "免并发限制", dataIndex: "concurrencyUnlimited", key: "concurrencyUnlimited", responsive: ["lg"], render: (v: number | undefined) => (v === 1 ? <Tag color="cyan">是</Tag> : <span style={{ color: "#bfbfbf" }}>否</span>) },
     {
-      title: "管理角色", dataIndex: "roleId", key: "roleId", responsive: ["md"], render: (rid: number | undefined, u) => {
+      title: "管理角色", dataIndex: "roleId", key: "roleId", responsive: ["md"], render: (rid: string | undefined, u) => {
         if (u.role !== 9) return <span style={{ color: "#bfbfbf" }}>-</span>;
         const role = roles.find((r) => r.id === rid);
         return <Tag color="blue">{role?.name ?? "超级管理员"}</Tag>;

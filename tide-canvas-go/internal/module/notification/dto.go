@@ -55,7 +55,7 @@ type ActorVO struct {
 //   - followedByMe：仅关注类(type=follow)有意义——当前用户是否已回关该 actor；
 //     用于前端「回关 / 已关注」按钮的持久态。非关注类通知恒为 false。
 type NotificationVO struct {
-	ID             int64     `json:"id"`
+	ID             int64     `json:"id,string"`
 	Actor          ActorVO   `json:"actor"`
 	Type           string    `json:"type"`
 	TargetType     string    `json:"targetType"`

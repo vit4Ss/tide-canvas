@@ -9,7 +9,7 @@ export interface PermissionGroup {
 }
 
 export interface RoleVO {
-  id: number;
+  id: string; // 后端雪花主键，字符串传输避免 JS number 精度丢失
   name: string;
   code: string;
   permissions: string[];

@@ -26,7 +26,7 @@ type UpdateReq struct {
 // BannerVO Banner 视图（对齐 BannerVO）。
 // SysBanner 基于 SoftDeleteModel，无 public_id，故 id 直接暴露雪花主键（int64）。
 type BannerVO struct {
-	ID         int64     `json:"id"`
+	ID         int64     `json:"id,string"`
 	Title      string    `json:"title"`
 	ImageURL   string    `json:"imageUrl"`
 	LinkURL    string    `json:"linkUrl"`

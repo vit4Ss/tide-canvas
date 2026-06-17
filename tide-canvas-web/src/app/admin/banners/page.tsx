@@ -25,7 +25,7 @@ export default function AdminBannersPage() {
   const [banners, setBanners] = useState<BannerVO[]>([]);
   const [loading, setLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<BannerForm>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -81,7 +81,7 @@ export default function AdminBannersPage() {
     loadBanners();
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (id: string) => {
     const res = await adminApi.banners.delete(id);
     if (res.success) loadBanners();
   };

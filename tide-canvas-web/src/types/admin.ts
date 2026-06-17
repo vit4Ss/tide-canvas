@@ -74,7 +74,7 @@ export interface AdminUserUpdateDTO {
   vipLevel?: number;
   /** 免 AI 并发限制(0否1是) */
   concurrencyUnlimited?: number;
-  roleId?: number;
+  roleId?: string; // 管理角色雪花主键，字符串传输避免 JS 精度丢失
   status?: number;
   apiQuota?: number;
   storageQuota?: number;
@@ -87,7 +87,7 @@ export interface AdminUserQuery extends PageQuery {
 }
 
 export interface BannerVO {
-  id: number;
+  id: string; // 后端雪花主键，字符串传输避免 JS number 精度丢失
   title: string;
   imageUrl: string;
   linkUrl: string;
