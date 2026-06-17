@@ -468,42 +468,12 @@ CREATE TABLE IF NOT EXISTS `im_user_status` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='IM用户在线状态表';
 
 
--- 会员等级体系：sys_user 加 vip_level；原 VIP(role=1) 迁移为 普通用户(role=0) + 会员等级2。
-ALTER TABLE `sys_user` ADD COLUMN `vip_level` INT NOT NULL DEFAULT 1 COMMENT '会员等级(1起)' AFTER `role`;
-UPDATE `sys_user` SET `vip_level` = 2, `role` = 0 WHERE `role` = 1;
-
--- 关注系统：新增关注关系表（中间表，无 public_id）。
-CREATE TABLE IF NOT EXISTS `sys_follow` (
-    `id`          BIGINT   NOT NULL COMMENT '主键(雪花ID,应用层生成)',
-    `follower_id` BIGINT   NOT NULL COMMENT '关注者用户ID',
-    `followee_id` BIGINT   NOT NULL COMMENT '被关注者用户ID',
-    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_follower_followee` (`follower_id`, `followee_id`),
-    KEY `idx_followee` (`followee_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='关注关系表';
-
--- 通知系统：新增站内通知表（中间/流水表，无 public_id）。关注/评论/点赞动作产生。
-CREATE TABLE IF NOT EXISTS `sys_notification` (
-    `id`          BIGINT       NOT NULL COMMENT '主键(雪花ID,应用层生成)',
-    `receiver_id` BIGINT       NOT NULL COMMENT '收通知者用户ID',
-    `actor_id`    BIGINT       NOT NULL COMMENT '触发通知者用户ID',
-    `type`        VARCHAR(16)  NOT NULL COMMENT '通知类型(follow/comment/like)',
-    `target_type` VARCHAR(16)  NOT NULL DEFAULT '' COMMENT '目标类型(post/blog;关注类为空)',
-    `target_id`   BIGINT       NOT NULL DEFAULT 0 COMMENT '目标内容内部主键(0=无目标)',
-    `content`     VARCHAR(255) NOT NULL DEFAULT '' COMMENT '通知摘要文案',
-    `is_read`     TINYINT      NOT NULL DEFAULT 0 COMMENT '是否已读(0未读,1已读)',
-    `create_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `update_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    PRIMARY KEY (`id`),
-    KEY `idx_receiver_time` (`receiver_id`, `create_time`),
-    KEY `idx_receiver_read` (`receiver_id`, `is_read`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='站内通知表';
-
 SET FOREIGN_KEY_CHECKS = 1;
 
 -- =============================================================
 -- 升级完成。建议执行后用 SHOW CREATE TABLE 抽查 sys_user / ai_handler_config /
 -- team_member 等是否与 schema.sql 一致；并校验 10 张表 public_id 均非空且唯一。
+--
+-- 本脚本为 baseline（一次性）。baseline 之后的增量迁移见 sql/migrations/，
+-- 按编号顺序执行；切勿再往本文件追加新结构（见 sql/migrations/README.md）。
 -- =============================================================
