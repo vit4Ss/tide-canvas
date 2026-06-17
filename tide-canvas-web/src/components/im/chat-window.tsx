@@ -42,6 +42,8 @@ interface ChatWindowProps {
   onRecall: (msgId: string) => void;
   /** 移动端「返回会话列表」（桌面端列表常驻则可不传） */
   onBack?: () => void;
+  /** 隐藏会话头部（客服悬浮窗已有外层标题栏，避免重复 header） */
+  hideHeader?: boolean;
 }
 
 export function ChatWindow({
@@ -53,6 +55,7 @@ export function ChatWindow({
   onSend,
   onRecall,
   onBack,
+  hideHeader = false,
 }: ChatWindowProps) {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -101,7 +104,8 @@ export function ChatWindow({
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      {/* 会话头部 */}
+      {/* 会话头部（客服悬浮窗已有外层标题栏，隐藏以避免重复） */}
+      {!hideHeader && (
       <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
         {onBack && (
           <Button
@@ -145,6 +149,7 @@ export function ChatWindow({
           )}
         </div>
       </div>
+      )}
 
       {/* 消息列表 */}
       <div ref={scrollRef} className="flex flex-1 flex-col gap-3 overflow-y-auto px-2 py-3">
@@ -153,8 +158,15 @@ export function ChatWindow({
             加载中...
           </div>
         ) : messages.length === 0 ? (
-          <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-            还没有消息，发送第一条吧
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 text-muted-foreground">
+            {isSupport ? (
+              <Headset className="size-8 opacity-40" />
+            ) : (
+              <MessageCircle className="size-8 opacity-40" />
+            )}
+            <span className="text-sm">
+              {isSupport ? "您好，有什么可以帮您？" : "还没有消息，发送第一条吧"}
+            </span>
           </div>
         ) : (
           messages.map((msg, i) => {

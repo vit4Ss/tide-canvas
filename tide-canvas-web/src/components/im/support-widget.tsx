@@ -83,9 +83,9 @@ export function SupportWidget() {
               <X className="h-4 w-4" />
             </button>
           </div>
-          <div className="min-h-0 flex-1">
+          <div className="flex min-h-0 flex-1">
             {opening && !supportConv ? (
-              <div className="flex h-full items-center justify-center text-muted-foreground">
+              <div className="flex h-full flex-1 items-center justify-center text-muted-foreground">
                 <Loader2 className="h-5 w-5 animate-spin" />
               </div>
             ) : (
@@ -97,7 +97,7 @@ export function SupportWidget() {
                 isOnline={isOnline}
                 onSend={handleSend}
                 onRecall={handleRecall}
-                onBack={() => setOpen(false)}
+                hideHeader
               />
             )}
           </div>
