@@ -56,34 +56,36 @@ type UserQuery struct {
 
 // UserUpdateDTO 编辑用户（对齐 AdminUserUpdateDTO）。所有字段可选，非空才更新。
 type UserUpdateDTO struct {
-	Role         *int   `json:"role"`
-	VipLevel     *int   `json:"vipLevel"`
-	RoleID       *int64 `json:"roleId"` // 管理角色ID(RBAC)；null 表示不分配
-	Status       *int   `json:"status"`
-	APIQuota     *int   `json:"apiQuota"`
-	StorageQuota *int64 `json:"storageQuota"`
+	Role                 *int   `json:"role"`
+	VipLevel             *int   `json:"vipLevel"`
+	ConcurrencyUnlimited *int   `json:"concurrencyUnlimited"` // 免AI并发限制(0否1是)；null 表示不更新
+	RoleID               *int64 `json:"roleId"`               // 管理角色ID(RBAC)；null 表示不分配
+	Status               *int   `json:"status"`
+	APIQuota             *int   `json:"apiQuota"`
+	StorageQuota         *int64 `json:"storageQuota"`
 }
 
 // UserVO 用户视图（对齐 UserVO）。id 为 public_id；teamPriceFactor / inTeam 暂不在管理端计算，置默认值。
 type UserVO struct {
-	ID            string     `json:"id"` // public_id
-	Username      string     `json:"username"`
-	Email         string     `json:"email"`
-	Phone         string     `json:"phone"`
-	Nickname      string     `json:"nickname"`
-	Avatar        string     `json:"avatar"`
-	Role          int        `json:"role"`
-	VipLevel      int        `json:"vipLevel"`
-	RoleID        *int64     `json:"roleId"`
-	Status        int        `json:"status"`
-	APIQuota      int        `json:"apiQuota"`
-	Points        int        `json:"points"`
-	IsAuthor      int        `json:"isAuthor"`
-	StorageQuota  int64      `json:"storageQuota"`
-	TeamID        *int64     `json:"teamId"`
-	InTeam        bool       `json:"inTeam"`
-	CreateTime    time.Time  `json:"createTime"`
-	LastLoginTime *time.Time `json:"lastLoginTime"`
+	ID                   string     `json:"id"` // public_id
+	Username             string     `json:"username"`
+	Email                string     `json:"email"`
+	Phone                string     `json:"phone"`
+	Nickname             string     `json:"nickname"`
+	Avatar               string     `json:"avatar"`
+	Role                 int        `json:"role"`
+	VipLevel             int        `json:"vipLevel"`
+	ConcurrencyUnlimited int        `json:"concurrencyUnlimited"`
+	RoleID               *int64     `json:"roleId"`
+	Status               int        `json:"status"`
+	APIQuota             int        `json:"apiQuota"`
+	Points               int        `json:"points"`
+	IsAuthor             int        `json:"isAuthor"`
+	StorageQuota         int64      `json:"storageQuota"`
+	TeamID               *int64     `json:"teamId"`
+	InTeam               bool       `json:"inTeam"`
+	CreateTime           time.Time  `json:"createTime"`
+	LastLoginTime        *time.Time `json:"lastLoginTime"`
 }
 
 // ---- 角色权限(RBAC) ----

@@ -24,6 +24,7 @@
 | 001 | `001_2026-06-17_membership_vip_level.sql` | `sys_user.vip_level` 列 + 旧 VIP 数据迁移 | 否 |
 | 002 | `002_2026-06-17_follow_system.sql` | `sys_follow` 关注关系表 | 是 |
 | 003 | `003_2026-06-17_notification_system.sql` | `sys_notification` 站内通知表 | 是 |
+| 004 | `004_2026-06-17_user_concurrency_unlimited.sql` | `sys_user.concurrency_unlimited` 列（用户级免 AI 并发限制） | 否 |
 
 ## 约定（重要）
 

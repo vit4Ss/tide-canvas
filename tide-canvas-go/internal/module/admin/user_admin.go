@@ -57,6 +57,9 @@ func (s *UserAdminService) Update(publicID string, dto *UserUpdateDTO) error {
 	if dto.VipLevel != nil {
 		columns["vip_level"] = *dto.VipLevel
 	}
+	if dto.ConcurrencyUnlimited != nil {
+		columns["concurrency_unlimited"] = *dto.ConcurrencyUnlimited
+	}
 	if dto.RoleID != nil {
 		columns["role_id"] = *dto.RoleID
 	}
@@ -75,24 +78,25 @@ func (s *UserAdminService) Update(publicID string, dto *UserUpdateDTO) error {
 // toUserVO 单个用户转 VO。id 取 public_id；teamId 非空视为在团队。
 func toUserVO(u *model.SysUser) UserVO {
 	return UserVO{
-		ID:            u.PublicID,
-		Username:      u.Username,
-		Email:         u.Email,
-		Phone:         u.Phone,
-		Nickname:      u.Nickname,
-		Avatar:        u.Avatar,
-		Role:          u.Role,
-		VipLevel:      u.VipLevel,
-		RoleID:        u.RoleID,
-		Status:        u.Status,
-		APIQuota:      u.APIQuota,
-		Points:        u.Points,
-		IsAuthor:      u.IsAuthor,
-		StorageQuota:  u.StorageQuota,
-		TeamID:        u.TeamID,
-		InTeam:        u.TeamID != nil,
-		CreateTime:    u.CreateTime,
-		LastLoginTime: u.LastLoginTime,
+		ID:                   u.PublicID,
+		Username:             u.Username,
+		Email:                u.Email,
+		Phone:                u.Phone,
+		Nickname:             u.Nickname,
+		Avatar:               u.Avatar,
+		Role:                 u.Role,
+		VipLevel:             u.VipLevel,
+		ConcurrencyUnlimited: u.ConcurrencyUnlimited,
+		RoleID:               u.RoleID,
+		Status:               u.Status,
+		APIQuota:             u.APIQuota,
+		Points:               u.Points,
+		IsAuthor:             u.IsAuthor,
+		StorageQuota:         u.StorageQuota,
+		TeamID:               u.TeamID,
+		InTeam:               u.TeamID != nil,
+		CreateTime:           u.CreateTime,
+		LastLoginTime:        u.LastLoginTime,
 	}
 }
 

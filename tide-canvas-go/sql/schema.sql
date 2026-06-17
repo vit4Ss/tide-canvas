@@ -41,6 +41,7 @@ CREATE TABLE `sys_user` (
     `avatar`          VARCHAR(512) DEFAULT NULL COMMENT '头像URL',
     `role`            TINYINT      NOT NULL DEFAULT 0 COMMENT '角色(0:普通用户,9:管理员;权威源见role_id)',
     `vip_level`       INT          NOT NULL DEFAULT 1 COMMENT '会员等级(1起;并发等权益按等级,配置见sys_config的vip.levels)',
+    `concurrency_unlimited` TINYINT NOT NULL DEFAULT 0 COMMENT '免AI并发限制(0否1是)',
     `role_id`         BIGINT       DEFAULT NULL COMMENT 'RBAC角色ID(权威源,见sys_role;1=超级管理员)',
     `status`          TINYINT      NOT NULL DEFAULT 1 COMMENT '状态(0:禁用,1:正常)',
     `api_quota`       INT          NOT NULL DEFAULT 100 COMMENT 'AI API调用额度(已废弃)',

@@ -72,6 +72,8 @@ export interface AdminUserVO extends UserVO {
 export interface AdminUserUpdateDTO {
   role?: number;
   vipLevel?: number;
+  /** 免 AI 并发限制(0否1是) */
+  concurrencyUnlimited?: number;
   roleId?: number;
   status?: number;
   apiQuota?: number;

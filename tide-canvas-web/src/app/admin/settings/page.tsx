@@ -55,13 +55,6 @@ const SETTING_GROUPS: SettingGroup[] = [
       { key: "pay.epay.pay_types", label: "启用的支付方式", type: "text", description: "逗号分隔，可选：alipay(支付宝)、wxpay(微信)", placeholder: "alipay,wxpay" },
     ],
   },
-  {
-    title: "AI 并发限制",
-    description: "各会员等级的 AI 并发上限请在「会员等级」页配置；管理员与下方白名单用户不受限。任务完成/失败/取消后自动释放名额。",
-    fields: [
-      { key: "ai.concurrency_whitelist", label: "并发白名单（用户名）", type: "text", description: "逗号分隔的用户名，名单内用户不受任何并发限制", placeholder: "alice,bob" },
-    ],
-  },
 ];
 const ALL_FIELDS = SETTING_GROUPS.flatMap((g) => g.fields);
 

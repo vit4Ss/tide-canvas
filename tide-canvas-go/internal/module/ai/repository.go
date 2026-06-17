@@ -56,13 +56,14 @@ func (r *Repository) GetConfigStr(key string) string {
 	return cfg.ConfigValue
 }
 
-// GetUserTier 取用户等级信息（role / 会员等级 vip_level / username），用于并发上限分档与白名单。
-func (r *Repository) GetUserTier(userID int64) (role int, vipLevel int, username string) {
+// GetUserTier 取用户等级信息（role / 会员等级 vip_level / 是否免并发限制 concurrency_unlimited），
+// 用于并发上限分档与用户级豁免。
+func (r *Repository) GetUserTier(userID int64) (role int, vipLevel int, concurrencyUnlimited int) {
 	var u model.SysUser
-	if err := r.db.Select("role", "vip_level", "username").First(&u, userID).Error; err != nil {
-		return 0, 0, ""
+	if err := r.db.Select("role", "vip_level", "concurrency_unlimited").First(&u, userID).Error; err != nil {
+		return 0, 0, 0
 	}
-	return u.Role, u.VipLevel, u.Username
+	return u.Role, u.VipLevel, u.ConcurrencyUnlimited
 }
 
 // DB 暴露底层连接（供上层做事务）。

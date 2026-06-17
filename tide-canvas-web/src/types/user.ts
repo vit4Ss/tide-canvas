@@ -7,6 +7,8 @@ export interface UserVO {
   avatar: string;
   role: UserRole;
   vipLevel?: number;
+  /** 免 AI 并发限制(0否1是) */
+  concurrencyUnlimited?: number;
   roleId?: number;
   status: UserStatus;
   apiQuota: number;

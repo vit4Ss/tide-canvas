@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Table, Input, Tag, Button, Modal, Select, InputNumber, Avatar, Space, Alert } from "antd";
+import { Table, Input, Tag, Button, Modal, Select, InputNumber, Switch, Avatar, Space, Alert } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { UserOutlined, EditOutlined } from "@ant-design/icons";
 import { Coins } from "lucide-react";
@@ -39,7 +39,7 @@ export default function AdminUsersPage() {
 
   // 编辑弹窗
   const [editTarget, setEditTarget] = useState<UserVO | null>(null);
-  const [editForm, setEditForm] = useState<{ role: number; vipLevel: number; status: number; apiQuota: number; roleId?: number }>({ role: 0, vipLevel: 1, status: 1, apiQuota: 0 });
+  const [editForm, setEditForm] = useState<{ role: number; vipLevel: number; concurrencyUnlimited: number; status: number; apiQuota: number; roleId?: number }>({ role: 0, vipLevel: 1, concurrencyUnlimited: 0, status: 1, apiQuota: 0 });
   const [saving, setSaving] = useState(false);
 
   // 调积分弹窗
@@ -74,7 +74,7 @@ export default function AdminUsersPage() {
 
   const openEdit = (user: UserVO) => {
     setEditTarget(user);
-    setEditForm({ role: user.role, vipLevel: user.vipLevel ?? 1, status: user.status, apiQuota: user.apiQuota, roleId: user.roleId });
+    setEditForm({ role: user.role, vipLevel: user.vipLevel ?? 1, concurrencyUnlimited: user.concurrencyUnlimited ?? 0, status: user.status, apiQuota: user.apiQuota, roleId: user.roleId });
   };
 
   const handleSave = async () => {
@@ -134,6 +134,7 @@ export default function AdminUsersPage() {
     { title: "邮箱", dataIndex: "email", key: "email", responsive: ["md"], render: (v) => <span style={{ color: "var(--ant-color-text-secondary, #8c8c8c)" }}>{v}</span> },
     { title: "角色", dataIndex: "role", key: "role", render: (r: number) => { const t = ROLE_TAG[r] ?? ROLE_TAG[0]; return <Tag color={t.color}>{t.label}</Tag>; } },
     { title: "会员等级", dataIndex: "vipLevel", key: "vipLevel", responsive: ["md"], render: (lv: number | undefined, u) => { if (u.role === 9) return <span style={{ color: "#bfbfbf" }}>-</span>; const level = lv ?? 1; const cfg = vipLevels.find((v) => v.level === level); return <Tag color="purple">{cfg?.name ?? `VIP${level}`}</Tag>; } },
+    { title: "免并发限制", dataIndex: "concurrencyUnlimited", key: "concurrencyUnlimited", responsive: ["lg"], render: (v: number | undefined) => (v === 1 ? <Tag color="cyan">是</Tag> : <span style={{ color: "#bfbfbf" }}>否</span>) },
     {
       title: "管理角色", dataIndex: "roleId", key: "roleId", responsive: ["md"], render: (rid: number | undefined, u) => {
         if (u.role !== 9) return <span style={{ color: "#bfbfbf" }}>-</span>;
@@ -210,6 +211,13 @@ export default function AdminUsersPage() {
             <div>
               <div style={{ marginBottom: 6 }}>API 额度</div>
               <InputNumber style={{ width: "100%" }} min={0} value={editForm.apiQuota} onChange={(v) => setEditForm({ ...editForm, apiQuota: v ?? 0 })} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 }}>
+              <div>
+                <div style={{ fontWeight: 500 }}>免 AI 并发限制</div>
+                <div style={{ fontSize: 12, color: "#bfbfbf", marginTop: 2 }}>开启后该用户不受 AI 并发上限约束（管理员始终不受限）</div>
+              </div>
+              <Switch checked={editForm.concurrencyUnlimited === 1} onChange={(c) => setEditForm({ ...editForm, concurrencyUnlimited: c ? 1 : 0 })} />
             </div>
           </div>
         )}
