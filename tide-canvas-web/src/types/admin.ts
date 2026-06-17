@@ -107,7 +107,7 @@ export interface BannerCreateDTO {
 export type BannerUpdateDTO = Partial<BannerCreateDTO>;
 
 export interface AiProviderVO {
-  id: number;
+  id: string; // 后端雪花主键，以字符串传输避免 JS number 精度丢失
   name: string;
   providerType: string;
   baseUrl: string;

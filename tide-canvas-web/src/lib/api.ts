@@ -235,8 +235,8 @@ export const adminApi = {
     providers: {
       list: () => http.get<AiProviderVO[]>("/api/admin/ai/providers"),
       create: (data: AiProviderCreateDTO) => http.post<AiProviderVO>("/api/admin/ai/providers", data),
-      update: (id: number, data: AiProviderUpdateDTO) => http.put<void>(`/api/admin/ai/providers/${id}`, data),
-      delete: (id: number) => http.delete<void>(`/api/admin/ai/providers/${id}`),
+      update: (id: string, data: AiProviderUpdateDTO) => http.put<void>(`/api/admin/ai/providers/${id}`, data),
+      delete: (id: string) => http.delete<void>(`/api/admin/ai/providers/${id}`),
       // 从供应商接口拉取可用模型 ID 列表（id 为雪花长整型字符串）；runware 供应商支持 search 关键词
       remoteModels: (id: string, search?: string) =>
         http.get<string[]>(`/api/admin/ai/providers/${id}/models${search ? `?search=${encodeURIComponent(search)}` : ""}`),

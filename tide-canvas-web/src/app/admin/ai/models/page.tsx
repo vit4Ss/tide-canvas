@@ -34,7 +34,7 @@ interface AdminAiModelVO {
   icon?: string;
   modelId: string;
   type: string;
-  providerId?: number;
+  providerId?: string;
   providerName?: string;
   pointCost: number;
   costPerCall?: number;

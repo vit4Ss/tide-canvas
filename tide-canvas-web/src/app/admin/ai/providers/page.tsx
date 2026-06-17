@@ -38,7 +38,7 @@ export default function AdminAiProvidersPage() {
   const [providers, setProviders] = useState<AiProviderVO[]>([]);
   const [loading, setLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<ProviderForm>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -78,7 +78,7 @@ export default function AdminAiProvidersPage() {
     }
   };
 
-  const handleDelete = async (id: number) => { await adminApi.ai.providers.delete(id); loadProviders(); };
+  const handleDelete = async (id: string) => { await adminApi.ai.providers.delete(id); loadProviders(); };
   const handleToggle = async (p: AiProviderVO) => { await adminApi.ai.providers.update(p.id, { status: p.status === 1 ? 0 : 1 }); loadProviders(); };
 
   const columns: ColumnsType<AiProviderVO> = [

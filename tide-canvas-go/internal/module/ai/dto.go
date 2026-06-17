@@ -142,7 +142,7 @@ type ModelVO struct {
 	PointCost         decimal.Decimal  `json:"pointCost"`
 	CostPerCall       *decimal.Decimal `json:"costPerCall"` // 仅管理端
 	Status            int              `json:"status"`
-	ProviderID        *int64           `json:"providerId"`
+	ProviderID        *int64           `json:"providerId,string"` // 雪花 id，字符串传输避免 JS 精度丢失
 	ProviderName      string           `json:"providerName"` // 管理端展示
 	CreateTime        string           `json:"createTime"`
 }
@@ -158,9 +158,9 @@ type HandlerVO struct {
 	PointCost      decimal.Decimal `json:"pointCost"`
 }
 
-// ProviderVO 供应商视图（对齐 AiProviderVO）。id 为内部主键。ApiKey 脱敏（前4+后4）。
+// ProviderVO 供应商视图（对齐 AiProviderVO）。id 为内部雪花主键，以字符串传输避免 JS 精度丢失。ApiKey 脱敏（前4+后4）。
 type ProviderVO struct {
-	ID           int64  `json:"id"`
+	ID           int64  `json:"id,string"`
 	Name         string `json:"name"`
 	ProviderType string `json:"providerType"`
 	BaseURL      string `json:"baseUrl"`
