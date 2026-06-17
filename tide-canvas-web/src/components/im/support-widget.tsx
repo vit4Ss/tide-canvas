@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { Headset, X, Loader2 } from "lucide-react";
 import { ChatWindow } from "@/components/im/chat-window";
 import { useImStore } from "@/stores/use-im-store";
@@ -14,6 +15,10 @@ import { imApi } from "@/lib/api";
 export function SupportWidget() {
   const [open, setOpen] = useState(false);
   const [opening, setOpening] = useState(false);
+  // 通过 Portal 渲染到 body，避开 header 的 backdrop-blur 形成的包含块
+  // （否则 fixed 会相对 header 定位，导致悬浮窗跑到顶部被截断）。
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   const conversations = useImStore((s) => s.conversations);
   const messages = useImStore((s) => s.messages);
@@ -64,7 +69,9 @@ export function SupportWidget() {
     if (supportConv) void recall(supportConv.id, msgId);
   };
 
-  return (
+  if (!mounted) return null;
+
+  return createPortal(
     <>
       {open && (
         <div className="fixed bottom-24 right-6 z-50 flex h-[480px] w-[360px] max-w-[calc(100vw-3rem)] flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl">
@@ -110,6 +117,7 @@ export function SupportWidget() {
           </span>
         )}
       </button>
-    </>
+    </>,
+    document.body,
   );
 }
