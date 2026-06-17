@@ -42,11 +42,9 @@ export default function AdminUsersPage() {
   const [editForm, setEditForm] = useState<{ role: number; vipLevel: number; concurrencyUnlimited: number; status: number; apiQuota: number; roleId?: number }>({ role: 0, vipLevel: 1, concurrencyUnlimited: 0, status: 1, apiQuota: 0 });
   const [saving, setSaving] = useState(false);
 
-  // 调积分弹窗
-  const [adjustTarget, setAdjustTarget] = useState<UserVO | null>(null);
+  // 积分调整（并入编辑弹窗）
   const [adjustAmount, setAdjustAmount] = useState<number | null>(null);
   const [adjustRemark, setAdjustRemark] = useState("");
-  const [adjusting, setAdjusting] = useState(false);
 
   const loadUsers = async (page = pageNum, search = keyword) => {
     setLoading(true);
@@ -75,46 +73,33 @@ export default function AdminUsersPage() {
   const openEdit = (user: UserVO) => {
     setEditTarget(user);
     setEditForm({ role: user.role, vipLevel: user.vipLevel ?? 1, concurrencyUnlimited: user.concurrencyUnlimited ?? 0, status: user.status, apiQuota: user.apiQuota, roleId: user.roleId });
+    setAdjustAmount(null);
+    setAdjustRemark("");
   };
 
   const handleSave = async () => {
     if (!editTarget) return;
+    const amount = Number(adjustAmount);
+    const wantAdjust = can("points:adjust") && Number.isFinite(amount) && amount !== 0;
     setSaving(true);
     try {
-      const res = await adminApi.users.update(editTarget.id, editForm);
-      if (res.success) {
-        toast.success("已保存");
-        setEditTarget(null);
-        loadUsers();
-      } else {
-        toast.error(res.message || "保存失败");
+      // 1. 保存用户字段（有编辑权限时）
+      if (can("user:edit")) {
+        const res = await adminApi.users.update(editTarget.id, editForm);
+        if (!res.success) { toast.error(res.message || "保存失败"); return; }
       }
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleAdjust = async () => {
-    if (!adjustTarget) return;
-    const amount = Number(adjustAmount);
-    if (!Number.isFinite(amount) || amount === 0) {
-      toast.error("请输入有效金额（正数增加，负数扣减）");
-      return;
-    }
-    setAdjusting(true);
-    try {
-      const res = await adminApi.points.adjust({ userId: adjustTarget.id, amount, remark: adjustRemark || undefined });
-      if (res.success) {
-        toast.success(`已为 ${adjustTarget.nickname || adjustTarget.username} 调整 ${amount > 0 ? "+" : ""}${amount} 积分`);
-        setAdjustTarget(null);
-        loadUsers();
-      } else {
-        toast.error(res.message || "调整失败");
+      // 2. 调整积分（填了非零金额且有权限时）
+      if (wantAdjust) {
+        const res = await adminApi.points.adjust({ userId: editTarget.id, amount, remark: adjustRemark || undefined });
+        if (!res.success) { toast.error(res.message || "积分调整失败"); return; }
       }
+      toast.success(wantAdjust ? `已保存，积分 ${amount > 0 ? "+" : ""}${amount}` : "已保存");
+      setEditTarget(null);
+      loadUsers();
     } catch {
       toast.error("网络错误，请稍后重试");
     } finally {
-      setAdjusting(false);
+      setSaving(false);
     }
   };
 
@@ -148,14 +133,9 @@ export default function AdminUsersPage() {
     { title: "注册时间", dataIndex: "createTime", key: "createTime", responsive: ["lg"], render: (v: string) => (v ? formatDate(v) : "-") },
     {
       title: "操作", key: "action", render: (_, u) => (
-        <Space size={4}>
-          {can("points:adjust") && (
-            <Button size="small" type="text" icon={<Coins size={14} />} style={{ color: "#d97706" }} onClick={() => { setAdjustTarget(u); setAdjustAmount(null); setAdjustRemark(""); }}>调积分</Button>
-          )}
-          {can("user:edit") && (
-            <Button size="small" type="text" icon={<EditOutlined />} onClick={() => openEdit(u)}>编辑</Button>
-          )}
-        </Space>
+        can("user:edit") || can("points:adjust") ? (
+          <Button size="small" type="text" icon={<EditOutlined />} onClick={() => openEdit(u)}>编辑</Button>
+        ) : <span style={{ color: "#bfbfbf" }}>-</span>
       ),
     },
   ];
@@ -219,39 +199,20 @@ export default function AdminUsersPage() {
               </div>
               <Switch checked={editForm.concurrencyUnlimited === 1} onChange={(c) => setEditForm({ ...editForm, concurrencyUnlimited: c ? 1 : 0 })} />
             </div>
+            {can("points:adjust") && (
+              <div style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 16 }}>
+                <div style={{ marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                  <Coins size={14} color="#d97706" /> 积分调整
+                  <span style={{ fontSize: 12, color: "#bfbfbf" }}>当前 {editTarget.points ?? 0}</span>
+                </div>
+                <InputNumber style={{ width: "100%" }} placeholder="正数增加，负数扣减，留空不变" value={adjustAmount} onChange={setAdjustAmount} />
+                <Input style={{ marginTop: 8 }} placeholder="调整备注（可选）" value={adjustRemark} onChange={(e) => setAdjustRemark(e.target.value)} />
+              </div>
+            )}
           </div>
         )}
       </Modal>
 
-      {/* 调整积分 */}
-      <Modal
-        title={<Space><Coins size={18} color="#d97706" /> 调整积分</Space>}
-        open={!!adjustTarget}
-        onCancel={() => setAdjustTarget(null)}
-        onOk={handleAdjust}
-        confirmLoading={adjusting}
-        okText="提交"
-        cancelText="取消"
-        okButtonProps={{ disabled: !adjustAmount }}
-      >
-        {adjustTarget && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 16, paddingTop: 8 }}>
-            <div style={{ color: "var(--ant-color-text-secondary, #8c8c8c)" }}>
-              用户：<b style={{ color: "#262626" }}>{adjustTarget.nickname || adjustTarget.username}</b>
-              <span style={{ color: "#bfbfbf" }}> @{adjustTarget.username}</span>
-              　当前积分 <b style={{ color: "#d97706" }}>{adjustTarget.points ?? 0}</b>
-            </div>
-            <div>
-              <div style={{ marginBottom: 6 }}>金额（+/-）</div>
-              <InputNumber style={{ width: "100%" }} placeholder="正数增加，负数扣减" autoFocus value={adjustAmount} onChange={setAdjustAmount} onPressEnter={handleAdjust} />
-            </div>
-            <div>
-              <div style={{ marginBottom: 6 }}>备注</div>
-              <Input placeholder="调整原因（可选）" value={adjustRemark} onChange={(e) => setAdjustRemark(e.target.value)} onPressEnter={handleAdjust} />
-            </div>
-          </div>
-        )}
-      </Modal>
     </div>
   );
 }
