@@ -8,8 +8,10 @@ import {
   Plus,
   BookOpen,
   Lightbulb,
-  Box,
   ArrowUp,
+  ChevronDown,
+  Check,
+  Zap,
   Loader2,
   Image as ImageIcon,
   Video,
@@ -20,9 +22,9 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { aiApi } from "@/lib/api";
-import { AiTaskStatus, AiModelType } from "@/types/ai";
+import { AiTaskStatus, AiModelType, type AiModelVO } from "@/types/ai";
 
-// 快捷创作类别（仿 Lovart 输入框下方的 chips）
+// 快捷创作类别（点击填入输入框作为提示词建议）
 const CHIPS = [
   { key: "image", Icon: ImageIcon },
   { key: "video", Icon: Video },
@@ -33,48 +35,60 @@ const CHIPS = [
 ] as const;
 
 const POLL_INTERVAL = 2000;
-const MAX_POLL = 5 * 60 * 1000;
+const MAX_POLL_IMAGE = 5 * 60 * 1000;
+const MAX_POLL_VIDEO = 30 * 60 * 1000; // 视频较慢，轮询上限放宽
 
+type GenKind = "image" | "video";
 type GenStatus = "generating" | "done" | "error";
 interface GenResult {
   id: string;
   prompt: string;
+  kind: GenKind;
   status: GenStatus;
-  imageUrl?: string;
+  url?: string;
   error?: string;
 }
 
 /**
  * 主页中央创作入口（仿 Lovart）：对话框式生成工具。
- * 输入提示词 → 复用 aiApi 文生图（异步任务 + 轮询）→ 在下方对话流展示结果，不跳转新建画布。
+ * 支持模型选择（图片/视频），按所选模型类型自动走 text_to_image / text_to_video，
+ * 复用 aiApi 异步任务 + 轮询，在下方对话流展示结果，不跳转新建画布。
  */
 export function CreativeHero() {
   const t = useTranslations("home");
   const router = useRouter();
   const { isLoggedIn } = useAuth();
   const [prompt, setPrompt] = useState("");
-  const [modelId, setModelId] = useState("default");
+  const [models, setModels] = useState<AiModelVO[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState("");
+  const [modelOpen, setModelOpen] = useState(false);
   const [results, setResults] = useState<GenResult[]>([]);
   const seqRef = useRef(0);
 
-  // 取一个图片模型作为默认（拿不到则用后端兜底 "default"）
+  // 加载可用的图片/视频模型，默认选第一个图片模型
   useEffect(() => {
     aiApi
       .listModels()
       .then((res) => {
         if (!res.success) return;
-        const img = res.data.find((m) => m.type === AiModelType.IMAGE);
-        if (img?.modelId) setModelId(img.modelId);
+        const usable = res.data.filter(
+          (m) => m.type === AiModelType.IMAGE || m.type === AiModelType.VIDEO,
+        );
+        setModels(usable);
+        const first = usable.find((m) => m.type === AiModelType.IMAGE) ?? usable[0];
+        if (first) setSelectedModelId(first.modelId);
       })
       .catch(() => {});
   }, []);
 
+  const selectedModel = models.find((m) => m.modelId === selectedModelId);
+
   const patch = (id: string, data: Partial<GenResult>) =>
     setResults((rs) => rs.map((r) => (r.id === id ? { ...r, ...data } : r)));
 
-  const poll = (taskId: number, id: string, start: number) => {
+  const poll = (taskId: number, id: string, start: number, maxPoll: number) => {
     const tick = async () => {
-      if (Date.now() - start > MAX_POLL) {
+      if (Date.now() - start > maxPoll) {
         patch(id, { status: "error", error: t("genTimeout") });
         return;
       }
@@ -86,7 +100,7 @@ export function CreativeHero() {
         }
         const task = res.data;
         if (task.status === AiTaskStatus.SUCCESS) {
-          patch(id, { status: "done", imageUrl: task.resultUrl });
+          patch(id, { status: "done", url: task.resultUrl });
         } else if (task.status === AiTaskStatus.FAILED || task.status === AiTaskStatus.CANCELLED) {
           patch(id, { status: "error", error: task.errorMsg || t("genFailed") });
         } else {
@@ -99,24 +113,30 @@ export function CreativeHero() {
     tick();
   };
 
-  const submit = async (preset?: string) => {
+  const submit = async () => {
     if (!isLoggedIn) {
       router.push("/login");
       return;
     }
-    const text = [preset, prompt.trim()].filter(Boolean).join(" ").trim();
+    const text = prompt.trim();
     if (!text) return;
     setPrompt("");
+    const isVideo = selectedModel?.type === AiModelType.VIDEO;
+    const kind: GenKind = isVideo ? "video" : "image";
     seqRef.current += 1;
     const id = `g${seqRef.current}`;
-    setResults((rs) => [{ id, prompt: text, status: "generating" }, ...rs]);
+    setResults((rs) => [{ id, prompt: text, kind, status: "generating" }, ...rs]);
     try {
-      const res = await aiApi.generate({ handler: "text_to_image", modelId, input: { prompt: text } });
+      const res = await aiApi.generate({
+        handler: isVideo ? "text_to_video" : "text_to_image",
+        modelId: selectedModelId || "default",
+        input: { prompt: text },
+      });
       if (!res.success) {
         patch(id, { status: "error", error: res.message || t("genFailed") });
         return;
       }
-      poll(res.data.id, id, Date.now());
+      poll(res.data.id, id, Date.now(), isVideo ? MAX_POLL_VIDEO : MAX_POLL_IMAGE);
     } catch {
       patch(id, { status: "error", error: t("genFailed") });
     }
@@ -128,6 +148,8 @@ export function CreativeHero() {
       submit();
     }
   };
+
+  const addChip = (label: string) => setPrompt((p) => (p ? `${p} ${label}` : label));
 
   const busy = results.some((r) => r.status === "generating");
 
@@ -161,17 +183,63 @@ export function CreativeHero() {
               <button type="button" aria-label="template" className="rounded-lg p-1.5 transition-colors hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800">
                 <BookOpen className="h-4 w-4" />
               </button>
+
+              {/* 模型选择下拉 */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setModelOpen((o) => !o)}
+                  className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                >
+                  {selectedModel?.type === AiModelType.VIDEO ? (
+                    <Video className="h-3.5 w-3.5" />
+                  ) : (
+                    <ImageIcon className="h-3.5 w-3.5" />
+                  )}
+                  <span className="max-w-[120px] truncate">{selectedModel?.name || t("model")}</span>
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </button>
+
+                {modelOpen && models.length > 0 && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setModelOpen(false)} />
+                    <div className="absolute bottom-full left-0 z-20 mb-2 max-h-72 w-64 overflow-auto rounded-xl border border-neutral-200 bg-white p-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-900">
+                      {models.map((m) => (
+                        <button
+                          key={m.modelId}
+                          type="button"
+                          onClick={() => {
+                            setSelectedModelId(m.modelId);
+                            setModelOpen(false);
+                          }}
+                          className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm text-neutral-700 transition-colors hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                        >
+                          {m.type === AiModelType.VIDEO ? (
+                            <Video className="h-4 w-4 shrink-0 text-neutral-400" />
+                          ) : (
+                            <ImageIcon className="h-4 w-4 shrink-0 text-neutral-400" />
+                          )}
+                          <span className="flex-1 truncate text-left">{m.name}</span>
+                          <span className="flex items-center gap-0.5 text-xs text-neutral-400">
+                            <Zap className="h-3 w-3 fill-amber-400 text-amber-400" />
+                            {m.pointCost}
+                          </span>
+                          {m.modelId === selectedModelId && <Check className="h-4 w-4 shrink-0 text-violet-600" />}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
+
             <div className="flex items-center gap-1 text-neutral-400">
               <button type="button" aria-label="inspiration" className="rounded-lg p-1.5 transition-colors hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800">
                 <Lightbulb className="h-4 w-4" />
               </button>
-              <button type="button" aria-label="model" className="rounded-lg p-1.5 transition-colors hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800">
-                <Box className="h-4 w-4" />
-              </button>
               <button
                 type="button"
-                onClick={() => submit()}
+                onClick={submit}
                 aria-label={t("send")}
                 className="ml-1 flex h-8 w-8 items-center justify-center rounded-full bg-violet-600 text-white transition-colors hover:bg-violet-700"
               >
@@ -187,7 +255,7 @@ export function CreativeHero() {
             <button
               key={key}
               type="button"
-              onClick={() => submit(t(`chips.${key}`))}
+              onClick={() => addChip(t(`chips.${key}`))}
               className="flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3.5 py-1.5 text-sm text-neutral-700 transition-colors hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:border-violet-500/40 dark:hover:bg-violet-500/10"
             >
               <Icon className="h-4 w-4" />
@@ -209,11 +277,18 @@ export function CreativeHero() {
                       {t("generating")}
                     </div>
                   )}
-                  {r.status === "done" && r.imageUrl && (
+                  {r.status === "done" && r.url && r.kind === "image" && (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
-                      src={r.imageUrl}
+                      src={r.url}
                       alt={r.prompt}
+                      className="max-h-96 w-auto rounded-xl border border-neutral-200 dark:border-neutral-800"
+                    />
+                  )}
+                  {r.status === "done" && r.url && r.kind === "video" && (
+                    <video
+                      src={r.url}
+                      controls
                       className="max-h-96 w-auto rounded-xl border border-neutral-200 dark:border-neutral-800"
                     />
                   )}

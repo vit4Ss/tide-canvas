@@ -46,6 +46,7 @@
     "genFailed": "生成失败，请重试",
     "genTimeout": "生成超时，请重试",
     "loginToCreate": "登录后即可开始创作",
+    "model": "模型",
     "chips": {
       "image": "图片生成",
       "video": "视频生成",

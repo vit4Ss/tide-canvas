@@ -46,6 +46,7 @@
     "genFailed": "Generation failed, please retry",
     "genTimeout": "Generation timed out, please retry",
     "loginToCreate": "Log in to start creating",
+    "model": "Model",
     "chips": {
       "image": "Image",
       "video": "Video",
