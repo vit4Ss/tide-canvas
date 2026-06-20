@@ -15,7 +15,6 @@ import {
   MessageSquare,
   BookOpen,
   Coins,
-  Crown,
 } from "lucide-react";
 import { useState } from "react";
 import { MessageEntry } from "@/components/im";
@@ -77,14 +76,7 @@ export function Header() {
               <Coins className="h-4 w-4" />
               {user?.points ?? 0}
             </Link>
-            {/* 开通会员：进入充值页会员 tab */}
-            <Link
-              href="/user/recharge?tab=member"
-              className="flex items-center gap-1.5 rounded-full bg-gradient-to-r from-amber-400 to-amber-500 px-3.5 py-1.5 text-sm font-semibold text-white shadow-sm transition-all hover:from-amber-500 hover:to-amber-600 hover:shadow"
-            >
-              <Crown className="h-4 w-4" />
-              开通会员
-            </Link>
+            {/* 开通会员入口暂时隐藏（保留 /user/recharge?tab=member 路由，恢复时还原此按钮即可） */}
             <NotificationCenter />
             <MessageEntry />
             <div
