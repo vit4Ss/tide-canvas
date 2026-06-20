@@ -2,8 +2,15 @@
 
 import Link from "next/link";
 import { ArrowRight, Play } from "lucide-react";
+import { useAuth } from "@/hooks/use-auth";
 
 export function HeroSection() {
+  const { isLoggedIn, initialized } = useAuth();
+
+  // 登录态加载中(initialized=false)或已登录 → 不展示营销 Hero：
+  // 登录用户直接进入工作台(Banner 顶到顶部)，且加载期不渲染可避免 Hero 闪现
+  if (!initialized || isLoggedIn) return null;
+
   return (
     <section className="relative overflow-hidden">
       <div className="absolute inset-0 -z-10">

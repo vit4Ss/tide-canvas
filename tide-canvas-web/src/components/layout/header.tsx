@@ -14,6 +14,8 @@ import {
   X,
   MessageSquare,
   BookOpen,
+  Coins,
+  Crown,
 } from "lucide-react";
 import { useState } from "react";
 import { MessageEntry } from "@/components/im";
@@ -66,6 +68,23 @@ export function Header() {
         <div className="flex items-center gap-3">
           {isLoggedIn ? (
             <>
+            {/* 积分余额：点击进入积分中心 */}
+            <Link
+              href="/user/points"
+              title="积分中心"
+              className="flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-sm font-semibold text-amber-600 transition-colors hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-500/10"
+            >
+              <Coins className="h-4 w-4" />
+              {user?.points ?? 0}
+            </Link>
+            {/* 开通会员：进入充值页会员 tab */}
+            <Link
+              href="/user/recharge?tab=member"
+              className="flex items-center gap-1.5 rounded-full bg-gradient-to-r from-amber-400 to-amber-500 px-3.5 py-1.5 text-sm font-semibold text-white shadow-sm transition-all hover:from-amber-500 hover:to-amber-600 hover:shadow"
+            >
+              <Crown className="h-4 w-4" />
+              开通会员
+            </Link>
             <NotificationCenter />
             <MessageEntry />
             <div
@@ -78,6 +97,7 @@ export function Header() {
               >
                 <div className="flex h-7 w-7 items-center justify-center rounded-full bg-neutral-200 dark:bg-neutral-700">
                   {user?.avatar ? (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img src={user.avatar} alt="" className="h-7 w-7 rounded-full object-cover" />
                   ) : (
                     <User className="h-4 w-4 text-neutral-500" />

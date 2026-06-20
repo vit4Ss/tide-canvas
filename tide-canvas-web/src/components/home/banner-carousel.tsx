@@ -59,53 +59,72 @@ export function BannerCarousel() {
   if (count === 0) return null;
 
   return (
-    <section className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+    <section className="mx-auto max-w-7xl px-4 pt-8 sm:px-6 lg:px-8">
       <div
-        className="group relative aspect-[16/5] w-full overflow-hidden rounded-2xl bg-neutral-100 dark:bg-neutral-900"
+        className="relative aspect-[18/5] w-full overflow-hidden"
         onMouseEnter={() => { if (timerRef.current) clearInterval(timerRef.current); }}
         onMouseLeave={startAutoplay}
       >
-        {/* 横向滑动轨道 */}
-        <div className="flex h-full transition-transform duration-500 ease-out" style={{ transform: `translateX(-${index * 100}%)` }}>
-          {banners.map((b) => (
-            <div key={b.id} className="h-full w-full shrink-0">
-              <BannerSlide banner={b} />
+        {/* coverflow：中间为当前张，两侧露边并压暗，其余隐藏 */}
+        {banners.map((b, i) => {
+          // 相对中心的「环形」位置：-1 左、0 中、1 右，其余隐藏
+          let pos = i - index;
+          if (pos > count / 2) pos -= count;
+          if (pos < -count / 2) pos += count;
+          const visible = Math.abs(pos) <= 1;
+          return (
+            <div
+              key={b.id}
+              aria-hidden={pos !== 0}
+              className="absolute left-1/2 top-1/2 h-full w-[72%] transition-all duration-500 ease-out"
+              style={{
+                transform: `translate(-50%, -50%) translateX(${pos * 100}%) scale(${pos === 0 ? 1 : 0.9})`,
+                opacity: visible ? (pos === 0 ? 1 : 0.45) : 0,
+                zIndex: pos === 0 ? 20 : 10,
+                pointerEvents: pos === 0 ? "auto" : "none",
+              }}
+            >
+              <div className={`h-full w-full overflow-hidden rounded-2xl bg-neutral-100 dark:bg-neutral-900 ${pos === 0 ? "shadow-2xl ring-1 ring-black/5 dark:ring-white/10" : ""}`}>
+                <BannerSlide banner={b} />
+              </div>
             </div>
-          ))}
-        </div>
+          );
+        })}
 
-        {/* 左右切换（多于 1 张时显示，hover 浮现） */}
+        {/* 左右切换（多于 1 张时显示） */}
         {count > 1 && (
           <>
             <button
               onClick={() => go(index - 1)}
               aria-label="上一张"
-              className="absolute left-3 top-1/2 hidden -translate-y-1/2 rounded-full bg-black/40 p-2 text-white opacity-0 backdrop-blur-sm transition-opacity hover:bg-black/60 group-hover:opacity-100 sm:block"
+              className="absolute left-2 top-1/2 z-30 hidden -translate-y-1/2 rounded-full bg-black/30 p-2 text-white backdrop-blur-sm transition-colors hover:bg-black/50 sm:block"
             >
               <ChevronLeft className="h-5 w-5" />
             </button>
             <button
               onClick={() => go(index + 1)}
               aria-label="下一张"
-              className="absolute right-3 top-1/2 hidden -translate-y-1/2 rounded-full bg-black/40 p-2 text-white opacity-0 backdrop-blur-sm transition-opacity hover:bg-black/60 group-hover:opacity-100 sm:block"
+              className="absolute right-2 top-1/2 z-30 hidden -translate-y-1/2 rounded-full bg-black/30 p-2 text-white backdrop-blur-sm transition-colors hover:bg-black/50 sm:block"
             >
               <ChevronRight className="h-5 w-5" />
             </button>
-
-            {/* 指示点 */}
-            <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 gap-2">
-              {banners.map((b, i) => (
-                <button
-                  key={b.id}
-                  onClick={() => go(i)}
-                  aria-label={`第 ${i + 1} 张`}
-                  className={`h-1.5 rounded-full transition-all ${i === index ? "w-6 bg-white" : "w-1.5 bg-white/50 hover:bg-white/80"}`}
-                />
-              ))}
-            </div>
           </>
         )}
       </div>
+
+      {/* 指示点（位于轮播条下方） */}
+      {count > 1 && (
+        <div className="mt-4 flex justify-center gap-2">
+          {banners.map((b, i) => (
+            <button
+              key={b.id}
+              onClick={() => go(i)}
+              aria-label={`第 ${i + 1} 张`}
+              className={`h-1.5 rounded-full transition-all ${i === index ? "w-6 bg-neutral-800 dark:bg-white" : "w-1.5 bg-neutral-300 hover:bg-neutral-400 dark:bg-neutral-600 dark:hover:bg-neutral-500"}`}
+            />
+          ))}
+        </div>
+      )}
     </section>
   );
 }
