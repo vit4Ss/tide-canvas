@@ -73,8 +73,8 @@ export function Sidebar() {
         })}
       </nav>
 
-      {/* 用户（底部） */}
-      <div className="mt-auto">
+      {/* 用户：紧跟导航图标下方 */}
+      <div className="mt-1">
         <Link
           href="/user"
           aria-label={tUser("profile")}

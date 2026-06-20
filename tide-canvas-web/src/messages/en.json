@@ -42,6 +42,10 @@
     "subtitle": "Your AI creative agent that turns ideas into work",
     "placeholder": "Ask TideCanvas to generate a beautiful poster…",
     "send": "Start Creating",
+    "generating": "Generating…",
+    "genFailed": "Generation failed, please retry",
+    "genTimeout": "Generation timed out, please retry",
+    "loginToCreate": "Log in to start creating",
     "chips": {
       "image": "Image",
       "video": "Video",

@@ -42,6 +42,10 @@
     "subtitle": "懂你的 AI 创作代理，帮你把想法变成作品",
     "placeholder": "让 TideCanvas 帮你生成一张美丽的海报…",
     "send": "开始创作",
+    "generating": "生成中…",
+    "genFailed": "生成失败，请重试",
+    "genTimeout": "生成超时，请重试",
+    "loginToCreate": "登录后即可开始创作",
     "chips": {
       "image": "图片生成",
       "video": "视频生成",
