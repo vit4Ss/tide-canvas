@@ -1,13 +1,11 @@
-import { HeroSection } from "@/components/home/hero-section";
-import { BannerCarousel } from "@/components/home/banner-carousel";
+import { CreativeHero } from "@/components/home/creative-hero";
 import { RecentProjects } from "@/components/home/recent-projects";
 import { FeaturedWorks } from "@/components/home/featured-works";
 
 export default function HomePage() {
   return (
     <>
-      <HeroSection />
-      <BannerCarousel />
+      <CreativeHero />
       <RecentProjects />
       <FeaturedWorks />
     </>

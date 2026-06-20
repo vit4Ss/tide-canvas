@@ -30,7 +30,7 @@ export function RecentProjects() {
   if (!isLoggedIn || !initialized) return null;
 
   return (
-    <section className="border-t border-neutral-200 py-16 dark:border-neutral-800">
+    <section className="py-12">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between">
           <h2 className="text-2xl font-bold">{t("title")}</h2>
@@ -47,10 +47,10 @@ export function RecentProjects() {
           {/* 开始创作卡片 */}
           <Link
             href="/canvas/new"
-            className="flex aspect-video flex-col items-center justify-center gap-3 rounded-2xl border border-cyan-200 bg-gradient-to-br from-cyan-50 to-blue-50 transition-all hover:shadow-md dark:border-cyan-900 dark:from-cyan-950/40 dark:to-blue-950/40"
+            className="flex aspect-video flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-neutral-300 bg-neutral-50 text-neutral-500 transition-colors hover:border-violet-300 hover:bg-violet-50 hover:text-violet-600 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400 dark:hover:border-violet-500/40 dark:hover:bg-violet-500/10"
           >
-            <Plus className="h-7 w-7 text-cyan-600 dark:text-cyan-400" />
-            <span className="text-sm font-medium text-cyan-700 dark:text-cyan-300">{t("create")}</span>
+            <Plus className="h-7 w-7" />
+            <span className="text-sm font-medium">{t("create")}</span>
           </Link>
 
           {loading ? (

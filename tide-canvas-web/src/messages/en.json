@@ -2,7 +2,9 @@
   "nav": {
     "canvas": "Canvas",
     "community": "Community",
-    "blog": "Blog"
+    "blog": "Blog",
+    "home": "Home",
+    "projects": "Projects"
   },
   "userMenu": {
     "profile": "Profile",
@@ -27,13 +29,27 @@
   "recent": {
     "title": "Recent Projects",
     "all": "All Projects",
-    "create": "Create"
+    "create": "New Project"
   },
   "featured": {
-    "title": "Featured Works",
-    "subtitle": "Save prompts, reference styles and result images that reliably deliver, so your next creation starts from proven experience",
+    "title": "Inspiration",
+    "subtitle": "Browse featured community works to spark your next creation",
     "more": "View More",
     "moreMobile": "View More Works"
+  },
+  "home": {
+    "title": "TideCanvas makes creation simpler",
+    "subtitle": "Your AI creative agent that turns ideas into work",
+    "placeholder": "Ask TideCanvas to generate a beautiful poster…",
+    "send": "Start Creating",
+    "chips": {
+      "image": "Image",
+      "video": "Video",
+      "design": "Design",
+      "poster": "Poster & Ads",
+      "character": "Character",
+      "ecommerce": "E-Commerce"
+    }
   },
   "language": {
     "zh": "简体中文",

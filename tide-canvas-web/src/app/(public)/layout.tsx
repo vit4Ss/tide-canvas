@@ -1,14 +1,9 @@
-import { Header } from "@/components/layout/header";
+import { PublicShell } from "@/components/layout/public-shell";
 
 export default function PublicLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  return (
-    <>
-      <Header />
-      <main className="flex-1">{children}</main>
-    </>
-  );
+  return <PublicShell>{children}</PublicShell>;
 }

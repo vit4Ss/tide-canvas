@@ -2,7 +2,9 @@
   "nav": {
     "canvas": "画布",
     "community": "社区",
-    "blog": "博客"
+    "blog": "博客",
+    "home": "首页",
+    "projects": "项目"
   },
   "userMenu": {
     "profile": "个人中心",
@@ -27,13 +29,27 @@
   "recent": {
     "title": "最近项目",
     "all": "全部项目",
-    "create": "开始创作"
+    "create": "新建项目"
   },
   "featured": {
-    "title": "精选作品",
-    "subtitle": "收藏稳定出图的提示词、参考风格和结果图片，让下一次创作从已有经验开始",
+    "title": "灵感发现",
+    "subtitle": "浏览社区精选作品，获取下一次创作的灵感",
     "more": "查看更多",
     "moreMobile": "查看更多作品"
+  },
+  "home": {
+    "title": "TideCanvas 让创作更简单",
+    "subtitle": "懂你的 AI 创作代理，帮你把想法变成作品",
+    "placeholder": "让 TideCanvas 帮你生成一张美丽的海报…",
+    "send": "开始创作",
+    "chips": {
+      "image": "图片生成",
+      "video": "视频生成",
+      "design": "设计",
+      "poster": "海报广告",
+      "character": "角色设计",
+      "ecommerce": "电商设计"
+    }
   },
   "language": {
     "zh": "简体中文",
