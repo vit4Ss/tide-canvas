@@ -4,7 +4,6 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/use-auth";
 import { Header } from "@/components/layout/header";
-import { Footer } from "@/components/layout/footer";
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   const { isLoggedIn, initialized } = useAuth();
@@ -30,7 +29,6 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
     <>
       <Header />
       <main className="flex-1">{children}</main>
-      <Footer />
     </>
   );
 }
