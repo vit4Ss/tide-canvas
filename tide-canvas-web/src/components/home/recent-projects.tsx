@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 import { useAuth } from "@/hooks/use-auth";
 import { projectApi } from "@/lib/api";
 import type { ProjectVO } from "@/types/canvas";
@@ -10,6 +11,7 @@ import { formatDateTime, displayProjectName } from "@/lib/utils";
 import { ProjectCardMenu } from "@/components/project/project-card-menu";
 
 export function RecentProjects() {
+  const t = useTranslations("recent");
   const { isLoggedIn, initialized } = useAuth();
   const [projects, setProjects] = useState<ProjectVO[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,12 +33,12 @@ export function RecentProjects() {
     <section className="border-t border-neutral-200 py-16 dark:border-neutral-800">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between">
-          <h2 className="text-2xl font-bold">最近项目</h2>
+          <h2 className="text-2xl font-bold">{t("title")}</h2>
           <Link
             href="/user/projects"
             className="flex items-center gap-1 text-sm font-medium text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white"
           >
-            全部项目
+            {t("all")}
             <ArrowRight className="h-4 w-4" />
           </Link>
         </div>
@@ -48,7 +50,7 @@ export function RecentProjects() {
             className="flex aspect-video flex-col items-center justify-center gap-3 rounded-2xl border border-cyan-200 bg-gradient-to-br from-cyan-50 to-blue-50 transition-all hover:shadow-md dark:border-cyan-900 dark:from-cyan-950/40 dark:to-blue-950/40"
           >
             <Plus className="h-7 w-7 text-cyan-600 dark:text-cyan-400" />
-            <span className="text-sm font-medium text-cyan-700 dark:text-cyan-300">开始创作</span>
+            <span className="text-sm font-medium text-cyan-700 dark:text-cyan-300">{t("create")}</span>
           </Link>
 
           {loading ? (

@@ -14,20 +14,23 @@ import {
   X,
   MessageSquare,
   BookOpen,
-  Coins,
+  Zap,
 } from "lucide-react";
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import { MessageEntry } from "@/components/im";
 import { NotificationCenter } from "@/components/notification";
+import { LocaleSwitcher } from "./locale-switcher";
 
 const navLinks = [
-  { href: "/user/projects", label: "画布", icon: Layers },
-  { href: "/community", label: "社区", icon: MessageSquare },
-  { href: "/blogs", label: "博客", icon: BookOpen },
-  // 「发现」功能开发中，暂时隐藏：{ href: "/explore", label: "发现", icon: Compass },
+  { href: "/user/projects", labelKey: "canvas", icon: Layers },
+  { href: "/community", labelKey: "community", icon: MessageSquare },
+  { href: "/blogs", labelKey: "blog", icon: BookOpen },
+  // 「发现」功能开发中，暂时隐藏：{ href: "/explore", labelKey: "explore", icon: Compass },
 ];
 
 export function Header() {
+  const t = useTranslations();
   const { user, isLoggedIn, isAdmin } = useAuth();
   const logout = useAuthStore((s) => s.logout);
   const router = useRouter();
@@ -58,7 +61,7 @@ export function Header() {
                 className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-white"
               >
                 <link.icon className="h-4 w-4" />
-                {link.label}
+                {t(`nav.${link.labelKey}`)}
               </Link>
             ))}
           </nav>
@@ -70,10 +73,10 @@ export function Header() {
             {/* 积分余额：点击进入积分中心 */}
             <Link
               href="/user/points"
-              title="积分中心"
-              className="flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-sm font-semibold text-amber-600 transition-colors hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-500/10"
+              title={t("header.pointsTitle")}
+              className="flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-sm font-semibold text-neutral-800 shadow-sm transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100 dark:hover:bg-neutral-700"
             >
-              <Coins className="h-4 w-4" />
+              <Zap className="h-4 w-4 fill-amber-400 text-amber-400" />
               {user?.points ?? 0}
             </Link>
             {/* 开通会员入口暂时隐藏（保留 /user/recharge?tab=member 路由，恢复时还原此按钮即可） */}
@@ -87,6 +90,7 @@ export function Header() {
               <button
                 className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-1.5 text-sm transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-800"
               >
+                <span className="hidden sm:inline">{user?.nickname || user?.username}</span>
                 <div className="flex h-7 w-7 items-center justify-center rounded-full bg-neutral-200 dark:bg-neutral-700">
                   {user?.avatar ? (
                     // eslint-disable-next-line @next/next/no-img-element
@@ -95,12 +99,11 @@ export function Header() {
                     <User className="h-4 w-4 text-neutral-500" />
                   )}
                 </div>
-                <span className="hidden sm:inline">{user?.nickname || user?.username}</span>
               </button>
 
               {userMenuOpen && (
                 /* top-full + pt-1：紧贴触发区，pt-1 作为透明衔接，避免移动到菜单途中 hover 中断 */
-                <div className="absolute left-0 top-full z-50 w-48 pt-1">
+                <div className="absolute right-0 top-full z-50 w-48 pt-1">
                   <div className="rounded-lg border border-neutral-200 bg-white py-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-900">
                     <Link
                       href="/user"
@@ -108,7 +111,7 @@ export function Header() {
                       onClick={() => setUserMenuOpen(false)}
                     >
                       <User className="h-4 w-4" />
-                      个人中心
+                      {t("userMenu.profile")}
                     </Link>
                     {/* 团队功能暂时隐藏（保留路由与后端，恢复时还原此链接即可） */}
                     <Link
@@ -117,7 +120,7 @@ export function Header() {
                       onClick={() => setUserMenuOpen(false)}
                     >
                       <Settings className="h-4 w-4" />
-                      账户设置
+                      {t("userMenu.settings")}
                     </Link>
                     {isAdmin && (
                       <Link
@@ -126,16 +129,18 @@ export function Header() {
                         onClick={() => setUserMenuOpen(false)}
                       >
                         <LayoutDashboard className="h-4 w-4" />
-                        管理后台
+                        {t("userMenu.admin")}
                       </Link>
                     )}
+                    <div className="my-1 border-t border-neutral-200 dark:border-neutral-700" />
+                    <LocaleSwitcher onSwitched={() => setUserMenuOpen(false)} />
                     <div className="my-1 border-t border-neutral-200 dark:border-neutral-700" />
                     <button
                       onClick={handleLogout}
                       className="flex w-full cursor-pointer items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"
                     >
                       <LogOut className="h-4 w-4" />
-                      退出登录
+                      {t("userMenu.logout")}
                     </button>
                   </div>
                 </div>
@@ -148,13 +153,13 @@ export function Header() {
                 href="/login"
                 className="rounded-lg px-4 py-2 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
               >
-                登录
+                {t("auth.login")}
               </Link>
               <Link
                 href="/register"
                 className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
               >
-                注册
+                {t("auth.register")}
               </Link>
             </div>
           )}
@@ -179,7 +184,7 @@ export function Header() {
                 onClick={() => setMobileMenuOpen(false)}
               >
                 <link.icon className="h-4 w-4" />
-                {link.label}
+                {t(`nav.${link.labelKey}`)}
               </Link>
             ))}
           </nav>

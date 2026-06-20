@@ -1,0 +1,42 @@
+{
+  "nav": {
+    "canvas": "Canvas",
+    "community": "Community",
+    "blog": "Blog"
+  },
+  "userMenu": {
+    "profile": "Profile",
+    "settings": "Account Settings",
+    "admin": "Admin Console",
+    "logout": "Log Out",
+    "language": "Language"
+  },
+  "auth": {
+    "login": "Log In",
+    "register": "Sign Up"
+  },
+  "header": {
+    "pointsTitle": "Points Center"
+  },
+  "hero": {
+    "title": "Infinite Canvas",
+    "subtitle": "Generate, connect and recompose <h>images, text and graphics</h> on an <h>infinite canvas</h>, turning creation from one-off generation into continuous iteration.",
+    "start": "Get Started",
+    "browse": "Browse Works"
+  },
+  "recent": {
+    "title": "Recent Projects",
+    "all": "All Projects",
+    "create": "Create"
+  },
+  "featured": {
+    "title": "Featured Works",
+    "subtitle": "Save prompts, reference styles and result images that reliably deliver, so your next creation starts from proven experience",
+    "more": "View More",
+    "moreMobile": "View More Works"
+  },
+  "language": {
+    "zh": "简体中文",
+    "en": "English"
+  }
+}

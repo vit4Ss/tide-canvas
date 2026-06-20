@@ -1,4 +1,8 @@
 import type { NextConfig } from "next";
+import createNextIntlPlugin from "next-intl/plugin";
+
+// next-intl：默认读取 ./src/i18n/request.ts（无路由前缀模式，locale 存 cookie）
+const withNextIntl = createNextIntlPlugin();
 
 const nextConfig: NextConfig = {
   // Docker 部署：构建产出 .next/standalone 自包含产物（无需携带完整 node_modules）
@@ -29,4 +33,4 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+export default withNextIntl(nextConfig);

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useTranslations } from "next-intl";
 import { ArrowRight } from "lucide-react";
 import { communityApi } from "@/lib/api";
 import type { PostVO } from "@/types/community";
@@ -11,6 +12,7 @@ import type { PostVO } from "@/types/community";
  * 无数据（或全部无图）时整个区块不渲染——不展示任何假占位卡片。
  */
 export function FeaturedWorks() {
+  const t = useTranslations("featured");
   const [works, setWorks] = useState<PostVO[]>([]);
 
   useEffect(() => {
@@ -33,16 +35,16 @@ export function FeaturedWorks() {
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-3xl font-bold tracking-tight">精选作品</h2>
+            <h2 className="text-3xl font-bold tracking-tight">{t("title")}</h2>
             <p className="mt-2 text-neutral-600 dark:text-neutral-400">
-              收藏稳定出图的提示词、参考风格和结果图片，让下一次创作从已有经验开始
+              {t("subtitle")}
             </p>
           </div>
           <Link
             href="/community"
             className="hidden items-center gap-1 text-sm font-medium text-neutral-600 hover:text-neutral-900 sm:flex dark:text-neutral-400 dark:hover:text-white"
           >
-            查看更多
+            {t("more")}
             <ArrowRight className="h-4 w-4" />
           </Link>
         </div>
@@ -96,7 +98,7 @@ export function FeaturedWorks() {
             href="/community"
             className="inline-flex items-center gap-1 text-sm font-medium text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white"
           >
-            查看更多作品
+            {t("moreMobile")}
             <ArrowRight className="h-4 w-4" />
           </Link>
         </div>
