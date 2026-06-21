@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/use-auth";
+import { CanvasTabBar } from "@/components/canvas/canvas-tab-bar";
 
 export default function CanvasLayout({ children }: { children: React.ReactNode }) {
   const { isLoggedIn, initialized } = useAuth();
@@ -24,5 +25,10 @@ export default function CanvasLayout({ children }: { children: React.ReactNode }
 
   if (!isLoggedIn) return null;
 
-  return <div className="canvas-app h-screen w-screen overflow-hidden">{children}</div>;
+  return (
+    <div className="canvas-app flex h-screen w-screen flex-col overflow-hidden">
+      <CanvasTabBar />
+      <div className="min-h-0 flex-1">{children}</div>
+    </div>
+  );
 }
