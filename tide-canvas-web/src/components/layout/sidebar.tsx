@@ -2,87 +2,109 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Layers, Plus, Home, Folder, MessageSquare, BookOpen, User } from "lucide-react";
+import { Layers, Plus, Sparkles, FolderOpen, LayoutGrid } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
+import { projectApi } from "@/lib/api";
+import type { ProjectVO } from "@/types/canvas";
+import { displayProjectName } from "@/lib/utils";
 
-// 左侧竖向导航项（仿 Lovart）
 const NAV = [
-  { href: "/", icon: Home, key: "home" },
-  { href: "/user/projects", icon: Folder, key: "projects" },
-  { href: "/community", icon: MessageSquare, key: "community" },
-  { href: "/blogs", icon: BookOpen, key: "blog" },
+  { href: "/", key: "create", icon: Sparkles },
+  { href: "/user/assets", key: "assets", icon: FolderOpen },
+  { href: "/user/projects", key: "projects", icon: LayoutGrid },
 ] as const;
 
-function Tooltip({ label }: { label: string }) {
-  return (
-    <span className="pointer-events-none absolute left-full top-1/2 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md bg-neutral-900 px-2 py-1 text-xs text-white opacity-0 shadow transition-opacity group-hover:opacity-100 dark:bg-neutral-700">
-      {label}
-    </span>
-  );
-}
-
-/** 主页专用左侧竖栏：logo + 新建 + 导航 + 底部用户。 */
+/** 主页左侧栏：logo + 新建 + 导航 + 创作历史列表。 */
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { isLoggedIn } = useAuth();
-  const tNav = useTranslations("nav");
-  const tRecent = useTranslations("recent");
-  const tUser = useTranslations("userMenu");
+  const t = useTranslations("sidebar");
+  const [history, setHistory] = useState<ProjectVO[]>([]);
+
+  useEffect(() => {
+    if (!isLoggedIn) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setHistory([]);
+      return;
+    }
+    projectApi
+      .list({ pageNum: 1, pageSize: 15 })
+      .then((res) => {
+        if (res.success && res.data) setHistory(res.data.records);
+      })
+      .catch(() => {});
+  }, [isLoggedIn]);
 
   const newProject = () => router.push(isLoggedIn ? "/canvas/new" : "/login");
 
   return (
-    <aside className="sticky top-0 flex h-screen w-16 shrink-0 flex-col items-center border-r border-neutral-200 bg-white py-4 dark:border-neutral-800 dark:bg-neutral-950">
+    <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col border-r border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950">
       {/* logo */}
-      <Link href="/" aria-label="TideCanvas" className="mb-4 flex h-9 w-9 items-center justify-center rounded-xl bg-neutral-900 dark:bg-white">
-        <Layers className="h-5 w-5 text-white dark:text-neutral-900" />
+      <Link href="/" className="flex items-center gap-2 px-4 py-4">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-neutral-900 dark:bg-white">
+          <Layers className="h-4 w-4 text-white dark:text-neutral-900" />
+        </div>
+        <span className="text-base font-bold tracking-tight">TideCanvas</span>
       </Link>
 
-      {/* 新建项目 */}
-      <button
-        type="button"
-        onClick={newProject}
-        aria-label={tRecent("create")}
-        className="group relative mb-2 flex h-10 w-10 items-center justify-center rounded-xl border border-neutral-200 text-neutral-600 transition-colors hover:border-violet-300 hover:bg-violet-50 hover:text-violet-600 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-violet-500/40 dark:hover:bg-violet-500/10"
-      >
-        <Plus className="h-5 w-5" />
-        <Tooltip label={tRecent("create")} />
-      </button>
+      {/* 新建创作 */}
+      <div className="px-3">
+        <button
+          type="button"
+          onClick={newProject}
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-violet-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-700"
+        >
+          <Plus className="h-4 w-4" />
+          {t("create")}
+        </button>
+      </div>
 
       {/* 导航 */}
-      <nav className="flex flex-col items-center gap-1">
-        {NAV.map(({ href, icon: Icon, key }) => {
+      <nav className="mt-3 flex flex-col gap-0.5 px-3">
+        {NAV.map(({ href, key, icon: Icon }) => {
           const active = pathname === href;
           return (
             <Link
               key={href}
               href={href}
-              aria-label={tNav(key)}
-              className={`group relative flex h-10 w-10 items-center justify-center rounded-xl transition-colors ${
+              className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors ${
                 active
-                  ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
-                  : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-white"
+                  ? "bg-neutral-100 font-medium text-neutral-900 dark:bg-neutral-800 dark:text-white"
+                  : "text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
               }`}
             >
-              <Icon className="h-5 w-5" />
-              <Tooltip label={tNav(key)} />
+              <Icon className="h-4 w-4" />
+              {t(key)}
             </Link>
           );
         })}
       </nav>
 
-      {/* 用户：紧跟导航图标下方 */}
-      <div className="mt-1">
-        <Link
-          href="/user"
-          aria-label={tUser("profile")}
-          className="group relative flex h-10 w-10 items-center justify-center rounded-xl text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-white"
-        >
-          <User className="h-5 w-5" />
-          <Tooltip label={tUser("profile")} />
+      {/* 创作历史 */}
+      <div className="mt-5 flex items-center justify-between px-5">
+        <span className="text-xs font-medium text-neutral-400">{t("history")}</span>
+        <Link href="/user/projects" className="text-xs text-neutral-400 transition-colors hover:text-neutral-600 dark:hover:text-neutral-200">
+          {t("viewAll")}
         </Link>
+      </div>
+      <div className="mt-1 min-h-0 flex-1 overflow-auto px-3 pb-4">
+        {history.length === 0 ? (
+          <p className="px-3 py-6 text-center text-xs text-neutral-300 dark:text-neutral-600">{t("empty")}</p>
+        ) : (
+          history.map((p) => (
+            <Link
+              key={p.id}
+              href={`/canvas/${p.urlToken}`}
+              title={displayProjectName(p.name)}
+              className="block truncate rounded-lg px-3 py-1.5 text-sm text-neutral-600 transition-colors hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
+            >
+              {displayProjectName(p.name)}
+            </Link>
+          ))
+        )}
       </div>
     </aside>
   );

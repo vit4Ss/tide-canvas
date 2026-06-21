@@ -40,6 +40,9 @@
   "home": {
     "title": "TideCanvas 让创作更简单",
     "subtitle": "懂你的 AI 创作代理，帮你把想法变成作品",
+    "greeting": "Hi {name}，和 TideCanvas 一起聊聊创作想法",
+    "guestName": "创作者",
+    "examples": ["一只戴墨镜的橘猫，电影感光效", "极简风格咖啡产品宣传图", "古风少女人物插画", "赛博朋克城市夜景"],
     "placeholder": "让 TideCanvas 帮你生成一张美丽的海报…",
     "send": "开始创作",
     "generating": "生成中…",
@@ -68,6 +71,14 @@
       "character": "角色设计",
       "ecommerce": "电商设计"
     }
+  },
+  "sidebar": {
+    "create": "创作",
+    "assets": "资产",
+    "projects": "项目",
+    "history": "创作历史",
+    "viewAll": "查看全部",
+    "empty": "暂无创作历史"
   },
   "language": {
     "zh": "简体中文",

@@ -54,7 +54,9 @@ interface GenResult extends GenParams {
 export function CreativeHero() {
   const t = useTranslations("home");
   const router = useRouter();
-  const { isLoggedIn } = useAuth();
+  const { isLoggedIn, user } = useAuth();
+  const name = user?.nickname || user?.username || t("guestName");
+  const examples = (t.raw("examples") as string[]) ?? [];
   const [tab, setTab] = useState<Tab>("image");
   const [prompt, setPrompt] = useState("");
   const [models, setModels] = useState<AiModelVO[]>([]);
@@ -210,16 +212,16 @@ export function CreativeHero() {
   const busy = results.some((r) => r.status === "generating");
 
   return (
-    <section className="px-4 pt-16 pb-10 sm:px-6 sm:pt-24 lg:px-8">
+    <section className="relative px-4 pt-16 pb-10 sm:px-6 sm:pt-24 lg:px-8">
+      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-80 bg-gradient-to-b from-violet-100/70 via-violet-50/30 to-transparent dark:from-violet-950/30 dark:via-violet-950/10" />
       <div className="mx-auto max-w-3xl">
-        {/* 标题 */}
+        {/* 个性化问候 */}
         <div className="flex items-center justify-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-neutral-900 dark:bg-white">
             <Layers className="h-5 w-5 text-white dark:text-neutral-900" />
           </div>
-          <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">{t("title")}</h1>
+          <h1 className="text-center text-2xl font-bold tracking-tight sm:text-3xl">{t("greeting", { name })}</h1>
         </div>
-        <p className="mt-3 text-center text-base text-neutral-400">{t("subtitle")}</p>
 
         {/* 创作输入卡片 */}
         <div className="mt-8 rounded-2xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-700 dark:bg-neutral-900">
@@ -340,6 +342,22 @@ export function CreativeHero() {
             </div>
           </div>
         </div>
+
+        {/* 示例提示词 */}
+        {examples.length > 0 && (
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+            {examples.map((ex) => (
+              <button
+                key={ex}
+                type="button"
+                onClick={() => setPrompt(ex)}
+                className="rounded-full border border-neutral-200 bg-white/70 px-3.5 py-1.5 text-sm text-neutral-600 transition-colors hover:border-violet-300 hover:text-violet-700 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300 dark:hover:text-violet-300"
+              >
+                {ex}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* 生成结果流 */}
         {results.length > 0 && (

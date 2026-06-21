@@ -40,6 +40,9 @@
   "home": {
     "title": "TideCanvas makes creation simpler",
     "subtitle": "Your AI creative agent that turns ideas into work",
+    "greeting": "Hi {name}, let's brainstorm creative ideas with TideCanvas",
+    "guestName": "there",
+    "examples": ["An orange cat wearing sunglasses, cinematic light", "Minimalist coffee product poster", "Ancient-style girl illustration", "Cyberpunk city at night"],
     "placeholder": "Ask TideCanvas to generate a beautiful poster…",
     "send": "Start Creating",
     "generating": "Generating…",
@@ -68,6 +71,14 @@
       "character": "Character",
       "ecommerce": "E-Commerce"
     }
+  },
+  "sidebar": {
+    "create": "Create",
+    "assets": "Assets",
+    "projects": "Projects",
+    "history": "History",
+    "viewAll": "View all",
+    "empty": "No history yet"
   },
   "language": {
     "zh": "简体中文",
