@@ -13,6 +13,9 @@ import {
   Check,
   Zap,
   Loader2,
+  Download,
+  FolderPlus,
+  LayoutGrid,
   Image as ImageIcon,
   Video,
   Palette,
@@ -21,8 +24,9 @@ import {
   ShoppingBag,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
-import { aiApi } from "@/lib/api";
+import { aiApi, fileApi } from "@/lib/api";
 import { AiTaskStatus, AiModelType, type AiModelVO } from "@/types/ai";
+import { toast } from "@/components/shared/toast";
 
 // 快捷创作类别（点击填入输入框作为提示词建议）
 const CHIPS = [
@@ -37,6 +41,7 @@ const CHIPS = [
 const POLL_INTERVAL = 2000;
 const MAX_POLL_IMAGE = 5 * 60 * 1000;
 const MAX_POLL_VIDEO = 30 * 60 * 1000; // 视频较慢，轮询上限放宽
+const MODEL_STORAGE_KEY = "tc:home:modelId";
 
 type GenKind = "image" | "video";
 type GenStatus = "generating" | "done" | "error";
@@ -47,12 +52,13 @@ interface GenResult {
   status: GenStatus;
   url?: string;
   error?: string;
+  saved?: boolean; // 已加入素材库
 }
 
 /**
  * 主页中央创作入口（仿 Lovart）：对话框式生成工具。
- * 支持模型选择（图片/视频），按所选模型类型自动走 text_to_image / text_to_video，
- * 复用 aiApi 异步任务 + 轮询，在下方对话流展示结果，不跳转新建画布。
+ * 模型选择（图片/视频，按类型分组、记忆上次选择）→ aiApi 异步任务 + 轮询 →
+ * 下方对话流展示结果，支持下载 / 存到画布 / 加入素材库（画布素材面板可引用）。
  */
 export function CreativeHero() {
   const t = useTranslations("home");
@@ -65,7 +71,7 @@ export function CreativeHero() {
   const [results, setResults] = useState<GenResult[]>([]);
   const seqRef = useRef(0);
 
-  // 加载可用的图片/视频模型，默认选第一个图片模型
+  // 加载可用的图片/视频模型；优先恢复上次选择(localStorage)，否则默认第一个图片模型
   useEffect(() => {
     aiApi
       .listModels()
@@ -75,13 +81,24 @@ export function CreativeHero() {
           (m) => m.type === AiModelType.IMAGE || m.type === AiModelType.VIDEO,
         );
         setModels(usable);
+        const saved = typeof window !== "undefined" ? localStorage.getItem(MODEL_STORAGE_KEY) : null;
+        const restored = saved && usable.find((m) => m.modelId === saved) ? saved : null;
         const first = usable.find((m) => m.type === AiModelType.IMAGE) ?? usable[0];
-        if (first) setSelectedModelId(first.modelId);
+        const pick = restored ?? first?.modelId ?? "";
+        if (pick) setSelectedModelId(pick);
       })
       .catch(() => {});
   }, []);
 
   const selectedModel = models.find((m) => m.modelId === selectedModelId);
+  const imageModels = models.filter((m) => m.type === AiModelType.IMAGE);
+  const videoModels = models.filter((m) => m.type === AiModelType.VIDEO);
+
+  const selectModel = (id: string) => {
+    setSelectedModelId(id);
+    setModelOpen(false);
+    localStorage.setItem(MODEL_STORAGE_KEY, id);
+  };
 
   const patch = (id: string, data: Partial<GenResult>) =>
     setResults((rs) => rs.map((r) => (r.id === id ? { ...r, ...data } : r)));
@@ -151,7 +168,68 @@ export function CreativeHero() {
 
   const addChip = (label: string) => setPrompt((p) => (p ? `${p} ${label}` : label));
 
+  // 下载：优先 fetch 成 blob 触发下载；跨域不可读时回退新标签打开
+  const download = async (r: GenResult) => {
+    if (!r.url) return;
+    const ext = r.kind === "video" ? "mp4" : "png";
+    try {
+      const resp = await fetch(r.url);
+      const blob = await resp.blob();
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objUrl;
+      a.download = `tidecanvas-${r.id}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objUrl);
+    } catch {
+      window.open(r.url, "_blank", "noopener");
+    }
+  };
+
+  const saveToLibrary = async (r: GenResult, thenOpenCanvas = false) => {
+    if (!r.url) return;
+    try {
+      const res = await fileApi.saveFromUrl({
+        url: r.url,
+        fileType: r.kind,
+        originalName: r.prompt.slice(0, 40),
+      });
+      if (res.success) {
+        patch(r.id, { saved: true });
+        toast.success(thenOpenCanvas ? t("savedToCanvas") : t("savedToLibrary"));
+        if (thenOpenCanvas) router.push("/canvas/new");
+      } else {
+        toast.error(res.message || t("saveFailed"));
+      }
+    } catch {
+      toast.error(t("saveFailed"));
+    }
+  };
+
   const busy = results.some((r) => r.status === "generating");
+
+  const renderModelItem = (m: AiModelVO) => (
+    <button
+      key={m.modelId}
+      type="button"
+      onClick={() => selectModel(m.modelId)}
+      className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm text-neutral-700 transition-colors hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-800"
+    >
+      {m.type === AiModelType.VIDEO ? (
+        <Video className="h-4 w-4 shrink-0 text-neutral-400" />
+      ) : (
+        <ImageIcon className="h-4 w-4 shrink-0 text-neutral-400" />
+      )}
+      <span className="flex-1 truncate text-left">{m.name}</span>
+      <span className="flex items-center gap-0.5 text-xs text-neutral-400">
+        <Zap className="h-3 w-3 fill-amber-400 text-amber-400" />
+        {m.pointCost}
+      </span>
+      {m.modelId === selectedModelId && <Check className="h-4 w-4 shrink-0 text-violet-600" />}
+    </button>
+  );
 
   return (
     <section className="px-4 pt-16 pb-10 sm:px-6 sm:pt-24 lg:px-8">
@@ -184,7 +262,7 @@ export function CreativeHero() {
                 <BookOpen className="h-4 w-4" />
               </button>
 
-              {/* 模型选择下拉 */}
+              {/* 模型选择下拉（按类型分组） */}
               <div className="relative">
                 <button
                   type="button"
@@ -204,29 +282,14 @@ export function CreativeHero() {
                   <>
                     <div className="fixed inset-0 z-10" onClick={() => setModelOpen(false)} />
                     <div className="absolute bottom-full left-0 z-20 mb-2 max-h-72 w-64 overflow-auto rounded-xl border border-neutral-200 bg-white p-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-900">
-                      {models.map((m) => (
-                        <button
-                          key={m.modelId}
-                          type="button"
-                          onClick={() => {
-                            setSelectedModelId(m.modelId);
-                            setModelOpen(false);
-                          }}
-                          className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm text-neutral-700 transition-colors hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-800"
-                        >
-                          {m.type === AiModelType.VIDEO ? (
-                            <Video className="h-4 w-4 shrink-0 text-neutral-400" />
-                          ) : (
-                            <ImageIcon className="h-4 w-4 shrink-0 text-neutral-400" />
-                          )}
-                          <span className="flex-1 truncate text-left">{m.name}</span>
-                          <span className="flex items-center gap-0.5 text-xs text-neutral-400">
-                            <Zap className="h-3 w-3 fill-amber-400 text-amber-400" />
-                            {m.pointCost}
-                          </span>
-                          {m.modelId === selectedModelId && <Check className="h-4 w-4 shrink-0 text-violet-600" />}
-                        </button>
-                      ))}
+                      {imageModels.length > 0 && (
+                        <div className="px-2 py-1 text-xs font-medium text-neutral-400">{t("groupImage")}</div>
+                      )}
+                      {imageModels.map(renderModelItem)}
+                      {videoModels.length > 0 && (
+                        <div className="mt-1 px-2 py-1 text-xs font-medium text-neutral-400">{t("groupVideo")}</div>
+                      )}
+                      {videoModels.map(renderModelItem)}
                     </div>
                   </>
                 )}
@@ -277,20 +340,43 @@ export function CreativeHero() {
                       {t("generating")}
                     </div>
                   )}
-                  {r.status === "done" && r.url && r.kind === "image" && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={r.url}
-                      alt={r.prompt}
-                      className="max-h-96 w-auto rounded-xl border border-neutral-200 dark:border-neutral-800"
-                    />
-                  )}
-                  {r.status === "done" && r.url && r.kind === "video" && (
-                    <video
-                      src={r.url}
-                      controls
-                      className="max-h-96 w-auto rounded-xl border border-neutral-200 dark:border-neutral-800"
-                    />
+                  {r.status === "done" && r.url && (
+                    <>
+                      {r.kind === "image" ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={r.url} alt={r.prompt} className="max-h-96 w-auto rounded-xl border border-neutral-200 dark:border-neutral-800" />
+                      ) : (
+                        <video src={r.url} controls className="max-h-96 w-auto rounded-xl border border-neutral-200 dark:border-neutral-800" />
+                      )}
+                      {/* 结果操作 */}
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => download(r)}
+                          className="flex items-center gap-1.5 rounded-lg border border-neutral-200 px-2.5 py-1 text-xs text-neutral-600 transition-colors hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          {t("download")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => saveToLibrary(r, true)}
+                          className="flex items-center gap-1.5 rounded-lg border border-neutral-200 px-2.5 py-1 text-xs text-neutral-600 transition-colors hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                        >
+                          <LayoutGrid className="h-3.5 w-3.5" />
+                          {t("saveToCanvas")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => saveToLibrary(r)}
+                          disabled={r.saved}
+                          className="flex items-center gap-1.5 rounded-lg border border-neutral-200 px-2.5 py-1 text-xs text-neutral-600 transition-colors hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                        >
+                          {r.saved ? <Check className="h-3.5 w-3.5 text-violet-600" /> : <FolderPlus className="h-3.5 w-3.5" />}
+                          {r.saved ? t("added") : t("addToLibrary")}
+                        </button>
+                      </div>
+                    </>
                   )}
                   {r.status === "error" && (
                     <p className="text-sm text-red-500">{r.error || t("genFailed")}</p>
