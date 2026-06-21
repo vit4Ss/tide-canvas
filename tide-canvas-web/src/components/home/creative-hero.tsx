@@ -251,7 +251,8 @@ export function CreativeHero() {
             onKeyDown={onKeyDown}
             placeholder={t("placeholder")}
             rows={2}
-            className="block w-full resize-none bg-transparent px-4 pt-4 text-sm text-neutral-800 placeholder:text-neutral-400 focus:outline-none dark:text-neutral-100"
+            style={{ outline: "none", boxShadow: "none", border: "none" }}
+            className="block w-full resize-none border-0 bg-transparent px-4 pt-4 text-sm text-neutral-800 placeholder:text-neutral-400 outline-none focus:outline-none focus:ring-0 dark:text-neutral-100"
           />
           <div className="flex items-center justify-between px-3 pb-3">
             <div className="flex items-center gap-1 text-neutral-400">
