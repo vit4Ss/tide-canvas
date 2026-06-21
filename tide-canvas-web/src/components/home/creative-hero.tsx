@@ -222,7 +222,7 @@ export function CreativeHero() {
         <p className="mt-3 text-center text-base text-neutral-400">{t("subtitle")}</p>
 
         {/* 创作输入卡片 */}
-        <div className="mt-8 overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-700 dark:bg-neutral-900">
+        <div className="mt-8 rounded-2xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-700 dark:bg-neutral-900">
           {/* tabs */}
           <div className="flex items-center gap-1 px-2 pt-2">
             {(["image", "video"] as const).map((tn) => (
@@ -269,7 +269,7 @@ export function CreativeHero() {
                 {modelOpen && tabModels.length > 0 && (
                   <>
                     <div className="fixed inset-0 z-10" onClick={() => setModelOpen(false)} />
-                    <div className="absolute bottom-full left-0 z-20 mb-2 max-h-72 w-64 overflow-auto rounded-xl border border-neutral-200 bg-white p-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-900">
+                    <div className="absolute top-full left-0 z-20 mt-2 max-h-72 w-64 overflow-auto rounded-xl border border-neutral-200 bg-white p-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-900">
                       {tabModels.map((m) => (
                         <button
                           key={m.modelId}
@@ -304,7 +304,7 @@ export function CreativeHero() {
                 {ratioOpen && (
                   <>
                     <div className="fixed inset-0 z-10" onClick={() => setRatioOpen(false)} />
-                    <div className="absolute bottom-full left-0 z-20 mb-2 w-28 rounded-xl border border-neutral-200 bg-white p-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-900">
+                    <div className="absolute top-full left-0 z-20 mt-2 w-28 rounded-xl border border-neutral-200 bg-white p-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-900">
                       {RATIOS.map((rt) => (
                         <button
                           key={rt}
