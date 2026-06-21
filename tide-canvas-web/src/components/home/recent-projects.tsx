@@ -47,7 +47,7 @@ export function RecentProjects() {
           {/* 开始创作卡片 */}
           <Link
             href="/canvas/new"
-            className="flex aspect-video flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-neutral-300 bg-neutral-50 text-neutral-500 transition-colors hover:border-violet-300 hover:bg-violet-50 hover:text-violet-600 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400 dark:hover:border-violet-500/40 dark:hover:bg-violet-500/10"
+            className="flex aspect-video flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-neutral-300 bg-neutral-50 text-neutral-500 transition-colors hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400 dark:hover:border-indigo-500/40 dark:hover:bg-indigo-500/10"
           >
             <Plus className="h-7 w-7" />
             <span className="text-sm font-medium">{t("create")}</span>

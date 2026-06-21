@@ -55,7 +55,7 @@ export function Sidebar() {
         <button
           type="button"
           onClick={newProject}
-          className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-violet-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-700"
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700"
         >
           <Plus className="h-4 w-4" />
           {t("create")}

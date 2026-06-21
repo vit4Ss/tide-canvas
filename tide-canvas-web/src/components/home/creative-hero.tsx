@@ -213,7 +213,7 @@ export function CreativeHero() {
 
   return (
     <section className="relative px-4 pt-16 pb-10 sm:px-6 sm:pt-24 lg:px-8">
-      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-80 bg-gradient-to-b from-violet-100/70 via-violet-50/30 to-transparent dark:from-violet-950/30 dark:via-violet-950/10" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-80 bg-gradient-to-b from-indigo-100/70 via-indigo-50/30 to-transparent dark:from-indigo-950/30 dark:via-indigo-950/10" />
       <div className="mx-auto max-w-3xl">
         {/* 个性化问候 */}
         <div className="flex items-center justify-center gap-3">
@@ -231,7 +231,7 @@ export function CreativeHero() {
               type="button"
               onClick={() => switchTab(tab === "image" ? "video" : "image")}
               title={t("switchMode")}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-violet-100 px-2.5 py-1 text-xs font-medium text-violet-700 transition-colors hover:bg-violet-200 dark:bg-violet-500/20 dark:text-violet-300 dark:hover:bg-violet-500/30"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-100 px-2.5 py-1 text-xs font-medium text-indigo-700 transition-colors hover:bg-indigo-200 dark:bg-indigo-500/20 dark:text-indigo-300 dark:hover:bg-indigo-500/30"
             >
               {tab === "video" ? <Video className="h-3.5 w-3.5" /> : <ImageIcon className="h-3.5 w-3.5" />}
               {t(tab === "video" ? "tabVideo" : "tabImage")}
@@ -278,7 +278,7 @@ export function CreativeHero() {
                             <Zap className="h-3 w-3 fill-amber-400 text-amber-400" />
                             {m.pointCost}
                           </span>
-                          {m.modelId === selectedModelId && <Check className="h-4 w-4 shrink-0 text-violet-600" />}
+                          {m.modelId === selectedModelId && <Check className="h-4 w-4 shrink-0 text-indigo-600" />}
                         </button>
                       ))}
                     </div>
@@ -309,7 +309,7 @@ export function CreativeHero() {
                           className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-sm text-neutral-700 transition-colors hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-800"
                         >
                           {rt}
-                          {rt === ratio && <Check className="h-4 w-4 text-violet-600" />}
+                          {rt === ratio && <Check className="h-4 w-4 text-indigo-600" />}
                         </button>
                       ))}
                     </div>
@@ -322,7 +322,7 @@ export function CreativeHero() {
               type="button"
               onClick={submit}
               aria-label={t("send")}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-600 text-white transition-colors hover:bg-violet-700"
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-white transition-colors hover:bg-indigo-700"
             >
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
             </button>
@@ -337,7 +337,7 @@ export function CreativeHero() {
                 key={ex}
                 type="button"
                 onClick={() => setPrompt(ex)}
-                className="rounded-full border border-neutral-200 bg-white/70 px-3.5 py-1.5 text-sm text-neutral-600 transition-colors hover:border-violet-300 hover:text-violet-700 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300 dark:hover:text-violet-300"
+                className="rounded-full border border-neutral-200 bg-white/70 px-3.5 py-1.5 text-sm text-neutral-600 transition-colors hover:border-indigo-300 hover:text-indigo-700 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300 dark:hover:text-indigo-300"
               >
                 {ex}
               </button>
@@ -391,7 +391,7 @@ export function CreativeHero() {
                     <ActionBtn
                       onClick={() => saveToLibrary(r)}
                       disabled={r.saved}
-                      icon={r.saved ? <Check className="h-3.5 w-3.5 text-violet-600" /> : <FolderPlus className="h-3.5 w-3.5" />}
+                      icon={r.saved ? <Check className="h-3.5 w-3.5 text-indigo-600" /> : <FolderPlus className="h-3.5 w-3.5" />}
                       label={r.saved ? t("added") : t("addToLibrary")}
                     />
                   </div>
