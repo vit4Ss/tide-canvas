@@ -20,6 +20,15 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN" className={`${inter.variable} h-full antialiased`}>
+      <head>
+        {/* 流光设计字体：Sora / Space Grotesk / JetBrains Mono / Noto Sans SC（site/studio/admin 的 liuguang 样式按名引用） */}
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Sora:wght@600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;700;900&display=swap"
+          rel="stylesheet"
+        />
+      </head>
       <body className="flex min-h-full flex-col bg-background font-sans text-foreground">
         {children}
         <ToastContainer />

@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>创作台 · SCARECROWAI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Sora:wght@600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="liuguang/flux.css" />
+<link rel="stylesheet" href="liuguang/pages.css" />
+<link rel="stylesheet" href="liuguang/studio.css" />
+</head>
+<body class="studio-body">
+
+<div class="ws">
+
+  <!-- full-height app sidebar -->
+  <aside class="ws-rail">
+    <a class="ws-brand" href="首页-流光.html" title="SCARECROW AI">
+      <span class="glyph"></span>
+      <b>SCARECROW</b>
+    </a>
+
+    <div class="ws-rail-sp"></div>
+
+    <nav class="ws-nav">
+      <a class="ws-tool" href="首页-流光.html" title="发现">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/></svg>
+        <span>发现</span>
+      </a>
+      <a class="ws-tool on" href="创作台.html" title="创作">
+        <svg viewBox="0 0 24 24"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 1 4 10.5c-.7.6-1 1-1 2H9c0-1-.3-1.4-1-2A6 6 0 0 1 12 3z"/></svg>
+        <span>创作</span>
+      </a>
+      <a class="ws-tool" href="对话.html" title="生成">
+        <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span>生成</span>
+      </a>
+      <a class="ws-tool" href="画布.html" title="画布">
+        <svg viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 0 1 2-2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><circle cx="12" cy="12" r="3"/></svg>
+        <span>画布</span>
+      </a>
+      <a class="ws-tool" href="作品广场.html" title="作品广场">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+        <span>作品广场</span>
+      </a>
+      <a class="ws-tool" href="灵感.html" title="灵感">
+        <svg viewBox="0 0 24 24"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 2v2M4.9 5l1.4 1.4M2 12h2M19.1 5l-1.4 1.4M20 12h2"/><path d="M9 14a4 4 0 1 1 6 0c-.5.5-1 1-1 2h-4c0-1-.5-1.5-1-2z"/></svg>
+        <span>灵感</span>
+      </a>
+    </nav>
+
+    <div class="ws-nav-div"></div>
+    <a class="ws-tool" href="资产.html" title="资产">
+      <svg viewBox="0 0 24 24"><path d="M3 7l2-3h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H3z"/></svg>
+      <span>资产</span>
+    </a>
+
+    <div class="ws-rail-sp"></div>
+
+    <a class="ws-upgrade" href="定价.html">
+      <div class="ws-upgrade-top"><span class="star">★</span> 低至 ¥39/月</div>
+      <div class="ws-upgrade-btn">升级 Pro</div>
+    </a>
+    <button class="ws-tool" title="通知" data-toast="暂无新通知">
+      <svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+      <span>通知</span>
+    </button>
+    <a class="ws-tool" href="#" title="登录" data-toast="登录 · 高保真原型">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>
+      <span>登录</span>
+    </a>
+  </aside>
+
+  <!-- control panel -->
+  <aside class="ws-panel">
+    <div class="ws-panel-scroll">
+      <div class="ws-typetabs" id="type-tabs">
+        <button class="on" data-type="image">
+          <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M21 16l-5-5L5 20"/></svg>
+          图片
+        </button>
+        <button data-type="video">
+          <svg viewBox="0 0 24 24"><rect x="3" y="5" width="13" height="14" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg>
+          视频
+        </button>
+      </div>
+
+      <div class="seg" id="mode-tabs"></div>
+
+      <div class="ws-model-wrap">
+        <button class="ws-model" id="modelCard" type="button" aria-haspopup="listbox" aria-expanded="false">
+          <span class="ws-model-sw" id="modelSw">G</span>
+          <span class="ws-model-info">
+            <span class="ws-model-row">
+              <span class="ws-model-name" id="modelName">GPT Image 2</span>
+              <span class="ws-model-tag" id="modelTag">HD</span>
+            </span>
+            <span class="ws-model-desc" id="modelDesc">OpenAI · 超清细节</span>
+          </span>
+          <span class="ws-model-switch"><span class="cv">▾</span></span>
+        </button>
+        <div class="ws-model-menu" id="modelMenu" role="listbox"></div>
+        <input type="hidden" id="model" value="GPT Image 2" />
+      </div>
+
+      <div class="ws-drop" id="drop">
+        <div class="ws-drop-ic">⤒</div>
+        <div class="ws-drop-tx">拖入参考图，或<b>点击上传</b></div>
+        <div class="ws-drop-sub">JPG / PNG / WEBP · ≤ 20MB</div>
+      </div>
+
+      <div class="ws-seclabel">提示词 <span class="ws-pcount"><b id="pLen">0</b> 字</span></div>
+      <div class="ws-promptbox">
+        <textarea class="ws-prompt" id="prompt" placeholder="描述你想要的画面，越具体越好…&#10;例：赛博朋克城市夜景，霓虹倒影，电影感，8K 超写实"></textarea>
+        <div class="ws-prompt-foot">
+          <button class="ws-aiopt" id="aiOpt" type="button"><span class="spark">✦</span> AI 优化</button>
+          <button class="ws-pclear" id="pClear" type="button">清空</button>
+        </div>
+      </div>
+
+      <div class="ws-chips-head">灵感提示词 · 点击填入</div>
+      <div class="ws-chips" id="ideas"></div>
+
+      <div class="ws-field col">
+        <label>画面比例</label>
+        <div class="ws-ratios" id="ratios"></div>
+      </div>
+
+      <div class="ws-field col">
+        <label>生成数量 · <span id="countVal">4</span></label>
+        <input class="slider" id="count" type="range" min="1" max="4" step="1" value="4" />
+      </div>
+    </div>
+
+    <div class="ws-panel-foot">
+      <button class="ws-gen" id="gen"><span class="spark">✦</span> 立即生成 <span class="ws-gen-cost">·&nbsp;<b id="cost">40</b>&nbsp;积分</span></button>
+      <div class="ws-balance">余额 1,280 积分 · <a href="定价.html">充值</a></div>
+    </div>
+  </aside>
+
+  <!-- center stage -->
+  <main class="ws-stage" id="stage">
+    <div class="ws-stage-main">
+      <canvas id="flux" class="ws-stage-fx"></canvas>
+      <div class="ws-stage-veil"></div>
+
+      <div class="ws-stage-top">
+        <div class="ws-crumb"><span class="d"></span>创作台 · STUDIO</div>
+        <div class="ws-stage-actions">
+          <button class="ws-iconbtn" id="clearBtn" title="清空画布" disabled>清空</button>
+        </div>
+      </div>
+
+      <div class="ws-empty" id="empty">
+        <div class="ws-empty-glyph"><span class="glyph"></span></div>
+        <h2>准备好开始创作了吗？</h2>
+        <p>写下一句提示词，挑个模型与比例 —— 数秒之后，作品就在这里浮现。</p>
+        <div class="ws-empty-tags">
+          <button type="button" data-type="image" data-tool="t2i">✦ 文生图</button>
+          <button type="button" data-type="image" data-tool="i2i">↻ 图生图</button>
+          <button type="button" data-type="video" data-tool="t2v">▶ 文生视频</button>
+          <button type="button" data-type="video" data-tool="i2v">⤢ 图生视频</button>
+        </div>
+      </div>
+
+      <div class="ws-grid" id="grid" style="display:none"></div>
+    </div>
+
+    <div class="ws-histbar">
+      <div class="ws-histbar-head">
+        <span>生成历史 <span class="ws-ahead-n" id="histN">0</span></span>
+        <div class="ws-histfilter" id="histFilter">
+          <button class="on" data-f="all">全部</button>
+          <button data-f="image">图片</button>
+          <button data-f="video">视频</button>
+        </div>
+      </div>
+      <div class="ws-histstrip" id="histStrip"></div>
+    </div>
+  </main>
+
+
+</div>
+
+<template id="__bundler_thumbnail">
+  <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <rect width="100" height="100" rx="20" fill="#05060c" />
+    <circle cx="50" cy="40" r="18" fill="none" stroke="#6d8bf5" stroke-width="6" />
+    <rect x="30" y="68" width="40" height="8" rx="4" fill="#9b7bf0" />
+    <rect x="38" y="82" width="24" height="6" rx="3" fill="#57c9e8" />
+  </svg>
+</template>
+
+<script src="liuguang/flux-field.js"></script>
+<script src="liuguang/home-data.js"></script>
+<script src="liuguang/shell.js"></script>
+<script src="liuguang/create.js"></script>
+</body>
+</html>

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>作品广场 · SCARECROWAI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Sora:wght@600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="liuguang/flux.css" />
+<link rel="stylesheet" href="liuguang/pages.css" />
+</head>
+<body>
+
+<div id="nav-slot"></div>
+
+<header class="page-hero">
+  <canvas id="flux"></canvas>
+  <div class="ph-scrim"></div>
+  <div class="wrap">
+    <div class="live-chip reveal"><span class="live-dot"></span>实时 · <b id="liveNum">8,902</b> 件作品本周新增</div>
+    <div class="page-head">
+      <span class="eyebrow reveal"><span class="d"></span>作品广场 · GALLERY</span>
+      <h1 class="reveal">在<span class="gtext">流光</span>之中，发现灵感</h1>
+      <p class="reveal">来自全球创作者的真实作品。点开任意一张，查看提示词与参数，一键生成同款。</p>
+    </div>
+  </div>
+</header>
+
+<section class="block" style="padding-top:30px">
+  <div class="wrap">
+    <div class="explore-bar reveal">
+      <label class="search">
+        <span style="color:var(--text-faint)">⌕</span>
+        <input id="q" type="text" placeholder="搜索作品、作者或模型…" />
+      </label>
+      <div class="seg" id="type-seg">
+        <button class="on" data-t="all">全部</button>
+        <button data-t="image">图片</button>
+        <button data-t="video">视频</button>
+      </div>
+      <select class="select" id="sort">
+        <option value="hot">最热</option>
+        <option value="new">最新</option>
+        <option value="like">点赞最多</option>
+      </select>
+    </div>
+    <div class="filters" id="cat-filters"></div>
+    <div class="masonry" id="feed"></div>
+    <div class="empty" id="empty" style="display:none">没有匹配的作品，换个关键词或分类试试 ✦</div>
+  </div>
+</section>
+
+<div id="footer-slot"></div>
+
+<template id="__bundler_thumbnail">
+  <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <rect width="100" height="100" rx="20" fill="#05060c" />
+    <rect x="14" y="14" width="34" height="46" rx="6" fill="#6d8bf5" />
+    <rect x="54" y="14" width="32" height="30" rx="6" fill="#9b7bf0" />
+    <rect x="54" y="50" width="32" height="36" rx="6" fill="#57c9e8" />
+    <rect x="14" y="66" width="34" height="20" rx="6" fill="#9b7bf0" />
+  </svg>
+</template>
+
+<script src="liuguang/flux-field.js"></script>
+<script src="liuguang/home-data.js"></script>
+<script src="liuguang/shell.js"></script>
+<script src="liuguang/explore.js"></script>
+</body>
+</html>

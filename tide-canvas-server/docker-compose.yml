@@ -1,0 +1,39 @@
+# 本地依赖:MySQL 8 + Redis 7,参数与 configs/config.yaml 默认一致。
+# 用法:docker compose up -d   （需要 Docker Desktop / Docker Engine）
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: tidecanvas-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: tidecanvas
+      TZ: Asia/Shanghai
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    ports:
+      - "3306:3306"
+    volumes:
+      - tidecanvas_mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: tidecanvas-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - tidecanvas_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  tidecanvas_mysql:
+  tidecanvas_redis:

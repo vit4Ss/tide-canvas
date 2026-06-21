@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SCARECROWAI · 流光首页</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Sora:wght@600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="liuguang/flux.css" />
+<link rel="stylesheet" href="liuguang/pages.css" />
+</head>
+<body>
+
+<canvas id="flux-bg"></canvas>
+<div id="flux-bg-scrim"></div>
+
+<div id="nav-slot"></div>
+
+<!-- HERO -->
+<header class="hero">
+  <div class="hero-scrim"></div>
+  <div class="hero-noise"></div>
+
+  <div class="hero-inner" id="heroInner">
+    <div class="live-chip reveal" style="--rd:.45s"><span class="live-dot"></span>实时 · <b id="liveNum">1,240</b> 人正在生成</div>
+    <span class="kicker reveal" style="--rd:0s">From ordinary to extraordinary · 从平凡到非凡</span>
+    <h1 class="hero-h1 reveal" style="--rd:.1s">
+      <span class="cn">一句话，</span>
+      <span class="row2 cn">生成<span class="gtext">想象</span>之物。</span>
+    </h1>
+    <p class="hero-sub reveal" style="--rd:.55s">图片与视频，30+ 顶级模型一键直达。无需任何专业知识，让灵感即刻成真——在流光之中，人人都是 AI 艺术家。</p>
+
+    <div class="console reveal" style="--rd:.7s" onclick="location.href='创作台.html'">
+      <span class="spark">✦</span>
+      <div class="field"><span id="typed"></span><span class="caret"></span></div>
+      <button class="console-go">生成 →</button>
+    </div>
+
+    <div class="hero-quick reveal" style="--rd:.82s">
+      <button class="qchip" data-toast="文生图 · 前往创作台">✨ 文生图</button>
+      <button class="qchip" data-toast="文生视频 · 前往创作台">🎬 文生视频</button>
+      <button class="qchip" data-toast="图生图 · 前往创作台">🖼 图生图</button>
+      <button class="qchip" data-toast="一键生成同款">↻ 生成同款</button>
+    </div>
+  </div>
+
+  <div class="hero-stats reveal" style="--rd:.95s">
+    <div class="hero-stats-in">
+      <div><div class="stat-n gtext">3,800<span style="font-size:.6em">万+</span></div><div class="stat-l">累计生成作品</div></div>
+      <div><div class="stat-n">30+</div><div class="stat-l">顶级模型与工作流</div></div>
+      <div><div class="stat-n">12<span style="font-size:.6em">s</span></div><div class="stat-l">平均出图时间</div></div>
+      <div><div class="stat-n">96<span style="font-size:.6em">万</span></div><div class="stat-l">活跃创作者</div></div>
+    </div>
+  </div>
+
+  <div class="scroll-cue"><span>SCROLL</span><span class="bar"></span></div>
+</header>
+
+<!-- CAPABILITIES -->
+<section class="block" id="caps-sec">
+  <div class="wrap">
+    <div class="sec-head center">
+      <div>
+        <span class="eyebrow reveal"><span class="d"></span>核心能力 · CAPABILITIES</span>
+        <h2 class="sec-title reveal">顶级模型 × 专业工具，<span class="gtext">一处搞定</span></h2>
+        <p class="sec-sub reveal">从生成到精修，整条创作链路都在流光之内。</p>
+      </div>
+      <a class="see-all reveal" href="创作台.html">全部工具 →</a>
+    </div>
+    <div class="cap-grid" id="caps"></div>
+  </div>
+</section>
+
+<!-- INFINITE CANVAS -->
+<section class="block" id="studio-sec">
+  <div class="wrap">
+    <div class="sec-head center">
+      <div>
+        <span class="eyebrow reveal"><span class="d"></span>无限画布 · INFINITE CANVAS</span>
+        <h2 class="sec-title reveal">在无限画布上，<span class="gtext">自由创作</span></h2>
+        <p class="sec-sub reveal">拖拽、组合、迭代——让每个想法都在同一个共享空间里自然流动。</p>
+      </div>
+      <a class="see-all reveal" href="创作台.html">试一试 →</a>
+    </div>
+    <div class="ic-frame reveal">
+      <div class="ic-stage" id="ic-stage"></div>
+    </div>
+  </div>
+</section>
+
+<!-- FEED -->
+<section class="block" id="feed-sec">
+  <div class="wrap">
+    <div class="sec-head center">
+      <div>
+        <span class="eyebrow reveal"><span class="d"></span>作品广场 · LIVE GALLERY</span>
+        <h2 class="sec-title reveal">此刻，社区正在生成的<span class="gtext">流光之作</span></h2>
+        <p class="sec-sub reveal">悬停任意作品即可一键生成同款。</p>
+      </div>
+      <a class="see-all reveal" href="作品广场.html">浏览全部作品 →</a>
+    </div>
+    <div class="filters" id="home-filters"></div>
+    <div class="coverflow" id="feed"></div>
+  </div>
+</section>
+
+<!-- MODEL MARQUEE -->
+<div class="mq-wrap">
+  <div class="mq-label">由业界顶级模型驱动 · POWERED BY</div>
+  <div class="mq-row" id="marquee"></div>
+</div>
+
+<!-- FAQ -->
+<section class="block" id="faq-sec">
+  <div class="wrap">
+    <div class="sec-head" style="justify-content:center; text-align:center; flex-direction:column; align-items:center;">
+      <span class="eyebrow reveal"><span class="d"></span>常见问题 · FAQ</span>
+      <h2 class="sec-title reveal" style="max-width:none">还有<span class="gtext">疑问</span>？</h2>
+    </div>
+    <div class="faq" id="faq"></div>
+  </div>
+</section>
+
+<!-- PRICING -->
+<section class="block" id="cta-sec">
+  <div class="wrap">
+    <div class="sec-head center">
+      <div>
+        <span class="eyebrow reveal"><span class="d"></span>价格方案 · PRICING</span>
+        <h2 class="sec-title reveal">选一个节奏，<span class="gtext">开始创作</span></h2>
+        <p class="sec-sub reveal">免费开始，无需信用卡。随时升级或取消——你只为真正用到的算力付费。</p>
+      </div>
+    </div>
+    <div style="display:flex; justify-content:center; margin-bottom:34px">
+      <div class="bill-toggle reveal" id="home-bill">
+        <button class="on" data-b="yr">年付 <span class="save">省 42%</span></button>
+        <button data-b="mo">月付</button>
+      </div>
+    </div>
+    <div class="plans" id="home-plans"></div>
+    <div style="text-align:center; margin-top:30px">
+      <a class="see-all reveal" href="定价.html">查看完整方案与对比 →</a>
+    </div>
+  </div>
+</section>
+
+<div id="footer-slot"></div>
+
+<template id="__bundler_thumbnail">
+  <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <rect width="100" height="100" rx="20" fill="#05060c" />
+    <rect x="18" y="44" width="64" height="9" rx="4.5" fill="#fff" />
+    <rect x="40" y="36" width="9" height="48" rx="4.5" fill="#fff" />
+    <circle cx="50" cy="27" r="11" fill="#6d8bf5" />
+    <rect x="30" y="15" width="40" height="6.5" rx="3.25" fill="#fff" />
+    <path d="M50 3 L62 16 L38 16 Z" fill="#9b7bf0" />
+  </svg>
+</template>
+
+<script src="liuguang/flux-field.js"></script>
+<script src="liuguang/home-data.js"></script>
+<script src="liuguang/shell.js"></script>
+<script src="liuguang/home-render.js"></script>
+</body>
+</html>

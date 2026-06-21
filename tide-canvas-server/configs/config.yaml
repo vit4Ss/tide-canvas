@@ -1,0 +1,68 @@
+# Tide Canvas server configuration (local development defaults).
+# Any value can be overridden by an environment variable using the prefix
+# TIDECANVAS_ with dots replaced by underscores, e.g.:
+#   TIDECANVAS_SERVER_PORT=8080
+#   TIDECANVAS_JWT_SECRET=...
+#   TIDECANVAS_MYSQL_PASSWORD=...
+#   TIDECANVAS_REDIS_ADDR=127.0.0.1:6379
+
+server:
+  port: 8080
+  mode: debug # debug | release | test
+
+mysql:
+  # If dsn is set it takes precedence over the discrete fields below.
+  dsn: ""
+  host: 106.14.165.141
+  port: 3306
+  user: root
+  password: root_password
+  database: canvas
+  params: "charset=utf8mb4&parseTime=True&loc=Local"
+  maxOpenConns: 100
+  maxIdleConns: 10
+  maxLifetime: 3600 # seconds
+
+redis:
+  addr: 106.14.165.141:6379
+  password: "mbfczzzz@123"
+  db: 0
+
+jwt:
+  secret: "change-me-in-production" # MUST override in production
+  accessTTL: 2h
+  refreshTTL: 168h # 7 days
+  issuer: tidecanvas
+
+storage:
+  type: local # local | oss
+  localDir: ./data/uploads
+  publicURL: http://localhost:8080/static
+  # OSS settings (used when type == oss)
+  endpoint: ""
+  bucket: ""
+  accessKey: ""
+  secretKey: ""
+  region: ""
+
+cors:
+  allowOrigins:
+    - http://localhost:3000
+
+email:
+  enabled: true
+  host: smtp.gmail.com
+  port: 587
+  username: ad@tcmzhan.com
+  password: jpwhhpqtekgsnlsf # Gmail app password, spaces removed
+  fromAddress: ad@tcmzhan.com
+  fromName: ScarecrowToken
+  replyTo: "" # blank -> falls back to fromAddress
+  ssl: false # 465 -> true
+  startTLS: true # 587 -> true
+  codeLength: 6
+  codeTTLSeconds: 600
+  resendCooldownSeconds: 60
+  maxAttempts: 5
+  sendCodeIPLimit: 10
+  sendCodeIPWindowSeconds: 600

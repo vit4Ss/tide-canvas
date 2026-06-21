@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>模型市场 · SCARECROWAI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Sora:wght@600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="liuguang/flux.css" />
+<link rel="stylesheet" href="liuguang/pages.css" />
+</head>
+<body>
+
+<div id="nav-slot"></div>
+
+<header class="page-hero">
+  <canvas id="flux"></canvas>
+  <div class="ph-scrim"></div>
+  <div class="wrap">
+    <div class="live-chip reveal"><span class="live-dot"></span><b id="liveNum">312</b> 个模型 · 每周更新</div>
+    <div class="page-head">
+      <span class="eyebrow reveal"><span class="d"></span>模型市场 · MODELS</span>
+      <h1 class="reveal">一个入口，<span class="gtext">接入所有顶级模型</span></h1>
+      <p class="reveal">大模型、LoRA 与工作流，社区精选、即点即用。挑一个，立刻开始创作。</p>
+    </div>
+  </div>
+</header>
+
+<section class="block" style="padding-top:30px">
+  <div class="wrap">
+    <div class="explore-bar reveal">
+      <label class="search">
+        <span style="color:var(--text-faint)">⌕</span>
+        <input id="q" type="text" placeholder="搜索模型、风格或基础模型…" />
+      </label>
+      <select class="select" id="sort">
+        <option value="runs">运行最多</option>
+        <option value="new">最新发布</option>
+        <option value="name">名称</option>
+      </select>
+    </div>
+    <div class="filters" id="base-filters"></div>
+    <div class="mgrid" id="models"></div>
+    <div class="empty" id="empty" style="display:none">没有匹配的模型，换个关键词试试 ✦</div>
+  </div>
+</section>
+
+<div id="footer-slot"></div>
+
+<template id="__bundler_thumbnail">
+  <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <rect width="100" height="100" rx="20" fill="#05060c" />
+    <rect x="16" y="16" width="32" height="32" rx="7" fill="#6d8bf5" />
+    <rect x="52" y="16" width="32" height="32" rx="7" fill="#9b7bf0" />
+    <rect x="16" y="52" width="32" height="32" rx="7" fill="#57c9e8" />
+    <rect x="52" y="52" width="32" height="32" rx="7" fill="#6d8bf5" />
+  </svg>
+</template>
+
+<script src="liuguang/flux-field.js"></script>
+<script src="liuguang/home-data.js"></script>
+<script src="liuguang/shell.js"></script>
+<script src="liuguang/models.js"></script>
+</body>
+</html>

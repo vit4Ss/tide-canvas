@@ -1,0 +1,11 @@
+/* Fills the (studio) layout's flex content region for the 灵感 (Inspire) page.
+   The canonical `.insp` class (liuguang/studio.css, locked) styles the scroll
+   container + glow, but it has no flex sizing — in the design it is a grid cell
+   of `.ws--insp`. Here the (studio) layout uses a flex content region, so the
+   `.insp` root needs `flex:1` to occupy it. Mirrors studio/placeholder's
+   `.stage`. Nothing else is overridden. */
+
+.fill {
+  flex: 1;
+  min-height: 0;
+}

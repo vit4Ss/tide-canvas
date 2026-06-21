@@ -1,0 +1,690 @@
+/* ============================================================================
+   Login / Register page styles — ported 1:1 from
+   design-ref/登录注册.html inline <style>.
+
+   Plain (global) stylesheet imported only by /login. It targets the design's
+   exact class names; the page's own chrome lives here (it is NOT under the
+   (site)/(studio)/(canvas) shells). Tokens (--accent / --grad / --pill / …)
+   come from @/styles/liuguang/flux.css, which the page imports first.
+
+   The original used <body data-mode="…"> + [data-only] to toggle login/register
+   fields. Since we cannot set attributes on <body>, the page renders a wrapper
+   <div class="auth-page" data-mode="…"> and these rules key off THAT wrapper.
+   ========================================================================== */
+
+.auth-page {
+  position: relative;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--ui);
+}
+
+/* ─── top bar ──────────────────────────────────────────────── */
+.auth-top {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 clamp(18px, 4vw, 40px);
+}
+.auth-top .brand {
+  font-size: 19px;
+  margin: 0;
+}
+.auth-top .back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 16px;
+  border-radius: var(--pill);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  transition: all 0.16s var(--ease);
+}
+.auth-top .back:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: var(--panel);
+}
+
+.auth-stage {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 96px 22px 48px;
+}
+
+.auth-card {
+  position: relative;
+  width: min(960px, 100%);
+  display: grid;
+  grid-template-columns: 1.02fr 0.98fr;
+  border-radius: 24px;
+  overflow: hidden;
+  background: color-mix(in oklab, var(--surface) 86%, transparent);
+  border: 1px solid var(--border-strong);
+  backdrop-filter: blur(26px);
+  -webkit-backdrop-filter: blur(26px);
+  box-shadow: 0 50px 130px rgba(0, 0, 0, 0.66);
+}
+.auth-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 5;
+  background: linear-gradient(
+    135deg,
+    color-mix(in oklab, var(--accent) 50%, transparent),
+    transparent 40%,
+    color-mix(in oklab, var(--accent-2) 42%, transparent)
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+@media (max-width: 780px) {
+  .auth-card {
+    grid-template-columns: 1fr;
+    max-width: 440px;
+  }
+  .auth-aside {
+    display: none;
+  }
+}
+
+/* ── left showcase panel ── */
+.auth-aside {
+  position: relative;
+  overflow: hidden;
+  padding: 40px 38px;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(165deg, #11163a 0%, #0a0c1c 60%, #0c0a22 100%);
+}
+.auth-aside .glow {
+  position: absolute;
+  width: 420px;
+  height: 420px;
+  border-radius: 50%;
+  filter: blur(50px);
+  opacity: 0.5;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 50%, var(--accent) 0%, transparent 65%);
+  top: -130px;
+  left: -90px;
+}
+.auth-aside .glow.b {
+  background: radial-gradient(circle at 50% 50%, var(--accent-2) 0%, transparent 65%);
+  top: auto;
+  bottom: -150px;
+  left: auto;
+  right: -110px;
+  opacity: 0.42;
+}
+.auth-aside-top {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--disp);
+  font-weight: 800;
+  font-size: 18px;
+  letter-spacing: -0.03em;
+}
+.auth-aside-top .glyph {
+  width: 24px;
+  height: 24px;
+  position: relative;
+}
+.auth-aside-top .glyph::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  background: var(--grad);
+  transform: rotate(45deg);
+  box-shadow: 0 0 16px var(--accent-soft);
+}
+.auth-aside-top b {
+  color: var(--accent);
+}
+
+.auth-aside-head {
+  position: relative;
+  z-index: 1;
+  margin-top: auto;
+}
+.auth-aside-head .eyebrow {
+  margin-bottom: 14px;
+}
+.auth-aside-head h2 {
+  font-family: var(--disp);
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.14;
+  margin: 0;
+  text-wrap: balance;
+}
+.auth-aside-head p {
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--text-dim);
+  margin: 14px 0 0;
+  max-width: 30ch;
+}
+
+.auth-tiles {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  gap: 9px;
+  margin-top: 26px;
+}
+.auth-tiles .t {
+  flex: 1;
+  height: 74px;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 10px 24px rgba(0, 0, 0, 0.4);
+  animation: tFloat 5s var(--ease) infinite;
+}
+.auth-tiles .t:nth-child(1) {
+  background: conic-gradient(from 200deg at 40% 30%, #6d8bf5, #57c9e8, #9b7bf0, #6d8bf5);
+  animation-delay: 0s;
+}
+.auth-tiles .t:nth-child(2) {
+  background: conic-gradient(from 20deg at 60% 40%, #9b7bf0, #6d8bf5, #b06fe0, #9b7bf0);
+  animation-delay: 0.6s;
+  margin-top: -12px;
+}
+.auth-tiles .t:nth-child(3) {
+  background: conic-gradient(from 120deg at 50% 60%, #57c9e8, #7b78f0, #6d8bf5, #57c9e8);
+  animation-delay: 1.2s;
+}
+@keyframes tFloat {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-7px);
+  }
+}
+
+.auth-stats {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  gap: 24px;
+  margin-top: 26px;
+  padding-top: 22px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.auth-stats .s b {
+  display: block;
+  font-family: var(--disp);
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.auth-stats .s span {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+/* ── right form panel ── */
+.auth-main {
+  position: relative;
+  padding: clamp(30px, 3.6vw, 46px) clamp(28px, 3.4vw, 44px);
+}
+.auth-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 4px;
+  border-radius: var(--pill);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.auth-tabs button {
+  height: 38px;
+  padding: 0 22px;
+  border-radius: var(--pill);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-faint);
+  transition: color 0.18s;
+}
+.auth-tabs button.on {
+  color: #fff;
+  background: var(--grad);
+  box-shadow: 0 5px 16px var(--accent-soft);
+}
+
+.auth-h {
+  font-family: var(--disp);
+  font-size: 25px;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  margin: 26px 0 5px;
+}
+.auth-sub {
+  font-size: 13.5px;
+  color: var(--text-faint);
+  margin: 0 0 22px;
+  line-height: 1.55;
+}
+
+/* email-only notice */
+.email-note {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 13px;
+  border-radius: 10px;
+  margin-bottom: 18px;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in oklab, var(--accent) 28%, transparent);
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+.email-note .ic {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  color: #fff;
+  background: var(--grad);
+}
+
+/* login sub-mode segmented */
+.submode {
+  display: none;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+.submode.show {
+  display: flex;
+}
+.submode button {
+  flex: 1;
+  height: 34px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  transition: all 0.16s;
+}
+.submode button.on {
+  color: var(--text);
+  background: var(--panel-hover);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.field {
+  margin-bottom: 14px;
+}
+.field > label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-bottom: 7px;
+  letter-spacing: 0.01em;
+}
+.inp {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 50px;
+  padding: 0 14px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  transition: border-color 0.16s, box-shadow 0.16s;
+}
+.inp:focus-within {
+  border-color: color-mix(in oklab, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.inp.bad {
+  border-color: #e05260;
+  box-shadow: 0 0 0 3px rgba(224, 82, 96, 0.16);
+}
+.inp.ok {
+  border-color: color-mix(in oklab, var(--accent-3) 60%, transparent);
+}
+.inp .lic {
+  flex: none;
+  color: var(--text-faint);
+  display: grid;
+  place-items: center;
+}
+.inp .lic svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.inp input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14.5px;
+  letter-spacing: 0.01em;
+}
+.inp input::placeholder {
+  color: var(--text-faint);
+}
+.inp .eye {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 12px;
+  padding: 4px;
+  transition: color 0.15s;
+}
+.inp .eye:hover {
+  color: var(--text-dim);
+}
+.inp .code-btn {
+  flex: none;
+  height: 34px;
+  padding: 0 13px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--accent);
+  border: 1px solid color-mix(in oklab, var(--accent) 35%, transparent);
+  background: var(--accent-soft);
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.inp .code-btn:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--accent) 22%, transparent);
+}
+.inp .code-btn:disabled {
+  color: var(--text-faint);
+  border-color: var(--border);
+  background: transparent;
+  cursor: default;
+}
+.err {
+  font-size: 11.5px;
+  color: #ee6b78;
+  margin-top: 6px;
+  min-height: 0;
+  display: none;
+}
+.err.show {
+  display: block;
+}
+
+.row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 2px 0 20px;
+}
+.chk {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.chk input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.chk .box {
+  width: 17px;
+  height: 17px;
+  border-radius: 5px;
+  border: 1px solid var(--border-strong);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  color: #fff;
+  transition: all 0.15s;
+}
+.chk input:checked + .box {
+  background: var(--grad);
+  border-color: transparent;
+}
+.chk .box::after {
+  content: "✓";
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.chk input:checked + .box::after {
+  opacity: 1;
+}
+.auth-link {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+}
+.auth-link:hover {
+  text-decoration: underline;
+}
+
+.submit {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  height: 52px;
+  border-radius: 13px;
+  background: var(--grad);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  box-shadow: 0 10px 30px var(--accent-soft);
+  transition: filter 0.16s, transform 0.16s;
+}
+.submit:hover {
+  filter: brightness(1.07);
+  transform: translateY(-1px);
+}
+.submit:active {
+  transform: translateY(0);
+}
+.submit.loading {
+  pointer-events: none;
+}
+.submit .spin {
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #fff;
+  animation: authSpin 0.7s linear infinite;
+  display: none;
+}
+.submit.loading .spin {
+  display: block;
+}
+.submit.loading .lbl {
+  opacity: 0.7;
+}
+@keyframes authSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 24px 0;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.socials {
+  display: flex;
+  gap: 10px;
+}
+.soc {
+  position: relative;
+  flex: 1;
+  height: 48px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-faint);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  cursor: not-allowed;
+}
+.soc svg {
+  width: 18px;
+  height: 18px;
+}
+.soc .soon {
+  position: absolute;
+  top: -8px;
+  right: 8px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #fff;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--text-faint) 60%, #000);
+  opacity: 0.9;
+}
+
+.auth-foot {
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-faint);
+  margin-top: 24px;
+}
+.auth-foot .auth-link {
+  font-size: 13px;
+}
+
+.terms {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-faint);
+  text-align: center;
+  margin-top: 18px;
+}
+.terms a {
+  color: var(--text-dim);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* toast (standalone, scoped to this page) */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 30px;
+  transform: translateX(-50%) translateY(20px);
+  z-index: 300;
+  padding: 13px 22px;
+  border-radius: var(--pill);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 16px 50px rgba(0, 0, 0, 0.6);
+  font-size: 14px;
+  font-weight: 600;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s, transform 0.25s var(--ease);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.toast.show {
+  opacity: 1;
+  transform: translateX(-50%);
+}
+.toast .ic {
+  color: var(--accent-3);
+}
+
+/* show / hide register-only & login-only fields (keyed off the wrapper) */
+.auth-page [data-only] {
+  display: none;
+}
+.auth-page[data-mode="login"] [data-only="login"] {
+  display: block;
+}
+.auth-page[data-mode="register"] [data-only="register"] {
+  display: block;
+}
+.auth-page[data-mode="register"] .submode {
+  display: none;
+}
+/* In login mode the submode is also [data-only="login"], whose display:block
+   rule would otherwise beat .submode.show on specificity — force flex back. */
+.auth-page[data-mode="login"] .submode {
+  display: flex;
+}
+
+/* the login row uses flex even though [data-only] defaults block */
+.auth-page[data-mode="login"] .row-between[data-only="login"] {
+  display: flex;
+}
+.auth-page[data-mode="register"] .row-between[data-only="register"] {
+  display: flex;
+}

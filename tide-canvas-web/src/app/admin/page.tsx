@@ -1,289 +1,353 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
-import { Card, Col, Row, Statistic, Table, Empty, Alert, Tag } from "antd";
-import type { ColumnsType } from "antd/es/table";
-import {
-  Users, Zap, FolderOpen, HardDrive, UserPlus, Activity, Eye, LogIn,
-} from "lucide-react";
-import {
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell,
-  BarChart, Bar,
-  AreaChart, Area,
-} from "recharts";
-import { adminApi } from "@/lib/api";
-import { formatDate } from "@/lib/utils";
-import type { DashboardOverviewVO, DashboardChartsVO, LogVO, ActiveUserVO } from "@/types/admin";
+/* ============================================================================
+   /admin — 数据概览 (dashboard), wired to the REAL backend.
 
-interface StatCard {
-  title: string;
-  value: string | number;
-  today?: number;
-  sub?: string;
-  icon: ReactNode;
-  color: string;
+   Faithful port of the liuguang admin.js V.dash() skin, now driven by:
+     GET /api/admin/dashboard/stats  -> AdminStatsVO  (KPI cards + hero)
+     GET /api/admin/dashboard/charts -> AdminChartsVO (recharts trends)
+
+   Only the data the backend exposes is rendered:
+     - hero strip: 今日实时营收 (totalRevenue head metric + today) + inline stats
+       (总订单 / 已支付 / 付费用户) + a revenue sparkline.
+     - 8 KPI cards: totalUsers / todayNewUsers / activeUsers / payingUsers /
+       totalPosts / totalModels / totalOrders / paidOrders.
+     - 增长趋势 (area): switchable user / post / order / revenue series.
+     - 用户 vs 内容增长 (multi-line): userGrowth & postGrowth over 14 days.
+     - 订单 / 营收 (area).
+
+   Keeps the EXACT liuguang `.viz-*` markup/classes + the shared AreaTrend /
+   MultiLine / StatCardGrid components. Loading + empty states included. No
+   @/mock imports. Client component (charts + interactive series toggle).
+   ============================================================================ */
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { AreaTrend, MultiLine } from "@/components/admin/charts";
+import { StatCardGrid } from "@/components/admin";
+import { useAuthStore } from "@/stores/use-auth-store";
+import { adminDashboardApi } from "@/lib/admin-dashboard-api";
+import type {
+  AdminChartsVO,
+  AdminStatsVO,
+  ChartPoint,
+  RevenuePoint,
+} from "@/types/admin-dashboard";
+
+/** Build a tiny svg sparkline `d` for the hero strip (smooth, no axes). */
+function sparkPath(vals: number[], w = 200, h = 32, pad = 3): string {
+  if (vals.length === 0) return "";
+  const max = Math.max(...vals) * 1.12 || 1;
+  const min = Math.min(...vals) * 0.9;
+  const span = max - min || 1;
+  const denom = vals.length > 1 ? vals.length - 1 : 1;
+  const xs = (i: number) => pad + (i / denom) * (w - pad * 2);
+  const ys = (v: number) => h - pad - ((v - min) / span) * (h - pad * 2);
+  let d = `M ${xs(0)} ${ys(vals[0])}`;
+  for (let i = 1; i < vals.length; i++) {
+    const x0 = xs(i - 1);
+    const y0 = ys(vals[i - 1]);
+    const x1 = xs(i);
+    const y1 = ys(vals[i]);
+    const cx = (x0 + x1) / 2;
+    d += ` C ${cx} ${y0} ${cx} ${y1} ${x1} ${y1}`;
+  }
+  return d;
 }
 
-const CHART_COLORS = ["#3b82f6", "#8b5cf6", "#f59e0b", "#ef4444", "#10b981", "#6b7280"];
+/** "YYYY-MM-DD" -> "MM-DD" for compact axis labels. */
+function shortDate(d: string): string {
+  return d.length >= 10 ? d.slice(5) : d;
+}
+
+/** Format an integer with thousands separators. */
+const fmtNum = (n: number) => n.toLocaleString("zh-Hans-CN");
+
+/** Format a fixed-2 decimal string ("0.00") as ¥ currency. */
+function fmtMoney(s: string): string {
+  const n = Number(s);
+  return Number.isFinite(n) ? `¥${n.toLocaleString("zh-Hans-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `¥${s}`;
+}
+
+type SeriesKey = "user" | "post" | "order" | "revenue";
+
+const SERIES_META: { key: SeriesKey; label: string; color: string }[] = [
+  { key: "user", label: "用户增长", color: "#0a84ff" },
+  { key: "post", label: "作品增长", color: "#bf5af2" },
+  { key: "order", label: "订单增长", color: "#34c759" },
+  { key: "revenue", label: "营收", color: "#1a9d54" },
+];
 
 export default function AdminDashboardPage() {
-  const [overview, setOverview] = useState<DashboardOverviewVO | null>(null);
-  const [charts, setCharts] = useState<DashboardChartsVO | null>(null);
-  const [logs, setLogs] = useState<LogVO[]>([]);
-  const [activeUsers, setActiveUsers] = useState<ActiveUserVO[]>([]);
-  const [error, setError] = useState("");
+  const [stats, setStats] = useState<AdminStatsVO | null>(null);
+  const [charts, setCharts] = useState<AdminChartsVO | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [series, setSeries] = useState<SeriesKey>("user");
+
+  const ensureSession = useAuthStore((s) => s.ensureSession);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      await ensureSession(); // 临时自动会话:以种子管理员(role 9)登录，AdminOnly 通过
+      const [statsRes, chartsRes] = await Promise.all([
+        adminDashboardApi.stats(),
+        adminDashboardApi.charts(),
+      ]);
+      if (statsRes.success && statsRes.data) setStats(statsRes.data);
+      else setError(statsRes.message || "加载统计数据失败");
+      if (chartsRes.success && chartsRes.data) setCharts(chartsRes.data);
+    } catch {
+      setError("加载数据失败，请稍后重试");
+    } finally {
+      setLoading(false);
+    }
+  }, [ensureSession]);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      adminApi.dashboard.overview()
-        .then((res) => { if (res.success) setOverview(res.data); })
-        .catch((err: unknown) => setError(err instanceof Error ? err.message : "加载数据概览失败"));
-      adminApi.dashboard.charts()
-        .then((res) => { if (res.success) setCharts(res.data); })
-        .catch(() => {});
-      adminApi.dashboard.activeUsers()
-        .then((res) => { if (res.success && res.data) setActiveUsers(res.data); })
-        .catch(() => {});
-      adminApi.logs.list({ pageNum: 1, pageSize: 5 })
-        .then((res) => { if (res.success && res.data) setLogs(res.data.records); })
-        .catch(() => {});
-    }, 0);
-    return () => clearTimeout(timer);
-  }, []);
+    load();
+  }, [load]);
 
-  const userTrendData = (charts?.userTrend ?? []).map((d) => ({ date: d.date, 新增: Number(d.newUsers), 活跃: Number(d.activeUsers) }));
-  const dailyCreationData = (charts?.dailyCreation ?? []).map((d) => ({ date: d.date, 项目: Number(d.projects), AI调用: Number(d.aiCalls) }));
-  const aiDistributionData = (charts?.aiDistribution ?? []).map((d, i) => ({ name: d.name, value: Number(d.value), color: CHART_COLORS[i % CHART_COLORS.length] }));
-  const modelUsageData = (charts?.modelUsage ?? []).map((d) => ({ name: d.name, 调用次数: Number(d.value) }));
-  const visitTrendData = (charts?.visitTrend ?? []).map((d) => ({ date: d.date, 访问量: Number(d.pv), 独立访客: Number(d.uv) }));
-  const loginTrendData = (charts?.loginTrend ?? []).map((d) => ({ date: d.date, 登录: Number(d.count) }));
+  // hero sparkline = the revenue series (numeric) over the window.
+  const revenueVals = useMemo(
+    () => (charts?.revenue ?? []).map((p: RevenuePoint) => Number(p.amount) || 0),
+    [charts],
+  );
 
-  const cards: StatCard[] = [
-    { title: "用户总数", value: overview?.totalUsers ?? 0, today: overview?.todayNewUsers, icon: <Users size={15} />, color: "#2563eb" },
-    { title: "今日新增", value: overview?.todayNewUsers ?? 0, icon: <UserPlus size={15} />, color: "#16a34a" },
-    { title: "活跃用户", value: overview?.activeUsers ?? 0, sub: `周活 ${overview?.activeWeek ?? 0} · 月活 ${overview?.activeMonth ?? 0}`, icon: <Activity size={15} />, color: "#9333ea" },
-    { title: "今日登录", value: overview?.todayLogins ?? 0, icon: <LogIn size={15} />, color: "#0d9488" },
-    { title: "今日访问", value: overview?.todayVisits ?? 0, sub: `独立访客 ${overview?.todayVisitors ?? 0}`, icon: <Eye size={15} />, color: "#4f46e5" },
-    { title: "API 调用", value: overview?.totalApiCalls ?? 0, today: overview?.todayApiCalls, icon: <Zap size={15} />, color: "#d97706" },
-    { title: "项目总数", value: overview?.totalProjects ?? 0, today: overview?.todayNewProjects, icon: <FolderOpen size={15} />, color: "#e11d48" },
-    { title: "存储使用", value: overview?.totalStorageBytes ? `${(overview.totalStorageBytes / 1073741824).toFixed(1)} GB` : "0 GB", icon: <HardDrive size={15} />, color: "#0891b2" },
-  ];
+  // 8 KPI cards from the aggregate stats block.
+  const kpis = useMemo(() => {
+    if (!stats) return [];
+    return [
+      { k: "总用户", v: fmtNum(stats.totalUsers), d: `+${fmtNum(stats.todayNewUsers)} 今日`, dir: "up" as const },
+      { k: "今日新增", v: fmtNum(stats.todayNewUsers), dir: "up" as const },
+      { k: "活跃用户 (7日)", v: fmtNum(stats.activeUsers), dir: "up" as const },
+      { k: "付费用户", v: fmtNum(stats.payingUsers), dir: "up" as const },
+      { k: "作品总数", v: fmtNum(stats.totalPosts), dir: "up" as const },
+      { k: "模型总数", v: fmtNum(stats.totalModels), dir: "up" as const },
+      { k: "订单总数", v: fmtNum(stats.totalOrders), d: `${fmtNum(stats.paidOrders)} 已支付`, dir: "up" as const },
+      { k: "总营收", v: fmtMoney(stats.totalRevenue), dir: "up" as const },
+    ];
+  }, [stats]);
 
-  const logColumns: ColumnsType<LogVO> = [
-    { title: "用户", dataIndex: "username", key: "username", render: (v: string) => v || "-" },
-    { title: "操作", dataIndex: "action", key: "action" },
-    { title: "目标", dataIndex: "target", key: "target", render: (v: string) => v || "-" },
-    { title: "时间", dataIndex: "createTime", key: "createTime", render: (v: string) => formatDate(v) },
-  ];
+  // selected single-series area data: {label,value}[].
+  const areaData = useMemo(() => {
+    if (!charts) return [];
+    if (series === "revenue") {
+      return charts.revenue.map((p) => ({ label: shortDate(p.date), value: Number(p.amount) || 0 }));
+    }
+    const src: ChartPoint[] =
+      series === "user" ? charts.userGrowth : series === "post" ? charts.postGrowth : charts.orderGrowth;
+    return src.map((p) => ({ label: shortDate(p.date), value: p.count }));
+  }, [charts, series]);
 
-  const activeUserColumns: ColumnsType<ActiveUserVO> = [
-    { title: "用户", dataIndex: "username", key: "username", render: (v: string, r) => <span style={{ fontWeight: 500 }}>{r.nickname || v}</span> },
-    { title: "积分", dataIndex: "points", key: "points", render: (v: number) => <Tag color="gold">{v ?? 0}</Tag> },
-    { title: "最近登录", dataIndex: "lastLoginTime", key: "lastLoginTime", render: (v: string) => v ? formatDate(v) : "-" },
-  ];
+  // 用户 vs 作品 multi-line (vals[] per series, indexed by day).
+  const multiSeries = useMemo(() => {
+    if (!charts) return [];
+    return [
+      { name: "新增用户", color: "#0a84ff", vals: charts.userGrowth.map((p) => p.count) },
+      { name: "新增作品", color: "#bf5af2", vals: charts.postGrowth.map((p) => p.count) },
+    ];
+  }, [charts]);
+
+  // 订单 / 营收 area (orders count vs revenue), shown as two stacked area cards.
+  const orderData = useMemo(
+    () => (charts?.orderGrowth ?? []).map((p) => ({ label: shortDate(p.date), value: p.count })),
+    [charts],
+  );
+  const revenueData = useMemo(
+    () => (charts?.revenue ?? []).map((p) => ({ label: shortDate(p.date), value: Number(p.amount) || 0 })),
+    [charts],
+  );
+
+  const activeMeta = SERIES_META.find((m) => m.key === series) ?? SERIES_META[0];
+
+  const dayRange = useMemo(() => {
+    const days = charts?.userGrowth ?? [];
+    if (days.length === 0) return { first: "", last: "" };
+    return { first: shortDate(days[0].date), last: shortDate(days[days.length - 1].date) };
+  }, [charts]);
+
+  if (loading) {
+    return (
+      <div className="adm-panel">
+        <div className="adm-phead">
+          <div>
+            <h2>数据概览</h2>
+            <div className="sub">正在加载…</div>
+          </div>
+        </div>
+        <p style={{ padding: 24, color: "var(--text-faint)" }}>加载中…</p>
+      </div>
+    );
+  }
+
+  if (error && !stats) {
+    return (
+      <div className="adm-panel">
+        <div className="adm-phead">
+          <div>
+            <h2>数据概览</h2>
+            <div className="sub">加载失败</div>
+          </div>
+          <div className="sp" />
+          <div className="adm-tools">
+            <button type="button" className="adm-btn" onClick={load}>
+              重试
+            </button>
+          </div>
+        </div>
+        <p style={{ padding: 24, color: "var(--text-faint)" }}>{error}</p>
+      </div>
+    );
+  }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div>
-        <h2 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>数据面板</h2>
-        <p style={{ marginTop: 4, color: "var(--ant-color-text-secondary, #8c8c8c)", fontSize: 14 }}>平台整体运营数据概览</p>
-      </div>
-
-      {error && <Alert type="error" message={error} showIcon />}
-
-      {/* 概览卡片 */}
-      <Row gutter={[12, 12]}>
-        {cards.map((card) => (
-          <Col key={card.title} xs={12} sm={8} md={6} xl={3}>
-            <Card style={{ height: "100%" }} styles={{ body: { padding: 14 } }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                <Statistic title={card.title} value={card.value} />
-                <span style={{ display: "inline-flex", height: 32, width: 32, alignItems: "center", justifyContent: "center", borderRadius: 8, background: `${card.color}14`, color: card.color, flexShrink: 0 }}>
-                  {card.icon}
-                </span>
+    <>
+      <div className="viz-grid">
+        {/* hero strip — 今日营收 + inline stats + revenue sparkline */}
+        <div className="viz-hero">
+          <div className="viz-hero-row">
+            <div className="lead">
+              <div className="lbl">
+                <span className="live" />
+                实时营收 · 今日
               </div>
-              {/* 底部信息行：始终占位（即使无内容），保证整排卡片等高对齐 */}
-              <div style={{ marginTop: 8, minHeight: 20, lineHeight: "20px", fontSize: 13, fontWeight: 500 }}>
-                {card.sub ? (
-                  <span style={{ color: "var(--ant-color-text-secondary, #8c8c8c)" }}>{card.sub}</span>
-                ) : card.today !== undefined ? (
-                  <span style={{ color: "#16a34a" }}>今日 +{card.today}</span>
+              <div className="big">{stats ? fmtMoney(stats.todayRevenue) : "¥0.00"}</div>
+              <div className="chg">本月累计 {stats ? fmtMoney(stats.totalRevenue) : "¥0.00"}</div>
+            </div>
+            <div className="hstats">
+              <div className="hstat">
+                <div className="k">总订单</div>
+                <div className="v">{stats ? fmtNum(stats.totalOrders) : "0"}</div>
+              </div>
+              <div className="hstat">
+                <div className="k">已支付</div>
+                <div className="v">{stats ? fmtNum(stats.paidOrders) : "0"}</div>
+              </div>
+              <div className="hstat">
+                <div className="k">付费用户</div>
+                <div className="v">{stats ? fmtNum(stats.payingUsers) : "0"}</div>
+              </div>
+            </div>
+            <div className="hspark">
+              <svg width="360" height="60" viewBox="0 0 360 60" preserveAspectRatio="none">
+                <defs>
+                  <linearGradient id="hg" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stopColor="#fff" stopOpacity={0.5} />
+                    <stop offset="1" stopColor="#fff" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                {revenueVals.length > 0 ? (
+                  <>
+                    <path d={`${sparkPath(revenueVals, 360, 60, 4)} L 356 56 L 4 56 Z`} fill="url(#hg)" />
+                    <path d={sparkPath(revenueVals, 360, 60, 4)} fill="none" stroke="#fff" strokeWidth="2.5" />
+                  </>
                 ) : null}
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        {/* 8 KPI cards */}
+        {kpis.length > 0 ? (
+          <div style={{ gridColumn: "span 12" }}>
+            <StatCardGrid items={kpis} />
+          </div>
+        ) : null}
+
+        {/* 增长趋势 (area, switchable series) */}
+        <div className="viz-card span8">
+          <div className="viz-h">
+            <div>
+              <h3>增长趋势</h3>
+              <div className="sub">近 14 天 · {activeMeta.label}</div>
+            </div>
+            <div className="viz-legend">
+              {SERIES_META.map((m) => (
+                <button
+                  key={m.key}
+                  type="button"
+                  className={`adm-chip${series === m.key ? " on" : ""}`}
+                  onClick={() => setSeries(m.key)}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {areaData.length > 0 ? (
+            <>
+              <AreaTrend data={areaData} color={activeMeta.color} />
+              <div className="viz-dot">
+                <span>{dayRange.first}</span>
+                <span>{dayRange.last}</span>
               </div>
-            </Card>
-          </Col>
-        ))}
-      </Row>
+            </>
+          ) : (
+            <p style={{ padding: 24, color: "var(--text-faint)" }}>暂无数据</p>
+          )}
+        </div>
 
-      {/* 图表第一行 */}
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={12}>
-          <Card title="用户增长趋势" extra={<span style={{ fontSize: 12, color: "#bfbfbf" }}>近 7 天</span>}>
-            <div style={{ height: 260 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={userTrendData}>
-                  <defs>
-                    <linearGradient id="colorActive" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.15} />
-                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="colorNew" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.15} />
-                      <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="date" tick={{ fontSize: 12 }} stroke="#999" />
-                  <YAxis tick={{ fontSize: 12 }} stroke="#999" allowDecimals={false} />
-                  <Tooltip contentStyle={{ borderRadius: 8, border: "1px solid #e5e5e5", fontSize: 13 }} />
-                  <Area type="monotone" dataKey="活跃" stroke="#3b82f6" fill="url(#colorActive)" strokeWidth={2} />
-                  <Area type="monotone" dataKey="新增" stroke="#10b981" fill="url(#colorNew)" strokeWidth={2} />
-                </AreaChart>
-              </ResponsiveContainer>
+        {/* 用户 vs 作品 (multi-line) */}
+        <div className="viz-card span4">
+          <div className="viz-h">
+            <div>
+              <h3>用户 vs 作品</h3>
+              <div className="sub">近 14 天新增</div>
             </div>
-          </Card>
-        </Col>
-        <Col xs={24} lg={12}>
-          <Card title="AI 调用分布" extra={<span style={{ fontSize: 12, color: "#bfbfbf" }}>各 Handler 占比</span>}>
-            <div style={{ height: 260 }}>
-              {aiDistributionData.length === 0 ? (
-                <Empty description="暂无调用数据" style={{ paddingTop: 60 }} />
-              ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={aiDistributionData}
-                      cx="50%" cy="50%" innerRadius={55} outerRadius={90} paddingAngle={3} dataKey="value"
-                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                      label={({ name, percent }: any) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
-                      style={{ fontSize: 11 }}
-                    >
-                      {aiDistributionData.map((entry, index) => <Cell key={index} fill={entry.color} />)}
-                    </Pie>
-                    <Tooltip formatter={(value) => [`${value} 次`, "调用次数"]} contentStyle={{ borderRadius: 8, fontSize: 13 }} />
-                  </PieChart>
-                </ResponsiveContainer>
-              )}
+            <div className="viz-legend">
+              {multiSeries.map((s) => (
+                <span key={s.name}>
+                  <i style={{ background: s.color }} />
+                  {s.name}
+                </span>
+              ))}
             </div>
-          </Card>
-        </Col>
-      </Row>
+          </div>
+          {multiSeries.some((s) => s.vals.length > 0) ? (
+            <>
+              <MultiLine series={multiSeries} />
+              <div className="viz-dot">
+                <span>{dayRange.first}</span>
+                <span>{dayRange.last}</span>
+              </div>
+            </>
+          ) : (
+            <p style={{ padding: 24, color: "var(--text-faint)" }}>暂无数据</p>
+          )}
+        </div>
 
-      {/* 图表第二行 */}
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={12}>
-          <Card title="每日创作量" extra={<span style={{ fontSize: 12, color: "#bfbfbf" }}>项目 / AI 调用</span>}>
-            <div style={{ height: 260 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={dailyCreationData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="date" tick={{ fontSize: 12 }} stroke="#999" />
-                  <YAxis yAxisId="left" tick={{ fontSize: 12 }} stroke="#999" allowDecimals={false} />
-                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12 }} stroke="#999" allowDecimals={false} />
-                  <Tooltip contentStyle={{ borderRadius: 8, border: "1px solid #e5e5e5", fontSize: 13 }} />
-                  <Bar yAxisId="left" dataKey="项目" fill="#8b5cf6" radius={[4, 4, 0, 0]} barSize={20} />
-                  <Bar yAxisId="right" dataKey="AI调用" fill="#f59e0b" radius={[4, 4, 0, 0]} barSize={20} />
-                </BarChart>
-              </ResponsiveContainer>
+        {/* 订单趋势 (area) */}
+        <div className="viz-card span6">
+          <div className="viz-h">
+            <div>
+              <h3>订单趋势</h3>
+              <div className="sub">近 14 天 · 新增订单</div>
             </div>
-          </Card>
-        </Col>
-        <Col xs={24} lg={12}>
-          <Card title="模型使用排行" extra={<span style={{ fontSize: 12, color: "#bfbfbf" }}>Top 5</span>}>
-            <div style={{ height: 260 }}>
-              {modelUsageData.length === 0 ? (
-                <Empty description="暂无调用数据" style={{ paddingTop: 60 }} />
-              ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={modelUsageData} layout="vertical">
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
-                    <XAxis type="number" tick={{ fontSize: 12 }} stroke="#999" allowDecimals={false} />
-                    <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} stroke="#999" width={100} />
-                    <Tooltip contentStyle={{ borderRadius: 8, border: "1px solid #e5e5e5", fontSize: 13 }} />
-                    <Bar dataKey="调用次数" fill="#3b82f6" radius={[0, 4, 4, 0]} barSize={18}>
-                      {modelUsageData.map((_, index) => <Cell key={index} fill={CHART_COLORS[index % CHART_COLORS.length]} />)}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </Card>
-        </Col>
-      </Row>
+          </div>
+          {orderData.length > 0 ? (
+            <AreaTrend data={orderData} color="#34c759" />
+          ) : (
+            <p style={{ padding: 24, color: "var(--text-faint)" }}>暂无数据</p>
+          )}
+        </div>
 
-      {/* 图表第三行：访问 / 登录趋势 */}
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={12}>
-          <Card title="访问趋势" extra={<span style={{ fontSize: 12, color: "#bfbfbf" }}>访问量 PV / 独立访客 UV · 近 7 天</span>}>
-            <div style={{ height: 260 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={visitTrendData}>
-                  <defs>
-                    <linearGradient id="colorPv" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.15} />
-                      <stop offset="95%" stopColor="#4f46e5" stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="colorUv" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.15} />
-                      <stop offset="95%" stopColor="#06b6d4" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="date" tick={{ fontSize: 12 }} stroke="#999" />
-                  <YAxis tick={{ fontSize: 12 }} stroke="#999" allowDecimals={false} />
-                  <Tooltip contentStyle={{ borderRadius: 8, border: "1px solid #e5e5e5", fontSize: 13 }} />
-                  <Area type="monotone" dataKey="访问量" stroke="#4f46e5" fill="url(#colorPv)" strokeWidth={2} />
-                  <Area type="monotone" dataKey="独立访客" stroke="#06b6d4" fill="url(#colorUv)" strokeWidth={2} />
-                </AreaChart>
-              </ResponsiveContainer>
+        {/* 营收趋势 (area) */}
+        <div className="viz-card span6">
+          <div className="viz-h">
+            <div>
+              <h3>营收趋势</h3>
+              <div className="sub">近 14 天 · 已支付金额</div>
             </div>
-          </Card>
-        </Col>
-        <Col xs={24} lg={12}>
-          <Card title="登录趋势" extra={<span style={{ fontSize: 12, color: "#bfbfbf" }}>成功登录 · 近 7 天</span>}>
-            <div style={{ height: 260 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={loginTrendData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="date" tick={{ fontSize: 12 }} stroke="#999" />
-                  <YAxis tick={{ fontSize: 12 }} stroke="#999" allowDecimals={false} />
-                  <Tooltip contentStyle={{ borderRadius: 8, border: "1px solid #e5e5e5", fontSize: 13 }} />
-                  <Bar dataKey="登录" fill="#0d9488" radius={[4, 4, 0, 0]} barSize={22} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </Card>
-        </Col>
-      </Row>
-
-      {/* 最近操作日志 + 活跃用户榜 */}
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={14}>
-          <Card title="最近操作日志">
-            <Table<LogVO>
-              rowKey="id"
-              columns={logColumns}
-              dataSource={logs}
-              pagination={false}
-              size="middle"
-              locale={{ emptyText: "暂无操作记录" }}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} lg={10}>
-          <Card title="活跃用户榜" extra={<span style={{ fontSize: 12, color: "#bfbfbf" }}>最近登录 Top 10</span>}>
-            <Table<ActiveUserVO>
-              rowKey="id"
-              columns={activeUserColumns}
-              dataSource={activeUsers}
-              pagination={false}
-              size="middle"
-              locale={{ emptyText: "暂无活跃用户" }}
-            />
-          </Card>
-        </Col>
-      </Row>
-    </div>
+          </div>
+          {revenueData.length > 0 ? (
+            <AreaTrend data={revenueData} color="#1a9d54" />
+          ) : (
+            <p style={{ padding: 24, color: "var(--text-faint)" }}>暂无数据</p>
+          )}
+        </div>
+      </div>
+    </>
   );
 }

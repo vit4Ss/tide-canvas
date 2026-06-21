@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>个人中心 · SCARECROWAI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Sora:wght@600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="liuguang/flux.css" />
+<link rel="stylesheet" href="liuguang/pages.css" />
+<style>
+  .acc-wrap{max-width:1040px; margin:0 auto; padding:0 22px;}
+
+  /* profile header card */
+  .pf-card{position:relative; overflow:hidden; display:flex; align-items:center; gap:24px; padding:30px; border-radius:22px; margin-top:-46px;
+    background:color-mix(in oklab,var(--surface) 88%, transparent); border:1px solid var(--border-strong);
+    backdrop-filter:blur(22px); -webkit-backdrop-filter:blur(22px); box-shadow:0 30px 80px rgba(0,0,0,.5);}
+  .pf-card .pf-glow{position:absolute; width:340px; height:340px; border-radius:50%; filter:blur(60px); opacity:.32; top:-180px; right:-60px; pointer-events:none;
+    background:radial-gradient(circle, var(--accent) 0%, transparent 65%);}
+  .pf-av{position:relative; z-index:1; display:grid; place-items:center; width:86px; height:86px; flex:none; border-radius:24px;
+    font-family:var(--disp); font-weight:800; font-size:32px; color:#0c0e16; box-shadow:inset 0 0 0 1px rgba(255,255,255,.2), 0 12px 30px rgba(0,0,0,.4);}
+  .pf-id{position:relative; z-index:1; min-width:0; flex:1;}
+  .pf-name{display:flex; align-items:center; gap:11px; font-family:var(--disp); font-size:26px; font-weight:800; letter-spacing:-.02em;}
+  .pf-badge{font-size:11px; font-weight:800; letter-spacing:.04em; color:#fff; padding:3px 9px; border-radius:6px; background:var(--grad-warm); white-space:nowrap;}
+  .pf-badge.plan{background:var(--grad);}
+  .pf-meta{display:flex; flex-wrap:wrap; gap:8px 20px; margin-top:9px; font-size:13.5px; color:var(--text-faint);}
+  .pf-meta b{color:var(--text-dim); font-weight:600;}
+  .pf-actions{position:relative; z-index:1; display:flex; gap:10px;}
+  .pf-btn{display:inline-flex; align-items:center; gap:7px; height:42px; padding:0 18px; border-radius:var(--pill); font-size:13.5px; font-weight:700; transition:all .16s var(--ease); white-space:nowrap;}
+  .pf-btn.pri{color:#fff; background:var(--grad); box-shadow:0 8px 22px var(--accent-soft);}
+  .pf-btn.pri:hover{filter:brightness(1.07); transform:translateY(-1px);}
+  .pf-btn.sec{color:var(--text); border:1px solid var(--border-strong);}
+  .pf-btn.sec:hover{background:var(--panel-hover);}
+  @media(max-width:680px){ .pf-card{flex-direction:column; align-items:flex-start; text-align:left;} }
+
+  /* stats */
+  .pf-stats{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-top:18px;}
+  .pf-stat{padding:20px; border-radius:16px; background:var(--surface); border:1px solid var(--border);}
+  .pf-stat .v{font-family:var(--disp); font-size:26px; font-weight:800; letter-spacing:-.02em;}
+  .pf-stat .v.grad{background:var(--grad); -webkit-background-clip:text; background-clip:text; color:transparent;}
+  .pf-stat .k{font-size:12.5px; color:var(--text-faint); margin-top:4px;}
+  @media(max-width:680px){ .pf-stats{grid-template-columns:repeat(2,1fr);} }
+
+  /* detail grid */
+  .pf-grid{display:grid; grid-template-columns:1.6fr 1fr; gap:18px; margin-top:18px; align-items:start;}
+  @media(max-width:880px){ .pf-grid{grid-template-columns:1fr;} }
+  .panel{padding:24px; border-radius:18px; background:var(--surface); border:1px solid var(--border);}
+  .panel h2{font-family:var(--disp); font-size:16px; font-weight:700; margin:0 0 4px;}
+  .panel .ph-note{font-size:12.5px; color:var(--text-faint); margin:0 0 18px;}
+
+  .info-row{display:flex; align-items:center; justify-content:space-between; gap:16px; padding:15px 0; border-top:1px solid var(--border);}
+  .info-row:first-of-type{border-top:none;}
+  .info-row .lab{font-size:13px; color:var(--text-faint);}
+  .info-row .val{font-size:14px; font-weight:600; color:var(--text); display:flex; align-items:center; gap:9px;}
+  .info-row .edit{font-size:12.5px; font-weight:700; color:var(--accent); padding:5px 11px; border-radius:8px; border:1px solid color-mix(in oklab,var(--accent) 30%,transparent); transition:all .15s;}
+  .info-row .edit:hover{background:var(--accent-soft);}
+  .verified{display:inline-flex; align-items:center; gap:5px; font-size:11.5px; font-weight:700; color:var(--accent-3); padding:3px 8px; border-radius:6px; background:color-mix(in oklab,var(--accent-3) 14%,transparent);}
+
+  /* permission / plan side */
+  .perm{display:flex; align-items:center; gap:12px; padding:14px 0; border-top:1px solid var(--border);}
+  .perm:first-of-type{border-top:none;}
+  .perm .pic{flex:none; width:38px; height:38px; border-radius:11px; display:grid; place-items:center; font-size:17px; background:var(--accent-soft); color:var(--accent);}
+  .perm .pt{flex:1; min-width:0;}
+  .perm .pt b{display:block; font-size:13.5px; font-weight:700; color:var(--text);}
+  .perm .pt span{font-size:12px; color:var(--text-faint);}
+  .perm .tick{color:var(--accent-3); font-size:16px;}
+  .perm.locked{opacity:.5;}
+  .perm.locked .pic{background:var(--panel); color:var(--text-faint);}
+  .perm .lock{color:var(--text-faint); font-size:14px;}
+
+  .admin-cta{display:flex; align-items:center; gap:13px; margin-top:18px; padding:16px; border-radius:14px;
+    background:linear-gradient(120deg, color-mix(in oklab,var(--accent) 16%,transparent), color-mix(in oklab,var(--accent-2) 14%,transparent));
+    border:1px solid color-mix(in oklab,var(--accent) 30%,transparent);}
+  .admin-cta .ai{flex:none; width:40px; height:40px; border-radius:11px; display:grid; place-items:center; font-size:19px; color:#fff; background:var(--grad);}
+  .admin-cta .at{flex:1;}
+  .admin-cta .at b{display:block; font-size:14px; font-weight:700;}
+  .admin-cta .at span{font-size:12px; color:var(--text-dim);}
+  .admin-cta a{flex:none; height:38px; padding:0 16px; border-radius:var(--pill); display:inline-flex; align-items:center; font-size:13px; font-weight:700; color:#fff; background:var(--grad); box-shadow:0 6px 16px var(--accent-soft); transition:filter .15s;}
+  .admin-cta a:hover{filter:brightness(1.08);}
+
+  .danger-row{display:flex; align-items:center; justify-content:space-between; gap:16px; margin-top:18px; padding-top:18px; border-top:1px solid var(--border);}
+  .logout-btn{height:40px; padding:0 18px; border-radius:var(--pill); font-size:13.5px; font-weight:700; color:var(--text-faint); border:1px solid var(--border-strong); transition:all .15s;}
+  .logout-btn:hover{color:#ee6b78; border-color:color-mix(in oklab,#e05260 50%,transparent); background:color-mix(in oklab,#e0526018 60%,transparent);}
+</style>
+</head>
+<body>
+
+<div id="nav-slot"></div>
+
+<header class="page-hero" style="min-height:240px">
+  <canvas id="flux"></canvas>
+  <div class="ph-scrim"></div>
+  <div class="wrap">
+    <div class="page-head">
+      <span class="eyebrow reveal"><span class="d"></span>个人中心 · ACCOUNT</span>
+    </div>
+  </div>
+</header>
+
+<section class="block" style="padding-top:0">
+  <div class="acc-wrap">
+    <!-- profile header -->
+    <div class="pf-card reveal-scale">
+      <div class="pf-glow"></div>
+      <div class="pf-av" id="pfAv">U</div>
+      <div class="pf-id">
+        <div class="pf-name"><span id="pfName">创作者</span><span class="pf-badge plan" id="pfPlan">免费版</span><span class="pf-badge" id="pfRole" style="display:none">管理员</span></div>
+        <div class="pf-meta">
+          <span><b id="pfEmail">you@example.com</b></span>
+          <span>注册于 <b id="pfJoined">2026-06</b></span>
+          <span>ID <b id="pfId">FX-000000</b></span>
+        </div>
+      </div>
+      <div class="pf-actions">
+        <a class="pf-btn sec" href="资产.html">我的作品</a>
+        <a class="pf-btn pri" href="创作台.html">✦ 去创作</a>
+      </div>
+    </div>
+
+    <!-- stats -->
+    <div class="pf-stats">
+      <div class="pf-stat reveal"><div class="v grad" id="stCredits">0</div><div class="k">可用积分</div></div>
+      <div class="pf-stat reveal"><div class="v" id="stWorks">128</div><div class="k">生成作品</div></div>
+      <div class="pf-stat reveal"><div class="v" id="stLikes">3.4K</div><div class="k">获得喜欢</div></div>
+      <div class="pf-stat reveal"><div class="v" id="stFollow">86</div><div class="k">关注者</div></div>
+    </div>
+
+    <div class="pf-grid">
+      <!-- account info -->
+      <div class="panel reveal">
+        <h2>账户信息</h2>
+        <p class="ph-note">管理你的登录方式与基本资料。目前仅支持邮箱登录。</p>
+        <div class="info-row">
+          <span class="lab">昵称</span>
+          <span class="val"><span id="ivName">创作者</span><button class="edit" data-toast="编辑昵称（原型）">编辑</button></span>
+        </div>
+        <div class="info-row">
+          <span class="lab">登录邮箱</span>
+          <span class="val"><span id="ivEmail">you@example.com</span><span class="verified">✓ 已验证</span></span>
+        </div>
+        <div class="info-row">
+          <span class="lab">密码</span>
+          <span class="val"><span>············</span><button class="edit" data-toast="修改密码链接已发送至邮箱（原型）">修改</button></span>
+        </div>
+        <div class="info-row">
+          <span class="lab">手机 / 微信</span>
+          <span class="val"><span style="color:var(--text-faint)">未绑定</span><button class="edit" data-toast="该登录方式即将开放">即将开放</button></span>
+        </div>
+
+        <div class="danger-row">
+          <div>
+            <div style="font-size:13.5px; font-weight:600;">退出登录</div>
+            <div style="font-size:12px; color:var(--text-faint); margin-top:2px;">在此设备上结束当前会话</div>
+          </div>
+          <button class="logout-btn" id="logoutBtn">⏻ 退出登录</button>
+        </div>
+      </div>
+
+      <!-- plan & permissions -->
+      <div class="panel reveal">
+        <h2>套餐与权限</h2>
+        <p class="ph-note">当前套餐：<b id="planName" style="color:var(--text)">免费版</b></p>
+        <div class="perm"><span class="pic">✦</span><div class="pt"><b>标准生成</b><span>图片与视频创作</span></div><span class="tick">✓</span></div>
+        <div class="perm"><span class="pic">⤓</span><div class="pt"><b>作品下载与收藏</b><span>无限保存到资产库</span></div><span class="tick">✓</span></div>
+        <div class="perm" id="permPriority"><span class="pic">⚡</span><div class="pt"><b>优先生成队列</b><span>高峰期免排队</span></div><span class="tick">✓</span></div>
+        <div class="perm" id="permAdmin"><span class="pic">⚙</span><div class="pt"><b>管理后台</b><span>数据 · 用户 · 内容审核</span></div><span class="tick">✓</span></div>
+
+        <div class="admin-cta" id="adminCta" style="display:none">
+          <span class="ai">⚙</span>
+          <div class="at"><b>你拥有管理权限</b><span>进入后台查看运营数据</span></div>
+          <a href="后台管理.html">进入后台</a>
+        </div>
+        <a class="pf-btn pri" id="upgradeCta" href="定价.html" style="width:100%; justify-content:center; margin-top:18px;">升级解锁更多权益 →</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div id="footer-slot"></div>
+
+<template id="__bundler_thumbnail">
+  <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <rect width="100" height="100" rx="20" fill="#05060c" />
+    <circle cx="50" cy="40" r="16" fill="#6d8bf5" />
+    <path d="M22 82c0-16 12-26 28-26s28 10 28 26z" fill="#9b7bf0" />
+  </svg>
+</template>
+
+<script src="liuguang/flux-field.js"></script>
+<script src="liuguang/home-data.js"></script>
+<script src="liuguang/shell.js"></script>
+<script>
+(function () {
+  const $ = (s) => document.querySelector(s);
+  FX.mountChrome('');
+
+  // background field
+  if (window.FluxField) {
+    window.FluxField.mount($('#flux'), { hue: 0.2, speed: .5, scale: .9, intensity: .9, flow: [0.02, -0.02], variant: 0, mouse: false, res: 0.55 });
+  }
+
+  const u = FX.authUser();
+  if (!u) { location.replace('登录注册.html'); return; }
+
+  const isAdmin = u.role === 'admin';
+  const planLabel = ({ free: '免费版', pro: '专业版', team: '团队版' })[u.plan] || '免费版';
+  const grad = FX.avatarGrad(u.email || u.name);
+  const id = 'FX-' + Math.abs([...(u.email || 'x')].reduce((a, c) => a * 33 + c.charCodeAt(0) | 0, 7)).toString().slice(0, 6).padStart(6, '0');
+
+  $('#pfAv').textContent = FX.initials(u.name);
+  $('#pfAv').style.background = grad;
+  $('#pfName').textContent = u.name;
+  $('#pfEmail').textContent = u.email;
+  $('#pfJoined').textContent = (u.joined || '2026-06-01').slice(0, 7);
+  $('#pfId').textContent = id;
+  $('#pfPlan').textContent = planLabel;
+  $('#ivName').textContent = u.name;
+  $('#ivEmail').textContent = u.email;
+  $('#planName').textContent = planLabel;
+  $('#stCredits').textContent = FX.fmt(u.credits || 0);
+
+  if (isAdmin) {
+    $('#pfRole').style.display = '';
+    $('#adminCta').style.display = '';
+    $('#upgradeCta').style.display = 'none';
+  } else {
+    $('#permAdmin').classList.add('locked');
+    $('#permAdmin').querySelector('.tick').outerHTML = '<span class="lock">🔒</span>';
+    if (u.plan === 'free') {
+      $('#permPriority').classList.add('locked');
+      $('#permPriority').querySelector('.tick').outerHTML = '<span class="lock">🔒</span>';
+    }
+  }
+
+  $('#logoutBtn').addEventListener('click', () => {
+    FX.setAuthUser(null);
+    FX.toast('已退出登录');
+    setTimeout(() => { location.href = '首页-流光.html'; }, 700);
+  });
+
+  setTimeout(() => { document.querySelector('.reveal-scale').classList.add('in'); FX.reveal(); }, 60);
+})();
+</script>
+</body>
+</html>

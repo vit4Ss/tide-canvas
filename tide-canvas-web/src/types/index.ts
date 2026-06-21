@@ -3,8 +3,3 @@ export * from "./user";
 export * from "./canvas";
 export * from "./ai";
 export * from "./file";
-export * from "./admin";
-export * from "./points";
-export * from "./community";
-export * from "./blog";
-export * from "./order";

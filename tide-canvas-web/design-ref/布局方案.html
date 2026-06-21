@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SCARECROWAI · 三个全新布局方案</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#0a0b10; --panel:#11131b; --line:rgba(255,255,255,.1); --line-2:rgba(255,255,255,.2);
+    --txt:#eef0f6; --dim:#9aa1b4; --faint:#646b80; --accent:#7d8bff;
+    --sans:'Space Grotesk','Noto Sans SC',system-ui,sans-serif; --mono:'JetBrains Mono',monospace;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{font-family:var(--sans); background:var(--bg); color:var(--txt); -webkit-font-smoothing:antialiased; min-height:100vh;
+    background-image:radial-gradient(70% 50% at 50% -8%, rgba(125,139,255,.14), transparent 60%);}
+  a{color:inherit; text-decoration:none;}
+  .wrap{max-width:1280px; margin:0 auto; padding:0 32px;}
+  .top{display:flex; align-items:center; height:72px; gap:14px;}
+  .brand{font-weight:700; font-size:18px; letter-spacing:-.03em;} .brand b{color:var(--accent);}
+  .top .mono{margin-left:auto; font-family:var(--mono); font-size:12px; color:var(--faint);}
+
+  .intro{padding:clamp(40px,6vw,80px) 0 clamp(28px,4vw,44px);}
+  .eyebrow{font-family:var(--mono); font-size:12px; letter-spacing:.16em; text-transform:uppercase; color:var(--faint); display:flex; align-items:center; gap:10px;}
+  .eyebrow i{width:7px; height:7px; border-radius:50%; background:var(--accent); display:inline-block;}
+  h1{font-size:clamp(32px,5vw,60px); font-weight:700; line-height:1.04; letter-spacing:-.03em; margin:18px 0 0; max-width:18ch;}
+  h1 .g{background:linear-gradient(100deg,#7d8bff,#46c6f0); -webkit-background-clip:text; background-clip:text; color:transparent;}
+  .lead{font-size:17px; color:var(--dim); line-height:1.6; margin:20px 0 0; max-width:54ch;}
+
+  .grid{display:grid; grid-template-columns:repeat(3,1fr); gap:20px; padding-bottom:30px;}
+  @media(max-width:980px){.grid{grid-template-columns:1fr;}}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:16px; overflow:hidden; display:flex; flex-direction:column; transition:transform .25s cubic-bezier(.2,.7,.2,1), border-color .25s, box-shadow .25s;}
+  .card:hover{transform:translateY(-6px); border-color:var(--line-2); box-shadow:0 30px 70px rgba(0,0,0,.5);}
+  .frame{position:relative; aspect-ratio:16/11; overflow:hidden; border-bottom:1px solid var(--line); background:#06080c;}
+  .frame iframe{position:absolute; top:0; left:0; width:333.33%; height:333.33%; transform:scale(.3); transform-origin:top left; border:0; pointer-events:none;}
+  .frame .hit{position:absolute; inset:0; z-index:2;}
+  .frame .tag{position:absolute; top:12px; left:12px; z-index:3; font-family:var(--mono); font-size:11px; font-weight:600; letter-spacing:.08em; padding:4px 10px; border-radius:7px; background:rgba(8,10,16,.7); backdrop-filter:blur(6px); border:1px solid var(--line);}
+  .open{position:absolute; right:12px; bottom:12px; z-index:3; height:38px; padding:0 18px; border-radius:999px; background:var(--txt); color:#0a0b10; font-size:13.5px; font-weight:700; display:inline-flex; align-items:center; gap:7px; opacity:0; transform:translateY(8px); transition:all .25s;}
+  .card:hover .open{opacity:1; transform:none;}
+  .body{padding:20px 20px 22px;}
+  .body .nm{font-size:20px; font-weight:700; letter-spacing:-.02em; display:flex; align-items:baseline; gap:10px;}
+  .body .nm em{font-style:normal; font-family:var(--mono); font-size:12px; color:var(--accent);}
+  .body .ds{font-size:14px; color:var(--dim); line-height:1.55; margin-top:10px;}
+  .body .meta{display:flex; flex-wrap:wrap; gap:7px; margin-top:16px;}
+  .body .meta span{font-size:11.5px; color:var(--faint); border:1px solid var(--line); border-radius:999px; padding:4px 11px;}
+  .foot{padding:30px 0 60px; font-size:13px; color:var(--faint); display:flex; justify-content:space-between; flex-wrap:wrap; gap:12px; border-top:1px solid var(--line);}
+  .foot a{color:var(--dim);} .foot a:hover{color:var(--txt);}
+</style>
+</head>
+<body>
+  <div class="wrap top">
+    <div class="brand">SCARECROW<b>AI</b></div>
+    <div class="mono">3 LAYOUT DIRECTIONS · 2026</div>
+  </div>
+
+  <div class="wrap intro">
+    <div class="eyebrow"><i></i>布局探索 · 三个方向</div>
+    <h1>同一个产品，<span class="g">三种完全不同</span>的布局骨架。</h1>
+    <p class="lead">每个方案在结构骨架、首屏形式、视觉浓度与信息架构上彻底拉开差异——都可点击进入、体验交互。挑一个你最想往下做的方向。</p>
+  </div>
+
+  <div class="wrap grid">
+    <a class="card" href="layouts/A-极简画廊.html">
+      <div class="frame">
+        <span class="tag">A · 极简</span>
+        <iframe src="layouts/A-极简画廊.html" title="A" scrolling="no" loading="lazy"></iframe>
+        <span class="hit"></span>
+        <span class="open">进入体验 →</span>
+      </div>
+      <div class="body">
+        <div class="nm">极简画廊 <em>LIGHT</em></div>
+        <div class="ds">浅色、克制、大量留白，作品本身就是主角。杂志式的画廊优先信息架构。</div>
+        <div class="meta"><span>浅色</span><span>作品优先</span><span>衬线大标题</span><span>低浓度</span></div>
+      </div>
+    </a>
+
+    <a class="card" href="layouts/B-控制台.html">
+      <div class="frame">
+        <span class="tag">B · 控制台</span>
+        <iframe src="layouts/B-控制台.html" title="B" scrolling="no" loading="lazy"></iframe>
+        <span class="hit"></span>
+        <span class="open">进入体验 →</span>
+      </div>
+      <div class="body">
+        <div class="nm">控制台 OS <em>DASHBOARD</em></div>
+        <div class="ds">深色、密集、像一套操作系统。侧边栏导航、实时面板、命令台与模型矩阵。</div>
+        <div class="meta"><span>深色</span><span>侧栏 IA</span><span>实时数据</span><span>高浓度</span></div>
+      </div>
+    </a>
+
+    <a class="card" href="layouts/C-杂志海报.html">
+      <div class="frame">
+        <span class="tag">C · 海报</span>
+        <iframe src="layouts/C-杂志海报.html" title="C" scrolling="no" loading="lazy"></iframe>
+        <span class="hit"></span>
+        <span class="open">进入体验 →</span>
+      </div>
+      <div class="body">
+        <div class="nm">杂志海报 <em>EDITORIAL</em></div>
+        <div class="ds">巨字叠压、珊瑚撞色、双色调大图。表现主义的编辑式排版与节奏。</div>
+        <div class="meta"><span>撞色</span><span>巨型字</span><span>双色调</span><span>浓烈</span></div>
+      </div>
+    </a>
+  </div>
+
+  <div class="wrap foot">
+    <span>挑定方向后，我会把它做深、补全交互与响应式。</span>
+    <a href="../SCARECROWAI.html">← 返回当前线上版本</a>
+  </div>
+</body>
+</html>

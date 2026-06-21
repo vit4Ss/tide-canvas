@@ -1,0 +1,55 @@
+/* 创作台 inner column layout — panel (360px) + stage (1fr), filling the
+   (studio) layout's .content region (a flex column). The locked studio.css
+   styles .ws-panel / .ws-stage themselves; here we only place them in a row,
+   mirroring the design's grid columns (360px 1fr to the right of the rail).
+   Page-owned: does NOT touch globals/layout/liuguang css. */
+
+.cols {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 360px 1fr;
+}
+
+@media (max-width: 1180px) {
+  .cols {
+    grid-template-columns: 320px 1fr;
+  }
+}
+
+@media (max-width: 820px) {
+  .cols {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Result-head meta chips — create.js emits .ws-rh-meta / .ws-rh-chip markup
+   that the locked studio.css doesn't style; scope minimal styles here so the
+   run summary (mode · model · ratio · ×count) reads cleanly. Targets the
+   design's exact global class names from inside this page (:global). */
+.cols :global(.ws-rh-meta) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.cols :global(.ws-rh-chip) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 99px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--panel);
+  border: 1px solid var(--border);
+}
+
+.cols :global(.ws-rh-chip .dot) {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}

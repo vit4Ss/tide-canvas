@@ -1,0 +1,156 @@
+// ARTWORKS — 作品广场 feed (mock).
+//
+// Base feed + Chinese category labels come from the canonical liuguang design
+// (design-ref/liuguang/home-data.js). Generation params (id / prompt /
+// negPrompt / steps / sampler / cfgScale / size / titleEn) are merged 1:1 by
+// title from the richer reference (design-ref/app/data.jsx). 18 items, faithful
+// to the design. Covers are raw hue triplets — derive CSS via mesh()/coverBg().
+
+import type { Artwork } from "./types";
+
+export const ARTWORKS: Artwork[] = [
+  {
+    id: "a1", cover: [268, 192, 320], h: 1.34, type: "image", cat: "科幻",
+    model: "Flux.1 Pro", title: "霓虹废土行者", titleEn: "Neon Wastes Walker",
+    author: "夜航 NightSail", likes: 4820,
+    prompt: "a lone wanderer in a neon-drenched ruined city, volumetric fog, cinematic lighting, extremely detailed environment, 8k uhd, sharp focus, award-winning photography",
+    negPrompt: "blurry, oversaturated, watermark, multiple people, text, low resolution, jpeg artifacts, crowd",
+    steps: 28, sampler: "DPM++ 2M Karras", cfgScale: 7.5, size: "1024×1536",
+  },
+  {
+    id: "a2", cover: [20, 42, 8], h: 0.78, type: "image", cat: "人像",
+    model: "SDXL Lightning", title: "黄昏侧颜", titleEn: "Dusk Profile",
+    author: "Mira", likes: 2310,
+    prompt: "cinematic portrait of a woman, golden hour rim light, film grain, 85mm f/1.4, shallow depth of field, skin texture, analog film look, Kodak Portra 400",
+    negPrompt: "harsh shadows, overexposed, ugly, distorted face, extra limbs, makeup, digital, plastic skin",
+    steps: 35, sampler: "Euler a", cfgScale: 8.0, size: "896×1152",
+  },
+  {
+    id: "a3", cover: [190, 250, 210], h: 1.0, type: "video", cat: "视频",
+    model: "Seedance 2.0", title: "深海水母", titleEn: "Abyssal Jellyfish",
+    author: "OceanLab", likes: 8930,
+    prompt: "bioluminescent jellyfish drifting in deep ocean, slow motion, hyperreal, 4K macro cinematography, blue-violet light rays, absolute silence atmosphere",
+    negPrompt: "fast motion, abrupt cuts, noise, artifacts, text on screen, human, surface",
+    steps: 40, sampler: "DDIM", cfgScale: 7.0, size: "1920×1080",
+  },
+  {
+    id: "a4", cover: [330, 286, 350], h: 1.5, type: "image", cat: "动漫",
+    model: "Animagine XL", title: "雨夜便利店", titleEn: "Rainy Konbini",
+    author: "青柠 Lime", likes: 6140,
+    prompt: "anime girl standing under convenience store light, rainy night, reflections on wet pavement, lofi mood, soft pastel neon glow, Studio Ghibli atmosphere, masterpiece",
+    negPrompt: "realistic, 3d, ugly hands, extra fingers, bad anatomy, lowres, watermark, signature",
+    steps: 30, sampler: "DPM++ SDE Karras", cfgScale: 8.5, size: "832×1216",
+  },
+  {
+    id: "a5", cover: [150, 110, 180], h: 0.72, type: "image", cat: "插画",
+    model: "Flux.1 Dev", title: "苔原小屋", titleEn: "Tundra Cabin",
+    author: "Forrest", likes: 1890,
+    prompt: "cozy isometric cabin nestled in misty tundra, soft illustration style, muted pastel palette, warm window glow against cold fog, storybook feel",
+    negPrompt: "dark, gloomy, realistic, photorealistic, harsh shadows, people, busy background",
+    steps: 24, sampler: "Euler a", cfgScale: 7.0, size: "1024×1024",
+  },
+  {
+    id: "a6", cover: [300, 260, 18], h: 1.18, type: "image", cat: "人像",
+    model: "Midjourney v6", title: "赛博艺伎", titleEn: "Cyber Geisha",
+    author: "KENJI", likes: 12400,
+    prompt: "cyberpunk geisha, ornate holographic mask, iridescent kimono with circuit patterns, dramatic studio lighting, hyperdetailed, 8K, ultra sharp, WLOP style",
+    negPrompt: "blurry, low quality, watermark, deformed face, bad anatomy, extra limbs, oversaturated, low detail",
+    steps: 40, sampler: "DPM++ 2M Karras", cfgScale: 9.0, size: "1024×1536",
+  },
+  {
+    id: "a7", cover: [95, 140, 70], h: 0.92, type: "video", cat: "视频",
+    model: "可灵 Kling 1.6", title: "风穿麦田", titleEn: "Wind Through Wheat",
+    author: "稻田 Paddy", likes: 3360,
+    prompt: "golden wheat field at sunset, strong wind sweeping through in slow motion, drone aerial shot, warm light, cinematic color grade, 4K",
+    negPrompt: "shaky camera, night scene, dark, rain, overexposed, people in frame, buildings",
+    steps: 35, sampler: "DDIM", cfgScale: 7.5, size: "1920×1080",
+  },
+  {
+    id: "a8", cover: [210, 248, 196], h: 1.28, type: "image", cat: "3D",
+    model: "Flux.1 Pro", title: "果冻机器人", titleEn: "Jelly Bot",
+    author: "Studio 3F", likes: 5210,
+    prompt: "cute translucent jelly robot, pastel studio background, soft key light, Octane render, subsurface scattering, 3d character design, kawaii, product shot",
+    negPrompt: "dark, scary, sharp edges, metallic, photorealistic, text, dirty, broken",
+    steps: 32, sampler: "DPM++ 2M Karras", cfgScale: 7.5, size: "1024×1024",
+  },
+  {
+    id: "a9", cover: [8, 350, 28], h: 0.84, type: "image", cat: "国风",
+    model: "墨韵 InkXL", title: "青绿山水", titleEn: "Verdant Mountains",
+    author: "砚 Yan", likes: 7720,
+    prompt: "中国传统工笔青绿山水，矿物质颜料质感，石青石绿设色，金线勾勒，白云缭绕，宣纸肌理，宋代院体画风",
+    negPrompt: "western art style, oil paint, photorealistic, modern elements, dark background, digital painting",
+    steps: 36, sampler: "Euler a", cfgScale: 8.0, size: "1344×768",
+  },
+  {
+    id: "a10", cover: [255, 230, 290], h: 1.12, type: "image", cat: "科幻",
+    model: "SDXL Turbo", title: "轨道城市", titleEn: "Orbital City",
+    author: "Vega", likes: 4480,
+    prompt: "megastructure orbital ring city surrounding Earth, hard science fiction, extreme detail, blue atmosphere below, solar panels, docking bays, inspired by Ian Banks Culture novels",
+    negPrompt: "clouds blocking view, people, lens flare, blurry, cartoonish, fantasy, magic",
+    steps: 30, sampler: "DPM++ 2M SDE", cfgScale: 8.5, size: "1344×768",
+  },
+  {
+    id: "a11", cover: [38, 16, 52], h: 0.7, type: "image", cat: "摄影",
+    model: "Flux.1 Dev", title: "沙丘正午", titleEn: "Dune Noon",
+    author: "Atlas", likes: 2050,
+    prompt: "minimal desert sand dunes, harsh noon light casting sharp shadow ridge lines, fine art photography, negative space, monochromatic tan, Sebastião Salgado style",
+    negPrompt: "people, animals, vegetation, overcast sky, colorful objects, oversaturated, structures",
+    steps: 25, sampler: "Euler a", cfgScale: 7.0, size: "1344×768",
+  },
+  {
+    id: "a12", cover: [282, 318, 200], h: 1.4, type: "video", cat: "视频",
+    model: "Seedance 2.0", title: "液态金属", titleEn: "Liquid Chrome",
+    author: "FLUXLAB", likes: 9610,
+    prompt: "morphing liquid chrome blob on infinite white studio floor, perfect reflections, seamless loop, 4K, photorealistic, slow motion close-up",
+    negPrompt: "rough surface, matte material, dark, colored tint, organic imperfections, fingerprints",
+    steps: 40, sampler: "DDIM", cfgScale: 7.0, size: "1920×1080",
+  },
+  {
+    id: "a13", cover: [168, 200, 140], h: 0.95, type: "image", cat: "插画",
+    model: "Animagine XL", title: "森灵", titleEn: "Forest Spirit",
+    author: "青柠 Lime", likes: 3990,
+    prompt: "tiny luminous forest spirit perched on a mossy branch, soft volumetric god-rays, Ghibli-esque illustration, watercolor wash, muted greens and gold",
+    negPrompt: "dark, scary, photorealistic, adult, harsh lighting, crowded, modern objects",
+    steps: 28, sampler: "DPM++ SDE Karras", cfgScale: 7.5, size: "832×1216",
+  },
+  {
+    id: "a14", cover: [345, 12, 300], h: 1.22, type: "image", cat: "设计",
+    model: "Ideogram 2.0", title: "复古唱片封面", titleEn: "Retro Sleeve",
+    author: "PRESS PLAY", likes: 1670,
+    prompt: "retro vinyl record album cover art, bold geometric typography, risograph texture, warm 70s color palette — mustard yellow, burnt orange, deep teal, halftone dots",
+    negPrompt: "modern flat design, 3d render, photography, cluttered, overly complex, dark, cold palette",
+    steps: 20, sampler: "Euler a", cfgScale: 6.5, size: "1024×1024",
+  },
+  {
+    id: "a15", cover: [225, 265, 245], h: 0.88, type: "image", cat: "人像",
+    model: "Midjourney v6", title: "冰晶女王", titleEn: "Frost Queen",
+    author: "Mira", likes: 8120,
+    prompt: "ethereal ice queen, crystalline crown with embedded snowflakes, frozen breath in cold air, dramatic blue-white rim lighting, ultra-detailed fabric and ice textures",
+    negPrompt: "warm colors, summer setting, greenery, casual clothing, smiling, blurry, painterly",
+    steps: 38, sampler: "DPM++ 2M Karras", cfgScale: 8.5, size: "896×1152",
+  },
+  {
+    id: "a16", cover: [110, 78, 150], h: 1.3, type: "image", cat: "动漫",
+    model: "Pony Diffusion", title: "机甲少女", titleEn: "Mecha Pilot",
+    author: "KENJI", likes: 10500,
+    prompt: "anime girl mecha pilot in sleek cockpit, dynamic low-angle shot, HUD display reflections on visor, detailed lineart, cel shaded, vibrant colors, score_9",
+    negPrompt: "realistic, photorealistic, 3d rendering, bad anatomy, extra limbs, blurry, ugly, duplicate",
+    steps: 35, sampler: "DPM++ SDE Karras", cfgScale: 8.0, size: "832×1216",
+  },
+  {
+    id: "a17", cover: [30, 60, 20], h: 0.76, type: "video", cat: "视频",
+    model: "可灵 Kling 1.6", title: "熔岩流动", titleEn: "Lava Flow",
+    author: "OceanLab", likes: 2890,
+    prompt: "extreme close-up of molten lava flowing over black basalt, glowing orange cracks, steam rising, macro lens, slow motion 240fps, 4K",
+    negPrompt: "wide landscape shot, people, cold tones, night sky, water, plants",
+    steps: 35, sampler: "DDIM", cfgScale: 7.5, size: "1920×1080",
+  },
+  {
+    id: "a18", cover: [195, 175, 230], h: 1.05, type: "image", cat: "3D",
+    model: "Flux.1 Pro", title: "微缩盆栽星球", titleEn: "Pocket Planet",
+    author: "Studio 3F", likes: 4310,
+    prompt: "miniature planet inside a glass terrarium dome, tiny forests and mountains, soft studio lighting, bokeh background, product photography, 3D render, Octane",
+    negPrompt: "dark background, flat lighting, 2d illustration, cartoon, oversaturated, people, text",
+    steps: 30, sampler: "DPM++ 2M Karras", cfgScale: 7.5, size: "1024×1024",
+  },
+];

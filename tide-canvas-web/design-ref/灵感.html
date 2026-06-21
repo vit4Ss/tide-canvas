@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>灵感 · SCARECROWAI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Sora:wght@600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="liuguang/flux.css" />
+<link rel="stylesheet" href="liuguang/pages.css" />
+<link rel="stylesheet" href="liuguang/studio.css" />
+</head>
+<body class="studio-body">
+
+<div class="ws ws--insp">
+
+  <!-- full-height app sidebar -->
+  <aside class="ws-rail">
+    <a class="ws-brand" href="首页-流光.html" title="SCARECROW AI">
+      <span class="glyph"></span>
+      <b>SCARECROW</b>
+    </a>
+
+    <div class="ws-rail-sp"></div>
+
+    <nav class="ws-nav">
+      <a class="ws-tool" href="首页-流光.html" title="发现">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/></svg>
+        <span>发现</span>
+      </a>
+      <a class="ws-tool" href="创作台.html" title="创作">
+        <svg viewBox="0 0 24 24"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 1 4 10.5c-.7.6-1 1-1 2H9c0-1-.3-1.4-1-2A6 6 0 0 1 12 3z"/></svg>
+        <span>创作</span>
+      </a>
+      <a class="ws-tool" href="对话.html" title="生成">
+        <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span>生成</span>
+      </a>
+      <a class="ws-tool" href="画布.html" title="画布">
+        <svg viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 0 1 2-2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><circle cx="12" cy="12" r="3"/></svg>
+        <span>画布</span>
+      </a>
+      <a class="ws-tool" href="作品广场.html" title="作品广场">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+        <span>作品广场</span>
+      </a>
+      <a class="ws-tool on" href="灵感.html" title="灵感">
+        <svg viewBox="0 0 24 24"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 2v2M4.9 5l1.4 1.4M2 12h2M19.1 5l-1.4 1.4M20 12h2"/><path d="M9 14a4 4 0 1 1 6 0c-.5.5-1 1-1 2h-4c0-1-.5-1.5-1-2z"/></svg>
+        <span>灵感</span>
+      </a>
+    </nav>
+
+    <div class="ws-nav-div"></div>
+    <a class="ws-tool" href="资产.html" title="资产">
+      <svg viewBox="0 0 24 24"><path d="M3 7l2-3h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H3z"/></svg>
+      <span>资产</span>
+    </a>
+
+    <div class="ws-rail-sp"></div>
+
+    <a class="ws-upgrade" href="定价.html">
+      <div class="ws-upgrade-top"><span class="star">★</span> 低至 ¥39/月</div>
+      <div class="ws-upgrade-btn">升级 Pro</div>
+    </a>
+    <button class="ws-tool" title="通知" data-toast="暂无新通知">
+      <svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+      <span>通知</span>
+    </button>
+    <a class="ws-tool" href="#" title="登录" data-toast="登录 · 高保真原型">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>
+      <span>登录</span>
+    </a>
+  </aside>
+
+  <!-- content -->
+  <main class="insp">
+    <div class="insp-glow" aria-hidden="true"></div>
+    <div class="insp-in">
+      <h1>灵感</h1>
+      <label class="insp-search">
+        <span class="ic">⌕</span>
+        <input id="q" type="text" placeholder="试试「国风 Q 版」" />
+      </label>
+      <div class="insp-tabs" id="insp-tabs">
+        <button class="on" data-t="insp">✦ 灵感</button>
+        <button data-t="theme">主题</button>
+        <button data-t="prompt">提示词</button>
+      </div>
+      <div class="insp-masonry" id="feed"></div>
+      <div class="empty" id="inspEmpty" style="display:none">没有匹配的灵感，换个关键词试试 ✦</div>
+    </div>
+  </main>
+
+</div>
+
+<template id="__bundler_thumbnail">
+  <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <rect width="100" height="100" rx="20" fill="#05060c" />
+    <circle cx="50" cy="38" r="15" fill="none" stroke="#6d8bf5" stroke-width="6" />
+    <rect x="42" y="62" width="16" height="9" rx="3" fill="#9b7bf0" />
+    <rect x="44" y="76" width="12" height="6" rx="3" fill="#57c9e8" />
+  </svg>
+</template>
+
+<script src="liuguang/flux-field.js"></script>
+<script src="liuguang/home-data.js"></script>
+<script src="liuguang/shell.js"></script>
+<script src="liuguang/inspire.js"></script>
+</body>
+</html>

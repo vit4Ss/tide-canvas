@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="dark" data-style="neon">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SCARECROWAI · 智绘社区</title>
+  <link rel="stylesheet" href="app/theme.css" />
+  <link rel="stylesheet" href="home/home.css" />
+  <script>
+    (function () {
+      try {
+        var d = document.documentElement;
+        d.dataset.theme = 'dark';
+        d.dataset.style = 'neon';
+        d.lang = (localStorage.getItem('scarecrowai_lang') || 'cn') === 'cn' ? 'zh' : 'en';
+      } catch (e) {}
+    })();
+  </script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+  <script src="home/shader.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <template id="__bundler_thumbnail">
+    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <rect width="100" height="100" rx="20" fill="#08080b" />
+      <g fill="#fff">
+        <rect x="14" y="42" width="72" height="10" rx="5" />
+        <rect x="45" y="34" width="10" height="54" rx="5" />
+      </g>
+      <circle cx="50" cy="26" r="11.5" fill="#7c5cff" />
+      <rect x="29.5" y="14" width="41" height="7" rx="3.5" fill="#fff" />
+      <path d="M50 1 L63.5 15 L36.5 15 Z" fill="#7c5cff" />
+    </svg>
+  </template>
+
+  <script type="text/babel" src="app/brand.jsx"></script>
+  <script type="text/babel" src="app/data.jsx"></script>
+  <script type="text/babel" src="home/home-app.jsx"></script>
+  <script type="text/babel" data-presets="react">
+    ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(window.HomeApp));
+  </script>
+</body>
+</html>

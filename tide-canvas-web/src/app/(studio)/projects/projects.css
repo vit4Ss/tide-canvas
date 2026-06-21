@@ -1,0 +1,36 @@
+/* Small adjustments layered on top of the locked liuguang/canvas.css so the
+   real-data project card can host a link wrapper + the shared ProjectCardMenu
+   without altering the ported design markup/classes.
+
+   Plain (global) stylesheet imported only by the projects page; it targets the
+   design's exact class names (.cv-card, .cv-name, …) which the page emits
+   verbatim. Scope stays effectively local since only this route imports it. */
+
+/* the thumb is wrapped in a <Link> for navigation — keep it a plain block so
+   the design's .cv-thumb hover/transform still reads correctly */
+.cv-thumb-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+}
+
+/* truncate the project name but leave room for the trailing card menu */
+.cv-name .cv-name-txt {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* the "…" menu sits at the end of the name row; reveal on card hover/focus */
+.cv-name .cv-card-menu {
+  flex: none;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.cv-card:hover .cv-name .cv-card-menu,
+.cv-name .cv-card-menu:focus-within {
+  opacity: 1;
+}

@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SCARECROWAI · 控制台 OS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --void:#06080c; --panel:#0c1118; --panel-2:#111824; --panel-3:#162032;
+    --line:rgba(120,190,255,.1); --line-2:rgba(120,190,255,.2);
+    --txt:#dbe4f0; --dim:#8593aa; --faint:#566480;
+    --grn:#46e29a; --cyan:#37d6e6; --amber:#f5b740; --red:#ff6363;
+    --mono:'JetBrains Mono', ui-monospace, monospace;
+    --sans:'Space Grotesk','Noto Sans SC', system-ui, sans-serif;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{font-family:var(--sans); background:var(--void); color:var(--txt); -webkit-font-smoothing:antialiased;
+    background-image:linear-gradient(rgba(120,190,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(120,190,255,.025) 1px,transparent 1px);
+    background-size:44px 44px;}
+  ::selection{background:var(--grn); color:#04130c;}
+  a{color:inherit; text-decoration:none;} button{font-family:inherit; cursor:pointer; border:none; background:none; color:inherit;}
+  .mono{font-family:var(--mono);}
+  svg{display:block;}
+
+  /* ── left rail ── */
+  .rail{position:fixed; left:0; top:0; bottom:0; width:62px; z-index:40; background:var(--panel); border-right:1px solid var(--line);
+    display:flex; flex-direction:column; align-items:center; padding:14px 0; gap:6px;}
+  .rail .logo{width:34px; height:34px; border-radius:9px; background:linear-gradient(135deg,var(--grn),var(--cyan)); display:grid; place-items:center; color:#04130c; font-weight:800; margin-bottom:14px;}
+  .rail button{width:40px; height:40px; border-radius:10px; display:grid; place-items:center; color:var(--faint); transition:all .15s; position:relative;}
+  .rail button:hover{color:var(--txt); background:var(--panel-2);}
+  .rail button.on{color:var(--grn); background:color-mix(in srgb,var(--grn) 14%, transparent);}
+  .rail button.on::before{content:''; position:absolute; left:-14px; top:8px; bottom:8px; width:3px; border-radius:3px; background:var(--grn);}
+  .rail .sp{flex:1;}
+
+  .app{margin-left:62px;}
+
+  /* ── status bar ── */
+  .status{position:sticky; top:0; z-index:30; height:44px; display:flex; align-items:center; gap:16px; padding:0 18px;
+    background:color-mix(in srgb,var(--void) 84%,transparent); backdrop-filter:blur(12px); border-bottom:1px solid var(--line); font-family:var(--mono); font-size:12px;}
+  .status .live{display:flex; align-items:center; gap:7px; color:var(--grn);}
+  .status .live i{width:7px; height:7px; border-radius:50%; background:var(--grn); box-shadow:0 0 8px var(--grn); animation:pp 1.8s infinite;}
+  @keyframes pp{0%,100%{opacity:1;}50%{opacity:.35;}}
+  .status .seg{color:var(--dim);}
+  .status .seg b{color:var(--txt); font-weight:600;}
+  .status .sp{flex:1;}
+  .status .chipx{padding:3px 10px; border:1px solid var(--line-2); border-radius:7px; color:var(--dim);}
+  .status .chipx b{color:var(--cyan);}
+
+  .pad{padding:clamp(22px,3vw,40px) clamp(18px,3vw,40px) 60px; max-width:1500px;}
+
+  /* ── console hero ── */
+  .eyebrow{font-family:var(--mono); font-size:12px; letter-spacing:.16em; text-transform:uppercase; color:var(--faint); display:flex; align-items:center; gap:10px; white-space:nowrap;}
+  .eyebrow b{color:var(--grn); font-weight:600;}
+  h1.head{font-size:clamp(30px,4.6vw,56px); font-weight:700; line-height:1.04; letter-spacing:-.03em; margin:16px 0 0;}
+  h1.head .g{background:linear-gradient(100deg,var(--grn),var(--cyan)); -webkit-background-clip:text; background-clip:text; color:transparent;}
+  .console-wrap{display:grid; grid-template-columns:1.5fr 1fr; gap:16px; margin-top:30px;}
+  @media(max-width:1000px){.console-wrap{grid-template-columns:1fr;}}
+  .panel{background:linear-gradient(180deg,var(--panel-2),var(--panel)); border:1px solid var(--line); border-radius:14px; overflow:hidden;}
+  .panel-h{display:flex; align-items:center; gap:8px; padding:11px 15px; border-bottom:1px solid var(--line); font-family:var(--mono); font-size:11.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim);}
+  .panel-h .d{width:8px; height:8px; border-radius:50%; background:var(--grn);}
+  .panel-h .tag{margin-left:auto; color:var(--faint); text-transform:none; letter-spacing:0;}
+
+  .cmd{padding:18px;}
+  .cmd .tabs{display:flex; gap:6px; margin-bottom:14px;}
+  .cmd .tab{height:34px; padding:0 14px; border-radius:8px; border:1px solid var(--line); font-size:13px; font-weight:600; color:var(--dim); display:inline-flex; align-items:center; gap:7px; transition:all .15s;}
+  .cmd .tab.on{background:color-mix(in srgb,var(--grn) 14%, transparent); color:var(--grn); border-color:color-mix(in srgb,var(--grn) 40%, transparent);}
+  .cmd .input{min-height:96px; background:var(--void); border:1px solid var(--line-2); border-radius:10px; padding:14px 16px; font-family:var(--mono); font-size:14.5px; line-height:1.6; color:var(--txt);}
+  .cmd .input .cr{display:inline-block; width:8px; height:18px; background:var(--grn); vertical-align:-3px; animation:pp 1s steps(1) infinite;}
+  .cmd .row{display:flex; align-items:center; gap:10px; margin-top:14px; flex-wrap:wrap;}
+  .selpill{display:inline-flex; align-items:center; gap:8px; height:38px; padding:0 12px; border:1px solid var(--line-2); border-radius:9px; font-size:13px; color:var(--txt); background:var(--panel-3); white-space:nowrap;}
+  .selpill .sw{width:16px; height:16px; border-radius:5px;}
+  .field{display:inline-flex; align-items:center; gap:7px; height:38px; padding:0 12px; border:1px solid var(--line); border-radius:9px; font-family:var(--mono); font-size:12.5px; color:var(--dim); white-space:nowrap;}
+  .field b{color:var(--txt);}
+  .run{margin-left:auto; height:42px; padding:0 24px; border-radius:10px; background:linear-gradient(120deg,var(--grn),var(--cyan)); color:#04130c; font-weight:700; font-size:14.5px; display:inline-flex; align-items:center; gap:8px; transition:filter .15s, transform .15s; white-space:nowrap;}
+  .run:hover{filter:brightness(1.08); transform:translateY(-1px);}
+
+  /* right panels */
+  .side{display:flex; flex-direction:column; gap:16px;}
+  .queue{padding:14px 15px; display:flex; flex-direction:column; gap:13px;}
+  .job{}
+  .job .jt{display:flex; justify-content:space-between; font-family:var(--mono); font-size:12px; margin-bottom:6px;}
+  .job .jt .nm{color:var(--txt);} .job .jt .pc{color:var(--cyan);}
+  .bar{height:6px; border-radius:99px; background:var(--panel-3); overflow:hidden;}
+  .bar i{display:block; height:100%; background:linear-gradient(90deg,var(--grn),var(--cyan)); border-radius:99px; transition:width .4s linear;}
+  .online{padding:6px 0;}
+  .online .o{display:flex; align-items:center; gap:10px; padding:9px 15px; font-family:var(--mono); font-size:12.5px; border-bottom:1px solid var(--line);}
+  .online .o:last-child{border-bottom:none;}
+  .online .o .dot{width:7px; height:7px; border-radius:50%; background:var(--grn); box-shadow:0 0 7px var(--grn); flex:none;}
+  .online .o .nm{color:var(--txt); flex:1;}
+  .online .o .ms{color:var(--dim);}
+  .online .o .ms b{color:var(--grn); font-weight:600;}
+
+  /* ── matrix ── */
+  .blk-h{display:flex; align-items:flex-end; justify-content:space-between; gap:20px; margin:48px 0 18px; flex-wrap:wrap;}
+  .blk-h h2{font-size:clamp(22px,2.8vw,32px); font-weight:700; letter-spacing:-.02em;}
+  .blk-h h2 small{font-family:var(--mono); font-size:13px; color:var(--faint); font-weight:500; margin-left:10px; letter-spacing:.05em;}
+  .matrix{display:grid; grid-template-columns:repeat(auto-fill,minmax(232px,1fr)); gap:14px;}
+  .mcard{background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:15px; transition:all .18s; cursor:pointer; position:relative; overflow:hidden;}
+  .mcard:hover{border-color:var(--line-2); transform:translateY(-3px); background:var(--panel-2);}
+  .mcard .top{display:flex; align-items:center; gap:10px; margin-bottom:12px;}
+  .mcard .ic{width:34px; height:34px; border-radius:9px; display:grid; place-items:center; font-family:var(--mono); font-weight:700; font-size:11px; color:#04130c;}
+  .mcard .nm{font-weight:600; font-size:15px;}
+  .mcard .ty{font-family:var(--mono); font-size:11px; color:var(--faint);}
+  .mcard .desc{font-size:12.5px; color:var(--dim); line-height:1.5; min-height:38px;}
+  .mcard .stats{display:flex; gap:14px; margin-top:12px; padding-top:11px; border-top:1px solid var(--line); font-family:var(--mono); font-size:11.5px; color:var(--faint);}
+  .mcard .stats b{color:var(--cyan); font-weight:600;}
+  .mcard .bdg{position:absolute; top:13px; right:13px; font-family:var(--mono); font-size:9.5px; font-weight:700; letter-spacing:.06em; padding:2px 6px; border-radius:5px; background:color-mix(in srgb,var(--grn) 16%,transparent); color:var(--grn);}
+
+  /* ── readout strip ── */
+  .readout{display:grid; grid-template-columns:repeat(4,1fr); gap:1px; margin-top:46px; background:var(--line); border:1px solid var(--line); border-radius:14px; overflow:hidden;}
+  .readout .r{background:var(--panel); padding:22px 20px;}
+  .readout .r .v{font-family:var(--mono); font-size:clamp(24px,3vw,34px); font-weight:700; letter-spacing:-.02em;}
+  .readout .r .v.g{color:var(--grn);} .readout .r .v.c{color:var(--cyan);}
+  .readout .r .l{font-size:12px; color:var(--dim); margin-top:6px; font-family:var(--mono);}
+  @media(max-width:760px){.readout{grid-template-columns:1fr 1fr;}}
+
+  footer{margin-top:54px; padding:22px 0; border-top:1px solid var(--line); font-family:var(--mono); font-size:12px; color:var(--faint); display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px;}
+
+  .switcher{position:fixed; right:18px; bottom:18px; z-index:60; display:flex; gap:6px; background:var(--panel-2); border:1px solid var(--line-2); border-radius:999px; padding:5px;}
+  .switcher a{width:34px; height:34px; border-radius:50%; display:grid; place-items:center; font-family:var(--mono); font-size:13px; font-weight:700; color:var(--dim);}
+  .switcher a.on{background:linear-gradient(135deg,var(--grn),var(--cyan)); color:#04130c;}
+  @media(max-width:560px){.rail{display:none;} .app{margin-left:0;}}
+</style>
+</head>
+<body>
+  <aside class="rail">
+    <div class="logo">S</div>
+    <button class="on" title="创作"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l2.2 6.5L21 12l-6.8 2.5L12 21l-2.2-6.5L3 12l6.8-2.5z"/></svg></button>
+    <button title="作品"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></button>
+    <button title="模型"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l9 5v10l-9 5-9-5V7z"/><path d="M12 22V12M3 7l9 5 9-5"/></svg></button>
+    <button title="任务"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg></button>
+    <button title="资产"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7l9-4 9 4-9 4z"/><path d="M3 12l9 4 9-4M3 17l9 4 9-4"/></svg></button>
+    <div class="sp"></div>
+    <button title="设置"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3.2"/><path d="M19 12a7 7 0 0 0-.1-1.3l2-1.5-2-3.4-2.3 1a7 7 0 0 0-2.2-1.3L13.7 2h-3.4l-.5 2.5a7 7 0 0 0-2.2 1.3l-2.3-1-2 3.4 2 1.5A7 7 0 0 0 5 12c0 .4 0 .9.1 1.3l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 2.2 1.3l.5 2.5h3.4l.5-2.5a7 7 0 0 0 2.2-1.3l2.3 1 2-3.4-2-1.5c.1-.4.1-.9.1-1.3z"/></svg></button>
+  </aside>
+
+  <div class="app">
+    <div class="status">
+      <span class="live"><i></i>SYSTEM ONLINE</span>
+      <span class="seg">SCARECROWAI <b>OS v2.0</b></span>
+      <span class="sp"></span>
+      <span class="chipx">余额 <b id="bal">1,240</b> 算力</span>
+      <span class="chipx">P95 <b id="p95">312ms</b></span>
+      <span class="chipx">用户 <b>@you</b></span>
+    </div>
+
+    <div class="pad">
+      <div class="eyebrow"><span>//</span> 超级 AI 创作控制台 <b>· 实时</b></div>
+      <h1 class="head">一句话，调度<span class="g">全部顶级模型</span></h1>
+
+      <div class="console-wrap">
+        <div class="panel">
+          <div class="panel-h"><span class="d"></span>命令台 / COMMAND<span class="tag">⌘K</span></div>
+          <div class="cmd">
+            <div class="tabs">
+              <button class="tab on" data-m="image"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>图片</button>
+              <button class="tab" data-m="video"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="14" height="14" rx="2"/><path d="m22 8-6 4 6 4z"/></svg>视频</button>
+            </div>
+            <div class="input mono" id="cinput"><span id="ctext"></span><span class="cr"></span></div>
+            <div class="row">
+              <span class="selpill"><span class="sw" style="background:linear-gradient(135deg,#46e29a,#37d6e6)"></span><span id="curModel">GPT Image 2</span>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></span>
+              <span class="field">尺寸 <b>1024²</b></span>
+              <span class="field">数量 <b>×4</b></span>
+              <button class="run">运行
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 3l14 9-14 9z"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="side">
+          <div class="panel">
+            <div class="panel-h"><span class="d" style="background:var(--cyan)"></span>渲染队列 / QUEUE<span class="tag" id="qn">3 active</span></div>
+            <div class="queue" id="queue"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-h"><span class="d"></span>模型在线 / ONLINE<span class="tag">14 nodes</span></div>
+            <div class="online" id="online"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="blk-h"><h2>模型矩阵<small>// MODEL MATRIX</small></h2></div>
+      <div class="matrix" id="matrix"></div>
+
+      <div class="readout">
+        <div class="r"><div class="v g">99.98%</div><div class="l">UPTIME · 30d</div></div>
+        <div class="r"><div class="v c" id="rps">1,842</div><div class="l">REQUESTS / SEC</div></div>
+        <div class="r"><div class="v">30+</div><div class="l">MODELS ONLINE</div></div>
+        <div class="r"><div class="v" id="p95b">312<span style="font-size:.6em">ms</span></div><div class="l">P95 LATENCY</div></div>
+      </div>
+
+      <footer>
+        <span>© 2026 SCARECROWAI · 稻草人智绘 OS</span>
+        <span>node sg-3 · region ap-east · build 2026.06.20</span>
+      </footer>
+    </div>
+  </div>
+
+  <div class="switcher">
+    <a href="A-极简画廊.html" title="极简画廊">A</a>
+    <a class="on" href="B-控制台.html" title="控制台 OS">B</a>
+    <a href="C-杂志海报.html" title="杂志海报">C</a>
+  </div>
+
+<script>
+  // ── command typewriter ──
+  const PROMPTS={image:['赛博朋克城市夜景，霓虹倒影，电影感，8K 超写实','液态金属机器人，纯白工作室布光，C4D 渲染','青绿山水工笔，矿物颜料石青石绿，宋代院体画风'],
+    video:['一只机械蝴蝶在霓虹丛林中飞行，慢动作，景深','黄昏海岸航拍，浪花拍打礁石，电影色调，4K 60fps','宇航员漂浮过土星环，体积光，超写实']};
+  let MODE='image', ct=document.getElementById('ctext'), pi=0,ci=0,del=false,twTimer;
+  function tw(){ const L=PROMPTS[MODE]; const full=L[pi%L.length];
+    if(!del){ ci++; ct.textContent=full.slice(0,ci); if(ci>=full.length){del=true; twTimer=setTimeout(tw,2100); return;} twTimer=setTimeout(tw,48); }
+    else{ ci--; ct.textContent=full.slice(0,Math.max(0,ci)); if(ci<=0){del=false; pi++; twTimer=setTimeout(tw,320); return;} twTimer=setTimeout(tw,22); } }
+  tw();
+  document.querySelectorAll('.cmd .tab').forEach(t=>t.addEventListener('click',()=>{
+    document.querySelectorAll('.cmd .tab').forEach(x=>x.classList.toggle('on',x===t));
+    MODE=t.dataset.m; pi=0; ci=0; del=false; clearTimeout(twTimer);
+    document.getElementById('curModel').textContent = MODE==='image'?'GPT Image 2':'Seedance 2.0';
+    tw();
+  }));
+
+  // ── render queue (live) ──
+  const QJOBS=[{nm:'cyber_city_8k',p:62},{nm:'ink_landscape',p:38},{nm:'mecha_pilot_v3',p:84}];
+  function drawQueue(){ document.getElementById('queue').innerHTML=QJOBS.map(j=>
+    `<div class="job"><div class="jt"><span class="nm">▸ ${j.nm}.png</span><span class="pc">${Math.round(j.p)}%</span></div><div class="bar"><i style="width:${j.p}%"></i></div></div>`).join(''); }
+  drawQueue();
+  setInterval(()=>{ QJOBS.forEach(j=>{ j.p+=Math.random()*7; if(j.p>=100){ j.p=2+Math.random()*10; } }); drawQueue(); },900);
+
+  // ── models online (live latency) ──
+  const ONLINE=[['GPT Image 2',38],['Nano Banana 2',52],['Seedance 2.0',128],['Kling 3.0',141],['Flux.1 Pro',61]];
+  function drawOnline(){ document.getElementById('online').innerHTML=ONLINE.map(([n,ms])=>
+    `<div class="o"><span class="dot"></span><span class="nm">${n}</span><span class="ms"><b>${ms}</b>ms</span></div>`).join(''); }
+  drawOnline();
+  setInterval(()=>{ ONLINE.forEach(o=>{ o[1]=Math.max(28, o[1]+Math.round((Math.random()-.5)*22)); }); drawOnline();
+    document.getElementById('p95').textContent=(290+Math.round(Math.random()*60))+'ms';
+    document.getElementById('p95b').innerHTML=(290+Math.round(Math.random()*60))+'<span style="font-size:.6em">ms</span>';
+    document.getElementById('rps').textContent=(1700+Math.round(Math.random()*400)).toLocaleString();
+  },1500);
+
+  // ── model matrix ──
+  const MATRIX=[
+    {nm:'GPT Image 2',tag:'GP',ty:'image · openai',desc:'语义级理解，文字渲染精准，画质细腻逼真。',lat:38,runs:'2.4M',bdg:'NEW',g:'linear-gradient(135deg,#46e29a,#37d6e6)'},
+    {nm:'Nano Banana 2',tag:'NB',ty:'image · google',desc:'极速出图，4K 分辨率，角色一致性强。',lat:52,runs:'5.1M',bdg:'HOT',g:'linear-gradient(135deg,#37d6e6,#6aa8ff)'},
+    {nm:'Seedance 2.0',tag:'S2',ty:'video · 字节',desc:'音画同步多模态旗舰，重塑 AI 视频标杆。',lat:128,runs:'880k',bdg:'NEW',g:'linear-gradient(135deg,#7c8bff,#37d6e6)'},
+    {nm:'Kling 3.0',tag:'KL',ty:'video · 快手',desc:'原生 4K 60fps，AI 多镜头分镜调度。',lat:141,runs:'1.2M',bdg:null,g:'linear-gradient(135deg,#46e29a,#8be36a)'},
+    {nm:'Midjourney V7',tag:'MJ',ty:'image · mj',desc:'将文字转化为极致的艺术视觉效果。',lat:74,runs:'9.3M',bdg:null,g:'linear-gradient(135deg,#a878ff,#37d6e6)'},
+    {nm:'Sora 2',tag:'SO',ty:'video · openai',desc:'长视频生成，物理一致性，电影质感。',lat:160,runs:'420k',bdg:null,g:'linear-gradient(135deg,#37d6e6,#46e29a)'},
+    {nm:'Flux.1 Pro',tag:'FX',ty:'image · bfl',desc:'超高细节写实，专业创作首选。',lat:61,runs:'3.8M',bdg:'HOT',g:'linear-gradient(135deg,#6aa8ff,#a878ff)'},
+    {nm:'Imagen 4.0',tag:'G4',ty:'image · google',desc:'Google 最先进的图像生成模型。',lat:58,runs:'2.0M',bdg:null,g:'linear-gradient(135deg,#46e29a,#37d6e6)'},
+  ];
+  document.getElementById('matrix').innerHTML=MATRIX.map(m=>
+    `<div class="mcard">${m.bdg?`<span class="bdg">${m.bdg}</span>`:''}
+      <div class="top"><div class="ic" style="background:${m.g}">${m.tag}</div><div><div class="nm">${m.nm}</div><div class="ty mono">${m.ty}</div></div></div>
+      <div class="desc">${m.desc}</div>
+      <div class="stats"><span>延迟 <b>${m.lat}ms</b></span><span>调用 <b>${m.runs}</b></span></div>
+    </div>`).join('');
+</script>
+</body>
+</html>

@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SCARECROWAI · 杂志海报</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Instrument+Serif:ital@0;1&family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --ink:#130A12; --ink-2:#1d0f1a; --ink-3:#2a1726;
+    --cream:#F4EADF; --cream-2:#c4b2a4; --cream-3:#8a7a6f;
+    --coral:#FF5A3C; --violet:#8B6BFF; --acid:#E8FF59;
+    --line:rgba(244,234,223,.16);
+    --grot:'Space Grotesk','Noto Sans SC', system-ui, sans-serif;
+    --serif:'Instrument Serif', Georgia, serif;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{font-family:var(--grot); background:var(--ink); color:var(--cream); -webkit-font-smoothing:antialiased; overflow-x:hidden;}
+  ::selection{background:var(--coral); color:var(--ink);}
+  a{color:inherit; text-decoration:none;} button{font-family:inherit; cursor:pointer; border:none; background:none; color:inherit;}
+  svg{display:block;}
+  .wrap{max-width:1340px; margin:0 auto; padding:0 32px;}
+  .serif{font-family:var(--serif);} .it{font-family:var(--serif); font-style:italic;}
+
+  /* ── masthead ── */
+  .topline{border-bottom:1px solid var(--line); font-family:var(--serif); font-style:italic; font-size:15px; color:var(--cream-2);}
+  .topline .wrap{display:flex; justify-content:space-between; align-items:center; height:38px;}
+  header .wrap{display:flex; align-items:center; height:78px; gap:32px;}
+  .brand{font-weight:700; font-size:22px; letter-spacing:-.04em;}
+  .brand b{color:var(--coral);}
+  header nav{display:flex; gap:28px; margin-left:auto;}
+  header nav a{font-size:14px; font-weight:500; color:var(--cream-2); transition:color .15s; white-space:nowrap;}
+  header nav a:hover{color:var(--cream);}
+  .enter{height:42px; padding:0 22px; border:1.5px solid var(--cream); border-radius:0; font-weight:600; font-size:14px; display:inline-flex; align-items:center; gap:8px; transition:all .18s;}
+  .enter:hover{background:var(--coral); border-color:var(--coral); color:var(--ink);}
+
+  /* ── duotone media ── */
+  .duo{position:relative; overflow:hidden; background:var(--ink-2);}
+  .duo .base{position:absolute; inset:0; filter:contrast(1.05) saturate(.5); transition:transform .7s cubic-bezier(.2,.7,.2,1);}
+  .duo .tint{position:absolute; inset:0; background:linear-gradient(135deg,var(--coral),var(--violet)); mix-blend-mode:overlay; opacity:.9;}
+  .duo .grain{position:absolute; inset:0; background:linear-gradient(180deg,transparent 55%,rgba(19,10,18,.5));}
+  .duo:hover .base{transform:scale(1.05);}
+
+  /* ── hero poster ── */
+  .hero{position:relative; padding:clamp(40px,6vw,74px) 0 clamp(48px,7vw,96px);}
+  .kick{font-family:var(--serif); font-style:italic; font-size:clamp(18px,2vw,24px); color:var(--coral);}
+  .poster{display:grid; grid-template-columns:1.15fr .85fr; gap:28px; align-items:end; margin-top:18px;}
+  @media(max-width:880px){.poster{grid-template-columns:1fr;}}
+  .big{font-weight:700; font-size:clamp(58px,13.5vw,184px); line-height:.86; letter-spacing:-.05em; margin:0;}
+  .big .row2{display:block; color:var(--coral);}
+  .big .em{font-family:var(--serif); font-style:italic; font-weight:400; letter-spacing:-.02em; color:var(--cream);}
+  .hero-media{position:relative; aspect-ratio:4/5; border-radius:0;}
+  .hero-media .cap{position:absolute; left:14px; bottom:12px; z-index:2; font-family:var(--serif); font-style:italic; font-size:15px; color:var(--cream);}
+  .hero-foot{display:flex; align-items:flex-end; justify-content:space-between; gap:30px; margin-top:30px; flex-wrap:wrap; border-top:1px solid var(--line); padding-top:24px;}
+  .hero-sub{font-size:clamp(16px,1.7vw,20px); color:var(--cream-2); max-width:40ch; line-height:1.5;}
+  .cta-btn{height:58px; padding:0 32px; background:var(--coral); color:var(--ink); font-weight:700; font-size:16px; display:inline-flex; align-items:center; gap:10px; white-space:nowrap; transition:transform .15s, background .2s;}
+  .cta-btn:hover{transform:translateY(-2px); background:var(--acid);}
+  .cta-btn.ghost{background:transparent; color:var(--cream); border:1.5px solid var(--line);}
+  .cta-btn.ghost:hover{border-color:var(--cream); background:transparent; color:var(--cream);}
+
+  /* ── stats ribbon ── */
+  .ribbon{background:var(--coral); color:var(--ink); overflow:hidden; border-top:1px solid var(--ink);}
+  .ribbon .rin{display:flex; gap:60px; padding:16px 0; width:max-content; animation:slide 26s linear infinite; font-family:var(--serif); font-style:italic; font-size:26px; white-space:nowrap;}
+  .ribbon .rin span{display:inline-flex; align-items:center; gap:60px;}
+  .ribbon .rin b{font-family:var(--grot); font-style:normal; font-weight:700;}
+  @keyframes slide{from{transform:translateX(0);}to{transform:translateX(-50%);}}
+
+  /* ── editorial feature ── */
+  .feat{padding:clamp(60px,8vw,120px) 0; border-bottom:1px solid var(--line);}
+  .feat .fin{display:grid; grid-template-columns:1fr 1fr; gap:clamp(30px,5vw,72px); align-items:center;}
+  .feat.rev .fin{direction:rtl;} .feat.rev .fin>*{direction:ltr;}
+  @media(max-width:860px){.feat .fin{grid-template-columns:1fr;} .feat.rev .fin{direction:ltr;}}
+  .feat .no{font-family:var(--serif); font-style:italic; font-size:clamp(40px,5vw,72px); color:var(--coral); line-height:1;}
+  .feat h2{font-weight:700; font-size:clamp(34px,4.6vw,64px); line-height:1.02; letter-spacing:-.035em; margin:14px 0 0;}
+  .feat h2 .it{color:var(--violet);}
+  .feat p{font-size:clamp(15px,1.5vw,18px); color:var(--cream-2); line-height:1.6; margin:22px 0 0; max-width:42ch;}
+  .feat .tags{display:flex; gap:8px; margin-top:26px; flex-wrap:wrap;}
+  .feat .tags span{font-size:13px; padding:6px 14px; border:1px solid var(--line); border-radius:999px; color:var(--cream-2);}
+  .feat-media{position:relative; aspect-ratio:1/1.04;}
+  .feat-media .num{position:absolute; top:14px; right:16px; z-index:2; font-family:var(--serif); font-style:italic; font-size:16px; color:var(--cream);}
+
+  /* ── giant model marquee ── */
+  .names{padding:clamp(50px,7vw,96px) 0; overflow:hidden; border-bottom:1px solid var(--line);}
+  .names .lab{font-family:var(--serif); font-style:italic; font-size:18px; color:var(--cream-3); padding:0 32px; margin-bottom:20px;}
+  .names .track{display:flex; gap:46px; width:max-content; animation:slide 40s linear infinite; align-items:center;}
+  .names .n{font-weight:700; font-size:clamp(40px,7vw,104px); letter-spacing:-.04em; color:transparent; -webkit-text-stroke:1.4px var(--cream-3); white-space:nowrap;}
+  .names .n.fill{-webkit-text-stroke:0; color:var(--coral);}
+  .names .n.fillv{-webkit-text-stroke:0; color:var(--violet);}
+  .names .track:hover{animation-play-state:paused;}
+
+  /* ── pull quote ── */
+  .quote{padding:clamp(70px,10vw,150px) 0; text-align:center;}
+  .quote q{font-family:var(--serif); font-style:italic; font-size:clamp(34px,6vw,86px); line-height:1.08; letter-spacing:-.02em; quotes:none; display:block; max-width:18ch; margin:0 auto;}
+  .quote q em{font-style:normal; color:var(--coral);}
+  .quote .by{font-size:14px; color:var(--cream-3); margin-top:30px; letter-spacing:.1em; text-transform:uppercase;}
+
+  /* ── CTA block ── */
+  .cta{background:var(--coral); color:var(--ink); padding:clamp(60px,9vw,130px) 0;}
+  .cta .cin{display:flex; align-items:center; justify-content:space-between; gap:40px; flex-wrap:wrap;}
+  .cta h2{font-weight:700; font-size:clamp(40px,7vw,108px); line-height:.92; letter-spacing:-.04em;}
+  .cta h2 .it{color:var(--ink);}
+  .cta .cb{height:66px; padding:0 40px; background:var(--ink); color:var(--cream); font-weight:700; font-size:18px; display:inline-flex; align-items:center; gap:12px; white-space:nowrap; transition:transform .15s;}
+  .cta .cb:hover{transform:translateY(-2px);}
+
+  footer{padding:46px 0; font-size:13.5px; color:var(--cream-3);}
+  footer .fin{display:flex; justify-content:space-between; flex-wrap:wrap; gap:18px; align-items:center;}
+  footer .fl{display:flex; gap:26px;} footer .fl a:hover{color:var(--cream);}
+
+  .switcher{position:fixed; right:18px; bottom:18px; z-index:60; display:flex; gap:6px; background:var(--ink-3); border:1px solid var(--line); border-radius:999px; padding:5px;}
+  .switcher a{width:34px; height:34px; border-radius:50%; display:grid; place-items:center; font-weight:700; font-size:13px; color:var(--cream-2);}
+  .switcher a.on{background:var(--coral); color:var(--ink);}
+
+  .reveal{opacity:0; transform:translateY(30px); transition:opacity .7s cubic-bezier(.2,.7,.2,1), transform .7s cubic-bezier(.2,.7,.2,1);}
+  .reveal.in{opacity:1; transform:none;}
+  @media(prefers-reduced-motion:reduce){.reveal{opacity:1; transform:none;}}
+  @media(max-width:680px){ header nav{display:none;} }
+</style>
+</head>
+<body>
+  <div class="topline"><div class="wrap"><span>SCARECROWAI · 智绘月刊</span><span>第 07 期 — 2026 / 06</span></div></div>
+  <header><div class="wrap">
+    <div class="brand">SCARECROW<b>AI</b></div>
+    <nav><a href="#f1">图片</a><a href="#f2">视频</a><a href="#names">模型</a><a href="#">价格</a></nav>
+    <a class="enter" href="#">进入创作 →</a>
+  </div></header>
+
+  <section class="hero"><div class="wrap">
+    <div class="kick">From ordinary to extraordinary · 从平凡到非凡</div>
+    <div class="poster">
+      <h1 class="big">一句话，<span class="row2">生成<span class="em">万物</span>。</span></h1>
+      <div class="hero-media duo">
+        <div class="base" id="hbase"></div><div class="tint"></div><div class="grain"></div>
+        <div class="cap">「赛博霓虹」· Seedance 2.0</div>
+      </div>
+    </div>
+    <div class="hero-foot">
+      <p class="hero-sub">图片 · 视频 · 30+ 顶级模型，一个平台全部拥有。无需专业知识，让想象即刻成真。</p>
+      <div style="display:flex; gap:12px; flex-wrap:wrap;">
+        <a class="cta-btn" href="#">开始创作 <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+        <a class="cta-btn ghost" href="#names">看模型</a>
+      </div>
+    </div>
+  </div></section>
+
+  <div class="ribbon"><div class="rin">
+    <span><span><b>5M+</b> 创作者</span><span><b>200M+</b> 作品</span><span><b>30+</b> 模型</span><span><b>4.9★</b> 评分</span><span><b>3.2s</b> 平均出图</span></span>
+    <span><span><b>5M+</b> 创作者</span><span><b>200M+</b> 作品</span><span><b>30+</b> 模型</span><span><b>4.9★</b> 评分</span><span><b>3.2s</b> 平均出图</span></span>
+  </div></div>
+
+  <section class="feat" id="f1"><div class="wrap fin">
+    <div class="reveal">
+      <div class="no">01</div>
+      <h2>图片生成，<br/>细节<span class="it">拉满</span>。</h2>
+      <p>GPT Image 2 全新上线，语义级理解、精准文字渲染，画风随心定制。从写实人像到工笔山水，一句话即得高清大图。</p>
+      <div class="tags"><span>GPT Image 2</span><span>Nano Banana Pro</span><span>Flux.1 Pro</span><span>Midjourney V7</span></div>
+    </div>
+    <div class="feat-media duo reveal"><div class="base" id="b1"></div><div class="tint"></div><div class="grain"></div><div class="num">FIG. 01</div></div>
+  </div></section>
+
+  <section class="feat rev" id="f2"><div class="wrap fin">
+    <div class="reveal">
+      <div class="no">02</div>
+      <h2>视频创作，<br/>视听<span class="it">双绝</span>。</h2>
+      <p>Seedance 2.0 主打音画同步，Kling 3.0 原生 4K 60fps 与 AI 多镜头分镜。一张静图，一句指令，即刻起飞成片。</p>
+      <div class="tags"><span>Seedance 2.0</span><span>Kling 3.0</span><span>Sora 2</span><span>Google Veo 3</span></div>
+    </div>
+    <div class="feat-media duo reveal"><div class="base" id="b2"></div><div class="tint" style="background:linear-gradient(135deg,var(--violet),var(--coral))"></div><div class="grain"></div><div class="num">FIG. 02</div></div>
+  </div></section>
+
+  <section class="feat" id="f3"><div class="wrap fin">
+    <div class="reveal">
+      <div class="no">03</div>
+      <h2>创作间，<br/>让灵感<span class="it">落地</span>。</h2>
+      <p>无限画布上自由编排：扩图、抠图、局部重绘、高清放大一站直达。工作流把想法自动串成大片，每一步都所见即所得。</p>
+      <div class="tags"><span>智能扩图</span><span>移除背景</span><span>局部重绘</span><span>4× 高清放大</span></div>
+    </div>
+    <div class="feat-media duo reveal"><div class="base" id="b3"></div><div class="tint" style="background:linear-gradient(135deg,var(--acid),var(--coral))"></div><div class="grain"></div><div class="num">FIG. 03</div></div>
+  </div></section>
+
+  <section class="names" id="names">
+    <div class="lab">已接入 · 持续更新</div>
+    <div class="track" id="track"></div>
+  </section>
+
+  <section class="quote"><div class="wrap">
+    <q>把<em>平凡</em>，变成<em>非凡</em>。</q>
+    <div class="by">— 一个超级 AI 智能体，为所有创作者</div>
+  </div></section>
+
+  <section class="cta"><div class="wrap cin">
+    <h2>现在，<br/>开始<span class="it">创造</span>。</h2>
+    <a class="cb" href="#">免费创作 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+  </div></section>
+
+  <footer><div class="wrap fin">
+    <div class="brand" style="font-size:17px;">SCARECROW<b>AI</b></div>
+    <div class="fl"><a href="#">关于</a><a href="#">博客</a><a href="#">帮助</a><a href="#">条款</a><a href="#">隐私</a></div>
+    <span>© 2026 稻草人智绘 · 智绘月刊 第 07 期</span>
+  </div></footer>
+
+  <div class="switcher">
+    <a href="A-极简画廊.html" title="极简画廊">A</a>
+    <a href="B-控制台.html" title="控制台 OS">B</a>
+    <a class="on" href="C-杂志海报.html" title="杂志海报">C</a>
+  </div>
+
+<script>
+  function gmesh(seed,gray){
+    const h1=(seed*61+20)%360,h2=(seed*97+150)%360,h3=(seed*131+280)%360;
+    const s=gray?28:64, l1=gray?52:60;
+    return `radial-gradient(120% 120% at 20% 14%, hsl(${h1} ${s}% ${l1}%) 0%, transparent 55%),`
+      +`radial-gradient(120% 120% at 84% 22%, hsl(${h2} ${s}% ${l1-6}%) 0%, transparent 52%),`
+      +`radial-gradient(150% 150% at 50% 108%, hsl(${h3} ${s}% ${l1-14}%) 0%, transparent 60%),`
+      +`linear-gradient(160deg, hsl(${h1} ${s}% 26%), hsl(${h2} ${s}% 12%))`;
+  }
+  ['hbase','b1','b2','b3'].forEach((id,i)=>{ const el=document.getElementById(id); if(el) el.style.background=gmesh(i*9+5,true); });
+
+  // giant model marquee
+  const NAMES=['GPT IMAGE 2','SEEDANCE 2.0','MIDJOURNEY V7','KLING 3.0','FLUX.1 PRO','SORA 2','NANO BANANA','IMAGEN 4.0','WAN 2.7','HAILUO'];
+  const cls=['','fill','','fillv','','fill','','fillv','','fill'];
+  const seq=NAMES.map((n,i)=>`<span class="n ${cls[i]}">${n}</span><span class="n" style="color:var(--cream-3);-webkit-text-stroke:0;font-family:var(--serif);font-style:italic;">✦</span>`).join('');
+  document.getElementById('track').innerHTML=seq+seq;
+
+  // scroll reveal
+  const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}}),{threshold:.15});
+  document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+</script>
+</body>
+</html>

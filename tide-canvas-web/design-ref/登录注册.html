@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>登录 / 注册 · SCARECROWAI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Sora:wght@600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="liuguang/flux.css" />
+<style>
+  /* ─── auth screen ──────────────────────────────────────────────── */
+  body{min-height:100vh;}
+  .auth-top{position:fixed; top:0; left:0; right:0; z-index:20; height:72px; display:flex; align-items:center; justify-content:space-between; padding:0 clamp(18px,4vw,40px);}
+  .auth-top .brand{font-size:19px; margin:0;}
+  .auth-top .back{display:inline-flex; align-items:center; gap:8px; height:38px; padding:0 16px; border-radius:var(--pill); font-size:13.5px; font-weight:600; color:var(--text-dim); border:1px solid var(--border); transition:all .16s var(--ease);}
+  .auth-top .back:hover{color:var(--text); border-color:var(--border-strong); background:var(--panel);}
+
+  .auth-stage{position:relative; z-index:1; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:96px 22px 48px;}
+
+  .auth-card{position:relative; width:min(960px,100%); display:grid; grid-template-columns:1.02fr .98fr;
+    border-radius:24px; overflow:hidden; background:color-mix(in oklab,var(--surface) 86%, transparent);
+    border:1px solid var(--border-strong); backdrop-filter:blur(26px); -webkit-backdrop-filter:blur(26px);
+    box-shadow:0 50px 130px rgba(0,0,0,.66);}
+  .auth-card::before{content:''; position:absolute; inset:0; padding:1px; border-radius:inherit; pointer-events:none; z-index:5;
+    background:linear-gradient(135deg, color-mix(in oklab,var(--accent) 50%,transparent), transparent 40%, color-mix(in oklab,var(--accent-2) 42%,transparent));
+    -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite:xor; mask-composite:exclude;}
+  @media(max-width:780px){ .auth-card{grid-template-columns:1fr; max-width:440px;} .auth-aside{display:none;} }
+
+  /* ── left showcase panel ── */
+  .auth-aside{position:relative; overflow:hidden; padding:40px 38px; display:flex; flex-direction:column;
+    background:linear-gradient(165deg, #11163a 0%, #0a0c1c 60%, #0c0a22 100%);}
+  .auth-aside .glow{position:absolute; width:420px; height:420px; border-radius:50%; filter:blur(50px); opacity:.5; pointer-events:none;
+    background:radial-gradient(circle at 50% 50%, var(--accent) 0%, transparent 65%); top:-130px; left:-90px;}
+  .auth-aside .glow.b{background:radial-gradient(circle at 50% 50%, var(--accent-2) 0%, transparent 65%); top:auto; bottom:-150px; left:auto; right:-110px; opacity:.42;}
+  .auth-aside-top{position:relative; z-index:1; display:flex; align-items:center; gap:10px; font-family:var(--disp); font-weight:800; font-size:18px; letter-spacing:-.03em;}
+  .auth-aside-top .glyph{width:24px; height:24px; position:relative;}
+  .auth-aside-top .glyph::before{content:''; position:absolute; inset:0; border-radius:6px; background:var(--grad); transform:rotate(45deg); box-shadow:0 0 16px var(--accent-soft);}
+  .auth-aside-top b{color:var(--accent);}
+
+  .auth-aside-head{position:relative; z-index:1; margin-top:auto;}
+  .auth-aside-head .eyebrow{margin-bottom:14px;}
+  .auth-aside-head h2{font-family:var(--disp); font-size:30px; font-weight:800; letter-spacing:-.03em; line-height:1.14; margin:0; text-wrap:balance;}
+  .auth-aside-head p{font-size:14px; line-height:1.65; color:var(--text-dim); margin:14px 0 0; max-width:30ch;}
+
+  .auth-tiles{position:relative; z-index:1; display:flex; gap:9px; margin-top:26px;}
+  .auth-tiles .t{flex:1; height:74px; border-radius:12px; box-shadow:inset 0 0 0 1px rgba(255,255,255,.08), 0 10px 24px rgba(0,0,0,.4);
+    animation:tFloat 5s var(--ease) infinite;}
+  .auth-tiles .t:nth-child(1){background:conic-gradient(from 200deg at 40% 30%, #6d8bf5, #57c9e8, #9b7bf0, #6d8bf5); animation-delay:0s;}
+  .auth-tiles .t:nth-child(2){background:conic-gradient(from 20deg at 60% 40%, #9b7bf0, #6d8bf5, #b06fe0, #9b7bf0); animation-delay:.6s; margin-top:-12px;}
+  .auth-tiles .t:nth-child(3){background:conic-gradient(from 120deg at 50% 60%, #57c9e8, #7b78f0, #6d8bf5, #57c9e8); animation-delay:1.2s;}
+  @keyframes tFloat{0%,100%{transform:translateY(0);} 50%{transform:translateY(-7px);}}
+
+  .auth-stats{position:relative; z-index:1; display:flex; gap:24px; margin-top:26px; padding-top:22px; border-top:1px solid rgba(255,255,255,.08);}
+  .auth-stats .s b{display:block; font-family:var(--disp); font-size:20px; font-weight:800; letter-spacing:-.02em;}
+  .auth-stats .s span{font-size:11.5px; color:var(--text-faint);}
+
+  /* ── right form panel ── */
+  .auth-main{position:relative; padding:clamp(30px,3.6vw,46px) clamp(28px,3.4vw,44px);}
+  .auth-tabs{display:inline-flex; gap:2px; padding:4px; border-radius:var(--pill); background:var(--surface-2); border:1px solid var(--border);}
+  .auth-tabs button{height:38px; padding:0 22px; border-radius:var(--pill); font-size:14px; font-weight:700; color:var(--text-faint); transition:color .18s;}
+  .auth-tabs button.on{color:#fff; background:var(--grad); box-shadow:0 5px 16px var(--accent-soft);}
+
+  .auth-h{font-family:var(--disp); font-size:25px; font-weight:800; letter-spacing:-.025em; margin:26px 0 5px;}
+  .auth-sub{font-size:13.5px; color:var(--text-faint); margin:0 0 22px; line-height:1.55;}
+
+  /* email-only notice */
+  .email-note{display:flex; align-items:center; gap:9px; padding:10px 13px; border-radius:10px; margin-bottom:18px;
+    background:var(--accent-soft); border:1px solid color-mix(in oklab,var(--accent) 28%,transparent);
+    font-size:12.5px; color:var(--text-dim); line-height:1.4;}
+  .email-note .ic{flex:none; width:20px; height:20px; border-radius:6px; display:grid; place-items:center; font-size:12px; color:#fff; background:var(--grad);}
+
+  /* login sub-mode segmented */
+  .submode{display:none; gap:4px; padding:3px; border-radius:10px; background:var(--surface-2); border:1px solid var(--border); margin-bottom:16px;}
+  .submode.show{display:flex;}
+  .submode button{flex:1; height:34px; border-radius:8px; font-size:13px; font-weight:600; color:var(--text-dim); transition:all .16s;}
+  .submode button.on{color:var(--text); background:var(--panel-hover); box-shadow:inset 0 0 0 1px var(--border-strong);}
+
+  .field{margin-bottom:14px;}
+  .field > label{display:block; font-size:12px; font-weight:600; color:var(--text-dim); margin-bottom:7px; letter-spacing:.01em;}
+  .inp{position:relative; display:flex; align-items:center; gap:10px; height:50px; padding:0 14px; border-radius:12px;
+    background:var(--surface-2); border:1px solid var(--border); transition:border-color .16s, box-shadow .16s;}
+  .inp:focus-within{border-color:color-mix(in oklab,var(--accent) 55%,transparent); box-shadow:0 0 0 3px var(--accent-soft);}
+  .inp.bad{border-color:#e05260; box-shadow:0 0 0 3px rgba(224,82,96,.16);}
+  .inp.ok{border-color:color-mix(in oklab,var(--accent-3) 60%,transparent);}
+  .inp .lic{flex:none; color:var(--text-faint); display:grid; place-items:center;}
+  .inp .lic svg{width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round;}
+  .inp input{flex:1; min-width:0; background:none; border:none; outline:none; color:var(--text); font-family:inherit; font-size:14.5px; letter-spacing:.01em;}
+  .inp input::placeholder{color:var(--text-faint);}
+  .inp .eye{flex:none; color:var(--text-faint); font-size:12px; padding:4px; transition:color .15s;}
+  .inp .eye:hover{color:var(--text-dim);}
+  .inp .code-btn{flex:none; height:34px; padding:0 13px; border-radius:8px; font-size:12.5px; font-weight:700; color:var(--accent);
+    border:1px solid color-mix(in oklab,var(--accent) 35%,transparent); background:var(--accent-soft); transition:all .15s; white-space:nowrap;}
+  .inp .code-btn:hover:not(:disabled){background:color-mix(in oklab,var(--accent) 22%,transparent);}
+  .inp .code-btn:disabled{color:var(--text-faint); border-color:var(--border); background:transparent; cursor:default;}
+  .err{font-size:11.5px; color:#ee6b78; margin-top:6px; min-height:0; display:none;}
+  .err.show{display:block;}
+
+  .row-between{display:flex; align-items:center; justify-content:space-between; margin:2px 0 20px;}
+  .chk{display:inline-flex; align-items:center; gap:8px; font-size:12.5px; color:var(--text-dim); cursor:pointer; user-select:none;}
+  .chk input{position:absolute; opacity:0; pointer-events:none;}
+  .chk .box{width:17px; height:17px; border-radius:5px; border:1px solid var(--border-strong); display:grid; place-items:center; font-size:11px; color:#fff; transition:all .15s;}
+  .chk input:checked + .box{background:var(--grad); border-color:transparent;}
+  .chk .box::after{content:'✓'; opacity:0; transition:opacity .15s;}
+  .chk input:checked + .box::after{opacity:1;}
+  .link{font-size:12.5px; font-weight:600; color:var(--accent); cursor:pointer;}
+  .link:hover{text-decoration:underline;}
+
+  .submit{position:relative; overflow:hidden; width:100%; height:52px; border-radius:13px; background:var(--grad); color:#fff;
+    font-size:15px; font-weight:700; letter-spacing:.01em; display:inline-flex; align-items:center; justify-content:center; gap:9px;
+    box-shadow:0 10px 30px var(--accent-soft); transition:filter .16s, transform .16s;}
+  .submit:hover{filter:brightness(1.07); transform:translateY(-1px);}
+  .submit:active{transform:translateY(0);}
+  .submit.loading{pointer-events:none;}
+  .submit .spin{width:17px; height:17px; border-radius:50%; border:2px solid rgba(255,255,255,.4); border-top-color:#fff; animation:spin .7s linear infinite; display:none;}
+  .submit.loading .spin{display:block;} .submit.loading .lbl{opacity:.7;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+
+  .divider{display:flex; align-items:center; gap:14px; margin:24px 0; color:var(--text-faint); font-size:12px;}
+  .divider::before,.divider::after{content:''; flex:1; height:1px; background:var(--border);}
+
+  .socials{display:flex; gap:10px;}
+  .soc{position:relative; flex:1; height:48px; border-radius:12px; display:inline-flex; align-items:center; justify-content:center; gap:8px;
+    font-size:13px; font-weight:600; color:var(--text-faint); background:var(--surface-2); border:1px solid var(--border); cursor:not-allowed;}
+  .soc svg{width:18px; height:18px;}
+  .soc .soon{position:absolute; top:-8px; right:8px; font-size:9px; font-weight:800; letter-spacing:.04em; color:#fff; padding:2px 6px; border-radius:5px; background:color-mix(in oklab,var(--text-faint) 60%, #000); opacity:.9;}
+
+  .auth-foot{text-align:center; font-size:13px; color:var(--text-faint); margin-top:24px;}
+  .auth-foot .link{font-size:13px;}
+
+  .terms{font-size:11px; line-height:1.6; color:var(--text-faint); text-align:center; margin-top:18px;}
+  .terms a{color:var(--text-dim); text-decoration:underline; text-underline-offset:2px;}
+
+  /* demo role chooser (prototype helper) */
+  .demo-role{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; padding:10px 6px 10px 13px;
+    border-radius:11px; border:1px dashed var(--border-strong); background:color-mix(in oklab,var(--surface-2) 70%, transparent);}
+  .demo-role .dr-lbl{font-size:12px; font-weight:600; color:var(--text-faint); display:flex; align-items:center; gap:6px;}
+  .demo-role .dr-lbl::before{content:'⚙'; font-size:12px;}
+  .dr-seg{display:inline-flex; gap:2px; padding:3px; border-radius:9px; background:var(--surface-2); border:1px solid var(--border);}
+  .dr-seg button{height:30px; padding:0 13px; border-radius:7px; font-size:12.5px; font-weight:600; color:var(--text-faint); transition:all .15s;}
+  .dr-seg button.on{color:#fff; background:var(--grad); box-shadow:0 4px 12px var(--accent-soft);}
+
+  /* toast */
+  .toast{position:fixed; left:50%; bottom:30px; transform:translateX(-50%) translateY(20px); z-index:300; padding:13px 22px; border-radius:var(--pill);
+    background:var(--surface); border:1px solid var(--border-strong); box-shadow:0 16px 50px rgba(0,0,0,.6); font-size:14px; font-weight:600;
+    opacity:0; pointer-events:none; transition:opacity .25s, transform .25s var(--ease); display:flex; align-items:center; gap:9px;}
+  .toast.show{opacity:1; transform:translateX(-50%);}
+  .toast .ic{color:var(--accent-3);}
+
+  /* show/hide register-only & login-only fields */
+  [data-only]{display:none;}
+  body[data-mode="login"] [data-only="login"]{display:block;}
+  body[data-mode="register"] [data-only="register"]{display:block;}
+  body[data-mode="register"] #submode{display:none;}
+</style>
+</head>
+<body data-mode="login">
+
+<canvas id="flux-bg"></canvas>
+<div id="flux-bg-scrim"></div>
+
+<header class="auth-top">
+  <a class="brand" href="首页-流光.html"><span class="glyph"></span>SCARECROW<b>AI</b></a>
+  <a class="back" href="首页-流光.html">← 返回首页</a>
+</header>
+
+<div class="auth-stage">
+  <div class="auth-card reveal-scale">
+
+    <!-- left showcase -->
+    <aside class="auth-aside">
+      <div class="glow"></div><div class="glow b"></div>
+      <div class="auth-aside-top"><span class="glyph"></span>SCARECROW<b>AI</b></div>
+      <div class="auth-aside-head">
+        <span class="eyebrow"><span class="d"></span>智绘社区 · FLUX</span>
+        <h2>一句话，<br />生成万象。</h2>
+        <p>登录即可保存作品、调用海量模型，并领取新手体验积分。</p>
+      </div>
+      <div class="auth-tiles"><span class="t"></span><span class="t"></span><span class="t"></span></div>
+      <div class="auth-stats">
+        <div class="s"><b>1.2M+</b><span>每日生成</span></div>
+        <div class="s"><b>320+</b><span>顶级模型</span></div>
+        <div class="s"><b>80K+</b><span>创作者</span></div>
+      </div>
+    </aside>
+
+    <!-- right form -->
+    <main class="auth-main">
+      <div class="auth-tabs" role="tablist">
+        <button id="tabLogin" class="on" type="button">登录</button>
+        <button id="tabReg" type="button">注册</button>
+      </div>
+
+      <h1 class="auth-h" id="formTitle">欢迎回来</h1>
+      <p class="auth-sub" id="formSub">登录你的 SCARECROWAI 账户，继续创作。</p>
+
+      <div class="email-note">
+        <span class="ic">✉</span>
+        <span>目前仅支持<b style="color:var(--text)"> 邮箱 </b>登录，其它登录方式即将开放。</span>
+      </div>
+
+      <!-- login: password / code segmented -->
+      <div class="submode show" id="submode" data-only="login">
+        <button class="on" data-sub="pwd" type="button">密码登录</button>
+        <button data-sub="code" type="button">邮箱验证码</button>
+      </div>
+
+      <form id="authForm" novalidate>
+        <!-- email -->
+        <div class="field">
+          <label for="email">邮箱地址</label>
+          <div class="inp" id="wrapEmail">
+            <span class="lic"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3.5 7l8.5 6 8.5-6"/></svg></span>
+            <input id="email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com" />
+          </div>
+          <div class="err" id="errEmail">请输入有效的邮箱地址</div>
+        </div>
+
+        <!-- verification code (register always, login when code-mode) -->
+        <div class="field" data-field="code" style="display:none">
+          <label for="code">邮箱验证码</label>
+          <div class="inp" id="wrapCode">
+            <span class="lic"><svg viewBox="0 0 24 24"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg></span>
+            <input id="code" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="6 位验证码" />
+            <button class="code-btn" id="codeBtn" type="button">获取验证码</button>
+          </div>
+          <div class="err" id="errCode">请输入收到的 6 位验证码</div>
+        </div>
+
+        <!-- password (login-pwd & register) -->
+        <div class="field" data-field="pwd">
+          <label for="pwd">密码</label>
+          <div class="inp" id="wrapPwd">
+            <span class="lic"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></span>
+            <input id="pwd" type="password" autocomplete="current-password" placeholder="请输入密码" />
+            <button class="eye" id="eyePwd" type="button" tabindex="-1">显示</button>
+          </div>
+          <div class="err" id="errPwd">密码至少 8 位，包含字母与数字</div>
+        </div>
+
+        <!-- login row -->
+        <div class="row-between" data-only="login">
+          <label class="chk"><input type="checkbox" id="remember" checked /><span class="box"></span>记住我</label>
+          <span class="link" data-toast="重置链接已发送至邮箱（原型）">忘记密码？</span>
+        </div>
+
+        <!-- register agree -->
+        <div class="row-between" data-only="register">
+          <label class="chk"><input type="checkbox" id="agree" /><span class="box"></span>我已阅读并同意服务条款</label>
+        </div>
+
+        <!-- demo identity (prototype): pick role to test permissions -->
+        <div class="demo-role">
+          <span class="dr-lbl">演示身份</span>
+          <div class="dr-seg" id="roleSeg">
+            <button type="button" class="on" data-role="user">普通用户</button>
+            <button type="button" data-role="admin">管理员</button>
+          </div>
+        </div>
+
+        <button class="submit" id="submitBtn" type="submit">
+          <span class="spin"></span><span class="lbl">登 录</span>
+        </button>
+      </form>
+
+      <div class="divider">其它方式</div>
+      <div class="socials">
+        <button class="soc" type="button" disabled>
+          <svg viewBox="0 0 24 24" fill="#7aa6b8"><path d="M8.7 7.4C5.3 7.4 2.5 9.7 2.5 12.6c0 1.6.9 3 2.4 4l-.6 1.8 2.1-1.1c.8.2 1.5.3 2.3.3h.6a3.9 3.9 0 0 1-.2-1.2c0-2.5 2.4-4.5 5.4-4.5h.5C14.8 9.2 12 7.4 8.7 7.4z"/><circle cx="6.6" cy="11" r=".8" fill="#0a0c1c"/><circle cx="10.8" cy="11" r=".8" fill="#0a0c1c"/><path d="M21.5 16c0-2.3-2.2-4.1-4.9-4.1s-4.9 1.8-4.9 4.1 2.2 4.1 4.9 4.1c.6 0 1.1-.1 1.6-.2l1.7.9-.5-1.5c1.3-.8 2.1-2 2.1-3.3z"/></svg>
+          微信<span class="soon">即将开放</span>
+        </button>
+        <button class="soc" type="button" disabled>
+          <svg viewBox="0 0 24 24"><path fill="#9aa3c2" d="M21.6 12.2c0-.7-.1-1.3-.2-1.9H12v3.6h5.4a4.6 4.6 0 0 1-2 3v2.5h3.2c1.9-1.7 3-4.3 3-7.2z"/><path fill="#9aa3c2" d="M12 22c2.7 0 4.9-.9 6.6-2.4l-3.2-2.5c-.9.6-2 1-3.4 1-2.6 0-4.8-1.8-5.6-4.1H3.1v2.6A10 10 0 0 0 12 22z"/><path fill="#9aa3c2" d="M6.4 14c-.2-.6-.3-1.3-.3-2s.1-1.4.3-2V7.4H3.1A10 10 0 0 0 2 12c0 1.6.4 3.1 1.1 4.6L6.4 14z"/><path fill="#9aa3c2" d="M12 5.9c1.5 0 2.8.5 3.8 1.5l2.8-2.8A10 10 0 0 0 12 2a10 10 0 0 0-8.9 5.4L6.4 10c.8-2.3 3-4.1 5.6-4.1z"/></svg>
+          Google<span class="soon">即将开放</span>
+        </button>
+      </div>
+
+      <p class="auth-foot" id="switchHint">还没有账户？<span class="link" id="gotoReg">免费注册</span></p>
+      <p class="terms" data-only="register">注册即代表你同意我们的 <a href="#" data-toast="服务条款（原型）">服务条款</a> 与 <a href="#" data-toast="隐私政策（原型）">隐私政策</a>。</p>
+    </main>
+  </div>
+</div>
+
+<template id="__bundler_thumbnail">
+  <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <rect width="100" height="100" rx="20" fill="#05060c" />
+    <rect x="22" y="30" width="56" height="9" rx="4.5" fill="#1a2040" />
+    <rect x="22" y="46" width="56" height="9" rx="4.5" fill="#1a2040" />
+    <rect x="22" y="63" width="56" height="11" rx="5.5" fill="#6d8bf5" />
+  </svg>
+</template>
+
+<script src="liuguang/flux-field.js"></script>
+<script>
+(function () {
+  const $ = (s) => document.querySelector(s);
+  const body = document.body;
+
+  /* toast (standalone, matches shell.js style) */
+  let toastEl, toastT;
+  function toast(msg) {
+    if (!toastEl) { toastEl = document.createElement('div'); toastEl.className = 'toast'; document.body.appendChild(toastEl); }
+    toastEl.innerHTML = '<span class="ic">✦</span>' + msg;
+    toastEl.classList.add('show'); clearTimeout(toastT);
+    toastT = setTimeout(() => toastEl.classList.remove('show'), 2200);
+  }
+  document.addEventListener('click', (e) => {
+    const t = e.target.closest('[data-toast]');
+    if (t) { e.preventDefault(); toast(t.dataset.toast); }
+  });
+
+  /* flux background */
+  if (window.FluxField) {
+    window.FluxField.mount($('#flux-bg'), { hue: 0.2, speed: .55, scale: .9, intensity: 1, flow: [0.02, -0.03], variant: 0, mouse: true, res: 0.6 });
+  }
+  setTimeout(() => $('.reveal-scale').classList.add('in'), 60);
+
+  /* ── mode + submode state ─────────────────────────────────── */
+  let subMode = 'pwd'; // pwd | code  (login only)
+
+  function syncFields() {
+    const mode = body.dataset.mode;
+    const codeField = $('[data-field="code"]');
+    const pwdField = $('[data-field="pwd"]');
+    if (mode === 'register') {
+      // register: email + code + password
+      codeField.style.display = 'block';
+      pwdField.style.display = 'block';
+      $('#pwd').setAttribute('autocomplete', 'new-password');
+      $('#pwd').placeholder = '设置密码（至少 8 位）';
+    } else {
+      // login
+      $('#pwd').setAttribute('autocomplete', 'current-password');
+      $('#pwd').placeholder = '请输入密码';
+      if (subMode === 'code') { codeField.style.display = 'block'; pwdField.style.display = 'none'; }
+      else { codeField.style.display = 'none'; pwdField.style.display = 'block'; }
+    }
+  }
+
+  function setMode(mode) {
+    body.dataset.mode = mode;
+    const login = mode === 'login';
+    $('#tabLogin').classList.toggle('on', login);
+    $('#tabReg').classList.toggle('on', !login);
+    $('#formTitle').textContent = login ? '欢迎回来' : '创建账户';
+    $('#formSub').textContent = login ? '登录你的 SCARECROWAI 账户，继续创作。' : '注册即送新手体验积分，无需绑定信用卡。';
+    $('#submitBtn .lbl').textContent = login ? '登 录' : '创建账户';
+    $('#switchHint').innerHTML = login
+      ? '还没有账户？<span class="link" id="gotoSwap">免费注册</span>'
+      : '已有账户？<span class="link" id="gotoSwap">直接登录</span>';
+    clearErrors();
+    syncFields();
+  }
+
+  $('#tabLogin').addEventListener('click', () => setMode('login'));
+  $('#tabReg').addEventListener('click', () => setMode('register'));
+  document.addEventListener('click', (e) => {
+    if (e.target.id === 'gotoSwap' || e.target.id === 'gotoReg')
+      setMode(body.dataset.mode === 'login' ? 'register' : 'login');
+  });
+
+  /* submode (login) */
+  $('#submode').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    subMode = b.dataset.sub;
+    $('#submode').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    clearErrors(); syncFields();
+  });
+
+  /* show / hide password */
+  $('#eyePwd').addEventListener('click', () => {
+    const inp = $('#pwd');
+    const show = inp.type === 'password';
+    inp.type = show ? 'text' : 'password';
+    $('#eyePwd').textContent = show ? '隐藏' : '显示';
+  });
+
+  /* code countdown */
+  let codeTimer;
+  $('#codeBtn').addEventListener('click', () => {
+    const email = $('#email').value.trim();
+    if (!isEmail(email)) { showErr('email', '请先输入有效的邮箱地址'); return; }
+    clearErr('email');
+    const btn = $('#codeBtn'); let n = 60;
+    btn.disabled = true; btn.textContent = n + ' s';
+    toast('验证码已发送至 ' + email + '（原型）');
+    clearInterval(codeTimer);
+    codeTimer = setInterval(() => {
+      n--; if (n <= 0) { clearInterval(codeTimer); btn.disabled = false; btn.textContent = '重新获取'; }
+      else btn.textContent = n + ' s';
+    }, 1000);
+  });
+
+  /* ── validation ───────────────────────────────────────────── */
+  function isEmail(v) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v); }
+  function isPwd(v) { return v.length >= 8 && /[a-zA-Z]/.test(v) && /\d/.test(v); }
+  function showErr(f, msg) {
+    const cap = f.charAt(0).toUpperCase() + f.slice(1);
+    if (msg) $('#err' + cap).textContent = msg;
+    $('#err' + cap).classList.add('show');
+    $('#wrap' + cap).classList.add('bad'); $('#wrap' + cap).classList.remove('ok');
+  }
+  function clearErr(f) {
+    const cap = f.charAt(0).toUpperCase() + f.slice(1);
+    $('#err' + cap).classList.remove('show'); $('#wrap' + cap).classList.remove('bad');
+  }
+  function clearErrors() { ['email', 'code', 'pwd'].forEach(clearErr); }
+
+  // live clear / mark
+  $('#email').addEventListener('input', () => {
+    const v = $('#email').value.trim();
+    $('#wrapEmail').classList.toggle('ok', isEmail(v));
+    if (isEmail(v)) clearErr('email');
+  });
+  $('#pwd').addEventListener('input', () => { if (isPwd($('#pwd').value)) clearErr('pwd'); });
+  $('#code').addEventListener('input', () => { if ($('#code').value.trim().length === 6) clearErr('code'); });
+
+  /* ── submit ───────────────────────────────────────────────── */
+  /* submit */
+  let demoRole = 'user';
+  $('#roleSeg').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    demoRole = b.dataset.role;
+    $('#roleSeg').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+  });
+
+  $('#authForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const mode = body.dataset.mode;
+    const needCode = mode === 'register' || (mode === 'login' && subMode === 'code');
+    const needPwd = mode === 'register' || (mode === 'login' && subMode === 'pwd');
+    let ok = true;
+
+    if (!isEmail($('#email').value.trim())) { showErr('email'); ok = false; }
+    if (needCode && $('#code').value.trim().length !== 6) { showErr('code'); ok = false; }
+    if (needPwd && !isPwd($('#pwd').value)) { showErr('pwd'); ok = false; }
+    if (mode === 'register' && !$('#agree').checked) { toast('请先同意服务条款与隐私政策'); ok = false; }
+
+    if (!ok) return;
+
+    const btn = $('#submitBtn');
+    btn.classList.add('loading');
+    setTimeout(() => {
+      btn.classList.remove('loading');
+      // persist user (prototype) so the shared nav shows the account menu
+      const email = $('#email').value.trim();
+      const name = email.split('@')[0].replace(/[._-]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || '创作者';
+      const user = {
+        name, email, role: demoRole,
+        plan: demoRole === 'admin' ? 'team' : 'free',
+        credits: demoRole === 'admin' ? 99999 : (mode === 'register' ? 200 : 1280),
+        joined: new Date().toISOString().slice(0, 10),
+      };
+      try { localStorage.setItem('flux_user', JSON.stringify(user)); } catch (_) {}
+      toast(mode === 'login' ? '登录成功 · 正在进入' : '账户已创建 · 正在进入');
+      setTimeout(() => { location.href = '首页-流光.html'; }, 750);
+    }, 1100);
+  });
+
+  setMode('login');
+})();
+</script>
+</body>
+</html>

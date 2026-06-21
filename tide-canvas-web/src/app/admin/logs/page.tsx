@@ -1,149 +1,190 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Table, Input, Select, DatePicker, Space, Tag, Alert, Tooltip, Button, Popconfirm } from "antd";
-import type { ColumnsType } from "antd/es/table";
-import { DeleteOutlined, ClearOutlined } from "@ant-design/icons";
-import { adminApi } from "@/lib/api";
-import { useHasPerm } from "@/stores/use-permission-store";
-import { toast } from "@/components/shared/toast";
-import { AdminPageHead } from "@/components/admin/page-head";
-import { formatDate } from "@/lib/utils";
-import type { LogVO, LogQuery } from "@/types/admin";
-import type { PageData } from "@/types/api";
+/* ============================================================================
+   /admin/logs — 日志管理.
 
-const { RangePicker } = DatePicker;
-const PAGE_SIZE = 20;
+   Faithful port of admin.js V.logs(), now wired to the REAL backend:
+     GET /api/admin/logs (paged, level?/module?/keyword? filters) -> PageData<LogVO>
 
-// 选项值需与后端 @OperateLog(action=...) 记录的中文完全一致（后端按 action 精确匹配筛选）
-const ACTION_OPTIONS = [
-  { value: "", label: "全部操作" },
-  { value: "编辑用户", label: "编辑用户" },
-  { value: "调整积分", label: "调整积分" },
-  { value: "退还积分", label: "退还积分" },
-  { value: "审核内容", label: "审核内容" },
-  { value: "授予作者", label: "授予作者" },
-  { value: "撤销作者", label: "撤销作者" },
-  { value: "确认订单支付", label: "确认订单支付" },
-  { value: "生成兑换码", label: "生成兑换码" },
-  { value: "新增Banner", label: "新增Banner" },
-  { value: "删除Banner", label: "删除Banner" },
-  { value: "更新配置", label: "更新配置" },
+     - 4 KPI cards (今日日志 / 错误率 / 告警 / 平均响应) — static display chrome.
+     - 系统日志 panel: filter chips (全部 / 操作审计 / 错误 / 安全 / 支付) + 搜索,
+       then the log table (时间 / 级别 / 模块 / 操作·信息 / 来源 IP / 操作人).
+
+   The filter chips drive the backend level/module filters:
+     操作审计 → level=INFO, 错误 → level=ERROR, 安全 → level=SECURITY,
+     支付 → module=pay. 全部 → no filter. Search box → keyword.
+
+   Client component (filter state, server-paged table, loading/empty states).
+   ============================================================================ */
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  AdminTable,
+  FilterChips,
+  Panel,
+  StatCardGrid,
+  StatusPill,
+  type Column,
+  type StatCardProps,
+  type StatusPillProps,
+} from "@/components/admin";
+import { adminLogsApi } from "@/lib/admin-logs-api";
+import type { LogVO, LogQuery } from "@/types/admin-logs";
+import { useAuthStore } from "@/stores/use-auth-store";
+
+/* ── static display chrome (no longer sourced from @/mock) ───────────────── */
+
+type PillTone = StatusPillProps["tone"];
+
+const LOG_KPIS: StatCardProps[] = [
+  { k: "今日日志", v: "2,418,902", dir: "up" },
+  { k: "错误率", v: "0.04%", d: "-0.01%", dir: "up" },
+  { k: "告警", v: "12", dir: "down" },
+  { k: "平均响应", v: "142ms", d: "-8ms", dir: "up" },
 ];
 
-export default function AdminLogsPage() {
-  const can = useHasPerm();
-  const [logs, setLogs] = useState<LogVO[]>([]);
-  const [total, setTotal] = useState(0);
-  const [pageNum, setPageNum] = useState(1);
-  const [keyword, setKeyword] = useState("");
-  const [actionFilter, setActionFilter] = useState("");
-  const [range, setRange] = useState<{ start?: string; end?: string }>({});
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+const LOG_FILTERS = ["全部", "操作审计", "错误", "安全", "支付"] as const;
 
-  const loadLogs = async (page = pageNum, search = keyword, action = actionFilter, r = range) => {
+/** Level → status-pill tone (INFO=gray, WARN=amber, ERROR=red, SECURITY=blue). */
+function levelTone(level: string): PillTone {
+  switch (level.toUpperCase()) {
+    case "ERROR":
+      return "red";
+    case "WARN":
+      return "amber";
+    case "SECURITY":
+      return "blue";
+    case "INFO":
+    default:
+      return "gray";
+  }
+}
+
+/** Translate a filter chip into backend level/module query params. */
+function filterToQuery(filter: string): Pick<LogQuery, "level" | "module"> {
+  switch (filter) {
+    case "操作审计":
+      return { level: "INFO" };
+    case "错误":
+      return { level: "ERROR" };
+    case "安全":
+      return { level: "SECURITY" };
+    case "支付":
+      return { module: "pay" };
+    default:
+      return {};
+  }
+}
+
+export default function AdminLogsPage() {
+  const [filter, setFilter] = useState<string>(LOG_FILTERS[0]);
+  const [query, setQuery] = useState("");
+  const [rows, setRows] = useState<LogVO[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const ensureSession = useAuthStore((s) => s.ensureSession);
+
+  const load = useCallback(async () => {
     setLoading(true);
-    setError("");
+    setError(null);
     try {
-      const query: LogQuery = {
-        pageNum: page, pageSize: PAGE_SIZE,
-        keyword: search || undefined,
-        action: action || undefined,
-        startTime: r.start || undefined,
-        endTime: r.end || undefined,
-      };
-      const res = await adminApi.logs.list(query);
+      await ensureSession();
+      const res = await adminLogsApi.list({
+        pageNum: 1,
+        pageSize: 100,
+        keyword: query.trim() || undefined,
+        ...filterToQuery(filter),
+      });
       if (res.success && res.data) {
-        const data = res.data as unknown as PageData<LogVO>;
-        setLogs(data.records);
-        setTotal(data.total);
+        setRows(res.data.records);
+        setTotal(res.data.total);
+      } else {
+        setError(res.message || "加载日志失败");
+        setRows([]);
+        setTotal(0);
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "加载日志列表失败");
+    } catch {
+      setError("加载日志失败");
+      setRows([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }
-  };
+  }, [ensureSession, filter, query]);
 
-  useEffect(() => { loadLogs(1); }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
 
-  const handleDelete = async (id: number) => {
-    const res = await adminApi.logs.remove(id);
-    if (res.success) {
-      toast.success("已删除");
-      loadLogs();
-    } else {
-      toast.error(res.message || "删除失败");
-    }
-  };
-
-  const handleClear = async () => {
-    const res = await adminApi.logs.clear();
-    if (res.success) {
-      toast.success("已清空日志");
-      setPageNum(1);
-      loadLogs(1);
-    } else {
-      toast.error(res.message || "清空失败");
-    }
-  };
-
-  const columns: ColumnsType<LogVO> = [
-    { title: "用户", dataIndex: "username", key: "username", render: (v) => <span style={{ fontWeight: 500 }}>{v || "-"}</span> },
-    { title: "操作", dataIndex: "action", key: "action", render: (v: string) => <Tag>{v}</Tag> },
-    { title: "目标", dataIndex: "target", key: "target", ellipsis: true, render: (v) => v || "-" },
-    {
-      title: "详情", dataIndex: "detail", key: "detail", responsive: ["md"], render: (v: string) =>
-        v ? <Tooltip title={v}><span style={{ display: "inline-block", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--ant-color-text-secondary, #8c8c8c)" }}>{v}</span></Tooltip> : <span style={{ color: "#bfbfbf" }}>-</span>,
-    },
-    { title: "IP", dataIndex: "ip", key: "ip", responsive: ["lg"], render: (v) => <span style={{ fontFamily: "monospace", fontSize: 12, color: "#bfbfbf" }}>{v || "-"}</span> },
-    { title: "时间", dataIndex: "createTime", key: "createTime", render: (v: string) => v ? formatDate(v) : "-" },
-    {
-      title: "操作", key: "actions", fixed: "right", width: 70, render: (_, row) => (
-        can("syslog:delete") && (
-          <Popconfirm title="确定删除该日志？" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => handleDelete(row.id)}>
-            <Button type="text" size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
-        )
-      ),
-    },
-  ];
+  const columns: Column<LogVO>[] = useMemo(
+    () => [
+      {
+        header: "时间",
+        className: "mono muted",
+        sortable: true,
+        sortValue: (l) => l.createTime,
+        cell: (l) => l.createTime || "—",
+      },
+      {
+        header: "级别",
+        cell: (l) => <StatusPill tone={levelTone(l.level)}>{l.level || "—"}</StatusPill>,
+      },
+      { header: "模块", className: "mono", cell: (l) => l.module || "—" },
+      { header: "操作 / 信息", className: "strong", cell: (l) => l.message },
+      { header: "来源 IP", className: "mono muted", cell: (l) => l.ip || "—" },
+      { header: "操作人", cell: (l) => l.operator || "—" },
+    ],
+    [],
+  );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <AdminPageHead title="系统日志" desc={`共 ${total} 条记录`} />
-      {error && <Alert type="error" message={error} showIcon closable onClose={() => setError("")} />}
+    <>
+      <StatCardGrid items={LOG_KPIS} />
 
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-        <Space wrap>
-          <Input.Search placeholder="搜索操作详情..." allowClear enterButton style={{ width: 260 }}
-            onSearch={(v) => { setKeyword(v); setPageNum(1); loadLogs(1, v, actionFilter, range); }} />
-          <Select style={{ width: 150 }} value={actionFilter} options={ACTION_OPTIONS}
-            onChange={(v) => { setActionFilter(v); setPageNum(1); loadLogs(1, keyword, v, range); }} />
-          <RangePicker
-            onChange={(_, ds) => {
-              const r = { start: ds?.[0] ? `${ds[0]} 00:00:00` : undefined, end: ds?.[1] ? `${ds[1]} 23:59:59` : undefined };
-              setRange(r); setPageNum(1); loadLogs(1, keyword, actionFilter, r);
-            }}
+      <Panel
+        title="系统日志"
+        sub="操作审计、错误与安全事件"
+        tools={
+          <>
+            <div className="adm-search" style={{ margin: 0 }}>
+              <span className="muted">⌕</span>
+              <input
+                placeholder="搜索信息 / 操作人"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </div>
+            <FilterChips options={[...LOG_FILTERS]} value={filter} onChange={setFilter} />
+            <button type="button" className="adm-btn ghost" onClick={() => load()}>
+              刷新
+            </button>
+          </>
+        }
+      >
+        {loading ? (
+          <div className="muted" style={{ padding: 32, textAlign: "center" }}>
+            加载中…
+          </div>
+        ) : error ? (
+          <div className="muted" style={{ padding: 32, textAlign: "center" }}>
+            {error}
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="muted" style={{ padding: 32, textAlign: "center" }}>
+            暂无日志记录
+          </div>
+        ) : (
+          <AdminTable<LogVO>
+            rows={rows}
+            rowKey={(l) => l.id}
+            columns={columns}
+            pageSize={20}
+            total={total}
           />
-        </Space>
-        {can("syslog:delete") && (
-          <Popconfirm title="确定清空全部日志？此操作不可恢复" okText="清空" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={handleClear}>
-            <Button danger icon={<ClearOutlined />} disabled={total === 0}>清空日志</Button>
-          </Popconfirm>
         )}
-      </div>
-
-      <Table<LogVO>
-        rowKey="id"
-        columns={columns}
-        dataSource={logs}
-        loading={loading}
-        scroll={{ x: "max-content" }}
-        locale={{ emptyText: "暂无日志记录" }}
-        pagination={{ current: pageNum, pageSize: PAGE_SIZE, total, showSizeChanger: false, showTotal: (t) => `共 ${t} 条`, onChange: (p) => { setPageNum(p); loadLogs(p); } }}
-      />
-    </div>
+      </Panel>
+    </>
   );
 }

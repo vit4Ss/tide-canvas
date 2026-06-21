@@ -1,0 +1,37 @@
+/* Shell for the (studio) route group: full-viewport rail + content.
+   Kept separate from liuguang/studio.css (locked) — only lays out the rail and
+   the page-content region. Inner column structure is owned by each page.
+   .ws-rail itself is styled by liuguang/studio.css; here we only place it. */
+
+.shell {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  min-height: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--ui);
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* mobile: stack rail above content (studio.css already reflows .ws-rail to a
+   horizontal bar at <=820px) */
+@media (max-width: 820px) {
+  .shell {
+    position: static;
+    flex-direction: column;
+    height: auto;
+    min-height: 100vh;
+  }
+  .content {
+    overflow: visible;
+  }
+}
