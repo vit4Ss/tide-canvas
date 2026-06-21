@@ -225,23 +225,17 @@ export function CreativeHero() {
 
         {/* 创作输入卡片 */}
         <div className="mt-8 rounded-2xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-700 dark:bg-neutral-900">
-          {/* tabs */}
-          <div className="flex items-center gap-1 px-2 pt-2">
-            {(["image", "video"] as const).map((tn) => (
-              <button
-                key={tn}
-                type="button"
-                onClick={() => switchTab(tn)}
-                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
-                  tab === tn
-                    ? "bg-violet-50 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300"
-                    : "text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-                }`}
-              >
-                {tn === "video" ? <Video className="h-4 w-4" /> : <ImageIcon className="h-4 w-4" />}
-                {t(tn === "video" ? "tabVideo" : "tabImage")}
-              </button>
-            ))}
+          {/* 当前生成模式：点击切换 图片 / 视频（仿小云雀框内模式标签） */}
+          <div className="px-3 pt-3">
+            <button
+              type="button"
+              onClick={() => switchTab(tab === "image" ? "video" : "image")}
+              title={t("switchMode")}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-violet-100 px-2.5 py-1 text-xs font-medium text-violet-700 transition-colors hover:bg-violet-200 dark:bg-violet-500/20 dark:text-violet-300 dark:hover:bg-violet-500/30"
+            >
+              {tab === "video" ? <Video className="h-3.5 w-3.5" /> : <ImageIcon className="h-3.5 w-3.5" />}
+              {t(tab === "video" ? "tabVideo" : "tabImage")}
+            </button>
           </div>
 
           <textarea
@@ -324,22 +318,14 @@ export function CreativeHero() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              {selectedModel && (
-                <span className="flex items-center gap-0.5 text-xs font-medium text-neutral-400">
-                  <Zap className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
-                  {selectedModel.pointCost}
-                </span>
-              )}
-              <button
-                type="button"
-                onClick={submit}
-                aria-label={t("send")}
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-600 text-white transition-colors hover:bg-violet-700"
-              >
-                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={submit}
+              aria-label={t("send")}
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-600 text-white transition-colors hover:bg-violet-700"
+            >
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
+            </button>
           </div>
         </div>
 

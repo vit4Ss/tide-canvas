@@ -52,6 +52,7 @@
     "model": "Model",
     "tabImage": "Image",
     "tabVideo": "Video",
+    "switchMode": "Click to switch image / video",
     "ratio": "Ratio",
     "regenerate": "Regenerate",
     "groupImage": "Image models",

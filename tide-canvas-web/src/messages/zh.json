@@ -52,6 +52,7 @@
     "model": "模型",
     "tabImage": "图片生成",
     "tabVideo": "视频生成",
+    "switchMode": "点击切换 图片 / 视频",
     "ratio": "比例",
     "regenerate": "再次生成",
     "groupImage": "图片模型",
