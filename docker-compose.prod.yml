@@ -26,9 +26,9 @@ services:
       TZ: Asia/Shanghai
     volumes:
       - mysql_data:/var/lib/mysql
-      # init.sql 仅在数据卷为空的首次启动执行；现网卷已初始化则不生效。
-      # 全新部署 Go 想自动建表，可改挂 ./tide-canvas-go/sql/schema.sql。
-      - ./tide-canvas-server/sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      # 仅在数据卷为空的首次启动执行；现网卷已初始化则不生效。
+      # 后端为 Go 版且无 AutoMigrate，全新库用 Go schema 初始化（建表 + 初始 admin/配置）。
+      - ./tide-canvas-go/sql/schema.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_general_ci
