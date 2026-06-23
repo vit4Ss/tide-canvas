@@ -110,6 +110,7 @@
         <div class="ws-drop-tx">拖入参考图，或<b>点击上传</b></div>
         <div class="ws-drop-sub">JPG / PNG / WEBP · ≤ 20MB</div>
       </div>
+      <div class="ws-reffiles" id="dropFiles"></div>
 
       <div class="ws-seclabel">提示词 <span class="ws-pcount"><b id="pLen">0</b> 字</span></div>
       <div class="ws-promptbox">
@@ -123,14 +124,29 @@
       <div class="ws-chips-head">灵感提示词 · 点击填入</div>
       <div class="ws-chips" id="ideas"></div>
 
-      <div class="ws-field col">
+      <div class="ws-field col" id="fieldRatio">
         <label>画面比例</label>
         <div class="ws-ratios" id="ratios"></div>
       </div>
 
-      <div class="ws-field col">
+      <div class="ws-field col" id="fieldImgRes">
+        <label>分辨率</label>
+        <div class="ws-ratios" id="imgResPills"></div>
+      </div>
+
+      <div class="ws-field col" id="fieldRes" style="display:none">
+        <label>清晰度</label>
+        <div class="ws-ratios" id="resPills"></div>
+      </div>
+
+      <div class="ws-field col" id="fieldCount">
         <label>生成数量 · <span id="countVal">4</span></label>
         <input class="slider" id="count" type="range" min="1" max="4" step="1" value="4" />
+      </div>
+
+      <div class="ws-field col" id="fieldDur" style="display:none">
+        <label>时长</label>
+        <div class="ws-ratios" id="durPills"></div>
       </div>
     </div>
 
@@ -170,11 +186,14 @@
 
     <div class="ws-histbar">
       <div class="ws-histbar-head">
-        <span>生成历史 <span class="ws-ahead-n" id="histN">0</span></span>
-        <div class="ws-histfilter" id="histFilter">
-          <button class="on" data-f="all">全部</button>
-          <button data-f="image">图片</button>
-          <button data-f="video">视频</button>
+        <div class="ws-histtitle">生成历史 <span class="ws-histcount" id="histCount"></span></div>
+        <div class="ws-histhead-r">
+          <div class="ws-histfilter" id="histFilter">
+            <button class="on" data-f="all" type="button">全部</button>
+            <button data-f="image" type="button">图片</button>
+            <button data-f="video" type="button">视频</button>
+          </div>
+          <div class="ws-histpager" id="histPager"></div>
         </div>
       </div>
       <div class="ws-histstrip" id="histStrip"></div>

@@ -325,3 +325,42 @@ footer{border-top:1px solid var(--border); padding:54px 0 40px; margin-top:clamp
   .nav-right .signin{display:none;}
   .nav-right .model-pill{display:none;}
 }
+
+/* ─── ACCOUNT DROPDOWN (logged-in nav) ────────────────────────────── */
+.acct{position:relative;}
+.acct-av{display:grid; place-items:center; width:36px; height:36px; border-radius:50%; font-family:var(--disp); font-weight:700; font-size:13px; color:#0c0e16; letter-spacing:.02em; box-shadow:inset 0 0 0 1px rgba(255,255,255,.18);}
+.acct-trigger{padding:0; border-radius:50%; line-height:0; transition:box-shadow .16s var(--ease), transform .16s var(--ease);}
+.acct-trigger:hover{transform:translateY(-1px);}
+.acct.open .acct-trigger,.acct-trigger:hover{box-shadow:0 0 0 3px var(--accent-soft);}
+
+.acct-menu{position:absolute; top:calc(100% + 12px); right:0; width:272px; z-index:60;
+  background:color-mix(in oklab,var(--surface) 92%, transparent); border:1px solid var(--border-strong);
+  border-radius:16px; box-shadow:0 24px 70px rgba(0,0,0,.55); backdrop-filter:blur(24px); -webkit-backdrop-filter:blur(24px);
+  padding:7px; opacity:0; transform:translateY(-8px) scale(.97); transform-origin:top right; pointer-events:none;
+  transition:opacity .18s var(--ease), transform .18s var(--ease);}
+.acct.open .acct-menu{opacity:1; transform:translateY(0) scale(1); pointer-events:auto;}
+
+.acct-head{display:flex; align-items:center; gap:11px; padding:11px 11px 13px;}
+.acct-av.lg{width:42px; height:42px; font-size:15px; flex:none;}
+.acct-id{min-width:0;}
+.acct-nm{display:flex; align-items:center; gap:7px; font-family:var(--disp); font-weight:700; font-size:14.5px; color:var(--text);}
+.acct-role{font-size:9.5px; font-weight:800; letter-spacing:.04em; color:#fff; padding:2px 6px; border-radius:5px; background:var(--grad-warm); white-space:nowrap;}
+.acct-em{font-size:12px; color:var(--text-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:2px;}
+
+.acct-credits{display:flex; align-items:center; justify-content:space-between; gap:10px; margin:0 4px 6px; padding:11px 13px;
+  border-radius:11px; background:var(--accent-soft); border:1px solid color-mix(in oklab,var(--accent) 24%,transparent); transition:filter .15s;}
+.acct-credits:hover{filter:brightness(1.08);}
+.acct-credits .plan{display:block; font-size:11px; color:var(--text-faint); margin-bottom:2px;}
+.acct-credits .cr{display:block; font-family:var(--disp); font-weight:800; font-size:15px; color:var(--text); letter-spacing:-.01em;}
+.acct-credits .up{font-size:12px; font-weight:700; color:var(--accent); white-space:nowrap;}
+
+.acct-list{display:flex; flex-direction:column; gap:1px; padding:3px;}
+.acct-list.bord{border-top:1px solid var(--border); margin-top:5px; padding-top:6px;}
+.acct-list a,.acct-list button{display:flex; align-items:center; gap:11px; width:100%; height:40px; padding:0 11px; border-radius:9px;
+  font-size:13.5px; font-weight:600; color:var(--text-dim); text-align:left; transition:background .14s, color .14s;}
+.acct-list a:hover,.acct-list button:hover{background:var(--panel-hover); color:var(--text);}
+.acct-list .mi{flex:none; width:20px; text-align:center; font-size:14px; opacity:.85;}
+.acct-list .admin:hover{color:var(--accent);}
+.acct-list .danger{color:var(--text-faint);}
+.acct-list .danger:hover{background:color-mix(in oklab,#e0526022 60%, transparent); color:#ee6b78;}
+@media(max-width:560px){ .acct-menu{right:-8px;} }

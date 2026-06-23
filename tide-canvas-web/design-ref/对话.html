@@ -87,15 +87,10 @@
             <textarea id="composer" placeholder="描述你想生成的内容，或上传参考素材让模型自由发挥…  输入 / 使用技能，@ 添加主体"></textarea>
           </div>
           <div class="composer-bar">
-            <button class="cm-chip on" data-toggle><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg>联网</button>
-            <button class="cm-chip">文生视频 ▾</button>
-            <button class="cm-chip">Kling-VIDEO-3.0-Pro ▾</button>
-            <button class="cm-chip">1:1 ▾</button>
-            <button class="cm-chip">1080p ▾</button>
-            <button class="cm-chip">5s ▾</button>
-            <button class="cm-chip">⚲ 2 ▾</button>
+            <button class="cm-chip on" id="cmWeb" data-toggle><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg>联网</button>
+            <div class="cm-config" id="cmConfig"></div>
             <span class="sp"></span>
-            <span class="cm-pts">约 100 积分</span>
+            <span class="cm-pts">约 <b id="cmPts">100</b> 积分</span>
             <button class="cm-send" id="chatSend" aria-label="发送">↑</button>
           </div>
         </div>
