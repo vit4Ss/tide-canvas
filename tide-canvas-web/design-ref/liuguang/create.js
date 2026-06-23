@@ -544,7 +544,11 @@
     // ambient shader backdrop
     if (window.FluxField) window.FluxField.mount($('#flux'), { hue: 1.1, speed: 0.7, scale: 1.0, intensity: 0.85, variant: 0 });
 
-    // accept a prompt handoff from "生成同款"
-    try { const p = sessionStorage.getItem('flux_prompt'); if (p) { $('#prompt').value = p; updateLen(); sessionStorage.removeItem('flux_prompt'); } } catch (e) {}
+    // accept a prompt handoff from "生成同款 / 重新编辑 / 再次生成"
+    try {
+      const p = sessionStorage.getItem('flux_prompt');
+      if (p) { $('#prompt').value = p; updateLen(); sessionStorage.removeItem('flux_prompt'); }
+      if (sessionStorage.getItem('flux_autogen')) { sessionStorage.removeItem('flux_autogen'); setTimeout(() => generate(), 450); }
+    } catch (e) {}
   });
 })();

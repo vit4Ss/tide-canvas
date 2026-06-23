@@ -214,6 +214,16 @@
     const isVid = a.type === 'video';
     const neg = a.neg || '低质量, 模糊, 多余肢体, 水印, 畸变, 文字';
     const steps = a.steps || 30, sampler = a.sampler || 'DPM++ 2M Karras', cfg = a.cfg || 7.5, size = a.size || '1024×1536', seed = a.seed || '2837461920';
+    const own = a.own === true || a.author === '我的创作' || a.cat === '创作';
+    const handoffPrompt = a.prompt || a.title;
+    const actionsHTML = own
+      ? `<button class="pri" data-reedit><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>重新编辑</button>
+         <button class="sec wide" data-regen><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>再次生成</button>
+         <button class="sec" data-toast="已加入收藏">♥</button>
+         <button class="sec" data-toast="已下载到本地">⤓</button>`
+      : `<button class="pri" data-go-create>✦ 生成同款</button>
+         <button class="sec" data-toast="已加入收藏">♥</button>
+         <button class="sec" data-toast="已下载到本地">⤓</button>`;
     $('.modal', maskEl).innerHTML = `
       <div class="modal-media">
         <div class="cov" style="background:${a.c}"></div>
@@ -244,15 +254,24 @@
           <div class="pcell"><div class="k">种子</div><div class="v">${String(seed).slice(0, 7)}</div></div>
         </div>
         <div class="modal-actions">
-          <button class="pri" data-go-create>✦ 生成同款</button>
-          <button class="sec" data-toast="已加入收藏">♥</button>
-          <button class="sec" data-toast="已下载到本地">⤓</button>
+          ${actionsHTML}
         </div>
       </div>`;
     $('.modal-x', maskEl).addEventListener('click', closeWork);
-    $('[data-go-create]', maskEl).addEventListener('click', () => {
-      try { sessionStorage.setItem('flux_prompt', a.prompt || a.title); } catch (_) {}
+    const goEl = $('[data-go-create]', maskEl);
+    if (goEl) goEl.addEventListener('click', () => {
+      try { sessionStorage.setItem('flux_prompt', handoffPrompt); } catch (_) {}
       toast('已带入参数 · 前往创作台'); setTimeout(() => location.href = '创作台.html', 650);
+    });
+    const reEl = $('[data-reedit]', maskEl);
+    if (reEl) reEl.addEventListener('click', () => {
+      try { sessionStorage.setItem('flux_prompt', handoffPrompt); } catch (_) {}
+      toast('已载入提示词 · 前往创作台编辑'); setTimeout(() => location.href = '创作台.html', 650);
+    });
+    const rgEl = $('[data-regen]', maskEl);
+    if (rgEl) rgEl.addEventListener('click', () => {
+      try { sessionStorage.setItem('flux_prompt', handoffPrompt); sessionStorage.setItem('flux_autogen', '1'); } catch (_) {}
+      toast('正在用相同参数重新生成 ✦'); setTimeout(() => location.href = '创作台.html', 650);
     });
     void maskEl.offsetWidth;            // force reflow so the transition runs
     maskEl.classList.add('show');

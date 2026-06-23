@@ -9,6 +9,11 @@
    imports flux/pages/studio.css). Exact liuguang class names are used so the
    already-imported CSS applies unchanged.
 
+   Faithful to the design: type-switched fields (图片 ↔ 视频), 分辨率/清晰度/时长
+   pills, typed reference-upload slots (参考图 / 原图 / 首尾帧 / 参考视频·音频) with
+   a preview modal, resolution-based cost, a 【风格】 result header and a paginated
+   生成历史 strip.
+
    Generation / AI 优化 are SIMULATED client-side (mock progress intervals →
    mesh-cover result cards) — the real API is a later phase. Covers are stored
    as MeshHues hue triplets so result/history cards can open the shared
@@ -25,6 +30,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
 } from "react";
 import type { Artwork, ArtworkType, MeshHues } from "@/mock";
 import { ARTWORKS, CREATE_MODELS, coverBg, mesh } from "@/mock";
@@ -37,6 +43,13 @@ import styles from "@/app/(studio)/studio/create.module.css";
 /* ── constants (ported 1:1 from create.js) ───────────────────────────────── */
 
 const RATIOS = ["1:1", "3:4", "4:3", "16:9", "9:16"] as const;
+const IMG_RES = ["1K", "2K", "4K"] as const;
+const VIDEO_RES = ["720p", "1080p", "4K"] as const;
+const VIDEO_DUR = ["5s", "10s", "15s"] as const;
+
+const IMG_RES_COST: Record<string, number> = { "1K": 8, "2K": 14, "4K": 30 };
+const RES_COST: Record<string, number> = { "720p": 30, "1080p": 50, "4K": 90 };
+const DUR_SEC: Record<string, number> = { "5s": 5, "10s": 10, "15s": 15 };
 
 const IDEAS = [
   "赛博朋克城市夜景，霓虹倒影，电影感，8K",
@@ -70,6 +83,54 @@ const TOOLS: Record<ToolKey, ToolCfg> = {
 const MODES_BY_TYPE: Record<ArtworkType, ToolKey[]> = {
   image: ["t2i", "i2i"],
   video: ["t2v", "i2v", "flf", "ref"],
+};
+
+/* typed reference uploads per tool (create.js UPLOADS) */
+type SlotType = "image" | "video" | "audio";
+interface SlotDef {
+  k: string;
+  label: string;
+  type: SlotType;
+  max: number;
+  hint: string;
+}
+
+const UPLOADS: Partial<Record<ToolKey, SlotDef[]>> = {
+  i2i: [{ k: "img", label: "参考图片", type: "image", max: 4, hint: "上传图片，作为生成参考" }],
+  edit: [{ k: "img", label: "原图", type: "image", max: 1, hint: "上传需要修改 / 扩展的图片" }],
+  i2v: [{ k: "first", label: "首帧图片", type: "image", max: 1, hint: "上传作为视频首帧的图片" }],
+  flf: [
+    { k: "first", label: "首帧", type: "image", max: 1, hint: "上传起始画面" },
+    { k: "last", label: "尾帧", type: "image", max: 1, hint: "上传结束画面" },
+  ],
+  ref: [
+    { k: "img", label: "参考图片", type: "image", max: 4, hint: "上传图片（人物 / 风格 / 场景）" },
+    { k: "video", label: "参考视频", type: "video", max: 3, hint: "最多 3 段，总时长 ≤ 15 秒。支持 mp4 / mov。" },
+    { k: "audio", label: "参考音频", type: "audio", max: 3, hint: "最多 3 段，总时长 ≤ 15 秒。支持 wav / mp3。" },
+  ],
+};
+
+const SLOT_ICON: Record<SlotType, ReactNode> = {
+  image: (
+    <svg viewBox="0 0 24 24">
+      <rect x="3" y="4" width="18" height="16" rx="2.5" />
+      <circle cx="8.5" cy="9.5" r="1.5" />
+      <path d="M21 15l-5-5L5 20" />
+    </svg>
+  ),
+  video: (
+    <svg viewBox="0 0 24 24">
+      <rect x="3" y="5" width="13" height="14" rx="2.5" />
+      <path d="M16 10l5-3v10l-5-3z" />
+    </svg>
+  ),
+  audio: (
+    <svg viewBox="0 0 24 24">
+      <path d="M9 18V6l10-2v12" />
+      <circle cx="6" cy="18" r="3" />
+      <circle cx="16" cy="16" r="3" />
+    </svg>
+  ),
 };
 
 interface ModelMeta {
@@ -138,6 +199,37 @@ function promptHue(prompt: string): number {
   return h;
 }
 
+/** deterministic reference-thumb gradient (create.js refGrad). */
+function refGrad(seed: number): string {
+  const h = (seed * 61 + 30) % 360;
+  return `linear-gradient(135deg, hsl(${h} 58% 52%), hsl(${(h + 44) % 360} 62% 36%))`;
+}
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/* ── upload-file model ────────────────────────────────────────────────────── */
+
+interface UploadFile {
+  g?: string; // gradient (image)
+  n: string; // name
+  s?: string; // size label (image)
+  d?: string; // duration label (video/audio)
+}
+
+/** mock a file for a slot (create.js makeFile). Client-only (event handlers). */
+function makeFile(type: SlotType, i: number): UploadFile {
+  if (type === "image")
+    return {
+      g: refGrad(i * 7 + (Date.now() % 11)),
+      n: "参考图_" + pad2(i + 1),
+      s: (Math.random() * 3 + 0.6).toFixed(1) + " MB",
+    };
+  if (type === "video") return { n: "clip_" + pad2(i + 1) + ".mp4", d: "00:0" + (4 + (i % 5)) };
+  return { n: "audio_" + pad2(i + 1) + ".mp3", d: "00:0" + (5 + (i % 4)) };
+}
+
+type SlotData = Record<string, UploadFile[]>;
+
 /* ── result / history models (carry hue triplets so cards open WorkModal) ── */
 
 interface ResultCell {
@@ -155,7 +247,19 @@ interface HistItem {
   model: string;
 }
 
+interface RunMeta {
+  prompt: string;
+  model: string;
+  ratio: string;
+  spec: string;
+  count: number;
+  label: string;
+  isVid: boolean;
+  refThumbs: string[];
+}
+
 let histSeq = 0;
+const PAGE_SIZE = 24; // items per page in the workspace history (create.js)
 
 /* ── component ───────────────────────────────────────────────────────────── */
 
@@ -168,6 +272,13 @@ export default function CreateStudio() {
   const [prompt, setPrompt] = useState("");
   const [ratio, setRatio] = useState<string>(RATIOS[0]);
   const [count, setCount] = useState(4);
+  const [imgRes, setImgRes] = useState<string>("2K");
+  const [res, setRes] = useState<string>("1080p");
+  const [dur, setDur] = useState<string>("5s");
+
+  /* typed reference uploads (per slot key) + preview modal target */
+  const [slotData, setSlotData] = useState<SlotData>({});
+  const [preview, setPreview] = useState<{ k: string; i: number } | null>(null);
 
   /* real models (public, no auth) — names drive the picker; metaMap enriches
      each row. Falls back to the CREATE_MODELS default list when the seeded DB
@@ -180,45 +291,46 @@ export default function CreateStudio() {
   const [cells, setCells] = useState<ResultCell[]>([]);
   const [progs, setProgs] = useState<number[]>([]);
   const [doneSet, setDoneSet] = useState<Record<number, boolean>>({});
-  const [runMeta, setRunMeta] = useState<{
-    prompt: string;
-    model: string;
-    ratio: string;
-    count: number;
-    label: string;
-    isVid: boolean;
-  } | null>(null);
+  const [runMeta, setRunMeta] = useState<RunMeta | null>(null);
 
-  /* history — seeded from ARTWORKS (first 12), newest on the left (create.js
-     seedHistory). Deterministic + SSR-safe, so it lives in lazy initial state
-     rather than an effect. */
+  /* history — seeded from ARTWORKS (cycled to 31 so pagination is visible,
+     mirrors create.js seedHistory), newest on the left. Deterministic +
+     SSR-safe, so it lives in lazy initial state rather than an effect. */
   const [hist, setHist] = useState<HistItem[]>(() =>
-    ARTWORKS.slice(0, 12).map((a) => ({
-      id: `seed-${a.id}`,
-      hues: a.cover,
-      type: a.type,
-      title: a.title,
-      prompt: a.prompt || a.title,
-      model: a.model,
-    })),
+    Array.from({ length: 31 }, (_, i) => {
+      const a = ARTWORKS[i % ARTWORKS.length];
+      return {
+        id: `seed-${i}`,
+        hues: a.cover,
+        type: a.type,
+        title: a.title,
+        prompt: a.prompt || a.title,
+        model: a.model,
+      };
+    }),
   );
   const [histFilter, setHistFilter] = useState<"all" | "image" | "video">("all");
+  const [histPage, setHistPage] = useState(1);
 
   /* shared work-detail modal */
   const [active, setActive] = useState<Artwork | null>(null);
 
   const ticksRef = useRef<ReturnType<typeof setInterval>[]>([]);
   const modelWrapRef = useRef<HTMLDivElement>(null);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
 
   /* ── derived ─────────────────────────────────────────────────────────── */
 
   const cfg = TOOLS[tool];
   const meta = metaOf(model, modelMeta);
   const hasResults = cells.length > 0;
+  const isVideo = curType === "video";
+  const slots = UPLOADS[tool] ?? null;
 
-  // cost: 30 for video models / t2v tool, else 10 — per × count (create.js).
-  const per = /Seedance|Kling|Veo|视频/.test(model) || cfg.mode === "t2v" ? 30 : 10;
-  const cost = per * count;
+  // cost (create.js updateCost): video = round(resCost*durSec/5); image = imgResCost*count.
+  const cost = isVideo
+    ? Math.round(((RES_COST[res] || 50) * (DUR_SEC[dur] || 5)) / 5)
+    : (IMG_RES_COST[imgRes] || 14) * count;
 
   const allDone = hasResults && Object.keys(doneSet).length >= cells.length;
   const aggProg =
@@ -229,6 +341,9 @@ export default function CreateStudio() {
     () => (histFilter === "all" ? hist : hist.filter((h) => h.type === histFilter)),
     [hist, histFilter],
   );
+  const histPages = Math.max(1, Math.ceil(filteredHist.length / PAGE_SIZE));
+  const curPage = Math.min(histPage, histPages);
+  const pageItems = filteredHist.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
 
   /* ── prompt / model handoff (mount) ──────────────────────────────────── */
 
@@ -297,14 +412,30 @@ export default function CreateStudio() {
     return () => document.removeEventListener("click", onDoc);
   }, [modelOpen]);
 
+  // close the upload preview on Escape (create.js openPreview esc handler).
+  useEffect(() => {
+    if (!preview) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPreview(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [preview]);
+
   // clear any running intervals on unmount.
   useEffect(() => () => ticksRef.current.forEach((t) => clearInterval(t)), []);
 
   /* ── panel handlers ──────────────────────────────────────────────────── */
 
+  // setTool clears the typed uploads (create.js setTool → slotData = {}).
+  const selectTool = (t: ToolKey) => {
+    setTool(t);
+    setSlotData({});
+  };
+
   const pickType = (t: ArtworkType) => {
     setCurType(t);
-    setTool(MODES_BY_TYPE[t][0]); // renderModes() → setTool(keys[0])
+    selectTool(MODES_BY_TYPE[t][0]); // renderModes() → setTool(keys[0])
   };
 
   const aiOptimize = () => {
@@ -314,6 +445,56 @@ export default function CreateStudio() {
     if (!/超清细节/.test(v)) v += boost;
     setPrompt(v);
     toast.success("✦ 已用 AI 优化提示词");
+  };
+
+  /* ── typed reference uploads (create.js addFile / removeFile / swap) ──── */
+
+  const addFile = (k: string) => {
+    const slot = slots?.find((s) => s.k === k);
+    if (!slot) return;
+    setSlotData((prev) => {
+      const arr = prev[k] || [];
+      if (arr.length >= slot.max) {
+        toast.info(slot.label + "最多 " + slot.max + " 个");
+        return prev;
+      }
+      toast.success("已添加" + slot.label + " · 原型");
+      return { ...prev, [k]: [...arr, makeFile(slot.type, arr.length)] };
+    });
+  };
+
+  const removeFile = (k: string, i: number) =>
+    setSlotData((prev) => {
+      const arr = (prev[k] || []).slice();
+      arr.splice(i, 1);
+      return { ...prev, [k]: arr };
+    });
+
+  const swapFlf = () =>
+    setSlotData((prev) => {
+      if (!(prev.first || prev.last)) return prev;
+      toast.success("已交换首尾帧");
+      return { ...prev, first: prev.last, last: prev.first };
+    });
+
+  const slotTypeOf = (k: string): SlotType =>
+    slots?.find((s) => s.k === k)?.type ?? "image";
+
+  /* gather reference thumbnails for the result header (create.js rhRefThumbs). */
+  const refThumbsForRun = (seed: number): string[] => {
+    const imgs: string[] = [];
+    Object.values(slotData).forEach((arr) =>
+      arr.forEach((f) => {
+        if (f.g) imgs.push(f.g);
+      }),
+    );
+    const out = imgs.length
+      ? imgs
+      : Array.from({ length: 4 }, (_, i) => {
+          const h = (seed * 7 + i * 53) % 360;
+          return `linear-gradient(135deg, hsl(${h} 50% 46%), hsl(${(h + 38) % 360} 55% 30%))`;
+        });
+    return out.slice(0, 4);
   };
 
   const buildWork = (
@@ -347,6 +528,7 @@ export default function CreateStudio() {
     const p = prompt.trim();
     if (!p) {
       toast.info("先写一句提示词吧 ✦");
+      promptRef.current?.focus();
       return;
     }
     setBusy(true);
@@ -357,16 +539,27 @@ export default function CreateStudio() {
     const r = ratio;
     const mdl = model;
     const hsh = promptHue(p);
+    const spec = isVid ? `${r} · ${res} · ${dur}` : `${r} · ${imgRes}`;
 
     const newCells: ResultCell[] = Array.from({ length: n }, (_, i) => ({
       i,
       hues: [hsh + i * 36, hsh + i * 36 + 80, hsh + i * 36 + 200] as MeshHues,
     }));
 
-    setRunMeta({ prompt: p, model: mdl, ratio: r, count: n, label, isVid });
+    setRunMeta({
+      prompt: p,
+      model: mdl,
+      ratio: r,
+      spec,
+      count: n,
+      label,
+      isVid,
+      refThumbs: refThumbsForRun(hsh),
+    });
     setCells(newCells);
     setProgs(new Array(n).fill(0));
     setDoneSet({});
+    setHistPage(1); // jump to first page so newest items are visible
 
     // clear any stragglers, then start per-cell progress intervals.
     ticksRef.current.forEach((t) => clearInterval(t));
@@ -401,7 +594,8 @@ export default function CreateStudio() {
       }, 90 + i * 40);
       ticksRef.current.push(tick);
     });
-  }, [busy, prompt, count, tool, ratio, model, pushHistory]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy, prompt, count, tool, ratio, model, res, dur, imgRes, slotData, pushHistory]);
 
   // tear down the current run's intervals + result state (no busy guard).
   const resetRun = useCallback(() => {
@@ -453,6 +647,235 @@ export default function CreateStudio() {
   const openHist = (h: HistItem) =>
     setActive(buildWork(h.hues, h.type, h.prompt, h.model));
 
+  /* ── render: typed upload slots (create.js renderUploads) ─────────────── */
+
+  const renderSlotCard = (s: SlotDef) => {
+    const files = slotData[s.k] || [];
+    if (files.length === 0) {
+      return (
+        <div className="ws-up" key={s.k}>
+          <button className="ws-up-slot" type="button" onClick={() => addFile(s.k)}>
+            <span className="ws-up-slot-ic">{SLOT_ICON[s.type]}</span>
+            <span className="ws-up-slot-tx">
+              <span className="t">{s.label}</span>
+              <span className="h">{s.hint}</span>
+            </span>
+            <span className="ws-up-slot-go">上传 ↗</span>
+          </button>
+        </div>
+      );
+    }
+    return (
+      <div className="ws-up" key={s.k}>
+        <div className="ws-up-head">
+          <label>
+            {s.label}
+            <span className="ws-up-n">
+              {files.length}/{s.max}
+            </span>
+          </label>
+          <button className="ws-up-act" type="button" onClick={() => addFile(s.k)}>
+            ⤓ 上传
+          </button>
+        </div>
+        {s.type === "image" ? (
+          <div className="ws-up-grid">
+            {files.map((f, i) => (
+              <div
+                className="ws-ref"
+                key={i}
+                title="点击预览"
+                onClick={() => setPreview({ k: s.k, i })}
+              >
+                <span className="ws-ref-img" style={{ background: f.g }} />
+                <span className="ws-ref-zoom">⚲</span>
+                <button
+                  className="ws-ref-x"
+                  type="button"
+                  title="移除"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeFile(s.k, i);
+                  }}
+                >
+                  ✕
+                </button>
+                <span className="ws-ref-meta">
+                  <span className="nm">{f.n}</span>
+                  <span className="sz">{f.s}</span>
+                </span>
+              </div>
+            ))}
+            {files.length < s.max && (
+              <button className="ws-ref-add" type="button" onClick={() => addFile(s.k)}>
+                <span className="p">＋</span>添加
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="ws-up-list">
+            {files.map((f, i) => (
+              <div
+                className="ws-file"
+                key={i}
+                title="点击预览"
+                onClick={() => setPreview({ k: s.k, i })}
+              >
+                <span className={`ic ${s.type}`}>{s.type === "video" ? "▶" : "♪"}</span>
+                <span className="fn">{f.n}</span>
+                <span className="fd">{f.d}</span>
+                <button
+                  className="ws-file-x"
+                  type="button"
+                  title="移除"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeFile(s.k, i);
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            {files.length < s.max && (
+              <button className="ws-up-more" type="button" onClick={() => addFile(s.k)}>
+                ＋ 继续添加
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderFlfBox = (s: SlotDef) => {
+    const f = (slotData[s.k] || [])[0];
+    if (!f) {
+      return (
+        <button className="ws-flf-box" type="button" onClick={() => addFile(s.k)}>
+          <span className="plus">＋</span>
+          <span className="lb">{s.label}</span>
+        </button>
+      );
+    }
+    return (
+      <div
+        className="ws-flf-box filled"
+        title="点击预览"
+        onClick={() => setPreview({ k: s.k, i: 0 })}
+      >
+        <span className="ws-flf-img" style={{ background: f.g }} />
+        <button
+          className="ws-flf-x"
+          type="button"
+          title="移除"
+          onClick={(e) => {
+            e.stopPropagation();
+            removeFile(s.k, 0);
+          }}
+        >
+          ✕
+        </button>
+        <span className="ws-flf-lb">{s.label}</span>
+      </div>
+    );
+  };
+
+  const renderUploads = () => {
+    if (!slots) return null;
+    if (tool === "flf") {
+      const [rw, rh] = ratio.split(":");
+      return (
+        <div className="ws-reffiles" id="dropFiles" style={{ display: "block" }}>
+          <div className="ws-up ws-up--flf">
+            <div className="ws-up-head">
+              <label>首尾帧</label>
+              <span className="ws-up-tip">上传起止画面，生成平滑过渡</span>
+            </div>
+            <div
+              className="ws-flf"
+              style={{ ["--flf-ar" as string]: `${rw}/${rh}` } as CSSProperties}
+            >
+              {renderFlfBox(slots[0])}
+              <button
+                className="ws-flf-arrow"
+                type="button"
+                title="交换首尾帧"
+                onClick={swapFlf}
+              >
+                ⇌
+              </button>
+              {renderFlfBox(slots[1])}
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="ws-reffiles" id="dropFiles" style={{ display: "block" }}>
+        {slots.map(renderSlotCard)}
+      </div>
+    );
+  };
+
+  /* ── render: upload preview modal (create.js openPreview) ─────────────── */
+
+  const renderPreview = () => {
+    if (!preview) return null;
+    const f = (slotData[preview.k] || [])[preview.i];
+    if (!f) return null;
+    const type = slotTypeOf(preview.k);
+    let media: ReactNode;
+    if (type === "image") {
+      media = <div className="ws-prev-media" style={{ background: f.g }} />;
+    } else if (type === "video") {
+      media = (
+        <div className="ws-prev-media dark" style={{ background: refGrad(preview.i * 9 + 40) }}>
+          <span className="ws-prev-play">▶</span>
+          <span className="ws-prev-badge">{f.d}</span>
+        </div>
+      );
+    } else {
+      media = (
+        <div className="ws-prev-media dark">
+          <div className="ws-prev-wave">
+            {Array.from({ length: 42 }, (_, i) => (
+              <i key={i} style={{ height: `${18 + ((i * 37) % 64)}%` }} />
+            ))}
+          </div>
+          <span className="ws-prev-play sm">▶</span>
+          <span className="ws-prev-badge">{f.d}</span>
+        </div>
+      );
+    }
+    return (
+      <div
+        className="ws-prev-mask show"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) setPreview(null);
+        }}
+      >
+        <div className="ws-prev" role="dialog" aria-modal>
+          <button
+            className="ws-prev-x"
+            type="button"
+            aria-label="关闭"
+            onClick={() => setPreview(null)}
+          >
+            ✕
+          </button>
+          {media}
+          <div className="ws-prev-meta">
+            <span className="nm">{f.n}</span>
+            <span className="sz">
+              {f.s || (type === "video" ? "视频 · " : "音频 · ") + (f.d ?? "")}
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   /* ── render ──────────────────────────────────────────────────────────── */
 
   const modeKeys = MODES_BY_TYPE[curType];
@@ -461,446 +884,567 @@ export default function CreateStudio() {
   return (
     <>
       <div className={styles.cols}>
-      {/* ── control panel ───────────────────────────────────────────── */}
-      <aside className="ws-panel">
-        <div className="ws-panel-scroll">
-          {/* type tabs: 图片 / 视频 */}
-          <div className="ws-typetabs" id="type-tabs">
-            <button
-              type="button"
-              className={curType === "image" ? "on" : undefined}
-              onClick={() => pickType("image")}
-            >
-              <svg viewBox="0 0 24 24">
-                <rect x="3" y="4" width="18" height="16" rx="2" />
-                <circle cx="8.5" cy="9.5" r="1.6" />
-                <path d="M21 16l-5-5L5 20" />
-              </svg>
-              图片
-            </button>
-            <button
-              type="button"
-              className={curType === "video" ? "on" : undefined}
-              onClick={() => pickType("video")}
-            >
-              <svg viewBox="0 0 24 24">
-                <rect x="3" y="5" width="13" height="14" rx="2" />
-                <path d="M16 10l5-3v10l-5-3z" />
-              </svg>
-              视频
-            </button>
-          </div>
-
-          {/* mode tabs (generation tool) */}
-          <div className="seg" id="mode-tabs">
-            {modeKeys.map((k) => (
+        {/* ── control panel ───────────────────────────────────────────── */}
+        <aside className="ws-panel">
+          <div className="ws-panel-scroll">
+            {/* type tabs: 图片 / 视频 */}
+            <div className="ws-typetabs" id="type-tabs">
               <button
-                key={k}
                 type="button"
-                className={tool === k ? "on" : undefined}
-                onClick={() => setTool(k)}
+                className={curType === "image" ? "on" : undefined}
+                onClick={() => pickType("image")}
               >
-                {TOOLS[k].label}
-              </button>
-            ))}
-          </div>
-
-          {/* model picker */}
-          <div
-            className={`ws-model-wrap${modelOpen ? " open" : ""}`}
-            ref={modelWrapRef}
-          >
-            <button
-              className="ws-model"
-              id="modelCard"
-              type="button"
-              aria-haspopup="listbox"
-              aria-expanded={modelOpen}
-              onClick={(e) => {
-                e.stopPropagation();
-                setModelOpen((v) => !v);
-              }}
-            >
-              <span className="ws-model-sw" style={swatchStyle}>
-                {modelInitial(model)}
-              </span>
-              <span className="ws-model-info">
-                <span className="ws-model-row">
-                  <span className="ws-model-name">{model}</span>
-                  <span className="ws-model-tag">{meta.tag}</span>
-                </span>
-                <span className="ws-model-desc">
-                  {meta.by} · {meta.desc}
-                </span>
-              </span>
-              <span className="ws-model-switch">
-                <span className="cv">▾</span>
-              </span>
-            </button>
-
-            <div className="ws-model-menu" id="modelMenu" role="listbox">
-              {modelNames.map((m) => {
-                const mm = metaOf(m, modelMeta);
-                return (
-                  <button
-                    key={m}
-                    type="button"
-                    role="option"
-                    aria-selected={m === model}
-                    className={`ws-mopt${m === model ? " on" : ""}`}
-                    onClick={() => {
-                      setModel(m);
-                      setModelOpen(false);
-                    }}
-                  >
-                    <span className="ws-mopt-sw" style={{ background: modelSwatch(m) }}>
-                      {modelInitial(m)}
-                    </span>
-                    <span className="ws-mopt-info">
-                      <span className="ws-mopt-row">
-                        <span className="ws-mopt-name">{m}</span>
-                        <span className="ws-model-tag">{mm.tag}</span>
-                      </span>
-                      <span className="ws-mopt-desc">
-                        {mm.by} · {mm.desc}
-                      </span>
-                    </span>
-                    <span className="ws-mopt-ck">✓</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* reference-image drop zone (shown for drop-capable tools) */}
-          <div
-            className={`ws-drop${cfg.drop ? " show" : ""}`}
-            id="drop"
-            onClick={() => toast.info("选择参考图 · 高保真原型")}
-          >
-            <div className="ws-drop-ic">⤒</div>
-            <div className="ws-drop-tx">
-              拖入参考图，或<b>点击上传</b>
-            </div>
-            <div className="ws-drop-sub">JPG / PNG / WEBP · ≤ 20MB</div>
-          </div>
-
-          {/* prompt */}
-          <div className="ws-seclabel">
-            提示词{" "}
-            <span className="ws-pcount">
-              <b id="pLen">{prompt.length}</b> 字
-            </span>
-          </div>
-          <div className="ws-promptbox">
-            <textarea
-              className="ws-prompt"
-              id="prompt"
-              placeholder={cfg.ph}
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-            />
-            <div className="ws-prompt-foot">
-              <button className="ws-aiopt" type="button" onClick={aiOptimize}>
-                <span className="spark">✦</span> AI 优化
+                <svg viewBox="0 0 24 24">
+                  <rect x="3" y="4" width="18" height="16" rx="2" />
+                  <circle cx="8.5" cy="9.5" r="1.6" />
+                  <path d="M21 16l-5-5L5 20" />
+                </svg>
+                图片
               </button>
               <button
-                className="ws-pclear"
                 type="button"
-                onClick={() => setPrompt("")}
+                className={curType === "video" ? "on" : undefined}
+                onClick={() => pickType("video")}
               >
-                清空
+                <svg viewBox="0 0 24 24">
+                  <rect x="3" y="5" width="13" height="14" rx="2" />
+                  <path d="M16 10l5-3v10l-5-3z" />
+                </svg>
+                视频
               </button>
             </div>
-          </div>
 
-          {/* idea chips */}
-          <div className="ws-chips-head">灵感提示词 · 点击填入</div>
-          <div className="ws-chips" id="ideas">
-            {IDEAS.map((t) => (
-              <button key={t} type="button" onClick={() => setPrompt(t)}>
-                {t.slice(0, 10)}…
-              </button>
-            ))}
-          </div>
-
-          {/* ratio */}
-          <div className="ws-field col">
-            <label>画面比例</label>
-            <div className="ws-ratios" id="ratios">
-              {RATIOS.map((r) => (
+            {/* mode tabs (generation tool) */}
+            <div className="seg" id="mode-tabs">
+              {modeKeys.map((k) => (
                 <button
-                  key={r}
+                  key={k}
                   type="button"
-                  className={`ratio${r === ratio ? " on" : ""}`}
-                  onClick={() => setRatio(r)}
+                  className={tool === k ? "on" : undefined}
+                  onClick={() => selectTool(k)}
                 >
-                  {r}
+                  {TOOLS[k].label}
                 </button>
               ))}
             </div>
-          </div>
 
-          {/* count */}
-          <div className="ws-field col">
-            <label>
-              生成数量 · <span id="countVal">{count}</span>
-            </label>
-            <input
-              className="slider"
-              id="count"
-              type="range"
-              min={1}
-              max={4}
-              step={1}
-              value={count}
-              onChange={(e) => setCount(+e.target.value)}
-            />
-          </div>
-        </div>
-
-        {/* footer */}
-        <div className="ws-panel-foot">
-          <button
-            className={`ws-gen${busy ? " busy" : ""}`}
-            id="gen"
-            type="button"
-            onClick={generate}
-          >
-            <span className="spark">✦</span> 立即生成{" "}
-            <span className="ws-gen-cost">
-              ·&nbsp;<b id="cost">{cost}</b>&nbsp;积分
-            </span>
-          </button>
-          <div className="ws-balance">
-            余额 1,280 积分 · <a href="/pricing">充值</a>
-          </div>
-        </div>
-      </aside>
-
-      {/* ── center stage ────────────────────────────────────────────── */}
-      <main className="ws-stage" id="stage">
-        <div className="ws-stage-main">
-          {/* stage-local ambient backdrop (design's <canvas id="flux"
-              class="ws-stage-fx">). Styled by studio.css's .ws-stage-fx —
-              we use the CSS gradient fallback so it stays scoped to the stage
-              (FluxField's #flux-bg is a full-viewport fixed field, unsuitable
-              here; the WebGL upgrade can land in a later phase). */}
-          <canvas id="flux" className="ws-stage-fx flux-fallback" aria-hidden />
-          <div className="ws-stage-veil" />
-
-          <div className="ws-stage-top">
-            <div className="ws-crumb">
-              <span className="d" />
-              创作台 · STUDIO
-            </div>
-            <div className="ws-stage-actions">
+            {/* model picker */}
+            <div
+              className={`ws-model-wrap${modelOpen ? " open" : ""}`}
+              ref={modelWrapRef}
+            >
               <button
-                className="ws-iconbtn"
-                id="clearBtn"
+                className="ws-model"
+                id="modelCard"
                 type="button"
-                title="清空画布"
-                disabled={!hasResults || busy}
-                onClick={clearCanvas}
+                aria-haspopup="listbox"
+                aria-expanded={modelOpen}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setModelOpen((v) => !v);
+                }}
               >
-                清空
+                <span className="ws-model-sw" style={swatchStyle}>
+                  {modelInitial(model)}
+                </span>
+                <span className="ws-model-info">
+                  <span className="ws-model-row">
+                    <span className="ws-model-name">{model}</span>
+                    <span className="ws-model-tag">{meta.tag}</span>
+                  </span>
+                  <span className="ws-model-desc">
+                    {meta.by} · {meta.desc}
+                  </span>
+                </span>
+                <span className="ws-model-switch">
+                  <span className="cv">▾</span>
+                </span>
               </button>
+
+              <div className="ws-model-menu" id="modelMenu" role="listbox">
+                {modelNames.map((m) => {
+                  const mm = metaOf(m, modelMeta);
+                  return (
+                    <button
+                      key={m}
+                      type="button"
+                      role="option"
+                      aria-selected={m === model}
+                      className={`ws-mopt${m === model ? " on" : ""}`}
+                      onClick={() => {
+                        setModel(m);
+                        setModelOpen(false);
+                      }}
+                    >
+                      <span className="ws-mopt-sw" style={{ background: modelSwatch(m) }}>
+                        {modelInitial(m)}
+                      </span>
+                      <span className="ws-mopt-info">
+                        <span className="ws-mopt-row">
+                          <span className="ws-mopt-name">{m}</span>
+                          <span className="ws-model-tag">{mm.tag}</span>
+                        </span>
+                        <span className="ws-mopt-desc">
+                          {mm.by} · {mm.desc}
+                        </span>
+                      </span>
+                      <span className="ws-mopt-ck">✓</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
+
+            {/* typed reference uploads (per-tool slots; create.js renderUploads) */}
+            {renderUploads()}
+
+            {/* prompt */}
+            <div className="ws-seclabel">
+              提示词{" "}
+              <span className="ws-pcount">
+                <b id="pLen">{prompt.length}</b> 字
+              </span>
+            </div>
+            <div className="ws-promptbox">
+              <textarea
+                className="ws-prompt"
+                id="prompt"
+                ref={promptRef}
+                placeholder={cfg.ph}
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+              />
+              <div className="ws-prompt-foot">
+                <button className="ws-aiopt" type="button" onClick={aiOptimize}>
+                  <span className="spark">✦</span> AI 优化
+                </button>
+                <button
+                  className="ws-pclear"
+                  type="button"
+                  onClick={() => setPrompt("")}
+                >
+                  清空
+                </button>
+              </div>
+            </div>
+
+            {/* idea chips */}
+            <div className="ws-chips-head">灵感提示词 · 点击填入</div>
+            <div className="ws-chips" id="ideas">
+              {IDEAS.map((t) => (
+                <button key={t} type="button" onClick={() => setPrompt(t)}>
+                  {t.slice(0, 10)}…
+                </button>
+              ))}
+            </div>
+
+            {/* 画面比例 (image only) */}
+            {!isVideo && (
+              <div className="ws-field col" id="fieldRatio">
+                <label>画面比例</label>
+                <div className="ws-ratios" id="ratios">
+                  {RATIOS.map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      className={`ratio${r === ratio ? " on" : ""}`}
+                      onClick={() => setRatio(r)}
+                    >
+                      {r}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 分辨率 (image only) */}
+            {!isVideo && (
+              <div className="ws-field col" id="fieldImgRes">
+                <label>分辨率</label>
+                <div className="ws-ratios" id="imgResPills">
+                  {IMG_RES.map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      className={`ratio${r === imgRes ? " on" : ""}`}
+                      onClick={() => setImgRes(r)}
+                    >
+                      {r}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 清晰度 (video only) */}
+            {isVideo && (
+              <div className="ws-field col" id="fieldRes">
+                <label>清晰度</label>
+                <div className="ws-ratios" id="resPills">
+                  {VIDEO_RES.map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      className={`ratio${r === res ? " on" : ""}`}
+                      onClick={() => setRes(r)}
+                    >
+                      {r}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 生成数量 (image only) */}
+            {!isVideo && (
+              <div className="ws-field col" id="fieldCount">
+                <label>
+                  生成数量 · <span id="countVal">{count}</span>
+                </label>
+                <input
+                  className="slider"
+                  id="count"
+                  type="range"
+                  min={1}
+                  max={4}
+                  step={1}
+                  value={count}
+                  onChange={(e) => setCount(+e.target.value)}
+                />
+              </div>
+            )}
+
+            {/* 时长 (video only) */}
+            {isVideo && (
+              <div className="ws-field col" id="fieldDur">
+                <label>时长</label>
+                <div className="ws-ratios" id="durPills">
+                  {VIDEO_DUR.map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      className={`ratio${d === dur ? " on" : ""}`}
+                      onClick={() => setDur(d)}
+                    >
+                      {d}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* empty state */}
-          {!hasResults && (
-            <div className="ws-empty" id="empty">
-              <div className="ws-empty-glyph">
-                <span className="glyph" />
+          {/* footer */}
+          <div className="ws-panel-foot">
+            <button
+              className={`ws-gen${busy ? " busy" : ""}`}
+              id="gen"
+              type="button"
+              onClick={generate}
+            >
+              <span className="spark">✦</span> 立即生成{" "}
+              <span className="ws-gen-cost">
+                ·&nbsp;<b id="cost">{cost}</b>&nbsp;积分
+              </span>
+            </button>
+            <div className="ws-balance">
+              余额 1,280 积分 · <a href="/pricing">充值</a>
+            </div>
+          </div>
+        </aside>
+
+        {/* ── center stage ────────────────────────────────────────────── */}
+        <main className="ws-stage" id="stage">
+          <div className="ws-stage-main">
+            {/* stage-local ambient backdrop (design's <canvas id="flux"
+                class="ws-stage-fx">). Styled by studio.css's .ws-stage-fx —
+                we use the CSS gradient fallback so it stays scoped to the stage
+                (FluxField's #flux-bg is a full-viewport fixed field, unsuitable
+                here; the WebGL upgrade can land in a later phase). */}
+            <canvas id="flux" className="ws-stage-fx flux-fallback" aria-hidden />
+            <div className="ws-stage-veil" />
+
+            <div className="ws-stage-top">
+              <div className="ws-crumb">
+                <span className="d" />
+                创作台 · STUDIO
               </div>
-              <h2>准备好开始创作了吗？</h2>
-              <p>写下一句提示词，挑个模型与比例 —— 数秒之后，作品就在这里浮现。</p>
-              <div className="ws-empty-tags">
-                {(
-                  [
-                    { type: "image", tool: "t2i", label: "✦ 文生图" },
-                    { type: "image", tool: "i2i", label: "↻ 图生图" },
-                    { type: "video", tool: "t2v", label: "▶ 文生视频" },
-                    { type: "video", tool: "i2v", label: "⤢ 图生视频" },
-                  ] as { type: ArtworkType; tool: ToolKey; label: string }[]
-                ).map((t) => (
-                  <button
-                    key={t.tool}
-                    type="button"
-                    onClick={() => {
-                      setCurType(t.type);
-                      setTool(t.tool);
-                    }}
-                  >
-                    {t.label}
-                  </button>
-                ))}
+              <div className="ws-stage-actions">
+                <button
+                  className="ws-iconbtn"
+                  id="clearBtn"
+                  type="button"
+                  title="清空画布"
+                  disabled={!hasResults || busy}
+                  onClick={clearCanvas}
+                >
+                  清空
+                </button>
               </div>
             </div>
-          )}
 
-          {/* result grid */}
-          {hasResults && runMeta && (
-            <div className="ws-grid" id="grid" style={{ display: "grid" }}>
-              <div
-                className="ws-result-head"
-                id="resultHead"
-                data-state={allDone ? "done" : "gen"}
-              >
-                <div className="ws-rh-main">
-                  <div className="ws-rh-title">
-                    <span className="ws-rh-spin" />
-                    <span id="rhStatus">
-                      {allDone
-                        ? runMeta.prompt.slice(0, 40) +
-                          (runMeta.prompt.length > 40 ? "…" : "")
-                        : doneCount > 0
-                          ? `正在生成 ${doneCount}/${cells.length}…`
-                          : `正在生成 ${runMeta.count} 张…`}
-                    </span>
+            {/* empty state */}
+            {!hasResults && (
+              <div className="ws-empty" id="empty">
+                <div className="ws-empty-glyph">
+                  <span className="glyph" />
+                </div>
+                <h2>准备好开始创作了吗？</h2>
+                <p>写下一句提示词，挑个模型与比例 —— 数秒之后，作品就在这里浮现。</p>
+                <div className="ws-empty-tags">
+                  {(
+                    [
+                      { type: "image", tool: "t2i", label: "✦ 文生图" },
+                      { type: "image", tool: "i2i", label: "↻ 图生图" },
+                      { type: "video", tool: "t2v", label: "▶ 文生视频" },
+                      { type: "video", tool: "i2v", label: "⤢ 图生视频" },
+                    ] as { type: ArtworkType; tool: ToolKey; label: string }[]
+                  ).map((t) => (
+                    <button
+                      key={t.tool}
+                      type="button"
+                      onClick={() => {
+                        setCurType(t.type);
+                        selectTool(t.tool);
+                        promptRef.current?.focus();
+                      }}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* result grid */}
+            {hasResults && runMeta && (
+              <div className="ws-grid" id="grid" style={{ display: "grid" }}>
+                <div
+                  className="ws-result-head"
+                  id="resultHead"
+                  data-state={allDone ? "done" : "gen"}
+                >
+                  <div className="ws-rh-style">
+                    <div className="ws-rh-refs">
+                      {runMeta.refThumbs.map((g, i) => (
+                        <span key={i} className="ws-rh-ref" style={{ background: g }} />
+                      ))}
+                    </div>
+                    <div className="ws-rh-sbody">
+                      <div className="ws-rh-prompt">
+                        <b>【风格】</b> {runMeta.prompt}
+                      </div>
+                      <div className="ws-rh-meta">
+                        <span className="ws-rh-model">
+                          <span className="sw" style={{ background: modelSwatch(runMeta.model) }}>
+                            {modelInitial(runMeta.model)}
+                          </span>
+                          {runMeta.model}
+                        </span>
+                        <span className="ws-rh-dot">·</span>
+                        <span>{runMeta.spec}</span>
+                        <button
+                          className="ws-rh-info"
+                          type="button"
+                          onClick={() => toast.info("生成参数详情 · 原型")}
+                        >
+                          详细信息 ⓘ
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                  <div className="ws-rh-meta">
-                    <span className="ws-rh-chip">
-                      <i className="dot" />
-                      {runMeta.label}
-                    </span>
-                    <span className="ws-rh-chip">{runMeta.model}</span>
-                    <span className="ws-rh-chip">{runMeta.ratio}</span>
-                    <span className="ws-rh-chip">×{runMeta.count}</span>
-                  </div>
-                  <div className="ws-rh-prog">
-                    <i id="rhBar" style={{ width: `${aggProg}%` }} />
+                  <div className="ws-rh-foot">
+                    <div className="ws-rh-main">
+                      <div className="ws-rh-title">
+                        <span className="ws-rh-spin" />
+                        <span id="rhStatus">
+                          {allDone
+                            ? `已生成 ${cells.length} 张 · 点击查看大图`
+                            : doneCount > 0
+                              ? `正在生成 ${doneCount}/${cells.length}…`
+                              : `正在生成 ${runMeta.count} 张…`}
+                        </span>
+                      </div>
+                      <div className="ws-rh-prog">
+                        <i id="rhBar" style={{ width: `${aggProg}%` }} />
+                      </div>
+                    </div>
+                    <div className="ws-rh-acts" id="rhActs">
+                      {!allDone && (
+                        <button type="button" id="rhCancel" onClick={cancelRun}>
+                          ✕ 取消
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
-                <div className="ws-rh-acts" id="rhActs">
-                  {allDone ? (
-                    <>
-                      <button
-                        type="button"
-                        id="rhRegen"
-                        onClick={() => {
-                          if (!busy) generate();
+
+                {cells.map((cell) => {
+                  const [rw, rh] = runMeta.ratio.split(":").map(Number);
+                  const done = !!doneSet[cell.i];
+                  const pct = Math.round(progs[cell.i] ?? 0);
+                  return (
+                    <div
+                      key={cell.i}
+                      className={`gen-cell${done ? " done" : ""}`}
+                      data-i={cell.i}
+                      style={{ aspectRatio: `${rw}/${rh}` }}
+                      onClick={() => openCell(cell)}
+                    >
+                      <div
+                        className="done-cov"
+                        style={{ background: mesh(cell.hues[0], cell.hues[1], cell.hues[2]) }}
+                      />
+                      <div className="shimmer" />
+                      <div className="ph">
+                        生成中 · <span className="pct">{pct}%</span>
+                      </div>
+                      <div className="bar">
+                        <i style={{ width: `${progs[cell.i] ?? 0}%` }} />
+                      </div>
+                      <span className="reveal-tag">✦ 刚刚生成</span>
+                      <div
+                        className="gen-acts"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const btn = (e.target as HTMLElement).closest("button");
+                          if (btn) cellAction(btn.dataset.act || "", cell);
                         }}
                       >
-                        ↻ 重新生成
-                      </button>
+                        <button type="button" data-act="edit">
+                          ✎ 编辑
+                        </button>
+                        <button type="button" data-act="regen">
+                          ↻ 重新生成
+                        </button>
+                        <button type="button" data-act="del">
+                          🗑 删除
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* done-state action bar (create.js ws-result-foot) */}
+                {allDone && (
+                  <div className="ws-result-foot">
+                    <button
+                      type="button"
+                      data-fa="edit"
+                      onClick={() => {
+                        setPrompt(runMeta.prompt);
+                        promptRef.current?.focus();
+                        toast.info("已载入提示词，可继续编辑");
+                      }}
+                    >
+                      <span className="i">✎</span>重新编辑
+                    </button>
+                    <button
+                      type="button"
+                      data-fa="regen"
+                      onClick={() => {
+                        if (!busy) generate();
+                      }}
+                    >
+                      <span className="i">↻</span>再次生成
+                    </button>
+                    <button
+                      type="button"
+                      data-fa="more"
+                      onClick={() => toast.info("更多 · 下载 / 收藏 / 分享")}
+                    >
+                      ⋯
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* generation-history strip (create.js renderStrip + pagination) */}
+          <div className="ws-histbar">
+            <div className="ws-histbar-head">
+              <div className="ws-histtitle">
+                生成历史{" "}
+                <span className="ws-histcount" id="histCount">
+                  {filteredHist.length || ""}
+                </span>
+              </div>
+              <div className="ws-histhead-r">
+                <div className="ws-histfilter" id="histFilter">
+                  {(
+                    [
+                      { f: "all", label: "全部" },
+                      { f: "image", label: "图片" },
+                      { f: "video", label: "视频" },
+                    ] as { f: "all" | "image" | "video"; label: string }[]
+                  ).map((b) => (
+                    <button
+                      key={b.f}
+                      type="button"
+                      className={histFilter === b.f ? "on" : undefined}
+                      onClick={() => {
+                        setHistFilter(b.f);
+                        setHistPage(1);
+                      }}
+                    >
+                      {b.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="ws-histpager" id="histPager">
+                  {histPages > 1 && (
+                    <>
                       <button
+                        className="ws-pprev"
                         type="button"
-                        id="rhDl"
-                        onClick={() => toast.success("已下载全部 · 原型")}
+                        disabled={curPage <= 1}
+                        onClick={() => setHistPage((p) => Math.max(1, p - 1))}
                       >
-                        ⤓ 下载全部
+                        ‹
+                      </button>
+                      <span className="ws-pcur">
+                        {curPage} / {histPages}
+                      </span>
+                      <button
+                        className="ws-pnext"
+                        type="button"
+                        disabled={curPage >= histPages}
+                        onClick={() => setHistPage((p) => Math.min(histPages, p + 1))}
+                      >
+                        ›
                       </button>
                     </>
-                  ) : (
-                    <button type="button" id="rhCancel" onClick={cancelRun}>
-                      ✕ 取消
-                    </button>
                   )}
                 </div>
               </div>
+            </div>
 
-              {cells.map((cell) => {
-                const [rw, rh] = runMeta.ratio.split(":").map(Number);
-                const done = !!doneSet[cell.i];
-                const pct = Math.round(progs[cell.i] ?? 0);
-                return (
-                  <div
-                    key={cell.i}
-                    className={`gen-cell${done ? " done" : ""}`}
-                    data-i={cell.i}
-                    style={{ aspectRatio: `${rw}/${rh}` }}
-                    onClick={() => openCell(cell)}
+            <div className="ws-histstrip" id="histStrip">
+              {filteredHist.length === 0 ? (
+                <div className="ws-hempty">
+                  还没有{histFilter === "video" ? "视频" : histFilter === "image" ? "图片" : ""}生成记录
+                </div>
+              ) : (
+                pageItems.map((h) => (
+                  <button
+                    key={h.id}
+                    type="button"
+                    className="ws-hcard"
+                    data-htype={h.type}
+                    onClick={() => openHist(h)}
                   >
-                    <div
-                      className="done-cov"
-                      style={{ background: mesh(cell.hues[0], cell.hues[1], cell.hues[2]) }}
-                    />
-                    <div className="shimmer" />
-                    <div className="ph">
-                      生成中 · <span className="pct">{pct}%</span>
-                    </div>
-                    <div className="bar">
-                      <i style={{ width: `${progs[cell.i] ?? 0}%` }} />
-                    </div>
-                    <span className="reveal-tag">✦ 刚刚生成</span>
-                    <div
-                      className="gen-acts"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const btn = (e.target as HTMLElement).closest("button");
-                        if (btn) cellAction(btn.dataset.act || "", cell);
-                      }}
-                    >
-                      <button type="button" data-act="edit">
-                        ✎ 编辑
-                      </button>
-                      <button type="button" data-act="regen">
-                        ↻ 重新生成
-                      </button>
-                      <button type="button" data-act="del">
-                        🗑 删除
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* generation-history strip */}
-        <div className="ws-histbar">
-          <div className="ws-histbar-head">
-            <span>
-              生成历史{" "}
-              <span className="ws-ahead-n" id="histN">
-                {hist.length}
-              </span>
-            </span>
-            <div className="ws-histfilter" id="histFilter">
-              {(
-                [
-                  { f: "all", label: "全部" },
-                  { f: "image", label: "图片" },
-                  { f: "video", label: "视频" },
-                ] as { f: "all" | "image" | "video"; label: string }[]
-              ).map((b) => (
-                <button
-                  key={b.f}
-                  type="button"
-                  className={histFilter === b.f ? "on" : undefined}
-                  onClick={() => setHistFilter(b.f)}
-                >
-                  {b.label}
-                </button>
-              ))}
+                    <span className="cov" style={{ background: coverBg(h.hues) }} />
+                    {h.type === "video" && <span className="vbadge">▶</span>}
+                  </button>
+                ))
+              )}
             </div>
           </div>
-
-          <div className="ws-histstrip" id="histStrip">
-            {filteredHist.length === 0 ? (
-              <div className="ws-hempty">还没有生成记录 · 写句提示词试试 ✦</div>
-            ) : (
-              filteredHist.map((h) => (
-                <button
-                  key={h.id}
-                  type="button"
-                  className="ws-hcard"
-                  data-htype={h.type}
-                  onClick={() => openHist(h)}
-                >
-                  <span className="cov" style={{ background: coverBg(h.hues) }} />
-                  {h.type === "video" && <span className="vbadge">▶</span>}
-                </button>
-              ))
-            )}
-          </div>
-        </div>
-      </main>
+        </main>
       </div>
 
+      {renderPreview()}
       <WorkModal work={active} onClose={() => setActive(null)} />
     </>
   );

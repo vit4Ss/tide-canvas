@@ -27,8 +27,10 @@ import (
 	"tidecanvas/internal/pkg/cache"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/logger"
+	"tidecanvas/internal/pkg/mailer"
 	"tidecanvas/internal/pkg/response"
 	"tidecanvas/internal/pkg/storage"
+	"tidecanvas/internal/pkg/token"
 
 	"tidecanvas/internal/handler/admin"
 	"tidecanvas/internal/handler/ai"
@@ -83,11 +85,18 @@ func run() error {
 	}
 	logger.L().Info("redis connected")
 
+	// Token: configure JWT signing (secret/TTLs) and the Redis-backed refresh
+	// store/blacklist. Must run before any token is issued or parsed.
+	token.Init(cfg.JWT, rdb)
+
 	// 3. Storage.
 	store, err := storage.New(cfg.Storage)
 	if err != nil {
 		return fmt.Errorf("init storage: %w", err)
 	}
+
+	// Mailer: register SMTP config so verification emails can be sent.
+	mailer.Init(cfg.Email)
 
 	deps := &app.Deps{DB: gdb, RDB: rdb, Cfg: cfg, Storage: store}
 
