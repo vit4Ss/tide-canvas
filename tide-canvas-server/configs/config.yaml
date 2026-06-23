@@ -49,6 +49,16 @@ cors:
   allowOrigins:
     - http://localhost:3000
 
+# Chat assistant LLM (Anthropic / Claude). Leave apiKey blank to keep the canned
+# placeholder reply; set it (or TIDECANVAS_LLM_APIKEY) to enable real replies.
+llm:
+  apiKey: "" # MUST be provided via env/config to enable the AI assistant
+  baseUrl: "" # optional; overrides the Anthropic API base URL
+  model: claude-opus-4-8
+  maxTokens: 2048
+  historyLimit: 20 # recent messages sent as context
+  # systemPrompt: "" # optional override of the built-in 流光 creative-assistant persona
+
 email:
   enabled: true
   host: smtp.gmail.com

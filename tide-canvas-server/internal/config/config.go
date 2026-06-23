@@ -21,7 +21,24 @@ type Config struct {
 	Storage StorageConfig `mapstructure:"storage"`
 	CORS    CORSConfig    `mapstructure:"cors"`
 	Email   EmailConfig   `mapstructure:"email"`
+	LLM     LLMConfig     `mapstructure:"llm"`
 }
+
+// LLMConfig holds the chat large-language-model settings. When APIKey is empty
+// the chat service falls back to a canned placeholder reply (no upstream call),
+// so the server stays runnable without credentials. Configure via
+// TIDECANVAS_LLM_APIKEY / TIDECANVAS_LLM_MODEL / TIDECANVAS_LLM_BASEURL.
+type LLMConfig struct {
+	APIKey       string `mapstructure:"apiKey"`
+	BaseURL      string `mapstructure:"baseUrl"`      // optional; overrides the Anthropic API base
+	Model        string `mapstructure:"model"`        // e.g. claude-opus-4-8
+	MaxTokens    int    `mapstructure:"maxTokens"`    // response cap
+	SystemPrompt string `mapstructure:"systemPrompt"` // persona/instructions for the assistant
+	HistoryLimit int    `mapstructure:"historyLimit"` // recent messages sent as context
+}
+
+// Enabled reports whether a real LLM is configured (an API key is present).
+func (l LLMConfig) Enabled() bool { return strings.TrimSpace(l.APIKey) != "" }
 
 // ServerConfig holds HTTP server settings.
 type ServerConfig struct {
@@ -197,7 +214,21 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("email.maxAttempts", 5)
 	v.SetDefault("email.sendCodeIPLimit", 10)
 	v.SetDefault("email.sendCodeIPWindowSeconds", 600)
+
+	v.SetDefault("llm.apiKey", "")
+	v.SetDefault("llm.baseUrl", "")
+	v.SetDefault("llm.model", "claude-opus-4-8")
+	v.SetDefault("llm.maxTokens", 2048)
+	v.SetDefault("llm.historyLimit", 20)
+	v.SetDefault("llm.systemPrompt", defaultLLMSystemPrompt)
 }
+
+// defaultLLMSystemPrompt gives the assistant a TideCanvas (流光) persona: a
+// creative copilot for brand, design and AIGC ideation. Overridable via
+// TIDECANVAS_LLM_SYSTEMPROMPT or configs/config.yaml.
+const defaultLLMSystemPrompt = "你是 TideCanvas（流光）创作平台的 AI 创作助手。" +
+	"你擅长品牌设计、视觉创意、文案撰写与 AIGC 灵感发散。" +
+	"请用简洁、专业且有启发性的中文回答用户，必要时给出可执行的创意方向或步骤。"
 
 func normalize(cfg *Config) {
 	if cfg.JWT.AccessTTL <= 0 {
@@ -238,5 +269,18 @@ func normalize(cfg *Config) {
 	}
 	if strings.TrimSpace(cfg.Email.ReplyTo) == "" {
 		cfg.Email.ReplyTo = cfg.Email.FromAddress
+	}
+
+	if strings.TrimSpace(cfg.LLM.Model) == "" {
+		cfg.LLM.Model = "claude-opus-4-8"
+	}
+	if cfg.LLM.MaxTokens <= 0 {
+		cfg.LLM.MaxTokens = 2048
+	}
+	if cfg.LLM.HistoryLimit <= 0 {
+		cfg.LLM.HistoryLimit = 20
+	}
+	if strings.TrimSpace(cfg.LLM.SystemPrompt) == "" {
+		cfg.LLM.SystemPrompt = defaultLLMSystemPrompt
 	}
 }

@@ -1,14 +1,20 @@
 package chat
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
 
+	"tidecanvas/internal/config"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
+	"tidecanvas/internal/pkg/llm"
+	"tidecanvas/internal/pkg/logger"
+
+	"go.uber.org/zap"
 )
 
 // service.go holds the chat business logic: ownership scoping, conversation
@@ -31,12 +37,32 @@ const cannedReply = "[占位回复] AI 暂未接入：当前还没有配置大�
 // not own. The handler maps it to a 404 to avoid leaking existence.
 var errForbidden = errors.New("chat: not owner")
 
+// llmReplyTimeout bounds a single upstream generation so a slow/hung provider
+// never blocks the user's send indefinitely.
+const llmReplyTimeout = 60 * time.Second
+
 type service struct {
 	repo *repo
+	// llmClient is nil when no API key is configured; sendMessage then falls back
+	// to the canned placeholder reply.
+	llmClient    *llm.Client
+	historyLimit int
 }
 
-func newService(db *gorm.DB) *service {
-	return &service{repo: newRepo(db)}
+func newService(db *gorm.DB, cfg config.LLMConfig) *service {
+	s := &service{repo: newRepo(db), historyLimit: cfg.HistoryLimit}
+	if s.historyLimit <= 0 {
+		s.historyLimit = 20
+	}
+	if client, err := llm.New(cfg); err != nil {
+		if !errors.Is(err, llm.ErrDisabled) {
+			logger.L().Warn("chat: LLM client init failed, using canned replies", zap.Error(err))
+		}
+	} else {
+		s.llmClient = client
+		logger.L().Info("chat: LLM assistant enabled", zap.String("model", cfg.Model))
+	}
+	return s
 }
 
 // listConversations returns a page of the authenticated owner's conversations.
@@ -127,13 +153,14 @@ func (s *service) sendMessage(conversationID, ownerID idgen.ID, dto SendMessageD
 		return nil, err
 	}
 
-	// Append a canned assistant reply (no LLM key wired yet). A failure to store
-	// the reply must not fail the user's send, so it is best-effort.
+	// Generate the assistant reply (real LLM when configured, canned otherwise).
+	// A failure to store the reply must not fail the user's send, so it is
+	// best-effort.
 	aiMsg := &model.IMMessage{
 		ConversationID: conversationID,
 		SenderID:       assistantSenderID,
 		ContentType:    "text",
-		Content:        s.buildReply(content),
+		Content:        s.generateReply(conversationID, content),
 		Status:         0,
 	}
 	at := time.Now()
@@ -162,6 +189,41 @@ func (s *service) markRead(conversationID, ownerID idgen.ID) error {
 		lastReadID = *conv.LastMessageID
 	}
 	return s.repo.markRead(conversationID, ownerID, lastReadID, time.Now())
+}
+
+// generateReply produces the assistant reply for the latest user message. When
+// an LLM is configured it sends the recent transcript to the model; on any error
+// (or when no LLM is configured) it falls back to the canned placeholder so the
+// chat round-trip always completes.
+func (s *service) generateReply(conversationID idgen.ID, userContent string) string {
+	if s.llmClient == nil {
+		return s.buildReply(userContent)
+	}
+
+	rows, err := s.repo.recentMessages(conversationID, s.historyLimit)
+	if err != nil {
+		logger.L().Warn("chat: load context failed, using canned reply", zap.Error(err))
+		return s.buildReply(userContent)
+	}
+
+	turns := make([]llm.Turn, 0, len(rows))
+	for i := range rows {
+		role := llm.RoleUser
+		if rows[i].SenderID == assistantSenderID {
+			role = llm.RoleAssistant
+		}
+		turns = append(turns, llm.Turn{Role: role, Text: rows[i].Content})
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), llmReplyTimeout)
+	defer cancel()
+
+	reply, err := s.llmClient.Chat(ctx, turns)
+	if err != nil {
+		logger.L().Warn("chat: LLM generation failed, using canned reply", zap.Error(err))
+		return s.buildReply(userContent)
+	}
+	return reply
 }
 
 // buildReply formats the canned assistant reply for a given user message.

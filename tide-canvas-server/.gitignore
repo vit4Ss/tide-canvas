@@ -6,8 +6,8 @@
 *.dll
 *.so
 *.dylib
-api
-tidecanvas
+/api
+/tidecanvas
 
 # Test / coverage
 *.test

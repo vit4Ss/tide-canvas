@@ -103,6 +103,28 @@ func (r *repo) createMessage(m *model.IMMessage) error {
 	return r.db.Create(m).Error
 }
 
+// recentMessages returns up to limit of a conversation's most recent messages in
+// chronological (oldest-first) order, for use as LLM context. It fetches the
+// newest `limit` rows (DESC) then reverses them so the transcript reads forward.
+func (r *repo) recentMessages(conversationID idgen.ID, limit int) ([]model.IMMessage, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	var rows []model.IMMessage
+	if err := r.db.
+		Where("conversation_id = ?", conversationID).
+		Order("create_time DESC").
+		Order("id DESC").
+		Limit(limit).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
+		rows[i], rows[j] = rows[j], rows[i]
+	}
+	return rows, nil
+}
+
 // touchConversation updates a conversation's last-message pointer/time so the
 // list ordering reflects recent activity.
 func (r *repo) touchConversation(id, lastMessageID idgen.ID, at time.Time) error {

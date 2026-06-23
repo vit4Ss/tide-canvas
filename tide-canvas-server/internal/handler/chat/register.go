@@ -28,7 +28,7 @@ import (
 // The :id param only ever appears under the static /conversations parent, so
 // there is no static-vs-:param sibling conflict to make gin panic.
 func Register(api *gin.RouterGroup, d *app.Deps) {
-	svc := newService(d.DB)
+	svc := newService(d.DB, d.Cfg.LLM)
 	h := newHandler(svc)
 
 	g := api.Group("/im")
