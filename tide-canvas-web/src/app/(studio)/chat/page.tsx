@@ -24,28 +24,132 @@ import "@/styles/liuguang/chat.css";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent,
 } from "react";
 import { chatApi } from "@/lib/chat-api";
+import { marketApi, type StudioModelVO } from "@/lib/market-api";
 import { useAuthStore } from "@/stores/use-auth-store";
 import type { ConversationVO, MessageVO } from "@/types/chat";
 import { mesh } from "@/lib/mesh";
 
-/* ── composer chip options (cosmetic, ported from chat.js) ─────────────────── */
+/* ── composer chips: model + options come from 模型管理 config (studio-models). ── */
 
-const MODES = ["文生视频", "文生图", "图生视频", "图生图"];
-const MODELS = ["Kling-VIDEO-3.0-Pro", "Vidu-2.0", "Hailuo-02", "Seedance-Pro"];
-const RATIOS = ["1:1", "16:9", "9:16", "4:3", "3:4"];
-const RESOLUTIONS = ["720p", "1080p", "2K", "4K"];
-const DURATIONS = ["5s", "10s", "15s"];
+/** config mode value → Chinese label for the 模式 chip. */
+const MODE_LABEL: Record<string, string> = {
+  t2i: "文生图",
+  i2i: "图生图",
+  t2v: "文生视频",
+  i2v: "图生视频",
+  keyframe: "首尾帧",
+  omni_ref: "全能参考",
+};
 
-/** Cycle through a list of chip options on click. */
-function next<T>(list: readonly T[], current: T): T {
-  const i = list.indexOf(current);
-  return list[(i + 1) % list.length];
+/** config mode value → one-line hint shown in the 模式 dropdown. */
+const MODE_HINT: Record<string, string> = {
+  t2i: "文字生成图片",
+  i2i: "参考图生成图片",
+  t2v: "文字生成视频",
+  i2v: "参考图生成视频",
+  keyframe: "首尾帧生成视频",
+  omni_ref: "多参考生成视频",
+};
+
+/** deterministic per-model swatch gradient (ported from chat.js). */
+function modelSwatch(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
+  return `linear-gradient(135deg, hsl(${h} 78% 62%), hsl(${(h + 50) % 360} 80% 52%))`;
+}
+function modelInitial(name: string): string {
+  return name.replace(/[^A-Za-z一-龥]/g, "").charAt(0) || "A";
+}
+function typeTag(type: string): string {
+  return type === "video" ? "VID" : type === "audio" ? "AUD" : type === "text" ? "TXT" : "IMG";
+}
+
+/** an aspect-ratio glyph box for the ratio dropdown lead/item. */
+function RatioBox({ ratio }: { ratio: string }) {
+  const [w, h] = ratio.split(":").map(Number);
+  if (!w || !h) return <span className="cm-rt" style={{ width: 16, height: 16 }} />;
+  const max = 16;
+  const bw = Math.round((w / Math.max(w, h)) * max);
+  const bh = Math.round((h / Math.max(w, h)) * max);
+  return <span className="cm-rt" style={{ width: bw, height: bh }} />;
+}
+
+/** A composer dropdown (`.cm-sel` chip + `.cm-menu` popover) matching the design. */
+function CmSelect({
+  open,
+  onToggle,
+  lead,
+  label,
+  menuH,
+  right,
+  children,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  lead?: React.ReactNode;
+  label: React.ReactNode;
+  menuH: string;
+  right?: boolean;
+  children: React.ReactNode;
+}) {
+  const chipRef = useRef<HTMLButtonElement>(null);
+  const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
+
+  // Position the menu with fixed coordinates anchored to the chip, so it escapes
+  // the horizontally-scrolling chip row's clipping. Recompute on scroll/resize.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const el = chipRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const st: CSSProperties = { position: "fixed", bottom: window.innerHeight - r.top + 8 };
+      if (right) st.right = window.innerWidth - r.right;
+      else st.left = r.left;
+      setMenuStyle(st);
+    };
+    place();
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [open, right]);
+
+  return (
+    <div className={`cm-sel${open ? " open" : ""}`}>
+      <button
+        ref={chipRef}
+        className="cm-chip"
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggle();
+        }}
+      >
+        {lead}
+        <span className="cm-lab">{label}</span>
+        <span className="cv">▾</span>
+      </button>
+      <div
+        className={`cm-menu${right ? " right" : ""}`}
+        style={menuStyle}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="cm-menu-h">{menuH}</div>
+        {children}
+      </div>
+    </div>
+  );
 }
 
 /* ── component ────────────────────────────────────────────────────────────── */
@@ -60,17 +164,88 @@ export default function ChatPage() {
   const [busy, setBusy] = useState(false);
   const [typing, setTyping] = useState(false);
 
-  // composer chips (cosmetic)
+  // composer chips — driven by the selected model's 模型管理 config
+  const [genModels, setGenModels] = useState<StudioModelVO[]>([]);
   const [web, setWeb] = useState(true);
-  const [mode, setMode] = useState(MODES[0]);
-  const [model, setModel] = useState(MODELS[0]);
-  const [ratio, setRatio] = useState(RATIOS[0]);
-  const [res, setRes] = useState(RESOLUTIONS[1]);
-  const [dur, setDur] = useState(DURATIONS[0]);
-  const [batch, setBatch] = useState(2);
+  const [mode, setMode] = useState("");
+  const [model, setModel] = useState("");
+  const [ratio, setRatio] = useState("");
+  const [res, setRes] = useState("");
+  const [dur, setDur] = useState("");
+  const [batch, setBatch] = useState(1);
+  const [openSel, setOpenSel] = useState<string | null>(null);
 
   const userEmail = useAuthStore((s) => s.user?.email);
   const ensureSession = useAuthStore((s) => s.ensureSession);
+
+  // ── composer config (from 模型管理 via studio-models) ──────────────────────
+  const modelNames = useMemo(() => genModels.map((m) => m.name), [genModels]);
+  const selModel = useMemo(
+    () => genModels.find((m) => m.name === model) ?? null,
+    [genModels, model],
+  );
+  const mCfg = selModel?.config ?? null;
+  const isVid = selModel?.type === "video";
+  const modeVals = mCfg?.modes ?? [];
+  const ratioOpts = mCfg?.ratios ?? [];
+  const resOpts = mCfg?.resolutions ?? [];
+  const durOpts = isVid ? mCfg?.durations ?? [] : [];
+  const countOpts = mCfg?.batchOptions?.length ? mCfg.batchOptions : [1, 2, 3, 4];
+  const batchMax = Math.max(...countOpts);
+  const toggleSel = (k: string) => setOpenSel((cur) => (cur === k ? null : k));
+
+  // load generatable models (image + video; text models are chat-only). Refetch
+  // on focus/visibility so 模型管理 edits reflect without a manual refresh.
+  const reloadGenModels = useCallback(async () => {
+    try {
+      const res = await marketApi.studioModels();
+      const list = (res.success && Array.isArray(res.data) ? res.data : []).filter(
+        (m) => m.type !== "text",
+      );
+      setGenModels(list);
+      if (list.length) {
+        setModel((cur) => (list.some((m) => m.name === cur) ? cur : list[0].name));
+      }
+    } catch {
+      setGenModels([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    reloadGenModels();
+  }, [reloadGenModels]);
+
+  useEffect(() => {
+    const onFocus = () => reloadGenModels();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") reloadGenModels();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [reloadGenModels]);
+
+  // close any open composer dropdown on an outside click.
+  useEffect(() => {
+    if (!openSel) return;
+    const onDoc = () => setOpenSel(null);
+    document.addEventListener("click", onDoc);
+    return () => document.removeEventListener("click", onDoc);
+  }, [openSel]);
+
+  // snap chip selections to values the selected model actually supports.
+  useEffect(() => {
+    if (!mCfg) return;
+    setMode((m) => (modeVals.length ? (modeVals.includes(m) ? m : modeVals[0]) : ""));
+    setRatio((r) => (ratioOpts.length ? (ratioOpts.includes(r) ? r : ratioOpts[0]) : ""));
+    setRes((r) => (resOpts.length ? (resOpts.includes(r) ? r : resOpts[0]) : ""));
+    setDur((d) => (durOpts.length ? (durOpts.includes(d) ? d : durOpts[0]) : ""));
+    setBatch((b) => Math.min(Math.max(1, b), batchMax));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mCfg, isVid]);
 
   const threadRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -235,15 +410,11 @@ export default function ChatPage() {
     [send],
   );
 
-  // ~ approx points cost (kept from the design's "约 100 积分")
+  // approx points cost: the selected model's 消耗积分 × batch.
   const points = useMemo(() => {
-    const base = mode.includes("视频") ? 100 : 20;
-    const resMul = { "720p": 1, "1080p": 1.6, "2K": 2.6, "4K": 4 }[res] ?? 1;
-    const durMul = mode.includes("视频")
-      ? ({ "5s": 1, "10s": 2, "15s": 3 }[dur] ?? 1)
-      : 1;
-    return Math.round(base * resMul * durMul * batch);
-  }, [mode, res, dur, batch]);
+    const base = parseFloat(selModel?.pointCost ?? "0") || 0;
+    return Math.round(base * Math.max(1, batch));
+  }, [selModel, batch]);
 
   return (
     <div className="chat-wrap">
@@ -351,6 +522,7 @@ export default function ChatPage() {
               />
             </div>
             <div className="composer-bar">
+              <div className="cm-row">
               <button
                 className={`cm-chip ${web ? "on" : ""}`}
                 type="button"
@@ -362,29 +534,188 @@ export default function ChatPage() {
                 </svg>
                 联网
               </button>
-              <button className="cm-chip" type="button" onClick={() => setMode((m) => next(MODES, m))}>
-                {mode} ▾
-              </button>
-              <button className="cm-chip" type="button" onClick={() => setModel((m) => next(MODELS, m))}>
-                {model} ▾
-              </button>
-              <button className="cm-chip" type="button" onClick={() => setRatio((r) => next(RATIOS, r))}>
-                {ratio} ▾
-              </button>
-              <button className="cm-chip" type="button" onClick={() => setRes((r) => next(RESOLUTIONS, r))}>
-                {res} ▾
-              </button>
-              <button className="cm-chip" type="button" onClick={() => setDur((d) => next(DURATIONS, d))}>
-                {dur} ▾
-              </button>
-              <button
-                className="cm-chip"
-                type="button"
-                onClick={() => setBatch((b) => (b >= 4 ? 1 : b + 1))}
+              {modelNames.length > 0 && (
+                <CmSelect
+                  open={openSel === "model"}
+                  onToggle={() => toggleSel("model")}
+                  menuH="选择模型"
+                  lead={
+                    <span className="cm-sw sm" style={{ background: modelSwatch(model) }}>
+                      {modelInitial(model)}
+                    </span>
+                  }
+                  label={model || "选择模型"}
+                >
+                  {genModels.map((m) => {
+                    const est = m.config?.estSeconds ?? 0;
+                    const cost = parseFloat(m.pointCost) || 0;
+                    const tag = est > 0 ? `~${est}s` : cost > 0 ? `${cost}积分` : typeTag(m.type);
+                    const desc =
+                      m.desc || (m.config?.capabilities?.length ? m.config.capabilities.join(" · ") : "高质量生成");
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        className={`cm-mitem${m.name === model ? " on" : ""}`}
+                        onClick={() => {
+                          setModel(m.name);
+                          setOpenSel(null);
+                        }}
+                      >
+                        <span className="cm-sw" style={{ background: modelSwatch(m.name) }}>
+                          {modelInitial(m.name)}
+                        </span>
+                        <span className="nfo">
+                          <span className="nm">
+                            <span className="nm-t">{m.name}</span>
+                            <i>{tag}</i>
+                          </span>
+                          <span className="ds">{desc}</span>
+                        </span>
+                        <span className="ck">✓</span>
+                      </button>
+                    );
+                  })}
+                </CmSelect>
+              )}
+
+              {modeVals.length > 0 && (
+                <CmSelect
+                  open={openSel === "mode"}
+                  onToggle={() => toggleSel("mode")}
+                  menuH="生成方式"
+                  lead={<span className="cm-ico lead">{isVid ? "▶" : "▦"}</span>}
+                  label={MODE_LABEL[mode] ?? mode}
+                >
+                  {modeVals.map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      className={`cm-mitem${v === mode ? " on" : ""}`}
+                      onClick={() => {
+                        setMode(v);
+                        setOpenSel(null);
+                      }}
+                    >
+                      <span className="cm-ico">{isVid ? "▶" : "▦"}</span>
+                      <span className="nfo">
+                        <span className="nm">{MODE_LABEL[v] ?? v}</span>
+                        <span className="ds">{MODE_HINT[v] ?? ""}</span>
+                      </span>
+                      <span className="ck">✓</span>
+                    </button>
+                  ))}
+                </CmSelect>
+              )}
+
+              {ratioOpts.length > 0 && (
+                <CmSelect
+                  open={openSel === "ratio"}
+                  onToggle={() => toggleSel("ratio")}
+                  menuH="画面比例"
+                  lead={<RatioBox ratio={ratio} />}
+                  label={ratio}
+                >
+                  {ratioOpts.map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      className={`cm-mitem${r === ratio ? " on" : ""}`}
+                      onClick={() => {
+                        setRatio(r);
+                        setOpenSel(null);
+                      }}
+                    >
+                      <RatioBox ratio={r} />
+                      <span className="nfo">
+                        <span className="nm">{r}</span>
+                      </span>
+                      <span className="ck">✓</span>
+                    </button>
+                  ))}
+                </CmSelect>
+              )}
+
+              {resOpts.length > 0 && (
+                <CmSelect
+                  open={openSel === "res"}
+                  onToggle={() => toggleSel("res")}
+                  menuH="分辨率"
+                  label={res.toUpperCase()}
+                >
+                  {resOpts.map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      className={`cm-mitem${r === res ? " on" : ""}`}
+                      onClick={() => {
+                        setRes(r);
+                        setOpenSel(null);
+                      }}
+                    >
+                      <span className="nfo">
+                        <span className="nm">{r.toUpperCase()}</span>
+                      </span>
+                      <span className="ck">✓</span>
+                    </button>
+                  ))}
+                </CmSelect>
+              )}
+
+              {durOpts.length > 0 && (
+                <CmSelect
+                  open={openSel === "dur"}
+                  onToggle={() => toggleSel("dur")}
+                  menuH="时长"
+                  label={dur}
+                >
+                  {durOpts.map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      className={`cm-mitem${d === dur ? " on" : ""}`}
+                      onClick={() => {
+                        setDur(d);
+                        setOpenSel(null);
+                      }}
+                    >
+                      <span className="nfo">
+                        <span className="nm">{d}</span>
+                      </span>
+                      <span className="ck">✓</span>
+                    </button>
+                  ))}
+                </CmSelect>
+              )}
+
+              <CmSelect
+                open={openSel === "count"}
+                onToggle={() => toggleSel("count")}
+                menuH="生成数量"
+                right
+                label={`⚲ ${batch}`}
               >
-                ⚲ {batch} ▾
-              </button>
-              <span className="sp" />
+                {countOpts.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    className={`cm-mitem${c === batch ? " on" : ""}`}
+                    onClick={() => {
+                      setBatch(c);
+                      setOpenSel(null);
+                    }}
+                  >
+                    <span className="cm-ico">⚲</span>
+                    <span className="nfo">
+                      <span className="nm">
+                        {c} {isVid ? "段" : "张"}
+                      </span>
+                    </span>
+                    <span className="ck">✓</span>
+                  </button>
+                ))}
+              </CmSelect>
+              </div>
               <span className="cm-pts">约 {points} 积分</span>
               <button
                 className="cm-send"

@@ -22,6 +22,16 @@ type Config struct {
 	CORS    CORSConfig    `mapstructure:"cors"`
 	Email   EmailConfig   `mapstructure:"email"`
 	LLM     LLMConfig     `mapstructure:"llm"`
+	Relay   RelayConfig   `mapstructure:"relay"`
+}
+
+// RelayConfig holds the upstream model relay (ScarecrowToken Relay) settings used
+// by the admin "刷新" sync: it pulls GET {BaseURL}/v1/models with APIKey as a
+// Bearer token and upserts the catalog into market_model. When APIKey is empty
+// the sync endpoint returns a clear "relay not configured" error.
+type RelayConfig struct {
+	BaseURL string `mapstructure:"baseUrl"`
+	APIKey  string `mapstructure:"apiKey"`
 }
 
 // LLMConfig holds the chat large-language-model settings. When APIKey is empty
@@ -221,6 +231,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.maxTokens", 2048)
 	v.SetDefault("llm.historyLimit", 20)
 	v.SetDefault("llm.systemPrompt", defaultLLMSystemPrompt)
+
+	v.SetDefault("relay.baseUrl", "https://relay.tcmzhan.com")
+	v.SetDefault("relay.apiKey", "")
 }
 
 // defaultLLMSystemPrompt gives the assistant a TideCanvas (流光) persona: a

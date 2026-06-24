@@ -34,8 +34,9 @@ import {
 } from "react";
 import type { Artwork, ArtworkType, MeshHues } from "@/mock";
 import { ARTWORKS, CREATE_MODELS, coverBg, mesh } from "@/mock";
+import { marketApi, type StudioModelVO } from "@/lib/market-api";
 import { aiApi } from "@/lib/api";
-import type { AiModelVO } from "@/types/ai";
+import { useAuthStore } from "@/stores/use-auth-store";
 import WorkModal from "@/components/site/work-modal";
 import { toast } from "@/components/shared/toast";
 import styles from "@/app/(studio)/studio/create.module.css";
@@ -46,6 +47,8 @@ const RATIOS = ["1:1", "3:4", "4:3", "16:9", "9:16"] as const;
 const IMG_RES = ["1K", "2K", "4K"] as const;
 const VIDEO_RES = ["720p", "1080p", "4K"] as const;
 const VIDEO_DUR = ["5s", "10s", "15s"] as const;
+
+const QUALITY_LABEL: Record<string, string> = { low: "低画质", medium: "标准画质", high: "高画质" };
 
 const IMG_RES_COST: Record<string, number> = { "1K": 8, "2K": 14, "4K": 30 };
 const RES_COST: Record<string, number> = { "720p": 30, "1080p": 50, "4K": 90 };
@@ -163,15 +166,39 @@ function typeTag(type: string): string {
         : "IMG";
 }
 
-/** derive a ModelMeta for a real backend model (curated MODEL_META wins). */
-function metaOfModel(m: AiModelVO): ModelMeta {
-  return (
-    MODEL_META[m.name] || {
-      tag: typeTag(m.type),
-      by: m.modelId || "模型",
-      desc: m.pointCost > 0 ? `${m.pointCost} 积分 / 次` : "高质量生成",
-    }
-  );
+/** derive a ModelMeta for a studio model purely from its model-management config:
+ *  the right-side tag prefers 预计耗时, then 消耗积分, then the media-type tag; the
+ *  subtitle is the 描述 (or capabilities when no description is set). */
+function metaOfStudio(m: StudioModelVO): ModelMeta {
+  const c = m.config;
+  const est = c?.estSeconds ?? 0;
+  const cost = parseFloat(m.pointCost) || 0;
+  const tag = est > 0 ? `~${est}s` : cost > 0 ? `${cost} 积分` : typeTag(m.type);
+  return {
+    tag,
+    by: "",
+    desc: m.desc || (c?.capabilities?.length ? c.capabilities.join(" · ") : "高质量生成"),
+  };
+}
+
+/** true when an icon value is an image URL (vs. an emoji / short glyph). */
+function isIconUrl(icon: string): boolean {
+  return /^(https?:)?\/\//.test(icon) || icon.startsWith("/");
+}
+
+/** map a config mode value (t2i/i2i/t2v/i2v/keyframe/omni_ref) to a studio ToolKey. */
+const MODE_TO_TOOL: Record<string, ToolKey> = {
+  t2i: "t2i",
+  i2i: "i2i",
+  t2v: "t2v",
+  i2v: "i2v",
+  keyframe: "flf",
+  omni_ref: "ref",
+};
+
+/** display label for a ratio value (auto → 自适应). */
+function ratioLabel(r: string): string {
+  return r === "auto" ? "自适应" : r;
 }
 
 /** meta lookup by display name, optionally backed by the real models map. */
@@ -275,16 +302,17 @@ export default function CreateStudio() {
   const [imgRes, setImgRes] = useState<string>("2K");
   const [res, setRes] = useState<string>("1080p");
   const [dur, setDur] = useState<string>("5s");
+  const [quality, setQuality] = useState<string>("");
 
   /* typed reference uploads (per slot key) + preview modal target */
   const [slotData, setSlotData] = useState<SlotData>({});
   const [preview, setPreview] = useState<{ k: string; i: number } | null>(null);
 
-  /* real models (public, no auth) — names drive the picker; metaMap enriches
-     each row. Falls back to the CREATE_MODELS default list when the seeded DB
-     has no ai_models yet (or the request fails), so the picker is never empty. */
-  const [modelNames, setModelNames] = useState<string[]>(CREATE_MODELS);
-  const [modelMeta, setModelMeta] = useState<Record<string, ModelMeta>>({});
+  /* real studio models for the current type (public, no auth), each carrying its
+     per-model config; the picker + option pills are derived from this list. */
+  const [studioList, setStudioList] = useState<StudioModelVO[]>([]);
+  const [optimizing, setOptimizing] = useState(false);
+  const ensureSession = useAuthStore((s) => s.ensureSession);
 
   /* stage state */
   const [busy, setBusy] = useState(false);
@@ -322,10 +350,71 @@ export default function CreateStudio() {
   /* ── derived ─────────────────────────────────────────────────────────── */
 
   const cfg = TOOLS[tool];
-  const meta = metaOf(model, modelMeta);
   const hasResults = cells.length > 0;
   const isVideo = curType === "video";
   const slots = UPLOADS[tool] ?? null;
+
+  /* ── studio models → picker names/meta + selected model's config ───────── */
+  const noBackend = studioList.length === 0;
+  const modelNames = useMemo(
+    () => (studioList.length ? studioList.map((m) => m.name) : CREATE_MODELS),
+    [studioList],
+  );
+  const modelMeta = useMemo(() => {
+    const map: Record<string, ModelMeta> = {};
+    for (const m of studioList) map[m.name] = metaOfStudio(m);
+    return map;
+  }, [studioList]);
+  const meta = metaOf(model, modelMeta);
+
+  // icon configured per model (emoji or image URL) for the picker swatch.
+  const iconByName = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const m of studioList) if (m.config?.icon) map[m.name] = m.config.icon;
+    return map;
+  }, [studioList]);
+  // resolve a swatch's style + glyph: image-URL icon → cover bg; emoji → glyph on
+  // the model's gradient; none → initial letter on the gradient.
+  const swatchFor = (name: string): { style: CSSProperties; content: string } => {
+    const icon = iconByName[name];
+    if (icon && isIconUrl(icon)) {
+      return { style: { background: `center/cover no-repeat url("${icon}")` }, content: "" };
+    }
+    return { style: { background: modelSwatch(name) }, content: icon || modelInitial(name) };
+  };
+
+  const mCfg = useMemo(
+    () => studioList.find((m) => m.name === model)?.config ?? null,
+    [studioList, model],
+  );
+
+  // dynamic option lists: a model's configured options only; when the backend
+  // returned no models at all, fall back to the built-in defaults so the panel
+  // is never empty. An empty configured list hides that control entirely.
+  const ratioOpts = mCfg?.ratios?.length ? mCfg.ratios : noBackend ? [...RATIOS] : [];
+  const resOpts = mCfg?.resolutions?.length
+    ? mCfg.resolutions
+    : noBackend
+      ? isVideo
+        ? [...VIDEO_RES]
+        : [...IMG_RES]
+      : [];
+  const durOpts = mCfg?.durations?.length ? mCfg.durations : noBackend ? [...VIDEO_DUR] : [];
+  const qualOpts = mCfg?.qualities ?? [];
+  const ideaOpts = mCfg?.ideas?.length ? mCfg.ideas : noBackend ? [...IDEAS] : [];
+  const batchOpts =
+    mCfg?.batchOptions && mCfg.batchOptions.length ? mCfg.batchOptions : [1, 2, 3, 4];
+  const batchMin = Math.min(...batchOpts);
+  const batchMax = Math.max(...batchOpts);
+
+  // tool/mode tabs: when the model configures modes, show only those; otherwise
+  // (or no backend) show all modes for the current type.
+  const configuredTools = (mCfg?.modes ?? [])
+    .map((m) => MODE_TO_TOOL[m])
+    .filter(Boolean) as ToolKey[];
+  const modeKeys = configuredTools.length
+    ? MODES_BY_TYPE[curType].filter((k) => configuredTools.includes(k))
+    : MODES_BY_TYPE[curType];
 
   // cost (create.js updateCost): video = round(resCost*durSec/5); image = imgResCost*count.
   const cost = isVideo
@@ -370,37 +459,67 @@ export default function CreateStudio() {
     }
   }, []);
 
-  // load real models (public endpoint, no session needed). Replaces the
-  // CREATE_MODELS mock list; on empty/failure we keep the default fallback.
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const res = await aiApi.listModels();
-        if (!alive) return;
-        const models = res.success && Array.isArray(res.data) ? res.data : [];
-        if (models.length === 0) return; // keep CREATE_MODELS fallback
-        const names: string[] = [];
-        const metaMap: Record<string, ModelMeta> = {};
-        for (const m of models) {
-          if (!m.name || names.includes(m.name)) continue;
-          names.push(m.name);
-          metaMap[m.name] = metaOfModel(m);
-        }
-        if (names.length === 0) return;
-        setModelNames(names);
-        setModelMeta(metaMap);
-        // if the current selection isn't a real model, snap to the first one
-        // (unless a handoff already picked a valid name).
+  // load the studio models for the current type (public endpoint). Each carries
+  // its per-model config; the picker + option pills derive from this list. On
+  // empty/failure the built-in fallback lists keep the panel usable. Selection is
+  // preserved if the chosen model still exists (so a refetch never resets it).
+  const reloadModels = useCallback(async () => {
+    try {
+      const res = await marketApi.studioModels(curType);
+      const list = res.success && Array.isArray(res.data) ? res.data : [];
+      setStudioList(list);
+      if (list.length) {
+        const names = list.map((m) => m.name);
         setModel((cur) => (names.includes(cur) ? cur : names[0]));
-      } catch {
-        /* keep CREATE_MODELS fallback */
       }
-    })();
-    return () => {
-      alive = false;
+    } catch {
+      setStudioList([]);
+    }
+  }, [curType]);
+
+  useEffect(() => {
+    reloadModels();
+  }, [reloadModels]);
+
+  // make admin edits feel live: re-fetch when the tab regains focus / becomes
+  // visible, so returning from 模型管理 reflects the latest per-model config
+  // without a manual refresh.
+  useEffect(() => {
+    const onFocus = () => reloadModels();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") reloadModels();
     };
-  }, []);
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [reloadModels]);
+
+  // when the selected model (its config) changes, snap each option control to a
+  // value the model actually supports (so a stale ratio/res/quality can't linger).
+  useEffect(() => {
+    if (!mCfg) return;
+    if (mCfg.ratios?.length) setRatio((r) => (mCfg.ratios!.includes(r) ? r : mCfg.ratios![0]));
+    if (mCfg.resolutions?.length) {
+      if (curType === "image") {
+        setImgRes((v) => (mCfg.resolutions!.includes(v) ? v : mCfg.resolutions![0]));
+      } else {
+        setRes((v) => (mCfg.resolutions!.includes(v) ? v : mCfg.resolutions![0]));
+      }
+    }
+    if (mCfg.durations?.length) setDur((v) => (mCfg.durations!.includes(v) ? v : mCfg.durations![0]));
+    setQuality((v) =>
+      mCfg.qualities?.length ? (mCfg.qualities.includes(v) ? v : mCfg.qualities[0]) : "",
+    );
+    if (mCfg.batchOptions?.length) {
+      const mn = Math.min(...mCfg.batchOptions);
+      const mx = Math.max(...mCfg.batchOptions);
+      setCount((c) => Math.min(Math.max(c, mn), mx));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mCfg, curType]);
 
   // close the model dropdown on outside click (create.js document click).
   useEffect(() => {
@@ -438,13 +557,31 @@ export default function CreateStudio() {
     selectTool(MODES_BY_TYPE[t][0]); // renderModes() → setTool(keys[0])
   };
 
-  const aiOptimize = () => {
-    let v = prompt.trim();
-    if (!v) v = "一幅富有想象力的画面";
-    const boost = "，超清细节，电影级布光，景深层次，8K 高分辨率";
-    if (!/超清细节/.test(v)) v += boost;
-    setPrompt(v);
-    toast.success("✦ 已用 AI 优化提示词");
+  // AI 优化: rewrite the prompt via the backend (relay text model). Falls back to
+  // a clear toast when no text model is configured / the call fails.
+  const aiOptimize = async () => {
+    const v = prompt.trim();
+    if (!v) {
+      toast.info("先写一句提示词再优化 ✦");
+      promptRef.current?.focus();
+      return;
+    }
+    if (optimizing) return;
+    setOptimizing(true);
+    try {
+      await ensureSession();
+      const res = await aiApi.optimizePrompt(v);
+      if (res.success && res.data?.prompt) {
+        setPrompt(res.data.prompt);
+        toast.success("✦ 已用 AI 优化提示词");
+      } else {
+        toast.error(res.message || "AI 优化失败");
+      }
+    } catch {
+      toast.error("AI 优化失败，请稍后重试");
+    } finally {
+      setOptimizing(false);
+    }
   };
 
   /* ── typed reference uploads (create.js addFile / removeFile / swap) ──── */
@@ -454,8 +591,9 @@ export default function CreateStudio() {
     if (!slot) return;
     setSlotData((prev) => {
       const arr = prev[k] || [];
-      if (arr.length >= slot.max) {
-        toast.info(slot.label + "最多 " + slot.max + " 个");
+      const max = slotMax(slot);
+      if (arr.length >= max) {
+        toast.info(slot.label + "最多 " + max + " 个");
         return prev;
       }
       toast.success("已添加" + slot.label + " · 原型");
@@ -479,6 +617,37 @@ export default function CreateStudio() {
 
   const slotTypeOf = (k: string): SlotType =>
     slots?.find((s) => s.k === k)?.type ?? "image";
+
+  // reference-asset limits configured per mode in 模型管理 (0 / unset = no limit):
+  //   i2i 图生图 → top-level maxRefImages/maxRefImageSizeMB
+  //   i2v 图生视频 → refLimits i2v.*
+  //   ref 全能参考 → refLimits omniRef.{image|video|audio}*
+  // (flf 首尾帧 uses fixed first/last boxes, so its config isn't applied here.)
+  const refLimitFor = (s: SlotDef): { count: number; size: number } => {
+    const rl = mCfg?.refLimits ?? {};
+    if (tool === "i2i" && s.type === "image") {
+      return { count: mCfg?.maxRefImages ?? 0, size: mCfg?.maxRefImageSizeMB ?? 0 };
+    }
+    if (tool === "i2v" && s.type === "image") {
+      return { count: rl["i2v.imageCount"] ?? 0, size: rl["i2v.imageSizeMB"] ?? 0 };
+    }
+    if (tool === "ref") {
+      if (s.type === "image") return { count: rl["omniRef.imageCount"] ?? 0, size: rl["omniRef.imageSizeMB"] ?? 0 };
+      if (s.type === "video") return { count: rl["omniRef.videoCount"] ?? 0, size: rl["omniRef.videoSizeMB"] ?? 0 };
+      if (s.type === "audio") return { count: rl["omniRef.audioCount"] ?? 0, size: rl["omniRef.audioSizeMB"] ?? 0 };
+    }
+    return { count: 0, size: 0 };
+  };
+  const slotMax = (s: SlotDef): number => {
+    const { count } = refLimitFor(s);
+    return count > 0 ? count : s.max;
+  };
+  const slotHint = (s: SlotDef): string => {
+    const { size } = refLimitFor(s);
+    if (size <= 0) return s.hint;
+    const unit = s.type === "image" ? "单张" : s.type === "video" ? "单段视频" : "单段音频";
+    return `${s.hint} · ${unit} ≤ ${size}MB`;
+  };
 
   /* gather reference thumbnails for the result header (create.js rhRefThumbs). */
   const refThumbsForRun = (seed: number): string[] => {
@@ -658,7 +827,7 @@ export default function CreateStudio() {
             <span className="ws-up-slot-ic">{SLOT_ICON[s.type]}</span>
             <span className="ws-up-slot-tx">
               <span className="t">{s.label}</span>
-              <span className="h">{s.hint}</span>
+              <span className="h">{slotHint(s)}</span>
             </span>
             <span className="ws-up-slot-go">上传 ↗</span>
           </button>
@@ -671,7 +840,7 @@ export default function CreateStudio() {
           <label>
             {s.label}
             <span className="ws-up-n">
-              {files.length}/{s.max}
+              {files.length}/{slotMax(s)}
             </span>
           </label>
           <button className="ws-up-act" type="button" onClick={() => addFile(s.k)}>
@@ -706,7 +875,7 @@ export default function CreateStudio() {
                 </span>
               </div>
             ))}
-            {files.length < s.max && (
+            {files.length < slotMax(s) && (
               <button className="ws-ref-add" type="button" onClick={() => addFile(s.k)}>
                 <span className="p">＋</span>添加
               </button>
@@ -737,7 +906,7 @@ export default function CreateStudio() {
                 </button>
               </div>
             ))}
-            {files.length < s.max && (
+            {files.length < slotMax(s) && (
               <button className="ws-up-more" type="button" onClick={() => addFile(s.k)}>
                 ＋ 继续添加
               </button>
@@ -878,8 +1047,7 @@ export default function CreateStudio() {
 
   /* ── render ──────────────────────────────────────────────────────────── */
 
-  const modeKeys = MODES_BY_TYPE[curType];
-  const swatchStyle: CSSProperties = { background: modelSwatch(model) };
+  const selSwatch = swatchFor(model);
 
   return (
     <>
@@ -944,8 +1112,8 @@ export default function CreateStudio() {
                   setModelOpen((v) => !v);
                 }}
               >
-                <span className="ws-model-sw" style={swatchStyle}>
-                  {modelInitial(model)}
+                <span className="ws-model-sw" style={selSwatch.style}>
+                  {selSwatch.content}
                 </span>
                 <span className="ws-model-info">
                   <span className="ws-model-row">
@@ -953,7 +1121,7 @@ export default function CreateStudio() {
                     <span className="ws-model-tag">{meta.tag}</span>
                   </span>
                   <span className="ws-model-desc">
-                    {meta.by} · {meta.desc}
+                    {meta.by ? `${meta.by} · ${meta.desc}` : meta.desc}
                   </span>
                 </span>
                 <span className="ws-model-switch">
@@ -964,6 +1132,7 @@ export default function CreateStudio() {
               <div className="ws-model-menu" id="modelMenu" role="listbox">
                 {modelNames.map((m) => {
                   const mm = metaOf(m, modelMeta);
+                  const sw = swatchFor(m);
                   return (
                     <button
                       key={m}
@@ -976,8 +1145,8 @@ export default function CreateStudio() {
                         setModelOpen(false);
                       }}
                     >
-                      <span className="ws-mopt-sw" style={{ background: modelSwatch(m) }}>
-                        {modelInitial(m)}
+                      <span className="ws-mopt-sw" style={sw.style}>
+                        {sw.content}
                       </span>
                       <span className="ws-mopt-info">
                         <span className="ws-mopt-row">
@@ -985,7 +1154,7 @@ export default function CreateStudio() {
                           <span className="ws-model-tag">{mm.tag}</span>
                         </span>
                         <span className="ws-mopt-desc">
-                          {mm.by} · {mm.desc}
+                          {mm.by ? `${mm.by} · ${mm.desc}` : mm.desc}
                         </span>
                       </span>
                       <span className="ws-mopt-ck">✓</span>
@@ -1010,13 +1179,13 @@ export default function CreateStudio() {
                 className="ws-prompt"
                 id="prompt"
                 ref={promptRef}
-                placeholder={cfg.ph}
+                placeholder={mCfg?.defaultPrompt || cfg.ph}
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
               />
               <div className="ws-prompt-foot">
-                <button className="ws-aiopt" type="button" onClick={aiOptimize}>
-                  <span className="spark">✦</span> AI 优化
+                <button className="ws-aiopt" type="button" onClick={aiOptimize} disabled={optimizing}>
+                  <span className="spark">✦</span> {optimizing ? "优化中…" : "AI 优化"}
                 </button>
                 <button
                   className="ws-pclear"
@@ -1028,75 +1197,98 @@ export default function CreateStudio() {
               </div>
             </div>
 
-            {/* idea chips */}
-            <div className="ws-chips-head">灵感提示词 · 点击填入</div>
-            <div className="ws-chips" id="ideas">
-              {IDEAS.map((t) => (
-                <button key={t} type="button" onClick={() => setPrompt(t)}>
-                  {t.slice(0, 10)}…
-                </button>
-              ))}
-            </div>
+            {/* idea chips (only when the model configures 灵感提示词) */}
+            {ideaOpts.length > 0 && (
+              <>
+                <div className="ws-chips-head">灵感提示词 · 点击填入</div>
+                <div className="ws-chips" id="ideas">
+                  {ideaOpts.map((t) => (
+                    <button key={t} type="button" onClick={() => setPrompt(t)}>
+                      {t.length > 10 ? t.slice(0, 10) + "…" : t}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
 
-            {/* 画面比例 (image only) */}
-            {!isVideo && (
+            {/* 画面比例 (configured ratios only) */}
+            {ratioOpts.length > 0 && (
               <div className="ws-field col" id="fieldRatio">
                 <label>画面比例</label>
                 <div className="ws-ratios" id="ratios">
-                  {RATIOS.map((r) => (
+                  {ratioOpts.map((r) => (
                     <button
                       key={r}
                       type="button"
                       className={`ratio${r === ratio ? " on" : ""}`}
                       onClick={() => setRatio(r)}
                     >
-                      {r}
+                      {ratioLabel(r)}
                     </button>
                   ))}
                 </div>
               </div>
             )}
 
-            {/* 分辨率 (image only) */}
-            {!isVideo && (
+            {/* 分辨率 (image, configured resolutions only) */}
+            {!isVideo && resOpts.length > 0 && (
               <div className="ws-field col" id="fieldImgRes">
                 <label>分辨率</label>
                 <div className="ws-ratios" id="imgResPills">
-                  {IMG_RES.map((r) => (
+                  {resOpts.map((r) => (
                     <button
                       key={r}
                       type="button"
                       className={`ratio${r === imgRes ? " on" : ""}`}
                       onClick={() => setImgRes(r)}
                     >
-                      {r}
+                      {r.toUpperCase()}
                     </button>
                   ))}
                 </div>
               </div>
             )}
 
-            {/* 清晰度 (video only) */}
-            {isVideo && (
+            {/* 质量 (image, configured qualities only) */}
+            {!isVideo && qualOpts.length > 0 && (
+              <div className="ws-field col" id="fieldQuality">
+                <label>质量</label>
+                <div className="ws-ratios" id="qualityPills">
+                  {qualOpts.map((q) => (
+                    <button
+                      key={q}
+                      type="button"
+                      className={`ratio${q === quality ? " on" : ""}`}
+                      onClick={() => setQuality(q)}
+                    >
+                      {QUALITY_LABEL[q] ?? q}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 清晰度 (video, configured resolutions only) */}
+            {isVideo && resOpts.length > 0 && (
               <div className="ws-field col" id="fieldRes">
                 <label>清晰度</label>
                 <div className="ws-ratios" id="resPills">
-                  {VIDEO_RES.map((r) => (
+                  {resOpts.map((r) => (
                     <button
                       key={r}
                       type="button"
                       className={`ratio${r === res ? " on" : ""}`}
                       onClick={() => setRes(r)}
                     >
-                      {r}
+                      {r.toUpperCase()}
                     </button>
                   ))}
                 </div>
               </div>
             )}
 
-            {/* 生成数量 (image only) */}
-            {!isVideo && (
+            {/* 生成数量 (image, range from configured batch options) */}
+            {!isVideo && batchMax > batchMin && (
               <div className="ws-field col" id="fieldCount">
                 <label>
                   生成数量 · <span id="countVal">{count}</span>
@@ -1105,8 +1297,8 @@ export default function CreateStudio() {
                   className="slider"
                   id="count"
                   type="range"
-                  min={1}
-                  max={4}
+                  min={batchMin}
+                  max={batchMax}
                   step={1}
                   value={count}
                   onChange={(e) => setCount(+e.target.value)}
@@ -1114,12 +1306,12 @@ export default function CreateStudio() {
               </div>
             )}
 
-            {/* 时长 (video only) */}
-            {isVideo && (
+            {/* 时长 (video, configured durations only) */}
+            {isVideo && durOpts.length > 0 && (
               <div className="ws-field col" id="fieldDur">
                 <label>时长</label>
                 <div className="ws-ratios" id="durPills">
-                  {VIDEO_DUR.map((d) => (
+                  {durOpts.map((d) => (
                     <button
                       key={d}
                       type="button"

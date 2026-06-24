@@ -31,6 +31,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 
 	// Public catalog reads — the marketplace is a public product surface.
 	g.GET("/categories", h.categories)
+	g.GET("/studio-models", h.studioModels)
 	g.GET("/models", h.list)
 	g.GET("/models/:id", h.get)
 

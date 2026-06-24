@@ -14,6 +14,7 @@ import (
 	"tidecanvas/internal/pkg/cache"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/logger"
+	"tidecanvas/internal/pkg/relaychat"
 )
 
 // Task status values (mirror frontend AiTaskStatus enum).
@@ -33,14 +34,20 @@ type service struct {
 	rdb      *redis.Client
 	registry *handlerRegistry
 	provider AiProviderClient
+	// relay powers prompt optimization via the relay text model; nil when no
+	// relay API key is configured.
+	relay        *relaychat.Client
+	systemPrompt string
 }
 
 func newService(d *app.Deps) *service {
 	return &service{
-		repo:     newRepo(d.DB),
-		rdb:      d.RDB,
-		registry: newHandlerRegistry(),
-		provider: newStubProviderClient(),
+		repo:         newRepo(d.DB),
+		rdb:          d.RDB,
+		registry:     newHandlerRegistry(),
+		provider:     newStubProviderClient(),
+		relay:        relaychat.New(d.Cfg.Relay.BaseURL, d.Cfg.Relay.APIKey),
+		systemPrompt: d.Cfg.LLM.SystemPrompt,
 	}
 }
 

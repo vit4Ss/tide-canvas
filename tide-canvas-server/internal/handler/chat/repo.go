@@ -21,6 +21,23 @@ type repo struct {
 
 func newRepo(db *gorm.DB) *repo { return &repo{db: db} }
 
+// textModelKey returns the upstream model id (model_key) to use for the chat
+// assistant: the listed text model flagged as the AI-optimization primary if one
+// exists, otherwise any listed text model. "" when none is configured.
+func (r *repo) textModelKey() string {
+	const base = "type = ? AND status = 1 AND model_key <> ''"
+	var m model.MarketModel
+	if err := r.db.Where(base, "text").
+		Where("config LIKE ?", `%"aiOptimizePrimary":true%`).
+		Order("update_time DESC").First(&m).Error; err == nil && m.ModelKey != "" {
+		return m.ModelKey
+	}
+	if err := r.db.Where(base, "text").Order("update_time DESC").First(&m).Error; err == nil {
+		return m.ModelKey
+	}
+	return ""
+}
+
 // listConversations returns a page of the owner's conversations plus the total
 // count, ordered by the most recent activity first (last_message_at desc, then
 // create_time desc as a tie-breaker for never-used conversations).

@@ -1,43 +1,39 @@
 "use client";
 
 /* ============================================================================
-   资产 · Assets — React port of design-ref/资产.html +
+   资产 · Assets — React port of the updated design-ref/资产.html +
    design-ref/liuguang/assets.js, rendered inside the (studio) ws-rail layout.
 
    Renders ONLY the content to the right of the rail (the <main class="asset">
    region); the rail + flux background + liuguang CSS come from the (studio)
-   layout, so the canonical .asset-* class names apply unchanged.
+   layout, so the canonical .asset-* / .as-* class names apply unchanged.
 
-   Sections (faithful to assets.js):
-   - .asset-top    → tabs 生成历史/主体/画布 + actions 批量操作/同步到剪映
-   - .asset-filter → 图片/视频/音频/文档 + 筛选 ▾
-   - .asset-body   → date-grouped grid of .as-card
+   Two tabs (matching the updated design):
+   - 生成历史 (hist)   → AI generation results — aiApi.listTasks(), grouped by date,
+                         rendered as cover cards (resultUrl, mesh fallback).
+   - 上传历史 (upload) → user-uploaded files — fileApi.list(), grouped by date,
+                         rendered as file cards (name + size + ↑上传 badge, glyph
+                         for non-image) with a real upload dropzone on top.
 
-   DATA IS REAL: fileApi.list({pageNum,pageSize,fileType?}) → PageData<FileVO>.
-   Files are grouped by their createTime date into the date-grouped grid that the
-   design expects (.asset-group / .asset-date / .asset-grid / .as-card). The
-   image/video/audio/文档 filter maps to the backend fileType (image|video|other):
-   图片→image, 视频→video, 音频→audio, 文档→other — sent to the server. Cards use
-   fileUrl as the cover (mesh fallback when empty) and a ▶ badge for videos; the
-   star flag at indexes 1 & 9 is kept from the design. Clicking a card opens the
-   file. The 主体/画布 tabs and 批量操作/同步到剪映 stay as prototype toasts.
+   Filter pills 图片/视频/音频/文档 map to the media type on each tab. The primary
+   action is context-aware: 同步到剪映 on 生成历史, 上传文件 on 上传历史.
    ========================================================================== */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { fileApi } from "@/lib/api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { aiApi, fileApi, uploadFileSmart } from "@/lib/api";
 import { useAuthStore } from "@/stores/use-auth-store";
 import type { FileVO } from "@/types/file";
+import type { AiTaskVO } from "@/types/ai";
 import { mesh } from "@/lib/mesh";
 import { toast } from "@/components/shared/toast";
 import { useReveal } from "@/components/site/use-reveal";
 
-type TabKey = "hist" | "subject" | "canvas";
+type TabKey = "hist" | "upload";
 type FilterKey = "image" | "video" | "audio" | "doc";
 
 const TABS: { t: TabKey; label: string }[] = [
   { t: "hist", label: "生成历史" },
-  { t: "subject", label: "主体" },
-  { t: "canvas", label: "画布" },
+  { t: "upload", label: "上传历史" },
 ];
 
 const FILTERS: { f: FilterKey; label: string }[] = [
@@ -47,30 +43,39 @@ const FILTERS: { f: FilterKey; label: string }[] = [
   { f: "doc", label: "文档" },
 ];
 
-/** Maps the design's four filter pills onto the backend FileType enum
- *  (image|video|other). 音频 → audio (backend stores none yet → empty state),
- *  文档 → other so it shows non-media uploads. */
+/** 上传历史 filter → backend FileType (image|video|other). 音频/文档 collapse to
+ *  "other"; we then split them client-side by mimeType. */
 const FILTER_TO_FILETYPE: Record<FilterKey, string> = {
   image: "image",
   video: "video",
-  audio: "audio",
+  audio: "other",
   doc: "other",
 };
 
-interface AssetGroup {
-  date: string;
-  items: FileVO[];
-}
+/** generation handler → media type, for the 生成历史 filter. */
+const HANDLER_TYPE: Record<string, "image" | "video"> = {
+  text_to_image: "image",
+  image_to_image: "image",
+  text_to_video: "video",
+  image_to_video: "video",
+  start_end_to_video: "video",
+};
 
-/** Deterministic mesh fallback for a file without a usable cover URL.
- *  Seeded from the file id so a given file always gets the same gradient. */
-function fallbackCover(id: number): string {
-  const h = (((id * 47) % 360) + 360) % 360;
+const FILE_GLYPH: Record<string, string> = { audio: "♪", doc: "▤", video: "▶" };
+const ACCEPT: Record<FilterKey, string> = {
+  image: "image/*",
+  video: "video/*",
+  audio: "audio/*",
+  doc: ".pdf,.doc,.docx,.txt,.md,.ppt,.pptx,.xls,.xlsx",
+};
+
+/** Deterministic mesh fallback for an item without a usable cover URL. */
+function fallbackCover(seed: number): string {
+  const h = (((seed * 47) % 360) + 360) % 360;
   return mesh(h, (h + 132) % 360, (h + 248) % 360);
 }
 
-/** createTime arrives as "YYYY-MM-DDTHH:MM:SS"; render the design's
- *  "M 月 D 日" header. Falls back to the raw string if it won't parse. */
+/** createTime "YYYY-MM-DDTHH:MM:SS" → design's "M 月 D 日" header. */
 function dateLabel(createTime: string): string {
   if (!createTime) return "未知日期";
   const t = Date.parse(createTime);
@@ -79,27 +84,45 @@ function dateLabel(createTime: string): string {
   return `${d.getMonth() + 1} 月 ${d.getDate()} 日`;
 }
 
-/** Sort key for a createTime string (newest first); missing → 0. */
 function timeKey(s: string): number {
   if (!s) return 0;
   const t = Date.parse(s);
   return Number.isNaN(t) ? 0 : t;
 }
 
-/** Group files into date buckets (newest day first, newest item first). */
-function groupByDate(files: FileVO[]): AssetGroup[] {
-  const buckets = new Map<string, FileVO[]>();
+function fmtSize(bytes: number): string {
+  if (!bytes) return "";
+  const mb = bytes / 1024 / 1024;
+  if (mb >= 1) return `${mb.toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+/** media kind of an uploaded file (image|video|audio|doc) from its type/mime. */
+function fileKind(f: FileVO): FilterKey {
+  if (f.fileType === "image") return "image";
+  if (f.fileType === "video") return "video";
+  if ((f.mimeType || "").startsWith("audio/")) return "audio";
+  return "doc";
+}
+
+interface Group<T> {
+  date: string;
+  items: T[];
+}
+
+function groupByDate<T>(rows: T[], getTime: (r: T) => string): Group<T>[] {
+  const buckets = new Map<string, T[]>();
   const order: string[] = [];
-  const sorted = files.slice().sort((a, b) => timeKey(b.createTime) - timeKey(a.createTime));
-  for (const f of sorted) {
-    const key = dateLabel(f.createTime);
+  const sorted = rows.slice().sort((a, b) => timeKey(getTime(b)) - timeKey(getTime(a)));
+  for (const r of sorted) {
+    const key = dateLabel(getTime(r));
     let arr = buckets.get(key);
     if (!arr) {
       arr = [];
       buckets.set(key, arr);
       order.push(key);
     }
-    arr.push(f);
+    arr.push(r);
   }
   return order.map((date) => ({ date, items: buckets.get(date)! }));
 }
@@ -107,25 +130,39 @@ function groupByDate(files: FileVO[]): AssetGroup[] {
 export default function AssetsPage() {
   const [tab, setTab] = useState<TabKey>("hist");
   const [filter, setFilter] = useState<FilterKey>("image");
+  const [tasks, setTasks] = useState<AiTaskVO[]>([]);
   const [files, setFiles] = useState<FileVO[]>([]);
   const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
 
   const ensureSession = useAuthStore((s) => s.ensureSession);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // 生成历史: all of the user's generation tasks (filtered client-side by type).
+  const loadTasks = useCallback(async () => {
+    setLoading(true);
+    try {
+      await ensureSession();
+      const res = await aiApi.listTasks({ pageNum: 1, pageSize: 100 });
+      setTasks(res.success && res.data ? res.data.records : []);
+    } catch {
+      setTasks([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [ensureSession]);
+
+  // 上传历史: the user's uploaded files for the current filter.
   const loadFiles = useCallback(async () => {
     setLoading(true);
     try {
-      await ensureSession(); // file list is authed — silently sign in default account
+      await ensureSession();
       const res = await fileApi.list({
         pageNum: 1,
         pageSize: 100,
         fileType: FILTER_TO_FILETYPE[filter] as FileVO["fileType"],
       });
-      if (res.success && res.data) {
-        setFiles(res.data.records);
-      } else {
-        setFiles([]);
-      }
+      setFiles(res.success && res.data ? res.data.records : []);
     } catch {
       setFiles([]);
     } finally {
@@ -133,24 +170,53 @@ export default function AssetsPage() {
     }
   }, [ensureSession, filter]);
 
-  // 生成历史 tab is the only data-backed tab; reload when the filter changes.
   useEffect(() => {
-    if (tab !== "hist") return;
-    loadFiles();
-  }, [tab, loadFiles]);
+    if (tab === "hist") loadTasks();
+    else loadFiles();
+  }, [tab, loadTasks, loadFiles]);
 
-  const groups = useMemo(() => (tab === "hist" ? groupByDate(files) : []), [tab, files]);
+  // tasks of the active media type, date-grouped (audio/doc → none for 生成历史).
+  const taskGroups = useMemo(() => {
+    if (tab !== "hist") return [];
+    const want = filter === "image" || filter === "video" ? filter : null;
+    if (!want) return [];
+    const matched = tasks.filter((t) => (HANDLER_TYPE[t.handler] ?? "image") === want);
+    return groupByDate(matched, (t) => t.createTime);
+  }, [tab, filter, tasks]);
 
-  // Empty-state copy: non-hist tabs → prototype panel; hist with no files → archive note.
-  const emptyMsg =
-    tab !== "hist"
-      ? `「${TABS.find((x) => x.t === tab)?.label}」面板 · 高保真原型`
-      : "该类型暂无资产 —— 生成或上传后会归档到这里 ✦";
+  // uploaded files of the active media kind, date-grouped.
+  const fileGroups = useMemo(() => {
+    if (tab !== "upload") return [];
+    const matched = files.filter((f) => fileKind(f) === filter);
+    return groupByDate(matched, (f) => f.createTime);
+  }, [tab, filter, files]);
 
-  // Re-scan reveal targets whenever the rendered set changes.
-  useReveal([tab, filter, groups]);
+  useReveal([tab, filter, taskGroups, fileGroups]);
 
-  const showEmpty = tab !== "hist" || (!loading && groups.length === 0);
+  const groupsEmpty = tab === "hist" ? taskGroups.length === 0 : fileGroups.length === 0;
+
+  // dropzone → real upload of the picked files, then reload the upload list.
+  const onPickFiles = async (list: FileList | null) => {
+    if (!list || list.length === 0) return;
+    setUploading(true);
+    try {
+      await ensureSession();
+      let ok = 0;
+      for (const file of Array.from(list)) {
+        const res = await uploadFileSmart(file);
+        if (res.success) ok++;
+      }
+      toast[ok > 0 ? "success" : "error"](
+        ok > 0 ? `已上传 ${ok} 个文件` : "上传失败，请稍后重试",
+      );
+      if (ok > 0) await loadFiles();
+    } catch {
+      toast.error("上传失败，请稍后重试");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
 
   return (
     <main className="asset">
@@ -171,13 +237,20 @@ export default function AssetsPage() {
           <button type="button" onClick={() => toast.info("批量操作 · 原型")}>
             ☑ 批量操作
           </button>
-          <button
-            type="button"
-            className="pri"
-            onClick={() => toast.info("同步到剪映 · 原型")}
-          >
-            ⇄ 同步到剪映
-          </button>
+          {tab === "upload" ? (
+            <button
+              type="button"
+              className="pri"
+              disabled={uploading}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {uploading ? "上传中…" : "↑ 上传文件"}
+            </button>
+          ) : (
+            <button type="button" className="pri" onClick={() => toast.info("同步到剪映 · 原型")}>
+              ⇄ 同步到剪映
+            </button>
+          )}
         </div>
       </div>
 
@@ -197,27 +270,57 @@ export default function AssetsPage() {
         </button>
       </div>
 
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept={ACCEPT[filter]}
+        style={{ display: "none" }}
+        onChange={(e) => onPickFiles(e.target.files)}
+      />
+
       <div className="asset-body" id="assetBody">
-        {tab === "hist" && loading ? (
+        {/* 上传历史 dropzone */}
+        {tab === "upload" && (
+          <button
+            type="button"
+            className="as-dropzone"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <span className="as-dz-ic">↑</span>
+            <b>{uploading ? "正在上传…" : "上传本地文件"}</b>
+            <i>点击选择 · 支持图片 / 视频 / 音频 / 文档</i>
+          </button>
+        )}
+
+        {loading ? (
           <div className="empty" style={{ padding: "80px 0" }}>
             正在加载资产…
           </div>
-        ) : showEmpty ? (
-          <div className="empty" style={{ padding: "80px 0" }}>
-            {emptyMsg}
+        ) : groupsEmpty ? (
+          <div className="empty" style={{ padding: tab === "upload" ? "60px 0" : "80px 0" }}>
+            {tab === "upload"
+              ? "该类型暂无上传文件 —— 从本地上传后会出现在这里 ✦"
+              : "该类型暂无生成资产 —— 生成后会归档到这里 ✦"}
           </div>
+        ) : tab === "hist" ? (
+          taskGroups.map((g) => (
+            <div className="asset-group" key={g.date}>
+              <div className="asset-date">{g.date}</div>
+              <div className="asset-grid">
+                {g.items.map((t, i) => (
+                  <TaskCard key={t.id} task={t} delay={(i % 8) * 0.02} star={i === 1 || i === 9} />
+                ))}
+              </div>
+            </div>
+          ))
         ) : (
-          groups.map((g) => (
+          fileGroups.map((g) => (
             <div className="asset-group" key={g.date}>
               <div className="asset-date">{g.date}</div>
               <div className="asset-grid">
                 {g.items.map((f, i) => (
-                  <AssetCard
-                    key={f.id}
-                    file={f}
-                    delay={(i % 8) * 0.02}
-                    star={i === 1 || i === 9}
-                  />
+                  <UploadCard key={f.id} file={f} delay={(i % 8) * 0.02} />
                 ))}
               </div>
             </div>
@@ -228,28 +331,17 @@ export default function AssetsPage() {
   );
 }
 
-/* ── AssetCard — React port of cardHTML() from assets.js, over a real FileVO ─── */
+/* ── TaskCard — a generation result (生成历史) over a real AiTaskVO ──────────── */
 
-function AssetCard({
-  file,
-  delay,
-  star,
-}: {
-  file: FileVO;
-  delay: number;
-  star: boolean;
-}) {
-  const isVid = file.fileType === "video";
-  const cover = file.fileUrl
-    ? `center / cover no-repeat url("${file.fileUrl}")`
-    : fallbackCover(file.id);
+function TaskCard({ task, delay, star }: { task: AiTaskVO; delay: number; star: boolean }) {
+  const isVid = (HANDLER_TYPE[task.handler] ?? "image") === "video";
+  const cover = task.resultUrl
+    ? `center / cover no-repeat url("${task.resultUrl}")`
+    : fallbackCover(task.id);
 
   const open = () => {
-    if (file.fileUrl) {
-      window.open(file.fileUrl, "_blank", "noopener,noreferrer");
-    } else {
-      toast.info("该资产暂无可预览的文件");
-    }
+    if (task.resultUrl) window.open(task.resultUrl, "_blank", "noopener,noreferrer");
+    else toast.info("该生成暂无可预览的结果");
   };
 
   return (
@@ -257,13 +349,52 @@ function AssetCard({
       type="button"
       className="as-card reveal in"
       style={{ ["--rd" as string]: `${delay}s` }}
-      title={file.originalName}
+      title={task.modelName}
       onClick={open}
     >
       <span className="cov" style={{ background: cover }} />
       <span className="pick" />
       {star && <span className="star">★</span>}
       {isVid && <span className="vbadge">▶</span>}
+    </button>
+  );
+}
+
+/* ── UploadCard — an uploaded file (上传历史) over a real FileVO ─────────────── */
+
+function UploadCard({ file, delay }: { file: FileVO; delay: number }) {
+  const kind = fileKind(file);
+  const isImg = kind === "image";
+
+  const open = () => {
+    if (file.fileUrl) window.open(file.fileUrl, "_blank", "noopener,noreferrer");
+    else toast.info("该文件暂无可预览的内容");
+  };
+
+  return (
+    <button
+      type="button"
+      className="as-card as-up reveal in"
+      style={{ ["--rd" as string]: `${delay}s` }}
+      title={file.originalName}
+      onClick={open}
+    >
+      {isImg && file.fileUrl ? (
+        <span
+          className="cov"
+          style={{ background: `center / cover no-repeat url("${file.fileUrl}")` }}
+        />
+      ) : (
+        <span className="cov as-file">
+          <span className="as-file-ic">{FILE_GLYPH[kind] || "▤"}</span>
+        </span>
+      )}
+      <span className="pick" />
+      <span className="as-up-badge">↑ 上传</span>
+      <span className="as-meta">
+        <b>{file.originalName}</b>
+        <i>{fmtSize(file.fileSize)}</i>
+      </span>
     </button>
   );
 }

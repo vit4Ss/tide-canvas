@@ -187,6 +187,10 @@
 .fld input:hover, .fld select:hover{background:var(--border);}
 .fld input:focus, .fld select:focus{outline:none; background:var(--surface); border-color:var(--accent); box-shadow:0 0 0 3.5px var(--accent-soft);}
 .fld input::placeholder{color:var(--text-faint);}
+.fld textarea{min-height:84px; padding:10px 13px; border-radius:10px; background:var(--panel); border:1px solid transparent; color:var(--text); font:inherit; font-size:13.5px; line-height:1.5; resize:vertical; transition:background .15s, border-color .15s, box-shadow .15s;}
+.fld textarea:hover{background:var(--border);}
+.fld textarea:focus{outline:none; background:var(--surface); border-color:var(--accent); box-shadow:0 0 0 3.5px var(--accent-soft);}
+.fld textarea::placeholder{color:var(--text-faint);}
 .fld .hint{font-size:11px; color:var(--text-faint); line-height:1.45;}
 
 .fsec{margin-top:20px;}

@@ -32,6 +32,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	authed := g.Group("")
 	authed.Use(middleware.JWTAuth(d))
 	authed.POST("/generate", h.generate)
+	authed.POST("/optimize-prompt", h.optimizePrompt)
 	authed.POST("/grid-split", h.gridSplit)
 	authed.GET("/tasks", h.listTasks)
 	authed.GET("/tasks/:id", h.getTask)

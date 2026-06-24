@@ -11,6 +11,7 @@ import { http, toParams } from "@/lib/http";
 import type { PageData } from "@/types/api";
 import type {
   AdminAiModelVO,
+  AdminAiProviderVO,
   AdminModelCreateDTO,
   AdminModelQuery,
   AdminModelStatusDTO,
@@ -28,6 +29,13 @@ export const adminModelsApi = {
   /** POST /api/admin/models — create (defaults status 1 已上架). */
   create: (dto: AdminModelCreateDTO) => http.post<AdminModelVO>(BASE, dto),
 
+  /**
+   * POST /api/admin/models/sync — pull the latest catalog from the upstream relay
+   * and upsert it into the model list (add new / update existing by name).
+   */
+  sync: () =>
+    http.post<{ created: number; updated: number; total: number }>(`${BASE}/sync`),
+
   /** PUT /api/admin/models/:id — partial update. */
   update: (id: string, dto: AdminModelUpdateDTO) =>
     http.put<AdminModelVO>(`${BASE}/${id}`, dto),
@@ -41,4 +49,7 @@ export const adminModelsApi = {
 
   /** GET /api/admin/ai-models — read-only generation registry. */
   listAiModels: () => http.get<AdminAiModelVO[]>("/api/admin/ai-models"),
+
+  /** GET /api/admin/ai-providers — read-only provider registry (供应商 dropdown). */
+  listAiProviders: () => http.get<AdminAiProviderVO[]>("/api/admin/ai-providers"),
 };

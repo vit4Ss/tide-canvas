@@ -76,9 +76,15 @@ func Models() []any {
 }
 
 // AutoMigrate runs GORM's schema migration for every registered model. main/db
-// wiring calls this after the DB connection is established.
+// wiring calls this after the DB connection is established. After the schema is
+// in place it runs idempotent data backfills for newly added columns.
 func AutoMigrate(db *gorm.DB) error {
-	return db.AutoMigrate(Models()...)
+	if err := db.AutoMigrate(Models()...); err != nil {
+		return err
+	}
+	// Backfill the market_model.type media category for rows created before the
+	// column existed (idempotent: only touches rows with an empty type).
+	return BackfillMarketModelType(db)
 }
 
 // User is an application user / account.

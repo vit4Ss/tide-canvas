@@ -13,6 +13,7 @@ import (
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/llm"
 	"tidecanvas/internal/pkg/logger"
+	"tidecanvas/internal/pkg/relaychat"
 
 	"go.uber.org/zap"
 )
@@ -43,24 +44,37 @@ const llmReplyTimeout = 60 * time.Second
 
 type service struct {
 	repo *repo
-	// llmClient is nil when no API key is configured; sendMessage then falls back
-	// to the canned placeholder reply.
+	// relay is the primary assistant backend: the ScarecrowToken relay's
+	// OpenAI-compatible chat completions, routed to a configured text model.
+	// nil when no relay API key is set.
+	relay *relaychat.Client
+	// llmClient is the legacy fallback (Anthropic) used when the relay is not
+	// configured or has no text model available. nil when no LLM key is set.
 	llmClient    *llm.Client
+	systemPrompt string
 	historyLimit int
 }
 
-func newService(db *gorm.DB, cfg config.LLMConfig) *service {
-	s := &service{repo: newRepo(db), historyLimit: cfg.HistoryLimit}
+func newService(db *gorm.DB, cfg *config.Config) *service {
+	s := &service{
+		repo:         newRepo(db),
+		historyLimit: cfg.LLM.HistoryLimit,
+		systemPrompt: cfg.LLM.SystemPrompt,
+		relay:        relaychat.New(cfg.Relay.BaseURL, cfg.Relay.APIKey),
+	}
 	if s.historyLimit <= 0 {
 		s.historyLimit = 20
 	}
-	if client, err := llm.New(cfg); err != nil {
+	if s.relay != nil {
+		logger.L().Info("chat: relay assistant enabled (text models via /v1/chat/completions)")
+	}
+	if client, err := llm.New(cfg.LLM); err != nil {
 		if !errors.Is(err, llm.ErrDisabled) {
 			logger.L().Warn("chat: LLM client init failed, using canned replies", zap.Error(err))
 		}
 	} else {
 		s.llmClient = client
-		logger.L().Info("chat: LLM assistant enabled", zap.String("model", cfg.Model))
+		logger.L().Info("chat: LLM fallback enabled", zap.String("model", cfg.LLM.Model))
 	}
 	return s
 }
@@ -196,7 +210,7 @@ func (s *service) markRead(conversationID, ownerID idgen.ID) error {
 // (or when no LLM is configured) it falls back to the canned placeholder so the
 // chat round-trip always completes.
 func (s *service) generateReply(conversationID idgen.ID, userContent string) string {
-	if s.llmClient == nil {
+	if s.relay == nil && s.llmClient == nil {
 		return s.buildReply(userContent)
 	}
 
@@ -206,24 +220,51 @@ func (s *service) generateReply(conversationID idgen.ID, userContent string) str
 		return s.buildReply(userContent)
 	}
 
-	turns := make([]llm.Turn, 0, len(rows))
-	for i := range rows {
-		role := llm.RoleUser
-		if rows[i].SenderID == assistantSenderID {
-			role = llm.RoleAssistant
+	// 1) Preferred: relay chat completions, routed to a configured text model.
+	if s.relay != nil {
+		if model := s.repo.textModelKey(); model != "" {
+			msgs := make([]relaychat.Msg, 0, len(rows)+1)
+			if p := strings.TrimSpace(s.systemPrompt); p != "" {
+				msgs = append(msgs, relaychat.Msg{Role: "system", Content: p})
+			}
+			for i := range rows {
+				role := "user"
+				if rows[i].SenderID == assistantSenderID {
+					role = "assistant"
+				}
+				msgs = append(msgs, relaychat.Msg{Role: role, Content: rows[i].Content})
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), llmReplyTimeout)
+			defer cancel()
+			if reply, err := s.relay.Chat(ctx, model, msgs); err == nil {
+				return reply
+			} else {
+				logger.L().Warn("chat: relay generation failed, falling back", zap.String("model", model), zap.Error(err))
+			}
 		}
-		turns = append(turns, llm.Turn{Role: role, Text: rows[i].Content})
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), llmReplyTimeout)
-	defer cancel()
-
-	reply, err := s.llmClient.Chat(ctx, turns)
-	if err != nil {
-		logger.L().Warn("chat: LLM generation failed, using canned reply", zap.Error(err))
-		return s.buildReply(userContent)
+	// 2) Fallback: legacy Anthropic client.
+	if s.llmClient != nil {
+		turns := make([]llm.Turn, 0, len(rows))
+		for i := range rows {
+			role := llm.RoleUser
+			if rows[i].SenderID == assistantSenderID {
+				role = llm.RoleAssistant
+			}
+			turns = append(turns, llm.Turn{Role: role, Text: rows[i].Content})
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), llmReplyTimeout)
+		defer cancel()
+		if reply, err := s.llmClient.Chat(ctx, turns); err == nil {
+			return reply
+		} else {
+			logger.L().Warn("chat: LLM generation failed, using canned reply", zap.Error(err))
+		}
 	}
-	return reply
+
+	// 3) Canned placeholder.
+	return s.buildReply(userContent)
 }
 
 // buildReply formats the canned assistant reply for a given user message.

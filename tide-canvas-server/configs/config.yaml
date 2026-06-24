@@ -59,6 +59,13 @@ llm:
   historyLimit: 20 # recent messages sent as context
   # systemPrompt: "" # optional override of the built-in 流光 creative-assistant persona
 
+# Upstream model relay (ScarecrowToken Relay). The admin 模型管理「刷新」按钮 pulls
+# {baseUrl}/v1/models with apiKey as a Bearer token and upserts the catalog into
+# market_model. Override apiKey via TIDECANVAS_RELAY_APIKEY in production.
+relay:
+  baseUrl: https://relay.tcmzhan.com
+  apiKey: "scrw_fknv3pw2_l5ae0qowt2fcr7zbvs6vts3r"
+
 email:
   enabled: true
   host: smtp.gmail.com

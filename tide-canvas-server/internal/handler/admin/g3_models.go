@@ -12,6 +12,7 @@ package admin
 // management of the registry tables, not duplicated copies.
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"gorm.io/gorm"
 
 	"tidecanvas/internal/app"
+	"tidecanvas/internal/config"
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
@@ -43,10 +45,11 @@ import (
 // The :id param only ever appears under the static /models parent, so it never
 // collides with the sibling static /ai-models, /ai-providers routes.
 func RegisterModels(g *gin.RouterGroup, d *app.Deps) {
-	h := &modelsHandler{db: d.DB}
+	h := &modelsHandler{db: d.DB, relay: d.Cfg.Relay}
 
 	g.GET("/models", h.list)
 	g.POST("/models", h.create)
+	g.POST("/models/sync", h.syncRelay)
 	g.PUT("/models/:id", h.update)
 	g.PUT("/models/:id/status", h.setStatus)
 	g.DELETE("/models/:id", h.remove)
@@ -58,7 +61,8 @@ func RegisterModels(g *gin.RouterGroup, d *app.Deps) {
 }
 
 type modelsHandler struct {
-	db *gorm.DB
+	db    *gorm.DB
+	relay config.RelayConfig
 }
 
 // ---- VOs ----
@@ -72,9 +76,12 @@ type AdminModelVO struct {
 	ID          idgen.ID  `json:"id"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
-	CoverUrl    string    `json:"coverUrl"`
-	Tags        string    `json:"tags"`
-	CategoryId  *idgen.ID `json:"categoryId"`
+	CoverUrl    string          `json:"coverUrl"`
+	Tags        string          `json:"tags"`
+	Type        string          `json:"type"`     // media category: text | image | video | audio
+	ModelKey    string          `json:"modelKey"` // upstream model id
+	Config      json.RawMessage `json:"config"`   // per-model generation settings (object or null)
+	CategoryId  *idgen.ID       `json:"categoryId"`
 	AiModelId   *idgen.ID `json:"aiModelId"`
 	AuthorId    idgen.ID  `json:"authorId"`
 	AuthorName  string    `json:"authorName"`
@@ -123,6 +130,7 @@ type AdminModelQuery struct {
 	Keyword    string `form:"keyword"`    // matches name/description/tags
 	Status     *int   `form:"status"`     // 0/1/2 exact match
 	CategoryId string `form:"categoryId"` // filter by category
+	Type       string `form:"type"`       // media category: text|image|video|audio
 }
 
 func (q *AdminModelQuery) normalize() {
@@ -137,6 +145,7 @@ func (q *AdminModelQuery) normalize() {
 	}
 	q.Keyword = strings.TrimSpace(q.Keyword)
 	q.CategoryId = strings.TrimSpace(q.CategoryId)
+	q.Type = strings.TrimSpace(q.Type)
 }
 
 func (q *AdminModelQuery) offset() int { return (q.PageNum - 1) * q.PageSize }
@@ -147,6 +156,9 @@ type AdminModelCreateDTO struct {
 	Description string  `json:"description" binding:"omitempty,max=8192"`
 	CoverUrl    string  `json:"coverUrl" binding:"omitempty,max=512"`
 	Tags        string  `json:"tags" binding:"omitempty,max=512"`
+	Type        string  `json:"type" binding:"omitempty,oneof=text image video audio"`
+	ModelKey    string  `json:"modelKey" binding:"omitempty,max=128"`
+	Config      json.RawMessage `json:"config" binding:"omitempty"`
 	CategoryId  string  `json:"categoryId" binding:"omitempty"`
 	AiModelId   string  `json:"aiModelId" binding:"omitempty"`
 	AuthorId    string  `json:"authorId" binding:"omitempty"`
@@ -161,6 +173,9 @@ type AdminModelUpdateDTO struct {
 	Description *string `json:"description" binding:"omitempty,max=8192"`
 	CoverUrl    *string `json:"coverUrl" binding:"omitempty,max=512"`
 	Tags        *string `json:"tags" binding:"omitempty,max=512"`
+	Type        *string `json:"type" binding:"omitempty,oneof=text image video audio"`
+	ModelKey    *string `json:"modelKey" binding:"omitempty,max=128"`
+	Config      json.RawMessage `json:"config" binding:"omitempty"`
 	CategoryId  *string `json:"categoryId" binding:"omitempty"`
 	AiModelId   *string `json:"aiModelId" binding:"omitempty"`
 	Price       *string `json:"price" binding:"omitempty"`
@@ -198,6 +213,9 @@ func (h *modelsHandler) list(c *gin.Context) {
 			tx = tx.Where("category_id = ?", cid)
 		}
 	}
+	if q.Type != "" {
+		tx = tx.Where("type = ?", q.Type)
+	}
 
 	var total int64
 	if err := tx.Count(&total).Error; err != nil {
@@ -227,11 +245,25 @@ func (h *modelsHandler) create(c *gin.Context) {
 		return
 	}
 
+	if configMarksPrimary(dto.Config) {
+		if name, ok := h.otherPrimaryName(0); ok {
+			response.Fail(c, response.CodeBadRequest, "已有 AI 优化主模型「"+name+"」，请先解除后再选择")
+			return
+		}
+	}
+
+	mType := strings.TrimSpace(dto.Type)
+	if mType == "" {
+		mType = "image"
+	}
 	m := &model.MarketModel{
 		Name:        strings.TrimSpace(dto.Name),
 		Description: strings.TrimSpace(dto.Description),
 		CoverURL:    strings.TrimSpace(dto.CoverUrl),
 		Tags:        strings.TrimSpace(dto.Tags),
+		Type:        mType,
+		ModelKey:    strings.TrimSpace(dto.ModelKey),
+		Config:      rawToString(dto.Config),
 		Status:      1, // default 已上架 so it shows on /models immediately
 	}
 	if cid := parseOptID(dto.CategoryId); cid != nil {
@@ -261,6 +293,22 @@ func (h *modelsHandler) create(c *gin.Context) {
 	h.respondOne(c, m)
 }
 
+// syncRelay pulls the upstream relay model catalog and upserts it into
+// market_model (add new / update existing by name), returning add/update counts.
+// New rows are listed (status 1) and authored by the current admin.
+func (h *modelsHandler) syncRelay(c *gin.Context) {
+	if strings.TrimSpace(h.relay.APIKey) == "" {
+		response.Fail(c, response.CodeServerError, "中转站未配置：请在 config.yaml 设置 relay.apiKey")
+		return
+	}
+	res, err := SyncRelayModels(h.db, h.relay.BaseURL, h.relay.APIKey, 1, middleware.CurrentUserID(c))
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "同步失败："+err.Error())
+		return
+	}
+	response.OK(c, res)
+}
+
 func (h *modelsHandler) update(c *gin.Context) {
 	id, ok := parsePathID(c)
 	if !ok {
@@ -270,6 +318,13 @@ func (h *modelsHandler) update(c *gin.Context) {
 	if err := c.ShouldBindJSON(&dto); err != nil {
 		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
 		return
+	}
+
+	if dto.Config != nil && configMarksPrimary(dto.Config) {
+		if name, ok := h.otherPrimaryName(id); ok {
+			response.Fail(c, response.CodeBadRequest, "已有 AI 优化主模型「"+name+"」，请先解除后再选择")
+			return
+		}
 	}
 
 	fields := map[string]any{}
@@ -284,6 +339,15 @@ func (h *modelsHandler) update(c *gin.Context) {
 	}
 	if dto.Tags != nil {
 		fields["tags"] = strings.TrimSpace(*dto.Tags)
+	}
+	if dto.Type != nil {
+		fields["type"] = strings.TrimSpace(*dto.Type)
+	}
+	if dto.ModelKey != nil {
+		fields["model_key"] = strings.TrimSpace(*dto.ModelKey)
+	}
+	if dto.Config != nil {
+		fields["config"] = rawToString(dto.Config)
 	}
 	if dto.CategoryId != nil {
 		fields["category_id"] = parseOptID(*dto.CategoryId)
@@ -480,6 +544,9 @@ func toAdminModelVO(m *model.MarketModel, authorName string) AdminModelVO {
 		Description: m.Description,
 		CoverUrl:    m.CoverURL,
 		Tags:        m.Tags,
+		Type:        m.Type,
+		ModelKey:    m.ModelKey,
+		Config:      stringToRaw(m.Config),
 		CategoryId:  m.CategoryID,
 		AiModelId:   m.AiModelID,
 		AuthorId:    m.AuthorID,
@@ -494,6 +561,53 @@ func toAdminModelVO(m *model.MarketModel, authorName string) AdminModelVO {
 		CreateTime:  g3FmtTime(m.CreateTime),
 		UpdateTime:  g3FmtTime(m.UpdateTime),
 	}
+}
+
+// configMarksPrimary reports whether an inbound config object sets the
+// aiOptimizePrimary flag (the global "AI 优化主模型").
+func configMarksPrimary(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var c struct {
+		AiOptimizePrimary bool `json:"aiOptimizePrimary"`
+	}
+	_ = json.Unmarshal(raw, &c)
+	return c.AiOptimizePrimary
+}
+
+// otherPrimaryName returns the name of any OTHER model already flagged as the
+// AI-optimization primary (excluding excludeID). Used to enforce a single primary.
+func (h *modelsHandler) otherPrimaryName(excludeID idgen.ID) (string, bool) {
+	var rows []model.MarketModel
+	if err := h.db.Where("config LIKE ?", `%"aiOptimizePrimary":true%`).Find(&rows).Error; err != nil {
+		return "", false
+	}
+	for i := range rows {
+		if rows[i].ID != excludeID {
+			return rows[i].Name, true
+		}
+	}
+	return "", false
+}
+
+// rawToString stores an inbound JSON config object as text ("" when empty/invalid
+// so the column never holds garbage).
+func rawToString(raw json.RawMessage) string {
+	if len(raw) == 0 || !json.Valid(raw) {
+		return ""
+	}
+	return string(raw)
+}
+
+// stringToRaw returns the stored config as a JSON object for the VO, or nil
+// (serializes as null) when empty/invalid.
+func stringToRaw(s string) json.RawMessage {
+	s = strings.TrimSpace(s)
+	if s == "" || !json.Valid([]byte(s)) {
+		return nil
+	}
+	return json.RawMessage(s)
 }
 
 func pickName(u *model.User) string {

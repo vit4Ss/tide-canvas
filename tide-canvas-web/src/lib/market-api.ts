@@ -1,6 +1,19 @@
 import { http, toParams } from "./http";
 import type { PageData } from "@/types/api";
 import type { ModelCategoryVO, MarketModelVO, MarketModelQuery } from "@/types/market";
+import type { ModelConfig } from "@/types/admin-models";
+
+/** Studio-facing model: catalog basics + the per-model generation config that the
+ *  创作台 renders its controls from (unconfigured options are simply absent). */
+export interface StudioModelVO {
+  id: string;
+  name: string;
+  modelKey: string;
+  type: string;
+  desc: string;
+  pointCost: string;
+  config: ModelConfig | null;
+}
 
 /**
  * Market (model marketplace) API — /api/market/*.
@@ -17,6 +30,9 @@ import type { ModelCategoryVO, MarketModelVO, MarketModelQuery } from "@/types/m
 export const marketApi = {
   categories: () =>
     http.get<ModelCategoryVO[]>("/api/market/categories"),
+  /** Studio models of a media type (image|video|…) with per-model config. */
+  studioModels: (type?: string) =>
+    http.get<StudioModelVO[]>("/api/market/studio-models", toParams({ type })),
   list: (query: MarketModelQuery) =>
     http.get<PageData<MarketModelVO>>("/api/market/models", toParams(query)),
   get: (id: string) =>

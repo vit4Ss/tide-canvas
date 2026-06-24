@@ -56,6 +56,8 @@ export const projectApi = {
 export const aiApi = {
   generate: (data: AiGenerateDTO) =>
     http.post<AiTaskVO>("/api/ai/generate", data),
+  optimizePrompt: (prompt: string) =>
+    http.post<{ prompt: string }>("/api/ai/optimize-prompt", { prompt }),
   gridSplit: (imageUrl: string, rows: number, cols: number, cells?: number[]) =>
     http.post<string[]>("/api/ai/grid-split", { imageUrl, rows, cols, ...(cells && cells.length ? { cells } : {}) }),
   getTask: (taskId: number) =>
