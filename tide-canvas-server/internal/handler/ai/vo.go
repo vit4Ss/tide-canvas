@@ -28,6 +28,14 @@ func fmtTime(t time.Time) string {
 	return t.Format(timeLayout)
 }
 
+// fmtTimePtr formats a nullable time (nil/zero → empty string).
+func fmtTimePtr(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return fmtTime(*t)
+}
+
 // AiTaskVO mirrors tide-canvas-web/src/types/ai.ts AiTaskVO. resultMeta is sent
 // as a JSON object (RawMessage) when the stored value is valid JSON, else as a
 // string; the frontend (parseTaskMeta) accepts either form.
@@ -40,6 +48,9 @@ type AiTaskVO struct {
 	ResultURL    string          `json:"resultUrl"`
 	ResultMeta   json.RawMessage `json:"resultMeta"`
 	ErrorMsg     string          `json:"errorMsg"`
+	// Input is the original generation request (prompt/ratio/resolution/…) so the
+	// 创作台 can restore the run's settings from history (重新编辑 / 再次生成).
+	Input        json.RawMessage `json:"input"`
 	CreateTime   string          `json:"createTime"`
 	CompleteTime string          `json:"completeTime"`
 }
@@ -68,8 +79,9 @@ func toTaskVO(t *model.AiTask) AiTaskVO {
 		ResultURL:    t.ResultUrl,
 		ResultMeta:   rawJSONOrString(t.ResultMeta),
 		ErrorMsg:     t.ErrorMsg,
+		Input:        rawJSONOrString(t.Input),
 		CreateTime:   fmtTime(t.CreateTime),
-		CompleteTime: fmtTime(t.CompleteTime),
+		CompleteTime: fmtTimePtr(t.CompleteTime),
 	}
 }
 

@@ -43,6 +43,16 @@
 .bubble ol, .bubble ul{margin:8px 0; padding-left:20px;} .bubble li{margin:5px 0;}
 .bubble .imgrow{display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:12px;}
 .bubble .imgrow .ph{aspect-ratio:1; border-radius:10px; box-shadow:inset 0 0 0 1px rgba(0,0,0,.06);}
+/* 对话式生成的图片/视频结果：单张合理尺寸 */
+.bubble .chat-gen-media{display:block; margin-top:10px; width:320px; max-width:100%; aspect-ratio:1; border-radius:12px; object-fit:cover; box-shadow:0 8px 28px rgba(0,0,0,.4); background-color:var(--surface-2);}
+/* 生成状态（生成中 / 失败 / 已过期 / 已取消） */
+.bubble .chat-gen-state{display:inline-flex; align-items:center; gap:8px; font-size:13px; color:var(--text-dim); padding:2px 0;}
+.bubble .chat-gen-state.err{color:#e0567f;}
+.bubble .chat-gen-state.warn{color:#e0a13a;}
+/* 结果下方操作（重新编辑 / 再次生成 / 重试） */
+.bubble .chat-gen-acts{display:flex; gap:8px; margin-top:8px;}
+.bubble .chat-gen-acts button{display:inline-flex; align-items:center; gap:5px; height:28px; padding:0 11px; border-radius:8px; font-size:12px; font-weight:600; color:var(--text-dim); background:var(--surface-2); border:1px solid var(--border); cursor:pointer; transition:all .15s;}
+.bubble .chat-gen-acts button:hover{color:#fff; border-color:var(--border-strong);}
 .typing{display:inline-flex; gap:4px; padding:4px 0;}
 .typing i{width:7px; height:7px; border-radius:50%; background:var(--text-faint); animation:typ 1.2s infinite;}
 .typing i:nth-child(2){animation-delay:.2s;} .typing i:nth-child(3){animation-delay:.4s;}

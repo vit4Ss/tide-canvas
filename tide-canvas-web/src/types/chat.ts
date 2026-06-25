@@ -9,7 +9,7 @@
 export type ChatRole = "user" | "ai";
 
 /** Content type of a message. Backend defaults to "text". */
-export type ChatContentType = "text" | "image" | "file";
+export type ChatContentType = "text" | "image" | "video" | "file";
 
 /** Summary view of a conversation (GET/POST /api/im/conversations). */
 export interface ConversationVO {
@@ -20,7 +20,21 @@ export interface ConversationVO {
   createTime: string;
 }
 
-/** A single message within a conversation. */
+/** Live status/result of the generation task an assistant message points to.
+ *  The task is the single source of truth; the message stores only its id. */
+export interface MessageTaskVO {
+  id: string;
+  /** 0 processing · 1 success · 2 failed · 3 cancelled */
+  status: number;
+  progress: number;
+  resultUrl: string;
+  resultMeta?: Record<string, unknown> | string;
+  errorMsg: string;
+}
+
+/** A single message within a conversation. 生成台 assistant messages carry a
+ *  `task` (live status, null when the task expired); the user message of a turn
+ *  carries the `params` snapshot used for the detail row / 重新编辑 / 再次生成. */
 export interface MessageVO {
   id: string;
   conversationId: string;
@@ -28,6 +42,9 @@ export interface MessageVO {
   contentType: string;
   content: string;
   createTime: string;
+  taskId?: string;
+  params?: Record<string, unknown>;
+  task?: MessageTaskVO;
 }
 
 /** Body for POST /api/im/conversations. Title is optional. */

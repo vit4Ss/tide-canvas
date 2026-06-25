@@ -187,9 +187,12 @@ type AiTask struct {
 	ResultUrl    string    `gorm:"size:1024" json:"resultUrl"`
 	ResultMeta   string    `gorm:"type:text" json:"resultMeta"`
 	ErrorMsg     string    `gorm:"size:1024" json:"errorMsg"`
-	CreateTime   time.Time `gorm:"autoCreateTime" json:"createTime"`
-	UpdateTime   time.Time `gorm:"autoUpdateTime" json:"updateTime"`
-	CompleteTime time.Time `json:"completeTime"`
+	CreateTime   time.Time  `gorm:"autoCreateTime" json:"createTime"`
+	UpdateTime   time.Time  `gorm:"autoUpdateTime" json:"updateTime"`
+	// Nullable: an in-progress task has no completion time. A non-pointer
+	// time.Time would serialize the zero value as '0000-00-00 00:00:00', which
+	// MySQL rejects under the default strict sql_mode (NO_ZERO_DATE).
+	CompleteTime *time.Time `gorm:"default:null" json:"completeTime"`
 }
 
 // TableName overrides the default pluralized table name.

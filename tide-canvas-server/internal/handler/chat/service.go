@@ -25,6 +25,19 @@ import (
 // title.
 const defaultConversationTitle = "新对话"
 
+// titleFromPrompt derives a short conversation title from the first prompt.
+func titleFromPrompt(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return defaultConversationTitle
+	}
+	r := []rune(p)
+	if len(r) > 16 {
+		return string(r[:16]) + "…"
+	}
+	return string(r)
+}
+
 // assistantSenderID is the sentinel sender used for the placeholder assistant
 // messages. Real users always have a non-zero snowflake id, so a sender id of 0
 // unambiguously marks a message as "ai" when the VO derives the role.
@@ -135,7 +148,76 @@ func (s *service) listMessages(conversationID, ownerID idgen.ID, q *ListQuery) (
 	for i := range rows {
 		vos = append(vos, toMessageVO(&rows[i], conv.OwnerID))
 	}
+
+	// Attach live task status to assistant messages that point to a task (the
+	// task is the single source of truth). One batched IN query, no N+1.
+	var taskIDs []idgen.ID
+	for i := range vos {
+		if vos[i].TaskID != nil {
+			taskIDs = append(taskIDs, *vos[i].TaskID)
+		}
+	}
+	if len(taskIDs) > 0 {
+		if tasks, terr := s.repo.tasksByIDs(taskIDs); terr == nil {
+			for i := range vos {
+				if vos[i].TaskID != nil {
+					vos[i].Task = toMessageTaskVO(tasks[*vos[i].TaskID]) // nil → 已过期 on the client
+				}
+			}
+		}
+	}
 	return vos, total, nil
+}
+
+// persistTurn atomically records a completed 生成台 turn: the user's prompt (with
+// its param snapshot) and an assistant message that points at the generation
+// task. No auto text reply. The task itself was already submitted via the ai
+// pipeline, so billing/quota are not re-implemented here (studio-design §9.2, §10.8).
+func (s *service) persistTurn(conversationID, ownerID idgen.ID, dto PersistTurnDTO, taskID idgen.ID) ([]MessageVO, error) {
+	conv, err := s.repo.findConversation(conversationID)
+	if err != nil {
+		return nil, err
+	}
+	if conv.OwnerID != ownerID {
+		return nil, errForbidden
+	}
+
+	contentType := strings.TrimSpace(dto.ContentType)
+	if contentType != "video" {
+		contentType = "image"
+	}
+
+	userMsg := &model.IMMessage{
+		ConversationID: conversationID,
+		SenderID:       ownerID,
+		ContentType:    "text",
+		Content:        strings.TrimSpace(dto.Prompt),
+		Params:         strings.TrimSpace(string(dto.Params)),
+		Status:         0,
+	}
+	aiMsg := &model.IMMessage{
+		ConversationID: conversationID,
+		SenderID:       assistantSenderID,
+		ContentType:    contentType,
+		Content:        "",
+		TaskID:         &taskID,
+		Status:         0,
+	}
+	if err := s.repo.createTurn(userMsg, aiMsg); err != nil {
+		return nil, err
+	}
+
+	at := time.Now()
+	_ = s.repo.touchConversation(conversationID, aiMsg.ID, at)
+	// First turn names the conversation from the prompt (best-effort).
+	if strings.TrimSpace(conv.Title) == "" || conv.Title == defaultConversationTitle {
+		_ = s.repo.renameConversation(conversationID, titleFromPrompt(userMsg.Content))
+	}
+
+	return []MessageVO{
+		toMessageVO(userMsg, conv.OwnerID),
+		toMessageVO(aiMsg, conv.OwnerID),
+	}, nil
 }
 
 // sendMessage persists the user's message, appends a canned assistant reply, and
@@ -185,6 +267,44 @@ func (s *service) sendMessage(conversationID, ownerID idgen.ID, dto SendMessageD
 	}
 
 	vo := toMessageVO(userMsg, conv.OwnerID)
+	return &vo, nil
+}
+
+// appendMessage persists a single message with NO auto assistant reply. Role
+// "ai" stores it under the assistant sentinel sender (so toMessageVO marks it as
+// an assistant bubble); anything else is the owner's own message. Used by 对话式
+// 生成 to log the prompt and the generated media (image/video) result.
+func (s *service) appendMessage(conversationID, ownerID idgen.ID, dto AppendMessageDTO) (*MessageVO, error) {
+	conv, err := s.repo.findConversation(conversationID)
+	if err != nil {
+		return nil, err
+	}
+	if conv.OwnerID != ownerID {
+		return nil, errForbidden
+	}
+
+	contentType := strings.TrimSpace(dto.Type)
+	if contentType == "" {
+		contentType = "text"
+	}
+	sender := ownerID
+	if strings.EqualFold(strings.TrimSpace(dto.Role), "ai") {
+		sender = assistantSenderID
+	}
+
+	msg := &model.IMMessage{
+		ConversationID: conversationID,
+		SenderID:       sender,
+		ContentType:    contentType,
+		Content:        strings.TrimSpace(dto.Content),
+		Status:         0,
+	}
+	if err := s.repo.createMessage(msg); err != nil {
+		return nil, err
+	}
+	_ = s.repo.touchConversation(conversationID, msg.ID, time.Now())
+
+	vo := toMessageVO(msg, conv.OwnerID)
 	return &vo, nil
 }
 

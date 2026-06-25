@@ -40,4 +40,37 @@ export const chatApi = {
       content,
       ...(type ? { type } : {}),
     } satisfies SendMessageDTO),
+
+  /** Append one message verbatim with NO auto reply — used by 对话式生成 to log
+   *  the user's prompt and the generated media (image/video) result. */
+  append: (
+    id: string,
+    content: string,
+    role: "user" | "ai",
+    type: "text" | "image" | "video" | "file" = "text",
+  ) =>
+    http.post<MessageVO>(`/api/im/conversations/${id}/messages/append`, {
+      role,
+      content,
+      type,
+    }),
+
+  /** Persist a completed 生成台 turn: the user prompt + its param snapshot + the
+   *  generation task. The assistant message stores only taskId (task = source of
+   *  truth). Returns [userMessage, assistantMessage]. */
+  persistTurn: (
+    id: string,
+    data: {
+      prompt: string;
+      params?: Record<string, unknown>;
+      taskId: string | number;
+      contentType?: "image" | "video";
+    },
+  ) =>
+    http.post<MessageVO[]>(`/api/im/conversations/${id}/turn`, {
+      prompt: data.prompt,
+      params: data.params ?? {},
+      taskId: String(data.taskId),
+      ...(data.contentType ? { contentType: data.contentType } : {}),
+    }),
 };

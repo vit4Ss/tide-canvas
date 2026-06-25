@@ -661,6 +661,23 @@ function ModelModal({
               onChange={(next) => setC({ ratios: next })}
             />
           </FormSection>
+
+          <FormSection label="生成数量" hint="创作台单次可生成的最大数量（1～4），默认 1">
+            <Chips
+              single
+              options={[
+                { v: "1", l: "1" },
+                { v: "2", l: "2" },
+                { v: "3", l: "3" },
+                { v: "4", l: "4" },
+              ]}
+              value={[String(Math.max(1, ...(cfg.batchOptions?.length ? cfg.batchOptions : [1])))]}
+              onChange={(next) => {
+                const mx = Math.min(4, Math.max(1, parseInt(next[0] || "1", 10) || 1));
+                setC({ batchOptions: Array.from({ length: mx }, (_, i) => i + 1) });
+              }}
+            />
+          </FormSection>
         </FormCard>
       )}
 

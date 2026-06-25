@@ -2,13 +2,25 @@ package ai
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"tidecanvas/internal/pkg/relaymedia"
 	"tidecanvas/internal/pkg/storage"
 )
+
+// rehostHC downloads relay-hosted result media so it can be re-uploaded to our
+// own storage; generous timeout for multi-MB images.
+var rehostHC = &http.Client{Timeout: 90 * time.Second}
 
 // provider_relay.go is the real AiProviderClient: it routes a generation request
 // to the ScarecrowToken relay's media endpoints via the relaymedia client. It
@@ -52,27 +64,33 @@ func (p *relayProviderClient) Generate(ctx context.Context, req GenerateRequest)
 
 	switch req.Handler {
 	case "text_to_image":
-		return p.result(p.c.GenerateImage(ctx, p.imageParams(model, req.Input)))
+		res, err := p.c.GenerateImage(ctx, p.imageParams(model, req.Input))
+		return p.result(ctx, res, err)
 	case "image_to_image":
 		ip := p.imageParams(model, req.Input)
 		ip.ImageURLs = p.upstreamURLs(inputImageURLs(req.Input))
-		return p.result(p.c.EditImage(ctx, ip))
+		res, err := p.c.EditImage(ctx, ip)
+		return p.result(ctx, res, err)
 	case "text_to_video":
-		return p.result(p.c.GenerateVideo(ctx, p.videoParams(model, "text_to_video", req.Input)))
+		res, err := p.c.GenerateVideo(ctx, p.videoParams(model, "text_to_video", req.Input))
+		return p.result(ctx, res, err)
 	case "image_to_video":
 		vp := p.videoParams(model, "image_to_video", req.Input)
 		vp.ImageURL = p.upstreamURL(firstURL(inputImageURLs(req.Input)))
-		return p.result(p.c.GenerateVideo(ctx, vp))
+		res, err := p.c.GenerateVideo(ctx, vp)
+		return p.result(ctx, res, err)
 	case "start_end_to_video":
 		vp := p.videoParams(model, "first_last_frame", req.Input)
 		vp.ImageURLs = p.upstreamURLs(startEndFrames(req.Input))
-		return p.result(p.c.GenerateVideo(ctx, vp))
+		res, err := p.c.GenerateVideo(ctx, vp)
+		return p.result(ctx, res, err)
 	case "reference_to_video":
 		vp := p.videoParams(model, "multi_ref", req.Input)
 		vp.ImageURLs = p.upstreamURLs(inputImageURLs(req.Input))
 		vp.VideoURLs = p.upstreamURLs(inputStrings(req.Input, "videoReferences", "video_urls"))
 		vp.AudioURLs = p.upstreamURLs(inputStrings(req.Input, "audioReferences", "audio_urls"))
-		return p.result(p.c.GenerateVideo(ctx, vp))
+		res, err := p.c.GenerateVideo(ctx, vp)
+		return p.result(ctx, res, err)
 	default:
 		return GenerateResult{}, errUnsupportedHandler
 	}
@@ -103,8 +121,10 @@ func (p *relayProviderClient) videoParams(model, mode string, in map[string]any)
 }
 
 // result maps a relaymedia.Result (and any error) to the domain GenerateResult,
-// preserving the audit fields even on failure.
-func (p *relayProviderClient) result(res relaymedia.Result, err error) (GenerateResult, error) {
+// preserving the audit fields even on failure. On success the relay-hosted media
+// is re-hosted onto our own storage so the frontend always loads it from a
+// stable, trusted host (relay CDNs vary and some are blocked client-side).
+func (p *relayProviderClient) result(ctx context.Context, res relaymedia.Result, err error) (GenerateResult, error) {
 	out := GenerateResult{
 		RequestURL:     res.RequestURL,
 		RequestBody:    res.RequestBody,
@@ -116,10 +136,79 @@ func (p *relayProviderClient) result(res relaymedia.Result, err error) (Generate
 		return out, err
 	}
 	if len(res.URLs) > 0 {
-		out.ResultURL = res.URLs[0]
-		out.URLs = res.URLs
+		urls := p.rehost(ctx, res.URLs)
+		out.ResultURL = urls[0]
+		out.URLs = urls
 	}
 	return out, nil
+}
+
+// rehost downloads each relay-hosted result and re-uploads it to our storage
+// (OSS), returning the stable public URLs. On any failure the original relay URL
+// is kept so generation still succeeds — just on the upstream host.
+func (p *relayProviderClient) rehost(ctx context.Context, urls []string) []string {
+	if p.store == nil || len(urls) == 0 {
+		return urls
+	}
+	out := make([]string, len(urls))
+	for i, u := range urls {
+		if saved, err := p.saveRemote(ctx, u); err == nil && saved != "" {
+			out[i] = saved
+		} else {
+			out[i] = u
+		}
+	}
+	return out
+}
+
+// saveRemote downloads srcURL and stores its bytes under a deterministic key,
+// returning the public URL on our storage.
+func (p *relayProviderClient) saveRemote(ctx context.Context, srcURL string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srcURL, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := rehostHC.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("relay rehost: fetch %s: HTTP %d", srcURL, resp.StatusCode)
+	}
+	ct := strings.TrimSpace(resp.Header.Get("Content-Type"))
+	key := "gen/" + sha1Hex(srcURL) + mediaExt(srcURL, ct)
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	// cap the copy at 64MB so a misbehaving upstream can't exhaust memory.
+	return p.store.Save(ctx, key, io.LimitReader(resp.Body, 64<<20), ct)
+}
+
+func sha1Hex(s string) string {
+	sum := sha1.Sum([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+// mediaExt picks a file extension from the URL path, falling back to the
+// content-type, then ".png".
+func mediaExt(srcURL, contentType string) string {
+	if u, err := url.Parse(srcURL); err == nil {
+		if e := strings.ToLower(path.Ext(u.Path)); e != "" && len(e) <= 5 {
+			return e
+		}
+	}
+	switch {
+	case strings.Contains(contentType, "jpeg"):
+		return ".jpg"
+	case strings.Contains(contentType, "webp"):
+		return ".webp"
+	case strings.Contains(contentType, "mp4"):
+		return ".mp4"
+	case strings.Contains(contentType, "png"):
+		return ".png"
+	}
+	return ".png"
 }
 
 // normalizeQuality maps a caller-supplied quality to the relay schema

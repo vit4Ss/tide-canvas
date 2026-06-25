@@ -16,6 +16,8 @@ export interface AiTaskVO {
   resultUrl: string;
   resultMeta: Record<string, unknown> | string;
   errorMsg: string;
+  /** original generation request (prompt/ratio/resolution/…) for history restore */
+  input: Record<string, unknown> | string;
   createTime: string;
   completeTime: string;
 }

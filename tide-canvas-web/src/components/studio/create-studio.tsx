@@ -33,9 +33,11 @@ import {
   type ReactNode,
 } from "react";
 import type { Artwork, ArtworkType, MeshHues } from "@/mock";
-import { ARTWORKS, CREATE_MODELS, coverBg, mesh } from "@/mock";
+import { CREATE_MODELS, coverBg, mesh } from "@/mock";
 import { marketApi, type StudioModelVO } from "@/lib/market-api";
-import { aiApi } from "@/lib/api";
+import { aiApi, uploadFileSmart } from "@/lib/api";
+import { AiTaskStatus } from "@/types/ai";
+import { AssetsBrowser, type PickedAsset } from "@/components/studio/assets-browser";
 import { useAuthStore } from "@/stores/use-auth-store";
 import WorkModal from "@/components/site/work-modal";
 import { toast } from "@/components/shared/toast";
@@ -196,6 +198,17 @@ const MODE_TO_TOOL: Record<string, ToolKey> = {
   omni_ref: "ref",
 };
 
+/** studio ToolKey → backend generation handler name (internal/handler/ai handlerRegistry). */
+const TOOL_TO_HANDLER: Record<ToolKey, string> = {
+  t2i: "text_to_image",
+  i2i: "image_to_image",
+  edit: "image_to_image",
+  t2v: "text_to_video",
+  i2v: "image_to_video",
+  flf: "start_end_to_video",
+  ref: "reference_to_video",
+};
+
 /** display label for a ratio value (auto → 自适应). */
 function ratioLabel(r: string): string {
   return r === "auto" ? "自适应" : r;
@@ -226,33 +239,94 @@ function promptHue(prompt: string): number {
   return h;
 }
 
+/** backend generation handler → media type for 生成历史 cards. */
+const HIST_HANDLER_TYPE: Record<string, ArtworkType> = {
+  text_to_image: "image",
+  image_to_image: "image",
+  text_to_video: "video",
+  image_to_video: "video",
+  start_end_to_video: "video",
+  reference_to_video: "video",
+};
+
+/** backend generation handler → studio ToolKey (reverse of TOOL_TO_HANDLER). */
+const HIST_HANDLER_TOOL: Record<string, ToolKey> = {
+  text_to_image: "t2i",
+  image_to_image: "i2i",
+  text_to_video: "t2v",
+  image_to_video: "i2v",
+  start_end_to_video: "flf",
+  reference_to_video: "ref",
+};
+
+/** parse a stored task input (object or JSON string) into a plain record. */
+function parseTaskInput(input: unknown): Record<string, unknown> {
+  if (input && typeof input === "object") return input as Record<string, unknown>;
+  if (typeof input === "string") {
+    try {
+      const o = JSON.parse(input || "{}");
+      return o && typeof o === "object" ? (o as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+/** reconstruct the 创作台 RunParams from a task's handler + stored input, so a
+ *  history item (or the restored last result) can be re-edited / re-generated. */
+function paramsFromTask(handler: string, modelName: string, input: unknown): RunParams {
+  const inp = parseTaskInput(input);
+  const str = (v: unknown) => (typeof v === "string" ? v : "");
+  const num = (v: unknown) => (typeof v === "number" ? v : parseInt(String(v ?? ""), 10) || 0);
+  const type: ArtworkType = HIST_HANDLER_TYPE[handler] ?? "image";
+  const reso = str(inp.clarity) || str(inp.resolution);
+  return {
+    prompt: str(inp.prompt),
+    model: modelName,
+    tool: HIST_HANDLER_TOOL[handler] ?? "t2i",
+    curType: type,
+    ratio: str(inp.aspectRatio) || str(inp.aspect_ratio) || str(inp.ratio) || "1:1",
+    imgRes: type === "image" ? reso || "2K" : "2K",
+    res: type === "video" ? reso || "1080p" : "1080p",
+    dur: str(inp.duration) || "5s",
+    quality: str(inp.quality),
+    count: Math.max(1, num(inp.batchCount) || 1),
+  };
+}
+
+/** deterministic mesh-hue triplet from a string id (cover fallback when no url). */
+function huesFromId(id: string): MeshHues {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360;
+  return [h, (h + 80) % 360, (h + 200) % 360];
+}
+
+function isHttpUrl(u: unknown): u is string {
+  return typeof u === "string" && /^https?:\/\//.test(u.trim());
+}
+
 /** deterministic reference-thumb gradient (create.js refGrad). */
 function refGrad(seed: number): string {
   const h = (seed * 61 + 30) % 360;
   return `linear-gradient(135deg, hsl(${h} 58% 52%), hsl(${(h + 44) % 360} 62% 36%))`;
 }
 
-const pad2 = (n: number) => String(n).padStart(2, "0");
-
 /* ── upload-file model ────────────────────────────────────────────────────── */
 
 interface UploadFile {
-  g?: string; // gradient (image)
+  g?: string; // thumbnail: a CSS gradient (mock) OR a real image URL
   n: string; // name
   s?: string; // size label (image)
   d?: string; // duration label (video/audio)
+  url?: string; // real asset URL (local upload / 资产库) sent to the backend as a reference
 }
 
-/** mock a file for a slot (create.js makeFile). Client-only (event handlers). */
-function makeFile(type: SlotType, i: number): UploadFile {
-  if (type === "image")
-    return {
-      g: refGrad(i * 7 + (Date.now() % 11)),
-      n: "参考图_" + pad2(i + 1),
-      s: (Math.random() * 3 + 0.6).toFixed(1) + " MB",
-    };
-  if (type === "video") return { n: "clip_" + pad2(i + 1) + ".mp4", d: "00:0" + (4 + (i % 5)) };
-  return { n: "audio_" + pad2(i + 1) + ".mp3", d: "00:0" + (5 + (i % 4)) };
+/** background value for a slot thumbnail: a real URL → cover image, else the
+ *  gradient string is used as-is. */
+function thumbBg(g?: string): string {
+  if (!g) return "var(--surface-2)";
+  return /^(https?:|data:)/.test(g) ? `center / cover no-repeat url("${g}")` : g;
 }
 
 type SlotData = Record<string, UploadFile[]>;
@@ -263,6 +337,8 @@ interface ResultCell {
   i: number;
   /** hue triplet → coverBg() for the modal, mesh() for the card bg. */
   hues: MeshHues;
+  /** real result image URL (real generations); when set it replaces the mesh placeholder. */
+  url?: string;
 }
 
 interface HistItem {
@@ -272,6 +348,10 @@ interface HistItem {
   title: string;
   prompt: string;
   model: string;
+  /** real result image URL (real generations). */
+  url?: string;
+  /** reconstructed run settings (for restoring this result to the panel). */
+  params?: RunParams;
 }
 
 interface RunMeta {
@@ -283,6 +363,39 @@ interface RunMeta {
   label: string;
   isVid: boolean;
   refThumbs: string[];
+}
+
+/** A backend generation in flight, persisted so a page refresh can resume it
+ *  (the task keeps running server-side). Stored under ACTIVE_RUN_KEY. */
+interface ActiveRun {
+  taskId: number;
+  prompt: string;
+  model: string;
+  ratio: string;
+  spec: string;
+  count: number;
+  isVid: boolean;
+  label: string;
+  hues: MeshHues[];
+  refThumbs: string[];
+  startedAt: number;
+}
+
+const ACTIVE_RUN_KEY = "studio_active_run";
+
+/** Full panel settings of a generation, captured so 重新编辑 / 再次生成 can restore
+ *  or reproduce that exact run rather than whatever the panel currently shows. */
+interface RunParams {
+  prompt: string;
+  model: string;
+  tool: ToolKey;
+  curType: ArtworkType;
+  ratio: string;
+  imgRes: string;
+  res: string;
+  dur: string;
+  quality: string;
+  count: number;
 }
 
 let histSeq = 0;
@@ -298,7 +411,7 @@ export default function CreateStudio() {
   const [modelOpen, setModelOpen] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [ratio, setRatio] = useState<string>(RATIOS[0]);
-  const [count, setCount] = useState(4);
+  const [count, setCount] = useState(1);
   const [imgRes, setImgRes] = useState<string>("2K");
   const [res, setRes] = useState<string>("1080p");
   const [dur, setDur] = useState<string>("5s");
@@ -307,6 +420,11 @@ export default function CreateStudio() {
   /* typed reference uploads (per slot key) + preview modal target */
   const [slotData, setSlotData] = useState<SlotData>({});
   const [preview, setPreview] = useState<{ k: string; i: number } | null>(null);
+  /* reference-image source flow: 来源选择菜单 / 资产库弹窗 / 本地上传 */
+  const [srcMenu, setSrcMenu] = useState<string | null>(null); // slot key whose 来源 menu is open
+  const [assetPick, setAssetPick] = useState<string | null>(null); // slot key the asset picker fills
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const localTargetRef = useRef<string | null>(null); // slot key awaiting a local file pick
 
   /* real studio models for the current type (public, no auth), each carrying its
      per-model config; the picker + option pills are derived from this list. */
@@ -320,30 +438,28 @@ export default function CreateStudio() {
   const [progs, setProgs] = useState<number[]>([]);
   const [doneSet, setDoneSet] = useState<Record<number, boolean>>({});
   const [runMeta, setRunMeta] = useState<RunMeta | null>(null);
+  // full settings of the last started run (for 重新编辑 / 再次生成) + a one-shot
+  // flag that fires generate() after those settings are restored to the panel.
+  const lastRunRef = useRef<RunParams | null>(null);
+  const [pendingGen, setPendingGen] = useState(false);
+  // ensures the stage is seeded with the last past result at most once per mount.
+  const stageSeededRef = useRef(false);
 
-  /* history — seeded from ARTWORKS (cycled to 31 so pagination is visible,
-     mirrors create.js seedHistory), newest on the left. Deterministic +
-     SSR-safe, so it lives in lazy initial state rather than an effect. */
-  const [hist, setHist] = useState<HistItem[]>(() =>
-    Array.from({ length: 31 }, (_, i) => {
-      const a = ARTWORKS[i % ARTWORKS.length];
-      return {
-        id: `seed-${i}`,
-        hues: a.cover,
-        type: a.type,
-        title: a.title,
-        prompt: a.prompt || a.title,
-        model: a.model,
-      };
-    }),
-  );
+  /* history — the user's REAL generation tasks (aiApi.listTasks), newest first.
+     Loaded post-mount (see loadHistory); empty until then. No mock seed. */
+  const [hist, setHist] = useState<HistItem[]>([]);
   const [histFilter, setHistFilter] = useState<"all" | "image" | "video">("all");
   const [histPage, setHistPage] = useState(1);
 
   /* shared work-detail modal */
   const [active, setActive] = useState<Artwork | null>(null);
+  /* full-image lightbox (click a finished result to zoom) */
+  const [lightbox, setLightbox] = useState<string | null>(null);
 
   const ticksRef = useRef<ReturnType<typeof setInterval>[]>([]);
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // bumped on every reset/cancel so in-flight poll callbacks from a stale run bail out.
+  const runIdRef = useRef(0);
   const modelWrapRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
 
@@ -422,9 +538,6 @@ export default function CreateStudio() {
     : (IMG_RES_COST[imgRes] || 14) * count;
 
   const allDone = hasResults && Object.keys(doneSet).length >= cells.length;
-  const aggProg =
-    progs.length > 0 ? progs.reduce((a, b) => a + b, 0) / progs.length : 0;
-  const doneCount = Object.keys(doneSet).length;
 
   const filteredHist = useMemo(
     () => (histFilter === "all" ? hist : hist.filter((h) => h.type === histFilter)),
@@ -433,6 +546,7 @@ export default function CreateStudio() {
   const histPages = Math.max(1, Math.ceil(filteredHist.length / PAGE_SIZE));
   const curPage = Math.min(histPage, histPages);
   const pageItems = filteredHist.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
+
 
   /* ── prompt / model handoff (mount) ──────────────────────────────────── */
 
@@ -480,6 +594,90 @@ export default function CreateStudio() {
   useEffect(() => {
     reloadModels();
   }, [reloadModels]);
+
+  // 生成历史: load the user's REAL generation tasks (persisted server-side). Each
+  // SUCCESS task with a result URL becomes a card; a batch task (resultMeta.urls)
+  // expands into one card per image. No mock seed — survives refresh.
+  const loadHistory = useCallback(async () => {
+    try {
+      await ensureSession();
+      const res = await aiApi.listTasks({ pageNum: 1, pageSize: 100 });
+      const records = res.success && res.data ? res.data.records : [];
+      const items: HistItem[] = [];
+      for (const t of records) {
+        let urls: string[] = [];
+        const meta =
+          typeof t.resultMeta === "string"
+            ? (() => {
+                try {
+                  return JSON.parse(t.resultMeta || "{}");
+                } catch {
+                  return {};
+                }
+              })()
+            : t.resultMeta;
+        const rawUrls = (meta as { urls?: unknown })?.urls;
+        if (Array.isArray(rawUrls)) urls = rawUrls.filter(isHttpUrl);
+        if (!urls.length && isHttpUrl(t.resultUrl)) urls = [t.resultUrl];
+        if (!urls.length) continue; // skip failed / urlless tasks (real data only)
+
+        const type = HIST_HANDLER_TYPE[t.handler] ?? "image";
+        const params = paramsFromTask(t.handler, t.modelName || "", t.input);
+        const title = params.prompt
+          ? params.prompt.slice(0, 14) + (params.prompt.length > 14 ? "…" : "")
+          : t.modelName || "我的创作";
+        urls.forEach((url, idx) =>
+          items.push({
+            id: `task-${t.id}-${idx}`,
+            hues: huesFromId(`${t.id}-${idx}`),
+            type,
+            title,
+            prompt: params.prompt,
+            model: t.modelName || "",
+            url,
+            params,
+          }),
+        );
+      }
+      setHist(items);
+
+      // First load only: if the user has past results and nothing is currently
+      // generating / being resumed, show their most recent image in the stage
+      // instead of the empty default state. First-time users keep the default.
+      if (!stageSeededRef.current) {
+        stageSeededRef.current = true; // mark attempted, so a later 清空 stays empty
+        let resuming = false;
+        try {
+          resuming = !!localStorage.getItem(ACTIVE_RUN_KEY);
+        } catch {
+          /* ignore */
+        }
+        const h = items[0];
+        if (h && h.url && !resuming) {
+          setRunMeta({
+            prompt: h.params?.prompt ?? "",
+            model: h.model,
+            ratio: h.params?.ratio ?? "1:1",
+            spec: "",
+            count: 1,
+            label: "",
+            isVid: h.type === "video",
+            refThumbs: [],
+          });
+          setCells([{ i: 0, hues: h.hues, url: h.url }]);
+          setProgs([100]);
+          setDoneSet({ 0: true });
+          if (h.params) lastRunRef.current = h.params;
+        }
+      }
+    } catch {
+      setHist([]);
+    }
+  }, [ensureSession]);
+
+  useEffect(() => {
+    loadHistory();
+  }, [loadHistory]);
 
   // make admin edits feel live: re-fetch when the tab regains focus / becomes
   // visible, so returning from 模型管理 reflects the latest per-model config
@@ -541,6 +739,16 @@ export default function CreateStudio() {
     return () => document.removeEventListener("keydown", onKey);
   }, [preview]);
 
+  // close the image lightbox on Escape.
+  useEffect(() => {
+    if (!lightbox) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLightbox(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [lightbox]);
+
   // clear any running intervals on unmount.
   useEffect(() => () => ticksRef.current.forEach((t) => clearInterval(t)), []);
 
@@ -586,19 +794,74 @@ export default function CreateStudio() {
 
   /* ── typed reference uploads (create.js addFile / removeFile / swap) ──── */
 
+  // adding a reference asset: every slot offers a source choice (本地上传 / 资产库).
   const addFile = (k: string) => {
+    const slot = slots?.find((s) => s.k === k);
+    if (!slot) return;
+    if ((slotData[k] || []).length >= slotMax(slot)) {
+      toast.info(slot.label + "最多 " + slotMax(slot) + " 个");
+      return;
+    }
+    setSrcMenu(k);
+  };
+
+  // push a real asset (uploaded or picked from 资产库) into a slot, honoring its max.
+  const addRealFile = (k: string, file: { url: string; name?: string; size?: string }) => {
     const slot = slots?.find((s) => s.k === k);
     if (!slot) return;
     setSlotData((prev) => {
       const arr = prev[k] || [];
-      const max = slotMax(slot);
-      if (arr.length >= max) {
-        toast.info(slot.label + "最多 " + max + " 个");
-        return prev;
-      }
-      toast.success("已添加" + slot.label + " · 原型");
-      return { ...prev, [k]: [...arr, makeFile(slot.type, arr.length)] };
+      if (arr.length >= slotMax(slot)) return prev; // silently cap (already warned on open)
+      const uf: UploadFile =
+        slot.type === "image"
+          ? { g: file.url, url: file.url, n: file.name || "参考图", s: file.size || "" }
+          : { n: file.name || (slot.type === "video" ? "video.mp4" : "audio.mp3"), d: "", url: file.url };
+      return { ...prev, [k]: [...arr, uf] };
     });
+  };
+
+  // 本地上传: open the OS file picker for the slot, then upload each chosen file.
+  const pickLocal = (k: string) => {
+    setSrcMenu(null);
+    localTargetRef.current = k;
+    const slot = slots?.find((s) => s.k === k);
+    const el = fileInputRef.current;
+    if (!el) return;
+    el.accept = slot?.type === "video" ? "video/*" : slot?.type === "audio" ? "audio/*" : "image/*";
+    el.value = "";
+    el.click();
+  };
+
+  const onLocalFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const k = localTargetRef.current;
+    const list = e.target.files;
+    if (!k || !list || list.length === 0) return;
+    await ensureSession();
+    for (const file of Array.from(list)) {
+      const res = await uploadFileSmart(file);
+      if (res.success && res.data?.fileUrl) {
+        addRealFile(k, {
+          url: res.data.fileUrl,
+          name: file.name,
+          size: (file.size / 1024 / 1024).toFixed(1) + " MB",
+        });
+      } else {
+        toast.error("上传失败：" + (res.message || file.name));
+      }
+    }
+    e.target.value = "";
+  };
+
+  // 资产库: open the full assets browser as a picker dialog for this slot.
+  const openAssets = (k: string) => {
+    setSrcMenu(null);
+    setAssetPick(k);
+  };
+
+  const chooseAsset = (a: PickedAsset) => {
+    const k = assetPick;
+    setAssetPick(null);
+    if (k) addRealFile(k, { url: a.url, name: a.name });
   };
 
   const removeFile = (k: string, i: number) =>
@@ -671,9 +934,11 @@ export default function CreateStudio() {
     type: ArtworkType,
     p: string,
     mdl: string,
+    url?: string,
   ): Artwork => ({
     id: `gen-${++histSeq}`,
     cover: hues,
+    ...(url ? { src: url } : {}),
     h: 1,
     type,
     cat: "设计",
@@ -684,13 +949,158 @@ export default function CreateStudio() {
     prompt: p,
   });
 
-  const pushHistory = useCallback(
-    (item: Omit<HistItem, "id">) =>
-      setHist((prev) => [{ id: `h-${++histSeq}`, ...item }, ...prev]),
-    [],
+  const pushHistory = useCallback((item: Omit<HistItem, "id">) => {
+    // Compute the id OUTSIDE the updater: a state updater must be pure, and React
+    // dev double-invokes it — mutating histSeq inside produced duplicate keys.
+    histSeq += 1;
+    const id = `h-${histSeq}`;
+    setHist((prev) => [{ id, ...item }, ...prev]);
+  }, []);
+
+  /* Drive the generating UI + poll a known backend task to completion. Shared by
+     a fresh generation AND by the refresh-resume path (same task id either way),
+     so an in-flight generation survives a page reload. */
+  const driveRun = useCallback(
+    (run: ActiveRun) => {
+      const { taskId, prompt: p, model: mdl, ratio: r, spec, count: n, isVid, label, hues } = run;
+      const myRun = (runIdRef.current += 1);
+
+      const newCells: ResultCell[] = hues.map((h, i) => ({ i, hues: h }));
+      setRunMeta({ prompt: p, model: mdl, ratio: r, spec, count: n, label, isVid, refThumbs: run.refThumbs });
+      setCells(newCells);
+      setDoneSet({});
+      setBusy(true);
+      setHistPage(1);
+
+      ticksRef.current.forEach((t) => clearInterval(t));
+      ticksRef.current = [];
+      if (pollRef.current) {
+        clearTimeout(pollRef.current);
+        pollRef.current = null;
+      }
+
+      // progress floor + gentle creep between polls (poll raises it to task.progress).
+      const PROG_FLOOR = 6;
+      const local = new Array(n).fill(PROG_FLOOR);
+      setProgs([...local]);
+      newCells.forEach((_, i) => {
+        const tick = setInterval(() => {
+          local[i] = Math.min(90, local[i] + 1.5);
+          setProgs([...local]);
+        }, 500);
+        ticksRef.current.push(tick);
+      });
+
+      const stopTicks = () => {
+        ticksRef.current.forEach((t) => clearInterval(t));
+        ticksRef.current = [];
+      };
+      const clearActive = () => {
+        try {
+          localStorage.removeItem(ACTIVE_RUN_KEY);
+        } catch {
+          /* storage unavailable */
+        }
+      };
+      const isValidUrl = (u?: string): u is string =>
+        !!u && (u.startsWith("https://") || u.startsWith("http://") || u.startsWith("data:"));
+
+      const finish = (urls: string[]) => {
+        if (runIdRef.current !== myRun) return;
+        stopTicks();
+        clearActive();
+        setProgs(new Array(n).fill(100));
+        setCells((prev) => prev.map((c) => ({ ...c, url: urls[c.i] ?? urls[0] })));
+        const done: Record<number, boolean> = {};
+        for (let i = 0; i < n; i++) done[i] = true;
+        setDoneSet(done);
+        setBusy(false);
+        newCells.forEach((cell, idx) =>
+          pushHistory({
+            hues: cell.hues,
+            type: isVid ? "video" : "image",
+            title: p,
+            prompt: p,
+            model: mdl,
+            url: urls[idx] ?? urls[0],
+          }),
+        );
+        toast.success("生成完成 · 点击作品查看详情");
+      };
+
+      const fail = (msg?: string) => {
+        if (runIdRef.current !== myRun) return;
+        stopTicks();
+        clearActive();
+        setBusy(false);
+        toast.error(msg || "生成失败");
+      };
+
+      const poll = async () => {
+        if (runIdRef.current !== myRun) return;
+        try {
+          const res = await aiApi.getTask(taskId);
+          if (runIdRef.current !== myRun) return;
+          if (!res.success) {
+            fail(res.message);
+            return;
+          }
+          const task = res.data;
+          if (task.status === AiTaskStatus.SUCCESS) {
+            let meta: Record<string, unknown> = {};
+            if (typeof task.resultMeta === "string") {
+              try {
+                meta = JSON.parse(task.resultMeta) || {};
+              } catch {
+                meta = {};
+              }
+            } else if (task.resultMeta && typeof task.resultMeta === "object") {
+              meta = task.resultMeta as Record<string, unknown>;
+            }
+            const rawUrls = meta.urls;
+            const urls = Array.isArray(rawUrls) ? rawUrls.filter(isValidUrl) : [];
+            const all = urls.length ? urls : isValidUrl(task.resultUrl) ? [task.resultUrl] : [];
+            if (!all.length) {
+              fail("生成结果无效，可能未配置 AI 供应商");
+              return;
+            }
+            finish(all);
+          } else if (task.status === AiTaskStatus.FAILED) {
+            fail(task.errorMsg);
+          } else if (task.status === AiTaskStatus.CANCELLED) {
+            if (runIdRef.current !== myRun) return;
+            stopTicks();
+            clearActive();
+            setBusy(false);
+          } else {
+            // still processing: raise the bar to the real progress (kept as a floor).
+            if (typeof task.progress === "number") {
+              const pv = Math.min(95, Math.max(PROG_FLOOR, task.progress));
+              for (let i = 0; i < n; i++) local[i] = Math.max(local[i], pv);
+              setProgs([...local]);
+            }
+            // deadline checked AFTER reading the task, so a completed task is always
+            // picked up even when resumed long after it was started.
+            const maxMs = isVid ? 30 * 60 * 1000 : 7 * 60 * 1000;
+            if (Date.now() - run.startedAt > maxMs) {
+              fail("生成超时，请重试");
+              return;
+            }
+            pollRef.current = setTimeout(poll, 1500);
+          }
+        } catch {
+          fail("网络错误");
+        }
+      };
+      poll();
+    },
+    [pushHistory],
   );
 
-  /* ── generation (simulated, ported from create.js generate()) ────────── */
+  /* ── generation ───────────────────────────────────────────────────────────
+     Calls the real backend (/api/ai/generate → poll /api/ai/tasks/:id) when a
+     real studio model is selected; falls back to the design-preview simulation
+     only when no backend model is available (studioList empty). */
 
   const generate = useCallback(() => {
     if (busy) return;
@@ -700,6 +1110,35 @@ export default function CreateStudio() {
       promptRef.current?.focus();
       return;
     }
+
+    // reference assets from the upload slots (real URLs from 本地上传 / 资产库).
+    const slotUrls = (key: string) =>
+      (slotData[key] || []).map((f) => f.url).filter((u): u is string => !!u);
+    const imageRefs = tool === "i2v" ? slotUrls("first") : slotUrls("img");
+    const firstFrame = slotUrls("first")[0];
+    const lastFrame = slotUrls("last")[0];
+    const needsRef = (UPLOADS[tool] ?? []).some((s) => s.type === "image");
+    if (needsRef && imageRefs.length === 0 && !firstFrame && !lastFrame) {
+      toast.info("请先上传参考图片");
+      return;
+    }
+    const refInput: Record<string, unknown> = {};
+    if (imageRefs.length) {
+      refInput.imageList = imageRefs;
+      refInput.sourceImage = imageRefs[0];
+      if (imageRefs.length > 1) refInput.references = imageRefs.slice(1);
+    }
+    if (tool === "flf") {
+      if (firstFrame) refInput.firstFrame = firstFrame;
+      if (lastFrame) refInput.lastFrame = lastFrame;
+    }
+    if (tool === "ref") {
+      const vids = slotUrls("video");
+      const auds = slotUrls("audio");
+      if (vids.length) refInput.videoReferences = vids;
+      if (auds.length) refInput.audioReferences = auds;
+    }
+
     setBusy(true);
 
     const n = count;
@@ -709,78 +1148,199 @@ export default function CreateStudio() {
     const mdl = model;
     const hsh = promptHue(p);
     const spec = isVid ? `${r} · ${res} · ${dur}` : `${r} · ${imgRes}`;
+    const hues: MeshHues[] = Array.from(
+      { length: n },
+      (_, i) => [hsh + i * 36, hsh + i * 36 + 80, hsh + i * 36 + 200] as MeshHues,
+    );
+    const refThumbs = refThumbsForRun(hsh);
 
-    const newCells: ResultCell[] = Array.from({ length: n }, (_, i) => ({
-      i,
-      hues: [hsh + i * 36, hsh + i * 36 + 80, hsh + i * 36 + 200] as MeshHues,
-    }));
+    // snapshot the exact settings of this run for 重新编辑 / 再次生成.
+    lastRunRef.current = {
+      prompt: p, model: mdl, tool, curType, ratio: r, imgRes, res, dur, quality, count: n,
+    };
 
-    setRunMeta({
-      prompt: p,
-      model: mdl,
-      ratio: r,
-      spec,
-      count: n,
-      label,
-      isVid,
-      refThumbs: refThumbsForRun(hsh),
-    });
-    setCells(newCells);
+    setRunMeta({ prompt: p, model: mdl, ratio: r, spec, count: n, label, isVid, refThumbs });
+    setCells(hues.map((h, i) => ({ i, hues: h })));
     setProgs(new Array(n).fill(0));
     setDoneSet({});
     setHistPage(1); // jump to first page so newest items are visible
 
-    // clear any stragglers, then start per-cell progress intervals.
+    // clear any stragglers from a previous run + invalidate its poll.
     ticksRef.current.forEach((t) => clearInterval(t));
     ticksRef.current = [];
-    const local = new Array(n).fill(0);
+    if (pollRef.current) {
+      clearTimeout(pollRef.current);
+      pollRef.current = null;
+    }
+    const myRun = (runIdRef.current += 1);
 
-    newCells.forEach((cell, i) => {
-      const speed = 1.4 + Math.random() * 1.2;
-      const tick = setInterval(() => {
-        local[i] = Math.min(100, local[i] + speed + Math.random() * 3);
-        setProgs([...local]);
-        if (local[i] >= 100) {
-          clearInterval(tick);
-          setDoneSet((prev) => {
-            if (prev[i]) return prev;
-            // record into history as each cell completes.
-            pushHistory({
-              hues: cell.hues,
-              type: isVid ? "video" : "image",
-              title: p,
-              prompt: p,
-              model: mdl,
-            });
-            const next = { ...prev, [i]: true };
-            if (Object.keys(next).length >= n) {
+    const selStudio = studioList.find((m) => m.name === model) ?? null;
+    const modelId = selStudio?.modelKey || selStudio?.id || "";
+
+    // ── design-preview simulation (no backend model configured) ───────────
+    if (!modelId) {
+      const local = new Array(n).fill(0);
+      const doneLocal = new Array(n).fill(false);
+      let doneCountLocal = 0;
+      hues.forEach((hu, i) => {
+        const speed = 1.4 + Math.random() * 1.2;
+        const tick = setInterval(() => {
+          local[i] = Math.min(100, local[i] + speed + Math.random() * 3);
+          setProgs([...local]);
+          if (local[i] >= 100) {
+            clearInterval(tick);
+            if (doneLocal[i]) return;
+            doneLocal[i] = true;
+            doneCountLocal += 1;
+            pushHistory({ hues: hu, type: isVid ? "video" : "image", title: p, prompt: p, model: mdl });
+            setDoneSet((prev) => ({ ...prev, [i]: true }));
+            if (doneCountLocal >= n) {
               setBusy(false);
               toast.success("生成完成 · 点击作品查看详情");
             }
-            return next;
-          });
+          }
+        }, 90 + i * 40);
+        ticksRef.current.push(tick);
+      });
+      return;
+    }
+
+    // ── real generation: create the task, persist it for refresh-resume, then
+    // hand off the progress UI + polling to driveRun. ─────────────────────
+    (async () => {
+      try {
+        await ensureSession();
+        if (runIdRef.current !== myRun) return;
+        const input: Record<string, unknown> = {
+          prompt: p,
+          ...refInput,
+          ...(ratioOpts.length ? { aspectRatio: r, aspect_ratio: r, ratio: r } : {}),
+          ...(isVid
+            ? {
+                ...(resOpts.length ? { resolution: res } : {}),
+                ...(durOpts.length ? { duration: dur } : {}),
+              }
+            : {
+                ...(resOpts.length ? { clarity: imgRes, resolution: imgRes } : {}),
+                ...(qualOpts.length ? { quality } : {}),
+              }),
+          ...(n > 1 ? { batchCount: n } : {}),
+        };
+        const res2 = await aiApi.generate({ handler: TOOL_TO_HANDLER[tool], modelId, input });
+        if (runIdRef.current !== myRun) return;
+        if (!res2.success) {
+          setBusy(false);
+          toast.error(res2.message || "生成请求失败");
+          return;
         }
-      }, 90 + i * 40);
-      ticksRef.current.push(tick);
-    });
+        const run: ActiveRun = {
+          taskId: res2.data.id,
+          prompt: p,
+          model: mdl,
+          ratio: r,
+          spec,
+          count: n,
+          isVid,
+          label,
+          hues,
+          refThumbs,
+          startedAt: Date.now(),
+        };
+        try {
+          localStorage.setItem(ACTIVE_RUN_KEY, JSON.stringify(run));
+        } catch {
+          /* storage unavailable — generation still works, just no refresh-resume */
+        }
+        driveRun(run);
+      } catch {
+        setBusy(false);
+        toast.error("网络错误");
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busy, prompt, count, tool, ratio, model, res, dur, imgRes, slotData, pushHistory]);
+  }, [busy, prompt, count, tool, ratio, model, res, dur, imgRes, quality, studioList, ratioOpts, resOpts, durOpts, qualOpts, ensureSession, pushHistory, driveRun]);
+
+  // Refresh-resume: on mount, if a generation was in flight (persisted at start),
+  // restore the generating UI and resume polling — the task keeps running on the
+  // server, so a reload no longer loses it.
+  useEffect(() => {
+    let raw: string | null = null;
+    try {
+      raw = localStorage.getItem(ACTIVE_RUN_KEY);
+    } catch {
+      return;
+    }
+    if (!raw) return;
+    let saved: ActiveRun | null = null;
+    try {
+      saved = JSON.parse(raw) as ActiveRun;
+    } catch {
+      saved = null;
+    }
+    if (!saved || typeof saved.taskId !== "number" || !Array.isArray(saved.hues)) {
+      try {
+        localStorage.removeItem(ACTIVE_RUN_KEY);
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      await ensureSession();
+      if (!cancelled) driveRun(saved);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ensureSession, driveRun]);
+
+  // 重新编辑 / 再次生成: restore the captured run's full settings back into the
+  // panel (type/mode/model/ratio/resolution/quality/count + prompt). Returns
+  // false when there is nothing to restore.
+  const restoreLastRun = useCallback((): boolean => {
+    const lr = lastRunRef.current;
+    if (!lr) return false;
+    setCurType(lr.curType);
+    setTool(lr.tool);
+    setModel(lr.model);
+    setPrompt(lr.prompt);
+    setRatio(lr.ratio);
+    setImgRes(lr.imgRes);
+    setRes(lr.res);
+    setDur(lr.dur);
+    setQuality(lr.quality);
+    setCount(lr.count);
+    return true;
+  }, []);
+
+  // 再次生成: after restoring the run's settings to the panel (above), fire
+  // generate() on the next commit so it reads the just-restored state.
+  useEffect(() => {
+    if (!pendingGen) return;
+    setPendingGen(false);
+    generate();
+  }, [pendingGen, generate]);
 
   // tear down the current run's intervals + result state (no busy guard).
   const resetRun = useCallback(() => {
     ticksRef.current.forEach((t) => clearInterval(t));
     ticksRef.current = [];
+    if (pollRef.current) {
+      clearTimeout(pollRef.current);
+      pollRef.current = null;
+    }
+    runIdRef.current += 1; // invalidate any in-flight poll for the previous run
+    try {
+      localStorage.removeItem(ACTIVE_RUN_KEY); // a cancelled/cleared run won't resume on refresh
+    } catch {
+      /* ignore */
+    }
     setCells([]);
     setProgs([]);
     setDoneSet({});
     setRunMeta(null);
   }, []);
-
-  const cancelRun = () => {
-    setBusy(false);
-    resetRun();
-    toast.info("已取消生成");
-  };
 
   // header "清空" — disabled while busy, so a plain reset is safe here.
   const clearCanvas = () => {
@@ -809,12 +1369,13 @@ export default function CreateStudio() {
         runMeta.isVid ? "video" : "image",
         runMeta.prompt,
         runMeta.model,
+        cell.url,
       ),
     );
   };
 
   const openHist = (h: HistItem) =>
-    setActive(buildWork(h.hues, h.type, h.prompt, h.model));
+    setActive(buildWork(h.hues, h.type, h.prompt, h.model, h.url));
 
   /* ── render: typed upload slots (create.js renderUploads) ─────────────── */
 
@@ -856,7 +1417,7 @@ export default function CreateStudio() {
                 title="点击预览"
                 onClick={() => setPreview({ k: s.k, i })}
               >
-                <span className="ws-ref-img" style={{ background: f.g }} />
+                <span className="ws-ref-img" style={{ background: thumbBg(f.g) }} />
                 <span className="ws-ref-zoom">⚲</span>
                 <button
                   className="ws-ref-x"
@@ -933,7 +1494,7 @@ export default function CreateStudio() {
         title="点击预览"
         onClick={() => setPreview({ k: s.k, i: 0 })}
       >
-        <span className="ws-flf-img" style={{ background: f.g }} />
+        <span className="ws-flf-img" style={{ background: thumbBg(f.g) }} />
         <button
           className="ws-flf-x"
           type="button"
@@ -996,7 +1557,7 @@ export default function CreateStudio() {
     const type = slotTypeOf(preview.k);
     let media: ReactNode;
     if (type === "image") {
-      media = <div className="ws-prev-media" style={{ background: f.g }} />;
+      media = <div className="ws-prev-media" style={{ background: thumbBg(f.g) }} />;
     } else if (type === "video") {
       media = (
         <div className="ws-prev-media dark" style={{ background: refGrad(preview.i * 9 + 40) }}>
@@ -1287,8 +1848,8 @@ export default function CreateStudio() {
               </div>
             )}
 
-            {/* 生成数量 (image, range from configured batch options) */}
-            {!isVideo && batchMax > batchMin && (
+            {/* 生成数量 (image). 始终显示；仅 1 个可选数量时滑块固定且禁用。 */}
+            {!isVideo && (
               <div className="ws-field col" id="fieldCount">
                 <label>
                   生成数量 · <span id="countVal">{count}</span>
@@ -1301,6 +1862,7 @@ export default function CreateStudio() {
                   max={batchMax}
                   step={1}
                   value={count}
+                  disabled={batchMax <= batchMin}
                   onChange={(e) => setCount(+e.target.value)}
                 />
               </div>
@@ -1408,69 +1970,22 @@ export default function CreateStudio() {
               </div>
             )}
 
-            {/* result grid */}
+            {/* result grid — columns follow the cell count: 1→1-up, 2→2-up,
+                3→3-up, 4→2×2 (其余 ≥5 仍用 2 列网格)。 */}
             {hasResults && runMeta && (
-              <div className="ws-grid" id="grid" style={{ display: "grid" }}>
-                <div
-                  className="ws-result-head"
-                  id="resultHead"
-                  data-state={allDone ? "done" : "gen"}
-                >
-                  <div className="ws-rh-style">
-                    <div className="ws-rh-refs">
-                      {runMeta.refThumbs.map((g, i) => (
-                        <span key={i} className="ws-rh-ref" style={{ background: g }} />
-                      ))}
-                    </div>
-                    <div className="ws-rh-sbody">
-                      <div className="ws-rh-prompt">
-                        <b>【风格】</b> {runMeta.prompt}
-                      </div>
-                      <div className="ws-rh-meta">
-                        <span className="ws-rh-model">
-                          <span className="sw" style={{ background: modelSwatch(runMeta.model) }}>
-                            {modelInitial(runMeta.model)}
-                          </span>
-                          {runMeta.model}
-                        </span>
-                        <span className="ws-rh-dot">·</span>
-                        <span>{runMeta.spec}</span>
-                        <button
-                          className="ws-rh-info"
-                          type="button"
-                          onClick={() => toast.info("生成参数详情 · 原型")}
-                        >
-                          详细信息 ⓘ
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="ws-rh-foot">
-                    <div className="ws-rh-main">
-                      <div className="ws-rh-title">
-                        <span className="ws-rh-spin" />
-                        <span id="rhStatus">
-                          {allDone
-                            ? `已生成 ${cells.length} 张 · 点击查看大图`
-                            : doneCount > 0
-                              ? `正在生成 ${doneCount}/${cells.length}…`
-                              : `正在生成 ${runMeta.count} 张…`}
-                        </span>
-                      </div>
-                      <div className="ws-rh-prog">
-                        <i id="rhBar" style={{ width: `${aggProg}%` }} />
-                      </div>
-                    </div>
-                    <div className="ws-rh-acts" id="rhActs">
-                      {!allDone && (
-                        <button type="button" id="rhCancel" onClick={cancelRun}>
-                          ✕ 取消
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
+              <div
+                className="ws-grid"
+                id="grid"
+                data-n={cells.length}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: `repeat(${
+                    cells.length <= 1 ? 1 : cells.length === 3 ? 3 : 2
+                  }, 1fr)`,
+                  // 单张时收窄网格，避免铺满整宽显得过大。
+                  ...(cells.length <= 1 ? { maxWidth: 560 } : {}),
+                }}
+              >
                 {cells.map((cell) => {
                   const [rw, rh] = runMeta.ratio.split(":").map(Number);
                   const done = !!doneSet[cell.i];
@@ -1480,12 +1995,23 @@ export default function CreateStudio() {
                       key={cell.i}
                       className={`gen-cell${done ? " done" : ""}`}
                       data-i={cell.i}
-                      style={{ aspectRatio: `${rw}/${rh}` }}
-                      onClick={() => openCell(cell)}
+                      style={{
+                        aspectRatio: `${rw}/${rh}`,
+                        ...(done && cell.url ? { cursor: "zoom-in" } : {}),
+                      }}
+                      onClick={() => {
+                        if (!done) return;
+                        if (cell.url) setLightbox(cell.url); // real image → zoom preview
+                        else openCell(cell); // simulation/mesh → work-detail modal
+                      }}
                     >
                       <div
                         className="done-cov"
-                        style={{ background: mesh(cell.hues[0], cell.hues[1], cell.hues[2]) }}
+                        style={{
+                          background: cell.url
+                            ? `center / cover no-repeat url("${cell.url}")`
+                            : mesh(cell.hues[0], cell.hues[1], cell.hues[2]),
+                        }}
                       />
                       <div className="shimmer" />
                       <div className="ph">
@@ -1524,9 +2050,10 @@ export default function CreateStudio() {
                       type="button"
                       data-fa="edit"
                       onClick={() => {
-                        setPrompt(runMeta.prompt);
-                        promptRef.current?.focus();
-                        toast.info("已载入提示词，可继续编辑");
+                        if (restoreLastRun()) {
+                          promptRef.current?.focus();
+                          toast.info("已载入该作品的参数，可修改后再次生成");
+                        }
                       }}
                     >
                       <span className="i">✎</span>重新编辑
@@ -1535,7 +2062,8 @@ export default function CreateStudio() {
                       type="button"
                       data-fa="regen"
                       onClick={() => {
-                        if (!busy) generate();
+                        if (busy) return;
+                        if (restoreLastRun()) setPendingGen(true);
                       }}
                     >
                       <span className="i">↻</span>再次生成
@@ -1613,23 +2141,41 @@ export default function CreateStudio() {
             </div>
 
             <div className="ws-histstrip" id="histStrip">
-              {filteredHist.length === 0 ? (
+              {filteredHist.length === 0 && !busy ? (
                 <div className="ws-hempty">
                   还没有{histFilter === "video" ? "视频" : histFilter === "image" ? "图片" : ""}生成记录
                 </div>
               ) : (
-                pageItems.map((h) => (
-                  <button
-                    key={h.id}
-                    type="button"
-                    className="ws-hcard"
-                    data-htype={h.type}
-                    onClick={() => openHist(h)}
-                  >
-                    <span className="cov" style={{ background: coverBg(h.hues) }} />
-                    {h.type === "video" && <span className="vbadge">▶</span>}
-                  </button>
-                ))
+                <>
+                  {/* 生成中占位卡：与上方生成框对应，完成后被真实历史项取代 */}
+                  {busy && curPage === 1 && (
+                    <div className="ws-hcard loading" aria-label="生成中">
+                      <span className="cov" />
+                      <span className="ws-hload">
+                        <i />
+                      </span>
+                    </div>
+                  )}
+                  {pageItems.map((h) => (
+                    <button
+                      key={h.id}
+                      type="button"
+                      className="ws-hcard"
+                      data-htype={h.type}
+                      onClick={() => openHist(h)}
+                    >
+                      <span
+                        className="cov"
+                        style={{
+                          background: h.url
+                            ? `center / cover no-repeat url("${h.url}")`
+                            : coverBg(h.hues),
+                        }}
+                      />
+                      {h.type === "video" && <span className="vbadge">▶</span>}
+                    </button>
+                  ))}
+                </>
               )}
             </div>
           </div>
@@ -1638,6 +2184,79 @@ export default function CreateStudio() {
 
       {renderPreview()}
       <WorkModal work={active} onClose={() => setActive(null)} />
+
+      {/* full-image lightbox — click a finished result to zoom; backdrop / ✕ / Esc closes */}
+      {lightbox && (
+        <div className="ws-lightbox" onClick={() => setLightbox(null)}>
+          <button
+            type="button"
+            className="ws-lb-x"
+            aria-label="关闭"
+            onClick={() => setLightbox(null)}
+          >
+            ✕
+          </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={lightbox} alt="生成结果预览" onClick={(e) => e.stopPropagation()} />
+        </div>
+      )}
+
+      {/* hidden input for 本地上传 */}
+      <input ref={fileInputRef} type="file" multiple hidden onChange={onLocalFiles} />
+
+      {/* 参考素材来源选择：本地上传 / 资产库（按槽类型 图片/视频/音频 适配文案） */}
+      {srcMenu &&
+        (() => {
+          const kind = slotTypeOf(srcMenu);
+          const lb = kind === "video" ? "视频" : kind === "audio" ? "音频" : "图片";
+          return (
+            <div className="ws-srcmask" onClick={() => setSrcMenu(null)}>
+              <div className="ws-srcmenu" onClick={(e) => e.stopPropagation()}>
+                <div className="ws-srcmenu-h">选择{lb}来源</div>
+                <button type="button" className="ws-srcopt" onClick={() => pickLocal(srcMenu)}>
+                  <span className="ic">⤓</span>
+                  <span className="tx">
+                    <b>本地上传</b>
+                    <i>从你的电脑选择{lb}</i>
+                  </span>
+                </button>
+                <button type="button" className="ws-srcopt" onClick={() => openAssets(srcMenu)}>
+                  <span className="ic">▦</span>
+                  <span className="tx">
+                    <b>从资产库选取</b>
+                    <i>选择已上传 / 已生成的{lb}</i>
+                  </span>
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+
+      {/* 资产库弹窗：复用整个资产页 UI 作为选择器，按槽类型默认到对应筛选 */}
+      {assetPick &&
+        (() => {
+          const kind = slotTypeOf(assetPick);
+          return (
+            <div className="ws-srcmask" onClick={() => setAssetPick(null)}>
+              <div className="ws-assetbox" onClick={(e) => e.stopPropagation()}>
+                <div className="ws-assetbox-h">
+                  <span>从资产库选取</span>
+                  <button type="button" aria-label="关闭" onClick={() => setAssetPick(null)}>
+                    ✕
+                  </button>
+                </div>
+                <div className="ws-assetbox-body">
+                  <AssetsBrowser
+                    pickMode
+                    onPick={chooseAsset}
+                    defaultFilter={kind}
+                    defaultTab={kind === "audio" ? "upload" : "hist"}
+                  />
+                </div>
+              </div>
+            </div>
+          );
+        })()}
     </>
   );
 }

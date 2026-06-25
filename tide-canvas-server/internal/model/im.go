@@ -50,6 +50,14 @@ type IMMessage struct {
 	Content     string `gorm:"column:content;type:text" json:"content"`
 	// Status: 0 已发送 / 1 已撤回.
 	Status int `gorm:"column:status;type:tinyint;not null;default:0" json:"status"`
+	// TaskID links a 生成台 assistant message to its generation task (ai_tasks).
+	// The task is the single source of truth for status/result; the assistant
+	// message stores no product, only this pointer. Null for text/user messages.
+	TaskID *idgen.ID `gorm:"column:task_id;index" json:"taskId,omitempty"`
+	// Params is the generation parameter snapshot (JSON) stored on the *user*
+	// message of a turn — used to render the result detail row and to power
+	// 重新编辑 / 再次生成. Empty for plain text messages.
+	Params string `gorm:"column:params;type:text" json:"params,omitempty"`
 }
 
 // TableName overrides the default pluralization.

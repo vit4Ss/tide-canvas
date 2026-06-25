@@ -39,5 +39,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	conv.POST("", h.createConversation)
 	conv.GET("/:id/messages", h.listMessages)
 	conv.POST("/:id/messages", h.sendMessage)
+	conv.POST("/:id/messages/append", h.appendMessage)
+	conv.POST("/:id/turn", h.persistTurn)
 	conv.POST("/:id/read", h.markRead)
 }

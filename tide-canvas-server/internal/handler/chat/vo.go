@@ -1,6 +1,8 @@
 package chat
 
 import (
+	"encoding/json"
+	"strings"
 	"time"
 
 	"tidecanvas/internal/model"
@@ -27,15 +29,33 @@ type ConversationVO struct {
 	CreateTime    string   `json:"createTime"`
 }
 
+// MessageTaskVO is the live status/result of the generation task a 生成台
+// assistant message points to (the task is the single source of truth). Attached
+// only to assistant messages whose linked task still exists.
+type MessageTaskVO struct {
+	ID         idgen.ID        `json:"id"`
+	Status     int             `json:"status"` // 0 processing,1 success,2 failed,3 cancelled
+	Progress   int             `json:"progress"`
+	ResultURL  string          `json:"resultUrl"`
+	ResultMeta json.RawMessage `json:"resultMeta,omitempty"`
+	ErrorMsg   string          `json:"errorMsg"`
+}
+
 // MessageVO is a single message within a conversation. Role is derived (see the
 // constants above) rather than stored on the model.
 type MessageVO struct {
-	ID             idgen.ID `json:"id"`
-	ConversationID idgen.ID `json:"conversationId"`
-	Role           string   `json:"role"`
-	ContentType    string   `json:"contentType"`
-	Content        string   `json:"content"`
-	CreateTime     string   `json:"createTime"`
+	ID             idgen.ID        `json:"id"`
+	ConversationID idgen.ID        `json:"conversationId"`
+	Role           string          `json:"role"`
+	ContentType    string          `json:"contentType"`
+	Content        string          `json:"content"`
+	CreateTime     string          `json:"createTime"`
+	// TaskID links an assistant message to its generation task; Params is the
+	// snapshot stored on the user message; Task is the batch-loaded live task
+	// status (nil when the task was deleted/expired → frontend shows 已过期).
+	TaskID *idgen.ID       `json:"taskId,omitempty"`
+	Params json.RawMessage `json:"params,omitempty"`
+	Task   *MessageTaskVO  `json:"task,omitempty"`
 }
 
 // toConversationVO maps a persisted conversation to its summary VO.
@@ -62,7 +82,38 @@ func toMessageVO(m *model.IMMessage, ownerID idgen.ID) MessageVO {
 		ContentType:    m.ContentType,
 		Content:        m.Content,
 		CreateTime:     formatTime(m.CreateTime),
+		TaskID:         m.TaskID,
+		Params:         rawJSONOrNil(m.Params),
 	}
+}
+
+// rawJSONOrNil returns s as a JSON value when it is non-blank valid JSON,
+// otherwise nil (so the omitempty field is dropped).
+func rawJSONOrNil(s string) json.RawMessage {
+	s = strings.TrimSpace(s)
+	if s == "" || !json.Valid([]byte(s)) {
+		return nil
+	}
+	return json.RawMessage(s)
+}
+
+// toMessageTaskVO maps an AiTask row to the compact live-status VO carried on an
+// assistant message.
+func toMessageTaskVO(t *model.AiTask) *MessageTaskVO {
+	if t == nil {
+		return nil
+	}
+	vo := &MessageTaskVO{
+		ID:        t.ID,
+		Status:    t.Status,
+		Progress:  t.Progress,
+		ResultURL: t.ResultUrl,
+		ErrorMsg:  t.ErrorMsg,
+	}
+	if s := strings.TrimSpace(t.ResultMeta); s != "" && json.Valid([]byte(s)) {
+		vo.ResultMeta = json.RawMessage(s)
+	}
+	return vo
 }
 
 // formatTime renders a time as RFC3339, or "" for the zero value.

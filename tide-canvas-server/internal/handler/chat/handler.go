@@ -95,6 +95,54 @@ func (h *handler) sendMessage(c *gin.Context) {
 	response.OK(c, vo)
 }
 
+// appendMessage handles POST /api/im/conversations/:id/messages/append (auth):
+// records one message (user prompt or generated media) without an auto reply.
+func (h *handler) appendMessage(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	var dto AppendMessageDTO
+	if err := c.ShouldBindJSON(&dto); err != nil {
+		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	ownerID := middleware.CurrentUserID(c)
+	vo, err := h.svc.appendMessage(id, ownerID, dto)
+	if err != nil {
+		h.fail(c, err, "failed to append message")
+		return
+	}
+	response.OK(c, vo)
+}
+
+// persistTurn handles POST /api/im/conversations/:id/turn (auth): records a
+// completed 生成台 turn (user prompt + param snapshot + assistant task pointer).
+// Returns the two persisted messages.
+func (h *handler) persistTurn(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	var dto PersistTurnDTO
+	if err := c.ShouldBindJSON(&dto); err != nil {
+		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	taskID, perr := idgen.Parse(dto.TaskID)
+	if perr != nil || taskID == 0 {
+		response.Fail(c, response.CodeBadRequest, "invalid taskId")
+		return
+	}
+	ownerID := middleware.CurrentUserID(c)
+	vos, err := h.svc.persistTurn(id, ownerID, dto, taskID)
+	if err != nil {
+		h.fail(c, err, "failed to persist turn")
+		return
+	}
+	response.OK(c, vos)
+}
+
 // markRead handles POST /api/im/conversations/:id/read (auth).
 func (h *handler) markRead(c *gin.Context) {
 	id, ok := parseID(c)

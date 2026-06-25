@@ -15,8 +15,9 @@
    canned assistant reply). 「新对话」 creates a conversation via createConversation().
 
    The composer chips (联网 / 模式 / 模型 / 比例 / 分辨率 / 时长 / 批量 / 积分) are
-   the design's cosmetic controls — kept 1:1 for visual fidelity, not yet wired
-   to a generation backend.
+   driven by the selected model's 模型管理 config. 联网 only renders for a 文本
+   model whose config.webSearch is enabled; the rest are not yet wired to a
+   generation backend.
    ========================================================================== */
 
 import "@/styles/liuguang/chat.css";
@@ -30,12 +31,16 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 import { chatApi } from "@/lib/chat-api";
+import { aiApi } from "@/lib/api";
+import { AiTaskStatus } from "@/types/ai";
 import { marketApi, type StudioModelVO } from "@/lib/market-api";
 import { useAuthStore } from "@/stores/use-auth-store";
-import type { ConversationVO, MessageVO } from "@/types/chat";
+import type { ConversationVO, MessageVO, MessageTaskVO } from "@/types/chat";
 import { mesh } from "@/lib/mesh";
+import { toast } from "@/components/shared/toast";
 
 /* ── composer chips: model + options come from 模型管理 config (studio-models). ── */
 
@@ -166,7 +171,7 @@ export default function ChatPage() {
 
   // composer chips — driven by the selected model's 模型管理 config
   const [genModels, setGenModels] = useState<StudioModelVO[]>([]);
-  const [web, setWeb] = useState(true);
+  const [web, setWeb] = useState(false);
   const [mode, setMode] = useState("");
   const [model, setModel] = useState("");
   const [ratio, setRatio] = useState("");
@@ -186,6 +191,10 @@ export default function ChatPage() {
   );
   const mCfg = selModel?.config ?? null;
   const isVid = selModel?.type === "video";
+  // 联网开关只对「文本模型」且其 config.webSearch 已开启时可用（模型管理里配置）。
+  const webSearchAvail = selModel?.type === "text" && !!mCfg?.webSearch;
+  // 「＋」上传：文本模型按 config.fileUpload 决定；图片/视频模型用于上传参考素材，保持显示。
+  const uploadAvail = selModel?.type === "text" ? !!mCfg?.fileUpload : true;
   const modeVals = mCfg?.modes ?? [];
   const ratioOpts = mCfg?.ratios ?? [];
   const resOpts = mCfg?.resolutions ?? [];
@@ -194,14 +203,13 @@ export default function ChatPage() {
   const batchMax = Math.max(...countOpts);
   const toggleSel = (k: string) => setOpenSel((cur) => (cur === k ? null : k));
 
-  // load generatable models (image + video; text models are chat-only). Refetch
-  // on focus/visibility so 模型管理 edits reflect without a manual refresh.
+  // load every studio model (text + image + video). Text models drive the chat
+  // assistant and may expose the 联网 toggle when their config enables webSearch.
+  // Refetch on focus/visibility so 模型管理 edits reflect without a manual refresh.
   const reloadGenModels = useCallback(async () => {
     try {
       const res = await marketApi.studioModels();
-      const list = (res.success && Array.isArray(res.data) ? res.data : []).filter(
-        (m) => m.type !== "text",
-      );
+      const list = res.success && Array.isArray(res.data) ? res.data : [];
       setGenModels(list);
       if (list.length) {
         setModel((cur) => (list.some((m) => m.name === cur) ? cur : list[0].name));
@@ -246,6 +254,11 @@ export default function ChatPage() {
     setBatch((b) => Math.min(Math.max(1, b), batchMax));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mCfg, isVid]);
+
+  // 切到不支持联网的模型时，强制关闭联网开关。
+  useEffect(() => {
+    if (!webSearchAvail) setWeb(false);
+  }, [webSearchAvail]);
 
   const threadRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -379,26 +392,133 @@ export default function ChatPage() {
     setMsgs((prev) => [...prev, optimistic]);
     setTyping(true);
 
+    const bump = (cid: string) =>
+      setConvos((prev) => {
+        const idx = prev.findIndex((c) => c.id === cid);
+        if (idx <= 0) return prev;
+        const copy = prev.slice();
+        const [c] = copy.splice(idx, 1);
+        copy.unshift(c);
+        return copy;
+      });
+
+    // 选图片/视频模型 → 真实生成（一个 turn，助手消息只指向 task）；文本模型 → 文字对话。
+    const wantImage = selModel?.type === "image";
+    const wantVideo = selModel?.type === "video";
+
     try {
-      const res = await chatApi.send(id, v);
-      if (res.success) {
-        // reload to pick up the persisted user message + canned assistant reply
-        await loadMessages(id);
-        // bump this conversation's lastMessageAt-driven ordering to the top
-        setConvos((prev) => {
-          const idx = prev.findIndex((c) => c.id === id);
-          if (idx <= 0) return prev;
-          const copy = prev.slice();
-          const [c] = copy.splice(idx, 1);
-          copy.unshift(c);
-          return copy;
+      if ((wantImage || wantVideo) && selModel) {
+        // 先 submit（计费/配额走既有生成管线）；被拒时尚未持久化任何东西，无孤儿可清。
+        const input: Record<string, unknown> = {
+          prompt: v,
+          ...(ratio ? { aspectRatio: ratio, aspect_ratio: ratio, ratio } : {}),
+          ...(res ? { resolution: res } : {}),
+          ...(wantVideo && dur ? { duration: dur } : {}),
+        };
+        const gen = await aiApi.generate({
+          handler: wantVideo ? "text_to_video" : "text_to_image",
+          modelId: selModel.modelKey || selModel.id,
+          input,
         });
+        if (!gen.success) {
+          setMsgs((prev) => prev.filter((m) => m.id !== optimistic.id)); // roll back optimistic
+          toast.error(gen.message || "生成请求失败");
+          return;
+        }
+        // 成功 → 原子持久化整个 turn（用户提示词+参数快照 / 助手 taskId）。
+        const params: Record<string, unknown> = {
+          model: selModel.name,
+          modelKey: selModel.modelKey,
+          type: selModel.type,
+          ...(mode ? { mode } : {}),
+          ...(ratio ? { ratio } : {}),
+          ...(res ? { resolution: res } : {}),
+          ...(wantVideo && dur ? { duration: dur } : {}),
+        };
+        await chatApi.persistTurn(id, {
+          prompt: v,
+          params,
+          taskId: gen.data.id,
+          contentType: wantVideo ? "video" : "image",
+        });
+        await loadMessages(id); // assistant message now carries the task → polling takes over
+        bump(id);
+      } else {
+        const res2 = await chatApi.send(id, v);
+        if (res2.success) {
+          await loadMessages(id);
+          bump(id);
+        }
       }
     } finally {
       setTyping(false);
       setBusy(false);
     }
-  }, [draft, busy, activeId, ensureSession, loadMessages, resetTa]);
+  }, [draft, busy, activeId, ensureSession, loadMessages, resetTa, selModel, mode, ratio, res, dur]);
+
+  // restore a turn's snapshot params into the composer (重新编辑 / 再次生成).
+  const restoreFromParams = useCallback((p?: Record<string, unknown>) => {
+    if (!p) return;
+    if (typeof p.model === "string") setModel(p.model);
+    if (typeof p.mode === "string") setMode(p.mode);
+    if (typeof p.ratio === "string") setRatio(p.ratio);
+    if (typeof p.resolution === "string") setRes(p.resolution);
+    if (typeof p.duration === "string") setDur(p.duration);
+  }, []);
+
+  // find the user (prompt) message of the turn an assistant result belongs to.
+  const turnUserOf = useCallback(
+    (aiMsg: MessageVO): MessageVO | null => {
+      const idx = msgs.findIndex((m) => m.id === aiMsg.id);
+      for (let i = idx - 1; i >= 0; i--) if (msgs[i].role === "user") return msgs[i];
+      return null;
+    },
+    [msgs],
+  );
+
+  const reEdit = useCallback(
+    (aiMsg: MessageVO) => {
+      const u = turnUserOf(aiMsg);
+      if (!u) return;
+      restoreFromParams(u.params);
+      setDraft(u.content);
+      requestAnimationFrame(() => taRef.current?.focus());
+    },
+    [turnUserOf, restoreFromParams],
+  );
+
+  const [pendingSend, setPendingSend] = useState(false);
+  const regenerate = useCallback(
+    (aiMsg: MessageVO) => {
+      if (busy) return;
+      const u = turnUserOf(aiMsg);
+      if (!u) return;
+      restoreFromParams(u.params);
+      setDraft(u.content);
+      setPendingSend(true);
+    },
+    [busy, turnUserOf, restoreFromParams],
+  );
+  // fire send() once the restored params/draft have committed.
+  useEffect(() => {
+    if (!pendingSend) return;
+    setPendingSend(false);
+    send();
+  }, [pendingSend, send]);
+
+  // 轮询：当前对话有任务在进行(status processing) → 每 1.5s 刷新消息（task 为真相，
+  // 状态/结果由后端 join 回来）；页面不可见时跳过；送出中暂停，避免覆盖乐观气泡。
+  const hasInflight = useMemo(
+    () => msgs.some((m) => m.task && m.task.status === AiTaskStatus.PROCESSING),
+    [msgs],
+  );
+  useEffect(() => {
+    if (!hasInflight || !activeId || busy) return;
+    const iv = setInterval(() => {
+      if (document.visibilityState === "visible") loadMessages(activeId);
+    }, 1500);
+    return () => clearInterval(iv);
+  }, [hasInflight, activeId, busy, loadMessages]);
 
   const onKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -487,7 +607,9 @@ export default function ChatPage() {
                 </div>
               </div>
             ) : (
-              msgs.map((m) => <Bubble key={m.id} msg={m} />)
+              msgs.map((m) => (
+                <Bubble key={m.id} msg={m} onReEdit={reEdit} onRegenerate={regenerate} />
+              ))
             )}
             {typing && (
               <div className="msg ai">
@@ -507,9 +629,11 @@ export default function ChatPage() {
         <div className="chat-composer">
           <div className="composer-box">
             <div className="composer-head">
-              <button className="cm-upload" title="上传参考素材" type="button">
-                ＋
-              </button>
+              {uploadAvail && (
+                <button className="cm-upload" title="上传参考素材" type="button">
+                  ＋
+                </button>
+              )}
               <textarea
                 ref={taRef}
                 value={draft}
@@ -523,17 +647,19 @@ export default function ChatPage() {
             </div>
             <div className="composer-bar">
               <div className="cm-row">
-              <button
-                className={`cm-chip ${web ? "on" : ""}`}
-                type="button"
-                onClick={() => setWeb((w) => !w)}
-              >
-                <svg viewBox="0 0 24 24">
-                  <circle cx="12" cy="12" r="9" />
-                  <path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18" />
-                </svg>
-                联网
-              </button>
+              {webSearchAvail && (
+                <button
+                  className={`cm-chip ${web ? "on" : ""}`}
+                  type="button"
+                  onClick={() => setWeb((w) => !w)}
+                >
+                  <svg viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18" />
+                  </svg>
+                  联网
+                </button>
+              )}
               {modelNames.length > 0 && (
                 <CmSelect
                   open={openSel === "model"}
@@ -745,26 +871,139 @@ function fallbackImage(id: string): string {
   return mesh(h, (h + 132) % 360, (h + 248) % 360);
 }
 
-function Bubble({ msg }: { msg: MessageVO }) {
+/** pick the result URL from a task (resultMeta.urls[0] → resultUrl). */
+function taskResultUrl(t: MessageTaskVO): string {
+  let meta: Record<string, unknown> = {};
+  if (typeof t.resultMeta === "string") {
+    try {
+      meta = JSON.parse(t.resultMeta) || {};
+    } catch {
+      meta = {};
+    }
+  } else if (t.resultMeta && typeof t.resultMeta === "object") {
+    meta = t.resultMeta as Record<string, unknown>;
+  }
+  const arr = Array.isArray(meta.urls) ? (meta.urls as unknown[]) : [];
+  const first = arr.find((u) => typeof u === "string" && /^(https?:|data:)/.test(u));
+  if (typeof first === "string") return first;
+  return /^(https?:|data:)/.test(t.resultUrl || "") ? t.resultUrl : "";
+}
+
+function Bubble({
+  msg,
+  onReEdit,
+  onRegenerate,
+}: {
+  msg: MessageVO;
+  onReEdit: (m: MessageVO) => void;
+  onRegenerate: (m: MessageVO) => void;
+}) {
+  // 生成台 assistant result: rendered from its linked task (single source of truth).
+  if (msg.role !== "user" && msg.taskId) {
+    return <AssistantResult msg={msg} onReEdit={onReEdit} onRegenerate={onRegenerate} />;
+  }
+
   const isMe = msg.role === "user";
+  // backward-compat: older append-based media messages carry the URL in content.
   const isImage = msg.contentType === "image";
+  const isVideo = msg.contentType === "video";
   return (
     <div className={`msg ${isMe ? "me" : "ai"}`}>
       <span className="av" />
       <div className="bubble">
         {isImage ? (
-          <div className="imgrow">
-            <div
-              className="ph"
-              style={{
-                background: msg.content
-                  ? `center / cover no-repeat url("${msg.content}")`
-                  : fallbackImage(msg.id),
-              }}
-            />
-          </div>
+          <div
+            className="chat-gen-media"
+            title="点击查看大图"
+            style={{
+              cursor: msg.content ? "zoom-in" : undefined,
+              background: msg.content
+                ? `center / cover no-repeat url("${msg.content}")`
+                : fallbackImage(msg.id),
+            }}
+            onClick={() =>
+              msg.content && window.open(msg.content, "_blank", "noopener,noreferrer")
+            }
+          />
+        ) : isVideo && msg.content ? (
+          // eslint-disable-next-line jsx-a11y/media-has-caption
+          <video className="chat-gen-media" src={msg.content} controls />
         ) : (
           <span>{msg.content}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** AssistantResult renders a 生成台 result bubble from its task's live state:
+ *  processing / failed / cancelled / expired(no task) / success(image|video). */
+function AssistantResult({
+  msg,
+  onReEdit,
+  onRegenerate,
+}: {
+  msg: MessageVO;
+  onReEdit: (m: MessageVO) => void;
+  onRegenerate: (m: MessageVO) => void;
+}) {
+  const t = msg.task;
+  const isVideo = msg.contentType === "video";
+
+  let body: ReactNode;
+  let done = false;
+  if (!t) {
+    body = <div className="chat-gen-state warn">⚠ 该生成已过期，请重新生成</div>;
+  } else if (t.status === AiTaskStatus.PROCESSING) {
+    body = (
+      <div className="chat-gen-state">
+        <span className="typing">
+          <i />
+          <i />
+          <i />
+        </span>
+        生成中 · {Math.round(t.progress || 0)}%
+      </div>
+    );
+  } else if (t.status === AiTaskStatus.FAILED) {
+    body = <div className="chat-gen-state err">⚠ 生成失败{t.errorMsg ? `：${t.errorMsg}` : ""}</div>;
+  } else if (t.status === AiTaskStatus.CANCELLED) {
+    body = <div className="chat-gen-state">已取消生成</div>;
+  } else {
+    const url = taskResultUrl(t);
+    done = !!url;
+    if (!url) {
+      body = <div className="chat-gen-state err">⚠ 生成结果无效</div>;
+    } else if (isVideo) {
+      // eslint-disable-next-line jsx-a11y/media-has-caption
+      body = <video className="chat-gen-media" src={url} controls />;
+    } else {
+      body = (
+        <div
+          className="chat-gen-media"
+          title="点击查看大图"
+          style={{ cursor: "zoom-in", background: `center / cover no-repeat url("${url}")` }}
+          onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
+        />
+      );
+    }
+  }
+
+  const retryable = !t || t.status === AiTaskStatus.FAILED;
+  return (
+    <div className="msg ai">
+      <span className="av" />
+      <div className="bubble">
+        {body}
+        {(done || retryable) && (
+          <div className="chat-gen-acts">
+            <button type="button" onClick={() => onReEdit(msg)}>
+              ✎ 重新编辑
+            </button>
+            <button type="button" onClick={() => onRegenerate(msg)}>
+              ↻ {retryable ? "重试" : "再次生成"}
+            </button>
+          </div>
         )}
       </div>
     </div>

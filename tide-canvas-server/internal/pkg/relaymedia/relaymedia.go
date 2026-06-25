@@ -34,14 +34,15 @@ const (
 	pathVideoGenerations = "/openapi/v1/generations"
 )
 
-// Tuning constants. The relay's synchronous image path can take ~40s; videos are
-// almost always async and can run for several minutes. We use a generous
-// per-request HTTP timeout plus a per-medium overall budget for the poll loop.
+// Tuning constants. The relay's synchronous image path can hold the connection
+// for well over a minute (the model runs inline); videos are almost always async
+// and can run for several minutes. Each call runs under the per-medium context
+// deadline below — we deliberately do NOT set a fixed http.Client.Timeout, which
+// would preempt that deadline and abort a still-running synchronous generation.
 const (
-	requestTimeout    = 120 * time.Second // single HTTP call (create / one poll)
-	pollInterval      = 2 * time.Second   // gap between task polls
-	imagePollDeadline = 6 * time.Minute   // overall budget for an async image task
-	videoPollDeadline = 20 * time.Minute  // videos are slower; stay under the 30m UI cap
+	pollInterval      = 2 * time.Second  // gap between task polls
+	imagePollDeadline = 6 * time.Minute  // overall budget for an image task (sync or polled)
+	videoPollDeadline = 20 * time.Minute // videos are slower; stay under the 30m UI cap
 )
 
 // Client calls the relay's media endpoints with a Bearer API key.
@@ -62,7 +63,9 @@ func New(baseURL, apiKey string) *Client {
 	if baseURL == "" {
 		baseURL = "https://relay.tcmzhan.com"
 	}
-	return &Client{baseURL: baseURL, apiKey: apiKey, hc: &http.Client{Timeout: requestTimeout}}
+	// No fixed client Timeout: each request is bounded by the per-medium context
+	// deadline (see submit), so a slow synchronous generation isn't cut off early.
+	return &Client{baseURL: baseURL, apiKey: apiKey, hc: &http.Client{}}
 }
 
 // ImageParams is a normalized image request. ImageURLs is only used by EditImage;

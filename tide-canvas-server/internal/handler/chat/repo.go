@@ -120,6 +120,39 @@ func (r *repo) createMessage(m *model.IMMessage) error {
 	return r.db.Create(m).Error
 }
 
+// createTurn atomically inserts a 生成台 turn's two messages (user prompt +
+// assistant task pointer). Ids are snowflake-assigned on insert; the assistant
+// row's larger id keeps it ordered after the user row (studio-design §9.2).
+func (r *repo) createTurn(userMsg, aiMsg *model.IMMessage) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(userMsg).Error; err != nil {
+			return err
+		}
+		return tx.Create(aiMsg).Error
+	})
+}
+
+// tasksByIDs batch-loads the generation tasks referenced by 生成台 assistant
+// messages, selecting ONLY the columns the message VO renders — the AiTask row
+// also carries large input/result blobs we must not pull every poll (§9.3).
+func (r *repo) tasksByIDs(ids []idgen.ID) (map[idgen.ID]*model.AiTask, error) {
+	out := make(map[idgen.ID]*model.AiTask, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	var rows []model.AiTask
+	if err := r.db.Model(&model.AiTask{}).
+		Select("id", "status", "progress", "result_url", "result_meta", "error_msg").
+		Where("id IN ?", ids).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		out[rows[i].ID] = &rows[i]
+	}
+	return out, nil
+}
+
 // recentMessages returns up to limit of a conversation's most recent messages in
 // chronological (oldest-first) order, for use as LLM context. It fetches the
 // newest `limit` rows (DESC) then reverses them so the transcript reads forward.
@@ -144,6 +177,13 @@ func (r *repo) recentMessages(conversationID idgen.ID, limit int) ([]model.IMMes
 
 // touchConversation updates a conversation's last-message pointer/time so the
 // list ordering reflects recent activity.
+// renameConversation sets a conversation's title.
+func (r *repo) renameConversation(id idgen.ID, title string) error {
+	return r.db.Model(&model.IMConversation{}).
+		Where("id = ?", id).
+		Update("title", title).Error
+}
+
 func (r *repo) touchConversation(id, lastMessageID idgen.ID, at time.Time) error {
 	return r.db.Model(&model.IMConversation{}).
 		Where("id = ?", id).

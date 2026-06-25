@@ -161,7 +161,7 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 	// Persist terminal task state.
 	end := time.Now()
 	task.UpdateTime = end
-	task.CompleteTime = end
+	task.CompleteTime = &end
 	if genErr != nil || res.ResultURL == "" {
 		task.Status = statusFailed
 		task.Progress = 100
@@ -194,9 +194,10 @@ func (s *service) cancelTask(ctx context.Context, userID idgen.ID, id idgen.ID) 
 		return errTaskForbidden
 	}
 	if task.Status == statusProcessing {
+		nowT := time.Now()
 		task.Status = statusCancelled
-		task.UpdateTime = time.Now()
-		task.CompleteTime = time.Now()
+		task.UpdateTime = nowT
+		task.CompleteTime = &nowT
 		if err := s.repo.updateTask(ctx, task); err != nil {
 			return err
 		}

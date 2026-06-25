@@ -30,6 +30,8 @@ export interface Artwork {
   id: string;
   /** Raw hue triplet for the mesh cover; derive CSS via mesh(...cover). */
   cover: MeshHues;
+  /** Real result image URL (real generations); when set it overrides the mesh cover. */
+  src?: string;
   /** Relative tile height — drives masonry rhythm. */
   h: number;
   type: ArtworkType;

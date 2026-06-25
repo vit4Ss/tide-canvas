@@ -91,7 +91,14 @@ export default function WorkModal({ work, onClose }: WorkModalProps) {
     >
       <div className="modal" role="dialog" aria-modal="true">
         <div className="modal-media">
-          <div className="cov" style={{ background: coverBg(a.cover) }} />
+          <div
+            className="cov"
+            style={{
+              background: a.src
+                ? `center / cover no-repeat url("${a.src}")`
+                : coverBg(a.cover),
+            }}
+          />
           {isVid && <span className="play-orb">▶</span>}
           <button type="button" className="modal-x" aria-label="关闭" onClick={onClose}>
             ✕
