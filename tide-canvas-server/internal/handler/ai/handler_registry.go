@@ -86,6 +86,7 @@ func builtinHandlers() []GenHandler {
 		genHandler{name: "text_to_video", op: "video", isAsync: true},
 		genHandler{name: "image_to_video", op: "video", isAsync: true},
 		genHandler{name: "start_end_to_video", op: "video", isAsync: true},
+		genHandler{name: "reference_to_video", op: "video", isAsync: true},
 		genHandler{name: "creative_desc", op: "generation", isAsync: false},
 	}
 }

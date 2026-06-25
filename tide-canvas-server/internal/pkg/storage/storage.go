@@ -38,19 +38,25 @@ type StorageStrategy interface {
 	Presign(ctx context.Context, key, contentType string) (PresignResult, error)
 	// Type reports the storage type identifier ("local" | "oss").
 	Type() string
+	// UpstreamURL rewrites a public asset URL into the form an overseas upstream
+	// supplier (the relay) should fetch — e.g. swapping the regional OSS host for
+	// the transfer-acceleration host. Backends that need no rewrite (local) return
+	// the URL unchanged.
+	UpstreamURL(url string) string
 }
 
 // ErrUnsupported is returned by operations a backend cannot perform.
 var ErrUnsupported = errors.New("storage: operation not supported")
 
-// New constructs the configured StorageStrategy. Only "local" is implemented
-// in this phase; other types fall back to local with the same config.
+// New constructs the configured StorageStrategy. Unknown types fall back to
+// local so the server stays bootable.
 func New(cfg config.StorageConfig) (StorageStrategy, error) {
 	switch strings.ToLower(cfg.Type) {
+	case "oss":
+		return NewOSSStorage(cfg)
 	case "", "local":
 		return NewLocalStorage(cfg)
 	default:
-		// OSS (etc.) not implemented yet — keep the server bootable on local.
 		return NewLocalStorage(cfg)
 	}
 }
@@ -138,3 +144,7 @@ func (l *LocalStorage) Presign(ctx context.Context, key, contentType string) (Pr
 		ContentType: contentType,
 	}, nil
 }
+
+// UpstreamURL returns the URL unchanged: local assets need no host rewrite (and
+// are only reachable on the same host anyway).
+func (l *LocalStorage) UpstreamURL(url string) string { return url }

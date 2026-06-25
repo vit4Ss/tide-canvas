@@ -89,11 +89,24 @@ func run() error {
 	// store/blacklist. Must run before any token is issued or parsed.
 	token.Init(cfg.JWT, rdb)
 
-	// 3. Storage.
-	store, err := storage.New(cfg.Storage)
+	// 3. Storage. Settings are overlaid from sys_config (admin 配置管理-editable,
+	// seeded from the file/env config on first boot); changes apply on restart.
+	storageCfg, err := storage.SeedAndLoadConfig(gdb, cfg.Storage)
 	if err != nil {
-		return fmt.Errorf("init storage: %w", err)
+		return fmt.Errorf("load storage config: %w", err)
 	}
+	store, err := storage.New(storageCfg)
+	if err != nil {
+		// A bad (admin-edited) OSS config must not brick startup — degrade to local
+		// so the server boots and the config can be corrected via the admin UI.
+		logger.L().Warn("storage init failed; falling back to local", zap.Error(err))
+		storageCfg.Type = "local"
+		if store, err = storage.New(storageCfg); err != nil {
+			return fmt.Errorf("init storage: %w", err)
+		}
+	}
+	cfg.Storage = storageCfg
+	logger.L().Info("storage initialized", zap.String("type", store.Type()))
 
 	// Mailer: register SMTP config so verification emails can be sent.
 	mailer.Init(cfg.Email)

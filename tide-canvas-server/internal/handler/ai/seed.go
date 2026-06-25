@@ -61,10 +61,16 @@ func SeedCatalog(db *gorm.DB) error {
 			IsAsync:     true, SortOrder: 5,
 		},
 		{
+			HandlerName: "reference_to_video", Name: "reference_to_video", DisplayName: "参考生视频",
+			Description: "Generate a video from one or more reference images/videos (multi-ref).",
+			InputSchema: `{"prompt":{"type":"string","required":true},"references":{"type":"array"},"videoReferences":{"type":"array"}}`,
+			IsAsync:     true, SortOrder: 6,
+		},
+		{
 			HandlerName: "creative_desc", Name: "creative_desc", DisplayName: "创意描述",
 			Description: "Produce a creative textual description from inputs.",
 			InputSchema: `{"prompt":{"type":"string","required":true}}`,
-			IsAsync:     false, SortOrder: 6,
+			IsAsync:     false, SortOrder: 7,
 		},
 	}
 

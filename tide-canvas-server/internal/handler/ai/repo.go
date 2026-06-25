@@ -81,37 +81,58 @@ func (r *repo) listTasks(ctx context.Context, userID idgen.ID, q taskQuery, offs
 	return rows, total, nil
 }
 
-// ---- AiModel ------------------------------------------------------------
+// ---- AiModel (sourced from market_model) --------------------------------
+//
+// The catalog the canvas reads (/api/ai/models) and the model the generate
+// pipeline resolves both come from market_model — the single source of truth the
+// relay sync (handler/admin/relay_sync.go) and 模型管理 GUI populate. The legacy
+// ai_models table is no longer consulted. Rows are adapted to the AiModel shape
+// the rest of the AI domain (VO + provider) already speaks via marketToAiModel.
 
-// listEnabledModels returns enabled models ordered for the catalog.
+// marketModelListed is market_model.Status for an 已上架 (listed) model.
+const marketModelListed = 1
+
+// listEnabledModels returns the listed market models adapted to AiModel, ordered
+// for the catalog (most-used first). The frontend filters by type client-side.
 func (r *repo) listEnabledModels(ctx context.Context) ([]model.AiModel, error) {
-	var rows []model.AiModel
-	err := r.db.WithContext(ctx).
-		Where("enabled = ?", true).
-		Order("sort_order ASC, id ASC").
-		Find(&rows).Error
-	return rows, err
+	var rows []model.MarketModel
+	if err := r.db.WithContext(ctx).
+		Where("status = ?", marketModelListed).
+		Order("use_count DESC, id ASC").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]model.AiModel, 0, len(rows))
+	for i := range rows {
+		out = append(out, marketToAiModel(&rows[i]))
+	}
+	return out, nil
 }
 
-// findModel resolves a model by its upstream ModelID string first, then by its
-// numeric primary key (the frontend sends AiModelVO.modelId, the upstream id).
+// findModel resolves a listed market model by its upstream model_key first (the
+// frontend sends AiModelVO.modelId, which we map to market_model.model_key),
+// then by numeric primary key. Returns (nil, nil) when not found.
 func (r *repo) findModel(ctx context.Context, modelID string) (*model.AiModel, error) {
 	if modelID == "" {
 		return nil, nil
 	}
-	var m model.AiModel
-	err := r.db.WithContext(ctx).First(&m, "model_id = ?", modelID).Error
+	var m model.MarketModel
+	err := r.db.WithContext(ctx).
+		First(&m, "model_key = ? AND status = ?", modelID, marketModelListed).Error
 	if err == nil {
-		return &m, nil
+		am := marketToAiModel(&m)
+		return &am, nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
 	// Fall back to numeric primary key.
 	if id, perr := idgen.Parse(modelID); perr == nil && id != 0 {
-		err = r.db.WithContext(ctx).First(&m, "id = ?", id).Error
+		err = r.db.WithContext(ctx).
+			First(&m, "id = ? AND status = ?", id, marketModelListed).Error
 		if err == nil {
-			return &m, nil
+			am := marketToAiModel(&m)
+			return &am, nil
 		}
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err

@@ -113,6 +113,18 @@ type StorageConfig struct {
 	AccessKey string `mapstructure:"accessKey"`
 	SecretKey string `mapstructure:"secretKey"`
 	Region    string `mapstructure:"region"`
+	// Prefix is the object-key root inside the bucket, namespacing this project's
+	// assets so a shared bucket does not collide across projects (e.g.
+	// "canvas/uploads/"). Applied by the OSS strategy to every key.
+	Prefix string `mapstructure:"prefix"`
+	// CDNDomain, when set, is the base host used to build public asset URLs
+	// (e.g. https://cdn.example.com) instead of the regional OSS endpoint.
+	CDNDomain string `mapstructure:"cdnDomain"`
+	// AccelerateDomain is the OSS Transfer-Acceleration host. When set, URLs sent
+	// to OVERSEAS upstream suppliers (the relay) are rewritten from the regional
+	// host to this global host so cross-border downloads stop timing out; the
+	// frontend display keeps the regional/CDN host.
+	AccelerateDomain string `mapstructure:"accelerateDomain"`
 }
 
 // CORSConfig holds allowed origins for the browser frontend.

@@ -35,15 +35,23 @@ jwt:
   issuer: tidecanvas
 
 storage:
-  type: local # local | oss
+  # These values seed the 存储配置 group in sys_config on first boot; afterwards the
+  # admin 配置管理 screen is the source of truth (changes apply on restart).
+  type: oss # local | oss
   localDir: ./data/uploads
   publicURL: http://localhost:8080/static
-  # OSS settings (used when type == oss)
-  endpoint: ""
-  bucket: ""
-  accessKey: ""
-  secretKey: ""
+  # OSS settings (used when type == oss).
+  # SECRETS: do NOT commit accessKey/secretKey. Provide them via env
+  #   TIDECANVAS_STORAGE_ACCESSKEY / TIDECANVAS_STORAGE_SECRETKEY
+  # or enter them in the admin 配置管理 → 存储配置 screen (persisted to sys_config).
+  endpoint: https://oss-cn-shanghai.aliyuncs.com
+  bucket: scaecrowtoken
+  accessKey: "" # set via env or admin UI
+  secretKey: "" # set via env or admin UI
   region: ""
+  prefix: canvas/uploads/ # project root inside the (possibly shared) bucket
+  cdnDomain: "" # optional CDN host for display URLs
+  accelerateDomain: scaecrowtoken.oss-accelerate.aliyuncs.com # cross-border upstream fetch
 
 cors:
   allowOrigins:

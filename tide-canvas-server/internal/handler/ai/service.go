@@ -45,7 +45,7 @@ func newService(d *app.Deps) *service {
 		repo:         newRepo(d.DB),
 		rdb:          d.RDB,
 		registry:     newHandlerRegistry(),
-		provider:     newStubProviderClient(),
+		provider:     newProviderClient(d.Cfg.Relay.BaseURL, d.Cfg.Relay.APIKey, d.Storage),
 		relay:        relaychat.New(d.Cfg.Relay.BaseURL, d.Cfg.Relay.APIKey),
 		systemPrompt: d.Cfg.LLM.SystemPrompt,
 	}
