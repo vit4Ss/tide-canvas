@@ -8,8 +8,8 @@ import (
 	"github.com/tidecanvas/tide-canvas-go/internal/middleware"
 	"github.com/tidecanvas/tide-canvas-go/internal/model"
 	"github.com/tidecanvas/tide-canvas-go/pkg/ecode"
-	"github.com/tidecanvas/tide-canvas-go/pkg/response"
 	appjwt "github.com/tidecanvas/tide-canvas-go/pkg/jwt"
+	"github.com/tidecanvas/tide-canvas-go/pkg/response"
 )
 
 // AdminService AI 管理端服务（忠实迁移 AdminAiController）：供应商/模型/Handler CRUD + 操作日志。
@@ -253,14 +253,19 @@ func (s *AdminService) createModel(c *gin.Context) {
 	response.OK(c, toModelVO(m, ""))
 }
 
+func (s *AdminService) findModelByRouteID(raw string) (*model.AiModel, error) {
+	if id, ok := parseInt64(raw); ok {
+		return s.repo.FindModelByID(id)
+	}
+	if !hasText(raw) {
+		return nil, nil
+	}
+	return s.repo.FindModelByPublicID(raw)
+}
+
 // updateModel PUT /models/:id 更新模型（对齐 updateModel；supportedHandlers 单独写以支持落 NULL）。
 func (s *AdminService) updateModel(c *gin.Context) {
-	id, ok := parseInt64(c.Param("id"))
-	if !ok {
-		response.Fail(c, ecode.BadRequest)
-		return
-	}
-	m, err := s.repo.FindModelByID(id)
+	m, err := s.findModelByRouteID(c.Param("id"))
 	if err != nil {
 		response.FailErr(c, err)
 		return
@@ -307,7 +312,7 @@ func (s *AdminService) updateModel(c *gin.Context) {
 			columns["supported_handlers"] = j
 		}
 	}
-	if err := s.repo.UpdateModelColumns(id, columns); err != nil {
+	if err := s.repo.UpdateModelColumns(m.ID, columns); err != nil {
 		response.FailErr(c, err)
 		return
 	}
@@ -316,12 +321,16 @@ func (s *AdminService) updateModel(c *gin.Context) {
 
 // deleteModel DELETE /models/:id 删除模型（逻辑删除）。
 func (s *AdminService) deleteModel(c *gin.Context) {
-	id, ok := parseInt64(c.Param("id"))
-	if !ok {
-		response.Fail(c, ecode.BadRequest)
+	m, err := s.findModelByRouteID(c.Param("id"))
+	if err != nil {
+		response.FailErr(c, err)
 		return
 	}
-	if err := s.repo.DeleteModel(id); err != nil {
+	if m == nil {
+		response.Fail(c, ecode.NotFound)
+		return
+	}
+	if err := s.repo.DeleteModel(m.ID); err != nil {
 		response.FailErr(c, err)
 		return
 	}

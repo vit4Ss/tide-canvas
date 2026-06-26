@@ -447,3 +447,138 @@ func tryParseJSON(body string) gjson.Result {
 	}
 	return gjson.Result{}
 }
+
+// buildChatMessages 将助手面板输入整理为 OpenAI chat/completions 消息。
+func buildChatMessages(input map[string]interface{}) []map[string]interface{} {
+	prompt := strOf(input["prompt"])
+	messages := make([]map[string]interface{}, 0, 16)
+	systemPrompt := strOf(input["systemPrompt"])
+	if !hasText(systemPrompt) {
+		systemPrompt = "你是 TideCanvas 的 AI 创作助手，擅长帮助用户优化提示词、分镜、脚本、画面描述和创作流程。请用简洁、可执行的中文回答。"
+	}
+	messages = append(messages, map[string]interface{}{"role": "system", "content": systemPrompt})
+
+	if history, ok := input["messages"].([]interface{}); ok {
+		start := 0
+		if len(history) > 30 {
+			start = len(history) - 30
+		}
+		for _, item := range history[start:] {
+			m, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			role := strings.ToLower(strOf(m["role"]))
+			if role != "system" && role != "assistant" && role != "user" {
+				role = "user"
+			}
+			content := strOf(m["content"])
+			if !hasText(content) {
+				continue
+			}
+			messages = append(messages, map[string]interface{}{"role": role, "content": content})
+		}
+	}
+
+	if attachmentText := buildAttachmentText(input["attachments"]); hasText(attachmentText) {
+		prompt = strings.TrimSpace(prompt + "\n\n" + attachmentText)
+	}
+	messages = append(messages, map[string]interface{}{"role": "user", "content": prompt})
+	return messages
+}
+
+func buildAttachmentText(value interface{}) string {
+	list, ok := value.([]interface{})
+	if !ok || len(list) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("附件：")
+	for _, item := range list {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		name := strOf(m["name"])
+		url := strOf(m["url"])
+		mimeType := strOf(m["mimeType"])
+		if !hasText(name) && !hasText(url) {
+			continue
+		}
+		sb.WriteString("\n- ")
+		if hasText(name) {
+			sb.WriteString(name)
+		}
+		if hasText(mimeType) {
+			sb.WriteString(" (")
+			sb.WriteString(mimeType)
+			sb.WriteString(")")
+		}
+		if hasText(url) {
+			sb.WriteString(": ")
+			sb.WriteString(url)
+		}
+	}
+	return sb.String()
+}
+
+func extractChatContent(root gjson.Result) string {
+	fields := []string{
+		"choices.0.message.content",
+		"choices.0.delta.content",
+		"output_text",
+		"answer",
+		"content",
+		"text",
+		"response",
+		"message",
+	}
+	for _, field := range fields {
+		value := root.Get(field)
+		if value.Exists() {
+			if value.Type == gjson.String && hasText(value.String()) {
+				return strings.TrimSpace(value.String())
+			}
+			if value.IsArray() {
+				if text := extractTextParts(value); hasText(text) {
+					return text
+				}
+			}
+		}
+	}
+	choices := root.Get("choices")
+	if choices.IsArray() {
+		var parts []string
+		for _, choice := range choices.Array() {
+			text := choice.Get("message.content").String()
+			if !hasText(text) {
+				text = choice.Get("text").String()
+			}
+			if hasText(text) {
+				parts = append(parts, strings.TrimSpace(text))
+			}
+		}
+		if len(parts) > 0 {
+			return strings.Join(parts, "\n")
+		}
+	}
+	return ""
+}
+
+func extractTextParts(node gjson.Result) string {
+	var parts []string
+	for _, item := range node.Array() {
+		if item.Type == gjson.String && hasText(item.String()) {
+			parts = append(parts, strings.TrimSpace(item.String()))
+			continue
+		}
+		for _, field := range []string{"text", "content", "value"} {
+			value := item.Get(field)
+			if value.Exists() && value.Type == gjson.String && hasText(value.String()) {
+				parts = append(parts, strings.TrimSpace(value.String()))
+				break
+			}
+		}
+	}
+	return strings.Join(parts, "\n")
+}

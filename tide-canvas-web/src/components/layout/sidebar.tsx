@@ -4,7 +4,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Layers, Plus, Sparkles, FolderOpen, LayoutGrid } from "lucide-react";
+import { Plus, Sparkles, FolderOpen, LayoutGrid } from "lucide-react";
+import { BrandMark } from "@/components/shared/brand-mark";
 import { useAuth } from "@/hooks/use-auth";
 import { projectApi } from "@/lib/api";
 import type { ProjectVO } from "@/types/canvas";
@@ -38,15 +39,17 @@ export function Sidebar() {
       .catch(() => {});
   }, [isLoggedIn]);
 
-  const newProject = () => router.push(isLoggedIn ? "/canvas/new" : "/login");
+  // 画布在浏览器新标签页打开（工作台作为常驻入口）
+  const newProject = () => {
+    if (isLoggedIn) window.open("/canvas/new", "_blank", "noopener");
+    else router.push("/login");
+  };
 
   return (
     <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col border-r border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950">
       {/* logo */}
       <Link href="/" className="flex items-center gap-2 px-4 py-4">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-neutral-900 dark:bg-white">
-          <Layers className="h-4 w-4 text-white dark:text-neutral-900" />
-        </div>
+        <BrandMark className="h-8 w-8" />
         <span className="text-base font-bold tracking-tight">TideCanvas</span>
       </Link>
 
@@ -98,6 +101,8 @@ export function Sidebar() {
             <Link
               key={p.id}
               href={`/canvas/${p.urlToken}`}
+              target="_blank"
+              rel="noopener"
               title={displayProjectName(p.name)}
               className="block truncate rounded-lg px-3 py-1.5 text-sm text-neutral-600 transition-colors hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
             >

@@ -134,7 +134,8 @@ services:
 
   frontend:
     build:
-      context: ./tide-canvas-web
+      # 前端已迁移到 shadcn monorepo（apps/web）；旧的 ./tide-canvas-web 保留可回滚
+      context: ./tide-canvas-frontend
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_BASE_URL: http://backend:8080

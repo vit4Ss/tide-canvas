@@ -28,8 +28,8 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
 
   if (!isLoggedIn) return null;
 
-  // 资产页采用左侧栏工作台布局（与主页一致）；其余账户页保持完整顶栏
-  if (pathname.startsWith("/user/assets")) {
+  // 资产页 / 项目页采用左侧栏工作台布局（与主页一致）；其余账户页保持完整顶栏
+  if (pathname.startsWith("/user/assets") || pathname.startsWith("/user/projects")) {
     return (
       <div className="flex min-h-screen">
         <Sidebar />

@@ -18,6 +18,9 @@ import (
 // operationOf 日志操作类型：新版协议优先取 body.mode（t2i/i2i/t2v/i2v/keyframe/omni_ref），
 // 无 mode 时按路径归类（对齐 AiRelayClient.operationOf）。
 func operationOf(path string, body map[string]interface{}) string {
+	if strings.Contains(path, "/chat/") {
+		return "chat"
+	}
 	if mode := strOf(body["mode"]); hasText(mode) {
 		return mode
 	}
@@ -190,6 +193,14 @@ func (g *Gateway) generateAudio(p *model.AiProvider, modelID, text string, input
 	return g.runware.generateAudio(p, modelID, text, input, pr, ctx)
 }
 
+// chat 助手对话：走 OpenAI 风格 /chat/completions，同步返回文本。
+func (g *Gateway) chat(p *model.AiProvider, modelID string, input map[string]interface{}, ctx logCtx) (string, error) {
+	if isRunware(p) {
+		return "", fmt.Errorf("当前供应商不支持助手对话，请在后台给文本模型关联 OpenAI 兼容供应商")
+	}
+	return g.relay.chat(p, modelID, input, ctx)
+}
+
 // logCtx 上游日志归属上下文（替代旧 GenerationLogContext.Ctx + ThreadLocal）。
 // recorded 为本次执行「是否已产生上游调用日志」的标志位指针：client 落库一条上游日志即置位，
 // service 据此决定要不要补记任务级 summary 日志。每次执行新建一个，goroutine 间互不干扰。
@@ -219,7 +230,7 @@ func newRelayClient(repo *Repository, cfg ClientConfig, sink logSink, logger *lo
 	// 统一读响应原始字节自行解析（gjson），不依赖 resty 自动反序列化：
 	// 部分中转站会把 JSON 错标成 octet-stream，按字节读可绕过 content-type 限制。
 	c := resty.New().
-		SetTimeout(time.Duration(cfg.RelayReadTimeoutMs) * time.Millisecond).
+		SetTimeout(time.Duration(cfg.RelayReadTimeoutMs)*time.Millisecond).
 		SetHeader("Accept", "application/json")
 	return &relayClient{repo: repo, cfg: cfg, sink: sink, logger: logger, http: c}
 }
@@ -281,6 +292,67 @@ func (c *relayClient) generateVideo(p *model.AiProvider, modelID, prompt string,
 	putIfText(body, "duration", durationStr(input))
 	putIfText(body, "fps", strOf(input["fps"]))
 	return c.submitAndResolve(p, "/contents/generations/tasks", body, ctx)
+}
+
+// chat 文本助手对话：OpenAI 兼容 /chat/completions，同步返回 choices[].message.content。
+func (c *relayClient) chat(p *model.AiProvider, modelID string, input map[string]interface{}, ctx logCtx) (string, error) {
+	body := map[string]interface{}{
+		"model":    c.resolveModelName(modelID, p, "gpt-4o-mini"),
+		"messages": buildChatMessages(input),
+		"stream":   false,
+	}
+	if temp, ok := input["temperature"].(float64); ok {
+		body["temperature"] = temp
+	}
+	if maxTokens := strOf(input["maxTokens"]); hasText(maxTokens) {
+		body["max_tokens"] = maxTokens
+	}
+
+	start := time.Now()
+	fullURL := baseURL(p) + "/chat/completions"
+	resp, err := c.http.R().
+		SetHeader("Authorization", "Bearer "+p.APIKey).
+		SetHeader("Content-Type", "application/json").
+		SetBody(body).
+		Post(fullURL)
+	code := 0
+	raw := ""
+	if resp != nil {
+		code = resp.StatusCode()
+		raw = string(resp.Body())
+	}
+	if err != nil && raw == "" {
+		c.recordLog("chat", fullURL, body, code, raw, "", false, "", err.Error(), start, ctx)
+		return "", err
+	}
+	root := tryParseSSE(raw)
+	if !root.Exists() {
+		root = tryParseJSON(raw)
+	}
+	if !root.Exists() {
+		msg := strings.TrimSpace(raw)
+		if msg == "" {
+			msg = "上游返回为空"
+		}
+		if len(msg) > 200 {
+			msg = msg[:200] + "..."
+		}
+		c.recordLog("chat", fullURL, body, code, raw, "", false, "", msg, start, ctx)
+		return "", fmt.Errorf("%s", msg)
+	}
+	if isFailed(root) || code >= 400 {
+		msg := errorMessage(root, code)
+		c.recordLog("chat", fullURL, body, code, raw, root.Get("id").String(), false, "", msg, start, ctx)
+		return "", fmt.Errorf("%s", msg)
+	}
+	content := extractChatContent(root)
+	if !hasText(content) {
+		msg := "上游未返回聊天内容"
+		c.recordLog("chat", fullURL, body, code, raw, root.Get("id").String(), false, "", msg, start, ctx)
+		return "", fmt.Errorf("%s", msg)
+	}
+	c.recordLog("chat", fullURL, body, code, raw, root.Get("id").String(), true, "", "", start, ctx)
+	return content, nil
 }
 
 // submitAndResolve 单结果包装（视频/单图复用）。
@@ -573,7 +645,7 @@ type runwareClient struct {
 
 func newRunwareClient(repo *Repository, cfg ClientConfig, sink logSink, logger *logrus.Logger) *runwareClient {
 	c := resty.New().
-		SetTimeout(time.Duration(cfg.RunwareReadTimeoutMs) * time.Millisecond).
+		SetTimeout(time.Duration(cfg.RunwareReadTimeoutMs)*time.Millisecond).
 		SetHeader("Accept", "application/json")
 	return &runwareClient{repo: repo, cfg: cfg, sink: sink, logger: logger, http: c}
 }
@@ -777,14 +849,14 @@ func (c *runwareClient) generateAudio(p *model.AiProvider, modelID, text string,
 // baseImageTask 公共 imageInference 任务体（对齐 RunwareClient.baseImageTask）。
 func (c *runwareClient) baseImageTask(modelID, prompt string, input map[string]interface{}) map[string]interface{} {
 	return map[string]interface{}{
-		"taskType":      "imageInference",
-		"taskUUID":      newUUID(),
-		"model":         modelID,
+		"taskType":       "imageInference",
+		"taskUUID":       newUUID(),
+		"model":          modelID,
 		"positivePrompt": prompt,
-		"numberResults": batchCountOf(input),
-		"outputType":    "URL",
-		"outputFormat":  "PNG",
-		"includeCost":   true,
+		"numberResults":  batchCountOf(input),
+		"outputType":     "URL",
+		"outputFormat":   "PNG",
+		"includeCost":    true,
 	}
 }
 

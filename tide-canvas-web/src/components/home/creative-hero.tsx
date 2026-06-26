@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import {
-  Layers,
   ChevronDown,
   Check,
   Zap,
@@ -17,6 +16,9 @@ import {
   Crop,
   Image as ImageIcon,
   Video,
+  Sparkles,
+  Palette,
+  Film,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { aiApi, fileApi } from "@/lib/api";
@@ -27,7 +29,9 @@ const POLL_INTERVAL = 2000;
 const MAX_POLL_IMAGE = 5 * 60 * 1000;
 const MAX_POLL_VIDEO = 30 * 60 * 1000;
 const MODEL_STORAGE_KEY = "tc:home:modelId";
-const RATIOS = ["1:1", "4:3", "3:4", "16:9", "9:16"] as const;
+const DEFAULT_RATIOS = ["1:1", "4:3", "3:4", "16:9", "9:16"];
+// 示例胶囊轮换图标（仿小云雀带图标的快捷标签）
+const CHIP_ICONS = [Sparkles, ImageIcon, Palette, Film] as const;
 
 type Tab = "image" | "video";
 type GenStatus = "generating" | "done" | "error";
@@ -88,6 +92,18 @@ export function CreativeHero() {
     tab === "video" ? m.type === AiModelType.VIDEO : m.type === AiModelType.IMAGE,
   );
   const selectedModel = tabModels.find((m) => m.modelId === selectedModelId) ?? tabModels[0];
+  // 模型矩阵：比例选项由所选模型的 config 动态约束（复用画布 image-node 的解析；空数组=无比例维度）
+  const formatConfig: { ratios?: string[] } = (() => {
+    if (!selectedModel?.config) return {};
+    try {
+      return JSON.parse(selectedModel.config) as { ratios?: string[] };
+    } catch {
+      return {};
+    }
+  })();
+  const ratioOptions = formatConfig.ratios?.length ? formatConfig.ratios : DEFAULT_RATIOS;
+  const hasRatioDim = !formatConfig.ratios || formatConfig.ratios.length > 0;
+  const effectiveRatio = ratioOptions.includes(ratio) ? ratio : (ratioOptions[0] ?? "1:1");
 
   const switchTab = (next: Tab) => {
     if (next === tab) return;
@@ -150,7 +166,11 @@ export function CreativeHero() {
       const res = await aiApi.generate({
         handler: p.kind === "video" ? "text_to_video" : "text_to_image",
         modelId: p.modelId || "default",
-        input: { prompt: text, aspectRatio: p.ratio },
+        input: {
+          prompt: text,
+          // 比例三别名：兼容不同上游模型的字段命名（与画布 image-node 一致）
+          ...(p.ratio ? { aspectRatio: p.ratio, aspect_ratio: p.ratio, ratio: p.ratio } : {}),
+        },
       });
       if (!res.success) {
         patch(id, { status: "error", error: res.message || t("genFailed") });
@@ -163,7 +183,13 @@ export function CreativeHero() {
   };
 
   const submit = () => {
-    doGenerate({ prompt, kind: tab, modelId: selectedModel?.modelId ?? "", modelName: selectedModel?.name ?? "", ratio });
+    doGenerate({
+      prompt,
+      kind: tab,
+      modelId: selectedModel?.modelId ?? "",
+      modelName: selectedModel?.name ?? "",
+      ratio: hasRatioDim ? effectiveRatio : "",
+    });
     setPrompt("");
   };
 
@@ -200,7 +226,7 @@ export function CreativeHero() {
       if (res.success) {
         patch(r.id, { saved: true });
         toast.success(thenOpenCanvas ? t("savedToCanvas") : t("savedToLibrary"));
-        if (thenOpenCanvas) router.push("/canvas/new");
+        if (thenOpenCanvas) window.open("/canvas/new", "_blank", "noopener");
       } else {
         toast.error(res.message || t("saveFailed"));
       }
@@ -212,40 +238,50 @@ export function CreativeHero() {
   const busy = results.some((r) => r.status === "generating");
 
   return (
-    <section className="relative px-4 pt-16 pb-10 sm:px-6 sm:pt-24 lg:px-8">
-      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-80 bg-gradient-to-b from-indigo-100/70 via-indigo-50/30 to-transparent dark:from-indigo-950/30 dark:via-indigo-950/10" />
+    <section className="relative isolate overflow-hidden px-4 pt-20 pb-16 sm:px-6 sm:pt-28 lg:px-8">
+      {/* 梦幻渐变 hero 背景（仿小云雀沉浸式氛围；详见 globals.css .hero-dream） */}
+      <div className="hero-dream pointer-events-none absolute inset-x-0 top-0 -z-10 h-[480px]" />
       <div className="mx-auto max-w-3xl">
-        {/* 个性化问候 */}
-        <div className="flex items-center justify-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-neutral-900 dark:bg-white">
-            <Layers className="h-5 w-5 text-white dark:text-neutral-900" />
+        {/* 个性化问候（白色叠加在渐变背景上） */}
+        <h1 className="text-center text-3xl font-semibold tracking-tight text-white drop-shadow-[0_2px_18px_rgba(45,28,66,0.30)] sm:text-4xl">
+          {t("greeting", { name })}
+        </h1>
+
+        {/* 模式分段切换（仿小云雀 Agent 切换） */}
+        <div className="mt-7 flex justify-center">
+          <div className="inline-flex items-center gap-1 rounded-full bg-white/60 p-1 shadow-sm ring-1 ring-black/5 backdrop-blur-md dark:bg-neutral-800/60 dark:ring-white/10">
+            {(["image", "video"] as const).map((m) => {
+              const active = tab === m;
+              const Icon = m === "video" ? Video : ImageIcon;
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => switchTab(m)}
+                  className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
+                    active
+                      ? "bg-neutral-900 text-white shadow-sm dark:bg-white dark:text-neutral-900"
+                      : "text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-white"
+                  }`}
+                >
+                  <Icon className="h-4 w-4" />
+                  {t(m === "video" ? "tabVideo" : "tabImage")}
+                </button>
+              );
+            })}
           </div>
-          <h1 className="text-center text-2xl font-bold tracking-tight sm:text-3xl">{t("greeting", { name })}</h1>
         </div>
 
         {/* 创作输入卡片 */}
-        <div className="mt-8 rounded-2xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-700 dark:bg-neutral-900">
-          {/* 当前生成模式：点击切换 图片 / 视频（仿小云雀框内模式标签） */}
-          <div className="px-3 pt-3">
-            <button
-              type="button"
-              onClick={() => switchTab(tab === "image" ? "video" : "image")}
-              title={t("switchMode")}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-100 px-2.5 py-1 text-xs font-medium text-indigo-700 transition-colors hover:bg-indigo-200 dark:bg-indigo-500/20 dark:text-indigo-300 dark:hover:bg-indigo-500/30"
-            >
-              {tab === "video" ? <Video className="h-3.5 w-3.5" /> : <ImageIcon className="h-3.5 w-3.5" />}
-              {t(tab === "video" ? "tabVideo" : "tabImage")}
-            </button>
-          </div>
-
+        <div className="relative z-10 mt-6 rounded-3xl border border-white/60 bg-white/95 shadow-xl shadow-neutral-900/5 dark:border-neutral-700/60 dark:bg-neutral-900/95">
           <textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder={t("placeholder")}
-            rows={2}
+            rows={3}
             style={{ outline: "none", boxShadow: "none", border: "none" }}
-            className="block w-full resize-none border-0 bg-transparent px-4 pt-3 text-sm text-neutral-800 placeholder:text-neutral-400 outline-none focus:outline-none focus:ring-0 dark:text-neutral-100"
+            className="block w-full resize-none border-0 bg-transparent px-5 pt-5 text-[15px] text-neutral-800 placeholder:text-neutral-400 outline-none focus:outline-none focus:ring-0 dark:text-neutral-100"
           />
 
           {/* 工具栏 */}
@@ -256,7 +292,7 @@ export function CreativeHero() {
                 <button
                   type="button"
                   onClick={() => { setModelOpen((o) => !o); setRatioOpen(false); }}
-                  className="flex items-center gap-1 rounded-lg border border-neutral-200 px-2.5 py-1.5 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                  className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-neutral-600 transition-colors hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
                 >
                   {tab === "video" ? <Video className="h-3.5 w-3.5" /> : <ImageIcon className="h-3.5 w-3.5" />}
                   <span className="max-w-[120px] truncate">{selectedModel?.name || t("model")}</span>
@@ -286,62 +322,73 @@ export function CreativeHero() {
                 )}
               </div>
 
-              {/* 比例下拉 */}
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => { setRatioOpen((o) => !o); setModelOpen(false); }}
-                  className="flex items-center gap-1 rounded-lg border border-neutral-200 px-2.5 py-1.5 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
-                >
-                  <Crop className="h-3.5 w-3.5" />
-                  {ratio}
-                  <ChevronDown className="h-3.5 w-3.5" />
-                </button>
-                {ratioOpen && (
-                  <>
-                    <div className="fixed inset-0 z-10" onClick={() => setRatioOpen(false)} />
-                    <div className="absolute top-full left-0 z-20 mt-2 w-28 rounded-xl border border-neutral-200 bg-white p-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-900">
-                      {RATIOS.map((rt) => (
-                        <button
-                          key={rt}
-                          type="button"
-                          onClick={() => { setRatio(rt); setRatioOpen(false); }}
-                          className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-sm text-neutral-700 transition-colors hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-800"
-                        >
-                          {rt}
-                          {rt === ratio && <Check className="h-4 w-4 text-indigo-600" />}
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
+              {/* 比例下拉（按模型矩阵约束；模型无比例维度则隐藏） */}
+              {hasRatioDim && (
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => { setRatioOpen((o) => !o); setModelOpen(false); }}
+                    className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-neutral-600 transition-colors hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                  >
+                    <Crop className="h-3.5 w-3.5" />
+                    {effectiveRatio}
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </button>
+                  {ratioOpen && (
+                    <>
+                      <div className="fixed inset-0 z-10" onClick={() => setRatioOpen(false)} />
+                      <div className="absolute top-full left-0 z-20 mt-2 w-28 rounded-xl border border-neutral-200 bg-white p-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-900">
+                        {ratioOptions.map((rt) => (
+                          <button
+                            key={rt}
+                            type="button"
+                            onClick={() => { setRatio(rt); setRatioOpen(false); }}
+                            className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-sm text-neutral-700 transition-colors hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                          >
+                            {rt}
+                            {rt === effectiveRatio && <Check className="h-4 w-4 text-indigo-600" />}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
 
             <button
               type="button"
               onClick={submit}
+              disabled={!prompt.trim() || busy}
               aria-label={t("send")}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-white transition-colors hover:bg-indigo-700"
+              className={`flex h-9 w-9 items-center justify-center rounded-full transition-colors ${
+                prompt.trim() && !busy
+                  ? "bg-indigo-600 text-white hover:bg-indigo-700"
+                  : "cursor-not-allowed bg-neutral-200 text-neutral-400 dark:bg-neutral-700 dark:text-neutral-500"
+              }`}
             >
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
             </button>
           </div>
         </div>
 
-        {/* 示例提示词 */}
+        {/* 示例提示词（带图标胶囊） */}
         {examples.length > 0 && (
-          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-            {examples.map((ex) => (
-              <button
-                key={ex}
-                type="button"
-                onClick={() => setPrompt(ex)}
-                className="rounded-full border border-neutral-200 bg-white/70 px-3.5 py-1.5 text-sm text-neutral-600 transition-colors hover:border-indigo-300 hover:text-indigo-700 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300 dark:hover:text-indigo-300"
-              >
-                {ex}
-              </button>
-            ))}
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-2.5">
+            {examples.map((ex, i) => {
+              const Icon = CHIP_ICONS[i % CHIP_ICONS.length];
+              return (
+                <button
+                  key={ex}
+                  type="button"
+                  onClick={() => setPrompt(ex)}
+                  className="flex items-center gap-1.5 rounded-full border border-neutral-200/80 bg-white/70 px-3.5 py-1.5 text-sm text-neutral-600 shadow-sm backdrop-blur-sm transition-colors hover:border-indigo-300 hover:text-indigo-700 dark:border-neutral-700 dark:bg-neutral-900/60 dark:text-neutral-300 dark:hover:text-indigo-300"
+                >
+                  <Icon className="h-3.5 w-3.5 text-indigo-500" />
+                  {ex}
+                </button>
+              );
+            })}
           </div>
         )}
 
@@ -357,10 +404,12 @@ export function CreativeHero() {
                     {r.kind === "video" ? <Video className="h-3 w-3" /> : <ImageIcon className="h-3 w-3" />}
                     {r.modelName || t("model")}
                   </span>
-                  <span className="flex items-center gap-1 rounded-md bg-neutral-100 px-2 py-1 dark:bg-neutral-800">
-                    <Crop className="h-3 w-3" />
-                    {r.ratio}
-                  </span>
+                  {r.ratio && (
+                    <span className="flex items-center gap-1 rounded-md bg-neutral-100 px-2 py-1 dark:bg-neutral-800">
+                      <Crop className="h-3 w-3" />
+                      {r.ratio}
+                    </span>
+                  )}
                 </div>
 
                 <div className="mt-3">

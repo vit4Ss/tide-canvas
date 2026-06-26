@@ -4,7 +4,6 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, notFound, useRouter } from "next/navigation";
 import { projectApi } from "@/lib/api";
 import { useCanvasStore } from "@/stores/use-canvas-store";
-import { useCanvasTabs } from "@/stores/use-canvas-tabs";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { CanvasView } from "@/components/canvas/canvas-view";
@@ -40,8 +39,6 @@ export default function CanvasEditorPage() {
   const groups = useCanvasStore((s) => s.groups);
   const loadCanvas = useCanvasStore((s) => s.loadCanvas);
   const setCurrentProjectId = useCanvasStore((s) => s.setCurrentProjectId);
-  const openTab = useCanvasTabs((s) => s.openTab);
-  const renameTab = useCanvasTabs((s) => s.renameTab);
 
   const autosaveTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -55,7 +52,6 @@ export default function CanvasEditorPage() {
         setCurrentProjectId(String(res.data.id));
         setProjectName(res.data.name);
         setThumbnail(res.data.thumbnail || null);
-        openTab({ token, name: res.data.name });
         if (res.data.canvasData && res.data.canvasData !== "{}") {
           try {
             const data = JSON.parse(res.data.canvasData);
@@ -72,7 +68,7 @@ export default function CanvasEditorPage() {
       if (!cancelled) setMissing(true);
     });
     return () => { cancelled = true; setCurrentProjectId(null); };
-  }, [token, loadCanvas, setCurrentProjectId, openTab]);
+  }, [token, loadCanvas, setCurrentProjectId]);
 
   const save = useCallback(async (silent = false) => {
     if (saving || !projectId) return;
@@ -135,7 +131,6 @@ export default function CanvasEditorPage() {
       return;
     }
     setProjectName(newName);
-    renameTab(token, newName);
     setEditingName(false);
     if (!projectId) return;
     const res = await projectApi.update(projectId, { name: newName });

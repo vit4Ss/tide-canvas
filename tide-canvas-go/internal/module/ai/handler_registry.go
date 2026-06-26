@@ -20,8 +20,10 @@ type handlerResult struct {
 	ErrorMsg   string
 }
 
-func okResult(resultURL string) handlerResult { return handlerResult{Success: true, ResultURL: resultURL} }
-func failResult(msg string) handlerResult     { return handlerResult{Success: false, ErrorMsg: msg} }
+func okResult(resultURL string) handlerResult {
+	return handlerResult{Success: true, ResultURL: resultURL}
+}
+func failResult(msg string) handlerResult { return handlerResult{Success: false, ErrorMsg: msg} }
 
 // aiHandler 单一生成方式的处理器（对齐 AiHandler）。
 type aiHandler interface {
@@ -51,6 +53,7 @@ func newHandlerRegistry(gw *Gateway, logger *logrus.Logger) *handlerRegistry {
 		&startEndToVideoHandler{gw: gw, logger: logger},
 		&referenceToVideoHandler{gw: gw, logger: logger},
 		&textToAudioHandler{gw: gw, logger: logger},
+		&assistantChatHandler{gw: gw, logger: logger},
 		&creativeDescHandler{logger: logger},
 	} {
 		r.m[h.name()] = h
@@ -133,8 +136,8 @@ type textToImageHandler struct {
 	logger *logrus.Logger
 }
 
-func (h *textToImageHandler) name() string  { return "text_to_image" }
-func (h *textToImageHandler) async() bool    { return true }
+func (h *textToImageHandler) name() string { return "text_to_image" }
+func (h *textToImageHandler) async() bool  { return true }
 func (h *textToImageHandler) validate(input map[string]interface{}) error {
 	return requirePrompt(input)
 }
@@ -163,7 +166,7 @@ type imageToImageHandler struct {
 }
 
 func (h *imageToImageHandler) name() string { return "image_to_image" }
-func (h *imageToImageHandler) async() bool   { return true }
+func (h *imageToImageHandler) async() bool  { return true }
 func (h *imageToImageHandler) validate(input map[string]interface{}) error {
 	if err := requirePrompt(input); err != nil {
 		return err
@@ -231,7 +234,7 @@ type textToVideoHandler struct {
 }
 
 func (h *textToVideoHandler) name() string { return "text_to_video" }
-func (h *textToVideoHandler) async() bool   { return true }
+func (h *textToVideoHandler) async() bool  { return true }
 func (h *textToVideoHandler) validate(input map[string]interface{}) error {
 	return requirePrompt(input)
 }
@@ -246,7 +249,7 @@ type imageToVideoHandler struct {
 }
 
 func (h *imageToVideoHandler) name() string { return "image_to_video" }
-func (h *imageToVideoHandler) async() bool   { return true }
+func (h *imageToVideoHandler) async() bool  { return true }
 func (h *imageToVideoHandler) validate(input map[string]interface{}) error {
 	if err := requirePrompt(input); err != nil {
 		return err
@@ -264,7 +267,7 @@ type startEndToVideoHandler struct {
 }
 
 func (h *startEndToVideoHandler) name() string { return "start_end_to_video" }
-func (h *startEndToVideoHandler) async() bool   { return true }
+func (h *startEndToVideoHandler) async() bool  { return true }
 func (h *startEndToVideoHandler) validate(input map[string]interface{}) error {
 	if err := requirePrompt(input); err != nil {
 		return err
@@ -285,7 +288,7 @@ type referenceToVideoHandler struct {
 }
 
 func (h *referenceToVideoHandler) name() string { return "reference_to_video" }
-func (h *referenceToVideoHandler) async() bool   { return true }
+func (h *referenceToVideoHandler) async() bool  { return true }
 func (h *referenceToVideoHandler) validate(input map[string]interface{}) error {
 	if err := requirePrompt(input); err != nil {
 		return err
@@ -330,7 +333,7 @@ type textToAudioHandler struct {
 const maxTTSTextLength = 50000
 
 func (h *textToAudioHandler) name() string { return "text_to_audio" }
-func (h *textToAudioHandler) async() bool   { return true }
+func (h *textToAudioHandler) async() bool  { return true }
 func (h *textToAudioHandler) validate(input map[string]interface{}) error {
 	prompt := strOf(input["prompt"])
 	if !hasText(prompt) {
@@ -358,13 +361,42 @@ func (h *textToAudioHandler) execute(modelID string, input map[string]interface{
 	return okResult(url)
 }
 
+// ---- 助手对话 ----
+type assistantChatHandler struct {
+	gw     *Gateway
+	logger *logrus.Logger
+}
+
+func (h *assistantChatHandler) name() string { return "assistant_chat" }
+func (h *assistantChatHandler) async() bool  { return false }
+func (h *assistantChatHandler) validate(input map[string]interface{}) error {
+	return requirePrompt(input)
+}
+func (h *assistantChatHandler) execute(modelID string, input map[string]interface{}, _ progressReporter, ctx logCtx) handlerResult {
+	provider, usable, err := providerUsable(h.gw, modelID)
+	if err != nil {
+		return failResult("助手对话失败: " + err.Error())
+	}
+	if !usable {
+		return failResult("未配置可用的 AI 供应商（baseUrl/apiKey）")
+	}
+	answer, err := h.gw.chat(provider, modelID, input, ctx)
+	if err != nil {
+		logErr(h.logger, "助手对话调用失败", err)
+		return failResult("助手对话失败: " + err.Error())
+	}
+	r := okResult("")
+	r.ResultMeta = jsonString(map[string]interface{}{"answer": answer})
+	return r
+}
+
 // ---- 创意描述（同步占位实现，对齐 CreativeDescHandler）----
 type creativeDescHandler struct {
 	logger *logrus.Logger
 }
 
 func (h *creativeDescHandler) name() string { return "creative_desc" }
-func (h *creativeDescHandler) async() bool   { return false }
+func (h *creativeDescHandler) async() bool  { return false }
 func (h *creativeDescHandler) validate(input map[string]interface{}) error {
 	return requirePrompt(input)
 }

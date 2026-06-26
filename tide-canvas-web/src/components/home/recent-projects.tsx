@@ -47,6 +47,8 @@ export function RecentProjects() {
           {/* 开始创作卡片 */}
           <Link
             href="/canvas/new"
+            target="_blank"
+            rel="noopener"
             className="flex aspect-video flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-neutral-300 bg-neutral-50 text-neutral-500 transition-colors hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400 dark:hover:border-indigo-500/40 dark:hover:bg-indigo-500/10"
           >
             <Plus className="h-7 w-7" />
@@ -68,6 +70,8 @@ export function RecentProjects() {
               <div key={project.id} className="group flex flex-col gap-3">
                 <Link
                   href={`/canvas/${project.urlToken}`}
+                  target="_blank"
+                  rel="noopener"
                   className="overflow-hidden rounded-2xl bg-neutral-100 transition-all hover:shadow-md dark:bg-neutral-800"
                 >
                   <div className="aspect-video">

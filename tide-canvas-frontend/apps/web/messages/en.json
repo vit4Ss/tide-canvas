@@ -1,0 +1,88 @@
+{
+  "nav": {
+    "canvas": "Canvas",
+    "community": "Community",
+    "blog": "Blog",
+    "home": "Home",
+    "projects": "Projects"
+  },
+  "userMenu": {
+    "profile": "Profile",
+    "settings": "Account Settings",
+    "admin": "Admin Console",
+    "logout": "Log Out",
+    "language": "Language"
+  },
+  "auth": {
+    "login": "Log In",
+    "register": "Sign Up"
+  },
+  "header": {
+    "pointsTitle": "Points Center"
+  },
+  "hero": {
+    "title": "Infinite Canvas",
+    "subtitle": "Generate, connect and recompose <h>images, text and graphics</h> on an <h>infinite canvas</h>, turning creation from one-off generation into continuous iteration.",
+    "start": "Get Started",
+    "browse": "Browse Works"
+  },
+  "recent": {
+    "title": "Recent Projects",
+    "all": "All Projects",
+    "create": "New Project"
+  },
+  "featured": {
+    "title": "Inspiration",
+    "subtitle": "Browse featured community works to spark your next creation",
+    "more": "View More",
+    "moreMobile": "View More Works"
+  },
+  "home": {
+    "title": "TideCanvas makes creation simpler",
+    "subtitle": "Your AI creative agent that turns ideas into work",
+    "greeting": "Hi {name}, let's brainstorm creative ideas with TideCanvas",
+    "guestName": "there",
+    "examples": ["An orange cat wearing sunglasses, cinematic light", "Minimalist coffee product poster", "Ancient-style girl illustration", "Cyberpunk city at night"],
+    "placeholder": "Ask TideCanvas to generate a beautiful poster…",
+    "send": "Start Creating",
+    "generating": "Generating…",
+    "genFailed": "Generation failed, please retry",
+    "genTimeout": "Generation timed out, please retry",
+    "loginToCreate": "Log in to start creating",
+    "model": "Model",
+    "tabImage": "Image",
+    "tabVideo": "Video",
+    "switchMode": "Click to switch image / video",
+    "ratio": "Ratio",
+    "regenerate": "Regenerate",
+    "groupImage": "Image models",
+    "groupVideo": "Video models",
+    "download": "Download",
+    "saveToCanvas": "Save to Canvas",
+    "addToLibrary": "Add to Library",
+    "added": "Added",
+    "savedToLibrary": "Added to library — reference it from the canvas asset panel",
+    "savedToCanvas": "Saved to library, opening canvas…",
+    "saveFailed": "Save failed",
+    "chips": {
+      "image": "Image",
+      "video": "Video",
+      "design": "Design",
+      "poster": "Poster & Ads",
+      "character": "Character",
+      "ecommerce": "E-Commerce"
+    }
+  },
+  "sidebar": {
+    "create": "Create",
+    "assets": "Assets",
+    "projects": "Projects",
+    "history": "History",
+    "viewAll": "View all",
+    "empty": "No history yet"
+  },
+  "language": {
+    "zh": "简体中文",
+    "en": "English"
+  }
+}
