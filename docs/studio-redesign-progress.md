@@ -1,7 +1,7 @@
 # 生成台(Creation Studio / 对话式生成)重设计 — 进度与待办
 
 > 依据 `docs/studio-design.md` 把 `/chat`(生成台)重做成「对话即历史 + Task 为唯一真实来源」的
-> 聊天式生成工作台。分阶段推进 P1→P5。**下次从 P2 继续。**
+> 聊天式生成工作台。分阶段推进 P1→P5。**P1/P2(核心)/P4/P5 已完成;剩 P3(@ 引用)。**
 
 最后更新:2026-06-26
 
@@ -28,17 +28,44 @@
 
 ---
 
-## ⏳ 待办(下次继续)
+## ✅ P2 — Composer 重做 + 文件参考(核心已完成)
 
-### P2 — Composer 重做 + 文件参考(下一步)
-- 三种加入参考:`<input type=file>` 挑选 / 拖放(dragDepth 计数防闪) / 粘贴(onPaste files)。
-- 上传生命周期:`URL.createObjectURL` blob 预览(uploading) → `uploadFileSmart` 真上传 → 回填 `{id/url}`;
-  race-guard(预览已被替换则丢弃)、同 bytes 去重、blob 在送出/切对话/卸载三处 `revokeObjectURL`。
-- id vs url:本地预览用 blob;送后端优先 `{id}` 否则 `{url}`,**永不**送 blob;历史缩图用重新签名 URL。
-- 参数 pill 列(PillSelect,向上展开/键盘导览)、参考缩略图条、成本预估(余额不足禁用送出)、送出即清空。
-- 文本模型附件(图片→id、其它→base64 file part),由模型 `webSearch/fileUpload` 控制按钮。
+**已完成**(`src/app/(studio)/chat/page.tsx`、`styles/liuguang/chat.css`):
+- 三种加入参考:`<input type=file>` 挑选 / 拖放(dragDepth 计数防闪 + 放置遮罩) / 粘贴(onPaste files),
+  按当前 mode 的 kinds/max 路由(REF_POLICY)。
+- 上传生命周期:`createObjectURL` blob 预览(转圈) → `uploadFileSmart` → 回填托管 url;
+  race-guard(移除则丢弃 revoke)、同 url 去重、blob 在送出/移除/切对话/新建/卸载多处 revoke。
+- 送后端只用托管 url(**永不**送 blob;OSS 公网地址,provider 自动加速改写)。
+- 按 mode 接入真实生成:i2i→image_to_image / i2v→image_to_video / keyframe→start_end_to_video /
+  omni_ref→reference_to_video。参考 mode 必须有可用参考才放行;送出清空;再次生成从快照恢复参考(url-only)。
 
-### P3 — `@` 引用 + RichPromptInput
+**未做(次要,留待后续)**:PillSelect 键盘导览重做(现用 CmSelect,功能可用)、文本模型附件(图片→id/其它→base64)、
+余额不足禁用送出(现仅显示预估积分)。
+
+## ✅ P4 — 文本对话 SSE 串流(已完成)
+
+- 后端:`relaychat.ChatStream`(共享 stream 核心,onDelta 回调)+ `POST /api/im/conversations/:id/stream`
+  (SSE,逐帧 `data:{delta}` / `{done,message}` / `{error}`),持久化 user+assistant + model_call_log。
+- 前端:`streamMessage`(fetch + ReadableStream 读取)、`AbortController`(切对话/卸载 abort,同控制器比对)、
+  串流气泡 +「思考中」+ 闪烁 caret、Markdown 渲染(react-markdown + remark-gfm)、切走不覆盖(activeIdRef 守卫)。
+
+## ✅ P5 — 细节(主要已完成)
+
+- 灯箱(单/多图,Esc 关闭、←/→ wrap、计数);MJ 多图(4-up)网格 → 点开灯箱轮播。
+- 下载钮(blob fetch 强制下载,跨域回退新标签)、跨环境复制钮(clipboard + execCommand 兜底,用户/AI 气泡)。
+- 自动滚动(接近底部才跟随,否则「跳到最新」按钮;送出/切对话强制到底)。
+- 对话重命名(行内编辑,Enter/blur 提交)+ 删除(确认),后端新增 `PUT/DELETE /api/im/conversations/:id`。
+
+**未做(次要)**:MJ 衍生动作 U/V/reroll(需上游 MJ 按钮支持)、管理员只读 scope。
+
+## ✅ P3 — `@` 引用(务实版,已完成)
+
+- **已做**:在现有 textarea 上做 IME 安全的 `@` 引用——参考 mode 下输入 `@` 弹出当前参考素材菜单
+  (缩略图 + `@图N`),↑↓/Enter/Tab/Esc 键盘导航,选中即在光标处插入 `@图N`;素材已随 turn 下发,
+  `@图N` 提供位置化命名。textarea 原生处理中文组字,**无 IME 卡顿/光标跳风险**。
+- **未做(完整 contentEditable pill 版,需浏览器实测后再上)**:内联缩略图 pill 渲染、按角色命名、
+  round-trip 字节级重现、粘贴自动配对、Ctrl+Z 撤销选取、hover 换图。这些依赖 contentEditable 中文组字
+  运行时行为,只能浏览器实测验证,故作为后续专项。
 - contentEditable(IME 安全,React 只渲染一次,不在打字时改写 DOM)、pill 渲染、inline `@` 菜单。
 - 候选 scope = 当前 mode 上传;序列化 pill→`@名`;`buildSubmitBody` 去 `@`、折进参考集并以 id 去重;
   round-trip 无损(重新编辑→不改→再送出 字节级重现);粘贴自动配对;`@` query 边界 `NAME_STOP`(易出 bug)。

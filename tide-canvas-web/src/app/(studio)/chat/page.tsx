@@ -33,8 +33,10 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { chatApi } from "@/lib/chat-api";
-import { aiApi } from "@/lib/api";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { chatApi, streamMessage } from "@/lib/chat-api";
+import { aiApi, uploadFileSmart } from "@/lib/api";
 import { AiTaskStatus } from "@/types/ai";
 import { marketApi, type StudioModelVO } from "@/lib/market-api";
 import { useAuthStore } from "@/stores/use-auth-store";
@@ -75,6 +77,41 @@ function modelInitial(name: string): string {
 }
 function typeTag(type: string): string {
   return type === "video" ? "VID" : type === "audio" ? "AUD" : type === "text" ? "TXT" : "IMG";
+}
+
+/* ── reference media (P2: 文件参考) ──────────────────────────────────────────── */
+
+type RefKind = "image" | "video" | "audio";
+
+/** A composer reference: local blob preview while uploading, hosted url after. */
+interface RefItem {
+  key: string; // stable local key (race-guard + revoke)
+  kind: RefKind;
+  blobUrl: string; // local object URL for instant preview
+  url?: string; // hosted URL after upload (sent to the backend)
+  uploading: boolean;
+  failed?: boolean;
+}
+
+/** Which reference kinds + how many a given generation mode accepts. Modes not
+ *  listed (t2i / t2v) take no reference media. */
+const REF_POLICY: Record<string, { kinds: RefKind[]; max: number }> = {
+  i2i: { kinds: ["image"], max: 6 },
+  i2v: { kinds: ["image"], max: 1 },
+  keyframe: { kinds: ["image"], max: 2 },
+  omni_ref: { kinds: ["image", "video", "audio"], max: 6 },
+};
+
+/** Classify a File into a reference kind by MIME type. */
+function fileKind(file: File): RefKind {
+  if (file.type.startsWith("video/")) return "video";
+  if (file.type.startsWith("audio/")) return "audio";
+  return "image";
+}
+
+/** The accept attribute for a mode's file picker. */
+function acceptFor(kinds: RefKind[]): string {
+  return kinds.map((k) => `${k}/*`).join(",");
 }
 
 /** an aspect-ratio glyph box for the ratio dropdown lead/item. */
@@ -180,6 +217,50 @@ export default function ChatPage() {
   const [batch, setBatch] = useState(1);
   const [openSel, setOpenSel] = useState<string | null>(null);
 
+  // reference media (P2): attached refs + drag state. refsRef mirrors refs for
+  // race-guards (upload callbacks) and unmount revoke without stale closures.
+  const [refs, setRefs] = useState<RefItem[]>([]);
+  const refsRef = useRef<RefItem[]>([]);
+  // synchronous count of accepted refs — authoritative across same-tick attaches
+  // (refsRef only catches up via an effect). Re-synced from refs on every commit.
+  const refCountRef = useRef(0);
+  const refSeq = useRef(0);
+  const [dragOver, setDragOver] = useState(false);
+  const dragDepth = useRef(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // lightbox (P5): viewed media set + index.
+  const [lightbox, setLightbox] = useState<{ items: LightboxItem[]; index: number } | null>(null);
+  const openLightbox = useCallback(
+    (items: LightboxItem[], index: number) => setLightbox({ items, index }),
+    [],
+  );
+  const stepLightbox = useCallback(
+    (delta: number) =>
+      setLightbox((lb) =>
+        lb ? { ...lb, index: (lb.index + delta + lb.items.length) % lb.items.length } : lb,
+      ),
+    [],
+  );
+
+  // auto-scroll (P5): follow only when the user is near the bottom; otherwise
+  // surface a 跳到最新 button instead of yanking them down mid-read.
+  const nearBottomRef = useRef(true);
+  const [showJump, setShowJump] = useState(false);
+
+  // text streaming (P4): the in-progress assistant reply for the active
+  // conversation + the abort controller (cancelled on switch / unmount).
+  const [streaming, setStreaming] = useState<string | null>(null);
+  const chatAbortRef = useRef<AbortController | null>(null);
+  const activeIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
+  // abort a residual stream on unmount (stop burning tokens upstream).
+  useEffect(() => {
+    return () => chatAbortRef.current?.abort();
+  }, []);
+
   const userEmail = useAuthStore((s) => s.user?.email);
   const ensureSession = useAuthStore((s) => s.ensureSession);
 
@@ -193,8 +274,6 @@ export default function ChatPage() {
   const isVid = selModel?.type === "video";
   // 联网开关只对「文本模型」且其 config.webSearch 已开启时可用（模型管理里配置）。
   const webSearchAvail = selModel?.type === "text" && !!mCfg?.webSearch;
-  // 「＋」上传：文本模型按 config.fileUpload 决定；图片/视频模型用于上传参考素材，保持显示。
-  const uploadAvail = selModel?.type === "text" ? !!mCfg?.fileUpload : true;
   const modeVals = mCfg?.modes ?? [];
   const ratioOpts = mCfg?.ratios ?? [];
   const resOpts = mCfg?.resolutions ?? [];
@@ -202,6 +281,155 @@ export default function ChatPage() {
   const countOpts = mCfg?.batchOptions?.length ? mCfg.batchOptions : [1, 2, 3, 4];
   const batchMax = Math.max(...countOpts);
   const toggleSel = (k: string) => setOpenSel((cur) => (cur === k ? null : k));
+
+  // reference policy for the current mode (image/video models only). undefined
+  // for text models and the t2i / t2v modes, which take no reference media.
+  const refPolicy = useMemo(
+    () => (selModel && selModel.type !== "text" ? REF_POLICY[mode] : undefined),
+    [selModel, mode],
+  );
+
+  // keep refsRef + the synchronous count in sync for stale-closure-free access
+  // in callbacks/cleanup (re-syncs the count after adds/removals/dedup drops).
+  useEffect(() => {
+    refsRef.current = refs;
+    refCountRef.current = refs.length;
+  }, [refs]);
+
+  // revoke every blob preview on unmount (avoid leaking object URLs).
+  useEffect(() => {
+    return () => {
+      for (const r of refsRef.current) URL.revokeObjectURL(r.blobUrl);
+    };
+  }, []);
+
+  // drop references that the current mode no longer accepts (e.g. switching from
+  // an image-ref mode to t2v); revoke their blobs.
+  useEffect(() => {
+    setRefs((prev) => {
+      if (!prev.length) return prev;
+      const keep = refPolicy ? prev.filter((r) => refPolicy.kinds.includes(r.kind)) : [];
+      if (keep.length === prev.length) return prev;
+      for (const r of prev) if (!keep.includes(r)) URL.revokeObjectURL(r.blobUrl);
+      return keep;
+    });
+  }, [refPolicy]);
+
+  // upload one reference: hosted URL replaces the blob on success; race-guard
+  // drops the result if the ref was removed mid-flight; dedup collapses same-url.
+  const uploadRef = useCallback(async (key: string, file: File, blobUrl: string) => {
+    const res = await uploadFileSmart(file).catch(() => null);
+    setRefs((cur) => {
+      const idx = cur.findIndex((r) => r.key === key);
+      if (idx < 0) {
+        URL.revokeObjectURL(blobUrl); // removed while uploading
+        return cur;
+      }
+      const url = res?.success ? res.data?.fileUrl : undefined;
+      if (url && cur.some((r) => r.key !== key && r.url === url)) {
+        URL.revokeObjectURL(blobUrl); // same bytes already attached → dedup
+        return cur.filter((r) => r.key !== key);
+      }
+      const next = cur.slice();
+      next[idx] = url
+        ? { ...next[idx], uploading: false, url }
+        : { ...next[idx], uploading: false, failed: true };
+      return next;
+    });
+  }, []);
+
+  // route picked/dropped/pasted files into the current mode's reference slots.
+  const attachFiles = useCallback(
+    (files: FileList | File[]) => {
+      const policy = refPolicy;
+      if (!policy) {
+        toast.info("当前模式不支持参考素材");
+        return;
+      }
+      const fresh: { item: RefItem; file: File }[] = [];
+      // use the synchronous counter (not the effect-lagged refsRef) so two attaches
+      // in the same tick can't both read a stale length and exceed policy.max.
+      let count = refCountRef.current;
+      for (const file of Array.from(files)) {
+        const kind = fileKind(file);
+        if (!policy.kinds.includes(kind)) continue;
+        if (count >= policy.max) {
+          toast.info(`最多添加 ${policy.max} 个参考素材`);
+          break;
+        }
+        const blobUrl = URL.createObjectURL(file);
+        fresh.push({ item: { key: `r${refSeq.current++}`, kind, blobUrl, uploading: true }, file });
+        count++;
+      }
+      if (!fresh.length) return;
+      refCountRef.current = count; // commit synchronously before the next call reads it
+      setRefs((prev) => [...prev, ...fresh.map((f) => f.item)]);
+      for (const { item, file } of fresh) void uploadRef(item.key, file, item.blobUrl);
+    },
+    [refPolicy, uploadRef],
+  );
+
+  const removeRef = useCallback((key: string) => {
+    setRefs((prev) => {
+      const r = prev.find((x) => x.key === key);
+      if (r) URL.revokeObjectURL(r.blobUrl);
+      return prev.filter((x) => x.key !== key);
+    });
+  }, []);
+
+  const clearRefs = useCallback(() => {
+    setRefs((prev) => {
+      for (const r of prev) URL.revokeObjectURL(r.blobUrl);
+      return [];
+    });
+  }, []);
+
+  // drag-and-drop onto the composer (dragDepth counter avoids overlay flicker
+  // from nested dragenter/leave) + paste of files.
+  const onDragEnter = useCallback(
+    (e: React.DragEvent) => {
+      if (!refPolicy) return;
+      e.preventDefault();
+      dragDepth.current++;
+      setDragOver(true);
+    },
+    [refPolicy],
+  );
+  const onDragOver = useCallback(
+    (e: React.DragEvent) => {
+      if (refPolicy) e.preventDefault();
+    },
+    [refPolicy],
+  );
+  const onDragLeave = useCallback(
+    (e: React.DragEvent) => {
+      if (!refPolicy) return;
+      e.preventDefault();
+      dragDepth.current = Math.max(0, dragDepth.current - 1);
+      if (dragDepth.current === 0) setDragOver(false);
+    },
+    [refPolicy],
+  );
+  const onDrop = useCallback(
+    (e: React.DragEvent) => {
+      if (!refPolicy) return;
+      e.preventDefault();
+      dragDepth.current = 0;
+      setDragOver(false);
+      if (e.dataTransfer.files?.length) attachFiles(e.dataTransfer.files);
+    },
+    [refPolicy, attachFiles],
+  );
+  const onPaste = useCallback(
+    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const files = e.clipboardData?.files;
+      if (refPolicy && files && files.length) {
+        e.preventDefault();
+        attachFiles(files);
+      }
+    },
+    [refPolicy, attachFiles],
+  );
 
   // load every studio model (text + image + video). Text models drive the chat
   // assistant and may expose the 联网 toggle when their config enables webSearch.
@@ -274,9 +502,33 @@ export default function ChatPage() {
     if (t) t.scrollTop = t.scrollHeight;
   }, []);
 
+  // force a jump to the latest (on send / conversation switch).
+  const forceBottom = useCallback(() => {
+    nearBottomRef.current = true;
+    setShowJump(false);
+    requestAnimationFrame(scrollEnd);
+  }, [scrollEnd]);
+
+  // track whether the user is reading near the bottom.
+  const onThreadScroll = useCallback(() => {
+    const t = threadRef.current;
+    if (!t) return;
+    const near = t.scrollHeight - t.scrollTop - t.clientHeight < 120;
+    nearBottomRef.current = near;
+    if (near) setShowJump(false);
+  }, []);
+
+  // passive content updates (polling/stream) follow only when near the bottom;
+  // otherwise reveal the jump button.
   useEffect(() => {
-    scrollEnd();
+    if (nearBottomRef.current) scrollEnd();
+    else setShowJump(true);
   }, [msgs, typing, scrollEnd]);
+
+  // selecting/switching a conversation forces a jump to its latest.
+  useEffect(() => {
+    forceBottom();
+  }, [activeId, forceBottom]);
 
   // auto-grow the textarea (chat.js: min(180, scrollHeight))
   const autosize = useCallback(() => {
@@ -333,10 +585,14 @@ export default function ChatPage() {
   const pickConvo = useCallback(
     (id: string) => {
       if (id === activeId) return;
+      chatAbortRef.current?.abort(); // cancel any in-flight stream
+      chatAbortRef.current = null;
+      setStreaming(null);
       setActiveId(id);
+      clearRefs();
       loadMessages(id);
     },
-    [activeId, loadMessages],
+    [activeId, loadMessages, clearRefs],
   );
 
   const newChat = useCallback(async () => {
@@ -350,16 +606,81 @@ export default function ChatPage() {
         setActiveId(res.data.id);
         setMsgs([]);
         setDraft("");
+        clearRefs();
         resetTa();
       }
     } finally {
       setBusy(false);
     }
-  }, [busy, ensureSession, resetTa]);
+  }, [busy, ensureSession, resetTa, clearRefs]);
+
+  // conversation rename / delete (P5)
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameVal, setRenameVal] = useState("");
+
+  const startRename = useCallback((c: ConversationVO) => {
+    setRenamingId(c.id);
+    setRenameVal(c.title || "");
+  }, []);
+
+  const commitRename = useCallback(async () => {
+    const id = renamingId;
+    if (!id) return;
+    setRenamingId(null);
+    const title = renameVal.trim();
+    const cur = convos.find((c) => c.id === id);
+    if (!cur || !title || title === cur.title) return;
+    setConvos((prev) => prev.map((c) => (c.id === id ? { ...c, title } : c))); // optimistic
+    const res = await chatApi.renameConversation(id, title);
+    if (!res.success) {
+      setConvos((prev) => prev.map((c) => (c.id === id ? { ...c, title: cur.title } : c))); // revert
+      toast.error(res.message || "重命名失败");
+    }
+  }, [renamingId, renameVal, convos]);
+
+  const removeConvo = useCallback(
+    async (c: ConversationVO) => {
+      // eslint-disable-next-line no-alert
+      if (!window.confirm(`删除对话「${c.title || "未命名对话"}」？此操作不可撤销。`)) return;
+      const res = await chatApi.deleteConversation(c.id);
+      if (!res.success) {
+        toast.error(res.message || "删除失败");
+        return;
+      }
+      const remaining = convos.filter((x) => x.id !== c.id);
+      setConvos(remaining);
+      if (activeId === c.id) {
+        if (remaining[0]) {
+          setActiveId(remaining[0].id);
+          loadMessages(remaining[0].id);
+        } else {
+          setActiveId(null);
+          setMsgs([]);
+        }
+      }
+    },
+    [convos, activeId, loadMessages],
+  );
 
   const send = useCallback(async () => {
     const v = draft.trim();
     if (!v || busy) return;
+
+    // reference media (uploaded → hosted urls). A ref-mode requires at least one
+    // usable ref and blocks while any is still uploading.
+    const refImageUrls = refs.filter((r) => r.kind === "image" && r.url).map((r) => r.url as string);
+    const refVideoUrls = refs.filter((r) => r.kind === "video" && r.url).map((r) => r.url as string);
+    const refAudioUrls = refs.filter((r) => r.kind === "audio" && r.url).map((r) => r.url as string);
+    if (refPolicy) {
+      if (refs.some((r) => r.uploading)) {
+        toast.info("参考素材上传中，请稍候");
+        return;
+      }
+      if (refImageUrls.length === 0 && refVideoUrls.length === 0) {
+        toast.error("当前模式需要先添加参考素材");
+        return;
+      }
+    }
 
     setBusy(true);
     setDraft("");
@@ -391,6 +712,7 @@ export default function ChatPage() {
     };
     setMsgs((prev) => [...prev, optimistic]);
     setTyping(true);
+    forceBottom();
 
     const bump = (cid: string) =>
       setConvos((prev) => {
@@ -415,8 +737,35 @@ export default function ChatPage() {
           ...(res ? { resolution: res } : {}),
           ...(wantVideo && dur ? { duration: dur } : {}),
         };
+        // pick the handler by mode + attached references (P2).
+        let handler: string;
+        if (wantVideo) {
+          if (mode === "i2v" && refImageUrls.length) {
+            handler = "image_to_video";
+            input.sourceImage = refImageUrls[0];
+            input.imageList = refImageUrls.slice(0, 1);
+          } else if (mode === "keyframe" && refImageUrls.length) {
+            handler = "start_end_to_video";
+            input.firstFrame = refImageUrls[0];
+            input.lastFrame = refImageUrls[1] ?? refImageUrls[0];
+          } else if (mode === "omni_ref" && (refImageUrls.length || refVideoUrls.length)) {
+            handler = "reference_to_video";
+            input.references = refImageUrls;
+            if (refVideoUrls.length) input.videoReferences = refVideoUrls;
+            if (refAudioUrls.length) input.audioReferences = refAudioUrls;
+          } else {
+            handler = "text_to_video";
+          }
+        } else if (mode === "i2i" && refImageUrls.length) {
+          handler = "image_to_image";
+          input.imageList = refImageUrls;
+        } else {
+          handler = "text_to_image";
+        }
+        // image handlers loop on batchCount → request N images when 批量 > 1 (not video).
+        if (wantImage && batch > 1) input.batchCount = batch;
         const gen = await aiApi.generate({
-          handler: wantVideo ? "text_to_video" : "text_to_image",
+          handler,
           modelId: selModel.modelKey || selModel.id,
           input,
         });
@@ -434,6 +783,14 @@ export default function ChatPage() {
           ...(ratio ? { ratio } : {}),
           ...(res ? { resolution: res } : {}),
           ...(wantVideo && dur ? { duration: dur } : {}),
+          ...(refImageUrls.length || refVideoUrls.length
+            ? {
+                references: [
+                  ...refImageUrls.map((url) => ({ url, kind: "image" })),
+                  ...refVideoUrls.map((url) => ({ url, kind: "video" })),
+                ],
+              }
+            : {}),
         };
         await chatApi.persistTurn(id, {
           prompt: v,
@@ -441,11 +798,32 @@ export default function ChatPage() {
           taskId: gen.data.id,
           contentType: wantVideo ? "video" : "image",
         });
+        clearRefs(); // turn committed → clear the composer references
         await loadMessages(id); // assistant message now carries the task → polling takes over
         bump(id);
       } else {
-        const res2 = await chatApi.send(id, v);
-        if (res2.success) {
+        // text model → streamed reply (P4). The generic typing dots give way to
+        // a live streaming bubble; switching conversation aborts it.
+        setTyping(false);
+        setStreaming("");
+        const ac = new AbortController();
+        chatAbortRef.current = ac;
+        let acc = "";
+        await streamMessage(id, v, {
+          signal: ac.signal,
+          onDelta: (d) => {
+            acc += d;
+            setStreaming(acc);
+            // coalesce rapid tokens into one scroll per frame to avoid judder.
+            if (nearBottomRef.current) requestAnimationFrame(scrollEnd);
+          },
+          onError: (m) => toast.error(m || "生成失败"),
+        });
+        // only clear OUR controller — a newer stream may have replaced it.
+        if (chatAbortRef.current === ac) chatAbortRef.current = null;
+        setStreaming(null);
+        // only refresh if the user is still on this conversation (not switched away).
+        if (activeIdRef.current === id) {
           await loadMessages(id);
           bump(id);
         }
@@ -454,17 +832,34 @@ export default function ChatPage() {
       setTyping(false);
       setBusy(false);
     }
-  }, [draft, busy, activeId, ensureSession, loadMessages, resetTa, selModel, mode, ratio, res, dur]);
+  }, [draft, busy, activeId, ensureSession, loadMessages, resetTa, selModel, mode, ratio, res, dur, batch, refs, refPolicy, clearRefs, forceBottom, scrollEnd]);
 
   // restore a turn's snapshot params into the composer (重新编辑 / 再次生成).
-  const restoreFromParams = useCallback((p?: Record<string, unknown>) => {
-    if (!p) return;
-    if (typeof p.model === "string") setModel(p.model);
-    if (typeof p.mode === "string") setMode(p.mode);
-    if (typeof p.ratio === "string") setRatio(p.ratio);
-    if (typeof p.resolution === "string") setRes(p.resolution);
-    if (typeof p.duration === "string") setDur(p.duration);
-  }, []);
+  const restoreFromParams = useCallback(
+    (p?: Record<string, unknown>) => {
+      if (!p) return;
+      if (typeof p.model === "string") setModel(p.model);
+      if (typeof p.mode === "string") setMode(p.mode);
+      if (typeof p.ratio === "string") setRatio(p.ratio);
+      if (typeof p.resolution === "string") setRes(p.resolution);
+      if (typeof p.duration === "string") setDur(p.duration);
+      // restore reference media as url-only items (the originals are hosted; no
+      // local blob/file is recreated). Lets 再次生成 work on a reference turn.
+      clearRefs();
+      if (Array.isArray(p.references)) {
+        const restored: RefItem[] = [];
+        for (const r of p.references) {
+          const url = r && typeof r === "object" ? (r as { url?: unknown }).url : undefined;
+          if (typeof url !== "string" || !url) continue;
+          const k = (r as { kind?: unknown }).kind;
+          const kind: RefKind = k === "video" ? "video" : k === "audio" ? "audio" : "image";
+          restored.push({ key: `r${refSeq.current++}`, kind, blobUrl: "", url, uploading: false });
+        }
+        if (restored.length) setRefs(restored);
+      }
+    },
+    [clearRefs],
+  );
 
   // find the user (prompt) message of the turn an assistant result belongs to.
   const turnUserOf = useCallback(
@@ -520,14 +915,105 @@ export default function ChatPage() {
     return () => clearInterval(iv);
   }, [hasInflight, activeId, busy, loadMessages]);
 
+  // ── @ 引用 (P3, textarea-based / IME-safe) ─────────────────────────────────
+  // Typing @ in a reference mode opens a menu of the attached references; picking
+  // one inserts "@图N" at the caret (the reference is already attached via the
+  // strip, so it ships with the turn). The full contentEditable thumbnail-pill
+  // RichPromptInput is deferred — it needs hands-on browser IME (中文组字) testing.
+  const [atMenu, setAtMenu] = useState<{ start: number } | null>(null);
+  const [atIndex, setAtIndex] = useState(0);
+
+  // candidates = attached references that finished uploading.
+  const mentionCands = useMemo(() => refs.filter((r) => r.url), [refs]);
+  const mentionLabel = useCallback(
+    (key: string) => {
+      const i = mentionCands.findIndex((r) => r.key === key);
+      return i >= 0 ? `图${i + 1}` : "图";
+    },
+    [mentionCands],
+  );
+
+  // visible candidates filtered by the query run after @ (matches the auto label).
+  const atVisible = useMemo(() => {
+    if (!atMenu) return [];
+    const ta = taRef.current;
+    const pos = ta?.selectionStart ?? draft.length;
+    const q = draft.slice(atMenu.start + 1, pos).trim();
+    if (!q) return mentionCands;
+    return mentionCands.filter((_, i) => `图${i + 1}`.includes(q) || `${i + 1}` === q);
+  }, [atMenu, draft, mentionCands]);
+
+  // detect an active "@query" ending at the caret (query: no whitespace/@, ≤40).
+  const detectAt = useCallback(
+    (ta: HTMLTextAreaElement) => {
+      if (!refPolicy || mentionCands.length === 0) {
+        setAtMenu(null);
+        return;
+      }
+      const pos = ta.selectionStart ?? ta.value.length;
+      const m = /(?:^|\s)@([^\s@]{0,40})$/.exec(ta.value.slice(0, pos));
+      if (m) {
+        setAtMenu({ start: pos - m[1].length - 1 });
+        setAtIndex(0);
+      } else {
+        setAtMenu(null);
+      }
+    },
+    [refPolicy, mentionCands.length],
+  );
+
+  const pickMention = useCallback(
+    (cand: RefItem) => {
+      const ta = taRef.current;
+      if (!ta || !atMenu) return;
+      const label = mentionLabel(cand.key);
+      const caretNow = ta.selectionStart ?? draft.length;
+      const before = draft.slice(0, atMenu.start);
+      const after = draft.slice(caretNow);
+      const next = `${before}@${label} ${after}`;
+      setDraft(next);
+      setAtMenu(null);
+      requestAnimationFrame(() => {
+        ta.focus();
+        const caret = before.length + label.length + 2; // @ + label + trailing space
+        ta.setSelectionRange(caret, caret);
+        autosize();
+      });
+    },
+    [atMenu, draft, mentionLabel, autosize],
+  );
+
   const onKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
+      // @-menu navigation takes precedence over send.
+      if (atMenu && atVisible.length) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setAtIndex((i) => (i + 1) % atVisible.length);
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setAtIndex((i) => (i - 1 + atVisible.length) % atVisible.length);
+          return;
+        }
+        if (e.key === "Enter" || e.key === "Tab") {
+          e.preventDefault();
+          pickMention(atVisible[Math.min(atIndex, atVisible.length - 1)]);
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setAtMenu(null);
+          return;
+        }
+      }
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         send();
       }
     },
-    [send],
+    [send, atMenu, atVisible, atIndex, pickMention],
   );
 
   // approx points cost: the selected model's 消耗积分 × batch.
@@ -560,18 +1046,58 @@ export default function ChatPage() {
               </span>
             </div>
           ) : (
-            convos.map((c) => (
-              <div
-                key={c.id}
-                className={`convo ${c.id === activeId ? "on" : ""}`}
-                onClick={() => pickConvo(c.id)}
-              >
-                <svg viewBox="0 0 24 24">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                </svg>
-                <span className="t">{c.title || "未命名对话"}</span>
-              </div>
-            ))
+            convos.map((c) =>
+              renamingId === c.id ? (
+                <div key={c.id} className="convo on">
+                  <input
+                    className="convo-rename"
+                    autoFocus
+                    value={renameVal}
+                    onChange={(e) => setRenameVal(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        commitRename();
+                      } else if (e.key === "Escape") {
+                        setRenamingId(null);
+                      }
+                    }}
+                    onBlur={commitRename}
+                  />
+                </div>
+              ) : (
+                <div key={c.id} className={`convo ${c.id === activeId ? "on" : ""}`}>
+                  <button className="convo-main" type="button" onClick={() => pickConvo(c.id)}>
+                    <svg viewBox="0 0 24 24">
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                    </svg>
+                    <span className="t">{c.title || "未命名对话"}</span>
+                  </button>
+                  <button
+                    className="convo-act"
+                    type="button"
+                    title="重命名"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      startRename(c);
+                    }}
+                  >
+                    ✎
+                  </button>
+                  <button
+                    className="convo-act"
+                    type="button"
+                    title="删除"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeConvo(c);
+                    }}
+                  >
+                    🗑
+                  </button>
+                </div>
+              ),
+            )
           )}
         </div>
       </aside>
@@ -583,7 +1109,7 @@ export default function ChatPage() {
           <span className="acct">{userEmail || "未登录"} ▾</span>
         </div>
 
-        <div className="chat-thread" ref={threadRef}>
+        <div className="chat-thread" ref={threadRef} onScroll={onThreadScroll}>
           <div className="chat-inner">
             {msgsLoading && msgs.length === 0 ? (
               <div className="msg ai">
@@ -608,8 +1134,36 @@ export default function ChatPage() {
               </div>
             ) : (
               msgs.map((m) => (
-                <Bubble key={m.id} msg={m} onReEdit={reEdit} onRegenerate={regenerate} />
+                <Bubble
+                  key={m.id}
+                  msg={m}
+                  onReEdit={reEdit}
+                  onRegenerate={regenerate}
+                  onOpenLightbox={openLightbox}
+                />
               ))
+            )}
+            {streaming !== null && (
+              <div className="msg ai">
+                <span className="av" />
+                <div className="bubble">
+                  {streaming === "" ? (
+                    <span className="chat-gen-state">
+                      <span className="typing">
+                        <i />
+                        <i />
+                        <i />
+                      </span>
+                      思考中…
+                    </span>
+                  ) : (
+                    <div className="md">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{streaming}</ReactMarkdown>
+                      <span className="stream-caret" />
+                    </div>
+                  )}
+                </div>
+              </div>
             )}
             {typing && (
               <div className="msg ai">
@@ -624,24 +1178,91 @@ export default function ChatPage() {
               </div>
             )}
           </div>
+          {showJump && (
+            <button className="chat-jump" type="button" onClick={forceBottom}>
+              ↓ 跳到最新
+            </button>
+          )}
         </div>
 
         <div className="chat-composer">
-          <div className="composer-box">
+          <div
+            className={`composer-box${dragOver ? " drag" : ""}`}
+            onDragEnter={onDragEnter}
+            onDragOver={onDragOver}
+            onDragLeave={onDragLeave}
+            onDrop={onDrop}
+          >
+            {dragOver && <div className="composer-drop">松开以添加参考素材</div>}
+            {atMenu && atVisible.length > 0 && (
+              <div className="at-menu" onMouseDown={(e) => e.preventDefault()}>
+                <div className="at-menu-h">引用参考素材</div>
+                {atVisible.map((r) => {
+                  const i = mentionCands.findIndex((c) => c.key === r.key);
+                  return (
+                    <button
+                      key={r.key}
+                      type="button"
+                      className={`at-item${atVisible[atIndex]?.key === r.key ? " on" : ""}`}
+                      onClick={() => pickMention(r)}
+                    >
+                      {r.kind === "image" ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={r.url || r.blobUrl} alt="" />
+                      ) : r.kind === "video" ? (
+                        // eslint-disable-next-line jsx-a11y/media-has-caption
+                        <video src={r.url || r.blobUrl} muted />
+                      ) : (
+                        <span className="at-aud">♪</span>
+                      )}
+                      <span className="at-lab">@图{i + 1}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {refs.length > 0 && (
+              <div className="ref-strip">
+                {refs.map((r) => (
+                  <RefThumb key={r.key} item={r} onRemove={() => removeRef(r.key)} />
+                ))}
+              </div>
+            )}
             <div className="composer-head">
-              {uploadAvail && (
-                <button className="cm-upload" title="上传参考素材" type="button">
+              {refPolicy && (
+                <button
+                  className="cm-upload"
+                  title="上传参考素材"
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                >
                   ＋
                 </button>
               )}
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept={refPolicy ? acceptFor(refPolicy.kinds) : undefined}
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  if (e.target.files?.length) attachFiles(e.target.files);
+                  e.target.value = "";
+                }}
+              />
               <textarea
                 ref={taRef}
                 value={draft}
                 onChange={(e) => {
                   setDraft(e.target.value);
                   autosize();
+                  detectAt(e.target);
                 }}
+                onKeyUp={(e) => detectAt(e.currentTarget)}
+                onClick={(e) => detectAt(e.currentTarget)}
+                onBlur={() => setTimeout(() => setAtMenu(null), 120)}
                 onKeyDown={onKeyDown}
+                onPaste={onPaste}
                 placeholder="描述你想生成的内容，或上传参考素材让模型自由发挥…  输入 / 使用技能，@ 添加主体"
               />
             </div>
@@ -857,6 +1478,43 @@ export default function ChatPage() {
           <div className="chat-hint">Enter 发送 · Shift+Enter 换行 · 可拖拽 / 粘贴添加参考</div>
         </div>
       </main>
+
+      {lightbox && (
+        <Lightbox
+          items={lightbox.items}
+          index={lightbox.index}
+          onClose={() => setLightbox(null)}
+          onStep={stepLightbox}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ── reference thumbnail (composer strip) ─────────────────────────────────── */
+
+function RefThumb({ item, onRemove }: { item: RefItem; onRemove: () => void }) {
+  const src = item.url || item.blobUrl;
+  return (
+    <div className={`ref-thumb${item.failed ? " failed" : ""}`}>
+      {item.kind === "image" ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={src} alt="参考" />
+      ) : item.kind === "video" ? (
+        // eslint-disable-next-line jsx-a11y/media-has-caption
+        <video src={src} muted />
+      ) : (
+        <span className="ref-aud">♪</span>
+      )}
+      {item.uploading && <span className="ref-spin" aria-label="上传中" />}
+      {item.failed && (
+        <span className="ref-badge" title="上传失败">
+          !
+        </span>
+      )}
+      <button type="button" className="ref-x" onClick={onRemove} aria-label="移除参考">
+        ×
+      </button>
     </div>
   );
 }
@@ -871,8 +1529,9 @@ function fallbackImage(id: string): string {
   return mesh(h, (h + 132) % 360, (h + 248) % 360);
 }
 
-/** pick the result URL from a task (resultMeta.urls[0] → resultUrl). */
-function taskResultUrl(t: MessageTaskVO): string {
+/** all valid result URLs from a task (resultMeta.urls[], falling back to
+ *  resultUrl). Multi-URL tasks (e.g. Midjourney 4-up) return every image. */
+function taskResultUrls(t: MessageTaskVO): string[] {
   let meta: Record<string, unknown> = {};
   if (typeof t.resultMeta === "string") {
     try {
@@ -884,23 +1543,174 @@ function taskResultUrl(t: MessageTaskVO): string {
     meta = t.resultMeta as Record<string, unknown>;
   }
   const arr = Array.isArray(meta.urls) ? (meta.urls as unknown[]) : [];
-  const first = arr.find((u) => typeof u === "string" && /^(https?:|data:)/.test(u));
-  if (typeof first === "string") return first;
-  return /^(https?:|data:)/.test(t.resultUrl || "") ? t.resultUrl : "";
+  const urls = arr.filter((u): u is string => typeof u === "string" && /^(https?:|data:)/.test(u));
+  if (urls.length) return urls;
+  return /^(https?:|data:)/.test(t.resultUrl || "") ? [t.resultUrl] : [];
+}
+
+/** Cross-environment clipboard write: navigator.clipboard (secure context) with
+ *  an execCommand fallback for plain-HTTP deploys where it is undefined. */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    /* fall through */
+  }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Download a media URL as a file. Tries a blob fetch (forces save even for a
+ *  cross-origin OSS URL); falls back to opening in a new tab on CORS failure. */
+async function downloadMedia(url: string, name: string): Promise<void> {
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error("fetch failed");
+    const blob = await r.blob();
+    const obj = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = obj;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(obj), 4000);
+  } catch {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
+
+/** A hover copy button (✓ feedback) used on prompt + text bubbles. */
+function CopyBtn({ text }: { text: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      type="button"
+      className="copy-btn"
+      title="复制"
+      onClick={async () => {
+        if (await copyText(text)) {
+          setDone(true);
+          setTimeout(() => setDone(false), 1200);
+        } else {
+          toast.error("复制失败");
+        }
+      }}
+    >
+      {done ? "✓" : "⧉"}
+    </button>
+  );
+}
+
+/** Lightbox state: a set of media items with a current index. */
+type LightboxItem = { url: string; video: boolean };
+
+/** Fullscreen lightbox with Esc-close and ←/→ wrap-around navigation. */
+function Lightbox({
+  items,
+  index,
+  onClose,
+  onStep,
+}: {
+  items: LightboxItem[];
+  index: number;
+  onClose: () => void;
+  onStep: (delta: number) => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      else if (e.key === "ArrowLeft") onStep(-1);
+      else if (e.key === "ArrowRight") onStep(1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, onStep]);
+
+  const cur = items[index];
+  if (!cur) return null;
+  return (
+    <div className="lightbox" onClick={onClose}>
+      <button className="lb-x" type="button" onClick={onClose} aria-label="关闭">
+        ×
+      </button>
+      {items.length > 1 && (
+        <>
+          <button
+            className="lb-nav prev"
+            type="button"
+            aria-label="上一张"
+            onClick={(e) => {
+              e.stopPropagation();
+              onStep(-1);
+            }}
+          >
+            ‹
+          </button>
+          <button
+            className="lb-nav next"
+            type="button"
+            aria-label="下一张"
+            onClick={(e) => {
+              e.stopPropagation();
+              onStep(1);
+            }}
+          >
+            ›
+          </button>
+          <span className="lb-count">
+            {index + 1} / {items.length}
+          </span>
+        </>
+      )}
+      <div className="lb-stage" onClick={(e) => e.stopPropagation()}>
+        {cur.video ? (
+          // eslint-disable-next-line jsx-a11y/media-has-caption
+          <video src={cur.url} controls autoPlay />
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={cur.url} alt="预览" />
+        )}
+      </div>
+    </div>
+  );
 }
 
 function Bubble({
   msg,
   onReEdit,
   onRegenerate,
+  onOpenLightbox,
 }: {
   msg: MessageVO;
   onReEdit: (m: MessageVO) => void;
   onRegenerate: (m: MessageVO) => void;
+  onOpenLightbox: (items: LightboxItem[], index: number) => void;
 }) {
   // 生成台 assistant result: rendered from its linked task (single source of truth).
   if (msg.role !== "user" && msg.taskId) {
-    return <AssistantResult msg={msg} onReEdit={onReEdit} onRegenerate={onRegenerate} />;
+    return (
+      <AssistantResult
+        msg={msg}
+        onReEdit={onReEdit}
+        onRegenerate={onRegenerate}
+        onOpenLightbox={onOpenLightbox}
+      />
+    );
   }
 
   const isMe = msg.role === "user";
@@ -921,37 +1731,48 @@ function Bubble({
                 ? `center / cover no-repeat url("${msg.content}")`
                 : fallbackImage(msg.id),
             }}
-            onClick={() =>
-              msg.content && window.open(msg.content, "_blank", "noopener,noreferrer")
-            }
+            onClick={() => msg.content && onOpenLightbox([{ url: msg.content, video: false }], 0)}
           />
         ) : isVideo && msg.content ? (
           // eslint-disable-next-line jsx-a11y/media-has-caption
           <video className="chat-gen-media" src={msg.content} controls />
-        ) : (
+        ) : isMe ? (
           <span>{msg.content}</span>
+        ) : (
+          <div className="md">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+          </div>
         )}
+        {!isImage && !isVideo && msg.content ? (
+          <div className="bubble-acts">
+            <CopyBtn text={msg.content} />
+          </div>
+        ) : null}
       </div>
     </div>
   );
 }
 
 /** AssistantResult renders a 生成台 result bubble from its task's live state:
- *  processing / failed / cancelled / expired(no task) / success(image|video). */
+ *  processing / failed / cancelled / expired(no task) / success(image|video).
+ *  Multi-URL results (MJ 4-up) render a grid; clicking any opens the lightbox. */
 function AssistantResult({
   msg,
   onReEdit,
   onRegenerate,
+  onOpenLightbox,
 }: {
   msg: MessageVO;
   onReEdit: (m: MessageVO) => void;
   onRegenerate: (m: MessageVO) => void;
+  onOpenLightbox: (items: LightboxItem[], index: number) => void;
 }) {
   const t = msg.task;
   const isVideo = msg.contentType === "video";
 
   let body: ReactNode;
   let done = false;
+  let primaryUrl = "";
   if (!t) {
     body = <div className="chat-gen-state warn">⚠ 该生成已过期，请重新生成</div>;
   } else if (t.status === AiTaskStatus.PROCESSING) {
@@ -970,20 +1791,36 @@ function AssistantResult({
   } else if (t.status === AiTaskStatus.CANCELLED) {
     body = <div className="chat-gen-state">已取消生成</div>;
   } else {
-    const url = taskResultUrl(t);
-    done = !!url;
-    if (!url) {
+    const urls = taskResultUrls(t);
+    done = urls.length > 0;
+    primaryUrl = urls[0] || "";
+    if (!urls.length) {
       body = <div className="chat-gen-state err">⚠ 生成结果无效</div>;
     } else if (isVideo) {
       // eslint-disable-next-line jsx-a11y/media-has-caption
-      body = <video className="chat-gen-media" src={url} controls />;
+      body = <video className="chat-gen-media" src={primaryUrl} controls />;
+    } else if (urls.length > 1) {
+      const items: LightboxItem[] = urls.map((u) => ({ url: u, video: false }));
+      body = (
+        <div className="chat-gen-grid">
+          {urls.map((u, i) => (
+            <div
+              key={u}
+              className="chat-gen-cell"
+              title="点击查看"
+              style={{ background: `center / cover no-repeat url("${u}")` }}
+              onClick={() => onOpenLightbox(items, i)}
+            />
+          ))}
+        </div>
+      );
     } else {
       body = (
         <div
           className="chat-gen-media"
           title="点击查看大图"
-          style={{ cursor: "zoom-in", background: `center / cover no-repeat url("${url}")` }}
-          onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
+          style={{ cursor: "zoom-in", background: `center / cover no-repeat url("${primaryUrl}")` }}
+          onClick={() => onOpenLightbox([{ url: primaryUrl, video: false }], 0)}
         />
       );
     }
@@ -1003,6 +1840,16 @@ function AssistantResult({
             <button type="button" onClick={() => onRegenerate(msg)}>
               ↻ {retryable ? "重试" : "再次生成"}
             </button>
+            {done && primaryUrl && (
+              <button
+                type="button"
+                onClick={() =>
+                  downloadMedia(primaryUrl, isVideo ? `gen-${msg.id}.mp4` : `gen-${msg.id}.png`)
+                }
+              >
+                ⤓ 下载
+              </button>
+            )}
           </div>
         )}
       </div>
