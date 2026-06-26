@@ -55,6 +55,43 @@ func (h genHandler) Execute(ctx context.Context, client AiProviderClient, req Ge
 	return client.Generate(ctx, req)
 }
 
+// presetEditHandler is a one-click image-edit capability (移除背景 / 物体移除 /
+// 高清放大 / 扩图). It carries a server-side preset instruction and reuses the
+// proven image_to_image (EditImage → /v1/images/edits) route: the source image
+// the user clicked is supplied by the client under imageList/sourceImage, and we
+// inject the engineered prompt here so the client never has to type one (and can
+// never override the operation's intent). `extra` seeds default request params
+// (e.g. resolution for upscale) without clobbering anything the client did send.
+type presetEditHandler struct {
+	name   string
+	prompt string
+	extra  map[string]any
+}
+
+func (h presetEditHandler) Name() string          { return h.name }
+func (h presetEditHandler) OperationType() string { return "edits" }
+func (h presetEditHandler) Async() bool           { return true }
+
+func (h presetEditHandler) Execute(ctx context.Context, client AiProviderClient, req GenerateRequest) (GenerateResult, error) {
+	if req.Input == nil {
+		req.Input = map[string]any{}
+	}
+	// The engineered instruction is authoritative — it drives the actual relay
+	// edit. (The client may still send a human label under "prompt" for history
+	// display; it is stored on the task but overridden here for the upstream call.)
+	req.Input["prompt"] = h.prompt
+	for k, v := range h.extra {
+		if _, ok := req.Input[k]; !ok {
+			req.Input[k] = v
+		}
+	}
+	// Route through the existing image-edit handler (provider_relay dispatches on
+	// req.Handler), which rewrites the source URL to the upstream-fetchable host
+	// and re-hosts the result onto our OSS.
+	req.Handler = "image_to_image"
+	return client.Generate(ctx, req)
+}
+
 // handlerRegistry maps handlerName -> GenHandler.
 type handlerRegistry struct {
 	handlers map[string]GenHandler
@@ -88,5 +125,36 @@ func builtinHandlers() []GenHandler {
 		genHandler{name: "start_end_to_video", op: "video", isAsync: true},
 		genHandler{name: "reference_to_video", op: "video", isAsync: true},
 		genHandler{name: "creative_desc", op: "generation", isAsync: false},
+
+		// One-click image-edit ops (per-result toolbar in 创作台). Each reuses the
+		// image-edit route with a fixed, server-owned instruction.
+		presetEditHandler{
+			name: "remove_bg",
+			prompt: "Completely remove the background of this image. Keep the main foreground subject perfectly intact " +
+				"with clean, precise edges and no halo or leftover fringe. Place the subject on a plain solid white " +
+				"background. Do not change, recolor, crop or restyle the subject itself.",
+		},
+		presetEditHandler{
+			name: "remove_object",
+			prompt: "Remove the unwanted and distracting elements from this image — stray people, clutter, text, " +
+				"watermarks and blemishes — while keeping the main subject and the overall composition unchanged. " +
+				"Realistically reconstruct the area behind the removed elements so the result looks natural and seamless.",
+		},
+		presetEditHandler{
+			name: "upscale",
+			prompt: "Upscale this image to a higher resolution. Greatly enhance sharpness, fine detail and texture " +
+				"clarity, and remove blur, noise and compression artifacts. Preserve the original content, composition, " +
+				"colors and style exactly — do not add, remove or alter any elements.",
+			// default to the highest tier so the output is genuinely larger; the
+			// frontend pairs this with a 4K-capable model. set-if-empty, so a client
+			// override still wins.
+			extra: map[string]any{"resolution": "4k", "quality": "high"},
+		},
+		presetEditHandler{
+			name: "outpaint",
+			prompt: "Expand this image outward on all sides, naturally extending the existing scene, lighting, " +
+				"perspective and art style to fill a larger canvas. Keep the original content unchanged and well " +
+				"composed; only generate new, seamlessly blended surroundings beyond the current borders.",
+		},
 	}
 }

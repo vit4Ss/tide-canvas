@@ -152,6 +152,18 @@
   box-shadow:0 50px 120px rgba(0,0,0,.7); display:grid; grid-template-columns:1.05fr .95fr; transform:scale(.96) translateY(10px); transition:transform .28s var(--ease);}
 .mask.show .modal{transform:none;}
 @media(max-width:760px){.modal{grid-template-columns:1fr; max-height:94vh;}}
+/* full-image zoom overlay (click the modal media to enlarge) — sits above the
+   modal mask (z-index:200); backdrop / ✕ / Esc closes it. */
+.modal-zoom{position:fixed; inset:0; z-index:1000; display:flex; align-items:center; justify-content:center;
+  padding:40px; background:rgba(0,0,0,.86); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
+  cursor:zoom-out; animation:wsZoomFade .18s var(--ease);}
+.modal-zoom img{max-width:92vw; max-height:92vh; object-fit:contain; border-radius:12px;
+  box-shadow:0 30px 90px rgba(0,0,0,.7); cursor:default;}
+.modal-zoom-x{position:fixed; top:20px; right:24px; width:40px; height:40px; border-radius:50%;
+  border:1px solid var(--border-strong); background:rgba(20,22,30,.7); color:#fff; font-size:17px;
+  cursor:pointer; display:grid; place-items:center; transition:background .15s;}
+.modal-zoom-x:hover{background:rgba(40,42,54,.92);}
+@keyframes wsZoomFade{from{opacity:0;}to{opacity:1;}}
 .modal-media{position:relative; min-height:380px; overflow:hidden;}
 .modal-media .cov{position:absolute; inset:0;}
 .modal-media::after{content:''; position:absolute; inset:0; pointer-events:none;

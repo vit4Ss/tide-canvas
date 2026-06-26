@@ -1611,7 +1611,16 @@ function CopyBtn({ text }: { text: string }) {
         }
       }}
     >
-      {done ? "✓" : "⧉"}
+      {done ? (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 12.5l5 5L20 6.5" />
+        </svg>
+      ) : (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="9" y="9" width="11" height="11" rx="2" />
+          <path d="M5 15V5a2 2 0 0 1 2-2h8" />
+        </svg>
+      )}
     </button>
   );
 }

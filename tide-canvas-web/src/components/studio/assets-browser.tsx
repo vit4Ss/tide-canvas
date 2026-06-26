@@ -10,6 +10,7 @@
    ========================================================================== */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { aiApi, fileApi, uploadFileSmart } from "@/lib/api";
 import { useAuthStore } from "@/stores/use-auth-store";
 import type { FileVO } from "@/types/file";
@@ -102,6 +103,27 @@ function fileKind(f: FileVO): FilterKey {
   return "doc";
 }
 
+/** A previewable / downloadable asset surfaced from a card click. */
+interface OpenAsset {
+  url: string;
+  kind: FilterKey;
+  name: string;
+}
+
+/** Force a download through the public server proxy, which adds a
+ *  Content-Disposition: attachment header (so cross-origin OSS files actually
+ *  download instead of opening) and bypasses CORS. Same-origin /api path is
+ *  rewritten to the backend by next.config. */
+function downloadAsset(url: string, name: string): void {
+  const href = `/api/files/download?url=${encodeURIComponent(url)}&name=${encodeURIComponent(name || "download")}`;
+  const a = document.createElement("a");
+  a.href = href;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
 interface Group<T> {
   date: string;
   items: T[];
@@ -144,9 +166,38 @@ export function AssetsBrowser({
   const [files, setFiles] = useState<FileVO[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  // in-app preview overlay target (image/video/audio); docs never set this.
+  const [preview, setPreview] = useState<OpenAsset | null>(null);
+
+  // open a clicked asset: media (image/video/audio) previews in-app; a 文档
+  // downloads straight away (per the asset-type preview rules).
+  const openAsset = useCallback((item: OpenAsset) => {
+    if (!item.url) {
+      toast.info("该资产暂无可用内容");
+      return;
+    }
+    if (item.kind === "doc") downloadAsset(item.url, item.name);
+    else setPreview(item);
+  }, []);
 
   const ensureSession = useAuthStore((s) => s.ensureSession);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const router = useRouter();
+
+  // hand a previewed image off to the 创作台 and load it into the matching tool
+  // (作为垫图 → 图生图 / 生成视频 → 图生视频首帧 / 精细编辑 → 改图).
+  const sendToStudio = useCallback(
+    (op: "pad" | "video" | "edit") => {
+      if (!preview) return;
+      try {
+        sessionStorage.setItem("studio_use_asset", JSON.stringify({ url: preview.url, op }));
+      } catch {
+        /* sessionStorage may be unavailable */
+      }
+      router.push("/studio");
+    },
+    [preview, router],
+  );
 
   // 生成历史: all of the user's generation tasks (filtered client-side by type).
   const loadTasks = useCallback(async () => {
@@ -184,6 +235,16 @@ export function AssetsBrowser({
     if (tab === "hist") loadTasks();
     else loadFiles();
   }, [tab, loadTasks, loadFiles]);
+
+  // Escape closes the preview overlay.
+  useEffect(() => {
+    if (!preview) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPreview(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [preview]);
 
   // tasks of the active media type, date-grouped (audio/doc → none for 生成历史).
   const taskGroups = useMemo(() => {
@@ -328,6 +389,7 @@ export function AssetsBrowser({
                     star={i === 1 || i === 9}
                     pickMode={pickMode}
                     onPick={onPick}
+                    onOpen={openAsset}
                   />
                 ))}
               </div>
@@ -345,6 +407,7 @@ export function AssetsBrowser({
                     delay={(i % 8) * 0.02}
                     pickMode={pickMode}
                     onPick={onPick}
+                    onOpen={openAsset}
                   />
                 ))}
               </div>
@@ -352,6 +415,61 @@ export function AssetsBrowser({
           ))
         )}
       </div>
+
+      {/* in-app preview overlay — image / video / audio; backdrop / ✕ / Esc closes */}
+      {preview && (
+        <div className="as-preview" onClick={() => setPreview(null)}>
+          <div className="as-preview-bar" onClick={(e) => e.stopPropagation()}>
+            <span className="as-preview-name">{preview.name}</span>
+            <button
+              type="button"
+              className="as-preview-dl"
+              onClick={() => downloadAsset(preview.url, preview.name)}
+            >
+              ↓ 下载
+            </button>
+            <button
+              type="button"
+              className="as-preview-x"
+              aria-label="关闭"
+              onClick={() => setPreview(null)}
+            >
+              ✕
+            </button>
+          </div>
+          <div className="as-preview-stage" onClick={(e) => e.stopPropagation()}>
+            {preview.kind === "image" && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={preview.url} alt={preview.name} />
+            )}
+            {preview.kind === "video" && (
+              <video src={preview.url} controls autoPlay playsInline />
+            )}
+            {preview.kind === "audio" && (
+              <div className="as-preview-audio">
+                <span className="as-preview-audio-ic">♪</span>
+                <b>{preview.name}</b>
+                <audio src={preview.url} controls autoPlay />
+              </div>
+            )}
+          </div>
+
+          {/* image-only quick actions: hand off to 创作台 */}
+          {preview.kind === "image" && !pickMode && (
+            <div className="as-preview-ops" onClick={(e) => e.stopPropagation()}>
+              <button type="button" onClick={() => sendToStudio("pad")}>
+                作为垫图
+              </button>
+              <button type="button" onClick={() => sendToStudio("video")}>
+                生成视频
+              </button>
+              <button type="button" onClick={() => sendToStudio("edit")}>
+                精细编辑
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </main>
   );
 }
@@ -364,12 +482,14 @@ function TaskCard({
   star,
   pickMode,
   onPick,
+  onOpen,
 }: {
   task: AiTaskVO;
   delay: number;
   star: boolean;
   pickMode?: boolean;
   onPick?: (asset: PickedAsset) => void;
+  onOpen?: (asset: OpenAsset) => void;
 }) {
   const isVid = (HANDLER_TYPE[task.handler] ?? "image") === "video";
   const cover = task.resultUrl
@@ -385,8 +505,11 @@ function TaskCard({
       }
       return;
     }
-    if (task.resultUrl) window.open(task.resultUrl, "_blank", "noopener,noreferrer");
-    else toast.info("该生成暂无可预览的结果");
+    if (task.resultUrl) {
+      onOpen?.({ url: task.resultUrl, kind: isVid ? "video" : "image", name: task.modelName || "生成结果" });
+    } else {
+      toast.info("该生成暂无可预览的结果");
+    }
   };
 
   return (
@@ -412,11 +535,13 @@ function UploadCard({
   delay,
   pickMode,
   onPick,
+  onOpen,
 }: {
   file: FileVO;
   delay: number;
   pickMode?: boolean;
   onPick?: (asset: PickedAsset) => void;
+  onOpen?: (asset: OpenAsset) => void;
 }) {
   const kind = fileKind(file);
   const isImg = kind === "image";
@@ -430,8 +555,11 @@ function UploadCard({
       }
       return;
     }
-    if (file.fileUrl) window.open(file.fileUrl, "_blank", "noopener,noreferrer");
-    else toast.info("该文件暂无可预览的内容");
+    if (file.fileUrl) {
+      onOpen?.({ url: file.fileUrl, kind, name: file.originalName || "文件" });
+    } else {
+      toast.info("该文件暂无可预览的内容");
+    }
   };
 
   return (

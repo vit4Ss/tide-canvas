@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
@@ -216,44 +217,113 @@ func (p *relayProviderClient) result(ctx context.Context, res relaymedia.Result,
 
 // rehost downloads each relay-hosted result and re-uploads it to our storage
 // (OSS), returning the stable public URLs. On any failure the original relay URL
-// is kept so generation still succeeds — just on the upstream host.
+// is kept so generation still succeeds — just on the upstream host. The downloads
+// run concurrently so a multi-image batch (or a slow/retrying CDN) does not
+// serialize: worst-case wall time is one slowest URL, not their sum.
 func (p *relayProviderClient) rehost(ctx context.Context, urls []string) []string {
 	if p.store == nil || len(urls) == 0 {
 		return urls
 	}
 	out := make([]string, len(urls))
+	var wg sync.WaitGroup
 	for i, u := range urls {
-		if saved, err := p.saveRemote(ctx, u); err == nil && saved != "" {
-			out[i] = saved
-		} else {
-			out[i] = u
-		}
+		wg.Add(1)
+		go func(i int, u string) {
+			defer wg.Done()
+			if saved, err := p.saveRemote(ctx, u); err == nil && saved != "" {
+				out[i] = saved
+			} else {
+				out[i] = u
+			}
+		}(i, u)
 	}
+	wg.Wait()
 	return out
 }
 
+// rehostRetries is how many times a relay-media download is attempted before
+// giving up. The relay's result CDNs intermittently drop connections mid-transfer
+// ("connection forcibly closed"); a single attempt would then fall back to the
+// ephemeral relay URL, which expires — so a couple of quick retries materially
+// raise the share of results that make it onto our durable OSS.
+const rehostRetries = 3
+
 // saveRemote downloads srcURL and stores its bytes under a deterministic key,
-// returning the public URL on our storage.
+// returning the public URL on our storage. The download (fetch + full read) is
+// retried on transient failures; the OSS upload is not (it is reliable and a
+// retry would re-download needlessly).
 func (p *relayProviderClient) saveRemote(ctx context.Context, srcURL string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srcURL, nil)
+	data, ct, err := fetchRemote(ctx, srcURL)
 	if err != nil {
 		return "", err
 	}
-	resp, err := rehostHC.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("relay rehost: fetch %s: HTTP %d", srcURL, resp.StatusCode)
-	}
-	ct := strings.TrimSpace(resp.Header.Get("Content-Type"))
 	key := "gen/" + sha1Hex(srcURL) + mediaExt(srcURL, ct)
 	if ct == "" {
 		ct = "application/octet-stream"
 	}
-	// cap the copy at 64MB so a misbehaving upstream can't exhaust memory.
-	return p.store.Save(ctx, key, io.LimitReader(resp.Body, 64<<20), ct)
+	// Hand storage a *bytes.Reader, never the raw *io.LimitedReader: the Aliyun OSS
+	// SDK reads a LimitedReader's .N field as the Content-Length, advertising 64MB
+	// for a 700KB image, which the HTTP transport rejects ("ContentLength=... with
+	// Body length ...") so the upload fails and we silently fall back to the
+	// ephemeral relay URL. A bytes.Reader exposes its true length.
+	return p.store.Save(ctx, key, bytes.NewReader(data), ct)
+}
+
+// fetchRemote downloads srcURL into memory (capped at maxRehostBytes so a
+// misbehaving upstream can't exhaust memory), retrying the whole fetch+read on
+// transient network/HTTP errors. Returns the bytes and the response Content-Type.
+func fetchRemote(ctx context.Context, srcURL string) ([]byte, string, error) {
+	var lastErr error
+	for attempt := 1; attempt <= rehostRetries; attempt++ {
+		data, ct, err := fetchOnce(ctx, srcURL)
+		if err == nil {
+			return data, ct, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil {
+			break // caller cancelled / deadline exceeded — stop retrying
+		}
+		if attempt < rehostRetries {
+			// brief linear backoff (0.5s, 1.0s) before the next try
+			select {
+			case <-ctx.Done():
+			case <-time.After(time.Duration(attempt) * 500 * time.Millisecond):
+			}
+		}
+	}
+	return nil, "", lastErr
+}
+
+// maxRehostBytes caps an in-memory rehost download. Generous enough for short AI
+// videos; images are far smaller. A body that exceeds it is treated as an error
+// (not silently truncated) so we never store a corrupt file under a SUCCESS URL.
+const maxRehostBytes = 256 << 20
+
+// fetchOnce performs a single download attempt.
+func fetchOnce(ctx context.Context, srcURL string) ([]byte, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srcURL, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	resp, err := rehostHC.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("relay rehost: fetch %s: HTTP %d", srcURL, resp.StatusCode)
+	}
+	// Read one byte past the cap so an oversized body is detected rather than
+	// silently truncated to a corrupt file (io.LimitReader + io.ReadAll would
+	// otherwise return the truncated bytes with a nil error).
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxRehostBytes+1))
+	if err != nil {
+		return nil, "", fmt.Errorf("relay rehost: read body: %w", err)
+	}
+	if int64(len(data)) > maxRehostBytes {
+		return nil, "", fmt.Errorf("relay rehost: %s exceeds %d MB cap", srcURL, maxRehostBytes>>20)
+	}
+	return data, strings.TrimSpace(resp.Header.Get("Content-Type")), nil
 }
 
 func sha1Hex(s string) string {

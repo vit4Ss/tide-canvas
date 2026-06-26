@@ -16,7 +16,7 @@
    - Backdrop click + Escape close; body scroll lock while open.
    ========================================================================== */
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Artwork } from "@/mock";
 import { coverBg, fmt } from "@/mock";
@@ -32,12 +32,20 @@ export interface WorkModalProps {
 export default function WorkModal({ work, onClose }: WorkModalProps) {
   const router = useRouter();
   const open = !!work;
+  // full-image zoom (click the media to enlarge a real image result). The zoom
+  // overlay covers the modal's close controls, so the modal can only be dismissed
+  // once the zoom is closed — i.e. zoom is always false by the time work changes,
+  // which is why no cross-work reset is needed.
+  const [zoom, setZoom] = useState(false);
 
-  // Escape to close + body scroll lock (mirrors shell.js ensureModal/openWork).
+  // Escape + body scroll lock (mirrors shell.js ensureModal/openWork). While the
+  // zoom overlay is open, Escape closes the zoom first, then the modal.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      if (zoom) setZoom(false);
+      else onClose();
     };
     document.addEventListener("keydown", onKey);
     document.body.classList.add("scroll-lock");
@@ -45,12 +53,14 @@ export default function WorkModal({ work, onClose }: WorkModalProps) {
       document.removeEventListener("keydown", onKey);
       document.body.classList.remove("scroll-lock");
     };
-  }, [open, onClose]);
+  }, [open, onClose, zoom]);
 
   if (!work) return null;
 
   const a = work;
   const isVid = a.type === "video";
+  // only a real image (not a mesh-placeholder cover, not a video) can be zoomed.
+  const canZoom = !!a.src && !isVid;
 
   // Defaults match shell.js openWork() when params are missing.
   const neg = a.negPrompt || "低质量, 模糊, 多余肢体, 水印, 畸变, 文字";
@@ -97,7 +107,11 @@ export default function WorkModal({ work, onClose }: WorkModalProps) {
               background: a.src
                 ? `center / cover no-repeat url("${a.src}")`
                 : coverBg(a.cover),
+              ...(canZoom ? { cursor: "zoom-in" } : {}),
             }}
+            onClick={canZoom ? () => setZoom(true) : undefined}
+            role={canZoom ? "button" : undefined}
+            aria-label={canZoom ? "放大查看" : undefined}
           />
           {isVid && <span className="play-orb">▶</span>}
           <button type="button" className="modal-x" aria-label="关闭" onClick={onClose}>
@@ -190,6 +204,22 @@ export default function WorkModal({ work, onClose }: WorkModalProps) {
           </div>
         </div>
       </div>
+
+      {/* full-image zoom — click the media to enlarge; backdrop / ✕ / Esc closes */}
+      {zoom && a.src && (
+        <div className="modal-zoom" onClick={() => setZoom(false)}>
+          <button
+            type="button"
+            className="modal-zoom-x"
+            aria-label="关闭"
+            onClick={() => setZoom(false)}
+          >
+            ✕
+          </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={a.src} alt={a.title} onClick={(e) => e.stopPropagation()} />
+        </div>
+      )}
     </div>
   );
 }

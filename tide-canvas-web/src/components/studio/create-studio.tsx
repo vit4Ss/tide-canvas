@@ -138,6 +138,93 @@ const SLOT_ICON: Record<SlotType, ReactNode> = {
   ),
 };
 
+/* per-result floating toolbar (hover a finished image). The first three load the
+   image into a tool's reference slot (作为垫图 / 生成视频 / 精细编辑); the rest are
+   one-click edit ops wired to dedicated backend handlers (扩图 / 高清放大 /
+   移除背景 / 物体移除). The `real` flag drives styling only — all are functional. */
+interface CellTool {
+  act: string;
+  label: string;
+  real: boolean;
+  icon: ReactNode;
+}
+const CELL_TOOLS: CellTool[] = [
+  {
+    act: "pad",
+    label: "作为垫图",
+    real: true,
+    icon: (
+      <svg viewBox="0 0 24 24">
+        <path d="M12 3l8 4-8 4-8-4 8-4z" />
+        <path d="M4 12l8 4 8-4" />
+        <path d="M4 16.5l8 4 8-4" />
+      </svg>
+    ),
+  },
+  {
+    act: "video",
+    label: "生成视频",
+    real: true,
+    icon: (
+      <svg viewBox="0 0 24 24">
+        <rect x="3" y="5" width="13" height="14" rx="2.5" />
+        <path d="M16 10l5-3v10l-5-3z" />
+      </svg>
+    ),
+  },
+  {
+    act: "edit",
+    label: "精细编辑",
+    real: true,
+    icon: (
+      <svg viewBox="0 0 24 24">
+        <path d="M4 20h4L18.5 9.5a2 2 0 0 0-3-3L5 17v3z" />
+        <path d="M13.5 6.5l3 3" />
+      </svg>
+    ),
+  },
+  {
+    act: "expand",
+    label: "扩图",
+    real: true,
+    icon: (
+      <svg viewBox="0 0 24 24">
+        <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M3 16v3a2 2 0 0 0 2 2h3" />
+      </svg>
+    ),
+  },
+  {
+    act: "hd",
+    label: "高清放大",
+    real: true,
+    icon: <span className="hd-glyph">HD</span>,
+  },
+  {
+    act: "rmbg",
+    label: "移除背景",
+    real: true,
+    icon: (
+      <svg viewBox="0 0 24 24">
+        <circle cx="6" cy="6" r="2.6" />
+        <circle cx="6" cy="18" r="2.6" />
+        <path d="M8.4 7.6L20 18M8.4 16.4L20 6" />
+      </svg>
+    ),
+  },
+  {
+    act: "rmobj",
+    label: "物体移除",
+    real: true,
+    icon: (
+      <svg viewBox="0 0 24 24">
+        <path d="M5.5 15.5l5-5 5 5-3.5 3.5H9l-3.5-3.5z" />
+        <path d="M10.5 10.5l5-5a2 2 0 0 1 3 0l1.5 1.5a2 2 0 0 1 0 3l-5 5" />
+        <path d="M8.5 19H20" />
+      </svg>
+    ),
+  },
+];
+
 interface ModelMeta {
   tag: string;
   by: string;
@@ -247,6 +334,11 @@ const HIST_HANDLER_TYPE: Record<string, ArtworkType> = {
   image_to_video: "video",
   start_end_to_video: "video",
   reference_to_video: "video",
+  // one-click image-edit ops (per-result toolbar)
+  remove_bg: "image",
+  remove_object: "image",
+  upscale: "image",
+  outpaint: "image",
 };
 
 /** backend generation handler → studio ToolKey (reverse of TOOL_TO_HANDLER). */
@@ -257,6 +349,19 @@ const HIST_HANDLER_TOOL: Record<string, ToolKey> = {
   image_to_video: "i2v",
   start_end_to_video: "flf",
   reference_to_video: "ref",
+  // edit ops restore into the 改图 tool (i2i family)
+  remove_bg: "edit",
+  remove_object: "edit",
+  upscale: "edit",
+  outpaint: "edit",
+};
+
+/** one-click edit op → its backend handler name (per-result toolbar buttons). */
+const EDIT_OP_HANDLER: Record<string, string> = {
+  rmbg: "remove_bg",
+  rmobj: "remove_object",
+  hd: "upscale",
+  expand: "outpaint",
 };
 
 /** parse a stored task input (object or JSON string) into a plain record. */
@@ -441,6 +546,11 @@ export default function CreateStudio() {
   // full settings of the last started run (for 重新编辑 / 再次生成) + a one-shot
   // flag that fires generate() after those settings are restored to the panel.
   const lastRunRef = useRef<RunParams | null>(null);
+  // synchronous in-flight latch: `busy` state is set asynchronously (and, for the
+  // one-click edit ops, only after a network round-trip), so it cannot prevent a
+  // rapid double-click from firing two backend tasks. This ref is flipped true
+  // before any await and cleared wherever the run settles (every setBusy(false)).
+  const genInFlightRef = useRef(false);
   const [pendingGen, setPendingGen] = useState(false);
   // ensures the stage is seeded with the last past result at most once per mount.
   const stageSeededRef = useRef(false);
@@ -551,16 +661,40 @@ export default function CreateStudio() {
   /* ── prompt / model handoff (mount) ──────────────────────────────────── */
 
   useEffect(() => {
-    // accept a prompt / model handoff from "生成同款" (create.js + work-modal).
+    // accept a prompt / model handoff from "生成同款" (create.js + work-modal),
+    // and an asset handoff from the 资产库 preview (作为垫图 / 生成视频 / 精细编辑).
     // Reading sessionStorage is an external-system read that can only run on the
     // client post-mount (avoids a hydration mismatch from a lazy initializer),
     // so setting state here is the intended pattern despite the lint heuristic.
     try {
+      // asset handoff: load a picked image into the matching tool's slot.
+      const rawAsset = sessionStorage.getItem("studio_use_asset");
+      if (rawAsset) {
+        sessionStorage.removeItem("studio_use_asset");
+        try {
+          const { url, op } = JSON.parse(rawAsset) as { url?: string; op?: string };
+          const route: Record<string, [ArtworkType, ToolKey, string, string]> = {
+            pad: ["image", "i2i", "img", "已作为垫图载入图生图 · 描述想要的改动"],
+            video: ["video", "i2v", "first", "已载入图生视频首帧 · 描述运动"],
+            edit: ["image", "edit", "img", "已载入改图 · 描述要精修的部分"],
+          };
+          const r = route[op || "pad"] || route.pad;
+          if (url) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect
+            setCurType(r[0]);
+            setTool(r[1]);
+            setSlotData({ [r[2]]: [{ g: url, url, n: "垫图", s: "" }] });
+            toast.success(r[3]);
+          }
+        } catch {
+          /* malformed handoff */
+        }
+      }
+
       const p = sessionStorage.getItem("flux_prompt");
       const m = sessionStorage.getItem("flux_model");
       if (!p && !m) return;
       if (p) {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
         setPrompt(p);
         sessionStorage.removeItem("flux_prompt");
       }
@@ -1097,13 +1231,151 @@ export default function CreateStudio() {
     [pushHistory],
   );
 
+  // Release the synchronous in-flight latch whenever a run settles (busy → false).
+  // This single effect covers every setBusy(false) path (driveRun finish/fail/
+  // cancelled, startGeneration failure, the simulation branch); paths that set the
+  // latch but never start a run (a thrown one-click op) clear it themselves.
+  useEffect(() => {
+    if (!busy) genInFlightRef.current = false;
+  }, [busy]);
+
+  /* Create a backend task and hand the progress UI + polling to driveRun. Shared
+     by the panel generate() and the one-click per-result edit ops, so both go
+     through the exact same task-create → persist → drive path. */
+  const startGeneration = useCallback(
+    async (args: {
+      handler: string;
+      modelId: string;
+      input: Record<string, unknown>;
+      meta: Omit<ActiveRun, "taskId" | "startedAt">;
+    }) => {
+      const myRun = (runIdRef.current += 1);
+      setBusy(true);
+      try {
+        await ensureSession();
+        if (runIdRef.current !== myRun) return;
+        const res2 = await aiApi.generate({
+          handler: args.handler,
+          modelId: args.modelId,
+          input: args.input,
+        });
+        if (runIdRef.current !== myRun) return;
+        if (!res2.success) {
+          setBusy(false);
+          toast.error(res2.message || "生成请求失败");
+          return;
+        }
+        const run: ActiveRun = { taskId: res2.data.id, ...args.meta, startedAt: Date.now() };
+        try {
+          localStorage.setItem(ACTIVE_RUN_KEY, JSON.stringify(run));
+        } catch {
+          /* storage unavailable — generation still works, just no refresh-resume */
+        }
+        driveRun(run);
+      } catch {
+        setBusy(false);
+        toast.error("网络错误");
+      }
+    },
+    [ensureSession, driveRun],
+  );
+
+  /* One-click per-result edit op (移除背景 / 物体移除 / 高清放大 / 扩图). Fires a
+     real generation on the clicked image with a fixed backend handler — the
+     server owns the edit instruction, so the user types nothing. The op always
+     runs on an image-edit model (resolved independently of the current panel
+     model, which may be a video model), and 高清放大 prefers a 4K-capable one. */
+  const oneClickEdit = useCallback(
+    async (op: string, imageUrl: string, label: string) => {
+      if (busy || genInFlightRef.current) {
+        toast.info("正在生成中，请稍候…");
+        return;
+      }
+      const handler = EDIT_OP_HANDLER[op];
+      if (!handler || !imageUrl) {
+        toast.info("该结果暂无可用图片");
+        return;
+      }
+      // latch synchronously, before the awaits below, so a rapid double-click
+      // can't slip a second task through (busy is only set later, inside
+      // startGeneration). Cleared on every exit that doesn't hand off to a run.
+      genInFlightRef.current = true;
+      try {
+        await ensureSession();
+        // resolve an image-edit-capable model (independent of the current panel
+        // type, since the panel may be on 视频 while editing an image result).
+        const r = await marketApi.studioModels("image");
+        const models = (r.success && r.data ? r.data : []) as StudioModelVO[];
+        const editable = models.filter((m) => {
+          const c = m.config;
+          return (c?.operations?.includes("edits") ?? false) || (c?.modes?.includes("i2i") ?? false);
+        });
+        const pool = editable.length ? editable : models;
+        const is4k = (m: StudioModelVO) =>
+          /4k/i.test(m.modelKey || "") || /4k|4K/.test(m.name);
+        let pick: StudioModelVO | undefined;
+        if (op === "hd") {
+          pick = pool.find(is4k) ?? pool.find((m) => model === m.name) ?? pool[0];
+        } else {
+          pick =
+            pool.find((m) => m.name === model) ??
+            pool.find((m) => /nano-banana-2$/.test(m.modelKey || "")) ??
+            pool.find((m) => /gpt-image-2/.test(m.modelKey || "")) ??
+            pool[0];
+        }
+        const modelId = pick?.modelKey || pick?.id || "";
+        if (!modelId) {
+          genInFlightRef.current = false;
+          toast.error("没有可用的图像编辑模型");
+          return;
+        }
+        // input carries only the source image (+ a human label under prompt for
+        // history display; the backend overrides it with the engineered prompt)
+        // and, for 高清放大, the 4K resolution hint.
+        const input: Record<string, unknown> = {
+          imageList: [imageUrl],
+          sourceImage: imageUrl,
+          prompt: label,
+          ...(op === "hd" ? { resolution: "4k", clarity: "4k", quality: "high" } : {}),
+        };
+        const hsh = promptHue(imageUrl);
+        const hues: MeshHues[] = [[hsh, (hsh + 80) % 360, (hsh + 200) % 360]];
+        setHistPage(1);
+        // a one-click edit is server-driven with no panel params, so clear the
+        // last-run snapshot: the result's 再次生成 / 重新编辑 foot actions must not
+        // replay the previous (unrelated) panel run.
+        lastRunRef.current = null;
+        await startGeneration({
+          handler,
+          modelId,
+          input,
+          meta: {
+            prompt: label,
+            model: pick?.name || model,
+            ratio: runMeta?.ratio ?? "1:1",
+            spec: label,
+            count: 1,
+            isVid: false,
+            label,
+            hues,
+            refThumbs: [imageUrl],
+          },
+        });
+      } catch {
+        genInFlightRef.current = false;
+        toast.error("网络错误，请重试");
+      }
+    },
+    [busy, ensureSession, model, runMeta, startGeneration],
+  );
+
   /* ── generation ───────────────────────────────────────────────────────────
      Calls the real backend (/api/ai/generate → poll /api/ai/tasks/:id) when a
      real studio model is selected; falls back to the design-preview simulation
      only when no backend model is available (studioList empty). */
 
   const generate = useCallback(() => {
-    if (busy) return;
+    if (busy || genInFlightRef.current) return;
     const p = prompt.trim();
     if (!p) {
       toast.info("先写一句提示词吧 ✦");
@@ -1139,6 +1411,9 @@ export default function CreateStudio() {
       if (auds.length) refInput.audioReferences = auds;
     }
 
+    // all early-return guards passed → latch synchronously (before any state
+    // update / the async startGeneration) so a double-click can't double-fire.
+    genInFlightRef.current = true;
     setBusy(true);
 
     const n = count;
@@ -1172,7 +1447,9 @@ export default function CreateStudio() {
       clearTimeout(pollRef.current);
       pollRef.current = null;
     }
-    const myRun = (runIdRef.current += 1);
+    // invalidate any in-flight poll from a previous run (startGeneration/driveRun
+    // each take their own run id from here).
+    runIdRef.current += 1;
 
     const selStudio = studioList.find((m) => m.name === model) ?? null;
     const modelId = selStudio?.modelKey || selStudio?.id || "";
@@ -1205,60 +1482,31 @@ export default function CreateStudio() {
       return;
     }
 
-    // ── real generation: create the task, persist it for refresh-resume, then
-    // hand off the progress UI + polling to driveRun. ─────────────────────
-    (async () => {
-      try {
-        await ensureSession();
-        if (runIdRef.current !== myRun) return;
-        const input: Record<string, unknown> = {
-          prompt: p,
-          ...refInput,
-          ...(ratioOpts.length ? { aspectRatio: r, aspect_ratio: r, ratio: r } : {}),
-          ...(isVid
-            ? {
-                ...(resOpts.length ? { resolution: res } : {}),
-                ...(durOpts.length ? { duration: dur } : {}),
-              }
-            : {
-                ...(resOpts.length ? { clarity: imgRes, resolution: imgRes } : {}),
-                ...(qualOpts.length ? { quality } : {}),
-              }),
-          ...(n > 1 ? { batchCount: n } : {}),
-        };
-        const res2 = await aiApi.generate({ handler: TOOL_TO_HANDLER[tool], modelId, input });
-        if (runIdRef.current !== myRun) return;
-        if (!res2.success) {
-          setBusy(false);
-          toast.error(res2.message || "生成请求失败");
-          return;
-        }
-        const run: ActiveRun = {
-          taskId: res2.data.id,
-          prompt: p,
-          model: mdl,
-          ratio: r,
-          spec,
-          count: n,
-          isVid,
-          label,
-          hues,
-          refThumbs,
-          startedAt: Date.now(),
-        };
-        try {
-          localStorage.setItem(ACTIVE_RUN_KEY, JSON.stringify(run));
-        } catch {
-          /* storage unavailable — generation still works, just no refresh-resume */
-        }
-        driveRun(run);
-      } catch {
-        setBusy(false);
-        toast.error("网络错误");
-      }
-    })();
+    // ── real generation: build the input, then hand off to startGeneration
+    // (shared task-create → persist → drive path). ────────────────────────
+    const input: Record<string, unknown> = {
+      prompt: p,
+      ...refInput,
+      ...(ratioOpts.length ? { aspectRatio: r, aspect_ratio: r, ratio: r } : {}),
+      ...(isVid
+        ? {
+            ...(resOpts.length ? { resolution: res } : {}),
+            ...(durOpts.length ? { duration: dur } : {}),
+          }
+        : {
+            ...(resOpts.length ? { clarity: imgRes, resolution: imgRes } : {}),
+            ...(qualOpts.length ? { quality } : {}),
+          }),
+      ...(n > 1 ? { batchCount: n } : {}),
+    };
+    void startGeneration({
+      handler: TOOL_TO_HANDLER[tool],
+      modelId,
+      input,
+      meta: { prompt: p, model: mdl, ratio: r, spec, count: n, isVid, label, hues, refThumbs },
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busy, prompt, count, tool, ratio, model, res, dur, imgRes, quality, studioList, ratioOpts, resOpts, durOpts, qualOpts, ensureSession, pushHistory, driveRun]);
+  }, [busy, prompt, count, tool, curType, ratio, model, res, dur, imgRes, quality, slotData, studioList, ratioOpts, resOpts, durOpts, qualOpts, pushHistory, startGeneration]);
 
   // Refresh-resume: on mount, if a generation was in flight (persisted at start),
   // restore the generating UI and resume polling — the task keeps running on the
@@ -1348,17 +1596,63 @@ export default function CreateStudio() {
     resetRun();
   };
 
-  // per-cell hover actions (create.js gen-acts).
-  const cellAction = (act: string, cell: ResultCell) => {
-    if (act === "del") {
-      setCells((prev) => prev.filter((c) => c.i !== cell.i));
-      toast.info("已删除");
-    } else if (act === "regen") {
-      if (runMeta) setPrompt(runMeta.prompt);
-      toast.info("已带入提示词 · 可重新生成");
-    } else {
-      toast.info("编辑 · 高保真原型");
+  // load a finished result into a tool's reference slot, then switch to that tool
+  // so the user can immediately describe the change. selectTool() clears slotData,
+  // and our setSlotData runs in the same batch so the injected slot wins.
+  const applyImageToTool = (
+    cell: ResultCell,
+    type: ArtworkType,
+    toolKey: ToolKey,
+    slotKey: string,
+    doneToast: string,
+  ) => {
+    if (!cell.url) {
+      toast.info("该结果暂无可用图片");
+      return;
     }
+    setCurType(type);
+    selectTool(toolKey);
+    setSlotData({ [slotKey]: [{ g: cell.url, url: cell.url, n: "垫图", s: "" }] });
+    toast.success(doneToast);
+    setTimeout(() => promptRef.current?.focus(), 0);
+  };
+
+  // per-cell hover toolbar (作为垫图 / 生成视频 / 精细编辑 / 扩图 / 高清放大 /
+  // 移除背景 / 物体移除). The first three load the image into a panel tool; the rest
+  // fire a one-click generation against a dedicated backend edit handler.
+  const cellTool = (act: string, cell: ResultCell) => {
+    switch (act) {
+      case "pad":
+        applyImageToTool(cell, "image", "i2i", "img", "已作为垫图载入图生图 · 描述想要的改动");
+        break;
+      case "video":
+        applyImageToTool(cell, "video", "i2v", "first", "已载入图生视频首帧 · 描述运动");
+        break;
+      case "edit":
+        applyImageToTool(cell, "image", "edit", "img", "已载入改图 · 描述要精修的部分");
+        break;
+      case "expand":
+      case "hd":
+      case "rmbg":
+      case "rmobj": {
+        if (!cell.url) {
+          toast.info("该结果暂无可用图片");
+          break;
+        }
+        const label = CELL_TOOLS.find((t) => t.act === act)?.label ?? "编辑";
+        void oneClickEdit(act, cell.url, label);
+        break;
+      }
+    }
+  };
+
+  // same toolbar from the zoom lightbox: wrap the previewed URL as a cell and
+  // reuse cellTool, then close the lightbox so the panel / new run is visible.
+  const lightboxTool = (act: string) => {
+    if (!lightbox) return;
+    const cell: ResultCell = { i: -1, hues: huesFromId(lightbox), url: lightbox };
+    setLightbox(null);
+    cellTool(act, cell);
   };
 
   const openCell = (cell: ResultCell) => {
@@ -2026,18 +2320,21 @@ export default function CreateStudio() {
                         onClick={(e) => {
                           e.stopPropagation();
                           const btn = (e.target as HTMLElement).closest("button");
-                          if (btn) cellAction(btn.dataset.act || "", cell);
+                          if (btn) cellTool(btn.dataset.act || "", cell);
                         }}
                       >
-                        <button type="button" data-act="edit">
-                          ✎ 编辑
-                        </button>
-                        <button type="button" data-act="regen">
-                          ↻ 重新生成
-                        </button>
-                        <button type="button" data-act="del">
-                          🗑 删除
-                        </button>
+                        {CELL_TOOLS.map((t) => (
+                          <button
+                            key={t.act}
+                            type="button"
+                            data-act={t.act}
+                            className={t.real ? undefined : "soon"}
+                            title={t.label}
+                            aria-label={t.label}
+                          >
+                            {t.icon}
+                          </button>
+                        ))}
                       </div>
                     </div>
                   );
@@ -2198,6 +2495,28 @@ export default function CreateStudio() {
           </button>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={lightbox} alt="生成结果预览" onClick={(e) => e.stopPropagation()} />
+          {/* same per-result edit toolbar, always visible in the zoom view */}
+          <div
+            className="gen-acts ws-lb-tools"
+            onClick={(e) => {
+              e.stopPropagation();
+              const btn = (e.target as HTMLElement).closest("button");
+              if (btn) lightboxTool(btn.dataset.act || "");
+            }}
+          >
+            {CELL_TOOLS.map((t) => (
+              <button
+                key={t.act}
+                type="button"
+                data-act={t.act}
+                className={t.real ? undefined : "soon"}
+                title={t.label}
+                aria-label={t.label}
+              >
+                {t.icon}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
