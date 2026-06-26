@@ -1,6 +1,6 @@
-﻿"use client";
+"use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import {
@@ -26,6 +26,7 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { aiApi, fileApi, uploadFileSmart } from "@/lib/api";
 import { AiModelType, AiTaskStatus, type AiModelVO } from "@/types/ai";
+import { applyTeamFactor } from "@/lib/points";
 import type { FileVO } from "@/types/file";
 import { toast } from "@/components/shared/toast";
 
@@ -51,6 +52,19 @@ const VIDEO_REFERENCE_MODE_OPTIONS = [
   { id: "firstLast", label: "首尾帧", icon: LayoutGrid },
   { id: "multiFrame", label: "智能多帧", icon: Video },
 ] as const;
+
+interface ModelFormatConfig {
+  pricing?: Record<string, Record<string, number>>;
+}
+
+function parseModelConfig(model?: AiModelVO): ModelFormatConfig {
+  if (!model?.config) return {};
+  try {
+    return JSON.parse(model.config) as ModelFormatConfig;
+  } catch {
+    return {};
+  }
+}
 
 type Tab = "image" | "video";
 type GenStatus = "generating" | "done" | "error";
@@ -82,10 +96,11 @@ interface GenResult extends GenParams {
 export function CreativeHero() {
   const t = useTranslations("home");
   const router = useRouter();
-  const { isLoggedIn } = useAuth();
+  const { isLoggedIn, user } = useAuth();
   const [tab, setTab] = useState<Tab>("image");
   const [prompt, setPrompt] = useState("");
   const [models, setModels] = useState<AiModelVO[]>([]);
+  const [handlerCosts, setHandlerCosts] = useState<Record<string, number>>({});
   const [selectedModelId, setSelectedModelId] = useState("");
   const [ratio, setRatio] = useState<string>("1:1");
   const [imageQuality, setImageQuality] = useState<ImageQuality>("standard");
@@ -104,6 +119,7 @@ export function CreativeHero() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [results, setResults] = useState<GenResult[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const seqRef = useRef(0);
 
@@ -122,6 +138,18 @@ export function CreativeHero() {
         setSelectedModelId((restored ? saved : img?.modelId) ?? usable[0]?.modelId ?? "");
       })
       .catch(() => {});
+  }, []);
+  useEffect(() => {
+    let active = true;
+    aiApi.listHandlers().then((res) => {
+      if (!active || !res.success) return;
+      const costs: Record<string, number> = {};
+      res.data.forEach((handler) => {
+        if (handler.handlerName) costs[handler.handlerName] = handler.pointCost ?? 0;
+      });
+      setHandlerCosts(costs);
+    }).catch(() => {});
+    return () => { active = false; };
   }, []);
 
   const tabModels = models.filter((m) =>
@@ -146,10 +174,32 @@ export function CreativeHero() {
   const ActiveCreationIcon = activeCreation.icon;
   const ReferenceModeIcon = referenceMode.icon;
   const busy = results.some((r) => r.status === "generating");
+  const selectedModelConfig = parseModelConfig(selectedModel);
+  const imageMatrixCost = tab === "image" ? selectedModelConfig.pricing?.[imageQuality]?.[imageResolution] : undefined;
+  const imageRefCount = references.filter((file) => file.fileType === "image" || file.mimeType?.startsWith("image/")).length;
+  const videoRefCount = references.filter((file) => file.fileType === "video" || file.mimeType?.startsWith("video/")).length;
+  const handlerForCost = tab === "image"
+    ? (imageRefCount > 0 ? "image_to_image" : "text_to_image")
+    : (imageRefCount > 0 && videoReferenceMode === "firstLast"
+        ? "start_end_to_video"
+        : (imageRefCount > 0 || videoRefCount > 0 ? "reference_to_video" : "text_to_video"));
+  const modelPointCost = selectedModel && selectedModel.pointCost > 0 ? selectedModel.pointCost : undefined;
+  const handlerPointCost = handlerCosts[handlerForCost] && handlerCosts[handlerForCost] > 0 ? handlerCosts[handlerForCost] : undefined;
+  const basePointCost = imageMatrixCost ?? modelPointCost ?? handlerPointCost ?? (tab === "image" ? 18 : 0);
+  const displayPointCost = applyTeamFactor(basePointCost, user);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [results.length]);
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const maxHeight = results.length === 0 ? 228 : 168;
+    el.style.height = "auto";
+    const nextHeight = Math.min(maxHeight, Math.max(86, el.scrollHeight));
+    el.style.height = nextHeight + "px";
+    el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
+  }, [prompt, results.length]);
 
   const switchTab = (next: Tab) => {
     if (next === tab) return;
@@ -437,7 +487,7 @@ export function CreativeHero() {
       <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[340px] bg-[linear-gradient(to_bottom,#f3f5f8,rgba(247,248,250,0.86)_68%,#f7f8fa)] dark:bg-[linear-gradient(to_bottom,#17181d,rgba(16,17,20,0.9)_68%,#101114)]" />
 
       <div className="mx-auto flex min-h-[calc(100vh-64px)] w-full max-w-[1280px] flex-col">
-        <div className={(results.length === 0 ? "px-1 pt-8 sm:pt-12" : "min-h-0 flex-1 px-1 pt-8 sm:pt-12")}>
+        <div className={(results.length === 0 ? "flex-1 px-1 pt-8 sm:pt-12" : "min-h-0 flex-1 px-1 pt-8 sm:pt-12")}>
           {results.length === 0 ? (
             <div className="flex flex-col items-center pb-8 pt-12 text-center sm:pt-16">
               <h1 className="text-[24px] font-semibold leading-tight tracking-normal text-neutral-950 sm:text-[28px] dark:text-white">
@@ -516,7 +566,7 @@ export function CreativeHero() {
         </div>
 
         <div className={(results.length === 0
-          ? "relative z-40 -mx-4 px-4 pb-0 pt-0 sm:-mx-6 sm:px-6"
+          ? "relative z-40 -mx-4 px-4 pb-8 pt-0 sm:-mx-6 sm:px-6 sm:pb-10 lg:pb-12"
           : "sticky bottom-4 z-40 -mx-4 bg-[linear-gradient(to_top,#f7f8fa_74%,rgba(247,248,250,0))] px-4 pb-0 pt-3 sm:-mx-6 sm:px-6 dark:bg-[linear-gradient(to_top,#101114_74%,rgba(16,17,20,0))]")}>
           <div className="mx-auto w-full max-w-[1200px]">
             <div className="relative z-30 rounded-[24px] bg-white p-4 text-left shadow-[0_18px_55px_rgba(15,23,42,0.10)] ring-1 ring-black/[0.06] backdrop-blur-2xl dark:bg-[#1d1e23] dark:ring-white/10">
@@ -547,13 +597,14 @@ export function CreativeHero() {
 
                 <div className="min-w-0 flex-1">
                   <textarea
+                    ref={textareaRef}
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
                     onKeyDown={onKeyDown}
                     placeholder={composerPlaceholder}
                     rows={3}
                     style={{ outline: "none", boxShadow: "none", border: "none" }}
-                    className="block min-h-[86px] w-full resize-none border-0 bg-transparent px-0 pt-1 text-[14px] leading-6 text-neutral-800 placeholder:text-neutral-400 outline-none focus:outline-none focus:ring-0 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+                    className="prompt-scroll block min-h-[86px] w-full resize-none border-0 bg-transparent px-0 pt-1 text-[14px] leading-6 text-neutral-800 placeholder:text-neutral-400 outline-none transition-[height] duration-150 ease-out focus:outline-none focus:ring-0 dark:text-neutral-100 dark:placeholder:text-neutral-500"
                   />
 
                   {references.length > 0 && (
@@ -769,7 +820,7 @@ export function CreativeHero() {
                 <div className="flex shrink-0 items-center gap-2">
                   <span className="hidden items-center gap-1 text-xs font-semibold text-neutral-950 sm:flex dark:text-white" title="本次生成消耗积分">
                     <Zap className="h-3.5 w-3.5 fill-neutral-950 text-neutral-950 dark:fill-white dark:text-white" />
-                    {selectedModel?.pointCost ?? 0}
+                    {displayPointCost}
                   </span>
                   <button
                     type="button"

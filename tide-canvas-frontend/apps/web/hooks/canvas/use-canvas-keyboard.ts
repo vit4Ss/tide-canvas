@@ -7,10 +7,17 @@ interface Options {
   onEscape?: () => void;
 }
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
+    return true;
+  }
+  return !!target.closest('[contenteditable="true"], [role="textbox"]');
+}
+
 export function useCanvasKeyboard({ onEscape }: Options = {}) {
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    const isTyping = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
-    if (isTyping) return;
+    if (isEditableTarget(e.target)) return;
 
     const store = useCanvasStore.getState();
     const ctrl = e.ctrlKey || e.metaKey;
