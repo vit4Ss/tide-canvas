@@ -72,6 +72,12 @@ func Models() []any {
 		&SysConfig{},
 		&EmailTemplate{},
 		&ApiKey{},
+
+		// Audit logs (written by internal/pkg/eventlog).
+		&AccessLog{},
+		&LoginLog{},
+		&BizLog{},
+		&ModelCallLog{},
 	}
 }
 

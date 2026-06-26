@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 
 	"tidecanvas/internal/config"
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/llm"
 	"tidecanvas/internal/pkg/logger"
@@ -64,8 +66,11 @@ type service struct {
 	// llmClient is the legacy fallback (Anthropic) used when the relay is not
 	// configured or has no text model available. nil when no LLM key is set.
 	llmClient    *llm.Client
-	systemPrompt string
-	historyLimit int
+	// fallbackModel is the configured Anthropic model name used by llmClient; it
+	// labels the ModelCallLog for fallback conversations. Empty when unset.
+	fallbackModel string
+	systemPrompt  string
+	historyLimit  int
 }
 
 func newService(db *gorm.DB, cfg *config.Config) *service {
@@ -87,6 +92,7 @@ func newService(db *gorm.DB, cfg *config.Config) *service {
 		}
 	} else {
 		s.llmClient = client
+		s.fallbackModel = strings.TrimSpace(cfg.LLM.Model)
 		logger.L().Info("chat: LLM fallback enabled", zap.String("model", cfg.LLM.Model))
 	}
 	return s
@@ -128,6 +134,39 @@ func (s *service) createConversation(ownerID idgen.ID, dto CreateConversationDTO
 
 	vo := toConversationVO(conv)
 	return &vo, nil
+}
+
+// renameConversation updates a conversation's title, enforcing ownership.
+func (s *service) renameConversation(conversationID, ownerID idgen.ID, title string) (*ConversationVO, error) {
+	conv, err := s.repo.findConversation(conversationID)
+	if err != nil {
+		return nil, err
+	}
+	if conv.OwnerID != ownerID {
+		return nil, errForbidden
+	}
+	title = strings.TrimSpace(title)
+	if title == "" {
+		title = defaultConversationTitle
+	}
+	if err := s.repo.updateConversationTitle(conversationID, title); err != nil {
+		return nil, err
+	}
+	conv.Title = title
+	vo := toConversationVO(conv)
+	return &vo, nil
+}
+
+// deleteConversation removes a conversation (and its messages), enforcing ownership.
+func (s *service) deleteConversation(conversationID, ownerID idgen.ID) error {
+	conv, err := s.repo.findConversation(conversationID)
+	if err != nil {
+		return err
+	}
+	if conv.OwnerID != ownerID {
+		return errForbidden
+	}
+	return s.repo.deleteConversation(conversationID)
 }
 
 // listMessages returns a page of a conversation's messages, enforcing ownership.
@@ -256,7 +295,7 @@ func (s *service) sendMessage(conversationID, ownerID idgen.ID, dto SendMessageD
 		ConversationID: conversationID,
 		SenderID:       assistantSenderID,
 		ContentType:    "text",
-		Content:        s.generateReply(conversationID, content),
+		Content:        s.generateReply(conversationID, ownerID, content),
 		Status:         0,
 	}
 	at := time.Now()
@@ -268,6 +307,127 @@ func (s *service) sendMessage(conversationID, ownerID idgen.ID, dto SendMessageD
 
 	vo := toMessageVO(userMsg, conv.OwnerID)
 	return &vo, nil
+}
+
+// streamMessage persists the user message, streams the assistant reply token by
+// token via onDelta, persists the full assistant reply, and returns the
+// assistant message VO. Ownership is enforced. When no relay text model is
+// available it emits the canned reply as a single delta so the round-trip still
+// completes.
+func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idgen.ID, content string, onDelta func(string)) (*MessageVO, error) {
+	conv, err := s.repo.findConversation(conversationID)
+	if err != nil {
+		return nil, err
+	}
+	if conv.OwnerID != ownerID {
+		return nil, errForbidden
+	}
+	content = strings.TrimSpace(content)
+
+	userMsg := &model.IMMessage{
+		ConversationID: conversationID,
+		SenderID:       ownerID,
+		ContentType:    "text",
+		Content:        content,
+	}
+	if err := s.repo.createMessage(userMsg); err != nil {
+		return nil, err
+	}
+
+	reply := s.streamReply(ctx, conversationID, ownerID, content, onDelta)
+
+	aiMsg := &model.IMMessage{
+		ConversationID: conversationID,
+		SenderID:       assistantSenderID,
+		ContentType:    "text",
+		Content:        reply,
+	}
+	at := time.Now()
+	if err := s.repo.createMessage(aiMsg); err == nil {
+		_ = s.repo.touchConversation(conversationID, aiMsg.ID, at)
+	} else {
+		_ = s.repo.touchConversation(conversationID, userMsg.ID, at)
+	}
+
+	vo := toMessageVO(aiMsg, conv.OwnerID)
+	return &vo, nil
+}
+
+// streamReply streams the assistant reply for the latest user message via the
+// relay text model, forwarding each delta through onDelta. On any error (or when
+// no relay text model is configured) it falls back to the canned reply, emitted
+// as one delta so the client still renders something.
+func (s *service) streamReply(ctx context.Context, conversationID, ownerID idgen.ID, userContent string, onDelta func(string)) string {
+	if s.relay != nil {
+		if model := s.repo.textModelKey(); model != "" {
+			if rows, err := s.repo.recentMessages(conversationID, s.historyLimit); err == nil {
+				msgs := make([]relaychat.Msg, 0, len(rows)+1)
+				if p := strings.TrimSpace(s.systemPrompt); p != "" {
+					msgs = append(msgs, relaychat.Msg{Role: "system", Content: p})
+				}
+				for i := range rows {
+					role := "user"
+					if rows[i].SenderID == assistantSenderID {
+						role = "assistant"
+					}
+					msgs = append(msgs, relaychat.Msg{Role: role, Content: rows[i].Content})
+				}
+				cctx, cancel := context.WithTimeout(ctx, llmReplyTimeout)
+				defer cancel()
+				start := time.Now()
+				reply, err := s.relay.ChatStream(cctx, model, msgs, onDelta)
+				reqBody, _ := json.Marshal(msgs)
+				eventlog.ModelText(ownerID, "chat", model, "/v1/chat/completions", string(reqBody), reply, time.Since(start).Milliseconds(), err)
+				if err == nil {
+					return reply
+				}
+				logger.L().Warn("chat: relay stream failed, using canned reply", zap.String("model", model), zap.Error(err))
+			}
+		}
+	}
+
+	// Fallback: legacy Anthropic client. It cannot stream, so the full reply is
+	// emitted as a single delta. Audit/cost tracking must still record the call.
+	if s.llmClient != nil {
+		if rows, err := s.repo.recentMessages(conversationID, s.historyLimit); err == nil {
+			turns := make([]llm.Turn, 0, len(rows))
+			for i := range rows {
+				role := llm.RoleUser
+				if rows[i].SenderID == assistantSenderID {
+					role = llm.RoleAssistant
+				}
+				turns = append(turns, llm.Turn{Role: role, Text: rows[i].Content})
+			}
+			cctx, cancel := context.WithTimeout(ctx, llmReplyTimeout)
+			defer cancel()
+			start := time.Now()
+			reply, cerr := s.llmClient.Chat(cctx, turns)
+			reqBody, _ := json.Marshal(turns)
+			eventlog.ModelText(ownerID, "chat", s.fallbackModelID(), "anthropic", string(reqBody), reply, time.Since(start).Milliseconds(), cerr)
+			if cerr == nil {
+				if onDelta != nil {
+					onDelta(reply)
+				}
+				return reply
+			}
+			logger.L().Warn("chat: LLM stream fallback failed, using canned reply", zap.Error(cerr))
+		}
+	}
+
+	reply := s.buildReply(userContent)
+	if onDelta != nil {
+		onDelta(reply)
+	}
+	return reply
+}
+
+// fallbackModelID labels the ModelCallLog for the Anthropic fallback path. It
+// uses the configured fallback model name when known, else a stable sentinel.
+func (s *service) fallbackModelID() string {
+	if s.fallbackModel != "" {
+		return s.fallbackModel
+	}
+	return "anthropic-fallback"
 }
 
 // appendMessage persists a single message with NO auto assistant reply. Role
@@ -329,7 +489,7 @@ func (s *service) markRead(conversationID, ownerID idgen.ID) error {
 // an LLM is configured it sends the recent transcript to the model; on any error
 // (or when no LLM is configured) it falls back to the canned placeholder so the
 // chat round-trip always completes.
-func (s *service) generateReply(conversationID idgen.ID, userContent string) string {
+func (s *service) generateReply(conversationID, ownerID idgen.ID, userContent string) string {
 	if s.relay == nil && s.llmClient == nil {
 		return s.buildReply(userContent)
 	}
@@ -356,11 +516,14 @@ func (s *service) generateReply(conversationID idgen.ID, userContent string) str
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), llmReplyTimeout)
 			defer cancel()
-			if reply, err := s.relay.Chat(ctx, model, msgs); err == nil {
+			start := time.Now()
+			reply, err := s.relay.Chat(ctx, model, msgs)
+			reqBody, _ := json.Marshal(msgs)
+			eventlog.ModelText(ownerID, "chat", model, "/v1/chat/completions", string(reqBody), reply, time.Since(start).Milliseconds(), err)
+			if err == nil {
 				return reply
-			} else {
-				logger.L().Warn("chat: relay generation failed, falling back", zap.String("model", model), zap.Error(err))
 			}
+			logger.L().Warn("chat: relay generation failed, falling back", zap.String("model", model), zap.Error(err))
 		}
 	}
 
@@ -376,11 +539,14 @@ func (s *service) generateReply(conversationID idgen.ID, userContent string) str
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), llmReplyTimeout)
 		defer cancel()
-		if reply, err := s.llmClient.Chat(ctx, turns); err == nil {
+		start := time.Now()
+		reply, err := s.llmClient.Chat(ctx, turns)
+		reqBody, _ := json.Marshal(turns)
+		eventlog.ModelText(ownerID, "chat", s.fallbackModelID(), "anthropic", string(reqBody), reply, time.Since(start).Milliseconds(), err)
+		if err == nil {
 			return reply
-		} else {
-			logger.L().Warn("chat: LLM generation failed, using canned reply", zap.Error(err))
 		}
+		logger.L().Warn("chat: LLM generation failed, using canned reply", zap.Error(err))
 	}
 
 	// 3) Canned placeholder.

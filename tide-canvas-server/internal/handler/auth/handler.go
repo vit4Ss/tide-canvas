@@ -56,6 +56,7 @@ func (h *handler) register(c *gin.Context) {
 	}
 	vo, err := h.svc.register(c.Request.Context(), dto)
 	if err != nil {
+		logAuth(c, 0, dto.Email, "register", "code", err)
 		switch {
 		case errors.Is(err, errUsernameExists):
 			response.Fail(c, response.CodeUsernameExists, "username already exists")
@@ -68,6 +69,7 @@ func (h *handler) register(c *gin.Context) {
 		}
 		return
 	}
+	logAuth(c, vo.ID, dto.Email, "register", "code", nil)
 	response.OK(c, vo)
 }
 
@@ -80,6 +82,7 @@ func (h *handler) login(c *gin.Context) {
 	}
 	vo, err := h.svc.login(c.Request.Context(), dto)
 	if err != nil {
+		logAuth(c, 0, dto.Account, "login", "password", err)
 		switch {
 		case errors.Is(err, errBadCredentials):
 			response.Fail(c, response.CodePasswordIncorrect, "incorrect account or password")
@@ -90,6 +93,7 @@ func (h *handler) login(c *gin.Context) {
 		}
 		return
 	}
+	logAuth(c, vo.UserInfo.ID, dto.Account, "login", "password", nil)
 	response.OK(c, vo)
 }
 
@@ -103,6 +107,7 @@ func (h *handler) loginCode(c *gin.Context) {
 	}
 	vo, err := h.svc.loginCode(c.Request.Context(), dto)
 	if err != nil {
+		logAuth(c, 0, dto.Email, "login_code", "code", err)
 		switch {
 		case errors.Is(err, errBadCode):
 			response.Fail(c, response.CodePasswordIncorrect, "验证码错误或已过期")
@@ -113,6 +118,7 @@ func (h *handler) loginCode(c *gin.Context) {
 		}
 		return
 	}
+	logAuth(c, vo.UserInfo.ID, dto.Email, "login_code", "code", nil)
 	response.OK(c, vo)
 }
 
@@ -140,9 +146,11 @@ func (h *handler) logout(c *gin.Context) {
 	// Blacklist the access token for its remaining lifetime when known.
 	ttl := remainingAccessTTL(c)
 	if err := h.svc.logout(uid, jtiStr, ttl); err != nil {
+		logAuth(c, uid, "", "logout", "", err)
 		response.Fail(c, response.CodeServerError, "logout failed")
 		return
 	}
+	logAuth(c, uid, "", "logout", "", nil)
 	response.OK[any](c, nil)
 }
 
@@ -170,6 +178,7 @@ func (h *handler) updatePassword(c *gin.Context) {
 	}
 	uid := middleware.CurrentUserID(c)
 	if err := h.svc.updatePassword(uid, dto); err != nil {
+		logAuth(c, uid, "", "password_change", "", err)
 		switch {
 		case errors.Is(err, errPasswordWrong):
 			response.Fail(c, response.CodePasswordIncorrect, "incorrect current password")
@@ -180,6 +189,7 @@ func (h *handler) updatePassword(c *gin.Context) {
 		}
 		return
 	}
+	logAuth(c, uid, "", "password_change", "", nil)
 	response.OK[any](c, nil)
 }
 

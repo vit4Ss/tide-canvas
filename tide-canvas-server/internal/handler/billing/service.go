@@ -11,6 +11,7 @@ import (
 
 	"tidecanvas/internal/config"
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
 )
 
@@ -72,6 +73,10 @@ func (s *service) createOrder(userID idgen.ID, dto CreateOrderDTO) (*OrderVO, er
 		Status:    0,
 	}
 
+	var (
+		bizPoints  int64
+		bizSummary string
+	)
 	switch dto.Type {
 	case OrderTypePlan:
 		planID, err := idgen.Parse(strings.TrimSpace(dto.PlanID))
@@ -84,6 +89,8 @@ func (s *service) createOrder(userID idgen.ID, dto CreateOrderDTO) (*OrderVO, er
 		}
 		o.PlanID = &planID
 		o.Amount = plan.Price
+		bizPoints = int64(plan.PointsGrant)
+		bizSummary = "购买会员套餐：" + plan.Name
 	case OrderTypePackage:
 		pkgID, err := idgen.Parse(strings.TrimSpace(dto.PackageID))
 		if err != nil || pkgID == 0 {
@@ -95,6 +102,8 @@ func (s *service) createOrder(userID idgen.ID, dto CreateOrderDTO) (*OrderVO, er
 		}
 		o.PackageID = &pkgID
 		o.Amount = pkg.Price
+		bizPoints = int64(pkg.Points + pkg.BonusPoints)
+		bizSummary = "购买积分包：" + pkg.Name
 	default:
 		return nil, errBadRequest
 	}
@@ -102,6 +111,18 @@ func (s *service) createOrder(userID idgen.ID, dto CreateOrderDTO) (*OrderVO, er
 	if err := s.repo.createOrder(o); err != nil {
 		return nil, err
 	}
+
+	eventlog.Biz(&model.BizLog{
+		UserID:  userID,
+		Action:  "order_create",
+		Summary: bizSummary,
+		Amount:  o.Amount,
+		Points:  bizPoints,
+		RefID:   o.ID,
+		RefType: "order",
+		Detail:  o.OrderNo,
+	})
+
 	vo := toOrderVO(o)
 	return &vo, nil
 }
@@ -134,7 +155,17 @@ func (s *service) getOrder(id, userID idgen.ID) (*OrderVO, error) {
 
 // cancelOrder cancels the user's pending order.
 func (s *service) cancelOrder(id, userID idgen.ID) error {
-	return s.repo.cancelOrder(id, userID)
+	if err := s.repo.cancelOrder(id, userID); err != nil {
+		return err
+	}
+	eventlog.Biz(&model.BizLog{
+		UserID:  userID,
+		Action:  "order_cancel",
+		Summary: "取消订单",
+		RefID:   id,
+		RefType: "order",
+	})
+	return nil
 }
 
 // genOrderNo builds a human-readable, unique order number: a timestamp prefix

@@ -37,6 +37,10 @@ type g5PageQuery struct {
 	Status string `form:"status"`
 	Type   string `form:"type"`
 	Scene  string `form:"scene"`
+	// Audit-log filters.
+	Action  string `form:"action"`
+	UserID  string `form:"userId"`
+	Success string `form:"success"`
 }
 
 // normalize applies pagination defaults/clamps and trims discrete filters.
@@ -56,6 +60,9 @@ func (q *g5PageQuery) normalize() {
 	q.Status = strings.TrimSpace(q.Status)
 	q.Type = strings.TrimSpace(q.Type)
 	q.Scene = strings.TrimSpace(q.Scene)
+	q.Action = strings.TrimSpace(q.Action)
+	q.UserID = strings.TrimSpace(q.UserID)
+	q.Success = strings.TrimSpace(q.Success)
 }
 
 // offset returns the SQL offset for the current page.

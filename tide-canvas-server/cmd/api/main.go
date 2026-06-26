@@ -25,6 +25,7 @@ import (
 	"tidecanvas/internal/db"
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/pkg/cache"
+	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/logger"
 	"tidecanvas/internal/pkg/mailer"
@@ -79,6 +80,9 @@ func run() error {
 	}
 	logger.L().Info("mysql connected & migrated")
 
+	// Start the async audit-log writer (access / login / business / model-call).
+	eventlog.Init(gdb)
+
 	rdb, err := cache.New(cfg.Redis)
 	if err != nil {
 		return fmt.Errorf("open redis: %w", err)
@@ -108,6 +112,17 @@ func run() error {
 	cfg.Storage = storageCfg
 	logger.L().Info("storage initialized", zap.String("type", store.Type()))
 
+	// BUG-2: Reference-based generation requires publicly fetchable reference URLs.
+	// Under local storage, reference assets are served from localhost, which the
+	// overseas relay cannot reach — so image_to_image / image_to_video /
+	// first_last_frame / multi_ref operations will fail. Warn loudly so OSS gets
+	// enabled in production.
+	if !strings.EqualFold(store.Type(), "oss") && strings.TrimSpace(cfg.Relay.APIKey) != "" {
+		logger.L().Warn("local storage with relay configured: reference-based generation " +
+			"(image_to_image / image_to_video / first_last_frame / multi_ref) will FAIL because " +
+			"the overseas relay cannot fetch localhost-hosted reference URLs; enable OSS in production")
+	}
+
 	// Mailer: register SMTP config so verification emails can be sent.
 	mailer.Init(cfg.Email)
 
@@ -128,6 +143,7 @@ func run() error {
 		middleware.RequestID(),
 		middleware.Recovery(),
 		middleware.ZapLogger(),
+		middleware.AccessLog(),
 		middleware.CORS(deps),
 	)
 

@@ -79,6 +79,25 @@ func (r *repo) createConversation(c *model.IMConversation) error {
 	return r.db.Create(c).Error
 }
 
+// updateConversationTitle renames a conversation.
+func (r *repo) updateConversationTitle(id idgen.ID, title string) error {
+	return r.db.Model(&model.IMConversation{}).Where("id = ?", id).Update("title", title).Error
+}
+
+// deleteConversation removes a conversation along with its messages and member
+// rows in one transaction.
+func (r *repo) deleteConversation(id idgen.ID) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("conversation_id = ?", id).Delete(&model.IMMessage{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("conversation_id = ?", id).Delete(&model.IMConversationMember{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&model.IMConversation{}, "id = ?", id).Error
+	})
+}
+
 // createMessageMember registers a user as the owner-member (role 2 = 群主) of a
 // conversation. The (conversation_id, user_id) pair is unique, so a duplicate is
 // tolerated as a no-op.

@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
 )
 
@@ -145,6 +146,13 @@ func (s *service) checkin(userID idgen.ID) (*CheckinResultVO, error) {
 		return &CheckinResultVO{Points: 0, ContinuousDays: continuousDays, Rewarded: false}, nil
 	}
 
+	eventlog.Biz(&model.BizLog{
+		UserID:  userID,
+		Action:  "checkin",
+		Summary: "每日签到奖励积分",
+		Points:  checkinReward,
+		RefType: "checkin",
+	})
 	return &CheckinResultVO{Points: checkinReward, ContinuousDays: continuousDays, Rewarded: true}, nil
 }
 

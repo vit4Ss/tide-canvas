@@ -67,6 +67,19 @@ type chunk struct {
 // non-streaming path is unreliable, so streaming is used and collapsed to a
 // single string here.
 func (c *Client) Chat(ctx context.Context, model string, msgs []Msg) (string, error) {
+	return c.stream(ctx, model, msgs, nil)
+}
+
+// ChatStream is like Chat but invokes onDelta for every token as it arrives,
+// returning the full accumulated reply when the stream ends. Pass a context with
+// a deadline to bound a long generation.
+func (c *Client) ChatStream(ctx context.Context, model string, msgs []Msg, onDelta func(string)) (string, error) {
+	return c.stream(ctx, model, msgs, onDelta)
+}
+
+// stream performs the SSE request, accumulating the reply and (when onDelta is
+// non-nil) forwarding each delta as it arrives.
+func (c *Client) stream(ctx context.Context, model string, msgs []Msg, onDelta func(string)) (string, error) {
 	if model == "" {
 		return "", errors.New("relaychat: model is required")
 	}
@@ -113,7 +126,14 @@ func (c *Client) Chat(ctx context.Context, model string, msgs []Msg) (string, er
 		if json.Unmarshal([]byte(data), &ck) != nil || len(ck.Choices) == 0 {
 			continue
 		}
-		sb.WriteString(ck.Choices[0].Delta.Content)
+		delta := ck.Choices[0].Delta.Content
+		if delta == "" {
+			continue
+		}
+		sb.WriteString(delta)
+		if onDelta != nil {
+			onDelta(delta)
+		}
 	}
 	if err := sc.Err(); err != nil {
 		return "", fmt.Errorf("relaychat: read stream: %w", err)

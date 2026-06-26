@@ -10,6 +10,7 @@ import (
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/response"
 )
@@ -317,6 +318,17 @@ func (h *g4PointsHandler) adjust(c *gin.Context) {
 		response.Fail(c, response.CodeServerError, "failed to adjust points")
 		return
 	}
+
+	eventlog.Biz(&model.BizLog{
+		UserID:     dto.UserID,
+		Action:     "points_adjust",
+		Summary:    "管理员调整积分",
+		Points:     int64(dto.Amount),
+		RefID:      record.ID,
+		RefType:    "point_record",
+		OperatorID: operatorID,
+		Detail:     eventlog.Truncate(strings.TrimSpace(dto.Remark), 1024),
+	})
 
 	var u model.User
 	var up *model.User

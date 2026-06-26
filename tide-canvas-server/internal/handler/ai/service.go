@@ -12,6 +12,7 @@ import (
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/cache"
+	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/logger"
 	"tidecanvas/internal/pkg/relaychat"
@@ -330,6 +331,26 @@ func (s *service) writeLog(ctx context.Context, task *model.AiTask, gh GenHandle
 	if err := s.repo.createLog(ctx, l); err != nil {
 		logger.L().Warn("ai: write generation log failed", zap.String("taskId", task.ID.String()), zap.Error(err))
 	}
+
+	// Mirror the upstream relay call into the unified model-call log.
+	scene := "image"
+	if gh.OperationType() == "video" {
+		scene = "video"
+	}
+	eventlog.ModelCall(&model.ModelCallLog{
+		UserID:         userID,
+		Scene:          scene,
+		Model:          m.ModelID,
+		Endpoint:       res.RequestURL,
+		RequestBody:    res.RequestBody,
+		ResponseBody:   res.ResponseBody,
+		HttpStatus:     res.HttpStatus,
+		Success:        success,
+		ErrorMsg:       errMsg,
+		DurationMs:     durationMs,
+		UpstreamTaskID: res.UpstreamTaskID,
+		Cost:           res.Cost,
+	})
 }
 
 // writeTaskState mirrors the task's progress/status into Redis for fast polling.

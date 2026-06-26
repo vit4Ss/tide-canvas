@@ -31,6 +31,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	RegisterMarketing(g, d)
 	RegisterResources(g, d)
 	RegisterLogs(g, d)
+	RegisterAuditLogs(g, d)
 	RegisterConfig(g, d)
 	RegisterEmail(g, d)
 }

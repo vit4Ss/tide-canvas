@@ -12,6 +12,8 @@ import (
 	"go.uber.org/zap"
 
 	"tidecanvas/internal/app"
+	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/logger"
 	"tidecanvas/internal/pkg/response"
@@ -117,6 +119,51 @@ func ZapLogger() gin.HandlerFunc {
 			zap.String("requestID", c.GetString(CtxRequestID)),
 		)
 	}
+}
+
+// AccessLog persists one access_log row per API request (asynchronously, via
+// eventlog). It runs in the global chain, so when c.Next() returns JWTAuth has
+// already populated the user id for authenticated routes. Non-API, health,
+// static and the high-frequency AI task-poll GET are skipped to keep the table
+// signal-rich.
+func AccessLog() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		path := c.Request.URL.Path
+		method := c.Request.Method
+		c.Next()
+
+		if !shouldLogAccess(method, path) {
+			return
+		}
+		eventlog.Access(&model.AccessLog{
+			UserID:    CurrentUserID(c),
+			Method:    method,
+			Path:      eventlog.Truncate(path, 512),
+			Query:     eventlog.Truncate(c.Request.URL.RawQuery, 1024),
+			Status:    c.Writer.Status(),
+			LatencyMs: time.Since(start).Milliseconds(),
+			IP:        c.ClientIP(),
+			UserAgent: eventlog.Truncate(c.Request.UserAgent(), 512),
+			RequestID: c.GetString(CtxRequestID),
+		})
+	}
+}
+
+// shouldLogAccess keeps the access log to meaningful API traffic: only /api/*,
+// excluding CORS preflight and the AI task-poll GET the canvas hits every couple
+// of seconds.
+func shouldLogAccess(method, path string) bool {
+	if method == "OPTIONS" {
+		return false
+	}
+	if !strings.HasPrefix(path, "/api/") {
+		return false
+	}
+	if method == "GET" && strings.HasPrefix(path, "/api/ai/tasks/") {
+		return false
+	}
+	return true
 }
 
 // JWTAuth validates the Bearer access token (signature, expiry, blacklist) and

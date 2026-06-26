@@ -12,6 +12,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"tidecanvas/internal/pkg/relaymedia"
@@ -64,12 +65,17 @@ func (p *relayProviderClient) Generate(ctx context.Context, req GenerateRequest)
 
 	switch req.Handler {
 	case "text_to_image":
-		res, err := p.c.GenerateImage(ctx, p.imageParams(model, req.Input))
+		ip := p.imageParams(model, req.Input)
+		res, err := p.batchImages(ctx, batchCount(req.Input), func(ctx context.Context) (relaymedia.Result, error) {
+			return p.c.GenerateImage(ctx, ip)
+		})
 		return p.result(ctx, res, err)
 	case "image_to_image":
 		ip := p.imageParams(model, req.Input)
 		ip.ImageURLs = p.upstreamURLs(inputImageURLs(req.Input))
-		res, err := p.c.EditImage(ctx, ip)
+		res, err := p.batchImages(ctx, batchCount(req.Input), func(ctx context.Context) (relaymedia.Result, error) {
+			return p.c.EditImage(ctx, ip)
+		})
 		return p.result(ctx, res, err)
 	case "text_to_video":
 		res, err := p.c.GenerateVideo(ctx, p.videoParams(model, "text_to_video", req.Input))
@@ -105,6 +111,71 @@ func (p *relayProviderClient) imageParams(model string, in map[string]any) relay
 		Resolution:  strings.ToLower(inputStr(in, "resolution", "clarity")), // relay schema: 1k/2k/4k
 		AspectRatio: inputStr(in, "aspect_ratio", "aspectRatio", "ratio"),
 	}
+}
+
+// batchCount reads the requested number of images from the input and clamps it
+// to the relay-friendly range [1,4]. The relay image API has no n/batch param, so
+// a value > 1 is realized by calling gen multiple times (see batchImages). An
+// absent/invalid value (0) means a single image.
+func batchCount(in map[string]any) int {
+	n := inputInt(in, "batchCount", "batch")
+	if n < 1 {
+		return 1
+	}
+	if n > 4 {
+		return 4
+	}
+	return n
+}
+
+// batchImages realizes a multi-image request by invoking gen `n` times (the relay
+// image endpoints produce one image per call and expose no batch param). For n<=1
+// it is a single passthrough call, preserving the original behavior exactly.
+//
+// For n>1 the calls run concurrently; every successful call's URLs are merged into
+// one Result. If at least one call succeeds the merged Result is returned (nil
+// error); if all calls fail the last error is returned. The audit fields
+// (RequestURL/RequestBody/ResponseBody/HTTPStatus/TaskID) are taken from the FIRST
+// call so the generation log still mirrors a representative upstream request.
+func (p *relayProviderClient) batchImages(ctx context.Context, n int, gen func(context.Context) (relaymedia.Result, error)) (relaymedia.Result, error) {
+	if n <= 1 {
+		return gen(ctx)
+	}
+
+	results := make([]relaymedia.Result, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results[i], errs[i] = gen(ctx)
+		}(i)
+	}
+	wg.Wait()
+
+	// First call's outcome supplies the audit fields for the merged Result.
+	merged := results[0]
+	merged.URLs = nil
+
+	var allURLs []string
+	var lastErr error
+	anyOK := false
+	for i := 0; i < n; i++ {
+		if errs[i] != nil {
+			lastErr = errs[i]
+			continue
+		}
+		anyOK = true
+		allURLs = append(allURLs, results[i].URLs...)
+	}
+
+	if !anyOK {
+		// All calls failed: return first call's audit fields with the last error.
+		return merged, lastErr
+	}
+	merged.URLs = allURLs
+	return merged, nil
 }
 
 // videoParams maps the shared input fields for a video request. The per-mode

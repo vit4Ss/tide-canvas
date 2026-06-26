@@ -2,6 +2,7 @@ package admin
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -9,7 +10,9 @@ import (
 	"gorm.io/gorm"
 
 	"tidecanvas/internal/app"
+	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/response"
 )
@@ -290,7 +293,46 @@ func (h *userHandler) updateUser(c *gin.Context) {
 		h.failLookup(c, err, "failed to load user")
 		return
 	}
+
+	// Audit security/membership-relevant changes (role, status, vip, points).
+	if summary := g1SensitiveChangeSummary(dto); summary != "" {
+		eventlog.Biz(&model.BizLog{
+			UserID:     id,
+			Action:     "user_update",
+			Summary:    "管理员修改用户：" + summary,
+			RefID:      id,
+			RefType:    "user",
+			OperatorID: middleware.CurrentUserID(c),
+			Detail:     eventlog.Truncate(summary, 1024),
+		})
+	}
+
 	response.OK(c, toAdminUserVO(u))
+}
+
+// g1SensitiveChangeSummary describes the security/membership-affecting fields an
+// admin changed on a user, for the business log. Returns "" when none changed.
+func g1SensitiveChangeSummary(dto AdminUserUpdateDTO) string {
+	var parts []string
+	if dto.Role != nil {
+		parts = append(parts, fmt.Sprintf("角色=%d", *dto.Role))
+	}
+	if dto.Status != nil {
+		parts = append(parts, fmt.Sprintf("状态=%d", *dto.Status))
+	}
+	if dto.VipLevel != nil {
+		parts = append(parts, fmt.Sprintf("会员等级=%d", *dto.VipLevel))
+	}
+	if dto.Points != nil {
+		parts = append(parts, fmt.Sprintf("积分=%d", *dto.Points))
+	}
+	if dto.RoleID != nil {
+		parts = append(parts, fmt.Sprintf("权限组=%s", strings.TrimSpace(*dto.RoleID)))
+	}
+	if dto.ApiQuota != nil {
+		parts = append(parts, fmt.Sprintf("API配额=%d", *dto.ApiQuota))
+	}
+	return strings.Join(parts, "，")
 }
 
 // adjustPoints handles POST /users/:id/points. It atomically adjusts the user's
@@ -343,6 +385,17 @@ func (h *userHandler) adjustPoints(c *gin.Context) {
 		response.Fail(c, response.CodeServerError, "failed to adjust points")
 		return
 	}
+
+	eventlog.Biz(&model.BizLog{
+		UserID:     id,
+		Action:     "points_adjust",
+		Summary:    "管理员调整积分",
+		Points:     int64(dto.Amount),
+		RefType:    "point_record",
+		OperatorID: middleware.CurrentUserID(c),
+		Detail:     eventlog.Truncate(strings.TrimSpace(dto.Remark), 1024),
+	})
+
 	response.OK(c, gin.H{"points": newBalance})
 }
 
@@ -384,6 +437,15 @@ func (h *userHandler) createRole(c *gin.Context) {
 		response.Fail(c, response.CodeServerError, "failed to create role")
 		return
 	}
+
+	eventlog.Biz(&model.BizLog{
+		Action:     "role_create",
+		Summary:    "管理员创建权限角色：" + role.Name,
+		RefID:      role.ID,
+		RefType:    "role",
+		OperatorID: middleware.CurrentUserID(c),
+	})
+
 	response.OK(c, toRoleVO(role))
 }
 
@@ -427,6 +489,15 @@ func (h *userHandler) updateRole(c *gin.Context) {
 		response.Fail(c, response.CodeServerError, "failed to load role")
 		return
 	}
+
+	eventlog.Biz(&model.BizLog{
+		Action:     "role_update",
+		Summary:    "管理员修改权限角色：" + role.Name,
+		RefID:      id,
+		RefType:    "role",
+		OperatorID: middleware.CurrentUserID(c),
+	})
+
 	response.OK(c, toRoleVO(&role))
 }
 
@@ -445,6 +516,15 @@ func (h *userHandler) deleteRole(c *gin.Context) {
 		response.Fail(c, response.CodeNotFound, "role not found")
 		return
 	}
+
+	eventlog.Biz(&model.BizLog{
+		Action:     "role_delete",
+		Summary:    "管理员删除权限角色",
+		RefID:      id,
+		RefType:    "role",
+		OperatorID: middleware.CurrentUserID(c),
+	})
+
 	response.OK[any](c, nil)
 }
 

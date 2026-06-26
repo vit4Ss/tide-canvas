@@ -11,6 +11,11 @@ type CreateConversationDTO struct {
 	Title string `json:"title" binding:"omitempty,max=128"`
 }
 
+// RenameConversationDTO is the body for PUT /api/im/conversations/:id.
+type RenameConversationDTO struct {
+	Title string `json:"title" binding:"required,max=128"`
+}
+
 // SendMessageDTO is the body for POST /api/im/conversations/:id/messages. Type
 // is the message content type (text / image / file); it defaults to "text".
 type SendMessageDTO struct {

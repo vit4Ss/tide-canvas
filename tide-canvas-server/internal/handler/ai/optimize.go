@@ -7,11 +7,16 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"tidecanvas/internal/middleware"
+	"tidecanvas/internal/pkg/eventlog"
+	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/relaychat"
 	"tidecanvas/internal/pkg/response"
 )
@@ -33,7 +38,7 @@ func (h *handler) optimizePrompt(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, "缺少提示词")
 		return
 	}
-	out, err := h.svc.optimizePrompt(c.Request.Context(), dto.Prompt)
+	out, err := h.svc.optimizePrompt(c.Request.Context(), middleware.CurrentUserID(c), dto.Prompt)
 	if err != nil {
 		response.Fail(c, response.CodeServerError, err.Error())
 		return
@@ -42,7 +47,7 @@ func (h *handler) optimizePrompt(c *gin.Context) {
 }
 
 // optimizePrompt rewrites the prompt via the configured relay text model.
-func (s *service) optimizePrompt(ctx context.Context, prompt string) (string, error) {
+func (s *service) optimizePrompt(ctx context.Context, userID idgen.ID, prompt string) (string, error) {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		return "", errors.New("请先输入提示词")
@@ -58,7 +63,10 @@ func (s *service) optimizePrompt(ctx context.Context, prompt string) (string, er
 		{Role: "system", Content: optimizeSystemPrompt},
 		{Role: "user", Content: prompt},
 	}
+	start := time.Now()
 	reply, err := s.relay.Chat(ctx, model, msgs)
+	reqBody, _ := json.Marshal(msgs)
+	eventlog.ModelText(userID, "optimize", model, "/v1/chat/completions", string(reqBody), reply, time.Since(start).Milliseconds(), err)
 	if err != nil {
 		return "", errors.New("AI 优化失败，请稍后重试")
 	}

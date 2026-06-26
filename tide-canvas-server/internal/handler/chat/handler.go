@@ -1,7 +1,10 @@
 package chat
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 
@@ -51,6 +54,40 @@ func (h *handler) createConversation(c *gin.Context) {
 		return
 	}
 	response.OK(c, vo)
+}
+
+// renameConversation handles PUT /api/im/conversations/:id (auth).
+func (h *handler) renameConversation(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	var dto RenameConversationDTO
+	if err := c.ShouldBindJSON(&dto); err != nil {
+		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	ownerID := middleware.CurrentUserID(c)
+	vo, err := h.svc.renameConversation(id, ownerID, dto.Title)
+	if err != nil {
+		h.fail(c, err, "failed to rename conversation")
+		return
+	}
+	response.OK(c, vo)
+}
+
+// removeConversation handles DELETE /api/im/conversations/:id (auth).
+func (h *handler) removeConversation(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	ownerID := middleware.CurrentUserID(c)
+	if err := h.svc.deleteConversation(id, ownerID); err != nil {
+		h.fail(c, err, "failed to delete conversation")
+		return
+	}
+	response.OK[any](c, nil)
 }
 
 // listMessages handles GET /api/im/conversations/:id/messages (auth).
@@ -141,6 +178,50 @@ func (h *handler) persistTurn(c *gin.Context) {
 		return
 	}
 	response.OK(c, vos)
+}
+
+// streamMessage handles POST /api/im/conversations/:id/stream (auth): a
+// text-model chat reply streamed back as Server-Sent Events. Each frame is a
+// JSON object: {"delta":"…"} per token, then {"done":true,"message":{…}}, or
+// {"error":"…"} on failure.
+func (h *handler) streamMessage(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	var dto SendMessageDTO
+	if err := c.ShouldBindJSON(&dto); err != nil {
+		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	ownerID := middleware.CurrentUserID(c)
+
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no") // disable proxy buffering
+	flusher, _ := c.Writer.(http.Flusher)
+
+	frame := func(obj any) {
+		b, _ := json.Marshal(obj)
+		fmt.Fprintf(c.Writer, "data: %s\n\n", b)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+
+	vo, err := h.svc.streamMessage(c.Request.Context(), id, ownerID, dto.Content, func(delta string) {
+		frame(map[string]string{"delta": delta})
+	})
+	if err != nil {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, errForbidden) {
+			frame(map[string]string{"error": "对话不存在"})
+		} else {
+			frame(map[string]string{"error": "生成失败"})
+		}
+		return
+	}
+	frame(map[string]any{"done": true, "message": vo})
 }
 
 // markRead handles POST /api/im/conversations/:id/read (auth).
