@@ -186,6 +186,9 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const imgAspect = imgAspectState && imgAspectState.src === node.imageSrc ? imgAspectState.aspect : null;
   const { generate, isGenerating } = useAiGeneration();
   const generating = isGenerating(node.id) || node.status === "generating";
+  const nodeUploading = uploading || node.uploading === true;
+  const nodeUploadPct = uploading ? uploadPct : node.uploadProgress ?? 0;
+  const uploadPreviewSrc = localPreview || node.imageSrc || null;
   const panoramaSig = useCanvasStore((s) =>
     s.connections
       .filter((c) => c.sourceId === node.id)
@@ -208,10 +211,10 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const panoramaGenerating = existingPanorama ? isGenerating(existingPanorama.id) || existingPanorama.status === "generating" : false;
 
   useEffect(() => {
-    if (node.imageSrc && node.status === "error" && !generating) {
+    if (node.imageSrc && node.status === "error" && !generating && !node.uploading) {
       updateNode(node.id, { status: "success" });
     }
-  }, [generating, node.id, node.imageSrc, node.status, updateNode]);
+  }, [generating, node.id, node.imageSrc, node.status, node.uploading, updateNode]);
 
   // ===== 引用（@ 提及）系统 =====
   // 取入边连接对应的源节点图片，编号 图片1/图片2…。用字符串签名做选择器，
@@ -859,10 +862,10 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
             <button
               onMouseDown={stop}
               onClick={openFilePicker}
-              disabled={uploading}
+              disabled={nodeUploading}
               className="flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 shadow-sm transition-colors hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
             >
-              {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+              {nodeUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
               上传
             </button>
           </NodeChrome>
@@ -1248,15 +1251,15 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
             </div>
           )}
           {/* 上传中遮罩：模糊预览 + 百分比 */}
-          {uploading && (
+          {nodeUploading && (
             <div className="absolute inset-0 z-[6] overflow-hidden">
-              {localPreview ? (
-                <img src={localPreview} alt="" className="h-full w-full scale-110 object-cover blur-xl" />
+              {uploadPreviewSrc ? (
+                <img src={uploadPreviewSrc} alt="" className="h-full w-full scale-110 object-cover blur-xl" />
               ) : (
                 <div className="h-full w-full bg-neutral-900" />
               )}
               <div className="absolute inset-0 flex items-center justify-center bg-black/55">
-                <p className="text-sm text-white/90">上传中 ({uploadPct}%) …</p>
+                <p className="text-sm text-white/90">上传中 ({nodeUploadPct}%) ...</p>
               </div>
             </div>
           )}
@@ -1321,11 +1324,11 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                   <button
                     onMouseDown={stop}
                     onClick={openFilePicker}
-                    disabled={uploading}
+                    disabled={nodeUploading}
                     className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-900"
                   >
                     <span className="flex h-6 w-6 items-center justify-center rounded-md bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200">
-                      {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                      {nodeUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
                     </span>
                     图生图
                   </button>

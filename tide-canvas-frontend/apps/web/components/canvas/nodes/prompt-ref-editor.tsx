@@ -218,14 +218,14 @@ export function PromptRefEditor({ value, onChange, refs, zoom, placeholder, onSu
             setMentionOpen(false);
           }}
           spellCheck={false}
-          className="relative block w-full overflow-y-auto whitespace-pre-wrap break-words border-0 bg-transparent text-sm leading-6 text-neutral-900 caret-neutral-900 selection:bg-blue-200/60 focus:outline-none focus-visible:outline-none focus:ring-0 dark:text-neutral-100 dark:caret-neutral-100 dark:selection:bg-blue-500/40"
+          className="prompt-scroll relative block w-full overflow-y-auto whitespace-pre-wrap break-words border-0 bg-transparent pr-2 text-sm leading-6 text-neutral-900 caret-neutral-900 selection:bg-blue-200/60 focus:outline-none focus-visible:outline-none focus:ring-0 dark:text-neutral-100 dark:caret-neutral-100 dark:selection:bg-blue-500/40"
           style={fill ? { ...editorStyleBase, minHeight: 0, flex: 1 } : { ...editorStyleBase, minHeight: `${MIN_ROWS * LINE_HEIGHT}px`, maxHeight: `${MAX_ROWS * LINE_HEIGHT}px` }}
         />
 
         {/* @ 引用下拉：锚定到 @ 光标正下方 */}
         {mentionOpen && mentionList.length > 0 && mentionPos && (
           <div
-            className="absolute z-30 max-h-48 w-56 overflow-auto rounded-xl border border-neutral-200 bg-white p-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-900"
+            className="prompt-scroll absolute z-30 max-h-48 w-56 overflow-auto rounded-xl border border-neutral-200 bg-white p-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-900"
             style={{ left: mentionPos.left, top: mentionPos.top + 4 }}
           >
             {mentionList.map((ref) => (

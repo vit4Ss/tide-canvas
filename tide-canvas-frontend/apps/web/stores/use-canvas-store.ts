@@ -16,6 +16,8 @@ export interface CanvasNode {
   /** 语音合成结果（audio 节点） */
   audioSrc?: string;
   status?: "idle" | "generating" | "success" | "error";
+  uploading?: boolean;
+  uploadProgress?: number;
   /** 生成时选择的目标画幅；有值时图片节点按该画幅展示，避免结果卡片被自然尺寸改成其它比例 */
   aspectRatio?: string;
   /** 卡片实际渲染尺寸（按图片比例计算）；供连线层把端点锚定到卡片真实边缘中点，实现默认居中对齐 */

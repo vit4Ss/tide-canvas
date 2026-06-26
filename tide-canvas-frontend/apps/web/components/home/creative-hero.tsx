@@ -97,6 +97,7 @@ export function CreativeHero() {
   const [modelOpen, setModelOpen] = useState(false);
   const [ratioOpen, setRatioOpen] = useState(false);
   const [referenceModeOpen, setReferenceModeOpen] = useState(false);
+  const [referenceDragActive, setReferenceDragActive] = useState(false);
   const [videoReferenceMode, setVideoReferenceMode] = useState<VideoReferenceMode>("omni");
   const [references, setReferences] = useState<FileVO[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -132,6 +133,7 @@ export function CreativeHero() {
   const effectiveRatio = ratioOptions.includes(ratio) ? ratio : defaultRatio;
   const ratioForRequest = effectiveRatio === "auto" ? "" : effectiveRatio;
   const referenceLimit = tab === "video" ? 12 : 1;
+  const canUploadReferences = !uploading && references.length < referenceLimit;
   const titleModeLabel = tab === "video" ? "视频生成" : "图片生成";
   const composerPlaceholder = tab === "video"
     ? "上传最多12个参考素材，输入文字或 @ 参考内容，自由组合图、文、音、视频多元素，定义精彩互动。例如：@图片1 模仿 @视频1 的动作，音色参考 @音频1。"
@@ -292,22 +294,31 @@ export function CreativeHero() {
     setPrompt("");
   };
 
-  const handleReferenceChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const picked = Array.from(event.target.files ?? []);
-    event.target.value = "";
+  const uploadReferenceFiles = async (picked: File[]) => {
     if (!picked.length) return;
     if (!isLoggedIn) {
       router.push("/login");
       return;
     }
+    const accepted = picked.filter((file) => {
+      if (tab === "image") return file.type.startsWith("image/");
+      return file.type.startsWith("image/") || file.type.startsWith("video/");
+    });
+    if (!accepted.length) {
+      toast.error(tab === "image" ? "请拖入图片文件" : "请拖入图片或视频文件");
+      return;
+    }
+    if (accepted.length < picked.length) {
+      toast.info(tab === "image" ? "已忽略非图片文件" : "已忽略不支持的文件类型");
+    }
     const maxReferences = tab === "video" ? 12 : 1;
     const available = Math.max(0, maxReferences - references.length);
-    const files = picked.slice(0, available);
+    const files = accepted.slice(0, available);
     if (!files.length) {
       toast.error(tab === "video" ? "最多上传 12 个参考素材" : "图片生成最多上传 1 张参考图");
       return;
     }
-    if (picked.length > available) toast.info(tab === "video" ? "最多保留 12 个参考素材，已选择前 " + available + " 个" : "图片生成最多保留 1 张参考图");
+    if (accepted.length > available) toast.info(tab === "video" ? "最多保留 12 个参考素材，已选择前 " + available + " 个" : "图片生成最多保留 1 张参考图");
     setUploading(true);
     setUploadProgress(0);
     const uploaded: FileVO[] = [];
@@ -329,6 +340,45 @@ export function CreativeHero() {
     }
     setUploading(false);
     setUploadProgress(0);
+  };
+
+  const handleReferenceChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    await uploadReferenceFiles(picked);
+  };
+
+  const handleReferenceDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (canUploadReferences) setReferenceDragActive(true);
+  };
+
+  const handleReferenceDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (canUploadReferences) {
+      event.dataTransfer.dropEffect = "copy";
+      setReferenceDragActive(true);
+    } else {
+      event.dataTransfer.dropEffect = "none";
+    }
+  };
+
+  const handleReferenceDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      setReferenceDragActive(false);
+    }
+  };
+
+  const handleReferenceDrop = async (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setReferenceDragActive(false);
+    if (!canUploadReferences) return;
+    await uploadReferenceFiles(Array.from(event.dataTransfer.files ?? []));
   };
 
   const removeReference = (fileUrl: string) => {
@@ -472,13 +522,22 @@ export function CreativeHero() {
             <div className="relative z-30 rounded-[24px] bg-white p-4 text-left shadow-[0_18px_55px_rgba(15,23,42,0.10)] ring-1 ring-black/[0.06] backdrop-blur-2xl dark:bg-[#1d1e23] dark:ring-white/10">
               <div className="flex gap-4 sm:gap-5">
                 <input ref={fileInputRef} type="file" multiple={tab === "video"} accept={tab === "video" ? "image/*,video/*" : "image/*"} className="hidden" onChange={handleReferenceChange} />
-                <div className="flex w-[68px] shrink-0 flex-col items-center gap-2 pt-1">
+                <div
+                  className="flex w-[68px] shrink-0 flex-col items-center gap-2 pt-1"
+                  onDragEnter={handleReferenceDragEnter}
+                  onDragOver={handleReferenceDragOver}
+                  onDragLeave={handleReferenceDragLeave}
+                  onDrop={handleReferenceDrop}
+                >
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={uploading || references.length >= referenceLimit}
-                    className="group relative flex h-[68px] w-[50px] rotate-[-7deg] flex-col items-center justify-center gap-1 rounded-[4px] bg-neutral-100 text-neutral-500 shadow-sm ring-1 ring-black/[0.04] transition-all hover:-translate-y-0.5 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white/10 dark:text-neutral-300 dark:ring-white/10 dark:hover:bg-white/14"
-                    title={tab === "video" ? "上传参考素材" : "上传参考图"}
+                    disabled={!canUploadReferences}
+                    className={(referenceDragActive
+                      ? "-translate-y-0.5 bg-sky-50 text-[#00a7d7] ring-2 ring-[#00a7d7]/55 dark:bg-sky-400/10 dark:text-[#43c9ef] dark:ring-[#43c9ef]/60"
+                      : "bg-neutral-100 text-neutral-500 ring-1 ring-black/[0.04] hover:-translate-y-0.5 hover:bg-neutral-50 dark:bg-white/10 dark:text-neutral-300 dark:ring-white/10 dark:hover:bg-white/14") +
+                      " group relative flex h-[68px] w-[50px] rotate-[-7deg] flex-col items-center justify-center gap-1 rounded-[4px] shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-60"}
+                    title={tab === "video" ? "点击或拖拽上传参考素材" : "点击或拖拽上传参考图"}
                   >
                     {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
                     <span className="text-[10px] font-medium leading-tight">{uploadLabel}</span>

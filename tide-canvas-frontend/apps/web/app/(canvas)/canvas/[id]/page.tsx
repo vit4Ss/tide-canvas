@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, notFound, useRouter } from "next/navigation";
 import { projectApi } from "@/lib/api";
-import { useCanvasStore } from "@/stores/use-canvas-store";
+import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { CanvasView } from "@/components/canvas/canvas-view";
@@ -14,6 +14,21 @@ import { toast } from "@/components/shared/toast";
 
 const AUTOSAVE_DELAY = 3000; // 3 秒无变化触发自动保存
 
+function serializeCanvasNodes(nodes: CanvasNode[]): CanvasNode[] {
+  return nodes
+    .filter((node) => {
+      const hasLocalPreview = node.imageSrc?.startsWith("blob:") || node.videoSrc?.startsWith("blob:");
+      return !(node.uploading && hasLocalPreview);
+    })
+    .map((node) => {
+      const persisted: CanvasNode = { ...node };
+      if (persisted.imageSrc?.startsWith("blob:")) delete persisted.imageSrc;
+      if (persisted.videoSrc?.startsWith("blob:")) delete persisted.videoSrc;
+      delete persisted.uploading;
+      delete persisted.uploadProgress;
+      return persisted;
+    });
+}
 export default function CanvasEditorPage() {
   const params = useParams();
   // URL 里的 [id] 实为不透明 url token，真实数值ID不在地址栏暴露
@@ -83,7 +98,7 @@ export default function CanvasEditorPage() {
     setSaving(true);
     try {
       const latest = useCanvasStore.getState();
-      const canvasData = JSON.stringify({ nodes: latest.nodes, connections: latest.connections, groups: latest.groups });
+      const canvasData = JSON.stringify({ nodes: serializeCanvasNodes(latest.nodes), connections: latest.connections, groups: latest.groups });
       const persistable = (u?: string): u is string => !!u && new RegExp("^https?://").test(u);
       const cover = (persistable(thumbnail ?? undefined) ? thumbnail : null)
         ?? latest.nodes.find((n) => n.type === "image" && persistable(n.imageSrc))?.imageSrc

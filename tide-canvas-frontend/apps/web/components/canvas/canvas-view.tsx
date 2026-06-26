@@ -248,6 +248,7 @@ export function CanvasView() {
     if (!e.dataTransfer.types.includes("Files")) return;
     e.preventDefault();
     setIsDraggingFile(false);
+
     const files = Array.from(e.dataTransfer.files).filter(
       (f) => f.type.startsWith("image/") || f.type.startsWith("video/")
     );
@@ -255,32 +256,57 @@ export function CanvasView() {
       if (e.dataTransfer.files.length > 0) toast.error("仅支持拖入图片或视频");
       return;
     }
+
     const world = panZoom.screenToWorld(e.clientX, e.clientY);
-    toast.info(files.length > 1 ? `正在上传 ${files.length} 个文件…` : "正在上传…");
+    toast.info(files.length > 1 ? `正在上传 ${files.length} 个文件...` : "正在上传...");
     let ok = 0;
+
     await Promise.all(
       files.map(async (file, i) => {
         const isVideo = file.type.startsWith("video/");
+        const previewUrl = URL.createObjectURL(file);
+        const st = useCanvasStore.getState();
+        const node = createNode(isVideo ? "video" : "image", world.x + i * 48, world.y + i * 48, st.nodes);
+        if (isVideo) node.videoSrc = previewUrl;
+        else node.imageSrc = previewUrl;
+        node.status = "idle";
+        node.uploading = true;
+        node.uploadProgress = 0;
+        if (file.name) node.title = file.name;
+        addNode(node);
+        selectNode(node.id);
+
         try {
-          const res = await uploadFileSmart(file);
+          const res = await uploadFileSmart(file, (pct) => {
+            useCanvasStore.getState().updateNode(node.id, { uploadProgress: pct });
+          });
           if (res.success && res.data?.fileUrl) {
-            const node = createNode(isVideo ? "video" : "image", world.x + i * 48, world.y + i * 48, useCanvasStore.getState().nodes);
-            if (isVideo) node.videoSrc = res.data.fileUrl;
-            else node.imageSrc = res.data.fileUrl;
-            node.status = "success";
-            if (file.name) node.title = file.name;
-            addNode(node);
+            const patch = isVideo
+              ? { videoSrc: res.data.fileUrl, status: "success" as const, uploading: false, uploadProgress: 100 }
+              : { imageSrc: res.data.fileUrl, status: "success" as const, uploading: false, uploadProgress: 100 };
+            useCanvasStore.getState().updateNode(node.id, patch);
             ok++;
           } else {
+            const patch = isVideo
+              ? { videoSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 }
+              : { imageSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 };
+            useCanvasStore.getState().updateNode(node.id, patch);
             toast.error(`上传失败：${res.message || file.name}`);
           }
         } catch (err) {
+          const patch = isVideo
+            ? { videoSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 }
+            : { imageSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 };
+          useCanvasStore.getState().updateNode(node.id, patch);
           toast.error(`上传失败：${(err as Error)?.message || file.name}`);
+        } finally {
+          URL.revokeObjectURL(previewUrl);
         }
       })
     );
+
     if (ok > 0) toast.success(ok > 1 ? `已添加 ${ok} 个节点` : "已添加到画布");
-  }, [panZoom, addNode]);
+  }, [panZoom, addNode, selectNode]);
 
   return (
     // translate="no" + notranslate：告知浏览器/翻译类扩展（如「沉浸式翻译」）整块画布勿翻译，

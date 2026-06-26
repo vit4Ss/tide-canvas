@@ -188,12 +188,15 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   const resolvingRef = useRef(false);
   const { generate, isGenerating } = useAiGeneration();
   const generating = isGenerating(node.id) || node.status === "generating";
+  const nodeUploading = uploading || node.uploading === true;
+  const nodeUploadPct = uploading ? uploadPct : node.uploadProgress ?? 0;
+  const uploadPreviewSrc = localPreview || node.videoSrc || null;
 
   useEffect(() => {
-    if (node.videoSrc && node.status === "error" && !generating) {
+    if (node.videoSrc && node.status === "error" && !generating && !node.uploading) {
       updateNode(node.id, { status: "success" });
     }
-  }, [generating, node.id, node.status, node.videoSrc, updateNode]);
+  }, [generating, node.id, node.status, node.videoSrc, node.uploading, updateNode]);
   const isMultiSelect = useCanvasStore((s) => s.selectedNodeIds.size > 1);
   const showAuxUI = isSelected && !isDragging && !isMultiSelect;
 
@@ -672,15 +675,15 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
               </div>
             </div>
           )}
-          {uploading && (
+          {nodeUploading && (
             <div className="absolute inset-0 z-[6] overflow-hidden">
-              {localPreview ? (
-                <video src={localPreview} muted className="h-full w-full scale-110 object-cover blur-xl" />
+              {uploadPreviewSrc ? (
+                <video src={uploadPreviewSrc} muted className="h-full w-full scale-110 object-cover blur-xl" />
               ) : (
                 <div className="h-full w-full bg-neutral-900" />
               )}
               <div className="absolute inset-0 flex items-center justify-center bg-black/55">
-                <p className="text-sm text-white/90">上传中 ({uploadPct}%) …</p>
+                <p className="text-sm text-white/90">上传中 ({nodeUploadPct}%) ...</p>
               </div>
             </div>
           )}
@@ -790,7 +793,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         )}
         {showAuxUI && !node.videoSrc && (
           <NodeChrome zoom={zoom} placement="top-center" gap={8}>
-            <button onMouseDown={stop} onClick={openFilePicker} disabled={uploading}
+            <button onMouseDown={stop} onClick={openFilePicker} disabled={nodeUploading}
               className="flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 shadow-sm transition-colors hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
               <Upload className="h-3.5 w-3.5" /> 上传
             </button>
