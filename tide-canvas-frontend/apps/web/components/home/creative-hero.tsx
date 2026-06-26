@@ -6,7 +6,6 @@ import { useTranslations } from "next-intl";
 import {
   ArrowUp,
   AtSign,
-  Bot,
   Check,
   ChevronDown,
   Clock3,
@@ -16,12 +15,9 @@ import {
   Image as ImageIcon,
   LayoutGrid,
   Loader2,
-  Mic2,
-  Music,
   RefreshCw,
   Sparkles,
   Upload,
-  UserRound,
   Video,
   Wand2,
   X,
@@ -46,20 +42,20 @@ const IMAGE_QUALITY_OPTIONS = [
 ] as const;
 const IMAGE_RESOLUTION_OPTIONS = ["1K", "2K", "4K"];
 const VIDEO_RESOLUTION_OPTIONS = ["480P", "720P", "1080P"];
-const PROMPT_CHIPS = ["沉浸式短片", "生成图片", "产品推广", "智能长视频 2.0"];
 const CREATION_TYPE_OPTIONS = [
-  { id: "agent", label: "Agent 模式", icon: Bot },
   { id: "image", label: "图片生成", icon: ImageIcon },
   { id: "video", label: "视频生成", icon: Video },
-  { id: "music", label: "音乐生成", icon: Music },
-  { id: "voice", label: "配音生成", icon: Mic2 },
-  { id: "avatar", label: "数字人", icon: UserRound },
-  { id: "motion", label: "动作模仿", icon: Sparkles },
+] as const;
+const VIDEO_REFERENCE_MODE_OPTIONS = [
+  { id: "omni", label: "全能参考", icon: Wand2 },
+  { id: "firstLast", label: "首尾帧", icon: LayoutGrid },
+  { id: "multiFrame", label: "智能多帧", icon: Video },
 ] as const;
 
 type Tab = "image" | "video";
 type GenStatus = "generating" | "done" | "error";
 type ImageQuality = (typeof IMAGE_QUALITY_OPTIONS)[number]["value"];
+type VideoReferenceMode = (typeof VIDEO_REFERENCE_MODE_OPTIONS)[number]["id"];
 
 interface GenParams {
   prompt: string;
@@ -72,6 +68,7 @@ interface GenParams {
   videoResolution?: string;
   videoDuration?: number;
   videoAudio?: boolean;
+  videoReferenceMode?: VideoReferenceMode;
   references?: FileVO[];
 }
 interface GenResult extends GenParams {
@@ -85,8 +82,7 @@ interface GenResult extends GenParams {
 export function CreativeHero() {
   const t = useTranslations("home");
   const router = useRouter();
-  const { isLoggedIn, user } = useAuth();
-  const name = user?.nickname || user?.username || t("guestName");
+  const { isLoggedIn } = useAuth();
   const [tab, setTab] = useState<Tab>("image");
   const [prompt, setPrompt] = useState("");
   const [models, setModels] = useState<AiModelVO[]>([]);
@@ -100,6 +96,8 @@ export function CreativeHero() {
   const [typeOpen, setTypeOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [ratioOpen, setRatioOpen] = useState(false);
+  const [referenceModeOpen, setReferenceModeOpen] = useState(false);
+  const [videoReferenceMode, setVideoReferenceMode] = useState<VideoReferenceMode>("omni");
   const [references, setReferences] = useState<FileVO[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -133,13 +131,18 @@ export function CreativeHero() {
   const defaultRatio = tab === "video" ? "16:9" : "1:1";
   const effectiveRatio = ratioOptions.includes(ratio) ? ratio : defaultRatio;
   const ratioForRequest = effectiveRatio === "auto" ? "" : effectiveRatio;
-  const imageQualityLabel = IMAGE_QUALITY_OPTIONS.find((item) => item.value === imageQuality)?.label ?? "标准画质";
-  const paramSummary = tab === "video"
-    ? (effectiveRatio === "auto" ? "Auto" : effectiveRatio) + " · " + videoResolution + " · " + videoDuration + "s"
-    : (effectiveRatio === "auto" ? "自适应" : effectiveRatio) + " · " + imageQualityLabel + " · " + imageResolution;
-  const referenceModeLabel = references.length ? "全能参考 " + references.length : "全能参考";
+  const referenceLimit = tab === "video" ? 12 : 1;
+  const titleModeLabel = tab === "video" ? "视频生成" : "图片生成";
+  const composerPlaceholder = tab === "video"
+    ? "上传最多12个参考素材，输入文字或 @ 参考内容，自由组合图、文、音、视频多元素，定义精彩互动。例如：@图片1 模仿 @视频1 的动作，音色参考 @音频1。"
+    : "上传参考图、输入文字或 @ 主体，描述你想生成的图片。";
+  const uploadLabel = tab === "video" ? "参考内容" : "参考图";
+  const referenceMode = VIDEO_REFERENCE_MODE_OPTIONS.find((item) => item.id === videoReferenceMode) ?? VIDEO_REFERENCE_MODE_OPTIONS[0];
+  const referenceModeLabel = references.length ? referenceMode.label + " " + references.length : referenceMode.label;
+  const modelLabel = selectedModel?.name ?? (tab === "video" ? "即梦 Seedance 2.0 mini" : "图片 4.7");
   const activeCreation = CREATION_TYPE_OPTIONS.find((item) => item.id === tab) ?? CREATION_TYPE_OPTIONS[1];
   const ActiveCreationIcon = activeCreation.icon;
+  const ReferenceModeIcon = referenceMode.icon;
   const busy = results.some((r) => r.status === "generating");
 
   useEffect(() => {
@@ -152,6 +155,10 @@ export function CreativeHero() {
     setRatio(next === "video" ? "16:9" : "1:1");
     setTypeOpen(false);
     setRatioOpen(false);
+    setReferenceModeOpen(false);
+    if (next === "image") {
+      setReferences((current) => current.filter((file) => file.fileType === "image" || file.mimeType?.startsWith("image/")).slice(0, 1));
+    }
     const list = models.filter((m) =>
       next === "video" ? m.type === AiModelType.VIDEO : m.type === AiModelType.IMAGE,
     );
@@ -229,17 +236,24 @@ export function CreativeHero() {
           ...(p.imageQuality ? { quality: p.imageQuality } : {}),
           ...(p.imageResolution ? { resolution: p.imageResolution.toLowerCase() } : {}),
         };
-    const handler = p.kind === "video"
-      ? (imageUrls.length || videoUrls.length ? "reference_to_video" : "text_to_video")
-      : (imageUrls.length ? "image_to_image" : "text_to_image");
-    const referenceInput = p.kind === "video"
-      ? {
-          ...(imageUrls.length ? { references: imageUrls } : {}),
-          ...(videoUrls.length ? { videoReferences: videoUrls } : {}),
-        }
-      : {
-          ...(imageUrls.length ? { imageList: imageUrls, sourceImage: imageUrls[0], references: imageUrls.slice(1) } : {}),
-        };
+    let handler = imageUrls.length ? "image_to_image" : "text_to_image";
+    let referenceInput: Record<string, unknown> = imageUrls.length
+      ? { imageList: imageUrls, sourceImage: imageUrls[0], references: imageUrls.slice(1) }
+      : {};
+    if (p.kind === "video") {
+      handler = imageUrls.length || videoUrls.length ? "reference_to_video" : "text_to_video";
+      referenceInput = {
+        ...(imageUrls.length ? { references: imageUrls } : {}),
+        ...(videoUrls.length ? { videoReferences: videoUrls } : {}),
+      };
+      if (imageUrls.length && p.videoReferenceMode === "firstLast") {
+        handler = "start_end_to_video";
+        referenceInput = { firstFrame: imageUrls[0], lastFrame: imageUrls[1] ?? imageUrls[0] };
+      } else if (imageUrls.length && p.videoReferenceMode === "multiFrame") {
+        handler = "reference_to_video";
+        referenceInput = { references: imageUrls };
+      }
+    }
     try {
       const res = await aiApi.generate({
         handler,
@@ -272,6 +286,7 @@ export function CreativeHero() {
       videoResolution,
       videoDuration,
       videoAudio,
+      videoReferenceMode,
       references,
     });
     setPrompt("");
@@ -285,13 +300,14 @@ export function CreativeHero() {
       router.push("/login");
       return;
     }
-    const available = Math.max(0, 12 - references.length);
+    const maxReferences = tab === "video" ? 12 : 1;
+    const available = Math.max(0, maxReferences - references.length);
     const files = picked.slice(0, available);
     if (!files.length) {
-      toast.error("最多上传 12 个参考素材");
+      toast.error(tab === "video" ? "最多上传 12 个参考素材" : "图片生成最多上传 1 张参考图");
       return;
     }
-    if (picked.length > available) toast.info("最多保留 12 个参考素材，已选择前 " + available + " 个");
+    if (picked.length > available) toast.info(tab === "video" ? "最多保留 12 个参考素材，已选择前 " + available + " 个" : "图片生成最多保留 1 张参考图");
     setUploading(true);
     setUploadProgress(0);
     const uploaded: FileVO[] = [];
@@ -308,7 +324,7 @@ export function CreativeHero() {
       }
     }
     if (uploaded.length) {
-      setReferences((current) => [...current, ...uploaded].slice(0, 12));
+      setReferences((current) => [...current, ...uploaded].slice(0, maxReferences));
       toast.success(uploaded.length > 1 ? "已上传 " + uploaded.length + " 个参考素材" : "参考素材已上传");
     }
     setUploading(false);
@@ -367,35 +383,25 @@ export function CreativeHero() {
   };
 
   return (
-    <section className="relative z-30 flex min-h-screen flex-col overflow-hidden px-4 pt-16 sm:px-6 lg:px-8">
-      <div
-        className="absolute inset-x-0 top-0 -z-20 h-[280px] bg-cover bg-center opacity-80 dark:opacity-35"
-        style={{ backgroundImage: "url('https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=2200&q=82')" }}
-      />
-      <div className="absolute inset-x-0 top-0 -z-10 h-[360px] bg-[linear-gradient(to_bottom,rgba(245,245,241,0.18),rgba(245,245,241,0.82)_62%,#f5f5f1_100%)] dark:bg-[linear-gradient(to_bottom,rgba(16,17,20,0.18),rgba(16,17,20,0.86)_66%,#101114_100%)]" />
+    <section className="relative z-30 flex min-h-screen flex-col overflow-hidden bg-[#f7f8fa] px-4 pt-16 text-neutral-950 sm:px-6 lg:px-8 dark:bg-[#101114] dark:text-white">
+      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[340px] bg-[linear-gradient(to_bottom,#f3f5f8,rgba(247,248,250,0.86)_68%,#f7f8fa)] dark:bg-[linear-gradient(to_bottom,#17181d,rgba(16,17,20,0.9)_68%,#101114)]" />
 
-      <div className="mx-auto flex min-h-[calc(100vh-64px)] w-full max-w-[980px] flex-col">
-        <div className="min-h-0 flex-1 px-1 pt-8 sm:pt-12">
+      <div className="mx-auto flex min-h-[calc(100vh-64px)] w-full max-w-[1280px] flex-col">
+        <div className={(results.length === 0 ? "px-1 pt-8 sm:pt-12" : "min-h-0 flex-1 px-1 pt-8 sm:pt-12")}>
           {results.length === 0 ? (
-            <div className="flex min-h-[calc(100vh-300px)] flex-col items-center justify-center text-center">
-              <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-2xl bg-white/85 shadow-[0_14px_40px_rgba(15,23,42,0.12)] ring-1 ring-black/[0.05] backdrop-blur-xl dark:bg-white/10 dark:ring-white/10">
-                <Wand2 className="h-5 w-5 text-neutral-900 dark:text-white" />
-              </div>
-              <h1 className="max-w-[820px] text-[30px] font-semibold leading-tight tracking-normal text-neutral-950 sm:text-[38px] xl:text-[42px] dark:text-white">
-                {t("greeting", { name })}
+            <div className="flex flex-col items-center pb-8 pt-12 text-center sm:pt-16">
+              <h1 className="text-[24px] font-semibold leading-tight tracking-normal text-neutral-950 sm:text-[28px] dark:text-white">
+                开启你的
+                <button
+                  type="button"
+                  onClick={() => switchTab(tab === "video" ? "image" : "video")}
+                  className="mx-2 inline-flex items-center gap-0.5 align-baseline text-[#00a7d7] transition-colors hover:text-[#008fbd]"
+                >
+                  {titleModeLabel}
+                  <ChevronDown className={(typeOpen ? "rotate-180" : "rotate-0") + " h-4 w-4 transition-transform"} />
+                </button>
+                即刻造梦！
               </h1>
-              <div className="mt-6 flex max-w-[760px] flex-wrap justify-center gap-2">
-                {PROMPT_CHIPS.map((item) => (
-                  <button
-                    key={item}
-                    type="button"
-                    onClick={() => setPrompt((current) => current || item)}
-                    className="rounded-full bg-white/82 px-4 py-2 text-sm font-medium text-neutral-600 shadow-sm ring-1 ring-black/[0.04] transition-colors hover:bg-white hover:text-neutral-950 dark:bg-white/8 dark:text-neutral-300 dark:ring-white/10 dark:hover:bg-white/12 dark:hover:text-white"
-                  >
-                    {item}
-                  </button>
-                ))}
-              </div>
             </div>
           ) : (
             <div className="mx-auto w-full max-w-[900px] space-y-5 pb-8 pt-4 text-left">
@@ -459,21 +465,23 @@ export function CreativeHero() {
           )}
         </div>
 
-        <div className="sticky bottom-0 z-40 -mx-4 bg-[linear-gradient(to_top,#f5f5f1_72%,rgba(245,245,241,0))] px-4 pb-0 pt-3 sm:-mx-6 sm:px-6 dark:bg-[linear-gradient(to_top,#101114_72%,rgba(16,17,20,0))]">
-          <div className="mx-auto w-full max-w-[930px]">
-            <div className="relative z-30 rounded-[24px] bg-white/96 p-3 text-left shadow-[0_18px_55px_rgba(15,23,42,0.14)] ring-1 ring-black/[0.06] backdrop-blur-2xl dark:bg-[#1d1e23]/96 dark:ring-white/10">
-              <div className="flex gap-4">
-                <input ref={fileInputRef} type="file" multiple accept="image/*,video/*" className="hidden" onChange={handleReferenceChange} />
-                <div className="flex w-[72px] shrink-0 flex-col items-center gap-2">
+        <div className={(results.length === 0
+          ? "relative z-40 -mx-4 px-4 pb-0 pt-0 sm:-mx-6 sm:px-6"
+          : "sticky bottom-4 z-40 -mx-4 bg-[linear-gradient(to_top,#f7f8fa_74%,rgba(247,248,250,0))] px-4 pb-0 pt-3 sm:-mx-6 sm:px-6 dark:bg-[linear-gradient(to_top,#101114_74%,rgba(16,17,20,0))]")}>
+          <div className="mx-auto w-full max-w-[1200px]">
+            <div className="relative z-30 rounded-[24px] bg-white p-4 text-left shadow-[0_18px_55px_rgba(15,23,42,0.10)] ring-1 ring-black/[0.06] backdrop-blur-2xl dark:bg-[#1d1e23] dark:ring-white/10">
+              <div className="flex gap-4 sm:gap-5">
+                <input ref={fileInputRef} type="file" multiple={tab === "video"} accept={tab === "video" ? "image/*,video/*" : "image/*"} className="hidden" onChange={handleReferenceChange} />
+                <div className="flex w-[68px] shrink-0 flex-col items-center gap-2 pt-1">
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={uploading || references.length >= 12}
-                    className="group relative flex h-[60px] w-[50px] rotate-[-7deg] flex-col items-center justify-center gap-1 rounded-[4px] bg-neutral-100 text-neutral-500 shadow-sm ring-1 ring-black/[0.04] transition-all hover:-translate-y-0.5 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white/10 dark:text-neutral-300 dark:ring-white/10 dark:hover:bg-white/14"
-                    title="上传参考素材"
+                    disabled={uploading || references.length >= referenceLimit}
+                    className="group relative flex h-[68px] w-[50px] rotate-[-7deg] flex-col items-center justify-center gap-1 rounded-[4px] bg-neutral-100 text-neutral-500 shadow-sm ring-1 ring-black/[0.04] transition-all hover:-translate-y-0.5 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white/10 dark:text-neutral-300 dark:ring-white/10 dark:hover:bg-white/14"
+                    title={tab === "video" ? "上传参考素材" : "上传参考图"}
                   >
                     {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                    <span className="text-[10px] font-medium">参考内容</span>
+                    <span className="text-[10px] font-medium leading-tight">{uploadLabel}</span>
                   </button>
                   {uploading && <span className="text-[10px] text-neutral-400">{uploadProgress || 0}%</span>}
                 </div>
@@ -483,10 +491,10 @@ export function CreativeHero() {
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
                     onKeyDown={onKeyDown}
-                    placeholder="上传最多12个参考素材，输入文字或 @ 参考内容，自由组合图、文、音、视频多元素，定义精彩互动。例如：@图片1 模仿 @视频1 的动作，音色参考 @音频1。"
-                    rows={2}
+                    placeholder={composerPlaceholder}
+                    rows={3}
                     style={{ outline: "none", boxShadow: "none", border: "none" }}
-                    className="block min-h-[66px] w-full resize-none border-0 bg-transparent px-0 pt-1 text-[14px] leading-6 text-neutral-800 placeholder:text-neutral-400 outline-none focus:outline-none focus:ring-0 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+                    className="block min-h-[86px] w-full resize-none border-0 bg-transparent px-0 pt-1 text-[14px] leading-6 text-neutral-800 placeholder:text-neutral-400 outline-none focus:outline-none focus:ring-0 dark:text-neutral-100 dark:placeholder:text-neutral-500"
                   />
 
                   {references.length > 0 && (
@@ -522,13 +530,13 @@ export function CreativeHero() {
                 </div>
               </div>
 
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-100 pt-3 dark:border-white/10">
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 pt-1">
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <div className="relative shrink-0">
                     <button
                       type="button"
-                      onClick={() => { setTypeOpen((open) => !open); setModelOpen(false); setRatioOpen(false); }}
-                      className="flex h-9 items-center gap-1.5 rounded-2xl bg-neutral-50 px-3 text-sm font-semibold text-cyan-600 ring-1 ring-black/[0.04] transition-colors hover:bg-neutral-100 dark:bg-white/8 dark:text-cyan-300 dark:ring-white/10 dark:hover:bg-white/12"
+                      onClick={() => { setTypeOpen((open) => !open); setModelOpen(false); setRatioOpen(false); setReferenceModeOpen(false); }}
+                      className="flex h-9 items-center gap-1.5 rounded-2xl bg-white px-3 text-sm font-semibold text-[#00a7d7] ring-1 ring-black/[0.06] transition-colors hover:bg-neutral-50 dark:bg-white/8 dark:text-[#43c9ef] dark:ring-white/10 dark:hover:bg-white/12"
                     >
                       <ActiveCreationIcon className="h-4 w-4" />
                       {activeCreation.label}
@@ -569,11 +577,11 @@ export function CreativeHero() {
                   <div className="relative min-w-0">
                     <button
                       type="button"
-                      onClick={() => { setModelOpen((o) => !o); setTypeOpen(false); setRatioOpen(false); }}
+                      onClick={() => { setModelOpen((o) => !o); setTypeOpen(false); setRatioOpen(false); setReferenceModeOpen(false); }}
                       className="flex h-9 max-w-[220px] items-center gap-1.5 rounded-xl bg-neutral-50 px-3 text-sm font-medium text-neutral-700 ring-1 ring-black/[0.04] transition-colors hover:bg-neutral-100 dark:bg-white/8 dark:text-neutral-200 dark:ring-white/10 dark:hover:bg-white/12"
                     >
                       <Sparkles className="h-3.5 w-3.5" />
-                      <span className="truncate">模型</span>
+                      <span className="truncate">{modelLabel}</span>
                       <ChevronDown className={(modelOpen ? "rotate-180" : "rotate-0") + " h-3.5 w-3.5 transition-transform"} />
                     </button>
                     {modelOpen && tabModels.length > 0 && (
@@ -596,27 +604,56 @@ export function CreativeHero() {
                     )}
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="flex h-9 items-center gap-1.5 rounded-xl bg-neutral-50 px-3 text-sm font-medium text-neutral-700 ring-1 ring-black/[0.04] transition-colors hover:bg-neutral-100 dark:bg-white/8 dark:text-neutral-200 dark:ring-white/10 dark:hover:bg-white/12"
-                  >
-                    <Wand2 className="h-3.5 w-3.5" />
-                    {referenceModeLabel}
-                    <ChevronDown className="h-3.5 w-3.5" />
-                  </button>
+                  {tab === "video" && (
+                    <div className="relative shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => { setReferenceModeOpen((open) => !open); setTypeOpen(false); setModelOpen(false); setRatioOpen(false); }}
+                        className="flex h-9 items-center gap-1.5 rounded-xl bg-neutral-50 px-3 text-sm font-medium text-neutral-700 ring-1 ring-black/[0.04] transition-colors hover:bg-neutral-100 dark:bg-white/8 dark:text-neutral-200 dark:ring-white/10 dark:hover:bg-white/12"
+                      >
+                        <ReferenceModeIcon className="h-3.5 w-3.5" />
+                        {referenceModeLabel}
+                        <ChevronDown className={(referenceModeOpen ? "rotate-180" : "rotate-0") + " h-3.5 w-3.5 transition-transform"} />
+                      </button>
+                      {referenceModeOpen && (
+                        <>
+                          <div className="fixed inset-0 z-10" onClick={() => setReferenceModeOpen(false)} />
+                          <div className="absolute bottom-full left-0 z-50 mb-3 w-[184px] rounded-2xl bg-white p-1.5 text-left shadow-[0_18px_55px_rgba(15,23,42,0.16)] ring-1 ring-black/[0.08] dark:bg-[#25262b] dark:ring-white/10">
+                            {VIDEO_REFERENCE_MODE_OPTIONS.map((item) => {
+                              const Icon = item.icon;
+                              const active = item.id === videoReferenceMode;
+                              return (
+                                <button
+                                  key={item.id}
+                                  type="button"
+                                  onClick={() => { setVideoReferenceMode(item.id); setReferenceModeOpen(false); }}
+                                  className={(active
+                                    ? "bg-neutral-100 text-neutral-950 dark:bg-white/10 dark:text-white"
+                                    : "text-neutral-700 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-white/8") +
+                                    " flex h-10 w-full items-center gap-2 rounded-xl px-2.5 text-sm transition-colors"}
+                                >
+                                  <Icon className="h-4 w-4 shrink-0" />
+                                  <span className="min-w-0 flex-1 truncate text-left">{item.label}</span>
+                                  {active && <Check className="h-4 w-4 shrink-0" />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
 
                   <div className="relative min-w-0">
                     <button
                       type="button"
-                      onClick={() => { setRatioOpen((o) => !o); setTypeOpen(false); setModelOpen(false); }}
+                      onClick={() => { setRatioOpen((o) => !o); setTypeOpen(false); setModelOpen(false); setReferenceModeOpen(false); }}
                       className="flex h-9 max-w-[280px] items-center gap-2 rounded-xl bg-neutral-50 px-3 text-sm font-medium text-neutral-700 ring-1 ring-black/[0.04] transition-colors hover:bg-neutral-100 dark:bg-white/8 dark:text-neutral-200 dark:ring-white/10 dark:hover:bg-white/12"
                     >
                       <Crop className="h-3.5 w-3.5" />
                       <span className="truncate">{effectiveRatio === "auto" ? "自适应" : effectiveRatio}</span>
                       <span className="h-4 w-px bg-neutral-200 dark:bg-white/10" />
                       <span>{tab === "video" ? videoResolution : imageResolution}</span>
-                      {tab === "image" && <span>{imageQualityLabel}</span>}
                       <ChevronDown className={(ratioOpen ? "rotate-180" : "rotate-0") + " h-3.5 w-3.5 transition-transform"} />
                     </button>
                     {ratioOpen && (
@@ -671,8 +708,8 @@ export function CreativeHero() {
                 </div>
 
                 <div className="flex shrink-0 items-center gap-2">
-                  <span className="hidden items-center gap-1 text-xs font-semibold text-neutral-500 sm:flex dark:text-neutral-400" title="本次生成消耗积分">
-                    <Zap className="h-3.5 w-3.5 fill-cyan-400 text-cyan-400" />
+                  <span className="hidden items-center gap-1 text-xs font-semibold text-neutral-950 sm:flex dark:text-white" title="本次生成消耗积分">
+                    <Zap className="h-3.5 w-3.5 fill-neutral-950 text-neutral-950 dark:fill-white dark:text-white" />
                     {selectedModel?.pointCost ?? 0}
                   </span>
                   <button
