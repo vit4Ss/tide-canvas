@@ -23,6 +23,7 @@ import "@/styles/liuguang/flux.css";
 import "./login.css";
 
 import { Suspense, useEffect, useRef, useState } from "react";
+import { Logo } from "@/components/flux/atoms";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import FluxField from "@/components/flux/flux-field";
@@ -196,7 +197,7 @@ function LoginInner() {
   const title = mode === "login" ? "欢迎回来" : "创建账户";
   const sub =
     mode === "login"
-      ? "登录你的 SCARECROWAI 账户，继续创作。"
+      ? "登录你的 流光 FlowingLight 账户，继续创作。"
       : "注册即送新手体验积分，无需绑定信用卡。";
   const submitLabel = mode === "login" ? "登 录" : "创建账户";
 
@@ -206,8 +207,8 @@ function LoginInner() {
 
       <header className="auth-top">
         <Link className="brand" href="/">
-          <span className="glyph" />
-          SCARECROW<b>AI</b>
+          <Logo size={26} />
+          FLOWING<b>LIGHT</b>
         </Link>
         <Link className="back" href="/">
           ← 返回首页
@@ -221,8 +222,8 @@ function LoginInner() {
             <div className="glow" />
             <div className="glow b" />
             <div className="auth-aside-top">
-              <span className="glyph" />
-              SCARECROW<b>AI</b>
+              <Logo size={26} />
+              FLOWING<b>LIGHT</b>
             </div>
             <div className="auth-aside-head">
               <span className="eyebrow">

@@ -23,6 +23,7 @@
    ========================================================================== */
 
 import Link from "next/link";
+import { Logo } from "@/components/flux/atoms";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "@/components/shared/toast";
@@ -166,8 +167,8 @@ export default function SiteNav() {
     <nav className="nav" id="nav" ref={navRef}>
       <div className="wrap nav-in">
         <Link className="brand" href="/">
-          <span className="glyph" />
-          SCARECROW<b>AI</b>
+          <Logo size={26} />
+          FLOWING<b>LIGHT</b>
         </Link>
 
         <div className="nav-links">

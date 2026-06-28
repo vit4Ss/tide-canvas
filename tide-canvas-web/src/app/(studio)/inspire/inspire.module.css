@@ -9,3 +9,141 @@
   flex: 1;
   min-height: 0;
 }
+
+/* subtitle under the 灵感 title */
+.sub {
+  margin: 6px 0 18px;
+  font-size: 14px;
+  color: var(--text-faint);
+}
+
+/* theme chips (collections) */
+.themes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 4px;
+}
+.theme {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: var(--pill);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--panel-solid);
+  border: 1px solid var(--border);
+  transition: all 0.15s;
+}
+.theme:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.themeOn {
+  color: #fff;
+  background: var(--accent);
+  border-color: transparent;
+}
+
+/* prompt card grid */
+.grid {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
+  gap: 16px;
+}
+.card {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  background: var(--panel-solid);
+  border: 1px solid var(--border);
+  transition: border-color 0.18s, transform 0.18s;
+}
+.card:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-2px);
+}
+.cardCover {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  background-color: var(--surface-2);
+}
+.copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  color: #fff;
+  background: rgba(12, 14, 20, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(6px);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.card:hover .copy {
+  opacity: 1;
+}
+.copy:hover {
+  background: var(--accent);
+  border-color: transparent;
+}
+.cardBody {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 13px 13px;
+  flex: 1;
+}
+.cardText {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tag {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.cardFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: auto;
+  padding-top: 4px;
+}
+.adopt {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.apply {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: var(--pill);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--grad);
+  box-shadow: 0 4px 14px var(--accent-soft);
+  transition: filter 0.15s, transform 0.15s;
+}
+.apply:hover {
+  filter: brightness(1.07);
+  transform: translateY(-1px);
+}

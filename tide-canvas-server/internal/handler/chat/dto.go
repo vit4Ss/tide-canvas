@@ -16,11 +16,25 @@ type RenameConversationDTO struct {
 	Title string `json:"title" binding:"required,max=128"`
 }
 
-// SendMessageDTO is the body for POST /api/im/conversations/:id/messages. Type
-// is the message content type (text / image / file); it defaults to "text".
+// SendMessageDTO is the body for POST /api/im/conversations/:id/messages and the
+// /stream endpoint. Type is the message content type (text / image / file); it
+// defaults to "text". Attachments are reference files uploaded in the composer
+// (text models with config.fileUpload); image attachments are forwarded to the
+// LLM as multimodal content.
 type SendMessageDTO struct {
-	Content string `json:"content" binding:"required,max=8192"`
-	Type    string `json:"type" binding:"omitempty,oneof=text image file"`
+	Content     string          `json:"content" binding:"required,max=8192"`
+	Type        string          `json:"type" binding:"omitempty,oneof=text image file"`
+	Attachments []MessageAttach `json:"attachments" binding:"omitempty,max=12,dive"`
+}
+
+// MessageAttach is one composer attachment: a hosted file URL plus its kind
+// (image / video / audio / file). Only image attachments are sent to the model.
+type MessageAttach struct {
+	// Not constrained to a strict URL shape: storage may return an absolute OSS
+	// URL or a publicURL-relative path. A malformed entry simply won't render /
+	// won't be sent to the model rather than failing the whole message.
+	URL  string `json:"url" binding:"required,max=2048"`
+	Kind string `json:"kind" binding:"omitempty,oneof=image video audio file"`
 }
 
 // AppendMessageDTO is the body for POST /api/im/conversations/:id/messages/append.

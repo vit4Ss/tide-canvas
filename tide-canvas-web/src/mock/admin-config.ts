@@ -54,7 +54,7 @@ export const BASE_CONFIG_CARDS: ConfigCard[] = [
     title: "站点信息",
     desc: "前台展示的基础品牌信息。",
     rows: [
-      { kind: "text", label: "站点名称", type: "text", value: "SCARECROW AI" },
+      { kind: "text", label: "站点名称", type: "text", value: "流光 FlowingLight" },
       { kind: "text", label: "备案号", type: "text", value: "粤ICP备2026xxxxx" },
       { kind: "select", label: "默认语言", value: "简体中文", options: ["简体中文", "English"] },
     ],

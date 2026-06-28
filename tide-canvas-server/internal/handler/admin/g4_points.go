@@ -290,6 +290,10 @@ func (h *g4PointsHandler) adjust(c *gin.Context) {
 		if newBalance < 0 {
 			newBalance = 0
 		}
+		// Record the delta that was ACTUALLY applied, not the requested one — when a
+		// negative adjust is clamped at 0, prevBalance + amount must still equal the
+		// new balance, or the user-facing ledger won't reconcile.
+		applied := int(newBalance - u.Points)
 		if err := tx.Model(&model.User{}).
 			Where("id = ?", dto.UserID).
 			Update("points", newBalance).Error; err != nil {
@@ -303,7 +307,7 @@ func (h *g4PointsHandler) adjust(c *gin.Context) {
 		record = model.PointRecord{
 			UserID:     dto.UserID,
 			ChangeType: "adjust",
-			Amount:     dto.Amount,
+			Amount:     applied,
 			Balance:    int(newBalance),
 			Remark:     remark,
 			RefID:      &opRef,

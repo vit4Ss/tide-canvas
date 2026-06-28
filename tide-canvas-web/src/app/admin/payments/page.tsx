@@ -173,6 +173,9 @@ export default function AdminPaymentsPage() {
       rate: toNum(chForm.rate) / 100, // percent → fraction
       callback: chForm.callback.trim(),
       enabled: chForm.enabled,
+      // full-overwrite upsert: preserve sortOrder (not in the form) on edit, like
+      // toggleCh does — otherwise editing a channel resets its order to 0.
+      ...(editingCh ? { sortOrder: editingCh.sortOrder } : {}),
     };
     if (!dto.name || !dto.type) return;
     const res = editingCh

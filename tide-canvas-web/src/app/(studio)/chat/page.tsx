@@ -39,6 +39,7 @@ import { chatApi, streamMessage } from "@/lib/chat-api";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { AiTaskStatus } from "@/types/ai";
 import { marketApi, type StudioModelVO } from "@/lib/market-api";
+import { AssetsBrowser, type PickedAsset } from "@/components/studio/assets-browser";
 import { useAuthStore } from "@/stores/use-auth-store";
 import type { ConversationVO, MessageVO, MessageTaskVO } from "@/types/chat";
 import { mesh } from "@/lib/mesh";
@@ -93,14 +94,25 @@ interface RefItem {
   failed?: boolean;
 }
 
+/** A reference policy: which kinds, how many, and (optional) per-file size cap. */
+interface RefPolicy {
+  kinds: RefKind[];
+  max: number;
+  /** per-file size limit in MB (0 / undefined = unlimited). */
+  maxSizeMB?: number;
+}
+
 /** Which reference kinds + how many a given generation mode accepts. Modes not
  *  listed (t2i / t2v) take no reference media. */
-const REF_POLICY: Record<string, { kinds: RefKind[]; max: number }> = {
+const REF_POLICY: Record<string, RefPolicy> = {
   i2i: { kinds: ["image"], max: 6 },
   i2v: { kinds: ["image"], max: 1 },
   keyframe: { kinds: ["image"], max: 2 },
   omni_ref: { kinds: ["image", "video", "audio"], max: 6 },
 };
+
+/** Hard cap on attachments per message — mirrors the backend DTO validation. */
+const MAX_ATTACHMENTS = 12;
 
 /** Classify a File into a reference kind by MIME type. */
 function fileKind(file: File): RefKind {
@@ -229,6 +241,11 @@ export default function ChatPage() {
   const dragDepth = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // reference-source flow: a 来源 menu (本地上传 / 资产库) anchored to the ＋ button,
+  // plus the 资产库 picker dialog. Mirrors 创作台 create-studio's source flow.
+  const [srcMenuPos, setSrcMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const [assetPickOpen, setAssetPickOpen] = useState(false);
+
   // lightbox (P5): viewed media set + index.
   const [lightbox, setLightbox] = useState<{ items: LightboxItem[]; index: number } | null>(null);
   const openLightbox = useCallback(
@@ -282,12 +299,25 @@ export default function ChatPage() {
   const batchMax = Math.max(...countOpts);
   const toggleSel = (k: string) => setOpenSel((cur) => (cur === k ? null : k));
 
-  // reference policy for the current mode (image/video models only). undefined
-  // for text models and the t2i / t2v modes, which take no reference media.
-  const refPolicy = useMemo(
-    () => (selModel && selModel.type !== "text" ? REF_POLICY[mode] : undefined),
-    [selModel, mode],
-  );
+  // reference policy for the current model/mode. For a 文本模型 it is driven by
+  // 模型管理 config (fileUpload on → 图片附件，数量 maxFileCount、单文件 maxFileSizeMB)；
+  // for image/video models it is the per-mode REF_POLICY (t2i / t2v take none).
+  const refPolicy = useMemo<RefPolicy | undefined>(() => {
+    if (!selModel) return undefined;
+    if (selModel.type === "text") {
+      if (!mCfg?.fileUpload) return undefined;
+      const cfgMax = mCfg.maxFileCount && mCfg.maxFileCount > 0 ? mCfg.maxFileCount : MAX_ATTACHMENTS;
+      return {
+        kinds: ["image"],
+        max: Math.min(cfgMax, MAX_ATTACHMENTS),
+        maxSizeMB: mCfg.maxFileSizeMB ?? 0,
+      };
+    }
+    return REF_POLICY[mode];
+  }, [selModel, mode, mCfg]);
+  // text-model uploads are OPTIONAL (a chat can be plain text); generation ref
+  // modes (i2i/i2v/…) REQUIRE at least one reference before sending.
+  const refOptional = selModel?.type === "text";
 
   // keep refsRef + the synchronous count in sync for stale-closure-free access
   // in callbacks/cleanup (re-syncs the count after adds/removals/dedup drops).
@@ -295,6 +325,25 @@ export default function ChatPage() {
     refsRef.current = refs;
     refCountRef.current = refs.length;
   }, [refs]);
+
+  // dismiss the 来源 menu / 资产库 dialog if the model stops supporting uploads
+  // (switched to a no-upload model while one was open).
+  useEffect(() => {
+    if (!refPolicy) {
+      setSrcMenuPos(null);
+      setAssetPickOpen(false);
+    }
+  }, [refPolicy]);
+
+  // Escape closes the 来源 menu (parity with the other popovers in this view).
+  useEffect(() => {
+    if (!srcMenuPos) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") setSrcMenuPos(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [srcMenuPos]);
 
   // revoke every blob preview on unmount (avoid leaking object URLs).
   useEffect(() => {
@@ -350,12 +399,17 @@ export default function ChatPage() {
       // use the synchronous counter (not the effect-lagged refsRef) so two attaches
       // in the same tick can't both read a stale length and exceed policy.max.
       let count = refCountRef.current;
+      const sizeCap = policy.maxSizeMB && policy.maxSizeMB > 0 ? policy.maxSizeMB : 0;
       for (const file of Array.from(files)) {
         const kind = fileKind(file);
         if (!policy.kinds.includes(kind)) continue;
         if (count >= policy.max) {
-          toast.info(`最多添加 ${policy.max} 个参考素材`);
+          toast.info(`最多添加 ${policy.max} 个文件`);
           break;
+        }
+        if (sizeCap && file.size > sizeCap * 1024 * 1024) {
+          toast.info(`「${file.name}」超过 ${sizeCap}MB 上限`);
+          continue;
         }
         const blobUrl = URL.createObjectURL(file);
         fresh.push({ item: { key: `r${refSeq.current++}`, kind, blobUrl, uploading: true }, file });
@@ -383,6 +437,79 @@ export default function ChatPage() {
       return [];
     });
   }, []);
+
+  // add an already-hosted asset (picked from 资产库) directly as a reference — no
+  // upload needed; honors the policy kinds/max and dedups by url.
+  const addAssetRef = useCallback(
+    (url: string, kind: RefKind) => {
+      const policy = refPolicy;
+      if (!policy) return;
+      if (!policy.kinds.includes(kind)) {
+        toast.info("当前模式不支持该类型素材");
+        return;
+      }
+      if (refsRef.current.some((r) => r.url === url)) {
+        toast.info("该素材已添加");
+        return;
+      }
+      if (refCountRef.current >= policy.max) {
+        toast.info(`最多添加 ${policy.max} 个文件`);
+        return;
+      }
+      refCountRef.current += 1; // commit synchronously before any follow-up add
+      setRefs((prev) => [...prev, { key: `r${refSeq.current++}`, kind, blobUrl: "", url, uploading: false }]);
+    },
+    [refPolicy],
+  );
+
+  // open the 来源 menu (本地上传 / 资产库) anchored above the ＋ button. Flips to
+  // below if there isn't room above; clamps within the viewport.
+  const openSrcMenu = useCallback(
+    (e: React.MouseEvent) => {
+      if (!refPolicy) return;
+      if (refCountRef.current >= refPolicy.max) {
+        toast.info(`最多添加 ${refPolicy.max} 个文件`);
+        return;
+      }
+      const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      const W = 300;
+      const H = 168;
+      const gap = 8;
+      let x = r.left;
+      if (x + W > window.innerWidth - 12) x = Math.max(12, window.innerWidth - 12 - W);
+      let y = r.top - H - gap;
+      if (y < 12) y = r.bottom + gap; // not enough room above → drop below
+      setSrcMenuPos({ x, y });
+    },
+    [refPolicy],
+  );
+
+  // 本地上传: close the menu and open the OS file picker (onChange → attachFiles).
+  const pickLocal = useCallback(() => {
+    setSrcMenuPos(null);
+    fileInputRef.current?.click();
+  }, []);
+
+  // 资产库: close the menu and open the assets picker dialog.
+  const openAssets = useCallback(() => {
+    setSrcMenuPos(null);
+    setAssetPickOpen(true);
+  }, []);
+
+  // an asset chosen from 资产库 → add it as a hosted reference. Non-media kinds
+  // (文档) are rejected rather than folded into "image" (which would attach a doc
+  // URL as a broken image and ship it to the model).
+  const chooseAsset = useCallback(
+    (a: PickedAsset) => {
+      setAssetPickOpen(false);
+      if (a.kind !== "image" && a.kind !== "video" && a.kind !== "audio") {
+        toast.info("当前模式不支持该类型素材");
+        return;
+      }
+      addAssetRef(a.url, a.kind);
+    },
+    [addAssetRef],
+  );
 
   // drag-and-drop onto the composer (dragDepth counter avoids overlay flicker
   // from nested dragenter/leave) + paste of files.
@@ -545,15 +672,22 @@ export default function ChatPage() {
     });
   }, []);
 
+  // bumps on every message-load request so a stale response (from a conversation
+  // the user already switched away from, or an old poll) is discarded instead of
+  // overwriting the current thread.
+  const msgsReqRef = useRef(0);
+
   // load a conversation's message history
   const loadMessages = useCallback(async (id: string) => {
+    const myReq = ++msgsReqRef.current;
     setMsgsLoading(true);
     try {
       const res = await chatApi.messages(id, { pageNum: 1, pageSize: 100 });
+      if (myReq !== msgsReqRef.current) return; // superseded by a newer load/switch
       if (res.success && res.data) setMsgs(res.data.records);
       else setMsgs([]);
     } finally {
-      setMsgsLoading(false);
+      if (myReq === msgsReqRef.current) setMsgsLoading(false);
     }
   }, []);
 
@@ -589,6 +723,7 @@ export default function ChatPage() {
       chatAbortRef.current = null;
       setStreaming(null);
       setActiveId(id);
+      setMsgs([]); // clear the old thread so the switch never shows stale messages
       clearRefs();
       loadMessages(id);
     },
@@ -673,10 +808,16 @@ export default function ChatPage() {
     const refAudioUrls = refs.filter((r) => r.kind === "audio" && r.url).map((r) => r.url as string);
     if (refPolicy) {
       if (refs.some((r) => r.uploading)) {
-        toast.info("参考素材上传中，请稍候");
+        toast.info("文件上传中，请稍候");
         return;
       }
-      if (refImageUrls.length === 0 && refVideoUrls.length === 0) {
+      // block on a failed upload so the user doesn't unknowingly send without it.
+      if (refs.some((r) => r.failed)) {
+        toast.error("有文件上传失败，请移除后重试");
+        return;
+      }
+      // text-model uploads are optional; generation ref-modes require one.
+      if (!refOptional && refImageUrls.length === 0 && refVideoUrls.length === 0) {
         toast.error("当前模式需要先添加参考素材");
         return;
       }
@@ -701,6 +842,13 @@ export default function ChatPage() {
       }
     }
 
+    // attachments snapshot — TEXT models only. Generation turns persist their
+    // references via persistTurn (params.references), so attaching here would make
+    // the optimistic bubble flash thumbnails that vanish on reload.
+    const attachSnapshot = refOptional
+      ? refImageUrls.map((url) => ({ url, kind: "image" as const }))
+      : [];
+
     // optimistic user bubble
     const optimistic: MessageVO = {
       id: `tmp-${Date.now()}`,
@@ -709,6 +857,7 @@ export default function ChatPage() {
       contentType: "text",
       content: v,
       createTime: new Date().toISOString(),
+      ...(attachSnapshot.length ? { params: { attachments: attachSnapshot } } : {}),
     };
     setMsgs((prev) => [...prev, optimistic]);
     setTyping(true);
@@ -799,8 +948,10 @@ export default function ChatPage() {
           contentType: wantVideo ? "video" : "image",
         });
         clearRefs(); // turn committed → clear the composer references
-        await loadMessages(id); // assistant message now carries the task → polling takes over
-        bump(id);
+        // only reload into the view if still on this conversation; otherwise the
+        // turn is already persisted and will show when the user switches back.
+        if (activeIdRef.current === id) await loadMessages(id);
+        bump(id); // surface the conversation to the top regardless of focus
       } else {
         // text model → streamed reply (P4). The generic typing dots give way to
         // a live streaming bubble; switching conversation aborts it.
@@ -809,16 +960,24 @@ export default function ChatPage() {
         const ac = new AbortController();
         chatAbortRef.current = ac;
         let acc = "";
+        let streamOk = true;
         await streamMessage(id, v, {
           signal: ac.signal,
+          attachments: attachSnapshot,
           onDelta: (d) => {
             acc += d;
             setStreaming(acc);
             // coalesce rapid tokens into one scroll per frame to avoid judder.
             if (nearBottomRef.current) requestAnimationFrame(scrollEnd);
           },
-          onError: (m) => toast.error(m || "生成失败"),
+          onError: (m) => {
+            streamOk = false;
+            toast.error(m || "生成失败");
+          },
         });
+        // clear the attachment strip only on success — keep it on failure so the
+        // user can resend without re-picking the files.
+        if (streamOk) clearRefs();
         // only clear OUR controller — a newer stream may have replaced it.
         if (chatAbortRef.current === ac) chatAbortRef.current = null;
         setStreaming(null);
@@ -832,7 +991,7 @@ export default function ChatPage() {
       setTyping(false);
       setBusy(false);
     }
-  }, [draft, busy, activeId, ensureSession, loadMessages, resetTa, selModel, mode, ratio, res, dur, batch, refs, refPolicy, clearRefs, forceBottom, scrollEnd]);
+  }, [draft, busy, activeId, ensureSession, loadMessages, resetTa, selModel, mode, ratio, res, dur, batch, refs, refPolicy, refOptional, clearRefs, forceBottom, scrollEnd]);
 
   // restore a turn's snapshot params into the composer (重新编辑 / 再次生成).
   const restoreFromParams = useCallback(
@@ -1127,7 +1286,7 @@ export default function ChatPage() {
                 <span className="av" />
                 <div className="bubble">
                   <div>
-                    你好！我是你的 SCARECROW 创作助手。告诉我你想创作的内容 ——
+                    你好！我是你的 流光 创作助手。告诉我你想创作的内容 ——
                     图片、视频、剧本或灵感，我来帮你一步步完成。
                   </div>
                 </div>
@@ -1232,9 +1391,9 @@ export default function ChatPage() {
               {refPolicy && (
                 <button
                   className="cm-upload"
-                  title="上传参考素材"
+                  title="添加参考素材（本地上传 / 资产库）"
                   type="button"
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={openSrcMenu}
                 >
                   ＋
                 </button>
@@ -1487,6 +1646,56 @@ export default function ChatPage() {
           onStep={stepLightbox}
         />
       )}
+
+      {/* 参考素材来源选择：本地上传 / 资产库（复用 创作台 的来源菜单） */}
+      {srcMenuPos && refPolicy && (
+        <>
+          <div className="ws-srcpop-catch" onClick={() => setSrcMenuPos(null)} />
+          <div
+            className="ws-srcmenu ws-srcmenu-pop"
+            style={{ left: srcMenuPos.x, top: srcMenuPos.y }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="ws-srcmenu-h">选择素材来源</div>
+            <button type="button" className="ws-srcopt" onClick={pickLocal}>
+              <span className="ic">⤓</span>
+              <span className="tx">
+                <b>本地上传</b>
+                <i>从你的电脑选择文件</i>
+              </span>
+            </button>
+            <button type="button" className="ws-srcopt" onClick={openAssets}>
+              <span className="ic">▦</span>
+              <span className="tx">
+                <b>从资产库选取</b>
+                <i>选择已上传 / 已生成的素材</i>
+              </span>
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* 资产库弹窗：复用整个资产页 UI 作为选择器 */}
+      {assetPickOpen && (
+        <div className="ws-srcmask" onClick={() => setAssetPickOpen(false)}>
+          <div className="ws-assetbox" onClick={(e) => e.stopPropagation()}>
+            <div className="ws-assetbox-h">
+              <span>从资产库选取</span>
+              <button type="button" aria-label="关闭" onClick={() => setAssetPickOpen(false)}>
+                ✕
+              </button>
+            </div>
+            <div className="ws-assetbox-body">
+              <AssetsBrowser
+                pickMode
+                onPick={chooseAsset}
+                defaultFilter={refPolicy?.kinds[0] ?? "image"}
+                defaultTab={refPolicy?.kinds[0] === "audio" ? "upload" : "hist"}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1699,6 +1908,26 @@ function Lightbox({
   );
 }
 
+/** Read the composer attachments snapshotted on a user message's params
+ *  ({attachments:[{url,kind}]}), filtering to entries with a usable URL. */
+function messageAttachments(msg: MessageVO): { url: string; kind: string }[] {
+  const raw = (msg.params as { attachments?: unknown } | undefined)?.attachments;
+  if (!Array.isArray(raw)) return [];
+  const out: { url: string; kind: string }[] = [];
+  for (const x of raw) {
+    if (x && typeof x === "object") {
+      const url = (x as { url?: unknown }).url;
+      const kind = (x as { kind?: unknown }).kind;
+      if (typeof url === "string" && url) {
+        // normalize empty/unknown kind to "image" (mirrors the backend, which
+        // treats ""/"image" alike) so it renders as a thumbnail, not a file chip.
+        out.push({ url, kind: typeof kind === "string" && kind ? kind : "image" });
+      }
+    }
+  }
+  return out;
+}
+
 function Bubble({
   msg,
   onReEdit,
@@ -1726,32 +1955,63 @@ function Bubble({
   // backward-compat: older append-based media messages carry the URL in content.
   const isImage = msg.contentType === "image";
   const isVideo = msg.contentType === "video";
+  // composer attachments snapshotted on the user message (text-model 文件上传).
+  const atts = messageAttachments(msg);
+  const attImages = atts.filter((a) => a.kind === "image");
   return (
     <div className={`msg ${isMe ? "me" : "ai"}`}>
       <span className="av" />
-      <div className="bubble">
-        {isImage ? (
-          <div
-            className="chat-gen-media"
-            title="点击查看大图"
-            style={{
-              cursor: msg.content ? "zoom-in" : undefined,
-              background: msg.content
-                ? `center / cover no-repeat url("${msg.content}")`
-                : fallbackImage(msg.id),
-            }}
-            onClick={() => msg.content && onOpenLightbox([{ url: msg.content, video: false }], 0)}
-          />
-        ) : isVideo && msg.content ? (
-          // eslint-disable-next-line jsx-a11y/media-has-caption
-          <video className="chat-gen-media" src={msg.content} controls />
-        ) : isMe ? (
-          <span>{msg.content}</span>
-        ) : (
-          <div className="md">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+      <div className="msg-col">
+        {isMe && atts.length > 0 && (
+          <div className="chat-msg-atts">
+            {atts.map((a, i) =>
+              a.kind === "image" ? (
+                <button
+                  key={i}
+                  type="button"
+                  className="chat-msg-att"
+                  title="点击查看大图"
+                  style={{ background: `center / cover no-repeat url("${a.url}")` }}
+                  onClick={() =>
+                    onOpenLightbox(
+                      attImages.map((x) => ({ url: x.url, video: false })),
+                      attImages.findIndex((x) => x.url === a.url),
+                    )
+                  }
+                />
+              ) : (
+                <a key={i} className="chat-msg-file" href={a.url} target="_blank" rel="noopener noreferrer">
+                  📎 {a.kind}
+                </a>
+              ),
+            )}
           </div>
         )}
+        <div className="bubble">
+          {isImage ? (
+            <div
+              className="chat-gen-media"
+              title="点击查看大图"
+              style={{
+                cursor: msg.content ? "zoom-in" : undefined,
+                background: msg.content
+                  ? `center / cover no-repeat url("${msg.content}")`
+                  : fallbackImage(msg.id),
+              }}
+              onClick={() => msg.content && onOpenLightbox([{ url: msg.content, video: false }], 0)}
+            />
+          ) : isVideo && msg.content ? (
+            // eslint-disable-next-line jsx-a11y/media-has-caption
+            <video className="chat-gen-media" src={msg.content} controls />
+          ) : isMe ? (
+            <span>{msg.content}</span>
+          ) : (
+            <div className="md">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+            </div>
+          )}
+        </div>
+        {/* copy action sits BELOW the bubble (outside it), not inside the colored pill */}
         {!isImage && !isVideo && msg.content ? (
           <div className="bubble-acts">
             <CopyBtn text={msg.content} />
@@ -1785,14 +2045,15 @@ function AssistantResult({
   if (!t) {
     body = <div className="chat-gen-state warn">⚠ 该生成已过期，请重新生成</div>;
   } else if (t.status === AiTaskStatus.PROCESSING) {
+    // a preview placeholder sized like the final media, so the result reveals in
+    // place instead of the layout jumping from a thin progress line to a full image.
     body = (
-      <div className="chat-gen-state">
-        <span className="typing">
-          <i />
-          <i />
-          <i />
+      <div className={`chat-gen-loading${isVideo ? " video" : ""}`}>
+        <span className="spin" />
+        <span className="lbl">生成中 · {Math.round(t.progress || 0)}%</span>
+        <span className="bar">
+          <i style={{ width: `${Math.max(4, Math.round(t.progress || 0))}%` }} />
         </span>
-        生成中 · {Math.round(t.progress || 0)}%
       </div>
     );
   } else if (t.status === AiTaskStatus.FAILED) {

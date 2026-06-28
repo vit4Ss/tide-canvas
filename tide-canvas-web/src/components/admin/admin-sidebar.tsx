@@ -5,7 +5,7 @@
 
    Faithful port of admin.js NAV + buildNav() markup:
      <aside class="adm-side">
-       <div class="adm-brand">…SCARECROW / ADMIN CONSOLE</div>
+       <div class="adm-brand">…FLOWINGLIGHT / ADMIN CONSOLE</div>
        <nav class="adm-nav">  (grouped: .adm-grp + .adm-link[.on] + .badge)
        <div class="adm-side-foot">…运营管理员 / 超级管理员 / 返回前台</div>
      </aside>
@@ -20,6 +20,7 @@
    ============================================================================ */
 
 import Link from "next/link";
+import { Logo } from "@/components/flux/atoms";
 import { usePathname } from "next/navigation";
 import { ADMIN_ICONS } from "@/mock/admin";
 
@@ -96,9 +97,11 @@ export function AdminSidebar() {
   return (
     <aside className="adm-side">
       <div className="adm-brand">
-        <span className="glyph" />
+        <Logo size={30} />
         <div>
-          <b>SCARECROW</b>
+          <b>
+            FLOWING<span style={{ color: "var(--accent)" }}>LIGHT</span>
+          </b>
           <small>ADMIN CONSOLE</small>
         </div>
       </div>

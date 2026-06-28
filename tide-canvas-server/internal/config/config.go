@@ -79,7 +79,7 @@ func (m MySQLConfig) BuildDSN() string {
 	}
 	params := m.Params
 	if params == "" {
-		params = "charset=utf8mb4&parseTime=True&loc=Local"
+		params = "charset=utf8mb4&parseTime=True&loc=Local&sql_mode=%27STRICT_TRANS_TABLES%2CNO_ENGINE_SUBSTITUTION%27"
 	}
 	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?%s",
 		m.User, m.Password, m.Host, m.Port, m.Database, params)
@@ -200,7 +200,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("mysql.user", "root")
 	v.SetDefault("mysql.password", "root")
 	v.SetDefault("mysql.database", "tidecanvas")
-	v.SetDefault("mysql.params", "charset=utf8mb4&parseTime=True&loc=Local")
+	v.SetDefault("mysql.params", "charset=utf8mb4&parseTime=True&loc=Local&sql_mode=%27STRICT_TRANS_TABLES%2CNO_ENGINE_SUBSTITUTION%27")
 	v.SetDefault("mysql.maxOpenConns", 100)
 	v.SetDefault("mysql.maxIdleConns", 10)
 	v.SetDefault("mysql.maxLifetime", 3600)

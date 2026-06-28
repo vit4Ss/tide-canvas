@@ -20,10 +20,49 @@ import (
 	"time"
 )
 
-// Msg is one OpenAI-shaped chat message.
+// Msg is one OpenAI-shaped chat message. Content is `any` so it can be either a
+// plain string (text-only message) OR a []Part array (multimodal: text + images),
+// matching the OpenAI chat-completions content contract. Build text messages with
+// TextMsg and image-bearing user messages with UserMultimodal.
 type Msg struct {
 	Role    string `json:"role"` // system | user | assistant
-	Content string `json:"content"`
+	Content any    `json:"content"`
+}
+
+// Part is one block of a multimodal message content array.
+type Part struct {
+	Type     string    `json:"type"` // "text" | "image_url"
+	Text     string    `json:"text,omitempty"`
+	ImageURL *ImageURL `json:"image_url,omitempty"`
+}
+
+// ImageURL is the OpenAI image reference (a hosted URL or a data: URI).
+type ImageURL struct {
+	URL string `json:"url"`
+}
+
+// TextMsg builds a plain text message (content is a string).
+func TextMsg(role, text string) Msg {
+	return Msg{Role: role, Content: text}
+}
+
+// UserMultimodal builds a user message carrying text plus zero or more images as
+// OpenAI content parts. With no image URLs it degrades to a plain text message so
+// the wire shape stays minimal.
+func UserMultimodal(text string, imageURLs []string) Msg {
+	if len(imageURLs) == 0 {
+		return TextMsg("user", text)
+	}
+	parts := make([]Part, 0, len(imageURLs)+1)
+	if strings.TrimSpace(text) != "" {
+		parts = append(parts, Part{Type: "text", Text: text})
+	}
+	for _, u := range imageURLs {
+		if u = strings.TrimSpace(u); u != "" {
+			parts = append(parts, Part{Type: "image_url", ImageURL: &ImageURL{URL: u}})
+		}
+	}
+	return Msg{Role: "user", Content: parts}
 }
 
 // Client calls the relay's /v1/chat/completions.

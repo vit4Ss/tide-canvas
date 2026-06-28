@@ -44,6 +44,11 @@ func (r *repo) updateTask(ctx context.Context, t *model.AiTask) error {
 	return r.db.WithContext(ctx).Save(t).Error
 }
 
+// deleteTask removes a task row by id (used by the user-facing 删除 in 生成记录).
+func (r *repo) deleteTask(ctx context.Context, id idgen.ID) error {
+	return r.db.WithContext(ctx).Delete(&model.AiTask{}, "id = ?", id).Error
+}
+
 // getTask fetches a task by id. Returns (nil, nil) when not found.
 func (r *repo) getTask(ctx context.Context, id idgen.ID) (*model.AiTask, error) {
 	var t model.AiTask

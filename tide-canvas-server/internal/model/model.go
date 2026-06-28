@@ -33,6 +33,7 @@ func Models() []any {
 		&CommunityPost{},
 		&PostComment{},
 		&PostLike{},
+		&PostBookmark{},
 		&UserFollow{},
 		// Blog.
 		&BlogCategory{},
@@ -88,9 +89,42 @@ func AutoMigrate(db *gorm.DB) error {
 	if err := db.AutoMigrate(Models()...); err != nil {
 		return err
 	}
+	// Force audience/channels/variables/scope to varchar. They were originally
+	// declared type:json but actually hold free text from the admin forms, which
+	// MySQL's json type rejects (Error 3140) — breaking campaign / email-template /
+	// api-key writes. AutoMigrate usually performs this conversion, but we alter
+	// explicitly so an already-created json column is guaranteed to be migrated.
+	if err := fixupFreeTextColumns(db); err != nil {
+		return err
+	}
 	// Backfill the market_model.type media category for rows created before the
 	// column existed (idempotent: only touches rows with an empty type).
 	return BackfillMarketModelType(db)
+}
+
+// fixupFreeTextColumns alters the four mis-typed json columns to varchar. Idempotent:
+// on a fresh DB the columns are already varchar (no-op alter); on an existing DB they
+// are converted from json. Skips columns/tables that don't exist yet.
+func fixupFreeTextColumns(db *gorm.DB) error {
+	fixes := []struct {
+		dst   any
+		field string
+	}{
+		{&Campaign{}, "Audience"},
+		{&Campaign{}, "Channels"},
+		{&EmailTemplate{}, "Variables"},
+		{&ApiKey{}, "Scope"},
+	}
+	m := db.Migrator()
+	for _, f := range fixes {
+		if !m.HasTable(f.dst) || !m.HasColumn(f.dst, f.field) {
+			continue
+		}
+		if err := m.AlterColumn(f.dst, f.field); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // User is an application user / account.

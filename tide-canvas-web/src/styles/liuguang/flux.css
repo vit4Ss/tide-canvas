@@ -48,9 +48,16 @@ body::after{
 .nav.solid{background:color-mix(in oklab, var(--bg) 78%, transparent); border-bottom:1px solid var(--border); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);}
 .nav-in{display:flex; align-items:center; gap:8px; height:68px;}
 .brand{display:flex; align-items:center; gap:10px; font-family:var(--disp); font-weight:800; font-size:19px; letter-spacing:-.03em; margin-right:14px;}
-.brand .glyph{width:26px; height:26px; flex:none; position:relative;}
-.brand .glyph::before{content:''; position:absolute; inset:0; border-radius:7px; background:var(--grad); transform:rotate(45deg); box-shadow:0 0 18px var(--accent-soft);}
+.brand .glyph{width:26px; height:26px; flex:none; position:relative; overflow:hidden; border-radius:8px;}
+/* FlowingLight mark: a gradient tile swept by a moving light streak (流光). */
+.brand .glyph::before{content:''; position:absolute; inset:0; border-radius:8px; background:var(--grad); box-shadow:0 0 18px var(--accent-soft);}
+.brand .glyph::after{content:''; position:absolute; inset:0; border-radius:8px; pointer-events:none; mix-blend-mode:screen;
+  background:linear-gradient(115deg, transparent 36%, rgba(255,255,255,.95) 47%, rgba(255,255,255,.2) 53%, transparent 62%),
+    radial-gradient(56% 44% at 74% 22%, rgba(255,255,255,.55), transparent 60%);
+  background-size:260% 100%, 100% 100%; background-repeat:no-repeat;
+  animation:glyphFlow 3.4s var(--ease) infinite;}
 .brand b{color:var(--accent);}
+@keyframes glyphFlow{0%{background-position:150% 0, 0 0;}55%,100%{background-position:-150% 0, 0 0;}}
 .nav-links{display:flex; align-items:center; gap:2px;}
 .nlink{display:inline-flex; align-items:center; gap:6px; height:38px; padding:0 14px; border-radius:var(--r-sm); font-size:14.5px; font-weight:600; color:var(--text-dim); transition:color .16s, background .16s; white-space:nowrap; flex:none;}
 .nlink:hover{color:var(--text); background:var(--panel);}

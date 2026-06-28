@@ -69,7 +69,7 @@ export const SMTP_ROWS: EmailCfgRow[] = [
   { kind: "text", label: "端口", type: "number", value: "465" },
   { kind: "select", label: "加密", value: "SSL", options: ["SSL", "TLS", "无"] },
   { kind: "text", label: "发件邮箱", type: "text", value: "no-reply@scarecrow.ai" },
-  { kind: "text", label: "发件人名称", type: "text", value: "SCARECROW AI" },
+  { kind: "text", label: "发件人名称", type: "text", value: "流光 FlowingLight" },
   { kind: "tag", label: "SPF / DKIM", value: "已验证", tone: "green" },
   { kind: "switch", label: "启用发信", on: true },
 ];
@@ -118,7 +118,7 @@ export const EMAIL_TEMPLATES: EmailTemplate[] = [
     variables: "{code} {name}",
     updatedAt: "02-10",
     enabled: true,
-    subject: "【SCARECROW AI】您的验证码",
+    subject: "【流光 FlowingLight】您的验证码",
     body: "您好 {name}，您的验证码是 {code}，5 分钟内有效。",
   },
   {
@@ -128,7 +128,7 @@ export const EMAIL_TEMPLATES: EmailTemplate[] = [
     variables: "{link}",
     updatedAt: "02-11",
     enabled: true,
-    subject: "【SCARECROW AI】重置您的密码",
+    subject: "【流光 FlowingLight】重置您的密码",
     body: "您好，请点击以下链接重置密码：{link}，链接 30 分钟内有效。",
   },
   {
@@ -138,7 +138,7 @@ export const EMAIL_TEMPLATES: EmailTemplate[] = [
     variables: "{plan} {date}",
     updatedAt: "02-12",
     enabled: true,
-    subject: "【SCARECROW AI】您的会员即将到期",
+    subject: "【流光 FlowingLight】您的会员即将到期",
     body: "您的 {plan} 会员将于 {date} 到期，续费可享连续优惠。",
   },
   {
@@ -148,7 +148,7 @@ export const EMAIL_TEMPLATES: EmailTemplate[] = [
     variables: "{amount} {balance}",
     updatedAt: "02-13",
     enabled: true,
-    subject: "【SCARECROW AI】充值成功",
+    subject: "【流光 FlowingLight】充值成功",
     body: "您已成功充值 {amount}，当前积分余额 {balance}。",
   },
   {
@@ -158,7 +158,7 @@ export const EMAIL_TEMPLATES: EmailTemplate[] = [
     variables: "{title} {coupon}",
     updatedAt: "02-14",
     enabled: true,
-    subject: "【SCARECROW AI】{title}",
+    subject: "【流光 FlowingLight】{title}",
     body: "限时活动来了！使用优惠券 {coupon} 立享折扣，名额有限。",
   },
   {
@@ -168,7 +168,7 @@ export const EMAIL_TEMPLATES: EmailTemplate[] = [
     variables: "{name} {gift}",
     updatedAt: "02-15",
     enabled: false,
-    subject: "【SCARECROW AI】{name}，我们想您了",
+    subject: "【流光 FlowingLight】{name}，我们想您了",
     body: "好久不见 {name}，回来领取专属礼包 {gift} 继续你的创作吧。",
   },
 ];

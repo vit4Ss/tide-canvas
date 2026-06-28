@@ -173,6 +173,114 @@ func (r *repo) setLike(userID, postID idgen.ID, like bool) (likeCount int, liked
 	return likeCount, like, err
 }
 
+// setBookmark inserts or removes the caller's bookmark (idempotent), returning
+// the resulting bookmarked state.
+func (r *repo) setBookmark(userID, postID idgen.ID, bookmark bool) (bool, error) {
+	if bookmark {
+		var existing model.PostBookmark
+		err := r.db.Where("user_id = ? AND post_id = ?", userID, postID).First(&existing).Error
+		if err == nil {
+			return true, nil // already bookmarked
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, err
+		}
+		row := &model.PostBookmark{PostID: postID, UserID: userID}
+		if err := r.db.Create(row).Error; err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	if err := r.db.Where("user_id = ? AND post_id = ?", userID, postID).
+		Delete(&model.PostBookmark{}).Error; err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+// isBookmarked reports whether the user has bookmarked the post (false for anon).
+func (r *repo) isBookmarked(userID, postID idgen.ID) (bool, error) {
+	if userID == 0 {
+		return false, nil
+	}
+	var n int64
+	err := r.db.Model(&model.PostBookmark{}).
+		Where("user_id = ? AND post_id = ?", userID, postID).Count(&n).Error
+	return n > 0, err
+}
+
+// isFollowing reports whether followerID follows followeeID (false for anon/self).
+func (r *repo) isFollowing(followerID, followeeID idgen.ID) (bool, error) {
+	if followerID == 0 || followerID == followeeID {
+		return false, nil
+	}
+	var n int64
+	err := r.db.Model(&model.UserFollow{}).
+		Where("follower_id = ? AND followee_id = ?", followerID, followeeID).Count(&n).Error
+	return n > 0, err
+}
+
+// incrementViews bumps a post's view counter (best-effort; errors are ignored by
+// the caller — a failed view bump must never break the detail read).
+func (r *repo) incrementViews(postID idgen.ID) {
+	_ = r.db.Model(&model.CommunityPost{}).Where("id = ?", postID).
+		UpdateColumn("view_count", gorm.Expr("view_count + 1")).Error
+}
+
+// userByID loads one user with the fields a public profile needs.
+func (r *repo) userByID(id idgen.ID) (*model.User, error) {
+	var u model.User
+	err := r.db.Select("id", "username", "nickname", "avatar", "create_time").
+		Where("id = ?", id).First(&u).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &u, nil
+}
+
+// listUserPosts returns a page of a user's published posts (newest first).
+func (r *repo) listUserPosts(userID idgen.ID, q *PageQuery) ([]model.CommunityPost, int64, error) {
+	tx := r.db.Model(&model.CommunityPost{}).
+		Where("user_id = ? AND status = ?", userID, statusPublished)
+
+	var total int64
+	if err := tx.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var rows []model.CommunityPost
+	err := tx.Order("create_time DESC").
+		Limit(q.PageSize).Offset(q.offset()).Find(&rows).Error
+	if err != nil {
+		return nil, 0, err
+	}
+	return rows, total, nil
+}
+
+// authorStats returns an author's published-works count, the sum of likes across
+// those works, and their follower / following counts.
+func (r *repo) authorStats(userID idgen.ID) (works, likes, followers, following int64, err error) {
+	if err = r.db.Model(&model.CommunityPost{}).
+		Where("user_id = ? AND status = ?", userID, statusPublished).
+		Count(&works).Error; err != nil {
+		return
+	}
+	if err = r.db.Model(&model.CommunityPost{}).
+		Where("user_id = ? AND status = ?", userID, statusPublished).
+		Select("COALESCE(SUM(like_count),0)").Scan(&likes).Error; err != nil {
+		return
+	}
+	if err = r.db.Model(&model.UserFollow{}).
+		Where("followee_id = ?", userID).Count(&followers).Error; err != nil {
+		return
+	}
+	err = r.db.Model(&model.UserFollow{}).
+		Where("follower_id = ?", userID).Count(&following).Error
+	return
+}
+
 // countComments returns the number of visible comments on a post.
 func (r *repo) countComments(postID idgen.ID) (int, error) {
 	var n int64

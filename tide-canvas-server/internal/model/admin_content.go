@@ -1,8 +1,9 @@
 package model
 
-// Admin-only content entities for the inspiration / home-curation sections of
-// the admin console. These have no public-facing endpoint yet; they back the
-// "灵感合集", "提示词库" and "首页楼层" management screens.
+// Content entities for the inspiration / home-curation sections. Curated in the
+// admin console ("灵感合集", "提示词库", "首页楼层"); Collection + PromptLib are also
+// exposed read-only to users via the public /api/inspiration/* endpoints
+// (internal/handler/inspiration).
 
 // Collection is a curated inspiration set (灵感合集). Type distinguishes a plain
 // collection (合集) from a theme (主题) or a prompt pack (提示词).

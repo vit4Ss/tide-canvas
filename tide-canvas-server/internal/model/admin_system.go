@@ -67,8 +67,8 @@ type EmailTemplate struct {
 	Type string `gorm:"column:type;type:varchar(16);not null;default:'html'" json:"type"`
 	// Scene: register / reset_password / order_paid / notify ...
 	Scene string `gorm:"column:scene;type:varchar(64);index" json:"scene"`
-	// Variables is a JSON array of placeholder names usable in the body.
-	Variables string `gorm:"column:variables;type:json" json:"variables"`
+	// Variables is a free-text list of placeholder names usable in the body (e.g. {code} {name}).
+	Variables string `gorm:"column:variables;type:varchar(255)" json:"variables"`
 	Subject   string `gorm:"column:subject;type:varchar(255)" json:"subject"`
 	Body      string `gorm:"column:body;type:text" json:"body"`
 	Enabled   bool   `gorm:"column:enabled;not null;default:true" json:"enabled"`
@@ -82,8 +82,8 @@ type ApiKey struct {
 	BaseModel
 
 	Name string `gorm:"column:name;type:varchar(128);not null" json:"name"`
-	// Scope is a JSON array of permission scopes granted to the key.
-	Scope    string `gorm:"column:scope;type:json" json:"scope"`
+	// Scope is a free-text permission scope label granted to the key (e.g. 全部 / 只读).
+	Scope    string `gorm:"column:scope;type:varchar(64)" json:"scope"`
 	KeyValue string `gorm:"column:key_value;type:varchar(255);uniqueIndex;not null" json:"keyValue"`
 	// DailyLimit caps requests per day (0 = unlimited).
 	DailyLimit int `gorm:"column:daily_limit;type:int;not null;default:0" json:"dailyLimit"`

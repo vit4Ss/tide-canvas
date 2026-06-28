@@ -8,7 +8,7 @@ import type { Metadata } from "next";
 import CreateStudio from "@/components/studio/create-studio";
 
 export const metadata: Metadata = {
-  title: "创作台 · SCARECROWAI",
+  title: "创作台 · 流光 FlowingLight",
 };
 
 export default function StudioPage() {

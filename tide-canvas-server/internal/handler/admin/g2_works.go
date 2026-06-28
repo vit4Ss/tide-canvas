@@ -271,8 +271,14 @@ func (h *worksHandler) queryPosts(q *AdminWorkQuery) ([]model.CommunityPost, int
 	if q.Status != nil {
 		tx = tx.Where("status = ?", *q.Status)
 	}
-	if q.Type == "image" || q.Type == "video" {
-		tx = tx.Where("content LIKE ?", `%"type":"`+q.Type+`"%`)
+	// workType() classifies anything that isn't explicitly "video" as 图片, so the
+	// 图片 filter must match the same set (incl. rows with no "type" key) — a plain
+	// LIKE '%"type":"image"%' would hide those. The OR is wrapped in a grouped
+	// sub-condition so it ANDs correctly with the other filters (GORM precedence).
+	if q.Type == "video" {
+		tx = tx.Where(`content LIKE ?`, `%"type":"video"%`)
+	} else if q.Type == "image" {
+		tx = tx.Where(h.db.Where(`content NOT LIKE ?`, `%"type":"video"%`).Or(`content IS NULL`))
 	}
 	if q.Cat != "" {
 		tx = tx.Where("content LIKE ?", `%"cat":"`+g2EscapeLike(q.Cat)+`"%`)
@@ -281,7 +287,7 @@ func (h *worksHandler) queryPosts(q *AdminWorkQuery) ([]model.CommunityPost, int
 		if *q.Featured {
 			tx = tx.Where("content LIKE ?", `%"featured":true%`)
 		} else {
-			tx = tx.Where("content NOT LIKE ? OR content IS NULL", `%"featured":true%`)
+			tx = tx.Where(h.db.Where(`content NOT LIKE ?`, `%"featured":true%`).Or(`content IS NULL`))
 		}
 	}
 	if q.Keyword != "" {

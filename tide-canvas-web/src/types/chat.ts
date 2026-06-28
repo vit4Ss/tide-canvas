@@ -52,8 +52,17 @@ export interface CreateConversationDTO {
   title?: string;
 }
 
-/** Body for POST /api/im/conversations/:id/messages. Type defaults to "text". */
+/** A composer attachment forwarded with a chat message. Image attachments are
+ *  sent to the model as multimodal content; all kinds are persisted for display. */
+export interface MessageAttachment {
+  url: string;
+  kind: "image" | "video" | "audio" | "file";
+}
+
+/** Body for POST /api/im/conversations/:id/messages (and /stream). Type defaults
+ *  to "text"; attachments are optional reference files. */
 export interface SendMessageDTO {
   content: string;
   type?: ChatContentType;
+  attachments?: MessageAttachment[];
 }

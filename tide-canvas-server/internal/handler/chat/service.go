@@ -275,13 +275,15 @@ func (s *service) sendMessage(conversationID, ownerID idgen.ID, dto SendMessageD
 		contentType = "text"
 	}
 	content := strings.TrimSpace(dto.Content)
+	imageURLs := imageAttachmentURLs(dto.Attachments)
 
-	// Persist the user message.
+	// Persist the user message (attachments snapshotted on Params for redisplay).
 	userMsg := &model.IMMessage{
 		ConversationID: conversationID,
 		SenderID:       ownerID,
 		ContentType:    contentType,
 		Content:        content,
+		Params:         attachmentsParams(dto.Attachments),
 		Status:         0,
 	}
 	if err := s.repo.createMessage(userMsg); err != nil {
@@ -295,7 +297,7 @@ func (s *service) sendMessage(conversationID, ownerID idgen.ID, dto SendMessageD
 		ConversationID: conversationID,
 		SenderID:       assistantSenderID,
 		ContentType:    "text",
-		Content:        s.generateReply(conversationID, ownerID, content),
+		Content:        s.generateReply(conversationID, ownerID, content, imageURLs),
 		Status:         0,
 	}
 	at := time.Now()
@@ -314,7 +316,7 @@ func (s *service) sendMessage(conversationID, ownerID idgen.ID, dto SendMessageD
 // assistant message VO. Ownership is enforced. When no relay text model is
 // available it emits the canned reply as a single delta so the round-trip still
 // completes.
-func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idgen.ID, content string, onDelta func(string)) (*MessageVO, error) {
+func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idgen.ID, content string, attachments []MessageAttach, onDelta func(string)) (*MessageVO, error) {
 	conv, err := s.repo.findConversation(conversationID)
 	if err != nil {
 		return nil, err
@@ -324,17 +326,22 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 	}
 	content = strings.TrimSpace(content)
 
+	// image attachments are forwarded to the model (multimodal); every attachment
+	// is also snapshotted on the user message so the bubble can re-render it.
+	imageURLs := imageAttachmentURLs(attachments)
+
 	userMsg := &model.IMMessage{
 		ConversationID: conversationID,
 		SenderID:       ownerID,
 		ContentType:    "text",
 		Content:        content,
+		Params:         attachmentsParams(attachments),
 	}
 	if err := s.repo.createMessage(userMsg); err != nil {
 		return nil, err
 	}
 
-	reply := s.streamReply(ctx, conversationID, ownerID, content, onDelta)
+	reply := s.streamReply(ctx, conversationID, ownerID, content, imageURLs, onDelta)
 
 	aiMsg := &model.IMMessage{
 		ConversationID: conversationID,
@@ -357,20 +364,30 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 // relay text model, forwarding each delta through onDelta. On any error (or when
 // no relay text model is configured) it falls back to the canned reply, emitted
 // as one delta so the client still renders something.
-func (s *service) streamReply(ctx context.Context, conversationID, ownerID idgen.ID, userContent string, onDelta func(string)) string {
+func (s *service) streamReply(ctx context.Context, conversationID, ownerID idgen.ID, userContent string, imageURLs []string, onDelta func(string)) string {
 	if s.relay != nil {
 		if model := s.repo.textModelKey(); model != "" {
 			if rows, err := s.repo.recentMessages(conversationID, s.historyLimit); err == nil {
 				msgs := make([]relaychat.Msg, 0, len(rows)+1)
 				if p := strings.TrimSpace(s.systemPrompt); p != "" {
-					msgs = append(msgs, relaychat.Msg{Role: "system", Content: p})
+					msgs = append(msgs, relaychat.TextMsg("system", p))
 				}
 				for i := range rows {
 					role := "user"
 					if rows[i].SenderID == assistantSenderID {
 						role = "assistant"
 					}
-					msgs = append(msgs, relaychat.Msg{Role: role, Content: rows[i].Content})
+					msgs = append(msgs, relaychat.TextMsg(role, rows[i].Content))
+				}
+				// attach the uploaded images to the latest user message so the model
+				// can actually see them (only the current turn carries attachments).
+				if len(imageURLs) > 0 {
+					for i := len(msgs) - 1; i >= 0; i-- {
+						if msgs[i].Role == "user" {
+							msgs[i] = relaychat.UserMultimodal(userContent, imageURLs)
+							break
+						}
+					}
 				}
 				cctx, cancel := context.WithTimeout(ctx, llmReplyTimeout)
 				defer cancel()
@@ -419,6 +436,35 @@ func (s *service) streamReply(ctx context.Context, conversationID, ownerID idgen
 		onDelta(reply)
 	}
 	return reply
+}
+
+// imageAttachmentURLs returns the hosted URLs of the image attachments (the only
+// kind forwarded to the model as multimodal content).
+func imageAttachmentURLs(atts []MessageAttach) []string {
+	urls := make([]string, 0, len(atts))
+	for _, a := range atts {
+		kind := strings.TrimSpace(a.Kind)
+		u := strings.TrimSpace(a.URL)
+		// only absolute URLs are fetchable by the upstream model; skip relative paths.
+		if (kind == "" || kind == "image") && (strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") || strings.HasPrefix(u, "data:")) {
+			urls = append(urls, u)
+		}
+	}
+	return urls
+}
+
+// attachmentsParams snapshots the composer attachments as a JSON object stored on
+// the user message's Params column ({"attachments":[…]}), so the bubble can
+// re-render them after a reload. Returns "" when there are none.
+func attachmentsParams(atts []MessageAttach) string {
+	if len(atts) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(map[string]any{"attachments": atts})
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // fallbackModelID labels the ModelCallLog for the Anthropic fallback path. It
@@ -489,7 +535,7 @@ func (s *service) markRead(conversationID, ownerID idgen.ID) error {
 // an LLM is configured it sends the recent transcript to the model; on any error
 // (or when no LLM is configured) it falls back to the canned placeholder so the
 // chat round-trip always completes.
-func (s *service) generateReply(conversationID, ownerID idgen.ID, userContent string) string {
+func (s *service) generateReply(conversationID, ownerID idgen.ID, userContent string, imageURLs []string) string {
 	if s.relay == nil && s.llmClient == nil {
 		return s.buildReply(userContent)
 	}
@@ -505,14 +551,23 @@ func (s *service) generateReply(conversationID, ownerID idgen.ID, userContent st
 		if model := s.repo.textModelKey(); model != "" {
 			msgs := make([]relaychat.Msg, 0, len(rows)+1)
 			if p := strings.TrimSpace(s.systemPrompt); p != "" {
-				msgs = append(msgs, relaychat.Msg{Role: "system", Content: p})
+				msgs = append(msgs, relaychat.TextMsg("system", p))
 			}
 			for i := range rows {
 				role := "user"
 				if rows[i].SenderID == assistantSenderID {
 					role = "assistant"
 				}
-				msgs = append(msgs, relaychat.Msg{Role: role, Content: rows[i].Content})
+				msgs = append(msgs, relaychat.TextMsg(role, rows[i].Content))
+			}
+			// attach the uploaded images to the latest user message (multimodal).
+			if len(imageURLs) > 0 {
+				for i := len(msgs) - 1; i >= 0; i-- {
+					if msgs[i].Role == "user" {
+						msgs[i] = relaychat.UserMultimodal(userContent, imageURLs)
+						break
+					}
+				}
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), llmReplyTimeout)
 			defer cancel()

@@ -18,7 +18,10 @@ mysql:
   user: root
   password: root_password
   database: canvas
-  params: "charset=utf8mb4&parseTime=True&loc=Local"
+  # sql_mode keeps STRICT_TRANS_TABLES (data-integrity) but drops NO_ZERO_DATE so
+  # optional/empty datetimes (campaign dates, api-key expiry = no-expiry) store as
+  # zero instead of being rejected with Error 1292.
+  params: "charset=utf8mb4&parseTime=True&loc=Local&sql_mode=%27STRICT_TRANS_TABLES%2CNO_ENGINE_SUBSTITUTION%27"
   maxOpenConns: 100
   maxIdleConns: 10
   maxLifetime: 3600 # seconds

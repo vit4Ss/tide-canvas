@@ -61,10 +61,10 @@ type Campaign struct {
 	Limit int `gorm:"column:limit_count;type:int;not null;default:0" json:"limit"`
 	// Status: draft / active / paused / ended.
 	Status string `gorm:"column:status;type:varchar(16);not null;default:'draft'" json:"status"`
-	// Audience is a JSON descriptor of the targeted user segment.
-	Audience string `gorm:"column:audience;type:json" json:"audience"`
-	// Channels is a JSON array of distribution channel keys.
-	Channels string `gorm:"column:channels;type:json" json:"channels"`
+	// Audience is a free-text descriptor of the targeted user segment (e.g. 新用户).
+	Audience string `gorm:"column:audience;type:varchar(255)" json:"audience"`
+	// Channels is a free-text / comma-separated list of distribution channels.
+	Channels string `gorm:"column:channels;type:varchar(255)" json:"channels"`
 }
 
 // TableName overrides the default pluralization.

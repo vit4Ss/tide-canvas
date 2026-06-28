@@ -214,7 +214,7 @@ export default function AdminDashboardPage() {
                 实时营收 · 今日
               </div>
               <div className="big">{stats ? fmtMoney(stats.todayRevenue) : "¥0.00"}</div>
-              <div className="chg">本月累计 {stats ? fmtMoney(stats.totalRevenue) : "¥0.00"}</div>
+              <div className="chg">累计营收 {stats ? fmtMoney(stats.totalRevenue) : "¥0.00"}</div>
             </div>
             <div className="hstats">
               <div className="hstat">

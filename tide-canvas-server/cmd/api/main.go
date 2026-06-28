@@ -24,6 +24,7 @@ import (
 	"tidecanvas/internal/config"
 	"tidecanvas/internal/db"
 	"tidecanvas/internal/middleware"
+	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/cache"
 	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
@@ -41,6 +42,7 @@ import (
 	"tidecanvas/internal/handler/community"
 	"tidecanvas/internal/handler/content"
 	"tidecanvas/internal/handler/file"
+	"tidecanvas/internal/handler/inspiration"
 	"tidecanvas/internal/handler/market"
 	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/handler/project"
@@ -79,6 +81,23 @@ func run() error {
 		return fmt.Errorf("migrate: %w", err)
 	}
 	logger.L().Info("mysql connected & migrated")
+
+	// Demo/bootstrap seed: populate the 作品广场 / 灵感 (and a default admin author)
+	// when their tables are empty, so a fresh DB renders content without a manual
+	// `go run ./cmd/reseed`. Auto-runs outside release mode; force in release with
+	// TIDECANVAS_SEED_DEMO=1. Each seed is idempotent (skips when its data exists)
+	// and best-effort (a failure is logged, never blocks startup).
+	if development || isTruthy(os.Getenv("TIDECANVAS_SEED_DEMO")) {
+		if err := model.Seed(gdb); err != nil {
+			logger.L().Warn("seed: admin", zap.Error(err))
+		}
+		if err := community.Seed(gdb); err != nil {
+			logger.L().Warn("seed: community", zap.Error(err))
+		}
+		if err := inspiration.Seed(gdb); err != nil {
+			logger.L().Warn("seed: inspiration", zap.Error(err))
+		}
+	}
 
 	// Start the async audit-log writer (access / login / business / model-call).
 	eventlog.Init(gdb)
@@ -170,6 +189,7 @@ func run() error {
 	file.Register(api, deps)
 	chat.Register(api, deps)
 	community.Register(api, deps)
+	inspiration.Register(api, deps)
 	content.Register(api, deps)
 	points.Register(api, deps)
 	billing.Register(api, deps)
@@ -206,4 +226,13 @@ func run() error {
 		return fmt.Errorf("graceful shutdown: %w", err)
 	}
 	return nil
+}
+
+// isTruthy reports whether an env value means "on".
+func isTruthy(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }

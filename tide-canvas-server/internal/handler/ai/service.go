@@ -159,6 +159,22 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 	res, genErr := gh.Execute(ctx, s.provider, req)
 	duration := time.Since(start).Milliseconds()
 
+	// The user may have cancelled/deleted the task while it ran. Re-load it and
+	// drop the result if the row is gone or was cancelled — otherwise we'd write
+	// stale terminal state (plus an orphan Redis entry + audit log) for a task the
+	// user already abandoned. (A delete that lands after this check is still safe:
+	// GORM Save updates 0 rows and never re-inserts.)
+	cur, cerr := s.repo.getTask(ctx, taskID)
+	if cerr != nil {
+		logger.L().Warn("ai: runTask recheck failed", zap.String("taskId", taskID.String()), zap.Error(cerr))
+		return
+	}
+	if cur == nil || cur.Status == statusCancelled {
+		logger.L().Info("ai: task cancelled/deleted mid-run, dropping result", zap.String("taskId", taskID.String()))
+		return
+	}
+	task = cur
+
 	// Persist terminal task state.
 	end := time.Now()
 	task.UpdateTime = end
@@ -182,7 +198,10 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 	s.writeLog(ctx, task, gh, m, userID, dto, res, genErr, duration)
 }
 
-// cancelTask marks a still-processing task as cancelled.
+// cancelTask removes a task. A still-processing task is flagged cancelled first
+// (so runTask's post-Execute recheck drops its result), then the row is deleted
+// and its transient Redis poll entry cleared. This backs the user-facing 删除 in
+// 生成记录 — a finished task would otherwise reappear on the next history reload.
 func (s *service) cancelTask(ctx context.Context, userID idgen.ID, id idgen.ID) error {
 	task, err := s.repo.getTask(ctx, id)
 	if err != nil {
@@ -195,6 +214,8 @@ func (s *service) cancelTask(ctx context.Context, userID idgen.ID, id idgen.ID) 
 		return errTaskForbidden
 	}
 	if task.Status == statusProcessing {
+		// flag cancelled first: if runTask's recheck reads the row before the delete
+		// commits, it still sees "cancelled" and drops the result cleanly.
 		nowT := time.Now()
 		task.Status = statusCancelled
 		task.UpdateTime = nowT
@@ -202,8 +223,11 @@ func (s *service) cancelTask(ctx context.Context, userID idgen.ID, id idgen.ID) 
 		if err := s.repo.updateTask(ctx, task); err != nil {
 			return err
 		}
-		s.writeTaskState(ctx, task)
 	}
+	if err := s.repo.deleteTask(ctx, id); err != nil {
+		return err
+	}
+	s.clearTaskState(ctx, id)
 	return nil
 }
 
@@ -366,6 +390,17 @@ func (s *service) writeTaskState(ctx context.Context, task *model.AiTask) {
 	b, _ := json.Marshal(payload)
 	if err := s.rdb.Set(ctx, key, b, taskStateTTL).Err(); err != nil {
 		logger.L().Debug("ai: redis set task state failed", zap.Error(err))
+	}
+}
+
+// clearTaskState removes a task's transient Redis poll entry (on delete/cancel),
+// so no orphan progress lingers until its TTL.
+func (s *service) clearTaskState(ctx context.Context, id idgen.ID) {
+	if s.rdb == nil {
+		return
+	}
+	if err := s.rdb.Del(ctx, cache.AiTaskKey(id.String())).Err(); err != nil {
+		logger.L().Debug("ai: redis del task state failed", zap.Error(err))
 	}
 }
 

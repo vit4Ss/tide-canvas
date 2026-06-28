@@ -1,51 +1,72 @@
 "use client";
 
 /* ============================================================================
-   WorkModal — React port of openWork() / closeWork() from
-   design-ref/liuguang/shell.js. Reusable artwork-detail dialog.
+   WorkModal — quick-view dialog for a community work. Given a postId it fetches
+   the full detail (communityApi.get) and renders the shared <WorkDetailBody/>
+   inside the liuguang `.mask`/`.modal` shell. A shareable standalone page lives
+   at /explore/[id] (same body), reachable via the 在新页打开 link.
 
-   Renders the canonical liuguang modal markup (.mask / .modal / .modal-media /
-   .cov / .modal-side / .modal-author / .pblock / .pgrid / .pcell /
-   .modal-actions) so the shared styles in pages.css apply unchanged.
-
-   - Controlled: parent passes `work` (open when non-null) + `onClose`.
-   - Covers are MeshHues triplets → rendered via coverBg(work.cover).
-   - Generation params fall back to the design's defaults when missing.
-   - Actions: 关注 / 复制提示词 / 收藏 / 下载 surface a toast; 生成同款 → /studio
-     (carries the prompt via sessionStorage, mirroring shell.js).
+   - Controlled: parent passes `postId` (open while non-null) + `onClose`.
    - Backdrop click + Escape close; body scroll lock while open.
    ========================================================================== */
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import type { Artwork } from "@/mock";
-import { coverBg, fmt } from "@/mock";
-import { Avatar } from "@/components/flux/atoms";
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { communityApi } from "@/lib/community-api";
+import type { PostDetailVO } from "@/types/community";
 import { toast } from "@/components/shared/toast";
+import WorkDetailBody from "@/components/site/work-detail";
 
 export interface WorkModalProps {
-  /** The artwork to show; modal is open while this is non-null. */
-  work: Artwork | null;
+  /** The post id to show; modal is open while this is non-null. */
+  postId: string | null;
   onClose: () => void;
+  /** Fired after a confirmed like toggle so the opening list can sync its card. */
+  onEngagementChange?: (e: { id: string; liked: boolean; likes: number }) => void;
 }
 
-export default function WorkModal({ work, onClose }: WorkModalProps) {
-  const router = useRouter();
-  const open = !!work;
-  // full-image zoom (click the media to enlarge a real image result). The zoom
-  // overlay covers the modal's close controls, so the modal can only be dismissed
-  // once the zoom is closed — i.e. zoom is always false by the time work changes,
-  // which is why no cross-work reset is needed.
-  const [zoom, setZoom] = useState(false);
+export default function WorkModal({ postId, onClose, onEngagementChange }: WorkModalProps) {
+  const open = !!postId;
+  const [detail, setDetail] = useState<PostDetailVO | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  // Escape + body scroll lock (mirrors shell.js ensureModal/openWork). While the
-  // zoom overlay is open, Escape closes the zoom first, then the modal.
+  // Keep onClose in a ref so the fetch/Escape effects below DON'T re-run every
+  // time the parent re-renders (the parent's inline `onClose` arrow changes
+  // identity — e.g. the explore page re-renders on a 2s live-counter tick, which
+  // would otherwise refetch the detail and wipe the user's state on a loop).
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+
+  // fetch the detail whenever the target post changes.
+  useEffect(() => {
+    if (!postId) {
+      setDetail(null);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setDetail(null);
+    communityApi.get(postId).then((res) => {
+      if (cancelled) return;
+      setLoading(false);
+      if (res.success && res.data) setDetail(res.data);
+      else {
+        toast.error("作品详情加载失败");
+        onCloseRef.current();
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [postId]);
+
+  // Escape + body scroll lock while open.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      if (zoom) setZoom(false);
-      else onClose();
+      if (e.key === "Escape") onCloseRef.current();
     };
     document.addEventListener("keydown", onKey);
     document.body.classList.add("scroll-lock");
@@ -53,44 +74,9 @@ export default function WorkModal({ work, onClose }: WorkModalProps) {
       document.removeEventListener("keydown", onKey);
       document.body.classList.remove("scroll-lock");
     };
-  }, [open, onClose, zoom]);
+  }, [open]);
 
-  if (!work) return null;
-
-  const a = work;
-  const isVid = a.type === "video";
-  // only a real image (not a mesh-placeholder cover, not a video) can be zoomed.
-  const canZoom = !!a.src && !isVid;
-
-  // Defaults match shell.js openWork() when params are missing.
-  const neg = a.negPrompt || "低质量, 模糊, 多余肢体, 水印, 畸变, 文字";
-  const steps = a.steps ?? 30;
-  const sampler = a.sampler || "DPM++ 2M Karras";
-  const cfg = a.cfgScale ?? 7.5;
-  const size = a.size || "1024×1536";
-  const seed = "2837461920";
-  const prompt =
-    a.prompt ||
-    `${a.title}，${a.model} 生成，高清细节，电影级布光，超写实质感`;
-
-  const goCreate = () => {
-    try {
-      sessionStorage.setItem("flux_prompt", a.prompt || a.title);
-    } catch {
-      /* sessionStorage may be unavailable */
-    }
-    toast.info("已带入参数 · 前往创作台");
-    router.push("/studio");
-  };
-
-  const copyPrompt = () => {
-    try {
-      navigator.clipboard?.writeText(prompt);
-    } catch {
-      /* clipboard may be unavailable */
-    }
-    toast.success("提示词已复制");
-  };
+  if (!postId) return null;
 
   return (
     <div
@@ -100,126 +86,17 @@ export default function WorkModal({ work, onClose }: WorkModalProps) {
       }}
     >
       <div className="modal" role="dialog" aria-modal="true">
-        <div className="modal-media">
-          <div
-            className="cov"
-            style={{
-              background: a.src
-                ? `center / cover no-repeat url("${a.src}")`
-                : coverBg(a.cover),
-              ...(canZoom ? { cursor: "zoom-in" } : {}),
-            }}
-            onClick={canZoom ? () => setZoom(true) : undefined}
-            role={canZoom ? "button" : undefined}
-            aria-label={canZoom ? "放大查看" : undefined}
-          />
-          {isVid && <span className="play-orb">▶</span>}
-          <button type="button" className="modal-x" aria-label="关闭" onClick={onClose}>
-            ✕
-          </button>
-        </div>
-
-        <div className="modal-side">
-          <h3 className="mt">{a.title}</h3>
-
-          <div className="modal-author">
-            <Avatar name={a.author} size={42} className="av" />
-            <div>
-              <div className="an">{a.author}</div>
-              <div className="as">
-                {fmt(a.likes)} 喜欢 · {a.cat}
-              </div>
-            </div>
-            <button
-              type="button"
-              className="foll"
-              onClick={() => toast.success(`已关注 ${a.author}`)}
-            >
-              + 关注
-            </button>
-          </div>
-
-          <div className="pblock">
-            <div className="pl">
-              提示词{" "}
-              <button type="button" onClick={copyPrompt}>
-                复制
-              </button>
-            </div>
-            <div className="pv">{prompt}</div>
-          </div>
-
-          <div className="pblock">
-            <div className="pl">反向提示词</div>
-            <div className="pv">{neg}</div>
-          </div>
-
-          <div className="pgrid">
-            <div className="pcell">
-              <div className="k">模型</div>
-              <div className="v">{a.model.split(" ")[0]}</div>
-            </div>
-            <div className="pcell">
-              <div className="k">采样器</div>
-              <div className="v">{sampler.split(" ")[0]}</div>
-            </div>
-            <div className="pcell">
-              <div className="k">步数</div>
-              <div className="v">{steps}</div>
-            </div>
-            <div className="pcell">
-              <div className="k">CFG</div>
-              <div className="v">{cfg}</div>
-            </div>
-            <div className="pcell">
-              <div className="k">尺寸</div>
-              <div className="v">{size}</div>
-            </div>
-            <div className="pcell">
-              <div className="k">种子</div>
-              <div className="v">{String(seed).slice(0, 7)}</div>
-            </div>
-          </div>
-
-          <div className="modal-actions">
-            <button type="button" className="pri" onClick={goCreate}>
-              ✦ 生成同款
-            </button>
-            <button
-              type="button"
-              className="sec"
-              aria-label="收藏"
-              onClick={() => toast.success("已加入收藏")}
-            >
-              ♥
-            </button>
-            <button
-              type="button"
-              className="sec"
-              aria-label="下载"
-              onClick={() => toast.success("已下载到本地")}
-            >
-              ⤓
-            </button>
-          </div>
-        </div>
+        {loading || !detail ? (
+          <div className="modal-loading">正在加载作品… ✦</div>
+        ) : (
+          <>
+            <WorkDetailBody detail={detail} onClose={onClose} onEngagementChange={onEngagementChange} />
+            <Link className="modal-openpage" href={`/explore/${detail.id}`}>
+              在新页打开 ↗
+            </Link>
+          </>
+        )}
       </div>
-
-      {/* full-image zoom — click the media to enlarge; backdrop / ✕ / Esc closes */}
-      {zoom && a.src && (
-        <div className="modal-zoom" onClick={() => setZoom(false)}>
-          <button
-            type="button"
-            className="modal-zoom-x"
-            aria-label="关闭"
-            onClick={() => setZoom(false)}
-          >
-            ✕
-          </button>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={a.src} alt={a.title} onClick={(e) => e.stopPropagation()} />
-        </div>
-      )}
     </div>
   );
 }

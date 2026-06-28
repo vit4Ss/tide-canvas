@@ -27,6 +27,7 @@ type postMeta struct {
 	Cat       string  `json:"cat"`       // category label
 	Model     string  `json:"model"`     // generation model label
 	Desc      string  `json:"desc"`      // human-readable description / body
+	VideoURL  string  `json:"videoUrl"`  // playable video source (video posts); cover is the poster
 	Prompt    string  `json:"prompt"`    // detail-only
 	NegPrompt string  `json:"negPrompt"` // detail-only
 	Steps     int     `json:"steps"`     // detail-only
@@ -57,6 +58,7 @@ type PostVO struct {
 	Author     AuthorVO `json:"author"`
 	Likes      int      `json:"likes"`
 	Liked      bool     `json:"liked"`
+	Views      int      `json:"views"`
 	CreateTime string   `json:"createTime"`
 }
 
@@ -64,14 +66,39 @@ type PostVO struct {
 // comment count on top of the feed card.
 type PostDetailVO struct {
 	PostVO
-	Prompt    string  `json:"prompt"`
-	NegPrompt string  `json:"negPrompt"`
-	Steps     int     `json:"steps"`
-	Sampler   string  `json:"sampler"`
-	CfgScale  float64 `json:"cfgScale"`
-	Size      string  `json:"size"`
-	Seed      int64   `json:"seed"`
-	Comments  int     `json:"comments"`
+	Prompt     string `json:"prompt"`
+	NegPrompt  string `json:"negPrompt"`
+	Steps      int    `json:"steps"`
+	Sampler    string `json:"sampler"`
+	CfgScale   float64 `json:"cfgScale"`
+	Size       string `json:"size"`
+	Seed       int64  `json:"seed"`
+	Comments   int    `json:"comments"`
+	// VideoURL is the playable source for video posts (empty for images); the
+	// cover doubles as the poster.
+	VideoURL   string `json:"videoUrl"`
+	// Bookmarked / Following reflect the current (possibly anonymous) viewer.
+	Bookmarked bool `json:"bookmarked"`
+	Following  bool `json:"following"`
+}
+
+// AuthorProfileVO is the public profile of a creator (the 作者主页 header) with
+// aggregate stats and the viewer's follow state.
+type AuthorProfileVO struct {
+	ID          idgen.ID `json:"id"`
+	Name        string   `json:"name"`
+	Avatar      string   `json:"avatar"`
+	Works       int64    `json:"works"`
+	Likes       int64    `json:"likes"`
+	Followers   int64    `json:"followers"`
+	Following   int64    `json:"following"`
+	IsFollowing bool     `json:"isFollowing"`
+	JoinedAt    string   `json:"joinedAt"`
+}
+
+// BookmarkVO is the toggle-bookmark response.
+type BookmarkVO struct {
+	Bookmarked bool `json:"bookmarked"`
 }
 
 // CommentVO is one comment in a post's comment list.
@@ -155,6 +182,7 @@ func toPostVO(p *model.CommunityPost, author *model.User, liked bool) PostVO {
 		Author:     toAuthorVO(author),
 		Likes:      p.LikeCount,
 		Liked:      liked,
+		Views:      p.ViewCount,
 		CreateTime: formatTime(p.CreateTime),
 	}
 }
@@ -173,6 +201,7 @@ func toPostDetailVO(p *model.CommunityPost, author *model.User, liked bool, comm
 		Size:      m.Size,
 		Seed:      m.Seed,
 		Comments:  commentCount,
+		VideoURL:  m.VideoURL,
 	}
 }
 

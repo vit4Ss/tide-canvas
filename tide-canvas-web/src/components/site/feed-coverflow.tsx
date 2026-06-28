@@ -277,7 +277,7 @@ export default function FeedCoverflow({
         </div>
       </div>
 
-      <WorkModal work={active} onClose={() => setActive(null)} />
+      <WorkModal postId={active?.id ?? null} onClose={() => setActive(null)} />
     </>
   );
 }

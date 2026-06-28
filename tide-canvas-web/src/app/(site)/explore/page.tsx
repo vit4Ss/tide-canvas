@@ -23,8 +23,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { communityApi } from "@/lib/community-api";
-import type { PostVO, PostDetailVO } from "@/types/community";
+import type { PostVO } from "@/types/community";
 import { useAuthStore } from "@/stores/use-auth-store";
 import WorkModal from "@/components/site/work-modal";
 import { toast } from "@/components/shared/toast";
@@ -62,10 +63,14 @@ function hues(id: string): MeshHues {
 /** Map a backend PostVO to the Artwork shape the shared WorkModal/tiles expect.
  *  `cover` carries the mesh-hue fallback triplet; the real cover URL (if any) is
  *  applied at the tile level. A detail VO adds the generation params. */
-type ArtworkX = Artwork & { coverUrl: string; likes: number; liked: boolean };
+type ArtworkX = Artwork & {
+  coverUrl: string;
+  likes: number;
+  liked: boolean;
+  authorId: string;
+};
 
-function toArtwork(p: PostVO | PostDetailVO): ArtworkX {
-  const d = p as PostDetailVO;
+function toArtwork(p: PostVO): ArtworkX {
   return {
     id: p.id,
     cover: hues(p.id),
@@ -75,14 +80,9 @@ function toArtwork(p: PostVO | PostDetailVO): ArtworkX {
     model: p.model || "—",
     title: p.title,
     author: p.author?.name || "用户",
+    authorId: p.author?.id || "",
     likes: p.likes,
     liked: p.liked,
-    prompt: d.prompt,
-    negPrompt: d.negPrompt,
-    steps: d.steps,
-    sampler: d.sampler,
-    cfgScale: d.cfgScale,
-    size: d.size,
     coverUrl: p.cover || p.thumbnail || "",
   };
 }
@@ -98,9 +98,14 @@ export default function ExplorePage() {
 
   const [posts, setPosts] = useState<PostVO[]>([]);
   const [loading, setLoading] = useState(true);
-  const [active, setActive] = useState<ArtworkX | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [activeId, setActiveId] = useState<string | null>(null);
   // Real category chips, accumulated across loads so chips never disappear.
   const [cats, setCats] = useState<string[]>([]);
+
+  const PAGE_SIZE = 24;
 
   // Debounce the keyword so each keystroke doesn't fire a request.
   const [debouncedQ, setDebouncedQ] = useState("");
@@ -112,40 +117,98 @@ export default function ExplorePage() {
   // Live "本周新增" counter (ported from FX.liveCounter, base 8902).
   const liveNum = useLiveCounter(8902);
 
+  // reqId bumps on every filter change so an in-flight page (first OR appended)
+  // from a stale filter set is discarded.
   const reqId = useRef(0);
 
-  const load = useCallback(async () => {
+  // current filters → backend query params. The 视频 chip is a type filter.
+  const queryFor = useCallback(
+    (p: number) => {
+      const catParam = cat === ALL || cat === VIDEO ? undefined : cat;
+      const typeParam = cat === VIDEO ? "video" : type === "all" ? undefined : type;
+      return {
+        pageNum: p,
+        pageSize: PAGE_SIZE,
+        sort,
+        cat: catParam,
+        type: typeParam,
+        keyword: debouncedQ || undefined,
+      };
+    },
+    [cat, type, sort, debouncedQ],
+  );
+
+  const mergeCats = (records: PostVO[]) =>
+    setCats((prev) => {
+      const merged = new Set(prev);
+      records.forEach((p) => p.cat && merged.add(p.cat));
+      return Array.from(merged);
+    });
+
+  // (re)load page 1 whenever the filters change (replaces the list).
+  const reload = useCallback(async () => {
     const id = ++reqId.current;
     setLoading(true);
-    // The 视频 category chip is a type filter on the backend; otherwise pass cat.
-    const catParam = cat === ALL || cat === VIDEO ? undefined : cat;
-    const typeParam =
-      cat === VIDEO ? "video" : type === "all" ? undefined : type;
-    const res = await communityApi.list({
-      pageNum: 1,
-      pageSize: 60,
-      sort,
-      cat: catParam,
-      type: typeParam,
-      keyword: debouncedQ || undefined,
-    });
-    if (id !== reqId.current) return; // a newer request superseded this one
+    const res = await communityApi.list(queryFor(1));
+    if (id !== reqId.current) return; // superseded by a newer filter change
     if (res.success && res.data) {
       setPosts(res.data.records);
-      setCats((prev) => {
-        const merged = new Set(prev);
-        res.data.records.forEach((p) => p.cat && merged.add(p.cat));
-        return Array.from(merged);
-      });
+      setTotal(res.data.total);
+      setPage(1);
+      mergeCats(res.data.records);
     } else {
       setPosts([]);
+      setTotal(0);
     }
     setLoading(false);
-  }, [cat, type, sort, debouncedQ]);
+  }, [queryFor]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    reload();
+  }, [reload]);
+
+  // append the next page (infinite scroll). Bails if a filter change superseded
+  // the current result set mid-flight.
+  const loadMore = useCallback(async () => {
+    if (loading || loadingMore || posts.length >= total) return;
+    const id = reqId.current;
+    const next = page + 1;
+    setLoadingMore(true);
+    const res = await communityApi.list(queryFor(next));
+    if (id !== reqId.current) {
+      setLoadingMore(false);
+      return; // filters changed while paging — discard
+    }
+    if (res.success && res.data) {
+      // de-dupe across pages: offset paging can re-surface a row when a new post
+      // shifts the window, which would otherwise cause duplicate React keys.
+      setPosts((prev) => {
+        const seen = new Set(prev.map((x) => x.id));
+        return [...prev, ...res.data.records.filter((r) => !seen.has(r.id))];
+      });
+      setTotal(res.data.total);
+      setPage(next);
+      mergeCats(res.data.records);
+    }
+    setLoadingMore(false);
+  }, [loading, loadingMore, posts.length, total, page, queryFor]);
+
+  const hasMore = posts.length < total;
+
+  // auto-load the next page when the sentinel scrolls into view.
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !hasMore) return;
+    const ob = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) loadMore();
+      },
+      { rootMargin: "800px" },
+    );
+    ob.observe(el);
+    return () => ob.disconnect();
+  }, [hasMore, loadMore]);
 
   // Chip list: 全部 + real categories (sorted, stable) + 视频 (type shortcut).
   const chips = useMemo(() => {
@@ -154,15 +217,6 @@ export default function ExplorePage() {
   }, [cats]);
 
   const items = useMemo(() => posts.map(toArtwork), [posts]);
-
-  const openWork = useCallback(async (id: string) => {
-    const res = await communityApi.get(id);
-    if (res.success && res.data) {
-      setActive(toArtwork(res.data));
-    } else {
-      toast.error("作品详情加载失败");
-    }
-  }, []);
 
   const remix = (art: Artwork) => {
     try {
@@ -262,7 +316,7 @@ export default function ExplorePage() {
                     key={a.id}
                     art={a}
                     delay={(i % 5) * 0.03}
-                    onOpen={() => openWork(a.id)}
+                    onOpen={() => setActiveId(a.id)}
                     onRemix={() => remix(a)}
                     onToggleLike={ensureSession}
                   />
@@ -275,12 +329,37 @@ export default function ExplorePage() {
               >
                 没有匹配的作品，换个关键词或分类试试 ✦
               </div>
+
+              {/* infinite-scroll sentinel + manual fallback */}
+              {hasMore && (
+                <>
+                  <div ref={sentinelRef} className="feed-sentinel" />
+                  <div style={{ textAlign: "center", marginTop: 24 }}>
+                    <button
+                      type="button"
+                      className="more-btn"
+                      disabled={loadingMore}
+                      onClick={loadMore}
+                    >
+                      {loadingMore ? "加载中…" : "加载更多"}
+                    </button>
+                  </div>
+                </>
+              )}
             </>
           )}
         </div>
       </section>
 
-      <WorkModal work={active} onClose={() => setActive(null)} />
+      <WorkModal
+        postId={activeId}
+        onClose={() => setActiveId(null)}
+        onEngagementChange={(e) =>
+          setPosts((prev) =>
+            prev.map((p) => (p.id === e.id ? { ...p, liked: e.liked, likes: e.likes } : p)),
+          )
+        }
+      />
     </>
   );
 }
@@ -305,6 +384,12 @@ function Tile({
   const [liked, setLiked] = useState(art.liked);
   const [likes, setLikes] = useState(art.likes);
   const [busy, setBusy] = useState(false);
+
+  // sync local like state when the parent updates this post (e.g. the user liked
+  // it inside the detail modal); the card's own optimistic toggle leaves the
+  // parent value unchanged, so these effects don't fight the local toggle.
+  useEffect(() => setLiked(art.liked), [art.liked]);
+  useEffect(() => setLikes(art.likes), [art.likes]);
 
   const cover = art.coverUrl
     ? `center / cover no-repeat url("${art.coverUrl}")`
@@ -364,7 +449,17 @@ function Tile({
         <div className="tile-meta">
           <div className="tt">{art.title}</div>
           <div className="tb">
-            <span>{art.author}</span>
+            {art.authorId ? (
+              <Link
+                href={`/user/${art.authorId}`}
+                className="tile-author"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {art.author}
+              </Link>
+            ) : (
+              <span>{art.author}</span>
+            )}
             <span className="dot">·</span>
             <span className="mono">{art.model}</span>
           </div>

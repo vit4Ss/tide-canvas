@@ -14,9 +14,16 @@
   border-right:1px solid var(--border); background:var(--surface); overflow-y:auto;}
 .ws-rail::-webkit-scrollbar{width:0;}
 .ws-brand{display:flex; flex-direction:column; align-items:center; gap:7px; padding:4px 0 18px;}
-.ws-brand .glyph{width:30px; height:30px; position:relative;}
-.ws-brand .glyph::before, .ws-empty-glyph .glyph::before{content:''; position:absolute; inset:0; border-radius:8px;
-  background:var(--grad); transform:rotate(45deg); box-shadow:0 0 18px var(--accent-soft);}
+.ws-brand .glyph{width:30px; height:30px; position:relative; overflow:hidden; border-radius:9px;}
+.ws-empty-glyph .glyph{overflow:hidden; border-radius:9px;}
+.ws-brand .glyph::before, .ws-empty-glyph .glyph::before{content:''; position:absolute; inset:0; border-radius:9px;
+  background:var(--grad); box-shadow:0 0 18px var(--accent-soft);}
+/* FlowingLight mark: light streak sweeping the gradient tile (流光). */
+.ws-brand .glyph::after, .ws-empty-glyph .glyph::after{content:''; position:absolute; inset:0; border-radius:9px; pointer-events:none; mix-blend-mode:screen;
+  background:linear-gradient(115deg, transparent 36%, rgba(255,255,255,.95) 47%, rgba(255,255,255,.2) 53%, transparent 62%),
+    radial-gradient(56% 44% at 74% 22%, rgba(255,255,255,.55), transparent 60%);
+  background-size:260% 100%, 100% 100%; background-repeat:no-repeat;
+  animation:glyphFlow 3.4s var(--ease) infinite;}
 .ws-brand b{font-family:var(--disp); font-size:10px; font-weight:800; letter-spacing:.06em; color:var(--text);}
 .ws-nav{display:flex; flex-direction:column; gap:3px;}
 .ws-tool{display:flex; flex-direction:column; align-items:center; gap:5px; padding:11px 4px; border-radius:13px;
@@ -347,6 +354,10 @@
 /* 参考图来源选择 / 资产库选择器 */
 .ws-srcmask{position:fixed; inset:0; z-index:1000; display:flex; align-items:center; justify-content:center; padding:24px; background:rgba(0,0,0,.6); backdrop-filter:blur(4px); animation:wsLbFade .15s var(--ease);}
 .ws-srcmenu{width:340px; max-width:92vw; background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:14px; box-shadow:0 30px 80px rgba(0,0,0,.6); display:flex; flex-direction:column; gap:8px;}
+/* anchored popover variant: opens at the click position, no dim mask */
+.ws-srcpop-catch{position:fixed; inset:0; z-index:1000; background:transparent;}
+.ws-srcmenu-pop{position:fixed; z-index:1001; width:300px; transform-origin:top left; animation:wsSrcPop .14s var(--ease);}
+@keyframes wsSrcPop{from{opacity:0; transform:translateY(-4px) scale(.97);} to{opacity:1; transform:none;}}
 .ws-srcmenu-h{font-size:13px; font-weight:600; color:var(--text-dim); padding:4px 6px 8px;}
 .ws-srcopt{display:flex; align-items:center; gap:12px; padding:12px; border-radius:12px; border:1px solid var(--border); background:var(--surface-2); cursor:pointer; text-align:left; transition:border-color .15s, transform .12s;}
 .ws-srcopt:hover{border-color:var(--accent); transform:translateY(-1px);}
@@ -387,8 +398,9 @@
 .ws-stage-veil{position:absolute; inset:0; z-index:1; pointer-events:none;
   background:radial-gradient(120% 100% at 50% 40%, transparent 0%, rgba(5,6,12,.55) 70%, rgba(5,6,12,.82) 100%);}
 
-.ws-stage-top{position:absolute; top:0; left:0; right:0; z-index:3; display:flex; align-items:center; justify-content:space-between;
-  gap:12px; padding:14px 18px;}
+.ws-stage-top{position:absolute; top:0; left:0; right:0; z-index:4; display:flex; align-items:center; justify-content:space-between;
+  gap:12px; padding:14px 18px;
+  background:linear-gradient(to bottom, color-mix(in oklab,var(--bg) 94%, transparent) 40%, transparent);}
 .ws-crumb{display:inline-flex; align-items:center; gap:8px; white-space:nowrap; font-family:var(--mono); font-size:12px; font-weight:600;
   letter-spacing:.12em; text-transform:uppercase; color:var(--text-dim);}
 .ws-crumb .d{width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 4px var(--accent-soft);}
@@ -498,6 +510,48 @@
 .gen-acts button.soon:hover{color:#fff; border-color:var(--border-strong); background:color-mix(in oklab,#fff 12%, transparent);}
 .gen-acts svg{width:17px; height:17px; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round;}
 .gen-acts .hd-glyph{font-size:11px; font-weight:800; letter-spacing:.5px; line-height:1;}
+
+/* ── result feed (run blocks; replaces ws-grid + 生成历史 strip) ─────── */
+/* fills the stage and scrolls; top padding clears the absolute ws-stage-top bar. */
+.ws-feed{position:absolute; inset:0; z-index:2; display:flex; flex-direction:column; gap:30px;
+  overflow-y:auto; overflow-x:hidden; padding:64px 24px 36px; overscroll-behavior:contain;}
+.ws-run{display:flex; flex-direction:column; gap:12px;}
+.ws-run-head{display:flex; align-items:flex-start; justify-content:space-between; gap:16px;}
+.ws-run-meta{min-width:0;}
+.ws-run-title{font-size:15px; font-weight:700; color:var(--text); max-width:62ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.ws-run-sub{margin-top:3px; font-size:12px; color:var(--text-faint);}
+.ws-run-acts{display:flex; align-items:center; gap:8px; flex:none;}
+.ws-run-acts button{display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 13px; border-radius:9px;
+  border:1px solid var(--border); background:var(--surface-2); color:var(--text-dim); font-size:13px; font-weight:600;
+  cursor:pointer; transition:border-color .15s var(--ease), color .15s, background .15s;}
+.ws-run-acts button:hover{border-color:var(--accent); color:var(--text);}
+.ws-run-acts button:disabled{opacity:.5; cursor:not-allowed;}
+.ws-run-acts button.ic{width:32px; padding:0; justify-content:center; font-size:14px;}
+.ws-run-acts button.ic.danger:hover{border-color:#e5484d; color:#e5484d;}
+.ws-run-acts .i{font-size:13px; line-height:1;}
+
+.ws-run-imgs{display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start;}
+/* each result card is sized by its image's TRUE ratio: fixed height, width:auto. */
+.ws-runimg{position:relative; height:240px; border-radius:14px; overflow:hidden; flex:none;
+  background:var(--surface-2); box-shadow:0 12px 40px rgba(0,0,0,.45);}
+.ws-run.single .ws-runimg{height:min(440px,56vh);}
+.ws-runimg .done-img{display:block; height:100%; width:auto; max-width:78vw; object-fit:contain;}
+.ws-runimg.done{cursor:zoom-in; transition:transform .18s var(--ease), box-shadow .18s;}
+.ws-runimg.done:hover{transform:translateY(-3px); box-shadow:0 18px 50px rgba(0,0,0,.6),0 0 0 1px var(--accent-soft);}
+/* video result: plays inline (controls), so no zoom cursor / hover lift */
+.ws-runimg.video{cursor:default; background:#000;}
+.ws-runimg.video:hover{transform:none; box-shadow:0 12px 40px rgba(0,0,0,.45);}
+.ws-runimg video.done-img{background:#000;}
+.ws-runimg .vbadge{position:absolute; left:10px; top:10px; z-index:3; width:26px; height:26px; border-radius:50%;
+  display:grid; place-items:center; font-size:11px; color:#fff; background:color-mix(in oklab,#0a0c14 64%, transparent); backdrop-filter:blur(6px);}
+.ws-runimg.done:hover .gen-acts{opacity:1; transform:translate(-50%,0); pointer-events:auto;}
+/* in-flight placeholder: aspectRatio (inline) + height drives width */
+.ws-runimg.loading .done-cov{position:absolute; inset:0;}
+.ws-runimg.loading .done-cov.on{opacity:1;}
+.ws-runimg.loading .shimmer{position:absolute; inset:0; background:linear-gradient(110deg,transparent 30%,color-mix(in oklab,var(--accent) 24%,transparent) 50%,transparent 70%); background-size:220% 100%; animation:wsShim 1.1s linear infinite;}
+.ws-runimg.loading .ph{position:absolute; left:0; right:0; top:50%; transform:translateY(-50%); text-align:center; font-size:13px; font-weight:600; color:var(--text-dim); z-index:2;}
+.ws-runimg.loading .bar{position:absolute; left:14px; right:14px; bottom:14px; height:4px; border-radius:99px; background:rgba(255,255,255,.14); overflow:hidden; z-index:2;}
+.ws-runimg.loading .bar i{display:block; height:100%; width:0; background:var(--grad); border-radius:99px; transition:width .1s linear;}
 
 /* ── asset panel ──────────────────────────────────────────────────── */
 .ws-assets{display:flex; flex-direction:column; min-height:0; border-left:1px solid var(--border); background:var(--surface);}

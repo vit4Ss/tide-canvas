@@ -79,6 +79,68 @@ func (h *handler) toggleLike(c *gin.Context, like bool) {
 	response.OK(c, vo)
 }
 
+// bookmark handles POST /community/posts/:id/bookmark (auth). Returns {bookmarked}.
+func (h *handler) bookmark(c *gin.Context) {
+	h.toggleBookmark(c, true)
+}
+
+// unbookmark handles DELETE /community/posts/:id/bookmark (auth).
+func (h *handler) unbookmark(c *gin.Context) {
+	h.toggleBookmark(c, false)
+}
+
+// toggleBookmark is shared by bookmark/unbookmark.
+func (h *handler) toggleBookmark(c *gin.Context, bookmark bool) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	userID := middleware.CurrentUserID(c)
+	vo, err := h.svc.setBookmark(userID, id, bookmark)
+	if err != nil {
+		h.fail(c, err, "failed to update bookmark")
+		return
+	}
+	response.OK(c, vo)
+}
+
+// authorProfile handles GET /community/users/:userId (public). AuthorProfileVO.
+func (h *handler) authorProfile(c *gin.Context) {
+	uid, ok := parseUserID(c)
+	if !ok {
+		return
+	}
+	viewerID := middleware.CurrentUserID(c)
+	vo, err := h.svc.authorProfile(viewerID, uid)
+	if err != nil {
+		h.fail(c, err, "failed to load author")
+		return
+	}
+	response.OK(c, vo)
+}
+
+// authorPosts handles GET /community/users/:userId/posts (public). PageData<PostVO>.
+func (h *handler) authorPosts(c *gin.Context) {
+	uid, ok := parseUserID(c)
+	if !ok {
+		return
+	}
+	var q PageQuery
+	if err := c.ShouldBindQuery(&q); err != nil {
+		response.Fail(c, response.CodeBadRequest, "invalid query: "+err.Error())
+		return
+	}
+	q.normalize()
+
+	viewerID := middleware.CurrentUserID(c)
+	vos, total, err := h.svc.authorPosts(viewerID, uid, &q)
+	if err != nil {
+		h.fail(c, err, "failed to list author posts")
+		return
+	}
+	response.Page(c, vos, total, q.PageNum, q.PageSize)
+}
+
 // comments handles GET /community/posts/:id/comments (public). PageData<CommentVO>.
 func (h *handler) comments(c *gin.Context) {
 	id, ok := parseID(c)
@@ -196,6 +258,16 @@ func parseID(c *gin.Context) (idgen.ID, bool) {
 	id, err := idgen.Parse(c.Param("id"))
 	if err != nil || id == 0 {
 		response.Fail(c, response.CodeBadRequest, "invalid post id")
+		return 0, false
+	}
+	return id, true
+}
+
+// parseUserID extracts and validates the :userId path param, writing a 400 on failure.
+func parseUserID(c *gin.Context) (idgen.ID, bool) {
+	id, err := idgen.Parse(c.Param("userId"))
+	if err != nil || id == 0 {
+		response.Fail(c, response.CodeBadRequest, "invalid user id")
 		return 0, false
 	}
 	return id, true

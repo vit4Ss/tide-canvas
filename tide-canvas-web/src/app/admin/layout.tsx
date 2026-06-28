@@ -1,5 +1,5 @@
 /* ============================================================================
-   /admin route-group layout — the SCARECROWAI 后台管理控制台 shell.
+   /admin route-group layout — the 流光 FlowingLight 后台管理控制台 shell.
 
    Nested under the app's root layout (which owns <html>/<body> + global fonts),
    so this renders ONLY the console chrome. Faithful to design-ref/后台管理.html:

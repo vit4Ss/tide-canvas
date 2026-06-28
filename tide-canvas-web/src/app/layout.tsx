@@ -9,8 +9,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "TideCanvas - 无限画布 AI 创作平台",
-  description: "基于无限画布的多模态 AI 创作工作流编排平台，在无限画布中生成、连接和重组图片、文字与图形。",
+  title: "流光 FlowingLight - 无限画布 AI 创作平台",
+  description: "流光 FlowingLight：基于无限画布的多模态 AI 创作平台，一句话生成图片与视频，接入海量模型，在无限画布中生成、连接和重组图片、文字与图形。",
 };
 
 export default function RootLayout({

@@ -30,6 +30,8 @@ export interface PostVO {
   likes: number;
   /** Whether the current caller has liked this post. */
   liked: boolean;
+  /** View count. */
+  views: number;
   /** RFC3339 timestamp (or "" for the zero value). */
   createTime: string;
 }
@@ -46,12 +48,53 @@ export interface PostDetailVO extends PostVO {
   seed: number;
   /** Comment count. */
   comments: number;
+  /** Playable video source for video posts (empty for images); cover = poster. */
+  videoUrl: string;
+  /** Whether the current viewer has bookmarked this post. */
+  bookmarked: boolean;
+  /** Whether the current viewer follows the author. */
+  following: boolean;
+}
+
+/** One comment on a post (CommentVO). */
+export interface CommentVO {
+  id: string;
+  postId: string;
+  parentId: string | null;
+  content: string;
+  author: AuthorVO;
+  createTime: string;
+}
+
+/** Public creator profile header (AuthorProfileVO). */
+export interface AuthorProfileVO {
+  id: string;
+  name: string;
+  avatar: string;
+  works: number;
+  likes: number;
+  followers: number;
+  following: number;
+  isFollowing: boolean;
+  joinedAt: string;
 }
 
 /** Toggle-like response (LikeVO). */
 export interface LikeVO {
   liked: boolean;
   likeCount: number;
+}
+
+/** Toggle-bookmark response (BookmarkVO). */
+export interface BookmarkVO {
+  bookmarked: boolean;
+}
+
+/** Body for POST /api/community/posts/:id/comments. */
+export interface CommentCreateDTO {
+  content: string;
+  /** Optional reply target (omit/"" for a top-level comment). */
+  parentId?: string;
 }
 
 /** Query for the community feed: GET /api/community/posts. */

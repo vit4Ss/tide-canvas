@@ -59,6 +59,7 @@ type relayParams struct {
 type RelaySyncResult struct {
 	Created int `json:"created"`
 	Updated int `json:"updated"`
+	Failed  int `json:"failed"`
 	Total   int `json:"total"`
 }
 
@@ -109,43 +110,58 @@ func SyncRelayModels(db *gorm.DB, baseURL, key string, newStatus int, authorID i
 
 	res := RelaySyncResult{Total: len(models)}
 	for _, m := range models {
+		modelKey := strings.TrimSpace(m.ID)
 		name := strings.TrimSpace(m.Name)
 		if name == "" {
-			name = strings.TrimSpace(m.ID)
+			name = modelKey
 		}
-		if name == "" {
+		if name == "" && modelKey == "" {
 			continue
 		}
 		typ := relayModality(m.Modality)
 		price := decimal.NewFromFloat(m.CreditCost)
 		cfg := buildStudioConfig(m)
 
+		// Match an existing row by the STABLE model_key (the relay id), not the
+		// display name — so renaming a model in the admin form (or a relay-side
+		// name change) doesn't make the next sync insert a duplicate. Fall back to
+		// name only when the relay omits an id.
 		var existing model.MarketModel
-		err := db.Where("name = ?", name).First(&existing).Error
-		if err == nil {
+		var lookErr error
+		if modelKey != "" {
+			lookErr = db.Where("model_key = ?", modelKey).First(&existing).Error
+		} else {
+			lookErr = db.Where("name = ?", name).First(&existing).Error
+		}
+
+		// A single model's failure must not abort the whole catalog sync; count it
+		// and continue so the operator gets accurate created/updated/failed totals.
+		if lookErr == nil {
 			fields := map[string]any{
 				"type":      typ,
 				"price":     price,
-				"model_key": m.ID,
+				"model_key": modelKey,
 			}
 			// Preserve admin-edited config; only seed it when still empty.
 			if strings.TrimSpace(existing.Config) == "" {
 				fields["config"] = cfg
 			}
 			if upErr := db.Model(&model.MarketModel{}).Where("id = ?", existing.ID).Updates(fields).Error; upErr != nil {
-				return res, upErr
+				res.Failed++
+				continue
 			}
 			res.Updated++
 			continue
 		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return res, err
+		if !errors.Is(lookErr, gorm.ErrRecordNotFound) {
+			res.Failed++
+			continue
 		}
 
 		row := model.MarketModel{
 			AuthorID: authorID,
 			Name:     name,
-			ModelKey: m.ID,
+			ModelKey: modelKey,
 			Type:     typ,
 			Config:   cfg,
 			Price:    price,
@@ -155,7 +171,8 @@ func SyncRelayModels(db *gorm.DB, baseURL, key string, newStatus int, authorID i
 		row.CreateTime = time.Now()
 		row.UpdateTime = time.Now()
 		if crErr := db.Create(&row).Error; crErr != nil {
-			return res, crErr
+			res.Failed++
+			continue
 		}
 		res.Created++
 	}

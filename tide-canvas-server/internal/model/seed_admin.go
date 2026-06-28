@@ -60,9 +60,9 @@ func SeedAdminData(db *gorm.DB) error {
 
 	// Campaigns (营销活动).
 	if err := seedIfEmpty(db, &Campaign{}, []Campaign{
-		{Name: "新用户 8 折", Type: "discount", Strength: "8折", StartTime: now.AddDate(0, 0, -3), EndTime: now.AddDate(0, 0, 27), Used: 156, Limit: 1000, Status: "active", Audience: `{"segment":"new_user"}`, Channels: `["web","app"]`},
-		{Name: "满 100 减 20", Type: "fullreduce", Strength: "满100减20", StartTime: now.AddDate(0, 0, -1), EndTime: now.AddDate(0, 0, 6), Used: 89, Limit: 500, Status: "active", Audience: `{"segment":"all"}`, Channels: `["web"]`},
-		{Name: "双十一闪购", Type: "flashsale", Strength: "限时5折", StartTime: now.AddDate(0, 1, 0), EndTime: now.AddDate(0, 1, 1), Used: 0, Limit: 2000, Status: "draft", Audience: `{"segment":"vip"}`, Channels: `["web","app","mini"]`},
+		{Name: "新用户 8 折", Type: "discount", Strength: "8折", StartTime: now.AddDate(0, 0, -3), EndTime: now.AddDate(0, 0, 27), Used: 156, Limit: 1000, Status: "active", Audience: "新用户", Channels: "网页,APP"},
+		{Name: "满 100 减 20", Type: "fullreduce", Strength: "满100减20", StartTime: now.AddDate(0, 0, -1), EndTime: now.AddDate(0, 0, 6), Used: 89, Limit: 500, Status: "active", Audience: "全部", Channels: "网页"},
+		{Name: "双十一闪购", Type: "flashsale", Strength: "限时5折", StartTime: now.AddDate(0, 1, 0), EndTime: now.AddDate(0, 1, 1), Used: 0, Limit: 2000, Status: "draft", Audience: "VIP 用户", Channels: "网页,APP,小程序"},
 	}); err != nil {
 		return err
 	}
@@ -107,18 +107,18 @@ func SeedAdminData(db *gorm.DB) error {
 
 	// Email templates (邮件模板).
 	if err := seedIfEmpty(db, &EmailTemplate{}, []EmailTemplate{
-		{Name: "注册欢迎", Type: "html", Scene: "register", Variables: `["nickname","code"]`, Subject: "欢迎加入潮汐画布", Body: "<p>你好 {{nickname}}，欢迎注册！</p>", Enabled: true},
-		{Name: "找回密码", Type: "html", Scene: "reset_password", Variables: `["code"]`, Subject: "重置你的密码", Body: "<p>你的验证码是 {{code}}，10 分钟内有效。</p>", Enabled: true},
-		{Name: "订单支付成功", Type: "html", Scene: "order_paid", Variables: `["orderNo","amount"]`, Subject: "订单支付成功通知", Body: "<p>订单 {{orderNo}} 已支付 {{amount}} 元。</p>", Enabled: true},
+		{Name: "注册欢迎", Type: "html", Scene: "register", Variables: "nickname, code", Subject: "欢迎加入潮汐画布", Body: "<p>你好 {{nickname}}，欢迎注册！</p>", Enabled: true},
+		{Name: "找回密码", Type: "html", Scene: "reset_password", Variables: "code", Subject: "重置你的密码", Body: "<p>你的验证码是 {{code}}，10 分钟内有效。</p>", Enabled: true},
+		{Name: "订单支付成功", Type: "html", Scene: "order_paid", Variables: "orderNo, amount", Subject: "订单支付成功通知", Body: "<p>订单 {{orderNo}} 已支付 {{amount}} 元。</p>", Enabled: true},
 	}); err != nil {
 		return err
 	}
 
 	// API keys (API 密钥).
 	if err := seedIfEmpty(db, &ApiKey{}, []ApiKey{
-		{Name: "默认服务端密钥", Scope: `["read","write"]`, KeyValue: "sk-live-demo-0001", DailyLimit: 100000, Expiry: now.AddDate(1, 0, 0), Enabled: true},
-		{Name: "只读统计密钥", Scope: `["read"]`, KeyValue: "sk-live-demo-0002", DailyLimit: 10000, Expiry: now.AddDate(0, 6, 0), Enabled: true},
-		{Name: "已停用密钥", Scope: `["read"]`, KeyValue: "sk-live-demo-0003", DailyLimit: 0, Expiry: now.AddDate(0, -1, 0), Enabled: false},
+		{Name: "默认服务端密钥", Scope: "全部", KeyValue: "sk-live-demo-0001", DailyLimit: 100000, Expiry: now.AddDate(1, 0, 0), Enabled: true},
+		{Name: "只读统计密钥", Scope: "只读", KeyValue: "sk-live-demo-0002", DailyLimit: 10000, Expiry: now.AddDate(0, 6, 0), Enabled: true},
+		{Name: "已停用密钥", Scope: "只读", KeyValue: "sk-live-demo-0003", DailyLimit: 0, Expiry: now.AddDate(0, -1, 0), Enabled: false},
 	}); err != nil {
 		return err
 	}

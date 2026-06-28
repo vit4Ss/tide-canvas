@@ -3,7 +3,7 @@
 /* ============================================================================
    创作台 · CreateStudio — React port of design-ref/创作台.html
    (<aside class="ws-panel"> control panel + <main class="ws-stage"> center
-   stage + 生成历史 strip) and design-ref/liuguang/create.js.
+   stage) and design-ref/liuguang/create.js.
 
    Renders ONLY the panel + stage (the (studio) layout owns the ws-rail and
    imports flux/pages/studio.css). Exact liuguang class names are used so the
@@ -11,13 +11,13 @@
 
    Faithful to the design: type-switched fields (图片 ↔ 视频), 分辨率/清晰度/时长
    pills, typed reference-upload slots (参考图 / 原图 / 首尾帧 / 参考视频·音频) with
-   a preview modal, resolution-based cost, a 【风格】 result header and a paginated
-   生成历史 strip.
+   a preview modal and resolution-based cost.
 
-   Generation / AI 优化 are SIMULATED client-side (mock progress intervals →
-   mesh-cover result cards) — the real API is a later phase. Covers are stored
-   as MeshHues hue triplets so result/history cards can open the shared
-   <WorkModal/> (which derives CSS via coverBg()).
+   Results render as a vertical FEED of generation runs (ws-feed): newest run on
+   top, each block = header (prompt + model · time + 重新生成/下载/删除) and a row of
+   its images shown at their TRUE aspect ratio (no crop). The in-flight run shows
+   progress placeholders, then joins the feed below — which also serves as the
+   history (the old cropped grid + separate 生成历史 strip were merged into this).
 
    Handoff: reads sessionStorage 'flux_prompt' / 'flux_model' on mount to
    prefill the prompt / model (mirrors create.js + work-modal.tsx).
@@ -32,14 +32,13 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import type { Artwork, ArtworkType, MeshHues } from "@/mock";
-import { CREATE_MODELS, coverBg, mesh } from "@/mock";
+import type { ArtworkType, MeshHues } from "@/mock";
+import { CREATE_MODELS, mesh } from "@/mock";
 import { marketApi, type StudioModelVO } from "@/lib/market-api";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { AiTaskStatus } from "@/types/ai";
 import { AssetsBrowser, type PickedAsset } from "@/components/studio/assets-browser";
 import { useAuthStore } from "@/stores/use-auth-store";
-import WorkModal from "@/components/site/work-modal";
 import { toast } from "@/components/shared/toast";
 import styles from "@/app/(studio)/studio/create.module.css";
 
@@ -411,6 +410,15 @@ function isHttpUrl(u: unknown): u is string {
   return typeof u === "string" && /^https?:\/\//.test(u.trim());
 }
 
+/** RFC3339 / ISO timestamp → "YYYY.MM.DD HH:mm" for the feed run header. */
+function fmtTs(iso?: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 /** deterministic reference-thumb gradient (create.js refGrad). */
 function refGrad(seed: number): string {
   const h = (seed * 61 + 30) % 360;
@@ -436,11 +444,11 @@ function thumbBg(g?: string): string {
 
 type SlotData = Record<string, UploadFile[]>;
 
-/* ── result / history models (carry hue triplets so cards open WorkModal) ── */
+/* ── result / history models (hue triplets back the mesh placeholders) ───── */
 
 interface ResultCell {
   i: number;
-  /** hue triplet → coverBg() for the modal, mesh() for the card bg. */
+  /** hue triplet → mesh() for the loading-placeholder background. */
   hues: MeshHues;
   /** real result image URL (real generations); when set it replaces the mesh placeholder. */
   url?: string;
@@ -448,6 +456,12 @@ interface ResultCell {
 
 interface HistItem {
   id: string;
+  /** run/task group key — every image of one generation shares it (feed grouping). */
+  run: string;
+  /** ISO timestamp of the run (for the feed header). */
+  ts?: string;
+  /** aspect ratio of the run (e.g. "16:9"), used to size loading placeholders. */
+  ratio?: string;
   hues: MeshHues;
   type: ArtworkType;
   title: string;
@@ -457,6 +471,19 @@ interface HistItem {
   url?: string;
   /** reconstructed run settings (for restoring this result to the panel). */
   params?: RunParams;
+}
+
+/** One generation run = a feed block (header + a row of its result images). */
+interface HistRun {
+  run: string;
+  ts?: string;
+  ratio?: string;
+  title: string;
+  prompt: string;
+  model: string;
+  type: ArtworkType;
+  params?: RunParams;
+  items: HistItem[];
 }
 
 interface RunMeta {
@@ -504,7 +531,6 @@ interface RunParams {
 }
 
 let histSeq = 0;
-const PAGE_SIZE = 24; // items per page in the workspace history (create.js)
 
 /* ── component ───────────────────────────────────────────────────────────── */
 
@@ -527,6 +553,7 @@ export default function CreateStudio() {
   const [preview, setPreview] = useState<{ k: string; i: number } | null>(null);
   /* reference-image source flow: 来源选择菜单 / 资产库弹窗 / 本地上传 */
   const [srcMenu, setSrcMenu] = useState<string | null>(null); // slot key whose 来源 menu is open
+  const [srcMenuPos, setSrcMenuPos] = useState<{ x: number; y: number } | null>(null); // anchor (right of trigger)
   const [assetPick, setAssetPick] = useState<string | null>(null); // slot key the asset picker fills
   const fileInputRef = useRef<HTMLInputElement>(null);
   const localTargetRef = useRef<string | null>(null); // slot key awaiting a local file pick
@@ -541,7 +568,6 @@ export default function CreateStudio() {
   const [busy, setBusy] = useState(false);
   const [cells, setCells] = useState<ResultCell[]>([]);
   const [progs, setProgs] = useState<number[]>([]);
-  const [doneSet, setDoneSet] = useState<Record<number, boolean>>({});
   const [runMeta, setRunMeta] = useState<RunMeta | null>(null);
   // full settings of the last started run (for 重新编辑 / 再次生成) + a one-shot
   // flag that fires generate() after those settings are restored to the panel.
@@ -558,11 +584,7 @@ export default function CreateStudio() {
   /* history — the user's REAL generation tasks (aiApi.listTasks), newest first.
      Loaded post-mount (see loadHistory); empty until then. No mock seed. */
   const [hist, setHist] = useState<HistItem[]>([]);
-  const [histFilter, setHistFilter] = useState<"all" | "image" | "video">("all");
-  const [histPage, setHistPage] = useState(1);
 
-  /* shared work-detail modal */
-  const [active, setActive] = useState<Artwork | null>(null);
   /* full-image lightbox (click a finished result to zoom) */
   const [lightbox, setLightbox] = useState<string | null>(null);
 
@@ -576,7 +598,6 @@ export default function CreateStudio() {
   /* ── derived ─────────────────────────────────────────────────────────── */
 
   const cfg = TOOLS[tool];
-  const hasResults = cells.length > 0;
   const isVideo = curType === "video";
   const slots = UPLOADS[tool] ?? null;
 
@@ -609,10 +630,11 @@ export default function CreateStudio() {
     return { style: { background: modelSwatch(name) }, content: icon || modelInitial(name) };
   };
 
-  const mCfg = useMemo(
-    () => studioList.find((m) => m.name === model)?.config ?? null,
+  const selModel = useMemo(
+    () => studioList.find((m) => m.name === model) ?? null,
     [studioList, model],
   );
+  const mCfg = selModel?.config ?? null;
 
   // dynamic option lists: a model's configured options only; when the backend
   // returned no models at all, fall back to the built-in defaults so the panel
@@ -642,20 +664,54 @@ export default function CreateStudio() {
     ? MODES_BY_TYPE[curType].filter((k) => configuredTools.includes(k))
     : MODES_BY_TYPE[curType];
 
-  // cost (create.js updateCost): video = round(resCost*durSec/5); image = imgResCost*count.
-  const cost = isVideo
-    ? Math.round(((RES_COST[res] || 50) * (DUR_SEC[dur] || 5)) / 5)
-    : (IMG_RES_COST[imgRes] || 14) * count;
+  // cost — honor the 后台模型配置 first, then fall back to the built-in map:
+  //   1) priceMatrix（后台「积分定价」）: image = 画质 × 清晰度, video = 时长 × 清晰度
+  //   2) 模型级固定积分 (config.creditCost, else the model's pointCost)
+  //   3) built-in fallback map (case-insensitive: 后台用 1k/2k/4k, 预览用 1K/2K/4K)
+  const cost = useMemo(() => {
+    const pm = mCfg?.priceMatrix;
+    const row = isVideo ? dur : quality;
+    const col = isVideo ? res : imgRes;
+    const cell = pm?.[row]?.[col];
+    const per = cell != null ? parseFloat(cell) : NaN;
+    if (Number.isFinite(per)) return isVideo ? Math.round(per) : Math.round(per) * count;
 
-  const allDone = hasResults && Object.keys(doneSet).length >= cells.length;
+    const flat = mCfg?.creditCost ?? (parseFloat(selModel?.pointCost ?? "") || 0);
+    if (flat > 0) return isVideo ? flat : flat * count;
 
-  const filteredHist = useMemo(
-    () => (histFilter === "all" ? hist : hist.filter((h) => h.type === histFilter)),
-    [hist, histFilter],
-  );
-  const histPages = Math.max(1, Math.ceil(filteredHist.length / PAGE_SIZE));
-  const curPage = Math.min(histPage, histPages);
-  const pageItems = filteredHist.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
+    const fb = (m: Record<string, number>, k: string, d: number) =>
+      m[k] ?? m[k.toUpperCase()] ?? m[k.toLowerCase()] ?? d;
+    return isVideo
+      ? Math.round((fb(RES_COST, res, 50) * (DUR_SEC[dur] || 5)) / 5)
+      : fb(IMG_RES_COST, imgRes, 14) * count;
+  }, [mCfg, selModel, isVideo, dur, res, imgRes, quality, count]);
+
+  // group the flat history into runs (one block per generation), newest first —
+  // `hist` is already newest-first, so first-seen order is preserved.
+  const runs = useMemo<HistRun[]>(() => {
+    const byRun = new Map<string, HistRun>();
+    const order: HistRun[] = [];
+    for (const h of hist) {
+      let g = byRun.get(h.run);
+      if (!g) {
+        g = {
+          run: h.run,
+          ts: h.ts,
+          ratio: h.ratio,
+          title: h.title,
+          prompt: h.prompt,
+          model: h.model,
+          type: h.type,
+          params: h.params,
+          items: [],
+        };
+        byRun.set(h.run, g);
+        order.push(g);
+      }
+      g.items.push(h);
+    }
+    return order;
+  }, [hist]);
 
 
   /* ── prompt / model handoff (mount) ──────────────────────────────────── */
@@ -763,6 +819,9 @@ export default function CreateStudio() {
         urls.forEach((url, idx) =>
           items.push({
             id: `task-${t.id}-${idx}`,
+            run: `task-${t.id}`,
+            ts: t.createTime,
+            ratio: params.ratio,
             hues: huesFromId(`${t.id}-${idx}`),
             type,
             title,
@@ -800,7 +859,6 @@ export default function CreateStudio() {
           });
           setCells([{ i: 0, hues: h.hues, url: h.url }]);
           setProgs([100]);
-          setDoneSet({ 0: true });
           if (h.params) lastRunRef.current = h.params;
         }
       }
@@ -929,12 +987,24 @@ export default function CreateStudio() {
   /* ── typed reference uploads (create.js addFile / removeFile / swap) ──── */
 
   // adding a reference asset: every slot offers a source choice (本地上传 / 资产库).
-  const addFile = (k: string) => {
+  const addFile = (k: string, e?: React.MouseEvent) => {
     const slot = slots?.find((s) => s.k === k);
     if (!slot) return;
     if ((slotData[k] || []).length >= slotMax(slot)) {
       toast.info(slot.label + "最多 " + slotMax(slot) + " 个");
       return;
+    }
+    // anchor the 来源 menu just to the right of the clicked trigger (flips left if it would overflow)
+    if (e) {
+      const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      const W = 300;
+      const gap = 8;
+      let x = r.right + gap;
+      if (x + W > window.innerWidth - 12) x = Math.max(12, r.left - W - gap);
+      const y = Math.min(r.top, Math.max(12, window.innerHeight - 200));
+      setSrcMenuPos({ x, y });
+    } else {
+      setSrcMenuPos(null);
     }
     setSrcMenu(k);
   };
@@ -1063,26 +1133,6 @@ export default function CreateStudio() {
     return out.slice(0, 4);
   };
 
-  const buildWork = (
-    hues: MeshHues,
-    type: ArtworkType,
-    p: string,
-    mdl: string,
-    url?: string,
-  ): Artwork => ({
-    id: `gen-${++histSeq}`,
-    cover: hues,
-    ...(url ? { src: url } : {}),
-    h: 1,
-    type,
-    cat: "设计",
-    model: mdl,
-    title: (p || "我的创作").slice(0, 14) + (p.length > 14 ? "…" : ""),
-    author: "我的创作",
-    likes: 0,
-    prompt: p,
-  });
-
   const pushHistory = useCallback((item: Omit<HistItem, "id">) => {
     // Compute the id OUTSIDE the updater: a state updater must be pure, and React
     // dev double-invokes it — mutating histSeq inside produced duplicate keys.
@@ -1102,9 +1152,7 @@ export default function CreateStudio() {
       const newCells: ResultCell[] = hues.map((h, i) => ({ i, hues: h }));
       setRunMeta({ prompt: p, model: mdl, ratio: r, spec, count: n, label, isVid, refThumbs: run.refThumbs });
       setCells(newCells);
-      setDoneSet({});
       setBusy(true);
-      setHistPage(1);
 
       ticksRef.current.forEach((t) => clearInterval(t));
       ticksRef.current = [];
@@ -1145,21 +1193,26 @@ export default function CreateStudio() {
         clearActive();
         setProgs(new Array(n).fill(100));
         setCells((prev) => prev.map((c) => ({ ...c, url: urls[c.i] ?? urls[0] })));
-        const done: Record<number, boolean> = {};
-        for (let i = 0; i < n; i++) done[i] = true;
-        setDoneSet(done);
         setBusy(false);
-        newCells.forEach((cell, idx) =>
+        // group every image of this run under one feed key; push in reverse so the
+        // prepends land back in 0..n order. ts lets the feed header show the time.
+        const runKey = `task-${taskId}`;
+        const ts = new Date().toISOString();
+        [...newCells].reverse().forEach((cell) =>
           pushHistory({
+            run: runKey,
+            ts,
+            ratio: r,
             hues: cell.hues,
             type: isVid ? "video" : "image",
             title: p,
             prompt: p,
             model: mdl,
-            url: urls[idx] ?? urls[0],
+            url: urls[cell.i] ?? urls[0],
+            params: lastRunRef.current ?? undefined,
           }),
         );
-        toast.success("生成完成 · 点击作品查看详情");
+        toast.success("生成完成 · 点击图片放大查看");
       };
 
       const fail = (msg?: string) => {
@@ -1340,7 +1393,6 @@ export default function CreateStudio() {
         };
         const hsh = promptHue(imageUrl);
         const hues: MeshHues[] = [[hsh, (hsh + 80) % 360, (hsh + 200) % 360]];
-        setHistPage(1);
         // a one-click edit is server-driven with no panel params, so clear the
         // last-run snapshot: the result's 再次生成 / 重新编辑 foot actions must not
         // replay the previous (unrelated) panel run.
@@ -1389,9 +1441,14 @@ export default function CreateStudio() {
     const imageRefs = tool === "i2v" ? slotUrls("first") : slotUrls("img");
     const firstFrame = slotUrls("first")[0];
     const lastFrame = slotUrls("last")[0];
-    const needsRef = (UPLOADS[tool] ?? []).some((s) => s.type === "image");
-    if (needsRef && imageRefs.length === 0 && !firstFrame && !lastFrame) {
-      toast.info("请先上传参考图片");
+    // 全能参考 (ref) accepts image / video / audio references — any one is enough.
+    const vidRefs = tool === "ref" ? slotUrls("video") : [];
+    const audRefs = tool === "ref" ? slotUrls("audio") : [];
+    const needsRef = (UPLOADS[tool] ?? []).length > 0;
+    const hasAnyRef =
+      imageRefs.length > 0 || !!firstFrame || !!lastFrame || vidRefs.length > 0 || audRefs.length > 0;
+    if (needsRef && !hasAnyRef) {
+      toast.info(tool === "ref" ? "请先上传参考素材（图片 / 视频 / 音频）" : "请先上传参考图片");
       return;
     }
     const refInput: Record<string, unknown> = {};
@@ -1405,10 +1462,8 @@ export default function CreateStudio() {
       if (lastFrame) refInput.lastFrame = lastFrame;
     }
     if (tool === "ref") {
-      const vids = slotUrls("video");
-      const auds = slotUrls("audio");
-      if (vids.length) refInput.videoReferences = vids;
-      if (auds.length) refInput.audioReferences = auds;
+      if (vidRefs.length) refInput.videoReferences = vidRefs;
+      if (audRefs.length) refInput.audioReferences = audRefs;
     }
 
     // all early-return guards passed → latch synchronously (before any state
@@ -1416,8 +1471,11 @@ export default function CreateStudio() {
     genInFlightRef.current = true;
     setBusy(true);
 
-    const n = count;
     const isVid = TOOLS[tool].mode === "t2v";
+    // video tools always produce a single clip; only image batches honor 生成数量
+    // (the count slider is image-only, but `count` persists across type switches —
+    // without this a leftover count>1 would spawn N duplicate video cells).
+    const n = isVid ? 1 : count;
     const label = TOOLS[tool].label;
     const r = ratio;
     const mdl = model;
@@ -1437,8 +1495,6 @@ export default function CreateStudio() {
     setRunMeta({ prompt: p, model: mdl, ratio: r, spec, count: n, label, isVid, refThumbs });
     setCells(hues.map((h, i) => ({ i, hues: h })));
     setProgs(new Array(n).fill(0));
-    setDoneSet({});
-    setHistPage(1); // jump to first page so newest items are visible
 
     // clear any stragglers from a previous run + invalidate its poll.
     ticksRef.current.forEach((t) => clearInterval(t));
@@ -1456,6 +1512,8 @@ export default function CreateStudio() {
 
     // ── design-preview simulation (no backend model configured) ───────────
     if (!modelId) {
+      const simRun = `sim-${Date.now()}`;
+      const simTs = new Date().toISOString();
       const local = new Array(n).fill(0);
       const doneLocal = new Array(n).fill(false);
       let doneCountLocal = 0;
@@ -1469,11 +1527,20 @@ export default function CreateStudio() {
             if (doneLocal[i]) return;
             doneLocal[i] = true;
             doneCountLocal += 1;
-            pushHistory({ hues: hu, type: isVid ? "video" : "image", title: p, prompt: p, model: mdl });
-            setDoneSet((prev) => ({ ...prev, [i]: true }));
+            pushHistory({
+              run: simRun,
+              ts: simTs,
+              ratio: r,
+              hues: hu,
+              type: isVid ? "video" : "image",
+              title: p,
+              prompt: p,
+              model: mdl,
+              params: lastRunRef.current ?? undefined,
+            });
             if (doneCountLocal >= n) {
               setBusy(false);
-              toast.success("生成完成 · 点击作品查看详情");
+              toast.success("生成完成 · 点击图片放大查看");
             }
           }
         }, 90 + i * 40);
@@ -1546,9 +1613,7 @@ export default function CreateStudio() {
   // 重新编辑 / 再次生成: restore the captured run's full settings back into the
   // panel (type/mode/model/ratio/resolution/quality/count + prompt). Returns
   // false when there is nothing to restore.
-  const restoreLastRun = useCallback((): boolean => {
-    const lr = lastRunRef.current;
-    if (!lr) return false;
+  const restoreParams = useCallback((lr: RunParams) => {
     setCurType(lr.curType);
     setTool(lr.tool);
     setModel(lr.model);
@@ -1559,7 +1624,6 @@ export default function CreateStudio() {
     setDur(lr.dur);
     setQuality(lr.quality);
     setCount(lr.count);
-    return true;
   }, []);
 
   // 再次生成: after restoring the run's settings to the panel (above), fire
@@ -1586,7 +1650,6 @@ export default function CreateStudio() {
     }
     setCells([]);
     setProgs([]);
-    setDoneSet({});
     setRunMeta(null);
   }, []);
 
@@ -1655,21 +1718,53 @@ export default function CreateStudio() {
     cellTool(act, cell);
   };
 
-  const openCell = (cell: ResultCell) => {
-    if (!doneSet[cell.i] || !runMeta) return;
-    setActive(
-      buildWork(
-        cell.hues,
-        runMeta.isVid ? "video" : "image",
-        runMeta.prompt,
-        runMeta.model,
-        cell.url,
-      ),
-    );
+  // 重新生成: restore a feed run's settings to the panel and fire a fresh run.
+  const regenRun = (r: HistRun) => {
+    if (busy) return;
+    if (r.params) {
+      lastRunRef.current = r.params;
+      restoreParams(r.params);
+    } else {
+      // no captured params (legacy item): seed prompt only so the user can adjust.
+      setPrompt(r.prompt);
+    }
+    setPendingGen(true);
   };
 
-  const openHist = (h: HistItem) =>
-    setActive(buildWork(h.hues, h.type, h.prompt, h.model, h.url));
+  // download every image of a run (cross-origin URLs fall back to opening a tab).
+  const downloadRun = async (r: HistRun) => {
+    const urls = r.items.map((it) => it.url).filter((u): u is string => !!u);
+    if (!urls.length) {
+      toast.info("该作品暂无可下载的图片");
+      return;
+    }
+    for (let i = 0; i < urls.length; i++) {
+      const url = urls[i];
+      try {
+        const resp = await fetch(url);
+        const blob = await resp.blob();
+        const obj = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = obj;
+        a.download = `${(r.prompt || "creation").slice(0, 20)}-${i + 1}`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(obj);
+      } catch {
+        window.open(url, "_blank", "noopener");
+      }
+    }
+    toast.success(urls.length > 1 ? `已开始下载 ${urls.length} 张图片` : "已开始下载");
+  };
+
+  // delete a run: drop it from the feed locally and best-effort remove it server-side.
+  const deleteRun = (r: HistRun) => {
+    setHist((prev) => prev.filter((h) => h.run !== r.run));
+    const m = /^task-(\d+)$/.exec(r.run);
+    if (m) void aiApi.cancelTask(Number(m[1])).catch(() => {});
+    toast.success("已删除");
+  };
 
   /* ── render: typed upload slots (create.js renderUploads) ─────────────── */
 
@@ -1678,7 +1773,7 @@ export default function CreateStudio() {
     if (files.length === 0) {
       return (
         <div className="ws-up" key={s.k}>
-          <button className="ws-up-slot" type="button" onClick={() => addFile(s.k)}>
+          <button className="ws-up-slot" type="button" onClick={(e) => addFile(s.k, e)}>
             <span className="ws-up-slot-ic">{SLOT_ICON[s.type]}</span>
             <span className="ws-up-slot-tx">
               <span className="t">{s.label}</span>
@@ -1698,7 +1793,7 @@ export default function CreateStudio() {
               {files.length}/{slotMax(s)}
             </span>
           </label>
-          <button className="ws-up-act" type="button" onClick={() => addFile(s.k)}>
+          <button className="ws-up-act" type="button" onClick={(e) => addFile(s.k, e)}>
             ⤓ 上传
           </button>
         </div>
@@ -1731,7 +1826,7 @@ export default function CreateStudio() {
               </div>
             ))}
             {files.length < slotMax(s) && (
-              <button className="ws-ref-add" type="button" onClick={() => addFile(s.k)}>
+              <button className="ws-ref-add" type="button" onClick={(e) => addFile(s.k, e)}>
                 <span className="p">＋</span>添加
               </button>
             )}
@@ -1762,7 +1857,7 @@ export default function CreateStudio() {
               </div>
             ))}
             {files.length < slotMax(s) && (
-              <button className="ws-up-more" type="button" onClick={() => addFile(s.k)}>
+              <button className="ws-up-more" type="button" onClick={(e) => addFile(s.k, e)}>
                 ＋ 继续添加
               </button>
             )}
@@ -1776,7 +1871,7 @@ export default function CreateStudio() {
     const f = (slotData[s.k] || [])[0];
     if (!f) {
       return (
-        <button className="ws-flf-box" type="button" onClick={() => addFile(s.k)}>
+        <button className="ws-flf-box" type="button" onClick={(e) => addFile(s.k, e)}>
           <span className="plus">＋</span>
           <span className="lb">{s.label}</span>
         </button>
@@ -2223,7 +2318,7 @@ export default function CreateStudio() {
                   id="clearBtn"
                   type="button"
                   title="清空画布"
-                  disabled={!hasResults || busy}
+                  disabled={busy}
                   onClick={clearCanvas}
                 >
                   清空
@@ -2231,8 +2326,8 @@ export default function CreateStudio() {
               </div>
             </div>
 
-            {/* empty state */}
-            {!hasResults && (
+            {/* empty state — only when nothing is generating and there's no history */}
+            {!busy && runs.length === 0 && (
               <div className="ws-empty" id="empty">
                 <div className="ws-empty-glyph">
                   <span className="glyph" />
@@ -2264,223 +2359,158 @@ export default function CreateStudio() {
               </div>
             )}
 
-            {/* result grid — columns follow the cell count: 1→1-up, 2→2-up,
-                3→3-up, 4→2×2 (其余 ≥5 仍用 2 列网格)。 */}
-            {hasResults && runMeta && (
-              <div
-                className="ws-grid"
-                id="grid"
-                data-n={cells.length}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: `repeat(${
-                    cells.length <= 1 ? 1 : cells.length === 3 ? 3 : 2
-                  }, 1fr)`,
-                  // 单张时收窄网格，避免铺满整宽显得过大。
-                  ...(cells.length <= 1 ? { maxWidth: 560 } : {}),
-                }}
-              >
-                {cells.map((cell) => {
-                  const [rw, rh] = runMeta.ratio.split(":").map(Number);
-                  const done = !!doneSet[cell.i];
-                  const pct = Math.round(progs[cell.i] ?? 0);
-                  return (
-                    <div
-                      key={cell.i}
-                      className={`gen-cell${done ? " done" : ""}`}
-                      data-i={cell.i}
-                      style={{
-                        aspectRatio: `${rw}/${rh}`,
-                        ...(done && cell.url ? { cursor: "zoom-in" } : {}),
-                      }}
-                      onClick={() => {
-                        if (!done) return;
-                        if (cell.url) setLightbox(cell.url); // real image → zoom preview
-                        else openCell(cell); // simulation/mesh → work-detail modal
-                      }}
-                    >
-                      <div
-                        className="done-cov"
-                        style={{
-                          background: cell.url
-                            ? `center / cover no-repeat url("${cell.url}")`
-                            : mesh(cell.hues[0], cell.hues[1], cell.hues[2]),
-                        }}
-                      />
-                      <div className="shimmer" />
-                      <div className="ph">
-                        生成中 · <span className="pct">{pct}%</span>
-                      </div>
-                      <div className="bar">
-                        <i style={{ width: `${progs[cell.i] ?? 0}%` }} />
-                      </div>
-                      <span className="reveal-tag">✦ 刚刚生成</span>
-                      <div
-                        className="gen-acts"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          const btn = (e.target as HTMLElement).closest("button");
-                          if (btn) cellTool(btn.dataset.act || "", cell);
-                        }}
-                      >
-                        {CELL_TOOLS.map((t) => (
-                          <button
-                            key={t.act}
-                            type="button"
-                            data-act={t.act}
-                            className={t.real ? undefined : "soon"}
-                            title={t.label}
-                            aria-label={t.label}
-                          >
-                            {t.icon}
-                          </button>
-                        ))}
+            {/* result feed — newest run on top; each run shows its images at their
+                TRUE aspect ratio (no crop). The in-flight run renders first; once it
+                finishes it joins the history feed below. Replaces the old cropped grid
+                + separate 生成历史 strip. */}
+            {(busy || runs.length > 0) && (
+              <div className="ws-feed" id="feed">
+                {/* in-flight run (placeholders with progress) */}
+                {busy && runMeta && (
+                  <div className={`ws-run inflight${cells.length <= 1 ? " single" : ""}`}>
+                    <div className="ws-run-head">
+                      <div className="ws-run-meta">
+                        <div className="ws-run-title">{runMeta.prompt || "我的创作"}</div>
+                        <div className="ws-run-sub">{runMeta.model || "生成中"} · 刚刚</div>
                       </div>
                     </div>
-                  );
-                })}
-
-                {/* done-state action bar (create.js ws-result-foot) */}
-                {allDone && (
-                  <div className="ws-result-foot">
-                    <button
-                      type="button"
-                      data-fa="edit"
-                      onClick={() => {
-                        if (restoreLastRun()) {
-                          promptRef.current?.focus();
-                          toast.info("已载入该作品的参数，可修改后再次生成");
-                        }
-                      }}
-                    >
-                      <span className="i">✎</span>重新编辑
-                    </button>
-                    <button
-                      type="button"
-                      data-fa="regen"
-                      onClick={() => {
-                        if (busy) return;
-                        if (restoreLastRun()) setPendingGen(true);
-                      }}
-                    >
-                      <span className="i">↻</span>再次生成
-                    </button>
-                    <button
-                      type="button"
-                      data-fa="more"
-                      onClick={() => toast.info("更多 · 下载 / 收藏 / 分享")}
-                    >
-                      ⋯
-                    </button>
+                    <div className="ws-run-imgs">
+                      {cells.map((cell) => {
+                        const [rw, rh] = runMeta.ratio.split(":").map(Number);
+                        const pct = Math.round(progs[cell.i] ?? 0);
+                        return (
+                          <div
+                            key={cell.i}
+                            className="ws-runimg loading"
+                            style={{ aspectRatio: `${rw || 1}/${rh || 1}` }}
+                          >
+                            <div
+                              className="done-cov on"
+                              style={{ background: mesh(cell.hues[0], cell.hues[1], cell.hues[2]) }}
+                            />
+                            <div className="shimmer" />
+                            <div className="ph">
+                              生成中 · <span className="pct">{pct}%</span>
+                            </div>
+                            <div className="bar">
+                              <i style={{ width: `${progs[cell.i] ?? 0}%` }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
+
+                {/* finished runs */}
+                {runs.map((r) => (
+                  <div key={r.run} className={`ws-run${r.items.length <= 1 ? " single" : ""}`}>
+                    <div className="ws-run-head">
+                      <div className="ws-run-meta">
+                        <div className="ws-run-title">{r.title || r.prompt || "我的创作"}</div>
+                        <div className="ws-run-sub">
+                          {r.model || "—"}
+                          {r.ts ? ` · ${fmtTs(r.ts)}` : ""}
+                        </div>
+                      </div>
+                      <div className="ws-run-acts">
+                        <button
+                          type="button"
+                          onClick={() => regenRun(r)}
+                          disabled={busy}
+                          title="用相同参数重新生成"
+                        >
+                          <span className="i">✦</span>重新生成
+                        </button>
+                        <button
+                          type="button"
+                          className="ic"
+                          onClick={() => downloadRun(r)}
+                          title="下载"
+                          aria-label="下载"
+                        >
+                          ⤓
+                        </button>
+                        <button
+                          type="button"
+                          className="ic danger"
+                          onClick={() => deleteRun(r)}
+                          title="删除"
+                          aria-label="删除"
+                        >
+                          🗑
+                        </button>
+                      </div>
+                    </div>
+                    <div className="ws-run-imgs">
+                      {r.items.map((it) => {
+                        const cell: ResultCell = { i: -1, hues: it.hues, url: it.url };
+                        return (
+                          <div
+                            key={it.id}
+                            className={`ws-runimg done${it.type === "video" ? " video" : ""}`}
+                            onClick={() => {
+                              // images zoom in the lightbox; videos play inline via controls.
+                              if (it.url && it.type !== "video") setLightbox(it.url);
+                            }}
+                          >
+                            {it.url ? (
+                              it.type === "video" ? (
+                                <video
+                                  className="done-img"
+                                  src={it.url}
+                                  controls
+                                  playsInline
+                                  preload="metadata"
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              ) : (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img className="done-img" src={it.url} alt={r.prompt} loading="lazy" />
+                              )
+                            ) : (
+                              <div
+                                className="done-cov on"
+                                style={{ background: mesh(it.hues[0], it.hues[1], it.hues[2]) }}
+                              />
+                            )}
+                            {/* the per-result edit toolbar is image-only (作为垫图/精修/扩图/高清…) */}
+                            {it.type !== "video" && (
+                              <div
+                                className="gen-acts"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const btn = (e.target as HTMLElement).closest("button");
+                                  if (btn) cellTool(btn.dataset.act || "", cell);
+                                }}
+                              >
+                                {CELL_TOOLS.map((t) => (
+                                  <button
+                                    key={t.act}
+                                    type="button"
+                                    data-act={t.act}
+                                    className={t.real ? undefined : "soon"}
+                                    title={t.label}
+                                    aria-label={t.label}
+                                  >
+                                    {t.icon}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
-          </div>
-
-          {/* generation-history strip (create.js renderStrip + pagination) */}
-          <div className="ws-histbar">
-            <div className="ws-histbar-head">
-              <div className="ws-histtitle">
-                生成历史{" "}
-                <span className="ws-histcount" id="histCount">
-                  {filteredHist.length || ""}
-                </span>
-              </div>
-              <div className="ws-histhead-r">
-                <div className="ws-histfilter" id="histFilter">
-                  {(
-                    [
-                      { f: "all", label: "全部" },
-                      { f: "image", label: "图片" },
-                      { f: "video", label: "视频" },
-                    ] as { f: "all" | "image" | "video"; label: string }[]
-                  ).map((b) => (
-                    <button
-                      key={b.f}
-                      type="button"
-                      className={histFilter === b.f ? "on" : undefined}
-                      onClick={() => {
-                        setHistFilter(b.f);
-                        setHistPage(1);
-                      }}
-                    >
-                      {b.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="ws-histpager" id="histPager">
-                  {histPages > 1 && (
-                    <>
-                      <button
-                        className="ws-pprev"
-                        type="button"
-                        disabled={curPage <= 1}
-                        onClick={() => setHistPage((p) => Math.max(1, p - 1))}
-                      >
-                        ‹
-                      </button>
-                      <span className="ws-pcur">
-                        {curPage} / {histPages}
-                      </span>
-                      <button
-                        className="ws-pnext"
-                        type="button"
-                        disabled={curPage >= histPages}
-                        onClick={() => setHistPage((p) => Math.min(histPages, p + 1))}
-                      >
-                        ›
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="ws-histstrip" id="histStrip">
-              {filteredHist.length === 0 && !busy ? (
-                <div className="ws-hempty">
-                  还没有{histFilter === "video" ? "视频" : histFilter === "image" ? "图片" : ""}生成记录
-                </div>
-              ) : (
-                <>
-                  {/* 生成中占位卡：与上方生成框对应，完成后被真实历史项取代 */}
-                  {busy && curPage === 1 && (
-                    <div className="ws-hcard loading" aria-label="生成中">
-                      <span className="cov" />
-                      <span className="ws-hload">
-                        <i />
-                      </span>
-                    </div>
-                  )}
-                  {pageItems.map((h) => (
-                    <button
-                      key={h.id}
-                      type="button"
-                      className="ws-hcard"
-                      data-htype={h.type}
-                      onClick={() => openHist(h)}
-                    >
-                      <span
-                        className="cov"
-                        style={{
-                          background: h.url
-                            ? `center / cover no-repeat url("${h.url}")`
-                            : coverBg(h.hues),
-                        }}
-                      />
-                      {h.type === "video" && <span className="vbadge">▶</span>}
-                    </button>
-                  ))}
-                </>
-              )}
-            </div>
           </div>
         </main>
       </div>
 
       {renderPreview()}
-      <WorkModal work={active} onClose={() => setActive(null)} />
 
       {/* full-image lightbox — click a finished result to zoom; backdrop / ✕ / Esc closes */}
       {lightbox && (
@@ -2529,8 +2559,13 @@ export default function CreateStudio() {
           const kind = slotTypeOf(srcMenu);
           const lb = kind === "video" ? "视频" : kind === "audio" ? "音频" : "图片";
           return (
-            <div className="ws-srcmask" onClick={() => setSrcMenu(null)}>
-              <div className="ws-srcmenu" onClick={(e) => e.stopPropagation()}>
+            <>
+              <div className="ws-srcpop-catch" onClick={() => setSrcMenu(null)} />
+              <div
+                className="ws-srcmenu ws-srcmenu-pop"
+                style={srcMenuPos ? { left: srcMenuPos.x, top: srcMenuPos.y } : undefined}
+                onClick={(e) => e.stopPropagation()}
+              >
                 <div className="ws-srcmenu-h">选择{lb}来源</div>
                 <button type="button" className="ws-srcopt" onClick={() => pickLocal(srcMenu)}>
                   <span className="ic">⤓</span>
@@ -2547,7 +2582,7 @@ export default function CreateStudio() {
                   </span>
                 </button>
               </div>
-            </div>
+            </>
           );
         })()}
 

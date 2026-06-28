@@ -67,12 +67,29 @@ type ApiKeyVO struct {
 	Enabled    bool     `json:"enabled"`
 }
 
-func toApiKeyVO(m *model.ApiKey) ApiKeyVO {
+// maskKey hides the middle of a secret, keeping a short prefix and the last 4
+// chars (e.g. "sk-live-demo-0001" -> "sk-…0001"). Short values are fully masked.
+func maskKey(k string) string {
+	r := []rune(k)
+	if len(r) <= 8 {
+		return "••••"
+	}
+	return string(r[:3]) + "…" + string(r[len(r)-4:])
+}
+
+// toApiKeyVO maps an ApiKey to its VO. reveal=true returns the full secret (only
+// on create, shown once); otherwise the secret is masked so the live key is never
+// re-exposed in list/detail responses.
+func toApiKeyVO(m *model.ApiKey, reveal bool) ApiKeyVO {
+	keyVal := m.KeyValue
+	if !reveal {
+		keyVal = maskKey(keyVal)
+	}
 	return ApiKeyVO{
 		ID:         m.ID,
 		Name:       m.Name,
 		Scope:      m.Scope,
-		KeyValue:   m.KeyValue,
+		KeyValue:   keyVal,
 		DailyLimit: m.DailyLimit,
 		Expiry:     g5FmtTime(m.Expiry),
 		Enabled:    m.Enabled,
@@ -244,7 +261,7 @@ func RegisterEmail(g *gin.RouterGroup, d *app.Deps) {
 		}
 		vos := make([]ApiKeyVO, 0, len(rows))
 		for i := range rows {
-			vos = append(vos, toApiKeyVO(&rows[i]))
+			vos = append(vos, toApiKeyVO(&rows[i], false))
 		}
 		response.Page(c, vos, total, q.PageNum, q.PageSize)
 	})
@@ -275,7 +292,8 @@ func RegisterEmail(g *gin.RouterGroup, d *app.Deps) {
 			response.Fail(c, response.CodeServerError, "failed to create api key")
 			return
 		}
-		response.OK(c, toApiKeyVO(&row))
+		// reveal the full secret once, on create, so the operator can copy it.
+		response.OK(c, toApiKeyVO(&row, true))
 	})
 
 	e.PUT("/api-keys/:id", func(c *gin.Context) {
@@ -299,7 +317,10 @@ func RegisterEmail(g *gin.RouterGroup, d *app.Deps) {
 		}
 		row.Name = strings.TrimSpace(dto.Name)
 		row.Scope = dto.Scope
-		if k := strings.TrimSpace(dto.KeyValue); k != "" {
+		// Only overwrite the secret when a real new value is supplied. A masked
+		// value (containing the mask glyphs) is what list responses now return, so
+		// re-submitting the form must NOT clobber the real key with its mask.
+		if k := strings.TrimSpace(dto.KeyValue); k != "" && !strings.ContainsAny(k, "…•") {
 			row.KeyValue = k
 		}
 		if dto.DailyLimit != nil {
@@ -315,7 +336,7 @@ func RegisterEmail(g *gin.RouterGroup, d *app.Deps) {
 			response.Fail(c, response.CodeServerError, "failed to update api key")
 			return
 		}
-		response.OK(c, toApiKeyVO(&row))
+		response.OK(c, toApiKeyVO(&row, false))
 	})
 
 	e.DELETE("/api-keys/:id", func(c *gin.Context) {

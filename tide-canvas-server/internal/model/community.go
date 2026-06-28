@@ -52,6 +52,17 @@ type PostLike struct {
 // TableName overrides the default pluralization.
 func (PostLike) TableName() string { return "post_like" }
 
+// PostBookmark records that a user bookmarked / 收藏 a post (unique per user+post).
+type PostBookmark struct {
+	BaseModel
+
+	PostID idgen.ID `gorm:"column:post_id;index:idx_bm_post_user,unique;not null" json:"postId"`
+	UserID idgen.ID `gorm:"column:user_id;index:idx_bm_post_user,unique;not null" json:"userId"`
+}
+
+// TableName overrides the default pluralization.
+func (PostBookmark) TableName() string { return "post_bookmark" }
+
 // UserFollow records a follow relationship (follower -> followee).
 type UserFollow struct {
 	BaseModel

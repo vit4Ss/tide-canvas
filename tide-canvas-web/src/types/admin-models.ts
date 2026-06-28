@@ -30,6 +30,8 @@ export interface ModelConfig {
   webSearch?: boolean;
   /** 文本模型：是否支持文件上传 */
   fileUpload?: boolean;
+  /** 文本模型：最多可上传的文件个数（0 / 未设 = 不限），仅当 fileUpload 时有意义 */
+  maxFileCount?: number;
   /** 文本模型：上传文件大小上限（MB），仅当 fileUpload 时有意义 */
   maxFileSizeMB?: number;
   /** 文本模型：是否作为「AI 优化」主模型（全局唯一，创作台 AI 优化按钮走此模型） */

@@ -17,6 +17,7 @@
    ========================================================================== */
 
 import Link from "next/link";
+import { Logo } from "@/components/flux/atoms";
 import { usePathname } from "next/navigation";
 import { toast } from "@/components/shared/toast";
 import { useAuth } from "@/hooks/use-auth";
@@ -127,9 +128,9 @@ export default function StudioRail() {
 
   return (
     <aside className="ws-rail">
-      <Link className="ws-brand" href="/" title="SCARECROW AI">
-        <span className="glyph" />
-        <b>SCARECROW</b>
+      <Link className="ws-brand" href="/" title="FlowingLight 流光">
+        <Logo size={30} />
+        <b>FLOWING</b>
       </Link>
 
       <div className="ws-rail-sp" />

@@ -55,13 +55,25 @@ func (s *service) feed(viewerID idgen.ID, q *FeedQuery) ([]PostVO, int64, error)
 }
 
 // detail returns the full post detail VO. viewerID may be 0 (anonymous reader).
+// Opening a detail bumps the view counter (best-effort); the increment is mirrored
+// onto the returned VO so the count is consistent without a re-read.
 func (s *service) detail(viewerID, postID idgen.ID) (*PostDetailVO, error) {
 	p, err := s.repo.findPost(postID)
 	if err != nil {
 		return nil, err
 	}
+	s.repo.incrementViews(postID)
+	p.ViewCount++
 	author, _ := s.repo.usersByIDs([]idgen.ID{p.UserID})
 	liked, err := s.repo.isLiked(viewerID, postID)
+	if err != nil {
+		return nil, err
+	}
+	bookmarked, err := s.repo.isBookmarked(viewerID, postID)
+	if err != nil {
+		return nil, err
+	}
+	following, err := s.repo.isFollowing(viewerID, p.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +82,77 @@ func (s *service) detail(viewerID, postID idgen.ID) (*PostDetailVO, error) {
 		return nil, err
 	}
 	d := toPostDetailVO(p, author[p.UserID], liked, commentCount)
+	d.Bookmarked = bookmarked
+	d.Following = following
 	return &d, nil
+}
+
+// setBookmark toggles the caller's bookmark on a post (404 if the post is gone).
+func (s *service) setBookmark(userID, postID idgen.ID, bookmark bool) (*BookmarkVO, error) {
+	if _, err := s.repo.findPost(postID); err != nil {
+		return nil, err
+	}
+	bookmarked, err := s.repo.setBookmark(userID, postID, bookmark)
+	if err != nil {
+		return nil, err
+	}
+	return &BookmarkVO{Bookmarked: bookmarked}, nil
+}
+
+// authorProfile assembles a creator's public profile + the viewer's follow state.
+func (s *service) authorProfile(viewerID, authorID idgen.ID) (*AuthorProfileVO, error) {
+	u, err := s.repo.userByID(authorID)
+	if err != nil {
+		return nil, err
+	}
+	works, likes, followers, following, err := s.repo.authorStats(authorID)
+	if err != nil {
+		return nil, err
+	}
+	isFollowing, err := s.repo.isFollowing(viewerID, authorID)
+	if err != nil {
+		return nil, err
+	}
+	return &AuthorProfileVO{
+		ID:          u.ID,
+		Name:        authorName(u),
+		Avatar:      u.Avatar,
+		Works:       works,
+		Likes:       likes,
+		Followers:   followers,
+		Following:   following,
+		IsFollowing: isFollowing,
+		JoinedAt:    formatTime(u.CreateTime),
+	}, nil
+}
+
+// authorPosts returns a page of an author's published posts as feed VOs.
+func (s *service) authorPosts(viewerID, authorID idgen.ID, q *PageQuery) ([]PostVO, int64, error) {
+	rows, total, err := s.repo.listUserPosts(authorID, q)
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(rows) == 0 {
+		return []PostVO{}, total, nil
+	}
+	authors, err := s.repo.usersByIDs([]idgen.ID{authorID})
+	if err != nil {
+		return nil, 0, err
+	}
+	postIDs := make([]idgen.ID, 0, len(rows))
+	for i := range rows {
+		postIDs = append(postIDs, rows[i].ID)
+	}
+	liked, err := s.repo.likedPostIDs(viewerID, postIDs)
+	if err != nil {
+		return nil, 0, err
+	}
+	vos := make([]PostVO, 0, len(rows))
+	for i := range rows {
+		p := &rows[i]
+		vos = append(vos, toPostVO(p, authors[authorID], liked[p.ID]))
+	}
+	return vos, total, nil
 }
 
 // setLike toggles (or sets) the caller's like on a post and returns the new

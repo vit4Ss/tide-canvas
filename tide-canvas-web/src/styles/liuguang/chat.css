@@ -45,6 +45,22 @@
 .bubble .imgrow .ph{aspect-ratio:1; border-radius:10px; box-shadow:inset 0 0 0 1px rgba(0,0,0,.06);}
 /* 对话式生成的图片/视频结果：单张合理尺寸 */
 .bubble .chat-gen-media{display:block; margin-top:10px; width:320px; max-width:100%; aspect-ratio:1; border-radius:12px; object-fit:cover; box-shadow:0 8px 28px rgba(0,0,0,.4); background-color:var(--surface-2);}
+/* 生成中预览占位：与成品同尺寸的方框 + 旋转圈 + 进度条 */
+.bubble .chat-gen-loading{position:relative; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px;
+  margin-top:10px; width:320px; max-width:100%; aspect-ratio:1; border-radius:12px;
+  background:var(--surface-2); box-shadow:inset 0 0 0 1px var(--border); overflow:hidden;}
+.bubble .chat-gen-loading.video{aspect-ratio:16/9;}
+.chat-gen-loading::before{content:''; position:absolute; inset:0;
+  background:linear-gradient(110deg,transparent 30%,color-mix(in oklab,var(--accent) 14%,transparent) 50%,transparent 70%);
+  background-size:220% 100%; animation:chatShim 1.3s linear infinite;}
+.chat-gen-loading .spin{position:relative; width:34px; height:34px; border-radius:50%;
+  border:3px solid color-mix(in oklab,var(--accent) 26%, transparent); border-top-color:var(--accent);
+  animation:chatSpin .8s linear infinite;}
+.chat-gen-loading .lbl{position:relative; font-size:13px; font-weight:600; color:var(--text-dim);}
+.chat-gen-loading .bar{position:absolute; left:16px; right:16px; bottom:14px; height:4px; border-radius:99px; background:rgba(127,127,127,.18); overflow:hidden;}
+.chat-gen-loading .bar i{display:block; height:100%; width:0; background:var(--grad); border-radius:99px; transition:width .25s linear;}
+@keyframes chatSpin{to{transform:rotate(360deg);}}
+@keyframes chatShim{from{background-position:200% 0} to{background-position:-200% 0}}
 /* 生成状态（生成中 / 失败 / 已过期 / 已取消） */
 .bubble .chat-gen-state{display:inline-flex; align-items:center; gap:8px; font-size:13px; color:var(--text-dim); padding:2px 0;}
 .bubble .chat-gen-state.err{color:#e0567f;}
@@ -149,8 +165,20 @@
 .lb-count{position:absolute; bottom:22px; left:50%; transform:translateX(-50%); font-size:13px; color:#fff; background:rgba(0,0,0,.5); padding:4px 12px; border-radius:var(--pill);}
 .chat-gen-grid{display:grid; grid-template-columns:1fr 1fr; gap:6px; max-width:420px;}
 .chat-gen-cell{aspect-ratio:1/1; border-radius:10px; cursor:zoom-in; background-color:var(--panel);}
+/* column wrapper so the copy action drops BELOW the bubble (outside the pill),
+   aligned to the bubble's side. */
+.msg-col{display:flex; flex-direction:column; max-width:80%; min-width:0;}
+.msg-col .bubble{max-width:100%;}
+.msg.me .msg-col{align-items:flex-end;}
+.msg.ai .msg-col{align-items:flex-start;}
 .bubble-acts{display:flex; gap:6px; margin-top:6px; opacity:0; transition:opacity .14s;}
 .msg:hover .bubble-acts{opacity:1;}
+
+/* user-message attachment thumbnails (text-model 文件上传), sit ABOVE the bubble. */
+.chat-msg-atts{display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; margin-bottom:6px;}
+.chat-msg-att{width:72px; height:72px; border-radius:10px; overflow:hidden; border:1px solid var(--border-strong); padding:0; cursor:zoom-in; flex:none; background-color:var(--panel);}
+.chat-msg-att:hover{border-color:var(--accent, #6b8afd);}
+.chat-msg-file{display:inline-flex; align-items:center; gap:4px; padding:6px 10px; border-radius:10px; border:1px solid var(--border-strong); background:var(--panel); color:var(--text-2, inherit); font-size:12px; text-decoration:none;}
 .copy-btn{display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; padding:0; border-radius:7px; color:var(--text-dim); background:var(--surface-2); border:1px solid var(--border); cursor:pointer; transition:color .14s, background .14s;}
 .copy-btn:hover{color:var(--text); background:var(--border);}
 .copy-btn svg{width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round;}

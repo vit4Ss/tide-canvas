@@ -107,19 +107,23 @@ export function Cover({ art, rounded = false, style, className }: CoverProps) {
   );
 }
 
-/* ── Logo — geometric scarecrow mark, duo/solid tone ──────────────────────── */
+/* ── Logo — FlowingLight (流光) mark: a gradient tile swept by a flowing light
+   ribbon with a glint head, duo/solid tone ────────────────────────────────── */
 
 export interface LogoProps {
   /** px size. Default 28. */
   size?: number;
-  /** 'duo' = head+hat in --accent, frame in currentColor; 'solid' = all currentColor. */
+  /** 'duo' = accent tile + light ribbon; 'solid' = currentColor tile. */
   tone?: 'duo' | 'solid';
   style?: CSSProperties;
   className?: string;
 }
 
 export function Logo({ size = 28, tone = 'duo', style, className }: LogoProps) {
-  const accent = tone === 'duo' ? 'var(--accent)' : 'currentColor';
+  const solid = tone === 'solid';
+  // Self-contained gradient (theme vars with hard fallbacks) so the mark renders
+  // on any theme/background — including the admin light theme — without relying on
+  // external CSS. A fixed gradient id is fine across instances (identical defs).
   return (
     <svg
       width={size}
@@ -130,31 +134,32 @@ export function Logo({ size = 28, tone = 'duo', style, className }: LogoProps) {
       style={{ display: 'block', flex: 'none', ...style }}
       aria-hidden
     >
-      {/* cross-arms */}
-      <rect x={4.5} y={13.6} width={23} height={3.2} rx={1.6} fill="currentColor" />
-      {/* body post */}
-      <rect x={14.4} y={11} width={3.2} height={17.2} rx={1.6} fill="currentColor" />
-      {/* head */}
-      <circle cx={16} cy={8.3} r={3.6} fill={accent} />
-      {/* hat brim */}
-      <rect x={9.4} y={4.5} width={13.2} height={2.2} rx={1.1} fill="currentColor" />
-      {/* hat cone */}
-      <path d="M16 0.4 L20.4 5 L11.6 5 Z" fill={accent} />
-      {/* stitch spark on the arm — tiny AI patch */}
-      <rect
-        x={23.4}
-        y={18.4}
-        width={2.6}
-        height={2.6}
-        rx={0.7}
-        fill={accent}
-        transform="rotate(45 24.7 19.7)"
+      {!solid && (
+        <defs>
+          <linearGradient id="fl-mark-grad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="var(--accent, #6d8bf5)" />
+            <stop offset="100%" stopColor="var(--accent-2, #9b7bf0)" />
+          </linearGradient>
+        </defs>
+      )}
+      {/* rounded brand tile */}
+      <rect x={2} y={2} width={28} height={28} rx={8.5} fill={solid ? 'currentColor' : 'url(#fl-mark-grad)'} />
+      {/* flowing-light ribbon — an S-curve light sweep across the tile (流光) */}
+      <path
+        d="M6 22 C 11.5 22, 11.5 11, 17 11 C 21 11, 22 16, 26.4 11.4"
+        stroke="#fff"
+        strokeWidth={2.6}
+        strokeLinecap="round"
+        fill="none"
+        opacity={0.97}
       />
+      {/* glint head of the light streak */}
+      <circle cx={26.4} cy={11.4} r={2} fill="#fff" />
     </svg>
   );
 }
 
-/* ── Wordmark — "SCARECROW" + accented "AI", optional CN tagline ───────────── */
+/* ── Wordmark — "FLOWING" + accented "LIGHT", optional 流光 tagline ──────────── */
 
 export interface WordmarkProps {
   /** base font px. Default 18. */
@@ -188,8 +193,8 @@ export function Wordmark({
           className="disp"
           style={{ fontWeight: 800, fontSize: size, letterSpacing: '-0.01em' }}
         >
-          SCARECROW
-          <span style={{ color: 'var(--accent)' }}>AI</span>
+          FLOWING
+          <span style={{ color: 'var(--accent)' }}>LIGHT</span>
         </div>
         {lang === 'cn' && (
           <div
@@ -202,7 +207,7 @@ export function Wordmark({
               paddingLeft: 1,
             }}
           >
-            稻 草 人 智 绘
+            流 光
           </div>
         )}
       </div>

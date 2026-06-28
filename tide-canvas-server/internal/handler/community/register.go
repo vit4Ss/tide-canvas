@@ -49,7 +49,12 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	g.GET("/posts/:id/comments", opt, h.comments)
 	g.POST("/posts/:id/like", auth, h.like)
 	g.DELETE("/posts/:id/like", auth, h.unlike)
+	g.POST("/posts/:id/bookmark", auth, h.bookmark)
+	g.DELETE("/posts/:id/bookmark", auth, h.unbookmark)
 	g.POST("/posts/:id/comments", auth, h.createComment)
+	// Public creator profile + their published works (optionalAuth → follow state).
+	g.GET("/users/:userId", opt, h.authorProfile)
+	g.GET("/users/:userId/posts", opt, h.authorPosts)
 
 	// Social follow graph — all authed. The :userId param lives under the static
 	// /users parent so it is never a sibling of /followers and /following.

@@ -10,6 +10,7 @@
    ========================================================================== */
 
 import Link from "next/link";
+import { Logo } from "@/components/flux/atoms";
 
 export default function SiteFooter() {
   return (
@@ -18,8 +19,8 @@ export default function SiteFooter() {
         <div className="foot-grid">
           <div className="foot-brand">
             <div className="brand">
-              <span className="glyph" />
-              SCARECROW<b>AI</b>
+              <Logo size={26} />
+              FLOWING<b>LIGHT</b>
             </div>
             <p>
               智绘社区 · 超级 AI 创作智能体。一句话生成图片与视频，海量模型一键调用。
@@ -52,7 +53,7 @@ export default function SiteFooter() {
 
         <div className="foot-bottom">
           <span>
-            © 2026 SCARECROWAI · 高保真交互原型 · 占位封面为生成式渐变，可替换为真实作品
+            © 2026 FLOWINGLIGHT · 流光 · 高保真交互原型 · 占位封面为生成式渐变，可替换为真实作品
           </span>
           <span className="mono">流光 · FLUX FIELD v2</span>
         </div>

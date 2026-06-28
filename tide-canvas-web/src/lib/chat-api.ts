@@ -15,7 +15,10 @@ import type {
   MessageVO,
   CreateConversationDTO,
   SendMessageDTO,
+  MessageAttachment,
 } from "@/types/chat";
+
+export type { MessageAttachment };
 
 /** Consume the SSE stream from POST /api/im/conversations/:id/stream. Each frame
  *  is a JSON object: {delta} per token, {done,message} at the end, or {error}.
@@ -28,6 +31,7 @@ export async function streamMessage(
     onDone?: (message: MessageVO) => void;
     onError?: (msg: string) => void;
     signal?: AbortSignal;
+    attachments?: MessageAttachment[];
   },
 ): Promise<void> {
   const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
@@ -39,7 +43,10 @@ export async function streamMessage(
         "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({
+        content,
+        ...(handlers.attachments?.length ? { attachments: handlers.attachments } : {}),
+      }),
       signal: handlers.signal,
     });
   } catch {
@@ -103,11 +110,12 @@ export const chatApi = {
     ),
 
   /** Send a user message; the backend appends a canned assistant reply. Returns
-   *  the persisted user MessageVO. */
-  send: (id: string, content: string, type?: SendMessageDTO["type"]) =>
+   *  the persisted user MessageVO. Image attachments are forwarded to the model. */
+  send: (id: string, content: string, type?: SendMessageDTO["type"], attachments?: MessageAttachment[]) =>
     http.post<MessageVO>(`/api/im/conversations/${id}/messages`, {
       content,
       ...(type ? { type } : {}),
+      ...(attachments?.length ? { attachments } : {}),
     } satisfies SendMessageDTO),
 
   /** Append one message verbatim with NO auto reply — used by 对话式生成 to log

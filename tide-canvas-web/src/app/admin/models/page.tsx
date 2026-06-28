@@ -439,6 +439,7 @@ function ModelModal({
     maxRefImageSizeMB: c0.maxRefImageSizeMB ?? 0,
     webSearch: c0.webSearch ?? false,
     fileUpload: c0.fileUpload ?? false,
+    maxFileCount: c0.maxFileCount ?? 0,
     maxFileSizeMB: c0.maxFileSizeMB ?? 0,
     aiOptimizePrimary: c0.aiOptimizePrimary ?? false,
     refLimits: c0.refLimits ?? {},
@@ -812,6 +813,19 @@ function ModelModal({
               onChange={(next) => setC({ fileUpload: next[0] === "yes" })}
             />
           </FormSection>
+
+          {cfg.fileUpload && (
+            <FormSection label="可上传文件数量" hint="单条消息最多可上传的文件个数（0 = 不限）">
+              <div className="fld" style={{ maxWidth: 220 }}>
+                <input
+                  inputMode="numeric"
+                  value={String(cfg.maxFileCount ?? 0)}
+                  onChange={(e) => setC({ maxFileCount: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
+                  placeholder="如：3"
+                />
+              </div>
+            </FormSection>
+          )}
 
           {cfg.fileUpload && (
             <FormSection label="支持的文件大小（MB）" hint="单个上传文件的大小上限">

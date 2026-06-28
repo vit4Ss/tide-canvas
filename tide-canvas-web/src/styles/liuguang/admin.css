@@ -23,8 +23,15 @@
 /* ── sidebar ──────────────────────────────────────────────────────── */
 .adm-side{display:flex; flex-direction:column; min-height:0; background:rgba(255,255,255,.7); backdrop-filter:blur(20px); border-right:1px solid var(--border);}
 .adm-brand{display:flex; align-items:center; gap:11px; padding:20px 20px 18px;}
-.adm-brand .glyph{width:30px; height:30px; position:relative; flex:none;}
+.adm-brand .glyph{width:30px; height:30px; position:relative; flex:none; overflow:hidden; border-radius:9px;}
 .adm-brand .glyph::before{content:''; position:absolute; inset:0; border-radius:9px; background:var(--grad); box-shadow:0 2px 8px var(--accent-soft);}
+/* FlowingLight mark: light streak sweeping the gradient tile (流光). */
+.adm-brand .glyph::after{content:''; position:absolute; inset:0; border-radius:9px; pointer-events:none; mix-blend-mode:screen;
+  background:linear-gradient(115deg, transparent 36%, rgba(255,255,255,.95) 47%, rgba(255,255,255,.2) 53%, transparent 62%),
+    radial-gradient(56% 44% at 74% 22%, rgba(255,255,255,.6), transparent 60%);
+  background-size:260% 100%, 100% 100%; background-repeat:no-repeat;
+  animation:admGlyphFlow 3.4s ease infinite;}
+@keyframes admGlyphFlow{0%{background-position:150% 0, 0 0;}55%,100%{background-position:-150% 0, 0 0;}}
 .adm-brand b{font-family:var(--disp); font-size:15px; font-weight:700; letter-spacing:-.01em; color:var(--text);}
 .adm-brand small{font-size:10px; color:var(--text-faint); letter-spacing:.1em; display:block; margin-top:1px;}
 .adm-nav{flex:1; overflow-y:auto; padding:8px 12px 20px;}

@@ -172,6 +172,18 @@ export default function AdminPricingPage() {
         .map((s) => s.trim())
         .filter(Boolean),
       status: planForm.status ? 1 : 0,
+      // The backend upsert is a FULL overwrite; the form doesn't expose
+      // code/desc/featured/cta/sortOrder, so carry the existing values through on
+      // edit — otherwise saving would blank the 热门 badge, description and order.
+      ...(editingPlan
+        ? {
+            code: editingPlan.code,
+            desc: editingPlan.desc,
+            featured: editingPlan.featured,
+            cta: editingPlan.cta,
+            sortOrder: editingPlan.sortOrder,
+          }
+        : {}),
     };
     if (!dto.name) return;
     const res = editingPlan
@@ -226,6 +238,8 @@ export default function AdminPricingPage() {
       bonusPoints: toNum(pkgForm.bonusPoints),
       price: toNum(pkgForm.price),
       status: pkgForm.status ? 1 : 0,
+      // full-overwrite upsert: preserve sortOrder (not in the form) on edit.
+      ...(editingPkg ? { sortOrder: editingPkg.sortOrder } : {}),
     };
     if (!dto.name) return;
     const res = editingPkg
