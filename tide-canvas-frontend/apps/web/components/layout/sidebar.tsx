@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Box, ChevronLeft, ChevronRight, FolderOpen, ImagePlus, LayoutGrid, Plus } from "lucide-react";
@@ -25,7 +25,6 @@ export function Sidebar({
   onCollapsedChange?: (collapsed: boolean) => void;
 }) {
   const pathname = usePathname();
-  const router = useRouter();
   const { isLoggedIn } = useAuth();
   const t = useTranslations("sidebar");
   const [history, setHistory] = useState<ProjectVO[]>([]);
@@ -42,11 +41,6 @@ export function Sidebar({
       })
       .catch(() => {});
   }, [isLoggedIn]);
-
-  const newProject = () => {
-    if (isLoggedIn) window.open("/canvas/new", "_blank", "noopener");
-    else router.push("/login");
-  };
 
   return (
     <aside className={(collapsed ? "w-[72px]" : "w-[208px]") + " fixed left-0 top-0 z-30 hidden h-screen shrink-0 transition-[width] duration-300 ease-out lg:block"}>

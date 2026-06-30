@@ -12,6 +12,9 @@ import (
 // 注册验证码邮件模板编码（对齐 VerificationCodeService.TEMPLATE_REGISTER_CODE）。
 const templateRegisterCode = "register_code"
 
+// 密码重置邮件模板编码。
+const templatePasswordReset = "password_reset"
+
 // variablePattern 变量占位符 {{name}}，允许两侧空白（对齐 EmailTemplateServiceImpl.VARIABLE_PATTERN）。
 var variablePattern = regexp.MustCompile(`\{\{\s*([A-Za-z0-9_]+)\s*\}\}`)
 

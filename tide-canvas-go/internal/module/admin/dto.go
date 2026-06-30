@@ -54,6 +54,23 @@ type UserQuery struct {
 	Status  *int   `form:"status"`
 }
 
+// UserCreateDTO 管理员手动创建用户。
+type UserCreateDTO struct {
+	Username             string `json:"username" binding:"required,max=64"`
+	Email                string `json:"email" binding:"required,email,max=128"`
+	Password             string `json:"password" binding:"required,min=6,max=32"`
+	Nickname             string `json:"nickname" binding:"max=64"`
+	Phone                string `json:"phone" binding:"max=20"`
+	Role                 *int   `json:"role"`
+	VipLevel             *int   `json:"vipLevel"`
+	ConcurrencyUnlimited *int   `json:"concurrencyUnlimited"`
+	RoleID               *int64 `json:"roleId,string"`
+	Status               *int   `json:"status"`
+	APIQuota             *int   `json:"apiQuota"`
+	Points               *int   `json:"points"`
+	StorageQuota         *int64 `json:"storageQuota"`
+}
+
 // UserUpdateDTO 编辑用户（对齐 AdminUserUpdateDTO）。所有字段可选，非空才更新。
 type UserUpdateDTO struct {
 	Role                 *int   `json:"role"`
@@ -63,6 +80,11 @@ type UserUpdateDTO struct {
 	Status               *int   `json:"status"`
 	APIQuota             *int   `json:"apiQuota"`
 	StorageQuota         *int64 `json:"storageQuota"`
+}
+
+// UserPasswordResetDTO 管理员手动重置用户密码。
+type UserPasswordResetDTO struct {
+	NewPassword string `json:"newPassword" binding:"required,min=6,max=32"`
 }
 
 // UserVO 用户视图（对齐 UserVO）。id 为 public_id；teamPriceFactor / inTeam 暂不在管理端计算，置默认值。

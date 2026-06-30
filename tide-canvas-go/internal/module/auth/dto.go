@@ -39,6 +39,17 @@ type UpdatePasswordReq struct {
 	NewPassword string `json:"newPassword" binding:"required,min=6,max=32"`
 }
 
+// PasswordResetRequestReq 请求发送密码重置邮件。
+type PasswordResetRequestReq struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+// PasswordResetConfirmReq 使用邮件 token 设置新密码。
+type PasswordResetConfirmReq struct {
+	Token       string `json:"token" binding:"required"`
+	NewPassword string `json:"newPassword" binding:"required,min=6,max=32"`
+}
+
 // UpdateProfileReq 修改个人资料请求（昵称 / 手机号，均可选，非空才更新）。
 type UpdateProfileReq struct {
 	Nickname string `json:"nickname"`

@@ -3,7 +3,7 @@ import type { PageQuery } from "./api";
 export interface FileVO {
   id: number;
   /** 归属用户ID（团队共享时区分自己/队友的素材） */
-  ownerId?: number;
+  ownerId?: string;
   originalName: string;
   fileUrl: string;
   fileSize: number;

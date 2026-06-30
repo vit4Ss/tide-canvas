@@ -34,6 +34,9 @@ func NewHandler(svc *Service, admin *AdminService, storage GridStorage) *Handler
 // 用户侧 /api/ai/*：JWTAuth。管理端 /api/admin/ai/*：JWTAuth + AdminOnly + RequiresPermission(ai:view / ai:manage)。
 // permLoader 透传给管理端 RegisterRoutes 用于按钮级权限校验（middleware.NewDBPermissionLoader(db)）。
 func (h *Handler) RegisterRoutes(api gin.IRouter, jwtProvider *appjwt.Provider, permLoader middleware.PermissionLoader) {
+	// Public read-only model catalog, used by the home composer before login.
+	publicAI := api.Group("/ai")
+	publicAI.GET("/models", h.listModels)
 	// ---- 用户侧 /api/ai ----
 	ai := api.Group("/ai")
 	ai.Use(middleware.JWTAuth(jwtProvider))
@@ -45,7 +48,6 @@ func (h *Handler) RegisterRoutes(api gin.IRouter, jwtProvider *appjwt.Provider, 
 	ai.GET("/tasks/:id", h.getTask)
 	ai.DELETE("/tasks/:id", h.cancelTask)
 	ai.GET("/tasks", h.listTasks)
-	ai.GET("/models", h.listModels)
 	ai.GET("/handlers", h.listHandlers)
 	ai.GET("/logs", h.myLogs)
 

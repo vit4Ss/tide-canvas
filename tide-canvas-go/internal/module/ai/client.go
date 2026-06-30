@@ -141,7 +141,17 @@ func (g *Gateway) isUsable(p *model.AiProvider) bool {
 }
 
 // resolveProvider 解析供应商：优先按 model 关联，找不到则取优先级最高的启用供应商（对齐 resolveProvider）。
-func (g *Gateway) resolveProvider(modelID string) (*model.AiProvider, error) {
+func (g *Gateway) resolveProvider(execModel executionModel) (*model.AiProvider, error) {
+	if execModel.ProviderID != 0 {
+		p, err := g.repo.FindProviderByID(execModel.ProviderID)
+		if err != nil {
+			return nil, err
+		}
+		if p != nil && p.Status == 1 {
+			return p, nil
+		}
+	}
+	modelID := execModel.ModelID
 	if hasText(modelID) && modelID != "default" {
 		m, err := g.repo.FindModelByModelID(modelID)
 		if err != nil {
@@ -679,7 +689,7 @@ func (c *runwareClient) generate(p *model.AiProvider, modelID, prompt string, in
 	size := c.imageSizeOf(input)
 	task["width"] = size[0]
 	task["height"] = size[1]
-	c.mergeModelExtras(task, modelID)
+	c.mergeModelExtras(task, p.ID, modelID)
 	return c.submitImage(p, task, ctx)
 }
 
@@ -690,7 +700,7 @@ func (c *runwareClient) edit(p *model.AiProvider, modelID, prompt string, imageU
 	}
 	urls := dedupLimit(imageURLs, maxReferenceImages)
 	task := c.baseImageTask(modelID, prompt, input)
-	if c.modelConfigFlag(modelID, "img2img") {
+	if c.modelConfigFlag(p.ID, modelID, "img2img") {
 		// 经典重绘：seedImage + strength（SD 系 checkpoint）
 		task["seedImage"] = urls[0]
 		strength := 0.8
@@ -705,7 +715,7 @@ func (c *runwareClient) edit(p *model.AiProvider, modelID, prompt string, imageU
 		// 编辑模型（FLUX Kontext / Seedream Edit / Qwen-Image-Edit 等）：全部输入作为 referenceImages
 		task["referenceImages"] = urls
 	}
-	c.mergeModelExtras(task, modelID)
+	c.mergeModelExtras(task, p.ID, modelID)
 	return c.submitImage(p, task, ctx)
 }
 
@@ -732,7 +742,7 @@ func (c *runwareClient) generateVideo(p *model.AiProvider, modelID, prompt strin
 	// 媒体参数：参考模式(全能参考) 与 首尾帧模式 互斥。
 	// v2 模型要求嵌套在 inputs 对象下（config "videoInputs":true），frameImages 用 {image,frame}；
 	// 旧模型顶层平铺 + {inputImage,frame}。
-	wrapInputs := c.modelConfigFlag(modelID, "videoInputs")
+	wrapInputs := c.modelConfigFlag(p.ID, modelID, "videoInputs")
 	media := map[string]interface{}{}
 	refImages := collectURLList(input["references"], maxReferenceImages)
 	refVideos := collectURLList(input["videoReferences"], 3)
@@ -769,7 +779,7 @@ func (c *runwareClient) generateVideo(p *model.AiProvider, modelID, prompt strin
 			task[k] = v
 		}
 	}
-	c.mergeModelExtras(task, modelID)
+	c.mergeModelExtras(task, p.ID, modelID)
 
 	start := time.Now()
 	fullURL := baseURL(p)
@@ -817,7 +827,7 @@ func (c *runwareClient) generateAudio(p *model.AiProvider, modelID, text string,
 		"deliveryMethod": "sync",
 		"includeCost":    true,
 	}
-	c.mergeModelExtras(task, modelID)
+	c.mergeModelExtras(task, p.ID, modelID)
 
 	start := time.Now()
 	fullURL := baseURL(p)
@@ -1056,14 +1066,14 @@ func snap64(v float64) int {
 }
 
 // modelConfigFlag 模型 config 的布尔开关（img2img / videoInputs）。
-func (c *runwareClient) modelConfigFlag(modelID, key string) bool {
-	cfg := c.modelConfig(modelID)
+func (c *runwareClient) modelConfigFlag(providerID int64, modelID, key string) bool {
+	cfg := c.modelConfig(providerID, modelID)
 	return cfg.Exists() && cfg.Get(key).Bool()
 }
 
 // mergeModelExtras 模型 config.runware 对象 → 原样合并进任务体（steps/CFGScale/providerSettings 等透传逃生门）。
-func (c *runwareClient) mergeModelExtras(task map[string]interface{}, modelID string) {
-	cfg := c.modelConfig(modelID)
+func (c *runwareClient) mergeModelExtras(task map[string]interface{}, providerID int64, modelID string) {
+	cfg := c.modelConfig(providerID, modelID)
 	if !cfg.Exists() {
 		return
 	}
@@ -1078,9 +1088,18 @@ func (c *runwareClient) mergeModelExtras(task map[string]interface{}, modelID st
 }
 
 // modelConfig 读取模型 config（JSON），解析失败/无配置返回不存在的 Result。
-func (c *runwareClient) modelConfig(modelID string) gjson.Result {
+func (c *runwareClient) modelConfig(providerID int64, modelID string) gjson.Result {
 	if !hasText(modelID) || modelID == "default" {
 		return gjson.Result{}
+	}
+	if providerID != 0 {
+		upstream, err := c.repo.FindUpstreamModelByProviderAndModelID(providerID, modelID)
+		if err == nil && upstream != nil && len(upstream.Config) > 0 {
+			s := string(upstream.Config)
+			if gjson.Valid(s) {
+				return gjson.Parse(s)
+			}
+		}
 	}
 	m, err := c.repo.FindModelByModelID(modelID)
 	if err != nil || m == nil || len(m.Config) == 0 {

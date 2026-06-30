@@ -110,6 +110,9 @@ export function CanvasView() {
       node.imageSrc = file.fileUrl;
     }
     node.status = "success";
+    node.fileSize = file.fileSize;
+    node.fileType = file.fileType;
+    node.mimeType = file.mimeType;
     addNode(node);
     selectNode(node.id);
   }, [panZoom, nodes, addNode, selectNode]);
@@ -272,6 +275,9 @@ export function CanvasView() {
         node.status = "idle";
         node.uploading = true;
         node.uploadProgress = 0;
+        node.fileSize = file.size;
+        node.fileType = isVideo ? "video" : "image";
+        node.mimeType = file.type;
         if (file.name) node.title = file.name;
         addNode(node);
         selectNode(node.id);
@@ -282,8 +288,8 @@ export function CanvasView() {
           });
           if (res.success && res.data?.fileUrl) {
             const patch = isVideo
-              ? { videoSrc: res.data.fileUrl, status: "success" as const, uploading: false, uploadProgress: 100 }
-              : { imageSrc: res.data.fileUrl, status: "success" as const, uploading: false, uploadProgress: 100 };
+              ? { videoSrc: res.data.fileUrl, status: "success" as const, uploading: false, uploadProgress: 100, fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType }
+              : { imageSrc: res.data.fileUrl, status: "success" as const, uploading: false, uploadProgress: 100, fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType };
             useCanvasStore.getState().updateNode(node.id, patch);
             ok++;
           } else {

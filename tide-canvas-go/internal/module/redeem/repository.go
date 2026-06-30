@@ -2,6 +2,7 @@ package redeem
 
 import (
 	"errors"
+	"strings"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -109,4 +110,31 @@ func (r *Repository) Page(q *RedeemCodeQuery) ([]model.RedeemCode, int64, error)
 		return nil, 0, err
 	}
 	return records, total, nil
+}
+
+func (r *Repository) UserDisplayNames(ids []int64) (map[int64]string, error) {
+	out := make(map[int64]string, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	type row struct {
+		ID       int64
+		Username string
+		Nickname string
+	}
+	var rows []row
+	if err := r.db.Model(&model.SysUser{}).
+		Select("id", "username", "nickname").
+		Where("id IN ?", ids).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		name := strings.TrimSpace(r.Nickname)
+		if name == "" {
+			name = strings.TrimSpace(r.Username)
+		}
+		out[r.ID] = name
+	}
+	return out, nil
 }

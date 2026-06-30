@@ -62,3 +62,5 @@ be-build.log
 # local Codex runtime logs/scripts
 .codex-runtime/
 tide-canvas-frontend/web-dev-*.log
+
+.tmp/

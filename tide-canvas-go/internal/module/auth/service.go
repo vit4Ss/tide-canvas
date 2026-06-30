@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"strings"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -24,13 +25,19 @@ type Service struct {
 	users     *user.Repository
 	jwt       *appjwt.Provider
 	code      CodeVerifier
+	resetMail PasswordResetMailer
 	teamPrice TeamPriceProvider
 	db        *gorm.DB // 写登录日志
+	publicURL string
+	resetTTL  time.Duration
 }
 
 // NewService 构造认证服务。
-func NewService(users *user.Repository, jwtProvider *appjwt.Provider, code CodeVerifier, teamPrice TeamPriceProvider) *Service {
-	return &Service{users: users, jwt: jwtProvider, code: code, teamPrice: teamPrice, db: users.DB()}
+func NewService(users *user.Repository, jwtProvider *appjwt.Provider, code CodeVerifier, resetMail PasswordResetMailer, teamPrice TeamPriceProvider, publicURL string, resetTTL time.Duration) *Service {
+	if resetTTL <= 0 {
+		resetTTL = 30 * time.Minute
+	}
+	return &Service{users: users, jwt: jwtProvider, code: code, resetMail: resetMail, teamPrice: teamPrice, db: users.DB(), publicURL: publicURL, resetTTL: resetTTL}
 }
 
 // SendEmailCode 发送邮箱注册验证码。
@@ -38,6 +45,8 @@ func (s *Service) SendEmailCode(email string) error { return s.code.SendEmailCod
 
 // Register 注册：校验验证码 → 邮箱/用户名唯一 → 创建用户。
 func (s *Service) Register(req *RegisterReq) (*UserVO, error) {
+	req.Username = strings.TrimSpace(req.Username)
+	req.Email = strings.TrimSpace(req.Email)
 	if err := s.code.VerifyEmailCode(req.Email, req.Code); err != nil {
 		return nil, err
 	}
@@ -56,13 +65,18 @@ func (s *Service) Register(req *RegisterReq) (*UserVO, error) {
 	if err != nil {
 		return nil, err
 	}
-	nickname := req.Nickname
+	nickname := strings.TrimSpace(req.Nickname)
 	if nickname == "" {
-		nickname = req.Username
+		nickname = strings.TrimSpace(req.Username)
+	}
+	if exists, err := s.users.ExistsByNickname(nickname, nil); err != nil {
+		return nil, err
+	} else if exists {
+		return nil, ecode.BadRequest.WithMessage("昵称已存在")
 	}
 	u := &model.SysUser{
-		Username:     req.Username,
-		Email:        req.Email,
+		Username:     strings.TrimSpace(req.Username),
+		Email:        strings.TrimSpace(req.Email),
 		Password:     hashed,
 		Nickname:     nickname,
 		Phone:        req.Phone,
@@ -167,8 +181,14 @@ func (s *Service) UpdateProfile(userID int64, req *UpdateProfileReq) (*UserVO, e
 		return nil, ecode.AccountNotFound
 	}
 	updates := map[string]interface{}{}
-	if req.Nickname != "" {
-		updates["nickname"] = req.Nickname
+	nickname := strings.TrimSpace(req.Nickname)
+	if nickname != "" && nickname != u.Nickname {
+		if exists, err := s.users.ExistsByNickname(nickname, &userID); err != nil {
+			return nil, err
+		} else if exists {
+			return nil, ecode.BadRequest.WithMessage("昵称已存在")
+		}
+		updates["nickname"] = nickname
 	}
 	if req.Phone != "" {
 		updates["phone"] = req.Phone

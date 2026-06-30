@@ -1,7 +1,8 @@
 import { http, toParams } from "./http";
-import type { PageData, PageResult, Result } from "@/types/api";
+import type { PageData, PageQuery, PageResult, Result } from "@/types/api";
 import type {
   UserVO, LoginVO, UserLoginDTO, UserRegisterDTO, UpdatePasswordDTO, UpdateProfileDTO,
+  PasswordResetRequestDTO, PasswordResetConfirmDTO,
 } from "@/types/user";
 import type {
   ProjectVO, ProjectDetailVO, CanvasDataVO, ShareVO,
@@ -14,8 +15,9 @@ import type {
 import type { FileVO, FileQuery } from "@/types/file";
 import type {
   DashboardOverviewVO, DashboardChartsVO, AdminUserVO, AdminUserQuery,
-  AdminUserUpdateDTO, BannerVO, BannerCreateDTO, BannerUpdateDTO,
+  AdminUserCreateDTO, AdminUserUpdateDTO, AdminUserPasswordResetDTO, BannerVO, BannerCreateDTO, BannerUpdateDTO,
   AiProviderVO, AiProviderCreateDTO, AiProviderUpdateDTO,
+  AiUpstreamModelVO, AiModelRouteVO, AiRouteDecisionLogVO,
   LogVO, LogQuery, ContentVO, ContentQuery,
   AccessLogVO, AccessLogQuery, LoginLogVO, LoginLogQuery, ActiveUserVO,
   VipLevelVO,
@@ -54,6 +56,7 @@ import type {
   EmailTemplateVO, EmailTemplateUpdateDTO, EmailTemplatePreviewDTO,
   EmailRenderVO, EmailTemplateSendTestDTO,
 } from "@/types/email-template";
+import { fileSizeExceededResult, resolveUploadLimitBytes, type UploadLimitOptions } from "@/lib/upload-limits";
 
 export const authApi = {
   emailCode: (data: { email: string }) =>
@@ -70,6 +73,10 @@ export const authApi = {
     http.put<void>("/api/auth/password", data),
   updateProfile: (data: UpdateProfileDTO) =>
     http.put<UserVO>("/api/auth/profile", data),
+  requestPasswordReset: (data: PasswordResetRequestDTO) =>
+    http.post<void>("/api/auth/password-reset/request", data),
+  confirmPasswordReset: (data: PasswordResetConfirmDTO) =>
+    http.post<void>("/api/auth/password-reset/confirm", data),
 };
 
 export const teamApi = {
@@ -95,7 +102,7 @@ export const projectApi = {
   delete: (id: string | number) =>
     http.delete<void>(`/api/projects/${id}`),
   saveCanvas: (id: string | number, data: CanvasSaveDTO) =>
-    http.put<void>(`/api/projects/${id}/canvas`, data),
+    http.put<CanvasDataVO>(`/api/projects/${id}/canvas`, data),
   getCanvas: (id: string | number) =>
     http.get<CanvasDataVO>(`/api/projects/${id}/canvas`),
   share: (id: string | number) =>
@@ -130,12 +137,27 @@ interface FilePresignVO {
 }
 
 export const fileApi = {
-  upload: (file: File) =>
-    http.upload<FileVO>("/api/files/upload", file),
-  uploadProgress: (file: File, onProgress?: (pct: number) => void) =>
-    http.uploadProgress<FileVO>("/api/files/upload", file, onProgress),
-  uploadBatch: (formData: FormData) =>
-    http.upload<FileVO[]>("/api/files/upload/batch", formData),
+  upload: (file: File) => {
+    const tooLarge = fileSizeExceededResult<FileVO>(file);
+    if (tooLarge) return Promise.resolve(tooLarge);
+    return http.upload<FileVO>("/api/files/upload", file);
+  },
+  uploadProgress: (file: File, onProgress?: (pct: number) => void, options?: UploadLimitOptions) => {
+    const tooLarge = fileSizeExceededResult<FileVO>(file, options);
+    if (tooLarge) return Promise.resolve(tooLarge);
+    return http.uploadProgress<FileVO>("/api/files/upload", file, onProgress);
+  },
+  uploadBatch: (formData: FormData) => {
+    if (typeof File !== "undefined") {
+      for (const value of formData.values()) {
+        if (value instanceof File) {
+          const tooLarge = fileSizeExceededResult<FileVO[]>(value);
+          if (tooLarge) return Promise.resolve(tooLarge);
+        }
+      }
+    }
+    return http.upload<FileVO[]>("/api/files/upload/batch", formData);
+  },
   presign: (data: { filename: string; contentType: string; fileType?: string }) =>
     http.post<FilePresignVO>("/api/files/presign", data),
   register: (data: { key: string; originalName: string; contentType: string; fileType?: string }) =>
@@ -154,7 +176,10 @@ export const fileApi = {
  * 智能上传：OSS 环境走「前端直传」(presign → 浏览器 PUT 到 OSS → register)，文件不经后端、省带宽、支持大文件；
  * 本地存储或直传不可用时自动回退到服务器中转上传。两种路径都通过 onProgress 上报进度，返回 Result<FileVO>。
  */
-export async function uploadFileSmart(file: File, onProgress?: (pct: number) => void): Promise<Result<FileVO>> {
+export async function uploadFileSmart(file: File, onProgress?: (pct: number) => void, options?: UploadLimitOptions): Promise<Result<FileVO>> {
+  const uploadLimit = resolveUploadLimitBytes(options?.maxBytes);
+  const tooLarge = fileSizeExceededResult<FileVO>(file, { ...options, maxBytes: uploadLimit });
+  if (tooLarge) return tooLarge;
   const contentType = file.type || "application/octet-stream";
   try {
     const pre = await fileApi.presign({ filename: file.name, contentType });
@@ -210,10 +235,14 @@ export const adminApi = {
   users: {
     list: (query: AdminUserQuery) =>
       http.get<PageResult<AdminUserVO>["data"]>("/api/admin/users", toParams(query)),
-    get: (id: number) =>
+    get: (id: string) =>
       http.get<AdminUserVO>(`/api/admin/users/${id}`),
-    update: (id: number, data: AdminUserUpdateDTO) =>
+    create: (data: AdminUserCreateDTO) =>
+      http.post<AdminUserVO>("/api/admin/users", data),
+    update: (id: string, data: AdminUserUpdateDTO) =>
       http.put<void>(`/api/admin/users/${id}`, data),
+    resetPassword: (id: string, data: AdminUserPasswordResetDTO) =>
+      http.post<void>(`/api/admin/users/${id}/password`, data),
   },
   contents: {
     list: (query: ContentQuery) =>
@@ -246,6 +275,21 @@ export const adminApi = {
       create: (data: Record<string, unknown>) => http.post<AiModelVO>("/api/admin/ai/models", data),
       update: (id: string | number, data: Record<string, unknown>) => http.put<void>(`/api/admin/ai/models/${id}`, data),
       delete: (id: string | number) => http.delete<void>(`/api/admin/ai/models/${id}`),
+    },
+    upstreamModels: {
+      list: () => http.get<AiUpstreamModelVO[]>("/api/admin/ai/upstream-models"),
+      create: (data: Record<string, unknown>) => http.post<AiUpstreamModelVO>("/api/admin/ai/upstream-models", data),
+      update: (id: string | number, data: Record<string, unknown>) => http.put<void>(`/api/admin/ai/upstream-models/${id}`, data),
+      delete: (id: string | number) => http.delete<void>(`/api/admin/ai/upstream-models/${id}`),
+    },
+    modelRoutes: {
+      list: (modelId: string | number) => http.get<AiModelRouteVO[]>(`/api/admin/ai/models/${modelId}/routes`),
+      create: (modelId: string | number, data: Record<string, unknown>) => http.post<AiModelRouteVO>(`/api/admin/ai/models/${modelId}/routes`, data),
+      update: (id: string | number, data: Record<string, unknown>) => http.put<void>(`/api/admin/ai/routes/${id}`, data),
+      delete: (id: string | number) => http.delete<void>(`/api/admin/ai/routes/${id}`),
+    },
+    routeDecisions: {
+      list: (query: PageQuery) => http.get<PageData<AiRouteDecisionLogVO>>("/api/admin/ai/route-decisions", toParams(query)),
     },
     handlers: {
       list: () => http.get<AiHandlerVO[]>("/api/admin/ai/handlers"),
@@ -305,7 +349,7 @@ export const adminApi = {
   points: {
     transactions: (query: PointsTransactionQuery) =>
       http.get<PageData<PointsTransactionVO>>("/api/admin/points/transactions", toParams(query)),
-    adjust: (data: { userId: number; amount: number; remark?: string }) =>
+    adjust: (data: { userId: string; amount: number; remark?: string }) =>
       http.post<void>("/api/admin/points/adjust", data),
     refundTask: (data: { taskId: number; reason?: string }) =>
       http.post<number>("/api/admin/points/refund-task", data),
@@ -319,17 +363,17 @@ export const adminApi = {
   authors: {
     list: (query: AdminUserQuery) =>
       http.get<PageData<AdminUserVO>>("/api/admin/authors", toParams(query)),
-    grant: (userId: number) =>
+    grant: (userId: string) =>
       http.post<void>(`/api/admin/authors/${userId}/grant`),
-    revoke: (userId: number) =>
+    revoke: (userId: string) =>
       http.post<void>(`/api/admin/authors/${userId}/revoke`),
   },
   orders: {
     list: (query: AdminUserQuery) =>
       http.get<PageData<RechargeOrderVO>>("/api/admin/orders", toParams(query)),
-    get: (id: number) =>
+    get: (id: string) =>
       http.get<RechargeOrderVO>(`/api/admin/orders/${id}`),
-    pay: (id: number) =>
+    pay: (id: string) =>
       http.post<void>(`/api/admin/orders/${id}/pay`),
   },
 };
@@ -442,15 +486,15 @@ export const orderApi = {
     http.post<RechargeOrderVO>("/api/orders/recharge", data),
   list: (query: OrderQuery) =>
     http.get<PageData<RechargeOrderVO>>("/api/orders", toParams(query)),
-  get: (id: number) =>
+  get: (id: string) =>
     http.get<RechargeOrderVO>(`/api/orders/${id}`),
-  cancel: (id: number) =>
+  cancel: (id: string) =>
     http.post<void>(`/api/orders/${id}/cancel`),
   rechargeConfig: () =>
     http.get<RechargeConfigVO>("/api/orders/recharge-config"),
-  pay: (id: number, payType?: string) =>
+  pay: (id: string, payType?: string) =>
     http.post<PaymentInitiateVO>(`/api/orders/${id}/pay`, payType ? { payType } : {}),
-  sync: (id: number) =>
+  sync: (id: string) =>
     http.post<RechargeOrderVO>(`/api/orders/${id}/sync`),
 };
 

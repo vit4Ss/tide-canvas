@@ -160,10 +160,10 @@ func (s *Service) DeleteProject(userID int64, publicID string) error {
 
 // SaveCanvas 保存画布数据（对齐 saveCanvas）。
 // thumbnail 仅接受 ≤512 的 http(s) 地址，其余（data:/blob: 或超长）忽略不覆盖原值，避免落库 Data too long。
-func (s *Service) SaveCanvas(userID int64, publicID string, req *CanvasSaveReq) error {
+func (s *Service) SaveCanvas(userID int64, publicID string, req *CanvasSaveReq) (*model.CanvasProject, error) {
 	project, err := s.getAndCheck(userID, publicID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	columns := map[string]interface{}{"canvas_data": req.CanvasData}
 	thumbnail := req.Thumbnail
@@ -171,16 +171,23 @@ func (s *Service) SaveCanvas(userID int64, publicID string, req *CanvasSaveReq) 
 		(strings.HasPrefix(thumbnail, "http://") || strings.HasPrefix(thumbnail, "https://")) {
 		columns["thumbnail"] = thumbnail
 	}
-	return s.repo.UpdateColumns(project.ID, columns)
+	if req.ExpectedUpdateTime != nil {
+		ok, err := s.repo.UpdateColumnsIfUpdateTime(project.ID, *req.ExpectedUpdateTime, columns)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, ecode.Conflict.WithMessage("画布已被其他窗口或成员更新，请刷新后再保存")
+		}
+	} else if err := s.repo.UpdateColumns(project.ID, columns); err != nil {
+		return nil, err
+	}
+	return s.repo.FindByID(project.ID)
 }
 
 // GetCanvasData 获取画布数据（对齐 getCanvasData）。新建未保存的画布 canvas_data 可能为空，由 handler 兜底 "{}"。
-func (s *Service) GetCanvasData(userID int64, publicID string) (string, error) {
-	project, err := s.getAndCheck(userID, publicID)
-	if err != nil {
-		return "", err
-	}
-	return project.CanvasData, nil
+func (s *Service) GetCanvasData(userID int64, publicID string) (*model.CanvasProject, error) {
+	return s.getAndCheck(userID, publicID)
 }
 
 // ShareProject 生成分享链接（对齐 shareProject）：首次生成 share_token（无横杠 UUID），已存在则复用。

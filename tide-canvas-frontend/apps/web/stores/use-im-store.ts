@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { imApi } from "@/lib/api";
+import { getAccessToken } from "@/lib/http";
 import { useAuthStore } from "@/stores/use-auth-store";
 import type { ConversationVO, ConversationType, MessageVO, WSEvent } from "@/types/im";
 
@@ -141,12 +142,12 @@ export const useImStore = create<ImState>((set, get) => {
 
     connect: () => {
       if (typeof window === "undefined") return;
-      const token = localStorage.getItem("access_token");
-      if (!token) return;
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
       manualClose = false;
-      const base = resolveWsBase().replace(/^http/, "ws"); // http→ws, https→wss
-      const sock = new WebSocket(`${base}/api/im/ws?token=${encodeURIComponent(token)}`);
+      const base = resolveWsBase().replace(/^http/, "ws"); // http->ws, https->wss
+      const token = getAccessToken();
+      const query = token && !base.includes(window.location.host) ? `?token=${encodeURIComponent(token)}` : "";
+      const sock = new WebSocket(`${base}/api/im/ws${query}`);
       ws = sock;
       sock.onopen = () => set({ connected: true });
       sock.onmessage = (e) => {

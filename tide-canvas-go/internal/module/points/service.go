@@ -170,7 +170,8 @@ func (s *service) ListTransactions(userID int64, q *TransactionQuery) ([]PointsT
 	if err != nil {
 		return nil, 0, err
 	}
-	return toTransactionVOList(records), total, nil
+	vos, err := s.toTransactionVOList(records)
+	return vos, total, err
 }
 
 // ListAllTransactions 管理端分页查询全部积分流水。对齐 PointsServiceImpl.listAllTransactions。
@@ -180,7 +181,8 @@ func (s *service) ListAllTransactions(q *TransactionQuery) ([]PointsTransactionV
 	if err != nil {
 		return nil, 0, err
 	}
-	return toTransactionVOList(records), total, nil
+	vos, err := s.toTransactionVOList(records)
+	return vos, total, err
 }
 
 // Checkin 每日签到。对齐 CheckinServiceImpl.checkin。
@@ -367,19 +369,24 @@ func parseDateTime(s string) (time.Time, bool) {
 }
 
 // toTransactionVOList 批量转换流水 VO。
-func toTransactionVOList(records []model.PointsTransaction) []PointsTransactionVO {
+func (s *service) toTransactionVOList(records []model.PointsTransaction) ([]PointsTransactionVO, error) {
+	names, err := s.repo.UserDisplayNames(pointsUserIDs(records))
+	if err != nil {
+		return nil, err
+	}
 	out := make([]PointsTransactionVO, 0, len(records))
 	for i := range records {
-		out = append(out, toTransactionVO(&records[i]))
+		out = append(out, toTransactionVO(&records[i], names))
 	}
-	return out
+	return out, nil
 }
 
 // toTransactionVO 转换单条流水 VO。对齐 PointsServiceImpl.toTransactionVO。
-func toTransactionVO(t *model.PointsTransaction) PointsTransactionVO {
+func toTransactionVO(t *model.PointsTransaction, names map[int64]string) PointsTransactionVO {
 	return PointsTransactionVO{
 		ID:           t.ID,
 		UserID:       t.UserID,
+		UserName:     names[t.UserID],
 		Amount:       t.Amount,
 		BalanceAfter: t.BalanceAfter,
 		Type:         t.Type,
@@ -388,4 +395,18 @@ func toTransactionVO(t *model.PointsTransaction) PointsTransactionVO {
 		Remark:       t.Remark,
 		CreateTime:   t.CreateTime,
 	}
+}
+
+func pointsUserIDs(records []model.PointsTransaction) []int64 {
+	seen := make(map[int64]struct{})
+	ids := make([]int64, 0, len(records))
+	for i := range records {
+		id := records[i].UserID
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
 }

@@ -55,7 +55,7 @@ export function ToastContainer() {
   const remove = (id: number) => setItems((prev) => prev.filter((i) => i.id !== id));
 
   return (
-    <div className="pointer-events-none fixed left-1/2 top-6 z-50 flex -translate-x-1/2 flex-col items-center gap-2">
+    <div className="pointer-events-none fixed left-1/2 top-6 z-[300] flex -translate-x-1/2 flex-col items-center gap-2">
       {items.map((item) => {
         const Icon = ICONS[item.type];
         return (

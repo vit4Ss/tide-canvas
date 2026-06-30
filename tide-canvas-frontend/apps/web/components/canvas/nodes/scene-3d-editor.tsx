@@ -6,6 +6,7 @@ import { X, Loader2, RotateCcw, Camera, Video, PersonStanding, Plus, Trash2, Eye
 import type * as THREE_NS from "three";
 import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-canvas-store";
 import { uploadFileSmart } from "@/lib/api";
+import { fetchWithAuth } from "@/lib/http";
 import { toast } from "@/components/shared/toast";
 import {
   buildMannequinFigure, buildSkinnedFigure, parseState, lightPositionFromAngles, makeLabelSprite, characterNameByIndex,
@@ -259,10 +260,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
             try {
               let blobUrl = panoUrl;
               if (!panoUrl.startsWith("data:")) {
-                const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
-                const resp = await fetch(`/api/files/download?url=${encodeURIComponent(panoUrl)}`, {
-                  headers: token ? { Authorization: `Bearer ${token}` } : {},
-                });
+                const resp = await fetchWithAuth(`/api/files/download?url=${encodeURIComponent(panoUrl)}`);
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const buf = await resp.arrayBuffer();
                 if (disposed) return;
@@ -815,7 +813,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
   };
 
   /** 截图以图片节点形式落到导演台右侧（多张时向下排列）并自动连线，作为下游 AI 生成的参考素材 */
-  const spawnShotNode = (url: string) => {
+  const spawnShotNode = (file: { fileUrl: string; fileSize: number; fileType: string; mimeType: string }) => {
     const st = useCanvasStore.getState();
     const nid = generateNodeId();
     const cw = SHOT_CARD_WIDTH;
@@ -833,7 +831,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
     st.addNode({
       id: nid, type: "image", x: targetX, y: targetY,
       width: cw, height: ch, contentW: cw, contentH: ch,
-      title: `导演台截图 ${count + 1}`, status: "success", imageSrc: url,
+      title: `导演台截图 ${count + 1}`, status: "success", imageSrc: file.fileUrl, fileSize: file.fileSize, fileType: file.fileType, mimeType: file.mimeType,
     }, true);
     st.addConnection({ id: `conn_${node.id}_${nid}`, sourceId: node.id, targetId: nid }, false);
   };
@@ -849,8 +847,8 @@ export function Scene3DEditor({ node, onClose }: Props) {
       if (!up.success) { toast.error(up.message || "截图上传失败"); return; }
       const url = up.data.fileUrl;
       persist();
-      updateNode(node.id, { imageSrc: url }); // 导演台预览 = 最近一次截图
-      spawnShotNode(url);
+      updateNode(node.id, { imageSrc: url, fileSize: up.data.fileSize, fileType: up.data.fileType, mimeType: up.data.mimeType }); // 导演台预览 = 最近一次截图
+      spawnShotNode(up.data);
       setShotCount((c) => c + 1);
       toast.success("已截图，图片节点已放入画布");
     } finally {

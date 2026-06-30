@@ -107,24 +107,26 @@ func (h *Handler) saveCanvas(c *gin.Context) {
 		response.Fail(c, ecode.BadRequest)
 		return
 	}
-	if err := h.svc.SaveCanvas(middleware.MustUserID(c), c.Param("id"), &req); err != nil {
-		response.FailErr(c, err)
-		return
-	}
-	response.OK(c, nil)
-}
-
-func (h *Handler) getCanvas(c *gin.Context) {
-	data, err := h.svc.GetCanvasData(middleware.MustUserID(c), c.Param("id"))
+	project, err := h.svc.SaveCanvas(middleware.MustUserID(c), c.Param("id"), &req)
 	if err != nil {
 		response.FailErr(c, err)
 		return
 	}
+	response.OK(c, CanvasDataVO{CanvasData: project.CanvasData, UpdateTime: project.UpdateTime})
+}
+
+func (h *Handler) getCanvas(c *gin.Context) {
+	project, err := h.svc.GetCanvasData(middleware.MustUserID(c), c.Param("id"))
+	if err != nil {
+		response.FailErr(c, err)
+		return
+	}
+	data := project.CanvasData
 	// 新建未保存的画布 canvas_data 为空，兜底空对象，避免前端解析空串失败。
 	if data == "" {
 		data = "{}"
 	}
-	response.OK(c, CanvasDataVO{CanvasData: data})
+	response.OK(c, CanvasDataVO{CanvasData: data, UpdateTime: project.UpdateTime})
 }
 
 func (h *Handler) share(c *gin.Context) {

@@ -60,11 +60,6 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   fetchUser: async () => {
-    const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
-    if (!token) {
-      set({ initialized: true });
-      return;
-    }
     try {
       const result = await authApi.me();
       if (result.success) {

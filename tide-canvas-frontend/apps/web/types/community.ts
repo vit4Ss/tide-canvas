@@ -2,7 +2,7 @@ import type { PageQuery } from "./api";
 
 export interface PostVO {
   id: number;
-  userId: number;
+  userId: string;
   nickname: string;
   avatar: string;
   title: string;
@@ -24,7 +24,7 @@ export interface PostDetailVO extends PostVO {
 
 export interface CommentVO {
   id: number;
-  userId: number;
+  userId: string;
   nickname: string;
   avatar: string;
   content: string;
@@ -59,5 +59,5 @@ export interface CommentCreateDTO {
 export interface PostQuery extends PageQuery {
   keyword?: string;
   category?: string;
-  userId?: number;
+  userId?: string;
 }

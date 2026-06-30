@@ -13,6 +13,9 @@ export interface CanvasNode {
   /** 组图：一次生成的全部图片(如 Midjourney 一组 4 张)；imageSrc 始终等于其中的「主图」 */
   images?: string[];
   videoSrc?: string;
+  fileSize?: number;
+  fileType?: string;
+  mimeType?: string;
   /** 语音合成结果（audio 节点） */
   audioSrc?: string;
   status?: "idle" | "generating" | "success" | "error";
@@ -369,13 +372,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   setTransform: (transform) => set({ transform }),
 
   loadCanvas: (nodes, connections, groups = []) => set({
-    // 统一图片/视频节点为标准大小 608×342（清掉旧 contentW/contentH，由渲染按图片比例重算）
-    nodes: nodes.map((n) => {
-      const normalized = normalizeNode(n);
-      return normalized.type === "image" || normalized.type === "video"
-        ? { ...normalized, width: 608, height: 342, contentW: undefined, contentH: undefined }
-        : normalized;
-    }),
+    nodes: nodes.map((n) => normalizeNode(n)),
     connections,
     groups: (groups || []).filter((g) => g && Array.isArray(g.nodeIds) && g.nodeIds.length > 0),
     selectedNodeIds: new Set(),

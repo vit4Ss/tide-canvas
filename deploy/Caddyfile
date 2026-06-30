@@ -7,6 +7,10 @@
 	@imws path /api/im/ws
 	reverse_proxy @imws backend:8080
 
+	# Local uploads are served by the backend static /uploads route.
+	@uploads path /uploads/*
+	reverse_proxy @uploads backend:8080
+
 	# 其余请求透传给 Next(其 /api/* rewrites 再代理到后端 REST)
 	reverse_proxy frontend:3000 {
 		flush_interval -1

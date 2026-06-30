@@ -102,6 +102,10 @@ func requireConfig(cfg providerConfig, providerName string) error {
 // AuthorizeURL 构造第三方授权页地址（前端重定向用）。redirectURI 为回调地址，state 防 CSRF。
 // 旧后端无此接口（前端直接拼），此处补全以统一由后端持有 client_id 与 scope。
 func (s *Service) AuthorizeURL(provider Provider, redirectURI string) (*AuthorizeVO, error) {
+	redirectURI = strings.TrimSpace(redirectURI)
+	if redirectURI == "" {
+		return nil, ecode.BadRequest.WithMessage("redirectUri不能为空")
+	}
 	state := strings.ReplaceAll(uuid.NewString(), "-", "")
 	switch provider {
 	case ProviderGitHub:
@@ -429,6 +433,10 @@ func (s *Service) findOrCreateOAuthUser(oauthUsername, email, nickname, avatar s
 		if err != nil {
 			return nil, err
 		}
+		nickname, err = s.uniqueNickname(nickname, oauthUsername)
+		if err != nil {
+			return nil, err
+		}
 		u = &model.SysUser{
 			Username:     oauthUsername,
 			Email:        email,
@@ -460,6 +468,34 @@ func (s *Service) findOrCreateOAuthUser(oauthUsername, email, nickname, avatar s
 	}
 	u.LastLoginTime = &now
 	return u, nil
+}
+
+func (s *Service) uniqueNickname(preferred, fallback string) (string, error) {
+	base := strings.TrimSpace(preferred)
+	if base == "" {
+		base = strings.TrimSpace(fallback)
+	}
+	if base == "" {
+		base = "user"
+	}
+	for i := 0; i < 50; i++ {
+		candidate := base
+		if i > 0 {
+			runes := []rune(base)
+			if len(runes) > 50 {
+				candidate = string(runes[:50])
+			}
+			candidate = candidate + "_" + uuid.NewString()[:8]
+		}
+		exists, err := s.users.ExistsByNickname(candidate, nil)
+		if err != nil {
+			return "", err
+		}
+		if !exists {
+			return candidate, nil
+		}
+	}
+	return "", ecode.Conflict.WithMessage("昵称已存在")
 }
 
 // buildLoginVO 签发双令牌并组装登录响应（对齐 auth.buildLoginVO）。

@@ -7,7 +7,7 @@ import { http, setTokens } from "@/lib/http";
 import { useAuthStore } from "@/stores/use-auth-store";
 import type { LoginVO } from "@/types/user";
 
-const OAUTH_REDIRECT_BASE = process.env.NEXT_PUBLIC_OAUTH_REDIRECT_BASE || "http://localhost:3000";
+const OAUTH_REDIRECT_BASE = process.env.NEXT_PUBLIC_OAUTH_REDIRECT_BASE || "";
 
 const PROVIDER_NAMES: Record<string, string> = {
   github: "GitHub",
@@ -17,22 +17,38 @@ const PROVIDER_NAMES: Record<string, string> = {
 
 interface Props {
   code: string;
+  state: string;
 }
 
-export function OAuthCallbackHandler({ code }: Props) {
+function loginRedirectUri(): string {
+  const base = OAUTH_REDIRECT_BASE || window.location.origin;
+  return `${base.replace(/\/$/, "")}/login`;
+}
+
+function clearOAuthSession() {
+  sessionStorage.removeItem("oauth_provider");
+  sessionStorage.removeItem("oauth_state");
+}
+
+export function OAuthCallbackHandler({ code, state }: Props) {
   const router = useRouter();
   const setUser = useAuthStore((s) => s.setUser);
   const [provider, setProvider] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
-    const p = sessionStorage.getItem("oauth_provider");
-    if (!p) return;
+    const p = sessionStorage.getItem("oauth_provider") || "";
+    const expectedState = sessionStorage.getItem("oauth_state") || "";
     setProvider(p);
-    sessionStorage.removeItem("oauth_provider");
-    sessionStorage.removeItem("oauth_state");
 
-    http.post<LoginVO>(`/api/auth/oauth/${p}`, { code, redirectUri: `${OAUTH_REDIRECT_BASE}/login` })
+    if (!p || !state || !expectedState || expectedState !== state) {
+      clearOAuthSession();
+      setError("OAuth state无效或已过期，请重新登录");
+      return;
+    }
+
+    clearOAuthSession();
+    http.post<LoginVO>(`/api/auth/oauth/${p}`, { code, state, redirectUri: loginRedirectUri() })
       .then((res) => {
         if (res.success) {
           setTokens(res.data.accessToken, res.data.refreshToken);
@@ -43,7 +59,7 @@ export function OAuthCallbackHandler({ code }: Props) {
         }
       })
       .catch(() => setError(`${PROVIDER_NAMES[p] || p} 登录失败，请重试`));
-  }, [code, router, setUser]);
+  }, [code, state, router, setUser]);
 
   return (
     <div className="flex min-h-[calc(100vh-8rem)] items-center justify-center">

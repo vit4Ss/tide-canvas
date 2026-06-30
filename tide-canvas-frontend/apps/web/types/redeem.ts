@@ -5,10 +5,10 @@ export interface RedeemCodeVO {
   code: string;
   points: number;
   /** 生成者（管理员）用户ID */
-  createdBy?: string;
+  creatorName?: string;
   /** 0未使用 / 1已使用 / 2已停用 */
   status: number;
-  usedBy?: string;
+  userName?: string;
   usedTime?: string;
   expireTime?: string;
   batchNo?: string;

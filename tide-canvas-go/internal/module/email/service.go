@@ -1,6 +1,7 @@
 package email
 
 import (
+	"html"
 	"math/rand"
 	"strconv"
 	"time"
@@ -24,7 +25,9 @@ const (
 // Service 邮箱验证码服务（忠实迁移 VerificationCodeService），实现 auth.CodeVerifier。
 //
 // 发码：生成 6 位码 → 校验同邮箱重发冷却 → 存储（带 TTL）→ 渲染 register_code 模板（停用回退内置文案）→ SMTP 发送；
-//      邮件渠道未启用/未配置时降级开发模式（验证码打日志）。
+//
+//	邮件渠道未启用/未配置时降级开发模式（验证码打日志）。
+//
 // 校验：比对验证码 → 累计错误次数达上限作废（防爆破）→ 过期自动失效。
 type Service struct {
 	store    CodeStore
@@ -158,6 +161,57 @@ func (s *Service) sendCodeMail(email, code string, ttlMinutes int64) error {
 	return s.sender.sendHTML(email, subject, htmlBody)
 }
 
+// SendPasswordReset 发送密码重置邮件；SMTP 未启用时只写日志，方便本地调试完整流程。
+func (s *Service) SendPasswordReset(email, resetURL string, ttl time.Duration) error {
+	if ttl <= 0 {
+		ttl = 30 * time.Minute
+	}
+	if !s.sender.enabled() {
+		s.warnf("【开发模式·邮件未启用】邮箱 %s 的密码重置链接：%s（%d 分钟内有效）", email, resetURL, durationMinutes(ttl))
+		return nil
+	}
+	if err := s.sendPasswordResetMail(email, resetURL, durationMinutes(ttl)); err != nil {
+		s.errorf("发送密码重置邮件失败: %s, err=%v", email, err)
+		return ecode.ServerError.WithMessage("密码重置邮件发送失败，请稍后重试")
+	}
+	return nil
+}
+
+// sendPasswordResetMail 渲染并发送密码重置邮件；模板缺失时回退内置 HTML。
+func (s *Service) sendPasswordResetMail(email, resetURL string, ttlMinutes int64) error {
+	siteName := s.tplRepo.siteName()
+	rendered, err := s.tplRepo.renderByCode(templatePasswordReset, map[string]string{
+		"siteName":   siteName,
+		"resetUrl":   resetURL,
+		"ttlMinutes": strconv.FormatInt(ttlMinutes, 10),
+		"email":      email,
+	})
+	if err != nil {
+		s.warnf("读取密码重置邮件模板失败，回退内置文案: %v", err)
+	}
+
+	var subject, htmlBody string
+	if rendered != nil {
+		subject = rendered.Subject
+		htmlBody = rendered.HTML
+	} else {
+		escapedURL := html.EscapeString(resetURL)
+		subject = siteName + " 密码重置"
+		htmlBody = "<p>您正在重置 " + html.EscapeString(siteName) + " 账号（" + html.EscapeString(email) + "）的登录密码。</p>" +
+			"<p><a href=\"" + escapedURL + "\">点击这里重置密码</a></p>" +
+			"<p>链接 " + strconv.FormatInt(ttlMinutes, 10) + " 分钟内有效。如非本人操作，请忽略本邮件。</p>"
+	}
+	return s.sender.sendHTML(email, subject, htmlBody)
+}
+
+func durationMinutes(d time.Duration) int64 {
+	mins := int64(d / time.Minute)
+	if mins <= 0 {
+		return 1
+	}
+	return mins
+}
+
 // generateCode 生成 6 位数字验证码（对齐 ThreadLocalRandom.nextInt(100000, 1000000)）。
 func generateCode() string {
 	return strconv.Itoa(100000 + rand.Intn(900000))
@@ -202,3 +256,4 @@ func (s *Service) errorf(format string, args ...interface{}) {
 
 // 编译期断言：Service 满足 auth.CodeVerifier（替换 router 中的 auth.DevCodeVerifier）。
 var _ auth.CodeVerifier = (*Service)(nil)
+var _ auth.PasswordResetMailer = (*Service)(nil)

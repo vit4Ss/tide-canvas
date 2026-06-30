@@ -19,6 +19,7 @@ const (
 // code 必填；redirectUri 仅 Google 换 token 时需要（须与授权阶段一致）。
 type CallbackReq struct {
 	Code        string `json:"code" binding:"required"`
+	State       string `json:"state" binding:"required"`
 	RedirectURI string `json:"redirectUri"`
 }
 

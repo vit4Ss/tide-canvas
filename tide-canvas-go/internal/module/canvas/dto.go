@@ -20,8 +20,9 @@ type ProjectUpdateReq struct {
 
 // CanvasSaveReq 保存画布数据请求（对齐 CanvasSaveDTO）。
 type CanvasSaveReq struct {
-	CanvasData string `json:"canvasData" binding:"required"`
-	Thumbnail  string `json:"thumbnail"`
+	CanvasData         string     `json:"canvasData" binding:"required"`
+	Thumbnail          string     `json:"thumbnail"`
+	ExpectedUpdateTime *time.Time `json:"expectedUpdateTime"`
 }
 
 // ProjectQuery 项目列表查询（对齐 ProjectQuery + PageQuery）。
@@ -70,7 +71,8 @@ type ProjectDetailVO struct {
 
 // CanvasDataVO 画布数据响应（对齐 getCanvas 返回 {canvasData}）。
 type CanvasDataVO struct {
-	CanvasData string `json:"canvasData"`
+	CanvasData string    `json:"canvasData"`
+	UpdateTime time.Time `json:"updateTime"`
 }
 
 // ShareVO 分享链接响应（对齐 share 返回 {shareToken, shareUrl}）。

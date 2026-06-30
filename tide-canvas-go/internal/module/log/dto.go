@@ -71,7 +71,7 @@ type SysLogQuery struct {
 // AccessLogVO 访问日志视图（对齐 AccessLogVO）。
 type AccessLogVO struct {
 	ID         int64     `json:"id"`
-	UserID     *int64    `json:"userId"`
+	UserID     *int64    `json:"-"`
 	Username   string    `json:"username"`
 	Method     string    `json:"method"`
 	Path       string    `json:"path"`
@@ -86,7 +86,7 @@ type AccessLogVO struct {
 // LoginLogVO 登录日志视图（对齐 LoginLogVO）。
 type LoginLogVO struct {
 	ID         int64     `json:"id"`
-	UserID     *int64    `json:"userId"`
+	UserID     *int64    `json:"-"`
 	Username   string    `json:"username"`
 	Status     int       `json:"status"` // 1:成功 0:失败
 	FailReason string    `json:"failReason"`
@@ -98,7 +98,7 @@ type LoginLogVO struct {
 // SysLogVO 操作日志视图（对齐 LogVO）。
 type SysLogVO struct {
 	ID         int64     `json:"id"`
-	UserID     *int64    `json:"userId"`
+	UserID     *int64    `json:"-"`
 	Username   string    `json:"username"`
 	Action     string    `json:"action"`
 	Target     string    `json:"target"`

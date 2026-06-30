@@ -19,20 +19,14 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# NEXT_PUBLIC_* 在构建期内联，必须以 build-arg 传入
-ARG NEXT_PUBLIC_API_BASE_URL=http://backend:8080
+# API_BASE_URL is server-only and read by Next route handlers at runtime.
+ARG API_BASE_URL=http://backend:8080
 ARG NEXT_PUBLIC_OAUTH_REDIRECT_BASE=
-ARG NEXT_PUBLIC_GITHUB_CLIENT_ID=
-ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID=
-ARG NEXT_PUBLIC_WECHAT_APP_ID=
-ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL \
+ENV API_BASE_URL=$API_BASE_URL \
     NEXT_PUBLIC_OAUTH_REDIRECT_BASE=$NEXT_PUBLIC_OAUTH_REDIRECT_BASE \
-    NEXT_PUBLIC_GITHUB_CLIENT_ID=$NEXT_PUBLIC_GITHUB_CLIENT_ID \
-    NEXT_PUBLIC_GOOGLE_CLIENT_ID=$NEXT_PUBLIC_GOOGLE_CLIENT_ID \
-    NEXT_PUBLIC_WECHAT_APP_ID=$NEXT_PUBLIC_WECHAT_APP_ID \
     NEXT_TELEMETRY_DISABLED=1
-# turbo build 会构建 apps/web（next build，output: standalone）
-RUN npm run build
+# Build the Next app directly to avoid depending on Turbo cache/log state in production images.
+RUN npm --workspace web run build
 
 # ====== Stage 3: 运行（standalone 自包含产物）======
 FROM node:22-slim AS runner
@@ -40,7 +34,8 @@ WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     HOSTNAME=0.0.0.0 \
-    PORT=3000
+    PORT=3000 \
+    API_BASE_URL=http://backend:8080
 
 RUN groupadd --system nodejs && useradd --system --gid nodejs nextjs
 

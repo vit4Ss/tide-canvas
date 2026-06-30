@@ -69,8 +69,10 @@ func (h *Handler) RegisterRoutes(api gin.IRouter, jwtProvider *appjwt.Provider, 
 	// 用户管理 /api/admin/users
 	users := admin.Group("/users")
 	users.GET("", middleware.RequiresPermission(permLoader, "user:view"), h.listUsers)
+	users.POST("", middleware.RequiresPermission(permLoader, "user:edit"), h.createUser)
 	users.GET("/:id", middleware.RequiresPermission(permLoader, "user:view"), h.getUser)
 	users.PUT("/:id", middleware.RequiresPermission(permLoader, "user:edit"), h.updateUser)
+	users.POST("/:id/password", middleware.RequiresPermission(permLoader, "user:edit"), h.resetUserPassword)
 
 	// 角色权限 /api/admin/roles
 	roles := admin.Group("/roles")

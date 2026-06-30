@@ -49,6 +49,17 @@ func (s *AdminService) RegisterRoutes(api gin.IRouter, jwtProvider *appjwt.Provi
 	g.PUT("/models/:id", middleware.RequiresPermission(permLoader, "model:manage"), s.updateModel)
 	g.DELETE("/models/:id", middleware.RequiresPermission(permLoader, "model:manage"), s.deleteModel)
 
+	// Production model routing
+	g.GET("/upstream-models", middleware.RequiresPermission(permLoader, "model:view"), s.listUpstreamModels)
+	g.POST("/upstream-models", middleware.RequiresPermission(permLoader, "model:manage"), s.createUpstreamModel)
+	g.PUT("/upstream-models/:id", middleware.RequiresPermission(permLoader, "model:manage"), s.updateUpstreamModel)
+	g.DELETE("/upstream-models/:id", middleware.RequiresPermission(permLoader, "model:manage"), s.deleteUpstreamModel)
+	g.GET("/models/:id/routes", middleware.RequiresPermission(permLoader, "model:view"), s.listModelRoutes)
+	g.POST("/models/:id/routes", middleware.RequiresPermission(permLoader, "model:manage"), s.createModelRoute)
+	g.PUT("/routes/:id", middleware.RequiresPermission(permLoader, "model:manage"), s.updateModelRoute)
+	g.DELETE("/routes/:id", middleware.RequiresPermission(permLoader, "model:manage"), s.deleteModelRoute)
+	g.GET("/route-decisions", middleware.RequiresPermission(permLoader, "ailog:view"), s.listRouteDecisionLogs)
+
 	// Handler
 	g.GET("/handlers", middleware.RequiresPermission(permLoader, "handler:view"), s.listHandlers)
 	g.PUT("/handlers/:name", middleware.RequiresPermission(permLoader, "handler:manage"), s.updateHandler)

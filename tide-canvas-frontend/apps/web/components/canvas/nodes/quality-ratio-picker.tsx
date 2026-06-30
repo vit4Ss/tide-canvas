@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, RectangleHorizontal } from "lucide-react";
 
@@ -26,7 +26,7 @@ interface RatioOption {
 }
 
 export const RATIO_OPTIONS: RatioOption[] = [
-  { value: "auto", label: "自适应", w: 14, h: 14 },
+  { value: "auto", label: "智能比例", w: 14, h: 14 },
   { value: "1:1", label: "1:1", w: 14, h: 14 },
   { value: "1:2", label: "1:2", w: 8, h: 16 },
   { value: "2:1", label: "2:1", w: 16, h: 8 },
@@ -42,7 +42,6 @@ export const RATIO_OPTIONS: RatioOption[] = [
   { value: "9:21", label: "9:21", w: 7, h: 16 },
 ];
 
-/** 解析 ratio 字符串为 width/height 数值（auto 返回 null） */
 export function parseRatio(ratio: string): { w: number; h: number } | null {
   if (ratio === "auto") return null;
   const [w, h] = ratio.split(":").map(Number);
@@ -52,14 +51,18 @@ export function parseRatio(ratio: string): { w: number; h: number } | null {
 interface Props {
   value: QualityRatioValue;
   onChange: (value: QualityRatioValue) => void;
-  /** 可选：限定可选的画质/清晰度/比例（来自模型配置），不传则显示全部 */
   qualities?: string[];
   clarities?: string[];
   ratios?: string[];
   compact?: boolean;
+  batchCount?: number;
+  batchOptions?: number[];
+  onBatchChange?: (value: number) => void;
 }
 
-export function QualityRatioPicker({ value, onChange, qualities, clarities, ratios, compact = false }: Props) {
+const PANEL_WIDTH = 372;
+
+export function QualityRatioPicker({ value, onChange, qualities, clarities, ratios, compact = false, batchCount, batchOptions, onBatchChange }: Props) {
   const [open, setOpen] = useState(false);
   const [openUp, setOpenUp] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -74,33 +77,43 @@ export function QualityRatioPicker({ value, onChange, qualities, clarities, rati
       if (containerRef.current?.contains(target) || panelRef.current?.contains(target)) return;
       setOpen(false);
     };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
     document.addEventListener("mousedown", onMouseDown);
-    return () => document.removeEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
   }, [open]);
 
-  // 维度语义：undefined(模型未配置) = 显示全部；空数组(后台明确全不勾) = 该模型无此维度，隐藏区块
   const qualityOpts = qualities ? QUALITY_OPTIONS.filter((q) => qualities.includes(q.value)) : [...QUALITY_OPTIONS];
   const clarityOpts = clarities ? CLARITY_OPTIONS.filter((c) => clarities.includes(c)) : [...CLARITY_OPTIONS];
   const ratioOpts = ratios ? RATIO_OPTIONS.filter((r) => ratios.includes(r.value)) : RATIO_OPTIONS;
+  const normalizedBatchOptions = batchOptions?.length ? [...batchOptions].sort((a, b) => a - b) : [];
+  const showBatch = batchCount != null && normalizedBatchOptions.length > 0 && !!onBatchChange;
 
   const qualityLabel = QUALITY_OPTIONS.find((q) => q.value === value.quality)?.label || "标准画质";
-  const ratioLabel = value.ratio === "auto" ? "自适应" : value.ratio;
+  const ratioLabel = value.ratio === "auto" ? "智能比例" : value.ratio;
   const summaryParts: string[] = [];
   if (ratioOpts.length) summaryParts.push(ratioLabel);
   if (qualityOpts.length) summaryParts.push(qualityLabel);
   if (clarityOpts.length) summaryParts.push(value.clarity);
+  if (showBatch) summaryParts.push(`${batchCount}张`);
   const summary = summaryParts.join(" · ") || "默认";
 
-  const stop = (e: React.MouseEvent) => e.stopPropagation();
+  const stop = (e: ReactMouseEvent) => e.stopPropagation();
 
-  // 展开前判断方向：下方空间充足则向下展开（不遮挡上方输入框），否则向上
-  const toggle = (e: React.MouseEvent) => {
+  const toggle = (e: ReactMouseEvent) => {
     stop(e);
     if (!open && triggerRef.current) {
       const rect = triggerRef.current.getBoundingClientRect();
       const spaceBelow = window.innerHeight - rect.bottom;
-      setOpenUp(spaceBelow < 440);
-      setPanelPos({ left: Math.round(rect.left), top: Math.round(spaceBelow < 440 ? rect.top - 8 : rect.bottom + 8) });
+      const nextOpenUp = spaceBelow < 500;
+      const left = Math.min(Math.max(12, Math.round(rect.left)), Math.max(12, window.innerWidth - PANEL_WIDTH - 12));
+      setOpenUp(nextOpenUp);
+      setPanelPos({ left, top: Math.round(nextOpenUp ? rect.top - 8 : rect.bottom + 8) });
     }
     setOpen(!open);
   };
@@ -109,111 +122,118 @@ export function QualityRatioPicker({ value, onChange, qualities, clarities, rati
     <div className="relative" ref={containerRef} onMouseDown={stop}>
       <button
         ref={triggerRef}
+        type="button"
         onClick={toggle}
-        className="flex items-center gap-1 rounded-md px-2 py-1 text-xs hover:bg-neutral-100 dark:hover:bg-neutral-800"
+        className={`${compact ? "h-7" : "h-8"} flex max-w-[240px] items-center gap-1.5 rounded-md px-2 text-xs text-neutral-700 transition-colors hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800`}
       >
-        <RectangleHorizontal className="h-3 w-3" />
-        {summary}
-        <ChevronDown className="h-3 w-3" />
+        <RectangleHorizontal className="h-3.5 w-3.5 shrink-0" />
+        <span className="truncate">{summary}</span>
+        <ChevronDown className={`h-3 w-3 shrink-0 text-neutral-400 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
 
       {open && typeof document !== "undefined" && createPortal(
         <div
           ref={panelRef}
-          className={`fixed z-50 w-[340px] rounded-xl border border-neutral-200 bg-white p-4 shadow-xl shadow-neutral-900/10 dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/30 ${openUp ? "-translate-y-full" : ""}`}
+          className={`fixed z-50 w-[372px] max-w-[calc(100vw-24px)] rounded-xl border border-black/[0.06] bg-white p-3 text-left shadow-[0_22px_70px_rgba(15,23,42,0.18)] dark:border-white/10 dark:bg-[#25262b] dark:shadow-black/35 ${openUp ? "-translate-y-full" : ""}`}
           style={{ left: panelPos.left, top: panelPos.top }}
           onMouseDown={stop}
         >
-          {/* 画质 */}
           {qualityOpts.length > 0 && (
-          <div>
-            <p className="mb-2 text-xs text-neutral-500">画质</p>
-            <div className="grid grid-cols-3 gap-2">
-              {qualityOpts.map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => onChange({ ...value, quality: opt.value })}
-                  className={`rounded-lg border px-3 py-2 text-xs transition-colors ${
-                    value.quality === opt.value
-                      ? "border-neutral-900 bg-white text-neutral-900 dark:border-white dark:bg-neutral-900 dark:text-white"
-                      : "border-neutral-200 text-neutral-600 hover:border-neutral-300 dark:border-neutral-700 dark:text-neutral-400"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
+            <ParamSection title="图像质量">
+              <SegmentedRow count={qualityOpts.length}>
+                {qualityOpts.map((opt) => (
+                  <SegmentButton key={opt.value} active={value.quality === opt.value} onClick={() => onChange({ ...value, quality: opt.value })}>
+                    {opt.label}
+                  </SegmentButton>
+                ))}
+              </SegmentedRow>
+            </ParamSection>
           )}
 
-          {/* 清晰度 */}
           {clarityOpts.length > 0 && (
-          <div className="mt-4 first:mt-0">
-            <p className="mb-2 text-xs text-neutral-500">清晰度</p>
-            <div className="grid grid-cols-3 gap-2">
-              {clarityOpts.map((c) => (
-                <button
-                  key={c}
-                  onClick={() => onChange({ ...value, clarity: c })}
-                  className={`rounded-lg border px-3 py-2 text-xs transition-colors ${
-                    value.clarity === c
-                      ? "border-neutral-900 bg-white text-neutral-900 dark:border-white dark:bg-neutral-900 dark:text-white"
-                      : "border-neutral-200 text-neutral-600 hover:border-neutral-300 dark:border-neutral-700 dark:text-neutral-400"
-                  }`}
-                >
-                  {c}
-                </button>
-              ))}
-            </div>
-          </div>
+            <ParamSection title="清晰度">
+              <SegmentedRow count={clarityOpts.length}>
+                {clarityOpts.map((c) => (
+                  <SegmentButton key={c} active={value.clarity === c} onClick={() => onChange({ ...value, clarity: c })}>
+                    {c}
+                  </SegmentButton>
+                ))}
+              </SegmentedRow>
+            </ParamSection>
           )}
 
-          {/* 比例 */}
           {ratioOpts.length > 0 && (
-          <div className="mt-4 first:mt-0">
-            <p className="mb-2 text-xs text-neutral-500">比例</p>
-            <div className="grid grid-cols-5 gap-2">
-              {ratioOpts.map((r) => {
-                const isSelected = value.ratio === r.value;
-                const scale = 20 / Math.max(r.w, r.h);
-                const iw = Math.round(r.w * scale);
-                const ih = Math.round(r.h * scale);
-                return (
-                  <button
-                    key={r.value}
-                    onClick={() => onChange({ ...value, ratio: r.value })}
-                    className={`flex flex-col items-center justify-center gap-1.5 rounded-lg border py-2 transition-colors ${
-                      isSelected
-                        ? "border-neutral-900 dark:border-white"
-                        : "border-neutral-200 hover:border-neutral-300 dark:border-neutral-700"
-                    }`}
-                  >
-                    <span className="flex h-5 items-center justify-center">
-                      <span
-                        className={`block rounded-[3px] border-[1.5px] ${
-                          isSelected
-                            ? "border-neutral-900 dark:border-white"
-                            : "border-neutral-400 dark:border-neutral-500"
-                        }`}
-                        style={{ width: iw, height: ih }}
-                      />
-                    </span>
-                    <span
-                      className={`text-[10px] leading-none ${
-                        isSelected ? "font-medium text-neutral-900 dark:text-white" : "text-neutral-500"
-                      }`}
-                    >
-                      {r.label}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+            <ParamSection title="图片尺寸">
+              <div className="grid grid-cols-6 gap-x-1 gap-y-2 rounded-lg bg-neutral-100 p-2 dark:bg-white/8">
+                {ratioOpts.map((r) => (
+                  <RatioTile key={r.value} option={r} active={value.ratio === r.value} onClick={() => onChange({ ...value, ratio: r.value })} />
+                ))}
+              </div>
+            </ParamSection>
+          )}
+
+          {showBatch && (
+            <ParamSection title="图片张数">
+              <SegmentedRow count={normalizedBatchOptions.length}>
+                {normalizedBatchOptions.map((count) => (
+                  <SegmentButton key={count} active={batchCount === count} onClick={() => onBatchChange(count)}>
+                    {count}
+                  </SegmentButton>
+                ))}
+              </SegmentedRow>
+            </ParamSection>
           )}
         </div>,
         document.body,
       )}
     </div>
+  );
+}
+
+function ParamSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="not-first:mt-4">
+      <div className="mb-2 text-[14px] font-semibold leading-5 text-neutral-700 dark:text-neutral-200">{title}</div>
+      {children}
+    </section>
+  );
+}
+
+function SegmentedRow({ children, count }: { children: ReactNode; count: number }) {
+  return (
+    <div className="grid rounded-lg bg-neutral-100 p-1 dark:bg-white/8" style={{ gridTemplateColumns: `repeat(${Math.max(1, count)}, minmax(0, 1fr))` }}>
+      {children}
+    </div>
+  );
+}
+
+function SegmentButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`${active ? "bg-white text-neutral-950 shadow-sm dark:bg-white dark:text-neutral-950" : "text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white"} flex h-9 items-center justify-center rounded-md px-2 text-sm font-medium transition-colors`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function RatioTile({ option, active, onClick }: { option: RatioOption; active: boolean; onClick: () => void }) {
+  const scale = 18 / Math.max(option.w, option.h);
+  const width = Math.max(4, Math.round(option.w * scale));
+  const height = Math.max(4, Math.round(option.h * scale));
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`${active ? "bg-white text-neutral-950 shadow-sm dark:bg-white dark:text-neutral-950" : "text-neutral-500 hover:bg-white/70 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-white/10 dark:hover:text-white"} flex h-[50px] flex-col items-center justify-center gap-1 rounded-lg text-[11px] font-medium transition-colors`}
+    >
+      <span className="flex h-5 items-center justify-center">
+        <span className="block rounded-[2px] border border-current" style={{ width, height } as CSSProperties} />
+      </span>
+      <span className="leading-none">{option.label}</span>
+    </button>
   );
 }

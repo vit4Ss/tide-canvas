@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -35,6 +36,12 @@ func (h *Handler) RegisterRoutes(api gin.IRouter) {
 	g.POST("/login", middleware.RateLimit(middleware.RateLimitOptions{
 		Name: "login", Limit: 10, Period: 60 * time.Second, Dimension: middleware.DimIP, BanThreshold: 5, BanSeconds: 900,
 	}), h.login)
+	g.POST("/password-reset/request", middleware.RateLimit(middleware.RateLimitOptions{
+		Name: "password_reset_request", Limit: 5, Period: 600 * time.Second, Dimension: middleware.DimIP, BanThreshold: 3, BanSeconds: 1800,
+	}), h.requestPasswordReset)
+	g.POST("/password-reset/confirm", middleware.RateLimit(middleware.RateLimitOptions{
+		Name: "password_reset_confirm", Limit: 10, Period: 600 * time.Second, Dimension: middleware.DimIP, BanThreshold: 5, BanSeconds: 1800,
+	}), h.confirmPasswordReset)
 	g.POST("/refresh", h.refresh)
 	g.POST("/logout", h.logout)
 
@@ -84,20 +91,55 @@ func (h *Handler) login(c *gin.Context) {
 		response.FailErr(c, err)
 		return
 	}
+	setLoginCookies(c, h.jwt, vo)
 	response.OK(c, vo)
+}
+
+func (h *Handler) requestPasswordReset(c *gin.Context) {
+	var req PasswordResetRequestReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, ecode.BadRequest)
+		return
+	}
+	if err := h.svc.RequestPasswordReset(&req, c.ClientIP(), c.GetHeader("User-Agent")); err != nil {
+		response.FailErr(c, err)
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (h *Handler) confirmPasswordReset(c *gin.Context) {
+	var req PasswordResetConfirmReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, ecode.BadRequest)
+		return
+	}
+	if err := h.svc.ConfirmPasswordReset(&req); err != nil {
+		response.FailErr(c, err)
+		return
+	}
+	response.OK(c, nil)
 }
 
 func (h *Handler) refresh(c *gin.Context) {
 	var req RefreshReq
-	if err := c.ShouldBindJSON(&req); err != nil {
+	_ = c.ShouldBindJSON(&req)
+	if req.RefreshToken == "" {
+		if cookie, err := c.Cookie("tc_refresh_token"); err == nil {
+			req.RefreshToken = cookie
+		}
+	}
+	if req.RefreshToken == "" {
 		response.Fail(c, ecode.BadRequest)
 		return
 	}
 	vo, err := h.svc.RefreshToken(&req)
 	if err != nil {
+		clearLoginCookies(c)
 		response.FailErr(c, err)
 		return
 	}
+	setLoginCookies(c, h.jwt, vo)
 	response.OK(c, vo)
 }
 
@@ -138,6 +180,28 @@ func (h *Handler) updateProfile(c *gin.Context) {
 }
 
 func (h *Handler) logout(c *gin.Context) {
-	// 无状态 JWT：前端清除本地 token 即可。
+	clearLoginCookies(c)
 	response.OK(c, nil)
+}
+
+func setLoginCookies(c *gin.Context, jwtProvider *appjwt.Provider, vo *LoginVO) {
+	if vo == nil {
+		return
+	}
+	secure := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("tc_access_token", vo.AccessToken, int(jwtProvider.AccessTTL()), "/", "", secure, true)
+	c.SetCookie("tc_refresh_token", vo.RefreshToken, int(jwtProvider.RefreshTTL()), "/api/auth", "", secure, true)
+}
+
+func clearLoginCookies(c *gin.Context) {
+	secure := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("tc_access_token", "", -1, "/", "", secure, true)
+	c.SetCookie("tc_refresh_token", "", -1, "/api/auth", "", secure, true)
+}
+
+// SetLoginCookies exposes the auth cookie writer for OAuth callbacks.
+func SetLoginCookies(c *gin.Context, jwtProvider *appjwt.Provider, vo *LoginVO) {
+	setLoginCookies(c, jwtProvider, vo)
 }

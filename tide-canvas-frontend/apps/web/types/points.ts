@@ -7,7 +7,7 @@ export interface PointsBalanceVO {
 
 export interface PointsTransactionVO {
   id: number;
-  userId: number;
+  userName?: string;
   amount: number;
   balanceAfter: number;
   type: number;
@@ -28,7 +28,7 @@ export interface CheckinCalendarVO {
 }
 
 export interface PointsTransactionQuery extends PageQuery {
-  userId?: number;
+  userKeyword?: string;
   type?: number;
   startTime?: string;
   endTime?: string;

@@ -7,6 +7,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"gorm.io/gorm"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -46,6 +47,14 @@ func New(db *gorm.DB, conf *viper.Viper, logger *logrus.Logger, rdb *redis.Clien
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
+
+	if conf.GetString("storage.kind") != "oss" {
+		localDir := conf.GetString("storage.local_dir")
+		if localDir == "" {
+			localDir = "./uploads"
+		}
+		r.Static("/uploads", localDir)
+	}
 
 	// JWT 提供者（密钥与有效期来自配置）
 	jwtProvider := appjwt.NewProvider(
@@ -95,9 +104,11 @@ func New(db *gorm.DB, conf *viper.Viper, logger *logrus.Logger, rdb *redis.Clien
 	teamSvc := team.NewService(team.NewRepository(db), logger)
 	team.NewHandler(teamSvc, jwtProvider).RegisterRoutes(api, jwtProvider)
 
-	// auth 模块（注册/登录/刷新/改密/当前用户）。加价系数依赖注入真实 team 服务。
-	// 验证码服务由 email 模块提供（SMTP + 模板渲染 + 验证码存储；mail.enabled=false 时走开发模式打日志）。
-	authSvc := auth.NewService(userRepo, jwtProvider, email.NewService(db, conf, logger, codeStore), teamSvc)
+	// auth 模块（注册/登录/刷新/改密/当前用户/密码重置）。加价系数依赖注入真实 team 服务。
+	// 邮件服务由 email 模块提供（SMTP + 模板渲染 + 验证码/重置邮件；mail.enabled=false 时走开发模式打日志）。
+	mailSvc := email.NewService(db, conf, logger, codeStore)
+	resetTTL := time.Duration(conf.GetInt("auth.password_reset_ttl_seconds")) * time.Second
+	authSvc := auth.NewService(userRepo, jwtProvider, mailSvc, mailSvc, teamSvc, conf.GetString("app.public_url"), resetTTL)
 	auth.NewHandler(authSvc, jwtProvider).RegisterRoutes(api)
 
 	// points 模块（积分余额/流水分页 + 每日签到/状态/日历）。
@@ -185,7 +196,7 @@ func New(db *gorm.DB, conf *viper.Viper, logger *logrus.Logger, rdb *redis.Clien
 	ai.StartRecoveryScheduler(aiSvc, conf.GetInt64("ai.task.timeout-scan-ms"), logger)
 
 	// oauth 第三方登录（GitHub/Google/微信，均为公开路由）
-	oauth.NewHandler(oauth.NewService(userRepo, jwtProvider, conf, logger)).RegisterRoutes(api)
+	oauth.NewHandler(oauth.NewService(userRepo, jwtProvider, conf, logger), jwtProvider).RegisterRoutes(api)
 
 	// log 日志查询（管理端：访问/登录/操作日志分页 + PV/UV 统计），JWTAuth + AdminOnly + RBAC 按钮级权限。
 	logmod.NewHandler(logmod.NewService(logmod.NewRepository(db), logger)).RegisterRoutes(api, jwtProvider, permLoader)

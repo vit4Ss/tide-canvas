@@ -105,6 +105,42 @@ func (r *Repository) FindUserByPublicID(publicID string) (*model.SysUser, error)
 	return &u, nil
 }
 
+// ExistsUserByEmail 邮箱是否已存在。
+func (r *Repository) ExistsUserByEmail(email string) (bool, error) {
+	var n int64
+	if err := r.db.Model(&model.SysUser{}).Where("email = ?", email).Count(&n).Error; err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// ExistsUserByUsername 用户名是否已存在。
+func (r *Repository) ExistsUserByUsername(username string) (bool, error) {
+	var n int64
+	if err := r.db.Model(&model.SysUser{}).Where("username = ?", username).Count(&n).Error; err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// ExistsUserByNickname 昵称是否已存在。
+func (r *Repository) ExistsUserByNickname(nickname string, excludeID *int64) (bool, error) {
+	var n int64
+	tx := r.db.Model(&model.SysUser{}).Where("nickname = ?", nickname)
+	if excludeID != nil {
+		tx = tx.Where("id != ?", *excludeID)
+	}
+	if err := tx.Count(&n).Error; err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// CreateUser 新增用户（主键与 public_id 由模型 BeforeCreate 注入）。
+func (r *Repository) CreateUser(user *model.SysUser) error {
+	return r.db.Create(user).Error
+}
+
 // UpdateUserColumns 局部更新用户指定列（自动维护 update_time）。
 func (r *Repository) UpdateUserColumns(id int64, columns map[string]interface{}) error {
 	if len(columns) == 0 {
@@ -263,7 +299,7 @@ func (r *Repository) CountAll(m interface{}) (int64, error) {
 // CountTodayByColumn 统计某模型今日（DATE(col)=CURDATE()）记录数。
 func (r *Repository) CountTodayByColumn(m interface{}, col string) (int64, error) {
 	var n int64
-	err := r.db.Model(m).Where("DATE("+col+") = CURDATE()").Count(&n).Error
+	err := r.db.Model(m).Where("DATE(" + col + ") = CURDATE()").Count(&n).Error
 	return n, err
 }
 

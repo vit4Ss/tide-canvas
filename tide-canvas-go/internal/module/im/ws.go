@@ -68,9 +68,15 @@ func originChecker(allowed []string) func(*http.Request) bool {
 // 浏览器原生 WebSocket 无法自定义请求头，故 access token 优先从 query 参数 token 传入，
 // 兼容 Authorization: Bearer 头（供非浏览器客户端）。
 func (h *WSHandler) Serve(c *gin.Context) {
-	token := c.Query("token")
+	token := ""
+	if cookie, err := c.Cookie("tc_access_token"); err == nil {
+		token = cookie
+	}
 	if token == "" {
 		token = bearerToken(c.GetHeader("Authorization"))
+	}
+	if token == "" {
+		token = c.Query("token")
 	}
 	claims, err := h.jwt.Parse(token)
 	if err != nil || claims.Type == appjwt.TypeRefresh {

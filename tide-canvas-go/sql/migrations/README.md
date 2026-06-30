@@ -25,6 +25,10 @@
 | 002 | `002_2026-06-17_follow_system.sql` | `sys_follow` 关注关系表 | 是 |
 | 003 | `003_2026-06-17_notification_system.sql` | `sys_notification` 站内通知表 | 是 |
 | 004 | `004_2026-06-17_user_concurrency_unlimited.sql` | `sys_user.concurrency_unlimited` 列（用户级免 AI 并发限制） | 否 |
+| 005 | `005_2026-06-29_prompt_preflight.sql` | AI 提示词预检策略与审核日志 | 是 |
+| 006 | `006_2026-06-29_model_routing_tables.sql` | AI 上游模型、路由规则、健康状态与决策日志 | 是 |
+| 007 | `007_2026-06-29_unique_user_nickname.sql` | 清理并约束用户昵称唯一 | 否 |
+| 008 | `008_2026-06-30_password_reset.sql` | 密码重置令牌表与重置邮件模板 | 是 |
 
 ## 约定（重要）
 

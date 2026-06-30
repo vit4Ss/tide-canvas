@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowUp, Bot, ChevronDown, ChevronRight, Expand, FileText, Loader2, Maximize2, Menu, Minimize2, Plus, Sparkles, X, Zap } from "lucide-react";
 import { aiApi, uploadFileSmart } from "@/lib/api";
+import { referenceKindFromFile, referenceKindFromMeta, resolveModelReferenceLimitBytes, validateKnownFileSize } from "@/lib/upload-limits";
 import { toast } from "@/components/shared/toast";
 import { AiModelType, AiTaskStatus, type AiModelVO, type AiTaskVO } from "@/types/ai";
 import type { FileVO } from "@/types/file";
@@ -424,7 +425,11 @@ export function CanvasAssistantPanel() {
 
     for (const file of files) {
       try {
-        const result = await uploadFileSmart(file, (progress) => setUploadProgress(progress));
+        const kind = referenceKindFromFile(file);
+        const result = await uploadFileSmart(file, (progress) => setUploadProgress(progress), {
+          maxBytes: resolveModelReferenceLimitBytes(selectedModel, kind),
+          label: kind === "video" ? "参考视频" : "参考文件",
+        });
         if (result.success && result.data?.fileUrl) {
           uploaded.push(result.data);
         } else {
@@ -483,7 +488,14 @@ export function CanvasAssistantPanel() {
     const currentAttachments = attachments;
     if ((!text && currentAttachments.length === 0) || sending || uploading) return;
 
-    const nextActiveSessionId = activeSessionId || createSessionId();
+    for (const file of currentAttachments) {
+      const kind = referenceKindFromMeta(file);
+      const message = validateKnownFileSize(file.fileSize, file.originalName, {
+        maxBytes: resolveModelReferenceLimitBytes(selectedModel, kind),
+        label: "参考文件",
+      });
+      if (message) { toast.error(message); return; }
+    }    const nextActiveSessionId = activeSessionId || createSessionId();
     if (!activeSessionId) setActiveSessionId(nextActiveSessionId);
     const history = messages
       .filter((item) => item.status === "done")

@@ -71,13 +71,15 @@ async function sliceGridAndApply(nodeId: string, gridUrl: string) {
     useCanvasStore.getState().updateNode(nodeId, { images: blobUrls, imageSrc: blobUrls[0] });
 
     const remote: string[] = [];
+    let firstFile: { fileSize: number; fileType: string; mimeType: string } | null = null;
     for (const s of slices) {
       const up = await uploadFileSmart(
           new File([s.blob], `grid-${s.cellIndex + 1}.png`, { type: "image/png" }));
       if (!up.success || !up.data?.fileUrl) throw new Error("upload failed");
       remote.push(up.data.fileUrl);
+      if (!firstFile) firstFile = { fileSize: up.data.fileSize, fileType: up.data.fileType, mimeType: up.data.mimeType };
     }
-    useCanvasStore.getState().updateNode(nodeId, { images: remote, imageSrc: remote[0] });
+    useCanvasStore.getState().updateNode(nodeId, { images: remote, imageSrc: remote[0], ...(firstFile ? { fileSize: firstFile.fileSize, fileType: firstFile.fileType, mimeType: firstFile.mimeType } : {}) });
     const toRevoke = blobUrls;
     blobUrls = [];
     setTimeout(() => toRevoke.forEach((u) => URL.revokeObjectURL(u)), 5000);

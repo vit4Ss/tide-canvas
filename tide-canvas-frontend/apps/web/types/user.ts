@@ -1,5 +1,5 @@
 export interface UserVO {
-  id: number;
+  id: string;
   username: string;
   email: string;
   phone: string;
@@ -26,7 +26,7 @@ export interface UserVO {
 }
 
 export interface UserSimpleVO {
-  id: number;
+  id: string;
   username: string;
   nickname: string;
   avatar: string;
@@ -62,6 +62,15 @@ export interface UpdatePasswordDTO {
 export interface UpdateProfileDTO {
   nickname?: string;
   phone?: string;
+}
+
+export interface PasswordResetRequestDTO {
+  email: string;
+}
+
+export interface PasswordResetConfirmDTO {
+  token: string;
+  newPassword: string;
 }
 
 export enum UserRole {

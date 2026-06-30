@@ -1,6 +1,6 @@
 import type { Result } from "@/types/api";
 
-const SERVER_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8080";
+const SERVER_URL = process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8080";
 const BASE_URL = typeof window !== "undefined" ? "" : SERVER_URL;
 
 type QueryParams = Record<string, string | number | boolean | undefined | null>;
@@ -32,21 +32,46 @@ function buildUrl(path: string, params?: QueryParams): string {
   return url;
 }
 
+let memoryAccessToken: string | null = null;
+let memoryRefreshToken: string | null = null;
+
 function getAccessToken(): string | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  return localStorage.getItem("access_token");
+  return memoryAccessToken;
 }
 
 function setTokens(accessToken: string, refreshToken: string) {
-  localStorage.setItem("access_token", accessToken);
-  localStorage.setItem("refresh_token", refreshToken);
+  memoryAccessToken = accessToken;
+  memoryRefreshToken = refreshToken;
+  if (typeof window !== "undefined") {
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("refresh_token");
+  }
 }
 
 function clearTokens() {
-  localStorage.removeItem("access_token");
-  localStorage.removeItem("refresh_token");
+  memoryAccessToken = null;
+  memoryRefreshToken = null;
+  if (typeof window !== "undefined") {
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("refresh_token");
+  }
+}
+
+function authHeaders(init?: HeadersInit): Headers {
+  const headers = new Headers(init);
+  const token = getAccessToken();
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  return headers;
+}
+
+async function fetchWithAuth(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  return fetch(input, {
+    ...init,
+    headers: authHeaders(init.headers),
+    credentials: init.credentials ?? "include",
+  });
 }
 
 /**
@@ -70,15 +95,13 @@ async function parseResult<T>(res: Response): Promise<Result<T>> {
 }
 
 async function refreshAccessToken(): Promise<string | null> {
-  const refreshToken = localStorage.getItem("refresh_token");
-  if (!refreshToken) {
-    return null;
-  }
   try {
+    const refreshToken = memoryRefreshToken;
     const res = await fetch(buildUrl("/api/auth/refresh"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refreshToken }),
+      credentials: "include",
+      body: JSON.stringify(refreshToken ? { refreshToken } : {}),
     });
     const result = await parseResult<{ accessToken: string; refreshToken: string }>(res);
     if (result.success) {
@@ -115,13 +138,14 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<R
   const config: RequestInit = {
     ...rest,
     headers,
+    credentials: "include",
     body: body ? JSON.stringify(body) : undefined,
   };
 
   let res = await fetch(url, config);
   let result: Result<T> = await parseResult<T>(res);
 
-  if (result.code === 401 && token) {
+  if (result.code === 401) {
     if (!refreshPromise) {
       refreshPromise = refreshAccessToken();
     }
@@ -132,17 +156,11 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<R
       headers["Authorization"] = `Bearer ${newToken}`;
       res = await fetch(url, { ...config, headers });
       result = await parseResult<T>(res);
-    } else if (!getAccessToken()) {
-      // 凭据已被明确清除(refresh token 失效)才跳登录；服务暂不可用时保留会话、把失败结果交给页面提示
-      if (typeof window !== "undefined") {
-        window.location.href = "/login";
-      }
     }
   }
 
   return result;
 }
-
 async function uploadFile<T>(path: string, file: File | FormData): Promise<Result<T>> {
   const headers: Record<string, string> = {};
   const token = getAccessToken();
@@ -159,12 +177,12 @@ async function uploadFile<T>(path: string, file: File | FormData): Promise<Resul
   let res = await fetch(buildUrl(path), {
     method: "POST",
     headers,
+    credentials: "include",
     body: formData,
   });
   let result: Result<T> = await parseResult<T>(res);
 
-  // 401 时尝试刷新 token 后重试
-  if (result.code === 401 && token) {
+  if (result.code === 401) {
     if (!refreshPromise) {
       refreshPromise = refreshAccessToken();
     }
@@ -176,19 +194,15 @@ async function uploadFile<T>(path: string, file: File | FormData): Promise<Resul
       res = await fetch(buildUrl(path), {
         method: "POST",
         headers,
+        credentials: "include",
         body: formData,
       });
       result = await parseResult<T>(res);
-    } else if (!getAccessToken()) {
-      if (typeof window !== "undefined") {
-        window.location.href = "/login";
-      }
     }
   }
 
   return result;
 }
-
 /** 带上传进度的文件上传（用 XHR；fetch 无法上报上传进度）。401 时刷新 token 重试一次。 */
 async function uploadFileWithProgress<T>(
   path: string,
@@ -205,6 +219,7 @@ async function uploadFileWithProgress<T>(
     new Promise<Result<T>>((resolve) => {
       const xhr = new XMLHttpRequest();
       xhr.open("POST", buildUrl(path));
+      xhr.withCredentials = true;
       if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
       if (onProgress) {
         xhr.upload.onprogress = (e) => {
@@ -224,7 +239,7 @@ async function uploadFileWithProgress<T>(
 
   const token = getAccessToken();
   let result = await send(token);
-  if (result.code === 401 && token) {
+  if (result.code === 401) {
     const newToken = await refreshAccessToken();
     if (newToken) result = await send(newToken);
   }
@@ -283,4 +298,4 @@ export const http = {
     putWithProgress(url, body, headers, onProgress),
 };
 
-export { setTokens, clearTokens };
+export { setTokens, clearTokens, getAccessToken, fetchWithAuth };

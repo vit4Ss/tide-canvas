@@ -1,78 +1,71 @@
 "use client";
 
+import { useState, type ReactNode } from "react";
+import { Loader2 } from "lucide-react";
+import { http } from "@/lib/http";
 import { GitHubIcon, GoogleIcon, WeChatIcon } from "./oauth-icons";
 
-const GITHUB_CLIENT_ID = process.env.NEXT_PUBLIC_GITHUB_CLIENT_ID || "";
-const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "";
-const WECHAT_APP_ID = process.env.NEXT_PUBLIC_WECHAT_APP_ID || "";
-const OAUTH_REDIRECT_BASE = process.env.NEXT_PUBLIC_OAUTH_REDIRECT_BASE || "http://localhost:3000";
+const OAUTH_REDIRECT_BASE = process.env.NEXT_PUBLIC_OAUTH_REDIRECT_BASE || "";
+
+const PROVIDER_NAMES: Record<string, string> = {
+  github: "GitHub",
+  google: "Google",
+  wechat: "微信",
+};
+
+interface AuthorizeVO {
+  authorizeUrl: string;
+  state: string;
+}
 
 interface Props {
   onUnconfigured: (provider: string) => void;
 }
 
+function loginRedirectUri(): string {
+  const base = OAUTH_REDIRECT_BASE || window.location.origin;
+  return `${base.replace(/\/$/, "")}/login`;
+}
+
 export function OAuthButtons({ onUnconfigured }: Props) {
-  const startOAuth = (
-    provider: string,
-    authUrl: string,
-    clientId: string,
-    scope: string,
-    extraParams?: Record<string, string>,
-  ) => {
-    if (!clientId) {
-      onUnconfigured(provider);
-      return;
+  const [loadingProvider, setLoadingProvider] = useState<string | null>(null);
+
+  const startOAuth = async (provider: "github" | "google" | "wechat") => {
+    if (loadingProvider) return;
+    setLoadingProvider(provider);
+    try {
+      const res = await http.get<AuthorizeVO>(`/api/auth/oauth/${provider}/authorize`, {
+        redirectUri: loginRedirectUri(),
+      });
+      if (!res.success || !res.data?.authorizeUrl || !res.data?.state) {
+        onUnconfigured(PROVIDER_NAMES[provider]);
+        return;
+      }
+      sessionStorage.setItem("oauth_provider", provider);
+      sessionStorage.setItem("oauth_state", res.data.state);
+      window.location.href = res.data.authorizeUrl;
+    } catch {
+      onUnconfigured(PROVIDER_NAMES[provider]);
+    } finally {
+      setLoadingProvider(null);
     }
-    const state = crypto.randomUUID();
-    sessionStorage.setItem("oauth_provider", provider);
-    sessionStorage.setItem("oauth_state", state);
-    const params = new URLSearchParams({
-      client_id: clientId,
-      redirect_uri: `${OAUTH_REDIRECT_BASE}/login`,
-      scope,
-      state,
-      response_type: "code",
-      ...extraParams,
-    });
-    window.location.href = `${authUrl}?${params}`;
   };
 
-  const handleGitHub = () =>
-    startOAuth("github", "https://github.com/login/oauth/authorize", GITHUB_CLIENT_ID, "user:email");
+  const btnClass = "flex items-center justify-center gap-2 rounded-lg border border-neutral-200 bg-white px-4 py-2.5 text-sm font-medium transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900 dark:hover:bg-neutral-800";
 
-  const handleGoogle = () =>
-    startOAuth("google", "https://accounts.google.com/o/oauth2/v2/auth", GOOGLE_CLIENT_ID, "openid email profile", {
-      access_type: "offline",
-      prompt: "consent",
-    });
-
-  const handleWeChat = () => {
-    if (!WECHAT_APP_ID) return onUnconfigured("微信");
-    const state = crypto.randomUUID();
-    sessionStorage.setItem("oauth_provider", "wechat");
-    sessionStorage.setItem("oauth_state", state);
-    const params = new URLSearchParams({
-      appid: WECHAT_APP_ID,
-      redirect_uri: `${OAUTH_REDIRECT_BASE}/login`,
-      response_type: "code",
-      scope: "snsapi_login",
-      state,
-    });
-    window.location.href = `https://open.weixin.qq.com/connect/qrconnect?${params}#wechat_redirect`;
-  };
-
-  const btnClass = "flex items-center justify-center gap-2 rounded-lg border border-neutral-200 bg-white px-4 py-2.5 text-sm font-medium transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:hover:bg-neutral-800";
+  const iconOrSpinner = (provider: string, icon: ReactNode) =>
+    loadingProvider === provider ? <Loader2 className="h-4 w-4 animate-spin" /> : icon;
 
   return (
     <div className="grid grid-cols-3 gap-3">
-      <button onClick={handleGitHub} className={btnClass}>
-        <GitHubIcon />GitHub
+      <button type="button" onClick={() => startOAuth("github")} disabled={!!loadingProvider} className={btnClass}>
+        {iconOrSpinner("github", <GitHubIcon />)}GitHub
       </button>
-      <button onClick={handleGoogle} className={btnClass}>
-        <GoogleIcon />Google
+      <button type="button" onClick={() => startOAuth("google")} disabled={!!loadingProvider} className={btnClass}>
+        {iconOrSpinner("google", <GoogleIcon />)}Google
       </button>
-      <button onClick={handleWeChat} className={btnClass}>
-        <WeChatIcon />微信
+      <button type="button" onClick={() => startOAuth("wechat")} disabled={!!loadingProvider} className={btnClass}>
+        {iconOrSpinner("wechat", <WeChatIcon />)}微信
       </button>
     </div>
   );

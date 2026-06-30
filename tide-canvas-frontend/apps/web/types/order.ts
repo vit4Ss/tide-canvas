@@ -1,8 +1,9 @@
 import type { PageQuery } from "./api";
 
 export interface RechargeOrderVO {
-  id: number;
+  id: string;
   orderNo: string;
+  userName?: string;
   amount: number;
   pointsAmount: number;
   paymentMethod: string;

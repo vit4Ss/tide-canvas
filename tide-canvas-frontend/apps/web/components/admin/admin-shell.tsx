@@ -116,7 +116,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
         width={232}
         style={{ borderRight: `1px solid ${token.colorBorderSecondary}`, overflow: "auto" }}
       >
-        <Link href="/admin" style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 16px", height: 56, flexShrink: 0 }}>
+        <Link href="/" title="Back to user site" style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 16px", height: 56, flexShrink: 0 }}>
           <BrandMark className="h-8 w-8 shrink-0" />
           {!collapsed && <span style={{ fontSize: 15, fontWeight: 700, color: token.colorText, whiteSpace: "nowrap" }}>TideCanvas</span>}
         </Link>

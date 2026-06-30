@@ -45,12 +45,13 @@ func TxTypeName(code int) string {
 // TransactionQuery 积分交易记录查询条件（对齐 PointsTransactionQuery extends PageQuery）。
 // 时间格式 yyyy-MM-dd HH:mm:ss；UserId 仅管理端查询使用。
 type TransactionQuery struct {
-	PageNum   int    `form:"pageNum"`
-	PageSize  int    `form:"pageSize"`
-	UserID    *int64 `form:"userId"`
-	Type      *int   `form:"type"`
-	StartTime string `form:"startTime"`
-	EndTime   string `form:"endTime"`
+	PageNum     int    `form:"pageNum"`
+	PageSize    int    `form:"pageSize"`
+	UserID      *int64 `form:"userId"`
+	UserKeyword string `form:"userKeyword"`
+	Type        *int   `form:"type"`
+	StartTime   string `form:"startTime"`
+	EndTime     string `form:"endTime"`
 }
 
 // normalize 校正分页参数，对齐旧 PageQuery 默认值与边界（pageNum>=1，1<=pageSize<=100，默认20）。
@@ -75,7 +76,8 @@ type PointsBalanceVO struct {
 // PointsTransactionVO 积分交易记录（对齐 PointsTransactionVO）。
 type PointsTransactionVO struct {
 	ID           int64     `json:"id"`
-	UserID       int64     `json:"userId"`
+	UserID       int64     `json:"-"`
+	UserName     string    `json:"userName"`
 	Amount       int       `json:"amount"`
 	BalanceAfter int       `json:"balanceAfter"`
 	Type         int       `json:"type"`

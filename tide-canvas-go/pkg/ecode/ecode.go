@@ -32,17 +32,19 @@ var (
 	Unauthorized = New(401, "未登录或Token已过期")
 	Forbidden    = New(403, "无权限访问")
 	NotFound     = New(404, "资源不存在")
+	Conflict     = New(409, "资源已被其他操作更新")
 	RateLimit    = New(429, "请求频率超限")
 	ServerError  = New(500, "系统内部错误")
 )
 
 // 账号
 var (
-	UsernameExists    = New(1001, "用户名已存在")
-	EmailExists       = New(1002, "邮箱已注册")
-	PasswordIncorrect = New(1003, "密码不正确")
-	AccountDisabled   = New(1004, "账号已被禁用")
-	AccountNotFound   = New(1005, "账号不存在")
+	UsernameExists       = New(1001, "用户名已存在")
+	EmailExists          = New(1002, "邮箱已注册")
+	PasswordIncorrect    = New(1003, "密码不正确")
+	AccountDisabled      = New(1004, "账号已被禁用")
+	AccountNotFound      = New(1005, "账号不存在")
+	PasswordResetInvalid = New(1006, "重置链接无效或已过期")
 )
 
 // AI / 积分 / 博客 / 订单 / 兑换

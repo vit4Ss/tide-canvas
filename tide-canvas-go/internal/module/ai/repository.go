@@ -230,6 +230,110 @@ func (r *Repository) ProviderNames() (map[int64]string, error) {
 }
 
 // =====================================================================
+// Production model routing
+// =====================================================================
+
+func (r *Repository) ListUpstreamModels() ([]model.AiUpstreamModel, error) {
+	var list []model.AiUpstreamModel
+	err := r.db.Order("provider_id ASC, priority DESC, id ASC").Find(&list).Error
+	return list, err
+}
+
+func (r *Repository) FindUpstreamModelByProviderAndModelID(providerID int64, modelID string) (*model.AiUpstreamModel, error) {
+	var m model.AiUpstreamModel
+	err := r.db.Where("provider_id = ? AND model_id = ?", providerID, modelID).First(&m).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+func (r *Repository) FindUpstreamModelByID(id int64) (*model.AiUpstreamModel, error) {
+	var m model.AiUpstreamModel
+	err := r.db.First(&m, id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+func (r *Repository) CreateUpstreamModel(m *model.AiUpstreamModel) error {
+	return r.db.Create(m).Error
+}
+
+func (r *Repository) UpdateUpstreamModelColumns(id int64, columns map[string]interface{}) error {
+	if len(columns) == 0 {
+		return nil
+	}
+	return r.db.Model(&model.AiUpstreamModel{}).Where("id = ?", id).Updates(columns).Error
+}
+
+func (r *Repository) DeleteUpstreamModel(id int64) error {
+	return r.db.Delete(&model.AiUpstreamModel{}, id).Error
+}
+
+func (r *Repository) ListRoutesByLogicalModel(logicalModelID int64) ([]model.AiModelRoute, error) {
+	var list []model.AiModelRoute
+	err := r.db.Where("logical_model_id = ?", logicalModelID).Order("handler_name ASC, priority DESC, id ASC").Find(&list).Error
+	return list, err
+}
+
+func (r *Repository) ListEnabledRoutes(logicalModelID int64, handlerName string) ([]model.AiModelRoute, error) {
+	var list []model.AiModelRoute
+	err := r.db.Where("logical_model_id = ? AND handler_name = ? AND status = ?", logicalModelID, handlerName, 1).
+		Order("priority DESC, id ASC").Find(&list).Error
+	return list, err
+}
+
+func (r *Repository) FindRouteByID(id int64) (*model.AiModelRoute, error) {
+	var route model.AiModelRoute
+	err := r.db.First(&route, id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &route, nil
+}
+
+func (r *Repository) CreateModelRoute(route *model.AiModelRoute) error {
+	return r.db.Create(route).Error
+}
+
+func (r *Repository) UpdateModelRouteColumns(id int64, columns map[string]interface{}) error {
+	if len(columns) == 0 {
+		return nil
+	}
+	return r.db.Model(&model.AiModelRoute{}).Where("id = ?", id).Updates(columns).Error
+}
+
+func (r *Repository) DeleteModelRoute(id int64) error {
+	return r.db.Delete(&model.AiModelRoute{}, id).Error
+}
+
+func (r *Repository) FindProviderHealthByProviderID(providerID int64) (*model.AiProviderHealth, error) {
+	var health model.AiProviderHealth
+	err := r.db.Where("provider_id = ?", providerID).First(&health).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &health, nil
+}
+
+func (r *Repository) InsertRouteDecisionLog(lg *model.AiRouteDecisionLog) error {
+	return r.db.Create(lg).Error
+}
+
+// =====================================================================
 // Handler 配置
 // =====================================================================
 
@@ -266,6 +370,22 @@ func (r *Repository) UpdateHandlerColumns(name string, columns map[string]interf
 		return nil
 	}
 	return r.db.Model(&model.AiHandlerConfig{}).Where("handler_name = ?", name).Updates(columns).Error
+}
+
+// =====================================================================
+// Prompt review
+// =====================================================================
+
+// ListEnabledPromptPolicies returns active local prompt review rules ordered by severity.
+func (r *Repository) ListEnabledPromptPolicies() ([]model.AiPromptPolicy, error) {
+	var list []model.AiPromptPolicy
+	err := r.db.Where("status = ?", 1).Order("severity DESC, id ASC").Find(&list).Error
+	return list, err
+}
+
+// InsertPromptReviewLog stores a best-effort prompt preflight decision.
+func (r *Repository) InsertPromptReviewLog(lg *model.AiPromptReviewLog) error {
+	return r.db.Create(lg).Error
 }
 
 // =====================================================================
@@ -547,6 +667,28 @@ func (r *Repository) TaskStatuses(ids []int64) (map[int64]int, error) {
 	}
 	for _, x := range rows {
 		result[x.ID] = x.Status
+	}
+	return result, nil
+}
+
+// TaskResultURLs returns taskID -> persisted result URL for logs linked to tasks.
+func (r *Repository) TaskResultURLs(ids []int64) (map[int64]string, error) {
+	result := make(map[int64]string, len(ids))
+	if len(ids) == 0 {
+		return result, nil
+	}
+	type row struct {
+		ID        int64
+		ResultURL string
+	}
+	var rows []row
+	if err := r.db.Model(&model.AiTask{}).Select("id", "result_url").Where("id IN ?", ids).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, x := range rows {
+		if strings.TrimSpace(x.ResultURL) != "" {
+			result[x.ID] = x.ResultURL
+		}
 	}
 	return result, nil
 }

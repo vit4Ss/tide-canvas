@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X, Loader2, ZoomIn, ZoomOut, Maximize2, Minimize2, RotateCw, Compass, Download, Globe } from "lucide-react";
 import { toast } from "@/components/shared/toast";
+import { fetchWithAuth } from "@/lib/http";
 import type * as THREE_NS from "three";
 
 interface Props {
@@ -85,10 +86,7 @@ export function PanoramaViewer({ src, title, onClose }: Props) {
       try {
         const THREE = await import("three");
         // 后端代理 → 同源字节 → blob 贴图（避免跨域污染）
-        const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
-        const resp = await fetch(`/api/files/download?url=${encodeURIComponent(src)}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
+        const resp = await fetchWithAuth(`/api/files/download?url=${encodeURIComponent(src)}`);
         if (!resp.ok) throw new Error("图片加载失败");
         const buf = await resp.arrayBuffer();
         if (disposed) return;
@@ -329,10 +327,7 @@ export function PanoramaViewer({ src, title, onClose }: Props) {
     if (downloading) return;
     setDownloading(true);
     try {
-      const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
-      const res = await fetch(`/api/files/download?url=${encodeURIComponent(src)}&name=${encodeURIComponent(title || "panorama")}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
+      const res = await fetchWithAuth(`/api/files/download?url=${encodeURIComponent(src)}&name=${encodeURIComponent(title || "panorama")}`);
       if (!res.ok) throw new Error("download failed");
       const blob = await res.blob();
       const u = URL.createObjectURL(blob);

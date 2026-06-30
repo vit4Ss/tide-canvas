@@ -94,3 +94,6 @@ func (c *Claims) UserID() (int64, error) {
 
 // AccessTTL 返回访问令牌有效期（秒），供登录响应回传 expiresIn。
 func (p *Provider) AccessTTL() int64 { return int64(p.accessTTL.Seconds()) }
+
+// RefreshTTL 返回刷新令牌有效期（秒），供 Cookie max-age 使用。
+func (p *Provider) RefreshTTL() int64 { return int64(p.refreshTTL.Seconds()) }

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import {
-  LayoutDashboard, Users, Wallet, Bot, Settings, ScrollText, MessageSquare,
+  LayoutDashboard, Users, Wallet, Bot, Settings, ScrollText,
 } from "lucide-react";
 
 export interface AdminPage {
@@ -41,13 +41,6 @@ export const ADMIN_GROUPS: AdminGroup[] = [
     ],
   },
   {
-    key: "messages", label: "消息", icon: <MessageSquare size={16} />,
-    items: [
-      // 后端 IM/客服接口仅 AdminOnly、无细粒度权限码 → 省略 perm，所有管理员可见
-      { key: "/admin/messages", label: "消息" },
-    ],
-  },
-  {
     key: "revenue", label: "营收", icon: <Wallet size={16} />,
     items: [
       { key: "/admin/points", label: "积分管理", perm: "points:view" },
@@ -60,7 +53,7 @@ export const ADMIN_GROUPS: AdminGroup[] = [
     items: [
       { key: "/admin/ai/providers", label: "AI 供应商", perm: "provider:view" },
       { key: "/admin/ai/models", label: "模型管理", perm: "model:view" },
-      { key: "/admin/ai/handlers", label: "Handler 积分", perm: "handler:view" },
+      { key: "/admin/ai/routing", label: "模型路由", perm: "model:view" },
       { key: "/admin/ai/logs", label: "AI 日志", perm: "ailog:view" },
     ],
   },

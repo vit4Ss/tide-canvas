@@ -3,13 +3,15 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-canvas-store";
-import { Video, Upload, MapPin, Camera, Loader2, Languages, Play, Pause, Download, Maximize2, X, Shield, Zap, ArrowUp, Layers, Sparkles, Copy } from "lucide-react";
+import { Video, Upload, Camera, Loader2, Play, Pause, Download, Maximize2, X, Zap, ArrowUp, Layers, Sparkles, Copy } from "lucide-react";
 import { toast } from "@/components/shared/toast";
 import { parseRatio } from "./quality-ratio-picker";
 import { VideoParamPicker, type VideoParamValue } from "./video-param-picker";
 import { ModelPicker } from "./model-picker";
 import { useAiGeneration } from "@/hooks/canvas/use-ai-generation";
 import { aiApi, uploadFileSmart } from "@/lib/api";
+import { fetchWithAuth } from "@/lib/http";
+import { referenceKindFromMeta, resolveModelReferenceLimitBytes, validateKnownFileSize } from "@/lib/upload-limits";
 import { useAuth } from "@/hooks/use-auth";
 import { applyTeamFactor } from "@/lib/points";
 import { AiModelType, type AiModelVO } from "@/types/ai";
@@ -393,9 +395,8 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     if (!node.videoSrc || downloading) return;
     setDownloading(true);
     try {
-      const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
       const api = `/api/files/download?url=${encodeURIComponent(node.videoSrc)}&name=${encodeURIComponent(node.title || "video")}`;
-      const res = await fetch(api, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      const res = await fetchWithAuth(api);
       if (!res.ok) throw new Error("download failed");
       const blob = await res.blob();
       const objUrl = URL.createObjectURL(blob);
@@ -433,9 +434,9 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     setUploadPct(0);
     setUploading(true);
     try {
-      const res = await uploadFileSmart(file, (pct) => setUploadPct(pct));
+      const res = await uploadFileSmart(file, (pct) => setUploadPct(pct), { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "video"), label: "参考视频" });
       if (res.success) {
-        updateNode(node.id, { videoSrc: res.data.fileUrl, status: "success" });
+        updateNode(node.id, { videoSrc: res.data.fileUrl, status: "success", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType });
         toast.success("视频已上传");
       } else {
         toast.error(res.message || "上传失败");
@@ -447,7 +448,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       setLocalPreview(null);
       URL.revokeObjectURL(objUrl);
     }
-  }, [node.id, updateNode]);
+  }, [node.id, selectedModel, updateNode]);
 
   // 首次需要播放时：查/建本地缓存→用 blob；跨域不可用则回退原生 src。解析完成由 effect 触发播放。
   const ensureResolved = useCallback(async () => {
@@ -495,7 +496,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       if (!blob) { toast.error("截图失败：请为媒体源开启 GET 跨域(CORS)"); return; }
       const label = kind === "first" ? "视频首帧" : kind === "last" ? "视频尾帧" : "视频截图";
       const file = new File([blob], `frame_${time.toFixed(1)}s.png`, { type: "image/png" });
-      const res = await uploadFileSmart(file);
+      const res = await uploadFileSmart(file, undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
       if (!res.success) { toast.error(res.message || "截图上传失败"); return; }
       const st = useCanvasStore.getState();
       const nid = generateNodeId();
@@ -524,6 +525,9 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         title: label,
         imageSrc: res.data.fileUrl,
         status: "success",
+        fileSize: res.data.fileSize,
+        fileType: res.data.fileType,
+        mimeType: res.data.mimeType,
       }, true);
       // 不连线：截图图片为独立节点
       st.selectNode(nid);
@@ -531,7 +535,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     } finally {
       setCapturing(false);
     }
-  }, [capturing, duration, node.x, node.y, node.width, node.contentW, node.videoSrc]);
+  }, [capturing, duration, node.x, node.y, node.width, node.contentW, node.videoSrc, selectedModel]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     onNodeMouseDown(node.id, e);
@@ -580,7 +584,14 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     const sources = incoming
       .map((c) => st.nodes.find((n) => n.id === c.sourceId))
       .filter((n): n is CanvasNode => !!n);
-    const limit = TAB_LIMITS[videoTab];
+    for (const refNode of sources.filter((n) => n.imageSrc || n.videoSrc)) {
+      const kind = referenceKindFromMeta({ fileType: refNode.fileType, mimeType: refNode.mimeType, type: refNode.type });
+      const message = validateKnownFileSize(refNode.fileSize, refNode.title, {
+        maxBytes: resolveModelReferenceLimitBytes(selectedModel, kind),
+        label: "参考文件",
+      });
+      if (message) { toast.error(message); return; }
+    }    const limit = TAB_LIMITS[videoTab];
     // 分别收集「真正有素材」的图片 / 视频参考 URL
     const imageUrls = sources.filter((n) => n.type === "image" && n.imageSrc).map((n) => n.imageSrc as string);
     const videoUrls = sources.filter((n) => n.type === "video" && n.videoSrc).map((n) => n.videoSrc as string);
@@ -895,9 +906,6 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                   />
                 </div>
                 <div className="flex shrink-0 items-center gap-1 text-xs text-neutral-500">
-                  <button onMouseDown={stop} title="翻译" className="rounded-md p-1 hover:bg-neutral-100 dark:hover:bg-neutral-800">
-                    <Languages className="h-3.5 w-3.5" />
-                  </button>
                   <span className="flex items-center gap-0.5 px-0.5">
                     <Zap className="h-3 w-3 text-neutral-900 dark:text-neutral-100" fill="currentColor" />
                     {applyTeamFactor(pointCost, user)}

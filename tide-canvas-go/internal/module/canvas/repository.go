@@ -2,6 +2,7 @@ package canvas
 
 import (
 	"errors"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -117,6 +118,14 @@ func (r *Repository) Save(p *model.CanvasProject) error {
 // UpdateColumns 局部更新指定列（自动维护 update_time）。
 func (r *Repository) UpdateColumns(id int64, columns map[string]interface{}) error {
 	return r.db.Model(&model.CanvasProject{}).Where("id = ?", id).Updates(columns).Error
+}
+
+func (r *Repository) UpdateColumnsIfUpdateTime(id int64, expected time.Time, columns map[string]interface{}) (bool, error) {
+	tx := r.db.Model(&model.CanvasProject{}).Where("id = ? AND update_time = ?", id, expected).Updates(columns)
+	if tx.Error != nil {
+		return false, tx.Error
+	}
+	return tx.RowsAffected > 0, nil
 }
 
 // DeleteByID 逻辑删除（soft delete：置 deleted 标志）。

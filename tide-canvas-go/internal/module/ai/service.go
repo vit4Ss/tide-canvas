@@ -131,12 +131,20 @@ func (s *Service) Generate(userID int64, dto *GenerateDTO) (*TaskVO, error) {
 	if err := handler.validate(dto.Input); err != nil {
 		return nil, ecode.BadRequest.WithMessage(err.Error())
 	}
+	preflight := s.preflightPrompt(userID, dto)
+	if preflight.Action == promptActionBlock {
+		return nil, ecode.BadRequest.WithMessage("提示词包含不允许的内容，请修改后再试")
+	}
 
 	// 3) 计费：单价 = model.pricing/pointCost × 张数 × 团队系数，向上取整为整数积分
 	selectedModel, err := s.findModel(dto.ModelID)
 	if err != nil {
 		return nil, err
 	}
+	if err := s.validateModelReferenceFileSizes(selectedModel, dto.Input); err != nil {
+		return nil, err
+	}
+	execModel := s.resolveExecutionModel(selectedModel, dto.Handler, &preflight)
 	unitCost, err := s.resolvePointCost(selectedModel, dto.Handler, dto.Input)
 	if err != nil {
 		return nil, err
@@ -187,12 +195,13 @@ func (s *Service) Generate(userID int64, dto *GenerateDTO) (*TaskVO, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.recordRouteDecision(userID, task.ID, dto, selectedModel, execModel, &preflight)
 
 	// 5) 执行（异步 goroutine 轮询上游 / 同步阻塞）
 	if handler.async() {
-		go s.runAsync(task.ID, handler, dto.ModelID, dto.Input, pointCost)
+		go s.runAsync(task.ID, handler, execModel, dto.Input, pointCost)
 	} else {
-		s.executeSync(task, handler, dto.ModelID, dto.Input, pointCost)
+		s.executeSync(task, handler, execModel, dto.Input, pointCost)
 	}
 
 	return s.toTaskVO(task, modelName), nil
@@ -335,8 +344,23 @@ func (s *Service) MyLogs(userID int64, projectPublicID string, q *PageQuery) ([]
 	if err != nil {
 		return nil, 0, err
 	}
+	taskIDs := make([]int64, 0, len(logs))
+	for i := range logs {
+		if logs[i].TaskID != nil {
+			taskIDs = append(taskIDs, *logs[i].TaskID)
+		}
+	}
+	taskResultURLs, err := s.repo.TaskResultURLs(taskIDs)
+	if err != nil {
+		return nil, 0, err
+	}
 	out := make([]GenerationLogVO, 0, len(logs))
 	for i := range logs {
+		if logs[i].TaskID != nil {
+			if resultURL := taskResultURLs[*logs[i].TaskID]; hasText(resultURL) {
+				logs[i].ResultURL = resultURL
+			}
+		}
 		out = append(out, toLogVO(&logs[i]))
 	}
 	return out, total, nil
@@ -346,10 +370,13 @@ func (s *Service) MyLogs(userID int64, projectPublicID string, q *PageQuery) ([]
 
 // runAsync 异步执行任务（goroutine）：执行上游 → 更新任务 → 失败退款。
 // 取消竞态：执行前/后均检查 cancelled，保留取消态不覆盖（对齐 AiTaskRunner）。
-func (s *Service) runAsync(taskID int64, handler aiHandler, modelID string, input map[string]interface{}, pointCost int) {
+func (s *Service) runAsync(taskID int64, handler aiHandler, execModel executionModel, input map[string]interface{}, pointCost int) {
 	defer func() {
-		if r := recover(); r != nil && s.logger != nil {
-			s.logger.Errorf("AI 异步任务 panic: taskId=%d, %v", taskID, r)
+		if r := recover(); r != nil {
+			if s.logger != nil {
+				s.logger.Errorf("AI 异步任务 panic: taskId=%d, %v", taskID, r)
+			}
+			s.failPanickedTask(taskID, fmt.Sprintf("AI task panic: %v", r))
 		}
 	}()
 
@@ -367,7 +394,7 @@ func (s *Service) runAsync(taskID int64, handler aiHandler, modelID string, inpu
 		return
 	}
 
-	failed, _ := s.executeAndFill(task, handler, modelID, input)
+	failed, _ := s.executeAndFill(task, handler, execModel, input)
 
 	// 执行完成后若任务已被取消，保留取消态不覆盖。
 	latest, _ := s.repo.FindTaskByID(taskID)
@@ -386,9 +413,21 @@ func (s *Service) runAsync(taskID int64, handler aiHandler, modelID string, inpu
 	}
 }
 
+func (s *Service) failPanickedTask(taskID int64, reason string) {
+	task, err := s.repo.FindTaskByID(taskID)
+	if err != nil || task == nil {
+		return
+	}
+	affected, err := s.repo.FailIfProcessing(taskID, reason)
+	if err != nil || affected != 1 {
+		return
+	}
+	s.refundIfNeeded(taskID, task.UserID)
+}
+
 // executeSync 同步执行任务（如 creative_desc，对齐 executeSync）。
-func (s *Service) executeSync(task *model.AiTask, handler aiHandler, modelID string, input map[string]interface{}, pointCost int) {
-	failed, _ := s.executeAndFill(task, handler, modelID, input)
+func (s *Service) executeSync(task *model.AiTask, handler aiHandler, execModel executionModel, input map[string]interface{}, pointCost int) {
+	failed, _ := s.executeAndFill(task, handler, execModel, input)
 	if err := s.repo.SaveTaskResult(task); err != nil && s.logger != nil {
 		s.logger.Errorf("AI sync task save failed: taskId=%d, %v", task.ID, err)
 	}
@@ -400,13 +439,13 @@ func (s *Service) executeSync(task *model.AiTask, handler aiHandler, modelID str
 // executeAndFill 调用 handler 执行并把结果回填到 task（含转存）；返回 (是否失败, 错误信息)。
 // recorded 为本次执行的「是否已产生上游日志」标志（per-call，goroutine 安全）：client 落库一条
 // 上游日志即置位；执行结束若仍未置位（占位/同步 handler）则由本函数补记任务级 summary 日志。
-func (s *Service) executeAndFill(task *model.AiTask, handler aiHandler, modelID string, input map[string]interface{}) (bool, string) {
+func (s *Service) executeAndFill(task *model.AiTask, handler aiHandler, execModel executionModel, input map[string]interface{}) (bool, string) {
 	startMs := time.Now()
 	recorded := false
 	ctx := logCtx{taskID: &task.ID, userID: &task.UserID, projectID: task.ProjectID, handler: task.HandlerName, recorded: &recorded}
 	pr := &taskProgress{repo: s.repo, taskID: task.ID}
 
-	result := handler.execute(modelID, input, pr, ctx)
+	result := handler.execute(execModel, input, pr, ctx)
 	failed := !result.Success
 	resultURL := result.ResultURL
 	errMsg := result.ErrorMsg
@@ -586,6 +625,161 @@ func (s *Service) assertProjectOwned(userID int64, projectPublicID string) (int6
 		return 0, ecode.Forbidden.WithMessage("无权在该项目下创建任务")
 	}
 	return projectID, nil
+}
+
+const maxReferenceFileBytes int64 = 50 * 1024 * 1024
+
+func (s *Service) validateModelReferenceFileSizes(m *model.AiModel, input map[string]interface{}) error {
+	urls := collectInputReferenceURLs(input)
+	if len(urls) == 0 || s.db == nil {
+		return nil
+	}
+	var files []model.SysFile
+	if err := s.db.Select("file_url,file_size,file_type,mime_type,original_name").Where("file_url IN ?", urls).Find(&files).Error; err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		return nil
+	}
+	byURL := make(map[string]model.SysFile, len(files))
+	for _, f := range files {
+		byURL[f.FileURL] = f
+	}
+	imageLimit, videoLimit := modelReferenceFileLimits(m)
+	for _, url := range urls {
+		f, ok := byURL[url]
+		if !ok || f.FileSize <= 0 {
+			continue
+		}
+		limit := imageLimit
+		if isReferenceVideoFile(f) {
+			limit = videoLimit
+		}
+		if f.FileSize > limit {
+			name := f.OriginalName
+			if !hasText(name) {
+				name = f.FileURL
+			}
+			return ecode.FileSizeExceeded.WithMessage(fmt.Sprintf("参考文件 %s 超过模型限制（最大 %s，当前 %s）", name, formatReferenceFileSize(limit), formatReferenceFileSize(f.FileSize)))
+		}
+	}
+	return nil
+}
+
+func collectInputReferenceURLs(input map[string]interface{}) []string {
+	if input == nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	urls := make([]string, 0, 8)
+	add := func(value interface{}) {
+		s := strings.TrimSpace(strOf(value))
+		if !hasText(s) {
+			return
+		}
+		if _, ok := seen[s]; ok {
+			return
+		}
+		seen[s] = struct{}{}
+		urls = append(urls, s)
+	}
+	addList := func(value interface{}) {
+		switch list := value.(type) {
+		case []interface{}:
+			for _, item := range list {
+				switch v := item.(type) {
+				case map[string]interface{}:
+					add(v["url"])
+				case map[string]string:
+					add(v["url"])
+				default:
+					add(v)
+				}
+			}
+		case []string:
+			for _, item := range list {
+				add(item)
+			}
+		}
+	}
+	for _, key := range []string{"imageList", "references", "videoReferences", "attachments"} {
+		addList(input[key])
+	}
+	for _, key := range []string{"sourceImage", "firstFrame", "lastFrame", "referenceImage", "referenceVideo"} {
+		add(input[key])
+	}
+	return urls
+}
+
+func modelReferenceFileLimits(m *model.AiModel) (int64, int64) {
+	imageLimit := maxReferenceFileBytes
+	videoLimit := maxReferenceFileBytes
+	if m == nil || !hasText(string(m.Config)) {
+		return imageLimit, videoLimit
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(m.Config, &cfg); err != nil {
+		return imageLimit, videoLimit
+	}
+	nested := map[string]interface{}{}
+	if raw, ok := cfg["referenceLimits"].(map[string]interface{}); ok {
+		nested = raw
+	}
+	imageLimit = referenceBytesFromConfig(
+		cfg["referenceImageMaxMB"], cfg["maxReferenceImageMB"], nested["imageMB"], nested["image"], nested["maxImageMB"],
+		cfg["referenceFileMaxMB"], cfg["maxReferenceFileMB"], nested["fileMB"], nested["file"], nested["maxFileMB"],
+	)
+	videoLimit = referenceBytesFromConfig(
+		cfg["referenceVideoMaxMB"], cfg["maxReferenceVideoMB"], nested["videoMB"], nested["video"], nested["maxVideoMB"],
+		cfg["referenceFileMaxMB"], cfg["maxReferenceFileMB"], nested["fileMB"], nested["file"], nested["maxFileMB"],
+	)
+	return imageLimit, videoLimit
+}
+
+func referenceBytesFromConfig(values ...interface{}) int64 {
+	for _, value := range values {
+		mb := int64FromConfigValue(value)
+		if mb > 0 {
+			bytes := mb * 1024 * 1024
+			if bytes > maxReferenceFileBytes {
+				return maxReferenceFileBytes
+			}
+			return bytes
+		}
+	}
+	return maxReferenceFileBytes
+}
+
+func int64FromConfigValue(value interface{}) int64 {
+	switch v := value.(type) {
+	case int:
+		return int64(v)
+	case int64:
+		return v
+	case float64:
+		return int64(v)
+	case string:
+		var n int64
+		if _, err := fmt.Sscan(strings.TrimSpace(v), &n); err == nil {
+			return n
+		}
+	}
+	return 0
+}
+
+func isReferenceVideoFile(f model.SysFile) bool {
+	return strings.EqualFold(f.FileType, "video") || strings.HasPrefix(strings.ToLower(f.MimeType), "video/")
+}
+
+func formatReferenceFileSize(bytes int64) string {
+	if bytes <= 0 {
+		return "0B"
+	}
+	mb := float64(bytes) / (1024 * 1024)
+	if bytes%(1024*1024) == 0 {
+		return fmt.Sprintf("%.0fMB", mb)
+	}
+	return fmt.Sprintf("%.1fMB", mb)
 }
 
 // findModel 解析模型：modelId 为空/"default" 返回 nil；否则按 model_id 查（对齐 findModel）。

@@ -32,7 +32,7 @@ type aiHandler interface {
 	// validate 校验入参，非法返回 error（对齐 IllegalArgumentException → BadRequest）。
 	validate(input map[string]interface{}) error
 	// execute 执行生成（同步阻塞，内部可轮询上游）。
-	execute(modelID string, input map[string]interface{}, pr progressReporter, ctx logCtx) handlerResult
+	execute(execModel executionModel, input map[string]interface{}, pr progressReporter, ctx logCtx) handlerResult
 	// async 是否异步（true → service 用 goroutine 跑；false → 同步执行，如 creative_desc）。
 	async() bool
 }
@@ -118,8 +118,8 @@ func buildMultiResult(urls []string, input map[string]interface{}) handlerResult
 }
 
 // providerUsable 解析供应商并判断可用；返回 (provider, usable, err)。
-func providerUsable(gw *Gateway, modelID string) (*model.AiProvider, bool, error) {
-	p, err := gw.resolveProvider(modelID)
+func providerUsable(gw *Gateway, execModel executionModel) (*model.AiProvider, bool, error) {
+	p, err := gw.resolveProvider(execModel)
 	if err != nil {
 		return nil, false, err
 	}
@@ -141,9 +141,9 @@ func (h *textToImageHandler) async() bool  { return true }
 func (h *textToImageHandler) validate(input map[string]interface{}) error {
 	return requirePrompt(input)
 }
-func (h *textToImageHandler) execute(modelID string, input map[string]interface{}, pr progressReporter, ctx logCtx) handlerResult {
+func (h *textToImageHandler) execute(execModel executionModel, input map[string]interface{}, pr progressReporter, ctx logCtx) handlerResult {
 	prompt := strOf(input["prompt"])
-	provider, usable, err := providerUsable(h.gw, modelID)
+	provider, usable, err := providerUsable(h.gw, execModel)
 	if err != nil {
 		return failResult("图像生成失败: " + err.Error())
 	}
@@ -151,7 +151,7 @@ func (h *textToImageHandler) execute(modelID string, input map[string]interface{
 		warn(h.logger, "未配置可用的 AI 供应商（baseUrl/apiKey），返回占位图")
 		return okResult(placeholderImage)
 	}
-	urls, err := h.gw.generate(provider, modelID, prompt, input, pr, ctx)
+	urls, err := h.gw.generate(provider, execModel.ModelID, prompt, input, pr, ctx)
 	if err != nil {
 		logErr(h.logger, "文生图调用失败", err)
 		return failResult("图像生成失败: " + err.Error())
@@ -173,7 +173,7 @@ func (h *imageToImageHandler) validate(input map[string]interface{}) error {
 	}
 	return requireField(input, "sourceImage", "sourceImage不能为空")
 }
-func (h *imageToImageHandler) execute(modelID string, input map[string]interface{}, pr progressReporter, ctx logCtx) handlerResult {
+func (h *imageToImageHandler) execute(execModel executionModel, input map[string]interface{}, pr progressReporter, ctx logCtx) handlerResult {
 	prompt := strOf(input["prompt"])
 	sourceImage := strOf(input["sourceImage"])
 	if !hasText(sourceImage) {
@@ -206,7 +206,7 @@ func (h *imageToImageHandler) execute(modelID string, input map[string]interface
 		}
 	}
 
-	provider, usable, err := providerUsable(h.gw, modelID)
+	provider, usable, err := providerUsable(h.gw, execModel)
 	if err != nil {
 		return failResult("图像编辑失败: " + err.Error())
 	}
@@ -214,7 +214,7 @@ func (h *imageToImageHandler) execute(modelID string, input map[string]interface
 		warn(h.logger, "未配置可用的 AI 供应商（baseUrl/apiKey），返回占位图")
 		return okResult(placeholderImage)
 	}
-	urls, err := h.gw.edit(provider, modelID, prompt, allURLs, input, pr, ctx)
+	urls, err := h.gw.edit(provider, execModel.ModelID, prompt, allURLs, input, pr, ctx)
 	if err != nil {
 		logErr(h.logger, "图生图调用失败", err)
 		return failResult("图像编辑失败: " + err.Error())
@@ -238,8 +238,8 @@ func (h *textToVideoHandler) async() bool  { return true }
 func (h *textToVideoHandler) validate(input map[string]interface{}) error {
 	return requirePrompt(input)
 }
-func (h *textToVideoHandler) execute(modelID string, input map[string]interface{}, pr progressReporter, ctx logCtx) handlerResult {
-	return videoExec(h.gw, h.logger, modelID, input, "t2v", pr, ctx)
+func (h *textToVideoHandler) execute(execModel executionModel, input map[string]interface{}, pr progressReporter, ctx logCtx) handlerResult {
+	return videoExec(h.gw, h.logger, execModel, input, "t2v", pr, ctx)
 }
 
 // ---- 图生视频 ----
@@ -256,8 +256,8 @@ func (h *imageToVideoHandler) validate(input map[string]interface{}) error {
 	}
 	return requireField(input, "sourceImage", "sourceImage不能为空")
 }
-func (h *imageToVideoHandler) execute(modelID string, input map[string]interface{}, pr progressReporter, ctx logCtx) handlerResult {
-	return videoExec(h.gw, h.logger, modelID, input, "i2v", pr, ctx)
+func (h *imageToVideoHandler) execute(execModel executionModel, input map[string]interface{}, pr progressReporter, ctx logCtx) handlerResult {
+	return videoExec(h.gw, h.logger, execModel, input, "i2v", pr, ctx)
 }
 
 // ---- 首尾帧视频 ----
@@ -277,8 +277,8 @@ func (h *startEndToVideoHandler) validate(input map[string]interface{}) error {
 	}
 	return requireField(input, "lastFrame", "lastFrame不能为空")
 }
-func (h *startEndToVideoHandler) execute(modelID string, input map[string]interface{}, pr progressReporter, ctx logCtx) handlerResult {
-	return videoExec(h.gw, h.logger, modelID, input, "keyframe", pr, ctx)
+func (h *startEndToVideoHandler) execute(execModel executionModel, input map[string]interface{}, pr progressReporter, ctx logCtx) handlerResult {
+	return videoExec(h.gw, h.logger, execModel, input, "keyframe", pr, ctx)
 }
 
 // ---- 参考生视频 ----
@@ -300,14 +300,14 @@ func (h *referenceToVideoHandler) validate(input map[string]interface{}) error {
 	}
 	return nil
 }
-func (h *referenceToVideoHandler) execute(modelID string, input map[string]interface{}, pr progressReporter, ctx logCtx) handlerResult {
-	return videoExec(h.gw, h.logger, modelID, input, "omni_ref", pr, ctx)
+func (h *referenceToVideoHandler) execute(execModel executionModel, input map[string]interface{}, pr progressReporter, ctx logCtx) handlerResult {
+	return videoExec(h.gw, h.logger, execModel, input, "omni_ref", pr, ctx)
 }
 
 // videoExec 视频 handler 公共执行：归一 prompt → 解析供应商 → 占位/调用网关（对齐各视频 Handler.execute）。
-func videoExec(gw *Gateway, logger *logrus.Logger, modelID string, input map[string]interface{}, mode string, pr progressReporter, ctx logCtx) handlerResult {
+func videoExec(gw *Gateway, logger *logrus.Logger, execModel executionModel, input map[string]interface{}, mode string, pr progressReporter, ctx logCtx) handlerResult {
 	prompt := normalizeInlineImageRefs(strOf(input["prompt"]))
-	provider, usable, err := providerUsable(gw, modelID)
+	provider, usable, err := providerUsable(gw, execModel)
 	if err != nil {
 		return failResult("视频生成失败: " + err.Error())
 	}
@@ -315,7 +315,7 @@ func videoExec(gw *Gateway, logger *logrus.Logger, modelID string, input map[str
 		warn(logger, "未配置可用的 AI 供应商（baseUrl/apiKey），返回占位视频")
 		return okResult(placeholderImage)
 	}
-	url, err := gw.generateVideo(provider, modelID, prompt, input, mode, pr, ctx)
+	url, err := gw.generateVideo(provider, execModel.ModelID, prompt, input, mode, pr, ctx)
 	if err != nil {
 		logErr(logger, "视频调用失败", err)
 		return failResult("视频生成失败: " + err.Error())
@@ -344,16 +344,16 @@ func (h *textToAudioHandler) validate(input map[string]interface{}) error {
 	}
 	return nil
 }
-func (h *textToAudioHandler) execute(modelID string, input map[string]interface{}, pr progressReporter, ctx logCtx) handlerResult {
+func (h *textToAudioHandler) execute(execModel executionModel, input map[string]interface{}, pr progressReporter, ctx logCtx) handlerResult {
 	text := strOf(input["prompt"])
-	provider, usable, err := providerUsable(h.gw, modelID)
+	provider, usable, err := providerUsable(h.gw, execModel)
 	if err != nil {
 		return failResult("语音合成失败: " + err.Error())
 	}
 	if !usable {
 		return failResult("未配置可用的 AI 供应商（baseUrl/apiKey）")
 	}
-	url, err := h.gw.generateAudio(provider, modelID, text, input, pr, ctx)
+	url, err := h.gw.generateAudio(provider, execModel.ModelID, text, input, pr, ctx)
 	if err != nil {
 		logErr(h.logger, "语音合成调用失败", err)
 		return failResult("语音合成失败: " + err.Error())
@@ -372,15 +372,15 @@ func (h *assistantChatHandler) async() bool  { return false }
 func (h *assistantChatHandler) validate(input map[string]interface{}) error {
 	return requirePrompt(input)
 }
-func (h *assistantChatHandler) execute(modelID string, input map[string]interface{}, _ progressReporter, ctx logCtx) handlerResult {
-	provider, usable, err := providerUsable(h.gw, modelID)
+func (h *assistantChatHandler) execute(execModel executionModel, input map[string]interface{}, _ progressReporter, ctx logCtx) handlerResult {
+	provider, usable, err := providerUsable(h.gw, execModel)
 	if err != nil {
 		return failResult("助手对话失败: " + err.Error())
 	}
 	if !usable {
 		return failResult("未配置可用的 AI 供应商（baseUrl/apiKey）")
 	}
-	answer, err := h.gw.chat(provider, modelID, input, ctx)
+	answer, err := h.gw.chat(provider, execModel.ModelID, input, ctx)
 	if err != nil {
 		logErr(h.logger, "助手对话调用失败", err)
 		return failResult("助手对话失败: " + err.Error())
@@ -400,9 +400,9 @@ func (h *creativeDescHandler) async() bool  { return false }
 func (h *creativeDescHandler) validate(input map[string]interface{}) error {
 	return requirePrompt(input)
 }
-func (h *creativeDescHandler) execute(modelID string, input map[string]interface{}, _ progressReporter, _ logCtx) handlerResult {
+func (h *creativeDescHandler) execute(execModel executionModel, input map[string]interface{}, _ progressReporter, _ logCtx) handlerResult {
 	if h.logger != nil {
-		h.logger.Infof("CreativeDesc handler executing: model=%s, prompt=%v", modelID, input["prompt"])
+		h.logger.Infof("CreativeDesc handler executing: model=%s, prompt=%v", execModel.ModelID, input["prompt"])
 	}
 	r := okResult("")
 	// 占位：忠实迁移旧实现（TODO: 接入真实文本增强模型）

@@ -55,7 +55,7 @@ export interface DashboardChartsVO {
 }
 
 export interface ActiveUserVO {
-  id: number;
+  id: string;
   username: string;
   nickname: string;
   avatar: string;
@@ -69,6 +69,23 @@ export interface AdminUserVO extends UserVO {
   projectCount: number;
 }
 
+export interface AdminUserCreateDTO {
+  username: string;
+  email: string;
+  password: string;
+  nickname?: string;
+  phone?: string;
+  role?: number;
+  vipLevel?: number;
+  /** 免 AI 并发限制(0否1是) */
+  concurrencyUnlimited?: number;
+  roleId?: string;
+  status?: number;
+  apiQuota?: number;
+  points?: number;
+  storageQuota?: number;
+}
+
 export interface AdminUserUpdateDTO {
   role?: number;
   vipLevel?: number;
@@ -78,6 +95,10 @@ export interface AdminUserUpdateDTO {
   status?: number;
   apiQuota?: number;
   storageQuota?: number;
+}
+
+export interface AdminUserPasswordResetDTO {
+  newPassword: string;
 }
 
 export interface AdminUserQuery extends PageQuery {
@@ -133,6 +154,59 @@ export interface AiProviderUpdateDTO extends Partial<AiProviderCreateDTO> {
   status?: number;
 }
 
+
+export interface AiUpstreamModelVO {
+  id: string;
+  providerId: string;
+  providerName: string;
+  name: string;
+  modelId: string;
+  type: string;
+  capabilities: string;
+  config: string;
+  costPerCall: number;
+  timeoutMs: number;
+  priority: number;
+  status: number;
+  createTime: string;
+}
+
+export interface AiModelRouteVO {
+  id: string;
+  logicalModelId: string;
+  logicalModelName: string;
+  upstreamModelId: string;
+  upstreamModelName: string;
+  handlerName: string;
+  routeStrategy: string;
+  complexityLevel: string;
+  conditions: string;
+  priority: number;
+  weight: number;
+  status: number;
+  createTime: string;
+}
+
+export interface AiRouteDecisionLogVO {
+  id: string;
+  taskId?: string;
+  userId?: string;
+  logicalModelId?: string;
+  upstreamModelId?: string;
+  providerId?: string;
+  routeId?: string;
+  handlerName: string;
+  routeStrategy: string;
+  logicalModel: string;
+  upstreamModel: string;
+  complexityLevel: string;
+  complexityScore: number;
+  decisionReason: string;
+  candidateCount: number;
+  fallbackUsed: number;
+  decisionMetadata: string;
+  createTime: string;
+}
 export interface LogVO {
   id: number;
   userId: number;
@@ -212,4 +286,3 @@ export interface VipLevelVO {
   name: string;
   concurrency: number; // 该等级 AI 并发上限，0=不限
 }
-

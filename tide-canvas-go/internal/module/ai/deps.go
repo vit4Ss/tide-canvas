@@ -130,9 +130,9 @@ func (f *DBUserFinder) UsernamesByIDs(ids []int64) (map[int64]string, error) {
 		return nil, err
 	}
 	for _, r := range rows {
-		name := r.Username
+		name := r.Nickname
 		if name == "" {
-			name = r.Nickname
+			name = r.Username
 		}
 		result[r.ID] = name
 	}

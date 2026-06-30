@@ -9,7 +9,7 @@ type SysUser struct {
 	Email                string     `json:"email" gorm:"column:email"`
 	Phone                string     `json:"phone" gorm:"column:phone"`
 	Password             string     `json:"-" gorm:"column:password"`
-	Nickname             string     `json:"nickname" gorm:"column:nickname"`
+	Nickname             string     `json:"nickname" gorm:"column:nickname;uniqueIndex:uk_nickname"`
 	Avatar               string     `json:"avatar" gorm:"column:avatar"`
 	Role                 int        `json:"role" gorm:"column:role"`
 	VipLevel             int        `json:"vipLevel" gorm:"column:vip_level"`
@@ -26,6 +26,22 @@ type SysUser struct {
 
 // TableName 表名。
 func (SysUser) TableName() string { return "sys_user" }
+
+// PasswordResetToken 密码重置令牌表 password_reset_token。
+// 只保存令牌哈希，不落库明文 token；链接泄露窗口由 expires_at 和 used_at 双重约束控制。
+type PasswordResetToken struct {
+	BaseModel
+	UserID    int64      `json:"userId" gorm:"column:user_id"`
+	Email     string     `json:"email" gorm:"column:email"`
+	TokenHash string     `json:"-" gorm:"column:token_hash"`
+	ExpiresAt time.Time  `json:"expiresAt" gorm:"column:expires_at"`
+	UsedAt    *time.Time `json:"usedAt" gorm:"column:used_at"`
+	RequestIP string     `json:"requestIp" gorm:"column:request_ip"`
+	UserAgent string     `json:"userAgent" gorm:"column:user_agent"`
+}
+
+// TableName 表名。
+func (PasswordResetToken) TableName() string { return "password_reset_token" }
 
 // SysRole 管理角色表 sys_role（RBAC 粒度权限）。
 type SysRole struct {

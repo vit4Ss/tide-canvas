@@ -246,8 +246,7 @@ func queryOrder(cfg *epayConfig, outTradeNo string) (epayOrderStatus, error) {
 func verifyResponseSign(root gjson.Result, cfg *epayConfig) error {
 	sign := root.Get("sign").String()
 	if strings.TrimSpace(sign) == "" {
-		// 无签名：信任 HTTPS 直连（对齐旧实现仅告警放行）。
-		return nil
+		return ecode.PaymentGatewayError
 	}
 	resp := make(map[string]string)
 	root.ForEach(func(key, value gjson.Result) bool {

@@ -58,10 +58,16 @@ func AdminOnly() gin.HandlerFunc {
 
 func parseToken(c *gin.Context, provider *appjwt.Provider) (*appjwt.Claims, bool) {
 	h := c.GetHeader("Authorization")
-	if !strings.HasPrefix(h, "Bearer ") {
+	token := ""
+	if strings.HasPrefix(h, "Bearer ") {
+		token = strings.TrimPrefix(h, "Bearer ")
+	} else if cookie, err := c.Cookie("tc_access_token"); err == nil {
+		token = cookie
+	}
+	if token == "" {
 		return nil, false
 	}
-	claims, err := provider.Parse(strings.TrimPrefix(h, "Bearer "))
+	claims, err := provider.Parse(token)
 	if err != nil {
 		return nil, false
 	}

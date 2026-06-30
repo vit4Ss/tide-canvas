@@ -19,6 +19,8 @@ import { type RefItem } from "./prompt-ref-utils";
 import { NodeChrome } from "./base/node-chrome";
 import { useAiGeneration } from "@/hooks/canvas/use-ai-generation";
 import { aiApi, uploadFileSmart } from "@/lib/api";
+import { fetchWithAuth } from "@/lib/http";
+import { referenceKindFromMeta, resolveModelReferenceLimitBytes, validateKnownFileSize } from "@/lib/upload-limits";
 import { sliceImageGrid } from "@/lib/image-slice";
 import { useAuth } from "@/hooks/use-auth";
 import { applyTeamFactor } from "@/lib/points";
@@ -171,7 +173,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   }
   // 一次出图张数（批量）：全部存入本节点 images，组图交互展示
   const [batchCount, setBatchCount] = useState(1);
-  const [batchOpen, setBatchOpen] = useState(false);
   // 组图：展示主图+堆叠徽标，点徽标「展开」拆成多个独立图片节点
   const groupImages = node.images && node.images.length > 1 ? node.images : null;
   // 已展开的子节点 id（${node.id}_g{n}），响应式 —— 徽标据此在「展开 / 收起」间切换
@@ -303,6 +304,22 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   }, [cardW, cardH, node.contentW, node.contentH, node.id, updateNode]);
 
   const handleGenerate = useCallback(() => {
+    const st = useCanvasStore.getState();
+    const referenceNodes = [
+      ...(node.imageSrc || node.videoSrc ? [node] : []),
+      ...st.connections
+        .filter((c) => c.targetId === node.id)
+        .map((c) => st.nodes.find((n) => n.id === c.sourceId))
+        .filter((n): n is CanvasNode => !!n && !!(n.imageSrc || n.videoSrc)),
+    ];
+    for (const refNode of referenceNodes) {
+      const kind = referenceKindFromMeta({ fileType: refNode.fileType, mimeType: refNode.mimeType, type: refNode.type });
+      const message = validateKnownFileSize(refNode.fileSize, refNode.title, {
+        maxBytes: resolveModelReferenceLimitBytes(selectedModel, kind),
+        label: "参考文件",
+      });
+      if (message) { toast.error(message); return; }
+    }
     // 引用图片参与编辑：按画布连接顺序完整下发 imageList，保证 prompt 里的「图片N / {{Image N}}」
     // 对齐到第 N 张输入图；若本节点已有图，则它固定作为 Image 1。
     const refImages = refs.map((r) => r.thumb).filter(Boolean);
@@ -325,7 +342,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [generate, node.id, node.prompt, node.imageSrc, qualityRatio, selectedModelId, refs, batchCount]);
+  }, [generate, node, qualityRatio, selectedModelId, selectedModel, refs, batchCount]);
 
   const handlePromptChange = useCallback((value: string) => {
     updateNode(node.id, {
@@ -421,16 +438,16 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     const dataUrl = panoApiRef.current?.capture();
     if (!dataUrl) { toast.error("截图失败，请重试"); return; }
     const blob = await (await fetch(dataUrl)).blob();
-    const res = await uploadFileSmart(new File([blob], "全景截图.png", { type: "image/png" }));
+    const res = await uploadFileSmart(new File([blob], "全景截图.png", { type: "image/png" }), undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
     if (!res.success) { toast.error(res.message || "截图上传失败"); return; }
     const st = useCanvasStore.getState();
     const capH = Math.round(node.width / 2);
     const nid = generateNodeId();
-    st.addNode({ id: nid, type: "image", x: node.x + node.width + 80, y: node.y, width: node.width, height: capH, contentW: node.width, contentH: capH, title: "全景截图", imageSrc: res.data.fileUrl, status: "success" }, true);
+    st.addNode({ id: nid, type: "image", x: node.x + node.width + 80, y: node.y, width: node.width, height: capH, contentW: node.width, contentH: capH, title: "全景截图", imageSrc: res.data.fileUrl, status: "success", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType }, true);
     st.addConnection({ id: `conn_${node.id}_${nid}_c`, sourceId: node.id, targetId: nid }, false);
     st.selectNode(nid);
     toast.success("已截取当前视角");
-  }, [node.id, node.x, node.y, node.width]);
+  }, [node.id, node.x, node.y, node.width, selectedModel]);
 
   // 全景「4 大视角截图」→ 当前/+90/+180/+270 平视各截一张 → 各上传 → 右侧竖排 4 个连线图片节点
   const handlePanoCapture4 = useCallback(async () => {
@@ -443,15 +460,15 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     let ok = 0;
     for (let i = 0; i < urls.length; i++) {
       const blob = await (await fetch(urls[i])).blob();
-      const res = await uploadFileSmart(new File([blob], `全景视角${i + 1}.png`, { type: "image/png" }));
+      const res = await uploadFileSmart(new File([blob], `全景视角${i + 1}.png`, { type: "image/png" }), undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
       if (!res.success) continue;
       const nid = generateNodeId();
-      st.addNode({ id: nid, type: "image", x: baseX, y: node.y + i * (capH + 24), width: node.width, height: capH, contentW: node.width, contentH: capH, title: `全景视角 ${i + 1}`, imageSrc: res.data.fileUrl, status: "success" }, i === 0);
+      st.addNode({ id: nid, type: "image", x: baseX, y: node.y + i * (capH + 24), width: node.width, height: capH, contentW: node.width, contentH: capH, title: `全景视角 ${i + 1}`, imageSrc: res.data.fileUrl, status: "success", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType }, i === 0);
       st.addConnection({ id: `conn_${node.id}_${nid}_${i}`, sourceId: node.id, targetId: nid }, false);
       ok++;
     }
     if (ok > 0) toast.success(`已截取 ${ok} 个视角`); else toast.error("截图失败");
-  }, [node.id, node.x, node.y, node.width]);
+  }, [node.id, node.x, node.y, node.width, selectedModel]);
 
   const multiAngleRatio = useMemo(() => {
     if (node.aspectRatio && parseRatio(node.aspectRatio)) return node.aspectRatio;
@@ -608,7 +625,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
           const up = await uploadFileSmart(
             new File([slice.blob], `grid_${slice.cellIndex + 1}.png`, { type: "image/png" }));
           if (!up.success || !up.data?.fileUrl) throw new Error(up.message || "upload failed");
-          useCanvasStore.getState().updateNode(nid, { imageSrc: up.data.fileUrl });
+          useCanvasStore.getState().updateNode(nid, { imageSrc: up.data.fileUrl, fileSize: up.data.fileSize, fileType: up.data.fileType, mimeType: up.data.mimeType });
           // 延迟回收 blob，等 React 用远端地址完成重渲，避免替换瞬间闪裂
           setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
         } catch {
@@ -650,9 +667,8 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
 
   // 下载图片：经后端代理拉取（同源、无跨域），转 blob 触发浏览器下载，全程不导航刷新
   const downloadUrl = useCallback(async (url: string, name: string) => {
-    const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
     const api = `/api/files/download?url=${encodeURIComponent(url)}&name=${encodeURIComponent(name)}`;
-    const res = await fetch(api, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    const res = await fetchWithAuth(api);
     if (!res.ok) throw new Error("download failed");
     const blob = await res.blob();
     const objUrl = URL.createObjectURL(blob);
@@ -756,9 +772,9 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     setUploadPct(0);
     setUploading(true);
     try {
-      const res = await uploadFileSmart(file, (pct) => setUploadPct(pct));
+      const res = await uploadFileSmart(file, (pct) => setUploadPct(pct), { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
       if (res.success) {
-        updateNode(node.id, { imageSrc: res.data.fileUrl, status: "idle" });
+        updateNode(node.id, { imageSrc: res.data.fileUrl, status: "idle", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType });
         toast.success("图片已上传，可输入指令进行编辑");
       } else {
         toast.error(res.message || "上传失败");
@@ -770,7 +786,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       setLocalPreview(null);
       URL.revokeObjectURL(objUrl);
     }
-  }, [node.id, updateNode]);
+  }, [node.id, selectedModel, updateNode]);
 
   // 拉取各 Handler 的积分消耗（后台可配置）
   useEffect(() => {
@@ -814,7 +830,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     if (!showAuxUI) {
       setGridMenuOpen(false);
       setCustomHover(null);
-      setBatchOpen(false);
       setAngleOpen(false);
     }
   }, [showAuxUI]);
@@ -1430,34 +1445,13 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                     qualities={formatConfig.qualities}
                     clarities={formatConfig.clarities}
                     ratios={formatConfig.ratios}
+                    batchCount={batchCount}
+                    batchOptions={batchOptions}
+                    onBatchChange={setBatchCount}
                     compact
                   />
-                  <button onMouseDown={stop} className="flex items-center gap-1 rounded-md px-2 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-800">
-                    <Camera className="h-3.5 w-3.5" />
-                    摄像机
-                  </button>
                 </div>
                 <div className="flex shrink-0 items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
-                  <div className="relative">
-                    <button onMouseDown={stop} onClick={(e) => { stop(e); setBatchOpen((v) => !v); }} className="flex items-center gap-1 rounded-md px-2 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-800">
-                      {batchCount}张
-                      <ChevronDown className="h-3 w-3" />
-                    </button>
-                    {batchOpen && (
-                      <div onMouseDown={stop} className="absolute bottom-full left-0 z-30 mb-1 w-20 rounded-lg border border-neutral-200 bg-white py-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-900">
-                        {batchOptions.map((n) => (
-                          <button
-                            key={n}
-                            onMouseDown={stop}
-                            onClick={(e) => { stop(e); setBatchCount(n); setBatchOpen(false); }}
-                            className={`block w-full px-3 py-1.5 text-left hover:bg-neutral-100 dark:hover:bg-neutral-800 ${batchCount === n ? "font-medium text-blue-600 dark:text-blue-400" : ""}`}
-                          >
-                            {n}张
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
                   <span className="flex items-center gap-0.5 text-xs text-neutral-500">
                     <Zap className="h-3 w-3 text-neutral-900 dark:text-neutral-100" fill="currentColor" />
                     {applyTeamFactor(pointCost * batchCount, user)}

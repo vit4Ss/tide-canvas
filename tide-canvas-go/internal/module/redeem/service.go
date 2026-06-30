@@ -164,7 +164,11 @@ func (s *Service) List(q *RedeemCodeQuery) ([]RedeemCodeVO, int64, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	return toVOList(records), total, nil
+	names, err := s.repo.UserDisplayNames(redeemUserIDs(records))
+	if err != nil {
+		return nil, 0, err
+	}
+	return toVOList(records, names), total, nil
 }
 
 // UpdateStatus 启用(0)/停用(2)。对齐 RedeemServiceImpl.updateStatus。
@@ -244,27 +248,55 @@ func (s *Service) logf(format string, args ...interface{}) {
 }
 
 // toVOList 批量转换兑换码 VO。
-func toVOList(records []model.RedeemCode) []RedeemCodeVO {
+func toVOList(records []model.RedeemCode, names map[int64]string) []RedeemCodeVO {
 	out := make([]RedeemCodeVO, 0, len(records))
 	for i := range records {
-		out = append(out, toVO(&records[i]))
+		out = append(out, toVO(&records[i], names))
 	}
 	return out
 }
 
 // toVO 转换单条兑换码 VO（对齐 BeanUtils.copyProperties）。
-func toVO(rc *model.RedeemCode) RedeemCodeVO {
-	return RedeemCodeVO{
-		ID:         rc.ID,
-		Code:       rc.Code,
-		Points:     rc.Points,
-		CreatedBy:  rc.CreatedBy,
-		Status:     rc.Status,
-		UsedBy:     rc.UsedBy,
-		UsedTime:   rc.UsedTime,
-		ExpireTime: rc.ExpireTime,
-		BatchNo:    rc.BatchNo,
-		Remark:     rc.Remark,
-		CreateTime: rc.CreateTime,
+func toVO(rc *model.RedeemCode, names map[int64]string) RedeemCodeVO {
+	creatorName := ""
+	if rc.CreatedBy != nil {
+		creatorName = names[*rc.CreatedBy]
 	}
+	userName := ""
+	if rc.UsedBy != nil {
+		userName = names[*rc.UsedBy]
+	}
+	return RedeemCodeVO{
+		ID:          rc.ID,
+		Code:        rc.Code,
+		Points:      rc.Points,
+		CreatedBy:   rc.CreatedBy,
+		CreatorName: creatorName,
+		Status:      rc.Status,
+		UsedBy:      rc.UsedBy,
+		UserName:    userName,
+		UsedTime:    rc.UsedTime,
+		ExpireTime:  rc.ExpireTime,
+		BatchNo:     rc.BatchNo,
+		Remark:      rc.Remark,
+		CreateTime:  rc.CreateTime,
+	}
+}
+
+func redeemUserIDs(records []model.RedeemCode) []int64 {
+	seen := make(map[int64]struct{})
+	ids := make([]int64, 0, len(records))
+	for i := range records {
+		for _, id := range []*int64{records[i].CreatedBy, records[i].UsedBy} {
+			if id == nil {
+				continue
+			}
+			if _, ok := seen[*id]; ok {
+				continue
+			}
+			seen[*id] = struct{}{}
+			ids = append(ids, *id)
+		}
+	}
+	return ids
 }

@@ -2,6 +2,7 @@ package points
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -85,14 +86,19 @@ func (r *Repository) PageTransactions(q *TransactionQuery, userID *int64) ([]mod
 	if userID != nil {
 		tx = tx.Where("user_id = ?", *userID)
 	}
+	if strings.TrimSpace(q.UserKeyword) != "" {
+		kw := "%" + strings.TrimSpace(q.UserKeyword) + "%"
+		tx = tx.Joins("JOIN sys_user u ON u.id = points_transaction.user_id").
+			Where("(u.nickname LIKE ? OR u.username LIKE ? OR u.email LIKE ?)", kw, kw, kw)
+	}
 	if q.Type != nil {
-		tx = tx.Where("type = ?", *q.Type)
+		tx = tx.Where("points_transaction.type = ?", *q.Type)
 	}
 	if start, ok := parseDateTime(q.StartTime); ok {
-		tx = tx.Where("create_time >= ?", start)
+		tx = tx.Where("points_transaction.create_time >= ?", start)
 	}
 	if end, ok := parseDateTime(q.EndTime); ok {
-		tx = tx.Where("create_time <= ?", end)
+		tx = tx.Where("points_transaction.create_time <= ?", end)
 	}
 
 	var total int64
@@ -101,13 +107,40 @@ func (r *Repository) PageTransactions(q *TransactionQuery, userID *int64) ([]mod
 	}
 
 	var records []model.PointsTransaction
-	if err := tx.Order("create_time DESC").
+	if err := tx.Order("points_transaction.create_time DESC").
 		Offset((q.PageNum - 1) * q.PageSize).
 		Limit(q.PageSize).
 		Find(&records).Error; err != nil {
 		return nil, 0, err
 	}
 	return records, total, nil
+}
+
+func (r *Repository) UserDisplayNames(ids []int64) (map[int64]string, error) {
+	out := make(map[int64]string, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	type row struct {
+		ID       int64
+		Username string
+		Nickname string
+	}
+	var rows []row
+	if err := r.db.Model(&model.SysUser{}).
+		Select("id", "username", "nickname").
+		Where("id IN ?", ids).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		name := strings.TrimSpace(r.Nickname)
+		if name == "" {
+			name = strings.TrimSpace(r.Username)
+		}
+		out[r.ID] = name
+	}
+	return out, nil
 }
 
 // ---- checkin_record ----

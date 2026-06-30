@@ -1,21 +1,17 @@
-/**
- * 前端图片网格切分工具。
- * 源图经后端下载代理取回(同源 blob)，规避上游(relay/MJ 等)无 CORS 头导致的 canvas 污染；
- * 切块在浏览器完成(原生支持 WebP/AVIF 解码)，调用方负责后续上传与展示。
- */
+import { fetchWithAuth } from "@/lib/http";
 
+/**
+ * Frontend image grid slicing utility.
+ * The source image is loaded through the same-origin backend download proxy to avoid CORS-tainted canvas reads.
+ */
 export interface GridSlice {
-  /** 行优先的格子索引(0..rows*cols-1) */
+  /** Row-major cell index, from 0 to rows*cols-1. */
   cellIndex: number;
   blob: Blob;
 }
 
-/** 经后端下载代理加载图片为可读像素的 HTMLImageElement(返回的 objUrl 由调用方负责 revoke) */
 async function loadImageViaProxy(url: string): Promise<{ img: HTMLImageElement; objUrl: string }> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
-  const res = await fetch(`/api/files/download?url=${encodeURIComponent(url)}&name=source`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
+  const res = await fetchWithAuth(`/api/files/download?url=${encodeURIComponent(url)}&name=source`);
   if (!res.ok) throw new Error(`fetch source failed: ${res.status}`);
   const objUrl = URL.createObjectURL(await res.blob());
   const img = new Image();
@@ -33,9 +29,8 @@ async function loadImageViaProxy(url: string): Promise<{ img: HTMLImageElement; 
 }
 
 /**
- * 把图片按 rows×cols 网格切块。
- *
- * @param cells 指定只切这些格子(行优先索引)；空/缺省切全部
+ * Slice an image into a rows x cols grid.
+ * @param cells Optional row-major indexes to slice. Empty means all cells.
  */
 export async function sliceImageGrid(
   sourceUrl: string,

@@ -66,13 +66,15 @@ type OrderQuery struct {
 
 // AdminOrderQuery 管理端订单查询条件（对齐 AdminOrderQuery extends PageQuery）。
 type AdminOrderQuery struct {
-	PageNum   int    `form:"pageNum"`
-	PageSize  int    `form:"pageSize"`
-	UserID    *int64 `form:"userId"`
-	Status    *int   `form:"status"`
-	OrderNo   string `form:"orderNo"`
-	StartTime string `form:"startTime"`
-	EndTime   string `form:"endTime"`
+	PageNum     int    `form:"pageNum"`
+	PageSize    int    `form:"pageSize"`
+	Keyword     string `form:"keyword"`
+	UserID      *int64 `form:"userId"`
+	UserKeyword string `form:"userKeyword"`
+	Status      *int   `form:"status"`
+	OrderNo     string `form:"orderNo"`
+	StartTime   string `form:"startTime"`
+	EndTime     string `form:"endTime"`
 }
 
 // normalize 校正分页参数，对齐旧 PageQuery 默认值与边界（pageNum>=1，1<=pageSize<=100，默认20）。
@@ -99,6 +101,7 @@ func normalizePage(pageNum, pageSize int) (int, int) {
 type RechargeOrderVO struct {
 	ID            string          `json:"id"`
 	OrderNo       string          `json:"orderNo"`
+	UserName      string          `json:"userName"`
 	Amount        decimal.Decimal `json:"amount"`
 	PointsAmount  int             `json:"pointsAmount"`
 	PaymentMethod string          `json:"paymentMethod"`

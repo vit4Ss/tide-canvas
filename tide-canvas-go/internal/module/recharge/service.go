@@ -146,7 +146,8 @@ func (s *Service) ListOrders(userID int64, q *OrderQuery) ([]RechargeOrderVO, in
 	if err != nil {
 		return nil, 0, err
 	}
-	return toOrderVOList(records), total, nil
+	vos, err := s.toOrderVOList(records)
+	return vos, total, err
 }
 
 // ListAllOrders 管理端分页查询全部订单列表（对齐 listAllOrders）。
@@ -156,7 +157,8 @@ func (s *Service) ListAllOrders(q *AdminOrderQuery) ([]RechargeOrderVO, int64, e
 	if err != nil {
 		return nil, 0, err
 	}
-	return toOrderVOList(records), total, nil
+	vos, err := s.toOrderVOList(records)
+	return vos, total, err
 }
 
 // GetOrderForAdmin 管理端按 public_id 查订单详情（不校验所属用户，对齐管理端 selectById）。
@@ -545,19 +547,28 @@ func randInt4() int {
 }
 
 // toOrderVOList 批量转换订单 VO。
-func toOrderVOList(records []model.RechargeOrder) []RechargeOrderVO {
+func (s *Service) toOrderVOList(records []model.RechargeOrder) ([]RechargeOrderVO, error) {
+	names, err := s.repo.UserDisplayNames(orderUserIDs(records))
+	if err != nil {
+		return nil, err
+	}
 	out := make([]RechargeOrderVO, 0, len(records))
 	for i := range records {
-		out = append(out, *toOrderVO(&records[i]))
+		out = append(out, *toOrderVOWithNames(&records[i], names))
 	}
-	return out
+	return out, nil
 }
 
 // toOrderVO 转换单个订单 VO（id = public_id，对齐 toOrderVO）。
 func toOrderVO(o *model.RechargeOrder) *RechargeOrderVO {
+	return toOrderVOWithNames(o, nil)
+}
+
+func toOrderVOWithNames(o *model.RechargeOrder, names map[int64]string) *RechargeOrderVO {
 	return &RechargeOrderVO{
 		ID:            o.PublicID,
 		OrderNo:       o.OrderNo,
+		UserName:      names[o.UserID],
 		Amount:        o.Amount,
 		PointsAmount:  o.PointsAmount,
 		PaymentMethod: o.PaymentMethod,
@@ -567,6 +578,20 @@ func toOrderVO(o *model.RechargeOrder) *RechargeOrderVO {
 		PaidTime:      o.PaidTime,
 		CreateTime:    o.CreateTime,
 	}
+}
+
+func orderUserIDs(records []model.RechargeOrder) []int64 {
+	seen := make(map[int64]struct{})
+	ids := make([]int64, 0, len(records))
+	for i := range records {
+		id := records[i].UserID
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // getOrDefault 取 map 值，缺失返回默认值。

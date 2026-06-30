@@ -4,7 +4,7 @@ import type { UserSimpleVO } from "./user";
 export interface ProjectVO {
   id: number;
   /** 归属用户ID（团队共享时区分自己/队友的项目） */
-  ownerId?: number;
+  ownerId?: string;
   name: string;
   description: string;
   thumbnail: string;
@@ -23,6 +23,7 @@ export interface ProjectDetailVO extends ProjectVO {
 
 export interface CanvasDataVO {
   canvasData: string;
+  updateTime?: string;
 }
 
 export interface ShareVO {
@@ -45,6 +46,7 @@ export interface ProjectUpdateDTO {
 export interface CanvasSaveDTO {
   canvasData: string;
   thumbnail?: string;
+  expectedUpdateTime?: string;
 }
 
 export interface ProjectQuery extends PageQuery {

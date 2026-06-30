@@ -2,7 +2,7 @@ import type { PageQuery } from "./api";
 
 export interface BlogVO {
   id: number;
-  authorId: number;
+  authorId: string;
   authorName: string;
   authorAvatar: string;
   title: string;
@@ -51,6 +51,6 @@ export interface BlogTipDTO {
 export interface BlogQuery extends PageQuery {
   keyword?: string;
   category?: string;
-  authorId?: number;
+  authorId?: string;
   free?: boolean;
 }

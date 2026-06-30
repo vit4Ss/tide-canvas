@@ -9,9 +9,8 @@ Internet -> Caddy(80/443 HTTPS) -> frontend(Next.js :3000)
 ```
 
 Backend now runs the Go service (`tide-canvas-go`) via `docker-compose.prod.yml`.
-The previous Spring Boot stack is kept as `docker-compose.java.yml` for rollback;
-both files share identical mysql/redis/frontend/caddy definitions, so running
-either one only rebuilds the `backend` service.
+The previous Spring Boot stack and standalone `tide-canvas-web` app have been
+archived under `archive/legacy/` and are no longer deployment targets.
 
 The server only needs the Git repository and one `.env` file. Do not upload
 local `application.yml`, `application-docker.yml`, or `.env.local`.
@@ -78,7 +77,7 @@ docker compose --env-file .env -f docker-compose.prod.yml up -d --build
 ```
 
 First build can take several minutes. MySQL initializes from
-`tide-canvas-server/sql/init.sql` only when the database volume is empty.
+`tide-canvas-go/sql/schema.sql` only when the database volume is empty.
 
 ## 5. Verify
 
@@ -133,12 +132,7 @@ docker exec tc-mysql sh -c 'mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --single-t
   context.
 - Keep `.env` private and never commit it.
 
-## Rollback to the Java backend
+## Legacy Code
 
-The Java stack is preserved as `docker-compose.java.yml`. To switch back, just
-bring it up — only the `backend` container is rebuilt, data volumes are untouched:
-
-```bash
-cd ~/tide-canvas
-docker compose --env-file .env -f docker-compose.java.yml up -d --build
-```
+The archived Java backend and standalone Next.js app are kept in
+`archive/legacy/` for reference only.

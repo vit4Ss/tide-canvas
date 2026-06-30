@@ -2,6 +2,8 @@ package ai
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -31,7 +33,8 @@ const (
 
 // gridHTTPClient 源图下载客户端：禁用重定向、连接超时 15s、整体超时 30s（对齐 ImageGridServiceImpl）。
 var gridHTTPClient = &http.Client{
-	Timeout: 30 * time.Second,
+	Timeout:   30 * time.Second,
+	Transport: &http.Transport{DialContext: dialPublicContext},
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		return http.ErrUseLastResponse // 不跟随重定向（对齐 Redirect.NEVER）
 	},
@@ -196,6 +199,34 @@ func assertPublicHTTP(rawURL string) error {
 		}
 	}
 	return nil
+}
+
+// dialPublicContext resolves and dials only public IP addresses, closing DNS rebinding gaps.
+func dialPublicContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil || len(ips) == 0 {
+		return nil, errors.New("unable to resolve host")
+	}
+	dialer := &net.Dialer{Timeout: 15 * time.Second}
+	var lastErr error
+	for _, ip := range ips {
+		if isBlockedIP(ip) {
+			return nil, errors.New("blocked private address")
+		}
+		conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, errors.New("no reachable address")
 }
 
 // isBlockedIP 拦截内网/环回/链路本地(含 169.254.169.254)/私网/组播/CGNAT/IPv6 ULA（对齐 SafeUrl.isBlocked）。

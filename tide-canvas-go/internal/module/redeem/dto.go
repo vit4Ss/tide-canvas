@@ -83,15 +83,17 @@ type RedeemResultVO struct {
 
 // RedeemCodeVO 兑换码（管理端列表展示，对齐 RedeemCodeVO）。
 type RedeemCodeVO struct {
-	ID         int64      `json:"id,string"`
-	Code       string     `json:"code"`
-	Points     int        `json:"points"`
-	CreatedBy  *int64     `json:"createdBy,string"`
-	Status     int        `json:"status"`
-	UsedBy     *int64     `json:"usedBy,string"`
-	UsedTime   *time.Time `json:"usedTime"`
-	ExpireTime *time.Time `json:"expireTime"`
-	BatchNo    string     `json:"batchNo"`
-	Remark     string     `json:"remark"`
-	CreateTime time.Time  `json:"createTime"`
+	ID          int64      `json:"id,string"`
+	Code        string     `json:"code"`
+	Points      int        `json:"points"`
+	CreatedBy   *int64     `json:"-"`
+	CreatorName string     `json:"creatorName"`
+	Status      int        `json:"status"`
+	UsedBy      *int64     `json:"-"`
+	UserName    string     `json:"userName"`
+	UsedTime    *time.Time `json:"usedTime"`
+	ExpireTime  *time.Time `json:"expireTime"`
+	BatchNo     string     `json:"batchNo"`
+	Remark      string     `json:"remark"`
+	CreateTime  time.Time  `json:"createTime"`
 }

@@ -1,9 +1,11 @@
 package file
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"path"
 	"strings"
@@ -42,8 +44,20 @@ func (s *URLSaver) SaveFromURL(userID int64, rawURL string) (string, error) {
 	if limit <= 0 {
 		limit = 100 << 20 // 100MB
 	}
+	if err := assertPublicHTTP(rawURL); err != nil {
+		return "", err
+	}
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := &http.Client{
+		Timeout:   60 * time.Second,
+		Transport: &http.Transport{DialContext: dialPublicContext},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return errors.New("too many redirects")
+			}
+			return assertPublicHTTP(req.URL.String())
+		},
+	}
 	resp, err := client.Get(rawURL)
 	if err != nil {
 		return "", err
@@ -79,6 +93,34 @@ func (s *URLSaver) SaveFromURL(userID int64, rawURL string) (string, error) {
 		s.logger.Infof("[file] AI 结果转存: userId=%d, %s -> %s", userID, rawURL, saved)
 	}
 	return saved, nil
+}
+
+// dialPublicContext dials only public IP addresses after resolving the target host.
+func dialPublicContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil || len(ips) == 0 {
+		return nil, errors.New("unable to resolve host")
+	}
+	dialer := &net.Dialer{Timeout: 15 * time.Second}
+	var lastErr error
+	for _, ip := range ips {
+		if isBlockedIP(ip) {
+			return nil, errors.New("blocked private address")
+		}
+		conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, errors.New("no reachable address")
 }
 
 // assetName 生成转存文件名：uuid + 扩展名（优先按 contentType，回退原 URL 后缀）。

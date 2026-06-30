@@ -1,22 +1,18 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, Monitor, Volume2, VolumeX, HelpCircle } from "lucide-react";
+import { ChevronDown, Monitor, Volume2, VolumeX } from "lucide-react";
 
 export interface VideoParamValue {
-  /** 画面比例，如 16:9 / 9:16 / auto */
   ratio: string;
-  /** 分辨率清晰度：480P / 720P / 1080P */
   resolution: string;
-  /** 视频时长（秒） */
   duration: number;
-  /** 是否生成音频 */
   audio: boolean;
 }
 
 export const VIDEO_RATIOS = [
-  { value: "auto", label: "Auto", w: 14, h: 14 },
+  { value: "auto", label: "智能比例", w: 14, h: 14 },
   { value: "16:9", label: "16:9", w: 16, h: 9 },
   { value: "4:3", label: "4:3", w: 16, h: 12 },
   { value: "1:1", label: "1:1", w: 14, h: 14 },
@@ -25,21 +21,26 @@ export const VIDEO_RATIOS = [
   { value: "21:9", label: "21:9", w: 16, h: 7 },
 ];
 
-/** 清晰度档位（也用于模型管理「支持清晰度」配置） */
 export const RESOLUTIONS = ["480P", "720P", "1080P"];
-
-/** 默认可选时长档位（秒）——模型未配置时回退 */
 export const DURATION_OPTIONS = [5, 10];
+
+interface RatioOption {
+  value: string;
+  label: string;
+  w: number;
+  h: number;
+}
 
 interface Props {
   value: VideoParamValue;
   onChange: (value: VideoParamValue) => void;
-  /** 可选：限定可选的清晰度 / 比例 / 时长档位 / 是否支持音频（来自模型配置），不传则显示全部 */
   resolutions?: string[];
   ratios?: string[];
   durations?: number[];
   allowAudio?: boolean;
 }
+
+const PANEL_WIDTH = 372;
 
 export function VideoParamPicker({ value, onChange, resolutions, ratios, durations, allowAudio }: Props) {
   const [open, setOpen] = useState(false);
@@ -56,161 +57,157 @@ export function VideoParamPicker({ value, onChange, resolutions, ratios, duratio
       if (containerRef.current?.contains(target) || panelRef.current?.contains(target)) return;
       setOpen(false);
     };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
     document.addEventListener("mousedown", onMouseDown);
-    return () => document.removeEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
   }, [open]);
 
-  const stop = (e: React.MouseEvent) => e.stopPropagation();
-
-  const toggle = (e: React.MouseEvent) => {
-    stop(e);
-    if (!open && triggerRef.current) {
-      const rect = triggerRef.current.getBoundingClientRect();
-      const nextOpenUp = window.innerHeight - rect.bottom < 480;
-      setOpenUp(nextOpenUp);
-      setPanelPos({ left: Math.round(rect.left), top: Math.round(nextOpenUp ? rect.top - 8 : rect.bottom + 8) });
-    }
-    setOpen(!open);
-  };
-
-  // 维度语义：undefined(模型未配置) = 显示全部；空数组(后台明确全不勾) = 该模型无此维度，隐藏区块
   const ratioOpts = ratios ? VIDEO_RATIOS.filter((r) => ratios.includes(r.value)) : VIDEO_RATIOS;
   const resolutionOpts = resolutions ? RESOLUTIONS.filter((r) => resolutions.includes(r)) : RESOLUTIONS;
   const durationOpts = durations ? [...durations].sort((a, b) => a - b) : DURATION_OPTIONS;
   const showAudio = allowAudio !== false;
-  const durIdx = Math.max(0, durationOpts.indexOf(value.duration));
-  const durPct = durationOpts.length > 1 ? Math.round((durIdx / (durationOpts.length - 1)) * 100) : 0;
 
   const summaryParts: string[] = [];
-  if (ratioOpts.length) summaryParts.push(value.ratio === "auto" ? "Auto" : value.ratio);
+  if (ratioOpts.length) summaryParts.push(value.ratio === "auto" ? "智能比例" : value.ratio);
   if (resolutionOpts.length) summaryParts.push(value.resolution);
   if (durationOpts.length) summaryParts.push(`${value.duration}s`);
   const summary = summaryParts.join(" · ") || "默认";
-  const cellBase = "rounded-lg border px-3 py-2 text-xs transition-colors";
-  const cellOn = "border-neutral-900 bg-white text-neutral-900 dark:border-white dark:bg-neutral-900 dark:text-white";
-  const cellOff = "border-neutral-200 text-neutral-600 hover:border-neutral-300 dark:border-neutral-700 dark:text-neutral-400";
+
+  const stop = (e: ReactMouseEvent) => e.stopPropagation();
+
+  const toggle = (e: ReactMouseEvent) => {
+    stop(e);
+    if (!open && triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const nextOpenUp = spaceBelow < 500;
+      const left = Math.min(Math.max(12, Math.round(rect.left)), Math.max(12, window.innerWidth - PANEL_WIDTH - 12));
+      setOpenUp(nextOpenUp);
+      setPanelPos({ left, top: Math.round(nextOpenUp ? rect.top - 8 : rect.bottom + 8) });
+    }
+    setOpen(!open);
+  };
 
   return (
     <div className="relative" ref={containerRef} onMouseDown={stop}>
       <button
         ref={triggerRef}
+        type="button"
         onClick={toggle}
-        className="flex items-center gap-1 rounded-md px-2 py-1 text-xs hover:bg-neutral-100 dark:hover:bg-neutral-800"
+        className="flex h-8 max-w-[250px] items-center gap-1.5 rounded-md px-2 text-xs text-neutral-700 transition-colors hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
       >
-        <Monitor className="h-3 w-3" />
-        {summary}
-        {showAudio && (value.audio ? <Volume2 className="h-3 w-3" /> : <VolumeX className="h-3 w-3 opacity-50" />)}
-        <ChevronDown className="h-3 w-3" />
+        <Monitor className="h-3.5 w-3.5 shrink-0" />
+        <span className="truncate">{summary}</span>
+        {showAudio && (value.audio ? <Volume2 className="h-3 w-3 shrink-0 text-neutral-500" /> : <VolumeX className="h-3 w-3 shrink-0 text-neutral-400" />)}
+        <ChevronDown className={`h-3 w-3 shrink-0 text-neutral-400 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
 
       {open && typeof document !== "undefined" && createPortal(
         <div
           ref={panelRef}
-          className={`fixed z-50 w-[360px] rounded-2xl border border-neutral-200 bg-white p-4 shadow-xl dark:border-neutral-700 dark:bg-neutral-900 ${openUp ? "-translate-y-full" : ""}`}
+          className={`fixed z-50 w-[372px] max-w-[calc(100vw-24px)] rounded-xl border border-black/[0.06] bg-white p-3 text-left shadow-[0_22px_70px_rgba(15,23,42,0.18)] dark:border-white/10 dark:bg-[#25262b] dark:shadow-black/35 ${openUp ? "-translate-y-full" : ""}`}
           style={{ left: panelPos.left, top: panelPos.top }}
           onMouseDown={stop}
         >
-          {/* 比例 */}
           {ratioOpts.length > 0 && (
-          <div>
-            <p className="mb-2 text-xs text-neutral-500">比例</p>
-            <div className="grid grid-cols-5 gap-2">
-              {ratioOpts.map((r) => {
-                const isSelected = value.ratio === r.value;
-                const scale = 20 / Math.max(r.w, r.h);
-                const iw = Math.round(r.w * scale);
-                const ih = Math.round(r.h * scale);
-                return (
-                  <button
-                    key={r.value}
-                    onClick={() => onChange({ ...value, ratio: r.value })}
-                    className={`flex flex-col items-center justify-center gap-1.5 rounded-lg border py-2 transition-colors ${
-                      isSelected ? "border-neutral-900 dark:border-white" : "border-neutral-200 hover:border-neutral-300 dark:border-neutral-700"
-                    }`}
-                  >
-                    <span className="flex h-5 items-center justify-center">
-                      <span
-                        className={`block rounded-[3px] border-[1.5px] ${isSelected ? "border-neutral-900 dark:border-white" : "border-neutral-400 dark:border-neutral-500"}`}
-                        style={{ width: iw, height: ih }}
-                      />
-                    </span>
-                    <span className={`text-[10px] leading-none ${isSelected ? "font-medium text-neutral-900 dark:text-white" : "text-neutral-500"}`}>
-                      {r.label}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-          )}
-
-          {/* 清晰度 */}
-          {resolutionOpts.length > 0 && (
-          <div className="mt-4 first:mt-0">
-            <p className="mb-2 text-xs text-neutral-500">清晰度</p>
-            <div className="grid grid-cols-3 gap-2">
-              {resolutionOpts.map((res) => (
-                <button
-                  key={res}
-                  onClick={() => onChange({ ...value, resolution: res })}
-                  className={`${cellBase} ${value.resolution === res ? cellOn : cellOff}`}
-                >
-                  {res}
-                </button>
-              ))}
-            </div>
-          </div>
-          )}
-
-          {/* 视频时长：档位轴（滑块按档位索引吸附；连续秒数=均匀刻度，非连续=按档位停靠） */}
-          {durationOpts.length > 0 && (
-          <div className="mt-4 first:mt-0">
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-neutral-500">视频时长</p>
-              <span className="text-xs text-neutral-400">{value.duration}s</span>
-            </div>
-            {durationOpts.length <= 1 ? (
-              <p className="mt-2 text-xs text-neutral-600 dark:text-neutral-300">{durationOpts[0] ?? value.duration}s</p>
-            ) : (
-              <>
-                <input
-                  type="range"
-                  min={0}
-                  max={durationOpts.length - 1}
-                  step={1}
-                  value={durIdx}
-                  onChange={(e) => onChange({ ...value, duration: durationOpts[Number(e.target.value)] })}
-                  style={{ "--pct": `${durPct}%` } as React.CSSProperties}
-                  className="slider-thin mt-2 w-full"
-                />
-                <div className="mt-1 flex justify-between text-[10px] text-neutral-400">
-                  <span>{durationOpts[0]}s</span>
-                  <span>{durationOpts[durationOpts.length - 1]}s</span>
-                </div>
-              </>
-            )}
-          </div>
-          )}
-
-          {/* 生成音频（模型支持时才显示） */}
-          {showAudio && (
-            <div className="mt-4">
-              <p className="mb-2 flex items-center gap-1 text-xs text-neutral-500">
-                生成音频 <HelpCircle className="h-3 w-3 text-neutral-400" />
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                <button onClick={() => onChange({ ...value, audio: true })} className={`${cellBase} ${value.audio ? cellOn : cellOff}`}>
-                  开启
-                </button>
-                <button onClick={() => onChange({ ...value, audio: false })} className={`${cellBase} ${!value.audio ? cellOn : cellOff}`}>
-                  关闭
-                </button>
+            <ParamSection title="视频尺寸">
+              <div className="grid grid-cols-6 gap-x-1 gap-y-2 rounded-lg bg-neutral-100 p-2 dark:bg-white/8">
+                {ratioOpts.map((ratio) => (
+                  <RatioTile key={ratio.value} option={ratio} active={value.ratio === ratio.value} onClick={() => onChange({ ...value, ratio: ratio.value })} />
+                ))}
               </div>
-            </div>
+            </ParamSection>
+          )}
+
+          {resolutionOpts.length > 0 && (
+            <ParamSection title="清晰度">
+              <SegmentedRow count={resolutionOpts.length}>
+                {resolutionOpts.map((res) => (
+                  <SegmentButton key={res} active={value.resolution === res} onClick={() => onChange({ ...value, resolution: res })}>
+                    {res}
+                  </SegmentButton>
+                ))}
+              </SegmentedRow>
+            </ParamSection>
+          )}
+
+          {durationOpts.length > 0 && (
+            <ParamSection title="视频时长">
+              <SegmentedRow count={durationOpts.length}>
+                {durationOpts.map((duration) => (
+                  <SegmentButton key={duration} active={value.duration === duration} onClick={() => onChange({ ...value, duration })}>
+                    {duration}s
+                  </SegmentButton>
+                ))}
+              </SegmentedRow>
+            </ParamSection>
+          )}
+
+          {showAudio && (
+            <ParamSection title="生成音频">
+              <SegmentedRow count={2}>
+                <SegmentButton active={value.audio} onClick={() => onChange({ ...value, audio: true })}>开启</SegmentButton>
+                <SegmentButton active={!value.audio} onClick={() => onChange({ ...value, audio: false })}>关闭</SegmentButton>
+              </SegmentedRow>
+            </ParamSection>
           )}
         </div>,
         document.body,
       )}
     </div>
+  );
+}
+
+function ParamSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="not-first:mt-4">
+      <div className="mb-2 text-[14px] font-semibold leading-5 text-neutral-700 dark:text-neutral-200">{title}</div>
+      {children}
+    </section>
+  );
+}
+
+function SegmentedRow({ children, count }: { children: ReactNode; count: number }) {
+  return (
+    <div className="grid rounded-lg bg-neutral-100 p-1 dark:bg-white/8" style={{ gridTemplateColumns: `repeat(${Math.max(1, count)}, minmax(0, 1fr))` }}>
+      {children}
+    </div>
+  );
+}
+
+function SegmentButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`${active ? "bg-white text-neutral-950 shadow-sm dark:bg-white dark:text-neutral-950" : "text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white"} flex h-9 items-center justify-center rounded-md px-2 text-sm font-medium transition-colors`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function RatioTile({ option, active, onClick }: { option: RatioOption; active: boolean; onClick: () => void }) {
+  const scale = 18 / Math.max(option.w, option.h);
+  const width = Math.max(4, Math.round(option.w * scale));
+  const height = Math.max(4, Math.round(option.h * scale));
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`${active ? "bg-white text-neutral-950 shadow-sm dark:bg-white dark:text-neutral-950" : "text-neutral-500 hover:bg-white/70 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-white/10 dark:hover:text-white"} flex h-[50px] flex-col items-center justify-center gap-1 rounded-lg text-[11px] font-medium transition-colors`}
+    >
+      <span className="flex h-5 items-center justify-center">
+        <span className="block rounded-[2px] border border-current" style={{ width, height } as CSSProperties} />
+      </span>
+      <span className="leading-none">{option.label}</span>
+    </button>
   );
 }

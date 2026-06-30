@@ -143,7 +143,7 @@ type ModelVO struct {
 	CostPerCall       *decimal.Decimal `json:"costPerCall"` // 仅管理端
 	Status            int              `json:"status"`
 	ProviderID        *int64           `json:"providerId,string"` // 雪花 id，字符串传输避免 JS 精度丢失
-	ProviderName      string           `json:"providerName"` // 管理端展示
+	ProviderName      string           `json:"providerName"`      // 管理端展示
 	CreateTime        string           `json:"createTime"`
 }
 
@@ -176,7 +176,7 @@ type ProviderVO struct {
 type GenerationLogVO struct {
 	ID             int64            `json:"id"`
 	TaskID         *int64           `json:"taskId"`
-	UserID         *int64           `json:"userId"`
+	UserID         *int64           `json:"-"`
 	ProjectID      *int64           `json:"projectId"`
 	HandlerName    string           `json:"handlerName"`
 	OperationType  string           `json:"operationType"`

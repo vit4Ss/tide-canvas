@@ -2,6 +2,7 @@ package recharge
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -141,17 +142,28 @@ func (r *Repository) PageAllOrders(q *AdminOrderQuery) ([]model.RechargeOrder, i
 	if q.UserID != nil {
 		tx = tx.Where("user_id = ?", *q.UserID)
 	}
+	keyword := strings.TrimSpace(q.Keyword)
+	userKeyword := strings.TrimSpace(q.UserKeyword)
+	if keyword != "" {
+		kw := "%" + keyword + "%"
+		tx = tx.Joins("JOIN sys_user u ON u.id = recharge_order.user_id").
+			Where("(recharge_order.order_no LIKE ? OR u.nickname LIKE ? OR u.username LIKE ? OR u.email LIKE ?)", kw, kw, kw, kw)
+	} else if userKeyword != "" {
+		kw := "%" + userKeyword + "%"
+		tx = tx.Joins("JOIN sys_user u ON u.id = recharge_order.user_id").
+			Where("(u.nickname LIKE ? OR u.username LIKE ? OR u.email LIKE ?)", kw, kw, kw)
+	}
 	if q.Status != nil {
-		tx = tx.Where("status = ?", *q.Status)
+		tx = tx.Where("recharge_order.status = ?", *q.Status)
 	}
 	if q.OrderNo != "" {
-		tx = tx.Where("order_no LIKE ?", "%"+q.OrderNo+"%")
+		tx = tx.Where("recharge_order.order_no LIKE ?", "%"+q.OrderNo+"%")
 	}
 	if start, ok := parseDateTime(q.StartTime); ok {
-		tx = tx.Where("create_time >= ?", start)
+		tx = tx.Where("recharge_order.create_time >= ?", start)
 	}
 	if end, ok := parseDateTime(q.EndTime); ok {
-		tx = tx.Where("create_time <= ?", end)
+		tx = tx.Where("recharge_order.create_time <= ?", end)
 	}
 	return pageOrders(tx, q.PageNum, q.PageSize)
 }
@@ -163,13 +175,40 @@ func pageOrders(tx *gorm.DB, pageNum, pageSize int) ([]model.RechargeOrder, int6
 		return nil, 0, err
 	}
 	var records []model.RechargeOrder
-	if err := tx.Order("create_time DESC").
+	if err := tx.Order("recharge_order.create_time DESC").
 		Offset((pageNum - 1) * pageSize).
 		Limit(pageSize).
 		Find(&records).Error; err != nil {
 		return nil, 0, err
 	}
 	return records, total, nil
+}
+
+func (r *Repository) UserDisplayNames(ids []int64) (map[int64]string, error) {
+	out := make(map[int64]string, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	type row struct {
+		ID       int64
+		Username string
+		Nickname string
+	}
+	var rows []row
+	if err := r.db.Model(&model.SysUser{}).
+		Select("id", "username", "nickname").
+		Where("id IN ?", ids).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		name := strings.TrimSpace(r.Nickname)
+		if name == "" {
+			name = strings.TrimSpace(r.Username)
+		}
+		out[r.ID] = name
+	}
+	return out, nil
 }
 
 // ---- sys_config ----

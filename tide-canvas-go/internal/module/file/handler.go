@@ -72,9 +72,9 @@ func (h *Handler) upload(c *gin.Context) {
 		response.Fail(c, ecode.BadRequest)
 		return
 	}
-	data, err := readMultipart(fh)
+	data, err := readMultipart(fh, h.svc.cfg.MaxSize)
 	if err != nil {
-		response.Fail(c, ecode.BadRequest)
+		response.FailErr(c, err)
 		return
 	}
 	vo, err := h.svc.Upload(middleware.MustUserID(c), data, fh.Filename, fh.Header.Get("Content-Type"))
@@ -92,19 +92,19 @@ func (h *Handler) uploadBatch(c *gin.Context) {
 		return
 	}
 	fhs := form.File["files"]
-	items := make([]UploadItem, 0, len(fhs))
+	vos := make([]*FileVO, 0, len(fhs))
 	for _, fh := range fhs {
-		data, err := readMultipart(fh)
+		data, err := readMultipart(fh, h.svc.cfg.MaxSize)
 		if err != nil {
-			response.Fail(c, ecode.BadRequest)
+			response.FailErr(c, err)
 			return
 		}
-		items = append(items, UploadItem{Data: data, OriginalName: fh.Filename, MimeType: fh.Header.Get("Content-Type")})
-	}
-	vos, err := h.svc.UploadBatch(middleware.MustUserID(c), items)
-	if err != nil {
-		response.FailErr(c, err)
-		return
+		vo, err := h.svc.Upload(middleware.MustUserID(c), data, fh.Filename, fh.Header.Get("Content-Type"))
+		if err != nil {
+			response.FailErr(c, err)
+			return
+		}
+		vos = append(vos, vo)
 	}
 	response.OK(c, vos)
 }
@@ -216,7 +216,8 @@ var errDownloadTooLarge = ecode.BadRequest.WithMessage("download too large")
 // fetchDownloadBody 拉取下载内容，不跟随重定向、超时控制、累计字节超限即中止（对齐 fetchDownloadBody）。
 func fetchDownloadBody(rawURL string) ([]byte, error) {
 	client := &http.Client{
-		Timeout: 60 * time.Second,
+		Timeout:   60 * time.Second,
+		Transport: &http.Transport{DialContext: dialPublicContext},
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse // 不跟随重定向
 		},
@@ -289,12 +290,28 @@ func isBlockedIP(ip net.IP) bool {
 	return false
 }
 
-// readMultipart 读取上传文件全部字节。
-func readMultipart(fh *multipart.FileHeader) ([]byte, error) {
+// readMultipart reads at most maxSize+1 bytes so oversized uploads never enter memory whole.
+func readMultipart(fh *multipart.FileHeader, maxSize int64) ([]byte, error) {
+	if fh == nil {
+		return nil, ecode.BadRequest
+	}
+	if maxSize <= 0 {
+		maxSize = 52428800
+	}
+	if fh.Size > maxSize {
+		return nil, ecode.FileSizeExceeded
+	}
 	f, err := fh.Open()
+	if err != nil {
+		return nil, ecode.BadRequest
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, maxSize+1))
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
-	return io.ReadAll(f)
+	if int64(len(data)) > maxSize {
+		return nil, ecode.FileSizeExceeded
+	}
+	return data, nil
 }

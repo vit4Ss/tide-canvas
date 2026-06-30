@@ -3,6 +3,7 @@ package auth
 import (
 	"github.com/shopspring/decimal"
 	"github.com/sirupsen/logrus"
+	"time"
 )
 
 // CodeVerifier 邮箱验证码服务（对齐旧 VerificationCodeService）。
@@ -10,6 +11,11 @@ import (
 type CodeVerifier interface {
 	SendEmailCode(email string) error
 	VerifyEmailCode(email, code string) error
+}
+
+// PasswordResetMailer 发送密码重置邮件。由 email 模块实现，auth 只依赖抽象以避免循环依赖。
+type PasswordResetMailer interface {
+	SendPasswordReset(email, resetURL string, ttl time.Duration) error
 }
 
 // TeamPriceProvider 团队加价系数提供者（对齐 TeamService.getPriceFactor）。

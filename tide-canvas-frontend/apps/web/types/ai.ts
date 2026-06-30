@@ -52,7 +52,7 @@ export interface AiTaskQuery extends PageQuery {
 export interface AiGenerationLogVO {
   id: number;
   taskId: number;
-  userId: number;
+  userId?: number;
   projectId: number;
   handlerName: string;
   operationType: string;

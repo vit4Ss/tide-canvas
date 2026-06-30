@@ -48,6 +48,14 @@ func Load() *viper.Viper {
 	bindCSV(v, "storage.allowed_types", "STORAGE_ALLOWED_TYPES")
 	bindCSV(v, "cors.allowed_origins", "CORS_ALLOWED_ORIGINS")
 
+	if strings.TrimSpace(v.GetString("app.public_url")) == "" {
+		if siteURL := strings.TrimSpace(os.Getenv("SITE_URL")); siteURL != "" {
+			v.Set("app.public_url", siteURL)
+		} else {
+			v.Set("app.public_url", "http://localhost:3000")
+		}
+	}
+
 	return v
 }
 
@@ -66,6 +74,9 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("jwt.access_ttl", 7200)
 	v.SetDefault("jwt.refresh_ttl", 604800)
+
+	v.SetDefault("app.public_url", "")
+	v.SetDefault("auth.password_reset_ttl_seconds", 1800)
 
 	v.SetDefault("redis.addr", "127.0.0.1:6379")
 	v.SetDefault("redis.db", 0)
