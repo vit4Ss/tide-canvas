@@ -7,6 +7,7 @@ import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
 import type { AiTaskVO, AiGenerateDTO } from "@/types/ai";
 import { AiTaskStatus } from "@/types/ai";
 import { toast } from "@/components/shared/toast";
+import { getImageCardSizeForRatio } from "@/lib/image-card-size";
 
 interface GenerateParams {
   nodeId: string;
@@ -23,7 +24,6 @@ const POLL_INTERVAL = 2000; // 2 秒轮询
 const MAX_POLL_TIME = 5 * 60 * 1000; // 图片等快任务：最多 5 分钟
 // 视频较慢（后端轮询可达 10min+），前端上限须 ≥ 后端，否则前端会先放弃、把已成功的任务误标失败、且不回填结果
 const MAX_POLL_TIME_VIDEO = 30 * 60 * 1000;
-const IMAGE_CARD_BASE_WIDTH = 608;
 
 function parseAspectRatio(value: unknown): number | null {
   if (typeof value !== "string" || value === "auto") return null;
@@ -34,12 +34,12 @@ function parseAspectRatio(value: unknown): number | null {
 function imageSizeForAspect(node: CanvasNode, aspectRatio: unknown) {
   const aspect = parseAspectRatio(aspectRatio);
   if (!aspect) return {};
-  const width = IMAGE_CARD_BASE_WIDTH;
-  const height = Math.round(width / aspect);
+
+  const size = getImageCardSizeForRatio(String(aspectRatio), aspect);
   return {
-    height,
-    contentW: width,
-    contentH: height,
+    height: size.h,
+    contentW: size.w,
+    contentH: size.h,
     aspectRatio: String(aspectRatio),
   };
 }

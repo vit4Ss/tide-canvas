@@ -13,13 +13,11 @@ import {
   Download,
   FolderPlus,
   Image as ImageIcon,
-  Languages,
   LayoutGrid,
   Loader2,
   Maximize2,
   Plus,
   RefreshCw,
-  SlidersHorizontal,
   Trash2,
   UploadCloud,
   Video,
@@ -36,7 +34,10 @@ import { applyTeamFactor } from "@/lib/points";
 import { referenceKindFromFile, referenceKindFromMeta, resolveModelReferenceLimitBytes, validateKnownFileSize } from "@/lib/upload-limits";
 import { FileType, type FileVO } from "@/types/file";
 import { toast } from "@/components/shared/toast";
-
+import { BatchCountDropdown } from "@/components/canvas/nodes/components/batch-count-dropdown";
+import { QualityRatioDropdown } from "@/components/canvas/nodes/components/quality-ratio-dropdown";
+import type { ImageQuality, QualityRatioValue } from "@/components/canvas/nodes/types/quality-ratio";
+import { getQualityLabel, normalizeBatchOptions } from "@/components/canvas/nodes/utils/quality-ratio";
 const POLL_INTERVAL = 2000;
 const MAX_POLL_IMAGE = 5 * 60 * 1000;
 const MAX_POLL_VIDEO = 30 * 60 * 1000;
@@ -45,12 +46,6 @@ const IMAGE_REFERENCE_LIMIT = 4;
 const VIDEO_REFERENCE_LIMIT = 12;
 const IMAGE_RATIO_OPTIONS = ["auto", "1:1", "1:2", "2:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "5:4", "4:5", "21:9", "9:21"];
 const VIDEO_RATIO_OPTIONS = ["auto", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"];
-const IMAGE_QUALITY_OPTIONS = [
-  { value: "low", label: "低画质" },
-  { value: "standard", label: "标准画质" },
-  { value: "high", label: "高画质" },
-] as const;
-const IMAGE_RESOLUTION_OPTIONS = ["1K", "2K", "4K"];
 const VIDEO_RESOLUTION_OPTIONS = ["480P", "720P", "1080P"];
 const CREATION_TYPE_OPTIONS = [
   { id: "image", label: "图片生成", icon: ImageIcon },
@@ -125,6 +120,7 @@ function generationTaskToFile(task: AiTaskVO): FileVO | null {
 
 interface ModelFormatConfig {
   pricing?: Record<string, Record<string, number>>;
+  batchSizes?: number[];
 }
 
 function parseModelConfig(model?: AiModelVO): ModelFormatConfig {
@@ -138,7 +134,6 @@ function parseModelConfig(model?: AiModelVO): ModelFormatConfig {
 
 type Tab = "image" | "video";
 type GenStatus = "generating" | "done" | "error";
-type ImageQuality = (typeof IMAGE_QUALITY_OPTIONS)[number]["value"];
 type VideoReferenceMode = (typeof VIDEO_REFERENCE_MODE_OPTIONS)[number]["id"];
 
 interface GenParams {
@@ -149,6 +144,7 @@ interface GenParams {
   ratio: string;
   imageQuality?: ImageQuality;
   imageResolution?: string;
+  imageCount?: number;
   videoResolution?: string;
   videoDuration?: number;
   videoAudio?: boolean;
@@ -176,12 +172,14 @@ export function CreativeHero() {
   const [ratio, setRatio] = useState<string>("1:1");
   const [imageQuality, setImageQuality] = useState<ImageQuality>("standard");
   const [imageResolution, setImageResolution] = useState("2K");
+  const [imageCount, setImageCount] = useState(1);
   const [videoResolution, setVideoResolution] = useState("720P");
   const [videoDuration, setVideoDuration] = useState(5);
   const [videoAudio, setVideoAudio] = useState(true);
   const [typeOpen, setTypeOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [ratioOpen, setRatioOpen] = useState(false);
+  const [countOpen, setCountOpen] = useState(false);
   const [referenceModeOpen, setReferenceModeOpen] = useState(false);
   const [referenceDragActive, setReferenceDragActive] = useState(false);
   const [videoReferenceMode, setVideoReferenceMode] = useState<VideoReferenceMode>("omni");
@@ -358,7 +356,20 @@ export function CreativeHero() {
   const hasPromptContent = Boolean(prompt.trim() || promptReferenceFiles.length);
   const canSubmit = hasPromptContent && !busy && !uploading;
   const selectedModelConfig = parseModelConfig(selectedModel);
+  const safeImageCountOptions = normalizeBatchOptions(selectedModelConfig.batchSizes);
+  const effectiveImageCount = safeImageCountOptions.includes(imageCount) ? imageCount : safeImageCountOptions[0] ?? 1;
   const imageMatrixCost = tab === "image" ? selectedModelConfig.pricing?.[imageQuality]?.[imageResolution] : undefined;
+  const paramSummary = tab === "image"
+    ? [
+        effectiveRatio === "auto" ? "自动" : effectiveRatio,
+        getQualityLabel(imageQuality),
+        imageResolution,
+      ].join(" · ")
+    : [
+        effectiveRatio === "auto" ? "自动" : effectiveRatio,
+        videoResolution,
+      ].join(" · ");
+  const imageParamValue: QualityRatioValue = { ratio: effectiveRatio, quality: imageQuality, clarity: imageResolution };
   const imageRefCount = references.filter((file) => file.fileType === "image" || file.mimeType?.startsWith("image/")).length;
   const videoRefCount = references.filter((file) => file.fileType === "video" || file.mimeType?.startsWith("video/")).length;
   const handlerForCost = tab === "image"
@@ -369,11 +380,12 @@ export function CreativeHero() {
   const modelPointCost = selectedModel && selectedModel.pointCost > 0 ? selectedModel.pointCost : undefined;
   const handlerPointCost = handlerCosts[handlerForCost] && handlerCosts[handlerForCost] > 0 ? handlerCosts[handlerForCost] : undefined;
   const basePointCost = imageMatrixCost ?? modelPointCost ?? handlerPointCost ?? (tab === "image" ? 18 : 0);
-  const displayPointCost = applyTeamFactor(basePointCost, user);
+  const displayPointCost = applyTeamFactor(basePointCost * (tab === "image" ? effectiveImageCount : 1), user);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [results.length]);
+
   useLayoutEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -445,6 +457,7 @@ export function CreativeHero() {
     setRatio(next === "video" ? "16:9" : "1:1");
     setTypeOpen(false);
     setRatioOpen(false);
+    setCountOpen(false);
     setReferenceModeOpen(false);
     if (next === "image") {
       setReferences((current) => current.filter((file) => file.fileType === "image" || file.mimeType?.startsWith("image/")).slice(0, IMAGE_REFERENCE_LIMIT));
@@ -468,6 +481,7 @@ export function CreativeHero() {
   const selectModel = (id: string) => {
     setSelectedModelId(id);
     setModelOpen(false);
+    setCountOpen(false);
     localStorage.setItem(MODEL_STORAGE_KEY, id);
   };
 
@@ -545,6 +559,7 @@ export function CreativeHero() {
       : {
           ...(p.imageQuality ? { quality: p.imageQuality } : {}),
           ...(p.imageResolution ? { resolution: p.imageResolution.toLowerCase() } : {}),
+          ...(p.imageCount && p.imageCount > 1 ? { batchCount: p.imageCount } : {}),
         };
     let handler = imageUrls.length ? "image_to_image" : "text_to_image";
     let referenceInput: Record<string, unknown> = imageUrls.length
@@ -594,6 +609,7 @@ export function CreativeHero() {
       ratio: ratioForRequest,
       imageQuality,
       imageResolution,
+      imageCount: effectiveImageCount,
       videoResolution,
       videoDuration,
       videoAudio,
@@ -973,7 +989,7 @@ export function CreativeHero() {
           <div className={(results.length === 0 ? "mx-auto w-full max-w-[920px]" : "mx-auto w-full max-w-[960px]")}> 
             <div
               data-type-open={typeOpen ? "true" : undefined}
-              className="relative z-30 rounded-xl border border-black/[0.06] bg-white p-3 text-left shadow-[0_18px_42px_rgba(15,23,42,0.14)] backdrop-blur-2xl dark:border-white/10 dark:bg-[#1d1e23]"
+              className="relative z-30 rounded-lg border border-neutral-200 bg-white p-3 text-left shadow-[0_18px_42px_rgba(15,23,42,0.08)] dark:border-white/10 dark:bg-neutral-950"
             >
               <input ref={fileInputRef} type="file" multiple={referenceLimit > 1} accept={tab === "video" ? "image/*,video/*" : "image/*"} className="hidden" onChange={handleReferenceChange} />
 
@@ -996,11 +1012,11 @@ export function CreativeHero() {
                           type="button"
                           onClick={() => { setTypeOpen(false); selectCreationType(item.id); }}
                           className={(active
-                            ? "bg-blue-50 text-[#1268ff]"
+                            ? "bg-neutral-950 text-white shadow-sm dark:bg-white dark:text-neutral-950"
                             : supported
                               ? "text-neutral-600 hover:bg-neutral-50 hover:text-neutral-950 dark:text-neutral-300 dark:hover:bg-white/8 dark:hover:text-white"
                               : "text-neutral-600 hover:bg-neutral-50 hover:text-neutral-950 dark:text-neutral-400 dark:hover:bg-white/8 dark:hover:text-white") +
-                            " flex h-9 items-center gap-1.5 rounded-lg px-3 text-sm font-semibold transition-colors"}
+                            " flex h-9 items-center gap-1.5 rounded-md px-3 text-sm font-semibold transition-colors"}
                         >
                           <Icon className="h-4 w-4" />
                           {item.label}
@@ -1011,7 +1027,7 @@ export function CreativeHero() {
                   <button
                     type="button"
                     onClick={() => textareaRef.current?.focus()}
-                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-neutral-500 transition-colors hover:bg-neutral-50 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-white/8 dark:hover:text-white"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-transparent text-neutral-500 transition-colors hover:border-neutral-200 hover:bg-neutral-100 hover:text-neutral-950 dark:text-neutral-400 dark:hover:border-white/10 dark:hover:bg-white/10 dark:hover:text-white"
                     title="展开"
                   >
                     <Maximize2 className="h-4 w-4" />
@@ -1063,9 +1079,9 @@ export function CreativeHero() {
                       onClick={openReferencePicker}
                       disabled={!canUploadReferences}
                       className={(referenceDragActive
-                        ? "border-[#00a7d7] bg-sky-50 text-[#00a7d7] ring-2 ring-[#00a7d7]/35 dark:bg-sky-400/10 dark:text-[#43c9ef]"
+                        ? "border-neutral-950 bg-neutral-50 text-neutral-950 ring-2 ring-neutral-950/10 dark:border-white dark:bg-white/10 dark:text-white dark:ring-white/15"
                         : "border-neutral-200 bg-white text-neutral-500 hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-700 dark:border-white/10 dark:bg-white/8 dark:text-neutral-300 dark:hover:bg-white/12") +
-                        " flex h-[52px] w-[52px] shrink-0 flex-col items-center justify-center gap-1 rounded-lg border border-dashed shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60"}
+                        " flex h-[52px] w-[52px] shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed transition-colors disabled:cursor-not-allowed disabled:opacity-60"}
                       title={tab === "video" ? "点击或拖拽上传参考素材" : "点击或拖拽上传参考图"}
                     >
                       {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
@@ -1103,8 +1119,8 @@ export function CreativeHero() {
                   <div className="relative min-w-0">
                     <button
                       type="button"
-                      onClick={() => { if (!tabModels.length) return; setModelOpen((o) => !o); setTypeOpen(false); setRatioOpen(false); setReferenceModeOpen(false); }}
-                      className={(modelSelectable ? "text-neutral-800 hover:bg-neutral-50 dark:text-neutral-200 dark:hover:bg-white/12" : "cursor-default text-neutral-400 dark:text-neutral-500") + " flex h-9 max-w-[240px] items-center gap-1.5 rounded-lg bg-white px-3 text-sm font-medium ring-1 ring-black/[0.12] transition-colors dark:bg-white/8 dark:ring-white/10"}
+                      onClick={() => { if (!tabModels.length) return; setModelOpen((o) => !o); setTypeOpen(false); setRatioOpen(false); setCountOpen(false); setReferenceModeOpen(false); }}
+                      className={(modelSelectable ? "text-neutral-800 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-white/10" : "cursor-default text-neutral-400 dark:text-neutral-500") + " flex h-9 max-w-[240px] items-center gap-1.5 rounded-md border border-neutral-200 bg-white px-3 text-sm font-medium transition-colors dark:border-white/10 dark:bg-white/8"}
                     >
                       <Box className="h-3.5 w-3.5" />
                       <span className="truncate">{modelLabel}</span>
@@ -1113,16 +1129,25 @@ export function CreativeHero() {
                     {modelOpen && modelSelectable && (
                       <>
                         <div className="fixed inset-0 z-10" onClick={() => setModelOpen(false)} />
-                        <div className="absolute bottom-full left-0 z-50 mb-3 max-h-72 w-64 overflow-auto rounded-xl bg-white p-1 shadow-xl ring-1 ring-black/10 dark:bg-[#25262b] dark:ring-white/10">
+                        <div className="absolute left-0 top-full z-50 mt-2 max-h-72 w-[260px] overflow-auto rounded-lg border border-neutral-200 bg-white/96 p-1.5 shadow-[0_16px_42px_rgba(15,23,42,0.16)] backdrop-blur dark:border-white/10 dark:bg-neutral-950/96">
                           {tabModels.map((m) => (
                             <button
                               key={m.modelId}
                               type="button"
                               onClick={() => selectModel(m.modelId)}
-                              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-neutral-700 transition-colors hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-white/8"
+                              className={(m.modelId === selectedModelId
+                                ? "bg-neutral-950 text-white shadow-sm dark:bg-white dark:text-neutral-950"
+                                : "text-neutral-700 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-white/10") + " flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-sm font-medium transition-colors"}
                             >
-                              <span className="flex-1 truncate text-left">{m.name}</span>
-                              {m.modelId === selectedModelId && <Check className="h-4 w-4 shrink-0 text-neutral-900 dark:text-white" />}
+                              <span
+                                className={(m.modelId === selectedModelId
+                                  ? "bg-white/12 text-white dark:bg-neutral-950/10 dark:text-neutral-950"
+                                  : "bg-neutral-100 text-neutral-500 dark:bg-white/8 dark:text-neutral-300") + " flex h-6 w-6 shrink-0 items-center justify-center rounded-md"}
+                              >
+                                <Box className="h-3.5 w-3.5" />
+                              </span>
+                              <span className="min-w-0 flex-1 truncate text-left">{m.name}</span>
+                              {m.modelId === selectedModelId && <Check className="h-3.5 w-3.5 shrink-0" />}
                             </button>
                           ))}
                         </div>
@@ -1134,8 +1159,8 @@ export function CreativeHero() {
                     <div className="relative shrink-0">
                       <button
                         type="button"
-                        onClick={() => { setReferenceModeOpen((open) => !open); setTypeOpen(false); setModelOpen(false); setRatioOpen(false); }}
-                        className="flex h-9 items-center gap-1.5 rounded-lg bg-white px-3 text-sm font-medium text-neutral-800 ring-1 ring-black/[0.12] transition-colors hover:bg-neutral-50 dark:bg-white/8 dark:text-neutral-200 dark:ring-white/10 dark:hover:bg-white/12"
+                        onClick={() => { setReferenceModeOpen((open) => !open); setTypeOpen(false); setModelOpen(false); setRatioOpen(false); setCountOpen(false); }}
+                        className="flex h-9 items-center gap-1.5 rounded-md border border-neutral-200 bg-white px-3 text-sm font-medium text-neutral-800 transition-colors hover:bg-neutral-100 dark:border-white/10 dark:bg-white/8 dark:text-neutral-200 dark:hover:bg-white/10"
                       >
                         <ReferenceModeIcon className="h-3.5 w-3.5" />
                         {referenceModeLabel}
@@ -1170,28 +1195,48 @@ export function CreativeHero() {
                     </div>
                   )}
 
-                  <div className="relative min-w-0">
-                    <button
-                      ref={ratioButtonRef}
-                      type="button"
-                      onClick={() => { setRatioOpen((o) => !o); setTypeOpen(false); setModelOpen(false); setReferenceModeOpen(false); }}
-                      className="flex h-9 max-w-[280px] items-center gap-2 rounded-lg bg-white px-3 text-sm font-medium text-neutral-800 ring-1 ring-black/[0.12] transition-colors hover:bg-neutral-50 dark:bg-white/8 dark:text-neutral-200 dark:ring-white/10 dark:hover:bg-white/12"
-                    >
-                      <SlidersHorizontal className="h-3.5 w-3.5" />
-                      <span className="truncate">{effectiveRatio === "auto" ? "智能比例" : effectiveRatio}</span>
-                      <span className="h-4 w-px bg-neutral-200 dark:bg-white/10" />
-                      <span>{tab === "video" ? videoResolution : "1张"}</span>
-                      <ChevronDown className={(ratioOpen ? "rotate-180" : "rotate-0") + " h-3.5 w-3.5 transition-transform"} />
-                    </button>
-                    {ratioOpen && (
-                      <>
-                        <div className="fixed inset-0 z-10" onClick={() => setRatioOpen(false)} />
-                        <div
-                          ref={ratioPanelRef}
-                          className="absolute z-50 rounded-lg border border-black/[0.06] bg-white p-3 text-left shadow-[0_22px_70px_rgba(15,23,42,0.18)] dark:border-white/10 dark:bg-[#25262b] dark:shadow-black/35"
-                          style={ratioPanelStyle}
-                        >
-                          {tab === "video" ? (
+                  {tab === "image" ? (
+                    <QualityRatioDropdown
+                      value={imageParamValue}
+                      onChange={(next) => {
+                        setRatio(next.ratio);
+                        setImageQuality(next.quality);
+                        setImageResolution(next.clarity);
+                      }}
+                      open={ratioOpen}
+                      onOpenChange={(open) => {
+                        setRatioOpen(open);
+                        if (open) {
+                          setTypeOpen(false);
+                          setModelOpen(false);
+                          setCountOpen(false);
+                          setReferenceModeOpen(false);
+                        }
+                      }}
+                      ratios={IMAGE_RATIO_OPTIONS}
+                      batchCount={effectiveImageCount}
+                      compact
+                    />
+                  ) : (
+                    <div className="relative min-w-0">
+                      <button
+                        ref={ratioButtonRef}
+                        type="button"
+                        onClick={() => { setRatioOpen((o) => !o); setTypeOpen(false); setModelOpen(false); setCountOpen(false); setReferenceModeOpen(false); }}
+                        className="flex h-9 max-w-[280px] items-center gap-2 rounded-md border border-neutral-200 bg-white px-3 text-sm font-medium text-neutral-800 transition-colors hover:bg-neutral-100 dark:border-white/10 dark:bg-white/8 dark:text-neutral-200 dark:hover:bg-white/10"
+                      >
+                        <Crop className="h-3.5 w-3.5" />
+                        <span className="truncate">{paramSummary}</span>
+                        <ChevronDown className={(ratioOpen ? "rotate-180" : "rotate-0") + " h-3.5 w-3.5 transition-transform"} />
+                      </button>
+                      {ratioOpen && (
+                        <>
+                          <div className="fixed inset-0 z-10" onClick={() => setRatioOpen(false)} />
+                          <div
+                            ref={ratioPanelRef}
+                            className="absolute z-50 rounded-lg border border-black/[0.06] bg-white p-3 text-left shadow-[0_22px_70px_rgba(15,23,42,0.18)] dark:border-white/10 dark:bg-[#25262b] dark:shadow-black/35"
+                            style={ratioPanelStyle}
+                          >
                             <VideoParamPanel
                               ratio={effectiveRatio}
                               onRatioChange={setRatio}
@@ -1202,43 +1247,43 @@ export function CreativeHero() {
                               audio={videoAudio}
                               onAudioChange={setVideoAudio}
                             />
-                          ) : (
-                            <ImageParamPanel
-                              ratio={effectiveRatio}
-                              onRatioChange={setRatio}
-                              quality={imageQuality}
-                              onQualityChange={setImageQuality}
-                              resolution={imageResolution}
-                              onResolutionChange={setImageResolution}
-                            />
-                          )}
-                        </div>
-                      </>
-                    )}
-                  </div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
 
+                  {tab === "image" && (
+                    <BatchCountDropdown
+                      value={effectiveImageCount}
+                      options={safeImageCountOptions}
+                      open={countOpen}
+                      onOpenChange={(open) => {
+                        setCountOpen(open);
+                        if (open) {
+                          setTypeOpen(false);
+                          setModelOpen(false);
+                          setRatioOpen(false);
+                          setReferenceModeOpen(false);
+                        }
+                      }}
+                      onChange={setImageCount}
+                    />
+                  )}
                   {tab === "video" && (
                     <button
                       type="button"
                       onClick={() => setVideoDuration((value) => (value === 5 ? 10 : 5))}
-                      className="flex h-9 items-center gap-1.5 rounded-lg bg-white px-3 text-sm font-medium text-neutral-800 ring-1 ring-black/[0.12] transition-colors hover:bg-neutral-50 dark:bg-white/8 dark:text-neutral-200 dark:ring-white/10 dark:hover:bg-white/12"
+                      className="flex h-9 items-center gap-1.5 rounded-md border border-neutral-200 bg-white px-3 text-sm font-medium text-neutral-800 transition-colors hover:bg-neutral-100 dark:border-white/10 dark:bg-white/8 dark:text-neutral-200 dark:hover:bg-white/10"
                     >
                       <Clock3 className="h-3.5 w-3.5" />
                       {videoDuration}s
                     </button>
                   )}
 
-                  <button
-                    type="button"
-                    onClick={() => toast.info("翻译优化暂未开放")}
-                    className="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-neutral-800 ring-1 ring-black/[0.12] transition-colors hover:bg-neutral-50 dark:bg-white/8 dark:text-neutral-200 dark:ring-white/10 dark:hover:bg-white/12"
-                    title="翻译优化"
-                  >
-                    <Languages className="h-4 w-4" />
-                  </button>
                 </div>
 
-                <div className="ml-auto flex h-9 shrink-0 items-center gap-1 rounded-lg bg-neutral-100 p-1 ring-1 ring-black/[0.05] dark:bg-white/10 dark:ring-white/10">
+                <div className="ml-auto flex h-9 shrink-0 items-center gap-1 rounded-md border border-neutral-200 bg-neutral-100 p-1 dark:border-white/10 dark:bg-white/10">
                   <span className={(canSubmit
                     ? "text-neutral-700 dark:text-neutral-100"
                     : "text-neutral-500 dark:text-white/50") +
@@ -1812,7 +1857,7 @@ function ReferenceMentionMenu({
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => onSelect(file)}
               className={(active
-                ? "bg-blue-50 text-[#1268ff] dark:bg-blue-500/15 dark:text-blue-200"
+                ? "bg-neutral-950 text-white shadow-sm dark:bg-white dark:text-neutral-950"
                 : "text-neutral-700 hover:bg-neutral-50 dark:text-neutral-200 dark:hover:bg-white/8") +
                 " flex w-full items-center gap-2 rounded-md px-2 py-2 text-left transition-colors"}
             >
@@ -1923,52 +1968,6 @@ function ReferencePreviewTile({ file, index, stackIndex, onUse, onRemove }: { fi
     </div>
   );
 }
-function ImageParamPanel({
-  ratio,
-  onRatioChange,
-  quality,
-  onQualityChange,
-  resolution,
-  onResolutionChange,
-}: {
-  ratio: string;
-  onRatioChange: (value: string) => void;
-  quality: ImageQuality;
-  onQualityChange: (value: ImageQuality) => void;
-  resolution: string;
-  onResolutionChange: (value: string) => void;
-}) {
-  return (
-    <div>
-      <ParamSection title="图像质量">
-        <SegmentedRow count={IMAGE_QUALITY_OPTIONS.length}>
-          {IMAGE_QUALITY_OPTIONS.map((item) => (
-            <SegmentButton key={item.value} active={quality === item.value} onClick={() => onQualityChange(item.value)}>
-              {item.label}
-            </SegmentButton>
-          ))}
-        </SegmentedRow>
-      </ParamSection>
-      <ParamSection title="清晰度">
-        <SegmentedRow count={IMAGE_RESOLUTION_OPTIONS.length}>
-          {IMAGE_RESOLUTION_OPTIONS.map((item) => (
-            <SegmentButton key={item} active={resolution === item} onClick={() => onResolutionChange(item)}>
-              {item}
-            </SegmentButton>
-          ))}
-        </SegmentedRow>
-      </ParamSection>
-      <ParamSection title="图片尺寸">
-        <div className="grid grid-cols-6 gap-x-1 gap-y-2 rounded-lg bg-neutral-100 p-2 dark:bg-white/8">
-          {IMAGE_RATIO_OPTIONS.map((item) => (
-            <RatioTile key={item} value={item} active={ratio === item} onClick={() => onRatioChange(item)} />
-          ))}
-        </div>
-      </ParamSection>
-    </div>
-  );
-}
-
 function VideoParamPanel({
   ratio,
   onRatioChange,
@@ -2025,7 +2024,7 @@ function VideoParamPanel({
 function ParamSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="not-first:mt-4">
-      <div className="mb-2 text-[14px] font-semibold leading-5 text-neutral-700 dark:text-neutral-200">{title}</div>
+      <div className="mb-1.5 text-[11px] font-semibold leading-4 text-neutral-700 dark:text-neutral-200">{title}</div>
       {children}
     </section>
   );
@@ -2047,7 +2046,7 @@ function SegmentButton({ active, onClick, children }: { active: boolean; onClick
       className={(active
         ? "bg-white text-neutral-950 shadow-sm dark:bg-white dark:text-neutral-950"
         : "text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white") +
-        " flex h-9 items-center justify-center rounded-md px-2 text-sm font-medium transition-colors"}
+        " flex h-7 items-center justify-center rounded-md px-2 text-[11px] font-normal transition-colors"}
     >
       {children}
     </button>
@@ -2055,7 +2054,7 @@ function SegmentButton({ active, onClick, children }: { active: boolean; onClick
 }
 
 function RatioTile({ value, active, onClick }: { value: string; active: boolean; onClick: () => void }) {
-  const label = value === "auto" ? "智能比例" : value;
+  const label = value === "auto" ? "自动" : value;
   return (
     <button
       type="button"
@@ -2063,7 +2062,7 @@ function RatioTile({ value, active, onClick }: { value: string; active: boolean;
       className={(active
         ? "bg-white text-neutral-950 shadow-sm dark:bg-white dark:text-neutral-950"
         : "text-neutral-500 hover:bg-white/70 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-white/10 dark:hover:text-white") +
-        " flex h-[50px] flex-col items-center justify-center gap-1 rounded-lg text-[11px] font-medium transition-colors"}
+        " flex h-[40px] flex-col items-center justify-center gap-0.5 rounded-md text-[9px] font-normal transition-colors"}
     >
       <RatioShape value={value} />
       <span className="leading-none">{label}</span>
@@ -2078,7 +2077,7 @@ function RatioShape({ value }: { value: string }) {
   const [wRaw, hRaw] = value.split(":").map((part) => Number(part));
   const w = Number.isFinite(wRaw) && wRaw > 0 ? wRaw : 1;
   const h = Number.isFinite(hRaw) && hRaw > 0 ? hRaw : 1;
-  const max = 18;
+  const max = 13;
   let width = max;
   let height = max;
   if (w >= h) {

@@ -8,3 +8,4 @@ export * from "./points";
 export * from "./community";
 export * from "./blog";
 export * from "./order";
+export * from "./style";

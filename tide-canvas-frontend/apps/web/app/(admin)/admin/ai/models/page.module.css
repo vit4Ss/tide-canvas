@@ -1,0 +1,217 @@
+﻿.page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.searchBar {
+  max-width: 360px;
+}
+
+.notice {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f6f8fa;
+  color: #667085;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.formStack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-top: 8px;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+}
+
+.fieldLabel {
+  margin-bottom: 6px;
+  color: #1f2937;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.fieldHint {
+  margin-top: 3px;
+  color: #b0b7c3;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  border-top: 1px solid #f0f0f0;
+  padding-top: 16px;
+}
+
+.sectionTitle {
+  margin-bottom: 8px;
+  color: #1f2937;
+  font-weight: 500;
+}
+
+.optionTag {
+  border: 1px solid #d9d9d9;
+  padding: 2px 10px;
+}
+
+.iconField {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.iconPreview {
+  display: inline-flex;
+  width: 38px;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #111827;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.iconPreview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.iconLibraryToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.iconGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+  gap: 12px;
+  max-height: 50vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.iconCard {
+  position: relative;
+  display: flex;
+  min-height: 118px;
+  cursor: pointer;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid #edf0f4;
+  border-radius: 10px;
+  background: #fff;
+  padding: 12px 8px;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+.iconCard:hover {
+  border-color: #1677ff;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
+  transform: translateY(-1px);
+}
+
+.iconCardSelected {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.16);
+}
+
+.iconThumb {
+  display: flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #f5f7fa;
+  color: #111827;
+  font-size: 22px;
+}
+
+.iconThumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.iconName {
+  width: 100%;
+  overflow: hidden;
+  color: #334155;
+  font-size: 12px;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iconDelete {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+
+.iconCard:hover .iconDelete {
+  opacity: 1;
+}
+
+.iconFooter {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+  border-top: 1px solid #f0f0f0;
+  padding-top: 12px;
+}
+
+.pricingWrap {
+  display: inline-block;
+  overflow-x: auto;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+}
+
+.pricingTable {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.pricingHead {
+  background: #fafafa;
+}
+
+.pricingCell,
+.pricingHeader {
+  padding: 7px 10px;
+  text-align: center;
+}
+
+.pricingHeader:first-child,
+.pricingCell:first-child {
+  text-align: left;
+  white-space: nowrap;
+}
+
+.pricingRow {
+  border-top: 1px solid #f0f0f0;
+}

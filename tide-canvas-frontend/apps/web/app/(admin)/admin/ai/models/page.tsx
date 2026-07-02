@@ -1,31 +1,78 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Table, Modal, Input, InputNumber, Select, Button, Tag, Space, AutoComplete, Alert, Popconfirm } from "antd";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import {
+  Button,
+  Empty,
+  Image as AntImage,
+  Input,
+  InputNumber,
+  Modal,
+  Popconfirm,
+  Progress,
+  Select,
+  Space,
+  Table,
+  Tag,
+} from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { PlusOutlined, EditOutlined, DeleteOutlined, SaveOutlined } from "@ant-design/icons";
-import { adminApi } from "@/lib/api";
+import {
+  ApartmentOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  FileImageOutlined,
+  PictureOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+  UploadOutlined,
+} from "@ant-design/icons";
+import { adminApi, fileApi } from "@/lib/api";
 import { useHasPerm } from "@/stores/use-permission-store";
 import { toast } from "@/components/shared/toast";
 import { AdminPageHead } from "@/components/admin/page-head";
-import type { AiProviderVO } from "@/types/admin";
-import { QUALITY_OPTIONS, CLARITY_OPTIONS, RATIO_OPTIONS } from "@/components/canvas/nodes/quality-ratio-picker";
-import { VIDEO_RATIOS, RESOLUTIONS, DURATION_OPTIONS } from "@/components/canvas/nodes/video-param-picker";
+import { CLARITY_OPTIONS, QUALITY_OPTIONS, RATIO_OPTIONS } from "@/components/canvas/nodes/quality-ratio-picker";
+import { DURATION_OPTIONS, RESOLUTIONS, VIDEO_RATIOS } from "@/components/canvas/nodes/video-param-picker";
+import type { AiIconAssetVO } from "@/types/ai";
+import styles from "./page.module.css";
 
 const { CheckableTag } = Tag;
-const DURATION_CHOICES = Array.from({ length: 12 }, (_, i) => i + 4);
+
+const DURATION_CHOICES = Array.from({ length: 12 }, (_, index) => index + 4);
+const ICON_FILE_MAX_MB = 2;
+const ICON_FILE_MAX_BYTES = ICON_FILE_MAX_MB * 1024 * 1024;
 
 const HANDLER_CHOICES: Record<string, { value: string; label: string }[]> = {
-  video: [
-    { value: "text_to_video", label: "文生视频" },
-    { value: "image_to_video", label: "图生视频" },
-    { value: "start_end_to_video", label: "首尾帧" },
-    { value: "reference_to_video", label: "全能参考/图片参考" },
-  ],
   image: [
     { value: "text_to_image", label: "文生图" },
     { value: "image_to_image", label: "图生图" },
   ],
+  video: [
+    { value: "text_to_video", label: "文生视频" },
+    { value: "image_to_video", label: "图生视频" },
+    { value: "start_end_to_video", label: "首尾帧" },
+    { value: "reference_to_video", label: "全能参考" },
+  ],
+};
+
+const MODEL_TYPES = [
+  { value: "image", label: "图片生成" },
+  { value: "video", label: "视频生成" },
+  { value: "text", label: "文本生成" },
+  { value: "audio", label: "语音合成" },
+];
+
+const TYPE_COLOR: Record<string, string> = {
+  image: "purple",
+  video: "blue",
+  text: "gold",
+  audio: "green",
+};
+
+const QUALITY_LABELS: Record<string, string> = {
+  low: "低画质",
+  standard: "标准画质",
+  high: "高画质",
 };
 
 interface AdminAiModelVO {
@@ -34,8 +81,6 @@ interface AdminAiModelVO {
   icon?: string;
   modelId: string;
   type: string;
-  providerId?: string;
-  providerName?: string;
   pointCost: number;
   costPerCall?: number;
   config?: string;
@@ -44,81 +89,197 @@ interface AdminAiModelVO {
   createTime?: string;
 }
 
-const MODEL_TYPES = [
-  { value: "image", label: "图片生成" },
-  { value: "video", label: "视频生成" },
-  { value: "text", label: "文本生成" },
-  { value: "audio", label: "语音合成" },
-];
-const TYPE_COLOR: Record<string, string> = { image: "purple", video: "blue", text: "gold", audio: "green" };
-
 interface ModelForm {
-  name: string; icon: string; modelId: string; type: string; providerId: string;
-  pointCost: number; costPerCall: number; description: string; estSeconds: number;
-  qualities: string[]; clarities: string[]; batchSizes: number[]; gridOutput: boolean;
-  ratios: string[]; resolutions: string[]; durations: number[]; audio: boolean;
-  videoInputs: boolean; supportedHandlers: string[];
+  name: string;
+  icon: string;
+  modelId: string;
+  type: string;
+  pointCost: number;
+  costPerCall: number;
+  description: string;
+  estSeconds: number;
+  qualities: string[];
+  clarities: string[];
+  batchSizes: number[];
+  gridOutput: boolean;
+  ratios: string[];
+  resolutions: string[];
+  durations: number[];
+  audio: boolean;
+  videoInputs: boolean;
+  supportedHandlers: string[];
   voices: { id: string; name: string }[];
   pricing: Record<string, Record<string, number>>;
-  referenceImageMaxMB: number; referenceVideoMaxMB: number;
-  routeStrategy: string; routeConfigText: string;
+  referenceImageMaxMB: number;
+  referenceVideoMaxMB: number;
 }
 
 const emptyForm: ModelForm = {
-  name: "", icon: "", modelId: "", type: "image", providerId: "", pointCost: 0, costPerCall: 0,
-  description: "", estSeconds: 0,
-  qualities: QUALITY_OPTIONS.map((q) => q.value), clarities: [...CLARITY_OPTIONS], batchSizes: [1, 2, 4], gridOutput: false,
-  ratios: RATIO_OPTIONS.map((r) => r.value), resolutions: [...RESOLUTIONS], durations: [...DURATION_OPTIONS],
-  audio: true, videoInputs: false, supportedHandlers: [], voices: [], pricing: {}, referenceImageMaxMB: 50, referenceVideoMaxMB: 50, routeStrategy: "priority", routeConfigText: "",
+  name: "",
+  icon: "",
+  modelId: "",
+  type: "image",
+  pointCost: 0,
+  costPerCall: 0,
+  description: "",
+  estSeconds: 0,
+  qualities: QUALITY_OPTIONS.map((quality) => quality.value),
+  clarities: [...CLARITY_OPTIONS],
+  batchSizes: [1, 2, 4],
+  gridOutput: false,
+  ratios: RATIO_OPTIONS.map((ratio) => ratio.value),
+  resolutions: [...RESOLUTIONS],
+  durations: [...DURATION_OPTIONS],
+  audio: true,
+  videoInputs: false,
+  supportedHandlers: [],
+  voices: [],
+  pricing: {},
+  referenceImageMaxMB: 50,
+  referenceVideoMaxMB: 50,
 };
 
-/** 多选标签组（画质/清晰度/比例/生成方式/张数/时长 等） */
-function TagGroup({ label, hint, options, selected, onToggle }: {
-  label: string; hint?: string; options: { value: string; label: string }[]; selected: string[]; onToggle: (v: string) => void;
-}) {
+function normalizeIconName(filename: string) {
+  return filename.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim() || "模型图标";
+}
+
+function isImageIcon(value?: string) {
+  if (!value) return false;
+  return /^https?:\/\//i.test(value) || value.startsWith("/") || value.startsWith("data:image") || value.startsWith("blob:");
+}
+
+function isSupportedIconFile(file: File) {
+  return ["image/png", "image/jpeg", "image/webp", "image/gif", "image/svg+xml"].includes(file.type);
+}
+
+function formatSize(bytes?: number) {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function qualityLabel(value: string) {
+  return QUALITY_LABELS[value] ?? value;
+}
+
+function ratioLabel(value: string) {
+  return value === "auto" ? "自动" : value;
+}
+
+function videoRatioLabel(value: string) {
+  return value === "auto" ? "自动" : value;
+}
+
+function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <div>
-      <div style={{ fontWeight: 500, marginBottom: 8 }}>{label}</div>
-      <Space wrap size={[6, 6]}>
-        {options.map((o) => (
-          <CheckableTag key={o.value} checked={selected.includes(o.value)} onChange={() => onToggle(o.value)} style={{ border: "1px solid #d9d9d9", padding: "2px 10px" }}>
-            {o.label}
-          </CheckableTag>
-        ))}
-      </Space>
-      {hint && <div style={{ fontSize: 12, color: "#bfbfbf", marginTop: 4 }}>{hint}</div>}
+      <div className={styles.fieldLabel}>{label}</div>
+      {children}
+      {hint && <div className={styles.fieldHint}>{hint}</div>}
     </div>
   );
 }
 
-/** 差异化定价矩阵（行维度 × 列维度） */
-function PricingMatrix({ corner, rows, cols, pricing, onSet }: {
-  corner: string; rows: { key: string; label: string }[]; cols: { key: string; label: string }[];
-  pricing: Record<string, Record<string, number>>; onSet: (row: string, col: string, val: number | null) => void;
+function IconPreview({ value }: { value?: string }) {
+  if (!value) {
+    return (
+      <span className={styles.iconPreview}>
+        <PictureOutlined />
+      </span>
+    );
+  }
+
+  if (isImageIcon(value)) {
+    return (
+      <span className={styles.iconPreview}>
+        <AntImage src={value} alt="模型图标" width={38} height={38} preview={false} fallback="" />
+      </span>
+    );
+  }
+
+  return <span className={styles.iconPreview}>{value}</span>;
+}
+
+function TagGroup({
+  label,
+  hint,
+  options,
+  selected,
+  onToggle,
+}: {
+  label: string;
+  hint?: string;
+  options: { value: string; label: string }[];
+  selected: string[];
+  onToggle: (value: string) => void;
 }) {
   return (
     <div>
-      <div style={{ fontWeight: 500 }}>积分定价（{corner.replace("＼", " × ")}）</div>
-      <div style={{ fontSize: 12, color: "#bfbfbf", margin: "2px 0 8px" }}>不同档位可设不同积分；留空或 0 的格回退到上方「消耗积分」。</div>
+      <div className={styles.sectionTitle}>{label}</div>
+      <Space wrap size={[6, 6]}>
+        {options.map((option) => (
+          <CheckableTag
+            key={option.value}
+            checked={selected.includes(option.value)}
+            onChange={() => onToggle(option.value)}
+            className={styles.optionTag}
+          >
+            {option.label}
+          </CheckableTag>
+        ))}
+      </Space>
+      {hint && <div className={styles.fieldHint}>{hint}</div>}
+    </div>
+  );
+}
+
+function PricingMatrix({
+  corner,
+  rows,
+  cols,
+  pricing,
+  onSet,
+}: {
+  corner: string;
+  rows: { key: string; label: string }[];
+  cols: { key: string; label: string }[];
+  pricing: Record<string, Record<string, number>>;
+  onSet: (row: string, col: string, value: number | null) => void;
+}) {
+  return (
+    <div>
+      <div className={styles.sectionTitle}>积分定价（{corner.replace("/", " × ")}）</div>
+      <div className={styles.fieldHint}>不同档位可设不同积分；留空或 0 时回退到上方“消耗积分”。</div>
       {rows.length === 0 || cols.length === 0 ? (
-        <div style={{ fontSize: 12, color: "#bfbfbf" }}>请先选择上方的两个维度</div>
+        <div className={styles.fieldHint}>请先选择上方的两个维度。</div>
       ) : (
-        <div style={{ overflowX: "auto", border: "1px solid var(--ant-color-border-secondary, #f0f0f0)", borderRadius: 8, display: "inline-block" }}>
-          <table style={{ fontSize: 12, borderCollapse: "collapse" }}>
+        <div className={styles.pricingWrap}>
+          <table className={styles.pricingTable}>
             <thead>
-              <tr style={{ background: "var(--ant-color-fill-quaternary, #fafafa)" }}>
-                <th style={{ padding: "8px 12px", textAlign: "left", color: "#bfbfbf", fontWeight: 500 }}>{corner}</th>
-                {cols.map((c) => <th key={c.key} style={{ padding: "8px 12px", textAlign: "center", fontWeight: 500 }}>{c.label}</th>)}
+              <tr className={styles.pricingHead}>
+                <th className={styles.pricingHeader}>{corner}</th>
+                {cols.map((col) => (
+                  <th key={col.key} className={styles.pricingHeader}>{col.label}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
-                <tr key={r.key} style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)" }}>
-                  <td style={{ padding: "6px 12px", fontWeight: 500, whiteSpace: "nowrap" }}>{r.label}</td>
-                  {cols.map((c) => (
-                    <td key={c.key} style={{ padding: 6 }}>
-                      <InputNumber size="small" min={0} step={0.1} controls={false} style={{ width: 64 }} placeholder="—"
-                        value={pricing[r.key]?.[c.key] ?? null} onChange={(v) => onSet(r.key, c.key, v)} />
+              {rows.map((row) => (
+                <tr key={row.key} className={styles.pricingRow}>
+                  <td className={styles.pricingCell}>{row.label}</td>
+                  {cols.map((col) => (
+                    <td key={col.key} className={styles.pricingCell}>
+                      <InputNumber
+                        size="small"
+                        min={0}
+                        step={0.1}
+                        controls={false}
+                        style={{ width: 66 }}
+                        placeholder="-"
+                        value={pricing[row.key]?.[col.key] ?? null}
+                        onChange={(value) => onSet(row.key, col.key, value)}
+                      />
                     </td>
                   ))}
                 </tr>
@@ -133,153 +294,452 @@ function PricingMatrix({ corner, rows, cols, pricing, onSet }: {
 
 export default function AdminAiModelsPage() {
   const can = useHasPerm();
+  const router = useRouter();
+  const iconFileInputRef = useRef<HTMLInputElement>(null);
+
   const [models, setModels] = useState<AdminAiModelVO[]>([]);
-  const [providers, setProviders] = useState<AiProviderVO[]>([]);
   const [loading, setLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<ModelForm>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState("");
-  const [remoteModels, setRemoteModels] = useState<string[]>([]);
-  const [fetchingModels, setFetchingModels] = useState(false);
-  const [fetchModelsError, setFetchModelsError] = useState("");
-  const [remoteSearch, setRemoteSearch] = useState("");
+
+  const [icons, setIcons] = useState<AiIconAssetVO[]>([]);
+  const [iconsLoading, setIconsLoading] = useState(false);
+  const [iconModalOpen, setIconModalOpen] = useState(false);
+  const [iconUploading, setIconUploading] = useState(false);
+  const [iconUploadProgress, setIconUploadProgress] = useState(0);
+  const [manualIconValue, setManualIconValue] = useState("");
+
+  const imageRatioOptions = useMemo(
+    () => RATIO_OPTIONS.map((ratio) => ({ value: ratio.value, label: ratioLabel(ratio.value) })),
+    [],
+  );
+  const videoRatioOptions = useMemo(
+    () => VIDEO_RATIOS.map((ratio) => ({ value: ratio.value, label: videoRatioLabel(ratio.value) })),
+    [],
+  );
+
+  const updateForm = (patch: Partial<ModelForm>) => setForm((prev) => ({ ...prev, ...patch }));
 
   const loadModels = useCallback(async () => {
+    setLoading(true);
     try {
-      const res = await adminApi.ai.models.list();
-      if (res.success) setModels(res.data as unknown as AdminAiModelVO[]);
+      const response = await adminApi.ai.models.list();
+      if (response.success) {
+        setModels(response.data as unknown as AdminAiModelVO[]);
+      } else {
+        toast.error(response.message || "模型列表加载失败");
+      }
     } finally {
       setLoading(false);
     }
   }, []);
-  const loadProviders = useCallback(async () => {
-    try { const res = await adminApi.ai.providers.list(); if (res.success) setProviders(res.data); } catch { /* ignore */ }
+
+  const loadIcons = useCallback(async () => {
+    setIconsLoading(true);
+    try {
+      const response = await adminApi.ai.icons.list();
+      if (response.success) {
+        setIcons(response.data ?? []);
+      } else {
+        toast.error(response.message || "图标库加载失败");
+      }
+    } finally {
+      setIconsLoading(false);
+    }
   }, []);
 
-  useEffect(() => { void loadModels(); void loadProviders(); }, [loadModels, loadProviders]);
+  useEffect(() => {
+    let cancelled = false;
 
-  const buildConfig = (): string | null => {
-    const pricing = Object.keys(form.pricing).length ? { pricing: form.pricing } : {};
-    const meta = { ...(form.description.trim() ? { description: form.description.trim() } : {}), ...(form.estSeconds > 0 ? { estSeconds: form.estSeconds } : {}) };
-    const referenceLimits = { referenceImageMaxMB: Math.min(50, Math.max(1, Math.round(form.referenceImageMaxMB || 50))), referenceVideoMaxMB: Math.min(50, Math.max(1, Math.round(form.referenceVideoMaxMB || 50))) };
-    const routeConfig: Record<string, unknown> = {};
-    const rawRoutes = form.routeConfigText.trim();
-    if (rawRoutes) {
+    async function loadInitialData() {
       try {
-        const routes = JSON.parse(rawRoutes);
-        if (!Array.isArray(routes)) {
-          toast.error("Model routes must be a JSON array");
-          return null;
+        const [modelsResponse, iconsResponse] = await Promise.all([
+          adminApi.ai.models.list(),
+          adminApi.ai.icons.list(),
+        ]);
+        if (cancelled) return;
+        if (modelsResponse.success) {
+          setModels(modelsResponse.data as unknown as AdminAiModelVO[]);
+        } else {
+          toast.error(modelsResponse.message || "模型列表加载失败");
         }
-        routeConfig.routeStrategy = form.routeStrategy;
-        routeConfig.routes = routes;
-      } catch {
-        toast.error("Invalid model routes JSON");
-        return null;
+        if (iconsResponse.success) {
+          setIcons(iconsResponse.data ?? []);
+        } else {
+          toast.error(iconsResponse.message || "图标库加载失败");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     }
-    if (form.type === "image") return JSON.stringify({ qualities: form.qualities, clarities: form.clarities, ratios: form.ratios, batchSizes: form.batchSizes, ...(form.gridOutput ? { gridOutput: true } : {}), ...pricing, ...referenceLimits, ...meta, ...routeConfig });
-    if (form.type === "video") return JSON.stringify({ resolutions: form.resolutions, ratios: form.ratios, durations: form.durations, audio: form.audio, ...(form.videoInputs ? { videoInputs: true } : {}), ...pricing, ...referenceLimits, ...meta, ...routeConfig });
-    if (form.type === "audio") return JSON.stringify({ voices: form.voices.filter((v) => v.id.trim()).map((v) => ({ id: v.id.trim(), name: v.name.trim() || v.id.trim() })), ...referenceLimits, ...meta, ...routeConfig });
-    return JSON.stringify({ ...referenceLimits, ...meta, ...routeConfig });
+
+    void loadInitialData();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const buildConfig = () => {
+    const pricing = Object.keys(form.pricing).length ? { pricing: form.pricing } : {};
+    const meta = {
+      ...(form.description.trim() ? { description: form.description.trim() } : {}),
+      ...(form.estSeconds > 0 ? { estSeconds: form.estSeconds } : {}),
+    };
+    const referenceLimits = {
+      referenceImageMaxMB: Math.min(50, Math.max(1, Math.round(form.referenceImageMaxMB || 50))),
+      referenceVideoMaxMB: Math.min(50, Math.max(1, Math.round(form.referenceVideoMaxMB || 50))),
+    };
+
+    if (form.type === "image") {
+      return JSON.stringify({
+        qualities: form.qualities,
+        clarities: form.clarities,
+        ratios: form.ratios,
+        batchSizes: form.batchSizes,
+        ...(form.gridOutput ? { gridOutput: true } : {}),
+        ...pricing,
+        ...referenceLimits,
+        ...meta,
+      });
+    }
+
+    if (form.type === "video") {
+      return JSON.stringify({
+        resolutions: form.resolutions,
+        ratios: form.ratios,
+        durations: form.durations,
+        audio: form.audio,
+        ...(form.videoInputs ? { videoInputs: true } : {}),
+        ...pricing,
+        ...referenceLimits,
+        ...meta,
+      });
+    }
+
+    if (form.type === "audio") {
+      return JSON.stringify({
+        voices: form.voices
+          .filter((voice) => voice.id.trim())
+          .map((voice) => ({ id: voice.id.trim(), name: voice.name.trim() || voice.id.trim() })),
+        ...referenceLimits,
+        ...meta,
+      });
+    }
+
+    return JSON.stringify({ ...referenceLimits, ...meta });
   };
 
-  const openCreate = () => { setEditingId(null); setForm(emptyForm); setRemoteModels([]); setFetchModelsError(""); setFormOpen(true); };
+  const openCreate = () => {
+    setEditingId(null);
+    setForm(emptyForm);
+    setManualIconValue("");
+    setFormOpen(true);
+  };
 
   const startEdit = (model: AdminAiModelVO) => {
-    let cfg: Record<string, unknown> = {};
-    if (model.config) { try { cfg = JSON.parse(model.config); } catch { cfg = {}; } }
-    const c = cfg as { qualities?: string[]; clarities?: string[]; ratios?: string[]; batchSizes?: number[]; gridOutput?: boolean; resolutions?: string[]; durations?: number[]; audio?: boolean; videoInputs?: boolean; voices?: { id: string; name: string }[]; pricing?: Record<string, Record<string, number>>; description?: string; estSeconds?: number; referenceImageMaxMB?: number; maxReferenceImageMB?: number; referenceVideoMaxMB?: number; maxReferenceVideoMB?: number; routeStrategy?: string; routes?: unknown[] };
+    let parsedConfig: Record<string, unknown> = {};
+    if (model.config) {
+      try {
+        parsedConfig = JSON.parse(model.config) as Record<string, unknown>;
+      } catch {
+        parsedConfig = {};
+      }
+    }
+    const config = parsedConfig as {
+      qualities?: string[];
+      clarities?: string[];
+      ratios?: string[];
+      batchSizes?: number[];
+      gridOutput?: boolean;
+      resolutions?: string[];
+      durations?: number[];
+      audio?: boolean;
+      videoInputs?: boolean;
+      voices?: { id: string; name: string }[];
+      pricing?: Record<string, Record<string, number>>;
+      description?: string;
+      estSeconds?: number;
+      referenceImageMaxMB?: number;
+      maxReferenceImageMB?: number;
+      referenceVideoMaxMB?: number;
+      maxReferenceVideoMB?: number;
+    };
+
     setEditingId(model.id);
+    setManualIconValue(model.icon ?? "");
     setForm({
-      name: model.name, icon: model.icon ?? "", modelId: model.modelId, type: model.type,
-      providerId: model.providerId == null ? "" : String(model.providerId),
-      pointCost: model.pointCost ?? 0, costPerCall: model.costPerCall ?? 0,
-      description: c.description ?? "", estSeconds: c.estSeconds ?? 0,
-      referenceImageMaxMB: c.referenceImageMaxMB ?? c.maxReferenceImageMB ?? 50, referenceVideoMaxMB: c.referenceVideoMaxMB ?? c.maxReferenceVideoMB ?? 50,
-      qualities: c.qualities ?? QUALITY_OPTIONS.map((q) => q.value), clarities: c.clarities ?? [...CLARITY_OPTIONS],
-      batchSizes: c.batchSizes ?? [1, 2, 4], gridOutput: c.gridOutput ?? false,
-      ratios: c.ratios ?? (model.type === "video" ? VIDEO_RATIOS.map((r) => r.value) : RATIO_OPTIONS.map((r) => r.value)),
-      resolutions: c.resolutions ?? [...RESOLUTIONS], durations: c.durations ?? [...DURATION_OPTIONS],
-      audio: c.audio ?? true, videoInputs: c.videoInputs ?? false,
-      supportedHandlers: model.supportedHandlers ?? [], voices: c.voices ?? [], pricing: c.pricing ?? {},
-      routeStrategy: c.routeStrategy ?? "priority", routeConfigText: c.routes ? JSON.stringify(c.routes, null, 2) : "",
+      name: model.name,
+      icon: model.icon ?? "",
+      modelId: model.modelId,
+      type: model.type,
+      pointCost: Number(model.pointCost ?? 0),
+      costPerCall: Number(model.costPerCall ?? 0),
+      description: config.description ?? "",
+      estSeconds: config.estSeconds ?? 0,
+      referenceImageMaxMB: config.referenceImageMaxMB ?? config.maxReferenceImageMB ?? 50,
+      referenceVideoMaxMB: config.referenceVideoMaxMB ?? config.maxReferenceVideoMB ?? 50,
+      qualities: config.qualities ?? QUALITY_OPTIONS.map((quality) => quality.value),
+      clarities: config.clarities ?? [...CLARITY_OPTIONS],
+      batchSizes: config.batchSizes ?? [1, 2, 4],
+      gridOutput: config.gridOutput ?? false,
+      ratios: config.ratios ?? (model.type === "video" ? VIDEO_RATIOS.map((ratio) => ratio.value) : RATIO_OPTIONS.map((ratio) => ratio.value)),
+      resolutions: config.resolutions ?? [...RESOLUTIONS],
+      durations: config.durations ?? [...DURATION_OPTIONS],
+      audio: config.audio ?? true,
+      videoInputs: config.videoInputs ?? false,
+      supportedHandlers: model.supportedHandlers ?? [],
+      voices: config.voices ?? [],
+      pricing: config.pricing ?? {},
     });
-    setRemoteModels([]); setFetchModelsError(""); setFormOpen(true);
+    setFormOpen(true);
+  };
+
+  const openIconLibrary = () => {
+    setManualIconValue(form.icon);
+    setIconModalOpen(true);
+    void loadIcons();
+  };
+
+  const selectIcon = (iconValue: string) => {
+    updateForm({ icon: iconValue });
+    setManualIconValue(iconValue);
+    setIconModalOpen(false);
+  };
+
+  const uploadIconFile = async (file: File) => {
+    if (!isSupportedIconFile(file)) {
+      toast.error("仅支持 PNG、JPG、WEBP、GIF、SVG 图标文件");
+      return;
+    }
+    if (file.size > ICON_FILE_MAX_BYTES) {
+      toast.error(`图标文件不能超过 ${ICON_FILE_MAX_MB}MB`);
+      return;
+    }
+
+    setIconUploading(true);
+    setIconUploadProgress(0);
+    try {
+      const uploadResponse = await fileApi.uploadProgress(
+        file,
+        (progress) => setIconUploadProgress(progress),
+        { maxBytes: ICON_FILE_MAX_BYTES },
+      );
+      if (!uploadResponse.success || !uploadResponse.data) {
+        toast.error(uploadResponse.message || "图标上传失败");
+        return;
+      }
+
+      const fileData = uploadResponse.data;
+      const createResponse = await adminApi.ai.icons.create({
+        name: normalizeIconName(file.name),
+        iconUrl: fileData.fileUrl,
+        fileId: fileData.id,
+        mimeType: fileData.mimeType || file.type,
+        fileSize: fileData.fileSize || file.size,
+        status: 1,
+      });
+      if (!createResponse.success) {
+        toast.error(createResponse.message || "图标入库失败");
+        return;
+      }
+
+      toast.success("图标已上传");
+      updateForm({ icon: createResponse.data.iconUrl });
+      setManualIconValue(createResponse.data.iconUrl);
+      await loadIcons();
+    } finally {
+      setIconUploading(false);
+      setIconUploadProgress(0);
+      if (iconFileInputRef.current) iconFileInputRef.current.value = "";
+    }
+  };
+
+  const handleIconFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) void uploadIconFile(file);
+  };
+
+  const handleIconDelete = async (id: string) => {
+    const response = await adminApi.ai.icons.delete(id);
+    if (response.success) {
+      toast.success("图标已删除");
+      await loadIcons();
+    } else {
+      toast.error(response.message || "删除失败");
+    }
   };
 
   const handleSave = async () => {
-    if (!form.name || !form.modelId) { toast.error("请填写名称和模型ID"); return; }
-    const config = buildConfig();
-    if (!config) return;
+    if (!form.name.trim() || !form.modelId.trim()) {
+      toast.error("请填写名称和前端模型标识");
+      return;
+    }
+
     setSaving(true);
     try {
       const payload: Record<string, unknown> = {
-        name: form.name, icon: form.icon, modelId: form.modelId, type: form.type,
-        pointCost: form.pointCost, costPerCall: form.costPerCall, config,
-        supportedHandlers: form.supportedHandlers, ...(form.providerId !== "" ? { providerId: form.providerId } : {}),
+        name: form.name.trim(),
+        icon: form.icon.trim(),
+        modelId: form.modelId.trim(),
+        type: form.type,
+        pointCost: form.pointCost,
+        costPerCall: form.costPerCall,
+        config: buildConfig(),
+        supportedHandlers: form.supportedHandlers,
       };
-      const res = editingId ? await adminApi.ai.models.update(editingId, payload) : await adminApi.ai.models.create(payload);
-      if (res.success) { toast.success("已保存"); setFormOpen(false); setEditingId(null); setForm(emptyForm); loadModels(); }
-      else toast.error(res.message || "保存失败");
+      const response = editingId
+        ? await adminApi.ai.models.update(editingId, payload)
+        : await adminApi.ai.models.create(payload);
+
+      if (response.success) {
+        toast.success("已保存");
+        setFormOpen(false);
+        setEditingId(null);
+        setForm(emptyForm);
+        await loadModels();
+      } else {
+        toast.error(response.message || "保存失败");
+      }
     } finally {
       setSaving(false);
     }
   };
 
-  const handleFetchRemoteModels = async () => {
-    if (!form.providerId) return;
-    const isRunware = providers.find((p) => String(p.id) === form.providerId)?.providerType === "runware";
-    if (isRunware && !remoteSearch.trim()) { setFetchModelsError("Runware 需要输入搜索关键词再拉取，如 flux / kling / seedream"); return; }
-    setFetchingModels(true); setFetchModelsError("");
-    try {
-      const res = await adminApi.ai.providers.remoteModels(form.providerId, remoteSearch.trim() || undefined);
-      if (res.success) { setRemoteModels(res.data ?? []); if (!res.data || res.data.length === 0) setFetchModelsError("该供应商未返回模型"); }
-      else { setRemoteModels([]); setFetchModelsError(res.message || "拉取失败"); }
-    } catch {
-      setRemoteModels([]); setFetchModelsError("拉取失败");
-    } finally {
-      setFetchingModels(false);
+  const handleDelete = async (id: string) => {
+    const response = await adminApi.ai.models.delete(id);
+    if (response.success) {
+      toast.success("模型已删除");
+      await loadModels();
+    } else {
+      toast.error(response.message || "删除失败");
     }
   };
 
-  const handleDelete = async (id: string) => { const res = await adminApi.ai.models.delete(id); if (res.success) loadModels(); };
-  const handleToggleStatus = async (m: AdminAiModelVO) => { await adminApi.ai.models.update(m.id, { status: m.status === 1 ? 0 : 1 }); loadModels(); };
+  const handleToggleStatus = async (model: AdminAiModelVO) => {
+    const response = await adminApi.ai.models.update(model.id, { status: model.status === 1 ? 0 : 1 });
+    if (response.success) {
+      await loadModels();
+    } else {
+      toast.error(response.message || "状态更新失败");
+    }
+  };
 
-  const toggleArr = (field: "qualities" | "clarities" | "ratios" | "resolutions" | "supportedHandlers", val: string) =>
-    setForm((prev) => { const arr = prev[field]; return { ...prev, [field]: arr.includes(val) ? arr.filter((x) => x !== val) : [...arr, val] }; });
-  const toggleDuration = (d: number) => setForm((prev) => ({ ...prev, durations: prev.durations.includes(d) ? prev.durations.filter((x) => x !== d) : [...prev.durations, d].sort((a, b) => a - b) }));
-  const toggleBatchSize = (n: number) => setForm((prev) => ({ ...prev, batchSizes: prev.batchSizes.includes(n) ? prev.batchSizes.filter((x) => x !== n) : [...prev.batchSizes, n].sort((a, b) => a - b) }));
-  const handleTypeChange = (type: string) => setForm((prev) => ({ ...prev, type, ratios: type === "video" ? VIDEO_RATIOS.map((r) => r.value) : RATIO_OPTIONS.map((r) => r.value), pricing: {} }));
-  const setPricing = (row: string, col: string, val: number | null) => setForm((prev) => {
-    const pricing = { ...prev.pricing }; const r = { ...(pricing[row] ?? {}) };
-    if (val == null || !Number.isFinite(val) || val <= 0) delete r[col]; else r[col] = val;
-    if (Object.keys(r).length === 0) delete pricing[row]; else pricing[row] = r;
-    return { ...prev, pricing };
-  });
+  const toggleArr = (field: "qualities" | "clarities" | "ratios" | "resolutions" | "supportedHandlers", value: string) => {
+    setForm((prev) => {
+      const values = prev[field];
+      return { ...prev, [field]: values.includes(value) ? values.filter((item) => item !== value) : [...values, value] };
+    });
+  };
+
+  const toggleDuration = (duration: number) => {
+    setForm((prev) => ({
+      ...prev,
+      durations: prev.durations.includes(duration)
+        ? prev.durations.filter((item) => item !== duration)
+        : [...prev.durations, duration].sort((a, b) => a - b),
+    }));
+  };
+
+  const toggleBatchSize = (count: number) => {
+    setForm((prev) => ({
+      ...prev,
+      batchSizes: prev.batchSizes.includes(count)
+        ? prev.batchSizes.filter((item) => item !== count)
+        : [...prev.batchSizes, count].sort((a, b) => a - b),
+    }));
+  };
+
+  const handleTypeChange = (type: string) => {
+    updateForm({
+      type,
+      ratios: type === "video" ? VIDEO_RATIOS.map((ratio) => ratio.value) : RATIO_OPTIONS.map((ratio) => ratio.value),
+      pricing: {},
+    });
+  };
+
+  const setPricing = (row: string, col: string, value: number | null) => {
+    setForm((prev) => {
+      const pricing = { ...prev.pricing };
+      const rowValue = { ...(pricing[row] ?? {}) };
+      if (value == null || !Number.isFinite(value) || value <= 0) {
+        delete rowValue[col];
+      } else {
+        rowValue[col] = value;
+      }
+      if (Object.keys(rowValue).length === 0) {
+        delete pricing[row];
+      } else {
+        pricing[row] = rowValue;
+      }
+      return { ...prev, pricing };
+    });
+  };
 
   const filteredModels = searchKeyword
-    ? models.filter((m) => m.name.toLowerCase().includes(searchKeyword.toLowerCase()) || m.modelId.toLowerCase().includes(searchKeyword.toLowerCase()))
+    ? models.filter((model) =>
+        model.name.toLowerCase().includes(searchKeyword.toLowerCase()) ||
+        model.modelId.toLowerCase().includes(searchKeyword.toLowerCase()),
+      )
     : models;
 
-  const isRunwareProvider = providers.find((p) => String(p.id) === form.providerId)?.providerType === "runware";
-
   const columns: ColumnsType<AdminAiModelVO> = [
-    { title: "名称", dataIndex: "name", key: "name", render: (v, m) => <Space>{m.icon && /^https?:/.test(m.icon) ? null : m.icon ? <span>{m.icon}</span> : null}<span style={{ fontWeight: 500 }}>{v}</span></Space> },
-    { title: "模型ID", dataIndex: "modelId", key: "modelId", responsive: ["md"], render: (v) => <span style={{ fontFamily: "monospace", fontSize: 12, color: "#8c8c8c" }}>{v}</span> },
-    { title: "类型", dataIndex: "type", key: "type", render: (t: string) => <Tag color={TYPE_COLOR[t] || "default"}>{MODEL_TYPES.find((x) => x.value === t)?.label || t}</Tag> },
-    { title: "供应商", dataIndex: "providerName", key: "providerName", responsive: ["lg"], render: (v) => v || "-" },
-    { title: "消耗积分", dataIndex: "pointCost", key: "pointCost", render: (v) => <span style={{ color: "#d97706", fontWeight: 500 }}>{v}</span> },
-    { title: "状态", dataIndex: "status", key: "status", render: (s: number) => s === 1 ? <Tag color="green">启用</Tag> : <Tag color="red">禁用</Tag> },
     {
-      title: "操作", key: "action", render: (_, m) => (
+      title: "名称",
+      dataIndex: "name",
+      key: "name",
+      render: (value: string, model) => (
+        <Space>
+          <IconPreview value={model.icon} />
+          <span style={{ fontWeight: 500 }}>{value}</span>
+        </Space>
+      ),
+    },
+    {
+      title: "前端模型标识",
+      dataIndex: "modelId",
+      key: "modelId",
+      responsive: ["md"],
+      render: (value: string) => <span style={{ fontFamily: "monospace", fontSize: 12, color: "#8c8c8c" }}>{value}</span>,
+    },
+    {
+      title: "类型",
+      dataIndex: "type",
+      key: "type",
+      render: (type: string) => <Tag color={TYPE_COLOR[type] || "default"}>{MODEL_TYPES.find((item) => item.value === type)?.label || type}</Tag>,
+    },
+    {
+      title: "消耗积分",
+      dataIndex: "pointCost",
+      key: "pointCost",
+      render: (value: number) => <span style={{ color: "#d97706", fontWeight: 500 }}>{value}</span>,
+    },
+    {
+      title: "状态",
+      dataIndex: "status",
+      key: "status",
+      render: (status: number) => (status === 1 ? <Tag color="green">启用</Tag> : <Tag color="red">禁用</Tag>),
+    },
+    {
+      title: "操作",
+      key: "action",
+      render: (_, model) => (
         <Space size={0}>
-          {can("model:manage") && <Button type="text" size="small" onClick={() => handleToggleStatus(m)} style={{ color: m.status === 1 ? "#ef4444" : "#16a34a" }}>{m.status === 1 ? "禁用" : "启用"}</Button>}
-          {can("model:manage") && <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(m)}>编辑</Button>}
           {can("model:manage") && (
-            <Popconfirm title={`删除模型「${m.name}」？`} okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => handleDelete(m.id)}>
+            <Button type="text" size="small" onClick={() => void handleToggleStatus(model)} style={{ color: model.status === 1 ? "#ef4444" : "#16a34a" }}>
+              {model.status === 1 ? "禁用" : "启用"}
+            </Button>
+          )}
+          {can("model:manage") && <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEdit(model)}>编辑</Button>}
+          {can("model:manage") && (
+            <Button type="text" size="small" icon={<ApartmentOutlined />} onClick={() => router.push(`/admin/ai/routing?modelId=${model.id}`)}>
+              映射
+            </Button>
+          )}
+          {can("model:manage") && (
+            <Popconfirm title={`删除模型“${model.name}”？`} okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => void handleDelete(model.id)}>
               <Button type="text" size="small" danger icon={<DeleteOutlined />} />
             </Popconfirm>
           )}
@@ -289,142 +749,238 @@ export default function AdminAiModelsPage() {
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <AdminPageHead title="模型管理" desc={`共 ${models.length} 个模型`} extra={can("model:manage") && <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增模型</Button>} />
+    <div className={styles.page}>
+      <AdminPageHead
+        title="前端模型管理"
+        desc={`共 ${models.length} 个用户可见模型`}
+        extra={can("model:manage") && <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增前端模型</Button>}
+      />
 
-      <Input.Search placeholder="搜索模型名称、模型ID..." allowClear style={{ maxWidth: 360 }} value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} />
+      <Input.Search
+        className={styles.searchBar}
+        placeholder="搜索模型名称、前端模型标识"
+        allowClear
+        value={searchKeyword}
+        onChange={(event) => setSearchKeyword(event.target.value)}
+      />
 
       <Table<AdminAiModelVO>
-        rowKey="id" columns={columns} dataSource={filteredModels} loading={loading}
-        scroll={{ x: "max-content" }} locale={{ emptyText: "暂无模型数据，点击右上角添加" }}
-        pagination={{ pageSize: 15, showTotal: (t) => `共 ${t} 条` }}
+        rowKey="id"
+        columns={columns}
+        dataSource={filteredModels}
+        loading={loading}
+        scroll={{ x: "max-content" }}
+        locale={{ emptyText: "暂无模型数据，点击右上角添加" }}
+        pagination={{ pageSize: 15, showTotal: (total) => `共 ${total} 条` }}
       />
 
       <Modal
-        title={editingId ? "编辑模型" : "新增模型"} open={formOpen} onCancel={() => setFormOpen(false)}
-        onOk={handleSave} confirmLoading={saving} okText="保存" cancelText="取消" width={960}
+        title={editingId ? "编辑前端模型" : "新增前端模型"}
+        open={formOpen}
+        onCancel={() => setFormOpen(false)}
+        onOk={() => void handleSave()}
+        confirmLoading={saving}
+        okText="保存"
+        cancelText="取消"
+        width={980}
         styles={{ body: { maxHeight: "74vh", overflowY: "auto", paddingRight: 12 } }}
-        classNames={{ body: "thin-scroll" }}
       >
-        <div style={{ display: "flex", flexDirection: "column", gap: 16, paddingTop: 8 }}>
-          {/* 基础字段 */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
-            <Field label="名称 *"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="如：DALL-E 3" /></Field>
-            <Field label="模型ID *">
-              <AutoComplete style={{ width: "100%" }} popupMatchSelectWidth={false} value={form.modelId} onChange={(v) => setForm({ ...form, modelId: v })}
-                options={remoteModels.map((m) => ({ value: m }))} placeholder="如：dall-e-3" filterOption={(i, o) => (o?.value ?? "").toLowerCase().includes(i.toLowerCase())} />
+        <div className={styles.formStack}>
+          <div className={styles.notice}>
+            这里配置的是用户端可见的逻辑模型；真实供应商、上游 model_id 和路由策略请到“模型映射”里维护。
+          </div>
+
+          <div className={styles.formGrid}>
+            <Field label="名称 *">
+              <Input value={form.name} onChange={(event) => updateForm({ name: event.target.value })} placeholder="如：nano Image" />
             </Field>
-            <Field label="类型"><Select style={{ width: "100%" }} value={form.type} onChange={handleTypeChange} options={MODEL_TYPES} /></Field>
-            <Field label="供应商">
-              <Select style={{ width: "100%" }} value={form.providerId || undefined} onChange={(v) => setForm({ ...form, providerId: v ?? "" })} placeholder="请选择供应商" allowClear
-                options={providers.map((p) => ({ value: String(p.id), label: p.name }))} />
+            <Field label="前端模型标识 *" hint="用户端和生成接口传递的逻辑模型 ID，不需要等于真实上游 model_id。">
+              <Input value={form.modelId} onChange={(event) => updateForm({ modelId: event.target.value })} placeholder="如：nano-banana-2" />
             </Field>
-            <Field label="消耗积分" hint="支持小数；按「单价×张数×团队系数」总价向上取整"><InputNumber style={{ width: "100%" }} min={0} step={0.1} value={form.pointCost} onChange={(v) => setForm({ ...form, pointCost: v ?? 0 })} /></Field>
-            <Field label="成本价（USD）" hint="上游单次成本，仅后台参考毛利，不计费、不对用户暴露"><InputNumber style={{ width: "100%" }} min={0} step={0.0001} value={form.costPerCall} onChange={(v) => setForm({ ...form, costPerCall: v ?? 0 })} /></Field>
-            <Field label="图标" hint="显示在「Lib Image」模型选择处"><Input value={form.icon} onChange={(e) => setForm({ ...form, icon: e.target.value })} placeholder="emoji 或图片 URL" /></Field>
-            <Field label="描述" hint="模型选择列表名称下的副标题（选填）"><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="如：动漫高审美模型" /></Field>
-            <Field label="预计耗时（秒）" hint="模型选择列表右侧耗时徽标（0=不显示）"><InputNumber style={{ width: "100%" }} min={0} value={form.estSeconds} onChange={(v) => setForm({ ...form, estSeconds: v ?? 0 })} /></Field>
-            <Field label="参考图上限（MB）" hint="单文件硬上限 50MB；可按模型设置更小"><InputNumber style={{ width: "100%" }} min={1} max={50} precision={0} value={form.referenceImageMaxMB} onChange={(v) => setForm({ ...form, referenceImageMaxMB: v ?? 50 })} /></Field>
-            <Field label="参考视频上限（MB）" hint="单文件硬上限 50MB；可按模型设置更小"><InputNumber style={{ width: "100%" }} min={1} max={50} precision={0} value={form.referenceVideoMaxMB} onChange={(v) => setForm({ ...form, referenceVideoMaxMB: v ?? 50 })} /></Field>
-            <Field label={" "} hint={!form.providerId ? "请先选择供应商" : "从所选供应商拉取模型，结果在「模型ID」中选择"}>
-              <Button block loading={fetchingModels} disabled={!form.providerId} onClick={handleFetchRemoteModels}>获取模型</Button>
+            <Field label="类型">
+              <Select style={{ width: "100%" }} value={form.type} onChange={handleTypeChange} options={MODEL_TYPES} />
+            </Field>
+            <Field label="消耗积分" hint="支持小数；最终扣费按生成张数、团队系数等规则向上取整。">
+              <InputNumber style={{ width: "100%" }} min={0} step={0.1} value={form.pointCost} onChange={(value) => updateForm({ pointCost: value ?? 0 })} />
+            </Field>
+            <Field label="成本价（USD）" hint="上游单次成本，仅后台参考毛利，不对用户暴露。">
+              <InputNumber style={{ width: "100%" }} min={0} step={0.0001} value={form.costPerCall} onChange={(value) => updateForm({ costPerCall: value ?? 0 })} />
+            </Field>
+            <Field label="图标" hint="显示在用户端模型选择处；推荐从图标库选择，便于复用和统一维护。">
+              <div className={styles.iconField}>
+                <IconPreview value={form.icon} />
+                <Input value={form.icon} onChange={(event) => updateForm({ icon: event.target.value })} placeholder="emoji、图片 URL 或从图库选择" />
+                <Button icon={<FileImageOutlined />} onClick={openIconLibrary}>选择图标</Button>
+                <Button onClick={() => updateForm({ icon: "" })}>清空</Button>
+              </div>
+            </Field>
+            <Field label="描述" hint="模型选择列表名称下方的副标题（选填）。">
+              <Input value={form.description} onChange={(event) => updateForm({ description: event.target.value })} placeholder="如：文本能力突出，细节稳定" />
+            </Field>
+            <Field label="预计耗时（秒）" hint="模型选择列表右侧耗时徽标，0 表示不显示。">
+              <InputNumber style={{ width: "100%" }} min={0} value={form.estSeconds} onChange={(value) => updateForm({ estSeconds: value ?? 0 })} />
+            </Field>
+            <Field label="参考图上限（MB）" hint="单文件硬上限 50MB，可按模型设置更小。">
+              <InputNumber style={{ width: "100%" }} min={1} max={50} precision={0} value={form.referenceImageMaxMB} onChange={(value) => updateForm({ referenceImageMaxMB: value ?? 50 })} />
+            </Field>
+            <Field label="参考视频上限（MB）" hint="单文件硬上限 50MB，可按模型设置更小。">
+              <InputNumber style={{ width: "100%" }} min={1} max={50} precision={0} value={form.referenceVideoMaxMB} onChange={(value) => updateForm({ referenceVideoMaxMB: value ?? 50 })} />
             </Field>
           </div>
 
-          {/* 拉取状态 / Runware 关键词搜索（「获取模型」按钮在上方基础字段区） */}
-          {form.providerId && (isRunwareProvider || fetchModelsError || remoteModels.length > 0) && (
-            <Space wrap>
-              {isRunwareProvider && <Input size="small" style={{ width: 160 }} value={remoteSearch} onChange={(e) => setRemoteSearch(e.target.value)} placeholder="搜索关键词，如 flux（改后点「获取模型」）" />}
-              {fetchModelsError && <span style={{ fontSize: 12, color: "#ef4444" }}>{fetchModelsError}</span>}
-              {remoteModels.length > 0 && <span style={{ fontSize: 12, color: "#16a34a" }}>已拉取 {remoteModels.length} 个，可在「模型ID」中选择</span>}
-            </Space>
-          )}
-
-          <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 12, borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 16 }}>
-            <Field label="Route strategy" hint="priority chooses the highest priority route; weighted distributes by weight">
-              <Select style={{ width: "100%" }} value={form.routeStrategy} onChange={(v) => setForm({ ...form, routeStrategy: v })}
-                options={[{ value: "priority", label: "Priority" }, { value: "weighted", label: "Weighted" }]} />
-            </Field>
-            <Field label="Routes JSON" hint="Leave empty to call the model ID above. When set, users still see only this model.">
-              <Input.TextArea rows={6} value={form.routeConfigText} onChange={(e) => setForm({ ...form, routeConfigText: e.target.value })}
-                placeholder={'[{"providerId":"123","modelId":"upstream-model","handlers":["text_to_image"],"priority":10,"weight":100}]'} />
-            </Field>
-          </div>
-          {/* 按类型的维度配置 */}
           {form.type !== "text" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 16, borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 16 }}>
+            <div className={styles.section}>
               {form.type === "image" && (
                 <>
-                  <TagGroup label="支持的生成方式" hint="不勾选 = 不限制（画布显示全部模式）" options={HANDLER_CHOICES.image} selected={form.supportedHandlers} onToggle={(v) => toggleArr("supportedHandlers", v)} />
-                  <TagGroup label="出图张数档位" hint="Midjourney 等固定 4 张只勾「4张」，不勾用默认(1/2/4)" options={[1, 2, 3, 4].map((n) => ({ value: String(n), label: `${n}张` }))} selected={form.batchSizes.map(String)} onToggle={(v) => toggleBatchSize(Number(v))} />
+                  <TagGroup label="支持的生成方式" hint="不勾选表示不限制，画布显示全部模式。" options={HANDLER_CHOICES.image} selected={form.supportedHandlers} onToggle={(value) => toggleArr("supportedHandlers", value)} />
+                  <TagGroup label="出图张数档位" hint="Midjourney 等固定 4 张只勾“4张”；不勾选时使用默认 1/2/4。" options={[1, 2, 3, 4].map((count) => ({ value: String(count), label: `${count}张` }))} selected={form.batchSizes.map(String)} onToggle={(value) => toggleBatchSize(Number(value))} />
                   <div>
-                    <div style={{ fontWeight: 500, marginBottom: 8 }}>上游四宫格输出</div>
+                    <div className={styles.sectionTitle}>上游四宫格输出</div>
                     <Space>
-                      <CheckableTag checked={form.gridOutput} onChange={() => setForm({ ...form, gridOutput: true })} style={{ border: "1px solid #d9d9d9", padding: "2px 10px" }}>是（单张 2×2 合图）</CheckableTag>
-                      <CheckableTag checked={!form.gridOutput} onChange={() => setForm({ ...form, gridOutput: false })} style={{ border: "1px solid #d9d9d9", padding: "2px 10px" }}>否（独立多张）</CheckableTag>
+                      <CheckableTag checked={form.gridOutput} onChange={() => updateForm({ gridOutput: true })} className={styles.optionTag}>是（单张 2×2 合图）</CheckableTag>
+                      <CheckableTag checked={!form.gridOutput} onChange={() => updateForm({ gridOutput: false })} className={styles.optionTag}>否（独立多张）</CheckableTag>
                     </Space>
-                    <div style={{ fontSize: 12, color: "#bfbfbf", marginTop: 4 }}>Midjourney 原生输出为一张 2×2 合图时选「是」，生成后自动切成 4 张组图</div>
+                    <div className={styles.fieldHint}>Midjourney 原生输出为一张 2×2 合图时选择“是”，生成后会自动切成 4 张组图。</div>
                   </div>
-                  <TagGroup label="支持画质" options={QUALITY_OPTIONS.map((q) => ({ value: q.value, label: q.label }))} selected={form.qualities} onToggle={(v) => toggleArr("qualities", v)} />
-                  <TagGroup label="支持清晰度" options={CLARITY_OPTIONS.map((c) => ({ value: c, label: c }))} selected={form.clarities} onToggle={(v) => toggleArr("clarities", v)} />
-                  <TagGroup label="支持比例" options={RATIO_OPTIONS.map((r) => ({ value: r.value, label: r.label }))} selected={form.ratios} onToggle={(v) => toggleArr("ratios", v)} />
-                  <PricingMatrix corner="画质＼清晰度" rows={form.qualities.map((q) => ({ key: q, label: QUALITY_OPTIONS.find((o) => o.value === q)?.label ?? q }))} cols={form.clarities.map((c) => ({ key: c, label: c }))} pricing={form.pricing} onSet={setPricing} />
+                  <TagGroup label="支持画质" options={QUALITY_OPTIONS.map((quality) => ({ value: quality.value, label: qualityLabel(quality.value) }))} selected={form.qualities} onToggle={(value) => toggleArr("qualities", value)} />
+                  <TagGroup label="支持清晰度" options={CLARITY_OPTIONS.map((clarity) => ({ value: clarity, label: clarity }))} selected={form.clarities} onToggle={(value) => toggleArr("clarities", value)} />
+                  <TagGroup label="支持比例" options={imageRatioOptions} selected={form.ratios} onToggle={(value) => toggleArr("ratios", value)} />
+                  <PricingMatrix
+                    corner="画质/清晰度"
+                    rows={form.qualities.map((quality) => ({ key: quality, label: qualityLabel(quality) }))}
+                    cols={form.clarities.map((clarity) => ({ key: clarity, label: clarity }))}
+                    pricing={form.pricing}
+                    onSet={setPricing}
+                  />
                 </>
               )}
+
               {form.type === "video" && (
                 <>
-                  <TagGroup label="支持的生成方式" hint="不勾选 = 不限制；勾选后画布视频节点只显示所选模式 Tab" options={HANDLER_CHOICES.video} selected={form.supportedHandlers} onToggle={(v) => toggleArr("supportedHandlers", v)} />
-                  <TagGroup label="支持清晰度" options={RESOLUTIONS.map((r) => ({ value: r, label: r }))} selected={form.resolutions} onToggle={(v) => toggleArr("resolutions", v)} />
-                  <TagGroup label="支持比例" options={VIDEO_RATIOS.map((r) => ({ value: r.value, label: r.label }))} selected={form.ratios} onToggle={(v) => toggleArr("ratios", v)} />
-                  <TagGroup label="支持时长（秒）" options={DURATION_CHOICES.map((d) => ({ value: String(d), label: `${d}s` }))} selected={form.durations.map(String)} onToggle={(v) => toggleDuration(Number(v))} />
+                  <TagGroup label="支持的生成方式" hint="不勾选表示不限制；勾选后画布视频节点只显示所选模式 Tab。" options={HANDLER_CHOICES.video} selected={form.supportedHandlers} onToggle={(value) => toggleArr("supportedHandlers", value)} />
+                  <TagGroup label="支持清晰度" options={RESOLUTIONS.map((resolution) => ({ value: resolution, label: resolution }))} selected={form.resolutions} onToggle={(value) => toggleArr("resolutions", value)} />
+                  <TagGroup label="支持比例" options={videoRatioOptions} selected={form.ratios} onToggle={(value) => toggleArr("ratios", value)} />
+                  <TagGroup label="支持时长（秒）" options={DURATION_CHOICES.map((duration) => ({ value: String(duration), label: `${duration}s` }))} selected={form.durations.map(String)} onToggle={(value) => toggleDuration(Number(value))} />
                   <div>
-                    <div style={{ fontWeight: 500, marginBottom: 8 }}>生成音频</div>
+                    <div className={styles.sectionTitle}>生成音频</div>
                     <Space>
-                      <CheckableTag checked={form.audio} onChange={() => setForm({ ...form, audio: true })} style={{ border: "1px solid #d9d9d9", padding: "2px 10px" }}>支持</CheckableTag>
-                      <CheckableTag checked={!form.audio} onChange={() => setForm({ ...form, audio: false })} style={{ border: "1px solid #d9d9d9", padding: "2px 10px" }}>不支持</CheckableTag>
+                      <CheckableTag checked={form.audio} onChange={() => updateForm({ audio: true })} className={styles.optionTag}>支持</CheckableTag>
+                      <CheckableTag checked={!form.audio} onChange={() => updateForm({ audio: false })} className={styles.optionTag}>不支持</CheckableTag>
                     </Space>
                   </div>
                   <div>
-                    <div style={{ fontWeight: 500, marginBottom: 8 }}>Runware 参数结构</div>
+                    <div className={styles.sectionTitle}>Runware 参数结构</div>
                     <Space>
-                      <CheckableTag checked={form.videoInputs} onChange={() => setForm({ ...form, videoInputs: true })} style={{ border: "1px solid #d9d9d9", padding: "2px 10px" }}>v2（inputs 嵌套）</CheckableTag>
-                      <CheckableTag checked={!form.videoInputs} onChange={() => setForm({ ...form, videoInputs: false })} style={{ border: "1px solid #d9d9d9", padding: "2px 10px" }}>旧版（顶层平铺）</CheckableTag>
+                      <CheckableTag checked={form.videoInputs} onChange={() => updateForm({ videoInputs: true })} className={styles.optionTag}>v2（inputs 嵌套）</CheckableTag>
+                      <CheckableTag checked={!form.videoInputs} onChange={() => updateForm({ videoInputs: false })} className={styles.optionTag}>旧版（顶层平铺）</CheckableTag>
                     </Space>
-                    <div style={{ fontSize: 12, color: "#bfbfbf", marginTop: 4 }}>Runware 新版视频模型（Seedance 2.0 等）须选 v2；非 Runware 或旧版保持「顶层平铺」</div>
+                    <div className={styles.fieldHint}>Runware 新版视频模型（Seedance 2.0 等）通常使用 v2；非 Runware 或旧版保持“顶层平铺”。</div>
                   </div>
-                  <PricingMatrix corner="清晰度＼时长" rows={form.resolutions.map((r) => ({ key: r, label: r }))} cols={[...form.durations].sort((a, b) => a - b).map((d) => ({ key: String(d), label: `${d}s` }))} pricing={form.pricing} onSet={setPricing} />
+                  <PricingMatrix
+                    corner="清晰度/时长"
+                    rows={form.resolutions.map((resolution) => ({ key: resolution, label: resolution }))}
+                    cols={[...form.durations].sort((a, b) => a - b).map((duration) => ({ key: String(duration), label: `${duration}s` }))}
+                    pricing={form.pricing}
+                    onSet={setPricing}
+                  />
                 </>
               )}
+
               {form.type === "audio" && (
                 <div>
-                  <div style={{ fontWeight: 500 }}>音色列表</div>
-                  <div style={{ fontSize: 12, color: "#bfbfbf", margin: "2px 0 8px" }}>音色ID 来自供应商文档；显示名是画布音频节点下拉里的名字</div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {form.voices.map((v, i) => (
-                      <Space key={i}>
-                        <Input style={{ width: 220, fontFamily: "monospace", fontSize: 12 }} placeholder="音色ID（上游标识）" value={v.id} onChange={(e) => setForm((p) => ({ ...p, voices: p.voices.map((x, j) => j === i ? { ...x, id: e.target.value } : x) }))} />
-                        <Input style={{ width: 180 }} placeholder="显示名（如：少女音色）" value={v.name} onChange={(e) => setForm((p) => ({ ...p, voices: p.voices.map((x, j) => j === i ? { ...x, name: e.target.value } : x) }))} />
-                        <Button type="text" danger icon={<DeleteOutlined />} onClick={() => setForm((p) => ({ ...p, voices: p.voices.filter((_, j) => j !== i) }))} />
+                  <div className={styles.sectionTitle}>音色列表</div>
+                  <div className={styles.fieldHint}>音色 ID 来自供应商文档；显示名是画布音频节点下拉里的名称。</div>
+                  <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                    {form.voices.map((voice, index) => (
+                      <Space key={`${voice.id}-${index}`}>
+                        <Input
+                          style={{ width: 220, fontFamily: "monospace", fontSize: 12 }}
+                          placeholder="音色 ID"
+                          value={voice.id}
+                          onChange={(event) => setForm((prev) => ({
+                            ...prev,
+                            voices: prev.voices.map((item, voiceIndex) => voiceIndex === index ? { ...item, id: event.target.value } : item),
+                          }))}
+                        />
+                        <Input
+                          style={{ width: 180 }}
+                          placeholder="显示名"
+                          value={voice.name}
+                          onChange={(event) => setForm((prev) => ({
+                            ...prev,
+                            voices: prev.voices.map((item, voiceIndex) => voiceIndex === index ? { ...item, name: event.target.value } : item),
+                          }))}
+                        />
+                        <Button type="text" danger icon={<DeleteOutlined />} onClick={() => setForm((prev) => ({ ...prev, voices: prev.voices.filter((_, voiceIndex) => voiceIndex !== index) }))} />
                       </Space>
                     ))}
-                  </div>
-                  <Button size="small" icon={<PlusOutlined />} style={{ marginTop: 8 }} onClick={() => setForm((p) => ({ ...p, voices: [...p.voices, { id: "", name: "" }] }))}>添加音色</Button>
+                  </Space>
+                  <Button size="small" icon={<PlusOutlined />} style={{ marginTop: 8 }} onClick={() => setForm((prev) => ({ ...prev, voices: [...prev.voices, { id: "", name: "" }] }))}>添加音色</Button>
                 </div>
               )}
             </div>
           )}
         </div>
       </Modal>
-    </div>
-  );
-}
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 6 }}>{label}</div>
-      {children}
-      {hint && <div style={{ fontSize: 11, color: "#bfbfbf", marginTop: 2 }}>{hint}</div>}
+      <Modal
+        title="模型图标库"
+        open={iconModalOpen}
+        onCancel={() => setIconModalOpen(false)}
+        footer={null}
+        width={780}
+      >
+        <div className={styles.iconLibraryToolbar}>
+          <div className={styles.fieldHint}>管理员上传后可在多个前端模型中复用；支持图片 URL、SVG 文件和常用位图格式。</div>
+          <Space>
+            <Button icon={<ReloadOutlined />} onClick={() => void loadIcons()} loading={iconsLoading}>刷新</Button>
+            <Button type="primary" icon={<UploadOutlined />} onClick={() => iconFileInputRef.current?.click()} loading={iconUploading}>上传图标</Button>
+          </Space>
+        </div>
+        <input
+          ref={iconFileInputRef}
+          type="file"
+          accept="image/svg+xml,image/png,image/jpeg,image/webp,image/gif"
+          hidden
+          onChange={handleIconFileChange}
+        />
+        {iconUploading && <Progress percent={iconUploadProgress} size="small" />}
+
+        {icons.length === 0 && !iconsLoading ? (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无图标，点击右上角上传" />
+        ) : (
+          <div className={styles.iconGrid}>
+            {icons.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`${styles.iconCard} ${form.icon === item.iconUrl ? styles.iconCardSelected : ""}`}
+                onClick={() => selectIcon(item.iconUrl)}
+              >
+                <span className={styles.iconThumb}>
+                  {isImageIcon(item.iconUrl) ? <AntImage src={item.iconUrl} alt={item.name} width={44} height={44} preview={false} fallback="" /> : item.iconUrl}
+                </span>
+                <span className={styles.iconName} title={item.name}>{item.name}</span>
+                {item.fileSize > 0 && <Tag>{formatSize(item.fileSize)}</Tag>}
+                {can("model:manage") && (
+                  <span className={styles.iconDelete} onClick={(event) => event.stopPropagation()}>
+                    <Popconfirm title={`删除图标“${item.name}”？`} okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => void handleIconDelete(item.id)}>
+                      <Button size="small" danger shape="circle" icon={<DeleteOutlined />} />
+                    </Popconfirm>
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className={styles.iconFooter}>
+          <Field label="手动输入图标">
+            <Input value={manualIconValue} onChange={(event) => setManualIconValue(event.target.value)} placeholder="emoji、图片 URL、data:image..." />
+          </Field>
+          <Button onClick={() => selectIcon(manualIconValue.trim())} disabled={!manualIconValue.trim()}>使用当前输入</Button>
+        </div>
+      </Modal>
     </div>
   );
 }

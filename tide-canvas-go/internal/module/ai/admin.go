@@ -1,6 +1,8 @@
 package ai
 
 import (
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
 	"github.com/sirupsen/logrus"
@@ -48,6 +50,12 @@ func (s *AdminService) RegisterRoutes(api gin.IRouter, jwtProvider *appjwt.Provi
 	g.POST("/models", middleware.RequiresPermission(permLoader, "model:manage"), s.createModel)
 	g.PUT("/models/:id", middleware.RequiresPermission(permLoader, "model:manage"), s.updateModel)
 	g.DELETE("/models/:id", middleware.RequiresPermission(permLoader, "model:manage"), s.deleteModel)
+
+	// Icon library for user-facing model selectors.
+	g.GET("/icons", middleware.RequiresPermission(permLoader, "model:view"), s.listIconAssets)
+	g.POST("/icons", middleware.RequiresPermission(permLoader, "model:manage"), s.createIconAsset)
+	g.PUT("/icons/:id", middleware.RequiresPermission(permLoader, "model:manage"), s.updateIconAsset)
+	g.DELETE("/icons/:id", middleware.RequiresPermission(permLoader, "model:manage"), s.deleteIconAsset)
 
 	// Production model routing
 	g.GET("/upstream-models", middleware.RequiresPermission(permLoader, "model:view"), s.listUpstreamModels)
@@ -226,10 +234,14 @@ func (s *AdminService) createModel(c *gin.Context) {
 		response.Fail(c, ecode.BadRequest)
 		return
 	}
-	providerID, ok := asInt64(body["providerId"])
-	if !ok {
-		response.Fail(c, ecode.BadRequest.WithMessage("providerId不能为空"))
-		return
+	providerID := int64(0)
+	if rawProviderID, exists := body["providerId"]; exists && hasText(strOf(rawProviderID)) {
+		parsedProviderID, ok := asInt64(rawProviderID)
+		if !ok {
+			response.Fail(c, ecode.BadRequest.WithMessage("providerId格式不正确"))
+			return
+		}
+		providerID = parsedProviderID
 	}
 	m := &model.AiModel{
 		ProviderID: providerID,
@@ -309,8 +321,13 @@ func (s *AdminService) updateModel(c *gin.Context) {
 		}
 	}
 	if v, ok := body["providerId"]; ok {
-		if pid, ok := asInt64(v); ok {
+		if !hasText(strOf(v)) {
+			columns["provider_id"] = int64(0)
+		} else if pid, ok := asInt64(v); ok {
 			columns["provider_id"] = pid
+		} else {
+			response.Fail(c, ecode.BadRequest.WithMessage("providerId格式不正确"))
+			return
 		}
 	}
 	setIfPresent(body, "status", columns, "status", asInt)
@@ -346,6 +363,157 @@ func (s *AdminService) deleteModel(c *gin.Context) {
 		return
 	}
 	response.OK(c, nil)
+}
+
+// =====================================================================
+// Icon library
+// =====================================================================
+
+// listIconAssets GET /icons 返回管理员维护的模型图标库。
+func (s *AdminService) listIconAssets(c *gin.Context) {
+	list, err := s.repo.ListIconAssets()
+	if err != nil {
+		response.FailErr(c, err)
+		return
+	}
+	out := make([]IconAssetVO, 0, len(list))
+	for i := range list {
+		out = append(out, toIconAssetVO(&list[i]))
+	}
+	response.OK(c, out)
+}
+
+// createIconAsset POST /icons 新增模型图标资产。文件上传走 /api/files/upload，这里只登记可复用资产。
+func (s *AdminService) createIconAsset(c *gin.Context) {
+	var body map[string]interface{}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		response.Fail(c, ecode.BadRequest)
+		return
+	}
+	name := strings.TrimSpace(strOf(body["name"]))
+	iconURL := strings.TrimSpace(strOf(body["iconUrl"]))
+	if !hasText(name) {
+		response.Fail(c, ecode.BadRequest.WithMessage("请填写图标名称"))
+		return
+	}
+	if !isReusableIconURL(iconURL) {
+		response.Fail(c, ecode.BadRequest.WithMessage("请上传或填写有效的图标地址"))
+		return
+	}
+	fileID := int64(0)
+	if v, ok := body["fileId"]; ok && hasText(strOf(v)) {
+		if parsed, ok := asInt64(v); ok {
+			fileID = parsed
+		}
+	}
+	fileSize := int64(0)
+	if v, ok := body["fileSize"]; ok && hasText(strOf(v)) {
+		if parsed, ok := asInt64(v); ok {
+			fileSize = parsed
+		}
+	}
+	asset := &model.AiIconAsset{
+		Name:      name,
+		IconURL:   iconURL,
+		FileID:    fileID,
+		MimeType:  strings.TrimSpace(strOf(body["mimeType"])),
+		FileSize:  fileSize,
+		Status:    intOrDefault(body["status"], 1),
+		SortOrder: intOrDefault(body["sortOrder"], 0),
+		CreatedBy: middleware.MustUserID(c),
+	}
+	if err := s.repo.CreateIconAsset(asset); err != nil {
+		response.FailErr(c, err)
+		return
+	}
+	response.OK(c, toIconAssetVO(asset))
+}
+
+// updateIconAsset PUT /icons/:id 局部更新模型图标资产。
+func (s *AdminService) updateIconAsset(c *gin.Context) {
+	asset, err := s.repo.FindIconAssetByPublicID(c.Param("id"))
+	if err != nil {
+		response.FailErr(c, err)
+		return
+	}
+	if asset == nil {
+		response.Fail(c, ecode.NotFound)
+		return
+	}
+	var body map[string]interface{}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		response.Fail(c, ecode.BadRequest)
+		return
+	}
+	columns := map[string]interface{}{}
+	if v, ok := body["name"]; ok {
+		name := strings.TrimSpace(strOf(v))
+		if !hasText(name) {
+			response.Fail(c, ecode.BadRequest.WithMessage("请填写图标名称"))
+			return
+		}
+		columns["name"] = name
+	}
+	if v, ok := body["iconUrl"]; ok {
+		iconURL := strings.TrimSpace(strOf(v))
+		if !isReusableIconURL(iconURL) {
+			response.Fail(c, ecode.BadRequest.WithMessage("请上传或填写有效的图标地址"))
+			return
+		}
+		columns["icon_url"] = iconURL
+	}
+	if v, ok := body["fileId"]; ok {
+		if !hasText(strOf(v)) {
+			columns["file_id"] = int64(0)
+		} else if id, ok := asInt64(v); ok {
+			columns["file_id"] = id
+		}
+	}
+	if v, ok := body["fileSize"]; ok {
+		if !hasText(strOf(v)) {
+			columns["file_size"] = int64(0)
+		} else if size, ok := asInt64(v); ok {
+			columns["file_size"] = size
+		}
+	}
+	setIfPresent(body, "mimeType", columns, "mime_type", asString)
+	setIfPresent(body, "status", columns, "status", asInt)
+	setIfPresent(body, "sortOrder", columns, "sort_order", asInt)
+	if err := s.repo.UpdateIconAssetColumns(asset.ID, columns); err != nil {
+		response.FailErr(c, err)
+		return
+	}
+	response.OK(c, nil)
+}
+
+// deleteIconAsset DELETE /icons/:id 软删除模型图标资产，不会自动清空已有模型 icon 字段。
+func (s *AdminService) deleteIconAsset(c *gin.Context) {
+	asset, err := s.repo.FindIconAssetByPublicID(c.Param("id"))
+	if err != nil {
+		response.FailErr(c, err)
+		return
+	}
+	if asset == nil {
+		response.Fail(c, ecode.NotFound)
+		return
+	}
+	if err := s.repo.DeleteIconAsset(asset.ID); err != nil {
+		response.FailErr(c, err)
+		return
+	}
+	response.OK(c, nil)
+}
+
+// isReusableIconURL 限制图标库只登记可被前端安全展示的图片地址。
+func isReusableIconURL(url string) bool {
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return false
+	}
+	return strings.HasPrefix(url, "/uploads/") ||
+		strings.HasPrefix(url, "http://") ||
+		strings.HasPrefix(url, "https://") ||
+		strings.HasPrefix(url, "data:image/")
 }
 
 // =====================================================================

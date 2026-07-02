@@ -9,7 +9,7 @@ import type {
   ProjectCreateDTO, ProjectUpdateDTO, CanvasSaveDTO, ProjectQuery,
 } from "@/types/canvas";
 import type {
-  AiTaskVO, AiModelVO, AiHandlerVO, AiGenerateDTO, AiTaskQuery,
+  AiTaskVO, AiModelVO, AiIconAssetVO, AiHandlerVO, AiGenerateDTO, AiTaskQuery,
   AiGenerationLogVO, AiGenerationLogQuery,
 } from "@/types/ai";
 import type { FileVO, FileQuery } from "@/types/file";
@@ -52,6 +52,9 @@ import type {
 import type {
   TeamVO, TeamCreateDTO, TeamJoinDTO,
 } from "@/types/team";
+import type {
+  StylePresetQuery, StylePresetVO, StylePresetSaveDTO, StyleFavoriteToggleVO,
+} from "@/types/style";
 import type {
   EmailTemplateVO, EmailTemplateUpdateDTO, EmailTemplatePreviewDTO,
   EmailRenderVO, EmailTemplateSendTestDTO,
@@ -128,6 +131,16 @@ export const aiApi = {
     http.get<PageData<AiGenerationLogVO>>("/api/ai/logs", toParams(query)),
 };
 
+export const styleApi = {
+  list: (query: StylePresetQuery) =>
+    http.get<PageResult<StylePresetVO>["data"]>("/api/styles", toParams(query)),
+  create: (data: StylePresetSaveDTO) =>
+    http.post<StylePresetVO>("/api/styles", data),
+  toggleFavorite: (id: string) =>
+    http.post<StyleFavoriteToggleVO>(`/api/styles/${id}/favorite`),
+  recordUse: (id: string) =>
+    http.post<void>(`/api/styles/${id}/use`),
+};
 interface FilePresignVO {
   direct: boolean;
   uploadUrl?: string;
@@ -173,8 +186,8 @@ export const fileApi = {
 };
 
 /**
- * 智能上传：OSS 环境走「前端直传」(presign → 浏览器 PUT 到 OSS → register)，文件不经后端、省带宽、支持大文件；
- * 本地存储或直传不可用时自动回退到服务器中转上传。两种路径都通过 onProgress 上报进度，返回 Result<FileVO>。
+ * 鏅鸿兘涓婁紶锛歄SS 鐜璧般€屽墠绔洿浼犮€?presign 鈫?娴忚鍣?PUT 鍒?OSS 鈫?register)锛屾枃浠朵笉缁忓悗绔€佺渷甯﹀銆佹敮鎸佸ぇ鏂囦欢锛?
+ * 鏈湴瀛樺偍鎴栫洿浼犱笉鍙敤鏃惰嚜鍔ㄥ洖閫€鍒版湇鍔″櫒涓浆涓婁紶銆備袱绉嶈矾寰勯兘閫氳繃 onProgress 涓婃姤杩涘害锛岃繑鍥?Result<FileVO>銆?
  */
 export async function uploadFileSmart(file: File, onProgress?: (pct: number) => void, options?: UploadLimitOptions): Promise<Result<FileVO>> {
   const uploadLimit = resolveUploadLimitBytes(options?.maxBytes);
@@ -188,11 +201,11 @@ export async function uploadFileSmart(file: File, onProgress?: (pct: number) => 
       if (put.ok) {
         return fileApi.register({ key: pre.data.key, originalName: file.name, contentType });
       }
-      // 直传 PUT 失败（多为 OSS 桶未配 CORS，浏览器预检被拦）→ 不报错，落到下方服务器中转上传，保证上传始终可用。
-      // 如需启用直传(省后端带宽/大文件友好)，请为 OSS 桶配置 CORS：来源=站点域名，方法=PUT/GET/HEAD，允许头=*，暴露头=ETag。
+      // 鐩翠紶 PUT 澶辫触锛堝涓?OSS 妗舵湭閰?CORS锛屾祻瑙堝櫒棰勬琚嫤锛夆啋 涓嶆姤閿欙紝钀藉埌涓嬫柟鏈嶅姟鍣ㄤ腑杞笂浼狅紝淇濊瘉涓婁紶濮嬬粓鍙敤銆?
+      // 濡傞渶鍚敤鐩翠紶(鐪佸悗绔甫瀹?澶ф枃浠跺弸濂?锛岃涓?OSS 妗堕厤缃?CORS锛氭潵婧?绔欑偣鍩熷悕锛屾柟娉?PUT/GET/HEAD锛屽厑璁稿ご=*锛屾毚闇插ご=ETag銆?
     }
   } catch {
-    // presign 异常 → 回退中转上传
+    // presign 寮傚父 鈫?鍥為€€涓浆涓婁紶
   }
   return http.uploadProgress<FileVO>("/api/files/upload", file, onProgress);
 }
@@ -260,13 +273,23 @@ export const adminApi = {
     delete: (id: string) =>
       http.delete<void>(`/api/admin/banners/${id}`),
   },
+  styles: {
+    list: (query: StylePresetQuery) =>
+      http.get<PageResult<StylePresetVO>["data"]>("/api/admin/styles", toParams(query)),
+    create: (data: StylePresetSaveDTO) =>
+      http.post<StylePresetVO>("/api/admin/styles", data),
+    update: (id: string, data: StylePresetSaveDTO) =>
+      http.put<void>(`/api/admin/styles/${id}`, data),
+    delete: (id: string) =>
+      http.delete<void>(`/api/admin/styles/${id}`),
+  },
   ai: {
     providers: {
       list: () => http.get<AiProviderVO[]>("/api/admin/ai/providers"),
       create: (data: AiProviderCreateDTO) => http.post<AiProviderVO>("/api/admin/ai/providers", data),
       update: (id: string, data: AiProviderUpdateDTO) => http.put<void>(`/api/admin/ai/providers/${id}`, data),
       delete: (id: string) => http.delete<void>(`/api/admin/ai/providers/${id}`),
-      // 从供应商接口拉取可用模型 ID 列表（id 为雪花长整型字符串）；runware 供应商支持 search 关键词
+      // 浠庝緵搴斿晢鎺ュ彛鎷夊彇鍙敤妯″瀷 ID 鍒楄〃锛坕d 涓洪洩鑺遍暱鏁村瀷瀛楃涓诧級锛況unware 渚涘簲鍟嗘敮鎸?search 鍏抽敭璇?
       remoteModels: (id: string, search?: string) =>
         http.get<string[]>(`/api/admin/ai/providers/${id}/models${search ? `?search=${encodeURIComponent(search)}` : ""}`),
     },
@@ -275,6 +298,12 @@ export const adminApi = {
       create: (data: Record<string, unknown>) => http.post<AiModelVO>("/api/admin/ai/models", data),
       update: (id: string | number, data: Record<string, unknown>) => http.put<void>(`/api/admin/ai/models/${id}`, data),
       delete: (id: string | number) => http.delete<void>(`/api/admin/ai/models/${id}`),
+    },
+    icons: {
+      list: () => http.get<AiIconAssetVO[]>("/api/admin/ai/icons"),
+      create: (data: Record<string, unknown>) => http.post<AiIconAssetVO>("/api/admin/ai/icons", data),
+      update: (id: string | number, data: Record<string, unknown>) => http.put<void>(`/api/admin/ai/icons/${id}`, data),
+      delete: (id: string | number) => http.delete<void>(`/api/admin/ai/icons/${id}`),
     },
     upstreamModels: {
       list: () => http.get<AiUpstreamModelVO[]>("/api/admin/ai/upstream-models"),
@@ -299,7 +328,7 @@ export const adminApi = {
       list: (query: AiGenerationLogQuery) =>
         http.get<PageData<AiGenerationLogVO>>("/api/admin/ai/logs", toParams(query)),
       get: (id: number) => http.get<AiGenerationLogVO>(`/api/admin/ai/logs/${id}`),
-      // 当前筛选条件下的上游成本汇总（USD）
+      // 褰撳墠绛涢€夋潯浠朵笅鐨勪笂娓告垚鏈眹鎬伙紙USD锛?
       costSum: (query: AiGenerationLogQuery) =>
         http.get<number>("/api/admin/ai/logs/cost-sum", toParams(query)),
     },
@@ -378,7 +407,7 @@ export const adminApi = {
   },
 };
 
-// ========== 积分 ==========
+// ========== 绉垎 ==========
 export const pointsApi = {
   balance: () =>
     http.get<PointsBalanceVO>("/api/points/balance"),
@@ -386,7 +415,7 @@ export const pointsApi = {
     http.get<PageData<PointsTransactionVO>>("/api/points/transactions", toParams(query)),
 };
 
-// ========== 签到 ==========
+// ========== 绛惧埌 ==========
 export const checkinApi = {
   checkin: () =>
     http.post<CheckinStatusVO>("/api/checkin"),
@@ -396,7 +425,7 @@ export const checkinApi = {
     http.get<CheckinCalendarVO>("/api/checkin/calendar", { year, month }),
 };
 
-// ========== 社区帖子 ==========
+// ========== 绀惧尯甯栧瓙 ==========
 export const communityApi = {
   list: (query: PostQuery) =>
     http.get<PageData<PostVO>>("/api/posts", toParams(query)),
@@ -418,7 +447,7 @@ export const communityApi = {
     http.delete<void>(`/api/posts/comments/${commentId}`),
 };
 
-// ========== 博客 ==========
+// ========== 鍗氬 ==========
 export const blogApi = {
   list: (query: BlogQuery) =>
     http.get<PageData<BlogVO>>("/api/blogs", toParams(query)),
@@ -440,47 +469,47 @@ export const blogApi = {
     http.get<PageData<BlogVO>>("/api/blogs/my", toParams(query)),
 };
 
-// ========== 关注（通知系统前置） ==========
+// ========== 鍏虫敞锛堥€氱煡绯荤粺鍓嶇疆锛?==========
 export const followApi = {
-  /** 关注对方（userId 为对方 public_id） */
+  /** 鍏虫敞瀵规柟锛坲serId 涓哄鏂?public_id锛?*/
   follow: (userId: string) =>
     http.post<void>(`/api/follow/${userId}`),
-  /** 取关 */
+  /** 鍙栧叧 */
   unfollow: (userId: string) =>
     http.delete<void>(`/api/follow/${userId}`),
-  /** 关注状态 {following, followedBy} */
+  /** 鍏虫敞鐘舵€?{following, followedBy} */
   status: (userId: string) =>
     http.get<FollowStatusVO>(`/api/follow/${userId}/status`),
-  /** 我关注的人（分页） */
+  /** 鎴戝叧娉ㄧ殑浜猴紙鍒嗛〉锛?*/
   following: (query?: FollowQuery) =>
     http.get<PageData<FollowUserVO>>("/api/follow/following", toParams(query ?? {})),
-  /** 关注我的人（分页） */
+  /** 鍏虫敞鎴戠殑浜猴紙鍒嗛〉锛?*/
   followers: (query?: FollowQuery) =>
     http.get<PageData<FollowUserVO>>("/api/follow/followers", toParams(query ?? {})),
 };
 
-// ========== 通知（站内通知，需登录） ==========
+// ========== 閫氱煡锛堢珯鍐呴€氱煡锛岄渶鐧诲綍锛?==========
 export const notificationApi = {
-  /** 通知列表（分页，可按 type 过滤） */
+  /** 閫氱煡鍒楄〃锛堝垎椤碉紝鍙寜 type 杩囨护锛?*/
   list: (query?: NotificationQuery) =>
     http.get<PageData<NotificationVO>>("/api/notifications", toParams(query ?? {})),
-  /** 未读通知数 {count} */
+  /** 鏈閫氱煡鏁?{count} */
   unreadCount: () =>
     http.get<UnreadCountVO>("/api/notifications/unread-count"),
-  /** 标记指定通知为已读 */
+  /** 鏍囪鎸囧畾閫氱煡涓哄凡璇?*/
   markRead: (ids: number[]) =>
     http.post<void>("/api/notifications/read", { ids }),
-  /** 全部标记为已读 */
+  /** 鍏ㄩ儴鏍囪涓哄凡璇?*/
   markAllRead: () =>
     http.post<void>("/api/notifications/read-all"),
 };
 
-// ========== Banner（首页轮播，公开） ==========
+// ========== Banner锛堥椤佃疆鎾紝鍏紑锛?==========
 export const bannerApi = {
   list: () => http.get<BannerVO[]>("/api/banners"),
 };
 
-// ========== 订单 ==========
+// ========== 璁㈠崟 ==========
 export const orderApi = {
   create: (data: RechargeCreateDTO) =>
     http.post<RechargeOrderVO>("/api/orders/recharge", data),
@@ -499,7 +528,7 @@ export const orderApi = {
 };
 
 export const imApi = {
-  // ---- 会话 ----
+  // ---- 浼氳瘽 ----
   conversations: (type?: ConversationType, page?: { pageNum?: number; pageSize?: number }) =>
     http.get<PageData<ConversationVO>>("/api/im/conversations", toParams({ type, ...(page ?? {}) })),
   openPrivate: (peerId: string) =>
@@ -508,7 +537,7 @@ export const imApi = {
     http.post<ConversationVO>("/api/im/conversations/support"),
   openStaff: (data: OpenStaffDTO) =>
     http.post<ConversationVO>("/api/im/conversations/staff", data),
-  // ---- 消息 ----
+  // ---- 娑堟伅 ----
   messages: (conversationId: string, params?: { before?: string; limit?: number }) =>
     http.get<MessageVO[]>(`/api/im/conversations/${conversationId}/messages`, toParams(params ?? {})),
   send: (data: SendMessageDTO) =>
@@ -517,10 +546,10 @@ export const imApi = {
     http.post<void>("/api/im/messages/read", { conversationId, lastReadMessageId }),
   recall: (messageId: string) =>
     http.post<void>(`/api/im/messages/${messageId}/recall`),
-  // ---- 在线状态 ----
+  // ---- 鍦ㄧ嚎鐘舵€?----
   status: (ids: string[]) =>
     http.get<UserStatusVO[]>("/api/im/status", { ids: ids.join(",") }),
-  // ---- 客服台（管理员）----
+  // ---- 瀹㈡湇鍙帮紙绠＄悊鍛橈級----
   supportWaiting: (page?: { pageNum?: number; pageSize?: number }) =>
     http.get<PageData<ConversationVO>>("/api/im/support/waiting", toParams(page ?? {})),
   supportAccept: (conversationId: string) =>

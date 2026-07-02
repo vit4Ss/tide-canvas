@@ -1,9 +1,8 @@
-# TideCanvas 前端（monorepo / Turborepo，apps/web = Next 16）
-# 构建上下文 = 本 monorepo 根（tide-canvas-frontend）。
-# 基镜像用 Debian slim(glibc) 而非 alpine(musl)：package-lock 只锁了 glibc 的
-# @next/swc-linux-x64-gnu，musl 变体缺失会让 Turbopack 构建失败。
+# TideCanvas 前端镜像：monorepo / Turborepo，apps/web 是 Next 16 应用。
+# 构建上下文为 tide-canvas-frontend 根目录。
+# 使用 Debian slim(glibc)，避免 alpine(musl) 缺少 Next SWC glibc 变体导致构建失败。
 
-# ====== Stage 1: 依赖安装（按 workspace 的 package.json 做缓存层）======
+# ====== Stage 1: 安装依赖 ======
 FROM node:22-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -17,18 +16,17 @@ RUN npm ci
 FROM node:22-slim AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
 COPY . .
 
-# API_BASE_URL is server-only and read by Next route handlers at runtime.
 ARG API_BASE_URL=http://backend:8080
 ARG NEXT_PUBLIC_OAUTH_REDIRECT_BASE=
 ENV API_BASE_URL=$API_BASE_URL \
     NEXT_PUBLIC_OAUTH_REDIRECT_BASE=$NEXT_PUBLIC_OAUTH_REDIRECT_BASE \
     NEXT_TELEMETRY_DISABLED=1
-# Build the Next app directly to avoid depending on Turbo cache/log state in production images.
 RUN npm --workspace web run build
 
-# ====== Stage 3: 运行（standalone 自包含产物）======
+# ====== Stage 3: 运行 ======
 FROM node:22-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production \
@@ -39,7 +37,7 @@ ENV NODE_ENV=production \
 
 RUN groupadd --system nodejs && useradd --system --gid nodejs nextjs
 
-# outputFileTracingRoot=monorepo 根 → standalone 内为 apps/web/server.js + node_modules + packages/*
+# outputFileTracingRoot 指向 monorepo 根目录，standalone 内包含 apps/web/server.js、node_modules 和 packages/*。
 COPY --from=builder /app/apps/web/public ./apps/web/public
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/static ./apps/web/.next/static

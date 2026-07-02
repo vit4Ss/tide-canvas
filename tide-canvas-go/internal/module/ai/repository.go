@@ -229,6 +229,44 @@ func (r *Repository) ProviderNames() (map[int64]string, error) {
 	return m, nil
 }
 
+// ListIconAssets 返回管理员维护的模型图标库，包含停用项，方便编辑历史配置。
+func (r *Repository) ListIconAssets() ([]model.AiIconAsset, error) {
+	var list []model.AiIconAsset
+	err := r.db.Order("sort_order DESC, create_time DESC, id DESC").Find(&list).Error
+	return list, err
+}
+
+// FindIconAssetByPublicID 按 public_id 查询图标资产。
+func (r *Repository) FindIconAssetByPublicID(publicID string) (*model.AiIconAsset, error) {
+	var asset model.AiIconAsset
+	err := r.db.Where("public_id = ?", publicID).First(&asset).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &asset, nil
+}
+
+// CreateIconAsset 新增模型图标资产。
+func (r *Repository) CreateIconAsset(asset *model.AiIconAsset) error {
+	return r.db.Create(asset).Error
+}
+
+// UpdateIconAssetColumns 局部更新图标资产字段。
+func (r *Repository) UpdateIconAssetColumns(id int64, columns map[string]interface{}) error {
+	if len(columns) == 0 {
+		return nil
+	}
+	return r.db.Model(&model.AiIconAsset{}).Where("id = ?", id).Updates(columns).Error
+}
+
+// DeleteIconAsset 软删除模型图标资产。
+func (r *Repository) DeleteIconAsset(id int64) error {
+	return r.db.Delete(&model.AiIconAsset{}, id).Error
+}
+
 // =====================================================================
 // Production model routing
 // =====================================================================

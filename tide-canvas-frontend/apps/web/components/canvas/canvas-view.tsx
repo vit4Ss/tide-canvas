@@ -18,7 +18,6 @@ import { CanvasGroupsLayer } from "./canvas-groups-layer";
 import { CanvasSelectionBox } from "./canvas-selection-box";
 import { CanvasContextMenu, type ContextMenuState } from "./canvas-context-menu";
 import { CanvasBottomToolbar } from "./canvas-bottom-toolbar";
-import { CanvasSideToolbar } from "./canvas-side-toolbar";
 import { MyAssetsPanel } from "./my-assets-panel";
 import { CanvasHistoryPanel } from "./canvas-history-panel";
 import { FileType, type FileVO } from "@/types/file";
@@ -430,15 +429,6 @@ export function CanvasView() {
         onUpload={() => alert("上传功能待接入")}
         onSaveAsset={handleSaveAsset}
       />
-
-      <CanvasSideToolbar
-        onAddNode={addNodeAtViewportCenter}
-        onArrange={handleArrange}
-        onOpenAssets={() => { setMyAssetsOpen((v) => !v); setHistoryOpen(false); }}
-        assetsActive={myAssetsOpen}
-        onOpenHistory={() => { setHistoryOpen((v) => !v); setMyAssetsOpen(false); }}
-        historyActive={historyOpen}
-      />
       <MyAssetsPanel open={myAssetsOpen} onClose={() => setMyAssetsOpen(false)} onPick={addAssetToCanvas} refreshKey={assetsRefreshKey} />
       <CanvasHistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />
 
@@ -448,6 +438,9 @@ export function CanvasView() {
         zoom={panZoom.transform.k}
         gridSnap={gridSnap}
         minimapVisible={minimapVisible}
+        assetsActive={myAssetsOpen}
+        historyActive={historyOpen}
+        onAddNode={addNodeAtViewportCenter}
         onZoomIn={panZoom.zoomIn}
         onZoomOut={panZoom.zoomOut}
         onZoomReset={panZoom.zoomReset}
@@ -455,6 +448,8 @@ export function CanvasView() {
         onToggleGridSnap={() => setGridSnap(!gridSnap)}
         onToggleMinimap={() => setMinimapVisible(!minimapVisible)}
         onArrange={handleArrange}
+        onOpenAssets={() => { setMyAssetsOpen((v) => !v); setHistoryOpen(false); }}
+        onOpenHistory={() => { setHistoryOpen((v) => !v); setMyAssetsOpen(false); }}
       />
     </div>
   );

@@ -79,7 +79,14 @@
     "projects": "项目",
     "history": "创作历史",
     "viewAll": "查看全部",
-    "empty": "暂无创作历史"
+    "empty": "暂无创作历史",
+    "platform": "平台",
+    "quickLinks": "快捷入口",
+    "explore": "探索",
+    "community": "社区",
+    "blogs": "博客",
+    "collapse": "收起侧边栏",
+    "expand": "展开侧边栏"
   },
   "language": {
     "zh": "简体中文",

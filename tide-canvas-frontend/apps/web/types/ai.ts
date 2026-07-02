@@ -32,6 +32,18 @@ export interface AiModelVO {
   pointCost: number;
 }
 
+export interface AiIconAssetVO {
+  id: string;
+  name: string;
+  iconUrl: string;
+  fileId?: string;
+  mimeType?: string;
+  fileSize: number;
+  status: number;
+  sortOrder: number;
+  createTime?: string;
+}
+
 export interface AiHandlerVO {
   handlerName: string;
   name: string;

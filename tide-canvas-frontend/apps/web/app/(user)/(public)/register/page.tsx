@@ -125,7 +125,7 @@ export default function RegisterPage() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 required
-                placeholder="3-64 位，全站唯一"
+                placeholder="3-16 位"
                 className={inputCls}
               />
 
@@ -135,7 +135,7 @@ export default function RegisterPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 type="email"
                 required
-                placeholder="您的企业或个人邮箱"
+                placeholder="您的邮箱"
                 className={inputCls}
               />
 

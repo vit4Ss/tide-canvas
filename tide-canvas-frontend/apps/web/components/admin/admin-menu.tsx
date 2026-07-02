@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+﻿import type { ReactNode } from "react";
 import {
   LayoutDashboard, Users, Wallet, Bot, Settings, ScrollText,
 } from "lucide-react";
@@ -37,6 +37,7 @@ export const ADMIN_GROUPS: AdminGroup[] = [
       { key: "/admin/contents", label: "内容管理", perm: "content:view" },
       { key: "/admin/authors", label: "作者管理", perm: "author:view" },
       { key: "/admin/banners", label: "Banner 管理", perm: "banner:view" },
+      { key: "/admin/styles", label: "风格库", perm: "style:view" },
       { key: "/admin/files", label: "文件管理", perm: "file:view" },
     ],
   },
@@ -53,7 +54,7 @@ export const ADMIN_GROUPS: AdminGroup[] = [
     items: [
       { key: "/admin/ai/providers", label: "AI 供应商", perm: "provider:view" },
       { key: "/admin/ai/models", label: "模型管理", perm: "model:view" },
-      { key: "/admin/ai/routing", label: "模型路由", perm: "model:view" },
+      { key: "/admin/ai/routing", label: "模型映射", perm: "model:view" },
       { key: "/admin/ai/logs", label: "AI 日志", perm: "ailog:view" },
     ],
   },

@@ -42,6 +42,22 @@ type AiModel struct {
 // TableName 表名。
 func (AiModel) TableName() string { return "ai_model" }
 
+// AiIconAsset AI 模型图标资产表，管理员上传后可在前端模型配置中复用。
+type AiIconAsset struct {
+	PublicModel
+	Name      string `json:"name" gorm:"column:name"`
+	IconURL   string `json:"iconUrl" gorm:"column:icon_url"`
+	FileID    int64  `json:"fileId" gorm:"column:file_id"`
+	MimeType  string `json:"mimeType" gorm:"column:mime_type"`
+	FileSize  int64  `json:"fileSize" gorm:"column:file_size"`
+	Status    int    `json:"status" gorm:"column:status"`
+	SortOrder int    `json:"sortOrder" gorm:"column:sort_order"`
+	CreatedBy int64  `json:"createdBy" gorm:"column:created_by"`
+}
+
+// TableName 表名。
+func (AiIconAsset) TableName() string { return "ai_icon_asset" }
+
 // AiHandlerConfig AI Handler配置表 ai_handler_config。
 type AiHandlerConfig struct {
 	SoftDeleteModel

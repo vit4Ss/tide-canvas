@@ -144,7 +144,7 @@ func (s *Service) Generate(userID int64, dto *GenerateDTO) (*TaskVO, error) {
 	if err := s.validateModelReferenceFileSizes(selectedModel, dto.Input); err != nil {
 		return nil, err
 	}
-	execModel := s.resolveExecutionModel(selectedModel, dto.Handler, &preflight)
+	execModel := s.resolveExecutionModel(selectedModel, dto.Handler, dto.Input, &preflight)
 	unitCost, err := s.resolvePointCost(selectedModel, dto.Handler, dto.Input)
 	if err != nil {
 		return nil, err

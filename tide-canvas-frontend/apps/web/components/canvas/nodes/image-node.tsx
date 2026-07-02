@@ -2,15 +2,19 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Button, Center, Group, Paper, Stack, Text, TextInput, ThemeIcon, UnstyledButton } from "@mantine/core";
 import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-canvas-store";
 import {
-  Image as ImageIcon, Upload, Plus, Maximize2, Box, MapPin, Copy,
+  Image as ImageIcon, Upload, Plus, Maximize2, Copy,
   Camera, ArrowUp, ChevronDown, ChevronRight, Zap, Download, X, Minimize2,
   ArrowLeft, LayoutGrid, Layers,
   Images, Orbit, Sun, Table, Brush, FlipHorizontal2,
   Grid2x2, Hash, RotateCcw,
 } from "lucide-react";
 import { QualityRatioPicker, parseRatio, RATIO_OPTIONS, QUALITY_OPTIONS, CLARITY_OPTIONS, type QualityRatioValue } from "./quality-ratio-picker";
+import { BatchCountDropdown } from "./components/batch-count-dropdown";
+import { ImageStylePicker, DEFAULT_STYLE_PRESET, type ImageStylePreset } from "./image-style-picker";
+import { STYLE_REFERENCE_NODE_TYPE } from "./style-reference-node";
 import { ModelPicker } from "./model-picker";
 import { PromptRefEditor, PromptEditorModal } from "./prompt-ref-editor";
 import { PanoramaViewer } from "./panorama-viewer";
@@ -24,6 +28,7 @@ import { referenceKindFromMeta, resolveModelReferenceLimitBytes, validateKnownFi
 import { sliceImageGrid } from "@/lib/image-slice";
 import { useAuth } from "@/hooks/use-auth";
 import { applyTeamFactor } from "@/lib/points";
+import { getImageCardSizeForRatio } from "@/lib/image-card-size";
 import { AiModelType, type AiModelVO } from "@/types/ai";
 import { toast } from "@/components/shared/toast";
 import { Loader2 } from "lucide-react";
@@ -39,27 +44,8 @@ interface Props {
 
 // 自定义宫格选择器的最大行列（N×N 网格）
 const CUSTOM_MAX = 8;
-const IMAGE_CARD_BASE_WIDTH = 608;
-const IMAGE_CARD_MAX_HEIGHT = 420;
-
-function fixedRatioWidth(aspect: number): number | null {
-  if (Math.abs(aspect - 9 / 16) < 0.001) return 345;
-  if (Math.abs(aspect - 1 / 2) < 0.001) return 350;
-  if (Math.abs(aspect - 2) < 0.001) return 694;
-  return null;
-}
-
-function fitCardSize(aspect: number, maxW = IMAGE_CARD_BASE_WIDTH, maxH = IMAGE_CARD_MAX_HEIGHT) {
-  const safeAspect = Number.isFinite(aspect) && aspect > 0 ? aspect : 16 / 9;
-  const fixedW = fixedRatioWidth(safeAspect);
-  if (fixedW != null) {
-    return { w: fixedW, h: Math.round(fixedW / safeAspect) };
-  }
-  const heightAtMaxWidth = maxW / safeAspect;
-  if (heightAtMaxWidth <= maxH) {
-    return { w: maxW, h: Math.round(heightAtMaxWidth) };
-  }
-  return { w: Math.round(maxH * safeAspect), h: maxH };
+function fitCardSize(aspect: number, ratio?: string | null) {
+  return getImageCardSizeForRatio(ratio, aspect);
 }
 
 /** 是否为比例选择器里存在的明确比例（排除 auto/空值），用于比例继承判断 */
@@ -69,8 +55,131 @@ function isStandardRatio(r?: string | null): r is string {
 
 // 提示词面板比图片卡片左右各宽出的总量（仅未生成图片时显示），居中伸出让底部控件更宽松
 const PANEL_EXTRA = 80;
+const STYLE_REFERENCE_WIDTH = 320;
+const STYLE_REFERENCE_HEIGHT = 356;
+const STYLE_REFERENCE_GAP = 92;
+
+function getStyleReferenceTitle(preset: ImageStylePreset): string {
+  return `素材-风格-${preset.shortName || preset.name || "未命名风格"}`;
+}
+
+function getStyleReferencePatch(preset: ImageStylePreset): Partial<CanvasNode> {
+  const displayName = preset.shortName || preset.name;
+  const coverUrl = preset.coverUrl || "";
+  return {
+    type: STYLE_REFERENCE_NODE_TYPE,
+    title: getStyleReferenceTitle(preset),
+    width: STYLE_REFERENCE_WIDTH,
+    height: STYLE_REFERENCE_HEIGHT,
+    contentW: STYLE_REFERENCE_WIDTH,
+    contentH: STYLE_REFERENCE_HEIGHT,
+    status: "success",
+    imageSrc: coverUrl || undefined,
+    stylePresetId: preset.id,
+    stylePresetName: displayName,
+    stylePresetPrompt: preset.prompt,
+    stylePresetModelIds: preset.modelIds,
+    stylePresetModelPrompts: preset.modelPrompts,
+    stylePresetCoverUrl: coverUrl || undefined,
+  };
+}
+
+function getStylePromptForModel(prompt: string, modelPrompts?: Record<string, string>, modelId?: string): string {
+  const modelPrompt = modelId ? modelPrompts?.[modelId]?.trim() : "";
+  return modelPrompt || prompt || "";
+}
 
 // 全景扩图提示词：让模型把当前图扩展为可环绕的 360° 全景（比例跟随源图节点）
+function EditableImageNodeTitle({ node }: { node: CanvasNode }) {
+  const updateNode = useCanvasStore((state) => state.updateNode);
+  const currentTitle = node.title?.trim() || "图片节点";
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(currentTitle);
+
+  useEffect(() => {
+    if (!editing) setDraft(currentTitle);
+  }, [currentTitle, editing]);
+
+  const startEdit = useCallback((event: React.MouseEvent) => {
+    event.stopPropagation();
+    setDraft(currentTitle);
+    setEditing(true);
+  }, [currentTitle]);
+
+  const commit = useCallback(() => {
+    const nextTitle = draft.trim() || "图片节点";
+    if (nextTitle !== node.title) {
+      updateNode(node.id, { title: nextTitle }, true);
+    }
+    setEditing(false);
+  }, [draft, node.id, node.title, updateNode]);
+
+  const cancel = useCallback(() => {
+    setDraft(currentTitle);
+    setEditing(false);
+  }, [currentTitle]);
+
+  if (editing) {
+    return (
+      <Group gap={4} wrap="nowrap" px={4} c="dimmed">
+        <ImageIcon className="h-3.5 w-3.5 shrink-0" />
+        <TextInput
+          autoFocus
+          value={draft}
+          onFocus={(event) => event.currentTarget.select()}
+          onMouseDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              commit();
+            }
+            if (event.key === "Escape") {
+              event.preventDefault();
+              cancel();
+            }
+          }}
+          size="xs"
+          variant="unstyled"
+          styles={{
+            root: { width: 176 },
+            input: {
+              minHeight: 22,
+              height: 22,
+              paddingInline: 6,
+              border: "1px solid var(--mantine-color-gray-4)",
+              borderRadius: 5,
+              background: "var(--mantine-color-white)",
+              fontSize: 12,
+              fontWeight: 500,
+              lineHeight: "20px",
+            },
+          }}
+        />
+      </Group>
+    );
+  }
+
+  return (
+    <Group gap={4} wrap="nowrap" px={4} c="dimmed">
+      <ImageIcon className="h-3.5 w-3.5 shrink-0" />
+      <UnstyledButton
+        onMouseDown={(event) => event.stopPropagation()}
+        onDoubleClick={startEdit}
+        title="双击重命名图片节点"
+        px={4}
+        py={2}
+        style={{ maxWidth: 180, borderRadius: 5 }}
+      >
+        <Text size="12px" fw={500} truncate c="dimmed">
+          {currentTitle}
+        </Text>
+      </UnstyledButton>
+    </Group>
+  );
+}
 const panoramaPrompt = (ratio: string) =>
   `将这张图扩展生成 360° 环绕全景图（equirectangular panorama，宽高比 ${ratio}）。必须让画面最左边缘与最右边缘无缝闭合，纹理、光照、颜色和透视连续，不能出现垂直拼接线、色块断层或重复硬边。向四周自然延展场景，保持主体、风格与光照一致，适合球面环绕观看。`;
 
@@ -173,6 +282,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   }
   // 一次出图张数（批量）：全部存入本节点 images，组图交互展示
   const [batchCount, setBatchCount] = useState(1);
+  const [batchOpen, setBatchOpen] = useState(false);
   // 组图：展示主图+堆叠徽标，点徽标「展开」拆成多个独立图片节点
   const groupImages = node.images && node.images.length > 1 ? node.images : null;
   // 已展开的子节点 id（${node.id}_g{n}），响应式 —— 徽标据此在「展开 / 收起」间切换
@@ -248,12 +358,90 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   }, [refsSig, node.id, node.imageSrc]);
 
   // 卡片比例：生成结果优先沿用本次选择的目标画幅，避免返回图自然尺寸把 16:9 卡片改成竖图。
-  const requestedRatio = node.aspectRatio || (!node.imageSrc ? qualityRatio.ratio : "auto");
-  const ratioParsed = parseRatio(requestedRatio);
-  const cardAspect = ratioParsed ? ratioParsed.w / ratioParsed.h : (node.imageSrc && imgAspect ? imgAspect : 4 / 3);
-  const { w: cardW, h: cardH } = fitCardSize(cardAspect);
+  const explicitRatio = node.aspectRatio || (!node.imageSrc ? qualityRatio.ratio : null);
+  const ratioParsed = explicitRatio ? parseRatio(explicitRatio) : null;
+  const cardAspect = ratioParsed ? ratioParsed.w / ratioParsed.h : (node.imageSrc && imgAspect ? imgAspect : 1);
+  const { w: cardW, h: cardH } = fitCardSize(cardAspect, explicitRatio);
   const promptPanelW = Math.max(640, cardW + PANEL_EXTRA);
   const selectedModel = imageModels.find((m) => m.modelId === selectedModelId);
+  const linkedStyleSig = useCanvasStore((s) =>
+    s.connections
+      .filter((c) => c.targetId === node.id)
+      .map((c) => {
+        const src = s.nodes.find((n) => n.id === c.sourceId);
+        return src?.type === STYLE_REFERENCE_NODE_TYPE
+          ? [src.id, src.stylePresetId || "", src.stylePresetName || "", src.stylePresetPrompt || "", src.stylePresetModelIds?.join(",") || "", JSON.stringify(src.stylePresetModelPrompts || {}), src.stylePresetCoverUrl || ""].join("~")
+          : "";
+      })
+      .filter(Boolean)
+      .join("|")
+  );
+  const linkedStyle = useMemo(() => {
+    const st = useCanvasStore.getState();
+    for (const connection of st.connections) {
+      if (connection.targetId !== node.id) continue;
+      const source = st.nodes.find((item) => item.id === connection.sourceId);
+      if (source?.type === STYLE_REFERENCE_NODE_TYPE && source.stylePresetId) {
+        return {
+          id: source.stylePresetId,
+          name: source.stylePresetName || source.title,
+          prompt: getStylePromptForModel(source.stylePresetPrompt || "", source.stylePresetModelPrompts, selectedModelId),
+        };
+      }
+    }
+    return null;
+  }, [linkedStyleSig, node.id, selectedModelId]);
+  const selectedStyleId = linkedStyle?.id ?? DEFAULT_STYLE_PRESET.id;
+  const selectedStyleName = linkedStyle?.name ?? DEFAULT_STYLE_PRESET.shortName;
+  const selectedStylePrompt = linkedStyle?.prompt ?? "";
+
+  const handleStylePresetChange = useCallback((preset: ImageStylePreset) => {
+    const st = useCanvasStore.getState();
+    const incomingStyleRefs = st.connections
+      .filter((connection) => connection.targetId === node.id)
+      .map((connection) => ({
+        connection,
+        source: st.nodes.find((item) => item.id === connection.sourceId),
+      }))
+      .filter((entry): entry is { connection: { id: string; sourceId: string; targetId: string }; source: CanvasNode } => entry.source?.type === STYLE_REFERENCE_NODE_TYPE);
+
+    st.pushHistory();
+    st.updateNode(node.id, {
+      stylePresetId: preset.id === DEFAULT_STYLE_PRESET.id ? undefined : preset.id,
+      stylePresetName: preset.id === DEFAULT_STYLE_PRESET.id ? undefined : (preset.shortName || preset.name),
+      stylePresetPrompt: preset.id === DEFAULT_STYLE_PRESET.id ? undefined : preset.prompt,
+      stylePresetModelIds: preset.id === DEFAULT_STYLE_PRESET.id ? undefined : preset.modelIds,
+      stylePresetModelPrompts: preset.id === DEFAULT_STYLE_PRESET.id ? undefined : preset.modelPrompts,
+      stylePresetCoverUrl: preset.id === DEFAULT_STYLE_PRESET.id ? undefined : preset.coverUrl,
+    }, false);
+
+    if (preset.id === DEFAULT_STYLE_PRESET.id) {
+      incomingStyleRefs.forEach((entry) => st.removeNode(entry.source.id, false));
+      return;
+    }
+
+    const [primaryRef, ...duplicateRefs] = incomingStyleRefs;
+    const patch = getStyleReferencePatch(preset);
+    if (primaryRef) {
+      st.updateNode(primaryRef.source.id, patch, false);
+      duplicateRefs.forEach((entry) => st.removeNode(entry.source.id, false));
+      return;
+    }
+
+    const styleNodeId = generateNodeId();
+    const styleNode: CanvasNode = {
+      id: styleNodeId,
+      x: node.x - STYLE_REFERENCE_WIDTH - STYLE_REFERENCE_GAP,
+      y: node.y,
+      type: STYLE_REFERENCE_NODE_TYPE,
+      title: getStyleReferenceTitle(preset),
+      width: STYLE_REFERENCE_WIDTH,
+      height: STYLE_REFERENCE_HEIGHT,
+      ...patch,
+    };
+    st.addNode(styleNode, false);
+    st.addConnection({ id: `conn_${styleNodeId}_${node.id}`, sourceId: styleNodeId, targetId: node.id }, false);
+  }, [node.id, node.x, node.y]);
   const formatConfig: { qualities?: string[]; clarities?: string[]; ratios?: string[]; batchSizes?: number[]; gridOutput?: boolean; pricing?: Record<string, Record<string, number>> } = (() => {
     if (!selectedModel?.config) return {};
     try {
@@ -326,13 +514,16 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     const ownImage = node.imageSrc || "";
     const imageList = ownImage ? [ownImage, ...refImages] : refImages;
     const hasImage = imageList.length > 0;
+    const stylePrompt = selectedStylePrompt.trim();
+    const mergedPrompt = [node.prompt?.trim(), stylePrompt ? `风格要求：${stylePrompt}` : ""].filter(Boolean).join("\n");
     generate({
       nodeId: node.id,
       handler: hasImage ? "image_to_image" : "text_to_image",
       modelId: selectedModelId || "default",
       gridOutput: formatConfig.gridOutput,
       input: {
-        prompt: node.prompt,
+        prompt: mergedPrompt,
+        ...(stylePrompt ? { stylePreset: selectedStyleId, stylePrompt } : {}),
         ...(imageList.length ? { imageList, sourceImage: imageList[0], references: imageList.slice(1) } : {}),
         // 模型无某维度(后台全不勾)时该参数不下发，避免上游收到其不支持的字段
         ...(hasRatioDim ? { aspectRatio: qualityRatio.ratio, aspect_ratio: qualityRatio.ratio, ratio: qualityRatio.ratio } : {}),
@@ -342,7 +533,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [generate, node, qualityRatio, selectedModelId, selectedModel, refs, batchCount]);
+  }, [generate, node, qualityRatio, selectedModelId, selectedModel, refs, batchCount, selectedStyleId, selectedStylePrompt]);
 
   const handlePromptChange = useCallback((value: string) => {
     updateNode(node.id, {
@@ -363,10 +554,9 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     const pr = parseRatio(panoRatio);
     const panoAspect = pr ? pr.w / pr.h : 16 / 9;
     // 卡片尺寸与图片节点渲染规则一致：横图限宽、竖图限高
-    const cw = panoAspect >= 1 ? IMAGE_CARD_BASE_WIDTH : Math.round(IMAGE_CARD_BASE_WIDTH * panoAspect);
-    const ph = panoAspect >= 1 ? Math.round(IMAGE_CARD_BASE_WIDTH / panoAspect) : IMAGE_CARD_BASE_WIDTH;
+    const { w: cw, h: ph } = fitCardSize(panoAspect, panoRatio);
     // 放到右侧列下方，避免与已有节点堆叠
-    const targetX = node.x + IMAGE_CARD_BASE_WIDTH + 80;
+    const targetX = node.x + cardW + 80;
     const colNodes = st.nodes.filter((n) => {
       const nw = n.contentW ?? n.width;
       return n.x < targetX + cw && n.x + nw > targetX;
@@ -408,7 +598,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       },
       // 生成后不自动弹全屏：结果已在新的 720° 节点内嵌环视；需要全屏再点工具栏全屏/「查看全景」
     });
-  }, [generate, node.id, node.x, node.y, node.width, node.aspectRatio, node.imageSrc, qualityRatio, selectedModelId]);
+  }, [cardW, generate, node.id, node.x, node.y, node.width, node.aspectRatio, node.imageSrc, qualityRatio, selectedModelId]);
 
   const handlePanorama = useCallback(() => {
     if (!node.imageSrc) {
@@ -529,7 +719,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       type: "image",
       x: targetX,
       y: targetY,
-      width: IMAGE_CARD_BASE_WIDTH,
+      width: cardW,
       height: cardH,
       contentW: cardW,
       contentH: cardH,
@@ -858,11 +1048,8 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       <div className="relative mx-auto" style={{ width: cardW }}>
         {/* 标题：恒定大小，吸附卡片左上方 */}
         {showAuxUI && !node.imageSrc && (
-          <NodeChrome zoom={zoom} placement="top-left" gap={4}>
-            <div className="flex items-center gap-1.5 whitespace-nowrap px-1 text-sm text-neutral-600 dark:text-neutral-300">
-              <ImageIcon className="h-4 w-4" />
-              <span className="font-medium">{node.title || "图片节点"}</span>
-            </div>
+          <NodeChrome zoom={zoom} placement="top-left" gap={10}>
+            <EditableImageNodeTitle node={node} />
           </NodeChrome>
         )}
         {/* 右上角分辨率（上传/生成后展示 W × H） */}
@@ -874,15 +1061,19 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         {/* 未生成：顶部「上传」按钮（恒定大小，吸附卡片正上方） */}
         {showAuxUI && !node.imageSrc && (
           <NodeChrome zoom={zoom} placement="top-center" gap={8}>
-            <button
+            <Button
               onMouseDown={stop}
               onClick={openFilePicker}
               disabled={nodeUploading}
-              className="flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 shadow-sm transition-colors hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
+              size="xs"
+              radius="md"
+              variant="default"
+              color="dark"
+              leftSection={nodeUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+              className="shadow-sm"
             >
-              {nodeUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
               上传
-            </button>
+            </Button>
           </NodeChrome>
         )}
         {/* 已生成 + 非预览：顶部操作工具栏（恒定大小独立胶囊，吸附卡片左上方）。
@@ -1229,20 +1420,27 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         {/* 组图：右侧堆叠纸张效果（置于主卡之下） */}
         {groupImages && (
           <>
-            <div className="absolute rounded-2xl bg-white shadow-sm ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-800"
+            <div className="absolute rounded-[12px] bg-white shadow-sm ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-800"
                  style={{ left: 16, right: -16, top: 8, height: cardH - 16 }} />
-            <div className="absolute rounded-2xl bg-white shadow-sm ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-800"
+            <div className="absolute rounded-[12px] bg-white shadow-sm ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-800"
                  style={{ left: 8, right: -8, top: 4, height: cardH - 8 }} />
           </>
         )}
 
         {/* 主图片区 - 始终显示（作为容器内唯一在流元素，决定容器尺寸） */}
-        <div
-          className={`relative overflow-hidden rounded-2xl bg-white shadow-sm ring-1 transition-all dark:bg-neutral-950 ${
-            isConnectTarget ? "ring-2 ring-blue-500/70" :
-            isSelected ? "ring-2 ring-neutral-400 dark:ring-neutral-600" : "ring-neutral-200 dark:ring-neutral-800"
+        <Paper
+          component="div"
+          radius={10}
+          shadow="none"
+          className={`relative overflow-hidden border bg-white transition-[border-color,box-shadow] dark:bg-neutral-950 ${
+            isConnectTarget
+              ? "border-blue-500 shadow-[0_0_0_1px_rgba(59,130,246,0.35)]"
+              : isSelected
+                ? "border-neutral-400 shadow-[0_0_0_1px_rgba(115,115,115,0.28)] dark:border-neutral-500"
+                : "border-neutral-300 dark:border-neutral-700"
           }`}
           style={{ width: cardW, height: cardH }}
+          withBorder={false}
         >
           {/* 组图徽标：在「展开为多个节点 / 收起」之间切换 */}
           {groupImages && !generating && (
@@ -1286,7 +1484,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
           )}
           {/* 宫格切分预览：网格线 + 可点选格子（选中则只切选中，不选则全部） */}
           {gridPreview && node.imageSrc && (
-            <div className="absolute inset-0 z-[4] overflow-hidden rounded-2xl">
+            <div className="absolute inset-0 z-[4] overflow-hidden rounded-[12px]">
               <div className="pointer-events-none absolute inset-0">
                 {Array.from({ length: gridPreview.cols - 1 }, (_, i) => (
                   <div key={`v${i}`} className="absolute inset-y-0 w-px bg-white/80 shadow-[0_0_2px_rgba(0,0,0,0.45)]" style={{ left: `${((i + 1) / gridPreview.cols) * 100}%` }} />
@@ -1326,43 +1524,53 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
               />
             )
           ) : (
-            <div className="relative h-full p-8 text-neutral-950 dark:text-neutral-100">
-              <div className="absolute inset-x-0 top-[28%] flex justify-center">
-                <svg className="h-16 w-16 text-neutral-400 dark:text-neutral-600" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  <circle cx="16.5" cy="7.5" r="2" />
-                  <path d="M3 19.5 9.2 11l4.2 5.2 2.8-3.5 4.8 6.8H3z" />
-                </svg>
-              </div>
-              <div className="absolute left-7 top-[45%]">
-                <p className="mb-2 text-sm text-neutral-500 dark:text-neutral-400">尝试：</p>
-                <div className="flex flex-col items-start gap-3">
-                  <button
-                    onMouseDown={stop}
-                    onClick={openFilePicker}
-                    disabled={nodeUploading}
-                    className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-900"
-                  >
-                    <span className="flex h-6 w-6 items-center justify-center rounded-md bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200">
+            <Center h="100%" p="xl" c="gray.9" className="relative dark:text-neutral-100">
+              <Center style={{ position: "absolute", insetInline: 0, top: "28%" }}>
+                <ThemeIcon variant="transparent" color="gray" size={82} radius="xl">
+                  <ImageIcon size={58} strokeWidth={1.5} />
+                </ThemeIcon>
+              </Center>
+
+              <Stack gap="sm" align="flex-start" style={{ position: "absolute", left: 28, top: "45%" }}>
+                <Text size="sm" c="dimmed">尝试：</Text>
+                <Button
+                  onMouseDown={stop}
+                  onClick={openFilePicker}
+                  disabled={nodeUploading}
+                  variant="subtle"
+                  color="dark"
+                  radius="md"
+                  size="sm"
+                  leftSection={
+                    <ThemeIcon variant="light" color="gray" size={24} radius="md">
                       {nodeUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                    </span>
-                    图生图
-                  </button>
-                  <button
-                    onMouseDown={stop}
-                    onClick={(e) => { stop(e); toast.info("图片高清功能即将上线"); }}
-                    className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-900"
-                  >
-                    <span className="flex h-6 w-6 items-center justify-center rounded-md bg-neutral-100 text-[10px] font-medium leading-none text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200">
-                      HD
-                    </span>
-                    图片高清
-                  </button>
-                </div>
-              </div>
-            </div>
+                    </ThemeIcon>
+                  }
+                  styles={{ root: { paddingLeft: 8, paddingRight: 10 }, label: { fontWeight: 500 } }}
+                >
+                  图生图
+                </Button>
+                <Button
+                  onMouseDown={stop}
+                  onClick={(e) => { stop(e); toast.info("图片高清功能即将上线"); }}
+                  variant="subtle"
+                  color="dark"
+                  radius="md"
+                  size="sm"
+                  leftSection={
+                    <ThemeIcon variant="light" color="gray" size={24} radius="md">
+                      <Text size="10px" fw={600} lh={1}>HD</Text>
+                    </ThemeIcon>
+                  }
+                  styles={{ root: { paddingLeft: 8, paddingRight: 10 }, label: { fontWeight: 500 } }}
+                >
+                  图片高清
+                </Button>
+              </Stack>
+            </Center>
           )}
 
-        </div>
+        </Paper>
 
         {/* 左右连接端口：恒定大小，吸附卡片左右缘中点 */}
         {showAuxUI && (
@@ -1391,11 +1599,16 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         {/* 提示词输入面板：恒定大小，吸附卡片正下方居中 */}
         {showAuxUI && !node.imageSrc && (
           <NodeChrome zoom={zoom} placement="bottom-center" gap={18}>
-            <div
-              className="relative rounded-xl border border-neutral-200 bg-white p-3 shadow-xl shadow-neutral-900/10 dark:border-neutral-800 dark:bg-neutral-950 dark:shadow-black/30"
-              style={{ width: promptPanelW, boxSizing: "border-box" }}
+            <Paper
+              component="div"
+              radius={10}
+              p={12}
+              shadow="sm"
+              withBorder
+              className="relative flex flex-col bg-white shadow-[0_10px_32px_rgba(15,23,42,0.10)] dark:bg-neutral-950 dark:shadow-black/30"
+              style={{ width: promptPanelW, minHeight: 176, boxSizing: "border-box" }}
             >
-              {/* 富文本输入框（@ 引用「图片N」内联绑定参考图）：风格/标记/参考 作前置工具、展开作后置 */}
+              {/* 富文本输入框（@ 引用「图片N」内联绑定参考图）：风格作前置工具、展开作后置 */}
               <PromptRefEditor
                 refs={refs}
                 zoom={zoom}
@@ -1405,12 +1618,13 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                 placeholder="可直接文字生图，或上传图片输入文字指令对图片进行编辑，如：将背景改为雪夜"
                 leading={
                   <>
-                    {[{ icon: Box, label: "风格" }, { icon: MapPin, label: "标记" }, { icon: Plus, label: "参考" }].map(({ icon: Icon, label }) => (
-                      <button key={label} onMouseDown={stop} className="flex h-12 w-12 shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg border border-neutral-200 bg-white text-xs text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
-                        <Icon className="h-4 w-4" />
-                        <span>{label}</span>
-                      </button>
-                    ))}
+                    <ImageStylePicker
+                      value={selectedStyleId}
+                      selectedName={selectedStyleName}
+                      selectedPrompt={selectedStylePrompt}
+                      modelId={selectedModelId}
+                      onChange={handleStylePresetChange}
+                    />
                   </>
                 }
                 trailing={
@@ -1432,8 +1646,8 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                 refs={refs}
                 placeholder="可直接文字生图，或上传图片输入文字指令对图片进行编辑，如：将背景改为雪夜"
               />
-              <div className="mt-3 flex items-center justify-between gap-2">
-                <div className="flex min-w-0 flex-nowrap items-center gap-1.5 text-xs text-neutral-600 dark:text-neutral-400">
+              <div className="mt-auto flex items-center gap-2 pt-5">
+                <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-1.5 text-xs text-neutral-600 dark:text-neutral-400">
                   <ModelPicker models={imageModels} value={selectedModelId} onChange={setSelectedModelId} />
                   <QualityRatioPicker
                     value={qualityRatio}
@@ -1445,13 +1659,19 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                     qualities={formatConfig.qualities}
                     clarities={formatConfig.clarities}
                     ratios={formatConfig.ratios}
-                    batchCount={batchCount}
-                    batchOptions={batchOptions}
-                    onBatchChange={setBatchCount}
                     compact
                   />
                 </div>
-                <div className="flex shrink-0 items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
+                <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
+                  <BatchCountDropdown
+                    value={batchCount}
+                    options={batchOptions}
+                    open={batchOpen}
+                    onOpenChange={setBatchOpen}
+                    onChange={setBatchCount}
+                    variant="ghost"
+                    align="right"
+                  />
                   <span className="flex items-center gap-0.5 text-xs text-neutral-500">
                     <Zap className="h-3 w-3 text-neutral-900 dark:text-neutral-100" fill="currentColor" />
                     {applyTeamFactor(pointCost * batchCount, user)}
@@ -1462,17 +1682,17 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                     onClick={(e) => { stop(e); handleGenerate(); }}
                     disabled={generating || !node.prompt?.trim()}
                     title={generating ? "生成中..." : "开始生成"}
-                    className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
+                    className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
                       generating || !node.prompt?.trim()
                         ? "bg-neutral-100 text-neutral-400 dark:bg-neutral-800"
-                        : "bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+                        : "bg-neutral-800 text-white hover:bg-neutral-950 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
                     }`}
                   >
                     {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}
                   </button>
                 </div>
               </div>
-            </div>
+            </Paper>
           </NodeChrome>
         )}
       </div>

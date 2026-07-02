@@ -33,6 +33,8 @@ var permissionCatalog = []PermissionGroup{
 		{Code: "author:manage", Label: "作者-授予/撤销"},
 		{Code: "banner:view", Label: "Banner-查看"},
 		{Code: "banner:manage", Label: "Banner-增删改"},
+		{Code: "style:view", Label: "风格库-查看"},
+		{Code: "style:manage", Label: "风格库-增删改"},
 		{Code: "file:view", Label: "文件-查看"},
 		{Code: "file:delete", Label: "文件-删除"},
 		{Code: "security:view", Label: "封禁-查看"},

@@ -9,6 +9,16 @@ export interface CanvasNode {
   height: number;
   title: string;
   prompt?: string;
+  /** 图片节点生成时选中的风格预设，默认风格不写入。 */
+  stylePresetId?: string;
+  /** 图片节点选中的风格短名称，用于按钮回显。 */
+  stylePresetName?: string;
+  /** 图片节点选中的风格提示词快照，用于生成时提交，避免依赖前端硬编码。 */
+  stylePresetPrompt?: string;
+  stylePresetModelIds?: string[];
+  stylePresetModelPrompts?: Record<string, string>;
+  /** 图片节点选中的风格封面，用于后续回显或历史恢复。 */
+  stylePresetCoverUrl?: string;
   imageSrc?: string;
   /** 组图：一次生成的全部图片(如 Midjourney 一组 4 张)；imageSrc 始终等于其中的「主图」 */
   images?: string[];

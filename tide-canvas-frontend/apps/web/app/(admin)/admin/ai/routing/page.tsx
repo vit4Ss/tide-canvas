@@ -20,6 +20,8 @@ import type { ColumnsType } from "antd/es/table";
 import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
 import { adminApi } from "@/lib/api";
 import { AdminPageHead } from "@/components/admin/page-head";
+import { CLARITY_OPTIONS, DEFAULT_IMAGE_COUNT_OPTIONS, QUALITY_OPTIONS, RATIO_OPTIONS } from "@/components/canvas/nodes/utils/quality-ratio";
+import { DURATION_OPTIONS, RESOLUTIONS, VIDEO_RATIOS } from "@/components/canvas/nodes/video-param-picker";
 import { toast } from "@/components/shared/toast";
 import { useHasPerm } from "@/stores/use-permission-store";
 import { formatDate } from "@/lib/utils";
@@ -60,13 +62,19 @@ interface RouteForm {
   handlerName: string;
   routeStrategy: string;
   complexityLevel: string;
-  conditionsText: string;
+  qualities: string[];
+  clarities: string[];
+  ratios: string[];
+  batchCounts: number[];
+  resolutions: string[];
+  durations: number[];
   priority: number;
   weight: number;
   status: number;
 }
 
 const PAGE_SIZE = 20;
+const { CheckableTag } = Tag;
 
 const MODEL_TYPES = [
   { value: "image", label: "图片" },
@@ -118,7 +126,12 @@ const emptyRouteForm: RouteForm = {
   handlerName: "",
   routeStrategy: "priority",
   complexityLevel: "",
-  conditionsText: "",
+  qualities: [],
+  clarities: [],
+  ratios: [],
+  batchCounts: [],
+  resolutions: [],
+  durations: [],
   priority: 0,
   weight: 100,
   status: 1,
@@ -164,6 +177,119 @@ function shortJson(text?: string) {
   return pretty.length > 80 ? `${pretty.slice(0, 80)}...` : pretty;
 }
 
+interface RouteMatchConfig {
+  qualities: string[];
+  clarities: string[];
+  ratios: string[];
+  batchCounts: number[];
+  resolutions: string[];
+  durations: number[];
+}
+
+const QUALITY_LABELS: Record<string, string> = {
+  low: "低画质",
+  standard: "标准画质",
+  high: "高画质",
+};
+
+const emptyRouteMatchConfig = (): RouteMatchConfig => ({
+  qualities: [],
+  clarities: [],
+  ratios: [],
+  batchCounts: [],
+  resolutions: [],
+  durations: [],
+});
+
+function stringArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
+  if (typeof value === "string" && value.trim()) return [value.trim()];
+  return [];
+}
+
+function numberArray(value: unknown): number[] {
+  const values = Array.isArray(value) ? value : value == null || value === "" ? [] : [value];
+  return values
+    .map((item) => Number(String(item).replace(/s$/i, "")))
+    .filter((item, index, arr) => Number.isFinite(item) && item > 0 && arr.indexOf(item) === index);
+}
+
+function parseRouteConditions(text?: string): RouteMatchConfig {
+  const empty = emptyRouteMatchConfig();
+  if (!text || text.trim() === "{}") return empty;
+  try {
+    const raw = JSON.parse(text) as Record<string, unknown>;
+    return {
+      qualities: stringArray(raw.qualities ?? raw.quality),
+      clarities: stringArray(raw.clarities ?? raw.clarity),
+      ratios: stringArray(raw.ratios ?? raw.aspectRatios ?? raw.aspectRatio ?? raw.ratio),
+      batchCounts: numberArray(raw.batchCounts ?? raw.batchCount ?? raw.counts ?? raw.n),
+      resolutions: stringArray(raw.resolutions ?? raw.resolution),
+      durations: numberArray(raw.durations ?? raw.duration),
+    };
+  } catch {
+    return empty;
+  }
+}
+
+function buildRouteConditions(form: RouteForm): string {
+  const conditions: Record<string, unknown> = {};
+  if (form.qualities.length) conditions.qualities = form.qualities;
+  if (form.clarities.length) conditions.clarities = form.clarities;
+  if (form.ratios.length) conditions.ratios = form.ratios;
+  if (form.batchCounts.length) conditions.batchCounts = form.batchCounts;
+  if (form.resolutions.length) conditions.resolutions = form.resolutions;
+  if (form.durations.length) conditions.durations = form.durations;
+  return JSON.stringify(conditions);
+}
+
+function toggleValue<T extends string | number>(values: T[], value: T): T[] {
+  return values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
+}
+
+function conditionTags(text?: string) {
+  const config = parseRouteConditions(text);
+  const tags: React.ReactNode[] = [];
+  const add = (key: string, label: string, values: Array<string | number>) => {
+    if (!values.length) return;
+    tags.push(<Tag key={key} color="blue">{label}: {values.join(" / ")}</Tag>);
+  };
+  add("qualities", "画质", config.qualities.map((value) => QUALITY_LABELS[value] ?? value));
+  add("clarities", "清晰度", config.clarities);
+  add("ratios", "比例", config.ratios.map((value) => (value === "auto" ? "自动" : value)));
+  add("batchCounts", "张数", config.batchCounts.map((value) => `${value}张`));
+  add("resolutions", "视频分辨率", config.resolutions);
+  add("durations", "时长", config.durations.map((value) => `${value}s`));
+  if (tags.length > 0) return <Space size={[0, 4]} wrap>{tags}</Space>;
+  if (text && text.trim() && text.trim() !== "{}") return <Tag color="purple">自定义条件</Tag>;
+  return <Tag>默认兜底</Tag>;
+}
+
+function RouteConditionGroup({ label, options, selected, onToggle }: {
+  label: string;
+  options: { value: string | number; label: string }[];
+  selected: Array<string | number>;
+  onToggle: (value: string | number) => void;
+}) {
+  return (
+    <div>
+      <div style={{ marginBottom: 6, color: "var(--ant-color-text-secondary, #8c8c8c)", fontSize: 12 }}>{label}</div>
+      <Space wrap size={[6, 6]}>
+        {options.map((option) => (
+          <CheckableTag
+            key={String(option.value)}
+            checked={selected.includes(option.value)}
+            onChange={() => onToggle(option.value)}
+            style={{ border: "1px solid #d9d9d9", padding: "2px 10px" }}
+          >
+            {option.label}
+          </CheckableTag>
+        ))}
+      </Space>
+    </div>
+  );
+}
+
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
@@ -182,6 +308,10 @@ export default function AdminAiRoutingPage() {
   const [upstreamModels, setUpstreamModels] = useState<AiUpstreamModelVO[]>([]);
   const [handlers, setHandlers] = useState<AiHandlerVO[]>([]);
   const [selectedModelId, setSelectedModelId] = useState("");
+  const [requestedModelId] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("modelId") ?? "";
+  });
 
   const [referenceLoading, setReferenceLoading] = useState(true);
   const [upstreamLoading, setUpstreamLoading] = useState(true);
@@ -203,6 +333,7 @@ export default function AdminAiRoutingPage() {
   const [editingRouteId, setEditingRouteId] = useState<string | null>(null);
   const [routeForm, setRouteForm] = useState<RouteForm>({ ...emptyRouteForm });
   const [routeSaving, setRouteSaving] = useState(false);
+
 
   const selectedLogicalModel = useMemo(
     () => logicalModels.find((m) => m.id === selectedModelId),
@@ -232,6 +363,7 @@ export default function AdminAiRoutingPage() {
       const nextModels = modelRes.success ? (modelRes.data as unknown as LogicalModelVO[]) : [];
       setLogicalModels(nextModels);
       setSelectedModelId((current) => {
+        if (requestedModelId && nextModels.some((m) => m.id === requestedModelId)) return requestedModelId;
         if (current && nextModels.some((m) => m.id === current)) return current;
         return nextModels[0]?.id ?? "";
       });
@@ -239,7 +371,7 @@ export default function AdminAiRoutingPage() {
     } finally {
       setReferenceLoading(false);
     }
-  }, []);
+  }, [requestedModelId]);
 
   const loadUpstreamModels = useCallback(async () => {
     setUpstreamLoading(true);
@@ -385,13 +517,19 @@ export default function AdminAiRoutingPage() {
   };
 
   const openEditRoute = (item: AiModelRouteVO) => {
+    const conditions = parseRouteConditions(item.conditions);
     setEditingRouteId(item.id);
     setRouteForm({
       upstreamModelId: String(item.upstreamModelId || ""),
       handlerName: item.handlerName || "",
       routeStrategy: item.routeStrategy || "priority",
       complexityLevel: item.complexityLevel || "",
-      conditionsText: prettyJson(item.conditions),
+      qualities: conditions.qualities,
+      clarities: conditions.clarities,
+      ratios: conditions.ratios,
+      batchCounts: conditions.batchCounts,
+      resolutions: conditions.resolutions,
+      durations: conditions.durations,
       priority: item.priority || 0,
       weight: item.weight || 100,
       status: item.status ?? 1,
@@ -404,8 +542,7 @@ export default function AdminAiRoutingPage() {
       toast.error("请选择逻辑模型、上游模型和 Handler");
       return;
     }
-    const conditions = jsonOrEmptyObject(routeForm.conditionsText, "匹配条件");
-    if (conditions == null) return;
+    const conditions = buildRouteConditions(routeForm);
     setRouteSaving(true);
     try {
       const payload: Record<string, unknown> = {
@@ -422,7 +559,7 @@ export default function AdminAiRoutingPage() {
         ? await adminApi.ai.modelRoutes.update(editingRouteId, payload)
         : await adminApi.ai.modelRoutes.create(selectedModelId, payload);
       if (res.success) {
-        toast.success("模型路由已保存");
+        toast.success("模型映射已保存");
         setRouteOpen(false);
         await loadRoutes();
       } else {
@@ -436,7 +573,7 @@ export default function AdminAiRoutingPage() {
   const deleteRoute = async (id: string) => {
     const res = await adminApi.ai.modelRoutes.delete(id);
     if (res.success) {
-      toast.success("模型路由已删除");
+      toast.success("模型映射已删除");
       await loadRoutes();
     } else {
       toast.error(res.message || "删除失败");
@@ -497,13 +634,13 @@ export default function AdminAiRoutingPage() {
     { title: "优先级", dataIndex: "priority", key: "priority", width: 90 },
     { title: "权重", dataIndex: "weight", key: "weight", width: 80 },
     {
-      title: "条件",
+      title: "匹配条件",
       dataIndex: "conditions",
       key: "conditions",
       responsive: ["lg"],
       render: (v) => (
-        <Tooltip title={<pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{prettyJson(v)}</pre>}>
-          <span style={{ fontFamily: "monospace", fontSize: 12, color: "#8c8c8c" }}>{shortJson(v)}</span>
+        <Tooltip title={<pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{shortJson(v) === "-" ? "空条件会作为默认兜底映射" : prettyJson(v)}</pre>}>
+          <span>{conditionTags(v)}</span>
         </Tooltip>
       ),
     },
@@ -516,7 +653,7 @@ export default function AdminAiRoutingPage() {
         <Space size={0}>
           {can("model:manage") && <Button type="text" size="small" icon={<EditOutlined />} onClick={() => openEditRoute(item)}>编辑</Button>}
           {can("model:manage") && (
-            <Popconfirm title="删除这条模型路由？" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => deleteRoute(item.id)}>
+            <Popconfirm title="删除这条模型映射？" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => deleteRoute(item.id)}>
               <Button type="text" size="small" danger icon={<DeleteOutlined />} />
             </Popconfirm>
           )}
@@ -538,11 +675,13 @@ export default function AdminAiRoutingPage() {
     { title: "操作", key: "action", align: "right", render: (_, item) => <Button type="link" size="small" onClick={() => setDecisionDetail(item)}>详情</Button> },
   ];
 
+  const routeConditionType = selectedLogicalModel?.type || upstreamModels.find((item) => item.id === routeForm.upstreamModelId)?.type || "image";
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <AdminPageHead
-        title="模型路由"
-        desc="维护逻辑模型到上游模型的映射、权重、优先级和运行时选择记录"
+        title="模型映射"
+        desc="给用户展示逻辑模型，再映射到真实上游模型；用户端只看到逻辑模型"
         extra={
           <Space>
             <Button icon={<ReloadOutlined />} onClick={refreshCurrent}>刷新</Button>
@@ -555,14 +694,14 @@ export default function AdminAiRoutingPage() {
       <Alert
         type="info"
         showIcon
-        message="路由映射会优先于模型配置里的旧 JSON routes 生效；未匹配到表结构路由时，后端仍会回退到旧配置。"
+        message="先在模型管理中创建用户可见模型，再在这里选择真实上游模型。未配置映射时，后端会直接调用逻辑模型自身的供应商与模型 ID。"
       />
 
       <Segmented
         value={activeTab}
         onChange={(value) => setActiveTab(value as TabKey)}
         options={[
-          { value: "routes", label: "路由映射" },
+          { value: "routes", label: "模型映射" },
           { value: "upstream", label: "上游模型" },
           { value: "decisions", label: "决策日志" },
         ]}
@@ -573,7 +712,7 @@ export default function AdminAiRoutingPage() {
           <Space wrap>
             <Select
               style={{ minWidth: 320 }}
-              placeholder="选择逻辑模型"
+              placeholder="选择用户可见模型"
               value={selectedModelId || undefined}
               loading={referenceLoading}
               onChange={(v) => setSelectedModelId(v)}
@@ -600,7 +739,7 @@ export default function AdminAiRoutingPage() {
             loading={routesLoading || referenceLoading}
             pagination={false}
             scroll={{ x: "max-content" }}
-            locale={{ emptyText: selectedModelId ? "暂无路由映射" : "请先选择逻辑模型" }}
+            locale={{ emptyText: selectedModelId ? "暂无模型映射" : "请先选择用户可见模型" }}
           />
         </>
       )}
@@ -692,7 +831,7 @@ export default function AdminAiRoutingPage() {
       </Modal>
 
       <Modal
-        title={editingRouteId ? "编辑路由映射" : "新增路由映射"}
+        title={editingRouteId ? "编辑模型映射" : "新增模型映射"}
         open={routeOpen}
         onCancel={() => setRouteOpen(false)}
         onOk={saveRoute}
@@ -733,7 +872,7 @@ export default function AdminAiRoutingPage() {
                 options={handlerOptions}
               />
             </Field>
-            <Field label="路由策略">
+            <Field label="映射策略">
               <Select style={{ width: "100%" }} value={routeForm.routeStrategy} onChange={(v) => setRouteForm((prev) => ({ ...prev, routeStrategy: v }))} options={ROUTE_STRATEGIES} />
             </Field>
             <Field label="复杂度匹配">
@@ -756,13 +895,67 @@ export default function AdminAiRoutingPage() {
               <Select style={{ width: "100%" }} value={routeForm.status} onChange={(v) => setRouteForm((prev) => ({ ...prev, status: v }))} options={STATUS_OPTIONS} />
             </Field>
           </div>
-          <Field label="匹配条件 JSON">
-            <Input.TextArea rows={5} value={routeForm.conditionsText} onChange={(e) => setRouteForm((prev) => ({ ...prev, conditionsText: e.target.value }))} placeholder='例如：{"region":"cn","maxCost":0.02}' />
-          </Field>
+          <div style={{ border: "1px solid var(--ant-color-border-secondary, #f0f0f0)", borderRadius: 8, padding: 12, background: "#fafafa" }}>
+            <div style={{ fontWeight: 500, marginBottom: 4 }}>匹配条件</div>
+            <div style={{ color: "var(--ant-color-text-secondary, #8c8c8c)", fontSize: 12, marginBottom: 12 }}>
+              不选择任何条件时，这条映射会作为默认兜底；选择条件后，后端会按本次生成参数优先命中更精确的映射。
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+              {routeConditionType === "video" ? (
+                <>
+                  <RouteConditionGroup
+                    label="视频分辨率"
+                    options={RESOLUTIONS.map((value) => ({ value, label: value }))}
+                    selected={routeForm.resolutions}
+                    onToggle={(value) => setRouteForm((prev) => ({ ...prev, resolutions: toggleValue(prev.resolutions, String(value)) }))}
+                  />
+                  <RouteConditionGroup
+                    label="视频比例"
+                    options={VIDEO_RATIOS.map((item) => ({ value: item.value, label: item.value === "auto" ? "自动" : item.label }))}
+                    selected={routeForm.ratios}
+                    onToggle={(value) => setRouteForm((prev) => ({ ...prev, ratios: toggleValue(prev.ratios, String(value)) }))}
+                  />
+                  <RouteConditionGroup
+                    label="视频时长"
+                    options={DURATION_OPTIONS.map((value) => ({ value, label: `${value}s` }))}
+                    selected={routeForm.durations}
+                    onToggle={(value) => setRouteForm((prev) => ({ ...prev, durations: toggleValue(prev.durations, Number(value)) }))}
+                  />
+                </>
+              ) : (
+                <>
+                  <RouteConditionGroup
+                    label="画质"
+                    options={QUALITY_OPTIONS.map((item) => ({ value: item.value, label: QUALITY_LABELS[item.value] ?? item.label }))}
+                    selected={routeForm.qualities}
+                    onToggle={(value) => setRouteForm((prev) => ({ ...prev, qualities: toggleValue(prev.qualities, String(value)) }))}
+                  />
+                  <RouteConditionGroup
+                    label="清晰度"
+                    options={CLARITY_OPTIONS.map((value) => ({ value, label: value }))}
+                    selected={routeForm.clarities}
+                    onToggle={(value) => setRouteForm((prev) => ({ ...prev, clarities: toggleValue(prev.clarities, String(value)) }))}
+                  />
+                  <RouteConditionGroup
+                    label="图片比例"
+                    options={RATIO_OPTIONS.map((item) => ({ value: item.value, label: item.value === "auto" ? "自动" : item.label }))}
+                    selected={routeForm.ratios}
+                    onToggle={(value) => setRouteForm((prev) => ({ ...prev, ratios: toggleValue(prev.ratios, String(value)) }))}
+                  />
+                  <RouteConditionGroup
+                    label="出图张数"
+                    options={DEFAULT_IMAGE_COUNT_OPTIONS.map((value) => ({ value, label: `${value}张` }))}
+                    selected={routeForm.batchCounts}
+                    onToggle={(value) => setRouteForm((prev) => ({ ...prev, batchCounts: toggleValue(prev.batchCounts, Number(value)) }))}
+                  />
+                </>
+              )}
+            </div>
+          </div>
         </div>
       </Modal>
 
-      <Modal title="路由决策详情" open={!!decisionDetail} onCancel={() => setDecisionDetail(null)} footer={null} width={760}>
+      <Modal title="映射决策详情" open={!!decisionDetail} onCancel={() => setDecisionDetail(null)} footer={null} width={760}>
         {decisionDetail && (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <Descriptions size="small" column={2} bordered items={[

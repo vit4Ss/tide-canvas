@@ -147,6 +147,19 @@ type ModelVO struct {
 	CreateTime        string           `json:"createTime"`
 }
 
+// IconAssetVO 模型图标资产视图，供管理员选择并引用到前端模型。
+type IconAssetVO struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	IconURL    string `json:"iconUrl"`
+	FileID     int64  `json:"fileId,string"`
+	MimeType   string `json:"mimeType"`
+	FileSize   int64  `json:"fileSize"`
+	Status     int    `json:"status"`
+	SortOrder  int    `json:"sortOrder"`
+	CreateTime string `json:"createTime"`
+}
+
 // HandlerVO Handler 配置视图（对齐 AiHandlerVO）。
 type HandlerVO struct {
 	HandlerName    string          `json:"handlerName"`

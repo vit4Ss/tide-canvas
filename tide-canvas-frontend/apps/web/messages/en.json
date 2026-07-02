@@ -79,7 +79,14 @@
     "projects": "Projects",
     "history": "History",
     "viewAll": "View all",
-    "empty": "No history yet"
+    "empty": "No history yet",
+    "platform": "Platform",
+    "quickLinks": "Quick links",
+    "explore": "Explore",
+    "community": "Community",
+    "blogs": "Blogs",
+    "collapse": "Collapse sidebar",
+    "expand": "Expand sidebar"
   },
   "language": {
     "zh": "简体中文",
