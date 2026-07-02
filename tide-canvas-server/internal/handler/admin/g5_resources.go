@@ -9,6 +9,15 @@ import (
 	"tidecanvas/internal/pkg/response"
 )
 
+// cacheClearPatterns are the transient application-cache key patterns purged by
+// POST /resources/cache/clear. Deliberately excludes auth:* (refresh tokens,
+// blacklist, email codes) so clearing the cache never logs users out or breaks
+// in-flight verification — only regenerable transient state is dropped.
+var cacheClearPatterns = []string{
+	"ai:task:*",   // transient AI task progress/state
+	"ratelimit:*", // token-bucket rate-limit counters
+}
+
 // g5_resources.go: admin resource inventory (model.AdminResource), read-only
 // paged list plus a cache-clear action (no-op so the screen's button succeeds).
 
@@ -80,9 +89,38 @@ func RegisterResources(g *gin.RouterGroup, d *app.Deps) {
 		response.Page(c, vos, total, q.PageNum, q.PageSize)
 	})
 
-	// cache/clear is a no-op acknowledgement: there is no application cache to
-	// purge here yet, but the admin screen expects a success envelope.
+	// cache/clear purges transient application-cache keys (AI task state +
+	// rate-limit counters) from Redis via SCAN, leaving auth/session keys intact.
+	// Returns how many keys were removed.
 	r.POST("/cache/clear", func(c *gin.Context) {
-		response.OK(c, gin.H{"cleared": true})
+		if d.RDB == nil {
+			response.OK(c, gin.H{"cleared": true, "keys": 0})
+			return
+		}
+		ctx := c.Request.Context()
+		var removed int64
+		for _, pattern := range cacheClearPatterns {
+			var cursor uint64
+			for {
+				keys, next, err := d.RDB.Scan(ctx, cursor, pattern, 200).Result()
+				if err != nil {
+					response.Fail(c, response.CodeServerError, "failed to scan cache keys")
+					return
+				}
+				if len(keys) > 0 {
+					n, err := d.RDB.Del(ctx, keys...).Result()
+					if err != nil {
+						response.Fail(c, response.CodeServerError, "failed to delete cache keys")
+						return
+					}
+					removed += n
+				}
+				cursor = next
+				if cursor == 0 {
+					break
+				}
+			}
+		}
+		response.OK(c, gin.H{"cleared": true, "keys": removed})
 	})
 }

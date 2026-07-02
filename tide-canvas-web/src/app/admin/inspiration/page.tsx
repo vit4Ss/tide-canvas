@@ -34,6 +34,7 @@ import { FilterChips } from "@/components/admin/filter-bar";
 import type { Kpi } from "@/mock/admin";
 import { mesh } from "@/lib/mesh";
 import { useAuthStore } from "@/stores/use-auth-store";
+import { toast } from "@/components/shared/toast";
 import { adminInspirationApi } from "@/lib/admin-inspiration-api";
 import type {
   CollectionUpsertDTO,
@@ -169,7 +170,7 @@ export default function AdminInspirationPage() {
     if (!collDraft) return;
     const title = collDraft.title.trim();
     if (!title) {
-      window.alert("请填写标题");
+      toast.error("请填写标题");
       return;
     }
     const body: CollectionUpsertDTO = {
@@ -189,9 +190,10 @@ export default function AdminInspirationPage() {
         : await adminInspirationApi.createCollection(body);
       if (res.success) {
         setCollDraft(null);
+        toast.success("合集已保存");
         await load();
       } else {
-        window.alert(res.message || "保存失败");
+        toast.error(res.message || "保存失败");
       }
     } finally {
       setBusy(false);
@@ -222,7 +224,12 @@ export default function AdminInspirationPage() {
       setBusy(true);
       try {
         const res = await adminInspirationApi.deleteCollection(c.id);
-        if (res.success) await load();
+        if (res.success) {
+          toast.success("合集已删除");
+          await load();
+        } else {
+          toast.error(res.message || "删除失败");
+        }
       } finally {
         setBusy(false);
       }
@@ -248,7 +255,7 @@ export default function AdminInspirationPage() {
     if (!promptDraft) return;
     const text = promptDraft.text.trim();
     if (!text) {
-      window.alert("请填写提示词");
+      toast.error("请填写提示词");
       return;
     }
     const body: PromptUpsertDTO = {
@@ -264,9 +271,10 @@ export default function AdminInspirationPage() {
         : await adminInspirationApi.createPrompt(body);
       if (res.success) {
         setPromptDraft(null);
+        toast.success("提示词已保存");
         await load();
       } else {
-        window.alert(res.message || "保存失败");
+        toast.error(res.message || "保存失败");
       }
     } finally {
       setBusy(false);
@@ -279,7 +287,12 @@ export default function AdminInspirationPage() {
       setBusy(true);
       try {
         const res = await adminInspirationApi.deletePrompt(p.id);
-        if (res.success) await load();
+        if (res.success) {
+          toast.success("提示词已删除");
+          await load();
+        } else {
+          toast.error(res.message || "删除失败");
+        }
       } finally {
         setBusy(false);
       }

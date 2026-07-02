@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -16,6 +17,7 @@ import (
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/logger"
 	"tidecanvas/internal/pkg/relaychat"
+	"tidecanvas/internal/pkg/storage"
 )
 
 // Task status values (mirror frontend AiTaskStatus enum).
@@ -39,6 +41,8 @@ type service struct {
 	// relay API key is configured.
 	relay        *relaychat.Client
 	systemPrompt string
+	// storage backs durable server-side artifacts (e.g. grid-split cells).
+	storage storage.StorageStrategy
 }
 
 func newService(d *app.Deps) *service {
@@ -49,6 +53,7 @@ func newService(d *app.Deps) *service {
 		provider:     newProviderClient(d.Cfg.Relay.BaseURL, d.Cfg.Relay.APIKey, d.Storage),
 		relay:        relaychat.New(d.Cfg.Relay.BaseURL, d.Cfg.Relay.APIKey),
 		systemPrompt: d.Cfg.LLM.SystemPrompt,
+		storage:      d.Storage,
 	}
 }
 
@@ -268,17 +273,25 @@ func (s *service) listTasks(ctx context.Context, userID idgen.ID, q taskQuery, o
 
 // ---- grid split ---------------------------------------------------------
 
-// gridSplit is a server-side image grid splitter. Real pixel slicing requires
-// decoding the upstream image; in this phase no upstream image processing is
-// wired, so it returns an explicit error. The frontend has its own client-side
-// canvas slicer (lib/image-slice.ts) as the primary path, so this endpoint is a
-// best-effort fallback only.
+// gridSplit is a server-side image grid splitter: it downloads the source
+// image, cuts it into rows×cols cells and persists each requested cell to
+// storage, returning the durable public URLs. The frontend keeps a client-side
+// canvas slicer (lib/image-slice.ts) as the primary fast path; this server path
+// is used when the cells must be persisted (e.g. onto OSS) rather than kept as
+// ephemeral blob URLs.
 func (s *service) gridSplit(ctx context.Context, dto gridSplitDTO) ([]string, error) {
-	_ = ctx
-	if dto.ImageURL == "" || dto.Rows <= 0 || dto.Cols <= 0 {
+	if dto.ImageURL == "" || dto.Rows <= 0 || dto.Cols <= 0 ||
+		dto.Rows > maxGridSide || dto.Cols > maxGridSide {
 		return nil, errBadGridSplit
 	}
-	return nil, errGridSplitUnavailable
+	// The source URL is client-supplied, so download it through the SSRF-guarded
+	// fetcher (grid_fetch.go), NOT the trusted relay-rehost path. Errors are kept
+	// generic (no target URL/status) so the endpoint can't probe the network.
+	data, _, err := safeFetchImage(ctx, dto.ImageURL)
+	if err != nil {
+		return nil, fmt.Errorf("%w: fetch source", errGridSplitUnavailable)
+	}
+	return s.sliceGrid(ctx, dto.ImageURL, data, dto.Rows, dto.Cols, dto.Cells)
 }
 
 // ---- logs ---------------------------------------------------------------

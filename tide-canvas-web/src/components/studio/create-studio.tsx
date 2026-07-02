@@ -1762,7 +1762,7 @@ export default function CreateStudio() {
   const deleteRun = (r: HistRun) => {
     setHist((prev) => prev.filter((h) => h.run !== r.run));
     const m = /^task-(\d+)$/.exec(r.run);
-    if (m) void aiApi.cancelTask(Number(m[1])).catch(() => {});
+    if (m) void aiApi.cancelTask(m[1]).catch(() => {}); // 字符串透传雪花 ID,避免 Number() 丢精度
     toast.success("已删除");
   };
 

@@ -3,6 +3,8 @@
 package auth
 
 import (
+	"time"
+
 	"github.com/gin-gonic/gin"
 
 	"tidecanvas/internal/app"
@@ -18,6 +20,7 @@ import (
 //	POST /api/auth/login        UserLoginDTO            -> LoginVO
 //	POST /api/auth/login-code   {email,code}            -> LoginVO  (passwordless login-or-create)
 //	POST /api/auth/refresh      {refreshToken}          -> {accessToken,refreshToken,expiresIn}
+//	POST /api/auth/reset-password ResetPasswordDTO      -> void   (public, passwordless via email code)
 //	POST /api/auth/logout                               -> void   (auth)
 //	GET  /api/auth/me                                   -> UserVO (auth)
 //	PUT  /api/auth/password     UpdatePasswordDTO       -> void   (auth)
@@ -34,6 +37,9 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	g.POST("/login", h.login)
 	g.POST("/login-code", h.loginCode)
 	g.POST("/refresh", h.refresh)
+	// Rate-limit the unauthenticated password reset to blunt distributed
+	// code brute-force (the per-email attempt cap already bounds a single code).
+	g.POST("/reset-password", middleware.RateLimit(d, 10, 10*time.Minute), h.resetPassword)
 
 	// Authenticated routes.
 	authed := g.Group("")

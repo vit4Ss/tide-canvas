@@ -9,17 +9,18 @@
      <button class="tbtn">通知 ⌃</button>
 
    The title + breadcrumb derive from the active route (findActive) instead of
-   the prototype's manual updates. Search placeholder matches the spec
-   ("搜索用户、作品、订单…"); both search and 通知 surface the app toast (the
-   real handlers are wired later).
+   the prototype's manual updates. Search routes to 用户管理 filtered by the typed
+   keyword (backend GET /api/admin/users?keyword= matches username/email/
+   nickname/phone); the users page reads the keyword from the URL on load.
    ============================================================================ */
 
-import { usePathname } from "next/navigation";
-import { toast } from "@/components/shared/toast";
+import { usePathname, useRouter } from "next/navigation";
+import NotificationCenter from "@/components/shared/notification-center";
 import { findActive } from "./admin-sidebar";
 
 export function AdminTopbar() {
   const pathname = usePathname() || "/admin";
+  const router = useRouter();
   const active = findActive(pathname);
 
   return (
@@ -33,19 +34,32 @@ export function AdminTopbar() {
         <span className="muted">⌕</span>
         <input
           type="text"
-          placeholder="搜索用户、作品、订单…"
+          placeholder="搜索用户（邮箱 / 昵称 / 手机）…"
           onKeyDown={(e) => {
             if (e.key === "Enter") {
-              const q = (e.target as HTMLInputElement).value.trim();
-              toast.info(q ? `搜索「${q}」· 高保真原型` : "搜索 · 高保真原型");
+              const q = (e.target as HTMLInputElement).value.trim().slice(0, 100);
+              router.push(q ? `/admin/users?keyword=${encodeURIComponent(q)}` : "/admin/users");
             }
           }}
         />
       </label>
 
-      <button type="button" className="tbtn" onClick={() => toast.info("通知 · 高保真原型")}>
-        通知 ⌃
-      </button>
+      <NotificationCenter
+        align="right"
+        renderTrigger={({ unread, toggle }) => (
+          <button
+            type="button"
+            className="tbtn"
+            onClick={toggle}
+            style={{ position: "relative" }}
+          >
+            通知 ⌃
+            {unread > 0 && (
+              <span className="notif-badge">{unread > 99 ? "99+" : unread}</span>
+            )}
+          </button>
+        )}
+      />
     </header>
   );
 }

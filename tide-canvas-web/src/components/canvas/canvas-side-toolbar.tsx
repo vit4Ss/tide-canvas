@@ -5,7 +5,7 @@ import {
   Plus, Workflow, PenTool, Clock, HelpCircle, Headphones,
   AlignLeft, Image as ImageIcon, Video, Scissors, Layers, AudioLines, FileCode2,
 } from "lucide-react";
-import { toast } from "@/components/shared/toast";
+import { CanvasHelpModal, type HelpTab } from "./canvas-help-modal";
 
 const NODE_TYPES: { type: string; label: string; icon: ComponentType<{ className?: string }> }[] = [
   { type: "image", label: "图片", icon: ImageIcon },
@@ -35,6 +35,7 @@ interface Props {
 /** 画布左侧悬浮垂直工具栏 */
 export function CanvasSideToolbar({ onAddNode, onArrange, onOpenAssets, assetsActive, onOpenHistory, historyActive }: Props) {
   const [addOpen, setAddOpen] = useState(false);
+  const [helpTab, setHelpTab] = useState<HelpTab | null>(null);
   const addRef = useRef<HTMLDivElement>(null);
 
   // 点外部 / Esc 关闭「添加」菜单
@@ -95,8 +96,14 @@ export function CanvasSideToolbar({ onAddNode, onArrange, onOpenAssets, assetsAc
 
       <div className="my-0.5 h-px w-6 bg-neutral-200 dark:bg-neutral-700" />
 
-      <ToolButton icon={HelpCircle} label="帮助" onClick={() => toast.info("「帮助」即将上线")} />
-      <ToolButton icon={Headphones} label="客服" onClick={() => toast.info("「客服」即将上线")} />
+      <ToolButton icon={HelpCircle} label="帮助" onClick={() => setHelpTab("help")} />
+      <ToolButton icon={Headphones} label="客服" onClick={() => setHelpTab("support")} />
+
+      <CanvasHelpModal
+        open={helpTab !== null}
+        initialTab={helpTab ?? "help"}
+        onClose={() => setHelpTab(null)}
+      />
     </div>
   );
 }

@@ -30,12 +30,13 @@ import FluxField from "@/components/flux/flux-field";
 import { authApi } from "@/lib/api";
 import { useAuthStore } from "@/stores/use-auth-store";
 
-type Mode = "login" | "register";
+type Mode = "login" | "register" | "reset";
 type SubMode = "pwd" | "code";
 type FieldKey = "email" | "code" | "pwd";
 
 const isEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
-const isPwd = (v: string) => v.length >= 8 && /[a-zA-Z]/.test(v) && /\d/.test(v);
+// 用码点计数([...v])而非 UTF-16 长度(v.length)，与后端 rune 计数一致，避免星芒面字符(如 emoji)前端放行、后端 400。
+const isPwd = (v: string) => [...v].length >= 8 && /[a-zA-Z]/.test(v) && /\d/.test(v);
 
 function LoginInner() {
   const router = useRouter();
@@ -45,6 +46,7 @@ function LoginInner() {
   const login = useAuthStore((s) => s.login);
   const loginCode = useAuthStore((s) => s.loginCode);
   const register = useAuthStore((s) => s.register);
+  const resetPassword = authApi.resetPassword;
 
   const [mode, setMode] = useState<Mode>("login");
   const [subMode, setSubMode] = useState<SubMode>("pwd");
@@ -104,6 +106,11 @@ function LoginInner() {
   const switchMode = (next: Mode) => {
     setMode(next);
     clearErrors();
+    // 清空跨模式残留输入，避免登录/注册/重置之间的数据串味与误提交。
+    setCode("");
+    setPwd("");
+    setShowPwd(false);
+    setAgree(false);
   };
 
   const switchSub = (next: SubMode) => {
@@ -111,9 +118,11 @@ function LoginInner() {
     clearErrors();
   };
 
-  // field visibility (mirrors syncFields)
-  const showCodeField = mode === "register" || (mode === "login" && subMode === "code");
-  const showPwdField = mode === "register" || (mode === "login" && subMode === "pwd");
+  // field visibility (mirrors syncFields). reset needs email + code + new password.
+  const showCodeField =
+    mode === "register" || mode === "reset" || (mode === "login" && subMode === "code");
+  const showPwdField =
+    mode === "register" || mode === "reset" || (mode === "login" && subMode === "pwd");
 
   // ── 获取验证码 ──────────────────────────────────────────────
   const sendCode = async () => {
@@ -144,13 +153,20 @@ function LoginInner() {
     if (loading) return;
 
     const e = email.trim();
-    const needCode = mode === "register" || (mode === "login" && subMode === "code");
-    const needPwd = mode === "register" || (mode === "login" && subMode === "pwd");
+    const needCode =
+      mode === "register" || mode === "reset" || (mode === "login" && subMode === "code");
+    const needPwd =
+      mode === "register" || mode === "reset" || (mode === "login" && subMode === "pwd");
 
     const nextErrors: Partial<Record<FieldKey, string>> = {};
     if (!isEmail(e)) nextErrors.email = "请输入有效的邮箱地址";
-    if (needCode && code.trim().length !== 6) nextErrors.code = "请输入收到的 6 位验证码";
+    // 验证码长度不写死 6：后端已改为由 verifyEmailCode 依配置(Email.CodeLength)权威校验，
+    // 前端只要求「非空数字」即可，避免非默认长度时把合法验证码在客户端拦下。
+    if (needCode && !/^\d+$/.test(code.trim())) nextErrors.code = "请输入收到的验证码";
     if (needPwd && !isPwd(pwd)) nextErrors.pwd = "密码至少 8 位，包含字母与数字";
+    // bcrypt 上限 72 字节：多字节(如中文)口令可能字符数合规但字节超限，前端先拦并给准确提示。
+    else if (needPwd && new TextEncoder().encode(pwd).length > 72)
+      nextErrors.pwd = "密码过长，请控制在约 72 字节(约 24 个中文字符)以内";
     if (Object.keys(nextErrors).length) {
       setErrors(nextErrors);
       return;
@@ -162,7 +178,21 @@ function LoginInner() {
 
     setLoading(true);
     try {
-      if (mode === "register") {
+      if (mode === "reset") {
+        // 忘记密码：邮箱验证码 + 新密码 → 重置后自动登录进入创作台
+        const res = await resetPassword({ email: e, code: code.trim(), newPassword: pwd });
+        if (!res.success) throw new Error(res.message || "重置失败，请稍后重试");
+        // 重置已成功；自动登录失败不应报成「重置失败」，改为引导手动登录。
+        try {
+          await login({ account: e, password: pwd, rememberMe: remember });
+        } catch {
+          toast("密码已重置，请使用新密码登录");
+          setMode("login");
+          setPwd("");
+          return;
+        }
+        toast("密码已重置 · 正在进入创作台");
+      } else if (mode === "register") {
         await register({ email: e, code: code.trim(), password: pwd });
         // 注册成功后自动登录拿会话
         await login({ account: e, password: pwd, rememberMe: remember });
@@ -178,9 +208,18 @@ function LoginInner() {
       router.replace(redirect);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "操作失败，请稍后重试";
-      // map backend message onto the most relevant inline error, plus a toast
-      if (mode === "register") {
+      // 按内容而非仅按模式定向内联错误：密码类错误统一落到 pwd 字段(register/reset 都有该字段)，
+      // 验证码类落到 code，否则按模式回退。避免把「密码过长/过弱」显示在邮箱/验证码下方误导用户。
+      const isPwdErr = /password|密码/i.test(msg);
+      const isCodeErr = /\bcode\b|验证码/i.test(msg);
+      if (needPwd && isPwdErr) {
+        setErr("pwd", msg);
+      } else if (needCode && isCodeErr) {
+        setErr("code", msg);
+      } else if (mode === "register") {
         setErr("email", msg);
+      } else if (mode === "reset") {
+        setErr("code", msg);
       } else if (subMode === "code") {
         setErr("code", msg);
       } else {
@@ -194,12 +233,14 @@ function LoginInner() {
 
   const codeBtnLabel = countdown > 0 ? `${countdown} s` : codeSent ? "重新获取" : "获取验证码";
 
-  const title = mode === "login" ? "欢迎回来" : "创建账户";
+  const title = mode === "login" ? "欢迎回来" : mode === "register" ? "创建账户" : "重置密码";
   const sub =
     mode === "login"
       ? "登录你的 流光 FlowingLight 账户，继续创作。"
-      : "注册即送新手体验积分，无需绑定信用卡。";
-  const submitLabel = mode === "login" ? "登 录" : "创建账户";
+      : mode === "register"
+        ? "注册即送新手体验积分，无需绑定信用卡。"
+        : "输入邮箱获取验证码，即可设置新密码。";
+  const submitLabel = mode === "login" ? "登 录" : mode === "register" ? "创建账户" : "重置密码";
 
   return (
     <div className="auth-page" data-mode={mode}>
@@ -349,14 +390,14 @@ function LoginInner() {
                       id="code"
                       type="text"
                       inputMode="numeric"
-                      maxLength={6}
+                      maxLength={12}
                       autoComplete="one-time-code"
-                      placeholder="6 位验证码"
+                      placeholder="验证码"
                       value={code}
                       onChange={(ev) => {
                         const v = ev.target.value;
                         setCode(v);
-                        if (v.trim().length === 6) clearErr("code");
+                        if (/^\d+$/.test(v.trim())) clearErr("code");
                       }}
                     />
                     <button
@@ -369,7 +410,7 @@ function LoginInner() {
                     </button>
                   </div>
                   <div className={`err${errors.code ? " show" : ""}`}>
-                    {errors.code || "请输入收到的 6 位验证码"}
+                    {errors.code || "请输入收到的验证码"}
                   </div>
                 </div>
               )}
@@ -388,8 +429,14 @@ function LoginInner() {
                     <input
                       id="pwd"
                       type={showPwd ? "text" : "password"}
-                      autoComplete={mode === "register" ? "new-password" : "current-password"}
-                      placeholder={mode === "register" ? "设置密码（至少 8 位）" : "请输入密码"}
+                      autoComplete={mode === "login" ? "current-password" : "new-password"}
+                      placeholder={
+                        mode === "register"
+                          ? "设置密码（至少 8 位）"
+                          : mode === "reset"
+                            ? "设置新密码（至少 8 位）"
+                            : "请输入密码"
+                      }
                       value={pwd}
                       onChange={(ev) => {
                         const v = ev.target.value;
@@ -427,9 +474,25 @@ function LoginInner() {
                   <button
                     type="button"
                     className="auth-link"
-                    onClick={() => toast("重置链接已发送至邮箱（原型）")}
+                    onClick={() => switchMode("reset")}
                   >
                     忘记密码？
+                  </button>
+                </div>
+              )}
+
+              {/* reset: back to login */}
+              {mode === "reset" && (
+                <div className="row-between" data-only="reset">
+                  <span style={{ fontSize: "12.5px", color: "var(--text-faint)" }}>
+                    通过邮箱验证码验证身份后设置新密码
+                  </span>
+                  <button
+                    type="button"
+                    className="auth-link"
+                    onClick={() => switchMode("login")}
+                  >
+                    ← 返回登录
                   </button>
                 </div>
               )}
@@ -490,13 +553,13 @@ function LoginInner() {
             {mode === "register" && (
               <p className="terms" data-only="register">
                 注册即代表你同意我们的{" "}
-                <a href="#" onClick={(e) => { e.preventDefault(); toast("服务条款（原型）"); }}>
+                <Link href="/terms" target="_blank">
                   服务条款
-                </a>{" "}
+                </Link>{" "}
                 与{" "}
-                <a href="#" onClick={(e) => { e.preventDefault(); toast("隐私政策（原型）"); }}>
+                <Link href="/privacy" target="_blank">
                   隐私政策
-                </a>
+                </Link>
                 。
               </p>
             )}

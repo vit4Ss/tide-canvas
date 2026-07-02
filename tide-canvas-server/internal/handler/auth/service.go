@@ -36,6 +36,13 @@ var (
 	errBadCode         = errors.New("auth: invalid or expired verification code")
 	errAccountDisabled = errors.New("auth: account disabled")
 	errPasswordWrong   = errors.New("auth: incorrect current password")
+	// errWeakPassword is returned when a new password fails the strength policy
+	// (see validatePasswordStrength). The handler maps it to a 400.
+	errWeakPassword = errors.New("auth: password too weak")
+	// errPasswordTooLong is returned when a password exceeds bcrypt's 72-byte
+	// limit (distinct from errWeakPassword so the user gets an accurate message —
+	// a 64-rune multi-byte passphrase can be within the char policy yet too long).
+	errPasswordTooLong = errors.New("auth: password too long")
 
 	// errRateLimited is returned when the per-IP send cap or the per-email
 	// resend cooldown is hit. The handler maps it to HTTP/body code 429.
@@ -182,6 +189,11 @@ func (s *service) verifyEmailCode(ctx context.Context, email, code string) error
 func (s *service) register(ctx context.Context, dto RegisterDTO) (*UserVO, error) {
 	email := strings.TrimSpace(strings.ToLower(dto.Email))
 
+	// Check strength before consuming the one-time email code, so a weak password
+	// doesn't burn the user's code.
+	if err := validatePasswordStrength(dto.Password); err != nil {
+		return nil, err
+	}
 	if err := s.verifyEmailCode(ctx, email, dto.Code); err != nil {
 		return nil, err
 	}
@@ -411,11 +423,80 @@ func (s *service) updatePassword(uid idgen.ID, dto UpdatePasswordDTO) error {
 	if bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(dto.OldPassword)) != nil {
 		return errPasswordWrong
 	}
+	if err := validatePasswordStrength(dto.NewPassword); err != nil {
+		return err
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(dto.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
-	return s.repo.updateFields(uid, map[string]any{"password_hash": string(hash)})
+	if err := s.repo.updateFields(uid, map[string]any{"password_hash": string(hash)}); err != nil {
+		return err
+	}
+	// Invalidate outstanding refresh tokens so an old/compromised session can't
+	// survive a password change (mirrors logout). Best-effort: a revoke failure
+	// must not fail the already-persisted password change.
+	_ = token.RevokeAllRefresh(uid)
+	return nil
+}
+
+// resetPassword implements the passwordless "forgot password" flow: it verifies
+// the one-time email code (consuming it) then sets a new bcrypt hash for the
+// matching account, without requiring authentication or the old password.
+func (s *service) resetPassword(ctx context.Context, dto ResetPasswordDTO) error {
+	email := strings.TrimSpace(strings.ToLower(dto.Email))
+	// Check strength before consuming the one-time code (see register).
+	if err := validatePasswordStrength(dto.NewPassword); err != nil {
+		return err
+	}
+	if err := s.verifyEmailCode(ctx, email, dto.Code); err != nil {
+		return err
+	}
+	u, err := s.repo.findByAccount(email)
+	if err != nil {
+		return err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(dto.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.updateFields(u.ID, map[string]any{"password_hash": string(hash)}); err != nil {
+		return err
+	}
+	// Lock out any pre-existing (possibly compromised) session after a reset —
+	// the whole point of "forgot password". Best-effort, as in updatePassword.
+	_ = token.RevokeAllRefresh(u.ID)
+	return nil
+}
+
+// validatePasswordStrength enforces the same policy as the web client
+// (tide-canvas-web isPwd): 8–64 characters containing at least one ASCII letter
+// and one digit. Applied in the service so direct API calls on register / change
+// / reset cannot bypass the UI-side check.
+func validatePasswordStrength(pw string) error {
+	// bcrypt hashes at most 72 BYTES and (since x/crypto returns ErrPasswordTooLong
+	// rather than truncating) errors past that. len() is the byte length, so this
+	// rejects an over-long multi-byte password (e.g. a long Chinese passphrase that
+	// is <=64 runes but >72 bytes) with a clean errWeakPassword BEFORE bcrypt — and,
+	// in register/reset, before the one-time email code is consumed.
+	if len(pw) > 72 {
+		return errPasswordTooLong
+	}
+	var n int
+	var hasLetter, hasDigit bool
+	for _, r := range pw {
+		n++
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z'):
+			hasLetter = true
+		case r >= '0' && r <= '9':
+			hasDigit = true
+		}
+	}
+	if n < 8 || n > 64 || !hasLetter || !hasDigit {
+		return errWeakPassword
+	}
+	return nil
 }
 
 // deriveUsername builds a username from an email local-part, sanitized.

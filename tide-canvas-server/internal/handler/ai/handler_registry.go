@@ -156,5 +156,12 @@ func builtinHandlers() []GenHandler {
 				"perspective and art style to fill a larger canvas. Keep the original content unchanged and well " +
 				"composed; only generate new, seamlessly blended surroundings beyond the current borders.",
 		},
+		presetEditHandler{
+			name: "relight",
+			prompt: "Relight this image with professional, cinematic lighting. Improve the exposure, contrast and " +
+				"color balance, add soft natural highlights and gentle shadows, and enhance depth and atmosphere. " +
+				"Preserve the original subject, composition, colors and style — do not add, remove or move any elements.",
+			extra: map[string]any{"quality": "high"},
+		},
 	}
 }

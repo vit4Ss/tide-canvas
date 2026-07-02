@@ -82,10 +82,12 @@ func (h *handler) gridSplit(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, errBadGridSplit):
-			response.Fail(c, response.CodeBadRequest, err.Error())
+			response.Fail(c, response.CodeBadRequest, "invalid grid split parameters")
 		default:
 			// Not available server-side; the frontend falls back to client slicing.
-			response.Fail(c, response.CodeServerError, err.Error())
+			// Keep the message generic so the endpoint can't be used to probe the
+			// network (SSRF oracle) via differing error text.
+			response.Fail(c, response.CodeServerError, "grid split unavailable")
 		}
 		return
 	}

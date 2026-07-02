@@ -97,9 +97,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const result = await authApi.me();
       if (result.success) {
         set({ user: result.data, initialized: true });
-      } else {
+      } else if (result.code === 401 || result.code === 403) {
+        // 仅在后端【明确拒绝】(token 失效/被吊销)时清凭据并置空用户。
         clearTokens();
         set({ user: null, initialized: true });
+      } else {
+        // 网络失败(fetchResult 归一为 code:0)/服务暂不可用(5xx/网关页)等暂时性失败：
+        // 保留 token、不置空用户，避免后端重启窗口把持有效凭据的用户误登出。
+        set({ initialized: true });
       }
     } catch {
       set({ initialized: true });
@@ -125,7 +130,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         }
         await ensureSessionPromise;
       }
-      return true;
+      // 不能无条件 true：fetchUser 可能因 401/403 已清掉 token(会话失效)。以「token 是否仍在」
+      // 为准——成功或瞬时失败时 token 仍在→放行；被明确拒绝时 token 已清→返回 false 让门禁跳登录。
+      return localStorage.getItem("access_token") != null;
     }
     // 无 token：跳转到登录页，带上当前路径用于登录后回跳。
     const here = window.location.pathname + window.location.search + window.location.hash;

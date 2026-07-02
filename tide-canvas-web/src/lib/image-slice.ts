@@ -12,10 +12,16 @@ export interface GridSlice {
 
 /** 经后端下载代理加载图片为可读像素的 HTMLImageElement(返回的 objUrl 由调用方负责 revoke) */
 async function loadImageViaProxy(url: string): Promise<{ img: HTMLImageElement; objUrl: string }> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
-  const res = await fetch(`/api/files/download?url=${encodeURIComponent(url)}&name=source`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
+  let res: Response;
+  if (url.startsWith("blob:") || url.startsWith("data:")) {
+    // 本地 blob:/data: 已是同源可读像素，直接加载,无需(也无法)走后端下载代理。
+    res = await fetch(url);
+  } else {
+    const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+    const headers: Record<string, string> = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    res = await fetch(`/api/files/download?url=${encodeURIComponent(url)}&name=source`, { headers });
+  }
   if (!res.ok) throw new Error(`fetch source failed: ${res.status}`);
   const objUrl = URL.createObjectURL(await res.blob());
   const img = new Image();
@@ -30,6 +36,29 @@ async function loadImageViaProxy(url: string): Promise<{ img: HTMLImageElement; 
     throw e;
   }
   return { img, objUrl };
+}
+
+/** 水平镜像整张图片，返回 PNG blob(经后端下载代理加载，规避 canvas 跨域污染)。 */
+export async function flipImageHorizontal(sourceUrl: string): Promise<Blob> {
+  const { img, objUrl } = await loadImageViaProxy(sourceUrl);
+  try {
+    const w = img.naturalWidth;
+    const h = img.naturalHeight;
+    if (!w || !h) throw new Error("empty image");
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("canvas unavailable");
+    ctx.translate(w, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(img, 0, 0);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+    if (!blob) throw new Error("encode failed");
+    return blob;
+  } finally {
+    URL.revokeObjectURL(objUrl);
+  }
 }
 
 /**

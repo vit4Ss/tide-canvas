@@ -45,3 +45,28 @@ export interface HomeFeedVO {
   works: PostLiteVO[];
   models: ModelLiteVO[];
 }
+
+/** One per-user notification (GET /api/notifications). */
+export interface NotificationVO {
+  id: string;
+  userId: string;
+  /** e.g. system / like / comment / follow / task. */
+  type: string;
+  title: string;
+  content: string;
+  linkUrl: string;
+  refId: string;
+  /** 0 = unread, 1 = read. */
+  isRead: number;
+  readTime: string;
+  createTime: string;
+}
+
+/** Query params for GET /api/notifications. */
+export interface NotificationQuery {
+  pageNum?: number;
+  pageSize?: number;
+  type?: string;
+  /** nil/undefined = all, 0 = unread, 1 = read. */
+  isRead?: number;
+}

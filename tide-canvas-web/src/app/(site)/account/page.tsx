@@ -25,19 +25,28 @@
 
    Actions:
      - 退出登录 → useAuthStore.logout() then router.push("/")
-     - 编辑昵称 / 修改密码 / 绑定手机·微信 → toast placeholders (no design action)
+     - 编辑昵称 → authApi.updateProfile({ nickname }) → setUser(fresh)
+     - 修改密码 → authApi.updatePassword({ oldPassword, newPassword })
+     - 绑定手机·微信 → toast placeholder (needs SMS/OAuth verification flow)
    ========================================================================== */
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { Loader2 } from "lucide-react";
 import { useAuthStore } from "@/stores/use-auth-store";
+import { authApi } from "@/lib/api";
+import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { toast } from "@/components/shared/toast";
 import { fmt } from "@/mock";
 import type { UserVO } from "@/types/user";
 import "./account.css";
 
 /* ── helpers ported from shell.js (FX.initials / FX.avatarGrad) ───────────── */
+
+/** 密码规则与登录页保持一致(≥8 位且含字母与数字)，避免此处设的密码在登录页被拒。
+    用码点计数([...v])对齐后端 rune 计数，避免星芒面字符边界不一致。 */
+const isPwd = (v: string) => [...v].length >= 8 && /[a-zA-Z]/.test(v) && /\d/.test(v);
 
 function initials(name: string): string {
   const s = (name || "").trim();
@@ -73,13 +82,231 @@ function planLabel(vipLevel?: number): string {
   }
 }
 
+/* ── edit-nickname modal ──────────────────────────────────────────────────── */
+function NicknameModal({
+  current,
+  onClose,
+  onSaved,
+}: {
+  current: string;
+  onClose: () => void;
+  onSaved: (u: UserVO) => void;
+}) {
+  const [value, setValue] = useState(current);
+  const [saving, setSaving] = useState(false);
+  const dialogRef = useFocusTrap<HTMLDivElement>(true);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    document.body.classList.add("scroll-lock"); // 锁背景滚动(复用 work-modal 的 .scroll-lock 约定)
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.classList.remove("scroll-lock");
+    };
+  }, [onClose]);
+
+  const submit = async () => {
+    if (saving) return; // 防抖:避免快速双击/连按回车并发提交(与 PasswordModal 一致)
+    const nickname = value.trim();
+    if (!nickname) {
+      toast.error("昵称不能为空");
+      return;
+    }
+    if (nickname === current) {
+      onClose();
+      return;
+    }
+    setSaving(true);
+    const res = await authApi.updateProfile({ nickname });
+    setSaving(false);
+    if (res.success && res.data) {
+      onSaved(res.data);
+      toast.success("昵称已更新");
+      onClose();
+    } else {
+      toast.error(res.message || "更新失败");
+    }
+  };
+
+  return (
+    <div
+      className="acc-modal-overlay"
+      onMouseDown={(e) => {
+        // 仅当在遮罩自身按下并抬起时关闭；在输入框内按下、拖到遮罩上抬起(选词溢出)不应关闭并丢弃输入。
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        className="acc-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="编辑昵称"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3>编辑昵称</h3>
+        <p className="sub">这是其他人在社区中看到的名字。</p>
+        <div className="field">
+          <label>昵称</label>
+          <input
+            autoFocus
+            value={value}
+            maxLength={64}
+            placeholder="输入新昵称"
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+          />
+        </div>
+        <div className="modal-actions">
+          <button type="button" className="m-btn ghost" onClick={onClose}>
+            取消
+          </button>
+          <button
+            type="button"
+            className="m-btn pri"
+            disabled={saving}
+            onClick={submit}
+          >
+            {saving ? (
+              <>
+                <Loader2 className="inline-block mr-1.5 h-4 w-4 animate-spin" /> 保存中…
+              </>
+            ) : (
+              "保存"
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── change-password modal ────────────────────────────────────────────────── */
+function PasswordModal({ onClose }: { onClose: () => void }) {
+  const [oldPassword, setOld] = useState("");
+  const [newPassword, setNew] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [saving, setSaving] = useState(false);
+  const dialogRef = useFocusTrap<HTMLFormElement>(true);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    document.body.classList.add("scroll-lock"); // 锁背景滚动(复用 work-modal 的 .scroll-lock 约定)
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.classList.remove("scroll-lock");
+    };
+  }, [onClose]);
+
+  const submit = async () => {
+    if (saving) return; // 防抖:避免快速双击并发提交
+    if (!oldPassword || !newPassword) {
+      toast.error("请填写完整");
+      return;
+    }
+    if (!isPwd(newPassword)) {
+      toast.error("新密码至少 8 位，包含字母与数字");
+      return;
+    }
+    if (newPassword !== confirm) {
+      toast.error("两次输入的新密码不一致");
+      return;
+    }
+    setSaving(true);
+    const res = await authApi.updatePassword({ oldPassword, newPassword });
+    setSaving(false);
+    if (res.success) {
+      toast.success("密码已修改");
+      onClose();
+    } else {
+      toast.error(res.message || "修改失败,请检查原密码");
+    }
+  };
+
+  return (
+    <div
+      className="acc-modal-overlay"
+      onMouseDown={(e) => {
+        // 仅当在遮罩自身按下并抬起时关闭；在输入框内按下、拖到遮罩上抬起(选词溢出)不应关闭并丢弃输入。
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <form
+        ref={dialogRef}
+        tabIndex={-1}
+        className="acc-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="修改密码"
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+      >
+        <h3>修改密码</h3>
+        <p className="sub">修改后需使用新密码重新登录其他设备。</p>
+        <div className="field">
+          <label>当前密码</label>
+          <input
+            type="password"
+            autoComplete="current-password"
+            autoFocus
+            value={oldPassword}
+            onChange={(e) => setOld(e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label>新密码</label>
+          <input
+            type="password"
+            autoComplete="new-password"
+            value={newPassword}
+            placeholder="至少 8 位，含字母和数字"
+            onChange={(e) => setNew(e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label>确认新密码</label>
+          <input
+            type="password"
+            autoComplete="new-password"
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+          />
+        </div>
+        <div className="modal-actions">
+          <button type="button" className="m-btn ghost" onClick={onClose}>
+            取消
+          </button>
+          <button type="submit" className="m-btn pri" disabled={saving}>
+            {saving ? (
+              <>
+                <Loader2 className="inline-block mr-1.5 h-4 w-4 animate-spin" /> 提交中…
+              </>
+            ) : (
+              "确认修改"
+            )}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export default function AccountPage() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
+  const setUser = useAuthStore((s) => s.setUser);
   const ensureSession = useAuthStore((s) => s.ensureSession);
   const logout = useAuthStore((s) => s.logout);
 
   const [checking, setChecking] = useState(true);
+  const [showNick, setShowNick] = useState(false);
+  const [showPwd, setShowPwd] = useState(false);
 
   // Auth gate: no token → ensureSession redirects to /login; with a token it
   // makes sure the user has been fetched. Mirrors the design's authUser() gate.
@@ -226,7 +453,7 @@ export default function AccountPage() {
                   <button
                     type="button"
                     className="edit"
-                    onClick={() => toast.info("编辑昵称（即将开放）")}
+                    onClick={() => setShowNick(true)}
                   >
                     编辑
                   </button>
@@ -246,9 +473,7 @@ export default function AccountPage() {
                   <button
                     type="button"
                     className="edit"
-                    onClick={() =>
-                      toast.info("修改密码链接已发送至邮箱（即将开放）")
-                    }
+                    onClick={() => setShowPwd(true)}
                   >
                     修改
                   </button>
@@ -364,6 +589,15 @@ export default function AccountPage() {
           </div>
         </div>
       </section>
+
+      {showNick && (
+        <NicknameModal
+          current={name}
+          onClose={() => setShowNick(false)}
+          onSaved={(u) => setUser(u)}
+        />
+      )}
+      {showPwd && <PasswordModal onClose={() => setShowPwd(false)} />}
     </div>
   );
 }

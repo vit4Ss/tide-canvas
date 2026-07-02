@@ -64,6 +64,12 @@ export interface UpdateProfileDTO {
   phone?: string;
 }
 
+export interface ResetPasswordDTO {
+  email: string;
+  code: string;
+  newPassword: string;
+}
+
 export enum UserRole {
   USER = 0,
   VIP = 1,

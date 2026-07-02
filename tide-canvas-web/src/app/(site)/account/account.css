@@ -388,3 +388,106 @@
   border-color: color-mix(in oklab, #e05260 50%, transparent);
   background: color-mix(in oklab, #e0526018 60%, transparent);
 }
+
+/* ── edit modal (昵称 / 密码) ─────────────────────────────────────────────── */
+.acc-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: color-mix(in oklab, #0a0b12 62%, transparent);
+  backdrop-filter: blur(6px);
+  animation: acc-fade 0.16s ease;
+}
+@keyframes acc-fade {
+  from {
+    opacity: 0;
+  }
+}
+.acc-modal {
+  width: 100%;
+  max-width: 400px;
+  border-radius: 18px;
+  padding: 24px;
+  background: var(--surface, #14161f);
+  border: 1px solid var(--border-strong, #2a2d3a);
+  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.6);
+  animation: acc-pop 0.18s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+@keyframes acc-pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+.acc-modal h3 {
+  margin: 0 0 4px;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text);
+}
+.acc-modal .sub {
+  margin: 0 0 18px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.acc-modal .field {
+  margin-bottom: 14px;
+}
+.acc-modal .field label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-dim, #b9bdca);
+}
+.acc-modal .field input {
+  width: 100%;
+  height: 42px;
+  padding: 0 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  color: var(--text);
+  background: color-mix(in oklab, var(--bg, #0d0e15) 70%, transparent);
+  border: 1px solid var(--border, #262a37);
+  transition: border-color 0.15s;
+}
+.acc-modal .field input:focus {
+  outline: none;
+  border-color: var(--brand, #7c8cff);
+}
+.acc-modal .modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 22px;
+}
+.acc-modal .m-btn {
+  height: 40px;
+  padding: 0 20px;
+  border-radius: var(--pill);
+  font-size: 13.5px;
+  font-weight: 700;
+  transition: all 0.15s;
+}
+.acc-modal .m-btn.ghost {
+  color: var(--text-faint);
+  border: 1px solid var(--border-strong);
+}
+.acc-modal .m-btn.ghost:hover {
+  color: var(--text);
+}
+.acc-modal .m-btn.pri {
+  color: #fff;
+  background: linear-gradient(135deg, #7c8cff, #9a7cff);
+}
+.acc-modal .m-btn.pri:hover {
+  filter: brightness(1.08);
+}
+.acc-modal .m-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}

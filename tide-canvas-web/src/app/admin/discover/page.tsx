@@ -32,6 +32,7 @@ import {
 import type { Kpi, PillTone } from "@/mock/admin";
 import { mesh } from "@/lib/mesh";
 import { useAuthStore } from "@/stores/use-auth-store";
+import { toast } from "@/components/shared/toast";
 import { adminDiscoverApi } from "@/lib/admin-discover-api";
 import {
   SLOT_STATUS_HIDDEN,
@@ -130,7 +131,7 @@ export default function AdminDiscoverPage() {
     if (!draft) return;
     const imageUrl = draft.imageUrl.trim();
     if (!imageUrl) {
-      window.alert("请填写图片 URL");
+      toast.error("请填写图片 URL");
       return;
     }
     const body: DiscoverSlotUpsertDTO = {
@@ -148,9 +149,10 @@ export default function AdminDiscoverPage() {
         : await adminDiscoverApi.createSlot(body);
       if (res.success) {
         setDraft(null);
+        toast.success("已保存");
         await load();
       } else {
-        window.alert(res.message || "保存失败");
+        toast.error(res.message || "保存失败");
       }
     } finally {
       setBusy(false);
@@ -185,7 +187,12 @@ export default function AdminDiscoverPage() {
       setBusy(true);
       try {
         const res = await adminDiscoverApi.deleteSlot(s.id);
-        if (res.success) await load();
+        if (res.success) {
+          toast.success("已删除");
+          await load();
+        } else {
+          toast.error(res.message || "删除失败");
+        }
       } finally {
         setBusy(false);
       }

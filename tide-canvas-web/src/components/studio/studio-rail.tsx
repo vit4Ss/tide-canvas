@@ -9,7 +9,7 @@
      画布     → /projects (EXISTING canvas hub)        作品广场 → /explore
      灵感     → /inspire      资产     → /assets        升级 Pro → /pricing
      brand    → /             登录     → /login
-   通知 is a placeholder (toast).
+   通知 → 真实通知中心(NotificationCenter,登录后显示,含未读红点/下拉列表)。
 
    Active state: an item is "on" when usePathname() matches (exact for "/",
    prefix for the rest so /studio/* etc. stay highlighted).
@@ -19,7 +19,7 @@
 import Link from "next/link";
 import { Logo } from "@/components/flux/atoms";
 import { usePathname } from "next/navigation";
-import { toast } from "@/components/shared/toast";
+import NotificationCenter from "@/components/shared/notification-center";
 import { useAuth } from "@/hooks/use-auth";
 
 interface NavItem {
@@ -168,18 +168,30 @@ export default function StudioRail() {
         <div className="ws-upgrade-btn">升级 Pro</div>
       </Link>
 
-      <button
-        className="ws-tool"
-        type="button"
-        title="通知"
-        onClick={() => toast.info("暂无新通知")}
-      >
-        <svg viewBox="0 0 24 24">
-          <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
-          <path d="M13.7 21a2 2 0 0 1-3.4 0" />
-        </svg>
-        <span>通知</span>
-      </button>
+      {user && (
+        <NotificationCenter
+          align="left"
+          renderTrigger={({ unread, toggle, open }) => (
+            <button
+              className={`ws-tool${open ? " on" : ""}`}
+              type="button"
+              title="通知"
+              onClick={toggle}
+            >
+              <span style={{ position: "relative", display: "inline-flex" }}>
+                <svg viewBox="0 0 24 24">
+                  <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+                  <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+                </svg>
+                {unread > 0 && (
+                  <span className="notif-badge">{unread > 99 ? "99+" : unread}</span>
+                )}
+              </span>
+              <span>通知</span>
+            </button>
+          )}
+        />
+      )}
 
       {user ? (
         <Link className="ws-tool" href="/account" title={accountName || "个人中心"}>

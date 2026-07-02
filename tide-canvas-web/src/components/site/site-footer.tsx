@@ -46,8 +46,8 @@ export default function SiteFooter() {
             <h4>关于</h4>
             <Link href="/pricing">价格方案</Link>
             <Link href="/pricing">企业版</Link>
-            <a href="#">服务条款</a>
-            <a href="#">联系我们</a>
+            <Link href="/terms">服务条款</Link>
+            <Link href="/privacy">隐私政策</Link>
           </div>
         </div>
 

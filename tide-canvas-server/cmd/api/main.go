@@ -97,6 +97,9 @@ func run() error {
 		if err := inspiration.Seed(gdb); err != nil {
 			logger.L().Warn("seed: inspiration", zap.Error(err))
 		}
+		if err := billing.Seed(gdb); err != nil {
+			logger.L().Warn("seed: billing", zap.Error(err))
+		}
 	}
 
 	// Start the async audit-log writer (access / login / business / model-call).

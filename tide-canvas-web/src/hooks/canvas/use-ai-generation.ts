@@ -208,7 +208,9 @@ export function useAiGeneration() {
       toast.info("生成中，请稍候");
       return;
     }
-    if (!input.prompt || String(input.prompt).trim().length === 0) {
+    // 预设编辑类 handler(去背/放大/打光/扩图等)由后端注入固定指令，客户端无需提示词。
+    const PROMPTLESS_HANDLERS = ["relight", "upscale", "remove_bg", "remove_object", "outpaint"];
+    if (!PROMPTLESS_HANDLERS.includes(handler) && (!input.prompt || String(input.prompt).trim().length === 0)) {
       toast.error("请先输入提示词");
       return;
     }

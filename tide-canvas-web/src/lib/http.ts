@@ -69,6 +69,27 @@ async function parseResult<T>(res: Response): Promise<Result<T>> {
   } as Result<T>;
 }
 
+/** 网络层失败（离线/DNS/连接重置等，此时 fetch 直接 reject 而非返回响应）归一为统一的
+    失败 Result，使所有调用方都走 success:false 分支，无需各自 try/catch，也不会抛出未处理的
+    Promise rejection 或让上层卡在 loading 态。 */
+function networkFailResult<T>(): Result<T> {
+  return {
+    success: false,
+    code: 0,
+    message: "网络连接失败，请检查网络后重试",
+  } as Result<T>;
+}
+
+/** fetch + parseResult，且【绝不抛出】：网络异常与响应体读取异常都归一为失败 Result。 */
+async function fetchResult<T>(input: string, init: RequestInit): Promise<Result<T>> {
+  try {
+    const res = await fetch(input, init);
+    return await parseResult<T>(res);
+  } catch {
+    return networkFailResult<T>();
+  }
+}
+
 async function refreshAccessToken(): Promise<string | null> {
   const refreshToken = localStorage.getItem("refresh_token");
   if (!refreshToken) {
@@ -118,8 +139,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<R
     body: body ? JSON.stringify(body) : undefined,
   };
 
-  let res = await fetch(url, config);
-  let result: Result<T> = await parseResult<T>(res);
+  let result = await fetchResult<T>(url, config);
 
   if (result.code === 401 && token) {
     if (!refreshPromise) {
@@ -130,8 +150,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<R
 
     if (newToken) {
       headers["Authorization"] = `Bearer ${newToken}`;
-      res = await fetch(url, { ...config, headers });
-      result = await parseResult<T>(res);
+      result = await fetchResult<T>(url, { ...config, headers });
     } else if (!getAccessToken()) {
       // 凭据已被明确清除(refresh token 失效)才跳登录；服务暂不可用时保留会话、把失败结果交给页面提示
       if (typeof window !== "undefined") {
@@ -156,12 +175,11 @@ async function uploadFile<T>(path: string, file: File | FormData): Promise<Resul
     return fd;
   })();
 
-  let res = await fetch(buildUrl(path), {
+  let result = await fetchResult<T>(buildUrl(path), {
     method: "POST",
     headers,
     body: formData,
   });
-  let result: Result<T> = await parseResult<T>(res);
 
   // 401 时尝试刷新 token 后重试
   if (result.code === 401 && token) {
@@ -173,12 +191,11 @@ async function uploadFile<T>(path: string, file: File | FormData): Promise<Resul
 
     if (newToken) {
       headers["Authorization"] = `Bearer ${newToken}`;
-      res = await fetch(buildUrl(path), {
+      result = await fetchResult<T>(buildUrl(path), {
         method: "POST",
         headers,
         body: formData,
       });
-      result = await parseResult<T>(res);
     } else if (!getAccessToken()) {
       if (typeof window !== "undefined") {
         window.location.href = "/login";

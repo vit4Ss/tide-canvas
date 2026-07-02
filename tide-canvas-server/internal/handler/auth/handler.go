@@ -64,6 +64,10 @@ func (h *handler) register(c *gin.Context) {
 			response.Fail(c, response.CodeEmailExists, "email already registered")
 		case errors.Is(err, errBadCode):
 			response.Fail(c, response.CodeBadRequest, "invalid or expired verification code")
+		case errors.Is(err, errWeakPassword):
+			response.Fail(c, response.CodeBadRequest, "password must be 8-64 chars with letters and digits")
+		case errors.Is(err, errPasswordTooLong):
+			response.Fail(c, response.CodeBadRequest, "password too long (max 72 bytes); shorten it or use fewer multi-byte characters")
 		default:
 			response.Fail(c, response.CodeServerError, "registration failed")
 		}
@@ -182,6 +186,10 @@ func (h *handler) updatePassword(c *gin.Context) {
 		switch {
 		case errors.Is(err, errPasswordWrong):
 			response.Fail(c, response.CodePasswordIncorrect, "incorrect current password")
+		case errors.Is(err, errWeakPassword):
+			response.Fail(c, response.CodeBadRequest, "password must be 8-64 chars with letters and digits")
+		case errors.Is(err, errPasswordTooLong):
+			response.Fail(c, response.CodeBadRequest, "password too long (max 72 bytes); shorten it or use fewer multi-byte characters")
 		case errors.Is(err, ErrNotFound):
 			response.Fail(c, response.CodeNotFound, "user not found")
 		default:
@@ -190,6 +198,35 @@ func (h *handler) updatePassword(c *gin.Context) {
 		return
 	}
 	logAuth(c, uid, "", "password_change", "", nil)
+	response.OK[any](c, nil)
+}
+
+// resetPassword handles POST /api/auth/reset-password (public). Passwordless
+// reset: a valid email verification code authorizes setting a new password.
+func (h *handler) resetPassword(c *gin.Context) {
+	var dto ResetPasswordDTO
+	if err := c.ShouldBindJSON(&dto); err != nil {
+		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	if err := h.svc.resetPassword(c.Request.Context(), dto); err != nil {
+		logAuth(c, 0, dto.Email, "password_reset", "code", err)
+		switch {
+		// errBadCode and ErrNotFound both surface as the SAME generic error so the
+		// unauthenticated endpoint never reveals whether an email is registered
+		// (mirrors the email-code endpoint's anti-enumeration design).
+		case errors.Is(err, errBadCode), errors.Is(err, ErrNotFound):
+			response.Fail(c, response.CodeBadRequest, "invalid or expired verification code")
+		case errors.Is(err, errWeakPassword):
+			response.Fail(c, response.CodeBadRequest, "password must be 8-64 chars with letters and digits")
+		case errors.Is(err, errPasswordTooLong):
+			response.Fail(c, response.CodeBadRequest, "password too long (max 72 bytes); shorten it or use fewer multi-byte characters")
+		default:
+			response.Fail(c, response.CodeServerError, "failed to reset password")
+		}
+		return
+	}
+	logAuth(c, 0, dto.Email, "password_reset", "code", nil)
 	response.OK[any](c, nil)
 }
 

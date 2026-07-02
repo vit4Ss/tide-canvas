@@ -349,6 +349,11 @@
 .cmp .no{color:var(--text-faint);}
 .cmp tr:hover td{background:var(--panel);}
 
+/* legal pages (服务条款 / 隐私政策) — see components/site/legal-doc.tsx.
+   The inner hero/card are self-styled; this only gives the page bottom breathing
+   room so the shared footer never crowds the last section. */
+.legal-page{padding-bottom:clamp(48px, 8vw, 96px);}
+
 /* toast */
 .toast{position:fixed; left:50%; bottom:30px; transform:translateX(-50%) translateY(20px); z-index:300; padding:13px 22px; border-radius:var(--pill);
   background:var(--surface); border:1px solid var(--border-strong); box-shadow:0 16px 50px rgba(0,0,0,.6); font-size:14px; font-weight:600;

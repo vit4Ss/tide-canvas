@@ -19,7 +19,7 @@ import { type RefItem } from "./prompt-ref-utils";
 import { NodeChrome } from "./base/node-chrome";
 import { useAiGeneration } from "@/hooks/canvas/use-ai-generation";
 import { aiApi, uploadFileSmart } from "@/lib/api";
-import { sliceImageGrid } from "@/lib/image-slice";
+import { sliceImageGrid, flipImageHorizontal } from "@/lib/image-slice";
 import { useAuth } from "@/hooks/use-auth";
 import { applyTeamFactor } from "@/lib/points";
 import { AiModelType, type AiModelVO } from "@/types/ai";
@@ -91,6 +91,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const [uploading, setUploading] = useState(false);
   const [gridMenuOpen, setGridMenuOpen] = useState(false);
   const [splitting, setSplitting] = useState(false);
+  const [flipping, setFlipping] = useState(false);
   // 宫格切分：选定宫格数后进入预览模式（图片叠网格线 + 顶栏切换为切分操作栏），再执行切分
   const [gridPreview, setGridPreview] = useState<{ rows: number; cols: number } | null>(null);
   // 自定义宫格选择器当前 hover 的行列（r 行 c 列）
@@ -536,13 +537,14 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     angleDragRef.current = null;
   }, []);
 
-  // 宫格切分：前端 canvas 秒切立即铺节点(本地 blob 即时显示)，随后后台静默上传、无感替换为远端地址
+  // 宫格切分：前端 canvas 秒切立即铺节点(本地 blob 即时显示)，随后后台静默上传、无感替换为远端地址。
+  // 客户端切分若失败(解码/canvas/toBlob)，且源图是后端可抓取的远端 URL，则回退到服务端切分
+  // (POST /api/ai/grid-split，直接返回已持久化到存储的地址)——即 grid.go 声明的 durable fallback。
   const handleGridSplit = useCallback(async (rows: number, cols: number, cells: number[] | null = null) => {
     if (!node.imageSrc || splitting) return;
     setGridMenuOpen(false);
     setSplitting(true);
     try {
-      const slices = await sliceImageGrid(node.imageSrc, rows, cols, cells);
       const store = useCanvasStore.getState();
       // 每块宽高比 = 原图比例 × rows/cols；据此排成紧凑网格，按原格子位置摆放
       const origAR = (node.contentW ?? node.width) / ((node.contentH ?? node.height) || 1);
@@ -552,11 +554,11 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       const CELL_H = Math.max(60, Math.round(CELL_W / (cellAR || 1)));
       const gap = 24;
       const startX = node.x + (node.contentW ?? node.width) + 100;
-      const placed = slices.map((s, i) => {
-        const r = Math.floor(s.cellIndex / cols);
-        const c = s.cellIndex % cols;
+      // 在原格子对应位置铺一个切片节点并连回源节点，返回新节点 id。
+      const placeCell = (cellIndex: number, imageSrc: string, recordHistory: boolean) => {
+        const r = Math.floor(cellIndex / cols);
+        const c = cellIndex % cols;
         const nid = generateNodeId();
-        const blobUrl = URL.createObjectURL(s.blob);
         store.addNode(
           {
             id: nid,
@@ -565,21 +567,45 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
             y: node.y + r * (CELL_H + gap),
             width: CELL_W,
             height: CELL_H,
-            title: `切片 ${s.cellIndex + 1}`,
-            imageSrc: blobUrl,
+            title: `切片 ${cellIndex + 1}`,
+            imageSrc,
             status: "idle",
           },
-          i === 0, // 仅首块记入历史，整批一次撤销
+          recordHistory, // 仅首块记入历史，整批一次撤销
         );
         // 切片连回原节点，标明来源
         store.addConnection(
           { id: `conn_${nid}_${node.id}`, sourceId: node.id, targetId: nid },
           false,
         );
+        return nid;
+      };
+
+      let slices: Awaited<ReturnType<typeof sliceImageGrid>>;
+      try {
+        slices = await sliceImageGrid(node.imageSrc, rows, cols, cells);
+      } catch (clientErr) {
+        // 客户端切分失败 → 回退服务端切分。仅当源图是后端可抓取的远端 URL 时可行；
+        // 本地 blob:/data: 后端无法访问，只能把原错误抛给外层统一提示。
+        if (!/^https?:/i.test(node.imageSrc)) throw clientErr;
+        const res = await aiApi.gridSplit(node.imageSrc, rows, cols, cells ?? undefined);
+        if (!res.success || !res.data?.length) {
+          throw new Error(res.message || "server grid split failed");
+        }
+        // 返回顺序 = 请求的 cells 顺序；未指定 cells 时为行优先全切。地址已持久化，无需再上传。
+        const order = cells && cells.length ? cells : Array.from({ length: rows * cols }, (_, i) => i);
+        res.data.forEach((url, i) => placeCell(order[i], url, i === 0));
+        toast.success(`已切分为 ${res.data.length} 块（服务端）`);
+        return;
+      }
+
+      // 客户端路径：blob 立即铺 + 后台静默上传替换为远端地址(刷新/引用/保存均依赖远端 URL)
+      const placed = slices.map((s, i) => {
+        const blobUrl = URL.createObjectURL(s.blob);
+        const nid = placeCell(s.cellIndex, blobUrl, i === 0);
         return { nid, blobUrl, slice: s };
       });
       toast.success(`已切分为 ${slices.length} 块`);
-      // 后台静默上传：成功后把节点 imageSrc 从本地 blob 换成远端地址(刷新/引用/保存均依赖远端 URL)
       placed.forEach(async ({ nid, blobUrl, slice }) => {
         try {
           const up = await uploadFileSmart(
@@ -624,6 +650,69 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     setGridPreview(null);
     setSelectedCells(new Set());
   }, [gridPreview, selectedCells, handleGridSplit]);
+
+  // 需服务端抓取源图的操作(打光/高清等)对本地 blob:/data: 源图会失败(后端拿不到本地地址)。
+  // 如刚宫格切分出的切片尚未完成后台上传，其 imageSrc 仍是 blob:，此时应提示等待而非发起注定失败的任务。
+  const srcNeedsRemoteButIsLocal = (src: string | undefined) => /^(blob:|data:)/i.test(src || "");
+
+  // 打光：一键光影增强（后端 relight 预设，走 image_to_image 路由，产出回写本节点）
+  const handleRelight = useCallback(() => {
+    if (!node.imageSrc || generating || flipping) return;
+    if (srcNeedsRemoteButIsLocal(node.imageSrc)) {
+      toast.info("图片上传中，请稍候再试");
+      return;
+    }
+    toast.info("正在重新打光…");
+    generate({
+      nodeId: node.id,
+      handler: "relight",
+      modelId: selectedModelId || "default",
+      input: { imageList: [node.imageSrc], sourceImage: node.imageSrc },
+    });
+  }, [generate, node.id, node.imageSrc, selectedModelId, generating, flipping]);
+
+  // 高清：一键放大（后端 upscale 预设）；沿用当前清晰度作为目标分辨率提示
+  const handleUpscale = useCallback(() => {
+    if (!node.imageSrc || generating || flipping) return;
+    if (srcNeedsRemoteButIsLocal(node.imageSrc)) {
+      toast.info("图片上传中，请稍候再试");
+      return;
+    }
+    toast.info("正在生成高清图片…");
+    // 不再把 UI 当前清晰度(默认 2K)作为目标分辨率下发：后端 upscale 预设默认 4K 且是 set-if-empty
+    // 语义(客户端值会覆盖它)，透传 2K 会把「高清」钉在 2K、对已 2K 的图等于不放大。留空让服务端用 4K。
+    generate({
+      nodeId: node.id,
+      handler: "upscale",
+      modelId: selectedModelId || "default",
+      input: {
+        imageList: [node.imageSrc],
+        sourceImage: node.imageSrc,
+      },
+    });
+  }, [generate, node.id, node.imageSrc, selectedModelId, generating, flipping]);
+
+  // 镜像：纯前端水平翻转（canvas），结果上传后回写本节点，无需消耗积分。
+  // 与生成中的打光/高清互斥：否则镜像回写可能被随后完成的生成任务覆盖(丢失更新)，反之亦然。
+  const handleFlip = useCallback(async () => {
+    if (!node.imageSrc || flipping || generating) return;
+    setFlipping(true);
+    toast.info("正在镜像…");
+    try {
+      const blob = await flipImageHorizontal(node.imageSrc);
+      const up = await uploadFileSmart(new File([blob], "镜像.png", { type: "image/png" }));
+      if (up.success && up.data?.fileUrl) {
+        updateNode(node.id, { imageSrc: up.data.fileUrl, images: undefined });
+        toast.success("已镜像");
+      } else {
+        toast.error(up.message || "镜像失败");
+      }
+    } catch (e) {
+      toast.error((e as Error)?.message || "镜像失败");
+    } finally {
+      setFlipping(false);
+    }
+  }, [node.imageSrc, node.id, flipping, generating, updateNode]);
 
   // 下载图片：经后端代理拉取（同源、无跨域），转 blob 触发浏览器下载，全程不导航刷新
   const downloadUrl = useCallback(async (url: string, name: string) => {
@@ -865,18 +954,20 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                 <Orbit className="h-4 w-4" /> 多角度
               </button>
               {/* 打光 */}
-              <button onMouseDown={stop} onClick={(e) => { stop(e); toast.info("「打光」功能即将上线"); }} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800">
-                <Sun className="h-4 w-4" /> 打光
+              <button onMouseDown={stop} onClick={(e) => { stop(e); handleRelight(); }} disabled={generating || flipping} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">
+                {isGenerating(node.id) ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sun className="h-4 w-4" />} 打光
               </button>
               <span className="mx-1 h-5 w-px bg-neutral-200 dark:bg-neutral-700" />
-              {/* 九宫格 */}
-              <button onMouseDown={stop} onClick={(e) => { stop(e); toast.info("「九宫格」功能即将上线"); }} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800">
-                <LayoutGrid className="h-4 w-4" /> 九宫格 <ChevronDown className="h-3.5 w-3.5 text-neutral-400" />
+              {/* 九宫格：快捷 3×3 进入预览 */}
+              <button onMouseDown={stop} onClick={(e) => { stop(e); enterGridPreview(3, 3); }} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800">
+                <LayoutGrid className="h-4 w-4" /> 九宫格
               </button>
               {/* 高清 */}
-              <button onMouseDown={stop} onClick={(e) => { stop(e); toast.info("「高清」功能即将上线"); }} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800">
-                <span className="flex h-4 items-center rounded bg-neutral-200 px-1 text-[10px] font-bold leading-none text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300">HD</span>
-                高清 <ChevronDown className="h-3.5 w-3.5 text-neutral-400" />
+              <button onMouseDown={stop} onClick={(e) => { stop(e); handleUpscale(); }} disabled={generating || flipping} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">
+                {isGenerating(node.id)
+                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                  : <span className="flex h-4 items-center rounded bg-neutral-200 px-1 text-[10px] font-bold leading-none text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300">HD</span>}
+                高清
               </button>
               {/* 宫格切分（下拉：预设 + 自定义网格选择器） */}
               <div className="relative" ref={gridMenuRef}>
@@ -941,7 +1032,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
               <span className="mx-1 h-5 w-px bg-neutral-200 dark:bg-neutral-700" />
               {/* 笔（编辑 / 图生图）· 镜像 · 下载 · 放大 */}
               <button onMouseDown={stop} onClick={openFilePicker} title="重新上传 / 图生图" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800"><Brush className="h-4 w-4" /></button>
-              <button onMouseDown={stop} onClick={(e) => { stop(e); toast.info("「镜像」功能即将上线"); }} title="镜像" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800"><FlipHorizontal2 className="h-4 w-4" /></button>
+              <button onMouseDown={stop} onClick={(e) => { stop(e); handleFlip(); }} disabled={flipping || generating} title="镜像" className="rounded-xl p-2 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">{flipping ? <Loader2 className="h-4 w-4 animate-spin" /> : <FlipHorizontal2 className="h-4 w-4" />}</button>
               <button onMouseDown={stop} onClick={handleDownload} disabled={downloading} title="下载" className="rounded-xl p-2 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">{downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}</button>
               <button onMouseDown={stop} onClick={(e) => { stop(e); setPreviewOpen(true); }} title="查看大图" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800"><Maximize2 className="h-4 w-4" /></button>
             </div>
@@ -975,7 +1066,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                 {splitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Layers className="h-4 w-4" />}
                 创建分镜组
               </button>
-              <button onMouseDown={stop} onClick={(e) => { stop(e); toast.info("「生成高清图片」功能即将上线"); }} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800">
+              <button onMouseDown={stop} onClick={(e) => { stop(e); setGridPreview(null); setSelectedCells(new Set()); handleUpscale(); }} disabled={generating || flipping} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">
                 <Zap className="h-4 w-4" />
                 生成高清图片
               </button>
@@ -1247,7 +1338,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
             </div>
           )}
           {/* 宫格切分预览：网格线 + 可点选格子（选中则只切选中，不选则全部） */}
-          {gridPreview && node.imageSrc && (
+          {showAuxUI && gridPreview && node.imageSrc && (
             <div className="absolute inset-0 z-[4] overflow-hidden rounded-2xl">
               <div className="pointer-events-none absolute inset-0">
                 {Array.from({ length: gridPreview.cols - 1 }, (_, i) => (
@@ -1309,8 +1400,9 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                   </button>
                   <button
                     onMouseDown={stop}
-                    onClick={(e) => { stop(e); toast.info("图片高清功能即将上线"); }}
-                    className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                    onClick={(e) => { stop(e); handleUpscale(); }}
+                    disabled={isGenerating(node.id) || !node.imageSrc}
+                    className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800"
                   >
                     <span className="flex h-6 w-6 items-center justify-center rounded-md bg-neutral-100 text-[10px] font-semibold dark:bg-neutral-800">
                       HD

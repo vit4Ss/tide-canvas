@@ -2,6 +2,7 @@ import { http, toParams } from "./http";
 import type { PageData, PageResult, Result } from "@/types/api";
 import type {
   UserVO, LoginVO, UserLoginDTO, UserRegisterDTO, UpdatePasswordDTO, UpdateProfileDTO,
+  ResetPasswordDTO,
 } from "@/types/user";
 import type {
   ProjectVO, ProjectDetailVO, CanvasDataVO, ShareVO,
@@ -30,6 +31,8 @@ export const authApi = {
     http.put<void>("/api/auth/password", data),
   updateProfile: (data: UpdateProfileDTO) =>
     http.put<UserVO>("/api/auth/profile", data),
+  resetPassword: (data: ResetPasswordDTO) =>
+    http.post<void>("/api/auth/reset-password", data),
 };
 
 export const projectApi = {
@@ -62,7 +65,8 @@ export const aiApi = {
     http.post<string[]>("/api/ai/grid-split", { imageUrl, rows, cols, ...(cells && cells.length ? { cells } : {}) }),
   getTask: (taskId: number) =>
     http.get<AiTaskVO>(`/api/ai/tasks/${taskId}`),
-  cancelTask: (taskId: number) =>
+  // taskId 是雪花 ID(> 2^53),必须以字符串透传,用 Number() 会丢精度导致删错任务。
+  cancelTask: (taskId: string | number) =>
     http.delete<void>(`/api/ai/tasks/${taskId}`),
   listTasks: (query: AiTaskQuery) =>
     http.get<PageResult<AiTaskVO>["data"]>("/api/ai/tasks", toParams(query)),

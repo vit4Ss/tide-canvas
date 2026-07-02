@@ -19,7 +19,8 @@
    / FormGrid components. Loading + empty states included. No @/mock imports.
    ============================================================================ */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   AdminModal,
   AdminTable,
@@ -125,8 +126,10 @@ const EMPTY_ROLE_FORM: RoleForm = {
   status: 1,
 };
 
-export default function AdminUsersPage() {
+function AdminUsersPageInner() {
   const ensureSession = useAuthStore((s) => s.ensureSession);
+  const searchParams = useSearchParams();
+  const urlKeyword = searchParams.get("keyword") ?? "";
 
   // list state
   const [rows, setRows] = useState<AdminUserVO[]>([]);
@@ -158,6 +161,14 @@ export default function AdminUsersPage() {
   const [editingRole, setEditingRole] = useState<RoleVO | null>(null);
   const [roleForm, setRoleForm] = useState<RoleForm>(EMPTY_ROLE_FORM);
   const [savingRole, setSavingRole] = useState(false);
+
+  // 顶栏全局搜索跳转 /admin/users?keyword=xxx 时应用该关键词；依赖 urlKeyword 使其
+  // 在已停留本页时再次搜索(router.push 改变 query)也能实时生效。
+  useEffect(() => {
+    setQuery(urlKeyword);
+    setKeyword(urlKeyword);
+    setPageNum(1);
+  }, [urlKeyword]);
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -695,5 +706,14 @@ export default function AdminUsersPage() {
         </FormCard>
       </AdminModal>
     </>
+  );
+}
+
+// useSearchParams 需要 Suspense 边界（Next App Router 要求）。
+export default function AdminUsersPage() {
+  return (
+    <Suspense fallback={null}>
+      <AdminUsersPageInner />
+    </Suspense>
   );
 }

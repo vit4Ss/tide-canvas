@@ -168,6 +168,12 @@ export function AssetsBrowser({
   const [uploading, setUploading] = useState(false);
   // in-app preview overlay target (image/video/audio); docs never set this.
   const [preview, setPreview] = useState<OpenAsset | null>(null);
+  // 批量操作:进入多选模式后卡片改为勾选;selected 存当前 tab 内条目 id(字符串)。
+  const [batchMode, setBatchMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  // 排序方向(更多筛选):false=最新在前(默认),true=最早在前。
+  const [sortAsc, setSortAsc] = useState(false);
 
   // open a clicked asset: media (image/video/audio) previews in-app; a 文档
   // downloads straight away (per the asset-type preview rules).
@@ -246,25 +252,105 @@ export function AssetsBrowser({
     return () => document.removeEventListener("keydown", onKey);
   }, [preview]);
 
+  // groupByDate returns newest-first; when sortAsc, reverse groups + items.
+  const applySort = useCallback(
+    <T,>(groups: Group<T>[]): Group<T>[] =>
+      sortAsc
+        ? groups.slice().reverse().map((g) => ({ ...g, items: g.items.slice().reverse() }))
+        : groups,
+    [sortAsc],
+  );
+
   // tasks of the active media type, date-grouped (audio/doc → none for 生成历史).
   const taskGroups = useMemo(() => {
     if (tab !== "hist") return [];
     const want = filter === "image" || filter === "video" ? filter : null;
     if (!want) return [];
     const matched = tasks.filter((t) => (HANDLER_TYPE[t.handler] ?? "image") === want);
-    return groupByDate(matched, (t) => t.createTime);
-  }, [tab, filter, tasks]);
+    return applySort(groupByDate(matched, (t) => t.createTime));
+  }, [tab, filter, tasks, applySort]);
 
   // uploaded files of the active media kind, date-grouped.
   const fileGroups = useMemo(() => {
     if (tab !== "upload") return [];
     const matched = files.filter((f) => fileKind(f) === filter);
-    return groupByDate(matched, (f) => f.createTime);
-  }, [tab, filter, files]);
+    return applySort(groupByDate(matched, (f) => f.createTime));
+  }, [tab, filter, files, applySort]);
 
   useReveal([tab, filter, taskGroups, fileGroups]);
 
   const groupsEmpty = tab === "hist" ? taskGroups.length === 0 : fileGroups.length === 0;
+
+  // 切换 tab/筛选时重置多选(条目集合已变)。
+  useEffect(() => {
+    setBatchMode(false);
+    setSelected(new Set());
+  }, [tab, filter]);
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  // 当前视图内全部条目 id(用于全选/批量操作)。
+  const currentIds = useMemo(
+    () =>
+      tab === "hist"
+        ? taskGroups.flatMap((g) => g.items.map((t) => String(t.id)))
+        : fileGroups.flatMap((g) => g.items.map((f) => String(f.id))),
+    [tab, taskGroups, fileGroups],
+  );
+  const allSelected = currentIds.length > 0 && currentIds.every((id) => selected.has(id));
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(currentIds));
+
+  const exitBatch = () => {
+    setBatchMode(false);
+    setSelected(new Set());
+  };
+
+  // 批量删除:生成历史→cancelTask,上传历史→file delete;逐条调用现有接口。
+  const batchDelete = async () => {
+    if (selected.size === 0 || busy) return;
+    if (!window.confirm(`确认删除所选 ${selected.size} 项？此操作不可恢复。`)) return;
+    setBusy(true);
+    let ok = 0;
+    for (const id of selected) {
+      try {
+        const res = tab === "hist" ? await aiApi.cancelTask(id) : await fileApi.delete(id);
+        if (res.success) ok++;
+      } catch {
+        /* 单条失败不阻断其余 */
+      }
+    }
+    toast[ok > 0 ? "success" : "error"](ok > 0 ? `已删除 ${ok} 项` : "删除失败，请稍后重试");
+    exitBatch();
+    setBusy(false);
+    if (tab === "hist") await loadTasks();
+    else await loadFiles();
+  };
+
+  // 批量下载:通过下载代理逐个触发(强制附件下载)。
+  const batchDownload = () => {
+    const urls = new Map<string, { url: string; name: string }>();
+    if (tab === "hist") {
+      tasks.forEach((t) => t.resultUrl && urls.set(String(t.id), { url: t.resultUrl, name: t.modelName || "生成结果" }));
+    } else {
+      files.forEach((f) => f.fileUrl && urls.set(String(f.id), { url: f.fileUrl, name: f.originalName || "文件" }));
+    }
+    let n = 0;
+    selected.forEach((id) => {
+      const a = urls.get(id);
+      if (a) {
+        downloadAsset(a.url, a.name);
+        n++;
+      }
+    });
+    if (n === 0) toast.info("所选项暂无可下载内容");
+  };
 
   // dropzone → real upload of the picked files, then reload the upload list.
   const onPickFiles = async (list: FileList | null) => {
@@ -304,8 +390,12 @@ export function AssetsBrowser({
         </div>
         <div className="asset-actions">
           {!pickMode && (
-            <button type="button" onClick={() => toast.info("批量操作 · 原型")}>
-              ☑ 批量操作
+            <button
+              type="button"
+              className={batchMode ? "on" : undefined}
+              onClick={() => (batchMode ? exitBatch() : setBatchMode(true))}
+            >
+              ☑ {batchMode ? "退出多选" : "批量操作"}
             </button>
           )}
           {tab === "upload" ? (
@@ -338,10 +428,59 @@ export function AssetsBrowser({
             {x.label}
           </button>
         ))}
-        <button type="button" onClick={() => toast.info("更多筛选 · 原型")}>
-          筛选 ▾
+        <button
+          type="button"
+          onClick={() => setSortAsc((v) => !v)}
+          title="切换排序"
+          style={{ marginLeft: "auto" }}
+        >
+          {sortAsc ? "最早在前 ↑" : "最新在前 ↓"}
         </button>
       </div>
+
+      {/* 多选操作条:进入批量模式后出现 */}
+      {batchMode && !pickMode && (
+        <div
+          className="asset-batchbar"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "8px 12px",
+            margin: "0 0 10px",
+            borderRadius: 12,
+            background: "color-mix(in oklab, var(--accent, #7c8cff) 10%, transparent)",
+            border: "1px solid color-mix(in oklab, var(--accent, #7c8cff) 30%, transparent)",
+            fontSize: 13,
+          }}
+        >
+          <span>已选 {selected.size} 项</span>
+          <button type="button" onClick={toggleAll} style={{ padding: "4px 10px" }}>
+            {allSelected ? "取消全选" : "全选"}
+          </button>
+          <span style={{ flex: 1 }} />
+          <button
+            type="button"
+            onClick={batchDownload}
+            disabled={selected.size === 0}
+            style={{ padding: "4px 10px", opacity: selected.size === 0 ? 0.5 : 1 }}
+          >
+            ↓ 下载所选
+          </button>
+          <button
+            type="button"
+            onClick={batchDelete}
+            disabled={selected.size === 0 || busy}
+            style={{
+              padding: "4px 10px",
+              color: "#ee6b78",
+              opacity: selected.size === 0 || busy ? 0.5 : 1,
+            }}
+          >
+            {busy ? "删除中…" : "🗑 删除所选"}
+          </button>
+        </div>
+      )}
 
       <input
         ref={fileInputRef}
@@ -390,6 +529,9 @@ export function AssetsBrowser({
                     pickMode={pickMode}
                     onPick={onPick}
                     onOpen={openAsset}
+                    batchMode={batchMode}
+                    selected={selected.has(String(t.id))}
+                    onToggle={toggleSelect}
                   />
                 ))}
               </div>
@@ -408,6 +550,9 @@ export function AssetsBrowser({
                     pickMode={pickMode}
                     onPick={onPick}
                     onOpen={openAsset}
+                    batchMode={batchMode}
+                    selected={selected.has(String(f.id))}
+                    onToggle={toggleSelect}
                   />
                 ))}
               </div>
@@ -483,6 +628,9 @@ function TaskCard({
   pickMode,
   onPick,
   onOpen,
+  batchMode,
+  selected,
+  onToggle,
 }: {
   task: AiTaskVO;
   delay: number;
@@ -490,6 +638,9 @@ function TaskCard({
   pickMode?: boolean;
   onPick?: (asset: PickedAsset) => void;
   onOpen?: (asset: OpenAsset) => void;
+  batchMode?: boolean;
+  selected?: boolean;
+  onToggle?: (id: string) => void;
 }) {
   const isVid = (HANDLER_TYPE[task.handler] ?? "image") === "video";
   const cover = task.resultUrl
@@ -497,6 +648,10 @@ function TaskCard({
     : fallbackCover(task.id);
 
   const onClick = () => {
+    if (batchMode) {
+      onToggle?.(String(task.id));
+      return;
+    }
     if (pickMode) {
       if (task.resultUrl) {
         onPick?.({ url: task.resultUrl, name: task.modelName || "生成图", kind: isVid ? "video" : "image" });
@@ -516,15 +671,47 @@ function TaskCard({
     <button
       type="button"
       className="as-card reveal in"
-      style={{ ["--rd" as string]: `${delay}s` }}
+      style={{
+        ["--rd" as string]: `${delay}s`,
+        outline: selected ? "3px solid var(--accent, #7c8cff)" : undefined,
+        outlineOffset: -3,
+      }}
       title={task.modelName}
       onClick={onClick}
     >
       <span className="cov" style={{ background: cover }} />
       <span className="pick" />
+      {batchMode && <SelectBadge selected={!!selected} />}
       {star && <span className="star">★</span>}
       {isVid && <span className="vbadge">▶</span>}
     </button>
+  );
+}
+
+/** 多选模式下的勾选角标(内联样式,免额外 CSS)。 */
+function SelectBadge({ selected }: { selected: boolean }) {
+  return (
+    <span
+      aria-hidden
+      style={{
+        position: "absolute",
+        top: 8,
+        left: 8,
+        width: 22,
+        height: 22,
+        borderRadius: "50%",
+        display: "grid",
+        placeItems: "center",
+        fontSize: 13,
+        fontWeight: 800,
+        color: selected ? "#fff" : "transparent",
+        background: selected ? "var(--accent, #7c8cff)" : "rgba(0,0,0,0.35)",
+        border: "2px solid #fff",
+        zIndex: 3,
+      }}
+    >
+      ✓
+    </span>
   );
 }
 
@@ -536,17 +723,27 @@ function UploadCard({
   pickMode,
   onPick,
   onOpen,
+  batchMode,
+  selected,
+  onToggle,
 }: {
   file: FileVO;
   delay: number;
   pickMode?: boolean;
   onPick?: (asset: PickedAsset) => void;
   onOpen?: (asset: OpenAsset) => void;
+  batchMode?: boolean;
+  selected?: boolean;
+  onToggle?: (id: string) => void;
 }) {
   const kind = fileKind(file);
   const isImg = kind === "image";
 
   const onClick = () => {
+    if (batchMode) {
+      onToggle?.(String(file.id));
+      return;
+    }
     if (pickMode) {
       if (file.fileUrl) {
         onPick?.({ url: file.fileUrl, name: file.originalName || "文件", kind });
@@ -566,10 +763,15 @@ function UploadCard({
     <button
       type="button"
       className="as-card as-up reveal in"
-      style={{ ["--rd" as string]: `${delay}s` }}
+      style={{
+        ["--rd" as string]: `${delay}s`,
+        outline: selected ? "3px solid var(--accent, #7c8cff)" : undefined,
+        outlineOffset: -3,
+      }}
       title={file.originalName}
       onClick={onClick}
     >
+      {batchMode && <SelectBadge selected={!!selected} />}
       {isImg && file.fileUrl ? (
         <span
           className="cov"

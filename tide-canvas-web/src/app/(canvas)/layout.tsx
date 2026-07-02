@@ -4,9 +4,9 @@ import { useEffect, useState } from "react";
 import { useAuthStore } from "@/stores/use-auth-store";
 
 /**
- * 画布路由组外壳。登录流程暂未做:进入画布前先 ensureSession()(无 token 则静默登录
- * 默认账号),确保 /canvas/new 创建项目、/canvas/[id] 自动保存等带鉴权的调用有 token。
- * 待接入真正登录后,这里改成登录态校验/跳登录即可。
+ * 画布路由组外壳。登录态门禁:进入画布前先 ensureSession()——有 token 则确保拉过用户
+ * 信息后放行;无 token 时 ensureSession 已跳转 /login?redirect=<当前路径>,此处保持
+ * loading 直到导航完成,避免未登录用户看到画布(其带鉴权的创建/保存调用必然 401)。
  */
 export default function CanvasLayout({ children }: { children: React.ReactNode }) {
   const ensureSession = useAuthStore((s) => s.ensureSession);
@@ -14,10 +14,23 @@ export default function CanvasLayout({ children }: { children: React.ReactNode }
 
   useEffect(() => {
     let mounted = true;
-    // 即使会话建立失败也放行渲染(页面会以未登录态降级,而非永久卡 loading)。
-    ensureSession().finally(() => {
-      if (mounted) setReady(true);
-    });
+    // 仅在会话有效时放行渲染;ok===false 表示已被重定向到登录页,继续显示 loading。
+    // 加 12s 超时兜底:会话检查若卡死(网络挂起),不至于永久转圈——超时后跳登录。
+    const timeout = new Promise<boolean>((resolve) =>
+      setTimeout(() => resolve(false), 12000),
+    );
+    Promise.race([ensureSession(), timeout])
+      .then((ok) => {
+        if (!mounted) return;
+        if (ok) setReady(true);
+        else if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+          const here = window.location.pathname + window.location.search;
+          window.location.href = `/login?redirect=${encodeURIComponent(here)}`;
+        }
+      })
+      .catch(() => {
+        if (mounted && typeof window !== "undefined") window.location.href = "/login";
+      });
     return () => {
       mounted = false;
     };

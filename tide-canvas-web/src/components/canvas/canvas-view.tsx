@@ -29,6 +29,7 @@ import { CanvasQuickAddMenu } from "./canvas-quick-add-menu";
 
 export function CanvasView() {
   const containerRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const nodes = useCanvasStore((s) => s.nodes);
   const connections = useCanvasStore((s) => s.connections);
   const groups = useCanvasStore((s) => s.groups);
@@ -243,18 +244,17 @@ export function CanvasView() {
     }
   }, []);
 
-  const handleFileDrop = useCallback(async (e: React.DragEvent) => {
-    if (!e.dataTransfer.types.includes("Files")) return;
-    e.preventDefault();
-    setIsDraggingFile(false);
-    const files = Array.from(e.dataTransfer.files).filter(
-      (f) => f.type.startsWith("image/") || f.type.startsWith("video/")
-    );
-    if (files.length === 0) {
-      if (e.dataTransfer.files.length > 0) toast.error("仅支持拖入图片或视频");
-      return;
+  // 上传一批图片/视频并在给定世界坐标处逐个落节点（拖入与「上传」菜单共用）。
+  const placeFilesAt = useCallback(async (files: File[], world: { x: number; y: number }) => {
+    if (files.length === 0) return;
+    // 超过 100MB(与网关 proxyClientMaxBodySize 一致)的文件先行拦截,避免白传后服务端才失败。
+    const MAX_FILE_SIZE = 100 * 1024 * 1024;
+    const oversized = files.filter((f) => f.size > MAX_FILE_SIZE);
+    files = files.filter((f) => f.size <= MAX_FILE_SIZE);
+    if (oversized.length > 0) {
+      toast.error(`${oversized.length} 个文件超过 100MB，已跳过`);
     }
-    const world = panZoom.screenToWorld(e.clientX, e.clientY);
+    if (files.length === 0) return;
     toast.info(files.length > 1 ? `正在上传 ${files.length} 个文件…` : "正在上传…");
     let ok = 0;
     await Promise.all(
@@ -279,7 +279,58 @@ export function CanvasView() {
       })
     );
     if (ok > 0) toast.success(ok > 1 ? `已添加 ${ok} 个节点` : "已添加到画布");
-  }, [panZoom, addNode]);
+  }, [addNode]);
+
+  const handleFileDrop = useCallback(async (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    setIsDraggingFile(false);
+    const files = Array.from(e.dataTransfer.files).filter(
+      (f) => f.type.startsWith("image/") || f.type.startsWith("video/")
+    );
+    if (files.length === 0) {
+      if (e.dataTransfer.files.length > 0) toast.error("仅支持拖入图片或视频");
+      return;
+    }
+    const world = panZoom.screenToWorld(e.clientX, e.clientY);
+    await placeFilesAt(files, world);
+  }, [panZoom, placeFilesAt]);
+
+  // 右键菜单「上传」：记录落点后打开文件选择框（选择是异步的，位置先存 ref）。
+  const uploadWorldRef = useRef<{ x: number; y: number } | null>(null);
+  const handleUpload = useCallback(() => {
+    // 右键菜单调用 onUpload 前会先 onClose()，但 contextMenu 闭包在本次同步事件中仍是旧值；
+    // 取不到时回退到视口中心。
+    if (contextMenu) {
+      uploadWorldRef.current = { x: contextMenu.worldX, y: contextMenu.worldY };
+    } else {
+      const rect = containerRef.current?.getBoundingClientRect();
+      const sx = rect ? rect.left + rect.width / 2 : 0;
+      const sy = rect ? rect.top + rect.height / 2 : 0;
+      uploadWorldRef.current = panZoom.screenToWorld(sx, sy);
+    }
+    fileInputRef.current?.click();
+  }, [contextMenu, panZoom]);
+
+  const handleUploadInputChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(e.target.files ?? []).filter(
+      (f) => f.type.startsWith("image/") || f.type.startsWith("video/")
+    );
+    e.target.value = ""; // 允许再次选择同一文件
+    if (picked.length === 0) {
+      toast.error("仅支持图片或视频");
+      return;
+    }
+    // 正常路径 uploadWorldRef 已在打开选择框前写入；兜底用视口中心（非屏幕原点）。
+    let world = uploadWorldRef.current;
+    if (!world) {
+      const rect = containerRef.current?.getBoundingClientRect();
+      const sx = rect ? rect.left + rect.width / 2 : 0;
+      const sy = rect ? rect.top + rect.height / 2 : 0;
+      world = panZoom.screenToWorld(sx, sy);
+    }
+    await placeFilesAt(picked, world);
+  }, [panZoom, placeFilesAt]);
 
   return (
     // translate="no" + notranslate：告知浏览器/翻译类扩展（如「沉浸式翻译」）整块画布勿翻译，
@@ -394,8 +445,18 @@ export function CanvasView() {
         onPaste={clipboard.pasteNode}
         onUndo={undo}
         onRedo={redo}
-        onUpload={() => alert("上传功能待接入")}
+        onUpload={handleUpload}
         onSaveAsset={handleSaveAsset}
+      />
+
+      {/* 隐藏文件选择框：右键菜单「上传」触发，支持多选图片/视频 */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*,video/*"
+        multiple
+        hidden
+        onChange={handleUploadInputChange}
       />
 
       <CanvasSideToolbar
