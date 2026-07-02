@@ -140,7 +140,7 @@ export default function PricingPage() {
               fontSize: "15.5px",
               color: "var(--text-dim)",
               margin: "14px 0 0",
-              maxWidth: "50ch",
+              maxWidth: "72ch",
               lineHeight: 1.6,
             }}
           >

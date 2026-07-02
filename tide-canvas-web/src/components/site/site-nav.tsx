@@ -29,11 +29,6 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "@/components/shared/toast";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/stores/use-auth-store";
-import {
-  useFluxBgStore,
-  FLUX_PRESETS,
-  FLUX_PRESET_ORDER,
-} from "@/stores/use-flux-bg-store";
 import { fmt } from "@/mock";
 import "./site-nav.css";
 
@@ -88,13 +83,9 @@ export default function SiteNav() {
   const router = useRouter();
   const navRef = useRef<HTMLElement>(null);
   const acctRef = useRef<HTMLDivElement>(null);
-  const bgRef = useRef<HTMLDivElement>(null);
   const { user, isAdmin } = useAuth();
   const logout = useAuthStore((s) => s.logout);
-  const preset = useFluxBgStore((s) => s.preset);
-  const setPreset = useFluxBgStore((s) => s.setPreset);
   const [open, setOpen] = useState(false);
-  const [bgOpen, setBgOpen] = useState(false);
 
   // scroll-past-40px .solid toggle (mirrors shell.mountChrome)
   useEffect(() => {
@@ -125,29 +116,9 @@ export default function SiteNav() {
     };
   }, [open]);
 
-  // 流光背景 switcher: close on outside-click / Escape (mirrors bindBgSwitcher)
-  useEffect(() => {
-    if (!bgOpen) return;
-    const onClick = (e: MouseEvent) => {
-      if (bgRef.current && !bgRef.current.contains(e.target as Node)) {
-        setBgOpen(false);
-      }
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setBgOpen(false);
-    };
-    document.addEventListener("click", onClick);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("click", onClick);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [bgOpen]);
-
   // close menus on navigation
   useEffect(() => {
     setOpen(false);
-    setBgOpen(false);
   }, [pathname]);
 
   const onLogout = async () => {
@@ -193,56 +164,6 @@ export default function SiteNav() {
           >
             文
           </button>
-
-          {/* 流光背景切换器 — ported from home-render.buildBgSwitcher().
-              The orb shows the active preset's gradient; clicking opens the
-              背景 popup, selecting a preset retunes the WebGL field + persists. */}
-          <div className={`bg-nav${bgOpen ? " open" : ""}`} ref={bgRef}>
-            <button
-              type="button"
-              className="icbtn bg-nav-btn"
-              title="背景流光"
-              aria-label="切换背景"
-              onClick={(e) => {
-                e.stopPropagation();
-                setBgOpen((v) => !v);
-              }}
-            >
-              <span
-                className="bg-orb"
-                style={{ background: FLUX_PRESETS[preset].sw }}
-              />
-            </button>
-            <div className="bg-nav-pop">
-              <div className="bg-switch-head">流光背景</div>
-              <div className="bg-switch-grid">
-                {FLUX_PRESET_ORDER.map((key) => {
-                  const p = FLUX_PRESETS[key];
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      className="bg-opt"
-                      aria-current={preset === key}
-                      onClick={() => {
-                        setPreset(key);
-                        setBgOpen(false);
-                      }}
-                    >
-                      <span
-                        className="bg-opt-sw"
-                        style={{ background: p.sw }}
-                      />
-                      <span className="bg-opt-tx">
-                        <b>{p.label}</b>
-                        <i>{p.sub}</i>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
 
           <Link className="vip" href="/pricing">
             会员特惠

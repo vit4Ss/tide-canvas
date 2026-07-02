@@ -17,13 +17,21 @@ const PROMPT_B =
   "An extreme studio close-up of the model's face looking directly at the camera. She uses thumb and index finger, with silver metallic nail polish, to delicately lift the nose bridge of the Y2K silver sunglasses. The background is a muted grey void with precise rim lighting…";
 
 type Hue = [number, number, number];
-const cover = (h: Hue, hgt: number) =>
-  `<div class="ic-img" style="height:${hgt}px; background:${mesh(h[0], h[1], h[2])}"></div>`;
+// 有真实作品图时用图，否则回退 mesh 渐变（作品即界面）
+const cover = (h: Hue, hgt: number, url?: string) =>
+  `<div class="ic-img" style="height:${hgt}px; background:${
+    url
+      ? `url(${url}) center/cover no-repeat`
+      : mesh(h[0], h[1], h[2])
+  }"></div>`;
 
-// nodes: [innerHTML, x, y, w]
-const NODES: Array<[string, number, number, number]> = [
+// nodes: [innerHTML, x, y, w, extraClass?] — 封面槽位依次消费 covers[0..5]
+const buildNodes = (
+  c: string[],
+): Array<[string, number, number, number, string?]> => [
   [
-    '<div class="ic-cap"><span class="dot"></span>Image</div>' + cover([210, 230, 245], 132),
+    '<div class="ic-cap"><span class="dot"></span>Image</div>' +
+      cover([210, 230, 245], 132, c[0]),
     40,
     150,
     196,
@@ -38,10 +46,10 @@ const NODES: Array<[string, number, number, number]> = [
   ],
   [
     '<div class="ic-cap"><span class="dot"></span>Image</div><div class="ic-grid2">' +
-      cover([300, 260, 18], 116) +
-      cover([8, 350, 28], 116) +
-      cover([110, 78, 150], 116) +
-      cover([255, 230, 290], 116) +
+      cover([300, 260, 18], 116, c[1]) +
+      cover([8, 350, 28], 116, c[2]) +
+      cover([110, 78, 150], 116, c[3]) +
+      cover([255, 230, 290], 116, c[4]) +
       "</div>",
     348,
     62,
@@ -56,12 +64,21 @@ const NODES: Array<[string, number, number, number]> = [
     348,
   ],
   [
-    '<div class="ic-cap video"><span class="dot"></span>Video</div>' + cover([20, 42, 8], 300),
+    '<div class="ic-cap video"><span class="dot"></span>Video</div>' +
+      cover([20, 42, 8], 300, c[5]) +
+      // 常驻"生成中"状态：让画布看起来正在工作
+      '<div class="ic-gen"><div class="ic-gen-bar"><i></i></div><span class="ic-gen-lb">✦ 生成中 · 84%</span></div>',
     846,
     132,
     226,
+    "gen-live",
   ],
 ];
+
+/* 两个协作光标（Figma 式多人在场感），路径在 1120×600 舞台坐标系内游走 */
+const CURSORS_HTML =
+  '<div class="ic-cursor a"><svg viewBox="0 0 16 16"><path d="M2 1l12 5.5-5 1.5-2 5z"/></svg><span>夜航</span></div>' +
+  '<div class="ic-cursor b"><svg viewBox="0 0 16 16"><path d="M2 1l12 5.5-5 1.5-2 5z"/></svg><span>Mira</span></div>';
 
 // wires between node ports (stage coords): [x1,y1,x2,y2]
 const WIRES: Array<[number, number, number, number]> = [
@@ -71,22 +88,27 @@ const WIRES: Array<[number, number, number, number]> = [
   [732, 512, 846, 340],
 ];
 
-export default function InfiniteCanvas() {
+export default function InfiniteCanvas({ covers = [] }: { covers?: string[] }) {
   const frameRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  const coversKey = covers.join(",");
 
-  // Build the stage DOM (nodes + SVG wires) once, imperatively — the markup is a
-  // fixed-coordinate showcase, identical to home-render.js.
+  // Build the stage DOM (nodes + SVG wires) imperatively — the markup is a
+  // fixed-coordinate showcase, identical to home-render.js. Rebuilds when the
+  // real-work covers arrive.
   useEffect(() => {
     const stage = stageRef.current;
     const frame = frameRef.current;
     if (!stage || !frame) return;
+    const NODES = buildNodes(coversKey ? coversKey.split(",") : []);
 
     let html =
       '<svg class="ic-wires" viewBox="0 0 1120 600" preserveAspectRatio="none"></svg>';
     NODES.forEach((n, i) => {
       html +=
-        '<div class="ic-node" style="left:' +
+        '<div class="ic-node' +
+        (n[4] ? " " + n[4] : "") +
+        '" style="left:' +
         n[1] +
         "px; top:" +
         n[2] +
@@ -98,6 +120,7 @@ export default function InfiniteCanvas() {
         n[0] +
         "</div>";
     });
+    html += CURSORS_HTML;
     stage.innerHTML = html;
 
     const svg = stage.querySelector(".ic-wires");
@@ -126,9 +149,18 @@ export default function InfiniteCanvas() {
         p.setAttribute("d", d);
         p.setAttribute("class", "ic-wire");
         const len = Math.hypot(x2 - x1, y2 - y1) + dx;
-        p.style.setProperty("--len", String(Math.round(len * 1.3)));
+        const plen = Math.round(len * 1.3);
+        p.style.setProperty("--len", String(plen));
         p.style.setProperty("--wd", (0.5 + i * 0.18).toFixed(2) + "s");
         svg.appendChild(p);
+        // 能量脉冲：一段 16px 的亮色短划沿贝塞尔线循环流动
+        const pulse = document.createElementNS(NS, "path");
+        pulse.setAttribute("d", d);
+        pulse.setAttribute("class", "ic-pulse");
+        pulse.style.strokeDasharray = `16 ${plen}`;
+        pulse.style.setProperty("--plen", String(plen + 16));
+        pulse.style.animationDelay = (1.8 + i * 0.7).toFixed(2) + "s";
+        svg.appendChild(pulse);
         [
           [x1, y1],
           [x2, y2],
@@ -185,11 +217,35 @@ export default function InfiniteCanvas() {
       io?.disconnect();
       window.removeEventListener("load", fit);
     };
-  }, []);
+  }, [coversKey]);
 
   return (
-    <div className="ic-frame reveal" ref={frameRef}>
-      <div className="ic-stage" id="ic-stage" ref={stageRef} />
+    <div className="ic-window reveal">
+      {/* 应用窗口镜头：红绿灯 + 标题 + 在线人数，让示意图读作"正在运行的产品" */}
+      <div className="ic-titlebar">
+        <span className="tdot r" />
+        <span className="tdot y" />
+        <span className="tdot g" />
+        <b>流光 · 无限画布 — 未命名项目</b>
+        <span className="ic-online">
+          <i className="av a" />
+          <i className="av b" />
+          <i className="av c" />
+          协作中 · 3 人
+        </span>
+      </div>
+      <div className="ic-frame" ref={frameRef}>
+        <div className="ic-stage" id="ic-stage" ref={stageRef} />
+        {/* 画布假控件（不随舞台缩放）：左下缩放，右下小地图 */}
+        <div className="ic-zoom" aria-hidden>
+          <span>−</span>
+          <b>86%</b>
+          <span>+</span>
+        </div>
+        <div className="ic-mini" aria-hidden>
+          <i />
+        </div>
+      </div>
     </div>
   );
 }

@@ -277,6 +277,23 @@ export default function FeedCoverflow({
         </div>
       </div>
 
+      {/* 实时播报条：社区新作滚动（与 coverflow 反向，制造"车水马龙"感） */}
+      {!loading && items.length > 0 && (
+        <div className="cf-ticker" aria-hidden>
+          <div className="cf-ticker-track">
+            {[0, 1].map((dup) =>
+              items.slice(0, 14).map((a, i) => (
+                <span className="tk" key={`${dup}-${a.id}-${i}`}>
+                  <i className="nw">NEW</i>
+                  <b>《{a.title}》</b>
+                  <span className="lk">♥ {fmt(a.likes)}</span>
+                </span>
+              )),
+            )}
+          </div>
+        </div>
+      )}
+
       <WorkModal postId={active?.id ?? null} onClose={() => setActive(null)} />
     </>
   );

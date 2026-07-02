@@ -18,6 +18,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { HERO_PROMPTS } from "@/mock";
 import { toast } from "@/components/shared/toast";
+import HeroWall from "@/components/site/hero-wall";
 
 const QUICK = [
   { ico: "✨", label: "文生图", toast: "文生图 · 前往创作台" },
@@ -89,6 +90,7 @@ export default function HomeHero() {
 
   return (
     <header className="hero">
+      <HeroWall />
       <div className="hero-scrim" />
       <div className="hero-noise" />
 

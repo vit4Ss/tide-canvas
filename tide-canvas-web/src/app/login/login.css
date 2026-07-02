@@ -1,21 +1,24 @@
 /* ============================================================================
-   Login / Register page styles — ported 1:1 from
+   Login / Register page styles -ported 1:1 from
    design-ref/登录注册.html inline <style>.
 
    Plain (global) stylesheet imported only by /login. It targets the design's
    exact class names; the page's own chrome lives here (it is NOT under the
-   (site)/(studio)/(canvas) shells). Tokens (--accent / --grad / --pill / …)
+   (site)/(studio)/(canvas) shells). Tokens (--accent / --grad / --pill / -
    come from @/styles/liuguang/flux.css, which the page imports first.
 
-   The original used <body data-mode="…"> + [data-only] to toggle login/register
+   The original used <body data-mode="-> + [data-only] to toggle login/register
    fields. Since we cannot set attributes on <body>, the page renders a wrapper
-   <div class="auth-page" data-mode="…"> and these rules key off THAT wrapper.
+   <div class="auth-page" data-mode="-> and these rules key off THAT wrapper.
    ========================================================================== */
 
 .auth-page {
   position: relative;
   min-height: 100vh;
-  background: var(--bg);
+  background:
+    radial-gradient(70% 60% at 12% 8%, rgba(79, 70, 229, 0.11), transparent 60%),
+    radial-gradient(60% 55% at 90% 92%, rgba(168, 85, 247, 0.09), transparent 62%),
+    var(--bg);
   color: var(--text);
   font-family: var(--ui);
 }
@@ -73,11 +76,9 @@
   grid-template-columns: 1.02fr 0.98fr;
   border-radius: 24px;
   overflow: hidden;
-  background: color-mix(in oklab, var(--surface) 86%, transparent);
-  border: 1px solid var(--border-strong);
-  backdrop-filter: blur(26px);
-  -webkit-backdrop-filter: blur(26px);
-  box-shadow: 0 50px 130px rgba(0, 0, 0, 0.66);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-pop);
 }
 .auth-card::before {
   content: "";
@@ -89,9 +90,9 @@
   z-index: 5;
   background: linear-gradient(
     135deg,
-    color-mix(in oklab, var(--accent) 50%, transparent),
+    color-mix(in oklab, var(--accent) 25%, transparent),
     transparent 40%,
-    color-mix(in oklab, var(--accent-2) 42%, transparent)
+    color-mix(in oklab, var(--accent-2) 20%, transparent)
   );
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
@@ -107,14 +108,22 @@
   }
 }
 
-/* ── left showcase panel ── */
+/* ── left showcase panel -colored brand card, keeps white text ── */
 .auth-aside {
   position: relative;
   overflow: hidden;
   padding: 40px 38px;
   display: flex;
   flex-direction: column;
-  background: linear-gradient(165deg, #11163a 0%, #0a0c1c 60%, #0c0a22 100%);
+  color: #fff;
+  background: linear-gradient(165deg, #6366f1 0%, #4f46e5 55%, #9333ea 100%);
+}
+.auth-aside .eyebrow {
+  color: rgba(255, 255, 255, 0.78);
+}
+.auth-aside .eyebrow .d {
+  background: #fff;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.22);
 }
 .auth-aside .glow {
   position: absolute;
@@ -122,19 +131,19 @@
   height: 420px;
   border-radius: 50%;
   filter: blur(50px);
-  opacity: 0.5;
+  opacity: 0.35;
   pointer-events: none;
-  background: radial-gradient(circle at 50% 50%, var(--accent) 0%, transparent 65%);
+  background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.9) 0%, transparent 65%);
   top: -130px;
   left: -90px;
 }
 .auth-aside .glow.b {
-  background: radial-gradient(circle at 50% 50%, var(--accent-2) 0%, transparent 65%);
+  background: radial-gradient(circle at 50% 50%, #2b1e8f 0%, transparent 65%);
   top: auto;
   bottom: -150px;
   left: auto;
   right: -110px;
-  opacity: 0.42;
+  opacity: 0.5;
 }
 .auth-aside-top {
   position: relative;
@@ -162,7 +171,7 @@
   box-shadow: 0 0 16px var(--accent-soft);
 }
 .auth-aside-top b {
-  color: var(--accent);
+  color: #ddd6fe;
 }
 
 .auth-aside-head {
@@ -185,7 +194,7 @@
 .auth-aside-head p {
   font-size: 14px;
   line-height: 1.65;
-  color: var(--text-dim);
+  color: rgba(255, 255, 255, 0.82);
   margin: 14px 0 0;
   max-width: 30ch;
 }
@@ -205,16 +214,16 @@
   animation: tFloat 5s var(--ease) infinite;
 }
 .auth-tiles .t:nth-child(1) {
-  background: conic-gradient(from 200deg at 40% 30%, #6d8bf5, #57c9e8, #9b7bf0, #6d8bf5);
+  background: conic-gradient(from 200deg at 40% 30%, #64d2ff, #a78bfa, #38bdf8, #64d2ff);
   animation-delay: 0s;
 }
 .auth-tiles .t:nth-child(2) {
-  background: conic-gradient(from 20deg at 60% 40%, #9b7bf0, #6d8bf5, #b06fe0, #9b7bf0);
+  background: conic-gradient(from 20deg at 60% 40%, #a78bfa, #64d2ff, #f0abfc, #a78bfa);
   animation-delay: 0.6s;
   margin-top: -12px;
 }
 .auth-tiles .t:nth-child(3) {
-  background: conic-gradient(from 120deg at 50% 60%, #57c9e8, #7b78f0, #6d8bf5, #57c9e8);
+  background: conic-gradient(from 120deg at 50% 60%, #38bdf8, #818cf8, #67e8f9, #38bdf8);
   animation-delay: 1.2s;
 }
 @keyframes tFloat {
@@ -245,7 +254,7 @@
 }
 .auth-stats .s span {
   font-size: 11.5px;
-  color: var(--text-faint);
+  color: rgba(255, 255, 255, 0.68);
 }
 
 /* ── right form panel ── */
@@ -642,9 +651,10 @@
   z-index: 300;
   padding: 13px 22px;
   border-radius: var(--pill);
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  box-shadow: 0 16px 50px rgba(0, 0, 0, 0.6);
+  background: #1d1d1f;
+  color: #f5f5f7;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: var(--shadow-pop);
   font-size: 14px;
   font-weight: 600;
   opacity: 0;
@@ -659,7 +669,7 @@
   transform: translateX(-50%);
 }
 .toast .ic {
-  color: var(--accent-3);
+  color: #64d2ff;
 }
 
 /* show / hide register-only & login-only fields (keyed off the wrapper) */
@@ -676,7 +686,7 @@
   display: none;
 }
 /* In login mode the submode is also [data-only="login"], whose display:block
-   rule would otherwise beat .submode.show on specificity — force flex back. */
+   rule would otherwise beat .submode.show on specificity -force flex back. */
 .auth-page[data-mode="login"] .submode {
   display: flex;
 }

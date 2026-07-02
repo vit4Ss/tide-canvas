@@ -29,7 +29,8 @@ export default function HomeFaq() {
               className="faq-q"
               onClick={() => setOpen(isOpen ? -1 : i)}
             >
-              <span>{f.q}</span>
+              <i className="n">{String(i + 1).padStart(2, "0")}</i>
+              <span className="qt">{f.q}</span>
               <span className="faq-ic">+</span>
             </button>
             <div

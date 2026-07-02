@@ -2320,14 +2320,6 @@ export default function CreateStudio() {
         {/* ── center stage ────────────────────────────────────────────── */}
         <main className="ws-stage" id="stage">
           <div className="ws-stage-main">
-            {/* stage-local ambient backdrop (design's <canvas id="flux"
-                class="ws-stage-fx">). Styled by studio.css's .ws-stage-fx —
-                we use the CSS gradient fallback so it stays scoped to the stage
-                (FluxField's #flux-bg is a full-viewport fixed field, unsuitable
-                here; the WebGL upgrade can land in a later phase). */}
-            <canvas id="flux" className="ws-stage-fx flux-fallback" aria-hidden />
-            <div className="ws-stage-veil" />
-
             <div className="ws-stage-top">
               <div className="ws-crumb">
                 <span className="d" />

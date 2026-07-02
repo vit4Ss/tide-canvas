@@ -38,8 +38,8 @@ export default function CanvasLayout({ children }: { children: React.ReactNode }
 
   if (!ready) {
     return (
-      <div className="flex h-screen w-screen items-center justify-center bg-neutral-950">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-neutral-700 border-t-neutral-200" />
+      <div className="flex h-screen w-screen items-center justify-center bg-[#f5f5f7]">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-neutral-300 border-t-indigo-600" />
       </div>
     );
   }

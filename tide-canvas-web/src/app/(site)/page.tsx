@@ -6,7 +6,7 @@
            design-ref/liuguang/home-render.js (dynamic logic) +
            design-ref/liuguang/home-data.js (now @/mock).
 
-   The (site) layout already renders <FluxField/>, <SiteNav/>, <SiteFooter/> and
+   The (site) layout already renders <SiteNav/>, <SiteFooter/> and
    imports flux.css + pages.css — this file renders ONLY the page content using
    the exact liuguang class names so the shared styles apply.
 
@@ -100,27 +100,56 @@ export default function HomePage() {
           </div>
 
           <div className="cap-grid" id="caps">
-            {CAPS.map((c, i) => (
-              <article
-                key={c.t}
-                className={`cap reveal-scale ${c.size}`}
-                style={{ ["--rd" as string]: `${(i % 4) * 0.05}s` }}
-                onClick={() => {
-                  toast.info(`${c.t} · 前往创作台`);
-                  router.push("/studio");
-                }}
-              >
-                <div className="cap-cover" style={{ background: coverBg(c.cover) }} />
-                <div className="cap-scrim" />
-                <span className="cap-ico">{c.ico}</span>
-                <span className="cap-kick">{i < 2 ? "CORE" : "TOOL"}</span>
-                <div className="cap-body">
-                  <h3>{c.t}</h3>
-                  <p>{c.d}</p>
-                  <span className="cap-go">试一下 →</span>
-                </div>
-              </article>
-            ))}
+            {(() => {
+              // 真实作品图铺进 bento（作品即界面）；大卡片吃前 3 张做轮播，
+              // 其余每卡一张，接口为空时回退 mesh 渐变。
+              const covers = works.filter((w) => w.coverUrl).map((w) => w.coverUrl);
+              let used = 0;
+              return CAPS.map((c, i) => {
+                const isBig = c.size === "big";
+                const take = isBig ? Math.min(3, covers.length - used) : covers.length - used > 0 ? 1 : 0;
+                const own = covers.slice(used, used + take);
+                used += take;
+                return (
+                  <article
+                    key={c.t}
+                    className={`cap reveal-scale ${c.size}`}
+                    style={{ ["--rd" as string]: `${(i % 4) * 0.05}s` }}
+                    onClick={() => {
+                      toast.info(`${c.t} · 前往创作台`);
+                      router.push("/studio");
+                    }}
+                  >
+                    {own.length > 0 ? (
+                      own.map((url, li) => (
+                        <div
+                          key={url}
+                          className={`cap-cover${li > 0 ? " xfade" : ""}`}
+                          style={{
+                            backgroundImage: `url(${url})`,
+                            ...(li > 0
+                              ? { animationDelay: `${li * 4.5}s` }
+                              : undefined),
+                          }}
+                        />
+                      ))
+                    ) : (
+                      <div className="cap-cover" style={{ background: coverBg(c.cover) }} />
+                    )}
+                    <div className="cap-scrim" />
+                    <span className="cap-ico">{c.ico}</span>
+                    <span className={`cap-kick${i < 2 ? " core" : ""}`}>
+                      {i < 2 ? "CORE" : "TOOL"}
+                    </span>
+                    <div className="cap-body">
+                      <h3>{c.t}</h3>
+                      <p>{c.d}</p>
+                      <span className="cap-go">试一下 →</span>
+                    </div>
+                  </article>
+                );
+              });
+            })()}
           </div>
         </div>
       </section>
@@ -144,7 +173,12 @@ export default function HomePage() {
               试一试 →
             </Link>
           </div>
-          <InfiniteCanvas />
+          <InfiniteCanvas
+            covers={works
+              .filter((w) => w.coverUrl)
+              .slice(3, 9)
+              .map((w) => w.coverUrl)}
+          />
         </div>
       </section>
 
@@ -175,21 +209,18 @@ export default function HomePage() {
       {/* FAQ */}
       <section className="block" id="faq-sec">
         <div className="wrap">
-          <div
-            className="sec-head"
-            style={{
-              justifyContent: "center",
-              textAlign: "center",
-              flexDirection: "column",
-              alignItems: "center",
-            }}
-          >
-            <span className="eyebrow reveal">
-              <span className="d" />常见问题 · FAQ
-            </span>
-            <h2 className="sec-title reveal" style={{ maxWidth: "none" }}>
-              还有<span className="gtext">疑问</span>？
-            </h2>
+          <div className="sec-head center">
+            <div>
+              <span className="eyebrow reveal">
+                <span className="d" />常见问题 · FAQ
+              </span>
+              <h2 className="sec-title reveal">
+                还有<span className="gtext">疑问</span>？
+              </h2>
+              <p className="sec-sub reveal">
+                关于模型、额度与商用授权的一切，都在这里。
+              </p>
+            </div>
           </div>
           <HomeFaq />
         </div>

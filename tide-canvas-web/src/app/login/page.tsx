@@ -8,8 +8,8 @@
    inline validation, 60s code countdown, password show/hide, 记住我.
 
    This page has its OWN chrome (it is NOT under (site)/(studio)/(canvas)). It
-   imports the liuguang flux tokens + paints the WebGL backdrop via <FluxField/>,
-   and layers its design-specific styles from ./login.css.
+   imports the liuguang flux tokens and layers its design-specific styles
+   from ./login.css.
 
    Submit wiring goes through the auth store:
      · 密码登录       → login({ account: email, password })
@@ -26,7 +26,6 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { Logo } from "@/components/flux/atoms";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import FluxField from "@/components/flux/flux-field";
 import { authApi } from "@/lib/api";
 import { useAuthStore } from "@/stores/use-auth-store";
 
@@ -244,8 +243,6 @@ function LoginInner() {
 
   return (
     <div className="auth-page" data-mode={mode}>
-      <FluxField hue={0.2} speed={0.55} scale={0.9} intensity={1} flow={[0.02, -0.03]} variant={0} res={0.6} />
-
       <header className="auth-top">
         <Link className="brand" href="/">
           <Logo size={26} />

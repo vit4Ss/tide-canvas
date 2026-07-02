@@ -205,8 +205,8 @@ export default function StudioRail() {
               placeItems: "center",
               fontSize: 10,
               fontWeight: 800,
-              color: "#0c0e16",
-              background: "linear-gradient(135deg,#6d8bf5,#9b7bf0)",
+              color: "#fff",
+              background: "linear-gradient(135deg,#4f46e5,#a855f7)",
             }}
           >
             {initials}
