@@ -133,7 +133,10 @@ func (s *service) checkin(userID idgen.ID) (*CheckinResultVO, error) {
 		continuousDays = latest.ContinuousDays + 1
 	}
 
-	_, rewarded, err := s.repo.applyCheckin(userID, today, checkinReward, continuousDays)
+	// Grant the admin-configured amount (falls back to checkinReward when unset).
+	reward := s.repo.checkinDailyReward(checkinReward)
+
+	_, rewarded, err := s.repo.applyCheckin(userID, today, reward, continuousDays)
 	if err != nil {
 		return nil, err
 	}
@@ -150,10 +153,10 @@ func (s *service) checkin(userID idgen.ID) (*CheckinResultVO, error) {
 		UserID:  userID,
 		Action:  "checkin",
 		Summary: "每日签到奖励积分",
-		Points:  checkinReward,
+		Points:  int64(reward),
 		RefType: "checkin",
 	})
-	return &CheckinResultVO{Points: checkinReward, ContinuousDays: continuousDays, Rewarded: true}, nil
+	return &CheckinResultVO{Points: reward, ContinuousDays: continuousDays, Rewarded: true}, nil
 }
 
 // dayKey renders a time as the YYYY-MM-DD key used by CheckinRecord and the

@@ -194,6 +194,18 @@ func (r *repo) recentMessages(conversationID idgen.ID, limit int) ([]model.IMMes
 	return rows, nil
 }
 
+// textContents returns the content of every text message in a conversation,
+// oldest-first, for the context token estimate. Media messages carry empty
+// content / URLs and are skipped. The conversation is bounded by the token cap
+// itself, so loading all text contents stays small.
+func (r *repo) textContents(conversationID idgen.ID) ([]string, error) {
+	var rows []string
+	err := r.db.Model(&model.IMMessage{}).
+		Where("conversation_id = ? AND content_type = ?", conversationID, "text").
+		Pluck("content", &rows).Error
+	return rows, err
+}
+
 // touchConversation updates a conversation's last-message pointer/time so the
 // list ordering reflects recent activity.
 // renameConversation sets a conversation's title.

@@ -34,8 +34,11 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	// Public routes.
 	g.POST("/email-code", h.emailCode)
 	g.POST("/register", h.register)
-	g.POST("/login", h.login)
-	g.POST("/login-code", h.loginCode)
+	// Throttle password / code login per-IP to blunt credential brute-force
+	// (findByAccount matches username OR email OR phone, so a known account can
+	// otherwise be sprayed unbounded — only bcrypt's cost slows it).
+	g.POST("/login", middleware.RateLimit(d, 10, 5*time.Minute), h.login)
+	g.POST("/login-code", middleware.RateLimit(d, 10, 5*time.Minute), h.loginCode)
 	g.POST("/refresh", h.refresh)
 	// Rate-limit the unauthenticated password reset to blunt distributed
 	// code brute-force (the per-email attempt cap already bounds a single code).

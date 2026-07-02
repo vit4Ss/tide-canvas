@@ -68,6 +68,7 @@ llm:
   model: claude-opus-4-8
   maxTokens: 2048
   historyLimit: 20 # recent messages sent as context
+  contextTokenLimit: 32000 # 会话累计 token 估算上限，达到后需开启新会话
   # systemPrompt: "" # optional override of the built-in 流光 creative-assistant persona
 
 # Upstream model relay (ScarecrowToken Relay). The admin 模型管理「刷新」按钮 pulls

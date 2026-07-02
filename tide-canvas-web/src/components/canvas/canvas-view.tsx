@@ -63,7 +63,15 @@ export function CanvasView() {
   const connection = useCanvasConnection({ containerRef });
   const boxSelect = useCanvasBoxSelect({ containerRef });
 
-  useCanvasKeyboard({ onEscape: () => setContextMenu(null) });
+  useCanvasKeyboard({
+    onEscape: () => setContextMenu(null),
+    // ⌘C copies the single selected node; ⌘V pastes it at an offset.
+    onCopy: () => {
+      const ids = Array.from(useCanvasStore.getState().selectedNodeIds);
+      if (ids.length === 1) clipboard.copyNode(ids[0]);
+    },
+    onPaste: () => clipboard.pasteNode(),
+  });
 
   // 跟踪容器尺寸（供小地图绘制可视区域 + 适应视图计算）
   useEffect(() => {

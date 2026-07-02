@@ -155,8 +155,20 @@ func (p *relayProviderClient) batchImages(ctx context.Context, n int, gen func(c
 	}
 	wg.Wait()
 
-	// First call's outcome supplies the audit fields for the merged Result.
-	merged := results[0]
+	// Audit fields come from the first SUCCESSFUL call so the generation /
+	// model-call log mirrors a request that actually produced a result. Taking
+	// them from results[0] unconditionally would, when call #0 failed but a
+	// sibling succeeded, record the failed call's (empty/error) ResponseBody and
+	// HTTPStatus against a SUCCESS task — corrupting the audit trail. Falls back
+	// to results[0] only when every call failed.
+	auditIdx := 0
+	for i := 0; i < n; i++ {
+		if errs[i] == nil {
+			auditIdx = i
+			break
+		}
+	}
+	merged := results[auditIdx]
 	merged.URLs = nil
 
 	var allURLs []string

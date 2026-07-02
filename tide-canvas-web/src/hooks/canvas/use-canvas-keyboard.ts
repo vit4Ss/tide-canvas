@@ -5,11 +5,20 @@ import { useCanvasStore } from "@/stores/use-canvas-store";
 
 interface Options {
   onEscape?: () => void;
+  onCopy?: () => void;
+  onPaste?: () => void;
 }
 
-export function useCanvasKeyboard({ onEscape }: Options = {}) {
+export function useCanvasKeyboard({ onEscape, onCopy, onPaste }: Options = {}) {
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    const isTyping = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+    // Also treat contentEditable as typing: the node prompt editor is a
+    // contentEditable <div>, and without this guard Delete would remove the very
+    // node being edited, Ctrl+A/Z/G would hijack text select/undo/group, etc.
+    const t = e.target as HTMLElement | null;
+    const isTyping =
+      t instanceof HTMLInputElement ||
+      t instanceof HTMLTextAreaElement ||
+      (t?.isContentEditable ?? false);
     if (isTyping) return;
 
     const store = useCanvasStore.getState();
@@ -31,6 +40,18 @@ export function useCanvasKeyboard({ onEscape }: Options = {}) {
     if (ctrl && e.key.toLowerCase() === "a") {
       e.preventDefault();
       store.selectAll();
+      return;
+    }
+    // Ctrl+C 复制选中节点到剪贴板
+    if (ctrl && e.key.toLowerCase() === "c" && onCopy) {
+      e.preventDefault();
+      onCopy();
+      return;
+    }
+    // Ctrl+V 粘贴
+    if (ctrl && e.key.toLowerCase() === "v" && onPaste) {
+      e.preventDefault();
+      onPaste();
       return;
     }
     // Ctrl+G 把当前多选(≥2)创建为分组
@@ -58,7 +79,7 @@ export function useCanvasKeyboard({ onEscape }: Options = {}) {
       store.clearSelection();
       store.selectConnection(null);
     }
-  }, [onEscape]);
+  }, [onEscape, onCopy, onPaste]);
 
   useEffect(() => {
     window.addEventListener("keydown", handleKeyDown);

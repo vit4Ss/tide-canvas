@@ -150,6 +150,14 @@ func run() error {
 
 	deps := &app.Deps{DB: gdb, RDB: rdb, Cfg: cfg, Storage: store}
 
+	// Reconcile AI tasks stranded in Processing by a prior crash/restart, so the
+	// frontend doesn't poll them forever. Best-effort; never blocks startup.
+	if n, err := ai.SweepStaleTasks(deps); err != nil {
+		logger.L().Warn("ai: sweep stale tasks failed", zap.Error(err))
+	} else if n > 0 {
+		logger.L().Info("ai: reconciled stale tasks", zap.Int64("count", n))
+	}
+
 	// 4. HTTP engine.
 	switch strings.ToLower(cfg.Server.Mode) {
 	case "release":

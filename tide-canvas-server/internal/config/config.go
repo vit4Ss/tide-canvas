@@ -45,6 +45,10 @@ type LLMConfig struct {
 	MaxTokens    int    `mapstructure:"maxTokens"`    // response cap
 	SystemPrompt string `mapstructure:"systemPrompt"` // persona/instructions for the assistant
 	HistoryLimit int    `mapstructure:"historyLimit"` // recent messages sent as context
+	// ContextTokenLimit caps a conversation's cumulative estimated tokens; once
+	// reached the chat endpoints reject new text turns and the frontend prompts
+	// the user to start a new conversation.
+	ContextTokenLimit int `mapstructure:"contextTokenLimit"`
 }
 
 // Enabled reports whether a real LLM is configured (an API key is present).
@@ -242,6 +246,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.model", "claude-opus-4-8")
 	v.SetDefault("llm.maxTokens", 2048)
 	v.SetDefault("llm.historyLimit", 20)
+	v.SetDefault("llm.contextTokenLimit", 32000)
 	v.SetDefault("llm.systemPrompt", defaultLLMSystemPrompt)
 
 	v.SetDefault("relay.baseUrl", "https://relay.tcmzhan.com")
@@ -304,6 +309,9 @@ func normalize(cfg *Config) {
 	}
 	if cfg.LLM.HistoryLimit <= 0 {
 		cfg.LLM.HistoryLimit = 20
+	}
+	if cfg.LLM.ContextTokenLimit <= 0 {
+		cfg.LLM.ContextTokenLimit = 32000
 	}
 	if strings.TrimSpace(cfg.LLM.SystemPrompt) == "" {
 		cfg.LLM.SystemPrompt = defaultLLMSystemPrompt

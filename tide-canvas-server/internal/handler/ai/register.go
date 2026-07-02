@@ -3,11 +3,30 @@
 package ai
 
 import (
+	"context"
+	"time"
+
 	"github.com/gin-gonic/gin"
 
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/middleware"
 )
+
+// staleTaskCutoff bounds how long a task may sit in Processing without an update
+// before it's considered orphaned. Longer than the longest generation deadline
+// (video ≈ 20m) and equal to the Redis task-state TTL, so a live task is never
+// swept.
+const staleTaskCutoff = 30 * time.Minute
+
+// SweepStaleTasks reconciles tasks left in Processing by a prior crash/restart —
+// their detached goroutine died, so nothing will ever write their terminal
+// state. Call once at startup before serving. Returns the number reconciled.
+func SweepStaleTasks(d *app.Deps) (int64, error) {
+	r := newRepo(d.DB)
+	cutoff := time.Now().Add(-staleTaskCutoff)
+	return r.sweepStaleTasks(context.Background(), statusProcessing, statusFailed, cutoff,
+		"generation interrupted (server restart)")
+}
 
 // Register mounts the AI routes on the /api group.
 //

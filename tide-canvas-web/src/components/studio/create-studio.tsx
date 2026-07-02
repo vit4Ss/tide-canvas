@@ -941,8 +941,23 @@ export default function CreateStudio() {
     return () => document.removeEventListener("keydown", onKey);
   }, [lightbox]);
 
-  // clear any running intervals on unmount.
-  useEffect(() => () => ticksRef.current.forEach((t) => clearInterval(t)), []);
+  // Tear down all timers on unmount. Beyond the progress intervals, this must
+  // also clear the self-rescheduling poll timeout and bump runIdRef — otherwise
+  // `poll` keeps re-arming after navigation, hits getTask forever, and on
+  // completion runs setState on an unmounted component + pops a toast on whatever
+  // page the user is now on.
+  useEffect(
+    () => () => {
+      ticksRef.current.forEach((t) => clearInterval(t));
+      ticksRef.current = [];
+      if (pollRef.current) {
+        clearTimeout(pollRef.current);
+        pollRef.current = null;
+      }
+      runIdRef.current += 1; // invalidate any in-flight poll
+    },
+    [],
+  );
 
   /* ── panel handlers ──────────────────────────────────────────────────── */
 
@@ -1194,24 +1209,30 @@ export default function CreateStudio() {
         setProgs(new Array(n).fill(100));
         setCells((prev) => prev.map((c) => ({ ...c, url: urls[c.i] ?? urls[0] })));
         setBusy(false);
-        // group every image of this run under one feed key; push in reverse so the
-        // prepends land back in 0..n order. ts lets the feed header show the time.
+        // group every image of this run under one feed key. Insert the whole run as
+        // one block (0..n order) with a dedup guard: on refresh-resume, loadHistory
+        // may have already seeded this task's items (same run key), and finishing the
+        // resumed poll would otherwise render every image twice. Ids are computed
+        // outside the updater so it stays pure (React dev double-invokes it).
         const runKey = `task-${taskId}`;
         const ts = new Date().toISOString();
-        [...newCells].reverse().forEach((cell) =>
-          pushHistory({
+        const built = newCells.map((cell) => {
+          histSeq += 1;
+          return {
+            id: `h-${histSeq}`,
             run: runKey,
             ts,
             ratio: r,
             hues: cell.hues,
-            type: isVid ? "video" : "image",
+            type: (isVid ? "video" : "image") as HistItem["type"],
             title: p,
             prompt: p,
             model: mdl,
             url: urls[cell.i] ?? urls[0],
             params: lastRunRef.current ?? undefined,
-          }),
-        );
+          };
+        });
+        setHist((prev) => (prev.some((h) => h.run === runKey) ? prev : [...built, ...prev]));
         toast.success("生成完成 · 点击图片放大查看");
       };
 

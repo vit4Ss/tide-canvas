@@ -2,6 +2,7 @@ package points
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 
 	"gorm.io/gorm"
@@ -57,6 +58,23 @@ func (r *repo) listRecords(userID idgen.ID, q *RecordQuery) ([]model.PointRecord
 		return nil, 0, err
 	}
 	return rows, total, nil
+}
+
+// checkinDailyReward returns the admin-configured daily check-in grant
+// (sys_config key points.checkinDaily), falling back to `fallback` when the key
+// is unset, unparseable or non-positive — so an admin change to 每日签到 points
+// actually takes effect instead of the code silently using a hardcoded value.
+func (r *repo) checkinDailyReward(fallback int) int {
+	var row model.SysConfig
+	if err := r.db.Select("config_value").
+		Where("config_key = ?", "points.checkinDaily").First(&row).Error; err != nil {
+		return fallback
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(row.ConfigValue))
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
 }
 
 // findCheckin loads the user's check-in row for a given YYYY-MM-DD day, if any.

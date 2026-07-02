@@ -32,6 +32,10 @@ export default function CanvasEditorPage() {
   const setCurrentProjectId = useCanvasStore((s) => s.setCurrentProjectId);
 
   const autosaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  // Latest `saving` read via a ref so `save` isn't recreated when it flips —
+  // otherwise the autosave effect (which depends on `save`) re-runs on every
+  // setSaving and self-perpetuates a ~3s save loop even with no edits.
+  const savingRef = useRef(false);
 
   // 加载项目（按 url token；不存在/无权限 → 404）
   useEffect(() => {
@@ -62,7 +66,8 @@ export default function CanvasEditorPage() {
   }, [token, loadCanvas, setCurrentProjectId]);
 
   const save = useCallback(async (silent = false) => {
-    if (saving || !projectId) return;
+    if (savingRef.current || !projectId) return;
+    savingRef.current = true;
     setSaving(true);
     try {
       const canvasData = JSON.stringify({ nodes, connections, groups });
@@ -81,15 +86,39 @@ export default function CanvasEditorPage() {
         toast.error("保存失败");
       }
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
-  }, [saving, nodes, connections, groups, projectId, thumbnail]);
+  }, [nodes, connections, groups, projectId, thumbnail]);
+
+  // Keep a ref to the latest `save` so the unmount flush below (which has empty
+  // deps) always calls the current version without re-subscribing.
+  const saveRef = useRef(save);
+  useEffect(() => {
+    saveRef.current = save;
+  }, [save]);
+
+  // Flush a pending autosave on unmount/navigate: if the debounce timer is still
+  // armed when the canvas unmounts, the last edits would otherwise be dropped.
+  useEffect(() => {
+    return () => {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+        // fire-and-forget; the request outlives this component.
+        void saveRef.current(true);
+      }
+    };
+  }, []);
 
   // 自动保存：监听 nodes/connections/groups 变化
   useEffect(() => {
     if (!loaded) return;
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
-    autosaveTimerRef.current = setTimeout(() => save(true), AUTOSAVE_DELAY);
+    autosaveTimerRef.current = setTimeout(() => {
+      autosaveTimerRef.current = null; // mark flushed so the unmount flush won't re-save
+      save(true);
+    }, AUTOSAVE_DELAY);
     return () => {
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     };

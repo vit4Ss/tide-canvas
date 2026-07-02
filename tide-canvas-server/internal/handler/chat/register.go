@@ -44,5 +44,6 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	conv.POST("/:id/stream", h.streamMessage)
 	conv.POST("/:id/messages/append", h.appendMessage)
 	conv.POST("/:id/turn", h.persistTurn)
+	conv.GET("/:id/context", h.contextUsage)
 	conv.POST("/:id/read", h.markRead)
 }

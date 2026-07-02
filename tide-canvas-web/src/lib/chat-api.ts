@@ -12,6 +12,7 @@ import { http, toParams } from "./http";
 import type { PageData } from "@/types/api";
 import type {
   ConversationVO,
+  ContextUsageVO,
   MessageVO,
   CreateConversationDTO,
   SendMessageDTO,
@@ -21,7 +22,9 @@ import type {
 export type { MessageAttachment };
 
 /** Consume the SSE stream from POST /api/im/conversations/:id/stream. Each frame
- *  is a JSON object: {delta} per token, {done,message} at the end, or {error}.
+ *  is a JSON object: {delta} per token, {done,message} at the end, or
+ *  {error,code?} — code "CONTEXT_LIMIT" means the conversation hit the context
+ *  cap and the user should start a new one.
  *  Pass an AbortSignal to cancel (switching conversation / leaving the page). */
 export async function streamMessage(
   id: string,
@@ -29,7 +32,7 @@ export async function streamMessage(
   handlers: {
     onDelta?: (delta: string) => void;
     onDone?: (message: MessageVO) => void;
-    onError?: (msg: string) => void;
+    onError?: (msg: string, code?: string) => void;
     signal?: AbortSignal;
     attachments?: MessageAttachment[];
   },
@@ -75,7 +78,8 @@ export async function streamMessage(
           const obj = JSON.parse(line.slice(5).trim());
           if (typeof obj.delta === "string") handlers.onDelta?.(obj.delta);
           else if (obj.done) handlers.onDone?.(obj.message as MessageVO);
-          else if (obj.error) handlers.onError?.(String(obj.error));
+          else if (obj.error)
+            handlers.onError?.(String(obj.error), typeof obj.code === "string" ? obj.code : undefined);
         } catch {
           /* ignore malformed frame */
         }
@@ -108,6 +112,10 @@ export const chatApi = {
       `/api/im/conversations/${id}/messages`,
       toParams(params ?? {}),
     ),
+
+  /** Estimated context-token usage of a conversation vs the server cap. */
+  contextUsage: (id: string) =>
+    http.get<ContextUsageVO>(`/api/im/conversations/${id}/context`),
 
   /** Send a user message; the backend appends a canned assistant reply. Returns
    *  the persisted user MessageVO. Image attachments are forwarded to the model. */

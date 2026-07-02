@@ -138,6 +138,27 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 // runTask performs the generation and persists the terminal state. It is run in
 // a detached goroutine; errors are logged, not returned.
 func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m *model.AiModel, userID idgen.ID, dto generateDTO) {
+	// This goroutine is detached from Gin's request scope, so Gin's Recovery
+	// middleware does NOT cover it — an unrecovered panic on the generation path
+	// (provider client, rehost, image decode, nil map, …) would crash the whole
+	// process and strand every other in-flight task. Recover, mark this task
+	// failed, and keep the server alive.
+	defer func() {
+		if r := recover(); r != nil {
+			logger.L().Error("ai: runTask panic recovered",
+				zap.String("taskId", taskID.String()), zap.Any("panic", r))
+			end := time.Now()
+			t := &model.AiTask{
+				ID: taskID, Status: statusFailed, Progress: 100,
+				ErrorMsg: "internal error during generation", UpdateTime: end, CompleteTime: &end,
+			}
+			if _, err := s.repo.finalizeTask(context.Background(), t, statusProcessing); err != nil {
+				logger.L().Error("ai: finalize after panic failed", zap.String("taskId", taskID.String()), zap.Error(err))
+			}
+			s.clearTaskState(context.Background(), taskID)
+		}
+	}()
+
 	start := time.Now()
 
 	// Re-load the task so a cancellation that landed between create and run is
@@ -164,23 +185,11 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 	res, genErr := gh.Execute(ctx, s.provider, req)
 	duration := time.Since(start).Milliseconds()
 
-	// The user may have cancelled/deleted the task while it ran. Re-load it and
-	// drop the result if the row is gone or was cancelled — otherwise we'd write
-	// stale terminal state (plus an orphan Redis entry + audit log) for a task the
-	// user already abandoned. (A delete that lands after this check is still safe:
-	// GORM Save updates 0 rows and never re-inserts.)
-	cur, cerr := s.repo.getTask(ctx, taskID)
-	if cerr != nil {
-		logger.L().Warn("ai: runTask recheck failed", zap.String("taskId", taskID.String()), zap.Error(cerr))
-		return
-	}
-	if cur == nil || cur.Status == statusCancelled {
-		logger.L().Info("ai: task cancelled/deleted mid-run, dropping result", zap.String("taskId", taskID.String()))
-		return
-	}
-	task = cur
-
-	// Persist terminal task state.
+	// Persist terminal task state atomically: finalizeTask only transitions a row
+	// that is still Processing, so a concurrent cancel/delete (which flags the row
+	// cancelled or removes it) can never be resurrected as success. This replaces
+	// the previous recheck-then-Save, which had a window where a cancel whose
+	// delete failed would leave the row and let this Save overwrite it as success.
 	end := time.Now()
 	task.UpdateTime = end
 	task.CompleteTime = &end
@@ -194,8 +203,16 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 		task.ResultUrl = res.ResultURL
 		task.ResultMeta = buildResultMeta(res)
 	}
-	if err := s.repo.updateTask(ctx, task); err != nil {
+	updated, err := s.repo.finalizeTask(ctx, task, statusProcessing)
+	if err != nil {
 		logger.L().Error("ai: persist task result failed", zap.String("taskId", taskID.String()), zap.Error(err))
+	}
+	if !updated {
+		// Row was cancelled/deleted mid-run (or already finalized): drop the result
+		// without writing Redis/audit state for an abandoned task.
+		logger.L().Info("ai: task no longer processing, dropping result", zap.String("taskId", taskID.String()))
+		s.clearTaskState(ctx, taskID)
+		return
 	}
 	s.writeTaskState(ctx, task)
 

@@ -47,6 +47,17 @@ export interface MessageVO {
   task?: MessageTaskVO;
 }
 
+/** Estimated context-token usage of a conversation vs the server cap
+ *  (GET /api/im/conversations/:id/context). `full` means the server will
+ *  reject new text turns — the user should start a new conversation. */
+export interface ContextUsageVO {
+  usedTokens: number;
+  limitTokens: number;
+  /** 0–100, clamped. */
+  percent: number;
+  full: boolean;
+}
+
 /** Body for POST /api/im/conversations. Title is optional. */
 export interface CreateConversationDTO {
   title?: string;

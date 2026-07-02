@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"errors"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -42,6 +43,44 @@ func (r *repo) createTask(ctx context.Context, t *model.AiTask) error {
 
 func (r *repo) updateTask(ctx context.Context, t *model.AiTask) error {
 	return r.db.WithContext(ctx).Save(t).Error
+}
+
+// finalizeTask writes terminal state (status/progress/result/error/timestamps)
+// only if the row is still in `fromStatus` (Processing). This makes the terminal
+// transition atomic so a concurrent cancel/delete can never be overwritten by a
+// blind full-row Save. Returns whether a row was actually updated.
+func (r *repo) finalizeTask(ctx context.Context, t *model.AiTask, fromStatus int) (bool, error) {
+	res := r.db.WithContext(ctx).Model(&model.AiTask{}).
+		Where("id = ? AND status = ?", t.ID, fromStatus).
+		Updates(map[string]any{
+			"status":        t.Status,
+			"progress":      t.Progress,
+			"result_url":    t.ResultUrl,
+			"result_meta":   t.ResultMeta,
+			"error_msg":     t.ErrorMsg,
+			"update_time":   t.UpdateTime,
+			"complete_time": t.CompleteTime,
+		})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}
+
+// sweepStaleTasks fails tasks left in Processing past the cutoff — orphaned when
+// the process crashed/restarted mid-generation (their detached goroutine died,
+// so nothing will ever write their terminal state and the frontend would poll
+// forever). Returns the number of rows reconciled.
+func (r *repo) sweepStaleTasks(ctx context.Context, fromStatus, toStatus int, before time.Time, errMsg string) (int64, error) {
+	res := r.db.WithContext(ctx).Model(&model.AiTask{}).
+		Where("status = ? AND update_time < ?", fromStatus, before).
+		Updates(map[string]any{
+			"status":      toStatus,
+			"progress":    100,
+			"error_msg":   errMsg,
+			"update_time": before,
+		})
+	return res.RowsAffected, res.Error
 }
 
 // deleteTask removes a task row by id (used by the user-facing 删除 in 生成记录).

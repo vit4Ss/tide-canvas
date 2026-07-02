@@ -53,6 +53,10 @@ const cannedReply = "[占位回复] AI 暂未接入：当前还没有配置大�
 // not own. The handler maps it to a 404 to avoid leaking existence.
 var errForbidden = errors.New("chat: not owner")
 
+// errContextFull is returned when a conversation's cumulative estimated tokens
+// reached the configured cap; the user must start a new conversation.
+var errContextFull = errors.New("chat: context token limit reached")
+
 // llmReplyTimeout bounds a single upstream generation so a slow/hung provider
 // never blocks the user's send indefinitely.
 const llmReplyTimeout = 60 * time.Second
@@ -65,23 +69,30 @@ type service struct {
 	relay *relaychat.Client
 	// llmClient is the legacy fallback (Anthropic) used when the relay is not
 	// configured or has no text model available. nil when no LLM key is set.
-	llmClient    *llm.Client
+	llmClient *llm.Client
 	// fallbackModel is the configured Anthropic model name used by llmClient; it
 	// labels the ModelCallLog for fallback conversations. Empty when unset.
 	fallbackModel string
 	systemPrompt  string
 	historyLimit  int
+	// ctxTokenLimit caps a conversation's cumulative estimated tokens (see
+	// tokens.go); text sends beyond it fail with errContextFull.
+	ctxTokenLimit int
 }
 
 func newService(db *gorm.DB, cfg *config.Config) *service {
 	s := &service{
-		repo:         newRepo(db),
-		historyLimit: cfg.LLM.HistoryLimit,
-		systemPrompt: cfg.LLM.SystemPrompt,
-		relay:        relaychat.New(cfg.Relay.BaseURL, cfg.Relay.APIKey),
+		repo:          newRepo(db),
+		historyLimit:  cfg.LLM.HistoryLimit,
+		systemPrompt:  cfg.LLM.SystemPrompt,
+		ctxTokenLimit: cfg.LLM.ContextTokenLimit,
+		relay:         relaychat.New(cfg.Relay.BaseURL, cfg.Relay.APIKey),
 	}
 	if s.historyLimit <= 0 {
 		s.historyLimit = 20
+	}
+	if s.ctxTokenLimit <= 0 {
+		s.ctxTokenLimit = 32000
 	}
 	if s.relay != nil {
 		logger.L().Info("chat: relay assistant enabled (text models via /v1/chat/completions)")
@@ -259,6 +270,53 @@ func (s *service) persistTurn(conversationID, ownerID idgen.ID, dto PersistTurnD
 	}, nil
 }
 
+// contextTokens sums the estimated tokens of a conversation's text messages.
+func (s *service) contextTokens(conversationID idgen.ID) (int, error) {
+	contents, err := s.repo.textContents(conversationID)
+	if err != nil {
+		return 0, err
+	}
+	used := 0
+	for _, c := range contents {
+		used += estimateTokens(c)
+	}
+	return used, nil
+}
+
+// contextUsage reports a conversation's estimated context usage vs the cap,
+// enforcing ownership. The frontend uses it to warn near the limit and to
+// prompt for a new conversation once full.
+func (s *service) contextUsage(conversationID, ownerID idgen.ID) (*ContextUsageVO, error) {
+	conv, err := s.repo.findConversation(conversationID)
+	if err != nil {
+		return nil, err
+	}
+	if conv.OwnerID != ownerID {
+		return nil, errForbidden
+	}
+	used, err := s.contextTokens(conversationID)
+	if err != nil {
+		return nil, err
+	}
+	vo := toContextUsageVO(used, s.ctxTokenLimit)
+	return &vo, nil
+}
+
+// guardContext rejects a new text turn once the conversation's estimated
+// tokens (existing transcript + the new message) exceed the cap. A failed
+// estimate fails open — the cap is a UX guardrail, not billing enforcement.
+func (s *service) guardContext(conversationID idgen.ID, newContent string) error {
+	used, err := s.contextTokens(conversationID)
+	if err != nil {
+		logger.L().Warn("chat: context estimate failed, skipping cap", zap.Error(err))
+		return nil
+	}
+	if used+estimateTokens(newContent) > s.ctxTokenLimit {
+		return errContextFull
+	}
+	return nil
+}
+
 // sendMessage persists the user's message, appends a canned assistant reply, and
 // returns the user message VO. Ownership is enforced.
 func (s *service) sendMessage(conversationID, ownerID idgen.ID, dto SendMessageDTO) (*MessageVO, error) {
@@ -275,6 +333,9 @@ func (s *service) sendMessage(conversationID, ownerID idgen.ID, dto SendMessageD
 		contentType = "text"
 	}
 	content := strings.TrimSpace(dto.Content)
+	if err := s.guardContext(conversationID, content); err != nil {
+		return nil, err
+	}
 	imageURLs := imageAttachmentURLs(dto.Attachments)
 
 	// Persist the user message (attachments snapshotted on Params for redisplay).
@@ -325,6 +386,9 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 		return nil, errForbidden
 	}
 	content = strings.TrimSpace(content)
+	if err := s.guardContext(conversationID, content); err != nil {
+		return nil, err
+	}
 
 	// image attachments are forwarded to the model (multimodal); every attachment
 	// is also snapshotted on the user message so the bubble can re-render it.

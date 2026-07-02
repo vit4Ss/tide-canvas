@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { sliceImageGrid } from "@/lib/image-slice";
 import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
@@ -94,6 +94,21 @@ export function useAiGeneration() {
   const currentProjectId = useCanvasStore((s) => s.currentProjectId);
   const [activeTaskIds, setActiveTaskIds] = useState<Set<string>>(new Set());
   const pollTimersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  // Latch flipped on unmount. Clearing timers alone doesn't stop a poll that is
+  // mid-`await getTask` when the view unmounts — it would re-arm a fresh timer
+  // afterward and run forever, calling updateNode/toast on the next page. poll()
+  // checks this before scheduling and after awaiting.
+  const aliveRef = useRef(true);
+
+  useEffect(() => {
+    aliveRef.current = true;
+    const timers = pollTimersRef.current;
+    return () => {
+      aliveRef.current = false;
+      timers.forEach((t) => clearTimeout(t));
+      timers.clear();
+    };
+  }, []);
 
   const markGenerationFailed = useCallback((nodeId: string) => {
     const node = useCanvasStore.getState().nodes.find((n) => n.id === nodeId);
@@ -104,6 +119,7 @@ export function useAiGeneration() {
   /** 轮询任务状态直到完成 */
   const pollTask = useCallback((nodeId: string, taskId: string | number, startTime: number, input: Record<string, unknown>, maxPollMs: number, gridOutput?: boolean, onSuccess?: (resultUrl: string) => void) => {
     const poll = async () => {
+      if (!aliveRef.current) return; // unmounted — stop the loop
       // 超时检查
       if (Date.now() - startTime > maxPollMs) {
         markGenerationFailed(nodeId);
@@ -118,6 +134,7 @@ export function useAiGeneration() {
 
       try {
         const res = await aiApi.getTask(taskId as number);
+        if (!aliveRef.current) return; // unmounted while awaiting — drop the result
         if (!res.success) {
           markGenerationFailed(nodeId);
           setActiveTaskIds((prev) => {

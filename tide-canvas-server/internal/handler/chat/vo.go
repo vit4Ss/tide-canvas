@@ -44,18 +44,45 @@ type MessageTaskVO struct {
 // MessageVO is a single message within a conversation. Role is derived (see the
 // constants above) rather than stored on the model.
 type MessageVO struct {
-	ID             idgen.ID        `json:"id"`
-	ConversationID idgen.ID        `json:"conversationId"`
-	Role           string          `json:"role"`
-	ContentType    string          `json:"contentType"`
-	Content        string          `json:"content"`
-	CreateTime     string          `json:"createTime"`
+	ID             idgen.ID `json:"id"`
+	ConversationID idgen.ID `json:"conversationId"`
+	Role           string   `json:"role"`
+	ContentType    string   `json:"contentType"`
+	Content        string   `json:"content"`
+	CreateTime     string   `json:"createTime"`
 	// TaskID links an assistant message to its generation task; Params is the
 	// snapshot stored on the user message; Task is the batch-loaded live task
 	// status (nil when the task was deleted/expired → frontend shows 已过期).
 	TaskID *idgen.ID       `json:"taskId,omitempty"`
 	Params json.RawMessage `json:"params,omitempty"`
 	Task   *MessageTaskVO  `json:"task,omitempty"`
+}
+
+// ContextUsageVO reports a conversation's estimated context-token usage against
+// the configured cap (GET /api/im/conversations/:id/context). Percent is
+// clamped to [0,100]; Full means new text turns will be rejected.
+type ContextUsageVO struct {
+	UsedTokens  int  `json:"usedTokens"`
+	LimitTokens int  `json:"limitTokens"`
+	Percent     int  `json:"percent"`
+	Full        bool `json:"full"`
+}
+
+// toContextUsageVO builds the usage VO from an estimate and the cap.
+func toContextUsageVO(used, limit int) ContextUsageVO {
+	pct := 0
+	if limit > 0 {
+		pct = used * 100 / limit
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	return ContextUsageVO{
+		UsedTokens:  used,
+		LimitTokens: limit,
+		Percent:     pct,
+		Full:        used >= limit,
+	}
 }
 
 // toConversationVO maps a persisted conversation to its summary VO.

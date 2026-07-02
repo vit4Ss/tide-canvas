@@ -99,6 +99,18 @@ func (s *service) getByToken(tok string) (*ProjectDetailVO, error) {
 // update applies partial changes to the owner's project and returns the fresh
 // summary VO.
 func (s *service) update(id, ownerID idgen.ID, dto UpdateDTO) (*ProjectVO, error) {
+	// Enforce ownership unconditionally. Ownership must never rely on
+	// updateFields' WHERE clause alone: an empty-body PUT ({} or unknown keys)
+	// produces no fields, skips updateFields, and would otherwise let any user
+	// read (and via the returned urlToken, open) another user's private project.
+	p, err := s.repo.findByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if p.OwnerID != ownerID {
+		return nil, errForbidden
+	}
+
 	fields := map[string]any{}
 	if dto.Name != nil {
 		fields["name"] = strings.TrimSpace(*dto.Name)
@@ -117,12 +129,11 @@ func (s *service) update(id, ownerID idgen.ID, dto UpdateDTO) (*ProjectVO, error
 		if err := s.repo.updateFields(id, ownerID, fields); err != nil {
 			return nil, err
 		}
+		if p, err = s.repo.findByID(id); err != nil {
+			return nil, err
+		}
 	}
 
-	p, err := s.repo.findByID(id)
-	if err != nil {
-		return nil, err
-	}
 	vo := toProjectVO(p)
 	return &vo, nil
 }

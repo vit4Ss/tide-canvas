@@ -45,6 +45,11 @@ const (
 	videoPollDeadline = 20 * time.Minute // videos are slower; stay under the 30m UI cap
 )
 
+// maxRespBody caps a single relay response read. Generous enough to hold verbose
+// multi-entry results or inline b64_json (a 1 MB cap was truncating legitimate
+// responses into parse failures), while still bounding memory per call.
+const maxRespBody int64 = 32 << 20 // 32 MB
+
 // Client calls the relay's media endpoints with a Bearer API key.
 type Client struct {
 	baseURL string
@@ -300,9 +305,18 @@ func (c *Client) do(ctx context.Context, method, url string, payload []byte) (in
 		return 0, nil, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	// Cap at maxRespBody but detect truncation: a legitimate response can exceed
+	// 1 MB (multiple data entries, verbose metadata, or inline b64_json), and
+	// silently truncating it turns a completed generation into a JSON-parse
+	// failure the user sees as a hard error. Reading one extra byte lets us tell
+	// "body too large" apart from a real parse error.
+	lr := io.LimitReader(resp.Body, maxRespBody+1)
+	body, err := io.ReadAll(lr)
 	if err != nil {
 		return resp.StatusCode, nil, err
+	}
+	if int64(len(body)) > maxRespBody {
+		return resp.StatusCode, nil, fmt.Errorf("relaymedia: response body exceeds %d bytes", maxRespBody)
 	}
 	return resp.StatusCode, body, nil
 }

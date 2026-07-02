@@ -119,6 +119,19 @@ async function refreshAccessToken(): Promise<string | null> {
 
 let refreshPromise: Promise<string | null> | null = null;
 
+/** 单飞刷新:并发 401(含普通请求、fetch 上传、XHR 进度上传)只发起一次 refresh,
+    所有调用方共享同一 Promise;由发起者在自己的 finally 里重置,避免后到的等待者
+    把下一轮刚创建的 Promise 置空,从而并发跑出两次 refresh(第二次用已消费的
+    refresh token → 401 → 误清凭据把用户踢下线)。 */
+function refreshTokenOnce(): Promise<string | null> {
+  if (!refreshPromise) {
+    refreshPromise = refreshAccessToken().finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return refreshPromise;
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<Result<T>> {
   const { params, body, headers: customHeaders, ...rest } = options;
 
@@ -142,11 +155,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<R
   let result = await fetchResult<T>(url, config);
 
   if (result.code === 401 && token) {
-    if (!refreshPromise) {
-      refreshPromise = refreshAccessToken();
-    }
-    const newToken = await refreshPromise;
-    refreshPromise = null;
+    const newToken = await refreshTokenOnce();
 
     if (newToken) {
       headers["Authorization"] = `Bearer ${newToken}`;
@@ -183,11 +192,7 @@ async function uploadFile<T>(path: string, file: File | FormData): Promise<Resul
 
   // 401 时尝试刷新 token 后重试
   if (result.code === 401 && token) {
-    if (!refreshPromise) {
-      refreshPromise = refreshAccessToken();
-    }
-    const newToken = await refreshPromise;
-    refreshPromise = null;
+    const newToken = await refreshTokenOnce();
 
     if (newToken) {
       headers["Authorization"] = `Bearer ${newToken}`;
@@ -242,7 +247,9 @@ async function uploadFileWithProgress<T>(
   const token = getAccessToken();
   let result = await send(token);
   if (result.code === 401 && token) {
-    const newToken = await refreshAccessToken();
+    // Route through the shared single-flight so a progress upload racing another
+    // 401 doesn't fire a second concurrent refresh with an already-rotated token.
+    const newToken = await refreshTokenOnce();
     if (newToken) result = await send(newToken);
   }
   return result;

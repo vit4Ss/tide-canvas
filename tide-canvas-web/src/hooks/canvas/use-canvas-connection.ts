@@ -105,8 +105,13 @@ export function useCanvasConnection({ containerRef }: Options) {
         const store = useCanvasStore.getState();
         const sourceId = c.sourceSide === "output" ? c.sourceNodeId : c.hoverTargetNodeId;
         const targetId = c.sourceSide === "output" ? c.hoverTargetNodeId : c.sourceNodeId;
-        // 避免重复连接
-        const exists = store.connections.some((conn) => conn.sourceId === sourceId && conn.targetId === targetId);
+        // 避免重复连接，同时拒绝反向边(A→B 已存在时不允许再建 B→A),
+        // 否则会形成 2 节点环,让按 DAG 遍历连接图的下游逻辑陷入歧义/死循环。
+        const exists = store.connections.some(
+          (conn) =>
+            (conn.sourceId === sourceId && conn.targetId === targetId) ||
+            (conn.sourceId === targetId && conn.targetId === sourceId),
+        );
         if (!exists && sourceId !== targetId) {
           store.addConnection({
             id: `conn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,

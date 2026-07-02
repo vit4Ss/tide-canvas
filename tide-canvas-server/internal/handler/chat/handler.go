@@ -214,14 +214,34 @@ func (h *handler) streamMessage(c *gin.Context) {
 		frame(map[string]string{"delta": delta})
 	})
 	if err != nil {
-		if errors.Is(err, ErrNotFound) || errors.Is(err, errForbidden) {
+		switch {
+		case errors.Is(err, ErrNotFound) || errors.Is(err, errForbidden):
 			frame(map[string]string{"error": "对话不存在"})
-		} else {
+		case errors.Is(err, errContextFull):
+			// distinct code so the frontend can surface the 开启新会话 prompt.
+			frame(map[string]string{"error": contextFullMsg, "code": "CONTEXT_LIMIT"})
+		default:
 			frame(map[string]string{"error": "生成失败"})
 		}
 		return
 	}
 	frame(map[string]any{"done": true, "message": vo})
+}
+
+// contextUsage handles GET /api/im/conversations/:id/context (auth): the
+// conversation's estimated context-token usage vs the configured cap.
+func (h *handler) contextUsage(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	ownerID := middleware.CurrentUserID(c)
+	vo, err := h.svc.contextUsage(id, ownerID)
+	if err != nil {
+		h.fail(c, err, "failed to load context usage")
+		return
+	}
+	response.OK(c, vo)
 }
 
 // markRead handles POST /api/im/conversations/:id/read (auth).
@@ -238,6 +258,10 @@ func (h *handler) markRead(c *gin.Context) {
 	response.OK[any](c, nil)
 }
 
+// contextFullMsg is the user-facing message when a conversation hit the
+// context-token cap.
+const contextFullMsg = "当前会话上下文已达上限，请开启新会话"
+
 // fail maps service errors to the appropriate response code.
 func (h *handler) fail(c *gin.Context, err error, fallbackMsg string) {
 	switch {
@@ -246,6 +270,8 @@ func (h *handler) fail(c *gin.Context, err error, fallbackMsg string) {
 	case errors.Is(err, errForbidden):
 		// Hide existence: treat a non-owner as not found so IDs cannot be probed.
 		response.Fail(c, response.CodeNotFound, "conversation not found")
+	case errors.Is(err, errContextFull):
+		response.Fail(c, response.CodeContextLimit, contextFullMsg)
 	default:
 		response.Fail(c, response.CodeServerError, fallbackMsg)
 	}

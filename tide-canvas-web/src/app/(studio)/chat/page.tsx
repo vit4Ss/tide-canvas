@@ -41,7 +41,7 @@ import { AiTaskStatus } from "@/types/ai";
 import { marketApi, type StudioModelVO } from "@/lib/market-api";
 import { AssetsBrowser, type PickedAsset } from "@/components/studio/assets-browser";
 import { useAuthStore } from "@/stores/use-auth-store";
-import type { ConversationVO, MessageVO, MessageTaskVO } from "@/types/chat";
+import type { ContextUsageVO, ConversationVO, MessageVO, MessageTaskVO } from "@/types/chat";
 import { mesh } from "@/lib/mesh";
 import { toast } from "@/components/shared/toast";
 
@@ -277,6 +277,21 @@ export default function ChatPage() {
   useEffect(() => {
     return () => chatAbortRef.current?.abort();
   }, []);
+
+  // context-window usage (like GPT/Claude 的会话上限): fetched when a conversation
+  // is opened and after each committed turn. ≥80% shows a 开启新会话 warning bar;
+  // full blocks text sends (the server enforces the cap too — CONTEXT_LIMIT).
+  // Stored keyed by conversation so switching never shows another thread's bar.
+  const [ctxUsageFor, setCtxUsageFor] = useState<{ id: string; usage: ContextUsageVO } | null>(null);
+  const ctxUsage = ctxUsageFor && ctxUsageFor.id === activeId ? ctxUsageFor.usage : null;
+  const refreshCtxUsage = useCallback(async (id: string) => {
+    const res = await chatApi.contextUsage(id);
+    if (res.success && res.data) setCtxUsageFor({ id, usage: res.data });
+  }, []);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- setState fires after an await (async fetch), not synchronously
+    if (activeId) refreshCtxUsage(activeId);
+  }, [activeId, refreshCtxUsage]);
 
   const userEmail = useAuthStore((s) => s.user?.email);
   const ensureSession = useAuthStore((s) => s.ensureSession);
@@ -801,6 +816,13 @@ export default function ChatPage() {
     const v = draft.trim();
     if (!v || busy) return;
 
+    // text-model sends are blocked once the conversation's context is full
+    // (the server enforces the same cap; this just fails fast with guidance).
+    if (selModel?.type === "text" && ctxUsage?.full) {
+      toast.error("当前会话上下文已达上限，请开启新会话");
+      return;
+    }
+
     // reference media (uploaded → hosted urls). A ref-mode requires at least one
     // usable ref and blocks while any is still uploading.
     const refImageUrls = refs.filter((r) => r.kind === "image" && r.url).map((r) => r.url as string);
@@ -932,6 +954,7 @@ export default function ChatPage() {
           ...(ratio ? { ratio } : {}),
           ...(res ? { resolution: res } : {}),
           ...(wantVideo && dur ? { duration: dur } : {}),
+          ...(wantImage && batch > 1 ? { batch } : {}),
           ...(refImageUrls.length || refVideoUrls.length
             ? {
                 references: [
@@ -952,6 +975,7 @@ export default function ChatPage() {
         // turn is already persisted and will show when the user switches back.
         if (activeIdRef.current === id) await loadMessages(id);
         bump(id); // surface the conversation to the top regardless of focus
+        refreshCtxUsage(id); // generation prompts count toward the context cap too
       } else {
         // text model → streamed reply (P4). The generic typing dots give way to
         // a live streaming bubble; switching conversation aborts it.
@@ -970,9 +994,11 @@ export default function ChatPage() {
             // coalesce rapid tokens into one scroll per frame to avoid judder.
             if (nearBottomRef.current) requestAnimationFrame(scrollEnd);
           },
-          onError: (m) => {
+          onError: (m, code) => {
             streamOk = false;
             toast.error(m || "生成失败");
+            // context cap reached server-side → refresh so the 开启新会话 bar shows.
+            if (code === "CONTEXT_LIMIT") refreshCtxUsage(id);
           },
         });
         // clear the attachment strip only on success — keep it on failure so the
@@ -986,12 +1012,20 @@ export default function ChatPage() {
           await loadMessages(id);
           bump(id);
         }
+        if (streamOk) refreshCtxUsage(id);
+        // On stream failure, restore the typed text to the composer. The draft was
+        // cleared up-front and loadMessages above dropped the optimistic bubble; on a
+        // network failure nothing was persisted, so without this the message is lost
+        // with no way to resend. Don't clobber newer text the user already typed.
+        if (!streamOk) {
+          setDraft((cur) => (cur ? cur : v));
+        }
       }
     } finally {
       setTyping(false);
       setBusy(false);
     }
-  }, [draft, busy, activeId, ensureSession, loadMessages, resetTa, selModel, mode, ratio, res, dur, batch, refs, refPolicy, refOptional, clearRefs, forceBottom, scrollEnd]);
+  }, [draft, busy, activeId, ensureSession, loadMessages, resetTa, selModel, mode, ratio, res, dur, batch, refs, refPolicy, refOptional, clearRefs, forceBottom, scrollEnd, ctxUsage, refreshCtxUsage]);
 
   // restore a turn's snapshot params into the composer (重新编辑 / 再次生成).
   const restoreFromParams = useCallback(
@@ -1002,6 +1036,7 @@ export default function ChatPage() {
       if (typeof p.ratio === "string") setRatio(p.ratio);
       if (typeof p.resolution === "string") setRes(p.resolution);
       if (typeof p.duration === "string") setDur(p.duration);
+      if (typeof p.batch === "number") setBatch(p.batch);
       // restore reference media as url-only items (the originals are hosted; no
       // local blob/file is recreated). Lets 再次生成 work on a reference turn.
       clearRefs();
@@ -1144,6 +1179,12 @@ export default function ChatPage() {
 
   const onKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
+      // While an IME is composing, Enter/Tab confirm a candidate word — never
+      // treat them as send / mention-pick, or a half-composed message gets sent
+      // (this is a zh-CN product, so composition is the common case).
+      if (e.nativeEvent.isComposing || e.keyCode === 229) {
+        return;
+      }
       // @-menu navigation takes precedence over send.
       if (atMenu && atVisible.length) {
         if (e.key === "ArrowDown") {
@@ -1345,6 +1386,18 @@ export default function ChatPage() {
         </div>
 
         <div className="chat-composer">
+          {selModel?.type === "text" && ctxUsage && ctxUsage.percent >= 80 && (
+            <div className={`chat-ctx-warn${ctxUsage.full ? " full" : ""}`}>
+              <span>
+                {ctxUsage.full
+                  ? "本会话上下文已达上限，无法继续对话，请开启新会话"
+                  : `本会话上下文已使用 ${ctxUsage.percent}%，建议开启新会话以获得更好的效果`}
+              </span>
+              <button type="button" onClick={newChat} disabled={busy}>
+                开启新会话
+              </button>
+            </div>
+          )}
           <div
             className={`composer-box${dragOver ? " drag" : ""}`}
             onDragEnter={onDragEnter}
@@ -1628,7 +1681,7 @@ export default function ChatPage() {
                 aria-label="发送"
                 type="button"
                 onClick={send}
-                disabled={busy || !draft.trim()}
+                disabled={busy || !draft.trim() || (selModel?.type === "text" && !!ctxUsage?.full)}
               >
                 ↑
               </button>

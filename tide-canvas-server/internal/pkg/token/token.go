@@ -133,7 +133,13 @@ func ParseAccess(tokenStr string) (*Claims, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		n, e := rdb.Exists(ctx, cache.BlacklistKey(claims.JTI)).Result()
-		if e == nil && n > 0 {
+		if e != nil {
+			// Fail closed on a Redis error: accepting the token would honor a
+			// revoked (logout / password-change) access token for the rest of its
+			// TTL during any Redis blip. Mirrors ParseRefresh's fail-closed policy.
+			return nil, e
+		}
+		if n > 0 {
 			return nil, ErrBlacklisted
 		}
 	}
