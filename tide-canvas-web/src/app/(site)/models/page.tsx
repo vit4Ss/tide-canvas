@@ -25,6 +25,7 @@ import { useRouter } from "next/navigation";
 import { marketApi } from "@/lib/market-api";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { mesh } from "@/lib/mesh";
+import SortSelect from "@/components/site/sort-select";
 import { useReveal } from "@/components/site/use-reveal";
 import type { ModelCategoryVO, MarketModelVO } from "@/types/market";
 
@@ -174,15 +175,15 @@ export default function ModelsPage() {
                 onChange={(e) => setQ(e.target.value)}
               />
             </label>
-            <select
-              className="select"
+            <SortSelect
               value={sort}
-              onChange={(e) => setSort(e.target.value as SortKey)}
-            >
-              <option value="runs">运行最多</option>
-              <option value="new">最新发布</option>
-              <option value="name">名称</option>
-            </select>
+              options={[
+                { value: "runs", label: "运行最多" },
+                { value: "new", label: "最新发布" },
+                { value: "name", label: "名称" },
+              ]}
+              onChange={(v) => setSort(v as SortKey)}
+            />
           </div>
 
           <div className="filters">

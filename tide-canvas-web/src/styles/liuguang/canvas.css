@@ -4,7 +4,7 @@
    ========================================================================== */
 
 /* full-bleed, rail + content; no inner scroll on body */
-.ws--canvas{grid-template-columns:104px 1fr;}
+.ws--canvas{grid-template-columns:auto 1fr;}
 
 /* ─── shared content shell ────────────────────────────────────────── */
 .cv{position:relative; min-height:0; overflow:hidden; display:flex; flex-direction:column; background:var(--bg);}

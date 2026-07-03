@@ -7,12 +7,14 @@ const nextConfig: NextConfig = {
   // 上会生成损坏的 .next/dev/types/routes.d.ts，导致路由表注册失败、全站 404。关闭以规避该 bug。
   typedRoutes: false,
   images: {
+    // 显式列出作品图所在的 OSS 域（创作台环境光取色借道 /_next/image 同源
+    // 代理，依赖这个白名单）。
     remotePatterns: [
-      {
-        protocol: "https",
-        hostname: "**",
-      },
+      { protocol: "https", hostname: "**.aliyuncs.com" },
     ],
+    // Next 16 默认拦截解析到私有 IP 的上游图（本机代理 fake-ip 模式下 OSS
+    // 域名会解析到 198.18.x.x 私网段而被误杀）。仅开发环境放行。
+    ...(process.env.NODE_ENV === "development" ? { dangerouslyAllowLocalIP: true } : {}),
   },
   experimental: {
     // rewrites() 代理上传时 Next 会缓冲请求体，默认上限仅 10MB，超出会被截断

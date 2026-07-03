@@ -256,31 +256,37 @@ export default function PricingPage() {
               看清每一分<span className="gtext">算力</span>
             </h2>
           </div>
-          <div style={{ overflowX: "auto" }} className="reveal">
-            <table className="cmp" id="cmp">
-              <thead>
-                <tr>
-                  {CMP_HEAD.map((h) => (
-                    <th key={h}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {CMP_ROWS.map((r) => (
-                  <tr key={r[0]}>
-                    <td>{r[0]}</td>
-                    {r.slice(1).map((c, ci) => (
-                      <td
-                        key={ci}
-                        className={c === "✓" ? "yes" : c === "—" ? "no" : ""}
-                      >
-                        {c}
-                      </td>
+          {/* Pro（第 2 数据列）与方案卡的推荐档同语言：hl 列 + 推荐徽章 */}
+          <div className="cmp-card reveal">
+            <div className="cmp-scroll">
+              <table className="cmp" id="cmp">
+                <thead>
+                  <tr>
+                    {CMP_HEAD.map((h, hi) => (
+                      <th key={h} className={hi === 2 ? "hl" : ""}>
+                        {h}
+                        {hi === 2 && <span className="cmp-badge">推荐</span>}
+                      </th>
                     ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {CMP_ROWS.map((r) => (
+                    <tr key={r[0]}>
+                      <td>{r[0]}</td>
+                      {r.slice(1).map((c, ci) => (
+                        <td
+                          key={ci}
+                          className={`${c === "—" ? "no" : ""}${ci === 1 ? " hl" : ""}`}
+                        >
+                          {c === "✓" ? <span className="cmp-ck">✓</span> : c}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </section>
 
@@ -316,7 +322,8 @@ export default function PricingPage() {
                     type="button"
                     onClick={() => setOpenFaq(open ? -1 : i)}
                   >
-                    <span>{f.q}</span>
+                    <i className="n">{String(i + 1).padStart(2, "0")}</i>
+                    <span className="qt">{f.q}</span>
                     <span className="faq-ic">+</span>
                   </button>
                   <div

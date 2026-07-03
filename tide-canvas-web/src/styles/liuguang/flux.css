@@ -102,8 +102,8 @@ section.block > .wrap{position:relative; z-index:2;}
 /* category filter row */
 .filters{display:flex; flex-wrap:wrap; gap:9px; margin-bottom:26px;}
 .filters .f{height:36px; padding:0 16px; border-radius:var(--pill); font-size:13.5px; font-weight:500; color:var(--text-dim); background:var(--panel); border:1px solid var(--border); transition:all .16s var(--ease);}
-.filters .f:hover{color:var(--text); border-color:var(--border-strong);}
-.filters .f.on{color:#fff; background:var(--accent); border-color:transparent; box-shadow:0 0 0 3px var(--accent-soft);}
+.filters .f:hover{color:var(--accent); border-color:var(--accent); background:var(--accent-soft);}
+.filters .f.on{color:#fff; background:var(--grad); border-color:transparent; box-shadow:0 4px 14px var(--accent-soft);}
 
 /* ─── INFINITE CANVAS (home) ──────────────────────────────────────── */
 .ic-frame{position:relative; overflow:hidden; border:1px solid var(--border); border-radius:var(--r-lg);
@@ -240,11 +240,16 @@ section.block > .wrap{position:relative; z-index:2;}
 @media(max-width:520px){.masonry{column-count:1;}}
 .masonry .tile{break-inside:avoid; -webkit-column-break-inside:avoid; margin:0 0 18px; display:block; width:100%;}
 @media(max-width:820px){.masonry .tile{margin-bottom:14px;}}
-.masonry .tile-cover{width:100%; height:auto;}
+.masonry .tile-cover{width:100%; height:auto; border-radius:16px;}
 
 .tile-cover{position:relative; width:100%; border-radius:var(--r); overflow:hidden; box-shadow:var(--shadow-sm);
   transition:transform .3s var(--ease), box-shadow .3s var(--ease);}
 .tile:hover .tile-cover{transform:translateY(-6px) scale(1.015); box-shadow:var(--shadow-lg);}
+/* 悬停品牌渐变光环（镂空描边，画廊瀑布流内生效） */
+.masonry .tile-cover::before{content:''; position:absolute; inset:0; z-index:3; border-radius:inherit; padding:1.5px; pointer-events:none; opacity:0; transition:opacity .22s;
+  background:var(--grad);
+  -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite:xor; mask-composite:exclude;}
+.masonry .tile:hover .tile-cover::before{opacity:1;}
 .tile-badge{position:absolute; top:10px; left:10px; z-index:2; font-size:10.5px; font-weight:700; letter-spacing:.04em; color:#fff; background:rgba(0,0,0,.45); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); padding:3px 9px; border-radius:6px;}
 .like{position:absolute; top:9px; right:9px; z-index:2; display:inline-flex; align-items:center; gap:5px; height:27px; padding:0 10px; border-radius:var(--pill); font-size:11.5px; font-weight:700; color:#fff; background:rgba(0,0,0,.42); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); transition:background .16s, transform .16s;}
 .like:hover{background:var(--accent);}
@@ -358,7 +363,8 @@ footer{border-top:1px solid var(--border); padding:54px 0 40px; margin-top:clamp
     radial-gradient(80% 100% at 20% 0%, rgba(79,70,229,.12), transparent 60%),
     radial-gradient(60% 80% at 85% 10%, rgba(168,85,247,.08), transparent 62%);}
 .page-hero .wrap{position:relative; z-index:2; padding-top:30px; padding-bottom:38px;}
-.page-hero .live-chip{margin-bottom:18px;}
+/* 内页 hero 的实时 chip 升级成白卡药丸（呼应首页 NEW 播报语言） */
+.page-hero .live-chip{margin-bottom:18px; height:36px; padding:0 16px 0 14px; border-radius:99px; background:var(--panel-solid); border:1px solid var(--border); box-shadow:var(--shadow-xs);}
 
 @media(max-width:880px){ .nav-links{display:none;} }
 @media(max-width:560px){

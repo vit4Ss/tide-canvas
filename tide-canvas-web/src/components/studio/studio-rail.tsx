@@ -17,6 +17,7 @@
    ========================================================================== */
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { Logo } from "@/components/flux/atoms";
 import { usePathname } from "next/navigation";
 import NotificationCenter from "@/components/shared/notification-center";
@@ -44,11 +45,12 @@ const NAV_TOP: NavItem[] = [
   {
     href: "/studio",
     label: "创作",
+    // 魔杖 + 星芒（灯泡留给「灵感」，避免同一隐喻用两次）
     icon: (
       <svg viewBox="0 0 24 24">
-        <path d="M9 18h6" />
-        <path d="M10 21h4" />
-        <path d="M12 3a6 6 0 0 1 4 10.5c-.7.6-1 1-1 2H9c0-1-.3-1.4-1-2A6 6 0 0 1 12 3z" />
+        <path d="M3 21L13.5 10.5" />
+        <path d="M13 5.5l5.5 5.5" />
+        <path d="M17.5 2v3M17.5 9v3M14 5.5h3M21 5.5h-3" />
       </svg>
     ),
   },
@@ -116,9 +118,33 @@ function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(href + "/");
 }
 
+/** localStorage key for the rail's collapsed state (persists across pages). */
+const RAIL_COLLAPSED_KEY = "ws_rail_collapsed";
+
 export default function StudioRail() {
   const pathname = usePathname() ?? "";
   const { user } = useAuth();
+
+  // 折叠态：SSR 恒为展开，挂载后从 localStorage 同步（避免 hydration 不一致）。
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => {
+    try {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 挂载后一次性同步外部存储
+      setCollapsed(localStorage.getItem(RAIL_COLLAPSED_KEY) === "1");
+    } catch {
+      /* localStorage unavailable */
+    }
+  }, []);
+  const toggleCollapsed = () =>
+    setCollapsed((c) => {
+      const next = !c;
+      try {
+        localStorage.setItem(RAIL_COLLAPSED_KEY, next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
 
   const toolClass = (href: string) =>
     `ws-tool${isActive(pathname, href) ? " on" : ""}`;
@@ -127,7 +153,7 @@ export default function StudioRail() {
   const initials = accountName.trim().slice(0, 1).toUpperCase() || "U";
 
   return (
-    <aside className="ws-rail">
+    <aside className={`ws-rail${collapsed ? " collapsed" : ""}`}>
       <Link className="ws-brand" href="/" title="FlowingLight 流光">
         <Logo size={30} />
         <b>FLOWING</b>
@@ -143,7 +169,7 @@ export default function StudioRail() {
             href={item.href}
             title={item.label}
           >
-            {item.icon}
+            <span className="ic">{item.icon}</span>
             <span>{item.label}</span>
           </Link>
         ))}
@@ -155,7 +181,7 @@ export default function StudioRail() {
         href={ASSETS_ITEM.href}
         title={ASSETS_ITEM.label}
       >
-        {ASSETS_ITEM.icon}
+        <span className="ic">{ASSETS_ITEM.icon}</span>
         <span>{ASSETS_ITEM.label}</span>
       </Link>
 
@@ -178,7 +204,7 @@ export default function StudioRail() {
               title="通知"
               onClick={toggle}
             >
-              <span style={{ position: "relative", display: "inline-flex" }}>
+              <span className="ic" style={{ position: "relative" }}>
                 <svg viewBox="0 0 24 24">
                   <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
                   <path d="M13.7 21a2 2 0 0 1-3.4 0" />
@@ -195,33 +221,59 @@ export default function StudioRail() {
 
       {user ? (
         <Link className="ws-tool" href="/account" title={accountName || "个人中心"}>
-          <span
-            aria-hidden
-            style={{
-              width: 22,
-              height: 22,
-              borderRadius: 7,
-              display: "grid",
-              placeItems: "center",
-              fontSize: 10,
-              fontWeight: 800,
-              color: "#fff",
-              background: "linear-gradient(135deg,#4f46e5,#a855f7)",
-            }}
-          >
-            {initials}
+          <span className="ic">
+            <span
+              aria-hidden
+              style={{
+                width: 22,
+                height: 22,
+                borderRadius: 7,
+                display: "grid",
+                placeItems: "center",
+                fontSize: 10,
+                fontWeight: 800,
+                color: "#fff",
+                background: "linear-gradient(135deg,#4f46e5,#a855f7)",
+              }}
+            >
+              {initials}
+            </span>
           </span>
           <span>我的</span>
         </Link>
       ) : (
         <Link className="ws-tool" href="/login" title="登录">
-          <svg viewBox="0 0 24 24">
-            <circle cx="12" cy="8" r="4" />
-            <path d="M4 21c0-4 4-6 8-6s8 2 8 6" />
-          </svg>
+          <span className="ic">
+            <svg viewBox="0 0 24 24">
+              <circle cx="12" cy="8" r="4" />
+              <path d="M4 21c0-4 4-6 8-6s8 2 8 6" />
+            </svg>
+          </span>
           <span>登录</span>
         </Link>
       )}
+
+      {/* 折叠开关：图标随状态翻转，折叠后悬浮提示仍可辨识 */}
+      <button
+        className="ws-tool ws-collapse"
+        type="button"
+        title={collapsed ? "展开导航" : "收起导航"}
+        onClick={toggleCollapsed}
+      >
+        <span className="ic">
+          <svg
+            viewBox="0 0 24 24"
+            style={{
+              transform: collapsed ? "rotate(180deg)" : undefined,
+              transition: "transform .22s",
+            }}
+          >
+            <path d="M14 6l-6 6 6 6" />
+            <path d="M19 6v12" />
+          </svg>
+        </span>
+        <span>收起</span>
+      </button>
     </aside>
   );
 }

@@ -27,6 +27,7 @@ import Link from "next/link";
 import { communityApi } from "@/lib/community-api";
 import type { PostVO } from "@/types/community";
 import { useAuthStore } from "@/stores/use-auth-store";
+import SortSelect from "@/components/site/sort-select";
 import WorkModal from "@/components/site/work-modal";
 import { toast } from "@/components/shared/toast";
 import { useLiveCounter } from "@/components/site/use-live-counter";
@@ -50,7 +51,6 @@ const SORT_OPTS: { value: SortKey; label: string }[] = [
 ];
 
 const ALL = "全部";
-const VIDEO = "视频";
 
 /** Deterministic mesh-hue triplet seeded from a post id (covers the shared
  *  components' MeshHues contract; used as the gradient fallback). */
@@ -58,6 +58,15 @@ function hues(id: string): MeshHues {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360;
   return [h, (h + 132) % 360, (h + 248) % 360];
+}
+
+/** Deterministic tile aspect (height ratio) per post so the masonry gets a
+ *  natural rhythm instead of uniform blocks; videos render landscape. */
+const H_STEPS = [1.05, 1.2, 1.33, 1.5] as const;
+function tileH(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 33 + id.charCodeAt(i)) % 9973;
+  return H_STEPS[h % H_STEPS.length];
 }
 
 /** Map a backend PostVO to the Artwork shape the shared WorkModal/tiles expect.
@@ -74,7 +83,7 @@ function toArtwork(p: PostVO): ArtworkX {
   return {
     id: p.id,
     cover: hues(p.id),
-    h: 1.3,
+    h: p.type === "video" ? 0.75 : tileH(p.id),
     type: p.type === "video" ? "video" : "image",
     cat: (p.cat || "插画") as Artwork["cat"],
     model: p.model || "—",
@@ -121,20 +130,18 @@ export default function ExplorePage() {
   // from a stale filter set is discarded.
   const reqId = useRef(0);
 
-  // current filters → backend query params. The 视频 chip is a type filter.
+  // current filters → backend query params. 分类 chips 只管题材（cat），媒介
+  // 类型完全由 seg（type）决定——两套状态不再交叉，避免「chip 选了视频、seg
+  // 却显示图片」的矛盾展示。
   const queryFor = useCallback(
-    (p: number) => {
-      const catParam = cat === ALL || cat === VIDEO ? undefined : cat;
-      const typeParam = cat === VIDEO ? "video" : type === "all" ? undefined : type;
-      return {
-        pageNum: p,
-        pageSize: PAGE_SIZE,
-        sort,
-        cat: catParam,
-        type: typeParam,
-        keyword: debouncedQ || undefined,
-      };
-    },
+    (p: number) => ({
+      pageNum: p,
+      pageSize: PAGE_SIZE,
+      sort,
+      cat: cat === ALL ? undefined : cat,
+      type: type === "all" ? undefined : type,
+      keyword: debouncedQ || undefined,
+    }),
     [cat, type, sort, debouncedQ],
   );
 
@@ -210,10 +217,11 @@ export default function ExplorePage() {
     return () => ob.disconnect();
   }, [hasMore, loadMore]);
 
-  // Chip list: 全部 + real categories (sorted, stable) + 视频 (type shortcut).
+  // Chip list: 全部 + real categories (sorted, stable)。媒介类型（图片/视频）
+  // 由上方 seg 独立控制，不再混入分类行。
   const chips = useMemo(() => {
     const sorted = [...cats].sort((a, b) => a.localeCompare(b, "zh"));
-    return [ALL, ...sorted, VIDEO];
+    return [ALL, ...sorted];
   }, [cats]);
 
   const items = useMemo(() => posts.map(toArtwork), [posts]);
@@ -228,10 +236,77 @@ export default function ExplorePage() {
     router.push("/studio");
   };
 
+  // ── 美术馆轮展（本页专属，与首页 HeroWall/播报条区分）────────────────
+  // 热度前 6 的带封面作品作为「正在展出」，全幅铺底轮播；独立请求一次，
+  // 不随下方筛选变化，保证展厅稳定。
+  const [feat, setFeat] = useState<ArtworkX[]>([]);
+  const [fi, setFi] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    communityApi
+      .list({ pageNum: 1, pageSize: 12, sort: "hot" })
+      .then((res) => {
+        if (!alive || !res.success || !res.data) return;
+        const withCover = res.data.records
+          .filter((p) => p.cover || p.thumbnail)
+          .slice(0, 6)
+          .map(toArtwork);
+        if (withCover.length) setFeat(withCover);
+      })
+      .catch(() => {
+        /* 无精选时保持纯暗场，不影响页面 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  // 6.5s 轮换（单张时不轮）；手动点缩略图会立即切换。
+  useEffect(() => {
+    if (feat.length < 2) return;
+    const iv = setInterval(() => setFi((i) => (i + 1) % feat.length), 6500);
+    return () => clearInterval(iv);
+  }, [feat.length]);
+  const cur = feat.length ? feat[fi % feat.length] : null;
+
+  // 展厅鼠标视差：--mx/--my ∈ [-.5,.5] 驱动轮展舞台（反向）与聚光灯（正向），
+  // 直接写 CSS 变量，不触发 React 渲染。
+  const heroRef = useRef<HTMLElement>(null);
+  const onHeroMove = useCallback((e: React.MouseEvent) => {
+    const el = heroRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    el.style.setProperty("--mx", ((e.clientX - r.left) / r.width - 0.5).toFixed(3));
+    el.style.setProperty("--my", ((e.clientY - r.top) / r.height - 0.5).toFixed(3));
+  }, []);
+
+  // 标题逐词入场（首页 hero 同款 wordUp）
+  const TITLE_WORDS = ["在", "流光", "之中，", "发现", "灵感"];
+
   return (
     <>
-      <header className="page-hero">
-        <div className="ph-scrim" />
+      {/* 美术馆展厅：热门作品全幅轮展 + 展签，工具条沉入暗场（本页专属形态） */}
+      <header className="xp-hero" ref={heroRef} onMouseMove={onHeroMove}>
+        {/* 背景层收进 .xp-bg 统一裁剪（hero 本体不裁剪，排序弹层要伸出带底）：
+            轮展舞台 → 可读性蒙版 → 极光 → 聚光灯 → 流光光束 */}
+        <div className="xp-bg" aria-hidden>
+          <div className="xp-feat-stage">
+            {feat.map((a, i) => (
+              <div
+                key={a.id}
+                className={`xp-feat-bg${i === fi % feat.length ? " on" : ""}`}
+                style={
+                  a.coverUrl
+                    ? { backgroundImage: `url("${a.coverUrl}")` }
+                    : { background: mesh(a.cover[0], a.cover[1], a.cover[2]) }
+                }
+              />
+            ))}
+          </div>
+          <div className="xp-scrim" />
+          <div className="xp-aurora" />
+          <div className="xp-spot" />
+          <div className="xp-beam" />
+        </div>
         <div className="wrap">
           <div className="live-chip reveal in">
             <span className="live-dot" />
@@ -242,21 +317,25 @@ export default function ExplorePage() {
               <span className="d" />
               作品广场 · GALLERY
             </span>
-            <h1 className="reveal in">
-              在<span className="gtext">流光</span>之中，发现灵感
+            <h1 className="xp-title">
+              {TITLE_WORDS.map((w, i) => (
+                <span
+                  key={w}
+                  className={`xw${w === "流光" ? " gtext" : ""}`}
+                  style={{ animationDelay: `${0.1 + i * 0.07}s` }}
+                >
+                  {w}
+                </span>
+              ))}
             </h1>
             <p className="reveal in">
               来自全球创作者的真实作品。点开任意一张，查看提示词与参数，一键生成同款。
             </p>
           </div>
-        </div>
-      </header>
 
-      <section className="block" style={{ paddingTop: 30 }}>
-        <div className="wrap">
           <div className="explore-bar reveal in">
             <label className="search">
-              <span style={{ color: "var(--text-faint)" }}>⌕</span>
+              <span style={{ color: "rgba(255,255,255,.45)" }}>⌕</span>
               <input
                 type="text"
                 placeholder="搜索作品、作者或模型…"
@@ -278,17 +357,11 @@ export default function ExplorePage() {
               ))}
             </div>
 
-            <select
-              className="select"
+            <SortSelect
               value={sort}
-              onChange={(e) => setSort(e.target.value as SortKey)}
-            >
-              {SORT_OPTS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
+              options={SORT_OPTS}
+              onChange={(v) => setSort(v as SortKey)}
+            />
           </div>
 
           <div className="filters">
@@ -303,7 +376,66 @@ export default function ExplorePage() {
               </button>
             ))}
           </div>
+        </div>
 
+        {/* 展签：正在展出的作品铭牌 + 轮展缩略图（点击看详情 / 生成同款） */}
+        {cur && (
+          <aside className="xp-plaque" onClick={() => setActiveId(cur.id)}>
+            <div className="xp-pl-no">
+              正在展出 · {String((fi % feat.length) + 1).padStart(2, "0")} /{" "}
+              {String(feat.length).padStart(2, "0")}
+            </div>
+            <div className="xp-pl-t">《{cur.title}》</div>
+            <div className="xp-pl-b">
+              {cur.author} · <span className="mono">{cur.model}</span> · ♥ {fmt(cur.likes)}
+            </div>
+            <div className="xp-pl-acts">
+              <button
+                type="button"
+                className="ghost"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActiveId(cur.id);
+                }}
+              >
+                查看详情
+              </button>
+              <button
+                type="button"
+                className="solid"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  remix(cur);
+                }}
+              >
+                ↻ 生成同款
+              </button>
+            </div>
+            <div className="xp-thumbs">
+              {feat.map((a, i) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  aria-label={`展出第 ${i + 1} 件`}
+                  className={i === fi % feat.length ? "on" : ""}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setFi(i);
+                  }}
+                  style={
+                    a.coverUrl
+                      ? { backgroundImage: `url("${a.coverUrl}")` }
+                      : { background: mesh(a.cover[0], a.cover[1], a.cover[2]) }
+                  }
+                />
+              ))}
+            </div>
+          </aside>
+        )}
+      </header>
+
+      <section className="block" style={{ paddingTop: 40 }}>
+        <div className="wrap">
           {loading ? (
             <div className="empty" style={{ display: "block" }}>
               正在加载作品… ✦
