@@ -421,29 +421,58 @@ body.imini .acc-page .pf-stat .v.grad{background:none; -webkit-background-clip:i
    长时间看表格/数据不累眼，彩色图表在纸面上也更清晰。
    ════════════════════════════════════════════════════════════════════ */
 body.imini .admin-body{
-  --bg:#F6F5F2; --surface:#FFFFFF; --surface-2:#FAFAF8; --panel:#EFEEE9;
-  --text:#1C1917; --text-dim:#57534E; --text-faint:#A29E96;
-  --border:#E7E5E0; --border-strong:#D6D3CC;
-  --accent:#1C1917; --accent-soft:rgba(28,25,23,.08);
-  --grad:#1C1917;
-  --r-sm:8px; --r:10px; --r-lg:14px;
-  --shadow-sm:0 1px 2px rgba(28,25,23,.05);
-  --shadow:0 2px 8px rgba(28,25,23,.06), 0 8px 24px rgba(28,25,23,.06);
+  /* 苹果白（apple.com/macOS 实测值,ux Bento-Apple 档案同源）：
+     #F5F5F7 页面 + 纯白卡 + #1D1D1F 墨 + #D2D2D7 发丝线 + Apple 蓝主控 */
+  --bg:#F5F5F7; --surface:#FFFFFF; --surface-2:#FBFBFD; --panel:#F0F0F3;
+  --text:#1D1D1F; --text-dim:#6E6E73; --text-faint:#86868B;
+  --border:#E8E8ED; --border-strong:#D2D2D7;
+  --accent:#0071E3; --accent-soft:rgba(0,113,227,.12);
+  --grad:#0071E3;
+  --r-sm:9px; --r:12px; --r-lg:18px;
+  --shadow-sm:2px 4px 12px rgba(0,0,0,.08);   /* apple.com 商店卡投影实测值 */
+  --shadow:2px 4px 16px rgba(0,0,0,.10);
   --disp:var(--font-sans),-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',sans-serif;
   --ui:var(--font-sans),-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',sans-serif;
 }
-body.imini .adm-side{background:rgba(255,255,255,.85); backdrop-filter:blur(14px);}
-body.imini .adm-top{background:rgba(255,255,255,.82); backdrop-filter:blur(14px);}
-/* 激活项 = 墨色底白字（Vercel 后台语言），徽标反白 */
-body.imini .adm-link.on{background:#1C1917; color:#fff;}
+/* 侧栏/顶栏 = apple.com 全局导航材质（毛玻璃是 Apple 官方用法） */
+body.imini .adm-side{background:rgba(251,251,253,.8);
+  backdrop-filter:saturate(180%) blur(20px); -webkit-backdrop-filter:saturate(180%) blur(20px);}
+body.imini .adm-top{background:rgba(251,251,253,.8);
+  backdrop-filter:saturate(180%) blur(20px); -webkit-backdrop-filter:saturate(180%) blur(20px);}
+/* 激活项 = Apple 蓝底白字（macOS 系统设置侧栏语言） */
+body.imini .adm-link.on{background:var(--accent); color:#fff;}
 body.imini .adm-link.on svg{stroke:#fff;}
-body.imini .adm-link.on .badge{color:#1C1917; background:rgba(255,255,255,.85);}
-/* 输入焦点：墨色细描边 + 极淡环 */
+body.imini .adm-link.on .badge{color:#fff; background:rgba(255,255,255,.25);}
+/* 输入焦点：Apple 蓝描边 + 淡蓝环 */
 body.imini .admin-body input:focus,body.imini .admin-body textarea:focus,body.imini .admin-body select:focus{
-  border-color:rgba(28,25,23,.55); box-shadow:0 0 0 3px rgba(28,25,23,.08); outline:none;}
-/* 品牌磁贴：墨色底（覆盖全站白磁贴规则,纸面上白色会隐形） */
-body.imini .adm-brand .glyph::before{background:#1C1917; box-shadow:none;}
-body.imini .admin-body ::selection{background:#1C1917; color:#fff;}
+  border-color:var(--accent); box-shadow:0 0 0 3px rgba(0,113,227,.16); outline:none;}
+/* 品牌磁贴：Apple 蓝底（覆盖全站白磁贴规则） */
+body.imini .adm-brand .glyph::before{background:var(--grad); box-shadow:none;}
+body.imini .admin-body ::selection{background:#0071E3; color:#fff;}
+
+/* ── 纸面光影体系（ux 规则 elevation-consistent：统一五级阴影梯度） ──
+   光源在上方：近距锐影(key) + 远距柔散(ambient)双层,墨色暖调。
+   e0 平贴=仅边线(chips/表格) e1 静置卡 e2 悬停浮起 e3 吸附栏 e4 弹层 */
+/* 页面 = apple.com 灰底色带,平铺不加渐变 */
+body.imini .adm{background:#F5F5F7;}
+/* e1 静置：白卡去边线,只用商店卡投影承层级（apple.com 商店卡语言） */
+body.imini .admin-body .kpi,body.imini .admin-body .adm-panel{
+  border-color:transparent; box-shadow:var(--shadow-sm);
+  transition:box-shadow .3s var(--ease), transform .3s var(--ease);}
+/* e2 悬停：轻浮起 + 投影扩散（ux 档案: hover lift + soft shadow expansion） */
+body.imini .admin-body .kpi:hover{transform:translateY(-2px);
+  box-shadow:2px 8px 24px rgba(0,0,0,.12);}
+/* e3 吸附栏：Apple 只用发丝线分层,不投影 */
+body.imini .adm-top{box-shadow:none; border-bottom:1px solid rgba(0,0,0,.10);}
+body.imini .adm-side{box-shadow:none;}
+/* e4 弹层：apple.com 弹层投影实测值 */
+body.imini .adm-modal{box-shadow:0 11px 34px rgba(0,0,0,.16), 2px 4px 16px rgba(0,0,0,.08); border:none;}
+body.imini .adm-mask{background:rgba(0,0,0,.4);}
+/* Apple 蓝主按钮：hover 仅换色不位移（apple.com 按钮行为） */
+body.imini .admin-body .adm-btn:hover{transform:none;}
+/* e0 平贴层的悬停反馈：表格行用灰底带 */
+body.imini .adm-table tbody tr:hover td{background:#F5F5F7;}
+body.imini .adm-chip:hover{background:var(--panel); border-color:var(--border-strong);}
 
 /* ── accent 变中性浅灰后的配套（原「accent 底 + 白字」全部转白底黑字） ── */
 body.imini .ratio.on{color:#0A0A0B; background:#fff; border-color:transparent;}
