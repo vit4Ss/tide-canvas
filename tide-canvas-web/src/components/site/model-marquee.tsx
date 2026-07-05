@@ -14,13 +14,15 @@
 
 import Link from "next/link";
 import { fmt } from "@/mock";
+import { matchBrandIcon } from "@/lib/model-brand";
 import type { ModelLiteVO } from "@/types/content";
 
 /** Deterministic brand-ish gradient for models without a logo. */
 function swGrad(seed: string): string {
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) % 360;
-  return `linear-gradient(135deg, hsl(${h} 70% 56%), hsl(${(h + 52) % 360} 72% 50%))`;
+  // 灰阶色板（主题零彩色）：白字可读的深灰系
+  return `linear-gradient(135deg, hsl(0 0% ${30 + (h % 16)}%), hsl(0 0% ${14 + (h % 10)}%))`;
 }
 
 export default function ModelMarquee({ models }: { models: ModelLiteVO[] }) {
@@ -51,17 +53,21 @@ export default function ModelMarquee({ models }: { models: ModelLiteVO[] }) {
         {lines.map((arr, li) => (
           <div className="mq-line" key={li}>
             <div className="mq-track">
-              {arr.concat(arr).map((m, i) => (
+              {arr.concat(arr).map((m, i) => {
+                // 图标三级回退（与创作台一致）：接口封面 → 品牌官方 logo
+                // （matchBrandIcon 按名称自动识别厂商）→ 字母灰阶兜底
+                const icon = m.coverUrl || matchBrandIcon(m.name);
+                return (
                 <Link className="mq-chip" href="/models" key={`${m.id}-${i}`}>
                   <span
                     className="sw"
                     style={
-                      m.coverUrl
-                        ? { backgroundImage: `url(${m.coverUrl})` }
+                      icon
+                        ? { backgroundImage: `url(${icon})`, backgroundSize: "cover" }
                         : { background: swGrad(m.name) }
                     }
                   >
-                    {m.coverUrl ? "" : m.name[0].toUpperCase()}
+                    {icon ? "" : m.name[0].toUpperCase()}
                   </span>
                   <b>{m.name}</b>
                   {m.tags?.[0] && <em>{m.tags[0]}</em>}
@@ -69,7 +75,8 @@ export default function ModelMarquee({ models }: { models: ModelLiteVO[] }) {
                     <span className="uc">{fmt(m.useCount)} 次调用</span>
                   )}
                 </Link>
-              ))}
+                );
+              })}
             </div>
           </div>
         ))}

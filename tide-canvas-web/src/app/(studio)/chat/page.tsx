@@ -39,6 +39,7 @@ import { chatApi, streamMessage } from "@/lib/chat-api";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { AiTaskStatus } from "@/types/ai";
 import { marketApi, type StudioModelVO } from "@/lib/market-api";
+import { matchBrandIcon } from "@/lib/model-brand";
 import { AssetsBrowser, type PickedAsset } from "@/components/studio/assets-browser";
 import { useAuthStore } from "@/stores/use-auth-store";
 import type { ContextUsageVO, ConversationVO, MessageVO, MessageTaskVO } from "@/types/chat";
@@ -71,10 +72,40 @@ const MODE_HINT: Record<string, string> = {
 function modelSwatch(name: string): string {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
-  return `linear-gradient(135deg, hsl(${h} 78% 62%), hsl(${(h + 50) % 360} 80% 52%))`;
+  // 灰阶色板（主题零彩色）：浅灰系配深色字
+  return `linear-gradient(135deg, hsl(0 0% ${82 + (h % 12)}%), hsl(0 0% ${64 + (h % 12)}%))`;
 }
 function modelInitial(name: string): string {
   return name.replace(/[^A-Za-z一-龥]/g, "").charAt(0) || "A";
+}
+
+/** swatch 样式+字形：后台配置 icon > 品牌官方 logo（自动匹配）> 首字母渐变。
+ *  与创作台 create-studio 的 swatchFor 同一优先级。 */
+function swatchOf(m?: {
+  name: string;
+  modelKey?: string;
+  config?: { icon?: string } | null;
+}): { style: React.CSSProperties; glyph: string } {
+  const name = m?.name || "";
+  const icon = m?.config?.icon;
+  if (icon && (/^(https?:)?\/\//.test(icon) || icon.startsWith("/"))) {
+    const isBrand = icon.startsWith("/model-icons/");
+    return {
+      style: isBrand
+        ? { background: `#fff center/66% no-repeat url("${icon}")`, boxShadow: "inset 0 0 0 1px rgba(22,28,45,.1)" }
+        : { background: `center/cover no-repeat url("${icon}")` },
+      glyph: "",
+    };
+  }
+  if (icon) return { style: { background: modelSwatch(name) }, glyph: icon };
+  const brand = matchBrandIcon(m?.modelKey, name);
+  if (brand) {
+    return {
+      style: { background: `#fff center/66% no-repeat url("${brand}")`, boxShadow: "inset 0 0 0 1px rgba(22,28,45,.1)" },
+      glyph: "",
+    };
+  }
+  return { style: { background: modelSwatch(name) }, glyph: modelInitial(name) };
 }
 function typeTag(type: string): string {
   return type === "video" ? "VID" : type === "audio" ? "AUD" : type === "text" ? "TXT" : "IMG";
@@ -1498,11 +1529,14 @@ export default function ChatPage() {
                   open={openSel === "model"}
                   onToggle={() => toggleSel("model")}
                   menuH="选择模型"
-                  lead={
-                    <span className="cm-sw sm" style={{ background: modelSwatch(model) }}>
-                      {modelInitial(model)}
-                    </span>
-                  }
+                  lead={(() => {
+                    const sw = swatchOf(genModels.find((m) => m.name === model) ?? { name: model });
+                    return (
+                      <span className="cm-sw sm" style={sw.style}>
+                        {sw.glyph}
+                      </span>
+                    );
+                  })()}
                   label={model || "选择模型"}
                 >
                   {genModels.map((m) => {
@@ -1521,9 +1555,14 @@ export default function ChatPage() {
                           setOpenSel(null);
                         }}
                       >
-                        <span className="cm-sw" style={{ background: modelSwatch(m.name) }}>
-                          {modelInitial(m.name)}
-                        </span>
+                        {(() => {
+                          const sw = swatchOf(m);
+                          return (
+                            <span className="cm-sw" style={sw.style}>
+                              {sw.glyph}
+                            </span>
+                          );
+                        })()}
                         <span className="nfo">
                           <span className="nm">
                             <span className="nm-t">{m.name}</span>

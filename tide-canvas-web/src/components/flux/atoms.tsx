@@ -121,9 +121,9 @@ export interface LogoProps {
 
 export function Logo({ size = 28, tone = 'duo', style, className }: LogoProps) {
   const solid = tone === 'solid';
-  // Self-contained gradient (theme vars with hard fallbacks) so the mark renders
-  // on any theme/background — including the admin light theme — without relying on
-  // external CSS. A fixed gradient id is fine across instances (identical defs).
+  // 2026-07-05 品牌重绘 v2「光速三线」：去掉底板磁贴，三道粗圆头光条
+  // 斜向俯冲（流光的速度线），最长一道的尽头是一颗冷青光子 #22D3EE。
+  // 粗几何形保证 16px 也清晰可读；无渐变无发光；solid = currentColor 单色。
   return (
     <svg
       width={size}
@@ -134,27 +134,13 @@ export function Logo({ size = 28, tone = 'duo', style, className }: LogoProps) {
       style={{ display: 'block', flex: 'none', ...style }}
       aria-hidden
     >
-      {!solid && (
-        <defs>
-          <linearGradient id="fl-mark-grad" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="var(--accent, #6d8bf5)" />
-            <stop offset="100%" stopColor="var(--accent-2, #9b7bf0)" />
-          </linearGradient>
-        </defs>
-      )}
-      {/* rounded brand tile */}
-      <rect x={2} y={2} width={28} height={28} rx={8.5} fill={solid ? 'currentColor' : 'url(#fl-mark-grad)'} />
-      {/* flowing-light ribbon — an S-curve light sweep across the tile (流光) */}
-      <path
-        d="M6 22 C 11.5 22, 11.5 11, 17 11 C 21 11, 22 16, 26.4 11.4"
-        stroke="#fff"
-        strokeWidth={2.6}
-        strokeLinecap="round"
-        fill="none"
-        opacity={0.97}
-      />
-      {/* glint head of the light streak */}
-      <circle cx={26.4} cy={11.4} r={2} fill="#fff" />
+      <g transform="skewX(-10)" stroke={solid ? 'currentColor' : '#FFFFFF'} strokeWidth={4} strokeLinecap="round">
+        <path d="M10 8 H24" />
+        <path d="M8 16 H19" />
+        <path d="M11 24 H16" />
+      </g>
+      {/* photon at the tip of the longest streak（冷青光子） */}
+      <circle cx={26.6} cy={6.6} r={2.6} fill={solid ? 'currentColor' : '#22D3EE'} />
     </svg>
   );
 }

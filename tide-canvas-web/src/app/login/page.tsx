@@ -20,6 +20,7 @@
    ========================================================================== */
 
 import "@/styles/liuguang/flux.css";
+import "@/styles/liuguang/imini-theme.css"; // 正式主题（body.imini 由根布局直出）
 import "./login.css";
 
 import { Suspense, useEffect, useRef, useState } from "react";

@@ -1,0 +1,497 @@
+/* ============================================================================
+   IMINI · 全站正式主题（2026-07-05 用户定稿）。body.imini 由根布局直出，
+   本文件被 site / studio / admin / login 各自引入；画布组未引入，保持自有深色。
+   色板照抄 imini.ai/zh（截图实测提取）：
+   - 页面底 #0A0A0B 近黑；卡片 #17171A/#1A1A1E；白发丝线 rgba(255,255,255,.10)
+   - 文字三级：#F5F5F7 / rgba(255,255,255,.65) / rgba(255,255,255,.45)
+   - 主按钮 = 白底黑字（imini「开始创作」）；强调色 = 中性浅灰 #E8E8EA
+     （用户明确要求零蓝紫零彩色——界面全灰阶，焦点环/选中态也是白灰）
+   - 彩色一律来自作品图与模型 logo，界面本身无彩色装饰
+   排印/圆角/动效沿用已定规则：Inter+Noto、H1≤36、圆角 6-16 无胶囊、
+   无玻璃无渐变、入场动画下线。结构与内容零改动。
+   ========================================================================== */
+
+/* ── 设计令牌 ─────────────────────────────────────────────────────────── */
+body.imini{
+  /* 强调色体系 = 白/中性（用户最终定稿：黑白灰，无彩色强调；
+     荧光绿/蓝/紫等九轮色相尝试全部否决——颜色只来自作品图与品牌 logo） */
+  --accent:#E8E8EA; --accent-2:#E8E8EA; --accent-3:#22D3EE;
+  --accent-soft:rgba(255,255,255,.09);
+  --grad:#E8E8EA; --grad-warm:#E8E8EA; --btn-grad:#FFFFFF;
+  /* 科技感点缀（用户认可的 imini 内页语言）：冷青 #22D3EE 只用于毫米级
+     元素——live 圆点/光标/激活项/焦点环/进度条,绝不上按钮与大面积 */
+  --tech:#22D3EE; --tech-soft:rgba(34,211,238,.16);
+  --btn-shadow:none;
+  --bg:#0A0A0B; --surface:#131316; --surface-2:#17171A; --panel-solid:#17171A;
+  --panel:rgba(255,255,255,.05); --panel-hover:rgba(255,255,255,.09);
+  --border:rgba(255,255,255,.10); --border-strong:rgba(255,255,255,.18);
+  --text:#F5F5F7; --text-dim:rgba(255,255,255,.65); --text-faint:rgba(255,255,255,.45);
+  --shadow-xs:none;
+  --shadow-sm:0 4px 16px rgba(0,0,0,.4);
+  --shadow:0 4px 16px rgba(0,0,0,.4);
+  --shadow-lg:0 10px 32px rgba(0,0,0,.5);
+  --shadow-pop:0 20px 60px rgba(0,0,0,.65);
+  --r-sm:8px; --r:10px; --r-lg:14px; --btn-r:999px;
+  --pill:999px; /* imini 按钮语言 = 胶囊（用户指定照抄，覆盖此前禁胶囊规则） */
+  --ease:cubic-bezier(.25,.1,.25,1);
+  --ui:var(--font-sans),-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC','PingFang SC','Microsoft YaHei',sans-serif;
+  --disp:var(--font-sans),-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC','PingFang SC','Microsoft YaHei',sans-serif;
+  --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  background:#0A0A0B;
+}
+body.imini ::selection{background:#E4E4E7; color:#0A0A0B;}
+
+/* ── 排印（沿用定稿字阶，颜色换白系） ─────────────────────────────────── */
+body.imini .hero-h1{font-size:clamp(30px,3.4vw,36px); font-weight:700; letter-spacing:-.015em; line-height:1.25; color:var(--text);}
+body.imini .hero-h1 .cn{font-weight:700;}
+body.imini .hero-sub{font-size:16px; line-height:1.6; color:var(--text-dim);}
+body.imini .sec-title{font-size:clamp(24px,2.4vw,28px); font-weight:600; letter-spacing:-.01em; line-height:1.3;}
+body.imini .page-head h1{font-size:clamp(26px,2.8vw,34px); font-weight:700; letter-spacing:-.015em;}
+body.imini .sec-sub{font-size:15px; line-height:1.6;}
+body.imini .cap-body h3{font-size:17px;}
+body.imini .cap.big .cap-body h3{font-size:20px;}
+body.imini .mq-title{font-size:clamp(22px,2.2vw,26px);}
+body.imini .modal-side .mt{font-size:20px;}
+body.imini .plan-price .num{font-size:34px;}
+body.imini .stat-n{font-size:clamp(20px,2vw,24px);}
+body.imini .author-hero .nm{font-size:20px;}
+body.imini .brand,body.imini .cap-body h3,body.imini .plan-name,
+body.imini .plan-price .num,body.imini .mq-title,body.imini .modal-side .mt,
+body.imini .stat-n,body.imini .canvas-empty h3{font-weight:600;}
+body.imini .eyebrow{font-family:inherit; font-size:13px; font-weight:400; letter-spacing:.01em; text-transform:none; color:var(--text-faint);}
+body.imini .eyebrow .d{box-shadow:none; background:var(--accent);}
+body.imini .kicker{font-family:inherit; font-size:12.5px; font-weight:400; letter-spacing:.06em; color:var(--text-faint);}
+body.imini .mq-eyebrow{font-family:inherit; font-size:12.5px; font-weight:400; letter-spacing:.06em; text-transform:none;}
+body.imini .panel-h,body.imini .pblock .pl{font-family:inherit; letter-spacing:.02em; text-transform:none;}
+body.imini .pcell .k{text-transform:none; letter-spacing:.02em;}
+body.imini .pcell .v{font-family:var(--mono);} /* 参数值=等宽（仪表盘精密感） */
+body.imini .stat-n{font-family:var(--mono); letter-spacing:-.01em;} /* 数据数字=等宽 */
+body.imini .cmp thead th{font-family:inherit; font-size:12px; letter-spacing:.02em; text-transform:none;}
+/* 渐变字 → 白色实色（注意 background 简写陷阱） */
+body.imini .gtext{background:none; -webkit-background-clip:initial; background-clip:initial;
+  color:#fff; -webkit-text-fill-color:#fff;}
+
+/* ── 按钮：主 CTA 白底黑字（imini 语言）；次级深灰发丝线；链接蓝 ───────── */
+body.imini .console-go,
+body.imini .vip,
+body.imini .modal-actions .pri,
+body.imini .plan-cta.solid{background:#fff; color:#0A0A0B; box-shadow:none; border-radius:999px; font-weight:500; font-size:15px;}
+body.imini .console-go:hover,
+body.imini .vip:hover,
+body.imini .modal-actions .pri:hover,
+body.imini .plan-cta.solid:hover{filter:none; background:#E8E8EA; color:#0A0A0B; transform:none;}
+body.imini .console-go:active{transform:none; background:#DCDCDF;}
+body.imini .modal-actions .pri::after{content:none;}
+body.imini .signin{border-radius:999px; box-shadow:none; font-weight:500; color:var(--text); border-color:var(--border-strong); background:transparent;}
+body.imini .signin:hover{transform:none; color:#fff; border-color:rgba(255,255,255,.32); background:var(--panel);}
+body.imini .plan-cta.ghost{border-radius:999px; box-shadow:none; font-weight:500; color:var(--text); background:transparent; border-color:var(--border-strong);}
+body.imini .plan-cta.ghost:hover{color:#fff; border-color:rgba(255,255,255,.34); background:var(--panel);}
+body.imini .see-all,body.imini .mq-more{color:#E8E8EA; border:none; background:none; padding:0; height:auto; font-weight:500; font-size:15px;}
+body.imini .see-all:hover,body.imini .mq-more:hover{transform:none; background:none; text-decoration:underline;}
+body.imini #feed-sec .see-all{color:#E8E8EA; border:none;}
+body.imini #feed-sec .see-all:hover{background:none; text-decoration:underline;}
+body.imini .qchip{background:var(--surface-2); border-color:var(--border); color:var(--text-dim); font-weight:500;}
+body.imini .qchip:hover{transform:none; background:#202024; border-color:var(--border-strong); color:var(--text);}
+body.imini .cap-kick{background:rgba(0,0,0,.6); backdrop-filter:none; border-radius:999px; font-weight:500; letter-spacing:.04em;}
+body.imini .cap-kick.core{background:var(--accent); box-shadow:none;}
+body.imini .model-pill{background:#fff; color:#0A0A0B; box-shadow:none; font-weight:500;}
+body.imini .model-pill .x{background:rgba(0,0,0,.1);}
+body.imini .nlink .tag{border-radius:999px; font-weight:600;}
+
+/* ── 导航：近黑实色 + 白发丝线 ───────────────────────────────────────── */
+body.imini .nav.solid{background:rgba(10,10,11,.92);
+  backdrop-filter:none; -webkit-backdrop-filter:none;
+  border-bottom:1px solid rgba(255,255,255,.08); box-shadow:none;}
+body.imini .nlink{font-weight:500; font-size:13.5px; color:var(--text-dim);}
+body.imini .nlink:hover{color:#fff;}
+body.imini .nlink.on{color:var(--tech); background:none;} /* imini 式：激活项青色文字 */
+/* 品牌字标：统一 800 重、收紧字距的紧凑大写 lockup */
+body.imini .brand{color:#fff; font-weight:800; letter-spacing:.02em; font-size:16px; gap:9px;}
+body.imini .brand b{font-weight:800; color:rgba(255,255,255,.55);}
+/* CSS 版磁贴（页脚/登录侧栏/后台侧栏共用）：同步为白磁贴 */
+body.imini .brand .glyph::before{background:#fff; box-shadow:none;}
+body.imini .auth-aside-top .glyph::before{background:#fff; box-shadow:none;}
+body.imini .adm-brand .glyph::before{background:#fff; box-shadow:none;}
+body.imini .brand b{color:#E8E8EA;}
+body.imini .icbtn{color:var(--text-dim); background:var(--panel); border-color:var(--border);}
+
+/* ── 表面：全站近黑；区块以明度分带；卡片 = 深灰面 + 白发丝线 ─────────── */
+body.imini section.block{background:#0A0A0B;}
+body.imini #caps-sec{background:#0A0A0B; border:none;}
+body.imini #studio-sec{background:#0F0F11;}
+body.imini #cta-sec{background:#0F0F11; border:none;}
+body.imini .mq-wrap{background:#0A0A0B; border-color:var(--border);}
+body.imini .plan{background:var(--surface-2); border-color:var(--border); border-radius:14px; box-shadow:none;}
+body.imini .plan:hover{transform:translateY(-2px); border-color:var(--border-strong); box-shadow:var(--shadow-sm);}
+body.imini .plan.feat,body.imini .plan.feat:hover{background:#1C1C21; color:var(--text); border:1px solid rgba(255,255,255,.35); box-shadow:none; transform:none;}
+body.imini .plan.feat:hover{transform:translateY(-2px);}
+body.imini .plan.feat::before,body.imini .plan.feat::after{content:none;}
+body.imini .plan.feat .plan-desc{color:var(--text-faint);}
+body.imini .plan.feat .plan-price .per{color:var(--text-faint);}
+body.imini .plan.feat .plan-feats li{color:var(--text-dim);}
+body.imini .plan.feat .plan-feats .ck{color:#E8E8EA; background:var(--accent-soft);}
+body.imini .plan.feat .plan-cta.solid{color:#0A0A0B; background:#fff; box-shadow:none;}
+body.imini .plan.feat .plan-cta.solid:hover{background:#E8E8EA; filter:none;}
+body.imini .plan-tag{border-radius:999px; font-weight:500; letter-spacing:0;}
+body.imini .cmp-badge{border-radius:999px; font-weight:500; letter-spacing:0;}
+body.imini .plan-feats .ck{color:#E8E8EA; background:var(--accent-soft);}
+/* FAQ：白发丝分割线列表 */
+body.imini .faq-item{background:none; border:none; border-radius:0; box-shadow:none; border-bottom:1px solid var(--border);}
+body.imini .faq-item:first-child{border-top:1px solid var(--border);}
+body.imini .faq-item.open{border-color:var(--border); box-shadow:none;}
+body.imini .faq-item::before{content:none;}
+body.imini .faq-q{padding-left:0; padding-right:0; font-weight:600; font-size:16px;}
+body.imini .faq-q .n{font-family:inherit; color:var(--text-faint);}
+body.imini .faq-item.open .faq-q .n{color:#E8E8EA;}
+body.imini .faq-a-in{padding-left:0; font-size:14.5px;}
+body.imini .faq-ic{background:none; color:var(--text-dim);}
+body.imini .faq-item.open .faq-ic{background:none; color:#fff;}
+
+/* ── 媒体卡：深灰面 + 白发丝线（imini 卡片语言） ─────────────────────── */
+body.imini .hw-tile{border-radius:14px; border:1px solid rgba(255,255,255,.12);}
+body.imini .cap,body.imini #caps-sec .cap{border-radius:14px; border:1px solid var(--border); box-shadow:none;
+  background:var(--surface-2);
+  transition:transform .25s var(--ease), box-shadow .25s var(--ease), border-color .25s;}
+body.imini .cap:hover,body.imini #caps-sec .cap:hover{transform:translateY(-2px); border-color:var(--border-strong); box-shadow:var(--shadow-sm);}
+body.imini .cap:hover .cap-cover{transform:scale(1.02);}
+body.imini .cap-cover:not([style*="url("]){background:linear-gradient(180deg,#232327,#1A1A1E) !important;}
+body.imini .cap-ico{background:rgba(0,0,0,.5); backdrop-filter:none; border-color:rgba(255,255,255,.14); border-radius:10px;}
+body.imini .ic-window{border-radius:14px; box-shadow:var(--shadow-sm); border-color:var(--border); background:var(--surface-2);}
+body.imini .ic-node{border-radius:10px;}
+body.imini .tile:hover .tile-cover{transform:translateY(-2px) scale(1.005);}
+body.imini .mcard:hover{transform:translateY(-2px);}
+body.imini .mq-chip{border-radius:12px; box-shadow:none; border-color:var(--border); background:var(--surface-2);}
+body.imini .mq-chip:hover{transform:none; box-shadow:none; border-color:var(--border-strong);}
+body.imini .mq-chip em{border-radius:999px;}
+
+/* ── 输入台：深灰面白发丝线，focus 蓝描边 ────────────────────────────── */
+body.imini .console{border-radius:999px; box-shadow:none; border-color:var(--border-strong); background:var(--surface-2);}
+body.imini .console:hover{box-shadow:none; border-color:rgba(255,255,255,.3);}
+body.imini .console:focus-within{border-color:rgba(34,211,238,.6); box-shadow:0 0 0 3px var(--tech-soft);}
+body.imini .console .caret{background:#E8E8EA;}
+body.imini .console .spark{color:var(--text-faint);}
+body.imini .search{background:var(--surface-2); border-color:var(--border);}
+body.imini .search:focus-within{border-color:rgba(34,211,238,.6); box-shadow:0 0 0 3px var(--tech-soft);}
+body.imini .sst-btn{background:var(--surface-2); border-color:var(--border); color:var(--text);}
+body.imini .sst.open .sst-btn{border-color:rgba(34,211,238,.6); box-shadow:0 0 0 3px var(--tech-soft);}
+body.imini .sst-menu{background:#1C1C21; border-color:var(--border-strong); backdrop-filter:none; -webkit-backdrop-filter:none;}
+body.imini .sst-it.on{color:#E8E8EA;}
+body.imini .seg{background:var(--surface-2); border-color:var(--border);}
+body.imini .seg button.on,body.imini .tabs button.on,body.imini .bill-toggle button.on{background:#fff; color:#0A0A0B; box-shadow:none; font-weight:500;}
+body.imini .bill-toggle{background:var(--surface-2); border-color:var(--border);}
+body.imini .bill-toggle button.on .save{color:#0A0A0B; background:rgba(0,0,0,.1);}
+body.imini .acc-modal .m-btn.pri{background:#fff; color:#0A0A0B;}
+body.imini .acc-modal .m-btn.pri:hover{filter:none; background:#E8E8EA;}
+body.imini .acc-modal .field input:focus{border-color:#E8E8EA;}
+body.imini .prompt-box,body.imini .cmt-new textarea{background:#101013; border-color:var(--border); color:var(--text);}
+
+/* ── 玻璃收敛：实色 ─────────────────────────────────────────────────── */
+body.imini .tile-badge,body.imini .like{backdrop-filter:none; -webkit-backdrop-filter:none; background:rgba(0,0,0,.6); border-radius:999px;}
+body.imini .play-orb{backdrop-filter:none; -webkit-backdrop-filter:none; background:rgba(0,0,0,.5); border:none;}
+body.imini .mask{backdrop-filter:none; -webkit-backdrop-filter:none; background:rgba(0,0,0,.66);}
+body.imini .modal{border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow-pop); background:#131316;}
+body.imini .ic-zoom,body.imini .ic-mini{backdrop-filter:none;}
+body.imini .modal-openpage{backdrop-filter:none; -webkit-backdrop-filter:none; background:rgba(0,0,0,.6);}
+
+/* ── 动效：入场剧场下线；循环内容动画保留 ────────────────────────────── */
+body.imini .reveal,body.imini .reveal-scale{opacity:1 !important; transform:none !important; transition:none !important;}
+body.imini .hero-h1 .w{opacity:1; transform:none; animation:none;}
+body.imini .hero-fadein{opacity:1; animation:none;}
+body.imini .xp-title .xw{opacity:1; transform:none; animation:none;}
+body.imini .lb-row:hover{transform:none;}
+body.imini .live-chip{font-family:inherit; color:var(--text-faint);}
+body.imini .live-dot{background:#E8E8EA;}
+body.imini .scroll-cue{font-family:inherit; letter-spacing:.12em;}
+body.imini .scroll-cue .bar{background:linear-gradient(rgba(255,255,255,.4),transparent);}
+
+/* ── hero：作品墙保留，蒙版换近黑系（左重右轻） ─────────────────────── */
+body.imini .hero-scrim{background:
+  linear-gradient(100deg, rgba(10,10,11,.94) 0%, rgba(10,10,11,.8) 34%, rgba(10,10,11,.38) 66%, rgba(10,10,11,.18) 100%),
+  linear-gradient(to bottom, rgba(10,10,11,.6) 0%, transparent 30%, transparent 62%, #0A0A0B 96%);}
+body.imini .hero-noise{opacity:.25; background-image:
+  linear-gradient(rgba(255,255,255,.05) 1px, transparent 1px),
+  linear-gradient(90deg, rgba(255,255,255,.05) 1px, transparent 1px);}
+body.imini .hero-stats-in{border-color:var(--border);}
+body.imini .hero-stats-in > div + div{border-color:var(--border);}
+
+/* ── 无限画布区：中性深色，脉冲/游标蓝与灰 ───────────────────────────── */
+body.imini #studio-sec::before{content:none;}
+body.imini .ic-wire,body.imini .ic-port,body.imini .ic-pulse{filter:none;}
+body.imini .ic-wire{stroke:rgba(255,255,255,.5);}
+body.imini .ic-port{fill:#E8E8EA;}
+body.imini .ic-pulse{stroke:#E8E8EA;}
+body.imini .ic-gen-bar i{background:#E8E8EA;}
+body.imini .ic-gen-bar i::after{content:none;}
+body.imini .ic-node.gen-live::after{content:none;}
+body.imini .ic-online .av.a{background:#E8E8EA;}
+body.imini .ic-online .av.b{background:#52525B;}
+body.imini .ic-online .av.c{background:#7B7B82;}
+body.imini .ic-cursor.a svg path{fill:#E8E8EA;} body.imini .ic-cursor.a span{background:#E8E8EA;}
+body.imini .ic-cursor.b svg path{fill:#A1A1AA;} body.imini .ic-cursor.b span{background:#A1A1AA;}
+
+/* ── 三步流程 / 旧创作台 ─────────────────────────────────────────────── */
+body.imini .step{border-radius:14px; background:var(--surface-2); border-color:var(--border);}
+body.imini .step:hover{transform:none; border-color:var(--border-strong);}
+body.imini .step-ico{background:var(--accent-soft); color:#E8E8EA; box-shadow:none; border-radius:10px;}
+body.imini .step-line{height:2px; background:var(--accent);}
+body.imini .canvas-area{background:#0F0F11;}
+body.imini .lb-foll,body.imini .modal-author .foll,body.imini .author-hero .foll{border-radius:999px; font-weight:500;}
+body.imini .author-hero .foll{color:#0A0A0B; background:#fff;}
+
+/* ── 作品广场（首页暗场带,与全站同底,以边线分带） ───────────────────── */
+body.imini #feed-sec{background:#000; border-top:1px solid var(--border); border-bottom:1px solid var(--border);}
+body.imini #feed-sec::before{content:none;}
+body.imini #feed-sec .coverflow::before{content:none;}
+body.imini #feed-sec .cf-track .tile-cover{box-shadow:none; -webkit-box-reflect:none; border-radius:14px;}
+body.imini #feed-sec .cf-track .tile.cf-focus .tile-cover{
+  box-shadow:0 0 0 2px rgba(255,255,255,.9); -webkit-box-reflect:none;}
+body.imini #feed-sec .filters .f{border-radius:999px; font-weight:500;}
+body.imini #feed-sec .filters .f.on{background:#fff; color:#000; box-shadow:none;}
+body.imini .tile.fresh .tile-cover::after{content:'刚刚生成'; box-shadow:none; border-radius:999px;}
+body.imini .cf-track .tile.cf-focus .tile-cover::before{content:'焦点作品'; box-shadow:none; border-radius:999px; background:rgba(255,255,255,.92); color:#000;}
+body.imini .tile.fresh .tile-cover{animation-name:iminiFresh;}
+@keyframes iminiFresh{0%{box-shadow:0 0 0 2px rgba(34,211,238,.85), 0 0 18px rgba(34,211,238,.35);} 100%{box-shadow:0 0 0 0 transparent;}}
+body.imini .cf-ticker .tk .lk{color:rgba(255,255,255,.6);}
+body.imini .cf-ticker .tk .nw{background:#E8E8EA; color:#fff;}
+
+/* ── explore 展厅（本就深色,统一蓝焦点） ─────────────────────────────── */
+body.imini .xp-hero{background:#000;}
+body.imini .xp-aurora,body.imini .xp-spot,body.imini .xp-beam{display:none;}
+body.imini .xp-plaque{background:rgba(12,12,14,.9); border-color:var(--border); box-shadow:none; border-radius:14px;
+  backdrop-filter:none; -webkit-backdrop-filter:none;}
+body.imini .xp-pl-no{color:#E8E8EA; font-family:inherit; letter-spacing:.08em;}
+body.imini .xp-thumbs button.on{box-shadow:0 0 0 2px rgba(255,255,255,.9);}
+body.imini .xp-pl-acts button{border-radius:999px; font-weight:500;}
+body.imini .xp-pl-acts .solid{background:#fff; color:#0A0A0B; box-shadow:none;}
+body.imini .xp-pl-acts .solid:hover{filter:none; background:#E8E8EA;}
+body.imini .xp-hero .search:focus-within{border-color:rgba(34,211,238,.6); box-shadow:0 0 0 3px var(--tech-soft);}
+body.imini .xp-hero .sst.open .sst-btn{border-color:rgba(34,211,238,.6); box-shadow:0 0 0 3px var(--tech-soft);}
+body.imini .xp-hero .sst-it.on{color:#E8E8EA;}
+body.imini .xp-hero .sst-menu{background:#1C1C21;}
+body.imini .xp-hero .filters .f{border-radius:999px; font-weight:500;}
+body.imini .xp-hero .filters .f.on{background:#fff; color:#000; border-color:transparent; box-shadow:none;}
+body.imini .xp-hero .search,body.imini .xp-hero .seg{backdrop-filter:none; -webkit-backdrop-filter:none;}
+body.imini .site-root:has(.xp-hero) .nav:not(.solid) .brand b{color:#E8E8EA;}
+body.imini .xp-title .gtext,body.imini #feed-sec .gtext{color:#fff; -webkit-text-fill-color:#fff;}
+
+/* ════════════════════════════════════════════════════════════════════
+   文字去彩（用户反馈"还是蓝紫配色"）：文字只有白/灰两系，彩色为零。
+   以下把所有彩色文字/徽标/图形点缀清成白灰体系；焦点环/选中态同为白灰
+   （用户二次要求后连功能态的蓝也已废除）。追加在文件尾覆盖前文同名规则。
+   ════════════════════════════════════════════════════════════════════ */
+body.imini .brand b{color:#fff;}
+body.imini .see-all,body.imini .mq-more,body.imini #feed-sec .see-all{color:var(--text-dim);}
+body.imini .see-all:hover,body.imini .mq-more:hover,body.imini #feed-sec .see-all:hover{color:#fff;}
+body.imini .nlink .tag{background:rgba(255,255,255,.14); color:#fff;}
+body.imini .eyebrow .d{background:var(--tech);}
+body.imini .live-dot{background:var(--tech); box-shadow:0 0 8px rgba(34,211,238,.5);}
+body.imini .console .caret{background:var(--tech);}
+body.imini .faq-item.open .faq-q .n{color:var(--text-faint);}
+body.imini .sst-it.on,body.imini .xp-hero .sst-it.on{color:var(--tech);}
+body.imini .xp-pl-no{color:var(--tech); letter-spacing:.1em;}
+/* 徽标/选中态：白底黑字（与主按钮同语言），不再用蓝 */
+body.imini .plan-tag,body.imini .cmp-badge{background:#fff; color:#0A0A0B;}
+body.imini .cap-kick.core{background:#fff; color:#0A0A0B;}
+body.imini .cf-ticker .tk .nw{background:#fff; color:#0A0A0B;}
+body.imini .plan.feat,body.imini .plan.feat:hover{border-color:rgba(255,255,255,.35);}
+body.imini .plan-feats .ck,body.imini .plan.feat .plan-feats .ck{color:#fff; background:rgba(255,255,255,.12);}
+body.imini .cmp-ck{color:#fff; background:rgba(255,255,255,.12);}
+body.imini .cmp thead th.hl{color:#fff; background:rgba(255,255,255,.06);}
+body.imini .cmp td.hl{background:rgba(255,255,255,.04); color:var(--text);}
+body.imini .cmp td.hl .cmp-ck{color:#0A0A0B; background:#fff;}
+/* 交互态：hover/选中一律白系 */
+body.imini .filters .f:hover{color:#fff; border-color:var(--border-strong); background:var(--panel);}
+body.imini .pblock .pl button{color:var(--text-dim); background:var(--panel);}
+body.imini .pblock .pl button:hover{color:#0A0A0B; background:#fff;}
+body.imini .lb-row:nth-child(1) .lb-rank,body.imini .lb-row:nth-child(2) .lb-rank{color:#fff;}
+body.imini .work-back:hover{color:#fff;}
+body.imini .bill-toggle .save{color:var(--text-dim); background:var(--panel);}
+body.imini .modal-actions .sec:hover{color:#fff; border-color:var(--border-strong);}
+body.imini .modal-actions .sec[data-on="true"]{color:#fff; border-color:rgba(255,255,255,.4);}
+body.imini .modal-x:hover{background:rgba(255,255,255,.22);}
+body.imini .lb-foll:hover,body.imini .lb-foll.on,
+body.imini .modal-author .foll:hover,body.imini .modal-author .foll.on{color:#0A0A0B; background:#fff; border-color:transparent;}
+body.imini .modal-author-link:hover .an{color:#fff;}
+body.imini .faq-item.open .faq-ic{color:#fff;}
+body.imini .acct-list a.admin{color:var(--text-dim);}
+body.imini .acct-credits{background:var(--panel); border:1px solid var(--border);}
+body.imini .acct-credits .up{color:#fff;}
+/* 账户菜单：半透明毛玻璃 → 实色深灰（底下内容不再透视），发丝线 */
+body.imini .acct-menu{background:#141417; backdrop-filter:none; -webkit-backdrop-filter:none;
+  border-color:var(--border-strong);}
+body.imini .acct-list .mi{display:grid; place-items:center;}
+/* 无限画布演示图形：连线/端口/游标/进度全部中性灰白 */
+body.imini .ic-wire{stroke:rgba(255,255,255,.3);}
+body.imini .ic-port{fill:rgba(255,255,255,.7);}
+body.imini .ic-pulse{stroke:var(--tech);}
+body.imini .ic-gen-bar i{background:var(--tech);}
+body.imini .ic-online .av.a{background:#3F3F46;}
+body.imini .ic-cursor.a svg path{fill:#E4E4E7;} body.imini .ic-cursor.a span{background:#3F3F46;}
+body.imini .step-ico{background:var(--panel); color:var(--text);}
+body.imini .step-line{background:rgba(255,255,255,.35);}
+
+/* ════════════════════════════════════════════════════════════════════
+   其他界面同步（用户确认 imini 主题后铺开）：
+   生成台/聊天/登录 共享 flux 令牌 → 挂 body.imini 即自动换色，
+   以下只补各自的硬编码紫与光效；后台是独立令牌域，整块覆写成深色。
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ── 白按钮配黑字（防隐形）：所有 var(--btn-grad) 消费者的 color:#fff
+      在 --btn-grad 变白后必须转黑，含 hover 的 brightness 滤镜一并中性化 ── */
+body.imini .ws-tool.on{color:#fff;} /* 激活项文字：蓝 → 白 */
+body.imini .ws-tool.on .ic{color:#0A0A0B; box-shadow:none;}
+body.imini .ws-tool.on .ic svg{stroke:#0A0A0B;} /* 白芯片上的图标必须深色 */
+body.imini .ws-typetabs button.on{color:#0A0A0B; box-shadow:none;}
+body.imini .ws-typetabs button.on svg{stroke:#0A0A0B;}
+body.imini .ws-ratios .ratio.on{color:#0A0A0B; box-shadow:none;}
+body.imini .ws-gen{color:#0A0A0B; box-shadow:none;}
+body.imini .ws-gen:hover{filter:none; background:#E8E8EA;}
+body.imini .ws-gen:active{transform:scale(.99); filter:none; background:#DCDCDF;}
+body.imini .ws-histfilter button.on{color:#0A0A0B; box-shadow:none;}
+body.imini .ws-rh-acts button#rhRegen{color:#0A0A0B; box-shadow:none;}
+body.imini .ws-lact.pri{color:#0A0A0B; box-shadow:none;}
+body.imini .asset-actions button.pri{color:#0A0A0B; box-shadow:none;}
+body.imini .chat-new{color:#0A0A0B; box-shadow:none;}
+body.imini .chat-new:hover{filter:none; background:#E8E8EA; transform:translateY(-1px);}
+body.imini .mcard-use{color:#0A0A0B; box-shadow:none;}
+body.imini .gen-btn{color:#0A0A0B; box-shadow:none;}
+body.imini .gen-btn:hover{filter:none; background:#E8E8EA; transform:translateY(-1px);}
+
+/* ── 生成台（studio.css 的 11 处硬编码紫） ──────────────────────────── */
+/* 升级卡：紫渐变面板 → 深灰卡 + 白胶囊 CTA（与全站按钮同语言） */
+body.imini .ws-upgrade{background:#17171A; border:1px solid rgba(255,255,255,.14); box-shadow:none;}
+body.imini .ws-upgrade::after{content:none;}
+body.imini .ws-upgrade:hover{transform:translateY(-2px); box-shadow:none; border-color:rgba(255,255,255,.28);}
+body.imini .ws-upgrade-btn{color:#0A0A0B; background:#fff; box-shadow:none;}
+body.imini .ws-upgrade-top .star{color:#fff;}
+/* 暗房舞台：紫色射灯/安全灯 → 中性白微光（保留漂移动画，只换色） */
+body.imini .ws-stage{background:#0A0A0B;}
+body.imini .ws-stage-main{background:
+  radial-gradient(72% 52% at 50% -8%, rgba(255,255,255,.07) 0%, rgba(255,255,255,.02) 46%, transparent 70%),
+  linear-gradient(180deg,#101013 0%,#0A0A0B 100%);
+  box-shadow:inset 0 -70px 100px -70px rgba(0,0,0,.5);}
+body.imini .ws-stage-main::after{background:
+  radial-gradient(36% 30% at 26% 18%, rgba(255,255,255,.04) 0%, transparent 62%),
+  radial-gradient(30% 26% at 76% 8%, rgba(255,255,255,.025) 0%, transparent 60%);}
+/* 面包屑圆点/悬停态/加载环：紫 → 白灰 */
+body.imini .ws-crumb .d{background:rgba(255,255,255,.4); box-shadow:none;}
+body.imini .ws-iconbtn:hover:not(:disabled){color:#fff; border-color:rgba(255,255,255,.35); background:rgba(255,255,255,.1);}
+body.imini .ws-empty-tags button:hover{color:#fff; border-color:rgba(255,255,255,.35); background:rgba(255,255,255,.1); transform:translateY(-2px);}
+body.imini .ws-run-foot button:hover{border-color:rgba(255,255,255,.35); color:#fff; background:rgba(255,255,255,.1);}
+body.imini .ws-runimg.loading{box-shadow:0 0 0 1.5px rgba(255,255,255,.3), 0 22px 60px -12px rgba(0,0,0,.5);}
+
+/* ── 登录页：品牌侧栏紫渐变 → 深灰面板；控件适配白胶囊按钮体系 ──────── */
+body.imini .auth-aside{background:#101013; border-right:1px solid rgba(255,255,255,.1);}
+body.imini .auth-aside .glow.b{background:radial-gradient(circle at 50% 50%, rgba(255,255,255,.25) 0%, transparent 65%);}
+body.imini .auth-aside-top b{color:#fff;}
+/* 示例作品瓦片：蓝紫锥形渐变 → 灰阶三连（深浅错落保留浮动动画） */
+body.imini .auth-tiles .t:nth-child(1){background:linear-gradient(150deg,#3A3A40,#232327);}
+body.imini .auth-tiles .t:nth-child(2){background:linear-gradient(200deg,#4A4A52,#2A2A2F);}
+body.imini .auth-tiles .t:nth-child(3){background:linear-gradient(120deg,#2E2E33,#1C1C20);}
+/* --btn-grad 已变白：活动 tab / 提交按钮 / 勾选框全部配黑字，勿白底白字 */
+body.imini .auth-tabs button.on{color:#0A0A0B; background:#fff; box-shadow:none;}
+body.imini .submit{color:#0A0A0B; background:#fff; box-shadow:none;}
+body.imini .submit:hover{filter:none; background:#E8E8EA; transform:translateY(-1px);}
+body.imini .submit .spin{border-color:rgba(0,0,0,.25); border-top-color:#0A0A0B;}
+body.imini .chk input:checked + .box{background:#fff; border-color:transparent; color:#0A0A0B;}
+/* 邮箱提示条 / 验证码按钮 / 文字链接：蓝调 → 中性灰白 */
+body.imini .email-note{background:var(--panel); border-color:var(--border);}
+body.imini .email-note .ic{background:rgba(255,255,255,.14); color:#fff;}
+body.imini .inp .code-btn{color:var(--text-dim); border-color:var(--border-strong); background:var(--panel);}
+body.imini .inp .code-btn:hover:not(:disabled){background:rgba(255,255,255,.14); color:#fff;}
+body.imini .auth-link{color:var(--text-dim);}
+body.imini .auth-link:hover{color:#fff;}
+
+/* ── 定价页收尾 CTA 面板：紫渐变大卡 → 深灰卡 + 白发丝线，按钮白胶囊 ── */
+body.imini .cta{background:#17171A; border:1px solid var(--border); box-shadow:none;}
+body.imini .cta::before{content:none;}
+body.imini .cta-glow{background:radial-gradient(50% 50% at 50% 50%, rgba(255,255,255,.1), transparent 70%);}
+body.imini .cta-primary{color:#0A0A0B; background:#fff; box-shadow:none; border-radius:999px;}
+body.imini .cta-primary:hover{transform:translateY(-2px); filter:none; background:#E8E8EA;}
+body.imini .cta-secondary{border-radius:999px; border-color:rgba(255,255,255,.3);}
+
+/* ── 账户页统计数字：渐变字（现为蓝）→ 白色实色 ─────────────────────── */
+body.imini .acc-page .pf-stat .v.grad{background:none; -webkit-background-clip:initial; background-clip:initial;
+  color:var(--text); -webkit-text-fill-color:var(--text);}
+
+/* ════════════════════════════════════════════════════════════════════
+   后台管理 =「纸面控制台」（2026-07-05 用户要求与前台刻意区分，自由发挥）：
+   暖白纸底 + 墨色主控 + 彩色图表——Vercel/Notion 后台路数。
+   消费端（暗色沉浸）与管理端（亮色高效）形成"里外"关系；
+   长时间看表格/数据不累眼，彩色图表在纸面上也更清晰。
+   ════════════════════════════════════════════════════════════════════ */
+body.imini .admin-body{
+  --bg:#F6F5F2; --surface:#FFFFFF; --surface-2:#FAFAF8; --panel:#EFEEE9;
+  --text:#1C1917; --text-dim:#57534E; --text-faint:#A29E96;
+  --border:#E7E5E0; --border-strong:#D6D3CC;
+  --accent:#1C1917; --accent-soft:rgba(28,25,23,.08);
+  --grad:#1C1917;
+  --r-sm:8px; --r:10px; --r-lg:14px;
+  --shadow-sm:0 1px 2px rgba(28,25,23,.05);
+  --shadow:0 2px 8px rgba(28,25,23,.06), 0 8px 24px rgba(28,25,23,.06);
+  --disp:var(--font-sans),-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',sans-serif;
+  --ui:var(--font-sans),-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC',sans-serif;
+}
+body.imini .adm-side{background:rgba(255,255,255,.85); backdrop-filter:blur(14px);}
+body.imini .adm-top{background:rgba(255,255,255,.82); backdrop-filter:blur(14px);}
+/* 激活项 = 墨色底白字（Vercel 后台语言），徽标反白 */
+body.imini .adm-link.on{background:#1C1917; color:#fff;}
+body.imini .adm-link.on svg{stroke:#fff;}
+body.imini .adm-link.on .badge{color:#1C1917; background:rgba(255,255,255,.85);}
+/* 输入焦点：墨色细描边 + 极淡环 */
+body.imini .admin-body input:focus,body.imini .admin-body textarea:focus,body.imini .admin-body select:focus{
+  border-color:rgba(28,25,23,.55); box-shadow:0 0 0 3px rgba(28,25,23,.08); outline:none;}
+/* 品牌磁贴：墨色底（覆盖全站白磁贴规则,纸面上白色会隐形） */
+body.imini .adm-brand .glyph::before{background:#1C1917; box-shadow:none;}
+body.imini .admin-body ::selection{background:#1C1917; color:#fff;}
+
+/* ── accent 变中性浅灰后的配套（原「accent 底 + 白字」全部转白底黑字） ── */
+body.imini .ratio.on{color:#0A0A0B; background:#fff; border-color:transparent;}
+body.imini .filters .f.on{color:#0A0A0B; background:#fff; border-color:transparent; box-shadow:none;}
+body.imini .cmt-new button{color:#0A0A0B; background:#fff;}
+body.imini .modal-openpage:hover{background:rgba(255,255,255,.24); border-color:transparent;}
+body.imini .ws-style .sck{color:#0A0A0B;}
+body.imini .msg.me .bubble{background:#2E2E33; color:#F5F5F7;}
+body.imini .cm-send{color:#0A0A0B; background:#fff;}
+body.imini .chat-ctx-warn button{color:#0A0A0B; background:#fff;}
+body.imini .chat-jump{color:#0A0A0B; background:#fff;}
+body.imini .admin-body ::selection{background:#E4E4E7; color:#0A0A0B;}
+
+/* ════════════════════════════════════════════════════════════════════
+   定价卡精修（用户："太普通"）——不加彩色、不改结构，靠光和层级出质感：
+   卡面微渐变+顶缘受光丝、Pro 卡抬升为主角（顶部青色发丝光+深投影+
+   青色勾选），价格数字等宽仪表化，区块加极淡顶部聚光。
+   ════════════════════════════════════════════════════════════════════ */
+/* 卡面：平灰 → 上浅下深微渐变 + 1px 顶缘受光（车削金属边感） */
+body.imini .plan{background:linear-gradient(180deg,#1A1A1F 0%,#131316 100%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.07);}
+body.imini .plan:hover{transform:translateY(-3px); border-color:var(--border-strong);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.07), 0 16px 40px -20px rgba(0,0,0,.7);}
+/* Pro 卡 = 主角：更亮的面、抬升、深投影、顶部一道青色发丝光 */
+body.imini .plan.feat,body.imini .plan.feat:hover{
+  background:linear-gradient(180deg,#20202A 0%,#15151A 100%);
+  border-color:rgba(255,255,255,.24);
+  transform:translateY(-10px);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.12), 0 28px 70px -28px rgba(0,0,0,.85);}
+body.imini .plan.feat:hover{transform:translateY(-14px);}
+body.imini .plan.feat::before{content:''; position:absolute; top:0; left:18px; right:18px; height:1px;
+  border-radius:1px; padding:0; -webkit-mask:none; mask:none;
+  background:linear-gradient(90deg, transparent, rgba(34,211,238,.85), transparent);}
+@media(max-width:900px){body.imini .plan.feat,body.imini .plan.feat:hover{transform:none;}}
+/* Pro 卡勾选圈 = 青（毫米级点缀），普通卡保持灰白 */
+body.imini .plan.feat .plan-feats .ck{color:#0A0A0B; background:var(--tech);}
+/* 价格数字：等宽仪表化，Pro 更大一号 */
+body.imini .plan-price .num{font-family:var(--mono); font-size:38px; letter-spacing:-.02em;}
+body.imini .plan.feat .plan-price .num{font-size:46px;}
+body.imini .plan-price .per{font-size:12.5px;}
+/* 区块顶部极淡白色聚光，打破纯平黑 */
+body.imini #cta-sec{background:radial-gradient(56% 46% at 50% 24%, rgba(255,255,255,.04), transparent 70%), #0F0F11;}
+
+/* ── 页脚：近黑 + 白发丝线;水印保留极轻 ─────────────────────────────── */
+body.imini footer{background:#0A0A0B; border-top:1px solid var(--border); margin-top:0;}
+body.imini footer::after{opacity:.14; -webkit-text-stroke:1px rgba(255,255,255,.25);}
+body.imini .foot-col h4{font-family:inherit; font-size:12.5px; letter-spacing:.02em; text-transform:none; color:var(--text); font-weight:600;}
+body.imini .foot-col a{font-size:13px; color:var(--text-dim);}
+body.imini .foot-col a:hover{color:#fff; text-decoration:underline;}
+body.imini .foot-brand p{font-size:13px; color:var(--text-faint);}
+body.imini .foot-bottom{font-size:12.5px; color:var(--text-faint); border-color:var(--border);}

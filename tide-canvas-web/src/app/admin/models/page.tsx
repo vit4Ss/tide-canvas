@@ -36,6 +36,7 @@ import { adminSwatch } from "@/mock/admin";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";
 import { adminModelsApi } from "@/lib/admin-models-api";
+import { BRAND_ICONS, brandIconUrl } from "@/lib/model-brand";
 import {
   MODEL_STATUS_LABEL,
   MODEL_TYPE_LABEL,
@@ -558,8 +559,40 @@ function ModelModal({
           <Field label="成本价（USD）" hint="上游单次成本，仅后台参考，不对用户暴露">
             <input value={cfg.costUsd ?? ""} onChange={(e) => setC({ costUsd: e.target.value })} placeholder="0.0000" inputMode="decimal" />
           </Field>
-          <Field label="图标" hint="emoji 或图片 URL">
-            <input value={cfg.icon ?? ""} onChange={(e) => setC({ icon: e.target.value })} placeholder="emoji 或图片 URL" />
+          <Field label="图标" hint="点选官方品牌图标；或填 emoji / 自定义图片 URL；留空 = 前台按 modelKey 自动匹配品牌">
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {BRAND_ICONS.map((b) => {
+                  const url = brandIconUrl(b.slug);
+                  const on = cfg.icon === url;
+                  return (
+                    <button
+                      key={b.slug}
+                      type="button"
+                      title={b.label}
+                      aria-label={b.label}
+                      aria-pressed={on}
+                      onClick={() => setC({ icon: on ? "" : url })}
+                      style={{
+                        width: 34,
+                        height: 34,
+                        borderRadius: 9,
+                        padding: 0,
+                        cursor: "pointer",
+                        background: `#fff center/62% no-repeat url("${url}")`,
+                        border: on ? "2px solid var(--accent, #4f46e5)" : "1px solid var(--border, #dcdfe6)",
+                        boxShadow: on ? "0 0 0 3px var(--accent-soft, rgba(79,70,229,.14))" : "none",
+                      }}
+                    />
+                  );
+                })}
+              </div>
+              <input
+                value={cfg.icon ?? ""}
+                onChange={(e) => setC({ icon: e.target.value })}
+                placeholder="emoji 或图片 URL（留空自动匹配品牌图标）"
+              />
+            </div>
           </Field>
           <Field label="描述" hint="模型选择列表名称下的副标题（选填）">
             <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="如：动漫高审美模型" />

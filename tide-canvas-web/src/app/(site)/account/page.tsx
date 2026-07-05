@@ -57,7 +57,8 @@ function avatarGrad(seed: string): string {
   let h = 0;
   const s = seed || "u";
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
-  return `linear-gradient(135deg, hsl(${h} 70% 60%), hsl(${(h + 48) % 360} 72% 56%))`;
+  // 灰阶头像（主题零彩色）：哈希只驱动明度差异，白字始终可读
+  return `linear-gradient(135deg, hsl(0 0% ${30 + (h % 16)}%), hsl(0 0% ${14 + (h % 10)}%))`;
 }
 
 /** Stable FX-###### id, seeded from the real user id (falls back to email). */

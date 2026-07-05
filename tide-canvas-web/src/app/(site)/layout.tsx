@@ -12,6 +12,7 @@
 
 import "@/styles/liuguang/flux.css";
 import "@/styles/liuguang/pages.css";
+import "@/styles/liuguang/imini-theme.css"; // 正式主题（body.imini 由根布局直出）
 
 import SiteNav from "@/components/site/site-nav";
 import SiteFooter from "@/components/site/site-footer";

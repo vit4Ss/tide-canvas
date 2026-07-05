@@ -35,6 +35,7 @@ import {
 import type { ArtworkType, MeshHues } from "@/mock";
 import { CREATE_MODELS, mesh } from "@/mock";
 import { marketApi, type StudioModelVO } from "@/lib/market-api";
+import { matchBrandIcon } from "@/lib/model-brand";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { AiTaskStatus } from "@/types/ai";
 import { AssetsBrowser, type PickedAsset } from "@/components/studio/assets-browser";
@@ -394,7 +395,8 @@ function metaOf(name: string, metaMap?: Record<string, ModelMeta>): ModelMeta {
 function modelSwatch(name: string): string {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
-  return `linear-gradient(135deg, hsl(${h} 78% 62%), hsl(${(h + 50) % 360} 80% 52%))`;
+  // 灰阶色板（主题零彩色）：浅灰系配深色字
+  return `linear-gradient(135deg, hsl(0 0% ${82 + (h % 12)}%), hsl(0 0% ${64 + (h % 12)}%))`;
 }
 
 /** first A-Z / CJK char (create.js modelInitial). */
@@ -507,7 +509,7 @@ function fmtTs(iso?: string): string {
 /** deterministic reference-thumb gradient (create.js refGrad). */
 function refGrad(seed: number): string {
   const h = (seed * 61 + 30) % 360;
-  return `linear-gradient(135deg, hsl(${h} 58% 52%), hsl(${(h + 44) % 360} 62% 36%))`;
+  return `linear-gradient(135deg, hsl(0 0% ${24 + (h % 16)}%), hsl(0 0% ${12 + (h % 10)}%))`;
 }
 
 /* ── upload-file model ────────────────────────────────────────────────────── */
@@ -705,14 +707,36 @@ export default function CreateStudio() {
     for (const m of studioList) if (m.config?.icon) map[m.name] = m.config.icon;
     return map;
   }, [studioList]);
-  // resolve a swatch's style + glyph: image-URL icon → cover bg; emoji → glyph on
-  // the model's gradient; none → initial letter on the gradient.
+  // 品牌图标自动匹配：config.icon 未配置时按 modelKey/名称识别厂商官方 logo。
+  const brandByName = useMemo(() => {
+    const map: Record<string, string | null> = {};
+    for (const m of studioList) map[m.name] = matchBrandIcon(m.modelKey, m.name);
+    return map;
+  }, [studioList]);
+  // resolve a swatch's style + glyph, in priority order:
+  //   1. 后台配置的 icon（图片 URL → cover；emoji → 渐变底上的字形）
+  //   2. 品牌官方 logo（白底 + contain，logo 需要留白，不能 cover 裁切）
+  //   3. 首字母 + 哈希渐变色块（原兜底）
   const swatchFor = (name: string): { style: CSSProperties; content: string } => {
     const icon = iconByName[name];
     if (icon && isIconUrl(icon)) {
-      return { style: { background: `center/cover no-repeat url("${icon}")` }, content: "" };
+      const isBrand = icon.startsWith("/model-icons/");
+      return {
+        style: isBrand
+          ? { background: `#fff center/66% no-repeat url("${icon}")`, boxShadow: "inset 0 0 0 1px rgba(22,28,45,.1)" }
+          : { background: `center/cover no-repeat url("${icon}")` },
+        content: "",
+      };
     }
-    return { style: { background: modelSwatch(name) }, content: icon || modelInitial(name) };
+    if (icon) return { style: { background: modelSwatch(name) }, content: icon };
+    const brand = brandByName[name];
+    if (brand) {
+      return {
+        style: { background: `#fff center/66% no-repeat url("${brand}")`, boxShadow: "inset 0 0 0 1px rgba(22,28,45,.1)" },
+        content: "",
+      };
+    }
+    return { style: { background: modelSwatch(name) }, content: modelInitial(name) };
   };
 
   const selModel = useMemo(
@@ -1228,7 +1252,7 @@ export default function CreateStudio() {
       ? imgs
       : Array.from({ length: 4 }, (_, i) => {
           const h = (seed * 7 + i * 53) % 360;
-          return `linear-gradient(135deg, hsl(${h} 50% 46%), hsl(${(h + 38) % 360} 55% 30%))`;
+          return `linear-gradient(135deg, hsl(0 0% ${26 + (h % 14)}%), hsl(0 0% ${12 + (h % 10)}%))`;
         });
     return out.slice(0, 4);
   };
@@ -1835,6 +1859,40 @@ export default function CreateStudio() {
       setPrompt(r.prompt);
     }
     setPendingGen(true);
+  };
+
+  // 编辑: restore the run's settings into the panel (WITHOUT firing) and focus
+  // the prompt, so the user can tweak parameters before regenerating.
+  const editRun = (r: HistRun) => {
+    if (busy) return;
+    if (r.params) {
+      lastRunRef.current = r.params;
+      restoreParams(r.params);
+    } else {
+      setPrompt(r.prompt);
+    }
+    setTimeout(() => promptRef.current?.focus(), 0);
+    toast.success("已载入该次生成的参数，可修改后重新生成");
+  };
+
+  // copy a run's prompt (clipboard API, execCommand fallback for http/older UAs).
+  const copyPrompt = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success("已复制提示词");
+    } catch {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        ta.remove();
+        toast.success("已复制提示词");
+      } catch {
+        toast.error("复制失败");
+      }
+    }
   };
 
   // download every image of a run (cross-origin URLs fall back to opening a tab).
@@ -2467,11 +2525,24 @@ export default function CreateStudio() {
                 {busy && runMeta && (
                   <div className={`ws-run inflight${cells.length <= 1 ? " single" : ""}`}>
                     <div className="ws-run-head">
-                      <div className="ws-run-meta">
-                        <div className="ws-run-title">{runMeta.prompt || "我的创作"}</div>
-                        <div className="ws-run-sub">{runMeta.model || "生成中"} · 刚刚</div>
-                      </div>
+                      <span className="ws-run-kind">
+                        {SLOT_ICON[runMeta.isVid ? "video" : "image"]}
+                        {runMeta.isVid ? "AI 视频" : "AI 图片"}
+                      </span>
+                      <span className="ws-run-div" />
+                      {runMeta.model && <span className="ws-run-chip">{runMeta.model}</span>}
+                      {runMeta.ratio && (
+                        <span className="ws-run-chip">{ratioLabel(runMeta.ratio)}</span>
+                      )}
+                      <span className="ws-run-time">生成中…</span>
                     </div>
+                    {runMeta.prompt && (
+                      <div className="ws-run-prompt">
+                        <span className="tx" title={runMeta.prompt}>
+                          {runMeta.prompt}
+                        </span>
+                      </div>
+                    )}
                     <div className="ws-run-imgs">
                       {cells.map((cell) => {
                         const [rw, rh] = runMeta.ratio.split(":").map(Number);
@@ -2504,44 +2575,34 @@ export default function CreateStudio() {
                 {runs.map((r) => (
                   <div key={r.run} className={`ws-run${r.items.length <= 1 ? " single" : ""}`}>
                     <div className="ws-run-head">
-                      <div className="ws-run-meta">
-                        <div className="ws-run-title" title={r.prompt || undefined}>
-                          {r.title || r.prompt || "我的创作"}
-                        </div>
-                        <div className="ws-run-sub">
-                          {r.model || "—"}
-                          {r.ts ? ` · ${fmtTs(r.ts)}` : ""}
-                        </div>
-                      </div>
-                      <div className="ws-run-acts">
-                        <button
-                          type="button"
-                          onClick={() => regenRun(r)}
-                          disabled={busy}
-                          title="用相同参数重新生成"
-                        >
-                          <span className="i">✦</span>重新生成
-                        </button>
-                        <button
-                          type="button"
-                          className="ic"
-                          onClick={() => downloadRun(r)}
-                          title="下载"
-                          aria-label="下载"
-                        >
-                          ⤓
-                        </button>
-                        <button
-                          type="button"
-                          className="ic danger"
-                          onClick={() => deleteRun(r)}
-                          title="删除"
-                          aria-label="删除"
-                        >
-                          🗑
-                        </button>
-                      </div>
+                      <span className="ws-run-kind">
+                        {SLOT_ICON[r.type]}
+                        {r.type === "video" ? "AI 视频" : "AI 图片"}
+                      </span>
+                      <span className="ws-run-div" />
+                      {r.model && <span className="ws-run-chip">{r.model}</span>}
+                      {r.ratio && <span className="ws-run-chip">{ratioLabel(r.ratio)}</span>}
+                      {r.ts && <span className="ws-run-time">{fmtTs(r.ts)}</span>}
                     </div>
+                    {r.prompt && (
+                      <div className="ws-run-prompt">
+                        <span className="tx" title={r.prompt}>
+                          {r.prompt}
+                        </span>
+                        <button
+                          type="button"
+                          className="cp"
+                          title="复制提示词"
+                          aria-label="复制提示词"
+                          onClick={() => copyPrompt(r.prompt)}
+                        >
+                          <svg viewBox="0 0 24 24">
+                            <rect x="9" y="9" width="11" height="11" rx="2" />
+                            <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+                          </svg>
+                        </button>
+                      </div>
+                    )}
                     <div className="ws-run-imgs">
                       {r.items.map((it) => {
                         const cell: ResultCell = { i: -1, hues: it.hues, url: it.url };
@@ -2602,6 +2663,53 @@ export default function CreateStudio() {
                           </AmbientFrame>
                         );
                       })}
+                    </div>
+                    <div className="ws-run-foot">
+                      <button
+                        type="button"
+                        onClick={() => editRun(r)}
+                        disabled={busy}
+                        title="载入该次参数到面板修改"
+                      >
+                        <svg viewBox="0 0 24 24">
+                          <path d="M4 20h4L18.5 9.5a2 2 0 0 0-3-3L5 17v3z" />
+                          <path d="M13.5 6.5l3 3" />
+                        </svg>
+                        编辑
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => regenRun(r)}
+                        disabled={busy}
+                        title="用相同参数重新生成"
+                      >
+                        <svg viewBox="0 0 24 24">
+                          <path d="M21 12a9 9 0 1 1-2.6-6.4" />
+                          <path d="M21 3v6h-6" />
+                        </svg>
+                        重新生成
+                      </button>
+                      <button type="button" onClick={() => downloadRun(r)} title="下载">
+                        <svg viewBox="0 0 24 24">
+                          <path d="M12 3v12" />
+                          <path d="M7 10l5 5 5-5" />
+                          <path d="M4 21h16" />
+                        </svg>
+                        下载
+                      </button>
+                      <button
+                        type="button"
+                        className="danger"
+                        onClick={() => deleteRun(r)}
+                        title="删除"
+                      >
+                        <svg viewBox="0 0 24 24">
+                          <path d="M4 7h16" />
+                          <path d="M9 7V4h6v3" />
+                          <path d="M6 7l1 14h10l1-14" />
+                        </svg>
+                        删除
+                      </button>
                     </div>
                   </div>
                 ))}

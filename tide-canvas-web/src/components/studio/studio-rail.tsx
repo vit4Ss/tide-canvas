@@ -153,6 +153,7 @@ export default function StudioRail() {
   const initials = accountName.trim().slice(0, 1).toUpperCase() || "U";
 
   return (
+    <>
     <aside className={`ws-rail${collapsed ? " collapsed" : ""}`}>
       <Link className="ws-brand" href="/" title="FlowingLight 流光">
         <Logo size={30} />
@@ -253,27 +254,22 @@ export default function StudioRail() {
         </Link>
       )}
 
-      {/* 折叠开关：图标随状态翻转，折叠后悬浮提示仍可辨识 */}
-      <button
-        className="ws-tool ws-collapse"
-        type="button"
-        title={collapsed ? "展开导航" : "收起导航"}
-        onClick={toggleCollapsed}
-      >
-        <span className="ic">
-          <svg
-            viewBox="0 0 24 24"
-            style={{
-              transform: collapsed ? "rotate(180deg)" : undefined,
-              transition: "transform .22s",
-            }}
-          >
-            <path d="M14 6l-6 6 6 6" />
-            <path d="M19 6v12" />
-          </svg>
-        </span>
-        <span>收起</span>
-      </button>
     </aside>
+
+    {/* 折叠开关：骑在侧栏右缘的圆形把手（须为 .ws-rail 的紧邻兄弟节点，
+        studio.css 用 left 与栏宽做同参数过渡让它跟着栏边滑动） */}
+    <button
+      className={`ws-rail-handle${collapsed ? " is-collapsed" : ""}`}
+      type="button"
+      aria-label={collapsed ? "展开导航" : "收起导航"}
+      aria-expanded={!collapsed}
+      title={collapsed ? "展开导航" : "收起导航"}
+      onClick={toggleCollapsed}
+    >
+      <svg viewBox="0 0 24 24">
+        <path d="M14.5 6.5L9 12l5.5 5.5" />
+      </svg>
+    </button>
+    </>
   );
 }

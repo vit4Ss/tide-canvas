@@ -17,6 +17,7 @@
    ============================================================================ */
 
 import "@/styles/liuguang/admin.css";
+import "@/styles/liuguang/imini-theme.css"; // 正式主题（body.imini 由根布局直出，覆写 admin 令牌域）
 import { AdminSidebar } from "@/components/admin/admin-sidebar";
 import { AdminTopbar } from "@/components/admin/admin-topbar";
 import { AdminGuard } from "@/components/admin/admin-guard";

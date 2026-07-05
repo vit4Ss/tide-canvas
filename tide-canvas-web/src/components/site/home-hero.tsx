@@ -21,10 +21,10 @@ import { toast } from "@/components/shared/toast";
 import HeroWall from "@/components/site/hero-wall";
 
 const QUICK = [
-  { ico: "✨", label: "文生图", toast: "文生图 · 前往创作台" },
-  { ico: "🎬", label: "文生视频", toast: "文生视频 · 前往创作台" },
-  { ico: "🖼", label: "图生图", toast: "图生图 · 前往创作台" },
-  { ico: "↻", label: "生成同款", toast: "一键生成同款" },
+  { label: "文生图", toast: "文生图 · 前往创作台" },
+  { label: "文生视频", toast: "文生视频 · 前往创作台" },
+  { label: "图生图", toast: "图生图 · 前往创作台" },
+  { label: "生成同款", toast: "一键生成同款" },
 ];
 
 export default function HomeHero() {
@@ -116,7 +116,6 @@ export default function HomeHero() {
           style={{ ["--rd" as string]: ".7s" }}
           onClick={goStudio}
         >
-          <span className="spark">✦</span>
           <div className="field">
             <span id="typed">{typed}</span>
             <span className="caret" />
@@ -144,7 +143,7 @@ export default function HomeHero() {
                 goStudio();
               }}
             >
-              {q.ico} {q.label}
+              {q.label}
             </button>
           ))}
         </div>

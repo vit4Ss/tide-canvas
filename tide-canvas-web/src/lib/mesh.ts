@@ -19,14 +19,17 @@ function mapHue(h: number): number {
  * value. Identical seeds always produce identical output.
  */
 export function mesh(h1: number, h2: number, h3: number): string {
+  // 2026-07-05 主题定稿:兜底图不再走蓝紫冷色带,改低饱和墨色系——
+  // 保留三点式明暗层次与确定性,色相仅剩极淡的冷灰倾向(饱和度 8-14%),
+  // 与"界面零蓝紫、彩色只来自真实作品"的全站规则一致。
   const a = mapHue(h1);
   const b = mapHue(h2);
   const c = mapHue(h3);
   return [
-    `radial-gradient(120% 130% at 16% 8%, hsl(${a} 68% 60%) 0%, transparent 52%)`,
-    `radial-gradient(120% 120% at 88% 18%, hsl(${b} 60% 54%) 0%, transparent 50%)`,
-    `radial-gradient(140% 140% at 50% 108%, hsl(${c} 56% 44%) 0%, transparent 58%)`,
-    `linear-gradient(155deg, hsl(${a} 46% 15%) 0%, hsl(${b} 52% 8%) 100%)`,
+    `radial-gradient(120% 130% at 16% 8%, hsl(${a} 12% 46%) 0%, transparent 52%)`,
+    `radial-gradient(120% 120% at 88% 18%, hsl(${b} 10% 34%) 0%, transparent 50%)`,
+    `radial-gradient(140% 140% at 50% 108%, hsl(${c} 8% 26%) 0%, transparent 58%)`,
+    `linear-gradient(155deg, hsl(${a} 14% 13%) 0%, hsl(${b} 16% 7%) 100%)`,
   ].join(', ');
 }
 

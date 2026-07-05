@@ -281,8 +281,8 @@
 }
 .auth-tabs button.on {
   color: #fff;
-  background: var(--grad);
-  box-shadow: 0 5px 16px var(--accent-soft);
+  background: var(--btn-grad);
+  box-shadow: var(--btn-shadow);
 }
 
 .auth-h {
@@ -491,7 +491,7 @@
   transition: all 0.15s;
 }
 .chk input:checked + .box {
-  background: var(--grad);
+  background: var(--btn-grad);
   border-color: transparent;
 }
 .chk .box::after {
@@ -521,8 +521,8 @@
   overflow: hidden;
   width: 100%;
   height: 52px;
-  border-radius: 13px;
-  background: var(--grad);
+  border-radius: var(--btn-r, 11px);
+  background: var(--btn-grad);
   color: #fff;
   font-size: 15px;
   font-weight: 700;
@@ -531,11 +531,11 @@
   align-items: center;
   justify-content: center;
   gap: 9px;
-  box-shadow: 0 10px 30px var(--accent-soft);
+  box-shadow: var(--btn-shadow);
   transition: filter 0.16s, transform 0.16s;
 }
 .submit:hover {
-  filter: brightness(1.07);
+  filter: brightness(0.94);
   transform: translateY(-1px);
 }
 .submit:active {

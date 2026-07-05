@@ -14,6 +14,7 @@
 import "@/styles/liuguang/flux.css";
 import "@/styles/liuguang/pages.css";
 import "@/styles/liuguang/studio.css";
+import "@/styles/liuguang/imini-theme.css"; // 正式主题（body.imini 由根布局直出）
 import StudioRail from "@/components/studio/studio-rail";
 import styles from "./studio-shell.module.css";
 

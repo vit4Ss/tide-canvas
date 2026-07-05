@@ -49,7 +49,8 @@ type PillTone = "green" | "gray" | "amber" | "red" | "blue";
 function avatarSwatch(name: string): string {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
-  return `linear-gradient(135deg,hsl(${h} 78% 60%),hsl(${(h + 50) % 360} 78% 50%))`;
+  // 灰阶头像（主题零彩色）
+  return `linear-gradient(135deg,hsl(0 0% ${30 + (h % 16)}%),hsl(0 0% ${14 + (h % 10)}%))`;
 }
 
 /* role / status maps (User.Role 0 user / 1 vip / 9 admin; Status 0/1). */
