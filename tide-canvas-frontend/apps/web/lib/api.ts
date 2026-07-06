@@ -12,7 +12,7 @@ import type {
   AiTaskVO, AiModelVO, AiIconAssetVO, AiHandlerVO, AiGenerateDTO, AiTaskQuery,
   AiGenerationLogVO, AiGenerationLogQuery,
 } from "@/types/ai";
-import type { FileVO, FileQuery } from "@/types/file";
+import type { FileVO, FileQuery, SystemUploadVO } from "@/types/file";
 import type {
   DashboardOverviewVO, DashboardChartsVO, AdminUserVO, AdminUserQuery,
   AdminUserCreateDTO, AdminUserUpdateDTO, AdminUserPasswordResetDTO, BannerVO, BannerCreateDTO, BannerUpdateDTO,
@@ -42,8 +42,9 @@ import type {
 import type {
   NotificationVO, NotificationQuery, UnreadCountVO,
 } from "@/types/notification";
+import type { AssistantPetStyle } from "@/types/assistant";
 import type {
-  RechargeOrderVO, RechargeCreateDTO, OrderQuery,
+  RechargeOrderVO, RechargeCreateDTO, OrderQuery, AdminOrderQuery,
   PaymentInitiateVO, RechargeConfigVO,
 } from "@/types/order";
 import type {
@@ -129,6 +130,13 @@ export const aiApi = {
     http.get<AiHandlerVO[]>("/api/ai/handlers"),
   canvasLogs: (query: AiGenerationLogQuery) =>
     http.get<PageData<AiGenerationLogVO>>("/api/ai/logs", toParams(query)),
+  deleteLog: (id: number) =>
+    http.delete<void>(`/api/ai/logs/${id}`),
+};
+
+export const assistantApi = {
+  petStyles: () =>
+    http.get<AssistantPetStyle[]>("/api/settings/assistant-pet-styles"),
 };
 
 export const styleApi = {
@@ -159,6 +167,14 @@ export const fileApi = {
     const tooLarge = fileSizeExceededResult<FileVO>(file, options);
     if (tooLarge) return Promise.resolve(tooLarge);
     return http.uploadProgress<FileVO>("/api/files/upload", file, onProgress);
+  },
+  systemUploadProgress: (file: File, onProgress?: (pct: number) => void, options?: UploadLimitOptions & { bizType?: string }) => {
+    const tooLarge = fileSizeExceededResult<SystemUploadVO>(file, options);
+    if (tooLarge) return Promise.resolve(tooLarge);
+    const formData = new FormData();
+    formData.append("file", file);
+    if (options?.bizType) formData.append("bizType", options.bizType);
+    return http.uploadProgress<SystemUploadVO>("/api/files/system-upload", formData, onProgress);
   },
   uploadBatch: (formData: FormData) => {
     if (typeof File !== "undefined") {
@@ -398,7 +414,7 @@ export const adminApi = {
       http.post<void>(`/api/admin/authors/${userId}/revoke`),
   },
   orders: {
-    list: (query: AdminUserQuery) =>
+    list: (query: AdminOrderQuery) =>
       http.get<PageData<RechargeOrderVO>>("/api/admin/orders", toParams(query)),
     get: (id: string) =>
       http.get<RechargeOrderVO>(`/api/admin/orders/${id}`),

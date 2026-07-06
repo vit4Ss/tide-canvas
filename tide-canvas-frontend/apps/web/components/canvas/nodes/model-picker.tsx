@@ -78,7 +78,7 @@ function parseMeta(model: AiModelVO): ModelMeta {
 
 function ModelGlyph({ icon, className = "h-4 w-4" }: { icon?: string; className?: string }) {
   if (icon && /^(https?:|data:image|\/)/.test(icon)) {
-    // eslint-disable-next-line @next/next/no-img-element
+
     return <img src={icon} alt="" className={`${className} rounded object-cover`} />;
   }
   if (icon && !icon.includes("<svg")) {

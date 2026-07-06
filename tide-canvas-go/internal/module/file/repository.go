@@ -64,6 +64,11 @@ func (r *Repository) Create(f *model.SysFile) error {
 	return r.db.Create(f).Error
 }
 
+// CreateAdminFile 新增管理员资源记录。管理员资源独立于用户素材库 sys_file。
+func (r *Repository) CreateAdminFile(f *model.SysAdminFile) error {
+	return r.db.Create(f).Error
+}
+
 // DeleteByID 删除文件记录（软删，置 deleted=1，对齐旧 deleteById）。
 func (r *Repository) DeleteByID(id int64) error {
 	return r.db.Delete(&model.SysFile{}, id).Error

@@ -1,21 +1,35 @@
 "use client";
 
-import { useRef, useState, useCallback, useEffect, useMemo } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Group } from "lucide-react";
+import {
+  Background,
+  BackgroundVariant,
+  MiniMap,
+  NodeToolbar,
+  Position,
+  ReactFlow,
+  ReactFlowProvider,
+  SelectionMode,
+  ViewportPortal,
+  useOnViewportChange,
+  useReactFlow,
+  type Connection as FlowConnection,
+  type Edge,
+  type EdgeMouseHandler,
+  type NodeChange,
+  type NodeTypes,
+  type OnNodeDrag,
+  type OnConnectStartParams,
+  type OnSelectionChangeParams,
+  type Viewport,
+} from "@xyflow/react";
 import { useCanvasStore } from "@/stores/use-canvas-store";
-import { useCanvasPanZoom } from "@/hooks/canvas/use-canvas-pan-zoom";
-import { useCanvasNodeDrag } from "@/hooks/canvas/use-canvas-node-drag";
 import { useCanvasClipboard } from "@/hooks/canvas/use-canvas-clipboard";
 import { useCanvasKeyboard } from "@/hooks/canvas/use-canvas-keyboard";
-import { useCanvasConnection } from "@/hooks/canvas/use-canvas-connection";
-import { useCanvasBoxSelect } from "@/hooks/canvas/use-canvas-box-select";
 import { createNode, autoArrangeNodes } from "@/lib/canvas-helpers";
-import { CanvasGridBackground } from "./canvas-grid-background";
 import { CanvasEmptyState } from "./canvas-empty-state";
-import { CanvasNodeComponent } from "./canvas-node";
-import { ConnectionsLayer } from "./connections-layer";
 import { CanvasGroupsLayer } from "./canvas-groups-layer";
-import { CanvasSelectionBox } from "./canvas-selection-box";
 import { CanvasContextMenu, type ContextMenuState } from "./canvas-context-menu";
 import { CanvasBottomToolbar } from "./canvas-bottom-toolbar";
 import { MyAssetsPanel } from "./my-assets-panel";
@@ -23,23 +37,64 @@ import { CanvasHistoryPanel } from "./canvas-history-panel";
 import { FileType, type FileVO } from "@/types/file";
 import { fileApi, uploadFileSmart } from "@/lib/api";
 import { toast } from "@/components/shared/toast";
-import { CanvasMinimap } from "./canvas-minimap";
 import { CanvasQuickAddMenu } from "./canvas-quick-add-menu";
 import { CanvasAssistantPanel } from "./canvas-assistant-panel";
+import { ReactFlowCanvasNode, type TideFlowNode } from "./react-flow-canvas-node";
+
+type TideFlowEdge = Edge<Record<string, never>, "default">;
+
+interface QuickAddState {
+  sourceNodeId: string;
+  sourceSide: "input" | "output";
+  clientX: number;
+  clientY: number;
+  worldX: number;
+  worldY: number;
+}
+
+const NODE_TYPES: NodeTypes = {
+  tideCanvasNode: ReactFlowCanvasNode,
+};
+
+const SNAP_GRID: [number, number] = [20, 20];
+
+function getClientPoint(event: MouseEvent | TouchEvent) {
+  if ("changedTouches" in event) {
+    const touch = event.changedTouches[0] || event.touches[0];
+    return touch ? { x: touch.clientX, y: touch.clientY } : null;
+  }
+  return { x: event.clientX, y: event.clientY };
+}
+
+function makeConnectionId(sourceId: string, targetId: string) {
+  return `conn_${sourceId}_${targetId}_${Date.now().toString(36)}`;
+}
 
 export function CanvasView() {
+  return (
+    <ReactFlowProvider>
+      <CanvasViewInner />
+    </ReactFlowProvider>
+  );
+}
+
+function CanvasViewInner() {
   const containerRef = useRef<HTMLDivElement>(null);
+  const reactFlow = useReactFlow<TideFlowNode, TideFlowEdge>();
   const nodes = useCanvasStore((s) => s.nodes);
   const connections = useCanvasStore((s) => s.connections);
   const groups = useCanvasStore((s) => s.groups);
   const selectedNodeIds = useCanvasStore((s) => s.selectedNodeIds);
   const selectedConnectionId = useCanvasStore((s) => s.selectedConnectionId);
+  const initialTransform = useCanvasStore((s) => s.transform);
   const addNode = useCanvasStore((s) => s.addNode);
   const removeNode = useCanvasStore((s) => s.removeNode);
   const selectNode = useCanvasStore((s) => s.selectNode);
+  const selectMany = useCanvasStore((s) => s.selectMany);
   const clearSelection = useCanvasStore((s) => s.clearSelection);
   const selectConnection = useCanvasStore((s) => s.selectConnection);
   const addConnection = useCanvasStore((s) => s.addConnection);
+  const updateNodePositions = useCanvasStore((s) => s.updateNodePositions);
   const undo = useCanvasStore((s) => s.undo);
   const redo = useCanvasStore((s) => s.redo);
   const canUndo = useCanvasStore((s) => s.undoStack.length > 0);
@@ -52,57 +107,87 @@ export function CanvasView() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
-  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
-  // 容器在屏幕中的原点（用于把世界坐标换算成 fixed 屏幕坐标；在 effect 里更新，避免 render 读 ref）
-  const [containerOrigin, setContainerOrigin] = useState({ left: 0, top: 0 });
-
-  const panZoom = useCanvasPanZoom({ containerRef });
-  const nodeDrag = useCanvasNodeDrag({ gridSnap });
+  const [viewport, setViewport] = useState<Viewport>({ x: initialTransform.x, y: initialTransform.y, zoom: initialTransform.k });
+  const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
+  const [quickAdd, setQuickAdd] = useState<QuickAddState | null>(null);
+  const connectionStartRef = useRef<{ nodeId: string; side: "input" | "output" } | null>(null);
   const clipboard = useCanvasClipboard();
-  const connection = useCanvasConnection({ containerRef });
-  const boxSelect = useCanvasBoxSelect({ containerRef });
 
-  useCanvasKeyboard({ onEscape: () => setContextMenu(null) });
+  useCanvasKeyboard({ onEscape: () => { setContextMenu(null); setQuickAdd(null); } });
 
-  // 跟踪容器尺寸（供小地图绘制可视区域 + 适应视图计算）
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const update = () => {
-      const r = el.getBoundingClientRect();
-      setViewportSize({ width: r.width, height: r.height });
-      setContainerOrigin({ left: r.left, top: r.top });
-    };
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    window.addEventListener("scroll", update, true);
-    return () => { ro.disconnect(); window.removeEventListener("scroll", update, true); };
-  }, []);
+  useOnViewportChange({
+    onChange: (nextViewport) => {
+      setViewport(nextViewport);
+      useCanvasStore.getState().setTransform({
+        x: nextViewport.x,
+        y: nextViewport.y,
+        k: nextViewport.zoom,
+      });
+    },
+  });
+
+  const flowNodes = useMemo<TideFlowNode[]>(
+    () => nodes.map((node) => ({
+      id: node.id,
+      type: "tideCanvasNode",
+      position: { x: node.x, y: node.y },
+      data: { node },
+      style: {
+        width: node.contentW ?? node.width,
+        height: node.contentH ?? node.height,
+      },
+      selected: selectedNodeIds.has(node.id),
+      draggable: true,
+      selectable: true,
+      deletable: false,
+    })),
+    [nodes, selectedNodeIds],
+  );
+
+  const flowEdges = useMemo<TideFlowEdge[]>(
+    () => connections.map((connection) => ({
+      id: connection.id,
+      source: connection.sourceId,
+      target: connection.targetId,
+      sourceHandle: "output",
+      targetHandle: "input",
+      type: "default",
+      selected: selectedConnectionId === connection.id,
+      animated: selectedNodeIds.has(connection.sourceId) || selectedNodeIds.has(connection.targetId),
+      style: {
+        stroke: selectedConnectionId === connection.id ? "#3b82f6" : "#9ca3af",
+        strokeWidth: selectedConnectionId === connection.id ? 2.5 : 2,
+      },
+    })),
+    [connections, selectedConnectionId, selectedNodeIds],
+  );
+
+  const screenToFlowPoint = useCallback((clientX: number, clientY: number) => (
+    reactFlow.screenToFlowPosition({ x: clientX, y: clientY })
+  ), [reactFlow]);
+
+  const getViewportCenter = useCallback(() => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    const x = rect ? rect.left + rect.width / 2 : window.innerWidth / 2;
+    const y = rect ? rect.top + rect.height / 2 : window.innerHeight / 2;
+    return screenToFlowPoint(x, y);
+  }, [screenToFlowPoint]);
 
   const handleAddNode = useCallback((type: string, worldX: number, worldY: number) => {
-    const node = createNode(type, worldX, worldY, nodes);
+    const node = createNode(type, worldX, worldY, useCanvasStore.getState().nodes);
     addNode(node);
     selectNode(node.id);
-  }, [addNode, selectNode, nodes]);
+  }, [addNode, selectNode]);
 
-  // 侧边工具栏「+」：在当前视口中心新建节点
   const addNodeAtViewportCenter = useCallback((type: string) => {
-    const rect = containerRef.current?.getBoundingClientRect();
-    const sx = rect ? rect.left + rect.width / 2 : 0;
-    const sy = rect ? rect.top + rect.height / 2 : 0;
-    const world = panZoom.screenToWorld(sx, sy);
+    const world = getViewportCenter();
     handleAddNode(type, world.x, world.y);
-  }, [panZoom, handleAddNode]);
+  }, [getViewportCenter, handleAddNode]);
 
-  // 「我的素材」点选：在视口中心新建图片/视频节点并填入该素材 URL
   const addAssetToCanvas = useCallback((file: FileVO) => {
-    const rect = containerRef.current?.getBoundingClientRect();
-    const sx = rect ? rect.left + rect.width / 2 : 0;
-    const sy = rect ? rect.top + rect.height / 2 : 0;
-    const world = panZoom.screenToWorld(sx, sy);
+    const world = getViewportCenter();
     const type = file.fileType === FileType.VIDEO ? "video" : "image";
-    const node = createNode(type, world.x, world.y, nodes);
+    const node = createNode(type, world.x, world.y, useCanvasStore.getState().nodes);
     if (type === "video") {
       node.videoSrc = file.fileUrl;
     } else {
@@ -114,9 +199,23 @@ export function CanvasView() {
     node.mimeType = file.mimeType;
     addNode(node);
     selectNode(node.id);
-  }, [panZoom, nodes, addNode, selectNode]);
+  }, [addNode, getViewportCenter, selectNode]);
 
-  // 右键「保存到我的素材」：把节点图片/视频 URL 记入素材库，并打开/刷新面板
+  const addGeneratedResourceToCanvas = useCallback((resource: { url: string; kind: "image" | "video"; title: string }) => {
+    const world = getViewportCenter();
+    const node = createNode(resource.kind, world.x, world.y, useCanvasStore.getState().nodes);
+    node.title = resource.title || (resource.kind === "video" ? "视频节点" : "图片节点");
+    node.status = "success";
+    node.fileType = resource.kind;
+    if (resource.kind === "video") {
+      node.videoSrc = resource.url;
+    } else {
+      node.imageSrc = resource.url;
+    }
+    addNode(node);
+    selectNode(node.id);
+  }, [addNode, getViewportCenter, selectNode]);
+
   const handleSaveAsset = useCallback(async () => {
     const node = nodes.find((n) => n.id === contextMenu?.nodeId);
     const url = node?.videoSrc || node?.imageSrc;
@@ -132,259 +231,299 @@ export function CanvasView() {
     if (res.success) {
       toast.success("已保存到我的素材");
       setMyAssetsOpen(true);
-      setAssetsRefreshKey((k) => k + 1);
+      setAssetsRefreshKey((key) => key + 1);
     } else {
       toast.error(res.message || "保存失败");
     }
-  }, [nodes, contextMenu]);
+  }, [contextMenu?.nodeId, nodes]);
 
-  const handleContextMenu = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    const target = e.target as HTMLElement;
-    const nodeEl = target.closest("[data-node-id]") as HTMLElement | null;
-    const world = panZoom.screenToWorld(e.clientX, e.clientY);
+  const openContextMenu = useCallback((event: React.MouseEvent | MouseEvent, nodeId?: string) => {
+    event.preventDefault();
+    const world = screenToFlowPoint(event.clientX, event.clientY);
     setContextMenu({
-      x: e.clientX, y: e.clientY,
-      worldX: world.x, worldY: world.y,
-      type: nodeEl ? "node" : "canvas",
-      nodeId: nodeEl?.dataset.nodeId,
+      x: event.clientX,
+      y: event.clientY,
+      worldX: world.x,
+      worldY: world.y,
+      type: nodeId ? "node" : "canvas",
+      nodeId,
     });
-  }, [panZoom]);
+  }, [screenToFlowPoint]);
 
-  // 画布空白处按下：开始平移 OR 框选
-  const handleCanvasMouseDown = useCallback((e: React.MouseEvent) => {
-    const target = e.target as HTMLElement;
-    if (!(target === containerRef.current || target.dataset.canvas)) return;
-    if (e.button !== 0) return;
-
-    setContextMenu(null);
-    selectConnection(null);
-    // Shift 按下时框选，否则平移
-    if (e.shiftKey) {
-      boxSelect.startBoxSelect(e.clientX, e.clientY);
-    } else {
-      clearSelection();
-      panZoom.handleMouseDown(e);
+  const handleNodesChange = useCallback((changes: NodeChange<TideFlowNode>[]) => {
+    const updates = changes.flatMap((change) => {
+      if (change.type !== "position" || !change.position) return [];
+      return [{ id: change.id, x: change.position.x, y: change.position.y }];
+    });
+    if (updates.length > 0) {
+      updateNodePositions(updates);
     }
-  }, [boxSelect, clearSelection, panZoom, selectConnection]);
 
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    panZoom.handleMouseMove(e);
-    nodeDrag.onMove(e);
-  }, [panZoom, nodeDrag]);
+    const removed = changes.flatMap((change) => (change.type === "remove" ? [change.id] : []));
+    if (removed.length > 0) {
+      useCanvasStore.getState().removeNodes(removed);
+    }
+  }, [updateNodePositions]);
 
-  const handleMouseUp = useCallback(() => {
-    panZoom.handleMouseUp();
-    nodeDrag.endDrag();
-  }, [panZoom, nodeDrag]);
+  const handleSelectionChange = useCallback((params: OnSelectionChangeParams<TideFlowNode, TideFlowEdge>) => {
+    selectMany(params.nodes.map((node) => node.id));
+    selectConnection(params.edges[0]?.id ?? null);
+  }, [selectConnection, selectMany]);
 
-  const handleArrange = useCallback(() => {
-    const st = useCanvasStore.getState();
-    if (st.nodes.length === 0) return;
-    st.pushHistory();
-    // 纯函数算位 → 单次批量落位（一次渲染），随后视口适配新布局
-    st.updateNodePositions(autoArrangeNodes(st.nodes, st.connections, st.groups));
-    panZoom.fitView();
-  }, [panZoom]);
+  const handleConnect = useCallback((params: FlowConnection) => {
+    if (!params.source || !params.target || params.source === params.target) return;
+    const exists = useCanvasStore.getState().connections.some(
+      (connection) => connection.sourceId === params.source && connection.targetId === params.target,
+    );
+    if (exists) {
+      setQuickAdd(null);
+      return;
+    }
+    addConnection({
+      id: makeConnectionId(params.source, params.target),
+      sourceId: params.source,
+      targetId: params.target,
+    });
+    setQuickAdd(null);
+  }, [addConnection]);
 
-  // 把当前多选节点创建为一个分组
-  const handleCreateGroup = useCallback(() => {
-    const ids = Array.from(useCanvasStore.getState().selectedNodeIds);
-    if (ids.length < 2) { toast.info("请先选择至少 2 个节点再成组"); return; }
-    const gid = useCanvasStore.getState().createGroup(ids);
-    if (gid) toast.success("已创建分组");
+  const handleConnectStart = useCallback((_event: MouseEvent | TouchEvent, params: OnConnectStartParams) => {
+    if (!params.nodeId) return;
+    connectionStartRef.current = {
+      nodeId: params.nodeId,
+      side: params.handleType === "target" ? "input" : "output",
+    };
   }, []);
 
-  // 多选时（≥2）计算包围盒顶部中点 → 供浮动「创建分组」按钮定位
-  const selectionBox = useMemo(() => {
-    if (selectedNodeIds.size < 2) return null;
-    const sel = nodes.filter((n) => selectedNodeIds.has(n.id));
-    if (sel.length < 2) return null;
-    let minX = Infinity, minY = Infinity, maxX = -Infinity;
-    for (const n of sel) {
-      const w = n.contentW ?? n.width;
-      if (n.x < minX) minX = n.x;
-      if (n.y < minY) minY = n.y;
-      if (n.x + w > maxX) maxX = n.x + w;
-    }
-    return { cx: (minX + maxX) / 2, top: minY };
-  }, [nodes, selectedNodeIds]);
+  const handleConnectEnd = useCallback((event: MouseEvent | TouchEvent) => {
+    const start = connectionStartRef.current;
+    connectionStartRef.current = null;
+    if (!start) return;
 
-  const handleConnectionClick = useCallback((id: string) => {
-    clearSelection();
-    selectConnection(id);
-  }, [clearSelection, selectConnection]);
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest(".react-flow__handle")) return;
 
-  // 从端口拖线到空白处松手 → 选择类型即新建节点并自动连线
+    const point = getClientPoint(event);
+    if (!point) return;
+    const world = screenToFlowPoint(point.x, point.y);
+    setQuickAdd({
+      sourceNodeId: start.nodeId,
+      sourceSide: start.side,
+      clientX: point.x,
+      clientY: point.y,
+      worldX: world.x,
+      worldY: world.y,
+    });
+  }, [screenToFlowPoint]);
+
   const handleQuickAdd = useCallback((type: string) => {
-    const qa = connection.quickAdd;
-    if (!qa) return;
-    const node = createNode(type, qa.worldX, qa.worldY, nodes);
+    if (!quickAdd) return;
+    const node = createNode(type, quickAdd.worldX, quickAdd.worldY, useCanvasStore.getState().nodes);
     addNode(node);
-    const sourceId = qa.sourceSide === "output" ? qa.sourceNodeId : node.id;
-    const targetId = qa.sourceSide === "output" ? node.id : qa.sourceNodeId;
+    const sourceId = quickAdd.sourceSide === "output" ? quickAdd.sourceNodeId : node.id;
+    const targetId = quickAdd.sourceSide === "output" ? node.id : quickAdd.sourceNodeId;
     if (sourceId !== targetId) {
-      addConnection({ id: `conn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, sourceId, targetId });
+      addConnection({ id: makeConnectionId(sourceId, targetId), sourceId, targetId });
     }
     selectNode(node.id);
-    connection.clearQuickAdd();
-  }, [connection, nodes, addNode, addConnection, selectNode]);
+    setQuickAdd(null);
+  }, [addConnection, addNode, quickAdd, selectNode]);
 
-  // 从系统拖入文件到画布：上传图片/视频，并在落点生成对应节点（多文件错开排列）
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    if (e.dataTransfer.types.includes("Files")) {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "copy";
+  const handleNodeDragStart: OnNodeDrag<TideFlowNode> = useCallback((_event, node) => {
+    setDraggingNodeId(node.id);
+    useCanvasStore.getState().pushHistory();
+  }, []);
+
+  const handleNodeDragStop: OnNodeDrag<TideFlowNode> = useCallback(() => {
+    setDraggingNodeId(null);
+  }, []);
+
+  const handleEdgeClick: EdgeMouseHandler<TideFlowEdge> = useCallback((event, edge) => {
+    event.stopPropagation();
+    clearSelection();
+    selectConnection(edge.id);
+  }, [clearSelection, selectConnection]);
+
+  const handlePaneClick = useCallback(() => {
+    setContextMenu(null);
+    setQuickAdd(null);
+    clearSelection();
+    selectConnection(null);
+  }, [clearSelection, selectConnection]);
+
+  const handleArrange = useCallback(() => {
+    const store = useCanvasStore.getState();
+    if (store.nodes.length === 0) return;
+    store.pushHistory();
+    store.updateNodePositions(autoArrangeNodes(store.nodes, store.connections, store.groups));
+    window.requestAnimationFrame(() => reactFlow.fitView({ padding: 0.18, duration: 240 }));
+  }, [reactFlow]);
+
+  const handleCreateGroup = useCallback(() => {
+    const ids = Array.from(useCanvasStore.getState().selectedNodeIds);
+    if (ids.length < 2) {
+      toast.info("请先选择至少 2 个节点再成组");
+      return;
+    }
+    const groupId = useCanvasStore.getState().createGroup(ids);
+    if (groupId) toast.success("已创建分组");
+  }, []);
+
+  const selectedGroupNodeIds = useMemo(() => Array.from(selectedNodeIds), [selectedNodeIds]);
+
+  const handleDragOver = useCallback((event: React.DragEvent) => {
+    if (event.dataTransfer.types.includes("Files")) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
       setIsDraggingFile(true);
     }
   }, []);
 
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    // 仅在真正离开画布容器（而非进入子元素）时取消高亮
-    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+  const handleDragLeave = useCallback((event: React.DragEvent) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node)) {
       setIsDraggingFile(false);
     }
   }, []);
 
-  const handleFileDrop = useCallback(async (e: React.DragEvent) => {
-    if (!e.dataTransfer.types.includes("Files")) return;
-    e.preventDefault();
+  const handleFileDrop = useCallback(async (event: React.DragEvent) => {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
     setIsDraggingFile(false);
 
-    const files = Array.from(e.dataTransfer.files).filter(
-      (f) => f.type.startsWith("image/") || f.type.startsWith("video/")
+    const files = Array.from(event.dataTransfer.files).filter(
+      (file) => file.type.startsWith("image/") || file.type.startsWith("video/"),
     );
     if (files.length === 0) {
-      if (e.dataTransfer.files.length > 0) toast.error("仅支持拖入图片或视频");
+      if (event.dataTransfer.files.length > 0) toast.error("仅支持拖入图片或视频");
       return;
     }
 
-    const world = panZoom.screenToWorld(e.clientX, e.clientY);
+    const world = screenToFlowPoint(event.clientX, event.clientY);
     toast.info(files.length > 1 ? `正在上传 ${files.length} 个文件...` : "正在上传...");
     let ok = 0;
 
-    await Promise.all(
-      files.map(async (file, i) => {
-        const isVideo = file.type.startsWith("video/");
-        const previewUrl = URL.createObjectURL(file);
-        const st = useCanvasStore.getState();
-        const node = createNode(isVideo ? "video" : "image", world.x + i * 48, world.y + i * 48, st.nodes);
-        if (isVideo) node.videoSrc = previewUrl;
-        else node.imageSrc = previewUrl;
-        node.status = "idle";
-        node.uploading = true;
-        node.uploadProgress = 0;
-        node.fileSize = file.size;
-        node.fileType = isVideo ? "video" : "image";
-        node.mimeType = file.type;
-        if (file.name) node.title = file.name;
-        addNode(node);
-        selectNode(node.id);
+    await Promise.all(files.map(async (file, index) => {
+      const isVideo = file.type.startsWith("video/");
+      const previewUrl = URL.createObjectURL(file);
+      const store = useCanvasStore.getState();
+      const node = createNode(isVideo ? "video" : "image", world.x + index * 48, world.y + index * 48, store.nodes);
+      if (isVideo) {
+        node.videoSrc = previewUrl;
+      } else {
+        node.imageSrc = previewUrl;
+      }
+      node.status = "idle";
+      node.uploading = true;
+      node.uploadProgress = 0;
+      node.fileSize = file.size;
+      node.fileType = isVideo ? "video" : "image";
+      node.mimeType = file.type;
+      if (file.name) node.title = file.name;
+      addNode(node);
+      selectNode(node.id);
 
-        try {
-          const res = await uploadFileSmart(file, (pct) => {
-            useCanvasStore.getState().updateNode(node.id, { uploadProgress: pct });
-          });
-          if (res.success && res.data?.fileUrl) {
-            const patch = isVideo
-              ? { videoSrc: res.data.fileUrl, status: "success" as const, uploading: false, uploadProgress: 100, fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType }
-              : { imageSrc: res.data.fileUrl, status: "success" as const, uploading: false, uploadProgress: 100, fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType };
-            useCanvasStore.getState().updateNode(node.id, patch);
-            ok++;
-          } else {
-            const patch = isVideo
-              ? { videoSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 }
-              : { imageSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 };
-            useCanvasStore.getState().updateNode(node.id, patch);
-            toast.error(`上传失败：${res.message || file.name}`);
-          }
-        } catch (err) {
+      try {
+        const res = await uploadFileSmart(file, (pct) => {
+          useCanvasStore.getState().updateNode(node.id, { uploadProgress: pct });
+        });
+        if (res.success && res.data?.fileUrl) {
+          const patch = isVideo
+            ? { videoSrc: res.data.fileUrl, status: "success" as const, uploading: false, uploadProgress: 100, fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType }
+            : { imageSrc: res.data.fileUrl, status: "success" as const, uploading: false, uploadProgress: 100, fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType };
+          useCanvasStore.getState().updateNode(node.id, patch);
+          ok++;
+        } else {
           const patch = isVideo
             ? { videoSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 }
             : { imageSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 };
           useCanvasStore.getState().updateNode(node.id, patch);
-          toast.error(`上传失败：${(err as Error)?.message || file.name}`);
-        } finally {
-          URL.revokeObjectURL(previewUrl);
+          toast.error(`上传失败：${res.message || file.name}`);
         }
-      })
-    );
+      } catch (err) {
+        const patch = isVideo
+          ? { videoSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 }
+          : { imageSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 };
+        useCanvasStore.getState().updateNode(node.id, patch);
+        toast.error(`上传失败：${(err as Error)?.message || file.name}`);
+      } finally {
+        URL.revokeObjectURL(previewUrl);
+      }
+    }));
 
     if (ok > 0) toast.success(ok > 1 ? `已添加 ${ok} 个节点` : "已添加到画布");
-  }, [panZoom, addNode, selectNode]);
+  }, [addNode, screenToFlowPoint, selectNode]);
 
   return (
-    // translate="no" + notranslate：告知浏览器/翻译类扩展（如「沉浸式翻译」）整块画布勿翻译，
-    // 抑制其在节点（尤其视频）上注入的悬浮翻译工具条。彻底关闭仍需在扩展侧将本站设为「永不翻译」。
     <div translate="no" className="notranslate relative h-full w-full overflow-hidden bg-neutral-50 dark:bg-neutral-900">
       <div
         ref={containerRef}
-        className="h-full w-full cursor-grab active:cursor-grabbing"
-        onMouseDown={handleCanvasMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-        onContextMenu={handleContextMenu}
+        className="h-full w-full"
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleFileDrop}
-        data-canvas="true"
       >
-        <CanvasGridBackground transform={panZoom.transform} />
-
-        <div
-          style={{
-            transform: `translate(${panZoom.transform.x}px, ${panZoom.transform.y}px) scale(${panZoom.transform.k})`,
-            transformOrigin: "0 0",
-          }}
-          className="absolute"
+        <ReactFlow<TideFlowNode, TideFlowEdge>
+          nodes={flowNodes}
+          edges={flowEdges}
+          nodeTypes={NODE_TYPES}
+          onNodesChange={handleNodesChange}
+          onSelectionChange={handleSelectionChange}
+          onConnect={handleConnect}
+          onConnectStart={handleConnectStart}
+          onConnectEnd={handleConnectEnd}
+          onNodeDragStart={handleNodeDragStart}
+          onNodeDragStop={handleNodeDragStop}
+          onEdgeClick={handleEdgeClick}
+          onPaneClick={handlePaneClick}
+          onPaneContextMenu={(event) => openContextMenu(event)}
+          onNodeContextMenu={(event, node) => openContextMenu(event, node.id)}
+          defaultViewport={{ x: initialTransform.x, y: initialTransform.y, zoom: initialTransform.k }}
+          minZoom={0.1}
+          maxZoom={5}
+          snapToGrid={gridSnap}
+          snapGrid={SNAP_GRID}
+          panOnScroll
+          selectionMode={SelectionMode.Partial}
+          deleteKeyCode={null}
+          proOptions={{ hideAttribution: true }}
+          fitView={false}
         >
-          <CanvasGroupsLayer groups={groups} nodes={nodes} selectedNodeIds={selectedNodeIds} />
-          <ConnectionsLayer
-            nodes={nodes}
-            connections={connections}
-            temp={connection.connecting}
-            selectedConnectionId={selectedConnectionId}
-            selectedNodeIds={selectedNodeIds}
-            onConnectionClick={handleConnectionClick}
-          />
-          {nodes.map((node) => (
-            <CanvasNodeComponent
-              key={node.id}
-              node={node}
-              isSelected={selectedNodeIds.has(node.id)}
-              isDragging={nodeDrag.draggingNodeId === node.id}
-              isConnectTarget={connection.hoverTargetNodeId === node.id}
-              onNodeMouseDown={nodeDrag.onNodeMouseDown}
-              onPortMouseDown={connection.startConnection}
-            />
-          ))}
-          {boxSelect.box && (
-            <CanvasSelectionBox
-              startWorldX={boxSelect.box.startWorldX}
-              startWorldY={boxSelect.box.startWorldY}
-              currentWorldX={boxSelect.box.currentWorldX}
-              currentWorldY={boxSelect.box.currentWorldY}
+          <Background variant={BackgroundVariant.Dots} gap={20} size={1.1} color="#d4d4d4" />
+          <ViewportPortal>
+            <CanvasGroupsLayer groups={groups} nodes={nodes} selectedNodeIds={selectedNodeIds} />
+          </ViewportPortal>
+          {minimapVisible && (
+            <MiniMap
+              position="bottom-left"
+              pannable
+              zoomable
+              nodeBorderRadius={8}
+              nodeColor="#e5e7eb"
+              nodeStrokeColor="#9ca3af"
+              style={{ marginBottom: 64, marginLeft: 16, borderRadius: 12, overflow: "hidden" }}
             />
           )}
-        </div>
+          {selectedGroupNodeIds.length >= 2 && !draggingNodeId && !quickAdd && (
+            <NodeToolbar
+              nodeId={selectedGroupNodeIds}
+              isVisible
+              position={Position.Top}
+              align="center"
+              offset={12}
+              style={{ zIndex: 30 }}
+            >
+              <button
+                onClick={handleCreateGroup}
+                className="flex items-center gap-1.5 rounded-lg bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+              >
+                <Group className="h-3.5 w-3.5" /> 创建分组 <kbd className="ml-0.5 opacity-60">⌘G</kbd>
+              </button>
+            </NodeToolbar>
+          )}
+        </ReactFlow>
       </div>
 
       {nodes.length === 0 && <CanvasEmptyState />}
-
-      {/* 多选浮动操作：在选区顶部上方居中显示「创建分组」（拖动/框选/连线时隐藏） */}
-      {selectionBox && !nodeDrag.draggingNodeId && !boxSelect.isBoxSelecting && !connection.connecting && (
-        <button
-          onClick={handleCreateGroup}
-          style={{
-            left: containerOrigin.left + panZoom.transform.x + selectionBox.cx * panZoom.transform.k,
-            top: containerOrigin.top + panZoom.transform.y + selectionBox.top * panZoom.transform.k - 12,
-          }}
-          className="fixed z-30 flex -translate-x-1/2 -translate-y-full items-center gap-1.5 rounded-lg bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white shadow-lg transition-colors hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-        >
-          <Group className="h-3.5 w-3.5" /> 创建分组 <kbd className="ml-0.5 opacity-60">⌘G</kbd>
-        </button>
-      )}
 
       {isDraggingFile && (
         <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-blue-500/10 backdrop-blur-[1px]">
@@ -395,20 +534,9 @@ export function CanvasView() {
         </div>
       )}
 
-      {minimapVisible && (
-        <div className="absolute bottom-16 left-4">
-          <CanvasMinimap
-            nodes={nodes}
-            transform={panZoom.transform}
-            viewportSize={viewportSize}
-            onNavigate={panZoom.centerOn}
-          />
-        </div>
-      )}
-
       <CanvasQuickAddMenu
-        menu={connection.quickAdd}
-        onClose={connection.clearQuickAdd}
+        menu={quickAdd}
+        onClose={() => setQuickAdd(null)}
         onSelect={handleQuickAdd}
       />
 
@@ -430,26 +558,26 @@ export function CanvasView() {
         onSaveAsset={handleSaveAsset}
       />
       <MyAssetsPanel open={myAssetsOpen} onClose={() => setMyAssetsOpen(false)} onPick={addAssetToCanvas} refreshKey={assetsRefreshKey} />
-      <CanvasHistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />
+      <CanvasHistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} onAddResource={addGeneratedResourceToCanvas} />
 
       <CanvasAssistantPanel />
 
       <CanvasBottomToolbar
-        zoom={panZoom.transform.k}
+        zoom={viewport.zoom}
         gridSnap={gridSnap}
         minimapVisible={minimapVisible}
         assetsActive={myAssetsOpen}
         historyActive={historyOpen}
         onAddNode={addNodeAtViewportCenter}
-        onZoomIn={panZoom.zoomIn}
-        onZoomOut={panZoom.zoomOut}
-        onZoomReset={panZoom.zoomReset}
-        onFitView={panZoom.fitView}
-        onToggleGridSnap={() => setGridSnap(!gridSnap)}
-        onToggleMinimap={() => setMinimapVisible(!minimapVisible)}
+        onZoomIn={() => reactFlow.zoomIn({ duration: 160 })}
+        onZoomOut={() => reactFlow.zoomOut({ duration: 160 })}
+        onZoomReset={() => reactFlow.setViewport({ x: 0, y: 0, zoom: 1 }, { duration: 180 })}
+        onFitView={() => reactFlow.fitView({ padding: 0.18, duration: 240 })}
+        onToggleGridSnap={() => setGridSnap((value) => !value)}
+        onToggleMinimap={() => setMinimapVisible((value) => !value)}
         onArrange={handleArrange}
-        onOpenAssets={() => { setMyAssetsOpen((v) => !v); setHistoryOpen(false); }}
-        onOpenHistory={() => { setHistoryOpen((v) => !v); setMyAssetsOpen(false); }}
+        onOpenAssets={() => { setMyAssetsOpen((value) => !value); setHistoryOpen(false); }}
+        onOpenHistory={() => { setHistoryOpen((value) => !value); setMyAssetsOpen(false); }}
       />
     </div>
   );

@@ -26,6 +26,16 @@ type RegisterReq struct {
 	FileType string `json:"fileType"`
 }
 
+// SystemUploadVO 系统配置类图片上传结果。记录写入 sys_admin_file，不写入 sys_file 素材表。
+type SystemUploadVO struct {
+	FileURL     string    `json:"fileUrl"`
+	FileSize    int64     `json:"fileSize"`
+	FileType    string    `json:"fileType"`
+	MimeType    string    `json:"mimeType"`
+	StorageType string    `json:"storageType"`
+	CreateTime  time.Time `json:"createTime"`
+}
+
 // SaveFromURLReq 从 URL 保存为素材请求（对齐旧 saveFromUrl 的 Map<String,Object> body）。
 type SaveFromURLReq struct {
 	URL          string `json:"url"`

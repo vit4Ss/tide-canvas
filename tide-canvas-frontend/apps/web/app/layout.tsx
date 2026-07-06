@@ -3,9 +3,12 @@ import localFont from "next/font/local";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale } from "next-intl/server";
 import "@mantine/core/styles.css";
+import "@douyinfe/semi-ui/lib/es/_base/base.css";
+import "@xyflow/react/dist/style.css";
 import "./globals.css";
 import { MantineAppProvider } from "@/components/shared/mantine-provider";
 import { ToastContainer } from "@/components/shared/toast";
+import { UiPreferencesProvider } from "@/components/shared/ui-preferences";
 
 // 使用仓库内置 Inter 字体，避免 Docker 构建时联网拉取 Google Fonts。
 const inter = localFont({
@@ -30,10 +33,12 @@ export default async function RootLayout({
     <html lang={locale} className={`${inter.variable} h-full antialiased`}>
       <body className="flex min-h-full flex-col bg-background font-sans text-foreground">
         <MantineAppProvider>
-          <NextIntlClientProvider>
-            {children}
-            <ToastContainer />
-          </NextIntlClientProvider>
+          <UiPreferencesProvider>
+            <NextIntlClientProvider>
+              {children}
+              <ToastContainer />
+            </NextIntlClientProvider>
+          </UiPreferencesProvider>
         </MantineAppProvider>
       </body>
     </html>

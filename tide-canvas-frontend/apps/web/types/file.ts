@@ -13,6 +13,15 @@ export interface FileVO {
   createTime: string;
 }
 
+export interface SystemUploadVO {
+  fileUrl: string;
+  fileSize: number;
+  fileType: FileType;
+  mimeType: string;
+  storageType: StorageType;
+  createTime: string;
+}
+
 export interface FileQuery extends PageQuery {
   fileType?: FileType;
   keyword?: string;

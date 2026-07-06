@@ -49,6 +49,13 @@ export interface OrderQuery extends PageQuery {
   endTime?: string;
 }
 
+export interface AdminOrderQuery extends OrderQuery {
+  keyword?: string;
+  userKeyword?: string;
+  orderNo?: string;
+  userId?: string | number;
+}
+
 export enum OrderStatus {
   PENDING = 0,
   PAID = 1,

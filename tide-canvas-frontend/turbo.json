@@ -1,7 +1,16 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "ui": "tui",
-  "globalEnv": ["API_BASE_URL", "BACKEND_URL", "NEXT_PUBLIC_API_BASE_PATH"],
+  "globalEnv": [
+    "API_BASE_URL",
+    "API_TARGET",
+    "BACKEND_URL",
+    "NEXT_PUBLIC_API_BASE_PATH",
+    "NEXT_PUBLIC_API_BASE_URL",
+    "NEXT_PUBLIC_OAUTH_REDIRECT_BASE",
+    "NEXT_PUBLIC_WS_URL",
+    "PORT"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

@@ -12,7 +12,7 @@ export interface PointsTransactionVO {
   balanceAfter: number;
   type: number;
   typeName: string;
-  bizId: number;
+  bizId?: number | null;
   remark: string;
   createTime: string;
 }

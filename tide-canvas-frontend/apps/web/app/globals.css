@@ -52,6 +52,12 @@
 }
 
 :root {
+  --tc-root-font-size: 16px;
+  --tc-font-scale: 1;
+  --tc-primary: #1677ff;
+  --tc-primary-soft: #e6f0ff;
+  --tc-primary-foreground: #ffffff;
+  --tc-ring: #4096ff;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -129,7 +135,16 @@
   }
   html {
     @apply font-sans;
+    font-size: var(--tc-root-font-size);
   }
+}
+
+body,
+button,
+input,
+textarea,
+select {
+  font-family: var(--font-sans), "Noto Sans SC", "PingFang SC", "Microsoft YaHei", Arial, Helvetica, sans-serif;
 }
 
 /* 注：原画布 Electron 风格的全局 cursor/禁选择强制已移除，全站回到浏览器标准行为。

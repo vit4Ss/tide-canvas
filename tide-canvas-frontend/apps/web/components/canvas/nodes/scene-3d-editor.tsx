@@ -1062,7 +1062,6 @@ export function Scene3DEditor({ node, onClose }: Props) {
           <div className="mb-1.5 text-xs font-medium text-white/60">全景背景</div>
           {panoUrl ? (
             <>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={panoUrl} alt="" className="h-14 w-full rounded-lg object-cover" />
               <div className="mt-1 truncate text-[11px] text-white/40">{pano?.is360 ? "已连接全景图" : "已连接图片（按全景使用）"} · {pano?.title}</div>
               <div className="mt-2 space-y-2">

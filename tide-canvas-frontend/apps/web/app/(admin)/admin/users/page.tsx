@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Table, Input, Tag, Button, Modal, Select, InputNumber, Switch, Avatar, Space, Alert } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { UserOutlined, EditOutlined, LockOutlined, PlusOutlined } from "@ant-design/icons";
@@ -74,7 +74,7 @@ export default function AdminUsersPage() {
   const [adjustAmount, setAdjustAmount] = useState<number | null>(null);
   const [adjustRemark, setAdjustRemark] = useState("");
 
-  const loadUsers = async (page = pageNum, search = keyword) => {
+  const loadUsers = useCallback(async (page: number, search: string) => {
     setLoading(true);
     setError("");
     try {
@@ -89,14 +89,14 @@ export default function AdminUsersPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  useEffect(() => { loadUsers(1); }, []);
+  useEffect(() => { void loadUsers(1, ""); }, [loadUsers]);
   useEffect(() => { adminApi.roles.list().then((r) => { if (r.success) setRoles(r.data ?? []); }).catch(() => {}); }, []);
   useEffect(() => { adminApi.vipLevels.list().then((r) => { if (r.success) setVipLevels(r.data ?? []); }).catch(() => {}); }, []);
 
-  const handleSearch = (v: string) => { setKeyword(v); setPageNum(1); loadUsers(1, v); };
-  const handlePageChange = (p: number) => { setPageNum(p); loadUsers(p); };
+  const handleSearch = (v: string) => { setKeyword(v); setPageNum(1); void loadUsers(1, v); };
+  const handlePageChange = (p: number) => { setPageNum(p); void loadUsers(p, keyword); };
 
   const openCreate = () => {
     setCreateForm(createDefaultForm());
@@ -233,7 +233,7 @@ export default function AdminUsersPage() {
       }
       toast.success(wantAdjust ? `已保存，积分 ${amount > 0 ? "+" : ""}${amount}` : "已保存");
       setEditTarget(null);
-      loadUsers();
+      void loadUsers(pageNum, keyword);
     } catch {
       toast.error("网络错误，请稍后重试");
     } finally {

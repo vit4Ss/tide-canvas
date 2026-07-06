@@ -53,6 +53,7 @@ export const ADMIN_GROUPS: AdminGroup[] = [
     key: "ai", label: "AI", icon: <Bot size={16} />,
     items: [
       { key: "/admin/ai/providers", label: "AI 供应商", perm: "provider:view" },
+      { key: "/admin/ai/upstream", label: "上游模型", perm: "model:view" },
       { key: "/admin/ai/models", label: "模型管理", perm: "model:view" },
       { key: "/admin/ai/routing", label: "模型映射", perm: "model:view" },
       { key: "/admin/ai/logs", label: "AI 日志", perm: "ailog:view" },
@@ -63,6 +64,7 @@ export const ADMIN_GROUPS: AdminGroup[] = [
     items: [
       { key: "/admin/roles", label: "角色权限", perm: "role:view" },
       { key: "/admin/email-templates", label: "邮件模板", perm: "email:view" },
+      { key: "/admin/assistant-pets", label: "助手宠物", perm: "setting:view" },
       { key: "/admin/settings", label: "系统设置", perm: "setting:view" },
     ],
   },

@@ -61,6 +61,60 @@ func (s *Service) Upload(userID int64, data []byte, originalName, mimeType strin
 	return vo, nil
 }
 
+// UploadSystemAsset 上传系统配置类资源，写入管理员资源表，不进入用户素材库、不占用用户素材额度。
+func (s *Service) UploadSystemAsset(userID int64, data []byte, originalName, mimeType, bizType string) (*SystemUploadVO, error) {
+	if err := s.validateFile(data, mimeType); err != nil {
+		s.opLog.RecordOperation("system_asset_upload", userID, nil, originalName, false, "", err.Error())
+		return nil, err
+	}
+	bizType = normalizeAdminFileBizType(bizType)
+	fileType := fileTypeFromMime(mimeType)
+	filePath, err := s.store.Upload(data, originalName, mimeType, "system/"+fileType+"/"+time.Now().Format("2006/01/02"))
+	if err != nil {
+		s.opLog.RecordOperation("system_asset_upload", userID, nil, originalName, false, "", err.Error())
+		return nil, ecode.ServerError.WithMessage("系统资源上传失败")
+	}
+	fileURL := s.store.PublicURL(filePath)
+	now := time.Now()
+	record := &model.SysAdminFile{
+		AdminID:      userID,
+		BizType:      bizType,
+		OriginalName: originalName,
+		StoredName:   storedNameOf(filePath),
+		FilePath:     filePath,
+		FileURL:      fileURL,
+		FileSize:     int64(len(data)),
+		FileType:     fileType,
+		MimeType:     mimeType,
+		Hash:         computeHash(data),
+		StorageType:  s.store.Type(),
+	}
+	if err := s.repo.CreateAdminFile(record); err != nil {
+		s.opLog.RecordOperation("system_asset_upload", userID, nil, originalName, false, fileURL, err.Error())
+		return nil, err
+	}
+	s.opLog.RecordOperation("system_asset_upload", userID, nil, originalName, true, fileURL, "")
+	return &SystemUploadVO{
+		FileURL:     fileURL,
+		FileSize:    int64(len(data)),
+		FileType:    fileType,
+		MimeType:    mimeType,
+		StorageType: s.store.Type(),
+		CreateTime:  now,
+	}, nil
+}
+
+func normalizeAdminFileBizType(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "system"
+	}
+	if len(value) > 64 {
+		return value[:64]
+	}
+	return value
+}
+
 func (s *Service) doUpload(userID int64, data []byte, originalName, mimeType string) (*FileVO, error) {
 	if err := s.validateFile(data, mimeType); err != nil {
 		return nil, err

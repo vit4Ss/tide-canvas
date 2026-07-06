@@ -36,6 +36,7 @@ const sidebarItems = [
   { href: "/admin/files", label: "文件管理", icon: FolderOpen },
   { href: "/admin/logs", label: "系统日志", icon: ScrollText },
   { href: "/admin/email-templates", label: "邮件模板", icon: Mail },
+  { href: "/admin/assistant-pets", label: "助手宠物", icon: Bot },
   { href: "/admin/settings", label: "系统设置", icon: Settings },
 ];
 

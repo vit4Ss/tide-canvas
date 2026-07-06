@@ -11,7 +11,7 @@ const AUTOPLAY_MS = 5000;
 /** 单张 Banner：有 linkUrl 时整图可点击跳转（外链新窗口、内链路由），否则纯展示 */
 function BannerSlide({ banner }: { banner: BannerVO }) {
   const isExternal = /^https?:\/\//.test(banner.linkUrl || "");
-  // eslint-disable-next-line @next/next/no-img-element
+
   const img = <img src={banner.imageUrl} alt={banner.title || "banner"} className="h-full w-full object-cover" draggable={false} />;
   if (!banner.linkUrl) {
     return <div className="block h-full w-full">{img}</div>;

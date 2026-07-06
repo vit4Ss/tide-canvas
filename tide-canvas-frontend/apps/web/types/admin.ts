@@ -168,6 +168,8 @@ export interface AiUpstreamModelVO {
   timeoutMs: number;
   priority: number;
   status: number;
+  createdBy: string;
+  creatorName: string;
   createTime: string;
 }
 

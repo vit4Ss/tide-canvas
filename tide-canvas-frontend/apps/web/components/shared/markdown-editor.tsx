@@ -19,6 +19,18 @@ interface MarkdownEditorProps {
   required?: boolean;
 }
 
+const MARKDOWN_TOOLS = [
+  { icon: Bold, title: "粗体", action: "bold" },
+  { icon: Italic, title: "斜体", action: "italic" },
+  { icon: Heading, title: "标题", action: "heading" },
+  { icon: List, title: "列表", action: "list" },
+  { icon: Quote, title: "引用", action: "quote" },
+  { icon: Code, title: "行内代码", action: "code" },
+  { icon: Link2, title: "链接", action: "link" },
+] as const;
+
+type MarkdownToolAction = (typeof MARKDOWN_TOOLS)[number]["action"];
+
 /**
  * 带工具栏（加粗/斜体/标题/列表/引用/代码/链接/插入图片）和「编辑 / 预览」切换的
  * Markdown 编辑器。图片按钮会上传文件并插入 `![](url)`。
@@ -95,15 +107,31 @@ export function MarkdownEditor({
     }
   };
 
-  const tools = [
-    { icon: Bold, title: "粗体", run: () => surround("**", "**", "粗体") },
-    { icon: Italic, title: "斜体", run: () => surround("*", "*", "斜体") },
-    { icon: Heading, title: "标题", run: () => linePrefix("## ") },
-    { icon: List, title: "列表", run: () => linePrefix("- ") },
-    { icon: Quote, title: "引用", run: () => linePrefix("> ") },
-    { icon: Code, title: "行内代码", run: () => surround("`", "`", "code") },
-    { icon: Link2, title: "链接", run: () => surround("[", "](https://)", "链接文字") },
-  ];
+  const runTool = (action: MarkdownToolAction) => {
+    switch (action) {
+      case "bold":
+        surround("**", "**", "粗体");
+        break;
+      case "italic":
+        surround("*", "*", "斜体");
+        break;
+      case "heading":
+        linePrefix("## ");
+        break;
+      case "list":
+        linePrefix("- ");
+        break;
+      case "quote":
+        linePrefix("> ");
+        break;
+      case "code":
+        surround("`", "`", "code");
+        break;
+      case "link":
+        surround("[", "](https://)", "链接文字");
+        break;
+    }
+  };
 
   return (
     <div>
@@ -111,12 +139,12 @@ export function MarkdownEditor({
       <div className="flex flex-wrap items-center gap-0.5 rounded-t-lg border border-b-0 border-neutral-300 bg-neutral-50 px-2 py-1 dark:border-neutral-700 dark:bg-neutral-900/50">
         {!preview && (
           <>
-            {tools.map((t) => (
+            {MARKDOWN_TOOLS.map((t) => (
               <button
                 key={t.title}
                 type="button"
                 title={t.title}
-                onClick={t.run}
+                onClick={() => runTool(t.action)}
                 className="rounded p-1.5 text-neutral-500 transition-colors hover:bg-neutral-200 hover:text-neutral-800 dark:hover:bg-neutral-700 dark:hover:text-neutral-100"
               >
                 <t.icon className="h-4 w-4" />

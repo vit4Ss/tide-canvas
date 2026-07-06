@@ -10,7 +10,7 @@ import (
 	"github.com/tidecanvas/tide-canvas-go/pkg/response"
 )
 
-// Handler 系统设置 HTTP 层（路由薄层），统一挂载于 /api/admin/settings。
+// Handler 系统设置 HTTP 层（路由薄层）。
 type Handler struct {
 	svc *Service
 }
@@ -20,15 +20,30 @@ func NewHandler(db *gorm.DB) *Handler {
 	return &Handler{svc: NewService(NewRepository(db))}
 }
 
-// RegisterRoutes 注册系统设置路由（传入 /api 组 → 实际 /api/admin/settings）。
+// RegisterRoutes 注册系统设置路由。
 //
 // 校验链：JWTAuth（注入当前用户）→ AdminOnly（限管理员）→ RequiresPermission(code)（按钮级权限码）。
 // 权限码忠实迁移旧 AdminSettingController：读取 setting:view，保存 setting:edit。
 func (h *Handler) RegisterRoutes(api gin.IRouter, jwtProvider *appjwt.Provider, permLoader middleware.PermissionLoader) {
+	userSettings := api.Group("/settings")
+	userSettings.Use(middleware.JWTAuth(jwtProvider))
+	userSettings.GET("/assistant-pet-styles", h.listAssistantPetStyles)
+
 	settings := api.Group("/admin/settings")
 	settings.Use(middleware.JWTAuth(jwtProvider), middleware.AdminOnly())
 	settings.GET("", middleware.RequiresPermission(permLoader, "setting:view"), h.get)
 	settings.PUT("", middleware.RequiresPermission(permLoader, "setting:edit"), h.update)
+}
+
+// listAssistantPetStyles GET /api/settings/assistant-pet-styles。
+// 用户端只拿已启用的宠物样式，不能读取完整 sys_config。
+func (h *Handler) listAssistantPetStyles(c *gin.Context) {
+	data, err := h.svc.ListEnabledAssistantPetStyles()
+	if err != nil {
+		response.FailErr(c, err)
+		return
+	}
+	response.OK(c, data)
 }
 
 // get GET /api/admin/settings 读取全部系统配置（权限码 setting:view）。

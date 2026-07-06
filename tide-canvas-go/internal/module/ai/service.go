@@ -366,6 +366,21 @@ func (s *Service) MyLogs(userID int64, projectPublicID string, q *PageQuery) ([]
 	return out, total, nil
 }
 
+// DeleteMyLog 删除当前用户自己的生成资源记录；团队共享记录只能由记录创建者删除。
+func (s *Service) DeleteMyLog(userID int64, logID int64) error {
+	lg, err := s.repo.FindLogByID(logID)
+	if err != nil {
+		return err
+	}
+	if lg == nil {
+		return ecode.NotFound.WithMessage("生成记录不存在")
+	}
+	if lg.UserID == nil || *lg.UserID != userID {
+		return ecode.Forbidden.WithMessage("只能删除自己的生成记录")
+	}
+	return s.repo.DeleteLogByID(logID)
+}
+
 // ===== 异步执行 / 同步执行（对齐 AiTaskRunner.run / AiServiceImpl.executeSync）=====
 
 // runAsync 异步执行任务（goroutine）：执行上游 → 更新任务 → 失败退款。

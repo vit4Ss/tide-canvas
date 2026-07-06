@@ -38,6 +38,7 @@ func NewHandler(svc *Service, jwtProvider *appjwt.Provider) *Handler {
 //
 //	POST   /api/files/upload         单文件上传
 //	POST   /api/files/upload/batch   批量上传
+//	POST   /api/files/system-upload  系统配置资源上传（管理员，setting:edit，不写入素材库）
 //	POST   /api/files/presign        申请前端直传凭据
 //	POST   /api/files/register       直传完成后登记
 //	POST   /api/files/save-from-url  从 URL 保存为素材
@@ -47,7 +48,7 @@ func NewHandler(svc *Service, jwtProvider *appjwt.Provider) *Handler {
 //	DELETE /api/files/:id            删除文件（:id = public_id）
 //
 // 注：旧版 RateLimit(file_upload/file_presign) 速率限制待限流中间件迁移后补挂。
-func (h *Handler) RegisterRoutes(api gin.IRouter, jwtProvider *appjwt.Provider) {
+func (h *Handler) RegisterRoutes(api gin.IRouter, jwtProvider *appjwt.Provider, permLoader middleware.PermissionLoader) {
 	g := api.Group("/files")
 	g.Use(middleware.JWTAuth(jwtProvider))
 
@@ -57,6 +58,14 @@ func (h *Handler) RegisterRoutes(api gin.IRouter, jwtProvider *appjwt.Provider) 
 	g.POST("/upload/batch", middleware.RateLimit(middleware.RateLimitOptions{
 		Name: "file_upload", Limit: 30, Period: 60 * time.Second, Dimension: middleware.DimUser, BanThreshold: 0,
 	}), h.uploadBatch)
+	g.POST("/system-upload",
+		middleware.AdminOnly(),
+		middleware.RequiresPermission(permLoader, "setting:edit"),
+		middleware.RateLimit(middleware.RateLimitOptions{
+			Name: "system_asset_upload", Limit: 20, Period: 60 * time.Second, Dimension: middleware.DimUser, BanThreshold: 0,
+		}),
+		h.systemUpload,
+	)
 	g.POST("/presign", h.presign)
 	g.POST("/register", h.register)
 	g.POST("/save-from-url", h.saveFromURL)
@@ -107,6 +116,25 @@ func (h *Handler) uploadBatch(c *gin.Context) {
 		vos = append(vos, vo)
 	}
 	response.OK(c, vos)
+}
+
+func (h *Handler) systemUpload(c *gin.Context) {
+	fh, err := c.FormFile("file")
+	if err != nil {
+		response.Fail(c, ecode.BadRequest)
+		return
+	}
+	data, err := readMultipart(fh, h.svc.cfg.MaxSize)
+	if err != nil {
+		response.FailErr(c, err)
+		return
+	}
+	vo, err := h.svc.UploadSystemAsset(middleware.MustUserID(c), data, fh.Filename, fh.Header.Get("Content-Type"), c.PostForm("bizType"))
+	if err != nil {
+		response.FailErr(c, err)
+		return
+	}
+	response.OK(c, vo)
 }
 
 func (h *Handler) presign(c *gin.Context) {

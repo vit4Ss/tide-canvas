@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Table, Input, Select, DatePicker, Space, Tag, Alert, Tooltip, Button, Popconfirm } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { DeleteOutlined, ClearOutlined } from "@ant-design/icons";
@@ -42,7 +42,12 @@ export default function AdminLogsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const loadLogs = async (page = pageNum, search = keyword, action = actionFilter, r = range) => {
+  const loadLogs = useCallback(async (
+    page: number,
+    search: string,
+    action: string,
+    r: { start?: string; end?: string },
+  ) => {
     setLoading(true);
     setError("");
     try {
@@ -64,15 +69,15 @@ export default function AdminLogsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  useEffect(() => { loadLogs(1); }, []);
+  useEffect(() => { void loadLogs(1, "", "", {}); }, [loadLogs]);
 
   const handleDelete = async (id: number) => {
     const res = await adminApi.logs.remove(id);
     if (res.success) {
       toast.success("已删除");
-      loadLogs();
+      void loadLogs(pageNum, keyword, actionFilter, range);
     } else {
       toast.error(res.message || "删除失败");
     }
@@ -83,7 +88,7 @@ export default function AdminLogsPage() {
     if (res.success) {
       toast.success("已清空日志");
       setPageNum(1);
-      loadLogs(1);
+      void loadLogs(1, keyword, actionFilter, range);
     } else {
       toast.error(res.message || "清空失败");
     }
@@ -118,13 +123,13 @@ export default function AdminLogsPage() {
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <Space wrap>
           <Input.Search placeholder="搜索操作详情..." allowClear enterButton style={{ width: 260 }}
-            onSearch={(v) => { setKeyword(v); setPageNum(1); loadLogs(1, v, actionFilter, range); }} />
+            onSearch={(v) => { setKeyword(v); setPageNum(1); void loadLogs(1, v, actionFilter, range); }} />
           <Select style={{ width: 150 }} value={actionFilter} options={ACTION_OPTIONS}
-            onChange={(v) => { setActionFilter(v); setPageNum(1); loadLogs(1, keyword, v, range); }} />
+            onChange={(v) => { setActionFilter(v); setPageNum(1); void loadLogs(1, keyword, v, range); }} />
           <RangePicker
             onChange={(_, ds) => {
               const r = { start: ds?.[0] ? `${ds[0]} 00:00:00` : undefined, end: ds?.[1] ? `${ds[1]} 23:59:59` : undefined };
-              setRange(r); setPageNum(1); loadLogs(1, keyword, actionFilter, r);
+              setRange(r); setPageNum(1); void loadLogs(1, keyword, actionFilter, r);
             }}
           />
         </Space>
@@ -142,7 +147,7 @@ export default function AdminLogsPage() {
         loading={loading}
         scroll={{ x: "max-content" }}
         locale={{ emptyText: "暂无日志记录" }}
-        pagination={{ current: pageNum, pageSize: PAGE_SIZE, total, showSizeChanger: false, showTotal: (t) => `共 ${t} 条`, onChange: (p) => { setPageNum(p); loadLogs(p); } }}
+        pagination={{ current: pageNum, pageSize: PAGE_SIZE, total, showSizeChanger: false, showTotal: (t) => `共 ${t} 条`, onChange: (p) => { setPageNum(p); void loadLogs(p, keyword, actionFilter, range); } }}
       />
     </div>
   );

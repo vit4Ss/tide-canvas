@@ -985,8 +985,8 @@ export function CreativeHero() {
         </div>
         <div className={(results.length === 0
           ? "relative z-40 px-0 pb-0 pt-0"
-          : "sticky bottom-4 z-40 -mx-4 bg-[linear-gradient(to_top,#f7f8fa_74%,rgba(247,248,250,0))] px-4 pb-0 pt-3 sm:-mx-6 sm:px-6 dark:bg-[linear-gradient(to_top,#101114_74%,rgba(16,17,20,0))]")}> 
-          <div className={(results.length === 0 ? "mx-auto w-full max-w-[920px]" : "mx-auto w-full max-w-[960px]")}> 
+          : "sticky bottom-4 z-40 -mx-4 bg-[linear-gradient(to_top,#f7f8fa_74%,rgba(247,248,250,0))] px-4 pb-0 pt-3 sm:-mx-6 sm:px-6 dark:bg-[linear-gradient(to_top,#101114_74%,rgba(16,17,20,0))]")}>
+          <div className={(results.length === 0 ? "mx-auto w-full max-w-[920px]" : "mx-auto w-full max-w-[960px]")}>
             <div
               data-type-open={typeOpen ? "true" : undefined}
               className="relative z-30 rounded-lg border border-neutral-200 bg-white p-3 text-left shadow-[0_18px_42px_rgba(15,23,42,0.08)] dark:border-white/10 dark:bg-neutral-950"
@@ -1633,7 +1633,6 @@ function ReferencePickerCard({
       ) : (
         <>
           {!mediaLoaded && <ReferenceMediaSkeleton />}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={file.fileUrl}
             alt=""
@@ -1801,7 +1800,7 @@ function ReferenceMediaPreviewDialog({ file, onClose }: { file: FileVO | null; o
         {isVideo ? (
           <video src={file.fileUrl} controls autoPlay className={mediaClass} style={mediaStyle} />
         ) : (
-          // eslint-disable-next-line @next/next/no-img-element
+
           <img src={file.fileUrl} alt={title} className={mediaClass} draggable={false} style={mediaStyle} />
         )}
       </div>

@@ -15,7 +15,6 @@ import {
   CalendarCheck,
   ShoppingCart,
   BookOpen,
-  Sparkles,
   Ticket,
   UserPlus,
   Users,

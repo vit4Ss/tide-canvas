@@ -1,216 +1,53 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowUp, Bot, ChevronDown, ChevronRight, Expand, FileText, Loader2, Maximize2, Menu, Minimize2, Plus, Sparkles, X, Zap } from "lucide-react";
+import { ChevronRight, Maximize2, Minimize2, X } from "lucide-react";
+import { AssistantComposer } from "./assistant/assistant-composer";
+import { AssistantHistoryMenu } from "./assistant/assistant-history-menu";
+import { AssistantLauncher } from "./assistant/assistant-launcher";
+import { AssistantMessageList } from "./assistant/assistant-message-list";
+import { AssistantPetStyleMenu } from "./assistant/assistant-pet-style-menu";
+import {
+  ASSISTANT_PET_STYLE_EVENT,
+  ASSISTANT_PET_STYLE_STORAGE_KEY,
+  fetchAssistantPetStyles,
+  loadSelectedAssistantPetStyleId,
+  saveSelectedAssistantPetStyleId,
+} from "./assistant/pet-style";
+import { resolveAssistantPetStyle } from "@/lib/assistant-pet-styles";
+import {
+  ASSISTANT_HANDLER,
+  ASSISTANT_MODEL_STORAGE_KEY,
+  CHAT_POLL_INTERVAL,
+  DEFAULT_PANEL_WIDTH,
+  MAX_CHAT_POLL_TIME,
+  MAX_STORED_SESSIONS,
+  MAX_PANEL_WIDTH,
+  MIN_PANEL_WIDTH,
+} from "./assistant/constants";
+import { parseTaskResult } from "./assistant/task-result";
+import {
+  createSessionId,
+  loadStoredSessions,
+  messageContentForHistory,
+  normalizeStoredMessages,
+  saveStoredSessions,
+  sessionTitleFromMessages,
+} from "./assistant/session-storage";
+import type { AssistantChatMessage, AssistantChatRole, AssistantStoredSession } from "./assistant/types";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { referenceKindFromFile, referenceKindFromMeta, resolveModelReferenceLimitBytes, validateKnownFileSize } from "@/lib/upload-limits";
 import { toast } from "@/components/shared/toast";
-import { AiModelType, AiTaskStatus, type AiModelVO, type AiTaskVO } from "@/types/ai";
+import { AiModelType, AiTaskStatus, type AiModelVO } from "@/types/ai";
+import type { AssistantPetStyle } from "@/types/assistant";
 import type { FileVO } from "@/types/file";
-
-const SUGGESTIONS = [
-  "优化创意提示词",
-  "构思分镜脚本",
-  "让想法走向画面",
-  "帮你点亮灵感~",
-];
-
-
-const MIN_PANEL_WIDTH = 380;
-const MAX_PANEL_WIDTH = 720;
-const DEFAULT_PANEL_WIDTH = 460;
-const ASSISTANT_MODEL_STORAGE_KEY = "tc:assistant:modelId";
-const ASSISTANT_SESSION_STORAGE_KEY = "tc:assistant:session";
-const ASSISTANT_SESSIONS_STORAGE_KEY = "tc:assistant:sessions";
-const ASSISTANT_ACTIVE_SESSION_STORAGE_KEY = "tc:assistant:activeSessionId";
-const ASSISTANT_HANDLER = "assistant_chat";
-const CHAT_POLL_INTERVAL = 1500;
-const MAX_CHAT_POLL_TIME = 60 * 1000;
-const MAX_STORED_MESSAGES = 80;
-const MAX_STORED_SESSIONS = 20;
-
-type AssistantChatRole = "user" | "assistant";
-type AssistantChatStatus = "done" | "pending" | "error";
-
-interface AssistantChatMessage {
-  id: string;
-  role: AssistantChatRole;
-  content: string;
-  attachments?: FileVO[];
-  status: AssistantChatStatus;
-}
-
-interface AssistantStoredSession {
-  id: string;
-  title: string;
-  messages: AssistantChatMessage[];
-  createdAt: number;
-  updatedAt: number;
-}
-
-interface AssistantStoredSessionsPayload {
-  sessions: AssistantStoredSession[];
-  activeSessionId?: string;
-}
 
 function clampPanelWidth(width: number) {
   return Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, width));
 }
 
-function formatFileSize(size: number) {
-  if (!Number.isFinite(size) || size <= 0) return "未知大小";
-  if (size < 1024) return size + " B";
-  if (size < 1024 * 1024) return Math.round(size / 1024) + " KB";
-  return (size / 1024 / 1024).toFixed(1) + " MB";
-}
-
 function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function attachmentSummary(files?: FileVO[]) {
-  if (!files?.length) return "";
-  return files
-    .map((file) => {
-      const parts = [file.originalName || "未命名文件"];
-      if (file.mimeType) parts.push("(" + file.mimeType + ")");
-      if (file.fileUrl) parts.push(file.fileUrl);
-      return "- " + parts.join(" ");
-    })
-    .join("\n");
-}
-
-function messageContentForHistory(item: AssistantChatMessage) {
-  const summary = attachmentSummary(item.attachments);
-  return summary ? item.content + "\n\n附件：\n" + summary : item.content;
-}
-
-function normalizeStoredMessages(messages: AssistantChatMessage[]): AssistantChatMessage[] {
-  return messages
-    .filter((item) => item.role === "user" || item.role === "assistant")
-    .filter((item) => item.content.trim() || item.attachments?.length)
-    .map((item) => ({
-      ...item,
-      status: item.status === "pending" ? "error" as const : item.status,
-      content: item.status === "pending" ? "上次回复中断，请重新发送。" : item.content,
-    }))
-    .slice(-MAX_STORED_MESSAGES);
-}
-
-function createSessionId() {
-  return "session-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
-}
-
-function normalizeSessionTitle(value: string) {
-  const title = value.replace(/\s+/g, " ").trim();
-  if (!title) return "";
-  return title.length > 18 ? title.slice(0, 18) + "..." : title;
-}
-
-function sessionTitleFromMessages(messages: AssistantChatMessage[]) {
-  const firstUserMessage = messages.find((item) => item.role === "user" && (item.content.trim() || item.attachments?.length));
-  const contentTitle = normalizeSessionTitle(firstUserMessage?.content ?? "");
-  if (contentTitle) return contentTitle;
-  const attachmentName = firstUserMessage?.attachments?.[0]?.originalName;
-  return attachmentName ? normalizeSessionTitle("附件 " + attachmentName) : "未命名会话";
-}
-
-function normalizeStoredSessions(value: unknown): AssistantStoredSession[] {
-  if (!Array.isArray(value)) return [] as AssistantStoredSession[];
-  return value
-    .map((item) => {
-      if (!item || typeof item !== "object") return null;
-      const session = item as Partial<AssistantStoredSession>;
-      const messages = normalizeStoredMessages(Array.isArray(session.messages) ? session.messages : []);
-      if (!messages.length) return null;
-      const updatedAt = Number.isFinite(session.updatedAt) ? Number(session.updatedAt) : Date.now();
-      const createdAt = Number.isFinite(session.createdAt) ? Number(session.createdAt) : updatedAt;
-      return {
-        id: typeof session.id === "string" && session.id.trim() ? session.id : createSessionId(),
-        title: normalizeSessionTitle(typeof session.title === "string" ? session.title : "") || sessionTitleFromMessages(messages),
-        messages,
-        createdAt,
-        updatedAt,
-      } satisfies AssistantStoredSession;
-    })
-    .filter((item): item is AssistantStoredSession => Boolean(item))
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, MAX_STORED_SESSIONS);
-}
-
-function loadStoredSessions() {
-  if (typeof window === "undefined") return { sessions: [] as AssistantStoredSession[], activeSessionId: "" };
-  try {
-    const raw = localStorage.getItem(ASSISTANT_SESSIONS_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as AssistantStoredSessionsPayload | AssistantStoredSession[];
-      const payloadSessions = Array.isArray(parsed) ? parsed : parsed.sessions;
-      const sessions = normalizeStoredSessions(payloadSessions);
-      const storedActiveId = localStorage.getItem(ASSISTANT_ACTIVE_SESSION_STORAGE_KEY);
-      const payloadActiveId = Array.isArray(parsed) ? "" : parsed.activeSessionId;
-      const activeSessionId = storedActiveId || payloadActiveId || sessions[0]?.id || "";
-      localStorage.removeItem(ASSISTANT_SESSION_STORAGE_KEY);
-      return { sessions, activeSessionId };
-    }
-
-    const legacyRaw = localStorage.getItem(ASSISTANT_SESSION_STORAGE_KEY);
-    if (!legacyRaw) return { sessions: [] as AssistantStoredSession[], activeSessionId: "" };
-    const legacy = JSON.parse(legacyRaw) as Partial<AssistantStoredSession>;
-    const messages = normalizeStoredMessages(Array.isArray(legacy.messages) ? legacy.messages : []);
-    if (!messages.length) return { sessions: [] as AssistantStoredSession[], activeSessionId: "" };
-    const updatedAt = Number.isFinite(legacy.updatedAt) ? Number(legacy.updatedAt) : Date.now();
-    const migratedSession: AssistantStoredSession = {
-      id: createSessionId(),
-      title: sessionTitleFromMessages(messages),
-      messages,
-      createdAt: updatedAt,
-      updatedAt,
-    };
-    return { sessions: [migratedSession], activeSessionId: migratedSession.id };
-  } catch {
-    return { sessions: [] as AssistantStoredSession[], activeSessionId: "" };
-  }
-}
-
-function saveStoredSessions(sessions: AssistantStoredSession[], activeSessionId: string) {
-  if (typeof window === "undefined") return;
-  const normalized = normalizeStoredSessions(sessions);
-  if (!normalized.length && !activeSessionId) {
-    localStorage.removeItem(ASSISTANT_SESSIONS_STORAGE_KEY);
-    localStorage.removeItem(ASSISTANT_ACTIVE_SESSION_STORAGE_KEY);
-    localStorage.removeItem(ASSISTANT_SESSION_STORAGE_KEY);
-    return;
-  }
-  localStorage.setItem(ASSISTANT_SESSIONS_STORAGE_KEY, JSON.stringify({ sessions: normalized, activeSessionId } satisfies AssistantStoredSessionsPayload));
-  if (activeSessionId) {
-    localStorage.setItem(ASSISTANT_ACTIVE_SESSION_STORAGE_KEY, activeSessionId);
-  } else {
-    localStorage.removeItem(ASSISTANT_ACTIVE_SESSION_STORAGE_KEY);
-  }
-  localStorage.removeItem(ASSISTANT_SESSION_STORAGE_KEY);
-}
-
-function parseTaskResult(task: AiTaskVO) {
-  const rawMeta = task.resultMeta;
-  const meta = typeof rawMeta === "string"
-    ? (() => {
-        try {
-          return JSON.parse(rawMeta) as Record<string, unknown>;
-        } catch {
-          return { text: rawMeta };
-        }
-      })()
-    : rawMeta;
-
-  if (meta && typeof meta === "object") {
-    for (const key of ["answer", "content", "text", "message", "response", "output", "enhancedPrompt"]) {
-      const value = meta[key];
-      if (typeof value === "string" && value.trim()) return value.trim();
-    }
-  }
-
-  if (typeof task.resultUrl === "string" && task.resultUrl.trim()) return task.resultUrl.trim();
-  return "已完成，但接口没有返回可展示的文本。";
 }
 
 export function CanvasAssistantPanel() {
@@ -230,9 +67,13 @@ export function CanvasAssistantPanel() {
   const [expanded, setExpanded] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
+  const [petStyleOpen, setPetStyleOpen] = useState(false);
   const [inputExpanded, setInputExpanded] = useState(false);
   const [resizing, setResizing] = useState(false);
   const [resizeHover, setResizeHover] = useState(false);
+  const [petStyles, setPetStyles] = useState<AssistantPetStyle[]>([]);
+  const [petStylesLoading, setPetStylesLoading] = useState(false);
+  const [selectedPetStyleId, setSelectedPetStyleId] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -240,6 +81,7 @@ export function CanvasAssistantPanel() {
   const sessionLoadedRef = useRef(false);
   const historyMenuRef = useRef<HTMLDivElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
+  const petStyleMenuRef = useRef<HTMLDivElement>(null);
   const resizingRef = useRef(false);
 
   useLayoutEffect(() => {
@@ -249,6 +91,42 @@ export function CanvasAssistantPanel() {
     input.style.height = Math.max(56, input.scrollHeight) + "px";
   }, [message]);
 
+  const loadPetStyles = useCallback(async () => {
+    setPetStylesLoading(true);
+    try {
+      const styles = await fetchAssistantPetStyles();
+      setPetStyles(styles);
+      setSelectedPetStyleId(loadSelectedAssistantPetStyleId());
+    } catch {
+      setPetStyles([]);
+    } finally {
+      setPetStylesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    setSelectedPetStyleId(loadSelectedAssistantPetStyleId());
+    loadPetStyles();
+  }, [loadPetStyles]);
+
+  useEffect(() => {
+    const handlePetStyleChange = (event: Event) => {
+      const detail = event instanceof CustomEvent ? event.detail : undefined;
+      const styleId = detail && typeof detail === "object" && "styleId" in detail ? String(detail.styleId || "") : "";
+      setSelectedPetStyleId(styleId || loadSelectedAssistantPetStyleId());
+    };
+    const handleStorageChange = (event: StorageEvent) => {
+      if (event.key === ASSISTANT_PET_STYLE_STORAGE_KEY) setSelectedPetStyleId(loadSelectedAssistantPetStyleId());
+    };
+    window.addEventListener(ASSISTANT_PET_STYLE_EVENT, handlePetStyleChange);
+    window.addEventListener("storage", handleStorageChange);
+    return () => {
+      window.removeEventListener(ASSISTANT_PET_STYLE_EVENT, handlePetStyleChange);
+      window.removeEventListener("storage", handleStorageChange);
+    };
+  }, []);
+
+  // 会话目前是画布助手的本地体验状态：恢复历史、保存当前会话都在浏览器侧完成。
   useEffect(() => {
     const restored = loadStoredSessions();
     setSessions(restored.sessions);
@@ -261,6 +139,7 @@ export function CanvasAssistantPanel() {
     sessionLoadedRef.current = true;
   }, []);
 
+  // 每次消息变化后重写当前会话快照，避免用户刷新页面后丢失上下文。
   useEffect(() => {
     if (!sessionLoadedRef.current) return;
     const normalized = normalizeStoredMessages(messages);
@@ -292,6 +171,7 @@ export function CanvasAssistantPanel() {
     if (!open) {
       setHistoryOpen(false);
       setModelOpen(false);
+      setPetStyleOpen(false);
     }
   }, [open]);
 
@@ -333,14 +213,19 @@ export function CanvasAssistantPanel() {
   }, []);
 
   useEffect(() => {
-    if (!historyOpen && !modelOpen) return;
+    if (!historyOpen && !modelOpen && !petStyleOpen) return;
 
     const handleOutsideClick = (event: MouseEvent | PointerEvent) => {
       const target = event.target;
       if (!(target instanceof Node)) return;
-      if (historyMenuRef.current?.contains(target) || modelMenuRef.current?.contains(target)) return;
+      if (
+        historyMenuRef.current?.contains(target) ||
+        modelMenuRef.current?.contains(target) ||
+        petStyleMenuRef.current?.contains(target)
+      ) return;
       setHistoryOpen(false);
       setModelOpen(false);
+      setPetStyleOpen(false);
     };
 
     document.addEventListener("pointerdown", handleOutsideClick, true);
@@ -349,8 +234,9 @@ export function CanvasAssistantPanel() {
       document.removeEventListener("pointerdown", handleOutsideClick, true);
       document.removeEventListener("mousedown", handleOutsideClick, true);
     };
-  }, [historyOpen, modelOpen]);
+  }, [historyOpen, modelOpen, petStyleOpen]);
 
+  // 面板宽度拖拽仍留在容器组件里，因为它直接影响 aside 的布局尺寸。
   const beginResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     resizingRef.current = true;
@@ -382,15 +268,33 @@ export function CanvasAssistantPanel() {
     window.addEventListener("pointerup", handleUp);
   }, [panelWidth]);
 
-  const displayWidth = expanded ? "min(720px, calc(100vw - 32px))" : "min(" + panelWidth + "px, calc(100vw - 32px))";
+  const widePanel = expanded || panelWidth >= MAX_PANEL_WIDTH - 1;
+  const displayWidth = widePanel ? "min(" + MAX_PANEL_WIDTH + "px, calc(100vw - 32px))" : "min(" + panelWidth + "px, calc(100vw - 32px))";
   const selectedModel = models.find((model) => model.modelId === selectedModelId) ?? models[0];
   const selectedPointCost = Number(selectedModel?.pointCost ?? 0);
   const pointLabel = selectedPointCost > 0 ? selectedPointCost.toLocaleString() : "免费";
+  const defaultPetStyle = resolveAssistantPetStyle(petStyles, null);
+
+  const togglePanelWidth = () => {
+    if (widePanel) {
+      setExpanded(false);
+      setPanelWidth(DEFAULT_PANEL_WIDTH);
+      return;
+    }
+    setExpanded(true);
+  };
 
   const selectModel = (model: AiModelVO) => {
     setSelectedModelId(model.modelId);
     setModelOpen(false);
     if (typeof window !== "undefined") localStorage.setItem(ASSISTANT_MODEL_STORAGE_KEY, model.modelId);
+  };
+
+  const selectPetStyle = (style: AssistantPetStyle | null) => {
+    const styleId = style?.id ?? null;
+    saveSelectedAssistantPetStyleId(styleId);
+    setSelectedPetStyleId(styleId);
+    setPetStyleOpen(false);
   };
 
   const selectSession = (session: AssistantStoredSession) => {
@@ -411,6 +315,12 @@ export function CanvasAssistantPanel() {
     setMessages([]);
     saveStoredSessions(sessions, sessionId);
     setHistoryOpen(false);
+  };
+
+  const collapseAssistant = () => {
+    setOpen(false);
+    setHistoryOpen(false);
+    setModelOpen(false);
   };
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -490,12 +400,17 @@ export function CanvasAssistantPanel() {
 
     for (const file of currentAttachments) {
       const kind = referenceKindFromMeta(file);
-      const message = validateKnownFileSize(file.fileSize, file.originalName, {
+      const validationMessage = validateKnownFileSize(file.fileSize, file.originalName, {
         maxBytes: resolveModelReferenceLimitBytes(selectedModel, kind),
         label: "参考文件",
       });
-      if (message) { toast.error(message); return; }
-    }    const nextActiveSessionId = activeSessionId || createSessionId();
+      if (validationMessage) {
+        toast.error(validationMessage);
+        return;
+      }
+    }
+
+    const nextActiveSessionId = activeSessionId || createSessionId();
     if (!activeSessionId) setActiveSessionId(nextActiveSessionId);
     const history = messages
       .filter((item) => item.status === "done")
@@ -567,16 +482,7 @@ export function CanvasAssistantPanel() {
   const canSubmit = Boolean(message.trim() || attachments.length) && !sending && !uploading;
 
   if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="fixed bottom-6 right-6 z-[70] flex h-12 w-12 items-center justify-center rounded-full bg-neutral-950 text-white shadow-xl shadow-neutral-900/25 transition-transform hover:scale-105 hover:bg-neutral-800 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-200"
-        title="AI 小助手"
-      >
-        <Bot className="h-5 w-5" />
-      </button>
-    );
+    return <AssistantLauncher onOpen={() => setOpen(true)} />;
   }
 
   return (
@@ -610,260 +516,105 @@ export function CanvasAssistantPanel() {
 
       <button
         type="button"
-        onClick={() => setOpen(false)}
-        className="absolute -left-7 top-14 z-30 flex h-12 w-7 items-center justify-center rounded-l-lg border border-neutral-200/70 border-r-0 bg-neutral-50 text-red-500 shadow-none outline-none ring-0 transition-colors hover:bg-neutral-100 hover:text-red-400 dark:border-white/10 dark:bg-[#18191d] dark:text-red-400 dark:hover:bg-[#222329] dark:hover:text-red-300"
+        onClick={collapseAssistant}
+        className="absolute -left-7 top-14 z-30 flex h-12 w-7 items-center justify-center rounded-l-lg border border-neutral-200/70 border-r-0 bg-neutral-50 text-neutral-500 shadow-none outline-none ring-0 transition-colors hover:bg-neutral-100 hover:text-neutral-900 dark:border-white/10 dark:bg-[#18191d] dark:text-neutral-300 dark:hover:bg-[#222329] dark:hover:text-white"
         title="收起助手"
       >
         <ChevronRight className="h-5 w-5" />
       </button>
 
-      <div className="relative flex h-12 shrink-0 items-center justify-end gap-2 px-4 text-neutral-600 dark:text-neutral-200">
-        <div className="relative" ref={historyMenuRef}>
-          <button
-            type="button"
-            onClick={() => {
-              setHistoryOpen((value) => !value);
+      <div className="relative flex h-14 shrink-0 items-center justify-between gap-3 px-4 text-neutral-600 dark:text-neutral-200">
+        <div className="flex min-w-0 items-center">
+          <AssistantHistoryMenu
+            rootRef={historyMenuRef}
+            open={historyOpen}
+            sessions={sessions}
+            activeSessionId={activeSessionId}
+            align="left"
+            onOpenChange={(nextOpen) => {
+              setHistoryOpen(nextOpen);
               setModelOpen(false);
+              setPetStyleOpen(false);
             }}
-            className="rounded-lg p-1.5 transition-colors hover:bg-neutral-200/70 dark:hover:bg-white/10"
-            title="历史会话"
-            aria-expanded={historyOpen}
-          >
-            <Menu className="h-4 w-4" />
-          </button>
-          {historyOpen && (
-            <div className="absolute right-0 top-9 z-40 w-44 overflow-hidden rounded-xl bg-white py-1 text-sm text-neutral-800 shadow-xl ring-1 ring-neutral-200/80 dark:bg-[#25262b] dark:text-neutral-100 dark:ring-white/10">
-              <div className="px-3 py-2 text-xs font-medium text-neutral-500 dark:text-neutral-400">历史会话</div>
-              <div className="max-h-52 overflow-y-auto">
-                {sessions.length ? sessions.map((session) => (
-                  <button
-                    key={session.id}
-                    type="button"
-                    onClick={() => selectSession(session)}
-                    className={(session.id === activeSessionId ? "bg-neutral-100 text-neutral-950 dark:bg-white/10 dark:text-white" : "text-neutral-700 dark:text-neutral-200") + " block w-full px-3 py-2 text-left transition-colors hover:bg-neutral-100 dark:hover:bg-white/8"}
-                    title={session.title}
-                  >
-                    <span className="block truncate">{session.title}</span>
-                  </button>
-                )) : (
-                  <div className="px-3 py-3 text-sm text-neutral-400 dark:text-neutral-500">暂无历史会话</div>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={startNewSession}
-                className="block w-full border-t border-neutral-100 px-3 py-2 text-left text-red-500 transition-colors hover:bg-red-50 dark:border-white/8 dark:hover:bg-red-500/10"
-              >
-                新建会话
-              </button>
-            </div>
-          )}
+            onStartNewSession={startNewSession}
+            onSelectSession={selectSession}
+          />
         </div>
 
-        <button
-          type="button"
-          onClick={() => setExpanded((value) => !value)}
-          className="rounded-lg p-1.5 transition-colors hover:bg-neutral-200/70 dark:hover:bg-white/10"
-          title={expanded ? "收起" : "展开"}
-          aria-pressed={expanded}
-        >
-          {expanded ? <Minimize2 className="h-4 w-4" /> : <Expand className="h-4 w-4" />}
-        </button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <AssistantPetStyleMenu
+            rootRef={petStyleMenuRef}
+            open={petStyleOpen}
+            styles={petStyles}
+            loading={petStylesLoading}
+            selectedStyleId={selectedPetStyleId}
+            defaultStyle={defaultPetStyle}
+            onOpenChange={(nextOpen) => {
+              setPetStyleOpen(nextOpen);
+              setHistoryOpen(false);
+              setModelOpen(false);
+            }}
+            onSelect={selectPetStyle}
+            onReload={loadPetStyles}
+          />
+
+          <button
+            type="button"
+            onClick={togglePanelWidth}
+            className={(widePanel ? "bg-neutral-950 text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-200" : "text-neutral-500 hover:bg-neutral-200/70 hover:text-neutral-950 dark:text-neutral-300 dark:hover:bg-white/10 dark:hover:text-white") + " flex h-8 w-8 items-center justify-center rounded-lg transition-colors"}
+            title={widePanel ? "恢复默认宽度" : "展开到宽屏"}
+            aria-label={widePanel ? "恢复默认宽度" : "展开到宽屏"}
+            aria-pressed={widePanel}
+          >
+            {widePanel ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+          </button>
+
+          <button
+            type="button"
+            onClick={collapseAssistant}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-neutral-500 transition-colors hover:bg-neutral-200/70 hover:text-neutral-950 dark:text-neutral-300 dark:hover:bg-white/10 dark:hover:text-white"
+            title="收起助手"
+            aria-label="收起助手"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col px-3 pb-3 sm:px-4">
         <div className={(messages.length ? "justify-start" : "justify-center pb-8") + " flex min-h-0 flex-1 flex-col"}>
-          {messages.length === 0 ? (
-            <div className="mx-auto w-full max-w-[330px]">
-              <div className="mb-7 flex h-11 w-11 items-center justify-center rounded-2xl bg-red-100 text-red-500 dark:bg-white/6 dark:text-red-400">
-                <Sparkles className="h-5 w-5" />
-              </div>
-              <h2 className="text-[28px] font-bold leading-tight tracking-normal text-neutral-950 dark:text-neutral-100">
-                <span className="text-red-500 dark:text-red-400">快来和AI小助理</span>聊天吧
-              </h2>
-              <ul className="mt-6 space-y-4 text-[15px] text-neutral-600 dark:text-red-200/90">
-                {SUGGESTIONS.map((item) => (
-                  <li key={item} className="flex items-center gap-3">
-                    <span className="h-2 w-2 rounded-full bg-red-500 dark:bg-red-400" />
-                    <span>{item}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : (
-            <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-4 pr-1">
-              <div className="space-y-4 pt-2">
-                {messages.map((item) => {
-                  const isUser = item.role === "user";
-                  return (
-                    <div key={item.id} className={(isUser ? "justify-end" : "justify-start") + " flex"}>
-                      <div
-                        className={(isUser
-                          ? "bg-neutral-950 text-white dark:bg-white dark:text-neutral-950"
-                          : item.status === "error"
-                            ? "bg-red-50 text-red-600 ring-1 ring-red-100 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/20"
-                            : "bg-white text-neutral-900 ring-1 ring-neutral-200/70 dark:bg-[#24252a] dark:text-neutral-100 dark:ring-white/8") + " max-w-[84%] rounded-2xl px-3.5 py-2.5 text-sm leading-6 shadow-sm"}
-                      >
-                        <div className="whitespace-pre-wrap break-words">
-                          {item.status === "pending" && (
-                            <span className="mr-2 inline-flex align-[-2px]">
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            </span>
-                          )}
-                          {item.content}
-                        </div>
-                        {item.attachments && item.attachments.length > 0 && (
-                          <div className="mt-2 space-y-1.5">
-                            {item.attachments.map((file) => (
-                              <div
-                                key={file.fileUrl}
-                                className={(isUser ? "bg-white/12 text-white/85 dark:bg-neutral-950/8 dark:text-neutral-700" : "bg-neutral-50 text-neutral-600 dark:bg-white/6 dark:text-neutral-300") + " flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs"}
-                              >
-                                <FileText className="h-3.5 w-3.5 shrink-0" />
-                                <span className="min-w-0 flex-1 truncate">{file.originalName}</span>
-                                <span className="shrink-0 opacity-70">{formatFileSize(file.fileSize)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-                <div ref={messagesEndRef} />
-              </div>
-            </div>
-          )}
+          <AssistantMessageList messages={messages} messagesEndRef={messagesEndRef} />
         </div>
 
-        <div className="shrink-0 rounded-2xl bg-white p-3 shadow-sm outline-none ring-1 ring-neutral-200/70 dark:bg-[#28292e] dark:ring-white/8">
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={handleFileChange}
-          />
-          {attachments.length > 0 && (
-            <div className="mb-3 flex flex-wrap gap-2">
-              {attachments.map((file) => (
-                <div
-                  key={file.fileUrl}
-                  className="flex max-w-full items-center gap-2 rounded-xl bg-neutral-50 px-2.5 py-2 text-xs text-neutral-700 ring-1 ring-neutral-200/70 dark:bg-white/6 dark:text-neutral-200 dark:ring-white/10"
-                  title={file.originalName}
-                >
-                  <FileText className="h-3.5 w-3.5 shrink-0 text-neutral-500 dark:text-neutral-400" />
-                  <div className="min-w-0">
-                    <div className="max-w-[210px] truncate font-medium">{file.originalName}</div>
-                    <div className="text-[11px] text-neutral-500 dark:text-neutral-400">{formatFileSize(file.fileSize)}</div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => removeAttachment(file.fileUrl)}
-                    className="rounded-md p-1 text-neutral-400 transition-colors hover:bg-neutral-200/70 hover:text-neutral-700 dark:hover:bg-white/10 dark:hover:text-white"
-                    title="移除文件"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-          {uploading && (
-            <div className="mb-3 flex items-center gap-2 rounded-xl bg-neutral-50 px-3 py-2 text-xs text-neutral-600 ring-1 ring-neutral-200/70 dark:bg-white/6 dark:text-neutral-300 dark:ring-white/10">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              <span>上传中{uploadProgress > 0 ? ` ${uploadProgress}%` : ""}</span>
-            </div>
-          )}
-          <div className="relative">
-            <textarea
-              ref={inputRef}
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={handleInputKeyDown}
-              placeholder="开启你的灵感之旅"
-              rows={2}
-              className={(inputExpanded ? "min-h-[180px]" : "min-h-[64px]") + " block w-full resize-none overflow-hidden rounded-none border-0 bg-transparent p-0 pr-8 text-sm leading-5 text-neutral-900 outline-none ring-0 placeholder:text-neutral-400 focus:border-transparent focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 dark:text-neutral-100 dark:placeholder:text-neutral-500"}
-              style={{
-                appearance: "none",
-                WebkitAppearance: "none",
-                border: "none",
-                outline: "none",
-                boxShadow: "none",
-              }}
-            />
-            <button
-              type="button"
-              onClick={() => setInputExpanded((value) => !value)}
-              className="absolute right-0 top-0 rounded-lg p-1.5 text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-800 dark:text-neutral-300 dark:hover:bg-white/10 dark:hover:text-white"
-              title={inputExpanded ? "收起输入区" : "放大输入区"}
-            >
-              {inputExpanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
-            </button>
-          </div>
-
-          <div className="mt-3 flex items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-3 text-sm text-neutral-700 dark:text-neutral-300">
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                className="rounded-lg p-1.5 transition-colors hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/10"
-                title="上传文件"
-              >
-                {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-              </button>
-              <div className="relative min-w-0" ref={modelMenuRef}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setModelOpen((value) => !value);
-                    setHistoryOpen(false);
-                  }}
-                  className="inline-flex max-w-[190px] items-center gap-2 rounded-lg px-2 py-1 font-medium transition-colors hover:bg-neutral-100 dark:hover:bg-white/10"
-                  title="选择模型"
-                  aria-expanded={modelOpen}
-                >
-                  <span className="truncate">{selectedModel?.name ?? (modelsLoading ? "加载模型..." : "选择模型")}</span>
-                  <ChevronDown className={(modelOpen ? "rotate-180" : "rotate-0") + " h-3.5 w-3.5 text-neutral-500 transition-transform duration-200"} />
-                </button>
-                {modelOpen && (
-                  <div className="absolute bottom-11 left-0 z-40 max-h-56 w-56 overflow-y-auto rounded-2xl bg-white p-1 text-sm text-neutral-800 shadow-xl ring-1 ring-neutral-200/80 dark:bg-[#25262b] dark:text-neutral-100 dark:ring-white/10">
-                    {models.length ? models.map((model) => (
-                      <button
-                        key={model.modelId}
-                        type="button"
-                        onClick={() => selectModel(model)}
-                        className={(model.modelId === selectedModel?.modelId ? "bg-neutral-100 text-neutral-950 dark:bg-white/10 dark:text-white" : "text-neutral-700 dark:text-neutral-200") + " block w-full rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-neutral-100 dark:hover:bg-white/8"}
-                      >
-                        <span className="block truncate font-medium leading-5">{model.name}</span>
-                      </button>
-                    )) : (
-                      <div className="px-3 py-2 text-neutral-500 dark:text-neutral-400">暂无可用模型</div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="inline-flex h-11 shrink-0 items-center gap-2 rounded-full bg-neutral-50 px-2 pl-3 shadow-sm ring-1 ring-neutral-100 dark:bg-[#303137] dark:ring-white/8">
-              <span className="flex items-center gap-1 text-xs font-medium text-neutral-700 dark:text-neutral-200">
-                <Zap className="h-3 w-3 text-neutral-900 dark:text-neutral-100" fill="currentColor" />
-                {pointLabel}
-              </span>
-              <button
-                type="button"
-                disabled={!canSubmit}
-                onClick={sendMessage}
-                className={(canSubmit
-                  ? "bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-                  : "bg-neutral-100 text-neutral-400 dark:bg-neutral-700 dark:text-neutral-500") + " flex h-8 w-8 items-center justify-center rounded-full transition-colors"}
-                title="发送"
-              >
-                {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}
-              </button>
-            </div>
-          </div>
-        </div>
+        <AssistantComposer
+          inputRef={inputRef}
+          fileInputRef={fileInputRef}
+          modelMenuRef={modelMenuRef}
+          message={message}
+          inputExpanded={inputExpanded}
+          attachments={attachments}
+          uploading={uploading}
+          uploadProgress={uploadProgress}
+          models={models}
+          selectedModel={selectedModel}
+          modelsLoading={modelsLoading}
+          modelOpen={modelOpen}
+          pointLabel={pointLabel}
+          sending={sending}
+          canSubmit={canSubmit}
+          onMessageChange={setMessage}
+          onInputKeyDown={handleInputKeyDown}
+          onFileChange={handleFileChange}
+          onRemoveAttachment={removeAttachment}
+          onToggleInputExpanded={() => setInputExpanded((value) => !value)}
+          onToggleModelOpen={() => {
+            setModelOpen((value) => !value);
+            setHistoryOpen(false);
+            setPetStyleOpen(false);
+          }}
+          onSelectModel={selectModel}
+          onSubmit={sendMessage}
+        />
       </div>
     </aside>
   );

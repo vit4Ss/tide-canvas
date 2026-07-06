@@ -69,7 +69,7 @@ export function HeaderActions() {
           <span className="hidden sm:inline">{user?.nickname || user?.username}</span>
           <div className="flex h-7 w-7 items-center justify-center rounded-full bg-neutral-100 ring-1 ring-black/[0.04] dark:bg-white/10 dark:ring-white/10">
             {user?.avatar ? (
-              // eslint-disable-next-line @next/next/no-img-element
+
               <img src={user.avatar} alt="" className="h-7 w-7 rounded-full object-cover" />
             ) : (
               <User className="h-4 w-4 text-neutral-500" />

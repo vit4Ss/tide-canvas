@@ -607,6 +607,11 @@ func (r *Repository) FindLogByID(id int64) (*model.AiGenerationLog, error) {
 	return &lg, nil
 }
 
+// DeleteLogByID 物理删除生成日志；生成出的文件本身不删除。
+func (r *Repository) DeleteLogByID(id int64) error {
+	return r.db.Delete(&model.AiGenerationLog{}, id).Error
+}
+
 // PageLogsByOwners 用户侧日志分页（团队共享：user_id IN ownerIDs，可按 projectID 过滤），按 id 倒序
 // （对齐 AiController.myLogs）。
 func (r *Repository) PageLogsByOwners(ownerIDs []int64, projectID *int64, q *PageQuery) ([]model.AiGenerationLog, int64, error) {

@@ -1,36 +1,28 @@
 "use client";
 
-import { memo, useCallback } from "react";
+import { memo } from "react";
 import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
 import { Clapperboard } from "lucide-react";
 import { NodeHeader } from "./base/node-header";
-import { NodePorts } from "./base/node-ports";
 
 interface Props {
   node: CanvasNode;
   isSelected: boolean;
   isDragging?: boolean;
   isConnectTarget?: boolean;
-  onNodeMouseDown: (nodeId: string, e: React.MouseEvent) => void;
-  onPortMouseDown?: (nodeId: string, side: "input" | "output", clientX: number, clientY: number) => void;
 }
 
-export const ScriptNode = memo(function ScriptNode({ node, isSelected, isDragging = false, isConnectTarget = false, onNodeMouseDown, onPortMouseDown }: Props) {
+export const ScriptNode = memo(function ScriptNode({ node, isSelected, isDragging = false, isConnectTarget = false }: Props) {
   const updateNode = useCanvasStore((s) => s.updateNode);
   const showAuxUI = isSelected && !isDragging;
-
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    onNodeMouseDown(node.id, e);
-  }, [node.id, onNodeMouseDown]);
 
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
   return (
     <div
       data-node-id={node.id}
-      className={`absolute select-none ${isSelected ? "z-10" : ""}`}
-      style={{ left: node.x, top: node.y, width: node.width, cursor: isDragging ? "grabbing" : "grab" }}
-      onMouseDown={handleMouseDown}
+      className={`relative select-none ${isSelected ? "z-10" : ""}`}
+      style={{ width: node.width, cursor: isDragging ? "grabbing" : "grab" }}
     >
       <NodeHeader icon={Clapperboard} title={node.title || "脚本节点"} visible={showAuxUI} />
 
@@ -52,7 +44,6 @@ export const ScriptNode = memo(function ScriptNode({ node, isSelected, isDraggin
             rows={8}
             spellCheck={false}
           />
-          <NodePorts nodeId={node.id} visible={showAuxUI} onPortMouseDown={onPortMouseDown} />
         </div>
       </div>
     </div>

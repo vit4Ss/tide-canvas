@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Alert, Avatar, Badge, Button, Empty, Form, Input, List, Segmented, Select, Spin, Tabs, Tag, theme,
+  Alert, Avatar, Badge, Button, Empty, Form, Input, Segmented, Select, Spin, Tabs, Tag, theme,
 } from "antd";
 import { CustomerServiceOutlined, MessageOutlined, UsergroupAddOutlined, ReloadOutlined } from "@ant-design/icons";
 import { AdminPageHead } from "@/components/admin/page-head";
@@ -10,7 +10,6 @@ import { AdminChatWindow, convTitle } from "@/components/admin/admin-chat-window
 import { imApi, adminApi } from "@/lib/api";
 import { useImStore } from "@/stores/use-im-store";
 import { useAuthStore } from "@/stores/use-auth-store";
-import { formatDate } from "@/lib/utils";
 import { SupportStatus } from "@/types/im";
 import type { ConversationVO } from "@/types/im";
 

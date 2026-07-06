@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, type MouseEvent } from "react";
+import { memo } from "react";
 import { Loader2, X } from "lucide-react";
 import { useCanvasStore } from "@/stores/use-canvas-store";
 import { cn } from "@/lib/utils";
@@ -14,17 +14,10 @@ export const DefaultNode = memo(function DefaultNode({
   isSelected,
   isDragging = false,
   isConnectTarget,
-  onNodeMouseDown,
-  onPortMouseDown,
 }: CanvasNodeProps) {
   const updateNode = useCanvasStore((state) => state.updateNode);
   const removeNode = useCanvasStore((state) => state.removeNode);
   const Icon = getNodeIcon(node.type);
-
-  const handleMouseDown = useCallback(
-    (event: MouseEvent) => onNodeMouseDown(node.id, event),
-    [node.id, onNodeMouseDown]
-  );
 
   return (
     <div
@@ -35,8 +28,11 @@ export const DefaultNode = memo(function DefaultNode({
         isSelected && !isDragging && styles.nodeSelected,
         isConnectTarget && styles.nodeConnectTarget
       )}
-      style={{ left: node.x, top: node.y, width: node.width, minHeight: node.height }}
-      onMouseDown={handleMouseDown}
+      style={{
+        position: "relative",
+        width: node.width,
+        minHeight: node.height,
+      }}
     >
       <div className={styles.header}>
         <div className={styles.titleWrap}>
@@ -69,23 +65,6 @@ export const DefaultNode = memo(function DefaultNode({
           rows={3}
         />
       </div>
-
-      <div
-        onMouseDown={(event) => {
-          event.stopPropagation();
-          onPortMouseDown?.(node.id, "input", event.clientX, event.clientY);
-        }}
-        className={cn(styles.port, styles.inputPort)}
-        title="输入端口"
-      />
-      <div
-        onMouseDown={(event) => {
-          event.stopPropagation();
-          onPortMouseDown?.(node.id, "output", event.clientX, event.clientY);
-        }}
-        className={cn(styles.port, styles.outputPort)}
-        title="输出端口"
-      />
     </div>
   );
 });

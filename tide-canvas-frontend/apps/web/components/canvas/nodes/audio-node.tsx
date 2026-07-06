@@ -18,7 +18,6 @@ import { aiApi } from "@/lib/api";
 import { AiModelType, type AiModelVO } from "@/types/ai";
 import { toast } from "@/components/shared/toast";
 import { NodeHeader } from "./base/node-header";
-import { NodePorts } from "./base/node-ports";
 import { NodeChrome } from "./base/node-chrome";
 import { ModelPicker } from "./model-picker";
 
@@ -27,8 +26,6 @@ interface Props {
   isSelected: boolean;
   isDragging?: boolean;
   isConnectTarget?: boolean;
-  onNodeMouseDown: (nodeId: string, e: React.MouseEvent) => void;
-  onPortMouseDown?: (nodeId: string, side: "input" | "output", clientX: number, clientY: number) => void;
 }
 
 const MAX_TEXT = 50000;
@@ -261,12 +258,6 @@ const AudioPromptEditor = forwardRef<AudioPromptEditorHandle, AudioPromptEditorP
 
   useEffect(() => {
     const editor = editorRef.current;
-    if (!editor) return;
-    syncAudioPromptEditor(editor, value || "");
-  }, []);
-
-  useEffect(() => {
-    const editor = editorRef.current;
     if (!editor || document.activeElement === editor) return;
     syncAudioPromptEditor(editor, value || "");
   }, [value]);
@@ -345,8 +336,6 @@ export const AudioNode = memo(function AudioNode({
   isSelected,
   isDragging = false,
   isConnectTarget = false,
-  onNodeMouseDown,
-  onPortMouseDown,
 }: Props) {
   const updateNode = useCanvasStore((s) => s.updateNode);
   const zoom = useCanvasStore((s) => s.transform.k);
@@ -396,10 +385,6 @@ export const AudioNode = memo(function AudioNode({
       updateNode(node.id, { prompt }, false);
     }
   }, [node.id, prompt, rawPrompt, updateNode]);
-
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    onNodeMouseDown(node.id, e);
-  }, [node.id, onNodeMouseDown]);
 
   const stop = (e: React.MouseEvent) => e.stopPropagation();
   const keepPanelFocus = (e: React.MouseEvent) => {
@@ -454,9 +439,8 @@ export const AudioNode = memo(function AudioNode({
   return (
     <div
       data-node-id={node.id}
-      className={`absolute select-none ${isSelected ? "z-10" : ""}`}
-      style={{ left: node.x, top: node.y, width: node.width, cursor: isDragging ? "grabbing" : "grab" }}
-      onMouseDown={handleMouseDown}
+      className={`relative select-none ${isSelected ? "z-10" : ""}`}
+      style={{ width: node.width, cursor: isDragging ? "grabbing" : "grab" }}
     >
       <div className="relative">
         <div
@@ -520,7 +504,6 @@ export const AudioNode = memo(function AudioNode({
         </div>
 
         <NodeHeader icon={AudioLines} title={node.title || "音频节点"} visible={showAuxUI} zoom={zoom} />
-        <NodePorts nodeId={node.id} visible={showAuxUI} zoom={zoom} onPortMouseDown={onPortMouseDown} />
 
         {showAuxUI && (
           <NodeChrome zoom={zoom} placement="bottom-center" gap={18} damp={0.6}>

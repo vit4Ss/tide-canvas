@@ -53,6 +53,7 @@ export default function AdminMonitorPage() {
   const [sessions, setSessions] = useState<SessionVO[]>([]);
   const [logins, setLogins] = useState<LoginLogVO[]>([]);
   const [loading, setLoading] = useState(true);
+  const [nowMs, setNowMs] = useState(0);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
@@ -67,6 +68,7 @@ export default function AdminMonitorPage() {
       if (r.success) setRedis(r.data);
       if (ss.success) setSessions(ss.data ?? []);
       if (lg.success && lg.data) setLogins((lg.data as unknown as { records: LoginLogVO[] }).records ?? []);
+      setNowMs(Date.now());
     } catch {
       /* ignore，保留上次数据 */
     } finally {
@@ -173,7 +175,7 @@ export default function AdminMonitorPage() {
             {sessions.length === 0 ? (
               <Empty description="暂无会话" image={Empty.PRESENTED_IMAGE_SIMPLE} />
             ) : sessions.map((s, i) => {
-              const active = Date.now() - toMs(s.lastActiveTime) < 120000;
+              const active = nowMs > 0 && nowMs - toMs(s.lastActiveTime) < 120000;
               return (
                 <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: i ? `1px solid ${token.colorBorderSecondary}` : undefined }}>
                   <Avatar size={32} style={{ background: token.colorPrimary, flexShrink: 0 }}>{(s.username || "游").charAt(0).toUpperCase()}</Avatar>

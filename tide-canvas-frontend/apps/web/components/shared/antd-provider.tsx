@@ -26,14 +26,14 @@ export function AntdProvider({ children }: { children: ReactNode }) {
             cssVar: { key: "tide" },
             algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
             token: {
-              colorPrimary: "#1677ff",
+              colorPrimary: "var(--tc-primary, #1677ff)",
               borderRadius: 8,
               fontFamily: "inherit",
             },
             components: {
               Menu: {
                 itemSelectedBg: isDark ? "#111a2c" : "#e6f0ff",
-                itemSelectedColor: "#1677ff",
+                itemSelectedColor: "var(--tc-primary, #1677ff)",
                 itemHoverBg: isDark ? "#1f1f1f" : "#f5f5f5",
                 itemBorderRadius: 8,
               },

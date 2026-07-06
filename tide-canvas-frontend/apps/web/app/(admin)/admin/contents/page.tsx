@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Table, Input, Select, Button, Tag, Space, Alert, Image as AntdImage } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { CheckOutlined, StopOutlined, FileImageOutlined } from "@ant-design/icons";
@@ -29,7 +29,7 @@ export default function AdminContentsPage() {
   const [auditing, setAuditing] = useState<number | null>(null);
   const [error, setError] = useState("");
 
-  const loadContents = async (page = pageNum, search = keyword, status = statusFilter) => {
+  const loadContents = useCallback(async (page: number, search: string, status: number | undefined) => {
     setLoading(true);
     setError("");
     try {
@@ -45,15 +45,15 @@ export default function AdminContentsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  useEffect(() => { loadContents(1); }, []);
+  useEffect(() => { void loadContents(1, "", undefined); }, [loadContents]);
 
   const handleAudit = async (id: number, status: number) => {
     setAuditing(id);
     try {
       const res = await adminApi.contents.audit(id, { status });
-      if (res.success) loadContents();
+      if (res.success) void loadContents(pageNum, keyword, statusFilter);
     } finally {
       setAuditing(null);
     }
@@ -86,8 +86,8 @@ export default function AdminContentsPage() {
 
       <Space wrap>
         <Input.Search placeholder="搜索作品名称..." allowClear enterButton style={{ width: 260 }}
-          onSearch={(v) => { setKeyword(v); setPageNum(1); loadContents(1, v, statusFilter); }} />
-        <Select style={{ width: 140 }} value={statusFilter ?? ""} onChange={(v) => { const s = v === "" ? undefined : Number(v); setStatusFilter(s); setPageNum(1); loadContents(1, keyword, s); }}
+          onSearch={(v) => { setKeyword(v); setPageNum(1); void loadContents(1, v, statusFilter); }} />
+        <Select style={{ width: 140 }} value={statusFilter ?? ""} onChange={(v) => { const s = v === "" ? undefined : Number(v); setStatusFilter(s); setPageNum(1); void loadContents(1, keyword, s); }}
           options={[{ value: "", label: "全部状态" }, { value: 0, label: "草稿" }, { value: 1, label: "已发布" }, { value: 2, label: "已下架" }]} />
       </Space>
 
@@ -98,7 +98,7 @@ export default function AdminContentsPage() {
         loading={loading}
         scroll={{ x: "max-content" }}
         locale={{ emptyText: "暂无作品数据" }}
-        pagination={{ current: pageNum, pageSize: PAGE_SIZE, total, showSizeChanger: false, showTotal: (t) => `共 ${t} 条`, onChange: (p) => { setPageNum(p); loadContents(p); } }}
+        pagination={{ current: pageNum, pageSize: PAGE_SIZE, total, showSizeChanger: false, showTotal: (t) => `共 ${t} 条`, onChange: (p) => { setPageNum(p); void loadContents(p, keyword, statusFilter); } }}
       />
     </div>
   );

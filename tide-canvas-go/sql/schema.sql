@@ -298,6 +298,34 @@ CREATE TABLE `sys_file` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='文件表';
 
 -- ----------------------------
+-- 管理员资源表【后台配置类资源，与用户素材物理隔离】
+-- ----------------------------
+DROP TABLE IF EXISTS `sys_admin_file`;
+CREATE TABLE `sys_admin_file` (
+    `id`            BIGINT       NOT NULL COMMENT '主键(雪花ID,应用层生成)',
+    `public_id`     CHAR(36)     CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL COMMENT '对外公开ID(UUID v4)',
+    `admin_id`      BIGINT       NOT NULL DEFAULT 0 COMMENT '管理员用户ID',
+    `biz_type`      VARCHAR(64)  NOT NULL DEFAULT 'system' COMMENT '业务类型(assistant_pet等)',
+    `original_name` VARCHAR(255) NOT NULL COMMENT '原始文件名',
+    `stored_name`   VARCHAR(255) NOT NULL COMMENT '存储文件名',
+    `file_path`     VARCHAR(512) NOT NULL COMMENT '存储路径',
+    `file_url`      VARCHAR(512) NOT NULL COMMENT '访问URL',
+    `file_size`     BIGINT       NOT NULL DEFAULT 0 COMMENT '文件大小(bytes)',
+    `file_type`     VARCHAR(16)  NOT NULL COMMENT '文件类型(image/video/other)',
+    `mime_type`     VARCHAR(128) DEFAULT NULL COMMENT 'MIME类型',
+    `hash`          VARCHAR(64)  DEFAULT NULL COMMENT 'SHA-256哈希',
+    `storage_type`  VARCHAR(16)  NOT NULL DEFAULT 'local' COMMENT '存储方式(local/oss)',
+    `create_time`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `deleted`       TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_admin_file_public_id` (`public_id`),
+    KEY `idx_admin_biz_time` (`admin_id`, `biz_type`, `create_time`),
+    KEY `idx_file_url` (`file_url`(191)),
+    KEY `idx_deleted_time` (`deleted`, `create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='管理员资源表';
+
+-- ----------------------------
 -- Banner表(管理端配置,前端只读列表,不对外引用:无public_id)
 -- ----------------------------
 DROP TABLE IF EXISTS `sys_banner`;

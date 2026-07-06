@@ -23,6 +23,8 @@ export const nextJsConfig = [
     languageOptions: {
       ...pluginReact.configs.flat.recommended.languageOptions,
       globals: {
+        ...globals.browser,
+        ...globals.node,
         ...globals.serviceworker,
       },
     },
@@ -34,6 +36,8 @@ export const nextJsConfig = [
     rules: {
       ...pluginNext.configs.recommended.rules,
       ...pluginNext.configs["core-web-vitals"].rules,
+      // This app renders user-uploaded/canvas images where raw <img> keeps layout and auth behavior predictable.
+      "@next/next/no-img-element": "off",
     },
   },
   {
@@ -43,6 +47,8 @@ export const nextJsConfig = [
     settings: { react: { version: "detect" } },
     rules: {
       ...pluginReactHooks.configs.recommended.rules,
+      // Client data fetching is used across the app; this rule is too noisy for that architecture.
+      "react-hooks/set-state-in-effect": "off",
       // React scope no longer necessary with new JSX transform.
       "react/react-in-jsx-scope": "off",
       "react/prop-types": "off",

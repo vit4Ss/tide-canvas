@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -50,6 +51,7 @@ func (h *Handler) RegisterRoutes(api gin.IRouter, jwtProvider *appjwt.Provider, 
 	ai.GET("/tasks", h.listTasks)
 	ai.GET("/handlers", h.listHandlers)
 	ai.GET("/logs", h.myLogs)
+	ai.DELETE("/logs/:id", h.deleteLog)
 
 	// ---- 管理端 /api/admin/ai ----
 	h.admin.RegisterRoutes(api, jwtProvider, permLoader)
@@ -172,4 +174,18 @@ func (h *Handler) myLogs(c *gin.Context) {
 		return
 	}
 	response.OK(c, response.Page(records, total, q.PageNum, q.PageSize))
+}
+
+// deleteLog DELETE /api/ai/logs/:id 删除自己的生成资源记录。
+func (h *Handler) deleteLog(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Fail(c, ecode.BadRequest)
+		return
+	}
+	if err := h.svc.DeleteMyLog(middleware.MustUserID(c), id); err != nil {
+		response.FailErr(c, err)
+		return
+	}
+	response.OK(c, nil)
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Table, Input, DatePicker, Space, Tag, Alert, Tooltip, Button, Popconfirm } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { DeleteOutlined, ClearOutlined } from "@ant-design/icons";
@@ -37,7 +37,12 @@ export default function AdminAccessLogsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const loadLogs = async (page = pageNum, path = pathKw, kw = keyword, r = range) => {
+  const loadLogs = useCallback(async (
+    page: number,
+    path: string,
+    kw: string,
+    r: { start?: string; end?: string },
+  ) => {
     setLoading(true);
     setError("");
     try {
@@ -59,19 +64,19 @@ export default function AdminAccessLogsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  useEffect(() => { loadLogs(1); }, []);
+  useEffect(() => { void loadLogs(1, "", "", {}); }, [loadLogs]);
 
   const handleDelete = async (id: number) => {
     const res = await adminApi.accessLogs.remove(id);
-    if (res.success) { toast.success("已删除"); loadLogs(); }
+    if (res.success) { toast.success("已删除"); void loadLogs(pageNum, pathKw, keyword, range); }
     else toast.error(res.message || "删除失败");
   };
 
   const handleClear = async () => {
     const res = await adminApi.accessLogs.clear();
-    if (res.success) { toast.success("已清空访问日志"); setPageNum(1); loadLogs(1); }
+    if (res.success) { toast.success("已清空访问日志"); setPageNum(1); void loadLogs(1, pathKw, keyword, range); }
     else toast.error(res.message || "清空失败");
   };
 
@@ -109,13 +114,13 @@ export default function AdminAccessLogsPage() {
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <Space wrap>
           <Input.Search placeholder="按路径筛选..." allowClear style={{ width: 220 }}
-            onSearch={(v) => { setPathKw(v); setPageNum(1); loadLogs(1, v, keyword, range); }} />
+            onSearch={(v) => { setPathKw(v); setPageNum(1); void loadLogs(1, v, keyword, range); }} />
           <Input.Search placeholder="搜索用户名 / IP..." allowClear style={{ width: 200 }}
-            onSearch={(v) => { setKeyword(v); setPageNum(1); loadLogs(1, pathKw, v, range); }} />
+            onSearch={(v) => { setKeyword(v); setPageNum(1); void loadLogs(1, pathKw, v, range); }} />
           <RangePicker
             onChange={(_, ds) => {
               const r = { start: ds?.[0] ? `${ds[0]} 00:00:00` : undefined, end: ds?.[1] ? `${ds[1]} 23:59:59` : undefined };
-              setRange(r); setPageNum(1); loadLogs(1, pathKw, keyword, r);
+              setRange(r); setPageNum(1); void loadLogs(1, pathKw, keyword, r);
             }}
           />
         </Space>
@@ -133,7 +138,7 @@ export default function AdminAccessLogsPage() {
         loading={loading}
         scroll={{ x: "max-content" }}
         locale={{ emptyText: "暂无访问记录" }}
-        pagination={{ current: pageNum, pageSize: PAGE_SIZE, total, showSizeChanger: false, showTotal: (t) => `共 ${t} 条`, onChange: (p) => { setPageNum(p); loadLogs(p); } }}
+        pagination={{ current: pageNum, pageSize: PAGE_SIZE, total, showSizeChanger: false, showTotal: (t) => `共 ${t} 条`, onChange: (p) => { setPageNum(p); void loadLogs(p, pathKw, keyword, range); } }}
       />
     </div>
   );

@@ -61,7 +61,7 @@ export default function PointsDashboardPage() {
 
   useEffect(() => {
     // fetchData 内含加载态 setState（既有逻辑）
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+
     fetchData();
   }, [fetchData]);
 

@@ -117,6 +117,9 @@ func New(db *gorm.DB, conf *viper.Viper, logger *logrus.Logger, rdb *redis.Clien
 	pointsSvc := points.NewService(points.NewRepository(db), logger)
 	points.NewHandler(pointsSvc, jwtProvider).RegisterRoutes(api, jwtProvider)
 
+	// RBAC 按钮级权限加载器：读 sys_user+sys_role 解析权限串，管理端路由复用。
+	permLoader := middleware.NewDBPermissionLoader(db)
+
 	// canvas 模块（项目 CRUD / 画布数据存取 / 分享链接）。
 	// 团队共享可见性注入真实 team 服务；归属用户 public_id 映射用 DBUserFinder 直读 sys_user 投影。
 	canvasSvc := canvas.NewService(canvas.NewRepository(db), teamSvc, canvas.NewDBUserFinder(db))
@@ -138,7 +141,7 @@ func New(db *gorm.DB, conf *viper.Viper, logger *logrus.Logger, rdb *redis.Clien
 			AllowedTypes: conf.GetStringSlice("storage.allowed_types"),
 		},
 	)
-	file.NewHandler(fileSvc, jwtProvider).RegisterRoutes(api, jwtProvider)
+	file.NewHandler(fileSvc, jwtProvider).RegisterRoutes(api, jwtProvider, permLoader)
 
 	// banner 模块（公开轮播图列表 + 管理端 CRUD）
 	banner.NewHandler(banner.NewService(banner.NewRepository(db)), jwtProvider).RegisterRoutes(api, jwtProvider)
@@ -159,9 +162,6 @@ func New(db *gorm.DB, conf *viper.Viper, logger *logrus.Logger, rdb *redis.Clien
 	followSvc := follow.NewService(follow.NewRepository(db), follow.NewDBUserFinder(db), logger)
 	followSvc.SetNotifier(notificationSvc)
 	follow.NewHandler(followSvc).RegisterRoutes(api, jwtProvider)
-
-	// RBAC 按钮级权限加载器：读 sys_user+sys_role 解析权限串，admin / ai / log / recharge 管理端路由由 RequiresPermission 复用。
-	permLoader := middleware.NewDBPermissionLoader(db)
 
 	// recharge 充值订单 + 易支付（notify 回调公开 / 管理端订单 /api/admin/orders 挂 RBAC），注入积分服务
 	recharge.NewHandler(recharge.NewService(recharge.NewRepository(db), pointsSvc, logger), jwtProvider).RegisterRoutes(api, jwtProvider, permLoader)

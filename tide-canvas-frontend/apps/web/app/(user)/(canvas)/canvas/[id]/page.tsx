@@ -8,11 +8,13 @@ import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { CanvasView } from "@/components/canvas/canvas-view";
 import { RechargeDialog } from "@/components/canvas/recharge-dialog";
-import { ArrowLeft, Share2, Loader2, Check, Pencil, Coins, User, LogOut, Settings, LayoutDashboard } from "lucide-react";
+import { ArrowLeft, Share2, Loader2, Check, Pencil, Coins, User, LogOut, Settings, LayoutDashboard, SlidersHorizontal } from "lucide-react";
+import { UiPreferencesDialog } from "@/components/canvas/ui-preferences-dialog";
 import Link from "next/link";
 import { toast } from "@/components/shared/toast";
 
-const AUTOSAVE_DELAY = 3000; // 3 秒无变化触发自动保存
+const AUTOSAVE_DELAY = 800; // 普通节点编辑短防抖保存，避免拖拽/输入时频繁请求
+const STRUCTURAL_AUTOSAVE_DELAY = 0; // 新增/删除节点、连线、分组等结构变化立即保存
 const CANVAS_SCHEMA_VERSION = 2;
 
 type CanvasViewport = { x: number; y: number; k: number };
@@ -65,6 +67,29 @@ function serializeCanvasNodes(nodes: CanvasNode[]): CanvasNode[] {
       return persisted;
     });
 }
+
+function buildCanvasPersistenceSignature(
+  nodes: CanvasNode[],
+  connections: Connection[],
+  groups: CanvasGroup[],
+  viewport: CanvasViewport,
+): string {
+  return JSON.stringify({
+    viewport,
+    nodes: serializeCanvasNodes(nodes),
+    connections,
+    groups,
+  });
+}
+
+function buildCanvasStructuralSignature(nodes: CanvasNode[], connections: Connection[], groups: CanvasGroup[]): string {
+  return JSON.stringify({
+    nodeIds: nodes.map((node) => `${node.id}:${node.type}`),
+    connections: connections.map((connection) => `${connection.id}:${connection.sourceId}->${connection.targetId}`),
+    groups: groups.map((group) => `${group.id}:${group.nodeIds.join(",")}`),
+  });
+}
+
 export default function CanvasEditorPage() {
   const params = useParams();
   // URL 里的 [id] 实为不透明 url token，真实数值 ID 不在地址栏暴露
@@ -84,6 +109,7 @@ export default function CanvasEditorPage() {
   const router = useRouter();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [rechargeOpen, setRechargeOpen] = useState(false);
+  const [uiPreferencesOpen, setUiPreferencesOpen] = useState(false);
 
   const nodes = useCanvasStore((s) => s.nodes);
   const connections = useCanvasStore((s) => s.connections);
@@ -94,6 +120,7 @@ export default function CanvasEditorPage() {
   const setCurrentProjectId = useCanvasStore((s) => s.setCurrentProjectId);
 
   const autosaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const autosaveSnapshotRef = useRef<{ persist: string; structural: string } | null>(null);
   const savingRef = useRef(false);
   const pendingSaveRef = useRef(false);
   const canvasUpdateTimeRef = useRef<string | null>(null);
@@ -170,11 +197,20 @@ export default function CanvasEditorPage() {
     }
   }, [projectId, thumbnail]);
 
-  // 自动保存：监听 nodes/connections/groups 变化
+  // 自动保存：结构性变化立即保存；普通内容变化短防抖保存。
   useEffect(() => {
     if (!loaded) return;
+    const nextSnapshot = {
+      persist: buildCanvasPersistenceSignature(nodes, connections, groups, transform),
+      structural: buildCanvasStructuralSignature(nodes, connections, groups),
+    };
+    const prevSnapshot = autosaveSnapshotRef.current;
+    autosaveSnapshotRef.current = nextSnapshot;
+    if (!prevSnapshot || prevSnapshot.persist === nextSnapshot.persist) return;
+
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
-    autosaveTimerRef.current = setTimeout(() => save(true), AUTOSAVE_DELAY);
+    const delay = prevSnapshot.structural !== nextSnapshot.structural ? STRUCTURAL_AUTOSAVE_DELAY : AUTOSAVE_DELAY;
+    autosaveTimerRef.current = setTimeout(() => save(true), delay);
     return () => {
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     };
@@ -188,6 +224,23 @@ export default function CanvasEditorPage() {
     };
     window.addEventListener("tide-canvas-save-now", handleSaveNow);
     return () => window.removeEventListener("tide-canvas-save-now", handleSaveNow);
+  }, [loaded, save]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    const flushPendingSave = () => {
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+      void save(true);
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") flushPendingSave();
+    };
+    window.addEventListener("pagehide", flushPendingSave);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("pagehide", flushPendingSave);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [loaded, save]);
 
   const handleShare = async () => {
@@ -296,7 +349,7 @@ export default function CanvasEditorPage() {
         <div className="relative" onMouseEnter={() => setUserMenuOpen(true)} onMouseLeave={() => setUserMenuOpen(false)}>
           <button className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
             {user?.avatar ? (
-              // eslint-disable-next-line @next/next/no-img-element
+
               <img src={user.avatar} alt="" className="h-full w-full object-cover" />
             ) : (
               <User className="h-4 w-4 text-neutral-500" />
@@ -320,6 +373,16 @@ export default function CanvasEditorPage() {
           )}
         </div>
 
+        {/* 界面设置 */}
+        <button
+          type="button"
+          onClick={() => setUiPreferencesOpen(true)}
+          title="界面设置"
+          className="flex h-9 w-9 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 shadow-sm transition-colors hover:bg-neutral-100 hover:text-neutral-900 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:hover:text-white"
+        >
+          <SlidersHorizontal className="h-4 w-4" />
+        </button>
+
         {/* 分享 */}
         <button onClick={handleShare} title="分享" className="flex h-9 w-9 items-center justify-center rounded-full bg-neutral-900 text-white shadow-sm transition-colors hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200">
           <Share2 className="h-4 w-4" />
@@ -327,6 +390,7 @@ export default function CanvasEditorPage() {
       </div>
 
       <RechargeDialog open={rechargeOpen} onOpenChange={setRechargeOpen} />
+      <UiPreferencesDialog open={uiPreferencesOpen} onOpenChange={setUiPreferencesOpen} />
     </div>
   );
 }

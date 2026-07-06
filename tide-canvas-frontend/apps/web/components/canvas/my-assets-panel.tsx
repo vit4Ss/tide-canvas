@@ -121,7 +121,7 @@ export function MyAssetsPanel({ open, onClose, onPick, refreshKey }: Props) {
                     </span>
                   </>
                 ) : (
-                  // eslint-disable-next-line @next/next/no-img-element
+
                   <img src={f.fileUrl} alt={f.originalName} className="h-full w-full object-cover" />
                 )}
                 {/* 删除：hover 显示右上角 */}

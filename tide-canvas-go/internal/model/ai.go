@@ -122,6 +122,7 @@ type AiUpstreamModel struct {
 	TimeoutMs    int             `json:"timeoutMs" gorm:"column:timeout_ms"`
 	Priority     int             `json:"priority" gorm:"column:priority"`
 	Status       int             `json:"status" gorm:"column:status"`
+	CreatedBy    int64           `json:"createdBy" gorm:"column:created_by"`
 }
 
 func (AiUpstreamModel) TableName() string { return "ai_upstream_model" }

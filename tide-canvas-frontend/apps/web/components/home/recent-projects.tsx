@@ -75,7 +75,7 @@ export function RecentProjects() {
                 >
                   <div className="aspect-[16/9] bg-neutral-100 dark:bg-white/5">
                     {project.thumbnail ? (
-                      // eslint-disable-next-line @next/next/no-img-element
+
                       <img src={project.thumbnail} alt={project.name} className="h-full w-full object-cover" />
                     ) : (
                       <div className="flex h-full items-center justify-center text-neutral-300 dark:text-neutral-600">

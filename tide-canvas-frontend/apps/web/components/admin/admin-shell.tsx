@@ -163,10 +163,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
               <div key={t.key} onClick={() => router.push(t.key)}
                 style={{
                   display: "flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: 6,
-                  cursor: "pointer", fontSize: 13, whiteSpace: "nowrap", lineHeight: 1.6,
-                  border: `1px solid ${activeTab ? token.colorPrimary : token.colorBorderSecondary}`,
-                  background: activeTab ? token.colorPrimaryBg : "transparent",
-                  color: activeTab ? token.colorPrimary : token.colorText,
+                  cursor: "pointer", fontSize: 13, fontWeight: activeTab ? 500 : 400, whiteSpace: "nowrap", lineHeight: 1.6,
+                  border: `1px solid ${activeTab ? token.colorInfoBorder : token.colorBorderSecondary}`,
+                  background: activeTab ? token.colorInfoBg : "transparent",
+                  color: activeTab ? token.colorInfo : token.colorText,
                 }}>
                 {t.label}
                 {t.key !== "/admin" && (

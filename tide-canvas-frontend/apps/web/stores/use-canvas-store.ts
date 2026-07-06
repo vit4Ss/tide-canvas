@@ -9,6 +9,12 @@ export interface CanvasNode {
   height: number;
   title: string;
   prompt?: string;
+  /** 文本节点生成后的结构化输出(JSON 字符串)，与用户原始 prompt 分开保存。 */
+  textOutput?: string;
+  textAction?: string;
+  textActionInput?: string;
+  textSupplementary?: string;
+  textError?: string;
   /** 图片节点生成时选中的风格预设，默认风格不写入。 */
   stylePresetId?: string;
   /** 图片节点选中的风格短名称，用于按钮回显。 */

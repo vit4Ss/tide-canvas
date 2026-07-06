@@ -232,28 +232,28 @@ export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId,
         key={preset.id}
         type="button"
         onClick={() => choosePreset(toPickerPreset(preset, modelId))}
-        className={`group relative overflow-hidden rounded-lg border bg-white text-left transition hover:-translate-y-0.5 hover:shadow-lg ${
+        className={`group relative overflow-hidden rounded-xl border bg-white text-left transition hover:-translate-y-0.5 hover:shadow-lg ${
           active ? "border-neutral-950 shadow-md" : "border-neutral-200 hover:border-neutral-300"
         }`}
       >
         <div className="relative aspect-[4/5] overflow-hidden bg-neutral-100">
           {preset.coverUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
+
             <img src={preset.coverUrl} alt={preset.name} className="h-full w-full object-cover" loading="lazy" />
           ) : (
             <div className={`flex h-full w-full items-center justify-center bg-gradient-to-br ${fallback}`}>
               <Sparkles className="h-9 w-9 text-neutral-500/70" />
             </div>
           )}
-          <span className="absolute left-2 top-2 rounded-md bg-black/55 px-1.5 py-0.5 text-[11px] text-white backdrop-blur">{preset.category || "推荐"}</span>
-          <span className="absolute right-2 top-2 rounded-md bg-white/85 px-1.5 py-0.5 text-[11px] text-neutral-700 backdrop-blur">{preset.commercial ? "商用" : "自用"}</span>
+          <span className="absolute left-2.5 top-2.5 rounded-md bg-black/55 px-2 py-0.5 text-[11px] text-white backdrop-blur">{preset.category || "推荐"}</span>
+          <span className="absolute right-2.5 top-2.5 rounded-md bg-white/85 px-2 py-0.5 text-[11px] text-neutral-700 backdrop-blur">{preset.commercial ? "商用" : "自用"}</span>
           {active && <span className="absolute left-2 bottom-2 flex h-6 w-6 items-center justify-center rounded-full bg-neutral-950 text-white"><Check className="h-3.5 w-3.5" /></span>}
         </div>
-        <div className="space-y-1 p-2.5">
+        <div className="space-y-2 p-3.5">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <div className="truncate text-[13px] font-semibold text-neutral-950">{preset.name}</div>
-              <div className="truncate text-[11px] text-neutral-500">{preset.authorName || "TideCanvas"}</div>
+              <div className="truncate text-sm font-semibold text-neutral-950">{preset.name}</div>
+              <div className="mt-0.5 truncate text-xs text-neutral-500">{preset.authorName || "TideCanvas"}</div>
             </div>
             <span
               role="button"
@@ -262,14 +262,14 @@ export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId,
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") toggleFavorite(event as unknown as ReactMouseEvent, preset);
               }}
-              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition ${preset.favorited ? "border-rose-200 bg-rose-50 text-rose-500" : "border-neutral-200 bg-white text-neutral-400 hover:text-neutral-700"}`}
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border transition ${preset.favorited ? "border-rose-200 bg-rose-50 text-rose-500" : "border-neutral-200 bg-white text-neutral-400 hover:text-neutral-700"}`}
               title={preset.favorited ? "取消收藏" : "收藏"}
             >
               <Heart className={`h-3.5 w-3.5 ${preset.favorited ? "fill-current" : ""}`} />
             </span>
           </div>
-          <p className="line-clamp-2 h-8 text-[11px] leading-4 text-neutral-500">{preset.description || preset.prompt}</p>
-          <div className="text-[11px] text-neutral-400">使用 {preset.usageCount ?? 0}</div>
+          <p className="line-clamp-2 h-10 text-xs leading-5 text-neutral-500">{preset.description || preset.prompt}</p>
+          <div className="text-xs text-neutral-400">使用 {preset.usageCount ?? 0}</div>
         </div>
       </button>
     );
@@ -294,55 +294,55 @@ export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId,
       </button>
 
       {open && typeof document !== "undefined" && createPortal(
-        <div className="fixed inset-0 z-[240] flex items-center justify-center bg-black/35 p-6 backdrop-blur-[2px]" onMouseDown={() => setOpen(false)}>
+        <div className="fixed inset-0 z-[240] flex items-center justify-center bg-black/35 p-8 backdrop-blur-[2px]" onMouseDown={() => setOpen(false)}>
           <section
             role="dialog"
             aria-modal="true"
             aria-label="选择风格"
-            className="flex h-[min(820px,calc(100vh-56px))] w-[min(1440px,calc(100vw-72px))] flex-col overflow-hidden rounded-xl bg-white shadow-2xl shadow-black/25"
+            className="flex h-[min(820px,calc(100vh-80px))] w-[min(1360px,calc(100vw-96px))] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl shadow-black/25"
             onMouseDown={stop}
           >
-            <header className="flex items-center gap-4 border-b border-neutral-100 px-5 py-3">
-              <div className="flex rounded-lg bg-neutral-100 p-1">
+            <header className="flex items-center gap-5 border-b border-neutral-100 px-7 py-4">
+              <div className="flex gap-1 rounded-xl bg-neutral-100/80 p-1.5">
                 {SOURCE_TABS.map((tab) => (
                   <button
                     key={tab.value}
                     type="button"
                     onClick={() => setSource(tab.value)}
-                    className={`rounded-md px-4 py-1.5 text-sm transition ${source === tab.value ? "bg-white text-neutral-950 shadow-sm" : "text-neutral-500 hover:text-neutral-900"}`}
+                    className={`rounded-lg px-4 py-2 text-sm transition ${source === tab.value ? "bg-white text-neutral-950 shadow-sm" : "text-neutral-500 hover:text-neutral-900"}`}
                   >
                     {tab.label}
                   </button>
                 ))}
               </div>
-              <div className="relative w-80 max-w-[32vw]">
+              <div className="relative w-96 max-w-[34vw]">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
                 <input
                   value={keyword}
                   onChange={(event) => setKeyword(event.target.value)}
                   placeholder="搜索风格名称、作者"
-                  className="h-9 w-full rounded-lg border border-neutral-200 bg-neutral-50 pl-9 pr-3 text-sm outline-none transition focus:border-neutral-300 focus:bg-white"
+                  className="h-10 w-full rounded-xl border border-neutral-200 bg-neutral-50 pl-9 pr-3 text-sm outline-none transition focus:border-neutral-300 focus:bg-white"
                 />
               </div>
               <label className="ml-auto flex items-center gap-2 text-sm text-neutral-500">
                 <input type="checkbox" checked={commercialOnly} onChange={(event) => setCommercialOnly(event.target.checked)} />
                 仅看可商用
               </label>
-              <button type="button" onClick={() => setCreateOpen((v) => !v)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-neutral-200 px-3 text-sm text-neutral-800 hover:bg-neutral-50">
+              <button type="button" onClick={() => setCreateOpen((v) => !v)} className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-neutral-200 px-4 text-sm text-neutral-800 hover:bg-neutral-50">
                 <Plus className="h-4 w-4" /> 自定义
               </button>
-              <button type="button" onClick={() => setOpen(false)} className="rounded-lg p-2 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900">
+              <button type="button" onClick={() => setOpen(false)} className="rounded-xl p-2 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900">
                 <X className="h-5 w-5" />
               </button>
             </header>
 
-            <div className="flex flex-wrap items-center gap-2 border-b border-neutral-100 px-5 py-3">
+            <div className="flex flex-wrap items-center gap-3 border-b border-neutral-100 px-7 py-4">
               {CATEGORY_OPTIONS.map((item) => (
                 <button
                   key={item}
                   type="button"
                   onClick={() => setCategory(item)}
-                  className={`rounded-md px-3 py-1.5 text-sm transition ${category === item ? "bg-neutral-950 text-white" : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"}`}
+                  className={`rounded-lg px-3.5 py-2 text-sm transition ${category === item ? "bg-neutral-950 text-white" : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"}`}
                 >
                   {item}
                 </button>
@@ -350,32 +350,32 @@ export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId,
             </div>
 
             {createOpen && (
-              <div className="grid grid-cols-[1fr_1fr_1.4fr_auto] gap-3 border-b border-neutral-100 bg-neutral-50 px-5 py-3">
-                <input value={customForm.name} onChange={(event) => setCustomForm((v) => ({ ...v, name: event.target.value }))} placeholder="风格名称" className="h-10 rounded-lg border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-400" />
-                <input value={customForm.shortName} onChange={(event) => setCustomForm((v) => ({ ...v, shortName: event.target.value }))} placeholder="短名称" className="h-10 rounded-lg border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-400" />
-                <input value={customForm.description} onChange={(event) => setCustomForm((v) => ({ ...v, description: event.target.value }))} placeholder="一句话描述" className="h-10 rounded-lg border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-400" />
-                <select value={customForm.category} onChange={(event) => setCustomForm((v) => ({ ...v, category: event.target.value }))} className="h-10 rounded-lg border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-400">
+              <div className="grid grid-cols-[1fr_1fr_1.4fr_auto] gap-3 border-b border-neutral-100 bg-neutral-50 px-7 py-4">
+                <input value={customForm.name} onChange={(event) => setCustomForm((v) => ({ ...v, name: event.target.value }))} placeholder="风格名称" className="h-10 rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-400" />
+                <input value={customForm.shortName} onChange={(event) => setCustomForm((v) => ({ ...v, shortName: event.target.value }))} placeholder="短名称" className="h-10 rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-400" />
+                <input value={customForm.description} onChange={(event) => setCustomForm((v) => ({ ...v, description: event.target.value }))} placeholder="一句话描述" className="h-10 rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-400" />
+                <select value={customForm.category} onChange={(event) => setCustomForm((v) => ({ ...v, category: event.target.value }))} className="h-10 rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-400">
                   {CATEGORY_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
                 </select>
-                <textarea value={customForm.prompt} onChange={(event) => setCustomForm((v) => ({ ...v, prompt: event.target.value }))} placeholder="风格提示词，例如：电影级布光、真实材质、浅景深、低饱和高级调色" className="col-span-3 min-h-20 resize-none rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400" />
+                <textarea value={customForm.prompt} onChange={(event) => setCustomForm((v) => ({ ...v, prompt: event.target.value }))} placeholder="风格提示词，例如：电影级布光、真实材质、浅景深、低饱和高级调色" className="col-span-3 min-h-20 resize-none rounded-xl border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400" />
                 <div className="flex flex-col justify-between gap-2">
                   <label className="flex items-center gap-2 text-sm text-neutral-600"><input type="checkbox" checked={customForm.publicFlag} onChange={(event) => setCustomForm((v) => ({ ...v, publicFlag: event.target.checked }))} />公开到广场</label>
-                  <button type="button" disabled={creating} onClick={submitCustomStyle} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-neutral-950 px-4 text-sm font-medium text-white disabled:opacity-50">
+                  <button type="button" disabled={creating} onClick={submitCustomStyle} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-medium text-white disabled:opacity-50">
                     {creating && <Loader2 className="h-4 w-4 animate-spin" />} 保存并使用
                   </button>
                 </div>
               </div>
             )}
 
-            <main className="min-h-0 flex-1 overflow-y-auto p-5">
+            <main className="min-h-0 flex-1 overflow-y-auto p-7">
               {loading ? (
-                <div className="grid grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-4">
-                  {Array.from({ length: 16 }).map((_, index) => <div key={index} className="h-72 animate-pulse rounded-lg bg-neutral-100" />)}
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-6">
+                  {Array.from({ length: 16 }).map((_, index) => <div key={index} className="h-80 animate-pulse rounded-xl bg-neutral-100" />)}
                 </div>
               ) : (
-                <div className="grid grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-4">
-                  <button type="button" onClick={() => choosePreset(DEFAULT_STYLE_PRESET)} className={`rounded-lg border bg-white p-4 text-left transition hover:shadow-md ${activeStyle.id === DEFAULT_STYLE_PRESET.id ? "border-neutral-950" : "border-neutral-200"}`}>
-                    <div className="mb-4 flex aspect-[4/5] items-center justify-center rounded-lg bg-neutral-100">
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-6">
+                  <button type="button" onClick={() => choosePreset(DEFAULT_STYLE_PRESET)} className={`rounded-xl border bg-white p-5 text-left transition hover:shadow-md ${activeStyle.id === DEFAULT_STYLE_PRESET.id ? "border-neutral-950" : "border-neutral-200"}`}>
+                    <div className="mb-5 flex aspect-[4/5] items-center justify-center rounded-xl bg-neutral-100">
                       <ImageIcon className="h-10 w-10 text-neutral-400" />
                     </div>
                     <div className="text-sm font-semibold text-neutral-950">默认风格</div>
@@ -385,7 +385,7 @@ export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId,
                 </div>
               )}
               {!loading && styles.length === 0 && (
-                <div className="flex h-48 items-center justify-center text-sm text-neutral-400">当前分类暂无风格</div>
+                <div className="flex h-64 items-center justify-center text-sm text-neutral-400">当前分类暂无风格</div>
               )}
             </main>
           </section>

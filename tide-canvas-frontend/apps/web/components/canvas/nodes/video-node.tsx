@@ -16,7 +16,6 @@ import { useAuth } from "@/hooks/use-auth";
 import { applyTeamFactor } from "@/lib/points";
 import { AiModelType, type AiModelVO } from "@/types/ai";
 import { NodeHeader } from "./base/node-header";
-import { NodePorts } from "./base/node-ports";
 import { NodeChrome } from "./base/node-chrome";
 import { PromptRefEditor, PromptEditorModal } from "./prompt-ref-editor";
 import { type RefItem } from "./prompt-ref-utils";
@@ -26,8 +25,6 @@ interface Props {
   isSelected: boolean;
   isDragging?: boolean;
   isConnectTarget?: boolean;
-  onNodeMouseDown: (nodeId: string, e: React.MouseEvent) => void;
-  onPortMouseDown?: (nodeId: string, side: "input" | "output", clientX: number, clientY: number) => void;
 }
 
 // 各模式（Tab）对连接源节点的数量/类型限制：hover 时提示，生成时校验。文生视频无需连接。
@@ -156,7 +153,7 @@ async function fetchAndCacheVideo(url: string): Promise<string | null> {
   }
 }
 
-export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging = false, isConnectTarget = false, onNodeMouseDown, onPortMouseDown }: Props) {
+export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging = false, isConnectTarget = false }: Props) {
   const updateNode = useCanvasStore((s) => s.updateNode);
   const { user } = useAuth(); // 团队价：消耗按 inTeam 系数加价显示
   // 当前画布缩放：外置组件按 1/zoom 反向缩放，保持恒定屏幕尺寸
@@ -537,10 +534,6 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     }
   }, [capturing, duration, node.x, node.y, node.width, node.contentW, node.videoSrc, selectedModel]);
 
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    onNodeMouseDown(node.id, e);
-  }, [node.id, onNodeMouseDown]);
-
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
   const copyPrompt = useCallback(async () => {
@@ -666,9 +659,8 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   return (
     <div
       data-node-id={node.id}
-      className={`absolute select-none ${isSelected ? "z-10" : ""}`}
-      style={{ left: node.x, top: node.y, width: node.width, cursor: isDragging ? "grabbing" : "grab" }}
-      onMouseDown={handleMouseDown}
+      className={`relative select-none ${isSelected ? "z-10" : ""}`}
+      style={{ width: node.width, cursor: isDragging ? "grabbing" : "grab" }}
     >
       <div className="relative mx-auto" style={{ width: cardW }}>
         <div
@@ -820,7 +812,6 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
             </div>
           </NodeChrome>
         )}
-        <NodePorts nodeId={node.id} visible={showAuxUI} zoom={zoom} onPortMouseDown={onPortMouseDown} />
         <input ref={fileInputRef} type="file" accept="video/*" className="hidden" onChange={handleFileUpload} />
 
         {showAuxUI && (
