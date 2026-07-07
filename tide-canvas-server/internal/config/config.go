@@ -20,9 +20,25 @@ type Config struct {
 	JWT     JWTConfig     `mapstructure:"jwt"`
 	Storage StorageConfig `mapstructure:"storage"`
 	CORS    CORSConfig    `mapstructure:"cors"`
-	Email   EmailConfig   `mapstructure:"email"`
-	LLM     LLMConfig     `mapstructure:"llm"`
-	Relay   RelayConfig   `mapstructure:"relay"`
+	Email      EmailConfig      `mapstructure:"email"`
+	LLM        LLMConfig        `mapstructure:"llm"`
+	Relay      RelayConfig      `mapstructure:"relay"`
+	Eliandapay EliandapayConfig `mapstructure:"eliandapay"`
+}
+
+// EliandapayConfig holds the 易联达Pay (eliandapay / api.ndow.cn) aggregator
+// cashier credentials. When Enabled is false (or MerchantID/MD5Key are blank),
+// order creation returns a clear "payment not configured" error instead of an
+// unusable checkout URL. NotifyURL must be a PUBLIC https URL the gateway can
+// reach; it points at POST/GET /api/billing/notify. Override secrets via
+// TIDECANVAS_ELIANDAPAY_MD5KEY / TIDECANVAS_ELIANDAPAY_MERCHANTID in production.
+type EliandapayConfig struct {
+	Enabled    bool   `mapstructure:"enabled"`
+	Gateway    string `mapstructure:"gateway"`    // API base incl. trailing slash, e.g. https://api.ndow.cn/
+	MerchantID string `mapstructure:"merchantId"` // 商户ID — the epay `pid`
+	MD5Key     string `mapstructure:"md5Key"`     // V1 MD5 密钥
+	NotifyURL  string `mapstructure:"notifyUrl"`  // PUBLIC https URL the gateway GETs on payment
+	ReturnURL  string `mapstructure:"returnUrl"`  // browser sync-redirect after pay (UX only)
 }
 
 // RelayConfig holds the upstream model relay (ScarecrowToken Relay) settings used
@@ -251,6 +267,13 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("relay.baseUrl", "https://relay.tcmzhan.com")
 	v.SetDefault("relay.apiKey", "")
+
+	v.SetDefault("eliandapay.enabled", true)
+	v.SetDefault("eliandapay.gateway", "https://api.ndow.cn/")
+	v.SetDefault("eliandapay.merchantId", "1052")
+	v.SetDefault("eliandapay.md5Key", "AYgauO61qisuGuqOz34cG6parLPdAoYU")
+	v.SetDefault("eliandapay.notifyUrl", "http://localhost:8080/api/billing/notify")
+	v.SetDefault("eliandapay.returnUrl", "http://localhost:3000/billing?pay_status=success")
 }
 
 // defaultLLMSystemPrompt gives the assistant a TideCanvas (流光) persona: a

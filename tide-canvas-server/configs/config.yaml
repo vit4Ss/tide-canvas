@@ -78,6 +78,19 @@ relay:
   baseUrl: https://relay.tcmzhan.com
   apiKey: "scrw_fknv3pw2_l5ae0qowt2fcr7zbvs6vts3r"
 
+# 易联达Pay (eliandapay / api.ndow.cn) 聚合收银台 —— 一个接口同时支持支付宝 + 微信，
+# MD5 签名。下单在 /api/orders 生成 submit.php 跳转 URL；网关异步回调打到
+# notify-url（= /api/billing/notify）完成结算与积分发放。生产环境请用 env 覆盖密钥：
+#   TIDECANVAS_ELIANDAPAY_MD5KEY / TIDECANVAS_ELIANDAPAY_MERCHANTID
+# notifyUrl 必须是网关能访问的公网 https 地址。
+eliandapay:
+  enabled: true
+  gateway: https://api.ndow.cn/
+  merchantId: "1052"
+  md5Key: "AYgauO61qisuGuqOz34cG6parLPdAoYU"
+  notifyUrl: http://localhost:8080/api/billing/notify
+  returnUrl: http://localhost:3000/billing?pay_status=success
+
 email:
   enabled: true
   host: smtp.gmail.com

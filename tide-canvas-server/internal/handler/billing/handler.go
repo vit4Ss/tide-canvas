@@ -56,12 +56,37 @@ func (h *handler) createOrder(c *gin.Context) {
 			response.Fail(c, response.CodeBadRequest, "invalid order request")
 		case errors.Is(err, ErrNotFound):
 			response.Fail(c, response.CodeNotFound, "plan or package not found")
+		case errors.Is(err, errPayUnavailable):
+			response.Fail(c, response.CodeServerError, "payment gateway unavailable")
 		default:
 			response.Fail(c, response.CodeServerError, "failed to create order")
 		}
 		return
 	}
 	response.OK(c, vo)
+}
+
+// verify handles POST /api/orders/:id/verify (auth). It is the return_url
+// backstop: after the user comes back from the cashier the client calls this so
+// a paid order still gets credited even if the gateway's async notify never
+// reached us. Idempotent — safe to call repeatedly.
+func (h *handler) verify(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	userID := middleware.CurrentUserID(c)
+	o, err := h.svc.getOrder(id, userID)
+	if err != nil {
+		h.fail(c, err, "failed to verify order")
+		return
+	}
+	res, err := h.svc.verifyOrder(c.Request.Context(), userID, o.OrderNo)
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "failed to verify order")
+		return
+	}
+	response.OK(c, res)
 }
 
 // listOrders handles GET /api/orders (auth). Returns a PageData<OrderVO>.
@@ -111,11 +136,36 @@ func (h *handler) cancelOrder(c *gin.Context) {
 	response.OK[any](c, nil)
 }
 
-// notify handles POST /api/billing/notify (public webhook). Payment gateways
-// expect a plain-text "success" acknowledgement so they stop retrying; the real
-// settlement flow is wired in a later phase.
+// notify handles the epay async payment callback (public webhook). The gateway
+// delivers it as a GET with query params (epay convention); we also accept a
+// POST form. We verify the MD5 sign, settle the order + grant credits
+// idempotently, and MUST reply the literal "success" so the gateway stops
+// retrying — anything else ("fail") makes it re-deliver.
 func (h *handler) notify(c *gin.Context) {
-	c.String(http.StatusOK, "success")
+	c.String(http.StatusOK, h.settle(c))
+}
+
+// settle collects the callback params (query + form) and runs settlement,
+// returning the plain-text body epay expects ("success" | "fail").
+func (h *handler) settle(c *gin.Context) string {
+	raw := map[string]string{}
+	for k, vs := range c.Request.URL.Query() {
+		if len(vs) > 0 {
+			raw[k] = vs[0]
+		}
+	}
+	// POST form values (if any) fill in / override, covering both delivery modes.
+	if err := c.Request.ParseForm(); err == nil {
+		for k, vs := range c.Request.PostForm {
+			if len(vs) > 0 {
+				raw[k] = vs[0]
+			}
+		}
+	}
+	if h.svc.settleNotify(raw) {
+		return "success"
+	}
+	return "fail"
 }
 
 // fail maps service errors to the appropriate response code. A non-owner is

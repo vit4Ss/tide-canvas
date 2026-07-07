@@ -2,6 +2,7 @@ package billing
 
 import (
 	"errors"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -108,6 +109,90 @@ func (r *repo) findOrder(id idgen.ID) (*model.Order, error) {
 		return nil, err
 	}
 	return &o, nil
+}
+
+// findOrderByNo loads an order by its order_no (the epay out_trade_no).
+func (r *repo) findOrderByNo(orderNo string) (*model.Order, error) {
+	var o model.Order
+	err := r.db.Where("order_no = ?", orderNo).First(&o).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &o, nil
+}
+
+// settleOrder atomically marks a pending order paid and grants its points in one
+// transaction. Idempotency is enforced by claiming the order with a conditional
+// UPDATE (WHERE status = 0): a re-delivered notify (or a return_url backstop that
+// races the notify) finds RowsAffected == 0 and is a clean no-op — it never
+// double-grants. Credits are added with an atomic `points + ?` expression (the
+// same pattern points.applyCheckin / AI settlement use) so a concurrent balance
+// change can't lose the update.
+//
+// grantPoints is the credits the order buys (plan.PointsGrant or
+// package.Points+BonusPoints); remark is the ledger display text; transactionID
+// is the gateway trade_no. Returns settled=true only when THIS call flipped the
+// order from pending to paid.
+func (r *repo) settleOrder(orderID idgen.ID, grantPoints int, remark, transactionID string, payTime time.Time) (bool, error) {
+	settled := false
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		// Claim the order: only a still-pending (status 0) row is flipped to paid.
+		res := tx.Model(&model.Order{}).
+			Where("id = ? AND status = ?", orderID, 0).
+			Updates(map[string]any{
+				"status":         1,
+				"pay_time":       payTime,
+				"transaction_id": transactionID,
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			// Already paid/cancelled — idempotent no-op.
+			return nil
+		}
+
+		// Load the order to know who to credit.
+		var o model.Order
+		if err := tx.Where("id = ?", orderID).First(&o).Error; err != nil {
+			return err
+		}
+
+		if grantPoints != 0 {
+			if err := tx.Model(&model.User{}).
+				Where("id = ?", o.UserID).
+				UpdateColumn("points", gorm.Expr("points + ?", grantPoints)).Error; err != nil {
+				return err
+			}
+			var u model.User
+			if err := tx.Select("id", "points").Where("id = ?", o.UserID).First(&u).Error; err != nil {
+				return err
+			}
+			refID := o.ID
+			ledger := &model.PointRecord{
+				UserID:     o.UserID,
+				ChangeType: "recharge",
+				Amount:     grantPoints,
+				Balance:    int(u.Points),
+				Remark:     remark,
+				RefID:      &refID,
+			}
+			ledger.ID = idgen.Next()
+			if err := tx.Create(ledger).Error; err != nil {
+				return err
+			}
+		}
+
+		settled = true
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return settled, nil
 }
 
 // cancelOrder marks a pending order (status 0) as cancelled (status 2), scoped

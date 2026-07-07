@@ -14,13 +14,14 @@ import (
 //
 // Frontend contract (tide-canvas-web -> billingApi / orderApi):
 //
-//	GET    /api/billing/plans      -> []PlanVO                         (public)
-//	GET    /api/billing/packages   -> []PointPackageVO                 (public)
-//	POST   /api/billing/notify     -> "success" (text)                 (public webhook)
-//	POST   /api/orders             CreateOrderDTO -> OrderVO           (auth)
-//	GET    /api/orders             OrderQuery -> PageData<OrderVO>     (auth)
-//	GET    /api/orders/:id         -> OrderVO                          (auth)
-//	POST   /api/orders/:id/cancel  -> void                             (auth)
+//	GET    /api/billing/plans        -> []PlanVO                       (public)
+//	GET    /api/billing/packages     -> []PointPackageVO               (public)
+//	GET/POST /api/billing/notify     -> "success"|"fail" (text)        (epay webhook)
+//	POST   /api/orders               CreateOrderDTO -> OrderVO{payUrl} (auth)
+//	GET    /api/orders               OrderQuery -> PageData<OrderVO>   (auth)
+//	GET    /api/orders/:id           -> OrderVO                        (auth)
+//	POST   /api/orders/:id/cancel    -> void                           (auth)
+//	POST   /api/orders/:id/verify    -> VerifyResult{paid,granted}     (auth)
 func Register(api *gin.RouterGroup, d *app.Deps) {
 	svc := newService(d.DB, d.Cfg)
 	h := newHandler(svc)
@@ -31,6 +32,8 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	b := api.Group("/billing")
 	b.GET("/plans", h.listPlans)
 	b.GET("/packages", h.listPackages)
+	// epay delivers the async notify as a GET (query params); accept POST too.
+	b.GET("/notify", h.notify)
 	b.POST("/notify", h.notify)
 
 	// Authenticated orders. The :id param sits only under the static /orders
@@ -41,4 +44,6 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	o.GET("", h.listOrders)
 	o.GET("/:id", h.getOrder)
 	o.POST("/:id/cancel", h.cancelOrder)
+	// return_url backstop: credit a paid order if the async notify was dropped.
+	o.POST("/:id/verify", h.verify)
 }

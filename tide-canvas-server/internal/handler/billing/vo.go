@@ -51,6 +51,9 @@ type OrderVO struct {
 	Status     int       `json:"status"`
 	PayTime    *string   `json:"payTime"`
 	CreateTime string    `json:"createTime"`
+	// PayURL is the epay page-jump cashier URL to redirect the browser to. Set
+	// only on order creation (empty on list/detail, hence omitempty).
+	PayURL string `json:"payUrl,omitempty"`
 }
 
 // planFeatures is the JSON shape stored in model.Plan.Features. It carries the
