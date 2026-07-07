@@ -23,16 +23,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { communityApi } from "@/lib/community-api";
 import type { PostVO } from "@/types/community";
 import { useAuthStore } from "@/stores/use-auth-store";
 import SortSelect from "@/components/site/sort-select";
 import WorkModal from "@/components/site/work-modal";
+import WorkTile, { toArtwork, type ArtworkX } from "@/components/site/work-tile";
 import { toast } from "@/components/shared/toast";
-import { useLiveCounter } from "@/components/site/use-live-counter";
 import { mesh } from "@/lib/mesh";
-import type { Artwork, MeshHues } from "@/mock";
 import { fmt } from "@/mock";
 
 type SortKey = "hot" | "new" | "like";
@@ -51,50 +49,6 @@ const SORT_OPTS: { value: SortKey; label: string }[] = [
 ];
 
 const ALL = "全部";
-
-/** Deterministic mesh-hue triplet seeded from a post id (covers the shared
- *  components' MeshHues contract; used as the gradient fallback). */
-function hues(id: string): MeshHues {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360;
-  return [h, (h + 132) % 360, (h + 248) % 360];
-}
-
-/** Deterministic tile aspect (height ratio) per post so the masonry gets a
- *  natural rhythm instead of uniform blocks; videos render landscape. */
-const H_STEPS = [1.05, 1.2, 1.33, 1.5] as const;
-function tileH(id: string): number {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 33 + id.charCodeAt(i)) % 9973;
-  return H_STEPS[h % H_STEPS.length];
-}
-
-/** Map a backend PostVO to the Artwork shape the shared WorkModal/tiles expect.
- *  `cover` carries the mesh-hue fallback triplet; the real cover URL (if any) is
- *  applied at the tile level. A detail VO adds the generation params. */
-type ArtworkX = Artwork & {
-  coverUrl: string;
-  likes: number;
-  liked: boolean;
-  authorId: string;
-};
-
-function toArtwork(p: PostVO): ArtworkX {
-  return {
-    id: p.id,
-    cover: hues(p.id),
-    h: p.type === "video" ? 0.75 : tileH(p.id),
-    type: p.type === "video" ? "video" : "image",
-    cat: (p.cat || "插画") as Artwork["cat"],
-    model: p.model || "—",
-    title: p.title,
-    author: p.author?.name || "用户",
-    authorId: p.author?.id || "",
-    likes: p.likes,
-    liked: p.liked,
-    coverUrl: p.cover || p.thumbnail || "",
-  };
-}
 
 export default function ExplorePage() {
   const router = useRouter();
@@ -123,8 +77,6 @@ export default function ExplorePage() {
     return () => clearTimeout(t);
   }, [q]);
 
-  // Live "本周新增" counter (ported from FX.liveCounter, base 8902).
-  const liveNum = useLiveCounter(8902);
 
   // reqId bumps on every filter change so an in-flight page (first OR appended)
   // from a stale filter set is discarded.
@@ -226,7 +178,7 @@ export default function ExplorePage() {
 
   const items = useMemo(() => posts.map(toArtwork), [posts]);
 
-  const remix = (art: Artwork) => {
+  const remix = (art: ArtworkX) => {
     try {
       sessionStorage.setItem("flux_prompt", art.prompt || art.title);
     } catch {
@@ -308,10 +260,13 @@ export default function ExplorePage() {
           <div className="xp-beam" />
         </div>
         <div className="wrap">
-          <div className="live-chip reveal in">
-            <span className="live-dot" />
-            实时 · <b>{liveNum}</b> 件作品本周新增
-          </div>
+          {/* 真实馆藏数（原随机游走假计数器已移除） */}
+          {total > 0 && (
+            <div className="live-chip reveal in">
+              <span className="live-dot" />
+              馆藏 · <b>{fmt(total)}</b> 件作品
+            </div>
+          )}
           <div className="page-head">
             <span className="eyebrow reveal in">
               <span className="d" />
@@ -444,7 +399,7 @@ export default function ExplorePage() {
             <>
               <div className="masonry">
                 {items.map((a, i) => (
-                  <Tile
+                  <WorkTile
                     key={a.id}
                     art={a}
                     delay={(i % 5) * 0.03}
@@ -493,120 +448,5 @@ export default function ExplorePage() {
         }
       />
     </>
-  );
-}
-
-/* ── Tile — React port of FX.tileHTML + FX.bindTiles (shell.js), wired to the
-   real like endpoint. Cover uses the real URL when present, else the mesh
-   gradient fallback. ──────────────────────────────────────────────────────── */
-
-function Tile({
-  art,
-  delay,
-  onOpen,
-  onRemix,
-  onToggleLike,
-}: {
-  art: ArtworkX;
-  delay: number;
-  onOpen: () => void;
-  onRemix: () => void;
-  onToggleLike: () => Promise<boolean>;
-}) {
-  const [liked, setLiked] = useState(art.liked);
-  const [likes, setLikes] = useState(art.likes);
-  const [busy, setBusy] = useState(false);
-
-  // sync local like state when the parent updates this post (e.g. the user liked
-  // it inside the detail modal); the card's own optimistic toggle leaves the
-  // parent value unchanged, so these effects don't fight the local toggle.
-  useEffect(() => setLiked(art.liked), [art.liked]);
-  useEffect(() => setLikes(art.likes), [art.likes]);
-
-  const cover = art.coverUrl
-    ? `center / cover no-repeat url("${art.coverUrl}")`
-    : mesh(art.cover[0], art.cover[1], art.cover[2]);
-
-  const toggle = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (busy) return;
-    setBusy(true);
-    // optimistic
-    const next = !liked;
-    setLiked(next);
-    setLikes((n) => n + (next ? 1 : -1));
-    try {
-      const ok = await onToggleLike();
-      if (!ok) throw new Error("no session");
-      const res = next
-        ? await communityApi.like(art.id)
-        : await communityApi.unlike(art.id);
-      if (res.success && res.data) {
-        setLiked(res.data.liked);
-        setLikes(res.data.likeCount);
-      } else {
-        throw new Error(res.message);
-      }
-    } catch {
-      // revert on failure
-      setLiked(!next);
-      setLikes((n) => n + (next ? -1 : 1));
-      toast.error("操作失败，请稍后重试");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <article
-      className="tile reveal in"
-      style={{ ["--rd" as string]: `${delay}s` }}
-      onClick={onOpen}
-    >
-      <div
-        className="tile-cover"
-        style={{ aspectRatio: (1 / art.h).toFixed(3), background: cover }}
-      >
-        {art.type === "video" && <span className="play-orb">▶</span>}
-        <span className="tile-badge">{art.type === "video" ? "VIDEO" : art.cat}</span>
-        <button
-          type="button"
-          className="like"
-          data-liked={liked ? "true" : "false"}
-          onClick={toggle}
-        >
-          ♥ {fmt(likes)}
-        </button>
-        <div className="tile-shade" />
-        <div className="tile-meta">
-          <div className="tt">{art.title}</div>
-          <div className="tb">
-            {art.authorId ? (
-              <Link
-                href={`/user/${art.authorId}`}
-                className="tile-author"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {art.author}
-              </Link>
-            ) : (
-              <span>{art.author}</span>
-            )}
-            <span className="dot">·</span>
-            <span className="mono">{art.model}</span>
-          </div>
-          <button
-            type="button"
-            className="remix"
-            onClick={(e) => {
-              e.stopPropagation();
-              onRemix();
-            }}
-          >
-            ↻ 生成同款
-          </button>
-        </div>
-      </div>
-    </article>
   );
 }

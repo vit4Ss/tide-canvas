@@ -63,7 +63,8 @@ export const aiApi = {
     http.post<{ prompt: string }>("/api/ai/optimize-prompt", { prompt }),
   gridSplit: (imageUrl: string, rows: number, cols: number, cells?: number[]) =>
     http.post<string[]>("/api/ai/grid-split", { imageUrl, rows, cols, ...(cells && cells.length ? { cells } : {}) }),
-  getTask: (taskId: number) =>
+  // taskId 同为雪花 ID 字符串（>2^53，number 会丢精度）
+  getTask: (taskId: string) =>
     http.get<AiTaskVO>(`/api/ai/tasks/${taskId}`),
   // taskId 是雪花 ID(> 2^53),必须以字符串透传,用 Number() 会丢精度导致删错任务。
   cancelTask: (taskId: string | number) =>
@@ -101,7 +102,7 @@ export const fileApi = {
     http.get<PageResult<FileVO>["data"]>("/api/files", toParams(query)),
   saveFromUrl: (data: { url: string; fileType?: string; originalName?: string }) =>
     http.post<FileVO>("/api/files/save-from-url", data),
-  get: (id: number) =>
+  get: (id: string) =>
     http.get<FileVO>(`/api/files/detail/${id}`),
   delete: (id: string | number) =>
     http.delete<void>(`/api/files/detail/${id}`),

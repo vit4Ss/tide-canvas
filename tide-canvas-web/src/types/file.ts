@@ -1,9 +1,9 @@
 import type { PageQuery } from "./api";
 
 export interface FileVO {
-  id: number;
+  id: string; // 后端雪花 ID 序列化为字符串
   /** 归属用户ID（团队共享时区分自己/队友的素材） */
-  ownerId?: number;
+  ownerId?: string;
   originalName: string;
   fileUrl: string;
   fileSize: number;

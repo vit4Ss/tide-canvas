@@ -8,7 +8,7 @@ export interface AiGenerateDTO {
 }
 
 export interface AiTaskVO {
-  id: number;
+  id: string; // 后端雪花 ID 序列化为字符串
   handler: string;
   modelName: string;
   status: AiTaskStatus;
@@ -23,7 +23,7 @@ export interface AiTaskVO {
 }
 
 export interface AiModelVO {
-  id: number;
+  id: string;
   name: string;
   icon: string;
   modelId: string;
@@ -41,7 +41,7 @@ export interface AiHandlerVO {
   description: string;
   inputSchema: Record<string, unknown>;
   isAsync: boolean;
-  defaultModelId: number;
+  defaultModelId: string;
   pointCost: number;
 }
 
@@ -52,10 +52,10 @@ export interface AiTaskQuery extends PageQuery {
 }
 
 export interface AiGenerationLogVO {
-  id: number;
-  taskId: number;
-  userId: number;
-  projectId: number;
+  id: string;
+  taskId: string;
+  userId: string;
+  projectId: string;
   handlerName: string;
   operationType: string;
   model: string;

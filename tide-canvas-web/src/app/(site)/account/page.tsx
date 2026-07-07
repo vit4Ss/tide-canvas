@@ -39,6 +39,7 @@ import { authApi } from "@/lib/api";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { toast } from "@/components/shared/toast";
 import { fmt } from "@/mock";
+import { grayscaleSwatch } from "@/lib/swatch";
 import type { UserVO } from "@/types/user";
 import "./account.css";
 
@@ -54,11 +55,7 @@ function initials(name: string): string {
 }
 
 function avatarGrad(seed: string): string {
-  let h = 0;
-  const s = seed || "u";
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
-  // 灰阶头像（主题零彩色）：哈希只驱动明度差异，白字始终可读
-  return `linear-gradient(135deg, hsl(0 0% ${30 + (h % 16)}%), hsl(0 0% ${14 + (h % 10)}%))`;
+  return grayscaleSwatch(seed || "u");
 }
 
 /** Stable FX-###### id, seeded from the real user id (falls back to email). */

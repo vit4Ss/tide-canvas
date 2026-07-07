@@ -31,6 +31,14 @@ export default function HomePricing({
 }) {
   const [cycle, setCycle] = useState<Cycle>("yr");
 
+  // 年付节省比例由真实套餐价推导（原硬编码"省 42%"）
+  const savePct = (() => {
+    const paid = plans.filter((p) => Number(p.monthly) > 0 && Number(p.yearly) > 0);
+    if (!paid.length) return 0;
+    const best = Math.max(...paid.map((p) => 1 - Number(p.yearly) / Number(p.monthly)));
+    return Math.round(best * 100);
+  })();
+
   if (loading) {
     return (
       <div className="sec-sub" style={{ textAlign: "center", padding: "40px 0" }}>
@@ -56,7 +64,7 @@ export default function HomePricing({
             className={cycle === "yr" ? "on" : ""}
             onClick={() => setCycle("yr")}
           >
-            年付 <span className="save">省 42%</span>
+            年付 {savePct > 0 && <span className="save">省 {savePct}%</span>}
           </button>
           <button
             type="button"

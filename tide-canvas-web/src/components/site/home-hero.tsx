@@ -31,7 +31,6 @@ export default function HomeHero() {
   const router = useRouter();
   const innerRef = useRef<HTMLDivElement>(null);
   const [typed, setTyped] = useState("");
-  const [liveNum, setLiveNum] = useState("1,240");
 
   // typewriter loop over HERO_PROMPTS (ported from FX.typeLoop)
   useEffect(() => {
@@ -60,18 +59,6 @@ export default function HomeHero() {
     return () => clearTimeout(timer);
   }, []);
 
-  // animated live counter (ported from FX.liveCounter)
-  useEffect(() => {
-    const base = 1240;
-    let v = base;
-    const id = setInterval(() => {
-      v += Math.round((Math.random() - 0.42) * 14);
-      v = Math.max(base - 60, Math.min(base + 220, v));
-      setLiveNum(v.toLocaleString("en-US"));
-    }, 2000);
-    return () => clearInterval(id);
-  }, []);
-
   // hero parallax + fade on scroll
   useEffect(() => {
     const hero = innerRef.current;
@@ -95,9 +82,6 @@ export default function HomeHero() {
       <div className="hero-noise" />
 
       <div className="hero-inner" id="heroInner" ref={innerRef}>
-        <div className="live-chip reveal" style={{ ["--rd" as string]: ".45s" }}>
-          <span className="live-dot" />实时 · <b id="liveNum">{liveNum}</b> 人正在生成
-        </div>
         <span className="kicker reveal" style={{ ["--rd" as string]: "0s" }}>
           From ordinary to extraordinary · 从平凡到非凡
         </span>
@@ -149,32 +133,7 @@ export default function HomeHero() {
         </div>
       </div>
 
-      <div className="hero-stats reveal" style={{ ["--rd" as string]: ".95s" }}>
-        <div className="hero-stats-in">
-          <div>
-            <div className="stat-n gtext">
-              3,800<span style={{ fontSize: ".6em" }}>万+</span>
-            </div>
-            <div className="stat-l">累计生成作品</div>
-          </div>
-          <div>
-            <div className="stat-n">30+</div>
-            <div className="stat-l">顶级模型与工作流</div>
-          </div>
-          <div>
-            <div className="stat-n">
-              12<span style={{ fontSize: ".6em" }}>s</span>
-            </div>
-            <div className="stat-l">平均出图时间</div>
-          </div>
-          <div>
-            <div className="stat-n">
-              96<span style={{ fontSize: ".6em" }}>万</span>
-            </div>
-            <div className="stat-l">活跃创作者</div>
-          </div>
-        </div>
-      </div>
+      {/* 原「3,800万+/30+/12s/96万」统计带为硬编码假数据，无对应后端指标，已移除 */}
 
       <div className="scroll-cue">
         <span>SCROLL</span>

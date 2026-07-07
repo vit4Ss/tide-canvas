@@ -133,7 +133,7 @@ export function useAiGeneration() {
       }
 
       try {
-        const res = await aiApi.getTask(taskId as number);
+        const res = await aiApi.getTask(String(taskId)); // 雪花 ID 字符串透传（number 会丢精度）
         if (!aliveRef.current) return; // unmounted while awaiting — drop the result
         if (!res.success) {
           markGenerationFailed(nodeId);

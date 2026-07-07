@@ -1,5 +1,5 @@
 export interface UserVO {
-  id: number;
+  id: string; // 后端雪花 ID 序列化为字符串
   username: string;
   email: string;
   phone: string;
@@ -16,7 +16,7 @@ export interface UserVO {
   isAuthor: number;
   storageQuota: number;
   /** 所属团队ID；null 表示未加入团队 */
-  teamId?: number | null;
+  teamId?: string | null;
   /** 是否在团队中（团队价/共享标识据此显示） */
   inTeam?: boolean;
   /** 团队模式 AI 消耗加价系数（不在团队为 1） */
@@ -26,7 +26,7 @@ export interface UserVO {
 }
 
 export interface UserSimpleVO {
-  id: number;
+  id: string;
   username: string;
   nickname: string;
   avatar: string;

@@ -22,7 +22,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Artwork } from "@/mock";
-import { coverBg, fmt } from "@/mock";
+import { fmt } from "@/mock";
 import { mesh } from "@/lib/mesh";
 import { toast } from "@/components/shared/toast";
 import WorkModal from "@/components/site/work-modal";
@@ -66,9 +66,10 @@ function toItem(p: PostLiteVO): FeedItem {
     h: 1.34,
     type: "image",
     cat,
-    model: p.tags?.[1] || "Flux",
+    // PostLiteVO 没有作者名与模型字段：不编造（原为假作者"流光社区"/假模型"Flux"），空值不渲染
+    model: p.tags?.[1] || "",
     title: p.title || "未命名作品",
-    author: "流光社区",
+    author: "",
     likes: p.likeCount,
     prompt: p.title,
     bg,
@@ -221,7 +222,7 @@ export default function FeedCoverflow({
           )}
           <div className="cf-track" style={{ ["--dur" as string]: `${dur}s` }}>
             {seq.map((a, i) => {
-              const isLiked = liked[a.id] ?? a.likes > 8000;
+              const isLiked = liked[a.id] ?? false; // 点赞态只认用户本次操作，不再按热度伪造
               return (
                 <article
                   key={`${a.id}-${i}`}
@@ -254,9 +255,9 @@ export default function FeedCoverflow({
                     <div className="tile-meta">
                       <div className="tt">{a.title}</div>
                       <div className="tb">
-                        <span>{a.author}</span>
-                        <span className="dot">·</span>
-                        <span className="mono">{a.model}</span>
+                        {a.author && <span>{a.author}</span>}
+                        {a.author && a.model && <span className="dot">·</span>}
+                        {a.model && <span className="mono">{a.model}</span>}
                       </div>
                       <button
                         type="button"

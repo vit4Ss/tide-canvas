@@ -62,6 +62,7 @@ export default function ModelsPage() {
 
   const [cats, setCats] = useState<ModelCategoryVO[]>([]);
   const [models, setModels] = useState<MarketModelVO[]>([]);
+  const [total, setTotal] = useState(0); // 真实在库总数（接口 PageData.total）
   const [loading, setLoading] = useState(true);
 
   // active base = category slug ("all" = 全部); q = free-text; sort key
@@ -95,8 +96,13 @@ export default function ModelsPage() {
         pageSize: 60,
       });
       if (!alive) return;
-      if (res.success && res.data) setModels(res.data.records);
-      else setModels([]);
+      if (res.success && res.data) {
+        setModels(res.data.records);
+        setTotal(res.data.total);
+      } else {
+        setModels([]);
+        setTotal(0);
+      }
       setLoading(false);
     }, q ? 280 : 0);
     return () => {
@@ -144,10 +150,13 @@ export default function ModelsPage() {
       <header className="page-hero">
         <div className="ph-scrim" />
         <div className="wrap">
-          <div className="live-chip reveal">
-            <span className="live-dot" />
-            <b>312</b> 个模型 · 每周更新
-          </div>
+          {/* 真实在库数（原硬编码"312 · 每周更新"为假数据） */}
+          {total > 0 && (
+            <div className="live-chip reveal">
+              <span className="live-dot" />
+              <b>{total}</b> 个模型在库
+            </div>
+          )}
           <div className="page-head">
             <span className="eyebrow reveal">
               <span className="d" />

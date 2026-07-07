@@ -84,6 +84,14 @@ export default function PricingPage() {
   const [plans, setPlans] = useState<PlanVO[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // 年付节省比例由真实套餐价推导（原硬编码"省 42%"），无付费套餐时不显示
+  const savePct = (() => {
+    const paid = plans.filter((p) => Number(p.monthly) > 0 && Number(p.yearly) > 0);
+    if (!paid.length) return 0;
+    const best = Math.max(...paid.map((p) => 1 - Number(p.yearly) / Number(p.monthly)));
+    return Math.round(best * 100);
+  })();
+
   useEffect(() => {
     let alive = true;
     // Public read — no session required.
@@ -156,7 +164,7 @@ export default function PricingPage() {
               className={cycle === "yr" ? "on" : ""}
               onClick={() => setCycle("yr")}
             >
-              年付 <span className="save">省 42%</span>
+              年付 {savePct > 0 && <span className="save">省 {savePct}%</span>}
             </button>
             <button
               type="button"
@@ -326,10 +334,8 @@ export default function PricingPage() {
                     <span className="qt">{f.q}</span>
                     <span className="faq-ic">+</span>
                   </button>
-                  <div
-                    className="faq-a"
-                    style={{ maxHeight: open ? 400 : 0 }}
-                  >
+                  {/* 展开动画由 CSS grid-rows 承担（.faq-item.open） */}
+                  <div className="faq-a">
                     <div className="faq-a-in">{f.a}</div>
                   </div>
                 </div>
