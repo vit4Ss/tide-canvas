@@ -216,9 +216,9 @@ export default function AdminDiscoverPage() {
         }
       >
         {loading ? (
-          <div style={{ padding: 28, color: "var(--muted, #94a3b8)" }}>加载中…</div>
+          <div style={{ padding: 28, color: "var(--text-faint)" }}>加载中…</div>
         ) : slots.length === 0 ? (
-          <div style={{ padding: 28, color: "var(--muted, #94a3b8)" }}>暂无推荐位。</div>
+          <div style={{ padding: 28, color: "var(--text-faint)" }}>暂无推荐位。</div>
         ) : (
           <div style={dim}>
             <AdminTable<DiscoverSlotVO>

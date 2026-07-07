@@ -51,12 +51,16 @@ interface Props {
   align?: "left" | "right";
   /** Poll interval for the unread badge in ms (0 disables). Default 60s. */
   pollMs?: number;
+  /** 面板色调。面板 portal 到 body，会继承 body 级主题令牌（如 imini 暗色）；
+   *  浅色宿主（后台工作台）传 "light" 让面板自带浅色令牌。默认跟随 body。 */
+  tone?: "inherit" | "light";
 }
 
 export default function NotificationCenter({
   renderTrigger,
   align = "right",
   pollMs = 60000,
+  tone = "inherit",
 }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -216,7 +220,7 @@ export default function NotificationCenter({
         createPortal(
           <div
             ref={panelRef}
-            className={`notif-panel${openUp ? " up" : ""}`}
+            className={`notif-panel${openUp ? " up" : ""}${tone === "light" ? " tone-light" : ""}`}
             role="menu"
             aria-label="通知"
             style={panelStyle}

@@ -36,7 +36,7 @@ import { adminSwatch } from "@/mock/admin";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";
 import { adminModelsApi } from "@/lib/admin-models-api";
-import { BRAND_ICONS, brandIconUrl } from "@/lib/model-brand";
+import { BRAND_ICONS, brandIconUrl, resolveModelSwatch } from "@/lib/model-brand";
 import {
   MODEL_STATUS_LABEL,
   MODEL_TYPE_LABEL,
@@ -134,11 +134,12 @@ export default function AdminModelsPage() {
     const live = rows.filter((m) => m.status === 1).length;
     const off = rows.filter((m) => m.status === 2).length;
     const pending = rows.filter((m) => m.status === 0).length;
+    // 分状态计数来自已加载的分页切片，标注「本页」避免误读为全量
     return [
       { k: "模型总数", v: String(total), d: "", dir: "up" },
-      { k: "已上架", v: String(live), d: "", dir: "up" },
-      { k: "已下架", v: String(off), d: "", dir: "up" },
-      { k: "待审核", v: String(pending), d: "", dir: pending > 0 ? "down" : "up" },
+      { k: "已上架", v: String(live), d: "本页", dir: "up" },
+      { k: "已下架", v: String(off), d: "本页", dir: "up" },
+      { k: "待审核", v: String(pending), d: "本页", dir: pending > 0 ? "down" : "up" },
     ];
   }, [rows, total]);
 
@@ -241,12 +242,19 @@ export default function AdminModelsPage() {
                 header: "模型",
                 sortable: true,
                 sortValue: (m) => m.name,
-                cell: (m) => (
-                  <div className="cellflex">
-                    <span className="sw" style={{ background: adminSwatch(m.name) }} />
-                    <span className="strong">{m.name}</span>
-                  </div>
-                ),
+                cell: (m) => {
+                  // 三级回退与前台一致：配置 icon → 品牌 logo（白底衬垫）→ 首字母粉彩
+                  const r = resolveModelSwatch({ name: m.name, modelKey: m.modelKey, icon: m.config?.icon });
+                  const fallback = !!r.glyph;
+                  return (
+                    <div className="cellflex">
+                      <span className="sw" style={fallback ? { background: adminSwatch(m.name) } : r.style}>
+                        {r.glyph}
+                      </span>
+                      <span className="strong">{m.name}</span>
+                    </div>
+                  );
+                },
               },
               {
                 header: "作者",

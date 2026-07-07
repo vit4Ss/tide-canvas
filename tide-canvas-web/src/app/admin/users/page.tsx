@@ -36,6 +36,7 @@ import {
 } from "@/components/admin";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminUsersApi } from "@/lib/admin-users-api";
+import { hueSwatch } from "@/lib/swatch";
 import type {
   AdminUserUpdateDTO,
   AdminUserVO,
@@ -45,12 +46,10 @@ import type {
 /** Status-pill tone keys (mirror the liuguang `.tag2.<tone>` classes). */
 type PillTone = "green" | "gray" | "amber" | "red" | "blue";
 
-/** Deterministic 2-tone avatar gradient from a name (local; no @/mock import). */
+/** Deterministic 2-tone avatar gradient from a name. */
 function avatarSwatch(name: string): string {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
-  // 灰阶头像（主题零彩色）
-  return `linear-gradient(135deg,hsl(0 0% ${30 + (h % 16)}%),hsl(0 0% ${14 + (h % 10)}%))`;
+  // 浅色工作台：柔和彩色头像（同 adminSwatch）
+  return hueSwatch(name);
 }
 
 /* role / status maps (User.Role 0 user / 1 vip / 9 admin; Status 0/1). */
@@ -380,7 +379,10 @@ function AdminUsersPageInner() {
           <span
             className="av"
             style={{ background: u.avatar ? `center / cover no-repeat url("${u.avatar}")` : avatarSwatch(u.nickname || u.username || u.id) }}
-          />
+          >
+            {/* 无头像时渲染首字符，色块不再是空心圆 */}
+            {!u.avatar && (u.nickname || u.username || "U").trim().charAt(0).toUpperCase()}
+          </span>
           <div>
             <div className="strong">{u.nickname || u.username || `用户 ${u.id}`}</div>
             <div className="muted mono" style={{ fontSize: 11.5 }}>
@@ -475,7 +477,7 @@ function AdminUsersPageInner() {
 
       {error ? (
         <div className="adm-panel" style={{ marginBottom: 16 }}>
-          <p style={{ padding: "12px 18px", color: "#ff375f", margin: 0 }}>{error}</p>
+          <p style={{ padding: "12px 18px", color: "var(--danger)", margin: 0 }}>{error}</p>
         </div>
       ) : null}
 

@@ -70,11 +70,14 @@ function fmtMoney(s: string): string {
 
 type SeriesKey = "user" | "post" | "order" | "revenue";
 
+/* 主蓝序列：同一时刻只显示一条序列，切换靠 tab 文本区分，颜色不做类目编码 */
+const COBALT = "#2563EB";
+const TEAL = "#0EA5A8";
 const SERIES_META: { key: SeriesKey; label: string; color: string }[] = [
-  { key: "user", label: "用户增长", color: "#0a84ff" },
-  { key: "post", label: "作品增长", color: "#bf5af2" },
-  { key: "order", label: "订单增长", color: "#34c759" },
-  { key: "revenue", label: "营收", color: "#1a9d54" },
+  { key: "user", label: "用户增长", color: COBALT },
+  { key: "post", label: "作品增长", color: COBALT },
+  { key: "order", label: "订单增长", color: COBALT },
+  { key: "revenue", label: "营收", color: COBALT },
 ];
 
 export default function AdminDashboardPage() {
@@ -145,8 +148,9 @@ export default function AdminDashboardPage() {
   const multiSeries = useMemo(() => {
     if (!charts) return [];
     return [
-      { name: "新增用户", color: "#0a84ff", vals: charts.userGrowth.map((p) => p.count) },
-      { name: "新增作品", color: "#bf5af2", vals: charts.postGrowth.map((p) => p.count) },
+      // 双序列 = 钴蓝 + 高光青（蓝图房双主轴：主指标墨线，对照序列高光）
+      { name: "新增用户", color: COBALT, vals: charts.userGrowth.map((p) => p.count) },
+      { name: "新增作品", color: TEAL, vals: charts.postGrowth.map((p) => p.count) },
     ];
   }, [charts]);
 
@@ -233,15 +237,16 @@ export default function AdminDashboardPage() {
             <div className="hspark">
               <svg width="360" height="60" viewBox="0 0 360 60" preserveAspectRatio="none">
                 <defs>
+                  {/* 白卡上的迷你曲线：主蓝描边 + 规范 8% 填充 */}
                   <linearGradient id="hg" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" stopColor="#fff" stopOpacity={0.5} />
-                    <stop offset="1" stopColor="#fff" stopOpacity={0} />
+                    <stop offset="0" stopColor={COBALT} stopOpacity={0.08} />
+                    <stop offset="1" stopColor={COBALT} stopOpacity={0.08} />
                   </linearGradient>
                 </defs>
                 {revenueVals.length > 0 ? (
                   <>
                     <path d={`${sparkPath(revenueVals, 360, 60, 4)} L 356 56 L 4 56 Z`} fill="url(#hg)" />
-                    <path d={sparkPath(revenueVals, 360, 60, 4)} fill="none" stroke="#fff" strokeWidth="2.5" />
+                    <path d={sparkPath(revenueVals, 360, 60, 4)} fill="none" stroke={COBALT} strokeWidth="2" />
                   </>
                 ) : null}
               </svg>
@@ -327,7 +332,7 @@ export default function AdminDashboardPage() {
             </div>
           </div>
           {orderData.length > 0 ? (
-            <AreaTrend data={orderData} color="#34c759" />
+            <AreaTrend data={orderData} />
           ) : (
             <p style={{ padding: 24, color: "var(--text-faint)" }}>暂无数据</p>
           )}
@@ -342,7 +347,7 @@ export default function AdminDashboardPage() {
             </div>
           </div>
           {revenueData.length > 0 ? (
-            <AreaTrend data={revenueData} color="#1a9d54" />
+            <AreaTrend data={revenueData} />
           ) : (
             <p style={{ padding: 24, color: "var(--text-faint)" }}>暂无数据</p>
           )}

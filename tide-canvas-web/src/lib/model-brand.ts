@@ -9,6 +9,9 @@
       中转站同步下来的新模型无需任何配置即可显示官方 logo。
    ========================================================================== */
 
+import type { CSSProperties } from "react";
+import { grayscaleSwatch } from "./swatch";
+
 export interface BrandIcon {
   slug: string;
   label: string;
@@ -82,4 +85,48 @@ export function matchBrandIcon(...keys: Array<string | undefined>): string | nul
   if (!hay) return null;
   for (const [re, slug] of RULES) if (re.test(hay)) return brandIconUrl(slug);
   return null;
+}
+
+/* ── 共享 swatch 解析（chat / 创作台的模型选择器共用一份，防止漂移） ─────── */
+
+/** true when an icon value is an image URL (vs. an emoji / short glyph). */
+export function isIconUrl(icon: string): boolean {
+  return /^(https?:)?\/\//.test(icon) || icon.startsWith("/");
+}
+
+/** 首字母字形（A-Z / CJK），无则 "A"。 */
+export function modelInitial(name: string): string {
+  return name.replace(/[^A-Za-z一-龥]/g, "").charAt(0) || "A";
+}
+
+/** 品牌 logo 的白底衬垫：logo 是黑图形配透明底，需要白底 + contain 留白，
+ *  不能 cover 裁切、更不能直接铺在暗色芯片上。 */
+const brandPlate = (url: string): CSSProperties => ({
+  background: `#fff center/66% no-repeat url("${url}")`,
+  boxShadow: "inset 0 0 0 1px rgba(22,28,45,.1)",
+});
+
+/** swatch 样式 + 字形，三级优先：
+ *  1. 后台配置的 icon（图片 URL → cover；emoji → 浅灰渐变底上的字形）
+ *  2. 品牌官方 logo（白底衬垫，按 modelKey/名称自动匹配）
+ *  3. 首字母 + 浅灰哈希渐变兜底 */
+export function resolveModelSwatch(m?: {
+  name: string;
+  modelKey?: string;
+  icon?: string | null;
+}): { style: CSSProperties; glyph: string } {
+  const name = m?.name || "";
+  const icon = m?.icon || "";
+  if (icon && isIconUrl(icon)) {
+    return {
+      style: icon.startsWith("/model-icons/")
+        ? brandPlate(icon)
+        : { background: `center/cover no-repeat url("${icon}")` },
+      glyph: "",
+    };
+  }
+  if (icon) return { style: { background: grayscaleSwatch(name, "light") }, glyph: icon };
+  const brand = matchBrandIcon(m?.modelKey, name);
+  if (brand) return { style: brandPlate(brand), glyph: "" };
+  return { style: { background: grayscaleSwatch(name, "light") }, glyph: modelInitial(name) };
 }

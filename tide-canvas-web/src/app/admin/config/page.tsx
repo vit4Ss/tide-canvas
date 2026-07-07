@@ -85,9 +85,9 @@ export default function AdminConfigPage() {
 
   const dirtyCount = Object.keys(edits).length;
 
+  // 只展示系统真实派生值（原「服务可用率 99.98%」为硬编码假数据，无对应后端指标，已移除）
   const kpis: StatCardProps[] = useMemo(
     () => [
-      { k: "服务可用率", v: "99.98%", d: "近 30 天", dir: "up" },
       { k: "配置项", v: String(items.length), dir: "up" },
       { k: "分组", v: String(groups.length), dir: "up" },
       { k: "待保存变更", v: String(dirtyCount), dir: dirtyCount > 0 ? "down" : "up" },
@@ -196,6 +196,8 @@ export default function AdminConfigPage() {
                         {it.description || it.configKey}
                       </span>
                       <input
+                        /* 密钥类配置值掩码显示（仍可编辑；聚焦后浏览器行为同密码框） */
+                        type={/secret|password|access[_-]?key|api[_-]?key/i.test(it.configKey) ? "password" : "text"}
                         value={valueOf(it)}
                         onChange={(e) => onEdit(it, e.target.value)}
                         aria-label={it.configKey}

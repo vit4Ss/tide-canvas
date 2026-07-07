@@ -16,8 +16,7 @@
    - This is the admin console's OWN top-level route group (NOT site/studio).
    ============================================================================ */
 
-import "@/styles/liuguang/admin.css";
-import "@/styles/liuguang/imini-theme.css"; // 正式主题（body.imini 由根布局直出，覆写 admin 令牌域）
+import "@/styles/liuguang/admin.css"; // 自包含令牌域：浅色工作台（Linear×Stripe 车道），不再叠 imini 覆盖
 import { AdminSidebar } from "@/components/admin/admin-sidebar";
 import { AdminTopbar } from "@/components/admin/admin-topbar";
 import { AdminGuard } from "@/components/admin/admin-guard";

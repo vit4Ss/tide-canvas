@@ -36,7 +36,6 @@ import {
   type StatCardProps,
   type StatusPillProps,
 } from "@/components/admin";
-import { HBars } from "@/components/admin/charts";
 import { FilterChips } from "@/components/admin/filter-bar";
 import { adminMarketingApi } from "@/lib/admin-marketing-api";
 import type {
@@ -50,29 +49,6 @@ import { formatDateTime } from "@/lib/utils";
 
 type PillTone = StatusPillProps["tone"];
 
-/* ── static display chrome (no longer sourced from @/mock) ───────────────── */
-
-const MARKETING_KPIS: StatCardProps[] = [
-  { k: "进行中活动", v: "8", d: "+2 本周", dir: "up" },
-  { k: "今日券核销", v: "4,218", d: "+9%", dir: "up" },
-  { k: "活动带来营收", v: "¥86,400", d: "+14%", dir: "up" },
-  { k: "拉新 ROI", v: "3.8×", d: "+0.4", dir: "up" },
-];
-
-const CHANNEL_ROI: { n: string; v: number }[] = [
-  { n: "抖音", v: 4200 },
-  { n: "小红书", v: 3600 },
-  { n: "微信", v: 2800 },
-  { n: "B 站", v: 1900 },
-  { n: "SEO", v: 1500 },
-];
-
-const CHANNEL_CAC: { label: string; value: string }[] = [
-  { label: "本月 CAC", value: "¥18.6" },
-  { label: "目标 CAC", value: "≤ ¥22" },
-  { label: "LTV / CAC", value: "4.2×" },
-];
-
 const CAMPAIGN_FILTERS = ["全部", "draft", "active", "paused", "ended"] as const;
 const CAMPAIGN_FILTER_LABELS: Record<string, string> = {
   全部: "全部",
@@ -85,6 +61,14 @@ const CAMPAIGN_TYPES = ["促销", "拉新", "裂变", "活动", "线索"];
 const COUPON_TYPES = ["满减", "折扣", "兑换", "直减"];
 const CAMPAIGN_STATUS_OPTIONS = ["draft", "active", "paused", "ended"];
 const COUPON_STATUS_OPTIONS = ["active", "inactive"];
+/** 状态下拉的中文展示文案（value 仍是后端枚举） */
+const STATUS_OPTION_LABELS: Record<string, string> = {
+  draft: "草稿",
+  active: "进行中",
+  paused: "已暂停",
+  ended: "已结束",
+  inactive: "已停用",
+};
 
 /** Campaign status → pill (label + tone). */
 function campaignStatus(status: string): { label: string; tone: PillTone } {
@@ -396,9 +380,17 @@ export default function AdminMarketingPage() {
       ? "发券"
       : "新建活动";
 
+  // KPI 全部由真实列表派生（原「今日券核销/营收/ROI」为编造数据，后端无对应指标，已移除）
+  const kpis: StatCardProps[] = [
+    { k: "活动总数", v: String(campaignTotal), dir: "up" },
+    { k: "进行中活动", v: String(campaigns.filter((c) => c.status === "active").length), dir: "up" },
+    { k: "优惠券总数", v: String(couponTotal), dir: "up" },
+    { k: "券已领取", v: String(coupons.reduce((s, c) => s + (c.used || 0), 0)), dir: "up" },
+  ];
+
   return (
     <>
-      <StatCardGrid items={MARKETING_KPIS} />
+      <StatCardGrid items={kpis} />
 
       {/* 营销活动 */}
       <Panel
@@ -472,49 +464,8 @@ export default function AdminMarketingPage() {
         )}
       </Panel>
 
-      {/* 渠道投放 — static display chrome */}
-      <Panel title="渠道投放" sub="各渠道获客与成本">
-        <div style={{ padding: 18 }}>
-          <div className="cfg-grid">
-            <div className="cfg-card">
-              <h3>渠道 ROI</h3>
-              <p>近 30 天各投放渠道表现。</p>
-              <HBars rows={CHANNEL_ROI} color="#0a84ff" />
-            </div>
-            <div className="cfg-card">
-              <h3>获客成本 CAC</h3>
-              <p>单个付费用户平均成本。</p>
-              {CHANNEL_CAC.map((r) => (
-                <div className="cfg-row" key={r.label}>
-                  <span className="lab">{r.label}</span>
-                  <span className="mono">{r.value}</span>
-                </div>
-              ))}
-              <div className="cfg-row">
-                <span className="lab">自动竞价</span>
-                <SwitchToggle defaultChecked aria-label="自动竞价" />
-              </div>
-            </div>
-            <div className="cfg-card">
-              <h3>Push / 触达</h3>
-              <p>消息推送与召回策略。</p>
-              <div className="cfg-row">
-                <span className="lab">流失召回</span>
-                <SwitchToggle defaultChecked aria-label="流失召回" />
-              </div>
-              <div className="cfg-row">
-                <span className="lab">每日 Push 上限</span>
-                <input type="number" defaultValue={2} />
-                <span className="unit">条</span>
-              </div>
-              <div className="cfg-row">
-                <span className="lab">免打扰时段</span>
-                <span className="muted">23:00–8:00</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </Panel>
+      {/* 「渠道投放」（ROI/CAC/Push）已移除：后端无任何渠道分析/推送策略接口，
+          原面板全部为编造数据与无持久化的假开关 */}
 
       {/* mktModal — 新建/编辑 活动 / 发券 */}
       <AdminModal
@@ -590,7 +541,7 @@ export default function AdminMarketingPage() {
               <select ref={statusRef} defaultValue={(modal?.row && (isCoupon ? editingCoupon?.status : editingCampaign?.status)) || statusOptions[0]}>
                 {statusOptions.map((o) => (
                   <option key={o} value={o}>
-                    {o}
+                    {STATUS_OPTION_LABELS[o] ?? o}
                   </option>
                 ))}
               </select>

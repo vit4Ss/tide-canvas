@@ -14,6 +14,7 @@
 // ============================================================================
 
 import { mesh } from "@/lib/mesh";
+import { hueSwatch } from "@/lib/swatch";
 
 export { mesh };
 
@@ -26,20 +27,20 @@ export { mesh };
  * leaderboard glyphs). Ported from admin.js `swatch(n)`.
  */
 export function adminSwatch(name: string): string {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
-  // 灰阶色板（主题零彩色）
-  return `linear-gradient(135deg,hsl(0 0% ${30 + (h % 16)}%),hsl(0 0% ${14 + (h % 10)}%))`;
+  // 浅色工作台：柔和彩色（身份识别靠颜色；灰阶是前台 imini 的铁律，后台不适用）
+  return hueSwatch(name);
 }
 
 /** The recharts categorical palette used across all admin charts. */
+/* 图表色板（用户定稿 v3）：蓝 → 青双主轴，浅阶收尾——类目靠图例/标签区分，
+   颜色表达"同一体系内的次序"（语义红绿另走 charts.tsx 常量）。 */
 export const CHART_COLORS = [
-  "#0a84ff",
-  "#34c759",
-  "#ff9f0a",
-  "#ff375f",
-  "#bf5af2",
-  "#5ac8fa",
+  "#2563EB", // 主蓝
+  "#0EA5A8", // 图表青
+  "#93C5FD", // 蓝浅阶
+  "#7ED4D6", // 青浅阶
+  "#94A3B8", // 冷灰
+  "#475569", // 深冷灰
 ] as const;
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -224,14 +225,14 @@ export const DASHBOARD_HERO: DashboardHero = {
 
 /** The 8 top KPI cards (总用户 / DAU / MAU / 今日生成 / 付费会员 / 付费转化 / 今日营收 / ARPU). */
 export const DASHBOARD_KPIS: DashboardKpi[] = [
-  { k: "总用户", v: "5,218,904", d: "+2.4%", dir: "up", icon: "users", color: "#0a84ff" },
-  { k: "日活 DAU", v: "486,210", d: "+5.1%", dir: "up", icon: "chart", color: "#34c759" },
-  { k: "月活 MAU", v: "3.82M", d: "+3.4%", dir: "up", icon: "chart", color: "#5ac8fa" },
-  { k: "今日生成", v: "1,902,338", d: "+8.7%", dir: "up", icon: "works", color: "#bf5af2" },
-  { k: "付费会员", v: "352,118", d: "+1.9%", dir: "up", icon: "credit", color: "#ff9f0a" },
-  { k: "付费转化", v: "6.8%", d: "-0.3%", dir: "down", icon: "price", color: "#ff375f" },
-  { k: "今日营收", v: "¥384.9K", d: "+11%", dir: "up", icon: "pay", color: "#1a9d54" },
-  { k: "ARPU", v: "¥58.2", d: "+5%", dir: "up", icon: "credit", color: "#0a84ff" },
+  { k: "总用户", v: "5,218,904", d: "+2.4%", dir: "up", icon: "users", color: "#5E6AD2" },
+  { k: "日活 DAU", v: "486,210", d: "+5.1%", dir: "up", icon: "chart", color: "#5E6AD2" },
+  { k: "月活 MAU", v: "3.82M", d: "+3.4%", dir: "up", icon: "chart", color: "#5E6AD2" },
+  { k: "今日生成", v: "1,902,338", d: "+8.7%", dir: "up", icon: "works", color: "#5E6AD2" },
+  { k: "付费会员", v: "352,118", d: "+1.9%", dir: "up", icon: "credit", color: "#5E6AD2" },
+  { k: "付费转化", v: "6.8%", d: "-0.3%", dir: "down", icon: "price", color: "#5E6AD2" },
+  { k: "今日营收", v: "¥384.9K", d: "+11%", dir: "up", icon: "pay", color: "#5E6AD2" },
+  { k: "ARPU", v: "¥58.2", d: "+5%", dir: "up", icon: "credit", color: "#5E6AD2" },
 ];
 
 /** 生成趋势 — labeled trend points (13 days). */
@@ -249,8 +250,8 @@ export const USER_COMPOSITION: Segment[] = [
 
 /** 用户增长 — 近 12 周 · 新增 vs 活跃 (multi-line). */
 export const USER_GROWTH: LineSeries[] = [
-  { name: "新增", color: "#0a84ff", vals: [12, 14, 13, 18, 20, 19, 24, 26, 25, 30, 34, 38] },
-  { name: "活跃", color: "#34c759", vals: [40, 44, 46, 52, 55, 60, 64, 70, 76, 82, 90, 98] },
+  { name: "新增", color: "#5E6AD2", vals: [12, 14, 13, 18, 20, 19, 24, 26, 25, 30, 34, 38] },
+  { name: "活跃", color: "#A1A1AA", vals: [40, 44, 46, 52, 55, 60, 64, 70, 76, 82, 90, 98] },
 ];
 
 /** 转化漏斗 — 访客 → 付费. */
@@ -320,8 +321,8 @@ export const SYSTEM_GAUGES: { label: string; pct: number }[] = [
 
 /** 系统健康 — 平均时延 / 成功率 (track bars, 0..100). */
 export const SYSTEM_BARS: { n: string; pct: number; val: string; color: string }[] = [
-  { n: "平均时延", pct: 34, val: "142ms", color: "#34c759" },
-  { n: "成功率", pct: 98, val: "98.6%", color: "#34c759" },
+  { n: "平均时延", pct: 34, val: "142ms", color: "#2E9E5B" },
+  { n: "成功率", pct: 98, val: "98.6%", color: "#2E9E5B" },
 ];
 
 /** 模型健康度 — 实时 (success / latency / queue board). */

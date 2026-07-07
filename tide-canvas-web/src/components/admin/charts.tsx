@@ -35,7 +35,18 @@ import {
   type Segment,
 } from "@/mock/admin";
 
-const GRID = "#e8e8ed";
+/* 配色常量（用户定稿色板 v3，与 admin.css 令牌对齐；recharts 需要字面量色值） */
+const GRID = "#EAF0F6"; /* 网格线 */
+const ACCENT = "#2563EB"; /* 主图表蓝 */
+const OK = "#16A34A";
+const WARN = "#D97706";
+const DANGER = "#DC2626";
+const TOOLTIP = {
+  borderRadius: 8,
+  border: "1px solid #E2E8F0",
+  boxShadow: "0 4px 12px rgba(15,23,42,.08)",
+  fontSize: 12,
+} as const;
 
 const compact = (v: number) =>
   v >= 10000 ? (v / 10000).toFixed(1) + "w" : v.toLocaleString();
@@ -46,7 +57,7 @@ const kfmt = (v: number) => (v >= 1000 ? (v / 1000).toFixed(0) + "k" : "" + v);
 /** Smooth filled area chart (生成趋势). */
 export function AreaTrend({
   data,
-  color = "#0a84ff",
+  color = ACCENT,
   height = 220,
 }: {
   data: { label: string; value: number }[];
@@ -56,24 +67,20 @@ export function AreaTrend({
   return (
     <ResponsiveContainer width="100%" height={height} className="viz-svg">
       <AreaChart data={data} margin={{ top: 14, right: 14, bottom: 0, left: 0 }}>
-        <defs>
-          <linearGradient id={`area-${color}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stopColor={color} stopOpacity={0.26} />
-            <stop offset="1" stopColor={color} stopOpacity={0} />
-          </linearGradient>
-        </defs>
         <CartesianGrid stroke={GRID} vertical={false} />
         <YAxis hide domain={["dataMin * 0.9", "dataMax * 1.12"]} />
         <Tooltip
           cursor={{ stroke: color, strokeOpacity: 0.3 }}
-          contentStyle={{ borderRadius: 10, border: "1px solid #e8e8ed", fontSize: 12 }}
+          contentStyle={TOOLTIP}
         />
+        {/* 填充按规范固定 8% 透明度（fillOpacity 对任意主色通用，也避免 SVG 渐变 id 转义问题） */}
         <Area
           type="monotone"
           dataKey="value"
           stroke={color}
           strokeWidth={2.5}
-          fill={`url(#area-${color})`}
+          fill={color}
+          fillOpacity={0.08}
           dot={false}
           activeDot={{ r: 4 }}
         />
@@ -101,7 +108,7 @@ export function MultiLine({
       <LineChart data={data} margin={{ top: 14, right: 14, bottom: 0, left: 0 }}>
         <CartesianGrid stroke={GRID} vertical={false} />
         <YAxis hide domain={["dataMin * 0.85", "dataMax * 1.12"]} />
-        <Tooltip contentStyle={{ borderRadius: 10, border: "1px solid #e8e8ed", fontSize: 12 }} />
+        <Tooltip contentStyle={TOOLTIP} />
         {series.map((s) => (
           <Line
             key={s.name}
@@ -144,7 +151,7 @@ export function Donut({ segs }: { segs: Segment[] }) {
                 <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
               ))}
             </Pie>
-            <Tooltip contentStyle={{ borderRadius: 10, border: "1px solid #e8e8ed", fontSize: 12 }} />
+            <Tooltip contentStyle={TOOLTIP} />
           </PieChart>
         </ResponsiveContainer>
         <div className="ctr">
@@ -171,7 +178,7 @@ export function HBars({ rows, color }: { rows: BarRow[]; color?: string }) {
   const max = Math.max(...rows.map((r) => r.v));
   return (
     <div className="viz-bars">
-      {rows.map((r, i) => (
+      {rows.map((r) => (
         <div className="viz-bar" key={r.n}>
           <span className="nm">{r.n}</span>
           <span className="track">
@@ -179,7 +186,8 @@ export function HBars({ rows, color }: { rows: BarRow[]; color?: string }) {
               className="fill"
               style={{
                 width: `${((r.v / max) * 100).toFixed(0)}%`,
-                background: color || CHART_COLORS[i % CHART_COLORS.length],
+                // 横条统一功能色：类目差异由行名承担，颜色不做装饰
+                background: color || ACCENT,
               }}
             />
           </span>
@@ -234,14 +242,14 @@ export function Gauge({ pct, label, color }: { pct: number; label: string; color
   const r = 54;
   const c = Math.PI * r;
   const len = (pct / 100) * c;
-  const col = color || (pct > 85 ? "#ff375f" : pct > 65 ? "#ff9f0a" : "#34c759");
+  const col = color || (pct > 85 ? DANGER : pct > 65 ? WARN : OK);
   return (
     <div className="viz-gauge">
       <svg width="150" height="92" viewBox="0 0 150 92">
         <path
           d={`M 16 84 A ${r} ${r} 0 0 1 134 84`}
           fill="none"
-          stroke="#e8e8ed"
+          stroke={GRID}
           strokeWidth="13"
           strokeLinecap="round"
         />
@@ -269,7 +277,7 @@ function Ring({ pct, color }: { pct: number; color: string }) {
   const len = (pct / 100) * c;
   return (
     <svg width="52" height="52" viewBox="0 0 52 52">
-      <circle cx="26" cy="26" r={r} fill="none" stroke="#e8e8ed" strokeWidth="6" />
+      <circle cx="26" cy="26" r={r} fill="none" stroke={GRID} strokeWidth="6" />
       <circle
         cx="26"
         cy="26"
@@ -281,7 +289,7 @@ function Ring({ pct, color }: { pct: number; color: string }) {
         strokeDasharray={`${len} ${c}`}
         transform="rotate(-90 26 26)"
       />
-      <text x="26" y="30" textAnchor="middle" fontSize="12" fontWeight="700" fill="#1d1d1f">
+      <text x="26" y="30" textAnchor="middle" fontSize="12" fontWeight="600" fill="#0F172A">
         {pct}
       </text>
     </svg>
@@ -293,7 +301,7 @@ export function HealthBoard({ models }: { models: ModelHealth[] }) {
   return (
     <div className="hb-grid">
       {models.map((m) => {
-        const col = m.ok > 99 ? "#34c759" : m.ok > 97 ? "#ff9f0a" : "#ff375f";
+        const col = m.ok > 99 ? OK : m.ok > 97 ? WARN : DANGER;
         const st: [string, string] =
           m.ok > 99 ? ["正常", "green"] : m.ok > 97 ? ["波动", "amber"] : ["异常", "red"];
         return (
@@ -346,10 +354,11 @@ export function Leaderboard({ rows, kind }: { rows: LeaderRow[]; kind: "user" | 
               {r.n}
             </div>
             <div className="lb-track">
+              {/* 名次条统一功能色：排名由序号与长度表达 */}
               <i
                 style={{
                   width: `${((r.v / max) * 100).toFixed(0)}%`,
-                  background: CHART_COLORS[i % CHART_COLORS.length],
+                  background: ACCENT,
                 }}
               />
             </div>

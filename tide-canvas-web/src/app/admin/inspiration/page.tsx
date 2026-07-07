@@ -324,9 +324,9 @@ export default function AdminInspirationPage() {
         }
       >
         {loading ? (
-          <div style={{ padding: 28, color: "var(--muted, #94a3b8)" }}>加载中…</div>
+          <div style={{ padding: 28, color: "var(--text-faint)" }}>加载中…</div>
         ) : collections.length === 0 ? (
-          <div style={{ padding: 28, color: "var(--muted, #94a3b8)" }}>暂无合集。</div>
+          <div style={{ padding: 28, color: "var(--text-faint)" }}>暂无合集。</div>
         ) : (
           <div style={dim}>
             <AdminTable<CollectionVO>
@@ -403,9 +403,9 @@ export default function AdminInspirationPage() {
         }
       >
         {loading ? (
-          <div style={{ padding: 28, color: "var(--muted, #94a3b8)" }}>加载中…</div>
+          <div style={{ padding: 28, color: "var(--text-faint)" }}>加载中…</div>
         ) : prompts.length === 0 ? (
-          <div style={{ padding: 28, color: "var(--muted, #94a3b8)" }}>暂无提示词。</div>
+          <div style={{ padding: 28, color: "var(--text-faint)" }}>暂无提示词。</div>
         ) : (
           <div style={dim}>
             <AdminTable<PromptVO>

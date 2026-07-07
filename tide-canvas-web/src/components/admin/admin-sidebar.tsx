@@ -22,7 +22,7 @@
 import Link from "next/link";
 import { Logo } from "@/components/flux/atoms";
 import { usePathname } from "next/navigation";
-import { ADMIN_ICONS } from "@/mock/admin";
+import { ADMIN_ICONS, adminSwatch } from "@/mock/admin";
 
 export interface AdminNavItem {
   /** Display label. */
@@ -49,7 +49,7 @@ export const ADMIN_NAV: AdminNavEntry[] = [
   { group: "总览" },
   { label: "数据概览", href: "/admin", icon: "dash" },
   { group: "运营" },
-  { label: "用户管理", href: "/admin/users", icon: "users", badge: "5.2M" },
+  { label: "用户管理", href: "/admin/users", icon: "users" },
   { label: "作品管理", href: "/admin/works", icon: "works" },
   { label: "灵感管理", href: "/admin/inspiration", icon: "insp" },
   { label: "日志管理", href: "/admin/logs", icon: "log" },
@@ -97,11 +97,10 @@ export function AdminSidebar() {
   return (
     <aside className="adm-side">
       <div className="adm-brand">
-        <Logo size={30} />
+        {/* 浅色工作台：currentColor 单色标；品牌字全墨色，功能色不做装饰 */}
+        <Logo size={22} tone="solid" />
         <div>
-          <b>
-            FLOWING<span style={{ color: "var(--accent)" }}>LIGHT</span>
-          </b>
+          <b>FLOWINGLIGHT</b>
           <small>ADMIN CONSOLE</small>
         </div>
       </div>
@@ -129,7 +128,7 @@ export function AdminSidebar() {
       </nav>
 
       <div className="adm-side-foot">
-        <span className="av" />
+        <span className="av" style={{ background: adminSwatch("运营管理员") }} />
         <div>
           <div className="nm">运营管理员</div>
           <div className="rl">超级管理员</div>

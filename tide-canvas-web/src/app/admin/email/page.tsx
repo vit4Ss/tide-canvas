@@ -49,35 +49,6 @@ import { formatDateTime } from "@/lib/utils";
 
 type PillTone = StatusPillProps["tone"];
 
-/* ── static display chrome (no longer sourced from @/mock) ───────────────── */
-
-const EMAIL_KPIS: StatCardProps[] = [
-  { k: "今日发送", v: "48,210", d: "+6%", dir: "up" },
-  { k: "送达率", v: "99.2%", d: "+0.1%", dir: "up" },
-  { k: "打开率", v: "38.4%", d: "+2.1%", dir: "up" },
-  { k: "退信 / 投诉", v: "0.6%", d: "-0.1%", dir: "up" },
-];
-
-interface CfgRow {
-  label: string;
-  value: string;
-  unit?: string;
-}
-const SMTP_ROWS: CfgRow[] = [
-  { label: "服务商", value: "阿里云邮件推送" },
-  { label: "SMTP 主机", value: "smtp.tidecanvas.ai" },
-  { label: "端口", value: "465" },
-  { label: "加密", value: "SSL" },
-  { label: "发件邮箱", value: "no-reply@tidecanvas.ai" },
-  { label: "发件人名称", value: "TIDE CANVAS" },
-];
-const SEND_POLICY_ROWS: CfgRow[] = [
-  { label: "每用户每日上限", value: "10", unit: "封" },
-  { label: "每分钟发送上限", value: "600", unit: "封" },
-  { label: "失败重试次数", value: "3" },
-  { label: "营销邮件免打扰", value: "22:00–8:00" },
-];
-
 const TEMPLATE_FILTERS = ["全部", "html", "text"];
 const TEMPLATE_TYPE_OPTIONS = ["html", "text"];
 const KEY_SCOPE_OPTIONS = ["全部", "生成", "只读", "导出"];
@@ -377,40 +348,18 @@ export default function AdminEmailPage() {
   const editingTpl = tplModal?.row ?? null;
   const editingKey = keyModal?.row ?? null;
 
+  // KPI 由真实列表派生。原「今日发送/送达率/打开率/退信」为编造数据（后端无发送统计接口），
+  // 原「SMTP 服务/发送策略」面板展示的是假配置（真实邮件配置在 配置管理 → mail 分组），均已移除。
+  const kpis: StatCardProps[] = [
+    { k: "邮件模板", v: String(templates.length), dir: "up" },
+    { k: "启用模板", v: String(templates.filter((t) => t.enabled).length), dir: "up" },
+    { k: "API 密钥", v: String(apiKeys.length), dir: "up" },
+    { k: "启用密钥", v: String(apiKeys.filter((k) => k.enabled).length), dir: "up" },
+  ];
+
   return (
     <>
-      <StatCardGrid items={EMAIL_KPIS} />
-
-      <div className="adm-2col">
-        <Panel title="SMTP 服务" sub="发件服务器与认证">
-          <div style={{ padding: 18 }}>
-            <div className="cfg-card" style={{ border: "none", padding: 0, boxShadow: "none" }}>
-              {SMTP_ROWS.map((row) => (
-                <div className="cfg-row" key={row.label}>
-                  <span className="lab">{row.label}</span>
-                  <span className="muted">{row.value}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </Panel>
-
-        <Panel title="发送策略" sub="频控与降级">
-          <div style={{ padding: 18 }}>
-            <div className="cfg-card" style={{ border: "none", padding: 0, boxShadow: "none" }}>
-              {SEND_POLICY_ROWS.map((row) => (
-                <div className="cfg-row" key={row.label}>
-                  <span className="lab">{row.label}</span>
-                  <span className="muted">
-                    {row.value}
-                    {row.unit ? ` ${row.unit}` : ""}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </Panel>
-      </div>
+      <StatCardGrid items={kpis} />
 
       {/* 邮件模板 */}
       <Panel
@@ -521,14 +470,15 @@ export default function AdminEmailPage() {
                 defaultValue={editingTpl?.body ?? ""}
                 placeholder="您好 {name}，您的验证码是 {code}，5 分钟内有效。"
                 style={{
+                  /* 与 .fld textarea 同规格：白底 + 发丝边（旧灰底是上一版表单语言） */
                   width: "100%",
                   minHeight: 120,
-                  padding: "12px 13px",
-                  borderRadius: 10,
-                  background: "var(--panel)",
-                  border: "1px solid transparent",
+                  padding: "10px 12px",
+                  borderRadius: 8,
+                  background: "var(--surface)",
+                  border: "1px solid var(--border)",
                   font: "inherit",
-                  fontSize: 13,
+                  fontSize: 12.5,
                   color: "var(--text)",
                   resize: "vertical",
                 }}

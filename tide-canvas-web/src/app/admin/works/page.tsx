@@ -248,9 +248,9 @@ export default function AdminWorksPage() {
         }
       >
         {loading ? (
-          <div style={{ padding: 28, color: "var(--muted, #94a3b8)" }}>加载中…</div>
+          <div style={{ padding: 28, color: "var(--text-faint)" }}>加载中…</div>
         ) : works.length === 0 ? (
-          <div style={{ padding: 28, color: "var(--muted, #94a3b8)" }}>
+          <div style={{ padding: 28, color: "var(--text-faint)" }}>
             暂无作品。
           </div>
         ) : (
@@ -273,6 +273,8 @@ export default function AdminWorksPage() {
         onClose={() => setDetail(null)}
         onSave={detail ? () => toggleFeatured(detail) : undefined}
         saveLabel={detail?.featured ? "取消精选" : "设为精选"}
+        cancelLabel="关闭"
+        footNote="精选状态即时生效"
       >
         {detail ? (
           <div style={{ display: "flex", gap: 18 }}>

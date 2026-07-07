@@ -37,9 +37,12 @@ func run() error {
 		return err
 	}
 
+	// 优先取管理员（role 9）——后台截图等场景需要过 AdminGuard；无管理员时回退首个用户。
 	var u model.User
-	if err := gdb.Order("id ASC").First(&u).Error; err != nil {
-		return fmt.Errorf("no user found: %w", err)
+	if err := gdb.Where("role = ?", 9).Order("id ASC").First(&u).Error; err != nil {
+		if err := gdb.Order("id ASC").First(&u).Error; err != nil {
+			return fmt.Errorf("no user found: %w", err)
+		}
 	}
 
 	// rdb=nil：只签发，不落 refresh JTI（access 校验不需要）。

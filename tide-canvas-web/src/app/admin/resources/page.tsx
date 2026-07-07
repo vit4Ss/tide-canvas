@@ -25,7 +25,6 @@ import {
   AdminTable,
   FilterBar,
   Panel,
-  RowActions,
   StatCardGrid,
   StatusPill,
   type Column,
@@ -38,15 +37,6 @@ import { useAuthStore } from "@/stores/use-auth-store";
 import { formatDateTime, formatFileSize } from "@/lib/utils";
 
 type PillTone = StatusPillProps["tone"];
-
-/* ── static display chrome (no longer sourced from @/mock) ───────────────── */
-
-const RESOURCE_KPIS: StatCardProps[] = [
-  { k: "存储占用", v: "38.2 TB", d: "+1.1 TB", dir: "down" },
-  { k: "CDN 月流量", v: "920 TB", d: "+6%", dir: "up" },
-  { k: "素材库", v: "12,408", d: "", dir: "up" },
-  { k: "回收待清", v: "38 GB", d: "", dir: "down" },
-];
 
 const RESOURCE_FILTERS = ["全部", "存储桶", "素材库", "字体", "缓存"] as const;
 
@@ -158,18 +148,22 @@ export default function AdminResourcesPage() {
         cell: (r) => (r.updateTime ? formatDateTime(r.updateTime) : "—"),
       },
       { header: "状态", cell: (r) => <StatusPill tone={statusTone(r.status)}>{r.status || "—"}</StatusPill> },
-      {
-        header: "操作",
-        align: "right",
-        cell: () => <RowActions actions={[{ label: "详情" }]} />,
-      },
+      // 「详情」列已移除：按钮从未接线且后端无资源详情接口
     ],
     [],
   );
 
+  // KPI 由真实列表派生（原「38.2TB/920TB/12,408/38GB」为编造数据，后端无存储/CDN 统计接口）
+  const kpis: StatCardProps[] = [
+    { k: "资源总数", v: String(total), dir: "up" },
+    { k: "类型数", v: String(new Set(all.map((r) => r.type)).size), dir: "up" },
+    { k: "待清理", v: String(all.filter((r) => r.status.includes("待清")).length), dir: "up" },
+    { k: "本页资源", v: String(all.length), dir: "up" },
+  ];
+
   return (
     <>
-      <StatCardGrid items={RESOURCE_KPIS} />
+      <StatCardGrid items={kpis} />
 
       <Panel
         title="资源管理"

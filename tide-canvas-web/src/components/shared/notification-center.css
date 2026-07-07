@@ -23,6 +23,20 @@
   box-shadow: var(--shadow-pop, 0 24px 64px rgba(0, 0, 0, 0.16));
   animation: notif-pop 0.16s cubic-bezier(0.2, 0.8, 0.3, 1);
 }
+/* 浅色宿主（后台工作台）：面板 portal 到 body 会继承 body 级暗色令牌，
+   tone-light 在面板自身重设一层浅色令牌（与 admin.css 蓝图房色板对齐） */
+.notif-panel.tone-light {
+  --surface: #ffffff;
+  --panel: #eef2f7;
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --text: #111827;
+  --text-dim: #64748b;
+  --text-faint: #94a3b8;
+  --accent: #2563eb;
+  --accent-soft: #eff6ff;
+  --shadow-pop: 0 4px 12px rgba(15, 23, 42, 0.06), 0 12px 32px rgba(15, 23, 42, 0.1);
+}
 .notif-panel.align-right {
   right: 0;
 }

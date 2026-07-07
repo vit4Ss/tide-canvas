@@ -16,18 +16,22 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import NotificationCenter from "@/components/shared/notification-center";
-import { findActive } from "./admin-sidebar";
+import { ADMIN_NAV_ITEMS, findActive } from "./admin-sidebar";
 
 export function AdminTopbar() {
   const pathname = usePathname() || "/admin";
   const router = useRouter();
   const active = findActive(pathname);
+  // 制图图号：当前模块在 15 个分区里的序号（蓝图签名细节，与 KPI 卡右上角同语言）
+  const sec = String(ADMIN_NAV_ITEMS.findIndex((it) => it.href === active.href) + 1).padStart(2, "0");
 
   return (
     <header className="adm-top">
       <div>
         <h1>{active.label}</h1>
-        <div className="crumb">控制台 / {active.label}</div>
+        <div className="crumb">
+          <span className="sec">SEC.{sec}</span>控制台 / {active.label}
+        </div>
       </div>
 
       <label className="adm-search">
@@ -46,6 +50,7 @@ export function AdminTopbar() {
 
       <NotificationCenter
         align="right"
+        tone="light"
         renderTrigger={({ unread, toggle }) => (
           <button
             type="button"
