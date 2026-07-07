@@ -183,7 +183,6 @@ body.imini .mask{backdrop-filter:none; -webkit-backdrop-filter:none; background:
 body.imini .modal{border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow-pop); background:#0C0C0E;}
 body.imini .modal-media{background:none;}
 body.imini .ic-zoom,body.imini .ic-mini{backdrop-filter:none;}
-body.imini .modal-openpage{backdrop-filter:none; -webkit-backdrop-filter:none; background:rgba(0,0,0,.6);}
 
 /* ── 动效：入场剧场下线；循环内容动画保留 ────────────────────────────── */
 /* will-change 也要压掉：它常驻层叠上下文，会把容器内的下拉菜单困在卡片之下 */
@@ -395,7 +394,6 @@ body.imini .acc-page .pf-stat .v.grad{background:none; -webkit-background-clip:i
 /* ── accent 变中性浅灰后的配套（原「accent 底 + 白字」全部转白底黑字） ── */
 body.imini .ratio.on{color:#0A0A0B; background:#fff; border-color:transparent;}
 body.imini .filters .f.on{color:#0A0A0B; background:#fff; border-color:transparent; box-shadow:none;}
-body.imini .modal-openpage:hover{background:rgba(255,255,255,.24); border-color:transparent;}
 body.imini .ws-style .sck{color:#0A0A0B;}
 body.imini .msg.me .bubble{background:#2E2E33; color:#F5F5F7;}
 body.imini .cm-send{color:#0A0A0B; background:#fff;}

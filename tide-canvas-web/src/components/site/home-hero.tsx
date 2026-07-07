@@ -16,9 +16,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { HERO_PROMPTS } from "@/mock";
+import { HERO_PROMPTS, fmt } from "@/mock";
 import { toast } from "@/components/shared/toast";
 import HeroWall from "@/components/site/hero-wall";
+import { communityApi } from "@/lib/community-api";
+import { marketApi } from "@/lib/market-api";
 
 const QUICK = [
   { label: "文生图", toast: "文生图 · 前往创作台" },
@@ -31,6 +33,25 @@ export default function HomeHero() {
   const router = useRouter();
   const innerRef = useRef<HTMLDivElement>(null);
   const [typed, setTyped] = useState("");
+  // 首屏定位数据：全部来自真实接口 total（只取 pageSize=1 的分页元数据），取不到就不显示
+  const [worksTotal, setWorksTotal] = useState(0);
+  const [modelsTotal, setModelsTotal] = useState(0);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const [posts, models] = await Promise.all([
+        communityApi.list({ pageNum: 1, pageSize: 1 }),
+        marketApi.list({ pageNum: 1, pageSize: 1 }),
+      ]);
+      if (!alive) return;
+      if (posts.success && posts.data) setWorksTotal(posts.data.total);
+      if (models.success && models.data) setModelsTotal(models.data.total);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // typewriter loop over HERO_PROMPTS (ported from FX.typeLoop)
   useEffect(() => {
@@ -92,7 +113,7 @@ export default function HomeHero() {
           </span>
         </h1>
         <p className="hero-sub reveal" style={{ ["--rd" as string]: ".55s" }}>
-          图片与视频，30+ 顶级模型一键直达。无需任何专业知识，让灵感即刻成真——在流光之中，人人都是 AI 艺术家。
+          AI 图片与视频创作平台：一句提示词，顶级模型一键直达。无需任何专业知识，让灵感即刻成真——在流光之中，人人都是 AI 艺术家。
         </p>
 
         <div
@@ -133,7 +154,26 @@ export default function HomeHero() {
         </div>
       </div>
 
-      {/* 原「3,800万+/30+/12s/96万」统计带为硬编码假数据，无对应后端指标，已移除 */}
+      {/* 定位统计带：全部为真实数据（社区/市场接口 total + 四类真实创作入口），
+          替代原硬编码假统计；接口未返回前不渲染 */}
+      {worksTotal > 0 && modelsTotal > 0 && (
+        <div className="hero-stats reveal" style={{ ["--rd" as string]: ".95s" }}>
+          <div className="hero-stats-in">
+            <div>
+              <div className="stat-n gtext">{fmt(worksTotal)}</div>
+              <div className="stat-l">馆藏社区作品</div>
+            </div>
+            <div>
+              <div className="stat-n">{modelsTotal}</div>
+              <div className="stat-l">在库生成模型</div>
+            </div>
+            <div>
+              <div className="stat-n">4 类</div>
+              <div className="stat-l">文生图 · 文生视频 · 图生图 · 生成同款</div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="scroll-cue">
         <span>SCROLL</span>

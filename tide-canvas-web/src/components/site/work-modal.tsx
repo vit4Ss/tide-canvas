@@ -11,7 +11,6 @@
    ========================================================================== */
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { communityApi } from "@/lib/community-api";
 import type { PostDetailVO } from "@/types/community";
 import { toast } from "@/components/shared/toast";
@@ -91,9 +90,6 @@ export default function WorkModal({ postId, onClose, onEngagementChange }: WorkM
         ) : (
           <>
             <WorkDetailBody detail={detail} onClose={onClose} onEngagementChange={onEngagementChange} />
-            <Link className="modal-openpage" href={`/explore/${detail.id}`}>
-              在新页打开 ↗
-            </Link>
           </>
         )}
       </div>

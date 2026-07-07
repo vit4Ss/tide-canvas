@@ -400,7 +400,8 @@ export function AssetsBrowser({
               ☑ {batchMode ? "退出多选" : "批量操作"}
             </button>
           )}
-          {tab === "upload" ? (
+          {/* 「同步到剪映」原型按钮已移除（无真实功能）；仅保留上传标签页的真实上传入口 */}
+          {tab === "upload" && (
             <button
               type="button"
               className="pri"
@@ -409,12 +410,6 @@ export function AssetsBrowser({
             >
               {uploading ? "上传中…" : "↑ 上传文件"}
             </button>
-          ) : (
-            !pickMode && (
-              <button type="button" className="pri" onClick={() => toast.info("同步到剪映 · 原型")}>
-                ⇄ 同步到剪映
-              </button>
-            )
           )}
         </div>
       </div>

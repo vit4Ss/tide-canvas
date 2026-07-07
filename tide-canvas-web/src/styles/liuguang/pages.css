@@ -232,11 +232,8 @@
 .modal-actions .pri:hover{filter:brightness(.94); transform:translateY(-1px);}
 .modal-actions{flex-wrap:wrap;}
 
-/* modal loading + open-in-page link */
+/* modal loading */
 .modal-loading{grid-column:1 / -1; display:grid; place-items:center; min-height:320px; color:var(--text-faint); font-size:15px;}
-.modal-openpage{position:absolute; left:14px; bottom:14px; z-index:3; font-size:12px; font-weight:600; color:#fff; text-decoration:none;
-  padding:6px 12px; border-radius:var(--pill); background:rgba(12,14,20,.62); border:1px solid rgba(255,255,255,.18); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);}
-.modal-openpage:hover{background:var(--accent); border-color:transparent;}
 
 /* tile author link */
 .tile-author{color:inherit; text-decoration:none;}

@@ -30,8 +30,13 @@ export default function RootLayout({
         />
       </head>
       {/* imini：全站正式主题类（照抄 imini.ai 的深色体系，样式在 liuguang/imini-theme.css，
-          由各路由组 layout 引入；未引入该文件的路由组（如画布）不受影响）。 */}
-      <body className="imini flex min-h-full flex-col bg-background font-sans text-foreground">
+          由各路由组 layout 引入；未引入该文件的路由组（如画布）不受影响）。
+          suppressHydrationWarning：浏览器插件（翻译类等）会在水合前往 body 注入私有属性，
+          只静默本元素的属性差异，子树校验不受影响。 */}
+      <body
+        suppressHydrationWarning
+        className="imini flex min-h-full flex-col bg-background font-sans text-foreground"
+      >
         {children}
         <ToastContainer />
       </body>
