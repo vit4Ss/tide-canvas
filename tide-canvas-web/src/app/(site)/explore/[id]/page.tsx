@@ -2,12 +2,13 @@
 
 /* ============================================================================
    作品详情 · standalone page (/explore/[id]) — a shareable, linkable view of one
-   community work. Renders the SAME <WorkDetailBody/> the quick-view modal uses,
-   in a static page layout (no overlay). Direct URL load + refresh both work.
+   community work. Renders the SAME fullscreen <WorkDetailBody/> the quick-view
+   uses（imini 式独立界面，fixed 全屏覆盖站点壳）。Direct URL load + refresh
+   both work; 关闭 = 返回作品广场（有来路则后退）。
    ========================================================================== */
 
-import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { communityApi } from "@/lib/community-api";
 import type { PostDetailVO } from "@/types/community";
@@ -15,6 +16,7 @@ import WorkDetailBody from "@/components/site/work-detail";
 
 export default function WorkDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const id = params?.id;
 
   const [detail, setDetail] = useState<PostDetailVO | null>(null);
@@ -38,28 +40,24 @@ export default function WorkDetailPage() {
     };
   }, [id]);
 
+  const close = useCallback(() => {
+    if (window.history.length > 1) router.back();
+    else router.push("/explore");
+  }, [router]);
+
+  if (state === "ok" && detail) {
+    return <WorkDetailBody detail={detail} onClose={close} />;
+  }
+
   return (
     <section className="block" style={{ paddingTop: 30 }}>
       <div className="wrap">
         <Link href="/explore" className="work-back">
           ← 返回作品广场
         </Link>
-
-        {state === "loading" && (
-          <div className="empty" style={{ display: "block" }}>
-            正在加载作品… ✦
-          </div>
-        )}
-        {state === "error" && (
-          <div className="empty" style={{ display: "block" }}>
-            作品不存在或已下架 ✦
-          </div>
-        )}
-        {state === "ok" && detail && (
-          <div className="work-page">
-            <WorkDetailBody detail={detail} />
-          </div>
-        )}
+        <div className="empty" style={{ display: "block" }}>
+          {state === "loading" ? "正在加载作品… ✦" : "作品不存在或已下架 ✦"}
+        </div>
       </div>
     </section>
   );

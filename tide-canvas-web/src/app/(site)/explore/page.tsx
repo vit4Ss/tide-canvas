@@ -438,15 +438,22 @@ export default function ExplorePage() {
         </div>
       </section>
 
-      <WorkModal
-        postId={activeId}
-        onClose={() => setActiveId(null)}
-        onEngagementChange={(e) =>
-          setPosts((prev) =>
-            prev.map((p) => (p.id === e.id ? { ...p, liked: e.liked, likes: e.likes } : p)),
-          )
-        }
-      />
+      {(() => {
+        // 查看器翻页：按当前筛选后的列表顺序取邻居
+        const idx = activeId ? items.findIndex((a) => a.id === activeId) : -1;
+        return (
+          <WorkModal
+            postId={activeId}
+            onClose={() => setActiveId(null)}
+            onPrev={idx > 0 ? () => setActiveId(items[idx - 1].id) : undefined}
+            onNext={
+              idx >= 0 && idx < items.length - 1
+                ? () => setActiveId(items[idx + 1].id)
+                : undefined
+            }
+          />
+        );
+      })()}
     </>
   );
 }

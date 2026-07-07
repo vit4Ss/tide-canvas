@@ -1,23 +1,29 @@
 "use client";
 
 /* ============================================================================
-   WorkDetailBody — the shared 作品详情 content (media column + info column),
-   used by BOTH the quick-view modal (<WorkModal/>) and the standalone detail
-   page (/explore/[id]). Self-contained: it owns the like / bookmark / follow /
-   comment state and calls the real community API.
+   WorkDetailBody — 作品详情全屏查看器（imini 式独立界面）。
 
-   Rendered inside a `.modal` container by the caller (the modal wraps it in a
-   `.mask`; the page renders it in a centered page section). Uses the liuguang
-   modal markup classes (.modal-media / .modal-side / .pblock / .pgrid …) plus a
-   few new comment/share classes added to pages.css.
+   由快速查看浮层（<WorkModal/>，广场/首页点开）与可分享的独立页
+   （/explore/[id]）共同复用。自包含：fixed 全屏、Esc 关闭、←/→ 翻页（有
+   邻居时）、滚动锁定。
+
+   社交向功能（点赞/收藏/浏览量/关注/评论）按产品决策不在查看器露出
+   （2026-07-07 用户拍板去掉）；保留的都是创作链路：复制提示词 / 下载原图 /
+   生成同款（flux_prompt + flux_model 交接）/ 作为垫图 · 生成视频
+   （studio_use_asset 交接）。信息区只放系统真实字段，空值不显示。
+   样式在 work-viewer.css（token 化，imini 白胶囊黑字）。
    ========================================================================== */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { ChevronLeft, ChevronRight, Copy, Download, X } from "lucide-react";
 import { copyText } from "@/lib/clipboard";
 import type { PostDetailVO } from "@/types/community";
 import { toast } from "@/components/shared/toast";
 import { mesh } from "@/lib/mesh";
+import { grayscaleSwatch } from "@/lib/swatch";
+import "./work-viewer.css";
 
 /** Deterministic mesh-hue triplet seeded from a post id (cover fallback). */
 function coverFallback(id: string): string {
@@ -28,36 +34,51 @@ function coverFallback(id: string): string {
 
 export interface WorkDetailBodyProps {
   detail: PostDetailVO;
-  /** When provided, a ✕ close button is shown (modal usage). */
+  /** 关闭回调（浮层 = 收起；独立页 = 返回广场）。 */
   onClose?: () => void;
-  /** 保留签名兼容旧调用方；墙签形态已无点赞入口，不再触发。 */
-  onEngagementChange?: (e: { id: string; liked: boolean; likes: number }) => void;
+  /** 上一件 / 下一件（提供时显示翻页箭头并启用 ←/→）。 */
+  onPrev?: () => void;
+  onNext?: () => void;
 }
 
-export default function WorkDetailBody({ detail, onClose }: WorkDetailBodyProps) {
+export default function WorkDetailBody({
+  detail,
+  onClose,
+  onPrev,
+  onNext,
+}: WorkDetailBodyProps) {
   const router = useRouter();
 
   const isVid = detail.type === "video";
   const cover = detail.cover || detail.thumbnail || "";
-  // 观展装裱：contain 保留真实构图比例，作品浮在近黑展墙上（不再 cover 裁切）
-  const coverBgVal = cover ? `center / contain no-repeat url("${cover}")` : coverFallback(detail.id);
-  const canZoom = !!cover && !isVid;
-
-  const [zoom, setZoom] = useState(false);
-
-  // re-seed when the detail changes (modal reused for a different work).
-  useEffect(() => {
-    setZoom(false);
-  }, [detail]);
-
-  // 墙签只放系统真实字段：空值不显示，绝不编造兜底文案/参数。
-  // 规格收成一行铭文（画签的"材质 · 尺寸"行）：主题 · 模型 · 分辨率
+  const mediaUrl = isVid ? detail.videoUrl || "" : cover;
   const prompt = detail.prompt?.trim() || "";
-  const specLine = [detail.cat, detail.model, detail.size]
-    .map((v) => v?.trim())
-    .filter(Boolean)
-    .join("  ·  ");
 
+  /* 键盘：Esc 关闭，←/→ 翻页；滚动锁定 —— 查看器自包含，两种宿主都生效 */
+  const cbRef = useRef({ onClose, onPrev, onNext });
+  useEffect(() => {
+    cbRef.current = { onClose, onPrev, onNext };
+  });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") cbRef.current.onClose?.();
+      else if (e.key === "ArrowLeft") cbRef.current.onPrev?.();
+      else if (e.key === "ArrowRight") cbRef.current.onNext?.();
+    };
+    document.addEventListener("keydown", onKey);
+    document.body.classList.add("scroll-lock");
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.classList.remove("scroll-lock");
+    };
+  }, []);
+
+  const copyPrompt = async () => {
+    if (await copyText(prompt)) toast.success("提示词已复制");
+    else toast.error("复制失败");
+  };
+
+  /* 生成同款：带入提示词 + 模型（创作台 flux_* 交接约定） */
   const goCreate = () => {
     try {
       sessionStorage.setItem("flux_prompt", detail.prompt || detail.title);
@@ -69,81 +90,147 @@ export default function WorkDetailBody({ detail, onClose }: WorkDetailBodyProps)
     router.push("/studio");
   };
 
-  const copyPrompt = async () => {
-    // 共享 copyText：clipboard API + execCommand 回退，失败明确提示（原实现静默吞掉）
-    if (await copyText(prompt)) toast.success("提示词已复制");
-    else toast.error("复制失败");
+  /* 作为垫图 / 生成视频：与资产库同一 studio_use_asset 交接 */
+  const useAsAsset = (op: "pad" | "video") => {
+    if (!cover) return;
+    try {
+      sessionStorage.setItem("studio_use_asset", JSON.stringify({ url: cover, op }));
+    } catch {
+      /* ignore */
+    }
+    router.push("/studio");
   };
 
+  const authorName = detail.author?.name || "创作者";
+  const publishDay = (detail.createTime || "").slice(0, 10);
+
   return (
-    <>
-      <div className="modal-media">
+    <div className="wv" role="dialog" aria-modal="true" aria-label={detail.title}>
+      {/* ── 舞台 ── */}
+      <div className="wv-stage">
         {isVid && detail.videoUrl ? (
           // eslint-disable-next-line jsx-a11y/media-has-caption
-          <video
-            className="cov"
-            src={detail.videoUrl}
-            poster={cover || undefined}
-            controls
-            playsInline
-            preload="metadata"
-            style={{ objectFit: "contain", background: cover ? undefined : coverBgVal }}
-          />
+          <video src={detail.videoUrl} poster={cover || undefined} controls playsInline preload="metadata" />
+        ) : cover ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={cover} alt={detail.title} />
         ) : (
-          <div
-            className="cov"
-            style={{ background: coverBgVal, ...(canZoom ? { cursor: "zoom-in" } : {}) }}
-            onClick={canZoom ? () => setZoom(true) : undefined}
-            role={canZoom ? "button" : undefined}
-            aria-label={canZoom ? "放大查看" : undefined}
-          />
+          <div className="wv-mesh" style={{ background: coverFallback(detail.id) }} />
         )}
-        {/* play-orb only on a still poster (no inline player) */}
-        {isVid && !detail.videoUrl && <span className="play-orb">▶</span>}
-        {onClose && (
-          <button type="button" className="modal-x" aria-label="关闭" onClick={onClose}>
-            ✕
+
+        {onPrev && (
+          <button type="button" className="wv-arrow prev" aria-label="上一件" onClick={onPrev}>
+            <ChevronLeft className="h-5 w-5" />
+          </button>
+        )}
+        {onNext && (
+          <button type="button" className="wv-arrow next" aria-label="下一件" onClick={onNext}>
+            <ChevronRight className="h-5 w-5" />
           </button>
         )}
       </div>
 
-      {/* 墙签：作品与文字同处一面展墙，文字块居于视线高度 */}
-      <div className="modal-side">
-        <div className="mt-eyebrow">
-          <span className="d" />
-          正在展出 · {detail.cat || "作品"}
-        </div>
-        <h3 className="mt">{detail.title}</h3>
-        {specLine && <div className="mt-specs">{specLine}</div>}
-
-        {prompt && (
-          <div className="pblock">
-            <div className="pl">
-              提示词{" "}
-              <button type="button" onClick={copyPrompt}>
-                复制
+      {/* ── 信息栏 ── */}
+      <aside className="wv-side">
+        <div className="wv-scroll">
+          <div className="wv-top">
+            {onClose && (
+              <button type="button" className="wv-x" aria-label="关闭" onClick={onClose}>
+                <X className="h-4 w-4" />
               </button>
-            </div>
-            <div className="pv">{prompt}</div>
+            )}
+            <Link
+              className="wv-author"
+              href={detail.author?.id ? `/user/${detail.author.id}` : "/explore"}
+            >
+              <span
+                className="av"
+                style={
+                  detail.author?.avatar
+                    ? { backgroundImage: `url("${detail.author.avatar}")` }
+                    : { background: grayscaleSwatch(authorName) }
+                }
+              >
+                {detail.author?.avatar ? "" : authorName.slice(0, 1).toUpperCase()}
+              </span>
+              <span>{authorName}</span>
+            </Link>
+            {mediaUrl && (
+              <a
+                className="wv-dl"
+                href={mediaUrl}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="查看原图 / 下载"
+              >
+                <Download className="h-4 w-4" />
+              </a>
+            )}
           </div>
-        )}
 
-        <div className="modal-actions">
-          <button type="button" className="pri" onClick={goCreate}>
+          <h1>{detail.title}</h1>
+
+          {detail.model && <span className="wv-model-chip">✦ {detail.model}</span>}
+
+          {prompt && (
+            <div className="wv-block">
+              <div className="bl">
+                提示词
+                <button type="button" onClick={copyPrompt}>
+                  <Copy className="h-3.5 w-3.5" /> 复制
+                </button>
+              </div>
+              <div className="wv-prompt">{prompt}</div>
+            </div>
+          )}
+
+          {(detail.model || detail.size || detail.cat || publishDay) && (
+            <div className="wv-block wv-info">
+              <div className="bl">信息</div>
+              {detail.model && (
+                <div className="row">
+                  <span className="k">模型</span>
+                  <span className="v">{detail.model}</span>
+                </div>
+              )}
+              {detail.size && (
+                <div className="row">
+                  <span className="k">尺寸</span>
+                  <span className="v">{detail.size}</span>
+                </div>
+              )}
+              {detail.cat && (
+                <div className="row">
+                  <span className="k">分类</span>
+                  <span className="v">{detail.cat}</span>
+                </div>
+              )}
+              {publishDay && (
+                <div className="row">
+                  <span className="k">发布</span>
+                  <span className="v">{publishDay}</span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="wv-actions">
+          <button type="button" className="wv-btn" onClick={goCreate}>
             ✦ 生成同款
           </button>
+          {!isVid && cover && (
+            <div className="wv-sub">
+              <button type="button" className="wv-btn ghost" onClick={() => useAsAsset("pad")}>
+                作为垫图
+              </button>
+              <button type="button" className="wv-btn ghost" onClick={() => useAsAsset("video")}>
+                生成视频
+              </button>
+            </div>
+          )}
         </div>
-      </div>
-
-      {zoom && cover && (
-        <div className="modal-zoom" onClick={() => setZoom(false)}>
-          <button type="button" className="modal-zoom-x" aria-label="关闭" onClick={() => setZoom(false)}>
-            ✕
-          </button>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={cover} alt={detail.title} onClick={(e) => e.stopPropagation()} />
-        </div>
-      )}
-    </>
+      </aside>
+    </div>
   );
 }
