@@ -125,25 +125,30 @@
   background: #fff;
   box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.22);
 }
-.auth-aside .glow {
+/* ── 美术馆入口：正在展出作品全幅铺底（交叉淡入轮展）+ 暗场蒙版 ── */
+.auth-wall {
   position: absolute;
-  width: 420px;
-  height: 420px;
-  border-radius: 50%;
-  filter: blur(50px);
-  opacity: 0.35;
+  inset: 0;
   pointer-events: none;
-  background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.9) 0%, transparent 65%);
-  top: -130px;
-  left: -90px;
 }
-.auth-aside .glow.b {
-  background: radial-gradient(circle at 50% 50%, #2b1e8f 0%, transparent 65%);
-  top: auto;
-  bottom: -150px;
-  left: auto;
-  right: -110px;
-  opacity: 0.5;
+.auth-wall-img {
+  position: absolute;
+  inset: 0;
+  background: center / cover no-repeat;
+  opacity: 0;
+  transform: scale(1.05);
+  transition: opacity 1.4s var(--ease), transform 9s linear;
+}
+.auth-wall-img.on {
+  opacity: 1;
+  transform: scale(1);
+}
+/* 上下双向压暗：顶部保品牌可读，底部保铭牌可读，中段留给作品 */
+.auth-scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(to top, rgba(10, 10, 11, 0.94) 0%, rgba(10, 10, 11, 0.44) 42%, rgba(10, 10, 11, 0.12) 68%, rgba(10, 10, 11, 0.55) 100%);
 }
 .auth-aside-top {
   position: relative;
@@ -199,62 +204,45 @@
   max-width: 30ch;
 }
 
-.auth-tiles {
+/* ── 作品铭牌（美术馆 plaque：发丝线 + 等宽小字 + 作品名） ── */
+.auth-plaque {
   position: relative;
   z-index: 1;
-  display: flex;
-  gap: 9px;
-  margin-top: 26px;
+  margin-top: auto;
+  padding-top: 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
 }
-.auth-tiles .t {
-  flex: 1;
-  height: 74px;
-  border-radius: 12px;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 10px 24px rgba(0, 0, 0, 0.4);
-  animation: tFloat 5s var(--ease) infinite;
+.auth-plaque .eyebrow {
+  margin-bottom: 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: rgba(255, 255, 255, 0.66);
 }
-.auth-tiles .t:nth-child(1) {
-  background: conic-gradient(from 200deg at 40% 30%, #64d2ff, #a78bfa, #38bdf8, #64d2ff);
-  animation-delay: 0s;
-}
-.auth-tiles .t:nth-child(2) {
-  background: conic-gradient(from 20deg at 60% 40%, #a78bfa, #64d2ff, #f0abfc, #a78bfa);
-  animation-delay: 0.6s;
-  margin-top: -12px;
-}
-.auth-tiles .t:nth-child(3) {
-  background: conic-gradient(from 120deg at 50% 60%, #38bdf8, #818cf8, #67e8f9, #38bdf8);
-  animation-delay: 1.2s;
-}
-@keyframes tFloat {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-7px);
-  }
-}
-
-.auth-stats {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  gap: 24px;
-  margin-top: 26px;
-  padding-top: 22px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-}
-.auth-stats .s b {
-  display: block;
+.auth-plaque h2 {
   font-family: var(--disp);
-  font-size: 20px;
-  font-weight: 800;
-  letter-spacing: -0.02em;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
-.auth-stats .s span {
-  font-size: 11.5px;
-  color: rgba(255, 255, 255, 0.68);
+.auth-plaque .by {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.62);
+  margin: 8px 0 0;
+}
+.auth-plaque .note {
+  font-size: 13px;
+  line-height: 1.65;
+  color: rgba(255, 255, 255, 0.5);
+  margin: 14px 0 0;
+  max-width: 36ch;
 }
 
 /* ── right form panel ── */

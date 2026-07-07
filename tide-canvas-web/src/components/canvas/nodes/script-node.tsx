@@ -28,7 +28,7 @@ export const ScriptNode = memo(function ScriptNode({ node, isSelected, isDraggin
   return (
     <div
       data-node-id={node.id}
-      className={`absolute select-none ${isSelected ? "z-10" : ""}`}
+      className={`absolute select-none focus-within:z-20 ${isSelected ? "z-10" : ""}`}
       style={{ left: node.x, top: node.y, width: node.width, cursor: "move" }}
       onMouseDown={handleMouseDown}
     >

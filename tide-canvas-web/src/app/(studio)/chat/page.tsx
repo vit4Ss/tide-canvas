@@ -39,7 +39,8 @@ import { chatApi, streamMessage } from "@/lib/chat-api";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { AiTaskStatus } from "@/types/ai";
 import { marketApi, type StudioModelVO } from "@/lib/market-api";
-import { matchBrandIcon } from "@/lib/model-brand";
+import { resolveModelSwatch } from "@/lib/model-brand";
+import { copyText } from "@/lib/clipboard";
 import { AssetsBrowser, type PickedAsset } from "@/components/studio/assets-browser";
 import { useAuthStore } from "@/stores/use-auth-store";
 import type { ContextUsageVO, ConversationVO, MessageVO, MessageTaskVO } from "@/types/chat";
@@ -68,44 +69,14 @@ const MODE_HINT: Record<string, string> = {
   omni_ref: "多参考生成视频",
 };
 
-/** deterministic per-model swatch gradient (ported from chat.js). */
-function modelSwatch(name: string): string {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
-  // 灰阶色板（主题零彩色）：浅灰系配深色字
-  return `linear-gradient(135deg, hsl(0 0% ${82 + (h % 12)}%), hsl(0 0% ${64 + (h % 12)}%))`;
-}
-function modelInitial(name: string): string {
-  return name.replace(/[^A-Za-z一-龥]/g, "").charAt(0) || "A";
-}
-
 /** swatch 样式+字形：后台配置 icon > 品牌官方 logo（自动匹配）> 首字母渐变。
- *  与创作台 create-studio 的 swatchFor 同一优先级。 */
+ *  与创作台共用 model-brand.ts 的 resolveModelSwatch，保证两处选择器不漂移。 */
 function swatchOf(m?: {
   name: string;
   modelKey?: string;
   config?: { icon?: string } | null;
 }): { style: React.CSSProperties; glyph: string } {
-  const name = m?.name || "";
-  const icon = m?.config?.icon;
-  if (icon && (/^(https?:)?\/\//.test(icon) || icon.startsWith("/"))) {
-    const isBrand = icon.startsWith("/model-icons/");
-    return {
-      style: isBrand
-        ? { background: `#fff center/66% no-repeat url("${icon}")`, boxShadow: "inset 0 0 0 1px rgba(22,28,45,.1)" }
-        : { background: `center/cover no-repeat url("${icon}")` },
-      glyph: "",
-    };
-  }
-  if (icon) return { style: { background: modelSwatch(name) }, glyph: icon };
-  const brand = matchBrandIcon(m?.modelKey, name);
-  if (brand) {
-    return {
-      style: { background: `#fff center/66% no-repeat url("${brand}")`, boxShadow: "inset 0 0 0 1px rgba(22,28,45,.1)" },
-      glyph: "",
-    };
-  }
-  return { style: { background: modelSwatch(name) }, glyph: modelInitial(name) };
+  return resolveModelSwatch({ name: m?.name || "", modelKey: m?.modelKey, icon: m?.config?.icon });
 }
 function typeTag(type: string): string {
   return type === "video" ? "VID" : type === "audio" ? "AUD" : type === "text" ? "TXT" : "IMG";
@@ -186,19 +157,28 @@ function CmSelect({
   children: React.ReactNode;
 }) {
   const chipRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
 
   // Position the menu with fixed coordinates anchored to the chip, so it escapes
   // the horizontally-scrolling chip row's clipping. Recompute on scroll/resize.
+  // 视口钳制：上方空间不足时压缩菜单高度（内部可滚动）；左锚菜单不许溢出右缘。
   useLayoutEffect(() => {
     if (!open) return;
     const place = () => {
       const el = chipRef.current;
       if (!el) return;
       const r = el.getBoundingClientRect();
-      const st: CSSProperties = { position: "fixed", bottom: window.innerHeight - r.top + 8 };
+      const st: CSSProperties = {
+        position: "fixed",
+        bottom: window.innerHeight - r.top + 8,
+        maxHeight: Math.min(320, Math.max(120, r.top - 16)),
+      };
       if (right) st.right = window.innerWidth - r.right;
-      else st.left = r.left;
+      else {
+        const w = menuRef.current?.offsetWidth ?? 0;
+        st.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
+      }
       setMenuStyle(st);
     };
     place();
@@ -226,6 +206,7 @@ function CmSelect({
         <span className="cv">▾</span>
       </button>
       <div
+        ref={menuRef}
         className={`cm-menu${right ? " right" : ""}`}
         style={menuStyle}
         onClick={(e) => e.stopPropagation()}
@@ -332,6 +313,17 @@ export default function ChatPage() {
   const selModel = useMemo(
     () => genModels.find((m) => m.name === model) ?? null,
     [genModels, model],
+  );
+  // swatch 按模型名 memo：ChatPage 在流式输出/输入期间每次增量都重渲染，swatchOf
+  // 内的 matchBrandIcon 是一组正则，不能每次渲染对每个模型重跑。
+  const swatchByName = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof swatchOf>>();
+    for (const m of genModels) map.set(m.name, swatchOf(m));
+    return map;
+  }, [genModels]);
+  const selSwatch = useMemo(
+    () => swatchByName.get(model) ?? swatchOf({ name: model }),
+    [swatchByName, model],
   );
   const mCfg = selModel?.config ?? null;
   const isVid = selModel?.type === "video";
@@ -510,6 +502,8 @@ export default function ChatPage() {
 
   // open the 来源 menu (本地上传 / 资产库) anchored above the ＋ button. Flips to
   // below if there isn't room above; clamps within the viewport.
+  const srcAnchorRef = useRef<DOMRect | null>(null);
+  const srcMenuElRef = useRef<HTMLDivElement>(null);
   const openSrcMenu = useCallback(
     (e: React.MouseEvent) => {
       if (!refPolicy) return;
@@ -518,6 +512,7 @@ export default function ChatPage() {
         return;
       }
       const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      srcAnchorRef.current = r; // 渲染后按菜单实测尺寸重钳制（见下方 layout effect）
       const W = 300;
       const H = 168;
       const gap = 8;
@@ -529,6 +524,23 @@ export default function ChatPage() {
     },
     [refPolicy],
   );
+
+  // 首次定位用的是估算高度（H=168），实际菜单 ~200px，会盖住 ＋ 按钮/越出视口底；
+  // 渲染后按真实尺寸对着锚点矩形重新钳制一次（值不变则不重渲染）。
+  useLayoutEffect(() => {
+    if (!srcMenuPos) return;
+    const el = srcMenuElRef.current;
+    const a = srcAnchorRef.current;
+    if (!el || !a) return;
+    const gap = 8;
+    const H = el.offsetHeight;
+    const W = el.offsetWidth;
+    let x = a.left;
+    if (x + W > window.innerWidth - 12) x = Math.max(12, window.innerWidth - 12 - W);
+    let y = a.top - H - gap;
+    if (y < 12) y = Math.min(a.bottom + gap, window.innerHeight - H - 12); // 翻转后也不许越出底缘
+    if (x !== srcMenuPos.x || y !== srcMenuPos.y) setSrcMenuPos({ x, y });
+  }, [srcMenuPos]);
 
   // 本地上传: close the menu and open the OS file picker (onChange → attachFiles).
   const pickLocal = useCallback(() => {
@@ -637,12 +649,19 @@ export default function ChatPage() {
     };
   }, [reloadGenModels]);
 
-  // close any open composer dropdown on an outside click.
+  // close any open composer dropdown on an outside click / Escape.
   useEffect(() => {
     if (!openSel) return;
     const onDoc = () => setOpenSel(null);
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") setOpenSel(null);
+    };
     document.addEventListener("click", onDoc);
-    return () => document.removeEventListener("click", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("click", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
   }, [openSel]);
 
   // snap chip selections to values the selected model actually supports.
@@ -1529,14 +1548,11 @@ export default function ChatPage() {
                   open={openSel === "model"}
                   onToggle={() => toggleSel("model")}
                   menuH="选择模型"
-                  lead={(() => {
-                    const sw = swatchOf(genModels.find((m) => m.name === model) ?? { name: model });
-                    return (
-                      <span className="cm-sw sm" style={sw.style}>
-                        {sw.glyph}
-                      </span>
-                    );
-                  })()}
+                  lead={
+                    <span className="cm-sw sm" style={selSwatch.style}>
+                      {selSwatch.glyph}
+                    </span>
+                  }
                   label={model || "选择模型"}
                 >
                   {genModels.map((m) => {
@@ -1556,7 +1572,7 @@ export default function ChatPage() {
                         }}
                       >
                         {(() => {
-                          const sw = swatchOf(m);
+                          const sw = swatchByName.get(m.name) ?? swatchOf(m);
                           return (
                             <span className="cm-sw" style={sw.style}>
                               {sw.glyph}
@@ -1744,6 +1760,7 @@ export default function ChatPage() {
         <>
           <div className="ws-srcpop-catch" onClick={() => setSrcMenuPos(null)} />
           <div
+            ref={srcMenuElRef}
             className="ws-srcmenu ws-srcmenu-pop"
             style={{ left: srcMenuPos.x, top: srcMenuPos.y }}
             onClick={(e) => e.stopPropagation()}
@@ -1847,32 +1864,6 @@ function taskResultUrls(t: MessageTaskVO): string[] {
   const urls = arr.filter((u): u is string => typeof u === "string" && /^(https?:|data:)/.test(u));
   if (urls.length) return urls;
   return /^(https?:|data:)/.test(t.resultUrl || "") ? [t.resultUrl] : [];
-}
-
-/** Cross-environment clipboard write: navigator.clipboard (secure context) with
- *  an execCommand fallback for plain-HTTP deploys where it is undefined. */
-async function copyText(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    /* fall through */
-  }
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand("copy");
-    ta.remove();
-    return ok;
-  } catch {
-    return false;
-  }
 }
 
 /** Download a media URL as a file. Tries a blob fetch (forces save even for a
@@ -2144,7 +2135,8 @@ function AssistantResult({
         <span className="spin" />
         <span className="lbl">生成中 · {Math.round(t.progress || 0)}%</span>
         <span className="bar">
-          <i style={{ width: `${Math.max(4, Math.round(t.progress || 0))}%` }} />
+          {/* 进度用 transform（CSS 侧 width:100% + scaleX），避免布局动画 */}
+          <i style={{ transform: `scaleX(${Math.max(0.04, (t.progress || 0) / 100)})` }} />
         </span>
       </div>
     );

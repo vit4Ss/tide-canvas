@@ -13,19 +13,44 @@
    ========================================================================== */
 
 import Link from "next/link";
+import { useMemo } from "react";
+import type { CSSProperties } from "react";
 import { fmt } from "@/mock";
 import { matchBrandIcon } from "@/lib/model-brand";
+import { grayscaleSwatch } from "@/lib/swatch";
 import type { ModelLiteVO } from "@/types/content";
 
 /** Deterministic brand-ish gradient for models without a logo. */
-function swGrad(seed: string): string {
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) % 360;
-  // 灰阶色板（主题零彩色）：白字可读的深灰系
-  return `linear-gradient(135deg, hsl(0 0% ${30 + (h % 16)}%), hsl(0 0% ${14 + (h % 10)}%))`;
-}
+const swGrad = (seed: string): string => grayscaleSwatch(seed);
 
 export default function ModelMarquee({ models }: { models: ModelLiteVO[] }) {
+  // swatch 每模型只算一遍：concat 复制后同一模型要渲染 2~4 次，matchBrandIcon 又是
+  // 一组正则，memo 掉避免父级每次重渲染都全量重算。
+  const swatches = useMemo(() => {
+    const map = new Map<string, { style: CSSProperties; letter: string }>();
+    for (const m of models) {
+      if (!m.name || map.has(m.id)) continue;
+      // 图标三级回退（与创作台/对话页一致）：接口封面 → 品牌官方 logo → 字母灰阶兜底。
+      // 品牌 logo 是黑图形配透明底，必须衬白底 + contain，直接铺在暗色芯片上会隐形。
+      const brand = m.coverUrl ? null : matchBrandIcon(m.name);
+      map.set(
+        m.id,
+        m.coverUrl
+          ? { style: { backgroundImage: `url(${m.coverUrl})`, backgroundSize: "cover" }, letter: "" }
+          : brand
+            ? {
+                style: {
+                  background: `#fff center/66% no-repeat url(${brand})`,
+                  boxShadow: "inset 0 0 0 1px rgba(0,0,0,.06)",
+                },
+                letter: "",
+              }
+            : { style: { background: swGrad(m.name) }, letter: m.name[0].toUpperCase() },
+      );
+    }
+    return map;
+  }, [models]);
+
   const pool = models.filter((m) => m.name);
   if (!pool.length) return null;
 
@@ -54,20 +79,14 @@ export default function ModelMarquee({ models }: { models: ModelLiteVO[] }) {
           <div className="mq-line" key={li}>
             <div className="mq-track">
               {arr.concat(arr).map((m, i) => {
-                // 图标三级回退（与创作台一致）：接口封面 → 品牌官方 logo
-                // （matchBrandIcon 按名称自动识别厂商）→ 字母灰阶兜底
-                const icon = m.coverUrl || matchBrandIcon(m.name);
+                const sw = swatches.get(m.id) ?? {
+                  style: { background: swGrad(m.name) },
+                  letter: m.name[0].toUpperCase(),
+                };
                 return (
                 <Link className="mq-chip" href="/models" key={`${m.id}-${i}`}>
-                  <span
-                    className="sw"
-                    style={
-                      icon
-                        ? { backgroundImage: `url(${icon})`, backgroundSize: "cover" }
-                        : { background: swGrad(m.name) }
-                    }
-                  >
-                    {icon ? "" : m.name[0].toUpperCase()}
+                  <span className="sw" style={sw.style}>
+                    {sw.letter}
                   </span>
                   <b>{m.name}</b>
                   {m.tags?.[0] && <em>{m.tags[0]}</em>}

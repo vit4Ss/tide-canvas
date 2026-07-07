@@ -12,6 +12,14 @@ export default function CanvasLayout({ children }: { children: React.ReactNode }
   const ensureSession = useAuthStore((s) => s.ensureSession);
   const [ready, setReady] = useState(false);
 
+  // imini 主题的全局样式表在软导航后仍驻留文档（App Router 不卸载布局 CSS），而根布局
+  // 给所有路由的 <body> 都盖了 imini 类——从站点/工作台软导航进画布时暗色规则会漏进
+  // 这套浅色画布 UI。挂载期间摘除标记类，离开时恢复。
+  useEffect(() => {
+    document.body.classList.remove("imini");
+    return () => document.body.classList.add("imini");
+  }, []);
+
   useEffect(() => {
     let mounted = true;
     // 仅在会话有效时放行渲染;ok===false 表示已被重定向到登录页,继续显示 loading。

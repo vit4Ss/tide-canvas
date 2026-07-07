@@ -68,8 +68,10 @@ const ACCEPT: Record<FilterKey, string> = {
 };
 
 /** Deterministic mesh fallback for an item without a usable cover URL. */
-function fallbackCover(seed: number): string {
-  const h = (((seed * 47) % 360) + 360) % 360;
+function fallbackCover(seed: string): string {
+  // 雪花 ID 是字符串：逐字符哈希（与全站其它 coverFallback 一致）
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) % 360;
   return mesh(h, (h + 132) % 360, (h + 248) % 360);
 }
 

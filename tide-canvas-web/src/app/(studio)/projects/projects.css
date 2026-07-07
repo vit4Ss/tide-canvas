@@ -14,6 +14,13 @@
   color: inherit;
 }
 
+/* 名称行不能裁剪：ProjectCardMenu 的下拉（absolute top-7）锚在行内，
+   canvas.css 给 .cv-name 的 overflow:hidden 会把整个菜单裁掉不可见；
+   文本截断已由下面的 .cv-name-txt 承担，这里放开容器 */
+.cv-name {
+  overflow: visible;
+}
+
 /* truncate the project name but leave room for the trailing card menu */
 .cv-name .cv-name-txt {
   min-width: 0;

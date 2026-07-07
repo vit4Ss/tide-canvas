@@ -58,7 +58,8 @@
   animation:chatSpin .8s linear infinite;}
 .chat-gen-loading .lbl{position:relative; font-size:13px; font-weight:600; color:var(--text-dim);}
 .chat-gen-loading .bar{position:absolute; left:16px; right:16px; bottom:14px; height:4px; border-radius:99px; background:rgba(127,127,127,.18); overflow:hidden;}
-.chat-gen-loading .bar i{display:block; height:100%; width:0; background:var(--grad); border-radius:99px; transition:width .25s linear;}
+.chat-gen-loading .bar i{display:block; height:100%; width:100%; background:var(--grad); border-radius:99px;
+  transform:scaleX(0); transform-origin:left; transition:transform .25s linear;} /* 进度走 transform，不动布局 */
 @keyframes chatSpin{to{transform:rotate(360deg);}}
 @keyframes chatShim{from{background-position:200% 0} to{background-position:-200% 0}}
 /* 生成状态（生成中 / 失败 / 已过期 / 已取消） */

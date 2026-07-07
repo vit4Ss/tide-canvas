@@ -28,6 +28,7 @@ import { Logo } from "@/components/flux/atoms";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { authApi } from "@/lib/api";
+import { communityApi } from "@/lib/community-api";
 import { useAuthStore } from "@/stores/use-auth-store";
 
 type Mode = "login" | "register" | "reset";
@@ -78,6 +79,43 @@ function LoginInner() {
     const t = setTimeout(() => setRevealed(true), 60);
     return () => clearTimeout(t);
   }, []);
+
+  // 侧栏 =「美术馆入口」：正在展出的社区热门作品全幅铺底轮展 + 底部铭牌
+  // （延续作品广场的展厅身份）。公开接口，未登录可取；无数据时回退品牌陈述版。
+  const [feats, setFeats] = useState<
+    { cover: string; title: string; author: string; model: string }[]
+  >([]);
+  const [fi, setFi] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    communityApi
+      .list({ pageNum: 1, pageSize: 12, sort: "hot" })
+      .then((res) => {
+        if (!alive || !res.success || !res.data) return;
+        const works = res.data.records
+          .filter((p) => p.cover || p.thumbnail)
+          .slice(0, 5)
+          .map((p) => ({
+            cover: p.cover || p.thumbnail || "",
+            title: p.title || "未命名作品",
+            author: p.author?.name || "创作者",
+            model: p.model || "",
+          }));
+        if (works.length) setFeats(works);
+      })
+      .catch(() => {
+        /* 拉取失败回退品牌陈述版 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  // 轮展：8s 一换，交叉淡入（与作品广场展厅同语言）
+  useEffect(() => {
+    if (feats.length < 2) return;
+    const id = setInterval(() => setFi((i) => (i + 1) % feats.length), 8000);
+    return () => clearInterval(id);
+  }, [feats.length]);
 
   // 60s code countdown tick
   useEffect(() => {
@@ -256,44 +294,48 @@ function LoginInner() {
 
       <div className="auth-stage">
         <div className={`auth-card reveal-scale${revealed ? " in" : ""}`}>
-          {/* left showcase */}
+          {/* left =「美术馆入口」：正在展出的真实作品全幅铺底，底部作品铭牌 */}
           <aside className="auth-aside">
-            <div className="glow" />
-            <div className="glow b" />
+            <div className="auth-wall" aria-hidden>
+              {feats.map((f, i) => (
+                <div
+                  key={f.cover}
+                  className={`auth-wall-img${i === fi ? " on" : ""}`}
+                  style={{ backgroundImage: `url("${f.cover}")` }}
+                />
+              ))}
+              <div className="auth-scrim" />
+            </div>
             <div className="auth-aside-top">
               <Logo size={26} />
               FLOWING<b>LIGHT</b>
             </div>
-            <div className="auth-aside-head">
-              <span className="eyebrow">
-                <span className="d" />智绘社区 · FLUX
-              </span>
-              <h2>
-                一句话，
-                <br />
-                生成万象。
-              </h2>
-              <p>登录即可保存作品、调用海量模型，并领取新手体验积分。</p>
-            </div>
-            <div className="auth-tiles">
-              <span className="t" />
-              <span className="t" />
-              <span className="t" />
-            </div>
-            <div className="auth-stats">
-              <div className="s">
-                <b>1.2M+</b>
-                <span>每日生成</span>
+            {feats.length > 0 ? (
+              <div className="auth-plaque">
+                <span className="eyebrow">
+                  <span className="d" />
+                  正在展出 · {String(fi + 1).padStart(2, "0")} / {String(feats.length).padStart(2, "0")}
+                </span>
+                <h2>《{feats[fi].title}》</h2>
+                <p className="by">
+                  {feats[fi].author}
+                  {feats[fi].model ? ` · ${feats[fi].model}` : ""}
+                </p>
+                <p className="note">来自作品广场的社区创作。登录后可收藏、生成同款，并领取新手体验积分。</p>
               </div>
-              <div className="s">
-                <b>320+</b>
-                <span>顶级模型</span>
+            ) : (
+              <div className="auth-aside-head">
+                <span className="eyebrow">
+                  <span className="d" />智绘社区 · FLOWINGLIGHT
+                </span>
+                <h2>
+                  一句话，
+                  <br />
+                  生成万象。
+                </h2>
+                <p>登录即可保存作品、调用海量模型，并领取新手体验积分。</p>
               </div>
-              <div className="s">
-                <b>80K+</b>
-                <span>创作者</span>
-              </div>
-            </div>
+            )}
           </aside>
 
           {/* right form */}

@@ -38,7 +38,9 @@ function ModelGlyph({ icon, className = "h-4 w-4" }: { icon?: string; className?
 
 export function ModelPicker({ models, value, onChange }: Props) {
   const [open, setOpen] = useState(false);
+  const [openUp, setOpenUp] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -68,7 +70,17 @@ export function ModelPicker({ models, value, onChange }: Props) {
   return (
     <div className="relative" ref={containerRef} onMouseDown={stop}>
       <button
-        onClick={(e) => { stop(e); setOpen(!open); }}
+        ref={triggerRef}
+        onClick={(e) => {
+          stop(e);
+          // 展开前判断方向（与 QualityRatioPicker 一致）：画布视口 overflow-hidden 且
+          // 不可滚动，向下空间不足时必须向上翻转，否则菜单下半截被裁掉且无法补救
+          if (!open && triggerRef.current) {
+            const rect = triggerRef.current.getBoundingClientRect();
+            setOpenUp(window.innerHeight - rect.bottom < 400);
+          }
+          setOpen(!open);
+        }}
         className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs hover:bg-neutral-100 dark:hover:bg-neutral-800"
       >
         <ModelGlyph icon={selected?.icon} className="h-3.5 w-3.5" />
@@ -77,7 +89,11 @@ export function ModelPicker({ models, value, onChange }: Props) {
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full z-20 mt-2 max-h-[360px] w-[300px] overflow-auto rounded-2xl border border-neutral-200 bg-white p-1.5 shadow-xl dark:border-neutral-700 dark:bg-neutral-900">
+        <div
+          className={`absolute left-0 z-20 max-h-[360px] w-[300px] overflow-auto rounded-2xl border border-neutral-200 bg-white p-1.5 shadow-xl dark:border-neutral-700 dark:bg-neutral-900 ${
+            openUp ? "bottom-full mb-2" : "top-full mt-2"
+          }`}
+        >
           {models.map((m) => {
             const isSel = m.modelId === value;
             const { description, estSeconds } = parseMeta(m.config);

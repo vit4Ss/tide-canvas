@@ -19,7 +19,11 @@ interface Props {
 export function ProjectCardMenu({ project, onChanged }: Props) {
   const router = useRouter();
   const ref = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
+  // 菜单 portal 到 body 用 fixed 坐标：项目列表区是 overflow:auto/hidden 的滚动口，
+  // 卡片内 absolute 弹层超出即被裁；坐标在打开时采集，滚动时收起。
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -29,10 +33,22 @@ export function ProjectCardMenu({ project, onChanged }: Props) {
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (ref.current?.contains(t) || menuRef.current?.contains(t)) return;
+      setOpen(false);
     };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    const onScroll = () => setOpen(false); // fixed 坐标滚动即失锚，直接收起
     document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onScroll, true);
+    };
   }, [open]);
 
   const stop = (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); };
@@ -101,14 +117,24 @@ export function ProjectCardMenu({ project, onChanged }: Props) {
   return (
     <div className="relative" ref={ref} onClick={stop}>
       <button
-        onClick={(e) => { stop(e); setOpen((v) => !v); }}
+        onClick={(e) => {
+          stop(e);
+          const r = e.currentTarget.getBoundingClientRect();
+          setMenuPos({ top: r.bottom + 6, right: window.innerWidth - r.right });
+          setOpen((v) => !v);
+        }}
         className="rounded-md p-1 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800"
       >
         <MoreHorizontal className="h-4 w-4" />
       </button>
 
-      {open && (
-        <div className="absolute right-0 top-7 z-20 w-44 overflow-hidden rounded-xl border border-neutral-200 bg-white py-1 shadow-xl dark:border-neutral-700 dark:bg-neutral-900">
+      {open && menuPos && createPortal(
+        <div
+          ref={menuRef}
+          style={{ top: menuPos.top, right: menuPos.right }}
+          className="fixed z-50 w-44 overflow-hidden rounded-xl border border-neutral-200 bg-white py-1 shadow-xl dark:border-neutral-700 dark:bg-neutral-900"
+          onClick={stop}
+        >
           <button onClick={handleOpen} className={item}><ExternalLink className="h-4 w-4 text-neutral-400" /> 打开</button>
           <button onClick={startRename} className={item}><Pencil className="h-4 w-4 text-neutral-400" /> 重命名</button>
           <button onClick={openCover} className={item}><ImageIcon className="h-4 w-4 text-neutral-400" /> 修改封面</button>
@@ -117,7 +143,8 @@ export function ProjectCardMenu({ project, onChanged }: Props) {
           <button onClick={handleDelete} className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-red-600 transition-colors hover:bg-red-50 dark:hover:bg-red-950/30">
             <Trash2 className="h-4 w-4" /> 删除项目
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {renameOpen && createPortal(

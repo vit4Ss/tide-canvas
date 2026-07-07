@@ -26,6 +26,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -35,7 +36,8 @@ import {
 import type { ArtworkType, MeshHues } from "@/mock";
 import { CREATE_MODELS, mesh } from "@/mock";
 import { marketApi, type StudioModelVO } from "@/lib/market-api";
-import { matchBrandIcon } from "@/lib/model-brand";
+import { resolveModelSwatch } from "@/lib/model-brand";
+import { copyText } from "@/lib/clipboard";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { AiTaskStatus } from "@/types/ai";
 import { AssetsBrowser, type PickedAsset } from "@/components/studio/assets-browser";
@@ -355,11 +357,6 @@ function metaOfStudio(m: StudioModelVO): ModelMeta {
   };
 }
 
-/** true when an icon value is an image URL (vs. an emoji / short glyph). */
-function isIconUrl(icon: string): boolean {
-  return /^(https?:)?\/\//.test(icon) || icon.startsWith("/");
-}
-
 /** map a config mode value (t2i/i2i/t2v/i2v/keyframe/omni_ref) to a studio ToolKey. */
 const MODE_TO_TOOL: Record<string, ToolKey> = {
   t2i: "t2i",
@@ -389,20 +386,6 @@ function ratioLabel(r: string): string {
 /** meta lookup by display name, optionally backed by the real models map. */
 function metaOf(name: string, metaMap?: Record<string, ModelMeta>): ModelMeta {
   return metaMap?.[name] || MODEL_META[name] || DEFAULT_META;
-}
-
-/** deterministic per-model swatch gradient (create.js modelSwatch). */
-function modelSwatch(name: string): string {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
-  // 灰阶色板（主题零彩色）：浅灰系配深色字
-  return `linear-gradient(135deg, hsl(0 0% ${82 + (h % 12)}%), hsl(0 0% ${64 + (h % 12)}%))`;
-}
-
-/** first A-Z / CJK char (create.js modelInitial). */
-function modelInitial(name: string): string {
-  const m = name.replace(/[^A-Za-z一-龥]/g, "");
-  return m.charAt(0) || "A";
 }
 
 /** stable hue seed from a prompt (create.js generate()). */
@@ -470,8 +453,13 @@ function paramsFromTask(handler: string, modelName: string, input: unknown): Run
   const inp = parseTaskInput(input);
   const str = (v: unknown) => (typeof v === "string" ? v : "");
   const num = (v: unknown) => (typeof v === "number" ? v : parseInt(String(v ?? ""), 10) || 0);
+  const strArr = (v: unknown) =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && !!x) : [];
   const type: ArtworkType = HIST_HANDLER_TYPE[handler] ?? "image";
   const reso = str(inp.clarity) || str(inp.resolution);
+  // 参考素材：任务 input 里持久化了 imageList/sourceImage 等，取回来恢复上传槽位。
+  const imageRefs = strArr(inp.imageList);
+  if (!imageRefs.length && str(inp.sourceImage)) imageRefs.push(str(inp.sourceImage));
   return {
     prompt: str(inp.prompt),
     model: modelName,
@@ -483,6 +471,11 @@ function paramsFromTask(handler: string, modelName: string, input: unknown): Run
     dur: str(inp.duration) || "5s",
     quality: str(inp.quality),
     count: Math.max(1, num(inp.batchCount) || 1),
+    imageRefs,
+    firstFrame: str(inp.firstFrame) || undefined,
+    lastFrame: str(inp.lastFrame) || undefined,
+    videoRefs: strArr(inp.videoReferences),
+    audioRefs: strArr(inp.audioReferences),
   };
 }
 
@@ -587,7 +580,7 @@ interface RunMeta {
 /** A backend generation in flight, persisted so a page refresh can resume it
  *  (the task keeps running server-side). Stored under ACTIVE_RUN_KEY. */
 interface ActiveRun {
-  taskId: number;
+  taskId: string; // 后端雪花 ID 序列化为字符串
   prompt: string;
   model: string;
   ratio: string;
@@ -615,6 +608,13 @@ interface RunParams {
   dur: string;
   quality: string;
   count: number;
+  /** 参考素材 URL（可选）：slotData 本身不持久化，刷新后靠这些字段把上传槽位
+   *  一并恢复，否则 i2i/i2v 的「编辑/重新生成」会卡在“请先上传参考图片”。 */
+  imageRefs?: string[];
+  firstFrame?: string;
+  lastFrame?: string;
+  videoRefs?: string[];
+  audioRefs?: string[];
 }
 
 let histSeq = 0;
@@ -641,6 +641,18 @@ export default function CreateStudio() {
   /* reference-image source flow: 来源选择菜单 / 资产库弹窗 / 本地上传 */
   const [srcMenu, setSrcMenu] = useState<string | null>(null); // slot key whose 来源 menu is open
   const [srcMenuPos, setSrcMenuPos] = useState<{ x: number; y: number } | null>(null); // anchor (right of trigger)
+
+  // 来源菜单是 fixed 定位、坐标一次性采集：页面/面板一滚动就会与触发槽位脱锚
+  // （移动端可滚动布局下悬浮在错误位置），滚动时直接收起。
+  useEffect(() => {
+    if (!srcMenu) return;
+    const close = () => {
+      setSrcMenu(null);
+      setSrcMenuPos(null);
+    };
+    window.addEventListener("scroll", close, true);
+    return () => window.removeEventListener("scroll", close, true);
+  }, [srcMenu]);
   const [assetPick, setAssetPick] = useState<string | null>(null); // slot key the asset picker fills
   const fileInputRef = useRef<HTMLInputElement>(null);
   const localTargetRef = useRef<string | null>(null); // slot key awaiting a local file pick
@@ -701,42 +713,20 @@ export default function CreateStudio() {
   }, [studioList]);
   const meta = metaOf(model, modelMeta);
 
-  // icon configured per model (emoji or image URL) for the picker swatch.
-  const iconByName = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const m of studioList) if (m.config?.icon) map[m.name] = m.config.icon;
+  // swatch 样式+字形：后台配置 icon > 品牌官方 logo > 首字母渐变——与 chat 共用
+  // model-brand.ts 的 resolveModelSwatch；按模型名 memo，避免每次渲染重跑正则。
+  const swatchByName = useMemo(() => {
+    const map: Record<string, { style: CSSProperties; content: string }> = {};
+    for (const m of studioList) {
+      const r = resolveModelSwatch({ name: m.name, modelKey: m.modelKey, icon: m.config?.icon });
+      map[m.name] = { style: r.style, content: r.glyph };
+    }
     return map;
   }, [studioList]);
-  // 品牌图标自动匹配：config.icon 未配置时按 modelKey/名称识别厂商官方 logo。
-  const brandByName = useMemo(() => {
-    const map: Record<string, string | null> = {};
-    for (const m of studioList) map[m.name] = matchBrandIcon(m.modelKey, m.name);
-    return map;
-  }, [studioList]);
-  // resolve a swatch's style + glyph, in priority order:
-  //   1. 后台配置的 icon（图片 URL → cover；emoji → 渐变底上的字形）
-  //   2. 品牌官方 logo（白底 + contain，logo 需要留白，不能 cover 裁切）
-  //   3. 首字母 + 哈希渐变色块（原兜底）
   const swatchFor = (name: string): { style: CSSProperties; content: string } => {
-    const icon = iconByName[name];
-    if (icon && isIconUrl(icon)) {
-      const isBrand = icon.startsWith("/model-icons/");
-      return {
-        style: isBrand
-          ? { background: `#fff center/66% no-repeat url("${icon}")`, boxShadow: "inset 0 0 0 1px rgba(22,28,45,.1)" }
-          : { background: `center/cover no-repeat url("${icon}")` },
-        content: "",
-      };
-    }
-    if (icon) return { style: { background: modelSwatch(name) }, content: icon };
-    const brand = brandByName[name];
-    if (brand) {
-      return {
-        style: { background: `#fff center/66% no-repeat url("${brand}")`, boxShadow: "inset 0 0 0 1px rgba(22,28,45,.1)" },
-        content: "",
-      };
-    }
-    return { style: { background: modelSwatch(name) }, content: modelInitial(name) };
+    if (swatchByName[name]) return swatchByName[name];
+    const r = resolveModelSwatch({ name });
+    return { style: r.style, content: r.glyph };
   };
 
   const selModel = useMemo(
@@ -1026,8 +1016,43 @@ export default function CreateStudio() {
     const onDoc = (e: MouseEvent) => {
       if (!modelWrapRef.current?.contains(e.target as Node)) setModelOpen(false);
     };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setModelOpen(false);
+    };
     document.addEventListener("click", onDoc);
-    return () => document.removeEventListener("click", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("click", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [modelOpen]);
+
+  // 模型下拉用 fixed 定位锚到触发卡下沿：原来的 absolute 定位会被
+  // .ws-panel-scroll(overflow-y:auto) 的滚动口在矮窗口下裁掉下半截；
+  // fixed 悬浮于面板之上，并按视口剩余空间收缩高度（菜单内部可滚动）。
+  const [modelMenuStyle, setModelMenuStyle] = useState<CSSProperties>({});
+  useLayoutEffect(() => {
+    if (!modelOpen) return;
+    const place = () => {
+      const wrap = modelWrapRef.current;
+      if (!wrap) return;
+      const r = wrap.getBoundingClientRect();
+      setModelMenuStyle({
+        position: "fixed",
+        top: r.bottom + 8,
+        left: r.left,
+        right: "auto",
+        width: r.width,
+        maxHeight: Math.max(160, Math.min(340, window.innerHeight - r.bottom - 24)),
+      });
+    };
+    place();
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
   }, [modelOpen]);
 
   // close the upload preview on Escape (create.js openPreview esc handler).
@@ -1620,6 +1645,7 @@ export default function CreateStudio() {
     // snapshot the exact settings of this run for 重新编辑 / 再次生成.
     lastRunRef.current = {
       prompt: p, model: mdl, tool, curType, ratio: r, imgRes, res, dur, quality, count: n,
+      imageRefs, firstFrame, lastFrame, videoRefs: vidRefs, audioRefs: audRefs,
     };
 
     setRunMeta({ prompt: p, model: mdl, ratio: r, spec, count: n, label, isVid, refThumbs });
@@ -1754,6 +1780,19 @@ export default function CreateStudio() {
     setDur(lr.dur);
     setQuality(lr.quality);
     setCount(lr.count);
+    // 参考素材回填：按 generate() 写入 refInput 的映射反向恢复各上传槽位。
+    // 仅在参数确实带参考素材时覆盖 slotData——旧快照/纯文生成不动现有槽位，
+    // 保持会话内“先传图再重新生成”的既有行为。
+    const toFiles = (urls: string[], label: string): UploadFile[] =>
+      urls.map((u, i) => ({ g: u, url: u, n: urls.length > 1 ? `${label} ${i + 1}` : label, s: "" }));
+    const imgs = lr.imageRefs ?? [];
+    const slots: SlotData = {};
+    if (imgs.length) slots[lr.tool === "i2v" ? "first" : "img"] = toFiles(imgs, "参考图");
+    if (lr.firstFrame) slots.first = toFiles([lr.firstFrame], "首帧");
+    if (lr.lastFrame) slots.last = toFiles([lr.lastFrame], "尾帧");
+    if (lr.videoRefs?.length) slots.video = toFiles(lr.videoRefs, "参考视频");
+    if (lr.audioRefs?.length) slots.audio = toFiles(lr.audioRefs, "参考音频");
+    if (Object.keys(slots).length) setSlotData(slots);
   }, []);
 
   // 再次生成: after restoring the run's settings to the panel (above), fire
@@ -1875,24 +1914,10 @@ export default function CreateStudio() {
     toast.success("已载入该次生成的参数，可修改后重新生成");
   };
 
-  // copy a run's prompt (clipboard API, execCommand fallback for http/older UAs).
+  // copy a run's prompt（共享 copyText：clipboard API + execCommand 回退）。
   const copyPrompt = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast.success("已复制提示词");
-    } catch {
-      try {
-        const ta = document.createElement("textarea");
-        ta.value = text;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        ta.remove();
-        toast.success("已复制提示词");
-      } catch {
-        toast.error("复制失败");
-      }
-    }
+    if (await copyText(text)) toast.success("已复制提示词");
+    else toast.error("复制失败");
   };
 
   // download every image of a run (cross-origin URLs fall back to opening a tab).
@@ -2243,7 +2268,7 @@ export default function CreateStudio() {
                 </span>
               </button>
 
-              <div className="ws-model-menu" id="modelMenu" role="listbox">
+              <div className="ws-model-menu" id="modelMenu" role="listbox" style={modelMenuStyle}>
                 {modelNames.map((m) => {
                   const mm = metaOf(m, modelMeta);
                   const sw = swatchFor(m);

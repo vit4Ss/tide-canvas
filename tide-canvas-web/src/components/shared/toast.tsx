@@ -54,8 +54,9 @@ export function ToastContainer() {
 
   const remove = (id: number) => setItems((prev) => prev.filter((i) => i.id !== id));
 
+  // z 必须高于全部弹层（modal-zoom/lightbox/srcmask 均为 1000）：toast 是反馈层，任何时候都要可见
   return (
-    <div className="pointer-events-none fixed left-1/2 top-6 z-50 flex -translate-x-1/2 flex-col items-center gap-2">
+    <div className="pointer-events-none fixed left-1/2 top-6 z-[1200] flex -translate-x-1/2 flex-col items-center gap-2">
       {items.map((item) => {
         const Icon = ICONS[item.type];
         return (

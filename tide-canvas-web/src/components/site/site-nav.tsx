@@ -30,6 +30,7 @@ import { toast } from "@/components/shared/toast";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { fmt } from "@/mock";
+import { grayscaleSwatch } from "@/lib/swatch";
 import "./site-nav.css";
 
 interface NavItem {
@@ -60,11 +61,7 @@ function initials(name: string): string {
   return (s.slice(0, 2) || "U").toUpperCase();
 }
 function avatarGrad(seed: string): string {
-  let h = 0;
-  const s = seed || "u";
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
-  // 灰阶头像（主题零彩色）：哈希只驱动明度差异，白字始终可读
-  return `linear-gradient(135deg, hsl(0 0% ${30 + (h % 16)}%), hsl(0 0% ${14 + (h % 10)}%))`;
+  return grayscaleSwatch(seed || "u");
 }
 function planLabel(vipLevel?: number): string {
   switch (vipLevel) {

@@ -33,10 +33,8 @@ export default function HomeFaq() {
               <span className="qt">{f.q}</span>
               <span className="faq-ic">+</span>
             </button>
-            <div
-              className="faq-a"
-              style={{ maxHeight: isOpen ? "400px" : "0px" }}
-            >
+            {/* 展开动画由 CSS grid-rows 承担（.faq-item.open），不再内联 maxHeight */}
+            <div className="faq-a">
               <div className="faq-a-in">{f.a}</div>
             </div>
           </div>

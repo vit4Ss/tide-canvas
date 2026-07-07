@@ -68,6 +68,10 @@
   pointer-events: none;
   transition: opacity 0.16s var(--ease), transform 0.16s var(--ease);
   z-index: 60;
+  /* 短视口（横屏手机等）兜底：菜单挂在 fixed 导航下，超高时内部滚动，
+     否则「管理后台/退出登录」会落在视口外永远点不到 */
+  max-height: calc(100vh - 84px);
+  overflow-y: auto;
 }
 .acct.open .acct-menu {
   opacity: 1;

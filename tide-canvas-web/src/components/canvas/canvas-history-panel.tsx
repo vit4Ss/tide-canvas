@@ -27,7 +27,7 @@ export function CanvasHistoryPanel({ open, onClose }: Props) {
   const [tasks, setTasks] = useState<AiTaskVO[]>([]);
   const [logs, setLogs] = useState<AiGenerationLogVO[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
