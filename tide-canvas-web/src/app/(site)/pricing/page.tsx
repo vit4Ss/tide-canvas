@@ -27,6 +27,8 @@ import { useEffect, useState } from "react";
 import { billingApi } from "@/lib/billing-api";
 import type { PlanVO } from "@/types/billing";
 import { useReveal } from "@/components/site/use-reveal";
+import { useAuthStore } from "@/stores/use-auth-store";
+import PayModal, { type PurchaseIntent } from "@/components/site/pay-modal";
 
 type Cycle = "yr" | "mo";
 
@@ -76,9 +78,30 @@ const PRICING_FAQS: readonly { q: string; a: string }[] = [
 
 export default function PricingPage() {
   const router = useRouter();
+  const user = useAuthStore((s) => s.user);
   const [cycle, setCycle] = useState<Cycle>("yr");
   // First FAQ open by default (matches pricing.js renderFaq()).
   const [openFaq, setOpenFaq] = useState<number>(0);
+  // Open pay-method chooser for a chosen paid plan.
+  const [payIntent, setPayIntent] = useState<PurchaseIntent | null>(null);
+
+  // Plan CTA: free plans go straight to the studio; paid plans require a session
+  // then open the pay-method chooser. The order is priced server-side from the
+  // plan's monthly price, so we show that figure in the modal.
+  const onPlanCta = (p: PlanVO) => {
+    if (p.monthly === 0) {
+      router.push("/studio");
+      return;
+    }
+    const loggedIn =
+      user != null ||
+      (typeof window !== "undefined" && !!localStorage.getItem("access_token"));
+    if (!loggedIn) {
+      router.push("/login?redirect=/pricing");
+      return;
+    }
+    setPayIntent({ type: "plan", planId: p.id, name: p.name, amount: p.monthly });
+  };
 
   // Real plan cards from the public billing endpoint.
   const [plans, setPlans] = useState<PlanVO[]>([]);
@@ -233,7 +256,7 @@ export default function PricingPage() {
                 <button
                   type="button"
                   className={`plan-cta ${p.featured ? "solid" : "ghost"}`}
-                  onClick={() => router.push("/studio")}
+                  onClick={() => onPlanCta(p)}
                 >
                   {p.cta}
                 </button>
@@ -365,6 +388,10 @@ export default function PricingPage() {
           </div>
         </section>
       </div>
+
+      {payIntent && (
+        <PayModal intent={payIntent} onClose={() => setPayIntent(null)} />
+      )}
     </div>
   );
 }
