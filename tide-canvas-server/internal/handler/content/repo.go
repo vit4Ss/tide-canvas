@@ -33,6 +33,31 @@ type repo struct {
 
 func newRepo(db *gorm.DB) *repo { return &repo{db: db} }
 
+// enabledFloors returns the enabled home floors in display order — the public
+// homepage renders its sections from these rows (admin 首页楼层 managed).
+func (r *repo) enabledFloors() ([]model.HomeFloor, error) {
+	var rows []model.HomeFloor
+	err := r.db.Where("enabled = ?", true).
+		Order("sort_order ASC, create_time ASC").Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// configValue reads one sys_config value by key ("" when the key is unset).
+func (r *repo) configValue(key string) (string, error) {
+	var row model.SysConfig
+	err := r.db.Select("config_value").Where("config_key = ?", key).First(&row).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", nil
+		}
+		return "", err
+	}
+	return row.ConfigValue, nil
+}
+
 // --- banners ---
 
 // listBanners returns visible banners, optionally filtered by position, ordered

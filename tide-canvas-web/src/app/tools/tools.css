@@ -1,0 +1,216 @@
+/* ============================================================================
+   /tools/[op] — 独立 AI 工具页样式。
+
+   全部使用主题 token（flux 浅色 / imini 纯黑均成立）；布局参照 imini 的
+   工具页语言：全屏点阵背景、居中单卡、白色胶囊主按钮（黑字，防隐形）。
+   ========================================================================== */
+
+.tool-page {
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 20px;
+  background:
+    radial-gradient(color-mix(in oklab, var(--text) 14%, transparent) 1px, transparent 1px)
+      0 0 / 28px 28px,
+    var(--bg);
+}
+
+.tool-page .tp-close {
+  position: fixed;
+  top: 18px;
+  right: 22px;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--pill, 999px);
+  color: var(--text-dim);
+  border: 1px solid transparent;
+  transition: all 0.16s var(--ease, ease);
+}
+.tool-page .tp-close:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: var(--panel-hover, rgba(255, 255, 255, 0.06));
+}
+
+/* ── 居中卡片 ─────────────────────────────────────────────────────────────── */
+.tool-page .tp-card {
+  width: min(400px, 100%);
+  border-radius: var(--r-lg, 16px);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg, 0 10px 32px rgba(0, 0, 0, 0.3));
+  padding: 24px;
+}
+/* 结果阶段需要更宽的对照空间 */
+.tool-page .tp-card.wide {
+  width: min(720px, 100%);
+}
+
+.tool-page .tp-cover {
+  height: 168px;
+  border-radius: var(--r, 12px);
+  background-size: cover;
+  background-position: center;
+}
+
+.tool-page .tp-card h1 {
+  margin: 20px 0 0;
+  font-size: 20px;
+  font-weight: 700;
+  text-align: center;
+  color: var(--text);
+}
+.tool-page .tp-desc {
+  margin: 8px auto 0;
+  max-width: 36ch;
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: center;
+  color: var(--text-faint);
+}
+
+/* ── 提示词（局部重绘） ───────────────────────────────────────────────────── */
+.tool-page .tp-prompt {
+  width: 100%;
+  margin-top: 16px;
+  padding: 12px 14px;
+  min-height: 76px;
+  resize: vertical;
+  border-radius: var(--r, 10px);
+  border: 1px solid var(--border);
+  background: transparent;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text);
+}
+.tool-page .tp-prompt:focus {
+  outline: none;
+  border-color: var(--border-strong);
+}
+.tool-page .tp-prompt::placeholder {
+  color: var(--text-faint);
+}
+
+/* ── 按钮（imini：白胶囊配黑字） ─────────────────────────────────────────── */
+.tool-page .tp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 46px;
+  margin-top: 20px;
+  border-radius: var(--pill, 999px);
+  font-size: 14.5px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--grad);
+  transition: all 0.16s var(--ease, ease);
+}
+body.imini .tool-page .tp-btn {
+  background: #fff;
+  color: #0a0a0b;
+}
+body.imini .tool-page .tp-btn:hover {
+  background: #e8e8ea;
+}
+.tool-page .tp-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.tool-page .tp-btn.ghost {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border-strong);
+}
+body.imini .tool-page .tp-btn.ghost {
+  background: transparent;
+  color: var(--text-dim);
+}
+.tool-page .tp-btn.ghost:hover {
+  color: var(--text);
+  background: var(--panel-hover, rgba(255, 255, 255, 0.06));
+}
+
+/* ── 处理 / 结果阶段 ─────────────────────────────────────────────────────── */
+.tool-page .tp-stage {
+  position: relative;
+  margin-top: 4px;
+  border-radius: var(--r, 12px);
+  overflow: hidden;
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+}
+.tool-page .tp-stage img {
+  display: block;
+  width: 100%;
+  max-height: 56vh;
+  object-fit: contain;
+}
+.tool-page .tp-stage .tp-busy {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: color-mix(in oklab, var(--bg) 55%, transparent);
+  backdrop-filter: blur(3px);
+  color: var(--text);
+  font-size: 13.5px;
+}
+
+.tool-page .tp-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 4px;
+}
+.tool-page .tp-pair figure {
+  margin: 0;
+}
+.tool-page .tp-pair .tp-stage {
+  margin-top: 0;
+}
+.tool-page .tp-pair figcaption {
+  margin-top: 8px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+@media (max-width: 560px) {
+  .tool-page .tp-pair {
+    grid-template-columns: 1fr;
+  }
+}
+
+.tool-page .tp-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+}
+.tool-page .tp-actions .tp-btn {
+  margin-top: 0;
+  flex: 1;
+}
+
+.tool-page .tp-err {
+  margin: 16px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: center;
+  color: var(--text-dim);
+}
+
+.tool-page .tp-meta {
+  margin: 14px 0 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-faint);
+}

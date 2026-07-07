@@ -44,10 +44,14 @@ type PostLiteVO struct {
 
 // ModelLiteVO is a slimmed market model for the home "hot models" rail.
 type ModelLiteVO struct {
-	ID        idgen.ID `json:"id"`
-	AuthorID  idgen.ID `json:"authorId"`
-	Name      string   `json:"name"`
-	CoverUrl  string   `json:"coverUrl"`
+	ID       idgen.ID `json:"id"`
+	AuthorID idgen.ID `json:"authorId"`
+	Name     string   `json:"name"`
+	CoverUrl string   `json:"coverUrl"`
+	// Type is the media category (text | image | video | audio); the home
+	// marquee uses it to deep-link a model into the right workspace
+	// (创作台 image/video vs 对话 text).
+	Type      string   `json:"type"`
 	Tags      []string `json:"tags"`
 	Price     string   `json:"price"`
 	UseCount  int      `json:"useCount"`
@@ -133,6 +137,7 @@ func toModelLiteVO(m *model.MarketModel) ModelLiteVO {
 		AuthorID:  m.AuthorID,
 		Name:      m.Name,
 		CoverUrl:  m.CoverURL,
+		Type:      m.Type,
 		Tags:      splitTags(m.Tags),
 		Price:     m.Price.String(),
 		UseCount:  m.UseCount,

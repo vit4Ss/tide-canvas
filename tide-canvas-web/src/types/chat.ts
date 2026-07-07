@@ -27,6 +27,8 @@ export interface MessageTaskVO {
   /** 0 processing · 1 success · 2 failed · 3 cancelled */
   status: number;
   progress: number;
+  /** 生成所用模型的显示名 —— 结果气泡的头像显示该模型图标。 */
+  modelName?: string;
   resultUrl: string;
   resultMeta?: Record<string, unknown> | string;
   errorMsg: string;

@@ -31,14 +31,8 @@ func SeedAdminData(db *gorm.DB) error {
 		return err
 	}
 
-	// Home floors (首页楼层).
-	if err := seedIfEmpty(db, &HomeFloor{}, []HomeFloor{
-		{Name: "顶部轮播", Subtitle: "运营 banner 轮播位", Type: "banner", ContentSource: "manual", Count: 5, SortOrder: 1, Enabled: true, Layout: "carousel", Platforms: `["web","app"]`},
-		{Name: "热门作品", Subtitle: "近 7 天热度排行", Type: "works", ContentSource: "auto", Count: 12, SortOrder: 2, Enabled: true, Layout: "grid", Platforms: `["web","app","mini"]`},
-		{Name: "精选合集", Subtitle: "编辑精选灵感合集", Type: "collections", ContentSource: "manual", Count: 6, SortOrder: 3, Enabled: true, Layout: "list", Platforms: `["web"]`},
-	}); err != nil {
-		return err
-	}
+	// 首页楼层：不再走 demo 种子——canonical 楼层由 model.AutoMigrate →
+	// ensureBaselineFloors 每次启动幂等确权（与真实首页区块一一对应）。
 
 	// Pay channels (支付渠道).
 	if err := seedIfEmpty(db, &PayChannel{}, []PayChannel{
@@ -104,6 +98,9 @@ func SeedAdminData(db *gorm.DB) error {
 	}); err != nil {
 		return err
 	}
+
+	// 注：site.footerLinks 配置键的确权在 model.AutoMigrate → ensureBaselineConfig
+	// （每次启动幂等执行），不在这里——本函数在旧库上会被整体跳过。
 
 	// Email templates (邮件模板).
 	if err := seedIfEmpty(db, &EmailTemplate{}, []EmailTemplate{

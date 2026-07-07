@@ -104,7 +104,7 @@ export default function AdminHomeFloorsPage() {
       {/* 首页楼层管理 */}
       <Panel
         title="首页楼层管理"
-        sub="排序，控制首页各楼层的展示与内容源"
+        sub="启用与排序即刻作用于公开首页（内置 7 类楼层与首页区块一一对应；作品流的「数量」控制展示条数）"
         tools={
           <button type="button" className="adm-btn" onClick={openNew}>
             + 新增楼层

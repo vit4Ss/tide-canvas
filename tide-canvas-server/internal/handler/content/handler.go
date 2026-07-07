@@ -19,6 +19,27 @@ type handler struct {
 
 func newHandler(svc *service) *handler { return &handler{svc: svc} }
 
+// --- site footer ---
+
+// footerLinks handles GET /api/site/footer (public). Returns the admin-
+// configured footer link columns (sys_config site.footerLinks，后台「配置管理」
+// 可编辑) with the factory default as fallback — never empty.
+func (h *handler) footerLinks(c *gin.Context) {
+	response.OK(c, h.svc.footerLinks())
+}
+
+// siteFloors handles GET /api/site/floors (public). Returns the enabled home
+// floors（后台「首页楼层」管理）in display order — the homepage renders its
+// sections from this list.
+func (h *handler) siteFloors(c *gin.Context) {
+	vos, err := h.svc.siteFloors()
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "failed to load floors")
+		return
+	}
+	response.OK(c, vos)
+}
+
 // --- banners ---
 
 // listBanners handles GET /api/banners (public). ?position filters placement.

@@ -8,8 +8,11 @@
 
    Now driven by REAL market models (ModelLiteVO from GET /api/home/feed) passed
    in via `models`. Each card carries the model's logo (coverUrl, else a
-   deterministic letter swatch), first tag and 调用量 — click lands on /models.
-   If the feed returns none we render nothing (purely decorative social-proof).
+   deterministic letter swatch), first tag and 调用量. Click deep-links the
+   model into its workspace by media type: image/video → /studio?type&model
+   (创作台预选该模型), text → /chat（sessionStorage flux_model 交接预选）,
+   anything else falls back to /models. If the feed returns none we render
+   nothing (purely decorative social-proof).
    ========================================================================== */
 
 import Link from "next/link";
@@ -22,6 +25,26 @@ import type { ModelLiteVO } from "@/types/content";
 
 /** Deterministic brand-ish gradient for models without a logo. */
 const swGrad = (seed: string): string => grayscaleSwatch(seed);
+
+/** Deep-link target per media type: 创作台 for image/video, 对话 for text,
+ *  模型市场 as the fallback for anything else (audio / untyped rows). */
+const hrefOf = (m: ModelLiteVO): string => {
+  if (m.type === "image" || m.type === "video") {
+    return `/studio?type=${m.type}&model=${encodeURIComponent(m.name)}`;
+  }
+  if (m.type === "text") return "/chat";
+  return "/models";
+};
+
+/** text 模型经 sessionStorage 交接预选（与创作台 flux_model 同一约定）。 */
+const handoffText = (m: ModelLiteVO) => {
+  if (m.type !== "text") return;
+  try {
+    sessionStorage.setItem("flux_model", m.name);
+  } catch {
+    /* ignore */
+  }
+};
 
 export default function ModelMarquee({ models }: { models: ModelLiteVO[] }) {
   // swatch 每模型只算一遍：concat 复制后同一模型要渲染 2~4 次，matchBrandIcon 又是
@@ -84,7 +107,12 @@ export default function ModelMarquee({ models }: { models: ModelLiteVO[] }) {
                   letter: m.name[0].toUpperCase(),
                 };
                 return (
-                <Link className="mq-chip" href="/models" key={`${m.id}-${i}`}>
+                <Link
+                  className="mq-chip"
+                  href={hrefOf(m)}
+                  onClick={() => handoffText(m)}
+                  key={`${m.id}-${i}`}
+                >
                   <span className="sw" style={sw.style}>
                     {sw.letter}
                   </span>

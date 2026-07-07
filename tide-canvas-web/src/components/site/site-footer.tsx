@@ -1,18 +1,77 @@
+"use client";
+
 /* ============================================================================
    SiteFooter — React port of footerHTML() from design-ref/liuguang/shell.js.
    Uses the exact liuguang class names from flux.css (footer / .wrap / .foot-grid
    / .foot-brand / .brand / .glyph / .foot-col / .foot-bottom / .mono) so the
    shared styles apply unchanged.
 
-   Pure presentational (no hooks / browser APIs) → server component.
-   Internal links resolve to real routes; coming-soon / external items render
-   as inert (#) anchors for now.
+   链接列由后台「配置管理」的 site.footerLinks 驱动（GET /api/site/footer，
+   服务端带出厂默认兜底）。首屏先渲染内置默认（与服务端出厂默认一致，避免
+   闪动），接口返回后替换为管理员配置。站内路径走 <Link>，外链走 <a>。
    ========================================================================== */
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { Logo } from "@/components/flux/atoms";
+import { contentApi } from "@/lib/content-api";
+import type { FooterColVO } from "@/types/content";
+
+/** 内置默认列 — 与服务端 model.DefaultFooterLinksJSON 保持一致。 */
+const DEFAULT_COLS: FooterColVO[] = [
+  {
+    title: "产品",
+    links: [
+      { label: "图片生成", href: "/studio?type=image" },
+      { label: "视频创作", href: "/studio?type=video" },
+      { label: "作品广场", href: "/explore" },
+    ],
+  },
+  {
+    title: "社区",
+    links: [
+      { label: "作品广场", href: "/explore" },
+      { label: "创作者", href: "/#creators" },
+      { label: "玩法教程", href: "/inspire" },
+      { label: "灵感周报", href: "/inspire" },
+    ],
+  },
+  {
+    title: "关于",
+    links: [
+      { label: "价格方案", href: "/pricing" },
+      { label: "企业版", href: "/pricing" },
+      { label: "服务条款", href: "/terms" },
+      { label: "隐私政策", href: "/privacy" },
+    ],
+  },
+];
+
+/** 站内相对路径用 <Link>（客户端导航），http(s) 外链用 <a> 新窗口打开。 */
+function FootLink({ label, href }: { label: string; href: string }) {
+  if (/^https?:\/\//i.test(href)) {
+    return (
+      <a href={href} target="_blank" rel="noreferrer">
+        {label}
+      </a>
+    );
+  }
+  return <Link href={href}>{label}</Link>;
+}
 
 export default function SiteFooter() {
+  const [cols, setCols] = useState<FooterColVO[]>(DEFAULT_COLS);
+
+  useEffect(() => {
+    let alive = true;
+    contentApi.footer().then((res) => {
+      if (alive && res.success && res.data?.length) setCols(res.data);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   return (
     <footer>
       <div className="wrap">
@@ -27,28 +86,14 @@ export default function SiteFooter() {
             </p>
           </div>
 
-          <div className="foot-col">
-            <h4>产品</h4>
-            <Link href="/studio">图片生成</Link>
-            <Link href="/studio">视频创作</Link>
-            <Link href="/explore">作品广场</Link>
-          </div>
-
-          <div className="foot-col">
-            <h4>社区</h4>
-            <Link href="/explore">作品广场</Link>
-            <Link href="/#creators">创作者</Link>
-            <a href="#">玩法教程</a>
-            <a href="#">灵感周报</a>
-          </div>
-
-          <div className="foot-col">
-            <h4>关于</h4>
-            <Link href="/pricing">价格方案</Link>
-            <Link href="/pricing">企业版</Link>
-            <Link href="/terms">服务条款</Link>
-            <Link href="/privacy">隐私政策</Link>
-          </div>
+          {cols.map((col) => (
+            <div className="foot-col" key={col.title}>
+              <h4>{col.title}</h4>
+              {col.links.map((l) => (
+                <FootLink key={`${l.label}-${l.href}`} label={l.label} href={l.href} />
+              ))}
+            </div>
+          ))}
         </div>
 
         <div className="foot-bottom">

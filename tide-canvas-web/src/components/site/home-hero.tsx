@@ -29,24 +29,52 @@ const QUICK = [
   { label: "生成同款", toast: "一键生成同款" },
 ];
 
+/** 模型 type → 统计带展示名；未知类型原样展示。顺序即展示优先级。 */
+const MODEL_TYPE_LABEL: [string, string][] = [
+  ["image", "图片生成"],
+  ["video", "视频生成"],
+  ["text", "文本创作"],
+  ["audio", "音频生成"],
+  ["3d", "3D 生成"],
+];
+
+/** 在库模型的去重类型，按预定义优先级排序（未知类型排尾）。 */
+function distinctTypes(types: string[]): string[] {
+  const seen = Array.from(new Set(types.filter(Boolean)));
+  const rank = new Map(MODEL_TYPE_LABEL.map(([k], i) => [k, i]));
+  return seen.sort(
+    (a, b) => (rank.get(a) ?? 99) - (rank.get(b) ?? 99) || a.localeCompare(b),
+  );
+}
+
+function typeLabel(t: string): string {
+  return MODEL_TYPE_LABEL.find(([k]) => k === t)?.[1] ?? t;
+}
+
 export default function HomeHero() {
   const router = useRouter();
   const innerRef = useRef<HTMLDivElement>(null);
   const [typed, setTyped] = useState("");
-  // 首屏定位数据：全部来自真实接口 total（只取 pageSize=1 的分页元数据），取不到就不显示
+  // 首屏定位数据：全部来自真实接口，取不到就不显示。作品数 = 社区分页 total；
+  // 模型数与创作类型 = 创作台在库模型（/api/market/studio-models）的数量与
+  // 去重 type —— 同步进新模态（如音频）时「N 类」自动跟着涨。
   const [worksTotal, setWorksTotal] = useState(0);
   const [modelsTotal, setModelsTotal] = useState(0);
+  const [modelTypes, setModelTypes] = useState<string[]>([]);
 
   useEffect(() => {
     let alive = true;
     (async () => {
       const [posts, models] = await Promise.all([
         communityApi.list({ pageNum: 1, pageSize: 1 }),
-        marketApi.list({ pageNum: 1, pageSize: 1 }),
+        marketApi.studioModels(),
       ]);
       if (!alive) return;
       if (posts.success && posts.data) setWorksTotal(posts.data.total);
-      if (models.success && models.data) setModelsTotal(models.data.total);
+      if (models.success && models.data) {
+        setModelsTotal(models.data.length);
+        setModelTypes(distinctTypes(models.data.map((m) => m.type)));
+      }
     })();
     return () => {
       alive = false;
@@ -154,9 +182,9 @@ export default function HomeHero() {
         </div>
       </div>
 
-      {/* 定位统计带：全部为真实数据（社区/市场接口 total + 四类真实创作入口），
-          替代原硬编码假统计；接口未返回前不渲染 */}
-      {worksTotal > 0 && modelsTotal > 0 && (
+      {/* 定位统计带：全部为真实数据（社区 total + 在库模型数 + 模型类型去重），
+          无一硬编码；接口未返回前不渲染 */}
+      {worksTotal > 0 && modelsTotal > 0 && modelTypes.length > 0 && (
         <div className="hero-stats reveal" style={{ ["--rd" as string]: ".95s" }}>
           <div className="hero-stats-in">
             <div>
@@ -168,8 +196,8 @@ export default function HomeHero() {
               <div className="stat-l">在库生成模型</div>
             </div>
             <div>
-              <div className="stat-n">4 类</div>
-              <div className="stat-l">文生图 · 文生视频 · 图生图 · 生成同款</div>
+              <div className="stat-n">{modelTypes.length} 类</div>
+              <div className="stat-l">{modelTypes.map(typeLabel).join(" · ")}</div>
             </div>
           </div>
         </div>

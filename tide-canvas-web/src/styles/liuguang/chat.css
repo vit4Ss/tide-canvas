@@ -32,6 +32,10 @@
 .msg .av{width:32px; height:32px; border-radius:9px; flex:none;}
 .msg.ai .av{background:var(--grad); position:relative;}
 .msg.ai .av::after{content:'✦'; position:absolute; inset:0; display:grid; place-items:center; color:#fff; font-size:15px;}
+/* 生成结果的 AI 头像 = 生成所用模型的图标（背景由 resolveModelSwatch 内联注入：
+   后台 icon / 品牌 logo 白垫 / 首字母灰阶；字形仅兜底时出现，深字配浅底） */
+.msg.ai .av.av-model{display:grid; place-items:center; overflow:hidden; font-size:12px; font-weight:700; color:#0c0e16;}
+.msg.ai .av.av-model::after{content:none;}
 .msg.me{flex-direction:row-reverse;}
 .msg.me .av{background:color-mix(in oklab,var(--accent) 26%, var(--surface)); position:relative;}
 .msg.me .av::after{content:'我'; position:absolute; inset:0; display:grid; place-items:center; color:var(--accent); font-size:12px; font-weight:700;}

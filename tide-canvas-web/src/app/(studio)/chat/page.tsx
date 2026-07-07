@@ -325,6 +325,12 @@ export default function ChatPage() {
     () => swatchByName.get(model) ?? swatchOf({ name: model }),
     [swatchByName, model],
   );
+  // 生成结果的 AI 头像按任务 modelName 取模型图标；不在列表中的历史模型名
+  // 按名称即时解析（品牌 logo 匹配仍然命中）。
+  const swatchForName = useCallback(
+    (name: string) => swatchByName.get(name) ?? swatchOf({ name }),
+    [swatchByName],
+  );
   const mCfg = selModel?.config ?? null;
   const isVid = selModel?.type === "video";
   // 联网开关只对「文本模型」且其 config.webSearch 已开启时可用（模型管理里配置）。
@@ -635,6 +641,22 @@ export default function ChatPage() {
   useEffect(() => {
     reloadGenModels();
   }, [reloadGenModels]);
+
+  // 首页模型跑马灯深链：text 模型经 sessionStorage flux_model 交接预选
+  // （与创作台同一约定）。列表加载的兜底会保留存在于列表中的选择，所以
+  // 这里先行 setModel 是安全的。
+  useEffect(() => {
+    try {
+      const m = sessionStorage.getItem("flux_model");
+      if (m) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setModel(m);
+        sessionStorage.removeItem("flux_model");
+      }
+    } catch {
+      /* sessionStorage unavailable */
+    }
+  }, []);
 
   useEffect(() => {
     const onFocus = () => reloadGenModels();
@@ -1390,6 +1412,7 @@ export default function ChatPage() {
                   onReEdit={reEdit}
                   onRegenerate={regenerate}
                   onOpenLightbox={openLightbox}
+                  swatchFor={swatchForName}
                 />
               ))
             )}
@@ -2016,11 +2039,14 @@ function Bubble({
   onReEdit,
   onRegenerate,
   onOpenLightbox,
+  swatchFor,
 }: {
   msg: MessageVO;
   onReEdit: (m: MessageVO) => void;
   onRegenerate: (m: MessageVO) => void;
   onOpenLightbox: (items: LightboxItem[], index: number) => void;
+  /** 模型名 → 图标 swatch（生成结果的 AI 头像显示生成所用模型）。 */
+  swatchFor: (name: string) => { style: React.CSSProperties; glyph: string };
 }) {
   // 生成台 assistant result: rendered from its linked task (single source of truth).
   if (msg.role !== "user" && msg.taskId) {
@@ -2030,6 +2056,7 @@ function Bubble({
         onReEdit={onReEdit}
         onRegenerate={onRegenerate}
         onOpenLightbox={onOpenLightbox}
+        swatchFor={swatchFor}
       />
     );
   }
@@ -2113,14 +2140,20 @@ function AssistantResult({
   onReEdit,
   onRegenerate,
   onOpenLightbox,
+  swatchFor,
 }: {
   msg: MessageVO;
   onReEdit: (m: MessageVO) => void;
   onRegenerate: (m: MessageVO) => void;
   onOpenLightbox: (items: LightboxItem[], index: number) => void;
+  swatchFor: (name: string) => { style: React.CSSProperties; glyph: string };
 }) {
   const t = msg.task;
   const isVideo = msg.contentType === "video";
+  // 生成结果的头像 = 生成该结果所用的模型图标（任务的 modelName；过期/无
+  // 任务时回退默认 ✦ 头像）。
+  const modelName = t?.modelName || "";
+  const sw = modelName ? swatchFor(modelName) : null;
 
   let body: ReactNode;
   let done = false;
@@ -2183,7 +2216,13 @@ function AssistantResult({
   const retryable = !t || t.status === AiTaskStatus.FAILED;
   return (
     <div className="msg ai">
-      <span className="av" />
+      {sw ? (
+        <span className="av av-model" style={sw.style} title={modelName}>
+          {sw.glyph}
+        </span>
+      ) : (
+        <span className="av" />
+      )}
       <div className="bubble">
         {body}
         {(done || retryable) && (

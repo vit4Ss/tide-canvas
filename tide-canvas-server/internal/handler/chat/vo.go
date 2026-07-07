@@ -33,9 +33,12 @@ type ConversationVO struct {
 // assistant message points to (the task is the single source of truth). Attached
 // only to assistant messages whose linked task still exists.
 type MessageTaskVO struct {
-	ID         idgen.ID        `json:"id"`
-	Status     int             `json:"status"` // 0 processing,1 success,2 failed,3 cancelled
-	Progress   int             `json:"progress"`
+	ID       idgen.ID `json:"id"`
+	Status   int      `json:"status"` // 0 processing,1 success,2 failed,3 cancelled
+	Progress int      `json:"progress"`
+	// ModelName is the display name of the model that ran this generation; the
+	// chat UI shows it as the result bubble's avatar (模型图标).
+	ModelName  string          `json:"modelName"`
 	ResultURL  string          `json:"resultUrl"`
 	ResultMeta json.RawMessage `json:"resultMeta,omitempty"`
 	ErrorMsg   string          `json:"errorMsg"`
@@ -134,6 +137,7 @@ func toMessageTaskVO(t *model.AiTask) *MessageTaskVO {
 		ID:        t.ID,
 		Status:    t.Status,
 		Progress:  t.Progress,
+		ModelName: t.ModelName,
 		ResultURL: t.ResultUrl,
 		ErrorMsg:  t.ErrorMsg,
 	}

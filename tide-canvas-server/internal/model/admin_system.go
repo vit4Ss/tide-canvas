@@ -44,6 +44,31 @@ type SysLog struct {
 // TableName overrides the default pluralization.
 func (SysLog) TableName() string { return "sys_log" }
 
+// ConfigKeyFooterLinks is the sys_config key holding the site footer link
+// columns as JSON: [{title, links:[{label, href}]}]. Edited in the admin
+// 配置管理 screen; served to the site by GET /api/site/footer.
+const ConfigKeyFooterLinks = "site.footerLinks"
+
+// DefaultFooterLinksJSON is the footer's factory default (mirrors the original
+// hard-coded site-footer columns). Used to seed the config key and as the
+// serve-time fallback when the stored value is missing or unparseable.
+const DefaultFooterLinksJSON = `[
+  {"title":"产品","links":[
+    {"label":"图片生成","href":"/studio?type=image"},
+    {"label":"视频创作","href":"/studio?type=video"},
+    {"label":"作品广场","href":"/explore"}]},
+  {"title":"社区","links":[
+    {"label":"作品广场","href":"/explore"},
+    {"label":"创作者","href":"/#creators"},
+    {"label":"玩法教程","href":"/inspire"},
+    {"label":"灵感周报","href":"/inspire"}]},
+  {"title":"关于","links":[
+    {"label":"价格方案","href":"/pricing"},
+    {"label":"企业版","href":"/pricing"},
+    {"label":"服务条款","href":"/terms"},
+    {"label":"隐私政策","href":"/privacy"}]}
+]`
+
 // SysConfig is a key-value platform configuration entry (系统配置).
 type SysConfig struct {
 	BaseModel

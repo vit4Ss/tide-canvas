@@ -862,21 +862,61 @@ export default function CreateStudio() {
     }
   }, []);
 
+  // 深链：/studio?type=image|video&tool=<工具>&model=<名称>（首页跑马灯 /
+  // 能力卡直达创作台）。类型立即切换（默认选对应的文生工具，tool 参数可指定
+  // 如 i2i）；模型名先存 ref，等该类型的模型列表加载完成后再落位——直接
+  // setModel 会被列表加载的兜底重置覆盖。
+  const deepModelRef = useRef<string | null>(null);
+  useEffect(() => {
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const t = sp.get("type");
+      const tl = sp.get("tool");
+      const m = sp.get("model");
+      if (t === "image" || t === "video") {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setCurType(t);
+        const tools = MODES_BY_TYPE[t] ?? [];
+        setTool(
+          tl && (tools as string[]).includes(tl)
+            ? (tl as ToolKey)
+            : t === "video"
+              ? "t2v"
+              : "t2i",
+        );
+      }
+      if (m) deepModelRef.current = m;
+    } catch {
+      /* URL API unavailable — ignore */
+    }
+  }, []);
+
   // load the studio models for the current type (public endpoint). Each carries
   // its per-model config; the picker + option pills derive from this list. On
   // empty/failure the built-in fallback lists keep the panel usable. Selection is
   // preserved if the chosen model still exists (so a refetch never resets it).
+  // 请求序号防过期：深链把 curType 从默认 image 切到 video 时，两次加载并发，
+  // 先发后至的 image 响应不能覆盖 video 列表。
+  const modelsReqSeq = useRef(0);
   const reloadModels = useCallback(async () => {
+    const seq = ++modelsReqSeq.current;
     try {
       const res = await marketApi.studioModels(curType);
+      if (seq !== modelsReqSeq.current) return; // stale response
       const list = res.success && Array.isArray(res.data) ? res.data : [];
       setStudioList(list);
       if (list.length) {
         const names = list.map((m) => m.name);
-        setModel((cur) => (names.includes(cur) ? cur : names[0]));
+        const deep = deepModelRef.current;
+        if (deep && names.includes(deep)) {
+          deepModelRef.current = null;
+          setModel(deep);
+        } else {
+          setModel((cur) => (names.includes(cur) ? cur : names[0]));
+        }
       }
     } catch {
-      setStudioList([]);
+      if (seq === modelsReqSeq.current) setStudioList([]);
     }
   }, [curType]);
 

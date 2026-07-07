@@ -99,7 +99,65 @@ func AutoMigrate(db *gorm.DB) error {
 	}
 	// Backfill the market_model.type media category for rows created before the
 	// column existed (idempotent: only touches rows with an empty type).
-	return BackfillMarketModelType(db)
+	if err := BackfillMarketModelType(db); err != nil {
+		return err
+	}
+	// Ensure baseline sys_config keys exist (idempotent). 与 demo 种子不同，这些
+	// 键在任何库（包括已投产的旧库）都必须有行，才能在后台「配置管理」中被
+	// 看到和编辑；已存在时绝不覆盖管理员的修改。
+	if err := ensureBaselineConfig(db); err != nil {
+		return err
+	}
+	// Ensure the canonical home floors exist (idempotent) — 首页楼层按 type 与
+	// 公开首页的区块一一对应，后台的启用/排序/数量即刻作用于首页渲染。
+	return ensureBaselineFloors(db)
+}
+
+// ensureBaselineConfig inserts must-exist sys_config rows when missing.
+func ensureBaselineConfig(db *gorm.DB) error {
+	var row SysConfig
+	return db.Where(SysConfig{ConfigKey: ConfigKeyFooterLinks}).
+		Attrs(SysConfig{
+			ConfigValue: DefaultFooterLinksJSON,
+			Group:       "site",
+			Description: "页脚链接（JSON 数组：[{title, links:[{label, href}]}]），前台 /api/site/footer 读取",
+		}).
+		FirstOrCreate(&row).Error
+}
+
+// CanonicalHomeFloors are the floor rows that map 1:1 onto the public
+// homepage's sections. Type is the machine key the homepage matches on
+// (与后台楼层编辑弹窗的「楼层类型」选项一致)；管理员改 enabled/sortOrder/
+// count 即刻驱动首页的显隐、顺序与内容数量。
+var CanonicalHomeFloors = []HomeFloor{
+	{Name: "首屏 Hero", Subtitle: "主视觉 + 提示词输入 + 作品墙", Type: "英雄区", ContentSource: "auto", Count: 1, SortOrder: 1, Enabled: true, Layout: "carousel", Platforms: `["web"]`},
+	{Name: "核心能力", Subtitle: "CORE 生成品类 + TOOL 编辑功能", Type: "能力展示", ContentSource: "manual", Count: 7, SortOrder: 2, Enabled: true, Layout: "grid", Platforms: `["web"]`},
+	{Name: "无限画布", Subtitle: "节点画布演示", Type: "无限画布", ContentSource: "manual", Count: 1, SortOrder: 3, Enabled: true, Layout: "carousel", Platforms: `["web"]`},
+	{Name: "作品广场", Subtitle: "社区实时作品 Coverflow", Type: "作品流", ContentSource: "auto", Count: 0, SortOrder: 4, Enabled: true, Layout: "carousel", Platforms: `["web"]`},
+	{Name: "模型跑马灯", Subtitle: "在库热门模型滚动展示", Type: "模型跑马灯", ContentSource: "auto", Count: 0, SortOrder: 5, Enabled: true, Layout: "carousel", Platforms: `["web"]`},
+	{Name: "常见问题", Subtitle: "首页 FAQ 折叠列表", Type: "FAQ", ContentSource: "manual", Count: 0, SortOrder: 6, Enabled: true, Layout: "list", Platforms: `["web"]`},
+	{Name: "价格方案", Subtitle: "套餐卡 + 完整方案入口", Type: "价格", ContentSource: "manual", Count: 0, SortOrder: 7, Enabled: true, Layout: "grid", Platforms: `["web"]`},
+}
+
+// ensureBaselineFloors makes home_floor rows match the homepage's real
+// sections: the old English demo rows (banner/works/collections — seeded when
+// the floor admin had no consumer) are removed, and each canonical type is
+// inserted when missing. Existing canonical rows are NEVER touched, so admin
+// edits (enabled/sortOrder/count/名称) survive restarts.
+func ensureBaselineFloors(db *gorm.DB) error {
+	// 旧演示行：英文 type 无法映射任何首页区块，楼层接通后即为纯噪音。
+	if err := db.Where("type IN ?", []string{"banner", "works", "collections"}).
+		Delete(&HomeFloor{}).Error; err != nil {
+		return err
+	}
+	for i := range CanonicalHomeFloors {
+		f := CanonicalHomeFloors[i]
+		var row HomeFloor
+		if err := db.Where(HomeFloor{Type: f.Type}).Attrs(f).FirstOrCreate(&row).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // fixupFreeTextColumns alters the four mis-typed json columns to varchar. Idempotent:

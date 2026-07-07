@@ -26,12 +26,38 @@ export interface PostLiteVO {
   createTime: string;
 }
 
+/** One footer link (FooterLinkVO). */
+export interface FooterLinkVO {
+  label: string;
+  href: string;
+}
+
+/** One titled footer column (FooterColVO) — GET /api/site/footer, driven by
+ *  the admin 配置管理 key `site.footerLinks`. */
+export interface FooterColVO {
+  title: string;
+  links: FooterLinkVO[];
+}
+
+/** One enabled homepage floor (HomeFloorLiteVO) — GET /api/site/floors,
+ *  driven by the admin 首页楼层 management. `type` is the machine key the
+ *  homepage matches its sections on. */
+export interface HomeFloorLiteVO {
+  type: string;
+  name: string;
+  count: number;
+  sortOrder: number;
+}
+
 /** Slimmed market model for the home "hot models" rail / marquee. */
 export interface ModelLiteVO {
   id: string;
   authorId: string;
   name: string;
   coverUrl: string;
+  /** Media category (text | image | video | audio) — drives the marquee
+   *  deep-link target (创作台 image/video vs 对话 text). */
+  type: string;
   tags: string[];
   /** Decimal price serialized as a string (e.g. "0", "29.00"). */
   price: string;

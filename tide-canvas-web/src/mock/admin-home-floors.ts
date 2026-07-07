@@ -1,115 +1,21 @@
 // ============================================================================
-// 首页楼层 (Home floors) mock — ported 1:1 from design-ref/liuguang/admin.js
-// V.floor() + floorModal(). 100% mock.
-//
-// Sections:
-//  - HOME_FLOORS        → the draggable .floor list (名称 / 副标题 / 启用)
-//  - FLOOR_GLOBAL_*     → 楼层全局配置 cfg-cards (背景流光 / 首屏 CTA)
-//  - FLOOR_*            → option lists feeding the floorModal selects/chips.
+// 首页楼层 (Home floors) — floorModal 的 UI 选项集（select/chip options）。
+// 楼层数据本身来自真实接口 /api/admin/home/floors（adminHomeFloorsApi），
+// 旧的 HOME_FLOORS mock 列表与 HomeFloor mock 类型已删除（2026-07 审计）。
 // ============================================================================
 
-/** A 首页楼层 row (one draggable .floor card). */
-export interface HomeFloor {
-  /** 楼层名称 (data-floor key). */
-  name: string;
-  /** 副标题 / meta line. */
-  subtitle: string;
-  /** 是否启用. */
-  enabled: boolean;
-  /** 楼层类型 (for the edit modal). */
-  type: string;
-  /** 内容源 (for the edit modal). */
-  contentSource: string;
-  /** 展示数量. */
-  count: number;
-  /** 布局样式 (single-select chip). */
-  layout: string;
-  /** 可见端 (multi-select chips). */
-  platforms: string[];
-}
-
-/** 首页楼层管理 — 拖拽排序，控制首页各楼层的展示与内容源. */
-export const HOME_FLOORS: HomeFloor[] = [
-  {
-    name: "英雄区 Hero",
-    subtitle: "主视觉 + Prompt 输入",
-    enabled: true,
-    type: "英雄区",
-    contentSource: "人工精选",
-    count: 1,
-    layout: "轮播",
-    platforms: ["Web", "iOS", "Android", "小程序"],
-  },
-  {
-    name: "能力展示",
-    subtitle: "4 张能力卡",
-    enabled: true,
-    type: "能力展示",
-    contentSource: "人工精选",
-    count: 4,
-    layout: "网格",
-    platforms: ["Web", "iOS", "Android", "小程序"],
-  },
-  {
-    name: "无限画布",
-    subtitle: "节点画布演示",
-    enabled: true,
-    type: "自定义",
-    contentSource: "人工精选",
-    count: 1,
-    layout: "横向滑动",
-    platforms: ["Web", "iOS", "Android"],
-  },
-  {
-    name: "作品广场 Coverflow",
-    subtitle: "实时作品流",
-    enabled: true,
-    type: "作品流",
-    contentSource: "实时热度",
-    count: 10,
-    layout: "Coverflow",
-    platforms: ["Web", "iOS", "Android", "小程序"],
-  },
-  {
-    name: "创作者榜",
-    subtitle: "Top 10 创作者",
-    enabled: false,
-    type: "创作者榜",
-    contentSource: "实时热度",
-    count: 10,
-    layout: "瀑布流",
-    platforms: ["Web", "iOS", "Android"],
-  },
-  {
-    name: "价格方案",
-    subtitle: "三档套餐",
-    enabled: true,
-    type: "价格",
-    contentSource: "人工精选",
-    count: 3,
-    layout: "网格",
-    platforms: ["Web", "iOS", "Android", "小程序"],
-  },
-  {
-    name: "FAQ",
-    subtitle: "常见问题",
-    enabled: true,
-    type: "FAQ",
-    contentSource: "人工精选",
-    count: 8,
-    layout: "网格",
-    platforms: ["Web", "iOS", "Android", "小程序"],
-  },
-];
-
-/** floorModal — 楼层类型 select options. */
+/** floorModal — 楼层类型 select options。前 7 项与公开首页的区块一一对应
+ *  （type 即匹配键，见 (site)/page.tsx DEFAULT_FLOOR_TYPES）；创作者榜/自定义
+ *  暂无对应区块，首页会忽略。 */
 export const FLOOR_TYPE_OPTIONS = [
   "英雄区",
   "能力展示",
+  "无限画布",
   "作品流",
-  "创作者榜",
-  "价格",
+  "模型跑马灯",
   "FAQ",
+  "价格",
+  "创作者榜",
   "自定义",
 ] as const;
 
