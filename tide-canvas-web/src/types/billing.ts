@@ -14,25 +14,27 @@ export interface PlanVO {
   items: string[];
 }
 
-/** Point top-up bundle shown alongside plans (PointPackageVO). */
-export interface PointPackageVO {
-  id: string;
-  name: string;
-  points: number;
-  bonusPoints: number;
-  price: number;
-}
-
 /** epay pay method. Maps to the backend payChannel → epay type. */
 export type PayChannel = "alipay" | "wxpay";
 
-/** Body for POST /api/orders (CreateOrderDTO). Exactly one of planId /
- *  packageId is required, matching `type`. */
+/** One selectable pay method (PayChannelVO), driven by the 管理后台 支付渠道
+ *  enabled switches (GET /api/billing/channels). */
+export interface PayChannelVO {
+  key: PayChannel;
+  name: string;
+}
+
+/** Billing cycle for plan orders. Yearly charges 12 × the plan's discounted
+ *  per-month yearly price and grants 12 × the monthly points. */
+export type BillCycle = "monthly" | "yearly";
+
+/** Body for POST /api/orders (CreateOrderDTO). Only plan purchases are
+ *  accepted — 积分随套餐发放，无单独积分包通道。 */
 export interface CreateOrderDTO {
-  type: "plan" | "point_package";
-  planId?: string;
-  packageId?: string;
+  type: "plan";
+  planId: string;
   payChannel?: PayChannel;
+  cycle?: BillCycle;
 }
 
 /** Order view returned by create/list/detail (OrderVO). On creation `payUrl`
@@ -43,10 +45,17 @@ export interface OrderVO {
   orderNo: string;
   type: string;
   planId?: string | null;
+  /** Billing cycle for plan orders ("monthly" / "yearly"); absent for packages. */
+  cycle?: string;
   amount: number;
   status: number;
   payTime?: string | null;
   createTime: string;
+  /** Checkout deadline (createTime + 30min), present only while pending.
+   *  过期的待支付订单会被服务端懒取消。 */
+  expireTime?: string | null;
+  /** epay cashier URL. Present on creation, and on GET detail while the order
+   *  is still pending (regenerated server-side for 继续支付). */
   payUrl?: string;
 }
 

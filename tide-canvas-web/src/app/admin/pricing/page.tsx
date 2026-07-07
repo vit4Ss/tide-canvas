@@ -4,11 +4,13 @@
    /admin/pricing — 价格管理 (REAL data).
 
    Liuguang admin.js V.price() skin, now backed by the real admin API
-   (src/lib/admin-pricing-api.ts → /api/admin/plans + /api/admin/packages).
+   (src/lib/admin-pricing-api.ts → /api/admin/plans).
    Editing plans here changes the public 定价 cards (same `plan` table).
 
-   - 套餐管理   : GET/POST/PUT/DELETE /api/admin/plans   (会员套餐 → public pricing)
-   - 积分包管理 : GET/POST/PUT/DELETE /api/admin/packages (one-off point packages)
+   - 套餐管理 : GET/POST/PUT/DELETE /api/admin/plans (会员套餐 → public pricing)
+
+   积分包管理已下线（2026-07-08 用户拍板：积分只随套餐发放，用户端购买通道
+   与后台管理一并移除；point_package 表保留仅供遗留订单结算/展示）。
 
    KEEPS the exact liuguang markup/classes + shared <Panel/AdminTable/StatusPill/
    SwitchToggle/RowActions/AdminModal/StatCardGrid> components. Mock import dropped.
@@ -30,12 +32,7 @@ import {
 import type { Kpi } from "@/mock/admin";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminPricingApi } from "@/lib/admin-pricing-api";
-import type {
-  AdminPlan,
-  AdminPlanUpsertDTO,
-  AdminPointPackage,
-  AdminPointPackageUpsertDTO,
-} from "@/types/admin-pricing";
+import type { AdminPlan, AdminPlanUpsertDTO } from "@/types/admin-pricing";
 
 const yuan = (n: number) => `¥${n.toLocaleString("zh-CN")}`;
 const num = (n: number) => n.toLocaleString("zh-CN");
@@ -70,34 +67,10 @@ const planToForm = (p: AdminPlan): PlanForm => ({
   status: p.status === 1,
 });
 
-/* ── package modal form state ──────────────────────────────────────────── */
-interface PackageForm {
-  name: string;
-  points: string;
-  bonusPoints: string;
-  price: string;
-  status: boolean;
-}
-const emptyPackageForm = (): PackageForm => ({
-  name: "",
-  points: "",
-  bonusPoints: "",
-  price: "",
-  status: true,
-});
-const packageToForm = (p: AdminPointPackage): PackageForm => ({
-  name: p.name,
-  points: String(p.points),
-  bonusPoints: String(p.bonusPoints),
-  price: String(p.price),
-  status: p.status === 1,
-});
-
 export default function AdminPricingPage() {
   const ensureSession = useAuthStore((s) => s.ensureSession);
 
   const [plans, setPlans] = useState<AdminPlan[]>([]);
-  const [packages, setPackages] = useState<AdminPointPackage[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -106,24 +79,14 @@ export default function AdminPricingPage() {
   const [editingPlan, setEditingPlan] = useState<AdminPlan | null>(null);
   const [planForm, setPlanForm] = useState<PlanForm>(emptyPlanForm());
 
-  // package modal
-  const [pkgOpen, setPkgOpen] = useState(false);
-  const [editingPkg, setEditingPkg] = useState<AdminPointPackage | null>(null);
-  const [pkgForm, setPkgForm] = useState<PackageForm>(emptyPackageForm());
-
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       await ensureSession();
-      const [planRes, pkgRes] = await Promise.all([
-        adminPricingApi.listPlans(),
-        adminPricingApi.listPackages(),
-      ]);
+      const planRes = await adminPricingApi.listPlans();
       if (planRes.success && planRes.data) setPlans(planRes.data);
-      if (pkgRes.success && pkgRes.data) setPackages(pkgRes.data);
       if (!planRes.success) setError(planRes.message || "加载套餐失败");
-      else if (!pkgRes.success) setError(pkgRes.message || "加载积分包失败");
     } catch {
       setError("加载失败，请稍后重试");
     } finally {
@@ -145,10 +108,10 @@ export default function AdminPricingPage() {
     return [
       { k: "在售套餐", v: String(onSale), dir: "up" },
       { k: "套餐总数", v: String(plans.length), dir: "up" },
-      { k: "积分包", v: String(packages.length), dir: "up" },
+      { k: "付费套餐", v: String(paid.length), dir: "up" },
       { k: "套餐均价", v: yuan(avgMonthly), dir: "up" },
     ];
-  }, [plans, packages]);
+  }, [plans]);
 
   /* ── plan actions ────────────────────────────────────────────────────── */
   const openCreatePlan = () => {
@@ -218,57 +181,6 @@ export default function AdminPricingPage() {
     const res = await adminPricingApi.deletePlan(p.id);
     if (res.success) load();
     else setError(res.message || "删除套餐失败");
-  };
-
-  /* ── package actions ─────────────────────────────────────────────────── */
-  const openCreatePkg = () => {
-    setEditingPkg(null);
-    setPkgForm(emptyPackageForm());
-    setPkgOpen(true);
-  };
-  const openEditPkg = (p: AdminPointPackage) => {
-    setEditingPkg(p);
-    setPkgForm(packageToForm(p));
-    setPkgOpen(true);
-  };
-  const savePkg = async () => {
-    const dto: AdminPointPackageUpsertDTO = {
-      name: pkgForm.name.trim(),
-      points: toNum(pkgForm.points),
-      bonusPoints: toNum(pkgForm.bonusPoints),
-      price: toNum(pkgForm.price),
-      status: pkgForm.status ? 1 : 0,
-      // full-overwrite upsert: preserve sortOrder (not in the form) on edit.
-      ...(editingPkg ? { sortOrder: editingPkg.sortOrder } : {}),
-    };
-    if (!dto.name) return;
-    const res = editingPkg
-      ? await adminPricingApi.updatePackage(editingPkg.id, dto)
-      : await adminPricingApi.createPackage(dto);
-    if (res.success) {
-      setPkgOpen(false);
-      load();
-    } else {
-      setError(res.message || "保存积分包失败");
-    }
-  };
-  const togglePkg = async (p: AdminPointPackage, next: boolean) => {
-    const dto: AdminPointPackageUpsertDTO = {
-      name: p.name,
-      points: p.points,
-      bonusPoints: p.bonusPoints,
-      price: p.price,
-      sortOrder: p.sortOrder,
-      status: next ? 1 : 0,
-    };
-    const res = await adminPricingApi.updatePackage(p.id, dto);
-    if (res.success) load();
-    else setError(res.message || "更新状态失败");
-  };
-  const deletePkg = async (p: AdminPointPackage) => {
-    const res = await adminPricingApi.deletePackage(p.id);
-    if (res.success) load();
-    else setError(res.message || "删除积分包失败");
   };
 
   return (
@@ -352,60 +264,6 @@ export default function AdminPricingPage() {
         )}
       </Panel>
 
-      {/* 积分包管理 */}
-      <Panel
-        title="积分包管理"
-        sub="一次性积分充值包"
-        tools={
-          <button type="button" className="adm-btn ghost" onClick={openCreatePkg}>
-            + 新增积分包
-          </button>
-        }
-      >
-        {loading ? (
-          <div style={{ padding: 18 }} className="muted">
-            加载中…
-          </div>
-        ) : packages.length === 0 ? (
-          <div style={{ padding: 18 }} className="muted">
-            暂无积分包，点击「新增积分包」创建。
-          </div>
-        ) : (
-          <AdminTable<AdminPointPackage>
-            rows={packages}
-            rowKey={(r) => r.id}
-            columns={[
-              { header: "积分包", className: "strong", cell: (r) => r.name },
-              { header: "积分", className: "mono", cell: (r) => num(r.points) },
-              { header: "赠送", className: "mono", cell: (r) => `+${num(r.bonusPoints)}` },
-              { header: "价格", className: "mono", cell: (r) => yuan(r.price) },
-              {
-                header: "状态",
-                cell: (r) => (
-                  <SwitchToggle
-                    checked={r.status === 1}
-                    onChange={(next) => togglePkg(r, next)}
-                    aria-label={`${r.name} 上架`}
-                  />
-                ),
-              },
-              {
-                header: "操作",
-                align: "right",
-                cell: (r) => (
-                  <RowActions
-                    actions={[
-                      { label: "编辑", onClick: () => openEditPkg(r) },
-                      { label: "删除", onClick: () => deletePkg(r) },
-                    ]}
-                  />
-                ),
-              },
-            ]}
-          />
-        )}
-      </Panel>
-
       {/* 新增 / 编辑套餐 modal */}
       <AdminModal
         open={planOpen}
@@ -459,58 +317,6 @@ export default function AdminPricingPage() {
                 checked={planForm.status}
                 onChange={(next) => setPlanForm((f) => ({ ...f, status: next }))}
                 aria-label="套餐状态"
-              />
-            </Field>
-          </FormGrid>
-        </FormCard>
-      </AdminModal>
-
-      {/* 新增 / 编辑积分包 modal */}
-      <AdminModal
-        open={pkgOpen}
-        title={editingPkg ? "编辑积分包" : "新增积分包"}
-        subtitle="配置一次性积分充值包"
-        onClose={() => setPkgOpen(false)}
-        onSave={savePkg}
-      >
-        <FormCard title="积分包信息">
-          <FormGrid>
-            <Field label="名称" required span={2}>
-              <input
-                placeholder="如：积分 3000"
-                value={pkgForm.name}
-                onChange={(e) => setPkgForm((f) => ({ ...f, name: e.target.value }))}
-              />
-            </Field>
-            <Field label="价格 (¥)" required span={2}>
-              <input
-                type="number"
-                placeholder="如：39"
-                value={pkgForm.price}
-                onChange={(e) => setPkgForm((f) => ({ ...f, price: e.target.value }))}
-              />
-            </Field>
-            <Field label="积分" required span={2}>
-              <input
-                type="number"
-                placeholder="如：3000"
-                value={pkgForm.points}
-                onChange={(e) => setPkgForm((f) => ({ ...f, points: e.target.value }))}
-              />
-            </Field>
-            <Field label="赠送积分" span={2}>
-              <input
-                type="number"
-                placeholder="如：300"
-                value={pkgForm.bonusPoints}
-                onChange={(e) => setPkgForm((f) => ({ ...f, bonusPoints: e.target.value }))}
-              />
-            </Field>
-            <Field label="状态" span={4} hint="关闭后该积分包下架">
-              <SwitchToggle
-                checked={pkgForm.status}
-                onChange={(next) => setPkgForm((f) => ({ ...f, status: next }))}
-                aria-label="积分包状态"
               />
             </Field>
           </FormGrid>

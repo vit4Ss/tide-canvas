@@ -3,36 +3,39 @@
 /* ============================================================================
    PayModal — pay-method chooser that starts an epay checkout.
 
-   Given a purchase intent (a plan or a point package + display name + amount)
-   it lets the user pick 支付宝 / 微信, creates the order via orderApi.create,
+   Given a purchase intent (a plan + billing cycle + display name + amount) it
+   lets the user pick 支付宝 / 微信, creates the order via orderApi.create,
    persists the pending order id (so the /billing return page can verify it),
    and redirects the browser to the epay page-jump cashier (order.payUrl).
+   积分只随套餐发放——单独的积分包购买通道已下线（产品决策，2026-07）。
 
    The caller is responsible for gating auth before opening this (a checkout
-   requires a session). Styling stays minimal and theme-driven (CSS vars) so it
-   sits quietly inside the liuguang shell.
+   requires a session). Styling lives in the co-located pay-modal.css and uses
+   only the liuguang theme tokens (flux / imini), mirroring .acc-modal.
    ========================================================================== */
 
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { orderApi, PENDING_ORDER_KEY } from "@/lib/billing-api";
+import { billingApi, orderApi, PENDING_ORDER_KEY } from "@/lib/billing-api";
+import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";
-import type { CreateOrderDTO, PayChannel } from "@/types/billing";
+import type { BillCycle, CreateOrderDTO, PayChannel, PayChannelVO } from "@/types/billing";
+import "./pay-modal.css";
 
 export interface PurchaseIntent {
-  type: "plan" | "point_package";
-  planId?: string;
-  packageId?: string;
-  /** Display name shown in the modal (plan / package name). */
+  planId: string;
+  /** Billing cycle; forwarded to the order (server prices from it). */
+  cycle: BillCycle;
+  /** Display name shown in the modal (plan name). */
   name: string;
   /** Amount in CNY for display only — the server prices the order. */
   amount: number;
+  /** Optional price breakdown shown under the amount (e.g. "¥39/月 × 12 个月"). */
+  amountNote?: string;
 }
 
-const CHANNELS: { key: PayChannel; label: string; icon: string }[] = [
-  { key: "alipay", label: "支付宝", icon: "支" },
-  { key: "wxpay", label: "微信支付", icon: "微" },
-];
+/** Icon glyphs per epay key; names come from the admin channel rows. */
+const CHANNEL_ICON: Record<PayChannel, string> = { alipay: "支", wxpay: "微" };
 
 export default function PayModal({
   intent,
@@ -41,7 +44,10 @@ export default function PayModal({
   intent: PurchaseIntent;
   onClose: () => void;
 }) {
-  const [channel, setChannel] = useState<PayChannel>("alipay");
+  const fetchUser = useAuthStore((s) => s.fetchUser);
+  const [channel, setChannel] = useState<PayChannel | null>(null);
+  // null = loading; [] = admin disabled every channel (checkout closed).
+  const [channels, setChannels] = useState<PayChannelVO[] | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -54,15 +60,60 @@ export default function PayModal({
     };
   }, [onClose, submitting]);
 
+  // 从收银台按「返回」回来时，页面从 bfcache 原样恢复，冻结的 submitting=true
+  // 会把按钮永远卡在「正在跳转…」。pageshow(persisted) 是唯一的恢复时机：
+  // 解锁按钮，并顺手核对一次挂起订单——用户可能已完成支付才按的返回。
+  useEffect(() => {
+    const onShow = (e: PageTransitionEvent) => {
+      if (!e.persisted) return;
+      setSubmitting(false);
+      let pending = "";
+      try {
+        pending = localStorage.getItem(PENDING_ORDER_KEY) || "";
+      } catch {
+        /* ignore */
+      }
+      if (!pending) return;
+      void orderApi.verify(pending).then((res) => {
+        if (res.success && res.data?.paid) {
+          try {
+            localStorage.removeItem(PENDING_ORDER_KEY);
+          } catch {
+            /* ignore */
+          }
+          toast.success("支付成功，积分已到账");
+          fetchUser();
+          onClose();
+        }
+      });
+    };
+    window.addEventListener("pageshow", onShow);
+    return () => window.removeEventListener("pageshow", onShow);
+  }, [onClose, fetchUser]);
+
+  // Available pay methods are the admin 支付渠道 configuration, not a
+  // hard-coded list. Default-select the first enabled one.
+  useEffect(() => {
+    let alive = true;
+    billingApi.channels().then((res) => {
+      if (!alive) return;
+      const list = res.success && res.data ? res.data : [];
+      setChannels(list);
+      setChannel(list[0]?.key ?? null);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const confirm = async () => {
-    if (submitting) return;
+    if (submitting || !channel) return;
     setSubmitting(true);
     const dto: CreateOrderDTO = {
-      type: intent.type,
+      type: "plan",
+      planId: intent.planId,
+      cycle: intent.cycle,
       payChannel: channel,
-      ...(intent.type === "plan"
-        ? { planId: intent.planId }
-        : { packageId: intent.packageId }),
     };
     const res = await orderApi.create(dto);
     if (res.success && res.data?.payUrl) {
@@ -77,146 +128,75 @@ export default function PayModal({
       return;
     }
     setSubmitting(false);
+    // The order row may exist but the gateway is off/unreachable — tell the
+    // user precisely instead of a generic create failure.
+    if (res.success && res.data && !res.data.payUrl) {
+      toast.error("支付通道暂未开通，请稍后再试或联系客服");
+      return;
+    }
     toast.error(res.message || "创建订单失败，请稍后重试");
   };
 
   return (
     <div
+      className="pm-overlay"
       role="dialog"
       aria-modal="true"
       aria-label="选择支付方式"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && !submitting) onClose();
       }}
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 1000,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 20,
-        background: "rgba(8,10,18,.62)",
-        backdropFilter: "blur(6px)",
-      }}
     >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "min(420px, 100%)",
-          borderRadius: 16,
-          border: "1px solid var(--line, rgba(255,255,255,.1))",
-          background: "var(--card, #14161f)",
-          boxShadow: "0 20px 60px rgba(0,0,0,.4)",
-          padding: 24,
-        }}
-      >
-        <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "var(--text, #fff)" }}>
-          确认订单
-        </h3>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "baseline",
-            gap: 12,
-            margin: "16px 0 20px",
-            paddingBottom: 16,
-            borderBottom: "1px solid var(--line, rgba(255,255,255,.08))",
-          }}
-        >
-          <span style={{ fontSize: 14, color: "var(--text-dim, #aab)" }}>{intent.name}</span>
-          <span style={{ fontSize: 22, fontWeight: 800, color: "var(--text, #fff)" }}>
-            ¥{intent.amount}
+      <div className="pm" onClick={(e) => e.stopPropagation()}>
+        <h3>确认订单</h3>
+
+        <div className="pm-line">
+          <span className="pm-name">{intent.name}</span>
+          <span className="pm-price">
+            <span className="pm-amt">¥{intent.amount}</span>
+            {intent.amountNote && <span className="pm-note">{intent.amountNote}</span>}
           </span>
         </div>
 
-        <div style={{ fontSize: 13, color: "var(--text-dim, #aab)", marginBottom: 10 }}>
-          选择支付方式
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          {CHANNELS.map((c) => {
-            const on = channel === c.key;
-            return (
+        <div className="pm-sub">选择支付方式</div>
+        {channels === null ? (
+          <div className="pm-empty">
+            <Loader2 className="h-4 w-4 animate-spin" /> 正在载入支付方式…
+          </div>
+        ) : channels.length === 0 ? (
+          <div className="pm-empty">支付通道暂未开通，请稍后再试或联系客服。</div>
+        ) : (
+          <div className="pm-channels">
+            {channels.map((c) => (
               <button
                 key={c.key}
                 type="button"
+                className={`pm-ch${channel === c.key ? " on" : ""}`}
                 onClick={() => setChannel(c.key)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  padding: "12px 14px",
-                  borderRadius: 12,
-                  cursor: "pointer",
-                  border: on
-                    ? "1.5px solid var(--brand, #6b5bff)"
-                    : "1px solid var(--line, rgba(255,255,255,.12))",
-                  background: on ? "var(--brand-soft, rgba(107,91,255,.1))" : "transparent",
-                  color: "var(--text, #fff)",
-                  transition: "border-color .16s ease, background .16s ease",
-                }}
               >
-                <span
-                  aria-hidden
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    width: 26,
-                    height: 26,
-                    borderRadius: 7,
-                    fontSize: 13,
-                    fontWeight: 700,
-                    color: "#fff",
-                    background: c.key === "alipay" ? "#1677ff" : "#07c160",
-                  }}
-                >
-                  {c.icon}
+                <span aria-hidden className={`ic ${c.key}`}>
+                  {CHANNEL_ICON[c.key] ?? c.name.slice(0, 1)}
                 </span>
-                <span style={{ fontSize: 14 }}>{c.label}</span>
+                <span>{c.name}</span>
               </button>
-            );
-          })}
-        </div>
+            ))}
+          </div>
+        )}
 
-        <div style={{ display: "flex", gap: 10, marginTop: 24 }}>
+        <div className="pm-actions">
           <button
             type="button"
+            className="pm-btn ghost"
             onClick={onClose}
             disabled={submitting}
-            style={{
-              flex: "0 0 auto",
-              padding: "11px 18px",
-              borderRadius: 10,
-              border: "1px solid var(--line, rgba(255,255,255,.14))",
-              background: "transparent",
-              color: "var(--text-dim, #aab)",
-              cursor: submitting ? "not-allowed" : "pointer",
-              fontSize: 14,
-            }}
           >
             取消
           </button>
           <button
             type="button"
+            className="pm-btn pri"
             onClick={confirm}
-            disabled={submitting}
-            style={{
-              flex: 1,
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
-              padding: "11px 18px",
-              borderRadius: 10,
-              border: "none",
-              background: "var(--brand, #6b5bff)",
-              color: "#fff",
-              cursor: submitting ? "wait" : "pointer",
-              fontSize: 14,
-              fontWeight: 600,
-            }}
+            disabled={submitting || !channel}
           >
             {submitting ? (
               <>
@@ -228,7 +208,7 @@ export default function PayModal({
           </button>
         </div>
 
-        <p style={{ margin: "14px 0 0", fontSize: 12, color: "var(--text-faint, #778)", lineHeight: 1.5 }}>
+        <p className="pm-tip">
           将跳转至第三方收银台完成支付。支付完成后请返回本站，积分将自动到账。
         </p>
       </div>

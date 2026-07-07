@@ -15,23 +15,25 @@ import (
 // Frontend contract (tide-canvas-web -> billingApi / orderApi):
 //
 //	GET    /api/billing/plans        -> []PlanVO                       (public)
-//	GET    /api/billing/packages     -> []PointPackageVO               (public)
+//	GET    /api/billing/channels     -> []PayChannelVO                 (public)
 //	GET/POST /api/billing/notify     -> "success"|"fail" (text)        (epay webhook)
-//	POST   /api/orders               CreateOrderDTO -> OrderVO{payUrl} (auth)
+//	POST   /api/orders               CreateOrderDTO{cycle} -> OrderVO{payUrl} (auth)
 //	GET    /api/orders               OrderQuery -> PageData<OrderVO>   (auth)
-//	GET    /api/orders/:id           -> OrderVO                        (auth)
+//	GET    /api/orders/:id           -> OrderVO{payUrl if pending}     (auth)
 //	POST   /api/orders/:id/cancel    -> void                           (auth)
 //	POST   /api/orders/:id/verify    -> VerifyResult{paid,granted}     (auth)
 func Register(api *gin.RouterGroup, d *app.Deps) {
 	svc := newService(d.DB, d.Cfg)
 	h := newHandler(svc)
 
-	// Public pricing catalog + payment-gateway webhook. All three are static
+	// Public pricing catalog + payment-gateway webhook. All routes are static
 	// siblings under /billing (no param segments) so gin never panics on a
-	// static-vs-param conflict.
+	// static-vs-param conflict. 积分包的用户端购买/读取已下线（积分只随套餐
+	// 发放）；管理端 /api/admin/packages 不受影响。
 	b := api.Group("/billing")
 	b.GET("/plans", h.listPlans)
-	b.GET("/packages", h.listPackages)
+	// 可用支付方式由管理后台「支付渠道」开关驱动（pay_channel.enabled）。
+	b.GET("/channels", h.listChannels)
 	// epay delivers the async notify as a GET (query params); accept POST too.
 	b.GET("/notify", h.notify)
 	b.POST("/notify", h.notify)

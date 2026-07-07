@@ -42,26 +42,4 @@ export interface AdminPlanUpsertDTO {
   status?: number;
 }
 
-/** g4PointPackageVO — admin point-package row view. */
-export interface AdminPointPackage {
-  id: string;
-  name: string;
-  points: number;
-  bonusPoints: number;
-  price: number;
-  sortOrder: number;
-  /** 1 = 上架, 0 = 下架. */
-  status: number;
-  createTime: string;
-  updateTime: string;
-}
-
-/** g4PointPackageUpsertDTO — create/update body for a point package. */
-export interface AdminPointPackageUpsertDTO {
-  name: string;
-  points?: number;
-  bonusPoints?: number;
-  price?: number;
-  sortOrder?: number;
-  status?: number;
-}
+// 积分包（AdminPointPackage）类型已随管理功能一并移除：积分只随套餐发放。

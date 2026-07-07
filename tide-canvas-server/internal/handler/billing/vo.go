@@ -32,25 +32,20 @@ type PlanVO struct {
 	Items         []string `json:"items"`
 }
 
-// PointPackageVO is the top-up bundle view shown alongside plans.
-type PointPackageVO struct {
-	ID          idgen.ID `json:"id"`
-	Name        string   `json:"name"`
-	Points      int      `json:"points"`
-	BonusPoints int      `json:"bonusPoints"`
-	Price       float64  `json:"price"`
-}
-
 // OrderVO is the order view returned by create/list/detail.
 type OrderVO struct {
 	ID         idgen.ID  `json:"id"`
 	OrderNo    string    `json:"orderNo"`
 	Type       string    `json:"type"`
 	PlanID     *idgen.ID `json:"planId"`
+	Cycle      string    `json:"cycle,omitempty"`
 	Amount     float64   `json:"amount"`
 	Status     int       `json:"status"`
 	PayTime    *string   `json:"payTime"`
 	CreateTime string    `json:"createTime"`
+	// ExpireTime is the checkout deadline (createTime + payTTL), present only
+	// while the order is still pending so the client can show 剩余支付时间.
+	ExpireTime *string `json:"expireTime,omitempty"`
 	// PayURL is the epay page-jump cashier URL to redirect the browser to. Set
 	// only on order creation (empty on list/detail, hence omitempty).
 	PayURL string `json:"payUrl,omitempty"`
@@ -64,15 +59,25 @@ type planFeatures struct {
 	Cta      string   `json:"cta"`
 	Featured bool     `json:"featured"`
 	Items    []string `json:"items"`
+	// VipLevel is the membership level a paid purchase of this plan confers on
+	// the buyer (0 = no change). Consumed by the settle flow, not exposed in VOs.
+	VipLevel int `json:"vipLevel"`
 }
 
-// toPlanVO maps a persisted plan to its pricing-card VO, decoding the Features
-// JSON blob for the presentation extras (tolerating empty/invalid JSON).
-func toPlanVO(p *model.Plan) PlanVO {
+// decodePlanFeatures decodes a plan's Features JSON blob, tolerating
+// empty/invalid JSON (zero-value features).
+func decodePlanFeatures(p *model.Plan) planFeatures {
 	var f planFeatures
 	if p.Features != "" {
 		_ = json.Unmarshal([]byte(p.Features), &f)
 	}
+	return f
+}
+
+// toPlanVO maps a persisted plan to its pricing-card VO, decoding the Features
+// JSON blob for the presentation extras.
+func toPlanVO(p *model.Plan) PlanVO {
+	f := decodePlanFeatures(p)
 	items := f.Items
 	if items == nil {
 		items = []string{}
@@ -91,18 +96,6 @@ func toPlanVO(p *model.Plan) PlanVO {
 	}
 }
 
-// toPointPackageVO maps a persisted point package to its VO.
-func toPointPackageVO(p *model.PointPackage) PointPackageVO {
-	price, _ := p.Price.Float64()
-	return PointPackageVO{
-		ID:          p.ID,
-		Name:        p.Name,
-		Points:      p.Points,
-		BonusPoints: p.BonusPoints,
-		Price:       price,
-	}
-}
-
 // toOrderVO maps a persisted order to its VO.
 func toOrderVO(o *model.Order) OrderVO {
 	amount, _ := o.Amount.Float64()
@@ -111,6 +104,7 @@ func toOrderVO(o *model.Order) OrderVO {
 		OrderNo:    o.OrderNo,
 		Type:       o.OrderType,
 		PlanID:     o.PlanID,
+		Cycle:      o.Cycle,
 		Amount:     amount,
 		Status:     o.Status,
 		CreateTime: formatTime(o.CreateTime),
@@ -118,6 +112,10 @@ func toOrderVO(o *model.Order) OrderVO {
 	if o.PayTime != nil && !o.PayTime.IsZero() {
 		t := o.PayTime.Format(time.RFC3339)
 		vo.PayTime = &t
+	}
+	if o.Status == 0 && !o.CreateTime.IsZero() {
+		t := payDeadline(o.CreateTime).Format(time.RFC3339)
+		vo.ExpireTime = &t
 	}
 	return vo
 }

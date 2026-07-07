@@ -1,0 +1,214 @@
+/* ============================================================================
+   PayModal — theme-token styles (co-located, imported by pay-modal.tsx).
+
+   Tokens come from the active liuguang theme (flux.css light / imini-theme.css
+   dark): --surface / --border(-strong) / --text(-dim/-faint) / --panel-hover /
+   --accent-soft / --grad / --pill / --shadow-pop. No hard-coded palette so the
+   modal follows whichever theme the shell runs.
+
+   Primary button follows the established "白按钮配黑字" pattern: base uses
+   var(--grad) + white text (flux), and a body.imini override flips it to the
+   imini white pill with dark text (same as body.imini .acc-modal .m-btn.pri).
+   支付宝/微信 icon squares keep their third-party brand colors — payment marks
+   need recognizability and are not part of the UI palette.
+   ========================================================================== */
+
+.pm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: pm-fade 0.16s ease;
+}
+@keyframes pm-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+.pm {
+  width: min(420px, 100%);
+  border-radius: var(--r-lg, 16px);
+  border: 1px solid var(--border-strong, #c3c8d2);
+  background: var(--surface, #ffffff);
+  box-shadow: var(--shadow-pop, 0 24px 64px rgba(0, 0, 0, 0.3));
+  padding: 24px;
+  animation: pm-pop 0.18s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+@keyframes pm-pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+.pm h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* order summary row */
+.pm .pm-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin: 16px 0 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.pm .pm-name {
+  font-size: 14px;
+  color: var(--text-dim);
+}
+.pm .pm-price {
+  text-align: right;
+}
+.pm .pm-amt {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--text);
+}
+.pm .pm-note {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.pm .pm-sub {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+
+/* channel chooser */
+.pm .pm-channels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+.pm .pm-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px;
+  border-radius: var(--r, 10px);
+  border: 1px dashed var(--border);
+  font-size: 13px;
+  color: var(--text-faint);
+}
+.pm .pm-ch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--r, 10px);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color 0.16s var(--ease, ease), background 0.16s var(--ease, ease);
+}
+.pm .pm-ch:hover {
+  background: var(--panel-hover, rgba(0, 0, 0, 0.04));
+}
+.pm .pm-ch.on {
+  border-color: var(--accent);
+  background: var(--accent-soft, rgba(0, 0, 0, 0.06));
+  font-weight: 500;
+}
+/* imini 选中语言 = 白底黑字（同 body.imini .seg button.on / .bill-toggle button.on） */
+body.imini .pm .pm-ch.on {
+  background: #fff;
+  border-color: transparent;
+  color: #0a0a0b;
+}
+body.imini .pm .pm-ch.on:hover {
+  background: #fff;
+}
+.pm .pm-ch .ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  flex: none;
+}
+.pm .pm-ch .ic.alipay {
+  background: #1677ff;
+}
+.pm .pm-ch .ic.wxpay {
+  background: #07c160;
+}
+
+/* actions */
+.pm .pm-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 24px;
+}
+.pm .pm-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 42px;
+  padding: 0 18px;
+  border-radius: var(--pill, 999px);
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.16s var(--ease, ease);
+}
+.pm .pm-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.pm .pm-btn.ghost {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  border: 1px solid var(--border-strong);
+  background: transparent;
+}
+.pm .pm-btn.ghost:hover {
+  color: var(--text);
+  background: var(--panel-hover, rgba(0, 0, 0, 0.04));
+}
+.pm .pm-btn.pri {
+  flex: 1;
+  border: none;
+  color: #fff;
+  background: var(--grad);
+}
+.pm .pm-btn.pri:hover {
+  filter: brightness(1.07);
+}
+/* imini 白按钮配黑字（防隐形），同 body.imini .acc-modal .m-btn.pri */
+body.imini .pm .pm-btn.pri {
+  background: #fff;
+  color: #0a0a0b;
+}
+body.imini .pm .pm-btn.pri:hover {
+  filter: none;
+  background: #e8e8ea;
+}
+
+.pm .pm-tip {
+  margin: 14px 0 0;
+  font-size: 12px;
+  color: var(--text-faint);
+  line-height: 1.5;
+}

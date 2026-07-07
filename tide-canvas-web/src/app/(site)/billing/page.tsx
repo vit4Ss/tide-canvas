@@ -11,11 +11,16 @@
    the gateway and credits the order idempotently. On success it refreshes the
    user so the new points balance shows immediately.
 
+   未支付/慢结算路径: polling exhausts → "支付确认中" with a 重新核对 button
+   (re-runs the same idempotent verify), plus the async notify and the account
+   page's 核对到账 as further backstops — a paid order can never be lost, an
+   unpaid one just stays pending until it lazily expires server-side.
+
    Renders inside the (site) layout (nav + footer + flux backdrop provided), so
    it emits only the result card.
    ========================================================================== */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Loader2, CheckCircle2, Clock, XCircle } from "lucide-react";
 import { orderApi, PENDING_ORDER_KEY } from "@/lib/billing-api";
@@ -26,56 +31,56 @@ type Phase = "verifying" | "granted" | "pending" | "none" | "error";
 const MAX_TRIES = 6;
 const RETRY_MS = 1500;
 
+/** Pending order id: ?orderId= wins, else the PayModal-persisted key. */
+function resolveOrderId(): string {
+  const params = new URLSearchParams(window.location.search);
+  const fromQuery = params.get("orderId");
+  if (fromQuery) return fromQuery;
+  try {
+    return localStorage.getItem(PENDING_ORDER_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function clearPending() {
+  try {
+    localStorage.removeItem(PENDING_ORDER_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
 export default function BillingReturnPage() {
   const fetchUser = useAuthStore((s) => s.fetchUser);
   const [phase, setPhase] = useState<Phase>("verifying");
   const ranRef = useRef(false);
+  const busyRef = useRef(false);
 
-  useEffect(() => {
-    // Guard against React 18 StrictMode double-invoke in dev.
-    if (ranRef.current) return;
-    ranRef.current = true;
-
-    let alive = true;
-    const clearPending = () => {
-      try {
-        localStorage.removeItem(PENDING_ORDER_KEY);
-      } catch {
-        /* ignore */
-      }
-    };
-
-    const resolveOrderId = (): string => {
-      const params = new URLSearchParams(window.location.search);
-      const fromQuery = params.get("orderId");
-      if (fromQuery) return fromQuery;
-      try {
-        return localStorage.getItem(PENDING_ORDER_KEY) || "";
-      } catch {
-        return "";
-      }
-    };
-
-    (async () => {
+  // Poll verify until paid or the tries run out. Idempotent server-side, so
+  // both the auto-run and the manual 重新核对 can call it freely.
+  const runVerify = useCallback(async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setPhase("verifying");
+    try {
       const orderId = resolveOrderId();
       if (!orderId) {
-        if (alive) setPhase("none");
+        setPhase("none");
         return;
       }
-      for (let attempt = 0; attempt < MAX_TRIES && alive; attempt++) {
+      for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
         const res = await orderApi.verify(orderId);
-        if (!alive) return;
-        if (res.success && res.data) {
-          if (res.data.paid) {
-            clearPending();
-            // Credits landed (either this call granted them or the async notify
-            // already did) — refresh the user so the balance updates.
-            await fetchUser();
-            if (alive) setPhase("granted");
-            return;
-          }
-        } else if (res.code === 401 || res.code === 403) {
-          if (alive) setPhase("error");
+        if (res.success && res.data?.paid) {
+          clearPending();
+          // Credits landed (either this call granted them or the async notify
+          // already did) — refresh the user so the balance updates.
+          await fetchUser();
+          setPhase("granted");
+          return;
+        }
+        if (!res.success && (res.code === 401 || res.code === 403)) {
+          setPhase("error");
           return;
         }
         // Not paid yet (settlement lag) — wait and retry.
@@ -83,15 +88,20 @@ export default function BillingReturnPage() {
           await new Promise((r) => setTimeout(r, RETRY_MS));
         }
       }
-      // Exhausted retries without a paid result: leave the pending key so a later
-      // manual re-check (or the async notify) can still settle it.
-      if (alive) setPhase("pending");
-    })();
-
-    return () => {
-      alive = false;
-    };
+      // Exhausted retries without a paid result: leave the pending key so 重新
+      // 核对 / the async notify / the account page can still settle it.
+      setPhase("pending");
+    } finally {
+      busyRef.current = false;
+    }
   }, [fetchUser]);
+
+  useEffect(() => {
+    // Guard against React 18 StrictMode double-invoke in dev.
+    if (ranRef.current) return;
+    ranRef.current = true;
+    void runVerify();
+  }, [runVerify]);
 
   return (
     <div className="block page-top">
@@ -106,20 +116,20 @@ export default function BillingReturnPage() {
             background: "var(--card, rgba(255,255,255,.03))",
           }}
         >
-          <Result phase={phase} />
+          <Result phase={phase} onRetry={runVerify} />
         </div>
       </div>
     </div>
   );
 }
 
-function Result({ phase }: { phase: Phase }) {
+function Result({ phase, onRetry }: { phase: Phase; onRetry: () => void }) {
   const icon = {
-    verifying: <Loader2 className="h-10 w-10 animate-spin" style={{ color: "var(--brand, #6b5bff)" }} />,
-    granted: <CheckCircle2 className="h-10 w-10" style={{ color: "#22c55e" }} />,
-    pending: <Clock className="h-10 w-10" style={{ color: "#f59e0b" }} />,
+    verifying: <Loader2 className="h-10 w-10 animate-spin" style={{ color: "var(--accent, #6b5bff)" }} />,
+    granted: <CheckCircle2 className="h-10 w-10" style={{ color: "var(--accent-3, #22c55e)" }} />,
+    pending: <Clock className="h-10 w-10" style={{ color: "var(--text-dim, #f59e0b)" }} />,
     none: <Clock className="h-10 w-10" style={{ color: "var(--text-dim, #99a)" }} />,
-    error: <XCircle className="h-10 w-10" style={{ color: "#ef4444" }} />,
+    error: <XCircle className="h-10 w-10" style={{ color: "var(--text-dim, #ef4444)" }} />,
   }[phase];
 
   const title = {
@@ -133,7 +143,8 @@ function Result({ phase }: { phase: Phase }) {
   const desc = {
     verifying: "请稍候，正在向支付网关核对订单状态。",
     granted: "积分已到账，感谢你的支持！",
-    pending: "支付可能仍在处理中。若你已完成付款，积分将在稍后自动到账，可稍后在账户中查看。",
+    pending:
+      "尚未查询到你的付款。若已完成付款，可点击「重新核对」，积分也会在网关回调后自动到账；若未付款，订单将在 30 分钟后自动取消，可随时在定价页重新购买。",
     none: "未找到需要确认的订单。如果你刚完成支付，请从账户页查看订单记录。",
     error: "请登录后在账户页查看订单状态，或联系客服。",
   }[phase];
@@ -157,16 +168,42 @@ function Result({ phase }: { phase: Phase }) {
       </p>
 
       {phase !== "verifying" && (
-        <div style={{ display: "flex", gap: 12, justifyContent: "center", marginTop: 28 }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 12,
+            justifyContent: "center",
+            flexWrap: "wrap",
+            marginTop: 28,
+          }}
+        >
+          {phase === "pending" && (
+            <button
+              type="button"
+              onClick={onRetry}
+              style={{
+                padding: "10px 20px",
+                borderRadius: "var(--pill, 10px)",
+                fontSize: 14,
+                fontWeight: 600,
+                color: "var(--text, #fff)",
+                background: "transparent",
+                border: "1px solid var(--border-strong, rgba(255,255,255,.2))",
+                cursor: "pointer",
+              }}
+            >
+              重新核对
+            </button>
+          )}
           <Link
             href="/account"
             style={{
               padding: "10px 20px",
-              borderRadius: 10,
+              borderRadius: "var(--pill, 10px)",
               fontSize: 14,
               fontWeight: 600,
-              color: "#fff",
-              background: "var(--brand, #6b5bff)",
+              color: "var(--text, #fff)",
+              border: "1px solid var(--border-strong, rgba(255,255,255,.2))",
               textDecoration: "none",
             }}
           >
@@ -176,10 +213,10 @@ function Result({ phase }: { phase: Phase }) {
             href="/studio"
             style={{
               padding: "10px 20px",
-              borderRadius: 10,
+              borderRadius: "var(--pill, 10px)",
               fontSize: 14,
               color: "var(--text-dim, #aab)",
-              border: "1px solid var(--line, rgba(255,255,255,.14))",
+              border: "1px solid var(--border, rgba(255,255,255,.14))",
               textDecoration: "none",
             }}
           >

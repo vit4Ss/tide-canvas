@@ -87,6 +87,9 @@ type Order struct {
 	OrderType string    `gorm:"column:order_type;type:varchar(32);not null" json:"orderType"`
 	PlanID    *idgen.ID `gorm:"column:plan_id;index" json:"planId"`
 	PackageID *idgen.ID `gorm:"column:package_id;index" json:"packageId"`
+	// Cycle: billing cycle for plan orders — "monthly" / "yearly" ("" for
+	// point-package orders). Determines the charged amount and points grant.
+	Cycle string `gorm:"column:cycle;type:varchar(16)" json:"cycle"`
 
 	Amount        decimal.Decimal `gorm:"column:amount;type:decimal(10,2);not null;default:0" json:"amount"`
 	PayMethod     string          `gorm:"column:pay_method;type:varchar(32)" json:"payMethod"`

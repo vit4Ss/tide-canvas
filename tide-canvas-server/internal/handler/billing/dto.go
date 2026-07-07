@@ -3,22 +3,33 @@ package billing
 // dto.go defines request payloads for billing/order endpoints. JSON tags are
 // camelCase to match the frontend wire contract (tide-canvas-web).
 
-// Order types accepted by POST /api/orders. They mirror model.Order.OrderType.
+// Order types stored in model.Order.OrderType. Only plan orders can be
+// CREATED — 积分随套餐发放，单独积分包购买已下线（产品决策，2026-07）。
+// OrderTypePackage remains for settling/displaying legacy package orders.
 const (
 	OrderTypePlan    = "plan"
 	OrderTypePackage = "point_package"
 )
 
+// Billing cycles accepted for plan orders. They mirror model.Order.Cycle.
+const (
+	CycleMonthly = "monthly"
+	CycleYearly  = "yearly"
+)
+
 // CreateOrderDTO is the body for POST /api/orders.
 //
-// Type selects what is being purchased: "plan" (requires planId) or
-// "point_package" (requires packageId). PayChannel is the desired payment
-// channel (e.g. wechat / alipay); it is optional and stored as pay_method.
+// Only "plan" purchases are accepted (requires planId). PayChannel is the
+// desired payment channel (e.g. wechat / alipay); it is optional and stored
+// as pay_method.
 type CreateOrderDTO struct {
-	Type       string `json:"type" binding:"required,oneof=plan point_package"`
-	PlanID     string `json:"planId" binding:"omitempty"`
-	PackageID  string `json:"packageId" binding:"omitempty"`
+	Type       string `json:"type" binding:"required,oneof=plan"`
+	PlanID     string `json:"planId" binding:"required"`
 	PayChannel string `json:"payChannel" binding:"omitempty,max=32"`
+	// Cycle selects the billing cycle for plan orders: "monthly" (default) or
+	// "yearly" (charged 12 × the plan's discounted per-month yearly price, grants
+	// 12 × the monthly points). Ignored for point-package orders.
+	Cycle string `json:"cycle" binding:"omitempty,oneof=monthly yearly"`
 }
 
 // OrderQuery is the query for GET /api/orders (OrderQuery + PageQuery).

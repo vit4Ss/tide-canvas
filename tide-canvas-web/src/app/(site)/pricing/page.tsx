@@ -60,7 +60,7 @@ const PRICING_FAQS: readonly { q: string; a: string }[] = [
   },
   {
     q: "没用完的积分会过期吗？",
-    a: "订阅赠送的月度积分按月重置，单独购买的积分包永久有效，不会过期。",
+    a: "不会。套餐发放的积分计入账户余额，长期有效，升级或续费后余额继续累加。",
   },
   {
     q: "支持哪些支付方式？",
@@ -85,25 +85,45 @@ export default function PricingPage() {
   // Open pay-method chooser for a chosen paid plan.
   const [payIntent, setPayIntent] = useState<PurchaseIntent | null>(null);
 
+  const requireLogin = () => {
+    const loggedIn =
+      user != null ||
+      (typeof window !== "undefined" && !!localStorage.getItem("access_token"));
+    if (!loggedIn) router.push("/login?redirect=/pricing");
+    return loggedIn;
+  };
+
   // Plan CTA: free plans go straight to the studio; paid plans require a session
   // then open the pay-method chooser. The order is priced server-side from the
-  // plan's monthly price, so we show that figure in the modal.
+  // chosen cycle (yearly = 12 × the discounted per-month price), so the modal
+  // mirrors exactly what will be charged.
   const onPlanCta = (p: PlanVO) => {
     if (p.monthly === 0) {
       router.push("/studio");
       return;
     }
-    const loggedIn =
-      user != null ||
-      (typeof window !== "undefined" && !!localStorage.getItem("access_token"));
-    if (!loggedIn) {
-      router.push("/login?redirect=/pricing");
-      return;
-    }
-    setPayIntent({ type: "plan", planId: p.id, name: p.name, amount: p.monthly });
+    if (!requireLogin()) return;
+    const yearly = cycle === "yr" && p.yearly > 0;
+    setPayIntent(
+      yearly
+        ? {
+            planId: p.id,
+            cycle: "yearly",
+            name: `${p.name}（年付）`,
+            amount: Math.round(p.yearly * 12 * 100) / 100,
+            amountNote: `¥${p.yearly}/月 × 12 个月`,
+          }
+        : {
+            planId: p.id,
+            cycle: "monthly",
+            name: p.name,
+            amount: p.monthly,
+          },
+    );
   };
 
-  // Real plan cards from the public billing endpoint.
+  // Real plan cards from the public billing endpoint. 积分只随套餐发放，
+  // 不提供单独充值（产品决策，2026-07）。
   const [plans, setPlans] = useState<PlanVO[]>([]);
   const [loading, setLoading] = useState(true);
 

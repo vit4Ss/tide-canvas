@@ -2,20 +2,22 @@ import { http, toParams } from "@/lib/http";
 import type { PageData } from "@/types/api";
 import type {
   PlanVO,
-  PointPackageVO,
+  PayChannelVO,
   CreateOrderDTO,
   OrderVO,
   VerifyResult,
 } from "@/types/billing";
 
 /**
- * Billing API — public reads of pricing plans and point-package bundles.
- * Mirrors tide-canvas-server/internal/handler/billing. Both reads are public
- * (no auth/session required).
+ * Billing API — public reads of pricing plans and the admin-enabled pay
+ * channels (no auth/session required). Mirrors
+ * tide-canvas-server/internal/handler/billing. 积分只随套餐发放，单独购买
+ * 积分包的通道已下线（管理端 /api/admin/packages 不受影响）。
  */
 export const billingApi = {
   plans: () => http.get<PlanVO[]>("/api/billing/plans"),
-  packages: () => http.get<PointPackageVO[]>("/api/billing/packages"),
+  /** 可用支付方式 — 由管理后台「支付渠道」开关驱动，空数组 = 支付未开通。 */
+  channels: () => http.get<PayChannelVO[]>("/api/billing/channels"),
 };
 
 /**

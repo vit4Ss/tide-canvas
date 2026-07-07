@@ -2,12 +2,15 @@
 // /api/admin (the route group is assembled elsewhere with JWTAuth + AdminOnly,
 // so every handler here may assume the caller is an admin, role 9).
 //
-// g4_pricing.go covers the pricing section: subscription plans and one-off point
-// packages. Per the LINKAGE PRINCIPLE the plan CRUD reads/writes the SAME `plan`
-// table the public /pricing page (handler/billing) renders, using the identical
-// Features JSON encoding (desc/yearly/cta/featured/items) so an admin edit is
-// immediately visible on the front-end pricing cards. Point packages back the
-// `point_package` table likewise.
+// g4_pricing.go covers the pricing section: subscription plans. Per the LINKAGE
+// PRINCIPLE the plan CRUD reads/writes the SAME `plan` table the public
+// /pricing page (handler/billing) renders, using the identical Features JSON
+// encoding (desc/yearly/cta/featured/items/vipLevel) so an admin edit is
+// immediately visible on the front-end pricing cards.
+//
+// 积分包（point_package）管理已下线（2026-07-08 用户拍板）：积分只随套餐发放，
+// 用户端购买通道与后台管理均已移除。point_package 表/种子与 billing 的
+// findPackage 保留，仅用于遗留积分包订单的结算与展示。
 package admin
 
 import (
@@ -33,10 +36,6 @@ import (
 //	POST   /plans            g4PlanUpsertDTO -> g4PlanVO
 //	PUT    /plans/:id        g4PlanUpsertDTO -> g4PlanVO
 //	DELETE /plans/:id        -> void
-//	GET    /packages         -> []g4PointPackageVO
-//	POST   /packages         g4PointPackageUpsertDTO -> g4PointPackageVO
-//	PUT    /packages/:id     g4PointPackageUpsertDTO -> g4PointPackageVO
-//	DELETE /packages/:id     -> void
 func RegisterPricing(g *gin.RouterGroup, d *app.Deps) {
 	h := &g4PricingHandler{db: d.DB}
 
@@ -44,11 +43,6 @@ func RegisterPricing(g *gin.RouterGroup, d *app.Deps) {
 	g.POST("/plans", h.createPlan)
 	g.PUT("/plans/:id", h.updatePlan)
 	g.DELETE("/plans/:id", h.deletePlan)
-
-	g.GET("/packages", h.listPackages)
-	g.POST("/packages", h.createPackage)
-	g.PUT("/packages/:id", h.updatePackage)
-	g.DELETE("/packages/:id", h.deletePackage)
 }
 
 type g4PricingHandler struct {
@@ -77,28 +71,18 @@ type g4PlanVO struct {
 	UpdateTime    string   `json:"updateTime"`
 }
 
-// g4PointPackageVO is the admin point-package row view.
-type g4PointPackageVO struct {
-	ID          idgen.ID `json:"id"`
-	Name        string   `json:"name"`
-	Points      int      `json:"points"`
-	BonusPoints int      `json:"bonusPoints"`
-	Price       float64  `json:"price"`
-	SortOrder   int      `json:"sortOrder"`
-	Status      int      `json:"status"`
-	CreateTime  string   `json:"createTime"`
-	UpdateTime  string   `json:"updateTime"`
-}
-
 // g4PlanFeatures is the JSON shape persisted in model.Plan.Features. It MUST
 // match handler/billing's planFeatures so the public pricing page decodes the
-// same presentation extras.
+// same presentation extras. VipLevel（购买该套餐授予的会员等级，结算时消费）
+// 不在管理表单中，但必须在这里声明并在更新时原样保留，否则一次套餐编辑就会
+// 把等级映射从 Features 里抹掉。
 type g4PlanFeatures struct {
 	Desc     string   `json:"desc"`
 	Yearly   float64  `json:"yearly"`
 	Cta      string   `json:"cta"`
 	Featured bool     `json:"featured"`
 	Items    []string `json:"items"`
+	VipLevel int      `json:"vipLevel"`
 }
 
 // ---- DTOs ----
@@ -118,16 +102,6 @@ type g4PlanUpsertDTO struct {
 	Items         []string `json:"items"`
 	SortOrder     int      `json:"sortOrder"`
 	Status        *int     `json:"status"`
-}
-
-// g4PointPackageUpsertDTO is the create/update body for a point package.
-type g4PointPackageUpsertDTO struct {
-	Name        string  `json:"name" binding:"required"`
-	Points      int     `json:"points"`
-	BonusPoints int     `json:"bonusPoints"`
-	Price       float64 `json:"price"`
-	SortOrder   int     `json:"sortOrder"`
-	Status      *int    `json:"status"`
 }
 
 // ---- plan handlers ----
@@ -195,78 +169,20 @@ func (h *g4PricingHandler) deletePlan(c *gin.Context) {
 	response.OK[any](c, nil)
 }
 
-// ---- package handlers ----
-
-func (h *g4PricingHandler) listPackages(c *gin.Context) {
-	var rows []model.PointPackage
-	if err := h.db.Order("sort_order asc, create_time asc").Find(&rows).Error; err != nil {
-		response.Fail(c, response.CodeServerError, "failed to load packages")
-		return
-	}
-	vos := make([]g4PointPackageVO, 0, len(rows))
-	for i := range rows {
-		vos = append(vos, g4ToPointPackageVO(&rows[i]))
-	}
-	response.OK(c, vos)
-}
-
-func (h *g4PricingHandler) createPackage(c *gin.Context) {
-	var dto g4PointPackageUpsertDTO
-	if err := c.ShouldBindJSON(&dto); err != nil {
-		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
-		return
-	}
-	row := model.PointPackage{}
-	g4ApplyPackage(&row, &dto, true)
-	if err := h.db.Create(&row).Error; err != nil {
-		response.Fail(c, response.CodeServerError, "failed to create package")
-		return
-	}
-	response.OK(c, g4ToPointPackageVO(&row))
-}
-
-func (h *g4PricingHandler) updatePackage(c *gin.Context) {
-	id, ok := g4ParseID(c)
-	if !ok {
-		return
-	}
-	var dto g4PointPackageUpsertDTO
-	if err := c.ShouldBindJSON(&dto); err != nil {
-		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
-		return
-	}
-	var row model.PointPackage
-	if err := h.db.First(&row, "id = ?", id).Error; err != nil {
-		h.failLookup(c, err, "package not found", "failed to update package")
-		return
-	}
-	g4ApplyPackage(&row, &dto, false)
-	if err := h.db.Save(&row).Error; err != nil {
-		response.Fail(c, response.CodeServerError, "failed to update package")
-		return
-	}
-	response.OK(c, g4ToPointPackageVO(&row))
-}
-
-func (h *g4PricingHandler) deletePackage(c *gin.Context) {
-	id, ok := g4ParseID(c)
-	if !ok {
-		return
-	}
-	if err := h.db.Delete(&model.PointPackage{}, "id = ?", id).Error; err != nil {
-		response.Fail(c, response.CodeServerError, "failed to delete package")
-		return
-	}
-	response.OK[any](c, nil)
-}
-
 // ---- mapping helpers ----
 
 // g4ApplyPlan copies DTO fields onto a plan row. The presentation extras are
-// packed into the Features JSON blob in the exact shape the public page reads.
-// On create, status defaults to 1 (上架) when omitted; on update an omitted
-// status preserves the existing value.
+// packed into the Features JSON blob in the exact shape the public page reads;
+// form 外的既有字段（vipLevel）从旧 Features 原样带过，避免一次编辑抹掉会员
+// 等级映射。On create, status defaults to 1 (上架) when omitted; on update an
+// omitted status preserves the existing value.
 func g4ApplyPlan(row *model.Plan, dto *g4PlanUpsertDTO, create bool) {
+	// carry non-form fields forward from the existing blob
+	var prev g4PlanFeatures
+	if row.Features != "" {
+		_ = json.Unmarshal([]byte(row.Features), &prev)
+	}
+
 	row.Name = dto.Name
 	row.Code = dto.Code
 	row.Description = dto.Desc
@@ -284,25 +200,11 @@ func g4ApplyPlan(row *model.Plan, dto *g4PlanUpsertDTO, create bool) {
 		Cta:      dto.Cta,
 		Featured: dto.Featured,
 		Items:    items,
+		VipLevel: prev.VipLevel,
 	}
 	if b, err := json.Marshal(feat); err == nil {
 		row.Features = string(b)
 	}
-
-	if dto.Status != nil {
-		row.Status = *dto.Status
-	} else if create {
-		row.Status = 1
-	}
-}
-
-// g4ApplyPackage copies DTO fields onto a point-package row.
-func g4ApplyPackage(row *model.PointPackage, dto *g4PointPackageUpsertDTO, create bool) {
-	row.Name = dto.Name
-	row.Points = dto.Points
-	row.BonusPoints = dto.BonusPoints
-	row.Price = decimal.NewFromFloat(dto.Price)
-	row.SortOrder = dto.SortOrder
 
 	if dto.Status != nil {
 		row.Status = *dto.Status
@@ -336,21 +238,6 @@ func g4ToPlanVO(p *model.Plan) g4PlanVO {
 		Status:        p.Status,
 		CreateTime:    g4FormatTime(p.CreateTime),
 		UpdateTime:    g4FormatTime(p.UpdateTime),
-	}
-}
-
-func g4ToPointPackageVO(p *model.PointPackage) g4PointPackageVO {
-	price, _ := p.Price.Float64()
-	return g4PointPackageVO{
-		ID:          p.ID,
-		Name:        p.Name,
-		Points:      p.Points,
-		BonusPoints: p.BonusPoints,
-		Price:       price,
-		SortOrder:   p.SortOrder,
-		Status:      p.Status,
-		CreateTime:  g4FormatTime(p.CreateTime),
-		UpdateTime:  g4FormatTime(p.UpdateTime),
 	}
 }
 

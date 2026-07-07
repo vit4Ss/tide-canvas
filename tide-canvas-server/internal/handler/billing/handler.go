@@ -30,12 +30,13 @@ func (h *handler) listPlans(c *gin.Context) {
 	response.OK(c, vos)
 }
 
-// listPackages handles GET /api/billing/packages (public). Returns
-// []PointPackageVO.
-func (h *handler) listPackages(c *gin.Context) {
-	vos, err := h.svc.listPackages()
+// listChannels handles GET /api/billing/channels (public). Returns the
+// admin-enabled, cashier-supported pay methods ([]PayChannelVO) so the client
+// renders exactly what the 管理后台 支付渠道 configuration allows.
+func (h *handler) listChannels(c *gin.Context) {
+	vos, err := h.svc.listPayChannels()
 	if err != nil {
-		response.Fail(c, response.CodeServerError, "failed to load packages")
+		response.Fail(c, response.CodeServerError, "failed to load pay channels")
 		return
 	}
 	response.OK(c, vos)
@@ -54,6 +55,8 @@ func (h *handler) createOrder(c *gin.Context) {
 		switch {
 		case errors.Is(err, errBadRequest):
 			response.Fail(c, response.CodeBadRequest, "invalid order request")
+		case errors.Is(err, errChannelDisabled):
+			response.Fail(c, response.CodeBadRequest, "该支付方式暂未开放")
 		case errors.Is(err, ErrNotFound):
 			response.Fail(c, response.CodeNotFound, "plan or package not found")
 		case errors.Is(err, errPayUnavailable):
