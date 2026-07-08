@@ -63,6 +63,8 @@ func (h *handler) generate(c *gin.Context) {
 			response.Fail(c, response.CodeHandlerNotFound, "handler not found")
 		case errors.Is(err, errNoModel):
 			response.Fail(c, response.CodeModelUnavailable, "model unavailable")
+		case errors.Is(err, errInsufficientPoints):
+			response.Fail(c, response.CodeQuotaInsufficient, "积分不足，请充值后再试")
 		default:
 			response.Fail(c, response.CodeServerError, "failed to start generation")
 		}

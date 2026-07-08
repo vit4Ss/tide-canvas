@@ -69,52 +69,6 @@ func (h *handler) homeFeed(c *gin.Context) {
 	response.OK(c, feed)
 }
 
-// --- blog ---
-
-// listBlogCategories handles GET /api/blog/categories (public).
-func (h *handler) listBlogCategories(c *gin.Context) {
-	vos, err := h.svc.listBlogCategories()
-	if err != nil {
-		response.Fail(c, response.CodeServerError, "failed to list categories")
-		return
-	}
-	response.OK(c, vos)
-}
-
-// listBlogArticles handles GET /api/blog/articles (public, paged).
-func (h *handler) listBlogArticles(c *gin.Context) {
-	var q ArticleQuery
-	if err := c.ShouldBindQuery(&q); err != nil {
-		response.Fail(c, response.CodeBadRequest, "invalid query: "+err.Error())
-		return
-	}
-	q.normalize()
-	vos, total, err := h.svc.listArticles(&q)
-	if err != nil {
-		response.Fail(c, response.CodeServerError, "failed to list articles")
-		return
-	}
-	response.Page(c, vos, total, q.PageNum, q.PageSize)
-}
-
-// getBlogArticle handles GET /api/blog/articles/:id (public).
-func (h *handler) getBlogArticle(c *gin.Context) {
-	id, ok := parseID(c, "article")
-	if !ok {
-		return
-	}
-	vo, err := h.svc.getArticle(id)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			response.Fail(c, response.CodeNotFound, "article not found")
-			return
-		}
-		response.Fail(c, response.CodeServerError, "failed to load article")
-		return
-	}
-	response.OK(c, vo)
-}
-
 // --- notifications (auth) ---
 
 // listNotifications handles GET /api/notifications (auth, paged).

@@ -15,9 +15,9 @@
    canned assistant reply). 「新对话」 creates a conversation via createConversation().
 
    The composer chips (联网 / 模式 / 模型 / 比例 / 分辨率 / 时长 / 批量 / 积分) are
-   driven by the selected model's 模型管理 config. 联网 only renders for a 文本
-   model whose config.webSearch is enabled; the rest are not yet wired to a
-   generation backend.
+   driven by the selected model's 模型管理 config, and the 比例/分辨率/时长/批量
+   selections ARE wired into aiApi.generate (aspectRatio/resolution/duration/
+   batchCount). 联网 only renders for a 文本 model whose config.webSearch is enabled.
    ========================================================================== */
 
 import "@/styles/liuguang/chat.css";

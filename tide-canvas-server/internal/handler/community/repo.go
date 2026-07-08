@@ -340,57 +340,6 @@ func (r *repo) setFollow(followerID, followeeID idgen.ID, follow bool) error {
 		Delete(&model.UserFollow{}).Error
 }
 
-// listFollowers returns a page of users who follow followeeID.
-func (r *repo) listFollowers(followeeID idgen.ID, q *PageQuery) ([]model.User, int64, error) {
-	return r.followGraph("followee_id", "follower_id", followeeID, q)
-}
-
-// listFollowing returns a page of users that followerID follows.
-func (r *repo) listFollowing(followerID idgen.ID, q *PageQuery) ([]model.User, int64, error) {
-	return r.followGraph("follower_id", "followee_id", followerID, q)
-}
-
-// followGraph is the shared paging query for followers/following. matchCol is the
-// side of the edge equal to the subject; selectCol is the side whose users are
-// returned.
-func (r *repo) followGraph(matchCol, selectCol string, subject idgen.ID, q *PageQuery) ([]model.User, int64, error) {
-	edge := r.db.Model(&model.UserFollow{}).Where(matchCol+" = ?", subject)
-
-	var total int64
-	if err := edge.Count(&total).Error; err != nil {
-		return nil, 0, err
-	}
-	if total == 0 {
-		return nil, 0, nil
-	}
-
-	var ids []idgen.ID
-	err := r.db.Model(&model.UserFollow{}).
-		Where(matchCol+" = ?", subject).
-		Order("create_time DESC").
-		Limit(q.PageSize).Offset(q.offset()).
-		Pluck(selectCol, &ids).Error
-	if err != nil {
-		return nil, 0, err
-	}
-	if len(ids) == 0 {
-		return nil, total, nil
-	}
-
-	usersByID, err := r.usersByIDs(ids)
-	if err != nil {
-		return nil, 0, err
-	}
-	// Preserve the follow-recency order from ids.
-	out := make([]model.User, 0, len(ids))
-	for _, id := range ids {
-		if u := usersByID[id]; u != nil {
-			out = append(out, *u)
-		}
-	}
-	return out, total, nil
-}
-
 // feedOrder builds a safe ORDER BY for the feed from a whitelisted sort key.
 func feedOrder(sort string) string {
 	switch sort {

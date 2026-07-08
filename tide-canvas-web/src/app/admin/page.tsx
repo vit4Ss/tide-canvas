@@ -70,9 +70,9 @@ function fmtMoney(s: string): string {
 
 type SeriesKey = "user" | "post" | "order" | "revenue";
 
-/* 主蓝序列：同一时刻只显示一条序列，切换靠 tab 文本区分，颜色不做类目编码 */
-const COBALT = "#2563EB";
-const TEAL = "#0EA5A8";
+/* 主苹果蓝序列：同一时刻只显示一条序列，切换靠 tab 文本区分，颜色不做类目编码 */
+const COBALT = "#0071E3";
+const TEAL = "#30B0C7";
 const SERIES_META: { key: SeriesKey; label: string; color: string }[] = [
   { key: "user", label: "用户增长", color: COBALT },
   { key: "post", label: "作品增长", color: COBALT },

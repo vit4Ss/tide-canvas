@@ -35,9 +35,6 @@ func Models() []any {
 		&PostLike{},
 		&PostBookmark{},
 		&UserFollow{},
-		// Blog.
-		&BlogCategory{},
-		&BlogArticle{},
 		// Points / billing.
 		&PointRecord{},
 		&CheckinRecord{},
@@ -281,6 +278,9 @@ type AiTask struct {
 	ModelName    string    `gorm:"size:128" json:"modelName"`
 	Status       int       `gorm:"default:0" json:"status"` // 0 processing,1 success,2 failed,3 cancelled
 	Progress     int       `gorm:"default:0" json:"progress"`
+	// PointCost is the points charged up front for this task, persisted so a
+	// crash-recovery sweep can refund the exact amount without recomputing it.
+	PointCost    int64     `gorm:"default:0" json:"pointCost"`
 	Input        string    `gorm:"type:text" json:"input"`
 	ResultUrl    string    `gorm:"size:1024" json:"resultUrl"`
 	ResultMeta   string    `gorm:"type:text" json:"resultMeta"`

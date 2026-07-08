@@ -9,20 +9,12 @@ import (
 	"tidecanvas/internal/pkg/idgen"
 )
 
-// seed.go inserts demo content (banners, blog categories + articles, and a few
-// notifications for the admin user). It is idempotent: each section is skipped
-// when rows already exist.
+// seed.go inserts demo content (banners and a few notifications for the admin
+// user). It is idempotent: each section is skipped when rows already exist.
 
 // Seed populates the content domain with demo data. Safe to call repeatedly.
 func Seed(db *gorm.DB) error {
 	if err := seedBanners(db); err != nil {
-		return err
-	}
-	catID, err := seedBlogCategories(db)
-	if err != nil {
-		return err
-	}
-	if err := seedBlogArticles(db, catID); err != nil {
 		return err
 	}
 	if err := seedNotifications(db); err != nil {
@@ -70,101 +62,6 @@ func seedBanners(db *gorm.DB) error {
 		},
 	}
 	return db.Create(&banners).Error
-}
-
-// seedBlogCategories inserts demo categories when none exist and returns the id
-// of the primary category to attach articles to. When categories already exist
-// it returns the first existing category id.
-func seedBlogCategories(db *gorm.DB) (idgen.ID, error) {
-	var existing model.BlogCategory
-	err := db.Order("sort_order ASC").First(&existing).Error
-	if err == nil {
-		return existing.ID, nil
-	}
-	if err != gorm.ErrRecordNotFound {
-		return 0, err
-	}
-
-	cats := []model.BlogCategory{
-		{BaseModel: model.BaseModel{ID: idgen.Next()}, Name: "产品动态", Slug: "product", SortOrder: 1, Status: 1},
-		{BaseModel: model.BaseModel{ID: idgen.Next()}, Name: "使用教程", Slug: "tutorial", SortOrder: 2, Status: 1},
-		{BaseModel: model.BaseModel{ID: idgen.Next()}, Name: "灵感分享", Slug: "inspiration", SortOrder: 3, Status: 1},
-	}
-	if err := db.Create(&cats).Error; err != nil {
-		return 0, err
-	}
-	return cats[0].ID, nil
-}
-
-// seedBlogArticles inserts ~4 published articles when none exist.
-func seedBlogArticles(db *gorm.DB, categoryID idgen.ID) error {
-	var count int64
-	if err := db.Model(&model.BlogArticle{}).Count(&count).Error; err != nil {
-		return err
-	}
-	if count > 0 {
-		return nil
-	}
-
-	author := adminUserID(db)
-	cat := categoryID
-	now := time.Now()
-
-	articles := []model.BlogArticle{
-		{
-			BaseModel:   model.BaseModel{ID: idgen.Next()},
-			CategoryID:  &cat,
-			AuthorID:    author,
-			Title:       "TideCanvas 正式发布：用 AI 重新定义创作",
-			Slug:        "tidecanvas-launch",
-			Summary:     "我们很高兴地宣布 TideCanvas 正式上线，带来全新的 AI 创意画布体验。",
-			Content:     "# TideCanvas 正式发布\n\nTideCanvas 是一款融合 AI 生成能力的创意画布工具，让创作更高效、更自由。",
-			CoverURL:    "https://picsum.photos/seed/tide-blog-1/1200/630",
-			ViewCount:   1280,
-			Status:      1,
-			PublishTime: ptrTime(now.Add(-96 * time.Hour)),
-		},
-		{
-			BaseModel:   model.BaseModel{ID: idgen.Next()},
-			CategoryID:  &cat,
-			AuthorID:    author,
-			Title:       "新手入门：5 分钟上手 AI 画布",
-			Slug:        "getting-started-5min",
-			Summary:     "从创建项目到生成第一张作品，带你快速熟悉 TideCanvas 的核心工作流。",
-			Content:     "# 新手入门\n\n1. 创建项目\n2. 选择模型\n3. 输入提示词\n4. 生成并微调\n5. 发布到社区",
-			CoverURL:    "https://picsum.photos/seed/tide-blog-2/1200/630",
-			ViewCount:   860,
-			Status:      1,
-			PublishTime: ptrTime(now.Add(-72 * time.Hour)),
-		},
-		{
-			BaseModel:   model.BaseModel{ID: idgen.Next()},
-			CategoryID:  &cat,
-			AuthorID:    author,
-			Title:       "提示词技巧：让生成结果更可控",
-			Slug:        "prompt-tips",
-			Summary:     "掌握这些提示词写法，让 AI 输出更贴近你的预期。",
-			Content:     "# 提示词技巧\n\n- 结构化描述主体、风格、光影\n- 善用负向提示词\n- 迭代式微调",
-			CoverURL:    "https://picsum.photos/seed/tide-blog-3/1200/630",
-			ViewCount:   642,
-			Status:      1,
-			PublishTime: ptrTime(now.Add(-48 * time.Hour)),
-		},
-		{
-			BaseModel:   model.BaseModel{ID: idgen.Next()},
-			CategoryID:  &cat,
-			AuthorID:    author,
-			Title:       "社区精选：本周最受欢迎的 10 个作品",
-			Slug:        "weekly-top-10",
-			Summary:     "看看创作者们本周都用 TideCanvas 做出了哪些惊艳的作品。",
-			Content:     "# 本周精选\n\n本周社区涌现了大量优秀作品，以下是编辑精选的 10 个。",
-			CoverURL:    "https://picsum.photos/seed/tide-blog-4/1200/630",
-			ViewCount:   1530,
-			Status:      1,
-			PublishTime: ptrTime(now.Add(-24 * time.Hour)),
-		},
-	}
-	return db.Create(&articles).Error
 }
 
 // seedNotifications inserts a few demo notifications for the admin user when the

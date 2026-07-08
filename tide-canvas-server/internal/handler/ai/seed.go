@@ -66,12 +66,6 @@ func SeedCatalog(db *gorm.DB) error {
 			InputSchema: `{"prompt":{"type":"string","required":true},"references":{"type":"array"},"videoReferences":{"type":"array"}}`,
 			IsAsync:     true, SortOrder: 6,
 		},
-		{
-			HandlerName: "creative_desc", Name: "creative_desc", DisplayName: "创意描述",
-			Description: "Produce a creative textual description from inputs.",
-			InputSchema: `{"prompt":{"type":"string","required":true}}`,
-			IsAsync:     false, SortOrder: 7,
-		},
 	}
 
 	for i := range seeds {

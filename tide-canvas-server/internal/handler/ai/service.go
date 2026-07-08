@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 
 	"tidecanvas/internal/app"
+	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/cache"
 	"tidecanvas/internal/pkg/eventlog"
@@ -85,10 +86,12 @@ func (s *service) listHandlers(ctx context.Context) ([]AiHandlerVO, error) {
 
 // ---- generate -----------------------------------------------------------
 
-// errNoHandler / errNoModel let the HTTP layer map to specific business codes.
+// errNoHandler / errNoModel / errInsufficientPoints let the HTTP layer map to
+// specific business codes.
 var (
-	errNoHandler = errors.New("handler not found")
-	errNoModel   = errors.New("model unavailable")
+	errNoHandler          = errors.New("handler not found")
+	errNoModel            = errors.New("model unavailable")
+	errInsufficientPoints = errors.New("insufficient points")
 )
 
 // generate creates a task in PROCESSING state, kicks off async execution, and
@@ -123,13 +126,38 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 		CreateTime: now,
 		UpdateTime: now,
 	}
+
+	// Charge the server-computed point cost up front (guarded against concurrent
+	// overspend). The deduction is the authoritative gate — a balance below cost
+	// rejects the generation before any task/row exists. cost==0 models are free.
+	// The cost is persisted on the task so a crash-recovery sweep can refund the
+	// exact amount; runTask refunds it on any non-success outcome too.
+	cost := resolveCost(m, dto.Input, s.repo.teamPriceFactor(ctx, userID))
+	task.PointCost = int64(cost)
+	if cost > 0 {
+		if err := points.Consume(s.repo.db, userID, cost, "生成消耗："+m.Name, task.ID); err != nil {
+			if errors.Is(err, points.ErrInsufficient) {
+				return nil, errInsufficientPoints
+			}
+			return nil, err
+		}
+	}
+
 	if err := s.repo.createTask(ctx, task); err != nil {
+		// Charged but the task row failed to persist: refund so the user isn't
+		// billed for a generation that never started.
+		if cost > 0 {
+			if rerr := points.Refund(s.repo.db, userID, cost, "生成创建失败退款", task.ID); rerr != nil {
+				logger.L().Error("ai: refund after createTask failed",
+					zap.String("taskId", task.ID.String()), zap.Error(rerr))
+			}
+		}
 		return nil, err
 	}
 	s.writeTaskState(ctx, task)
 
 	// Execute in the background; the HTTP request returns the PROCESSING task.
-	go s.runTask(context.Background(), task.ID, gh, m, userID, dto)
+	go s.runTask(context.Background(), task.ID, gh, m, userID, dto, cost)
 
 	vo := toTaskVO(task)
 	return &vo, nil
@@ -137,7 +165,22 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 
 // runTask performs the generation and persists the terminal state. It is run in
 // a detached goroutine; errors are logged, not returned.
-func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m *model.AiModel, userID idgen.ID, dto generateDTO) {
+func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m *model.AiModel, userID idgen.ID, dto generateDTO, cost int) {
+	// refund credits the up-front charge back on any non-success outcome
+	// (failure / cancel / panic). It is single-shot: once a refund transaction
+	// commits, later terminal paths are no-ops, so the user is never double-paid.
+	refunded := false
+	refund := func(reason string) {
+		if cost <= 0 || refunded {
+			return
+		}
+		if err := points.Refund(s.repo.db, userID, cost, reason, taskID); err != nil {
+			logger.L().Error("ai: refund failed", zap.String("taskId", taskID.String()), zap.Error(err))
+			return
+		}
+		refunded = true
+	}
+
 	// This goroutine is detached from Gin's request scope, so Gin's Recovery
 	// middleware does NOT cover it — an unrecovered panic on the generation path
 	// (provider client, rehost, image decode, nil map, …) would crash the whole
@@ -156,6 +199,7 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 				logger.L().Error("ai: finalize after panic failed", zap.String("taskId", taskID.String()), zap.Error(err))
 			}
 			s.clearTaskState(context.Background(), taskID)
+			refund("生成异常退款")
 		}
 	}()
 
@@ -166,9 +210,12 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 	task, err := s.repo.getTask(ctx, taskID)
 	if err != nil || task == nil {
 		logger.L().Warn("ai: runTask load failed", zap.String("taskId", taskID.String()), zap.Error(err))
+		// Task removed (cancelled/deleted) or unreadable before it ran: refund.
+		refund("生成取消退款")
 		return
 	}
 	if task.Status == statusCancelled {
+		refund("生成取消退款")
 		return
 	}
 
@@ -209,12 +256,18 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 	}
 	if !updated {
 		// Row was cancelled/deleted mid-run (or already finalized): drop the result
-		// without writing Redis/audit state for an abandoned task.
+		// without writing Redis/audit state for an abandoned task, and refund.
 		logger.L().Info("ai: task no longer processing, dropping result", zap.String("taskId", taskID.String()))
 		s.clearTaskState(ctx, taskID)
+		refund("生成取消退款")
 		return
 	}
 	s.writeTaskState(ctx, task)
+
+	// Failed generation: give the charged points back.
+	if task.Status == statusFailed {
+		refund("生成失败退款")
+	}
 
 	// Audit log row (best-effort).
 	s.writeLog(ctx, task, gh, m, userID, dto, res, genErr, duration)

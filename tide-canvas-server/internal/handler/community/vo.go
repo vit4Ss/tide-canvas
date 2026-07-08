@@ -111,14 +111,6 @@ type CommentVO struct {
 	CreateTime string    `json:"createTime"`
 }
 
-// UserSimpleVO is the compact user view for follower / following lists.
-type UserSimpleVO struct {
-	ID       idgen.ID `json:"id"`
-	Username string   `json:"username"`
-	Nickname string   `json:"nickname"`
-	Avatar   string   `json:"avatar"`
-}
-
 // LikeVO is the toggle-like response.
 type LikeVO struct {
 	Liked     bool `json:"liked"`
@@ -214,19 +206,6 @@ func toCommentVO(cm *model.PostComment, author *model.User) CommentVO {
 		Content:    cm.Content,
 		Author:     toAuthorVO(author),
 		CreateTime: formatTime(cm.CreateTime),
-	}
-}
-
-// toUserSimpleVO maps a user to the compact follower/following VO.
-func toUserSimpleVO(u *model.User) UserSimpleVO {
-	if u == nil {
-		return UserSimpleVO{}
-	}
-	return UserSimpleVO{
-		ID:       u.ID,
-		Username: u.Username,
-		Nickname: u.Nickname,
-		Avatar:   u.Avatar,
 	}
 }
 

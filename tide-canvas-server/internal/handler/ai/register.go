@@ -7,9 +7,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 
 	"tidecanvas/internal/app"
+	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/middleware"
+	"tidecanvas/internal/pkg/logger"
 )
 
 // staleTaskCutoff bounds how long a task may sit in Processing without an update
@@ -24,8 +27,31 @@ const staleTaskCutoff = 30 * time.Minute
 func SweepStaleTasks(d *app.Deps) (int64, error) {
 	r := newRepo(d.DB)
 	cutoff := time.Now().Add(-staleTaskCutoff)
-	return r.sweepStaleTasks(context.Background(), statusProcessing, statusFailed, cutoff,
+	ctx := context.Background()
+
+	// Snapshot the doomed tasks (with their charged cost) BEFORE flipping them to
+	// Failed, so we know whom to refund.
+	stale, _ := r.staleProcessingTasks(ctx, statusProcessing, cutoff)
+
+	n, err := r.sweepStaleTasks(ctx, statusProcessing, statusFailed, cutoff,
 		"generation interrupted (server restart)")
+	if err != nil {
+		return n, err
+	}
+
+	// Refund each interrupted task's up-front charge. After the sweep these rows
+	// are Failed (not Processing), so a subsequent restart can't re-select them —
+	// no double refund. A crash mid-loop only under-refunds (safe), never over.
+	for i := range stale {
+		t := &stale[i]
+		if t.PointCost > 0 {
+			if rerr := points.Refund(d.DB, t.UserID, int(t.PointCost), "生成中断退款（服务重启）", t.ID); rerr != nil {
+				logger.L().Warn("ai: sweep refund failed",
+					zap.String("taskId", t.ID.String()), zap.Error(rerr))
+			}
+		}
+	}
+	return n, nil
 }
 
 // Register mounts the AI routes on the /api group.

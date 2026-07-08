@@ -45,6 +45,8 @@ type AiTaskVO struct {
 	ModelName    string          `json:"modelName"`
 	Status       int             `json:"status"`
 	Progress     int             `json:"progress"`
+	// PointCost is the points charged for this task (server-computed at submit).
+	PointCost    int64           `json:"pointCost"`
 	ResultURL    string          `json:"resultUrl"`
 	ResultMeta   json.RawMessage `json:"resultMeta"`
 	ErrorMsg     string          `json:"errorMsg"`
@@ -76,6 +78,7 @@ func toTaskVO(t *model.AiTask) AiTaskVO {
 		ModelName:    t.ModelName,
 		Status:       t.Status,
 		Progress:     t.Progress,
+		PointCost:    t.PointCost,
 		ResultURL:    t.ResultUrl,
 		ResultMeta:   rawJSONOrString(t.ResultMeta),
 		ErrorMsg:     t.ErrorMsg,

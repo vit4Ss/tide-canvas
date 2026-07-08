@@ -36,15 +36,15 @@ import {
 } from "@/mock/admin";
 
 /* 配色常量（用户定稿色板 v3，与 admin.css 令牌对齐；recharts 需要字面量色值） */
-const GRID = "#EAF0F6"; /* 网格线 */
-const ACCENT = "#2563EB"; /* 主图表蓝 */
-const OK = "#16A34A";
-const WARN = "#D97706";
-const DANGER = "#DC2626";
+const GRID = "#ECECEF"; /* 网格线 */
+const ACCENT = "#0071E3"; /* 主图表苹果蓝 */
+const OK = "#34C759";
+const WARN = "#FF9500";
+const DANGER = "#FF3B30";
 const TOOLTIP = {
-  borderRadius: 8,
-  border: "1px solid #E2E8F0",
-  boxShadow: "0 4px 12px rgba(15,23,42,.08)",
+  borderRadius: 10,
+  border: "1px solid #E5E5EA",
+  boxShadow: "0 1px 3px rgba(0,0,0,.08), 0 20px 48px rgba(0,0,0,.18)",
   fontSize: 12,
 } as const;
 

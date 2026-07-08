@@ -244,20 +244,6 @@ func (h *handler) contextUsage(c *gin.Context) {
 	response.OK(c, vo)
 }
 
-// markRead handles POST /api/im/conversations/:id/read (auth).
-func (h *handler) markRead(c *gin.Context) {
-	id, ok := parseID(c)
-	if !ok {
-		return
-	}
-	ownerID := middleware.CurrentUserID(c)
-	if err := h.svc.markRead(id, ownerID); err != nil {
-		h.fail(c, err, "failed to mark conversation read")
-		return
-	}
-	response.OK[any](c, nil)
-}
-
 // contextFullMsg is the user-facing message when a conversation hit the
 // context-token cap.
 const contextFullMsg = "当前会话上下文已达上限，请开启新会话"

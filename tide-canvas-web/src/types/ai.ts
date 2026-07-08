@@ -39,7 +39,9 @@ export interface AiHandlerVO {
   name: string;
   displayName: string;
   description: string;
-  inputSchema: Record<string, unknown>;
+  // 后端 rawJSONOrString：合法 JSON 时为对象，列存非法 JSON 时会退化成字符串
+  // （与 AiTaskVO.resultMeta/input 同处理），消费前需判类型。
+  inputSchema: Record<string, unknown> | string;
   isAsync: boolean;
   defaultModelId: string;
   pointCost: number;
@@ -82,8 +84,9 @@ export interface AiGenerationLogVO {
 }
 
 export interface AiGenerationLogQuery extends PageQuery {
-  taskId?: number;
-  userId?: number;
+  // 雪花 ID（> 2^53），必须以字符串传递，用 Number() 会丢精度、匹配到错误/空结果。
+  taskId?: string | number;
+  userId?: string | number;
   projectId?: string | number;
   handlerName?: string;
   operationType?: string;

@@ -185,25 +185,29 @@ export default function AdminConfigPage() {
           </div>
         ) : (
           <div style={{ padding: 18 }}>
-            <div className="cfg-grid">
+            <div className="set-wrap">
               {groups.map(([group, rows]) => (
-                <div className="cfg-card" key={group}>
-                  <h3>{group}</h3>
-                  <p>{rows.length} 项配置</p>
-                  {rows.map((it) => (
-                    <div className="cfg-row" key={it.configKey}>
-                      <span className="lab" title={it.description || it.configKey}>
-                        {it.description || it.configKey}
-                      </span>
-                      <input
-                        /* 密钥类配置值掩码显示（仍可编辑；聚焦后浏览器行为同密码框） */
-                        type={/secret|password|access[_-]?key|api[_-]?key/i.test(it.configKey) ? "password" : "text"}
-                        value={valueOf(it)}
-                        onChange={(e) => onEdit(it, e.target.value)}
-                        aria-label={it.configKey}
-                      />
-                    </div>
-                  ))}
+                <div className="set-group" key={group}>
+                  <div className="gh">
+                    {group}
+                    <small>{rows.length} 项</small>
+                  </div>
+                  <div className="set-list">
+                    {rows.map((it) => (
+                      <div className="set-row" key={it.configKey}>
+                        <div className="lab" title={it.description || it.configKey}>
+                          {it.description || it.configKey}
+                        </div>
+                        <input
+                          /* 密钥类配置值掩码显示（仍可编辑；聚焦后浏览器行为同密码框） */
+                          type={/secret|password|access[_-]?key|api[_-]?key/i.test(it.configKey) ? "password" : "text"}
+                          value={valueOf(it)}
+                          onChange={(e) => onEdit(it, e.target.value)}
+                          aria-label={it.configKey}
+                        />
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ))}
             </div>

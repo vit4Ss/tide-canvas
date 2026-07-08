@@ -11,33 +11,6 @@ type BannerQuery struct {
 	Position string `form:"position"`
 }
 
-// ArticleQuery is the query for GET /api/blog/articles. categoryId filters by
-// category (string snowflake), keyword does a title/summary LIKE.
-type ArticleQuery struct {
-	PageNum    int    `form:"pageNum"`
-	PageSize   int    `form:"pageSize"`
-	CategoryID string `form:"categoryId"`
-	Keyword    string `form:"keyword"`
-}
-
-// normalize applies defaults and clamps for pagination.
-func (q *ArticleQuery) normalize() {
-	if q.PageNum <= 0 {
-		q.PageNum = 1
-	}
-	if q.PageSize <= 0 {
-		q.PageSize = 12
-	}
-	if q.PageSize > 100 {
-		q.PageSize = 100
-	}
-	q.CategoryID = strings.TrimSpace(q.CategoryID)
-	q.Keyword = strings.TrimSpace(q.Keyword)
-}
-
-// offset returns the SQL offset for the current page.
-func (q *ArticleQuery) offset() int { return (q.PageNum - 1) * q.PageSize }
-
 // NotificationQuery is the query for GET /api/notifications. isRead is optional
 // (pointer-less here: -1 means "all", 0 unread, 1 read).
 type NotificationQuery struct {

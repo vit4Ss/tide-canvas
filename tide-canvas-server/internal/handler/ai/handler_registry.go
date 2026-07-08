@@ -124,7 +124,6 @@ func builtinHandlers() []GenHandler {
 		genHandler{name: "image_to_video", op: "video", isAsync: true},
 		genHandler{name: "start_end_to_video", op: "video", isAsync: true},
 		genHandler{name: "reference_to_video", op: "video", isAsync: true},
-		genHandler{name: "creative_desc", op: "generation", isAsync: false},
 
 		// One-click image-edit ops (per-result toolbar in 创作台). Each reuses the
 		// image-edit route with a fixed, server-owned instruction.

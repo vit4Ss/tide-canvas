@@ -578,22 +578,6 @@ func (s *service) appendMessage(conversationID, ownerID idgen.ID, dto AppendMess
 	return &vo, nil
 }
 
-// markRead clears the owner's unread state for a conversation. Ownership is
-// enforced.
-func (s *service) markRead(conversationID, ownerID idgen.ID) error {
-	conv, err := s.repo.findConversation(conversationID)
-	if err != nil {
-		return err
-	}
-	if conv.OwnerID != ownerID {
-		return errForbidden
-	}
-	lastReadID := idgen.ID(0)
-	if conv.LastMessageID != nil {
-		lastReadID = *conv.LastMessageID
-	}
-	return s.repo.markRead(conversationID, ownerID, lastReadID, time.Now())
-}
 
 // generateReply produces the assistant reply for the latest user message. When
 // an LLM is configured it sends the recent transcript to the model; on any error

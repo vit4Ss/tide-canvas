@@ -18,10 +18,9 @@ var ErrNotFound = errors.New("content: not found")
 
 // Visibility / status constants shared by repo & service.
 const (
-	statusVisible   = 1 // banner / category / article published & shown
-	postPublished   = 1 // community_post status: 已发布
-	modelListed     = 1 // market_model status: 已上架
-	articlePublished = 1 // blog_article status: 已发布
+	statusVisible = 1 // banner / floor visible
+	postPublished = 1 // community_post status: 已发布
+	modelListed   = 1 // market_model status: 已上架
 
 	notifUnread = 0
 	notifRead   = 1
@@ -102,71 +101,6 @@ func (r *repo) hotModels(limit int) ([]model.MarketModel, error) {
 		return nil, err
 	}
 	return rows, nil
-}
-
-// --- blog ---
-
-// listBlogCategories returns visible categories ordered by sort_order asc.
-func (r *repo) listBlogCategories() ([]model.BlogCategory, error) {
-	var rows []model.BlogCategory
-	err := r.db.Model(&model.BlogCategory{}).
-		Where("status = ?", statusVisible).
-		Order("sort_order ASC, create_time ASC").
-		Find(&rows).Error
-	if err != nil {
-		return nil, err
-	}
-	return rows, nil
-}
-
-// listArticles returns a page of published articles plus the total count.
-func (r *repo) listArticles(q *ArticleQuery) ([]model.BlogArticle, int64, error) {
-	tx := r.db.Model(&model.BlogArticle{}).Where("status = ?", articlePublished)
-
-	if q.CategoryID != "" {
-		if cid, err := idgen.Parse(q.CategoryID); err == nil && cid != 0 {
-			tx = tx.Where("category_id = ?", cid)
-		}
-	}
-	if q.Keyword != "" {
-		like := "%" + q.Keyword + "%"
-		tx = tx.Where("title LIKE ? OR summary LIKE ?", like, like)
-	}
-
-	var total int64
-	if err := tx.Count(&total).Error; err != nil {
-		return nil, 0, err
-	}
-
-	var rows []model.BlogArticle
-	err := tx.Order("publish_time DESC, create_time DESC").
-		Limit(q.PageSize).Offset(q.offset()).
-		Find(&rows).Error
-	if err != nil {
-		return nil, 0, err
-	}
-	return rows, total, nil
-}
-
-// findArticle loads a single published article by id.
-func (r *repo) findArticle(id idgen.ID) (*model.BlogArticle, error) {
-	var a model.BlogArticle
-	err := r.db.Where("id = ? AND status = ?", id, articlePublished).First(&a).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-	return &a, nil
-}
-
-// incrArticleView best-effort increments the view counter (errors ignored by
-// the caller; not part of the read contract).
-func (r *repo) incrArticleView(id idgen.ID) error {
-	return r.db.Model(&model.BlogArticle{}).
-		Where("id = ?", id).
-		UpdateColumn("view_count", gorm.Expr("view_count + 1")).Error
 }
 
 // --- notifications (scoped to userID) ---

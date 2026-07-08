@@ -8,12 +8,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
 	"tidecanvas/internal/config"
+	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/cache"
 	"tidecanvas/internal/pkg/idgen"
@@ -151,6 +153,13 @@ func (s *service) emailCode(ctx context.Context, email, ip string) error {
 // is requested. On a successful match both the code and attempt keys are removed.
 func (s *service) verifyEmailCode(ctx context.Context, email, code string) error {
 	if s.rdb == nil {
+		// Redis unavailable. Skipping verification is a convenience for local dev
+		// ONLY — in release mode it would accept ANY code, opening registration /
+		// passwordless-login / password-reset to account takeover. Fail closed in
+		// release; allow the skip only in debug/test.
+		if gin.Mode() == gin.ReleaseMode {
+			return errBadCode
+		}
 		return nil
 	}
 	key := cache.EmailCodeKey(email)
@@ -238,6 +247,14 @@ func (s *service) register(ctx context.Context, dto RegisterDTO) (*UserVO, error
 	}
 	if err := s.repo.create(u); err != nil {
 		return nil, err
+	}
+
+	// Grant the configured new-user point bonus (sys_config ai.default_points).
+	// Best-effort: a grant failure must not fail an otherwise-valid registration.
+	if granted, err := points.GrantSignup(s.repo.db, u.ID); err != nil {
+		logger.L().Warn("auth: signup point grant failed", zap.String("userId", u.ID.String()), zap.Error(err))
+	} else {
+		u.Points += int64(granted)
 	}
 
 	vo := toUserVO(u, 1)
@@ -350,6 +367,13 @@ func (s *service) createCodeUser(email string) (*model.User, error) {
 	}
 	if err := s.repo.create(u); err != nil {
 		return nil, err
+	}
+
+	// Same new-user bonus for accounts bootstrapped via the email-code login path.
+	if granted, err := points.GrantSignup(s.repo.db, u.ID); err != nil {
+		logger.L().Warn("auth: signup point grant failed", zap.String("userId", u.ID.String()), zap.Error(err))
+	} else {
+		u.Points += int64(granted)
 	}
 	return u, nil
 }

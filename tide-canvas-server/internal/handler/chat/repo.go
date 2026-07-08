@@ -224,14 +224,3 @@ func (r *repo) touchConversation(id, lastMessageID idgen.ID, at time.Time) error
 		}).Error
 }
 
-// markRead resets the owner's unread counter and advances the read marker for a
-// conversation. It is a no-op (no error) when no member row exists.
-func (r *repo) markRead(conversationID, userID, lastReadID idgen.ID, at time.Time) error {
-	return r.db.Model(&model.IMConversationMember{}).
-		Where("conversation_id = ? AND user_id = ?", conversationID, userID).
-		Updates(map[string]any{
-			"unread_count":   0,
-			"last_read_id":   lastReadID,
-			"last_read_time": at,
-		}).Error
-}

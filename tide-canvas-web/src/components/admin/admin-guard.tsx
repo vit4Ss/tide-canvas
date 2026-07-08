@@ -54,15 +54,15 @@ export function AdminGuard({ children }: { children: React.ReactNode }) {
         minHeight: "100vh",
         display: "grid",
         placeItems: "center",
-        background: "#F6F8FB",
-        color: "#111827",
+        background: "#F5F5F7",
+        color: "#1D1D1F",
         fontFamily: "var(--ui, system-ui, sans-serif)",
       }}
     >
       {state === "denied" ? (
         <div style={{ textAlign: "center" }}>
           <div style={{ fontSize: 14, fontWeight: 600 }}>需要管理员权限</div>
-          <div style={{ marginTop: 6, fontSize: 13, color: "#64748B" }}>
+          <div style={{ marginTop: 6, fontSize: 13, color: "#6E6E73" }}>
             当前账号无权访问后台，正在返回首页…
           </div>
         </div>
@@ -72,8 +72,8 @@ export function AdminGuard({ children }: { children: React.ReactNode }) {
             width: 28,
             height: 28,
             borderRadius: "50%",
-            border: "3px solid #E2E8F0",
-            borderTopColor: "#2563EB",
+            border: "3px solid #E5E5EA",
+            borderTopColor: "#0071E3",
             animation: "adminGuardSpin .7s linear infinite",
           }}
         />

@@ -26,8 +26,6 @@ import (
 //	POST   /api/community/posts/:id/comments    [auth] CommentCreateDTO -> CommentVO
 //	POST   /api/follow/users/:userId            [auth] -> void
 //	DELETE /api/follow/users/:userId            [auth] -> void
-//	GET    /api/follow/followers                [auth] -> PageData<UserSimpleVO>
-//	GET    /api/follow/following                [auth] -> PageData<UserSimpleVO>
 //
 // Public reads use optionalAuth so a logged-in viewer's liked flag is populated
 // when a token is present, while anonymous readers are still served (no 401).
@@ -56,14 +54,12 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	g.GET("/users/:userId", opt, h.authorProfile)
 	g.GET("/users/:userId/posts", opt, h.authorPosts)
 
-	// Social follow graph — all authed. The :userId param lives under the static
-	// /users parent so it is never a sibling of /followers and /following.
+	// Social follow toggle — all authed. The :userId param lives under the static
+	// /users parent so gin never sees a static-vs-param sibling collision.
 	f := api.Group("/follow")
 	f.Use(auth)
 	f.POST("/users/:userId", h.follow)
 	f.DELETE("/users/:userId", h.unfollow)
-	f.GET("/followers", h.followers)
-	f.GET("/following", h.following)
 }
 
 // optionalAuth populates the current-user context from a Bearer token when one

@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/middleware"
@@ -283,7 +284,12 @@ func (h *g4PointsHandler) adjust(c *gin.Context) {
 
 	err := h.db.Transaction(func(tx *gorm.DB) error {
 		var u model.User
-		if err := tx.First(&u, "id = ?", dto.UserID).Error; err != nil {
+		// SELECT ... FOR UPDATE: lock the row so a concurrent guarded deduction
+		// (points.Consume during AI generation) can't land between this read and the
+		// absolute write below — otherwise this adjust would clobber that deduction
+		// and drift user.Points away from the point_record ledger.
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&u, "id = ?", dto.UserID).Error; err != nil {
 			return err
 		}
 		newBalance := u.Points + int64(dto.Amount)

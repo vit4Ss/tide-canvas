@@ -88,6 +88,34 @@ func (r *repo) deleteTask(ctx context.Context, id idgen.ID) error {
 	return r.db.WithContext(ctx).Delete(&model.AiTask{}, "id = ?", id).Error
 }
 
+// teamPriceFactor returns the AI-consumption markup of the user's team
+// (Team.PriceFactor), or 1 when the user has no team or the factor is unset/<=1.
+// Mirrors auth/repo.teamPriceFactor so the charge matches the frontend estimate.
+func (r *repo) teamPriceFactor(ctx context.Context, userID idgen.ID) float64 {
+	var u model.User
+	if err := r.db.WithContext(ctx).Select("id", "team_id").
+		Where("id = ?", userID).First(&u).Error; err != nil || u.TeamID == 0 {
+		return 1
+	}
+	var t model.Team
+	if err := r.db.WithContext(ctx).Select("id", "price_factor").
+		Where("id = ?", u.TeamID).First(&t).Error; err != nil || t.PriceFactor <= 1 {
+		return 1
+	}
+	return t.PriceFactor
+}
+
+// staleProcessingTasks lists tasks still Processing past the cutoff, selecting
+// only the fields the crash-recovery refund needs (id / user / charged cost).
+func (r *repo) staleProcessingTasks(ctx context.Context, fromStatus int, before time.Time) ([]model.AiTask, error) {
+	var rows []model.AiTask
+	err := r.db.WithContext(ctx).
+		Select("id", "user_id", "point_cost").
+		Where("status = ? AND update_time < ?", fromStatus, before).
+		Find(&rows).Error
+	return rows, err
+}
+
 // getTask fetches a task by id. Returns (nil, nil) when not found.
 func (r *repo) getTask(ctx context.Context, id idgen.ID) (*model.AiTask, error) {
 	var t model.AiTask

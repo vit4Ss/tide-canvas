@@ -239,29 +239,3 @@ func (s *service) follow(followerID, targetID idgen.ID, follow bool) error {
 	return s.repo.setFollow(followerID, targetID, follow)
 }
 
-// followers returns a page of users following the caller.
-func (s *service) followers(userID idgen.ID, q *PageQuery) ([]UserSimpleVO, int64, error) {
-	rows, total, err := s.repo.listFollowers(userID, q)
-	if err != nil {
-		return nil, 0, err
-	}
-	return toUserSimpleVOs(rows), total, nil
-}
-
-// following returns a page of users the caller follows.
-func (s *service) following(userID idgen.ID, q *PageQuery) ([]UserSimpleVO, int64, error) {
-	rows, total, err := s.repo.listFollowing(userID, q)
-	if err != nil {
-		return nil, 0, err
-	}
-	return toUserSimpleVOs(rows), total, nil
-}
-
-// toUserSimpleVOs maps user rows to the compact VO slice.
-func toUserSimpleVOs(rows []model.User) []UserSimpleVO {
-	vos := make([]UserSimpleVO, 0, len(rows))
-	for i := range rows {
-		vos = append(vos, toUserSimpleVO(&rows[i]))
-	}
-	return vos
-}

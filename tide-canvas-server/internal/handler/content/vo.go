@@ -58,35 +58,6 @@ type ModelLiteVO struct {
 	LikeCount int      `json:"likeCount"`
 }
 
-// BlogCategoryVO is one visible blog category (GET /api/blog/categories).
-type BlogCategoryVO struct {
-	ID        idgen.ID `json:"id"`
-	Name      string   `json:"name"`
-	Slug      string   `json:"slug"`
-	SortOrder int      `json:"sortOrder"`
-}
-
-// ArticleVO is the blog article summary (list view, no body content).
-type ArticleVO struct {
-	ID          idgen.ID `json:"id"`
-	CategoryID  idgen.ID `json:"categoryId"`
-	AuthorID    idgen.ID `json:"authorId"`
-	Title       string   `json:"title"`
-	Slug        string   `json:"slug"`
-	Summary     string   `json:"summary"`
-	CoverUrl    string   `json:"coverUrl"`
-	ViewCount   int      `json:"viewCount"`
-	PublishTime string   `json:"publishTime"`
-	CreateTime  string   `json:"createTime"`
-}
-
-// ArticleDetailVO is the full blog article (GET /api/blog/articles/:id),
-// extending the summary with the rendered content body.
-type ArticleDetailVO struct {
-	ArticleVO
-	Content string `json:"content"`
-}
-
 // NotificationVO is one per-user notification (GET /api/notifications).
 type NotificationVO struct {
 	ID         idgen.ID `json:"id"`
@@ -142,40 +113,6 @@ func toModelLiteVO(m *model.MarketModel) ModelLiteVO {
 		Price:     m.Price.String(),
 		UseCount:  m.UseCount,
 		LikeCount: m.LikeCount,
-	}
-}
-
-// toBlogCategoryVO maps a blog category to its VO.
-func toBlogCategoryVO(c *model.BlogCategory) BlogCategoryVO {
-	return BlogCategoryVO{
-		ID:        c.ID,
-		Name:      c.Name,
-		Slug:      c.Slug,
-		SortOrder: c.SortOrder,
-	}
-}
-
-// toArticleVO maps a blog article to its summary VO.
-func toArticleVO(a *model.BlogArticle) ArticleVO {
-	return ArticleVO{
-		ID:          a.ID,
-		CategoryID:  derefID(a.CategoryID),
-		AuthorID:    a.AuthorID,
-		Title:       a.Title,
-		Slug:        a.Slug,
-		Summary:     a.Summary,
-		CoverUrl:    a.CoverURL,
-		ViewCount:   a.ViewCount,
-		PublishTime: formatTimePtr(a.PublishTime),
-		CreateTime:  formatTime(a.CreateTime),
-	}
-}
-
-// toArticleDetailVO maps a blog article to its full detail VO.
-func toArticleDetailVO(a *model.BlogArticle) ArticleDetailVO {
-	return ArticleDetailVO{
-		ArticleVO: toArticleVO(a),
-		Content:   a.Content,
 	}
 }
 

@@ -1,51 +1,52 @@
 /* ============================================================================
-   FLOWINGLIGHT ADMIN — 浅色工作台（Linear × Stripe 车道，impeccable 重构）
+   FLOWINGLIGHT ADMIN — 苹果后台工作台（App Store Connect / macOS 系统设置 车道）
 
-   设计决策（PRODUCT.md + 设计简报）：
-   - 场景：运营者白天在明亮办公室长时间读表格/表单 → 浅色、低噪、高密度。
-   - 单一字族固定 rem 阶梯（13px 基准），全部数字 tabular-nums 对齐。
-   - 唯一功能色靛蓝 #5E6AD2：主按钮/当前导航/焦点环/关键状态，绝不装饰。
-   - 层级靠排版与发丝线，不靠阴影（阴影只留给弹层）。
+   设计决策（PRODUCT.md + 用户定稿 2026-07-08「按苹果惯例」）：
+   - 场景：运营者白天长时间读表格/表单 → #F5F5F7 浅灰场 + 纯白圆角卡。
+   - 单一字族 SF Pro（-apple-system），全部数字 tabular-nums 对齐。
+   - 唯一功能色苹果蓝 #0071E3：主按钮/当前导航/焦点环/关键状态；开关用苹果绿。
+   - 层级靠柔和阴影 + 大圆角（14px）；设置用「分组内嵌列表」承载。
    - 动效 120–200ms，只表达状态；无入场编排。
-   - 自包含令牌域：不依赖任何前台主题文件。
+   - 自包含令牌域：不依赖任何前台主题文件。基础规则在前，苹果主题层在文件末尾覆盖。
    ========================================================================== */
 .admin-body{
-  /* ── 配色（用户定稿 2026-07-06 v3）：全部值照抄用户色板，未指定项同族派生 ── */
-  /* 品牌 */
-  --accent:#2563EB; --accent-strong:#1D4ED8; --accent-active:#1E40AF;
-  --accent-soft:#EFF6FF; --accent-border:#BFDBFE; --accent-ring:rgba(37,99,235,.35);
-  /* 侧栏 */
-  --sidebar:#0B1F3A; --sidebar-2:#102A4C; --sidebar-hover:#18385F; --sidebar-active:#1E426D;
-  --sidebar-indicator:#3B82F6;
-  --sidebar-text:#D8E4F2; --sidebar-dim:#8EA6C1; --sidebar-faint:#647C99;
-  /* 面 */
-  --bg:#F6F8FB; --surface:#FFFFFF; --surface-hover:#FAFCFF;
-  --surface-2:#F6F8FB;                 /* 表头底（与页底同族） */
-  --panel:#EEF2F7;                     /* chips / 静默控件底（分割线同族） */
-  --border:#E2E8F0; --border-weak:#EEF2F7; --border-strong:#CBD5E1;
-  /* 文字（五级） */
-  --text-title:#0F172A; --text:#111827; --text-dim:#64748B; --text-faint:#94A3B8;
-  --text-placeholder:#A8B3C1;
+  /* ── 苹果后台语言（2026-07-08 定稿）：App Store Connect / macOS 系统设置 车道。
+     #F5F5F7 浅灰场 + 纯白圆角卡 + 柔和阴影（非发丝线）；SF Pro 单字族；
+     苹果蓝单一强调，绿色开关；分组内嵌列表承载设置。 ── */
+  /* 品牌：苹果蓝（apple.com 营销蓝），白字对比达标 */
+  --accent:#0071E3; --accent-strong:#0063C6; --accent-active:#0056AE;
+  --accent-soft:#E9F2FE; --accent-border:#BEDCFB; --accent-ring:rgba(0,113,227,.30);
+  /* 侧栏：近白 vibrancy 面 + 发丝右线；选中 = 苹果蓝软底填充胶囊（无左指示条） */
+  --sidebar:#FBFBFD; --sidebar-border:#E5E5EA; --sidebar-hover:#F0F0F3;
+  --sidebar-text:#3A3A3C; --sidebar-dim:#8E8E93; --sidebar-faint:#86868B;
+  /* 面：#F5F5F7 场 + 纯白卡；层级靠柔和阴影 */
+  --bg:#F5F5F7; --surface:#FFFFFF; --surface-hover:#F5F5F7;
+  --surface-2:#FAFAFC;                 /* 表头底 */
+  --panel:#F0F0F3;                     /* 输入底 / chips / 轨道（苹果灰填充控件） */
+  --border:#E5E5EA; --border-weak:#ECECEF; --border-strong:#D1D1D6;
+  /* 文字（苹果中性灰阶，全部 ≥4.5:1 达 AA） */
+  --text-title:#1D1D1F; --text:#1D1D1F; --text-dim:#6E6E73; --text-faint:#86868B;
+  --text-placeholder:#AEAEB2;
   /* 图表 */
-  --chart-blue:#2563EB; --chart-blue-fill:rgba(37,99,235,.08);
-  --chart-cyan:#0EA5A8; --chart-cyan-fill:rgba(14,165,168,.08);
-  --chart-empty:#CBD5E1; --chart-grid:#EAF0F6;
-  --accent-2:#0EA5A8; --accent-2-soft:rgba(14,165,168,.10);
-  /* 语义状态（浅底沿用 v2 实色） */
-  --ok:#16A34A; --ok-soft:#ECFDF3;
-  --warn:#D97706; --warn-soft:#FFF7ED;
-  --danger:#DC2626; --danger-soft:#FEF2F2;
-  /* 几何 */
-  --r-sm:6px; --r:8px; --r-lg:10px; --pill:999px;
-  --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
-  --ui:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC','PingFang SC',sans-serif;
-  --disp:var(--ui); /* 单一字族：product register 不需要 display 字体 */
+  --chart-blue:#0071E3; --chart-blue-fill:rgba(0,113,227,.08);
+  --chart-cyan:#30B0C7; --chart-cyan-fill:rgba(48,176,199,.10);
+  --chart-empty:#D1D1D6; --chart-grid:#ECECEF;
+  --accent-2:#30B0C7; --accent-2-soft:rgba(48,176,199,.12);
+  /* 语义状态（苹果系统色） */
+  --ok:#34C759; --ok-soft:#E7F9ED;
+  --warn:#FF9500; --warn-soft:#FFF3E2;
+  --danger:#FF3B30; --danger-soft:#FFECEB;
+  /* 几何（苹果大圆角） */
+  --r-sm:8px; --r:10px; --r-lg:14px; --pill:999px;
+  --mono:ui-monospace,'SF Mono','JetBrains Mono',Menlo,monospace;
+  --ui:-apple-system,BlinkMacSystemFont,'SF Pro Text','SF Pro Display','Segoe UI','PingFang SC','Noto Sans SC',sans-serif;
+  --disp:var(--ui); /* 单一字族：苹果后台即 SF 一族 */
   --ease:cubic-bezier(.4,0,.2,1);
-  --shadow-sm:none;
-  --shadow:none;
-  --shadow-pop:0 4px 12px rgba(15,23,42,.06), 0 12px 32px rgba(15,23,42,.10); /* 阴影色照抄 */
+  --shadow-sm:0 1px 2px rgba(0,0,0,.04);
+  --shadow:0 1px 2px rgba(0,0,0,.04), 0 6px 18px rgba(0,0,0,.05); /* 苹果柔和卡阴影 */
+  --shadow-pop:0 1px 3px rgba(0,0,0,.08), 0 20px 48px rgba(0,0,0,.18); /* 弹层 */
   height:100vh; overflow:hidden; background:var(--bg); color:var(--text);
-  font-family:var(--ui); font-size:13px; -webkit-font-smoothing:antialiased;
+  font-family:var(--ui); font-size:13.5px; letter-spacing:-.01em; -webkit-font-smoothing:antialiased;
   font-variant-numeric:tabular-nums; /* 全后台数字等宽对齐 */
 }
 .admin-body :focus-visible{outline:2px solid var(--accent-ring); outline-offset:1px; border-radius:2px;}
@@ -53,57 +54,53 @@
 @media (prefers-reduced-motion:reduce){
   .admin-body *, .admin-body *::before, .admin-body *::after{animation:none !important; transition:none !important;}
 }
-.adm{position:fixed; inset:0; display:grid; grid-template-columns:232px 1fr; background:var(--bg);}
+.adm{position:fixed; inset:0; display:grid; grid-template-columns:236px 1fr; background:var(--bg);}
 
-/* ── sidebar：深海军蓝（用户七值规范），白墨线导航 + 亮蓝指示条；
-   内容区保持白色高效，一深一浅即是"图纸与工作台" ── */
-.adm-side{display:flex; flex-direction:column; min-height:0; background:var(--sidebar); border-right:none; color:var(--sidebar-text);}
-.adm-side :focus-visible{outline-color:var(--sidebar-indicator);} /* 深底上换亮蓝焦点环 */
-.adm-brand{display:flex; align-items:center; gap:10px; padding:16px 16px 12px; color:#fff;}
-.adm-brand b{font-size:13px; font-weight:600; letter-spacing:.02em; color:#fff;}
-.adm-brand small{font-size:10px; font-weight:500; color:var(--sidebar-dim); letter-spacing:.08em; display:block; margin-top:1px;}
-.adm-nav{flex:1; overflow-y:auto; padding:4px 10px 16px;}
-.adm-nav::-webkit-scrollbar{width:6px;} .adm-nav::-webkit-scrollbar-thumb{background:rgba(255,255,255,.16); border-radius:99px;}
-.adm-grp{font-size:10.5px; font-weight:500; letter-spacing:.06em; color:var(--sidebar-faint); padding:14px 10px 4px;}
-.adm-link{position:relative; display:flex; align-items:center; gap:9px; height:30px; padding:0 10px; border-radius:var(--r-sm); cursor:pointer;
+/* ── sidebar：浅中性导航面（Linear/Stripe 真身）。发丝右线与内容分界；
+   选中态 = 靛蓝软底 + 靛蓝墨 + 左指示条，绝不深底反白 ── */
+.adm-side{display:flex; flex-direction:column; min-height:0; background:var(--sidebar); border-right:1px solid var(--sidebar-border); color:var(--sidebar-text);}
+.adm-brand{display:flex; align-items:center; gap:10px; padding:18px 16px 14px; color:var(--text-title);}
+.adm-brand b{font-size:13px; font-weight:600; letter-spacing:.01em; color:var(--text-title);}
+.adm-brand small{font-size:10px; font-weight:500; color:var(--text-faint); letter-spacing:.09em; display:block; margin-top:2px;}
+.adm-nav{flex:1; overflow-y:auto; padding:4px 12px 16px;}
+.adm-nav::-webkit-scrollbar{width:6px;} .adm-nav::-webkit-scrollbar-thumb{background:var(--border-strong); border-radius:99px;}
+.adm-grp{font-size:10.5px; font-weight:600; letter-spacing:.07em; text-transform:uppercase; color:var(--text-faint); padding:16px 10px 5px;}
+.adm-link{position:relative; display:flex; align-items:center; gap:9px; height:32px; padding:0 10px; border-radius:var(--r-sm); cursor:pointer;
   color:var(--sidebar-text); font-size:13px; font-weight:500; transition:background .12s, color .12s;}
-.adm-link svg{width:15px; height:15px; flex:none; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; opacity:.85;}
-.adm-link:hover{background:var(--sidebar-hover); color:#fff;}
-.adm-link.on{background:var(--sidebar-active); color:#fff;}
-.adm-link.on::before{content:''; position:absolute; left:0; top:7px; bottom:7px; width:2.5px; border-radius:2px; background:var(--sidebar-indicator);} /* 选中指示条 */
-.adm-link.on svg{stroke:#fff; opacity:1;}
-.adm-link .badge{margin-left:auto; font-family:var(--mono); font-size:10.5px; font-weight:500; color:var(--sidebar-dim); background:none; padding:0; border-radius:0;}
-.adm-link.on .badge{color:var(--sidebar-text); background:none;}
-.adm-side-foot{background:var(--sidebar-2); border-top:1px solid rgba(255,255,255,.08); padding:12px 14px; display:flex; align-items:center; gap:9px;}
-.adm-side-foot .av{width:28px; height:28px; border-radius:50%; flex:none; background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.18);}
-.adm-side-foot .nm{font-size:12.5px; font-weight:600; color:var(--sidebar-text);}
-.adm-side-foot .rl{font-size:11px; color:var(--sidebar-dim);}
-.adm-side-foot a{margin-left:auto; color:var(--sidebar-faint); font-size:14px; text-decoration:none; transition:color .12s;}
-.adm-side-foot a:hover{color:#fff;}
+.adm-link svg{width:15px; height:15px; flex:none; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; opacity:.66;}
+.adm-link:hover{background:var(--sidebar-hover); color:var(--text-title);}
+.adm-link:hover svg{opacity:.85;}
+.adm-link.on{background:var(--accent-soft); color:var(--accent-strong); font-weight:600;}
+.adm-link.on::before{content:''; position:absolute; left:-2px; top:7px; bottom:7px; width:2.5px; border-radius:0 2px 2px 0; background:var(--accent);} /* 选中指示条 */
+.adm-link.on svg{stroke:var(--accent); opacity:1;}
+.adm-link .badge{margin-left:auto; font-family:var(--mono); font-size:10.5px; font-weight:500; color:var(--text-faint); background:none; padding:0; border-radius:0;}
+.adm-link.on .badge{color:var(--accent-strong);}
+.adm-side-foot{background:var(--sidebar); border-top:1px solid var(--sidebar-border); padding:12px 14px; display:flex; align-items:center; gap:9px;}
+.adm-side-foot .av{width:28px; height:28px; border-radius:50%; flex:none; box-shadow:inset 0 0 0 1px rgba(16,24,40,.08);}
+.adm-side-foot .nm{font-size:12.5px; font-weight:600; color:var(--text);}
+.adm-side-foot .rl{font-size:11px; color:var(--text-faint);}
+.adm-side-foot a{margin-left:auto; width:26px; height:26px; border-radius:var(--r-sm); display:grid; place-items:center; color:var(--text-faint); font-size:14px; text-decoration:none; transition:color .12s, background .12s;}
+.adm-side-foot a:hover{color:var(--text); background:var(--panel);}
 
 /* ── main ─────────────────────────────────────────────────────────── */
 .adm-main{display:flex; flex-direction:column; min-height:0;}
-.adm-top{flex:none; display:flex; align-items:center; gap:14px; height:52px; padding:0 24px; border-bottom:1px solid var(--border); background:var(--surface);}
-.adm-top h1{font-size:14px; font-weight:600; letter-spacing:0; margin:0; color:var(--text-title);}
-.adm-top .crumb{font-size:11.5px; color:var(--text-faint); margin-top:1px;}
-.adm-top .crumb .sec{font-family:var(--mono); font-size:10.5px; letter-spacing:.08em; color:rgba(37,99,235,.65); margin-right:6px;} /* 制图图号 */
-.adm-search{margin-left:auto; display:flex; align-items:center; gap:7px; height:30px; padding:0 10px; border-radius:var(--r-sm); width:240px; background:var(--surface); border:1px solid var(--border); transition:border-color .12s, box-shadow .12s;}
+.adm-top{flex:none; display:flex; align-items:center; gap:14px; height:56px; padding:0 28px; border-bottom:1px solid var(--border); background:var(--surface);}
+.adm-top h1{font-size:14.5px; font-weight:600; letter-spacing:-.01em; margin:0; color:var(--text-title);}
+.adm-top .crumb{font-size:11.5px; color:var(--text-faint); margin-top:2px;}
+.adm-search{margin-left:auto; display:flex; align-items:center; gap:7px; height:32px; padding:0 11px; border-radius:var(--r-sm); width:248px; background:var(--surface); border:1px solid var(--border); transition:border-color .12s, box-shadow .12s;}
 .adm-search:focus-within{border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft);}
 .adm-search input{flex:1; min-width:0; background:none; border:none; outline:none; color:var(--text); font:inherit; font-size:12.5px;}
 .adm-search input::placeholder{color:var(--text-placeholder);}
 .adm-top .tbtn{height:30px; padding:0 12px; border-radius:var(--r-sm); font-size:12.5px; font-weight:500; color:var(--text-dim); background:var(--surface); border:1px solid var(--border); transition:border-color .12s, color .12s;}
 .adm-top .tbtn:hover{border-color:var(--border-strong); color:var(--text);}
-.adm-content{flex:1; overflow-y:auto; padding:20px 24px 32px;}
+.adm-content{flex:1; overflow-y:auto; padding:24px 28px 40px;}
 .adm-content::-webkit-scrollbar{width:10px;} .adm-content::-webkit-scrollbar-thumb{background:var(--border-strong); border-radius:99px; border:3px solid var(--bg);}
 
-/* ── KPI 统计行：白卡发丝线，数字是主角；右上制图索引号是本套设计的签名细节 ── */
-.adm-kpis{display:grid; grid-template-columns:repeat(auto-fit, minmax(180px,1fr)); gap:12px; margin-bottom:18px; counter-reset:kpi;}
-.kpi{position:relative; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-lg); padding:14px 16px;}
-.adm-kpis .kpi::after{counter-increment:kpi; content:counter(kpi, decimal-leading-zero);
-  position:absolute; top:12px; right:14px; font-family:var(--mono); font-size:10px; letter-spacing:.08em;
-  color:rgba(37,99,235,.45);} /* 蓝图图号 01 02 03… */
+/* ── KPI 统计行：白卡发丝线，数字是主角 ── */
+.adm-kpis{display:grid; grid-template-columns:repeat(auto-fit, minmax(180px,1fr)); gap:12px; margin-bottom:18px;}
+.kpi{position:relative; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-lg); padding:15px 16px;}
 .kpi .k{font-size:12px; color:var(--text-faint); font-weight:500;}
-.kpi .v{font-family:var(--mono); font-size:21px; font-weight:600; letter-spacing:-.02em; margin-top:6px; color:var(--text-title);} /* 仪表数字=等宽 */
+.kpi .v{font-family:var(--mono); font-size:22px; font-weight:600; letter-spacing:-.02em; margin-top:7px; color:var(--text-title);} /* 仪表数字=等宽 */
 .kpi .d{font-size:11.5px; font-weight:500; margin-top:6px; display:inline-flex; align-items:center; gap:3px;}
 .kpi .d.up{color:var(--ok);} .kpi .d.down{color:var(--danger);}
 .kpi .d.up::before{content:'↑';} .kpi .d.down::before{content:'↓';}
@@ -362,3 +359,73 @@
 .adm-empty .t{font-size:13px; font-weight:600; color:var(--text);}
 .adm-empty .s{font-size:12px; color:var(--text-faint); max-width:36ch; line-height:1.6;}
 .adm-empty .adm-btn{margin-top:8px;}
+
+/* ════════════════════════════════════════════════════════════════════════
+   苹果后台主题层（2026-07-08）——覆盖在基础规则之后。
+   柔和阴影卡 / 填充胶囊侧栏 / 毛玻璃大标题顶栏 / 绿色开关 / 分组内嵌列表。
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* 卡片：纯白 + 大圆角 + 柔和双层阴影，极淡边（不再靠发丝线分界） */
+.adm-panel,.kpi,.viz-card,.cfg-card,.fcard,.hb-card{
+  border:1px solid rgba(0,0,0,.05); box-shadow:var(--shadow); border-radius:var(--r-lg);
+}
+.kpi{padding:16px 18px;}
+.kpi .v,.viz-hero .big,.viz-hero .hstat .v{font-family:var(--ui); letter-spacing:-.02em;}
+.kpi .v{font-size:26px;}
+
+/* 侧栏：填充胶囊选中，去掉左指示条（苹果 sidebar 语言） */
+.adm-brand{padding:20px 18px 14px;}
+.adm-grp{text-transform:none; letter-spacing:.01em; font-size:11.5px; padding:16px 12px 6px;}
+.adm-link{height:36px; border-radius:9px; font-size:13.5px;}
+.adm-link svg{width:17px; height:17px; opacity:.55;}
+.adm-link.on{color:var(--accent-strong);}
+.adm-link.on::before{content:none;}
+.adm-link.on svg{stroke:var(--accent); opacity:1;}
+
+/* 顶栏：更高 + 毛玻璃 + 大标题 */
+.adm-top{height:60px; padding:0 30px; background:rgba(251,251,253,.72);
+  -webkit-backdrop-filter:saturate(180%) blur(20px); backdrop-filter:saturate(180%) blur(20px); border-bottom:1px solid var(--sidebar-border);}
+.adm-top h1{font-size:19px; font-weight:600; letter-spacing:-.02em;}
+.adm-top .crumb{font-size:11.5px;}
+.adm-search{height:34px; border-radius:var(--r); background:var(--panel); border-color:transparent;}
+.adm-search:focus-within{background:var(--surface); border-color:var(--accent);}
+.adm-top .tbtn{height:34px; border-radius:var(--r); background:var(--panel); border-color:transparent; color:var(--text-dim);}
+.adm-top .tbtn:hover{background:#E8E8EB; color:var(--text);}
+
+/* 按钮：苹果实心圆角（非全胶囊），ghost = 灰底蓝字 */
+.adm-btn{height:34px; border-radius:var(--r); font-weight:500;}
+.adm-btn:active{transform:scale(.98);}
+.adm-btn.ghost{background:var(--panel); border-color:transparent; color:var(--accent);}
+.adm-btn.ghost:hover{background:#E8E8EB; color:var(--accent-strong); border-color:transparent;}
+.adm-chip{border-radius:8px; height:30px;}
+
+/* 开关：苹果绿 */
+.sw-toggle{width:38px; height:23px;}
+.sw-toggle::after{width:19px; height:19px;}
+.sw-toggle.on{background:var(--ok);}
+.sw-toggle.on::after{transform:translateX(15px);}
+
+/* 表格：去竖线 / 透明表头 / 更高行距（苹果 list 的呼吸） */
+.adm-table th{background:transparent; padding:10px 20px; border-bottom:1px solid var(--border-weak);}
+.adm-table td{padding:13px 20px; border-bottom:1px solid var(--border-weak);}
+.adm-phead{padding:16px 20px;}
+.adm-phead h2{font-size:15px; letter-spacing:-.01em;}
+
+/* 弹层：更大圆角 */
+.adm-modal{border-radius:18px;}
+
+/* 分组内嵌列表（iOS/macOS 系统设置签名）——/admin/config 用 */
+.set-wrap{max-width:760px;}
+.set-group{margin-bottom:26px;}
+.set-group > .gh{font-size:13px; font-weight:600; color:var(--text-dim); padding:0 4px 8px; letter-spacing:-.01em;}
+.set-group > .gh small{font-weight:400; font-size:12px; color:var(--text-faint); margin-left:8px;}
+.set-list{background:var(--surface); border-radius:var(--r-lg); box-shadow:var(--shadow); border:1px solid rgba(0,0,0,.05); overflow:hidden;}
+.set-row{position:relative; display:flex; align-items:center; gap:14px; min-height:52px; padding:9px 18px;}
+.set-row + .set-row::before{content:''; position:absolute; top:0; left:18px; right:0; height:1px; background:var(--border-weak);}
+.set-row .lab{flex:1; min-width:0; font-size:13.5px; color:var(--text); line-height:1.4;}
+.set-row .lab small{display:block; font-size:12px; color:var(--text-faint); margin-top:1px; line-height:1.35;}
+.set-row input,.set-row select{width:46%; max-width:340px; height:32px; padding:0 12px; border-radius:9px;
+  background:var(--panel); border:1px solid transparent; color:var(--text); font:inherit; font-size:13px; text-align:right;
+  transition:background .12s, border-color .12s, box-shadow .12s;}
+.set-row input:focus,.set-row select:focus{outline:none; background:var(--surface); border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft);}
+.set-row input::placeholder{color:var(--text-placeholder);}

@@ -167,44 +167,6 @@ func (s *service) homeFeed() (*HomeFeedVO, error) {
 	return feed, nil
 }
 
-// --- blog ---
-
-func (s *service) listBlogCategories() ([]BlogCategoryVO, error) {
-	rows, err := s.repo.listBlogCategories()
-	if err != nil {
-		return nil, err
-	}
-	vos := make([]BlogCategoryVO, 0, len(rows))
-	for i := range rows {
-		vos = append(vos, toBlogCategoryVO(&rows[i]))
-	}
-	return vos, nil
-}
-
-func (s *service) listArticles(q *ArticleQuery) ([]ArticleVO, int64, error) {
-	rows, total, err := s.repo.listArticles(q)
-	if err != nil {
-		return nil, 0, err
-	}
-	vos := make([]ArticleVO, 0, len(rows))
-	for i := range rows {
-		vos = append(vos, toArticleVO(&rows[i]))
-	}
-	return vos, total, nil
-}
-
-func (s *service) getArticle(id idgen.ID) (*ArticleDetailVO, error) {
-	a, err := s.repo.findArticle(id)
-	if err != nil {
-		return nil, err
-	}
-	// Best-effort view bump; failure does not affect the read.
-	_ = s.repo.incrArticleView(id)
-	a.ViewCount++ // reflect the bump in this response
-	d := toArticleDetailVO(a)
-	return &d, nil
-}
-
 // --- notifications ---
 
 func (s *service) listNotifications(userID idgen.ID, q *NotificationQuery) ([]NotificationVO, int64, error) {

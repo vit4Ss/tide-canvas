@@ -207,43 +207,6 @@ func (h *handler) toggleFollow(c *gin.Context, follow bool) {
 	response.OK[any](c, nil)
 }
 
-// followers handles GET /follow/followers (auth). PageData<UserSimpleVO>.
-func (h *handler) followers(c *gin.Context) {
-	h.followList(c, true)
-}
-
-// following handles GET /follow/following (auth). PageData<UserSimpleVO>.
-func (h *handler) following(c *gin.Context) {
-	h.followList(c, false)
-}
-
-// followList is shared by followers/following.
-func (h *handler) followList(c *gin.Context, followers bool) {
-	var q PageQuery
-	if err := c.ShouldBindQuery(&q); err != nil {
-		response.Fail(c, response.CodeBadRequest, "invalid query: "+err.Error())
-		return
-	}
-	q.normalize()
-
-	userID := middleware.CurrentUserID(c)
-	var (
-		vos   []UserSimpleVO
-		total int64
-		err   error
-	)
-	if followers {
-		vos, total, err = h.svc.followers(userID, &q)
-	} else {
-		vos, total, err = h.svc.following(userID, &q)
-	}
-	if err != nil {
-		response.Fail(c, response.CodeServerError, "failed to list users")
-		return
-	}
-	response.Page(c, vos, total, q.PageNum, q.PageSize)
-}
-
 // fail maps service errors to the appropriate response code.
 func (h *handler) fail(c *gin.Context, err error, fallbackMsg string) {
 	if errors.Is(err, ErrNotFound) {

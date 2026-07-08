@@ -39,6 +39,7 @@ import { marketApi, type StudioModelVO } from "@/lib/market-api";
 import { resolveModelSwatch } from "@/lib/model-brand";
 import { copyText } from "@/lib/clipboard";
 import { aiApi, uploadFileSmart } from "@/lib/api";
+import { pointsApi } from "@/lib/points-api";
 import { AiTaskStatus } from "@/types/ai";
 import { AssetsBrowser, type PickedAsset } from "@/components/studio/assets-browser";
 import { useAuthStore } from "@/stores/use-auth-store";
@@ -665,6 +666,16 @@ export default function CreateStudio() {
 
   /* stage state */
   const [busy, setBusy] = useState(false);
+  // 真实积分余额（替代原硬编码假数据）。生成结算后刷新——扣减/退款在后端完成。
+  const [balance, setBalance] = useState<number | null>(null);
+  const refreshBalance = useCallback(async () => {
+    try {
+      const res = await pointsApi.balance();
+      if (res.success && res.data) setBalance(res.data.points);
+    } catch {
+      /* 忽略：余额展示非关键路径 */
+    }
+  }, []);
   const [cells, setCells] = useState<ResultCell[]>([]);
   const [progs, setProgs] = useState<number[]>([]);
   const [runMeta, setRunMeta] = useState<RunMeta | null>(null);
@@ -1484,8 +1495,24 @@ export default function CreateStudio() {
   // cancelled, startGeneration failure, the simulation branch); paths that set the
   // latch but never start a run (a thrown one-click op) clear it themselves.
   useEffect(() => {
-    if (!busy) genInFlightRef.current = false;
-  }, [busy]);
+    if (!busy) {
+      genInFlightRef.current = false;
+      // 结算即刷新余额：成功已扣减、失败/取消已退款，都以后端为准。
+      refreshBalance();
+    }
+  }, [busy, refreshBalance]);
+
+  // 挂载时拉一次真实余额（需先确保会话，否则 401）。
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      await ensureSession();
+      if (!cancelled) refreshBalance();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ensureSession, refreshBalance]);
 
   /* Create a backend task and hand the progress UI + polling to driveRun. Shared
      by the panel generate() and the one-click per-result edit ops, so both go
@@ -1788,7 +1815,9 @@ export default function CreateStudio() {
     } catch {
       saved = null;
     }
-    if (!saved || typeof saved.taskId !== "number" || !Array.isArray(saved.hues)) {
+    // taskId 是后端雪花 ID，序列化为字符串（见 ActiveRun.taskId: string）。原先误判
+    // typeof !== "number" 恒真，导致刷新后在飞的生成任务总被丢弃、"刷新续跑"永久失效。
+    if (!saved || typeof saved.taskId !== "string" || !saved.taskId || !Array.isArray(saved.hues)) {
       try {
         localStorage.removeItem(ACTIVE_RUN_KEY);
       } catch {
@@ -2520,7 +2549,8 @@ export default function CreateStudio() {
               </span>
             </button>
             <div className="ws-balance">
-              余额 1,280 积分 · <a href="/pricing">充值</a>
+              {balance !== null ? `余额 ${balance.toLocaleString()} 积分` : "余额 —"} ·{" "}
+              <a href="/pricing">充值</a>
             </div>
           </div>
         </aside>
