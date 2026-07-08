@@ -97,10 +97,12 @@ export default function SiteFooter() {
         </div>
 
         <div className="foot-bottom">
-          <span>
-            © 2026 FLOWINGLIGHT · 流光 · 高保真交互原型 · 占位封面为生成式渐变，可替换为真实作品
+          <span>© {new Date().getFullYear()} 流光 FlowingLight · 保留所有权利</span>
+          <span className="foot-legal">
+            <Link href="/terms">服务条款</Link>
+            <Link href="/privacy">隐私政策</Link>
+            <a href="mailto:ad@tcmzhan.com">联系我们</a>
           </span>
-          <span className="mono">流光 · FLUX FIELD v2</span>
         </div>
       </div>
     </footer>

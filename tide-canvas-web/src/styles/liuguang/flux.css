@@ -361,6 +361,10 @@ footer{border-top:1px solid var(--border); padding:54px 0 40px; margin-top:clamp
 .foot-col a{display:block; font-size:13.5px; color:var(--text-dim); padding:6px 0; transition:color .14s;}
 .foot-col a:hover{color:var(--accent);}
 .foot-bottom{display:flex; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-top:44px; padding-top:24px; border-top:1px solid var(--border); font-size:12.5px; color:var(--text-faint);}
+/* 底栏右侧法务/联系链接（服务条款 · 隐私政策 · 联系我们） */
+.foot-legal{display:inline-flex; gap:18px;}
+.foot-legal a{color:var(--text-faint); transition:color .14s;}
+.foot-legal a:hover{color:var(--text-dim); text-decoration:underline;}
 
 /* ─── REVEAL ──────────────────────────────────────────────────────── */
 .reveal{opacity:0; transform:translateY(24px); transition:opacity .6s var(--ease), transform .6s var(--ease); transition-delay:var(--rd,0s); will-change:opacity,transform;}

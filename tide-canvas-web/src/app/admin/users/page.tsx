@@ -59,23 +59,25 @@ function roleLabel(r: number) {
   return ROLE_LABEL[r] ?? `角色 ${r}`;
 }
 
-/* the filter-chip row: 全部 / 普通 / VIP / 管理员 / 已封禁. */
-type FilterKey = "all" | "user" | "vip" | "admin" | "banned";
+/* the filter-chip row: 全部 / 普通 / 订阅用户 / 管理员 / 已封禁.
+   订阅用户按 vipLevel >= 1 筛（购买套餐结算时提升的真实付费口径）；
+   旧「VIP」标签筛 role=1，但支付链路从不写 role，永远筛不出人，已废弃。 */
+type FilterKey = "all" | "user" | "subscribed" | "admin" | "banned";
 const FILTERS: { key: FilterKey; label: string }[] = [
   { key: "all", label: "全部" },
   { key: "user", label: "普通用户" },
-  { key: "vip", label: "VIP" },
+  { key: "subscribed", label: "订阅用户" },
   { key: "admin", label: "管理员" },
   { key: "banned", label: "已封禁" },
 ];
 
-/** Map a filter chip to the backend role/status query params. */
-function filterToQuery(f: FilterKey): { role?: number; status?: number } {
+/** Map a filter chip to the backend role/status/subscribed query params. */
+function filterToQuery(f: FilterKey): { role?: number; status?: number; subscribed?: string } {
   switch (f) {
     case "user":
       return { role: 0 };
-    case "vip":
-      return { role: 1 };
+    case "subscribed":
+      return { subscribed: "1" };
     case "admin":
       return { role: 9 };
     case "banned":
@@ -591,8 +593,8 @@ function AdminUsersPageInner() {
                   value={editForm.role}
                   onChange={(e) => setEditForm({ ...editForm, role: Number(e.target.value) })}
                 >
+                  {/* role=1(VIP) 死档已移除：会员身份走 vipLevel，由购买结算提升 */}
                   <option value={0}>普通用户</option>
-                  <option value={1}>VIP</option>
                   <option value={9}>管理员</option>
                 </select>
               </Field>

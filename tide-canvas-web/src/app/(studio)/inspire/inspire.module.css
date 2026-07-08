@@ -147,3 +147,13 @@
   filter: brightness(1.07);
   transform: translateY(-1px);
 }
+/* imini 白按钮配黑字（防隐形）：--grad 已变浅灰，白字会隐形 */
+:global(body.imini) .apply {
+  color: #0a0a0b;
+  background: #fff;
+  box-shadow: none;
+}
+:global(body.imini) .apply:hover {
+  filter: none;
+  background: #e8e8ea;
+}

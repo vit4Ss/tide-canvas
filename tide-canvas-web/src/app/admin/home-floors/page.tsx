@@ -39,6 +39,7 @@ import {
 } from "@/mock/admin-home-floors";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminHomeFloorsApi } from "@/lib/admin-home-floors-api";
+import { confirmDialog } from "@/components/shared/confirm";
 import type { HomeFloorVO } from "@/types/admin-home-floors";
 
 export default function AdminHomeFloorsPage() {
@@ -79,7 +80,14 @@ export default function AdminHomeFloorsPage() {
   };
 
   const removeFloor = async (floor: HomeFloorVO) => {
-    if (typeof window !== "undefined" && !window.confirm(`确定删除楼层「${floor.name}」？`)) return;
+    if (
+      !(await confirmDialog({
+        title: "删除楼层",
+        message: `确定删除楼层「${floor.name}」？`,
+        confirmText: "删除",
+      }))
+    )
+      return;
     const res = await adminHomeFloorsApi.remove(floor.id);
     if (res.success) load();
     else setError(res.message || "删除失败");

@@ -76,7 +76,16 @@ export default function HomePricing({
         </div>
       </div>
 
-      <div className="plans" id="home-plans">
+      <div
+        className="plans"
+        id="home-plans"
+        style={
+          {
+            // 列数=套餐数，全部卡片保持一行（≤900px 由媒体查询回落单列）
+            "--plan-cols": Math.max(plans.length, 1),
+          } as React.CSSProperties
+        }
+      >
         {plans.map((p, i) => {
           const isFree = p.monthly === 0;
           const price = cycle === "yr" ? p.yearly : p.monthly;

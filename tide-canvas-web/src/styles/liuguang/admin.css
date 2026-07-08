@@ -429,3 +429,13 @@
   transition:background .12s, border-color .12s, box-shadow .12s;}
 .set-row input:focus,.set-row select:focus{outline:none; background:var(--surface); border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft);}
 .set-row input::placeholder{color:var(--text-placeholder);}
+
+/* 方案对比表编辑器（/admin/pricing）：表格内联输入。灰底无边框呈现"可点可改"，
+   聚焦后白底蓝描边（与 .set-row input 同语言），避免看起来像纯文本。 */
+.cmp-edit td{padding-top:7px; padding-bottom:7px;}
+.cmp-edit input{width:100%; height:30px; padding:0 10px; border-radius:8px;
+  background:var(--panel); border:1px solid transparent; color:var(--text); font:inherit; font-size:12.5px;
+  transition:background .12s, border-color .12s, box-shadow .12s;}
+.cmp-edit input:hover{background:#E8E8EB;}
+.cmp-edit input:focus{outline:none; background:var(--surface); border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft);}
+.cmp-edit input::placeholder{color:var(--text-placeholder);}

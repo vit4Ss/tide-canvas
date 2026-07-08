@@ -61,15 +61,6 @@ func SeedAdminData(db *gorm.DB) error {
 		return err
 	}
 
-	// Coupons (优惠券).
-	if err := seedIfEmpty(db, &Coupon{}, []Coupon{
-		{Code: "WELCOME20", Type: "amount", Value: decimal.RequireFromString("20.00"), StartTime: now.AddDate(0, 0, -5), EndTime: now.AddDate(0, 1, 0), Used: 230, Limit: 1000, Status: "active"},
-		{Code: "SAVE15PCT", Type: "percent", Value: decimal.RequireFromString("15.00"), StartTime: now.AddDate(0, 0, -2), EndTime: now.AddDate(0, 0, 28), Used: 47, Limit: 300, Status: "active"},
-		{Code: "EXPIRED50", Type: "amount", Value: decimal.RequireFromString("50.00"), StartTime: now.AddDate(0, -2, 0), EndTime: now.AddDate(0, -1, 0), Used: 500, Limit: 500, Status: "expired"},
-	}); err != nil {
-		return err
-	}
-
 	// Admin resources (资源管理).
 	if err := seedIfEmpty(db, &AdminResource{}, []AdminResource{
 		{Name: "oss-assets-prod", Type: "bucket", Size: 824633720832, Refs: 12840, Status: "active", UpdateTime: now},

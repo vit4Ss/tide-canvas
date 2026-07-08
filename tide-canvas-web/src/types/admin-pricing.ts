@@ -42,4 +42,26 @@ export interface AdminPlanUpsertDTO {
   status?: number;
 }
 
+/** 方案对比表的一行：能力名 + 每套餐一格（键=套餐 id；"✓"/"—"/文字）。 */
+export interface AdminCompareRow {
+  label: string;
+  values: Record<string, string>;
+}
+
+/** GET/PUT /api/admin/pricing/compare 的文档体（billing.CompareVO 镜像）。 */
+export interface AdminCompareVO {
+  rows: AdminCompareRow[];
+}
+
+/** 定价页 FAQ 的一条问答。 */
+export interface AdminFaqItem {
+  q: string;
+  a: string;
+}
+
+/** GET/PUT /api/admin/pricing/faq 的文档体（billing.FaqVO 镜像）。 */
+export interface AdminFaqVO {
+  items: AdminFaqItem[];
+}
+
 // 积分包（AdminPointPackage）类型已随管理功能一并移除：积分只随套餐发放。

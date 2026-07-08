@@ -7,13 +7,10 @@
 //   POST   /api/admin/marketing/campaigns        CampaignDTO -> CampaignVO
 //   PUT    /api/admin/marketing/campaigns/:id     CampaignDTO -> CampaignVO
 //   DELETE /api/admin/marketing/campaigns/:id     -> void
-//   GET    /api/admin/marketing/coupons          -> PageData<CouponVO>
-//   POST   /api/admin/marketing/coupons          CouponDTO -> CouponVO
-//   PUT    /api/admin/marketing/coupons/:id       CouponDTO -> CouponVO
-//   DELETE /api/admin/marketing/coupons/:id       -> void
 //
+//（优惠券类型已下线：产品没有优惠券体系，2026-07-09 用户拍板。）
 // IDs serialize as quoted decimal STRINGS (idgen.ID). Times are RFC3339 strings
-// (empty "" when zero). Coupon.value is a decimal STRING (e.g. "20").
+// (empty "" when zero).
 // ============================================================================
 
 /** A marketing campaign (model.Campaign). */
@@ -50,35 +47,7 @@ export interface CampaignDTO {
   channels?: string;
 }
 
-/** A coupon / redemption code (model.Coupon). */
-export interface CouponVO {
-  id: string;
-  code: string;
-  type: string;
-  /** Decimal string, e.g. "20". */
-  value: string;
-  startTime: string;
-  endTime: string;
-  used: number;
-  limit: number;
-  /** active | inactive … */
-  status: string;
-}
-
-/** Create/update body for a coupon. */
-export interface CouponDTO {
-  code: string;
-  type: string;
-  /** Decimal string. */
-  value?: string;
-  startTime?: string;
-  endTime?: string;
-  used?: number;
-  limit?: number;
-  status?: string;
-}
-
-/** Shared list query (g5PageQuery) for campaigns / coupons. */
+/** Shared list query (g5PageQuery) for campaigns. */
 export interface MarketingQuery {
   pageNum?: number;
   pageSize?: number;

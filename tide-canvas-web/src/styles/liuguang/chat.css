@@ -95,7 +95,7 @@
 .cm-row{display:flex; align-items:center; gap:8px; flex:1 1 auto; min-width:0; overflow-x:auto; scrollbar-width:none;}
 .cm-row::-webkit-scrollbar{height:0;}
 .composer-bar > .cm-pts, .composer-bar > .cm-send{flex:none;}
-.cm-chip{display:inline-flex; align-items:center; gap:5px; height:30px; padding:0 11px; border-radius:var(--pill); font-size:12.5px; font-weight:500; color:var(--text-dim); background:var(--panel); border:1px solid transparent; transition:all .14s;}
+.cm-chip{display:inline-flex; align-items:center; gap:5px; height:30px; padding:0 11px; border-radius:6px; font-size:12.5px; font-weight:500; color:var(--text-dim); background:var(--panel); border:1px solid transparent; transition:all .14s;}
 .cm-chip:hover{color:var(--text); background:var(--border);}
 .cm-chip.on{color:var(--accent); background:var(--accent-soft);}
 .cm-chip svg{width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.8;}

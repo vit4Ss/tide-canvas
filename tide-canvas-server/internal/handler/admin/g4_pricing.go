@@ -22,6 +22,7 @@ import (
 	"gorm.io/gorm"
 
 	"tidecanvas/internal/app"
+	"tidecanvas/internal/handler/billing"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/response"
@@ -36,6 +37,8 @@ import (
 //	POST   /plans            g4PlanUpsertDTO -> g4PlanVO
 //	PUT    /plans/:id        g4PlanUpsertDTO -> g4PlanVO
 //	DELETE /plans/:id        -> void
+//	GET    /pricing/compare  -> billing.CompareVO（有效值：已存 JSON 或出厂兜底）
+//	PUT    /pricing/compare  billing.CompareVO -> billing.CompareVO（存 sys_config）
 func RegisterPricing(g *gin.RouterGroup, d *app.Deps) {
 	h := &g4PricingHandler{db: d.DB}
 
@@ -43,6 +46,12 @@ func RegisterPricing(g *gin.RouterGroup, d *app.Deps) {
 	g.POST("/plans", h.createPlan)
 	g.PUT("/plans/:id", h.updatePlan)
 	g.DELETE("/plans/:id", h.deletePlan)
+	// 定价页方案对比表：行内容可编辑；列 = 真实套餐（不落库，随套餐管理走）。
+	g.GET("/pricing/compare", h.getCompare)
+	g.PUT("/pricing/compare", h.saveCompare)
+	// 定价页常见问题 FAQ。
+	g.GET("/pricing/faq", h.getFaq)
+	g.PUT("/pricing/faq", h.saveFaq)
 }
 
 type g4PricingHandler struct {
@@ -167,6 +176,78 @@ func (h *g4PricingHandler) deletePlan(c *gin.Context) {
 		return
 	}
 	response.OK[any](c, nil)
+}
+
+// ---- compare-table handlers ----
+
+// getCompare returns the effective 方案对比 rows (stored JSON or the factory
+// default translated onto live plans) so the admin editor starts pre-filled.
+func (h *g4PricingHandler) getCompare(c *gin.Context) {
+	vo, err := billing.LoadCompare(h.db)
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "failed to load compare table")
+		return
+	}
+	response.OK(c, vo)
+}
+
+// saveCompare persists the 方案对比 rows to sys_config (pricing.compare) and
+// echoes the saved document. Empty-label rows are dropped server-side.
+func (h *g4PricingHandler) saveCompare(c *gin.Context) {
+	var vo billing.CompareVO
+	if err := c.ShouldBindJSON(&vo); err != nil {
+		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	rows := make([]billing.CompareRow, 0, len(vo.Rows))
+	for _, r := range vo.Rows {
+		if r.Label == "" {
+			continue
+		}
+		if r.Values == nil {
+			r.Values = map[string]string{}
+		}
+		rows = append(rows, r)
+	}
+	vo.Rows = rows
+	if err := billing.SaveCompare(h.db, vo); err != nil {
+		response.Fail(c, response.CodeServerError, "failed to save compare table")
+		return
+	}
+	response.OK(c, vo)
+}
+
+// getFaq returns the effective 定价 FAQ (stored JSON or factory default).
+func (h *g4PricingHandler) getFaq(c *gin.Context) {
+	vo, err := billing.LoadFaq(h.db)
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "failed to load faq")
+		return
+	}
+	response.OK(c, vo)
+}
+
+// saveFaq persists the 定价 FAQ to sys_config (pricing.faq). Rows with an
+// empty question are dropped server-side.
+func (h *g4PricingHandler) saveFaq(c *gin.Context) {
+	var vo billing.FaqVO
+	if err := c.ShouldBindJSON(&vo); err != nil {
+		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	items := make([]billing.FaqItem, 0, len(vo.Items))
+	for _, it := range vo.Items {
+		if it.Q == "" {
+			continue
+		}
+		items = append(items, it)
+	}
+	vo.Items = items
+	if err := billing.SaveFaq(h.db, vo); err != nil {
+		response.Fail(c, response.CodeServerError, "failed to save faq")
+		return
+	}
+	response.OK(c, vo)
 }
 
 // ---- mapping helpers ----

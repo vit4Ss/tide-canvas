@@ -14,6 +14,28 @@ export interface PlanVO {
   items: string[];
 }
 
+/** 方案对比表的一行：能力名 + 每套餐一格（键=套餐 id；"✓" 支持 / "—" 不支持 / 文字）。 */
+export interface CompareRow {
+  label: string;
+  values: Record<string, string>;
+}
+
+/** GET /api/billing/compare — 对比表行内容；列由客户端用真实套餐拼装。 */
+export interface CompareVO {
+  rows: CompareRow[];
+}
+
+/** 定价页 FAQ 的一条问答。 */
+export interface FaqItem {
+  q: string;
+  a: string;
+}
+
+/** GET /api/billing/faq — 定价页常见问题（后台价格管理可编辑）。 */
+export interface FaqVO {
+  items: FaqItem[];
+}
+
 /** epay pay method. Maps to the backend payChannel → epay type. */
 export type PayChannel = "alipay" | "wxpay";
 

@@ -70,23 +70,4 @@ type Campaign struct {
 // TableName overrides the default pluralization.
 func (Campaign) TableName() string { return "campaign" }
 
-// Coupon is a redeemable coupon code (优惠券).
-type Coupon struct {
-	BaseModel
-
-	Code string `gorm:"column:code;type:varchar(64);uniqueIndex;not null" json:"code"`
-	// Type: amount / percent / points.
-	Type string `gorm:"column:type;type:varchar(16);not null" json:"type"`
-	// Value is the face value (currency amount, percent points, or points).
-	Value     decimal.Decimal `gorm:"column:value;type:decimal(10,2);not null;default:0" json:"value"`
-	StartTime time.Time       `gorm:"column:start_time" json:"startTime"`
-	EndTime   time.Time       `gorm:"column:end_time" json:"endTime"`
-	// Used counts redemptions so far; Limit is the cap (0 = unlimited).
-	Used  int `gorm:"column:used;type:int;not null;default:0" json:"used"`
-	Limit int `gorm:"column:limit_count;type:int;not null;default:0" json:"limit"`
-	// Status: active / disabled / expired.
-	Status string `gorm:"column:status;type:varchar(16);not null;default:'active'" json:"status"`
-}
-
-// TableName overrides the default pluralization.
-func (Coupon) TableName() string { return "coupon" }
+// 优惠券（Coupon）模型已下线（2026-07-09 用户拍板：产品没有优惠券体系）。

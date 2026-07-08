@@ -190,9 +190,12 @@ export default function StudioRail() {
 
       <Link className="ws-upgrade" href="/pricing">
         <div className="ws-upgrade-top">
-          <span className="star">★</span> 低至 ¥39/月
+          <b>
+            <span className="star">★</span> 升级 Pro
+          </b>
+          <span className="sub">解锁全部模型，低至 ¥39/月</span>
         </div>
-        <div className="ws-upgrade-btn">升级 Pro</div>
+        <div className="ws-upgrade-btn">立即升级</div>
       </Link>
 
       {user && (

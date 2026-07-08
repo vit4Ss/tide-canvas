@@ -5,12 +5,6 @@ import "strings"
 // dto.go defines request payloads / query params for content endpoints. JSON &
 // form tags are camelCase to match the frontend wire contract.
 
-// BannerQuery is the query for GET /api/banners. Position is optional; when set
-// only banners for that placement key are returned.
-type BannerQuery struct {
-	Position string `form:"position"`
-}
-
 // NotificationQuery is the query for GET /api/notifications. isRead is optional
 // (pointer-less here: -1 means "all", 0 unread, 1 read).
 type NotificationQuery struct {

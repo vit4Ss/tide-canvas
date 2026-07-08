@@ -17,6 +17,7 @@ import type { FileVO } from "@/types/file";
 import type { AiTaskVO } from "@/types/ai";
 import { mesh } from "@/lib/mesh";
 import { toast } from "@/components/shared/toast";
+import { confirmDialog } from "@/components/shared/confirm";
 import { useReveal } from "@/components/site/use-reveal";
 
 type TabKey = "hist" | "upload";
@@ -317,7 +318,14 @@ export function AssetsBrowser({
   // 批量删除:生成历史→cancelTask,上传历史→file delete;逐条调用现有接口。
   const batchDelete = async () => {
     if (selected.size === 0 || busy) return;
-    if (!window.confirm(`确认删除所选 ${selected.size} 项？此操作不可恢复。`)) return;
+    if (
+      !(await confirmDialog({
+        title: "批量删除",
+        message: `确认删除所选 ${selected.size} 项？此操作不可恢复。`,
+        confirmText: "删除",
+      }))
+    )
+      return;
     setBusy(true);
     let ok = 0;
     for (const id of selected) {

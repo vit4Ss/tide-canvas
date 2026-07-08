@@ -11,22 +11,11 @@ import (
 // vo.go defines response payloads for content endpoints. Every id / FK field is
 // an idgen.ID (serializes as a quoted string). JSON is camelCase.
 
-// BannerVO is one promotional banner (GET /api/banners, embedded in home feed).
-type BannerVO struct {
-	ID        idgen.ID `json:"id"`
-	Title     string   `json:"title"`
-	ImageUrl  string   `json:"imageUrl"`
-	LinkUrl   string   `json:"linkUrl"`
-	Position  string   `json:"position"`
-	SortOrder int      `json:"sortOrder"`
-}
-
-// HomeFeedVO is the aggregated homepage payload: carousel banners, recent
-// community works, and the hottest market models.
+// HomeFeedVO is the aggregated homepage payload: recent community works and
+// the hottest market models.（运营推荐位 banners 已随「发现管理」下线。）
 type HomeFeedVO struct {
-	Banners []BannerVO     `json:"banners"`
-	Works   []PostLiteVO   `json:"works"`
-	Models  []ModelLiteVO  `json:"models"`
+	Works  []PostLiteVO  `json:"works"`
+	Models []ModelLiteVO `json:"models"`
 }
 
 // PostLiteVO is a slimmed community post for the home "recent works" rail.
@@ -73,18 +62,6 @@ type NotificationVO struct {
 }
 
 // --- mappers ---
-
-// toBannerVO maps a persisted banner to its VO.
-func toBannerVO(b *model.Banner) BannerVO {
-	return BannerVO{
-		ID:        b.ID,
-		Title:     b.Title,
-		ImageUrl:  b.ImageURL,
-		LinkUrl:   b.LinkURL,
-		Position:  b.Position,
-		SortOrder: b.SortOrder,
-	}
-}
 
 // toPostLiteVO maps a community post to the slimmed home-feed VO.
 func toPostLiteVO(p *model.CommunityPost) PostLiteVO {

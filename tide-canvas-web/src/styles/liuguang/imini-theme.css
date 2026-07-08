@@ -323,6 +323,7 @@ body.imini .ws-tool.on .ic svg{stroke:#0A0A0B;} /* 白芯片上的图标必须�
 body.imini .ws-typetabs button.on{color:#0A0A0B; box-shadow:none;}
 body.imini .ws-typetabs button.on svg{stroke:#0A0A0B;}
 body.imini .ws-ratios .ratio.on{color:#0A0A0B; box-shadow:none;}
+/* 选项芯片 6px 已在各基础文件定稿（studio/chat/pages.css），此处无需覆盖 */
 body.imini .ws-gen{color:#0A0A0B; box-shadow:none;}
 body.imini .ws-gen:hover{filter:none; background:#E8E8EA;}
 body.imini .ws-gen:active{transform:scale(.99); filter:none; background:#DCDCDF;}
@@ -335,6 +336,20 @@ body.imini .chat-new:hover{filter:none; background:#E8E8EA; transform:translateY
 body.imini .mcard-use{color:#0A0A0B; box-shadow:none;}
 body.imini .gen-btn{color:#0A0A0B; box-shadow:none;}
 body.imini .gen-btn:hover{filter:none; background:#E8E8EA; transform:translateY(-1px);}
+/* 账户页（account.css 写死 color:#fff + var(--grad)，--grad 变浅后白字隐形） */
+body.imini .acc-page .pf-btn.pri{color:#0A0A0B; background:#fff; box-shadow:none;}
+body.imini .acc-page .pf-btn.pri:hover{filter:none; background:#E8E8EA; transform:translateY(-1px);}
+body.imini .acc-page .admin-cta .ai{color:#0A0A0B; background:#fff;}
+body.imini .acc-page .admin-cta a{color:#0A0A0B; background:#fff; box-shadow:none;}
+body.imini .acc-page .admin-cta a:hover{filter:none; background:#E8E8EA;}
+/* 创作台图标芯片（studio.css 的 color:#fff + var(--grad) 小方块） */
+body.imini .ws-file .ic{color:#0A0A0B;}
+body.imini .ws-srcopt .ic{color:#0A0A0B;}
+body.imini .ws-hcard.file .hic{color:#0A0A0B;}
+/* 聊天 AI 头像：浅灰底上的白色 ✦ 转深 */
+body.imini .msg.ai .av::after{color:#0A0A0B;}
+/* 首页能力卡：hover 时图标底变白，白字形必须转深 */
+body.imini .cap:hover .cap-ico{color:#0A0A0B;}
 
 /* ── 生成台（studio.css 的 11 处硬编码紫） ──────────────────────────── */
 /* 升级卡：紫渐变面板 → 深灰卡 + 白胶囊 CTA（与全站按钮同语言） */

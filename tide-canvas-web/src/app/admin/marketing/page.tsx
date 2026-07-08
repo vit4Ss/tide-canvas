@@ -3,21 +3,16 @@
 /* ============================================================================
    /admin/marketing — 营销管理.
 
-   Faithful port of admin.js V.marketing() + mktModal(), now wired to the REAL
-   backend (full CRUD):
+   Wired to the REAL backend (full CRUD):
      GET/POST/PUT/DELETE /api/admin/marketing/campaigns
-     GET/POST/PUT/DELETE /api/admin/marketing/coupons
 
-     - 4 KPI tiles (进行中活动 / 今日券核销 / 活动带来营收 / 拉新 ROI) — static.
+     - KPI tiles（活动总数 / 进行中活动）— 由真实列表派生。
      - 营销活动 panel: status filter chips + 新建活动, table
        (活动 / 类型 / 周期 / 参与 / 状态 / 操作[编辑·删除])
-     - 优惠券 / 兑换码 panel: 发券, table
-       (名称 / 类型 / 面额·力度 / 已领·已用 / 有效期 / 状态[开关] / 操作[编辑·删除])
-     - 渠道投放 panel: cfg-grid (渠道 ROI h-bars / 获客成本 CAC / Push 触达) — static.
-     - mktModal: 新建/编辑 活动 OR 发券 (kind toggles 类型 options + card title),
-       writing real campaign/coupon DTOs and refreshing the list on save.
+     - mktModal: 新建/编辑 活动，writing real campaign DTOs and refreshing.
 
-   Client component (modals + interactive tables + loading/empty states).
+   优惠券 / 兑换码 面板已下线（2026-07-09 用户拍板：产品没有优惠券体系，
+   后端 coupon 接口/模型/种子一并移除）。
    ============================================================================ */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -31,19 +26,13 @@ import {
   RowActions,
   StatCardGrid,
   StatusPill,
-  SwitchToggle,
   type Column,
   type StatCardProps,
   type StatusPillProps,
 } from "@/components/admin";
 import { FilterChips } from "@/components/admin/filter-bar";
 import { adminMarketingApi } from "@/lib/admin-marketing-api";
-import type {
-  CampaignVO,
-  CampaignDTO,
-  CouponVO,
-  CouponDTO,
-} from "@/types/admin-marketing";
+import type { CampaignVO, CampaignDTO } from "@/types/admin-marketing";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { formatDateTime } from "@/lib/utils";
 
@@ -58,16 +47,13 @@ const CAMPAIGN_FILTER_LABELS: Record<string, string> = {
   ended: "已结束",
 };
 const CAMPAIGN_TYPES = ["促销", "拉新", "裂变", "活动", "线索"];
-const COUPON_TYPES = ["满减", "折扣", "兑换", "直减"];
 const CAMPAIGN_STATUS_OPTIONS = ["draft", "active", "paused", "ended"];
-const COUPON_STATUS_OPTIONS = ["active", "inactive"];
 /** 状态下拉的中文展示文案（value 仍是后端枚举） */
 const STATUS_OPTION_LABELS: Record<string, string> = {
   draft: "草稿",
   active: "进行中",
   paused: "已暂停",
   ended: "已结束",
-  inactive: "已停用",
 };
 
 /** Campaign status → pill (label + tone). */
@@ -93,18 +79,6 @@ function periodLabel(startTime: string, endTime: string): string {
   return `${s || "—"} ~ ${e || "长期"}`;
 }
 
-/* ── modal state ─────────────────────────────────────────────────────────── */
-
-interface CampaignModal {
-  kind: "campaign";
-  row: CampaignVO | null;
-}
-interface CouponModal {
-  kind: "coupon";
-  row: CouponVO | null;
-}
-type ModalState = CampaignModal | CouponModal;
-
 /** Datetime-local string from an RFC3339 value (or "" when unset). */
 function toLocalInput(rfc: string): string {
   if (!rfc) return "";
@@ -119,15 +93,12 @@ export default function AdminMarketingPage() {
 
   const [campaignFilter, setCampaignFilter] = useState<string>(CAMPAIGN_FILTERS[0]);
   const [campaigns, setCampaigns] = useState<CampaignVO[]>([]);
-  const [coupons, setCoupons] = useState<CouponVO[]>([]);
   const [campaignTotal, setCampaignTotal] = useState(0);
-  const [couponTotal, setCouponTotal] = useState(0);
   const [loadingCampaigns, setLoadingCampaigns] = useState(true);
-  const [loadingCoupons, setLoadingCoupons] = useState(true);
   const [campaignError, setCampaignError] = useState<string | null>(null);
-  const [couponError, setCouponError] = useState<string | null>(null);
 
-  const [modal, setModal] = useState<ModalState | null>(null);
+  // modal: null = closed; {row:null} = 新建; {row} = 编辑
+  const [modal, setModal] = useState<{ row: CampaignVO | null } | null>(null);
   const [saving, setSaving] = useState(false);
 
   // form refs (uncontrolled inputs read on save)
@@ -140,8 +111,6 @@ export default function AdminMarketingPage() {
   const statusRef = useRef<HTMLSelectElement>(null);
   const audienceRef = useRef<HTMLInputElement>(null);
   const channelsRef = useRef<HTMLInputElement>(null);
-  const codeRef = useRef<HTMLInputElement>(null);
-  const valueRef = useRef<HTMLInputElement>(null);
 
   const loadCampaigns = useCallback(async () => {
     setLoadingCampaigns(true);
@@ -170,97 +139,44 @@ export default function AdminMarketingPage() {
     }
   }, [ensureSession, campaignFilter]);
 
-  const loadCoupons = useCallback(async () => {
-    setLoadingCoupons(true);
-    setCouponError(null);
-    try {
-      await ensureSession();
-      const res = await adminMarketingApi.listCoupons({ pageNum: 1, pageSize: 100 });
-      if (res.success && res.data) {
-        setCoupons(res.data.records);
-        setCouponTotal(res.data.total);
-      } else {
-        setCouponError(res.message || "加载优惠券失败");
-        setCoupons([]);
-        setCouponTotal(0);
-      }
-    } catch {
-      setCouponError("加载优惠券失败");
-      setCoupons([]);
-      setCouponTotal(0);
-    } finally {
-      setLoadingCoupons(false);
-    }
-  }, [ensureSession]);
-
   useEffect(() => {
     loadCampaigns();
   }, [loadCampaigns]);
-  useEffect(() => {
-    loadCoupons();
-  }, [loadCoupons]);
 
-  const openCampaign = (row: CampaignVO | null) => setModal({ kind: "campaign", row });
-  const openCoupon = (row: CouponVO | null) => setModal({ kind: "coupon", row });
+  const openCampaign = (row: CampaignVO | null) => setModal({ row });
   const close = () => {
     if (!saving) setModal(null);
   };
-
-  const isCoupon = modal?.kind === "coupon";
-  const typeOptions = isCoupon ? COUPON_TYPES : CAMPAIGN_TYPES;
-  const statusOptions = isCoupon ? COUPON_STATUS_OPTIONS : CAMPAIGN_STATUS_OPTIONS;
 
   const handleSave = useCallback(async () => {
     if (!modal) return;
     setSaving(true);
     try {
       await ensureSession();
-      const startVal = startRef.current?.value || undefined;
-      const endVal = endRef.current?.value || undefined;
       const limitVal = limitRef.current?.value;
       const limitNum = limitVal ? Number(limitVal) : undefined;
-
-      if (modal.kind === "campaign") {
-        const dto: CampaignDTO = {
-          name: nameRef.current?.value.trim() ?? "",
-          type: typeRef.current?.value ?? CAMPAIGN_TYPES[0],
-          strength: strengthRef.current?.value ?? "",
-          startTime: startVal,
-          endTime: endVal,
-          limit: Number.isFinite(limitNum) ? limitNum : undefined,
-          status: statusRef.current?.value ?? "draft",
-          audience: audienceRef.current?.value ?? "",
-          channels: channelsRef.current?.value ?? "",
-        };
-        const res = modal.row
-          ? await adminMarketingApi.updateCampaign(modal.row.id, dto)
-          : await adminMarketingApi.createCampaign(dto);
-        if (res.success) {
-          setModal(null);
-          await loadCampaigns();
-        }
-      } else {
-        const dto: CouponDTO = {
-          code: codeRef.current?.value.trim() ?? "",
-          type: typeRef.current?.value ?? COUPON_TYPES[0],
-          value: valueRef.current?.value || undefined,
-          startTime: startVal,
-          endTime: endVal,
-          limit: Number.isFinite(limitNum) ? limitNum : undefined,
-          status: statusRef.current?.value ?? "active",
-        };
-        const res = modal.row
-          ? await adminMarketingApi.updateCoupon(modal.row.id, dto)
-          : await adminMarketingApi.createCoupon(dto);
-        if (res.success) {
-          setModal(null);
-          await loadCoupons();
-        }
+      const dto: CampaignDTO = {
+        name: nameRef.current?.value.trim() ?? "",
+        type: typeRef.current?.value ?? CAMPAIGN_TYPES[0],
+        strength: strengthRef.current?.value ?? "",
+        startTime: startRef.current?.value || undefined,
+        endTime: endRef.current?.value || undefined,
+        limit: Number.isFinite(limitNum) ? limitNum : undefined,
+        status: statusRef.current?.value ?? "draft",
+        audience: audienceRef.current?.value ?? "",
+        channels: channelsRef.current?.value ?? "",
+      };
+      const res = modal.row
+        ? await adminMarketingApi.updateCampaign(modal.row.id, dto)
+        : await adminMarketingApi.createCampaign(dto);
+      if (res.success) {
+        setModal(null);
+        await loadCampaigns();
       }
     } finally {
       setSaving(false);
     }
-  }, [modal, ensureSession, loadCampaigns, loadCoupons]);
+  }, [modal, ensureSession, loadCampaigns]);
 
   const deleteCampaign = useCallback(
     async (row: CampaignVO) => {
@@ -269,35 +185,6 @@ export default function AdminMarketingPage() {
       if (res.success) await loadCampaigns();
     },
     [ensureSession, loadCampaigns],
-  );
-
-  const deleteCoupon = useCallback(
-    async (row: CouponVO) => {
-      await ensureSession();
-      const res = await adminMarketingApi.deleteCoupon(row.id);
-      if (res.success) await loadCoupons();
-    },
-    [ensureSession, loadCoupons],
-  );
-
-  /** Toggle a coupon's enabled status (active <-> inactive) and refresh. */
-  const toggleCoupon = useCallback(
-    async (row: CouponVO, next: boolean) => {
-      await ensureSession();
-      const dto: CouponDTO = {
-        code: row.code,
-        type: row.type,
-        value: row.value,
-        startTime: row.startTime || undefined,
-        endTime: row.endTime || undefined,
-        limit: row.limit,
-        used: row.used,
-        status: next ? "active" : "inactive",
-      };
-      const res = await adminMarketingApi.updateCoupon(row.id, dto);
-      if (res.success) await loadCoupons();
-    },
-    [ensureSession, loadCoupons],
   );
 
   const campaignColumns: Column<CampaignVO>[] = useMemo(
@@ -333,59 +220,13 @@ export default function AdminMarketingPage() {
     [deleteCampaign],
   );
 
-  const couponColumns: Column<CouponVO>[] = useMemo(
-    () => [
-      { header: "名称", className: "strong", cell: (r) => r.code },
-      { header: "类型", cell: (r) => r.type },
-      { header: "面额 / 力度", className: "mono", cell: (r) => r.value || "—" },
-      {
-        header: "已领 / 已用",
-        className: "mono",
-        cell: (r) => `${r.limit.toLocaleString()} / ${r.used.toLocaleString()}`,
-      },
-      { header: "有效期", className: "muted", cell: (r) => (r.endTime ? `~ ${formatDateTime(r.endTime)}` : "长期") },
-      {
-        header: "状态",
-        cell: (r) => (
-          <SwitchToggle
-            checked={r.status === "active"}
-            onChange={(next) => toggleCoupon(r, next)}
-            aria-label={`${r.code} 启用`}
-          />
-        ),
-      },
-      {
-        header: "操作",
-        align: "right",
-        cell: (r) => (
-          <RowActions
-            actions={[
-              { label: "编辑", onClick: () => openCoupon(r) },
-              { label: "删除", onClick: () => deleteCoupon(r), danger: true },
-            ]}
-          />
-        ),
-      },
-    ],
-    [deleteCoupon, toggleCoupon],
-  );
+  const editing = modal?.row ?? null;
+  const modalTitle = editing ? `编辑 · ${editing.name}` : "新建活动";
 
-  const editingCampaign = modal?.kind === "campaign" ? modal.row : null;
-  const editingCoupon = modal?.kind === "coupon" ? modal.row : null;
-  const modalTitle = modal?.row
-    ? isCoupon
-      ? `编辑 · ${editingCoupon?.code ?? ""}`
-      : `编辑 · ${editingCampaign?.name ?? ""}`
-    : isCoupon
-      ? "发券"
-      : "新建活动";
-
-  // KPI 全部由真实列表派生（原「今日券核销/营收/ROI」为编造数据，后端无对应指标，已移除）
+  // KPI 全部由真实列表派生
   const kpis: StatCardProps[] = [
     { k: "活动总数", v: String(campaignTotal), dir: "up" },
     { k: "进行中活动", v: String(campaigns.filter((c) => c.status === "active").length), dir: "up" },
-    { k: "优惠券总数", v: String(couponTotal), dir: "up" },
-    { k: "券已领取", v: String(coupons.reduce((s, c) => s + (c.used || 0), 0)), dir: "up" },
   ];
 
   return (
@@ -395,7 +236,7 @@ export default function AdminMarketingPage() {
       {/* 营销活动 */}
       <Panel
         title="营销活动"
-        sub="运营活动、Banner 与投放"
+        sub="运营活动与投放"
         tools={
           <>
             <FilterChips
@@ -432,130 +273,64 @@ export default function AdminMarketingPage() {
         )}
       </Panel>
 
-      {/* 优惠券 / 兑换码 */}
-      <Panel
-        title="优惠券 / 兑换码"
-        tools={
-          <button type="button" className="adm-btn ghost" onClick={() => openCoupon(null)}>
-            + 发券
-          </button>
-        }
-      >
-        {loadingCoupons ? (
-          <div className="muted" style={{ padding: 32, textAlign: "center" }}>
-            加载中…
-          </div>
-        ) : couponError ? (
-          <div className="muted" style={{ padding: 32, textAlign: "center" }}>
-            {couponError}
-          </div>
-        ) : coupons.length === 0 ? (
-          <div className="muted" style={{ padding: 32, textAlign: "center" }}>
-            暂无优惠券
-          </div>
-        ) : (
-          <AdminTable<CouponVO>
-            rows={coupons}
-            rowKey={(r) => r.id}
-            columns={couponColumns}
-            pageSize={10}
-            total={couponTotal}
-          />
-        )}
-      </Panel>
+      {/* 「优惠券/兑换码」面板已下线（产品无优惠券体系）；
+          「渠道投放」（ROI/CAC/Push）早前已移除（编造数据） */}
 
-      {/* 「渠道投放」（ROI/CAC/Push）已移除：后端无任何渠道分析/推送策略接口，
-          原面板全部为编造数据与无持久化的假开关 */}
-
-      {/* mktModal — 新建/编辑 活动 / 发券 */}
+      {/* mktModal — 新建/编辑 活动 */}
       <AdminModal
         open={modal != null}
         title={modalTitle}
-        subtitle={
-          modal?.row
-            ? isCoupon
-              ? "编辑优惠券 / 兑换码"
-              : "编辑营销活动"
-            : isCoupon
-              ? "发放一张优惠券 / 兑换码"
-              : "新建一个营销活动"
-        }
+        subtitle={editing ? "编辑营销活动" : "新建一个营销活动"}
         saveLabel={saving ? "保存中…" : "保存"}
         onClose={close}
         onSave={handleSave}
       >
-        <FormCard title={isCoupon ? "优惠券信息" : "活动信息"}>
+        <FormCard title="活动信息">
           <FormGrid>
-            {isCoupon ? (
-              <Field label="兑换码 / 名称" required span={2}>
-                <input ref={codeRef} placeholder="如：NEWYEAR20" defaultValue={editingCoupon?.code ?? ""} />
-              </Field>
-            ) : (
-              <Field label="名称" required span={2}>
-                <input ref={nameRef} placeholder="如：限时年付 -42%" defaultValue={editingCampaign?.name ?? ""} />
-              </Field>
-            )}
+            <Field label="名称" required span={2}>
+              <input ref={nameRef} placeholder="如：限时年付 -42%" defaultValue={editing?.name ?? ""} />
+            </Field>
             <Field label="类型" span={2}>
-              <select ref={typeRef} defaultValue={(modal?.row && (isCoupon ? editingCoupon?.type : editingCampaign?.type)) || typeOptions[0]}>
-                {typeOptions.map((o) => (
+              <select ref={typeRef} defaultValue={editing?.type || CAMPAIGN_TYPES[0]}>
+                {CAMPAIGN_TYPES.map((o) => (
                   <option key={o} value={o}>
                     {o}
                   </option>
                 ))}
               </select>
             </Field>
-            {isCoupon ? (
-              <Field label="面额 / 力度">
-                <input ref={valueRef} placeholder="如：20" defaultValue={editingCoupon?.value ?? ""} />
-              </Field>
-            ) : (
-              <Field label="力度 / 面额">
-                <input ref={strengthRef} placeholder="如：-42%" defaultValue={editingCampaign?.strength ?? ""} />
-              </Field>
-            )}
+            <Field label="力度 / 面额">
+              <input ref={strengthRef} placeholder="如：-42%" defaultValue={editing?.strength ?? ""} />
+            </Field>
             <Field label="限量">
               <input
                 ref={limitRef}
                 type="number"
                 placeholder="不限"
-                defaultValue={
-                  modal?.row ? String((isCoupon ? editingCoupon?.limit : editingCampaign?.limit) ?? "") : ""
-                }
+                defaultValue={editing ? String(editing.limit ?? "") : ""}
               />
             </Field>
             <Field label="开始时间" span={2}>
-              <input
-                ref={startRef}
-                type="datetime-local"
-                defaultValue={toLocalInput((isCoupon ? editingCoupon?.startTime : editingCampaign?.startTime) ?? "")}
-              />
+              <input ref={startRef} type="datetime-local" defaultValue={toLocalInput(editing?.startTime ?? "")} />
             </Field>
             <Field label="结束时间" span={2}>
-              <input
-                ref={endRef}
-                type="datetime-local"
-                defaultValue={toLocalInput((isCoupon ? editingCoupon?.endTime : editingCampaign?.endTime) ?? "")}
-              />
+              <input ref={endRef} type="datetime-local" defaultValue={toLocalInput(editing?.endTime ?? "")} />
             </Field>
             <Field label="状态" span={2}>
-              <select ref={statusRef} defaultValue={(modal?.row && (isCoupon ? editingCoupon?.status : editingCampaign?.status)) || statusOptions[0]}>
-                {statusOptions.map((o) => (
+              <select ref={statusRef} defaultValue={editing?.status || CAMPAIGN_STATUS_OPTIONS[0]}>
+                {CAMPAIGN_STATUS_OPTIONS.map((o) => (
                   <option key={o} value={o}>
                     {STATUS_OPTION_LABELS[o] ?? o}
                   </option>
                 ))}
               </select>
             </Field>
-            {!isCoupon && (
-              <>
-                <Field label="适用人群" span={2}>
-                  <input ref={audienceRef} placeholder="如：全部 / 新用户" defaultValue={editingCampaign?.audience ?? ""} />
-                </Field>
-                <Field label="投放渠道" span={4}>
-                  <input ref={channelsRef} placeholder="如：站内,抖音,微信" defaultValue={editingCampaign?.channels ?? ""} />
-                </Field>
-              </>
-            )}
+            <Field label="适用人群" span={2}>
+              <input ref={audienceRef} placeholder="如：全部 / 新用户" defaultValue={editing?.audience ?? ""} />
+            </Field>
+            <Field label="投放渠道" span={4}>
+              <input ref={channelsRef} placeholder="如：站内,抖音,微信" defaultValue={editing?.channels ?? ""} />
+            </Field>
           </FormGrid>
         </FormCard>
       </AdminModal>

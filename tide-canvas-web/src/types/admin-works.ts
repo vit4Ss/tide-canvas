@@ -1,9 +1,8 @@
-// TS shapes for the admin 作品 / 灵感 / 发现 (group g2) endpoints.
+// TS shapes for the admin 作品 / 灵感 (group g2) endpoints.
 //
 // Field names mirror the backend VOs/DTOs in
 //   tide-canvas-server/internal/handler/admin/g2_works.go
 //   tide-canvas-server/internal/handler/admin/g2_inspiration.go
-//   tide-canvas-server/internal/handler/admin/g2_discover.go
 //
 // NOTE on ids: idgen.ID marshals as a QUOTED decimal string (e.g. "123") — see
 // idgen.MarshalJSON — and these are 64-bit snowflakes that overflow JS numbers,

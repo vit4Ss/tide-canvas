@@ -26,7 +26,7 @@
    />
    ============================================================================ */
 
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
 export type CellAlign = "left" | "right" | "center";
 
@@ -117,6 +117,35 @@ export function AdminTable<T>({
   const alignStyle = (a?: CellAlign): React.CSSProperties | undefined =>
     a === "right" ? { textAlign: "right" } : a === "center" ? { textAlign: "center" } : undefined;
 
+  // FLIP：行顺序变化（上移/下移等）时，让行从旧位置平滑滑到新位置，
+  // 而不是瞬间跳变。按 data-rowkey 记录每行上一次的 offsetTop，渲染后对
+  // 位置变化的行先反向位移再过渡回原位。
+  const tbodyRef = useRef<HTMLTableSectionElement>(null);
+  const prevTops = useRef<Map<string, number>>(new Map());
+  useLayoutEffect(() => {
+    const tbody = tbodyRef.current;
+    if (!tbody) return;
+    const trs = Array.from(tbody.rows) as HTMLTableRowElement[];
+    const tops = new Map<string, number>();
+    for (const tr of trs) {
+      const k = tr.dataset.rowkey;
+      if (k != null) tops.set(k, tr.offsetTop);
+    }
+    for (const tr of trs) {
+      const k = tr.dataset.rowkey;
+      if (k == null) continue;
+      const prev = prevTops.current.get(k);
+      const now = tops.get(k);
+      if (prev == null || now == null || prev === now) continue;
+      tr.style.transition = "none";
+      tr.style.transform = `translateY(${prev - now}px)`;
+      void tr.offsetHeight; // 强制 reflow，让初始位移先生效，否则过渡不触发
+      tr.style.transition = "transform .2s cubic-bezier(.25,.1,.25,1)";
+      tr.style.transform = "";
+    }
+    prevTops.current = tops;
+  });
+
   return (
     <>
       <table className={`adm-table${className ? ` ${className}` : ""}`}>
@@ -141,9 +170,9 @@ export function AdminTable<T>({
             })}
           </tr>
         </thead>
-        <tbody>
+        <tbody ref={tbodyRef}>
           {visible.map((row, ri) => (
-            <tr key={rowKey(row, ri)}>
+            <tr key={rowKey(row, ri)} data-rowkey={String(rowKey(row, ri))}>
               {columns.map((c, ci) => (
                 <td key={ci} className={c.className} style={alignStyle(c.align)}>
                   {c.cell(row, ri)}

@@ -1,0 +1,115 @@
+/* confirmDialog 弹窗 — 默认 imini 深色语言；.light = 苹果浅色后台变体。
+   z 层：高于业务弹层(1000)、低于 toast(1200)。动效 160ms ease-out。 */
+
+.cfm-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.55);
+  animation: cfmFade 0.16s cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+.cfm {
+  width: min(400px, calc(100vw - 48px));
+  padding: 22px 22px 18px;
+  border-radius: 14px;
+  background: #17171a;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  animation: cfmPop 0.16s cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+.cfm-t {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  color: #f5f5f7;
+  letter-spacing: -0.01em;
+}
+.cfm-m {
+  margin: 8px 0 0;
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: rgba(255, 255, 255, 0.65);
+}
+.cfm-acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 22px;
+}
+.cfm-btn {
+  height: 34px;
+  padding: 0 18px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.14s, border-color 0.14s, color 0.14s;
+}
+.cfm-btn.ghost {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.65);
+}
+.cfm-btn.ghost:hover {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.32);
+  background: rgba(255, 255, 255, 0.06);
+}
+.cfm-btn.pri {
+  background: #fff;
+  border: none;
+  color: #0a0a0b;
+}
+.cfm-btn.pri:hover {
+  background: #e8e8ea;
+}
+
+/* ── 浅色变体（苹果后台 .admin-body 环境）：白卡 + 苹果蓝主按钮 ── */
+.cfm-mask.light {
+  background: rgba(0, 0, 0, 0.32);
+}
+.cfm-mask.light .cfm {
+  background: #fff;
+  border-color: #e5e5ea;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.18);
+}
+.cfm-mask.light .cfm-t {
+  color: #1d1d1f;
+}
+.cfm-mask.light .cfm-m {
+  color: #6e6e73;
+}
+.cfm-mask.light .cfm-btn {
+  border-radius: 10px;
+}
+.cfm-mask.light .cfm-btn.ghost {
+  border-color: #d1d1d6;
+  color: #6e6e73;
+}
+.cfm-mask.light .cfm-btn.ghost:hover {
+  color: #1d1d1f;
+  background: #f0f0f3;
+  border-color: #d1d1d6;
+}
+.cfm-mask.light .cfm-btn.pri {
+  background: #0071e3;
+  color: #fff;
+}
+.cfm-mask.light .cfm-btn.pri:hover {
+  background: #0063c6;
+}
+
+@keyframes cfmFade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes cfmPop {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(4px);
+  }
+}

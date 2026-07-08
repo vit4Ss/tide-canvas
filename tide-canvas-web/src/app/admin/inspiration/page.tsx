@@ -35,6 +35,7 @@ import type { Kpi } from "@/mock/admin";
 import { mesh } from "@/lib/mesh";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";
+import { confirmDialog } from "@/components/shared/confirm";
 import { adminInspirationApi } from "@/lib/admin-inspiration-api";
 import type {
   CollectionUpsertDTO,
@@ -220,7 +221,14 @@ export default function AdminInspirationPage() {
 
   const deleteColl = useCallback(
     async (c: CollectionVO) => {
-      if (!window.confirm(`确认删除合集「${c.title}」？`)) return;
+      if (
+        !(await confirmDialog({
+          title: "删除合集",
+          message: `确认删除合集「${c.title}」？`,
+          confirmText: "删除",
+        }))
+      )
+        return;
       setBusy(true);
       try {
         const res = await adminInspirationApi.deleteCollection(c.id);
@@ -283,7 +291,14 @@ export default function AdminInspirationPage() {
 
   const deletePrompt = useCallback(
     async (p: PromptVO) => {
-      if (!window.confirm("确认删除该提示词？")) return;
+      if (
+        !(await confirmDialog({
+          title: "删除提示词",
+          message: "确认删除该提示词？",
+          confirmText: "删除",
+        }))
+      )
+        return;
       setBusy(true);
       try {
         const res = await adminInspirationApi.deletePrompt(p.id);

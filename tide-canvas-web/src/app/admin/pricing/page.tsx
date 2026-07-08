@@ -16,7 +16,7 @@
    SwitchToggle/RowActions/AdminModal/StatCardGrid> components. Mock import dropped.
    ============================================================================ */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AdminModal,
   AdminTable,
@@ -32,7 +32,12 @@ import {
 import type { Kpi } from "@/mock/admin";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminPricingApi } from "@/lib/admin-pricing-api";
-import type { AdminPlan, AdminPlanUpsertDTO } from "@/types/admin-pricing";
+import type {
+  AdminCompareRow,
+  AdminFaqItem,
+  AdminPlan,
+  AdminPlanUpsertDTO,
+} from "@/types/admin-pricing";
 
 const yuan = (n: number) => `¥${n.toLocaleString("zh-CN")}`;
 const num = (n: number) => n.toLocaleString("zh-CN");
@@ -44,26 +49,38 @@ const toNum = (s: string) => {
 /* ── plan modal form state ─────────────────────────────────────────────── */
 interface PlanForm {
   name: string;
+  desc: string;
+  cta: string;
   monthly: string;
   yearly: string;
   monthlyPoints: string;
   items: string;
+  featured: boolean;
+  sortOrder: string;
   status: boolean;
 }
 const emptyPlanForm = (): PlanForm => ({
   name: "",
+  desc: "",
+  cta: "",
   monthly: "",
   yearly: "",
   monthlyPoints: "",
   items: "",
+  featured: false,
+  sortOrder: "0",
   status: true,
 });
 const planToForm = (p: AdminPlan): PlanForm => ({
   name: p.name,
+  desc: p.desc,
+  cta: p.cta,
   monthly: String(p.monthly),
   yearly: String(p.yearly),
   monthlyPoints: String(p.monthlyPoints),
   items: (p.items ?? []).join(" · "),
+  featured: p.featured,
+  sortOrder: String(p.sortOrder),
   status: p.status === 1,
 });
 
@@ -79,20 +96,55 @@ export default function AdminPricingPage() {
   const [editingPlan, setEditingPlan] = useState<AdminPlan | null>(null);
   const [planForm, setPlanForm] = useState<PlanForm>(emptyPlanForm());
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      await ensureSession();
-      const planRes = await adminPricingApi.listPlans();
-      if (planRes.success && planRes.data) setPlans(planRes.data);
-      if (!planRes.success) setError(planRes.message || "加载套餐失败");
-    } catch {
-      setError("加载失败，请稍后重试");
-    } finally {
-      setLoading(false);
-    }
-  }, [ensureSession]);
+  // 方案对比表（行可编辑；列=真实套餐）。dirty 后显示保存提示；
+  // ref 镜像给 load() 用，避免静默刷新覆盖未保存的编辑。
+  const [cmpRows, setCmpRows] = useState<AdminCompareRow[]>([]);
+  const [cmpDirty, setCmpDirty] = useState(false);
+  const [cmpSaving, setCmpSaving] = useState(false);
+  const cmpDirtyRef = useRef(false);
+  const markCmpDirty = () => {
+    setCmpDirty(true);
+    cmpDirtyRef.current = true;
+  };
+
+  // 常见问题 FAQ（与对比表同一套编辑/保存模式）。
+  const [faqItems, setFaqItems] = useState<AdminFaqItem[]>([]);
+  const [faqDirty, setFaqDirty] = useState(false);
+  const [faqSaving, setFaqSaving] = useState(false);
+  const faqDirtyRef = useRef(false);
+  const markFaqDirty = () => {
+    setFaqDirty(true);
+    faqDirtyRef.current = true;
+  };
+
+  // silent：跳过 loading 占位，静默换数据。排序等就地操作用它刷新，
+  // 否则表格被「加载中…」卸载重建，行移动的过渡动画会被打断。
+  const load = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!opts?.silent) setLoading(true);
+      setError(null);
+      try {
+        await ensureSession();
+        const planRes = await adminPricingApi.listPlans();
+        if (planRes.success && planRes.data) setPlans(planRes.data);
+        if (!planRes.success) setError(planRes.message || "加载套餐失败");
+        // 对比表 / FAQ 跟随加载（编辑中不覆盖本地未保存的改动）
+        const cmpRes = await adminPricingApi.getCompare();
+        if (cmpRes.success && cmpRes.data?.rows) {
+          setCmpRows((prev) => (prev.length && cmpDirtyRef.current ? prev : cmpRes.data!.rows));
+        }
+        const faqRes = await adminPricingApi.getFaq();
+        if (faqRes.success && faqRes.data?.items) {
+          setFaqItems((prev) => (prev.length && faqDirtyRef.current ? prev : faqRes.data!.items));
+        }
+      } catch {
+        setError("加载失败，请稍后重试");
+      } finally {
+        if (!opts?.silent) setLoading(false);
+      }
+    },
+    [ensureSession],
+  );
 
   useEffect(() => {
     load();
@@ -127,26 +179,23 @@ export default function AdminPricingPage() {
   const savePlan = async () => {
     const dto: AdminPlanUpsertDTO = {
       name: planForm.name.trim(),
+      desc: planForm.desc.trim(),
+      cta: planForm.cta.trim(),
       monthly: toNum(planForm.monthly),
       yearly: toNum(planForm.yearly),
       monthlyPoints: toNum(planForm.monthlyPoints),
+      // 只按 · 和换行分割：权益文案里合法出现逗号（如「每月 3,000 积分」），
+      // 逗号分割会把它拆碎并写坏库里的 items。
       items: planForm.items
-        .split(/[·\n,，]/)
+        .split(/[·\n]/)
         .map((s) => s.trim())
         .filter(Boolean),
+      featured: planForm.featured,
+      sortOrder: toNum(planForm.sortOrder),
       status: planForm.status ? 1 : 0,
-      // The backend upsert is a FULL overwrite; the form doesn't expose
-      // code/desc/featured/cta/sortOrder, so carry the existing values through on
-      // edit — otherwise saving would blank the 热门 badge, description and order.
-      ...(editingPlan
-        ? {
-            code: editingPlan.code,
-            desc: editingPlan.desc,
-            featured: editingPlan.featured,
-            cta: editingPlan.cta,
-            sortOrder: editingPlan.sortOrder,
-          }
-        : {}),
+      // The backend upsert is a FULL overwrite; the form doesn't expose code,
+      // so carry the existing value through on edit.
+      ...(editingPlan ? { code: editingPlan.code } : {}),
     };
     if (!dto.name) return;
     const res = editingPlan
@@ -174,13 +223,131 @@ export default function AdminPricingPage() {
       status: next ? 1 : 0,
     };
     const res = await adminPricingApi.updatePlan(p.id, dto);
-    if (res.success) load();
+    if (res.success) load({ silent: true });
     else setError(res.message || "更新状态失败");
   };
   const deletePlan = async (p: AdminPlan) => {
     const res = await adminPricingApi.deletePlan(p.id);
     if (res.success) load();
     else setError(res.message || "删除套餐失败");
+  };
+
+  /* ── compare-table actions ───────────────────────────────────────────── */
+  const updateCmpLabel = (i: number, v: string) => {
+    setCmpRows((rows) => rows.map((r, ri) => (ri === i ? { ...r, label: v } : r)));
+    markCmpDirty();
+  };
+  const updateCmpCell = (i: number, planId: string, v: string) => {
+    setCmpRows((rows) =>
+      rows.map((r, ri) => (ri === i ? { ...r, values: { ...r.values, [planId]: v } } : r)),
+    );
+    markCmpDirty();
+  };
+  const addCmpRow = () => {
+    setCmpRows((rows) => [...rows, { label: "", values: {} }]);
+    markCmpDirty();
+  };
+  const removeCmpRow = (i: number) => {
+    setCmpRows((rows) => rows.filter((_, ri) => ri !== i));
+    markCmpDirty();
+  };
+  const moveCmpRow = (i: number, dir: -1 | 1) => {
+    setCmpRows((rows) => {
+      const to = i + dir;
+      if (to < 0 || to >= rows.length) return rows;
+      const next = [...rows];
+      const [moved] = next.splice(i, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
+    markCmpDirty();
+  };
+  const saveCompare = async () => {
+    setCmpSaving(true);
+    const rows = cmpRows
+      .map((r) => ({ ...r, label: r.label.trim() }))
+      .filter((r) => r.label);
+    const res = await adminPricingApi.saveCompare({ rows });
+    setCmpSaving(false);
+    if (res.success && res.data?.rows) {
+      setCmpRows(res.data.rows);
+      setCmpDirty(false);
+      cmpDirtyRef.current = false;
+    } else {
+      setError(res.message || "保存对比表失败");
+    }
+  };
+
+  /* ── FAQ actions ─────────────────────────────────────────────────────── */
+  const updateFaq = (i: number, patch: Partial<AdminFaqItem>) => {
+    setFaqItems((items) => items.map((it, ii) => (ii === i ? { ...it, ...patch } : it)));
+    markFaqDirty();
+  };
+  const addFaq = () => {
+    setFaqItems((items) => [...items, { q: "", a: "" }]);
+    markFaqDirty();
+  };
+  const removeFaq = (i: number) => {
+    setFaqItems((items) => items.filter((_, ii) => ii !== i));
+    markFaqDirty();
+  };
+  const moveFaq = (i: number, dir: -1 | 1) => {
+    setFaqItems((items) => {
+      const to = i + dir;
+      if (to < 0 || to >= items.length) return items;
+      const next = [...items];
+      const [moved] = next.splice(i, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
+    markFaqDirty();
+  };
+  const saveFaq = async () => {
+    setFaqSaving(true);
+    const items = faqItems
+      .map((it) => ({ q: it.q.trim(), a: it.a.trim() }))
+      .filter((it) => it.q);
+    const res = await adminPricingApi.saveFaq({ items });
+    setFaqSaving(false);
+    if (res.success && res.data?.items) {
+      setFaqItems(res.data.items);
+      setFaqDirty(false);
+      faqDirtyRef.current = false;
+    } else {
+      setError(res.message || "保存 FAQ 失败");
+    }
+  };
+
+  // 上移/下移：按新顺序给全表重编号 sortOrder（0..n-1），只回写有变化的行。
+  // 全量重编号顺带修平历史上重复/跳号的 sortOrder，避免相邻交换在重号时失效。
+  const movePlan = async (from: number, dir: -1 | 1) => {
+    const to = from + dir;
+    if (to < 0 || to >= plans.length) return;
+    const next = [...plans];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    setPlans(next.map((p, i) => ({ ...p, sortOrder: i }))); // optimistic
+    const results = await Promise.all(
+      next.map((p, i) =>
+        p.sortOrder === i
+          ? Promise.resolve(null)
+          : adminPricingApi.updatePlan(p.id, {
+              name: p.name,
+              code: p.code,
+              desc: p.desc,
+              monthly: p.monthly,
+              yearly: p.yearly,
+              monthlyPoints: p.monthlyPoints,
+              featured: p.featured,
+              cta: p.cta,
+              items: p.items,
+              sortOrder: i,
+              status: p.status,
+            }),
+      ),
+    );
+    if (results.some((r) => r && !r.success)) setError("调整排序失败");
+    load({ silent: true }); // server truth（静默，别打断行移动动画）
   };
 
   return (
@@ -250,9 +417,13 @@ export default function AdminPricingPage() {
               {
                 header: "操作",
                 align: "right",
-                cell: (r) => (
+                cell: (r, i) => (
                   <RowActions
                     actions={[
+                      ...(i > 0 ? [{ label: "上移", onClick: () => movePlan(i, -1) }] : []),
+                      ...(i < plans.length - 1
+                        ? [{ label: "下移", onClick: () => movePlan(i, 1) }]
+                        : []),
                       { label: "编辑", onClick: () => openEditPlan(r) },
                       { label: "删除", onClick: () => deletePlan(r) },
                     ]}
@@ -261,6 +432,175 @@ export default function AdminPricingPage() {
               },
             ]}
           />
+        )}
+      </Panel>
+
+      {/* 方案对比表：行内容可编辑；列 = 上方套餐（名称/顺序/推荐自动跟随） */}
+      <Panel
+        title="方案对比表"
+        sub="公开定价页「方案对比」的行内容 · 列自动对应上方套餐 · 值填 ✓ 表示支持、— 表示不支持，或直接填文字"
+        tools={
+          <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+            {cmpDirty && (
+              <span className="muted" style={{ fontSize: 12 }}>
+                有未保存的修改
+              </span>
+            )}
+            <button type="button" className="adm-btn ghost" onClick={addCmpRow}>
+              + 添加行
+            </button>
+            <button
+              type="button"
+              className="adm-btn"
+              onClick={saveCompare}
+              disabled={cmpSaving || !cmpDirty}
+            >
+              {cmpSaving ? "保存中…" : "保存"}
+            </button>
+          </span>
+        }
+      >
+        {loading ? (
+          <div style={{ padding: 18 }} className="muted">
+            加载中…
+          </div>
+        ) : (
+          <table className="adm-table cmp-edit">
+            <thead>
+              <tr>
+                <th style={{ width: 180 }}>能力</th>
+                {plans.map((p) => (
+                  <th key={p.id}>
+                    {p.name}
+                    {p.featured ? " ★" : ""}
+                  </th>
+                ))}
+                <th style={{ width: 200, textAlign: "right" }}>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cmpRows.length === 0 && (
+                <tr>
+                  <td colSpan={plans.length + 2} className="muted">
+                    暂无对比行，点击「添加行」开始配置。
+                  </td>
+                </tr>
+              )}
+              {cmpRows.map((r, i) => (
+                <tr key={i}>
+                  <td>
+                    <input
+                      value={r.label}
+                      placeholder="如：每月积分"
+                      onChange={(e) => updateCmpLabel(i, e.target.value)}
+                    />
+                  </td>
+                  {plans.map((p) => (
+                    <td key={p.id}>
+                      <input
+                        value={r.values?.[p.id] ?? ""}
+                        placeholder="—"
+                        onChange={(e) => updateCmpCell(i, p.id, e.target.value)}
+                      />
+                    </td>
+                  ))}
+                  <td style={{ textAlign: "right" }}>
+                    <RowActions
+                      actions={[
+                        ...(i > 0 ? [{ label: "上移", onClick: () => moveCmpRow(i, -1) }] : []),
+                        ...(i < cmpRows.length - 1
+                          ? [{ label: "下移", onClick: () => moveCmpRow(i, 1) }]
+                          : []),
+                        { label: "删除", onClick: () => removeCmpRow(i) },
+                      ]}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Panel>
+
+      {/* 常见问题 FAQ：公开定价页「关于付费，你可能想问」的问答内容 */}
+      <Panel
+        title="常见问题 FAQ"
+        sub="公开定价页 FAQ 的问答内容 · 展示顺序即列表顺序"
+        tools={
+          <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+            {faqDirty && (
+              <span className="muted" style={{ fontSize: 12 }}>
+                有未保存的修改
+              </span>
+            )}
+            <button type="button" className="adm-btn ghost" onClick={addFaq}>
+              + 添加问题
+            </button>
+            <button
+              type="button"
+              className="adm-btn"
+              onClick={saveFaq}
+              disabled={faqSaving || !faqDirty}
+            >
+              {faqSaving ? "保存中…" : "保存"}
+            </button>
+          </span>
+        }
+      >
+        {loading ? (
+          <div style={{ padding: 18 }} className="muted">
+            加载中…
+          </div>
+        ) : (
+          <table className="adm-table cmp-edit">
+            <thead>
+              <tr>
+                <th style={{ width: 40 }}>#</th>
+                <th style={{ width: 280 }}>问题</th>
+                <th>回答</th>
+                <th style={{ width: 200, textAlign: "right" }}>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {faqItems.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="muted">
+                    暂无问题，点击「添加问题」开始配置。
+                  </td>
+                </tr>
+              )}
+              {faqItems.map((f, i) => (
+                <tr key={i}>
+                  <td className="muted mono">{String(i + 1).padStart(2, "0")}</td>
+                  <td>
+                    <input
+                      value={f.q}
+                      placeholder="如：积分是怎么计算的？"
+                      onChange={(e) => updateFaq(i, { q: e.target.value })}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      value={f.a}
+                      placeholder="回答内容"
+                      onChange={(e) => updateFaq(i, { a: e.target.value })}
+                    />
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    <RowActions
+                      actions={[
+                        ...(i > 0 ? [{ label: "上移", onClick: () => moveFaq(i, -1) }] : []),
+                        ...(i < faqItems.length - 1
+                          ? [{ label: "下移", onClick: () => moveFaq(i, 1) }]
+                          : []),
+                        { label: "删除", onClick: () => removeFaq(i) },
+                      ]}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </Panel>
 
@@ -281,12 +621,26 @@ export default function AdminPricingPage() {
                 onChange={(e) => setPlanForm((f) => ({ ...f, name: e.target.value }))}
               />
             </Field>
+            <Field label="副标题" span={2} hint="卡片名称下方的一句话，如：高频创作者的首选">
+              <input
+                placeholder="如：高频创作者的首选"
+                value={planForm.desc}
+                onChange={(e) => setPlanForm((f) => ({ ...f, desc: e.target.value }))}
+              />
+            </Field>
             <Field label="每月积分" span={2}>
               <input
                 type="number"
                 placeholder="如：3000"
                 value={planForm.monthlyPoints}
                 onChange={(e) => setPlanForm((f) => ({ ...f, monthlyPoints: e.target.value }))}
+              />
+            </Field>
+            <Field label="按钮文案" span={2} hint="卡片 CTA 按钮文字，留空按钮无文字">
+              <input
+                placeholder="如：升级 Pro / 免费开始 / 联系我们"
+                value={planForm.cta}
+                onChange={(e) => setPlanForm((f) => ({ ...f, cta: e.target.value }))}
               />
             </Field>
             <Field label="月价 (¥)" required span={2}>
@@ -305,11 +659,25 @@ export default function AdminPricingPage() {
                 onChange={(e) => setPlanForm((f) => ({ ...f, yearly: e.target.value }))}
               />
             </Field>
-            <Field label="权益说明" span={4} hint="用 · 或换行分隔多条权益">
+            <Field label="权益说明" span={4} hint="用 · 分隔多条权益（条目内可以使用逗号）">
               <input
-                placeholder="如：全模型 · 高清 · 商用授权"
+                placeholder="如：每月 3,000 积分 · 全部图片 + 视频模型 · 商用授权"
                 value={planForm.items}
                 onChange={(e) => setPlanForm((f) => ({ ...f, items: e.target.value }))}
+              />
+            </Field>
+            <Field label="排序" span={2} hint="数字越小越靠前（公开定价卡片顺序）">
+              <input
+                type="number"
+                value={planForm.sortOrder}
+                onChange={(e) => setPlanForm((f) => ({ ...f, sortOrder: e.target.value }))}
+              />
+            </Field>
+            <Field label="最受欢迎徽章" span={2} hint="开启后卡片高亮并显示「最受欢迎」标签（建议只开一个）">
+              <SwitchToggle
+                checked={planForm.featured}
+                onChange={(next) => setPlanForm((f) => ({ ...f, featured: next }))}
+                aria-label="最受欢迎徽章"
               />
             </Field>
             <Field label="状态" span={4} hint="关闭后套餐将下架（公开定价同步隐藏）">

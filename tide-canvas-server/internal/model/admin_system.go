@@ -69,6 +69,25 @@ const DefaultFooterLinksJSON = `[
     {"label":"隐私政策","href":"/privacy"}]}
 ]`
 
+// ConfigKeyPricingCompare is the sys_config key holding the pricing page's
+// 方案对比 table rows as JSON: {rows:[{label, values:{<planID>: cell}}]}.
+// Columns are NOT stored — the public page derives them from the live plan
+// catalog, so plan renames / reorders / featured 标记 follow 套餐管理
+// automatically. Edited in the admin 价格管理 screen; served to the site by
+// GET /api/billing/compare. Cell convention: "✓" 支持 / "—" 不支持 / 任意文字.
+const ConfigKeyPricingCompare = "pricing.compare"
+
+// ConfigKeyPricingFaq is the sys_config key holding the pricing page's FAQ as
+// JSON: {items:[{q, a}]}. Edited in the admin 价格管理 screen; served to the
+// site by GET /api/billing/faq (factory default when never saved).
+const ConfigKeyPricingFaq = "pricing.faq"
+
+// ConfigKeyChatContextTokenLimit is the sys_config key overriding the chat
+// conversation's cumulative context-token cap (llm.contextTokenLimit). Seeded
+// on boot from the config file; edited in the admin 配置管理 screen and read
+// per request by handler/chat, so changes apply WITHOUT a restart.
+const ConfigKeyChatContextTokenLimit = "llm.contextTokenLimit"
+
 // SysConfig is a key-value platform configuration entry (系统配置).
 type SysConfig struct {
 	BaseModel

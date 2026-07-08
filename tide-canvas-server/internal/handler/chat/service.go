@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -93,6 +94,17 @@ func newService(db *gorm.DB, cfg *config.Config) *service {
 	}
 	if s.ctxTokenLimit <= 0 {
 		s.ctxTokenLimit = 32000
+	}
+	// 把会话上下文上限暴露到后台「配置管理」（首启以配置文件值种入 sys_config；
+	// 之后后台是数据源，contextLimit() 每次实时读取，改后无需重启）。
+	var seed model.SysConfig
+	if err := db.Where(model.SysConfig{ConfigKey: model.ConfigKeyChatContextTokenLimit}).
+		Attrs(model.SysConfig{
+			ConfigValue: strconv.Itoa(s.ctxTokenLimit),
+			Group:       "AI 对话",
+			Description: "会话累计上下文 token 估算上限，达到后要求用户开启新会话（保存即生效）",
+		}).FirstOrCreate(&seed).Error; err != nil {
+		logger.L().Warn("chat: seed context-limit config failed", zap.Error(err))
 	}
 	if s.relay != nil {
 		logger.L().Info("chat: relay assistant enabled (text models via /v1/chat/completions)")
@@ -298,8 +310,23 @@ func (s *service) contextUsage(conversationID, ownerID idgen.ID) (*ContextUsageV
 	if err != nil {
 		return nil, err
 	}
-	vo := toContextUsageVO(used, s.ctxTokenLimit)
+	vo := toContextUsageVO(used, s.contextLimit())
 	return &vo, nil
+}
+
+// contextLimit returns the effective conversation token cap: the admin
+// 配置管理 override (sys_config llm.contextTokenLimit) when it holds a positive
+// integer, else the boot config value. Read per call —— 单行唯一键查询开销可忽略，
+// 换来后台改完即时生效、无需重启。
+func (s *service) contextLimit() int {
+	var row model.SysConfig
+	if err := s.repo.db.Where("config_key = ?", model.ConfigKeyChatContextTokenLimit).
+		First(&row).Error; err == nil {
+		if n, convErr := strconv.Atoi(strings.TrimSpace(row.ConfigValue)); convErr == nil && n > 0 {
+			return n
+		}
+	}
+	return s.ctxTokenLimit
 }
 
 // guardContext rejects a new text turn once the conversation's estimated
@@ -311,7 +338,7 @@ func (s *service) guardContext(conversationID idgen.ID, newContent string) error
 		logger.L().Warn("chat: context estimate failed, skipping cap", zap.Error(err))
 		return nil
 	}
-	if used+estimateTokens(newContent) > s.ctxTokenLimit {
+	if used+estimateTokens(newContent) > s.contextLimit() {
 		return errContextFull
 	}
 	return nil

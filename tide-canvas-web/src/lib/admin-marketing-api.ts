@@ -1,5 +1,6 @@
 // ============================================================================
-// Admin marketing API client — wraps /api/admin/marketing/{campaigns,coupons}.
+// Admin marketing API client — wraps /api/admin/marketing/campaigns.
+//（优惠券接口已下线：产品没有优惠券体系，2026-07-09 用户拍板。）
 //
 // Built on the shared http helper (returns Result<T>; paged = PageData<T>).
 // Admin pages must call `await useAuthStore.getState().ensureSession()` before
@@ -8,16 +9,9 @@
 
 import { http, toParams } from "@/lib/http";
 import type { PageData } from "@/types/api";
-import type {
-  CampaignVO,
-  CampaignDTO,
-  CouponVO,
-  CouponDTO,
-  MarketingQuery,
-} from "@/types/admin-marketing";
+import type { CampaignVO, CampaignDTO, MarketingQuery } from "@/types/admin-marketing";
 
 export const adminMarketingApi = {
-  // ── Campaigns ────────────────────────────────────────────────────────────
   listCampaigns: (query: MarketingQuery = {}) =>
     http.get<PageData<CampaignVO>>("/api/admin/marketing/campaigns", toParams(query)),
   createCampaign: (dto: CampaignDTO) =>
@@ -26,14 +20,4 @@ export const adminMarketingApi = {
     http.put<CampaignVO>(`/api/admin/marketing/campaigns/${id}`, dto),
   deleteCampaign: (id: string) =>
     http.delete<void>(`/api/admin/marketing/campaigns/${id}`),
-
-  // ── Coupons ──────────────────────────────────────────────────────────────
-  listCoupons: (query: MarketingQuery = {}) =>
-    http.get<PageData<CouponVO>>("/api/admin/marketing/coupons", toParams(query)),
-  createCoupon: (dto: CouponDTO) =>
-    http.post<CouponVO>("/api/admin/marketing/coupons", dto),
-  updateCoupon: (id: string, dto: CouponDTO) =>
-    http.put<CouponVO>(`/api/admin/marketing/coupons/${id}`, dto),
-  deleteCoupon: (id: string) =>
-    http.delete<void>(`/api/admin/marketing/coupons/${id}`),
 };

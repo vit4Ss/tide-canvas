@@ -30,6 +30,29 @@ func (h *handler) listPlans(c *gin.Context) {
 	response.OK(c, vos)
 }
 
+// getCompare handles GET /api/billing/compare (public). Returns the pricing
+// page's 方案对比 rows ({rows:[{label, values:{planId: cell}}]}); columns come
+// from GET /plans on the client so the table always mirrors 套餐管理.
+func (h *handler) getCompare(c *gin.Context) {
+	vo, err := LoadCompare(h.svc.repo.db)
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "failed to load compare table")
+		return
+	}
+	response.OK(c, vo)
+}
+
+// getFaq handles GET /api/billing/faq (public). Returns the pricing page's
+// FAQ items ({items:[{q,a}]}), admin-editable in 价格管理.
+func (h *handler) getFaq(c *gin.Context) {
+	vo, err := LoadFaq(h.svc.repo.db)
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "failed to load faq")
+		return
+	}
+	response.OK(c, vo)
+}
+
 // listChannels handles GET /api/billing/channels (public). Returns the
 // admin-enabled, cashier-supported pay methods ([]PayChannelVO) so the client
 // renders exactly what the 管理后台 支付渠道 configuration allows.

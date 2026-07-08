@@ -32,6 +32,10 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	// 发放）；管理端 /api/admin/packages 不受影响。
 	b := api.Group("/billing")
 	b.GET("/plans", h.listPlans)
+	// 定价页方案对比表（行内容；列=真实套餐，由客户端拼装）。
+	b.GET("/compare", h.getCompare)
+	// 定价页常见问题 FAQ（后台价格管理可编辑）。
+	b.GET("/faq", h.getFaq)
 	// 可用支付方式由管理后台「支付渠道」开关驱动（pay_channel.enabled）。
 	b.GET("/channels", h.listChannels)
 	// epay delivers the async notify as a GET (query params); accept POST too.

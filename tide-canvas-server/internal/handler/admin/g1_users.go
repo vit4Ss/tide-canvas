@@ -98,15 +98,19 @@ type RoleVO struct {
 
 // AdminUserQuery is the query for GET /users.
 //
-//	keyword? matches username/email/nickname/phone
-//	role?    exact User.Role (0 user / 1 vip / 9 admin) — sent as a pointer so 0 is distinguishable from "unset"
-//	status?  exact User.Status (0 disabled / 1 active)
+//	keyword?    matches username/email/nickname/phone
+//	role?       exact User.Role (0 user / 9 admin) — sent as a pointer so 0 is distinguishable from "unset"
+//	status?     exact User.Status (0 disabled / 1 active)
+//	subscribed? "1" filters paying members (vip_level >= 1，购买套餐结算时提升)——
+//	            用户列表的「订阅用户」标签用它；role=1 的旧 VIP 档从不被支付链路
+//	            写入，不再作为筛选口径。
 type AdminUserQuery struct {
-	PageNum  int    `form:"pageNum"`
-	PageSize int    `form:"pageSize"`
-	Keyword  string `form:"keyword"`
-	Role     *int   `form:"role"`
-	Status   *int   `form:"status"`
+	PageNum    int    `form:"pageNum"`
+	PageSize   int    `form:"pageSize"`
+	Keyword    string `form:"keyword"`
+	Role       *int   `form:"role"`
+	Status     *int   `form:"status"`
+	Subscribed string `form:"subscribed"`
 }
 
 func (q *AdminUserQuery) normalize() {
@@ -174,6 +178,9 @@ func (h *userHandler) listUsers(c *gin.Context) {
 	}
 	if q.Status != nil {
 		tx = tx.Where("status = ?", *q.Status)
+	}
+	if q.Subscribed == "1" {
+		tx = tx.Where("vip_level >= 1")
 	}
 
 	var total int64

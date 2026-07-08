@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 import { MoreHorizontal, ExternalLink, Pencil, Image as ImageIcon, Copy, Trash2, X } from "lucide-react";
 import { projectApi } from "@/lib/api";
 import { toast } from "@/components/shared/toast";
+import { confirmDialog } from "@/components/shared/confirm";
 import { CanvasCoverPicker } from "@/components/canvas/canvas-cover-picker";
 import type { ProjectVO } from "@/types/canvas";
 
@@ -107,7 +108,14 @@ export function ProjectCardMenu({ project, onChanged }: Props) {
 
   const handleDelete = async () => {
     setOpen(false);
-    if (!confirm("确定要删除该项目吗？")) return;
+    if (
+      !(await confirmDialog({
+        title: "删除项目",
+        message: "确定要删除该项目吗？此操作不可撤销。",
+        confirmText: "删除",
+      }))
+    )
+      return;
     const res = await projectApi.delete(project.id);
     if (res.success) { toast.success("已删除"); onChanged(); } else toast.error(res.message || "删除失败");
   };

@@ -21,60 +21,21 @@
    - FAQ accordion (single-open, first open by default).
    ========================================================================== */
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { billingApi } from "@/lib/billing-api";
-import type { PlanVO } from "@/types/billing";
+import type { CompareRow, FaqItem, PlanVO } from "@/types/billing";
 import { useReveal } from "@/components/site/use-reveal";
 import { useAuthStore } from "@/stores/use-auth-store";
 import PayModal, { type PurchaseIntent } from "@/components/site/pay-modal";
 
 type Cycle = "yr" | "mo";
 
-const CMP_HEAD = ["能力", "体验版", "创作者 Pro", "企业版"] as const;
+/* Feature comparison table — 列 = 真实套餐（跟随套餐管理的名称/排序/推荐），
+   行 = GET /api/billing/compare（后台价格管理可编辑）。
+   格子约定："✓" 支持 / "—" 不支持 / 其余按字面文字展示。 */
 
-/* Feature comparison table — STATIC design content (no billing backend
-   equivalent). Each row: [capability, 体验版, 创作者 Pro, 企业版];
-   "✓" = supported, "—" = not supported, otherwise a literal value. */
-const CMP_ROWS: readonly (readonly string[])[] = [
-  ["每月积分", "100", "3,000", "无限"],
-  ["图片模型", "基础", "全部", "全部 + 私有"],
-  ["视频模型", "—", "全部", "全部"],
-  ["生成速度", "标准", "优先不限速", "最高优先"],
-  ["最高分辨率", "512²", "4K", "4K"],
-  ["商用授权", "—", "✓", "✓"],
-  ["API 接入", "—", "—", "✓"],
-  ["团队协作", "—", "—", "✓"],
-];
-
-/* Pricing FAQ — STATIC design content (no billing backend equivalent). */
-const PRICING_FAQS: readonly { q: string; a: string }[] = [
-  {
-    q: "积分是怎么计算的？",
-    a: "每次生成会按模型与分辨率消耗对应积分，标准图片约 1 积分/张，高清与视频按算力计费。生成前会显示预估消耗。",
-  },
-  {
-    q: "可以随时升级或降级吗？",
-    a: "可以。升级立即生效并按比例计费；降级会在当前账期结束后生效，已购积分继续有效。",
-  },
-  {
-    q: "没用完的积分会过期吗？",
-    a: "不会。套餐发放的积分计入账户余额，长期有效，升级或续费后余额继续累加。",
-  },
-  {
-    q: "支持哪些支付方式？",
-    a: "支持微信支付、支付宝以及主流信用卡。企业版可申请对公转账与发票。",
-  },
-  {
-    q: "生成的作品版权归谁？",
-    a: "你拥有自己生成作品的使用权。Pro 及以上方案附带商用授权，可用于商业项目。",
-  },
-  {
-    q: "免费版有什么限制？",
-    a: "免费版每月赠送 100 积分，可使用基础图片模型与标准队列，适合尝鲜与轻度创作。",
-  },
-];
+/* Pricing FAQ — GET /api/billing/faq（后台价格管理可编辑，缺省回落出厂内容）。 */
 
 export default function PricingPage() {
   const router = useRouter();
@@ -125,6 +86,8 @@ export default function PricingPage() {
   // Real plan cards from the public billing endpoint. 积分只随套餐发放，
   // 不提供单独充值（产品决策，2026-07）。
   const [plans, setPlans] = useState<PlanVO[]>([]);
+  const [cmpRows, setCmpRows] = useState<CompareRow[]>([]);
+  const [faqs, setFaqs] = useState<FaqItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   // 年付节省比例由真实套餐价推导（原硬编码"省 42%"），无付费套餐时不显示
@@ -137,7 +100,7 @@ export default function PricingPage() {
 
   useEffect(() => {
     let alive = true;
-    // Public read — no session required.
+    // Public reads — no session required.
     billingApi
       .plans()
       .then((res) => {
@@ -146,6 +109,12 @@ export default function PricingPage() {
       .finally(() => {
         if (alive) setLoading(false);
       });
+    billingApi.compare().then((res) => {
+      if (alive && res.success && res.data?.rows) setCmpRows(res.data.rows);
+    });
+    billingApi.faq().then((res) => {
+      if (alive && res.success && res.data?.items) setFaqs(res.data.items);
+    });
     return () => {
       alive = false;
     };
@@ -220,7 +189,17 @@ export default function PricingPage() {
         </div>
 
         {/* ── Plans grid ─────────────────────────────────────────────── */}
-        <div className="plans" id="plans" style={{ marginTop: 36 }}>
+        <div
+          className="plans"
+          id="plans"
+          style={
+            {
+              marginTop: 36,
+              // 列数=套餐数，全部卡片保持一行（≤900px 由媒体查询回落单列）
+              "--plan-cols": Math.max(plans.length, 1),
+            } as React.CSSProperties
+          }
+        >
           {loading && plans.length === 0 && (
             <p
               className="reveal"
@@ -294,54 +273,62 @@ export default function PricingPage() {
         </div>
 
         {/* ── Feature comparison table ───────────────────────────────── */}
-        <section className="block" style={{ paddingBottom: 0 }}>
-          <div
-            className="sec-head"
-            style={{ flexDirection: "column", alignItems: "flex-start" }}
-          >
-            <span className="eyebrow reveal">
-              <span className="d" />
-              方案对比 · COMPARE
-            </span>
-            <h2 className="sec-title reveal">
-              看清每一分<span className="gtext">算力</span>
-            </h2>
-          </div>
-          {/* Pro（第 2 数据列）与方案卡的推荐档同语言：hl 列 + 推荐徽章 */}
-          <div className="cmp-card reveal">
-            <div className="cmp-scroll">
-              <table className="cmp" id="cmp">
-                <thead>
-                  <tr>
-                    {CMP_HEAD.map((h, hi) => (
-                      <th key={h} className={hi === 2 ? "hl" : ""}>
-                        {h}
-                        {hi === 2 && <span className="cmp-badge">推荐</span>}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {CMP_ROWS.map((r) => (
-                    <tr key={r[0]}>
-                      <td>{r[0]}</td>
-                      {r.slice(1).map((c, ci) => (
-                        <td
-                          key={ci}
-                          className={`${c === "—" ? "no" : ""}${ci === 1 ? " hl" : ""}`}
-                        >
-                          {c === "✓" ? <span className="cmp-ck">✓</span> : c}
-                        </td>
+        {/* 列=在售套餐（名称/顺序/推荐徽章跟随套餐管理），行=后台可编辑的对比配置 */}
+        {plans.length > 0 && cmpRows.length > 0 && (
+          <section className="block" style={{ paddingBottom: 0 }}>
+            <div
+              className="sec-head"
+              style={{ flexDirection: "column", alignItems: "flex-start" }}
+            >
+              <span className="eyebrow reveal">
+                <span className="d" />
+                方案对比 · COMPARE
+              </span>
+              <h2 className="sec-title reveal">
+                看清每一分<span className="gtext">算力</span>
+              </h2>
+            </div>
+            {/* featured 套餐列与方案卡的推荐档同语言：hl 列 + 推荐徽章 */}
+            <div className="cmp-card reveal">
+              <div className="cmp-scroll">
+                <table className="cmp" id="cmp">
+                  <thead>
+                    <tr>
+                      <th>能力</th>
+                      {plans.map((p) => (
+                        <th key={p.id} className={p.featured ? "hl" : ""}>
+                          {p.name}
+                          {p.featured && <span className="cmp-badge">推荐</span>}
+                        </th>
                       ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {cmpRows.map((r) => (
+                      <tr key={r.label}>
+                        <td>{r.label}</td>
+                        {plans.map((p) => {
+                          const c = r.values?.[p.id] || "—";
+                          return (
+                            <td
+                              key={p.id}
+                              className={`${c === "—" ? "no" : ""}${p.featured ? " hl" : ""}`}
+                            >
+                              {c === "✓" ? <span className="cmp-ck">✓</span> : c}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
+        )}
 
         {/* ── FAQ accordion ──────────────────────────────────────────── */}
+        {faqs.length > 0 && (
         <section className="block">
           <div
             className="sec-head"
@@ -360,7 +347,7 @@ export default function PricingPage() {
             </h2>
           </div>
           <div className="faq price-faq" id="faq">
-            {PRICING_FAQS.map((f, i) => {
+            {faqs.map((f, i) => {
               const open = openFaq === i;
               return (
                 <div
@@ -386,27 +373,9 @@ export default function PricingPage() {
             })}
           </div>
         </section>
+        )}
 
-        {/* ── CTA block ──────────────────────────────────────────────── */}
-        <section className="block" style={{ paddingBottom: 0 }}>
-          <div className="cta reveal-scale">
-            <div className="cta-glow" />
-            <h2>
-              仍在犹豫？
-              <br />
-              <span className="gtext">先免费试一张</span>
-            </h2>
-            <p>注册即送体验积分，无需绑定信用卡。喜欢了再升级。</p>
-            <div className="cta-actions">
-              <Link className="cta-primary" href="/studio">
-                免费开始创作 →
-              </Link>
-              <Link className="cta-secondary" href="/explore">
-                看看大家在做什么
-              </Link>
-            </div>
-          </div>
-        </section>
+        {/* CTA 收尾块已按用户要求移除（2026-07-08）：定价页以 FAQ 结束。 */}
       </div>
 
       {payIntent && (

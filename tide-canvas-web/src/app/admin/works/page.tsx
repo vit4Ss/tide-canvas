@@ -7,7 +7,8 @@
    /explore feed). Keeps the liuguang admin markup/classes + shared components:
      - 4 KPI cards (总作品 / 已发布 / 待审核 / 精选), derived from the loaded page.
      - 作品库 panel: filter chips (全部 / 图片 / 视频 / 精选 / 已下架) + the works
-       table (作品 / 作者 / 模型 / 点赞 / 类型 / 状态 / 操作).
+       table (作品 / 作者 / 模型 / 类型 / 状态 / 操作)。点赞/评论/浏览等社交
+       计数已移除（2026-07-09 用户拍板：产品没有这些）。
      - 作品详情 modal (查看): cover + meta, with a 精选/取消精选 toggle action.
 
    CRUD against the real endpoints, refreshing the list after each change:
@@ -30,6 +31,7 @@ import {
 import type { Kpi, PillTone } from "@/mock/admin";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminWorksApi } from "@/lib/admin-works-api";
+import { confirmDialog } from "@/components/shared/confirm";
 import {
   WORK_STATUS_OFFLINE,
   WORK_STATUS_PENDING,
@@ -152,7 +154,13 @@ export default function AdminWorksPage() {
 
   const remove = useCallback(
     async (w: AdminWorkVO) => {
-      if (!window.confirm(`确认删除作品「${w.title || w.id}」？此操作会同步从 /explore 移除。`)) {
+      if (
+        !(await confirmDialog({
+          title: "删除作品",
+          message: `确认删除作品「${w.title || w.id}」？此操作会同步从作品广场移除。`,
+          confirmText: "删除",
+        }))
+      ) {
         return;
       }
       setBusyId(w.id);
@@ -185,14 +193,6 @@ export default function AdminWorksPage() {
     },
     { header: "作者", cell: (w) => w.author?.name || "用户" },
     { header: "模型", className: "muted", cell: (w) => w.model || "—" },
-    {
-      header: "点赞",
-      align: "right",
-      className: "mono",
-      sortable: true,
-      sortValue: (w) => w.likes,
-      cell: (w) => w.likes.toLocaleString(),
-    },
     {
       header: "类型",
       cell: (w) => {
@@ -306,18 +306,7 @@ export default function AdminWorksPage() {
                   {typeLabel(detail.type).text}
                 </StatusPill>
               </div>
-              <div className="cfg-row">
-                <span className="lab">点赞</span>
-                <span className="mono">{detail.likes.toLocaleString()}</span>
-              </div>
-              <div className="cfg-row">
-                <span className="lab">评论</span>
-                <span className="mono">{detail.comments.toLocaleString()}</span>
-              </div>
-              <div className="cfg-row">
-                <span className="lab">浏览</span>
-                <span className="mono">{detail.views.toLocaleString()}</span>
-              </div>
+              {/* 点赞/评论/浏览行已移除（2026-07-09 用户拍板：产品没有这些社交计数） */}
               <div className="cfg-row">
                 <span className="lab">状态</span>
                 <StatusPill tone={statusTone(detail.status)}>

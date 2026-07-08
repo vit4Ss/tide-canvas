@@ -46,6 +46,7 @@ import { useAuthStore } from "@/stores/use-auth-store";
 import type { ContextUsageVO, ConversationVO, MessageVO, MessageTaskVO } from "@/types/chat";
 import { mesh } from "@/lib/mesh";
 import { toast } from "@/components/shared/toast";
+import { confirmDialog } from "@/components/shared/confirm";
 
 /* ── composer chips: model + options come from 模型管理 config (studio-models). ── */
 
@@ -305,7 +306,6 @@ export default function ChatPage() {
     if (activeId) refreshCtxUsage(activeId);
   }, [activeId, refreshCtxUsage]);
 
-  const userEmail = useAuthStore((s) => s.user?.email);
   const ensureSession = useAuthStore((s) => s.ensureSession);
 
   // ── composer config (from 模型管理 via studio-models) ──────────────────────
@@ -331,6 +331,28 @@ export default function ChatPage() {
     (name: string) => swatchByName.get(name) ?? swatchOf({ name }),
     [swatchByName],
   );
+  // 当前所选模型的头像（发送占位/流式回复/文字回复的 AI 头像都用它，
+  // 让"正在生成"的气泡直接亮出当前模型的图标而不是通用 ✦）。
+  const curModelAv = (
+    <span className="av av-model" style={selSwatch.style} title={model}>
+      {selSwatch.glyph}
+    </span>
+  );
+  // 生成结果的兜底模型名：旧任务没存 modelName 时，回退到该轮用户消息的
+  // params.model（persistTurn 的参数快照）。按消息顺序一次扫描建表。
+  const fallbackModelByMsg = useMemo(() => {
+    const map = new Map<string, string>();
+    let lastParamModel = "";
+    for (const m of msgs) {
+      if (m.role === "user") {
+        const pm = m.params && typeof m.params.model === "string" ? (m.params.model as string) : "";
+        if (pm) lastParamModel = pm;
+      } else if (m.taskId) {
+        map.set(m.id, lastParamModel);
+      }
+    }
+    return map;
+  }, [msgs]);
   const mCfg = selModel?.config ?? null;
   const isVid = selModel?.type === "video";
   // 联网开关只对「文本模型」且其 config.webSearch 已开启时可用（模型管理里配置）。
@@ -862,8 +884,14 @@ export default function ChatPage() {
 
   const removeConvo = useCallback(
     async (c: ConversationVO) => {
-      // eslint-disable-next-line no-alert
-      if (!window.confirm(`删除对话「${c.title || "未命名对话"}」？此操作不可撤销。`)) return;
+      if (
+        !(await confirmDialog({
+          title: "删除对话",
+          message: `删除对话「${c.title || "未命名对话"}」？此操作不可撤销。`,
+          confirmText: "删除",
+        }))
+      )
+        return;
       const res = await chatApi.deleteConversation(c.id);
       if (!res.success) {
         toast.error(res.message || "删除失败");
@@ -1378,14 +1406,13 @@ export default function ChatPage() {
       <main className="chat-main">
         <div className="chat-top">
           <span className="ti">{activeTitle}</span>
-          <span className="acct">{userEmail || "未登录"} ▾</span>
         </div>
 
         <div className="chat-thread" ref={threadRef} onScroll={onThreadScroll}>
           <div className="chat-inner">
             {msgsLoading && msgs.length === 0 ? (
               <div className="msg ai">
-                <span className="av" />
+                {curModelAv}
                 <div className="bubble">
                   <span className="typing">
                     <i />
@@ -1396,7 +1423,7 @@ export default function ChatPage() {
               </div>
             ) : !msgsLoading && msgs.length === 0 ? (
               <div className="msg ai">
-                <span className="av" />
+                {curModelAv}
                 <div className="bubble">
                   <div>
                     你好！我是你的 流光 创作助手。告诉我你想创作的内容 ——
@@ -1413,12 +1440,13 @@ export default function ChatPage() {
                   onRegenerate={regenerate}
                   onOpenLightbox={openLightbox}
                   swatchFor={swatchForName}
+                  fallbackModel={fallbackModelByMsg.get(m.id) || model}
                 />
               ))
             )}
             {streaming !== null && (
               <div className="msg ai">
-                <span className="av" />
+                {curModelAv}
                 <div className="bubble">
                   {streaming === "" ? (
                     <span className="chat-gen-state">
@@ -1440,7 +1468,7 @@ export default function ChatPage() {
             )}
             {typing && (
               <div className="msg ai">
-                <span className="av" />
+                {curModelAv}
                 <div className="bubble">
                   <span className="typing">
                     <i />
@@ -1521,7 +1549,10 @@ export default function ChatPage() {
                   type="button"
                   onClick={openSrcMenu}
                 >
-                  ＋
+                  {/* SVG 加号：全角＋字形字面不居中，在圆钮里会偏位 */}
+                  <svg viewBox="0 0 24 24" aria-hidden style={{ width: 15, height: 15, fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" }}>
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
                 </button>
               )}
               <input
@@ -2040,6 +2071,7 @@ function Bubble({
   onRegenerate,
   onOpenLightbox,
   swatchFor,
+  fallbackModel,
 }: {
   msg: MessageVO;
   onReEdit: (m: MessageVO) => void;
@@ -2047,6 +2079,8 @@ function Bubble({
   onOpenLightbox: (items: LightboxItem[], index: number) => void;
   /** 模型名 → 图标 swatch（生成结果的 AI 头像显示生成所用模型）。 */
   swatchFor: (name: string) => { style: React.CSSProperties; glyph: string };
+  /** 任务没存 modelName 时的兜底模型名（该轮 params.model，再退当前所选）。 */
+  fallbackModel?: string;
 }) {
   // 生成台 assistant result: rendered from its linked task (single source of truth).
   if (msg.role !== "user" && msg.taskId) {
@@ -2057,6 +2091,7 @@ function Bubble({
         onRegenerate={onRegenerate}
         onOpenLightbox={onOpenLightbox}
         swatchFor={swatchFor}
+        fallbackModel={fallbackModel}
       />
     );
   }
@@ -2068,9 +2103,16 @@ function Bubble({
   // composer attachments snapshotted on the user message (text-model 文件上传).
   const atts = messageAttachments(msg);
   const attImages = atts.filter((a) => a.kind === "image");
+  const aiSw = !isMe && fallbackModel ? swatchFor(fallbackModel) : null;
   return (
     <div className={`msg ${isMe ? "me" : "ai"}`}>
-      <span className="av" />
+      {aiSw ? (
+        <span className="av av-model" style={aiSw.style} title={fallbackModel}>
+          {aiSw.glyph}
+        </span>
+      ) : (
+        <span className="av" />
+      )}
       <div className="msg-col">
         {isMe && atts.length > 0 && (
           <div className="chat-msg-atts">
@@ -2141,18 +2183,20 @@ function AssistantResult({
   onRegenerate,
   onOpenLightbox,
   swatchFor,
+  fallbackModel,
 }: {
   msg: MessageVO;
   onReEdit: (m: MessageVO) => void;
   onRegenerate: (m: MessageVO) => void;
   onOpenLightbox: (items: LightboxItem[], index: number) => void;
   swatchFor: (name: string) => { style: React.CSSProperties; glyph: string };
+  fallbackModel?: string;
 }) {
   const t = msg.task;
   const isVideo = msg.contentType === "video";
-  // 生成结果的头像 = 生成该结果所用的模型图标（任务的 modelName；过期/无
-  // 任务时回退默认 ✦ 头像）。
-  const modelName = t?.modelName || "";
+  // 生成结果的头像 = 生成该结果所用的模型图标：任务 modelName 优先，旧任务
+  // 没存时回退该轮 params.model / 当前所选模型（fallbackModel），仍无则 ✦。
+  const modelName = t?.modelName || fallbackModel || "";
   const sw = modelName ? swatchFor(modelName) : null;
 
   let body: ReactNode;

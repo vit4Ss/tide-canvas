@@ -94,6 +94,55 @@
   font-size: 13px;
   color: var(--text-faint, #86868b);
 }
+/* 空态：铃铛 + 主副两级文案，别让面板像个空盒子 */
+.notif-empty.rich {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 40px 14px 44px;
+}
+.notif-empty.rich svg {
+  width: 28px;
+  height: 28px;
+  margin-bottom: 6px;
+  fill: none;
+  stroke: var(--text-faint, #86868b);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.7;
+}
+.notif-empty.rich b {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-dim, #6e6e73);
+}
+.notif-empty.rich span {
+  font-size: 12px;
+  color: var(--text-faint, #86868b);
+}
+
+/* 条目类型图标芯片：弱底圆角方块 + 线性图标 */
+.notif-ic {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: var(--panel, rgba(0, 0, 0, 0.05));
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.06));
+}
+.notif-ic svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: var(--text-dim, #6e6e73);
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 
 .notif-item {
   position: relative;
@@ -168,6 +217,134 @@
 .notif-del:hover {
   color: #ee6b78;
   background: color-mix(in oklab, #e05260 18%, transparent);
+}
+
+/* ── 详情弹窗：完整正文阅读态（点条目打开）────────────────────────────── */
+.notif-dmask {
+  position: fixed;
+  inset: 0;
+  z-index: 1050;
+  display: flex;
+  justify-content: center;
+  /* 顶部悬挂（约 14vh）：阅读卡比居中更轻，不压底部输入台，视线路径短 */
+  align-items: flex-start;
+  padding-top: 14vh;
+  background: rgba(0, 0, 0, 0.55);
+  animation: notif-pop 0.16s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+/* 浅色宿主：与面板 tone-light 同一层令牌重设 */
+.notif-dmask.tone-light {
+  --surface: #ffffff;
+  --panel: #eef2f7;
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --text: #111827;
+  --text-dim: #64748b;
+  --text-faint: #94a3b8;
+  --accent: #2563eb;
+  background: rgba(0, 0, 0, 0.32);
+}
+.notif-detail {
+  position: relative;
+  width: min(420px, calc(100vw - 48px));
+  max-height: min(72vh, 560px);
+  display: flex;
+  flex-direction: column;
+  padding: 22px;
+  border-radius: 16px;
+  background: var(--surface, #17171a);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  box-shadow: var(--shadow-pop, 0 24px 64px rgba(0, 0, 0, 0.5));
+}
+.nd-x {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  font-size: 17px;
+  line-height: 1;
+  color: var(--text-faint, #86868b);
+  transition: all 0.13s;
+}
+.nd-x:hover {
+  color: var(--text, #f5f5f7);
+  background: var(--panel, rgba(255, 255, 255, 0.08));
+}
+.nd-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-right: 30px; /* 给右上 × 留位 */
+}
+.nd-head .notif-ic {
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+}
+.nd-head .notif-ic svg {
+  width: 17px;
+  height: 17px;
+}
+.nd-ht {
+  flex: 1;
+  min-width: 0;
+}
+.nd-ht b {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.4;
+  color: var(--text, #f5f5f7);
+}
+.nd-ht span {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-faint, #86868b);
+}
+/* 正文放进弱底内嵌块：短内容也有结构，长内容内部滚动 */
+.nd-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin-top: 16px;
+  padding: 13px 14px;
+  border-radius: 10px;
+  background: var(--panel, rgba(255, 255, 255, 0.05));
+  font-size: 13.5px;
+  line-height: 1.75;
+  color: var(--text-dim, rgba(255, 255, 255, 0.72));
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.nd-acts {
+  display: flex;
+  margin-top: 16px;
+}
+.nd-btn {
+  height: 38px;
+  width: 100%;
+  border-radius: 999px;
+  font-size: 13.5px;
+  font-weight: 500;
+  transition: background 0.14s, opacity 0.14s;
+}
+.nd-btn.pri {
+  background: var(--text, #fff);
+  color: var(--surface, #0a0a0b);
+}
+.nd-btn.pri:hover {
+  opacity: 0.9;
+}
+.notif-dmask.tone-light .nd-btn {
+  border-radius: 10px;
+}
+.notif-dmask.tone-light .nd-btn.pri {
+  background: var(--accent, #2563eb);
+  color: #fff;
 }
 
 /* unread badge dot on the trigger -hosts add .notif-badge to a span */

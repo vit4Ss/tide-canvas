@@ -40,6 +40,37 @@ function relativeTime(iso: string): string {
   return new Date(t).toLocaleDateString("zh-CN");
 }
 
+/** 类型 → 线性图标 path（24 viewBox，stroke 风格，与站内 Lucide 语言一致）。 */
+const TYPE_ICON: Record<string, React.ReactNode> = {
+  system: (
+    <path d="M12 2a7 7 0 0 0-7 7v3.5L3 16h18l-2-3.5V9a7 7 0 0 0-7-7Zm-2.3 17a2.5 2.5 0 0 0 4.6 0" />
+  ),
+  like: (
+    <path d="M19 14c1.5-1.4 3-3.2 3-5.5A4.5 4.5 0 0 0 17.5 4c-1.7 0-3 .8-4 2-.9-1.2-2.3-2-4-2A4.5 4.5 0 0 0 5 8.5C5 10.8 6.5 12.6 8 14l4 4 4-4Z" />
+  ),
+  comment: <path d="M21 12a8 8 0 0 1-8 8H4l2-3a8 8 0 1 1 15-5Z" />,
+  follow: (
+    <>
+      <circle cx="9" cy="8" r="4" />
+      <path d="M2 21c0-3.9 3.1-7 7-7s7 3.1 7 7M19 8v6M22 11h-6" />
+    </>
+  ),
+  order: (
+    <>
+      <rect x="2" y="5" width="20" height="14" rx="3" />
+      <path d="M2 10h20" />
+    </>
+  ),
+};
+
+const TYPE_LABEL: Record<string, string> = {
+  system: "系统通知",
+  like: "点赞",
+  comment: "评论",
+  follow: "关注",
+  order: "订单",
+};
+
 interface Props {
   /** Host-supplied trigger button. */
   renderTrigger: (state: {
@@ -74,6 +105,8 @@ export default function NotificationCenter({
   // overflow:auto、104px 窄栏)裁剪；据触发器位置决定向上/下弹与左右对齐。
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
   const [openUp, setOpenUp] = useState(false); // 向上弹出时用反向入场动画
+  // 详情弹窗：点条目打开，展示完整正文；带链接的在弹窗内提供「前往查看」。
+  const [detail, setDetail] = useState<NotificationVO | null>(null);
 
   const positionPanel = useCallback(() => {
     const el = wrapRef.current;
@@ -170,6 +203,14 @@ export default function NotificationCenter({
     };
   }, [open]);
 
+  // Esc 关闭详情弹窗（独立于面板的 Esc 处理）。
+  useEffect(() => {
+    if (!detail) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setDetail(null);
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [detail]);
+
   const markOneRead = async (n: NotificationVO) => {
     if (n.isRead === 1) return;
     // optimistic
@@ -181,16 +222,28 @@ export default function NotificationCenter({
     if (!res.success) loadList(); // 失败时整体回滚(列表+计数)，避免 UI 与后端不一致
   };
 
+  // 点条目 = 标记已读 + 打开详情弹窗（面板收起）；跳转移到弹窗内的「前往查看」。
   const onItemClick = async (n: NotificationVO) => {
+    setDetail(n);
+    setOpen(false);
     await markOneRead(n);
-    if (n.linkUrl) {
-      setOpen(false);
-      if (/^https?:\/\//i.test(n.linkUrl)) {
-        window.open(n.linkUrl, "_blank", "noopener");
-      } else {
-        router.push(n.linkUrl);
-      }
+  };
+
+  const goDetailLink = () => {
+    const url = detail?.linkUrl;
+    setDetail(null);
+    if (!url) return;
+    if (/^https?:\/\//i.test(url)) {
+      window.open(url, "_blank", "noopener");
+      return;
     }
+    // 已在目标页时 router.push 无感——给出明确反馈，避免按钮"点了没反应"。
+    const targetPath = url.split(/[?#]/)[0];
+    if (typeof window !== "undefined" && window.location.pathname === targetPath) {
+      toast.info("你已经在该页面了");
+      return;
+    }
+    router.push(url);
   };
 
   const markAll = async () => {
@@ -240,7 +293,13 @@ export default function NotificationCenter({
             ) : listError ? (
               <div className="notif-empty">{listError}</div>
             ) : items.length === 0 ? (
-              <div className="notif-empty">暂无通知</div>
+              <div className="notif-empty rich">
+                <svg viewBox="0 0 24 24" aria-hidden>
+                  <path d="M12 2a7 7 0 0 0-7 7v3.5L3 16h18l-2-3.5V9a7 7 0 0 0-7-7Zm-2.3 17a2.5 2.5 0 0 0 4.6 0" />
+                </svg>
+                <b>暂无通知</b>
+                <span>生成结果、系统公告会在这里提醒你</span>
+              </div>
             ) : (
               items.map((n) => (
                 <div
@@ -260,6 +319,9 @@ export default function NotificationCenter({
                   }}
                 >
                   {n.isRead === 0 && <span className="notif-dot" aria-hidden />}
+                  <span className="notif-ic" aria-hidden>
+                    <svg viewBox="0 0 24 24">{TYPE_ICON[n.type] ?? TYPE_ICON.system}</svg>
+                  </span>
                   <div className="notif-body">
                     <div className="notif-item-title">{n.title || "通知"}</div>
                     {n.content && <div className="notif-item-text">{n.content}</div>}
@@ -278,6 +340,52 @@ export default function NotificationCenter({
               ))
             )}
           </div>
+          </div>,
+          document.body,
+        )}
+
+      {/* 详情弹窗：完整正文 + 类型/时间元信息；带链接时提供「前往查看」 */}
+      {detail && typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className={`notif-dmask${tone === "light" ? " tone-light" : ""}`}
+            onClick={() => setDetail(null)}
+          >
+            <div
+              className="notif-detail"
+              role="dialog"
+              aria-modal="true"
+              aria-label={detail.title || "通知详情"}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                className="nd-x"
+                aria-label="关闭"
+                onClick={() => setDetail(null)}
+              >
+                ×
+              </button>
+              <div className="nd-head">
+                <span className="notif-ic" aria-hidden>
+                  <svg viewBox="0 0 24 24">{TYPE_ICON[detail.type] ?? TYPE_ICON.system}</svg>
+                </span>
+                <div className="nd-ht">
+                  <b>{detail.title || "通知"}</b>
+                  <span>
+                    {TYPE_LABEL[detail.type] ?? "通知"} · {relativeTime(detail.createTime)}
+                  </span>
+                </div>
+              </div>
+              <div className="nd-body">{detail.content || "（该通知没有正文）"}</div>
+              {detail.linkUrl && (
+                <div className="nd-acts">
+                  <button type="button" className="nd-btn pri" onClick={goDetailLink}>
+                    前往查看 →
+                  </button>
+                </div>
+              )}
+            </div>
           </div>,
           document.body,
         )}

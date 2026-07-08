@@ -40,23 +40,6 @@ func (h *handler) siteFloors(c *gin.Context) {
 	response.OK(c, vos)
 }
 
-// --- banners ---
-
-// listBanners handles GET /api/banners (public). ?position filters placement.
-func (h *handler) listBanners(c *gin.Context) {
-	var q BannerQuery
-	if err := c.ShouldBindQuery(&q); err != nil {
-		response.Fail(c, response.CodeBadRequest, "invalid query: "+err.Error())
-		return
-	}
-	vos, err := h.svc.listBanners(q.Position)
-	if err != nil {
-		response.Fail(c, response.CodeServerError, "failed to list banners")
-		return
-	}
-	response.OK(c, vos)
-}
-
 // --- home feed ---
 
 // homeFeed handles GET /api/home/feed (public).

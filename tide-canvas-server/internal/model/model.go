@@ -50,7 +50,6 @@ func Models() []any {
 		&IMMessage{},
 		// System / misc.
 		&Notification{},
-		&Banner{},
 		&Team{},
 		&SysRole{},
 
@@ -63,7 +62,6 @@ func Models() []any {
 		&PayChannel{},
 		&PointRule{},
 		&Campaign{},
-		&Coupon{},
 		// System / platform.
 		&AdminResource{},
 		&SysLog{},

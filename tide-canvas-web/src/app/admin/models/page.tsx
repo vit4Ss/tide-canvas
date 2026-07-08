@@ -35,6 +35,7 @@ import type { Kpi, PillTone } from "@/mock/admin";
 import { adminSwatch } from "@/mock/admin";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";
+import { confirmDialog } from "@/components/shared/confirm";
 import { adminModelsApi } from "@/lib/admin-models-api";
 import { BRAND_ICONS, brandIconUrl, resolveModelSwatch } from "@/lib/model-brand";
 import {
@@ -183,7 +184,13 @@ export default function AdminModelsPage() {
   };
 
   const removeModel = async (m: AdminModelVO) => {
-    if (typeof window !== "undefined" && !window.confirm(`确定删除模型「${m.name}」？此操作会同步从模型市场移除。`)) {
+    if (
+      !(await confirmDialog({
+        title: "删除模型",
+        message: `确定删除模型「${m.name}」？此操作会同步从模型市场移除。`,
+        confirmText: "删除",
+      }))
+    ) {
       return;
     }
     const res = await adminModelsApi.remove(m.id);

@@ -55,7 +55,6 @@ export const ADMIN_NAV: AdminNavEntry[] = [
   { label: "日志管理", href: "/admin/logs", icon: "log" },
   { group: "内容" },
   { label: "首页楼层", href: "/admin/home-floors", icon: "floor" },
-  { label: "发现管理", href: "/admin/discover", icon: "discover" },
   { label: "模型管理", href: "/admin/models", icon: "model" },
   { label: "资源管理", href: "/admin/resources", icon: "res" },
   { group: "商业" },
@@ -64,6 +63,7 @@ export const ADMIN_NAV: AdminNavEntry[] = [
   { label: "价格管理", href: "/admin/pricing", icon: "price" },
   { label: "支付管理", href: "/admin/payments", icon: "pay" },
   { group: "系统" },
+  { label: "消息管理", href: "/admin/notifications", icon: "bell" },
   { label: "配置管理", href: "/admin/config", icon: "cog" },
   { label: "邮件配置", href: "/admin/email", icon: "mail" },
 ];

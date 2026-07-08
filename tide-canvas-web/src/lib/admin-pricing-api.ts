@@ -7,12 +7,19 @@
 //   POST   /api/admin/plans            -> AdminPlan
 //   PUT    /api/admin/plans/:id        -> AdminPlan
 //   DELETE /api/admin/plans/:id        -> void
+//   GET    /api/admin/pricing/compare  -> AdminCompareVO（有效值，含出厂兜底）
+//   PUT    /api/admin/pricing/compare  -> AdminCompareVO
 //
 // 积分包（/api/admin/packages）管理已下线：积分只随套餐发放。
 // ============================================================================
 
 import { http } from "@/lib/http";
-import type { AdminPlan, AdminPlanUpsertDTO } from "@/types/admin-pricing";
+import type {
+  AdminCompareVO,
+  AdminFaqVO,
+  AdminPlan,
+  AdminPlanUpsertDTO,
+} from "@/types/admin-pricing";
 
 export const adminPricingApi = {
   // ---- plans (公开定价的同源数据) ----
@@ -21,4 +28,10 @@ export const adminPricingApi = {
   updatePlan: (id: string, dto: AdminPlanUpsertDTO) =>
     http.put<AdminPlan>(`/api/admin/plans/${id}`, dto),
   deletePlan: (id: string) => http.delete<null>(`/api/admin/plans/${id}`),
+  // ---- 方案对比表（行内容；列=真实套餐，公开定价页同源） ----
+  getCompare: () => http.get<AdminCompareVO>("/api/admin/pricing/compare"),
+  saveCompare: (vo: AdminCompareVO) => http.put<AdminCompareVO>("/api/admin/pricing/compare", vo),
+  // ---- 常见问题 FAQ（公开定价页同源） ----
+  getFaq: () => http.get<AdminFaqVO>("/api/admin/pricing/faq"),
+  saveFaq: (vo: AdminFaqVO) => http.put<AdminFaqVO>("/api/admin/pricing/faq", vo),
 };

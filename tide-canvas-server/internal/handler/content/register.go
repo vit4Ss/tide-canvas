@@ -15,7 +15,6 @@ import (
 //
 // Frontend contract:
 //
-//	GET    /api/banners                      ?position -> []BannerVO            (public)
 //	GET    /api/site/footer                  -> []FooterColVO                   (public)
 //	GET    /api/site/floors                  -> []HomeFloorLiteVO               (public)
 //	GET    /api/home/feed                    -> HomeFeedVO                      (public)
@@ -33,15 +32,12 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	svc := newService(d.DB)
 	h := newHandler(svc)
 
-	// Public banners. Admin CRUD lives elsewhere (admin surface).
-	api.GET("/banners", h.listBanners) // ?position -> []BannerVO
-
 	// 站点页脚链接：后台「配置管理」的 site.footerLinks 驱动，带出厂默认兜底。
 	api.GET("/site/footer", h.footerLinks) // -> []FooterColVO
 	// 首页楼层：后台「首页楼层」的启用/排序/数量驱动首页区块渲染。
 	api.GET("/site/floors", h.siteFloors) // -> []HomeFloorLiteVO
 
-	// Aggregated homepage feed (banners + recent works + hot models).
+	// Aggregated homepage feed (recent works + hot models).
 	home := api.Group("/home")
 	home.GET("/feed", h.homeFeed) // -> HomeFeedVO
 

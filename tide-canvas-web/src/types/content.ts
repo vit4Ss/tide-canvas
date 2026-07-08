@@ -3,16 +3,6 @@
 // every id / FK field is an idgen.ID, which serializes as a quoted string, so
 // all id fields here are typed `string`.
 
-/** One promotional banner (GET /api/banners, embedded in the home feed). */
-export interface BannerVO {
-  id: string;
-  title: string;
-  imageUrl: string;
-  linkUrl: string;
-  position: string;
-  sortOrder: number;
-}
-
 /** Slimmed community post for the home "recent works" / LIVE GALLERY rail. */
 export interface PostLiteVO {
   id: string;
@@ -65,9 +55,9 @@ export interface ModelLiteVO {
   likeCount: number;
 }
 
-/** Aggregated homepage payload (GET /api/home/feed). */
+/** Aggregated homepage payload (GET /api/home/feed).
+ *  （运营推荐位 banners 已随「发现管理」下线，2026-07-09。） */
 export interface HomeFeedVO {
-  banners: BannerVO[];
   works: PostLiteVO[];
   models: ModelLiteVO[];
 }

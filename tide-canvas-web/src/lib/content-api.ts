@@ -1,7 +1,6 @@
 import { http, toParams } from "@/lib/http";
 import type { PageData } from "@/types/api";
 import type {
-  BannerVO,
   FooterColVO,
   HomeFeedVO,
   HomeFloorLiteVO,
@@ -14,8 +13,7 @@ import type {
  * authenticated notification center. Mirrors
  * tide-canvas-server/internal/handler/content.
  *
- *   GET    /api/home/feed                       -> HomeFeedVO { banners[], works[], models[] }
- *   GET    /api/banners   ?position             -> BannerVO[]
+ *   GET    /api/home/feed                       -> HomeFeedVO { works[], models[] }
  *   GET    /api/site/footer                     -> FooterColVO[]  (后台配置管理 site.footerLinks)
  *   GET    /api/notifications                    -> PageData<NotificationVO>   (auth)
  *   GET    /api/notifications/unread-count       -> { count }                  (auth)
@@ -25,8 +23,6 @@ import type {
  */
 export const contentApi = {
   homeFeed: () => http.get<HomeFeedVO>("/api/home/feed"),
-  banners: (position?: string) =>
-    http.get<BannerVO[]>("/api/banners", position ? toParams({ position }) : undefined),
   /** 页脚链接列 — 后台「配置管理」可编辑，服务端带出厂默认兜底。 */
   footer: () => http.get<FooterColVO[]>("/api/site/footer"),
   /** 首页楼层 — 后台「首页楼层」的启用/排序/数量驱动首页区块。 */

@@ -111,39 +111,15 @@ func (s *service) siteFloors() ([]HomeFloorLiteVO, error) {
 	return vos, nil
 }
 
-// --- banners ---
-
-func (s *service) listBanners(position string) ([]BannerVO, error) {
-	rows, err := s.repo.listBanners(position)
-	if err != nil {
-		return nil, err
-	}
-	vos := make([]BannerVO, 0, len(rows))
-	for i := range rows {
-		vos = append(vos, toBannerVO(&rows[i]))
-	}
-	return vos, nil
-}
-
 // --- home feed ---
 
-// homeFeed aggregates home_top banners, recent community works and hot market
-// models. Each section is read live and tolerates emptiness (always returns a
-// non-nil slice).
+// homeFeed aggregates recent community works and hot market models. Each
+// section is read live and tolerates emptiness (always returns a non-nil
+// slice). （运营推荐位 banners 已随「发现管理」一并下线，2026-07-09 用户拍板。）
 func (s *service) homeFeed() (*HomeFeedVO, error) {
 	feed := &HomeFeedVO{
-		Banners: []BannerVO{},
-		Works:   []PostLiteVO{},
-		Models:  []ModelLiteVO{},
-	}
-
-	// Banners for the home carousel (home_top placement).
-	banners, err := s.repo.listBanners("home_top")
-	if err != nil {
-		return nil, err
-	}
-	for i := range banners {
-		feed.Banners = append(feed.Banners, toBannerVO(&banners[i]))
+		Works:  []PostLiteVO{},
+		Models: []ModelLiteVO{},
 	}
 
 	// Recent published community posts as "works".

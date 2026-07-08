@@ -73,7 +73,7 @@
 .console-go:hover{filter:brightness(.94); transform:translateY(-1px);}
 .console-go:active{transform:scale(.96);}
 .hero-quick{display:flex; flex-wrap:wrap; gap:9px; margin-top:18px;}
-.qchip{display:inline-flex; align-items:center; gap:7px; height:34px; padding:0 14px; border-radius:var(--pill);
+.qchip{display:inline-flex; align-items:center; gap:7px; height:34px; padding:0 14px; border-radius:6px;
   font-size:13px; font-weight:500; color:var(--text-dim); background:var(--surface); border:1px solid var(--border);
   transition:all .16s var(--ease);}
 .qchip:hover{color:var(--text); border-color:var(--border-strong); background:var(--panel-hover); transform:translateY(-1px);}
@@ -295,7 +295,7 @@
 .field-row{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:14px;}
 .field-row label{font-size:13px; color:var(--text-dim); font-weight:600;}
 .ratio-row{display:flex; gap:8px; flex-wrap:wrap;}
-.ratio{height:34px; min-width:46px; padding:0 12px; border-radius:var(--r-sm); font-size:12.5px; font-weight:700; color:var(--text-dim); background:var(--surface-2); border:1px solid var(--border); transition:all .16s;}
+.ratio{height:34px; min-width:46px; padding:0 12px; border-radius:6px; font-size:12.5px; font-weight:700; color:var(--text-dim); background:var(--surface-2); border:1px solid var(--border); transition:all .16s;}
 .ratio.on{color:#fff; background:var(--accent); border-color:transparent;}
 /* 自绘排序下拉 SortSelect（.sst）：药丸触发器 + 玻璃卡弹层。
    原生 select 的弹出菜单是系统绘制的，无法贴合设计语言，故整体自绘。 */
@@ -336,7 +336,8 @@
 .bill-toggle button.on{color:#fff; background:var(--btn-grad); box-shadow:var(--btn-shadow);}
 .bill-toggle .save{font-size:11px; font-weight:700; color:var(--accent); background:var(--accent-soft); padding:2px 7px; border-radius:99px; margin-left:5px;}
 .bill-toggle button.on .save{color:#fff; background:rgba(255,255,255,.24);}
-.plans{display:grid; grid-template-columns:repeat(3,1fr); gap:18px; align-items:start;}
+/* 列数跟随套餐数量（--plan-cols 由页面按 plans.length 注入），保证全部卡片一行排开 */
+.plans{display:grid; grid-template-columns:repeat(var(--plan-cols,3),minmax(0,1fr)); gap:18px; align-items:start;}
 @media(max-width:900px){.plans{grid-template-columns:1fr;}}
 .plans .plan{position:relative; padding:28px 26px; border-radius:var(--r-lg); background:var(--panel-solid); border:1px solid var(--border); box-shadow:var(--shadow-sm); transition:transform .26s var(--ease), border-color .26s, box-shadow .26s;}
 .plans .plan:hover{transform:translateY(-4px); border-color:var(--border-strong); box-shadow:var(--shadow-lg);}

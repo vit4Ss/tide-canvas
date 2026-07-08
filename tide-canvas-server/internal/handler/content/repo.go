@@ -2,7 +2,6 @@ package content
 
 import (
 	"errors"
-	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -55,22 +54,6 @@ func (r *repo) configValue(key string) (string, error) {
 		return "", err
 	}
 	return row.ConfigValue, nil
-}
-
-// --- banners ---
-
-// listBanners returns visible banners, optionally filtered by position, ordered
-// by sort_order asc then newest first.
-func (r *repo) listBanners(position string) ([]model.Banner, error) {
-	tx := r.db.Model(&model.Banner{}).Where("status = ?", statusVisible)
-	if position = strings.TrimSpace(position); position != "" {
-		tx = tx.Where("position = ?", position)
-	}
-	var rows []model.Banner
-	if err := tx.Order("sort_order ASC, create_time DESC").Find(&rows).Error; err != nil {
-		return nil, err
-	}
-	return rows, nil
 }
 
 // --- home feed (live reads of other domains; tolerate empty) ---

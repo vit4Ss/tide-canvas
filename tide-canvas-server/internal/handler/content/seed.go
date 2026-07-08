@@ -9,59 +9,13 @@ import (
 	"tidecanvas/internal/pkg/idgen"
 )
 
-// seed.go inserts demo content (banners and a few notifications for the admin
-// user). It is idempotent: each section is skipped when rows already exist.
+// seed.go inserts demo content (a few notifications for the admin user). It is
+// idempotent: each section is skipped when rows already exist.
+//（banner 种子已随「发现管理」下线，2026-07-09 用户拍板。）
 
 // Seed populates the content domain with demo data. Safe to call repeatedly.
 func Seed(db *gorm.DB) error {
-	if err := seedBanners(db); err != nil {
-		return err
-	}
-	if err := seedNotifications(db); err != nil {
-		return err
-	}
-	return nil
-}
-
-// seedBanners inserts ~3 home banners when none exist.
-func seedBanners(db *gorm.DB) error {
-	var count int64
-	if err := db.Model(&model.Banner{}).Count(&count).Error; err != nil {
-		return err
-	}
-	if count > 0 {
-		return nil
-	}
-	banners := []model.Banner{
-		{
-			BaseModel: model.BaseModel{ID: idgen.Next()},
-			Title:     "AI 创意画布，灵感即刻成形",
-			ImageURL:  "https://picsum.photos/seed/tide-banner-1/1600/600",
-			LinkURL:   "/studio",
-			Position:  "home_top",
-			SortOrder: 1,
-			Status:    1,
-		},
-		{
-			BaseModel: model.BaseModel{ID: idgen.Next()},
-			Title:     "探索社区精选作品",
-			ImageURL:  "https://picsum.photos/seed/tide-banner-2/1600/600",
-			LinkURL:   "/explore",
-			Position:  "home_top",
-			SortOrder: 2,
-			Status:    1,
-		},
-		{
-			BaseModel: model.BaseModel{ID: idgen.Next()},
-			Title:     "模型市场限时上新",
-			ImageURL:  "https://picsum.photos/seed/tide-banner-3/1600/600",
-			LinkURL:   "/models",
-			Position:  "home_top",
-			SortOrder: 3,
-			Status:    1,
-		},
-	}
-	return db.Create(&banners).Error
+	return seedNotifications(db)
 }
 
 // seedNotifications inserts a few demo notifications for the admin user when the

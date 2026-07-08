@@ -3,6 +3,8 @@ import type { PageData } from "@/types/api";
 import type {
   PlanVO,
   PayChannelVO,
+  CompareVO,
+  FaqVO,
   CreateOrderDTO,
   OrderVO,
   VerifyResult,
@@ -16,6 +18,10 @@ import type {
  */
 export const billingApi = {
   plans: () => http.get<PlanVO[]>("/api/billing/plans"),
+  /** 定价页方案对比表（行内容；列=plans() 返回的真实套餐）。 */
+  compare: () => http.get<CompareVO>("/api/billing/compare"),
+  /** 定价页常见问题 FAQ（后台价格管理可编辑）。 */
+  faq: () => http.get<FaqVO>("/api/billing/faq"),
   /** 可用支付方式 — 由管理后台「支付渠道」开关驱动，空数组 = 支付未开通。 */
   channels: () => http.get<PayChannelVO[]>("/api/billing/channels"),
 };

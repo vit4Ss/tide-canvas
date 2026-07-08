@@ -62,6 +62,8 @@ export interface AdminUserQuery {
   keyword?: string;
   role?: number;
   status?: number;
+  /** "1" = 只看订阅用户（vipLevel >= 1，购买套餐的真实付费口径）。 */
+  subscribed?: string;
 }
 
 /** Body for PUT /admin/users/:id. All fields optional (partial update). */

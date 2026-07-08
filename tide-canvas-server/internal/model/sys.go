@@ -26,23 +26,6 @@ type Notification struct {
 // TableName overrides the default pluralization.
 func (Notification) TableName() string { return "notification" }
 
-// Banner is a home / promo banner (sys_banner, /api/banners + admin).
-type Banner struct {
-	BaseModel
-
-	Title    string `gorm:"column:title;type:varchar(128)" json:"title"`
-	ImageURL string `gorm:"column:image_url;type:varchar(512);not null" json:"imageUrl"`
-	LinkURL  string `gorm:"column:link_url;type:varchar(512)" json:"linkUrl"`
-	// Position: home_top / explore / pricing ... (placement key).
-	Position  string `gorm:"column:position;type:varchar(32)" json:"position"`
-	SortOrder int    `gorm:"column:sort_order;type:int;not null;default:0" json:"sortOrder"`
-	// Status: 0 隐藏 / 1 显示.
-	Status int `gorm:"column:status;type:tinyint;not null;default:1" json:"status"`
-}
-
-// TableName overrides the default pluralization.
-func (Banner) TableName() string { return "sys_banner" }
-
 // Team is a collaboration team; users reference it via User.TeamID.
 type Team struct {
 	BaseModel

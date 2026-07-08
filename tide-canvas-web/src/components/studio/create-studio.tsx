@@ -1891,12 +1891,6 @@ export default function CreateStudio() {
     setRunMeta(null);
   }, []);
 
-  // header "清空" — disabled while busy, so a plain reset is safe here.
-  const clearCanvas = () => {
-    if (busy) return;
-    resetRun();
-  };
-
   // load a finished result into a tool's reference slot, then switch to that tool
   // so the user can immediately describe the change. selectTool() clears slotData,
   // and our setSlotData runs in the same batch so the injected slot wins.
@@ -2130,7 +2124,12 @@ export default function CreateStudio() {
     if (!f) {
       return (
         <button className="ws-flf-box" type="button" onClick={(e) => addFile(s.k, e)}>
-          <span className="plus">＋</span>
+          {/* SVG 加号：全角「＋」字形字面不居中，会与下方文字视觉错位 */}
+          <span className="plus" aria-hidden>
+            <svg viewBox="0 0 24 24">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          </span>
           <span className="lb">{s.label}</span>
         </button>
       );
@@ -2180,7 +2179,9 @@ export default function CreateStudio() {
                 title="交换首尾帧"
                 onClick={swapFlf}
               >
-                ⇌
+                <svg viewBox="0 0 24 24" aria-hidden>
+                  <path d="M7 4 3 8l4 4M3 8h18M17 20l4-4-4-4M21 16H3" />
+                </svg>
               </button>
               {renderFlfBox(slots[1])}
             </div>
@@ -2395,13 +2396,7 @@ export default function CreateStudio() {
                 <button className="ws-aiopt" type="button" onClick={aiOptimize} disabled={optimizing}>
                   <span className="spark">✦</span> {optimizing ? "优化中…" : "AI 优化"}
                 </button>
-                <button
-                  className="ws-pclear"
-                  type="button"
-                  onClick={() => setPrompt("")}
-                >
-                  清空
-                </button>
+                {/* 提示词「清空」按钮已按用户要求移除（2026-07-08）：全选删除足够 */}
               </div>
             </div>
 
@@ -2563,18 +2558,7 @@ export default function CreateStudio() {
                 <span className="d" />
                 创作台 · STUDIO
               </div>
-              <div className="ws-stage-actions">
-                <button
-                  className="ws-iconbtn"
-                  id="clearBtn"
-                  type="button"
-                  title="清空画布"
-                  disabled={busy}
-                  onClick={clearCanvas}
-                >
-                  清空
-                </button>
-              </div>
+              {/* 「清空画布」按钮已按用户要求移除（2026-07-08）：结果卡自带逐条删除 */}
             </div>
 
             {/* empty state — only when nothing is generating and there's no history */}

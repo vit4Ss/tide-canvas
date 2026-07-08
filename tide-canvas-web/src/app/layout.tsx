@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { ToastContainer } from "@/components/shared/toast";
+import { ConfirmHost } from "@/components/shared/confirm";
 
 const inter = Inter({
   variable: "--font-sans",
@@ -39,6 +40,7 @@ export default function RootLayout({
       >
         {children}
         <ToastContainer />
+        <ConfirmHost />
       </body>
     </html>
   );
