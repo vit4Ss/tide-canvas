@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -70,6 +71,9 @@ type AdminUserVO struct {
 	Role          int      `json:"role"`
 	RoleID        idgen.ID `json:"roleId"`
 	VipLevel      int      `json:"vipLevel"`
+	// PlanName is the display name of the user's current plan, derived from the
+	// real plan table via vip_level (0 → the free plan). Read-only convenience.
+	PlanName      string   `json:"planName"`
 	Status        int      `json:"status"`
 	ApiQuota      int64    `json:"apiQuota"`
 	Points        int64    `json:"points"`
@@ -102,8 +106,9 @@ type RoleVO struct {
 //	role?       exact User.Role (0 user / 9 admin) — sent as a pointer so 0 is distinguishable from "unset"
 //	status?     exact User.Status (0 disabled / 1 active)
 //	subscribed? "1" filters paying members (vip_level >= 1，购买套餐结算时提升)——
-//	            用户列表的「订阅用户」标签用它；role=1 的旧 VIP 档从不被支付链路
-//	            写入，不再作为筛选口径。
+//	            用户列表的「订阅用户」标签用它；"0" 筛免费用户 (vip_level = 0，
+//	            即 FREE 档)——「普通用户」标签 = role=0 且 subscribed=0，与订阅
+//	            用户互斥。role=1 的旧 VIP 档从不被支付链路写入，不再作为筛选口径。
 type AdminUserQuery struct {
 	PageNum    int    `form:"pageNum"`
 	PageSize   int    `form:"pageSize"`
@@ -158,6 +163,55 @@ type RoleSaveDTO struct {
 
 // ----- user handlers --------------------------------------------------------
 
+// planNameByVip maps vip_level → 套餐显示名，数据来源于真实 plan 表：
+// features.vipLevel 优先，其次种子 code 兜底（pro→1 / enterprise→2），其余视为
+// 0（免费档）。价格>0 却映射到 0 的付费套餐不代表会员等级，跳过。同级取
+// sort_order 最靠前的一个。
+func (h *userHandler) planNameByVip() map[int]string {
+	var plans []model.Plan
+	if err := h.db.Order("sort_order ASC").Find(&plans).Error; err != nil {
+		return map[int]string{}
+	}
+	names := map[int]string{}
+	for i := range plans {
+		p := &plans[i]
+		var f struct {
+			VipLevel int `json:"vipLevel"`
+		}
+		if p.Features != "" {
+			_ = json.Unmarshal([]byte(p.Features), &f)
+		}
+		level := f.VipLevel
+		if level == 0 {
+			switch p.Code {
+			case "pro":
+				level = 1
+			case "enterprise":
+				level = 2
+			}
+		}
+		if level == 0 && p.Price.Sign() > 0 {
+			continue
+		}
+		if _, ok := names[level]; !ok {
+			names[level] = p.Name
+		}
+	}
+	return names
+}
+
+// planNameFor renders the display name for a vip level with graceful fallbacks
+// (unknown paid level → "VIP n"; no free plan row → "FREE").
+func planNameFor(names map[int]string, level int) string {
+	if n, ok := names[level]; ok {
+		return n
+	}
+	if level > 0 {
+		return fmt.Sprintf("VIP %d", level)
+	}
+	return "FREE"
+}
+
 // listUsers handles GET /users. Returns PageData<AdminUserVO> over the real users
 // table, with keyword/role/status filters, plus per-user project & post counts.
 func (h *userHandler) listUsers(c *gin.Context) {
@@ -181,6 +235,8 @@ func (h *userHandler) listUsers(c *gin.Context) {
 	}
 	if q.Subscribed == "1" {
 		tx = tx.Where("vip_level >= 1")
+	} else if q.Subscribed == "0" {
+		tx = tx.Where("vip_level = 0")
 	}
 
 	var total int64
@@ -202,12 +258,14 @@ func (h *userHandler) listUsers(c *gin.Context) {
 	}
 	projCounts := h.countByOwner(&model.Project{}, "owner_id", ids)
 	postCounts := h.countByOwner(&model.CommunityPost{}, "user_id", ids)
+	planNames := h.planNameByVip()
 
 	vos := make([]AdminUserVO, 0, len(rows))
 	for i := range rows {
 		vo := toAdminUserVO(&rows[i])
 		vo.ProjectCount = projCounts[rows[i].ID]
 		vo.PostCount = postCounts[rows[i].ID]
+		vo.PlanName = planNameFor(planNames, rows[i].VipLevel)
 		vos = append(vos, vo)
 	}
 	response.Page(c, vos, total, q.PageNum, q.PageSize)
@@ -227,6 +285,7 @@ func (h *userHandler) getUser(c *gin.Context) {
 	vo := toAdminUserVO(u)
 	vo.ProjectCount = h.countByOwner(&model.Project{}, "owner_id", []idgen.ID{id})[id]
 	vo.PostCount = h.countByOwner(&model.CommunityPost{}, "user_id", []idgen.ID{id})[id]
+	vo.PlanName = planNameFor(h.planNameByVip(), u.VipLevel)
 	response.OK(c, vo)
 }
 

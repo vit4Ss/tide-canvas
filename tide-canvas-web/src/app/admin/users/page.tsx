@@ -61,7 +61,8 @@ function roleLabel(r: number) {
 }
 
 /* the filter-chip row: 全部 / 普通 / 订阅用户 / 管理员 / 已封禁.
-   订阅用户按 vipLevel >= 1 筛（购买套餐结算时提升的真实付费口径）；
+   普通用户 = 免费档（role=0 且 vipLevel=0，即 FREE 用户）；
+   订阅用户 = 付费买套餐的（vipLevel >= 1，购买结算时提升）——两者互斥。
    旧「VIP」标签筛 role=1，但支付链路从不写 role，永远筛不出人，已废弃。 */
 type FilterKey = "all" | "user" | "subscribed" | "admin" | "banned";
 const FILTERS: { key: FilterKey; label: string }[] = [
@@ -76,7 +77,8 @@ const FILTERS: { key: FilterKey; label: string }[] = [
 function filterToQuery(f: FilterKey): { role?: number; status?: number; subscribed?: string } {
   switch (f) {
     case "user":
-      return { role: 0 };
+      // 普通用户 = 非管理员且未订阅（FREE 档）
+      return { role: 0, subscribed: "0" };
     case "subscribed":
       return { subscribed: "1" };
     case "admin":
@@ -377,12 +379,12 @@ function AdminUsersPageInner() {
 
   /* ---- columns ------------------------------------------------------------- */
 
-  // 列宽百分比均摊整行（table-layout:fixed 下不给宽度会 8 列均分，
+  // 列宽百分比均摊整行（table-layout:fixed 下不给宽度会均分，
   // 用户列装不下「头像+名称+邮箱」）
   const userColumns: Column<AdminUserVO>[] = [
     {
       header: "用户",
-      width: "24%",
+      width: "19%",
       cell: (u) => (
         <div className="cellflex">
           <span
@@ -403,28 +405,39 @@ function AdminUsersPageInner() {
     },
     {
       header: "角色",
-      width: "9%",
+      width: "8%",
       cell: (u) => <StatusPill tone={ROLE_TONE[u.role] ?? "gray"}>{roleLabel(u.role)}</StatusPill>,
     },
     {
+      // 当前套餐：vip_level 对照真实 plan 表派生，新用户 = 免费档（FREE）
+      header: "套餐",
+      width: "8%",
+      cell: (u) => (
+        <StatusPill tone={u.vipLevel >= 1 ? "blue" : "gray"}>
+          {u.planName || (u.vipLevel >= 1 ? `VIP ${u.vipLevel}` : "FREE")}
+        </StatusPill>
+      ),
+    },
+    {
       header: "积分余额",
-      width: "10%",
+      width: "8%",
       align: "right",
       className: "mono",
       cell: (u) => fmtNum(u.points),
     },
     {
       header: "API 额度",
-      width: "10%",
+      width: "8%",
       align: "right",
       className: "mono",
       cell: (u) => fmtNum(u.apiQuota),
     },
-    { header: "作品 / 项目", width: "10%", className: "mono", cell: (u) => `${fmtNum(u.postCount)} / ${fmtNum(u.projectCount)}` },
-    { header: "最近登录", width: "14%", className: "muted", cell: (u) => fmtTime(u.lastLoginTime) },
+    { header: "作品 / 项目", width: "8%", className: "mono", cell: (u) => `${fmtNum(u.postCount)} / ${fmtNum(u.projectCount)}` },
+    { header: "注册时间", width: "11%", className: "muted", cell: (u) => fmtTime(u.createTime) },
+    { header: "最近登录", width: "11%", className: "muted", cell: (u) => fmtTime(u.lastLoginTime) },
     {
       header: "状态",
-      width: "9%",
+      width: "7%",
       cell: (u) => (
         <StatusPill tone={u.status === 1 ? "green" : "red"}>
           {u.status === 1 ? "正常" : "已封禁"}
@@ -433,7 +446,7 @@ function AdminUsersPageInner() {
     },
     {
       header: "操作",
-      width: "14%",
+      width: "12%",
       align: "right",
       cell: (u) => (
         <RowActions

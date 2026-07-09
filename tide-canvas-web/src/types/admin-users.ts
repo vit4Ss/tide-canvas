@@ -28,6 +28,8 @@ export interface AdminUserVO {
   role: number;
   roleId: string;
   vipLevel: number;
+  /** 当前套餐显示名（由 vip_level 对照真实 plan 表派生；0 → 免费档）。 */
+  planName: string;
   /** 0 disabled / 1 active. */
   status: number;
   apiQuota: number;
