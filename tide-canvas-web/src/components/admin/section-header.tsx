@@ -57,7 +57,7 @@ export interface SectionHeaderProps {
 
 export function SectionHeader({ title, sub, tools }: SectionHeaderProps) {
   return (
-    <div className="adm-phead" style={{ border: "none", paddingLeft: 0, paddingRight: 0 }}>
+    <div className="adm-phead adm-section-head">
       <div>
         <h2>{title}</h2>
         {sub ? <div className="sub">{sub}</div> : null}

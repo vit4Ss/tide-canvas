@@ -29,6 +29,7 @@ import {
   type Column,
   type StatCardProps,
   type StatusPillProps,
+  TableSkeleton,
 } from "@/components/admin";
 import { FilterChips } from "@/components/admin/filter-bar";
 import { adminMarketingApi } from "@/lib/admin-marketing-api";
@@ -251,9 +252,7 @@ export default function AdminMarketingPage() {
         }
       >
         {loadingCampaigns ? (
-          <div className="muted" style={{ padding: 32, textAlign: "center" }}>
-            加载中…
-          </div>
+          <TableSkeleton />
         ) : campaignError ? (
           <div className="muted" style={{ padding: 32, textAlign: "center" }}>
             {campaignError}

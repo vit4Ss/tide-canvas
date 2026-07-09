@@ -1,24 +1,11 @@
 /* ============================================================================
-   /admin route-group layout — the 流光 FlowingLight 后台管理控制台 shell.
-
-   Nested under the app's root layout (which owns <html>/<body> + global fonts),
-   so this renders ONLY the console chrome. Faithful to design-ref/后台管理.html:
-     .admin-body (light-theme token scope) > .adm (sidebar 260px | main grid)
-       <AdminSidebar/>  — all 16 sections, active via usePathname
-       <main class="adm-main">
-         <AdminTopbar/> — title / breadcrumb / 搜索 / 通知
-         <div class="adm-content">{page}</div>
-
-   - imports the already-copied liuguang admin stylesheet (light Apple theme;
-     intentionally distinct from the dark site/studio).
-   - The original prototype set these classes on <body>; here .admin-body wraps
-     the console and .adm is position:fixed inset:0 so it fills the viewport.
-   - This is the admin console's OWN top-level route group (NOT site/studio).
+   /admin layout — dense ops console shell.
    ============================================================================ */
 
-import "@/styles/liuguang/admin.css"; // 自包含令牌域：浅色工作台（Linear×Stripe 车道），不再叠 imini 覆盖
-import { AdminSidebar } from "@/components/admin/admin-sidebar";
-import { AdminTopbar } from "@/components/admin/admin-topbar";
+import "@/styles/liuguang/admin.css";
+import { GeistSans } from "geist/font/sans";
+import { GeistMono } from "geist/font/mono";
+import { AdminShell } from "@/components/admin/admin-shell";
 import { AdminGuard } from "@/components/admin/admin-guard";
 
 export default function AdminLayout({
@@ -26,14 +13,9 @@ export default function AdminLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <AdminGuard>
-      <div className="admin-body">
-        <div className="adm">
-          <AdminSidebar />
-          <main className="adm-main">
-            <AdminTopbar />
-            <div className="adm-content">{children}</div>
-          </main>
-        </div>
+      {/* Geist 变量只挂在后台域：拉丁字母/数字走 Geist，中文回落 PingFang/Noto（admin.css --ui/--mono） */}
+      <div className={`admin-body ${GeistSans.variable} ${GeistMono.variable}`}>
+        <AdminShell>{children}</AdminShell>
       </div>
     </AdminGuard>
   );

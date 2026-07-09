@@ -24,6 +24,7 @@ import {
   StatCardGrid,
   StatusPill,
   SwitchToggle,
+  TableSkeleton,
 } from "@/components/admin";
 import type { Kpi, PillTone } from "@/mock/admin";
 import { useAuthStore } from "@/stores/use-auth-store";
@@ -34,7 +35,8 @@ import type {
   AdminPayChannelUpsertDTO,
 } from "@/types/admin-payments";
 
-const yuan = (n: number) => `¥${n.toLocaleString("zh-CN")}`;
+const yuan = (n: number) =>
+  `¥${n.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const pct = (n: number) => `${(n * 100).toFixed(2).replace(/\.?0+$/, "")}%`;
 const toNum = (s: string) => {
   const v = Number(String(s).replace(/[^\d.-]/g, ""));
@@ -141,17 +143,15 @@ export default function AdminPaymentsPage() {
     loadAll();
   }, [loadAll]);
 
-  const pageCount = Math.max(1, Math.ceil(orderTotal / ORDER_PAGE_SIZE));
-
   /* ── KPIs derived from real data ─────────────────────────────────────── */
   const kpis: Kpi[] = useMemo(() => {
     const enabled = channels.filter((c) => c.enabled).length;
     const todaySum = channels.reduce((s, c) => s + c.todayAmount, 0);
     return [
-      { k: "支付渠道", v: String(channels.length), dir: "up" },
-      { k: "启用渠道", v: String(enabled), dir: "up" },
-      { k: "渠道今日金额", v: yuan(todaySum), dir: "up" },
-      { k: "交易总数", v: orderTotal.toLocaleString("zh-CN"), dir: "up" },
+      { k: "支付渠道", v: String(channels.length) },
+      { k: "启用中", v: String(enabled) },
+      { k: "今日金额", v: yuan(todaySum) },
+      { k: "交易笔数", v: orderTotal.toLocaleString("zh-CN") },
     ];
   }, [channels, orderTotal]);
 
@@ -208,15 +208,12 @@ export default function AdminPaymentsPage() {
   };
 
   return (
-    <>
+    <div className="adm-page">
       <StatCardGrid items={kpis} />
 
       {error ? (
-        <div className="adm-panel" style={{ padding: 16 }}>
-          <span className="tag2 red">
-            <i className="dot" />
-            {error}
-          </span>
+        <div className="adm-panel">
+          <p style={{ padding: "12px 18px", color: "var(--danger)", margin: 0 }}>{error}</p>
         </div>
       ) : null}
 
@@ -231,9 +228,7 @@ export default function AdminPaymentsPage() {
         }
       >
         {loading ? (
-          <div style={{ padding: 18 }} className="muted">
-            加载中…
-          </div>
+          <TableSkeleton />
         ) : channels.length === 0 ? (
           <div style={{ padding: 18 }} className="muted">
             暂无支付渠道，点击「接入渠道」添加。
@@ -243,22 +238,27 @@ export default function AdminPaymentsPage() {
             rows={channels}
             rowKey={(r) => r.id}
             columns={[
-              { header: "渠道", className: "strong", cell: (r) => r.name },
-              { header: "类型", className: "muted", cell: (r) => r.type || "—" },
-              { header: "费率", className: "mono", cell: (r) => pct(r.rate) },
-              { header: "今日金额", className: "mono", cell: (r) => yuan(r.todayAmount) },
+              // fixed 表格必须显式分配列宽，回调 URL 是无空格长串，不截断会溢进状态列
+              { header: "渠道", width: "14%", className: "strong", cell: (r) => r.name },
+              { header: "类型", width: "10%", className: "muted", cell: (r) => r.type || "—" },
+              { header: "费率", width: "8%", className: "mono", cell: (r) => pct(r.rate) },
+              { header: "今日金额", width: "12%", className: "mono", cell: (r) => yuan(r.todayAmount) },
               {
                 header: "回调",
+                width: "34%",
                 className: "muted",
                 cell: (r) =>
                   r.callback ? (
-                    <span className="mono">{r.callback}</span>
+                    <span className="mono truncate" title={r.callback}>
+                      {r.callback}
+                    </span>
                   ) : (
-                    <StatusPill tone="gray">未配置</StatusPill>
+                    <span className="muted">未配置</span>
                   ),
               },
               {
                 header: "状态",
+                width: "8%",
                 cell: (r) => (
                   <SwitchToggle
                     checked={r.enabled}
@@ -269,6 +269,7 @@ export default function AdminPaymentsPage() {
               },
               {
                 header: "操作",
+                width: "14%",
                 align: "right",
                 cell: (r) => (
                   <RowActions
@@ -300,9 +301,7 @@ export default function AdminPaymentsPage() {
         }
       >
         {loading || ordersLoading ? (
-          <div style={{ padding: 18 }} className="muted">
-            加载中…
-          </div>
+          <TableSkeleton />
         ) : orders.length === 0 ? (
           <div style={{ padding: 18 }} className="muted">
             暂无交易记录。
@@ -313,21 +312,33 @@ export default function AdminPaymentsPage() {
               rows={orders}
               rowKey={(r) => r.id}
               columns={[
-                { header: "订单号", className: "mono muted", cell: (r) => r.orderNo },
+                {
+                  header: "订单号",
+                  width: "20%",
+                  className: "mono muted",
+                  cell: (r) => (
+                    <span className="truncate" title={r.orderNo}>
+                      {r.orderNo}
+                    </span>
+                  ),
+                },
                 {
                   header: "用户",
+                  width: "14%",
                   cell: (r) => r.user?.nickname || r.user?.username || r.userId,
                 },
-                { header: "套餐 / 商品", cell: (r) => orderItemLabel(r) },
+                { header: "套餐 / 商品", width: "16%", cell: (r) => orderItemLabel(r) },
                 {
                   header: "金额",
+                  width: "10%",
                   align: "right",
                   className: "mono strong",
                   cell: (r) => yuan(r.amount),
                 },
-                { header: "渠道", cell: (r) => r.payMethod || "—" },
+                { header: "渠道", width: "10%", cell: (r) => r.payMethod || "—" },
                 {
                   header: "时间",
+                  width: "18%",
                   className: "muted",
                   cell: (r) => fmtTime(r.payTime || r.createTime),
                 },
@@ -339,35 +350,13 @@ export default function AdminPaymentsPage() {
                   },
                 },
               ]}
+              server={{
+                page: orderPage,
+                pageSize: ORDER_PAGE_SIZE,
+                total: orderTotal,
+                onPage: loadOrders,
+              }}
             />
-            {/* server-side pager (the order list is paged by the backend) */}
-            <div className="adm-pager">
-              <span className="total">共 {orderTotal.toLocaleString("zh-CN")} 条</span>
-              <div className="pgs">
-                <button
-                  type="button"
-                  className="pg nav"
-                  onClick={() => loadOrders(Math.max(1, orderPage - 1))}
-                  disabled={orderPage <= 1}
-                  aria-label="上一页"
-                >
-                  ‹
-                </button>
-                <button type="button" className="pg on">
-                  {orderPage}
-                </button>
-                <span className="gap">/ {pageCount}</span>
-                <button
-                  type="button"
-                  className="pg nav"
-                  onClick={() => loadOrders(Math.min(pageCount, orderPage + 1))}
-                  disabled={orderPage >= pageCount}
-                  aria-label="下一页"
-                >
-                  ›
-                </button>
-              </div>
-            </div>
           </>
         )}
       </Panel>
@@ -421,6 +410,6 @@ export default function AdminPaymentsPage() {
           </FormGrid>
         </FormCard>
       </AdminModal>
-    </>
+    </div>
   );
 }

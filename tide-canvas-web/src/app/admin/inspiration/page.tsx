@@ -29,6 +29,7 @@ import {
   StatCardGrid,
   StatusPill,
   SwitchToggle,
+  TableSkeleton,
 } from "@/components/admin";
 import { FilterChips } from "@/components/admin/filter-bar";
 import type { Kpi } from "@/mock/admin";
@@ -339,7 +340,7 @@ export default function AdminInspirationPage() {
         }
       >
         {loading ? (
-          <div style={{ padding: 28, color: "var(--text-faint)" }}>加载中…</div>
+          <TableSkeleton />
         ) : collections.length === 0 ? (
           <div style={{ padding: 28, color: "var(--text-faint)" }}>暂无合集。</div>
         ) : (
@@ -348,6 +349,7 @@ export default function AdminInspirationPage() {
               rows={collections}
               rowKey={(r) => r.id}
               total={collTotal}
+              pageSize={10}
               columns={[
                 {
                   header: "封面",
@@ -418,7 +420,7 @@ export default function AdminInspirationPage() {
         }
       >
         {loading ? (
-          <div style={{ padding: 28, color: "var(--text-faint)" }}>加载中…</div>
+          <TableSkeleton />
         ) : prompts.length === 0 ? (
           <div style={{ padding: 28, color: "var(--text-faint)" }}>暂无提示词。</div>
         ) : (

@@ -33,6 +33,7 @@ import {
   Panel,
   StatusPill,
   SwitchToggle,
+  ListSkeleton,
 } from "@/components/admin";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";
@@ -92,13 +93,11 @@ export default function AdminToolsPage() {
       {/* 工具管理 */}
       <Panel
         title="工具管理"
-        sub="独立工具页与创作台一键操作 —— 启用、文案与生成参数全后台驱动"
+        sub="独立工具页与创作台一键操作的启用、文案与生成参数，全部后台驱动"
       >
         <div style={{ padding: "16px 18px" }}>
           {loading ? (
-            <div className="muted" style={{ padding: "24px 0", textAlign: "center" }}>
-              加载中…
-            </div>
+            <ListSkeleton rows={5} height={64} />
           ) : error ? (
             <div className="muted" style={{ padding: "24px 0", textAlign: "center" }}>
               {error}
@@ -110,7 +109,7 @@ export default function AdminToolsPage() {
             </div>
           ) : tools.length === 0 ? (
             <div className="muted" style={{ padding: "24px 0", textAlign: "center" }}>
-              暂无工具（工具由代码注册，随服务端版本自动初始化）。
+              暂无工具，服务端启动后会自动注册。
             </div>
           ) : (
             <>

@@ -36,6 +36,7 @@ import {
   type Column,
   type StatCardProps,
   type StatusPillProps,
+  TableSkeleton,
 } from "@/components/admin";
 import { adminEmailApi } from "@/lib/admin-email-api";
 import type {
@@ -375,9 +376,7 @@ export default function AdminEmailPage() {
         }
       >
         {loadingTpl ? (
-          <div className="muted" style={{ padding: 32, textAlign: "center" }}>
-            加载中…
-          </div>
+          <TableSkeleton />
         ) : tplError ? (
           <div className="muted" style={{ padding: 32, textAlign: "center" }}>
             {tplError}
@@ -408,9 +407,7 @@ export default function AdminEmailPage() {
         }
       >
         {loadingKey ? (
-          <div className="muted" style={{ padding: 32, textAlign: "center" }}>
-            加载中…
-          </div>
+          <TableSkeleton />
         ) : keyError ? (
           <div className="muted" style={{ padding: 32, textAlign: "center" }}>
             {keyError}

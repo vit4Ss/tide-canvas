@@ -25,11 +25,10 @@ import {
   FormGrid,
   Panel,
   RowActions,
-  StatCardGrid,
   StatusPill,
   SwitchToggle,
+  TableSkeleton,
 } from "@/components/admin";
-import type { Kpi } from "@/mock/admin";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminPricingApi } from "@/lib/admin-pricing-api";
 import type {
@@ -151,18 +150,11 @@ export default function AdminPricingPage() {
   }, [load]);
 
   /* ── KPIs derived from real data ─────────────────────────────────────── */
-  const kpis: Kpi[] = useMemo(() => {
+  // 原 KPI 四卡（在售/总数重复、均价无运营动作）已撤，计数并入面板副标题
+  const planSummary = useMemo(() => {
     const onSale = plans.filter((p) => p.status === 1).length;
-    const paid = plans.filter((p) => p.monthly > 0);
-    const avgMonthly = paid.length
-      ? Math.round(paid.reduce((s, p) => s + p.monthly, 0) / paid.length)
-      : 0;
-    return [
-      { k: "在售套餐", v: String(onSale), dir: "up" },
-      { k: "套餐总数", v: String(plans.length), dir: "up" },
-      { k: "付费套餐", v: String(paid.length), dir: "up" },
-      { k: "套餐均价", v: yuan(avgMonthly), dir: "up" },
-    ];
+    const paid = plans.filter((p) => p.monthly > 0).length;
+    return `${plans.length} 个套餐 · ${onSale} 在售 / ${paid} 付费`;
   }, [plans]);
 
   /* ── plan actions ────────────────────────────────────────────────────── */
@@ -352,8 +344,6 @@ export default function AdminPricingPage() {
 
   return (
     <>
-      <StatCardGrid items={kpis} />
-
       {error ? (
         <div className="adm-panel" style={{ padding: 16 }}>
           <span className="tag2 red">
@@ -366,7 +356,7 @@ export default function AdminPricingPage() {
       {/* 套餐管理 */}
       <Panel
         title="套餐管理"
-        sub="会员套餐定价与权益 · 与公开定价同源"
+        sub={`会员套餐定价与权益 · ${planSummary} · 与公开定价同源`}
         tools={
           <button type="button" className="adm-btn" onClick={openCreatePlan}>
             + 新增套餐
@@ -374,9 +364,7 @@ export default function AdminPricingPage() {
         }
       >
         {loading ? (
-          <div style={{ padding: 18 }} className="muted">
-            加载中…
-          </div>
+          <TableSkeleton />
         ) : plans.length === 0 ? (
           <div style={{ padding: 18 }} className="muted">
             暂无套餐，点击「新增套餐」创建第一个会员套餐。
@@ -402,7 +390,16 @@ export default function AdminPricingPage() {
               {
                 header: "权益",
                 className: "muted",
-                cell: (r) => (r.items ?? []).join(" · ") || "—",
+                cell: (r) => {
+                  const items = (r.items ?? []).join(" · ");
+                  return items ? (
+                    <span className="clamp2" title={items}>
+                      {items}
+                    </span>
+                  ) : (
+                    "—"
+                  );
+                },
               },
               {
                 header: "状态",
@@ -461,9 +458,7 @@ export default function AdminPricingPage() {
         }
       >
         {loading ? (
-          <div style={{ padding: 18 }} className="muted">
-            加载中…
-          </div>
+          <TableSkeleton />
         ) : (
           <table className="adm-table cmp-edit">
             <thead>
@@ -548,9 +543,7 @@ export default function AdminPricingPage() {
         }
       >
         {loading ? (
-          <div style={{ padding: 18 }} className="muted">
-            加载中…
-          </div>
+          <TableSkeleton />
         ) : (
           <table className="adm-table cmp-edit">
             <thead>
@@ -580,9 +573,11 @@ export default function AdminPricingPage() {
                     />
                   </td>
                   <td>
-                    <input
+                    {/* 回答通常是长文本，单行输入框读不全也改不动 */}
+                    <textarea
                       value={f.a}
                       placeholder="回答内容"
+                      rows={2}
                       onChange={(e) => updateFaq(i, { a: e.target.value })}
                     />
                   </td>

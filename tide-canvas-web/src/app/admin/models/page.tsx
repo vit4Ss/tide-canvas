@@ -27,11 +27,12 @@ import {
   FormSection,
   Panel,
   RowActions,
-  StatCardGrid,
+
   StatusPill,
   SwitchToggle,
+  TableSkeleton,
 } from "@/components/admin";
-import type { Kpi, PillTone } from "@/mock/admin";
+import type { PillTone } from "@/mock/admin";
 import { adminSwatch } from "@/mock/admin";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";
@@ -136,20 +137,9 @@ export default function AdminModelsPage() {
     load();
   }, [load]);
 
-  const kpis: Kpi[] = useMemo(() => {
-    const live = rows.filter((m) => m.status === 1).length;
-    const off = rows.filter((m) => m.status === 2).length;
-    const pending = rows.filter((m) => m.status === 0).length;
-    // 分状态计数来自已加载的分页切片，标注「本页」避免误读为全量
-    return [
-      { k: "模型总数", v: String(total), d: "", dir: "up" },
-      { k: "已上架", v: String(live), d: "本页", dir: "up" },
-      { k: "已下架", v: String(off), d: "本页", dir: "up" },
-      { k: "待审核", v: String(pending), d: "本页", dir: pending > 0 ? "down" : "up" },
-    ];
-  }, [rows, total]);
+  const liveCount = useMemo(() => rows.filter((m) => m.status === 1).length, [rows]);
 
-  // 刷新：pull the latest catalog from the upstream relay and upsert it into the
+  // 同步：pull the latest catalog from the upstream relay and upsert it into the
   // list (add new / update existing), then reload.
   const syncModels = async () => {
     if (syncing) return;
@@ -204,12 +194,10 @@ export default function AdminModelsPage() {
   };
 
   return (
-    <>
-      <StatCardGrid items={kpis} />
-
+    <div className="adm-page">
       <Panel
         title="模型管理"
-        sub="接入、定价与上下架（即模型市场）"
+        sub={`共 ${total} 个 · 本页上架 ${liveCount}`}
         tools={
           <FilterBar
             options={TYPE_FILTERS.map((f) => f.label)}
@@ -218,20 +206,18 @@ export default function AdminModelsPage() {
             actions={
               <button
                 type="button"
-                className="adm-btn"
+                className="adm-btn ghost"
                 onClick={syncModels}
                 disabled={syncing}
               >
-                {syncing ? "刷新中…" : "↻ 刷新"}
+                {syncing ? "同步中…" : "同步上游"}
               </button>
             }
           />
         }
       >
         {loading ? (
-          <div className="muted" style={{ padding: "40px 18px", textAlign: "center" }}>
-            加载中…
-          </div>
+          <TableSkeleton />
         ) : error ? (
           <div className="muted" style={{ padding: "40px 18px", textAlign: "center" }}>
             {error}
@@ -249,6 +235,7 @@ export default function AdminModelsPage() {
           <AdminTable<AdminModelVO>
             rows={rows}
             rowKey={(m) => m.id}
+            pageSize={20}
             columns={[
               {
                 header: "模型",
@@ -269,23 +256,11 @@ export default function AdminModelsPage() {
                 },
               },
               {
-                header: "作者",
-                className: "muted",
-                sortable: true,
-                sortValue: (m) => m.authorName,
-                cell: (m) => m.authorName || "—",
-              },
-              {
                 header: "类型",
                 className: "muted",
                 sortable: true,
                 sortValue: (m) => m.type,
                 cell: (m) => MODEL_TYPE_LABEL[m.type] || "—",
-              },
-              {
-                header: "标签",
-                className: "muted",
-                cell: (m) => m.tags || "—",
               },
               {
                 header: "单次积分",
@@ -342,7 +317,7 @@ export default function AdminModelsPage() {
           load();
         }}
       />
-    </>
+    </div>
   );
 }
 
@@ -600,8 +575,8 @@ function ModelModal({
                         padding: 0,
                         cursor: "pointer",
                         background: `#fff center/62% no-repeat url("${url}")`,
-                        border: on ? "2px solid var(--accent, #4f46e5)" : "1px solid var(--border, #dcdfe6)",
-                        boxShadow: on ? "0 0 0 3px var(--accent-soft, rgba(79,70,229,.14))" : "none",
+                        border: on ? "2px solid var(--accent)" : "1px solid var(--border)",
+                        boxShadow: on ? "0 0 0 3px var(--accent-soft)" : "none",
                       }}
                     />
                   );

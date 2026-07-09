@@ -26,6 +26,7 @@ import {
   StatCardGrid,
   StatusPill,
   SwitchToggle,
+  TableSkeleton,
 } from "@/components/admin";
 import type { Kpi, PillTone } from "@/mock/admin";
 import { useAuthStore } from "@/stores/use-auth-store";
@@ -163,7 +164,6 @@ export default function AdminPointsPage() {
     loadAll();
   }, [loadAll]);
 
-  const pageCount = Math.max(1, Math.ceil(ledgerTotal / TX_PAGE_SIZE));
 
   /* ── KPIs derived from real data ─────────────────────────────────────── */
   const kpis: Kpi[] = useMemo(() => {
@@ -280,9 +280,7 @@ export default function AdminPointsPage() {
         }
       >
         {loading ? (
-          <div style={{ padding: 18 }} className="muted">
-            加载中…
-          </div>
+          <TableSkeleton />
         ) : rules.length === 0 ? (
           <div style={{ padding: 18 }} className="muted">
             暂无积分规则，点击「新增规则」创建。
@@ -340,9 +338,7 @@ export default function AdminPointsPage() {
         }
       >
         {loading || ledgerLoading ? (
-          <div style={{ padding: 18 }} className="muted">
-            加载中…
-          </div>
+          <TableSkeleton />
         ) : ledger.length === 0 ? (
           <div style={{ padding: 18 }} className="muted">
             暂无积分流水。
@@ -374,34 +370,13 @@ export default function AdminPointsPage() {
                 { header: "余额", align: "right", className: "mono", cell: (r) => num(r.balance) },
                 { header: "说明", className: "muted", cell: (r) => r.remark || "—" },
               ]}
+              server={{
+                page: ledgerPage,
+                pageSize: TX_PAGE_SIZE,
+                total: ledgerTotal,
+                onPage: loadLedger,
+              }}
             />
-            <div className="adm-pager">
-              <span className="total">共 {ledgerTotal.toLocaleString("zh-CN")} 条</span>
-              <div className="pgs">
-                <button
-                  type="button"
-                  className="pg nav"
-                  onClick={() => loadLedger(Math.max(1, ledgerPage - 1))}
-                  disabled={ledgerPage <= 1}
-                  aria-label="上一页"
-                >
-                  ‹
-                </button>
-                <button type="button" className="pg on">
-                  {ledgerPage}
-                </button>
-                <span className="gap">/ {pageCount}</span>
-                <button
-                  type="button"
-                  className="pg nav"
-                  onClick={() => loadLedger(Math.min(pageCount, ledgerPage + 1))}
-                  disabled={ledgerPage >= pageCount}
-                  aria-label="下一页"
-                >
-                  ›
-                </button>
-              </div>
-            </div>
           </>
         )}
       </Panel>

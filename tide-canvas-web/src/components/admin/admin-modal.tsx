@@ -25,7 +25,7 @@
    </AdminModal>
    ============================================================================ */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export interface AdminModalProps {
   open: boolean;
@@ -55,6 +55,7 @@ export function AdminModal({
   onSave,
 }: AdminModalProps) {
   const [show, setShow] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   // toggle `.show` after mount for the entrance transition; the cleanup resets
   // it when `open` flips back to false (no synchronous setState in the effect).
@@ -65,6 +66,11 @@ export function AdminModal({
       cancelAnimationFrame(id);
       setShow(false);
     };
+  }, [open]);
+
+  // 打开时把焦点移入弹窗（键盘用户不用从页面顶部 Tab 进来；Esc 立即可用）
+  useEffect(() => {
+    if (open) dialogRef.current?.focus();
   }, [open]);
 
   // Escape-to-close
@@ -91,7 +97,15 @@ export function AdminModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="adm-modal" role="dialog" aria-modal="true">
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        className="adm-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={typeof title === "string" ? title : undefined}
+        style={{ outline: "none" }}
+      >
         <div className="adm-mhead">
           <div>
             <h2>{title}</h2>

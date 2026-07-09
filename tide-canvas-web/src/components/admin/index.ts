@@ -1,6 +1,4 @@
-// Barrel for the /admin shared primitives. Section pages import from
-// "@/components/admin". All components use the EXACT liuguang class names from
-// design-ref/后台管理.html + admin.js so the styles in admin.css apply.
+// Barrel for the /admin shared primitives.
 
 export { AdminTable } from "./admin-table";
 export type { AdminTableProps, Column, CellAlign } from "./admin-table";
@@ -32,3 +30,11 @@ export type { SwitchToggleProps } from "./switch-toggle";
 
 export { RowActions } from "./row-actions";
 export type { RowAction, RowActionsProps } from "./row-actions";
+
+export { TableSkeleton, ListSkeleton } from "./table-skeleton";
+export type { TableSkeletonProps, ListSkeletonProps } from "./table-skeleton";
+
+export { AdminShell } from "./admin-shell";
+export { AdminSidebar, findActive, ADMIN_NAV, ADMIN_NAV_ITEMS } from "./admin-sidebar";
+export type { AdminNavItem, AdminNavEntry } from "./admin-sidebar";
+export { AdminTopbar } from "./admin-topbar";

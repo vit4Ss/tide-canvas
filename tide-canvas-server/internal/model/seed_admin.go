@@ -61,16 +61,6 @@ func SeedAdminData(db *gorm.DB) error {
 		return err
 	}
 
-	// Admin resources (资源管理).
-	if err := seedIfEmpty(db, &AdminResource{}, []AdminResource{
-		{Name: "oss-assets-prod", Type: "bucket", Size: 824633720832, Refs: 12840, Status: "active", UpdateTime: now},
-		{Name: "cdn-global", Type: "cdn", Size: 0, Refs: 12840, Status: "active", UpdateTime: now},
-		{Name: "SourceHanSans", Type: "font", Size: 16777216, Refs: 320, Status: "active", UpdateTime: now},
-		{Name: "redis-cache", Type: "cache", Size: 268435456, Refs: 1, Status: "idle", UpdateTime: now},
-	}); err != nil {
-		return err
-	}
-
 	// System logs (系统日志).
 	if err := seedIfEmpty(db, &SysLog{}, []SysLog{
 		{Level: "info", Module: "auth", Message: "管理员登录成功", IP: "10.0.0.1", Operator: "admin"},

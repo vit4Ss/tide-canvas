@@ -28,6 +28,7 @@ import {
   MChips,
   Panel,
   SwitchToggle,
+  ListSkeleton,
 } from "@/components/admin";
 import {
   FLOOR_BG_PRESETS,
@@ -142,9 +143,7 @@ export default function AdminHomeFloorsPage() {
       >
         <div style={{ padding: "16px 18px" }}>
           {loading ? (
-            <div className="muted" style={{ padding: "24px 0", textAlign: "center" }}>
-              加载中…
-            </div>
+            <ListSkeleton rows={5} height={64} />
           ) : error ? (
             <div className="muted" style={{ padding: "24px 0", textAlign: "center" }}>
               {error}
@@ -361,7 +360,7 @@ function FloorModal({
           </Field>
         </FormGrid>
         <FormSection label="选项">
-          <div className="cfg-card" style={{ boxShadow: "none", padding: "4px 16px" }}>
+          <div className="cfg-card flat">
             <div className="cfg-row">
               <span className="lab">启用楼层</span>
               <SwitchToggle checked={enabled} onChange={setEnabled} aria-label="启用楼层" />

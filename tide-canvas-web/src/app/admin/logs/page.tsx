@@ -22,10 +22,11 @@ import {
   AdminTable,
   FilterChips,
   Panel,
-  StatCardGrid,
+  RowActions,
   StatusPill,
   type Column,
   type StatusPillProps,
+  TableSkeleton,
 } from "@/components/admin";
 import { adminLogsApi } from "@/lib/admin-logs-api";
 import type {
@@ -90,8 +91,7 @@ function CopyBtn({ text }: { text: string }) {
   return (
     <button
       type="button"
-      className="adm-btn ghost"
-      style={{ height: 28, padding: "0 10px", fontSize: 12 }}
+      className="adm-chip"
       onClick={() => {
         try {
           void navigator.clipboard?.writeText(text);
@@ -160,7 +160,7 @@ function LogDetailModal({
           >
             {inline.map((f, i) =>
               !isBlock(f) ? (
-                <div key={i} style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
+                <div key={i} style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
                   <span className="muted" style={{ fontSize: 12 }}>
                     {f.label}
                   </span>
@@ -180,7 +180,7 @@ function LogDetailModal({
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "space-between",
-                    marginBottom: 6,
+                    marginBottom: 8,
                   }}
                 >
                   <span className="muted" style={{ fontSize: 12 }}>
@@ -194,10 +194,10 @@ function LogDetailModal({
                     margin: 0,
                     maxHeight: 260,
                     overflow: "auto",
-                    background: "rgba(127,127,127,.09)",
-                    border: "1px solid rgba(127,127,127,.16)",
-                    padding: 11,
-                    borderRadius: 8,
+                    background: "var(--panel)",
+                    border: "1px solid var(--border-weak)",
+                    padding: 12,
+                    borderRadius: "var(--r-sm)",
                     fontSize: 12,
                     lineHeight: 1.5,
                     whiteSpace: "pre-wrap",
@@ -302,28 +302,29 @@ function LogTable<T extends { id: string }>({
         header: "",
         align: "right",
         cell: (r) => (
-          <button
-            type="button"
-            className="adm-btn ghost"
-            style={{ height: 28, padding: "0 10px", fontSize: 12 }}
-            onClick={() => setDetailRow(r)}
-          >
-            详情
-          </button>
+          <RowActions actions={[{ label: "详情", onClick: () => setDetailRow(r) }]} />
         ),
       },
     ];
   }, [columns, detail]);
 
-  const kpis = stats && rows.length > 0 ? stats(rows) : null;
   const active = detailRow && detail ? detail(detailRow) : null;
+  const summary =
+    stats && rows.length > 0
+      ? stats(rows)
+          .map((s) => `${s.k} ${s.v}`)
+          .join(" · ")
+      : null;
 
   return (
     <>
-      {kpis ? <StatCardGrid items={kpis} /> : null}
       <Panel
         title="日志明细"
-        sub={`共 ${total} 条${rows.length < total ? ` · 显示最新 ${rows.length}` : ""}`}
+        sub={
+          summary
+            ? `共 ${total} 条 · ${summary}`
+            : `共 ${total} 条${rows.length < total ? ` · 显示最新 ${rows.length}` : ""}`
+        }
         tools={
           <>
             <div className="adm-search" style={{ margin: 0 }}>
@@ -344,9 +345,7 @@ function LogTable<T extends { id: string }>({
         }
       >
         {loading ? (
-          <div className="muted" style={{ padding: 32, textAlign: "center" }}>
-            加载中…
-          </div>
+          <TableSkeleton />
         ) : error ? (
           <div className="muted" style={{ padding: 32, textAlign: "center" }}>
             {error}
@@ -369,10 +368,20 @@ function LogTable<T extends { id: string }>({
 
 /* ── shared helpers ──────────────────────────────────────────────────────── */
 
+/** ISO / RFC3339 → "YYYY-MM-DD HH:mm:ss" for scanability. */
+function fmtLogTime(s: string): string {
+  if (!s) return "—";
+  const t = Date.parse(s);
+  if (Number.isNaN(t)) return s.replace("T", " ").replace(/\+\d{2}:\d{2}$/, "").slice(0, 19);
+  const d = new Date(t);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
 const timeCol = <T extends { createTime: string }>(): Column<T> => ({
   header: "时间",
   className: "mono muted",
-  cell: (r) => r.createTime || "—",
+  cell: (r) => fmtLogTime(r.createTime),
 });
 
 const pct = (num: number, den: number) => (den > 0 ? `${Math.round((num / den) * 100)}%` : "—");
@@ -603,8 +612,8 @@ export default function AdminLogsPage() {
   const [tab, setTab] = useState<Tab>("系统");
 
   return (
-    <>
-      <div style={{ marginBottom: 16 }}>
+    <div className="adm-page">
+      <div className="adm-page-tabs">
         <FilterChips options={[...TABS]} value={tab} onChange={(v) => setTab(v as Tab)} />
       </div>
       {tab === "系统" ? <SystemTab /> : null}
@@ -612,6 +621,6 @@ export default function AdminLogsPage() {
       {tab === "登录" ? <LoginTab /> : null}
       {tab === "业务" ? <BizTab /> : null}
       {tab === "模型" ? <ModelTab /> : null}
-    </>
+    </div>
   );
 }

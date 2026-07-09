@@ -39,6 +39,8 @@ export interface Column<T> {
   align?: CellAlign;
   /** Extra className applied to every <td> in this column (e.g. "mono strong"). */
   className?: string;
+  /** Optional column width (e.g. "120px", "18%"). Applied to th + td. */
+  width?: string | number;
   /** Enable click-to-sort on this column's header. */
   sortable?: boolean;
   /** Value used for sorting (defaults to the rendered cell if it's a string/number). */
@@ -58,6 +60,18 @@ export interface AdminTableProps<T> {
   total?: number;
   /** Extra className on the `.adm-table`. */
   className?: string;
+  /** Empty-state content when rows is empty (default "暂无数据"). */
+  empty?: React.ReactNode;
+  /**
+   * Server-paged mode: rows 已是当前页数据，翻页由父组件重新拉取。
+   * 传入后 pageSize（客户端切片）被忽略，页脚渲染同一套 `.adm-pager`。
+   */
+  server?: {
+    page: number;
+    pageSize: number;
+    total: number;
+    onPage: (p: number) => void;
+  };
 }
 
 type SortDir = "asc" | "desc" | null;
@@ -70,13 +84,15 @@ export function AdminTable<T>({
   pageSizeOptions = [10, 20, 50],
   total,
   className,
+  empty = "暂无数据",
+  server,
 }: AdminTableProps<T>) {
   const [sortCol, setSortCol] = useState<number | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(initialPageSize ?? 10);
 
-  const paged = initialPageSize != null;
+  const paged = initialPageSize != null && server == null;
 
   const sorted = useMemo(() => {
     if (sortCol == null || sortDir == null) return rows;
@@ -117,6 +133,15 @@ export function AdminTable<T>({
   const alignStyle = (a?: CellAlign): React.CSSProperties | undefined =>
     a === "right" ? { textAlign: "right" } : a === "center" ? { textAlign: "center" } : undefined;
 
+  const colStyle = (c: Column<T>): React.CSSProperties => {
+    const s: React.CSSProperties = { ...alignStyle(c.align) };
+    if (c.width != null) {
+      const w = typeof c.width === "number" ? `${c.width}px` : c.width;
+      s.width = w;
+    }
+    return s;
+  };
+
   // FLIP：行顺序变化（上移/下移等）时，让行从旧位置平滑滑到新位置，
   // 而不是瞬间跳变。按 data-rowkey 记录每行上一次的 offsetTop，渲染后对
   // 位置变化的行先反向位移再过渡回原位。
@@ -148,42 +173,73 @@ export function AdminTable<T>({
 
   return (
     <>
-      <table className={`adm-table${className ? ` ${className}` : ""}`}>
-        <thead>
-          <tr>
-            {columns.map((c, i) => {
-              const arrow = sortCol === i ? (sortDir === "asc" ? " ↑" : sortDir === "desc" ? " ↓" : "") : "";
-              return (
-                <th
-                  key={i}
-                  style={{
-                    ...alignStyle(c.align),
-                    cursor: c.sortable ? "pointer" : undefined,
-                    userSelect: c.sortable ? "none" : undefined,
-                  }}
-                  onClick={c.sortable ? () => toggleSort(i) : undefined}
-                >
-                  {c.header}
-                  {arrow}
-                </th>
-              );
-            })}
-          </tr>
-        </thead>
-        <tbody ref={tbodyRef}>
-          {visible.map((row, ri) => (
-            <tr key={rowKey(row, ri)} data-rowkey={String(rowKey(row, ri))}>
-              {columns.map((c, ci) => (
-                <td key={ci} className={c.className} style={alignStyle(c.align)}>
-                  {c.cell(row, ri)}
-                </td>
-              ))}
+      <div className="adm-table-wrap">
+        <table className={`adm-table adm-table-fixed${className ? ` ${className}` : ""}`}>
+          <colgroup>
+            {columns.map((c, i) => (
+              <col
+                key={i}
+                style={
+                  c.width != null
+                    ? { width: typeof c.width === "number" ? `${c.width}px` : c.width }
+                    : undefined
+                }
+              />
+            ))}
+          </colgroup>
+          <thead>
+            <tr>
+              {columns.map((c, i) => {
+                const arrow = sortCol === i ? (sortDir === "asc" ? " ↑" : sortDir === "desc" ? " ↓" : "") : "";
+                return (
+                  <th
+                    key={i}
+                    style={{
+                      ...colStyle(c),
+                      cursor: c.sortable ? "pointer" : undefined,
+                      userSelect: c.sortable ? "none" : undefined,
+                    }}
+                    onClick={c.sortable ? () => toggleSort(i) : undefined}
+                  >
+                    {c.header}
+                    {arrow}
+                  </th>
+                );
+              })}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody ref={tbodyRef}>
+            {visible.length === 0 ? (
+              <tr>
+                <td colSpan={columns.length}>
+                  <div className="adm-empty">
+                    <span className="s">{empty}</span>
+                  </div>
+                </td>
+              </tr>
+            ) : null}
+            {visible.map((row, ri) => (
+              <tr key={rowKey(row, ri)} data-rowkey={String(rowKey(row, ri))}>
+                {columns.map((c, ci) => (
+                  <td key={ci} className={c.className} style={colStyle(c)}>
+                    {c.cell(row, ri)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
-      {paged ? (
+      {server ? (
+        <AdminPager
+          total={server.total}
+          page={server.page}
+          pageCount={Math.max(1, Math.ceil(server.total / server.pageSize))}
+          pageSize={server.pageSize}
+          onPage={server.onPage}
+        />
+      ) : paged ? (
         <AdminPager
           total={total ?? sorted.length}
           page={safePage}
@@ -206,9 +262,10 @@ interface AdminPagerProps {
   page: number;
   pageCount: number;
   pageSize: number;
-  pageSizeOptions: number[];
+  /** 省略时隐藏「N 条/页」选择器（服务端分页固定页大小）。 */
+  pageSizeOptions?: number[];
   onPage: (p: number) => void;
-  onPageSize: (s: number) => void;
+  onPageSize?: (s: number) => void;
 }
 
 /** The `.adm-pager` footer — total label + page-size select + numbered buttons. */
@@ -221,60 +278,67 @@ function AdminPager({
   onPage,
   onPageSize,
 }: AdminPagerProps) {
-  // window of page numbers (mirrors admin.js: up to ~7 buttons + last + …)
-  const maxBtns = Math.min(7, pageCount);
-  const nums: number[] = [];
-  for (let i = 1; i <= maxBtns; i++) nums.push(i);
-  const showLast = pageCount > maxBtns;
+  // 滑动窗口页码：始终显示首尾页，当前页居中，两侧超出用 … 折叠，
+  // 总按钮数不超过 7（含首尾），窗口随当前页移动而不是固定 1..7。
+  const items: (number | "…")[] = [];
+  if (pageCount <= 7) {
+    for (let i = 1; i <= pageCount; i++) items.push(i);
+  } else {
+    const lo = Math.max(2, Math.min(page - 1, pageCount - 4));
+    const hi = Math.min(pageCount - 1, Math.max(page + 1, 5));
+    items.push(1);
+    if (lo > 2) items.push("…");
+    for (let i = lo; i <= hi; i++) items.push(i);
+    if (hi < pageCount - 1) items.push("…");
+    items.push(pageCount);
+  }
 
   return (
     <div className="adm-pager">
       <span className="total">共 {total.toLocaleString()} 条</span>
       <div className="pgs">
-        <select
-          className="psz"
-          value={pageSize}
-          onChange={(e) => onPageSize(Number(e.target.value))}
-        >
-          {pageSizeOptions.map((s) => (
-            <option key={s} value={s}>
-              {s} 条/页
-            </option>
-          ))}
-        </select>
+        {onPageSize && pageSizeOptions ? (
+          <select
+            className="psz"
+            value={pageSize}
+            onChange={(e) => onPageSize(Number(e.target.value))}
+          >
+            {pageSizeOptions.map((s) => (
+              <option key={s} value={s}>
+                {s} 条/页
+              </option>
+            ))}
+          </select>
+        ) : null}
         <button
           type="button"
           className="pg nav"
+          disabled={page <= 1}
           onClick={() => onPage(Math.max(1, page - 1))}
           aria-label="上一页"
         >
           ‹
         </button>
-        {nums.map((n) => (
-          <button
-            key={n}
-            type="button"
-            className={`pg${n === page ? " on" : ""}`}
-            onClick={() => onPage(n)}
-          >
-            {n}
-          </button>
-        ))}
-        {showLast ? (
-          <>
-            <span className="gap">…</span>
+        {items.map((it, i) =>
+          it === "…" ? (
+            <span key={`gap-${i}`} className="gap">
+              …
+            </span>
+          ) : (
             <button
+              key={it}
               type="button"
-              className={`pg${page === pageCount ? " on" : ""}`}
-              onClick={() => onPage(pageCount)}
+              className={`pg${it === page ? " on" : ""}`}
+              onClick={() => onPage(it)}
             >
-              {pageCount}
+              {it}
             </button>
-          </>
-        ) : null}
+          ),
+        )}
         <button
           type="button"
           className="pg nav"
+          disabled={page >= pageCount}
           onClick={() => onPage(Math.min(pageCount, page + 1))}
           aria-label="下一页"
         >

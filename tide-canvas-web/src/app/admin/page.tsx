@@ -1,29 +1,19 @@
 "use client";
 
 /* ============================================================================
-   /admin — 数据概览 (dashboard), wired to the REAL backend.
+   /admin — 数据概览 (dense ops dashboard).
 
-   Faithful port of the liuguang admin.js V.dash() skin, now driven by:
-     GET /api/admin/dashboard/stats  -> AdminStatsVO  (KPI cards + hero)
-     GET /api/admin/dashboard/charts -> AdminChartsVO (recharts trends)
-
-   Only the data the backend exposes is rendered:
-     - hero strip: 今日实时营收 (totalRevenue head metric + today) + inline stats
-       (总订单 / 已支付 / 付费用户) + a revenue sparkline.
-     - 8 KPI cards: totalUsers / todayNewUsers / activeUsers / payingUsers /
-       totalPosts / totalModels / totalOrders / paidOrders.
-     - 增长趋势 (area): switchable user / post / order / revenue series.
-     - 用户 vs 内容增长 (multi-line): userGrowth & postGrowth over 14 days.
-     - 订单 / 营收 (area).
-
-   Keeps the EXACT liuguang `.viz-*` markup/classes + the shared AreaTrend /
-   MultiLine / StatCardGrid components. Loading + empty states included. No
-   @/mock imports. Client component (charts + interactive series toggle).
+   Layout:
+     1. Compact hero: today revenue + key counters
+     2. 4 honest metrics (not 8 vanity cards)
+     3. One switchable trend chart + user/post multi-line
+     4. Quick links to high-frequency ops tasks
    ============================================================================ */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { AreaTrend, MultiLine } from "@/components/admin/charts";
-import { StatCardGrid } from "@/components/admin";
+import { ListSkeleton, StatCardGrid } from "@/components/admin";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminDashboardApi } from "@/lib/admin-dashboard-api";
 import type {
@@ -33,7 +23,6 @@ import type {
   RevenuePoint,
 } from "@/types/admin-dashboard";
 
-/** Build a tiny svg sparkline `d` for the hero strip (smooth, no axes). */
 function sparkPath(vals: number[], w = 200, h = 32, pad = 3): string {
   if (vals.length === 0) return "";
   const max = Math.max(...vals) * 1.12 || 1;
@@ -54,29 +43,27 @@ function sparkPath(vals: number[], w = 200, h = 32, pad = 3): string {
   return d;
 }
 
-/** "YYYY-MM-DD" -> "MM-DD" for compact axis labels. */
 function shortDate(d: string): string {
   return d.length >= 10 ? d.slice(5) : d;
 }
 
-/** Format an integer with thousands separators. */
 const fmtNum = (n: number) => n.toLocaleString("zh-Hans-CN");
 
-/** Format a fixed-2 decimal string ("0.00") as ¥ currency. */
 function fmtMoney(s: string): string {
   const n = Number(s);
-  return Number.isFinite(n) ? `¥${n.toLocaleString("zh-Hans-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `¥${s}`;
+  return Number.isFinite(n)
+    ? `¥${n.toLocaleString("zh-Hans-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : `¥${s}`;
 }
 
 type SeriesKey = "user" | "post" | "order" | "revenue";
 
-/* 主苹果蓝序列：同一时刻只显示一条序列，切换靠 tab 文本区分，颜色不做类目编码 */
-const COBALT = "#0071E3";
-const TEAL = "#30B0C7";
+const COBALT = "#3b5bdb";
+const TEAL = "#0d9488";
 const SERIES_META: { key: SeriesKey; label: string; color: string }[] = [
-  { key: "user", label: "用户增长", color: COBALT },
-  { key: "post", label: "作品增长", color: COBALT },
-  { key: "order", label: "订单增长", color: COBALT },
+  { key: "user", label: "用户", color: COBALT },
+  { key: "post", label: "作品", color: COBALT },
+  { key: "order", label: "订单", color: COBALT },
   { key: "revenue", label: "营收", color: COBALT },
 ];
 
@@ -93,7 +80,7 @@ export default function AdminDashboardPage() {
     setLoading(true);
     setError(null);
     try {
-      await ensureSession(); // 临时自动会话:以种子管理员(role 9)登录，AdminOnly 通过
+      await ensureSession();
       const [statsRes, chartsRes] = await Promise.all([
         adminDashboardApi.stats(),
         adminDashboardApi.charts(),
@@ -112,57 +99,56 @@ export default function AdminDashboardPage() {
     load();
   }, [load]);
 
-  // hero sparkline = the revenue series (numeric) over the window.
   const revenueVals = useMemo(
     () => (charts?.revenue ?? []).map((p: RevenuePoint) => Number(p.amount) || 0),
     [charts],
   );
 
-  // 8 KPI cards from the aggregate stats block.
+  // 4 key metrics only — todayNewUsers as annotation, not a duplicate card
   const kpis = useMemo(() => {
     if (!stats) return [];
+    const todayUsers = stats.todayNewUsers;
     return [
-      { k: "总用户", v: fmtNum(stats.totalUsers), d: `+${fmtNum(stats.todayNewUsers)} 今日`, dir: "up" as const },
-      { k: "今日新增", v: fmtNum(stats.todayNewUsers), dir: "up" as const },
-      { k: "活跃用户 (7日)", v: fmtNum(stats.activeUsers), dir: "up" as const },
-      { k: "付费用户", v: fmtNum(stats.payingUsers), dir: "up" as const },
-      { k: "作品总数", v: fmtNum(stats.totalPosts), dir: "up" as const },
-      { k: "模型总数", v: fmtNum(stats.totalModels), dir: "up" as const },
-      { k: "订单总数", v: fmtNum(stats.totalOrders), d: `${fmtNum(stats.paidOrders)} 已支付`, dir: "up" as const },
-      { k: "总营收", v: fmtMoney(stats.totalRevenue), dir: "up" as const },
+      {
+        k: "总用户",
+        v: fmtNum(stats.totalUsers),
+        d: todayUsers > 0 ? `今日 +${fmtNum(todayUsers)}` : "今日 +0",
+        dir: todayUsers > 0 ? ("up" as const) : undefined,
+      },
+      { k: "7 日活跃", v: fmtNum(stats.activeUsers) },
+      { k: "付费用户", v: fmtNum(stats.payingUsers) },
+      {
+        k: "订单",
+        v: fmtNum(stats.totalOrders),
+        d: `${fmtNum(stats.paidOrders)} 已支付`,
+      },
     ];
   }, [stats]);
 
-  // selected single-series area data: {label,value}[].
   const areaData = useMemo(() => {
     if (!charts) return [];
     if (series === "revenue") {
-      return charts.revenue.map((p) => ({ label: shortDate(p.date), value: Number(p.amount) || 0 }));
+      return charts.revenue.map((p) => ({
+        label: shortDate(p.date),
+        value: Number(p.amount) || 0,
+      }));
     }
     const src: ChartPoint[] =
-      series === "user" ? charts.userGrowth : series === "post" ? charts.postGrowth : charts.orderGrowth;
+      series === "user"
+        ? charts.userGrowth
+        : series === "post"
+          ? charts.postGrowth
+          : charts.orderGrowth;
     return src.map((p) => ({ label: shortDate(p.date), value: p.count }));
   }, [charts, series]);
 
-  // 用户 vs 作品 multi-line (vals[] per series, indexed by day).
   const multiSeries = useMemo(() => {
     if (!charts) return [];
     return [
-      // 双序列 = 钴蓝 + 高光青（蓝图房双主轴：主指标墨线，对照序列高光）
       { name: "新增用户", color: COBALT, vals: charts.userGrowth.map((p) => p.count) },
       { name: "新增作品", color: TEAL, vals: charts.postGrowth.map((p) => p.count) },
     ];
   }, [charts]);
-
-  // 订单 / 营收 area (orders count vs revenue), shown as two stacked area cards.
-  const orderData = useMemo(
-    () => (charts?.orderGrowth ?? []).map((p) => ({ label: shortDate(p.date), value: p.count })),
-    [charts],
-  );
-  const revenueData = useMemo(
-    () => (charts?.revenue ?? []).map((p) => ({ label: shortDate(p.date), value: Number(p.amount) || 0 })),
-    [charts],
-  );
 
   const activeMeta = SERIES_META.find((m) => m.key === series) ?? SERIES_META[0];
 
@@ -172,17 +158,25 @@ export default function AdminDashboardPage() {
     return { first: shortDate(days[0].date), last: shortDate(days[days.length - 1].date) };
   }, [charts]);
 
+  const hasTrendSignal = useMemo(() => {
+    return areaData.some((p) => p.value > 0) || multiSeries.some((s) => s.vals.some((v) => v > 0));
+  }, [areaData, multiSeries]);
+
   if (loading) {
+    // 骨架屏形状对齐真实首屏：KPI 卡阵 + 两块图表面板
     return (
-      <div className="adm-panel">
-        <div className="adm-phead">
-          <div>
-            <h2>数据概览</h2>
-            <div className="sub">正在加载…</div>
-          </div>
+      <>
+        <div className="adm-kpis" aria-hidden="true">
+          {Array.from({ length: 4 }, (_, i) => (
+            <div
+              key={i}
+              className="skel skel-card"
+              style={{ height: 92, borderRadius: "var(--r-lg)", flex: "1 1 180px" }}
+            />
+          ))}
         </div>
-        <p style={{ padding: 24, color: "var(--text-faint)" }}>加载中…</p>
-      </div>
+        <ListSkeleton rows={2} height={280} gap={14} onField />
+      </>
     );
   }
 
@@ -201,69 +195,62 @@ export default function AdminDashboardPage() {
             </button>
           </div>
         </div>
-        <p style={{ padding: 24, color: "var(--text-faint)" }}>{error}</p>
+        <p style={{ padding: 20, color: "var(--text-faint)" }}>{error}</p>
       </div>
     );
   }
 
   return (
-    <>
-      <div className="viz-grid">
-        {/* hero strip — 今日营收 + inline stats + revenue sparkline */}
-        <div className="viz-hero">
-          <div className="viz-hero-row">
-            <div className="lead">
-              <div className="lbl">
-                <span className="live" />
-                实时营收 · 今日
-              </div>
-              <div className="big">{stats ? fmtMoney(stats.todayRevenue) : "¥0.00"}</div>
-              <div className="chg">累计营收 {stats ? fmtMoney(stats.totalRevenue) : "¥0.00"}</div>
+    <div className="adm-page">
+      <div className="viz-hero">
+        <div className="viz-hero-row">
+          <div className="lead">
+            <div className="lbl">
+              <span className="live" />
+              今日营收
             </div>
-            <div className="hstats">
-              <div className="hstat">
-                <div className="k">总订单</div>
-                <div className="v">{stats ? fmtNum(stats.totalOrders) : "0"}</div>
-              </div>
-              <div className="hstat">
-                <div className="k">已支付</div>
-                <div className="v">{stats ? fmtNum(stats.paidOrders) : "0"}</div>
-              </div>
-              <div className="hstat">
-                <div className="k">付费用户</div>
-                <div className="v">{stats ? fmtNum(stats.payingUsers) : "0"}</div>
-              </div>
+            <div className="big">{stats ? fmtMoney(stats.todayRevenue) : "¥0.00"}</div>
+            <div className="chg">累计 {stats ? fmtMoney(stats.totalRevenue) : "¥0.00"}</div>
+          </div>
+          <div className="hstats">
+            <div className="hstat">
+              <div className="k">作品</div>
+              <div className="v">{stats ? fmtNum(stats.totalPosts) : "0"}</div>
             </div>
+            <div className="hstat">
+              <div className="k">模型</div>
+              <div className="v">{stats ? fmtNum(stats.totalModels) : "0"}</div>
+            </div>
+            <div className="hstat">
+              <div className="k">已支付订单</div>
+              <div className="v">{stats ? fmtNum(stats.paidOrders) : "0"}</div>
+            </div>
+          </div>
+          {revenueVals.some((v) => v > 0) ? (
             <div className="hspark">
-              <svg width="360" height="60" viewBox="0 0 360 60" preserveAspectRatio="none">
+              <svg width="220" height="44" viewBox="0 0 220 44" preserveAspectRatio="none">
                 <defs>
-                  {/* 白卡上的迷你曲线：主蓝描边 + 规范 8% 填充 */}
                   <linearGradient id="hg" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" stopColor={COBALT} stopOpacity={0.08} />
-                    <stop offset="1" stopColor={COBALT} stopOpacity={0.08} />
+                    <stop offset="0" stopColor={COBALT} stopOpacity={0.1} />
+                    <stop offset="1" stopColor={COBALT} stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                {revenueVals.length > 0 ? (
-                  <>
-                    <path d={`${sparkPath(revenueVals, 360, 60, 4)} L 356 56 L 4 56 Z`} fill="url(#hg)" />
-                    <path d={sparkPath(revenueVals, 360, 60, 4)} fill="none" stroke={COBALT} strokeWidth="2" />
-                  </>
-                ) : null}
+                <path d={`${sparkPath(revenueVals, 220, 44, 3)} L 217 41 L 3 41 Z`} fill="url(#hg)" />
+                <path
+                  d={sparkPath(revenueVals, 220, 44, 3)}
+                  fill="none"
+                  stroke={COBALT}
+                  strokeWidth="1.75"
+                />
               </svg>
             </div>
-          </div>
+          ) : null}
         </div>
+      </div>
 
-        {/* 8 KPI cards */}
-        {kpis.length > 0 ? (
-          // StatCardGrid 的 .adm-kpis 自带 margin-bottom:18；在 .viz-grid 栅格里
-          // 会与 gap 叠加成 30px，用等值负外边距抵消，回到 12px 栅格节奏。
-          <div style={{ gridColumn: "span 12", marginBottom: -18 }}>
-            <StatCardGrid items={kpis} />
-          </div>
-        ) : null}
+      {kpis.length > 0 ? <StatCardGrid items={kpis} /> : null}
 
-        {/* 增长趋势 (area, switchable series) */}
+      <div className="viz-grid">
         <div className="viz-card span8">
           <div className="viz-h">
             <div>
@@ -283,7 +270,7 @@ export default function AdminDashboardPage() {
               ))}
             </div>
           </div>
-          {areaData.length > 0 ? (
+          {areaData.length > 0 && hasTrendSignal ? (
             <>
               <AreaTrend data={areaData} color={activeMeta.color} />
               <div className="viz-dot">
@@ -292,69 +279,79 @@ export default function AdminDashboardPage() {
               </div>
             </>
           ) : (
-            <p style={{ padding: 24, color: "var(--text-faint)" }}>暂无数据</p>
+            <div className="adm-empty">
+              <div className="t">暂无增长信号</div>
+              <div className="s">近 14 天无新增数据时，趋势图会保持空白，避免平线误导。</div>
+            </div>
           )}
         </div>
 
-        {/* 用户 vs 作品 (multi-line) */}
         <div className="viz-card span4">
           <div className="viz-h">
             <div>
               <h3>用户 vs 作品</h3>
               <div className="sub">近 14 天新增</div>
             </div>
-            <div className="viz-legend">
-              {multiSeries.map((s) => (
-                <span key={s.name}>
-                  <i style={{ background: s.color }} />
-                  {s.name}
-                </span>
-              ))}
-            </div>
           </div>
-          {multiSeries.some((s) => s.vals.length > 0) ? (
+          {multiSeries.some((s) => s.vals.some((v) => v > 0)) ? (
             <>
               <MultiLine series={multiSeries} />
+              <div className="viz-legend">
+                {multiSeries.map((s) => (
+                  <span key={s.name}>
+                    <i style={{ background: s.color }} />
+                    {s.name}
+                  </span>
+                ))}
+              </div>
               <div className="viz-dot">
                 <span>{dayRange.first}</span>
                 <span>{dayRange.last}</span>
               </div>
             </>
           ) : (
-            <p style={{ padding: 24, color: "var(--text-faint)" }}>暂无数据</p>
-          )}
-        </div>
-
-        {/* 订单趋势 (area) */}
-        <div className="viz-card span6">
-          <div className="viz-h">
-            <div>
-              <h3>订单趋势</h3>
-              <div className="sub">近 14 天 · 新增订单</div>
+            <div className="adm-empty">
+              <div className="t">暂无对照数据</div>
+              <div className="s">有用户或作品增长后会显示双轴对照。</div>
             </div>
-          </div>
-          {orderData.length > 0 ? (
-            <AreaTrend data={orderData} />
-          ) : (
-            <p style={{ padding: 24, color: "var(--text-faint)" }}>暂无数据</p>
-          )}
-        </div>
-
-        {/* 营收趋势 (area) */}
-        <div className="viz-card span6">
-          <div className="viz-h">
-            <div>
-              <h3>营收趋势</h3>
-              <div className="sub">近 14 天 · 已支付金额</div>
-            </div>
-          </div>
-          {revenueData.length > 0 ? (
-            <AreaTrend data={revenueData} />
-          ) : (
-            <p style={{ padding: 24, color: "var(--text-faint)" }}>暂无数据</p>
           )}
         </div>
       </div>
-    </>
+
+      <div className="viz-card span12">
+        <div className="viz-h">
+          <div>
+            <h3>快捷入口</h3>
+            <div className="sub">高频运营任务</div>
+          </div>
+        </div>
+        <div className="adm-quick">
+          <Link href="/admin/users">
+            <span className="qk">用户管理</span>
+            <span className="qs">检索、封禁、调积分</span>
+          </Link>
+          <Link href="/admin/works">
+            <span className="qk">作品管理</span>
+            <span className="qs">审核与下架</span>
+          </Link>
+          <Link href="/admin/models">
+            <span className="qk">模型管理</span>
+            <span className="qs">上下架与同步</span>
+          </Link>
+          <Link href="/admin/payments">
+            <span className="qk">支付管理</span>
+            <span className="qs">渠道与订单流水</span>
+          </Link>
+          <Link href="/admin/logs">
+            <span className="qk">日志管理</span>
+            <span className="qs">错误与模型调用</span>
+          </Link>
+          <Link href="/admin/config">
+            <span className="qk">配置管理</span>
+            <span className="qs">站点与系统参数</span>
+          </Link>
+        </div>
+      </div>
+    </div>
   );
 }

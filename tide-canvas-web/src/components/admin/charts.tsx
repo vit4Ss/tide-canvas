@@ -35,16 +35,16 @@ import {
   type Segment,
 } from "@/mock/admin";
 
-/* 配色常量（用户定稿色板 v3，与 admin.css 令牌对齐；recharts 需要字面量色值） */
-const GRID = "#ECECEF"; /* 网格线 */
-const ACCENT = "#0071E3"; /* 主图表苹果蓝 */
-const OK = "#34C759";
-const WARN = "#FF9500";
-const DANGER = "#FF3B30";
+/* Chart palette aligned with dense admin console tokens. */
+const GRID = "#f0f0f2";
+const ACCENT = "#3b5bdb";
+const OK = "#16a34a";
+const WARN = "#d97706";
+const DANGER = "#dc2626";
 const TOOLTIP = {
-  borderRadius: 10,
-  border: "1px solid #E5E5EA",
-  boxShadow: "0 1px 3px rgba(0,0,0,.08), 0 20px 48px rgba(0,0,0,.18)",
+  borderRadius: 6,
+  border: "1px solid #e4e4e7",
+  boxShadow: "0 8px 24px rgba(0,0,0,.1)",
   fontSize: 12,
 } as const;
 
@@ -289,7 +289,7 @@ function Ring({ pct, color }: { pct: number; color: string }) {
         strokeDasharray={`${len} ${c}`}
         transform="rotate(-90 26 26)"
       />
-      <text x="26" y="30" textAnchor="middle" fontSize="12" fontWeight="600" fill="#0F172A">
+      <text x="26" y="30" textAnchor="middle" fontSize="12" fontWeight="600" fill="#1D1D1F">
         {pct}
       </text>
     </svg>

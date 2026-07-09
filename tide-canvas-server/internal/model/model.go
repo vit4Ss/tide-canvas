@@ -68,7 +68,6 @@ func Models() []any {
 		&PointRule{},
 		&Campaign{},
 		// System / platform.
-		&AdminResource{},
 		&SysLog{},
 		&SysConfig{},
 		&EmailTemplate{},

@@ -31,33 +31,33 @@ export function adminSwatch(name: string): string {
 /* 图表色板（用户定稿 v3）：蓝 → 青双主轴，浅阶收尾——类目靠图例/标签区分，
    颜色表达"同一体系内的次序"（语义红绿另走 charts.tsx 常量）。 */
 export const CHART_COLORS = [
-  "#0071E3", // 主苹果蓝
-  "#30B0C7", // 图表青
-  "#7FB8F0", // 蓝浅阶
-  "#9BD6E0", // 青浅阶
-  "#AEAEB2", // 冷灰
-  "#6E6E73", // 深冷灰
+  "#3b5bdb", // ink blue
+  "#0d9488", // teal
+  "#7c8cf0", // soft blue
+  "#5eead4", // soft teal
+  "#a1a1aa", // zinc
+  "#52525b", // zinc dark
 ] as const;
 
 /* ──────────────────────────────────────────────────────────────────────────
    Cross-section shared types
    ──────────────────────────────────────────────────────────────────────── */
 
-/** up = positive/green delta, down = negative/red delta. */
+/** Explicit trend only — never default to "up" (avoids fake green arrows). */
 export type Trend = "up" | "down";
 
 /** Status-pill tone keys → map to liuguang `.tag2.<tone>` classes. */
 export type PillTone = "green" | "gray" | "amber" | "red" | "blue";
 
-/** A single KPI tile (label / value / optional delta). */
+/** A single metric cell in the compact strip. */
 export interface Kpi {
   /** Label, e.g. "总用户". */
   k: string;
   /** Formatted value, e.g. "5,218,904". */
   v: string;
-  /** Optional delta text, e.g. "+12,304 今日". Empty/undefined hides it. */
+  /** Optional annotation (e.g. "今日 +12"). No arrow unless dir is set. */
   d?: string;
-  /** Delta direction (defaults to "up"). */
+  /** Only set when the delta is a real up/down change. */
   dir?: Trend;
 }
 
@@ -126,7 +126,6 @@ export const ADMIN_ICONS: Record<string, string> = {
   model: "M12 2l8 4.5v9L12 20l-8-4.5v-9zM12 2v18M4 6.5l8 4.5 8-4.5",
   toolkit:
     "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z",
-  res: "M3 7l2-3h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H3z",
   credit:
     "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM9.5 9.5a2.5 2.5 0 0 1 5 0M12 7v1M12 16v1M9 14h6",
   price: "M20 12l-8 8-9-9V4h7zM7.5 7.5h.01",

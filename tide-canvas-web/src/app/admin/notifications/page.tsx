@@ -22,12 +22,20 @@ import {
   Panel,
   RowActions,
   StatusPill,
+  TableSkeleton,
 } from "@/components/admin";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminNotifyApi } from "@/lib/admin-notify-api";
 import type { AdminNotification, AdminNotifySendDTO } from "@/types/admin-notify";
 import { confirmDialog } from "@/components/shared/confirm";
 import { toast } from "@/components/shared/toast";
+
+function fmtTime(s: string): string {
+  if (!s) return "—";
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return s;
+  return d.toLocaleString("zh-CN", { hour12: false });
+}
 
 const TYPE_LABEL: Record<string, string> = {
   system: "系统",
@@ -159,9 +167,7 @@ export default function AdminNotificationsPage() {
         }
       >
         {loading ? (
-          <div style={{ padding: 18 }} className="muted">
-            加载中…
-          </div>
+          <TableSkeleton />
         ) : rows.length === 0 ? (
           <div style={{ padding: 18 }} className="muted">
             暂无消息，点击「发送通知」向用户推送第一条站内消息。
@@ -170,7 +176,7 @@ export default function AdminNotificationsPage() {
           <AdminTable<AdminNotification>
             rows={rows}
             rowKey={(r) => r.id}
-            total={total}
+            server={{ page: pageNum, pageSize, total, onPage: (p) => load(p) }}
             columns={[
               {
                 header: "标题 / 内容",
@@ -214,7 +220,7 @@ export default function AdminNotificationsPage() {
                   </StatusPill>
                 ),
               },
-              { header: "发送时间", className: "muted mono", cell: (r) => r.createTime },
+              { header: "发送时间", className: "muted mono", cell: (r) => fmtTime(r.createTime) },
               {
                 header: "操作",
                 align: "right",

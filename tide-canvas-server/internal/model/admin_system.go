@@ -4,28 +4,9 @@ import (
 	"time"
 )
 
-// Admin-only system / platform entities: resource inventory, logs, config,
-// email templates and API keys. These back the system & developer admin screens.
-
-// AdminResource is a tracked platform resource (资源管理): buckets, CDNs, fonts
-// and caches with usage and reference counts.
-type AdminResource struct {
-	BaseModel
-
-	Name string `gorm:"column:name;type:varchar(128);not null" json:"name"`
-	// Type: bucket / cdn / font / cache.
-	Type string `gorm:"column:type;type:varchar(16);not null" json:"type"`
-	// Size is the resource size in bytes.
-	Size int64 `gorm:"column:size;type:bigint;not null;default:0" json:"size"`
-	// Refs is the number of entities referencing this resource.
-	Refs int `gorm:"column:refs;type:int;not null;default:0" json:"refs"`
-	// Status: active / idle / error / archived.
-	Status     string    `gorm:"column:status;type:varchar(16);not null;default:'active'" json:"status"`
-	UpdateTime time.Time `gorm:"column:resource_update_time" json:"updateTime"`
-}
-
-// TableName overrides the default pluralization.
-func (AdminResource) TableName() string { return "admin_resource" }
+// Admin-only system / platform entities: logs, config, email templates and
+// API keys. These back the system & developer admin screens.
+// (资源管理/AdminResource 已于 2026-07-09 整链删除——纯种子演示数据，无真实探测。)
 
 // SysLog is a system / operation log entry (系统日志).
 type SysLog struct {

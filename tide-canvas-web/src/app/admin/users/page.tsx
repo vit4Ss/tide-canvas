@@ -30,12 +30,13 @@ import {
   FormGrid,
   Panel,
   RowActions,
-  StatCardGrid,
   StatusPill,
   type Column,
+  TableSkeleton,
 } from "@/components/admin";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminUsersApi } from "@/lib/admin-users-api";
+import { confirmDialog } from "@/components/shared/confirm";
 import { hueSwatch } from "@/lib/swatch";
 import type {
   AdminUserUpdateDTO,
@@ -236,17 +237,6 @@ function AdminUsersPageInner() {
 
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  // KPI cards derived from the current page metadata.
-  const kpis = useMemo(
-    () => [
-      { k: "用户总数", v: fmtNum(total), dir: "up" as const },
-      { k: "当前页", v: `${pageNum} / ${pageCount}`, dir: "up" as const },
-      { k: "本页用户", v: fmtNum(rows.length), dir: "up" as const },
-      { k: "角色数", v: fmtNum(roles.length), dir: "up" as const },
-    ],
-    [total, pageNum, pageCount, rows.length, roles.length],
-  );
-
   /* ---- user actions -------------------------------------------------------- */
 
   function openEdit(u: AdminUserVO) {
@@ -372,6 +362,14 @@ function AdminUsersPageInner() {
   }
 
   async function deleteRole(r: RoleVO) {
+    if (
+      !(await confirmDialog({
+        title: "删除角色",
+        message: `确定删除角色「${r.name}」？拥有该角色的用户将失去对应权限。`,
+        confirmText: "删除",
+      }))
+    )
+      return;
     const res = await adminUsersApi.deleteRole(r.id);
     if (res.success) await loadRoles();
     else setError(res.message || "删除角色失败");
@@ -379,9 +377,12 @@ function AdminUsersPageInner() {
 
   /* ---- columns ------------------------------------------------------------- */
 
+  // 列宽百分比均摊整行（table-layout:fixed 下不给宽度会 8 列均分，
+  // 用户列装不下「头像+名称+邮箱」）
   const userColumns: Column<AdminUserVO>[] = [
     {
       header: "用户",
+      width: "24%",
       cell: (u) => (
         <div className="cellflex">
           <span
@@ -402,24 +403,28 @@ function AdminUsersPageInner() {
     },
     {
       header: "角色",
+      width: "9%",
       cell: (u) => <StatusPill tone={ROLE_TONE[u.role] ?? "gray"}>{roleLabel(u.role)}</StatusPill>,
     },
     {
       header: "积分余额",
+      width: "10%",
       align: "right",
       className: "mono",
       cell: (u) => fmtNum(u.points),
     },
     {
       header: "API 额度",
+      width: "10%",
       align: "right",
       className: "mono",
       cell: (u) => fmtNum(u.apiQuota),
     },
-    { header: "作品 / 项目", className: "mono", cell: (u) => `${fmtNum(u.postCount)} / ${fmtNum(u.projectCount)}` },
-    { header: "最近登录", className: "muted", cell: (u) => fmtTime(u.lastLoginTime) },
+    { header: "作品 / 项目", width: "10%", className: "mono", cell: (u) => `${fmtNum(u.postCount)} / ${fmtNum(u.projectCount)}` },
+    { header: "最近登录", width: "14%", className: "muted", cell: (u) => fmtTime(u.lastLoginTime) },
     {
       header: "状态",
+      width: "9%",
       cell: (u) => (
         <StatusPill tone={u.status === 1 ? "green" : "red"}>
           {u.status === 1 ? "正常" : "已封禁"}
@@ -428,6 +433,7 @@ function AdminUsersPageInner() {
     },
     {
       header: "操作",
+      width: "14%",
       align: "right",
       cell: (u) => (
         <RowActions
@@ -480,24 +486,22 @@ function AdminUsersPageInner() {
   ];
 
   return (
-    <>
-      <StatCardGrid items={kpis} />
-
+    <div className="adm-page">
       {error ? (
-        <div className="adm-panel" style={{ marginBottom: 16 }}>
+        <div className="adm-panel">
           <p style={{ padding: "12px 18px", color: "var(--danger)", margin: 0 }}>{error}</p>
         </div>
       ) : null}
 
       <Panel
         title="用户列表"
-        sub="管理账号、角色、积分与封禁状态（直接作用于真实用户表）"
+        sub={`共 ${fmtNum(total)} 人 · 角色 ${fmtNum(roles.length)} · 第 ${pageNum}/${pageCount} 页`}
         tools={
           <>
             <div className="adm-search" style={{ margin: 0 }}>
               <span className="muted">⌕</span>
               <input
-                placeholder="搜索用户 / 邮箱 / 手机"
+                placeholder="邮箱 / 昵称 / 手机"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => {
@@ -511,7 +515,7 @@ function AdminUsersPageInner() {
           </>
         }
       >
-        <div className="adm-tools" style={{ padding: "12px 20px 0" }}>
+        <div className="adm-tools" style={{ padding: "14px 20px 6px" }}>
           <FilterChips
             options={FILTERS.map((f) => f.label)}
             value={FILTERS.find((f) => f.key === filter)?.label}
@@ -520,38 +524,16 @@ function AdminUsersPageInner() {
         </div>
 
         {loading ? (
-          <p style={{ padding: 24, color: "var(--text-faint)" }}>加载中…</p>
+          <TableSkeleton />
         ) : rows.length === 0 ? (
           <p style={{ padding: 24, color: "var(--text-faint)" }}>没有符合条件的用户</p>
         ) : (
-          <>
-            <AdminTable<AdminUserVO> rows={rows} rowKey={(u) => u.id} columns={userColumns} />
-            <div className="adm-pager">
-              <span className="total">共 {total.toLocaleString()} 条</span>
-              <div className="pgs">
-                <button
-                  type="button"
-                  className="pg nav"
-                  onClick={() => setPageNum((p) => Math.max(1, p - 1))}
-                  aria-label="上一页"
-                >
-                  ‹
-                </button>
-                <button type="button" className="pg on">
-                  {pageNum}
-                </button>
-                <span className="gap">/ {pageCount}</span>
-                <button
-                  type="button"
-                  className="pg nav"
-                  onClick={() => setPageNum((p) => Math.min(pageCount, p + 1))}
-                  aria-label="下一页"
-                >
-                  ›
-                </button>
-              </div>
-            </div>
-          </>
+          <AdminTable<AdminUserVO>
+            rows={rows}
+            rowKey={(u) => u.id}
+            columns={userColumns}
+            server={{ page: pageNum, pageSize: PAGE_SIZE, total, onPage: setPageNum }}
+          />
         )}
       </Panel>
 
@@ -565,7 +547,7 @@ function AdminUsersPageInner() {
         }
       >
         {rolesLoading ? (
-          <p style={{ padding: 24, color: "var(--text-faint)" }}>加载中…</p>
+          <TableSkeleton />
         ) : roles.length === 0 ? (
           <p style={{ padding: 24, color: "var(--text-faint)" }}>暂无角色，点击「新建角色」创建。</p>
         ) : (
@@ -716,7 +698,7 @@ function AdminUsersPageInner() {
           </FormGrid>
         </FormCard>
       </AdminModal>
-    </>
+    </div>
   );
 }
 

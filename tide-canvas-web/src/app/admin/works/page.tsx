@@ -24,11 +24,11 @@ import {
   FilterChips,
   Panel,
   RowActions,
-  StatCardGrid,
   StatusPill,
   type Column,
+  TableSkeleton,
 } from "@/components/admin";
-import type { Kpi, PillTone } from "@/mock/admin";
+import type { PillTone } from "@/mock/admin";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminWorksApi } from "@/lib/admin-works-api";
 import { confirmDialog } from "@/components/shared/confirm";
@@ -42,6 +42,8 @@ import {
 
 const WORK_FILTERS = ["全部", "图片", "视频", "精选", "已下架"] as const;
 type WorkFilter = (typeof WORK_FILTERS)[number];
+
+const PAGE_SIZE = 20;
 
 /** Status int → pill tone + label. */
 function statusTone(status: number): PillTone {
@@ -65,11 +67,12 @@ export default function AdminWorksPage() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [filter, setFilter] = useState<WorkFilter>(WORK_FILTERS[0]);
+  const [page, setPage] = useState(1);
   const [detail, setDetail] = useState<AdminWorkVO | null>(null);
 
   // Map the active filter chip → the API query (status/type/featured).
-  const queryForFilter = useCallback((f: WorkFilter): AdminWorkQuery => {
-    const base: AdminWorkQuery = { pageNum: 1, pageSize: 50 };
+  const queryForFilter = useCallback((f: WorkFilter, pageNum: number): AdminWorkQuery => {
+    const base: AdminWorkQuery = { pageNum, pageSize: PAGE_SIZE };
     switch (f) {
       case "图片":
         return { ...base, type: "image" };
@@ -91,7 +94,7 @@ export default function AdminWorksPage() {
     setLoading(true);
     try {
       await ensureSession(); // 登录流程暂未做:无 token 时静默登录默认账号
-      const res = await adminWorksApi.list(queryForFilter(filter));
+      const res = await adminWorksApi.list(queryForFilter(filter, page));
       if (id !== reqIdRef.current) return; // 过期响应丢弃
       if (res.success && res.data) {
         setWorks(res.data.records);
@@ -103,24 +106,16 @@ export default function AdminWorksPage() {
     } finally {
       if (id === reqIdRef.current) setLoading(false);
     }
-  }, [ensureSession, filter, queryForFilter]);
+  }, [ensureSession, filter, page, queryForFilter]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  // KPIs derived from the loaded rows (the page is a single 50-row slice).
-  const kpis: Kpi[] = useMemo(() => {
-    const published = works.filter((w) => w.status === WORK_STATUS_PUBLISHED).length;
-    const pending = works.filter((w) => w.status === WORK_STATUS_PENDING).length;
-    const featured = works.filter((w) => w.featured).length;
-    return [
-      { k: "总作品", v: total.toLocaleString(), d: "community_post", dir: "up" },
-      { k: "已发布", v: published.toLocaleString(), d: "本页", dir: "up" },
-      { k: "待审核", v: pending.toLocaleString(), d: "本页", dir: pending ? "down" : "up" },
-      { k: "精选", v: featured.toLocaleString(), d: "本页", dir: "up" },
-    ];
-  }, [works, total]);
+  const pendingCount = useMemo(
+    () => works.filter((w) => w.status === WORK_STATUS_PENDING).length,
+    [works],
+  );
 
   // --- CRUD actions ---
 
@@ -178,9 +173,11 @@ export default function AdminWorksPage() {
     [load],
   );
 
+  // 列宽用百分比均摊整行，避免「作品」一列吃掉全部剩余宽、其它列被挤到最右
   const columns: Column<AdminWorkVO>[] = [
     {
       header: "作品",
+      width: "28%",
       cell: (w) => (
         <div className="cellflex">
           <span
@@ -191,14 +188,34 @@ export default function AdminWorksPage() {
                 : undefined
             }
           />
-          <span className="strong">{w.title || w.id}</span>
+          <span className="strong" title={w.title || w.id}>
+            {w.title || w.id}
+          </span>
         </div>
       ),
     },
-    { header: "作者", cell: (w) => w.author?.name || "用户" },
-    { header: "模型", className: "muted", cell: (w) => w.model || "—" },
+    {
+      header: "作者",
+      width: "12%",
+      cell: (w) => (
+        <span className="truncate" title={w.author?.name || "用户"}>
+          {w.author?.name || "用户"}
+        </span>
+      ),
+    },
+    {
+      header: "模型",
+      width: "18%",
+      className: "muted",
+      cell: (w) => (
+        <span className="truncate" title={w.model || "—"}>
+          {w.model || "—"}
+        </span>
+      ),
+    },
     {
       header: "类型",
+      width: "10%",
       cell: (w) => {
         const t = typeLabel(w.type);
         return <StatusPill tone={t.tone}>{t.text}</StatusPill>;
@@ -206,6 +223,7 @@ export default function AdminWorksPage() {
     },
     {
       header: "状态",
+      width: "12%",
       cell: (w) => (
         <StatusPill tone={statusTone(w.status)}>
           {w.featured ? `${w.statusText} · 精选` : w.statusText}
@@ -215,6 +233,7 @@ export default function AdminWorksPage() {
     {
       header: "操作",
       align: "right",
+      width: "20%",
       cell: (w) => {
         const offline = w.status === WORK_STATUS_OFFLINE;
         return (
@@ -237,22 +256,23 @@ export default function AdminWorksPage() {
   ];
 
   return (
-    <>
-      <StatCardGrid items={kpis} />
-
+    <div className="adm-page">
       <Panel
         title="作品库"
-        sub="审核、下架与精选推荐 · 与 /explore 同源"
+        sub={`共 ${total.toLocaleString()} · 本页待审 ${pendingCount} · 与 /explore 同源`}
         tools={
           <FilterChips
             options={[...WORK_FILTERS]}
             value={filter}
-            onChange={(v) => setFilter(v as WorkFilter)}
+            onChange={(v) => {
+              setFilter(v as WorkFilter);
+              setPage(1);
+            }}
           />
         }
       >
         {loading ? (
-          <div style={{ padding: 28, color: "var(--text-faint)" }}>加载中…</div>
+          <TableSkeleton />
         ) : works.length === 0 ? (
           <div style={{ padding: 28, color: "var(--text-faint)" }}>
             暂无作品。
@@ -262,8 +282,8 @@ export default function AdminWorksPage() {
             <AdminTable<AdminWorkVO>
               rows={works}
               rowKey={(w) => w.id}
-              total={total}
               columns={columns}
+              server={{ page, pageSize: PAGE_SIZE, total, onPage: setPage }}
             />
           </div>
         )}
@@ -327,6 +347,6 @@ export default function AdminWorksPage() {
           </div>
         ) : null}
       </AdminModal>
-    </>
+    </div>
   );
 }
