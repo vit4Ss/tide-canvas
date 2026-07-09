@@ -150,6 +150,13 @@ func (p *relayProviderClient) batchImages(ctx context.Context, n int, gen func(c
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
+			// 子 goroutine 的 panic 不会被 runTask 的 defer recover 兜住(Go 语义),
+			// 不 recover 会崩掉整个进程。这里就地捕获并转成本路 error。
+			defer func() {
+				if r := recover(); r != nil {
+					errs[i] = fmt.Errorf("panic in batch image #%d: %v", i, r)
+				}
+			}()
 			results[i], errs[i] = gen(ctx)
 		}(i)
 	}
@@ -242,6 +249,12 @@ func (p *relayProviderClient) rehost(ctx context.Context, urls []string) []strin
 		wg.Add(1)
 		go func(i int, u string) {
 			defer wg.Done()
+			// 子 goroutine panic 需就地 recover(否则崩进程);失败/异常都回退原始 URL。
+			defer func() {
+				if r := recover(); r != nil {
+					out[i] = u
+				}
+			}()
 			if saved, err := p.saveRemote(ctx, u); err == nil && saved != "" {
 				out[i] = saved
 			} else {

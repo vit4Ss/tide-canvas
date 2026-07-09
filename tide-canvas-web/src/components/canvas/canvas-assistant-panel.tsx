@@ -283,7 +283,13 @@ export function CanvasAssistantPanel() {
           .sort((a, b) => b.updatedAt - a.updatedAt)
           .slice(0, MAX_STORED_SESSIONS);
       }
-      saveStoredSessions(next, nextActiveSessionId);
+      // localStorage 可能满(20 会话×80 消息含附件 URL)或不可用;写盘失败只记为持久化
+      // 失效,绝不在状态更新阶段抛出 QuotaExceededError 把整棵组件树打崩。
+      try {
+        saveStoredSessions(next, nextActiveSessionId);
+      } catch {
+        /* 持久化失败:保留内存会话,忽略 */
+      }
       return next;
     });
   }, [messages, activeSessionId]);
@@ -452,6 +458,14 @@ export function CanvasAssistantPanel() {
     setAttachments((current) => current.filter((file) => file.fileUrl !== fileUrl));
   };
 
+  // 轮询守卫:面板卸载(离开画布)或切换会话后停止聊天任务轮询,避免无谓请求 / 卸载后 setState。
+  const assistantUnmountedRef = useRef(false);
+  const activeSessionIdRef = useRef(activeSessionId);
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
+  useEffect(() => () => { assistantUnmountedRef.current = true; }, []);
+
   const nextMessageId = (role: AssistantChatRole) => {
     messageSeqRef.current += 1;
     return role + "-" + Date.now() + "-" + messageSeqRef.current;
@@ -463,10 +477,14 @@ export function CanvasAssistantPanel() {
 
   const pollTask = async (taskId: string | number, assistantId: string) => {
     const deadline = Date.now() + MAX_CHAT_POLL_TIME;
+    const startedSession = activeSessionIdRef.current;
     while (Date.now() < deadline) {
       await wait(CHAT_POLL_INTERVAL);
+      // 面板已卸载或已切换到别的会话 → 停止轮询(避免无谓请求与写入非当前会话)。
+      if (assistantUnmountedRef.current || activeSessionIdRef.current !== startedSession) return;
       const res = await aiApi.getTask(String(taskId));
-      if (!res.success) {
+      if (assistantUnmountedRef.current || activeSessionIdRef.current !== startedSession) return;
+      if (!res.success || !res.data) {
         patchMessage(assistantId, { status: "error", content: res.message || "获取回复失败" });
         return;
       }

@@ -102,7 +102,7 @@ async function refreshAccessToken(): Promise<string | null> {
       body: JSON.stringify({ refreshToken }),
     });
     const result = await parseResult<{ accessToken: string; refreshToken: string }>(res);
-    if (result.success) {
+    if (result.success && result.data?.accessToken) {
       setTokens(result.data.accessToken, result.data.refreshToken);
       return result.data.accessToken;
     }

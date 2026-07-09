@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { aiApi } from "@/lib/api";
 import { useCanvasStore } from "@/stores/use-canvas-store";
 import { AiTaskStatus, type AiTaskVO, type AiGenerationLogVO } from "@/types/ai";
@@ -29,16 +29,22 @@ export function CanvasHistoryPanel({ open, onClose }: Props) {
   const [loaded, setLoaded] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  const aliveRef = useRef(true);
+  useEffect(() => () => { aliveRef.current = false; }, []);
+
   const load = useCallback(async () => {
     try {
       const [tRes, lRes] = await Promise.all([
         aiApi.listTasks({ pageNum: 1, pageSize: 50, status: AiTaskStatus.PROCESSING, ...(projectId ? { projectId } : {}) }),
         aiApi.canvasLogs({ pageNum: 1, pageSize: 50, ...(projectId ? { projectId } : {}) }),
       ]);
-      if (tRes.success) setTasks(tRes.data.records);
-      if (lRes.success) setLogs(lRes.data.records);
+      if (!aliveRef.current) return; // 卸载后不 setState
+      if (tRes.success && tRes.data) setTasks(tRes.data.records);
+      if (lRes.success && lRes.data) setLogs(lRes.data.records);
+    } catch {
+      // 拉取失败(被 4s 轮询反复触发):忽略,不抛未处理 rejection
     } finally {
-      setLoaded(true);
+      if (aliveRef.current) setLoaded(true);
     }
   }, [projectId]);
 

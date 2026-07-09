@@ -188,6 +188,9 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   const [hovering, setHovering] = useState(false);
   const objUrlRef = useRef<string | null>(null);
   const resolvingRef = useRef(false);
+  // 卸载守卫:异步探测/上传回调完成时若节点已卸载,不再 setState。
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
   const { generate, isGenerating } = useAiGeneration();
   const generating = isGenerating(node.id) || node.status === "generating";
   const nodeUploading = uploading || node.uploading === true;
@@ -429,7 +432,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     // 探测原始分辨率用于头部「W × H」展示
     const probe = document.createElement("video");
     probe.preload = "metadata";
-    probe.onloadedmetadata = () => setVideoDims({ w: probe.videoWidth, h: probe.videoHeight });
+    probe.onloadedmetadata = () => { if (mountedRef.current) setVideoDims({ w: probe.videoWidth, h: probe.videoHeight }); };
     probe.src = objUrl;
     setUploadPct(0);
     setUploading(true);
@@ -497,7 +500,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       const label = kind === "first" ? "视频首帧" : kind === "last" ? "视频尾帧" : "视频截图";
       const file = new File([blob], `frame_${time.toFixed(1)}s.png`, { type: "image/png" });
       const res = await uploadFileSmart(file, undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
-      if (!res.success) { toast.error(res.message || "截图上传失败"); return; }
+      if (!res.success || !res.data) { toast.error(res.message || "截图上传失败"); return; }
       const st = useCanvasStore.getState();
       const nid = generateNodeId();
       const cw = node.contentW ?? node.width;
@@ -532,6 +535,9 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       // 不连线：截图图片为独立节点
       st.selectNode(nid);
       toast.success(`已截取${kind === "first" ? "首帧" : kind === "last" ? "尾帧" : "当前帧"}`);
+    } catch {
+      // 抓帧/上传异常:给出反馈,避免未处理 rejection 与静默失败。
+      toast.error("截图失败，请重试");
     } finally {
       setCapturing(false);
     }

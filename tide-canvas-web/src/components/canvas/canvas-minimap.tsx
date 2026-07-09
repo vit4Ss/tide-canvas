@@ -33,10 +33,11 @@ export function CanvasMinimap({ nodes, transform, viewportSize, onNavigate }: Pr
   const bounds = useMemo(() => {
     const vw = viewportSize.width || 1;
     const vh = viewportSize.height || 1;
-    const viewMinX = -transform.x / transform.k;
-    const viewMinY = -transform.y / transform.k;
-    const viewMaxX = viewMinX + vw / transform.k;
-    const viewMaxY = viewMinY + vh / transform.k;
+    const k = transform.k || 1; // 防 k 为 0/NaN 导致 Infinity 坐标
+    const viewMinX = -transform.x / k;
+    const viewMinY = -transform.y / k;
+    const viewMaxX = viewMinX + vw / k;
+    const viewMaxY = viewMinY + vh / k;
 
     let minX = viewMinX, minY = viewMinY, maxX = viewMaxX, maxY = viewMaxY;
     nodes.forEach((n) => {
@@ -82,9 +83,10 @@ export function CanvasMinimap({ nodes, transform, viewportSize, onNavigate }: Pr
   // 可视区域矩形（小地图坐标）
   const vw = viewportSize.width || 1;
   const vh = viewportSize.height || 1;
-  const vp = worldToMini(-transform.x / transform.k, -transform.y / transform.k);
-  const vpW = (vw / transform.k) * bounds.scale;
-  const vpH = (vh / transform.k) * bounds.scale;
+  const k = transform.k || 1; // 防 k 为 0/NaN
+  const vp = worldToMini(-transform.x / k, -transform.y / k);
+  const vpW = (vw / k) * bounds.scale;
+  const vpH = (vh / k) * bounds.scale;
 
   return (
     <div

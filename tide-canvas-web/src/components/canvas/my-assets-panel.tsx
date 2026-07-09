@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { fileApi } from "@/lib/api";
 import { FileType, type FileVO } from "@/types/file";
 import { X, RefreshCw, Inbox, Video, Loader2, Trash2 } from "lucide-react";
@@ -49,12 +49,18 @@ export function MyAssetsPanel({ open, onClose, onPick, refreshKey }: Props) {
   }, [deleting]);
 
   // setState 均在 await 之后（不在同步路径置加载态，避免 effect 内同步 setState）
+  // reqId 守卫:快速切 tab 时,较慢的旧响应后到不应覆盖新 tab 的数据。
+  const reqIdRef = useRef(0);
   const load = useCallback(async () => {
+    const id = ++reqIdRef.current;
     try {
       const res = await fileApi.list({ pageNum: 1, pageSize: 60, ...(tab ? { fileType: tab as FileType } : {}) });
-      if (res.success) setFiles(res.data.records);
+      if (id !== reqIdRef.current) return; // 已有更新的请求,丢弃本次过期响应
+      if (res.success && res.data) setFiles(res.data.records);
+    } catch {
+      // 拉取失败:忽略,不抛未处理 rejection
     } finally {
-      setLoaded(true);
+      if (id === reqIdRef.current) setLoaded(true);
     }
   }, [tab]);
 

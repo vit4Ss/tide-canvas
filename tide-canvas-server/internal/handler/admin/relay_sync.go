@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -30,6 +31,14 @@ import (
 
 // ErrRelayNotConfigured is returned when no relay API key is configured.
 var ErrRelayNotConfigured = errors.New("relay not configured: missing api key")
+
+// maxRelayRespBody caps the relay /v1/models response we read into memory (8MB).
+const maxRelayRespBody = 8 << 20
+
+// syncMu serializes catalog syncs within this process: model_key 非唯一索引(且可为空,
+// 无法直接建唯一约束),两次并发「刷新」/与 importmodels 并跑会对同一 model_key 插入
+// 重复行。串行化关掉了单实例内的竞态窗口(跨实例部署仍需运维层避免并发触发)。
+var syncMu sync.Mutex
 
 // RelayModel is one entry of the relay's GET /v1/models response.
 type RelayModel struct {
@@ -83,7 +92,11 @@ func FetchRelayModels(baseURL, key string) ([]RelayModel, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	// 限制响应体大小并检查读错误(与 relaymedia 的谨慎做法一致),避免异常大响应打爆内存。
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRelayRespBody))
+	if err != nil {
+		return nil, fmt.Errorf("read relay response: %w", err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("relay HTTP %d: %s", resp.StatusCode, truncate(string(body), 200))
 	}
@@ -103,6 +116,9 @@ func FetchRelayModels(baseURL, key string) ([]RelayModel, error) {
 
 // SyncRelayModels fetches the relay catalog and upserts it into market_model.
 func SyncRelayModels(db *gorm.DB, baseURL, key string, newStatus int, authorID idgen.ID) (RelaySyncResult, error) {
+	syncMu.Lock()
+	defer syncMu.Unlock()
+
 	models, err := FetchRelayModels(baseURL, key)
 	if err != nil {
 		return RelaySyncResult{}, err

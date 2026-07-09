@@ -74,7 +74,7 @@ type HomeFloorCreateDTO struct {
 	Subtitle      string `json:"subtitle" binding:"omitempty,max=255"`
 	Type          string `json:"type" binding:"required,max=32"`
 	ContentSource string `json:"contentSource" binding:"omitempty,max=64"`
-	Count         *int   `json:"count" binding:"omitempty"`
+	Count         *int   `json:"count" binding:"omitempty,max=1000"`
 	SortOrder     *int   `json:"sortOrder" binding:"omitempty"`
 	Enabled       *bool  `json:"enabled" binding:"omitempty"`
 }
@@ -85,7 +85,7 @@ type HomeFloorUpdateDTO struct {
 	Subtitle      *string `json:"subtitle" binding:"omitempty,max=255"`
 	Type          *string `json:"type" binding:"omitempty,max=32"`
 	ContentSource *string `json:"contentSource" binding:"omitempty,max=64"`
-	Count         *int    `json:"count" binding:"omitempty"`
+	Count         *int    `json:"count" binding:"omitempty,max=1000"`
 	SortOrder     *int    `json:"sortOrder" binding:"omitempty"`
 	Enabled       *bool   `json:"enabled" binding:"omitempty"`
 }

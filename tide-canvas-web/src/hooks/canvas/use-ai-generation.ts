@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { sliceImageGrid } from "@/lib/image-slice";
 import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
@@ -96,6 +96,17 @@ export function useAiGeneration() {
   const currentProjectId = useCanvasStore((s) => s.currentProjectId);
   const [activeTaskIds, setActiveTaskIds] = useState<Set<string>>(new Set());
   const pollTimersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  // 卸载守卫:离开画布(客户端导航)时停止所有轮询链、避免在已卸载组件上 setState。
+  const cancelledRef = useRef(false);
+  useEffect(() => {
+    cancelledRef.current = false;
+    const timers = pollTimersRef.current;
+    return () => {
+      cancelledRef.current = true;
+      timers.forEach((t) => clearTimeout(t));
+      timers.clear();
+    };
+  }, []);
 
   const markGenerationFailed = useCallback((nodeId: string) => {
     const node = useCanvasStore.getState().nodes.find((n) => n.id === nodeId);
@@ -106,6 +117,7 @@ export function useAiGeneration() {
   /** 轮询任务状态直到完成 */
   const pollTask = useCallback((nodeId: string, taskId: string | number, startTime: number, input: Record<string, unknown>, maxPollMs: number, gridOutput?: boolean, onSuccess?: (resultUrl: string) => void) => {
     const poll = async () => {
+      if (cancelledRef.current) return; // 组件已卸载,停止轮询
       // 超时检查
       if (Date.now() - startTime > maxPollMs) {
         markGenerationFailed(nodeId);
@@ -120,7 +132,8 @@ export function useAiGeneration() {
 
       try {
         const res = await aiApi.getTask(String(taskId));
-        if (!res.success) {
+        if (cancelledRef.current) return; // await 期间已卸载
+        if (!res.success || !res.data) {
           markGenerationFailed(nodeId);
           setActiveTaskIds((prev) => {
             const next = new Set(prev);
@@ -221,7 +234,7 @@ export function useAiGeneration() {
     const dto: AiGenerateDTO = { handler, modelId, input, ...(currentProjectId ? { projectId: currentProjectId } : {}) };
     try {
       const res = await aiApi.generate(dto);
-      if (!res.success) {
+      if (!res.success || !res.data?.id) {
         markGenerationFailed(nodeId);
         toast.error(res.message || "生成请求失败");
         setActiveTaskIds((prev) => {

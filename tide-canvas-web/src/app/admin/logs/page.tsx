@@ -17,7 +17,7 @@
    bodies pretty-printed with a 复制 button.
    ============================================================================ */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AdminTable,
   FilterChips,
@@ -85,6 +85,8 @@ function isBlock(f: DetailField): f is { label: string; block: string; json?: bo
 
 function CopyBtn({ text }: { text: string }) {
   const [done, setDone] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
   return (
     <button
       type="button"
@@ -94,7 +96,8 @@ function CopyBtn({ text }: { text: string }) {
         try {
           void navigator.clipboard?.writeText(text);
           setDone(true);
-          setTimeout(() => setDone(false), 1200);
+          if (timerRef.current) clearTimeout(timerRef.current);
+          timerRef.current = setTimeout(() => setDone(false), 1200);
         } catch {
           /* clipboard blocked */
         }
@@ -251,7 +254,10 @@ function LogTable<T extends { id: string }>({
   const [chip, setChip] = useState<string>(chips?.[0] ?? "");
   const [detailRow, setDetailRow] = useState<T | null>(null);
 
+  // reqId 守卫:搜索/切筛选时并发请求,只有最新一次的响应生效(避免先发后到的旧结果覆盖)。
+  const reqIdRef = useRef(0);
   const run = useCallback(async () => {
+    const id = ++reqIdRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -262,6 +268,7 @@ function LogTable<T extends { id: string }>({
         keyword: query.trim() || undefined,
         ...(chipToQuery ? chipToQuery(chip) : {}),
       });
+      if (id !== reqIdRef.current) return; // 过期响应丢弃
       if (res.success && res.data) {
         setRows(res.data.records);
         setTotal(res.data.total);
@@ -271,16 +278,19 @@ function LogTable<T extends { id: string }>({
         setTotal(0);
       }
     } catch {
+      if (id !== reqIdRef.current) return;
       setError("加载日志失败");
       setRows([]);
       setTotal(0);
     } finally {
-      setLoading(false);
+      if (id === reqIdRef.current) setLoading(false);
     }
   }, [ensureSession, load, query, chip, chipToQuery]);
 
+  // 防抖:搜索框每次按键都会改变 query→run,不防抖会逐字符发起 pageSize:100 查询。
   useEffect(() => {
-    run();
+    const t = setTimeout(() => void run(), 300);
+    return () => clearTimeout(t);
   }, [run]);
 
   // append a 详情 action column when a detail builder is supplied.

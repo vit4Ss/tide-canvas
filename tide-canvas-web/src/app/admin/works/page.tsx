@@ -17,7 +17,7 @@
      - 删除 → DELETE /works/:id
    ============================================================================ */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AdminModal,
   AdminTable,
@@ -84,11 +84,15 @@ export default function AdminWorksPage() {
     }
   }, []);
 
+  // reqId 守卫:快速切筛选时,较慢的旧响应后到不应覆盖新筛选结果。
+  const reqIdRef = useRef(0);
   const load = useCallback(async () => {
+    const id = ++reqIdRef.current;
     setLoading(true);
     try {
       await ensureSession(); // 登录流程暂未做:无 token 时静默登录默认账号
       const res = await adminWorksApi.list(queryForFilter(filter));
+      if (id !== reqIdRef.current) return; // 过期响应丢弃
       if (res.success && res.data) {
         setWorks(res.data.records);
         setTotal(res.data.total);
@@ -97,7 +101,7 @@ export default function AdminWorksPage() {
         setTotal(0);
       }
     } finally {
-      setLoading(false);
+      if (id === reqIdRef.current) setLoading(false);
     }
   }, [ensureSession, filter, queryForFilter]);
 

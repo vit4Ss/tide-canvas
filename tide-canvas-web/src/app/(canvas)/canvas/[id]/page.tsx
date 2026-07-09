@@ -54,6 +54,10 @@ export default function CanvasEditorPage() {
           } catch {
             loadCanvas([], []);
           }
+        } else {
+          // 空项目必须显式清空:store 是全局单例,不清则上一个项目的节点残留在此项目里
+          // 显示,且随后自动保存会把上个项目的画布写进本项目(数据串档)。
+          loadCanvas([], []);
         }
         setLoaded(true);
       } else {
@@ -129,17 +133,25 @@ export default function CanvasEditorPage() {
     setEditingName(true);
   };
 
+  const confirmingNameRef = useRef(false);
   const handleConfirmName = async () => {
-    const newName = editingNameValue.trim();
-    if (!newName || newName === projectName) {
+    // Enter 会先 setEditingName(false) 使 input 失焦触发 onBlur → 二次调用;用 ref 去重,避免重复 update 请求。
+    if (confirmingNameRef.current) return;
+    confirmingNameRef.current = true;
+    try {
+      const newName = editingNameValue.trim();
+      if (!newName || newName === projectName) {
+        setEditingName(false);
+        return;
+      }
+      setProjectName(newName);
       setEditingName(false);
-      return;
+      if (!projectId) return;
+      const res = await projectApi.update(projectId, { name: newName });
+      if (res.success) toast.success("项目名已更新");
+    } finally {
+      confirmingNameRef.current = false;
     }
-    setProjectName(newName);
-    setEditingName(false);
-    if (!projectId) return;
-    const res = await projectApi.update(projectId, { name: newName });
-    if (res.success) toast.success("项目名已更新");
   };
 
   // token 无效 / 项目不存在 → 404

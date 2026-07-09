@@ -208,22 +208,28 @@ export function AssetsBrowser({
     [preview, router],
   );
 
+  // reqId 守卫(tasks/files 共用):切 tab 或 filter 时,旧 tab/筛选的响应后到不应覆盖当前视图。
+  const reqIdRef = useRef(0);
+
   // 生成历史: all of the user's generation tasks (filtered client-side by type).
   const loadTasks = useCallback(async () => {
+    const id = ++reqIdRef.current;
     setLoading(true);
     try {
       await ensureSession();
       const res = await aiApi.listTasks({ pageNum: 1, pageSize: 100 });
+      if (id !== reqIdRef.current) return;
       setTasks(res.success && res.data ? res.data.records : []);
     } catch {
-      setTasks([]);
+      if (id === reqIdRef.current) setTasks([]);
     } finally {
-      setLoading(false);
+      if (id === reqIdRef.current) setLoading(false);
     }
   }, [ensureSession]);
 
   // 上传历史: the user's uploaded files for the current filter.
   const loadFiles = useCallback(async () => {
+    const id = ++reqIdRef.current;
     setLoading(true);
     try {
       await ensureSession();
@@ -232,11 +238,12 @@ export function AssetsBrowser({
         pageSize: 100,
         fileType: FILTER_TO_FILETYPE[filter] as FileVO["fileType"],
       });
+      if (id !== reqIdRef.current) return;
       setFiles(res.success && res.data ? res.data.records : []);
     } catch {
-      setFiles([]);
+      if (id === reqIdRef.current) setFiles([]);
     } finally {
-      setLoading(false);
+      if (id === reqIdRef.current) setLoading(false);
     }
   }, [ensureSession, filter]);
 

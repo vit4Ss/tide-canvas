@@ -19,7 +19,7 @@
    / FormGrid components. Loading + empty states included. No @/mock imports.
    ============================================================================ */
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   AdminModal,
@@ -172,7 +172,11 @@ function AdminUsersPageInner() {
     setPageNum(1);
   }, [urlKeyword]);
 
+  // reqId 守卫:切筛选会触发「旧 pageNum」+「setPageNum(1)」两次请求,只让最新一次生效,
+  // 避免先发的旧页请求后到、把错误页码的数据渲染上去。
+  const reqIdRef = useRef(0);
   const loadUsers = useCallback(async () => {
+    const id = ++reqIdRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -185,6 +189,7 @@ function AdminUsersPageInner() {
         role,
         status,
       });
+      if (id !== reqIdRef.current) return; // 过期响应丢弃
       if (res.success && res.data) {
         setRows(res.data.records);
         setTotal(res.data.total);
@@ -194,11 +199,12 @@ function AdminUsersPageInner() {
         setTotal(0);
       }
     } catch {
+      if (id !== reqIdRef.current) return;
       setError("加载用户失败，请稍后重试");
       setRows([]);
       setTotal(0);
     } finally {
-      setLoading(false);
+      if (id === reqIdRef.current) setLoading(false);
     }
   }, [ensureSession, filter, pageNum, keyword]);
 

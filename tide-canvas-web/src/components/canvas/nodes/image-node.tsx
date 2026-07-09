@@ -220,6 +220,9 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const isMultiSelect = useCanvasStore((s) => s.selectedNodeIds.size > 1);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const gridMenuRef = useRef<HTMLDivElement>(null);
+  // 卸载守卫:异步探测/上传回调完成时若节点已卸载,不再 setState。
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
   const [uploading, setUploading] = useState(false);
   const [gridMenuOpen, setGridMenuOpen] = useState(false);
   const [splitting, setSplitting] = useState(false);
@@ -627,16 +630,20 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const handlePanoCapture = useCallback(async () => {
     const dataUrl = panoApiRef.current?.capture();
     if (!dataUrl) { toast.error("截图失败，请重试"); return; }
-    const blob = await (await fetch(dataUrl)).blob();
-    const res = await uploadFileSmart(new File([blob], "全景截图.png", { type: "image/png" }), undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
-    if (!res.success) { toast.error(res.message || "截图上传失败"); return; }
-    const st = useCanvasStore.getState();
-    const capH = Math.round(node.width / 2);
-    const nid = generateNodeId();
-    st.addNode({ id: nid, type: "image", x: node.x + node.width + 80, y: node.y, width: node.width, height: capH, contentW: node.width, contentH: capH, title: "全景截图", imageSrc: res.data.fileUrl, status: "success", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType }, true);
-    st.addConnection({ id: `conn_${node.id}_${nid}_c`, sourceId: node.id, targetId: nid }, false);
-    st.selectNode(nid);
-    toast.success("已截取当前视角");
+    try {
+      const blob = await (await fetch(dataUrl)).blob();
+      const res = await uploadFileSmart(new File([blob], "全景截图.png", { type: "image/png" }), undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
+      if (!res.success || !res.data) { toast.error(res.message || "截图上传失败"); return; }
+      const st = useCanvasStore.getState();
+      const capH = Math.round(node.width / 2);
+      const nid = generateNodeId();
+      st.addNode({ id: nid, type: "image", x: node.x + node.width + 80, y: node.y, width: node.width, height: capH, contentW: node.width, contentH: capH, title: "全景截图", imageSrc: res.data.fileUrl, status: "success", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType }, true);
+      st.addConnection({ id: `conn_${node.id}_${nid}_c`, sourceId: node.id, targetId: nid }, false);
+      st.selectNode(nid);
+      toast.success("已截取当前视角");
+    } catch {
+      toast.error("截图失败，请重试");
+    }
   }, [node.id, node.x, node.y, node.width, selectedModel]);
 
   // 全景「4 大视角截图」→ 当前/+90/+180/+270 平视各截一张 → 各上传 → 右侧竖排 4 个连线图片节点
@@ -649,13 +656,18 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     const baseX = node.x + node.width + 80;
     let ok = 0;
     for (let i = 0; i < urls.length; i++) {
-      const blob = await (await fetch(urls[i])).blob();
-      const res = await uploadFileSmart(new File([blob], `全景视角${i + 1}.png`, { type: "image/png" }), undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
-      if (!res.success) continue;
-      const nid = generateNodeId();
-      st.addNode({ id: nid, type: "image", x: baseX, y: node.y + i * (capH + 24), width: node.width, height: capH, contentW: node.width, contentH: capH, title: `全景视角 ${i + 1}`, imageSrc: res.data.fileUrl, status: "success", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType }, i === 0);
-      st.addConnection({ id: `conn_${node.id}_${nid}_${i}`, sourceId: node.id, targetId: nid }, false);
-      ok++;
+      // 单个视角 fetch/上传失败不应中断整批,也不产生未处理 rejection。
+      try {
+        const blob = await (await fetch(urls[i])).blob();
+        const res = await uploadFileSmart(new File([blob], `全景视角${i + 1}.png`, { type: "image/png" }), undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
+        if (!res.success || !res.data) continue;
+        const nid = generateNodeId();
+        st.addNode({ id: nid, type: "image", x: baseX, y: node.y + i * (capH + 24), width: node.width, height: capH, contentW: node.width, contentH: capH, title: `全景视角 ${i + 1}`, imageSrc: res.data.fileUrl, status: "success", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType }, i === 0);
+        st.addConnection({ id: `conn_${node.id}_${nid}_${i}`, sourceId: node.id, targetId: nid }, false);
+        ok++;
+      } catch {
+        /* 跳过此视角 */
+      }
     }
     if (ok > 0) toast.success(`已截取 ${ok} 个视角`); else toast.error("截图失败");
   }, [node.id, node.x, node.y, node.width, selectedModel]);
@@ -819,6 +831,8 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
           // 延迟回收 blob，等 React 用远端地址完成重渲，避免替换瞬间闪裂
           setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
         } catch {
+          // 上传失败:该切片无法持久化(刷新即失效),回收其 blob URL,避免永久泄漏。
+          URL.revokeObjectURL(blobUrl);
           toast.error(`切片 ${slice.cellIndex + 1} 上传失败，该切片刷新后将丢失`);
         }
       });
@@ -957,7 +971,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     setLocalPreview(objUrl);
     // 探测原始分辨率用于头部「W × H」展示
     const probe = document.createElement("img");
-    probe.onload = () => setImageDims({ w: probe.naturalWidth, h: probe.naturalHeight });
+    probe.onload = () => { if (mountedRef.current) setImageDims({ w: probe.naturalWidth, h: probe.naturalHeight }); };
     probe.src = objUrl;
     setUploadPct(0);
     setUploading(true);

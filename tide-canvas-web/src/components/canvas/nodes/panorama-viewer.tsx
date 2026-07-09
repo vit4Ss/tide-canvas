@@ -95,7 +95,13 @@ export function PanoramaViewer({ src, title, onClose }: Props) {
           new THREE.TextureLoader().load(blobUrl, resolve, undefined, () => reject(new Error("贴图解析失败")));
         });
         // 两份独立贴图：球面用 sRGB（走 three 色管），小行星用原样（着色器直通），二者上传格式互不影响
-        const [texture, planetTex] = await Promise.all([loadTexture(), loadTexture()]);
+        let texture: THREE_NS.Texture, planetTex: THREE_NS.Texture;
+        try {
+          [texture, planetTex] = await Promise.all([loadTexture(), loadTexture()]);
+        } catch (e) {
+          URL.revokeObjectURL(blobUrl); // 贴图解析失败也要回收 blob,避免 reject 路径泄漏
+          throw e;
+        }
         URL.revokeObjectURL(blobUrl);
         const mount = mountRef.current;
         if (disposed || !mount) { texture.dispose(); planetTex.dispose(); return; }
@@ -103,7 +109,7 @@ export function PanoramaViewer({ src, title, onClose }: Props) {
         const w = mount.clientWidth || 1;
         const h = mount.clientHeight || 1;
         const renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // 封顶 2:高 DPI 全屏避免显存/性能压力
         renderer.setSize(w, h);
         renderer.domElement.style.touchAction = "none";
         mount.appendChild(renderer.domElement);

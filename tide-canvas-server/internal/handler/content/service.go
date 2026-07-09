@@ -17,6 +17,8 @@ import (
 const (
 	homeWorksLimit  = 8
 	homeModelsLimit = 6
+	// maxFloorWorks 是单个作品流楼层解析作品数的硬上限(挡住管理员超大 Count 配置)。
+	maxFloorWorks = 50
 )
 
 type service struct {
@@ -125,11 +127,10 @@ func (s *service) siteFloors() ([]HomeFloorLiteVO, error) {
 			SortOrder: rows[i].SortOrder,
 		}
 		if rows[i].Type == floorTypeWorks {
-			works, err := s.resolveFloorWorks(rows[i].ContentSource, rows[i].Count)
-			if err != nil {
-				return nil, err
+			// 单个作品流楼层查询失败不应让整个首页楼层接口失败 —— 该楼层留空作品即可。
+			if works, err := s.resolveFloorWorks(rows[i].ContentSource, rows[i].Count); err == nil {
+				vo.Works = works
 			}
-			vo.Works = works
 		}
 		vos = append(vos, vo)
 	}
@@ -146,6 +147,9 @@ func (s *service) siteFloors() ([]HomeFloorLiteVO, error) {
 func (s *service) resolveFloorWorks(source string, count int) ([]PostLiteVO, error) {
 	if count <= 0 {
 		count = homeWorksLimit
+	}
+	if count > maxFloorWorks {
+		count = maxFloorWorks // 防止管理员配置超大 Count → 超大 LIMIT/分配
 	}
 	sources := parseFloorSources(source)
 

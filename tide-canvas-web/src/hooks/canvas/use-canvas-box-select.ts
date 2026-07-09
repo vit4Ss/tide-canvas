@@ -18,8 +18,6 @@ export function useCanvasBoxSelect({ containerRef }: Options) {
   const [box, setBox] = useState<BoxSelectState | null>(null);
   const boxRef = useRef<BoxSelectState | null>(null);
   boxRef.current = box;
-  const transformRef = useRef(useCanvasStore.getState().transform);
-  transformRef.current = useCanvasStore.getState().transform;
 
   const screenToWorld = useCallback((sx: number, sy: number) => {
     const rect = containerRef.current?.getBoundingClientRect();

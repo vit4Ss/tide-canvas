@@ -16,7 +16,7 @@
    Client component (filter state, switches, modal, CRUD).
    ============================================================================ */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AdminModal,
   AdminTable,
@@ -107,13 +107,17 @@ export default function AdminModelsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<AdminModelVO | null>(null);
 
+  // reqId 守卫:快速切类型筛选时,旧响应后到不应覆盖新筛选结果。
+  const reqIdRef = useRef(0);
   const load = useCallback(async () => {
+    const id = ++reqIdRef.current;
     setLoading(true);
     setError(null);
     try {
       await ensureSession();
       const type = TYPE_FILTERS[typeIdx]?.type;
       const res = await adminModelsApi.list({ pageNum: 1, pageSize: 100, type });
+      if (id !== reqIdRef.current) return; // 过期响应丢弃
       if (res.success && res.data) {
         setRows(res.data.records);
         setTotal(res.data.total);
@@ -121,9 +125,10 @@ export default function AdminModelsPage() {
         setError(res.message || "加载失败");
       }
     } catch {
+      if (id !== reqIdRef.current) return;
       setError("加载失败，请稍后重试");
     } finally {
-      setLoading(false);
+      if (id === reqIdRef.current) setLoading(false);
     }
   }, [ensureSession, typeIdx]);
 

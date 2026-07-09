@@ -2054,7 +2054,7 @@ export default function CreateStudio() {
             {files.map((f, i) => (
               <div
                 className="ws-ref"
-                key={i}
+                key={f.url ?? `${f.n}-${f.s ?? ""}`}
                 title="点击预览"
                 onClick={() => setPreview({ k: s.k, i })}
               >
@@ -2088,7 +2088,7 @@ export default function CreateStudio() {
             {files.map((f, i) => (
               <div
                 className="ws-file"
-                key={i}
+                key={f.url ?? `${f.n}-${f.d ?? f.s ?? ""}`}
                 title="点击预览"
                 onClick={() => setPreview({ k: s.k, i })}
               >
