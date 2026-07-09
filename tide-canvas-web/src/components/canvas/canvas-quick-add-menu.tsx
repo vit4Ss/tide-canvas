@@ -1,16 +1,15 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { AlignLeft, Image as ImageIcon, Video, Scissors, Layers, AudioLines, FileCode2 } from "lucide-react";
+import { AlignLeft, Image as ImageIcon, Video, Layers, AudioLines, Clapperboard } from "lucide-react";
 
 const NODE_TYPES = [
   { type: "text", label: "文本", icon: AlignLeft },
   { type: "image", label: "图片", icon: ImageIcon },
   { type: "video", label: "视频", icon: Video },
-  { type: "video_compose", label: "视频合成", icon: Scissors },
   { type: "scene_3d", label: "导演台", icon: Layers },
   { type: "audio", label: "音频", icon: AudioLines },
-  { type: "script", label: "脚本", icon: FileCode2 },
+  { type: "script", label: "脚本", icon: Clapperboard },
 ];
 
 interface Props {

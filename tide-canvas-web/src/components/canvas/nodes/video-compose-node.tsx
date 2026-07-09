@@ -54,8 +54,8 @@ export const VideoComposeNode = memo(function VideoComposeNode({ node, isSelecte
   return (
     <div
       data-node-id={node.id}
-      className={`absolute select-none focus-within:z-20 ${isSelected ? "z-10" : ""}`}
-      style={{ left: node.x, top: node.y, width: node.width, cursor: "move" }}
+      className={`absolute select-none ${isSelected ? "z-10" : ""}`}
+      style={{ left: node.x, top: node.y, width: node.width, cursor: isDragging ? "grabbing" : "grab" }}
       onMouseDown={handleMouseDown}
     >
       <NodeHeader icon={Scissors} title={node.title || "视频合成"} visible={showAuxUI} />

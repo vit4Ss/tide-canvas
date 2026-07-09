@@ -2,7 +2,7 @@
 
 import { memo, useCallback } from "react";
 import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
-import { FileCode2 } from "lucide-react";
+import { Clapperboard } from "lucide-react";
 import { NodeHeader } from "./base/node-header";
 import { NodePorts } from "./base/node-ports";
 
@@ -28,15 +28,15 @@ export const ScriptNode = memo(function ScriptNode({ node, isSelected, isDraggin
   return (
     <div
       data-node-id={node.id}
-      className={`absolute select-none focus-within:z-20 ${isSelected ? "z-10" : ""}`}
-      style={{ left: node.x, top: node.y, width: node.width, cursor: "move" }}
+      className={`absolute select-none ${isSelected ? "z-10" : ""}`}
+      style={{ left: node.x, top: node.y, width: node.width, cursor: isDragging ? "grabbing" : "grab" }}
       onMouseDown={handleMouseDown}
     >
-      <NodeHeader icon={FileCode2} title={node.title || "脚本节点"} visible={showAuxUI} />
+      <NodeHeader icon={Clapperboard} title={node.title || "脚本节点"} visible={showAuxUI} />
 
       <div className="relative">
         <div
-          className={`relative rounded-2xl border bg-neutral-950 p-4 font-mono transition-all dark:bg-black ${
+          className={`relative rounded-2xl border bg-white p-4 transition-all dark:bg-neutral-900 ${
             isConnectTarget ? "border-blue-500 ring-2 ring-blue-500/40" :
             isSelected ? "border-neutral-300 dark:border-neutral-700" : "border-neutral-200 dark:border-neutral-800"
           }`}
@@ -46,8 +46,8 @@ export const ScriptNode = memo(function ScriptNode({ node, isSelected, isDraggin
             value={node.prompt || ""}
             onChange={(e) => updateNode(node.id, { prompt: e.target.value })}
             onMouseDown={stop}
-            placeholder="// 在这里编写脚本..."
-            className="w-full resize-none border-0 bg-transparent text-sm leading-6 text-green-400 outline-none placeholder:text-neutral-600 focus:outline-none focus-visible:outline-none focus:ring-0"
+            placeholder="在此撰写剧本 / 分镜脚本…"
+            className="w-full resize-none border-0 bg-transparent text-sm leading-7 text-neutral-800 outline-none placeholder:text-neutral-400 focus:outline-none focus-visible:outline-none focus:ring-0 dark:text-neutral-100"
             style={{ outline: "none", boxShadow: "none", minHeight: 170, cursor: "text" }}
             rows={8}
             spellCheck={false}

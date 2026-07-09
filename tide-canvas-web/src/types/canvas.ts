@@ -2,7 +2,7 @@ import type { PageQuery } from "./api";
 import type { UserSimpleVO } from "./user";
 
 export interface ProjectVO {
-  id: string; // 后端雪花 ID 序列化为字符串
+  id: string; // 后端雪花 ID 序列化为字符串(flowingLight 全站 string ID,勿改回 number)
   /** 归属用户ID（团队共享时区分自己/队友的项目） */
   ownerId?: string;
   name: string;
@@ -23,6 +23,7 @@ export interface ProjectDetailVO extends ProjectVO {
 
 export interface CanvasDataVO {
   canvasData: string;
+  updateTime?: string;
 }
 
 export interface ShareVO {
@@ -45,6 +46,7 @@ export interface ProjectUpdateDTO {
 export interface CanvasSaveDTO {
   canvasData: string;
   thumbnail?: string;
+  expectedUpdateTime?: string;
 }
 
 export interface ProjectQuery extends PageQuery {

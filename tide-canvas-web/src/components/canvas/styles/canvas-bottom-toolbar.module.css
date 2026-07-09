@@ -1,0 +1,314 @@
+/* 中文注释：画布底部控制区拆成左下状态栏和居中工具坞，模拟参考站的轻量悬浮控制体验。 */
+.statusBar {
+  position: absolute;
+  left: 18px;
+  bottom: 18px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: rgb(38, 38, 38);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.assetButton,
+.statusIconButton,
+.zoomStepButton,
+.zoomPercentButton,
+.dockButton {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.assetButton {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px;
+  color: rgb(55, 65, 81);
+  font-weight: 500;
+  transition: color 160ms ease;
+}
+
+.assetButton:hover,
+.activeTextButton {
+  color: rgb(10, 10, 10);
+}
+
+.statusIconButton,
+.zoomStepButton {
+  display: inline-flex;
+  height: 30px;
+  width: 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: rgb(82, 82, 82);
+  transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+}
+
+.statusIconButton:hover,
+.zoomStepButton:hover:not(:disabled),
+.activeIconButton {
+  background: rgba(10, 10, 10, 0.08);
+  color: rgb(10, 10, 10);
+}
+
+.statusIcon {
+  height: 16px;
+  width: 16px;
+  stroke-width: 1.9;
+}
+
+.zoomCluster {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  gap: 2px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.88);
+  padding: 2px;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(12px);
+}
+
+.zoomPercentButton {
+  min-width: 44px;
+  height: 28px;
+  border-radius: 8px;
+  padding: 0 8px;
+  color: rgb(23, 23, 23);
+  font-size: 12px;
+  font-weight: 600;
+  transition: background-color 160ms ease;
+}
+
+.zoomPercentButton:hover {
+  background: rgb(245, 245, 245);
+}
+
+.zoomStepButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.actionDock {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 10px 34px rgba(15, 23, 42, 0.12);
+  transform: translateX(-50%);
+  backdrop-filter: blur(14px);
+}
+
+.addWrapper {
+  position: relative;
+}
+
+.dockButton {
+  display: inline-flex;
+  height: 32px;
+  width: 32px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: rgb(38, 38, 38);
+  transition: background-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.dockButton:hover:not(:disabled),
+.activeDockButton {
+  background: rgb(245, 245, 245);
+  color: rgb(10, 10, 10);
+}
+
+.dockButton:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.dockButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.primaryDockButton {
+  background: rgb(10, 10, 10);
+  color: #ffffff;
+}
+
+.primaryDockButton:hover:not(:disabled) {
+  background: rgb(38, 38, 38);
+  color: #ffffff;
+}
+
+.dockIcon {
+  height: 18px;
+  width: 18px;
+  stroke-width: 1.9;
+}
+
+.divider {
+  height: 20px;
+  width: 1px;
+  background: rgb(229, 229, 229);
+}
+
+.addMenu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 12px);
+  width: 248px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.98);
+  padding: 8px;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(16px);
+}
+
+.addMenuHeader {
+  padding: 4px 8px 8px;
+  color: rgb(115, 115, 115);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.addMenuItem {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  padding: 8px;
+  color: rgb(23, 23, 23);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 160ms ease;
+}
+
+.addMenuItem:hover {
+  background: rgb(245, 245, 245);
+}
+
+.addMenuIcon {
+  display: inline-flex;
+  height: 32px;
+  width: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: rgb(245, 245, 245);
+  color: rgb(64, 64, 64);
+}
+
+.menuIcon {
+  height: 16px;
+  width: 16px;
+  stroke-width: 1.9;
+}
+
+.addMenuText {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.addMenuLabel {
+  color: rgb(23, 23, 23);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.addMenuHint {
+  overflow: hidden;
+  color: rgb(115, 115, 115);
+  font-size: 11px;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:global(.dark) .assetButton,
+:global(.dark) .statusBar,
+:global(.dark) .dockButton {
+  color: rgb(229, 229, 229);
+}
+
+:global(.dark) .actionDock,
+:global(.dark) .zoomCluster,
+:global(.dark) .addMenu {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(23, 23, 23, 0.92);
+}
+
+:global(.dark) .statusIconButton:hover,
+:global(.dark) .zoomStepButton:hover:not(:disabled),
+:global(.dark) .activeIconButton,
+:global(.dark) .dockButton:hover:not(:disabled),
+:global(.dark) .activeDockButton,
+:global(.dark) .zoomPercentButton:hover,
+:global(.dark) .addMenuItem:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+:global(.dark) .zoomPercentButton,
+:global(.dark) .addMenuLabel {
+  color: #ffffff;
+}
+
+:global(.dark) .divider {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+:global(.dark) .addMenuHeader,
+:global(.dark) .addMenuHint {
+  color: rgb(163, 163, 163);
+}
+
+:global(.dark) .addMenuIcon {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgb(229, 229, 229);
+}
+
+@media (max-width: 768px) {
+  .statusBar {
+    left: 12px;
+    bottom: 12px;
+    gap: 4px;
+  }
+
+  .assetButton span {
+    display: none;
+  }
+
+  .actionDock {
+    right: 12px;
+    left: auto;
+    bottom: 12px;
+    transform: none;
+  }
+
+  .addMenu {
+    right: 0;
+    left: auto;
+  }
+}

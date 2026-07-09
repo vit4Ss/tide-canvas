@@ -2,15 +2,19 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Button, Center, Group, Paper, Stack, Text, TextInput, ThemeIcon, UnstyledButton } from "@mantine/core";
 import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-canvas-store";
 import {
-  Image as ImageIcon, Upload, Plus, Maximize2, Box, MapPin, Copy,
+  Image as ImageIcon, Upload, Plus, Maximize2, Copy,
   Camera, ArrowUp, ChevronDown, ChevronRight, Zap, Download, X, Minimize2,
   ArrowLeft, LayoutGrid, Layers,
   Images, Orbit, Sun, Table, Brush, FlipHorizontal2,
-  Focus, Grid2x2, Hash, RotateCcw,
+  Grid2x2, Hash, RotateCcw,
 } from "lucide-react";
 import { QualityRatioPicker, parseRatio, RATIO_OPTIONS, QUALITY_OPTIONS, CLARITY_OPTIONS, type QualityRatioValue } from "./quality-ratio-picker";
+import { BatchCountDropdown } from "./components/batch-count-dropdown";
+import { ImageStylePicker, DEFAULT_STYLE_PRESET, type ImageStylePreset } from "./image-style-picker";
+import { STYLE_REFERENCE_NODE_TYPE } from "./style-reference-node";
 import { ModelPicker } from "./model-picker";
 import { PromptRefEditor, PromptEditorModal } from "./prompt-ref-editor";
 import { PanoramaViewer } from "./panorama-viewer";
@@ -19,9 +23,12 @@ import { type RefItem } from "./prompt-ref-utils";
 import { NodeChrome } from "./base/node-chrome";
 import { useAiGeneration } from "@/hooks/canvas/use-ai-generation";
 import { aiApi, uploadFileSmart } from "@/lib/api";
-import { sliceImageGrid, flipImageHorizontal } from "@/lib/image-slice";
+import { fetchWithAuth } from "@/lib/http";
+import { referenceKindFromMeta, resolveModelReferenceLimitBytes, validateKnownFileSize } from "@/lib/upload-limits";
+import { sliceImageGrid } from "@/lib/image-slice";
 import { useAuth } from "@/hooks/use-auth";
 import { applyTeamFactor } from "@/lib/points";
+import { getImageCardSizeForRatio } from "@/lib/image-card-size";
 import { AiModelType, type AiModelVO } from "@/types/ai";
 import { toast } from "@/components/shared/toast";
 import { Loader2 } from "lucide-react";
@@ -37,7 +44,9 @@ interface Props {
 
 // 自定义宫格选择器的最大行列（N×N 网格）
 const CUSTOM_MAX = 8;
-const IMAGE_CARD_BASE_WIDTH = 608;
+function fitCardSize(aspect: number, ratio?: string | null) {
+  return getImageCardSizeForRatio(ratio, aspect);
+}
 
 /** 是否为比例选择器里存在的明确比例（排除 auto/空值），用于比例继承判断 */
 function isStandardRatio(r?: string | null): r is string {
@@ -46,8 +55,131 @@ function isStandardRatio(r?: string | null): r is string {
 
 // 提示词面板比图片卡片左右各宽出的总量（仅未生成图片时显示），居中伸出让底部控件更宽松
 const PANEL_EXTRA = 80;
+const STYLE_REFERENCE_WIDTH = 320;
+const STYLE_REFERENCE_HEIGHT = 356;
+const STYLE_REFERENCE_GAP = 92;
+
+function getStyleReferenceTitle(preset: ImageStylePreset): string {
+  return `素材-风格-${preset.shortName || preset.name || "未命名风格"}`;
+}
+
+function getStyleReferencePatch(preset: ImageStylePreset): Partial<CanvasNode> {
+  const displayName = preset.shortName || preset.name;
+  const coverUrl = preset.coverUrl || "";
+  return {
+    type: STYLE_REFERENCE_NODE_TYPE,
+    title: getStyleReferenceTitle(preset),
+    width: STYLE_REFERENCE_WIDTH,
+    height: STYLE_REFERENCE_HEIGHT,
+    contentW: STYLE_REFERENCE_WIDTH,
+    contentH: STYLE_REFERENCE_HEIGHT,
+    status: "success",
+    imageSrc: coverUrl || undefined,
+    stylePresetId: preset.id,
+    stylePresetName: displayName,
+    stylePresetPrompt: preset.prompt,
+    stylePresetModelIds: preset.modelIds,
+    stylePresetModelPrompts: preset.modelPrompts,
+    stylePresetCoverUrl: coverUrl || undefined,
+  };
+}
+
+function getStylePromptForModel(prompt: string, modelPrompts?: Record<string, string>, modelId?: string): string {
+  const modelPrompt = modelId ? modelPrompts?.[modelId]?.trim() : "";
+  return modelPrompt || prompt || "";
+}
 
 // 全景扩图提示词：让模型把当前图扩展为可环绕的 360° 全景（比例跟随源图节点）
+function EditableImageNodeTitle({ node }: { node: CanvasNode }) {
+  const updateNode = useCanvasStore((state) => state.updateNode);
+  const currentTitle = node.title?.trim() || "图片节点";
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(currentTitle);
+
+  useEffect(() => {
+    if (!editing) setDraft(currentTitle);
+  }, [currentTitle, editing]);
+
+  const startEdit = useCallback((event: React.MouseEvent) => {
+    event.stopPropagation();
+    setDraft(currentTitle);
+    setEditing(true);
+  }, [currentTitle]);
+
+  const commit = useCallback(() => {
+    const nextTitle = draft.trim() || "图片节点";
+    if (nextTitle !== node.title) {
+      updateNode(node.id, { title: nextTitle }, true);
+    }
+    setEditing(false);
+  }, [draft, node.id, node.title, updateNode]);
+
+  const cancel = useCallback(() => {
+    setDraft(currentTitle);
+    setEditing(false);
+  }, [currentTitle]);
+
+  if (editing) {
+    return (
+      <Group gap={4} wrap="nowrap" px={4} c="dimmed">
+        <ImageIcon className="h-3.5 w-3.5 shrink-0" />
+        <TextInput
+          autoFocus
+          value={draft}
+          onFocus={(event) => event.currentTarget.select()}
+          onMouseDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              commit();
+            }
+            if (event.key === "Escape") {
+              event.preventDefault();
+              cancel();
+            }
+          }}
+          size="xs"
+          variant="unstyled"
+          styles={{
+            root: { width: 176 },
+            input: {
+              minHeight: 22,
+              height: 22,
+              paddingInline: 6,
+              border: "1px solid var(--mantine-color-gray-4)",
+              borderRadius: 5,
+              background: "var(--mantine-color-white)",
+              fontSize: 12,
+              fontWeight: 500,
+              lineHeight: "20px",
+            },
+          }}
+        />
+      </Group>
+    );
+  }
+
+  return (
+    <Group gap={4} wrap="nowrap" px={4} c="dimmed">
+      <ImageIcon className="h-3.5 w-3.5 shrink-0" />
+      <UnstyledButton
+        onMouseDown={(event) => event.stopPropagation()}
+        onDoubleClick={startEdit}
+        title="双击重命名图片节点"
+        px={4}
+        py={2}
+        style={{ maxWidth: 180, borderRadius: 5 }}
+      >
+        <Text size="12px" fw={500} truncate c="dimmed">
+          {currentTitle}
+        </Text>
+      </UnstyledButton>
+    </Group>
+  );
+}
 const panoramaPrompt = (ratio: string) =>
   `将这张图扩展生成 360° 环绕全景图（equirectangular panorama，宽高比 ${ratio}）。必须让画面最左边缘与最右边缘无缝闭合，纹理、光照、颜色和透视连续，不能出现垂直拼接线、色块断层或重复硬边。向四周自然延展场景，保持主体、风格与光照一致，适合球面环绕观看。`;
 
@@ -91,7 +223,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const [uploading, setUploading] = useState(false);
   const [gridMenuOpen, setGridMenuOpen] = useState(false);
   const [splitting, setSplitting] = useState(false);
-  const [flipping, setFlipping] = useState(false);
   // 宫格切分：选定宫格数后进入预览模式（图片叠网格线 + 顶栏切换为切分操作栏），再执行切分
   const [gridPreview, setGridPreview] = useState<{ rows: number; cols: number } | null>(null);
   // 自定义宫格选择器当前 hover 的行列（r 行 c 列）
@@ -166,6 +297,9 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const imgAspect = imgAspectState && imgAspectState.src === node.imageSrc ? imgAspectState.aspect : null;
   const { generate, isGenerating } = useAiGeneration();
   const generating = isGenerating(node.id) || node.status === "generating";
+  const nodeUploading = uploading || node.uploading === true;
+  const nodeUploadPct = uploading ? uploadPct : node.uploadProgress ?? 0;
+  const uploadPreviewSrc = localPreview || node.imageSrc || null;
   const panoramaSig = useCanvasStore((s) =>
     s.connections
       .filter((c) => c.sourceId === node.id)
@@ -188,10 +322,10 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const panoramaGenerating = existingPanorama ? isGenerating(existingPanorama.id) || existingPanorama.status === "generating" : false;
 
   useEffect(() => {
-    if (node.imageSrc && node.status === "error" && !generating) {
+    if (node.imageSrc && node.status === "error" && !generating && !node.uploading) {
       updateNode(node.id, { status: "success" });
     }
-  }, [generating, node.id, node.imageSrc, node.status, updateNode]);
+  }, [generating, node.id, node.imageSrc, node.status, node.uploading, updateNode]);
 
   // ===== 引用（@ 提及）系统 =====
   // 取入边连接对应的源节点图片，编号 图片1/图片2…。用字符串签名做选择器，
@@ -224,13 +358,90 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   }, [refsSig, node.id, node.imageSrc]);
 
   // 卡片比例：生成结果优先沿用本次选择的目标画幅，避免返回图自然尺寸把 16:9 卡片改成竖图。
-  const requestedRatio = node.aspectRatio || (!node.imageSrc ? qualityRatio.ratio : "auto");
-  const ratioParsed = parseRatio(requestedRatio);
-  const cardAspect = ratioParsed ? ratioParsed.w / ratioParsed.h : (node.imageSrc && imgAspect ? imgAspect : 4 / 3);
-  const CARD_MAX = IMAGE_CARD_BASE_WIDTH;
-  const cardW = cardAspect >= 1 ? CARD_MAX : Math.round(CARD_MAX * cardAspect);
-  const cardH = cardAspect >= 1 ? Math.round(CARD_MAX / cardAspect) : CARD_MAX;
+  const explicitRatio = node.aspectRatio || (!node.imageSrc ? qualityRatio.ratio : null);
+  const ratioParsed = explicitRatio ? parseRatio(explicitRatio) : null;
+  const cardAspect = ratioParsed ? ratioParsed.w / ratioParsed.h : (node.imageSrc && imgAspect ? imgAspect : 1);
+  const { w: cardW, h: cardH } = fitCardSize(cardAspect, explicitRatio);
+  const promptPanelW = Math.max(640, cardW + PANEL_EXTRA);
   const selectedModel = imageModels.find((m) => m.modelId === selectedModelId);
+  const linkedStyleSig = useCanvasStore((s) =>
+    s.connections
+      .filter((c) => c.targetId === node.id)
+      .map((c) => {
+        const src = s.nodes.find((n) => n.id === c.sourceId);
+        return src?.type === STYLE_REFERENCE_NODE_TYPE
+          ? [src.id, src.stylePresetId || "", src.stylePresetName || "", src.stylePresetPrompt || "", src.stylePresetModelIds?.join(",") || "", JSON.stringify(src.stylePresetModelPrompts || {}), src.stylePresetCoverUrl || ""].join("~")
+          : "";
+      })
+      .filter(Boolean)
+      .join("|")
+  );
+  const linkedStyle = useMemo(() => {
+    const st = useCanvasStore.getState();
+    for (const connection of st.connections) {
+      if (connection.targetId !== node.id) continue;
+      const source = st.nodes.find((item) => item.id === connection.sourceId);
+      if (source?.type === STYLE_REFERENCE_NODE_TYPE && source.stylePresetId) {
+        return {
+          id: source.stylePresetId,
+          name: source.stylePresetName || source.title,
+          prompt: getStylePromptForModel(source.stylePresetPrompt || "", source.stylePresetModelPrompts, selectedModelId),
+        };
+      }
+    }
+    return null;
+  }, [linkedStyleSig, node.id, selectedModelId]);
+  const selectedStyleId = linkedStyle?.id ?? DEFAULT_STYLE_PRESET.id;
+  const selectedStyleName = linkedStyle?.name ?? DEFAULT_STYLE_PRESET.shortName;
+  const selectedStylePrompt = linkedStyle?.prompt ?? "";
+
+  const handleStylePresetChange = useCallback((preset: ImageStylePreset) => {
+    const st = useCanvasStore.getState();
+    const incomingStyleRefs = st.connections
+      .filter((connection) => connection.targetId === node.id)
+      .map((connection) => ({
+        connection,
+        source: st.nodes.find((item) => item.id === connection.sourceId),
+      }))
+      .filter((entry): entry is { connection: { id: string; sourceId: string; targetId: string }; source: CanvasNode } => entry.source?.type === STYLE_REFERENCE_NODE_TYPE);
+
+    st.pushHistory();
+    st.updateNode(node.id, {
+      stylePresetId: preset.id === DEFAULT_STYLE_PRESET.id ? undefined : preset.id,
+      stylePresetName: preset.id === DEFAULT_STYLE_PRESET.id ? undefined : (preset.shortName || preset.name),
+      stylePresetPrompt: preset.id === DEFAULT_STYLE_PRESET.id ? undefined : preset.prompt,
+      stylePresetModelIds: preset.id === DEFAULT_STYLE_PRESET.id ? undefined : preset.modelIds,
+      stylePresetModelPrompts: preset.id === DEFAULT_STYLE_PRESET.id ? undefined : preset.modelPrompts,
+      stylePresetCoverUrl: preset.id === DEFAULT_STYLE_PRESET.id ? undefined : preset.coverUrl,
+    }, false);
+
+    if (preset.id === DEFAULT_STYLE_PRESET.id) {
+      incomingStyleRefs.forEach((entry) => st.removeNode(entry.source.id, false));
+      return;
+    }
+
+    const [primaryRef, ...duplicateRefs] = incomingStyleRefs;
+    const patch = getStyleReferencePatch(preset);
+    if (primaryRef) {
+      st.updateNode(primaryRef.source.id, patch, false);
+      duplicateRefs.forEach((entry) => st.removeNode(entry.source.id, false));
+      return;
+    }
+
+    const styleNodeId = generateNodeId();
+    const styleNode: CanvasNode = {
+      id: styleNodeId,
+      x: node.x - STYLE_REFERENCE_WIDTH - STYLE_REFERENCE_GAP,
+      y: node.y,
+      type: STYLE_REFERENCE_NODE_TYPE,
+      title: getStyleReferenceTitle(preset),
+      width: STYLE_REFERENCE_WIDTH,
+      height: STYLE_REFERENCE_HEIGHT,
+      ...patch,
+    };
+    st.addNode(styleNode, false);
+    st.addConnection({ id: `conn_${styleNodeId}_${node.id}`, sourceId: styleNodeId, targetId: node.id }, false);
+  }, [node.id, node.x, node.y]);
   const formatConfig: { qualities?: string[]; clarities?: string[]; ratios?: string[]; batchSizes?: number[]; gridOutput?: boolean; pricing?: Record<string, Record<string, number>> } = (() => {
     if (!selectedModel?.config) return {};
     try {
@@ -281,19 +492,38 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   }, [cardW, cardH, node.contentW, node.contentH, node.id, updateNode]);
 
   const handleGenerate = useCallback(() => {
+    const st = useCanvasStore.getState();
+    const referenceNodes = [
+      ...(node.imageSrc || node.videoSrc ? [node] : []),
+      ...st.connections
+        .filter((c) => c.targetId === node.id)
+        .map((c) => st.nodes.find((n) => n.id === c.sourceId))
+        .filter((n): n is CanvasNode => !!n && !!(n.imageSrc || n.videoSrc)),
+    ];
+    for (const refNode of referenceNodes) {
+      const kind = referenceKindFromMeta({ fileType: refNode.fileType, mimeType: refNode.mimeType, type: refNode.type });
+      const message = validateKnownFileSize(refNode.fileSize, refNode.title, {
+        maxBytes: resolveModelReferenceLimitBytes(selectedModel, kind),
+        label: "参考文件",
+      });
+      if (message) { toast.error(message); return; }
+    }
     // 引用图片参与编辑：按画布连接顺序完整下发 imageList，保证 prompt 里的「图片N / {{Image N}}」
     // 对齐到第 N 张输入图；若本节点已有图，则它固定作为 Image 1。
     const refImages = refs.map((r) => r.thumb).filter(Boolean);
     const ownImage = node.imageSrc || "";
     const imageList = ownImage ? [ownImage, ...refImages] : refImages;
     const hasImage = imageList.length > 0;
+    const stylePrompt = selectedStylePrompt.trim();
+    const mergedPrompt = [node.prompt?.trim(), stylePrompt ? `风格要求：${stylePrompt}` : ""].filter(Boolean).join("\n");
     generate({
       nodeId: node.id,
       handler: hasImage ? "image_to_image" : "text_to_image",
       modelId: selectedModelId || "default",
       gridOutput: formatConfig.gridOutput,
       input: {
-        prompt: node.prompt,
+        prompt: mergedPrompt,
+        ...(stylePrompt ? { stylePreset: selectedStyleId, stylePrompt } : {}),
         ...(imageList.length ? { imageList, sourceImage: imageList[0], references: imageList.slice(1) } : {}),
         // 模型无某维度(后台全不勾)时该参数不下发，避免上游收到其不支持的字段
         ...(hasRatioDim ? { aspectRatio: qualityRatio.ratio, aspect_ratio: qualityRatio.ratio, ratio: qualityRatio.ratio } : {}),
@@ -303,7 +533,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [generate, node.id, node.prompt, node.imageSrc, qualityRatio, selectedModelId, refs, batchCount]);
+  }, [generate, node, qualityRatio, selectedModelId, selectedModel, refs, batchCount, selectedStyleId, selectedStylePrompt]);
 
   const handlePromptChange = useCallback((value: string) => {
     updateNode(node.id, {
@@ -324,10 +554,9 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     const pr = parseRatio(panoRatio);
     const panoAspect = pr ? pr.w / pr.h : 16 / 9;
     // 卡片尺寸与图片节点渲染规则一致：横图限宽、竖图限高
-    const cw = panoAspect >= 1 ? IMAGE_CARD_BASE_WIDTH : Math.round(IMAGE_CARD_BASE_WIDTH * panoAspect);
-    const ph = panoAspect >= 1 ? Math.round(IMAGE_CARD_BASE_WIDTH / panoAspect) : IMAGE_CARD_BASE_WIDTH;
+    const { w: cw, h: ph } = fitCardSize(panoAspect, panoRatio);
     // 放到右侧列下方，避免与已有节点堆叠
-    const targetX = node.x + IMAGE_CARD_BASE_WIDTH + 80;
+    const targetX = node.x + cardW + 80;
     const colNodes = st.nodes.filter((n) => {
       const nw = n.contentW ?? n.width;
       return n.x < targetX + cw && n.x + nw > targetX;
@@ -369,7 +598,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       },
       // 生成后不自动弹全屏：结果已在新的 720° 节点内嵌环视；需要全屏再点工具栏全屏/「查看全景」
     });
-  }, [generate, node.id, node.x, node.y, node.width, node.aspectRatio, node.imageSrc, qualityRatio, selectedModelId]);
+  }, [cardW, generate, node.id, node.x, node.y, node.width, node.aspectRatio, node.imageSrc, qualityRatio, selectedModelId]);
 
   const handlePanorama = useCallback(() => {
     if (!node.imageSrc) {
@@ -399,16 +628,16 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     const dataUrl = panoApiRef.current?.capture();
     if (!dataUrl) { toast.error("截图失败，请重试"); return; }
     const blob = await (await fetch(dataUrl)).blob();
-    const res = await uploadFileSmart(new File([blob], "全景截图.png", { type: "image/png" }));
+    const res = await uploadFileSmart(new File([blob], "全景截图.png", { type: "image/png" }), undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
     if (!res.success) { toast.error(res.message || "截图上传失败"); return; }
     const st = useCanvasStore.getState();
     const capH = Math.round(node.width / 2);
     const nid = generateNodeId();
-    st.addNode({ id: nid, type: "image", x: node.x + node.width + 80, y: node.y, width: node.width, height: capH, contentW: node.width, contentH: capH, title: "全景截图", imageSrc: res.data.fileUrl, status: "success" }, true);
+    st.addNode({ id: nid, type: "image", x: node.x + node.width + 80, y: node.y, width: node.width, height: capH, contentW: node.width, contentH: capH, title: "全景截图", imageSrc: res.data.fileUrl, status: "success", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType }, true);
     st.addConnection({ id: `conn_${node.id}_${nid}_c`, sourceId: node.id, targetId: nid }, false);
     st.selectNode(nid);
     toast.success("已截取当前视角");
-  }, [node.id, node.x, node.y, node.width]);
+  }, [node.id, node.x, node.y, node.width, selectedModel]);
 
   // 全景「4 大视角截图」→ 当前/+90/+180/+270 平视各截一张 → 各上传 → 右侧竖排 4 个连线图片节点
   const handlePanoCapture4 = useCallback(async () => {
@@ -421,15 +650,15 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     let ok = 0;
     for (let i = 0; i < urls.length; i++) {
       const blob = await (await fetch(urls[i])).blob();
-      const res = await uploadFileSmart(new File([blob], `全景视角${i + 1}.png`, { type: "image/png" }));
+      const res = await uploadFileSmart(new File([blob], `全景视角${i + 1}.png`, { type: "image/png" }), undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
       if (!res.success) continue;
       const nid = generateNodeId();
-      st.addNode({ id: nid, type: "image", x: baseX, y: node.y + i * (capH + 24), width: node.width, height: capH, contentW: node.width, contentH: capH, title: `全景视角 ${i + 1}`, imageSrc: res.data.fileUrl, status: "success" }, i === 0);
+      st.addNode({ id: nid, type: "image", x: baseX, y: node.y + i * (capH + 24), width: node.width, height: capH, contentW: node.width, contentH: capH, title: `全景视角 ${i + 1}`, imageSrc: res.data.fileUrl, status: "success", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType }, i === 0);
       st.addConnection({ id: `conn_${node.id}_${nid}_${i}`, sourceId: node.id, targetId: nid }, false);
       ok++;
     }
     if (ok > 0) toast.success(`已截取 ${ok} 个视角`); else toast.error("截图失败");
-  }, [node.id, node.x, node.y, node.width]);
+  }, [node.id, node.x, node.y, node.width, selectedModel]);
 
   const multiAngleRatio = useMemo(() => {
     if (node.aspectRatio && parseRatio(node.aspectRatio)) return node.aspectRatio;
@@ -490,7 +719,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       type: "image",
       x: targetX,
       y: targetY,
-      width: IMAGE_CARD_BASE_WIDTH,
+      width: cardW,
       height: cardH,
       contentW: cardW,
       contentH: cardH,
@@ -537,14 +766,13 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     angleDragRef.current = null;
   }, []);
 
-  // 宫格切分：前端 canvas 秒切立即铺节点(本地 blob 即时显示)，随后后台静默上传、无感替换为远端地址。
-  // 客户端切分若失败(解码/canvas/toBlob)，且源图是后端可抓取的远端 URL，则回退到服务端切分
-  // (POST /api/ai/grid-split，直接返回已持久化到存储的地址)——即 grid.go 声明的 durable fallback。
+  // 宫格切分：前端 canvas 秒切立即铺节点(本地 blob 即时显示)，随后后台静默上传、无感替换为远端地址
   const handleGridSplit = useCallback(async (rows: number, cols: number, cells: number[] | null = null) => {
     if (!node.imageSrc || splitting) return;
     setGridMenuOpen(false);
     setSplitting(true);
     try {
+      const slices = await sliceImageGrid(node.imageSrc, rows, cols, cells);
       const store = useCanvasStore.getState();
       // 每块宽高比 = 原图比例 × rows/cols；据此排成紧凑网格，按原格子位置摆放
       const origAR = (node.contentW ?? node.width) / ((node.contentH ?? node.height) || 1);
@@ -554,11 +782,11 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       const CELL_H = Math.max(60, Math.round(CELL_W / (cellAR || 1)));
       const gap = 24;
       const startX = node.x + (node.contentW ?? node.width) + 100;
-      // 在原格子对应位置铺一个切片节点并连回源节点，返回新节点 id。
-      const placeCell = (cellIndex: number, imageSrc: string, recordHistory: boolean) => {
-        const r = Math.floor(cellIndex / cols);
-        const c = cellIndex % cols;
+      const placed = slices.map((s, i) => {
+        const r = Math.floor(s.cellIndex / cols);
+        const c = s.cellIndex % cols;
         const nid = generateNodeId();
+        const blobUrl = URL.createObjectURL(s.blob);
         store.addNode(
           {
             id: nid,
@@ -567,51 +795,27 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
             y: node.y + r * (CELL_H + gap),
             width: CELL_W,
             height: CELL_H,
-            title: `切片 ${cellIndex + 1}`,
-            imageSrc,
+            title: `切片 ${s.cellIndex + 1}`,
+            imageSrc: blobUrl,
             status: "idle",
           },
-          recordHistory, // 仅首块记入历史，整批一次撤销
+          i === 0, // 仅首块记入历史，整批一次撤销
         );
         // 切片连回原节点，标明来源
         store.addConnection(
           { id: `conn_${nid}_${node.id}`, sourceId: node.id, targetId: nid },
           false,
         );
-        return nid;
-      };
-
-      let slices: Awaited<ReturnType<typeof sliceImageGrid>>;
-      try {
-        slices = await sliceImageGrid(node.imageSrc, rows, cols, cells);
-      } catch (clientErr) {
-        // 客户端切分失败 → 回退服务端切分。仅当源图是后端可抓取的远端 URL 时可行；
-        // 本地 blob:/data: 后端无法访问，只能把原错误抛给外层统一提示。
-        if (!/^https?:/i.test(node.imageSrc)) throw clientErr;
-        const res = await aiApi.gridSplit(node.imageSrc, rows, cols, cells ?? undefined);
-        if (!res.success || !res.data?.length) {
-          throw new Error(res.message || "server grid split failed");
-        }
-        // 返回顺序 = 请求的 cells 顺序；未指定 cells 时为行优先全切。地址已持久化，无需再上传。
-        const order = cells && cells.length ? cells : Array.from({ length: rows * cols }, (_, i) => i);
-        res.data.forEach((url, i) => placeCell(order[i], url, i === 0));
-        toast.success(`已切分为 ${res.data.length} 块（服务端）`);
-        return;
-      }
-
-      // 客户端路径：blob 立即铺 + 后台静默上传替换为远端地址(刷新/引用/保存均依赖远端 URL)
-      const placed = slices.map((s, i) => {
-        const blobUrl = URL.createObjectURL(s.blob);
-        const nid = placeCell(s.cellIndex, blobUrl, i === 0);
         return { nid, blobUrl, slice: s };
       });
       toast.success(`已切分为 ${slices.length} 块`);
+      // 后台静默上传：成功后把节点 imageSrc 从本地 blob 换成远端地址(刷新/引用/保存均依赖远端 URL)
       placed.forEach(async ({ nid, blobUrl, slice }) => {
         try {
           const up = await uploadFileSmart(
             new File([slice.blob], `grid_${slice.cellIndex + 1}.png`, { type: "image/png" }));
           if (!up.success || !up.data?.fileUrl) throw new Error(up.message || "upload failed");
-          useCanvasStore.getState().updateNode(nid, { imageSrc: up.data.fileUrl });
+          useCanvasStore.getState().updateNode(nid, { imageSrc: up.data.fileUrl, fileSize: up.data.fileSize, fileType: up.data.fileType, mimeType: up.data.mimeType });
           // 延迟回收 blob，等 React 用远端地址完成重渲，避免替换瞬间闪裂
           setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
         } catch {
@@ -651,74 +855,10 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     setSelectedCells(new Set());
   }, [gridPreview, selectedCells, handleGridSplit]);
 
-  // 需服务端抓取源图的操作(打光/高清等)对本地 blob:/data: 源图会失败(后端拿不到本地地址)。
-  // 如刚宫格切分出的切片尚未完成后台上传，其 imageSrc 仍是 blob:，此时应提示等待而非发起注定失败的任务。
-  const srcNeedsRemoteButIsLocal = (src: string | undefined) => /^(blob:|data:)/i.test(src || "");
-
-  // 打光：一键光影增强（后端 relight 预设，走 image_to_image 路由，产出回写本节点）
-  const handleRelight = useCallback(() => {
-    if (!node.imageSrc || generating || flipping) return;
-    if (srcNeedsRemoteButIsLocal(node.imageSrc)) {
-      toast.info("图片上传中，请稍候再试");
-      return;
-    }
-    toast.info("正在重新打光…");
-    generate({
-      nodeId: node.id,
-      handler: "relight",
-      modelId: selectedModelId || "default",
-      input: { imageList: [node.imageSrc], sourceImage: node.imageSrc },
-    });
-  }, [generate, node.id, node.imageSrc, selectedModelId, generating, flipping]);
-
-  // 高清：一键放大（后端 upscale 预设）；沿用当前清晰度作为目标分辨率提示
-  const handleUpscale = useCallback(() => {
-    if (!node.imageSrc || generating || flipping) return;
-    if (srcNeedsRemoteButIsLocal(node.imageSrc)) {
-      toast.info("图片上传中，请稍候再试");
-      return;
-    }
-    toast.info("正在生成高清图片…");
-    // 不再把 UI 当前清晰度(默认 2K)作为目标分辨率下发：后端 upscale 预设默认 4K 且是 set-if-empty
-    // 语义(客户端值会覆盖它)，透传 2K 会把「高清」钉在 2K、对已 2K 的图等于不放大。留空让服务端用 4K。
-    generate({
-      nodeId: node.id,
-      handler: "upscale",
-      modelId: selectedModelId || "default",
-      input: {
-        imageList: [node.imageSrc],
-        sourceImage: node.imageSrc,
-      },
-    });
-  }, [generate, node.id, node.imageSrc, selectedModelId, generating, flipping]);
-
-  // 镜像：纯前端水平翻转（canvas），结果上传后回写本节点，无需消耗积分。
-  // 与生成中的打光/高清互斥：否则镜像回写可能被随后完成的生成任务覆盖(丢失更新)，反之亦然。
-  const handleFlip = useCallback(async () => {
-    if (!node.imageSrc || flipping || generating) return;
-    setFlipping(true);
-    toast.info("正在镜像…");
-    try {
-      const blob = await flipImageHorizontal(node.imageSrc);
-      const up = await uploadFileSmart(new File([blob], "镜像.png", { type: "image/png" }));
-      if (up.success && up.data?.fileUrl) {
-        updateNode(node.id, { imageSrc: up.data.fileUrl, images: undefined });
-        toast.success("已镜像");
-      } else {
-        toast.error(up.message || "镜像失败");
-      }
-    } catch (e) {
-      toast.error((e as Error)?.message || "镜像失败");
-    } finally {
-      setFlipping(false);
-    }
-  }, [node.imageSrc, node.id, flipping, generating, updateNode]);
-
   // 下载图片：经后端代理拉取（同源、无跨域），转 blob 触发浏览器下载，全程不导航刷新
   const downloadUrl = useCallback(async (url: string, name: string) => {
-    const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
     const api = `/api/files/download?url=${encodeURIComponent(url)}&name=${encodeURIComponent(name)}`;
-    const res = await fetch(api, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    const res = await fetchWithAuth(api);
     if (!res.ok) throw new Error("download failed");
     const blob = await res.blob();
     const objUrl = URL.createObjectURL(blob);
@@ -822,9 +962,9 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     setUploadPct(0);
     setUploading(true);
     try {
-      const res = await uploadFileSmart(file, (pct) => setUploadPct(pct));
+      const res = await uploadFileSmart(file, (pct) => setUploadPct(pct), { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
       if (res.success) {
-        updateNode(node.id, { imageSrc: res.data.fileUrl, status: "idle" });
+        updateNode(node.id, { imageSrc: res.data.fileUrl, status: "idle", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType });
         toast.success("图片已上传，可输入指令进行编辑");
       } else {
         toast.error(res.message || "上传失败");
@@ -836,7 +976,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       setLocalPreview(null);
       URL.revokeObjectURL(objUrl);
     }
-  }, [node.id, updateNode]);
+  }, [node.id, selectedModel, updateNode]);
 
   // 拉取各 Handler 的积分消耗（后台可配置）
   useEffect(() => {
@@ -880,7 +1020,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     if (!showAuxUI) {
       setGridMenuOpen(false);
       setCustomHover(null);
-      setBatchOpen(false);
       setAngleOpen(false);
     }
   }, [showAuxUI]);
@@ -901,19 +1040,16 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   return (
     <div
       data-node-id={node.id}
-      className={`absolute select-none focus-within:z-20 ${isSelected ? "z-10" : ""}`}
-      style={{ left: node.x, top: node.y, width: node.width, cursor: "move" }}
+      className={`absolute select-none ${isSelected ? "z-10" : ""}`}
+      style={{ left: node.x, top: node.y, width: node.width, cursor: isDragging ? "grabbing" : "grab" }}
       onMouseDown={handleMouseDown}
     >
       {/* 卡片尺寸的定位容器（居中）；外置组件以卡片边缘为锚做恒定大小覆盖层 */}
       <div className="relative mx-auto" style={{ width: cardW }}>
         {/* 标题：恒定大小，吸附卡片左上方 */}
         {showAuxUI && !node.imageSrc && (
-          <NodeChrome zoom={zoom} placement="top-left" gap={4}>
-            <div className="flex items-center gap-1.5 whitespace-nowrap px-1 text-sm text-neutral-600 dark:text-neutral-300">
-              <ImageIcon className="h-4 w-4" />
-              <span className="font-medium">{node.title || "图片节点"}</span>
-            </div>
+          <NodeChrome zoom={zoom} placement="top-left" gap={10}>
+            <EditableImageNodeTitle node={node} />
           </NodeChrome>
         )}
         {/* 右上角分辨率（上传/生成后展示 W × H） */}
@@ -925,15 +1061,19 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         {/* 未生成：顶部「上传」按钮（恒定大小，吸附卡片正上方） */}
         {showAuxUI && !node.imageSrc && (
           <NodeChrome zoom={zoom} placement="top-center" gap={8}>
-            <button
+            <Button
               onMouseDown={stop}
               onClick={openFilePicker}
-              disabled={uploading}
-              className="flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 shadow-sm transition-colors hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
+              disabled={nodeUploading}
+              size="xs"
+              radius="md"
+              variant="default"
+              color="dark"
+              leftSection={nodeUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+              className="shadow-sm"
             >
-              {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
               上传
-            </button>
+            </Button>
           </NodeChrome>
         )}
         {/* 已生成 + 非预览：顶部操作工具栏（恒定大小独立胶囊，吸附卡片左上方）。
@@ -954,20 +1094,18 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                 <Orbit className="h-4 w-4" /> 多角度
               </button>
               {/* 打光 */}
-              <button onMouseDown={stop} onClick={(e) => { stop(e); handleRelight(); }} disabled={generating || flipping} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">
-                {isGenerating(node.id) ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sun className="h-4 w-4" />} 打光
+              <button onMouseDown={stop} onClick={(e) => { stop(e); toast.info("「打光」功能即将上线"); }} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800">
+                <Sun className="h-4 w-4" /> 打光
               </button>
               <span className="mx-1 h-5 w-px bg-neutral-200 dark:bg-neutral-700" />
-              {/* 九宫格：快捷 3×3 进入预览 */}
-              <button onMouseDown={stop} onClick={(e) => { stop(e); enterGridPreview(3, 3); }} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800">
-                <LayoutGrid className="h-4 w-4" /> 九宫格
+              {/* 九宫格 */}
+              <button onMouseDown={stop} onClick={(e) => { stop(e); toast.info("「九宫格」功能即将上线"); }} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800">
+                <LayoutGrid className="h-4 w-4" /> 九宫格 <ChevronDown className="h-3.5 w-3.5 text-neutral-400" />
               </button>
               {/* 高清 */}
-              <button onMouseDown={stop} onClick={(e) => { stop(e); handleUpscale(); }} disabled={generating || flipping} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">
-                {isGenerating(node.id)
-                  ? <Loader2 className="h-4 w-4 animate-spin" />
-                  : <span className="flex h-4 items-center rounded bg-neutral-200 px-1 text-[10px] font-bold leading-none text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300">HD</span>}
-                高清
+              <button onMouseDown={stop} onClick={(e) => { stop(e); toast.info("「高清」功能即将上线"); }} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800">
+                <span className="flex h-4 items-center rounded bg-neutral-200 px-1 text-[10px] font-medium leading-none text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300">HD</span>
+                高清 <ChevronDown className="h-3.5 w-3.5 text-neutral-400" />
               </button>
               {/* 宫格切分（下拉：预设 + 自定义网格选择器） */}
               <div className="relative" ref={gridMenuRef}>
@@ -1032,7 +1170,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
               <span className="mx-1 h-5 w-px bg-neutral-200 dark:bg-neutral-700" />
               {/* 笔（编辑 / 图生图）· 镜像 · 下载 · 放大 */}
               <button onMouseDown={stop} onClick={openFilePicker} title="重新上传 / 图生图" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800"><Brush className="h-4 w-4" /></button>
-              <button onMouseDown={stop} onClick={(e) => { stop(e); handleFlip(); }} disabled={flipping || generating} title="镜像" className="rounded-xl p-2 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">{flipping ? <Loader2 className="h-4 w-4 animate-spin" /> : <FlipHorizontal2 className="h-4 w-4" />}</button>
+              <button onMouseDown={stop} onClick={(e) => { stop(e); toast.info("「镜像」功能即将上线"); }} title="镜像" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800"><FlipHorizontal2 className="h-4 w-4" /></button>
               <button onMouseDown={stop} onClick={handleDownload} disabled={downloading} title="下载" className="rounded-xl p-2 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">{downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}</button>
               <button onMouseDown={stop} onClick={(e) => { stop(e); setPreviewOpen(true); }} title="查看大图" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800"><Maximize2 className="h-4 w-4" /></button>
             </div>
@@ -1066,7 +1204,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                 {splitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Layers className="h-4 w-4" />}
                 创建分镜组
               </button>
-              <button onMouseDown={stop} onClick={(e) => { stop(e); setGridPreview(null); setSelectedCells(new Set()); handleUpscale(); }} disabled={generating || flipping} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">
+              <button onMouseDown={stop} onClick={(e) => { stop(e); toast.info("「生成高清图片」功能即将上线"); }} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800">
                 <Zap className="h-4 w-4" />
                 生成高清图片
               </button>
@@ -1282,20 +1420,27 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         {/* 组图：右侧堆叠纸张效果（置于主卡之下） */}
         {groupImages && (
           <>
-            <div className="absolute rounded-2xl bg-white shadow-sm ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-800"
+            <div className="absolute rounded-[12px] bg-white shadow-sm ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-800"
                  style={{ left: 16, right: -16, top: 8, height: cardH - 16 }} />
-            <div className="absolute rounded-2xl bg-white shadow-sm ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-800"
+            <div className="absolute rounded-[12px] bg-white shadow-sm ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-800"
                  style={{ left: 8, right: -8, top: 4, height: cardH - 8 }} />
           </>
         )}
 
         {/* 主图片区 - 始终显示（作为容器内唯一在流元素，决定容器尺寸） */}
-        <div
-          className={`relative overflow-hidden rounded-2xl bg-white shadow-sm ring-1 transition-all dark:bg-neutral-950 ${
-            isConnectTarget ? "ring-2 ring-blue-500/70" :
-            isSelected ? "ring-2 ring-blue-400" : "ring-neutral-200 dark:ring-neutral-800"
+        <Paper
+          component="div"
+          radius={10}
+          shadow="none"
+          className={`relative overflow-hidden border bg-white transition-[border-color,box-shadow] dark:bg-neutral-950 ${
+            isConnectTarget
+              ? "border-blue-500 shadow-[0_0_0_1px_rgba(59,130,246,0.35)]"
+              : isSelected
+                ? "border-neutral-400 shadow-[0_0_0_1px_rgba(115,115,115,0.28)] dark:border-neutral-500"
+                : "border-neutral-300 dark:border-neutral-700"
           }`}
           style={{ width: cardW, height: cardH }}
+          withBorder={false}
         >
           {/* 组图徽标：在「展开为多个节点 / 收起」之间切换 */}
           {groupImages && !generating && (
@@ -1319,15 +1464,15 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
             </div>
           )}
           {/* 上传中遮罩：模糊预览 + 百分比 */}
-          {uploading && (
+          {nodeUploading && (
             <div className="absolute inset-0 z-[6] overflow-hidden">
-              {localPreview ? (
-                <img src={localPreview} alt="" className="h-full w-full scale-110 object-cover blur-xl" />
+              {uploadPreviewSrc ? (
+                <img src={uploadPreviewSrc} alt="" className="h-full w-full scale-110 object-cover blur-xl" />
               ) : (
                 <div className="h-full w-full bg-neutral-900" />
               )}
               <div className="absolute inset-0 flex items-center justify-center bg-black/55">
-                <p className="text-sm text-white/90">上传中 ({uploadPct}%) …</p>
+                <p className="text-sm text-white/90">上传中 ({nodeUploadPct}%) ...</p>
               </div>
             </div>
           )}
@@ -1338,8 +1483,8 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
             </div>
           )}
           {/* 宫格切分预览：网格线 + 可点选格子（选中则只切选中，不选则全部） */}
-          {showAuxUI && gridPreview && node.imageSrc && (
-            <div className="absolute inset-0 z-[4] overflow-hidden rounded-2xl">
+          {gridPreview && node.imageSrc && (
+            <div className="absolute inset-0 z-[4] overflow-hidden rounded-[12px]">
               <div className="pointer-events-none absolute inset-0">
                 {Array.from({ length: gridPreview.cols - 1 }, (_, i) => (
                   <div key={`v${i}`} className="absolute inset-y-0 w-px bg-white/80 shadow-[0_0_2px_rgba(0,0,0,0.45)]" style={{ left: `${((i + 1) / gridPreview.cols) * 100}%` }} />
@@ -1379,42 +1524,53 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
               />
             )
           ) : (
-            <div className="flex h-full flex-col items-center justify-center gap-5 p-5">
-              <svg className="h-10 w-10 text-neutral-300 dark:text-neutral-700" viewBox="0 0 24 24" fill="currentColor">
-                <circle cx="8" cy="8" r="2" />
-                <path d="M2 19l5.5-7L12 17l3.5-4.5L22 19z" />
-              </svg>
-              <div className="w-full px-1">
-                <p className="mb-2 text-sm text-neutral-500">尝试：</p>
-                <div className="flex flex-col items-start gap-1">
-                  <button
-                    onMouseDown={stop}
-                    onClick={openFilePicker}
-                    disabled={uploading}
-                    className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800"
-                  >
-                    <span className="flex h-6 w-6 items-center justify-center rounded-md bg-neutral-100 dark:bg-neutral-800">
-                      {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                    </span>
-                    图生图
-                  </button>
-                  <button
-                    onMouseDown={stop}
-                    onClick={(e) => { stop(e); handleUpscale(); }}
-                    disabled={isGenerating(node.id) || !node.imageSrc}
-                    className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800"
-                  >
-                    <span className="flex h-6 w-6 items-center justify-center rounded-md bg-neutral-100 text-[10px] font-semibold dark:bg-neutral-800">
-                      HD
-                    </span>
-                    图片高清
-                  </button>
-                </div>
-              </div>
-            </div>
+            <Center h="100%" p="xl" c="gray.9" className="relative dark:text-neutral-100">
+              <Center style={{ position: "absolute", insetInline: 0, top: "28%" }}>
+                <ThemeIcon variant="transparent" color="gray" size={82} radius="xl">
+                  <ImageIcon size={58} strokeWidth={1.5} />
+                </ThemeIcon>
+              </Center>
+
+              <Stack gap="sm" align="flex-start" style={{ position: "absolute", left: 28, top: "45%" }}>
+                <Text size="sm" c="dimmed">尝试：</Text>
+                <Button
+                  onMouseDown={stop}
+                  onClick={openFilePicker}
+                  disabled={nodeUploading}
+                  variant="subtle"
+                  color="dark"
+                  radius="md"
+                  size="sm"
+                  leftSection={
+                    <ThemeIcon variant="light" color="gray" size={24} radius="md">
+                      {nodeUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                    </ThemeIcon>
+                  }
+                  styles={{ root: { paddingLeft: 8, paddingRight: 10 }, label: { fontWeight: 500 } }}
+                >
+                  图生图
+                </Button>
+                <Button
+                  onMouseDown={stop}
+                  onClick={(e) => { stop(e); toast.info("图片高清功能即将上线"); }}
+                  variant="subtle"
+                  color="dark"
+                  radius="md"
+                  size="sm"
+                  leftSection={
+                    <ThemeIcon variant="light" color="gray" size={24} radius="md">
+                      <Text size="10px" fw={600} lh={1}>HD</Text>
+                    </ThemeIcon>
+                  }
+                  styles={{ root: { paddingLeft: 8, paddingRight: 10 }, label: { fontWeight: 500 } }}
+                >
+                  图片高清
+                </Button>
+              </Stack>
+            </Center>
           )}
 
-        </div>
+        </Paper>
 
         {/* 左右连接端口：恒定大小，吸附卡片左右缘中点 */}
         {showAuxUI && (
@@ -1442,27 +1598,33 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
 
         {/* 提示词输入面板：恒定大小，吸附卡片正下方居中 */}
         {showAuxUI && !node.imageSrc && (
-          <NodeChrome zoom={zoom} placement="bottom-center" gap={12}>
-            <div
-              className="relative rounded-2xl border border-neutral-200 bg-white p-3 shadow-[0_12px_30px_rgba(15,23,42,0.08)] dark:border-neutral-800 dark:bg-neutral-950"
-              style={{ width: node.width + PANEL_EXTRA, boxSizing: "border-box" }}
+          <NodeChrome zoom={zoom} placement="bottom-center" gap={18}>
+            <Paper
+              component="div"
+              radius={10}
+              p={12}
+              shadow="sm"
+              withBorder
+              className="relative flex flex-col bg-white shadow-[0_10px_32px_rgba(15,23,42,0.10)] dark:bg-neutral-950 dark:shadow-black/30"
+              style={{ width: promptPanelW, minHeight: 176, boxSizing: "border-box" }}
             >
-              {/* 富文本输入框（@ 引用「图片N」内联绑定参考图）：风格/标记/聚焦 作前置工具、展开作后置 */}
+              {/* 富文本输入框（@ 引用「图片N」内联绑定参考图）：风格作前置工具、展开作后置 */}
               <PromptRefEditor
                 refs={refs}
                 zoom={zoom}
                 value={node.prompt || ""}
                 onChange={handlePromptChange}
                 onSubmit={() => { if (!generating && node.prompt?.trim()) handleGenerate(); }}
-                placeholder="根据图片1的主体或位置参考，输入你的生成描述；输入 @ 可引用已连接图片"
+                placeholder="可直接文字生图，或上传图片输入文字指令对图片进行编辑，如：将背景改为雪夜"
                 leading={
                   <>
-                    {[{ icon: Box, label: "风格" }, { icon: MapPin, label: "标记" }, { icon: Focus, label: "聚焦" }].map(({ icon: Icon, label }) => (
-                      <button key={label} onMouseDown={stop} className="flex h-12 w-12 shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg border border-neutral-200 bg-white text-xs text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
-                        <Icon className="h-4 w-4" />
-                        <span>{label}</span>
-                      </button>
-                    ))}
+                    <ImageStylePicker
+                      value={selectedStyleId}
+                      selectedName={selectedStyleName}
+                      selectedPrompt={selectedStylePrompt}
+                      modelId={selectedModelId}
+                      onChange={handleStylePresetChange}
+                    />
                   </>
                 }
                 trailing={
@@ -1482,10 +1644,10 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                 value={node.prompt || ""}
                 onChange={handlePromptChange}
                 refs={refs}
-                placeholder="输入你的生成描述；输入 @ 可引用已连接图片"
+                placeholder="可直接文字生图，或上传图片输入文字指令对图片进行编辑，如：将背景改为雪夜"
               />
-              <div className="mt-3 flex items-center justify-between gap-2">
-                <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-neutral-600 dark:text-neutral-400">
+              <div className="mt-auto flex items-center gap-2 pt-5">
+                <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-1.5 text-xs text-neutral-600 dark:text-neutral-400">
                   <ModelPicker models={imageModels} value={selectedModelId} onChange={setSelectedModelId} />
                   <QualityRatioPicker
                     value={qualityRatio}
@@ -1499,34 +1661,19 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                     ratios={formatConfig.ratios}
                     compact
                   />
-                  <button onMouseDown={stop} className="flex items-center gap-1 rounded-md px-2 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-800">
-                    <Camera className="h-3.5 w-3.5" />
-                    摄像机
-                  </button>
                 </div>
-                <div className="flex shrink-0 items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
-                  <div className="relative">
-                    <button onMouseDown={stop} onClick={(e) => { stop(e); setBatchOpen((v) => !v); }} className="flex items-center gap-1 rounded-md px-2 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-800">
-                      {batchCount}张
-                      <ChevronDown className="h-3 w-3" />
-                    </button>
-                    {batchOpen && (
-                      <div onMouseDown={stop} className="absolute bottom-full left-0 z-30 mb-1 w-20 rounded-lg border border-neutral-200 bg-white py-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-900">
-                        {batchOptions.map((n) => (
-                          <button
-                            key={n}
-                            onMouseDown={stop}
-                            onClick={(e) => { stop(e); setBatchCount(n); setBatchOpen(false); }}
-                            className={`block w-full px-3 py-1.5 text-left hover:bg-neutral-100 dark:hover:bg-neutral-800 ${batchCount === n ? "font-medium text-blue-600 dark:text-blue-400" : ""}`}
-                          >
-                            {n}张
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
+                  <BatchCountDropdown
+                    value={batchCount}
+                    options={batchOptions}
+                    open={batchOpen}
+                    onOpenChange={setBatchOpen}
+                    onChange={setBatchCount}
+                    variant="ghost"
+                    align="right"
+                  />
                   <span className="flex items-center gap-0.5 text-xs text-neutral-500">
-                    <Zap className="h-3 w-3 text-amber-500" fill="currentColor" />
+                    <Zap className="h-3 w-3 text-neutral-900 dark:text-neutral-100" fill="currentColor" />
                     {applyTeamFactor(pointCost * batchCount, user)}
                     {user?.inTeam && <span className="text-[10px] font-medium text-amber-500">团队价</span>}
                   </span>
@@ -1535,17 +1682,17 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                     onClick={(e) => { stop(e); handleGenerate(); }}
                     disabled={generating || !node.prompt?.trim()}
                     title={generating ? "生成中..." : "开始生成"}
-                    className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
+                    className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
                       generating || !node.prompt?.trim()
                         ? "bg-neutral-100 text-neutral-400 dark:bg-neutral-800"
-                        : "bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+                        : "bg-neutral-800 text-white hover:bg-neutral-950 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
                     }`}
                   >
                     {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}
                   </button>
                 </div>
               </div>
-            </div>
+            </Paper>
           </NodeChrome>
         )}
       </div>

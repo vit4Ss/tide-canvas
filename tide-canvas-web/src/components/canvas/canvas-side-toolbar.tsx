@@ -3,18 +3,17 @@
 import { useEffect, useRef, useState, type ComponentType } from "react";
 import {
   Plus, Workflow, PenTool, Clock, HelpCircle, Headphones,
-  AlignLeft, Image as ImageIcon, Video, Scissors, Layers, AudioLines, FileCode2,
+  AlignLeft, Image as ImageIcon, Video, Layers, AudioLines, Clapperboard,
 } from "lucide-react";
-import { CanvasHelpModal, type HelpTab } from "./canvas-help-modal";
+import { toast } from "@/components/shared/toast";
 
 const NODE_TYPES: { type: string; label: string; icon: ComponentType<{ className?: string }> }[] = [
   { type: "image", label: "图片", icon: ImageIcon },
   { type: "video", label: "视频", icon: Video },
   { type: "text", label: "文本", icon: AlignLeft },
   { type: "audio", label: "音频", icon: AudioLines },
-  { type: "video_compose", label: "视频合成", icon: Scissors },
   { type: "scene_3d", label: "导演台", icon: Layers },
-  { type: "script", label: "脚本", icon: FileCode2 },
+  { type: "script", label: "脚本", icon: Clapperboard },
 ];
 
 interface Props {
@@ -35,7 +34,6 @@ interface Props {
 /** 画布左侧悬浮垂直工具栏 */
 export function CanvasSideToolbar({ onAddNode, onArrange, onOpenAssets, assetsActive, onOpenHistory, historyActive }: Props) {
   const [addOpen, setAddOpen] = useState(false);
-  const [helpTab, setHelpTab] = useState<HelpTab | null>(null);
   const addRef = useRef<HTMLDivElement>(null);
 
   // 点外部 / Esc 关闭「添加」菜单
@@ -96,14 +94,8 @@ export function CanvasSideToolbar({ onAddNode, onArrange, onOpenAssets, assetsAc
 
       <div className="my-0.5 h-px w-6 bg-neutral-200 dark:bg-neutral-700" />
 
-      <ToolButton icon={HelpCircle} label="帮助" onClick={() => setHelpTab("help")} />
-      <ToolButton icon={Headphones} label="客服" onClick={() => setHelpTab("support")} />
-
-      <CanvasHelpModal
-        open={helpTab !== null}
-        initialTab={helpTab ?? "help"}
-        onClose={() => setHelpTab(null)}
-      />
+      <ToolButton icon={HelpCircle} label="帮助" onClick={() => toast.info("「帮助」即将上线")} />
+      <ToolButton icon={Headphones} label="客服" onClick={() => toast.info("「客服」即将上线")} />
     </div>
   );
 }

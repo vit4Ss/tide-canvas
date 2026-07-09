@@ -3,13 +3,15 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-canvas-store";
-import { Video, Upload, MapPin, Camera, Loader2, Languages, Play, Pause, Download, Maximize2, X, Shield, Zap, ArrowUp, Layers, Sparkles, Copy } from "lucide-react";
+import { Video, Upload, Camera, Loader2, Play, Pause, Download, Maximize2, X, Zap, ArrowUp, Layers, Sparkles, Copy } from "lucide-react";
 import { toast } from "@/components/shared/toast";
 import { parseRatio } from "./quality-ratio-picker";
 import { VideoParamPicker, type VideoParamValue } from "./video-param-picker";
 import { ModelPicker } from "./model-picker";
 import { useAiGeneration } from "@/hooks/canvas/use-ai-generation";
 import { aiApi, uploadFileSmart } from "@/lib/api";
+import { fetchWithAuth } from "@/lib/http";
+import { referenceKindFromMeta, resolveModelReferenceLimitBytes, validateKnownFileSize } from "@/lib/upload-limits";
 import { useAuth } from "@/hooks/use-auth";
 import { applyTeamFactor } from "@/lib/points";
 import { AiModelType, type AiModelVO } from "@/types/ai";
@@ -96,6 +98,29 @@ function grabFrame(src: string, time: number): Promise<Blob | null> {
   });
 }
 
+const VIDEO_CARD_MAX_WIDTH = 608;
+const VIDEO_CARD_MAX_HEIGHT = 420;
+
+function fixedRatioWidth(aspect: number): number | null {
+  if (Math.abs(aspect - 9 / 16) < 0.001) return 345;
+  if (Math.abs(aspect - 1 / 2) < 0.001) return 350;
+  if (Math.abs(aspect - 2) < 0.001) return 694;
+  return null;
+}
+
+function fitVideoCardSize(aspect: number, maxW = VIDEO_CARD_MAX_WIDTH, maxH = VIDEO_CARD_MAX_HEIGHT) {
+  const safeAspect = Number.isFinite(aspect) && aspect > 0 ? aspect : 16 / 9;
+  const fixedW = fixedRatioWidth(safeAspect);
+  if (fixedW != null) {
+    return { w: fixedW, h: Math.round(fixedW / safeAspect) };
+  }
+  const heightAtMaxWidth = maxW / safeAspect;
+  if (heightAtMaxWidth <= maxH) {
+    return { w: maxW, h: Math.round(heightAtMaxWidth) };
+  }
+  return { w: Math.round(maxH * safeAspect), h: maxH };
+}
+
 const VIDEO_CACHE = "tc-video-v1";
 
 /** 只查本地缓存（不发起下载）；命中返回本地 blob URL，否则 null */
@@ -141,6 +166,8 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   const [selectedModelId, setSelectedModelId] = useState("");
   const [videoTab, setVideoTab] = useState("文生视频");
   const [hoveredTab, setHoveredTab] = useState<string | null>(null);
+  const [hoveredTabX, setHoveredTabX] = useState<number | null>(null);
+  const tabRowRef = useRef<HTMLDivElement>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -163,12 +190,15 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   const resolvingRef = useRef(false);
   const { generate, isGenerating } = useAiGeneration();
   const generating = isGenerating(node.id) || node.status === "generating";
+  const nodeUploading = uploading || node.uploading === true;
+  const nodeUploadPct = uploading ? uploadPct : node.uploadProgress ?? 0;
+  const uploadPreviewSrc = localPreview || node.videoSrc || null;
 
   useEffect(() => {
-    if (node.videoSrc && node.status === "error" && !generating) {
+    if (node.videoSrc && node.status === "error" && !generating && !node.uploading) {
       updateNode(node.id, { status: "success" });
     }
-  }, [generating, node.id, node.status, node.videoSrc, updateNode]);
+  }, [generating, node.id, node.status, node.videoSrc, node.uploading, updateNode]);
   const isMultiSelect = useCanvasStore((s) => s.selectedNodeIds.size > 1);
   const showAuxUI = isSelected && !isDragging && !isMultiSelect;
 
@@ -253,14 +283,15 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   // 视频卡片按所选比例渲染，缩放时维持比例
   const ratioParsed = parseRatio(videoParam.ratio);
   const cardAspect = ratioParsed ? ratioParsed.w / ratioParsed.h : 16 / 9;
-  const cardHeight = Math.round(node.width / cardAspect);
+  const { w: cardW, h: cardHeight } = fitVideoCardSize(cardAspect);
+  const promptPanelW = Math.max(640, cardW + 32);
 
   // 卡片实际渲染尺寸同步 store（连线锚点、整理布局与图片节点一致对齐）
   useEffect(() => {
-    if (node.contentW !== node.width || node.contentH !== cardHeight) {
-      updateNode(node.id, { contentW: node.width, contentH: cardHeight });
+    if (node.contentW !== cardW || node.contentH !== cardHeight) {
+      updateNode(node.id, { contentW: cardW, contentH: cardHeight });
     }
-  }, [node.width, cardHeight, node.contentW, node.contentH, node.id, updateNode]);
+  }, [cardW, cardHeight, node.contentW, node.contentH, node.id, updateNode]);
 
   // 换源时重置缓存解析；若本地已缓存则直接用 blob（刷新/重挂也免下载）
   useEffect(() => {
@@ -364,9 +395,8 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     if (!node.videoSrc || downloading) return;
     setDownloading(true);
     try {
-      const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
       const api = `/api/files/download?url=${encodeURIComponent(node.videoSrc)}&name=${encodeURIComponent(node.title || "video")}`;
-      const res = await fetch(api, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      const res = await fetchWithAuth(api);
       if (!res.ok) throw new Error("download failed");
       const blob = await res.blob();
       const objUrl = URL.createObjectURL(blob);
@@ -404,9 +434,9 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     setUploadPct(0);
     setUploading(true);
     try {
-      const res = await uploadFileSmart(file, (pct) => setUploadPct(pct));
+      const res = await uploadFileSmart(file, (pct) => setUploadPct(pct), { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "video"), label: "参考视频" });
       if (res.success) {
-        updateNode(node.id, { videoSrc: res.data.fileUrl, status: "success" });
+        updateNode(node.id, { videoSrc: res.data.fileUrl, status: "success", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType });
         toast.success("视频已上传");
       } else {
         toast.error(res.message || "上传失败");
@@ -418,7 +448,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       setLocalPreview(null);
       URL.revokeObjectURL(objUrl);
     }
-  }, [node.id, updateNode]);
+  }, [node.id, selectedModel, updateNode]);
 
   // 首次需要播放时：查/建本地缓存→用 blob；跨域不可用则回退原生 src。解析完成由 effect 触发播放。
   const ensureResolved = useCallback(async () => {
@@ -466,7 +496,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       if (!blob) { toast.error("截图失败：请为媒体源开启 GET 跨域(CORS)"); return; }
       const label = kind === "first" ? "视频首帧" : kind === "last" ? "视频尾帧" : "视频截图";
       const file = new File([blob], `frame_${time.toFixed(1)}s.png`, { type: "image/png" });
-      const res = await uploadFileSmart(file);
+      const res = await uploadFileSmart(file, undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
       if (!res.success) { toast.error(res.message || "截图上传失败"); return; }
       const st = useCanvasStore.getState();
       const nid = generateNodeId();
@@ -495,6 +525,9 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         title: label,
         imageSrc: res.data.fileUrl,
         status: "success",
+        fileSize: res.data.fileSize,
+        fileType: res.data.fileType,
+        mimeType: res.data.mimeType,
       }, true);
       // 不连线：截图图片为独立节点
       st.selectNode(nid);
@@ -502,13 +535,41 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     } finally {
       setCapturing(false);
     }
-  }, [capturing, duration, node.x, node.y, node.width, node.contentW, node.videoSrc]);
+  }, [capturing, duration, node.x, node.y, node.width, node.contentW, node.videoSrc, selectedModel]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     onNodeMouseDown(node.id, e);
   }, [node.id, onNodeMouseDown]);
 
   const stop = (e: React.MouseEvent) => e.stopPropagation();
+
+  const copyPrompt = useCallback(async () => {
+    const text = node.prompt?.trim();
+    if (!text) {
+      toast.error("没有可复制的提示词");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success("已复制提示词");
+    } catch {
+      toast.error("复制失败");
+    }
+  }, [node.prompt]);
+
+  const handleTabMouseEnter = useCallback((tab: string, e: React.MouseEvent<HTMLButtonElement>) => {
+    setHoveredTab(tab);
+    const row = tabRowRef.current?.getBoundingClientRect();
+    const button = e.currentTarget.getBoundingClientRect();
+    if (row) {
+      setHoveredTabX(button.left - row.left + button.width / 2);
+    }
+  }, []);
+
+  const handleTabMouseLeave = useCallback(() => {
+    setHoveredTab(null);
+    setHoveredTabX(null);
+  }, []);
 
   const handlePromptChange = (value: string) => {
     updateNode(node.id, {
@@ -523,7 +584,14 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     const sources = incoming
       .map((c) => st.nodes.find((n) => n.id === c.sourceId))
       .filter((n): n is CanvasNode => !!n);
-    const limit = TAB_LIMITS[videoTab];
+    for (const refNode of sources.filter((n) => n.imageSrc || n.videoSrc)) {
+      const kind = referenceKindFromMeta({ fileType: refNode.fileType, mimeType: refNode.mimeType, type: refNode.type });
+      const message = validateKnownFileSize(refNode.fileSize, refNode.title, {
+        maxBytes: resolveModelReferenceLimitBytes(selectedModel, kind),
+        label: "参考文件",
+      });
+      if (message) { toast.error(message); return; }
+    }    const limit = TAB_LIMITS[videoTab];
     // 分别收集「真正有素材」的图片 / 视频参考 URL
     const imageUrls = sources.filter((n) => n.type === "image" && n.imageSrc).map((n) => n.imageSrc as string);
     const videoUrls = sources.filter((n) => n.type === "video" && n.videoSrc).map((n) => n.videoSrc as string);
@@ -598,17 +666,17 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   return (
     <div
       data-node-id={node.id}
-      className={`absolute select-none focus-within:z-20 ${isSelected ? "z-10" : ""}`}
-      style={{ left: node.x, top: node.y, width: node.width, cursor: "move" }}
+      className={`absolute select-none ${isSelected ? "z-10" : ""}`}
+      style={{ left: node.x, top: node.y, width: node.width, cursor: isDragging ? "grabbing" : "grab" }}
       onMouseDown={handleMouseDown}
     >
-      <div className="relative">
+      <div className="relative mx-auto" style={{ width: cardW }}>
         <div
           className={`relative overflow-hidden rounded-2xl bg-white shadow-sm ring-1 transition-all dark:bg-neutral-950 ${
             isConnectTarget ? "ring-2 ring-blue-500/70" :
-            isSelected ? "ring-2 ring-blue-400" : "ring-neutral-200 hover:ring-neutral-300 dark:ring-neutral-800 dark:hover:ring-neutral-700"
+            isSelected ? "ring-2 ring-neutral-400 dark:ring-neutral-600" : "ring-neutral-200 hover:ring-neutral-300 dark:ring-neutral-800 dark:hover:ring-neutral-700"
           }`}
-          style={{ height: cardHeight }}
+          style={{ width: cardW, height: cardHeight }}
         >
           {generating && (
             <div className="absolute inset-0 z-[5] flex items-center justify-center bg-white/70 backdrop-blur-sm dark:bg-neutral-900/70">
@@ -618,15 +686,15 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
               </div>
             </div>
           )}
-          {uploading && (
+          {nodeUploading && (
             <div className="absolute inset-0 z-[6] overflow-hidden">
-              {localPreview ? (
-                <video src={localPreview} muted className="h-full w-full scale-110 object-cover blur-xl" />
+              {uploadPreviewSrc ? (
+                <video src={uploadPreviewSrc} muted className="h-full w-full scale-110 object-cover blur-xl" />
               ) : (
                 <div className="h-full w-full bg-neutral-900" />
               )}
               <div className="absolute inset-0 flex items-center justify-center bg-black/55">
-                <p className="text-sm text-white/90">上传中 ({uploadPct}%) …</p>
+                <p className="text-sm text-white/90">上传中 ({nodeUploadPct}%) ...</p>
               </div>
             </div>
           )}
@@ -736,7 +804,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         )}
         {showAuxUI && !node.videoSrc && (
           <NodeChrome zoom={zoom} placement="top-center" gap={8}>
-            <button onMouseDown={stop} onClick={openFilePicker} disabled={uploading}
+            <button onMouseDown={stop} onClick={openFilePicker} disabled={nodeUploading}
               className="flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 shadow-sm transition-colors hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
               <Upload className="h-3.5 w-3.5" /> 上传
             </button>
@@ -756,12 +824,12 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         <input ref={fileInputRef} type="file" accept="video/*" className="hidden" onChange={handleFileUpload} />
 
         {showAuxUI && (
-          <NodeChrome zoom={zoom} placement="bottom-center" gap={12} damp={0.6}>
-            <div onMouseDown={stop} className="flex flex-col rounded-2xl border border-neutral-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-950" style={{ width: 640, height: 250, boxSizing: "border-box" }}>
+          <NodeChrome zoom={zoom} placement="bottom-center" gap={18} damp={0.6}>
+            <div onMouseDown={stop} className="flex flex-col rounded-xl border border-neutral-200 bg-white p-3 shadow-xl shadow-neutral-900/10 dark:border-neutral-800 dark:bg-neutral-950 dark:shadow-black/30" style={{ width: promptPanelW, height: 250, boxSizing: "border-box" }}>
               {/* 模式 Tab */}
-              <div className="relative flex items-center justify-between gap-1">
+              <div ref={tabRowRef} className="relative flex items-center justify-between gap-1">
                 {hoveredTab && TAB_LIMITS[hoveredTab] && (
-                  <div className="absolute bottom-full left-0 z-30 mb-2 whitespace-nowrap rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs text-neutral-600 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
+                  <div className="pointer-events-none absolute bottom-full z-30 mb-2 -translate-x-1/2 whitespace-nowrap rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs text-neutral-600 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300" style={{ left: hoveredTabX ?? 0 }}>
                     {TAB_LIMITS[hoveredTab].hint}
                   </div>
                 )}
@@ -772,14 +840,14 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                       <button
                         key={t}
                         onMouseDown={stop}
-                        onMouseEnter={() => setHoveredTab(t)}
-                        onMouseLeave={() => setHoveredTab(null)}
+                        onMouseEnter={(e) => handleTabMouseEnter(t, e)}
+                        onMouseLeave={handleTabMouseLeave}
                         onClick={(e) => { stop(e); if (enabled) setVideoTab(t); }}
                         aria-disabled={!enabled}
                         className={`whitespace-nowrap rounded-lg px-2 py-1 transition-colors ${
                           !enabled ? "cursor-not-allowed text-neutral-300 dark:text-neutral-700"
-                            : videoTab === t ? "bg-neutral-100 font-medium text-neutral-900 dark:bg-neutral-800 dark:text-white"
-                            : "text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                            : videoTab === t ? "cursor-pointer bg-neutral-100 font-medium text-neutral-900 dark:bg-neutral-800 dark:text-white"
+                            : "cursor-pointer text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
                         }`}
                       >
                         {t}
@@ -787,12 +855,24 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                     );
                   })}
                 </div>
-                <button onMouseDown={stop} onClick={(e) => { stop(e); const t = node.prompt?.trim(); if (t) navigator.clipboard?.writeText(t)?.then(() => toast.success("已复制提示词"), () => toast.error("复制失败")); }} title="复制提示词" className="shrink-0 rounded-md p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800">
-                  <Copy className="h-3.5 w-3.5" />
-                </button>
-                <button onMouseDown={stop} onClick={(e) => { stop(e); setPromptExpanded(true); }} title="展开编辑" className="shrink-0 rounded-md p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800">
-                  <Maximize2 className="h-3.5 w-3.5" />
-                </button>
+                <div className="ml-auto flex shrink-0 items-center gap-0.5">
+                  <button
+                    onMouseDown={stop}
+                    onClick={(e) => { stop(e); void copyPrompt(); }}
+                    title="复制提示词"
+                    className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onMouseDown={stop}
+                    onClick={(e) => { stop(e); setPromptExpanded(true); }}
+                    title="展开编辑"
+                    className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800"
+                  >
+                    <Maximize2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
               </div>
               {/* 工具：标记 / 运镜 / 角色库 ＋ 富文本输入（@ 引用「图片N」内联绑定参考图，与图片节点统一） */}
               <PromptRefEditor
@@ -803,12 +883,6 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                 onChange={handlePromptChange}
                 onSubmit={() => { if (node.prompt?.trim() && !generating) handleGenerate(); }}
                 placeholder="描述你想要生成的画面内容，@ 引用已连接图片（图片1/图片2…）"
-                leading={[{ icon: MapPin, label: "标记" }, { icon: Camera, label: "运镜" }, { icon: Shield, label: "角色库" }].map(({ icon: Icon, label }) => (
-                  <button key={label} onMouseDown={stop} className="flex shrink-0 flex-col items-center gap-0.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
-                    <Icon className="h-3.5 w-3.5" />
-                    <span>{label}</span>
-                  </button>
-                ))}
               />
               <PromptEditorModal
                 open={promptExpanded}
@@ -820,7 +894,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
               />
               {/* 底部栏 */}
               <div className="mt-2 flex items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-1 text-xs text-neutral-600 dark:text-neutral-400">
+                <div className="flex flex-nowrap items-center gap-1 text-xs text-neutral-600 dark:text-neutral-400">
                   <ModelPicker models={videoModels} value={selectedModelId} onChange={setSelectedModelId} />
                   <VideoParamPicker
                     value={videoParam}
@@ -832,11 +906,8 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                   />
                 </div>
                 <div className="flex shrink-0 items-center gap-1 text-xs text-neutral-500">
-                  <button onMouseDown={stop} title="翻译" className="rounded-md p-1 hover:bg-neutral-100 dark:hover:bg-neutral-800">
-                    <Languages className="h-3.5 w-3.5" />
-                  </button>
                   <span className="flex items-center gap-0.5 px-0.5">
-                    <Zap className="h-3 w-3 text-amber-500" fill="currentColor" />
+                    <Zap className="h-3 w-3 text-neutral-900 dark:text-neutral-100" fill="currentColor" />
                     {applyTeamFactor(pointCost, user)}
                     {user?.inTeam && <span className="text-[10px] font-medium text-amber-500">团队价</span>}
                   </span>

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import type * as THREE_NS from "three";
+import { fetchWithAuth } from "@/lib/http";
 
 export interface InlinePanoramaApi {
   reset: () => void;
@@ -39,10 +40,7 @@ export function InlinePanorama({ src, gridOn = false, apiRef, interactive = true
     (async () => {
       try {
         const THREE = await import("three");
-        const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
-        const resp = await fetch(`/api/files/download?url=${encodeURIComponent(src)}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
+        const resp = await fetchWithAuth(`/api/files/download?url=${encodeURIComponent(src)}`);
         if (!resp.ok) throw new Error("全景加载失败");
         const buf = await resp.arrayBuffer();
         if (disposed) return;

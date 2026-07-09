@@ -5,7 +5,6 @@ import { fileApi } from "@/lib/api";
 import { FileType, type FileVO } from "@/types/file";
 import { X, RefreshCw, Inbox, Video, Loader2, Trash2 } from "lucide-react";
 import { toast } from "@/components/shared/toast";
-import { confirmDialog } from "@/components/shared/confirm";
 
 interface Props {
   open: boolean;
@@ -32,14 +31,7 @@ export function MyAssetsPanel({ open, onClose, onPick, refreshKey }: Props) {
   // 删除素材：确认后调后端删除，成功即从列表移除
   const handleDelete = useCallback(async (f: FileVO) => {
     if (deleting) return;
-    if (
-      !(await confirmDialog({
-        title: "删除素材",
-        message: `确定删除素材「${f.originalName}」？该操作不可恢复。`,
-        confirmText: "删除",
-      }))
-    )
-      return;
+    if (!window.confirm(`确定删除素材「${f.originalName}」？该操作不可恢复。`)) return;
     setDeleting(f.id);
     try {
       const res = await fileApi.delete(f.id);

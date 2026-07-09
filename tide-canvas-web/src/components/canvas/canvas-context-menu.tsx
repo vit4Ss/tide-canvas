@@ -2,9 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  AlignLeft, ImageIcon, Video, Scissors, Layers, AudioLines, FileCode2,
+  AlignLeft, ImageIcon, Video, Layers, AudioLines, Clapperboard,
   Upload as UploadIcon, History,
-  ChevronRight, ChevronLeft, Trash2, Copy, Group,
+  ChevronLeft, Trash2, Copy, Group,
 } from "lucide-react";
 
 export interface ContextMenuState {
@@ -19,22 +19,22 @@ export interface ContextMenuState {
 interface NodeTypeItem {
   type: string;
   label: string;
+  desc: string;
   icon: typeof AlignLeft;
 }
 
 const NODE_TYPES: NodeTypeItem[] = [
-  { type: "text", label: "文本", icon: AlignLeft },
-  { type: "image", label: "图片", icon: ImageIcon },
-  { type: "video", label: "视频", icon: Video },
-  { type: "video_compose", label: "视频合成", icon: Scissors },
-  { type: "scene_3d", label: "导演台", icon: Layers },
-  { type: "audio", label: "音频", icon: AudioLines },
-  { type: "script", label: "脚本", icon: FileCode2 },
+  { type: "text", label: "文本", desc: "输入文字 / 提示词", icon: AlignLeft },
+  { type: "image", label: "图片", desc: "AI 生成或上传图片", icon: ImageIcon },
+  { type: "video", label: "视频", desc: "AI 生成或上传视频", icon: Video },
+  { type: "scene_3d", label: "导演台", desc: "3D 场景编排与运镜", icon: Layers },
+  { type: "audio", label: "音频", desc: "AI 生成或上传音频", icon: AudioLines },
+  { type: "script", label: "脚本", desc: "撰写 / 生成分镜脚本", icon: Clapperboard },
 ];
 
 const RESOURCE_TYPES = [
-  { type: "upload", label: "上传", icon: UploadIcon },
-  { type: "history", label: "从生成历史选择", icon: History },
+  { type: "upload", label: "上传", desc: "从本地上传文件", icon: UploadIcon },
+  { type: "history", label: "从生成历史选择", desc: "复用历史生成结果", icon: History },
 ];
 
 interface Props {
@@ -97,13 +97,13 @@ export function CanvasContextMenu({
     onClose();
   };
 
-  const itemClass = "flex w-full items-center justify-between px-5 py-2.5 text-sm transition-colors hover:bg-neutral-50 dark:hover:bg-neutral-800";
-  const disabledClass = "flex w-full items-center justify-between px-5 py-2.5 text-sm text-neutral-300 dark:text-neutral-600 cursor-not-allowed";
+  const itemClass = "mx-2 flex w-[calc(100%-1rem)] items-center justify-between rounded-xl px-3.5 py-3 text-sm transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-800";
+  const disabledClass = "mx-2 flex w-[calc(100%-1rem)] items-center justify-between rounded-xl px-3.5 py-3 text-sm text-neutral-300 dark:text-neutral-600 cursor-not-allowed";
 
   return (
     <div
       ref={menuRef}
-      className="fixed z-50 w-60 rounded-2xl border border-neutral-200 bg-white py-2 shadow-2xl dark:border-neutral-800 dark:bg-neutral-900"
+      className="fixed z-50 w-64 rounded-2xl border border-neutral-200 bg-white py-2.5 shadow-2xl dark:border-neutral-800 dark:bg-neutral-900"
       style={{ left: menu.x, top: menu.y }}
     >
       {menu.type === "canvas" ? (
@@ -121,12 +121,15 @@ export function CanvasContextMenu({
               <button
                 key={item.type}
                 onClick={() => handleAddNode(item.type)}
-                className="flex w-full items-center gap-3 px-3 py-1.5 text-sm transition-colors hover:bg-neutral-50 dark:hover:bg-neutral-800"
+                className="group mx-2 flex w-[calc(100%-1rem)] items-center gap-3 rounded-xl px-2.5 py-2 text-sm transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-800"
               >
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-600 transition-colors group-hover:bg-neutral-900 group-hover:text-white dark:bg-neutral-800 dark:text-neutral-300 dark:group-hover:bg-white dark:group-hover:text-neutral-900">
                   <item.icon className="h-4 w-4" />
                 </span>
-                <span className="flex-1 text-left font-medium">{item.label}</span>
+                <span className="min-w-0 flex-1 text-left">
+                  <span className="block font-medium">{item.label}</span>
+                  <span className="block max-h-0 truncate text-xs leading-4 text-neutral-400 opacity-0 transition-all duration-200 group-hover:max-h-4 group-hover:opacity-100">{item.desc}</span>
+                </span>
               </button>
             ))}
 
@@ -135,12 +138,15 @@ export function CanvasContextMenu({
               <button
                 key={item.type}
                 onClick={() => { onClose(); if (item.type === "upload") onUpload?.(); }}
-                className="flex w-full items-center gap-3 px-3 py-1.5 text-sm transition-colors hover:bg-neutral-50 dark:hover:bg-neutral-800"
+                className="group mx-2 flex w-[calc(100%-1rem)] items-center gap-3 rounded-xl px-2.5 py-2 text-sm transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-800"
               >
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-600 transition-colors group-hover:bg-neutral-900 group-hover:text-white dark:bg-neutral-800 dark:text-neutral-300 dark:group-hover:bg-white dark:group-hover:text-neutral-900">
                   <item.icon className="h-4 w-4" />
                 </span>
-                <span className="flex-1 text-left font-medium">{item.label}</span>
+                <span className="min-w-0 flex-1 text-left">
+                  <span className="block font-medium">{item.label}</span>
+                  <span className="block max-h-0 truncate text-xs leading-4 text-neutral-400 opacity-0 transition-all duration-200 group-hover:max-h-4 group-hover:opacity-100">{item.desc}</span>
+                </span>
               </button>
             ))}
           </>
@@ -154,10 +160,9 @@ export function CanvasContextMenu({
             </button>
             <button onClick={() => setView("nodes")} className={`${itemClass} font-medium`}>
               <span>添加节点</span>
-              <ChevronRight className="h-3.5 w-3.5 text-neutral-400" />
             </button>
 
-            <div className="my-1.5 mx-3 border-t border-neutral-100 dark:border-neutral-800" />
+            <div className="my-2 mx-3 border-t border-neutral-100 dark:border-neutral-800" />
 
             <button
               disabled={!canUndo}
@@ -199,7 +204,7 @@ export function CanvasContextMenu({
                 </span>
                 <kbd className="text-xs text-neutral-400">⌘G</kbd>
               </button>
-              <div className="my-1.5 mx-3 border-t border-neutral-100 dark:border-neutral-800" />
+              <div className="my-2 mx-3 border-t border-neutral-100 dark:border-neutral-800" />
             </>
           )}
           <button
@@ -218,10 +223,10 @@ export function CanvasContextMenu({
           >
             <span>保存到我的素材</span>
           </button>
-          <div className="my-1.5 mx-3 border-t border-neutral-100 dark:border-neutral-800" />
+          <div className="my-2 mx-3 border-t border-neutral-100 dark:border-neutral-800" />
           <button
             onClick={() => { if (menu.nodeId) onDeleteNode(menu.nodeId); onClose(); }}
-            className="flex w-full items-center justify-between px-5 py-2.5 text-sm text-red-600 transition-colors hover:bg-red-50 dark:hover:bg-red-950/30"
+            className="mx-2 flex w-[calc(100%-1rem)] items-center justify-between rounded-xl px-3.5 py-3 text-sm text-red-600 transition-colors hover:bg-red-50 dark:hover:bg-red-950/30"
           >
             <span className="flex items-center gap-2">
               <Trash2 className="h-4 w-4" />

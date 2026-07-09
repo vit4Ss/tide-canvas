@@ -116,7 +116,7 @@ function CanvasGroupFrame({ group, active, left, top, width, height }: FrameProp
       }}
     >
       <div
-        className="group/gp pointer-events-auto absolute inset-x-0 top-0 flex h-[34px] cursor-move items-center gap-1.5 rounded-t-2xl px-2.5"
+        className="group/gp pointer-events-auto absolute inset-x-0 top-0 flex h-[34px] cursor-grab active:cursor-grabbing items-center gap-1.5 rounded-t-2xl px-2.5"
         style={{ backgroundColor: `${group.color}26` }}
         onMouseDown={startDrag}
         onDoubleClick={(e) => { stop(e); startEdit(); }}
@@ -162,9 +162,7 @@ function CanvasGroupFrame({ group, active, left, top, width, height }: FrameProp
           {paletteOpen && (
             <div
               onMouseDown={stop}
-              /* z-30 > 选中节点的 z-10：点组头会全选成员节点，z 相同时按 DOM 顺序
-                 后渲染的节点会盖住调色板 */
-              className="absolute right-0 top-full z-30 mt-1 flex gap-1 rounded-lg border border-neutral-200 bg-white p-1.5 shadow-lg dark:border-neutral-700 dark:bg-neutral-900"
+              className="absolute right-0 top-full z-10 mt-1 flex gap-1 rounded-lg border border-neutral-200 bg-white p-1.5 shadow-lg dark:border-neutral-700 dark:bg-neutral-900"
             >
               {GROUP_COLORS.map((c) => (
                 <button

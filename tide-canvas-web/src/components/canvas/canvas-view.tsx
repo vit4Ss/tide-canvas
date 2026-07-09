@@ -18,7 +18,6 @@ import { CanvasGroupsLayer } from "./canvas-groups-layer";
 import { CanvasSelectionBox } from "./canvas-selection-box";
 import { CanvasContextMenu, type ContextMenuState } from "./canvas-context-menu";
 import { CanvasBottomToolbar } from "./canvas-bottom-toolbar";
-import { CanvasSideToolbar } from "./canvas-side-toolbar";
 import { MyAssetsPanel } from "./my-assets-panel";
 import { CanvasHistoryPanel } from "./canvas-history-panel";
 import { FileType, type FileVO } from "@/types/file";
@@ -26,10 +25,14 @@ import { fileApi, uploadFileSmart } from "@/lib/api";
 import { toast } from "@/components/shared/toast";
 import { CanvasMinimap } from "./canvas-minimap";
 import { CanvasQuickAddMenu } from "./canvas-quick-add-menu";
+import { CanvasAssistantPanel } from "./canvas-assistant-panel";
+// 画布内部分节点(image-node / quality-ratio-dropdown)使用 @mantine/core,需 Provider + 其 CSS。
+// 就近包在画布视图内,避免改动画布入口路由。
+import { MantineProvider } from "@mantine/core";
+import "@mantine/core/styles.css";
 
 export function CanvasView() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const nodes = useCanvasStore((s) => s.nodes);
   const connections = useCanvasStore((s) => s.connections);
   const groups = useCanvasStore((s) => s.groups);
@@ -63,15 +66,7 @@ export function CanvasView() {
   const connection = useCanvasConnection({ containerRef });
   const boxSelect = useCanvasBoxSelect({ containerRef });
 
-  useCanvasKeyboard({
-    onEscape: () => setContextMenu(null),
-    // ⌘C copies the single selected node; ⌘V pastes it at an offset.
-    onCopy: () => {
-      const ids = Array.from(useCanvasStore.getState().selectedNodeIds);
-      if (ids.length === 1) clipboard.copyNode(ids[0]);
-    },
-    onPaste: () => clipboard.pasteNode(),
-  });
+  useCanvasKeyboard({ onEscape: () => setContextMenu(null) });
 
   // 跟踪容器尺寸（供小地图绘制可视区域 + 适应视图计算）
   useEffect(() => {
@@ -118,6 +113,9 @@ export function CanvasView() {
       node.imageSrc = file.fileUrl;
     }
     node.status = "success";
+    node.fileSize = file.fileSize;
+    node.fileType = file.fileType;
+    node.mimeType = file.mimeType;
     addNode(node);
     selectNode(node.id);
   }, [panZoom, nodes, addNode, selectNode]);
@@ -252,47 +250,11 @@ export function CanvasView() {
     }
   }, []);
 
-  // 上传一批图片/视频并在给定世界坐标处逐个落节点（拖入与「上传」菜单共用）。
-  const placeFilesAt = useCallback(async (files: File[], world: { x: number; y: number }) => {
-    if (files.length === 0) return;
-    // 超过 100MB(与网关 proxyClientMaxBodySize 一致)的文件先行拦截,避免白传后服务端才失败。
-    const MAX_FILE_SIZE = 100 * 1024 * 1024;
-    const oversized = files.filter((f) => f.size > MAX_FILE_SIZE);
-    files = files.filter((f) => f.size <= MAX_FILE_SIZE);
-    if (oversized.length > 0) {
-      toast.error(`${oversized.length} 个文件超过 100MB，已跳过`);
-    }
-    if (files.length === 0) return;
-    toast.info(files.length > 1 ? `正在上传 ${files.length} 个文件…` : "正在上传…");
-    let ok = 0;
-    await Promise.all(
-      files.map(async (file, i) => {
-        const isVideo = file.type.startsWith("video/");
-        try {
-          const res = await uploadFileSmart(file);
-          if (res.success && res.data?.fileUrl) {
-            const node = createNode(isVideo ? "video" : "image", world.x + i * 48, world.y + i * 48, useCanvasStore.getState().nodes);
-            if (isVideo) node.videoSrc = res.data.fileUrl;
-            else node.imageSrc = res.data.fileUrl;
-            node.status = "success";
-            if (file.name) node.title = file.name;
-            addNode(node);
-            ok++;
-          } else {
-            toast.error(`上传失败：${res.message || file.name}`);
-          }
-        } catch (err) {
-          toast.error(`上传失败：${(err as Error)?.message || file.name}`);
-        }
-      })
-    );
-    if (ok > 0) toast.success(ok > 1 ? `已添加 ${ok} 个节点` : "已添加到画布");
-  }, [addNode]);
-
   const handleFileDrop = useCallback(async (e: React.DragEvent) => {
     if (!e.dataTransfer.types.includes("Files")) return;
     e.preventDefault();
     setIsDraggingFile(false);
+
     const files = Array.from(e.dataTransfer.files).filter(
       (f) => f.type.startsWith("image/") || f.type.startsWith("video/")
     );
@@ -300,49 +262,65 @@ export function CanvasView() {
       if (e.dataTransfer.files.length > 0) toast.error("仅支持拖入图片或视频");
       return;
     }
+
     const world = panZoom.screenToWorld(e.clientX, e.clientY);
-    await placeFilesAt(files, world);
-  }, [panZoom, placeFilesAt]);
+    toast.info(files.length > 1 ? `正在上传 ${files.length} 个文件...` : "正在上传...");
+    let ok = 0;
 
-  // 右键菜单「上传」：记录落点后打开文件选择框（选择是异步的，位置先存 ref）。
-  const uploadWorldRef = useRef<{ x: number; y: number } | null>(null);
-  const handleUpload = useCallback(() => {
-    // 右键菜单调用 onUpload 前会先 onClose()，但 contextMenu 闭包在本次同步事件中仍是旧值；
-    // 取不到时回退到视口中心。
-    if (contextMenu) {
-      uploadWorldRef.current = { x: contextMenu.worldX, y: contextMenu.worldY };
-    } else {
-      const rect = containerRef.current?.getBoundingClientRect();
-      const sx = rect ? rect.left + rect.width / 2 : 0;
-      const sy = rect ? rect.top + rect.height / 2 : 0;
-      uploadWorldRef.current = panZoom.screenToWorld(sx, sy);
-    }
-    fileInputRef.current?.click();
-  }, [contextMenu, panZoom]);
+    await Promise.all(
+      files.map(async (file, i) => {
+        const isVideo = file.type.startsWith("video/");
+        const previewUrl = URL.createObjectURL(file);
+        const st = useCanvasStore.getState();
+        const node = createNode(isVideo ? "video" : "image", world.x + i * 48, world.y + i * 48, st.nodes);
+        if (isVideo) node.videoSrc = previewUrl;
+        else node.imageSrc = previewUrl;
+        node.status = "idle";
+        node.uploading = true;
+        node.uploadProgress = 0;
+        node.fileSize = file.size;
+        node.fileType = isVideo ? "video" : "image";
+        node.mimeType = file.type;
+        if (file.name) node.title = file.name;
+        addNode(node);
+        selectNode(node.id);
 
-  const handleUploadInputChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const picked = Array.from(e.target.files ?? []).filter(
-      (f) => f.type.startsWith("image/") || f.type.startsWith("video/")
+        try {
+          const res = await uploadFileSmart(file, (pct) => {
+            useCanvasStore.getState().updateNode(node.id, { uploadProgress: pct });
+          });
+          if (res.success && res.data?.fileUrl) {
+            const patch = isVideo
+              ? { videoSrc: res.data.fileUrl, status: "success" as const, uploading: false, uploadProgress: 100, fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType }
+              : { imageSrc: res.data.fileUrl, status: "success" as const, uploading: false, uploadProgress: 100, fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType };
+            useCanvasStore.getState().updateNode(node.id, patch);
+            ok++;
+          } else {
+            const patch = isVideo
+              ? { videoSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 }
+              : { imageSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 };
+            useCanvasStore.getState().updateNode(node.id, patch);
+            toast.error(`上传失败：${res.message || file.name}`);
+          }
+        } catch (err) {
+          const patch = isVideo
+            ? { videoSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 }
+            : { imageSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 };
+          useCanvasStore.getState().updateNode(node.id, patch);
+          toast.error(`上传失败：${(err as Error)?.message || file.name}`);
+        } finally {
+          URL.revokeObjectURL(previewUrl);
+        }
+      })
     );
-    e.target.value = ""; // 允许再次选择同一文件
-    if (picked.length === 0) {
-      toast.error("仅支持图片或视频");
-      return;
-    }
-    // 正常路径 uploadWorldRef 已在打开选择框前写入；兜底用视口中心（非屏幕原点）。
-    let world = uploadWorldRef.current;
-    if (!world) {
-      const rect = containerRef.current?.getBoundingClientRect();
-      const sx = rect ? rect.left + rect.width / 2 : 0;
-      const sy = rect ? rect.top + rect.height / 2 : 0;
-      world = panZoom.screenToWorld(sx, sy);
-    }
-    await placeFilesAt(picked, world);
-  }, [panZoom, placeFilesAt]);
+
+    if (ok > 0) toast.success(ok > 1 ? `已添加 ${ok} 个节点` : "已添加到画布");
+  }, [panZoom, addNode, selectNode]);
 
   return (
     // translate="no" + notranslate：告知浏览器/翻译类扩展（如「沉浸式翻译」）整块画布勿翻译，
     // 抑制其在节点（尤其视频）上注入的悬浮翻译工具条。彻底关闭仍需在扩展侧将本站设为「永不翻译」。
+    <MantineProvider>
     <div translate="no" className="notranslate relative h-full w-full overflow-hidden bg-neutral-50 dark:bg-neutral-900">
       <div
         ref={containerRef}
@@ -453,35 +431,21 @@ export function CanvasView() {
         onPaste={clipboard.pasteNode}
         onUndo={undo}
         onRedo={redo}
-        onUpload={handleUpload}
+        onUpload={() => alert("上传功能待接入")}
         onSaveAsset={handleSaveAsset}
-      />
-
-      {/* 隐藏文件选择框：右键菜单「上传」触发，支持多选图片/视频 */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*,video/*"
-        multiple
-        hidden
-        onChange={handleUploadInputChange}
-      />
-
-      <CanvasSideToolbar
-        onAddNode={addNodeAtViewportCenter}
-        onArrange={handleArrange}
-        onOpenAssets={() => { setMyAssetsOpen((v) => !v); setHistoryOpen(false); }}
-        assetsActive={myAssetsOpen}
-        onOpenHistory={() => { setHistoryOpen((v) => !v); setMyAssetsOpen(false); }}
-        historyActive={historyOpen}
       />
       <MyAssetsPanel open={myAssetsOpen} onClose={() => setMyAssetsOpen(false)} onPick={addAssetToCanvas} refreshKey={assetsRefreshKey} />
       <CanvasHistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />
+
+      <CanvasAssistantPanel />
 
       <CanvasBottomToolbar
         zoom={panZoom.transform.k}
         gridSnap={gridSnap}
         minimapVisible={minimapVisible}
+        assetsActive={myAssetsOpen}
+        historyActive={historyOpen}
+        onAddNode={addNodeAtViewportCenter}
         onZoomIn={panZoom.zoomIn}
         onZoomOut={panZoom.zoomOut}
         onZoomReset={panZoom.zoomReset}
@@ -489,7 +453,10 @@ export function CanvasView() {
         onToggleGridSnap={() => setGridSnap(!gridSnap)}
         onToggleMinimap={() => setMinimapVisible(!minimapVisible)}
         onArrange={handleArrange}
+        onOpenAssets={() => { setMyAssetsOpen((v) => !v); setHistoryOpen(false); }}
+        onOpenHistory={() => { setHistoryOpen((v) => !v); setMyAssetsOpen(false); }}
       />
     </div>
+    </MantineProvider>
   );
 }

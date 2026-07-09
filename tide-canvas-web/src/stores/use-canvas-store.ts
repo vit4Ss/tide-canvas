@@ -9,13 +9,28 @@ export interface CanvasNode {
   height: number;
   title: string;
   prompt?: string;
+  /** 图片节点生成时选中的风格预设，默认风格不写入。 */
+  stylePresetId?: string;
+  /** 图片节点选中的风格短名称，用于按钮回显。 */
+  stylePresetName?: string;
+  /** 图片节点选中的风格提示词快照，用于生成时提交，避免依赖前端硬编码。 */
+  stylePresetPrompt?: string;
+  stylePresetModelIds?: string[];
+  stylePresetModelPrompts?: Record<string, string>;
+  /** 图片节点选中的风格封面，用于后续回显或历史恢复。 */
+  stylePresetCoverUrl?: string;
   imageSrc?: string;
   /** 组图：一次生成的全部图片(如 Midjourney 一组 4 张)；imageSrc 始终等于其中的「主图」 */
   images?: string[];
   videoSrc?: string;
+  fileSize?: number;
+  fileType?: string;
+  mimeType?: string;
   /** 语音合成结果（audio 节点） */
   audioSrc?: string;
   status?: "idle" | "generating" | "success" | "error";
+  uploading?: boolean;
+  uploadProgress?: number;
   /** 生成时选择的目标画幅；有值时图片节点按该画幅展示，避免结果卡片被自然尺寸改成其它比例 */
   aspectRatio?: string;
   /** 卡片实际渲染尺寸（按图片比例计算）；供连线层把端点锚定到卡片真实边缘中点，实现默认居中对齐 */
@@ -115,6 +130,25 @@ const MAX_HISTORY = 50;
 /** 分组默认配色（按现有分组数轮转，相邻分组颜色不同） */
 export const GROUP_COLORS = ["#3b82f6", "#22c55e", "#f59e0b", "#ec4899", "#8b5cf6", "#06b6d4", "#ef4444"];
 
+function normalizePromptText(value: string): string {
+  if (!value.includes("\\u")) return value;
+  let decoded = value;
+  for (let i = 0; i < 4; i += 1) {
+    const next = decoded.replace(/\\+u([0-9a-fA-F]{4})/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+    if (next === decoded) break;
+    decoded = next;
+  }
+  return decoded;
+}
+
+function normalizeNode(node: CanvasNode): CanvasNode {
+  return typeof node.prompt === "string" ? { ...node, prompt: normalizePromptText(node.prompt) } : node;
+}
+
+function normalizeNodePatch(data: Partial<CanvasNode>): Partial<CanvasNode> {
+  return typeof data.prompt === "string" ? { ...data, prompt: normalizePromptText(data.prompt) } : data;
+}
+
 export function generateNodeId(): string {
   return `node_${Date.now()}_${++nodeCounter}`;
 }
@@ -196,7 +230,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   addNode: (node, recordHistory = true) => set((state) => {
     const undo = recordHistory ? [...state.undoStack.slice(-MAX_HISTORY + 1), snapshot(state)] : state.undoStack;
     return {
-      nodes: [...state.nodes, node],
+      nodes: [...state.nodes, normalizeNode(node)],
       undoStack: undo,
       redoStack: recordHistory ? [] : state.redoStack,
     };
@@ -206,7 +240,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // 拖拽更新太频繁，默认不记录历史
     const undo = recordHistory ? [...state.undoStack.slice(-MAX_HISTORY + 1), snapshot(state)] : state.undoStack;
     return {
-      nodes: state.nodes.map((n) => (n.id === id ? { ...n, ...data } : n)),
+      nodes: state.nodes.map((n) => (n.id === id ? normalizeNode({ ...n, ...normalizeNodePatch(data) }) : n)),
       undoStack: undo,
       redoStack: recordHistory ? [] : state.redoStack,
     };
@@ -348,12 +382,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   setTransform: (transform) => set({ transform }),
 
   loadCanvas: (nodes, connections, groups = []) => set({
-    // 统一图片/视频节点为标准大小 608×342（清掉旧 contentW/contentH，由渲染按图片比例重算）
-    nodes: nodes.map((n) =>
-      n.type === "image" || n.type === "video"
-        ? { ...n, width: 608, height: 342, contentW: undefined, contentH: undefined }
-        : n
-    ),
+    nodes: nodes.map((n) => normalizeNode(n)),
     connections,
     groups: (groups || []).filter((g) => g && Array.isArray(g.nodeIds) && g.nodeIds.length > 0),
     selectedNodeIds: new Set(),

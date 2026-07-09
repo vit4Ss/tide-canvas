@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { sliceImageGrid } from "@/lib/image-slice";
 import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
 import type { AiTaskVO, AiGenerateDTO } from "@/types/ai";
 import { AiTaskStatus } from "@/types/ai";
 import { toast } from "@/components/shared/toast";
+import { getImageCardSizeForRatio } from "@/lib/image-card-size";
 
 interface GenerateParams {
   nodeId: string;
@@ -23,7 +24,6 @@ const POLL_INTERVAL = 2000; // 2 秒轮询
 const MAX_POLL_TIME = 5 * 60 * 1000; // 图片等快任务：最多 5 分钟
 // 视频较慢（后端轮询可达 10min+），前端上限须 ≥ 后端，否则前端会先放弃、把已成功的任务误标失败、且不回填结果
 const MAX_POLL_TIME_VIDEO = 30 * 60 * 1000;
-const IMAGE_CARD_BASE_WIDTH = 608;
 
 function parseAspectRatio(value: unknown): number | null {
   if (typeof value !== "string" || value === "auto") return null;
@@ -34,12 +34,12 @@ function parseAspectRatio(value: unknown): number | null {
 function imageSizeForAspect(node: CanvasNode, aspectRatio: unknown) {
   const aspect = parseAspectRatio(aspectRatio);
   if (!aspect) return {};
-  const width = IMAGE_CARD_BASE_WIDTH;
-  const height = Math.round(width / aspect);
+
+  const size = getImageCardSizeForRatio(String(aspectRatio), aspect);
   return {
-    height,
-    contentW: width,
-    contentH: height,
+    height: size.h,
+    contentW: size.w,
+    contentH: size.h,
     aspectRatio: String(aspectRatio),
   };
 }
@@ -71,13 +71,15 @@ async function sliceGridAndApply(nodeId: string, gridUrl: string) {
     useCanvasStore.getState().updateNode(nodeId, { images: blobUrls, imageSrc: blobUrls[0] });
 
     const remote: string[] = [];
+    let firstFile: { fileSize: number; fileType: string; mimeType: string } | null = null;
     for (const s of slices) {
       const up = await uploadFileSmart(
           new File([s.blob], `grid-${s.cellIndex + 1}.png`, { type: "image/png" }));
       if (!up.success || !up.data?.fileUrl) throw new Error("upload failed");
       remote.push(up.data.fileUrl);
+      if (!firstFile) firstFile = { fileSize: up.data.fileSize, fileType: up.data.fileType, mimeType: up.data.mimeType };
     }
-    useCanvasStore.getState().updateNode(nodeId, { images: remote, imageSrc: remote[0] });
+    useCanvasStore.getState().updateNode(nodeId, { images: remote, imageSrc: remote[0], ...(firstFile ? { fileSize: firstFile.fileSize, fileType: firstFile.fileType, mimeType: firstFile.mimeType } : {}) });
     const toRevoke = blobUrls;
     blobUrls = [];
     setTimeout(() => toRevoke.forEach((u) => URL.revokeObjectURL(u)), 5000);
@@ -94,21 +96,6 @@ export function useAiGeneration() {
   const currentProjectId = useCanvasStore((s) => s.currentProjectId);
   const [activeTaskIds, setActiveTaskIds] = useState<Set<string>>(new Set());
   const pollTimersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
-  // Latch flipped on unmount. Clearing timers alone doesn't stop a poll that is
-  // mid-`await getTask` when the view unmounts — it would re-arm a fresh timer
-  // afterward and run forever, calling updateNode/toast on the next page. poll()
-  // checks this before scheduling and after awaiting.
-  const aliveRef = useRef(true);
-
-  useEffect(() => {
-    aliveRef.current = true;
-    const timers = pollTimersRef.current;
-    return () => {
-      aliveRef.current = false;
-      timers.forEach((t) => clearTimeout(t));
-      timers.clear();
-    };
-  }, []);
 
   const markGenerationFailed = useCallback((nodeId: string) => {
     const node = useCanvasStore.getState().nodes.find((n) => n.id === nodeId);
@@ -119,7 +106,6 @@ export function useAiGeneration() {
   /** 轮询任务状态直到完成 */
   const pollTask = useCallback((nodeId: string, taskId: string | number, startTime: number, input: Record<string, unknown>, maxPollMs: number, gridOutput?: boolean, onSuccess?: (resultUrl: string) => void) => {
     const poll = async () => {
-      if (!aliveRef.current) return; // unmounted — stop the loop
       // 超时检查
       if (Date.now() - startTime > maxPollMs) {
         markGenerationFailed(nodeId);
@@ -133,8 +119,7 @@ export function useAiGeneration() {
       }
 
       try {
-        const res = await aiApi.getTask(String(taskId)); // 雪花 ID 字符串透传（number 会丢精度）
-        if (!aliveRef.current) return; // unmounted while awaiting — drop the result
+        const res = await aiApi.getTask(String(taskId));
         if (!res.success) {
           markGenerationFailed(nodeId);
           setActiveTaskIds((prev) => {
@@ -225,9 +210,7 @@ export function useAiGeneration() {
       toast.info("生成中，请稍候");
       return;
     }
-    // 预设编辑类 handler(去背/放大/打光/扩图等)由后端注入固定指令，客户端无需提示词。
-    const PROMPTLESS_HANDLERS = ["relight", "upscale", "remove_bg", "remove_object", "outpaint"];
-    if (!PROMPTLESS_HANDLERS.includes(handler) && (!input.prompt || String(input.prompt).trim().length === 0)) {
+    if (!input.prompt || String(input.prompt).trim().length === 0) {
       toast.error("请先输入提示词");
       return;
     }

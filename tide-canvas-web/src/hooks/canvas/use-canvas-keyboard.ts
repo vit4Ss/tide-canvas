@@ -5,21 +5,19 @@ import { useCanvasStore } from "@/stores/use-canvas-store";
 
 interface Options {
   onEscape?: () => void;
-  onCopy?: () => void;
-  onPaste?: () => void;
 }
 
-export function useCanvasKeyboard({ onEscape, onCopy, onPaste }: Options = {}) {
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
+    return true;
+  }
+  return !!target.closest('[contenteditable="true"], [role="textbox"]');
+}
+
+export function useCanvasKeyboard({ onEscape }: Options = {}) {
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    // Also treat contentEditable as typing: the node prompt editor is a
-    // contentEditable <div>, and without this guard Delete would remove the very
-    // node being edited, Ctrl+A/Z/G would hijack text select/undo/group, etc.
-    const t = e.target as HTMLElement | null;
-    const isTyping =
-      t instanceof HTMLInputElement ||
-      t instanceof HTMLTextAreaElement ||
-      (t?.isContentEditable ?? false);
-    if (isTyping) return;
+    if (isEditableTarget(e.target)) return;
 
     const store = useCanvasStore.getState();
     const ctrl = e.ctrlKey || e.metaKey;
@@ -40,18 +38,6 @@ export function useCanvasKeyboard({ onEscape, onCopy, onPaste }: Options = {}) {
     if (ctrl && e.key.toLowerCase() === "a") {
       e.preventDefault();
       store.selectAll();
-      return;
-    }
-    // Ctrl+C 复制选中节点到剪贴板
-    if (ctrl && e.key.toLowerCase() === "c" && onCopy) {
-      e.preventDefault();
-      onCopy();
-      return;
-    }
-    // Ctrl+V 粘贴
-    if (ctrl && e.key.toLowerCase() === "v" && onPaste) {
-      e.preventDefault();
-      onPaste();
       return;
     }
     // Ctrl+G 把当前多选(≥2)创建为分组
@@ -79,7 +65,7 @@ export function useCanvasKeyboard({ onEscape, onCopy, onPaste }: Options = {}) {
       store.clearSelection();
       store.selectConnection(null);
     }
-  }, [onEscape, onCopy, onPaste]);
+  }, [onEscape]);
 
   useEffect(() => {
     window.addEventListener("keydown", handleKeyDown);

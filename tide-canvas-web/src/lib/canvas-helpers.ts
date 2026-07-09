@@ -16,7 +16,7 @@ const NODE_TYPE_SIZES: Record<string, { width: number; height: number }> = {
   video: { width: 608, height: 342 },
   video_compose: { width: 720, height: 580 },
   scene_3d: { width: 720, height: 360 },
-  text: { width: 360, height: 200 },
+  text: { width: 440, height: 440 },
   audio: { width: 360, height: 200 },
   script: { width: 360, height: 200 },
 };

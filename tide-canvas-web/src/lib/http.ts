@@ -284,6 +284,26 @@ function toParams(obj: any): QueryParams {
 
 export { toParams };
 
+// fetchWithAuth —— 画布子系统用的低层带鉴权 fetch(返回原始 Response,由调用方自解析)。
+// 相对路径经 buildUrl 指向 API 源(与 http.* 一致),已注入 Bearer,凭据随行。
+function authHeaders(init?: HeadersInit): Headers {
+  const headers = new Headers(init);
+  const token = getAccessToken();
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  return headers;
+}
+
+async function fetchWithAuth(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const target = typeof input === "string" ? buildUrl(input) : input;
+  return fetch(target, {
+    ...init,
+    headers: authHeaders(init.headers),
+    credentials: init.credentials ?? "include",
+  });
+}
+
 export const http = {
   get: <T>(path: string, params?: QueryParams) =>
     request<T>(path, { method: "GET", params }),
@@ -307,4 +327,4 @@ export const http = {
     putWithProgress(url, body, headers, onProgress),
 };
 
-export { setTokens, clearTokens };
+export { setTokens, clearTokens, fetchWithAuth };

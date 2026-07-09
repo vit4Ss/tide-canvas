@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { createPortal } from "react-dom";
 import { ChevronDown, Sparkles } from "lucide-react";
 import type { AiModelVO } from "@/types/ai";
 
@@ -10,117 +11,238 @@ interface Props {
   onChange: (modelId: string) => void;
 }
 
-/** 从模型 config(JSON) 解析列表展示用的描述与预计耗时（由后台「模型管理」写入） */
-function parseMeta(config?: string): { description?: string; estSeconds?: number } {
-  if (!config) return {};
+interface ModelMeta {
+  description?: string;
+  estSeconds?: number;
+  isNew: boolean;
+  badges: string[];
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+}
+
+function numberList(value: unknown): number[] {
+  return Array.isArray(value) ? value.filter((item): item is number => typeof item === "number" && Number.isFinite(item)) : [];
+}
+
+function pickPositiveNumber(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+  }
+  return undefined;
+}
+
+function hasPositiveNumber(record: Record<string, unknown>, keys: string[]) {
+  return keys.some((key) => pickPositiveNumber(record, [key]) != null);
+}
+
+function parseMeta(model: AiModelVO): ModelMeta {
+  if (!model.config) return { isNew: false, badges: [model.type] };
   try {
-    const c = JSON.parse(config) as { description?: unknown; estSeconds?: unknown };
+    const c = JSON.parse(model.config) as Record<string, unknown>;
+    const clarities = stringList(c.clarities);
+    const resolutions = stringList(c.resolutions);
+    const ratios = stringList(c.ratios);
+    const batchSizes = numberList(c.batchSizes);
+    const tags = stringList(c.tags);
+    const badges: string[] = [];
+
+    if ([...clarities, ...resolutions].some((item) => item.toUpperCase().includes("4K"))) badges.push("超清4K");
+    else if (resolutions.some((item) => item.toUpperCase().includes("1080"))) badges.push("1080P");
+    if (ratios.length >= 4) badges.push("多尺寸");
+    if (batchSizes.some((item) => item > 1)) badges.push("批量生成");
+    if (
+      hasPositiveNumber(c, ["referenceImageMaxMB", "maxReferenceImageMB", "referenceVideoMaxMB", "maxReferenceVideoMB"]) ||
+      model.supportedHandlers?.some((handler) => /ref|image_to_image|video/i.test(handler))
+    ) {
+      badges.push("多参考图");
+    }
+    if (c.routeStrategy || Array.isArray(c.routes)) badges.push("智能路由");
+
     return {
       description: typeof c.description === "string" && c.description.trim() ? c.description.trim() : undefined,
-      estSeconds: typeof c.estSeconds === "number" && c.estSeconds > 0 ? c.estSeconds : undefined,
+      estSeconds: pickPositiveNumber(c, ["estSeconds", "estimatedSeconds", "durationSeconds", "seconds", "timeSeconds"]),
+      isNew: c.isNew === true || c.new === true || tags.some((tag) => tag.toLowerCase() === "new"),
+      badges: [...badges, ...tags.filter((tag) => tag.toLowerCase() !== "new")].slice(0, 4),
     };
   } catch {
-    return {};
+    return { isNew: false, badges: [model.type] };
   }
 }
 
-/** 模型图标：URL 图片 / emoji 或文本 / 默认图标 */
 function ModelGlyph({ icon, className = "h-4 w-4" }: { icon?: string; className?: string }) {
-  if (icon && /^https?:\/\//.test(icon)) {
+  if (icon && /^(https?:|data:image|\/)/.test(icon)) {
     // eslint-disable-next-line @next/next/no-img-element
     return <img src={icon} alt="" className={`${className} rounded object-cover`} />;
   }
-  if (icon) {
+  if (icon && !icon.includes("<svg")) {
     return <span className="text-base leading-none">{icon}</span>;
   }
-  return <Sparkles className={`${className} text-blue-500`} />;
+  return <Sparkles className={`${className} text-sky-500 dark:text-sky-300`} />;
 }
+
+function primaryBadge(isNew: boolean, badges: string[]) {
+  return badges.find((badge) => badge.includes("风格") || badge.includes("上新")) || (isNew ? "NEW" : undefined);
+}
+
+const PANEL_WIDTH = 386;
+const PANEL_MAX_HEIGHT = 408;
 
 export function ModelPicker({ models, value, onChange }: Props) {
   const [open, setOpen] = useState(false);
   const [openUp, setOpenUp] = useState(false);
+  const [panelPos, setPanelPos] = useState({ left: 0, top: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+
+  const stop = (event: ReactMouseEvent) => event.stopPropagation();
+
+  const updatePanelPosition = () => {
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const nextOpenUp = spaceBelow < PANEL_MAX_HEIGHT + 24;
+    const left = Math.min(Math.max(12, Math.round(rect.left)), Math.max(12, window.innerWidth - PANEL_WIDTH - 12));
+    setOpenUp(nextOpenUp);
+    setPanelPos({ left, top: Math.round(nextOpenUp ? rect.top - 8 : rect.bottom + 8) });
+  };
 
   useEffect(() => {
     if (!open) return;
-    const onMouseDown = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+    const onMouseDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (containerRef.current?.contains(target) || panelRef.current?.contains(target)) return;
+      setOpen(false);
     };
     document.addEventListener("mousedown", onMouseDown);
     return () => document.removeEventListener("mousedown", onMouseDown);
   }, [open]);
 
-  const stop = (e: React.MouseEvent) => e.stopPropagation();
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    const onReposition = () => updatePanelPosition();
+    document.addEventListener("keydown", onKeyDown);
+    window.addEventListener("resize", onReposition);
+    window.addEventListener("scroll", onReposition, true);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("resize", onReposition);
+      window.removeEventListener("scroll", onReposition, true);
+    };
+  }, [open]);
 
-  // 未配置模型时回退为静态展示
+  const toggle = (event: ReactMouseEvent) => {
+    stop(event);
+    if (!open) updatePanelPosition();
+    setOpen((current) => !current);
+  };
+
   if (models.length === 0) {
     return (
-      <span className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-neutral-600 dark:text-neutral-400">
-        <Sparkles className="h-3 w-3 text-blue-500" />
+      <span className="flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-normal text-neutral-800 transition-[background-color,box-shadow] hover:bg-neutral-100/80 hover:shadow-sm dark:text-neutral-200 dark:hover:bg-white/8 dark:hover:shadow-black/20">
+        <Sparkles className="h-3.5 w-3.5 text-sky-500" />
         Lib Image
       </span>
     );
   }
 
-  const selected = models.find((m) => m.modelId === value) || models[0];
+  const selected = models.find((model) => model.modelId === value) || models[0];
+
+  if (models.length === 1) {
+    return (
+      <span
+        title={selected?.name || "选择模型"}
+        onMouseDown={stop}
+        className="flex h-8 max-w-[190px] items-center gap-1.5 rounded-md px-2.5 text-xs text-neutral-800 transition-[background-color,box-shadow] hover:bg-neutral-100/80 hover:shadow-sm dark:text-neutral-200 dark:hover:bg-white/8 dark:hover:shadow-black/20"
+      >
+        <ModelGlyph icon={selected?.icon} className="h-3.5 w-3.5" />
+        <span className="min-w-0 max-w-[134px] truncate font-normal">{selected?.name || "选择模型"}</span>
+      </span>
+    );
+  }
 
   return (
     <div className="relative" ref={containerRef} onMouseDown={stop}>
       <button
         ref={triggerRef}
-        onClick={(e) => {
-          stop(e);
-          // 展开前判断方向（与 QualityRatioPicker 一致）：画布视口 overflow-hidden 且
-          // 不可滚动，向下空间不足时必须向上翻转，否则菜单下半截被裁掉且无法补救
-          if (!open && triggerRef.current) {
-            const rect = triggerRef.current.getBoundingClientRect();
-            setOpenUp(window.innerHeight - rect.bottom < 400);
-          }
-          setOpen(!open);
-        }}
-        className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs hover:bg-neutral-100 dark:hover:bg-neutral-800"
+        type="button"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        title={selected?.name || "选择模型"}
+        onClick={toggle}
+        className="flex h-8 max-w-[190px] items-center gap-1.5 rounded-md px-2.5 text-xs text-neutral-800 transition-[background-color,box-shadow] hover:bg-neutral-100/80 hover:shadow-sm dark:text-neutral-200 dark:hover:bg-white/8 dark:hover:shadow-black/20"
       >
         <ModelGlyph icon={selected?.icon} className="h-3.5 w-3.5" />
-        <span className="max-w-[140px] truncate font-medium">{selected?.name || "选择模型"}</span>
-        <ChevronDown className="h-3 w-3 text-neutral-400" />
+        <span className="min-w-0 max-w-[134px] truncate font-normal">{selected?.name || "选择模型"}</span>
+        <ChevronDown className={`h-3 w-3 shrink-0 text-neutral-400 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
 
-      {open && (
+      {open && typeof document !== "undefined" && createPortal(
         <div
-          className={`absolute left-0 z-20 max-h-[360px] w-[300px] overflow-auto rounded-2xl border border-neutral-200 bg-white p-1.5 shadow-xl dark:border-neutral-700 dark:bg-neutral-900 ${
-            openUp ? "bottom-full mb-2" : "top-full mt-2"
-          }`}
+          ref={panelRef}
+          role="listbox"
+          aria-label="选择模型"
+          className={`fixed z-50 w-[386px] max-w-[calc(100vw-24px)] rounded-xl border border-neutral-200 bg-white p-1.5 text-left shadow-[0_18px_48px_rgba(15,23,42,0.18)] dark:border-white/10 dark:bg-neutral-950 dark:text-white dark:shadow-black/40 ${openUp ? "-translate-y-full" : ""}`}
+          style={{ left: panelPos.left, top: panelPos.top }}
+          onMouseDown={stop}
         >
-          {models.map((m) => {
-            const isSel = m.modelId === value;
-            const { description, estSeconds } = parseMeta(m.config);
-            return (
-              <button
-                key={m.modelId}
-                onClick={(e) => { stop(e); onChange(m.modelId); setOpen(false); }}
-                className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors ${
-                  isSel ? "bg-neutral-100 dark:bg-neutral-800" : "hover:bg-neutral-50 dark:hover:bg-neutral-800/50"
-                }`}
-              >
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-200/70 text-neutral-600 dark:bg-neutral-700/70 dark:text-neutral-200">
-                  <ModelGlyph icon={m.icon} className="h-5 w-5" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium text-neutral-900 dark:text-neutral-100">{m.name}</span>
-                  {description && (
-                    <span className="mt-0.5 block truncate text-xs text-neutral-400">{description}</span>
+          <div className="model-picker-scroll max-h-[408px] overflow-y-auto pr-1 [scrollbar-color:#b7b7b7_transparent] [scrollbar-width:thin]">
+            {models.map((model) => {
+              const isSelected = model.modelId === selected.modelId;
+              const { description, estSeconds, isNew, badges } = parseMeta(model);
+              const badge = primaryBadge(isNew, badges);
+              return (
+                <button
+                  key={model.modelId}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  onClick={(event) => {
+                    stop(event);
+                    onChange(model.modelId);
+                    setOpen(false);
+                  }}
+                  className={`group flex min-h-[56px] w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left outline-none transition-colors duration-150 ${
+                    isSelected
+                      ? "bg-neutral-100 text-neutral-950 dark:bg-white/12 dark:text-white"
+                      : "text-neutral-900 hover:bg-neutral-50 focus-visible:bg-neutral-50 dark:text-neutral-100 dark:hover:bg-white/8 dark:focus-visible:bg-white/8"
+                  }`}
+                >
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-50 text-neutral-700 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.02)] dark:bg-white/8 dark:text-neutral-200">
+                    <ModelGlyph icon={model.icon} className="h-[18px] w-[18px]" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <span className="truncate text-[13px] font-semibold leading-5">{model.name}</span>
+                      {badge && <span className="shrink-0 rounded-full bg-cyan-100 px-1.5 py-0.5 text-[10px] font-medium leading-none text-cyan-600 dark:bg-cyan-300/15 dark:text-cyan-200">{badge}</span>}
+                    </span>
+                    {description && (
+                      <span className={`truncate text-[12px] leading-4 text-neutral-500 dark:text-neutral-400 ${isSelected ? "block" : "hidden group-hover:block group-focus-visible:block"}`}>
+                        {description}
+                      </span>
+                    )}
+                  </span>
+                  {estSeconds != null && (
+                    <span className="shrink-0 rounded-full bg-neutral-50 px-2 py-0.5 text-[11px] leading-4 tabular-nums text-neutral-500 ring-1 ring-black/[0.03] dark:bg-white/8 dark:text-neutral-300 dark:ring-white/10">
+                      {estSeconds}s
+                    </span>
                   )}
-                </span>
-                {estSeconds != null && (
-                  <span className="shrink-0 text-xs tabular-nums text-neutral-400">{estSeconds}s</span>
-                )}
-              </button>
-            );
-          })}
-        </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

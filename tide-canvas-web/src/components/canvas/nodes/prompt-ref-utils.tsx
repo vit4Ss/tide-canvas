@@ -7,6 +7,9 @@ export const LINE_HEIGHT = 24;
 export const MIN_ROWS = 3;
 export const MAX_ROWS = 4;
 
+const ZERO_WIDTH_SPACE = String.fromCharCode(0x200b);
+const NON_BREAKING_SPACE = String.fromCharCode(0x00a0);
+
 /** 来自入边连接的可引用图片 */
 export interface RefItem {
   id: string;
@@ -97,7 +100,7 @@ export function syncPromptEditorContent(editor: HTMLDivElement, prompt: string, 
 
 export function serializePromptNode(node: ChildNode): string {
   if (node.nodeType === Node.TEXT_NODE) {
-    return (node.textContent || "").replace(/\u200B/g, "");
+    return (node.textContent || "").split(ZERO_WIDTH_SPACE).join("");
   }
   if (!(node instanceof HTMLElement)) {
     return "";
@@ -115,7 +118,7 @@ export function serializePromptEditor(editor: HTMLDivElement) {
   return Array.from(editor.childNodes)
     .map(serializePromptNode)
     .join("")
-    .replace(/\u00a0/g, " ");
+    .split(NON_BREAKING_SPACE).join(" ");
 }
 
 export function getRangeInEditor(editor: HTMLDivElement, fallback?: Range | null) {

@@ -13,6 +13,15 @@ import type {
   AiGenerationLogVO, AiGenerationLogQuery,
 } from "@/types/ai";
 import type { FileVO, FileQuery } from "@/types/file";
+// 画布子系统所需类型(随画布前端一并引入)
+import type {
+  StylePresetQuery, StylePresetVO, StyleFavoriteToggleVO, StylePresetSaveDTO,
+} from "@/types/style";
+import type {
+  RechargeCreateDTO, RechargeOrderVO, OrderQuery, RechargeConfigVO, PaymentInitiateVO,
+} from "@/types/order";
+import type { RedeemResultVO } from "@/types/redeem";
+import { fileSizeExceededResult, resolveUploadLimitBytes, type UploadLimitOptions } from "@/lib/upload-limits";
 
 export const authApi = {
   emailCode: (data: { email: string }) =>
@@ -115,7 +124,11 @@ export const fileApi = {
  * 智能上传：OSS 环境走「前端直传」(presign → 浏览器 PUT 到 OSS → register)，文件不经后端、省带宽、支持大文件；
  * 本地存储或直传不可用时自动回退到服务器中转上传。两种路径都通过 onProgress 上报进度，返回 Result<FileVO>。
  */
-export async function uploadFileSmart(file: File, onProgress?: (pct: number) => void): Promise<Result<FileVO>> {
+export async function uploadFileSmart(file: File, onProgress?: (pct: number) => void, options?: UploadLimitOptions): Promise<Result<FileVO>> {
+  // 上传前置尺寸校验(画布参考图/视频按模型上限,带 label 友好提示);超限直接返回失败 Result。
+  const uploadLimit = resolveUploadLimitBytes(options?.maxBytes);
+  const tooLarge = fileSizeExceededResult<FileVO>(file, { ...options, maxBytes: uploadLimit });
+  if (tooLarge) return tooLarge;
   const contentType = file.type || "application/octet-stream";
   try {
     const pre = await fileApi.presign({ filename: file.name, contentType });
@@ -132,3 +145,37 @@ export async function uploadFileSmart(file: File, onProgress?: (pct: number) => 
   }
   return http.uploadProgress<FileVO>("/api/files/upload", file, onProgress);
 }
+
+// ── 画布子系统 API(风格库 / 充值下单 / 兑换码)——随画布前端一并引入 ──────────
+export const styleApi = {
+  list: (query: StylePresetQuery) =>
+    http.get<PageResult<StylePresetVO>["data"]>("/api/styles", toParams(query)),
+  create: (data: StylePresetSaveDTO) =>
+    http.post<StylePresetVO>("/api/styles", data),
+  toggleFavorite: (id: string) =>
+    http.post<StyleFavoriteToggleVO>(`/api/styles/${id}/favorite`),
+  recordUse: (id: string) =>
+    http.post<void>(`/api/styles/${id}/use`),
+};
+
+export const orderApi = {
+  create: (data: RechargeCreateDTO) =>
+    http.post<RechargeOrderVO>("/api/orders/recharge", data),
+  list: (query: OrderQuery) =>
+    http.get<PageData<RechargeOrderVO>>("/api/orders", toParams(query)),
+  get: (id: string) =>
+    http.get<RechargeOrderVO>(`/api/orders/${id}`),
+  cancel: (id: string) =>
+    http.post<void>(`/api/orders/${id}/cancel`),
+  rechargeConfig: () =>
+    http.get<RechargeConfigVO>("/api/orders/recharge-config"),
+  pay: (id: string, payType?: string) =>
+    http.post<PaymentInitiateVO>(`/api/orders/${id}/pay`, payType ? { payType } : {}),
+  sync: (id: string) =>
+    http.post<RechargeOrderVO>(`/api/orders/${id}/sync`),
+};
+
+export const redeemApi = {
+  redeem: (code: string) =>
+    http.post<RedeemResultVO>("/api/redeem", { code }),
+};
