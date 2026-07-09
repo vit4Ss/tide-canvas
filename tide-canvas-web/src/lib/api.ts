@@ -13,14 +13,10 @@ import type {
   AiGenerationLogVO, AiGenerationLogQuery,
 } from "@/types/ai";
 import type { FileVO, FileQuery } from "@/types/file";
-// 画布子系统所需类型(随画布前端一并引入)
+// 画布风格库所需类型
 import type {
   StylePresetQuery, StylePresetVO, StyleFavoriteToggleVO, StylePresetSaveDTO,
 } from "@/types/style";
-import type {
-  RechargeCreateDTO, RechargeOrderVO, OrderQuery, RechargeConfigVO, PaymentInitiateVO,
-} from "@/types/order";
-import type { RedeemResultVO } from "@/types/redeem";
 import { fileSizeExceededResult, resolveUploadLimitBytes, type UploadLimitOptions } from "@/lib/upload-limits";
 
 export const authApi = {
@@ -146,7 +142,7 @@ export async function uploadFileSmart(file: File, onProgress?: (pct: number) => 
   return http.uploadProgress<FileVO>("/api/files/upload", file, onProgress);
 }
 
-// ── 画布子系统 API(风格库 / 充值下单 / 兑换码)——随画布前端一并引入 ──────────
+// ── 画布风格库 API(图片节点的风格选择器)——对接后端 /api/styles ──────────
 export const styleApi = {
   list: (query: StylePresetQuery) =>
     http.get<PageResult<StylePresetVO>["data"]>("/api/styles", toParams(query)),
@@ -156,26 +152,4 @@ export const styleApi = {
     http.post<StyleFavoriteToggleVO>(`/api/styles/${id}/favorite`),
   recordUse: (id: string) =>
     http.post<void>(`/api/styles/${id}/use`),
-};
-
-export const orderApi = {
-  create: (data: RechargeCreateDTO) =>
-    http.post<RechargeOrderVO>("/api/orders/recharge", data),
-  list: (query: OrderQuery) =>
-    http.get<PageData<RechargeOrderVO>>("/api/orders", toParams(query)),
-  get: (id: string) =>
-    http.get<RechargeOrderVO>(`/api/orders/${id}`),
-  cancel: (id: string) =>
-    http.post<void>(`/api/orders/${id}/cancel`),
-  rechargeConfig: () =>
-    http.get<RechargeConfigVO>("/api/orders/recharge-config"),
-  pay: (id: string, payType?: string) =>
-    http.post<PaymentInitiateVO>(`/api/orders/${id}/pay`, payType ? { payType } : {}),
-  sync: (id: string) =>
-    http.post<RechargeOrderVO>(`/api/orders/${id}/sync`),
-};
-
-export const redeemApi = {
-  redeem: (code: string) =>
-    http.post<RedeemResultVO>("/api/redeem", { code }),
 };

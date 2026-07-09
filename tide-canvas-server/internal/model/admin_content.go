@@ -48,8 +48,9 @@ type HomeFloor struct {
 	// not sent to the public site.
 	Subtitle string `gorm:"column:subtitle;type:varchar(255)" json:"subtitle"`
 	// Type is the machine key the public homepage matches its sections on:
-	// 英雄区 / 能力展示 / 无限画布 / 作品流 / 模型跑马灯 / FAQ / 价格.
-	Type string `gorm:"column:type;type:varchar(32);not null" json:"type"`
+	// 英雄区 / 能力展示 / 无限画布 / 作品流 / 模型跑马灯 / FAQ / 价格. 唯一索引保证
+	// 每个区块只有一行(与 AiTool.Key 同款),ensureBaselineFloors 的 FirstOrCreate 幂等。
+	Type string `gorm:"column:type;type:varchar(32);not null;uniqueIndex" json:"type"`
 	// ContentSource applies to 作品流 only: a comma-separated list of work-source
 	// keys ("hot" / "latest", 可组合). Empty for non-works floors. 解析见
 	// content/service.go parseFloorSources / resolveFloorWorks.

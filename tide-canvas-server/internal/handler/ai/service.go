@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -44,7 +45,13 @@ type service struct {
 	systemPrompt string
 	// storage backs durable server-side artifacts (e.g. grid-split cells).
 	storage storage.StorageStrategy
+	// sem 限制并发执行的 runTask 数(每个会打无上限时长的上游 relay 调用),避免突发
+	// 请求产生无上限 goroutine + 无上限上游连接;超额任务在 goroutine 内排队等待。
+	sem chan struct{}
 }
+
+// maxConcurrentGenerations 是同时执行的生成任务上限(排队而非拒绝)。
+const maxConcurrentGenerations = 32
 
 func newService(d *app.Deps) *service {
 	return &service{
@@ -55,6 +62,7 @@ func newService(d *app.Deps) *service {
 		relay:        relaychat.New(d.Cfg.Relay.BaseURL, d.Cfg.Relay.APIKey),
 		systemPrompt: d.Cfg.LLM.SystemPrompt,
 		storage:      d.Storage,
+		sem:          make(chan struct{}, maxConcurrentGenerations),
 	}
 }
 
@@ -202,6 +210,11 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 // a detached goroutine; errors are logged, not returned. tool is the preset op's
 // pre-loaded ai_tools config (nil for base handlers / when the row is missing).
 func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m *model.AiModel, userID idgen.ID, dto generateDTO, cost int, tool *model.AiTool) {
+	// 并发闸:超过 maxConcurrentGenerations 的任务在此排队(任务已处于 PROCESSING),
+	// 限制同时打到上游 relay 的连接数。
+	s.sem <- struct{}{}
+	defer func() { <-s.sem }()
+
 	// refund credits the up-front charge back on any non-success outcome
 	// (failure / cancel / panic). It is single-shot: once a refund transaction
 	// commits, later terminal paths are no-ops, so the user is never double-paid.
@@ -271,7 +284,14 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 		req.PresetExtra = decodeToolExtra(tool.ExtraParams)
 	}
 
-	res, genErr := gh.Execute(ctx, s.provider, req)
+	var res GenerateResult
+	var genErr error
+	if gh.Name() == assistantChatHandler {
+		// 画布 AI 助手:走 relay 文本对话,回复在 Meta["text"](无 URL 结果)。
+		res, genErr = s.runAssistantChat(ctx, m, dto)
+	} else {
+		res, genErr = gh.Execute(ctx, s.provider, req)
+	}
 	duration := time.Since(start).Milliseconds()
 
 	// Persist terminal task state atomically: finalizeTask only transitions a row
@@ -282,7 +302,7 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 	end := time.Now()
 	task.UpdateTime = end
 	task.CompleteTime = &end
-	if genErr != nil || res.ResultURL == "" {
+	if genErr != nil || (res.ResultURL == "" && !resultHasText(res)) {
 		task.Status = statusFailed
 		task.Progress = 100
 		task.ErrorMsg = errMessage(genErr)
@@ -584,6 +604,16 @@ func decodeInput(raw json.RawMessage) map[string]any {
 }
 
 // buildResultMeta serializes the result's meta + extra urls for resultMeta.
+// resultHasText reports whether the result carries a non-empty text reply
+// (画布 AI 助手用 Meta["text"] 承载文本结果,没有 URL 也算成功)。
+func resultHasText(res GenerateResult) bool {
+	if res.Meta == nil {
+		return false
+	}
+	t, _ := res.Meta["text"].(string)
+	return strings.TrimSpace(t) != ""
+}
+
 func buildResultMeta(res GenerateResult) string {
 	meta := map[string]any{}
 	for k, v := range res.Meta {

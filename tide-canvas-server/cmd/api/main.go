@@ -47,6 +47,7 @@ import (
 	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/handler/project"
 	"tidecanvas/internal/handler/stub"
+	"tidecanvas/internal/handler/style"
 )
 
 func main() {
@@ -202,6 +203,7 @@ func run() error {
 	community.Register(api, deps)
 	inspiration.Register(api, deps)
 	content.Register(api, deps)
+	style.Register(api, deps)
 	points.Register(api, deps)
 	billing.Register(api, deps)
 	market.Register(api, deps)

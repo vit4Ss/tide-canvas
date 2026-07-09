@@ -59,6 +59,10 @@ func Models() []any {
 		&Collection{},
 		&PromptLib{},
 		&HomeFloor{},
+		// 风格预设(画布图片节点的风格选择器)
+		&StylePreset{},
+		&StyleFavorite{},
+		&StyleUsage{},
 		// Billing / growth.
 		&PayChannel{},
 		&PointRule{},
@@ -82,6 +86,15 @@ func Models() []any {
 // wiring calls this after the DB connection is established. After the schema is
 // in place it runs idempotent data backfills for newly added columns.
 func AutoMigrate(db *gorm.DB) error {
+	// 建 home_floor.type 唯一索引前先按 type 去重(保留最小 id),否则旧库若有重复
+	// 楼层行会导致 AutoMigrate 建唯一索引失败、卡住启动。仅在表已存在时执行。
+	if db.Migrator().HasTable(&HomeFloor{}) {
+		if err := db.Exec(
+			"DELETE t1 FROM home_floor t1 JOIN home_floor t2 ON t1.type = t2.type AND t1.id > t2.id",
+		).Error; err != nil {
+			return err
+		}
+	}
 	if err := db.AutoMigrate(Models()...); err != nil {
 		return err
 	}
