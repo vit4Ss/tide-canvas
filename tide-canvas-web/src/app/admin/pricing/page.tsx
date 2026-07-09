@@ -440,7 +440,7 @@ export default function AdminPricingPage() {
         title="方案对比表"
         sub="公开定价页「方案对比」的行内容 · 列自动对应上方套餐 · 值填 ✓ 表示支持、— 表示不支持，或直接填文字"
         tools={
-          <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+          <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
             {cmpDirty && (
               <span className="muted" style={{ fontSize: 12 }}>
                 有未保存的修改
@@ -527,7 +527,7 @@ export default function AdminPricingPage() {
         title="常见问题 FAQ"
         sub="公开定价页 FAQ 的问答内容 · 展示顺序即列表顺序"
         tools={
-          <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+          <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
             {faqDirty && (
               <span className="muted" style={{ fontSize: 12 }}>
                 有未保存的修改

@@ -256,7 +256,9 @@ export default function AdminDashboardPage() {
 
         {/* 8 KPI cards */}
         {kpis.length > 0 ? (
-          <div style={{ gridColumn: "span 12" }}>
+          // StatCardGrid 的 .adm-kpis 自带 margin-bottom:18；在 .viz-grid 栅格里
+          // 会与 gap 叠加成 30px，用等值负外边距抵消，回到 12px 栅格节奏。
+          <div style={{ gridColumn: "span 12", marginBottom: -18 }}>
             <StatCardGrid items={kpis} />
           </div>
         ) : null}
@@ -268,7 +270,7 @@ export default function AdminDashboardPage() {
               <h3>增长趋势</h3>
               <div className="sub">近 14 天 · {activeMeta.label}</div>
             </div>
-            <div className="viz-legend">
+            <div className="adm-tools">
               {SERIES_META.map((m) => (
                 <button
                   key={m.key}

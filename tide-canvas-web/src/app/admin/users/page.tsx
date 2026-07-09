@@ -505,7 +505,7 @@ function AdminUsersPageInner() {
           </>
         }
       >
-        <div className="adm-tools" style={{ padding: "12px 18px 0" }}>
+        <div className="adm-tools" style={{ padding: "12px 20px 0" }}>
           <FilterChips
             options={FILTERS.map((f) => f.label)}
             value={FILTERS.find((f) => f.key === filter)?.label}

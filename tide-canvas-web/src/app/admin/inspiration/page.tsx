@@ -478,7 +478,7 @@ export default function AdminInspirationPage() {
       >
         {collDraft ? (
           <>
-            <FormCard title="合集信息">
+            <FormCard title="合集信息" style={{ marginTop: 0 }}>
               <FormGrid>
                 <Field label="标题" required span={2}>
                   <input

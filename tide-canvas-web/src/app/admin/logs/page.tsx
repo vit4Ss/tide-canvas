@@ -89,7 +89,7 @@ function CopyBtn({ text }: { text: string }) {
     <button
       type="button"
       className="adm-btn ghost"
-      style={{ padding: "2px 9px", fontSize: 11 }}
+      style={{ height: 28, padding: "0 10px", fontSize: 12 }}
       onClick={() => {
         try {
           void navigator.clipboard?.writeText(text);
@@ -295,7 +295,7 @@ function LogTable<T extends { id: string }>({
           <button
             type="button"
             className="adm-btn ghost"
-            style={{ padding: "3px 11px", fontSize: 12 }}
+            style={{ height: 28, padding: "0 10px", fontSize: 12 }}
             onClick={() => setDetailRow(r)}
           >
             详情
