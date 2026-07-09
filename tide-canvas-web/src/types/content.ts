@@ -31,12 +31,15 @@ export interface FooterColVO {
 
 /** One enabled homepage floor (HomeFloorLiteVO) — GET /api/site/floors,
  *  driven by the admin 首页楼层 management. `type` is the machine key the
- *  homepage matches its sections on. */
+ *  homepage matches its sections on. `works` is populated only for works-backed
+ *  floors (作品流): the server resolves the floor's 内容源 (实时热度/最新发布,
+ *  可组合) into审核通过 works, so the client just renders them. */
 export interface HomeFloorLiteVO {
   type: string;
   name: string;
   count: number;
   sortOrder: number;
+  works?: PostLiteVO[];
 }
 
 /** Slimmed market model for the home "hot models" rail / marquee. */

@@ -4,7 +4,7 @@
    Nested under the app's root layout (which owns <html>/<body> + global fonts),
    so this renders ONLY the console chrome. Faithful to design-ref/后台管理.html:
      .admin-body (light-theme token scope) > .adm (sidebar 260px | main grid)
-       <AdminSidebar/>  — all 15 sections, active via usePathname
+       <AdminSidebar/>  — all 16 sections, active via usePathname
        <main class="adm-main">
          <AdminTopbar/> — title / breadcrumb / 搜索 / 通知
          <div class="adm-content">{page}</div>

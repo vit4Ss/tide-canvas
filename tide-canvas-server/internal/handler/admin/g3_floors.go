@@ -6,7 +6,6 @@ package admin
 // drive the public home. CRUD plus an explicit reorder endpoint.
 
 import (
-	"encoding/json"
 	"errors"
 	"strings"
 
@@ -49,50 +48,46 @@ type floorsHandler struct {
 
 // ---- VO ----
 
-// HomeFloorVO is the admin view of a home_floor row. `platforms` is exposed as a
-// decoded string array (the column stores a JSON array); it is always non-nil so
-// it serializes as [] rather than null.
+// HomeFloorVO is the admin view of a home_floor row.
 type HomeFloorVO struct {
-	ID            idgen.ID `json:"id"`
-	Name          string   `json:"name"`
-	Subtitle      string   `json:"subtitle"`
-	Type          string   `json:"type"`          // banner|works|models|collections...
-	ContentSource string   `json:"contentSource"` // manual|auto|tag:xxx
-	Count         int      `json:"count"`
-	SortOrder     int      `json:"sortOrder"`
-	Enabled       bool     `json:"enabled"`
-	Layout        string   `json:"layout"` // grid|carousel|list
-	Platforms     []string `json:"platforms"`
-	CreateTime    string   `json:"createTime"`
-	UpdateTime    string   `json:"updateTime"`
+	ID       idgen.ID `json:"id"`
+	Name     string   `json:"name"`
+	Subtitle string   `json:"subtitle"` // admin-facing description (floor list); not sent to the site
+	// Type is the machine key the homepage matches on: 英雄区|能力展示|无限画布|
+	// 作品流|模型跑马灯|FAQ|价格.
+	Type string `json:"type"`
+	// ContentSource applies to 作品流 only: comma-separated source keys hot/latest
+	// (可组合); empty for non-works floors.
+	ContentSource string `json:"contentSource"`
+	Count         int    `json:"count"`
+	SortOrder     int    `json:"sortOrder"`
+	Enabled       bool   `json:"enabled"`
+	CreateTime    string `json:"createTime"`
+	UpdateTime    string `json:"updateTime"`
 }
 
 // ---- DTOs ----
 
 // HomeFloorCreateDTO creates a home floor.
 type HomeFloorCreateDTO struct {
-	Name          string   `json:"name" binding:"required,max=128"`
-	Subtitle      string   `json:"subtitle" binding:"omitempty,max=255"`
-	Type          string   `json:"type" binding:"required,max=32"`
-	ContentSource string   `json:"contentSource" binding:"omitempty,max=64"`
-	Count         *int     `json:"count" binding:"omitempty"`
-	SortOrder     *int     `json:"sortOrder" binding:"omitempty"`
-	Enabled       *bool    `json:"enabled" binding:"omitempty"`
-	Layout        string   `json:"layout" binding:"omitempty,max=32"`
-	Platforms     []string `json:"platforms" binding:"omitempty"`
+	Name          string `json:"name" binding:"required,max=128"`
+	Subtitle      string `json:"subtitle" binding:"omitempty,max=255"`
+	Type          string `json:"type" binding:"required,max=32"`
+	ContentSource string `json:"contentSource" binding:"omitempty,max=64"`
+	Count         *int   `json:"count" binding:"omitempty"`
+	SortOrder     *int   `json:"sortOrder" binding:"omitempty"`
+	Enabled       *bool  `json:"enabled" binding:"omitempty"`
 }
 
 // HomeFloorUpdateDTO is a partial update; nil fields are left unchanged.
 type HomeFloorUpdateDTO struct {
-	Name          *string   `json:"name" binding:"omitempty,max=128"`
-	Subtitle      *string   `json:"subtitle" binding:"omitempty,max=255"`
-	Type          *string   `json:"type" binding:"omitempty,max=32"`
-	ContentSource *string   `json:"contentSource" binding:"omitempty,max=64"`
-	Count         *int      `json:"count" binding:"omitempty"`
-	SortOrder     *int      `json:"sortOrder" binding:"omitempty"`
-	Enabled       *bool     `json:"enabled" binding:"omitempty"`
-	Layout        *string   `json:"layout" binding:"omitempty,max=32"`
-	Platforms     *[]string `json:"platforms" binding:"omitempty"`
+	Name          *string `json:"name" binding:"omitempty,max=128"`
+	Subtitle      *string `json:"subtitle" binding:"omitempty,max=255"`
+	Type          *string `json:"type" binding:"omitempty,max=32"`
+	ContentSource *string `json:"contentSource" binding:"omitempty,max=64"`
+	Count         *int    `json:"count" binding:"omitempty"`
+	SortOrder     *int    `json:"sortOrder" binding:"omitempty"`
+	Enabled       *bool   `json:"enabled" binding:"omitempty"`
 }
 
 // HomeFloorOrderDTO carries the new ordering: a list of floor ids in the desired
@@ -137,9 +132,7 @@ func (h *floorsHandler) create(c *gin.Context) {
 		Subtitle:      strings.TrimSpace(dto.Subtitle),
 		Type:          strings.TrimSpace(dto.Type),
 		ContentSource: strings.TrimSpace(dto.ContentSource),
-		Layout:        strings.TrimSpace(dto.Layout),
 		Enabled:       true,
-		Platforms:     encodePlatforms(dto.Platforms),
 	}
 	if dto.Count != nil {
 		f.Count = *dto.Count
@@ -190,12 +183,6 @@ func (h *floorsHandler) update(c *gin.Context) {
 	}
 	if dto.Enabled != nil {
 		fields["enabled"] = *dto.Enabled
-	}
-	if dto.Layout != nil {
-		fields["layout"] = strings.TrimSpace(*dto.Layout)
-	}
-	if dto.Platforms != nil {
-		fields["platforms"] = encodePlatforms(*dto.Platforms)
 	}
 
 	if len(fields) > 0 {
@@ -297,36 +284,7 @@ func toHomeFloorVO(f *model.HomeFloor) HomeFloorVO {
 		Count:         f.Count,
 		SortOrder:     f.SortOrder,
 		Enabled:       f.Enabled,
-		Layout:        f.Layout,
-		Platforms:     decodePlatforms(f.Platforms),
 		CreateTime:    g3FmtTime(f.CreateTime),
 		UpdateTime:    g3FmtTime(f.UpdateTime),
 	}
-}
-
-// encodePlatforms serializes a string slice to a JSON array for the json column.
-// A nil/empty slice stores "[]" so reads round-trip to an empty array.
-func encodePlatforms(p []string) string {
-	if len(p) == 0 {
-		return "[]"
-	}
-	b, err := json.Marshal(p)
-	if err != nil {
-		return "[]"
-	}
-	return string(b)
-}
-
-// decodePlatforms parses the stored JSON array, always returning a non-nil slice.
-func decodePlatforms(raw string) []string {
-	out := []string{}
-	s := strings.TrimSpace(raw)
-	if s == "" || s[0] != '[' {
-		return out
-	}
-	_ = json.Unmarshal([]byte(s), &out)
-	if out == nil {
-		out = []string{}
-	}
-	return out
 }

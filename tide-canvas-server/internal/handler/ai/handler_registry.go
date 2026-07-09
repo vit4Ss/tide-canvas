@@ -3,6 +3,8 @@ package ai
 import (
 	"context"
 	"errors"
+
+	"tidecanvas/internal/model"
 )
 
 // Domain errors surfaced by the AI pipeline.
@@ -62,6 +64,10 @@ func (h genHandler) Execute(ctx context.Context, client AiProviderClient, req Ge
 // inject the engineered prompt here so the client never has to type one (and can
 // never override the operation's intent). `extra` seeds default request params
 // (e.g. resolution for upscale) without clobbering anything the client did send.
+//
+// prompt/extra 是内建兜底值（来自 model.CanonicalAiTools）；运行时后台在
+// ai_tools 行上维护的配置经 req.PresetPrompt / req.PresetExtra 覆盖，行缺失
+// 或字段为空时退回内建，行为不变。
 type presetEditHandler struct {
 	name   string
 	prompt string
@@ -79,8 +85,18 @@ func (h presetEditHandler) Execute(ctx context.Context, client AiProviderClient,
 	// The engineered instruction is authoritative — it drives the actual relay
 	// edit. (The client may still send a human label under "prompt" for history
 	// display; it is stored on the task but overridden here for the upstream call.)
-	req.Input["prompt"] = h.prompt
-	for k, v := range h.extra {
+	// 后台配置优先：service.generate 从 ai_tools 行带来的 PresetPrompt/PresetExtra
+	// 覆盖内建默认；为空/为 nil 时退回内建，保证行缺失时行为不变。
+	prompt := h.prompt
+	if req.PresetPrompt != "" {
+		prompt = req.PresetPrompt
+	}
+	extra := h.extra
+	if req.PresetExtra != nil {
+		extra = req.PresetExtra
+	}
+	req.Input["prompt"] = prompt
+	for k, v := range extra {
 		if _, ok := req.Input[k]; !ok {
 			req.Input[k] = v
 		}
@@ -117,50 +133,35 @@ func (r *handlerRegistry) get(name string) (GenHandler, bool) {
 // builtinHandlers lists the stub capabilities. op classifies image vs. video for
 // the log's operation column (frontend OP_LABEL maps generation/edits/video).
 func builtinHandlers() []GenHandler {
-	return []GenHandler{
+	handlers := []GenHandler{
 		genHandler{name: "text_to_image", op: "generation", isAsync: true},
 		genHandler{name: "image_to_image", op: "edits", isAsync: true},
 		genHandler{name: "text_to_video", op: "video", isAsync: true},
 		genHandler{name: "image_to_video", op: "video", isAsync: true},
 		genHandler{name: "start_end_to_video", op: "video", isAsync: true},
 		genHandler{name: "reference_to_video", op: "video", isAsync: true},
-
-		// One-click image-edit ops (per-result toolbar in 创作台). Each reuses the
-		// image-edit route with a fixed, server-owned instruction.
-		presetEditHandler{
-			name: "remove_bg",
-			prompt: "Completely remove the background of this image. Keep the main foreground subject perfectly intact " +
-				"with clean, precise edges and no halo or leftover fringe. Place the subject on a plain solid white " +
-				"background. Do not change, recolor, crop or restyle the subject itself.",
-		},
-		presetEditHandler{
-			name: "remove_object",
-			prompt: "Remove the unwanted and distracting elements from this image — stray people, clutter, text, " +
-				"watermarks and blemishes — while keeping the main subject and the overall composition unchanged. " +
-				"Realistically reconstruct the area behind the removed elements so the result looks natural and seamless.",
-		},
-		presetEditHandler{
-			name: "upscale",
-			prompt: "Upscale this image to a higher resolution. Greatly enhance sharpness, fine detail and texture " +
-				"clarity, and remove blur, noise and compression artifacts. Preserve the original content, composition, " +
-				"colors and style exactly — do not add, remove or alter any elements.",
-			// default to the highest tier so the output is genuinely larger; the
-			// frontend pairs this with a 4K-capable model. set-if-empty, so a client
-			// override still wins.
-			extra: map[string]any{"resolution": "4k", "quality": "high"},
-		},
-		presetEditHandler{
-			name: "outpaint",
-			prompt: "Expand this image outward on all sides, naturally extending the existing scene, lighting, " +
-				"perspective and art style to fill a larger canvas. Keep the original content unchanged and well " +
-				"composed; only generate new, seamlessly blended surroundings beyond the current borders.",
-		},
-		presetEditHandler{
-			name: "relight",
-			prompt: "Relight this image with professional, cinematic lighting. Improve the exposure, contrast and " +
-				"color balance, add soft natural highlights and gentle shadows, and enhance depth and atmosphere. " +
-				"Preserve the original subject, composition, colors and style — do not add, remove or move any elements.",
-			extra: map[string]any{"quality": "high"},
-		},
 	}
+	base := map[string]bool{}
+	for _, h := range handlers {
+		base[h.Name()] = true
+	}
+
+	// One-click image-edit ops (per-result toolbar in 创作台 / 独立工具页). Each
+	// reuses the image-edit route with a fixed, server-owned instruction. 代码
+	// 注册能力，配置决定策略：预设指令的唯一出处是 model.CanonicalAiTools，取
+	// 其中 handler 不属于基础能力的行生成 presetEditHandler（内建兜底值；运行
+	// 时后台在 ai_tools 上的编辑经 req.PresetPrompt/req.PresetExtra 覆盖）。
+	for i := range model.CanonicalAiTools {
+		t := &model.CanonicalAiTools[i]
+		if base[t.Handler] {
+			// e.g. 局部重绘 rides the plain image_to_image capability — no preset.
+			continue
+		}
+		handlers = append(handlers, presetEditHandler{
+			name:   t.Handler,
+			prompt: t.PresetPrompt,
+			extra:  decodeToolExtra(t.ExtraParams),
+		})
+	}
+	return handlers
 }

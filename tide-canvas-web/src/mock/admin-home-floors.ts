@@ -19,14 +19,17 @@ export const FLOOR_TYPE_OPTIONS = [
   "自定义",
 ] as const;
 
-/** floorModal — 内容源 select options. */
-export const FLOOR_SOURCE_OPTIONS = ["实时热度", "人工精选", "最新发布", "指定合集"] as const;
+/** floorModal — 内容源选项（多选、可组合）。key 存库（home_floor.content_source，
+ *  逗号分隔），label 展示。仅「吃作品」的楼层出现该控件（见 WORKS_FLOOR_TYPES）；
+ *  后端按选择顺序取审核通过作品、去重合并（内容源解析见 content/service.go）。 */
+export const FLOOR_SOURCE_OPTIONS = [
+  { key: "hot", label: "实时热度" },
+  { key: "latest", label: "最新发布" },
+] as const;
 
-/** floorModal — 布局样式 (single-select chips). */
-export const FLOOR_LAYOUT_OPTIONS = ["瀑布流", "横向滑动", "Coverflow", "网格", "轮播"] as const;
-
-/** floorModal — 可见端 (multi-select chips). */
-export const FLOOR_PLATFORM_OPTIONS = ["Web", "iOS", "Android", "小程序"] as const;
+/** 需要「内容源」的楼层类型 —— 目前只有作品流吃动态社区作品；其余楼层为静态或
+ *  有自己的固有来源（模型跑马灯=模型），编辑弹窗里不显示内容源。 */
+export const WORKS_FLOOR_TYPES = ["作品流"] as const;
 
 /** 楼层全局配置 · 背景流光 — 默认预设 select options. */
 export const FLOOR_BG_PRESETS = ["极光", "星云", "深海"] as const;

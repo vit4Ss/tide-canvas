@@ -43,19 +43,20 @@ func (PromptLib) TableName() string { return "prompt_lib" }
 type HomeFloor struct {
 	BaseModel
 
-	Name     string `gorm:"column:name;type:varchar(128);not null" json:"name"`
+	Name string `gorm:"column:name;type:varchar(128);not null" json:"name"`
+	// Subtitle is an admin-facing description shown in the 后台 floor list; it is
+	// not sent to the public site.
 	Subtitle string `gorm:"column:subtitle;type:varchar(255)" json:"subtitle"`
-	// Type: banner / works / models / collections ... (floor render type).
+	// Type is the machine key the public homepage matches its sections on:
+	// 英雄区 / 能力展示 / 无限画布 / 作品流 / 模型跑马灯 / FAQ / 价格.
 	Type string `gorm:"column:type;type:varchar(32);not null" json:"type"`
-	// ContentSource: manual / auto / tag:xxx ... (where the floor pulls items).
+	// ContentSource applies to 作品流 only: a comma-separated list of work-source
+	// keys ("hot" / "latest", 可组合). Empty for non-works floors. 解析见
+	// content/service.go parseFloorSources / resolveFloorWorks.
 	ContentSource string `gorm:"column:content_source;type:varchar(64)" json:"contentSource"`
 	Count         int    `gorm:"column:count;type:int;not null;default:0" json:"count"`
 	SortOrder     int    `gorm:"column:sort_order;type:int;not null;default:0" json:"sortOrder"`
 	Enabled       bool   `gorm:"column:enabled;not null;default:true" json:"enabled"`
-	// Layout: grid / carousel / list ... (visual layout key).
-	Layout string `gorm:"column:layout;type:varchar(32)" json:"layout"`
-	// Platforms is a JSON array of platform keys (web / app / mini ...).
-	Platforms string `gorm:"column:platforms;type:json" json:"platforms"`
 }
 
 // TableName overrides the default pluralization.

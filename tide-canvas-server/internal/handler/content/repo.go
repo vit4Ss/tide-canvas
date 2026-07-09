@@ -72,6 +72,23 @@ func (r *repo) recentPosts(limit int) ([]model.CommunityPost, error) {
 	return rows, nil
 }
 
+// hotPosts returns the hottest published community posts, ranked by a
+// like/view weighted score then recency (limit capped). 作品流「实时热度」内容源
+// 用它：热度 = 点赞*3 + 浏览，与 recentPosts（最新发布）并列为两个可选/可合并
+// 的作品来源。
+func (r *repo) hotPosts(limit int) ([]model.CommunityPost, error) {
+	var rows []model.CommunityPost
+	err := r.db.Model(&model.CommunityPost{}).
+		Where("status = ?", postPublished).
+		Order("(like_count * 3 + view_count) DESC, create_time DESC").
+		Limit(limit).
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
 // hotModels returns the hottest listed market models by use_count then like_count.
 func (r *repo) hotModels(limit int) ([]model.MarketModel, error) {
 	var rows []model.MarketModel

@@ -42,7 +42,7 @@ function isGroup(e: AdminNavEntry): e is { group: string } {
 }
 
 /**
- * The full 15-section nav, grouped exactly as in admin.js NAV.
+ * The full 16-section nav, grouped exactly as in admin.js NAV.
  * Route mapping per the task spec.
  */
 export const ADMIN_NAV: AdminNavEntry[] = [
@@ -56,6 +56,7 @@ export const ADMIN_NAV: AdminNavEntry[] = [
   { group: "内容" },
   { label: "首页楼层", href: "/admin/home-floors", icon: "floor" },
   { label: "模型管理", href: "/admin/models", icon: "model" },
+  { label: "工具管理", href: "/admin/tools", icon: "toolkit" },
   { label: "资源管理", href: "/admin/resources", icon: "res" },
   { group: "商业" },
   { label: "积分管理", href: "/admin/points", icon: "credit" },

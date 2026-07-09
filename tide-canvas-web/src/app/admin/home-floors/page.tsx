@@ -32,15 +32,36 @@ import {
 import {
   FLOOR_BG_PRESETS,
   FLOOR_CTA_TARGETS,
-  FLOOR_LAYOUT_OPTIONS,
-  FLOOR_PLATFORM_OPTIONS,
   FLOOR_SOURCE_OPTIONS,
   FLOOR_TYPE_OPTIONS,
+  WORKS_FLOOR_TYPES,
 } from "@/mock/admin-home-floors";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminHomeFloorsApi } from "@/lib/admin-home-floors-api";
 import { confirmDialog } from "@/components/shared/confirm";
 import type { HomeFloorVO } from "@/types/admin-home-floors";
+
+// 内容源 键↔标签映射（存库用 key，展示用 label）。
+const SOURCE_LABELS = FLOOR_SOURCE_OPTIONS.map((o) => o.label);
+const KEY_TO_LABEL: Record<string, string> = Object.fromEntries(
+  FLOOR_SOURCE_OPTIONS.map((o) => [o.key, o.label]),
+);
+const LABEL_TO_KEY: Record<string, string> = Object.fromEntries(
+  FLOOR_SOURCE_OPTIONS.map((o) => [o.label, o.key]),
+);
+
+/** 解析已存的 content_source（"hot,latest"，含遗留 auto/manual）为展示用标签数组。
+ *  作品流楼层为空时默认「实时热度」，与后端 parseFloorSources 的兜底一致。 */
+function sourceKeysToLabels(raw?: string): string[] {
+  const labels = (raw || "")
+    .split(",")
+    .map((s) => s.trim())
+    .map((s) => (s === "auto" ? "hot" : s === "manual" ? "latest" : s))
+    .filter((k) => KEY_TO_LABEL[k])
+    .map((k) => KEY_TO_LABEL[k]);
+  const uniq = Array.from(new Set(labels));
+  return uniq.length ? uniq : [KEY_TO_LABEL.hot];
+}
 
 export default function AdminHomeFloorsPage() {
   const ensureSession = useAuthStore((s) => s.ensureSession);
@@ -178,7 +199,7 @@ export default function AdminHomeFloorsPage() {
 
       {/* 楼层全局配置（无后端表，保持展示态） */}
       <Panel title="楼层全局配置">
-        <div style={{ padding: 18 }}>
+        <div style={{ padding: "16px 18px" }}>
           <div className="cfg-grid">
             <div className="cfg-card">
               <h3>背景流光</h3>
@@ -248,16 +269,18 @@ function FloorModal({
   const [name, setName] = useState(floor?.name ?? "");
   const [subtitle, setSubtitle] = useState(floor?.subtitle ?? "");
   const [type, setType] = useState(floor?.type || FLOOR_TYPE_OPTIONS[0]);
-  const [contentSource, setContentSource] = useState(floor?.contentSource || FLOOR_SOURCE_OPTIONS[0]);
+  // 内容源以展示标签数组存于 state，保存时映射回 key；仅作品流楼层生效。
+  const [sourceLabels, setSourceLabels] = useState<string[]>(
+    sourceKeysToLabels(floor?.contentSource),
+  );
   const [count, setCount] = useState(String(floor?.count ?? 10));
   const [sortOrder, setSortOrder] = useState(String(floor?.sortOrder ?? 0));
-  const [layout, setLayout] = useState<string>(floor?.layout || FLOOR_LAYOUT_OPTIONS[0]);
-  const [platforms, setPlatforms] = useState<string[]>(
-    floor?.platforms ?? [...FLOOR_PLATFORM_OPTIONS],
-  );
   const [enabled, setEnabled] = useState(floor ? floor.enabled : true);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // 仅「吃作品」的楼层（作品流）才有内容源；其余楼层是静态或有固有来源，隐藏该控件。
+  const isWorksFloor = (WORKS_FLOOR_TYPES as readonly string[]).includes(type);
 
   const save = async () => {
     if (!name.trim()) {
@@ -267,15 +290,17 @@ function FloorModal({
     setSaving(true);
     setErr(null);
     try {
+      // 只有作品流楼层携带内容源；其余楼层不吃作品，存空串。
+      const contentSource = isWorksFloor
+        ? sourceLabels.map((l) => LABEL_TO_KEY[l]).filter(Boolean).join(",")
+        : "";
       const payload = {
         name: name.trim(),
         subtitle: subtitle.trim(),
         type: type.trim(),
-        contentSource: contentSource.trim(),
+        contentSource,
         count: Number(count) || 0,
         sortOrder: Number(sortOrder) || 0,
-        layout: layout.trim(),
-        platforms,
         enabled,
       };
       const res = floor
@@ -315,13 +340,19 @@ function FloorModal({
           <Field label="副标题" span={2}>
             <input placeholder="选填" value={subtitle} onChange={(e) => setSubtitle(e.target.value)} />
           </Field>
-          <Field label="内容源" span={2}>
-            <select value={contentSource} onChange={(e) => setContentSource(e.target.value)}>
-              {FLOOR_SOURCE_OPTIONS.map((o) => (
-                <option key={o}>{o}</option>
-              ))}
-            </select>
-          </Field>
+          {isWorksFloor ? (
+            <Field
+              label="内容源"
+              span={2}
+              hint="可多选，按选择顺序合并去重（如：实时热度 + 最新发布）"
+            >
+              <MChips
+                options={SOURCE_LABELS}
+                selected={sourceLabels}
+                onChange={setSourceLabels}
+              />
+            </Field>
+          ) : null}
           <Field label="展示数量">
             <input value={count} onChange={(e) => setCount(e.target.value)} inputMode="numeric" />
           </Field>
@@ -329,24 +360,6 @@ function FloorModal({
             <input value={sortOrder} onChange={(e) => setSortOrder(e.target.value)} inputMode="numeric" />
           </Field>
         </FormGrid>
-      </FormCard>
-
-      <FormCard title="展示设置">
-        <FormSection label="布局样式">
-          <MChips
-            options={[...FLOOR_LAYOUT_OPTIONS]}
-            selected={[layout]}
-            solo
-            onChange={(next) => setLayout(next[0] ?? layout)}
-          />
-        </FormSection>
-        <FormSection label="可见端">
-          <MChips
-            options={[...FLOOR_PLATFORM_OPTIONS]}
-            selected={platforms}
-            onChange={setPlatforms}
-          />
-        </FormSection>
         <FormSection label="选项">
           <div className="cfg-card" style={{ boxShadow: "none", padding: "4px 16px" }}>
             <div className="cfg-row">

@@ -242,6 +242,36 @@ func (r *repo) findHandler(ctx context.Context, name string) (*model.AiHandler, 
 	return &h, nil
 }
 
+// ---- AiTool ---------------------------------------------------------------
+
+// findToolByHandler resolves an ai_tools row by its registry handler name.
+// Returns (nil, nil) when not found — 生成链路以内建默认值兜底（resilience）。
+func (r *repo) findToolByHandler(ctx context.Context, handler string) (*model.AiTool, error) {
+	if handler == "" {
+		return nil, nil
+	}
+	var t model.AiTool
+	err := r.db.WithContext(ctx).First(&t, "handler = ?", handler).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// listSiteTools returns the tools shown on the public site（启用且有独立工具页
+// /tools/<key> + 首页卡片），ordered for the catalog.
+func (r *repo) listSiteTools(ctx context.Context) ([]model.AiTool, error) {
+	var rows []model.AiTool
+	err := r.db.WithContext(ctx).
+		Where("enabled = ? AND show_page = ?", true, true).
+		Order("sort_order ASC, create_time ASC").
+		Find(&rows).Error
+	return rows, err
+}
+
 // ---- AiGenerationLog ----------------------------------------------------
 
 func (r *repo) createLog(ctx context.Context, l *model.AiGenerationLog) error {

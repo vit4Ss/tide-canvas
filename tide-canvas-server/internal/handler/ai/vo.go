@@ -142,6 +142,70 @@ func toModelVO(m *model.AiModel) AiModelVO {
 	}
 }
 
+// AiToolVO mirrors AiToolVO in types/ai.ts — the public shape of a 智能工具
+// (config-driven one-click edit). PresetPrompt 是服务端资产，故意不外发。
+// cover 是 CoverHues 解码出的 [h1,h2,h3] 色相数组（解析失败为 null）；
+// extraParams 是解码后的参数对象（空/非法为 null）。
+type AiToolVO struct {
+	Key         string         `json:"key"`
+	Title       string         `json:"title"`
+	Desc        string         `json:"desc"`
+	Handler     string         `json:"handler"`
+	NeedPrompt  bool           `json:"needPrompt"`
+	Hd          bool           `json:"hd"`
+	Icon        string         `json:"icon"`
+	Cover       []int          `json:"cover"`
+	Placeholder string         `json:"placeholder"`
+	ExtraParams map[string]any `json:"extraParams"`
+	SortOrder   int            `json:"sortOrder"`
+}
+
+// decodeToolHues parses a stored cover_hues value ("[h1,h2,h3]") into an int
+// slice; nil (serialized as null) when empty/unparsable so the frontend falls
+// back to its neutral cover art.
+func decodeToolHues(s string) []int {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	var hues []int
+	if json.Unmarshal([]byte(s), &hues) != nil || len(hues) == 0 {
+		return nil
+	}
+	return hues
+}
+
+// decodeToolExtra parses a stored extra_params JSON object; nil when empty or
+// invalid（调用方退回内建默认值）。An explicit "{}" decodes to a non-nil empty
+// map — 管理员用它清空某个工具的内建附加参数。
+func decodeToolExtra(s string) map[string]any {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	m := map[string]any{}
+	if json.Unmarshal([]byte(s), &m) != nil {
+		return nil
+	}
+	return m
+}
+
+func toToolVO(t *model.AiTool) AiToolVO {
+	return AiToolVO{
+		Key:         t.Key,
+		Title:       t.Title,
+		Desc:        t.Desc,
+		Handler:     t.Handler,
+		NeedPrompt:  t.NeedPrompt,
+		Hd:          t.Hd,
+		Icon:        t.Icon,
+		Cover:       decodeToolHues(t.CoverHues),
+		Placeholder: t.Placeholder,
+		ExtraParams: decodeToolExtra(t.ExtraParams),
+		SortOrder:   t.SortOrder,
+	}
+}
+
 // AiHandlerVO mirrors AiHandlerVO in types/ai.ts. inputSchema is emitted as a
 // JSON object; defaultModelId is a string id (idgen.ID) per the string-id rule.
 type AiHandlerVO struct {

@@ -35,7 +35,7 @@ type FooterLinkVO struct {
 	Href  string `json:"href"`
 }
 type FooterColVO struct {
-	Title string `json:"title"`
+	Title string         `json:"title"`
 	Links []FooterLinkVO `json:"links"`
 }
 
@@ -84,16 +84,33 @@ func parseFooterCols(raw string) ([]FooterColVO, bool) {
 // HomeFloorLiteVO is the slim public view of one enabled homepage floor. Type
 // is the machine key the homepage matches its sections on (英雄区/能力展示/
 // 无限画布/作品流/模型跑马灯/FAQ/价格)；unknown types are delivered but the
-// client ignores them.
+// client ignores them. Works is populated only for works-backed floors (作品流):
+// the server resolves the floor's 内容源 (实时热度/最新发布, single or combined)
+// into审核通过 works so the client just renders them.
 type HomeFloorLiteVO struct {
-	Type      string `json:"type"`
-	Name      string `json:"name"`
-	Count     int    `json:"count"`
-	SortOrder int    `json:"sortOrder"`
+	Type      string       `json:"type"`
+	Name      string       `json:"name"`
+	Count     int          `json:"count"`
+	SortOrder int          `json:"sortOrder"`
+	Works     []PostLiteVO `json:"works,omitempty"`
 }
 
+// floorTypeWorks is the only floor type that renders dynamic community works
+// today (作品流); its 内容源 selects/combines the work sources below. Other floor
+// types are static or draw from their own intrinsic source (模型跑马灯 = models),
+// so they carry no 内容源.
+const floorTypeWorks = "作品流"
+
+// Valid 作品流 content sources. Stored on home_floor.content_source as a
+// comma-separated key list ("hot" / "latest" / "hot,latest"), resolved in order.
+const (
+	floorSourceHot    = "hot"    // 实时热度：like*3 + view 加权
+	floorSourceLatest = "latest" // 最新发布：create_time 倒序
+)
+
 // siteFloors returns the enabled homepage floors in display order (admin
-// 首页楼层 managed; model.CanonicalHomeFloors keeps the rows in existence).
+// 首页楼层 managed; model.CanonicalHomeFloors keeps the rows in existence). For
+// 作品流 floors it also resolves the configured 内容源 into审核通过 works.
 func (s *service) siteFloors() ([]HomeFloorLiteVO, error) {
 	rows, err := s.repo.enabledFloors()
 	if err != nil {
@@ -101,14 +118,123 @@ func (s *service) siteFloors() ([]HomeFloorLiteVO, error) {
 	}
 	vos := make([]HomeFloorLiteVO, 0, len(rows))
 	for i := range rows {
-		vos = append(vos, HomeFloorLiteVO{
+		vo := HomeFloorLiteVO{
 			Type:      rows[i].Type,
 			Name:      rows[i].Name,
 			Count:     rows[i].Count,
 			SortOrder: rows[i].SortOrder,
-		})
+		}
+		if rows[i].Type == floorTypeWorks {
+			works, err := s.resolveFloorWorks(rows[i].ContentSource, rows[i].Count)
+			if err != nil {
+				return nil, err
+			}
+			vo.Works = works
+		}
+		vos = append(vos, vo)
 	}
 	return vos, nil
+}
+
+// resolveFloorWorks turns a 作品流 floor's 内容源 into a deduped slice of审核通过
+// works, capped at count. Multiple sources are BLENDED by quota, not stacked:
+// count is split evenly across the selected sources (e.g. "hot,latest" with
+// count=8 → 4 hottest + 4 newest, deduped), so 组合来源真正体现两种口味而不是被
+// 第一个来源占满。实时热度/最新发布抽的是同一批已发布作品、仅排序不同，若按
+// 顺序填充组合会退化成纯热度——配额混合正是为此。去重/池子不足时按来源顺序回
+// 填补齐。空/遗留内容源回退实时热度，未配置的楼层也有内容。
+func (s *service) resolveFloorWorks(source string, count int) ([]PostLiteVO, error) {
+	if count <= 0 {
+		count = homeWorksLimit
+	}
+	sources := parseFloorSources(source)
+
+	// 预取每个来源的作品池（每源最多 count，足够任意配额与回填）。
+	pools := make([][]model.CommunityPost, 0, len(sources))
+	for _, src := range sources {
+		var (
+			posts []model.CommunityPost
+			err   error
+		)
+		switch src {
+		case floorSourceHot:
+			posts, err = s.repo.hotPosts(count)
+		case floorSourceLatest:
+			posts, err = s.repo.recentPosts(count)
+		}
+		if err != nil {
+			return nil, err
+		}
+		pools = append(pools, posts)
+	}
+
+	seen := make(map[idgen.ID]bool, count)
+	out := make([]PostLiteVO, 0, count)
+	add := func(p *model.CommunityPost) bool {
+		if len(out) >= count || seen[p.ID] {
+			return false
+		}
+		seen[p.ID] = true
+		out = append(out, toPostLiteVO(p))
+		return true
+	}
+
+	// 配额混合：各来源均分 count（向上取整），按来源顺序各取其配额（去重）。
+	perSource := (count + len(pools) - 1) / len(pools)
+	for pi := range pools {
+		taken := 0
+		for i := range pools[pi] {
+			if taken >= perSource || len(out) >= count {
+				break
+			}
+			if add(&pools[pi][i]) {
+				taken++
+			}
+		}
+	}
+	// 回填：配额上取整 + 去重可能没填满，按来源顺序补齐到 count。
+	for pi := range pools {
+		if len(out) >= count {
+			break
+		}
+		for i := range pools[pi] {
+			if len(out) >= count {
+				break
+			}
+			add(&pools[pi][i])
+		}
+	}
+	return out, nil
+}
+
+// parseFloorSources normalizes a comma-separated content_source into an ordered,
+// deduped list of valid source keys. Legacy values from before 内容源 was wired
+// map forward (auto→hot, manual→latest); anything unknown/empty falls back to
+// 实时热度. 旧配置从未真正生效，这里在读取时归一化，无需破坏性数据迁移。
+func parseFloorSources(raw string) []string {
+	out := make([]string, 0, 2)
+	seen := map[string]bool{}
+	for _, p := range strings.Split(raw, ",") {
+		p = strings.TrimSpace(p)
+		switch p {
+		case "auto":
+			p = floorSourceHot
+		case "manual":
+			p = floorSourceLatest
+		}
+		if p != floorSourceHot && p != floorSourceLatest {
+			continue
+		}
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		out = append(out, floorSourceHot)
+	}
+	return out
 }
 
 // --- home feed ---

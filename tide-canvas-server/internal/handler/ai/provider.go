@@ -13,6 +13,13 @@ type GenerateRequest struct {
 	Model    *model.AiModel
 	Provider *model.AiProvider
 	Input    map[string]any
+	// PresetPrompt is the server-owned engineered instruction from the tool's
+	// ai_tools row (后台可编辑). Set by service.generate for preset one-click ops
+	// only; empty means "use the handler's builtin fallback". Never client input.
+	PresetPrompt string
+	// PresetExtra is the decoded ai_tools ExtraParams object, same lifecycle as
+	// PresetPrompt: nil means "use the handler's builtin extra defaults".
+	PresetExtra map[string]any
 }
 
 // GenerateResult is the normalized provider output. For async upstreams the

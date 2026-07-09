@@ -1,6 +1,6 @@
 // Package admin wires the admin-console route surface under /api/admin. Every
 // group is gated by JWTAuth + AdminOnly (role 9) so only administrators reach
-// the dashboard, user/content/work moderation, AI provider/model/floor
+// the dashboard, user/content/work moderation, AI provider/model/floor/tool
 // management, pricing/payments/points, marketing, resources, logs, config, and
 // email endpoints.
 package admin
@@ -24,6 +24,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	RegisterInspiration(g, d)
 	RegisterModels(g, d)
 	RegisterFloors(g, d)
+	RegisterTools(g, d)
 	RegisterPricing(g, d)
 	RegisterPayments(g, d)
 	RegisterPoints(g, d)

@@ -24,11 +24,13 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { CAPS, coverBg } from "@/mock";
+import { CAPS, coverBg, type Cap, type MeshHues } from "@/mock";
 import { contentApi } from "@/lib/content-api";
 import { billingApi } from "@/lib/billing-api";
+import { aiApi } from "@/lib/api";
 import type { PostLiteVO, ModelLiteVO, HomeFloorLiteVO } from "@/types/content";
 import type { PlanVO } from "@/types/billing";
+import type { AiToolVO } from "@/types/ai";
 import { useReveal } from "@/components/site/use-reveal";
 import HomeHero from "@/components/site/home-hero";
 import InfiniteCanvas from "@/components/site/infinite-canvas";
@@ -50,7 +52,9 @@ const DEFAULT_FLOOR_TYPES = [
 ] as const;
 
 /** 能力卡分流：CORE 生成品类 → 创作台对应模式；TOOL 编辑功能 → 独立工具页
-    （封装好提示词的一键处理，/tools/[op]）。 */
+    （封装好提示词的一键处理，/tools/[op]）。工具卡现由后台「工具管理」
+    （/api/ai/tools）下发，href 直接是 /tools/<key>；此表用于创作台卡片与
+    mock CAPS 兜底条目（接口未应答/失败时按出厂条目分流）。 */
 const CAP_LINK: Record<string, string> = {
   文生图: "/studio?type=image",
   文生视频: "/studio?type=video",
@@ -73,6 +77,8 @@ export default function HomePage() {
   const [plansLoading, setPlansLoading] = useState(true);
   // 首页楼层配置（后台「首页楼层」）：null = 未返回（按出厂顺序渲染）。
   const [floors, setFloors] = useState<HomeFloorLiteVO[] | null>(null);
+  // 独立工具配置（后台「工具管理」）：null = 未返回/失败（工具卡按 mock CAPS 兜底）。
+  const [tools, setTools] = useState<AiToolVO[] | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -88,6 +94,11 @@ export default function HomePage() {
       .finally(() => alive && setFeedLoading(false));
     contentApi.floors().then((res) => {
       if (alive && res.success && res.data) setFloors(res.data);
+    });
+    aiApi.tools().then((res) => {
+      if (alive && res.success && Array.isArray(res.data) && res.data.length) {
+        setTools(res.data);
+      }
     });
     billingApi
       .plans()
@@ -117,10 +128,31 @@ export default function HomePage() {
     return known.length ? known : fallback;
   }, [floors]);
 
+  // 能力卡列表：前 3 张（文生图/文生视频/图生图）固定为创作台入口；工具卡来自
+  // 后台「工具管理」（/tools/<key>），接口未应答/失败时回退 mock CAPS 出厂条目。
+  const capList = useMemo<(Cap & { href: string })[]>(() => {
+    const withLink = (c: Cap) => ({ ...c, href: CAP_LINK[c.t] ?? "/studio" });
+    const studio = CAPS.slice(0, 3).map(withLink);
+    if (tools === null) return [...studio, ...CAPS.slice(3).map(withLink)];
+    return [
+      ...studio,
+      ...tools.map((t) => ({
+        t: t.title,
+        d: t.desc,
+        ico: t.icon || "✦",
+        size: "" as const,
+        cover: (Array.isArray(t.cover) && t.cover.length === 3
+          ? t.cover
+          : [220, 200, 260]) as MeshHues,
+        href: `/tools/${t.key}`,
+      })),
+    ];
+  }, [tools]);
+
   // 去AI味预览已升级为 (site) 组级挂载 — 见 layout 里的 <DeaiPreview/>。
 
   // Reveal .reveal/.reveal-scale on scroll (re-scan after mount paints).
-  useReveal([works, models, plans, floorList]);
+  useReveal([works, models, plans, floorList, capList]);
 
   /* ── 楼层 → 区块渲染（后台「首页楼层」驱动显隐/顺序/数量）───────────── */
   const renderFloor = (f: HomeFloorLiteVO) => {
@@ -132,7 +164,7 @@ export default function HomePage() {
       case "无限画布":
         return renderCanvas(f.type);
       case "作品流":
-        return renderGallery(f.type, f.count);
+        return renderGallery(f.type, f.count, f.works);
       case "模型跑马灯":
         return <ModelMarquee key={f.type} models={models} />;
       case "FAQ":
@@ -168,7 +200,7 @@ export default function HomePage() {
               // 其余每卡一张，接口为空时回退 mesh 渐变。
               const covers = works.filter((w) => w.coverUrl).map((w) => w.coverUrl);
               let used = 0;
-              return CAPS.map((c, i) => {
+              return capList.map((c, i) => {
                 const isBig = c.size === "big";
                 const take = isBig ? Math.min(3, covers.length - used) : covers.length - used > 0 ? 1 : 0;
                 const own = covers.slice(used, used + take);
@@ -178,7 +210,7 @@ export default function HomePage() {
                     key={c.t}
                     className={`cap reveal-scale ${c.size}`}
                     style={{ ["--rd" as string]: `${(i % 4) * 0.05}s` }}
-                    onClick={() => router.push(CAP_LINK[c.t] ?? "/studio")}
+                    onClick={() => router.push(c.href)}
                   >
                     {own.length > 0 ? (
                       own.map((url, li) => (
@@ -245,7 +277,16 @@ export default function HomePage() {
   );
 
   /* count > 0 时按后台配置截取作品数（0 = 全量交给组件自行裁决） */
-  const renderGallery = (key: string, count: number) => (
+  const renderGallery = (key: string, count: number, floorWorks?: PostLiteVO[]) => {
+    // 后端已按楼层「内容源」(实时热度/最新发布, 可组合) 解析好并截断的作品优先；
+    // 兜底楼层(接口未返回时的出厂顺序)没有 works，退回全局 homeFeed 作品。
+    const list =
+      floorWorks && floorWorks.length
+        ? floorWorks
+        : count > 0
+          ? works.slice(0, count)
+          : works;
+    return (
       <section className="block" id="feed-sec" key={key}>
         <div className="wrap">
           <div className="sec-head center">
@@ -262,13 +303,11 @@ export default function HomePage() {
               浏览全部作品 →
             </Link>
           </div>
-          <FeedCoverflow
-            works={count > 0 ? works.slice(0, count) : works}
-            loading={feedLoading}
-          />
+          <FeedCoverflow works={list} loading={feedLoading} />
         </div>
       </section>
-  );
+    );
+  };
 
   const renderFaq = (key: string) => (
       <section className="block" id="faq-sec" key={key}>

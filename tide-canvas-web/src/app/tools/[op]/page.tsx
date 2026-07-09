@@ -8,10 +8,13 @@
    处理器与模型解析策略），用户只需上传图片；局部重绘额外要一句修改描述，
    走 image_to_image。流程：上传 → 自动处理 → 原图/结果对照 → 下载。
 
+   工具定义（标题/文案/处理器/封面等）来自后台「工具管理」（GET /api/ai/tools，
+   公开接口）；接口未应答或失败时用 FALLBACK_OPS 出厂兜底，页面永不空白。
+
    任务同样落在 /api/ai/tasks（创作台的生成历史里也能看到）。
    ========================================================================== */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { Loader2, Plus, X } from "lucide-react";
@@ -19,7 +22,7 @@ import { aiApi, fileApi } from "@/lib/api";
 import { marketApi, type StudioModelVO } from "@/lib/market-api";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";
-import { AiTaskStatus } from "@/types/ai";
+import { AiTaskStatus, type AiToolVO } from "@/types/ai";
 import { coverBg } from "@/mock";
 
 interface ToolDef {
@@ -34,15 +37,19 @@ interface ToolDef {
   /** mesh-gradient cover hues — 与首页核心能力卡同源（mock/home.ts CAPS） */
   cover: [number, number, number];
   placeholder?: string;
+  /** 额外生成参数——随请求原样下发（计费按这些原始入参解析，须由客户端发送） */
+  extra?: Record<string, unknown>;
 }
 
-const OPS: Record<string, ToolDef> = {
+/** 出厂兜底：/api/ai/tools 未应答或失败时按此渲染，页面永不空白。 */
+const FALLBACK_OPS: Record<string, ToolDef> = {
   upscale: {
     title: "高清放大",
     desc: "无损放大图片尺寸，智能重塑高清画质。",
     handler: "upscale",
     hd: true,
     cover: [255, 230, 290],
+    extra: { resolution: "4k", clarity: "4k", quality: "high" },
   },
   rmbg: {
     title: "一键抠图",
@@ -93,7 +100,44 @@ async function pickModel(def: ToolDef): Promise<StudioModelVO | null> {
 export default function ToolPage() {
   const router = useRouter();
   const params = useParams<{ op: string }>();
-  const def = OPS[params.op];
+
+  // 后台「工具管理」配置：null = 接口未应答/失败（渲染 FALLBACK_OPS 出厂兜底）。
+  const [tools, setTools] = useState<AiToolVO[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    aiApi.tools().then((res) => {
+      if (alive && res.success && Array.isArray(res.data) && res.data.length) {
+        setTools(res.data);
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  /** 工具定义解析：接口已返回 → 按 key 匹配（匹配不到 = 已下线/不存在）；
+      未返回 → 出厂兜底（封面缺失时借用兜底色相，再退中性三元组）。 */
+  const def = useMemo<ToolDef | undefined>(() => {
+    if (tools !== null) {
+      const vo = tools.find((t) => t.key === params.op);
+      if (!vo) return undefined;
+      const fb: ToolDef | undefined = FALLBACK_OPS[params.op];
+      return {
+        title: vo.title,
+        desc: vo.desc,
+        handler: vo.handler,
+        hd: vo.hd,
+        needPrompt: vo.needPrompt,
+        cover:
+          Array.isArray(vo.cover) && vo.cover.length === 3
+            ? vo.cover
+            : (fb?.cover ?? [220, 200, 260]),
+        placeholder: vo.placeholder || undefined,
+        extra: vo.extraParams ?? undefined,
+      };
+    }
+    return FALLBACK_OPS[params.op];
+  }, [tools, params.op]);
 
   const ensureSession = useAuthStore((s) => s.ensureSession);
   const [phase, setPhase] = useState<Phase>("idle");
@@ -164,6 +208,7 @@ export default function ToolPage() {
 
   const run = useCallback(
     async (imgUrl: string, promptText: string) => {
+      if (!def) return;
       setPhase("running");
       setProgress(0);
       setError("");
@@ -177,7 +222,7 @@ export default function ToolPage() {
           imageList: [imgUrl],
           sourceImage: imgUrl,
           prompt: promptText,
-          ...(def.hd ? { resolution: "4k", clarity: "4k", quality: "high" } : {}),
+          ...(def.extra ?? {}),
         };
         const res = await aiApi.generate({
           handler: def.handler,
@@ -198,6 +243,7 @@ export default function ToolPage() {
 
   const onFile = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (!def) return;
       const f = e.target.files?.[0];
       e.target.value = "";
       if (!f) return;
@@ -237,6 +283,17 @@ export default function ToolPage() {
   }, [router]);
 
   if (!def) {
+    // 接口未应答且无出厂兜底：先转 loading，避免在配置返回前闪现「未找到」。
+    if (tools === null) {
+      return (
+        <div className="tool-page">
+          <Loader2
+            className="h-6 w-6 animate-spin"
+            style={{ color: "var(--text-faint)" }}
+          />
+        </div>
+      );
+    }
     return (
       <div className="tool-page">
         <div className="tp-card">

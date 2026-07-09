@@ -84,6 +84,20 @@ func (s *service) listHandlers(ctx context.Context) ([]AiHandlerVO, error) {
 	return out, nil
 }
 
+// listSiteTools lists the 智能工具 the public site renders (独立工具页 + 首页
+// 卡片): enabled AND showPage rows only, in admin-defined order.
+func (s *service) listSiteTools(ctx context.Context) ([]AiToolVO, error) {
+	rows, err := s.repo.listSiteTools(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AiToolVO, 0, len(rows))
+	for i := range rows {
+		out = append(out, toToolVO(&rows[i]))
+	}
+	return out, nil
+}
+
 // ---- generate -----------------------------------------------------------
 
 // errNoHandler / errNoModel / errInsufficientPoints let the HTTP layer map to
@@ -92,6 +106,8 @@ var (
 	errNoHandler          = errors.New("handler not found")
 	errNoModel            = errors.New("model unavailable")
 	errInsufficientPoints = errors.New("insufficient points")
+	// errToolDisabled：后台把预设工具下线（ai_tools.enabled=false）后拒绝生成。
+	errToolDisabled = errors.New("tool disabled")
 )
 
 // generate creates a task in PROCESSING state, kicks off async execution, and
@@ -102,6 +118,25 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 		// Also accept a DB-registered handler whose impl isn't built in: treat as
 		// missing capability so the frontend shows HANDLER_NOT_FOUND cleanly.
 		return nil, errNoHandler
+	}
+
+	// 预设工具的服务端配置（ai_tools 行）——只对 presetEditHandler 生效，绝不
+	// 波及基础能力（下线「局部重绘」工具不能挡掉创作台的图生图）。后台下线
+	// (enabled=false) 直接拒绝；在线则把后台维护的提示词/附加参数带进执行。
+	// runTask 跑在 detached goroutine（context.Background()），所以配置必须在
+	// 这里用请求 context 预加载。行缺失时退回内建默认值（resilience）。
+	var tool *model.AiTool
+	if _, isPreset := gh.(presetEditHandler); isPreset {
+		row, err := s.repo.findToolByHandler(ctx, dto.Handler)
+		if err != nil {
+			return nil, err
+		}
+		if row != nil {
+			if !row.Enabled {
+				return nil, errToolDisabled
+			}
+			tool = row
+		}
 	}
 
 	m, err := s.repo.findModel(ctx, dto.ModelID)
@@ -157,15 +192,16 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 	s.writeTaskState(ctx, task)
 
 	// Execute in the background; the HTTP request returns the PROCESSING task.
-	go s.runTask(context.Background(), task.ID, gh, m, userID, dto, cost)
+	go s.runTask(context.Background(), task.ID, gh, m, userID, dto, cost, tool)
 
 	vo := toTaskVO(task)
 	return &vo, nil
 }
 
 // runTask performs the generation and persists the terminal state. It is run in
-// a detached goroutine; errors are logged, not returned.
-func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m *model.AiModel, userID idgen.ID, dto generateDTO, cost int) {
+// a detached goroutine; errors are logged, not returned. tool is the preset op's
+// pre-loaded ai_tools config (nil for base handlers / when the row is missing).
+func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m *model.AiModel, userID idgen.ID, dto generateDTO, cost int, tool *model.AiTool) {
 	// refund credits the up-front charge back on any non-success outcome
 	// (failure / cancel / panic). It is single-shot: once a refund transaction
 	// commits, later terminal paths are no-ops, so the user is never double-paid.
@@ -227,6 +263,12 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 		Model:    m,
 		Provider: nil, // resolved by a real provider client; stub ignores it
 		Input:    input,
+	}
+	// 注入后台维护的预设工具配置（generate() 已用请求 context 预加载）。计费
+	// (resolveCost) 始终基于客户端原始 input 且早已完成，这里的注入绝不影响费用。
+	if tool != nil {
+		req.PresetPrompt = tool.PresetPrompt
+		req.PresetExtra = decodeToolExtra(tool.ExtraParams)
 	}
 
 	res, genErr := gh.Execute(ctx, s.provider, req)

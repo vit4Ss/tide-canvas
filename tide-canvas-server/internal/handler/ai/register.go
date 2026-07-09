@@ -65,6 +65,7 @@ func SweepStaleTasks(d *app.Deps) (int64, error) {
 //	GET    /api/ai/tasks         AiTaskQuery -> PageData<AiTaskVO>            (auth)
 //	GET    /api/ai/models        -> AiModelVO[]                              (public catalog)
 //	GET    /api/ai/handlers      -> AiHandlerVO[]                            (public catalog)
+//	GET    /api/ai/tools         -> AiToolVO[]                               (public catalog; 启用且有独立页的智能工具)
 //	GET    /api/ai/logs          AiGenerationLogQuery -> PageData<AiGenerationLogVO> (auth; admins see all)
 func Register(api *gin.RouterGroup, d *app.Deps) {
 	h := newHandler(d)
@@ -73,6 +74,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	// Public catalog endpoints (no auth — used by anonymous catalog views too).
 	g.GET("/models", h.listModels)
 	g.GET("/handlers", h.listHandlers)
+	g.GET("/tools", h.listSiteTools)
 
 	authed := g.Group("")
 	authed.Use(middleware.JWTAuth(d))

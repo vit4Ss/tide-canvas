@@ -32,6 +32,7 @@ const (
 	CodeModelUnavailable  = 2002
 	CodeHandlerNotFound   = 2003
 	CodeContextLimit      = 2004
+	CodeToolDisabled      = 2005
 
 	CodeFileTypeNotAllowed  = 3001
 	CodeFileSizeExceeded    = 3002

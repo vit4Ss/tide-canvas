@@ -40,6 +40,16 @@ func (h *handler) listHandlers(c *gin.Context) {
 	response.OK(c, rows)
 }
 
+// listSiteTools GET /api/ai/tools -> AiToolVO[]
+func (h *handler) listSiteTools(c *gin.Context) {
+	rows, err := h.svc.listSiteTools(c.Request.Context())
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "failed to load tools")
+		return
+	}
+	response.OK(c, rows)
+}
+
 // generate POST /api/ai/generate -> AiTaskVO
 func (h *handler) generate(c *gin.Context) {
 	var dto generateDTO
@@ -63,6 +73,8 @@ func (h *handler) generate(c *gin.Context) {
 			response.Fail(c, response.CodeHandlerNotFound, "handler not found")
 		case errors.Is(err, errNoModel):
 			response.Fail(c, response.CodeModelUnavailable, "model unavailable")
+		case errors.Is(err, errToolDisabled):
+			response.Fail(c, response.CodeToolDisabled, "该工具已下线")
 		case errors.Is(err, errInsufficientPoints):
 			response.Fail(c, response.CodeQuotaInsufficient, "积分不足，请充值后再试")
 		default:

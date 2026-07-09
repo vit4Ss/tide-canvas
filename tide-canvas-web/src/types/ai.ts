@@ -47,6 +47,29 @@ export interface AiHandlerVO {
   pointCost: number;
 }
 
+/** 独立 AI 工具配置（公开）— 对应 Go internal/handler/ai/vo.go 的 AiToolVO
+    （GET /api/ai/tools，仅返回已启用且展示独立页的工具）。 */
+export interface AiToolVO {
+  /** URL slug，独立页为 /tools/<key> */
+  key: string;
+  title: string;
+  desc: string;
+  /** 后端生成处理器名（handlerRegistry） */
+  handler: string;
+  /** 需要用户输入一句修改描述（如局部重绘） */
+  needPrompt: boolean;
+  /** 偏好 4K 模型（高清放大） */
+  hd: boolean;
+  /** 字形图标，如 ⤢ */
+  icon: string;
+  /** mesh 封面色相三元组；后端 CoverHues 解析失败时为 null */
+  cover: [number, number, number] | null;
+  placeholder: string;
+  /** 额外生成参数（随请求原样下发）；空/非法 JSON 时为 null */
+  extraParams: Record<string, unknown> | null;
+  sortOrder: number;
+}
+
 export interface AiTaskQuery extends PageQuery {
   handler?: string;
   status?: AiTaskStatus;

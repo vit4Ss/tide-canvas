@@ -9,7 +9,7 @@ import type {
   ProjectCreateDTO, ProjectUpdateDTO, CanvasSaveDTO, ProjectQuery,
 } from "@/types/canvas";
 import type {
-  AiTaskVO, AiModelVO, AiHandlerVO, AiGenerateDTO, AiTaskQuery,
+  AiTaskVO, AiModelVO, AiHandlerVO, AiToolVO, AiGenerateDTO, AiTaskQuery,
   AiGenerationLogVO, AiGenerationLogQuery,
 } from "@/types/ai";
 import type { FileVO, FileQuery } from "@/types/file";
@@ -75,6 +75,9 @@ export const aiApi = {
     http.get<AiModelVO[]>("/api/ai/models"),
   listHandlers: () =>
     http.get<AiHandlerVO[]>("/api/ai/handlers"),
+  /** GET /api/ai/tools — 启用中的独立工具配置（公开）。 */
+  tools: () =>
+    http.get<AiToolVO[]>("/api/ai/tools"),
   canvasLogs: (query: AiGenerationLogQuery) =>
     http.get<PageData<AiGenerationLogVO>>("/api/ai/logs", toParams(query)),
 };
