@@ -30,7 +30,7 @@ export interface PanelProps {
 
 export function Panel({ title, sub, tools, children, className }: PanelProps) {
   return (
-    <div className={`adm-panel${className ? ` ${className}` : ""}`}>
+    <section className={`adm-panel${className ? ` ${className}` : ""}`}>
       <div className="adm-phead">
         <div>
           <h2>{title}</h2>
@@ -40,7 +40,7 @@ export function Panel({ title, sub, tools, children, className }: PanelProps) {
         {tools ? <div className="adm-tools">{tools}</div> : null}
       </div>
       {children}
-    </div>
+    </section>
   );
 }
 
@@ -57,14 +57,14 @@ export interface SectionHeaderProps {
 
 export function SectionHeader({ title, sub, tools }: SectionHeaderProps) {
   return (
-    <div className="adm-phead adm-section-head">
+    <header className="adm-phead adm-section-head">
       <div>
         <h2>{title}</h2>
         {sub ? <div className="sub">{sub}</div> : null}
       </div>
       <div className="sp" />
       {tools ? <div className="adm-tools">{tools}</div> : null}
-    </div>
+    </header>
   );
 }
 

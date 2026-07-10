@@ -12,8 +12,15 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { RefreshCw } from "lucide-react";
 import { AreaTrend, MultiLine } from "@/components/admin/charts";
-import { ListSkeleton, StatCardGrid } from "@/components/admin";
+import {
+  AdminAlert,
+  AdminEmptyState,
+  FilterChips,
+  ListSkeleton,
+  StatCardGrid,
+} from "@/components/admin";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminDashboardApi } from "@/lib/admin-dashboard-api";
 import type {
@@ -58,13 +65,13 @@ function fmtMoney(s: string): string {
 
 type SeriesKey = "user" | "post" | "order" | "revenue";
 
-const COBALT = "#3b5bdb";
-const TEAL = "#0d9488";
+const CHART_BLUE = "var(--chart-blue)";
+const CHART_TEAL = "var(--chart-cyan)";
 const SERIES_META: { key: SeriesKey; label: string; color: string }[] = [
-  { key: "user", label: "用户", color: COBALT },
-  { key: "post", label: "作品", color: COBALT },
-  { key: "order", label: "订单", color: COBALT },
-  { key: "revenue", label: "营收", color: COBALT },
+  { key: "user", label: "用户", color: CHART_BLUE },
+  { key: "post", label: "作品", color: CHART_BLUE },
+  { key: "order", label: "订单", color: CHART_BLUE },
+  { key: "revenue", label: "营收", color: CHART_BLUE },
 ];
 
 export default function AdminDashboardPage() {
@@ -96,7 +103,8 @@ export default function AdminDashboardPage() {
   }, [ensureSession]);
 
   useEffect(() => {
-    load();
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
   }, [load]);
 
   const revenueVals = useMemo(
@@ -145,8 +153,8 @@ export default function AdminDashboardPage() {
   const multiSeries = useMemo(() => {
     if (!charts) return [];
     return [
-      { name: "新增用户", color: COBALT, vals: charts.userGrowth.map((p) => p.count) },
-      { name: "新增作品", color: TEAL, vals: charts.postGrowth.map((p) => p.count) },
+      { name: "新增用户", color: CHART_BLUE, vals: charts.userGrowth.map((p) => p.count) },
+      { name: "新增作品", color: CHART_TEAL, vals: charts.postGrowth.map((p) => p.count) },
     ];
   }, [charts]);
 
@@ -182,20 +190,19 @@ export default function AdminDashboardPage() {
 
   if (error && !stats) {
     return (
-      <div className="adm-panel">
-        <div className="adm-phead">
-          <div>
-            <h2>数据概览</h2>
-            <div className="sub">加载失败</div>
-          </div>
-          <div className="sp" />
-          <div className="adm-tools">
-            <button type="button" className="adm-btn" onClick={load}>
-              重试
-            </button>
-          </div>
-        </div>
-        <p style={{ padding: 20, color: "var(--text-faint)" }}>{error}</p>
+      <div className="adm-page">
+        <AdminAlert
+          tone="error"
+          title="数据概览加载失败"
+          action={
+          <button type="button" className="adm-btn" onClick={load}>
+            <RefreshCw aria-hidden size={15} />
+            重新加载
+          </button>
+          }
+        >
+          {error}
+        </AdminAlert>
       </div>
     );
   }
@@ -228,18 +235,26 @@ export default function AdminDashboardPage() {
           </div>
           {revenueVals.some((v) => v > 0) ? (
             <div className="hspark">
-              <svg width="220" height="44" viewBox="0 0 220 44" preserveAspectRatio="none">
+              <svg
+                width="220"
+                height="44"
+                viewBox="0 0 220 44"
+                preserveAspectRatio="none"
+                role="img"
+                aria-label="近 14 天营收走势"
+              >
+                <title>近 14 天营收走势</title>
                 <defs>
                   <linearGradient id="hg" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" stopColor={COBALT} stopOpacity={0.1} />
-                    <stop offset="1" stopColor={COBALT} stopOpacity={0} />
+                    <stop offset="0" stopColor={CHART_BLUE} stopOpacity={0.1} />
+                    <stop offset="1" stopColor={CHART_BLUE} stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <path d={`${sparkPath(revenueVals, 220, 44, 3)} L 217 41 L 3 41 Z`} fill="url(#hg)" />
                 <path
                   d={sparkPath(revenueVals, 220, 44, 3)}
                   fill="none"
-                  stroke={COBALT}
+                  stroke={CHART_BLUE}
                   strokeWidth="1.75"
                 />
               </svg>
@@ -257,18 +272,12 @@ export default function AdminDashboardPage() {
               <h3>增长趋势</h3>
               <div className="sub">近 14 天 · {activeMeta.label}</div>
             </div>
-            <div className="adm-tools">
-              {SERIES_META.map((m) => (
-                <button
-                  key={m.key}
-                  type="button"
-                  className={`adm-chip${series === m.key ? " on" : ""}`}
-                  onClick={() => setSeries(m.key)}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
+            <FilterChips
+              label="趋势指标"
+              options={SERIES_META.map((item) => item.label)}
+              value={activeMeta.label}
+              onChange={(_, index) => setSeries(SERIES_META[index].key)}
+            />
           </div>
           {areaData.length > 0 && hasTrendSignal ? (
             <>
@@ -279,10 +288,10 @@ export default function AdminDashboardPage() {
               </div>
             </>
           ) : (
-            <div className="adm-empty">
-              <div className="t">暂无增长信号</div>
-              <div className="s">近 14 天无新增数据时，趋势图会保持空白，避免平线误导。</div>
-            </div>
+            <AdminEmptyState
+              title="暂无增长信号"
+              description="近 14 天无新增数据时，趋势图会保持空白，避免平线误导。"
+            />
           )}
         </div>
 
@@ -310,10 +319,10 @@ export default function AdminDashboardPage() {
               </div>
             </>
           ) : (
-            <div className="adm-empty">
-              <div className="t">暂无对照数据</div>
-              <div className="s">有用户或作品增长后会显示双轴对照。</div>
-            </div>
+            <AdminEmptyState
+              title="暂无对照数据"
+              description="有用户或作品增长后会显示双轴对照。"
+            />
           )}
         </div>
       </div>

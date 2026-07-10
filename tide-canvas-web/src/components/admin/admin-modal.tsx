@@ -28,7 +28,17 @@
    </AdminModal>
    ============================================================================ */
 
-import { useEffect, useRef, useState } from "react";
+import {
+  cloneElement,
+  createContext,
+  isValidElement,
+  useContext,
+  useEffect,
+  useId,
+  useState,
+} from "react";
+import { LoaderCircle, X } from "lucide-react";
+import { useFocusTrap } from "@/hooks/use-focus-trap";
 
 export interface AdminModalProps {
   open: boolean;
@@ -41,6 +51,12 @@ export interface AdminModalProps {
   cancelLabel?: string;
   /** Save button label (default: "保存"). */
   saveLabel?: string;
+  /** Dialog width preset. Defaults to md. */
+  size?: "sm" | "md" | "lg" | "xl";
+  /** Whether the dialog can be dismissed via close button, backdrop, or Escape. */
+  closeable?: boolean;
+  /** Whether to render the secondary cancel action. */
+  showCancel?: boolean;
   onClose: () => void;
   /** Fires on save; return/resolve `false` to keep the modal open
    *  (validation / API failure). Any other result closes the modal. */
@@ -55,12 +71,17 @@ export function AdminModal({
   footNote = "变更将在保存后生效",
   cancelLabel = "取消",
   saveLabel = "保存",
+  size = "md",
+  closeable = true,
+  showCancel = true,
   onClose,
   onSave,
 }: AdminModalProps) {
   const [show, setShow] = useState(false);
   const [saving, setSaving] = useState(false);
-  const dialogRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useFocusTrap<HTMLDivElement>(open);
+  const titleId = useId();
+  const subtitleId = useId();
 
   // toggle `.show` after mount for the entrance transition; the cleanup resets
   // it when `open` flips back to false (no synchronous setState in the effect).
@@ -73,20 +94,15 @@ export function AdminModal({
     };
   }, [open]);
 
-  // 打开时把焦点移入弹窗（键盘用户不用从页面顶部 Tab 进来；Esc 立即可用）
-  useEffect(() => {
-    if (open) dialogRef.current?.focus();
-  }, [open]);
-
   // Escape-to-close
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !saving && closeable) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [closeable, open, onClose, saving]);
 
   if (!open) return null;
 
@@ -109,35 +125,40 @@ export function AdminModal({
     <div
       className={`adm-mask${show ? " show" : ""}`}
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget && !saving && closeable) onClose();
       }}
     >
       <div
         ref={dialogRef}
         tabIndex={-1}
-        className="adm-modal"
+        className={`adm-modal adm-modal-${size}`}
         role="dialog"
         aria-modal="true"
-        aria-label={typeof title === "string" ? title : undefined}
-        style={{ outline: "none" }}
+        aria-labelledby={titleId}
+        aria-describedby={subtitle ? subtitleId : undefined}
+        aria-busy={saving}
       >
         <div className="adm-mhead">
           <div>
-            <h2>{title}</h2>
-            {subtitle ? <div className="mh-sub">{subtitle}</div> : null}
+            <h2 id={titleId}>{title}</h2>
+            {subtitle ? <div className="mh-sub" id={subtitleId}>{subtitle}</div> : null}
           </div>
-          <button type="button" className="x" onClick={onClose} aria-label="关闭">
-            ✕
-          </button>
+          {closeable ? (
+            <button type="button" className="x" onClick={onClose} aria-label="关闭" disabled={saving}>
+              <X aria-hidden size={16} strokeWidth={1.8} />
+            </button>
+          ) : null}
         </div>
         <div className="adm-mbody">{children}</div>
         <div className="adm-mfoot">
           <span className="foot-note">{footNote}</span>
-          <button type="button" className="adm-btn ghost" onClick={onClose}>
-            {cancelLabel}
-          </button>
+          {showCancel ? (
+            <button type="button" className="adm-btn ghost" onClick={onClose} disabled={saving}>
+              {cancelLabel}
+            </button>
+          ) : null}
           <button type="button" className="adm-btn" disabled={saving} onClick={save}>
-            {saving ? "保存中…" : saveLabel}
+            {saving ? <><LoaderCircle className="adm-spin" aria-hidden size={14} />保存中…</> : saveLabel}
           </button>
         </div>
       </div>
@@ -161,10 +182,10 @@ export function FormCard({
   style?: React.CSSProperties;
 }) {
   return (
-    <div className="fcard" style={style}>
-      <div className="ct">{title}</div>
+    <section className="fcard" style={style}>
+      <h3 className="ct">{title}</h3>
       {children}
-    </div>
+    </section>
   );
 }
 
@@ -179,30 +200,101 @@ export interface FieldProps {
   required?: boolean;
   /** Hint line under the control. */
   hint?: React.ReactNode;
+  /** Inline validation message. */
+  error?: React.ReactNode;
   /** Column span: 2 → `.col2`, 4 → full row. */
   span?: 2 | 4;
+  /** Treat the child as a composite group rather than one labelable control. */
+  group?: boolean;
   /** Custom control; if omitted, a text <input> with `placeholder`/`defaultValue`. */
   children?: React.ReactNode;
   placeholder?: string;
   defaultValue?: string;
 }
 
-export function Field({ label, required, hint, span, children, placeholder, defaultValue }: FieldProps) {
-  const spanClass = span === 2 ? " col2" : "";
-  const spanStyle: React.CSSProperties | undefined = span === 4 ? { gridColumn: "span 4" } : undefined;
+export function Field({ label, required, hint, error, span, group, children, placeholder, defaultValue }: FieldProps) {
+  const controlId = useId();
+  const labelId = useId();
+  const hintId = useId();
+  const errorId = useId();
+  const spanClass = span === 2 ? " col2" : span === 4 ? " col4" : "";
+  const nativeTag = children && isValidElement(children) && typeof children.type === "string"
+    ? children.type
+    : null;
+  const isNativeLabelable = nativeTag != null && ["button", "input", "meter", "output", "progress", "select", "textarea"].includes(nativeTag);
+  const isComposite = group ?? (nativeTag != null && !isNativeLabelable);
+  const resolvedControlId =
+    !isComposite && children && isValidElement<{ id?: string }>(children)
+      ? children.props.id ?? controlId
+      : controlId;
+  let control: React.ReactNode = children ?? (
+    <input id={resolvedControlId} placeholder={placeholder} defaultValue={defaultValue} required={required} />
+  );
+  if (
+    children && !isComposite &&
+    isValidElement<{
+      id?: string;
+      "aria-describedby"?: string;
+      "aria-invalid"?: boolean | "true" | "false";
+      required?: boolean;
+    }>(children)
+  ) {
+    const describedBy = [hint ? hintId : "", error ? errorId : "", children.props["aria-describedby"] ?? ""]
+      .filter(Boolean)
+      .join(" ");
+    control = cloneElement(children, {
+      id: resolvedControlId,
+      required: children.props.required ?? required,
+      "aria-describedby": describedBy || undefined,
+      "aria-invalid": error ? true : children.props["aria-invalid"],
+    });
+  } else if (
+    children && isComposite &&
+    isValidElement<{
+      role?: string;
+      "aria-labelledby"?: string;
+      "aria-describedby"?: string;
+      "aria-invalid"?: boolean | "true" | "false";
+    }>(children)
+  ) {
+    const describedBy = [hint ? hintId : "", error ? errorId : "", children.props["aria-describedby"] ?? ""]
+      .filter(Boolean)
+      .join(" ");
+    control = cloneElement(children, {
+      role: children.props.role ?? "group",
+      "aria-labelledby": children.props["aria-labelledby"] ?? labelId,
+      "aria-describedby": describedBy || undefined,
+      "aria-invalid": error ? true : children.props["aria-invalid"],
+    });
+  }
   return (
-    <div className={`fld${spanClass}`} style={spanStyle}>
-      <label>
-        {label}
-        {required ? <span className="req">*</span> : null}
-      </label>
-      {children ?? <input placeholder={placeholder} defaultValue={defaultValue} />}
-      {hint ? <span className="hint">{hint}</span> : null}
+    <div className={`fld${spanClass}${error ? " has-error" : ""}`}>
+      {isComposite ? (
+        <span className="fld-label" id={labelId}>
+          {label}
+          {required ? <span className="req" aria-hidden>*</span> : null}
+        </span>
+      ) : (
+        <label htmlFor={resolvedControlId}>
+          {label}
+          {required ? <span className="req" aria-hidden>*</span> : null}
+        </label>
+      )}
+      {control}
+      {hint ? <span className="hint" id={hintId}>{hint}</span> : null}
+      {error ? <span className="fld-error" id={errorId} role="alert">{error}</span> : null}
     </div>
   );
 }
 
 /** A `.fsec` section with an accent `.lab` heading (for chip groups / option lists). */
+const FormSectionLabelContext = createContext<string | undefined>(undefined);
+
+/** Label id for composite controls rendered inside a FormSection. */
+export function useFormSectionLabelId() {
+  return useContext(FormSectionLabelContext);
+}
+
 export function FormSection({
   label,
   children,
@@ -212,11 +304,20 @@ export function FormSection({
   children: React.ReactNode;
   hint?: React.ReactNode;
 }) {
+  const labelId = useId();
+  const hintId = useId();
   return (
-    <div className="fsec">
-      <span className="lab">{label}</span>
-      {children}
-      {hint ? <div className="hint">{hint}</div> : null}
+    <div
+      className="fsec"
+      role="group"
+      aria-labelledby={labelId}
+      aria-describedby={hint ? hintId : undefined}
+    >
+      <span className="lab" id={labelId}>{label}</span>
+      <FormSectionLabelContext.Provider value={labelId}>
+        {children}
+      </FormSectionLabelContext.Provider>
+      {hint ? <div className="hint" id={hintId}>{hint}</div> : null}
     </div>
   );
 }
@@ -227,33 +328,56 @@ export function FormSection({
  */
 export function MChips({
   options,
-  selected = [],
+  selected,
   solo = false,
   onChange,
+  label,
+  role = "group",
+  "aria-labelledby": ariaLabelledBy,
+  "aria-describedby": ariaDescribedBy,
+  "aria-invalid": ariaInvalid,
 }: {
   options: string[];
   selected?: string[];
   solo?: boolean;
   onChange?: (next: string[]) => void;
+  /** Accessible group name when rendered outside FormSection. */
+  label?: string;
+  role?: string;
+  "aria-labelledby"?: string;
+  "aria-describedby"?: string;
+  "aria-invalid"?: boolean | "true" | "false";
 }) {
-  const [sel, setSel] = useState<string[]>(selected);
+  const [internal, setInternal] = useState<string[]>(selected ?? []);
+  const sectionLabelId = useFormSectionLabelId();
+  const labelledBy = ariaLabelledBy ?? sectionLabelId;
+  const sel = selected ?? internal;
   const toggle = (opt: string) => {
     let next: string[];
     if (solo) next = [opt];
     else next = sel.includes(opt) ? sel.filter((s) => s !== opt) : [...sel, opt];
-    setSel(next);
+    if (selected == null) setInternal(next);
     onChange?.(next);
   };
   return (
-    <div className="mchips">
+    <div
+      className="mchips"
+      role={role}
+      aria-labelledby={labelledBy}
+      aria-label={labelledBy ? undefined : label}
+      aria-describedby={ariaDescribedBy}
+      aria-invalid={ariaInvalid}
+    >
       {options.map((opt) => (
-        <span
+        <button
+          type="button"
           key={opt}
           className={`mchip${sel.includes(opt) ? " on" : ""}`}
           onClick={() => toggle(opt)}
+          aria-pressed={sel.includes(opt)}
         >
           {opt}
-        </span>
+        </button>
       ))}
     </div>
   );

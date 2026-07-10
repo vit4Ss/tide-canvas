@@ -26,7 +26,7 @@
    />
    ============================================================================ */
 
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 
 export type CellAlign = "left" | "right" | "center";
 
@@ -62,6 +62,8 @@ export interface AdminTableProps<T> {
   className?: string;
   /** Empty-state content when rows is empty (default "暂无数据"). */
   empty?: React.ReactNode;
+  /** Accessible label for the table region. */
+  label?: string;
   /**
    * Server-paged mode: rows 已是当前页数据，翻页由父组件重新拉取。
    * 传入后 pageSize（客户端切片）被忽略，页脚渲染同一套 `.adm-pager`。
@@ -85,6 +87,7 @@ export function AdminTable<T>({
   total,
   className,
   empty = "暂无数据",
+  label = "数据表格",
   server,
 }: AdminTableProps<T>) {
   const [sortCol, setSortCol] = useState<number | null>(null);
@@ -142,38 +145,9 @@ export function AdminTable<T>({
     return s;
   };
 
-  // FLIP：行顺序变化（上移/下移等）时，让行从旧位置平滑滑到新位置，
-  // 而不是瞬间跳变。按 data-rowkey 记录每行上一次的 offsetTop，渲染后对
-  // 位置变化的行先反向位移再过渡回原位。
-  const tbodyRef = useRef<HTMLTableSectionElement>(null);
-  const prevTops = useRef<Map<string, number>>(new Map());
-  useLayoutEffect(() => {
-    const tbody = tbodyRef.current;
-    if (!tbody) return;
-    const trs = Array.from(tbody.rows) as HTMLTableRowElement[];
-    const tops = new Map<string, number>();
-    for (const tr of trs) {
-      const k = tr.dataset.rowkey;
-      if (k != null) tops.set(k, tr.offsetTop);
-    }
-    for (const tr of trs) {
-      const k = tr.dataset.rowkey;
-      if (k == null) continue;
-      const prev = prevTops.current.get(k);
-      const now = tops.get(k);
-      if (prev == null || now == null || prev === now) continue;
-      tr.style.transition = "none";
-      tr.style.transform = `translateY(${prev - now}px)`;
-      void tr.offsetHeight; // 强制 reflow，让初始位移先生效，否则过渡不触发
-      tr.style.transition = "transform .2s cubic-bezier(.25,.1,.25,1)";
-      tr.style.transform = "";
-    }
-    prevTops.current = tops;
-  });
-
   return (
     <>
-      <div className="adm-table-wrap">
+      <div className="adm-table-wrap" role="region" aria-label={label} tabIndex={0}>
         <table className={`adm-table adm-table-fixed${className ? ` ${className}` : ""}`}>
           <colgroup>
             {columns.map((c, i) => (
@@ -190,30 +164,42 @@ export function AdminTable<T>({
           <thead>
             <tr>
               {columns.map((c, i) => {
+                const sortable = Boolean(c.sortable && server == null);
                 const arrow = sortCol === i ? (sortDir === "asc" ? " ↑" : sortDir === "desc" ? " ↓" : "") : "";
                 return (
                   <th
                     key={i}
+                    aria-sort={
+                      sortCol === i && sortDir === "asc"
+                        ? "ascending"
+                        : sortCol === i && sortDir === "desc"
+                          ? "descending"
+                          : sortable
+                            ? "none"
+                            : undefined
+                    }
                     style={{
                       ...colStyle(c),
-                      cursor: c.sortable ? "pointer" : undefined,
-                      userSelect: c.sortable ? "none" : undefined,
                     }}
-                    onClick={c.sortable ? () => toggleSort(i) : undefined}
                   >
-                    {c.header}
-                    {arrow}
+                    {sortable ? (
+                      <button type="button" className="adm-sort" onClick={() => toggleSort(i)}>
+                        <span>{c.header}</span>
+                        <span className="adm-sort-arrow" aria-hidden>{arrow.trim() || "↕"}</span>
+                      </button>
+                    ) : c.header}
                   </th>
                 );
               })}
             </tr>
           </thead>
-          <tbody ref={tbodyRef}>
+          <tbody>
             {visible.length === 0 ? (
               <tr>
                 <td colSpan={columns.length}>
                   <div className="adm-empty">
-                    <span className="s">{empty}</span>
+                    <span className="t">暂无数据</span>
+                    {empty !== "暂无数据" ? <span className="s">{empty}</span> : null}
                   </div>
                 </td>
               </tr>
@@ -300,6 +286,7 @@ function AdminPager({
         {onPageSize && pageSizeOptions ? (
           <select
             className="psz"
+            aria-label="每页显示条数"
             value={pageSize}
             onChange={(e) => onPageSize(Number(e.target.value))}
           >
@@ -312,7 +299,7 @@ function AdminPager({
         ) : null}
         <button
           type="button"
-          className="pg nav"
+          className="pg pg-nav"
           disabled={page <= 1}
           onClick={() => onPage(Math.max(1, page - 1))}
           aria-label="上一页"
@@ -330,6 +317,8 @@ function AdminPager({
               type="button"
               className={`pg${it === page ? " on" : ""}`}
               onClick={() => onPage(it)}
+              aria-current={it === page ? "page" : undefined}
+              aria-label={`第 ${it} 页`}
             >
               {it}
             </button>
@@ -337,7 +326,7 @@ function AdminPager({
         )}
         <button
           type="button"
-          className="pg nav"
+          className="pg pg-nav"
           disabled={page >= pageCount}
           onClick={() => onPage(Math.min(pageCount, page + 1))}
           aria-label="下一页"

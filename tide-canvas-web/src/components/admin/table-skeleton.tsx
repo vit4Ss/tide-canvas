@@ -19,6 +19,8 @@ export function TableSkeleton({ rows = 6, cols = 6 }: TableSkeletonProps) {
   // 确定性伪随机列宽 42–94px：视觉上像真实数据的参差，又不依赖 Math.random
   const w = (r: number, c: number) => 42 + ((r * 7 + c * 13) % 5) * 13;
   return (
+    <>
+    <span className="sr-only" role="status">正在加载数据</span>
     <table className="adm-table" aria-hidden="true">
       <thead>
         <tr>
@@ -47,6 +49,7 @@ export function TableSkeleton({ rows = 6, cols = 6 }: TableSkeletonProps) {
         ))}
       </tbody>
     </table>
+    </>
   );
 }
 
@@ -64,7 +67,9 @@ export interface ListSkeletonProps {
 /** 卡片/行列表形状的骨架（楼层、工具、配置分组等非表格列表）。 */
 export function ListSkeleton({ rows = 4, height = 56, gap = 10, onField = false }: ListSkeletonProps) {
   return (
-    <div aria-hidden="true" style={{ display: "flex", flexDirection: "column", gap }}>
+    <div style={{ display: "flex", flexDirection: "column", gap }}>
+      <span className="sr-only" role="status">正在加载内容</span>
+      <div aria-hidden="true" style={{ display: "contents" }}>
       {Array.from({ length: rows }, (_, i) => (
         <div
           key={i}
@@ -72,6 +77,7 @@ export function ListSkeleton({ rows = 4, height = 56, gap = 10, onField = false 
           style={{ height, borderRadius: "var(--r-lg)" }}
         />
       ))}
+      </div>
     </div>
   );
 }

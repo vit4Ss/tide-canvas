@@ -20,6 +20,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
+  ArrowUpRight,
+  CheckCircle2,
+  CircleAlert,
+  Plus,
+  RotateCcw,
+  Save,
+} from "lucide-react";
+import {
   AdminModal,
   Field,
   FormCard,
@@ -30,6 +38,7 @@ import {
 import { adminConfigApi } from "@/lib/admin-config-api";
 import type { ConfigVO, ConfigItemDTO } from "@/types/admin-config";
 import { useAuthStore } from "@/stores/use-auth-store";
+import { confirmDialog } from "@/components/shared/confirm";
 import { toast } from "@/components/shared/toast";
 
 /* 后端 group 是原始键（site/ai/mail…）与中文名（AI 对话/存储配置）混存，
@@ -45,7 +54,18 @@ const GROUP_LABEL: Record<string, string> = {
   存储配置: "存储配置",
 };
 const GROUP_ORDER = ["site", "home", "ai", "AI 对话", "mail", "pricing", "points", "存储配置"];
+const GROUP_DESCRIPTION: Record<string, string> = {
+  site: "站点名称、品牌信息与公共页面内容",
+  home: "首页展示与内容入口",
+  ai: "AI 服务接入与生成参数",
+  "AI 对话": "对话模型与会话行为",
+  mail: "邮件发送服务与发件身份",
+  pricing: "公开定价页的基础信息",
+  points: "积分规则与默认额度",
+  存储配置: "文件存储与访问地址",
+};
 const groupLabel = (g: string) => GROUP_LABEL[g] ?? g;
+const groupDescription = (g: string) => GROUP_DESCRIPTION[g] ?? "系统运行所需的相关配置";
 const groupRank = (g: string) => {
   const i = GROUP_ORDER.indexOf(g);
   return i === -1 ? GROUP_ORDER.length : i;
@@ -109,9 +129,14 @@ export default function AdminConfigPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [feedback, setFeedback] = useState<{
+    tone: "success" | "error";
+    message: string;
+  } | null>(null);
   // Edited values keyed by configKey (only changed keys are present).
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [newOpen, setNewOpen] = useState(false);
+  const [newError, setNewError] = useState<string | null>(null);
 
   const nKeyRef = useRef<HTMLInputElement>(null);
   const nValueRef = useRef<HTMLInputElement>(null);
@@ -127,6 +152,7 @@ export default function AdminConfigPage() {
       if (res.success && res.data) {
         setItems(res.data);
         setEdits({});
+        setFeedback(null);
       } else {
         setError(res.message || "加载配置失败");
         setItems([]);
@@ -140,7 +166,8 @@ export default function AdminConfigPage() {
   }, [ensureSession]);
 
   useEffect(() => {
-    load();
+    const frame = requestAnimationFrame(() => void load());
+    return () => cancelAnimationFrame(frame);
   }, [load]);
 
   // group ConfigVO[] by `group` (blank group → 其它)，按 GROUP_ORDER 定序
@@ -160,7 +187,7 @@ export default function AdminConfigPage() {
 
   // 左侧分组导航：滚动跟随高亮（IntersectionObserver 取视口上部命中的分组）
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
-  const groupRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const groupRefs = useRef<Map<string, HTMLElement>>(new Map());
   useEffect(() => {
     if (groups.length === 0) return;
     const io = new IntersectionObserver(
@@ -178,12 +205,16 @@ export default function AdminConfigPage() {
 
   const jumpTo = (g: string) => {
     setActiveGroup(g);
-    groupRefs.current.get(g)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    groupRefs.current
+      .get(g)
+      ?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
   };
 
   const valueOf = (it: ConfigVO) => (it.configKey in edits ? edits[it.configKey] : it.configValue);
 
   const onEdit = (it: ConfigVO, next: string) => {
+    setFeedback(null);
     setEdits((prev) => {
       const copy = { ...prev };
       if (next === it.configValue) delete copy[it.configKey];
@@ -196,6 +227,7 @@ export default function AdminConfigPage() {
     const changed = items.filter((it) => it.configKey in edits);
     if (changed.length === 0) return;
     setSaving(true);
+    setFeedback(null);
     try {
       await ensureSession();
       const payload: ConfigItemDTO[] = changed.map((it) => ({
@@ -208,7 +240,18 @@ export default function AdminConfigPage() {
       if (res.success && res.data) {
         setItems(res.data);
         setEdits({});
+        const message = `已保存 ${changed.length} 项配置`;
+        setFeedback({ tone: "success", message });
+        toast.success(message);
+      } else {
+        const message = res.message || "保存配置失败";
+        setFeedback({ tone: "error", message });
+        toast.error(message);
       }
+    } catch {
+      const message = "保存配置失败，请稍后重试";
+      setFeedback({ tone: "error", message });
+      toast.error(message);
     } finally {
       setSaving(false);
     }
@@ -270,7 +313,12 @@ export default function AdminConfigPage() {
 
   const createItem = useCallback(async () => {
     const key = nKeyRef.current?.value.trim();
-    if (!key) return false;
+    if (!key) {
+      setNewError("请输入唯一的配置键");
+      nKeyRef.current?.focus();
+      return false;
+    }
+    setNewError(null);
     setSaving(true);
     try {
       await ensureSession();
@@ -287,12 +335,17 @@ export default function AdminConfigPage() {
         setItems(res.data);
         setEdits({});
         setNewOpen(false);
+        toast.success(`配置 ${key} 已创建`);
       } else {
-        toast.error(res.message || "保存失败");
+        const message = res.message || "创建配置失败";
+        setNewError(message);
+        toast.error(message);
         return false;
       }
     } catch {
-      toast.error("保存失败，请稍后重试");
+      const message = "创建配置失败，请稍后重试";
+      setNewError(message);
+      toast.error(message);
       return false;
     } finally {
       setSaving(false);
@@ -300,246 +353,588 @@ export default function AdminConfigPage() {
   }, [ensureSession]);
 
   return (
-    <div className="set-page">
-      {/* 无外层白面板：标题行 + 白色分组卡直接浮在 #F5F5F7 灰场上（macOS 系统设置的对比关系）；
-          set-page 把标题行与内容块一起居中，超宽屏留白对称 */}
+    <div className="set-page config-admin-page" aria-busy={loading || saving}>
       <SectionHeader
         title="基础配置"
         sub={
           loading
-            ? "站点信息与全局开关"
-            : `站点信息与全局开关 · ${items.length} 项 / ${groups.length} 组，保存后生效`
+            ? "站点信息、服务接入与全局运行参数"
+            : `${items.length} 项配置，分为 ${groups.length} 组 · 修改仅在保存后生效`
         }
         tools={
           <>
-            <button type="button" className="adm-btn ghost" onClick={() => setNewOpen(true)}>
-              + 新建配置
+            <button
+              type="button"
+              className="adm-btn ghost"
+              aria-label="新建系统配置"
+              onClick={() => {
+                setNewError(null);
+                setNewOpen(true);
+              }}
+            >
+              <Plus aria-hidden size={14} />
+              新建配置
             </button>
-            <button type="button" className="adm-btn" disabled={dirtyCount === 0 || saving} onClick={save}>
+            <button
+              type="button"
+              className="adm-btn"
+              disabled={dirtyCount === 0 || saving}
+              onClick={save}
+              aria-label={dirtyCount > 0 ? `保存 ${dirtyCount} 项配置变更` : "当前没有待保存变更"}
+            >
+              <Save aria-hidden size={14} />
               {saving ? "保存中…" : dirtyCount > 0 ? `保存变更 (${dirtyCount})` : "保存变更"}
             </button>
           </>
         }
       />
 
+      {!loading && (dirtyCount > 0 || feedback) ? (
+        <div
+          className={`config-save-state ${
+            feedback?.tone === "error" ? "is-error" : dirtyCount > 0 ? "is-dirty" : "is-success"
+          }`}
+          role={feedback?.tone === "error" ? "alert" : "status"}
+          aria-live="polite"
+        >
+          <span className="config-save-state-icon" aria-hidden>
+            {feedback?.tone === "error" || dirtyCount > 0 ? (
+              <CircleAlert size={17} />
+            ) : (
+              <CheckCircle2 size={17} />
+            )}
+          </span>
+          <div className="config-save-state-copy">
+            <strong>
+              {feedback?.tone === "error"
+                ? "保存未完成"
+                : dirtyCount > 0
+                  ? `${dirtyCount} 项修改尚未保存`
+                  : "配置已同步"}
+            </strong>
+            <span>
+              {feedback?.tone === "error"
+                ? `${feedback.message}${dirtyCount > 0 ? `，${dirtyCount} 项修改仍保留在页面中。` : ""}`
+                : dirtyCount > 0
+                  ? "继续检查其余分组，确认后统一保存。"
+                  : feedback?.message}
+            </span>
+          </div>
+          {dirtyCount > 0 ? (
+            <button
+              type="button"
+              className="config-reset-button"
+              onClick={async () => {
+                if (
+                  !(await confirmDialog({
+                    title: "撤销未保存修改",
+                    message: `确认撤销当前 ${dirtyCount} 项未保存修改？页面会恢复到最近一次已保存的配置，此操作不可恢复。`,
+                    confirmText: "确认撤销",
+                    danger: true,
+                  }))
+                ) {
+                  return;
+                }
+                setEdits({});
+                setFeedback(null);
+              }}
+              aria-label={`撤销全部 ${dirtyCount} 项未保存修改`}
+            >
+              <RotateCcw aria-hidden size={13} />
+              撤销修改
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       {loading ? (
         <ListSkeleton rows={3} height={150} gap={16} onField />
       ) : error ? (
-        <div className="adm-empty">
-          <span className="t">{error}</span>
+        <div className="adm-empty config-state-card" role="alert">
+          <CircleAlert aria-hidden size={22} />
+          <span className="t">配置加载失败</span>
+          <span className="s">{error}。请检查网络连接后重试。</span>
           <button type="button" className="adm-btn ghost" onClick={load}>
-            重试
+            重新加载
           </button>
         </div>
       ) : items.length === 0 ? (
-        <div className="adm-empty">
-          <span className="t">暂无配置项</span>
-          <span className="s">点击「新建配置」添加第一项。</span>
+        <div className="adm-empty config-state-card">
+          <span className="t">还没有系统配置</span>
+          <span className="s">创建第一项配置后，它会按分组显示在这里。</span>
+          <button
+            type="button"
+            className="adm-btn"
+            onClick={() => {
+              setNewError(null);
+              setNewOpen(true);
+            }}
+          >
+            <Plus aria-hidden size={14} />
+            新建配置
+          </button>
         </div>
       ) : (
         <div className="set-cols">
           <nav className="set-nav" aria-label="配置分组">
-            {groups.map(([group, rows]) => (
-              <button
-                key={group}
-                type="button"
-                className={group === (activeGroup ?? groups[0]?.[0]) ? "on" : undefined}
-                onClick={() => jumpTo(group)}
-              >
-                {groupLabel(group)}
-                <span className="n">{rows.length}</span>
-              </button>
-            ))}
+            {groups.map(([group, rows]) => {
+              const groupDirty = rows.filter((row) => row.configKey in edits).length;
+              return (
+                <button
+                  key={group}
+                  type="button"
+                  className={group === (activeGroup ?? groups[0]?.[0]) ? "on" : undefined}
+                  onClick={() => jumpTo(group)}
+                  aria-current={group === (activeGroup ?? groups[0]?.[0]) ? "location" : undefined}
+                >
+                  {groupLabel(group)}
+                  <span className={`n${groupDirty > 0 ? " has-dirty" : ""}`}>
+                    {groupDirty > 0 ? `${groupDirty} 未保存` : rows.length}
+                  </span>
+                </button>
+              );
+            })}
           </nav>
 
           <div className="set-wrap">
-            {groups.map(([group, rows]) => (
-              <div
-                className="set-group"
-                key={group}
-                data-group={group}
-                ref={(el) => {
-                  if (el) groupRefs.current.set(group, el);
-                  else groupRefs.current.delete(group);
-                }}
-              >
-                <div className="gh">
-                  {groupLabel(group)}
-                  <small>{rows.length} 项</small>
-                </div>
-                <div className="set-list">
-                  {rows.map((it) => {
-                    const managed = MANAGED_ELSEWHERE[it.configKey];
-                    const isFooterLinks = it.configKey === "site.footerLinks";
-                    const secret = /secret|password|access[_-]?key|api[_-]?key/i.test(it.configKey);
-                    const block = !managed && !isFooterLinks && !secret && isBlockValue(it.configValue);
-                    const fl = isFooterLinks ? parseFooterLinks(valueOf(it)) : null;
-                    return (
-                      <div className={`set-row${block ? " block" : ""}`} key={it.configKey}>
-                        <div className="lab">
-                          {isFooterLinks ? "页脚链接（前台页脚的链接分组）" : it.description || it.configKey}
-                          <span className="key">{it.configKey}</span>
-                        </div>
-                        {managed ? (
-                          <Link href={managed.href} className="set-link">
-                            {managed.hint} ›
-                          </Link>
-                        ) : isFooterLinks && fl ? (
-                          <>
-                            <span className="set-summary">
-                              {fl.length} 组 · {fl.reduce((n, g) => n + g.links.length, 0)} 个链接
+            {groups.map(([group, rows], groupIndex) => {
+              const groupDirty = rows.filter((row) => row.configKey in edits).length;
+              const headingId = `config-group-${groupIndex}`;
+              return (
+                <section
+                  className="set-group"
+                  key={group}
+                  data-group={group}
+                  aria-labelledby={headingId}
+                  ref={(el) => {
+                    if (el) groupRefs.current.set(group, el);
+                    else groupRefs.current.delete(group);
+                  }}
+                >
+                  <div className="gh config-group-heading">
+                    <div>
+                      <h2 id={headingId}>{groupLabel(group)}</h2>
+                      <p>{groupDescription(group)}</p>
+                    </div>
+                    <span className={groupDirty > 0 ? "config-group-count is-dirty" : "config-group-count"}>
+                      {groupDirty > 0 ? `${groupDirty} 项待保存` : `${rows.length} 项`}
+                    </span>
+                  </div>
+                  <div className="set-list">
+                    {rows.map((it) => {
+                      const managed = MANAGED_ELSEWHERE[it.configKey];
+                      const isFooterLinks = it.configKey === "site.footerLinks";
+                      const secret = /secret|password|access[_-]?key|api[_-]?key/i.test(it.configKey);
+                      const block = !managed && !isFooterLinks && !secret && isBlockValue(it.configValue);
+                      const fl = isFooterLinks ? parseFooterLinks(valueOf(it)) : null;
+                      const dirty = it.configKey in edits;
+                      const displayLabel = isFooterLinks
+                        ? "页脚链接（前台页脚的链接分组）"
+                        : it.description || it.configKey;
+                      const controlLabel = `${displayLabel}（${it.configKey}）`;
+                      return (
+                        <div
+                          className={`set-row${block ? " block" : ""}${dirty ? " is-dirty" : ""}`}
+                          key={it.configKey}
+                        >
+                          <div className="lab">
+                            <span className="config-label-line">
+                              <span>{displayLabel}</span>
+                              {dirty ? <span className="config-dirty-tag">已修改</span> : null}
                             </span>
-                            <button
-                              type="button"
-                              className="adm-btn ghost"
-                              onClick={() => openFooterLinks(it)}
-                            >
-                              编辑
-                            </button>
-                          </>
-                        ) : block ? (
-                          <textarea
-                            value={valueOf(it)}
-                            onChange={(e) => onEdit(it, e.target.value)}
-                            aria-label={it.configKey}
-                            rows={3}
-                            spellCheck={false}
-                          />
-                        ) : (
-                          <input
-                            /* 密钥类配置值掩码显示（仍可编辑；聚焦后浏览器行为同密码框） */
-                            type={secret ? "password" : "text"}
-                            value={valueOf(it)}
-                            onChange={(e) => onEdit(it, e.target.value)}
-                            aria-label={it.configKey}
-                          />
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
+                            <span className="key">{it.configKey}</span>
+                          </div>
+                          {managed ? (
+                            <Link href={managed.href} className="set-link" aria-label={`${managed.hint}：${displayLabel}`}>
+                              {managed.hint}
+                              <ArrowUpRight aria-hidden size={13} />
+                            </Link>
+                          ) : isFooterLinks && fl ? (
+                            <div className="config-row-actions">
+                              <span className="set-summary">
+                                {fl.length} 组 · {fl.reduce((n, g) => n + g.links.length, 0)} 个链接
+                              </span>
+                              <button
+                                type="button"
+                                className="adm-btn ghost"
+                                onClick={() => openFooterLinks(it)}
+                                aria-label="编辑前台页脚链接"
+                              >
+                                编辑
+                              </button>
+                            </div>
+                          ) : block ? (
+                            <textarea
+                              value={valueOf(it)}
+                              onChange={(e) => onEdit(it, e.target.value)}
+                              aria-label={controlLabel}
+                              rows={3}
+                              spellCheck={false}
+                            />
+                          ) : (
+                            <input
+                              type={secret ? "password" : "text"}
+                              value={valueOf(it)}
+                              onChange={(e) => onEdit(it, e.target.value)}
+                              aria-label={controlLabel}
+                              autoComplete={secret ? "new-password" : undefined}
+                              spellCheck={false}
+                            />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              );
+            })}
           </div>
         </div>
       )}
 
-      {/* 新建配置 */}
       <AdminModal
         open={newOpen}
+        size="md"
         title="新建配置"
-        subtitle="新增一项系统配置 (按 configKey 去重)"
-        saveLabel={saving ? "保存中…" : "保存"}
-        onClose={() => (saving ? undefined : setNewOpen(false))}
+        subtitle="添加系统运行参数；相同 configKey 会覆盖现有配置"
+        saveLabel="创建配置"
+        onClose={() => {
+          if (!saving) {
+            setNewError(null);
+            setNewOpen(false);
+          }
+        }}
         onSave={createItem}
       >
         <FormCard title="配置信息" style={{ marginTop: 0 }}>
           <FormGrid>
-            <Field label="配置键 configKey" required span={2}>
-              <input ref={nKeyRef} placeholder="如：site.name" />
+            <Field
+              label="配置键 configKey"
+              required
+              span={2}
+              hint={newError ? <span className="config-field-error" role="alert">{newError}</span> : "建议使用 domain.name 形式"}
+            >
+              <input
+                ref={nKeyRef}
+                placeholder="如：site.name"
+                aria-invalid={Boolean(newError)}
+                onChange={() => setNewError(null)}
+                autoComplete="off"
+                spellCheck={false}
+              />
             </Field>
-            <Field label="分组 group" span={2}>
-              <input ref={nGroupRef} placeholder="如：站点信息" />
+            <Field label="分组 group" span={2} hint="用于页面中的配置分组">
+              <input ref={nGroupRef} placeholder="如：site" autoComplete="off" />
             </Field>
             <Field label="配置值 configValue" span={4}>
-              <input ref={nValueRef} placeholder="值" />
+              <input ref={nValueRef} placeholder="输入配置值" autoComplete="off" />
             </Field>
-            <Field label="说明 description" span={4}>
-              <input ref={nDescRef} placeholder="选填" />
+            <Field label="说明 description" span={4} hint="使用面向运营人员的简短说明">
+              <input ref={nDescRef} placeholder="如：前台展示的站点名称" />
             </Field>
           </FormGrid>
         </FormCard>
       </AdminModal>
 
-      {/* 页脚链接结构化编辑（site.footerLinks，替代裸 JSON） */}
       <AdminModal
         open={flItem != null}
+        size="lg"
         title="编辑页脚链接"
-        subtitle="前台页脚的链接分组，保存后即时生效（/api/site/footer）"
-        saveLabel={saving ? "保存中…" : "保存"}
+        subtitle="维护前台页脚的分组与链接，保存后即时生效"
+        saveLabel="保存页脚"
         onClose={() => (saving ? undefined : setFlItem(null))}
         onSave={saveFooterLinks}
       >
-        {flGroups.map((g, gi) => (
-          <FormCard
-            key={gi}
-            title={
-              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                {g.title.trim() || `分组 ${gi + 1}`}
-                <button
-                  type="button"
-                  className="adm-chip"
-                  style={{ marginLeft: "auto" }}
-                  onClick={() => setFlGroups((gs) => gs.filter((_, i) => i !== gi))}
-                >
-                  删除分组
-                </button>
-              </span>
-            }
-          >
-            <FormGrid>
-              <Field label="分组标题" span={2}>
-                <input
-                  value={g.title}
-                  placeholder="如：产品"
-                  onChange={(e) => patchGroup(gi, { title: e.target.value })}
-                />
-              </Field>
-            </FormGrid>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
-              {g.links.map((l, li) => (
-                <div key={li} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <div className="fld" style={{ flex: 1 }}>
-                    <input
-                      value={l.label}
-                      placeholder="名称（如：图片生成）"
-                      onChange={(e) => patchLink(gi, li, { label: e.target.value })}
-                    />
+        <div className="config-footer-editor">
+          {flGroups.length === 0 ? (
+            <div className="config-footer-empty">
+              <strong>页脚还没有链接分组</strong>
+              <span>先添加一个分组，再填写链接名称和地址。</span>
+            </div>
+          ) : null}
+          {flGroups.map((g, gi) => (
+            <FormCard
+              key={gi}
+              title={
+                <span className="config-footer-title">
+                  <span>{g.title.trim() || `分组 ${gi + 1}`}</span>
+                  <button
+                    type="button"
+                    className="adm-chip"
+                    onClick={() => setFlGroups((gs) => gs.filter((_, i) => i !== gi))}
+                    aria-label={`删除${g.title.trim() || `分组 ${gi + 1}`}`}
+                  >
+                    删除分组
+                  </button>
+                </span>
+              }
+            >
+              <FormGrid>
+                <Field label="分组标题" span={2}>
+                  <input
+                    value={g.title}
+                    placeholder="如：产品"
+                    onChange={(e) => patchGroup(gi, { title: e.target.value })}
+                    aria-label={`第 ${gi + 1} 个页脚分组的标题`}
+                  />
+                </Field>
+              </FormGrid>
+              <div className="config-footer-links">
+                {g.links.map((l, li) => (
+                  <div key={li} className="config-footer-link-row">
+                    <div className="fld config-footer-link-name">
+                      <label htmlFor={`footer-link-${gi}-${li}-label`}>链接名称</label>
+                      <input
+                        id={`footer-link-${gi}-${li}-label`}
+                        value={l.label}
+                        placeholder="如：图片生成"
+                        onChange={(e) => patchLink(gi, li, { label: e.target.value })}
+                      />
+                    </div>
+                    <div className="fld config-footer-link-url">
+                      <label htmlFor={`footer-link-${gi}-${li}-href`}>链接地址</label>
+                      <input
+                        id={`footer-link-${gi}-${li}-href`}
+                        value={l.href}
+                        placeholder="如：/studio?type=image"
+                        onChange={(e) => patchLink(gi, li, { href: e.target.value })}
+                        spellCheck={false}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      className="adm-chip config-remove-link"
+                      onClick={() =>
+                        patchGroup(gi, { links: g.links.filter((_, j) => j !== li) })
+                      }
+                      aria-label={`移除${l.label.trim() || `第 ${li + 1} 个链接`}`}
+                    >
+                      移除
+                    </button>
                   </div>
-                  <div className="fld" style={{ flex: 2 }}>
-                    <input
-                      value={l.href}
-                      placeholder="链接（如：/studio?type=image）"
-                      onChange={(e) => patchLink(gi, li, { href: e.target.value })}
-                    />
-                  </div>
+                ))}
+                <div>
                   <button
                     type="button"
                     className="adm-chip"
                     onClick={() =>
-                      patchGroup(gi, { links: g.links.filter((_, j) => j !== li) })
+                      patchGroup(gi, { links: [...g.links, { label: "", href: "" }] })
                     }
                   >
-                    移除
+                    <Plus aria-hidden size={12} />
+                    添加链接
                   </button>
                 </div>
-              ))}
-              <div>
-                <button
-                  type="button"
-                  className="adm-chip"
-                  onClick={() =>
-                    patchGroup(gi, { links: [...g.links, { label: "", href: "" }] })
-                  }
-                >
-                  + 添加链接
-                </button>
               </div>
-            </div>
-          </FormCard>
-        ))}
-        <div style={{ marginTop: 12 }}>
-          <button
-            type="button"
-            className="adm-btn ghost"
-            onClick={() =>
-              setFlGroups((gs) => [...gs, { title: "", links: [{ label: "", href: "" }] }])
-            }
-          >
-            + 添加分组
-          </button>
+            </FormCard>
+          ))}
+          <div className="config-add-footer-group">
+            <button
+              type="button"
+              className="adm-btn ghost"
+              onClick={() =>
+                setFlGroups((gs) => [...gs, { title: "", links: [{ label: "", href: "" }] }])
+              }
+            >
+              <Plus aria-hidden size={14} />
+              添加分组
+            </button>
+          </div>
         </div>
       </AdminModal>
+
+      <style>{`
+        .config-admin-page .config-save-state {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          min-height: 52px;
+          margin: 0 0 16px;
+          padding: 10px 12px;
+          border: 1px solid var(--border);
+          border-radius: var(--r-lg);
+          background: var(--surface);
+          color: var(--text-dim);
+        }
+        .config-admin-page .config-save-state.is-dirty {
+          border-color: color-mix(in srgb, var(--warn) 28%, var(--border));
+          background: var(--warn-soft);
+        }
+        .config-admin-page .config-save-state.is-error {
+          border-color: color-mix(in srgb, var(--danger) 28%, var(--border));
+          background: var(--danger-soft);
+        }
+        .config-admin-page .config-save-state.is-success {
+          border-color: color-mix(in srgb, var(--ok) 24%, var(--border));
+          background: var(--ok-soft);
+        }
+        .config-admin-page .config-save-state-icon {
+          display: grid;
+          flex: none;
+          place-items: center;
+          color: var(--warn);
+        }
+        .config-admin-page .config-save-state.is-error .config-save-state-icon { color: var(--danger); }
+        .config-admin-page .config-save-state.is-success .config-save-state-icon { color: var(--ok); }
+        .config-admin-page .config-save-state-copy {
+          display: flex;
+          flex: 1;
+          min-width: 0;
+          flex-direction: column;
+          gap: 2px;
+          font-size: 12px;
+          line-height: 1.45;
+        }
+        .config-admin-page .config-save-state-copy strong {
+          color: var(--text);
+          font-size: 12.5px;
+          font-weight: 600;
+        }
+        .config-admin-page .config-reset-button {
+          display: inline-flex;
+          flex: none;
+          align-items: center;
+          gap: 5px;
+          min-height: 30px;
+          padding: 0 8px;
+          border: 0;
+          border-radius: var(--r-sm);
+          background: transparent;
+          color: var(--text-dim);
+          cursor: pointer;
+          font: inherit;
+          font-size: 12px;
+          font-weight: 500;
+        }
+        .config-admin-page .config-reset-button:hover { background: rgba(0, 0, 0, 0.05); color: var(--text); }
+        .config-admin-page .config-reset-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+        .config-admin-page .config-state-card {
+          min-height: 260px;
+          border: 1px solid var(--border);
+          border-radius: var(--r-lg);
+          background: var(--surface);
+          color: var(--text-faint);
+        }
+        .config-admin-page .config-group-heading {
+          display: flex;
+          align-items: flex-end;
+          justify-content: space-between;
+          gap: 16px;
+          padding: 0 2px 10px;
+        }
+        .config-admin-page .config-group-heading h2 {
+          margin: 0;
+          color: var(--text-title);
+          font-size: 14px;
+          font-weight: 600;
+          line-height: 1.4;
+        }
+        .config-admin-page .config-group-heading p {
+          max-width: 64ch;
+          margin: 3px 0 0;
+          color: var(--text-faint);
+          font-size: 12px;
+          font-weight: 400;
+          line-height: 1.5;
+        }
+        .config-admin-page .config-group-count {
+          flex: none;
+          padding-bottom: 1px;
+          color: var(--text-faint);
+          font-family: var(--mono);
+          font-size: 11.5px;
+          font-weight: 400;
+        }
+        .config-admin-page .config-group-count.is-dirty,
+        .config-admin-page .set-nav .n.has-dirty { color: var(--warn); }
+        .config-admin-page .set-row.is-dirty { background: color-mix(in srgb, var(--warn-soft) 52%, var(--surface)); }
+        .config-admin-page .config-label-line {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          min-width: 0;
+        }
+        .config-admin-page .config-label-line > span:first-child {
+          min-width: 0;
+          overflow-wrap: anywhere;
+        }
+        .config-admin-page .config-dirty-tag {
+          flex: none;
+          border-radius: var(--r-sm);
+          color: var(--warn);
+          font-size: 11px;
+          font-weight: 600;
+        }
+        .config-admin-page .config-row-actions {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 10px;
+        }
+        .config-admin-page .set-link { display: inline-flex; align-items: center; gap: 4px; }
+        .config-admin-page .config-field-error { color: var(--danger); }
+        .config-admin-page input[aria-invalid="true"] { border-color: var(--danger); }
+        .config-admin-page .config-footer-title {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          width: 100%;
+        }
+        .config-admin-page .config-footer-title .adm-chip { margin-left: auto; }
+        .config-admin-page .config-footer-links {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          margin-top: 16px;
+        }
+        .config-admin-page .config-footer-link-row {
+          display: grid;
+          grid-template-columns: minmax(140px, 0.8fr) minmax(240px, 1.6fr) auto;
+          gap: 10px;
+          align-items: end;
+        }
+        .config-admin-page .config-remove-link { margin-bottom: 2px; }
+        .config-admin-page .config-add-footer-group { margin-top: 12px; }
+        .config-admin-page .config-footer-empty {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          margin-top: 18px;
+          padding: 18px;
+          border: 1px dashed var(--border-strong);
+          border-radius: var(--r-lg);
+          color: var(--text-faint);
+          font-size: 12.5px;
+          text-align: center;
+        }
+        .config-admin-page .config-footer-empty strong { color: var(--text); font-size: 13px; }
+        @media (max-width: 1100px) {
+          .config-admin-page .set-nav {
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            padding-bottom: 4px;
+          }
+          .config-admin-page .set-nav button { flex: none; min-width: 132px; }
+        }
+        @media (max-width: 720px) {
+          .config-admin-page .config-save-state { align-items: flex-start; flex-wrap: wrap; }
+          .config-admin-page .config-reset-button { margin-left: 29px; }
+          .config-admin-page .config-group-heading { align-items: flex-start; }
+          .config-admin-page .config-row-actions {
+            align-items: stretch;
+            flex-direction: column;
+            width: 100%;
+          }
+          .config-admin-page .config-row-actions .set-summary { white-space: normal; }
+          .config-admin-page .config-footer-link-row { grid-template-columns: 1fr; }
+          .config-admin-page .config-remove-link { justify-self: start; margin: 0; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .config-admin-page *, .config-admin-page *::before, .config-admin-page *::after {
+            scroll-behavior: auto !important;
+          }
+        }
+      `}</style>
     </div>
   );
 }

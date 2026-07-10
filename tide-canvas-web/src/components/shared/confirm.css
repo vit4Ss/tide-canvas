@@ -66,8 +66,15 @@
 .cfm-btn.pri:hover {
   background: #e8e8ea;
 }
+.cfm-btn.pri.danger {
+  background: #b91c1c;
+  color: #fff;
+}
+.cfm-btn.pri.danger:hover {
+  background: #991b1b;
+}
 
-/* ── 浅色变体（苹果后台 .admin-body 环境）：白卡 + 苹果蓝主按钮 ── */
+/* ── 浅色变体（后台 .admin-body 环境）：白卡 + 后台统一钴蓝 ── */
 .cfm-mask.light {
   background: rgba(0, 0, 0, 0.32);
 }
@@ -77,29 +84,35 @@
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.18);
 }
 .cfm-mask.light .cfm-t {
-  color: #1d1d1f;
+  color: #111113;
 }
 .cfm-mask.light .cfm-m {
-  color: #6e6e73;
+  color: #52525b;
 }
 .cfm-mask.light .cfm-btn {
   border-radius: 10px;
 }
 .cfm-mask.light .cfm-btn.ghost {
-  border-color: #d1d1d6;
-  color: #6e6e73;
+  border-color: #dedee3;
+  color: #52525b;
 }
 .cfm-mask.light .cfm-btn.ghost:hover {
-  color: #1d1d1f;
-  background: #f0f0f3;
-  border-color: #d1d1d6;
+  color: #18181b;
+  background: #f3f3f5;
+  border-color: #c9c9d1;
 }
 .cfm-mask.light .cfm-btn.pri {
-  background: #0071e3;
+  background: #3b5bdb;
   color: #fff;
 }
 .cfm-mask.light .cfm-btn.pri:hover {
-  background: #0063c6;
+  background: #344fc7;
+}
+.cfm-mask.light .cfm-btn.pri.danger {
+  background: #b91c1c;
+}
+.cfm-mask.light .cfm-btn.pri.danger:hover {
+  background: #991b1b;
 }
 
 @keyframes cfmFade {
@@ -111,5 +124,22 @@
   from {
     opacity: 0;
     transform: scale(0.97) translateY(4px);
+  }
+}
+
+@media (max-width: 520px) {
+  .cfm {
+    width: calc(100vw - 24px);
+    padding: 20px 18px 16px;
+  }
+  .cfm-acts .cfm-btn {
+    flex: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cfm-mask,
+  .cfm {
+    animation: none;
   }
 }

@@ -28,7 +28,7 @@ export interface RowActionsProps {
 
 export function RowActions({ actions }: RowActionsProps) {
   return (
-    <div className="rowacts">
+    <div className="rowacts" role="group" aria-label="行操作">
       {actions.map((a, i) => (
         <button
           key={a.label + i}

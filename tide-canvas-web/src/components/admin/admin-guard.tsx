@@ -48,37 +48,17 @@ export function AdminGuard({ children }: { children: React.ReactNode }) {
   if (state === "ok") return <>{children}</>;
 
   return (
-    <div
-      style={{
-        /* 此屏渲染在 .admin-body 之外，用字面量对齐 admin.css 定稿色板 */
-        minHeight: "100vh",
-        display: "grid",
-        placeItems: "center",
-        background: "#F5F5F7",
-        color: "#1D1D1F",
-        fontFamily: "var(--ui, system-ui, sans-serif)",
-      }}
-    >
+    <div className="adm-guard" role="status" aria-live="polite">
       {state === "denied" ? (
-        <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: 14, fontWeight: 600 }}>需要管理员权限</div>
-          <div style={{ marginTop: 6, fontSize: 13, color: "#6E6E73" }}>
+        <div className="adm-guard-message">
+          <strong>需要管理员权限</strong>
+          <span>
             当前账号无权访问后台，正在返回首页…
-          </div>
+          </span>
         </div>
       ) : (
-        <div
-          style={{
-            width: 28,
-            height: 28,
-            borderRadius: "50%",
-            border: "3px solid #E5E5EA",
-            borderTopColor: "#0071E3",
-            animation: "adminGuardSpin .7s linear infinite",
-          }}
-        />
+        <div className="adm-guard-spinner" aria-label="正在验证管理员权限" />
       )}
-      <style>{`@keyframes adminGuardSpin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
 }

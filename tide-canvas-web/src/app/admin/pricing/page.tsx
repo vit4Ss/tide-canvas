@@ -17,7 +17,10 @@
    ============================================================================ */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Plus, RefreshCw, Save, Star } from "lucide-react";
 import {
+  AdminAlert,
+  AdminEmptyState,
   AdminModal,
   AdminTable,
   Field,
@@ -30,6 +33,7 @@ import {
   TableSkeleton,
 } from "@/components/admin";
 import { toast } from "@/components/shared/toast";
+import { confirmDialog } from "@/components/shared/confirm";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminPricingApi } from "@/lib/admin-pricing-api";
 import type {
@@ -147,7 +151,8 @@ export default function AdminPricingPage() {
   );
 
   useEffect(() => {
-    load();
+    const frame = requestAnimationFrame(() => void load());
+    return () => cancelAnimationFrame(frame);
   }, [load]);
 
   /* ── KPIs derived from real data ─────────────────────────────────────── */
@@ -207,15 +212,20 @@ export default function AdminPricingPage() {
       // so carry the existing value through on edit.
       ...(editingPlan ? { code: editingPlan.code } : {}),
     };
-    const res = editingPlan
-      ? await adminPricingApi.updatePlan(editingPlan.id, dto)
-      : await adminPricingApi.createPlan(dto);
-    if (res.success) {
-      setPlanOpen(false);
-      load();
-    } else {
-      // 弹窗保持打开（return false），顶部 error 横幅被弹窗盖住，用 toast 提示
+    try {
+      const res = editingPlan
+        ? await adminPricingApi.updatePlan(editingPlan.id, dto)
+        : await adminPricingApi.createPlan(dto);
+      if (res.success) {
+        setPlanOpen(false);
+        load();
+        toast.success(editingPlan ? "套餐已更新" : "套餐已创建");
+        return true;
+      }
       toast.error(res.message || "保存套餐失败");
+      return false;
+    } catch {
+      toast.error("保存套餐失败，请稍后重试");
       return false;
     }
   };
@@ -233,14 +243,32 @@ export default function AdminPricingPage() {
       sortOrder: p.sortOrder,
       status: next ? 1 : 0,
     };
-    const res = await adminPricingApi.updatePlan(p.id, dto);
-    if (res.success) load({ silent: true });
-    else setError(res.message || "更新状态失败");
+    try {
+      const res = await adminPricingApi.updatePlan(p.id, dto);
+      if (res.success) load({ silent: true });
+      else toast.error(res.message || "套餐状态更新失败");
+    } catch {
+      toast.error("套餐状态更新失败，请稍后重试");
+    }
   };
   const deletePlan = async (p: AdminPlan) => {
-    const res = await adminPricingApi.deletePlan(p.id);
-    if (res.success) load();
-    else setError(res.message || "删除套餐失败");
+    if (
+      !(await confirmDialog({
+        title: "删除会员套餐",
+        message: `确认永久删除套餐「${p.name}」？该套餐会立即从公开定价页移除，已有订单记录不会被删除。`,
+        confirmText: "确认删除",
+      }))
+    )
+      return;
+    try {
+      const res = await adminPricingApi.deletePlan(p.id);
+      if (res.success) {
+        toast.success(`已删除套餐「${p.name}」`);
+        load();
+      } else toast.error(res.message || "删除套餐失败");
+    } catch {
+      toast.error("删除套餐失败，请稍后重试");
+    }
   };
 
   /* ── compare-table actions ───────────────────────────────────────────── */
@@ -274,18 +302,23 @@ export default function AdminPricingPage() {
     markCmpDirty();
   };
   const saveCompare = async () => {
+    if (cmpSaving) return;
     setCmpSaving(true);
     const rows = cmpRows
       .map((r) => ({ ...r, label: r.label.trim() }))
       .filter((r) => r.label);
-    const res = await adminPricingApi.saveCompare({ rows });
-    setCmpSaving(false);
-    if (res.success && res.data?.rows) {
-      setCmpRows(res.data.rows);
-      setCmpDirty(false);
-      cmpDirtyRef.current = false;
-    } else {
-      setError(res.message || "保存对比表失败");
+    try {
+      const res = await adminPricingApi.saveCompare({ rows });
+      if (res.success && res.data?.rows) {
+        setCmpRows(res.data.rows);
+        setCmpDirty(false);
+        cmpDirtyRef.current = false;
+        toast.success("方案对比表已保存");
+      } else toast.error(res.message || "保存对比表失败");
+    } catch {
+      toast.error("保存对比表失败，请稍后重试");
+    } finally {
+      setCmpSaving(false);
     }
   };
 
@@ -314,18 +347,23 @@ export default function AdminPricingPage() {
     markFaqDirty();
   };
   const saveFaq = async () => {
+    if (faqSaving) return;
     setFaqSaving(true);
     const items = faqItems
       .map((it) => ({ q: it.q.trim(), a: it.a.trim() }))
       .filter((it) => it.q);
-    const res = await adminPricingApi.saveFaq({ items });
-    setFaqSaving(false);
-    if (res.success && res.data?.items) {
-      setFaqItems(res.data.items);
-      setFaqDirty(false);
-      faqDirtyRef.current = false;
-    } else {
-      setError(res.message || "保存 FAQ 失败");
+    try {
+      const res = await adminPricingApi.saveFaq({ items });
+      if (res.success && res.data?.items) {
+        setFaqItems(res.data.items);
+        setFaqDirty(false);
+        faqDirtyRef.current = false;
+        toast.success("常见问题已保存");
+      } else toast.error(res.message || "保存常见问题失败");
+    } catch {
+      toast.error("保存常见问题失败，请稍后重试");
+    } finally {
+      setFaqSaving(false);
     }
   };
 
@@ -338,38 +376,49 @@ export default function AdminPricingPage() {
     const [moved] = next.splice(from, 1);
     next.splice(to, 0, moved);
     setPlans(next.map((p, i) => ({ ...p, sortOrder: i }))); // optimistic
-    const results = await Promise.all(
-      next.map((p, i) =>
-        p.sortOrder === i
-          ? Promise.resolve(null)
-          : adminPricingApi.updatePlan(p.id, {
-              name: p.name,
-              code: p.code,
-              desc: p.desc,
-              monthly: p.monthly,
-              yearly: p.yearly,
-              monthlyPoints: p.monthlyPoints,
-              featured: p.featured,
-              cta: p.cta,
-              items: p.items,
-              sortOrder: i,
-              status: p.status,
-            }),
-      ),
-    );
-    if (results.some((r) => r && !r.success)) setError("调整排序失败");
-    load({ silent: true }); // server truth（静默，别打断行移动动画）
+    try {
+      const results = await Promise.all(
+        next.map((p, i) =>
+          p.sortOrder === i
+            ? Promise.resolve(null)
+            : adminPricingApi.updatePlan(p.id, {
+                name: p.name,
+                code: p.code,
+                desc: p.desc,
+                monthly: p.monthly,
+                yearly: p.yearly,
+                monthlyPoints: p.monthlyPoints,
+                featured: p.featured,
+                cta: p.cta,
+                items: p.items,
+                sortOrder: i,
+                status: p.status,
+              }),
+        ),
+      );
+      if (results.some((r) => r && !r.success)) toast.error("套餐排序保存失败");
+    } catch {
+      toast.error("套餐排序保存失败，请稍后重试");
+    } finally {
+      load({ silent: true }); // server truth（静默，别打断行移动动画）
+    }
   };
 
   return (
-    <>
+    <div className="adm-page">
       {error ? (
-        <div className="adm-panel" style={{ padding: 16 }}>
-          <span className="tag2 red">
-            <i className="dot" />
-            {error}
-          </span>
-        </div>
+        <AdminAlert
+          tone="error"
+          title="定价数据加载失败"
+          action={
+            <button type="button" className="adm-btn ghost" onClick={() => load()}>
+              <RefreshCw aria-hidden size={14} />
+              重新加载
+            </button>
+          }
+        >
+          {error}
+        </AdminAlert>
       ) : null}
 
       {/* 套餐管理 */}
@@ -378,18 +427,27 @@ export default function AdminPricingPage() {
         sub={`会员套餐定价与权益 · ${planSummary} · 与公开定价同源`}
         tools={
           <button type="button" className="adm-btn" onClick={openCreatePlan}>
-            + 新增套餐
+            <Plus aria-hidden size={15} />
+            新增套餐
           </button>
         }
       >
         {loading ? (
           <TableSkeleton />
         ) : plans.length === 0 ? (
-          <div style={{ padding: 18 }} className="muted">
-            暂无套餐，点击「新增套餐」创建第一个会员套餐。
-          </div>
+          <AdminEmptyState
+            title="还没有会员套餐"
+            description="创建第一个套餐后，它会同步显示在公开定价页。"
+            action={
+              <button type="button" className="adm-btn" onClick={openCreatePlan}>
+                <Plus aria-hidden size={15} />
+                新增套餐
+              </button>
+            }
+          />
         ) : (
           <AdminTable<AdminPlan>
+            label="会员套餐列表"
             rows={plans}
             rowKey={(r) => r.id}
             columns={[
@@ -458,20 +516,23 @@ export default function AdminPricingPage() {
         tools={
           <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
             {cmpDirty && (
-              <span className="muted" style={{ fontSize: 12 }}>
+              <span className="muted" style={{ fontSize: 12 }} role="status" aria-live="polite">
                 有未保存的修改
               </span>
             )}
             <button type="button" className="adm-btn ghost" onClick={addCmpRow}>
-              + 添加行
+              <Plus aria-hidden size={14} />
+              添加能力
             </button>
             <button
               type="button"
               className="adm-btn"
               onClick={saveCompare}
               disabled={cmpSaving || !cmpDirty}
+              aria-busy={cmpSaving}
             >
-              {cmpSaving ? "保存中…" : "保存"}
+              {!cmpSaving ? <Save aria-hidden size={14} /> : null}
+              {cmpSaving ? "保存中…" : "保存对比表"}
             </button>
           </span>
         }
@@ -479,14 +540,17 @@ export default function AdminPricingPage() {
         {loading ? (
           <TableSkeleton />
         ) : (
-          <table className="adm-table cmp-edit">
+          <div className="adm-table-wrap" role="region" aria-label="方案对比表编辑器" tabIndex={0}>
+          <table className="adm-table cmp-edit" aria-label="方案对比表编辑器">
             <thead>
               <tr>
                 <th style={{ width: 180 }}>能力</th>
                 {plans.map((p) => (
                   <th key={p.id}>
-                    {p.name}
-                    {p.featured ? " ★" : ""}
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                      {p.name}
+                      {p.featured ? <Star aria-label="热门套餐" size={12} fill="currentColor" /> : null}
+                    </span>
                   </th>
                 ))}
                 <th style={{ width: 200, textAlign: "right" }}>操作</th>
@@ -495,8 +559,17 @@ export default function AdminPricingPage() {
             <tbody>
               {cmpRows.length === 0 && (
                 <tr>
-                  <td colSpan={plans.length + 2} className="muted">
-                    暂无对比行，点击「添加行」开始配置。
+                  <td colSpan={plans.length + 2}>
+                    <AdminEmptyState
+                      title="暂无对比项"
+                      description="添加公开定价页需要展示的能力或权益。"
+                      action={
+                        <button type="button" className="adm-btn ghost" onClick={addCmpRow}>
+                          <Plus aria-hidden size={14} />
+                          添加能力
+                        </button>
+                      }
+                    />
                   </td>
                 </tr>
               )}
@@ -507,6 +580,7 @@ export default function AdminPricingPage() {
                       value={r.label}
                       placeholder="如：每月积分"
                       onChange={(e) => updateCmpLabel(i, e.target.value)}
+                      aria-label={`第 ${i + 1} 行能力名称`}
                     />
                   </td>
                   {plans.map((p) => (
@@ -515,6 +589,7 @@ export default function AdminPricingPage() {
                         value={r.values?.[p.id] ?? ""}
                         placeholder="—"
                         onChange={(e) => updateCmpCell(i, p.id, e.target.value)}
+                        aria-label={`${r.label || `第 ${i + 1} 行`} · ${p.name}`}
                       />
                     </td>
                   ))}
@@ -525,7 +600,7 @@ export default function AdminPricingPage() {
                         ...(i < cmpRows.length - 1
                           ? [{ label: "下移", onClick: () => moveCmpRow(i, 1) }]
                           : []),
-                        { label: "删除", onClick: () => removeCmpRow(i) },
+                        { label: "移除", onClick: () => removeCmpRow(i) },
                       ]}
                     />
                   </td>
@@ -533,6 +608,7 @@ export default function AdminPricingPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </Panel>
 
@@ -543,20 +619,23 @@ export default function AdminPricingPage() {
         tools={
           <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
             {faqDirty && (
-              <span className="muted" style={{ fontSize: 12 }}>
+              <span className="muted" style={{ fontSize: 12 }} role="status" aria-live="polite">
                 有未保存的修改
               </span>
             )}
             <button type="button" className="adm-btn ghost" onClick={addFaq}>
-              + 添加问题
+              <Plus aria-hidden size={14} />
+              添加问题
             </button>
             <button
               type="button"
               className="adm-btn"
               onClick={saveFaq}
               disabled={faqSaving || !faqDirty}
+              aria-busy={faqSaving}
             >
-              {faqSaving ? "保存中…" : "保存"}
+              {!faqSaving ? <Save aria-hidden size={14} /> : null}
+              {faqSaving ? "保存中…" : "保存常见问题"}
             </button>
           </span>
         }
@@ -564,10 +643,11 @@ export default function AdminPricingPage() {
         {loading ? (
           <TableSkeleton />
         ) : (
-          <table className="adm-table cmp-edit">
+          <div className="adm-table-wrap" role="region" aria-label="常见问题编辑器" tabIndex={0}>
+          <table className="adm-table cmp-edit" aria-label="常见问题编辑器">
             <thead>
               <tr>
-                <th style={{ width: 40 }}>#</th>
+                <th style={{ width: 64 }}>序号</th>
                 <th style={{ width: 280 }}>问题</th>
                 <th>回答</th>
                 <th style={{ width: 200, textAlign: "right" }}>操作</th>
@@ -576,8 +656,17 @@ export default function AdminPricingPage() {
             <tbody>
               {faqItems.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="muted">
-                    暂无问题，点击「添加问题」开始配置。
+                  <td colSpan={4}>
+                    <AdminEmptyState
+                      title="暂无常见问题"
+                      description="添加用户在购买前最需要了解的信息。"
+                      action={
+                        <button type="button" className="adm-btn ghost" onClick={addFaq}>
+                          <Plus aria-hidden size={14} />
+                          添加问题
+                        </button>
+                      }
+                    />
                   </td>
                 </tr>
               )}
@@ -589,6 +678,7 @@ export default function AdminPricingPage() {
                       value={f.q}
                       placeholder="如：积分是怎么计算的？"
                       onChange={(e) => updateFaq(i, { q: e.target.value })}
+                      aria-label={`第 ${i + 1} 个问题`}
                     />
                   </td>
                   <td>
@@ -598,6 +688,7 @@ export default function AdminPricingPage() {
                       placeholder="回答内容"
                       rows={2}
                       onChange={(e) => updateFaq(i, { a: e.target.value })}
+                      aria-label={`第 ${i + 1} 个问题的回答`}
                     />
                   </td>
                   <td style={{ textAlign: "right" }}>
@@ -607,7 +698,7 @@ export default function AdminPricingPage() {
                         ...(i < faqItems.length - 1
                           ? [{ label: "下移", onClick: () => moveFaq(i, 1) }]
                           : []),
-                        { label: "删除", onClick: () => removeFaq(i) },
+                        { label: "移除", onClick: () => removeFaq(i) },
                       ]}
                     />
                   </td>
@@ -615,14 +706,18 @@ export default function AdminPricingPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </Panel>
 
       {/* 新增 / 编辑套餐 modal */}
       <AdminModal
         open={planOpen}
+        size="lg"
         title={editingPlan ? "编辑套餐" : "新增套餐"}
         subtitle="配置会员套餐的定价、积分与权益（保存后同步公开定价）"
+        footNote="保存后立即同步公开定价页；已产生的订单金额不会重算"
+        saveLabel="保存套餐"
         onClose={() => setPlanOpen(false)}
         onSave={savePlan}
       >
@@ -704,6 +799,6 @@ export default function AdminPricingPage() {
           </FormGrid>
         </FormCard>
       </AdminModal>
-    </>
+    </div>
   );
 }

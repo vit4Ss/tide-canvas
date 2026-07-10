@@ -20,7 +20,10 @@
    ============================================================================ */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { GripVertical, Plus, RefreshCw, Save } from "lucide-react";
 import {
+  AdminAlert,
+  AdminEmptyState,
   AdminModal,
   Field,
   FormCard,
@@ -94,17 +97,27 @@ export default function AdminHomeFloorsPage() {
   }, [ensureSession]);
 
   useEffect(() => {
-    load();
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
   }, [load]);
 
-  const openNew = () => setModal({ floor: null });
-  const openEdit = (floor: HomeFloorVO) => setModal({ floor });
+  const openNew = () => {
+    setError(null);
+    setModal({ floor: null });
+  };
+  const openEdit = (floor: HomeFloorVO) => {
+    setError(null);
+    setModal({ floor });
+  };
   const close = () => setModal(null);
 
   const toggleEnabled = async (floor: HomeFloorVO, next: boolean) => {
     const res = await adminHomeFloorsApi.update(floor.id, { enabled: next });
     if (res.success) load();
-    else load();
+    else {
+      toast.error(res.message || "更新楼层状态失败");
+      load();
+    }
   };
 
   const removeFloor = async (floor: HomeFloorVO) => {
@@ -126,7 +139,10 @@ export default function AdminHomeFloorsPage() {
     async (next: HomeFloorVO[]) => {
       setFloors(next); // optimistic
       const res = await adminHomeFloorsApi.reorder({ ids: next.map((f) => f.id) });
-      if (!res.success) load(); // revert from server truth
+      if (!res.success) {
+        toast.error(res.message || "保存楼层顺序失败");
+        load(); // revert from server truth
+      }
     },
     [load],
   );
@@ -166,14 +182,15 @@ export default function AdminHomeFloorsPage() {
   const f = modal?.floor ?? null;
 
   return (
-    <>
+    <div className="adm-page">
       {/* 首页楼层管理 */}
       <Panel
-        title="首页楼层管理"
-        sub="启用与排序即刻作用于公开首页（内置 7 类楼层与首页区块一一对应；作品流的「数量」控制展示条数）"
+        title="楼层编排"
+        sub={`共 ${floors.length} 个楼层 · 启用、排序与内容源会同步到公开首页`}
         tools={
           <button type="button" className="adm-btn" onClick={openNew}>
-            + 新增楼层
+            <Plus aria-hidden size={15} />
+            新增楼层
           </button>
         }
       >
@@ -181,86 +198,102 @@ export default function AdminHomeFloorsPage() {
           {loading ? (
             <ListSkeleton rows={5} height={64} />
           ) : error ? (
-            <div className="muted" style={{ padding: "24px 0", textAlign: "center" }}>
-              {error}
-              <div style={{ marginTop: 12 }}>
+            <AdminAlert
+              tone="error"
+              title="首页楼层加载失败"
+              action={
                 <button type="button" className="adm-btn ghost" onClick={load}>
-                  重试
+                  <RefreshCw aria-hidden size={15} />
+                  重新加载
                 </button>
-              </div>
-            </div>
+              }
+            >
+              {error}
+            </AdminAlert>
           ) : floors.length === 0 ? (
-            <div className="muted" style={{ padding: "24px 0", textAlign: "center" }}>
-              暂无楼层，点击「新增楼层」添加。
-            </div>
+            <AdminEmptyState
+              title="首页还没有内容楼层"
+              description="新建第一个楼层后，可继续调整展示顺序与内容来源。"
+              action={
+                <button type="button" className="adm-btn" onClick={openNew}>
+                  <Plus aria-hidden size={15} />
+                  新增楼层
+                </button>
+              }
+            />
           ) : (
-            floors.map((floor, i) => (
-              <div
-                className={`floor${dragIx === i ? " dragging" : ""}${
-                  overIx === i && dragIx != null && dragIx !== i ? " drop-hint" : ""
-                }`}
-                data-floor={floor.name}
-                key={floor.id}
-                draggable
-                onDragStart={(e) => {
-                  if (!dragFromHandle.current) {
-                    e.preventDefault(); // 只认手柄起拖，避免误拖行内按钮/开关
-                    return;
-                  }
-                  setDragIx(i);
-                  e.dataTransfer.effectAllowed = "move";
-                }}
-                onDragOver={(e) => {
-                  if (dragIx == null) return;
-                  e.preventDefault();
-                  setOverIx(i);
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  dropTo(i);
-                }}
-                onDragEnd={endDrag}
-              >
-                <span
-                  className="grab"
-                  onMouseDown={() => {
-                    dragFromHandle.current = true;
+            <div role="list" aria-label="首页楼层排序">
+              {floors.map((floor, i) => (
+                <div
+                  className={`floor${dragIx === i ? " dragging" : ""}${
+                    overIx === i && dragIx != null && dragIx !== i ? " drop-hint" : ""
+                  }`}
+                  data-floor={floor.name}
+                  key={floor.id}
+                  role="listitem"
+                  draggable
+                  onDragStart={(e) => {
+                    if (!dragFromHandle.current) {
+                      e.preventDefault(); // 只认手柄起拖，避免误拖行内按钮/开关
+                      return;
+                    }
+                    setDragIx(i);
+                    e.dataTransfer.effectAllowed = "move";
                   }}
-                  aria-label={`拖动调整 ${floor.name} 顺序`}
+                  onDragOver={(e) => {
+                    if (dragIx == null) return;
+                    e.preventDefault();
+                    setOverIx(i);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    dropTo(i);
+                  }}
+                  onDragEnd={endDrag}
                 >
-                  ⋮⋮
-                </span>
-                <span className="ix">{i + 1}</span>
-                <div>
-                  <div className="nm">{floor.name}</div>
-                  <div className="meta">{floor.subtitle || floor.type}</div>
-                </div>
-                <div className="sp" />
-                <SwitchToggle
-                  checked={floor.enabled}
-                  onChange={(next) => toggleEnabled(floor, next)}
-                  aria-label={`${floor.name} 启用`}
-                />
-                <div className="rowacts">
-                  <button type="button" disabled={i === 0} onClick={() => move(i, -1)}>
-                    上移
-                  </button>
                   <button
                     type="button"
-                    disabled={i === floors.length - 1}
-                    onClick={() => move(i, 1)}
+                    className="grab"
+                    onMouseDown={() => {
+                      dragFromHandle.current = true;
+                    }}
+                    aria-label={`拖动调整 ${floor.name} 顺序`}
+                    title="拖动调整顺序"
                   >
-                    下移
+                    <GripVertical aria-hidden size={16} />
                   </button>
-                  <button type="button" onClick={() => openEdit(floor)}>
-                    编辑
-                  </button>
-                  <button type="button" className="danger" onClick={() => removeFloor(floor)}>
-                    删除
-                  </button>
+                  <span className="ix">{i + 1}</span>
+                  <div>
+                    <div className="nm">{floor.name}</div>
+                    <div className="meta">{floor.subtitle || floor.type}</div>
+                  </div>
+                  <div className="sp" />
+                  <SwitchToggle
+                    checked={floor.enabled}
+                    onChange={(next) => toggleEnabled(floor, next)}
+                    aria-label={`${floor.name} 启用`}
+                  />
+                  <div className="rowacts">
+                    <button type="button" disabled={i === 0} onClick={() => move(i, -1)}>
+                      上移
+                    </button>
+                    <button
+                      type="button"
+                      disabled={i === floors.length - 1}
+                      onClick={() => move(i, 1)}
+                    >
+                      下移
+                    </button>
+                    <button type="button" onClick={() => openEdit(floor)}>
+                      编辑
+                    </button>
+                    <button type="button" className="danger" onClick={() => removeFloor(floor)}>
+                      删除
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))
+              ))}
+            </div>
           )}
         </div>
       </Panel>
@@ -275,7 +308,7 @@ export default function AdminHomeFloorsPage() {
           load();
         }} />
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -360,7 +393,8 @@ function GlobalConfigPanel() {
   }, [ensureSession]);
 
   useEffect(() => {
-    load();
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
   }, [load]);
 
   const dirty = form != null && JSON.stringify(form) !== snapshot;
@@ -419,7 +453,7 @@ function GlobalConfigPanel() {
   return (
     <Panel
       title="楼层全局配置"
-      sub="背景流光与首屏 CTA，保存后作用于公开首页"
+      sub="设置首页背景效果与首屏主按钮，保存后刷新首页即可查看"
       tools={
         <button
           type="button"
@@ -427,6 +461,7 @@ function GlobalConfigPanel() {
           disabled={!dirty || saving}
           onClick={save}
         >
+          {!saving ? <Save aria-hidden size={15} /> : null}
           {saving ? "保存中…" : "保存"}
         </button>
       }
@@ -434,14 +469,18 @@ function GlobalConfigPanel() {
       <div style={{ padding: "16px 18px" }}>
         {form == null ? (
           loadError ? (
-            <div className="muted" style={{ padding: "24px 0", textAlign: "center" }}>
-              {loadError}
-              <div style={{ marginTop: 12 }}>
+            <AdminAlert
+              tone="error"
+              title="全局配置加载失败"
+              action={
                 <button type="button" className="adm-btn ghost" onClick={load}>
-                  重试
+                  <RefreshCw aria-hidden size={15} />
+                  重新加载
                 </button>
-              </div>
-            </div>
+              }
+            >
+              {loadError}
+            </AdminAlert>
           ) : (
             <ListSkeleton rows={2} height={64} />
           )
@@ -591,16 +630,22 @@ function FloorModal({
   return (
     <AdminModal
       open
+      size="lg"
       title={floor ? `编辑楼层 · ${floor.name}` : "新增楼层"}
       subtitle={floor ? "调整该楼层的展示与内容源" : "新增一个首页楼层"}
       saveLabel={saving ? "保存中…" : "保存"}
-      footNote={err ?? "变更将在保存后生效"}
+      footNote={err ? <span role="alert">{err}</span> : "变更将在保存后生效"}
       onClose={onClose}
       onSave={save}
     >
       <FormCard title="楼层信息">
         <FormGrid>
-          <Field label="楼层名称" required span={2}>
+          <Field
+            label="楼层名称"
+            required
+            span={2}
+            error={err === "请填写楼层名称" ? err : undefined}
+          >
             <input placeholder="如：本周精选" value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
           <Field label="楼层类型" span={2}>
@@ -615,11 +660,13 @@ function FloorModal({
           </Field>
           {isWorksFloor ? (
             <Field
+              group
               label="内容源"
               span={2}
               hint="可多选，按选择顺序合并去重（如：实时热度 + 最新发布）"
             >
               <MChips
+                label="内容源"
                 options={SOURCE_LABELS}
                 selected={sourceLabels}
                 onChange={setSourceLabels}
@@ -633,7 +680,7 @@ function FloorModal({
             <input value={sortOrder} onChange={(e) => setSortOrder(e.target.value)} inputMode="numeric" />
           </Field>
         </FormGrid>
-        <FormSection label="选项">
+        <FormSection label="楼层状态">
           <div className="cfg-card flat">
             <div className="cfg-row">
               <span className="lab">启用楼层</span>

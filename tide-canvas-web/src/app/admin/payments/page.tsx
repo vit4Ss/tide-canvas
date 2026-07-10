@@ -13,8 +13,11 @@
    KEEPS the exact liuguang markup/classes + shared components. Mock import dropped.
    ============================================================================ */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Plus, RefreshCw, Search, X } from "lucide-react";
 import {
+  AdminAlert,
+  AdminEmptyState,
   AdminModal,
   AdminTable,
   Field,
@@ -107,6 +110,7 @@ export default function AdminPaymentsPage() {
   // 订单搜索:query = 输入框实时值,keyword = 已提交的检索词(回车/按钮提交)
   const [orderQuery, setOrderQuery] = useState("");
   const [orderKeyword, setOrderKeyword] = useState("");
+  const orderKeywordRef = useRef("");
 
   // channel modal
   const [chOpen, setChOpen] = useState(false);
@@ -114,35 +118,53 @@ export default function AdminPaymentsPage() {
   const [chForm, setChForm] = useState<ChannelForm>(emptyChannelForm());
 
   const loadChannels = useCallback(async () => {
-    const res = await adminPaymentsApi.listChannels();
-    if (res.success && res.data) setChannels(res.data);
-    else setError(res.message || "加载支付渠道失败");
+    try {
+      const res = await adminPaymentsApi.listChannels();
+      if (res.success && res.data) setChannels(res.data);
+      else setError(res.message || "加载支付渠道失败");
+    } catch {
+      setError("加载支付渠道失败，请稍后重试");
+    }
   }, []);
 
   const loadOrders = useCallback(
-    async (page: number, keyword: string = orderKeyword) => {
+    async (page: number, keyword: string = orderKeywordRef.current) => {
       setOrdersLoading(true);
-      const res = await adminPaymentsApi.listOrders({
-        pageNum: page,
-        pageSize: ORDER_PAGE_SIZE,
-        keyword: keyword.trim() || undefined,
-      });
-      if (res.success && res.data) {
-        setOrders(res.data.records);
-        setOrderTotal(res.data.total);
-        setOrderPage(res.data.pageNum);
-      } else {
-        setError(res.message || "加载交易失败");
+      try {
+        const res = await adminPaymentsApi.listOrders({
+          pageNum: page,
+          pageSize: ORDER_PAGE_SIZE,
+          keyword: keyword.trim() || undefined,
+        });
+        if (res.success && res.data) {
+          setOrders(res.data.records);
+          setOrderTotal(res.data.total);
+          setOrderPage(res.data.pageNum);
+        } else {
+          setError(res.message || "加载交易失败");
+        }
+      } catch {
+        setError("加载交易失败，请稍后重试");
+      } finally {
+        setOrdersLoading(false);
       }
-      setOrdersLoading(false);
     },
-    [orderKeyword],
+    [],
   );
 
   // 提交搜索:记住检索词并回到第 1 页。
   const searchOrders = () => {
-    setOrderKeyword(orderQuery);
-    loadOrders(1, orderQuery);
+    const keyword = orderQuery.trim();
+    orderKeywordRef.current = keyword;
+    setOrderKeyword(keyword);
+    loadOrders(1, keyword);
+  };
+
+  const clearOrderSearch = () => {
+    orderKeywordRef.current = "";
+    setOrderQuery("");
+    setOrderKeyword("");
+    loadOrders(1, "");
   };
 
   const loadAll = useCallback(async () => {
@@ -159,7 +181,8 @@ export default function AdminPaymentsPage() {
   }, [ensureSession, loadChannels, loadOrders]);
 
   useEffect(() => {
-    loadAll();
+    const frame = requestAnimationFrame(() => void loadAll());
+    return () => cancelAnimationFrame(frame);
   }, [loadAll]);
 
   /* ── KPIs derived from real data ─────────────────────────────────────── */
@@ -226,29 +249,48 @@ export default function AdminPaymentsPage() {
       sortOrder: c.sortOrder,
       enabled: next,
     };
-    const res = await adminPaymentsApi.updateChannel(c.id, dto);
-    if (res.success) loadChannels();
-    else setError(res.message || "更新状态失败");
+    try {
+      const res = await adminPaymentsApi.updateChannel(c.id, dto);
+      if (!res.success) toast.error(res.message || "渠道状态更新失败");
+    } catch {
+      toast.error("渠道状态更新失败，请稍后重试");
+    } finally {
+      loadChannels();
+    }
   };
   const deleteCh = async (c: AdminPayChannel) => {
-    const res = await adminPaymentsApi.deleteChannel(c.id);
-    if (res.success) loadChannels();
-    else setError(res.message || "删除渠道失败");
+    if (
+      !(await confirmDialog({
+        title: "删除支付渠道",
+        message: `确认永久删除渠道「${c.name}」？删除后该渠道将无法继续发起新支付，已有订单记录不会受影响。`,
+        confirmText: "确认删除",
+      }))
+    )
+      return;
+    try {
+      const res = await adminPaymentsApi.deleteChannel(c.id);
+      if (res.success) {
+        toast.success(`已删除支付渠道「${c.name}」`);
+        loadChannels();
+      } else toast.error(res.message || "删除渠道失败");
+    } catch {
+      toast.error("删除渠道失败，请稍后重试");
+    }
   };
 
   /* ── order refund(账务标记 + 积分回收;二次确认)──────────────────── */
   const refundOrder = async (o: AdminOrder) => {
     if (
       !(await confirmDialog({
-        title: "订单退款",
+        title: "确认账务退款",
         message: `确定将订单「${o.orderNo}」标记为已退款？将按结算流水回收该订单授予的积分（余额不足收至 0）。渠道侧的原路退回需在支付渠道后台另行操作。`,
-        confirmText: "退款",
+        confirmText: "确认账务退款",
       }))
     )
       return;
     const res = await adminPaymentsApi.refundOrder(o.id);
     if (res.success) {
-      toast.success("已标记退款并回收积分");
+      toast.success("账务退款已完成；渠道原路退款仍需另行处理");
       loadOrders(orderPage);
     } else {
       toast.error(res.message || "退款失败");
@@ -260,9 +302,18 @@ export default function AdminPaymentsPage() {
       <StatCardGrid items={kpis} />
 
       {error ? (
-        <div className="adm-panel">
-          <p style={{ padding: "12px 18px", color: "var(--danger)", margin: 0 }}>{error}</p>
-        </div>
+        <AdminAlert
+          tone="error"
+          title="支付数据加载失败"
+          action={
+            <button type="button" className="adm-btn ghost" onClick={loadAll}>
+              <RefreshCw aria-hidden size={14} />
+              重新加载
+            </button>
+          }
+        >
+          {error}
+        </AdminAlert>
       ) : null}
 
       {/* 支付渠道 */}
@@ -271,18 +322,27 @@ export default function AdminPaymentsPage() {
         sub="渠道开关、费率与回调"
         tools={
           <button type="button" className="adm-btn" onClick={openCreateCh}>
-            + 接入渠道
+            <Plus aria-hidden size={15} />
+            接入渠道
           </button>
         }
       >
         {loading ? (
           <TableSkeleton />
         ) : channels.length === 0 ? (
-          <div style={{ padding: 18 }} className="muted">
-            暂无支付渠道，点击「接入渠道」添加。
-          </div>
+          <AdminEmptyState
+            title="暂无支付渠道"
+            description="接入支付渠道并配置回调后，用户才能完成在线付款。"
+            action={
+              <button type="button" className="adm-btn" onClick={openCreateCh}>
+                <Plus aria-hidden size={15} />
+                接入渠道
+              </button>
+            }
+          />
         ) : (
           <AdminTable<AdminPayChannel>
+            label="支付渠道列表"
             rows={channels}
             rowKey={(r) => r.id}
             columns={[
@@ -338,41 +398,66 @@ export default function AdminPaymentsPage() {
         title="最近交易"
         sub="全部用户的真实订单流水"
         tools={
-          <>
+          <form
+            role="search"
+            onSubmit={(e) => {
+              e.preventDefault();
+              searchOrders();
+            }}
+            style={{ display: "flex", alignItems: "center", gap: 8 }}
+          >
             <div className="adm-search" style={{ margin: 0 }}>
-              <span className="muted">⌕</span>
+              <Search aria-hidden size={15} />
               <input
                 placeholder="订单号 / 交易号"
+                aria-label="搜索订单号或交易号"
                 value={orderQuery}
                 onChange={(e) => setOrderQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") searchOrders();
-                }}
               />
             </div>
-            <button type="button" className="adm-btn ghost" onClick={searchOrders}>
-              搜索
+            <button type="submit" className="adm-btn ghost" disabled={ordersLoading}>
+              {ordersLoading ? "搜索中…" : "搜索"}
             </button>
+            {orderKeyword ? (
+              <button type="button" className="adm-btn ghost" onClick={clearOrderSearch} disabled={ordersLoading}>
+                <X aria-hidden size={14} />
+                清除
+              </button>
+            ) : null}
             <button
               type="button"
               className="adm-btn ghost"
               onClick={() => loadOrders(orderPage)}
               disabled={ordersLoading}
+              aria-busy={ordersLoading}
             >
-              刷新
+              <RefreshCw className={ordersLoading ? "adm-spin" : undefined} aria-hidden size={14} />
+              {ordersLoading ? "刷新中…" : "刷新"}
             </button>
-          </>
+          </form>
         }
       >
         {loading || ordersLoading ? (
           <TableSkeleton />
         ) : orders.length === 0 ? (
-          <div style={{ padding: 18 }} className="muted">
-            {orderKeyword ? `没有匹配「${orderKeyword}」的订单。` : "暂无交易记录。"}
-          </div>
+          <AdminEmptyState
+            title={orderKeyword ? "未找到匹配订单" : "暂无交易记录"}
+            description={
+              orderKeyword ? `没有匹配「${orderKeyword}」的订单号或交易号。` : "用户完成付款后，订单会显示在这里。"
+            }
+            action={
+              orderKeyword ? (
+                <button type="button" className="adm-btn ghost" onClick={clearOrderSearch}>
+                  <X aria-hidden size={14} />
+                  清除搜索
+                </button>
+              ) : undefined
+            }
+          />
         ) : (
           <>
             <AdminTable<AdminOrder>
+              label="交易订单列表"
               rows={orders}
               rowKey={(r) => r.id}
               columns={[
@@ -420,7 +505,7 @@ export default function AdminPaymentsPage() {
                   // 仅已支付订单可退款;其余状态无操作。
                   cell: (r) =>
                     r.status === 1 ? (
-                      <RowActions actions={[{ label: "退款", onClick: () => refundOrder(r) }]} />
+                      <RowActions actions={[{ label: "账务退款", danger: true, onClick: () => refundOrder(r) }]} />
                     ) : (
                       <span className="muted">—</span>
                     ),
@@ -440,8 +525,11 @@ export default function AdminPaymentsPage() {
       {/* 接入 / 配置渠道 modal */}
       <AdminModal
         open={chOpen}
+        size="md"
         title={editingCh ? "配置渠道" : "接入渠道"}
         subtitle="配置支付渠道的费率、回调与开关"
+        footNote="渠道配置保存后立即用于新支付请求；请先验证回调地址可用"
+        saveLabel="保存渠道"
         onClose={() => setChOpen(false)}
         onSave={saveCh}
       >
@@ -469,7 +557,7 @@ export default function AdminPaymentsPage() {
                 onChange={(e) => setChForm((f) => ({ ...f, rate: e.target.value }))}
               />
             </Field>
-            <Field label="回调地址" span={2}>
+            <Field label="回调地址" span={4} hint="用于接收支付结果通知，请填写可公开访问的 HTTPS 地址">
               <input
                 placeholder="https://api.example.com/pay/callback"
                 value={chForm.callback}

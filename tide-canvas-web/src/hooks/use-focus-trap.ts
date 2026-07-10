@@ -22,8 +22,12 @@ export function useFocusTrap<T extends HTMLElement = HTMLDivElement>(active: boo
         ),
       ).filter((el) => el.offsetParent !== null);
 
-    // 初始焦点：容器内第一个可聚焦元素；没有则聚焦容器本身。
-    const first0 = focusables()[0];
+    // 初始焦点：优先显式 autofocus / 表单控件；否则取第一个可聚焦元素。
+    // 这样表单弹窗不会先落到右上角关闭按钮，危险确认框仍可用 autoFocus 指向取消。
+    const preferred = container.querySelector<HTMLElement>(
+      '[autofocus],[data-autofocus],input:not([disabled]),select:not([disabled]),textarea:not([disabled])',
+    );
+    const first0 = preferred && preferred.offsetParent !== null ? preferred : focusables()[0];
     if (first0) first0.focus();
     else container.focus();
 

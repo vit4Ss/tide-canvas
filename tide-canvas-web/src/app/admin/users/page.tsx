@@ -19,9 +19,12 @@
    / FormGrid components. Loading + empty states included. No @/mock imports.
    ============================================================================ */
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { Plus, RefreshCw, Search } from "lucide-react";
 import {
+  AdminAlert,
+  AdminEmptyState,
   AdminModal,
   AdminTable,
   Field,
@@ -170,9 +173,12 @@ function AdminUsersPageInner() {
   // 顶栏全局搜索跳转 /admin/users?keyword=xxx 时应用该关键词；依赖 urlKeyword 使其
   // 在已停留本页时再次搜索(router.push 改变 query)也能实时生效。
   useEffect(() => {
-    setQuery(urlKeyword);
-    setKeyword(urlKeyword);
-    setPageNum(1);
+    const timer = window.setTimeout(() => {
+      setQuery(urlKeyword);
+      setKeyword(urlKeyword);
+      setPageNum(1);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [urlKeyword]);
 
   // reqId 守卫:切筛选会触发「旧 pageNum」+「setPageNum(1)」两次请求,只让最新一次生效,
@@ -227,15 +233,18 @@ function AdminUsersPageInner() {
   }, [ensureSession]);
 
   useEffect(() => {
-    loadUsers();
+    const timer = window.setTimeout(() => void loadUsers(), 0);
+    return () => window.clearTimeout(timer);
   }, [loadUsers]);
   useEffect(() => {
-    loadRoles();
+    const timer = window.setTimeout(() => void loadRoles(), 0);
+    return () => window.clearTimeout(timer);
   }, [loadRoles]);
 
   // reset to page 1 when filter/keyword changes
   useEffect(() => {
-    setPageNum(1);
+    const timer = window.setTimeout(() => setPageNum(1), 0);
+    return () => window.clearTimeout(timer);
   }, [filter, keyword]);
 
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -243,6 +252,7 @@ function AdminUsersPageInner() {
   /* ---- user actions -------------------------------------------------------- */
 
   function openEdit(u: AdminUserVO) {
+    setError(null);
     setEditUser(u);
     setEditForm({
       nickname: u.nickname,
@@ -291,6 +301,7 @@ function AdminUsersPageInner() {
   }
 
   function openPoints(u: AdminUserVO) {
+    setError(null);
     setPointsUser(u);
     setPointsAmount("");
     setPointsRemark("");
@@ -327,12 +338,14 @@ function AdminUsersPageInner() {
   /* ---- role actions -------------------------------------------------------- */
 
   function openCreateRole() {
+    setError(null);
     setEditingRole(null);
     setRoleForm(EMPTY_ROLE_FORM);
     setRoleModalOpen(true);
   }
 
   function openEditRole(r: RoleVO) {
+    setError(null);
     setEditingRole(r);
     setRoleForm({
       name: r.name,
@@ -397,7 +410,7 @@ function AdminUsersPageInner() {
   const userColumns: Column<AdminUserVO>[] = [
     {
       header: "用户",
-      width: "19%",
+      width: "18%",
       cell: (u) => (
         <div className="cellflex">
           <span
@@ -447,7 +460,7 @@ function AdminUsersPageInner() {
     },
     { header: "作品 / 项目", width: "8%", className: "mono", cell: (u) => `${fmtNum(u.postCount)} / ${fmtNum(u.projectCount)}` },
     { header: "注册时间", width: "11%", className: "muted", cell: (u) => fmtTime(u.createTime) },
-    { header: "最近登录", width: "11%", className: "muted", cell: (u) => fmtTime(u.lastLoginTime) },
+    { header: "最近登录", width: "10%", className: "muted", cell: (u) => fmtTime(u.lastLoginTime) },
     {
       header: "状态",
       width: "7%",
@@ -459,7 +472,7 @@ function AdminUsersPageInner() {
     },
     {
       header: "操作",
-      width: "12%",
+      width: "14%",
       align: "right",
       cell: (u) => (
         <RowActions
@@ -514,9 +527,18 @@ function AdminUsersPageInner() {
   return (
     <div className="adm-page">
       {error ? (
-        <div className="adm-panel">
-          <p style={{ padding: "12px 18px", color: "var(--danger)", margin: 0 }}>{error}</p>
-        </div>
+        <AdminAlert
+          tone="error"
+          title="操作未完成"
+          action={
+            <button type="button" className="adm-btn ghost" onClick={loadUsers}>
+              <RefreshCw aria-hidden size={15} />
+              重新加载用户
+            </button>
+          }
+        >
+          {error}
+        </AdminAlert>
       ) : null}
 
       <Panel
@@ -524,9 +546,10 @@ function AdminUsersPageInner() {
         sub={`共 ${fmtNum(total)} 人 · 角色 ${fmtNum(roles.length)} · 第 ${pageNum}/${pageCount} 页`}
         tools={
           <>
-            <div className="adm-search" style={{ margin: 0 }}>
-              <span className="muted">⌕</span>
+            <div className="adm-search" role="search">
+              <Search aria-hidden size={15} />
               <input
+                aria-label="搜索用户"
                 placeholder="邮箱 / 昵称 / 手机"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -543,6 +566,7 @@ function AdminUsersPageInner() {
       >
         <div className="adm-tools" style={{ padding: "14px 20px 6px" }}>
           <FilterChips
+            label="用户类型"
             options={FILTERS.map((f) => f.label)}
             value={FILTERS.find((f) => f.key === filter)?.label}
             onChange={(_, i) => setFilter(FILTERS[i].key)}
@@ -552,12 +576,29 @@ function AdminUsersPageInner() {
         {loading ? (
           <TableSkeleton />
         ) : rows.length === 0 ? (
-          <p style={{ padding: 24, color: "var(--text-faint)" }}>没有符合条件的用户</p>
+          <AdminEmptyState
+            title="没有符合条件的用户"
+            description="尝试更换用户类型，或清除搜索关键词后重新查询。"
+            action={filter !== "all" || keyword ? (
+              <button
+                type="button"
+                className="adm-btn ghost"
+                onClick={() => {
+                  setFilter("all");
+                  setQuery("");
+                  setKeyword("");
+                }}
+              >
+                清除筛选
+              </button>
+            ) : undefined}
+          />
         ) : (
           <AdminTable<AdminUserVO>
             rows={rows}
             rowKey={(u) => u.id}
             columns={userColumns}
+            label="用户列表"
             server={{ page: pageNum, pageSize: PAGE_SIZE, total, onPage: setPageNum }}
           />
         )}
@@ -568,25 +609,38 @@ function AdminUsersPageInner() {
         sub="后台权限角色（sys_role）"
         tools={
           <button type="button" className="adm-btn" onClick={openCreateRole}>
-            + 新建角色
+            <Plus aria-hidden size={15} />
+            新建角色
           </button>
         }
       >
         {rolesLoading ? (
           <TableSkeleton />
         ) : roles.length === 0 ? (
-          <p style={{ padding: 24, color: "var(--text-faint)" }}>暂无角色，点击「新建角色」创建。</p>
+          <AdminEmptyState
+            title="尚未创建自定义角色"
+            description="创建角色后，可为后台运营人员配置清晰的权限边界。"
+            action={
+              <button type="button" className="adm-btn" onClick={openCreateRole}>
+                <Plus aria-hidden size={15} />
+                新建角色
+              </button>
+            }
+          />
         ) : (
-          <AdminTable<RoleVO> rows={roles} rowKey={(r) => r.id} columns={roleColumns} />
+          <AdminTable<RoleVO> rows={roles} rowKey={(r) => r.id} columns={roleColumns} label="角色列表" />
         )}
       </Panel>
 
       {/* 用户编辑 */}
       <AdminModal
         open={editUser != null && editForm != null}
+        size="lg"
         title="编辑用户"
         subtitle={editUser ? editUser.email || editUser.username : ""}
+        footNote={error ? <span role="alert">{error}</span> : "谨慎修改角色、余额与账号状态"}
         onClose={() => {
+          setError(null);
           setEditUser(null);
           setEditForm(null);
         }}
@@ -650,15 +704,26 @@ function AdminUsersPageInner() {
       {/* 积分调整 */}
       <AdminModal
         open={pointsUser != null}
+        size="sm"
         title="积分调整"
         subtitle={pointsUser ? `${pointsUser.nickname || pointsUser.username} · 当前 ${fmtNum(pointsUser.points)}` : ""}
-        onClose={() => setPointsUser(null)}
+        footNote={error ? <span role="alert">{error}</span> : "提交后将写入积分流水"}
+        onClose={() => {
+          setError(null);
+          setPointsUser(null);
+        }}
         saveLabel={savingPoints ? "提交中…" : "提交"}
         onSave={savePoints}
       >
         <FormCard title="变动信息">
           <FormGrid>
-            <Field label="变动值" span={2} required hint="正数赠送，负数扣减；余额最低为 0">
+            <Field
+              label="变动值"
+              span={2}
+              required
+              hint="正数赠送，负数扣减；余额最低为 0"
+              error={error === "请输入非零的积分变动值" ? error : undefined}
+            >
               <input
                 type="number"
                 placeholder="如 100 或 -50"
@@ -676,15 +741,25 @@ function AdminUsersPageInner() {
       {/* 角色 新建 / 编辑 */}
       <AdminModal
         open={roleModalOpen}
+        size="md"
         title={editingRole ? "编辑角色" : "新建角色"}
         subtitle={editingRole ? editingRole.name : "定义一组后台权限"}
-        onClose={() => setRoleModalOpen(false)}
+        footNote={error ? <span role="alert">{error}</span> : "权限变更将在保存后生效"}
+        onClose={() => {
+          setError(null);
+          setRoleModalOpen(false);
+        }}
         saveLabel={savingRole ? "保存中…" : "保存"}
         onSave={saveRole}
       >
         <FormCard title="角色信息">
           <FormGrid>
-            <Field label="角色名称" span={2} required>
+            <Field
+              label="角色名称"
+              span={2}
+              required
+              error={error === "角色名称不能为空" ? error : undefined}
+            >
               <input
                 placeholder="如：内容运营"
                 value={roleForm.name}
@@ -715,7 +790,7 @@ function AdminUsersPageInner() {
               />
             </Field>
             <Field label="权限 (JSON 数组)" span={4} hint='如 ["user:read","user:write"]'>
-              <input
+              <textarea
                 placeholder='["user:read"]'
                 value={roleForm.permissions}
                 onChange={(e) => setRoleForm({ ...roleForm, permissions: e.target.value })}
@@ -731,7 +806,7 @@ function AdminUsersPageInner() {
 // useSearchParams 需要 Suspense 边界（Next App Router 要求）。
 export default function AdminUsersPage() {
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<div className="adm-page"><TableSkeleton /></div>}>
       <AdminUsersPageInner />
     </Suspense>
   );

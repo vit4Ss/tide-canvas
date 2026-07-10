@@ -15,7 +15,10 @@
    ============================================================================ */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Plus, RefreshCw, SlidersHorizontal } from "lucide-react";
 import {
+  AdminAlert,
+  AdminEmptyState,
   AdminModal,
   AdminTable,
   Field,
@@ -27,10 +30,13 @@ import {
   StatusPill,
   SwitchToggle,
   TableSkeleton,
+  ListSkeleton,
 } from "@/components/admin";
 import type { Kpi, PillTone } from "@/mock/admin";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminPointsApi } from "@/lib/admin-points-api";
+import { confirmDialog } from "@/components/shared/confirm";
+import { toast } from "@/components/shared/toast";
 import type {
   AdminPointAdjustDTO,
   AdminPointRecord,
@@ -123,28 +129,41 @@ export default function AdminPointsPage() {
   const [adjForm, setAdjForm] = useState<AdjustForm>(emptyAdjustForm());
 
   const loadRules = useCallback(async () => {
-    const res = await adminPointsApi.listRules();
-    if (res.success && res.data) setRules(res.data);
-    else setError(res.message || "加载积分规则失败");
+    try {
+      const res = await adminPointsApi.listRules();
+      if (res.success && res.data) setRules(res.data);
+      else setError(res.message || "加载积分规则失败");
+    } catch {
+      setError("加载积分规则失败，请稍后重试");
+    }
   }, []);
 
   const loadLedger = useCallback(async (page: number) => {
     setLedgerLoading(true);
-    const res = await adminPointsApi.listTransactions({ pageNum: page, pageSize: TX_PAGE_SIZE });
-    if (res.success && res.data) {
-      setLedger(res.data.records);
-      setLedgerTotal(res.data.total);
-      setLedgerPage(res.data.pageNum);
-    } else {
-      setError(res.message || "加载积分流水失败");
+    try {
+      const res = await adminPointsApi.listTransactions({ pageNum: page, pageSize: TX_PAGE_SIZE });
+      if (res.success && res.data) {
+        setLedger(res.data.records);
+        setLedgerTotal(res.data.total);
+        setLedgerPage(res.data.pageNum);
+      } else {
+        setError(res.message || "加载积分流水失败");
+      }
+    } catch {
+      setError("加载积分流水失败，请稍后重试");
+    } finally {
+      setLedgerLoading(false);
     }
-    setLedgerLoading(false);
   }, []);
 
   const loadConfig = useCallback(async () => {
-    const res = await adminPointsApi.getConfig();
-    if (res.success && res.data) setConfig({ ...EMPTY_CONFIG, ...res.data });
-    else setError(res.message || "加载配置失败");
+    try {
+      const res = await adminPointsApi.getConfig();
+      if (res.success && res.data) setConfig({ ...EMPTY_CONFIG, ...res.data });
+      else setError(res.message || "加载配置失败");
+    } catch {
+      setError("加载配置失败，请稍后重试");
+    }
   }, []);
 
   const loadAll = useCallback(async () => {
@@ -161,7 +180,8 @@ export default function AdminPointsPage() {
   }, [ensureSession, loadRules, loadLedger, loadConfig]);
 
   useEffect(() => {
-    loadAll();
+    const frame = requestAnimationFrame(() => void loadAll());
+    return () => cancelAnimationFrame(frame);
   }, [loadAll]);
 
 
@@ -169,10 +189,10 @@ export default function AdminPointsPage() {
   const kpis: Kpi[] = useMemo(() => {
     const enabledRules = rules.filter((r) => r.enabled).length;
     return [
-      { k: "积分规则", v: String(rules.length), dir: "up" },
-      { k: "启用规则", v: String(enabledRules), dir: "up" },
-      { k: "流水记录", v: ledgerTotal.toLocaleString("zh-CN"), dir: "up" },
-      { k: "兑换汇率", v: config["points.exchangeRate"] || "—", dir: "up" },
+      { k: "积分规则", v: String(rules.length) },
+      { k: "启用规则", v: String(enabledRules) },
+      { k: "流水记录", v: ledgerTotal.toLocaleString("zh-CN") },
+      { k: "兑换汇率", v: config["points.exchangeRate"] || "—" },
     ];
   }, [rules, ledgerTotal, config]);
 
@@ -195,7 +215,10 @@ export default function AdminPointsPage() {
       trigger: ruleForm.trigger.trim(),
       enabled: ruleForm.enabled,
     };
-    if (!dto.name || !dto.scene) return false;
+    if (!dto.name || !dto.scene) {
+      toast.error(!dto.name ? "请填写规则名称" : "请填写适用场景");
+      return false;
+    }
     try {
       const res = editingRule
         ? await adminPointsApi.updateRule(editingRule.id, dto)
@@ -203,12 +226,13 @@ export default function AdminPointsPage() {
       if (res.success) {
         setRuleOpen(false);
         loadRules();
+        toast.success(editingRule ? "规则已更新" : "规则已创建");
       } else {
-        setError(res.message || "保存规则失败");
+        toast.error(res.message || "保存规则失败");
         return false;
       }
     } catch {
-      setError("保存规则失败，请稍后重试");
+      toast.error("保存规则失败，请稍后重试");
       return false;
     }
   };
@@ -220,14 +244,33 @@ export default function AdminPointsPage() {
       trigger: r.trigger,
       enabled: next,
     };
-    const res = await adminPointsApi.updateRule(r.id, dto);
-    if (res.success) loadRules();
-    else setError(res.message || "更新状态失败");
+    try {
+      const res = await adminPointsApi.updateRule(r.id, dto);
+      if (!res.success) toast.error(res.message || "规则状态更新失败");
+    } catch {
+      toast.error("规则状态更新失败，请稍后重试");
+    } finally {
+      loadRules();
+    }
   };
   const deleteRule = async (r: AdminPointRule) => {
-    const res = await adminPointsApi.deleteRule(r.id);
-    if (res.success) loadRules();
-    else setError(res.message || "删除规则失败");
+    if (
+      !(await confirmDialog({
+        title: "删除积分规则",
+        message: `确认永久删除规则「${r.name}」？删除后该场景将不再按此规则自动变动积分，历史流水不会受影响。`,
+        confirmText: "确认删除",
+      }))
+    )
+      return;
+    try {
+      const res = await adminPointsApi.deleteRule(r.id);
+      if (res.success) {
+        toast.success(`已删除规则「${r.name}」`);
+        loadRules();
+      } else toast.error(res.message || "删除规则失败");
+    } catch {
+      toast.error("删除规则失败，请稍后重试");
+    }
   };
 
   /* ── adjust action (writes REAL balance) ─────────────────────────────── */
@@ -241,18 +284,22 @@ export default function AdminPointsPage() {
       amount: toInt(adjForm.amount),
       remark: adjForm.remark.trim() || undefined,
     };
-    if (!dto.userId || dto.amount === 0) return false;
+    if (!dto.userId || dto.amount === 0) {
+      toast.error(!dto.userId ? "请填写目标用户 ID" : "积分变动数量不能为 0");
+      return false;
+    }
     try {
       const res = await adminPointsApi.adjust(dto);
       if (res.success) {
         setAdjOpen(false);
         loadLedger(1);
+        toast.success("用户积分已调整并写入流水");
       } else {
-        setError(res.message || "调整积分失败");
+        toast.error(res.message || "调整积分失败");
         return false;
       }
     } catch {
-      setError("调整积分失败，请稍后重试");
+      toast.error("调整积分失败，请稍后重试");
       return false;
     }
   };
@@ -261,24 +308,38 @@ export default function AdminPointsPage() {
   const setConfigField = (key: keyof AdminPointsConfig, value: string) =>
     setConfig((c) => ({ ...c, [key]: value }));
   const saveConfig = async () => {
+    if (savingConfig) return;
     setSavingConfig(true);
-    const res = await adminPointsApi.putConfig(config);
-    if (res.success && res.data) setConfig({ ...EMPTY_CONFIG, ...res.data });
-    else setError(res.message || "保存配置失败");
-    setSavingConfig(false);
+    try {
+      const res = await adminPointsApi.putConfig(config);
+      if (res.success && res.data) {
+        setConfig({ ...EMPTY_CONFIG, ...res.data });
+        toast.success("积分全局配置已保存");
+      } else toast.error(res.message || "保存配置失败");
+    } catch {
+      toast.error("保存配置失败，请稍后重试");
+    } finally {
+      setSavingConfig(false);
+    }
   };
 
   return (
-    <>
+    <div className="adm-page">
       <StatCardGrid items={kpis} />
 
       {error ? (
-        <div className="adm-panel" style={{ padding: 16 }}>
-          <span className="tag2 red">
-            <i className="dot" />
-            {error}
-          </span>
-        </div>
+        <AdminAlert
+          tone="error"
+          title="积分数据加载失败"
+          action={
+            <button type="button" className="adm-btn ghost" onClick={loadAll}>
+              <RefreshCw aria-hidden size={14} />
+              重新加载
+            </button>
+          }
+        >
+          {error}
+        </AdminAlert>
       ) : null}
 
       {/* 积分规则 */}
@@ -287,18 +348,27 @@ export default function AdminPointsPage() {
         sub="消耗规则、赠送与触发条件"
         tools={
           <button type="button" className="adm-btn" onClick={openCreateRule}>
-            + 新增规则
+            <Plus aria-hidden size={15} />
+            新增规则
           </button>
         }
       >
         {loading ? (
           <TableSkeleton />
         ) : rules.length === 0 ? (
-          <div style={{ padding: 18 }} className="muted">
-            暂无积分规则，点击「新增规则」创建。
-          </div>
+          <AdminEmptyState
+            title="暂无积分规则"
+            description="创建消耗或赠送规则，统一管理各业务场景的积分变动。"
+            action={
+              <button type="button" className="adm-btn" onClick={openCreateRule}>
+                <Plus aria-hidden size={15} />
+                新增规则
+              </button>
+            }
+          />
         ) : (
           <AdminTable<AdminPointRule>
+            label="积分规则列表"
             rows={rules}
             rowKey={(r) => r.id}
             columns={[
@@ -345,19 +415,22 @@ export default function AdminPointsPage() {
         sub="全部用户的积分变动明细"
         tools={
           <button type="button" className="adm-btn" onClick={openAdjust}>
-            + 手动调整
+            <SlidersHorizontal aria-hidden size={15} />
+            手动调整
           </button>
         }
       >
         {loading || ledgerLoading ? (
           <TableSkeleton />
         ) : ledger.length === 0 ? (
-          <div style={{ padding: 18 }} className="muted">
-            暂无积分流水。
-          </div>
+          <AdminEmptyState
+            title="暂无积分流水"
+            description="自动赠送、消费和手动调整发生后，变动记录会显示在这里。"
+          />
         ) : (
           <>
             <AdminTable<AdminPointRecord>
+              label="积分流水列表"
               rows={ledger}
               rowKey={(r) => r.id}
               columns={[
@@ -398,38 +471,46 @@ export default function AdminPointsPage() {
         title="积分全局配置"
         sub="签到 / 邀请 / 注册赠送与兑换汇率"
         tools={
-          <button type="button" className="adm-btn" onClick={saveConfig} disabled={savingConfig}>
+          <button type="button" className="adm-btn" onClick={saveConfig} disabled={savingConfig || loading} aria-busy={savingConfig}>
             {savingConfig ? "保存中…" : "保存配置"}
           </button>
         }
       >
-        <div style={{ padding: 18 }}>
+        {loading ? (
+          <div style={{ padding: 18 }}><ListSkeleton rows={3} height={40} /></div>
+        ) : <div style={{ padding: 18 }}>
           <div className="cfg-grid">
             <div className="cfg-card">
               <h3>赠送规则</h3>
               <p>各场景的默认积分赠送数量。</p>
               <div className="cfg-row">
-                <span className="lab">每日签到</span>
+                <label className="lab" htmlFor="points-checkin-daily">每日签到</label>
                 <input
+                  id="points-checkin-daily"
                   type="number"
+                  min={0}
                   value={config["points.checkinDaily"]}
                   onChange={(e) => setConfigField("points.checkinDaily", e.target.value)}
                 />
                 <span className="unit">积分</span>
               </div>
               <div className="cfg-row">
-                <span className="lab">邀请奖励</span>
+                <label className="lab" htmlFor="points-invite-reward">邀请奖励</label>
                 <input
+                  id="points-invite-reward"
                   type="number"
+                  min={0}
                   value={config["points.inviteReward"]}
                   onChange={(e) => setConfigField("points.inviteReward", e.target.value)}
                 />
                 <span className="unit">积分</span>
               </div>
               <div className="cfg-row">
-                <span className="lab">注册礼包</span>
+                <label className="lab" htmlFor="points-signup-bonus">注册礼包</label>
                 <input
+                  id="points-signup-bonus"
                   type="number"
+                  min={0}
                   value={config["points.signupBonus"]}
                   onChange={(e) => setConfigField("points.signupBonus", e.target.value)}
                 />
@@ -440,9 +521,11 @@ export default function AdminPointsPage() {
               <h3>汇率</h3>
               <p>充值时的人民币与积分兑换比例。</p>
               <div className="cfg-row">
-                <span className="lab">1 元 =</span>
+                <label className="lab" htmlFor="points-exchange-rate">1 元 =</label>
                 <input
+                  id="points-exchange-rate"
                   type="number"
+                  min={0}
                   value={config["points.exchangeRate"]}
                   onChange={(e) => setConfigField("points.exchangeRate", e.target.value)}
                 />
@@ -450,14 +533,16 @@ export default function AdminPointsPage() {
               </div>
             </div>
           </div>
-        </div>
+        </div>}
       </Panel>
 
       {/* 新增 / 编辑规则 modal */}
       <AdminModal
         open={ruleOpen}
+        size="md"
         title={editingRule ? "编辑规则" : "新增规则"}
         subtitle="配置积分消耗 / 赠送规则与触发条件"
+        footNote="保存后立即用于后续积分结算，历史流水不会重算"
         onClose={() => setRuleOpen(false)}
         onSave={saveRule}
       >
@@ -506,9 +591,10 @@ export default function AdminPointsPage() {
       {/* 手动调整积分 modal — writes the REAL user balance */}
       <AdminModal
         open={adjOpen}
+        size="md"
         title="手动调整积分"
         subtitle="直接增减指定用户的真实积分余额，并写入流水"
-        footNote="此操作将立即改变用户余额"
+        footNote="确认后立即改变真实余额并写入不可编辑的积分流水"
         saveLabel="确认调整"
         onClose={() => setAdjOpen(false)}
         onSave={saveAdjust}
@@ -540,6 +626,6 @@ export default function AdminPointsPage() {
           </FormGrid>
         </FormCard>
       </AdminModal>
-    </>
+    </div>
   );
 }

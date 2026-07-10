@@ -9,10 +9,11 @@
    与 toast 同一套监听器模式：ConfirmHost 挂在根布局，模块级函数触发。
    主题：默认深色（imini 令牌）；检测到 .admin-body（苹果浅色后台）时切换
    浅色变体——弹窗渲染在 body 层，拿不到 .admin-body 的令牌域，只能显式分支。
-   Esc = 取消，Enter = 确认，点遮罩 = 取消。
+   Esc / 点遮罩 = 取消；确认只通过显式按钮触发，避免误操作。
    ========================================================================== */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
+import { useFocusTrap } from "@/hooks/use-focus-trap";
 import "./confirm.css";
 
 export interface ConfirmOptions {
@@ -22,6 +23,8 @@ export interface ConfirmOptions {
   /** 确认按钮文字（默认「确定」）。 */
   confirmText?: string;
   cancelText?: string;
+  /** Dangerous operations use an explicit red confirmation treatment. */
+  danger?: boolean;
 }
 
 type Pending = ConfirmOptions & { resolve: (ok: boolean) => void };
@@ -43,6 +46,9 @@ export function confirmDialog(opts: ConfirmOptions | string): Promise<boolean> {
 export function ConfirmHost() {
   const [pending, setPending] = useState<Pending | null>(null);
   const [light, setLight] = useState(false);
+  const dialogRef = useFocusTrap<HTMLDivElement>(pending != null);
+  const titleId = useId();
+  const messageId = useId();
 
   useEffect(() => {
     hostListener = (p) => {
@@ -67,29 +73,36 @@ export function ConfirmHost() {
     if (!pending) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") done(false);
-      if (e.key === "Enter") done(true);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [pending, done]);
 
   if (!pending) return null;
+  const danger =
+    pending.danger ??
+    /删除|下架|封禁|停用|吊销|退款|清空/.test(
+      `${pending.title ?? ""}${pending.confirmText ?? ""}`,
+    );
   return (
     <div className={`cfm-mask${light ? " light" : ""}`} onClick={() => done(false)}>
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         className="cfm"
         role="alertdialog"
         aria-modal="true"
-        aria-label={pending.title ?? "确认操作"}
+        aria-labelledby={titleId}
+        aria-describedby={messageId}
         onClick={(e) => e.stopPropagation()}
       >
-        <b className="cfm-t">{pending.title ?? "确认操作"}</b>
-        <p className="cfm-m">{pending.message}</p>
+        <b className="cfm-t" id={titleId}>{pending.title ?? "确认操作"}</b>
+        <p className="cfm-m" id={messageId}>{pending.message}</p>
         <div className="cfm-acts">
-          <button type="button" className="cfm-btn ghost" onClick={() => done(false)}>
+          <button type="button" className="cfm-btn ghost" autoFocus onClick={() => done(false)}>
             {pending.cancelText ?? "取消"}
           </button>
-          <button type="button" className="cfm-btn pri" autoFocus onClick={() => done(true)}>
+          <button type="button" className={`cfm-btn pri${danger ? " danger" : ""}`} onClick={() => done(true)}>
             {pending.confirmText ?? "确定"}
           </button>
         </div>

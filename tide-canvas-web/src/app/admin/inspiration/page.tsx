@@ -16,8 +16,11 @@
    展示 switch on a collection writes its `visible` flag inline.
    ============================================================================ */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Plus, RefreshCw } from "lucide-react";
 import {
+  AdminAlert,
+  AdminEmptyState,
   AdminModal,
   AdminTable,
   Field,
@@ -26,13 +29,11 @@ import {
   FormSection,
   Panel,
   RowActions,
-  StatCardGrid,
   StatusPill,
   SwitchToggle,
   TableSkeleton,
 } from "@/components/admin";
 import { FilterChips } from "@/components/admin/filter-bar";
-import type { Kpi } from "@/mock/admin";
 import { mesh } from "@/lib/mesh";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";
@@ -98,15 +99,19 @@ export default function AdminInspirationPage() {
   const [collTotal, setCollTotal] = useState(0);
   const [collPage, setCollPage] = useState(1);
   const [collLoading, setCollLoading] = useState(true);
+  const [collError, setCollError] = useState<string | null>(null);
   const [prompts, setPrompts] = useState<PromptVO[]>([]);
   const [promptTotal, setPromptTotal] = useState(0);
   const [promptPage, setPromptPage] = useState(1);
   const [promptLoading, setPromptLoading] = useState(true);
+  const [promptError, setPromptError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const [collFilter, setCollFilter] = useState<CollectionFilter>(COLLECTION_FILTERS[0]);
   const [collDraft, setCollDraft] = useState<CollDraft | null>(null);
   const [promptDraft, setPromptDraft] = useState<PromptDraft | null>(null);
+  const [collFormError, setCollFormError] = useState<string | null>(null);
+  const [promptFormError, setPromptFormError] = useState<string | null>(null);
 
   // reqId 守卫:切筛选会触发「旧页码」+「重置页码」两次请求,只让最新一次生效,
   // 避免先发的旧请求后到、把过期数据渲染上去。
@@ -114,6 +119,7 @@ export default function AdminInspirationPage() {
   const loadCollections = useCallback(async () => {
     const id = ++collReqRef.current;
     setCollLoading(true);
+    setCollError(null);
     try {
       await ensureSession(); // 登录流程暂未做:无 token 时静默登录默认账号
       const type = collFilter === "全部" ? undefined : collFilter;
@@ -126,7 +132,16 @@ export default function AdminInspirationPage() {
       if (res.success && res.data) {
         setCollections(res.data.records);
         setCollTotal(res.data.total);
+      } else {
+        setCollections([]);
+        setCollTotal(0);
+        setCollError(res.message || "加载合集失败");
       }
+    } catch {
+      if (id !== collReqRef.current) return;
+      setCollections([]);
+      setCollTotal(0);
+      setCollError("加载合集失败，请稍后重试");
     } finally {
       if (id === collReqRef.current) setCollLoading(false);
     }
@@ -136,6 +151,7 @@ export default function AdminInspirationPage() {
   const loadPrompts = useCallback(async () => {
     const id = ++promptReqRef.current;
     setPromptLoading(true);
+    setPromptError(null);
     try {
       await ensureSession();
       const res = await adminInspirationApi.listPrompts({
@@ -146,34 +162,35 @@ export default function AdminInspirationPage() {
       if (res.success && res.data) {
         setPrompts(res.data.records);
         setPromptTotal(res.data.total);
+      } else {
+        setPrompts([]);
+        setPromptTotal(0);
+        setPromptError(res.message || "加载提示词失败");
       }
+    } catch {
+      if (id !== promptReqRef.current) return;
+      setPrompts([]);
+      setPromptTotal(0);
+      setPromptError("加载提示词失败，请稍后重试");
     } finally {
       if (id === promptReqRef.current) setPromptLoading(false);
     }
   }, [ensureSession, promptPage]);
 
   useEffect(() => {
-    loadCollections();
+    const timer = window.setTimeout(() => void loadCollections(), 0);
+    return () => window.clearTimeout(timer);
   }, [loadCollections]);
 
   useEffect(() => {
-    loadPrompts();
+    const timer = window.setTimeout(() => void loadPrompts(), 0);
+    return () => window.clearTimeout(timer);
   }, [loadPrompts]);
-
-  const kpis: Kpi[] = useMemo(() => {
-    const visible = collections.filter((c) => c.visible).length;
-    const adoptions = prompts.reduce((sum, p) => sum + p.adoptions, 0);
-    return [
-      { k: "合集总数", v: collTotal.toLocaleString(), d: "Collection", dir: "up" },
-      { k: "已展示", v: visible.toLocaleString(), d: "本页", dir: "up" },
-      { k: "提示词库", v: promptTotal.toLocaleString(), d: "PromptLib", dir: "up" },
-      { k: "累计采用", v: adoptions.toLocaleString(), d: "本页", dir: "up" },
-    ];
-  }, [collections, prompts, collTotal, promptTotal]);
 
   /* --- collection CRUD --- */
 
-  const openNewColl = () =>
+  const openNewColl = () => {
+    setCollFormError(null);
     setCollDraft({
       id: null,
       title: "",
@@ -185,8 +202,10 @@ export default function AdminInspirationPage() {
       description: "",
       visible: true,
     });
+  };
 
-  const openEditColl = (c: CollectionVO) =>
+  const openEditColl = (c: CollectionVO) => {
+    setCollFormError(null);
     setCollDraft({
       id: c.id,
       title: c.title,
@@ -198,12 +217,14 @@ export default function AdminInspirationPage() {
       description: c.description,
       visible: c.visible,
     });
+  };
 
   const saveColl = useCallback(async () => {
     if (!collDraft) return;
+    setCollFormError(null);
     const title = collDraft.title.trim();
     if (!title) {
-      toast.error("请填写标题");
+      setCollFormError("请填写标题");
       return false;
     }
     const body: CollectionUpsertDTO = {
@@ -226,11 +247,15 @@ export default function AdminInspirationPage() {
         toast.success("合集已保存");
         await loadCollections();
       } else {
-        toast.error(res.message || "保存失败");
+        const message = res.message || "保存失败";
+        setCollFormError(message);
+        toast.error(message);
         return false;
       }
     } catch {
-      toast.error("保存失败，请稍后重试");
+      const message = "保存失败，请稍后重试";
+      setCollFormError(message);
+      toast.error(message);
       return false;
     } finally {
       setBusy(false);
@@ -248,6 +273,9 @@ export default function AdminInspirationPage() {
           visible: next,
         });
         if (res.success) await loadCollections();
+        else toast.error(res.message || "更新展示状态失败");
+      } catch {
+        toast.error("更新展示状态失败，请稍后重试");
       } finally {
         setBusy(false);
       }
@@ -274,6 +302,8 @@ export default function AdminInspirationPage() {
         } else {
           toast.error(res.message || "删除失败");
         }
+      } catch {
+        toast.error("删除失败，请稍后重试");
       } finally {
         setBusy(false);
       }
@@ -283,10 +313,13 @@ export default function AdminInspirationPage() {
 
   /* --- prompt CRUD --- */
 
-  const openNewPrompt = () =>
+  const openNewPrompt = () => {
+    setPromptFormError(null);
     setPromptDraft({ id: null, text: "", tags: "", adoptions: "0", coverUrl: "" });
+  };
 
-  const openEditPrompt = (p: PromptVO) =>
+  const openEditPrompt = (p: PromptVO) => {
+    setPromptFormError(null);
     setPromptDraft({
       id: p.id,
       text: p.text,
@@ -294,12 +327,14 @@ export default function AdminInspirationPage() {
       adoptions: String(p.adoptions),
       coverUrl: p.coverUrl,
     });
+  };
 
   const savePrompt = useCallback(async () => {
     if (!promptDraft) return;
+    setPromptFormError(null);
     const text = promptDraft.text.trim();
     if (!text) {
-      toast.error("请填写提示词");
+      setPromptFormError("请填写提示词");
       return false;
     }
     const body: PromptUpsertDTO = {
@@ -318,11 +353,15 @@ export default function AdminInspirationPage() {
         toast.success("提示词已保存");
         await loadPrompts();
       } else {
-        toast.error(res.message || "保存失败");
+        const message = res.message || "保存失败";
+        setPromptFormError(message);
+        toast.error(message);
         return false;
       }
     } catch {
-      toast.error("保存失败，请稍后重试");
+      const message = "保存失败，请稍后重试";
+      setPromptFormError(message);
+      toast.error(message);
       return false;
     } finally {
       setBusy(false);
@@ -348,6 +387,8 @@ export default function AdminInspirationPage() {
         } else {
           toast.error(res.message || "删除失败");
         }
+      } catch {
+        toast.error("删除失败，请稍后重试");
       } finally {
         setBusy(false);
       }
@@ -358,16 +399,15 @@ export default function AdminInspirationPage() {
   const dim = busy ? { opacity: 0.6, pointerEvents: "none" as const } : undefined;
 
   return (
-    <>
-      <StatCardGrid items={kpis} />
-
+    <div className="adm-page">
       {/* 灵感配置 */}
       <Panel
         title="灵感配置"
-        sub="管理灵感页的合集、主题与展示"
+        sub={`共 ${collTotal.toLocaleString()} 个内容组 · 本页 ${collections.filter((c) => c.visible).length} 个正在展示`}
         tools={
           <>
             <FilterChips
+              label="灵感内容类型"
               options={[...COLLECTION_FILTERS]}
               value={collFilter}
               onChange={(v) => {
@@ -376,20 +416,46 @@ export default function AdminInspirationPage() {
               }}
             />
             <button type="button" className="adm-btn" onClick={openNewColl}>
-              + 新增合集
+              <Plus aria-hidden size={15} />
+              新增合集
             </button>
           </>
         }
       >
         {collLoading ? (
           <TableSkeleton />
+        ) : collError ? (
+          <div style={{ padding: 16 }}>
+            <AdminAlert
+              tone="error"
+              title="灵感内容加载失败"
+              action={
+                <button type="button" className="adm-btn ghost" onClick={loadCollections}>
+                  <RefreshCw aria-hidden size={15} />
+                  重新加载
+                </button>
+              }
+            >
+              {collError}
+            </AdminAlert>
+          </div>
         ) : collections.length === 0 ? (
-          <div style={{ padding: 28, color: "var(--text-faint)" }}>暂无合集。</div>
+          <AdminEmptyState
+            title="当前类型下没有灵感内容"
+            description="可以新建内容组，或切换到“全部”查看其他类型。"
+            action={
+              <button type="button" className="adm-btn" onClick={openNewColl}>
+                <Plus aria-hidden size={15} />
+                新增合集
+              </button>
+            }
+          />
         ) : (
-          <div style={dim}>
+          <div style={dim} aria-busy={busy}>
             <AdminTable<CollectionVO>
               rows={collections}
               rowKey={(r) => r.id}
+              label="灵感合集列表"
               server={{ page: collPage, pageSize: PAGE_SIZE, total: collTotal, onPage: setCollPage }}
               columns={[
                 {
@@ -453,22 +519,48 @@ export default function AdminInspirationPage() {
       {/* 提示词库 */}
       <Panel
         title="提示词库"
-        sub="高频提示词与采用情况"
+        sub={`共 ${promptTotal.toLocaleString()} 条 · 本页累计采用 ${prompts.reduce((sum, p) => sum + p.adoptions, 0).toLocaleString()} 次`}
         tools={
           <button type="button" className="adm-btn" onClick={openNewPrompt}>
-            + 新增提示词
+            <Plus aria-hidden size={15} />
+            新增提示词
           </button>
         }
       >
         {promptLoading ? (
           <TableSkeleton />
+        ) : promptError ? (
+          <div style={{ padding: 16 }}>
+            <AdminAlert
+              tone="error"
+              title="提示词库加载失败"
+              action={
+                <button type="button" className="adm-btn ghost" onClick={loadPrompts}>
+                  <RefreshCw aria-hidden size={15} />
+                  重新加载
+                </button>
+              }
+            >
+              {promptError}
+            </AdminAlert>
+          </div>
         ) : prompts.length === 0 ? (
-          <div style={{ padding: 28, color: "var(--text-faint)" }}>暂无提示词。</div>
+          <AdminEmptyState
+            title="提示词库还是空的"
+            description="添加经过验证的提示词，帮助创作者更快开始创作。"
+            action={
+              <button type="button" className="adm-btn" onClick={openNewPrompt}>
+                <Plus aria-hidden size={15} />
+                新增提示词
+              </button>
+            }
+          />
         ) : (
-          <div style={dim}>
+          <div style={dim} aria-busy={busy}>
             <AdminTable<PromptVO>
               rows={prompts}
               rowKey={(r) => r.id}
+              label="提示词列表"
               server={{ page: promptPage, pageSize: PAGE_SIZE, total: promptTotal, onPage: setPromptPage }}
               columns={[
                 { header: "提示词", className: "strong", cell: (r) => r.text },
@@ -476,11 +568,15 @@ export default function AdminInspirationPage() {
                   header: "标签",
                   cell: (r) => (
                     <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap" }}>
-                      {splitTags(r.tags).map((t) => (
-                        <StatusPill key={t} tone="gray">
-                          {t}
-                        </StatusPill>
-                      ))}
+                      {splitTags(r.tags).length > 0 ? (
+                        splitTags(r.tags).map((t) => (
+                          <StatusPill key={t} tone="gray">
+                            {t}
+                          </StatusPill>
+                        ))
+                      ) : (
+                        <span className="muted">未标记</span>
+                      )}
                     </span>
                   ),
                 },
@@ -512,23 +608,29 @@ export default function AdminInspirationPage() {
       {/* inspModal — 新增/编辑合集 */}
       <AdminModal
         open={collDraft != null}
+        size="lg"
         title={collDraft?.id ? `编辑 · ${collDraft.title || "合集"}` : "新增合集"}
         subtitle={collDraft?.id ? "编辑灵感合集内容与展示" : "新增一个灵感合集"}
-        onClose={() => setCollDraft(null)}
+        footNote={collFormError ? <span role="alert">{collFormError}</span> : "变更将在保存后生效"}
+        onClose={() => {
+          setCollFormError(null);
+          setCollDraft(null);
+        }}
         onSave={saveColl}
         saveLabel={busy ? "保存中…" : "保存"}
       >
         {collDraft ? (
           <>
-            <FormCard title="合集信息" style={{ marginTop: 0 }}>
+            <FormCard title="合集信息">
               <FormGrid>
-                <Field label="标题" required span={2}>
+                <Field label="标题" required span={2} error={collFormError === "请填写标题" ? collFormError : undefined}>
                   <input
                     placeholder="如：国风 Q 版"
                     value={collDraft.title}
-                    onChange={(e) =>
-                      setCollDraft({ ...collDraft, title: e.target.value })
-                    }
+                    onChange={(e) => {
+                      setCollFormError(null);
+                      setCollDraft({ ...collDraft, title: e.target.value });
+                    }}
                   />
                 </Field>
                 <Field label="类型" span={2}>
@@ -582,7 +684,7 @@ export default function AdminInspirationPage() {
                   />
                 </Field>
                 <Field label="描述" span={4}>
-                  <input
+                  <textarea
                     placeholder="选填，展示在合集卡片下方"
                     value={collDraft.description}
                     onChange={(e) =>
@@ -595,7 +697,7 @@ export default function AdminInspirationPage() {
 
             <FormCard title="选项">
               <FormSection label="展示">
-                <div className="cfg-card" style={{ boxShadow: "none", padding: "4px 16px" }}>
+                <div className="cfg-card flat">
                   <div className="cfg-row">
                     <span className="lab">在灵感页展示</span>
                     <SwitchToggle
@@ -614,22 +716,33 @@ export default function AdminInspirationPage() {
       {/* promptModal — 新增/编辑提示词 */}
       <AdminModal
         open={promptDraft != null}
+        size="md"
         title={promptDraft?.id ? "编辑提示词" : "新增提示词"}
         subtitle="提示词文本、标签与采用次数"
-        onClose={() => setPromptDraft(null)}
+        footNote={promptFormError ? <span role="alert">{promptFormError}</span> : "变更将在保存后生效"}
+        onClose={() => {
+          setPromptFormError(null);
+          setPromptDraft(null);
+        }}
         onSave={savePrompt}
         saveLabel={busy ? "保存中…" : "保存"}
       >
         {promptDraft ? (
-          <FormCard title="提示词信息" style={{ marginTop: 0 }}>
+          <FormCard title="提示词信息">
             <FormGrid>
-              <Field label="提示词" required span={4}>
-                <input
+              <Field
+                label="提示词"
+                required
+                span={4}
+                error={promptFormError === "请填写提示词" ? promptFormError : undefined}
+              >
+                <textarea
                   placeholder="如：赛博朋克城市夜景，霓虹反光"
                   value={promptDraft.text}
-                  onChange={(e) =>
-                    setPromptDraft({ ...promptDraft, text: e.target.value })
-                  }
+                  onChange={(e) => {
+                    setPromptFormError(null);
+                    setPromptDraft({ ...promptDraft, text: e.target.value });
+                  }}
                 />
               </Field>
               <Field label="标签" span={2}>
@@ -663,6 +776,6 @@ export default function AdminInspirationPage() {
           </FormCard>
         ) : null}
       </AdminModal>
-    </>
+    </div>
   );
 }

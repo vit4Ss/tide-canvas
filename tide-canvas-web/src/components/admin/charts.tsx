@@ -22,6 +22,7 @@ import {
   PieChart,
   ResponsiveContainer,
   Tooltip,
+  XAxis,
   YAxis,
 } from "recharts";
 import {
@@ -64,11 +65,35 @@ export function AreaTrend({
   color?: string;
   height?: number;
 }) {
+  const values = data.map((point) => point.value);
+  const first = values[0] ?? 0;
+  const last = values.at(-1) ?? 0;
+  const minimum = values.length ? Math.min(...values) : 0;
+  const maximum = values.length ? Math.max(...values) : 0;
   return (
+    <div
+      className="viz-chart"
+      role="group"
+      aria-label={`趋势图，共 ${data.length} 个数据点；起始 ${compact(first)}，结束 ${compact(last)}，最低 ${compact(minimum)}，最高 ${compact(maximum)}`}
+    >
     <ResponsiveContainer width="100%" height={height} className="viz-svg">
-      <AreaChart data={data} margin={{ top: 14, right: 14, bottom: 0, left: 0 }}>
+      <AreaChart accessibilityLayer data={data} margin={{ top: 14, right: 8, bottom: 0, left: 0 }}>
         <CartesianGrid stroke={GRID} vertical={false} />
-        <YAxis hide domain={["dataMin * 0.9", "dataMax * 1.12"]} />
+        <XAxis
+          dataKey="label"
+          axisLine={false}
+          tickLine={false}
+          interval="preserveStartEnd"
+          tick={{ fill: "#6b6b76", fontSize: 11 }}
+        />
+        <YAxis
+          width={42}
+          axisLine={false}
+          tickLine={false}
+          tickFormatter={compact}
+          tick={{ fill: "#6b6b76", fontSize: 11 }}
+          domain={["dataMin * 0.9", "dataMax * 1.12"]}
+        />
         <Tooltip
           cursor={{ stroke: color, strokeOpacity: 0.3 }}
           contentStyle={TOOLTIP}
@@ -83,9 +108,11 @@ export function AreaTrend({
           fillOpacity={0.08}
           dot={false}
           activeDot={{ r: 4 }}
+          isAnimationActive={false}
         />
       </AreaChart>
     </ResponsiveContainer>
+    </div>
   );
 }
 
@@ -103,11 +130,33 @@ export function MultiLine({
     series.forEach((s) => (row[s.name] = s.vals[i]));
     return row;
   });
+  const summary = series
+    .map((item) => `${item.name}从 ${compact(item.vals[0] ?? 0)} 到 ${compact(item.vals.at(-1) ?? 0)}`)
+    .join("；");
   return (
+    <div
+      className="viz-chart"
+      role="group"
+      aria-label={`多序列趋势图，共 ${series.length} 组数据${summary ? `；${summary}` : ""}`}
+    >
     <ResponsiveContainer width="100%" height={height} className="viz-svg">
-      <LineChart data={data} margin={{ top: 14, right: 14, bottom: 0, left: 0 }}>
+      <LineChart accessibilityLayer data={data} margin={{ top: 14, right: 8, bottom: 0, left: 0 }}>
         <CartesianGrid stroke={GRID} vertical={false} />
-        <YAxis hide domain={["dataMin * 0.85", "dataMax * 1.12"]} />
+        <XAxis
+          dataKey="i"
+          axisLine={false}
+          tickLine={false}
+          interval="preserveStartEnd"
+          tick={{ fill: "#6b6b76", fontSize: 11 }}
+        />
+        <YAxis
+          width={42}
+          axisLine={false}
+          tickLine={false}
+          tickFormatter={compact}
+          tick={{ fill: "#6b6b76", fontSize: 11 }}
+          domain={["dataMin * 0.85", "dataMax * 1.12"]}
+        />
         <Tooltip contentStyle={TOOLTIP} />
         {series.map((s) => (
           <Line
@@ -118,10 +167,12 @@ export function MultiLine({
             strokeWidth={2.5}
             dot={false}
             activeDot={{ r: 4 }}
+            isAnimationActive={false}
           />
         ))}
       </LineChart>
     </ResponsiveContainer>
+    </div>
   );
 }
 
@@ -146,6 +197,7 @@ export function Donut({ segs }: { segs: Segment[] }) {
               startAngle={90}
               endAngle={-270}
               stroke="none"
+              isAnimationActive={false}
             >
               {segs.map((_, i) => (
                 <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
@@ -163,7 +215,7 @@ export function Donut({ segs }: { segs: Segment[] }) {
         {segs.map((s, i) => (
           <span key={s.n}>
             <i style={{ background: CHART_COLORS[i % CHART_COLORS.length] }} />
-            {s.n} · {Math.round((s.v / total) * 100)}%
+            {s.n} · {total > 0 ? Math.round((s.v / total) * 100) : 0}%
           </span>
         ))}
       </div>
@@ -175,7 +227,7 @@ export function Donut({ segs }: { segs: Segment[] }) {
 
 /** Horizontal bar list (各模块调用量 / 地区分布 / 留存 / 积分流水). */
 export function HBars({ rows, color }: { rows: BarRow[]; color?: string }) {
-  const max = Math.max(...rows.map((r) => r.v));
+  const max = Math.max(1, ...rows.map((r) => r.v));
   return (
     <div className="viz-bars">
       {rows.map((r) => (
@@ -213,7 +265,7 @@ export function TrackBar({ n, pct, val, color }: { n: string; pct: number; val: 
 
 /** Conversion funnel (访客 → 付费). */
 export function Funnel({ steps }: { steps: FunnelStep[] }) {
-  const max = steps[0]?.v ?? 1;
+  const max = Math.max(1, steps[0]?.v ?? 1);
   return (
     <div className="viz-funnel">
       {steps.map((s, i) => {
@@ -276,7 +328,7 @@ function Ring({ pct, color }: { pct: number; color: string }) {
   const c = 2 * Math.PI * r;
   const len = (pct / 100) * c;
   return (
-    <svg width="52" height="52" viewBox="0 0 52 52">
+    <svg width="52" height="52" viewBox="0 0 52 52" aria-hidden>
       <circle cx="26" cy="26" r={r} fill="none" stroke={GRID} strokeWidth="6" />
       <circle
         cx="26"
@@ -339,7 +391,7 @@ export function HealthBoard({ models }: { models: ModelHealth[] }) {
 
 /** Leaderboard (用户消耗榜 / 模型使用排行榜). */
 export function Leaderboard({ rows, kind }: { rows: LeaderRow[]; kind: "user" | "model" }) {
-  const max = Math.max(...rows.map((r) => r.v));
+  const max = Math.max(1, ...rows.map((r) => r.v));
   return (
     <div className="lb">
       {rows.map((r, i) => (

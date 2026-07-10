@@ -10,6 +10,7 @@ export {
   Field,
   FormSection,
   MChips,
+  useFormSectionLabelId,
 } from "./admin-modal";
 export type { AdminModalProps, FieldProps } from "./admin-modal";
 
@@ -33,6 +34,9 @@ export type { RowAction, RowActionsProps } from "./row-actions";
 
 export { TableSkeleton, ListSkeleton } from "./table-skeleton";
 export type { TableSkeletonProps, ListSkeletonProps } from "./table-skeleton";
+
+export { AdminAlert, AdminEmptyState } from "./feedback";
+export type { AdminAlertTone } from "./feedback";
 
 export { AdminShell } from "./admin-shell";
 export { AdminSidebar, findActive, ADMIN_NAV, ADMIN_NAV_ITEMS } from "./admin-sidebar";

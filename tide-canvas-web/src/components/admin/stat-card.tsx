@@ -16,8 +16,8 @@ export function StatCard({ k, v, d, dir }: StatCardProps) {
     dir === "up" ? "d up" : dir === "down" ? "d down" : d ? "d" : "";
   return (
     <div className="kpi">
-      <div className="k">{k}</div>
-      <div className="v">{v}</div>
+      <dt className="k">{k}</dt>
+      <dd className="v">{v}</dd>
       {d ? <div className={deltaClass || "d"}>{d}</div> : null}
     </div>
   );
@@ -31,11 +31,11 @@ export interface StatCardGridProps {
 export function StatCardGrid({ items }: StatCardGridProps) {
   if (!items.length) return null;
   return (
-    <div className="adm-kpis">
+    <dl className="adm-kpis">
       {items.map((it, i) => (
         <StatCard key={it.k + i} {...it} />
       ))}
-    </div>
+    </dl>
   );
 }
 

@@ -18,9 +18,14 @@
    ============================================================================ */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Check, Copy, RefreshCw, Search } from "lucide-react";
 import {
+  AdminAlert,
+  AdminEmptyState,
+  AdminModal,
   AdminTable,
   FilterChips,
+  FormCard,
   Panel,
   RowActions,
   StatusPill,
@@ -44,6 +49,13 @@ type PillTone = StatusPillProps["tone"];
 
 const TABS = ["系统", "请求", "登录", "业务", "模型"] as const;
 type Tab = (typeof TABS)[number];
+const TAB_IDS: Record<Tab, string> = {
+  系统: "system",
+  请求: "access",
+  登录: "login",
+  业务: "business",
+  模型: "model",
+};
 
 /** HTTP status → pill tone (2xx green, 3xx blue, 4xx amber, 5xx/err red). */
 function statusTone(status: number): PillTone {
@@ -92,6 +104,8 @@ function CopyBtn({ text }: { text: string }) {
     <button
       type="button"
       className="adm-chip"
+      style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+      aria-live="polite"
       onClick={() => {
         try {
           void navigator.clipboard?.writeText(text);
@@ -103,6 +117,7 @@ function CopyBtn({ text }: { text: string }) {
         }
       }}
     >
+      {done ? <Check aria-hidden size={13} /> : <Copy aria-hidden size={13} />}
       {done ? "已复制" : "复制"}
     </button>
   );
@@ -117,107 +132,66 @@ function LogDetailModal({
   fields: DetailField[];
   onClose: () => void;
 }) {
-  const [show, setShow] = useState(false);
-  useEffect(() => {
-    const id = requestAnimationFrame(() => setShow(true));
-    return () => cancelAnimationFrame(id);
-  }, []);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   const inline = fields.filter((f) => !isBlock(f));
   const blocks = fields.filter(isBlock);
 
   return (
-    <div
-      className={`adm-mask${show ? " show" : ""}`}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
+    <AdminModal
+      open
+      size="xl"
+      title={title}
+      subtitle="日志详情 · 只读"
+      footNote="只读记录，不会修改系统数据"
+      cancelLabel="返回"
+      saveLabel="完成"
+      onClose={onClose}
+      onSave={() => true}
     >
-      <div className="adm-modal" role="dialog" aria-modal="true" style={{ maxWidth: 760 }}>
-        <div className="adm-mhead">
-          <div>
-            <h2>{title}</h2>
-            <div className="mh-sub">日志详情 · 只读</div>
-          </div>
-          <button type="button" className="x" onClick={onClose} aria-label="关闭">
-            ✕
-          </button>
-        </div>
-        <div className="adm-mbody">
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "12px 20px",
-            }}
-          >
+      {inline.length > 0 ? (
+        <FormCard title="基本信息">
+          <dl className="fgrid">
             {inline.map((f, i) =>
               !isBlock(f) ? (
-                <div key={i} style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
-                  <span className="muted" style={{ fontSize: 12 }}>
-                    {f.label}
-                  </span>
-                  <span className="strong" style={{ wordBreak: "break-all" }}>
+                <div className="fld col2" key={`${f.label}-${i}`}>
+                  <dt className="muted">{f.label}</dt>
+                  <dd className="strong" style={{ margin: 0, wordBreak: "break-word" }}>
                     {f.value ?? "—"}
-                  </span>
+                  </dd>
                 </div>
               ) : null,
             )}
-          </div>
+          </dl>
+        </FormCard>
+      ) : null}
 
-          {blocks.map((f, i) =>
-            isBlock(f) ? (
-              <div key={i} style={{ marginTop: 16 }}>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    marginBottom: 8,
-                  }}
-                >
-                  <span className="muted" style={{ fontSize: 12 }}>
-                    {f.label}
-                  </span>
-                  {f.block ? <CopyBtn text={f.json ? pretty(f.block) : f.block} /> : null}
-                </div>
-                <pre
-                  className="mono"
-                  style={{
-                    margin: 0,
-                    maxHeight: 260,
-                    overflow: "auto",
-                    background: "var(--panel)",
-                    border: "1px solid var(--border-weak)",
-                    padding: 12,
-                    borderRadius: "var(--r-sm)",
-                    fontSize: 12,
-                    lineHeight: 1.5,
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-all",
-                  }}
-                >
-                  {f.block ? (f.json ? pretty(f.block) : f.block) : "—"}
-                </pre>
-              </div>
-            ) : null,
-          )}
-        </div>
-        <div className="adm-mfoot">
-          <span className="foot-note">只读 · 按 Esc 关闭</span>
-          <button type="button" className="adm-btn ghost" onClick={onClose}>
-            关闭
-          </button>
-        </div>
-      </div>
-    </div>
+      {blocks.map((f, i) => (
+        <FormCard title={f.label} key={`${f.label}-${i}`}>
+          {f.block ? (
+            <div className="adm-tools" style={{ marginBottom: 8 }}>
+              <CopyBtn text={f.json ? pretty(f.block) : f.block} />
+            </div>
+          ) : null}
+          <pre
+            className="mono"
+            style={{
+              margin: 0,
+              maxHeight: 320,
+              overflow: "auto",
+              background: "var(--panel)",
+              border: "1px solid var(--border-weak)",
+              padding: 12,
+              borderRadius: "var(--r-sm)",
+              fontSize: 12,
+              lineHeight: 1.6,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+            }}
+          >
+            {f.block ? (f.json ? pretty(f.block) : f.block) : "—"}
+          </pre>
+        </FormCard>
+      ))}
+    </AdminModal>
   );
 }
 
@@ -299,7 +273,7 @@ function LogTable<T extends { id: string }>({
     return [
       ...columns,
       {
-        header: "",
+        header: "操作",
         align: "right",
         cell: (r) => (
           <RowActions actions={[{ label: "详情", onClick: () => setDetailRow(r) }]} />
@@ -315,6 +289,7 @@ function LogTable<T extends { id: string }>({
           .map((s) => `${s.k} ${s.v}`)
           .join(" · ")
       : null;
+  const hasActiveFilter = Boolean(query.trim()) || Boolean(chips && chip !== chips[0]);
 
   return (
     <>
@@ -327,18 +302,25 @@ function LogTable<T extends { id: string }>({
         }
         tools={
           <>
-            <div className="adm-search" style={{ margin: 0 }}>
-              <span className="muted">⌕</span>
+            <div className="adm-search" role="search">
+              <Search aria-hidden size={15} />
               <input
+                aria-label="搜索日志"
                 placeholder={searchPlaceholder}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
             </div>
             {chips && chipToQuery ? (
-              <FilterChips options={[...chips]} value={chip} onChange={setChip} />
+              <FilterChips
+                label="日志结果筛选"
+                options={[...chips]}
+                value={chip}
+                onChange={setChip}
+              />
             ) : null}
             <button type="button" className="adm-btn ghost" onClick={() => run()}>
+              <RefreshCw aria-hidden size={15} />
               刷新
             </button>
           </>
@@ -347,15 +329,46 @@ function LogTable<T extends { id: string }>({
         {loading ? (
           <TableSkeleton />
         ) : error ? (
-          <div className="muted" style={{ padding: 32, textAlign: "center" }}>
-            {error}
+          <div style={{ padding: 16 }}>
+            <AdminAlert
+              tone="error"
+              title="日志加载失败"
+              action={
+                <button type="button" className="adm-btn ghost" onClick={() => run()}>
+                  <RefreshCw aria-hidden size={15} />
+                  重新加载
+                </button>
+              }
+            >
+              {error}
+            </AdminAlert>
           </div>
         ) : rows.length === 0 ? (
-          <div className="muted" style={{ padding: 32, textAlign: "center" }}>
-            暂无日志记录
-          </div>
+          <AdminEmptyState
+            title="没有找到日志记录"
+            description={hasActiveFilter ? "尝试清除搜索或筛选条件。" : "当前日志分类暂时没有记录。"}
+            action={hasActiveFilter ? (
+              <button
+                type="button"
+                className="adm-btn ghost"
+                onClick={() => {
+                  setQuery("");
+                  if (chips?.[0]) setChip(chips[0]);
+                }}
+              >
+                清除筛选
+              </button>
+            ) : undefined}
+          />
         ) : (
-          <AdminTable<T> rows={rows} rowKey={(r) => r.id} columns={cols} pageSize={20} total={total} />
+          <AdminTable<T>
+            rows={rows}
+            rowKey={(r) => r.id}
+            columns={cols}
+            pageSize={20}
+            total={total}
+            label="日志明细"
+          />
         )}
       </Panel>
 
@@ -611,16 +624,58 @@ function ModelTab() {
 export default function AdminLogsPage() {
   const [tab, setTab] = useState<Tab>("系统");
 
+  const selectTab = (next: Tab) => {
+    setTab(next);
+    requestAnimationFrame(() => document.getElementById(`log-tab-${TAB_IDS[next]}`)?.focus());
+  };
+
   return (
     <div className="adm-page">
       <div className="adm-page-tabs">
-        <FilterChips options={[...TABS]} value={tab} onChange={(v) => setTab(v as Tab)} />
+        <div className="adm-segment" role="tablist" aria-label="日志分类">
+          {TABS.map((item, index) => {
+            const selected = item === tab;
+            const id = TAB_IDS[item];
+            return (
+              <button
+                key={item}
+                type="button"
+                id={`log-tab-${id}`}
+                className={`adm-chip${selected ? " on" : ""}`}
+                role="tab"
+                aria-selected={selected}
+                aria-controls={`log-panel-${id}`}
+                tabIndex={selected ? 0 : -1}
+                onClick={() => setTab(item)}
+                onKeyDown={(event) => {
+                  let nextIndex: number | null = null;
+                  if (event.key === "ArrowRight") nextIndex = (index + 1) % TABS.length;
+                  if (event.key === "ArrowLeft") nextIndex = (index - 1 + TABS.length) % TABS.length;
+                  if (event.key === "Home") nextIndex = 0;
+                  if (event.key === "End") nextIndex = TABS.length - 1;
+                  if (nextIndex == null) return;
+                  event.preventDefault();
+                  selectTab(TABS[nextIndex]);
+                }}
+              >
+                {item}
+              </button>
+            );
+          })}
+        </div>
       </div>
-      {tab === "系统" ? <SystemTab /> : null}
-      {tab === "请求" ? <AccessTab /> : null}
-      {tab === "登录" ? <LoginTab /> : null}
-      {tab === "业务" ? <BizTab /> : null}
-      {tab === "模型" ? <ModelTab /> : null}
+      <div
+        role="tabpanel"
+        id={`log-panel-${TAB_IDS[tab]}`}
+        aria-labelledby={`log-tab-${TAB_IDS[tab]}`}
+        tabIndex={0}
+      >
+        {tab === "系统" ? <SystemTab /> : null}
+        {tab === "请求" ? <AccessTab /> : null}
+        {tab === "登录" ? <LoginTab /> : null}
+        {tab === "业务" ? <BizTab /> : null}
+        {tab === "模型" ? <ModelTab /> : null}
+      </div>
     </div>
   );
 }

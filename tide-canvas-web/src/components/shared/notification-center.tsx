@@ -16,11 +16,19 @@
    read (single + all), delete, and link navigation.
    ========================================================================== */
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { notificationApi } from "@/lib/content-api";
 import { toast } from "@/components/shared/toast";
+import { useFocusTrap } from "@/hooks/use-focus-trap";
 import type { NotificationVO } from "@/types/content";
 import "./notification-center.css";
 
@@ -76,6 +84,7 @@ interface Props {
   renderTrigger: (state: {
     unread: number;
     open: boolean;
+    panelId: string;
     toggle: () => void;
   }) => React.ReactNode;
   /** Dropdown horizontal anchor relative to the trigger. Default "right". */
@@ -100,13 +109,22 @@ export default function NotificationCenter({
   const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
+  const panelRef = useFocusTrap<HTMLDivElement>(open);
   // 面板通过 portal 渲染到 body 并用 fixed 定位，避免被宿主容器(如 studio 侧栏的
   // overflow:auto、104px 窄栏)裁剪；据触发器位置决定向上/下弹与左右对齐。
   const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
   const [openUp, setOpenUp] = useState(false); // 向上弹出时用反向入场动画
   // 详情弹窗：点条目打开，展示完整正文；带链接的在弹窗内提供「前往查看」。
   const [detail, setDetail] = useState<NotificationVO | null>(null);
+  const detailRef = useFocusTrap<HTMLDivElement>(Boolean(detail));
+  const uid = useId().replace(/:/g, "");
+  const panelId = `notification-panel-${uid}`;
+  const panelTitleId = `${panelId}-title`;
+  const detailTitleId = `${panelId}-detail-title`;
+  const detailBodyId = `${panelId}-detail-body`;
+
+  const closePanel = useCallback(() => setOpen(false), []);
+  const closeDetail = useCallback(() => setDetail(null), []);
 
   const positionPanel = useCallback(() => {
     const el = wrapRef.current;
@@ -161,15 +179,19 @@ export default function NotificationCenter({
 
   // Unread badge: initial load + polling. Silent on failure (e.g. logged out).
   useEffect(() => {
-    refreshUnread();
-    if (pollMs <= 0) return;
-    const id = window.setInterval(refreshUnread, pollMs);
-    return () => window.clearInterval(id);
+    const initialId = window.setTimeout(refreshUnread, 0);
+    const pollId = pollMs > 0 ? window.setInterval(refreshUnread, pollMs) : null;
+    return () => {
+      window.clearTimeout(initialId);
+      if (pollId !== null) window.clearInterval(pollId);
+    };
   }, [refreshUnread, pollMs]);
 
   // Load the full list whenever the panel opens.
   useEffect(() => {
-    if (open) loadList();
+    if (!open) return;
+    const id = window.setTimeout(loadList, 0);
+    return () => window.clearTimeout(id);
   }, [open, loadList]);
 
   // Position the portaled panel on open, and keep it anchored on resize/scroll.
@@ -192,24 +214,32 @@ export default function NotificationCenter({
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
       if (wrapRef.current?.contains(t) || panelRef.current?.contains(t)) return;
-      setOpen(false);
+      closePanel();
     };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      closePanel();
+    };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [closePanel, open, panelRef]);
 
   // Esc 关闭详情弹窗（独立于面板的 Esc 处理）。
   useEffect(() => {
     if (!detail) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setDetail(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      closeDetail();
+    };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [detail]);
+  }, [closeDetail, detail]);
 
   const markOneRead = async (n: NotificationVO) => {
     if (n.isRead === 1) return;
@@ -267,79 +297,104 @@ export default function NotificationCenter({
 
   return (
     <div className="notif-center" ref={wrapRef}>
-      {renderTrigger({ unread, open, toggle: () => setOpen((v) => !v) })}
+      {renderTrigger({
+        unread,
+        open,
+        panelId,
+        toggle: () => setOpen((value) => !value),
+      })}
 
       {open && typeof document !== "undefined" &&
         createPortal(
           <div
+            id={panelId}
             ref={panelRef}
             className={`notif-panel${openUp ? " up" : ""}${tone === "light" ? " tone-light" : ""}`}
-            role="menu"
-            aria-label="通知"
+            role="dialog"
+            aria-labelledby={panelTitleId}
+            aria-busy={loading}
+            tabIndex={-1}
             style={panelStyle}
           >
-          <div className="notif-head">
-            <span className="notif-title">通知</span>
-            {unread > 0 && (
-              <button type="button" className="notif-readall" onClick={markAll}>
-                全部已读
-              </button>
-            )}
-          </div>
-
-          <div className="notif-list">
-            {loading ? (
-              <div className="notif-empty">加载中…</div>
-            ) : listError ? (
-              <div className="notif-empty">{listError}</div>
-            ) : items.length === 0 ? (
-              <div className="notif-empty rich">
-                <svg viewBox="0 0 24 24" aria-hidden>
-                  <path d="M12 2a7 7 0 0 0-7 7v3.5L3 16h18l-2-3.5V9a7 7 0 0 0-7-7Zm-2.3 17a2.5 2.5 0 0 0 4.6 0" />
-                </svg>
-                <b>暂无通知</b>
-                <span>生成结果、系统公告会在这里提醒你</span>
-              </div>
-            ) : (
-              items.map((n) => (
-                <div
-                  key={n.id}
-                  className={`notif-item${n.isRead === 0 ? " unread" : ""}`}
-                  role="menuitem"
-                  tabIndex={0}
-                  onClick={() => onItemClick(n)}
-                  onKeyDown={(e) => {
-                    // 仅当焦点在整行本身时才把 Enter/Space 当作「打开」；焦点在行内删除按钮上时
-                    // 交由该按钮处理，避免同一次按键既删除又打开/跳转。
-                    if (e.target !== e.currentTarget) return;
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      onItemClick(n);
-                    }
-                  }}
-                >
-                  {n.isRead === 0 && <span className="notif-dot" aria-hidden />}
-                  <span className="notif-ic" aria-hidden>
-                    <svg viewBox="0 0 24 24">{TYPE_ICON[n.type] ?? TYPE_ICON.system}</svg>
-                  </span>
-                  <div className="notif-body">
-                    <div className="notif-item-title">{n.title || "通知"}</div>
-                    {n.content && <div className="notif-item-text">{n.content}</div>}
-                    <div className="notif-item-time">{relativeTime(n.createTime)}</div>
-                  </div>
-                  <button
-                    type="button"
-                    className="notif-del"
-                    title="删除"
-                    aria-label="删除通知"
-                    onClick={(e) => removeOne(e, n)}
-                  >
-                    ×
+            <div className="notif-head">
+              <h2 className="notif-title" id={panelTitleId}>
+                通知
+              </h2>
+              <div className="notif-head-actions">
+                {unread > 0 && (
+                  <button type="button" className="notif-readall" onClick={markAll}>
+                    全部已读
                   </button>
+                )}
+                <button
+                  type="button"
+                  className="notif-close"
+                  aria-label="关闭通知"
+                  data-autofocus
+                  onClick={closePanel}
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+
+            <div
+              className="notif-list"
+              role={!loading && !listError && items.length > 0 ? "list" : undefined}
+            >
+              {loading ? (
+                <div className="notif-empty" role="status">
+                  加载中…
                 </div>
-              ))
-            )}
-          </div>
+              ) : listError ? (
+                <div className="notif-empty" role="alert">
+                  {listError}
+                </div>
+              ) : items.length === 0 ? (
+                <div className="notif-empty rich">
+                  <svg viewBox="0 0 24 24" aria-hidden>
+                    <path d="M12 2a7 7 0 0 0-7 7v3.5L3 16h18l-2-3.5V9a7 7 0 0 0-7-7Zm-2.3 17a2.5 2.5 0 0 0 4.6 0" />
+                  </svg>
+                  <b>暂无通知</b>
+                  <span>生成结果、系统公告会在这里提醒你</span>
+                </div>
+              ) : (
+                items.map((n) => (
+                  <div
+                    key={n.id}
+                    className={`notif-item${n.isRead === 0 ? " unread" : ""}`}
+                    role="listitem"
+                  >
+                    {n.isRead === 0 && <span className="notif-dot" aria-hidden />}
+                    <button
+                      type="button"
+                      className="notif-item-open"
+                      onClick={() => onItemClick(n)}
+                    >
+                      <span className="notif-ic" aria-hidden>
+                        <svg viewBox="0 0 24 24">
+                          {TYPE_ICON[n.type] ?? TYPE_ICON.system}
+                        </svg>
+                      </span>
+                      <span className="notif-body">
+                        <span className="notif-item-title">{n.title || "通知"}</span>
+                        {n.content && <span className="notif-item-text">{n.content}</span>}
+                        <span className="notif-item-time">{relativeTime(n.createTime)}</span>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="notif-del"
+                      title="删除"
+                      aria-label={`删除通知：${n.title || "通知"}`}
+                      onClick={(e) => removeOne(e, n)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
           </div>,
           document.body,
         )}
@@ -349,20 +404,24 @@ export default function NotificationCenter({
         createPortal(
           <div
             className={`notif-dmask${tone === "light" ? " tone-light" : ""}`}
-            onClick={() => setDetail(null)}
+            onClick={closeDetail}
           >
             <div
+              ref={detailRef}
               className="notif-detail"
               role="dialog"
               aria-modal="true"
-              aria-label={detail.title || "通知详情"}
+              aria-labelledby={detailTitleId}
+              aria-describedby={detailBodyId}
+              tabIndex={-1}
               onClick={(e) => e.stopPropagation()}
             >
               <button
                 type="button"
                 className="nd-x"
                 aria-label="关闭"
-                onClick={() => setDetail(null)}
+                data-autofocus
+                onClick={closeDetail}
               >
                 ×
               </button>
@@ -371,13 +430,15 @@ export default function NotificationCenter({
                   <svg viewBox="0 0 24 24">{TYPE_ICON[detail.type] ?? TYPE_ICON.system}</svg>
                 </span>
                 <div className="nd-ht">
-                  <b>{detail.title || "通知"}</b>
+                  <h2 id={detailTitleId}>{detail.title || "通知"}</h2>
                   <span>
                     {TYPE_LABEL[detail.type] ?? "通知"} · {relativeTime(detail.createTime)}
                   </span>
                 </div>
               </div>
-              <div className="nd-body">{detail.content || "（该通知没有正文）"}</div>
+              <div className="nd-body" id={detailBodyId}>
+                {detail.content || "（该通知没有正文）"}
+              </div>
               {detail.linkUrl && (
                 <div className="nd-acts">
                   <button type="button" className="nd-btn pri" onClick={goDetailLink}>

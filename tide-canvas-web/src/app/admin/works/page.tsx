@@ -18,7 +18,10 @@
    ============================================================================ */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { RefreshCw } from "lucide-react";
 import {
+  AdminAlert,
+  AdminEmptyState,
   AdminModal,
   AdminTable,
   FilterChips,
@@ -66,6 +69,7 @@ export default function AdminWorksPage() {
   const [works, setWorks] = useState<AdminWorkVO[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [filter, setFilter] = useState<WorkFilter>(WORK_FILTERS[0]);
   const [page, setPage] = useState(1);
@@ -93,6 +97,7 @@ export default function AdminWorksPage() {
   const load = useCallback(async () => {
     const id = ++reqIdRef.current;
     setLoading(true);
+    setError(null);
     try {
       await ensureSession(); // 登录流程暂未做:无 token 时静默登录默认账号
       const res = await adminWorksApi.list(queryForFilter(filter, page));
@@ -103,14 +108,21 @@ export default function AdminWorksPage() {
       } else {
         setWorks([]);
         setTotal(0);
+        setError(res.message || "加载作品失败");
       }
+    } catch {
+      if (id !== reqIdRef.current) return;
+      setWorks([]);
+      setTotal(0);
+      setError("加载作品失败，请稍后重试");
     } finally {
       if (id === reqIdRef.current) setLoading(false);
     }
   }, [ensureSession, filter, page, queryForFilter]);
 
   useEffect(() => {
-    load();
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
   }, [load]);
 
   const pendingCount = useMemo(
@@ -126,6 +138,9 @@ export default function AdminWorksPage() {
       try {
         const res = await adminWorksApi.setStatus(w.id, { status });
         if (res.success) await load();
+        else toast.error(res.message || "更新作品状态失败");
+      } catch {
+        toast.error("更新作品状态失败");
       } finally {
         setBusyId(null);
       }
@@ -175,6 +190,9 @@ export default function AdminWorksPage() {
       try {
         const res = await adminWorksApi.remove(w.id);
         if (res.success) await load();
+        else toast.error(res.message || "删除作品失败");
+      } catch {
+        toast.error("删除作品失败");
       } finally {
         setBusyId(null);
       }
@@ -268,9 +286,10 @@ export default function AdminWorksPage() {
     <div className="adm-page">
       <Panel
         title="作品库"
-        sub={`共 ${total.toLocaleString()} · 本页待审 ${pendingCount} · 与 /explore 同源`}
+        sub={`共 ${total.toLocaleString()} 件 · 本页待审 ${pendingCount} 件 · 公开作品广场内容`}
         tools={
           <FilterChips
+            label="作品类型与状态"
             options={[...WORK_FILTERS]}
             value={filter}
             onChange={(v) => {
@@ -282,16 +301,48 @@ export default function AdminWorksPage() {
       >
         {loading ? (
           <TableSkeleton />
-        ) : works.length === 0 ? (
-          <div style={{ padding: 28, color: "var(--text-faint)" }}>
-            暂无作品。
+        ) : error ? (
+          <div style={{ padding: 16 }}>
+            <AdminAlert
+              tone="error"
+              title="作品列表加载失败"
+              action={
+                <button type="button" className="adm-btn ghost" onClick={load}>
+                  <RefreshCw aria-hidden size={15} />
+                  重新加载
+                </button>
+              }
+            >
+              {error}
+            </AdminAlert>
           </div>
+        ) : works.length === 0 ? (
+          <AdminEmptyState
+            title="当前筛选下没有作品"
+            description="切换类型或状态后再查看；新作品发布后会自动出现在这里。"
+            action={filter !== "全部" ? (
+              <button
+                type="button"
+                className="adm-btn ghost"
+                onClick={() => {
+                  setFilter("全部");
+                  setPage(1);
+                }}
+              >
+                查看全部作品
+              </button>
+            ) : undefined}
+          />
         ) : (
-          <div style={busyId ? { opacity: 0.6, pointerEvents: "none" } : undefined}>
+          <div
+            aria-busy={busyId != null}
+            style={busyId ? { opacity: 0.6, pointerEvents: "none" } : undefined}
+          >
             <AdminTable<AdminWorkVO>
               rows={works}
               rowKey={(w) => w.id}
               columns={columns}
+              label="作品列表"
               server={{ page, pageSize: PAGE_SIZE, total, onPage: setPage }}
             />
           </div>
@@ -301,6 +352,7 @@ export default function AdminWorksPage() {
       {/* 作品详情 */}
       <AdminModal
         open={detail != null}
+        size="xl"
         title={detail ? detail.title || detail.id : "作品详情"}
         subtitle={detail ? `${detail.author?.name || "用户"} · ${detail.model || "—"}` : ""}
         onClose={() => setDetail(null)}
@@ -310,20 +362,28 @@ export default function AdminWorksPage() {
         footNote="精选状态即时生效"
       >
         {detail ? (
-          <div style={{ display: "flex", gap: 18 }}>
-            <span
-              className="sw"
-              style={{
-                background: detail.cover
-                  ? `center / cover no-repeat url("${detail.cover}")`
-                  : undefined,
-                width: 160,
-                height: 160,
-                borderRadius: 12,
-                flex: "none",
-              }}
-            />
-            <div className="cfg-card" style={{ flex: 1, margin: 0 }}>
+          <div className="cfg-grid">
+            <div className="cfg-card" style={{ padding: 0, overflow: "hidden" }}>
+              {detail.cover ? (
+                <div
+                  role="img"
+                  aria-label={`${detail.title || "作品"}封面预览`}
+                  style={{
+                    minHeight: 320,
+                    aspectRatio: "4 / 3",
+                    background: `var(--surface-2) center / contain no-repeat url("${detail.cover}")`,
+                  }}
+                />
+              ) : (
+                <div style={{ minHeight: 320 }}>
+                  <AdminEmptyState
+                    title="暂无可用预览"
+                    description="作品未提供封面地址，可通过右侧信息确认内容。"
+                  />
+                </div>
+              )}
+            </div>
+            <div className="cfg-card">
               <h3>作品信息</h3>
               <div className="cfg-row">
                 <span className="lab">作者</span>
@@ -332,6 +392,14 @@ export default function AdminWorksPage() {
               <div className="cfg-row">
                 <span className="lab">模型</span>
                 <span className="muted">{detail.model || "—"}</span>
+              </div>
+              <div className="cfg-row">
+                <span className="lab">分类</span>
+                <span className="muted">{detail.cat || "未分类"}</span>
+              </div>
+              <div className="cfg-row">
+                <span className="lab">标签</span>
+                <span className="muted" title={detail.tags || undefined}>{detail.tags || "未标记"}</span>
               </div>
               <div className="cfg-row">
                 <span className="lab">类型</span>
@@ -351,6 +419,10 @@ export default function AdminWorksPage() {
                 <StatusPill tone={detail.featured ? "green" : "gray"}>
                   {detail.featured ? "已精选" : "未精选"}
                 </StatusPill>
+              </div>
+              <div className="cfg-row">
+                <span className="lab">作品 ID</span>
+                <span className="mono muted">{detail.id}</span>
               </div>
             </div>
           </div>

@@ -13,7 +13,10 @@
    ============================================================================ */
 
 import { useCallback, useEffect, useState } from "react";
+import { Plus, RefreshCw, Send } from "lucide-react";
 import {
+  AdminAlert,
+  AdminEmptyState,
   AdminModal,
   AdminTable,
   Field,
@@ -99,7 +102,8 @@ export default function AdminNotificationsPage() {
   );
 
   useEffect(() => {
-    load(1);
+    const frame = requestAnimationFrame(() => void load(1));
+    return () => cancelAnimationFrame(frame);
   }, [load]);
 
   const send = async () => {
@@ -120,16 +124,22 @@ export default function AdminNotificationsPage() {
       return false;
     }
     setSending(true);
-    const res = await adminNotifyApi.send(dto);
-    setSending(false);
-    if (res.success && res.data) {
-      toast.success(`已发送给 ${res.data.sent} 位用户`);
-      setSendOpen(false);
-      setSendForm(emptySendForm());
-      load(1);
-    } else {
+    try {
+      const res = await adminNotifyApi.send(dto);
+      if (res.success && res.data) {
+        toast.success(`已发送给 ${res.data.sent} 位用户`);
+        setSendOpen(false);
+        setSendForm(emptySendForm());
+        load(1);
+        return true;
+      }
       toast.error(res.message || "发送失败");
       return false;
+    } catch {
+      toast.error("发送失败，请稍后重试");
+      return false;
+    } finally {
+      setSending(false);
     }
   };
 
@@ -142,39 +152,60 @@ export default function AdminNotificationsPage() {
       }))
     )
       return;
-    const res = await adminNotifyApi.remove(n.id);
-    if (res.success) load(pageNum, { silent: true });
-    else toast.error(res.message || "删除失败");
+    try {
+      const res = await adminNotifyApi.remove(n.id);
+      if (res.success) {
+        toast.success("消息已从用户通知中心移除");
+        load(pageNum, { silent: true });
+      } else toast.error(res.message || "删除失败");
+    } catch {
+      toast.error("删除失败，请稍后重试");
+    }
   };
 
   return (
-    <>
+    <div className="adm-page">
       {error ? (
-        <div className="adm-panel" style={{ padding: 16 }}>
-          <span className="tag2 red">
-            <i className="dot" />
-            {error}
-          </span>
-        </div>
+        <AdminAlert
+          tone="error"
+          title="站内消息加载失败"
+          action={
+            <button type="button" className="adm-btn ghost" onClick={() => load(pageNum)}>
+              <RefreshCw aria-hidden size={14} />
+              重新加载
+            </button>
+          }
+        >
+          {error}
+        </AdminAlert>
       ) : null}
 
       <Panel
-        title="消息管理"
+        title="通知列表"
         sub="站内通知 · 与用户通知中心同源，发送/删除即时生效"
         tools={
           <button type="button" className="adm-btn" onClick={() => setSendOpen(true)}>
-            + 发送通知
+            <Send aria-hidden size={15} />
+            发送通知
           </button>
         }
       >
         {loading ? (
           <TableSkeleton />
         ) : rows.length === 0 ? (
-          <div style={{ padding: 18 }} className="muted">
-            暂无消息，点击「发送通知」向用户推送第一条站内消息。
-          </div>
+          <AdminEmptyState
+            title="暂无站内消息"
+            description="发送系统公告或定向通知后，消息会同步出现在用户通知中心。"
+            action={
+              <button type="button" className="adm-btn" onClick={() => setSendOpen(true)}>
+                <Plus aria-hidden size={15} />
+                新建通知
+              </button>
+            }
+          />
         ) : (
           <AdminTable<AdminNotification>
+            label="站内消息列表"
             rows={rows}
             rowKey={(r) => r.id}
             server={{ page: pageNum, pageSize, total, onPage: (p) => load(p) }}
@@ -237,11 +268,17 @@ export default function AdminNotificationsPage() {
       {/* 发送通知 modal */}
       <AdminModal
         open={sendOpen}
+        size="lg"
         title="发送通知"
-        subtitle="推送站内消息（用户铃铛面板即时可见）"
+        subtitle={sendForm.target === "all" ? "向全部用户广播站内消息" : "按邮箱向指定用户发送站内消息"}
+        footNote={
+          sendForm.target === "all"
+            ? "广播会立即进入所有用户的通知中心，请在发送前复核标题、正文与链接"
+            : "通知发送后立即可见；删除只会移除对应的单条消息"
+        }
         onClose={() => setSendOpen(false)}
         onSave={send}
-        saveLabel={sending ? "发送中…" : "发送"}
+        saveLabel={sending ? "发送中…" : sendForm.target === "all" ? "确认广播" : "发送通知"}
       >
         <FormCard title="消息内容">
           <FormGrid>
@@ -253,7 +290,8 @@ export default function AdminNotificationsPage() {
               />
             </Field>
             <Field label="内容" span={4}>
-              <input
+              <textarea
+                rows={5}
                 placeholder="通知正文（可留空）"
                 value={sendForm.content}
                 onChange={(e) => setSendForm((f) => ({ ...f, content: e.target.value }))}
@@ -280,6 +318,8 @@ export default function AdminNotificationsPage() {
             {sendForm.target === "user" && (
               <Field label="用户邮箱" required span={2}>
                 <input
+                  type="email"
+                  autoComplete="off"
                   placeholder="如：user@example.com"
                   value={sendForm.email}
                   onChange={(e) => setSendForm((f) => ({ ...f, email: e.target.value }))}
@@ -289,6 +329,6 @@ export default function AdminNotificationsPage() {
           </FormGrid>
         </FormCard>
       </AdminModal>
-    </>
+    </div>
   );
 }

@@ -17,8 +17,11 @@
    ============================================================================ */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Plus, RefreshCw, Trash2 } from "lucide-react";
 import {
   AdminModal,
+  AdminAlert,
+  AdminEmptyState,
   AdminTable,
   Field,
   FilterBar,
@@ -31,6 +34,7 @@ import {
   StatusPill,
   SwitchToggle,
   TableSkeleton,
+  useFormSectionLabelId,
 } from "@/components/admin";
 import type { PillTone } from "@/mock/admin";
 import { adminSwatch } from "@/mock/admin";
@@ -137,7 +141,8 @@ export default function AdminModelsPage() {
   }, [ensureSession, typeIdx, pageNum]);
 
   useEffect(() => {
-    load();
+    const frame = requestAnimationFrame(() => void load());
+    return () => cancelAnimationFrame(frame);
   }, [load]);
 
   const liveCount = useMemo(() => rows.filter((m) => m.status === 1).length, [rows]);
@@ -175,6 +180,11 @@ export default function AdminModelsPage() {
     setModalOpen(true);
   };
 
+  const openCreate = () => {
+    setEditing(null);
+    setModalOpen(true);
+  };
+
   const toggleStatus = async (m: AdminModelVO, next: boolean) => {
     try {
       const res = await adminModelsApi.setStatus(m.id, { enabled: next });
@@ -189,21 +199,29 @@ export default function AdminModelsPage() {
     if (
       !(await confirmDialog({
         title: "删除模型",
-        message: `确定删除模型「${m.name}」？此操作会同步从模型市场移除。`,
-        confirmText: "删除",
+        message: `确认永久删除模型「${m.name}」？模型将立即从模型市场与创作台移除，已有配置无法恢复。`,
+        confirmText: "确认删除",
       }))
     ) {
       return;
     }
-    const res = await adminModelsApi.remove(m.id);
-    if (res.success) load();
-    else setError(res.message || "删除失败");
+    try {
+      const res = await adminModelsApi.remove(m.id);
+      if (res.success) {
+        toast.success(`已删除模型「${m.name}」`);
+        load();
+      } else {
+        toast.error(res.message || "删除失败");
+      }
+    } catch {
+      toast.error("删除失败，请稍后重试");
+    }
   };
 
   return (
     <div className="adm-page">
       <Panel
-        title="模型管理"
+        title="模型目录"
         sub={`共 ${total} 个 · 本页上架 ${liveCount}`}
         tools={
           <FilterBar
@@ -214,14 +232,22 @@ export default function AdminModelsPage() {
               setPageNum(1);
             }}
             actions={
-              <button
-                type="button"
-                className="adm-btn ghost"
-                onClick={syncModels}
-                disabled={syncing}
-              >
-                {syncing ? "同步中…" : "同步上游"}
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="adm-btn ghost"
+                  onClick={syncModels}
+                  disabled={syncing}
+                  aria-busy={syncing}
+                >
+                  <RefreshCw className={syncing ? "adm-spin" : undefined} aria-hidden size={14} />
+                  {syncing ? "同步中…" : "同步上游"}
+                </button>
+                <button type="button" className="adm-btn" onClick={openCreate}>
+                  <Plus aria-hidden size={15} />
+                  新增模型
+                </button>
+              </>
             }
           />
         }
@@ -229,20 +255,34 @@ export default function AdminModelsPage() {
         {loading ? (
           <TableSkeleton />
         ) : error ? (
-          <div className="muted" style={{ padding: "40px 18px", textAlign: "center" }}>
-            {error}
-            <div style={{ marginTop: 12 }}>
-              <button type="button" className="adm-btn ghost" onClick={load}>
-                重试
-              </button>
-            </div>
+          <div style={{ padding: 16 }}>
+            <AdminAlert
+              tone="error"
+              title="模型列表加载失败"
+              action={
+                <button type="button" className="adm-btn ghost" onClick={load}>
+                  <RefreshCw aria-hidden size={14} />
+                  重新加载
+                </button>
+              }
+            >
+              {error}
+            </AdminAlert>
           </div>
         ) : rows.length === 0 ? (
-          <div className="muted" style={{ padding: "40px 18px", textAlign: "center" }}>
-            暂无模型，点击「接入模型」新增。
-          </div>
+          <AdminEmptyState
+            title="还没有模型"
+            description="新增一个模型，或先从上游同步现有模型目录。"
+            action={
+              <button type="button" className="adm-btn" onClick={openCreate}>
+                <Plus aria-hidden size={15} />
+                新增模型
+              </button>
+            }
+          />
         ) : (
           <AdminTable<AdminModelVO>
+            label="模型列表"
             rows={rows}
             rowKey={(m) => m.id}
             server={{ page: pageNum, pageSize: PAGE_SIZE, total, onPage: setPageNum }}
@@ -347,6 +387,7 @@ function Chips<T extends string | number>({
   onChange: (next: T[]) => void;
   single?: boolean;
 }) {
+  const sectionLabelId = useFormSectionLabelId();
   const toggle = (v: T) => {
     if (single) {
       onChange([v]);
@@ -355,15 +396,17 @@ function Chips<T extends string | number>({
     onChange(value.includes(v) ? value.filter((x) => x !== v) : [...value, v]);
   };
   return (
-    <div className="mchips">
+    <div className="mchips" role="group" aria-labelledby={sectionLabelId}>
       {options.map((o) => (
-        <span
+        <button
+          type="button"
           key={String(o.v)}
           className={`mchip${value.includes(o.v) ? " on" : ""}`}
           onClick={() => toggle(o.v)}
+          aria-pressed={value.includes(o.v)}
         >
           {o.l}
-        </span>
+        </button>
       ))}
     </div>
   );
@@ -539,19 +582,20 @@ function ModelModal({
   return (
     <AdminModal
       open={open}
+      size="xl"
       title={model ? `配置模型 · ${model.name}` : "新增模型"}
       subtitle="基础信息 · 生成能力 · 积分定价（每个模型独立配置，同步至模型市场与创作台）"
       saveLabel={saving ? "保存中…" : "保存"}
-      footNote={err ?? "变更将在保存后同步到模型市场与创作台"}
+      footNote={err ? <span role="alert">{err}</span> : "变更将在保存后同步到模型市场与创作台"}
       onClose={onClose}
       onSave={save}
     >
       <FormCard title="基础信息">
         <FormGrid>
-          <Field label="名称" required>
+          <Field label="名称" required span={2}>
             <input placeholder="如：GPT Image 2" value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
-          <Field label="模型ID" required hint="上游模型标识（如 gpt-image-2）">
+          <Field label="模型 ID" span={2} hint="选填；上游模型标识（如 gpt-image-2）">
             <input placeholder="如：gpt-image-2" value={modelKey} onChange={(e) => setModelKey(e.target.value)} />
           </Field>
           <Field label="类型">
@@ -569,7 +613,7 @@ function ModelModal({
           <Field label="成本价（USD）" hint="上游单次成本，仅后台参考，不对用户暴露">
             <input value={cfg.costUsd ?? ""} onChange={(e) => setC({ costUsd: e.target.value })} placeholder="0.0000" inputMode="decimal" />
           </Field>
-          <Field label="图标" hint="点选官方品牌图标；或填 emoji / 自定义图片 URL；留空 = 前台按 modelKey 自动匹配品牌">
+          <Field group label="图标" span={4} hint="点选官方品牌图标；或填 emoji / 自定义图片 URL；留空 = 前台按 modelKey 自动匹配品牌">
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {BRAND_ICONS.map((b) => {
@@ -586,7 +630,7 @@ function ModelModal({
                       style={{
                         width: 34,
                         height: 34,
-                        borderRadius: 9,
+                        borderRadius: 8,
                         padding: 0,
                         cursor: "pointer",
                         background: `#fff center/62% no-repeat url("${url}")`,
@@ -601,10 +645,11 @@ function ModelModal({
                 value={cfg.icon ?? ""}
                 onChange={(e) => setC({ icon: e.target.value })}
                 placeholder="emoji 或图片 URL（留空自动匹配品牌图标）"
+                aria-label="自定义图标字符或图片 URL"
               />
             </div>
           </Field>
-          <Field label="描述" hint="模型选择列表名称下的副标题（选填）">
+          <Field label="描述" span={2} hint="模型选择列表名称下的副标题（选填）">
             <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="如：动漫高审美模型" />
           </Field>
           <Field label="预计耗时（秒）" hint="模型选择列表右侧耗时徽标（0=不显示）">
@@ -734,6 +779,7 @@ function ModelModal({
                 value={cfg.defaultPrompt ?? ""}
                 onChange={(e) => setC({ defaultPrompt: e.target.value })}
                 placeholder="如：赛博朋克城市夜景，霓虹倒影，电影感，8K 超写实"
+                aria-label="默认提示词"
               />
             </div>
           </FormSection>
@@ -747,16 +793,24 @@ function ModelModal({
                       value={idea}
                       onChange={(e) => setIdea(i, e.target.value)}
                       placeholder={`灵感提示词 ${i + 1}`}
+                      aria-label={`灵感提示词 ${i + 1}`}
                     />
                   </div>
-                  <button type="button" className="adm-btn ghost" onClick={() => removeIdea(i)}>
-                    删除
+                  <button
+                    type="button"
+                    className="adm-btn ghost"
+                    onClick={() => removeIdea(i)}
+                    aria-label={`移除灵感提示词 ${i + 1}`}
+                  >
+                    <Trash2 aria-hidden size={14} />
+                    移除
                   </button>
                 </div>
               ))}
               <div>
                 <button type="button" className="adm-btn ghost" onClick={addIdea}>
-                  ＋ 添加灵感词
+                  <Plus aria-hidden size={14} />
+                  添加灵感词
                 </button>
               </div>
             </div>
@@ -775,10 +829,11 @@ function ModelModal({
           ) : (
             <div className="fsec">
               <div className="fmatrix">
-                <table>
+                <div className="adm-table-wrap" role="region" aria-label="模型分档积分矩阵" tabIndex={0}>
+                <table aria-label="模型分档积分矩阵">
                   <thead>
                     <tr>
-                      <th>{isVideo ? "时长 ＼ 清晰度" : "画质 ＼ 清晰度"}</th>
+                      <th>{isVideo ? "时长 / 清晰度" : "画质 / 清晰度"}</th>
                       {matrixCols.map((col) => (
                         <th key={col}>{col.toUpperCase()}</th>
                       ))}
@@ -795,6 +850,7 @@ function ModelModal({
                               inputMode="decimal"
                               value={cfg.priceMatrix?.[row.key]?.[col] ?? ""}
                               onChange={(e) => setCell(row.key, col, e.target.value)}
+                              aria-label={`${row.label} ${col.toUpperCase()} 积分`}
                             />
                           </td>
                         ))}
@@ -802,6 +858,7 @@ function ModelModal({
                     ))}
                   </tbody>
                 </table>
+                </div>
               </div>
               <div className="hint">不同档位可设不同积分；留空或 0 的格回退到上方「消耗积分」。</div>
             </div>
@@ -865,6 +922,7 @@ function ModelModal({
                   value={String(cfg.maxFileCount ?? 0)}
                   onChange={(e) => setC({ maxFileCount: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
                   placeholder="如：3"
+                  aria-label="可上传文件数量"
                 />
               </div>
             </FormSection>
@@ -878,6 +936,7 @@ function ModelModal({
                   value={String(cfg.maxFileSizeMB ?? 0)}
                   onChange={(e) => setC({ maxFileSizeMB: Number(e.target.value) || 0 })}
                   placeholder="如：20"
+                  aria-label="支持的文件大小（MB）"
                 />
               </div>
             </FormSection>

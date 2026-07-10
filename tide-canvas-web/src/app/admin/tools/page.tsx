@@ -13,7 +13,7 @@
 
    Keeps the liuguang admin markup/classes + shared components (Panel /
    StatusPill / SwitchToggle / AdminModal / FormCard / FormGrid / Field /
-   FormSection / MChips). The ordered `.floor` row list (⋮⋮ handle 拖拽 +
+   FormSection / MChips). The ordered `.floor` row list (拖拽手柄 +
    上移/下移, 启用 toggle) mirrors /admin/home-floors — drag 与按钮共用同一个
    reorder 端点。
 
@@ -24,8 +24,11 @@
    ============================================================================ */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { GripVertical, RefreshCw } from "lucide-react";
 import {
   AdminModal,
+  AdminAlert,
+  AdminEmptyState,
   Field,
   FormCard,
   FormGrid,
@@ -48,6 +51,7 @@ export default function AdminToolsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<AdminToolVO | null>(null);
+  const [reordering, setReordering] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -65,30 +69,49 @@ export default function AdminToolsPage() {
   }, [ensureSession]);
 
   useEffect(() => {
-    load();
+    const frame = requestAnimationFrame(() => void load());
+    return () => cancelAnimationFrame(frame);
   }, [load]);
 
   const openEdit = (tool: AdminToolVO) => setEditing(tool);
   const close = () => setEditing(null);
 
   const toggleEnabled = async (tool: AdminToolVO, next: boolean) => {
-    const res = await adminToolsApi.setStatus(tool.id, { enabled: next });
-    if (res.success) load();
-    else load(); // revert from server truth on failure
+    try {
+      const res = await adminToolsApi.setStatus(tool.id, { enabled: next });
+      if (!res.success) toast.error(res.message || "工具状态更新失败");
+    } catch {
+      toast.error("工具状态更新失败，请稍后重试");
+    } finally {
+      load(); // 始终以服务端真值回滚开关
+    }
   };
 
-  // Persist a new ordering (shared by 上移/下移 buttons and ⋮⋮ drag-drop).
+  // Persist a new ordering (shared by 上移/下移 buttons and drag-drop).
   const applyOrder = useCallback(
     async (next: AdminToolVO[]) => {
+      if (reordering) return;
       setTools(next); // optimistic
-      const res = await adminToolsApi.reorder({ ids: next.map((t) => t.id) });
-      if (!res.success) load(); // revert from server truth
+      setReordering(true);
+      try {
+        const res = await adminToolsApi.reorder({ ids: next.map((t) => t.id) });
+        if (!res.success) {
+          toast.error(res.message || "排序保存失败");
+          await load();
+        }
+      } catch {
+        toast.error("排序保存失败，请稍后重试");
+        await load();
+      } finally {
+        setReordering(false);
+      }
     },
-    [load],
+    [load, reordering],
   );
 
   // Move tool at index `from` to `from+dir`.
   const move = (from: number, dir: -1 | 1) => {
+    if (reordering) return;
     const to = from + dir;
     if (to < 0 || to >= tools.length) return;
     const next = [...tools];
@@ -97,7 +120,7 @@ export default function AdminToolsPage() {
     applyOrder(next);
   };
 
-  // ⋮⋮ 拖拽排序：只允许从手柄起拖（dragFromHandle 门闩），行整体作为放置目标；
+  // 拖拽排序：只允许从手柄起拖（dragFromHandle 门闩），行整体作为放置目标；
   // 松手把被拖行插到目标行位置，与上移/下移共用 applyOrder 持久化。
   const [dragIx, setDragIx] = useState<number | null>(null);
   const [overIx, setOverIx] = useState<number | null>(null);
@@ -120,28 +143,33 @@ export default function AdminToolsPage() {
   };
 
   return (
-    <>
+    <div className="adm-page">
       {/* 工具管理 */}
       <Panel
-        title="工具管理"
-        sub="独立工具页与创作台一键操作的启用、文案与生成参数，全部后台驱动"
+        title="工具列表"
+        sub={`${tools.length} 个已注册工具 · 拖动或使用上下移动调整公开展示顺序`}
       >
-        <div style={{ padding: "16px 18px" }}>
+        <div style={{ padding: "16px 18px" }} aria-busy={loading || reordering}>
           {loading ? (
             <ListSkeleton rows={5} height={64} />
           ) : error ? (
-            <div className="muted" style={{ padding: "24px 0", textAlign: "center" }}>
-              {error}
-              <div style={{ marginTop: 12 }}>
+            <AdminAlert
+              tone="error"
+              title="工具列表加载失败"
+              action={
                 <button type="button" className="adm-btn ghost" onClick={load}>
-                  重试
+                  <RefreshCw aria-hidden size={14} />
+                  重新加载
                 </button>
-              </div>
-            </div>
+              }
+            >
+              {error}
+            </AdminAlert>
           ) : tools.length === 0 ? (
-            <div className="muted" style={{ padding: "24px 0", textAlign: "center" }}>
-              暂无工具，服务端启动后会自动注册。
-            </div>
+            <AdminEmptyState
+              title="暂无已注册工具"
+              description="工具能力由服务端代码注册，服务启动并完成注册后会显示在这里。"
+            />
           ) : (
             <>
               {tools.map((tool, i) => (
@@ -151,7 +179,7 @@ export default function AdminToolsPage() {
                   }`}
                   data-floor={tool.key}
                   key={tool.id}
-                  draggable
+                  draggable={!reordering}
                   onDragStart={(e) => {
                     if (!dragFromHandle.current) {
                       e.preventDefault(); // 只认手柄起拖，避免误拖行内按钮/开关
@@ -176,9 +204,13 @@ export default function AdminToolsPage() {
                     onMouseDown={() => {
                       dragFromHandle.current = true;
                     }}
-                    aria-label={`拖动调整 ${tool.title} 顺序`}
+                    onMouseUp={() => {
+                      dragFromHandle.current = false;
+                    }}
+                    title={`拖动调整 ${tool.title} 顺序`}
+                    aria-hidden="true"
                   >
-                    ⋮⋮
+                    <GripVertical size={16} strokeWidth={1.8} />
                   </span>
                   <span className="ix">{i + 1}</span>
                   <div>
@@ -200,17 +232,17 @@ export default function AdminToolsPage() {
                     aria-label={`${tool.title} 启用`}
                   />
                   <div className="rowacts">
-                    <button type="button" disabled={i === 0} onClick={() => move(i, -1)}>
+                    <button type="button" disabled={reordering || i === 0} onClick={() => move(i, -1)}>
                       上移
                     </button>
                     <button
                       type="button"
-                      disabled={i === tools.length - 1}
+                      disabled={reordering || i === tools.length - 1}
                       onClick={() => move(i, 1)}
                     >
                       下移
                     </button>
-                    <button type="button" onClick={() => openEdit(tool)}>
+                    <button type="button" onClick={() => openEdit(tool)} disabled={reordering}>
                       编辑
                     </button>
                   </div>
@@ -236,7 +268,7 @@ export default function AdminToolsPage() {
           }}
         />
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -346,6 +378,7 @@ function ToolModal({
   return (
     <AdminModal
       open
+      size="lg"
       title={`编辑工具 · ${tool.title}`}
       subtitle={`${tool.key} · ${tool.handler}（key 与 handler 由代码注册，不可修改）`}
       footNote="变更将在保存后作用于工具页与创作台"
@@ -376,12 +409,13 @@ function ToolModal({
               onChange={(e) => setIcon(e.target.value)}
             />
           </Field>
-          <Field label="封面色相" span={2} hint="首页能力卡与工具页封面的三色相（0–360）">
+          <Field group label="封面色相" span={2} hint="首页能力卡与工具页封面的三色相（0–360）">
             <div style={{ display: "flex", gap: 8 }}>
               {hues.map((h, i) => (
                 <input
                   key={i}
                   inputMode="numeric"
+                  aria-label={`封面色相 ${i + 1}`}
                   placeholder="0–360"
                   value={h}
                   onChange={(e) => setHue(i, e.target.value)}
@@ -440,6 +474,7 @@ function ToolModal({
               value={presetPrompt}
               onChange={(e) => setPresetPrompt(e.target.value)}
               placeholder="Engineered instruction sent to the model…"
+              aria-label="预置提示词"
             />
           </div>
         </FormSection>
@@ -454,6 +489,7 @@ function ToolModal({
               value={extraParams}
               onChange={(e) => setExtraParams(e.target.value)}
               placeholder='{"resolution":"4k"}（留空 = 内置默认）'
+              aria-label="默认参数 JSON"
             />
           </div>
         </FormSection>

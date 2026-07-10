@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { CheckCircle, XCircle, AlertCircle, X } from "lucide-react";
 
 export type ToastType = "success" | "error" | "info";
@@ -37,13 +37,45 @@ const COLORS = {
   info: "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950/50 dark:text-blue-400",
 };
 
+function ToastCard({ item, onRemove }: { item: ToastItem; onRemove: (id: number) => void }) {
+  const [paused, setPaused] = useState(false);
+  const Icon = ICONS[item.type];
+
+  useEffect(() => {
+    if (paused) return;
+    const duration = item.type === "error" ? 8000 : 5000;
+    const timer = window.setTimeout(() => onRemove(item.id), duration);
+    return () => window.clearTimeout(timer);
+  }, [item.id, item.type, onRemove, paused]);
+
+  return (
+    <div
+      role={item.type === "error" ? "alert" : "status"}
+      aria-atomic="true"
+      tabIndex={0}
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+      onFocusCapture={() => setPaused(true)}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setPaused(false);
+      }}
+      className={`pointer-events-auto flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm shadow-md ${COLORS[item.type]}`}
+    >
+      <Icon className="h-4 w-4 shrink-0" aria-hidden />
+      <span>{item.message}</span>
+      <button type="button" aria-label="关闭提示" onClick={() => onRemove(item.id)} className="ml-2 opacity-60 hover:opacity-100">
+        <X className="h-3.5 w-3.5" aria-hidden />
+      </button>
+    </div>
+  );
+}
+
 export function ToastContainer() {
   const [items, setItems] = useState<ToastItem[]>([]);
 
   useEffect(() => {
     const listener = (item: ToastItem) => {
       setItems((prev) => [...prev, item]);
-      setTimeout(() => setItems((prev) => prev.filter((i) => i.id !== item.id)), 1800);
     };
     listeners.push(listener);
     return () => {
@@ -52,22 +84,16 @@ export function ToastContainer() {
     };
   }, []);
 
-  const remove = (id: number) => setItems((prev) => prev.filter((i) => i.id !== id));
+  const remove = useCallback((id: number) => {
+    setItems((prev) => prev.filter((i) => i.id !== id));
+  }, []);
 
   // z 必须高于全部弹层（modal-zoom/lightbox/srcmask 均为 1000）：toast 是反馈层，任何时候都要可见
   return (
-    <div className="pointer-events-none fixed left-1/2 top-6 z-[1200] flex -translate-x-1/2 flex-col items-center gap-2">
+    <div className="pointer-events-none fixed left-1/2 top-6 z-[1200] flex -translate-x-1/2 flex-col items-center gap-2" aria-live="polite" aria-label="操作反馈">
       {items.map((item) => {
-        const Icon = ICONS[item.type];
         return (
-          <div key={item.id}
-            className={`pointer-events-auto flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm shadow-md ${COLORS[item.type]}`}>
-            <Icon className="h-4 w-4 shrink-0" />
-            <span>{item.message}</span>
-            <button onClick={() => remove(item.id)} className="ml-2 opacity-60 hover:opacity-100">
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </div>
+          <ToastCard key={item.id} item={item} onRemove={remove} />
         );
       })}
     </div>

@@ -24,14 +24,16 @@ export interface FilterChipsProps {
   onChange?: (value: string, index: number) => void;
   /** Initial active index when uncontrolled (default 0). */
   defaultIndex?: number;
+  /** Accessible name for the filter group. */
+  label?: string;
 }
 
-export function FilterChips({ options, value, onChange, defaultIndex = 0 }: FilterChipsProps) {
+export function FilterChips({ options, value, onChange, defaultIndex = 0, label = "筛选" }: FilterChipsProps) {
   const [internal, setInternal] = useState(defaultIndex);
   const activeIndex = value != null ? options.indexOf(value) : internal;
 
   return (
-    <>
+    <div className="adm-segment" role="group" aria-label={label}>
       {options.map((opt, i) => (
         <button
           key={opt + i}
@@ -41,11 +43,12 @@ export function FilterChips({ options, value, onChange, defaultIndex = 0 }: Filt
             if (value == null) setInternal(i);
             onChange?.(opt, i);
           }}
+          aria-pressed={i === activeIndex}
         >
           {opt}
         </button>
       ))}
-    </>
+    </div>
   );
 }
 

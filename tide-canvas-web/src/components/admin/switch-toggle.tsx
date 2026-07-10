@@ -17,29 +17,38 @@
 import { useState } from "react";
 
 export interface SwitchToggleProps {
+  id?: string;
   checked?: boolean;
   defaultChecked?: boolean;
   onChange?: (next: boolean) => void;
   disabled?: boolean;
   "aria-label"?: string;
+  "aria-describedby"?: string;
+  "aria-invalid"?: boolean | "true" | "false";
 }
 
 export function SwitchToggle({
+  id,
   checked,
   defaultChecked = false,
   onChange,
   disabled,
   "aria-label": ariaLabel,
+  "aria-describedby": ariaDescribedBy,
+  "aria-invalid": ariaInvalid,
 }: SwitchToggleProps) {
   const [internal, setInternal] = useState(defaultChecked);
   const on = checked != null ? checked : internal;
 
   return (
     <button
+      id={id}
       type="button"
       role="switch"
       aria-checked={on}
-      aria-label={ariaLabel}
+      aria-label={ariaLabel ?? "切换状态"}
+      aria-describedby={ariaDescribedBy}
+      aria-invalid={ariaInvalid}
       disabled={disabled}
       className={`sw-toggle${on ? " on" : ""}`}
       onClick={() => {

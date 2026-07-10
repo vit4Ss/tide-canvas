@@ -7,70 +7,76 @@
    Breadcrumb is hidden via CSS; kept off to reduce noise.
    ============================================================================ */
 
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import NotificationCenter from "@/components/shared/notification-center";
 import { findActive } from "./admin-sidebar";
-
-function showUserSearch(pathname: string): boolean {
-  return pathname === "/admin/users" || pathname.startsWith("/admin/users/");
-}
+import { Bell, Menu, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 
 export interface AdminTopbarProps {
   onMenuClick?: () => void;
+  onCollapseClick?: () => void;
+  navOpen?: boolean;
+  collapsed?: boolean;
 }
 
-export function AdminTopbar({ onMenuClick }: AdminTopbarProps) {
+export function AdminTopbar({
+  onMenuClick,
+  onCollapseClick,
+  navOpen = false,
+  collapsed = false,
+}: AdminTopbarProps) {
   const pathname = usePathname() || "/admin";
-  const router = useRouter();
   const active = findActive(pathname);
-  const canSearchUsers = showUserSearch(pathname);
 
   return (
     <header className="adm-top">
       <button
         type="button"
         className="adm-menu-btn"
-        aria-label="打开导航"
+        aria-label={navOpen ? "关闭导航" : "打开导航"}
+        aria-expanded={navOpen}
+        aria-controls="admin-primary-navigation"
         onClick={onMenuClick}
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M4 7h16M4 12h16M4 17h16" />
-        </svg>
+        <Menu aria-hidden size={17} strokeWidth={1.8} />
       </button>
 
-      <div>
+      <button
+        type="button"
+        className="adm-collapse-btn"
+        aria-label={collapsed ? "展开侧栏" : "收起侧栏"}
+        aria-pressed={collapsed}
+        onClick={onCollapseClick}
+      >
+        {collapsed ? (
+          <PanelLeftOpen aria-hidden size={17} strokeWidth={1.8} />
+        ) : (
+          <PanelLeftClose aria-hidden size={17} strokeWidth={1.8} />
+        )}
+      </button>
+
+      <div className="adm-title-block">
         <h1>{active.label}</h1>
+        <p>{active.description}</p>
       </div>
 
-      {canSearchUsers ? (
-        <label className="adm-search">
-          <span className="muted">⌕</span>
-          <input
-            type="text"
-            placeholder="搜索用户（邮箱 / 昵称 / 手机）…"
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                const q = (e.target as HTMLInputElement).value.trim().slice(0, 100);
-                router.push(q ? `/admin/users?keyword=${encodeURIComponent(q)}` : "/admin/users");
-              }
-            }}
-          />
-        </label>
-      ) : (
-        <div style={{ marginLeft: "auto" }} />
-      )}
+      <div className="adm-top-spacer" />
 
       <NotificationCenter
         align="right"
         tone="light"
-        renderTrigger={({ unread, toggle }) => (
+        renderTrigger={({ unread, open, panelId, toggle }) => (
           <button
             type="button"
             className="tbtn"
             onClick={toggle}
-            style={{ position: "relative" }}
+            aria-label={unread > 0 ? `通知，${unread} 条未读` : "通知"}
+            aria-expanded={open}
+            aria-haspopup="dialog"
+            aria-controls={panelId}
           >
-            通知
+            <Bell aria-hidden size={15} strokeWidth={1.8} />
+            <span className="tbtn-label">通知</span>
             {unread > 0 && (
               <span className="notif-badge">{unread > 99 ? "99+" : unread}</span>
             )}

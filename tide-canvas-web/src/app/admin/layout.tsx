@@ -12,11 +12,11 @@ export default function AdminLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <AdminGuard>
-      {/* Geist 变量只挂在后台域：拉丁字母/数字走 Geist，中文回落 PingFang/Noto（admin.css --ui/--mono） */}
-      <div className={`admin-body ${GeistSans.variable} ${GeistMono.variable}`}>
+    /* Geist 变量只挂在后台域：拉丁字母/数字走 Geist，中文回落 PingFang/Noto（admin.css --ui/--mono） */
+    <div className={`admin-body ${GeistSans.variable} ${GeistMono.variable}`}>
+      <AdminGuard>
         <AdminShell>{children}</AdminShell>
-      </div>
-    </AdminGuard>
+      </AdminGuard>
+    </div>
   );
 }
