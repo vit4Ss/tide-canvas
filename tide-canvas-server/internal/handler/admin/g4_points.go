@@ -26,11 +26,12 @@ import (
 // g4PointsConfigKeys are the sys_config keys exposed by the points config
 // section. GET returns each key's current value (empty string if unset); PUT
 // upserts only the keys present in the body.
+// （points.exchangeRate 已整链下线：积分只随套餐发放为用户定稿，充值汇率
+//   无任何业务消费方，2026-07-10 随后台 UI 一并移除。）
 var g4PointsConfigKeys = []string{
 	"points.checkinDaily", // daily check-in grant
 	"points.inviteReward", // invite reward
 	"points.signupBonus",  // new-user signup bonus
-	"points.exchangeRate", // RMB -> points exchange rate
 }
 
 const g4PointsConfigGroup = "points"

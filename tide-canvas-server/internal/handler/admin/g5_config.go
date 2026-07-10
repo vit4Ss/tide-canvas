@@ -63,7 +63,6 @@ var baselineConfigKeys = map[string]struct{}{
 	"points.checkinDaily":                {},
 	"points.inviteReward":                {},
 	"points.signupBonus":                 {},
-	"points.exchangeRate":                {},
 }
 
 // RegisterConfig mounts the config admin routes on the admin group.

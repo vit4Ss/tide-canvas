@@ -69,13 +69,12 @@ export interface AdminPointsConfig {
   "points.checkinDaily": string;
   "points.inviteReward": string;
   "points.signupBonus": string;
-  "points.exchangeRate": string;
 }
 
-/** The exact config keys the backend persists. */
+/** The exact config keys the backend persists.
+ *（points.exchangeRate 已随「积分只随套餐发放」定稿整链下线，2026-07-10。）*/
 export const POINTS_CONFIG_KEYS = [
   "points.checkinDaily",
   "points.inviteReward",
   "points.signupBonus",
-  "points.exchangeRate",
 ] as const;

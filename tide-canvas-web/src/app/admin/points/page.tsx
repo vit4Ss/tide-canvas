@@ -72,7 +72,6 @@ const EMPTY_CONFIG: AdminPointsConfig = {
   "points.checkinDaily": "",
   "points.inviteReward": "",
   "points.signupBonus": "",
-  "points.exchangeRate": "",
 };
 
 /* ── rule modal form state ─────────────────────────────────────────────── */
@@ -192,9 +191,8 @@ export default function AdminPointsPage() {
       { k: "积分规则", v: String(rules.length) },
       { k: "启用规则", v: String(enabledRules) },
       { k: "流水记录", v: ledgerTotal.toLocaleString("zh-CN") },
-      { k: "兑换汇率", v: config["points.exchangeRate"] || "—" },
     ];
-  }, [rules, ledgerTotal, config]);
+  }, [rules, ledgerTotal]);
 
   /* ── rule actions ────────────────────────────────────────────────────── */
   const openCreateRule = () => {
@@ -469,7 +467,7 @@ export default function AdminPointsPage() {
       {/* 积分全局配置 — sys_config keys (GET/PUT) */}
       <Panel
         title="积分全局配置"
-        sub="签到 / 邀请 / 注册赠送与兑换汇率"
+        sub="签到 / 邀请 / 注册赠送"
         tools={
           <button type="button" className="adm-btn" onClick={saveConfig} disabled={savingConfig || loading} aria-busy={savingConfig}>
             {savingConfig ? "保存中…" : "保存配置"}
@@ -513,21 +511,6 @@ export default function AdminPointsPage() {
                   min={0}
                   value={config["points.signupBonus"]}
                   onChange={(e) => setConfigField("points.signupBonus", e.target.value)}
-                />
-                <span className="unit">积分</span>
-              </div>
-            </div>
-            <div className="cfg-card">
-              <h3>汇率</h3>
-              <p>充值时的人民币与积分兑换比例。</p>
-              <div className="cfg-row">
-                <label className="lab" htmlFor="points-exchange-rate">1 元 =</label>
-                <input
-                  id="points-exchange-rate"
-                  type="number"
-                  min={0}
-                  value={config["points.exchangeRate"]}
-                  onChange={(e) => setConfigField("points.exchangeRate", e.target.value)}
                 />
                 <span className="unit">积分</span>
               </div>

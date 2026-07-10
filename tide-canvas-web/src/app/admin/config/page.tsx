@@ -94,7 +94,6 @@ const BASELINE_KEYS = new Set([
   "points.checkinDaily",
   "points.inviteReward",
   "points.signupBonus",
-  "points.exchangeRate",
 ]);
 
 /* ── 页脚链接（site.footerLinks）结构化编辑 ──────────────────────────── */
