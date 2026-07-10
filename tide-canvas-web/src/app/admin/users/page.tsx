@@ -184,13 +184,14 @@ function AdminUsersPageInner() {
     setError(null);
     try {
       await ensureSession();
-      const { role, status } = filterToQuery(filter);
+      const { role, status, subscribed } = filterToQuery(filter);
       const res = await adminUsersApi.list({
         pageNum,
         pageSize: PAGE_SIZE,
         keyword: keyword || undefined,
         role,
         status,
+        subscribed,
       });
       if (id !== reqIdRef.current) return; // 过期响应丢弃
       if (res.success && res.data) {
@@ -254,7 +255,7 @@ function AdminUsersPageInner() {
   }
 
   async function saveEdit() {
-    if (!editUser || !editForm) return;
+    if (!editUser || !editForm) return false;
     setSavingUser(true);
     try {
       const dto: AdminUserUpdateDTO = {
@@ -272,7 +273,11 @@ function AdminUsersPageInner() {
         await loadUsers();
       } else {
         setError(res.message || "保存失败");
+        return false;
       }
+    } catch {
+      setError("保存失败，请稍后重试");
+      return false;
     } finally {
       setSavingUser(false);
     }
@@ -292,11 +297,11 @@ function AdminUsersPageInner() {
   }
 
   async function savePoints() {
-    if (!pointsUser) return;
+    if (!pointsUser) return false;
     const amount = Number(pointsAmount);
     if (!Number.isFinite(amount) || amount === 0) {
       setError("请输入非零的积分变动值");
-      return;
+      return false;
     }
     setSavingPoints(true);
     try {
@@ -309,7 +314,11 @@ function AdminUsersPageInner() {
         await loadUsers();
       } else {
         setError(res.message || "积分调整失败");
+        return false;
       }
+    } catch {
+      setError("积分调整失败，请稍后重试");
+      return false;
     } finally {
       setSavingPoints(false);
     }
@@ -338,7 +347,7 @@ function AdminUsersPageInner() {
   async function saveRole() {
     if (!roleForm.name.trim()) {
       setError("角色名称不能为空");
-      return;
+      return false;
     }
     setSavingRole(true);
     try {
@@ -357,7 +366,11 @@ function AdminUsersPageInner() {
         await loadRoles();
       } else {
         setError(res.message || "保存角色失败");
+        return false;
       }
+    } catch {
+      setError("保存角色失败，请稍后重试");
+      return false;
     } finally {
       setSavingRole(false);
     }

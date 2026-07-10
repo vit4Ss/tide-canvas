@@ -76,6 +76,8 @@ const DURATION_OPTIONS = Array.from({ length: 15 }, (_, i) => `${i + 1}s`);
 const RATIO_OPTIONS = ["1:1", "3:2", "2:3", "16:9", "9:16", "4:3", "3:4", "21:9"];
 const RATIO_LABEL: Record<string, string> = {};
 
+const PAGE_SIZE = 20;
+
 /** Category chips → backend media-type filter (undefined = 全部). */
 const TYPE_FILTERS: { label: string; type?: string }[] = [
   { label: "全部" },
@@ -100,6 +102,7 @@ export default function AdminModelsPage() {
 
   const [rows, setRows] = useState<AdminModelVO[]>([]);
   const [total, setTotal] = useState(0);
+  const [pageNum, setPageNum] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [typeIdx, setTypeIdx] = useState(0);
@@ -108,7 +111,7 @@ export default function AdminModelsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<AdminModelVO | null>(null);
 
-  // reqId 守卫:快速切类型筛选时,旧响应后到不应覆盖新筛选结果。
+  // reqId 守卫:快速切类型筛选/翻页时,旧响应后到不应覆盖新结果。
   const reqIdRef = useRef(0);
   const load = useCallback(async () => {
     const id = ++reqIdRef.current;
@@ -117,7 +120,7 @@ export default function AdminModelsPage() {
     try {
       await ensureSession();
       const type = TYPE_FILTERS[typeIdx]?.type;
-      const res = await adminModelsApi.list({ pageNum: 1, pageSize: 100, type });
+      const res = await adminModelsApi.list({ pageNum, pageSize: PAGE_SIZE, type });
       if (id !== reqIdRef.current) return; // 过期响应丢弃
       if (res.success && res.data) {
         setRows(res.data.records);
@@ -131,7 +134,7 @@ export default function AdminModelsPage() {
     } finally {
       if (id === reqIdRef.current) setLoading(false);
     }
-  }, [ensureSession, typeIdx]);
+  }, [ensureSession, typeIdx, pageNum]);
 
   useEffect(() => {
     load();
@@ -173,9 +176,13 @@ export default function AdminModelsPage() {
   };
 
   const toggleStatus = async (m: AdminModelVO, next: boolean) => {
-    const res = await adminModelsApi.setStatus(m.id, { enabled: next });
-    if (res.success) load();
-    else load(); // revert from server truth on failure
+    try {
+      const res = await adminModelsApi.setStatus(m.id, { enabled: next });
+      if (!res.success) toast.error(res.message || "状态更新失败");
+    } catch {
+      toast.error("状态更新失败，请稍后重试");
+    }
+    load(); // 失败时同样重载,以服务端真值回滚开关
   };
 
   const removeModel = async (m: AdminModelVO) => {
@@ -202,7 +209,10 @@ export default function AdminModelsPage() {
           <FilterBar
             options={TYPE_FILTERS.map((f) => f.label)}
             value={TYPE_FILTERS[typeIdx].label}
-            onChange={(_, i) => setTypeIdx(i)}
+            onChange={(_, i) => {
+              setTypeIdx(i);
+              setPageNum(1);
+            }}
             actions={
               <button
                 type="button"
@@ -235,7 +245,7 @@ export default function AdminModelsPage() {
           <AdminTable<AdminModelVO>
             rows={rows}
             rowKey={(m) => m.id}
-            pageSize={20}
+            server={{ page: pageNum, pageSize: PAGE_SIZE, total, onPage: setPageNum }}
             columns={[
               {
                 header: "模型",
@@ -493,7 +503,7 @@ function ModelModal({
   const save = async () => {
     if (!name.trim()) {
       setErr("请填写模型名称");
-      return;
+      return false;
     }
     setSaving(true);
     setErr(null);
@@ -510,10 +520,15 @@ function ModelModal({
       const res = model
         ? await adminModelsApi.update(model.id, payload)
         : await adminModelsApi.create(payload);
-      if (res.success) onSaved();
-      else setErr(res.message || "保存失败");
+      if (res.success) {
+        onSaved();
+      } else {
+        setErr(res.message || "保存失败");
+        return false;
+      }
     } catch {
       setErr("保存失败，请稍后重试");
+      return false;
     } finally {
       setSaving(false);
     }

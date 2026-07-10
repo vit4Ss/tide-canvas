@@ -13,8 +13,11 @@
      </div>
 
    Behavior parity with admin.js: backdrop click closes, ✕ closes, 取消 closes,
-   保存 fires onSave then closes. The `.show` class is toggled on the next frame
-   so the open transition runs (admin.js did `void offsetWidth; add('show')`).
+   保存 awaits onSave then closes — UNLESS onSave returns/resolves `false`
+   (校验失败或接口失败时返回 false，弹窗保持打开、用户输入不丢；admin.js 的
+   「无条件关弹窗」quirk 由此修正，2026-07 审计)。onSave 进行中保存按钮禁用。
+   The `.show` class is toggled on the next frame so the open transition runs
+   (admin.js did `void offsetWidth; add('show')`).
    Escape-to-close added for accessibility. Renders nothing when closed.
 
    Section pages compose their forms from the exported field helpers (Field,
@@ -39,8 +42,9 @@ export interface AdminModalProps {
   /** Save button label (default: "保存"). */
   saveLabel?: string;
   onClose: () => void;
-  /** Fires before the modal closes on save. */
-  onSave?: () => void;
+  /** Fires on save; return/resolve `false` to keep the modal open
+   *  (validation / API failure). Any other result closes the modal. */
+  onSave?: () => void | boolean | Promise<void | boolean>;
 }
 
 export function AdminModal({
@@ -55,6 +59,7 @@ export function AdminModal({
   onSave,
 }: AdminModalProps) {
   const [show, setShow] = useState(false);
+  const [saving, setSaving] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
 
   // toggle `.show` after mount for the entrance transition; the cleanup resets
@@ -85,9 +90,19 @@ export function AdminModal({
 
   if (!open) return null;
 
-  const save = () => {
-    onSave?.();
-    onClose();
+  const save = async () => {
+    if (saving) return;
+    if (!onSave) {
+      onClose();
+      return;
+    }
+    setSaving(true);
+    try {
+      const result = await onSave();
+      if (result !== false) onClose();
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -121,8 +136,8 @@ export function AdminModal({
           <button type="button" className="adm-btn ghost" onClick={onClose}>
             {cancelLabel}
           </button>
-          <button type="button" className="adm-btn" onClick={save}>
-            {saveLabel}
+          <button type="button" className="adm-btn" disabled={saving} onClick={save}>
+            {saving ? "保存中…" : saveLabel}
           </button>
         </div>
       </div>

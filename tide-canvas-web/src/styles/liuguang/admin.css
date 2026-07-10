@@ -286,7 +286,8 @@
   font-size: 11px;
   color: var(--text-faint);
 }
-.adm-side-foot a {
+.adm-side-foot a,
+.adm-side-foot button {
   margin-left: auto;
   height: 28px;
   padding: 0 10px;
@@ -301,7 +302,19 @@
   white-space: nowrap;
   transition: color 0.1s, background 0.1s;
 }
-.adm-side-foot a:hover {
+/* 右侧动作组（前台 / 退出）：组整体贴右，组内不再各自 auto 推挤 */
+.adm-side-foot .acts {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+}
+.adm-side-foot .acts a,
+.adm-side-foot .acts button {
+  margin-left: 0;
+  padding: 0 8px;
+}
+.adm-side-foot a:hover,
+.adm-side-foot button:hover {
   color: var(--text);
   background: var(--panel);
 }
@@ -1007,6 +1020,13 @@ tr:hover .rowacts,
   color: var(--text-faint);
   cursor: grab;
   font-size: 14px;
+}
+/* 拖拽排序（楼层/工具行）：被拖行半透明，悬停目标行顶部出插入指示线 */
+.floor.dragging {
+  opacity: 0.45;
+}
+.floor.drop-hint {
+  box-shadow: inset 0 2px 0 var(--accent);
 }
 .floor .ix {
   width: 22px;

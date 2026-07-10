@@ -16,7 +16,7 @@
    展示 switch on a collection writes its `visible` flag inline.
    ============================================================================ */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AdminModal,
   AdminTable,
@@ -49,6 +49,8 @@ const COLLECTION_FILTERS = ["全部", "合集", "主题", "提示词"] as const;
 type CollectionFilter = (typeof COLLECTION_FILTERS)[number];
 
 const COLLECTION_TYPE_OPTIONS = ["合集", "主题", "提示词"] as const;
+
+const PAGE_SIZE = 10;
 
 /** Deterministic mesh cover from an id (fallback when coverUrl is empty). */
 function meshCover(id: string): string {
@@ -94,40 +96,69 @@ export default function AdminInspirationPage() {
 
   const [collections, setCollections] = useState<CollectionVO[]>([]);
   const [collTotal, setCollTotal] = useState(0);
+  const [collPage, setCollPage] = useState(1);
+  const [collLoading, setCollLoading] = useState(true);
   const [prompts, setPrompts] = useState<PromptVO[]>([]);
   const [promptTotal, setPromptTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const [promptPage, setPromptPage] = useState(1);
+  const [promptLoading, setPromptLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
   const [collFilter, setCollFilter] = useState<CollectionFilter>(COLLECTION_FILTERS[0]);
   const [collDraft, setCollDraft] = useState<CollDraft | null>(null);
   const [promptDraft, setPromptDraft] = useState<PromptDraft | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // reqId 守卫:切筛选会触发「旧页码」+「重置页码」两次请求,只让最新一次生效,
+  // 避免先发的旧请求后到、把过期数据渲染上去。
+  const collReqRef = useRef(0);
+  const loadCollections = useCallback(async () => {
+    const id = ++collReqRef.current;
+    setCollLoading(true);
     try {
       await ensureSession(); // 登录流程暂未做:无 token 时静默登录默认账号
       const type = collFilter === "全部" ? undefined : collFilter;
-      const [coll, prm] = await Promise.all([
-        adminInspirationApi.listCollections({ pageNum: 1, pageSize: 50, type }),
-        adminInspirationApi.listPrompts({ pageNum: 1, pageSize: 50 }),
-      ]);
-      if (coll.success && coll.data) {
-        setCollections(coll.data.records);
-        setCollTotal(coll.data.total);
-      }
-      if (prm.success && prm.data) {
-        setPrompts(prm.data.records);
-        setPromptTotal(prm.data.total);
+      const res = await adminInspirationApi.listCollections({
+        pageNum: collPage,
+        pageSize: PAGE_SIZE,
+        type,
+      });
+      if (id !== collReqRef.current) return; // 过期响应丢弃
+      if (res.success && res.data) {
+        setCollections(res.data.records);
+        setCollTotal(res.data.total);
       }
     } finally {
-      setLoading(false);
+      if (id === collReqRef.current) setCollLoading(false);
     }
-  }, [ensureSession, collFilter]);
+  }, [ensureSession, collFilter, collPage]);
+
+  const promptReqRef = useRef(0);
+  const loadPrompts = useCallback(async () => {
+    const id = ++promptReqRef.current;
+    setPromptLoading(true);
+    try {
+      await ensureSession();
+      const res = await adminInspirationApi.listPrompts({
+        pageNum: promptPage,
+        pageSize: PAGE_SIZE,
+      });
+      if (id !== promptReqRef.current) return; // 过期响应丢弃
+      if (res.success && res.data) {
+        setPrompts(res.data.records);
+        setPromptTotal(res.data.total);
+      }
+    } finally {
+      if (id === promptReqRef.current) setPromptLoading(false);
+    }
+  }, [ensureSession, promptPage]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    loadCollections();
+  }, [loadCollections]);
+
+  useEffect(() => {
+    loadPrompts();
+  }, [loadPrompts]);
 
   const kpis: Kpi[] = useMemo(() => {
     const visible = collections.filter((c) => c.visible).length;
@@ -173,7 +204,7 @@ export default function AdminInspirationPage() {
     const title = collDraft.title.trim();
     if (!title) {
       toast.error("请填写标题");
-      return;
+      return false;
     }
     const body: CollectionUpsertDTO = {
       title,
@@ -193,14 +224,18 @@ export default function AdminInspirationPage() {
       if (res.success) {
         setCollDraft(null);
         toast.success("合集已保存");
-        await load();
+        await loadCollections();
       } else {
         toast.error(res.message || "保存失败");
+        return false;
       }
+    } catch {
+      toast.error("保存失败，请稍后重试");
+      return false;
     } finally {
       setBusy(false);
     }
-  }, [collDraft, load]);
+  }, [collDraft, loadCollections]);
 
   const toggleVisible = useCallback(
     async (c: CollectionVO, next: boolean) => {
@@ -212,12 +247,12 @@ export default function AdminInspirationPage() {
           coverUrl: c.coverUrl,
           visible: next,
         });
-        if (res.success) await load();
+        if (res.success) await loadCollections();
       } finally {
         setBusy(false);
       }
     },
-    [load],
+    [loadCollections],
   );
 
   const deleteColl = useCallback(
@@ -235,7 +270,7 @@ export default function AdminInspirationPage() {
         const res = await adminInspirationApi.deleteCollection(c.id);
         if (res.success) {
           toast.success("合集已删除");
-          await load();
+          await loadCollections();
         } else {
           toast.error(res.message || "删除失败");
         }
@@ -243,7 +278,7 @@ export default function AdminInspirationPage() {
         setBusy(false);
       }
     },
-    [load],
+    [loadCollections],
   );
 
   /* --- prompt CRUD --- */
@@ -265,7 +300,7 @@ export default function AdminInspirationPage() {
     const text = promptDraft.text.trim();
     if (!text) {
       toast.error("请填写提示词");
-      return;
+      return false;
     }
     const body: PromptUpsertDTO = {
       text,
@@ -281,14 +316,18 @@ export default function AdminInspirationPage() {
       if (res.success) {
         setPromptDraft(null);
         toast.success("提示词已保存");
-        await load();
+        await loadPrompts();
       } else {
         toast.error(res.message || "保存失败");
+        return false;
       }
+    } catch {
+      toast.error("保存失败，请稍后重试");
+      return false;
     } finally {
       setBusy(false);
     }
-  }, [promptDraft, load]);
+  }, [promptDraft, loadPrompts]);
 
   const deletePrompt = useCallback(
     async (p: PromptVO) => {
@@ -305,7 +344,7 @@ export default function AdminInspirationPage() {
         const res = await adminInspirationApi.deletePrompt(p.id);
         if (res.success) {
           toast.success("提示词已删除");
-          await load();
+          await loadPrompts();
         } else {
           toast.error(res.message || "删除失败");
         }
@@ -313,7 +352,7 @@ export default function AdminInspirationPage() {
         setBusy(false);
       }
     },
-    [load],
+    [loadPrompts],
   );
 
   const dim = busy ? { opacity: 0.6, pointerEvents: "none" as const } : undefined;
@@ -331,7 +370,10 @@ export default function AdminInspirationPage() {
             <FilterChips
               options={[...COLLECTION_FILTERS]}
               value={collFilter}
-              onChange={(v) => setCollFilter(v as CollectionFilter)}
+              onChange={(v) => {
+                setCollFilter(v as CollectionFilter);
+                setCollPage(1);
+              }}
             />
             <button type="button" className="adm-btn" onClick={openNewColl}>
               + 新增合集
@@ -339,7 +381,7 @@ export default function AdminInspirationPage() {
           </>
         }
       >
-        {loading ? (
+        {collLoading ? (
           <TableSkeleton />
         ) : collections.length === 0 ? (
           <div style={{ padding: 28, color: "var(--text-faint)" }}>暂无合集。</div>
@@ -348,8 +390,7 @@ export default function AdminInspirationPage() {
             <AdminTable<CollectionVO>
               rows={collections}
               rowKey={(r) => r.id}
-              total={collTotal}
-              pageSize={10}
+              server={{ page: collPage, pageSize: PAGE_SIZE, total: collTotal, onPage: setCollPage }}
               columns={[
                 {
                   header: "封面",
@@ -419,7 +460,7 @@ export default function AdminInspirationPage() {
           </button>
         }
       >
-        {loading ? (
+        {promptLoading ? (
           <TableSkeleton />
         ) : prompts.length === 0 ? (
           <div style={{ padding: 28, color: "var(--text-faint)" }}>暂无提示词。</div>
@@ -428,8 +469,7 @@ export default function AdminInspirationPage() {
             <AdminTable<PromptVO>
               rows={prompts}
               rowKey={(r) => r.id}
-              pageSize={10}
-              total={promptTotal}
+              server={{ page: promptPage, pageSize: PAGE_SIZE, total: promptTotal, onPage: setPromptPage }}
               columns={[
                 { header: "提示词", className: "strong", cell: (r) => r.text },
                 {

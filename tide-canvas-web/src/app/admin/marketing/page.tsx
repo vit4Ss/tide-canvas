@@ -36,6 +36,7 @@ import { adminMarketingApi } from "@/lib/admin-marketing-api";
 import type { CampaignVO, CampaignDTO } from "@/types/admin-marketing";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { formatDateTime } from "@/lib/utils";
+import { toast } from "@/components/shared/toast";
 
 type PillTone = StatusPillProps["tone"];
 
@@ -151,13 +152,18 @@ export default function AdminMarketingPage() {
 
   const handleSave = useCallback(async () => {
     if (!modal) return;
+    const name = nameRef.current?.value.trim() ?? "";
+    if (!name) {
+      toast.error("请填写活动名称");
+      return false;
+    }
     setSaving(true);
     try {
       await ensureSession();
       const limitVal = limitRef.current?.value;
       const limitNum = limitVal ? Number(limitVal) : undefined;
       const dto: CampaignDTO = {
-        name: nameRef.current?.value.trim() ?? "",
+        name,
         type: typeRef.current?.value ?? CAMPAIGN_TYPES[0],
         strength: strengthRef.current?.value ?? "",
         startTime: startRef.current?.value || undefined,
@@ -170,10 +176,15 @@ export default function AdminMarketingPage() {
       const res = modal.row
         ? await adminMarketingApi.updateCampaign(modal.row.id, dto)
         : await adminMarketingApi.createCampaign(dto);
-      if (res.success) {
-        setModal(null);
-        await loadCampaigns();
+      if (!res.success) {
+        toast.error(res.message || "保存活动失败");
+        return false;
       }
+      setModal(null);
+      await loadCampaigns();
+    } catch {
+      toast.error("保存活动失败");
+      return false;
     } finally {
       setSaving(false);
     }

@@ -195,15 +195,21 @@ export default function AdminPointsPage() {
       trigger: ruleForm.trigger.trim(),
       enabled: ruleForm.enabled,
     };
-    if (!dto.name || !dto.scene) return;
-    const res = editingRule
-      ? await adminPointsApi.updateRule(editingRule.id, dto)
-      : await adminPointsApi.createRule(dto);
-    if (res.success) {
-      setRuleOpen(false);
-      loadRules();
-    } else {
-      setError(res.message || "保存规则失败");
+    if (!dto.name || !dto.scene) return false;
+    try {
+      const res = editingRule
+        ? await adminPointsApi.updateRule(editingRule.id, dto)
+        : await adminPointsApi.createRule(dto);
+      if (res.success) {
+        setRuleOpen(false);
+        loadRules();
+      } else {
+        setError(res.message || "保存规则失败");
+        return false;
+      }
+    } catch {
+      setError("保存规则失败，请稍后重试");
+      return false;
     }
   };
   const toggleRule = async (r: AdminPointRule, next: boolean) => {
@@ -235,13 +241,19 @@ export default function AdminPointsPage() {
       amount: toInt(adjForm.amount),
       remark: adjForm.remark.trim() || undefined,
     };
-    if (!dto.userId || dto.amount === 0) return;
-    const res = await adminPointsApi.adjust(dto);
-    if (res.success) {
-      setAdjOpen(false);
-      loadLedger(1);
-    } else {
-      setError(res.message || "调整积分失败");
+    if (!dto.userId || dto.amount === 0) return false;
+    try {
+      const res = await adminPointsApi.adjust(dto);
+      if (res.success) {
+        setAdjOpen(false);
+        loadLedger(1);
+      } else {
+        setError(res.message || "调整积分失败");
+        return false;
+      }
+    } catch {
+      setError("调整积分失败，请稍后重试");
+      return false;
     }
   };
 

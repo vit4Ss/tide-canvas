@@ -13,16 +13,17 @@
 
    Keeps the liuguang admin markup/classes + shared components (Panel /
    StatusPill / SwitchToggle / AdminModal / FormCard / FormGrid / Field /
-   FormSection / MChips). The ordered `.floor` row list (grab ⋮⋮ handle,
-   上移/下移, 启用 toggle) mirrors /admin/home-floors.
+   FormSection / MChips). The ordered `.floor` row list (⋮⋮ handle 拖拽 +
+   上移/下移, 启用 toggle) mirrors /admin/home-floors — drag 与按钮共用同一个
+   reorder 端点。
 
-   Known AdminModal quirk: 保存 closes the modal unconditionally, so both
-   validation and API failures surface via toast AFTER close.
+   AdminModal contract: onSave 返回 false 时弹窗保持打开（校验/接口失败），
+   成功路径由 onSaved 关闭并刷新（2026-07 修正旧「无条件关弹窗」quirk）。
 
    Client component (toggles + reorder + modal).
    ============================================================================ */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AdminModal,
   Field,
@@ -76,16 +77,46 @@ export default function AdminToolsPage() {
     else load(); // revert from server truth on failure
   };
 
-  // Persist a new ordering: move tool at index `from` to `from+dir`.
-  const move = async (from: number, dir: -1 | 1) => {
+  // Persist a new ordering (shared by 上移/下移 buttons and ⋮⋮ drag-drop).
+  const applyOrder = useCallback(
+    async (next: AdminToolVO[]) => {
+      setTools(next); // optimistic
+      const res = await adminToolsApi.reorder({ ids: next.map((t) => t.id) });
+      if (!res.success) load(); // revert from server truth
+    },
+    [load],
+  );
+
+  // Move tool at index `from` to `from+dir`.
+  const move = (from: number, dir: -1 | 1) => {
     const to = from + dir;
     if (to < 0 || to >= tools.length) return;
     const next = [...tools];
     const [moved] = next.splice(from, 1);
     next.splice(to, 0, moved);
-    setTools(next); // optimistic
-    const res = await adminToolsApi.reorder({ ids: next.map((t) => t.id) });
-    if (!res.success) load(); // revert from server truth
+    applyOrder(next);
+  };
+
+  // ⋮⋮ 拖拽排序：只允许从手柄起拖（dragFromHandle 门闩），行整体作为放置目标；
+  // 松手把被拖行插到目标行位置，与上移/下移共用 applyOrder 持久化。
+  const [dragIx, setDragIx] = useState<number | null>(null);
+  const [overIx, setOverIx] = useState<number | null>(null);
+  const dragFromHandle = useRef(false);
+
+  const endDrag = () => {
+    dragFromHandle.current = false;
+    setDragIx(null);
+    setOverIx(null);
+  };
+
+  const dropTo = (to: number) => {
+    const from = dragIx;
+    endDrag();
+    if (from == null || to === from) return;
+    const next = [...tools];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    applyOrder(next);
   };
 
   return (
@@ -114,8 +145,41 @@ export default function AdminToolsPage() {
           ) : (
             <>
               {tools.map((tool, i) => (
-                <div className="floor" data-floor={tool.key} key={tool.id}>
-                  <span className="grab">⋮⋮</span>
+                <div
+                  className={`floor${dragIx === i ? " dragging" : ""}${
+                    overIx === i && dragIx != null && dragIx !== i ? " drop-hint" : ""
+                  }`}
+                  data-floor={tool.key}
+                  key={tool.id}
+                  draggable
+                  onDragStart={(e) => {
+                    if (!dragFromHandle.current) {
+                      e.preventDefault(); // 只认手柄起拖，避免误拖行内按钮/开关
+                      return;
+                    }
+                    setDragIx(i);
+                    e.dataTransfer.effectAllowed = "move";
+                  }}
+                  onDragOver={(e) => {
+                    if (dragIx == null) return;
+                    e.preventDefault();
+                    setOverIx(i);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    dropTo(i);
+                  }}
+                  onDragEnd={endDrag}
+                >
+                  <span
+                    className="grab"
+                    onMouseDown={() => {
+                      dragFromHandle.current = true;
+                    }}
+                    aria-label={`拖动调整 ${tool.title} 顺序`}
+                  >
+                    ⋮⋮
+                  </span>
                   <span className="ix">{i + 1}</span>
                   <div>
                     <div className="nm">{tool.title}</div>
@@ -208,12 +272,12 @@ function ToolModal({
   const setHue = (i: number, val: string) =>
     setHues((prev) => prev.map((h, j) => (j === i ? val : h)));
 
-  // AdminModal 保存 closes unconditionally, so validation/API errors toast.
-  const save = async () => {
+  // 校验/接口失败 return false → AdminModal 保持打开，用户输入不丢。
+  const save = async (): Promise<boolean> => {
     const nextTitle = title.trim();
     if (!nextTitle) {
       toast.error("工具标题不能为空");
-      return;
+      return false;
     }
 
     const nextExtra = extraParams.trim();
@@ -223,11 +287,11 @@ function ToolModal({
         parsed = JSON.parse(nextExtra);
       } catch {
         toast.error("默认参数不是合法 JSON");
-        return;
+        return false;
       }
       if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
         toast.error('默认参数需为 JSON 对象，如 {"resolution":"4k"}');
-        return;
+        return false;
       }
     }
 
@@ -237,12 +301,12 @@ function ToolModal({
     if (filled.length > 0) {
       if (filled.length !== 3) {
         toast.error("封面色相需填满 3 个数值，或全部留空");
-        return;
+        return false;
       }
       const nums = hues.map((h) => Number(h.trim()));
       if (nums.some((n) => !Number.isInteger(n) || n < 0 || n > 360)) {
         toast.error("封面色相需为 0–360 的整数");
-        return;
+        return false;
       }
       cover = nums;
     }
@@ -262,15 +326,20 @@ function ToolModal({
 
     if (Object.keys(dto).length === 0) {
       onSaved(); // nothing changed
-      return;
+      return true;
     }
 
     try {
       const res = await adminToolsApi.update(tool.id, dto);
-      if (res.success) onSaved();
-      else toast.error(res.message || "保存失败");
+      if (res.success) {
+        onSaved();
+        return true;
+      }
+      toast.error(res.message || "保存失败");
+      return false;
     } catch {
       toast.error("保存失败，请稍后重试");
+      return false;
     }
   };
 

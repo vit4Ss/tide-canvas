@@ -5,10 +5,10 @@
 
    Wired to the admin works API (community_post rows, shared with the public
    /explore feed). Keeps the liuguang admin markup/classes + shared components:
-     - 4 KPI cards (总作品 / 已发布 / 待审核 / 精选), derived from the loaded page.
      - 作品库 panel: filter chips (全部 / 图片 / 视频 / 精选 / 已下架) + the works
        table (作品 / 作者 / 模型 / 类型 / 状态 / 操作)。点赞/评论/浏览等社交
-       计数已移除（2026-07-09 用户拍板：产品没有这些）。
+       计数已移除（2026-07-09 用户拍板：产品没有这些）；原 4 KPI 卡已撤，
+       本页待审数并入 Panel 副标题。
      - 作品详情 modal (查看): cover + meta, with a 精选/取消精选 toggle action.
 
    CRUD against the real endpoints, refreshing the list after each change:
@@ -32,6 +32,7 @@ import type { PillTone } from "@/mock/admin";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminWorksApi } from "@/lib/admin-works-api";
 import { confirmDialog } from "@/components/shared/confirm";
+import { toast } from "@/components/shared/toast";
 import {
   WORK_STATUS_OFFLINE,
   WORK_STATUS_PENDING,
@@ -132,18 +133,26 @@ export default function AdminWorksPage() {
     [load],
   );
 
+  // 返回 boolean：详情弹窗把它当 AdminModal onSave 用，失败返回 false
+  // 让弹窗保持打开（列表行内调用忽略返回值，行为不变）。
   const toggleFeatured = useCallback(
-    async (w: AdminWorkVO) => {
+    async (w: AdminWorkVO): Promise<boolean> => {
       setBusyId(w.id);
       try {
         const res = await adminWorksApi.setStatus(w.id, {
           status: w.status,
           featured: !w.featured,
         });
-        if (res.success) {
-          setDetail((d) => (d && d.id === w.id ? { ...d, featured: !w.featured } : d));
-          await load();
+        if (!res.success) {
+          toast.error(res.message || "更新精选状态失败");
+          return false;
         }
+        setDetail((d) => (d && d.id === w.id ? { ...d, featured: !w.featured } : d));
+        await load();
+        return true;
+      } catch {
+        toast.error("更新精选状态失败");
+        return false;
       } finally {
         setBusyId(null);
       }

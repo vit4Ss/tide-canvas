@@ -113,11 +113,11 @@ export default function AdminNotificationsPage() {
     };
     if (!dto.title) {
       toast.error("请填写标题");
-      return;
+      return false;
     }
     if (sendForm.target === "user" && !dto.email) {
       toast.error("定向发送需要填写用户邮箱");
-      return;
+      return false;
     }
     setSending(true);
     const res = await adminNotifyApi.send(dto);
@@ -129,6 +129,7 @@ export default function AdminNotificationsPage() {
       load(1);
     } else {
       toast.error(res.message || "发送失败");
+      return false;
     }
   };
 

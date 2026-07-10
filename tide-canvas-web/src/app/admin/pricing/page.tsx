@@ -29,6 +29,7 @@ import {
   SwitchToggle,
   TableSkeleton,
 } from "@/components/admin";
+import { toast } from "@/components/shared/toast";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminPricingApi } from "@/lib/admin-pricing-api";
 import type {
@@ -169,12 +170,29 @@ export default function AdminPricingPage() {
     setPlanOpen(true);
   };
   const savePlan = async () => {
+    // 月价/年价 UI 标了 required：空串/非法/负数直接拦下（0 合法 = 免费档），
+    // 否则 toNum 会把空值静默变 0 提交。校验失败返回 false 让弹窗保持打开。
+    const name = planForm.name.trim();
+    if (!name) {
+      toast.error("请填写套餐名称");
+      return false;
+    }
+    const monthly = Number(planForm.monthly.trim());
+    if (planForm.monthly.trim() === "" || !Number.isFinite(monthly) || monthly < 0) {
+      toast.error("请填写有效的月价");
+      return false;
+    }
+    const yearly = Number(planForm.yearly.trim());
+    if (planForm.yearly.trim() === "" || !Number.isFinite(yearly) || yearly < 0) {
+      toast.error("请填写有效的年价");
+      return false;
+    }
     const dto: AdminPlanUpsertDTO = {
-      name: planForm.name.trim(),
+      name,
       desc: planForm.desc.trim(),
       cta: planForm.cta.trim(),
-      monthly: toNum(planForm.monthly),
-      yearly: toNum(planForm.yearly),
+      monthly,
+      yearly,
       monthlyPoints: toNum(planForm.monthlyPoints),
       // 只按 · 和换行分割：权益文案里合法出现逗号（如「每月 3,000 积分」），
       // 逗号分割会把它拆碎并写坏库里的 items。
@@ -189,7 +207,6 @@ export default function AdminPricingPage() {
       // so carry the existing value through on edit.
       ...(editingPlan ? { code: editingPlan.code } : {}),
     };
-    if (!dto.name) return;
     const res = editingPlan
       ? await adminPricingApi.updatePlan(editingPlan.id, dto)
       : await adminPricingApi.createPlan(dto);
@@ -197,7 +214,9 @@ export default function AdminPricingPage() {
       setPlanOpen(false);
       load();
     } else {
-      setError(res.message || "保存套餐失败");
+      // 弹窗保持打开（return false），顶部 error 横幅被弹窗盖住，用 toast 提示
+      toast.error(res.message || "保存套餐失败");
+      return false;
     }
   };
   const togglePlan = async (p: AdminPlan, next: boolean) => {

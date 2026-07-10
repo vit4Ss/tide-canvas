@@ -2,12 +2,17 @@
 
 /* ============================================================================
    AdminSidebar — dense nav rail for the ops console.
+   底部身份区读真实登录用户（原「运营管理员/超级管理员」为硬编码占位，
+   2026-07 审计修正），并提供 前台 / 退出登录 两个动作。
    ============================================================================ */
 
 import Link from "next/link";
 import { Logo } from "@/components/flux/atoms";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { ADMIN_ICONS } from "@/mock/admin";
+import { useAuth } from "@/hooks/use-auth";
+import { useAuthStore } from "@/stores/use-auth-store";
+import { toast } from "@/components/shared/toast";
 
 export interface AdminNavItem {
   label: string;
@@ -67,6 +72,23 @@ export interface AdminSidebarProps {
 export function AdminSidebar({ onNavigate }: AdminSidebarProps) {
   const pathname = usePathname() || "/admin";
   const active = findActive(pathname);
+  const router = useRouter();
+  const { user } = useAuth();
+  const logout = useAuthStore((s) => s.logout);
+
+  // 真实登录身份（admin-guard 保证 role=9 才能到这里）；会话未就绪时的占位。
+  const name = user ? user.nickname || user.username : "管理员";
+  const email = user?.email ?? "";
+
+  const onLogout = async () => {
+    onNavigate?.();
+    try {
+      await logout();
+    } finally {
+      toast.success("已退出登录");
+      router.push("/");
+    }
+  };
 
   return (
     <aside className="adm-side">
@@ -103,15 +125,22 @@ export function AdminSidebar({ onNavigate }: AdminSidebarProps) {
 
       <div className="adm-side-foot">
         <span className="av" aria-hidden>
-          运
+          {(name.trim().slice(0, 1) || "管").toUpperCase()}
         </span>
-        <div>
-          <div className="nm">运营管理员</div>
-          <div className="rl">超级管理员</div>
+        <div style={{ minWidth: 0 }}>
+          <div className="nm">{name}</div>
+          <div className="rl" title={email}>
+            {email || "管理员"}
+          </div>
         </div>
-        <Link href="/" title="返回前台" onClick={onNavigate}>
-          前台
-        </Link>
+        <span className="acts">
+          <Link href="/" title="返回前台" onClick={onNavigate}>
+            前台
+          </Link>
+          <button type="button" title="退出登录" onClick={onLogout}>
+            退出
+          </button>
+        </span>
       </div>
     </aside>
   );

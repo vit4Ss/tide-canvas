@@ -8,12 +8,14 @@
      GET/POST/PUT/DELETE /api/admin/email/templates
      GET/POST/PUT/DELETE /api/admin/email/api-keys
 
-     - KPI strip (今日发送 / 送达率 / 打开率 / 退信·投诉) — static chrome.
-     - .adm-2col: SMTP 服务 (cfg rows) | 发送策略 (cfg rows) — static chrome.
-     - 邮件模板: filterChips(全部 / 系统 / 营销 / 通知 by type) + 新建模板; table
+     - KPI strip (邮件模板 / 启用模板 / API 密钥 / 启用密钥) — 由真实列表派生。
+     - 邮件模板: filterChips(全部 / html / text by type) + 新建模板; table
        (模板 / 类型 / 触发场景 / 变量 / 状态[开关] / 操作[编辑·删除]) → tplModal.
      - API 密钥: 新建密钥; table (名称 / Key / 权限 / 日上限 / 状态[开关] /
        操作[编辑·删除]) → keyModal.
+
+   原「SMTP 服务/发送策略」面板展示的是假配置，已移除
+   （真实邮件配置在 配置管理 → mail 分组）。
 
    Client component: filter state, template/key modals, switch toggles,
    loading/empty states.
@@ -47,6 +49,7 @@ import type {
 } from "@/types/admin-email";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { formatDateTime } from "@/lib/utils";
+import { toast } from "@/components/shared/toast";
 
 type PillTone = StatusPillProps["tone"];
 
@@ -171,11 +174,16 @@ export default function AdminEmailPage() {
 
   const saveTemplate = useCallback(async () => {
     if (!tplModal) return;
+    const name = tNameRef.current?.value.trim() ?? "";
+    if (!name) {
+      toast.error("请填写模板名称");
+      return false;
+    }
     setSaving(true);
     try {
       await ensureSession();
       const dto: EmailTemplateDTO = {
-        name: tNameRef.current?.value.trim() ?? "",
+        name,
         type: tTypeRef.current?.value ?? "html",
         scene: tSceneRef.current?.value ?? "",
         variables: tVarsRef.current?.value ?? "",
@@ -186,10 +194,15 @@ export default function AdminEmailPage() {
       const res = tplModal.row
         ? await adminEmailApi.updateTemplate(tplModal.row.id, dto)
         : await adminEmailApi.createTemplate(dto);
-      if (res.success) {
-        setTplModal(null);
-        await loadTemplates();
+      if (!res.success) {
+        toast.error(res.message || "保存模板失败");
+        return false;
       }
+      setTplModal(null);
+      await loadTemplates();
+    } catch {
+      toast.error("保存模板失败");
+      return false;
     } finally {
       setSaving(false);
     }
@@ -197,13 +210,18 @@ export default function AdminEmailPage() {
 
   const saveApiKey = useCallback(async () => {
     if (!keyModal) return;
+    const name = kNameRef.current?.value.trim() ?? "";
+    if (!name) {
+      toast.error("请填写密钥名称");
+      return false;
+    }
     setSaving(true);
     try {
       await ensureSession();
       const limitVal = kLimitRef.current?.value;
       const limitNum = limitVal ? Number(limitVal) : undefined;
       const dto: ApiKeyDTO = {
-        name: kNameRef.current?.value.trim() ?? "",
+        name,
         scope: kScopeRef.current?.value ?? "",
         keyValue: kValueRef.current?.value.trim() || undefined,
         dailyLimit: Number.isFinite(limitNum) ? limitNum : undefined,
@@ -213,10 +231,15 @@ export default function AdminEmailPage() {
       const res = keyModal.row
         ? await adminEmailApi.updateApiKey(keyModal.row.id, dto)
         : await adminEmailApi.createApiKey(dto);
-      if (res.success) {
-        setKeyModal(null);
-        await loadApiKeys();
+      if (!res.success) {
+        toast.error(res.message || "保存密钥失败");
+        return false;
       }
+      setKeyModal(null);
+      await loadApiKeys();
+    } catch {
+      toast.error("保存密钥失败");
+      return false;
     } finally {
       setSaving(false);
     }
