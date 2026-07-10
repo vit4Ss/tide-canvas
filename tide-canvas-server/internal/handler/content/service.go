@@ -86,8 +86,9 @@ func parseFooterCols(raw string) ([]FooterColVO, bool) {
 // HomeGlobalVO is the public view of the homepage's global settings（后台
 // 首页楼层「楼层全局配置」panel）: the 背景流光 shader defaults plus the
 // hero's primary CTA. FluxPreset is a client-side palette key (aurora/nebula/
-// ocean/ember/verdant/ink — the client falls back on unknown keys), and
-// CtaTarget is a route key (studio/pricing) the client maps to a path.
+// ocean/ember/verdant/ink，或 "off" = 首页整体不渲染流光背景 — the client
+// falls back on unknown keys), and CtaTarget is a route key (studio/pricing)
+// the client maps to a path.
 type HomeGlobalVO struct {
 	FluxPreset     string  `json:"fluxPreset"`
 	FluxIntensity  float64 `json:"fluxIntensity"`

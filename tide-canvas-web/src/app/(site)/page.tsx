@@ -390,8 +390,10 @@ export default function HomePage() {
 
   return (
     <>
-      {/* 全局流光背景：等配置返回再挂载，避免默认预设闪一下再跳变 */}
-      {homeCfg && (
+      {/* 全局流光背景：等配置返回再挂载，避免默认预设闪一下再跳变。
+          后台预设选「关闭」(off) 时整体不挂载——无 canvas、无 flux-on 透明化、
+          无切换器，首页回到纯黑楼层底。 */}
+      {homeCfg && homeCfg.fluxPreset !== "off" && (
         <FluxBg
           preset={homeCfg.fluxPreset}
           intensity={homeCfg.fluxIntensity}

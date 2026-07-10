@@ -350,7 +350,7 @@ function parseHomeGlobal(raw: string): HomeGlobalForm {
     }>;
     return {
       fluxPreset:
-        v.fluxPreset && FLUX_PRESETS[v.fluxPreset]
+        v.fluxPreset && (v.fluxPreset === "off" || FLUX_PRESETS[v.fluxPreset])
           ? v.fluxPreset
           : HOME_GLOBAL_DEFAULTS.fluxPreset,
       fluxIntensity:
@@ -496,6 +496,8 @@ function GlobalConfigPanel() {
                   onChange={(e) => patch({ fluxPreset: e.target.value })}
                   aria-label="默认预设"
                 >
+                  {/* off = 整体不渲染背景（无 canvas / 切换器），首页纯黑楼层底 */}
+                  <option value="off">关闭 · 无流光背景</option>
                   {FLUX_PRESET_ORDER.map((key) => (
                     <option key={key} value={key}>
                       {FLUX_PRESETS[key].label} · {FLUX_PRESETS[key].sub}
