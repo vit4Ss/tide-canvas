@@ -1,6 +1,8 @@
 package model
 
 import (
+	"strings"
+
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 
@@ -56,6 +58,10 @@ type MarketModel struct {
 	Price     decimal.Decimal `gorm:"column:price;type:decimal(10,2);not null;default:0" json:"price"`
 	UseCount  int             `gorm:"column:use_count;type:int;not null;default:0" json:"useCount"`
 	LikeCount int             `gorm:"column:like_count;type:int;not null;default:0" json:"likeCount"`
+	// SortOrder orders models INSIDE their media type in the pickers（后台
+	// 模型管理行内上移/下移；小值在前，同值按 id）。类型之间的顺序另由
+	// sys_config ConfigKeyMarketTypeOrder 决定。
+	SortOrder int `gorm:"column:sort_order;type:int;not null;default:0" json:"sortOrder"`
 	// Status: 0 待审核 / 1 已上架 / 2 已下架.
 	Status int `gorm:"column:status;type:tinyint;not null;default:1" json:"status"`
 }
@@ -65,6 +71,44 @@ func (MarketModel) TableName() string { return "market_model" }
 
 // MarketModelTypes are the recognized media categories for MarketModel.Type.
 var MarketModelTypes = []string{"text", "image", "video", "audio"}
+
+// ConfigKeyMarketTypeOrder is the sys_config key holding the media-type order
+// of the model pickers as a comma list (e.g. "text,audio,image,video"). Edited
+// in the admin 模型管理「类型排序」; consumed by /api/market/studio-models.
+const ConfigKeyMarketTypeOrder = "market.typeOrder"
+
+// DefaultMarketTypeOrder is the factory picker order（2026-07-10 用户指定：
+// 文本 → 音频 → 图片 → 视频）, used when the config key is missing/invalid.
+var DefaultMarketTypeOrder = []string{"text", "audio", "image", "video"}
+
+// ParseMarketTypeOrder parses the stored comma list into a valid, de-duplicated
+// type order. Unknown entries are dropped; types missing from the value are
+// appended in factory order so a partial save never hides a category. Returns
+// nil when nothing valid remains (caller falls back to the default).
+func ParseMarketTypeOrder(s string) []string {
+	valid := map[string]bool{}
+	for _, t := range MarketModelTypes {
+		valid[t] = true
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(MarketModelTypes))
+	for _, p := range strings.Split(s, ",") {
+		t := strings.TrimSpace(p)
+		if valid[t] && !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	for _, t := range DefaultMarketTypeOrder {
+		if !seen[t] {
+			out = append(out, t)
+		}
+	}
+	return out
+}
 
 // BackfillMarketModelType assigns a media Type to legacy market_model rows that
 // predate the column (Type == ""). It derives the bucket from the row's tags:

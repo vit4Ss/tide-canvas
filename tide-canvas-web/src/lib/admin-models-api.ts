@@ -36,6 +36,18 @@ export const adminModelsApi = {
   sync: () =>
     http.post<{ created: number; updated: number; total: number }>(`${BASE}/sync`),
 
+  /** PUT /api/admin/models/order — 类型内排序：ids 按展示顺序，
+   *  sort_order = start + index（start 承接分页偏移）。 */
+  reorder: (ids: string[], start = 0) =>
+    http.put<null>(`${BASE}/order`, { ids, start }),
+
+  /** GET /api/admin/models/type-order — 模型选择器的类型顺序。 */
+  getTypeOrder: () => http.get<{ types: string[] }>(`${BASE}/type-order`),
+
+  /** PUT /api/admin/models/type-order — 保存类型顺序（text/image/video/audio 排列）。 */
+  saveTypeOrder: (types: string[]) =>
+    http.put<{ types: string[] }>(`${BASE}/type-order`, { types }),
+
   /** PUT /api/admin/models/:id — partial update. */
   update: (id: string, dto: AdminModelUpdateDTO) =>
     http.put<AdminModelVO>(`${BASE}/${id}`, dto),

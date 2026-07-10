@@ -84,6 +84,8 @@ export interface AdminModelVO {
   status: number;
   /** status === 1 */
   enabled: boolean;
+  /** 类型内顺序（小值在前；后台上移/下移维护） */
+  sortOrder: number;
   useCount: number;
   /** alias of useCount */
   usage: number;

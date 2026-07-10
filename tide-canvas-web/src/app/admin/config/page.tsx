@@ -90,6 +90,7 @@ const BASELINE_KEYS = new Set([
   "pricing.compare",
   "pricing.faq",
   "llm.contextTokenLimit",
+  "market.typeOrder",
   "points.checkinDaily",
   "points.inviteReward",
   "points.signupBonus",

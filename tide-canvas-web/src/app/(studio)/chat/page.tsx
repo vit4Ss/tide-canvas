@@ -650,6 +650,8 @@ export default function ChatPage() {
   const reloadGenModels = useCallback(async () => {
     try {
       const res = await marketApi.studioModels();
+      // 顺序由后端决定：类型顺序=后台「模型管理·类型排序」（sys_config
+      // market.typeOrder），类型内=行内上移/下移（sort_order）。
       const list = res.success && Array.isArray(res.data) ? res.data : [];
       setGenModels(list);
       if (list.length) {

@@ -9,6 +9,7 @@ package market
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -40,12 +41,29 @@ func (h *handler) studioModels(c *gin.Context) {
 	response.OK(c, vos)
 }
 
-// studioModels (service) returns listed models of a type with their config.
+// studioModels (service) returns listed models of a type with their config,
+// grouped by the admin-configured media-type order（类型间顺序）; rows inside a
+// type already arrive by sort_order（类型内顺序，后台上移/下移）.
 func (s *service) studioModels(typ string) ([]StudioModelVO, error) {
 	rows, err := s.repo.studioModels(typ)
 	if err != nil {
 		return nil, err
 	}
+	rank := map[string]int{}
+	for i, t := range s.repo.typeOrder() {
+		rank[t] = i
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		ri, ok := rank[rows[i].Type]
+		if !ok {
+			ri = len(rank)
+		}
+		rj, ok := rank[rows[j].Type]
+		if !ok {
+			rj = len(rank)
+		}
+		return ri < rj
+	})
 	vos := make([]StudioModelVO, 0, len(rows))
 	for i := range rows {
 		m := &rows[i]
@@ -67,15 +85,29 @@ func (s *service) studioModels(typ string) ([]StudioModelVO, error) {
 }
 
 // studioModels (repo) returns listed models of a type (all types when empty),
-// most-used first.
+// by the admin-managed sort_order（同值回退最热优先）.
 func (r *repo) studioModels(typ string) ([]model.MarketModel, error) {
 	tx := r.db.Model(&model.MarketModel{}).Where("status = ?", statusListed)
 	if typ != "" {
 		tx = tx.Where("type = ?", typ)
 	}
 	var rows []model.MarketModel
-	if err := tx.Order("use_count DESC, id ASC").Find(&rows).Error; err != nil {
+	if err := tx.Order("sort_order ASC, use_count DESC, id ASC").Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	return rows, nil
+}
+
+// typeOrder returns the admin-configured media-type order (sys_config
+// market.typeOrder), falling back to the factory default（文本→音频→图片→视频）.
+func (r *repo) typeOrder() []string {
+	var row model.SysConfig
+	if err := r.db.Select("config_value").
+		Where("config_key = ?", model.ConfigKeyMarketTypeOrder).
+		First(&row).Error; err == nil {
+		if parsed := model.ParseMarketTypeOrder(row.ConfigValue); parsed != nil {
+			return parsed
+		}
+	}
+	return model.DefaultMarketTypeOrder
 }

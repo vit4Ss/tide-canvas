@@ -34,22 +34,29 @@ import (
 //
 // Routes:
 //
-//	GET    /admin/models            AdminModelQuery -> PageData<AdminModelVO>  (from market_model)
-//	POST   /admin/models            AdminModelCreateDTO -> AdminModelVO
-//	PUT    /admin/models/:id        AdminModelUpdateDTO -> AdminModelVO
-//	PUT    /admin/models/:id/status AdminModelStatusDTO -> AdminModelVO
-//	DELETE /admin/models/:id        -> void
-//	GET    /admin/ai-models         -> List<AdminAiModelVO>     (generation registry, read-only)
-//	GET    /admin/ai-providers      -> List<AdminAiProviderVO>  (generation registry, read-only)
+//	GET    /admin/models             AdminModelQuery -> PageData<AdminModelVO>  (from market_model)
+//	POST   /admin/models             AdminModelCreateDTO -> AdminModelVO
+//	PUT    /admin/models/order       AdminModelOrderDTO -> void        (类型内模型排序)
+//	GET    /admin/models/type-order  -> {types}                        (选择器类型顺序)
+//	PUT    /admin/models/type-order  AdminModelTypeOrderDTO -> {types}
+//	PUT    /admin/models/:id         AdminModelUpdateDTO -> AdminModelVO
+//	PUT    /admin/models/:id/status  AdminModelStatusDTO -> AdminModelVO
+//	DELETE /admin/models/:id         -> void
+//	GET    /admin/ai-models          -> List<AdminAiModelVO>     (generation registry, read-only)
+//	GET    /admin/ai-providers       -> List<AdminAiProviderVO>  (generation registry, read-only)
 //
-// The :id param only ever appears under the static /models parent, so it never
-// collides with the sibling static /ai-models, /ai-providers routes.
+// The :id param only ever appears under the static /models parent; static
+// siblings (/order, /type-order, /sync) are declared first — gin matches
+// static segments before :param, so they do not conflict.
 func RegisterModels(g *gin.RouterGroup, d *app.Deps) {
 	h := &modelsHandler{db: d.DB, relay: d.Cfg.Relay}
 
 	g.GET("/models", h.list)
 	g.POST("/models", h.create)
 	g.POST("/models/sync", h.syncRelay)
+	g.PUT("/models/order", h.reorder)
+	g.GET("/models/type-order", h.getTypeOrder)
+	g.PUT("/models/type-order", h.putTypeOrder)
 	g.PUT("/models/:id", h.update)
 	g.PUT("/models/:id/status", h.setStatus)
 	g.DELETE("/models/:id", h.remove)
@@ -89,6 +96,7 @@ type AdminModelVO struct {
 	PointCost   string    `json:"pointCost"` // alias of price (points to run)
 	Status      int       `json:"status"`    // 0 待审核 / 1 已上架 / 2 已下架
 	Enabled     bool      `json:"enabled"`   // Status == 1
+	SortOrder   int       `json:"sortOrder"` // 类型内顺序（小值在前）
 	UseCount    int       `json:"useCount"`
 	Usage       int       `json:"usage"` // alias of useCount
 	LikeCount   int       `json:"likeCount"`
@@ -190,6 +198,19 @@ type AdminModelStatusDTO struct {
 	Enabled *bool `json:"enabled" binding:"omitempty"`
 }
 
+// AdminModelOrderDTO reorders models inside a type: ids in display order;
+// each row gets sort_order = start + index（start 承接分页偏移，避免第 2 页
+// 的重排把第 1 页的序号顶掉）.
+type AdminModelOrderDTO struct {
+	Ids   []string `json:"ids" binding:"required,min=1,max=500"`
+	Start int      `json:"start" binding:"omitempty,gte=0"`
+}
+
+// AdminModelTypeOrderDTO carries the picker order of media types.
+type AdminModelTypeOrderDTO struct {
+	Types []string `json:"types" binding:"required,min=1,max=8"`
+}
+
 // ---- Handlers ----
 
 func (h *modelsHandler) list(c *gin.Context) {
@@ -223,8 +244,14 @@ func (h *modelsHandler) list(c *gin.Context) {
 		return
 	}
 
+	// 按类型筛选时按手工排序展示（供行内上移/下移所见即所得）；全部视图按
+	// 最近更新（跨类型的 sort_order 相互独立，混排无意义）。
+	order := "update_time DESC"
+	if q.Type != "" {
+		order = "sort_order ASC, id ASC"
+	}
 	var rows []model.MarketModel
-	if err := tx.Order("update_time DESC").
+	if err := tx.Order(order).
 		Limit(q.PageSize).Offset(q.offset()).Find(&rows).Error; err != nil {
 		response.Fail(c, response.CodeServerError, "failed to list models")
 		return
@@ -293,6 +320,113 @@ func (h *modelsHandler) create(c *gin.Context) {
 		return
 	}
 	h.respondOne(c, m)
+}
+
+// reorder assigns sort_order = start + index for the given ids（类型内排序；
+// 与 floors reorder 同款，事务内整批更新，不存在半排状态）.
+func (h *modelsHandler) reorder(c *gin.Context) {
+	var dto AdminModelOrderDTO
+	if err := c.ShouldBindJSON(&dto); err != nil {
+		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	ids := make([]idgen.ID, 0, len(dto.Ids))
+	for _, s := range dto.Ids {
+		id, err := idgen.Parse(strings.TrimSpace(s))
+		if err != nil || id == 0 {
+			response.Fail(c, response.CodeBadRequest, "invalid id: "+s)
+			return
+		}
+		ids = append(ids, id)
+	}
+	err := h.db.Transaction(func(tx *gorm.DB) error {
+		for i, id := range ids {
+			if e := tx.Model(&model.MarketModel{}).Where("id = ?", id).
+				UpdateColumn("sort_order", dto.Start+i).Error; e != nil {
+				return e
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "failed to reorder models")
+		return
+	}
+	response.OK[any](c, nil)
+}
+
+// getTypeOrder returns the effective picker order of media types.
+func (h *modelsHandler) getTypeOrder(c *gin.Context) {
+	response.OK(c, gin.H{"types": h.effectiveTypeOrder()})
+}
+
+// putTypeOrder validates and persists the picker order to sys_config
+// (market.typeOrder). Unknown/duplicate entries are rejected; missing types
+// are appended by ParseMarketTypeOrder so the pickers never lose a category.
+func (h *modelsHandler) putTypeOrder(c *gin.Context) {
+	var dto AdminModelTypeOrderDTO
+	if err := c.ShouldBindJSON(&dto); err != nil {
+		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	valid := map[string]bool{}
+	for _, t := range model.MarketModelTypes {
+		valid[t] = true
+	}
+	seen := map[string]bool{}
+	for _, t := range dto.Types {
+		t = strings.TrimSpace(t)
+		if !valid[t] {
+			response.Fail(c, response.CodeBadRequest, "未知模型类型: "+t)
+			return
+		}
+		if seen[t] {
+			response.Fail(c, response.CodeBadRequest, "重复模型类型: "+t)
+			return
+		}
+		seen[t] = true
+	}
+	order := model.ParseMarketTypeOrder(strings.Join(dto.Types, ","))
+	value := strings.Join(order, ",")
+
+	var row model.SysConfig
+	err := h.db.Where("config_key = ?", model.ConfigKeyMarketTypeOrder).First(&row).Error
+	switch {
+	case err == nil:
+		if e := h.db.Model(&model.SysConfig{}).Where("id = ?", row.ID).
+			UpdateColumn("config_value", value).Error; e != nil {
+			response.Fail(c, response.CodeServerError, "failed to save type order")
+			return
+		}
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		row = model.SysConfig{
+			ConfigKey:   model.ConfigKeyMarketTypeOrder,
+			ConfigValue: value,
+			Group:       "market",
+			Description: "模型选择器的类型顺序（逗号分隔），后台「模型管理 · 类型排序」编辑",
+		}
+		if e := h.db.Create(&row).Error; e != nil {
+			response.Fail(c, response.CodeServerError, "failed to save type order")
+			return
+		}
+	default:
+		response.Fail(c, response.CodeServerError, "failed to save type order")
+		return
+	}
+	response.OK(c, gin.H{"types": order})
+}
+
+// effectiveTypeOrder reads the stored order, falling back to the default.
+func (h *modelsHandler) effectiveTypeOrder() []string {
+	var row model.SysConfig
+	if err := h.db.Select("config_value").
+		Where("config_key = ?", model.ConfigKeyMarketTypeOrder).
+		First(&row).Error; err == nil {
+		if parsed := model.ParseMarketTypeOrder(row.ConfigValue); parsed != nil {
+			return parsed
+		}
+	}
+	return model.DefaultMarketTypeOrder
 }
 
 // syncRelay pulls the upstream relay model catalog and upserts it into
@@ -557,6 +691,7 @@ func toAdminModelVO(m *model.MarketModel, authorName string) AdminModelVO {
 		PointCost:   price,
 		Status:      m.Status,
 		Enabled:     enabled,
+		SortOrder:   m.SortOrder,
 		UseCount:    m.UseCount,
 		Usage:       m.UseCount,
 		LikeCount:   m.LikeCount,

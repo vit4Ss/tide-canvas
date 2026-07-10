@@ -17,7 +17,7 @@
    ============================================================================ */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Plus, RefreshCw, Trash2 } from "lucide-react";
 import {
   AdminModal,
   AdminAlert,
@@ -114,6 +114,7 @@ export default function AdminModelsPage() {
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<AdminModelVO | null>(null);
+  const [typeOrderOpen, setTypeOrderOpen] = useState(false);
 
   // reqId 守卫:快速切类型筛选/翻页时,旧响应后到不应覆盖新结果。
   const reqIdRef = useRef(0);
@@ -195,6 +196,31 @@ export default function AdminModelsPage() {
     load(); // 失败时同样重载,以服务端真值回滚开关
   };
 
+  // 类型内排序：仅在选中具体类型时可用（列表按 sort_order 展示，所见即所得）。
+  // 乐观交换本页两行后整批提交 sort_order = 分页偏移 + 行号；失败回读服务端真值。
+  const typeFilter = TYPE_FILTERS[typeIdx]?.type;
+  const moveRow = async (m: AdminModelVO, dir: -1 | 1) => {
+    const i = rows.findIndex((r) => r.id === m.id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= rows.length) return;
+    const next = [...rows];
+    [next[i], next[j]] = [next[j], next[i]];
+    setRows(next);
+    try {
+      const res = await adminModelsApi.reorder(
+        next.map((r) => r.id),
+        (pageNum - 1) * PAGE_SIZE,
+      );
+      if (!res.success) {
+        toast.error(res.message || "排序保存失败");
+        load();
+      }
+    } catch {
+      toast.error("排序保存失败，请稍后重试");
+      load();
+    }
+  };
+
   const removeModel = async (m: AdminModelVO) => {
     if (
       !(await confirmDialog({
@@ -233,6 +259,14 @@ export default function AdminModelsPage() {
             }}
             actions={
               <>
+                <button
+                  type="button"
+                  className="adm-btn ghost"
+                  onClick={() => setTypeOrderOpen(true)}
+                >
+                  <ArrowUpDown aria-hidden size={14} />
+                  类型排序
+                </button>
                 <button
                   type="button"
                   className="adm-btn ghost"
@@ -342,14 +376,24 @@ export default function AdminModelsPage() {
               {
                 header: "操作",
                 align: "right",
-                cell: (m) => (
-                  <RowActions
-                    actions={[
-                      { label: "配置", onClick: () => openEdit(m) },
-                      { label: "删除", onClick: () => removeModel(m) },
-                    ]}
-                  />
-                ),
+                cell: (m) => {
+                  const idx = rows.findIndex((r) => r.id === m.id);
+                  return (
+                    <RowActions
+                      actions={[
+                        // 类型内排序仅在选中具体类型时出现（全部视图混排无意义）
+                        ...(typeFilter && idx > 0
+                          ? [{ label: "上移", onClick: () => moveRow(m, -1 as const) }]
+                          : []),
+                        ...(typeFilter && idx >= 0 && idx < rows.length - 1
+                          ? [{ label: "下移", onClick: () => moveRow(m, 1 as const) }]
+                          : []),
+                        { label: "配置", onClick: () => openEdit(m) },
+                        { label: "删除", onClick: () => removeModel(m) },
+                      ]}
+                    />
+                  );
+                },
               },
             ]}
           />
@@ -367,9 +411,139 @@ export default function AdminModelsPage() {
           load();
         }}
       />
+
+      <TypeOrderModal open={typeOrderOpen} onClose={() => setTypeOrderOpen(false)} />
     </div>
   );
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   TypeOrderModal — 模型选择器的类型顺序（sys_config market.typeOrder）。
+   上移/下移排列 文本/图片/视频/音频，保存后创作台与对话的模型下拉即时生效。
+   ──────────────────────────────────────────────────────────────────────── */
+
+function TypeOrderModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const ensureSession = useAuthStore((s) => s.ensureSession);
+  const [types, setTypes] = useState<string[] | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setTypes(null);
+    (async () => {
+      try {
+        await ensureSession();
+        const res = await adminModelsApi.getTypeOrder();
+        setTypes(res.success && res.data?.types?.length ? res.data.types : [...DEFAULT_TYPE_ORDER]);
+      } catch {
+        setTypes([...DEFAULT_TYPE_ORDER]);
+      }
+    })();
+  }, [open, ensureSession]);
+
+  const move = (i: number, d: -1 | 1) =>
+    setTypes((ts) => {
+      if (!ts) return ts;
+      const j = i + d;
+      if (j < 0 || j >= ts.length) return ts;
+      const next = [...ts];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+
+  const save = async () => {
+    if (!types || saving) return false;
+    setSaving(true);
+    try {
+      await ensureSession();
+      const res = await adminModelsApi.saveTypeOrder(types);
+      if (res.success) {
+        toast.success("类型顺序已保存，模型选择器即时生效");
+        onClose();
+      } else {
+        toast.error(res.message || "保存失败");
+        return false;
+      }
+    } catch {
+      toast.error("保存失败，请稍后重试");
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <AdminModal
+      open={open}
+      size="sm"
+      title="类型排序"
+      subtitle="模型选择器中各类型的展示顺序；类型内的模型顺序用列表行的「上移 / 下移」调整"
+      saveLabel={saving ? "保存中…" : "保存"}
+      onClose={() => {
+        if (!saving) onClose();
+      }}
+      onSave={save}
+    >
+      {types == null ? (
+        <TableSkeleton />
+      ) : (
+        <div className="type-order-list" role="list" aria-label="模型类型顺序">
+          {types.map((t, i) => (
+            <div key={t} className="type-order-row" role="listitem">
+              <span className="n">{i + 1}</span>
+              <span className="lab">{MODEL_TYPE_LABEL[t] ?? t}</span>
+              <span className="acts">
+                <button
+                  type="button"
+                  className="adm-btn ghost"
+                  disabled={i === 0}
+                  onClick={() => move(i, -1)}
+                  aria-label={`上移${MODEL_TYPE_LABEL[t] ?? t}`}
+                >
+                  <ArrowUp aria-hidden size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="adm-btn ghost"
+                  disabled={i === types.length - 1}
+                  onClick={() => move(i, 1)}
+                  aria-label={`下移${MODEL_TYPE_LABEL[t] ?? t}`}
+                >
+                  <ArrowDown aria-hidden size={14} />
+                </button>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      <style>{`
+        .type-order-list { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+        .type-order-row {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 10px 14px;
+          border: 1px solid var(--border);
+          border-radius: var(--r);
+          background: var(--surface);
+        }
+        .type-order-row .n {
+          flex: none;
+          width: 18px;
+          color: var(--text-faint);
+          font-family: var(--mono);
+          font-size: 12px;
+        }
+        .type-order-row .lab { flex: 1; font-size: 13px; font-weight: 500; }
+        .type-order-row .acts { display: inline-flex; gap: 6px; }
+        .type-order-row .acts button:disabled { opacity: 0.35; cursor: default; }
+      `}</style>
+    </AdminModal>
+  );
+}
+
+/** 出厂类型顺序 — 与后端 model.DefaultMarketTypeOrder 一致。 */
+const DEFAULT_TYPE_ORDER = ["text", "audio", "image", "video"] as const;
 
 /* ──────────────────────────────────────────────────────────────────────────
    Chips — labeled multi/single select chip group (value ≠ label), styled with
