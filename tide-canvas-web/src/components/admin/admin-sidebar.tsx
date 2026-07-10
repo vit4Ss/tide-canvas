@@ -41,6 +41,7 @@ export const ADMIN_NAV: AdminNavEntry[] = [
   { group: "内容" },
   { label: "首页楼层", href: "/admin/home-floors", icon: "floor", description: "首页内容编排、排序与展示策略" },
   { label: "模型管理", href: "/admin/models", icon: "model", description: "模型目录、供应商、能力与上下架" },
+  { label: "模型状态", href: "/admin/model-status", icon: "pulse", description: "已上架模型的可用性与时延探测" },
   { label: "工具管理", href: "/admin/tools", icon: "toolkit", description: "智能工具能力、提示词与入口配置" },
   { group: "商业" },
   { label: "积分管理", href: "/admin/points", icon: "credit", description: "积分规则、流水与人工调整" },

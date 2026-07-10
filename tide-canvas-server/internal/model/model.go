@@ -66,6 +66,8 @@ func Models() []any {
 		// Billing / growth.
 		&PayChannel{},
 		&PointRule{},
+		// 模型可用性探测样本（后台「模型状态」页）。
+		&ModelProbe{},
 		// System / platform.
 		&SysLog{},
 		&SysConfig{},

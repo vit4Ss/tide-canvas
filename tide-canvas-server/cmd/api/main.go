@@ -33,6 +33,7 @@ import (
 	"tidecanvas/internal/pkg/response"
 	"tidecanvas/internal/pkg/storage"
 	"tidecanvas/internal/pkg/token"
+	"tidecanvas/internal/prober"
 
 	"tidecanvas/internal/handler/admin"
 	"tidecanvas/internal/handler/ai"
@@ -158,6 +159,12 @@ func run() error {
 	} else if n > 0 {
 		logger.L().Info("ai: reconciled stale tasks", zap.Int64("count", n))
 	}
+
+	// 模型可用性探测器（后台「模型状态」页数据源）：定时对已上架模型发起
+	// 最小探测并落 model_probe；relay 未配置时自行退出。随进程关停。
+	probeCtx, probeStop := context.WithCancel(context.Background())
+	defer probeStop()
+	go prober.Run(probeCtx, deps)
 
 	// 4. HTTP engine.
 	switch strings.ToLower(cfg.Server.Mode) {

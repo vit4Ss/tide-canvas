@@ -60,6 +60,7 @@ var baselineConfigKeys = map[string]struct{}{
 	model.ConfigKeyPricingFaq:            {},
 	model.ConfigKeyChatContextTokenLimit: {},
 	model.ConfigKeyMarketTypeOrder:       {},
+	model.ConfigKeyProbeInterval:         {},
 	"points.checkinDaily":                {},
 	"points.inviteReward":                {},
 	"points.signupBonus":                 {},

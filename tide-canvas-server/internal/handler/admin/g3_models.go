@@ -57,6 +57,8 @@ func RegisterModels(g *gin.RouterGroup, d *app.Deps) {
 	g.PUT("/models/order", h.reorder)
 	g.GET("/models/type-order", h.getTypeOrder)
 	g.PUT("/models/type-order", h.putTypeOrder)
+	// 模型状态页（?scope=enabled|all）：探测样本聚合，见 g3_model_status.go。
+	g.GET("/models/status", h.modelStatus)
 	g.PUT("/models/:id", h.update)
 	g.PUT("/models/:id/status", h.setStatus)
 	g.DELETE("/models/:id", h.remove)

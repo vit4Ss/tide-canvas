@@ -150,6 +150,36 @@ export interface AdminModelStatusDTO {
   enabled?: boolean;
 }
 
+/** One probe sample in the 模型状态 view (AdminModelProbeVO). */
+export interface AdminModelProbeVO {
+  ok: boolean;
+  totalMs: number;
+  /** first-token latency (chat probes; 0 otherwise) */
+  firstMs: number;
+  error: string;
+  time: string;
+}
+
+/** One model card on the 模型状态 page (AdminModelStatusVO). */
+export interface AdminModelStatusVO {
+  id: string;
+  name: string;
+  type: string;
+  modelKey: string;
+  icon: string;
+  enabled: boolean;
+  /** chat = 流式补全探测（首字/完成时延）；catalog = 上游目录可达探测 */
+  kind: "chat" | "catalog";
+  current: AdminModelProbeVO | null;
+  /** 可用率百分比 0–100；null = 窗口内无样本 */
+  avail24h: number | null;
+  avail7d: number | null;
+  /** 旧→新，≤60，驱动检测条 */
+  recent: AdminModelProbeVO[];
+  intervalSec: number;
+  nextInSec: number;
+}
+
 /** Read-only generation-registry view of an ai_provider (供应商 dropdown). */
 export interface AdminAiProviderVO {
   id: string;

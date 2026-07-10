@@ -15,6 +15,7 @@ import type {
   AdminModelCreateDTO,
   AdminModelQuery,
   AdminModelStatusDTO,
+  AdminModelStatusVO,
   AdminModelUpdateDTO,
   AdminModelVO,
 } from "@/types/admin-models";
@@ -40,6 +41,11 @@ export const adminModelsApi = {
    *  sort_order = start + index（start 承接分页偏移）。 */
   reorder: (ids: string[], start = 0) =>
     http.put<null>(`${BASE}/order`, { ids, start }),
+
+  /** GET /api/admin/models/status — 模型状态页（探测样本聚合）。
+   *  scope=enabled（默认）仅已上架；all 额外含有探测历史的已下架模型。 */
+  status: (scope: "enabled" | "all" = "enabled") =>
+    http.get<AdminModelStatusVO[]>(`${BASE}/status`, toParams({ scope })),
 
   /** GET /api/admin/models/type-order — 模型选择器的类型顺序。 */
   getTypeOrder: () => http.get<{ types: string[] }>(`${BASE}/type-order`),
