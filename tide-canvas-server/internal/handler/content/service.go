@@ -81,6 +81,62 @@ func parseFooterCols(raw string) ([]FooterColVO, bool) {
 	return out, true
 }
 
+// --- site home global settings ---
+
+// HomeGlobalVO is the public view of the homepage's global settings（后台
+// 首页楼层「楼层全局配置」panel）: the 背景流光 shader defaults plus the
+// hero's primary CTA. FluxPreset is a client-side palette key (aurora/nebula/
+// ocean/ember/verdant/ink — the client falls back on unknown keys), and
+// CtaTarget is a route key (studio/pricing) the client maps to a path.
+type HomeGlobalVO struct {
+	FluxPreset     string  `json:"fluxPreset"`
+	FluxIntensity  float64 `json:"fluxIntensity"`
+	FluxUserSwitch bool    `json:"fluxUserSwitch"`
+	CtaLabel       string  `json:"ctaLabel"`
+	CtaTarget      string  `json:"ctaTarget"`
+}
+
+// homeGlobal returns the admin-configured homepage globals (sys_config
+// home.global). A missing / unparseable value falls back to the factory
+// default so the homepage always gets a complete settings object.
+func (s *service) homeGlobal() HomeGlobalVO {
+	raw, err := s.repo.configValue(model.ConfigKeyHomeGlobal)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		raw = model.DefaultHomeGlobalJSON
+	}
+	if vo, ok := parseHomeGlobal(raw); ok {
+		return vo
+	}
+	vo, _ := parseHomeGlobal(model.DefaultHomeGlobalJSON)
+	return vo
+}
+
+// parseHomeGlobal decodes + sanitizes the home.global JSON: intensity is
+// clamped to the shader's usable 0–1.5 band, and blank strings fall back to
+// the factory defaults so a partially-filled save never blanks the homepage.
+func parseHomeGlobal(raw string) (HomeGlobalVO, bool) {
+	var vo HomeGlobalVO
+	if json.Unmarshal([]byte(raw), &vo) != nil {
+		return HomeGlobalVO{}, false
+	}
+	if strings.TrimSpace(vo.FluxPreset) == "" {
+		vo.FluxPreset = "aurora"
+	}
+	if vo.FluxIntensity <= 0 {
+		vo.FluxIntensity = 0.78
+	}
+	if vo.FluxIntensity > 1.5 {
+		vo.FluxIntensity = 1.5
+	}
+	if strings.TrimSpace(vo.CtaLabel) == "" {
+		vo.CtaLabel = "生成"
+	}
+	if vo.CtaTarget != "pricing" {
+		vo.CtaTarget = "studio"
+	}
+	return vo, true
+}
+
 // --- site home floors ---
 
 // HomeFloorLiteVO is the slim public view of one enabled homepage floor. Type

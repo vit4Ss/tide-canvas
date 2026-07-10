@@ -42,6 +42,18 @@ export interface HomeFloorLiteVO {
   works?: PostLiteVO[];
 }
 
+/** Homepage global settings (HomeGlobalVO) — GET /api/site/home-config,
+ *  driven by the admin 首页楼层「楼层全局配置」panel (sys_config `home.global`).
+ *  fluxPreset is a FLUX_PRESETS key (unknown keys fall back client-side);
+ *  ctaTarget is a route key resolved via ctaTargetHref(). */
+export interface HomeGlobalVO {
+  fluxPreset: string;
+  fluxIntensity: number;
+  fluxUserSwitch: boolean;
+  ctaLabel: string;
+  ctaTarget: string;
+}
+
 /** Slimmed market model for the home "hot models" rail / marquee. */
 export interface ModelLiteVO {
   id: string;

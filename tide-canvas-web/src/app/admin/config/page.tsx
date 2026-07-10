@@ -36,6 +36,7 @@ import { toast } from "@/components/shared/toast";
    已知键映射为中文显示名，未知键原样透出；顺序按此表优先、其余按名称排尾。 */
 const GROUP_LABEL: Record<string, string> = {
   site: "站点信息",
+  home: "首页",
   ai: "AI 服务",
   "AI 对话": "AI 对话",
   mail: "邮件",
@@ -43,7 +44,7 @@ const GROUP_LABEL: Record<string, string> = {
   points: "积分",
   存储配置: "存储配置",
 };
-const GROUP_ORDER = ["site", "ai", "AI 对话", "mail", "pricing", "points", "存储配置"];
+const GROUP_ORDER = ["site", "home", "ai", "AI 对话", "mail", "pricing", "points", "存储配置"];
 const groupLabel = (g: string) => GROUP_LABEL[g] ?? g;
 const groupRank = (g: string) => {
   const i = GROUP_ORDER.indexOf(g);
@@ -57,6 +58,7 @@ const isBlockValue = (v: string) => v.length > 60 || /^[\[{]/.test(v.trim());
 const MANAGED_ELSEWHERE: Record<string, { hint: string; href: string }> = {
   "pricing.compare": { hint: "在价格管理中编辑", href: "/admin/pricing" },
   "pricing.faq": { hint: "在价格管理中编辑", href: "/admin/pricing" },
+  "home.global": { hint: "在首页楼层中编辑", href: "/admin/home-floors" },
 };
 
 /* ── 页脚链接（site.footerLinks）结构化编辑 ──────────────────────────── */
@@ -232,7 +234,7 @@ export default function AdminConfigPage() {
     );
 
   const saveFooterLinks = useCallback(async () => {
-    if (!flItem) return;
+    if (!flItem) return false;
     const value = serializeFooterLinks(flGroups);
     setSaving(true);
     try {
@@ -256,7 +258,11 @@ export default function AdminConfigPage() {
         toast.success("页脚链接已保存");
       } else {
         toast.error(res.message || "保存失败");
+        return false;
       }
+    } catch {
+      toast.error("保存失败，请稍后重试");
+      return false;
     } finally {
       setSaving(false);
     }
@@ -264,7 +270,7 @@ export default function AdminConfigPage() {
 
   const createItem = useCallback(async () => {
     const key = nKeyRef.current?.value.trim();
-    if (!key) return;
+    if (!key) return false;
     setSaving(true);
     try {
       await ensureSession();
@@ -281,7 +287,13 @@ export default function AdminConfigPage() {
         setItems(res.data);
         setEdits({});
         setNewOpen(false);
+      } else {
+        toast.error(res.message || "保存失败");
+        return false;
       }
+    } catch {
+      toast.error("保存失败，请稍后重试");
+      return false;
     } finally {
       setSaving(false);
     }

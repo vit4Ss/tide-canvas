@@ -129,14 +129,29 @@ func AutoMigrate(db *gorm.DB) error {
 
 // ensureBaselineConfig inserts must-exist sys_config rows when missing.
 func ensureBaselineConfig(db *gorm.DB) error {
-	var row SysConfig
-	return db.Where(SysConfig{ConfigKey: ConfigKeyFooterLinks}).
-		Attrs(SysConfig{
+	baseline := []SysConfig{
+		{
+			ConfigKey:   ConfigKeyFooterLinks,
 			ConfigValue: DefaultFooterLinksJSON,
 			Group:       "site",
 			Description: "页脚链接（JSON 数组：[{title, links:[{label, href}]}]），前台 /api/site/footer 读取",
-		}).
-		FirstOrCreate(&row).Error
+		},
+		{
+			ConfigKey:   ConfigKeyHomeGlobal,
+			ConfigValue: DefaultHomeGlobalJSON,
+			Group:       "home",
+			Description: "首页全局配置（背景流光 + 首屏 CTA），后台「首页楼层」编辑，前台 /api/site/home-config 读取",
+		},
+	}
+	for i := range baseline {
+		var row SysConfig
+		if err := db.Where(SysConfig{ConfigKey: baseline[i].ConfigKey}).
+			Attrs(baseline[i]).
+			FirstOrCreate(&row).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // CanonicalHomeFloors are the floor rows that map 1:1 onto the public

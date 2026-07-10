@@ -117,6 +117,14 @@ body.imini #caps-sec{background:#0A0A0B; border:none;}
 body.imini #studio-sec{background:#0F0F11;}
 body.imini #cta-sec{background:#0F0F11; border:none;}
 body.imini .mq-wrap{background:#0A0A0B; border-color:var(--border);}
+/* 首页流光背景开启时（body.flux-on 由 flux-bg 组件挂/卸），楼层区块让出
+   不透明底，露出其下的固定着色器场（压光罩保证可读性）；其余页面不受影响。 */
+body.imini.flux-on section.block,
+body.imini.flux-on #caps-sec,
+body.imini.flux-on #studio-sec,
+body.imini.flux-on #cta-sec,
+body.imini.flux-on .mq-wrap,
+body.imini.flux-on footer{background:transparent;}
 /* .plan 的面/影/位移由文末「定价卡精修」段定稿，此处只保留未被覆盖的边线与圆角 */
 body.imini .plans .plan{border-color:var(--border); border-radius:14px;}
 body.imini .plans .plan.feat,body.imini .plans .plan.feat:hover{color:var(--text); border:1px solid rgba(255,255,255,.35);}

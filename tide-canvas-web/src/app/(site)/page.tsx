@@ -28,11 +28,17 @@ import { CAPS, coverBg, type Cap, type MeshHues } from "@/mock";
 import { contentApi } from "@/lib/content-api";
 import { billingApi } from "@/lib/billing-api";
 import { aiApi } from "@/lib/api";
-import type { PostLiteVO, ModelLiteVO, HomeFloorLiteVO } from "@/types/content";
+import type {
+  PostLiteVO,
+  ModelLiteVO,
+  HomeFloorLiteVO,
+  HomeGlobalVO,
+} from "@/types/content";
 import type { PlanVO } from "@/types/billing";
 import type { AiToolVO } from "@/types/ai";
 import { useReveal } from "@/components/site/use-reveal";
 import HomeHero from "@/components/site/home-hero";
+import FluxBg from "@/components/site/flux-bg";
 import InfiniteCanvas from "@/components/site/infinite-canvas";
 import FeedCoverflow from "@/components/site/feed-coverflow";
 import ModelMarquee from "@/components/site/model-marquee";
@@ -55,6 +61,16 @@ const DEFAULT_FLOOR_TYPES = [
     （封装好提示词的一键处理，/tools/[op]）。工具卡现由后台「工具管理」
     （/api/ai/tools）下发，href 直接是 /tools/<key>；此表用于创作台卡片与
     mock CAPS 兜底条目（接口未应答/失败时按出厂条目分流）。 */
+/** 首页全局配置的出厂默认（与后端 DefaultHomeGlobalJSON 一致）——接口失败时
+    背景与 CTA 仍按此渲染，首页不因配置接口降级。 */
+const DEFAULT_HOME_GLOBAL: HomeGlobalVO = {
+  fluxPreset: "aurora",
+  fluxIntensity: 0.78,
+  fluxUserSwitch: true,
+  ctaLabel: "生成",
+  ctaTarget: "studio",
+};
+
 const CAP_LINK: Record<string, string> = {
   文生图: "/studio?type=image",
   文生视频: "/studio?type=video",
@@ -77,6 +93,9 @@ export default function HomePage() {
   const [plansLoading, setPlansLoading] = useState(true);
   // 首页楼层配置（后台「首页楼层」）：null = 未返回（按出厂顺序渲染）。
   const [floors, setFloors] = useState<HomeFloorLiteVO[] | null>(null);
+  // 首页全局配置（背景流光 + 首屏 CTA）：null = 未返回（背景暂不挂载，
+  // 避免先按默认预设渲染再跳变到后台配置）。
+  const [homeCfg, setHomeCfg] = useState<HomeGlobalVO | null>(null);
   // 独立工具配置（后台「工具管理」）：null = 未返回/失败（工具卡按 mock CAPS 兜底）。
   const [tools, setTools] = useState<AiToolVO[] | null>(null);
 
@@ -95,6 +114,13 @@ export default function HomePage() {
     contentApi.floors().then((res) => {
       if (alive && res.success && res.data) setFloors(res.data);
     });
+    contentApi
+      .homeConfig()
+      .then((res) => {
+        if (!alive) return;
+        setHomeCfg(res.success && res.data ? res.data : DEFAULT_HOME_GLOBAL);
+      })
+      .catch(() => alive && setHomeCfg(DEFAULT_HOME_GLOBAL));
     aiApi.tools().then((res) => {
       if (alive && res.success && Array.isArray(res.data) && res.data.length) {
         setTools(res.data);
@@ -158,7 +184,13 @@ export default function HomePage() {
   const renderFloor = (f: HomeFloorLiteVO) => {
     switch (f.type) {
       case "英雄区":
-        return <HomeHero key={f.type} />;
+        return (
+          <HomeHero
+            key={f.type}
+            ctaLabel={(homeCfg ?? DEFAULT_HOME_GLOBAL).ctaLabel}
+            ctaTarget={(homeCfg ?? DEFAULT_HOME_GLOBAL).ctaTarget}
+          />
+        );
       case "能力展示":
         return renderCaps(f.type);
       case "无限画布":
@@ -356,5 +388,17 @@ export default function HomePage() {
       </section>
   );
 
-  return <>{floorList.map(renderFloor)}</>;
+  return (
+    <>
+      {/* 全局流光背景：等配置返回再挂载，避免默认预设闪一下再跳变 */}
+      {homeCfg && (
+        <FluxBg
+          preset={homeCfg.fluxPreset}
+          intensity={homeCfg.fluxIntensity}
+          allowSwitch={homeCfg.fluxUserSwitch}
+        />
+      )}
+      {floorList.map(renderFloor)}
+    </>
+  );
 }

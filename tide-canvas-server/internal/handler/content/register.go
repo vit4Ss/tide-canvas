@@ -17,6 +17,7 @@ import (
 //
 //	GET    /api/site/footer                  -> []FooterColVO                   (public)
 //	GET    /api/site/floors                  -> []HomeFloorLiteVO               (public)
+//	GET    /api/site/home-config             -> HomeGlobalVO                    (public)
 //	GET    /api/home/feed                    -> HomeFeedVO                      (public)
 //	GET    /api/notifications                NotificationQuery -> PageData<...> (auth)
 //	GET    /api/notifications/unread-count    -> { count }                      (auth)
@@ -36,6 +37,8 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	api.GET("/site/footer", h.footerLinks) // -> []FooterColVO
 	// 首页楼层：后台「首页楼层」的启用/排序/数量驱动首页区块渲染。
 	api.GET("/site/floors", h.siteFloors) // -> []HomeFloorLiteVO
+	// 首页全局配置：后台「首页楼层」的背景流光/首屏 CTA，带出厂默认兜底。
+	api.GET("/site/home-config", h.homeGlobal) // -> HomeGlobalVO
 
 	// Aggregated homepage feed (recent works + hot models).
 	home := api.Group("/home")

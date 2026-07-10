@@ -50,6 +50,18 @@ const DefaultFooterLinksJSON = `[
     {"label":"隐私政策","href":"/privacy"}]}
 ]`
 
+// ConfigKeyHomeGlobal is the sys_config key holding the homepage's global
+// settings as JSON: 背景流光 (preset / intensity / user-switch) + 首屏 CTA
+// (label / target). Edited in the admin 首页楼层「楼层全局配置」panel; served
+// to the site by GET /api/site/home-config.
+const ConfigKeyHomeGlobal = "home.global"
+
+// DefaultHomeGlobalJSON is the homepage global settings' factory default
+// (mirrors the shipped hero button + the liuguang aurora background). Used to
+// seed the config key and as the serve-time fallback when the stored value is
+// missing or unparseable.
+const DefaultHomeGlobalJSON = `{"fluxPreset":"aurora","fluxIntensity":0.78,"fluxUserSwitch":true,"ctaLabel":"生成","ctaTarget":"studio"}`
+
 // ConfigKeyPricingCompare is the sys_config key holding the pricing page's
 // 方案对比 table rows as JSON: {rows:[{label, values:{<planID>: cell}}]}.
 // Columns are NOT stored — the public page derives them from the live plan

@@ -31,8 +31,6 @@ export const FLOOR_SOURCE_OPTIONS = [
  *  有自己的固有来源（模型跑马灯=模型），编辑弹窗里不显示内容源。 */
 export const WORKS_FLOOR_TYPES = ["作品流"] as const;
 
-/** 楼层全局配置 · 背景流光 — 默认预设 select options. */
-export const FLOOR_BG_PRESETS = ["极光", "星云", "深海"] as const;
-
-/** 楼层全局配置 · 首屏 CTA — 跳转 select options. */
-export const FLOOR_CTA_TARGETS = ["创作台", "定价"] as const;
+// 楼层全局配置的选项（背景流光预设 / CTA 跳转）已改用 @/lib/flux-presets 的
+// 共享定义（与公开首页同一份），旧的 FLOOR_BG_PRESETS / FLOOR_CTA_TARGETS
+// 纯展示常量随面板接真删除（2026-07 审计）。

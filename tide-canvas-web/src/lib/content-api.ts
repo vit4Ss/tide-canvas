@@ -4,6 +4,7 @@ import type {
   FooterColVO,
   HomeFeedVO,
   HomeFloorLiteVO,
+  HomeGlobalVO,
   NotificationVO,
   NotificationQuery,
 } from "@/types/content";
@@ -27,6 +28,9 @@ export const contentApi = {
   footer: () => http.get<FooterColVO[]>("/api/site/footer"),
   /** 首页楼层 — 后台「首页楼层」的启用/排序/数量驱动首页区块。 */
   floors: () => http.get<HomeFloorLiteVO[]>("/api/site/floors"),
+  /** 首页全局配置 — 后台「首页楼层 · 楼层全局配置」的背景流光与首屏 CTA，
+   *  服务端带出厂默认兜底。 */
+  homeConfig: () => http.get<HomeGlobalVO>("/api/site/home-config"),
 };
 
 /** Notification center — all endpoints require an authenticated session. */

@@ -17,6 +17,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { HERO_PROMPTS, fmt } from "@/mock";
+import { ctaTargetHref } from "@/lib/flux-presets";
 import { toast } from "@/components/shared/toast";
 import HeroWall from "@/components/site/hero-wall";
 import { communityApi } from "@/lib/community-api";
@@ -51,7 +52,15 @@ function typeLabel(t: string): string {
   return MODEL_TYPE_LABEL.find(([k]) => k === t)?.[1] ?? t;
 }
 
-export default function HomeHero() {
+export default function HomeHero({
+  ctaLabel = "生成",
+  ctaTarget = "studio",
+}: {
+  /** 首屏主按钮文案（后台「首页楼层 · 楼层全局配置」home.global.ctaLabel）。 */
+  ctaLabel?: string;
+  /** 主按钮跳转键 studio/pricing（home.global.ctaTarget），经 ctaTargetHref 解析。 */
+  ctaTarget?: string;
+}) {
   const router = useRouter();
   const innerRef = useRef<HTMLDivElement>(null);
   const [typed, setTyped] = useState("");
@@ -123,6 +132,8 @@ export default function HomeHero() {
   }, []);
 
   const goStudio = () => router.push("/studio");
+  // 主 CTA 按后台配置跳转；console 本体与快捷 chips 是提示词入口，恒去创作台。
+  const goCta = () => router.push(ctaTargetHref(ctaTarget));
 
   return (
     <header className="hero">
@@ -158,10 +169,10 @@ export default function HomeHero() {
             className="console-go"
             onClick={(e) => {
               e.stopPropagation();
-              goStudio();
+              goCta();
             }}
           >
-            生成 →
+            {ctaLabel} →
           </button>
         </div>
 

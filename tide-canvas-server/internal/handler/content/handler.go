@@ -28,6 +28,13 @@ func (h *handler) footerLinks(c *gin.Context) {
 	response.OK(c, h.svc.footerLinks())
 }
 
+// homeGlobal handles GET /api/site/home-config (public). Returns the admin-
+// configured homepage globals（背景流光 + 首屏 CTA，后台「首页楼层」panel）
+// with the factory default as fallback — never empty.
+func (h *handler) homeGlobal(c *gin.Context) {
+	response.OK(c, h.svc.homeGlobal())
+}
+
 // siteFloors handles GET /api/site/floors (public). Returns the enabled home
 // floors（后台「首页楼层」管理）in display order — the homepage renders its
 // sections from this list.

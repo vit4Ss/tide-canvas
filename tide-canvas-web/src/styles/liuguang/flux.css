@@ -88,6 +88,40 @@ img{display:block; max-width:100%;}
 /* page regions keep their own stacking context above any backdrop tint */
 .hero, section.block, .mq-wrap, footer{position:relative; z-index:1;}
 
+/* ─── GLOBAL CONTINUOUS BACKGROUND（首页流光场，design-ref 原样回植）──── */
+/* one fixed shader field behind the whole page — its hue/flow morph with
+   scroll, so there are no per-section seams. */
+#flux-bg{position:fixed; inset:0; width:100vw; height:100vh; z-index:0; display:block; pointer-events:none;}
+#flux-bg.flux-fallback{background:radial-gradient(70% 70% at 30% 25%, #1b2a6e 0%, transparent 60%), radial-gradient(60% 60% at 80% 75%, #45286f 0%, transparent 62%), #05060c;}
+/* fixed legibility veil: darker top/bottom, lighter middle — uniform everywhere */
+#flux-bg-scrim{position:fixed; inset:0; z-index:0; pointer-events:none;
+  background:
+    radial-gradient(120% 85% at 50% 42%, rgba(5,6,12,.40) 0%, rgba(5,6,12,.58) 58%, rgba(5,6,12,.80) 100%),
+    linear-gradient(to bottom, rgba(5,6,12,.66) 0%, rgba(5,6,12,.56) 30%, rgba(5,6,12,.56) 70%, rgba(5,6,12,.78) 100%);}
+
+/* ─── BACKGROUND SWITCHER (in nav) ────────────────────────────────── */
+.bg-nav{position:relative; display:inline-flex;}
+.bg-nav-btn{overflow:hidden;}
+.bg-nav-btn .bg-orb{width:18px; height:18px; border-radius:50%; box-shadow:0 0 0 1px rgba(255,255,255,.22); transition:background .5s var(--ease);}
+.bg-nav.open .bg-nav-btn{color:var(--text); border-color:var(--border-strong);}
+.bg-nav-pop{display:none; position:absolute; top:calc(100% + 12px); right:0; width:236px; padding:8px; border-radius:16px;
+  background:var(--panel-solid); border:1px solid var(--border-strong); box-shadow:var(--shadow-pop);
+  z-index:80;}
+.bg-nav.open .bg-nav-pop{display:block;}
+.bg-nav-pop::before{content:''; position:absolute; top:-5px; right:16px; width:10px; height:10px; rotate:45deg;
+  background:inherit; border-left:1px solid var(--border-strong); border-top:1px solid var(--border-strong);}
+.bg-switch-head{font-family:var(--mono); font-size:10.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--text-faint); padding:7px 8px 9px;}
+.bg-switch-grid{display:flex; flex-direction:column; gap:3px;}
+.bg-opt{display:flex; align-items:center; gap:11px; width:100%; padding:8px; border-radius:11px; text-align:left; transition:background .15s;}
+.bg-opt:hover{background:var(--panel-hover);}
+.bg-opt[aria-current="true"]{background:var(--panel);}
+.bg-opt-sw{width:32px; height:32px; border-radius:9px; flex:none; box-shadow:inset 0 0 0 1px rgba(255,255,255,.12);}
+.bg-opt-tx{display:flex; flex-direction:column; line-height:1.25; min-width:0;}
+.bg-opt-tx b{font-size:13.5px; font-weight:600; color:var(--text);}
+.bg-opt-tx i{font-style:normal; font-size:11px; color:var(--text-faint);}
+.bg-opt[aria-current="true"] .bg-opt-tx b{color:var(--text);}
+@media(max-width:560px){ .bg-nav-pop{position:fixed; top:auto; bottom:16px; right:12px; left:12px; width:auto;} .bg-nav-pop::before{display:none;} }
+
 /* ─── SHARED SECTION SHELL ────────────────────────────────────────── */
 /* live-feed tile swap (cross-fade + "刚刚生成" flash) */
 .tile .tile-cover{transition:transform .3s var(--ease), box-shadow .3s var(--ease), opacity .42s var(--ease), filter .42s var(--ease);}

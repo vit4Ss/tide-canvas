@@ -8,17 +8,18 @@
    components (Panel / SwitchToggle / AdminModal / FormCard / FormGrid / Field /
    FormSection / MChips).
 
-   The draggable .floor list keeps its ⋮⋮ grab handle (presentational) and adds
-   上移/下移 actions that persist order via PUT /home/floors/order. The 启用 toggle,
-   编辑/删除, and the modal CRUD all hit the real endpoints and refresh.
+   The .floor list reorders by ⋮⋮ handle drag-drop AND 上移/下移 buttons — both
+   persist via PUT /home/floors/order. The 启用 toggle, 编辑/删除, and the modal
+   CRUD all hit the real endpoints and refresh.
 
-   The 楼层全局配置 panel (背景流光 / 首屏 CTA) has no backend table, so it stays
-   presentational, matching the design.
+   The 楼层全局配置 panel (背景流光 / 首屏 CTA) persists to sys_config
+   `home.global` via PUT /api/admin/config and is served to the public home by
+   GET /api/site/home-config (背景着色器预设/强度/用户切换 + hero 主按钮).
 
    Client component (modals + toggles + reorder).
    ============================================================================ */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AdminModal,
   Field,
@@ -31,15 +32,20 @@ import {
   ListSkeleton,
 } from "@/components/admin";
 import {
-  FLOOR_BG_PRESETS,
-  FLOOR_CTA_TARGETS,
   FLOOR_SOURCE_OPTIONS,
   FLOOR_TYPE_OPTIONS,
   WORKS_FLOOR_TYPES,
 } from "@/mock/admin-home-floors";
+import {
+  FLUX_PRESETS,
+  FLUX_PRESET_ORDER,
+  HOME_CTA_TARGETS,
+} from "@/lib/flux-presets";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminHomeFloorsApi } from "@/lib/admin-home-floors-api";
+import { adminConfigApi } from "@/lib/admin-config-api";
 import { confirmDialog } from "@/components/shared/confirm";
+import { toast } from "@/components/shared/toast";
 import type { HomeFloorVO } from "@/types/admin-home-floors";
 
 // 内容源 键↔标签映射（存库用 key，展示用 label）。
@@ -115,16 +121,46 @@ export default function AdminHomeFloorsPage() {
     else setError(res.message || "删除失败");
   };
 
-  // Persist a new ordering: move floor at index `from` to `from+dir`.
-  const move = async (from: number, dir: -1 | 1) => {
+  // Persist a new ordering (shared by 上移/下移 buttons and ⋮⋮ drag-drop).
+  const applyOrder = useCallback(
+    async (next: HomeFloorVO[]) => {
+      setFloors(next); // optimistic
+      const res = await adminHomeFloorsApi.reorder({ ids: next.map((f) => f.id) });
+      if (!res.success) load(); // revert from server truth
+    },
+    [load],
+  );
+
+  // Move floor at index `from` to `from+dir`.
+  const move = (from: number, dir: -1 | 1) => {
     const to = from + dir;
     if (to < 0 || to >= floors.length) return;
     const next = [...floors];
     const [moved] = next.splice(from, 1);
     next.splice(to, 0, moved);
-    setFloors(next); // optimistic
-    const res = await adminHomeFloorsApi.reorder({ ids: next.map((f) => f.id) });
-    if (!res.success) load(); // revert from server truth
+    applyOrder(next);
+  };
+
+  // ⋮⋮ 拖拽排序：只允许从手柄起拖（dragFromHandle 门闩），行整体作为放置目标；
+  // 松手把被拖行插到目标行位置，与上移/下移共用 applyOrder 持久化。
+  const [dragIx, setDragIx] = useState<number | null>(null);
+  const [overIx, setOverIx] = useState<number | null>(null);
+  const dragFromHandle = useRef(false);
+
+  const endDrag = () => {
+    dragFromHandle.current = false;
+    setDragIx(null);
+    setOverIx(null);
+  };
+
+  const dropTo = (to: number) => {
+    const from = dragIx;
+    endDrag();
+    if (from == null || to === from) return;
+    const next = [...floors];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    applyOrder(next);
   };
 
   const f = modal?.floor ?? null;
@@ -159,8 +195,41 @@ export default function AdminHomeFloorsPage() {
             </div>
           ) : (
             floors.map((floor, i) => (
-              <div className="floor" data-floor={floor.name} key={floor.id}>
-                <span className="grab">⋮⋮</span>
+              <div
+                className={`floor${dragIx === i ? " dragging" : ""}${
+                  overIx === i && dragIx != null && dragIx !== i ? " drop-hint" : ""
+                }`}
+                data-floor={floor.name}
+                key={floor.id}
+                draggable
+                onDragStart={(e) => {
+                  if (!dragFromHandle.current) {
+                    e.preventDefault(); // 只认手柄起拖，避免误拖行内按钮/开关
+                    return;
+                  }
+                  setDragIx(i);
+                  e.dataTransfer.effectAllowed = "move";
+                }}
+                onDragOver={(e) => {
+                  if (dragIx == null) return;
+                  e.preventDefault();
+                  setOverIx(i);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  dropTo(i);
+                }}
+                onDragEnd={endDrag}
+              >
+                <span
+                  className="grab"
+                  onMouseDown={() => {
+                    dragFromHandle.current = true;
+                  }}
+                  aria-label={`拖动调整 ${floor.name} 顺序`}
+                >
+                  ⋮⋮
+                </span>
                 <span className="ix">{i + 1}</span>
                 <div>
                   <div className="nm">{floor.name}</div>
@@ -196,50 +265,8 @@ export default function AdminHomeFloorsPage() {
         </div>
       </Panel>
 
-      {/* 楼层全局配置（无后端表，保持展示态） */}
-      <Panel title="楼层全局配置">
-        <div style={{ padding: "16px 18px" }}>
-          <div className="cfg-grid">
-            <div className="cfg-card">
-              <h3>背景流光</h3>
-              <p>首页连续着色器背景的默认预设与强度。</p>
-              <div className="cfg-row">
-                <span className="lab">默认预设</span>
-                <select>
-                  {FLOOR_BG_PRESETS.map((o) => (
-                    <option key={o}>{o}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="cfg-row">
-                <span className="lab">强度</span>
-                <input type="number" defaultValue="0.78" />
-                <span className="unit">0–1.5</span>
-              </div>
-              <div className="cfg-row">
-                <span className="lab">允许用户切换</span>
-                <SwitchToggle defaultChecked aria-label="允许用户切换" />
-              </div>
-            </div>
-            <div className="cfg-card">
-              <h3>首屏 CTA</h3>
-              <p>英雄区主按钮文案与跳转。</p>
-              <div className="cfg-row">
-                <span className="lab">按钮文案</span>
-                <input type="text" defaultValue="开始创作" />
-              </div>
-              <div className="cfg-row">
-                <span className="lab">跳转</span>
-                <select>
-                  {FLOOR_CTA_TARGETS.map((o) => (
-                    <option key={o}>{o}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </div>
-        </div>
-      </Panel>
+      {/* 楼层全局配置（sys_config home.global → 前台 /api/site/home-config） */}
+      <GlobalConfigPanel />
 
       {/* floorModal — 新增/编辑楼层 */}
       {modal != null ? (
@@ -249,6 +276,247 @@ export default function AdminHomeFloorsPage() {
         }} />
       ) : null}
     </>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   GlobalConfigPanel — 楼层全局配置（背景流光 + 首屏 CTA）。
+   读写 sys_config `home.global`（GET/PUT /api/admin/config），保存后公开首页
+   下次加载即生效（/api/site/home-config）。脏检测驱动保存按钮。
+   ──────────────────────────────────────────────────────────────────────── */
+
+// 表单态（intensity 以字符串承接输入，保存时解析并夹到 0–1.5）。
+interface HomeGlobalForm {
+  fluxPreset: string;
+  fluxIntensity: string;
+  fluxUserSwitch: boolean;
+  ctaLabel: string;
+  ctaTarget: string;
+}
+
+// 出厂默认 — 与后端 model.DefaultHomeGlobalJSON 一致（键缺失/解析失败时兜底）。
+const HOME_GLOBAL_DEFAULTS: HomeGlobalForm = {
+  fluxPreset: "aurora",
+  fluxIntensity: "0.78",
+  fluxUserSwitch: true,
+  ctaLabel: "生成",
+  ctaTarget: "studio",
+};
+
+const HOME_GLOBAL_KEY = "home.global";
+
+/** 解析已存的 home.global JSON 为表单态；非法值逐字段回退默认。 */
+function parseHomeGlobal(raw: string): HomeGlobalForm {
+  try {
+    const v = JSON.parse(raw) as Partial<{
+      fluxPreset: string;
+      fluxIntensity: number;
+      fluxUserSwitch: boolean;
+      ctaLabel: string;
+      ctaTarget: string;
+    }>;
+    return {
+      fluxPreset:
+        v.fluxPreset && FLUX_PRESETS[v.fluxPreset]
+          ? v.fluxPreset
+          : HOME_GLOBAL_DEFAULTS.fluxPreset,
+      fluxIntensity:
+        typeof v.fluxIntensity === "number" && v.fluxIntensity > 0
+          ? String(Math.min(v.fluxIntensity, 1.5))
+          : HOME_GLOBAL_DEFAULTS.fluxIntensity,
+      fluxUserSwitch: v.fluxUserSwitch !== false,
+      ctaLabel: v.ctaLabel?.trim() || HOME_GLOBAL_DEFAULTS.ctaLabel,
+      ctaTarget:
+        v.ctaTarget === "pricing" ? "pricing" : HOME_GLOBAL_DEFAULTS.ctaTarget,
+    };
+  } catch {
+    return { ...HOME_GLOBAL_DEFAULTS };
+  }
+}
+
+function GlobalConfigPanel() {
+  const ensureSession = useAuthStore((s) => s.ensureSession);
+  const [form, setForm] = useState<HomeGlobalForm | null>(null);
+  const [snapshot, setSnapshot] = useState<string>("");
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoadError(null);
+    try {
+      await ensureSession();
+      const res = await adminConfigApi.list();
+      if (!res.success || !res.data) {
+        setLoadError(res.message || "加载失败");
+        return;
+      }
+      const row = res.data.find((it) => it.configKey === HOME_GLOBAL_KEY);
+      const next = row ? parseHomeGlobal(row.configValue) : { ...HOME_GLOBAL_DEFAULTS };
+      setForm(next);
+      setSnapshot(JSON.stringify(next));
+    } catch {
+      setLoadError("加载失败，请稍后重试");
+    }
+  }, [ensureSession]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const dirty = form != null && JSON.stringify(form) !== snapshot;
+
+  const patch = (p: Partial<HomeGlobalForm>) =>
+    setForm((f) => (f ? { ...f, ...p } : f));
+
+  const save = async () => {
+    if (!form || saving) return;
+    if (!form.ctaLabel.trim()) {
+      toast.error("请填写按钮文案");
+      return;
+    }
+    const intensity = Number(form.fluxIntensity);
+    if (!Number.isFinite(intensity) || intensity <= 0 || intensity > 1.5) {
+      toast.error("强度需在 0–1.5 之间");
+      return;
+    }
+    setSaving(true);
+    try {
+      const value = JSON.stringify({
+        fluxPreset: form.fluxPreset,
+        fluxIntensity: intensity,
+        fluxUserSwitch: form.fluxUserSwitch,
+        ctaLabel: form.ctaLabel.trim(),
+        ctaTarget: form.ctaTarget,
+      });
+      const res = await adminConfigApi.save([
+        {
+          configKey: HOME_GLOBAL_KEY,
+          configValue: value,
+          group: "home",
+          description:
+            "首页全局配置（背景流光 + 首屏 CTA），后台「首页楼层」编辑，前台 /api/site/home-config 读取",
+        },
+      ]);
+      if (res.success) {
+        const normalized: HomeGlobalForm = {
+          ...form,
+          fluxIntensity: String(intensity),
+          ctaLabel: form.ctaLabel.trim(),
+        };
+        setForm(normalized);
+        setSnapshot(JSON.stringify(normalized));
+        toast.success("已保存，首页刷新后生效");
+      } else {
+        toast.error(res.message || "保存失败");
+      }
+    } catch {
+      toast.error("保存失败，请稍后重试");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Panel
+      title="楼层全局配置"
+      sub="背景流光与首屏 CTA，保存后作用于公开首页"
+      tools={
+        <button
+          type="button"
+          className="adm-btn"
+          disabled={!dirty || saving}
+          onClick={save}
+        >
+          {saving ? "保存中…" : "保存"}
+        </button>
+      }
+    >
+      <div style={{ padding: "16px 18px" }}>
+        {form == null ? (
+          loadError ? (
+            <div className="muted" style={{ padding: "24px 0", textAlign: "center" }}>
+              {loadError}
+              <div style={{ marginTop: 12 }}>
+                <button type="button" className="adm-btn ghost" onClick={load}>
+                  重试
+                </button>
+              </div>
+            </div>
+          ) : (
+            <ListSkeleton rows={2} height={64} />
+          )
+        ) : (
+          <div className="cfg-grid">
+            <div className="cfg-card">
+              <h3>背景流光</h3>
+              <p>首页连续着色器背景的默认预设与强度。</p>
+              <div className="cfg-row">
+                <span className="lab">默认预设</span>
+                <select
+                  value={form.fluxPreset}
+                  onChange={(e) => patch({ fluxPreset: e.target.value })}
+                  aria-label="默认预设"
+                >
+                  {FLUX_PRESET_ORDER.map((key) => (
+                    <option key={key} value={key}>
+                      {FLUX_PRESETS[key].label} · {FLUX_PRESETS[key].sub}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="cfg-row">
+                <span className="lab">强度</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={1.5}
+                  step={0.01}
+                  value={form.fluxIntensity}
+                  onChange={(e) => patch({ fluxIntensity: e.target.value })}
+                  aria-label="强度"
+                />
+                <span className="unit">0–1.5</span>
+              </div>
+              <div className="cfg-row">
+                <span className="lab">允许用户切换</span>
+                <SwitchToggle
+                  checked={form.fluxUserSwitch}
+                  onChange={(next) => patch({ fluxUserSwitch: next })}
+                  aria-label="允许用户切换"
+                />
+              </div>
+            </div>
+            <div className="cfg-card">
+              <h3>首屏 CTA</h3>
+              <p>英雄区主按钮文案与跳转。</p>
+              <div className="cfg-row">
+                <span className="lab">按钮文案</span>
+                <input
+                  type="text"
+                  value={form.ctaLabel}
+                  onChange={(e) => patch({ ctaLabel: e.target.value })}
+                  aria-label="按钮文案"
+                />
+              </div>
+              <div className="cfg-row">
+                <span className="lab">跳转</span>
+                <select
+                  value={form.ctaTarget}
+                  onChange={(e) => patch({ ctaTarget: e.target.value })}
+                  aria-label="跳转"
+                >
+                  {HOME_CTA_TARGETS.map((t) => (
+                    <option key={t.key} value={t.key}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </Panel>
   );
 }
 
@@ -281,10 +549,11 @@ function FloorModal({
   // 仅「吃作品」的楼层（作品流）才有内容源；其余楼层是静态或有固有来源，隐藏该控件。
   const isWorksFloor = (WORKS_FLOOR_TYPES as readonly string[]).includes(type);
 
-  const save = async () => {
+  // 校验/接口失败 return false → AdminModal 保持打开(footNote 显示错误)。
+  const save = async (): Promise<boolean> => {
     if (!name.trim()) {
       setErr("请填写楼层名称");
-      return;
+      return false;
     }
     setSaving(true);
     setErr(null);
@@ -305,10 +574,15 @@ function FloorModal({
       const res = floor
         ? await adminHomeFloorsApi.update(floor.id, payload)
         : await adminHomeFloorsApi.create(payload);
-      if (res.success) onSaved();
-      else setErr(res.message || "保存失败");
+      if (res.success) {
+        onSaved();
+        return true;
+      }
+      setErr(res.message || "保存失败");
+      return false;
     } catch {
       setErr("保存失败，请稍后重试");
+      return false;
     } finally {
       setSaving(false);
     }

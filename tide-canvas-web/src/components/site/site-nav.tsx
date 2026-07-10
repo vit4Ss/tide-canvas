@@ -29,6 +29,8 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "@/components/shared/toast";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/stores/use-auth-store";
+import { useFluxBgStore } from "@/stores/use-flux-bg-store";
+import BgSwitcher from "@/components/site/bg-switcher";
 import { fmt } from "@/mock";
 import { grayscaleSwatch } from "@/lib/swatch";
 import "./site-nav.css";
@@ -84,6 +86,9 @@ export default function SiteNav() {
   const { user, isAdmin } = useAuth();
   const logout = useAuthStore((s) => s.logout);
   const [open, setOpen] = useState(false);
+  // 流光背景切换器：仅当首页背景已挂载且后台允许用户切换时出现在 nav-right
+  // （design-ref buildBgSwitcher 的 insertBefore 位置——.vip 之前）。
+  const showBgSwitcher = useFluxBgStore((s) => s.active && s.allowSwitch);
 
   // scroll-past-40px .solid toggle (mirrors shell.mountChrome)
   useEffect(() => {
@@ -162,6 +167,8 @@ export default function SiteNav() {
           >
             文
           </button>
+
+          {showBgSwitcher && <BgSwitcher />}
 
           <Link className="vip" href="/pricing">
             会员特惠
