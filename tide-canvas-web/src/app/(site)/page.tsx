@@ -229,14 +229,24 @@ export default function HomePage() {
           <div className="cap-grid" id="caps">
             {(() => {
               // 真实作品图铺进 bento（作品即界面）；大卡片吃前 3 张做轮播，
-              // 其余每卡一张，接口为空时回退 mesh 渐变。
+              // 其余每卡一张。作品数不够铺满时从头循环复用——否则排尾的卡
+              // （高清放大）会掉进近黑 mesh 兜底，纯黑主题下像"没背景"。
+              // 仅接口整体为空时才回退 mesh 渐变。
               const covers = works.filter((w) => w.coverUrl).map((w) => w.coverUrl);
               let used = 0;
+              const takeCovers = (n: number): string[] => {
+                if (covers.length === 0) return [];
+                const own: string[] = [];
+                for (let k = 0; k < n && own.length < covers.length; k++) {
+                  const url = covers[(used + k) % covers.length];
+                  if (!own.includes(url)) own.push(url); // 同卡轮播内不重复
+                }
+                used += n;
+                return own;
+              };
               return capList.map((c, i) => {
                 const isBig = c.size === "big";
-                const take = isBig ? Math.min(3, covers.length - used) : covers.length - used > 0 ? 1 : 0;
-                const own = covers.slice(used, used + take);
-                used += take;
+                const own = takeCovers(isBig ? 3 : 1);
                 return (
                   <article
                     key={c.t}
