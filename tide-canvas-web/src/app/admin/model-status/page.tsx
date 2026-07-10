@@ -40,10 +40,22 @@ function fmtPct(v: number | null): string {
   return v >= 100 ? "100%" : `${v.toFixed(2)}%`;
 }
 
-/** "2026-07-10 21:30:05" → "21:30"；解析失败原样返回。 */
+/** RFC3339/"YYYY-MM-DD HH:MM:SS" → "HH:MM"；解析失败退回正则截取。 */
 function shortTime(s: string): string {
-  const m = /\b(\d{2}:\d{2}):\d{2}\b/.exec(s);
-  return m ? m[1] : s || "—";
+  if (!s) return "—";
+  const d = new Date(s);
+  if (!Number.isNaN(d.getTime())) {
+    return d.toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit" });
+  }
+  const m = /(\d{2}:\d{2}):\d{2}/.exec(s);
+  return m ? m[1] : s;
+}
+
+/** 完整本地时间（strip 悬停与时间块 title 用）。 */
+function fullTime(s: string): string {
+  if (!s) return "";
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? s : d.toLocaleString("zh-CN", { hour12: false });
 }
 
 export default function AdminModelStatusPage() {
@@ -315,7 +327,7 @@ function StatusCard({ m, elapsedSec }: { m: AdminModelStatusVO; elapsedSec: numb
             </div>
             <div className="s">调度健康</div>
           </div>
-          <div className="mstat-tile">
+          <div className="mstat-tile" title={cur ? fullTime(cur.time) : undefined}>
             <div className="k">最近检测</div>
             <div className="v">{cur ? shortTime(cur.time) : "—"}</div>
             <div className="s">目录可达 {fmtMs(cur?.totalMs ?? 0)} ms</div>
@@ -355,7 +367,7 @@ function StatusCard({ m, elapsedSec }: { m: AdminModelStatusVO; elapsedSec: numb
             <i key={`p${i}`} aria-hidden />
           ))}
           {m.recent.map((p, i) => (
-            <i key={i} className={p.ok ? "ok" : "bad"} title={`${p.time} · ${p.ok ? "可用" : "异常"}${p.totalMs ? ` · ${p.totalMs}ms` : ""}`} />
+            <i key={i} className={p.ok ? "ok" : "bad"} title={`${fullTime(p.time)} · ${p.ok ? "可用" : "异常"}${p.totalMs ? ` · ${p.totalMs}ms` : ""}`} />
           ))}
         </div>
       </div>
