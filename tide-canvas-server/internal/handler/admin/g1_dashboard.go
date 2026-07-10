@@ -115,12 +115,33 @@ func (h *dashboardHandler) sumPaidAmount(extraWhere string, arg any) string {
 // AdminChartsVO carries the dashboard time series. Each point is a {date,count}
 // pair; dates are YYYY-MM-DD over the trailing window (oldest first).
 //
-//	{userGrowth:[{date,count}],postGrowth:[{date,count}],orderGrowth:[{date,count}],revenue:[{date,amount}]}
+//	{userGrowth:[{date,count}],postGrowth:[{date,count}],orderGrowth:[{date,count}],
+//	 revenue:[{date,amount}],modelCalls:[{date,count,success}],modelTop:[{model,count,success,avgMs}]}
 type AdminChartsVO struct {
 	UserGrowth  []ChartPoint   `json:"userGrowth"`
 	PostGrowth  []ChartPoint   `json:"postGrowth"`
 	OrderGrowth []ChartPoint   `json:"orderGrowth"`
 	Revenue     []RevenuePoint `json:"revenue"`
+	// ModelCalls：近 14 天模型调用量/成功量（model_call_log 真实用户调用；
+	// 可用性探测在独立的 model_probe 表，不计入）。
+	ModelCalls []ModelCallPoint `json:"modelCalls"`
+	// ModelTop：近 14 天调用量 Top5 模型（含成功量与平均耗时）。
+	ModelTop []ModelTopVO `json:"modelTop"`
+}
+
+// ModelCallPoint is a single {date,count,success} sample of model calls.
+type ModelCallPoint struct {
+	Date    string `json:"date"`
+	Count   int64  `json:"count"`
+	Success int64  `json:"success"`
+}
+
+// ModelTopVO is one row of the model-call leaderboard.
+type ModelTopVO struct {
+	Model   string `json:"model"`
+	Count   int64  `json:"count"`
+	Success int64  `json:"success"`
+	AvgMs   int64  `json:"avgMs"`
 }
 
 // ChartPoint is a single {date,count} sample.
@@ -156,12 +177,15 @@ func (h *dashboardHandler) charts(c *gin.Context) {
 	postCounts := h.dailyCounts(&model.CommunityPost{}, "create_time", start)
 	orderCounts := h.dailyCounts(&model.Order{}, "create_time", start)
 	revenueByDay := h.dailyRevenue(start)
+	callsByDay := h.dailyModelCalls(start)
 
 	vo := AdminChartsVO{
 		UserGrowth:  make([]ChartPoint, 0, g1ChartDays),
 		PostGrowth:  make([]ChartPoint, 0, g1ChartDays),
 		OrderGrowth: make([]ChartPoint, 0, g1ChartDays),
 		Revenue:     make([]RevenuePoint, 0, g1ChartDays),
+		ModelCalls:  make([]ModelCallPoint, 0, g1ChartDays),
+		ModelTop:    h.topModelCalls(start, 5),
 	}
 	for _, day := range days {
 		vo.UserGrowth = append(vo.UserGrowth, ChartPoint{Date: day, Count: userCounts[day]})
@@ -169,6 +193,8 @@ func (h *dashboardHandler) charts(c *gin.Context) {
 		vo.OrderGrowth = append(vo.OrderGrowth, ChartPoint{Date: day, Count: orderCounts[day]})
 		amount := revenueByDay[day]
 		vo.Revenue = append(vo.Revenue, RevenuePoint{Date: day, Amount: amount.StringFixed(2)})
+		call := callsByDay[day]
+		vo.ModelCalls = append(vo.ModelCalls, ModelCallPoint{Date: day, Count: call.N, Success: call.OkN})
 	}
 	response.OK(c, vo)
 }
@@ -202,6 +228,65 @@ func (h *dashboardHandler) dailyCounts(m any, dateCol string, since time.Time) m
 	}
 	for i := range rows {
 		out[rows[i].Day] = rows[i].N
+	}
+	return out
+}
+
+// g1CallRow is the scan target for the grouped daily model-call aggregation.
+type g1CallRow struct {
+	Day string `gorm:"column:day"`
+	N   int64  `gorm:"column:n"`
+	OkN int64  `gorm:"column:okn"`
+}
+
+// dailyModelCalls returns a map of YYYY-MM-DD -> {calls, successes} over
+// model_call_log（真实用户调用：chat/optimize/image/video）from `since` onward.
+func (h *dashboardHandler) dailyModelCalls(since time.Time) map[string]g1CallRow {
+	out := map[string]g1CallRow{}
+	var rows []g1CallRow
+	err := h.db.Model(&model.ModelCallLog{}).
+		Select("DATE_FORMAT(create_time, ?) AS day, COUNT(*) AS n, COALESCE(SUM(success), 0) AS okn", g1DayFmt).
+		Where("create_time >= ?", since).
+		Group("day").
+		Scan(&rows).Error
+	if err != nil {
+		return out
+	}
+	for i := range rows {
+		out[rows[i].Day] = rows[i]
+	}
+	return out
+}
+
+// topModelCalls returns the most-called models since the cut-off, with success
+// counts and average duration.
+func (h *dashboardHandler) topModelCalls(since time.Time, limit int) []ModelTopVO {
+	var rows []struct {
+		Model string `gorm:"column:model"`
+		N     int64  `gorm:"column:n"`
+		OkN   int64  `gorm:"column:okn"`
+		AvgMs int64  `gorm:"column:avg_ms"`
+	}
+	out := []ModelTopVO{}
+	// AVG 返回带小数的 DECIMAL，直接扫 int64 会整查询报错——ROUND+CAST 落整。
+	err := h.db.Model(&model.ModelCallLog{}).
+		Select("model, COUNT(*) AS n, COALESCE(SUM(success), 0) AS okn, " +
+			"CAST(COALESCE(ROUND(AVG(duration_ms)), 0) AS SIGNED) AS avg_ms").
+		Where("create_time >= ? AND model <> ''", since).
+		Group("model").
+		Order("n DESC").
+		Limit(limit).
+		Scan(&rows).Error
+	if err != nil {
+		return out
+	}
+	for i := range rows {
+		out = append(out, ModelTopVO{
+			Model:   rows[i].Model,
+			Count:   rows[i].N,
+			Success: rows[i].OkN,
+			AvgMs:   rows[i].AvgMs,
+		})
 	}
 	return out
 }

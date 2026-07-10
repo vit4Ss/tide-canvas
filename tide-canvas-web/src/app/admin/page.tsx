@@ -29,6 +29,9 @@ import type {
   RevenuePoint,
 } from "@/types/admin-dashboard";
 
+const fmtDurMs = (ms: number) =>
+  ms >= 10_000 ? `${(ms / 1000).toFixed(1)}s` : `${ms.toLocaleString("zh-Hans-CN")}ms`;
+
 function sparkPath(vals: number[], w = 200, h = 32, pad = 3): string {
   if (vals.length === 0) return "";
   const max = Math.max(...vals) * 1.12 || 1;
@@ -161,6 +164,25 @@ export default function AdminDashboardPage() {
   }, [charts]);
 
   const activeMeta = SERIES_META.find((m) => m.key === series) ?? SERIES_META[0];
+
+  // 模型调用（近 14 天）：总调用 vs 成功 双线 + Top5 榜
+  const callSeries = useMemo(() => {
+    const pts = charts?.modelCalls ?? [];
+    return [
+      { name: "调用量", color: CHART_BLUE, vals: pts.map((p) => p.count) },
+      { name: "成功", color: CHART_TEAL, vals: pts.map((p) => p.success) },
+    ];
+  }, [charts]);
+  const callTotal = useMemo(
+    () => (charts?.modelCalls ?? []).reduce((n, p) => n + p.count, 0),
+    [charts],
+  );
+  const callSuccess = useMemo(
+    () => (charts?.modelCalls ?? []).reduce((n, p) => n + p.success, 0),
+    [charts],
+  );
+  const modelTop = charts?.modelTop ?? [];
+  const topMax = modelTop.length ? Math.max(...modelTop.map((m) => m.count)) : 0;
 
   const dayRange = useMemo(() => {
     const days = charts?.userGrowth ?? [];
@@ -317,6 +339,74 @@ export default function AdminDashboardPage() {
               title="暂无对照数据"
               description="有用户或作品增长后会显示双轴对照。"
             />
+          )}
+        </div>
+      </div>
+
+      <div className="viz-grid">
+        <div className="viz-card span8">
+          <div className="viz-h">
+            <div>
+              <h3>模型调用</h3>
+              <div className="sub">
+                近 14 天 · 共 {fmtNum(callTotal)} 次
+                {callTotal > 0 ? ` · 成功 ${((callSuccess / callTotal) * 100).toFixed(1)}%` : ""}
+              </div>
+            </div>
+          </div>
+          {callSeries.some((s) => s.vals.some((v) => v > 0)) ? (
+            <>
+              <MultiLine series={callSeries} />
+              <div className="viz-legend">
+                {callSeries.map((s) => (
+                  <span key={s.name}>
+                    <i style={{ background: s.color }} />
+                    {s.name}
+                  </span>
+                ))}
+              </div>
+              <div className="viz-dot">
+                <span>{dayRange.first}</span>
+                <span>{dayRange.last}</span>
+              </div>
+            </>
+          ) : (
+            <AdminEmptyState
+              title="暂无模型调用"
+              description="用户在创作台 / 对话发起生成后，这里会按天累计调用量与成功率。"
+            />
+          )}
+        </div>
+
+        <div className="viz-card span4">
+          <div className="viz-h">
+            <div>
+              <h3>调用 Top 5</h3>
+              <div className="sub">近 14 天 · 按调用量</div>
+            </div>
+          </div>
+          {modelTop.length > 0 ? (
+            <div className="viz-bars">
+              {modelTop.map((m) => (
+                <div className="vb" key={m.model}>
+                  <div className="vb-line">
+                    <span className="vb-name" title={m.model}>
+                      {m.model}
+                    </span>
+                    <span className="vb-n">{fmtNum(m.count)}</span>
+                  </div>
+                  <div className="vb-bar">
+                    <i style={{ width: topMax > 0 ? `${(m.count / topMax) * 100}%` : 0 }} />
+                  </div>
+                  <div className="vb-sub">
+                    成功 {m.count > 0 ? ((m.success / m.count) * 100).toFixed(1) : "0"}% · 均耗时{" "}
+                    {fmtDurMs(m.avgMs)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <AdminEmptyState title="暂无调用记录" description="有真实模型调用后显示排行。" />
           )}
         </div>
       </div>

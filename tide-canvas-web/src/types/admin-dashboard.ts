@@ -38,10 +38,29 @@ export interface RevenuePoint {
   amount: string;
 }
 
+/** A single {date,count,success} model-call sample (YYYY-MM-DD). */
+export interface ModelCallPoint {
+  date: string;
+  count: number;
+  success: number;
+}
+
+/** One row of the model-call leaderboard (近 14 天). */
+export interface ModelTopVO {
+  model: string;
+  count: number;
+  success: number;
+  avgMs: number;
+}
+
 /** Dashboard time series (trailing 14-day window, oldest first). */
 export interface AdminChartsVO {
   userGrowth: ChartPoint[];
   postGrowth: ChartPoint[];
   orderGrowth: ChartPoint[];
   revenue: RevenuePoint[];
+  /** 近 14 天模型调用（model_call_log 真实用户调用；探测样本不计入） */
+  modelCalls: ModelCallPoint[];
+  /** 近 14 天调用量 Top5 模型 */
+  modelTop: ModelTopVO[];
 }
