@@ -1,13 +1,11 @@
 package model
 
 import (
-	"time"
-
 	"github.com/shopspring/decimal"
 )
 
-// Admin-only billing / growth entities: payment channels, point rules, marketing
-// campaigns and coupons. These back the operations & finance admin screens.
+// Admin-only billing / growth entities: payment channels and point rules. These
+// back the operations & finance admin screens.
 
 // PayChannel is a configured payment channel (支付渠道).
 type PayChannel struct {
@@ -45,29 +43,6 @@ type PointRule struct {
 // TableName overrides the default pluralization.
 func (PointRule) TableName() string { return "point_rule" }
 
-// Campaign is a marketing campaign / promotion (营销活动).
-type Campaign struct {
-	BaseModel
-
-	Name string `gorm:"column:name;type:varchar(128);not null" json:"name"`
-	// Type: discount / gift / fullreduce / flashsale ...
-	Type string `gorm:"column:type;type:varchar(32);not null" json:"type"`
-	// Strength is the discount strength descriptor (e.g. "8折" / "满100减20").
-	Strength  string    `gorm:"column:strength;type:varchar(64)" json:"strength"`
-	StartTime time.Time `gorm:"column:start_time" json:"startTime"`
-	EndTime   time.Time `gorm:"column:end_time" json:"endTime"`
-	// Used counts redemptions so far; Limit is the cap (0 = unlimited).
-	Used  int `gorm:"column:used;type:int;not null;default:0" json:"used"`
-	Limit int `gorm:"column:limit_count;type:int;not null;default:0" json:"limit"`
-	// Status: draft / active / paused / ended.
-	Status string `gorm:"column:status;type:varchar(16);not null;default:'draft'" json:"status"`
-	// Audience is a free-text descriptor of the targeted user segment (e.g. 新用户).
-	Audience string `gorm:"column:audience;type:varchar(255)" json:"audience"`
-	// Channels is a free-text / comma-separated list of distribution channels.
-	Channels string `gorm:"column:channels;type:varchar(255)" json:"channels"`
-}
-
-// TableName overrides the default pluralization.
-func (Campaign) TableName() string { return "campaign" }
-
+// 营销活动（Campaign）模型已随营销管理整链下线（2026-07-10 用户拍板：活动
+// 数据无任何业务消费方——不打折、不发券、不统计,纯台账无真实链路）。
 // 优惠券（Coupon）模型已下线（2026-07-09 用户拍板：产品没有优惠券体系）。

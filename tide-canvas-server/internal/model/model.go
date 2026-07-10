@@ -66,7 +66,6 @@ func Models() []any {
 		// Billing / growth.
 		&PayChannel{},
 		&PointRule{},
-		&Campaign{},
 		// System / platform.
 		&SysLog{},
 		&SysConfig{},
@@ -274,16 +273,15 @@ func ensureBaselineTools(db *gorm.DB) error {
 	return nil
 }
 
-// fixupFreeTextColumns alters the four mis-typed json columns to varchar. Idempotent:
+// fixupFreeTextColumns alters the mis-typed json columns to varchar. Idempotent:
 // on a fresh DB the columns are already varchar (no-op alter); on an existing DB they
 // are converted from json. Skips columns/tables that don't exist yet.
+//（Campaign 的 Audience/Channels 两项已随营销管理整链下线移除,2026-07-10。）
 func fixupFreeTextColumns(db *gorm.DB) error {
 	fixes := []struct {
 		dst   any
 		field string
 	}{
-		{&Campaign{}, "Audience"},
-		{&Campaign{}, "Channels"},
 		{&EmailTemplate{}, "Variables"},
 		{&ApiKey{}, "Scope"},
 	}

@@ -52,14 +52,7 @@ func SeedAdminData(db *gorm.DB) error {
 		return err
 	}
 
-	// Campaigns (营销活动).
-	if err := seedIfEmpty(db, &Campaign{}, []Campaign{
-		{Name: "新用户 8 折", Type: "discount", Strength: "8折", StartTime: now.AddDate(0, 0, -3), EndTime: now.AddDate(0, 0, 27), Used: 156, Limit: 1000, Status: "active", Audience: "新用户", Channels: "网页,APP"},
-		{Name: "满 100 减 20", Type: "fullreduce", Strength: "满100减20", StartTime: now.AddDate(0, 0, -1), EndTime: now.AddDate(0, 0, 6), Used: 89, Limit: 500, Status: "active", Audience: "全部", Channels: "网页"},
-		{Name: "双十一闪购", Type: "flashsale", Strength: "限时5折", StartTime: now.AddDate(0, 1, 0), EndTime: now.AddDate(0, 1, 1), Used: 0, Limit: 2000, Status: "draft", Audience: "VIP 用户", Channels: "网页,APP,小程序"},
-	}); err != nil {
-		return err
-	}
+	// 营销活动种子已随营销管理整链下线（2026-07-10,编造的演示数据）。
 
 	// System logs (系统日志).
 	if err := seedIfEmpty(db, &SysLog{}, []SysLog{

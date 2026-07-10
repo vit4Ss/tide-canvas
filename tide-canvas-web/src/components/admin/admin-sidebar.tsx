@@ -41,7 +41,6 @@ export const ADMIN_NAV: AdminNavEntry[] = [
   { label: "工具管理", href: "/admin/tools", icon: "toolkit" },
   { group: "商业" },
   { label: "积分管理", href: "/admin/points", icon: "credit" },
-  { label: "营销管理", href: "/admin/marketing", icon: "promo" },
   { label: "价格管理", href: "/admin/pricing", icon: "price" },
   { label: "支付管理", href: "/admin/payments", icon: "pay" },
   { group: "系统" },
