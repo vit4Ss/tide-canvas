@@ -173,15 +173,17 @@ func (r *repo) tasksByIDs(ids []idgen.ID) (map[idgen.ID]*model.AiTask, error) {
 }
 
 // recentMessages returns up to limit of a conversation's most recent messages in
-// chronological (oldest-first) order, for use as LLM context. It fetches the
-// newest `limit` rows (DESC) then reverses them so the transcript reads forward.
-func (r *repo) recentMessages(conversationID idgen.ID, limit int) ([]model.IMMessage, error) {
+// chronological (oldest-first) order, for use as LLM context. Messages already
+// covered by the compaction summary (id <= afterID) are excluded — they enter
+// the prompt as the summary instead. It fetches the newest `limit` rows (DESC)
+// then reverses them so the transcript reads forward.
+func (r *repo) recentMessages(conversationID, afterID idgen.ID, limit int) ([]model.IMMessage, error) {
 	if limit <= 0 {
 		limit = 20
 	}
 	var rows []model.IMMessage
 	if err := r.db.
-		Where("conversation_id = ?", conversationID).
+		Where("conversation_id = ? AND id > ?", conversationID, afterID).
 		Order("create_time DESC").
 		Order("id DESC").
 		Limit(limit).
@@ -194,16 +196,29 @@ func (r *repo) recentMessages(conversationID idgen.ID, limit int) ([]model.IMMes
 	return rows, nil
 }
 
-// textContents returns the content of every text message in a conversation,
-// oldest-first, for the context token estimate. Media messages carry empty
-// content / URLs and are skipped. The conversation is bounded by the token cap
-// itself, so loading all text contents stays small.
-func (r *repo) textContents(conversationID idgen.ID) ([]string, error) {
-	var rows []string
+// textMessagesAfter returns a conversation's text messages with id > afterID,
+// oldest-first (id / sender / content only) — the token-estimate and compaction
+// source. Media messages carry empty content / URLs and are skipped. 上下文由
+// 压缩+上限双重约束，摘要之后的原文消息量始终有限。
+func (r *repo) textMessagesAfter(conversationID, afterID idgen.ID) ([]model.IMMessage, error) {
+	var rows []model.IMMessage
 	err := r.db.Model(&model.IMMessage{}).
-		Where("conversation_id = ? AND content_type = ?", conversationID, "text").
-		Pluck("content", &rows).Error
+		Select("id", "sender_id", "content").
+		Where("conversation_id = ? AND content_type = ? AND id > ?", conversationID, "text", afterID).
+		Order("id ASC").
+		Find(&rows).Error
 	return rows, err
+}
+
+// saveContextSummary persists the compaction result: the rolled-up summary and
+// the last message id it covers.
+func (r *repo) saveContextSummary(id idgen.ID, summary string, uptoID idgen.ID) error {
+	return r.db.Model(&model.IMConversation{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"context_summary": summary,
+			"summary_upto_id": uptoID,
+		}).Error
 }
 
 // touchConversation updates a conversation's last-message pointer/time so the

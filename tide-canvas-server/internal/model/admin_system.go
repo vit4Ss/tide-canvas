@@ -81,6 +81,13 @@ const ConfigKeyPricingFaq = "pricing.faq"
 // per request by handler/chat, so changes apply WITHOUT a restart.
 const ConfigKeyChatContextTokenLimit = "llm.contextTokenLimit"
 
+// ConfigKeyChatCompressAt is the sys_config key for the chat context
+// auto-compaction threshold in estimated tokens: once a conversation's
+// context passes it, older history is rolled into the conversation summary
+// (handler/chat maybeCompact). 0 = 自动（上限的 70%）. Seeded on boot; read
+// per send so admin edits apply without a restart.
+const ConfigKeyChatCompressAt = "llm.compressAtTokens"
+
 // SysConfig is a key-value platform configuration entry (系统配置).
 type SysConfig struct {
 	BaseModel

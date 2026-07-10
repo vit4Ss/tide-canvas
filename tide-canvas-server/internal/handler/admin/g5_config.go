@@ -59,6 +59,7 @@ var baselineConfigKeys = map[string]struct{}{
 	model.ConfigKeyPricingCompare:        {},
 	model.ConfigKeyPricingFaq:            {},
 	model.ConfigKeyChatContextTokenLimit: {},
+	model.ConfigKeyChatCompressAt:        {},
 	model.ConfigKeyMarketTypeOrder:       {},
 	model.ConfigKeyProbeInterval:         {},
 	"points.checkinDaily":                {},

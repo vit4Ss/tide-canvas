@@ -22,16 +22,19 @@ func TestEstimateTokens(t *testing.T) {
 }
 
 func TestToContextUsageVO(t *testing.T) {
-	if vo := toContextUsageVO(8000, 32000); vo.Percent != 25 || vo.Full {
+	if vo := toContextUsageVO(8000, 32000, false); vo.Percent != 25 || vo.Full || vo.Compressed {
 		t.Errorf("25%% case: %+v", vo)
 	}
-	if vo := toContextUsageVO(32000, 32000); vo.Percent != 100 || !vo.Full {
+	if vo := toContextUsageVO(32000, 32000, false); vo.Percent != 100 || !vo.Full {
 		t.Errorf("at-limit case: %+v", vo)
 	}
-	if vo := toContextUsageVO(999999, 32000); vo.Percent != 100 || !vo.Full {
+	if vo := toContextUsageVO(999999, 32000, false); vo.Percent != 100 || !vo.Full {
 		t.Errorf("over-limit case: %+v", vo)
 	}
-	if vo := toContextUsageVO(0, 32000); vo.Percent != 0 || vo.Full {
+	if vo := toContextUsageVO(0, 32000, false); vo.Percent != 0 || vo.Full {
 		t.Errorf("empty case: %+v", vo)
+	}
+	if vo := toContextUsageVO(8000, 32000, true); !vo.Compressed {
+		t.Errorf("compressed case: %+v", vo)
 	}
 }

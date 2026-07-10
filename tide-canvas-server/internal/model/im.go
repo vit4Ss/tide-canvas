@@ -18,6 +18,13 @@ type IMConversation struct {
 
 	LastMessageID *idgen.ID  `gorm:"column:last_message_id" json:"lastMessageId"`
 	LastMessageAt *time.Time `gorm:"column:last_message_at" json:"lastMessageAt"`
+
+	// ContextSummary 是上下文自动压缩（compaction）的滚动摘要：会话估算 token
+	// 达到阈值后，较早的消息被文本模型压缩进这段摘要，以 system 消息注入后续
+	// 请求；SummaryUptoID 记录摘要已覆盖到的最后一条消息 id，其后的消息仍以
+	// 原文进上下文。两个字段只服务于 LLM 上下文，不进任何 VO。
+	ContextSummary string   `gorm:"column:context_summary;type:text" json:"-"`
+	SummaryUptoID  idgen.ID `gorm:"column:summary_upto_id;not null;default:0" json:"-"`
 }
 
 // TableName overrides the default pluralization.

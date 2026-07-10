@@ -1489,12 +1489,17 @@ export default function ChatPage() {
         </div>
 
         <div className="chat-composer">
+          {/* 已压缩且余量健康时给个安静的说明；仍逼近上限（压缩后依旧 ≥80%）
+              则继续走下方的警示条 */}
+          {selModel?.type === "text" && ctxUsage?.compressed && ctxUsage.percent < 80 && (
+            <div className="chat-ctx-note">较早的对话已自动压缩为摘要，模型仍保有前文关键信息</div>
+          )}
           {selModel?.type === "text" && ctxUsage && ctxUsage.percent >= 80 && (
             <div className={`chat-ctx-warn${ctxUsage.full ? " full" : ""}`}>
               <span>
                 {ctxUsage.full
-                  ? "本会话上下文已达上限，无法继续对话，请开启新会话"
-                  : `本会话上下文已使用 ${ctxUsage.percent}%，建议开启新会话以获得更好的效果`}
+                  ? "本会话上下文已达上限（自动压缩后仍不足），请开启新会话"
+                  : `本会话上下文已使用 ${ctxUsage.percent}%，接近阈值时会自动压缩较早对话`}
               </span>
               <button type="button" onClick={newChat} disabled={busy}>
                 开启新会话

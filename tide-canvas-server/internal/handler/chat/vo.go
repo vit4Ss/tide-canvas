@@ -63,16 +63,19 @@ type MessageVO struct {
 
 // ContextUsageVO reports a conversation's estimated context-token usage against
 // the configured cap (GET /api/im/conversations/:id/context). Percent is
-// clamped to [0,100]; Full means new text turns will be rejected.
+// clamped to [0,100]; Full means new text turns will be rejected; Compressed
+// means older history has been auto-compacted into a rolling summary (usage
+// counts the summary + the uncompressed tail, not the original transcript).
 type ContextUsageVO struct {
 	UsedTokens  int  `json:"usedTokens"`
 	LimitTokens int  `json:"limitTokens"`
 	Percent     int  `json:"percent"`
 	Full        bool `json:"full"`
+	Compressed  bool `json:"compressed"`
 }
 
 // toContextUsageVO builds the usage VO from an estimate and the cap.
-func toContextUsageVO(used, limit int) ContextUsageVO {
+func toContextUsageVO(used, limit int, compressed bool) ContextUsageVO {
 	pct := 0
 	if limit > 0 {
 		pct = used * 100 / limit
@@ -85,6 +88,7 @@ func toContextUsageVO(used, limit int) ContextUsageVO {
 		LimitTokens: limit,
 		Percent:     pct,
 		Full:        used >= limit,
+		Compressed:  compressed,
 	}
 }
 
