@@ -40,6 +40,8 @@ export interface AdminOrderQuery {
   pageSize?: number;
   /** Optional status filter (0..3). Omit for all. */
   status?: number;
+  /** Keyword over order_no / transaction_id (LIKE). Omit for all. */
+  keyword?: string;
 }
 
 /** g4PayChannelVO — admin payment-channel row view. */

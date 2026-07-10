@@ -2,6 +2,7 @@ package admin
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
@@ -13,10 +14,11 @@ import (
 	"tidecanvas/internal/pkg/response"
 )
 
-// g4_payments.go covers the payments section: order ledger (read-only, all
-// users) and payment-channel CRUD. Per the LINKAGE PRINCIPLE the order list
-// reads the SAME `order` table the user-facing /api/orders flow writes, so the
-// admin sees every real purchase. Pay channels back the `pay_channel` table.
+// g4_payments.go covers the payments section: order ledger (all users, with
+// keyword search + admin refund) and payment-channel CRUD. Per the LINKAGE
+// PRINCIPLE the order list reads the SAME `order` table the user-facing
+// /api/orders flow writes, so the admin sees every real purchase. Pay channels
+// back the `pay_channel` table.
 
 // RegisterPayments mounts the payments-admin routes on the admin-gated group g.
 //
@@ -24,6 +26,7 @@ import (
 //
 //	GET    /orders              g4OrderQuery -> PageData<g4OrderVO>
 //	GET    /orders/:id          -> g4OrderVO
+//	POST   /orders/:id/refund   -> g4OrderVO   (已支付 → 已退款 + 回收积分)
 //	GET    /pay/channels        -> []g4PayChannelVO
 //	POST   /pay/channels        g4PayChannelUpsertDTO -> g4PayChannelVO
 //	PUT    /pay/channels/:id    g4PayChannelUpsertDTO -> g4PayChannelVO
@@ -34,6 +37,7 @@ func RegisterPayments(g *gin.RouterGroup, d *app.Deps) {
 	// /orders + /orders/:id (param only under the static parent — no sibling clash).
 	g.GET("/orders", h.listOrders)
 	g.GET("/orders/:id", h.getOrder)
+	g.POST("/orders/:id/refund", h.refundOrder)
 
 	// Pay channels live under the static /pay/channels parent.
 	g.GET("/pay/channels", h.listChannels)
@@ -90,12 +94,15 @@ type g4PayChannelVO struct {
 
 // ---- DTOs ----
 
-// g4OrderQuery is the order-list query: pagination + optional status filter.
+// g4OrderQuery is the order-list query: pagination + optional status filter +
+// keyword search over order_no / transaction_id.
 type g4OrderQuery struct {
 	g4Page
 	// Status filters by order status (0 待支付/1 已支付/2 已取消/3 已退款). Use a
 	// pointer so an omitted filter returns all statuses (0 is a valid filter).
 	Status *int `form:"status"`
+	// Keyword matches order_no / transaction_id (LIKE, trimmed; empty = all).
+	Keyword string `form:"keyword"`
 }
 
 // g4PayChannelUpsertDTO is the create/update body for a payment channel.
@@ -121,6 +128,10 @@ func (h *g4PaymentsHandler) listOrders(c *gin.Context) {
 	tx := h.db.Model(&model.Order{})
 	if q.Status != nil {
 		tx = tx.Where("status = ?", *q.Status)
+	}
+	if kw := strings.TrimSpace(q.Keyword); kw != "" {
+		like := "%" + kw + "%"
+		tx = tx.Where("order_no LIKE ? OR transaction_id LIKE ?", like, like)
 	}
 
 	var total int64
@@ -166,6 +177,97 @@ func (h *g4PaymentsHandler) getOrder(c *gin.Context) {
 	}
 	response.OK(c, g4ToOrderVO(&row, up))
 }
+
+// refundOrder marks a PAID order refunded (status 1 → 3) and claws back the
+// points the order granted. The grant is derived from the settle-time ledger
+// rows (point_record: change_type=recharge, ref_id=order id) — never
+// re-computed from today's plan/package pricing, so price changes after the
+// purchase can't skew the reversal. The deduction is floored at the user's
+// current balance (already-spent credits can't go negative) and journaled as a
+// change_type=refund ledger row. VIP level is NOT auto-reverted (settle 的
+// vip 提升是 upgrade-only、无法归因单一订单；需要时管理员在用户管理里手动调整)。
+// 注意:这只是账务标记 + 积分回收,渠道端的真实退款(原路退回)需在支付渠道
+// 后台另行操作。
+func (h *g4PaymentsHandler) refundOrder(c *gin.Context) {
+	id, ok := g4ParseID(c)
+	if !ok {
+		return
+	}
+
+	var refunded model.Order
+	txErr := h.db.Transaction(func(tx *gorm.DB) error {
+		// Claim: only a paid order flips to refunded (guards double-refund races).
+		res := tx.Model(&model.Order{}).
+			Where("id = ? AND status = ?", id, 1).
+			Update("status", 3)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return errG4RefundState
+		}
+		if err := tx.Where("id = ?", id).First(&refunded).Error; err != nil {
+			return err
+		}
+
+		// Sum what the settle actually granted (ledger truth, not re-priced).
+		var granted int64
+		if err := tx.Model(&model.PointRecord{}).
+			Where("ref_id = ? AND change_type = ?", id, "recharge").
+			Select("COALESCE(SUM(amount), 0)").Scan(&granted).Error; err != nil {
+			return err
+		}
+		if granted <= 0 {
+			return nil // 未授予积分的订单(异常/零额)只改状态
+		}
+
+		// Claw back, floored at the current balance (spent credits stay spent).
+		var u model.User
+		if err := tx.Select("id", "points").Where("id = ?", refunded.UserID).First(&u).Error; err != nil {
+			return err
+		}
+		deduct := granted
+		if u.Points < deduct {
+			deduct = u.Points
+		}
+		if deduct > 0 {
+			if err := tx.Model(&model.User{}).
+				Where("id = ?", refunded.UserID).
+				UpdateColumn("points", gorm.Expr("points - ?", deduct)).Error; err != nil {
+				return err
+			}
+		}
+		refID := refunded.ID
+		ledger := &model.PointRecord{
+			UserID:     refunded.UserID,
+			ChangeType: "refund",
+			Amount:     int(-deduct),
+			Balance:    int(u.Points - deduct),
+			Remark:     "订单退款收回：" + refunded.OrderNo,
+			RefID:      &refID,
+		}
+		ledger.ID = idgen.Next()
+		return tx.Create(ledger).Error
+	})
+	if txErr != nil {
+		if errors.Is(txErr, errG4RefundState) {
+			response.Fail(c, response.CodeBadRequest, "仅已支付订单可退款")
+			return
+		}
+		response.Fail(c, response.CodeServerError, "failed to refund order")
+		return
+	}
+
+	var u model.User
+	var up *model.User
+	if err := h.db.First(&u, "id = ?", refunded.UserID).Error; err == nil {
+		up = &u
+	}
+	response.OK(c, g4ToOrderVO(&refunded, up))
+}
+
+// errG4RefundState marks a refund attempt on a non-paid order.
+var errG4RefundState = errors.New("order not refundable")
 
 // loadUsers batch-loads the buyers for a page of orders, keyed by user id.
 func (h *g4PaymentsHandler) loadUsers(orders []model.Order) map[idgen.ID]*model.User {

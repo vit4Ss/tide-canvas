@@ -3,12 +3,13 @@
 // internal/handler/admin/g4_payments.go using the shared http helper.
 //
 // Routes:
-//   GET    /api/admin/orders             -> PageData<AdminOrder>
-//   GET    /api/admin/orders/:id         -> AdminOrder
-//   GET    /api/admin/pay/channels       -> AdminPayChannel[]
-//   POST   /api/admin/pay/channels       -> AdminPayChannel
-//   PUT    /api/admin/pay/channels/:id   -> AdminPayChannel
-//   DELETE /api/admin/pay/channels/:id   -> void
+//   GET    /api/admin/orders                  -> PageData<AdminOrder>
+//   GET    /api/admin/orders/:id              -> AdminOrder
+//   POST   /api/admin/orders/:id/refund      -> AdminOrder (已支付 → 已退款 + 回收积分)
+//   GET    /api/admin/pay/channels            -> AdminPayChannel[]
+//   POST   /api/admin/pay/channels            -> AdminPayChannel
+//   PUT    /api/admin/pay/channels/:id        -> AdminPayChannel
+//   DELETE /api/admin/pay/channels/:id        -> void
 // ============================================================================
 
 import { http, toParams } from "@/lib/http";
@@ -25,6 +26,8 @@ export const adminPaymentsApi = {
   listOrders: (query: AdminOrderQuery = {}) =>
     http.get<PageData<AdminOrder>>("/api/admin/orders", toParams(query)),
   getOrder: (id: string) => http.get<AdminOrder>(`/api/admin/orders/${id}`),
+  /** 账务退款:已支付 → 已退款 + 按结算流水回收积分(渠道原路退回需另行操作)。 */
+  refundOrder: (id: string) => http.post<AdminOrder>(`/api/admin/orders/${id}/refund`),
 
   // ---- pay channels ----
   listChannels: () => http.get<AdminPayChannel[]>("/api/admin/pay/channels"),

@@ -6,8 +6,9 @@
    Liuguang admin.js V.pay() skin, now backed by the real admin API
    (src/lib/admin-payments-api.ts):
      - 支付渠道 : GET/POST/PUT/DELETE /api/admin/pay/channels  (channel CRUD)
-     - 最近交易 : GET /api/admin/orders (paged, read-only ledger — every real
-                  purchase from the same `order` table the user flow writes)
+     - 最近交易 : GET /api/admin/orders (paged, 关键词搜订单号/交易号) +
+                  POST /orders/:id/refund(账务退款:已支付 → 已退款,按结算
+                  流水回收积分;渠道原路退回需在渠道后台另行操作)
 
    KEEPS the exact liuguang markup/classes + shared components. Mock import dropped.
    ============================================================================ */
@@ -29,6 +30,8 @@ import {
 import type { Kpi, PillTone } from "@/mock/admin";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminPaymentsApi } from "@/lib/admin-payments-api";
+import { confirmDialog } from "@/components/shared/confirm";
+import { toast } from "@/components/shared/toast";
 import type {
   AdminOrder,
   AdminPayChannel,
@@ -101,6 +104,9 @@ export default function AdminPaymentsPage() {
   const [loading, setLoading] = useState(true);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 订单搜索:query = 输入框实时值,keyword = 已提交的检索词(回车/按钮提交)
+  const [orderQuery, setOrderQuery] = useState("");
+  const [orderKeyword, setOrderKeyword] = useState("");
 
   // channel modal
   const [chOpen, setChOpen] = useState(false);
@@ -113,18 +119,31 @@ export default function AdminPaymentsPage() {
     else setError(res.message || "加载支付渠道失败");
   }, []);
 
-  const loadOrders = useCallback(async (page: number) => {
-    setOrdersLoading(true);
-    const res = await adminPaymentsApi.listOrders({ pageNum: page, pageSize: ORDER_PAGE_SIZE });
-    if (res.success && res.data) {
-      setOrders(res.data.records);
-      setOrderTotal(res.data.total);
-      setOrderPage(res.data.pageNum);
-    } else {
-      setError(res.message || "加载交易失败");
-    }
-    setOrdersLoading(false);
-  }, []);
+  const loadOrders = useCallback(
+    async (page: number, keyword: string = orderKeyword) => {
+      setOrdersLoading(true);
+      const res = await adminPaymentsApi.listOrders({
+        pageNum: page,
+        pageSize: ORDER_PAGE_SIZE,
+        keyword: keyword.trim() || undefined,
+      });
+      if (res.success && res.data) {
+        setOrders(res.data.records);
+        setOrderTotal(res.data.total);
+        setOrderPage(res.data.pageNum);
+      } else {
+        setError(res.message || "加载交易失败");
+      }
+      setOrdersLoading(false);
+    },
+    [orderKeyword],
+  );
+
+  // 提交搜索:记住检索词并回到第 1 页。
+  const searchOrders = () => {
+    setOrderKeyword(orderQuery);
+    loadOrders(1, orderQuery);
+  };
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -166,7 +185,8 @@ export default function AdminPaymentsPage() {
     setChForm(channelToForm(c));
     setChOpen(true);
   };
-  const saveCh = async () => {
+  // 校验/接口失败 return false → AdminModal 保持打开,用户输入不丢。
+  const saveCh = async (): Promise<boolean> => {
     const dto: AdminPayChannelUpsertDTO = {
       name: chForm.name.trim(),
       type: chForm.type.trim(),
@@ -177,15 +197,24 @@ export default function AdminPaymentsPage() {
       // toggleCh does — otherwise editing a channel resets its order to 0.
       ...(editingCh ? { sortOrder: editingCh.sortOrder } : {}),
     };
-    if (!dto.name || !dto.type) return;
-    const res = editingCh
-      ? await adminPaymentsApi.updateChannel(editingCh.id, dto)
-      : await adminPaymentsApi.createChannel(dto);
-    if (res.success) {
-      setChOpen(false);
-      loadChannels();
-    } else {
-      setError(res.message || "保存渠道失败");
+    if (!dto.name || !dto.type) {
+      toast.error(!dto.name ? "请填写渠道名称" : "请填写渠道类型");
+      return false;
+    }
+    try {
+      const res = editingCh
+        ? await adminPaymentsApi.updateChannel(editingCh.id, dto)
+        : await adminPaymentsApi.createChannel(dto);
+      if (res.success) {
+        setChOpen(false);
+        loadChannels();
+        return true;
+      }
+      toast.error(res.message || "保存渠道失败");
+      return false;
+    } catch {
+      toast.error("保存渠道失败，请稍后重试");
+      return false;
     }
   };
   const toggleCh = async (c: AdminPayChannel, next: boolean) => {
@@ -205,6 +234,25 @@ export default function AdminPaymentsPage() {
     const res = await adminPaymentsApi.deleteChannel(c.id);
     if (res.success) loadChannels();
     else setError(res.message || "删除渠道失败");
+  };
+
+  /* ── order refund(账务标记 + 积分回收;二次确认)──────────────────── */
+  const refundOrder = async (o: AdminOrder) => {
+    if (
+      !(await confirmDialog({
+        title: "订单退款",
+        message: `确定将订单「${o.orderNo}」标记为已退款？将按结算流水回收该订单授予的积分（余额不足收至 0）。渠道侧的原路退回需在支付渠道后台另行操作。`,
+        confirmText: "退款",
+      }))
+    )
+      return;
+    const res = await adminPaymentsApi.refundOrder(o.id);
+    if (res.success) {
+      toast.success("已标记退款并回收积分");
+      loadOrders(orderPage);
+    } else {
+      toast.error(res.message || "退款失败");
+    }
   };
 
   return (
@@ -285,26 +333,42 @@ export default function AdminPaymentsPage() {
         )}
       </Panel>
 
-      {/* 最近交易 (server-paged, read-only) */}
+      {/* 最近交易 (server-paged, 关键词搜索 + 账务退款) */}
       <Panel
         title="最近交易"
         sub="全部用户的真实订单流水"
         tools={
-          <button
-            type="button"
-            className="adm-btn ghost"
-            onClick={() => loadOrders(orderPage)}
-            disabled={ordersLoading}
-          >
-            刷新
-          </button>
+          <>
+            <div className="adm-search" style={{ margin: 0 }}>
+              <span className="muted">⌕</span>
+              <input
+                placeholder="订单号 / 交易号"
+                value={orderQuery}
+                onChange={(e) => setOrderQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") searchOrders();
+                }}
+              />
+            </div>
+            <button type="button" className="adm-btn ghost" onClick={searchOrders}>
+              搜索
+            </button>
+            <button
+              type="button"
+              className="adm-btn ghost"
+              onClick={() => loadOrders(orderPage)}
+              disabled={ordersLoading}
+            >
+              刷新
+            </button>
+          </>
         }
       >
         {loading || ordersLoading ? (
           <TableSkeleton />
         ) : orders.length === 0 ? (
           <div style={{ padding: 18 }} className="muted">
-            暂无交易记录。
+            {orderKeyword ? `没有匹配「${orderKeyword}」的订单。` : "暂无交易记录。"}
           </div>
         ) : (
           <>
@@ -314,7 +378,7 @@ export default function AdminPaymentsPage() {
               columns={[
                 {
                   header: "订单号",
-                  width: "20%",
+                  width: "18%",
                   className: "mono muted",
                   cell: (r) => (
                     <span className="truncate" title={r.orderNo}>
@@ -324,10 +388,10 @@ export default function AdminPaymentsPage() {
                 },
                 {
                   header: "用户",
-                  width: "14%",
+                  width: "12%",
                   cell: (r) => r.user?.nickname || r.user?.username || r.userId,
                 },
-                { header: "套餐 / 商品", width: "16%", cell: (r) => orderItemLabel(r) },
+                { header: "套餐 / 商品", width: "14%", cell: (r) => orderItemLabel(r) },
                 {
                   header: "金额",
                   width: "10%",
@@ -335,10 +399,10 @@ export default function AdminPaymentsPage() {
                   className: "mono strong",
                   cell: (r) => yuan(r.amount),
                 },
-                { header: "渠道", width: "10%", cell: (r) => r.payMethod || "—" },
+                { header: "渠道", width: "8%", cell: (r) => r.payMethod || "—" },
                 {
                   header: "时间",
-                  width: "18%",
+                  width: "16%",
                   className: "muted",
                   cell: (r) => fmtTime(r.payTime || r.createTime),
                 },
@@ -348,6 +412,18 @@ export default function AdminPaymentsPage() {
                     const s = ORDER_STATUS[r.status] ?? { label: String(r.status), tone: "gray" as PillTone };
                     return <StatusPill tone={s.tone}>{s.label}</StatusPill>;
                   },
+                },
+                {
+                  header: "操作",
+                  width: "9%",
+                  align: "right",
+                  // 仅已支付订单可退款;其余状态无操作。
+                  cell: (r) =>
+                    r.status === 1 ? (
+                      <RowActions actions={[{ label: "退款", onClick: () => refundOrder(r) }]} />
+                    ) : (
+                      <span className="muted">—</span>
+                    ),
                 },
               ]}
               server={{
