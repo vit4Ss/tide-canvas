@@ -181,7 +181,10 @@
 /* 折叠动画走 grid-rows（0fr→1fr），不再动 max-height */
 .faq-a{display:grid; grid-template-rows:0fr; overflow:hidden; transition:grid-template-rows .3s var(--ease);}
 .faq-item.open .faq-a{grid-template-rows:1fr;}
-.faq-a-in{min-height:0; overflow:hidden; padding:0 22px 20px; font-size:14px; line-height:1.65; color:var(--text-dim);}
+/* 收起态 padding-bottom 必须归零：padding 计入 0fr 轨道的最小高度，固定 20px
+   底距会让收起的答案漏出恰好一行文字（视觉"半开"）。展开时随动画补回。 */
+.faq-a-in{min-height:0; overflow:hidden; padding:0 22px; font-size:14px; line-height:1.65; color:var(--text-dim); transition:padding-bottom .3s var(--ease);}
+.faq-item.open .faq-a-in{padding-bottom:20px;}
 
 /* ─── WORK MODAL (shared, all pages) ──────────────────────────────── */
 .mask{position:fixed; inset:0; z-index:200; background:rgba(20,22,28,.4); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);

@@ -174,7 +174,9 @@ func RegisterEmail(g *gin.RouterGroup, d *app.Deps) {
 			Body:      dto.Body,
 			Enabled:   dto.Enabled == nil || *dto.Enabled,
 		}
-		if err := db.Create(&row).Error; err != nil {
+		// enabled is force-written: a struct Create would swallow enabled:false
+		// via the default:true tag and activate a template meant to stay off.
+		if err := adminCreateRow(db, &row, map[string]any{"enabled": row.Enabled}); err != nil {
 			response.Fail(c, response.CodeServerError, "failed to create template")
 			return
 		}
@@ -288,7 +290,13 @@ func RegisterEmail(g *gin.RouterGroup, d *app.Deps) {
 		if dto.Expiry != nil {
 			row.Expiry = g5ParseTime(dto.Expiry)
 		}
-		if err := db.Create(&row).Error; err != nil {
+		// enabled is force-written: a struct Create would swallow enabled:false
+		// via the default:true tag and activate a key meant to stay off.
+		if err := adminCreateRow(db, &row, map[string]any{"enabled": row.Enabled}); err != nil {
+			if errors.Is(err, gorm.ErrDuplicatedKey) {
+				response.Fail(c, response.CodeBadRequest, "该密钥值已存在")
+				return
+			}
 			response.Fail(c, response.CodeServerError, "failed to create api key")
 			return
 		}

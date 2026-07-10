@@ -49,7 +49,8 @@ export interface AdminToolUpdateDTO {
   needPrompt?: boolean;
   hd?: boolean;
   icon?: string;
-  /** null clears; otherwise exactly 3 ints in 0..360. */
+  /** Exactly 3 ints in 0..360 to set. null/缺省 = 未提供、保持不变（后端
+   *  *[]int 对 null 不做清除，目前没有清除封面的通道）。 */
   cover?: number[] | null;
   placeholder?: string;
   sortOrder?: number;

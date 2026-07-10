@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -49,10 +50,26 @@ type ConfigUpsertDTO struct {
 	Items []ConfigItemDTO `json:"items"`
 }
 
+// baselineConfigKeys are the must-exist sys_config keys seeded by
+// model.AutoMigrate / boot wiring. They drive live pages (页脚/首页/定价/聊天
+// 上下文/积分策略), so the delete endpoint refuses to remove them.
+var baselineConfigKeys = map[string]struct{}{
+	model.ConfigKeyFooterLinks:           {},
+	model.ConfigKeyHomeGlobal:            {},
+	model.ConfigKeyPricingCompare:        {},
+	model.ConfigKeyPricingFaq:            {},
+	model.ConfigKeyChatContextTokenLimit: {},
+	"points.checkinDaily":                {},
+	"points.inviteReward":                {},
+	"points.signupBonus":                 {},
+	"points.exchangeRate":                {},
+}
+
 // RegisterConfig mounts the config admin routes on the admin group.
 //
-//	GET /config  -> []ConfigVO
-//	PUT /config  {items:[ConfigItemDTO]} | [ConfigItemDTO] | map<string,string> -> []ConfigVO
+//	GET    /config      -> []ConfigVO
+//	PUT    /config      {items:[ConfigItemDTO]} | [ConfigItemDTO] | map<string,string> -> []ConfigVO
+//	DELETE /config/:id  -> void（基线键拒绝删除）
 func RegisterConfig(g *gin.RouterGroup, d *app.Deps) {
 	db := d.DB
 
@@ -70,7 +87,7 @@ func RegisterConfig(g *gin.RouterGroup, d *app.Deps) {
 	})
 
 	g.PUT("/config", func(c *gin.Context) {
-		items, err := bindConfigItems(c)
+		items, mapForm, err := bindConfigItems(c)
 		if err != nil {
 			response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
 			return
@@ -78,6 +95,34 @@ func RegisterConfig(g *gin.RouterGroup, d *app.Deps) {
 		if len(items) == 0 {
 			response.Fail(c, response.CodeBadRequest, "no config items provided")
 			return
+		}
+
+		// The flat-map convenience shape is update-only: any JSON object would
+		// otherwise mint arbitrary sys_config rows ({"name":"x"} → key "name").
+		// Creating new keys requires the explicit {items:[...]} / array shapes.
+		if mapForm {
+			keys := make([]string, 0, len(items))
+			for i := range items {
+				if k := strings.TrimSpace(items[i].ConfigKey); k != "" {
+					keys = append(keys, k)
+				}
+			}
+			var existing []string
+			if err := db.Model(&model.SysConfig{}).Where("config_key IN ?", keys).
+				Pluck("config_key", &existing).Error; err != nil {
+				response.Fail(c, response.CodeServerError, "failed to save config")
+				return
+			}
+			known := make(map[string]struct{}, len(existing))
+			for _, k := range existing {
+				known[k] = struct{}{}
+			}
+			for _, k := range keys {
+				if _, ok := known[k]; !ok {
+					response.Fail(c, response.CodeBadRequest, "未知配置键: "+k)
+					return
+				}
+			}
 		}
 
 		// Upsert each by configKey; conflict updates value/group/description.
@@ -119,43 +164,71 @@ func RegisterConfig(g *gin.RouterGroup, d *app.Deps) {
 		}
 		response.OK(c, vos)
 	})
+
+	// 删除配置键。基线键（页面/策略消费方仍在读）拒绝删除；其余键（含误建的
+	// 垃圾键）可删——config 此前无删除通道，误建的行只能进 DB 手清。
+	g.DELETE("/config/:id", func(c *gin.Context) {
+		id, ok := g5ParseID(c)
+		if !ok {
+			return
+		}
+		var row model.SysConfig
+		if err := db.First(&row, "id = ?", id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				response.Fail(c, response.CodeNotFound, "config not found")
+				return
+			}
+			response.Fail(c, response.CodeServerError, "failed to load config")
+			return
+		}
+		if _, protected := baselineConfigKeys[row.ConfigKey]; protected {
+			response.Fail(c, response.CodeBadRequest, "基线配置不可删除: "+row.ConfigKey)
+			return
+		}
+		if err := db.Delete(&model.SysConfig{}, "id = ?", id).Error; err != nil {
+			response.Fail(c, response.CodeServerError, "failed to delete config")
+			return
+		}
+		response.OK[any](c, nil)
+	})
 }
 
 // bindConfigItems accepts three request shapes: {items:[...]}, a bare [...] array
 // of ConfigItemDTO, or a flat map<string,string> of key->value. The map form is
-// convenient for the settings screen which serializes a plain object.
-func bindConfigItems(c *gin.Context) ([]ConfigItemDTO, error) {
+// convenient for the settings screen which serializes a plain object; mapForm
+// reports when that shape was used so the caller can apply update-only rules.
+func bindConfigItems(c *gin.Context) (items []ConfigItemDTO, mapForm bool, err error) {
 	raw, err := c.GetRawData()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	trimmed := strings.TrimSpace(string(raw))
 	if trimmed == "" {
-		return nil, nil
+		return nil, false, nil
 	}
 
 	// Wrapped object {items:[...]} first.
 	if strings.HasPrefix(trimmed, "{") {
 		var wrapped ConfigUpsertDTO
 		if err := jsonUnmarshal(raw, &wrapped); err == nil && len(wrapped.Items) > 0 {
-			return wrapped.Items, nil
+			return wrapped.Items, false, nil
 		}
 		// Fall back to flat map<string,string>.
 		var m map[string]string
 		if err := jsonUnmarshal(raw, &m); err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		items := make([]ConfigItemDTO, 0, len(m))
+		items = make([]ConfigItemDTO, 0, len(m))
 		for k, v := range m {
 			items = append(items, ConfigItemDTO{ConfigKey: k, ConfigValue: v})
 		}
-		return items, nil
+		return items, true, nil
 	}
 
 	// Bare array form.
 	var arr []ConfigItemDTO
 	if err := jsonUnmarshal(raw, &arr); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return arr, nil
+	return arr, false, nil
 }

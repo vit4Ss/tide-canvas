@@ -175,8 +175,13 @@ func RegisterNotifications(g *gin.RouterGroup, d *app.Deps) {
 		if !ok {
 			return
 		}
-		if err := db.Delete(&model.Notification{}, "id = ?", id).Error; err != nil {
+		res := db.Delete(&model.Notification{}, "id = ?", id)
+		if res.Error != nil {
 			response.Fail(c, response.CodeServerError, "failed to delete notification")
+			return
+		}
+		if res.RowsAffected == 0 {
+			response.Fail(c, response.CodeNotFound, "notification not found")
 			return
 		}
 		response.OK[any](c, nil)

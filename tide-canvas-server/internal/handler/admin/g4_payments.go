@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/model"
@@ -106,11 +107,15 @@ type g4OrderQuery struct {
 }
 
 // g4PayChannelUpsertDTO is the create/update body for a payment channel.
+// Bounds mirror the DB columns (name varchar(64), type varchar(32), callback
+// varchar(512)); rate is a per-transaction fee fraction (0.006 = 0.6%), so it
+// must sit in [0,1] — anything larger is a typo that would previously overflow
+// decimal(6,4) into a bare 500.
 type g4PayChannelUpsertDTO struct {
-	Name      string  `json:"name" binding:"required"`
-	Type      string  `json:"type" binding:"required"`
-	Rate      float64 `json:"rate"`
-	Callback  string  `json:"callback"`
+	Name      string  `json:"name" binding:"required,max=64"`
+	Type      string  `json:"type" binding:"required,max=32"`
+	Rate      float64 `json:"rate" binding:"gte=0,lte=1"`
+	Callback  string  `json:"callback" binding:"omitempty,max=512"`
 	Enabled   *bool   `json:"enabled"`
 	SortOrder int     `json:"sortOrder"`
 }
@@ -204,6 +209,15 @@ func (h *g4PaymentsHandler) refundOrder(c *gin.Context) {
 			return res.Error
 		}
 		if res.RowsAffected == 0 {
+			// Zero rows means "not paid" OR "no such order" — look it up so the
+			// caller gets 404 for a missing id instead of a misleading 400.
+			var n int64
+			if err := tx.Model(&model.Order{}).Where("id = ?", id).Count(&n).Error; err != nil {
+				return err
+			}
+			if n == 0 {
+				return errG4RefundNotFound
+			}
 			return errG4RefundState
 		}
 		if err := tx.Where("id = ?", id).First(&refunded).Error; err != nil {
@@ -222,8 +236,12 @@ func (h *g4PaymentsHandler) refundOrder(c *gin.Context) {
 		}
 
 		// Claw back, floored at the current balance (spent credits stay spent).
+		// FOR UPDATE serializes concurrent writers on this user row (another
+		// refund / adjust / consume) — without it two refunds both read the
+		// same stale balance and the floor can't stop points going negative.
 		var u model.User
-		if err := tx.Select("id", "points").Where("id = ?", refunded.UserID).First(&u).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Select("id", "points").Where("id = ?", refunded.UserID).First(&u).Error; err != nil {
 			return err
 		}
 		deduct := granted
@@ -250,6 +268,10 @@ func (h *g4PaymentsHandler) refundOrder(c *gin.Context) {
 		return tx.Create(ledger).Error
 	})
 	if txErr != nil {
+		if errors.Is(txErr, errG4RefundNotFound) {
+			response.Fail(c, response.CodeNotFound, "order not found")
+			return
+		}
 		if errors.Is(txErr, errG4RefundState) {
 			response.Fail(c, response.CodeBadRequest, "仅已支付订单可退款")
 			return
@@ -268,6 +290,9 @@ func (h *g4PaymentsHandler) refundOrder(c *gin.Context) {
 
 // errG4RefundState marks a refund attempt on a non-paid order.
 var errG4RefundState = errors.New("order not refundable")
+
+// errG4RefundNotFound marks a refund attempt on a missing order id.
+var errG4RefundNotFound = errors.New("order not found")
 
 // loadUsers batch-loads the buyers for a page of orders, keyed by user id.
 func (h *g4PaymentsHandler) loadUsers(orders []model.Order) map[idgen.ID]*model.User {
@@ -317,7 +342,9 @@ func (h *g4PaymentsHandler) createChannel(c *gin.Context) {
 	}
 	row := model.PayChannel{}
 	g4ApplyChannel(&row, &dto, true)
-	if err := h.db.Create(&row).Error; err != nil {
+	// enabled is force-written: a struct Create would swallow enabled:false via
+	// the default:true tag and activate a channel meant to stay off.
+	if err := adminCreateRow(h.db, &row, map[string]any{"enabled": row.Enabled}); err != nil {
 		response.Fail(c, response.CodeServerError, "failed to create channel")
 		return
 	}
@@ -348,6 +375,12 @@ func (h *g4PaymentsHandler) updateChannel(c *gin.Context) {
 		response.Fail(c, response.CodeServerError, "failed to update channel")
 		return
 	}
+	// Re-read so the echo carries the persisted decimal(6,4) rate, not the
+	// pre-persistence in-memory value.
+	if err := h.db.First(&row, "id = ?", id).Error; err != nil {
+		response.Fail(c, response.CodeServerError, "failed to reload channel")
+		return
+	}
 	response.OK(c, g4ToPayChannelVO(&row))
 }
 
@@ -356,8 +389,13 @@ func (h *g4PaymentsHandler) deleteChannel(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.db.Delete(&model.PayChannel{}, "id = ?", id).Error; err != nil {
+	res := h.db.Delete(&model.PayChannel{}, "id = ?", id)
+	if res.Error != nil {
 		response.Fail(c, response.CodeServerError, "failed to delete channel")
+		return
+	}
+	if res.RowsAffected == 0 {
+		response.Fail(c, response.CodeNotFound, "channel not found")
 		return
 	}
 	response.OK[any](c, nil)

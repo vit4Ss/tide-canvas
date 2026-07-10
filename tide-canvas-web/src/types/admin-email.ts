@@ -49,7 +49,9 @@ export interface ApiKeyVO {
   name: string;
   /** 权限范围, e.g. "全部" | "生成" | "只读" | "导出". */
   scope: string;
-  /** The key value (server-minted when blank on create). */
+  /** The key value（server-minted when blank on create）。仅创建响应回显明文
+   *  （一次性展示）；列表/更新响应一律返回掩码值（如 "sk-…0001"），真实密钥
+   *  不再二次外发。 */
   keyValue: string;
   /** Calls allowed per day (0 = unlimited). */
   dailyLimit: number;

@@ -99,18 +99,21 @@ type g4PlanFeatures struct {
 // g4PlanUpsertDTO is the create/update body for a plan. Monthly maps to
 // Plan.Price; monthlyPoints to Plan.PointsGrant; the rest are packed into the
 // Features JSON blob (same as the public page reads).
+// Bounds mirror the DB columns (name varchar(64), code varchar(32), desc
+// varchar(512), price decimal(10,2)) so extreme admin input gets a friendly
+// 400 instead of a column-constraint 500; prices/points must be non-negative.
 type g4PlanUpsertDTO struct {
-	Name          string   `json:"name" binding:"required"`
-	Code          string   `json:"code"`
-	Desc          string   `json:"desc"`
-	Monthly       float64  `json:"monthly"`
-	Yearly        float64  `json:"yearly"`
-	MonthlyPoints int      `json:"monthlyPoints"`
+	Name          string   `json:"name" binding:"required,max=64"`
+	Code          string   `json:"code" binding:"required,max=32"`
+	Desc          string   `json:"desc" binding:"omitempty,max=512"`
+	Monthly       float64  `json:"monthly" binding:"gte=0,lte=99999999.99"`
+	Yearly        float64  `json:"yearly" binding:"gte=0,lte=99999999.99"`
+	MonthlyPoints int      `json:"monthlyPoints" binding:"gte=0"`
 	Featured      bool     `json:"featured"`
-	Cta           string   `json:"cta"`
+	Cta           string   `json:"cta" binding:"omitempty,max=64"`
 	Items         []string `json:"items"`
 	SortOrder     int      `json:"sortOrder"`
-	Status        *int     `json:"status"`
+	Status        *int     `json:"status" binding:"omitempty,oneof=0 1"`
 }
 
 // ---- plan handlers ----
@@ -136,7 +139,13 @@ func (h *g4PricingHandler) createPlan(c *gin.Context) {
 	}
 	row := model.Plan{}
 	g4ApplyPlan(&row, &dto, true)
-	if err := h.db.Create(&row).Error; err != nil {
+	// status is force-written: a struct Create would swallow status:0 (下架)
+	// via the default:1 tag and put the draft plan straight onto /pricing.
+	if err := adminCreateRow(h.db, &row, map[string]any{"status": row.Status}); err != nil {
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
+			response.Fail(c, response.CodeBadRequest, "套餐编码已存在")
+			return
+		}
 		response.Fail(c, response.CodeServerError, "failed to create plan")
 		return
 	}
@@ -160,7 +169,17 @@ func (h *g4PricingHandler) updatePlan(c *gin.Context) {
 	}
 	g4ApplyPlan(&row, &dto, false)
 	if err := h.db.Save(&row).Error; err != nil {
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
+			response.Fail(c, response.CodeBadRequest, "套餐编码已存在")
+			return
+		}
 		response.Fail(c, response.CodeServerError, "failed to update plan")
+		return
+	}
+	// Re-read so the echo carries the persisted values (decimal(10,2) rounding),
+	// not the pre-persistence in-memory row.
+	if err := h.db.First(&row, "id = ?", id).Error; err != nil {
+		response.Fail(c, response.CodeServerError, "failed to reload plan")
 		return
 	}
 	response.OK(c, g4ToPlanVO(&row))
@@ -171,8 +190,13 @@ func (h *g4PricingHandler) deletePlan(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.db.Delete(&model.Plan{}, "id = ?", id).Error; err != nil {
+	res := h.db.Delete(&model.Plan{}, "id = ?", id)
+	if res.Error != nil {
 		response.Fail(c, response.CodeServerError, "failed to delete plan")
+		return
+	}
+	if res.RowsAffected == 0 {
+		response.Fail(c, response.CodeNotFound, "plan not found")
 		return
 	}
 	response.OK[any](c, nil)

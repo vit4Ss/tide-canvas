@@ -19,10 +19,16 @@ import (
 //
 // Frontend contract:
 //
-//	GET    /api/im/conversations               IMConversationQuery -> PageData<ConversationVO>  (auth)
-//	POST   /api/im/conversations               {title?}            -> ConversationVO             (auth)
-//	GET    /api/im/conversations/:id/messages  PageQuery           -> PageData<MessageVO>        (auth)
-//	POST   /api/im/conversations/:id/messages  {content,type?}     -> MessageVO                  (auth)
+//	GET    /api/im/conversations                       IMConversationQuery -> PageData<ConversationVO>  (auth)
+//	POST   /api/im/conversations                       {title?}            -> ConversationVO             (auth)
+//	PUT    /api/im/conversations/:id                   {title}             -> ConversationVO             (auth)
+//	DELETE /api/im/conversations/:id                   -> void                                           (auth)
+//	GET    /api/im/conversations/:id/messages          PageQuery           -> PageData<MessageVO>        (auth)
+//	POST   /api/im/conversations/:id/messages          {content,type?}     -> MessageVO                  (auth)
+//	POST   /api/im/conversations/:id/stream            {content}           -> SSE stream                 (auth)
+//	POST   /api/im/conversations/:id/messages/append   {content,role?}     -> MessageVO                  (auth)
+//	POST   /api/im/conversations/:id/turn              {user,assistant}    -> [MessageVO]                (auth)
+//	GET    /api/im/conversations/:id/context           -> context token usage                            (auth)
 //
 // The :id param only ever appears under the static /conversations parent, so
 // there is no static-vs-:param sibling conflict to make gin panic.

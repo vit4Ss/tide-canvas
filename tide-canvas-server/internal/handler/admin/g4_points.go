@@ -98,12 +98,15 @@ type g4PointRecordVO struct {
 
 // ---- DTOs ----
 
-// g4PointRuleUpsertDTO is the create/update body for a point rule.
+// g4PointRuleUpsertDTO is the create/update body for a point rule. String
+// bounds mirror the DB columns (name/scene varchar(64), trigger varchar(32))
+// so over-long input gets a friendly 400 instead of a "Data too long" 500.
+// Amount may be negative (deduction rules).
 type g4PointRuleUpsertDTO struct {
-	Name    string `json:"name" binding:"required"`
-	Scene   string `json:"scene" binding:"required"`
+	Name    string `json:"name" binding:"required,max=64"`
+	Scene   string `json:"scene" binding:"required,max=64"`
 	Amount  int    `json:"amount"`
-	Trigger string `json:"trigger"`
+	Trigger string `json:"trigger" binding:"omitempty,max=32"`
 	Enabled *bool  `json:"enabled"`
 }
 
@@ -146,7 +149,9 @@ func (h *g4PointsHandler) createRule(c *gin.Context) {
 	}
 	row := model.PointRule{}
 	g4ApplyRule(&row, &dto, true)
-	if err := h.db.Create(&row).Error; err != nil {
+	// enabled is force-written: a struct Create would swallow enabled:false via
+	// the default:true tag and activate a rule meant to stay off.
+	if err := adminCreateRow(h.db, &row, map[string]any{"enabled": row.Enabled}); err != nil {
 		response.Fail(c, response.CodeServerError, "failed to create rule")
 		return
 	}
@@ -185,8 +190,13 @@ func (h *g4PointsHandler) deleteRule(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.db.Delete(&model.PointRule{}, "id = ?", id).Error; err != nil {
+	res := h.db.Delete(&model.PointRule{}, "id = ?", id)
+	if res.Error != nil {
 		response.Fail(c, response.CodeServerError, "failed to delete rule")
+		return
+	}
+	if res.RowsAffected == 0 {
+		response.Fail(c, response.CodeNotFound, "rule not found")
 		return
 	}
 	response.OK[any](c, nil)

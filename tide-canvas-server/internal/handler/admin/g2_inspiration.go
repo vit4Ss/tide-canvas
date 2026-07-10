@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -221,13 +222,15 @@ func (h *inspirationHandler) createCollection(c *gin.Context) {
 		row.Visible = *dto.Visible
 	}
 	if dto.Tags != nil {
-		row.Tags = *dto.Tags
+		row.Tags = normalizeTags(*dto.Tags)
 	}
 	if dto.Description != nil {
 		row.Description = *dto.Description
 	}
 
-	if err := h.db.Create(&row).Error; err != nil {
+	// visible is force-written: a struct Create would swallow visible:false via
+	// the default:true tag and expose a collection meant to stay hidden.
+	if err := adminCreateRow(h.db, &row, map[string]any{"visible": row.Visible}); err != nil {
 		response.Fail(c, response.CodeServerError, "failed to create collection")
 		return
 	}
@@ -266,7 +269,7 @@ func (h *inspirationHandler) updateCollection(c *gin.Context) {
 		updates["visible"] = *dto.Visible
 	}
 	if dto.Tags != nil {
-		updates["tags"] = *dto.Tags
+		updates["tags"] = normalizeTags(*dto.Tags)
 	}
 	if dto.Description != nil {
 		updates["description"] = *dto.Description
@@ -348,7 +351,7 @@ func (h *inspirationHandler) createPrompt(c *gin.Context) {
 		CoverURL: dto.CoverURL,
 	}
 	if dto.Tags != nil {
-		row.Tags = *dto.Tags
+		row.Tags = normalizeTags(*dto.Tags)
 	}
 	if dto.Adoptions != nil {
 		row.Adoptions = *dto.Adoptions
@@ -383,7 +386,7 @@ func (h *inspirationHandler) updatePrompt(c *gin.Context) {
 		"cover_url": dto.CoverURL,
 	}
 	if dto.Tags != nil {
-		updates["tags"] = *dto.Tags
+		updates["tags"] = normalizeTags(*dto.Tags)
 	}
 	if dto.Adoptions != nil {
 		updates["adoptions"] = *dto.Adoptions
@@ -425,6 +428,35 @@ func (h *inspirationHandler) failLookup(c *gin.Context, err error, what string) 
 		return
 	}
 	response.Fail(c, response.CodeServerError, "failed to load "+what)
+}
+
+// normalizeTags canonicalizes an incoming tags value for the MySQL json
+// columns (collection.tags / prompt_lib.tags). A JSON array passes through;
+// anything else ("测试,TEST" from a plain input) is split on ,/、/， into a
+// JSON string array. Without this, a non-JSON string used to fail the insert
+// and surface as a bare 500.
+func normalizeTags(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if strings.HasPrefix(s, "[") && json.Valid([]byte(s)) {
+		return s
+	}
+	parts := strings.FieldsFunc(s, func(r rune) bool {
+		return r == ',' || r == '，' || r == '、'
+	})
+	arr := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if t := strings.TrimSpace(p); t != "" {
+			arr = append(arr, t)
+		}
+	}
+	b, err := json.Marshal(arr)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
 }
 
 // parseInspirationID extracts and validates the :id path param.

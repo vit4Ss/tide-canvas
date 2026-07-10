@@ -425,7 +425,22 @@ footer{border-top:1px solid var(--border); padding:54px 0 40px; margin-top:clamp
 /* 内页 hero 的实时 chip 升级成白卡药丸（呼应首页 NEW 播报语言） */
 .page-hero .live-chip{margin-bottom:18px; height:36px; padding:0 16px 0 14px; border-radius:99px; background:var(--panel-solid); border:1px solid var(--border); box-shadow:var(--shadow-xs);}
 
-@media(max-width:880px){ .nav-links{display:none;} }
+/* 移动端主导航：≤880px .nav-links 隐藏后由汉堡抽屉承载（此前无任何替代
+   入口，手机上到不了作品广场/创作台/价格）。样式沿用 .icbtn/.nlink 语言。 */
+.nav-burger{display:none; place-items:center; width:38px; height:38px; border-radius:var(--r-sm); color:var(--text-dim); background:var(--panel); border:1px solid var(--border); transition:all .16s var(--ease);}
+.nav-burger:hover{color:var(--text); border-color:var(--border-strong);}
+.nav-drawer{position:fixed; top:68px; left:0; right:0; z-index:49; display:none; flex-direction:column; gap:2px; padding:10px 18px 16px;
+  background:rgba(255,255,255,.97); border-bottom:1px solid var(--border); box-shadow:0 12px 32px rgba(0,0,0,.06);
+  backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px); animation:navDrawerIn .16s var(--ease);}
+.nav-drawer .nlink{height:46px;}
+@keyframes navDrawerIn{from{opacity:0; transform:translateY(-6px);}to{opacity:1; transform:none;}}
+@media (prefers-reduced-motion:reduce){.nav-drawer{animation:none;}}
+
+@media(max-width:880px){
+  .nav-links{display:none;}
+  .nav-burger{display:inline-grid;}
+  .nav-drawer{display:flex;}
+}
 @media(max-width:560px){
   .wrap{padding:0 18px;}
   .nav-right .signin{display:none;}

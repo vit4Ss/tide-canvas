@@ -26,6 +26,7 @@ import {
   Plus,
   RotateCcw,
   Save,
+  Trash2,
 } from "lucide-react";
 import {
   AdminModal,
@@ -80,6 +81,20 @@ const MANAGED_ELSEWHERE: Record<string, { hint: string; href: string }> = {
   "pricing.faq": { hint: "在价格管理中编辑", href: "/admin/pricing" },
   "home.global": { hint: "在首页楼层中编辑", href: "/admin/home-floors" },
 };
+
+/* 基线键（页面/策略消费方仍在读，后端同样拒绝删除）——不展示删除入口。
+   与 g5_config.go 的 baselineConfigKeys 保持一致。 */
+const BASELINE_KEYS = new Set([
+  "site.footerLinks",
+  "home.global",
+  "pricing.compare",
+  "pricing.faq",
+  "llm.contextTokenLimit",
+  "points.checkinDaily",
+  "points.inviteReward",
+  "points.signupBonus",
+  "points.exchangeRate",
+]);
 
 /* ── 页脚链接（site.footerLinks）结构化编辑 ──────────────────────────── */
 interface FooterLink {
@@ -311,6 +326,43 @@ export default function AdminConfigPage() {
     }
   }, [flItem, flGroups, ensureSession]);
 
+  /* 删除非基线配置键（此前 config 无删除通道，误建键只能进 DB 手清）。 */
+  const removeItem = useCallback(
+    async (it: ConfigVO) => {
+      if (
+        !(await confirmDialog({
+          title: "删除配置",
+          message: `确认删除配置 ${it.configKey}？删除后前台读取该键将回退到默认行为，此操作不可恢复。`,
+          confirmText: "确认删除",
+          danger: true,
+        }))
+      ) {
+        return;
+      }
+      setSaving(true);
+      try {
+        await ensureSession();
+        const res = await adminConfigApi.remove(it.id);
+        if (res.success) {
+          setItems((prev) => prev.filter((row) => row.id !== it.id));
+          setEdits((prev) => {
+            const copy = { ...prev };
+            delete copy[it.configKey];
+            return copy;
+          });
+          toast.success(`配置 ${it.configKey} 已删除`);
+        } else {
+          toast.error(res.message || "删除配置失败");
+        }
+      } catch {
+        toast.error("删除配置失败，请稍后重试");
+      } finally {
+        setSaving(false);
+      }
+    },
+    [ensureSession],
+  );
+
   const createItem = useCallback(async () => {
     const key = nKeyRef.current?.value.trim();
     if (!key) {
@@ -541,6 +593,17 @@ export default function AdminConfigPage() {
                             <span className="config-label-line">
                               <span>{displayLabel}</span>
                               {dirty ? <span className="config-dirty-tag">已修改</span> : null}
+                              {!BASELINE_KEYS.has(it.configKey) && (
+                                <button
+                                  type="button"
+                                  className="config-del"
+                                  onClick={() => removeItem(it)}
+                                  aria-label={`删除配置 ${it.configKey}`}
+                                  title="删除配置"
+                                >
+                                  <Trash2 aria-hidden size={12} />
+                                </button>
+                              )}
                             </span>
                             <span className="key">{it.configKey}</span>
                           </div>
@@ -872,6 +935,24 @@ export default function AdminConfigPage() {
           gap: 10px;
         }
         .config-admin-page .set-link { display: inline-flex; align-items: center; gap: 4px; }
+        .config-admin-page .config-del {
+          display: inline-grid;
+          flex: none;
+          place-items: center;
+          width: 22px;
+          height: 22px;
+          border: 0;
+          border-radius: var(--r-sm);
+          background: transparent;
+          color: var(--text-faint);
+          cursor: pointer;
+          opacity: 0;
+          transition: opacity 0.16s, color 0.16s, background 0.16s;
+        }
+        .config-admin-page .set-row:hover .config-del,
+        .config-admin-page .config-del:focus-visible { opacity: 1; }
+        .config-admin-page .config-del:hover { background: var(--danger-soft); color: var(--danger); }
+        .config-admin-page .config-del:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
         .config-admin-page .config-field-error { color: var(--danger); }
         .config-admin-page input[aria-invalid="true"] { border-color: var(--danger); }
         .config-admin-page .config-footer-title {

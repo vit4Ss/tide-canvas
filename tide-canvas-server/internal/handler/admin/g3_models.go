@@ -286,7 +286,9 @@ func (h *modelsHandler) create(c *gin.Context) {
 		m.Status = *dto.Status
 	}
 
-	if err := h.db.Create(m).Error; err != nil {
+	// status is force-written: a struct Create would swallow status:0 (下架)
+	// via the default:1 tag and list the model on /models immediately.
+	if err := adminCreateRow(h.db, m, map[string]any{"status": m.Status}); err != nil {
 		response.Fail(c, response.CodeServerError, "failed to create model")
 		return
 	}

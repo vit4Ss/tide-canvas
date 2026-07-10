@@ -13,6 +13,8 @@ export interface AiTaskVO {
   modelName: string;
   status: AiTaskStatus;
   progress: number;
+  /** 本次任务实际扣除的积分（服务端提交时计定，供历史/详情展示扣费） */
+  pointCost: number;
   resultUrl: string;
   resultMeta: Record<string, unknown> | string;
   errorMsg: string;

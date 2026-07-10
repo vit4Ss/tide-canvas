@@ -144,7 +144,13 @@ func (h *floorsHandler) create(c *gin.Context) {
 		f.Enabled = *dto.Enabled
 	}
 
-	if err := h.db.Create(f).Error; err != nil {
+	// enabled is force-written: a struct Create would swallow enabled:false via
+	// the default:true tag and put a hidden floor straight onto the homepage.
+	if err := adminCreateRow(h.db, f, map[string]any{"enabled": f.Enabled}); err != nil {
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
+			response.Fail(c, response.CodeBadRequest, "该楼层类型已存在")
+			return
+		}
 		response.Fail(c, response.CodeServerError, "failed to create floor")
 		return
 	}
@@ -188,6 +194,10 @@ func (h *floorsHandler) update(c *gin.Context) {
 	if len(fields) > 0 {
 		res := h.db.Model(&model.HomeFloor{}).Where("id = ?", id).Updates(fields)
 		if res.Error != nil {
+			if errors.Is(res.Error, gorm.ErrDuplicatedKey) {
+				response.Fail(c, response.CodeBadRequest, "该楼层类型已存在")
+				return
+			}
 			response.Fail(c, response.CodeServerError, "failed to update floor")
 			return
 		}

@@ -86,6 +86,8 @@ export default function SiteNav() {
   const { user, isAdmin } = useAuth();
   const logout = useAuthStore((s) => s.logout);
   const [open, setOpen] = useState(false);
+  // 移动端主导航抽屉（≤880px .nav-links 隐藏后的唯一入口）
+  const [menuOpen, setMenuOpen] = useState(false);
   // 流光背景切换器：仅当首页背景已挂载且后台允许用户切换时出现在 nav-right
   // （design-ref buildBgSwitcher 的 insertBefore 位置——.vip 之前）。
   const showBgSwitcher = useFluxBgStore((s) => s.active && s.allowSwitch);
@@ -122,7 +124,18 @@ export default function SiteNav() {
   // close menus on navigation
   useEffect(() => {
     setOpen(false);
+    setMenuOpen(false);
   }, [pathname]);
+
+  // mobile drawer: close on Escape
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
 
   const onLogout = async () => {
     setOpen(false);
@@ -159,6 +172,25 @@ export default function SiteNav() {
         </div>
 
         <div className="nav-right">
+          <button
+            type="button"
+            className="nav-burger"
+            aria-label={menuOpen ? "关闭菜单" : "打开菜单"}
+            aria-expanded={menuOpen}
+            aria-controls="nav-drawer"
+            onClick={() => setMenuOpen((v) => !v)}
+          >
+            {menuOpen ? (
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+                <path d="M4 7h16M4 12h16M4 17h16" />
+              </svg>
+            )}
+          </button>
+
           <button
             type="button"
             className="icbtn"
@@ -283,6 +315,26 @@ export default function SiteNav() {
           )}
         </div>
       </div>
+
+      {menuOpen && (
+        <div className="nav-drawer" id="nav-drawer">
+          {NAV.map((n) => (
+            <Link
+              key={n.k}
+              className={`nlink${isActive(n, pathname) ? " on" : ""}`}
+              href={n.href}
+            >
+              {n.label}
+              {n.tag && <span className="tag">{n.tag}</span>}
+            </Link>
+          ))}
+          {!user && (
+            <Link className="nlink" href="/login">
+              登录
+            </Link>
+          )}
+        </div>
+      )}
     </nav>
   );
 }

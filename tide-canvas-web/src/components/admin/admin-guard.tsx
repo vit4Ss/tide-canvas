@@ -24,10 +24,13 @@ export function AdminGuard({ children }: { children: React.ReactNode }) {
     let mounted = true;
     (async () => {
       const ok = await ensureSession(); // redirects to /login when no token
-      if (!ok || !mounted) return;
+      if (!mounted) return;
       const u = useAuthStore.getState().user;
-      if (!u) {
-        // token was invalid / cleared → go log in
+      if (!ok || !u) {
+        // ensureSession only self-redirects on the "no token at all" path; a
+        // token that got 401'd and cleared (logout + back button, expiry)
+        // resolves false with no navigation — without this redirect the guard
+        // would sit on the spinner forever.
         const back = encodeURIComponent("/admin");
         window.location.href = `/login?redirect=${back}`;
         return;

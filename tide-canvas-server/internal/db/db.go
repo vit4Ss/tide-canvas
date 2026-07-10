@@ -27,6 +27,11 @@ func Open(cfg config.MySQLConfig) (*gorm.DB, error) {
 		Logger:                 logger.Default.LogMode(logger.Warn),
 		SkipDefaultTransaction: true,
 		PrepareStmt:            true,
+		// Translate driver errors (MySQL 1062 …) into gorm.ErrDuplicatedKey etc.
+		// Without this, every errors.Is(err, gorm.ErrDuplicatedKey) check in the
+		// codebase (seeding, points repo, admin unique-conflict handling) never
+		// matches and unique-key conflicts surface as bare 500s.
+		TranslateError: true,
 	}
 
 	gdb, err := gorm.Open(mysql.Open(cfg.BuildDSN()), gormCfg)

@@ -24,7 +24,7 @@ export interface AdminUserVO {
   phone: string;
   nickname: string;
   avatar: string;
-  /** 0 user / 1 vip / 9 admin. */
+  /** 0 user / 9 admin（后端实际口径；付费身份走 vipLevel，不占 role）. */
   role: number;
   roleId: string;
   vipLevel: number;

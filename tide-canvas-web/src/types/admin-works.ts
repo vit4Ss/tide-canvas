@@ -63,3 +63,11 @@ export interface AdminWorkStatusDTO {
   status: number;
   featured?: boolean;
 }
+
+/** Body for POST /admin/moderation/:id/review (AdminModerationReviewDTO).
+ *  approve=true 发布（status 1）；false 下架（status 2）。reason 为审核备注，
+ *  仅入业务日志、不落 community_post 列。 */
+export interface AdminModerationReviewDTO {
+  approve: boolean;
+  reason?: string;
+}

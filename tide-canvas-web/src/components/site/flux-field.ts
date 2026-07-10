@@ -357,7 +357,10 @@ export function mountFluxField(
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerdown", onDown);
       }
-      gl!.getExtension("WEBGL_lose_context")?.loseContext();
+      // 不调 loseContext()：context loss 对 canvas 是粘性的，effect 重挂载
+      // （StrictMode 双跑、preset/intensity deps 变更）再 getContext 拿回的是
+      // 已丢失的旧 context，shader 编译必败、流光永久退化成 CSS 渐变。
+      // rAF/监听器/observer 已逐一清理，浏览器会自行回收 GL 资源。
     },
     canvas,
   };

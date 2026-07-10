@@ -16,4 +16,7 @@ export const adminConfigApi = {
   /** PUT /api/admin/config { items } -> ConfigVO[] (full reloaded list). */
   save: (items: ConfigItemDTO[]) =>
     http.put<ConfigVO[]>("/api/admin/config", { items }),
+
+  /** DELETE /api/admin/config/:id -> void（基线键后端拒绝删除）. */
+  remove: (id: string) => http.delete<null>(`/api/admin/config/${id}`),
 };
