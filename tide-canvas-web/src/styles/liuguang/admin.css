@@ -1882,21 +1882,50 @@ tr:hover .rowacts,
   margin-top: 6px;
   color: var(--text-faint);
 }
-.viz-hero .hstats {
-  display: flex;
-  gap: 32px;
-  flex-wrap: wrap;
+/* hero 第二行：核心指标带（总用户/活跃/付费/订单/作品/模型）。
+   发丝竖线分隔、无独立卡壳——避免此前「hero 右钉三小数 + 下面再横一条
+   四格」的两条半空横幅。 */
+.viz-hero-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 14px 0;
+  margin: 18px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-weak);
 }
-.viz-hero .hstat .k {
+.viz-hero-metrics .hm {
+  min-width: 0;
+  padding: 2px 20px;
+  border-left: 1px solid var(--border-weak);
+}
+.viz-hero-metrics .hm:first-child {
+  padding-left: 0;
+  border-left: none;
+}
+.viz-hero-metrics .hm .k {
   font-size: 12px;
   color: var(--text-faint);
+  letter-spacing: 0.02em;
 }
-.viz-hero .hstat .v {
+.viz-hero-metrics .hm .v {
   font-family: var(--mono);
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 600;
+  line-height: 1.2;
+  margin: 6px 0 0;
+  color: var(--text-title);
+}
+.viz-hero-metrics .hm .d {
+  font-size: 12px;
+  color: var(--text-faint);
   margin-top: 4px;
-  color: var(--text);
+}
+.viz-hero-metrics .hm .d.up {
+  color: var(--ok);
+}
+.viz-hero-metrics .hm .d.up::before {
+  content: "↑";
+  margin-right: 1px;
 }
 .viz-big {
   font-family: var(--mono);
@@ -2852,9 +2881,13 @@ tr:hover .rowacts,
   .viz-hero-row {
     gap: 20px;
   }
-  .viz-hero .hstats {
-    width: 100%;
-    gap: 20px;
+  .viz-hero-metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  /* 两列换行后竖分隔线会落在行首，改用行间距分组 */
+  .viz-hero-metrics .hm {
+    border-left: none;
+    padding-left: 0;
   }
 }
 

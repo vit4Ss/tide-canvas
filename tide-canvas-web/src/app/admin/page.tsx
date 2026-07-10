@@ -19,7 +19,6 @@ import {
   AdminEmptyState,
   FilterChips,
   ListSkeleton,
-  StatCardGrid,
 } from "@/components/admin";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminDashboardApi } from "@/lib/admin-dashboard-api";
@@ -112,8 +111,9 @@ export default function AdminDashboardPage() {
     [charts],
   );
 
-  // 4 key metrics only — todayNewUsers as annotation, not a duplicate card
-  const kpis = useMemo(() => {
+  // 指标带第二行：核心运营指标 + 内容盘子，全部收进 hero 一张卡
+  //（此前 hero 右侧钉三个小数 + 下方再横一条四格，两条半空横幅割裂又空旷）。
+  const heroMetrics = useMemo(() => {
     if (!stats) return [];
     const todayUsers = stats.todayNewUsers;
     return [
@@ -130,6 +130,8 @@ export default function AdminDashboardPage() {
         v: fmtNum(stats.totalOrders),
         d: `${fmtNum(stats.paidOrders)} 已支付`,
       },
+      { k: "作品", v: fmtNum(stats.totalPosts) },
+      { k: "模型", v: fmtNum(stats.totalModels) },
     ];
   }, [stats]);
 
@@ -171,18 +173,14 @@ export default function AdminDashboardPage() {
   }, [areaData, multiSeries]);
 
   if (loading) {
-    // 骨架屏形状对齐真实首屏：KPI 卡阵 + 两块图表面板
+    // 骨架屏形状对齐真实首屏：指标带 + 两块图表面板
     return (
       <>
-        <div className="adm-kpis" aria-hidden="true">
-          {Array.from({ length: 4 }, (_, i) => (
-            <div
-              key={i}
-              className="skel skel-card"
-              style={{ height: 92, borderRadius: "var(--r-lg)", flex: "1 1 180px" }}
-            />
-          ))}
-        </div>
+        <div
+          className="skel skel-card"
+          aria-hidden="true"
+          style={{ height: 176, borderRadius: "var(--r-lg)" }}
+        />
         <ListSkeleton rows={2} height={280} gap={14} onField />
       </>
     );
@@ -219,20 +217,6 @@ export default function AdminDashboardPage() {
             <div className="big">{stats ? fmtMoney(stats.todayRevenue) : "¥0.00"}</div>
             <div className="chg">累计 {stats ? fmtMoney(stats.totalRevenue) : "¥0.00"}</div>
           </div>
-          <div className="hstats">
-            <div className="hstat">
-              <div className="k">作品</div>
-              <div className="v">{stats ? fmtNum(stats.totalPosts) : "0"}</div>
-            </div>
-            <div className="hstat">
-              <div className="k">模型</div>
-              <div className="v">{stats ? fmtNum(stats.totalModels) : "0"}</div>
-            </div>
-            <div className="hstat">
-              <div className="k">已支付订单</div>
-              <div className="v">{stats ? fmtNum(stats.paidOrders) : "0"}</div>
-            </div>
-          </div>
           {revenueVals.some((v) => v > 0) ? (
             <div className="hspark">
               <svg
@@ -261,9 +245,19 @@ export default function AdminDashboardPage() {
             </div>
           ) : null}
         </div>
-      </div>
 
-      {kpis.length > 0 ? <StatCardGrid items={kpis} /> : null}
+        {heroMetrics.length > 0 ? (
+          <dl className="viz-hero-metrics">
+            {heroMetrics.map((m) => (
+              <div className="hm" key={m.k}>
+                <dt className="k">{m.k}</dt>
+                <dd className="v">{m.v}</dd>
+                {m.d ? <div className={`d${m.dir === "up" ? " up" : ""}`}>{m.d}</div> : null}
+              </div>
+            ))}
+          </dl>
+        ) : null}
+      </div>
 
       <div className="viz-grid">
         <div className="viz-card span8">
