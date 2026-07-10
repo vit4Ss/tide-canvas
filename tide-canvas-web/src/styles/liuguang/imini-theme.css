@@ -422,6 +422,10 @@ body.imini .msg.me .bubble{background:#2E2E33; color:#F5F5F7;}
 body.imini .cm-send{color:#0A0A0B; background:#fff;}
 body.imini .chat-ctx-warn button{color:#0A0A0B; background:#fff;}
 body.imini .chat-jump{color:#0A0A0B; background:#fff;}
+/* composer 开关 chip（联网等）选中态：浅色令牌的 accent-soft(9%白) 在近黑底
+   上与未选中(5%白)肉眼不可分，点了像没反应——转白底黑字（与 .on 同语言） */
+body.imini .cm-chip.on{color:#0A0A0B; background:#fff;}
+body.imini .cm-chip.on:hover{color:#0A0A0B; background:#E8E8EA;}
 /* --grad-warm 已改近白（见 :root 段），原「warm 底 + 白字」的徽章全部转深字 */
 body.imini .mbadge.hot,body.imini .acct-role,
 body.imini .acc-page .pf-badge,body.imini .cm-mitem .nm i{color:#0A0A0B;}
