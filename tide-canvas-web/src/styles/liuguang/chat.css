@@ -86,7 +86,9 @@
 .composer-head{display:flex; align-items:flex-start; gap:12px; padding:14px 14px 2px;}
 .composer-box textarea{flex:1; width:100%; min-height:46px; max-height:180px; resize:none; border:none; outline:none; background:none; padding:11px 2px 6px; font:inherit; font-size:14.5px; line-height:1.6; color:var(--text);}
 .composer-box textarea::placeholder{color:var(--text-faint);}
-.cm-upload{flex:none; width:46px; height:46px; border-radius:12px; border:1.5px dashed var(--border-strong); background:var(--panel); color:var(--text-faint); font-size:22px; font-weight:300; transition:all .15s;}
+/* display:grid 居中必须显式写：按钮内是 SVG 加号，Tailwind preflight 把
+   svg 设为 display:block，不居中就顶到按钮左上角。 */
+.cm-upload{flex:none; display:grid; place-items:center; padding:0; width:46px; height:46px; border-radius:12px; border:1.5px dashed var(--border-strong); background:var(--panel); color:var(--text-faint); font-size:22px; font-weight:300; transition:all .15s;}
 .cm-upload:hover{color:var(--accent); border-color:var(--accent); background:var(--accent-soft);}
 .composer-box .composer-head textarea{padding:11px 2px 6px;}
 .composer-bar{display:flex; align-items:center; gap:8px; flex-wrap:nowrap; padding:8px 10px 10px; min-width:0;}
