@@ -1,37 +1,21 @@
 # Tide Canvas 服务器部署（测试环境，与 relay 中转站同机共存）。
 #
-# 端口规划（全部 host 网络，域名不隔离端口，443 只能有一个监听者）：
-#   80/443 —— edge（本文件的边缘 nginx，唯一入口，按域名分流 + 统一终结 TLS）
-#   8080   —— relay-backend（apirouter 项目，已存在，不动）
-#   8090   —— relay-frontend（apirouter 项目，需从 80/443 改为 listen 127.0.0.1:8090）
+# 公网入口是宿主机原生安装的 nginx（80/443，按域名分流 + 统一终结 TLS），
+# 站点配置与安装步骤见本目录 nginx/README 注释与 nginx/conf.d/*.conf。
+#
+# 端口规划（全 host 网络）：
+#   80/443 —— 宿主机 nginx（唯一入口）
+#   8080   —— relay-backend（apirouter 项目，不动）
+#   8090   —— relay-frontend（apirouter 项目，挂"让位版"配置后仅监听回环）
 #   8081   —— tidecanvas-backend
 #   3000   —— tidecanvas 前端 Next SSR（仅监听回环）
 #
 # 使用：
 #   1. docker login ghcr.io -u <github用户名> -p <PAT(read:packages)>
-#   2. 宿主机固定路径（均为绝对路径直挂，见 edge 挂载）：
-#        站点配置      -> /root/nginx/conf.d/（flowlight.conf、relay.conf，来自本仓库 deploy/nginx/conf.d/）
-#        flowlight 证书 -> /root/flowfinght/cert/（fullchain.pem + privkey.pem）
-#        relay 证书     -> /root/apirouter/cert/（server.pem + server.key，apirouter 项目原目录）
-#   3. 把 relay-frontend 的 nginx 从 80/443 挪到 127.0.0.1:8090（见 nginx/conf.d/relay.conf 头注）
-#   4. docker compose pull && docker compose up -d
-# 更新版本：重复第 4 步（CI 每次推 flowingLight 都会刷新 :latest）。
-# 改边缘 nginx 配置后：docker compose exec edge nginx -s reload
+#   2. docker compose pull && docker compose up -d
+# 更新版本：重复第 2 步（CI 每次推 flowingLight 都会刷新 :latest）。
 
 services:
-  edge:
-    image: nginx:1.27-alpine
-    container_name: edge-nginx
-    restart: unless-stopped
-    network_mode: host          # 唯一占用宿主机 80/443 的进程
-    volumes:
-      - /root/nginx/conf.d:/etc/nginx/conf.d:ro            # 站点配置(flowlight.conf / relay.conf)
-      - /root/flowfinght/cert:/etc/nginx/cert/flowlight:ro # flowlight: fullchain.pem + privkey.pem
-      - /root/apirouter/cert:/etc/nginx/cert/relay:ro      # relay: server.pem + server.key(原目录直挂,续期自动生效)
-    depends_on:
-      - frontend
-      - backend
-
   backend:
     image: ghcr.io/vit4ss/tide-canvas-backend:latest
     container_name: tidecanvas-backend
@@ -40,7 +24,6 @@ services:
     environment:
       TIDECANVAS_ENV: test        # 选择 configs/config.test.yaml 叠加层
       TIDECANVAS_SERVER_PORT: "8081" # 8080 被同机 relay-backend 占用
-      # 聊天助手走中转站的文本模型（模型管理里 status=1 的 text 模型），无需单独配 LLM key。
       # OSS 密钥不进镜像，在这里注入或在后台「配置管理→存储配置」录入：
       # TIDECANVAS_STORAGE_ACCESSKEY: ""
       # TIDECANVAS_STORAGE_SECRETKEY: ""
@@ -51,7 +34,7 @@ services:
     image: ghcr.io/vit4ss/tide-canvas-frontend:latest
     container_name: tidecanvas-frontend
     restart: unless-stopped
-    network_mode: host          # Next SSR 监听 127.0.0.1:3000，仅供 edge 反代
+    network_mode: host          # Next SSR 监听 127.0.0.1:3000，仅供宿主机 nginx 反代
     depends_on:
       - backend
 
