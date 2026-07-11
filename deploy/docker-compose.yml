@@ -9,9 +9,9 @@
 #
 # 使用：
 #   1. docker login ghcr.io -u <github用户名> -p <PAT(read:packages)>
-#   2. 证书放到本文件同级目录：
-#        cert/flowlight/fullchain.pem + privkey.pem
-#        cert/relay/fullchain.pem + privkey.pem
+#   2. 证书（文件名固定为 fullchain.pem + privkey.pem）：
+#        flowlight -> /root/flowfinght/cert/（宿主机绝对路径，见 edge 挂载）
+#        relay     -> 本文件同级 cert/relay/
 #      站点配置在 nginx/conf.d/（flowlight.conf、relay.conf）
 #   3. 把 relay-frontend 的 nginx 从 80/443 挪到 127.0.0.1:8090（见 nginx/conf.d/relay.conf 头注）
 #   4. docker compose pull && docker compose up -d
@@ -26,7 +26,8 @@ services:
     network_mode: host          # 唯一占用宿主机 80/443 的进程
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - ./cert:/etc/nginx/cert:ro
+      - /root/flowfinght/cert:/etc/nginx/cert/flowlight:ro # flowlight 证书目录（宿主机）
+      - ./cert/relay:/etc/nginx/cert/relay:ro
     depends_on:
       - frontend
       - backend
