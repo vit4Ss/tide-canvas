@@ -9,10 +9,10 @@
 #
 # 使用：
 #   1. docker login ghcr.io -u <github用户名> -p <PAT(read:packages)>
-#   2. 证书（文件名固定为 fullchain.pem + privkey.pem）：
-#        flowlight -> /root/flowfinght/cert/（宿主机绝对路径，见 edge 挂载）
-#        relay     -> 本文件同级 cert/relay/
-#      站点配置在 nginx/conf.d/（flowlight.conf、relay.conf）
+#   2. 宿主机固定路径（均为绝对路径直挂，见 edge 挂载）：
+#        站点配置      -> /root/nginx/conf.d/（flowlight.conf、relay.conf，来自本仓库 deploy/nginx/conf.d/）
+#        flowlight 证书 -> /root/flowfinght/cert/（fullchain.pem + privkey.pem）
+#        relay 证书     -> /root/apirouter/cert/（server.pem + server.key，apirouter 项目原目录）
 #   3. 把 relay-frontend 的 nginx 从 80/443 挪到 127.0.0.1:8090（见 nginx/conf.d/relay.conf 头注）
 #   4. docker compose pull && docker compose up -d
 # 更新版本：重复第 4 步（CI 每次推 flowingLight 都会刷新 :latest）。
@@ -25,7 +25,7 @@ services:
     restart: unless-stopped
     network_mode: host          # 唯一占用宿主机 80/443 的进程
     volumes:
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - /root/nginx/conf.d:/etc/nginx/conf.d:ro            # 站点配置(flowlight.conf / relay.conf)
       - /root/flowfinght/cert:/etc/nginx/cert/flowlight:ro # flowlight: fullchain.pem + privkey.pem
       - /root/apirouter/cert:/etc/nginx/cert/relay:ro      # relay: server.pem + server.key(原目录直挂,续期自动生效)
     depends_on:
