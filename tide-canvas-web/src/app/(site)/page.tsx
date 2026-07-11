@@ -38,7 +38,6 @@ import type { PlanVO } from "@/types/billing";
 import type { AiToolVO } from "@/types/ai";
 import { useReveal } from "@/components/site/use-reveal";
 import HomeHero from "@/components/site/home-hero";
-import FluxBg from "@/components/site/flux-bg";
 import InfiniteCanvas from "@/components/site/infinite-canvas";
 import FeedCoverflow from "@/components/site/feed-coverflow";
 import ModelMarquee from "@/components/site/model-marquee";
@@ -64,9 +63,6 @@ const DEFAULT_FLOOR_TYPES = [
 /** 首页全局配置的出厂默认（与后端 DefaultHomeGlobalJSON 一致）——接口失败时
     背景与 CTA 仍按此渲染，首页不因配置接口降级。 */
 const DEFAULT_HOME_GLOBAL: HomeGlobalVO = {
-  fluxPreset: "off", // 用户定稿:背景默认关闭(与后端 DefaultHomeGlobalJSON 一致)
-  fluxIntensity: 0.78,
-  fluxUserSwitch: true,
   ctaLabel: "生成",
   ctaTarget: "studio",
 };
@@ -398,19 +394,6 @@ export default function HomePage() {
       </section>
   );
 
-  return (
-    <>
-      {/* 全局流光背景：等配置返回再挂载，避免默认预设闪一下再跳变。
-          后台预设选「关闭」(off) 时整体不挂载——无 canvas、无 flux-on 透明化、
-          无切换器，首页回到纯黑楼层底。 */}
-      {homeCfg && homeCfg.fluxPreset !== "off" && (
-        <FluxBg
-          preset={homeCfg.fluxPreset}
-          intensity={homeCfg.fluxIntensity}
-          allowSwitch={homeCfg.fluxUserSwitch}
-        />
-      )}
-      {floorList.map(renderFloor)}
-    </>
-  );
+  // 流光背景功能已整体移除（产品定稿：纯黑楼层底，不再提供背景与切换器）。
+  return <>{floorList.map(renderFloor)}</>;
 }

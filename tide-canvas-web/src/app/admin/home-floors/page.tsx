@@ -39,11 +39,7 @@ import {
   FLOOR_TYPE_OPTIONS,
   WORKS_FLOOR_TYPES,
 } from "@/mock/admin-home-floors";
-import {
-  FLUX_PRESETS,
-  FLUX_PRESET_ORDER,
-  HOME_CTA_TARGETS,
-} from "@/lib/flux-presets";
+import { HOME_CTA_TARGETS } from "@/lib/flux-presets";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminHomeFloorsApi } from "@/lib/admin-home-floors-api";
 import { adminConfigApi } from "@/lib/admin-config-api";
@@ -318,46 +314,30 @@ export default function AdminHomeFloorsPage() {
    下次加载即生效（/api/site/home-config）。脏检测驱动保存按钮。
    ──────────────────────────────────────────────────────────────────────── */
 
-// 表单态（intensity 以字符串承接输入，保存时解析并夹到 0–1.5）。
+// 表单态。流光背景功能已整体移除（产品定稿：纯黑底，不提供背景配置），
+// home.global 只剩首屏 CTA 两项。
 interface HomeGlobalForm {
-  fluxPreset: string;
-  fluxIntensity: string;
-  fluxUserSwitch: boolean;
   ctaLabel: string;
   ctaTarget: string;
 }
 
 // 出厂默认 — 与后端 model.DefaultHomeGlobalJSON 一致（键缺失/解析失败时兜底）。
 const HOME_GLOBAL_DEFAULTS: HomeGlobalForm = {
-  fluxPreset: "aurora",
-  fluxIntensity: "0.78",
-  fluxUserSwitch: true,
   ctaLabel: "生成",
   ctaTarget: "studio",
 };
 
 const HOME_GLOBAL_KEY = "home.global";
 
-/** 解析已存的 home.global JSON 为表单态；非法值逐字段回退默认。 */
+/** 解析已存的 home.global JSON 为表单态；非法值逐字段回退默认。
+    旧数据里可能残留 flux* 字段，直接忽略。 */
 function parseHomeGlobal(raw: string): HomeGlobalForm {
   try {
     const v = JSON.parse(raw) as Partial<{
-      fluxPreset: string;
-      fluxIntensity: number;
-      fluxUserSwitch: boolean;
       ctaLabel: string;
       ctaTarget: string;
     }>;
     return {
-      fluxPreset:
-        v.fluxPreset && (v.fluxPreset === "off" || FLUX_PRESETS[v.fluxPreset])
-          ? v.fluxPreset
-          : HOME_GLOBAL_DEFAULTS.fluxPreset,
-      fluxIntensity:
-        typeof v.fluxIntensity === "number" && v.fluxIntensity > 0
-          ? String(Math.min(v.fluxIntensity, 1.5))
-          : HOME_GLOBAL_DEFAULTS.fluxIntensity,
-      fluxUserSwitch: v.fluxUserSwitch !== false,
       ctaLabel: v.ctaLabel?.trim() || HOME_GLOBAL_DEFAULTS.ctaLabel,
       ctaTarget:
         v.ctaTarget === "pricing" ? "pricing" : HOME_GLOBAL_DEFAULTS.ctaTarget,
@@ -408,17 +388,9 @@ function GlobalConfigPanel() {
       toast.error("请填写按钮文案");
       return;
     }
-    const intensity = Number(form.fluxIntensity);
-    if (!Number.isFinite(intensity) || intensity <= 0 || intensity > 1.5) {
-      toast.error("强度需在 0–1.5 之间");
-      return;
-    }
     setSaving(true);
     try {
       const value = JSON.stringify({
-        fluxPreset: form.fluxPreset,
-        fluxIntensity: intensity,
-        fluxUserSwitch: form.fluxUserSwitch,
         ctaLabel: form.ctaLabel.trim(),
         ctaTarget: form.ctaTarget,
       });
@@ -428,13 +400,12 @@ function GlobalConfigPanel() {
           configValue: value,
           group: "home",
           description:
-            "首页全局配置（背景流光 + 首屏 CTA），后台「首页楼层」编辑，前台 /api/site/home-config 读取",
+            "首页全局配置（首屏 CTA），后台「首页楼层」编辑，前台 /api/site/home-config 读取",
         },
       ]);
       if (res.success) {
         const normalized: HomeGlobalForm = {
           ...form,
-          fluxIntensity: String(intensity),
           ctaLabel: form.ctaLabel.trim(),
         };
         setForm(normalized);
@@ -453,7 +424,7 @@ function GlobalConfigPanel() {
   return (
     <Panel
       title="楼层全局配置"
-      sub="设置首页背景效果与首屏主按钮，保存后刷新首页即可查看"
+      sub="设置首屏主按钮，保存后刷新首页即可查看"
       tools={
         <button
           type="button"
@@ -486,47 +457,6 @@ function GlobalConfigPanel() {
           )
         ) : (
           <div className="cfg-grid">
-            <div className="cfg-card">
-              <h3>背景流光</h3>
-              <p>首页连续着色器背景的默认预设与强度。</p>
-              <div className="cfg-row">
-                <span className="lab">默认预设</span>
-                <select
-                  value={form.fluxPreset}
-                  onChange={(e) => patch({ fluxPreset: e.target.value })}
-                  aria-label="默认预设"
-                >
-                  {/* off = 整体不渲染背景（无 canvas / 切换器），首页纯黑楼层底 */}
-                  <option value="off">关闭 · 无流光背景</option>
-                  {FLUX_PRESET_ORDER.map((key) => (
-                    <option key={key} value={key}>
-                      {FLUX_PRESETS[key].label} · {FLUX_PRESETS[key].sub}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="cfg-row">
-                <span className="lab">强度</span>
-                <input
-                  type="number"
-                  min={0}
-                  max={1.5}
-                  step={0.01}
-                  value={form.fluxIntensity}
-                  onChange={(e) => patch({ fluxIntensity: e.target.value })}
-                  aria-label="强度"
-                />
-                <span className="unit">0–1.5</span>
-              </div>
-              <div className="cfg-row">
-                <span className="lab">允许用户切换</span>
-                <SwitchToggle
-                  checked={form.fluxUserSwitch}
-                  onChange={(next) => patch({ fluxUserSwitch: next })}
-                  aria-label="允许用户切换"
-                />
-              </div>
-            </div>
             <div className="cfg-card">
               <h3>首屏 CTA</h3>
               <p>英雄区主按钮文案与跳转。</p>

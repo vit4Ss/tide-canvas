@@ -44,12 +44,9 @@ export interface HomeFloorLiteVO {
 
 /** Homepage global settings (HomeGlobalVO) — GET /api/site/home-config,
  *  driven by the admin 首页楼层「楼层全局配置」panel (sys_config `home.global`).
- *  fluxPreset is a FLUX_PRESETS key (unknown keys fall back client-side);
+ *  流光背景功能已整体移除，只剩首屏 CTA；
  *  ctaTarget is a route key resolved via ctaTargetHref(). */
 export interface HomeGlobalVO {
-  fluxPreset: string;
-  fluxIntensity: number;
-  fluxUserSwitch: boolean;
   ctaLabel: string;
   ctaTarget: string;
 }

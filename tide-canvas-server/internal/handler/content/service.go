@@ -84,17 +84,12 @@ func parseFooterCols(raw string) ([]FooterColVO, bool) {
 // --- site home global settings ---
 
 // HomeGlobalVO is the public view of the homepage's global settings（后台
-// 首页楼层「楼层全局配置」panel）: the 背景流光 shader defaults plus the
-// hero's primary CTA. FluxPreset is a client-side palette key (aurora/nebula/
-// ocean/ember/verdant/ink，或 "off" = 首页整体不渲染流光背景 — the client
-// falls back on unknown keys), and CtaTarget is a route key (studio/pricing)
-// the client maps to a path.
+// 首页楼层「楼层全局配置」panel）。流光背景功能已按产品定稿整体移除，
+// 只剩 hero 首屏 CTA：CtaTarget is a route key (studio/pricing) the client
+// maps to a path. 旧库里残留的 flux* 字段在反序列化时被自然忽略。
 type HomeGlobalVO struct {
-	FluxPreset     string  `json:"fluxPreset"`
-	FluxIntensity  float64 `json:"fluxIntensity"`
-	FluxUserSwitch bool    `json:"fluxUserSwitch"`
-	CtaLabel       string  `json:"ctaLabel"`
-	CtaTarget      string  `json:"ctaTarget"`
+	CtaLabel  string `json:"ctaLabel"`
+	CtaTarget string `json:"ctaTarget"`
 }
 
 // homeGlobal returns the admin-configured homepage globals (sys_config
@@ -112,22 +107,13 @@ func (s *service) homeGlobal() HomeGlobalVO {
 	return vo
 }
 
-// parseHomeGlobal decodes + sanitizes the home.global JSON: intensity is
-// clamped to the shader's usable 0–1.5 band, and blank strings fall back to
-// the factory defaults so a partially-filled save never blanks the homepage.
+// parseHomeGlobal decodes + sanitizes the home.global JSON: blank strings
+// fall back to the factory defaults so a partially-filled save never blanks
+// the homepage.
 func parseHomeGlobal(raw string) (HomeGlobalVO, bool) {
 	var vo HomeGlobalVO
 	if json.Unmarshal([]byte(raw), &vo) != nil {
 		return HomeGlobalVO{}, false
-	}
-	if strings.TrimSpace(vo.FluxPreset) == "" {
-		vo.FluxPreset = "off" // 与出厂默认一致：背景关闭
-	}
-	if vo.FluxIntensity <= 0 {
-		vo.FluxIntensity = 0.78
-	}
-	if vo.FluxIntensity > 1.5 {
-		vo.FluxIntensity = 1.5
 	}
 	if strings.TrimSpace(vo.CtaLabel) == "" {
 		vo.CtaLabel = "生成"
