@@ -1,20 +1,44 @@
-# Tide Canvas 服务器部署（测试环境）。
-# 前提：宿主机已运行 MySQL(127.0.0.1:3306) 与 Redis(127.0.0.1:6379)。
+# Tide Canvas 服务器部署（测试环境，与 relay 中转站同机共存）。
+#
+# 端口规划（全部 host 网络，域名不隔离端口，443 只能有一个监听者）：
+#   80/443 —— edge（本文件的边缘 nginx，唯一入口，按域名分流 + 统一终结 TLS）
+#   8080   —— relay-backend（apirouter 项目，已存在，不动）
+#   8090   —— relay-frontend（apirouter 项目，需从 80/443 改为 listen 127.0.0.1:8090）
+#   8081   —— tidecanvas-backend
+#   3000   —— tidecanvas 前端 Next SSR（仅监听回环）
 #
 # 使用：
 #   1. docker login ghcr.io -u <github用户名> -p <PAT(read:packages)>
-#   2. 证书放到本文件同级的 cert/ 目录：fullchain.pem + privkey.pem
-#   3. docker compose pull && docker compose up -d
-# 更新版本：重复第 3 步即可（CI 每次推 flowingLight 都会刷新 :latest）。
+#   2. 证书放到本文件同级目录：
+#        cert/flowlight/fullchain.pem + privkey.pem
+#        cert/relay/fullchain.pem + privkey.pem
+#      站点配置在 nginx/conf.d/（flowlight.conf、relay.conf）
+#   3. 把 relay-frontend 的 nginx 从 80/443 挪到 127.0.0.1:8090（见 nginx/conf.d/relay.conf 头注）
+#   4. docker compose pull && docker compose up -d
+# 更新版本：重复第 4 步（CI 每次推 flowingLight 都会刷新 :latest）。
+# 改边缘 nginx 配置后：docker compose exec edge nginx -s reload
 
 services:
+  edge:
+    image: nginx:1.27-alpine
+    container_name: edge-nginx
+    restart: unless-stopped
+    network_mode: host          # 唯一占用宿主机 80/443 的进程
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./cert:/etc/nginx/cert:ro
+    depends_on:
+      - frontend
+      - backend
+
   backend:
     image: ghcr.io/vit4ss/tide-canvas-backend:latest
     container_name: tidecanvas-backend
     restart: unless-stopped
-    network_mode: host          # 直接占用宿主机 8080；通过 127.0.0.1:3306/6379 连本机 mysql/redis
+    network_mode: host          # 通过 127.0.0.1:3306/6379 连本机 mysql/redis
     environment:
-      TIDECANVAS_ENV: test      # 选择 configs/config.test.yaml 叠加层
+      TIDECANVAS_ENV: test        # 选择 configs/config.test.yaml 叠加层
+      TIDECANVAS_SERVER_PORT: "8081" # 8080 被同机 relay-backend 占用
       # 聊天助手走中转站的文本模型（模型管理里 status=1 的 text 模型），无需单独配 LLM key。
       # OSS 密钥不进镜像，在这里注入或在后台「配置管理→存储配置」录入：
       # TIDECANVAS_STORAGE_ACCESSKEY: ""
@@ -26,9 +50,7 @@ services:
     image: ghcr.io/vit4ss/tide-canvas-frontend:latest
     container_name: tidecanvas-frontend
     restart: unless-stopped
-    network_mode: host          # 直接占用宿主机 80/443；镜像内 nginx 反代 127.0.0.1:8080(后端) 与 127.0.0.1:3000(自身 Next)
-    volumes:
-      - ./cert:/etc/nginx/cert:ro   # fullchain.pem + privkey.pem，缺证书 nginx 起不来
+    network_mode: host          # Next SSR 监听 127.0.0.1:3000，仅供 edge 反代
     depends_on:
       - backend
 

@@ -81,7 +81,7 @@ func New(baseURL, apiKey string) *Client {
 	}
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" {
-		baseURL = "https://flowlight.tcmzhan.com"
+		baseURL = "https://relay.tcmzhan.com"
 	}
 	return &Client{baseURL: baseURL, apiKey: apiKey, hc: &http.Client{Timeout: 60 * time.Second}}
 }

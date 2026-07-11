@@ -338,7 +338,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.contextTokenLimit", 32000)
 	v.SetDefault("llm.systemPrompt", defaultLLMSystemPrompt)
 
-	v.SetDefault("relay.baseUrl", "https://flowlight.tcmzhan.com")
+	v.SetDefault("relay.baseUrl", "https://relay.tcmzhan.com")
 	v.SetDefault("relay.apiKey", "")
 
 	v.SetDefault("eliandapay.enabled", true)

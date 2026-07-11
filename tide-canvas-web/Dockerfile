@@ -15,8 +15,9 @@ COPY . .
 
 # NEXT_PUBLIC_* 与 rewrites 目标在构建期内联/固化，必须以 build-arg 传入。
 # API_BASE_URL 用于 SSR 直连与 /api/* 代理目标：部署为 network_mode: host，
-# 后端就在同宿主机的 8080，故默认 127.0.0.1（浏览器侧 /api 由镜像内 nginx 直接反代后端）。
-ARG NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8080
+# 后端在同宿主机的 8081（8080 已被同机的 relay-backend 占用）；
+# 浏览器侧 /api 由边缘 nginx 直接反代后端，不经过 Next。
+ARG NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8081
 ARG NEXT_PUBLIC_OAUTH_REDIRECT_BASE=
 ARG NEXT_PUBLIC_GITHUB_CLIENT_ID=
 ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID=
@@ -29,30 +30,23 @@ ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL \
     NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
-# ====== Stage 3: 运行（node SSR + nginx 终结 TLS） ======
+# ====== Stage 3: 运行 ======
 FROM node:22-slim AS runner
 WORKDIR /app
-# HOSTNAME=127.0.0.1：host 网络下 Next 只监听回环，对外仅暴露 nginx 的 80/443
+# HOSTNAME=127.0.0.1：host 网络下 Next 只监听回环，公网流量统一由独立的边缘 nginx
+# 容器（80/443 + 证书）按域名分流进来
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     HOSTNAME=127.0.0.1 \
     PORT=3000
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends nginx \
-    && rm -rf /var/lib/apt/lists/* \
-    # debian nginx 自带的 default 站点会抢占 80，移除
-    && rm -f /etc/nginx/sites-enabled/default
-
-COPY deploy/nginx.conf /etc/nginx/conf.d/tidecanvas.conf
-COPY deploy/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN groupadd --system nodejs && useradd --system --gid nodejs nextjs
 
 # standalone 产物不含 public 与 .next/static，需手动拷入由 server.js 一并伺服
 COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# nginx 需要 root 绑定 80/443（host 网络），不再降权运行
-EXPOSE 80 443
-CMD ["/entrypoint.sh"]
+USER nextjs
+EXPOSE 3000
+CMD ["node", "server.js"]

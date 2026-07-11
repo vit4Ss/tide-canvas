@@ -1,6 +1,7 @@
 # 推送 flowingLight 分支时自动构建前后端镜像并推到 ghcr.io：
-#   ghcr.io/<owner>/tide-canvas-backend:latest  （Go API，host 网络连本机 MySQL/Redis）
-#   ghcr.io/<owner>/tide-canvas-frontend:latest （Next SSR + nginx 80/443，证书由部署侧挂载）
+#   ghcr.io/<owner>/tide-canvas-backend:latest  （Go API :8081，host 网络连本机 MySQL/Redis）
+#   ghcr.io/<owner>/tide-canvas-frontend:latest （Next SSR :3000，仅监听回环）
+# 80/443 与证书由独立的边缘 nginx 容器负责（与 relay 同机共存，按域名分流）。
 # 服务器部署见 deploy/docker-compose.yml。
 name: docker-images
 
@@ -29,9 +30,9 @@ jobs:
           - name: frontend
             context: tide-canvas-web
             image: tide-canvas-frontend
-            # 部署为 host 网络：SSR 直连与浏览器 /api 都落在本机 8080 的后端
+            # 部署为 host 网络：SSR 直连本机 8081 的后端（8080 被同机 relay 占用）
             build-args: |
-              NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8080
+              NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8081
     steps:
       - uses: actions/checkout@v4
 
