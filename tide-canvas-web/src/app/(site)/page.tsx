@@ -64,7 +64,7 @@ const DEFAULT_FLOOR_TYPES = [
 /** 首页全局配置的出厂默认（与后端 DefaultHomeGlobalJSON 一致）——接口失败时
     背景与 CTA 仍按此渲染，首页不因配置接口降级。 */
 const DEFAULT_HOME_GLOBAL: HomeGlobalVO = {
-  fluxPreset: "aurora",
+  fluxPreset: "off", // 用户定稿:背景默认关闭(与后端 DefaultHomeGlobalJSON 一致)
   fluxIntensity: 0.78,
   fluxUserSwitch: true,
   ctaLabel: "生成",

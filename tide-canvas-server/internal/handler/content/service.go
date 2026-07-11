@@ -121,7 +121,7 @@ func parseHomeGlobal(raw string) (HomeGlobalVO, bool) {
 		return HomeGlobalVO{}, false
 	}
 	if strings.TrimSpace(vo.FluxPreset) == "" {
-		vo.FluxPreset = "aurora"
+		vo.FluxPreset = "off" // 与出厂默认一致：背景关闭
 	}
 	if vo.FluxIntensity <= 0 {
 		vo.FluxIntensity = 0.78

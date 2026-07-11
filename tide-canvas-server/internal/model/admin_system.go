@@ -56,11 +56,12 @@ const DefaultFooterLinksJSON = `[
 // to the site by GET /api/site/home-config.
 const ConfigKeyHomeGlobal = "home.global"
 
-// DefaultHomeGlobalJSON is the homepage global settings' factory default
-// (mirrors the shipped hero button + the liuguang aurora background). Used to
+// DefaultHomeGlobalJSON is the homepage global settings' factory default.
+// 流光背景出厂即「关闭」（fluxPreset=off）——用户定稿的纯黑主题不带背景，
+// 新库种子后不再需要到后台手关；后台「首页楼层」仍可随时开启。Used to
 // seed the config key and as the serve-time fallback when the stored value is
 // missing or unparseable.
-const DefaultHomeGlobalJSON = `{"fluxPreset":"aurora","fluxIntensity":0.78,"fluxUserSwitch":true,"ctaLabel":"生成","ctaTarget":"studio"}`
+const DefaultHomeGlobalJSON = `{"fluxPreset":"off","fluxIntensity":0.78,"fluxUserSwitch":true,"ctaLabel":"生成","ctaTarget":"studio"}`
 
 // ConfigKeyPricingCompare is the sys_config key holding the pricing page's
 // 方案对比 table rows as JSON: {rows:[{label, values:{<planID>: cell}}]}.
