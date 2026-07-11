@@ -26,22 +26,9 @@ type PayChannel struct {
 // TableName overrides the default pluralization.
 func (PayChannel) TableName() string { return "pay_channel" }
 
-// PointRule is a rule that grants or deducts points for a scene (积分规则).
-type PointRule struct {
-	BaseModel
-
-	Name string `gorm:"column:name;type:varchar(64);not null" json:"name"`
-	// Scene: checkin / invite / share / first_recharge ...
-	Scene string `gorm:"column:scene;type:varchar(64);not null" json:"scene"`
-	// Amount may be negative (deduction) or positive (grant).
-	Amount int `gorm:"column:amount;type:int;not null;default:0" json:"amount"`
-	// Trigger: once / daily / per_action ...
-	Trigger string `gorm:"column:trigger;type:varchar(32)" json:"trigger"`
-	Enabled bool   `gorm:"column:enabled;not null;default:true" json:"enabled"`
-}
-
-// TableName overrides the default pluralization.
-func (PointRule) TableName() string { return "point_rule" }
+// 积分规则（PointRule）模型已整链下线（2026-07-12 用户拍板：无任何业务
+// 消费方——生成消耗按模型定价、赠送走 sys_config points.* 键，规则表纯摆设。
+// 遗留的 point_rule 表不再由代码管理）。
 
 // 营销活动（Campaign）模型已随营销管理整链下线（2026-07-10 用户拍板：活动
 // 数据无任何业务消费方——不打折、不发券、不统计,纯台账无真实链路）。

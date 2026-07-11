@@ -36,14 +36,7 @@ func SeedAdminData(db *gorm.DB) error {
 	// 支付渠道的真实默认值已挪进 model.Seed（每次启动幂等种入），
 	// 这里不再放带假流水的演示数据。
 
-	// Point rules (积分规则).
-	if err := seedIfEmpty(db, &PointRule{}, []PointRule{
-		{Name: "每日签到", Scene: "checkin", Amount: 10, Trigger: "daily", Enabled: true},
-		{Name: "邀请好友", Scene: "invite", Amount: 100, Trigger: "per_action", Enabled: true},
-		{Name: "首次充值奖励", Scene: "first_recharge", Amount: 200, Trigger: "once", Enabled: true},
-	}); err != nil {
-		return err
-	}
+	// 积分规则种子已随 point_rule 整链下线（2026-07-12，无业务消费方）。
 
 	// 营销活动种子已随营销管理整链下线（2026-07-10,编造的演示数据）。
 

@@ -97,10 +97,12 @@ func Refund(db *gorm.DB, userID idgen.ID, amount int, remark string, refID idgen
 	})
 }
 
-// GrantSignup grants the admin-configured signup bonus (sys_config key
-// ai.default_points) to a freshly created user and writes a "signup" ledger row.
-// A missing / zero / invalid config is a no-op. Returns the granted amount so the
-// caller can reflect it in the immediate response.
+// GrantSignup grants the admin-configured signup bonus to a freshly created
+// user and writes a "signup" ledger row. The amount comes from sys_config
+// points.signupBonus（后台「积分全局配置 · 注册赠送」旋钮）, falling back to
+// the legacy ai.default_points（配置管理）when unset/invalid. A missing / zero
+// config is a no-op. Returns the granted amount so the caller can reflect it
+// in the immediate response.
 func GrantSignup(db *gorm.DB, userID idgen.ID) (int, error) {
 	amount := signupGrant(db)
 	if amount <= 0 {
@@ -116,17 +118,21 @@ func GrantSignup(db *gorm.DB, userID idgen.ID) (int, error) {
 	return amount, nil
 }
 
-// signupGrant reads the sys_config ai.default_points value (new-user bonus).
-// Returns 0 when unset, non-numeric or negative.
+// signupGrant reads the new-user bonus: points.signupBonus first（积分管理页
+// 「注册赠送」）, legacy ai.default_points（配置管理）as fallback. 显式配 0 表示
+// 不发（不会落到 fallback）；两个键都缺失/非法时返回 0。
 func signupGrant(db *gorm.DB) int {
-	var row model.SysConfig
-	if err := db.Select("config_value").
-		Where("config_key = ?", "ai.default_points").First(&row).Error; err != nil {
-		return 0
+	for _, key := range []string{"points.signupBonus", "ai.default_points"} {
+		var row model.SysConfig
+		if err := db.Select("config_value").
+			Where("config_key = ?", key).First(&row).Error; err != nil {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(row.ConfigValue))
+		if err != nil || n < 0 {
+			continue
+		}
+		return n
 	}
-	n, err := strconv.Atoi(strings.TrimSpace(row.ConfigValue))
-	if err != nil || n < 0 {
-		return 0
-	}
-	return n
+	return 0
 }

@@ -63,9 +63,8 @@ func Models() []any {
 		&StylePreset{},
 		&StyleFavorite{},
 		&StyleUsage{},
-		// Billing / growth.
+		// Billing / growth.（积分规则 point_rule 已整链下线 2026-07-12：无业务消费方）
 		&PayChannel{},
-		&PointRule{},
 		// 模型可用性探测样本（后台「模型状态」页）。
 		&ModelProbe{},
 		// System / platform.

@@ -5,17 +5,19 @@
 
    Liuguang admin.js V.credit() skin, now backed by the real admin API
    (src/lib/admin-points-api.ts):
-     - 积分规则   : GET/POST/PUT/DELETE /api/admin/points/rules
      - 积分流水   : GET /api/admin/points/transactions (paged, all users)
      - 手动调整   : POST /api/admin/points/adjust {userId,amount,remark}
                     (writes the REAL user balance + a ledger row)
      - 全局配置   : GET/PUT /api/admin/points/config (sys_config keys)
 
+   （「积分规则」CRUD 已整链下线 2026-07-12：无任何业务消费方——生成消耗
+     按模型定价、赠送走下方全局配置，规则表纯属摆设。）
+
    KEEPS the exact liuguang markup/classes + shared components. Mock import dropped.
    ============================================================================ */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { RefreshCw, SlidersHorizontal } from "lucide-react";
 import {
   AdminAlert,
   AdminEmptyState,
@@ -25,23 +27,18 @@ import {
   FormCard,
   FormGrid,
   Panel,
-  RowActions,
   StatCardGrid,
   StatusPill,
-  SwitchToggle,
   TableSkeleton,
   ListSkeleton,
 } from "@/components/admin";
 import type { Kpi, PillTone } from "@/mock/admin";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminPointsApi } from "@/lib/admin-points-api";
-import { confirmDialog } from "@/components/shared/confirm";
 import { toast } from "@/components/shared/toast";
 import type {
   AdminPointAdjustDTO,
   AdminPointRecord,
-  AdminPointRule,
-  AdminPointRuleUpsertDTO,
   AdminPointsConfig,
 } from "@/types/admin-points";
 
@@ -74,29 +71,6 @@ const EMPTY_CONFIG: AdminPointsConfig = {
   "points.signupBonus": "",
 };
 
-/* ── rule modal form state ─────────────────────────────────────────────── */
-interface RuleForm {
-  name: string;
-  scene: string;
-  amount: string;
-  trigger: string;
-  enabled: boolean;
-}
-const emptyRuleForm = (): RuleForm => ({
-  name: "",
-  scene: "",
-  amount: "",
-  trigger: "",
-  enabled: true,
-});
-const ruleToForm = (r: AdminPointRule): RuleForm => ({
-  name: r.name,
-  scene: r.scene,
-  amount: String(r.amount),
-  trigger: r.trigger,
-  enabled: r.enabled,
-});
-
 /* ── adjust modal form state ───────────────────────────────────────────── */
 interface AdjustForm {
   userId: string;
@@ -108,7 +82,6 @@ const emptyAdjustForm = (): AdjustForm => ({ userId: "", amount: "", remark: "" 
 export default function AdminPointsPage() {
   const ensureSession = useAuthStore((s) => s.ensureSession);
 
-  const [rules, setRules] = useState<AdminPointRule[]>([]);
   const [ledger, setLedger] = useState<AdminPointRecord[]>([]);
   const [ledgerTotal, setLedgerTotal] = useState(0);
   const [ledgerPage, setLedgerPage] = useState(1);
@@ -118,24 +91,9 @@ export default function AdminPointsPage() {
   const [savingConfig, setSavingConfig] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // rule modal
-  const [ruleOpen, setRuleOpen] = useState(false);
-  const [editingRule, setEditingRule] = useState<AdminPointRule | null>(null);
-  const [ruleForm, setRuleForm] = useState<RuleForm>(emptyRuleForm());
-
   // adjust modal
   const [adjOpen, setAdjOpen] = useState(false);
   const [adjForm, setAdjForm] = useState<AdjustForm>(emptyAdjustForm());
-
-  const loadRules = useCallback(async () => {
-    try {
-      const res = await adminPointsApi.listRules();
-      if (res.success && res.data) setRules(res.data);
-      else setError(res.message || "加载积分规则失败");
-    } catch {
-      setError("加载积分规则失败，请稍后重试");
-    }
-  }, []);
 
   const loadLedger = useCallback(async (page: number) => {
     setLedgerLoading(true);
@@ -170,13 +128,13 @@ export default function AdminPointsPage() {
     setError(null);
     try {
       await ensureSession();
-      await Promise.all([loadRules(), loadLedger(1), loadConfig()]);
+      await Promise.all([loadLedger(1), loadConfig()]);
     } catch {
       setError("加载失败，请稍后重试");
     } finally {
       setLoading(false);
     }
-  }, [ensureSession, loadRules, loadLedger, loadConfig]);
+  }, [ensureSession, loadLedger, loadConfig]);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => void loadAll());
@@ -186,90 +144,16 @@ export default function AdminPointsPage() {
 
   /* ── KPIs derived from real data ─────────────────────────────────────── */
   const kpis: Kpi[] = useMemo(() => {
-    const enabledRules = rules.filter((r) => r.enabled).length;
+    const cfgNum = (k: keyof AdminPointsConfig) => {
+      const v = String(config[k] ?? "").trim();
+      return v === "" ? "—" : num(toInt(v));
+    };
     return [
-      { k: "积分规则", v: String(rules.length) },
-      { k: "启用规则", v: String(enabledRules) },
       { k: "流水记录", v: ledgerTotal.toLocaleString("zh-CN") },
+      { k: "每日签到赠送", v: cfgNum("points.checkinDaily") },
+      { k: "注册礼包", v: cfgNum("points.signupBonus") },
     ];
-  }, [rules, ledgerTotal]);
-
-  /* ── rule actions ────────────────────────────────────────────────────── */
-  const openCreateRule = () => {
-    setEditingRule(null);
-    setRuleForm(emptyRuleForm());
-    setRuleOpen(true);
-  };
-  const openEditRule = (r: AdminPointRule) => {
-    setEditingRule(r);
-    setRuleForm(ruleToForm(r));
-    setRuleOpen(true);
-  };
-  const saveRule = async () => {
-    const dto: AdminPointRuleUpsertDTO = {
-      name: ruleForm.name.trim(),
-      scene: ruleForm.scene.trim(),
-      amount: toInt(ruleForm.amount),
-      trigger: ruleForm.trigger.trim(),
-      enabled: ruleForm.enabled,
-    };
-    if (!dto.name || !dto.scene) {
-      toast.error(!dto.name ? "请填写规则名称" : "请填写适用场景");
-      return false;
-    }
-    try {
-      const res = editingRule
-        ? await adminPointsApi.updateRule(editingRule.id, dto)
-        : await adminPointsApi.createRule(dto);
-      if (res.success) {
-        setRuleOpen(false);
-        loadRules();
-        toast.success(editingRule ? "规则已更新" : "规则已创建");
-      } else {
-        toast.error(res.message || "保存规则失败");
-        return false;
-      }
-    } catch {
-      toast.error("保存规则失败，请稍后重试");
-      return false;
-    }
-  };
-  const toggleRule = async (r: AdminPointRule, next: boolean) => {
-    const dto: AdminPointRuleUpsertDTO = {
-      name: r.name,
-      scene: r.scene,
-      amount: r.amount,
-      trigger: r.trigger,
-      enabled: next,
-    };
-    try {
-      const res = await adminPointsApi.updateRule(r.id, dto);
-      if (!res.success) toast.error(res.message || "规则状态更新失败");
-    } catch {
-      toast.error("规则状态更新失败，请稍后重试");
-    } finally {
-      loadRules();
-    }
-  };
-  const deleteRule = async (r: AdminPointRule) => {
-    if (
-      !(await confirmDialog({
-        title: "删除积分规则",
-        message: `确认永久删除规则「${r.name}」？删除后该场景将不再按此规则自动变动积分，历史流水不会受影响。`,
-        confirmText: "确认删除",
-      }))
-    )
-      return;
-    try {
-      const res = await adminPointsApi.deleteRule(r.id);
-      if (res.success) {
-        toast.success(`已删除规则「${r.name}」`);
-        loadRules();
-      } else toast.error(res.message || "删除规则失败");
-    } catch {
-      toast.error("删除规则失败，请稍后重试");
-    }
-  };
+  }, [config, ledgerTotal]);
 
   /* ── adjust action (writes REAL balance) ─────────────────────────────── */
   const openAdjust = () => {
@@ -339,73 +223,6 @@ export default function AdminPointsPage() {
           {error}
         </AdminAlert>
       ) : null}
-
-      {/* 积分规则 */}
-      <Panel
-        title="积分规则"
-        sub="消耗规则、赠送与触发条件"
-        tools={
-          <button type="button" className="adm-btn" onClick={openCreateRule}>
-            <Plus aria-hidden size={15} />
-            新增规则
-          </button>
-        }
-      >
-        {loading ? (
-          <TableSkeleton />
-        ) : rules.length === 0 ? (
-          <AdminEmptyState
-            title="暂无积分规则"
-            description="创建消耗或赠送规则，统一管理各业务场景的积分变动。"
-            action={
-              <button type="button" className="adm-btn" onClick={openCreateRule}>
-                <Plus aria-hidden size={15} />
-                新增规则
-              </button>
-            }
-          />
-        ) : (
-          <AdminTable<AdminPointRule>
-            label="积分规则列表"
-            rows={rules}
-            rowKey={(r) => r.id}
-            columns={[
-              { header: "规则", className: "strong", cell: (r) => r.name, sortable: true, sortValue: (r) => r.name },
-              { header: "场景", cell: (r) => r.scene, sortable: true, sortValue: (r) => r.scene },
-              {
-                header: "消耗 / 赠送",
-                className: "mono",
-                cell: (r) => signed(r.amount),
-                sortable: true,
-                sortValue: (r) => r.amount,
-              },
-              { header: "触发条件", className: "muted", cell: (r) => r.trigger || "—" },
-              {
-                header: "状态",
-                cell: (r) => (
-                  <SwitchToggle
-                    checked={r.enabled}
-                    onChange={(next) => toggleRule(r, next)}
-                    aria-label={`${r.name} 开关`}
-                  />
-                ),
-              },
-              {
-                header: "操作",
-                align: "right",
-                cell: (r) => (
-                  <RowActions
-                    actions={[
-                      { label: "编辑", onClick: () => openEditRule(r) },
-                      { label: "删除", onClick: () => deleteRule(r) },
-                    ]}
-                  />
-                ),
-              },
-            ]}
-          />
-        )}
-      </Panel>
 
       {/* 积分流水 ledger (server-paged) + 手动调整 */}
       <Panel
@@ -518,58 +335,6 @@ export default function AdminPointsPage() {
           </div>
         </div>}
       </Panel>
-
-      {/* 新增 / 编辑规则 modal */}
-      <AdminModal
-        open={ruleOpen}
-        size="md"
-        title={editingRule ? "编辑规则" : "新增规则"}
-        subtitle="配置积分消耗 / 赠送规则与触发条件"
-        footNote="保存后立即用于后续积分结算，历史流水不会重算"
-        onClose={() => setRuleOpen(false)}
-        onSave={saveRule}
-      >
-        <FormCard title="规则信息">
-          <FormGrid>
-            <Field label="规则名称" required span={2}>
-              <input
-                placeholder="如：文生图"
-                value={ruleForm.name}
-                onChange={(e) => setRuleForm((f) => ({ ...f, name: e.target.value }))}
-              />
-            </Field>
-            <Field label="场景" required span={2}>
-              <input
-                placeholder="如：创作台"
-                value={ruleForm.scene}
-                onChange={(e) => setRuleForm((f) => ({ ...f, scene: e.target.value }))}
-              />
-            </Field>
-            <Field label="消耗 / 赠送" required span={2} hint="负数为消耗，正数为赠送">
-              <input
-                type="number"
-                placeholder="如：-10 或 200"
-                value={ruleForm.amount}
-                onChange={(e) => setRuleForm((f) => ({ ...f, amount: e.target.value }))}
-              />
-            </Field>
-            <Field label="触发条件" span={2}>
-              <input
-                placeholder="如：每次生成"
-                value={ruleForm.trigger}
-                onChange={(e) => setRuleForm((f) => ({ ...f, trigger: e.target.value }))}
-              />
-            </Field>
-            <Field label="状态" span={4} hint="关闭后该规则不再生效">
-              <SwitchToggle
-                checked={ruleForm.enabled}
-                onChange={(next) => setRuleForm((f) => ({ ...f, enabled: next }))}
-                aria-label="规则状态"
-              />
-            </Field>
-          </FormGrid>
-        </FormCard>
-      </AdminModal>
 
       {/* 手动调整积分 modal — writes the REAL user balance */}
       <AdminModal

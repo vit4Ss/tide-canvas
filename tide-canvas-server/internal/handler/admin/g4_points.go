@@ -16,12 +16,14 @@ import (
 	"tidecanvas/internal/pkg/response"
 )
 
-// g4_points.go covers the points section: point-rule CRUD (point_rule table),
-// the global point ledger (point_record, all users — read-only), a manual
-// balance adjustment that — per the LINKAGE PRINCIPLE — writes BOTH user.Points
-// and a point_record ledger row in one transaction so the user's balance and
-// the user-facing /api/points/records view stay consistent, and a small config
-// section backed by sys_config keys.
+// g4_points.go covers the points section: the global point ledger
+// (point_record, all users — read-only), a manual balance adjustment that —
+// per the LINKAGE PRINCIPLE — writes BOTH user.Points and a point_record
+// ledger row in one transaction so the user's balance and the user-facing
+// /api/points/records view stay consistent, and a small config section backed
+// by sys_config keys.
+// （积分规则 point_rule CRUD 已整链下线 2026-07-12：无任何业务消费方——
+//   生成消耗按模型定价、赠送走下方 sys_config 键，规则表纯属摆设。）
 
 // g4PointsConfigKeys are the sys_config keys exposed by the points config
 // section. GET returns each key's current value (empty string if unset); PUT
@@ -40,22 +42,12 @@ const g4PointsConfigGroup = "points"
 //
 // Routes:
 //
-//	GET    /points/rules           -> []g4PointRuleVO
-//	POST   /points/rules           g4PointRuleUpsertDTO -> g4PointRuleVO
-//	PUT    /points/rules/:id       g4PointRuleUpsertDTO -> g4PointRuleVO
-//	DELETE /points/rules/:id       -> void
 //	GET    /points/transactions    g4PointTxQuery -> PageData<g4PointRecordVO>
 //	POST   /points/adjust          g4PointAdjustDTO -> g4PointRecordVO
 //	GET    /points/config          -> map[string]string
 //	PUT    /points/config          map[string]string -> map[string]string
 func RegisterPoints(g *gin.RouterGroup, d *app.Deps) {
 	h := &g4PointsHandler{db: d.DB}
-
-	// Rules under the static /points/rules parent.
-	g.GET("/points/rules", h.listRules)
-	g.POST("/points/rules", h.createRule)
-	g.PUT("/points/rules/:id", h.updateRule)
-	g.DELETE("/points/rules/:id", h.deleteRule)
 
 	// Ledger (read-only) + manual adjustment + config. All static paths, no
 	// :param siblings, so no gin route conflicts.
@@ -70,18 +62,6 @@ type g4PointsHandler struct {
 }
 
 // ---- VOs ----
-
-// g4PointRuleVO is the admin point-rule row view.
-type g4PointRuleVO struct {
-	ID         idgen.ID `json:"id"`
-	Name       string   `json:"name"`
-	Scene      string   `json:"scene"`
-	Amount     int      `json:"amount"`
-	Trigger    string   `json:"trigger"`
-	Enabled    bool     `json:"enabled"`
-	CreateTime string   `json:"createTime"`
-	UpdateTime string   `json:"updateTime"`
-}
 
 // g4PointRecordVO is one ledger row, enriched with the owning user's compact
 // block so the admin ledger shows who the entry belongs to.
@@ -99,18 +79,6 @@ type g4PointRecordVO struct {
 
 // ---- DTOs ----
 
-// g4PointRuleUpsertDTO is the create/update body for a point rule. String
-// bounds mirror the DB columns (name/scene varchar(64), trigger varchar(32))
-// so over-long input gets a friendly 400 instead of a "Data too long" 500.
-// Amount may be negative (deduction rules).
-type g4PointRuleUpsertDTO struct {
-	Name    string `json:"name" binding:"required,max=64"`
-	Scene   string `json:"scene" binding:"required,max=64"`
-	Amount  int    `json:"amount"`
-	Trigger string `json:"trigger" binding:"omitempty,max=32"`
-	Enabled *bool  `json:"enabled"`
-}
-
 // g4PointTxQuery is the ledger query: pagination + optional user / changeType
 // filters across all users.
 type g4PointTxQuery struct {
@@ -125,82 +93,6 @@ type g4PointAdjustDTO struct {
 	UserID idgen.ID `json:"userId" binding:"required"`
 	Amount int      `json:"amount" binding:"required"`
 	Remark string   `json:"remark"`
-}
-
-// ---- rule handlers ----
-
-func (h *g4PointsHandler) listRules(c *gin.Context) {
-	var rows []model.PointRule
-	if err := h.db.Order("create_time asc").Find(&rows).Error; err != nil {
-		response.Fail(c, response.CodeServerError, "failed to load rules")
-		return
-	}
-	vos := make([]g4PointRuleVO, 0, len(rows))
-	for i := range rows {
-		vos = append(vos, g4ToPointRuleVO(&rows[i]))
-	}
-	response.OK(c, vos)
-}
-
-func (h *g4PointsHandler) createRule(c *gin.Context) {
-	var dto g4PointRuleUpsertDTO
-	if err := c.ShouldBindJSON(&dto); err != nil {
-		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
-		return
-	}
-	row := model.PointRule{}
-	g4ApplyRule(&row, &dto, true)
-	// enabled is force-written: a struct Create would swallow enabled:false via
-	// the default:true tag and activate a rule meant to stay off.
-	if err := adminCreateRow(h.db, &row, map[string]any{"enabled": row.Enabled}); err != nil {
-		response.Fail(c, response.CodeServerError, "failed to create rule")
-		return
-	}
-	response.OK(c, g4ToPointRuleVO(&row))
-}
-
-func (h *g4PointsHandler) updateRule(c *gin.Context) {
-	id, ok := g4ParseID(c)
-	if !ok {
-		return
-	}
-	var dto g4PointRuleUpsertDTO
-	if err := c.ShouldBindJSON(&dto); err != nil {
-		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
-		return
-	}
-	var row model.PointRule
-	if err := h.db.First(&row, "id = ?", id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			response.Fail(c, response.CodeNotFound, "rule not found")
-			return
-		}
-		response.Fail(c, response.CodeServerError, "failed to update rule")
-		return
-	}
-	g4ApplyRule(&row, &dto, false)
-	if err := h.db.Save(&row).Error; err != nil {
-		response.Fail(c, response.CodeServerError, "failed to update rule")
-		return
-	}
-	response.OK(c, g4ToPointRuleVO(&row))
-}
-
-func (h *g4PointsHandler) deleteRule(c *gin.Context) {
-	id, ok := g4ParseID(c)
-	if !ok {
-		return
-	}
-	res := h.db.Delete(&model.PointRule{}, "id = ?", id)
-	if res.Error != nil {
-		response.Fail(c, response.CodeServerError, "failed to delete rule")
-		return
-	}
-	if res.RowsAffected == 0 {
-		response.Fail(c, response.CodeNotFound, "rule not found")
-		return
-	}
-	response.OK[any](c, nil)
 }
 
 // ---- ledger handler ----
@@ -427,33 +319,6 @@ func (h *g4PointsHandler) putConfig(c *gin.Context) {
 }
 
 // ---- mapping helpers ----
-
-// g4ApplyRule copies DTO fields onto a point-rule row. On create, enabled
-// defaults to true when omitted; on update an omitted enabled preserves it.
-func g4ApplyRule(row *model.PointRule, dto *g4PointRuleUpsertDTO, create bool) {
-	row.Name = dto.Name
-	row.Scene = dto.Scene
-	row.Amount = dto.Amount
-	row.Trigger = dto.Trigger
-	if dto.Enabled != nil {
-		row.Enabled = *dto.Enabled
-	} else if create {
-		row.Enabled = true
-	}
-}
-
-func g4ToPointRuleVO(p *model.PointRule) g4PointRuleVO {
-	return g4PointRuleVO{
-		ID:         p.ID,
-		Name:       p.Name,
-		Scene:      p.Scene,
-		Amount:     p.Amount,
-		Trigger:    p.Trigger,
-		Enabled:    p.Enabled,
-		CreateTime: g4FormatTime(p.CreateTime),
-		UpdateTime: g4FormatTime(p.UpdateTime),
-	}
-}
 
 func g4ToPointRecordVO(r *model.PointRecord, u *model.User) g4PointRecordVO {
 	vo := g4PointRecordVO{

@@ -7,28 +7,8 @@
 
 import type { AdminOrderUser } from "./admin-payments";
 
-/** g4PointRuleVO — admin point-rule row view. */
-export interface AdminPointRule {
-  id: string;
-  name: string;
-  scene: string;
-  /** Consume (negative) / grant (positive) amount. */
-  amount: number;
-  trigger: string;
-  enabled: boolean;
-  createTime: string;
-  updateTime: string;
-}
-
-/** g4PointRuleUpsertDTO — create/update body for a point rule. */
-export interface AdminPointRuleUpsertDTO {
-  name: string;
-  scene: string;
-  amount?: number;
-  trigger?: string;
-  /** Omit to default to true on create / preserve on update. */
-  enabled?: boolean;
-}
+// （积分规则 AdminPointRule / AdminPointRuleUpsertDTO 已随 point_rule 整链
+//   下线 2026-07-12：无任何业务消费方。）
 
 /** g4PointRecordVO — one ledger row, enriched with the owning user block. */
 export interface AdminPointRecord {
