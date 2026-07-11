@@ -24,7 +24,7 @@ mysql:
   host: 127.0.0.1
   port: 3306
   user: root
-  password: root_password
+  password: "mbfczzzz@123"
   database: canvas
   # sql_mode keeps STRICT_TRANS_TABLES (data-integrity) but drops NO_ZERO_DATE so
   # optional/empty datetimes (campaign dates, api-key expiry = no-expiry) store as
