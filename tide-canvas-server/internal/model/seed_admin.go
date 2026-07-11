@@ -3,7 +3,6 @@ package model
 import (
 	"time"
 
-	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
@@ -34,14 +33,8 @@ func SeedAdminData(db *gorm.DB) error {
 	// 首页楼层：不再走 demo 种子——canonical 楼层由 model.AutoMigrate →
 	// ensureBaselineFloors 每次启动幂等确权（与真实首页区块一一对应）。
 
-	// Pay channels (支付渠道).
-	if err := seedIfEmpty(db, &PayChannel{}, []PayChannel{
-		{Name: "支付宝", Type: "alipay", Rate: decimal.RequireFromString("0.0060"), TodayAmount: decimal.RequireFromString("12840.50"), Callback: "https://api.tidecanvas.local/pay/alipay/callback", Enabled: true, SortOrder: 1},
-		{Name: "微信支付", Type: "wechat", Rate: decimal.RequireFromString("0.0060"), TodayAmount: decimal.RequireFromString("9620.00"), Callback: "https://api.tidecanvas.local/pay/wechat/callback", Enabled: true, SortOrder: 2},
-		{Name: "Stripe", Type: "stripe", Rate: decimal.RequireFromString("0.0290"), TodayAmount: decimal.RequireFromString("1530.20"), Callback: "https://api.tidecanvas.local/pay/stripe/callback", Enabled: false, SortOrder: 3},
-	}); err != nil {
-		return err
-	}
+	// 支付渠道的真实默认值已挪进 model.Seed（每次启动幂等种入），
+	// 这里不再放带假流水的演示数据。
 
 	// Point rules (积分规则).
 	if err := seedIfEmpty(db, &PointRule{}, []PointRule{
