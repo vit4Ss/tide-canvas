@@ -1,19 +1,34 @@
-// Package config loads application configuration from configs/config.yaml and
-// environment variables (env overrides file). Env var names follow the viper
-// convention with the TIDECANVAS_ prefix and underscores replacing dots, e.g.
-// TIDECANVAS_SERVER_PORT, TIDECANVAS_JWT_SECRET, TIDECANVAS_REDIS_ADDR.
+// Package config loads application configuration in three layers, later layers
+// overriding earlier ones:
+//
+//  1. configs/config.yaml           — shared base (local/test defaults)
+//  2. configs/config.<env>.yaml     — per-environment overlay, selected by
+//     TIDECANVAS_ENV (test | prod, default "test"); missing overlay is fine
+//  3. environment variables         — TIDECANVAS_ prefix, dots -> underscores,
+//     e.g. TIDECANVAS_SERVER_PORT, TIDECANVAS_JWT_SECRET, TIDECANVAS_REDIS_ADDR
 package config
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/spf13/viper"
 )
 
+// Environment names selectable via TIDECANVAS_ENV.
+const (
+	EnvTest = "test"
+	EnvProd = "prod"
+)
+
 // Config is the root configuration.
 type Config struct {
+	// Env is the running environment ("test" or "prod"), resolved from
+	// TIDECANVAS_ENV at load time; it is not read from the yaml files.
+	Env string `mapstructure:"-"`
+
 	Server  ServerConfig  `mapstructure:"server"`
 	MySQL   MySQLConfig   `mapstructure:"mysql"`
 	Redis   RedisConfig   `mapstructure:"redis"`
@@ -176,10 +191,18 @@ type EmailConfig struct {
 	SendCodeIPWindowSeconds int `mapstructure:"sendCodeIPWindowSeconds"`
 }
 
-// Load reads configs/config.yaml (searched from a few common locations) and
-// overlays environment variables. Missing config file is tolerated as long as
-// defaults / env supply the required values.
+// Load reads configs/config.yaml (searched from a few common locations),
+// merges the configs/config.<env>.yaml overlay selected by TIDECANVAS_ENV
+// (default "test"), then overlays environment variables. Missing files are
+// tolerated as long as defaults / env supply the required values; an invalid
+// TIDECANVAS_ENV value is a fatal error to prevent silently running a prod
+// deployment on test settings (or vice versa).
 func Load() (*Config, error) {
+	env, err := resolveEnv()
+	if err != nil {
+		return nil, err
+	}
+
 	v := viper.New()
 
 	v.SetConfigName("config")
@@ -191,10 +214,6 @@ func Load() (*Config, error) {
 
 	setDefaults(v)
 
-	v.SetEnvPrefix("TIDECANVAS")
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	v.AutomaticEnv()
-
 	if err := v.ReadInConfig(); err != nil {
 		// A missing config file is acceptable; any other read error is fatal.
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
@@ -202,14 +221,68 @@ func Load() (*Config, error) {
 		}
 	}
 
+	// Merge the per-environment overlay (config.test.yaml / config.prod.yaml)
+	// on top of the base file. A missing overlay is fine — the base plus env
+	// vars may already be complete.
+	v.SetConfigName("config." + env)
+	if err := v.MergeInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return nil, fmt.Errorf("config: read config.%s.yaml: %w", env, err)
+		}
+	}
+
+	// Bind env vars after file merging so they always win.
+	v.SetEnvPrefix("TIDECANVAS")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+
 	var cfg Config
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("config: unmarshal: %w", err)
 	}
 
+	cfg.Env = env
 	normalize(&cfg)
+	if err := validate(&cfg); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
 }
+
+// validate enforces settings that must never ship to production with test
+// defaults. It only runs hard checks in prod so local/test boots stay
+// zero-config.
+func validate(cfg *Config) error {
+	if !cfg.IsProd() {
+		return nil
+	}
+	secret := strings.TrimSpace(cfg.JWT.Secret)
+	if secret == "" || secret == "change-me-in-production" {
+		return fmt.Errorf("config: prod requires a real JWT secret — set TIDECANVAS_JWT_SECRET or jwt.secret in configs/config.prod.yaml")
+	}
+	if strings.TrimSpace(cfg.Server.Mode) != "release" {
+		cfg.Server.Mode = "release"
+	}
+	return nil
+}
+
+// resolveEnv reads TIDECANVAS_ENV and validates it. Empty means test so that
+// local development keeps working with zero setup; anything other than
+// test/prod is rejected loudly.
+func resolveEnv() (string, error) {
+	env := strings.ToLower(strings.TrimSpace(os.Getenv("TIDECANVAS_ENV")))
+	switch env {
+	case "":
+		return EnvTest, nil
+	case EnvTest, EnvProd:
+		return env, nil
+	default:
+		return "", fmt.Errorf("config: invalid TIDECANVAS_ENV %q (expected %q or %q)", env, EnvTest, EnvProd)
+	}
+}
+
+// IsProd reports whether the server is running with the production overlay.
+func (c *Config) IsProd() bool { return c.Env == EnvProd }
 
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.port", 8080)
@@ -265,7 +338,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.contextTokenLimit", 32000)
 	v.SetDefault("llm.systemPrompt", defaultLLMSystemPrompt)
 
-	v.SetDefault("relay.baseUrl", "https://relay.tcmzhan.com")
+	v.SetDefault("relay.baseUrl", "https://flowlight.tcmzhan.com")
 	v.SetDefault("relay.apiKey", "")
 
 	v.SetDefault("eliandapay.enabled", true)

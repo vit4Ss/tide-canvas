@@ -1,0 +1,44 @@
+# 生产环境叠加配置（TIDECANVAS_ENV=prod）。
+#
+# 加载顺序：config.yaml（基础） -> config.prod.yaml（本文件覆盖） -> 环境变量。
+# 本文件只写与测试环境不同的键；没写的键沿用 config.yaml。
+#
+# ⚠️ 所有标注【生产请替换】的占位值必须在上线前改掉，或用环境变量覆盖：
+#   TIDECANVAS_MYSQL_HOST / TIDECANVAS_MYSQL_PASSWORD
+#   TIDECANVAS_REDIS_ADDR / TIDECANVAS_REDIS_PASSWORD
+#   TIDECANVAS_JWT_SECRET
+#   TIDECANVAS_RELAY_APIKEY
+#   TIDECANVAS_ELIANDAPAY_MD5KEY / TIDECANVAS_ELIANDAPAY_MERCHANTID
+# 密钥类建议一律走环境变量，不要提交到仓库。
+
+server:
+  mode: release # 关闭 gin 调试日志
+
+mysql:
+  host: prod-mysql.internal # 【生产请替换】生产库地址
+  port: 3306
+  user: root
+  password: "" # 【生产请替换】务必通过 TIDECANVAS_MYSQL_PASSWORD 注入
+  database: canvas
+
+redis:
+  addr: prod-redis.internal:6379 # 【生产请替换】
+  password: "" # 【生产请替换】务必通过 TIDECANVAS_REDIS_PASSWORD 注入
+  db: 0
+
+jwt:
+  secret: "" # 【生产请替换】务必通过 TIDECANVAS_JWT_SECRET 注入；留空/默认值时服务会拒绝启动
+
+cors:
+  allowOrigins:
+    - https://www.yourdomain.com # 【生产请替换】前端正式域名
+
+# 支付回调必须是网关可访问的公网 https 地址；returnUrl 指向前端正式域名。
+eliandapay:
+  notifyUrl: https://api.yourdomain.com/api/billing/notify # 【生产请替换】
+  returnUrl: https://www.yourdomain.com/billing?pay_status=success # 【生产请替换】
+
+storage:
+  # 存储配置首启会种子进 sys_config，之后以后台「配置管理」为准；
+  # OSS accessKey/secretKey 继续走环境变量或后台录入，不写在这里。
+  publicURL: https://api.yourdomain.com/static # 【生产请替换】仅 local 存储模式使用

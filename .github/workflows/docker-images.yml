@@ -1,0 +1,63 @@
+# 推送 flowingLight 分支时自动构建前后端镜像并推到 ghcr.io：
+#   ghcr.io/<owner>/tide-canvas-backend:latest  （Go API，host 网络连本机 MySQL/Redis）
+#   ghcr.io/<owner>/tide-canvas-frontend:latest （Next SSR + nginx 80/443，证书由部署侧挂载）
+# 服务器部署见 deploy/docker-compose.yml。
+name: docker-images
+
+on:
+  push:
+    branches: [flowingLight]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            context: tide-canvas-server
+            image: tide-canvas-backend
+            build-args: ""
+          - name: frontend
+            context: tide-canvas-web
+            image: tide-canvas-frontend
+            # 部署为 host 网络：SSR 直连与浏览器 /api 都落在本机 8080 的后端
+            build-args: |
+              NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8080
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          # metadata-action 会自动把镜像名转小写（vit4Ss -> vit4ss）
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}
+          tags: |
+            type=raw,value=latest
+            type=sha
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: ${{ matrix.build-args }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}

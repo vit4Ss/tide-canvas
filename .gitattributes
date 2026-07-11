@@ -1,0 +1,2 @@
+# 容器入口脚本必须 LF：Windows 提交 CRLF 会让 Linux 容器报 "no such file or directory"
+*.sh text eol=lf

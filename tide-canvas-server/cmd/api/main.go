@@ -229,7 +229,7 @@ func run() error {
 	srv := &http.Server{Addr: addr, Handler: r}
 
 	go func() {
-		logger.L().Info("server listening", zap.String("addr", addr))
+		logger.L().Info("server listening", zap.String("addr", addr), zap.String("env", cfg.Env), zap.String("mode", cfg.Server.Mode))
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.L().Error("listen", zap.Error(err))
 		}

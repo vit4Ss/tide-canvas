@@ -31,8 +31,12 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # env files (can opt-in for committing if needed)
+# 提交环境模板（不含密钥，只有 URL / 公开 client id）；.env / .env.local 等本地文件仍被忽略
 .env*
 !.env.prod.example
+!.env.example
+!.env.development
+!.env.production
 
 # Spring Boot config (use *-sample.yml as template)
 tide-canvas-server/src/main/resources/application.yml

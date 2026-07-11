@@ -66,7 +66,7 @@ func New(baseURL, apiKey string) *Client {
 	}
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" {
-		baseURL = "https://relay.tcmzhan.com"
+		baseURL = "https://flowlight.tcmzhan.com"
 	}
 	// No fixed client Timeout: each request is bounded by the per-medium context
 	// deadline (see submit), so a slow synchronous generation isn't cut off early.

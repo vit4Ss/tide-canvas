@@ -1,0 +1,36 @@
+# Tide Canvas 服务器部署（测试环境）。
+# 前提：宿主机已运行 MySQL(127.0.0.1:3306) 与 Redis(127.0.0.1:6379)。
+#
+# 使用：
+#   1. docker login ghcr.io -u <github用户名> -p <PAT(read:packages)>
+#   2. 证书放到本文件同级的 cert/ 目录：fullchain.pem + privkey.pem
+#   3. docker compose pull && docker compose up -d
+# 更新版本：重复第 3 步即可（CI 每次推 flowingLight 都会刷新 :latest）。
+
+services:
+  backend:
+    image: ghcr.io/vit4ss/tide-canvas-backend:latest
+    container_name: tidecanvas-backend
+    restart: unless-stopped
+    network_mode: host          # 直接占用宿主机 8080；通过 127.0.0.1:3306/6379 连本机 mysql/redis
+    environment:
+      TIDECANVAS_ENV: test      # 选择 configs/config.test.yaml 叠加层
+      # 密钥类不进镜像，在这里（或同级 .env 文件）注入：
+      # TIDECANVAS_LLM_APIKEY: ""
+      # TIDECANVAS_STORAGE_ACCESSKEY: ""
+      # TIDECANVAS_STORAGE_SECRETKEY: ""
+    volumes:
+      - uploads-data:/app/data/uploads   # local 存储模式的上传目录（oss 模式下备而不用）
+
+  frontend:
+    image: ghcr.io/vit4ss/tide-canvas-frontend:latest
+    container_name: tidecanvas-frontend
+    restart: unless-stopped
+    network_mode: host          # 直接占用宿主机 80/443；镜像内 nginx 反代 127.0.0.1:8080(后端) 与 127.0.0.1:3000(自身 Next)
+    volumes:
+      - ./cert:/etc/nginx/cert:ro   # fullchain.pem + privkey.pem，缺证书 nginx 起不来
+    depends_on:
+      - backend
+
+volumes:
+  uploads-data:

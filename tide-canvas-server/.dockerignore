@@ -1,0 +1,12 @@
+# 构建上下文瘦身：只需要源码 + go.mod/go.sum + configs
+*.exe
+*.log
+data/
+uploads/
+.env
+.env.*
+docker-compose.yml
+README.md
+.gitignore
+.idea/
+.vscode/

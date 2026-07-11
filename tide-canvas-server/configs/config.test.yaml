@@ -1,0 +1,16 @@
+# 测试环境叠加配置（TIDECANVAS_ENV=test，缺省即为 test）。
+#
+# 加载顺序：config.yaml（基础） -> config.test.yaml（本文件覆盖） -> 环境变量。
+# 基础文件 config.yaml 里的连接串/密钥本身就是测试环境的值，所以这里只需要
+# 声明与测试环境强相关的差异项；将来测试环境要改什么，加到这里即可，
+# 不要直接改 config.yaml（那是两个环境共享的底座）。
+
+server:
+  mode: debug # 测试环境保留 gin 调试日志
+
+storage:
+  # 测试环境专用桶（与生产隔离）。注意：存储配置首启已种子进 sys_config，
+  # 之后以后台「配置管理」/数据库值为准——改这里的同时要同步更新测试库
+  # sys_config 里的 storage.ossBucket / storage.ossAccelerateDomain。
+  bucket: flowlinght-test
+  accelerateDomain: flowlinght-test.oss-accelerate.aliyuncs.com

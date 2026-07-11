@@ -25,8 +25,10 @@ internal/
     cache/                 # go-redis v9 client + key builders
     storage/               # StorageStrategy + LocalStorage (+ presign stub)
     logger/                # zap global logger
-configs/config.yaml        # local defaults (env overrides via TIDECANVAS_*)
-.env.example               # env override template
+configs/config.yaml        # shared base config (= test defaults)
+configs/config.test.yaml   # test overlay (TIDECANVAS_ENV=test, default)
+configs/config.prod.yaml   # prod overlay (TIDECANVAS_ENV=prod)
+.env.example               # env override template (TIDECANVAS_* wins over yaml)
 ```
 
 Each domain package under `internal/handler/<domain>` owns its own
@@ -73,14 +75,33 @@ Health check: `GET /healthz`.
 
 ## Configuration
 
-`configs/config.yaml` holds defaults. Override any value with an environment
-variable using the `TIDECANVAS_` prefix and underscores for dots, e.g.:
+配置分三层加载，后者覆盖前者：
+
+1. `configs/config.yaml` —— 共享底座（取值即测试环境默认）
+2. `configs/config.<env>.yaml` —— 环境叠加，由 `TIDECANVAS_ENV` 选择：
+   - `test`（缺省）→ `config.test.yaml`
+   - `prod` → `config.prod.yaml`（生产占位值上线前必须替换）
+3. 环境变量 —— `TIDECANVAS_` 前缀，点换下划线，永远优先
+
+```bash
+# 测试环境（缺省，等价于不设 TIDECANVAS_ENV）
+go run ./cmd/api
+
+# 生产环境（jwt.secret 缺失或为默认值时会拒绝启动）
+TIDECANVAS_ENV=prod TIDECANVAS_JWT_SECRET=... go run ./cmd/api
+```
 
 | Setting            | Env var                          |
 |--------------------|----------------------------------|
+| （环境选择）        | `TIDECANVAS_ENV`                 |
 | `server.port`      | `TIDECANVAS_SERVER_PORT`         |
 | `mysql.password`   | `TIDECANVAS_MYSQL_PASSWORD`      |
 | `redis.addr`       | `TIDECANVAS_REDIS_ADDR`          |
 | `jwt.secret`       | `TIDECANVAS_JWT_SECRET`          |
 
-> Always override `jwt.secret` outside local development.
+> 生产环境密钥（JWT/MySQL/Redis/支付/Relay）一律走环境变量注入，
+> 不要写进 `config.prod.yaml` 提交到仓库。
+>
+> 前端对应机制：`tide-canvas-web/.env.development`（`next dev` 加载）与
+> `.env.production`（`next build` 加载）；Docker 构建时 `--build-arg
+> NEXT_PUBLIC_API_BASE_URL=...` 优先级最高。
