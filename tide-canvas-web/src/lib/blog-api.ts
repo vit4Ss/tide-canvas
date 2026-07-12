@@ -3,6 +3,7 @@ import type { PageData } from "@/types/api";
 import type {
   AdminBlogPostVO,
   BlogAdminQuery,
+  BlogBatchStatusDTO,
   BlogChannelCreateDTO,
   BlogChannelUpdateDTO,
   BlogChannelVO,
@@ -40,6 +41,10 @@ export const adminBlogApi = {
       "/api/admin/blog/posts/ai-polish",
       body,
     ),
+
+  /** 全部上架/全部下架（按来源/频道筛选范围） */
+  batchStatus: (body: BlogBatchStatusDTO) =>
+    http.post<{ updated: number }>("/api/admin/blog/posts/batch-status", body),
 
   channels: () => http.get<BlogChannelVO[]>("/api/admin/blog/channels"),
 

@@ -56,6 +56,8 @@ func RegisterBlog(g *gin.RouterGroup, d *app.Deps) {
 	posts.POST("", h.createPost)
 	// 编辑弹窗「AI 优化」：去广告引流/理顺文案，结果回填表单（见 g2_blog_ai.go）。
 	posts.POST("/ai-polish", h.aiPolish)
+	// 批量上架/下架：作用于与列表一致的筛选范围（来源/频道）。
+	posts.POST("/batch-status", h.batchStatus)
 	posts.PUT("/:id", h.updatePost)
 	posts.DELETE("/:id", h.removePost)
 
@@ -164,12 +166,17 @@ func (h *blogHandler) listPosts(c *gin.Context) {
 	q.normalize()
 
 	tx := h.db.Model(&model.BlogPost{})
-	// Type 复用为来源筛选（self|telegram），Status 为 0|1。
+	// Type 复用为来源筛选（self|telegram），Status 为 0|1；channelId 精确到频道。
 	if q.Type != "" {
 		tx = tx.Where("source = ?", q.Type)
 	}
 	if q.Status != "" {
 		tx = tx.Where("status = ?", q.Status)
+	}
+	if cid := strings.TrimSpace(c.Query("channelId")); cid != "" {
+		if id, err := idgen.Parse(cid); err == nil && id != 0 {
+			tx = tx.Where("channel_id = ?", id)
+		}
 	}
 	if q.Keyword != "" {
 		kw := "%" + q.Keyword + "%"
@@ -216,6 +223,46 @@ func (h *blogHandler) listPosts(c *gin.Context) {
 		}
 	}
 	response.Page(c, vos, total, q.PageNum, q.PageSize)
+}
+
+// BlogBatchStatusDTO applies a status to every post in the filter scope.
+type BlogBatchStatusDTO struct {
+	Status    *int   `json:"status" binding:"required,oneof=0 1"`
+	Source    string `json:"source" binding:"omitempty,oneof=self telegram"`
+	ChannelID string `json:"channelId" binding:"omitempty,max=32"`
+}
+
+// batchStatus handles POST /admin/blog/posts/batch-status：全部上架/全部下架。
+// 上架时给还没有发布时间的行补 published_at（telegram 文章带原消息时间，
+// COALESCE 不覆盖）。
+func (h *blogHandler) batchStatus(c *gin.Context) {
+	var dto BlogBatchStatusDTO
+	if err := c.ShouldBindJSON(&dto); err != nil {
+		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	tx := h.db.Model(&model.BlogPost{}).Where("status <> ?", *dto.Status)
+	if dto.Source != "" {
+		tx = tx.Where("source = ?", dto.Source)
+	}
+	if cid := strings.TrimSpace(dto.ChannelID); cid != "" {
+		id, err := idgen.Parse(cid)
+		if err != nil || id == 0 {
+			response.Fail(c, response.CodeBadRequest, "invalid channelId")
+			return
+		}
+		tx = tx.Where("channel_id = ?", id)
+	}
+	fields := map[string]any{"status": *dto.Status}
+	if *dto.Status == model.BlogStatusPublished {
+		fields["published_at"] = gorm.Expr("COALESCE(published_at, NOW())")
+	}
+	res := tx.Updates(fields)
+	if res.Error != nil {
+		response.Fail(c, response.CodeServerError, "failed to update posts")
+		return
+	}
+	response.OK(c, gin.H{"updated": res.RowsAffected})
 }
 
 func (h *blogHandler) createPost(c *gin.Context) {
@@ -851,14 +898,16 @@ func buildTgPost(ch *model.BlogChannel, m *tgfeed.Message, media *hostedMedia, c
 	}
 	msgTime := m.Time
 	return &model.BlogPost{
-		Source:      model.BlogSourceTelegram,
-		ChannelID:   ch.ID,
-		TgMsgID:     m.ID,
-		Title:       truncateRunes(title, 120),
-		Summary:     truncateRunes(summary, 160),
-		CoverURL:    cover,
-		Content:     content,
-		Status:      model.BlogStatusPublished,
+		Source:    model.BlogSourceTelegram,
+		ChannelID: ch.ID,
+		TgMsgID:   m.ID,
+		Title:     truncateRunes(title, 120),
+		Summary:   truncateRunes(summary, 160),
+		CoverURL:  cover,
+		Content:   content,
+		// 导入为草稿：先审核/AI 优化，再上架（用户定稿）。发布时间仍取原
+		// 消息时间，上架后前台按频道原时序排列。
+		Status:      model.BlogStatusDraft,
 		PublishedAt: &msgTime,
 	}
 }

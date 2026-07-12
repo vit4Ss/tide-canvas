@@ -41,13 +41,21 @@ export interface AdminBlogPostVO {
   updateTime: string;
 }
 
-/** 后台文章列表筛选（Type 复用为来源 self|telegram） */
+/** 后台文章列表筛选（Type 复用为来源 self|telegram；channelId 精确到频道） */
 export interface BlogAdminQuery {
   pageNum?: number;
   pageSize?: number;
   keyword?: string;
   type?: BlogSource | "";
   status?: "" | "0" | "1";
+  channelId?: string;
+}
+
+/** 批量上架/下架（作用于来源/频道筛选范围） */
+export interface BlogBatchStatusDTO {
+  status: number; // 0 草稿, 1 已发布
+  source?: BlogSource;
+  channelId?: string;
 }
 
 /** 新建自建文章 */

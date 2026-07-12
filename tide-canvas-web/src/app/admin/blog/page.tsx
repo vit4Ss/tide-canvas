@@ -36,7 +36,12 @@ import {
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminBlogApi } from "@/lib/blog-api";
 import { uploadFileSmart } from "@/lib/api";
-import type { AdminBlogPostVO, BlogAdminQuery, BlogChannelVO } from "@/types/blog";
+import type {
+  AdminBlogPostVO,
+  BlogAdminQuery,
+  BlogBatchStatusDTO,
+  BlogChannelVO,
+} from "@/types/blog";
 import { confirmDialog } from "@/components/shared/confirm";
 import { toast } from "@/components/shared/toast";
 
@@ -49,14 +54,25 @@ function fmtTime(s: string): string {
   return d.toLocaleString("zh-CN", { hour12: false });
 }
 
-const FILTERS = ["全部", "自建", "频道同步", "草稿箱"] as const;
-type Filter = (typeof FILTERS)[number];
+/** 来源筛选值："" 全部 / "self" 自建 / 其余为频道 id */
+type SrcFilter = string;
+const STATUS_CHIPS = ["全部", "已发布", "草稿"] as const;
+type StatusChip = (typeof STATUS_CHIPS)[number];
+const statusForChip: Record<StatusChip, "" | "1" | "0"> = {
+  全部: "",
+  已发布: "1",
+  草稿: "0",
+};
 
-function queryForFilter(filter: Filter, page: number): BlogAdminQuery {
+function buildQuery(page: number, src: SrcFilter, status: StatusChip): BlogAdminQuery {
   const q: BlogAdminQuery = { pageNum: page, pageSize: PAGE_SIZE };
-  if (filter === "自建") q.type = "self";
-  if (filter === "频道同步") q.type = "telegram";
-  if (filter === "草稿箱") q.status = "0";
+  if (src === "self") q.type = "self";
+  else if (src) {
+    q.type = "telegram";
+    q.channelId = src;
+  }
+  const s = statusForChip[status];
+  if (s) q.status = s;
   return q;
 }
 
@@ -82,9 +98,11 @@ export default function AdminBlogPage() {
   const [posts, setPosts] = useState<AdminBlogPostVO[]>([]);
   const [total, setTotal] = useState(0);
   const [pageNum, setPageNum] = useState(1);
-  const [filter, setFilter] = useState<Filter>("全部");
+  const [srcFilter, setSrcFilter] = useState<SrcFilter>("");
+  const [statusChip, setStatusChip] = useState<StatusChip>("全部");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [batching, setBatching] = useState(false);
 
   // 编辑/新建弹窗
   const [modalOpen, setModalOpen] = useState(false);
@@ -107,12 +125,17 @@ export default function AdminBlogPage() {
   const [chEditTitle, setChEditTitle] = useState("");
 
   const loadPosts = useCallback(
-    async (page = 1, f: Filter = filter, opts?: { silent?: boolean }) => {
+    async (
+      page = 1,
+      src: SrcFilter = srcFilter,
+      status: StatusChip = statusChip,
+      opts?: { silent?: boolean },
+    ) => {
       if (!opts?.silent) setLoading(true);
       setError(null);
       try {
         await ensureSession();
-        const res = await adminBlogApi.posts(queryForFilter(f, page));
+        const res = await adminBlogApi.posts(buildQuery(page, src, status));
         if (res.success && res.data) {
           setPosts(res.data.records ?? []);
           setTotal(res.data.total ?? 0);
@@ -124,7 +147,7 @@ export default function AdminBlogPage() {
         if (!opts?.silent) setLoading(false);
       }
     },
-    [ensureSession, filter],
+    [ensureSession, srcFilter, statusChip],
   );
 
   const loadChannels = useCallback(
@@ -192,7 +215,7 @@ export default function AdminBlogPage() {
       if (res.success) {
         toast.success(editingId ? "文章已保存" : "文章已创建");
         setModalOpen(false);
-        loadPosts(editingId ? pageNum : 1, filter, { silent: true });
+        loadPosts(editingId ? pageNum : 1, srcFilter, statusChip, { silent: true });
         return true;
       }
       toast.error(res.message || "保存失败");
@@ -207,7 +230,7 @@ export default function AdminBlogPage() {
     const res = await adminBlogApi.updatePost(p.id, { status: next });
     if (res.success) {
       toast.success(next === 1 ? "已发布" : "已下架为草稿");
-      loadPosts(pageNum, filter, { silent: true });
+      loadPosts(pageNum, srcFilter, statusChip, { silent: true });
     } else {
       toast.error(res.message || "操作失败");
     }
@@ -225,10 +248,52 @@ export default function AdminBlogPage() {
     const res = await adminBlogApi.removePost(p.id);
     if (res.success) {
       toast.success("文章已删除");
-      loadPosts(pageNum, filter, { silent: true });
+      loadPosts(pageNum, srcFilter, statusChip, { silent: true });
       loadChannels({ silent: true });
     } else {
       toast.error(res.message || "删除失败");
+    }
+  };
+
+  /** 当前来源筛选的可读名（确认框文案用） */
+  const srcLabel = () => {
+    if (srcFilter === "self") return "自建";
+    if (srcFilter) {
+      const ch = channels.find((c) => c.id === srcFilter);
+      return `频道「${ch?.title || ch?.username || srcFilter}」`;
+    }
+    return "全部来源";
+  };
+
+  const batchStatus = async (status: 0 | 1) => {
+    const verb = status === 1 ? "上架" : "下架";
+    if (
+      !(await confirmDialog({
+        title: `全部${verb}`,
+        message: `确认把「${srcLabel()}」下的所有${status === 1 ? "草稿" : "已发布"}文章全部${verb}？${
+          status === 1 ? "前台将立即可见。" : "前台将立即隐藏。"
+        }`,
+        confirmText: `全部${verb}`,
+      }))
+    )
+      return;
+    setBatching(true);
+    try {
+      const body: BlogBatchStatusDTO = { status };
+      if (srcFilter === "self") body.source = "self";
+      else if (srcFilter) {
+        body.source = "telegram";
+        body.channelId = srcFilter;
+      }
+      const res = await adminBlogApi.batchStatus(body);
+      if (res.success && res.data) {
+        toast.success(`已${verb} ${res.data.updated} 篇`);
+        loadPosts(1);
+      } else {
+        toast.error(res.message || "操作失败");
+      }
+    } finally {
+      setBatching(false);
     }
   };
 
@@ -343,12 +408,12 @@ export default function AdminBlogPage() {
       const res = await adminBlogApi.syncChannel(ch.id);
       if (res.success && res.data) {
         const r = res.data;
-        const parts = [`新增 ${r.created} 篇`];
+        const parts = [`导入 ${r.created} 篇草稿（审核后可批量上架）`];
         if (r.skippedEmpty > 0) parts.push(`跳过无文字消息 ${r.skippedEmpty} 条`);
         if (r.imageFailed > 0) parts.push(`${r.imageFailed} 张图转存失败`);
         toast.success(`「${r.channelTitle || ch.username}」同步完成：${parts.join("，")}`);
         loadChannels({ silent: true });
-        loadPosts(1, filter, { silent: true });
+        loadPosts(1, srcFilter, statusChip, { silent: true });
       } else {
         toast.error(res.message || "同步失败");
       }
@@ -398,14 +463,55 @@ export default function AdminBlogPage() {
         sub={`共 ${total} 篇 · 前台 /blog 实时同源`}
         tools={
           <>
+            <select
+              aria-label="来源筛选"
+              value={srcFilter}
+              onChange={(e) => {
+                setSrcFilter(e.target.value);
+                void loadPosts(1, e.target.value);
+              }}
+              style={{
+                padding: "7px 10px",
+                borderRadius: 8,
+                border: "1px solid rgba(15,23,42,.12)",
+                background: "#fff",
+                fontSize: 13,
+                color: "inherit",
+              }}
+            >
+              <option value="">全部来源</option>
+              <option value="self">自建</option>
+              {channels.map((ch) => (
+                <option key={ch.id} value={ch.id}>
+                  频道 · {ch.title || `@${ch.username}`}
+                </option>
+              ))}
+            </select>
             <FilterChips
-              options={[...FILTERS]}
-              value={filter}
+              label="状态筛选"
+              options={[...STATUS_CHIPS]}
+              value={statusChip}
               onChange={(v) => {
-                setFilter(v as Filter);
-                void loadPosts(1, v as Filter);
+                setStatusChip(v as StatusChip);
+                void loadPosts(1, srcFilter, v as StatusChip);
               }}
             />
+            <button
+              type="button"
+              className="adm-btn ghost"
+              disabled={batching}
+              onClick={() => void batchStatus(1)}
+            >
+              全部上架
+            </button>
+            <button
+              type="button"
+              className="adm-btn ghost"
+              disabled={batching}
+              onClick={() => void batchStatus(0)}
+            >
+              全部下架
+            </button>
             <button type="button" className="adm-btn" onClick={openCreate}>
               <Plus aria-hidden size={15} />
               新建文章
@@ -532,7 +638,7 @@ export default function AdminBlogPage() {
       {/* ── Telegram 频道源 ──────────────────────────────────── */}
       <Panel
         title="Telegram 频道源"
-        sub="抓取公开频道网页预览（t.me/s），只导入含文字的消息，图片自动转存本站存储；重复同步不会产生重复文章"
+        sub="抓取公开频道网页预览（t.me/s），只导入含文字的消息，图片/视频自动转存本站存储；同步导入为草稿，审核或 AI 优化后上架；重复同步不会产生重复文章"
         tools={
           <button type="button" className="adm-btn" onClick={() => setChModalOpen(true)}>
             <Plus aria-hidden size={15} />
