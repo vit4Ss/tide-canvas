@@ -173,17 +173,17 @@ export default function PricingPage() {
           <div className="bill-toggle reveal" id="bill">
             <button
               type="button"
-              className={cycle === "yr" ? "on" : ""}
-              onClick={() => setCycle("yr")}
-            >
-              年付 {savePct > 0 && <span className="save">省 {savePct}%</span>}
-            </button>
-            <button
-              type="button"
               className={cycle === "mo" ? "on" : ""}
               onClick={() => setCycle("mo")}
             >
               月付
+            </button>
+            <button
+              type="button"
+              className={cycle === "yr" ? "on" : ""}
+              onClick={() => setCycle("yr")}
+            >
+              年付 {savePct > 0 && <span className="save">省 {savePct}%</span>}
             </button>
           </div>
         </div>
