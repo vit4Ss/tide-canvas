@@ -30,6 +30,9 @@ type Phase = "verifying" | "granted" | "pending" | "none" | "error";
 
 const MAX_TRIES = 6;
 const RETRY_MS = 1500;
+// 整体核对预算：后端查网关单次最多 15s，6 轮最坏要 1 分多钟——观感即“卡死”。
+// 超过预算直接转入「支付确认中」，用户可点「重新核对」，异步回调也会兜底。
+const DEADLINE_MS = 20_000;
 
 /** Pending order id: ?orderId= wins, else the PayModal-persisted key. */
 function resolveOrderId(): string {
@@ -69,6 +72,7 @@ export default function BillingReturnPage() {
         setPhase("none");
         return;
       }
+      const startedAt = Date.now();
       for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
         const res = await orderApi.verify(orderId);
         if (res.success && res.data?.paid) {
@@ -82,6 +86,10 @@ export default function BillingReturnPage() {
         if (!res.success && (res.code === 401 || res.code === 403)) {
           setPhase("error");
           return;
+        }
+        // 超过整体预算即止损：转入可手动重试的「支付确认中」。
+        if (Date.now() - startedAt > DEADLINE_MS) {
+          break;
         }
         // Not paid yet (settlement lag) — wait and retry.
         if (attempt < MAX_TRIES - 1) {
@@ -105,15 +113,17 @@ export default function BillingReturnPage() {
 
   return (
     <div className="block page-top">
-      <div className="wrap" style={{ maxWidth: 620 }}>
+      <div className="wrap" style={{ maxWidth: 560 }}>
+        {/* imini 语言：深色面板 + 细边框，零彩色（旧版误用浅色主题的
+            --card/--accent 变量，纯黑主题下渲染成白底紫图标）。 */}
         <div
           style={{
-            margin: "40px auto",
-            padding: "40px 32px",
+            margin: "40px auto 72px",
+            padding: "48px 36px",
             textAlign: "center",
             borderRadius: 16,
-            border: "1px solid var(--line, rgba(255,255,255,.1))",
-            background: "var(--card, rgba(255,255,255,.03))",
+            border: "1px solid var(--border, rgba(255,255,255,.1))",
+            background: "var(--surface, #131316)",
           }}
         >
           <Result phase={phase} onRetry={runVerify} />
@@ -124,12 +134,15 @@ export default function BillingReturnPage() {
 }
 
 function Result({ phase, onRetry }: { phase: Phase; onRetry: () => void }) {
+  // 零彩色：成功用主文字白，其余用弱化灰；spinner 是功能性进度指示。
   const icon = {
-    verifying: <Loader2 className="h-10 w-10 animate-spin" style={{ color: "var(--accent, #6b5bff)" }} />,
-    granted: <CheckCircle2 className="h-10 w-10" style={{ color: "var(--accent-3, #22c55e)" }} />,
-    pending: <Clock className="h-10 w-10" style={{ color: "var(--text-dim, #f59e0b)" }} />,
-    none: <Clock className="h-10 w-10" style={{ color: "var(--text-dim, #99a)" }} />,
-    error: <XCircle className="h-10 w-10" style={{ color: "var(--text-dim, #ef4444)" }} />,
+    verifying: (
+      <Loader2 size={34} className="animate-spin" style={{ color: "var(--text-dim, #aaa)" }} />
+    ),
+    granted: <CheckCircle2 size={34} style={{ color: "var(--text, #fff)" }} />,
+    pending: <Clock size={34} style={{ color: "var(--text-dim, #aaa)" }} />,
+    none: <Clock size={34} style={{ color: "var(--text-faint, #888)" }} />,
+    error: <XCircle size={34} style={{ color: "var(--text-dim, #aaa)" }} />,
   }[phase];
 
   const title = {
