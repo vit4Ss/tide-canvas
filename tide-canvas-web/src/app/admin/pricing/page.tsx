@@ -189,7 +189,7 @@ export default function AdminPricingPage() {
     }
     const yearly = Number(planForm.yearly.trim());
     if (planForm.yearly.trim() === "" || !Number.isFinite(yearly) || yearly < 0) {
-      toast.error("请填写有效的年价");
+      toast.error("请填写有效的年付月价（折后每月单价，非一年总价）");
       return false;
     }
     const dto: AdminPlanUpsertDTO = {
@@ -462,7 +462,7 @@ export default function AdminPricingPage() {
                 ),
               },
               { header: "月价", className: "mono", cell: (r) => yuan(r.monthly) },
-              { header: "年价", className: "mono", cell: (r) => yuan(r.yearly) },
+              { header: "年付月价", className: "mono", cell: (r) => yuan(r.yearly) },
               { header: "每月积分", className: "mono", cell: (r) => num(r.monthlyPoints) },
               {
                 header: "权益",
@@ -760,10 +760,15 @@ export default function AdminPricingPage() {
                 onChange={(e) => setPlanForm((f) => ({ ...f, monthly: e.target.value }))}
               />
             </Field>
-            <Field label="年价 (¥)" required span={2}>
+            <Field
+              label="年付月价 (¥/月)"
+              required
+              span={2}
+              hint="年付档的折后每月单价，不是一年总价；年付下单收款 = 此价 × 12"
+            >
               <input
                 type="number"
-                placeholder="如：468"
+                placeholder="如：39"
                 value={planForm.yearly}
                 onChange={(e) => setPlanForm((f) => ({ ...f, yearly: e.target.value }))}
               />
