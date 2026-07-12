@@ -73,19 +73,23 @@ var blogSyncMu sync.Mutex
 
 // AdminBlogPostVO is the admin view of a blog_post row（含状态与来源明细）.
 type AdminBlogPostVO struct {
-	ID          idgen.ID `json:"id"`
-	Source      string   `json:"source"` // self | telegram
-	ChannelID   idgen.ID `json:"channelId"`
-	TgMsgID     int64    `json:"tgMsgId"`
-	Title       string   `json:"title"`
-	Summary     string   `json:"summary"`
-	CoverURL    string   `json:"coverUrl"`
-	Content     string   `json:"content"`
-	Status      int      `json:"status"` // 0 草稿, 1 已发布
-	ViewCount   int64    `json:"viewCount"`
-	PublishedAt string   `json:"publishedAt"`
-	CreateTime  string   `json:"createTime"`
-	UpdateTime  string   `json:"updateTime"`
+	ID        idgen.ID `json:"id"`
+	Source    string   `json:"source"` // self | telegram
+	ChannelID idgen.ID `json:"channelId"`
+	// ChannelTitle/ChannelUsername 标注 telegram 文章的具体来源频道
+	//（频道已删除时仍按历史行回填，不留空白）。
+	ChannelTitle    string `json:"channelTitle"`
+	ChannelUsername string `json:"channelUsername"`
+	TgMsgID         int64  `json:"tgMsgId"`
+	Title           string `json:"title"`
+	Summary         string `json:"summary"`
+	CoverURL        string `json:"coverUrl"`
+	Content         string `json:"content"`
+	Status          int    `json:"status"` // 0 草稿, 1 已发布
+	ViewCount       int64  `json:"viewCount"`
+	PublishedAt     string `json:"publishedAt"`
+	CreateTime      string `json:"createTime"`
+	UpdateTime      string `json:"updateTime"`
 }
 
 // BlogPostCreateDTO creates a self-written post.
@@ -174,9 +178,33 @@ func (h *blogHandler) listPosts(c *gin.Context) {
 		response.Fail(c, response.CodeServerError, "failed to list posts")
 		return
 	}
+	// 批量回填来源频道名（Unscoped：频道删除后其历史文章仍标注原频道）。
+	chIDs := make([]idgen.ID, 0, len(rows))
+	for i := range rows {
+		if rows[i].ChannelID != 0 {
+			chIDs = append(chIDs, rows[i].ChannelID)
+		}
+	}
+	chName := map[idgen.ID]model.BlogChannel{}
+	if len(chIDs) > 0 {
+		var chs []model.BlogChannel
+		if err := h.db.Unscoped().Where("id IN ?", chIDs).Find(&chs).Error; err == nil {
+			for _, ch := range chs {
+				chName[ch.ID] = ch
+			}
+		}
+	}
+
 	vos := make([]AdminBlogPostVO, len(rows))
 	for i := range rows {
 		vos[i] = toAdminBlogPostVO(&rows[i])
+		if ch, ok := chName[rows[i].ChannelID]; ok {
+			vos[i].ChannelTitle = ch.Title
+			vos[i].ChannelUsername = ch.Username
+			if vos[i].ChannelTitle == "" {
+				vos[i].ChannelTitle = "@" + ch.Username
+			}
+		}
 	}
 	response.Page(c, vos, total, q.PageNum, q.PageSize)
 }

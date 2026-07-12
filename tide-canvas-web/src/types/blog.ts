@@ -26,6 +26,9 @@ export interface AdminBlogPostVO {
   id: string;
   source: BlogSource;
   channelId: string;
+  /** telegram 文章的来源频道（频道已删除时仍回填历史名称） */
+  channelTitle: string;
+  channelUsername: string;
   tgMsgId: number;
   title: string;
   summary: string;

@@ -452,7 +452,9 @@ export default function AdminBlogPage() {
                 header: "来源",
                 cell: (r) =>
                   r.source === "telegram" ? (
-                    <StatusPill tone="blue">频道同步</StatusPill>
+                    <span title={r.channelUsername ? `@${r.channelUsername}` : undefined}>
+                      <StatusPill tone="blue">{r.channelTitle || "频道同步"}</StatusPill>
+                    </span>
                   ) : (
                     <StatusPill tone="gray">自建</StatusPill>
                   ),
