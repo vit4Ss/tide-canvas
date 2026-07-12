@@ -673,6 +673,103 @@ func (h *blogHandler) rehostAll(ctx context.Context, username string, m *tgfeed.
 	return out
 }
 
+// ---- 推广尾注剥离 ----
+// 频道消息末尾惯常挂自推：一条分割线 + 若干机器人/引流链接行（用户明确
+// 不要）。两层规则，保守裁剪：
+//  1. 末尾若存在分割线，且其后每个非空行都含 Markdown 链接（≤6 行）——
+//     从分割线起整段裁掉；
+//  2. 结尾的「纯链接行」（整行除链接外只剩表情/点号等符号，无文字）——
+//     逐行裁掉。
+// 正文中带前缀的引用链接（如「来源：[@xx](…)」）不满足任一规则，不受影响。
+
+var (
+	promoSepRe  = regexp.MustCompile(`^(?:>\s*)?[─━—–=_*\-]{6,}$`)
+	promoLinkRe = regexp.MustCompile(`\[[^\]]*\]\([^)]*\)`)
+	wordCharRe  = regexp.MustCompile(`[\p{L}\p{N}]`)
+)
+
+// isPureLinkLine reports whether a line is only links + decorative symbols.
+func isPureLinkLine(line string) bool {
+	if !strings.Contains(line, "](") {
+		return false
+	}
+	rest := promoLinkRe.ReplaceAllString(line, "")
+	return !wordCharRe.MatchString(rest)
+}
+
+// stripPromoMarkdown applies both rules to the message markdown, returning the
+// cleaned text and how many non-blank tail lines were removed.
+func stripPromoMarkdown(md string) (string, int) {
+	lines := strings.Split(md, "\n")
+	end := len(lines)
+	removed := 0
+
+	// 规则 1：分割线 + 全链接尾段。
+	for i := end - 1; i >= 0 && i >= end-8; i-- {
+		if !promoSepRe.MatchString(strings.TrimSpace(lines[i])) {
+			continue
+		}
+		ok, tailNonBlank := true, 0
+		for _, l := range lines[i+1 : end] {
+			t := strings.TrimSpace(l)
+			if t == "" {
+				continue
+			}
+			tailNonBlank++
+			if !strings.Contains(t, "](") {
+				ok = false
+				break
+			}
+		}
+		if ok && tailNonBlank > 0 && tailNonBlank <= 6 {
+			removed += tailNonBlank
+			end = i
+		}
+		break
+	}
+	// 规则 2：结尾纯链接行。
+	for end > 0 {
+		t := strings.TrimSpace(lines[end-1])
+		if t == "" {
+			end--
+			continue
+		}
+		if isPureLinkLine(t) {
+			removed++
+			end--
+			continue
+		}
+		break
+	}
+	return strings.TrimRight(strings.Join(lines[:end], "\n"), "\n \t"), removed
+}
+
+// stripPromoPlain removes the same number of trailing non-blank lines from the
+// plain rendering（行结构与 markdown 一致），保持标题/摘要口径同步。
+func stripPromoPlain(plain string, removed int) string {
+	if removed <= 0 {
+		return plain
+	}
+	lines := strings.Split(plain, "\n")
+	end := len(lines)
+	for end > 0 && removed > 0 {
+		if strings.TrimSpace(lines[end-1]) != "" {
+			removed--
+		}
+		end--
+	}
+	// 顺带吃掉紧邻的分割线与空行。
+	for end > 0 {
+		t := strings.TrimSpace(lines[end-1])
+		if t == "" || promoSepRe.MatchString(t) {
+			end--
+			continue
+		}
+		break
+	}
+	return strings.TrimRight(strings.Join(lines[:end], "\n"), "\n \t")
+}
+
 // filterBlogComments keeps the substantive replies（完整 prompt 这类），过滤
 // 掉普通闲聊：保留含代码块的，或纯文本 ≥ 40 字的；最多 3 条。
 func filterBlogComments(cs []tgfeed.Comment) []tgfeed.Comment {
@@ -682,6 +779,10 @@ func filterBlogComments(cs []tgfeed.Comment) []tgfeed.Comment {
 			break
 		}
 		if strings.Contains(c.Markdown, "```") || len([]rune(c.Plain)) >= 40 {
+			// 评论同样剥推广尾注。
+			if md, removed := stripPromoMarkdown(c.Markdown); removed > 0 && strings.TrimSpace(md) != "" {
+				c.Markdown = md
+			}
 			out = append(out, c)
 		}
 	}
@@ -693,7 +794,13 @@ func filterBlogComments(cs []tgfeed.Comment) []tgfeed.Comment {
 // 顶部封面，与频道里“媒体在上、文字在下”的观感一致）；评论区的实质性回复
 // （完整 prompt 等）以分割线区块附在正文末尾。
 func buildTgPost(ch *model.BlogChannel, m *tgfeed.Message, media *hostedMedia, comments []tgfeed.Comment) *model.BlogPost {
-	title, rest := splitTitle(m.Plain)
+	// 剥掉频道自推尾注；整条都是推广时保守放弃裁剪（标题不能为空）。
+	md, removed := stripPromoMarkdown(m.Markdown)
+	plain := stripPromoPlain(m.Plain, removed)
+	if strings.TrimSpace(plain) == "" {
+		md, plain = m.Markdown, m.Plain
+	}
+	title, rest := splitTitle(plain)
 
 	var b strings.Builder
 	for _, v := range media.videos {
@@ -703,7 +810,7 @@ func buildTgPost(ch *model.BlogChannel, m *tgfeed.Message, media *hostedMedia, c
 			b.WriteString("![video](" + v.URL + ")\n\n")
 		}
 	}
-	b.WriteString(m.Markdown)
+	b.WriteString(md)
 	// 除封面外的图片附在正文末尾（封面在详情页顶部单独展示，不重复）。
 	extra := media.photos
 	if len(media.videos) == 0 && len(extra) > 0 {
