@@ -25,4 +25,8 @@ storage:
   # 之后以后台「配置管理」/数据库值为准——改这里的同时要同步更新测试库
   # sys_config 里的 storage.ossBucket / storage.ossAccelerateDomain。
   bucket: flowlinght-test
-  accelerateDomain: flowlinght-test.oss-accelerate.aliyuncs.com
+  # 传输加速域名留空：flowlinght-test 桶未开启传输加速，加速端点返回 400，
+  # 上游取参考图失败会表现为「图片编辑需要至少一张参考图」（2026-07-13 实测）。
+  # 在阿里云控制台为该桶开启传输加速后，填 flowlinght-test.oss-accelerate.aliyuncs.com
+  # 并同步更新测试库 sys_config。
+  accelerateDomain: ""
