@@ -63,6 +63,10 @@ export default function PricingPage() {
       router.push("/studio");
       return;
     }
+    // 已是该档（或更高档）会员：不再进入收银台（服务端下单同样拦截）。
+    if (user && p.vipLevel > 0 && (user.vipLevel ?? 0) >= p.vipLevel) {
+      return;
+    }
     if (!requireLogin()) return;
     const yearly = cycle === "yr" && p.yearly > 0;
     setPayIntent(
@@ -242,6 +246,11 @@ export default function PricingPage() {
             const orig = Math.round(Number(p.monthly) * 12 * 100) / 100;
             const showOrig =
               !free && cycle === "yr" && Number(p.yearly) > 0 && orig > Number(p.yearly);
+            // 会员态：等级相同 =「当前套餐」，已持有更高档 =「已包含」，均不可再购。
+            const myLevel = user?.vipLevel ?? 0;
+            const isCurrent = p.vipLevel > 0 && myLevel === p.vipLevel;
+            const isCovered = p.vipLevel > 0 && myLevel > p.vipLevel;
+            const owned = isCurrent || isCovered;
             return (
               <div
                 key={p.id}
@@ -269,10 +278,12 @@ export default function PricingPage() {
                 </div>
                 <button
                   type="button"
-                  className={`plan-cta ${p.featured ? "solid" : "ghost"}`}
+                  className={`plan-cta ${p.featured && !owned ? "solid" : "ghost"}`}
+                  disabled={owned}
+                  style={owned ? { opacity: 0.55, cursor: "default" } : undefined}
                   onClick={() => onPlanCta(p)}
                 >
-                  {p.cta}
+                  {isCurrent ? "当前套餐" : isCovered ? "已包含" : p.cta}
                 </button>
                 <ul className="plan-feats">
                   {p.items.map((it) => (

@@ -31,6 +31,14 @@ func (r *repo) listPlans() ([]model.Plan, error) {
 	return rows, nil
 }
 
+// userVipLevel returns the user's current membership level（重复购买拦截用）.
+func (r *repo) userVipLevel(userID idgen.ID) (int, error) {
+	var u struct{ VipLevel int }
+	err := r.db.Model(&model.User{}).Select("vip_level").
+		Where("id = ?", userID).Take(&u).Error
+	return u.VipLevel, err
+}
+
 // findPlan loads a plan by primary key.
 func (r *repo) findPlan(id idgen.ID) (*model.Plan, error) {
 	var p model.Plan

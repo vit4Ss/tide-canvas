@@ -80,6 +80,8 @@ func (h *handler) createOrder(c *gin.Context) {
 			response.Fail(c, response.CodeBadRequest, "invalid order request")
 		case errors.Is(err, errChannelDisabled):
 			response.Fail(c, response.CodeBadRequest, "该支付方式暂未开放")
+		case errors.Is(err, errAlreadyOnPlan):
+			response.Fail(c, response.CodeBadRequest, "你已是该套餐会员，无需重复购买")
 		case errors.Is(err, ErrNotFound):
 			response.Fail(c, response.CodeNotFound, "plan or package not found")
 		case errors.Is(err, errPayUnavailable):

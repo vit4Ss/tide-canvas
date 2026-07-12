@@ -12,6 +12,8 @@ export interface PlanVO {
   featured: boolean;
   cta: string;
   items: string[];
+  /** 购买授予的会员等级（0=不授予）；与 user.vipLevel 对比渲染「当前套餐」态 */
+  vipLevel: number;
 }
 
 /** 方案对比表的一行：能力名 + 每套餐一格（键=套餐 id；"✓" 支持 / "—" 不支持 / 文字）。 */

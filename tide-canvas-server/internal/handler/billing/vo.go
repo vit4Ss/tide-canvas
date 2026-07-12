@@ -30,6 +30,9 @@ type PlanVO struct {
 	Featured      bool     `json:"featured"`
 	Cta           string   `json:"cta"`
 	Items         []string `json:"items"`
+	// VipLevel 是购买该套餐授予的会员等级（0=不授予）。前台用它与
+	// user.vipLevel 对比渲染「当前套餐」态，服务端下单同样拦截。
+	VipLevel int `json:"vipLevel"`
 }
 
 // OrderVO is the order view returned by create/list/detail.
@@ -93,6 +96,7 @@ func toPlanVO(p *model.Plan) PlanVO {
 		Featured:      f.Featured,
 		Cta:           f.Cta,
 		Items:         items,
+		VipLevel:      vipForPlan(p),
 	}
 }
 

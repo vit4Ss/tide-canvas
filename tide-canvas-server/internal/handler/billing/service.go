@@ -29,6 +29,7 @@ var (
 	errBadRequest      = errors.New("billing: invalid request")
 	errPayUnavailable  = errors.New("billing: payment gateway unavailable")
 	errChannelDisabled = errors.New("billing: pay channel not enabled")
+	errAlreadyOnPlan   = errors.New("billing: already on this plan")
 )
 
 // payTTL is how long a pending order stays payable. After the deadline the
@@ -221,6 +222,14 @@ func (s *service) createOrder(userID idgen.ID, dto CreateOrderDTO) (*OrderVO, er
 		plan, err := s.repo.findPlan(planID)
 		if err != nil {
 			return nil, err
+		}
+		// 已是该档（或更高档）会员：拦掉重复购买——会员有效期尚未实现，
+		// 重复购买只会再收一次钱（用户反馈 2026-07-12）。等续费/有效期
+		// 上线后再放开同档续购。
+		if vip := vipForPlan(plan); vip > 0 {
+			if lvl, lvlErr := s.repo.userVipLevel(userID); lvlErr == nil && lvl >= vip {
+				return nil, errAlreadyOnPlan
+			}
 		}
 		cycle := dto.Cycle
 		if cycle == "" {
