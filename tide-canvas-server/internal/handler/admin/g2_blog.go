@@ -491,8 +491,51 @@ func (h *blogHandler) runSync(ctx context.Context, ch *model.BlogChannel) (*Blog
 		}
 	}
 
+	// 阶段一：并发转存图片（信号量限 6 路）。串行逐张下载曾把百条首采拖到
+	// 30s+，超过 Next 开发代理的 30s 默认超时（后端 200、浏览器 500）。
+	hosted := make([][]string, len(fresh))
+	failed := make([]int, len(fresh))
+	sem := make(chan struct{}, 6)
+	var wg sync.WaitGroup
+	for i := range fresh {
+		if strings.TrimSpace(fresh[i].Plain) == "" {
+			continue // 无文字消息不会落库，图也不用转存
+		}
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			hosted[i], failed[i] = h.rehostAll(ctx, ch.Username, &fresh[i])
+		}(i)
+	}
+	wg.Wait()
+
+	// 阶段二：按消息 id 升序落库，水位单调推进。去重用一次批查、插入分批——
+	// 逐条 COUNT+INSERT 在远程库上每条都吃一个网络往返，百条首采即 10s+。
+	candidateIDs := make([]int64, 0, len(fresh))
+	for i := range fresh {
+		if strings.TrimSpace(fresh[i].Plain) != "" {
+			candidateIDs = append(candidateIDs, fresh[i].ID)
+		}
+	}
+	dup := map[int64]bool{}
+	if len(candidateIDs) > 0 {
+		var existing []int64
+		if err := h.db.Model(&model.BlogPost{}).
+			Where("channel_id = ? AND tg_msg_id IN ?", ch.ID, candidateIDs).
+			Pluck("tg_msg_id", &existing).Error; err != nil {
+			return nil, fmt.Errorf("dedup lookup: %w", err)
+		}
+		for _, id := range existing {
+			dup[id] = true
+		}
+	}
+
 	maxID := ch.LastMsgID
-	for _, m := range fresh {
+	posts := make([]*model.BlogPost, 0, len(fresh))
+	for i := range fresh {
+		m := &fresh[i]
 		if m.ID > maxID {
 			maxID = m.ID
 		}
@@ -500,19 +543,18 @@ func (h *blogHandler) runSync(ctx context.Context, ch *model.BlogChannel) (*Blog
 			out.SkippedEmpty++
 			continue
 		}
-		// 幂等：同一条消息只导一次（水位回退/并发窗口的兜底）。
-		var dup int64
-		h.db.Model(&model.BlogPost{}).
-			Where("channel_id = ? AND tg_msg_id = ?", ch.ID, m.ID).Count(&dup)
-		if dup > 0 {
+		out.ImageFailed += failed[i]
+		if dup[m.ID] {
 			continue
 		}
-		post := h.buildTgPost(ctx, ch, &m, out)
-		if err := h.db.Create(post).Error; err != nil {
-			return nil, fmt.Errorf("save post (msg %d): %w", m.ID, err)
-		}
-		out.Created++
+		posts = append(posts, buildTgPost(ch, m, hosted[i]))
 	}
+	if len(posts) > 0 {
+		if err := h.db.CreateInBatches(posts, 20).Error; err != nil {
+			return nil, fmt.Errorf("save posts: %w", err)
+		}
+	}
+	out.Created = len(posts)
 
 	// 推进水位并回填频道备注名（管理员没填时用频道自己的名字）。
 	now := time.Now()
@@ -530,24 +572,28 @@ func (h *blogHandler) runSync(ctx context.Context, ch *model.BlogChannel) (*Blog
 	return out, nil
 }
 
-// buildTgPost converts one telegram message into a published blog_post，图片
-// 转存失败时保留原 CDN 链接（计入 ImageFailed，文章照常导入）。
-func (h *blogHandler) buildTgPost(ctx context.Context, ch *model.BlogChannel, m *tgfeed.Message, out *BlogSyncResultVO) *model.BlogPost {
+// rehostAll re-hosts one message's images (capped)，失败的保留原 CDN 链接并
+// 计数返回。
+func (h *blogHandler) rehostAll(ctx context.Context, username string, m *tgfeed.Message) (hosted []string, failed int) {
 	photos := m.Photos
 	if len(photos) > blogSyncMaxImages {
 		photos = photos[:blogSyncMaxImages]
 	}
-	hosted := make([]string, 0, len(photos))
+	hosted = make([]string, 0, len(photos))
 	for i, u := range photos {
-		saved, err := h.rehostImage(ctx, ch.Username, m.ID, i, u)
+		saved, err := h.rehostImage(ctx, username, m.ID, i, u)
 		if err != nil {
-			out.ImageFailed++
+			failed++
 			hosted = append(hosted, u)
 			continue
 		}
 		hosted = append(hosted, saved)
 	}
+	return hosted, failed
+}
 
+// buildTgPost converts one telegram message into a published blog_post.
+func buildTgPost(ch *model.BlogChannel, m *tgfeed.Message, hosted []string) *model.BlogPost {
 	title, rest := splitTitle(m.Plain)
 	content := m.Markdown
 	// 除封面外的图片附在正文末尾（封面在详情页顶部单独展示，不重复）。

@@ -20,6 +20,9 @@ const nextConfig: NextConfig = {
     // rewrites() 代理上传时 Next 会缓冲请求体，默认上限仅 10MB，超出会被截断
     // 导致后端 multipart 解析 EOFException。提到与后端 max-request-size(100MB) 对齐。
     proxyClientMaxBodySize: "100mb",
+    // 代理默认 30s 超时：博客 TG 频道首次同步（抓预览+图片转存）可能超过它，
+    // 后端明明 200 浏览器却收到代理的 500。对齐边缘 nginx 的长超时口径。
+    proxyTimeout: 300_000,
   },
   async rewrites() {
     return [
