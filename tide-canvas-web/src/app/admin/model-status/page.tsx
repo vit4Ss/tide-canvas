@@ -3,17 +3,18 @@
 /* ============================================================================
    /admin/model-status — 模型状态.
 
-   已上架模型的可用性看板（参考 ccgo 服务状态页的信息结构，视觉走后台
-   苹果白语言）。数据源 GET /api/admin/models/status：internal/prober 定时
-   探测的 model_probe 样本聚合——text 模型为真实流式补全（首字/完成时延），
-   图片/视频/音频为上游目录可达性。
+   已上架模型的可用性看板（视觉走后台苹果白语言）。数据源
+   GET /api/admin/models/status：统一模型调用日志 model_call_log 里的
+   真实用户调用聚合——不主动探测（2026-07-13 用户定稿：探测消耗上游额度，
+   且反映不了真实生成链路）。
 
-   - 默认「仅启用」；「全部」额外展示已下架但仍有探测历史的模型。
-   - 卡片：状态点 / 时延块 / 24h·7天可用率条 / 最近 60 次检测条 / 下次倒计时。
-   - 30s 自动刷新，倒计时本地每秒递减。
+   - 默认「仅启用」；「全部」额外展示已下架但 7 天内仍有调用的模型。
+   - 卡片：状态点 / 最近调用块 / 24h·7天成功率条（含调用次数）/ 最近 60 次
+     调用条；无调用的模型显示「暂无调用」。
+   - 30s 自动刷新。
    ============================================================================ */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { AdminAlert, AdminEmptyState, FilterBar, Panel, TableSkeleton } from "@/components/admin";
 import { adminSwatch } from "@/mock/admin";
@@ -65,9 +66,6 @@ export default function AdminModelStatusPage() {
   const [scopeIdx, setScopeIdx] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // 倒计时基准：本次数据抓取的时刻；tick 驱动每秒重算展示值。
-  const [fetchedAt, setFetchedAt] = useState(0);
-  const [, setTick] = useState(0);
 
   const reqIdRef = useRef(0);
   const load = useCallback(
@@ -81,7 +79,6 @@ export default function AdminModelStatusPage() {
         if (id !== reqIdRef.current) return;
         if (res.success && res.data) {
           setRows(res.data);
-          setFetchedAt(Date.now());
         } else {
           setError(res.message || "加载失败");
         }
@@ -100,27 +97,13 @@ export default function AdminModelStatusPage() {
     return () => cancelAnimationFrame(frame);
   }, [load]);
 
-  // 静默轮询 + 每秒 tick（倒计时展示）。
+  // 静默轮询。
   useEffect(() => {
     const poll = window.setInterval(() => void load(true), REFRESH_MS);
-    const tick = window.setInterval(() => setTick((t) => t + 1), 1000);
-    return () => {
-      window.clearInterval(poll);
-      window.clearInterval(tick);
-    };
+    return () => window.clearInterval(poll);
   }, [load]);
 
-  const elapsedSec = fetchedAt ? Math.floor((Date.now() - fetchedAt) / 1000) : 0;
-
-  const interval = useMemo(
-    () => rows.find((r) => r.intervalSec > 0)?.intervalSec ?? 0,
-    [rows],
-  );
-  const sub = loading
-    ? "已上架模型的可用性与时延探测"
-    : interval > 0
-      ? `每 ${interval}s 自动探测 · 文本走真实补全，媒体走上游目录可达`
-      : "探测已停用（配置管理 models.probeIntervalSec 设为正数即恢复）";
+  const sub = "基于用户真实调用统计（不主动探测）· 成功率与耗时来自模型调用日志";
 
   return (
     <div className="adm-page mstat-page">
@@ -161,12 +144,12 @@ export default function AdminModelStatusPage() {
         ) : rows.length === 0 ? (
           <AdminEmptyState
             title="暂无可展示的模型"
-            description="上架模型后探测器会自动开始检测；首轮数据最多等待一个探测周期。"
+            description="上架模型后，用户每次真实调用都会计入这里的成功率与耗时统计。"
           />
         ) : (
           <div className="mstat-grid">
             {rows.map((m) => (
-              <StatusCard key={m.id} m={m} elapsedSec={elapsedSec} />
+              <StatusCard key={m.id} m={m} />
             ))}
           </div>
         )}
@@ -271,16 +254,15 @@ export default function AdminModelStatusPage() {
   );
 }
 
-function StatusCard({ m, elapsedSec }: { m: AdminModelStatusVO; elapsedSec: number }) {
+function StatusCard({ m }: { m: AdminModelStatusVO }) {
   const cur = m.current;
   const state: "ok" | "bad" | "na" = cur ? (cur.ok ? "ok" : "bad") : "na";
-  const stateLabel = cur ? (cur.ok ? "可用" : "异常") : "待检测";
-  const nextIn = m.intervalSec > 0 ? Math.max(m.nextInSec - elapsedSec, 0) : -1;
+  const stateLabel = cur ? (cur.ok ? "可用" : "异常") : "暂无调用";
 
   const r = resolveModelSwatch({ name: m.name, modelKey: m.modelKey, icon: m.icon || undefined });
   const fallback = !!r.glyph;
 
-  // 检测条：不足 60 格时左侧补空位，右端恒为最新。
+  // 状态条：不足 60 格时左侧补空位，右端恒为最新。
   const pad = Math.max(STRIP_LEN - m.recent.length, 0);
 
   return (
@@ -299,53 +281,44 @@ function StatusCard({ m, elapsedSec }: { m: AdminModelStatusVO; elapsedSec: numb
         </span>
       </div>
 
-      {m.kind === "chat" ? (
-        <div className="mstat-tiles">
-          <div className="mstat-tile">
-            <div className="k">对话完成</div>
-            <div className="v">
-              {fmtMs(cur?.totalMs ?? 0)}
-              <em>ms</em>
-            </div>
-            <div className="s">完整检测</div>
+      <div className="mstat-tiles">
+        <div className="mstat-tile">
+          <div className="k">当前状态</div>
+          <div className="v" style={{ color: state === "ok" ? "var(--ok)" : state === "bad" ? "var(--danger)" : undefined }}>
+            {stateLabel}
           </div>
-          <div className="mstat-tile">
-            <div className="k">首字响应</div>
-            <div className="v">
-              {fmtMs(cur?.firstMs ?? 0)}
-              <em>ms</em>
-            </div>
-            <div className="s">流式探测</div>
+          <div className="s">按最近一次真实调用</div>
+        </div>
+        <div className="mstat-tile" title={cur ? fullTime(cur.time) : undefined}>
+          <div className="k">最近调用</div>
+          <div className="v">{cur ? shortTime(cur.time) : "—"}</div>
+          <div className="s">
+            {cur ? `${cur.scene} · 耗时 ${fmtMs(cur.totalMs)} ms` : "等待用户调用"}
           </div>
         </div>
-      ) : (
-        <div className="mstat-tiles">
-          <div className="mstat-tile">
-            <div className="k">当前状态</div>
-            <div className="v" style={{ color: state === "ok" ? "var(--ok)" : state === "bad" ? "var(--danger)" : undefined }}>
-              {stateLabel}
-            </div>
-            <div className="s">调度健康</div>
-          </div>
-          <div className="mstat-tile" title={cur ? fullTime(cur.time) : undefined}>
-            <div className="k">最近检测</div>
-            <div className="v">{cur ? shortTime(cur.time) : "—"}</div>
-            <div className="s">目录可达 {fmtMs(cur?.totalMs ?? 0)} ms</div>
-          </div>
-        </div>
-      )}
+      </div>
 
       <div className="mstat-avail">
         <div>
-          <div className="k">24h 可用</div>
-          <div className="v">{fmtPct(m.avail24h)}</div>
+          <div className="k">24h 成功率</div>
+          <div className="v">
+            {fmtPct(m.avail24h)}
+            <em style={{ marginLeft: 6, color: "var(--text-faint)", fontSize: 11, fontStyle: "normal", fontWeight: 400 }}>
+              {m.calls24h > 0 ? `${m.calls24h} 次` : ""}
+            </em>
+          </div>
           <div className="mstat-bar">
             <i style={{ width: `${m.avail24h ?? 0}%` }} />
           </div>
         </div>
         <div>
-          <div className="k">7 天可用</div>
-          <div className="v">{fmtPct(m.avail7d)}</div>
+          <div className="k">7 天成功率</div>
+          <div className="v">
+            {fmtPct(m.avail7d)}
+            <em style={{ marginLeft: 6, color: "var(--text-faint)", fontSize: 11, fontStyle: "normal", fontWeight: 400 }}>
+              {m.calls7d > 0 ? `${m.calls7d} 次` : ""}
+            </em>
+          </div>
           <div className="mstat-bar">
             <i style={{ width: `${m.avail7d ?? 0}%` }} />
           </div>
@@ -354,20 +327,24 @@ function StatusCard({ m, elapsedSec }: { m: AdminModelStatusVO; elapsedSec: numb
 
       <div>
         <div className="mstat-strip-head">
-          <b>最近 {STRIP_LEN} 次检测</b>
-          <span>{nextIn >= 0 ? `下次 ${nextIn}s` : "探测已停用"}</span>
+          <b>最近 {STRIP_LEN} 次调用</b>
+          <span>{m.calls7d > 0 ? `7 天共 ${m.calls7d} 次` : "暂无调用"}</span>
         </div>
         <div
           className="mstat-strip"
           style={{ marginTop: 6 }}
           role="img"
-          aria-label={`最近 ${m.recent.length} 次检测结果`}
+          aria-label={`最近 ${m.recent.length} 次调用结果`}
         >
           {Array.from({ length: pad }, (_, i) => (
             <i key={`p${i}`} aria-hidden />
           ))}
           {m.recent.map((p, i) => (
-            <i key={i} className={p.ok ? "ok" : "bad"} title={`${fullTime(p.time)} · ${p.ok ? "可用" : "异常"}${p.totalMs ? ` · ${p.totalMs}ms` : ""}`} />
+            <i
+              key={i}
+              className={p.ok ? "ok" : "bad"}
+              title={`${fullTime(p.time)} · ${p.scene} · ${p.ok ? "成功" : "失败"}${p.totalMs ? ` · ${p.totalMs}ms` : ""}`}
+            />
           ))}
         </div>
       </div>

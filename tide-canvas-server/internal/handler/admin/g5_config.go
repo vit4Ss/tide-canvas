@@ -61,7 +61,6 @@ var baselineConfigKeys = map[string]struct{}{
 	model.ConfigKeyChatContextTokenLimit: {},
 	model.ConfigKeyChatCompressAt:        {},
 	model.ConfigKeyMarketTypeOrder:       {},
-	model.ConfigKeyProbeInterval:         {},
 	"points.checkinDaily":                {},
 	"points.inviteReward":                {},
 	"points.signupBonus":                 {},

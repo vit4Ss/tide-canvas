@@ -1,8 +1,10 @@
 package admin
 
-// g3_model_status.go — 后台「模型状态」页的聚合接口。数据源是 internal/prober
-// 定时写入的 model_probe 表：text 模型为真实流式补全探测（首字/完成时延），
-// 其余媒体类型为上游目录可达性探测。本文件只读聚合，不发探测请求。
+// g3_model_status.go — 后台「模型状态」页的聚合接口。数据源是统一模型调用
+// 日志 model_call_log（文本 chat/optimize/blog-polish + 媒体 image/video 的
+// 真实用户调用，internal/pkg/eventlog 落库）：不再主动探测（用户定稿
+// 2026-07-13，internal/prober 已整链下线——text 探测消耗上游额度，媒体目录
+// 探测反映不了真实生成链路）。本文件只读聚合，不发任何上游请求。
 
 import (
 	"encoding/json"
@@ -16,11 +18,11 @@ import (
 	"tidecanvas/internal/pkg/response"
 )
 
-// AdminModelProbeVO is one probe sample in the status view.
-type AdminModelProbeVO struct {
+// AdminModelCallVO is one real user call in the status view.
+type AdminModelCallVO struct {
 	OK      bool   `json:"ok"`
 	TotalMs int64  `json:"totalMs"`
-	FirstMs int64  `json:"firstMs"`
+	Scene   string `json:"scene"` // chat|optimize|blog-polish|image|video…
 	Error   string `json:"error"`
 	Time    string `json:"time"`
 }
@@ -33,28 +35,27 @@ type AdminModelStatusVO struct {
 	ModelKey string   `json:"modelKey"`
 	Icon     string   `json:"icon"` // config.icon（可空，前端回退品牌图标）
 	Enabled  bool     `json:"enabled"`
-	// Kind: chat（流式补全探测，展示首字/完成时延）/ catalog（目录可达探测）。
-	Kind    string             `json:"kind"`
-	Current *AdminModelProbeVO `json:"current"` // 最近一次探测；nil = 尚无数据
-	// Avail24h / Avail7d 为可用率百分比（0–100）；nil = 窗口内无样本。
+	Current  *AdminModelCallVO `json:"current"` // 最近一次真实调用；nil = 暂无调用
+	// Avail24h / Avail7d 为成功率百分比（0–100）；nil = 窗口内无调用。
 	Avail24h *float64 `json:"avail24h"`
 	Avail7d  *float64 `json:"avail7d"`
-	// Recent are the latest samples oldest→newest（≤60，驱动检测条）。
-	Recent      []AdminModelProbeVO `json:"recent"`
-	IntervalSec int                 `json:"intervalSec"`
-	NextInSec   int                 `json:"nextInSec"`
+	// Calls24h / Calls7d 为窗口内的真实调用次数。
+	Calls24h int64 `json:"calls24h"`
+	Calls7d  int64 `json:"calls7d"`
+	// Recent are the latest calls oldest→newest（≤60，驱动状态条）。
+	Recent []AdminModelCallVO `json:"recent"`
 }
 
-// probeAgg is one GROUP BY row of the availability windows.
-type probeAgg struct {
-	ModelID idgen.ID
-	Total   int64
-	Okays   int64
+// callAgg is one GROUP BY row of the success-rate windows.
+type callAgg struct {
+	Model string
+	Total int64
+	Okays int64
 }
 
 // modelStatus handles GET /admin/models/status?scope=enabled|all.
-// scope=enabled（默认）只出已上架模型；scope=all 额外带上已下架但仍有探测
-// 历史的模型（历史按保留期滚动，约 8 天）。
+// scope=enabled（默认）只出已上架模型；scope=all 额外带上已下架但 7 天内仍有
+// 真实调用记录的模型。
 func (h *modelsHandler) modelStatus(c *gin.Context) {
 	scope := strings.TrimSpace(c.Query("scope"))
 	if scope != "all" {
@@ -68,58 +69,45 @@ func (h *modelsHandler) modelStatus(c *gin.Context) {
 	}
 
 	now := time.Now()
-	agg24 := h.probeWindow(now.Add(-24 * time.Hour))
-	agg7d := h.probeWindow(now.Add(-7 * 24 * time.Hour))
-
-	interval := model.ProbeIntervalSec(h.db)
+	agg24 := h.callWindow(now.Add(-24 * time.Hour))
+	agg7d := h.callWindow(now.Add(-7 * 24 * time.Hour))
 
 	vos := make([]AdminModelStatusVO, 0, len(models))
 	for i := range models {
 		m := &models[i]
 		enabled := m.Status == 1
-		_, hasHistory := agg7d[m.ID]
+		_, hasHistory := agg7d[m.ModelKey]
 		if !enabled && (scope == "enabled" || !hasHistory) {
 			continue
 		}
 
-		kind := "catalog"
-		if m.Type == "text" {
-			kind = "chat"
-		}
 		vo := AdminModelStatusVO{
-			ID:          m.ID,
-			Name:        m.Name,
-			Type:        m.Type,
-			ModelKey:    m.ModelKey,
-			Icon:        configIcon(m.Config),
-			Enabled:     enabled,
-			Kind:        kind,
-			Avail24h:    availPct(agg24[m.ID]),
-			Avail7d:     availPct(agg7d[m.ID]),
-			Recent:      []AdminModelProbeVO{},
-			IntervalSec: interval,
+			ID:       m.ID,
+			Name:     m.Name,
+			Type:     m.Type,
+			ModelKey: m.ModelKey,
+			Icon:     configIcon(m.Config),
+			Enabled:  enabled,
+			Avail24h: callPct(agg24[m.ModelKey]),
+			Avail7d:  callPct(agg7d[m.ModelKey]),
+			Recent:   []AdminModelCallVO{},
+		}
+		if a := agg24[m.ModelKey]; a != nil {
+			vo.Calls24h = a.Total
+		}
+		if a := agg7d[m.ModelKey]; a != nil {
+			vo.Calls7d = a.Total
 		}
 
-		var rows []model.ModelProbe
-		if err := h.db.Where("model_id = ?", m.ID).
+		var rows []model.ModelCallLog
+		if err := h.db.Select("success, duration_ms, scene, error_msg, create_time").
+			Where("model = ?", m.ModelKey).
 			Order("create_time DESC").Limit(60).Find(&rows).Error; err == nil && len(rows) > 0 {
-			latest := rows[0]
-			cur := toProbeVO(&latest)
+			cur := toCallVO(&rows[0])
 			vo.Current = &cur
-			// 下次检测倒计时按探测器节奏推算（interval=0 时探测已停用）。
-			if interval > 0 {
-				next := interval - int(now.Sub(latest.CreateTime).Seconds())
-				if next < 0 {
-					next = 0
-				}
-				if next > interval {
-					next = interval
-				}
-				vo.NextInSec = next
-			}
 			// 倒序取回，正序展示（旧→新）。
 			for j := len(rows) - 1; j >= 0; j-- {
-				vo.Recent = append(vo.Recent, toProbeVO(&rows[j]))
+				vo.Recent = append(vo.Recent, toCallVO(&rows[j]))
 			}
 		}
 		vos = append(vos, vo)
@@ -127,24 +115,24 @@ func (h *modelsHandler) modelStatus(c *gin.Context) {
 	response.OK(c, vos)
 }
 
-// probeWindow aggregates ok/total per model since the cut-off.
-func (h *modelsHandler) probeWindow(since time.Time) map[idgen.ID]*probeAgg {
-	var rows []probeAgg
-	out := map[idgen.ID]*probeAgg{}
-	if err := h.db.Model(&model.ModelProbe{}).
-		Select("model_id, COUNT(*) AS total, SUM(ok) AS okays").
-		Where("create_time > ?", since).
-		Group("model_id").Scan(&rows).Error; err != nil {
+// callWindow aggregates ok/total per model key since the cut-off.
+func (h *modelsHandler) callWindow(since time.Time) map[string]*callAgg {
+	var rows []callAgg
+	out := map[string]*callAgg{}
+	if err := h.db.Model(&model.ModelCallLog{}).
+		Select("model, COUNT(*) AS total, SUM(success) AS okays").
+		Where("create_time > ? AND model <> ''", since).
+		Group("model").Scan(&rows).Error; err != nil {
 		return out
 	}
 	for i := range rows {
-		out[rows[i].ModelID] = &rows[i]
+		out[rows[i].Model] = &rows[i]
 	}
 	return out
 }
 
-// availPct converts an aggregate to a 0–100 percentage (nil when no samples).
-func availPct(a *probeAgg) *float64 {
+// callPct converts an aggregate to a 0–100 percentage (nil when no calls).
+func callPct(a *callAgg) *float64 {
 	if a == nil || a.Total == 0 {
 		return nil
 	}
@@ -152,13 +140,13 @@ func availPct(a *probeAgg) *float64 {
 	return &pct
 }
 
-func toProbeVO(p *model.ModelProbe) AdminModelProbeVO {
-	return AdminModelProbeVO{
-		OK:      p.OK,
-		TotalMs: p.TotalMs,
-		FirstMs: p.FirstMs,
-		Error:   p.ErrorMsg,
-		Time:    g3FmtTime(p.CreateTime),
+func toCallVO(l *model.ModelCallLog) AdminModelCallVO {
+	return AdminModelCallVO{
+		OK:      l.Success == 1,
+		TotalMs: l.DurationMs,
+		Scene:   l.Scene,
+		Error:   l.ErrorMsg,
+		Time:    g3FmtTime(l.CreateTime),
 	}
 }
 

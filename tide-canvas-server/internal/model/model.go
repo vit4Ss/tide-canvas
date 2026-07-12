@@ -69,8 +69,6 @@ func Models() []any {
 		&StyleUsage{},
 		// Billing / growth.（积分规则 point_rule 已整链下线 2026-07-12：无业务消费方）
 		&PayChannel{},
-		// 模型可用性探测样本（后台「模型状态」页）。
-		&ModelProbe{},
 		// System / platform.
 		&SysLog{},
 		&SysConfig{},
@@ -99,6 +97,18 @@ func AutoMigrate(db *gorm.DB) error {
 		}
 	}
 	if err := db.AutoMigrate(Models()...); err != nil {
+		return err
+	}
+	// 模型主动探测已整链下线（2026-07-13 用户定稿，模型状态改为按真实调用
+	// 统计）：清掉旧库的探测样本表与探测间隔配置行，避免后台配置管理里
+	// 残留一个不再控制任何东西的键。均幂等。
+	if db.Migrator().HasTable("model_probe") {
+		if err := db.Migrator().DropTable("model_probe"); err != nil {
+			return err
+		}
+	}
+	if err := db.Where("config_key = ?", "models.probeIntervalSec").
+		Delete(&SysConfig{}).Error; err != nil {
 		return err
 	}
 	// Force audience/channels/variables/scope to varchar. They were originally

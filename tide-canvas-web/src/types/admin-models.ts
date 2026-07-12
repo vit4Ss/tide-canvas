@@ -150,17 +150,19 @@ export interface AdminModelStatusDTO {
   enabled?: boolean;
 }
 
-/** One probe sample in the 模型状态 view (AdminModelProbeVO). */
-export interface AdminModelProbeVO {
+/** One real user call in the 模型状态 view (AdminModelCallVO). */
+export interface AdminModelCallVO {
   ok: boolean;
   totalMs: number;
-  /** first-token latency (chat probes; 0 otherwise) */
-  firstMs: number;
+  /** 调用场景：chat | optimize | blog-polish | image | video… */
+  scene: string;
   error: string;
   time: string;
 }
 
-/** One model card on the 模型状态 page (AdminModelStatusVO). */
+/** One model card on the 模型状态 page (AdminModelStatusVO)。
+    不主动探测（2026-07-13 用户定稿）：全部指标由 model_call_log 里的
+    真实用户调用聚合而来。 */
 export interface AdminModelStatusVO {
   id: string;
   name: string;
@@ -168,16 +170,15 @@ export interface AdminModelStatusVO {
   modelKey: string;
   icon: string;
   enabled: boolean;
-  /** chat = 流式补全探测（首字/完成时延）；catalog = 上游目录可达探测 */
-  kind: "chat" | "catalog";
-  current: AdminModelProbeVO | null;
-  /** 可用率百分比 0–100；null = 窗口内无样本 */
+  current: AdminModelCallVO | null;
+  /** 成功率百分比 0–100；null = 窗口内无调用 */
   avail24h: number | null;
   avail7d: number | null;
-  /** 旧→新，≤60，驱动检测条 */
-  recent: AdminModelProbeVO[];
-  intervalSec: number;
-  nextInSec: number;
+  /** 窗口内真实调用次数 */
+  calls24h: number;
+  calls7d: number;
+  /** 旧→新，≤60，驱动状态条 */
+  recent: AdminModelCallVO[];
 }
 
 /** Read-only generation-registry view of an ai_provider (供应商 dropdown). */

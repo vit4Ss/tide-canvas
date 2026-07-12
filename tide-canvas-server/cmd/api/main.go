@@ -33,7 +33,6 @@ import (
 	"tidecanvas/internal/pkg/response"
 	"tidecanvas/internal/pkg/storage"
 	"tidecanvas/internal/pkg/token"
-	"tidecanvas/internal/prober"
 
 	"tidecanvas/internal/handler/admin"
 	"tidecanvas/internal/handler/ai"
@@ -160,11 +159,8 @@ func run() error {
 		logger.L().Info("ai: reconciled stale tasks", zap.Int64("count", n))
 	}
 
-	// 模型可用性探测器（后台「模型状态」页数据源）：定时对已上架模型发起
-	// 最小探测并落 model_probe；relay 未配置时自行退出。随进程关停。
-	probeCtx, probeStop := context.WithCancel(context.Background())
-	defer probeStop()
-	go prober.Run(probeCtx, deps)
+	// 模型主动探测已整链下线（2026-07-13 用户定稿）：后台「模型状态」页改为
+	// 聚合 model_call_log 里的真实用户调用，不再定时消耗上游额度。
 
 	// 4. HTTP engine.
 	switch strings.ToLower(cfg.Server.Mode) {

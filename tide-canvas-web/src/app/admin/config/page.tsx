@@ -92,7 +92,6 @@ const BASELINE_KEYS = new Set([
   "llm.contextTokenLimit",
   "llm.compressAtTokens",
   "market.typeOrder",
-  "models.probeIntervalSec",
   "points.checkinDaily",
   "points.inviteReward",
   "points.signupBonus",

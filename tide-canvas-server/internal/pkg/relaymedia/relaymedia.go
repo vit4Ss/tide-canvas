@@ -126,11 +126,38 @@ type mediaResp struct {
 		URL     string `json:"url"`
 		B64JSON string `json:"b64_json"`
 	} `json:"data"`
-	Error *struct {
+	Error *mediaError `json:"error"`
+}
+
+// mediaError tolerates the relay's两种错误体：OpenAI 对象形
+// {"error":{"message","type","code"}} 与部分 4xx 返回的纯字符串形
+// {"error":"..."}——严格结构曾让 400 的真实原因被解析错误吞掉
+//（用户实测 2026-07-13）。code 兼容数字与字符串。
+type mediaError struct {
+	Message string `json:"message"`
+	Type    string `json:"type"`
+	Code    string `json:"code"`
+}
+
+func (e *mediaError) UnmarshalJSON(data []byte) error {
+	var s string
+	if json.Unmarshal(data, &s) == nil {
+		e.Message = s
+		return nil
+	}
+	var a struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
-		Code    string `json:"code"`
-	} `json:"error"`
+		Code    any    `json:"code"`
+	}
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	e.Message, e.Type = a.Message, a.Type
+	if a.Code != nil {
+		e.Code = fmt.Sprint(a.Code)
+	}
+	return nil
 }
 
 // GenerateImage performs a text-to-image generation (POST /v1/images/generations).
@@ -207,6 +234,11 @@ func (c *Client) submit(ctx context.Context, path string, body map[string]any, d
 
 	var mr mediaResp
 	if jsonErr := json.Unmarshal(respBody, &mr); jsonErr != nil {
+		// 非 2xx 的解析失败：把上游原文透出来（截断），而不是一条 Go json
+		// 错误——那会把真实拒绝原因吞掉。
+		if status < 200 || status >= 300 {
+			return res, fmt.Errorf("relaymedia: HTTP %d: %s", status, snippet(respBody))
+		}
 		return res, fmt.Errorf("relaymedia: parse response (HTTP %d): %w", status, jsonErr)
 	}
 	res.TaskID = mr.ID
@@ -246,6 +278,9 @@ func (c *Client) poll(ctx context.Context, taskID string, base Result) (Result, 
 
 		var mr mediaResp
 		if jsonErr := json.Unmarshal(respBody, &mr); jsonErr != nil {
+			if status < 200 || status >= 300 {
+				return base, fmt.Errorf("relaymedia: poll task %s: HTTP %d: %s", taskID, status, snippet(respBody))
+			}
 			return base, fmt.Errorf("relaymedia: parse task %s (HTTP %d): %w", taskID, status, jsonErr)
 		}
 		if mr.Status != "" {
@@ -374,4 +409,13 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// snippet renders a response body for error messages (trimmed + truncated).
+func snippet(raw []byte) string {
+	s := strings.TrimSpace(string(raw))
+	if s == "" {
+		return "(empty body)"
+	}
+	return truncate(s, 300)
 }
