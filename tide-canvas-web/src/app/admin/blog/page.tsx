@@ -17,7 +17,7 @@
    ============================================================================ */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Plus, RefreshCw } from "lucide-react";
+import { Plus, RefreshCw, Sparkles } from "lucide-react";
 import {
   AdminAlert,
   AdminEmptyState,
@@ -92,6 +92,7 @@ export default function AdminBlogPage() {
   const [form, setForm] = useState<PostForm>(emptyPostForm());
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [polishing, setPolishing] = useState(false);
   const coverInputRef = useRef<HTMLInputElement>(null);
 
   // ---- 频道 ----
@@ -228,6 +229,35 @@ export default function AdminBlogPage() {
       loadChannels({ silent: true });
     } else {
       toast.error(res.message || "删除失败");
+    }
+  };
+
+  const polish = async () => {
+    if (!form.content.trim()) {
+      toast.error("正文为空，没有可优化的内容");
+      return;
+    }
+    setPolishing(true);
+    try {
+      const res = await adminBlogApi.polishPost({
+        title: form.title,
+        summary: form.summary,
+        content: form.content,
+      });
+      if (res.success && res.data) {
+        const d = res.data;
+        setForm((f) => ({
+          ...f,
+          title: d.title || f.title,
+          summary: d.summary || f.summary,
+          content: d.content || f.content,
+        }));
+        toast.success("AI 优化完成，请检查内容后保存");
+      } else {
+        toast.error(res.message || "AI 优化失败");
+      }
+    } finally {
+      setPolishing(false);
     }
   };
 
@@ -645,14 +675,32 @@ export default function AdminBlogPage() {
                 onChange={(e) => setForm((f) => ({ ...f, summary: e.target.value }))}
               />
             </Field>
-            <Field label="正文（Markdown）" span={4}>
-              <textarea
-                rows={14}
-                placeholder={"## 小标题\n\n正文支持 **加粗**、[链接](https://…) 与图片 ![](url)…"}
-                value={form.content}
-                onChange={(e) => setForm((f) => ({ ...f, content: e.target.value }))}
-                style={{ fontFamily: "var(--mono)", fontSize: 13 }}
-              />
+            <Field
+              label="正文（Markdown）"
+              span={4}
+              hint="「AI 优化」会去除广告引流、理顺文案并重写标题/摘要，prompt 代码块与图片视频原样保留；结果回填后需点保存才生效"
+            >
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <button
+                    type="button"
+                    className="adm-btn ghost"
+                    disabled={polishing}
+                    onClick={() => void polish()}
+                  >
+                    <Sparkles aria-hidden size={14} />
+                    {polishing ? "优化中…" : "AI 优化"}
+                  </button>
+                </div>
+                <textarea
+                  rows={14}
+                  placeholder={"## 小标题\n\n正文支持 **加粗**、[链接](https://…) 与图片 ![](url)…"}
+                  value={form.content}
+                  onChange={(e) => setForm((f) => ({ ...f, content: e.target.value }))}
+                  style={{ fontFamily: "var(--mono)", fontSize: 13 }}
+                  disabled={polishing}
+                />
+              </div>
             </Field>
             <Field label="状态" span={2}>
               <select

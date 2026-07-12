@@ -34,6 +34,13 @@ export const adminBlogApi = {
 
   removePost: (id: string) => http.delete<null>(`/api/admin/blog/posts/${id}`),
 
+  /** AI 优化：去广告引流/理顺文案，prompt 代码块原样保留；结果回填表单 */
+  polishPost: (body: { title: string; summary: string; content: string }) =>
+    http.post<{ title: string; summary: string; content: string }>(
+      "/api/admin/blog/posts/ai-polish",
+      body,
+    ),
+
   channels: () => http.get<BlogChannelVO[]>("/api/admin/blog/channels"),
 
   createChannel: (body: BlogChannelCreateDTO) =>

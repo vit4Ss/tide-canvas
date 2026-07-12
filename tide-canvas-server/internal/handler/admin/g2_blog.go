@@ -24,6 +24,7 @@ import (
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
+	"tidecanvas/internal/pkg/relaychat"
 	"tidecanvas/internal/pkg/response"
 	"tidecanvas/internal/pkg/storage"
 	"tidecanvas/internal/pkg/tgfeed"
@@ -44,11 +45,17 @@ import (
 //	DELETE /admin/blog/channels/:id      -> void（仅删频道行，已导入文章保留）
 //	POST   /admin/blog/channels/:id/sync -> BlogSyncResultVO
 func RegisterBlog(g *gin.RouterGroup, d *app.Deps) {
-	h := &blogHandler{db: d.DB, store: d.Storage}
+	h := &blogHandler{
+		db:    d.DB,
+		store: d.Storage,
+		relay: relaychat.New(d.Cfg.Relay.BaseURL, d.Cfg.Relay.APIKey),
+	}
 
 	posts := g.Group("/blog/posts")
 	posts.GET("", h.listPosts)
 	posts.POST("", h.createPost)
+	// 编辑弹窗「AI 优化」：去广告引流/理顺文案，结果回填表单（见 g2_blog_ai.go）。
+	posts.POST("/ai-polish", h.aiPolish)
 	posts.PUT("/:id", h.updatePost)
 	posts.DELETE("/:id", h.removePost)
 
@@ -63,6 +70,8 @@ func RegisterBlog(g *gin.RouterGroup, d *app.Deps) {
 type blogHandler struct {
 	db    *gorm.DB
 	store storage.StorageStrategy
+	// relay is the text-model client for「AI 优化」; nil when无中转站密钥。
+	relay *relaychat.Client
 }
 
 // blogSyncMu serializes channel syncs within this process：并发点两次「同步」
