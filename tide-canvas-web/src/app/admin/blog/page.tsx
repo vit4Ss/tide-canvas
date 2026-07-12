@@ -101,6 +101,9 @@ export default function AdminBlogPage() {
   const [chForm, setChForm] = useState({ username: "", title: "" });
   const [chSaving, setChSaving] = useState(false);
   const [syncingId, setSyncingId] = useState<string | null>(null);
+  // 频道编辑（仅备注名；username 是数据源标识，填错请删除重加）
+  const [chEditing, setChEditing] = useState<BlogChannelVO | null>(null);
+  const [chEditTitle, setChEditTitle] = useState("");
 
   const loadPosts = useCallback(
     async (page = 1, f: Filter = filter, opts?: { silent?: boolean }) => {
@@ -267,6 +270,31 @@ export default function AdminBlogPage() {
         return true;
       }
       toast.error(res.message || "添加失败");
+      return false;
+    } finally {
+      setChSaving(false);
+    }
+  };
+
+  const openChannelEdit = (ch: BlogChannelVO) => {
+    setChEditing(ch);
+    setChEditTitle(ch.title);
+  };
+
+  const saveChannelEdit = async () => {
+    if (!chEditing) return false;
+    setChSaving(true);
+    try {
+      const res = await adminBlogApi.updateChannel(chEditing.id, {
+        title: chEditTitle.trim(),
+      });
+      if (res.success) {
+        toast.success("频道备注已保存");
+        setChEditing(null);
+        loadChannels({ silent: true });
+        return true;
+      }
+      toast.error(res.message || "保存失败");
       return false;
     } finally {
       setChSaving(false);
@@ -544,6 +572,7 @@ export default function AdminBlogPage() {
                           if (!syncingId) void syncChannel(r);
                         },
                       },
+                      { label: "编辑", onClick: () => openChannelEdit(r) },
                       { label: "删除", onClick: () => removeChannel(r) },
                     ]}
                   />
@@ -631,6 +660,32 @@ export default function AdminBlogPage() {
                 <option value={1}>已发布</option>
                 <option value={0}>草稿</option>
               </select>
+            </Field>
+          </FormGrid>
+        </FormCard>
+      </AdminModal>
+
+      {/* ── 频道编辑弹窗 ─────────────────────────────────────── */}
+      <AdminModal
+        open={chEditing != null}
+        title="编辑频道"
+        subtitle={chEditing ? `@${chEditing.username}` : undefined}
+        footNote="频道用户名是数据源标识，不支持修改；如添加错了频道，请删除后重新添加"
+        onClose={() => setChEditing(null)}
+        onSave={saveChannelEdit}
+        saveLabel={chSaving ? "保存中…" : "保存"}
+      >
+        <FormCard title="频道信息">
+          <FormGrid>
+            <Field label="频道用户名" span={4}>
+              <input value={chEditing ? `@${chEditing.username}` : ""} disabled />
+            </Field>
+            <Field label="备注名" span={4} hint="后台展示用；留空则下次同步自动取频道名称">
+              <input
+                placeholder="如：Sora 精选"
+                value={chEditTitle}
+                onChange={(e) => setChEditTitle(e.target.value)}
+              />
             </Field>
           </FormGrid>
         </FormCard>
