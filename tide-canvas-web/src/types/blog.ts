@@ -104,4 +104,6 @@ export interface BlogSyncResultVO {
   created: number;
   skippedEmpty: number;
   imageFailed: number;
+  /** true = 媒体落在本地存储（OSS 未生效），链接仅本机可见，属坏数据信号 */
+  storageLocal: boolean;
 }

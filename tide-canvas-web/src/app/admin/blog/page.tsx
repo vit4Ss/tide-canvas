@@ -412,6 +412,11 @@ export default function AdminBlogPage() {
         if (r.skippedEmpty > 0) parts.push(`跳过无文字消息 ${r.skippedEmpty} 条`);
         if (r.imageFailed > 0) parts.push(`${r.imageFailed} 张图转存失败`);
         toast.success(`「${r.channelTitle || ch.username}」同步完成：${parts.join("，")}`);
+        if (r.storageLocal) {
+          toast.error(
+            "警告：当前后端为本地存储（OSS 未生效），本次导入的图片/视频链接只有本机能访问。请配置 OSS 密钥并重启后端后，删除本批文章重新同步。",
+          );
+        }
         loadChannels({ silent: true });
         loadPosts(1, srcFilter, statusChip, { silent: true });
       } else {

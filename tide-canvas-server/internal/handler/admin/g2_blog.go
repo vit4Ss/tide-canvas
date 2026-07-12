@@ -153,6 +153,9 @@ type BlogSyncResultVO struct {
 	Created      int    `json:"created"`      // 新导入文章数
 	SkippedEmpty int    `json:"skippedEmpty"` // 无文字消息（跳过）
 	ImageFailed  int    `json:"imageFailed"`  // 转存失败、保留原 CDN 链接的图片数
+	// StorageLocal 提示本次媒体落在了本地存储（OSS 未配置/未生效）——
+	// 链接只有本机可访问，属于坏数据信号，前端会醒目警告。
+	StorageLocal bool `json:"storageLocal"`
 }
 
 // ---- posts ----
@@ -542,6 +545,9 @@ func (h *blogHandler) syncChannel(c *gin.Context) {
 		response.Fail(c, response.CodeServerError, "同步失败："+err.Error())
 		return
 	}
+	// OSS 未生效（密钥缺失/改配置后进程未重启）时媒体 URL 是 localhost，
+	// 对外全是死链——结果里带上信号让前端醒目警告，避免脏数据静默入库。
+	res.StorageLocal = !strings.EqualFold(h.store.Type(), "oss")
 	response.OK(c, res)
 }
 
