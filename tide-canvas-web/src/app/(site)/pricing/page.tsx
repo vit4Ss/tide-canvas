@@ -56,8 +56,8 @@ export default function PricingPage() {
 
   // Plan CTA: free plans go straight to the studio; paid plans require a session
   // then open the pay-method chooser. The order is priced server-side from the
-  // chosen cycle (yearly = 12 × the discounted per-month price), so the modal
-  // mirrors exactly what will be charged.
+  // chosen cycle（年付 = 一年总价，用户口径 2026-07-12），so the modal mirrors
+  // exactly what will be charged.
   const onPlanCta = (p: PlanVO) => {
     if (p.monthly === 0) {
       router.push("/studio");
@@ -71,8 +71,8 @@ export default function PricingPage() {
             planId: p.id,
             cycle: "yearly",
             name: `${p.name}（年付）`,
-            amount: Math.round(p.yearly * 12 * 100) / 100,
-            amountNote: `¥${p.yearly}/月 × 12 个月`,
+            amount: Math.round(p.yearly * 100) / 100,
+            amountNote: `折合 ¥${Math.round((p.yearly / 12) * 100) / 100}/月`,
           }
         : {
             planId: p.id,
@@ -90,11 +90,14 @@ export default function PricingPage() {
   const [faqs, setFaqs] = useState<FaqItem[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // 年付节省比例由真实套餐价推导（原硬编码"省 42%"），无付费套餐时不显示
+  // 年付节省比例由真实套餐价推导（yearly = 一年总价，折合月价 = yearly/12），
+  // 无付费套餐时不显示
   const savePct = (() => {
     const paid = plans.filter((p) => Number(p.monthly) > 0 && Number(p.yearly) > 0);
     if (!paid.length) return 0;
-    const best = Math.max(...paid.map((p) => 1 - Number(p.yearly) / Number(p.monthly)));
+    const best = Math.max(
+      ...paid.map((p) => 1 - Number(p.yearly) / 12 / Number(p.monthly)),
+    );
     return Math.round(best * 100);
   })();
 
@@ -234,11 +237,11 @@ export default function PricingPage() {
             const free = p.monthly === 0;
             const price = cycle === "yr" ? p.yearly : p.monthly;
             const num = free ? "¥0" : "¥" + price;
-            const per = free
-              ? "永久免费"
-              : cycle === "yr"
-                ? "/ 月（年付）"
-                : "/ 月";
+            const per = free ? "永久免费" : cycle === "yr" ? "/ 年" : "/ 月";
+            // 年付展示划线原价（按月价 × 12），只有真有折扣时才显示。
+            const orig = Math.round(Number(p.monthly) * 12 * 100) / 100;
+            const showOrig =
+              !free && cycle === "yr" && Number(p.yearly) > 0 && orig > Number(p.yearly);
             return (
               <div
                 key={p.id}
@@ -251,6 +254,18 @@ export default function PricingPage() {
                 <div className="plan-price">
                   <span className="num">{num}</span>
                   <span className="per">{per}</span>
+                  {showOrig && (
+                    <span
+                      style={{
+                        marginLeft: 8,
+                        fontSize: 13,
+                        color: "var(--text-faint)",
+                        textDecoration: "line-through",
+                      }}
+                    >
+                      ¥{orig}
+                    </span>
+                  )}
                 </div>
                 <button
                   type="button"

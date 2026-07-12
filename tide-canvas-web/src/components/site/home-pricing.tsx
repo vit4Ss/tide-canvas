@@ -31,11 +31,13 @@ export default function HomePricing({
 }) {
   const [cycle, setCycle] = useState<Cycle>("yr");
 
-  // 年付节省比例由真实套餐价推导（原硬编码"省 42%"）
+  // 年付节省比例由真实套餐价推导（yearly = 一年总价，折合月价 = yearly/12）
   const savePct = (() => {
     const paid = plans.filter((p) => Number(p.monthly) > 0 && Number(p.yearly) > 0);
     if (!paid.length) return 0;
-    const best = Math.max(...paid.map((p) => 1 - Number(p.yearly) / Number(p.monthly)));
+    const best = Math.max(
+      ...paid.map((p) => 1 - Number(p.yearly) / 12 / Number(p.monthly)),
+    );
     return Math.round(best * 100);
   })();
 
@@ -89,13 +91,13 @@ export default function HomePricing({
         {plans.map((p, i) => {
           const isFree = p.monthly === 0;
           const price = cycle === "yr" ? p.yearly : p.monthly;
-          const per = isFree
-            ? "永久免费"
-            : cycle === "yr"
-              ? "/ 月（年付）"
-              : "/ 月";
+          const per = isFree ? "永久免费" : cycle === "yr" ? "/ 年" : "/ 月";
           const num = isFree ? "¥0" : "¥" + money(price);
           const href = isFree ? "/studio" : "/pricing";
+          // 年付展示划线原价（月价 × 12），只有真有折扣时才显示。
+          const orig = Math.round(Number(p.monthly) * 12 * 100) / 100;
+          const showOrig =
+            !isFree && cycle === "yr" && Number(p.yearly) > 0 && orig > Number(p.yearly);
           return (
             <div
               key={p.id}
@@ -108,6 +110,18 @@ export default function HomePricing({
               <div className="plan-price">
                 <span className="num">{num}</span>
                 <span className="per">{per}</span>
+                {showOrig && (
+                  <span
+                    style={{
+                      marginLeft: 8,
+                      fontSize: 13,
+                      color: "var(--text-faint)",
+                      textDecoration: "line-through",
+                    }}
+                  >
+                    ¥{money(orig)}
+                  </span>
+                )}
               </div>
               <Link
                 className={`plan-cta ${p.featured ? "solid" : "ghost"}`}

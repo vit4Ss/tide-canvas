@@ -129,9 +129,10 @@ func (s *service) enabledPayKeySet() (map[string]bool, error) {
 
 // planPricing resolves the authoritative charge and points grant for a plan
 // order under the chosen billing cycle. Monthly uses the plan's Price /
-// PointsGrant as-is; yearly charges 12 × the discounted per-month price stored
-// in Features and grants 12 × the monthly points. A plan without a yearly
-// price cannot be bought yearly.
+// PointsGrant as-is; yearly charges the plan's yearly TOTAL price stored in
+// Features（用户口径 2026-07-12：年付字段=一年总价，收款即此价）and grants
+// 12 × the monthly points. A plan without a yearly price cannot be bought
+// yearly.
 func planPricing(plan *model.Plan, cycle string) (decimal.Decimal, int, error) {
 	if cycle != CycleYearly {
 		return plan.Price, plan.PointsGrant, nil
@@ -140,7 +141,7 @@ func planPricing(plan *model.Plan, cycle string) (decimal.Decimal, int, error) {
 	if f.Yearly <= 0 {
 		return decimal.Zero, 0, errBadRequest
 	}
-	price := decimal.NewFromFloat(f.Yearly).Mul(decimal.NewFromInt(12)).Round(2)
+	price := decimal.NewFromFloat(f.Yearly).Round(2)
 	return price, plan.PointsGrant * 12, nil
 }
 
@@ -185,7 +186,7 @@ func (s *service) listPlans() ([]PlanVO, error) {
 // createOrder creates a pending (status 0) order for the user. The order amount
 // is taken from the referenced plan/package's price so the client cannot set
 // its own price. For plans the chosen billing cycle drives the charge: monthly
-// = Price, yearly = 12 × the discounted per-month Features price.
+// = Price, yearly = the yearly TOTAL Features price.
 func (s *service) createOrder(userID idgen.ID, dto CreateOrderDTO) (*OrderVO, error) {
 	// The requested pay channel must be one the admin has enabled
 	// (/admin/payments → pay_channel.enabled) AND the epay cashier supports.

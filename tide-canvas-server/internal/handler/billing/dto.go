@@ -27,8 +27,8 @@ type CreateOrderDTO struct {
 	PlanID     string `json:"planId" binding:"required"`
 	PayChannel string `json:"payChannel" binding:"omitempty,max=32"`
 	// Cycle selects the billing cycle for plan orders: "monthly" (default) or
-	// "yearly" (charged 12 × the plan's discounted per-month yearly price, grants
-	// 12 × the monthly points). Ignored for point-package orders.
+	// "yearly" (charged the plan's yearly TOTAL price, grants 12 × the monthly
+	// points). Ignored for point-package orders.
 	Cycle string `json:"cycle" binding:"omitempty,oneof=monthly yearly"`
 }
 

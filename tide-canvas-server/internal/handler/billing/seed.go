@@ -21,7 +21,7 @@ type planSeed struct {
 	code          string
 	desc          string
 	monthly       float64 // shown as the monthly price; stored in Plan.Price
-	yearly        float64 // per-month price when paid yearly; stored in Features
+	yearly        float64 // yearly TOTAL price（一年总价，收款即此价）; stored in Features
 	monthlyPoints int     // stored in Plan.PointsGrant
 	durationDays  int
 	vipLevel      int // membership level conferred on purchase; stored in Features
@@ -66,13 +66,13 @@ func seedPlans(db *gorm.DB) error {
 		},
 		{
 			name: "创作者 Pro", code: "pro", desc: "高频创作者的首选",
-			monthly: 68, yearly: 39, monthlyPoints: 3000, durationDays: 30,
+			monthly: 68, yearly: 468, monthlyPoints: 3000, durationDays: 30,
 			vipLevel: 1, featured: true, cta: "升级 Pro",
 			items: []string{"每月 3,000 积分", "全部图片 + 视频模型", "优先生成队列 · 不限速", "高清放大 / 局部重绘", "商用授权", "4K 超高分辨率"},
 		},
 		{
 			name: "企业版", code: "enterprise", desc: "团队协作与品牌量产",
-			monthly: 268, yearly: 199, monthlyPoints: 20000, durationDays: 30,
+			monthly: 268, yearly: 2388, monthlyPoints: 20000, durationDays: 30,
 			vipLevel: 2, featured: false, cta: "联系我们",
 			items: []string{"无限积分（公平使用）", "团队席位与协作空间", "API 接入与工作流", "专属客户成功经理", "品牌风格私有模型", "SLA 与发票支持"},
 		},
