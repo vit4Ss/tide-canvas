@@ -536,9 +536,10 @@ func (h *blogHandler) runSync(ctx context.Context, ch *model.BlogChannel) (*Blog
 		}
 	}
 
-	// 阶段一：并发转存图片/视频（信号量限 6 路）。串行逐张下载曾把百条首采
-	// 拖到 30s+，超过 Next 开发代理的 30s 默认超时（后端 200、浏览器 500）。
+	// 阶段一：并发转存图片/视频 + 抓评论区（信号量限 6 路）。串行逐张下载曾
+	// 把百条首采拖到 30s+，超过 Next 开发代理的 30s 默认超时。
 	media := make([]hostedMedia, len(fresh))
+	comments := make([][]tgfeed.Comment, len(fresh))
 	sem := make(chan struct{}, 6)
 	var wg sync.WaitGroup
 	for i := range fresh {
@@ -551,6 +552,11 @@ func (h *blogHandler) runSync(ctx context.Context, ch *model.BlogChannel) (*Blog
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			media[i] = h.rehostAll(ctx, ch.Username, &fresh[i])
+			// 评论区（讨论组回复）：这类频道常把完整 prompt 放在评论里，
+			// 抓下来并进正文。失败/无讨论组静默跳过。
+			if cs, err := tgfeed.FetchComments(ctx, ch.Username, fresh[i].ID, 10); err == nil {
+				comments[i] = filterBlogComments(cs)
+			}
 		}(i)
 	}
 	wg.Wait()
@@ -591,7 +597,7 @@ func (h *blogHandler) runSync(ctx context.Context, ch *model.BlogChannel) (*Blog
 		if dup[m.ID] {
 			continue
 		}
-		posts = append(posts, buildTgPost(ch, m, &media[i]))
+		posts = append(posts, buildTgPost(ch, m, &media[i], comments[i]))
 	}
 	if len(posts) > 0 {
 		if err := h.db.CreateInBatches(posts, 20).Error; err != nil {
@@ -667,10 +673,26 @@ func (h *blogHandler) rehostAll(ctx context.Context, username string, m *tgfeed.
 	return out
 }
 
+// filterBlogComments keeps the substantive replies（完整 prompt 这类），过滤
+// 掉普通闲聊：保留含代码块的，或纯文本 ≥ 40 字的；最多 3 条。
+func filterBlogComments(cs []tgfeed.Comment) []tgfeed.Comment {
+	out := make([]tgfeed.Comment, 0, 3)
+	for _, c := range cs {
+		if len(out) == 3 {
+			break
+		}
+		if strings.Contains(c.Markdown, "```") || len([]rune(c.Plain)) >= 40 {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // buildTgPost converts one telegram message into a published blog_post。视频
 // 用 `![video](url "poster")` 约定嵌入正文最前（详情页把它渲染成播放器并隐藏
-// 顶部封面，与频道里“媒体在上、文字在下”的观感一致）。
-func buildTgPost(ch *model.BlogChannel, m *tgfeed.Message, media *hostedMedia) *model.BlogPost {
+// 顶部封面，与频道里“媒体在上、文字在下”的观感一致）；评论区的实质性回复
+// （完整 prompt 等）以分割线区块附在正文末尾。
+func buildTgPost(ch *model.BlogChannel, m *tgfeed.Message, media *hostedMedia, comments []tgfeed.Comment) *model.BlogPost {
 	title, rest := splitTitle(m.Plain)
 
 	var b strings.Builder
@@ -691,6 +713,12 @@ func buildTgPost(ch *model.BlogChannel, m *tgfeed.Message, media *hostedMedia) *
 		b.WriteString("\n")
 		for _, u := range extra {
 			b.WriteString("\n![](" + u + ")\n")
+		}
+	}
+	if len(comments) > 0 {
+		b.WriteString("\n\n---\n\n**评论区补充**\n")
+		for _, cm := range comments {
+			b.WriteString("\n" + cm.Markdown + "\n")
 		}
 	}
 	content := b.String()

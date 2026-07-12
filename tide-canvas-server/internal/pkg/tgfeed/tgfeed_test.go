@@ -129,6 +129,43 @@ func TestParsePageNoPreview(t *testing.T) {
 	}
 }
 
+// discussionFixture mimics the ?embed=1&discussion=1 widget page: one reply
+// with a reply-template quote (must be excluded) and a <pre> prompt body.
+const discussionFixture = `<!DOCTYPE html><html><body>
+<div class="tgme_post_discussion js-message_history">
+ <div class="tgme_widget_message_wrap">
+  <div class="tgme_widget_message js-widget_message" data-peer="c123_456" data-post-id="1197">
+   <div class="tgme_widget_message_author accent_color">
+    <a class="tgme_widget_message_owner_name"><span class="tgme_widget_message_author_name"><span dir="auto" class="name color1">seedance-video-workshop</span></span></a>
+   </div>
+   <div class="tgme_widget_message_reply_template js-reply_tpl">
+    <div class="tgme_widget_message_text js-message_reply_text">原帖引用不应出现</div>
+   </div>
+   <div class="tgme_widget_message_text js-message_text" dir="auto">
+     完整 prompt：<br/><pre>A cute baby girl with her kitten, cinematic.<br/>Scene 1: she smiles.</pre>
+   </div>
+  </div>
+ </div>
+</div></body></html>`
+
+func TestParseComments(t *testing.T) {
+	cs := parseComments(discussionFixture)
+	if len(cs) != 1 {
+		t.Fatalf("comments = %d, want 1", len(cs))
+	}
+	c := cs[0]
+	if c.Author != "seedance-video-workshop" {
+		t.Errorf("author = %q", c.Author)
+	}
+	if strings.Contains(c.Markdown, "原帖引用不应出现") {
+		t.Errorf("reply template leaked into comment: %q", c.Markdown)
+	}
+	// <pre> 内的 <br/> 必须还原为换行（多行 prompt 不能挤成一行）。
+	if !strings.Contains(c.Markdown, "```\nA cute baby girl with her kitten, cinematic.\nScene 1: she smiles.\n```") {
+		t.Errorf("pre block lost or breaks collapsed: %q", c.Markdown)
+	}
+}
+
 // TestFetchLive hits the real t.me preview（网络相关，默认跳过）：
 //
 //	TGFEED_LIVE=1 go test ./internal/pkg/tgfeed -run TestFetchLive -v
@@ -174,6 +211,17 @@ func TestFetchLive(t *testing.T) {
 		last := p.Messages[len(p.Messages)-1]
 		t.Logf("%s: latest #%d %s | %s", ch, last.ID, last.Time.Format(time.RFC3339),
 			truncateForLog(last.Plain, 80))
+
+		// 评论区（讨论组）：最新一条的回复。无讨论组时应静默返回空。
+		cs, err := FetchComments(ctx, ch, last.ID, 10)
+		if err != nil {
+			t.Errorf("%s: FetchComments: %v", ch, err)
+			continue
+		}
+		t.Logf("%s: msg #%d comments=%d", ch, last.ID, len(cs))
+		for _, c := range cs {
+			t.Logf("  comment by %q: %s", c.Author, truncateForLog(c.Plain, 60))
+		}
 	}
 }
 

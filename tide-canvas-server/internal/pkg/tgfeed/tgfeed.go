@@ -121,6 +121,93 @@ func FetchImage(ctx context.Context, url string) ([]byte, string, error) {
 	return data, ct, nil
 }
 
+// Comment is one discussion-group reply under a channel post（频道「评论区」）。
+type Comment struct {
+	Author   string
+	Markdown string
+	Plain    string
+}
+
+// FetchComments loads the discussion widget of one channel post
+// (t.me/<user>/<id>?embed=1&discussion=1) and returns its replies。频道没绑
+// 讨论组（无评论区）时返回空列表而非错误。
+func FetchComments(ctx context.Context, username string, msgID int64, limit int) ([]Comment, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	u := fmt.Sprintf("https://t.me/%s/%d?embed=1&discussion=1&comments_limit=%d",
+		strings.TrimPrefix(strings.TrimSpace(username), "@"), msgID, limit)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+	req.Header.Set("Accept-Language", "en")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRespBody))
+	if err != nil {
+		return nil, fmt.Errorf("tgfeed: read discussion: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		// 无讨论组/消息不存在等：按无评论处理，不让整个同步失败。
+		return nil, nil
+	}
+	return parseComments(string(body)), nil
+}
+
+// parseComments extracts the reply messages from a discussion widget page.
+func parseComments(raw string) []Comment {
+	doc, err := html.Parse(strings.NewReader(raw))
+	if err != nil {
+		return nil
+	}
+	var out []Comment
+	walk(doc, func(n *html.Node) bool {
+		if n.Type == html.ElementNode && hasClass(n, "tgme_widget_message") &&
+			attr(n, "data-post-id") != "" {
+			if c, ok := parseComment(n); ok {
+				out = append(out, c)
+			}
+			return false
+		}
+		return true
+	})
+	return out
+}
+
+// parseComment extracts author + text from one reply block（跳过 reply
+// template——那是对原帖的引用，不是评论内容）。
+func parseComment(n *html.Node) (Comment, bool) {
+	var c Comment
+	walk(n, func(cn *html.Node) bool {
+		if cn.Type != html.ElementNode {
+			return true
+		}
+		switch {
+		case hasClass(cn, "tgme_widget_message_reply_template"):
+			return false
+		case hasClass(cn, "tgme_widget_message_author_name"):
+			if c.Author == "" {
+				c.Author = textContent(cn)
+			}
+			return false
+		case hasClass(cn, "js-message_text") && !hasClass(cn, "js-message_reply_text"):
+			if c.Markdown == "" {
+				c.Markdown = strings.TrimSpace(renderMarkdown(cn))
+				c.Plain = strings.TrimSpace(renderPlain(cn))
+			}
+			return false
+		}
+		return true
+	})
+	return c, c.Markdown != ""
+}
+
 // videoClient allows longer transfers than the page client (视频体积大)。
 var videoClient = &http.Client{Timeout: 180 * time.Second}
 
@@ -201,7 +288,11 @@ func parseMessage(n *html.Node) (Message, bool) {
 			return true
 		}
 		switch {
-		case hasClass(c, "tgme_widget_message_text"):
+		case hasClass(c, "tgme_widget_message_reply"),
+			hasClass(c, "tgme_widget_message_reply_template"):
+			// 回复引用块：引用的是别的消息，不是本条正文。
+			return false
+		case hasClass(c, "tgme_widget_message_text") && !hasClass(c, "js-message_reply_text"):
 			// 转发消息会嵌套两份 text；取首个（外层即正文）。
 			if m.Markdown == "" {
 				m.Markdown = strings.TrimSpace(renderMarkdown(c))
@@ -315,10 +406,11 @@ func renderInline(b *strings.Builder, n *html.Node, markdown bool) {
 			case "code":
 				wrapInline(b, c, "`", markdown)
 			case "pre":
+				// <pre> 里的换行是 <br/>，必须还原，否则多行 prompt 挤成一行。
 				if markdown {
-					b.WriteString("\n```\n" + textContent(c) + "\n```\n")
+					b.WriteString("\n```\n" + textWithBreaks(c) + "\n```\n")
 				} else {
-					b.WriteString("\n" + textContent(c) + "\n")
+					b.WriteString("\n" + textWithBreaks(c) + "\n")
 				}
 			default:
 				// tg-emoji / span 等容器：直接下钻。
@@ -388,6 +480,20 @@ func textContent(n *html.Node) string {
 	walk(n, func(c *html.Node) bool {
 		if c.Type == html.TextNode {
 			b.WriteString(c.Data)
+		}
+		return true
+	})
+	return strings.TrimSpace(b.String())
+}
+
+// textWithBreaks is textContent with <br> preserved as newlines.
+func textWithBreaks(n *html.Node) string {
+	var b strings.Builder
+	walk(n, func(c *html.Node) bool {
+		if c.Type == html.TextNode {
+			b.WriteString(c.Data)
+		} else if c.Type == html.ElementNode && c.Data == "br" {
+			b.WriteString("\n")
 		}
 		return true
 	})
