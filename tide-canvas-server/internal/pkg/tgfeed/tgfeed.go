@@ -217,6 +217,11 @@ func renderInline(b *strings.Builder, n *html.Node, markdown bool) {
 			case "a":
 				href := attr(c, "href")
 				text := textContent(c)
+				// 相对链接（话题标签的 ?q=… 站内搜索等）只保留文字：博客详情里
+				// 它们会被解析成本站相对地址，点开毫无意义。
+				if !strings.HasPrefix(href, "http") {
+					href = ""
+				}
 				if markdown && href != "" && text != "" && text != href {
 					fmt.Fprintf(b, "[%s](%s)", text, href)
 				} else if text != "" {

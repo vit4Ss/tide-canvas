@@ -22,7 +22,7 @@ const fixture = `<!DOCTYPE html><html><head>
    <a class="tgme_widget_message_photo_wrap abc" href="https://t.me/HotSora/101"
       style="width:400px;background-image:url('https://cdn4.cdn-telegram.org/file/photo101.jpg')"></a>
    <div class="tgme_widget_message_text js-message_text" dir="auto">
-     Sora 2 新玩法<br/><br/>用 <b>参考图</b> 控制镜头，教程见 <a href="https://example.com/t">这里</a>
+     <a href="?q=%23Sora">#Sora</a> Sora 2 新玩法<br/><br/>用 <b>参考图</b> 控制镜头，教程见 <a href="https://example.com/t">这里</a>
    </div>
    <div class="tgme_widget_message_footer">
     <a class="tgme_widget_message_date" href="https://t.me/HotSora/101">
@@ -69,7 +69,11 @@ func TestParsePageFixture(t *testing.T) {
 	if !strings.Contains(m.Markdown, "[这里](https://example.com/t)") {
 		t.Errorf("markdown link lost: %q", m.Markdown)
 	}
-	if !strings.HasPrefix(m.Plain, "Sora 2 新玩法") {
+	// 相对链接（话题标签）只留文字，不产出 [..](?q=..)。
+	if strings.Contains(m.Markdown, "?q=") || !strings.Contains(m.Markdown, "#Sora") {
+		t.Errorf("relative link should collapse to text: %q", m.Markdown)
+	}
+	if !strings.HasPrefix(m.Plain, "#Sora Sora 2 新玩法") {
 		t.Errorf("plain first line = %q", m.Plain)
 	}
 	if strings.Contains(m.Plain, "**") || strings.Contains(m.Plain, "](") {
