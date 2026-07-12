@@ -22,6 +22,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	RegisterUsers(g, d)
 	RegisterWorks(g, d)
 	RegisterInspiration(g, d)
+	RegisterBlog(g, d)
 	RegisterModels(g, d)
 	RegisterFloors(g, d)
 	RegisterTools(g, d)

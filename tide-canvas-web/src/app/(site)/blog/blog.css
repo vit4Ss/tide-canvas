@@ -1,0 +1,307 @@
+/* ============================================================================
+   /blog — 博客列表与详情的专属样式（co-located，随页面加载）。
+
+   设计语言：纯黑 imini 主题下的「无框编辑部网格」——
+   不做参考站的盒式卡片，靠留白 + 细分割线 + 图文上下结构组织信息；
+   首篇为横向 Featured 大图，其余三列网格。动画只有 160/200ms 的
+   透明度与边框过渡，克制到几乎无感。
+   ========================================================================== */
+
+/* ---- 列表 ---- */
+
+.blog-head {
+  margin-bottom: 40px;
+}
+
+/* Featured：最新一篇，横向图文 */
+.blog-feat {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: 32px;
+  align-items: center;
+  padding: 24px 0 32px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 48px;
+  text-decoration: none;
+  color: inherit;
+}
+.blog-feat .blog-cover {
+  border-radius: 14px;
+}
+.blog-feat-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.blog-feat-title {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.blog-feat-sum {
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text-dim);
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.blog-feat-more {
+  font-size: 13.5px;
+  color: var(--text-faint);
+  transition: color 160ms ease-out;
+}
+.blog-feat:hover .blog-feat-more {
+  color: var(--text);
+}
+
+/* 网格：三列，无卡片盒，图 + 文上下结构 */
+.blog-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 40px 28px;
+}
+.blog-item {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  text-decoration: none;
+  color: inherit;
+}
+.blog-cover {
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-2) center / cover no-repeat;
+  transition: border-color 200ms ease-out;
+  overflow: hidden;
+}
+.blog-item:hover .blog-cover,
+.blog-feat:hover .blog-cover {
+  border-color: rgba(255, 255, 255, 0.24);
+}
+/* 无封面时的占位：极淡的字符水印，不做插画 */
+.blog-cover.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+}
+.blog-item-title {
+  font-size: 15.5px;
+  font-weight: 600;
+  line-height: 1.45;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.blog-item-sum {
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--text-dim);
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.blog-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.blog-meta .dot::before {
+  content: "·";
+}
+
+/* 加载更多：白描边胶囊（imini 按钮语言） */
+.blog-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 56px;
+}
+.blog-more button {
+  padding: 10px 28px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color 160ms ease-out, color 160ms ease-out;
+}
+.blog-more button:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.3);
+  color: var(--text);
+}
+.blog-more button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 骨架屏 */
+.blog-skel {
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.blog-skel.cover {
+  aspect-ratio: 16 / 9;
+}
+.blog-skel.line {
+  height: 14px;
+  margin-top: 12px;
+}
+.blog-skel.line.short {
+  width: 60%;
+}
+
+.blog-empty {
+  padding: 96px 0;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 14px;
+}
+
+@media (max-width: 960px) {
+  .blog-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .blog-feat {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+}
+@media (max-width: 620px) {
+  .blog-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---- 详情 ---- */
+
+.blog-article {
+  max-width: 720px;
+  margin: 0 auto;
+}
+.blog-back {
+  display: inline-block;
+  font-size: 13.5px;
+  color: var(--text-faint);
+  text-decoration: none;
+  margin-bottom: 28px;
+  transition: color 160ms ease-out;
+}
+.blog-back:hover {
+  color: var(--text);
+}
+.blog-article h1 {
+  font-size: clamp(26px, 3.4vw, 32px);
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.3;
+  margin: 0 0 16px;
+}
+.blog-article .blog-meta {
+  margin-bottom: 28px;
+}
+.blog-article-cover {
+  width: 100%;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  margin-bottom: 32px;
+  display: block;
+}
+
+/* Markdown 正文排版 */
+.blog-md {
+  font-size: 15.5px;
+  line-height: 1.85;
+  color: var(--text);
+}
+.blog-md p {
+  margin: 0 0 1.25em;
+}
+.blog-md h2 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 2em 0 0.8em;
+  line-height: 1.4;
+}
+.blog-md h3 {
+  font-size: 17px;
+  font-weight: 600;
+  margin: 1.6em 0 0.7em;
+}
+.blog-md a {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: rgba(255, 255, 255, 0.35);
+}
+.blog-md a:hover {
+  text-decoration-color: rgba(255, 255, 255, 0.7);
+}
+.blog-md img {
+  max-width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  margin: 8px 0;
+  display: block;
+}
+.blog-md code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+.blog-md pre {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  overflow-x: auto;
+  margin: 0 0 1.25em;
+}
+.blog-md pre code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+.blog-md blockquote {
+  margin: 0 0 1.25em;
+  padding: 2px 0 2px 16px;
+  border-left: 2px solid rgba(255, 255, 255, 0.2);
+  color: var(--text-dim);
+}
+.blog-md ul,
+.blog-md ol {
+  margin: 0 0 1.25em;
+  padding-left: 1.4em;
+}
+.blog-md li {
+  margin-bottom: 0.4em;
+}
+.blog-md hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 2em 0;
+}

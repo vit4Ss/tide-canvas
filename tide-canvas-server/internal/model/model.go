@@ -54,6 +54,10 @@ func Models() []any {
 		&Team{},
 		&SysRole{},
 
+		// Blog（前台 /blog + 后台「博客管理」；来源=自建 self / Telegram 频道同步）.
+		&BlogPost{},
+		&BlogChannel{},
+
 		// Admin-only sections (no public endpoint yet).
 		// Inspiration / home curation.
 		&Collection{},

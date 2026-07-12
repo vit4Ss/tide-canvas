@@ -1,0 +1,706 @@
+package admin
+
+// g2_blog.go (group g2, content management) owns the admin 博客管理 surface:
+// 自建文章 CRUD + Telegram 频道源管理与同步。与前台 /blog（内容包 blog.go 的
+// 公开读取面）同表同源（LINKAGE）：这里的发布/下架/删除即刻反映到前台列表。
+//
+// Telegram 同步：抓公开频道网页预览 t.me/s/<username>（internal/pkg/tgfeed），
+// 只导入含文字的消息，图片下载后转存到本站对象存储（tg CDN 链接会过期且境内
+// 不可达），按 (channel_id, tg_msg_id) 幂等去重——重复同步不会产生重复文章。
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+
+	"tidecanvas/internal/app"
+	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/idgen"
+	"tidecanvas/internal/pkg/response"
+	"tidecanvas/internal/pkg/storage"
+	"tidecanvas/internal/pkg/tgfeed"
+)
+
+// RegisterBlog mounts the admin blog routes on the (already JWTAuth+AdminOnly
+// gated) /admin group.
+//
+// Routes:
+//
+//	GET    /admin/blog/posts             -> PageData<AdminBlogPostVO>
+//	POST   /admin/blog/posts             BlogPostCreateDTO -> AdminBlogPostVO
+//	PUT    /admin/blog/posts/:id         BlogPostUpdateDTO -> AdminBlogPostVO
+//	DELETE /admin/blog/posts/:id         -> void
+//	GET    /admin/blog/channels          -> []BlogChannelVO
+//	POST   /admin/blog/channels          BlogChannelCreateDTO -> BlogChannelVO
+//	PUT    /admin/blog/channels/:id      BlogChannelUpdateDTO -> BlogChannelVO
+//	DELETE /admin/blog/channels/:id      -> void（仅删频道行，已导入文章保留）
+//	POST   /admin/blog/channels/:id/sync -> BlogSyncResultVO
+func RegisterBlog(g *gin.RouterGroup, d *app.Deps) {
+	h := &blogHandler{db: d.DB, store: d.Storage}
+
+	posts := g.Group("/blog/posts")
+	posts.GET("", h.listPosts)
+	posts.POST("", h.createPost)
+	posts.PUT("/:id", h.updatePost)
+	posts.DELETE("/:id", h.removePost)
+
+	ch := g.Group("/blog/channels")
+	ch.GET("", h.listChannels)
+	ch.POST("", h.createChannel)
+	ch.PUT("/:id", h.updateChannel)
+	ch.DELETE("/:id", h.removeChannel)
+	ch.POST("/:id/sync", h.syncChannel)
+}
+
+type blogHandler struct {
+	db    *gorm.DB
+	store storage.StorageStrategy
+}
+
+// blogSyncMu serializes channel syncs within this process：并发点两次「同步」
+// 会对同一 (channel, msg) 竞态插入重复文章（索引非唯一，见 model/blog.go）。
+var blogSyncMu sync.Mutex
+
+// ---- VO / DTO ----
+
+// AdminBlogPostVO is the admin view of a blog_post row（含状态与来源明细）.
+type AdminBlogPostVO struct {
+	ID          idgen.ID `json:"id"`
+	Source      string   `json:"source"` // self | telegram
+	ChannelID   idgen.ID `json:"channelId"`
+	TgMsgID     int64    `json:"tgMsgId"`
+	Title       string   `json:"title"`
+	Summary     string   `json:"summary"`
+	CoverURL    string   `json:"coverUrl"`
+	Content     string   `json:"content"`
+	Status      int      `json:"status"` // 0 草稿, 1 已发布
+	ViewCount   int64    `json:"viewCount"`
+	PublishedAt string   `json:"publishedAt"`
+	CreateTime  string   `json:"createTime"`
+	UpdateTime  string   `json:"updateTime"`
+}
+
+// BlogPostCreateDTO creates a self-written post.
+type BlogPostCreateDTO struct {
+	Title    string `json:"title" binding:"required,max=255"`
+	Summary  string `json:"summary" binding:"omitempty,max=512"`
+	CoverURL string `json:"coverUrl" binding:"omitempty,max=1024"`
+	Content  string `json:"content" binding:"omitempty"`
+	Status   *int   `json:"status" binding:"omitempty,oneof=0 1"`
+}
+
+// BlogPostUpdateDTO is a partial update; nil fields are left unchanged. 对
+// telegram 来源的文章同样适用（可改标题/摘要/正文/上下架）。
+type BlogPostUpdateDTO struct {
+	Title    *string `json:"title" binding:"omitempty,max=255"`
+	Summary  *string `json:"summary" binding:"omitempty,max=512"`
+	CoverURL *string `json:"coverUrl" binding:"omitempty,max=1024"`
+	Content  *string `json:"content" binding:"omitempty"`
+	Status   *int    `json:"status" binding:"omitempty,oneof=0 1"`
+}
+
+// BlogChannelVO is the admin view of a blog_channel row.
+type BlogChannelVO struct {
+	ID         idgen.ID `json:"id"`
+	Username   string   `json:"username"`
+	Title      string   `json:"title"`
+	Enabled    bool     `json:"enabled"`
+	LastMsgID  int64    `json:"lastMsgId"`
+	LastSyncAt string   `json:"lastSyncAt"`
+	PostCount  int64    `json:"postCount"`
+	CreateTime string   `json:"createTime"`
+}
+
+// BlogChannelCreateDTO adds a channel source.
+type BlogChannelCreateDTO struct {
+	// Username 接受 @handle / t.me 链接 / 裸 handle，服务端归一化。
+	Username string `json:"username" binding:"required,max=128"`
+	Title    string `json:"title" binding:"omitempty,max=128"`
+}
+
+// BlogChannelUpdateDTO is a partial update.
+type BlogChannelUpdateDTO struct {
+	Title   *string `json:"title" binding:"omitempty,max=128"`
+	Enabled *bool   `json:"enabled" binding:"omitempty"`
+}
+
+// BlogSyncResultVO reports one sync run.
+type BlogSyncResultVO struct {
+	ChannelTitle string `json:"channelTitle"`
+	Created      int    `json:"created"`      // 新导入文章数
+	SkippedEmpty int    `json:"skippedEmpty"` // 无文字消息（跳过）
+	ImageFailed  int    `json:"imageFailed"`  // 转存失败、保留原 CDN 链接的图片数
+}
+
+// ---- posts ----
+
+func (h *blogHandler) listPosts(c *gin.Context) {
+	var q g5PageQuery
+	if err := c.ShouldBindQuery(&q); err != nil {
+		response.Fail(c, response.CodeBadRequest, "invalid query: "+err.Error())
+		return
+	}
+	q.normalize()
+
+	tx := h.db.Model(&model.BlogPost{})
+	// Type 复用为来源筛选（self|telegram），Status 为 0|1。
+	if q.Type != "" {
+		tx = tx.Where("source = ?", q.Type)
+	}
+	if q.Status != "" {
+		tx = tx.Where("status = ?", q.Status)
+	}
+	if q.Keyword != "" {
+		kw := "%" + q.Keyword + "%"
+		tx = tx.Where("title LIKE ? OR summary LIKE ?", kw, kw)
+	}
+
+	var total int64
+	if err := tx.Count(&total).Error; err != nil {
+		response.Fail(c, response.CodeServerError, "failed to count posts")
+		return
+	}
+	var rows []model.BlogPost
+	if err := tx.Order("COALESCE(published_at, create_time) DESC, id DESC").
+		Limit(q.PageSize).Offset(q.offset()).Find(&rows).Error; err != nil {
+		response.Fail(c, response.CodeServerError, "failed to list posts")
+		return
+	}
+	vos := make([]AdminBlogPostVO, len(rows))
+	for i := range rows {
+		vos[i] = toAdminBlogPostVO(&rows[i])
+	}
+	response.Page(c, vos, total, q.PageNum, q.PageSize)
+}
+
+func (h *blogHandler) createPost(c *gin.Context) {
+	var dto BlogPostCreateDTO
+	if err := c.ShouldBindJSON(&dto); err != nil {
+		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	status := model.BlogStatusPublished
+	if dto.Status != nil {
+		status = *dto.Status
+	}
+	p := &model.BlogPost{
+		Source:   model.BlogSourceSelf,
+		Title:    strings.TrimSpace(dto.Title),
+		Summary:  strings.TrimSpace(dto.Summary),
+		CoverURL: strings.TrimSpace(dto.CoverURL),
+		Content:  dto.Content,
+		Status:   status,
+	}
+	if p.Summary == "" {
+		p.Summary = blogSummaryFromMarkdown(p.Content, 160)
+	}
+	if status == model.BlogStatusPublished {
+		now := time.Now()
+		p.PublishedAt = &now
+	}
+	// status 需要强制写入：草稿的 0 会被 struct Create 按零值吞掉。
+	if err := adminCreateRow(h.db, p, map[string]any{"status": p.Status}); err != nil {
+		response.Fail(c, response.CodeServerError, "failed to create post")
+		return
+	}
+	response.OK(c, toAdminBlogPostVO(p))
+}
+
+func (h *blogHandler) updatePost(c *gin.Context) {
+	id, ok := parsePathID(c)
+	if !ok {
+		return
+	}
+	var dto BlogPostUpdateDTO
+	if err := c.ShouldBindJSON(&dto); err != nil {
+		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
+		return
+	}
+
+	var existing model.BlogPost
+	if err := h.db.Where("id = ?", id).First(&existing).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			response.Fail(c, response.CodeNotFound, "post not found")
+			return
+		}
+		response.Fail(c, response.CodeServerError, "failed to load post")
+		return
+	}
+
+	fields := map[string]any{}
+	if dto.Title != nil {
+		fields["title"] = strings.TrimSpace(*dto.Title)
+	}
+	if dto.Summary != nil {
+		fields["summary"] = strings.TrimSpace(*dto.Summary)
+	}
+	if dto.CoverURL != nil {
+		fields["cover_url"] = strings.TrimSpace(*dto.CoverURL)
+	}
+	if dto.Content != nil {
+		fields["content"] = *dto.Content
+	}
+	if dto.Status != nil {
+		fields["status"] = *dto.Status
+		// 首次发布补发布时间（telegram 文章带原消息时间，不覆盖）。
+		if *dto.Status == model.BlogStatusPublished && existing.PublishedAt == nil {
+			fields["published_at"] = time.Now()
+		}
+	}
+	if len(fields) > 0 {
+		if err := h.db.Model(&model.BlogPost{}).Where("id = ?", id).
+			Updates(fields).Error; err != nil {
+			response.Fail(c, response.CodeServerError, "failed to update post")
+			return
+		}
+	}
+	var row model.BlogPost
+	if err := h.db.Where("id = ?", id).First(&row).Error; err != nil {
+		response.Fail(c, response.CodeServerError, "failed to load post")
+		return
+	}
+	response.OK(c, toAdminBlogPostVO(&row))
+}
+
+func (h *blogHandler) removePost(c *gin.Context) {
+	id, ok := parsePathID(c)
+	if !ok {
+		return
+	}
+	res := h.db.Where("id = ?", id).Delete(&model.BlogPost{})
+	if res.Error != nil {
+		response.Fail(c, response.CodeServerError, "failed to delete post")
+		return
+	}
+	if res.RowsAffected == 0 {
+		response.Fail(c, response.CodeNotFound, "post not found")
+		return
+	}
+	response.OK[any](c, nil)
+}
+
+// ---- channels ----
+
+func (h *blogHandler) listChannels(c *gin.Context) {
+	var rows []model.BlogChannel
+	if err := h.db.Order("create_time ASC").Find(&rows).Error; err != nil {
+		response.Fail(c, response.CodeServerError, "failed to list channels")
+		return
+	}
+	// 文章数实时统计（同步后手动删文会让缓存列漂移）。
+	counts := map[idgen.ID]int64{}
+	type cnt struct {
+		ChannelID idgen.ID
+		N         int64
+	}
+	var cs []cnt
+	if err := h.db.Model(&model.BlogPost{}).
+		Select("channel_id AS channel_id, COUNT(*) AS n").
+		Where("source = ?", model.BlogSourceTelegram).
+		Group("channel_id").Scan(&cs).Error; err == nil {
+		for _, x := range cs {
+			counts[x.ChannelID] = x.N
+		}
+	}
+	vos := make([]BlogChannelVO, len(rows))
+	for i := range rows {
+		vos[i] = toBlogChannelVO(&rows[i])
+		vos[i].PostCount = counts[rows[i].ID]
+	}
+	response.OK(c, vos)
+}
+
+func (h *blogHandler) createChannel(c *gin.Context) {
+	var dto BlogChannelCreateDTO
+	if err := c.ShouldBindJSON(&dto); err != nil {
+		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	username, err := normalizeTgUsername(dto.Username)
+	if err != nil {
+		response.Fail(c, response.CodeBadRequest, err.Error())
+		return
+	}
+	ch := &model.BlogChannel{
+		Username: username,
+		Title:    strings.TrimSpace(dto.Title),
+		Enabled:  true,
+	}
+	if err := adminCreateRow(h.db, ch, nil); err != nil {
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
+			response.Fail(c, response.CodeBadRequest, "该频道已添加")
+			return
+		}
+		response.Fail(c, response.CodeServerError, "failed to create channel")
+		return
+	}
+	response.OK(c, toBlogChannelVO(ch))
+}
+
+func (h *blogHandler) updateChannel(c *gin.Context) {
+	id, ok := parsePathID(c)
+	if !ok {
+		return
+	}
+	var dto BlogChannelUpdateDTO
+	if err := c.ShouldBindJSON(&dto); err != nil {
+		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	fields := map[string]any{}
+	if dto.Title != nil {
+		fields["title"] = strings.TrimSpace(*dto.Title)
+	}
+	if dto.Enabled != nil {
+		fields["enabled"] = *dto.Enabled
+	}
+	if len(fields) > 0 {
+		res := h.db.Model(&model.BlogChannel{}).Where("id = ?", id).Updates(fields)
+		if res.Error != nil {
+			response.Fail(c, response.CodeServerError, "failed to update channel")
+			return
+		}
+		if res.RowsAffected == 0 {
+			response.Fail(c, response.CodeNotFound, "channel not found")
+			return
+		}
+	}
+	var row model.BlogChannel
+	if err := h.db.Where("id = ?", id).First(&row).Error; err != nil {
+		response.Fail(c, response.CodeNotFound, "channel not found")
+		return
+	}
+	response.OK(c, toBlogChannelVO(&row))
+}
+
+// removeChannel deletes the channel row ONLY；已导入的文章是既成内容，保留并可
+// 在文章列表单独管理（前端删除确认里已说明）。
+func (h *blogHandler) removeChannel(c *gin.Context) {
+	id, ok := parsePathID(c)
+	if !ok {
+		return
+	}
+	res := h.db.Where("id = ?", id).Delete(&model.BlogChannel{})
+	if res.Error != nil {
+		response.Fail(c, response.CodeServerError, "failed to delete channel")
+		return
+	}
+	if res.RowsAffected == 0 {
+		response.Fail(c, response.CodeNotFound, "channel not found")
+		return
+	}
+	response.OK[any](c, nil)
+}
+
+// ---- sync ----
+
+const (
+	// blogSyncMaxPages caps how many preview pages (~20 msgs each) one sync
+	// walks back — 首次导入最多约 100 条，之后增量同步通常只走 1 页。
+	blogSyncMaxPages = 5
+	// blogSyncMaxImages caps re-hosted images per message.
+	blogSyncMaxImages = 6
+)
+
+func (h *blogHandler) syncChannel(c *gin.Context) {
+	id, ok := parsePathID(c)
+	if !ok {
+		return
+	}
+	var ch model.BlogChannel
+	if err := h.db.Where("id = ?", id).First(&ch).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			response.Fail(c, response.CodeNotFound, "channel not found")
+			return
+		}
+		response.Fail(c, response.CodeServerError, "failed to load channel")
+		return
+	}
+	if !ch.Enabled {
+		response.Fail(c, response.CodeBadRequest, "频道已停用，启用后再同步")
+		return
+	}
+
+	blogSyncMu.Lock()
+	defer blogSyncMu.Unlock()
+
+	// 抓页 + 逐图转存都在这个预算内；预览页超时单次 20s（tgfeed）。
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 120*time.Second)
+	defer cancel()
+
+	res, err := h.runSync(ctx, &ch)
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "同步失败："+err.Error())
+		return
+	}
+	response.OK(c, res)
+}
+
+// runSync walks the channel preview from newest backwards, imports messages
+// newer than LastMsgID, and advances the watermark.
+func (h *blogHandler) runSync(ctx context.Context, ch *model.BlogChannel) (*BlogSyncResultVO, error) {
+	out := &BlogSyncResultVO{}
+	var fresh []tgfeed.Message
+	beforeID := int64(0)
+
+	for page := 0; page < blogSyncMaxPages; page++ {
+		pg, err := tgfeed.FetchPage(ctx, ch.Username, beforeID)
+		if err != nil {
+			// 首页就失败 → 整体失败；翻旧页失败 → 用已抓到的部分继续。
+			if page == 0 {
+				return nil, err
+			}
+			break
+		}
+		if out.ChannelTitle == "" {
+			out.ChannelTitle = pg.ChannelTitle
+		}
+		if len(pg.Messages) == 0 {
+			break
+		}
+		oldest := pg.Messages[0].ID
+		for _, m := range pg.Messages {
+			if m.ID < oldest {
+				oldest = m.ID
+			}
+			if m.ID > ch.LastMsgID {
+				fresh = append(fresh, m)
+			}
+		}
+		// 本页最旧的消息已越过水位 → 不必再翻更旧的页。
+		if oldest <= ch.LastMsgID+1 {
+			break
+		}
+		beforeID = oldest
+	}
+
+	// 按消息 id 升序导入，水位单调推进（中途失败不会留下空洞）。
+	for i := 0; i < len(fresh); i++ {
+		for j := i + 1; j < len(fresh); j++ {
+			if fresh[j].ID < fresh[i].ID {
+				fresh[i], fresh[j] = fresh[j], fresh[i]
+			}
+		}
+	}
+
+	maxID := ch.LastMsgID
+	for _, m := range fresh {
+		if m.ID > maxID {
+			maxID = m.ID
+		}
+		if strings.TrimSpace(m.Plain) == "" {
+			out.SkippedEmpty++
+			continue
+		}
+		// 幂等：同一条消息只导一次（水位回退/并发窗口的兜底）。
+		var dup int64
+		h.db.Model(&model.BlogPost{}).
+			Where("channel_id = ? AND tg_msg_id = ?", ch.ID, m.ID).Count(&dup)
+		if dup > 0 {
+			continue
+		}
+		post := h.buildTgPost(ctx, ch, &m, out)
+		if err := h.db.Create(post).Error; err != nil {
+			return nil, fmt.Errorf("save post (msg %d): %w", m.ID, err)
+		}
+		out.Created++
+	}
+
+	// 推进水位并回填频道备注名（管理员没填时用频道自己的名字）。
+	now := time.Now()
+	fields := map[string]any{"last_msg_id": maxID, "last_sync_at": now}
+	if strings.TrimSpace(ch.Title) == "" && out.ChannelTitle != "" {
+		fields["title"] = out.ChannelTitle
+	}
+	if err := h.db.Model(&model.BlogChannel{}).Where("id = ?", ch.ID).
+		Updates(fields).Error; err != nil {
+		return nil, err
+	}
+	if out.ChannelTitle == "" {
+		out.ChannelTitle = ch.Title
+	}
+	return out, nil
+}
+
+// buildTgPost converts one telegram message into a published blog_post，图片
+// 转存失败时保留原 CDN 链接（计入 ImageFailed，文章照常导入）。
+func (h *blogHandler) buildTgPost(ctx context.Context, ch *model.BlogChannel, m *tgfeed.Message, out *BlogSyncResultVO) *model.BlogPost {
+	photos := m.Photos
+	if len(photos) > blogSyncMaxImages {
+		photos = photos[:blogSyncMaxImages]
+	}
+	hosted := make([]string, 0, len(photos))
+	for i, u := range photos {
+		saved, err := h.rehostImage(ctx, ch.Username, m.ID, i, u)
+		if err != nil {
+			out.ImageFailed++
+			hosted = append(hosted, u)
+			continue
+		}
+		hosted = append(hosted, saved)
+	}
+
+	title, rest := splitTitle(m.Plain)
+	content := m.Markdown
+	// 除封面外的图片附在正文末尾（封面在详情页顶部单独展示，不重复）。
+	if len(hosted) > 1 {
+		var b strings.Builder
+		b.WriteString(content)
+		b.WriteString("\n")
+		for _, u := range hosted[1:] {
+			b.WriteString("\n![](" + u + ")\n")
+		}
+		content = b.String()
+	}
+
+	summary := collapseSpace(rest)
+	if summary == "" {
+		summary = collapseSpace(title)
+	}
+	cover := ""
+	if len(hosted) > 0 {
+		cover = hosted[0]
+	}
+	msgTime := m.Time
+	return &model.BlogPost{
+		Source:      model.BlogSourceTelegram,
+		ChannelID:   ch.ID,
+		TgMsgID:     m.ID,
+		Title:       truncateRunes(title, 120),
+		Summary:     truncateRunes(summary, 160),
+		CoverURL:    cover,
+		Content:     content,
+		Status:      model.BlogStatusPublished,
+		PublishedAt: &msgTime,
+	}
+}
+
+// rehostImage downloads one CDN image and saves it under the blog prefix.
+func (h *blogHandler) rehostImage(ctx context.Context, username string, msgID int64, idx int, url string) (string, error) {
+	data, ct, err := tgfeed.FetchImage(ctx, url)
+	if err != nil {
+		return "", err
+	}
+	key := fmt.Sprintf("blog/tg/%s/%d_%d%s", username, msgID, idx, extByContentType(ct))
+	return h.store.Save(ctx, key, bytes.NewReader(data), ct)
+}
+
+// ---- helpers ----
+
+var tgUsernameRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{3,31}$`)
+
+// normalizeTgUsername accepts "@handle" / "https://t.me/handle" / "t.me/s/handle"
+// / bare handle and returns the bare handle.
+func normalizeTgUsername(raw string) (string, error) {
+	s := strings.TrimSpace(raw)
+	s = strings.TrimPrefix(s, "https://")
+	s = strings.TrimPrefix(s, "http://")
+	s = strings.TrimPrefix(s, "t.me/")
+	s = strings.TrimPrefix(s, "telegram.me/")
+	s = strings.TrimPrefix(s, "s/")
+	s = strings.TrimPrefix(s, "@")
+	s = strings.TrimSuffix(s, "/")
+	if i := strings.IndexAny(s, "/?#"); i >= 0 {
+		s = s[:i]
+	}
+	if !tgUsernameRe.MatchString(s) {
+		return "", errors.New("频道用户名无效：应为 @handle 或 t.me 链接（字母开头，4-32 位字母/数字/下划线）")
+	}
+	return s, nil
+}
+
+// splitTitle returns the first non-empty line and the remaining text.
+func splitTitle(plain string) (title, rest string) {
+	lines := strings.Split(plain, "\n")
+	for i, l := range lines {
+		if t := strings.TrimSpace(l); t != "" {
+			return t, strings.Join(lines[i+1:], "\n")
+		}
+	}
+	return "", ""
+}
+
+// collapseSpace flattens all whitespace runs into single spaces.
+func collapseSpace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// truncateRunes hard-caps a string at n runes (appending … when cut).
+func truncateRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n-1]) + "…"
+}
+
+// blogSummaryFromMarkdown derives a plain-text summary from Markdown content.
+func blogSummaryFromMarkdown(md string, n int) string {
+	s := md
+	// 图片整体移除，链接保留文字。
+	s = regexp.MustCompile(`!\[[^\]]*\]\([^)]*\)`).ReplaceAllString(s, "")
+	s = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`).ReplaceAllString(s, "$1")
+	s = strings.NewReplacer("**", "", "__", "", "`", "", "#", "", ">", "", "*", "", "~~", "").Replace(s)
+	return truncateRunes(collapseSpace(s), n)
+}
+
+// extByContentType maps an image content type to a file extension.
+func extByContentType(ct string) string {
+	switch {
+	case strings.Contains(ct, "png"):
+		return ".png"
+	case strings.Contains(ct, "webp"):
+		return ".webp"
+	case strings.Contains(ct, "gif"):
+		return ".gif"
+	default:
+		return ".jpg"
+	}
+}
+
+func toAdminBlogPostVO(p *model.BlogPost) AdminBlogPostVO {
+	published := ""
+	if p.PublishedAt != nil && !p.PublishedAt.IsZero() {
+		published = p.PublishedAt.Format(time.RFC3339)
+	}
+	return AdminBlogPostVO{
+		ID:          p.ID,
+		Source:      p.Source,
+		ChannelID:   p.ChannelID,
+		TgMsgID:     p.TgMsgID,
+		Title:       p.Title,
+		Summary:     p.Summary,
+		CoverURL:    p.CoverURL,
+		Content:     p.Content,
+		Status:      p.Status,
+		ViewCount:   p.ViewCount,
+		PublishedAt: published,
+		CreateTime:  g5FmtTime(p.CreateTime),
+		UpdateTime:  g5FmtTime(p.UpdateTime),
+	}
+}
+
+func toBlogChannelVO(ch *model.BlogChannel) BlogChannelVO {
+	lastSync := ""
+	if ch.LastSyncAt != nil && !ch.LastSyncAt.IsZero() {
+		lastSync = ch.LastSyncAt.Format(time.RFC3339)
+	}
+	return BlogChannelVO{
+		ID:         ch.ID,
+		Username:   ch.Username,
+		Title:      ch.Title,
+		Enabled:    ch.Enabled,
+		LastMsgID:  ch.LastMsgID,
+		LastSyncAt: lastSync,
+		PostCount:  ch.PostCount,
+		CreateTime: g5FmtTime(ch.CreateTime),
+	}
+}

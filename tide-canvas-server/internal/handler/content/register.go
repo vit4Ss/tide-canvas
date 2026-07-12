@@ -44,6 +44,11 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	home := api.Group("/home")
 	home.GET("/feed", h.homeFeed) // -> HomeFeedVO
 
+	// Blog（公开读取；写入面在后台 /admin/blog，自建 + Telegram 频道同步同表）。
+	blog := api.Group("/blog")
+	blog.GET("/posts", h.blogList)       // paged -> PageData<BlogPostLiteVO>
+	blog.GET("/posts/:id", h.blogDetail) // -> BlogPostVO（草稿 404）
+
 	// Authenticated notification center.
 	notif := api.Group("/notifications")
 	notif.Use(middleware.JWTAuth(d))
