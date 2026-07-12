@@ -408,7 +408,22 @@ const (
 	blogSyncMaxPages = 5
 	// blogSyncMaxImages caps re-hosted images per message.
 	blogSyncMaxImages = 6
+	// blogSyncMaxVideos caps re-hosted videos per message（视频体积大）.
+	blogSyncMaxVideos = 2
 )
+
+// hostedVideo is one re-hosted video attachment.
+type hostedVideo struct {
+	URL    string // 本站 mp4 地址
+	Poster string // 封面（本站地址；转存失败时为原 CDN 地址）
+}
+
+// hostedMedia is one message's re-hosted attachments.
+type hostedMedia struct {
+	photos []string
+	videos []hostedVideo
+	failed int
+}
 
 func (h *blogHandler) syncChannel(c *gin.Context) {
 	id, ok := parsePathID(c)
@@ -432,8 +447,10 @@ func (h *blogHandler) syncChannel(c *gin.Context) {
 	blogSyncMu.Lock()
 	defer blogSyncMu.Unlock()
 
-	// 抓页 + 逐图转存都在这个预算内；预览页超时单次 20s（tgfeed）。
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 120*time.Second)
+	// 抓页 + 图片/视频转存都在这个预算内；预览页超时单次 20s（tgfeed），
+	// 视频单个上限 80MB/180s。与 Next 代理 proxyTimeout(300s)、边缘 nginx
+	// (900s) 的口径兼容。
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 280*time.Second)
 	defer cancel()
 
 	res, err := h.runSync(ctx, &ch)
@@ -491,22 +508,21 @@ func (h *blogHandler) runSync(ctx context.Context, ch *model.BlogChannel) (*Blog
 		}
 	}
 
-	// 阶段一：并发转存图片（信号量限 6 路）。串行逐张下载曾把百条首采拖到
-	// 30s+，超过 Next 开发代理的 30s 默认超时（后端 200、浏览器 500）。
-	hosted := make([][]string, len(fresh))
-	failed := make([]int, len(fresh))
+	// 阶段一：并发转存图片/视频（信号量限 6 路）。串行逐张下载曾把百条首采
+	// 拖到 30s+，超过 Next 开发代理的 30s 默认超时（后端 200、浏览器 500）。
+	media := make([]hostedMedia, len(fresh))
 	sem := make(chan struct{}, 6)
 	var wg sync.WaitGroup
 	for i := range fresh {
 		if strings.TrimSpace(fresh[i].Plain) == "" {
-			continue // 无文字消息不会落库，图也不用转存
+			continue // 无文字消息不会落库，媒体也不用转存
 		}
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			hosted[i], failed[i] = h.rehostAll(ctx, ch.Username, &fresh[i])
+			media[i] = h.rehostAll(ctx, ch.Username, &fresh[i])
 		}(i)
 	}
 	wg.Wait()
@@ -543,11 +559,11 @@ func (h *blogHandler) runSync(ctx context.Context, ch *model.BlogChannel) (*Blog
 			out.SkippedEmpty++
 			continue
 		}
-		out.ImageFailed += failed[i]
+		out.ImageFailed += media[i].failed
 		if dup[m.ID] {
 			continue
 		}
-		posts = append(posts, buildTgPost(ch, m, hosted[i]))
+		posts = append(posts, buildTgPost(ch, m, &media[i]))
 	}
 	if len(posts) > 0 {
 		if err := h.db.CreateInBatches(posts, 20).Error; err != nil {
@@ -572,48 +588,94 @@ func (h *blogHandler) runSync(ctx context.Context, ch *model.BlogChannel) (*Blog
 	return out, nil
 }
 
-// rehostAll re-hosts one message's images (capped)，失败的保留原 CDN 链接并
-// 计数返回。
-func (h *blogHandler) rehostAll(ctx context.Context, username string, m *tgfeed.Message) (hosted []string, failed int) {
+// rehostAll re-hosts one message's images & videos (capped)。图片失败保留原
+// CDN 链接；视频失败退化为封面图（原视频链接很快过期，留着就是死链）。
+func (h *blogHandler) rehostAll(ctx context.Context, username string, m *tgfeed.Message) hostedMedia {
+	var out hostedMedia
+
 	photos := m.Photos
 	if len(photos) > blogSyncMaxImages {
 		photos = photos[:blogSyncMaxImages]
 	}
-	hosted = make([]string, 0, len(photos))
 	for i, u := range photos {
 		saved, err := h.rehostImage(ctx, username, m.ID, i, u)
 		if err != nil {
-			failed++
-			hosted = append(hosted, u)
+			out.failed++
+			out.photos = append(out.photos, u)
 			continue
 		}
-		hosted = append(hosted, saved)
+		out.photos = append(out.photos, saved)
 	}
-	return hosted, failed
+
+	videos := m.Videos
+	if len(videos) > blogSyncMaxVideos {
+		videos = videos[:blogSyncMaxVideos]
+	}
+	for i, v := range videos {
+		// 封面缩略先转存（<video poster> 与列表卡片都用它）。
+		poster := v.Poster
+		if poster != "" {
+			if saved, err := h.rehostImage(ctx, username, m.ID, 100+i, poster); err == nil {
+				poster = saved
+			}
+		}
+		if v.URL == "" {
+			// 预览没内嵌视频源（体积过大）：封面当图片兜底。
+			if poster != "" {
+				out.photos = append(out.photos, poster)
+			}
+			continue
+		}
+		saved, err := h.rehostVideo(ctx, username, m.ID, i, v.URL)
+		if err != nil {
+			out.failed++
+			if poster != "" {
+				out.photos = append(out.photos, poster)
+			}
+			continue
+		}
+		out.videos = append(out.videos, hostedVideo{URL: saved, Poster: poster})
+	}
+	return out
 }
 
-// buildTgPost converts one telegram message into a published blog_post.
-func buildTgPost(ch *model.BlogChannel, m *tgfeed.Message, hosted []string) *model.BlogPost {
+// buildTgPost converts one telegram message into a published blog_post。视频
+// 用 `![video](url "poster")` 约定嵌入正文最前（详情页把它渲染成播放器并隐藏
+// 顶部封面，与频道里“媒体在上、文字在下”的观感一致）。
+func buildTgPost(ch *model.BlogChannel, m *tgfeed.Message, media *hostedMedia) *model.BlogPost {
 	title, rest := splitTitle(m.Plain)
-	content := m.Markdown
+
+	var b strings.Builder
+	for _, v := range media.videos {
+		if v.Poster != "" {
+			b.WriteString("![video](" + v.URL + " \"" + v.Poster + "\")\n\n")
+		} else {
+			b.WriteString("![video](" + v.URL + ")\n\n")
+		}
+	}
+	b.WriteString(m.Markdown)
 	// 除封面外的图片附在正文末尾（封面在详情页顶部单独展示，不重复）。
-	if len(hosted) > 1 {
-		var b strings.Builder
-		b.WriteString(content)
+	extra := media.photos
+	if len(media.videos) == 0 && len(extra) > 0 {
+		extra = extra[1:] // 首图即封面
+	}
+	if len(extra) > 0 {
 		b.WriteString("\n")
-		for _, u := range hosted[1:] {
+		for _, u := range extra {
 			b.WriteString("\n![](" + u + ")\n")
 		}
-		content = b.String()
 	}
+	content := b.String()
 
 	summary := collapseSpace(rest)
 	if summary == "" {
 		summary = collapseSpace(title)
 	}
 	cover := ""
-	if len(hosted) > 0 {
-		cover = hosted[0]
+	if len(media.videos) > 0 && media.videos[0].Poster != "" {
+		cover = media.videos[0].Poster
+	} else if len(media.photos) > 0 {
+		cover = media.photos[0]
 	}
 	msgTime := m.Time
 	return &model.BlogPost{
@@ -627,6 +689,20 @@ func buildTgPost(ch *model.BlogChannel, m *tgfeed.Message, hosted []string) *mod
 		Status:      model.BlogStatusPublished,
 		PublishedAt: &msgTime,
 	}
+}
+
+// rehostVideo downloads one CDN video and saves it under the blog prefix.
+func (h *blogHandler) rehostVideo(ctx context.Context, username string, msgID int64, idx int, url string) (string, error) {
+	data, ct, err := tgfeed.FetchVideo(ctx, url)
+	if err != nil {
+		return "", err
+	}
+	ext := ".mp4"
+	if strings.Contains(ct, "webm") {
+		ext = ".webm"
+	}
+	key := fmt.Sprintf("blog/tg/%s/%d_v%d%s", username, msgID, idx, ext)
+	return h.store.Save(ctx, key, bytes.NewReader(data), ct)
 }
 
 // rehostImage downloads one CDN image and saves it under the blog prefix.

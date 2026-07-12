@@ -30,11 +30,19 @@ type Message struct {
 	Markdown string
 	// Plain is the same text without any markup (title/summary derivation).
 	Plain string
-	// Photos are the message's image URLs (photo attachments + video poster
-	// thumbs), in display order — telesco.pe CDN URLs that expire, so callers
-	// should re-host them.
+	// Photos are the message's image URLs, in display order — telesco.pe CDN
+	// URLs that expire, so callers should re-host them.
 	Photos []string
+	// Videos are the message's video attachments. 预览页对中小视频内嵌真实
+	// mp4 源；过大的视频只给封面（URL 为空，Poster 可当图片用）。
+	Videos []Video
 	Time   time.Time
+}
+
+// Video is one video attachment (mp4 src + poster thumb; both expire).
+type Video struct {
+	URL    string // mp4 源；预览未内嵌时为空
+	Poster string // 封面缩略图
 }
 
 // Int64ID keeps the telegram message id readable at call sites.
@@ -113,6 +121,43 @@ func FetchImage(ctx context.Context, url string) ([]byte, string, error) {
 	return data, ct, nil
 }
 
+// videoClient allows longer transfers than the page client (视频体积大)。
+var videoClient = &http.Client{Timeout: 180 * time.Second}
+
+// maxVideoBytes caps a downloaded video (预览内嵌的都是中小视频).
+const maxVideoBytes = 80 << 20 // 80MB
+
+// ErrVideoTooLarge means the video exceeded the re-host cap.
+var ErrVideoTooLarge = errors.New("tgfeed: video exceeds size cap")
+
+// FetchVideo downloads one CDN video (for re-hosting). Returns bytes + content type.
+func FetchVideo(ctx context.Context, url string) ([]byte, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	resp, err := videoClient.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("tgfeed: video HTTP %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxVideoBytes+1))
+	if err != nil {
+		return nil, "", err
+	}
+	if len(data) > maxVideoBytes {
+		return nil, "", ErrVideoTooLarge
+	}
+	ct := resp.Header.Get("Content-Type")
+	if ct == "" {
+		ct = "video/mp4"
+	}
+	return data, ct, nil
+}
+
 // ---- parsing ----
 
 var bgImageRe = regexp.MustCompile(`background-image:\s*url\('([^']+)'\)`)
@@ -163,8 +208,19 @@ func parseMessage(n *html.Node) (Message, bool) {
 				m.Plain = strings.TrimSpace(renderPlain(c))
 			}
 			return false
-		case hasClass(c, "tgme_widget_message_photo_wrap"),
-			hasClass(c, "tgme_widget_message_video_thumb"):
+		case hasClass(c, "tgme_widget_message_video_player"),
+			hasClass(c, "tgme_widget_message_roundvideo_player"):
+			if v, ok := parseVideoPlayer(c); ok {
+				m.Videos = append(m.Videos, v)
+			}
+			return false
+		case hasClass(c, "tgme_widget_message_photo_wrap"):
+			if u := extractBgImage(attr(c, "style")); u != "" {
+				m.Photos = append(m.Photos, u)
+			}
+			return false
+		case hasClass(c, "tgme_widget_message_video_thumb"):
+			// 不在 player 里的孤立视频缩略：当图片兜底。
 			if u := extractBgImage(attr(c, "style")); u != "" {
 				m.Photos = append(m.Photos, u)
 			}
@@ -181,7 +237,28 @@ func parseMessage(n *html.Node) (Message, bool) {
 	if m.Time.IsZero() {
 		m.Time = time.Now()
 	}
-	return m, m.Markdown != "" || len(m.Photos) > 0
+	return m, m.Markdown != "" || len(m.Photos) > 0 || len(m.Videos) > 0
+}
+
+// parseVideoPlayer extracts the mp4 src and poster thumb from one
+// tgme_widget_message_video_player block.
+func parseVideoPlayer(n *html.Node) (Video, bool) {
+	var v Video
+	walk(n, func(c *html.Node) bool {
+		if c.Type != html.ElementNode {
+			return true
+		}
+		if c.Data == "video" && v.URL == "" {
+			if src := attr(c, "src"); src != "" {
+				v.URL = src
+			}
+		}
+		if hasClass(c, "tgme_widget_message_video_thumb") && v.Poster == "" {
+			v.Poster = extractBgImage(attr(c, "style"))
+		}
+		return true
+	})
+	return v, v.URL != "" || v.Poster != ""
 }
 
 func extractBgImage(style string) string {

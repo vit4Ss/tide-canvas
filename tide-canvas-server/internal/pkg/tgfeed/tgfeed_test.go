@@ -45,6 +45,23 @@ const fixture = `<!DOCTYPE html><html><head>
   </div>
  </div>
 </div>
+<div class="tgme_widget_message_wrap">
+ <div class="tgme_widget_message js-widget_message" data-post="HotSora/103">
+  <div class="tgme_widget_message_bubble">
+   <a class="tgme_widget_message_video_player blured js-message_video_player" href="https://t.me/HotSora/103">
+    <i class="tgme_widget_message_video_thumb"
+       style="background-image:url('https://cdn4.cdn-telegram.org/file/thumb103.jpg')"></i>
+    <video src="https://cdn4.cdn-telegram.org/file/video103.mp4" class="tgme_widget_message_video js-message_video" muted></video>
+   </a>
+   <div class="tgme_widget_message_text js-message_text" dir="auto">DV 手持视频示例</div>
+   <div class="tgme_widget_message_footer">
+    <a class="tgme_widget_message_date" href="https://t.me/HotSora/103">
+      <time datetime="2026-07-11T03:00:00+00:00" class="time">03:00</time>
+    </a>
+   </div>
+  </div>
+ </div>
+</div>
 </section></body></html>`
 
 func TestParsePageFixture(t *testing.T) {
@@ -55,8 +72,8 @@ func TestParsePageFixture(t *testing.T) {
 	if p.ChannelTitle != "Hot Sora" {
 		t.Errorf("channel title = %q, want Hot Sora", p.ChannelTitle)
 	}
-	if len(p.Messages) != 2 {
-		t.Fatalf("messages = %d, want 2", len(p.Messages))
+	if len(p.Messages) != 3 {
+		t.Fatalf("messages = %d, want 3", len(p.Messages))
 	}
 
 	m := p.Messages[0]
@@ -91,6 +108,19 @@ func TestParsePageFixture(t *testing.T) {
 	if p.Messages[1].ID != 102 || p.Messages[1].Plain != "" || len(p.Messages[1].Photos) != 1 {
 		t.Errorf("photo-only message parsed wrong: %+v", p.Messages[1])
 	}
+
+	// 视频消息：mp4 源 + 封面缩略，缩略不重复出现在 Photos。
+	v := p.Messages[2]
+	if v.ID != 103 || len(v.Videos) != 1 || len(v.Photos) != 0 {
+		t.Fatalf("video message parsed wrong: %+v", v)
+	}
+	if v.Videos[0].URL != "https://cdn4.cdn-telegram.org/file/video103.mp4" ||
+		v.Videos[0].Poster != "https://cdn4.cdn-telegram.org/file/thumb103.jpg" {
+		t.Errorf("video src/poster = %+v", v.Videos[0])
+	}
+	if v.Plain != "DV 手持视频示例" {
+		t.Errorf("video message text = %q", v.Plain)
+	}
 }
 
 func TestParsePageNoPreview(t *testing.T) {
@@ -118,13 +148,19 @@ func TestFetchLive(t *testing.T) {
 			t.Fatalf("FetchPage(%s): no messages parsed", ch)
 		}
 		t.Logf("%s: title=%q messages=%d", ch, p.ChannelTitle, len(p.Messages))
-		withText, withPhoto := 0, 0
+		withText, withPhoto, withVideo, withVideoSrc := 0, 0, 0, 0
 		for _, m := range p.Messages {
 			if strings.TrimSpace(m.Plain) != "" {
 				withText++
 			}
 			if len(m.Photos) > 0 {
 				withPhoto++
+			}
+			if len(m.Videos) > 0 {
+				withVideo++
+				if m.Videos[0].URL != "" {
+					withVideoSrc++
+				}
 			}
 			if m.ID <= 0 {
 				t.Errorf("%s: bad msg id %d", ch, m.ID)
@@ -133,7 +169,8 @@ func TestFetchLive(t *testing.T) {
 				t.Errorf("%s: msg %d no time", ch, m.ID)
 			}
 		}
-		t.Logf("%s: withText=%d withPhoto=%d", ch, withText, withPhoto)
+		t.Logf("%s: withText=%d withPhoto=%d withVideo=%d (embedded src=%d)",
+			ch, withText, withPhoto, withVideo, withVideoSrc)
 		last := p.Messages[len(p.Messages)-1]
 		t.Logf("%s: latest #%d %s | %s", ch, last.ID, last.Time.Format(time.RFC3339),
 			truncateForLog(last.Plain, 80))

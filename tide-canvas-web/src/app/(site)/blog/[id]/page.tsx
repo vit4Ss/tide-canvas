@@ -6,6 +6,10 @@
    数据: GET /api/blog/posts/:id（草稿 404）。正文为 Markdown，用与聊天页
    相同的 react-markdown + remark-gfm 渲染；排版走 blog.css 的 .blog-md
    （720px 阅读宽度、1.85 行高）。来源（自建 / Telegram）不对外区分。
+
+   视频约定：`![video](url "poster")` —— TG 同步的视频帖以此嵌入正文最前，
+   这里覆写 img 组件渲染成 <video controls>；视频帖不再重复渲染顶部封面
+   （封面即视频海报），与频道里“媒体在上、文字在下”的观感一致。
    ========================================================================== */
 
 import { useEffect, useState } from "react";
@@ -85,7 +89,7 @@ export default function BlogDetailPage() {
                   </>
                 )}
               </div>
-              {post.coverUrl && (
+              {post.coverUrl && !post.content.includes("![video](") && (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   className="blog-article-cover"
@@ -94,7 +98,25 @@ export default function BlogDetailPage() {
                 />
               )}
               <div className="blog-md">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    img: ({ src, alt, title }) =>
+                      alt === "video" && typeof src === "string" ? (
+                        <video
+                          className="blog-video"
+                          src={src}
+                          poster={title || undefined}
+                          controls
+                          playsInline
+                          preload="metadata"
+                        />
+                      ) : (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={typeof src === "string" ? src : undefined} alt={alt || ""} />
+                      ),
+                  }}
+                >
                   {post.content}
                 </ReactMarkdown>
               </div>
