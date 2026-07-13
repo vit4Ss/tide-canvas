@@ -30,7 +30,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type KeyboardEvent,
   type ReactNode,
 } from "react";
 import ReactMarkdown from "react-markdown";
@@ -42,6 +41,11 @@ import { marketApi, type StudioModelVO } from "@/lib/market-api";
 import { resolveModelSwatch } from "@/lib/model-brand";
 import { copyText } from "@/lib/clipboard";
 import { AssetsBrowser, type PickedAsset } from "@/components/studio/assets-browser";
+import {
+  MentionPromptEditor,
+  buildMentionRefs,
+  type MentionEditorHandle,
+} from "@/components/studio/mention-prompt-editor";
 import { useAuthStore } from "@/stores/use-auth-store";
 import type { ContextUsageVO, ConversationVO, MessageVO, MessageTaskVO } from "@/types/chat";
 import { mesh } from "@/lib/mesh";
@@ -633,17 +637,6 @@ export default function ChatPage() {
     },
     [refPolicy, attachFiles],
   );
-  const onPaste = useCallback(
-    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-      const files = e.clipboardData?.files;
-      if (refPolicy && files && files.length) {
-        e.preventDefault();
-        attachFiles(files);
-      }
-    },
-    [refPolicy, attachFiles],
-  );
-
   // load every studio model (text + image + video). Text models drive the chat
   // assistant and may expose the 联网 toggle when their config enables webSearch.
   // Refetch on focus/visibility so 模型管理 edits reflect without a manual refresh.
@@ -727,7 +720,7 @@ export default function ChatPage() {
   }, [webSearchAvail]);
 
   const threadRef = useRef<HTMLDivElement>(null);
-  const taRef = useRef<HTMLTextAreaElement>(null);
+  const taRef = useRef<MentionEditorHandle>(null);
 
   const activeTitle = useMemo(
     () => convos.find((c) => c.id === activeId)?.title ?? "新对话",
@@ -768,20 +761,8 @@ export default function ChatPage() {
     forceBottom();
   }, [activeId, forceBottom]);
 
-  // auto-grow the textarea (chat.js: min(180, scrollHeight))
-  const autosize = useCallback(() => {
-    const ta = taRef.current;
-    if (!ta) return;
-    ta.style.height = "auto";
-    ta.style.height = Math.min(180, ta.scrollHeight) + "px";
-  }, []);
-
-  const resetTa = useCallback(() => {
-    requestAnimationFrame(() => {
-      const ta = taRef.current;
-      if (ta) ta.style.height = "auto";
-    });
-  }, []);
+  // 输入框高度由 contentEditable 自然增长（CSS max-height:180px + overflow-y:auto
+  // 封顶），原 textarea 的 autosize/resetTa 不再需要。
 
   // bumps on every message-load request so a stale response (from a conversation
   // the user already switched away from, or an old poll) is discarded instead of
@@ -853,12 +834,11 @@ export default function ChatPage() {
         setMsgs([]);
         setDraft("");
         clearRefs();
-        resetTa();
       }
     } finally {
       setBusy(false);
     }
-  }, [busy, ensureSession, resetTa, clearRefs]);
+  }, [busy, ensureSession, clearRefs]);
 
   // conversation rename / delete (P5)
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -941,7 +921,14 @@ export default function ChatPage() {
         return;
       }
       // text-model uploads are optional; generation ref-modes require one.
-      if (!refOptional && refImageUrls.length === 0 && refVideoUrls.length === 0) {
+      // omni_ref 的策略允许纯音频参考（音频驱动的视频生成），音频也算数——
+      // 否则界面明示「音频已添加、可 @ 引用」，发送却被拦，自相矛盾。
+      if (
+        !refOptional &&
+        refImageUrls.length === 0 &&
+        refVideoUrls.length === 0 &&
+        refAudioUrls.length === 0
+      ) {
         toast.error("当前模式需要先添加参考素材");
         return;
       }
@@ -949,7 +936,6 @@ export default function ChatPage() {
 
     setBusy(true);
     setDraft("");
-    resetTa();
     await ensureSession();
 
     // ensure there is a conversation to send into
@@ -1021,7 +1007,11 @@ export default function ChatPage() {
             handler = "start_end_to_video";
             input.firstFrame = refImageUrls[0];
             input.lastFrame = refImageUrls[1] ?? refImageUrls[0];
-          } else if (mode === "omni_ref" && (refImageUrls.length || refVideoUrls.length)) {
+          } else if (
+            mode === "omni_ref" &&
+            (refImageUrls.length || refVideoUrls.length || refAudioUrls.length)
+          ) {
+            // 纯音频参考也走 reference_to_video（与创作台「全能参考」行为一致）
             handler = "reference_to_video";
             input.references = refImageUrls;
             if (refVideoUrls.length) input.videoReferences = refVideoUrls;
@@ -1057,11 +1047,14 @@ export default function ChatPage() {
           ...(res ? { resolution: res } : {}),
           ...(wantVideo && dur ? { duration: dur } : {}),
           ...(wantImage && batch > 1 ? { batch } : {}),
-          ...(refImageUrls.length || refVideoUrls.length
+          ...(refImageUrls.length || refVideoUrls.length || refAudioUrls.length
             ? {
                 references: [
                   ...refImageUrls.map((url) => ({ url, kind: "image" })),
                   ...refVideoUrls.map((url) => ({ url, kind: "video" })),
+                  // 音频引用也要入快照：漏掉的话「重新编辑/再次生成」恢复不出
+                  // 音频素材，prompt 里的「音频N」token 变成悬空引用
+                  ...refAudioUrls.map((url) => ({ url, kind: "audio" })),
                 ],
               }
             : {}),
@@ -1127,7 +1120,7 @@ export default function ChatPage() {
       setTyping(false);
       setBusy(false);
     }
-  }, [draft, busy, activeId, ensureSession, loadMessages, resetTa, selModel, mode, ratio, res, dur, batch, refs, refPolicy, refOptional, clearRefs, forceBottom, scrollEnd, ctxUsage, refreshCtxUsage]);
+  }, [draft, busy, activeId, ensureSession, loadMessages, selModel, mode, ratio, res, dur, batch, refs, refPolicy, refOptional, clearRefs, forceBottom, scrollEnd, ctxUsage, refreshCtxUsage]);
 
   // restore a turn's snapshot params into the composer (重新编辑 / 再次生成).
   const restoreFromParams = useCallback(
@@ -1211,112 +1204,23 @@ export default function ChatPage() {
     return () => clearInterval(iv);
   }, [hasInflight, activeId, busy, loadMessages]);
 
-  // ── @ 引用 (P3, textarea-based / IME-safe) ─────────────────────────────────
-  // Typing @ in a reference mode opens a menu of the attached references; picking
-  // one inserts "@图N" at the caret (the reference is already attached via the
-  // strip, so it ships with the turn). The full contentEditable thumbnail-pill
-  // RichPromptInput is deferred — it needs hands-on browser IME (中文组字) testing.
-  const [atMenu, setAtMenu] = useState<{ start: number } | null>(null);
-  const [atIndex, setAtIndex] = useState(0);
-
-  // candidates = attached references that finished uploading.
-  const mentionCands = useMemo(() => refs.filter((r) => r.url), [refs]);
-  const mentionLabel = useCallback(
-    (key: string) => {
-      const i = mentionCands.findIndex((r) => r.key === key);
-      return i >= 0 ? `图${i + 1}` : "图";
-    },
-    [mentionCands],
+  // ── @ 引用（富文本 pill 版，与创作台共用 MentionPromptEditor）────────────────
+  // 输入 @ 弹出已挂参考素材的候选菜单，选中在光标处插入带缩略图的内联 pill，
+  // 序列化为「图片N/视频N/音频N」——N 按 kind 编号，与 send() 组装
+  // imageList / videoReferences / audioReferences 的顺序严格一致。
+  // 编号必须覆盖「全部」已挂素材（含上传中的）再过滤出可选项：若只给传完的
+  // 编号，先传完的那张会被编成图片1，等前面的传完后整体位移，已插入正文的
+  // pill 会静默换绑到另一张图。send() 发送时按 refs 全序组装，编号天然对齐。
+  const mentionRefs = useMemo(
+    () =>
+      refPolicy
+        ? buildMentionRefs(
+            refs.map((r) => ({ key: r.key, kind: r.kind, thumb: r.url || r.blobUrl })),
+          ).filter((_, i) => !!refs[i].url)
+        : [],
+    [refPolicy, refs],
   );
 
-  // visible candidates filtered by the query run after @ (matches the auto label).
-  const atVisible = useMemo(() => {
-    if (!atMenu) return [];
-    const ta = taRef.current;
-    const pos = ta?.selectionStart ?? draft.length;
-    const q = draft.slice(atMenu.start + 1, pos).trim();
-    if (!q) return mentionCands;
-    return mentionCands.filter((_, i) => `图${i + 1}`.includes(q) || `${i + 1}` === q);
-  }, [atMenu, draft, mentionCands]);
-
-  // detect an active "@query" ending at the caret (query: no whitespace/@, ≤40).
-  const detectAt = useCallback(
-    (ta: HTMLTextAreaElement) => {
-      if (!refPolicy || mentionCands.length === 0) {
-        setAtMenu(null);
-        return;
-      }
-      const pos = ta.selectionStart ?? ta.value.length;
-      const m = /(?:^|\s)@([^\s@]{0,40})$/.exec(ta.value.slice(0, pos));
-      if (m) {
-        setAtMenu({ start: pos - m[1].length - 1 });
-        setAtIndex(0);
-      } else {
-        setAtMenu(null);
-      }
-    },
-    [refPolicy, mentionCands.length],
-  );
-
-  const pickMention = useCallback(
-    (cand: RefItem) => {
-      const ta = taRef.current;
-      if (!ta || !atMenu) return;
-      const label = mentionLabel(cand.key);
-      const caretNow = ta.selectionStart ?? draft.length;
-      const before = draft.slice(0, atMenu.start);
-      const after = draft.slice(caretNow);
-      const next = `${before}@${label} ${after}`;
-      setDraft(next);
-      setAtMenu(null);
-      requestAnimationFrame(() => {
-        ta.focus();
-        const caret = before.length + label.length + 2; // @ + label + trailing space
-        ta.setSelectionRange(caret, caret);
-        autosize();
-      });
-    },
-    [atMenu, draft, mentionLabel, autosize],
-  );
-
-  const onKeyDown = useCallback(
-    (e: KeyboardEvent<HTMLTextAreaElement>) => {
-      // While an IME is composing, Enter/Tab confirm a candidate word — never
-      // treat them as send / mention-pick, or a half-composed message gets sent
-      // (this is a zh-CN product, so composition is the common case).
-      if (e.nativeEvent.isComposing || e.keyCode === 229) {
-        return;
-      }
-      // @-menu navigation takes precedence over send.
-      if (atMenu && atVisible.length) {
-        if (e.key === "ArrowDown") {
-          e.preventDefault();
-          setAtIndex((i) => (i + 1) % atVisible.length);
-          return;
-        }
-        if (e.key === "ArrowUp") {
-          e.preventDefault();
-          setAtIndex((i) => (i - 1 + atVisible.length) % atVisible.length);
-          return;
-        }
-        if (e.key === "Enter" || e.key === "Tab") {
-          e.preventDefault();
-          pickMention(atVisible[Math.min(atIndex, atVisible.length - 1)]);
-          return;
-        }
-        if (e.key === "Escape") {
-          e.preventDefault();
-          setAtMenu(null);
-          return;
-        }
-      }
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        send();
-      }
-    },
-    [send, atMenu, atVisible, atIndex, pickMention],
-  );
 
   // approx points cost: the selected model's 消耗积分 × batch.
   const points = useMemo(() => {
@@ -1514,33 +1418,6 @@ export default function ChatPage() {
             onDrop={onDrop}
           >
             {dragOver && <div className="composer-drop">松开以添加参考素材</div>}
-            {atMenu && atVisible.length > 0 && (
-              <div className="at-menu" onMouseDown={(e) => e.preventDefault()}>
-                <div className="at-menu-h">引用参考素材</div>
-                {atVisible.map((r) => {
-                  const i = mentionCands.findIndex((c) => c.key === r.key);
-                  return (
-                    <button
-                      key={r.key}
-                      type="button"
-                      className={`at-item${atVisible[atIndex]?.key === r.key ? " on" : ""}`}
-                      onClick={() => pickMention(r)}
-                    >
-                      {r.kind === "image" ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={r.url || r.blobUrl} alt="" />
-                      ) : r.kind === "video" ? (
-                        // eslint-disable-next-line jsx-a11y/media-has-caption
-                        <video src={r.url || r.blobUrl} muted />
-                      ) : (
-                        <span className="at-aud">♪</span>
-                      )}
-                      <span className="at-lab">@图{i + 1}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
             {refs.length > 0 && (
               <div className="ref-strip">
                 {refs.map((r) => (
@@ -1573,20 +1450,15 @@ export default function ChatPage() {
                   e.target.value = "";
                 }}
               />
-              <textarea
+              <MentionPromptEditor
                 ref={taRef}
+                className="composer-input"
                 value={draft}
-                onChange={(e) => {
-                  setDraft(e.target.value);
-                  autosize();
-                  detectAt(e.target);
-                }}
-                onKeyUp={(e) => detectAt(e.currentTarget)}
-                onClick={(e) => detectAt(e.currentTarget)}
-                onBlur={() => setTimeout(() => setAtMenu(null), 120)}
-                onKeyDown={onKeyDown}
-                onPaste={onPaste}
-                placeholder="描述你想生成的内容，或上传参考素材让模型自由发挥…  输入 / 使用技能，@ 添加主体"
+                onChange={setDraft}
+                refs={mentionRefs}
+                onSubmit={send}
+                onPasteFiles={refPolicy ? attachFiles : undefined}
+                placeholder="描述你想生成的内容，或上传参考素材让模型自由发挥…  @ 引用参考素材"
               />
             </div>
             <div className="composer-bar">

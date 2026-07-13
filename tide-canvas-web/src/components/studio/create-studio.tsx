@@ -42,6 +42,13 @@ import { aiApi, uploadFileSmart } from "@/lib/api";
 import { pointsApi } from "@/lib/points-api";
 import { AiTaskStatus } from "@/types/ai";
 import { AssetsBrowser, type PickedAsset } from "@/components/studio/assets-browser";
+import {
+  MentionPromptEditor,
+  buildMentionRefs,
+  extractMentionTokens,
+  type MentionEditorHandle,
+  type MentionKind,
+} from "@/components/studio/mention-prompt-editor";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";
 import styles from "@/app/(studio)/studio/create.module.css";
@@ -703,13 +710,32 @@ export default function CreateStudio() {
   // bumped on every reset/cancel so in-flight poll callbacks from a stale run bail out.
   const runIdRef = useRef(0);
   const modelWrapRef = useRef<HTMLDivElement>(null);
-  const promptRef = useRef<HTMLTextAreaElement>(null);
+  const promptRef = useRef<MentionEditorHandle>(null);
 
   /* ── derived ─────────────────────────────────────────────────────────── */
 
   const cfg = TOOLS[tool];
   const isVideo = curType === "video";
   const slots = UPLOADS[tool] ?? null;
+
+  /* @ 引用候选：按提交顺序给槽位素材编号（图片N/视频N/音频N）。顺序必须与
+     generate() 组装 imageList / firstFrame·lastFrame / videoReferences /
+     audioReferences 的顺序一致——token 的 N 就是对齐到第 N 个素材。
+     （flf 的 slots 序 = [first, last] → 图片1=首帧、图片2=尾帧。） */
+  const mentionRefs = useMemo(() => {
+    if (!slots) return [];
+    const items: { key: string; kind: MentionKind; thumb?: string }[] = [];
+    for (const s of slots) {
+      (slotData[s.k] ?? []).forEach((f, i) => {
+        items.push({
+          key: `${s.k}-${i}-${f.url ?? f.g ?? f.n}`,
+          kind: s.type,
+          thumb: s.type === "image" ? (f.g || f.url) : f.url,
+        });
+      });
+    }
+    return buildMentionRefs(items);
+  }, [slots, slotData]);
 
   /* ── studio models → picker names/meta + selected model's config ───────── */
   const noBackend = studioList.length === 0;
@@ -1173,7 +1199,19 @@ export default function CreateStudio() {
       const res = await aiApi.optimizePrompt(v);
       if (res.success && res.data?.prompt) {
         setPrompt(res.data.prompt);
-        toast.success("✦ 已用 AI 优化提示词");
+        // 优化模型不认识「图片N」引用 token，重写后引用大概率丢失——素材
+        // 还在槽位里，提醒用户重新 @ 即可，不打断流程。用 token 解析而非
+        // includes 子串比较：优化结果里的「图片1080p」含「图片1」子串但
+        // 不是有效 token，includes 会误判引用仍在。
+        const before = extractMentionTokens(v);
+        const after = extractMentionTokens(res.data.prompt);
+        const hadMention = mentionRefs.some((r) => before.has(r.label));
+        const keptMention = mentionRefs.some((r) => after.has(r.label));
+        if (hadMention && !keptMention) {
+          toast.info("优化后素材引用（图片N）被改写，请重新 @ 引用");
+        } else {
+          toast.success("✦ 已用 AI 优化提示词");
+        }
       } else {
         toast.error(res.message || "AI 优化失败");
       }
@@ -2384,13 +2422,16 @@ export default function CreateStudio() {
               </span>
             </div>
             <div className="ws-promptbox">
-              <textarea
-                className="ws-prompt"
-                id="prompt"
+              {/* 富文本提示词框：有参考素材时输入 @ 引用（图片N pill），Enter 保持换行 */}
+              <MentionPromptEditor
                 ref={promptRef}
-                placeholder={mCfg?.defaultPrompt || cfg.ph}
+                id="prompt"
+                className="ws-prompt"
                 value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
+                onChange={setPrompt}
+                refs={mentionRefs}
+                placeholder={mCfg?.defaultPrompt || cfg.ph}
+                submitOnEnter={false}
               />
               <div className="ws-prompt-foot">
                 <button className="ws-aiopt" type="button" onClick={aiOptimize} disabled={optimizing}>
