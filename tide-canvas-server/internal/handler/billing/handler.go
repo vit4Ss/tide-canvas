@@ -53,6 +53,18 @@ func (h *handler) getFaq(c *gin.Context) {
 	response.OK(c, vo)
 }
 
+// getPromo handles GET /api/billing/promo (public). Returns the pricing page's
+// 限时折扣横幅 config ({enabled,tag,title,subtitle,endsAt}), admin-editable in
+// 价格管理; the client hides the banner when disabled or expired.
+func (h *handler) getPromo(c *gin.Context) {
+	vo, err := LoadPromo(h.svc.repo.db)
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "failed to load promo")
+		return
+	}
+	response.OK(c, vo)
+}
+
 // listChannels handles GET /api/billing/channels (public). Returns the
 // admin-enabled, cashier-supported pay methods ([]PayChannelVO) so the client
 // renders exactly what the 管理后台 支付渠道 configuration allows.

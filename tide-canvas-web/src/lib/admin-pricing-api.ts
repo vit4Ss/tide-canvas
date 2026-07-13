@@ -20,6 +20,7 @@ import type {
   AdminPlan,
   AdminPlanUpsertDTO,
 } from "@/types/admin-pricing";
+import type { PromoVO } from "@/types/billing";
 
 export const adminPricingApi = {
   // ---- plans (公开定价的同源数据) ----
@@ -34,4 +35,7 @@ export const adminPricingApi = {
   // ---- 常见问题 FAQ（公开定价页同源） ----
   getFaq: () => http.get<AdminFaqVO>("/api/admin/pricing/faq"),
   saveFaq: (vo: AdminFaqVO) => http.put<AdminFaqVO>("/api/admin/pricing/faq", vo),
+  // ---- 限时折扣横幅（公开定价页同源；关闭或到期前端隐藏） ----
+  getPromo: () => http.get<PromoVO>("/api/admin/pricing/promo"),
+  savePromo: (vo: PromoVO) => http.put<PromoVO>("/api/admin/pricing/promo", vo),
 };

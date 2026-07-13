@@ -5,6 +5,7 @@ import type {
   PayChannelVO,
   CompareVO,
   FaqVO,
+  PromoVO,
   CreateOrderDTO,
   OrderVO,
   VerifyResult,
@@ -22,6 +23,8 @@ export const billingApi = {
   compare: () => http.get<CompareVO>("/api/billing/compare"),
   /** 定价页常见问题 FAQ（后台价格管理可编辑）。 */
   faq: () => http.get<FaqVO>("/api/billing/faq"),
+  /** 定价页限时折扣横幅（关闭或到期前端隐藏）。 */
+  promo: () => http.get<PromoVO>("/api/billing/promo"),
   /** 可用支付方式 — 由管理后台「支付渠道」开关驱动，空数组 = 支付未开通。 */
   channels: () => http.get<PayChannelVO[]>("/api/billing/channels"),
 };

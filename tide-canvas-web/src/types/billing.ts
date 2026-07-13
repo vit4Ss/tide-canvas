@@ -38,6 +38,16 @@ export interface FaqVO {
   items: FaqItem[];
 }
 
+/** GET /api/billing/promo — 定价页限时折扣横幅（后台价格管理可编辑）。
+ *  enabled=false 或 endsAt 到点后前端隐藏；endsAt 为 RFC3339 时间戳。 */
+export interface PromoVO {
+  enabled: boolean;
+  tag: string;
+  title: string;
+  subtitle: string;
+  endsAt: string;
+}
+
 /** epay pay method. Maps to the backend payChannel → epay type. */
 export type PayChannel = "alipay" | "wxpay";
 

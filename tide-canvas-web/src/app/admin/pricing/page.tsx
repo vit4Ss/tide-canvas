@@ -53,6 +53,7 @@ const toNum = (s: string) => {
 /* ── plan modal form state ─────────────────────────────────────────────── */
 interface PlanForm {
   name: string;
+  code: string;
   desc: string;
   cta: string;
   monthly: string;
@@ -62,9 +63,11 @@ interface PlanForm {
   featured: boolean;
   sortOrder: string;
   status: boolean;
+  vipLevel: string;
 }
 const emptyPlanForm = (): PlanForm => ({
   name: "",
+  code: "",
   desc: "",
   cta: "",
   monthly: "",
@@ -74,9 +77,25 @@ const emptyPlanForm = (): PlanForm => ({
   featured: false,
   sortOrder: "0",
   status: true,
+  vipLevel: "0",
 });
+/* RFC3339 ↔ <input type="datetime-local"> 值（本地时区，无秒）。 */
+const isoToLocalInput = (iso: string): string => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+const localInputToIso = (v: string): string => {
+  if (!v) return "";
+  const d = new Date(v);
+  return Number.isFinite(d.getTime()) ? d.toISOString() : "";
+};
+
 const planToForm = (p: AdminPlan): PlanForm => ({
   name: p.name,
+  code: p.code,
   desc: p.desc,
   cta: p.cta,
   monthly: String(p.monthly),
@@ -86,6 +105,7 @@ const planToForm = (p: AdminPlan): PlanForm => ({
   featured: p.featured,
   sortOrder: String(p.sortOrder),
   status: p.status === 1,
+  vipLevel: String(p.vipLevel ?? 0),
 });
 
 export default function AdminPricingPage() {
@@ -121,6 +141,24 @@ export default function AdminPricingPage() {
     faqDirtyRef.current = true;
   };
 
+  // 限时折扣横幅（sys_config: pricing.promo）。endsAt 在表单里用
+  // datetime-local 字符串，提交时转 RFC3339。
+  const [promoForm, setPromoForm] = useState({
+    enabled: false,
+    tag: "",
+    title: "",
+    subtitle: "",
+    endsAt: "",
+  });
+  const [promoDirty, setPromoDirty] = useState(false);
+  const [promoSaving, setPromoSaving] = useState(false);
+  const promoDirtyRef = useRef(false);
+  const setPromo = (patch: Partial<typeof promoForm>) => {
+    setPromoForm((f) => ({ ...f, ...patch }));
+    setPromoDirty(true);
+    promoDirtyRef.current = true;
+  };
+
   // silent：跳过 loading 占位，静默换数据。排序等就地操作用它刷新，
   // 否则表格被「加载中…」卸载重建，行移动的过渡动画会被打断。
   const load = useCallback(
@@ -140,6 +178,21 @@ export default function AdminPricingPage() {
         const faqRes = await adminPricingApi.getFaq();
         if (faqRes.success && faqRes.data?.items) {
           setFaqItems((prev) => (prev.length && faqDirtyRef.current ? prev : faqRes.data!.items));
+        }
+        const promoRes = await adminPricingApi.getPromo();
+        if (promoRes.success && promoRes.data) {
+          const d = promoRes.data;
+          setPromoForm((prev) =>
+            promoDirtyRef.current
+              ? prev
+              : {
+                  enabled: d.enabled,
+                  tag: d.tag,
+                  title: d.title,
+                  subtitle: d.subtitle,
+                  endsAt: isoToLocalInput(d.endsAt),
+                },
+          );
         }
       } catch {
         setError("加载失败，请稍后重试");
@@ -182,6 +235,17 @@ export default function AdminPricingPage() {
       toast.error("请填写套餐名称");
       return false;
     }
+    // code 是套餐唯一编码（后端 required + unique）；新增必填，编辑只读带回。
+    const code = editingPlan ? editingPlan.code : planForm.code.trim();
+    if (!code) {
+      toast.error("请填写套餐代码");
+      return false;
+    }
+    // 只校验新增：编辑带回的旧 code 不重新格式化，避免历史数据被锁死。
+    if (!editingPlan && !/^[A-Za-z0-9_-]{1,32}$/.test(code)) {
+      toast.error("套餐代码仅支持字母、数字、- 与 _（32 字符以内）");
+      return false;
+    }
     const monthly = Number(planForm.monthly.trim());
     if (planForm.monthly.trim() === "" || !Number.isFinite(monthly) || monthly < 0) {
       toast.error("请填写有效的月价");
@@ -194,6 +258,7 @@ export default function AdminPricingPage() {
     }
     const dto: AdminPlanUpsertDTO = {
       name,
+      code,
       desc: planForm.desc.trim(),
       cta: planForm.cta.trim(),
       monthly,
@@ -208,9 +273,7 @@ export default function AdminPricingPage() {
       featured: planForm.featured,
       sortOrder: toNum(planForm.sortOrder),
       status: planForm.status ? 1 : 0,
-      // The backend upsert is a FULL overwrite; the form doesn't expose code,
-      // so carry the existing value through on edit.
-      ...(editingPlan ? { code: editingPlan.code } : {}),
+      vipLevel: toNum(planForm.vipLevel),
     };
     try {
       const res = editingPlan
@@ -364,6 +427,45 @@ export default function AdminPricingPage() {
       toast.error("保存常见问题失败，请稍后重试");
     } finally {
       setFaqSaving(false);
+    }
+  };
+
+  const savePromo = async () => {
+    if (promoSaving) return;
+    const title = promoForm.title.trim();
+    const endsAtIso = localInputToIso(promoForm.endsAt);
+    if (promoForm.enabled) {
+      if (!title) {
+        toast.error("启用横幅需要填写标题");
+        return;
+      }
+      if (!endsAtIso) {
+        toast.error("请选择结束时间");
+        return;
+      }
+      if (new Date(endsAtIso).getTime() <= Date.now()) {
+        toast.error("结束时间需晚于当前时间");
+        return;
+      }
+    }
+    setPromoSaving(true);
+    try {
+      const res = await adminPricingApi.savePromo({
+        enabled: promoForm.enabled,
+        tag: promoForm.tag.trim(),
+        title,
+        subtitle: promoForm.subtitle.trim(),
+        endsAt: endsAtIso,
+      });
+      if (res.success) {
+        setPromoDirty(false);
+        promoDirtyRef.current = false;
+        toast.success("限时折扣横幅已保存");
+      } else toast.error(res.message || "保存横幅失败");
+    } catch {
+      toast.error("保存横幅失败，请稍后重试");
+    } finally {
+      setPromoSaving(false);
     }
   };
 
@@ -710,6 +812,69 @@ export default function AdminPricingPage() {
         )}
       </Panel>
 
+      {/* 限时折扣横幅：公开定价页套餐卡上方的促销条 */}
+      <Panel
+        title="限时折扣横幅"
+        sub="公开定价页套餐卡上方的促销条 · 关闭或倒计时到点自动隐藏"
+        tools={
+          <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+            {promoDirty && (
+              <span className="muted" style={{ fontSize: 12 }} role="status" aria-live="polite">
+                有未保存的修改
+              </span>
+            )}
+            <button
+              type="button"
+              className="adm-btn"
+              onClick={savePromo}
+              disabled={promoSaving || !promoDirty}
+              aria-busy={promoSaving}
+            >
+              {!promoSaving ? <Save aria-hidden size={14} /> : null}
+              {promoSaving ? "保存中…" : "保存横幅"}
+            </button>
+          </span>
+        }
+      >
+        <FormGrid>
+          <Field label="启用" span={2} hint="关闭后前台立即隐藏；开启需填写标题与结束时间">
+            <SwitchToggle
+              checked={promoForm.enabled}
+              onChange={(next) => setPromo({ enabled: next })}
+              aria-label="启用限时折扣横幅"
+            />
+          </Field>
+          <Field label="结束时间" required={promoForm.enabled} span={2} hint="倒计时目标；到点后横幅自动消失">
+            <input
+              type="datetime-local"
+              value={promoForm.endsAt}
+              onChange={(e) => setPromo({ endsAt: e.target.value })}
+            />
+          </Field>
+          <Field label="标签" span={2} hint="左上角胶囊小字，留空不显示">
+            <input
+              placeholder="如：限时折扣"
+              value={promoForm.tag}
+              onChange={(e) => setPromo({ tag: e.target.value })}
+            />
+          </Field>
+          <Field label="标题" required={promoForm.enabled} span={2}>
+            <input
+              placeholder="如：Seedance 2.5 即将上线"
+              value={promoForm.title}
+              onChange={(e) => setPromo({ title: e.target.value })}
+            />
+          </Field>
+          <Field label="副标题" span={4} hint="标题下方一句话，留空不显示">
+            <input
+              placeholder="如：和 FlowingLight 一起，创作伟大作品"
+              value={promoForm.subtitle}
+              onChange={(e) => setPromo({ subtitle: e.target.value })}
+            />
+          </Field>
+        </FormGrid>
+      </Panel>
+
       {/* 新增 / 编辑套餐 modal */}
       <AdminModal
         open={planOpen}
@@ -730,7 +895,24 @@ export default function AdminPricingPage() {
                 onChange={(e) => setPlanForm((f) => ({ ...f, name: e.target.value }))}
               />
             </Field>
-            <Field label="副标题" span={2} hint="卡片名称下方的一句话，如：高频创作者的首选">
+            <Field
+              label="套餐代码"
+              required={!editingPlan}
+              span={2}
+              hint={
+                editingPlan
+                  ? "唯一编码，创建后不可修改"
+                  : "唯一编码，仅字母 / 数字 / - / _，如：pro、ultra；创建后不可修改"
+              }
+            >
+              <input
+                placeholder="如：pro"
+                value={planForm.code}
+                disabled={!!editingPlan}
+                onChange={(e) => setPlanForm((f) => ({ ...f, code: e.target.value }))}
+              />
+            </Field>
+            <Field label="副标题" span={4} hint="卡片名称下方的一句话，如：高频创作者的首选">
               <input
                 placeholder="如：高频创作者的首选"
                 value={planForm.desc}
@@ -794,7 +976,19 @@ export default function AdminPricingPage() {
                 aria-label="最受欢迎徽章"
               />
             </Field>
-            <Field label="状态" span={4} hint="关闭后套餐将下架（公开定价同步隐藏）">
+            <Field
+              label="会员等级"
+              span={2}
+              hint="购买后授予的等级，0 = 不授予；只能买更高等级（升级），同级/低级会被拦截"
+            >
+              <input
+                type="number"
+                placeholder="如：1"
+                value={planForm.vipLevel}
+                onChange={(e) => setPlanForm((f) => ({ ...f, vipLevel: e.target.value }))}
+              />
+            </Field>
+            <Field label="状态" span={2} hint="关闭后套餐将下架（公开定价同步隐藏）">
               <SwitchToggle
                 checked={planForm.status}
                 onChange={(next) => setPlanForm((f) => ({ ...f, status: next }))}

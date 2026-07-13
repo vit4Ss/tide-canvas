@@ -90,14 +90,17 @@ export default function HomePricing({
       >
         {plans.map((p, i) => {
           const isFree = p.monthly === 0;
-          const price = cycle === "yr" ? p.yearly : p.monthly;
-          const per = isFree ? "永久免费" : cycle === "yr" ? "/ 年" : "/ 月";
-          const num = isFree ? "¥0" : "¥" + money(price);
+          // 未配年付价的套餐在年付档回落月付展示（与定价页同口径）。
+          const yr = cycle === "yr" && Number(p.yearly) > 0;
+          // 年付主价 = 折合月价（yearly/12），旁边划线展示月付原价（与定价页同语言）。
+          const eff = yr
+            ? Math.round((Number(p.yearly) / 12) * 100) / 100
+            : Number(p.monthly);
+          const per = isFree ? "永久免费" : "/ 月";
+          const num = isFree ? "¥0" : "¥" + money(eff);
           const href = isFree ? "/studio" : "/pricing";
-          // 年付展示划线原价（月价 × 12），只有真有折扣时才显示。
-          const orig = Math.round(Number(p.monthly) * 12 * 100) / 100;
-          const showOrig =
-            !isFree && cycle === "yr" && Number(p.yearly) > 0 && orig > Number(p.yearly);
+          const orig = Number(p.monthly);
+          const showOrig = !isFree && yr && Number(p.yearly) > 0 && orig > eff;
           return (
             <div
               key={p.id}
@@ -109,12 +112,10 @@ export default function HomePricing({
               <div className="plan-desc">{p.desc}</div>
               <div className="plan-price">
                 <span className="num">{num}</span>
-                <span className="per">{per}</span>
                 {showOrig && (
                   <span
                     style={{
-                      marginLeft: 8,
-                      fontSize: 13,
+                      fontSize: 15,
                       color: "var(--text-faint)",
                       textDecoration: "line-through",
                     }}
@@ -122,7 +123,19 @@ export default function HomePricing({
                     ¥{money(orig)}
                   </span>
                 )}
+                <span className="per">{per}</span>
               </div>
+              {!isFree && yr && Number(p.yearly) > 0 && (
+                <div
+                  style={{
+                    fontSize: 12.5,
+                    color: "var(--text-faint)",
+                    marginTop: 4,
+                  }}
+                >
+                  按年支付 ¥{money(p.yearly)}
+                </div>
+              )}
               <Link
                 className={`plan-cta ${p.featured ? "solid" : "ghost"}`}
                 href={href}

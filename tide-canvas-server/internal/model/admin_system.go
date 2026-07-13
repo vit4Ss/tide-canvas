@@ -75,6 +75,12 @@ const ConfigKeyPricingCompare = "pricing.compare"
 // site by GET /api/billing/faq (factory default when never saved).
 const ConfigKeyPricingFaq = "pricing.faq"
 
+// ConfigKeyPricingPromo is the sys_config key holding the pricing page's
+// 限时折扣横幅 as JSON: {enabled, tag, title, subtitle, endsAt(RFC3339)}.
+// Edited in the admin 价格管理 screen; served to the site by
+// GET /api/billing/promo. 前端在 enabled=false 或倒计时到点后隐藏横幅。
+const ConfigKeyPricingPromo = "pricing.promo"
+
 // ConfigKeyChatContextTokenLimit is the sys_config key overriding the chat
 // conversation's cumulative context-token cap (llm.contextTokenLimit). Seeded
 // on boot from the config file; edited in the admin 配置管理 screen and read

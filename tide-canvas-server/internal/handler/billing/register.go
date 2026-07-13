@@ -36,6 +36,8 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	b.GET("/compare", h.getCompare)
 	// 定价页常见问题 FAQ（后台价格管理可编辑）。
 	b.GET("/faq", h.getFaq)
+	// 定价页限时折扣横幅（后台价格管理可编辑；关闭或到期前端隐藏）。
+	b.GET("/promo", h.getPromo)
 	// 可用支付方式由管理后台「支付渠道」开关驱动（pay_channel.enabled）。
 	b.GET("/channels", h.listChannels)
 	// epay delivers the async notify as a GET (query params); accept POST too.

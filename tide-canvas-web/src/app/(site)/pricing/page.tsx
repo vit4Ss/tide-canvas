@@ -28,6 +28,7 @@ import type { CompareRow, FaqItem, PlanVO } from "@/types/billing";
 import { useReveal } from "@/components/site/use-reveal";
 import { useAuthStore } from "@/stores/use-auth-store";
 import PayModal, { type PurchaseIntent } from "@/components/site/pay-modal";
+import PromoBanner from "@/components/site/promo-banner";
 
 type Cycle = "yr" | "mo";
 
@@ -195,6 +196,9 @@ export default function PricingPage() {
           </div>
         </div>
 
+        {/* ── 限时折扣横幅（倒计时到点自动隐藏，配置见 promo-banner.tsx） ── */}
+        <PromoBanner />
+
         {/* ── Plans grid ─────────────────────────────────────────────── */}
         <div
           className="plans"
@@ -239,17 +243,31 @@ export default function PricingPage() {
 
           {plans.map((p, i) => {
             const free = p.monthly === 0;
-            const price = cycle === "yr" ? p.yearly : p.monthly;
-            const num = free ? "¥0" : "¥" + price;
-            const per = free ? "永久免费" : cycle === "yr" ? "/ 年" : "/ 月";
-            // 年付展示划线原价（按月价 × 12），只有真有折扣时才显示。
-            const orig = Math.round(Number(p.monthly) * 12 * 100) / 100;
-            const showOrig =
-              !free && cycle === "yr" && Number(p.yearly) > 0 && orig > Number(p.yearly);
-            // 会员态：等级相同 =「当前套餐」，已持有更高档 =「已包含」，均不可再购。
+            // 未配年付价的套餐在年付档回落月付展示（下单同样按月收）。
+            const yr = cycle === "yr" && Number(p.yearly) > 0;
+            // 年付主价 = 折合月价（yearly/12），旁边划线展示月付原价；
+            // 实际收款仍是年付总价，价格下方注明。
+            const eff = yr
+              ? Math.round((Number(p.yearly) / 12) * 100) / 100
+              : Number(p.monthly);
+            const num = free ? "¥0" : "¥" + eff;
+            const per = free ? "永久免费" : "/ 月";
+            const orig = Number(p.monthly);
+            const showOrig = !free && yr && Number(p.yearly) > 0 && orig > eff;
+            // 会员态：等级相同 =「当前套餐」，已持有更高档 =「已包含」，均不可
+            // 再购（套餐只能升级）。FREE 是默认档：登录且无付费等级 = 当前套餐，
+            // 已是付费会员 = 已包含。
             const myLevel = user?.vipLevel ?? 0;
-            const isCurrent = p.vipLevel > 0 && myLevel === p.vipLevel;
-            const isCovered = p.vipLevel > 0 && myLevel > p.vipLevel;
+            const isCurrent = user
+              ? free
+                ? myLevel === 0
+                : p.vipLevel > 0 && myLevel === p.vipLevel
+              : false;
+            const isCovered = user
+              ? free
+                ? myLevel > 0
+                : p.vipLevel > 0 && myLevel > p.vipLevel
+              : false;
             const owned = isCurrent || isCovered;
             return (
               <div
@@ -262,12 +280,10 @@ export default function PricingPage() {
                 <div className="plan-desc">{p.desc}</div>
                 <div className="plan-price">
                   <span className="num">{num}</span>
-                  <span className="per">{per}</span>
                   {showOrig && (
                     <span
                       style={{
-                        marginLeft: 8,
-                        fontSize: 13,
+                        fontSize: 15,
                         color: "var(--text-faint)",
                         textDecoration: "line-through",
                       }}
@@ -275,7 +291,19 @@ export default function PricingPage() {
                       ¥{orig}
                     </span>
                   )}
+                  <span className="per">{per}</span>
                 </div>
+                {!free && yr && Number(p.yearly) > 0 && (
+                  <div
+                    style={{
+                      fontSize: 12.5,
+                      color: "var(--text-faint)",
+                      marginTop: 4,
+                    }}
+                  >
+                    按年支付 ¥{p.yearly}
+                  </div>
+                )}
                 <button
                   type="button"
                   className={`plan-cta ${p.featured && !owned ? "solid" : "ghost"}`}

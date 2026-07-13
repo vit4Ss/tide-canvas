@@ -16,6 +16,7 @@ package admin
 import (
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
@@ -52,6 +53,9 @@ func RegisterPricing(g *gin.RouterGroup, d *app.Deps) {
 	// 定价页常见问题 FAQ。
 	g.GET("/pricing/faq", h.getFaq)
 	g.PUT("/pricing/faq", h.saveFaq)
+	// 定价页限时折扣横幅。
+	g.GET("/pricing/promo", h.getPromo)
+	g.PUT("/pricing/promo", h.savePromo)
 }
 
 type g4PricingHandler struct {
@@ -76,8 +80,11 @@ type g4PlanVO struct {
 	Items         []string `json:"items"`
 	SortOrder     int      `json:"sortOrder"`
 	Status        int      `json:"status"`
-	CreateTime    string   `json:"createTime"`
-	UpdateTime    string   `json:"updateTime"`
+	// VipLevel：购买授予的会员等级（有效值：features 显式值，否则种子 code
+	// 兜底，与 billing.vipForPlan 同口径）。
+	VipLevel   int    `json:"vipLevel"`
+	CreateTime string `json:"createTime"`
+	UpdateTime string `json:"updateTime"`
 }
 
 // g4PlanFeatures is the JSON shape persisted in model.Plan.Features. It MUST
@@ -114,6 +121,9 @@ type g4PlanUpsertDTO struct {
 	Items         []string `json:"items"`
 	SortOrder     int      `json:"sortOrder"`
 	Status        *int     `json:"status" binding:"omitempty,oneof=0 1"`
+	// VipLevel：购买授予的会员等级（0=不授予）。指针语义：省略 = 保留既有
+	// 值（排序等批量回写不带此字段，不能把等级清零）。
+	VipLevel *int `json:"vipLevel" binding:"omitempty,gte=0,lte=99"`
 }
 
 // ---- plan handlers ----
@@ -274,6 +284,48 @@ func (h *g4PricingHandler) saveFaq(c *gin.Context) {
 	response.OK(c, vo)
 }
 
+// getPromo returns the stored 限时折扣横幅 config (disabled zero value when
+// never saved).
+func (h *g4PricingHandler) getPromo(c *gin.Context) {
+	vo, err := billing.LoadPromo(h.db)
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "failed to load promo")
+		return
+	}
+	response.OK(c, vo)
+}
+
+// savePromo persists the 限时折扣横幅 to sys_config (pricing.promo). 开启时
+// 校验结束时间：必须是合法 RFC3339 且晚于当前时刻，否则前端会渲染一个立即
+// 消失的横幅。
+func (h *g4PricingHandler) savePromo(c *gin.Context) {
+	var vo billing.PromoVO
+	if err := c.ShouldBindJSON(&vo); err != nil {
+		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	if vo.Enabled {
+		if vo.Title == "" {
+			response.Fail(c, response.CodeBadRequest, "请填写横幅标题")
+			return
+		}
+		end, err := time.Parse(time.RFC3339, vo.EndsAt)
+		if err != nil {
+			response.Fail(c, response.CodeBadRequest, "结束时间格式不正确")
+			return
+		}
+		if !end.After(time.Now()) {
+			response.Fail(c, response.CodeBadRequest, "结束时间需晚于当前时间")
+			return
+		}
+	}
+	if err := billing.SavePromo(h.db, vo); err != nil {
+		response.Fail(c, response.CodeServerError, "failed to save promo")
+		return
+	}
+	response.OK(c, vo)
+}
+
 // ---- mapping helpers ----
 
 // g4ApplyPlan copies DTO fields onto a plan row. The presentation extras are
@@ -299,13 +351,17 @@ func g4ApplyPlan(row *model.Plan, dto *g4PlanUpsertDTO, create bool) {
 	if items == nil {
 		items = []string{}
 	}
+	vip := prev.VipLevel
+	if dto.VipLevel != nil {
+		vip = *dto.VipLevel
+	}
 	feat := g4PlanFeatures{
 		Desc:     dto.Desc,
 		Yearly:   dto.Yearly,
 		Cta:      dto.Cta,
 		Featured: dto.Featured,
 		Items:    items,
-		VipLevel: prev.VipLevel,
+		VipLevel: vip,
 	}
 	if b, err := json.Marshal(feat); err == nil {
 		row.Features = string(b)
@@ -341,9 +397,25 @@ func g4ToPlanVO(p *model.Plan) g4PlanVO {
 		Items:         items,
 		SortOrder:     p.SortOrder,
 		Status:        p.Status,
+		VipLevel:      g4EffectiveVipLevel(p, &f),
 		CreateTime:    g4FormatTime(p.CreateTime),
 		UpdateTime:    g4FormatTime(p.UpdateTime),
 	}
+}
+
+// g4EffectiveVipLevel mirrors billing.vipForPlan: explicit features.vipLevel
+// wins, else the seeded plan codes, else 0.
+func g4EffectiveVipLevel(p *model.Plan, f *g4PlanFeatures) int {
+	if f.VipLevel > 0 {
+		return f.VipLevel
+	}
+	switch p.Code {
+	case "pro":
+		return 1
+	case "enterprise":
+		return 2
+	}
+	return 0
 }
 
 // failLookup maps a gorm lookup error: not-found -> 404, anything else -> 500.

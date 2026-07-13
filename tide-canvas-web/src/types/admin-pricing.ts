@@ -22,6 +22,8 @@ export interface AdminPlan {
   sortOrder: number;
   /** 1 = 上架, 0 = 下架. */
   status: number;
+  /** 购买授予的会员等级（0=不授予）；只能升级/重复购买拦截按它比较。 */
+  vipLevel: number;
   createTime: string;
   updateTime: string;
 }
@@ -40,6 +42,8 @@ export interface AdminPlanUpsertDTO {
   sortOrder?: number;
   /** Omit to default to 1 (上架) on create / preserve on update. */
   status?: number;
+  /** 购买授予的会员等级（0=不授予）。Omit 保留既有值（批量排序回写不带它）。 */
+  vipLevel?: number;
 }
 
 /** 方案对比表的一行：能力名 + 每套餐一格（键=套餐 id；"✓"/"—"/文字）。 */
