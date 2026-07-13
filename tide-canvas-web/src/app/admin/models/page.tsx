@@ -567,7 +567,10 @@ function Chips<T extends string | number>({
       onChange([v]);
       return;
     }
-    onChange(value.includes(v) ? value.filter((x) => x !== v) : [...value, v]);
+    const next = value.includes(v) ? value.filter((x) => x !== v) : [...value, v];
+    // 按 options 顺序归一化，避免存下「点选顺序」（如 4s, 15s, 5s…）
+    const order = new Map(options.map((o, i) => [o.v, i]));
+    onChange([...next].sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0)));
   };
   return (
     <div className="mchips" role="group" aria-labelledby={sectionLabelId}>
@@ -687,7 +690,9 @@ function ModelModal({
 
   // price-matrix rows: image → qualities, video → durations; cols → resolutions.
   const matrixRows = isVideo
-    ? (cfg.durations ?? []).map((d) => ({ key: d, label: d }))
+    ? [...(cfg.durations ?? [])]
+        .sort((a, b) => parseFloat(a) - parseFloat(b))
+        .map((d) => ({ key: d, label: d }))
     : (cfg.qualities ?? []).map((q) => ({
         key: q,
         label: QUALITY_OPTIONS.find((o) => o.v === q)?.l ?? q,

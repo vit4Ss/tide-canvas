@@ -783,7 +783,9 @@ export default function CreateStudio() {
         ? [...VIDEO_RES]
         : [...IMG_RES]
       : [];
-  const durOpts = mCfg?.durations?.length ? mCfg.durations : noBackend ? [...VIDEO_DUR] : [];
+  const durOpts = (mCfg?.durations?.length ? [...mCfg.durations] : noBackend ? [...VIDEO_DUR] : []).sort(
+    (a, b) => parseFloat(a) - parseFloat(b),
+  );
   const qualOpts = mCfg?.qualities ?? [];
   const ideaOpts = mCfg?.ideas?.length ? mCfg.ideas : noBackend ? [...IDEAS] : [];
   const batchOpts =
