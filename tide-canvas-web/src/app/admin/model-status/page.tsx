@@ -240,15 +240,6 @@ export default function AdminModelStatusPage() {
         .mstat-strip i { flex: 1; border-radius: 2px; background: var(--border); }
         .mstat-strip i.ok { background: var(--ok); }
         .mstat-strip i.bad { background: var(--danger); }
-        .mstat-err {
-          overflow: hidden;
-          color: var(--danger);
-          font-size: 11.5px;
-          line-height: 1.5;
-          display: -webkit-box;
-          -webkit-line-clamp: 2;
-          -webkit-box-orient: vertical;
-        }
       `}</style>
     </div>
   );
@@ -349,7 +340,8 @@ function StatusCard({ m }: { m: AdminModelStatusVO }) {
         </div>
       </div>
 
-      {cur && !cur.ok && cur.error ? <div className="mstat-err">{cur.error}</div> : null}
+      {/* 错误原因不在卡片上展示（异常红点 + 红色调用条已足够表达状态），
+          完整错误原文在「日志 → 模型日志」详情里查看 */}
     </div>
   );
 }
