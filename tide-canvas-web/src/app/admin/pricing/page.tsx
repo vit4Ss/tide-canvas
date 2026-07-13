@@ -836,43 +836,46 @@ export default function AdminPricingPage() {
           </span>
         }
       >
-        <FormGrid>
-          <Field label="启用" span={2} hint="关闭后前台立即隐藏；开启需填写标题与结束时间">
-            <SwitchToggle
-              checked={promoForm.enabled}
-              onChange={(next) => setPromo({ enabled: next })}
-              aria-label="启用限时折扣横幅"
-            />
-          </Field>
-          <Field label="结束时间" required={promoForm.enabled} span={2} hint="倒计时目标；到点后横幅自动消失">
-            <input
-              type="datetime-local"
-              value={promoForm.endsAt}
-              onChange={(e) => setPromo({ endsAt: e.target.value })}
-            />
-          </Field>
-          <Field label="标签" span={2} hint="左上角胶囊小字，留空不显示">
-            <input
-              placeholder="如：限时折扣"
-              value={promoForm.tag}
-              onChange={(e) => setPromo({ tag: e.target.value })}
-            />
-          </Field>
-          <Field label="标题" required={promoForm.enabled} span={2}>
-            <input
-              placeholder="如：Seedance 2.5 即将上线"
-              value={promoForm.title}
-              onChange={(e) => setPromo({ title: e.target.value })}
-            />
-          </Field>
-          <Field label="副标题" span={4} hint="标题下方一句话，留空不显示">
-            <input
-              placeholder="如：和 FlowingLight 一起，创作伟大作品"
-              value={promoForm.subtitle}
-              onChange={(e) => setPromo({ subtitle: e.target.value })}
-            />
-          </Field>
-        </FormGrid>
+        {/* 面板体不自带内边距（表格靠单元格 padding），表单要自己包一层 */}
+        <div style={{ padding: "16px 20px" }}>
+          <FormGrid>
+            <Field label="启用" span={2} hint="关闭后前台立即隐藏；开启需填写标题与结束时间">
+              <SwitchToggle
+                checked={promoForm.enabled}
+                onChange={(next) => setPromo({ enabled: next })}
+                aria-label="启用限时折扣横幅"
+              />
+            </Field>
+            <Field label="结束时间" required={promoForm.enabled} span={2} hint="倒计时目标；到点后横幅自动消失">
+              <input
+                type="datetime-local"
+                value={promoForm.endsAt}
+                onChange={(e) => setPromo({ endsAt: e.target.value })}
+              />
+            </Field>
+            <Field label="标签" span={2} hint="左上角胶囊小字，留空不显示">
+              <input
+                placeholder="如：限时折扣"
+                value={promoForm.tag}
+                onChange={(e) => setPromo({ tag: e.target.value })}
+              />
+            </Field>
+            <Field label="标题" required={promoForm.enabled} span={2}>
+              <input
+                placeholder="如：Seedance 2.5 即将上线"
+                value={promoForm.title}
+                onChange={(e) => setPromo({ title: e.target.value })}
+              />
+            </Field>
+            <Field label="副标题" span={4} hint="标题下方一句话，留空不显示">
+              <input
+                placeholder="如：和 FlowingLight 一起，创作伟大作品"
+                value={promoForm.subtitle}
+                onChange={(e) => setPromo({ subtitle: e.target.value })}
+              />
+            </Field>
+          </FormGrid>
+        </div>
       </Panel>
 
       {/* 新增 / 编辑套餐 modal */}
