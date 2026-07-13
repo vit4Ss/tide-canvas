@@ -49,12 +49,51 @@ func applyUserFilter(tx *gorm.DB, raw string) *gorm.DB {
 	return tx
 }
 
+// resolveUserNames batch-resolves user ids -> display name (昵称优先，回退用户名)
+// for one page of log rows, so the 用户 column can show a human name instead of
+// a raw snowflake id. Missing/deleted users are simply absent from the map
+// (the frontend falls back to the id). One IN query per page, id 0 skipped.
+func resolveUserNames(db *gorm.DB, ids []idgen.ID) map[idgen.ID]string {
+	uniq := make(map[idgen.ID]struct{}, len(ids))
+	for _, id := range ids {
+		if id != 0 {
+			uniq[id] = struct{}{}
+		}
+	}
+	if len(uniq) == 0 {
+		return nil
+	}
+	list := make([]idgen.ID, 0, len(uniq))
+	for id := range uniq {
+		list = append(list, id)
+	}
+	var rows []struct {
+		ID       idgen.ID
+		Username string
+		Nickname string
+	}
+	if err := db.Model(&model.User{}).Select("id, username, nickname").
+		Where("id IN ?", list).Scan(&rows).Error; err != nil {
+		return nil // 名字解析失败不阻断日志列表，前端回退显示 id
+	}
+	out := make(map[idgen.ID]string, len(rows))
+	for _, r := range rows {
+		if r.Nickname != "" {
+			out[r.ID] = r.Nickname
+		} else {
+			out[r.ID] = r.Username
+		}
+	}
+	return out
+}
+
 // ---- access ----------------------------------------------------------------
 
 // AccessLogVO is the list view of an API access log.
 type AccessLogVO struct {
 	ID         idgen.ID `json:"id"`
 	UserID     idgen.ID `json:"userId"`
+	Username   string   `json:"username"` // 展示名（昵称优先），查不到为空
 	Method     string   `json:"method"`
 	Path       string   `json:"path"`
 	Query      string   `json:"query"`
@@ -89,11 +128,16 @@ func listAccessLogs(c *gin.Context, db *gorm.DB) {
 		response.Fail(c, response.CodeServerError, "failed to list logs")
 		return
 	}
+	ids := make([]idgen.ID, 0, len(rows))
+	for i := range rows {
+		ids = append(ids, rows[i].UserID)
+	}
+	names := resolveUserNames(db, ids)
 	vos := make([]AccessLogVO, 0, len(rows))
 	for i := range rows {
 		r := &rows[i]
 		vos = append(vos, AccessLogVO{
-			ID: r.ID, UserID: r.UserID, Method: r.Method, Path: r.Path, Query: r.Query,
+			ID: r.ID, UserID: r.UserID, Username: names[r.UserID], Method: r.Method, Path: r.Path, Query: r.Query,
 			Status: r.Status, LatencyMs: r.LatencyMs, IP: r.IP, UserAgent: r.UserAgent,
 			RequestID: r.RequestID, CreateTime: g5FmtTime(r.CreateTime),
 		})
@@ -107,6 +151,7 @@ func listAccessLogs(c *gin.Context, db *gorm.DB) {
 type LoginLogVO struct {
 	ID         idgen.ID `json:"id"`
 	UserID     idgen.ID `json:"userId"`
+	Username   string   `json:"username"` // 展示名（昵称优先），查不到为空
 	Account    string   `json:"account"`
 	Action     string   `json:"action"`
 	Channel    string   `json:"channel"`
@@ -143,11 +188,16 @@ func listLoginLogs(c *gin.Context, db *gorm.DB) {
 		response.Fail(c, response.CodeServerError, "failed to list logs")
 		return
 	}
+	ids := make([]idgen.ID, 0, len(rows))
+	for i := range rows {
+		ids = append(ids, rows[i].UserID)
+	}
+	names := resolveUserNames(db, ids)
 	vos := make([]LoginLogVO, 0, len(rows))
 	for i := range rows {
 		r := &rows[i]
 		vos = append(vos, LoginLogVO{
-			ID: r.ID, UserID: r.UserID, Account: r.Account, Action: r.Action, Channel: r.Channel,
+			ID: r.ID, UserID: r.UserID, Username: names[r.UserID], Account: r.Account, Action: r.Action, Channel: r.Channel,
 			Success: r.Success, FailReason: r.FailReason, IP: r.IP, UserAgent: r.UserAgent,
 			CreateTime: g5FmtTime(r.CreateTime),
 		})
@@ -161,6 +211,7 @@ func listLoginLogs(c *gin.Context, db *gorm.DB) {
 type BizLogVO struct {
 	ID         idgen.ID `json:"id"`
 	UserID     idgen.ID `json:"userId"`
+	Username   string   `json:"username"` // 展示名（昵称优先），查不到为空
 	Action     string   `json:"action"`
 	Summary    string   `json:"summary"`
 	Amount     string   `json:"amount"`
@@ -195,11 +246,16 @@ func listBizLogs(c *gin.Context, db *gorm.DB) {
 		response.Fail(c, response.CodeServerError, "failed to list logs")
 		return
 	}
+	ids := make([]idgen.ID, 0, len(rows))
+	for i := range rows {
+		ids = append(ids, rows[i].UserID)
+	}
+	names := resolveUserNames(db, ids)
 	vos := make([]BizLogVO, 0, len(rows))
 	for i := range rows {
 		r := &rows[i]
 		vos = append(vos, BizLogVO{
-			ID: r.ID, UserID: r.UserID, Action: r.Action, Summary: r.Summary,
+			ID: r.ID, UserID: r.UserID, Username: names[r.UserID], Action: r.Action, Summary: r.Summary,
 			Amount: r.Amount.String(), Points: r.Points, RefID: r.RefID, RefType: r.RefType,
 			OperatorID: r.OperatorID, Detail: r.Detail, CreateTime: g5FmtTime(r.CreateTime),
 		})
@@ -213,6 +269,7 @@ func listBizLogs(c *gin.Context, db *gorm.DB) {
 type ModelCallLogVO struct {
 	ID             idgen.ID `json:"id"`
 	UserID         idgen.ID `json:"userId"`
+	Username       string   `json:"username"` // 展示名（昵称优先），查不到为空
 	Scene          string   `json:"scene"`
 	Model          string   `json:"model"`
 	Endpoint       string   `json:"endpoint"`
@@ -253,11 +310,16 @@ func listModelLogs(c *gin.Context, db *gorm.DB) {
 		response.Fail(c, response.CodeServerError, "failed to list logs")
 		return
 	}
+	ids := make([]idgen.ID, 0, len(rows))
+	for i := range rows {
+		ids = append(ids, rows[i].UserID)
+	}
+	names := resolveUserNames(db, ids)
 	vos := make([]ModelCallLogVO, 0, len(rows))
 	for i := range rows {
 		r := &rows[i]
 		vos = append(vos, ModelCallLogVO{
-			ID: r.ID, UserID: r.UserID, Scene: r.Scene, Model: r.Model, Endpoint: r.Endpoint,
+			ID: r.ID, UserID: r.UserID, Username: names[r.UserID], Scene: r.Scene, Model: r.Model, Endpoint: r.Endpoint,
 			RequestBody: r.RequestBody, ResponseBody: r.ResponseBody, HttpStatus: r.HttpStatus,
 			Success: r.Success, ErrorMsg: r.ErrorMsg, DurationMs: r.DurationMs,
 			UpstreamTaskID: r.UpstreamTaskID, Cost: r.Cost, CreateTime: g5FmtTime(r.CreateTime),

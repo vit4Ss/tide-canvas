@@ -400,7 +400,9 @@ const timeCol = <T extends { createTime: string }>(): Column<T> => ({
 const pct = (num: number, den: number) => (den > 0 ? `${Math.round((num / den) * 100)}%` : "—");
 const avg = (nums: number[]) =>
   nums.length ? `${Math.round(nums.reduce((a, b) => a + b, 0) / nums.length)}ms` : "—";
-const userCell = (uid: string) => (uid === "0" ? "游客 / 系统" : uid);
+/** 用户列：后端已按页把 userId 批量解析成展示名（昵称优先）；查不到（已注销
+ *  等）回退显示原始 id，0 表示未登录请求。 */
+const userCell = (uid: string, name?: string) => (uid === "0" ? "游客 / 系统" : name || uid);
 
 /* ── tabs ────────────────────────────────────────────────────────────────── */
 
@@ -449,7 +451,7 @@ function AccessTab() {
   const columns: Column<AccessLogVO>[] = useMemo(
     () => [
       timeCol<AccessLogVO>(),
-      { header: "用户", className: "mono muted", cell: (l) => userCell(l.userId) },
+      { header: "用户", className: "mono muted", cell: (l) => userCell(l.userId, l.username) },
       { header: "方法", className: "mono", cell: (l) => l.method },
       { header: "路径", className: "mono strong", cell: (l) => clip(l.path, 48) },
       { header: "状态", cell: (l) => <StatusPill tone={statusTone(l.status)}>{l.status}</StatusPill> },
@@ -473,7 +475,7 @@ function AccessTab() {
         title: `请求日志 · ${l.method} ${l.path}`,
         fields: [
           { label: "时间", value: l.createTime || "—" },
-          { label: "用户", value: userCell(l.userId) },
+          { label: "用户", value: userCell(l.userId, l.username) },
           { label: "方法", value: l.method },
           { label: "状态", value: l.status },
           { label: "耗时", value: `${l.latencyMs}ms` },
@@ -518,7 +520,8 @@ function LoginTab() {
         fields: [
           { label: "时间", value: l.createTime || "—" },
           { label: "账号", value: l.account || "—" },
-          { label: "用户 ID", value: userCell(l.userId) },
+          { label: "用户", value: userCell(l.userId, l.username) },
+          { label: "用户 ID", value: l.userId },
           { label: "动作", value: l.action },
           { label: "渠道", value: l.channel || "—" },
           { label: "结果", value: l.success === 1 ? "成功" : "失败" },
@@ -535,7 +538,7 @@ function BizTab() {
   const columns: Column<BizLogVO>[] = useMemo(
     () => [
       timeCol<BizLogVO>(),
-      { header: "用户", className: "mono muted", cell: (l) => userCell(l.userId) },
+      { header: "用户", className: "mono muted", cell: (l) => userCell(l.userId, l.username) },
       { header: "动作", className: "mono", cell: (l) => l.action },
       { header: "摘要", className: "strong", cell: (l) => clip(l.summary, 40) },
       { header: "金额", className: "mono", cell: (l) => (Number(l.amount) > 0 ? `¥${l.amount}` : "—") },
@@ -558,7 +561,7 @@ function BizTab() {
         title: `业务日志 · ${l.action}`,
         fields: [
           { label: "时间", value: l.createTime || "—" },
-          { label: "用户", value: userCell(l.userId) },
+          { label: "用户", value: userCell(l.userId, l.username) },
           { label: "动作", value: l.action },
           { label: "摘要", value: l.summary || "—" },
           { label: "金额", value: Number(l.amount) > 0 ? `¥${l.amount}` : "—" },
@@ -576,7 +579,7 @@ function ModelTab() {
   const columns: Column<ModelCallLogVO>[] = useMemo(
     () => [
       timeCol<ModelCallLogVO>(),
-      { header: "用户", className: "mono muted", cell: (l) => userCell(l.userId) },
+      { header: "用户", className: "mono muted", cell: (l) => userCell(l.userId, l.username) },
       { header: "场景", cell: (l) => <StatusPill tone="blue">{l.scene}</StatusPill> },
       { header: "模型", className: "mono strong", cell: (l) => l.model || "—" },
       { header: "结果", cell: (l) => <StatusPill tone={okTone(l.success)}>{l.success === 1 ? "成功" : "失败"}</StatusPill> },
@@ -602,7 +605,7 @@ function ModelTab() {
         title: `模型日志 · ${l.model || "—"}`,
         fields: [
           { label: "时间", value: l.createTime || "—" },
-          { label: "用户", value: userCell(l.userId) },
+          { label: "用户", value: userCell(l.userId, l.username) },
           { label: "场景", value: l.scene },
           { label: "模型", value: l.model || "—" },
           { label: "结果", value: <StatusPill tone={okTone(l.success)}>{l.success === 1 ? "成功" : "失败"}</StatusPill> },

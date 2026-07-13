@@ -41,6 +41,8 @@ export interface LogQuery {
 export interface AccessLogVO {
   id: string;
   userId: string;
+  /** 展示名（昵称优先），后端查不到时为空 → 回退显示 userId。 */
+  username?: string;
   method: string;
   path: string;
   query: string;
@@ -56,6 +58,8 @@ export interface AccessLogVO {
 export interface LoginLogVO {
   id: string;
   userId: string;
+  /** 展示名（昵称优先），后端查不到时为空 → 回退显示 userId。 */
+  username?: string;
   account: string;
   /** login | register | logout | login_code */
   action: string;
@@ -73,6 +77,8 @@ export interface LoginLogVO {
 export interface BizLogVO {
   id: string;
   userId: string;
+  /** 展示名（昵称优先），后端查不到时为空 → 回退显示 userId。 */
+  username?: string;
   /** checkin | points_adjust | order_create | … */
   action: string;
   summary: string;
@@ -90,6 +96,8 @@ export interface BizLogVO {
 export interface ModelCallLogVO {
   id: string;
   userId: string;
+  /** 展示名（昵称优先），后端查不到时为空 → 回退显示 userId。 */
+  username?: string;
   /** chat | optimize | image | video */
   scene: string;
   model: string;
