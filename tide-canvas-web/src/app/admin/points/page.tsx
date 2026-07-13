@@ -16,14 +16,15 @@
    KEEPS the exact liuguang markup/classes + shared components. Mock import dropped.
    ============================================================================ */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { RefreshCw, SlidersHorizontal } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { RefreshCw, Search, SlidersHorizontal, X } from "lucide-react";
 import {
   AdminAlert,
   AdminEmptyState,
   AdminModal,
   AdminTable,
   Field,
+  FilterChips,
   FormCard,
   FormGrid,
   Panel,
@@ -63,6 +64,30 @@ function changeTone(changeType: string, amount: number): PillTone {
   return "green";
 }
 
+/** changeType → 中文标签（值域见后端 points/ledger.go 及各写入点）。 */
+const CHANGE_TYPE_LABEL: Record<string, string> = {
+  consume: "生成消耗",
+  recharge: "充值",
+  refund: "退款",
+  checkin: "签到",
+  signup: "注册奖励",
+  adjust: "手动调整",
+  admin: "后台发放",
+};
+
+/** 类型筛选 chips：label → changeType 值（「全部」不传）。 */
+const TX_TYPE_FILTERS = ["全部", "生成消耗", "充值", "退款", "签到", "注册奖励", "手动调整", "后台发放"] as const;
+const TX_TYPE_VALUE: Record<string, string | undefined> = {
+  全部: undefined,
+  生成消耗: "consume",
+  充值: "recharge",
+  退款: "refund",
+  签到: "checkin",
+  注册奖励: "signup",
+  手动调整: "adjust",
+  后台发放: "admin",
+};
+
 const TX_PAGE_SIZE = 10;
 
 const EMPTY_CONFIG: AdminPointsConfig = {
@@ -95,10 +120,27 @@ export default function AdminPointsPage() {
   const [adjOpen, setAdjOpen] = useState(false);
   const [adjForm, setAdjForm] = useState<AdjustForm>(emptyAdjustForm());
 
+  // 流水筛选：类型 chips（label 单选）+ 用户 ID 精确搜索。ref 供 loadLedger 读取，
+  // 避免回调依赖筛选 state 导致身份变化。
+  const [txFilter, setTxFilter] = useState("全部");
+  const txTypeRef = useRef<string | undefined>(undefined);
+  const [userQuery, setUserQuery] = useState("");
+  const [userKeyword, setUserKeyword] = useState("");
+  const userIdRef = useRef("");
+
+  // reqId 守卫：快速切筛选/搜索时并发请求，慢的旧响应后到不能覆盖新筛选结果
+  const ledgerReqRef = useRef(0);
   const loadLedger = useCallback(async (page: number) => {
+    const id = ++ledgerReqRef.current;
     setLedgerLoading(true);
     try {
-      const res = await adminPointsApi.listTransactions({ pageNum: page, pageSize: TX_PAGE_SIZE });
+      const res = await adminPointsApi.listTransactions({
+        pageNum: page,
+        pageSize: TX_PAGE_SIZE,
+        changeType: txTypeRef.current,
+        userId: userIdRef.current || undefined,
+      });
+      if (id !== ledgerReqRef.current) return; // 过期响应丢弃
       if (res.success && res.data) {
         setLedger(res.data.records);
         setLedgerTotal(res.data.total);
@@ -107,9 +149,10 @@ export default function AdminPointsPage() {
         setError(res.message || "加载积分流水失败");
       }
     } catch {
+      if (id !== ledgerReqRef.current) return;
       setError("加载积分流水失败，请稍后重试");
     } finally {
-      setLedgerLoading(false);
+      if (id === ledgerReqRef.current) setLedgerLoading(false);
     }
   }, []);
 
@@ -229,18 +272,96 @@ export default function AdminPointsPage() {
         title="积分流水"
         sub="全部用户的积分变动明细"
         tools={
-          <button type="button" className="adm-btn" onClick={openAdjust}>
-            <SlidersHorizontal aria-hidden size={15} />
-            手动调整
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <FilterChips
+              label="变动类型"
+              options={[...TX_TYPE_FILTERS]}
+              value={txFilter}
+              onChange={(v) => {
+                setTxFilter(v);
+                txTypeRef.current = TX_TYPE_VALUE[v];
+                loadLedger(1);
+              }}
+            />
+            <form
+              role="search"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const kw = userQuery.trim();
+                if (kw && !/^\d+$/.test(kw)) {
+                  toast.error("用户 ID 是纯数字（用户管理里可复制）");
+                  return;
+                }
+                userIdRef.current = kw;
+                setUserKeyword(kw);
+                loadLedger(1);
+              }}
+              style={{ display: "flex", alignItems: "center", gap: 8 }}
+            >
+              <div className="adm-search" style={{ margin: 0 }}>
+                <Search aria-hidden size={15} />
+                <input
+                  placeholder="用户 ID"
+                  aria-label="按用户 ID 筛选流水"
+                  value={userQuery}
+                  onChange={(e) => setUserQuery(e.target.value)}
+                />
+              </div>
+              <button type="submit" className="adm-btn ghost">
+                搜索
+              </button>
+              {userKeyword ? (
+                <button
+                  type="button"
+                  className="adm-btn ghost"
+                  onClick={() => {
+                    userIdRef.current = "";
+                    setUserQuery("");
+                    setUserKeyword("");
+                    loadLedger(1);
+                  }}
+                >
+                  <X aria-hidden size={14} />
+                  清除
+                </button>
+              ) : null}
+            </form>
+            <button type="button" className="adm-btn" onClick={openAdjust}>
+              <SlidersHorizontal aria-hidden size={15} />
+              手动调整
+            </button>
+          </div>
         }
       >
         {loading || ledgerLoading ? (
           <TableSkeleton />
         ) : ledger.length === 0 ? (
           <AdminEmptyState
-            title="暂无积分流水"
-            description="自动赠送、消费和手动调整发生后，变动记录会显示在这里。"
+            title={txFilter !== "全部" || userKeyword ? "当前筛选下没有流水" : "暂无积分流水"}
+            description={
+              txFilter !== "全部" || userKeyword
+                ? "切换变动类型或清除用户 ID 后再查看。"
+                : "自动赠送、消费和手动调整发生后，变动记录会显示在这里。"
+            }
+            action={
+              txFilter !== "全部" || userKeyword ? (
+                <button
+                  type="button"
+                  className="adm-btn ghost"
+                  onClick={() => {
+                    setTxFilter("全部");
+                    txTypeRef.current = undefined;
+                    userIdRef.current = "";
+                    setUserQuery("");
+                    setUserKeyword("");
+                    loadLedger(1);
+                  }}
+                >
+                  <X aria-hidden size={14} />
+                  清除筛选
+                </button>
+              ) : undefined
+            }
           />
         ) : (
           <>
@@ -258,7 +379,9 @@ export default function AdminPointsPage() {
                 {
                   header: "类型",
                   cell: (r) => (
-                    <StatusPill tone={changeTone(r.changeType, r.amount)}>{r.changeType}</StatusPill>
+                    <StatusPill tone={changeTone(r.changeType, r.amount)}>
+                      {CHANGE_TYPE_LABEL[r.changeType] ?? r.changeType}
+                    </StatusPill>
                   ),
                 },
                 {

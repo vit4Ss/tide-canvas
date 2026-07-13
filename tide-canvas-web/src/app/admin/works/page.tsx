@@ -18,7 +18,7 @@
    ============================================================================ */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Search, X } from "lucide-react";
 import {
   AdminAlert,
   AdminEmptyState,
@@ -74,6 +74,9 @@ export default function AdminWorksPage() {
   const [filter, setFilter] = useState<WorkFilter>(WORK_FILTERS[0]);
   const [page, setPage] = useState(1);
   const [detail, setDetail] = useState<AdminWorkVO | null>(null);
+  // 关键词搜索（标题/内容/标签，后端 LIKE）：query = 输入框实时值，keyword = 已提交检索词
+  const [query, setQuery] = useState("");
+  const [keyword, setKeyword] = useState("");
 
   // Map the active filter chip → the API query (status/type/featured).
   const queryForFilter = useCallback((f: WorkFilter, pageNum: number): AdminWorkQuery => {
@@ -100,7 +103,10 @@ export default function AdminWorksPage() {
     setError(null);
     try {
       await ensureSession(); // 登录流程暂未做:无 token 时静默登录默认账号
-      const res = await adminWorksApi.list(queryForFilter(filter, page));
+      const res = await adminWorksApi.list({
+        ...queryForFilter(filter, page),
+        keyword: keyword || undefined,
+      });
       if (id !== reqIdRef.current) return; // 过期响应丢弃
       if (res.success && res.data) {
         setWorks(res.data.records);
@@ -118,7 +124,7 @@ export default function AdminWorksPage() {
     } finally {
       if (id === reqIdRef.current) setLoading(false);
     }
-  }, [ensureSession, filter, page, queryForFilter]);
+  }, [ensureSession, filter, page, keyword, queryForFilter]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -288,15 +294,55 @@ export default function AdminWorksPage() {
         title="作品库"
         sub={`共 ${total.toLocaleString()} 件 · 本页待审 ${pendingCount} 件 · 公开作品广场内容`}
         tools={
-          <FilterChips
-            label="作品类型与状态"
-            options={[...WORK_FILTERS]}
-            value={filter}
-            onChange={(v) => {
-              setFilter(v as WorkFilter);
-              setPage(1);
-            }}
-          />
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <FilterChips
+              label="作品类型与状态"
+              options={[...WORK_FILTERS]}
+              value={filter}
+              onChange={(v) => {
+                setFilter(v as WorkFilter);
+                setPage(1);
+              }}
+            />
+            <form
+              role="search"
+              onSubmit={(e) => {
+                e.preventDefault();
+                setKeyword(query.trim());
+                setPage(1);
+              }}
+              style={{ display: "flex", alignItems: "center", gap: 8 }}
+            >
+              <div className="adm-search" style={{ margin: 0 }}>
+                <Search aria-hidden size={15} />
+                <input
+                  placeholder="标题 / 提示词 / 标签"
+                  aria-label="搜索作品标题、提示词或标签"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+              </div>
+              {/* 不随 loading 禁用：默认提交按钮被禁用时按 Enter 的隐式提交会静默失效
+                  （列表加载中提交搜索无反应）；并发安全由 load 的 reqId 守卫保证 */}
+              <button type="submit" className="adm-btn ghost">
+                搜索
+              </button>
+              {keyword ? (
+                <button
+                  type="button"
+                  className="adm-btn ghost"
+                  onClick={() => {
+                    setQuery("");
+                    setKeyword("");
+                    setPage(1);
+                  }}
+                >
+                  <X aria-hidden size={14} />
+                  清除
+                </button>
+              ) : null}
+            </form>
+          </div>
         }
       >
         {loading ? (
@@ -318,14 +364,20 @@ export default function AdminWorksPage() {
           </div>
         ) : works.length === 0 ? (
           <AdminEmptyState
-            title="当前筛选下没有作品"
-            description="切换类型或状态后再查看；新作品发布后会自动出现在这里。"
-            action={filter !== "全部" ? (
+            title={keyword ? "未找到匹配作品" : "当前筛选下没有作品"}
+            description={
+              keyword
+                ? `没有标题、提示词或标签匹配「${keyword}」的作品。`
+                : "切换类型或状态后再查看；新作品发布后会自动出现在这里。"
+            }
+            action={filter !== "全部" || keyword ? (
               <button
                 type="button"
                 className="adm-btn ghost"
                 onClick={() => {
                   setFilter("全部");
+                  setQuery("");
+                  setKeyword("");
                   setPage(1);
                 }}
               >

@@ -21,6 +21,7 @@ import {
   AdminModal,
   AdminTable,
   Field,
+  FilterChips,
   FormCard,
   FormGrid,
   Panel,
@@ -55,6 +56,16 @@ const ORDER_STATUS: Record<number, { label: string; tone: PillTone }> = {
   1: { label: "已支付", tone: "green" },
   2: { label: "已取消", tone: "gray" },
   3: { label: "已退款", tone: "red" },
+};
+
+/** 状态筛选 chips：label → 后端 status 值（「全部」不传）。 */
+const ORDER_STATUS_FILTERS = ["全部", "待支付", "已支付", "已取消", "已退款"] as const;
+const ORDER_STATUS_VALUE: Record<string, number | undefined> = {
+  全部: undefined,
+  待支付: 0,
+  已支付: 1,
+  已取消: 2,
+  已退款: 3,
 };
 
 /** Order display time: prefer payTime, fall back to createTime. */
@@ -111,6 +122,9 @@ export default function AdminPaymentsPage() {
   const [orderQuery, setOrderQuery] = useState("");
   const [orderKeyword, setOrderKeyword] = useState("");
   const orderKeywordRef = useRef("");
+  // 状态筛选（chips 单选）：label → status 数值；ref 供 loadOrders 读取
+  const [statusFilter, setStatusFilter] = useState("全部");
+  const statusFilterRef = useRef<number | undefined>(undefined);
 
   // channel modal
   const [chOpen, setChOpen] = useState(false);
@@ -127,15 +141,20 @@ export default function AdminPaymentsPage() {
     }
   }, []);
 
+  // reqId 守卫：快速切状态 chips/搜索时并发请求，慢的旧响应后到不能覆盖新筛选结果
+  const ordersReqRef = useRef(0);
   const loadOrders = useCallback(
     async (page: number, keyword: string = orderKeywordRef.current) => {
+      const id = ++ordersReqRef.current;
       setOrdersLoading(true);
       try {
         const res = await adminPaymentsApi.listOrders({
           pageNum: page,
           pageSize: ORDER_PAGE_SIZE,
           keyword: keyword.trim() || undefined,
+          status: statusFilterRef.current,
         });
+        if (id !== ordersReqRef.current) return; // 过期响应丢弃
         if (res.success && res.data) {
           setOrders(res.data.records);
           setOrderTotal(res.data.total);
@@ -144,9 +163,10 @@ export default function AdminPaymentsPage() {
           setError(res.message || "加载交易失败");
         }
       } catch {
+        if (id !== ordersReqRef.current) return;
         setError("加载交易失败，请稍后重试");
       } finally {
-        setOrdersLoading(false);
+        if (id === ordersReqRef.current) setOrdersLoading(false);
       }
     },
     [],
@@ -398,6 +418,17 @@ export default function AdminPaymentsPage() {
         title="最近交易"
         sub="全部用户的真实订单流水"
         tools={
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <FilterChips
+            label="订单状态"
+            options={[...ORDER_STATUS_FILTERS]}
+            value={statusFilter}
+            onChange={(v) => {
+              setStatusFilter(v);
+              statusFilterRef.current = ORDER_STATUS_VALUE[v];
+              loadOrders(1);
+            }}
+          />
           <form
             role="search"
             onSubmit={(e) => {
@@ -415,11 +446,13 @@ export default function AdminPaymentsPage() {
                 onChange={(e) => setOrderQuery(e.target.value)}
               />
             </div>
-            <button type="submit" className="adm-btn ghost" disabled={ordersLoading}>
+            {/* 不随 loading 禁用：默认提交按钮被禁用时按 Enter 的隐式提交会静默失效
+                （列表加载中提交搜索无反应）；并发安全由 loadOrders 的 reqId 守卫保证 */}
+            <button type="submit" className="adm-btn ghost">
               {ordersLoading ? "搜索中…" : "搜索"}
             </button>
             {orderKeyword ? (
-              <button type="button" className="adm-btn ghost" onClick={clearOrderSearch} disabled={ordersLoading}>
+              <button type="button" className="adm-btn ghost" onClick={clearOrderSearch}>
                 <X aria-hidden size={14} />
                 清除
               </button>
@@ -435,15 +468,20 @@ export default function AdminPaymentsPage() {
               {ordersLoading ? "刷新中…" : "刷新"}
             </button>
           </form>
+          </div>
         }
       >
         {loading || ordersLoading ? (
           <TableSkeleton />
         ) : orders.length === 0 ? (
           <AdminEmptyState
-            title={orderKeyword ? "未找到匹配订单" : "暂无交易记录"}
+            title={orderKeyword ? "未找到匹配订单" : statusFilter !== "全部" ? "当前状态下没有订单" : "暂无交易记录"}
             description={
-              orderKeyword ? `没有匹配「${orderKeyword}」的订单号或交易号。` : "用户完成付款后，订单会显示在这里。"
+              orderKeyword
+                ? `没有匹配「${orderKeyword}」的订单号或交易号。`
+                : statusFilter !== "全部"
+                  ? `没有「${statusFilter}」状态的订单，切换状态筛选再查看。`
+                  : "用户完成付款后，订单会显示在这里。"
             }
             action={
               orderKeyword ? (

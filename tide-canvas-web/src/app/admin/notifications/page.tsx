@@ -12,8 +12,8 @@
    FormCard/FormGrid/Field）。
    ============================================================================ */
 
-import { useCallback, useEffect, useState } from "react";
-import { Plus, RefreshCw, Send } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Plus, RefreshCw, Search, Send, X } from "lucide-react";
 import {
   AdminAlert,
   AdminEmptyState,
@@ -72,19 +72,32 @@ export default function AdminNotificationsPage() {
   const [pageSize] = useState(50);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // 关键词搜索（标题/内容，后端 LIKE）：query = 输入框实时值，keyword = 已提交检索词。
+  // ref 供 load 读取，避免 load 依赖 keyword 导致回调身份反复变化。
+  const [query, setQuery] = useState("");
+  const [keyword, setKeyword] = useState("");
+  const keywordRef = useRef("");
 
   // send modal
   const [sendOpen, setSendOpen] = useState(false);
   const [sendForm, setSendForm] = useState<SendForm>(emptySendForm());
   const [sending, setSending] = useState(false);
 
+  // reqId 守卫：快速搜索/清除时并发请求，慢的旧响应后到不能覆盖新筛选结果
+  const loadReqRef = useRef(0);
   const load = useCallback(
     async (page = 1, opts?: { silent?: boolean }) => {
+      const id = ++loadReqRef.current;
       if (!opts?.silent) setLoading(true);
       setError(null);
       try {
         await ensureSession();
-        const res = await adminNotifyApi.list({ pageNum: page, pageSize });
+        const res = await adminNotifyApi.list({
+          pageNum: page,
+          pageSize,
+          keyword: keywordRef.current || undefined,
+        });
+        if (id !== loadReqRef.current) return; // 过期响应丢弃
         if (res.success && res.data) {
           setRows(res.data.records ?? []);
           setTotal(res.data.total ?? 0);
@@ -93,9 +106,10 @@ export default function AdminNotificationsPage() {
           setError(res.message || "加载消息失败");
         }
       } catch {
+        if (id !== loadReqRef.current) return;
         setError("加载失败，请稍后重试");
       } finally {
-        if (!opts?.silent) setLoading(false);
+        if (id === loadReqRef.current && !opts?.silent) setLoading(false);
       }
     },
     [ensureSession, pageSize],
@@ -184,23 +198,86 @@ export default function AdminNotificationsPage() {
         title="通知列表"
         sub="站内通知 · 与用户通知中心同源，发送/删除即时生效"
         tools={
-          <button type="button" className="adm-btn" onClick={() => setSendOpen(true)}>
-            <Send aria-hidden size={15} />
-            发送通知
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <form
+              role="search"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const kw = query.trim();
+                keywordRef.current = kw;
+                setKeyword(kw);
+                load(1);
+              }}
+              style={{ display: "flex", alignItems: "center", gap: 8 }}
+            >
+              <div className="adm-search" style={{ margin: 0 }}>
+                <Search aria-hidden size={15} />
+                <input
+                  placeholder="标题 / 内容"
+                  aria-label="搜索通知标题或内容"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+              </div>
+              {/* 不随 loading 禁用：默认提交按钮被禁用时按 Enter 的隐式提交会静默失效
+                  （列表加载中提交搜索无反应）；并发安全由 load 的 reqId 守卫保证 */}
+              <button type="submit" className="adm-btn ghost">
+                搜索
+              </button>
+              {keyword ? (
+                <button
+                  type="button"
+                  className="adm-btn ghost"
+                  onClick={() => {
+                    keywordRef.current = "";
+                    setQuery("");
+                    setKeyword("");
+                    load(1);
+                  }}
+                >
+                  <X aria-hidden size={14} />
+                  清除
+                </button>
+              ) : null}
+            </form>
+            <button type="button" className="adm-btn" onClick={() => setSendOpen(true)}>
+              <Send aria-hidden size={15} />
+              发送通知
+            </button>
+          </div>
         }
       >
         {loading ? (
           <TableSkeleton />
         ) : rows.length === 0 ? (
           <AdminEmptyState
-            title="暂无站内消息"
-            description="发送系统公告或定向通知后，消息会同步出现在用户通知中心。"
+            title={keyword ? "未找到匹配消息" : "暂无站内消息"}
+            description={
+              keyword
+                ? `没有标题或内容匹配「${keyword}」的消息。`
+                : "发送系统公告或定向通知后，消息会同步出现在用户通知中心。"
+            }
             action={
-              <button type="button" className="adm-btn" onClick={() => setSendOpen(true)}>
-                <Plus aria-hidden size={15} />
-                新建通知
-              </button>
+              keyword ? (
+                <button
+                  type="button"
+                  className="adm-btn ghost"
+                  onClick={() => {
+                    keywordRef.current = "";
+                    setQuery("");
+                    setKeyword("");
+                    load(1);
+                  }}
+                >
+                  <X aria-hidden size={14} />
+                  清除搜索
+                </button>
+              ) : (
+                <button type="button" className="adm-btn" onClick={() => setSendOpen(true)}>
+                  <Plus aria-hidden size={15} />
+                  新建通知
+                </button>
+              )
             }
           />
         ) : (
