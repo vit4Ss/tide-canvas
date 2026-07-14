@@ -70,16 +70,17 @@ function displayId(user: UserVO): string {
   return "FX-" + Math.abs(n).toString().slice(0, 6).padStart(6, "0");
 }
 
-/** vipLevel → plan label. Levels align with the billing seeds
-    (pro → 1, enterprise → 2; see billing/service.go vipForPlan). */
+/** vipLevel → plan label。与后台「价格管理」各套餐的会员等级配置对应
+    （FREE 0 / PRO 1 / MAX 2 / ULTRA 3；billing/service.go vipForPlan 同口径），
+    展示名与定价页套餐名一致，避免"企业版/旗舰版"这类第二套称呼。 */
 function planLabel(vipLevel?: number): string {
   switch (vipLevel) {
     case 1:
-      return "专业版";
+      return "PRO";
     case 2:
-      return "企业版";
+      return "MAX";
     case 3:
-      return "旗舰版";
+      return "ULTRA";
     default:
       return "免费版";
   }

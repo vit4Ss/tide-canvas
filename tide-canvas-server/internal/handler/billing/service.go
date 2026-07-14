@@ -157,7 +157,9 @@ func planOrderName(plan *model.Plan, cycle string) string {
 
 // vipForPlan maps a plan to the membership level its purchase confers: an
 // explicit features.vipLevel wins, else the seeded plan codes, else 0 (no
-// change — points only).
+// change — points only). 兜底表与现行档位链一致：FREE 0 / PRO 1 / MAX 2 /
+// ULTRA(code=enterprise) 3——四档的 features.vipLevel 均已显式配置，这里
+// 只是防 Features 被清空后的最后防线。
 func vipForPlan(plan *model.Plan) int {
 	if f := decodePlanFeatures(plan); f.VipLevel > 0 {
 		return f.VipLevel
@@ -165,8 +167,10 @@ func vipForPlan(plan *model.Plan) int {
 	switch plan.Code {
 	case "pro":
 		return 1
-	case "enterprise":
+	case "max":
 		return 2
+	case "enterprise":
+		return 3
 	}
 	return 0
 }

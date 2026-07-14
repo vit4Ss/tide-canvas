@@ -164,9 +164,9 @@ type RoleSaveDTO struct {
 // ----- user handlers --------------------------------------------------------
 
 // planNameByVip maps vip_level → 套餐显示名，数据来源于真实 plan 表：
-// features.vipLevel 优先，其次种子 code 兜底（pro→1 / enterprise→2），其余视为
-// 0（免费档）。价格>0 却映射到 0 的付费套餐不代表会员等级，跳过。同级取
-// sort_order 最靠前的一个。
+// features.vipLevel 优先，其次种子 code 兜底（pro→1 / max→2 / enterprise→3，
+// 与 billing.vipForPlan 同口径），其余视为 0（免费档）。价格>0 却映射到 0 的
+// 付费套餐不代表会员等级，跳过。同级取 sort_order 最靠前的一个。
 func (h *userHandler) planNameByVip() map[int]string {
 	var plans []model.Plan
 	if err := h.db.Order("sort_order ASC").Find(&plans).Error; err != nil {
@@ -186,8 +186,10 @@ func (h *userHandler) planNameByVip() map[int]string {
 			switch p.Code {
 			case "pro":
 				level = 1
-			case "enterprise":
+			case "max":
 				level = 2
+			case "enterprise":
+				level = 3
 			}
 		}
 		if level == 0 && p.Price.Sign() > 0 {
