@@ -61,6 +61,8 @@ interface PlanForm {
   monthlyPoints: string;
   items: string;
   featured: boolean;
+  /** 前台定价卡是否展示 CTA 按钮（落库为 hideCta 取反）。 */
+  showCta: boolean;
   sortOrder: string;
   status: boolean;
   vipLevel: string;
@@ -75,6 +77,7 @@ const emptyPlanForm = (): PlanForm => ({
   monthlyPoints: "",
   items: "",
   featured: false,
+  showCta: true,
   sortOrder: "0",
   status: true,
   vipLevel: "0",
@@ -103,6 +106,7 @@ const planToForm = (p: AdminPlan): PlanForm => ({
   monthlyPoints: String(p.monthlyPoints),
   items: (p.items ?? []).join(" · "),
   featured: p.featured,
+  showCta: !p.hideCta,
   sortOrder: String(p.sortOrder),
   status: p.status === 1,
   vipLevel: String(p.vipLevel ?? 0),
@@ -271,6 +275,7 @@ export default function AdminPricingPage() {
         .map((s) => s.trim())
         .filter(Boolean),
       featured: planForm.featured,
+      hideCta: !planForm.showCta,
       sortOrder: toNum(planForm.sortOrder),
       status: planForm.status ? 1 : 0,
       vipLevel: toNum(planForm.vipLevel),
@@ -977,6 +982,13 @@ export default function AdminPricingPage() {
                 checked={planForm.featured}
                 onChange={(next) => setPlanForm((f) => ({ ...f, featured: next }))}
                 aria-label="最受欢迎徽章"
+              />
+            </Field>
+            <Field label="展示按钮" span={2} hint="关闭后前台定价卡不显示按钮（如免费档不需要引导购买）">
+              <SwitchToggle
+                checked={planForm.showCta}
+                onChange={(next) => setPlanForm((f) => ({ ...f, showCta: next }))}
+                aria-label="前台展示 CTA 按钮"
               />
             </Field>
             <Field

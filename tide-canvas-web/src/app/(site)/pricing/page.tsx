@@ -275,44 +275,35 @@ export default function PricingPage() {
                 className={`plan ${p.featured ? "feat" : ""} reveal`}
                 style={{ "--rd": `${i * 0.06}s` } as React.CSSProperties}
               >
-                {p.featured && <span className="plan-tag">最受欢迎</span>}
-                <div className="plan-name">{p.name}</div>
+                {/* 六区固定结构（与 pages.css 的 subgrid 轨道一一对应）：
+                    区块恒渲染，缺内容留空占轨——任意后台参数组合不破对齐 */}
+                <div className="plan-head">
+                  <div className="plan-name">{p.name}</div>
+                  {p.featured && <span className="plan-tag">最受欢迎</span>}
+                </div>
                 <div className="plan-desc">{p.desc}</div>
                 <div className="plan-price">
                   <span className="num">{num}</span>
-                  {showOrig && (
-                    <span
-                      style={{
-                        fontSize: 15,
-                        color: "var(--text-faint)",
-                        textDecoration: "line-through",
-                      }}
-                    >
-                      ¥{orig}
-                    </span>
-                  )}
+                  {showOrig && <span className="orig">¥{orig}</span>}
                   <span className="per">{per}</span>
                 </div>
-                {!free && yr && Number(p.yearly) > 0 && (
-                  <div
-                    style={{
-                      fontSize: 12.5,
-                      color: "var(--text-faint)",
-                      marginTop: 4,
-                    }}
-                  >
-                    按年支付 ¥{p.yearly}
-                  </div>
-                )}
-                <button
-                  type="button"
-                  className={`plan-cta ${p.featured && !owned ? "solid" : "ghost"}`}
-                  disabled={owned}
-                  style={owned ? { opacity: 0.55, cursor: "default" } : undefined}
-                  onClick={() => onPlanCta(p)}
-                >
-                  {isCurrent ? "当前套餐" : isCovered ? "已包含" : p.cta}
-                </button>
+                <div className="plan-meta">
+                  {!free && yr && Number(p.yearly) > 0 ? `按年支付 ¥${p.yearly}` : ""}
+                </div>
+                <div className="plan-cta-slot">
+                  {/* hideCta：后台按套餐配置隐藏按钮；槽位保留，权益区跨卡齐线 */}
+                  {!p.hideCta && (
+                    <button
+                      type="button"
+                      className={`plan-cta ${p.featured && !owned ? "solid" : "ghost"}`}
+                      disabled={owned}
+                      style={owned ? { opacity: 0.55, cursor: "default" } : undefined}
+                      onClick={() => onPlanCta(p)}
+                    >
+                      {isCurrent ? "当前套餐" : isCovered ? "已包含" : p.cta}
+                    </button>
+                  )}
+                </div>
                 <ul className="plan-feats">
                   {p.items.map((it) => (
                     <li key={it}>

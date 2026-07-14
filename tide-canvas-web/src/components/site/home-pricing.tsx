@@ -107,41 +107,32 @@ export default function HomePricing({
               className={`plan ${p.featured ? "feat" : ""} reveal`}
               style={{ ["--rd" as string]: `${i * 0.06}s` }}
             >
-              {p.featured && <span className="plan-tag">最受欢迎</span>}
-              <div className="plan-name">{p.name}</div>
+              {/* 六区固定结构（与 pages.css 的 subgrid 轨道一一对应）：
+                  区块恒渲染，缺内容留空占轨——任意后台参数组合不破对齐 */}
+              <div className="plan-head">
+                <div className="plan-name">{p.name}</div>
+                {p.featured && <span className="plan-tag">最受欢迎</span>}
+              </div>
               <div className="plan-desc">{p.desc}</div>
               <div className="plan-price">
                 <span className="num">{num}</span>
-                {showOrig && (
-                  <span
-                    style={{
-                      fontSize: 15,
-                      color: "var(--text-faint)",
-                      textDecoration: "line-through",
-                    }}
-                  >
-                    ¥{money(orig)}
-                  </span>
-                )}
+                {showOrig && <span className="orig">¥{money(orig)}</span>}
                 <span className="per">{per}</span>
               </div>
-              {!isFree && yr && Number(p.yearly) > 0 && (
-                <div
-                  style={{
-                    fontSize: 12.5,
-                    color: "var(--text-faint)",
-                    marginTop: 4,
-                  }}
-                >
-                  按年支付 ¥{money(p.yearly)}
-                </div>
-              )}
-              <Link
-                className={`plan-cta ${p.featured ? "solid" : "ghost"}`}
-                href={href}
-              >
-                {p.cta}
-              </Link>
+              <div className="plan-meta">
+                {!isFree && yr && Number(p.yearly) > 0 ? `按年支付 ¥${money(p.yearly)}` : ""}
+              </div>
+              <div className="plan-cta-slot">
+                {/* hideCta：后台按套餐配置隐藏按钮；槽位保留，权益区跨卡齐线 */}
+                {!p.hideCta && (
+                  <Link
+                    className={`plan-cta ${p.featured ? "solid" : "ghost"}`}
+                    href={href}
+                  >
+                    {p.cta}
+                  </Link>
+                )}
+              </div>
               <ul className="plan-feats">
                 {p.items.map((it) => (
                   <li key={it}>

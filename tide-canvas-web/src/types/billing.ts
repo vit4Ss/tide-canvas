@@ -11,6 +11,8 @@ export interface PlanVO {
   monthlyPoints: number;
   featured: boolean;
   cta: string;
+  /** true = 定价卡不渲染 CTA 按钮（后台按套餐配置；缺省展示） */
+  hideCta?: boolean;
   items: string[];
   /** 购买授予的会员等级（0=不授予）；与 user.vipLevel 对比渲染「当前套餐」态 */
   vipLevel: number;

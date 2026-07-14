@@ -29,7 +29,9 @@ type PlanVO struct {
 	MonthlyPoints int      `json:"monthlyPoints"`
 	Featured      bool     `json:"featured"`
 	Cta           string   `json:"cta"`
-	Items         []string `json:"items"`
+	// HideCta 为 true 时定价卡不渲染 CTA 按钮（后台按套餐配置；默认 false=展示）。
+	HideCta bool     `json:"hideCta"`
+	Items   []string `json:"items"`
 	// VipLevel 是购买该套餐授予的会员等级（0=不授予）。前台用它与
 	// user.vipLevel 对比渲染「当前套餐」态，服务端下单同样拦截。
 	VipLevel int `json:"vipLevel"`
@@ -61,7 +63,9 @@ type planFeatures struct {
 	Yearly   float64  `json:"yearly"`
 	Cta      string   `json:"cta"`
 	Featured bool     `json:"featured"`
-	Items    []string `json:"items"`
+	// HideCta：定价卡隐藏 CTA 按钮（后台开关；存量数据无此字段 = false = 展示）。
+	HideCta bool     `json:"hideCta"`
+	Items   []string `json:"items"`
 	// VipLevel is the membership level a paid purchase of this plan confers on
 	// the buyer (0 = no change). Consumed by the settle flow, not exposed in VOs.
 	VipLevel int `json:"vipLevel"`
@@ -95,6 +99,7 @@ func toPlanVO(p *model.Plan) PlanVO {
 		MonthlyPoints: p.PointsGrant,
 		Featured:      f.Featured,
 		Cta:           f.Cta,
+		HideCta:       f.HideCta,
 		Items:         items,
 		VipLevel:      vipForPlan(p),
 	}

@@ -18,6 +18,8 @@ export interface AdminPlan {
   monthlyPoints: number;
   featured: boolean;
   cta: string;
+  /** true = 定价卡隐藏 CTA 按钮（默认展示）。 */
+  hideCta: boolean;
   items: string[];
   sortOrder: number;
   /** 1 = 上架, 0 = 下架. */
@@ -44,6 +46,8 @@ export interface AdminPlanUpsertDTO {
   status?: number;
   /** 购买授予的会员等级（0=不授予）。Omit 保留既有值（批量排序回写不带它）。 */
   vipLevel?: number;
+  /** 定价卡隐藏 CTA 按钮。Omit 保留既有值（上下架等部分回写不带它）。 */
+  hideCta?: boolean;
 }
 
 /** 方案对比表的一行：能力名 + 每套餐一格（键=套餐 id；"✓"/"—"/文字）。 */

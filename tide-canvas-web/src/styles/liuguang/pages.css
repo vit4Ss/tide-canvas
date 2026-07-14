@@ -339,44 +339,66 @@
 .bill-toggle button.on{color:#fff; background:var(--btn-grad); box-shadow:var(--btn-shadow);}
 .bill-toggle .save{font-size:11px; font-weight:700; color:var(--accent); background:var(--accent-soft); padding:2px 7px; border-radius:99px; margin-left:5px;}
 .bill-toggle button.on .save{color:#fff; background:rgba(255,255,255,.24);}
-/* 列数跟随套餐数量（--plan-cols 由页面按 plans.length 注入），保证全部卡片一行排开 */
-/* 等高卡片：默认 stretch，权益条数不同的卡底部也对齐（feat 卡的抬升由 transform 承担） */
-.plans{display:grid; grid-template-columns:repeat(var(--plan-cols,3),minmax(0,1fr)); gap:18px;}
-@media(max-width:900px){.plans{grid-template-columns:1fr;}}
-.plans .plan{position:relative; padding:28px 26px; border-radius:var(--r-lg); background:var(--panel-solid); border:1px solid var(--border); box-shadow:var(--shadow-sm); transition:transform .26s var(--ease), border-color .26s, box-shadow .26s;}
-.plans .plan:hover{transform:translateY(-4px); border-color:var(--border-strong); box-shadow:var(--shadow-lg);}
-/* 推荐档：品牌渐变面板 + 微放大，与 CTA 色板同语言 */
-.plans .plan.feat{z-index:1; border-color:transparent; color:#fff; overflow:hidden;
-  background:linear-gradient(160deg,#4338ca 0%,#4f46e5 45%,#7e22ce 100%);
-  box-shadow:0 24px 56px rgba(63,50,180,.35); transform:scale(1.045);}
-.plans .plan.feat:hover{transform:scale(1.045) translateY(-4px); border-color:transparent; box-shadow:0 30px 64px rgba(63,50,180,.44);}
-.plans .plan.feat::before{content:''; position:absolute; inset:0; padding:1px; border-radius:inherit; pointer-events:none;
-  background:linear-gradient(135deg, rgba(255,255,255,.55), transparent 42%, rgba(255,255,255,.2));
-  -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite:xor; mask-composite:exclude;}
-.plans .plan.feat::after{content:''; position:absolute; top:-40%; right:-24%; width:66%; height:90%; pointer-events:none;
-  background:radial-gradient(50% 50% at 50% 50%, rgba(255,255,255,.26), transparent 70%); filter:blur(28px);}
-.plans .plan.feat > *{position:relative; z-index:1;}
-.plans .plan.feat .plan-desc{color:rgba(255,255,255,.74);}
-.plans .plan.feat .plan-price .per{color:rgba(255,255,255,.68);}
-.plans .plan.feat .plan-feats li{color:rgba(255,255,255,.88);}
-@media(max-width:900px){.plans .plan.feat{transform:none;} .plans .plan.feat:hover{transform:translateY(-4px);}}
-.plan-tag{position:absolute; top:-12px; left:26px; height:24px; padding:0 12px; border-radius:var(--pill); font-size:11px; font-weight:800; letter-spacing:.04em; color:#fff; background:var(--grad-warm); display:inline-flex; align-items:center;}
-.plan-name{font-family:var(--disp); font-size:20px; font-weight:800;}
-.plan-desc{font-size:13px; color:var(--text-faint); margin:6px 0 18px; min-height:34px;}
-.plan-price{display:flex; align-items:baseline; gap:6px;}
-.plan-price .num{font-family:var(--disp); font-size:46px; font-weight:800; letter-spacing:-.03em;}
+/* ── 订阅方案卡：六区 subgrid「报价单式对齐」───────────────────────────
+   卡内固定六区：①名称+徽章行 ②描述 ③价格 ④计费说明 ⑤按钮槽 ⑥权益。
+   六区由 subgrid 跨卡共轨——后台的任意参数组合（描述留空、隐藏按钮、
+   未配年付、促销划线、1..N 档、权益条数不一）都不会让相邻卡错位：
+   某区在某张卡缺内容时轨道仍在，所有卡的同名区永远在同一水平线。
+   列数跟随套餐数量（--plan-cols 由页面按 plans.length 注入）；
+   ≤900px 单列（或不支持 subgrid 的浏览器）退回流式堆叠。 */
+/* 容器查询挂在外层（价格字号 = cqi ÷ 列数 推导单卡宽度）；不能挂在
+   .plan 上——grid item 一旦成为 size container 会引入布局包含，
+   subgrid 的跨卡共轨即失效。 */
+.plans{display:grid; grid-template-columns:repeat(var(--plan-cols,3),minmax(0,1fr));
+  grid-template-rows:repeat(5,auto) 1fr; gap:16px; align-items:stretch;
+  container-type:inline-size;}
+.plans .plan{position:relative; display:grid; grid-row:span 6; grid-template-rows:subgrid; row-gap:0;
+  padding:24px 24px 26px; border-radius:var(--r-lg); background:var(--panel-solid);
+  border:1px solid var(--border); box-shadow:var(--shadow-sm);
+  transition:transform .2s var(--ease), border-color .2s, box-shadow .2s;}
+.plans .plan:hover{transform:translateY(-3px); border-color:var(--border-strong); box-shadow:var(--shadow-lg);}
+@supports not (grid-template-rows: subgrid){
+  .plans{grid-template-rows:none;}
+  .plans .plan{display:flex; flex-direction:column;}
+}
+@media(max-width:900px){
+  .plans{grid-template-columns:1fr; grid-template-rows:none;}
+  .plans .plan{display:flex; flex-direction:column; grid-row:auto;}
+  /* 单列时 --plan-cols 仍是档数，cqi÷列数会把字号算小——回退固定字号 */
+  .plan-price .num{font-size:40px;}
+}
+/* 推荐档（非 imini 主题的回退面）：描边强调；不再放大/抬升，整行齐平 */
+.plans .plan.feat{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent), var(--shadow-lg);}
+/* ① 名称行：徽章内联右置，不再绝对定位骑卡片边缘 */
+.plan-head{display:flex; align-items:center; gap:10px; min-height:24px;}
+.plan-name{font-family:var(--disp); font-size:19px; font-weight:800; letter-spacing:.01em;}
+.plan-tag{margin-left:auto; height:22px; padding:0 10px; border-radius:var(--pill); font-size:11px;
+  font-weight:700; letter-spacing:.02em; color:#fff; background:var(--grad-warm);
+  display:inline-flex; align-items:center; white-space:nowrap;}
+/* ② 描述：最多两行截断；留空时行高占位由 subgrid 轨道统一 */
+.plan-desc{font-size:13px; line-height:1.5; color:var(--text-faint); margin:6px 0 0; min-height:20px;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;}
+/* ③ 价格：基线对齐；表格数字防止促销价切换时跳动 */
+.plan-price{display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; margin-top:18px;}
+.plan-price .num{font-family:var(--disp); font-weight:800;
+  font-size:clamp(26px, calc(15cqi / var(--plan-cols, 3)), 40px);
+  letter-spacing:-.02em; line-height:1; font-variant-numeric:tabular-nums;}
+.plan-price .orig{font-size:14px; color:var(--text-faint); text-decoration:line-through;}
 .plan-price .per{font-size:13px; color:var(--text-faint);}
-.plan-cta{display:flex; align-items:center; justify-content:center; width:100%; height:48px; border-radius:var(--r-sm); margin:20px 0; font-weight:700; font-size:14.5px; transition:all .16s var(--ease);}
+/* ④ 计费说明：恒占一行（按年支付 ¥X；月付/免费档留空），下方按钮不错位 */
+.plan-meta{min-height:19px; margin-top:6px; font-size:12.5px; color:var(--text-faint);}
+/* ⑤ 按钮槽：后台关闭「展示按钮」时按钮消失但槽位仍在，权益区跨卡齐线 */
+.plan-cta-slot{margin-top:18px; min-height:48px; display:flex; align-items:stretch;}
+.plan-cta{display:flex; align-items:center; justify-content:center; width:100%; height:48px;
+  border-radius:var(--r-sm); font-weight:700; font-size:14.5px; transition:all .16s var(--ease);}
 .plan-cta.ghost{color:var(--text); background:var(--surface); border:1px solid var(--border-strong); box-shadow:var(--shadow-xs);}
 .plan-cta.ghost:hover{color:var(--accent); border-color:var(--accent); background:var(--accent-soft);}
 .plan-cta.solid{color:#fff; background:var(--btn-grad); box-shadow:var(--btn-shadow);}
 .plan-cta.solid:hover{filter:brightness(.94); transform:translateY(-1px);}
-/* 渐变面板内：白底反色按钮 */
-.plans .plan.feat .plan-cta.solid{color:#4f46e5; background:#fff; box-shadow:0 10px 28px rgba(12,8,60,.35);}
-.plans .plan.feat .plan-cta.solid:hover{filter:brightness(.97);}
-.plan-feats{display:flex; flex-direction:column; gap:11px;}
+/* ⑥ 权益：分隔线起头，与上方拉开一档 */
+.plan-feats{display:flex; flex-direction:column; gap:11px; padding:16px 0 0; margin:18px 0 0;
+  border-top:1px solid var(--border); list-style:none;}
 .plan-feats li{display:flex; align-items:flex-start; gap:10px; font-size:13.5px; color:var(--text-dim); list-style:none;}
-.plan-feats{padding:0; margin:0;}
 /* ── 限时折扣横幅（定价页，参考 imini 促销条） ───────────────────────── */
 .promo{display:flex; align-items:center; justify-content:space-between; gap:24px; margin-top:36px; padding:24px 28px;
   border-radius:var(--r-lg); border:1px solid rgba(34,211,238,.16); overflow:hidden;

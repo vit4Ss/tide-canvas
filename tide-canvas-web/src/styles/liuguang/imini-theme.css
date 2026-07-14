@@ -440,23 +440,35 @@ body.imini .plans .plan{background:linear-gradient(180deg,#1A1A1F 0%,#131316 100
   box-shadow:inset 0 1px 0 rgba(255,255,255,.07);}
 body.imini .plans .plan:hover{transform:translateY(-3px); border-color:var(--border-strong);
   box-shadow:inset 0 1px 0 rgba(255,255,255,.07), 0 16px 40px -20px rgba(0,0,0,.7);}
-/* Pro 卡 = 主角：更亮的面、抬升、深投影、顶部一道青色发丝光 */
+/* 推荐卡 = 主角，但与全行齐平（六区 subgrid 跨卡共轨，位移抬升会破坏
+   对齐线）：更亮的面 + 更亮描边 + 顶部青色发丝光 + 深投影，靠光不靠位移。 */
 body.imini .plans .plan.feat,body.imini .plans .plan.feat:hover{
   background:linear-gradient(180deg,#20202A 0%,#15151A 100%);
   border-color:rgba(255,255,255,.24);
-  transform:translateY(-10px);
   box-shadow:inset 0 1px 0 rgba(255,255,255,.12), 0 28px 70px -28px rgba(0,0,0,.85);}
-body.imini .plans .plan.feat:hover{transform:translateY(-14px);}
+body.imini .plans .plan.feat:hover{transform:translateY(-3px);}
 body.imini .plans .plan.feat::before{content:''; position:absolute; top:0; left:18px; right:18px; height:1px;
   border-radius:1px; padding:0; -webkit-mask:none; mask:none;
   background:linear-gradient(90deg, transparent, rgba(34,211,238,.85), transparent);}
-@media(max-width:900px){body.imini .plans .plan.feat,body.imini .plans .plan.feat:hover{transform:none;}}
+/* 徽章：与名称同行的白底胶囊（内联右置结构在 pages.css 的 .plan-head） */
+body.imini .plan-tag{height:21px; padding:0 9px; font-size:10.5px;}
+/* 推荐卡权益分隔线略亮一档，与更亮的卡面同层级 */
+body.imini .plans .plan.feat .plan-feats{border-top-color:rgba(255,255,255,.12);}
 /* Pro 卡勾选圈 = 青（毫米级点缀），普通卡保持灰白 */
 body.imini .plans .plan.feat .plan-feats .ck{color:#0A0A0B; background:var(--tech);}
-/* 价格数字：等宽仪表化，Pro 更大一号 */
-body.imini .plan-price .num{font-family:var(--mono); font-size:38px; letter-spacing:-.02em;}
-body.imini .plans .plan.feat .plan-price .num{font-size:46px;}
+/* 价格数字：等宽仪表化；推荐卡大一号是唯一的尺寸强调。
+   字号随单卡宽度缩放（外层 .plans 是 inline-size 容器，cqi÷列数≈卡宽）：
+   档位多/价格长（如 ¥8.33 + 划线 ¥10）时数字自动收小，"/月"不掉行。 */
+body.imini .plan-price .num{font-family:var(--mono); letter-spacing:-.02em;
+  font-size:clamp(24px, calc(13.5cqi / var(--plan-cols, 3)), 36px);}
+body.imini .plans .plan.feat .plan-price .num{
+  font-size:clamp(28px, calc(15.5cqi / var(--plan-cols, 3)), 42px);}
+@media(max-width:900px){
+  body.imini .plan-price .num{font-size:36px;}
+  body.imini .plans .plan.feat .plan-price .num{font-size:42px;}
+}
 body.imini .plan-price .per{font-size:12.5px;}
+body.imini .plan-price .orig{font-family:var(--mono); font-size:13.5px;}
 /* 区块顶部极淡白色聚光，打破纯平黑 */
 body.imini #cta-sec{background:radial-gradient(56% 46% at 50% 24%, rgba(255,255,255,.04), transparent 70%), #0F0F11;}
 

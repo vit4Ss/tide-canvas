@@ -77,9 +77,11 @@ type g4PlanVO struct {
 	MonthlyPoints int      `json:"monthlyPoints"`
 	Featured      bool     `json:"featured"`
 	Cta           string   `json:"cta"`
-	Items         []string `json:"items"`
-	SortOrder     int      `json:"sortOrder"`
-	Status        int      `json:"status"`
+	// HideCta：定价卡隐藏 CTA 按钮（默认 false=展示）。
+	HideCta   bool     `json:"hideCta"`
+	Items     []string `json:"items"`
+	SortOrder int      `json:"sortOrder"`
+	Status    int      `json:"status"`
 	// VipLevel：购买授予的会员等级（有效值：features 显式值，否则种子 code
 	// 兜底，与 billing.vipForPlan 同口径）。
 	VipLevel   int    `json:"vipLevel"`
@@ -97,6 +99,7 @@ type g4PlanFeatures struct {
 	Yearly   float64  `json:"yearly"`
 	Cta      string   `json:"cta"`
 	Featured bool     `json:"featured"`
+	HideCta  bool     `json:"hideCta"`
 	Items    []string `json:"items"`
 	VipLevel int      `json:"vipLevel"`
 }
@@ -124,6 +127,9 @@ type g4PlanUpsertDTO struct {
 	// VipLevel：购买授予的会员等级（0=不授予）。指针语义：省略 = 保留既有
 	// 值（排序等批量回写不带此字段，不能把等级清零）。
 	VipLevel *int `json:"vipLevel" binding:"omitempty,gte=0,lte=99"`
+	// HideCta：定价卡隐藏 CTA 按钮。同 VipLevel 指针语义：省略 = 保留既有值
+	//（上下架 togglePlan 等部分回写不带此字段，不能把开关重置）。
+	HideCta *bool `json:"hideCta"`
 }
 
 // ---- plan handlers ----
@@ -355,11 +361,16 @@ func g4ApplyPlan(row *model.Plan, dto *g4PlanUpsertDTO, create bool) {
 	if dto.VipLevel != nil {
 		vip = *dto.VipLevel
 	}
+	hideCta := prev.HideCta
+	if dto.HideCta != nil {
+		hideCta = *dto.HideCta
+	}
 	feat := g4PlanFeatures{
 		Desc:     dto.Desc,
 		Yearly:   dto.Yearly,
 		Cta:      dto.Cta,
 		Featured: dto.Featured,
+		HideCta:  hideCta,
 		Items:    items,
 		VipLevel: vip,
 	}
@@ -394,6 +405,7 @@ func g4ToPlanVO(p *model.Plan) g4PlanVO {
 		MonthlyPoints: p.PointsGrant,
 		Featured:      f.Featured,
 		Cta:           f.Cta,
+		HideCta:       f.HideCta,
 		Items:         items,
 		SortOrder:     p.SortOrder,
 		Status:        p.Status,
