@@ -339,27 +339,16 @@ const MODEL_META: Record<string, ModelMeta> = {
 
 const DEFAULT_META: ModelMeta = { tag: "AI", by: "模型", desc: "高质量生成" };
 
-/** map a backend AiModelVO.type to a short display tag. */
-function typeTag(type: string): string {
-  return type === "video"
-    ? "VID"
-    : type === "audio"
-      ? "AUD"
-      : type === "text"
-        ? "TXT"
-        : "IMG";
-}
-
 /** derive a ModelMeta for a studio model purely from its model-management config:
- *  the right-side tag prefers 预计耗时, then 消耗积分, then the media-type tag; the
- *  subtitle is the 描述 (or capabilities when no description is set). */
+ *  the right-side tag shows 预计耗时 only——积分不在选择器里显示（用户定稿
+ *  2026-07-14：消耗已在「立即生成 · N 积分」按钮上呈现，选择器满屏积分是噪音），
+ *  没有耗时就不渲染徽标；the subtitle is the 描述 (or capabilities when no
+ *  description is set). */
 function metaOfStudio(m: StudioModelVO): ModelMeta {
   const c = m.config;
   const est = c?.estSeconds ?? 0;
-  const cost = parseFloat(m.pointCost) || 0;
-  const tag = est > 0 ? `~${est}s` : cost > 0 ? `${cost} 积分` : typeTag(m.type);
   return {
-    tag,
+    tag: est > 0 ? `~${est}s` : "",
     by: "",
     desc: m.desc || (c?.capabilities?.length ? c.capabilities.join(" · ") : "高质量生成"),
   };
@@ -2367,7 +2356,7 @@ export default function CreateStudio() {
                 <span className="ws-model-info">
                   <span className="ws-model-row">
                     <span className="ws-model-name">{model}</span>
-                    <span className="ws-model-tag">{meta.tag}</span>
+                    {meta.tag && <span className="ws-model-tag">{meta.tag}</span>}
                   </span>
                   <span className="ws-model-desc">
                     {meta.by ? `${meta.by} · ${meta.desc}` : meta.desc}
@@ -2400,7 +2389,7 @@ export default function CreateStudio() {
                       <span className="ws-mopt-info">
                         <span className="ws-mopt-row">
                           <span className="ws-mopt-name">{m}</span>
-                          <span className="ws-model-tag">{mm.tag}</span>
+                          {mm.tag && <span className="ws-model-tag">{mm.tag}</span>}
                         </span>
                         <span className="ws-mopt-desc">
                           {mm.by ? `${mm.by} · ${mm.desc}` : mm.desc}
