@@ -121,7 +121,8 @@ func (h *handler) list(c *gin.Context) {
 		like := "%" + keyword + "%"
 		tx = tx.Where("name LIKE ? OR description LIKE ?", like, like)
 	}
-	if category != "" {
+	// 「推荐」是聚合页签而非真实分类:展示全部(官方优先),不做 category 过滤
+	if category != "" && category != "推荐" {
 		tx = tx.Where("category = ?", category)
 	}
 	if commercialOnly {
