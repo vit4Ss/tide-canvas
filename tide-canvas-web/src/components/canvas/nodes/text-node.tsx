@@ -4,10 +4,12 @@ import { memo, useCallback, useEffect, useState } from "react";
 import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
 import { aiApi } from "@/lib/api";
 import { AiModelType, type AiModelVO } from "@/types/ai";
+import { useAiGeneration } from "@/hooks/canvas/use-ai-generation";
 import {
   AlignLeft,
   ArrowUp,
   Image as ImageIcon,
+  Loader2,
   Music2,
   Play,
   Text,
@@ -53,6 +55,8 @@ export const TextNode = memo(function TextNode({
 
   const [models, setModels] = useState<AiModelVO[]>([]);
   const [modelId, setModelId] = useState("");
+  const { generate, isGenerating } = useAiGeneration();
+  const generating = node.status === "generating" || isGenerating(node.id);
 
   useEffect(() => {
     if (node.width !== TEXT_CARD_WIDTH || node.height !== TEXT_CARD_HEIGHT) {
@@ -89,6 +93,18 @@ export const TextNode = memo(function TextNode({
     updateNode(node.id, { prompt: value }, false);
   };
 
+  // 与 AI 助手面板同一条链路：assistant_chat handler + relay 文本模型，结果经
+  // use-ai-generation 的文本分支写回 node.content
+  const handleGenerate = () => {
+    if (!canSubmit || generating) return;
+    generate({
+      nodeId: node.id,
+      handler: "assistant_chat",
+      modelId: selectedModel?.modelId || "default",
+      input: { prompt: prompt.trim() },
+    });
+  };
+
   return (
     <div
       data-node-id={node.id}
@@ -106,6 +122,14 @@ export const TextNode = memo(function TextNode({
         >
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_8%,rgba(0,0,0,0.025),transparent_34%)] dark:bg-[radial-gradient(circle_at_50%_8%,rgba(255,255,255,0.04),transparent_34%)]" />
 
+          {node.content ? (
+            <div
+              className="relative h-full overflow-y-auto px-7 py-6 text-neutral-900 dark:text-neutral-100"
+              onWheel={(e) => e.stopPropagation()}
+            >
+              <p className="whitespace-pre-wrap break-words text-sm leading-7">{node.content}</p>
+            </div>
+          ) : (
           <div className="relative flex h-full flex-col items-center px-7 pb-8 pt-12 text-neutral-900 dark:text-neutral-100">
             <div className="flex h-20 items-center justify-center text-neutral-400 dark:text-neutral-600" aria-hidden="true">
               <div className="space-y-2">
@@ -136,6 +160,14 @@ export const TextNode = memo(function TextNode({
               </div>
             </div>
           </div>
+          )}
+
+          {generating && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center gap-2 bg-white/75 text-sm text-neutral-500 dark:bg-neutral-950/75 dark:text-neutral-400">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              正在生成...
+            </div>
+          )}
         </div>
 
         <NodeHeader icon={AlignLeft} title={node.title || "文本节点"} visible={showAuxUI} zoom={zoom} />
@@ -182,16 +214,16 @@ export const TextNode = memo(function TextNode({
                   </span>
                   <button
                     onMouseDown={stop}
-                    onClick={(e) => { stop(e); }}
-                    disabled={!canSubmit}
-                    title="确认文本"
+                    onClick={(e) => { stop(e); handleGenerate(); }}
+                    disabled={!canSubmit || generating}
+                    title="生成文本"
                     className={"flex h-8 w-8 items-center justify-center rounded-full transition-colors " + (
-                      canSubmit
+                      canSubmit && !generating
                         ? "bg-neutral-950 text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-200"
                         : "cursor-not-allowed bg-neutral-100 text-neutral-400 dark:bg-neutral-800 dark:text-neutral-500"
                     )}
                   >
-                    <ArrowUp className="h-3.5 w-3.5" />
+                    {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}
                   </button>
                 </div>
               </div>

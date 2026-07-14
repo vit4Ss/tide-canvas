@@ -9,6 +9,8 @@ export interface CanvasNode {
   height: number;
   title: string;
   prompt?: string;
+  /** 文本节点生成结果（relay 文本模型回复），卡片内展示 */
+  content?: string;
   /** 图片节点生成时选中的风格预设，默认风格不写入。 */
   stylePresetId?: string;
   /** 图片节点选中的风格短名称，用于按钮回显。 */

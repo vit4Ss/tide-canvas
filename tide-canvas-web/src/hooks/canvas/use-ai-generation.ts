@@ -57,6 +57,16 @@ function parseTaskMeta(meta: unknown): Record<string, unknown> {
   return typeof meta === "object" && !Array.isArray(meta) ? meta as Record<string, unknown> : {};
 }
 
+/** 文本任务(如 assistant_chat)的结果在 resultMeta 里而非 resultUrl；按常见键取回复文本 */
+function extractTextResult(task: AiTaskVO): string {
+  const meta = parseTaskMeta(task.resultMeta);
+  for (const key of ["text", "content", "answer", "message", "response", "output"]) {
+    const value = meta[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
 /**
  * 把单张 2×2 四宫格(如 Midjourney 原生输出)切成 4 张独立图并以组图展示：
  * 切块后先用本地 blob 立即升级为组图(秒显)，再后台静默上传，完成后无感替换为远端地址；
@@ -110,7 +120,7 @@ export function useAiGeneration() {
 
   const markGenerationFailed = useCallback((nodeId: string) => {
     const node = useCanvasStore.getState().nodes.find((n) => n.id === nodeId);
-    const nextStatus: CanvasNode["status"] = node?.imageSrc || node?.videoSrc || node?.audioSrc ? "success" : "error";
+    const nextStatus: CanvasNode["status"] = node?.imageSrc || node?.videoSrc || node?.audioSrc || node?.content ? "success" : "error";
     updateNode(nodeId, { status: nextStatus });
   }, [updateNode]);
 
@@ -145,6 +155,26 @@ export function useAiGeneration() {
         }
         const task: AiTaskVO = res.data;
         if (task.status === AiTaskStatus.SUCCESS) {
+          const store = useCanvasStore.getState();
+          const node = store.nodes.find((n) => n.id === nodeId);
+          // 文本节点：结果在 resultMeta 而非 resultUrl，直接写回 content
+          if (node?.type === "text") {
+            const text = extractTextResult(task);
+            if (!text) {
+              markGenerationFailed(nodeId);
+              toast.error("生成结果为空，请重试");
+            } else {
+              updateNode(nodeId, { status: "success", content: text });
+              toast.success("生成成功");
+              onSuccess?.(text);
+            }
+            setActiveTaskIds((prev) => {
+              const next = new Set(prev);
+              next.delete(nodeId);
+              return next;
+            });
+            return;
+          }
           // 校验 URL：只接受 http(s):// 或 data: 开头的合法地址
           const isValid = (u?: string): u is string =>
             !!u && (u.startsWith("https://") || u.startsWith("http://") || u.startsWith("data:"));
@@ -153,8 +183,6 @@ export function useAiGeneration() {
             markGenerationFailed(nodeId);
             toast.error("生成结果无效，可能未配置 AI 供应商");
           } else {
-            const store = useCanvasStore.getState();
-            const node = store.nodes.find((n) => n.id === nodeId);
             const isVideo = node?.type === "video";
             const isAudio = node?.type === "audio";
             const requestedAspect = input.aspectRatio ?? input.aspect_ratio ?? input.ratio;
