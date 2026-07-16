@@ -19,6 +19,7 @@ import { mesh } from "@/lib/mesh";
 import { toast } from "@/components/shared/toast";
 import { confirmDialog } from "@/components/shared/confirm";
 import { useReveal } from "@/components/site/use-reveal";
+import { AudioPlayerCard } from "@/components/studio/audio-player-card";
 
 type TabKey = "hist" | "upload";
 type FilterKey = "image" | "video" | "audio" | "doc";
@@ -607,7 +608,7 @@ export function AssetsBrowser({
               <div className="as-preview-audio">
                 <span className="as-preview-audio-ic">♪</span>
                 <b>{preview.name}</b>
-                <audio src={preview.url} controls autoPlay />
+                <AudioPlayerCard src={preview.url} autoPlay />
               </div>
             )}
           </div>

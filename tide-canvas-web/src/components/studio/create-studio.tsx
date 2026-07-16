@@ -42,6 +42,7 @@ import { aiApi, uploadFileSmart } from "@/lib/api";
 import { pointsApi } from "@/lib/points-api";
 import { AiTaskStatus } from "@/types/ai";
 import { AssetsBrowser, type PickedAsset } from "@/components/studio/assets-browser";
+import { AudioPlayerCard } from "@/components/studio/audio-player-card";
 import {
   MentionPromptEditor,
   buildMentionRefs,
@@ -2872,15 +2873,7 @@ export default function CreateStudio() {
                                   onClick={(e) => e.stopPropagation()}
                                 />
                               ) : it.type === "audio" ? (
-                                <>
-                                  <span className="au-ic" aria-hidden>♪</span>
-                                  <audio
-                                    src={it.url}
-                                    controls
-                                    preload="metadata"
-                                    onClick={(e) => e.stopPropagation()}
-                                  />
-                                </>
+                                <AudioPlayerCard src={it.url} />
                               ) : (
                                 // eslint-disable-next-line @next/next/no-img-element
                                 <img className="done-img" src={it.url} alt={r.prompt} loading="lazy" />

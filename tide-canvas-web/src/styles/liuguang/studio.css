@@ -713,13 +713,22 @@
   display:grid; place-items:center; font-size:11px; color:#fff; background:color-mix(in oklab,#0a0c14 64%, transparent); backdrop-filter:blur(6px);}
 /* audio in-flight: a compact wide bar instead of the tall image placeholder */
 .ws-run.inflight.audio .ws-runimg.loading{height:96px; width:min(560px,100%); aspect-ratio:auto !important;}
-/* audio result: a horizontal player row (no aspect ratio / zoom / hover lift) */
-.ws-runimg.audio{cursor:default; display:flex; align-items:center; gap:12px; padding:14px 16px;
+/* audio result: custom player card (播放钮 + 波形 + 时间), no zoom / hover lift */
+.ws-runimg.audio{cursor:default; display:flex; align-items:stretch;
   width:min(560px,100%); background:var(--surface-2); border:1px solid var(--border);}
 .ws-runimg.audio:hover{transform:none; box-shadow:var(--shadow);}
-.ws-runimg.audio .au-ic{flex:none; width:38px; height:38px; border-radius:10px; display:grid; place-items:center;
-  font-size:17px; color:var(--text-dim); background:var(--panel); border:1px solid var(--border);}
-.ws-runimg.audio audio{flex:1; min-width:0; height:36px;}
+.ap-card{flex:1; min-width:0; display:flex; align-items:center; gap:14px; padding:16px 18px;}
+/* 白色圆钮承担唯一视觉重心（同大 CTA 的胶囊语言）;audio 元素本体隐藏 */
+.ap-card audio{display:none;}
+.ap-btn{flex:none; width:44px; height:44px; border-radius:50%; display:grid; place-items:center;
+  color:var(--bg); background:var(--text); transition:transform .16s var(--ease), opacity .16s;}
+.ap-btn:hover{transform:scale(1.05);}
+.ap-btn:active{transform:scale(.97);}
+.ap-btn svg{width:19px; height:19px; fill:currentColor;}
+/* 波形画布:颜色继承文字色,canvas 内按 alpha 区分已播/未播 */
+.ap-wave{flex:1; min-width:0; height:44px; color:var(--text); cursor:pointer; touch-action:none;}
+.ap-time{flex:none; font-family:var(--mono); font-size:11px; color:var(--text-faint);
+  font-variant-numeric:tabular-nums; white-space:nowrap;}
 .ws-runimg.done:hover .gen-acts{opacity:1; transform:translate(-50%,0); pointer-events:auto;}
 /* in-flight placeholder: aspectRatio (inline) + height drives width。
    「正在显影」的功能性紫光打在占位片自身上 */
@@ -900,6 +909,8 @@
 .as-preview-audio-ic{width:72px; height:72px; border-radius:50%; display:grid; place-items:center; font-size:32px; color:#fff;
   background:linear-gradient(135deg, var(--accent), color-mix(in oklab,var(--accent) 40%, #000));}
 .as-preview-audio b{font-size:13.5px; color:var(--text); max-width:320px; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+/* 浮层内的定制播放卡:去掉卡片内距,给一个稳定宽度 */
+.as-preview-audio .ap-card{width:420px; max-width:70vw; padding:6px 0 0;}
 .as-preview-ops{position:fixed; left:50%; bottom:26px; transform:translateX(-50%); z-index:1001; display:flex; gap:8px;
   padding:6px; border-radius:13px; background:rgba(18,20,26,.82); border:1px solid rgba(255,255,255,.14);
   box-shadow:0 8px 26px rgba(0,0,0,.35); backdrop-filter:blur(10px);}
