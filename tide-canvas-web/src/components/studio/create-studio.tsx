@@ -74,8 +74,8 @@ const IDEAS = [
   "深海发光水母，慢镜头，4K 微距，蓝紫光束",
 ] as const;
 
-type ToolKey = "t2i" | "i2i" | "edit" | "t2v" | "i2v" | "flf" | "ref";
-type ToolMode = "t2i" | "i2i" | "t2v";
+type ToolKey = "t2i" | "i2i" | "edit" | "t2v" | "i2v" | "flf" | "ref" | "t2a";
+type ToolMode = "t2i" | "i2i" | "t2v" | "t2a";
 
 /* ── 内容感知环境光（YouTube Ambient Mode 思路）─────────────────────────────
    取生成图的平均主色，作为该灯箱片泛光的颜色（CSS 变量 --amb，studio.css 的
@@ -178,11 +178,13 @@ const TOOLS: Record<ToolKey, ToolCfg> = {
   i2v: { mode: "t2v", label: "图生视频", head: "图生视频", drop: true, ph: "上传首帧图片，再描述运动…\n例：人物缓缓回头，发丝随风飘动，电影质感" },
   flf: { mode: "t2v", label: "首尾帧", head: "首尾帧生成", drop: true, ph: "上传首帧与尾帧，描述过渡…\n例：从清晨到日落的平滑时间流逝" },
   ref: { mode: "t2v", label: "全能参考", head: "全能参考", drop: true, ph: "上传参考图（人物 / 风格 / 动作），描述想要的视频…\n例：参考人物形象，生成其在雪山奔跑的镜头" },
+  t2a: { mode: "t2a", label: "音乐生成", head: "生成音乐", drop: false, ph: "描述你想要的音乐，Suno 会自动谱曲写词…\n例：温柔的中文民谣，木吉他伴奏，关于夏天傍晚的回忆" },
 };
 
 const MODES_BY_TYPE: Record<ArtworkType, ToolKey[]> = {
   image: ["t2i", "i2i"],
   video: ["t2v", "i2v", "flf", "ref"],
+  audio: ["t2a"],
 };
 
 /* typed reference uploads per tool (create.js UPLOADS) */
@@ -362,6 +364,7 @@ const MODE_TO_TOOL: Record<string, ToolKey> = {
   i2v: "i2v",
   keyframe: "flf",
   omni_ref: "ref",
+  t2a: "t2a",
 };
 
 /** studio ToolKey → backend generation handler name (internal/handler/ai handlerRegistry). */
@@ -373,6 +376,7 @@ const TOOL_TO_HANDLER: Record<ToolKey, string> = {
   i2v: "image_to_video",
   flf: "start_end_to_video",
   ref: "reference_to_video",
+  t2a: "text_to_audio",
 };
 
 /** display label for a ratio value (auto → 自适应). */
@@ -400,6 +404,7 @@ const HIST_HANDLER_TYPE: Record<string, ArtworkType> = {
   image_to_video: "video",
   start_end_to_video: "video",
   reference_to_video: "video",
+  text_to_audio: "audio",
   // one-click image-edit ops (per-result toolbar)
   remove_bg: "image",
   remove_object: "image",
@@ -415,6 +420,7 @@ const HIST_HANDLER_TOOL: Record<string, ToolKey> = {
   image_to_video: "i2v",
   start_end_to_video: "flf",
   reference_to_video: "ref",
+  text_to_audio: "t2a",
   // edit ops restore into the 改图 tool (i2i family)
   remove_bg: "edit",
   remove_object: "edit",
@@ -462,7 +468,8 @@ function paramsFromTask(handler: string, modelName: string, input: unknown): Run
     model: modelName,
     tool: HIST_HANDLER_TOOL[handler] ?? "t2i",
     curType: type,
-    ratio: str(inp.aspectRatio) || str(inp.aspect_ratio) || str(inp.ratio) || "1:1",
+    // 音频无画面比例——留空，否则历史里的音频卡会顶着一枚假 "1:1" 徽标。
+    ratio: type === "audio" ? "" : str(inp.aspectRatio) || str(inp.aspect_ratio) || str(inp.ratio) || "1:1",
     imgRes: type === "image" ? reso || "2K" : "2K",
     res: type === "video" ? reso || "1080p" : "1080p",
     dur: str(inp.duration) || "5s",
@@ -473,6 +480,10 @@ function paramsFromTask(handler: string, modelName: string, input: unknown): Run
     lastFrame: str(inp.lastFrame) || undefined,
     videoRefs: strArr(inp.videoReferences),
     audioRefs: strArr(inp.audioReferences),
+    lyrics: str(inp.lyrics) || undefined,
+    songStyle: str(inp.tags) || undefined,
+    songTitle: str(inp.title) || undefined,
+    instrumental: inp.makeInstrumental === true || undefined,
   };
 }
 
@@ -571,6 +582,8 @@ interface RunMeta {
   count: number;
   label: string;
   isVid: boolean;
+  /** 媒体类型；缺省时按 isVid 推导（兼容旧持久化数据），audio 由此区分 */
+  kind?: ArtworkType;
   refThumbs: string[];
 }
 
@@ -584,6 +597,8 @@ interface ActiveRun {
   spec: string;
   count: number;
   isVid: boolean;
+  /** 媒体类型；缺省按 isVid 推导（旧快照兼容），audio 由此区分 */
+  kind?: ArtworkType;
   label: string;
   hues: MeshHues[];
   refThumbs: string[];
@@ -612,6 +627,11 @@ interface RunParams {
   lastFrame?: string;
   videoRefs?: string[];
   audioRefs?: string[];
+  /** 音频（Suno）：自定义模式的歌词/风格/歌名与纯音乐开关 */
+  lyrics?: string;
+  songStyle?: string;
+  songTitle?: string;
+  instrumental?: boolean;
 }
 
 let histSeq = 0;
@@ -631,6 +651,11 @@ export default function CreateStudio() {
   const [res, setRes] = useState<string>("1080p");
   const [dur, setDur] = useState<string>("5s");
   const [quality, setQuality] = useState<string>("");
+  /* 音频（Suno）自定义模式：歌词/风格/歌名/纯音乐。全空 = 灵感模式（Suno 自动写词）。 */
+  const [lyrics, setLyrics] = useState("");
+  const [songStyle, setSongStyle] = useState("");
+  const [songTitle, setSongTitle] = useState("");
+  const [instrumental, setInstrumental] = useState(false);
 
   /* typed reference uploads (per slot key) + preview modal target */
   const [slotData, setSlotData] = useState<SlotData>({});
@@ -705,6 +730,7 @@ export default function CreateStudio() {
 
   const cfg = TOOLS[tool];
   const isVideo = curType === "video";
+  const isAudio = curType === "audio";
   const slots = UPLOADS[tool] ?? null;
 
   /* @ 引用候选：按提交顺序给槽位素材编号（图片N/视频N/音频N）。顺序必须与
@@ -760,6 +786,9 @@ export default function CreateStudio() {
     [studioList, model],
   );
   const mCfg = selModel?.config ?? null;
+  // Suno 音效卡与音乐卡用法不同（不吃歌词/风格/歌名，只按描述出短音效），
+  // 以 modelKey 里的 sfx 识别并隐藏自定义模式字段。
+  const isSfx = isAudio && /sfx/i.test(selModel?.modelKey ?? "");
 
   // dynamic option lists: a model's configured options only; when the backend
   // returned no models at all, fall back to the built-in defaults so the panel
@@ -796,6 +825,10 @@ export default function CreateStudio() {
   //   2) 模型级固定积分 (config.creditCost, else the model's pointCost)
   //   3) built-in fallback map (case-insensitive: 后台用 1k/2k/4k, 预览用 1K/2K/4K)
   const cost = useMemo(() => {
+    // 音频按次计费（Suno 两首一次结算），无画质/清晰度矩阵与数量倍乘。
+    if (isAudio) {
+      return mCfg?.creditCost ?? (parseFloat(selModel?.pointCost ?? "") || 0);
+    }
     const pm = mCfg?.priceMatrix;
     const row = isVideo ? dur : quality;
     const col = isVideo ? res : imgRes;
@@ -811,7 +844,7 @@ export default function CreateStudio() {
     return isVideo
       ? Math.round((fb(RES_COST, res, 50) * (DUR_SEC[dur] || 5)) / 5)
       : fb(IMG_RES_COST, imgRes, 14) * count;
-  }, [mCfg, selModel, isVideo, dur, res, imgRes, quality, count]);
+  }, [mCfg, selModel, isVideo, isAudio, dur, res, imgRes, quality, count]);
 
   // group the flat history into runs (one block per generation), newest first —
   // `hist` is already newest-first, so first-seen order is preserved.
@@ -901,7 +934,7 @@ export default function CreateStudio() {
       const t = sp.get("type");
       const tl = sp.get("tool");
       const m = sp.get("model");
-      if (t === "image" || t === "video") {
+      if (t === "image" || t === "video" || t === "audio") {
         // eslint-disable-next-line react-hooks/set-state-in-effect
         setCurType(t);
         const tools = MODES_BY_TYPE[t] ?? [];
@@ -910,7 +943,9 @@ export default function CreateStudio() {
             ? (tl as ToolKey)
             : t === "video"
               ? "t2v"
-              : "t2i",
+              : t === "audio"
+                ? "t2a"
+                : "t2i",
         );
       }
       if (m) deepModelRef.current = m;
@@ -1022,6 +1057,7 @@ export default function CreateStudio() {
             count: 1,
             label: "",
             isVid: h.type === "video",
+            kind: h.type,
             refThumbs: [],
           });
           setCells([{ i: 0, hues: h.hues, url: h.url }]);
@@ -1376,10 +1412,11 @@ export default function CreateStudio() {
   const driveRun = useCallback(
     (run: ActiveRun) => {
       const { taskId, prompt: p, model: mdl, ratio: r, spec, count: n, isVid, label, hues } = run;
+      const kind: ArtworkType = run.kind ?? (isVid ? "video" : "image");
       const myRun = (runIdRef.current += 1);
 
       const newCells: ResultCell[] = hues.map((h, i) => ({ i, hues: h }));
-      setRunMeta({ prompt: p, model: mdl, ratio: r, spec, count: n, label, isVid, refThumbs: run.refThumbs });
+      setRunMeta({ prompt: p, model: mdl, ratio: r, spec, count: n, label, isVid, kind, refThumbs: run.refThumbs });
       setCells(newCells);
       setBusy(true);
 
@@ -1438,7 +1475,7 @@ export default function CreateStudio() {
             ts,
             ratio: r,
             hues: cell.hues,
-            type: (isVid ? "video" : "image") as HistItem["type"],
+            type: kind,
             title: p,
             prompt: p,
             model: mdl,
@@ -1447,7 +1484,7 @@ export default function CreateStudio() {
           };
         });
         setHist((prev) => (prev.some((h) => h.run === runKey) ? prev : [...built, ...prev]));
-        toast.success("生成完成 · 点击图片放大查看");
+        toast.success(kind === "audio" ? "生成完成 · 点击播放试听" : "生成完成 · 点击图片放大查看");
       };
 
       const fail = (msg?: string) => {
@@ -1503,7 +1540,8 @@ export default function CreateStudio() {
             }
             // deadline checked AFTER reading the task, so a completed task is always
             // picked up even when resumed long after it was started.
-            const maxMs = isVid ? 30 * 60 * 1000 : 7 * 60 * 1000;
+            // 音频（Suno）1–4 分钟 + 回存,给 12 分钟;后端整体预算 10 分钟。
+            const maxMs = isVid ? 30 * 60 * 1000 : kind === "audio" ? 12 * 60 * 1000 : 7 * 60 * 1000;
             if (Date.now() - run.startedAt > maxMs) {
               fail("生成超时，请重试");
               return;
@@ -1680,9 +1718,16 @@ export default function CreateStudio() {
   const generate = useCallback(() => {
     if (busy || genInFlightRef.current) return;
     const p = prompt.trim();
-    if (!p) {
-      toast.info("先写一句提示词吧 ✦");
+    // 音频自定义模式（带歌词）时描述可省略——上游有 lyrics 会忽略 input。
+    const audLyrics = isAudio && !isSfx ? lyrics.trim() : "";
+    if (!p && !audLyrics) {
+      toast.info(isAudio ? "先写一句音乐描述，或填入自定义歌词 ✦" : "先写一句提示词吧 ✦");
       promptRef.current?.focus();
+      return;
+    }
+    // Suno 组合歧义：描述 + 风格但没歌词会被上游直接拒绝（tags 触发自定义模式）。
+    if (isAudio && !isSfx && !audLyrics && songStyle.trim()) {
+      toast.info("填了「风格」需搭配歌词（自定义模式），或清空风格走灵感模式");
       return;
     }
 
@@ -1723,15 +1768,15 @@ export default function CreateStudio() {
     setBusy(true);
 
     const isVid = TOOLS[tool].mode === "t2v";
-    // video tools always produce a single clip; only image batches honor 生成数量
-    // (the count slider is image-only, but `count` persists across type switches —
-    // without this a leftover count>1 would spawn N duplicate video cells).
-    const n = isVid ? 1 : count;
+    // video/audio tools always produce a single result; only image batches honor
+    // 生成数量 (the count slider is image-only, but `count` persists across type
+    // switches — without this a leftover count>1 would spawn N duplicate cells).
+    const n = isVid || isAudio ? 1 : count;
     const label = TOOLS[tool].label;
-    const r = ratio;
+    const r = isAudio ? "" : ratio; // 音频无画面比例
     const mdl = model;
-    const hsh = promptHue(p);
-    const spec = isVid ? `${r} · ${res} · ${dur}` : `${r} · ${imgRes}`;
+    const hsh = promptHue(p || audLyrics);
+    const spec = isAudio ? "" : isVid ? `${r} · ${res} · ${dur}` : `${r} · ${imgRes}`;
     const hues: MeshHues[] = Array.from(
       { length: n },
       (_, i) => [hsh + i * 36, hsh + i * 36 + 80, hsh + i * 36 + 200] as MeshHues,
@@ -1742,6 +1787,14 @@ export default function CreateStudio() {
     lastRunRef.current = {
       prompt: p, model: mdl, tool, curType, ratio: r, imgRes, res, dur, quality, count: n,
       imageRefs, firstFrame, lastFrame, videoRefs: vidRefs, audioRefs: audRefs,
+      ...(isAudio && !isSfx
+        ? {
+            lyrics: audLyrics || undefined,
+            songStyle: songStyle.trim() || undefined,
+            songTitle: songTitle.trim() || undefined,
+            instrumental: instrumental || undefined,
+          }
+        : {}),
     };
 
     setRunMeta({ prompt: p, model: mdl, ratio: r, spec, count: n, label, isVid, refThumbs });
@@ -1784,7 +1837,7 @@ export default function CreateStudio() {
               ts: simTs,
               ratio: r,
               hues: hu,
-              type: isVid ? "video" : "image",
+              type: isAudio ? "audio" : isVid ? "video" : "image",
               title: p,
               prompt: p,
               model: mdl,
@@ -1803,29 +1856,39 @@ export default function CreateStudio() {
 
     // ── real generation: build the input, then hand off to startGeneration
     // (shared task-create → persist → drive path). ────────────────────────
-    const input: Record<string, unknown> = {
-      prompt: p,
-      ...refInput,
-      ...(ratioOpts.length ? { aspectRatio: r, aspect_ratio: r, ratio: r } : {}),
-      ...(isVid
-        ? {
-            ...(resOpts.length ? { resolution: res } : {}),
-            ...(durOpts.length ? { duration: dur } : {}),
-          }
-        : {
-            ...(resOpts.length ? { clarity: imgRes, resolution: imgRes } : {}),
-            ...(qualOpts.length ? { quality } : {}),
-          }),
-      ...(n > 1 ? { batchCount: n } : {}),
-    };
+    const input: Record<string, unknown> = isAudio
+      ? {
+          // 音频：描述（灵感模式）+ 可选自定义模式字段。风格 tags 只随歌词发送
+          //（组合歧义已在上方拦截），SFX 卡只吃描述。
+          ...(p ? { prompt: p } : {}),
+          ...(audLyrics ? { lyrics: audLyrics } : {}),
+          ...(audLyrics && songStyle.trim() ? { tags: songStyle.trim() } : {}),
+          ...(audLyrics && songTitle.trim() ? { title: songTitle.trim() } : {}),
+          ...(!isSfx && instrumental ? { makeInstrumental: true } : {}),
+        }
+      : {
+          prompt: p,
+          ...refInput,
+          ...(ratioOpts.length ? { aspectRatio: r, aspect_ratio: r, ratio: r } : {}),
+          ...(isVid
+            ? {
+                ...(resOpts.length ? { resolution: res } : {}),
+                ...(durOpts.length ? { duration: dur } : {}),
+              }
+            : {
+                ...(resOpts.length ? { clarity: imgRes, resolution: imgRes } : {}),
+                ...(qualOpts.length ? { quality } : {}),
+              }),
+          ...(n > 1 ? { batchCount: n } : {}),
+        };
     void startGeneration({
       handler: TOOL_TO_HANDLER[tool],
       modelId,
       input,
-      meta: { prompt: p, model: mdl, ratio: r, spec, count: n, isVid, label, hues, refThumbs },
+      meta: { prompt: p, model: mdl, ratio: r, spec, count: n, isVid, kind: curType, label, hues, refThumbs },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busy, prompt, count, tool, curType, ratio, model, res, dur, imgRes, quality, slotData, studioList, ratioOpts, resOpts, durOpts, qualOpts, pushHistory, startGeneration]);
+  }, [busy, prompt, count, tool, curType, ratio, model, res, dur, imgRes, quality, lyrics, songStyle, songTitle, instrumental, slotData, studioList, ratioOpts, resOpts, durOpts, qualOpts, pushHistory, startGeneration]);
 
   // Refresh-resume: on mount, if a generation was in flight (persisted at start),
   // restore the generating UI and resume polling — the task keeps running on the
@@ -1878,6 +1941,10 @@ export default function CreateStudio() {
     setDur(lr.dur);
     setQuality(lr.quality);
     setCount(lr.count);
+    setLyrics(lr.lyrics ?? "");
+    setSongStyle(lr.songStyle ?? "");
+    setSongTitle(lr.songTitle ?? "");
+    setInstrumental(lr.instrumental ?? false);
     // 参考素材回填：按 generate() 写入 refInput 的映射反向恢复各上传槽位。
     // 仅在参数确实带参考素材时覆盖 slotData——旧快照/纯文生成不动现有槽位，
     // 保持会话内“先传图再重新生成”的既有行为。
@@ -2318,6 +2385,18 @@ export default function CreateStudio() {
                 </svg>
                 视频
               </button>
+              <button
+                type="button"
+                className={curType === "audio" ? "on" : undefined}
+                onClick={() => pickType("audio")}
+              >
+                <svg viewBox="0 0 24 24">
+                  <path d="M9 18V6l10-2v12" />
+                  <circle cx="6" cy="18" r="3" />
+                  <circle cx="16" cy="16" r="3" />
+                </svg>
+                音频
+              </button>
             </div>
 
             {/* mode tabs (generation tool) */}
@@ -2446,8 +2525,62 @@ export default function CreateStudio() {
               </>
             )}
 
+            {/* 音频（Suno）自定义模式：歌词/风格/歌名/人声。全空 = 灵感模式。
+                音效卡（SFX）用法不同，只吃描述，隐藏这些字段。 */}
+            {isAudio && !isSfx && (
+              <>
+                <div className="ws-field col" id="fieldLyrics">
+                  <label>自定义歌词 · 选填</label>
+                  <textarea
+                    className="ws-audio-ta"
+                    value={lyrics}
+                    onChange={(e) => setLyrics(e.target.value)}
+                    placeholder={"填写后进入自定义模式，Suno 按歌词演唱\n[Verse]\n阳光洒在肩上\n[Chorus]\n这就是青春的模样"}
+                  />
+                </div>
+                <div className="ws-field col" id="fieldSongStyle">
+                  <label>音乐风格 · 需搭配歌词</label>
+                  <input
+                    className="ws-audio-in"
+                    type="text"
+                    value={songStyle}
+                    onChange={(e) => setSongStyle(e.target.value)}
+                    placeholder="pop, ballad, chinese"
+                  />
+                </div>
+                <div className="ws-field col" id="fieldSongTitle">
+                  <label>歌名 · 需搭配歌词</label>
+                  <input
+                    className="ws-audio-in"
+                    type="text"
+                    value={songTitle}
+                    onChange={(e) => setSongTitle(e.target.value)}
+                    placeholder="给这首歌起个名字"
+                  />
+                </div>
+                <div className="ws-field col" id="fieldVocal">
+                  <label>人声</label>
+                  <div className="ws-ratios">
+                    {[
+                      { v: false, l: "有人声" },
+                      { v: true, l: "纯音乐" },
+                    ].map((o) => (
+                      <button
+                        key={o.l}
+                        type="button"
+                        className={`ratio${instrumental === o.v ? " on" : ""}`}
+                        onClick={() => setInstrumental(o.v)}
+                      >
+                        {o.l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+
             {/* 画面比例 (configured ratios only) */}
-            {ratioOpts.length > 0 && (
+            {!isAudio && ratioOpts.length > 0 && (
               <div className="ws-field col" id="fieldRatio">
                 <label>画面比例</label>
                 <div className="ws-ratios" id="ratios">
@@ -2466,7 +2599,7 @@ export default function CreateStudio() {
             )}
 
             {/* 分辨率 (image, configured resolutions only) */}
-            {!isVideo && resOpts.length > 0 && (
+            {!isVideo && !isAudio && resOpts.length > 0 && (
               <div className="ws-field col" id="fieldImgRes">
                 <label>分辨率</label>
                 <div className="ws-ratios" id="imgResPills">
@@ -2485,7 +2618,7 @@ export default function CreateStudio() {
             )}
 
             {/* 质量 (image, configured qualities only) */}
-            {!isVideo && qualOpts.length > 0 && (
+            {!isVideo && !isAudio && qualOpts.length > 0 && (
               <div className="ws-field col" id="fieldQuality">
                 <label>质量</label>
                 <div className="ws-ratios" id="qualityPills">
@@ -2523,7 +2656,7 @@ export default function CreateStudio() {
             )}
 
             {/* 生成数量 (image). 始终显示；仅 1 个可选数量时滑块固定且禁用。 */}
-            {!isVideo && (
+            {!isVideo && !isAudio && (
               <div className="ws-field col" id="fieldCount">
                 <label>
                   生成数量 · <span id="countVal">{count}</span>
@@ -2608,6 +2741,7 @@ export default function CreateStudio() {
                       { type: "image", tool: "i2i", label: "↻ 图生图" },
                       { type: "video", tool: "t2v", label: "▶ 文生视频" },
                       { type: "video", tool: "i2v", label: "⤢ 图生视频" },
+                      { type: "audio", tool: "t2a", label: "♪ 音乐生成" },
                     ] as { type: ArtworkType; tool: ToolKey; label: string }[]
                   ).map((t) => (
                     <button
@@ -2634,11 +2768,11 @@ export default function CreateStudio() {
               <div className="ws-feed" id="feed">
                 {/* in-flight run (placeholders with progress) */}
                 {busy && runMeta && (
-                  <div className={`ws-run inflight${cells.length <= 1 ? " single" : ""}`}>
+                  <div className={`ws-run inflight${cells.length <= 1 ? " single" : ""}${runMeta.kind === "audio" ? " audio" : ""}`}>
                     <div className="ws-run-head">
                       <span className="ws-run-kind">
-                        {SLOT_ICON[runMeta.isVid ? "video" : "image"]}
-                        {runMeta.isVid ? "AI 视频" : "AI 图片"}
+                        {SLOT_ICON[runMeta.kind ?? (runMeta.isVid ? "video" : "image")]}
+                        {runMeta.kind === "audio" ? "AI 音乐" : runMeta.isVid ? "AI 视频" : "AI 图片"}
                       </span>
                       <span className="ws-run-div" />
                       {runMeta.model && <span className="ws-run-chip">{runMeta.model}</span>}
@@ -2688,7 +2822,7 @@ export default function CreateStudio() {
                     <div className="ws-run-head">
                       <span className="ws-run-kind">
                         {SLOT_ICON[r.type]}
-                        {r.type === "video" ? "AI 视频" : "AI 图片"}
+                        {r.type === "video" ? "AI 视频" : r.type === "audio" ? "AI 音乐" : "AI 图片"}
                       </span>
                       <span className="ws-run-div" />
                       {r.model && <span className="ws-run-chip">{r.model}</span>}
@@ -2720,11 +2854,11 @@ export default function CreateStudio() {
                         return (
                           <AmbientFrame
                             key={it.id}
-                            url={it.type !== "video" ? it.url || undefined : undefined}
-                            className={`ws-runimg done${it.type === "video" ? " video" : ""}`}
+                            url={it.type === "image" ? it.url || undefined : undefined}
+                            className={`ws-runimg done${it.type === "video" ? " video" : it.type === "audio" ? " audio" : ""}`}
                             onClick={() => {
-                              // images zoom in the lightbox; videos play inline via controls.
-                              if (it.url && it.type !== "video") setLightbox(it.url);
+                              // images zoom in the lightbox; video/audio play inline via controls.
+                              if (it.url && it.type === "image") setLightbox(it.url);
                             }}
                           >
                             {it.url ? (
@@ -2737,6 +2871,16 @@ export default function CreateStudio() {
                                   preload="metadata"
                                   onClick={(e) => e.stopPropagation()}
                                 />
+                              ) : it.type === "audio" ? (
+                                <>
+                                  <span className="au-ic" aria-hidden>♪</span>
+                                  <audio
+                                    src={it.url}
+                                    controls
+                                    preload="metadata"
+                                    onClick={(e) => e.stopPropagation()}
+                                  />
+                                </>
                               ) : (
                                 // eslint-disable-next-line @next/next/no-img-element
                                 <img className="done-img" src={it.url} alt={r.prompt} loading="lazy" />
@@ -2748,7 +2892,7 @@ export default function CreateStudio() {
                               />
                             )}
                             {/* the per-result edit toolbar is image-only (作为垫图/精修/扩图/高清…) */}
-                            {it.type !== "video" && (
+                            {it.type === "image" && (
                               <div
                                 className="gen-acts"
                                 onClick={(e) => {

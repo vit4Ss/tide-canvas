@@ -104,7 +104,7 @@
 .ws-phead .spark{color:var(--accent);}
 
 /* type tabs: 图片 / 视频 — clean segmented track */
-.ws-typetabs{display:grid; grid-template-columns:1fr 1fr; gap:4px; padding:4px; margin-bottom:22px;
+.ws-typetabs{display:grid; grid-template-columns:repeat(3,1fr); gap:4px; padding:4px; margin-bottom:22px;
   background:var(--bg); border-radius:13px;}
 .ws-typetabs button{display:flex; align-items:center; justify-content:center; gap:8px; height:44px; border-radius:10px;
   font-size:14.5px; font-weight:700; color:var(--text-faint); transition:all .18s var(--ease);}
@@ -375,6 +375,15 @@
 .ws-field .select{height:40px; padding:0 13px; border-radius:11px; background:var(--bg); border:1px solid var(--border);
   color:var(--text); font:inherit; font-size:13px; min-width:158px; transition:border-color .15s;}
 .ws-field .select:hover{border-color:var(--border-strong);}
+/* 音频（Suno）自定义模式输入：与 .select / 提示词框同语言的朴素输入件 */
+.ws-audio-ta{width:100%; min-height:96px; resize:vertical; padding:11px 13px; border-radius:11px;
+  background:var(--bg); border:1px solid var(--border); color:var(--text); font:inherit; font-size:13px; line-height:1.6; transition:border-color .15s;}
+.ws-audio-ta:focus{outline:none; border-color:var(--border-strong);}
+.ws-audio-ta::placeholder{color:var(--text-faint);}
+.ws-audio-in{width:100%; height:40px; padding:0 13px; border-radius:11px; background:var(--bg); border:1px solid var(--border);
+  color:var(--text); font:inherit; font-size:13px; transition:border-color .15s;}
+.ws-audio-in:focus{outline:none; border-color:var(--border-strong);}
+.ws-audio-in::placeholder{color:var(--text-faint);}
 .ws-ratios{display:flex; gap:7px; flex-wrap:wrap;}
 /* 选项芯片统一 6px 圆角矩形（2026-07-08 用户定稿，参考 AntD；胶囊只留给大 CTA） */
 .ws-ratios .ratio{height:34px; min-width:50px; padding:0 14px; border-radius:6px; font-size:12.5px; font-weight:600;
@@ -702,6 +711,15 @@
 .ws-runimg video.done-img{background:#000;}
 .ws-runimg .vbadge{position:absolute; left:10px; top:10px; z-index:3; width:26px; height:26px; border-radius:50%;
   display:grid; place-items:center; font-size:11px; color:#fff; background:color-mix(in oklab,#0a0c14 64%, transparent); backdrop-filter:blur(6px);}
+/* audio in-flight: a compact wide bar instead of the tall image placeholder */
+.ws-run.inflight.audio .ws-runimg.loading{height:96px; width:min(560px,100%); aspect-ratio:auto !important;}
+/* audio result: a horizontal player row (no aspect ratio / zoom / hover lift) */
+.ws-runimg.audio{cursor:default; display:flex; align-items:center; gap:12px; padding:14px 16px;
+  width:min(560px,100%); background:var(--surface-2); border:1px solid var(--border);}
+.ws-runimg.audio:hover{transform:none; box-shadow:var(--shadow);}
+.ws-runimg.audio .au-ic{flex:none; width:38px; height:38px; border-radius:10px; display:grid; place-items:center;
+  font-size:17px; color:var(--text-dim); background:var(--panel); border:1px solid var(--border);}
+.ws-runimg.audio audio{flex:1; min-width:0; height:36px;}
 .ws-runimg.done:hover .gen-acts{opacity:1; transform:translate(-50%,0); pointer-events:auto;}
 /* in-flight placeholder: aspectRatio (inline) + height drives width。
    「正在显影」的功能性紫光打在占位片自身上 */

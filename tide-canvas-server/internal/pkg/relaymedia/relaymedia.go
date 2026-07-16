@@ -4,9 +4,10 @@
 //	POST {baseURL}/v1/images/generations  — text-to-image
 //	POST {baseURL}/v1/images/edits        — image edit (參考图 → 新图)
 //	POST {baseURL}/openapi/v1/generations — video (mode-driven: t2v/i2v/keyframe/multi_ref)
+//	POST {baseURL}/v1/audio/speech        — audio (TTS 与音乐/音效共用,由模型决定上游)
 //	GET  {baseURL}/v1/tasks/{id}          — poll an async task
 //
-// All three generation endpoints share one response contract: a synchronous 200
+// All generation endpoints share one response contract: a synchronous 200
 // with the result data, or an asynchronous 202 carrying a task id that must be
 // polled at /v1/tasks/{id} until it reaches a terminal state. This client hides
 // that difference — the public methods always block until a terminal result and
@@ -32,6 +33,7 @@ const (
 	pathImageGenerations = "/v1/images/generations"
 	pathImageEdits       = "/v1/images/edits"
 	pathVideoGenerations = "/openapi/v1/generations"
+	pathAudioSpeech      = "/v1/audio/speech"
 )
 
 // Tuning constants. The relay's synchronous image path can hold the connection
@@ -43,6 +45,7 @@ const (
 	pollInterval      = 2 * time.Second  // gap between task polls
 	imagePollDeadline = 6 * time.Minute  // overall budget for an image task (sync or polled)
 	videoPollDeadline = 20 * time.Minute // videos are slower; stay under the 30m UI cap
+	audioPollDeadline = 10 * time.Minute // TTS 通常同步秒回;Suno 音乐约 1–4 分钟(总是 202 轮询)
 )
 
 // maxRespBody caps a single relay response read. Generous enough to hold verbose
@@ -101,6 +104,17 @@ type VideoParams struct {
 	Duration   int      // whole seconds; omitted when ≤ 0
 }
 
+// AudioParams is a normalized audio request (TTS / 音乐 / 音效共用端点,上游由模型
+// 决定)。Input 是要合成的文本(TTS)或音乐描述(Suno 灵感模式);Suno 自定义歌词
+// 模式把歌词等放进 Extras(lyrics/tags/title/make_instrumental …)并可省略 Input。
+type AudioParams struct {
+	Model        string
+	Input        string         // TTS 文本 / 音乐描述;Extras 含 lyrics 时可为空
+	Voice        string         // TTS 音色 id;音乐模型忽略
+	Instructions string         // 情绪/风格;Suno 传 "instrumental" 生成纯音乐
+	Extras       map[string]any // 供应商透传参数(≤32 键/16KB),如 Suno lyrics/tags/title
+}
+
 // Result is the normalized terminal outcome. URLs holds every produced media file
 // (usually one). The audit fields mirror the upstream call for the generation
 // log; they are populated even when the call ultimately fails.
@@ -126,6 +140,13 @@ type mediaResp struct {
 		URL     string `json:"url"`
 		B64JSON string `json:"b64_json"`
 	} `json:"data"`
+	// 音频任务的结果字段:/v1/audio/speech 同步 200 带 audio.url;/v1/tasks/{id}
+	// 上多输出(Suno 两首)的全集在 output_urls,单输出在 output_url。
+	OutputURL  string   `json:"output_url"`
+	OutputURLs []string `json:"output_urls"`
+	Audio      *struct {
+		URL string `json:"url"`
+	} `json:"audio"`
 	Error *mediaError `json:"error"`
 }
 
@@ -186,6 +207,25 @@ func (c *Client) EditImage(ctx context.Context, p ImageParams) (Result, error) {
 	putNonEmpty(body, "resolution", p.Resolution)
 	putNonEmpty(body, "aspect_ratio", p.AspectRatio)
 	return c.submit(ctx, pathImageEdits, body, imagePollDeadline)
+}
+
+// GenerateAudio performs an audio generation (POST /v1/audio/speech — TTS 与
+// 音乐/音效共用)。Input 与 Extras 至少要有一个:Suno 自定义歌词模式只带 Extras。
+func (c *Client) GenerateAudio(ctx context.Context, p AudioParams) (Result, error) {
+	if strings.TrimSpace(p.Model) == "" {
+		return Result{}, fmt.Errorf("relaymedia: model is required")
+	}
+	if strings.TrimSpace(p.Input) == "" && len(p.Extras) == 0 {
+		return Result{}, fmt.Errorf("relaymedia: audio requires input text or extras")
+	}
+	body := map[string]any{"model": p.Model}
+	putNonEmpty(body, "input", p.Input)
+	putNonEmpty(body, "voice", p.Voice)
+	putNonEmpty(body, "instructions", p.Instructions)
+	if len(p.Extras) > 0 {
+		body["extras"] = p.Extras
+	}
+	return c.submit(ctx, pathAudioSpeech, body, audioPollDeadline)
 }
 
 // GenerateVideo performs a mode-driven video generation
@@ -381,12 +421,34 @@ func putNonEmptySlice(m map[string]any, key string, vals []string) {
 	}
 }
 
-// mediaURLs extracts the non-empty result URLs from a response.
+// mediaURLs extracts the non-empty result URLs from a response. data[] 为主;
+// 音频任务的全集可能只在 output_urls(Suno 两首,同步 200 的 data 仅回主歌),
+// 取两者中更全的一组;都空时兜底 output_url / audio.url。
 func mediaURLs(mr mediaResp) []string {
 	out := make([]string, 0, len(mr.Data))
 	for _, d := range mr.Data {
 		if u := strings.TrimSpace(d.URL); u != "" {
 			out = append(out, u)
+		}
+	}
+	if len(mr.OutputURLs) > len(out) {
+		alt := make([]string, 0, len(mr.OutputURLs))
+		for _, u := range mr.OutputURLs {
+			if u = strings.TrimSpace(u); u != "" {
+				alt = append(alt, u)
+			}
+		}
+		if len(alt) > len(out) {
+			out = alt
+		}
+	}
+	if len(out) == 0 {
+		if u := strings.TrimSpace(mr.OutputURL); u != "" {
+			out = append(out, u)
+		} else if mr.Audio != nil {
+			if u := strings.TrimSpace(mr.Audio.URL); u != "" {
+				out = append(out, u)
+			}
 		}
 	}
 	return out

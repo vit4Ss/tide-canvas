@@ -10,7 +10,9 @@ package admin
 // resolutions / qualities / durations / price modifiers …) is pre-filled from the
 // upstream schema. On a later re-sync the Config is left untouched if it is
 // already set, so an admin's manual tweaks in the form are preserved; only the
-// catalog-level fields (name key, type, base price) are refreshed.
+// catalog-level fields (name key, type) are refreshed. Price is seeded on first
+// import only — re-syncs never overwrite an existing row's price, so admin
+// pricing edits survive.
 
 import (
 	"encoding/json"
@@ -153,9 +155,10 @@ func SyncRelayModels(db *gorm.DB, baseURL, key string, newStatus int, authorID i
 		// A single model's failure must not abort the whole catalog sync; count it
 		// and continue so the operator gets accurate created/updated/failed totals.
 		if lookErr == nil {
+			// Price is intentionally NOT refreshed here: admins may have re-priced
+			// the model locally, and a sync must not clobber that.
 			fields := map[string]any{
 				"type":      typ,
-				"price":     price,
 				"model_key": modelKey,
 			}
 			// Preserve admin-edited config; only seed it when still empty.

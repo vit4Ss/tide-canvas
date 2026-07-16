@@ -11,7 +11,7 @@ export type { MeshHues };
 
 /* ── Artworks (作品广场 feed) ────────────────────────────────────────────── */
 
-export type ArtworkType = "image" | "video";
+export type ArtworkType = "image" | "video" | "audio";
 
 /** Liuguang category labels (Chinese, as authored in the design). */
 export type ArtworkCategory =

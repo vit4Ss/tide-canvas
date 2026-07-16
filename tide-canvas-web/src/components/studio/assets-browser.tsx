@@ -52,12 +52,13 @@ const FILTER_TO_FILETYPE: Record<FilterKey, string> = {
 };
 
 /** generation handler → media type, for the 生成历史 filter. */
-const HANDLER_TYPE: Record<string, "image" | "video"> = {
+const HANDLER_TYPE: Record<string, "image" | "video" | "audio"> = {
   text_to_image: "image",
   image_to_image: "image",
   text_to_video: "video",
   image_to_video: "video",
   start_end_to_video: "video",
+  text_to_audio: "audio",
 };
 
 const FILE_GLYPH: Record<string, string> = { audio: "♪", doc: "▤", video: "▶" };
@@ -271,10 +272,10 @@ export function AssetsBrowser({
     [sortAsc],
   );
 
-  // tasks of the active media type, date-grouped (audio/doc → none for 生成历史).
+  // tasks of the active media type, date-grouped (doc → none for 生成历史).
   const taskGroups = useMemo(() => {
     if (tab !== "hist") return [];
-    const want = filter === "image" || filter === "video" ? filter : null;
+    const want = filter === "image" || filter === "video" || filter === "audio" ? filter : null;
     if (!want) return [];
     const matched = tasks.filter((t) => (HANDLER_TYPE[t.handler] ?? "image") === want);
     return applySort(groupByDate(matched, (t) => t.createTime));
@@ -654,10 +655,13 @@ function TaskCard({
   selected?: boolean;
   onToggle?: (id: string) => void;
 }) {
-  const isVid = (HANDLER_TYPE[task.handler] ?? "image") === "video";
-  const cover = task.resultUrl
-    ? `center / cover no-repeat url("${task.resultUrl}")`
-    : fallbackCover(task.id);
+  const kind = HANDLER_TYPE[task.handler] ?? "image";
+  const isVid = kind === "video";
+  // 音频结果是 mp3,不能当封面图铺——用回退渐变 + ♪ 角标。
+  const cover =
+    task.resultUrl && kind !== "audio"
+      ? `center / cover no-repeat url("${task.resultUrl}")`
+      : fallbackCover(task.id);
 
   const onClick = () => {
     if (batchMode) {
@@ -666,14 +670,14 @@ function TaskCard({
     }
     if (pickMode) {
       if (task.resultUrl) {
-        onPick?.({ url: task.resultUrl, name: task.modelName || "生成图", kind: isVid ? "video" : "image" });
+        onPick?.({ url: task.resultUrl, name: task.modelName || "生成图", kind });
       } else {
         toast.info("该生成暂无可选取的结果");
       }
       return;
     }
     if (task.resultUrl) {
-      onOpen?.({ url: task.resultUrl, kind: isVid ? "video" : "image", name: task.modelName || "生成结果" });
+      onOpen?.({ url: task.resultUrl, kind, name: task.modelName || "生成结果" });
     } else {
       toast.info("该生成暂无可预览的结果");
     }
@@ -696,6 +700,7 @@ function TaskCard({
       {batchMode && <SelectBadge selected={!!selected} />}
       {star && <span className="star">★</span>}
       {isVid && <span className="vbadge">▶</span>}
+      {kind === "audio" && <span className="vbadge">♪</span>}
     </button>
   );
 }

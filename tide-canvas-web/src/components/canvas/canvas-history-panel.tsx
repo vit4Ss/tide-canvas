@@ -12,9 +12,10 @@ const HANDLER_LABEL: Record<string, string> = {
   text_to_video: "文生视频",
   image_to_video: "图生视频",
   start_end_to_video: "首尾帧视频",
+  text_to_audio: "音频生成",
   creative_desc: "创意描述",
 };
-const OP_LABEL: Record<string, string> = { generation: "文生图", edits: "图生图", video: "视频" };
+const OP_LABEL: Record<string, string> = { generation: "文生图", edits: "图生图", video: "视频", audio: "音频" };
 
 interface Props {
   open: boolean;

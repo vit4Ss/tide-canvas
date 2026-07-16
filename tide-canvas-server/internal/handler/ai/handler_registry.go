@@ -140,6 +140,8 @@ func builtinHandlers() []GenHandler {
 		genHandler{name: "image_to_video", op: "video", isAsync: true},
 		genHandler{name: "start_end_to_video", op: "video", isAsync: true},
 		genHandler{name: "reference_to_video", op: "video", isAsync: true},
+		// 音频(TTS/音乐/音效共用 relay /v1/audio/speech,上游由模型决定)。
+		genHandler{name: "text_to_audio", op: "audio", isAsync: true},
 		// 画布 AI 助手:runTask 特判该 handler 走 relay 文本模型(见 assistant_chat.go),
 		// 结果放 Meta["text"],不产出 URL。
 		genHandler{name: assistantChatHandler, op: "chat", isAsync: true},

@@ -98,6 +98,9 @@ func (p *relayProviderClient) Generate(ctx context.Context, req GenerateRequest)
 		vp.AudioURLs = p.upstreamURLs(inputStrings(req.Input, "audioReferences", "audio_urls"))
 		res, err := p.c.GenerateVideo(ctx, vp)
 		return p.result(ctx, res, err)
+	case "text_to_audio":
+		res, err := p.c.GenerateAudio(ctx, audioParams(model, req.Input))
+		return p.result(ctx, res, err)
 	default:
 		return GenerateResult{}, errUnsupportedHandler
 	}
@@ -209,6 +212,58 @@ func (p *relayProviderClient) videoParams(model, mode string, in map[string]any)
 		Resolution: strings.ToLower(inputStr(in, "resolution")), // 480p/720p/1080p
 		Duration:   inputInt(in, "duration"),
 	}
+}
+
+// audioParams maps the studio input to an audio request. Suno 灵感模式只有
+// prompt(音乐描述);自定义模式的歌词/风格/歌名等既接受打平的顶层键(创作台
+// 表单),也接受一个完整的 extras 对象(高级透传),顶层键优先级更高。
+func audioParams(model string, in map[string]any) relaymedia.AudioParams {
+	extras := map[string]any{}
+	if raw, ok := in["extras"].(map[string]any); ok {
+		for k, v := range raw {
+			extras[k] = v
+		}
+	}
+	// 顶层便捷键 → extras 规范键(与 relay 文档一致)。
+	for from, to := range map[string]string{
+		"lyrics":        "lyrics",
+		"tags":          "tags",
+		"title":         "title",
+		"negativeTags":  "negative_tags",
+		"negative_tags": "negative_tags",
+	} {
+		if v := inputStr(in, from); v != "" {
+			extras[to] = v
+		}
+	}
+	if v, ok := inputBool(in, "makeInstrumental", "make_instrumental"); ok {
+		extras["make_instrumental"] = v
+	}
+	return relaymedia.AudioParams{
+		Model:        model,
+		Input:        inputStr(in, "prompt", "input"),
+		Voice:        inputStr(in, "voice"),
+		Instructions: inputStr(in, "instructions", "style"),
+		Extras:       extras,
+	}
+}
+
+// inputBool returns the first key present coerced to a bool, and whether any
+// key was found (absent ≠ false: Suno 的 make_instrumental 不传与传 false 不同).
+func inputBool(in map[string]any, keys ...string) (bool, bool) {
+	for _, k := range keys {
+		switch v := in[k].(type) {
+		case bool:
+			return v, true
+		case string:
+			if s := strings.ToLower(strings.TrimSpace(v)); s == "true" || s == "1" {
+				return true, true
+			} else if s == "false" || s == "0" {
+				return false, true
+			}
+		}
+	}
+	return false, false
 }
 
 // result maps a relaymedia.Result (and any error) to the domain GenerateResult,
@@ -373,6 +428,12 @@ func mediaExt(srcURL, contentType string) string {
 		return ".mp4"
 	case strings.Contains(contentType, "png"):
 		return ".png"
+	case strings.Contains(contentType, "mpeg"), strings.Contains(contentType, "mp3"):
+		return ".mp3"
+	case strings.Contains(contentType, "wav"):
+		return ".wav"
+	case strings.Contains(contentType, "ogg"):
+		return ".ogg"
 	}
 	return ".png"
 }
