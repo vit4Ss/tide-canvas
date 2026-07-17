@@ -445,7 +445,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     st.addNode(styleNode, false);
     st.addConnection({ id: `conn_${styleNodeId}_${node.id}`, sourceId: styleNodeId, targetId: node.id }, false);
   }, [node.id, node.x, node.y]);
-  const formatConfig: { qualities?: string[]; clarities?: string[]; ratios?: string[]; batchSizes?: number[]; gridOutput?: boolean; pricing?: Record<string, Record<string, number>> } = (() => {
+  const formatConfig: { qualities?: string[]; clarities?: string[]; resolutions?: string[]; ratios?: string[]; batchSizes?: number[]; gridOutput?: boolean; pricing?: Record<string, Record<string, number>> } = (() => {
     if (!selectedModel?.config) return {};
     try {
       return JSON.parse(selectedModel.config);
@@ -461,7 +461,9 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const batchOptions = formatConfig.batchSizes?.length ? formatConfig.batchSizes : [1, 2, 4];
   // 各维度可选值：undefined(模型未配置) = 默认全集；空数组(后台明确全不勾) = 模型无此维度，选择器隐藏且参数不下发
   const qualityValues = formatConfig.qualities ?? QUALITY_OPTIONS.map((q) => q.value);
-  const clarityValues = formatConfig.clarities ?? [...CLARITY_OPTIONS];
+  // 后台把图片清晰度存在 resolutions 键（值为小写 1k/2k/4k），历史上误读 clarities
+  // 导致选择器读不到模型真实档位——两者都兜住，resolutions 优先。
+  const clarityValues = formatConfig.clarities ?? formatConfig.resolutions ?? [...CLARITY_OPTIONS];
   const ratioValues = formatConfig.ratios;
   const hasRatioDim = !ratioValues || ratioValues.length > 0;
   // 切换模型后当前张数/画质/清晰度/比例不在该模型的可选档位 → 自动校正为其首个档位
@@ -969,15 +971,18 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     if (!file) return;
     const objUrl = URL.createObjectURL(file);
     setLocalPreview(objUrl);
+    setImageDims(null); // 换新文件先清掉上一次的尺寸，成功后才由本次探测回填
     // 探测原始分辨率用于头部「W × H」展示
     const probe = document.createElement("img");
     probe.onload = () => { if (mountedRef.current) setImageDims({ w: probe.naturalWidth, h: probe.naturalHeight }); };
     probe.src = objUrl;
     setUploadPct(0);
     setUploading(true);
+    let ok = false;
     try {
       const res = await uploadFileSmart(file, (pct) => setUploadPct(pct), { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
       if (res.success) {
+        ok = true;
         updateNode(node.id, { imageSrc: res.data.fileUrl, status: "idle", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType });
         toast.success("图片已上传，可输入指令进行编辑");
       } else {
@@ -988,6 +993,8 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     } finally {
       setUploading(false);
       setLocalPreview(null);
+      // 失败(或探测晚于失败回填)时清掉尺寸标签，避免上传失败后残留孤立的 W×H。
+      if (!ok) setImageDims(null);
       URL.revokeObjectURL(objUrl);
     }
   }, [node.id, selectedModel, updateNode]);
@@ -1066,8 +1073,9 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
             <EditableImageNodeTitle node={node} />
           </NodeChrome>
         )}
-        {/* 右上角分辨率（上传/生成后展示 W × H） */}
-        {showAuxUI && imageDims && (
+        {/* 右上角分辨率（上传/生成后展示 W × H）。只在确有图片时显示——探测异步，
+            上传失败后 probe 可能仍晚回填一次 imageDims，用 node.imageSrc 兜底防残留 */}
+        {showAuxUI && imageDims && node.imageSrc && (
           <NodeChrome zoom={zoom} placement="top-right" gap={4}>
             <span className="whitespace-nowrap px-1 text-xs text-neutral-400">{imageDims.w} × {imageDims.h}</span>
           </NodeChrome>
@@ -1671,7 +1679,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                       setQualityRatio(v);
                     }}
                     qualities={formatConfig.qualities}
-                    clarities={formatConfig.clarities}
+                    clarities={formatConfig.clarities ?? formatConfig.resolutions}
                     ratios={formatConfig.ratios}
                     compact
                   />

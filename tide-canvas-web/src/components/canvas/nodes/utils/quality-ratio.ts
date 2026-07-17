@@ -35,8 +35,15 @@ export function parseRatio(ratio: string): { w: number; h: number } | null {
   return { w, h };
 }
 
-export function getQualityLabel(value: ImageQuality): string {
-  return QUALITY_OPTIONS.find((option) => option.value === value)?.label ?? "标准画质";
+// 画质取值 → 友好名。内置 QUALITY_OPTIONS 只有 low/standard/high；后台常配
+// medium 表示"标准"（与后端 normalizeQuality 的 standard→medium 对齐），补进别名。
+const QUALITY_LABEL_ALIAS: Record<string, string> = { low: "低画质", standard: "标准画质", medium: "标准画质", high: "高画质" };
+export function getQualityLabel(value: string): string {
+  return (
+    QUALITY_OPTIONS.find((option) => option.value === value)?.label ??
+    QUALITY_LABEL_ALIAS[value.toLowerCase()] ??
+    "标准画质"
+  );
 }
 
 export function getRatioLabel(value: string): string {
@@ -52,7 +59,7 @@ export function normalizeBatchOptions(options?: readonly number[]): number[] {
 }
 
 export function buildQualityRatioSummary(value: QualityRatioValue, batchCount?: number): string {
-  const parts = [getRatioLabel(value.ratio), getQualityLabel(value.quality), value.clarity];
+  const parts = [getRatioLabel(value.ratio), getQualityLabel(value.quality), value.clarity.toUpperCase()];
   if (batchCount != null) parts.push(`${batchCount}张`);
   return parts.join(" · ");
 }

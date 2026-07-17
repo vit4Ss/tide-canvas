@@ -5,7 +5,8 @@ export type ImageQuality = "low" | "standard" | "high";
 export type ImageClarity = "1K" | "2K" | "4K";
 
 export interface QualityRatioValue {
-  quality: ImageQuality;
+  // 后台配置可用 low/standard/medium/high 等任意档位，故用 string 而非窄联合。
+  quality: string;
   clarity: string;
   ratio: string;
 }
