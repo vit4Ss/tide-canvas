@@ -815,22 +815,30 @@ export default function ChatPage() {
     };
   }, [ensureSession, loadMessages]);
 
+  // 停掉进行中的文本流：中止请求并撤下流式气泡。切会话 / 新建会话 / 删除当前
+  // 会话都必须调——流式气泡渲染在 msgs 之后、不挑会话，漏掉任何一处，幽灵
+  // 气泡就会渗进切换后的会话继续打字。
+  const stopStream = useCallback(() => {
+    chatAbortRef.current?.abort();
+    chatAbortRef.current = null;
+    setStreaming(null);
+  }, []);
+
   const pickConvo = useCallback(
     (id: string) => {
       if (id === activeId) return;
-      chatAbortRef.current?.abort(); // cancel any in-flight stream
-      chatAbortRef.current = null;
-      setStreaming(null);
+      stopStream();
       setActiveId(id);
       setMsgs([]); // clear the old thread so the switch never shows stale messages
       clearRefs();
       loadMessages(id);
     },
-    [activeId, loadMessages, clearRefs],
+    [activeId, loadMessages, clearRefs, stopStream],
   );
 
   const newChat = useCallback(async () => {
     if (busy) return;
+    stopStream();
     setBusy(true);
     try {
       await ensureSession();
@@ -845,7 +853,7 @@ export default function ChatPage() {
     } finally {
       setBusy(false);
     }
-  }, [busy, ensureSession, clearRefs]);
+  }, [busy, ensureSession, clearRefs, stopStream]);
 
   // conversation rename / delete (P5)
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -889,6 +897,9 @@ export default function ChatPage() {
       const remaining = convos.filter((x) => x.id !== c.id);
       setConvos(remaining);
       if (activeId === c.id) {
+        // 删除的是当前会话：先停掉进行中的流（删除按钮没有 busy 守卫，流式
+        // 期间可点），否则幽灵流式气泡会渗进切换后的会话继续打字。
+        stopStream();
         if (remaining[0]) {
           setActiveId(remaining[0].id);
           loadMessages(remaining[0].id);
@@ -898,7 +909,7 @@ export default function ChatPage() {
         }
       }
     },
-    [convos, activeId, loadMessages],
+    [convos, activeId, loadMessages, stopStream],
   );
 
   const send = useCallback(async () => {

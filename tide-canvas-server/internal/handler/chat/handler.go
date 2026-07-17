@@ -151,6 +151,11 @@ func (h *handler) appendMessage(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
 		return
 	}
+	// 同 /messages、/stream：拦下纯空白内容（binding:required 只拦空串）。
+	if strings.TrimSpace(dto.Content) == "" {
+		response.Fail(c, response.CodeBadRequest, "content is blank")
+		return
+	}
 	ownerID := middleware.CurrentUserID(c)
 	vo, err := h.svc.appendMessage(id, ownerID, dto)
 	if err != nil {

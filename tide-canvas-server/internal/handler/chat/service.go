@@ -72,6 +72,11 @@ const llmReplyTimeout = 60 * time.Second
 // compactKeepTail 条最近消息永远保留原文（≈3 轮），保证近场语境不失真。
 const compactKeepTail = 6
 
+// compactAtMessages 按消息条数触发压缩（与 token 阈值互为兜底）：消息多而短
+// 的会话 token 迟迟到不了阈值，但一旦越过上下文窗口（historyWindow 的 200 条
+// 安全阀）中段消息就会静默掉出模型视野——所以在逼近窗口前先压缩。
+const compactAtMessages = 120
+
 // compactSummaryMaxRunes caps the stored summary so a rambling model can't
 // bloat the very context the compaction is supposed to shrink.
 const compactSummaryMaxRunes = 2000
@@ -438,7 +443,8 @@ func (s *service) maybeCompact(ctx context.Context, conv *model.IMConversation) 
 	for i := range rows {
 		used += estimateTokens(rows[i].Content)
 	}
-	if used <= s.compactThreshold() {
+	// token 或消息条数任一越线都触发压缩（见 compactAtMessages 的注释）。
+	if used <= s.compactThreshold() && len(rows) <= compactAtMessages {
 		return
 	}
 
