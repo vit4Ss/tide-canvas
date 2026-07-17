@@ -63,6 +63,9 @@ export async function streamMessage(
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let buf = "";
+  // 是否收到了终结帧（done/error）。没收到就结束 = 连接中途断掉（网络抖动 /
+  // 服务端崩溃），必须通知调用方——否则回复静默消失、界面毫无解释。
+  let terminal = false;
   try {
     for (;;) {
       const { value, done } = await reader.read();
@@ -77,16 +80,24 @@ export async function streamMessage(
         try {
           const obj = JSON.parse(line.slice(5).trim());
           if (typeof obj.delta === "string") handlers.onDelta?.(obj.delta);
-          else if (obj.done) handlers.onDone?.(obj.message as MessageVO);
-          else if (obj.error)
+          else if (obj.done) {
+            terminal = true;
+            handlers.onDone?.(obj.message as MessageVO);
+          } else if (obj.error) {
+            terminal = true;
             handlers.onError?.(String(obj.error), typeof obj.code === "string" ? obj.code : undefined);
+          }
         } catch {
           /* ignore malformed frame */
         }
       }
     }
   } catch {
-    // aborted or network drop mid-stream; caller handles via onError/abort.
+    // read threw: an abort (caller-initiated, silent) or a mid-stream network
+    // drop (reported below via the terminal check).
+  }
+  if (!terminal && !handlers.signal?.aborted) {
+    handlers.onError?.("连接中断，回复可能不完整，请查看最新消息或重试");
   }
 }
 

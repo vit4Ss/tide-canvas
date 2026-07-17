@@ -255,7 +255,7 @@ func (s *service) listMessages(conversationID, ownerID idgen.ID, q *ListQuery) (
 		}
 	}
 	if len(taskIDs) > 0 {
-		if tasks, terr := s.repo.tasksByIDs(taskIDs); terr == nil {
+		if tasks, terr := s.repo.tasksByIDs(taskIDs, ownerID); terr == nil {
 			for i := range vos {
 				if vos[i].TaskID != nil {
 					vos[i].Task = toMessageTaskVO(tasks[*vos[i].TaskID]) // nil → 已过期 on the client
@@ -276,6 +276,13 @@ func (s *service) persistTurn(conversationID, ownerID idgen.ID, dto PersistTurnD
 		return nil, err
 	}
 	if conv.OwnerID != ownerID {
+		return nil, errForbidden
+	}
+	// taskId 由客户端上送：必须校验该任务属于当前用户，否则任何人都能把他人
+	// 任务挂进自己的会话，再经消息列表的 task join 读走他人生成结果（越权）。
+	if owned, terr := s.repo.taskOwnedBy(taskID, ownerID); terr != nil {
+		return nil, terr
+	} else if !owned {
 		return nil, errForbidden
 	}
 
@@ -624,13 +631,26 @@ func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, o
 				cctx, cancel := context.WithTimeout(ctx, llmReplyTimeout)
 				defer cancel()
 				start := time.Now()
-				reply, err := s.relay.ChatStream(cctx, model, msgs, onDelta)
+				// 记录已推送给客户端的增量：中途失败时以它为准收尾，绝不再叠加
+				// 降级回复——否则客户端看到「半截真回复 + 占位文案」，而落库的又是
+				// 另一份内容，三方不一致。
+				var streamed strings.Builder
+				reply, err := s.relay.ChatStream(cctx, model, msgs, func(d string) {
+					streamed.WriteString(d)
+					if onDelta != nil {
+						onDelta(d)
+					}
+				})
 				reqBody, _ := json.Marshal(msgs)
 				eventlog.ModelText(ownerID, "chat", model, "/v1/chat/completions", string(reqBody), reply, time.Since(start).Milliseconds(), err)
 				if err == nil {
 					return reply
 				}
-				logger.L().Warn("chat: relay stream failed, using canned reply", zap.String("model", model), zap.Error(err))
+				logger.L().Warn("chat: relay stream failed", zap.String("model", model), zap.Error(err))
+				if partial := strings.TrimSpace(streamed.String()); partial != "" {
+					// 已流出实质内容：持久化客户端实际看到的部分，跳过降级链。
+					return streamed.String()
+				}
 			}
 		}
 	}

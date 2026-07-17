@@ -154,7 +154,10 @@ func (r *repo) createTurn(userMsg, aiMsg *model.IMMessage) error {
 // tasksByIDs batch-loads the generation tasks referenced by 生成台 assistant
 // messages, selecting ONLY the columns the message VO renders — the AiTask row
 // also carries large input/result blobs we must not pull every poll (§9.3).
-func (r *repo) tasksByIDs(ids []idgen.ID) (map[idgen.ID]*model.AiTask, error) {
+// ownerID 过滤是纵深防御：TaskID 虽由 persistTurn 校验归属后写入，但历史脏数据
+// （修复前挂进来的他人任务）不该借这条 join 泄露结果，不属于本人的一律按
+// 「已过期」处理（map 缺项）。
+func (r *repo) tasksByIDs(ids []idgen.ID, ownerID idgen.ID) (map[idgen.ID]*model.AiTask, error) {
 	out := make(map[idgen.ID]*model.AiTask, len(ids))
 	if len(ids) == 0 {
 		return out, nil
@@ -162,7 +165,7 @@ func (r *repo) tasksByIDs(ids []idgen.ID) (map[idgen.ID]*model.AiTask, error) {
 	var rows []model.AiTask
 	if err := r.db.Model(&model.AiTask{}).
 		Select("id", "status", "progress", "result_url", "result_meta", "error_msg").
-		Where("id IN ?", ids).
+		Where("id IN ? AND user_id = ?", ids, ownerID).
 		Find(&rows).Error; err != nil {
 		return nil, err
 	}
@@ -172,18 +175,33 @@ func (r *repo) tasksByIDs(ids []idgen.ID) (map[idgen.ID]*model.AiTask, error) {
 	return out, nil
 }
 
+// taskOwnedBy reports whether the generation task exists AND belongs to userID.
+// persistTurn 的归属闸门：taskId 由客户端上送，不校验会让任意用户把他人任务挂进
+// 自己的会话，再经消息列表的 task join 读走他人生成结果。
+func (r *repo) taskOwnedBy(taskID, userID idgen.ID) (bool, error) {
+	var n int64
+	if err := r.db.Model(&model.AiTask{}).
+		Where("id = ? AND user_id = ?", taskID, userID).
+		Count(&n).Error; err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // recentMessages returns up to limit of a conversation's most recent messages in
 // chronological (oldest-first) order, for use as LLM context. Messages already
 // covered by the compaction summary (id <= afterID) are excluded — they enter
 // the prompt as the summary instead. It fetches the newest `limit` rows (DESC)
 // then reverses them so the transcript reads forward.
+// 只取非空文本：生成 turn 的助手消息 Content=""（结果在 task 上），混进上下文
+// 会成为空 assistant 轮次——部分 OpenAI 兼容上游直接拒绝空 content。
 func (r *repo) recentMessages(conversationID, afterID idgen.ID, limit int) ([]model.IMMessage, error) {
 	if limit <= 0 {
 		limit = 20
 	}
 	var rows []model.IMMessage
 	if err := r.db.
-		Where("conversation_id = ? AND id > ?", conversationID, afterID).
+		Where("conversation_id = ? AND id > ? AND content_type = ? AND content <> ''", conversationID, afterID, "text").
 		Order("create_time DESC").
 		Order("id DESC").
 		Limit(limit).

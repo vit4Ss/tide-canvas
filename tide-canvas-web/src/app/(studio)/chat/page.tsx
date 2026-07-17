@@ -400,6 +400,7 @@ export default function ChatPage() {
   // (switched to a no-upload model while one was open).
   useEffect(() => {
     if (!refPolicy) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 关闭浮层是对 refPolicy 消失的收敛动作，一次性且无级联
       setSrcMenuPos(null);
       setAssetPickOpen(false);
     }
@@ -425,6 +426,7 @@ export default function ChatPage() {
   // drop references that the current mode no longer accepts (e.g. switching from
   // an image-ref mode to t2v); revoke their blobs.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 按新策略收敛已挂素材，函数式更新且带 no-op 短路，无级联
     setRefs((prev) => {
       if (!prev.length) return prev;
       const keep = refPolicy ? prev.filter((r) => refPolicy.kinds.includes(r.kind)) : [];
@@ -656,6 +658,7 @@ export default function ChatPage() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 挂载时拉取模型列表，setState 发生在 await 之后
     reloadGenModels();
   }, [reloadGenModels]);
 
@@ -706,6 +709,7 @@ export default function ChatPage() {
   // snap chip selections to values the selected model actually supports.
   useEffect(() => {
     if (!mCfg) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 换模型后把芯片选择收敛到该模型支持的取值，全部函数式更新
     setMode((m) => (modeVals.length ? (modeVals.includes(m) ? m : modeVals[0]) : ""));
     setRatio((r) => (ratioOpts.length ? (ratioOpts.includes(r) ? r : ratioOpts[0]) : ""));
     setRes((r) => (resOpts.length ? (resOpts.includes(r) ? r : resOpts[0]) : ""));
@@ -716,6 +720,7 @@ export default function ChatPage() {
 
   // 切到不支持联网的模型时，强制关闭联网开关。
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 能力开关随模型收敛，一次性复位
     if (!webSearchAvail) setWeb(false);
   }, [webSearchAvail]);
 
@@ -758,6 +763,7 @@ export default function ChatPage() {
 
   // selecting/switching a conversation forces a jump to its latest.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 切会话强制回底部（内部复位 showJump），一次性
     forceBottom();
   }, [activeId, forceBottom]);
 
@@ -1177,15 +1183,26 @@ export default function ChatPage() {
       if (busy) return;
       const u = turnUserOf(aiMsg);
       if (!u) return;
+      // 快照里的模型已下架时不能自动发送：selModel 会解析为 null，send() 将
+      // 静默降级成文本对话（图片提示词喂给文本模型，还白吃上下文）。回填
+      // 参数与提示词让用户改选模型后手动发送。
+      const pm = u.params && typeof u.params.model === "string" ? (u.params.model as string) : "";
+      const modelGone = !!pm && !genModels.some((m) => m.name === pm);
       restoreFromParams(u.params);
       setDraft(u.content);
+      if (modelGone) {
+        toast.info(`模型「${pm}」已下架，请重新选择模型后发送`);
+        requestAnimationFrame(() => taRef.current?.focus());
+        return;
+      }
       setPendingSend(true);
     },
-    [busy, turnUserOf, restoreFromParams],
+    [busy, turnUserOf, restoreFromParams, genModels],
   );
   // fire send() once the restored params/draft have committed.
   useEffect(() => {
     if (!pendingSend) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 一次性触发闩：复位后立即发送，不产生级联
     setPendingSend(false);
     send();
   }, [pendingSend, send]);
