@@ -10,9 +10,10 @@
 
    Data is REAL and fully authed: chatApi over /api/im/* (see src/lib/chat-api.ts).
    ensureSession() runs before the first request. The conversation list comes
-   from chatApi.conversations(); selecting one loads chatApi.messages(); the
-   composer calls chatApi.send() then reloads the thread (the backend appends a
-   canned assistant reply). 「新对话」 creates a conversation via createConversation().
+   from chatApi.conversations(); selecting one loads chatApi.messages(). 文本模型
+   走 streamMessage（SSE 流式，完成后 reload 落库消息）；图/视频模型先经
+   aiApi.generate 跑任务，再 persistTurn 原子入库整轮。「新对话」 creates a
+   conversation via createConversation().
 
    The composer chips (联网 / 模式 / 模型 / 比例 / 分辨率 / 时长 / 批量 / 积分) are
    driven by the selected model's 模型管理 config, and the 比例/分辨率/时长/批量

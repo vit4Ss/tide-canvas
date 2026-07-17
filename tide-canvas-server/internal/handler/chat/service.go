@@ -389,6 +389,20 @@ func (s *service) guardContext(conv *model.IMConversation, newContent string) er
 	return nil
 }
 
+// historyWindow is the max after-summary messages fetched as LLM context. 窗口
+// 必须覆盖 contextTokens 计费的全部范围（摘要之后的所有原文），否则会出现
+// 「第 N 条起既不在摘要里也不进上下文、却仍占着 token 预算」的静默失忆——
+// 消息多而短（或未配置 relay、压缩永不推进）时尤其明显。token 硬上限由
+// guardContext 兜底，所以窗口放大不会失控；200 只是 SQL 取数的安全阀。
+// 配置的 historyLimit 只在配得更大时生效（旧默认 20 正是失忆的根源）。
+func (s *service) historyWindow() int {
+	const floor = 200
+	if s.historyLimit > floor {
+		return s.historyLimit
+	}
+	return floor
+}
+
 // compactThreshold returns the token level that triggers auto-compaction: the
 // admin override (sys_config llm.compressAtTokens) when positive, else 70% of
 // the context cap. Read per send so admin edits apply without a restart.
@@ -483,9 +497,11 @@ func (s *service) maybeCompact(ctx context.Context, conv *model.IMConversation) 
 		zap.Int("summaryTokens", estimateTokens(summary)))
 }
 
-// sendMessage persists the user's message, appends a canned assistant reply, and
-// returns the user message VO. Ownership is enforced.
-func (s *service) sendMessage(conversationID, ownerID idgen.ID, dto SendMessageDTO) (*MessageVO, error) {
+// sendMessage persists the user's message, synchronously generates and persists
+// the assistant reply, and returns the user message VO. Ownership is enforced.
+// ctx 应传请求上下文：客户端断开即取消压缩与生成，不再用 Background 空烧
+// 上游 token（最坏压缩 90s + 生成 60s）。
+func (s *service) sendMessage(ctx context.Context, conversationID, ownerID idgen.ID, dto SendMessageDTO) (*MessageVO, error) {
 	conv, err := s.repo.findConversation(conversationID)
 	if err != nil {
 		return nil, err
@@ -500,7 +516,7 @@ func (s *service) sendMessage(conversationID, ownerID idgen.ID, dto SendMessageD
 	}
 	content := strings.TrimSpace(dto.Content)
 	// 越过阈值先自动压缩（就地更新 conv），压缩后仍超硬上限才拒绝。
-	s.maybeCompact(context.Background(), conv)
+	s.maybeCompact(ctx, conv)
 	if err := s.guardContext(conv, content); err != nil {
 		return nil, err
 	}
@@ -521,17 +537,23 @@ func (s *service) sendMessage(conversationID, ownerID idgen.ID, dto SendMessageD
 
 	// Generate the assistant reply (real LLM when configured, canned otherwise).
 	// A failure to store the reply must not fail the user's send, so it is
-	// best-effort.
-	aiMsg := &model.IMMessage{
-		ConversationID: conversationID,
-		SenderID:       assistantSenderID,
-		ContentType:    "text",
-		Content:        s.generateReply(conv, ownerID, content, imageURLs),
-		Status:         0,
-	}
+	// best-effort. 空回复（请求被取消时 generateReply 返回 ""）不落库——
+	// 否则断开的请求会往会话里塞一条空/占位气泡。
+	reply := s.generateReply(ctx, conv, ownerID, content, imageURLs)
 	at := time.Now()
-	if err := s.repo.createMessage(aiMsg); err == nil {
-		_ = s.repo.touchConversation(conversationID, aiMsg.ID, at)
+	if strings.TrimSpace(reply) != "" {
+		aiMsg := &model.IMMessage{
+			ConversationID: conversationID,
+			SenderID:       assistantSenderID,
+			ContentType:    "text",
+			Content:        reply,
+			Status:         0,
+		}
+		if err := s.repo.createMessage(aiMsg); err == nil {
+			_ = s.repo.touchConversation(conversationID, aiMsg.ID, at)
+		} else {
+			_ = s.repo.touchConversation(conversationID, userMsg.ID, at)
+		}
 	} else {
 		_ = s.repo.touchConversation(conversationID, userMsg.ID, at)
 	}
@@ -584,8 +606,13 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 		Content:        reply,
 	}
 	at := time.Now()
-	if err := s.repo.createMessage(aiMsg); err == nil {
-		_ = s.repo.touchConversation(conversationID, aiMsg.ID, at)
+	// 空回复 = 客户端中途断开且无实质内容：只 touch 用户消息，不落库空气泡。
+	if strings.TrimSpace(reply) != "" {
+		if err := s.repo.createMessage(aiMsg); err == nil {
+			_ = s.repo.touchConversation(conversationID, aiMsg.ID, at)
+		} else {
+			_ = s.repo.touchConversation(conversationID, userMsg.ID, at)
+		}
 	} else {
 		_ = s.repo.touchConversation(conversationID, userMsg.ID, at)
 	}
@@ -603,7 +630,7 @@ func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, o
 	conversationID := conv.ID
 	if s.relay != nil {
 		if model := s.repo.textModelKey(); model != "" {
-			if rows, err := s.repo.recentMessages(conversationID, conv.SummaryUptoID, s.historyLimit); err == nil {
+			if rows, err := s.repo.recentMessages(conversationID, conv.SummaryUptoID, s.historyWindow()); err == nil {
 				msgs := make([]relaychat.Msg, 0, len(rows)+2)
 				if p := strings.TrimSpace(s.systemPrompt); p != "" {
 					msgs = append(msgs, relaychat.TextMsg("system", p))
@@ -651,6 +678,9 @@ func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, o
 					// 已流出实质内容：持久化客户端实际看到的部分，跳过降级链。
 					return streamed.String()
 				}
+				if ctx.Err() != nil {
+					return "" // 客户端已断开：不降级空烧，也不落库占位回复
+				}
 			}
 		}
 	}
@@ -660,7 +690,7 @@ func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, o
 	// （压缩摘要不注入此路径：Turn 只有 user/assistant 两种角色且要求交替，
 	// 强插伪造轮次弊大于利——legacy 回退本就是降级体验。）
 	if s.llmClient != nil {
-		if rows, err := s.repo.recentMessages(conversationID, conv.SummaryUptoID, s.historyLimit); err == nil {
+		if rows, err := s.repo.recentMessages(conversationID, conv.SummaryUptoID, s.historyWindow()); err == nil {
 			turns := make([]llm.Turn, 0, len(rows))
 			for i := range rows {
 				role := llm.RoleUser
@@ -682,6 +712,9 @@ func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, o
 				return reply
 			}
 			logger.L().Warn("chat: LLM stream fallback failed, using canned reply", zap.Error(cerr))
+			if ctx.Err() != nil {
+				return ""
+			}
 		}
 	}
 
@@ -774,12 +807,12 @@ func (s *service) appendMessage(conversationID, ownerID idgen.ID, dto AppendMess
 // (or when no LLM is configured) it falls back to the canned placeholder so the
 // chat round-trip always completes. 上下文 = system 提示词 + 压缩摘要（如有）+
 // 摘要之后的原文消息。
-func (s *service) generateReply(conv *model.IMConversation, ownerID idgen.ID, userContent string, imageURLs []string) string {
+func (s *service) generateReply(ctx context.Context, conv *model.IMConversation, ownerID idgen.ID, userContent string, imageURLs []string) string {
 	if s.relay == nil && s.llmClient == nil {
 		return s.buildReply(userContent)
 	}
 
-	rows, err := s.repo.recentMessages(conv.ID, conv.SummaryUptoID, s.historyLimit)
+	rows, err := s.repo.recentMessages(conv.ID, conv.SummaryUptoID, s.historyWindow())
 	if err != nil {
 		logger.L().Warn("chat: load context failed, using canned reply", zap.Error(err))
 		return s.buildReply(userContent)
@@ -811,16 +844,19 @@ func (s *service) generateReply(conv *model.IMConversation, ownerID idgen.ID, us
 					}
 				}
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), llmReplyTimeout)
+			cctx, cancel := context.WithTimeout(ctx, llmReplyTimeout)
 			defer cancel()
 			start := time.Now()
-			reply, err := s.relay.Chat(ctx, model, msgs)
+			reply, err := s.relay.Chat(cctx, model, msgs)
 			reqBody, _ := json.Marshal(msgs)
 			eventlog.ModelText(ownerID, "chat", model, "/v1/chat/completions", string(reqBody), reply, time.Since(start).Milliseconds(), err)
 			if err == nil {
 				return reply
 			}
 			logger.L().Warn("chat: relay generation failed, falling back", zap.String("model", model), zap.Error(err))
+			if ctx.Err() != nil {
+				return "" // 请求已取消（客户端断开）：不再降级空烧，也不落库占位
+			}
 		}
 	}
 
@@ -834,16 +870,19 @@ func (s *service) generateReply(conv *model.IMConversation, ownerID idgen.ID, us
 			}
 			turns = append(turns, llm.Turn{Role: role, Text: rows[i].Content})
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), llmReplyTimeout)
+		cctx, cancel := context.WithTimeout(ctx, llmReplyTimeout)
 		defer cancel()
 		start := time.Now()
-		reply, err := s.llmClient.Chat(ctx, turns)
+		reply, err := s.llmClient.Chat(cctx, turns)
 		reqBody, _ := json.Marshal(turns)
 		eventlog.ModelText(ownerID, "chat", s.fallbackModelID(), "anthropic", string(reqBody), reply, time.Since(start).Milliseconds(), err)
 		if err == nil {
 			return reply
 		}
 		logger.L().Warn("chat: LLM generation failed, using canned reply", zap.Error(err))
+		if ctx.Err() != nil {
+			return ""
+		}
 	}
 
 	// 3) Canned placeholder.

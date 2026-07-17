@@ -124,7 +124,8 @@ func (h *handler) sendMessage(c *gin.Context) {
 		return
 	}
 	ownerID := middleware.CurrentUserID(c)
-	vo, err := h.svc.sendMessage(id, ownerID, dto)
+	// 请求上下文贯通到压缩与生成：客户端断开即取消，不再空烧上游。
+	vo, err := h.svc.sendMessage(c.Request.Context(), id, ownerID, dto)
 	if err != nil {
 		h.fail(c, err, "failed to send message")
 		return
