@@ -258,6 +258,8 @@
 .ws-label{font-size:12.5px; font-weight:700; letter-spacing:.01em; color:var(--text-dim); margin:0 0 9px;}
 /* section label with counter */
 .ws-seclabel{display:flex; align-items:center; justify-content:space-between; font-size:12.5px; font-weight:700; color:var(--text-dim); margin:0 0 9px;}
+/* 音频「创作模式」等字段插到提示词上方后，节标题需要与前一字段拉开呼吸距 */
+.ws-field + .ws-seclabel{margin-top:20px;}
 .ws-pcount{font-family:var(--mono); font-size:11px; font-weight:500; color:var(--text-faint);}
 .ws-pcount b{color:var(--text-dim);}
 /* prompt box with inner toolbar */
@@ -380,6 +382,11 @@
   background:var(--bg); border:1px solid var(--border); color:var(--text); font:inherit; font-size:13px; line-height:1.6; transition:border-color .15s;}
 .ws-audio-ta:focus{outline:none; border-color:var(--border-strong);}
 .ws-audio-ta::placeholder{color:var(--text-faint);}
+/* textarea 溢出时原生系统滚动条（白轨道+箭头）与暗色面板脱节，按面板同语言收细 */
+.ws-prompt,.ws-audio-ta{scrollbar-width:thin; scrollbar-color:var(--border-strong) transparent;}
+.ws-prompt::-webkit-scrollbar,.ws-audio-ta::-webkit-scrollbar{width:7px;}
+.ws-prompt::-webkit-scrollbar-thumb,.ws-audio-ta::-webkit-scrollbar-thumb{background:var(--border-strong); border-radius:99px;}
+.ws-prompt::-webkit-resizer,.ws-audio-ta::-webkit-resizer{background:transparent;}
 .ws-audio-in{width:100%; height:40px; padding:0 13px; border-radius:11px; background:var(--bg); border:1px solid var(--border);
   color:var(--text); font:inherit; font-size:13px; transition:border-color .15s;}
 .ws-audio-in:focus{outline:none; border-color:var(--border-strong);}

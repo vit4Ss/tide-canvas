@@ -75,7 +75,7 @@ const IDEAS = [
   "深海发光水母，慢镜头，4K 微距，蓝紫光束",
 ] as const;
 
-type ToolKey = "t2i" | "i2i" | "edit" | "t2v" | "i2v" | "flf" | "ref" | "t2a";
+type ToolKey = "t2i" | "i2i" | "edit" | "t2v" | "i2v" | "flf" | "ref" | "t2a" | "sfx";
 type ToolMode = "t2i" | "i2i" | "t2v" | "t2a";
 
 /* ── 内容感知环境光（YouTube Ambient Mode 思路）─────────────────────────────
@@ -180,12 +180,13 @@ const TOOLS: Record<ToolKey, ToolCfg> = {
   flf: { mode: "t2v", label: "首尾帧", head: "首尾帧生成", drop: true, ph: "上传首帧与尾帧，描述过渡…\n例：从清晨到日落的平滑时间流逝" },
   ref: { mode: "t2v", label: "全能参考", head: "全能参考", drop: true, ph: "上传参考图（人物 / 风格 / 动作），描述想要的视频…\n例：参考人物形象，生成其在雪山奔跑的镜头" },
   t2a: { mode: "t2a", label: "音乐生成", head: "生成音乐", drop: false, ph: "描述你想要的音乐，Suno 会自动谱曲写词…\n例：温柔的中文民谣，木吉他伴奏，关于夏天傍晚的回忆" },
+  sfx: { mode: "t2a", label: "音效生成", head: "生成音效", drop: false, ph: "描述你想要的音效，越具体越好…\n例：雨打铁皮屋顶，远处传来低沉的雷声" },
 };
 
 const MODES_BY_TYPE: Record<ArtworkType, ToolKey[]> = {
   image: ["t2i", "i2i"],
   video: ["t2v", "i2v", "flf", "ref"],
-  audio: ["t2a"],
+  audio: ["t2a", "sfx"],
 };
 
 /* typed reference uploads per tool (create.js UPLOADS) */
@@ -342,6 +343,22 @@ const MODEL_META: Record<string, ModelMeta> = {
 
 const DEFAULT_META: ModelMeta = { tag: "AI", by: "模型", desc: "高质量生成" };
 
+/** 音乐风格预设（2026-07-17 由自由输入改为点选多选）：值用 Suno 识别度最高的
+ *  英文 tag，界面展示中文；选中项逗号拼接进 tags。历史记录恢复的手填旧值不在
+ *  预设中时原样保留发送，仅不高亮。 */
+const AUDIO_STYLES: Array<{ v: string; l: string }> = [
+  { v: "pop", l: "流行" },
+  { v: "folk", l: "民谣" },
+  { v: "rock", l: "摇滚" },
+  { v: "electronic", l: "电子" },
+  { v: "hip-hop", l: "嘻哈" },
+  { v: "r&b", l: "R&B" },
+  { v: "jazz", l: "爵士" },
+  { v: "ballad", l: "抒情" },
+  { v: "chinese traditional", l: "古风" },
+  { v: "cinematic", l: "电影感" },
+];
+
 /** derive a ModelMeta for a studio model purely from its model-management config:
  *  the right-side tag shows 预计耗时 only——积分不在选择器里显示（用户定稿
  *  2026-07-14：消耗已在「立即生成 · N 积分」按钮上呈现，选择器满屏积分是噪音），
@@ -366,7 +383,17 @@ const MODE_TO_TOOL: Record<string, ToolKey> = {
   keyframe: "flf",
   omni_ref: "ref",
   t2a: "t2a",
+  sfx: "sfx",
 };
+
+/** 音频模型归属页签：后台配置 modes 含 sfx → 音效生成；显式配了 t2a → 音乐生成；
+ *  都没配时按 modelKey 里的 sfx 兜底（中转站同步下来未配置的新模型也能归对）。 */
+function audioToolOf(m: StudioModelVO): ToolKey {
+  const modes = m.config?.modes ?? [];
+  if (modes.includes("sfx")) return "sfx";
+  if (modes.includes("t2a")) return "t2a";
+  return /sfx/i.test(m.modelKey ?? "") ? "sfx" : "t2a";
+}
 
 /** studio ToolKey → backend generation handler name (internal/handler/ai handlerRegistry). */
 const TOOL_TO_HANDLER: Record<ToolKey, string> = {
@@ -378,6 +405,7 @@ const TOOL_TO_HANDLER: Record<ToolKey, string> = {
   flf: "start_end_to_video",
   ref: "reference_to_video",
   t2a: "text_to_audio",
+  sfx: "text_to_audio",
 };
 
 /** display label for a ratio value (auto → 自适应). */
@@ -467,7 +495,11 @@ function paramsFromTask(handler: string, modelName: string, input: unknown): Run
   return {
     prompt: str(inp.prompt),
     model: modelName,
-    tool: HIST_HANDLER_TOOL[handler] ?? "t2i",
+    // 音频共用 text_to_audio handler，音效模型的历史按名称归回音效页签。
+    tool:
+      handler === "text_to_audio" && /sfx|音效/i.test(modelName)
+        ? "sfx"
+        : (HIST_HANDLER_TOOL[handler] ?? "t2i"),
     curType: type,
     // 音频无画面比例——留空，否则历史里的音频卡会顶着一枚假 "1:1" 徽标。
     ratio: type === "audio" ? "" : str(inp.aspectRatio) || str(inp.aspect_ratio) || str(inp.ratio) || "1:1",
@@ -485,6 +517,23 @@ function paramsFromTask(handler: string, modelName: string, input: unknown): Run
     songStyle: str(inp.tags) || undefined,
     songTitle: str(inp.title) || undefined,
     instrumental: inp.makeInstrumental === true || undefined,
+    ...(type === "audio"
+      ? (() => {
+          // 延长/翻唱的任务参数在 input.extras 里；据此反推创作模式与原曲引用。
+          const ex =
+            inp.extras && typeof inp.extras === "object"
+              ? (inp.extras as Record<string, unknown>)
+              : {};
+          const task = str(ex.task);
+          const mode: MusicMode =
+            task === "extend" || task === "cover" ? task : str(inp.lyrics) ? "custom" : "inspire";
+          return {
+            musicMode: mode,
+            sourceClipId: str(ex.continue_clip_id) || str(ex.cover_clip_id) || undefined,
+            continueAt: num(ex.continue_at) || undefined,
+          };
+        })()
+      : {}),
   };
 }
 
@@ -558,6 +607,9 @@ interface HistItem {
   model: string;
   /** real result image URL (real generations). */
   url?: string;
+  /** Suno 分轨：clip_id 供延长/翻唱引用；trackTitle 是 Suno 起的歌名。 */
+  clipId?: string;
+  trackTitle?: string;
   /** reconstructed run settings (for restoring this result to the panel). */
   params?: RunParams;
 }
@@ -633,6 +685,24 @@ interface RunParams {
   songStyle?: string;
   songTitle?: string;
   instrumental?: boolean;
+  /** 音频（Suno）创作模式与延长/翻唱的原曲引用 */
+  musicMode?: MusicMode;
+  sourceClipId?: string;
+  continueAt?: number;
+}
+
+/** Suno 音乐创作模式（对齐上游 API：extras.task = extend / cover）。 */
+type MusicMode = "inspire" | "custom" | "extend" | "cover";
+
+/** resultMeta.tracks 的宽松解析（后端 provider_relay 写入的形状）。 */
+function tracksFromMeta(meta: unknown): { clipId: string; title: string; url: string }[] {
+  const raw = (meta as { tracks?: unknown })?.tracks;
+  if (!Array.isArray(raw)) return [];
+  return raw.map((t) => {
+    const o = t && typeof t === "object" ? (t as Record<string, unknown>) : {};
+    const s = (v: unknown) => (typeof v === "string" ? v : "");
+    return { clipId: s(o.clipId), title: s(o.title), url: s(o.url) };
+  });
 }
 
 let histSeq = 0;
@@ -652,9 +722,24 @@ export default function CreateStudio() {
   const [res, setRes] = useState<string>("1080p");
   const [dur, setDur] = useState<string>("5s");
   const [quality, setQuality] = useState<string>("");
-  /* 音频（Suno）自定义模式：歌词/风格/歌名/纯音乐。全空 = 灵感模式（Suno 自动写词）。 */
+  /* 音频（Suno）音乐创作模式：灵感 = 只填描述，Suno 自动写词；自定义歌词 =
+     歌词必填 + 风格/歌名，描述不发送；延长/翻唱 = 引用先前生成的 clip_id。
+     各模式字段互斥展示（对齐上游 API 语义）。 */
+  const [musicMode, setMusicMode] = useState<MusicMode>("inspire");
+  /* 延长/翻唱的原曲(clip_id)与延长起点秒数(字符串承载输入框,提交时转整数) */
+  const [sourceClipId, setSourceClipId] = useState("");
+  const [continueAt, setContinueAt] = useState("");
   const [lyrics, setLyrics] = useState("");
   const [songStyle, setSongStyle] = useState("");
+  /* songStyle 底层仍是逗号串（发送/历史恢复不变），芯片按成员关系点亮/切换。 */
+  const songStyleList = songStyle.split(",").map((s) => s.trim()).filter(Boolean);
+  const toggleSongStyle = (v: string) =>
+    setSongStyle(
+      (songStyleList.includes(v)
+        ? songStyleList.filter((x) => x !== v)
+        : [...songStyleList, v]
+      ).join(", "),
+    );
   const [songTitle, setSongTitle] = useState("");
   const [instrumental, setInstrumental] = useState(false);
 
@@ -717,6 +802,20 @@ export default function CreateStudio() {
      Loaded post-mount (see loadHistory); empty until then. No mock seed. */
   const [hist, setHist] = useState<HistItem[]>([]);
 
+  /* 延长/翻唱的原曲候选：历史音频里带 clip_id 的分轨(新→旧,按 clip 去重)。
+     上游约束:只能引用自己生成的歌,所以候选就是用户的生成历史。 */
+  const clipOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { clipId: string; label: string }[] = [];
+    for (const h of hist) {
+      if (h.type !== "audio" || !h.clipId || seen.has(h.clipId)) continue;
+      seen.add(h.clipId);
+      const name = h.trackTitle || h.title || h.model || "未命名";
+      out.push({ clipId: h.clipId, label: name.length > 24 ? name.slice(0, 24) + "…" : name });
+    }
+    return out;
+  }, [hist]);
+
   /* full-image lightbox (click a finished result to zoom) */
   const [lightbox, setLightbox] = useState<string | null>(null);
 
@@ -755,10 +854,15 @@ export default function CreateStudio() {
 
   /* ── studio models → picker names/meta + selected model's config ───────── */
   const noBackend = studioList.length === 0;
-  const modelNames = useMemo(
-    () => (studioList.length ? studioList.map((m) => m.name) : CREATE_MODELS),
-    [studioList],
-  );
+  const modelNames = useMemo(() => {
+    if (!studioList.length) return CREATE_MODELS;
+    // 音频两页签各自持有模型池，下拉只显示本池；池空时回退全量（防呆）。
+    const pool =
+      curType === "audio"
+        ? studioList.filter((m) => audioToolOf(m) === (tool === "sfx" ? "sfx" : "t2a"))
+        : studioList;
+    return (pool.length ? pool : studioList).map((m) => m.name);
+  }, [studioList, curType, tool]);
   const modelMeta = useMemo(() => {
     const map: Record<string, ModelMeta> = {};
     for (const m of studioList) map[m.name] = metaOfStudio(m);
@@ -787,9 +891,9 @@ export default function CreateStudio() {
     [studioList, model],
   );
   const mCfg = selModel?.config ?? null;
-  // Suno 音效卡与音乐卡用法不同（不吃歌词/风格/歌名，只按描述出短音效），
-  // 以 modelKey 里的 sfx 识别并隐藏自定义模式字段。
-  const isSfx = isAudio && /sfx/i.test(selModel?.modelKey ?? "");
+  // Suno 音效卡与音乐卡用法不同（不吃歌词/风格/歌名，只按描述出短音效）。
+  // 页签拆分后以工具为准，modelKey 里的 sfx 作兜底（未配置 modes 的旧数据）。
+  const isSfx = isAudio && (tool === "sfx" || /sfx/i.test(selModel?.modelKey ?? ""));
 
   // dynamic option lists: a model's configured options only; when the backend
   // returned no models at all, fall back to the built-in defaults so the panel
@@ -817,9 +921,15 @@ export default function CreateStudio() {
   const configuredTools = (mCfg?.modes ?? [])
     .map((m) => MODE_TO_TOOL[m])
     .filter(Boolean) as ToolKey[];
-  const modeKeys = configuredTools.length
-    ? MODES_BY_TYPE[curType].filter((k) => configuredTools.includes(k))
-    : MODES_BY_TYPE[curType];
+  // 音频例外：页签按"全目录里有没有模型"决定（音乐/音效是两族模型，不是同一
+  // 模型的两种模式），否则选中音乐模型时音效页签会消失、永远点不过去。
+  const modeKeys = isAudio
+    ? noBackend
+      ? MODES_BY_TYPE.audio
+      : MODES_BY_TYPE.audio.filter((k) => studioList.some((m) => audioToolOf(m) === k))
+    : configuredTools.length
+      ? MODES_BY_TYPE[curType].filter((k) => configuredTools.includes(k))
+      : MODES_BY_TYPE[curType];
 
   // cost — honor the 后台模型配置 first, then fall back to the built-in map:
   //   1) priceMatrix（后台「积分定价」）: image = 画质 × 清晰度, video = 时长 × 清晰度
@@ -1016,6 +1126,8 @@ export default function CreateStudio() {
 
         const type = HIST_HANDLER_TYPE[t.handler] ?? "image";
         const params = paramsFromTask(t.handler, t.modelName || "", t.input);
+        // Suno 分轨明细：clip_id 供延长/翻唱引用，trackTitle 是 Suno 起的歌名。
+        const tracks = tracksFromMeta(meta);
         const title = params.prompt
           ? params.prompt.slice(0, 14) + (params.prompt.length > 14 ? "…" : "")
           : t.modelName || "我的创作";
@@ -1027,10 +1139,12 @@ export default function CreateStudio() {
             ratio: params.ratio,
             hues: huesFromId(`${t.id}-${idx}`),
             type,
-            title,
+            title: tracks[idx]?.title || title,
             prompt: params.prompt,
             model: t.modelName || "",
             url,
+            clipId: tracks[idx]?.clipId || undefined,
+            trackTitle: tracks[idx]?.title || undefined,
             params,
           }),
         );
@@ -1204,7 +1318,23 @@ export default function CreateStudio() {
   const selectTool = (t: ToolKey) => {
     setTool(t);
     setSlotData({});
+    // 音频页签切换时把选中模型对齐到该页签的模型池（下拉只显示本池）。
+    if ((t === "t2a" || t === "sfx") && studioList.length) {
+      const pool = studioList.filter((m) => audioToolOf(m) === t);
+      if (pool.length) setModel((cur) => (pool.some((m) => m.name === cur) ? cur : pool[0].name));
+    }
   };
+
+  // 反向对齐：历史恢复 / 深链直接设了音频模型时，页签自动跟随模型所属池
+  //（点页签换模型走 selectTool，这里只处理"模型先变"的路径，等值守卫防环）。
+  useEffect(() => {
+    if (!isAudio || !studioList.length) return;
+    const m = studioList.find((x) => x.name === model);
+    if (!m) return;
+    const t = audioToolOf(m);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTool((cur) => ((cur === "t2a" || cur === "sfx") && cur !== t ? t : cur));
+  }, [model, studioList, isAudio]);
 
   const pickType = (t: ArtworkType) => {
     setCurType(t);
@@ -1454,12 +1584,20 @@ export default function CreateStudio() {
       const isValidUrl = (u?: string): u is string =>
         !!u && (u.startsWith("https://") || u.startsWith("http://") || u.startsWith("data:"));
 
-      const finish = (urls: string[]) => {
+      const finish = (urls: string[], tracks: { clipId: string; title: string; url: string }[] = []) => {
         if (runIdRef.current !== myRun) return;
         stopTicks();
         clearActive();
-        setProgs(new Array(n).fill(100));
-        setCells((prev) => prev.map((c) => ({ ...c, url: urls[c.i] ?? urls[0] })));
+        // Suno 一次返回两首：结果多于占位格时按结果数展开（仅音频；图片批量的
+        // n 与结果数本就一致）。补出的格子沿用首格色相。
+        const outCells =
+          kind === "audio" && urls.length > newCells.length
+            ? urls.map(
+                (_, i) => newCells[i] ?? { i, hues: newCells[0]?.hues ?? ([0, 80, 200] as MeshHues) },
+              )
+            : newCells;
+        setProgs(new Array(outCells.length).fill(100));
+        setCells(outCells.map((c) => ({ ...c, url: urls[c.i] ?? urls[0] })));
         setBusy(false);
         // group every image of this run under one feed key. Insert the whole run as
         // one block (0..n order) with a dedup guard: on refresh-resume, loadHistory
@@ -1468,7 +1606,7 @@ export default function CreateStudio() {
         // outside the updater so it stays pure (React dev double-invokes it).
         const runKey = `task-${taskId}`;
         const ts = new Date().toISOString();
-        const built = newCells.map((cell) => {
+        const built = outCells.map((cell) => {
           histSeq += 1;
           return {
             id: `h-${histSeq}`,
@@ -1477,10 +1615,12 @@ export default function CreateStudio() {
             ratio: r,
             hues: cell.hues,
             type: kind,
-            title: p,
+            title: tracks[cell.i]?.title || p || mdl,
             prompt: p,
             model: mdl,
             url: urls[cell.i] ?? urls[0],
+            clipId: tracks[cell.i]?.clipId || undefined,
+            trackTitle: tracks[cell.i]?.title || undefined,
             params: lastRunRef.current ?? undefined,
           };
         });
@@ -1524,7 +1664,7 @@ export default function CreateStudio() {
               fail("生成结果无效，可能未配置 AI 供应商");
               return;
             }
-            finish(all);
+            finish(all, tracksFromMeta(meta));
           } else if (task.status === AiTaskStatus.FAILED) {
             fail(task.errorMsg);
           } else if (task.status === AiTaskStatus.CANCELLED) {
@@ -1719,16 +1859,24 @@ export default function CreateStudio() {
   const generate = useCallback(() => {
     if (busy || genInFlightRef.current) return;
     const p = prompt.trim();
-    // 音频自定义模式（带歌词）时描述可省略——上游有 lyrics 会忽略 input。
-    const audLyrics = isAudio && !isSfx ? lyrics.trim() : "";
-    if (!p && !audLyrics) {
-      toast.info(isAudio ? "先写一句音乐描述，或填入自定义歌词 ✦" : "先写一句提示词吧 ✦");
-      promptRef.current?.focus();
+    // 音乐创作模式互斥（对齐上游 API）：灵感=只看描述;自定义=歌词必填、描述不发;
+    // 延长/翻唱=原曲 clip 必选、歌词选填。旧版"风格需搭配歌词"歧义由模式结构消除。
+    const musicCustom = isAudio && !isSfx && musicMode === "custom";
+    const musicTask = isAudio && !isSfx && (musicMode === "extend" || musicMode === "cover")
+      ? musicMode
+      : "";
+    const audLyrics = isAudio && !isSfx && musicMode !== "inspire" ? lyrics.trim() : "";
+    if (musicCustom && !audLyrics) {
+      toast.info("自定义歌词模式需先填写歌词 ✦");
       return;
     }
-    // Suno 组合歧义：描述 + 风格但没歌词会被上游直接拒绝（tags 触发自定义模式）。
-    if (isAudio && !isSfx && !audLyrics && songStyle.trim()) {
-      toast.info("填了「风格」需搭配歌词（自定义模式），或清空风格走灵感模式");
+    if (musicTask && !sourceClipId) {
+      toast.info(musicTask === "extend" ? "延长模式需先选择原曲 ✦" : "翻唱模式需先选择原曲 ✦");
+      return;
+    }
+    if (!musicTask && !p && !audLyrics) {
+      toast.info(isAudio ? "先写一句音乐描述 ✦" : "先写一句提示词吧 ✦");
+      promptRef.current?.focus();
       return;
     }
 
@@ -1794,6 +1942,10 @@ export default function CreateStudio() {
             songStyle: songStyle.trim() || undefined,
             songTitle: songTitle.trim() || undefined,
             instrumental: instrumental || undefined,
+            musicMode,
+            sourceClipId: musicTask ? sourceClipId : undefined,
+            continueAt:
+              musicTask === "extend" ? parseInt(continueAt, 10) || undefined : undefined,
           }
         : {}),
     };
@@ -1859,13 +2011,28 @@ export default function CreateStudio() {
     // (shared task-create → persist → drive path). ────────────────────────
     const input: Record<string, unknown> = isAudio
       ? {
-          // 音频：描述（灵感模式）+ 可选自定义模式字段。风格 tags 只随歌词发送
-          //（组合歧义已在上方拦截），SFX 卡只吃描述。
-          ...(p ? { prompt: p } : {}),
+          // 音频：灵感模式只发描述；自定义歌词模式只发歌词/风格/歌名（描述不发，
+          // 上游有 lyrics 时本就忽略 input）；延长/翻唱经 extras 传 task 与原曲
+          // clip_id（此组合上游不做 tags 歧义校验）；SFX 卡只吃描述。
+          ...(p && !musicCustom && !musicTask ? { prompt: p } : {}),
           ...(audLyrics ? { lyrics: audLyrics } : {}),
-          ...(audLyrics && songStyle.trim() ? { tags: songStyle.trim() } : {}),
-          ...(audLyrics && songTitle.trim() ? { title: songTitle.trim() } : {}),
+          ...((audLyrics || musicTask) && songStyle.trim() ? { tags: songStyle.trim() } : {}),
+          ...((audLyrics || musicTask) && songTitle.trim() ? { title: songTitle.trim() } : {}),
           ...(!isSfx && instrumental ? { makeInstrumental: true } : {}),
+          ...(musicTask
+            ? {
+                extras:
+                  musicTask === "extend"
+                    ? {
+                        task: "extend",
+                        continue_clip_id: sourceClipId,
+                        ...(parseInt(continueAt, 10) > 0
+                          ? { continue_at: parseInt(continueAt, 10) }
+                          : {}),
+                      }
+                    : { task: "cover", cover_clip_id: sourceClipId },
+              }
+            : {}),
         }
       : {
           prompt: p,
@@ -1889,7 +2056,7 @@ export default function CreateStudio() {
       meta: { prompt: p, model: mdl, ratio: r, spec, count: n, isVid, kind: curType, label, hues, refThumbs },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busy, prompt, count, tool, curType, ratio, model, res, dur, imgRes, quality, lyrics, songStyle, songTitle, instrumental, slotData, studioList, ratioOpts, resOpts, durOpts, qualOpts, pushHistory, startGeneration]);
+  }, [busy, prompt, count, tool, curType, ratio, model, res, dur, imgRes, quality, musicMode, sourceClipId, continueAt, lyrics, songStyle, songTitle, instrumental, slotData, studioList, ratioOpts, resOpts, durOpts, qualOpts, pushHistory, startGeneration]);
 
   // Refresh-resume: on mount, if a generation was in flight (persisted at start),
   // restore the generating UI and resume polling — the task keeps running on the
@@ -1946,6 +2113,10 @@ export default function CreateStudio() {
     setSongStyle(lr.songStyle ?? "");
     setSongTitle(lr.songTitle ?? "");
     setInstrumental(lr.instrumental ?? false);
+    // 模式优先取显式字段；老数据按"有歌词 = 自定义"推导。
+    setMusicMode(lr.musicMode ?? (lr.lyrics ? "custom" : "inspire"));
+    setSourceClipId(lr.sourceClipId ?? "");
+    setContinueAt(lr.continueAt ? String(lr.continueAt) : "");
     // 参考素材回填：按 generate() 写入 refInput 的映射反向恢复各上传槽位。
     // 仅在参数确实带参考素材时覆盖 slotData——旧快照/纯文生成不动现有槽位，
     // 保持会话内“先传图再重新生成”的既有行为。
@@ -2485,7 +2656,77 @@ export default function CreateStudio() {
             {/* typed reference uploads (per-tool slots; create.js renderUploads) */}
             {renderUploads()}
 
-            {/* prompt */}
+            {/* 音乐创作模式（对齐 Suno API：灵感 = 描述生成，自定义 = 按歌词演唱，
+                延长/翻唱 = 引用先前生成的原曲 clip） */}
+            {isAudio && !isSfx && (
+              <div className="ws-field col" id="fieldMusicMode">
+                <label>创作模式</label>
+                <div className="ws-ratios">
+                  {(
+                    [
+                      { v: "inspire", l: "灵感模式" },
+                      { v: "custom", l: "自定义歌词" },
+                      { v: "extend", l: "延长" },
+                      { v: "cover", l: "翻唱" },
+                    ] as const
+                  ).map((o) => (
+                    <button
+                      key={o.v}
+                      type="button"
+                      className={`ratio${musicMode === o.v ? " on" : ""}`}
+                      onClick={() => setMusicMode(o.v)}
+                    >
+                      {o.l}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 延长/翻唱：原曲选择（候选 = 用户历史生成的分轨；上游只认自己的 clip） */}
+            {isAudio && !isSfx && (musicMode === "extend" || musicMode === "cover") && (
+              <>
+                <div className="ws-field col" id="fieldSourceClip">
+                  <label>原曲 · 必选</label>
+                  <select
+                    className="select"
+                    value={sourceClipId}
+                    onChange={(e) => setSourceClipId(e.target.value)}
+                  >
+                    <option value="">
+                      {clipOptions.length ? "选择一首你生成过的歌" : "暂无可选原曲 · 先生成一首音乐"}
+                    </option>
+                    {/* 历史恢复的 clip 不在候选时补一项，否则 select 显示占位
+                        而状态仍持有该值，提交内容与所见不符。 */}
+                    {sourceClipId && !clipOptions.some((o) => o.clipId === sourceClipId) && (
+                      <option value={sourceClipId}>原曲 {sourceClipId.slice(0, 8)}…</option>
+                    )}
+                    {clipOptions.map((o) => (
+                      <option key={o.clipId} value={o.clipId}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {musicMode === "extend" && (
+                  <div className="ws-field col" id="fieldContinueAt">
+                    <label>延长起点 · 秒 · 选填</label>
+                    <input
+                      className="ws-audio-in"
+                      type="text"
+                      inputMode="numeric"
+                      value={continueAt}
+                      onChange={(e) => setContinueAt(e.target.value.replace(/[^0-9]/g, ""))}
+                      placeholder="留空 = 从原曲结尾续写"
+                    />
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* prompt（自定义歌词/延长/翻唱模式下描述不参与生成，整块隐藏避免误导） */}
+            {!(isAudio && !isSfx && musicMode !== "inspire") && (
+              <>
             <div className="ws-seclabel">
               提示词{" "}
               <span className="ws-pcount">
@@ -2525,32 +2766,57 @@ export default function CreateStudio() {
                 </div>
               </>
             )}
+              </>
+            )}
 
-            {/* 音频（Suno）自定义模式：歌词/风格/歌名/人声。全空 = 灵感模式。
-                音效卡（SFX）用法不同，只吃描述，隐藏这些字段。 */}
-            {isAudio && !isSfx && (
+            {/* 音频（Suno）自定义/延长/翻唱的参数：歌词（自定义必填，延长 = 续写
+                歌词、翻唱 = 改编提示，均选填）+ 风格/歌名。音效卡（SFX）隐藏。 */}
+            {isAudio && !isSfx && musicMode !== "inspire" && (
               <>
                 <div className="ws-field col" id="fieldLyrics">
-                  <label>自定义歌词 · 选填</label>
+                  <label>
+                    {musicMode === "custom"
+                      ? "歌词 · 必填"
+                      : musicMode === "extend"
+                        ? "续写歌词 · 选填"
+                        : "改编提示 / 歌词 · 选填"}{" "}
+                    <span className="ws-pcount">
+                      <b>{lyrics.length}</b> 字
+                    </span>
+                  </label>
                   <textarea
                     className="ws-audio-ta"
                     value={lyrics}
                     onChange={(e) => setLyrics(e.target.value)}
-                    placeholder={"填写后进入自定义模式，Suno 按歌词演唱\n[Verse]\n阳光洒在肩上\n[Chorus]\n这就是青春的模样"}
+                    placeholder={
+                      musicMode === "custom"
+                        ? "Suno 按歌词演唱，支持段落标记\n[Verse]\n阳光洒在肩上\n[Chorus]\n这就是青春的模样"
+                        : musicMode === "extend"
+                          ? "为延长的部分续写歌词，留空则由 Suno 续写\n[Verse]\n…"
+                          : "描述想要的改编方向，或直接给出歌词，留空则保留原词"
+                    }
                   />
                 </div>
                 <div className="ws-field col" id="fieldSongStyle">
-                  <label>音乐风格 · 需搭配歌词</label>
-                  <input
-                    className="ws-audio-in"
-                    type="text"
-                    value={songStyle}
-                    onChange={(e) => setSongStyle(e.target.value)}
-                    placeholder="pop, ballad, chinese"
-                  />
+                  <label>音乐风格 · 可多选</label>
+                  <div className="ws-ratios">
+                    {AUDIO_STYLES.map((s) => {
+                      const on = songStyleList.includes(s.v);
+                      return (
+                        <button
+                          key={s.v}
+                          type="button"
+                          className={`ratio${on ? " on" : ""}`}
+                          onClick={() => toggleSongStyle(s.v)}
+                        >
+                          {s.l}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
                 <div className="ws-field col" id="fieldSongTitle">
-                  <label>歌名 · 需搭配歌词</label>
+                  <label>歌名</label>
                   <input
                     className="ws-audio-in"
                     type="text"
@@ -2559,25 +2825,29 @@ export default function CreateStudio() {
                     placeholder="给这首歌起个名字"
                   />
                 </div>
-                <div className="ws-field col" id="fieldVocal">
-                  <label>人声</label>
-                  <div className="ws-ratios">
-                    {[
-                      { v: false, l: "有人声" },
-                      { v: true, l: "纯音乐" },
-                    ].map((o) => (
-                      <button
-                        key={o.l}
-                        type="button"
-                        className={`ratio${instrumental === o.v ? " on" : ""}`}
-                        onClick={() => setInstrumental(o.v)}
-                      >
-                        {o.l}
-                      </button>
-                    ))}
-                  </div>
-                </div>
               </>
+            )}
+
+            {/* 人声/纯音乐两种创作模式都支持（上游 make_instrumental 通吃） */}
+            {isAudio && !isSfx && (
+              <div className="ws-field col" id="fieldVocal">
+                <label>人声</label>
+                <div className="ws-ratios">
+                  {[
+                    { v: false, l: "有人声" },
+                    { v: true, l: "纯音乐" },
+                  ].map((o) => (
+                    <button
+                      key={o.l}
+                      type="button"
+                      className={`ratio${instrumental === o.v ? " on" : ""}`}
+                      onClick={() => setInstrumental(o.v)}
+                    >
+                      {o.l}
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
 
             {/* 画面比例 (configured ratios only) */}
@@ -2743,6 +3013,7 @@ export default function CreateStudio() {
                       { type: "video", tool: "t2v", label: "▶ 文生视频" },
                       { type: "video", tool: "i2v", label: "⤢ 图生视频" },
                       { type: "audio", tool: "t2a", label: "♪ 音乐生成" },
+                      { type: "audio", tool: "sfx", label: "≈ 音效生成" },
                     ] as { type: ArtworkType; tool: ToolKey; label: string }[]
                   ).map((t) => (
                     <button

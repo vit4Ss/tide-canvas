@@ -34,6 +34,7 @@ export const BRAND_ICONS: BrandIcon[] = [
   { slug: "hunyuan", label: "混元" },
   { slug: "kolors", label: "可图 Kolors" },
   { slug: "minimax", label: "MiniMax / 海螺" },
+  { slug: "suno", label: "Suno" },
   { slug: "vidu", label: "Vidu" },
   { slug: "runway", label: "Runway" },
   { slug: "luma", label: "Luma" },
@@ -66,6 +67,7 @@ const RULES: Array<[RegExp, string]> = [
   [/hunyuan|混元/i, "hunyuan"],
   [/kolors|可图/i, "kolors"],
   [/minimax|hailuo|海螺/i, "minimax"],
+  [/suno/i, "suno"],
   [/vidu/i, "vidu"],
   [/runway|gen-?[34]/i, "runway"],
   [/luma|dream-?machine/i, "luma"],
@@ -99,12 +101,22 @@ export function modelInitial(name: string): string {
   return name.replace(/[^A-Za-z一-龥]/g, "").charAt(0) || "A";
 }
 
+/** 自带深色底的整铺 tile（预合成的 App 图标风方块，cover 填满芯片，
+ *  不上白底衬垫）。目前仅 Suno——黑底白波形，与纯黑主题同语言。 */
+const TILE_ICONS = new Set([brandIconUrl("suno")]);
+
 /** 品牌 logo 的白底衬垫：logo 是黑图形配透明底，需要白底 + contain 留白，
  *  不能 cover 裁切、更不能直接铺在暗色芯片上。 */
-const brandPlate = (url: string): CSSProperties => ({
-  background: `#fff center/66% no-repeat url("${url}")`,
-  boxShadow: "inset 0 0 0 1px rgba(22,28,45,.1)",
-});
+const brandPlate = (url: string): CSSProperties =>
+  TILE_ICONS.has(url)
+    ? {
+        background: `center/cover no-repeat url("${url}")`,
+        boxShadow: "inset 0 0 0 1px rgba(255,255,255,.08)",
+      }
+    : {
+        background: `#fff center/66% no-repeat url("${url}")`,
+        boxShadow: "inset 0 0 0 1px rgba(22,28,45,.1)",
+      };
 
 /** swatch 样式 + 字形，三级优先：
  *  1. 后台配置的 icon（图片 URL → cover；emoji → 浅灰渐变底上的字形）

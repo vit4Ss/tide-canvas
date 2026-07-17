@@ -55,6 +55,13 @@ var defaults = map[string]string{
 	"Voxtral Mini TTS": "轻量语音合成 · 快速朗读",
 	"Lyria 3 Pro":      "谷歌音乐生成 · 完整曲目",
 	"Lyria 3 Clip":     "谷歌音乐生成 · 短片段配乐",
+
+	// 音频 · Suno（音乐生成：描述一句话区分版本定位；音效卡单独说明用法）
+	"Suno V4 (MXAPI)":   "完整歌曲生成 · 词曲唱一体",
+	"Suno V4.5 (MXAPI)": "曲风更丰富 · 人声更自然",
+	"Suno V5 (MXAPI)":   "新一代音质 · 编曲层次分明",
+	"Suno V5.5 (MXAPI)": "旗舰版本 · 情感表达细腻",
+	"Suno 音效 (MXAPI)":   "文字生成音效 · 短促干净可循环",
 }
 
 func main() {

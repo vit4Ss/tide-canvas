@@ -65,7 +65,10 @@ const MODE_OPTIONS: Record<string, { v: string; l: string }[]> = {
     { v: "omni_ref", l: "全能参考" },
   ],
   text: [],
-  audio: [],
+  audio: [
+    { v: "t2a", l: "音乐生成" },
+    { v: "sfx", l: "音效生成" },
+  ],
 };
 const QUALITY_OPTIONS = [
   { v: "low", l: "低画质" },
@@ -944,6 +947,21 @@ function ModelModal({
                 const mx = Math.min(4, Math.max(1, parseInt(next[0] || "1", 10) || 1));
                 setC({ batchOptions: Array.from({ length: mx }, (_, i) => i + 1) });
               }}
+            />
+          </FormSection>
+        </FormCard>
+      )}
+
+      {type === "audio" && (
+        <FormCard title="生成能力">
+          <FormSection
+            label="生成方式"
+            hint="决定创作台音频区的页签归属（音乐生成 / 音效生成）；不勾选时按模型 Key 是否含 sfx 自动识别"
+          >
+            <Chips
+              options={modeOptions}
+              value={cfg.modes ?? []}
+              onChange={(next) => setC({ modes: next })}
             />
           </FormSection>
         </FormCard>

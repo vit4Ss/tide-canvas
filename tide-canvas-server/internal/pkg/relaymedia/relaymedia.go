@@ -120,6 +120,7 @@ type AudioParams struct {
 // log; they are populated even when the call ultimately fails.
 type Result struct {
 	URLs   []string
+	Tracks []Track // Suno 音乐任务的分轨明细(与 URLs 同序);其它任务为空
 	TaskID string
 	Status string
 
@@ -127,6 +128,16 @@ type Result struct {
 	RequestBody  string
 	ResponseBody string
 	HTTPStatus   int
+}
+
+// Track is one Suno song from /v1/tasks/{id}'s tracks[]. ClipID 是延长(extend)/
+// 翻唱(cover)后续任务的关键引用;其余字段用于展示。
+type Track struct {
+	ClipID   string
+	Title    string
+	CoverURL string
+	Duration float64 // seconds
+	URL      string
 }
 
 // mediaResp is the OpenAI-shaped response, reused for the create call and the
@@ -147,7 +158,43 @@ type mediaResp struct {
 	Audio      *struct {
 		URL string `json:"url"`
 	} `json:"audio"`
+	// Suno 音乐任务的分轨明细(仅 /v1/tasks/{id} 返回):clip_id 供延长/翻唱引用。
+	Tracks []struct {
+		ClipID   string  `json:"clip_id"`
+		Title    string  `json:"title"`
+		CoverURL string  `json:"cover_url"`
+		ImageURL string  `json:"image_url"`
+		Duration float64 `json:"duration"`
+		URL      string  `json:"url"`
+		AudioURL string  `json:"audio_url"`
+	} `json:"tracks"`
 	Error *mediaError `json:"error"`
+}
+
+// mediaTracks normalizes mr.Tracks (封面/音频 URL 字段兼容两种命名)。
+func mediaTracks(mr mediaResp) []Track {
+	if len(mr.Tracks) == 0 {
+		return nil
+	}
+	out := make([]Track, 0, len(mr.Tracks))
+	for _, t := range mr.Tracks {
+		cover := strings.TrimSpace(t.CoverURL)
+		if cover == "" {
+			cover = strings.TrimSpace(t.ImageURL)
+		}
+		url := strings.TrimSpace(t.URL)
+		if url == "" {
+			url = strings.TrimSpace(t.AudioURL)
+		}
+		out = append(out, Track{
+			ClipID:   strings.TrimSpace(t.ClipID),
+			Title:    strings.TrimSpace(t.Title),
+			CoverURL: cover,
+			Duration: t.Duration,
+			URL:      url,
+		})
+	}
+	return out
 }
 
 // mediaError tolerates the relay's两种错误体：OpenAI 对象形
@@ -288,6 +335,7 @@ func (c *Client) submit(ctx context.Context, path string, body map[string]any, d
 	if status >= 200 && status < 300 {
 		if urls := mediaURLs(mr); len(urls) > 0 {
 			res.URLs = urls
+			res.Tracks = mediaTracks(mr)
 			return res, nil
 		}
 		// 2xx but no inline media: the relay deferred to a task (the usual 202
@@ -339,6 +387,7 @@ func (c *Client) poll(ctx context.Context, taskID string, base Result) (Result, 
 				return base, fmt.Errorf("relaymedia: task %s succeeded with no media url", taskID)
 			}
 			base.URLs = urls
+			base.Tracks = mediaTracks(mr)
 			return base, nil
 		case "failed", "error", "cancelled", "canceled":
 			return base, upstreamError(status, mr, respBody)

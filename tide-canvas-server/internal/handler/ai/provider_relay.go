@@ -285,6 +285,28 @@ func (p *relayProviderClient) result(ctx context.Context, res relaymedia.Result,
 		urls := p.rehost(ctx, res.URLs)
 		out.ResultURL = urls[0]
 		out.URLs = urls
+		// Suno 分轨明细进 Meta["tracks"]（随 resultMeta 落库）：clip_id 是延长/
+		// 翻唱后续任务的引用。播放地址与 URLs 同序，指向 rehost 后的稳定 URL。
+		if len(res.Tracks) > 0 {
+			tracks := make([]map[string]any, 0, len(res.Tracks))
+			for i, t := range res.Tracks {
+				u := t.URL
+				if i < len(urls) {
+					u = urls[i]
+				}
+				tracks = append(tracks, map[string]any{
+					"clipId":   t.ClipID,
+					"title":    t.Title,
+					"coverUrl": t.CoverURL,
+					"duration": t.Duration,
+					"url":      u,
+				})
+			}
+			if out.Meta == nil {
+				out.Meta = map[string]any{}
+			}
+			out.Meta["tracks"] = tracks
+		}
 	}
 	return out, nil
 }
