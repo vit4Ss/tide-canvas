@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -123,6 +124,11 @@ func (h *handler) sendMessage(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
 		return
 	}
+	// 同 /stream：拦下纯空白内容（binding:required 只拦空串）。
+	if strings.TrimSpace(dto.Content) == "" {
+		response.Fail(c, response.CodeBadRequest, "content is blank")
+		return
+	}
 	ownerID := middleware.CurrentUserID(c)
 	// 请求上下文贯通到压缩与生成：客户端断开即取消，不再空烧上游。
 	vo, err := h.svc.sendMessage(c.Request.Context(), id, ownerID, dto)
@@ -193,6 +199,12 @@ func (h *handler) streamMessage(c *gin.Context) {
 	var dto SendMessageDTO
 	if err := c.ShouldBindJSON(&dto); err != nil {
 		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	// binding:required 只拦空串，纯空白会溜过：trim 后为空的消息落库即成
+	// 空文本行，被上下文组装过滤后，多模态附件会错挂到上一条用户消息。
+	if strings.TrimSpace(dto.Content) == "" {
+		response.Fail(c, response.CodeBadRequest, "content is blank")
 		return
 	}
 	ownerID := middleware.CurrentUserID(c)

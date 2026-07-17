@@ -53,7 +53,8 @@ export async function streamMessage(
       signal: handlers.signal,
     });
   } catch {
-    handlers.onError?.("网络错误");
+    // 主动中止（切会话/离开页面）不是错误，别对用户弹"网络错误"假警报。
+    if (!handlers.signal?.aborted) handlers.onError?.("网络错误");
     return;
   }
   if (!res.ok || !res.body) {
