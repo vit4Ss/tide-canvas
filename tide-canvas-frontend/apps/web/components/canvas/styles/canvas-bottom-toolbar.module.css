@@ -3,12 +3,12 @@
   position: absolute;
   left: 18px;
   bottom: 18px;
-  z-index: 30;
+  z-index: 80;
   display: flex;
   align-items: center;
   gap: 8px;
-  color: rgb(38, 38, 38);
-  font-size: 13px;
+  color: var(--tc-canvas-text);
+  font-size: 12px;
   line-height: 1;
 }
 
@@ -30,14 +30,14 @@
   align-items: center;
   gap: 6px;
   padding: 0 2px;
-  color: rgb(55, 65, 81);
+  color: var(--tc-canvas-text-muted);
   font-weight: 500;
   transition: color 160ms ease;
 }
 
 .assetButton:hover,
 .activeTextButton {
-  color: rgb(10, 10, 10);
+  color: var(--tc-canvas-text);
 }
 
 .statusIconButton,
@@ -48,15 +48,15 @@
   align-items: center;
   justify-content: center;
   border-radius: 8px;
-  color: rgb(82, 82, 82);
+  color: var(--tc-canvas-text-muted);
   transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
 }
 
 .statusIconButton:hover,
 .zoomStepButton:hover:not(:disabled),
 .activeIconButton {
-  background: rgba(10, 10, 10, 0.08);
-  color: rgb(10, 10, 10);
+  background: var(--tc-canvas-hover);
+  color: var(--tc-canvas-text);
 }
 
 .statusIcon {
@@ -70,10 +70,11 @@
   height: 32px;
   align-items: center;
   gap: 2px;
+  border: 1px solid var(--tc-canvas-border);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--tc-canvas-panel);
   padding: 2px;
-  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.06);
   backdrop-filter: blur(12px);
 }
 
@@ -82,14 +83,14 @@
   height: 28px;
   border-radius: 8px;
   padding: 0 8px;
-  color: rgb(23, 23, 23);
+  color: var(--tc-canvas-text);
   font-size: 12px;
   font-weight: 600;
   transition: background-color 160ms ease;
 }
 
 .zoomPercentButton:hover {
-  background: rgb(245, 245, 245);
+  background: var(--tc-canvas-hover);
 }
 
 .zoomStepButton:disabled {
@@ -101,15 +102,15 @@
   position: absolute;
   left: 50%;
   bottom: 18px;
-  z-index: 30;
+  z-index: 80;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 10px 34px rgba(15, 23, 42, 0.12);
+  gap: 5px;
+  padding: 6px;
+  border: 1px solid var(--tc-canvas-border);
+  border-radius: 12px;
+  background: var(--tc-canvas-panel);
+  box-shadow: var(--tc-canvas-shadow);
   transform: translateX(-50%);
   backdrop-filter: blur(14px);
 }
@@ -125,14 +126,14 @@
   align-items: center;
   justify-content: center;
   border-radius: 8px;
-  color: rgb(38, 38, 38);
+  color: var(--tc-canvas-text);
   transition: background-color 160ms ease, color 160ms ease, transform 160ms ease;
 }
 
 .dockButton:hover:not(:disabled),
 .activeDockButton {
-  background: rgb(245, 245, 245);
-  color: rgb(10, 10, 10);
+  background: var(--tc-canvas-hover);
+  color: var(--tc-canvas-text);
 }
 
 .dockButton:active:not(:disabled) {
@@ -145,12 +146,12 @@
 }
 
 .primaryDockButton {
-  background: rgb(10, 10, 10);
+  background: #202124;
   color: #ffffff;
 }
 
 .primaryDockButton:hover:not(:disabled) {
-  background: rgb(38, 38, 38);
+  background: #34363a;
   color: #ffffff;
 }
 
@@ -163,7 +164,7 @@
 .divider {
   height: 20px;
   width: 1px;
-  background: rgb(229, 229, 229);
+  background: var(--tc-canvas-border);
 }
 
 .addMenu {
@@ -172,17 +173,17 @@
   bottom: calc(100% + 12px);
   width: 248px;
   overflow: hidden;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid var(--tc-canvas-border);
+  border-radius: 12px;
+  background: var(--tc-canvas-panel-solid);
   padding: 8px;
-  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.18);
+  box-shadow: var(--tc-canvas-shadow-popover);
   backdrop-filter: blur(16px);
 }
 
 .addMenuHeader {
   padding: 4px 8px 8px;
-  color: rgb(115, 115, 115);
+  color: var(--tc-canvas-text-muted);
   font-size: 12px;
   font-weight: 600;
 }
@@ -196,14 +197,14 @@
   border-radius: 10px;
   background: transparent;
   padding: 8px;
-  color: rgb(23, 23, 23);
+  color: var(--tc-canvas-text);
   text-align: left;
   cursor: pointer;
   transition: background-color 160ms ease;
 }
 
 .addMenuItem:hover {
-  background: rgb(245, 245, 245);
+  background: var(--tc-canvas-hover);
 }
 
 .addMenuIcon {
@@ -214,8 +215,8 @@
   align-items: center;
   justify-content: center;
   border-radius: 10px;
-  background: rgb(245, 245, 245);
-  color: rgb(64, 64, 64);
+  background: var(--tc-canvas-panel-muted);
+  color: var(--tc-canvas-text-muted);
 }
 
 .menuIcon {
@@ -232,14 +233,14 @@
 }
 
 .addMenuLabel {
-  color: rgb(23, 23, 23);
+  color: var(--tc-canvas-text);
   font-size: 13px;
   font-weight: 600;
 }
 
 .addMenuHint {
   overflow: hidden;
-  color: rgb(115, 115, 115);
+  color: var(--tc-canvas-text-muted);
   font-size: 11px;
   line-height: 15px;
   text-overflow: ellipsis;
@@ -255,8 +256,8 @@
 :global(.dark) .actionDock,
 :global(.dark) .zoomCluster,
 :global(.dark) .addMenu {
-  border-color: rgba(255, 255, 255, 0.12);
-  background: rgba(23, 23, 23, 0.92);
+  border-color: var(--tc-canvas-border);
+  background: var(--tc-canvas-panel);
 }
 
 :global(.dark) .statusIconButton:hover,
@@ -276,7 +277,7 @@
 }
 
 :global(.dark) .divider {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--tc-canvas-border);
 }
 
 :global(.dark) .addMenuHeader,
@@ -285,7 +286,7 @@
 }
 
 :global(.dark) .addMenuIcon {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--tc-canvas-panel-muted);
   color: rgb(229, 229, 229);
 }
 

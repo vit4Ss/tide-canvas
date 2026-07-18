@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, Sparkles } from "lucide-react";
 import type { AiModelVO } from "@/types/ai";
+import { useDismissibleCanvasOverlay, useExclusiveCanvasOverlay } from "../canvas-overlay-coordinator";
 
 interface Props {
   models: AiModelVO[];
@@ -98,44 +99,37 @@ export function ModelPicker({ models, value, onChange }: Props) {
   const [open, setOpen] = useState(false);
   const [openUp, setOpenUp] = useState(false);
   const [panelPos, setPanelPos] = useState({ left: 0, top: 0 });
+  const [panelMaxHeight, setPanelMaxHeight] = useState(PANEL_MAX_HEIGHT);
   const containerRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const closeOverlay = useCallback(() => setOpen(false), []);
+  const announceOpen = useExclusiveCanvasOverlay(open, closeOverlay, "model-picker");
+  useDismissibleCanvasOverlay(open, closeOverlay, [triggerRef, panelRef]);
 
   const stop = (event: ReactMouseEvent) => event.stopPropagation();
 
   const updatePanelPosition = () => {
     if (!triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
-    const spaceBelow = window.innerHeight - rect.bottom;
-    const nextOpenUp = spaceBelow < PANEL_MAX_HEIGHT + 24;
+    const margin = 12;
+    const gap = 8;
+    const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - gap - margin);
+    const spaceAbove = Math.max(0, rect.top - gap - margin);
+    const nextOpenUp = spaceBelow < PANEL_MAX_HEIGHT && spaceAbove > spaceBelow;
+    const availableHeight = Math.max(96, Math.min(PANEL_MAX_HEIGHT, nextOpenUp ? spaceAbove : spaceBelow));
     const left = Math.min(Math.max(12, Math.round(rect.left)), Math.max(12, window.innerWidth - PANEL_WIDTH - 12));
     setOpenUp(nextOpenUp);
-    setPanelPos({ left, top: Math.round(nextOpenUp ? rect.top - 8 : rect.bottom + 8) });
+    setPanelMaxHeight(availableHeight);
+    setPanelPos({ left, top: Math.round(nextOpenUp ? rect.top - gap : rect.bottom + gap) });
   };
 
   useEffect(() => {
     if (!open) return;
-    const onMouseDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (containerRef.current?.contains(target) || panelRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    document.addEventListener("mousedown", onMouseDown);
-    return () => document.removeEventListener("mousedown", onMouseDown);
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
     const onReposition = () => updatePanelPosition();
-    document.addEventListener("keydown", onKeyDown);
     window.addEventListener("resize", onReposition);
     window.addEventListener("scroll", onReposition, true);
     return () => {
-      document.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("resize", onReposition);
       window.removeEventListener("scroll", onReposition, true);
     };
@@ -143,7 +137,10 @@ export function ModelPicker({ models, value, onChange }: Props) {
 
   const toggle = (event: ReactMouseEvent) => {
     stop(event);
-    if (!open) updatePanelPosition();
+    if (!open) {
+      announceOpen();
+      updatePanelPosition();
+    }
     setOpen((current) => !current);
   };
 
@@ -192,11 +189,12 @@ export function ModelPicker({ models, value, onChange }: Props) {
           ref={panelRef}
           role="listbox"
           aria-label="选择模型"
-          className={`fixed z-50 w-[386px] max-w-[calc(100vw-24px)] rounded-xl border border-neutral-200 bg-white p-1.5 text-left shadow-[0_18px_48px_rgba(15,23,42,0.18)] dark:border-white/10 dark:bg-neutral-950 dark:text-white dark:shadow-black/40 ${openUp ? "-translate-y-full" : ""}`}
+          className={`fixed z-[1200] w-[386px] max-w-[calc(100vw-24px)] rounded-xl border border-neutral-200 bg-white p-1.5 text-left shadow-[0_18px_48px_rgba(15,23,42,0.18)] dark:border-white/10 dark:bg-[#202124] dark:text-white dark:shadow-black/40 ${openUp ? "-translate-y-full" : ""}`}
           style={{ left: panelPos.left, top: panelPos.top }}
           onMouseDown={stop}
+          onWheel={(event) => event.stopPropagation()}
         >
-          <div className="model-picker-scroll max-h-[408px] overflow-y-auto pr-1 [scrollbar-color:#b7b7b7_transparent] [scrollbar-width:thin]">
+          <div className="model-picker-scroll overflow-y-auto pr-1 [scrollbar-color:#b7b7b7_transparent] [scrollbar-width:thin]" style={{ maxHeight: panelMaxHeight }}>
             {models.map((model) => {
               const isSelected = model.modelId === selected.modelId;
               const { description, estSeconds, isNew, badges } = parseMeta(model);

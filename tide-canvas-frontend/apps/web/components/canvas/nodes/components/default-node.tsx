@@ -22,8 +22,11 @@ export const DefaultNode = memo(function DefaultNode({
   return (
     <div
       data-node-id={node.id}
+      data-node-selected={isSelected && !isConnectTarget ? "true" : undefined}
+      data-node-native-border="true"
       className={cn(
         styles.node,
+        "canvas-node-selection-surface",
         !isSelected && !isConnectTarget && styles.nodeIdle,
         isSelected && !isDragging && styles.nodeSelected,
         isConnectTarget && styles.nodeConnectTarget

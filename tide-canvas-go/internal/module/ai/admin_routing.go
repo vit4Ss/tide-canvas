@@ -295,6 +295,12 @@ func (s *AdminService) createModelRoute(c *gin.Context) {
 	if v, ok := body["conditions"]; ok && v != nil {
 		route.Conditions = jsonColumn(v)
 	}
+	if logicalModel.Type == "video" {
+		if err := validateVideoRouteConditions(logicalModel.Config, route.Conditions); err != nil {
+			response.Fail(c, ecode.BadRequest.WithMessage(err.Error()))
+			return
+		}
+	}
 	if err := s.repo.CreateModelRoute(route); err != nil {
 		response.FailErr(c, err)
 		return
@@ -335,7 +341,23 @@ func (s *AdminService) updateModelRoute(c *gin.Context) {
 	setIfPresent(body, "weight", columns, "weight", asInt)
 	setIfPresent(body, "status", columns, "status", asInt)
 	if v, ok := body["conditions"]; ok && v != nil {
-		columns["conditions"] = jsonColumn(v)
+		conditions := jsonColumn(v)
+		logicalModel, err := s.repo.FindModelByID(existing.LogicalModelID)
+		if err != nil {
+			response.FailErr(c, err)
+			return
+		}
+		if logicalModel == nil {
+			response.Fail(c, ecode.NotFound)
+			return
+		}
+		if logicalModel.Type == "video" {
+			if err := validateVideoRouteConditions(logicalModel.Config, conditions); err != nil {
+				response.Fail(c, ecode.BadRequest.WithMessage(err.Error()))
+				return
+			}
+		}
+		columns["conditions"] = conditions
 	}
 	if err := s.repo.UpdateModelRouteColumns(id, columns); err != nil {
 		response.FailErr(c, err)

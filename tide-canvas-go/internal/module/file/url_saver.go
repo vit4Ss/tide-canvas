@@ -13,6 +13,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
+
+	"github.com/tidecanvas/tide-canvas-go/internal/model"
 )
 
 // URLSaver 把外部（上游临时）URL 的内容下载并转存到自有存储后端，返回自有持久化 URL。
@@ -21,18 +23,28 @@ import (
 // （中转站/Runware）返回的临时媒体 URL 持久化到 OSS，避免上游 URL 过期导致结果不可访问。
 // 与 file.Service.SaveFromURL 不同——后者只把 URL 登记为素材引用，不下载转存。
 type URLSaver struct {
-	store    Storage
+	service  *Service
 	maxBytes int64
 	logger   *logrus.Logger
 }
 
 // NewURLSaver 构造。maxBytes<=0 时默认 100MB。
-func NewURLSaver(store Storage, maxBytes int64, logger *logrus.Logger) *URLSaver {
-	return &URLSaver{store: store, maxBytes: maxBytes, logger: logger}
+func NewURLSaver(service *Service, maxBytes int64, logger *logrus.Logger) *URLSaver {
+	return &URLSaver{service: service, maxBytes: maxBytes, logger: logger}
+}
+
+func (s *URLSaver) EnsureCapacity(userID int64) error {
+	if s.service == nil {
+		return errors.New("file service unavailable")
+	}
+	return s.service.assertQuota(userID, 1)
 }
 
 // SaveFromURL 下载 rawURL 内容并上传到存储后端，返回新的公网 URL。
 func (s *URLSaver) SaveFromURL(userID int64, rawURL string) (string, error) {
+	if s.service == nil || s.service.store == nil {
+		return "", errors.New("file service unavailable")
+	}
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
 		return "", errors.New("empty url")
@@ -84,11 +96,36 @@ func (s *URLSaver) SaveFromURL(userID int64, rawURL string) (string, error) {
 		contentType = "application/octet-stream"
 	}
 
-	key, err := s.store.Upload(data, assetName(rawURL, contentType), contentType, "ai")
+	if err := s.service.assertQuota(userID, int64(len(data))); err != nil {
+		return "", err
+	}
+	name := assetName(rawURL, contentType)
+	key, err := s.service.store.Upload(data, name, contentType, "ai/"+time.Now().Format("2006/01/02"))
 	if err != nil {
 		return "", err
 	}
-	saved := s.store.PublicURL(key)
+	saved := s.service.store.PublicURL(key)
+	file := &model.SysFile{
+		UserID:       userID,
+		OriginalName: name,
+		StoredName:   storedNameOf(key),
+		FilePath:     key,
+		FileURL:      saved,
+		FileSize:     int64(len(data)),
+		FileType:     fileTypeFromMime(contentType),
+		MimeType:     contentType,
+		Hash:         computeHash(data),
+		StorageType:  s.service.store.Type(),
+	}
+	if err := s.service.repo.Create(file); err != nil {
+		s.service.store.Delete(key)
+		return "", err
+	}
+	if err := s.service.createInitialReference(userID, file.ID, "conversation"); err != nil {
+		_ = s.service.repo.DeleteByID(file.ID)
+		s.service.store.Delete(key)
+		return "", err
+	}
 	if s.logger != nil {
 		s.logger.Infof("[file] AI 结果转存: userId=%d, %s -> %s", userID, rawURL, saved)
 	}

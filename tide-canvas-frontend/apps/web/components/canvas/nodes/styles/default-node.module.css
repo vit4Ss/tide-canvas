@@ -3,25 +3,25 @@
   position: absolute;
   user-select: none;
   overflow: hidden;
-  border: 1px solid rgb(229 229 229);
+  border: 1px solid var(--tc-canvas-border, rgb(229 229 229));
   border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  background: var(--tc-canvas-panel-solid, #fff);
+  box-shadow: var(--tc-canvas-shadow, 0 1px 2px rgba(15, 23, 42, 0.06));
   transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
 .nodeIdle:hover {
-  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
+  border-color: var(--tc-canvas-border-strong, rgb(163 163 163));
 }
 
 .nodeSelected {
-  border-color: rgb(96 165 250);
-  box-shadow: 0 18px 42px rgba(37, 99, 235, 0.16), 0 0 0 2px rgba(96, 165, 250, 0.48);
+  border-color: var(--tc-canvas-border, rgb(229 229 229));
+  box-shadow: var(--tc-canvas-shadow, 0 12px 32px rgba(15, 23, 42, 0.12));
 }
 
 .nodeConnectTarget {
-  border-color: rgb(59 130 246);
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4);
+  border-color: var(--tc-canvas-text, rgb(38 38 38));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--tc-canvas-text, rgb(38 38 38)) 28%, transparent);
 }
 
 .header {
@@ -29,7 +29,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  border-bottom: 1px solid rgb(245 245 245);
+  border-bottom: 1px solid var(--tc-canvas-border, rgb(245 245 245));
   padding: 8px 12px;
 }
 
@@ -44,7 +44,7 @@
   height: 16px;
   width: 16px;
   flex: 0 0 auto;
-  color: rgb(115 115 115);
+  color: var(--tc-canvas-text-muted, rgb(115 115 115));
 }
 
 .title {
@@ -54,7 +54,7 @@
   white-space: nowrap;
   font-size: 12px;
   font-weight: 600;
-  color: rgb(38 38 38);
+  color: var(--tc-canvas-text, rgb(38 38 38));
 }
 
 .actions {
@@ -97,9 +97,9 @@
 .promptInput {
   width: 100%;
   resize: none;
-  border: 1px solid rgb(229 229 229);
+  border: 1px solid var(--tc-canvas-border, rgb(229 229 229));
   border-radius: 10px;
-  background: rgb(250 250 250);
+  background: var(--tc-canvas-panel-muted, rgb(250 250 250));
   padding: 8px 10px;
   font-size: 12px;
   line-height: 1.5;
@@ -108,8 +108,8 @@
 }
 
 .promptInput:focus {
-  border-color: rgb(96 165 250);
-  background: #fff;
+  border-color: var(--tc-canvas-border-strong, rgb(115 115 115));
+  background: var(--tc-canvas-panel-solid, #fff);
 }
 
 .port {
@@ -139,22 +139,22 @@
 }
 
 :global(.dark) .node {
-  border-color: rgb(38 38 38);
-  background: rgb(10 10 10);
+  border-color: var(--tc-canvas-border);
+  background: var(--tc-canvas-panel-solid);
 }
 
 :global(.dark) .header {
-  border-bottom-color: rgb(38 38 38);
+  border-bottom-color: var(--tc-canvas-border);
 }
 
 :global(.dark) .title {
-  color: rgb(245 245 245);
+  color: var(--tc-canvas-text);
 }
 
 :global(.dark) .promptInput {
-  border-color: rgb(64 64 64);
-  background: rgb(23 23 23);
-  color: rgb(245 245 245);
+  border-color: var(--tc-canvas-border);
+  background: var(--tc-canvas-panel-muted);
+  color: var(--tc-canvas-text);
 }
 
 :global(.dark) .port {

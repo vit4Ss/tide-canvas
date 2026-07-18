@@ -120,6 +120,34 @@ func frameEntry(url, frame string, wrapInputs bool) map[string]interface{} {
 	return map[string]interface{}{"inputImage": url, "frame": frame}
 }
 
+// applyRunwareVideoAudio 把统一的音频开关写入 Runware 的 providerSettings。
+// Runware 的 generateAudio 是供应商级字段；Google Veo 与 Lightricks LTX 均使用该结构。
+// 其它供应商仅在管理员已通过 config.runware.providerSettings 声明对应对象时覆盖，避免发送未知字段。
+func applyRunwareVideoAudio(task map[string]interface{}, modelID string, enabled bool) {
+	settings, _ := task["providerSettings"].(map[string]interface{})
+	if settings == nil {
+		settings = map[string]interface{}{}
+	}
+
+	providerKey := ""
+	if prefix, _, ok := strings.Cut(strings.TrimSpace(modelID), ":"); ok {
+		providerKey = strings.ToLower(strings.TrimSpace(prefix))
+	}
+	providerConfig, hasProviderConfig := settings[providerKey].(map[string]interface{})
+	if !hasProviderConfig {
+		switch providerKey {
+		case "google", "lightricks":
+			providerConfig = map[string]interface{}{}
+		default:
+			return
+		}
+	}
+
+	providerConfig["generateAudio"] = enabled
+	settings[providerKey] = providerConfig
+	task["providerSettings"] = settings
+}
+
 // ---- 比例 / 清晰度 / 时长归一（Relay 与 Runware 共用，对齐两 client 的同名私有方法）----
 
 // aspectOf 比例：input.aspectRatio / aspect_ratio / aspect，缺省 defaultValue；"auto" 视为缺省（仅 Runware 需要，
@@ -454,7 +482,7 @@ func buildChatMessages(input map[string]interface{}) []map[string]interface{} {
 	messages := make([]map[string]interface{}, 0, 16)
 	systemPrompt := strOf(input["systemPrompt"])
 	if !hasText(systemPrompt) {
-		systemPrompt = "你是 TideCanvas 的 AI 创作助手，擅长帮助用户优化提示词、分镜、脚本、画面描述和创作流程。请用简洁、可执行的中文回答。"
+		systemPrompt = "你是 TideCanvas 的 AI 创作助手，擅长帮助用户优化提示词、分镜、脚本、画面描述和创作流程。请用简洁、可执行的中文回答。引用附件事实时保留资料片段中的 [来源：…] 标记，不得编造来源。"
 	}
 	messages = append(messages, map[string]interface{}{"role": "system", "content": systemPrompt})
 
@@ -483,8 +511,79 @@ func buildChatMessages(input map[string]interface{}) []map[string]interface{} {
 	if attachmentText := buildAttachmentText(input["attachments"]); hasText(attachmentText) {
 		prompt = strings.TrimSpace(prompt + "\n\n" + attachmentText)
 	}
-	messages = append(messages, map[string]interface{}{"role": "user", "content": prompt})
+	content := interface{}(prompt)
+	images := buildAttachmentImages(input["attachments"])
+	files := buildAttachmentFiles(input["attachments"])
+	if len(images) > 0 || len(files) > 0 {
+		parts := make([]map[string]interface{}, 0, len(images)+len(files)+1)
+		parts = append(parts, map[string]interface{}{"type": "text", "text": prompt})
+		for _, imageURL := range images {
+			parts = append(parts, map[string]interface{}{
+				"type":      "image_url",
+				"image_url": map[string]interface{}{"url": imageURL, "detail": "auto"},
+			})
+		}
+		for _, file := range files {
+			parts = append(parts, map[string]interface{}{
+				"type": "file",
+				"file": map[string]interface{}{"filename": file.name, "file_data": file.dataURL},
+			})
+		}
+		content = parts
+	}
+	messages = append(messages, map[string]interface{}{"role": "user", "content": content})
 	return messages
+}
+
+type inlineChatFile struct {
+	name    string
+	dataURL string
+}
+
+func buildAttachmentFiles(value interface{}) []inlineChatFile {
+	list, ok := value.([]interface{})
+	if !ok {
+		return nil
+	}
+	files := make([]inlineChatFile, 0, len(list))
+	for _, item := range list {
+		attachment, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		direct, _ := attachment["directNativeFile"].(bool)
+		dataURL := strOf(attachment["dataURL"])
+		if direct && hasText(dataURL) {
+			files = append(files, inlineChatFile{name: strOf(attachment["name"]), dataURL: dataURL})
+		}
+	}
+	return files
+}
+
+func buildAttachmentImages(value interface{}) []string {
+	list, ok := value.([]interface{})
+	if !ok {
+		return nil
+	}
+	images := make([]string, 0, len(list))
+	for _, item := range list {
+		attachment, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		direct, _ := attachment["directMultimodal"].(bool)
+		if !direct {
+			continue
+		}
+		imageURL := strOf(attachment["dataURL"])
+		if !hasText(imageURL) {
+			imageURL = strOf(attachment["url"])
+		}
+		if hasText(imageURL) {
+			images = append(images, imageURL)
+		}
+	}
+	return images
 }
 
 func buildAttachmentText(value interface{}) string {
@@ -517,6 +616,14 @@ func buildAttachmentText(value interface{}) string {
 		if hasText(url) {
 			sb.WriteString(": ")
 			sb.WriteString(url)
+		}
+		if extracted := strings.TrimSpace(strOf(m["extractedText"])); extracted != "" {
+			sb.WriteString("\n")
+			sb.WriteString(extracted)
+		}
+		if citations := strings.TrimSpace(strOf(m["citations"])); citations != "" {
+			sb.WriteString("\n")
+			sb.WriteString(citations)
 		}
 	}
 	return sb.String()

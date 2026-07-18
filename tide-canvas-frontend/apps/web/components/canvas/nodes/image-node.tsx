@@ -1112,7 +1112,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
           <NodeChrome zoom={zoom} placement="top-center" gap={10} zIndex={20}>
             <div
               onMouseDown={stop}
-              className="flex items-center gap-0.5 whitespace-nowrap rounded-[18px] border border-neutral-200/80 bg-white px-2 py-1.5 text-sm text-neutral-700 shadow-lg dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+              className="canvas-node-floating-tools flex items-center gap-0.5 whitespace-nowrap rounded-[18px] border border-neutral-200/80 bg-white px-2 py-1.5 text-sm text-neutral-700 shadow-lg dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
             >
               {/* 360 全景：普通图生成 2:1 equirectangular 全景；已有结果时直接打开查看器。 */}
               <button onMouseDown={stop} onClick={(e) => { stop(e); handlePanorama(); }} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800">
@@ -1460,12 +1460,12 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
           component="div"
           radius={10}
           shadow="none"
-          className={`relative overflow-hidden border bg-white transition-[border-color,box-shadow] dark:bg-neutral-950 ${
+          data-node-selected={isSelected && !isConnectTarget ? "true" : undefined}
+          data-node-native-border="true"
+          className={`canvas-node-selection-surface relative overflow-hidden border bg-white transition-[border-color,box-shadow] dark:bg-neutral-950 ${
             isConnectTarget
               ? "border-blue-500 shadow-[0_0_0_1px_rgba(59,130,246,0.35)]"
-              : isSelected
-                ? "border-neutral-400 shadow-[0_0_0_1px_rgba(115,115,115,0.28)] dark:border-neutral-500"
-                : "border-neutral-300 dark:border-neutral-700"
+              : "border-neutral-300 dark:border-neutral-700"
           }`}
           style={{ width: cardW, height: cardH }}
           withBorder={false}
@@ -1606,7 +1606,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
               bordered={false}
               shadows="hover"
               bodyStyle={{ minHeight: 176, padding: 0, display: "flex", flexDirection: "column" }}
-              className="relative overflow-visible rounded-[18px] border border-neutral-200/80 bg-white shadow-[0_12px_36px_rgba(15,23,42,0.10)] dark:border-neutral-800 dark:bg-neutral-950 dark:shadow-black/30"
+              className="canvas-node-composer relative overflow-visible rounded-[18px] border border-neutral-200/80 bg-white shadow-[0_12px_36px_rgba(15,23,42,0.10)] dark:border-neutral-800 dark:bg-neutral-950 dark:shadow-black/30"
               style={{ width: promptPanelW, minHeight: 176, boxSizing: "border-box", borderRadius: 18 }}
             >
               {/* 富文本输入框（@ 引用「图片N」内联绑定参考图）：风格作前置工具、展开作后置 */}

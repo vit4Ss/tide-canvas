@@ -23,7 +23,7 @@ import { CloudDownloadOutlined, DeleteOutlined, EditOutlined, PlusOutlined, Relo
 import { adminApi } from "@/lib/api";
 import { AdminPageHead } from "@/components/admin/page-head";
 import { CLARITY_OPTIONS, DEFAULT_IMAGE_COUNT_OPTIONS, QUALITY_OPTIONS, RATIO_OPTIONS } from "@/components/canvas/nodes/utils/quality-ratio";
-import { DURATION_OPTIONS, RESOLUTIONS, VIDEO_RATIOS } from "@/components/canvas/nodes/video-param-picker";
+import { getVideoModelOptions, parseVideoModelConfig, VIDEO_RATIOS } from "@/lib/video-model-config";
 import { toast } from "@/components/shared/toast";
 import { useHasPerm } from "@/stores/use-permission-store";
 import { formatDate } from "@/lib/utils";
@@ -400,6 +400,10 @@ export function AdminAiRoutingPageView({ defaultTab = "routes" }: { defaultTab?:
   const selectedLogicalModel = useMemo(
     () => logicalModels.find((m) => m.id === selectedModelId),
     [logicalModels, selectedModelId],
+  );
+  const selectedVideoOptions = useMemo(
+    () => getVideoModelOptions(parseVideoModelConfig(selectedLogicalModel?.config)),
+    [selectedLogicalModel?.config],
   );
 
   const filteredLogicalModels = useMemo(() => {
@@ -1373,19 +1377,19 @@ export function AdminAiRoutingPageView({ defaultTab = "routes" }: { defaultTab?:
                 <>
                   <RouteConditionGroup
                     label="视频分辨率"
-                    options={RESOLUTIONS.map((value) => ({ value, label: value }))}
+                    options={selectedVideoOptions.resolutions.map((value) => ({ value, label: value }))}
                     selected={routeForm.resolutions}
                     onToggle={(value) => setRouteForm((prev) => ({ ...prev, resolutions: toggleValue(prev.resolutions, String(value)) }))}
                   />
                   <RouteConditionGroup
                     label="视频比例"
-                    options={VIDEO_RATIOS.map((item) => ({ value: item.value, label: item.value === "auto" ? "自动" : item.label }))}
+                    options={VIDEO_RATIOS.filter((item) => selectedVideoOptions.ratios.includes(item.value)).map((item) => ({ value: item.value, label: item.label }))}
                     selected={routeForm.ratios}
                     onToggle={(value) => setRouteForm((prev) => ({ ...prev, ratios: toggleValue(prev.ratios, String(value)) }))}
                   />
                   <RouteConditionGroup
                     label="视频时长"
-                    options={DURATION_OPTIONS.map((value) => ({ value, label: `${value}s` }))}
+                    options={selectedVideoOptions.durations.map((value) => ({ value, label: `${value}s` }))}
                     selected={routeForm.durations}
                     onToggle={(value) => setRouteForm((prev) => ({ ...prev, durations: toggleValue(prev.durations, Number(value)) }))}
                   />

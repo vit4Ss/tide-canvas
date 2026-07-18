@@ -41,11 +41,13 @@ export const Scene3DNode = memo(function Scene3DNode({ node, isSelected, isDragg
 
       <div className="relative">
         <div
-          className={`relative overflow-hidden rounded-2xl border transition-all ${
+          data-node-selected={isSelected && !isConnectTarget ? "true" : undefined}
+          data-node-native-border="true"
+          className={`canvas-node-selection-surface relative overflow-hidden rounded-2xl border transition-all ${
             node.imageSrc ? "bg-gradient-to-br from-slate-800 to-slate-900" : "bg-white dark:bg-neutral-950"
           } ${
             isConnectTarget ? "border-blue-500 ring-2 ring-blue-500/40" :
-            isSelected ? "border-neutral-300 dark:border-neutral-700" : "border-neutral-200 dark:border-neutral-800"
+            "border-neutral-200 dark:border-neutral-800"
           }`}
           style={{ height: cardHeight }}
         >

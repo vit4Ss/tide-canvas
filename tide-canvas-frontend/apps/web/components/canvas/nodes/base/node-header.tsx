@@ -16,8 +16,8 @@ export function NodeHeader({ icon: Icon, title, visible, zoom }: Props) {
   if (!visible) return null;
 
   const row = (
-    <div className="flex items-center gap-1.5 whitespace-nowrap px-1 text-sm text-neutral-600 dark:text-neutral-300">
-      <Icon className="h-4 w-4" />
+    <div className="flex items-center gap-1.5 whitespace-nowrap px-1 text-[12px] text-neutral-600 dark:text-neutral-300">
+      <Icon className="h-3.5 w-3.5" />
       <span className="font-medium">{title}</span>
     </div>
   );

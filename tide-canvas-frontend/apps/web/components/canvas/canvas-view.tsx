@@ -15,8 +15,8 @@ import {
   useOnViewportChange,
   useReactFlow,
   type Connection as FlowConnection,
-  type Edge,
   type EdgeMouseHandler,
+  type EdgeTypes,
   type NodeChange,
   type NodeTypes,
   type OnNodeDrag,
@@ -40,8 +40,10 @@ import { toast } from "@/components/shared/toast";
 import { CanvasQuickAddMenu } from "./canvas-quick-add-menu";
 import { CanvasAssistantPanel } from "./canvas-assistant-panel";
 import { ReactFlowCanvasNode, type TideFlowNode } from "./react-flow-canvas-node";
+import { closeCanvasOverlays } from "./canvas-overlay-coordinator";
+import { AnimatedCanvasEdge, type CanvasFlowEdge } from "./animated-canvas-edge";
 
-type TideFlowEdge = Edge<Record<string, never>, "default">;
+type TideFlowEdge = CanvasFlowEdge;
 
 interface QuickAddState {
   sourceNodeId: string;
@@ -54,6 +56,10 @@ interface QuickAddState {
 
 const NODE_TYPES: NodeTypes = {
   tideCanvasNode: ReactFlowCanvasNode,
+};
+
+const EDGE_TYPES: EdgeTypes = {
+  canvasFlow: AnimatedCanvasEdge,
 };
 
 const SNAP_GRID: [number, number] = [20, 20];
@@ -70,15 +76,19 @@ function makeConnectionId(sourceId: string, targetId: string) {
   return `conn_${sourceId}_${targetId}_${Date.now().toString(36)}`;
 }
 
-export function CanvasView() {
+interface CanvasViewProps {
+  projectName?: string;
+}
+
+export function CanvasView({ projectName }: CanvasViewProps) {
   return (
     <ReactFlowProvider>
-      <CanvasViewInner />
+      <CanvasViewInner projectName={projectName} />
     </ReactFlowProvider>
   );
 }
 
-function CanvasViewInner() {
+function CanvasViewInner({ projectName }: CanvasViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const reactFlow = useReactFlow<TideFlowNode, TideFlowEdge>();
   const nodes = useCanvasStore((s) => s.nodes);
@@ -145,20 +155,21 @@ function CanvasViewInner() {
   );
 
   const flowEdges = useMemo<TideFlowEdge[]>(
-    () => connections.map((connection) => ({
-      id: connection.id,
-      source: connection.sourceId,
-      target: connection.targetId,
-      sourceHandle: "output",
-      targetHandle: "input",
-      type: "default",
-      selected: selectedConnectionId === connection.id,
-      animated: selectedNodeIds.has(connection.sourceId) || selectedNodeIds.has(connection.targetId),
-      style: {
-        stroke: selectedConnectionId === connection.id ? "#3b82f6" : "#9ca3af",
-        strokeWidth: selectedConnectionId === connection.id ? 2.5 : 2,
-      },
-    })),
+    () => connections.map((connection) => {
+      const selected = selectedConnectionId === connection.id;
+      const directlyLinkedToSelection = selectedNodeIds.has(connection.sourceId) || selectedNodeIds.has(connection.targetId);
+      return {
+        id: connection.id,
+        source: connection.sourceId,
+        target: connection.targetId,
+        sourceHandle: "output",
+        targetHandle: "input",
+        type: "canvasFlow",
+        selected,
+        animated: false,
+        data: { active: selected || directlyLinkedToSelection },
+      };
+    }),
     [connections, selectedConnectionId, selectedNodeIds],
   );
 
@@ -201,6 +212,18 @@ function CanvasViewInner() {
     selectNode(node.id);
   }, [addNode, getViewportCenter, selectNode]);
 
+  const focusCanvasNode = useCallback((nodeId: string) => {
+    const node = useCanvasStore.getState().nodes.find((item) => item.id === nodeId);
+    if (!node) return;
+    selectNode(nodeId);
+    const width = node.contentW ?? node.width;
+    const height = node.contentH ?? node.height;
+    reactFlow.setCenter(node.x + width / 2, node.y + height / 2, {
+      zoom: Math.min(1.25, Math.max(0.75, viewport.zoom)),
+      duration: 220,
+    });
+  }, [reactFlow, selectNode, viewport.zoom]);
+
   const addGeneratedResourceToCanvas = useCallback((resource: { url: string; kind: "image" | "video"; title: string }) => {
     const world = getViewportCenter();
     const node = createNode(resource.kind, world.x, world.y, useCanvasStore.getState().nodes);
@@ -239,6 +262,7 @@ function CanvasViewInner() {
 
   const openContextMenu = useCallback((event: React.MouseEvent | MouseEvent, nodeId?: string) => {
     event.preventDefault();
+    closeCanvasOverlays();
     const world = screenToFlowPoint(event.clientX, event.clientY);
     setContextMenu({
       x: event.clientX,
@@ -251,6 +275,19 @@ function CanvasViewInner() {
   }, [screenToFlowPoint]);
 
   const handleNodesChange = useCallback((changes: NodeChange<TideFlowNode>[]) => {
+    // React Flow 使用受控 nodes；单击产生的 select 变更必须同步回 Zustand，
+    // 否则下一次受控数据回写会撤销第一次选择，表现为需要双击。
+    const selectionChanges = changes.filter((change) => change.type === "select");
+    if (selectionChanges.length > 0) {
+      const nextSelectedIds = new Set(useCanvasStore.getState().selectedNodeIds);
+      selectionChanges.forEach((change) => {
+        if (change.selected) nextSelectedIds.add(change.id);
+        else nextSelectedIds.delete(change.id);
+      });
+      selectMany(Array.from(nextSelectedIds));
+      if (selectionChanges.some((change) => change.selected)) selectConnection(null);
+    }
+
     const updates = changes.flatMap((change) => {
       if (change.type !== "position" || !change.position) return [];
       return [{ id: change.id, x: change.position.x, y: change.position.y }];
@@ -263,7 +300,7 @@ function CanvasViewInner() {
     if (removed.length > 0) {
       useCanvasStore.getState().removeNodes(removed);
     }
-  }, [updateNodePositions]);
+  }, [selectConnection, selectMany, updateNodePositions]);
 
   const handleSelectionChange = useCallback((params: OnSelectionChangeParams<TideFlowNode, TideFlowEdge>) => {
     selectMany(params.nodes.map((node) => node.id));
@@ -305,6 +342,7 @@ function CanvasViewInner() {
 
     const point = getClientPoint(event);
     if (!point) return;
+    closeCanvasOverlays();
     const world = screenToFlowPoint(point.x, point.y);
     setQuickAdd({
       sourceNodeId: start.nodeId,
@@ -345,6 +383,7 @@ function CanvasViewInner() {
   }, [clearSelection, selectConnection]);
 
   const handlePaneClick = useCallback(() => {
+    closeCanvasOverlays();
     setContextMenu(null);
     setQuickAdd(null);
     clearSelection();
@@ -454,7 +493,7 @@ function CanvasViewInner() {
   }, [addNode, screenToFlowPoint, selectNode]);
 
   return (
-    <div translate="no" className="notranslate relative h-full w-full overflow-hidden bg-neutral-50 dark:bg-neutral-900">
+    <div translate="no" className="notranslate relative h-full w-full overflow-hidden bg-[var(--tc-canvas-bg)] text-[var(--tc-canvas-text)]">
       <div
         ref={containerRef}
         className="h-full w-full"
@@ -466,6 +505,7 @@ function CanvasViewInner() {
           nodes={flowNodes}
           edges={flowEdges}
           nodeTypes={NODE_TYPES}
+          edgeTypes={EDGE_TYPES}
           onNodesChange={handleNodesChange}
           onSelectionChange={handleSelectionChange}
           onConnect={handleConnect}
@@ -488,7 +528,7 @@ function CanvasViewInner() {
           proOptions={{ hideAttribution: true }}
           fitView={false}
         >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1.1} color="#d4d4d4" />
+          <Background variant={BackgroundVariant.Dots} gap={20} size={1.05} color="var(--tc-canvas-dot)" />
           <ViewportPortal>
             <CanvasGroupsLayer groups={groups} nodes={nodes} selectedNodeIds={selectedNodeIds} />
           </ViewportPortal>
@@ -498,9 +538,10 @@ function CanvasViewInner() {
               pannable
               zoomable
               nodeBorderRadius={8}
-              nodeColor="#e5e7eb"
-              nodeStrokeColor="#9ca3af"
-              style={{ marginBottom: 64, marginLeft: 16, borderRadius: 12, overflow: "hidden" }}
+              nodeColor="var(--tc-canvas-panel-muted)"
+              nodeStrokeColor="var(--tc-canvas-border-strong)"
+              maskColor="rgba(15, 23, 42, 0.06)"
+              style={{ marginBottom: 64, marginLeft: 16, borderRadius: 12, overflow: "hidden", border: "1px solid var(--tc-canvas-border)", background: "var(--tc-canvas-panel)" }}
             />
           )}
           {selectedGroupNodeIds.length >= 2 && !draggingNodeId && !quickAdd && (
@@ -557,7 +598,14 @@ function CanvasViewInner() {
         onUpload={() => alert("上传功能待接入")}
         onSaveAsset={handleSaveAsset}
       />
-      <MyAssetsPanel open={myAssetsOpen} onClose={() => setMyAssetsOpen(false)} onPick={addAssetToCanvas} refreshKey={assetsRefreshKey} />
+      <MyAssetsPanel
+        open={myAssetsOpen}
+        onClose={() => setMyAssetsOpen(false)}
+        projectName={projectName}
+        onSelectNode={focusCanvasNode}
+        onPick={addAssetToCanvas}
+        refreshKey={assetsRefreshKey}
+      />
       <CanvasHistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} onAddResource={addGeneratedResourceToCanvas} />
 
       <CanvasAssistantPanel />

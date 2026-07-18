@@ -75,6 +75,7 @@ func toModelVO(m *model.AiModel, providerName string) ModelVO {
 		ModelID:           m.ModelID,
 		Type:              m.Type,
 		SupportedHandlers: parseSupportedHandlers(m.SupportedHandlers),
+		Capabilities:      decodeCapabilities(m),
 		Config:            string(m.Config),
 		PointCost:         m.PointCost,
 		Status:            m.Status,
@@ -170,6 +171,17 @@ func parseSupportedHandlers(j datatypes.JSON) []string {
 	}
 	if len(out) == 0 {
 		return nil
+	}
+	return out
+}
+
+func decodeJSONObject(j datatypes.JSON) map[string]any {
+	if len(j) == 0 || string(j) == "null" {
+		return map[string]any{}
+	}
+	var out map[string]any
+	if err := json.Unmarshal(j, &out); err != nil || out == nil {
+		return map[string]any{}
 	}
 	return out
 }
@@ -272,4 +284,13 @@ func (p *taskProgress) report(progress int) {
 		return
 	}
 	_ = p.repo.UpdateProgressIfProcessing(p.taskID, progress)
+}
+
+// reportText persists partial assistant output and returns false once the task was cancelled.
+func (p *taskProgress) reportText(content string) bool {
+	if p == nil || p.repo == nil {
+		return true
+	}
+	active, err := p.repo.UpdateStreamingTextIfProcessing(p.taskID, content)
+	return err == nil && active
 }

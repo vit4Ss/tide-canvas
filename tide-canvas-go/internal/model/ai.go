@@ -33,6 +33,7 @@ type AiModel struct {
 	ModelID           string          `json:"modelId" gorm:"column:model_id"`
 	Type              string          `json:"type" gorm:"column:type"`
 	SupportedHandlers datatypes.JSON  `json:"supportedHandlers" gorm:"column:supported_handlers"`
+	Capabilities      datatypes.JSON  `json:"capabilities" gorm:"column:capabilities"`
 	Config            datatypes.JSON  `json:"config" gorm:"column:config"`
 	CostPerCall       decimal.Decimal `json:"-" gorm:"column:cost_per_call"`
 	PointCost         decimal.Decimal `json:"pointCost" gorm:"column:point_cost"`

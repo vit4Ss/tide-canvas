@@ -14,6 +14,15 @@ import { fetchWithAuth } from "@/lib/http";
 import { referenceKindFromMeta, resolveModelReferenceLimitBytes, validateKnownFileSize } from "@/lib/upload-limits";
 import { useAuth } from "@/hooks/use-auth";
 import { applyTeamFactor } from "@/lib/points";
+import {
+  calculateVideoBaseCost,
+  getVideoModelOptions,
+  normalizeVideoParamSelection,
+  parseVideoModelConfig,
+  readRememberedVideoParams,
+  rememberVideoParams,
+  sameVideoParams,
+} from "@/lib/video-model-config";
 import { AiModelType, type AiModelVO } from "@/types/ai";
 import { NodeHeader } from "./base/node-header";
 import { NodeChrome } from "./base/node-chrome";
@@ -158,9 +167,14 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   const { user } = useAuth(); // 团队价：消耗按 inTeam 系数加价显示
   // 当前画布缩放：外置组件按 1/zoom 反向缩放，保持恒定屏幕尺寸
   const zoom = useCanvasStore((s) => s.transform.k);
-  const [videoParam, setVideoParam] = useState<VideoParamValue>({ ratio: "16:9", resolution: "720P", duration: 5, audio: true });
+  const [videoParam, setVideoParam] = useState<VideoParamValue>({
+    ratio: node.aspectRatio ?? "auto",
+    resolution: node.videoResolution ?? "720P",
+    duration: node.videoDuration ?? 5,
+    audio: node.videoAudio !== false,
+  });
   const [videoModels, setVideoModels] = useState<AiModelVO[]>([]);
-  const [selectedModelId, setSelectedModelId] = useState("");
+  const [selectedModelId, setSelectedModelId] = useState(node.videoModelId ?? "");
   const [videoTab, setVideoTab] = useState("文生视频");
   const [hoveredTab, setHoveredTab] = useState<string | null>(null);
   const [hoveredTabX, setHoveredTabX] = useState<number | null>(null);
@@ -252,43 +266,24 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   const visibleTabs = ALL_TABS.filter(
     (t) => !modelHandlers || modelHandlers.length === 0 || modelHandlers.includes(TAB_HANDLER[t])
   );
-  const formatConfig: { resolutions?: string[]; ratios?: string[]; durations?: number[]; audio?: boolean; pricing?: Record<string, Record<string, number>> } = (() => {
-    if (!selectedModel?.config) return {};
-    try {
-      return JSON.parse(selectedModel.config);
-    } catch {
-      return {};
-    }
-  })();
-  const matrixCost = formatConfig.pricing?.[videoParam.resolution]?.[String(videoParam.duration)];
-  const pointCost = matrixCost ?? selectedModel?.pointCost ?? 135;
-
-  // 切换模型后当前比例/清晰度/时长不在该模型的可选档位 → 自动校正为其首个档位
-  useEffect(() => {
-    setVideoParam((p) => {
-      let next = p;
-      const { ratios, resolutions, durations } = formatConfig;
-      if (ratios?.length && !ratios.includes(p.ratio)) next = { ...next, ratio: ratios[0] };
-      if (resolutions?.length && !resolutions.includes(p.resolution)) next = { ...next, resolution: resolutions[0] };
-      if (durations?.length && !durations.includes(p.duration)) next = { ...next, duration: [...durations].sort((a, b) => a - b)[0] };
-      return next;
-    });
-    // formatConfig 由 selectedModelId 派生(引用每次渲染变化)，不列入依赖
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedModelId]);
+  const formatConfig = parseVideoModelConfig(selectedModel?.config);
+  const videoOptions = getVideoModelOptions(formatConfig);
+  const effectiveVideoParam = normalizeVideoParamSelection(formatConfig, videoParam);
+  const pointCost = calculateVideoBaseCost(formatConfig, effectiveVideoParam) ?? 0;
 
   // 视频卡片按所选比例渲染，缩放时维持比例
-  const ratioParsed = parseRatio(videoParam.ratio);
+  const ratioParsed = parseRatio(effectiveVideoParam.ratio);
   const cardAspect = ratioParsed ? ratioParsed.w / ratioParsed.h : 16 / 9;
   const { w: cardW, h: cardHeight } = fitVideoCardSize(cardAspect);
   const promptPanelW = Math.max(640, cardW + 32);
 
-  // 卡片实际渲染尺寸同步 store（连线锚点、整理布局与图片节点一致对齐）
+  // 卡片实际渲染尺寸同步 store（节点盒、连线锚点和可见卡片必须完全一致）。
+  // 只写 contentW/contentH 会让旧 node.width 容器继续居中卡片，造成左右端点距离不对称。
   useEffect(() => {
-    if (node.contentW !== cardW || node.contentH !== cardHeight) {
-      updateNode(node.id, { contentW: cardW, contentH: cardHeight });
+    if (node.width !== cardW || node.height !== cardHeight || node.contentW !== cardW || node.contentH !== cardHeight) {
+      updateNode(node.id, { width: cardW, height: cardHeight, contentW: cardW, contentH: cardHeight });
     }
-  }, [cardW, cardHeight, node.contentW, node.contentH, node.id, updateNode]);
+  }, [cardW, cardHeight, node.contentW, node.contentH, node.height, node.id, node.width, updateNode]);
 
   // 换源时重置缓存解析；若本地已缓存则直接用 blob（刷新/重挂也免下载）
   useEffect(() => {
@@ -364,26 +359,68 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       if (active && res.success) {
         const vids = res.data.filter((m) => m.type === AiModelType.VIDEO);
         setVideoModels(vids);
-        if (vids.length > 0) setSelectedModelId((prev) => prev || vids[0].modelId);
+        if (vids.length > 0) setSelectedModelId((prev) => vids.some((model) => model.modelId === prev) ? prev : vids[0].modelId);
       }
     }).catch(() => {});
     return () => { active = false; };
   }, []);
 
-  // 切换模型后，把视频参数收敛到该模型 config 允许的清晰度/比例/时长/音频，避免下发非法值
+  // 首次加载优先恢复节点自身参数；新节点才读取浏览器里该模型的最后一次选择。
   useEffect(() => {
     if (!selectedModel) return;
-    setVideoParam((prev) => {
-      const next = { ...prev };
-      if (formatConfig.resolutions?.length && !formatConfig.resolutions.includes(next.resolution)) next.resolution = formatConfig.resolutions[0];
-      if (formatConfig.ratios?.length && !formatConfig.ratios.includes(next.ratio)) next.ratio = formatConfig.ratios[0];
-      if (formatConfig.durations?.length && !formatConfig.durations.includes(next.duration)) next.duration = [...formatConfig.durations].sort((a, b) => a - b)[0];
-      if (formatConfig.audio === false) next.audio = false;
-      return next.resolution === prev.resolution && next.ratio === prev.ratio && next.duration === prev.duration && next.audio === prev.audio ? prev : next;
+    const nodeValue = node.videoModelId === selectedModel.modelId
+      ? {
+          ratio: node.aspectRatio,
+          resolution: node.videoResolution,
+          duration: node.videoDuration,
+          audio: node.videoAudio,
+        }
+      : readRememberedVideoParams(selectedModel.modelId);
+    const next = normalizeVideoParamSelection(parseVideoModelConfig(selectedModel.config), nodeValue);
+    setVideoParam((prev) => sameVideoParams(prev, next) ? prev : next);
+    updateNode(node.id, {
+      videoModelId: selectedModel.modelId,
+      aspectRatio: next.ratio,
+      videoResolution: next.resolution,
+      videoDuration: next.duration,
+      videoAudio: next.audio,
     });
-    // 仅在切换模型时收敛；formatConfig 随 selectedModelId 派生，无需进 deps
+    // 节点字段由本 effect 写回，不作为依赖，避免保存动作触发重复恢复。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedModelId]);
+  }, [selectedModel?.config, selectedModel?.modelId]);
+
+  const updateVideoParam = (value: VideoParamValue) => {
+    if (!selectedModel) return;
+    const next = normalizeVideoParamSelection(formatConfig, value);
+    setVideoParam(next);
+    updateNode(node.id, {
+      videoModelId: selectedModel.modelId,
+      aspectRatio: next.ratio,
+      videoResolution: next.resolution,
+      videoDuration: next.duration,
+      videoAudio: next.audio,
+    });
+    rememberVideoParams(selectedModel.modelId, next);
+  };
+
+  const selectVideoModel = (modelId: string) => {
+    const model = videoModels.find((item) => item.modelId === modelId);
+    setSelectedModelId(modelId);
+    if (!model) return;
+    const next = normalizeVideoParamSelection(
+      parseVideoModelConfig(model.config),
+      readRememberedVideoParams(modelId),
+    );
+    setVideoParam(next);
+    updateNode(node.id, {
+      videoModelId: modelId,
+      aspectRatio: next.ratio,
+      videoResolution: next.resolution,
+      videoDuration: next.duration,
+      videoAudio: next.audio,
+    });
+    rememberVideoParams(modelId, next);
+  };
 
   // 下载视频：经后端代理拉取（同源、无跨域），转 blob 触发下载，不导航刷新
   const handleDownload = useCallback(async (e: React.MouseEvent) => {
@@ -572,6 +609,10 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   };
 
   const handleGenerate = () => {
+    if (!selectedModel || !selectedModelId) {
+      toast.error("请先选择可用的视频模型");
+      return;
+    }
     const st = useCanvasStore.getState();
     const incoming = st.connections.filter((c) => c.targetId === node.id);
     const sources = incoming
@@ -584,7 +625,8 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         label: "参考文件",
       });
       if (message) { toast.error(message); return; }
-    }    const limit = TAB_LIMITS[videoTab];
+    }
+    const limit = TAB_LIMITS[videoTab];
     // 分别收集「真正有素材」的图片 / 视频参考 URL
     const imageUrls = sources.filter((n) => n.type === "image" && n.imageSrc).map((n) => n.imageSrc as string);
     const videoUrls = sources.filter((n) => n.type === "video" && n.videoSrc).map((n) => n.videoSrc as string);
@@ -595,13 +637,13 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       return;
     }
 
-    // 按模式选 handler，把图片/视频/文字喂给生成；模型无某维度(后台全不勾)时该参数不下发
+    // 按模式选 handler，把图片/视频/文字与已校验的视频参数提交给后端。
     const base: Record<string, unknown> = {
       prompt: node.prompt,
-      ...(!formatConfig.ratios || formatConfig.ratios.length ? { aspectRatio: videoParam.ratio } : {}),
-      ...(!formatConfig.resolutions || formatConfig.resolutions.length ? { resolution: videoParam.resolution } : {}),
-      ...(!formatConfig.durations || formatConfig.durations.length ? { duration: videoParam.duration } : {}),
-      ...(formatConfig.audio !== false ? { audio: videoParam.audio } : {}),
+      aspectRatio: effectiveVideoParam.ratio,
+      resolution: effectiveVideoParam.resolution,
+      duration: effectiveVideoParam.duration,
+      audio: effectiveVideoParam.audio,
     };
     let handler = "text_to_video";
     let input: Record<string, unknown> = base;
@@ -639,7 +681,11 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         contentH: node.contentH,
         title: node.title || "视频节点",
         prompt: node.prompt,
-        aspectRatio: node.aspectRatio,
+        aspectRatio: effectiveVideoParam.ratio,
+        videoModelId: selectedModelId,
+        videoResolution: effectiveVideoParam.resolution,
+        videoDuration: effectiveVideoParam.duration,
+        videoAudio: effectiveVideoParam.audio,
         status: "idle",
       }, true);
       // 克隆入边连线，使新节点拥有与原节点完全相同的参考输入
@@ -653,20 +699,21 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       }
     }
 
-    generate({ nodeId: targetNodeId, handler, modelId: selectedModelId || "default", input });
+    generate({ nodeId: targetNodeId, handler, modelId: selectedModelId, input });
   };
 
   return (
     <div
       data-node-id={node.id}
       className={`relative select-none ${isSelected ? "z-10" : ""}`}
-      style={{ width: node.width, cursor: isDragging ? "grabbing" : "grab" }}
+      style={{ width: cardW, cursor: isDragging ? "grabbing" : "grab" }}
     >
       <div className="relative mx-auto" style={{ width: cardW }}>
         <div
-          className={`relative overflow-hidden rounded-2xl bg-white shadow-sm ring-1 transition-all dark:bg-neutral-950 ${
+          data-node-selected={isSelected && !isConnectTarget ? "true" : undefined}
+          className={`canvas-node-selection-surface relative overflow-hidden rounded-2xl bg-white shadow-sm ring-1 transition-all dark:bg-neutral-950 ${
             isConnectTarget ? "ring-2 ring-blue-500/70" :
-            isSelected ? "ring-2 ring-neutral-400 dark:ring-neutral-600" : "ring-neutral-200 hover:ring-neutral-300 dark:ring-neutral-800 dark:hover:ring-neutral-700"
+            "ring-neutral-200 hover:ring-neutral-300 dark:ring-neutral-800 dark:hover:ring-neutral-700"
           }`}
           style={{ width: cardW, height: cardHeight }}
         >
@@ -750,7 +797,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
             <div className="flex h-full flex-col">
               <div className="flex flex-1 items-center justify-center p-6">
                 {(() => {
-                  const r = parseRatio(videoParam.ratio);
+                  const r = parseRatio(effectiveVideoParam.ratio);
                   const MAX_W = 280, MAX_H = 220;
                   let w = MAX_W, h = MAX_H;
                   if (r) {
@@ -816,7 +863,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
 
         {showAuxUI && (
           <NodeChrome zoom={zoom} placement="bottom-center" gap={18} damp={0.6}>
-            <div onMouseDown={stop} className="flex flex-col rounded-xl border border-neutral-200 bg-white p-3 shadow-xl shadow-neutral-900/10 dark:border-neutral-800 dark:bg-neutral-950 dark:shadow-black/30" style={{ width: promptPanelW, height: 250, boxSizing: "border-box" }}>
+            <div onMouseDown={stop} className="canvas-node-composer flex flex-col rounded-xl border border-neutral-200 bg-white p-3 shadow-xl shadow-neutral-900/10 dark:border-neutral-800 dark:bg-neutral-950 dark:shadow-black/30" style={{ width: promptPanelW, height: 250, boxSizing: "border-box" }}>
               {/* 模式 Tab */}
               <div ref={tabRowRef} className="relative flex items-center justify-between gap-1">
                 {hoveredTab && TAB_LIMITS[hoveredTab] && (
@@ -886,14 +933,14 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
               {/* 底部栏 */}
               <div className="mt-2 flex items-center justify-between gap-2">
                 <div className="flex flex-nowrap items-center gap-1 text-xs text-neutral-600 dark:text-neutral-400">
-                  <ModelPicker models={videoModels} value={selectedModelId} onChange={setSelectedModelId} />
+                  <ModelPicker models={videoModels} value={selectedModelId} onChange={selectVideoModel} />
                   <VideoParamPicker
-                    value={videoParam}
-                    onChange={setVideoParam}
-                    resolutions={formatConfig.resolutions}
-                    ratios={formatConfig.ratios}
-                    durations={formatConfig.durations}
-                    allowAudio={formatConfig.audio}
+                    value={effectiveVideoParam}
+                    onChange={updateVideoParam}
+                    resolutions={videoOptions.resolutions}
+                    ratios={videoOptions.ratios}
+                    durations={videoOptions.durations}
+                    allowAudio={videoOptions.allowAudio}
                   />
                 </div>
                 <div className="flex shrink-0 items-center gap-1 text-xs text-neutral-500">
@@ -905,9 +952,9 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                   <button
                     onMouseDown={stop}
                     onClick={(e) => { stop(e); if (node.prompt?.trim() && !generating) handleGenerate(); }}
-                    disabled={!node.prompt?.trim() || generating}
+                    disabled={!node.prompt?.trim() || !selectedModel || generating}
                     title={generating ? "生成中..." : "开始生成"}
-                    className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${(!node.prompt?.trim() || generating) ? "bg-neutral-100 text-neutral-400 dark:bg-neutral-800" : "bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"}`}
+                    className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${(!node.prompt?.trim() || !selectedModel || generating) ? "bg-neutral-100 text-neutral-400 dark:bg-neutral-800" : "bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"}`}
                   >
                     {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}
                   </button>

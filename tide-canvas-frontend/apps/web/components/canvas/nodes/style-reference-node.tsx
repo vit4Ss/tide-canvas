@@ -25,7 +25,7 @@ export const StyleReferenceNode = memo(function StyleReferenceNode({
   return (
     <div
       data-node-id={node.id}
-      className="relative select-none"
+      className={`relative select-none ${isSelected ? "z-10" : ""}`}
       style={{ width: node.width, minHeight: node.height }}
     >
       <div className="mb-2 flex h-5 min-w-0 items-center gap-1.5 text-[12px] font-medium text-neutral-600 dark:text-neutral-300">
@@ -34,12 +34,12 @@ export const StyleReferenceNode = memo(function StyleReferenceNode({
       </div>
 
       <div
-        className={`group relative overflow-hidden rounded-xl border bg-neutral-100 shadow-sm transition-all dark:bg-neutral-900 ${
+        data-node-selected={isSelected && !isConnectTarget ? "true" : undefined}
+        data-node-native-border="true"
+        className={`canvas-node-selection-surface group relative overflow-hidden rounded-xl border bg-neutral-100 shadow-sm transition-all dark:bg-neutral-900 ${
           isConnectTarget
             ? "border-blue-500 ring-2 ring-blue-400/40"
-            : isSelected
-              ? "border-blue-500 shadow-lg ring-2 ring-blue-400/40"
-              : "border-neutral-200 hover:border-neutral-300 hover:shadow-md dark:border-neutral-800"
+            : "border-neutral-200 hover:border-neutral-300 hover:shadow-md dark:border-neutral-800"
         }`}
         style={{ height: Math.max(180, node.height - 28) }}
       >

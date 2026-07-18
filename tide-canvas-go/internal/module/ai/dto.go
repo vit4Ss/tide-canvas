@@ -14,7 +14,6 @@ package ai
 
 import (
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 
@@ -76,10 +75,12 @@ func (q *PageQuery) Offset() int { return (q.PageNum - 1) * q.PageSize }
 // GenerateDTO 统一生成入口请求（对齐 AiGenerateDTO）。
 // input 为前端透传的生成参数（prompt / sourceImage / aspectRatio / batchCount 等），由各 Handler 校验消费。
 type GenerateDTO struct {
-	Handler   string                 `json:"handler"`
-	ModelID   string                 `json:"modelId"`
-	ProjectID string                 `json:"projectId"` // 画布 public_id（可空，旧版为内部主键 projectId）
-	Input     map[string]interface{} `json:"input"`
+	Handler        string                 `json:"handler"`
+	ModelID        string                 `json:"modelId"`
+	ProjectID      string                 `json:"projectId"` // 画布 public_id（可空，旧版为内部主键 projectId）
+	ConversationID string                 `json:"conversationId"`
+	MessageID      string                 `json:"messageId"`
+	Input          map[string]interface{} `json:"input"`
 }
 
 // GridSplitDTO 图片宫格切分请求：将 imageUrl 指向的图片均匀切成 rows×cols 块（对齐 GridSplitDTO）。
@@ -138,6 +139,7 @@ type ModelVO struct {
 	ModelID           string           `json:"modelId"`
 	Type              string           `json:"type"`
 	SupportedHandlers []string         `json:"supportedHandlers"` // 空/缺省表示不限制
+	Capabilities      map[string]any   `json:"capabilities"`
 	Config            string           `json:"config"`
 	PointCost         decimal.Decimal  `json:"pointCost"`
 	CostPerCall       *decimal.Decimal `json:"costPerCall"` // 仅管理端
@@ -270,8 +272,7 @@ func ceilToInt(total decimal.Decimal) int {
 	if total.Sign() <= 0 {
 		return 0
 	}
-	f, _ := total.Float64()
-	return int(math.Ceil(f - 1e-9))
+	return int(total.Ceil().IntPart())
 }
 
 // maskAPIKey API Key 脱敏：>8 位取前4+****+后4，否则 ****（对齐 AdminAiController.listProviders）。

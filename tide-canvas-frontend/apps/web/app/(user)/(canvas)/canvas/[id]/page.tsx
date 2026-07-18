@@ -12,6 +12,7 @@ import { ArrowLeft, Share2, Loader2, Check, Pencil, Coins, User, LogOut, Setting
 import { UiPreferencesDialog } from "@/components/canvas/ui-preferences-dialog";
 import Link from "next/link";
 import { toast } from "@/components/shared/toast";
+import canvasStyles from "@/components/canvas/styles/canvas-shell.module.css";
 
 const AUTOSAVE_DELAY = 800; // 普通节点编辑短防抖保存，避免拖拽/输入时频繁请求
 const STRUCTURAL_AUTOSAVE_DELAY = 0; // 新增/删除节点、连线、分组等结构变化立即保存
@@ -292,19 +293,19 @@ export default function CanvasEditorPage() {
   }
 
   return (
-    <div className="relative h-full w-full overflow-hidden">
-      <CanvasView />
+    <div className={`${canvasStyles.shell} relative h-full w-full overflow-hidden`}>
+      <CanvasView projectName={projectName} />
 
       {/* 左上浮层：返回 + 项目名（点击重命名） + 保存状态 */}
-      <div className="absolute left-4 top-4 z-20 flex items-center gap-2">
+      <div className={`${canvasStyles.topCluster} absolute left-4 top-4 z-50`}>
         <Link
           href="/user/projects"
           title="返回项目列表"
-          className="flex h-9 w-9 items-center justify-center rounded-xl border border-neutral-200 bg-white text-neutral-500 shadow-sm transition-colors hover:bg-neutral-100 hover:text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800"
+          className={canvasStyles.iconButton}
         >
           <ArrowLeft className="h-4 w-4" />
         </Link>
-        <div className="flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 py-2 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+        <div className={canvasStyles.projectPill}>
           {editingName ? (
             <input
               autoFocus
@@ -334,9 +335,9 @@ export default function CanvasEditorPage() {
       </div>
 
       {/* 右上浮层：积分余额 + 充值积分 + 头像菜单 + 分享 */}
-      <div className="absolute right-4 top-4 z-20 flex items-center gap-2">
+      <div className={`${canvasStyles.topCluster} absolute right-4 top-4 z-50`}>
         {/* 积分余额 + 充值积分 */}
-        <div className="flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+        <div className={canvasStyles.pointsPill}>
           <Coins className="h-4 w-4 text-amber-500" />
           <span className="font-medium tabular-nums">{user?.points ?? 0}</span>
           <span className="h-3.5 w-px bg-neutral-200 dark:bg-neutral-700" />
@@ -347,7 +348,7 @@ export default function CanvasEditorPage() {
 
         {/* 头像 + 账户菜单 */}
         <div className="relative" onMouseEnter={() => setUserMenuOpen(true)} onMouseLeave={() => setUserMenuOpen(false)}>
-          <button className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+          <button className={canvasStyles.avatarButton}>
             {user?.avatar ? (
 
               <img src={user.avatar} alt="" className="h-full w-full object-cover" />
@@ -357,7 +358,7 @@ export default function CanvasEditorPage() {
           </button>
           {userMenuOpen && (
             <div className="absolute right-0 top-full z-50 w-44 pt-1">
-              <div className="rounded-lg border border-neutral-200 bg-white py-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-900">
+              <div className={`${canvasStyles.menuPanel} py-1`}>
                 <div className="truncate px-4 py-2 text-xs text-neutral-400">{user?.nickname || user?.username || "未登录"}</div>
                 <div className="my-1 border-t border-neutral-200 dark:border-neutral-700" />
                 <Link href="/user" onClick={() => setUserMenuOpen(false)} className="flex items-center gap-2 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"><User className="h-4 w-4" />个人中心</Link>
@@ -378,13 +379,13 @@ export default function CanvasEditorPage() {
           type="button"
           onClick={() => setUiPreferencesOpen(true)}
           title="界面设置"
-          className="flex h-9 w-9 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 shadow-sm transition-colors hover:bg-neutral-100 hover:text-neutral-900 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:hover:text-white"
+          className={canvasStyles.secondaryButton}
         >
           <SlidersHorizontal className="h-4 w-4" />
         </button>
 
         {/* 分享 */}
-        <button onClick={handleShare} title="分享" className="flex h-9 w-9 items-center justify-center rounded-full bg-neutral-900 text-white shadow-sm transition-colors hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200">
+        <button onClick={handleShare} title="分享" className={canvasStyles.primaryButton}>
           <Share2 className="h-4 w-4" />
         </button>
       </div>

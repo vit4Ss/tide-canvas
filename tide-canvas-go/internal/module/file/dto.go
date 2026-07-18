@@ -12,6 +12,8 @@ type PresignReq struct {
 	ContentType string `json:"contentType"`
 	// FileType 可选，不传则由 contentType 推断 image / video / other。
 	FileType string `json:"fileType"`
+	// Purpose 区分素材库上传与会话临时附件；conversation 不会自动出现在资产库。
+	Purpose string `json:"purpose"`
 }
 
 // RegisterReq 前端直传完成后登记文件请求（对齐 FileRegisterDTO）。
@@ -24,6 +26,13 @@ type RegisterReq struct {
 	ContentType string `json:"contentType"`
 	// FileType 仅占位：同 ContentType，以票据为准。
 	FileType string `json:"fileType"`
+}
+
+// StorageUsageVO 当前用户物理文件空间统计，同一文件的多个业务引用只计算一次。
+type StorageUsageVO struct {
+	UsedBytes  int64   `json:"usedBytes"`
+	QuotaBytes int64   `json:"quotaBytes"`
+	Percentage float64 `json:"percentage"`
 }
 
 // SystemUploadVO 系统配置类图片上传结果。记录写入 sys_admin_file，不写入 sys_file 素材表。
@@ -84,7 +93,7 @@ type FileVO struct {
 	// ID 对外公开ID（public_id）。
 	ID string `json:"id"`
 	// OwnerID 归属用户对外ID（团队共享时前端据此区分自己/队友的素材）。
-	OwnerID string `json:"ownerId"`
+	OwnerID      string    `json:"ownerId"`
 	OriginalName string    `json:"originalName"`
 	FileURL      string    `json:"fileUrl"`
 	FileSize     int64     `json:"fileSize"`

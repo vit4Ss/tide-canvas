@@ -1,9 +1,10 @@
 "use client";
 
-import { type CSSProperties, type ReactNode } from "react";
+import { useCallback, useRef, type CSSProperties, type ReactNode } from "react";
 import { Popover } from "@mantine/core";
 import { ChevronDown, RectangleHorizontal, SlidersHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useDismissibleCanvasOverlay, useExclusiveCanvasOverlay } from "../../canvas-overlay-coordinator";
 import styles from "../styles/parameter-dropdown.module.css";
 import type { ImageQuality, ParamSectionProps, QualityRatioValue, RatioOption } from "../types/quality-ratio";
 import {
@@ -24,6 +25,7 @@ interface QualityRatioDropdownProps {
   ratios?: readonly string[];
   batchCount?: number;
   compact?: boolean;
+  composer?: boolean;
 }
 
 // 中文注释：画质、清晰度和尺寸的组合下拉，首页和画布节点共用同一套交互与视觉。
@@ -37,15 +39,21 @@ export function QualityRatioDropdown({
   ratios,
   batchCount,
   compact = false,
+  composer = false,
 }: QualityRatioDropdownProps) {
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const closeOverlay = useCallback(() => onOpenChange(false), [onOpenChange]);
+  const announceOpen = useExclusiveCanvasOverlay(open, closeOverlay, "quality-ratio");
+  useDismissibleCanvasOverlay(open, closeOverlay, [triggerRef, panelRef]);
   const qualityOptions = qualities ? QUALITY_OPTIONS.filter((option) => qualities.includes(option.value)) : QUALITY_OPTIONS;
   const clarityOptions = clarities ? CLARITY_OPTIONS.filter((option) => clarities.includes(option)) : CLARITY_OPTIONS;
   const ratioOptions = ratios ? RATIO_OPTIONS.filter((option) => ratios.includes(option.value)) : RATIO_OPTIONS;
 
   const dropdownPanel = (
-    <div className={styles.panelInner} onMouseDown={(event) => event.stopPropagation()}>
+    <div className={styles.panelInner} onMouseDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
       {qualityOptions.length > 0 && (
-        <ParamSection title="图像质量">
+        <ParamSection title={composer ? "图像质量" : "画质"}>
           <SegmentedRow count={qualityOptions.length}>
             {qualityOptions.map((option) => (
               <SegmentButton key={option.value} active={value.quality === option.value} onClick={() => onChange({ ...value, quality: option.value })}>
@@ -69,7 +77,7 @@ export function QualityRatioDropdown({
       )}
 
       {ratioOptions.length > 0 && (
-        <ParamSection title="图片尺寸">
+        <ParamSection title={composer ? "图片尺寸" : "比例"}>
           <div className={styles.ratioGrid}>
             {ratioOptions.map((option) => (
               <RatioTile
@@ -89,12 +97,12 @@ export function QualityRatioDropdown({
     <Popover
       opened={open}
       onChange={onOpenChange}
-      width={420}
-      position="bottom-start"
+      width={composer ? 420 : 344}
+      position={composer ? "top-start" : "bottom-start"}
       offset={8}
       withinPortal
       floatingStrategy="fixed"
-      zIndex={1000}
+      zIndex={1200}
       radius={12}
       shadow="none"
       middlewares={{ flip: true, shift: { padding: 12 }, inline: true }}
@@ -103,12 +111,14 @@ export function QualityRatioDropdown({
     >
       <Popover.Target>
         <button
+          ref={triggerRef}
           type="button"
           onClick={(event) => {
             event.stopPropagation();
+            if (!open) announceOpen();
             onOpenChange(!open);
           }}
-          className={cn(styles.trigger, compact && styles.triggerCompact)}
+          className={cn(styles.trigger, compact && styles.triggerCompact, composer && styles.triggerComposer)}
           aria-expanded={open}
           title="选择图片参数"
         >
@@ -118,7 +128,7 @@ export function QualityRatioDropdown({
         </button>
       </Popover.Target>
 
-      <Popover.Dropdown className={styles.panel}>
+      <Popover.Dropdown ref={panelRef} className={cn(styles.panel, composer && styles.panelComposer)}>
         {dropdownPanel}
       </Popover.Dropdown>
     </Popover>

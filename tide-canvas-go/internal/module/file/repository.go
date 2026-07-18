@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/tidecanvas/tide-canvas-go/internal/model"
 )
@@ -74,9 +75,55 @@ func (r *Repository) DeleteByID(id int64) error {
 	return r.db.Delete(&model.SysFile{}, id).Error
 }
 
+func (r *Repository) DeleteExtractedDocument(fileID int64) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var documents []model.AiDocument
+		if err := tx.Where("file_id = ?", fileID).Find(&documents).Error; err != nil {
+			return err
+		}
+		for _, document := range documents {
+			if err := tx.Where("document_id = ?", document.ID).Delete(&model.AiDocumentChunk{}).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Where("file_id = ?", fileID).Delete(&model.AiDocument{}).Error
+	})
+}
+
+// CreateReference records a business reference without duplicating the physical file.
+func (r *Repository) CreateReference(ref *model.SysFileReference) error {
+	return r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(ref).Error
+}
+
+func (r *Repository) DeleteReference(fileID int64, bizType string, bizID int64) error {
+	return r.db.Where("file_id = ? AND biz_type = ? AND biz_id = ?", fileID, bizType, bizID).
+		Delete(&model.SysFileReference{}).Error
+}
+
+func (r *Repository) DeleteReferencesForFile(fileID int64) error {
+	return r.db.Where("file_id = ?", fileID).Delete(&model.SysFileReference{}).Error
+}
+
+func (r *Repository) CountReferences(fileID int64) (int64, error) {
+	var total int64
+	err := r.db.Model(&model.SysFileReference{}).Where("file_id = ?", fileID).Count(&total).Error
+	return total, err
+}
+
+func (r *Repository) FindOwnedByIDs(userID int64, ids []int64) ([]model.SysFile, error) {
+	var rows []model.SysFile
+	if len(ids) == 0 {
+		return rows, nil
+	}
+	err := r.db.Where("user_id = ? AND id IN ?", userID, ids).Find(&rows).Error
+	return rows, err
+}
+
 // Page 团队共享素材库分页：归属用户在 ownerIDs 内，可选按 fileType 精确、originalName 模糊，按创建时间倒序。
 func (r *Repository) Page(ownerIDs []int64, fileType, keyword string, pageNum, pageSize int) ([]model.SysFile, int64, error) {
-	q := r.db.Model(&model.SysFile{}).Where("user_id IN ?", ownerIDs)
+	q := r.db.Model(&model.SysFile{}).
+		Where("user_id IN ?", ownerIDs).
+		Where("EXISTS (SELECT 1 FROM sys_file_reference sfr WHERE sfr.file_id = sys_file.id AND sfr.biz_type = ?)", "asset")
 	if fileType != "" {
 		q = q.Where("file_type = ?", fileType)
 	}

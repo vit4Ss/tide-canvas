@@ -70,6 +70,7 @@ func (h *Handler) RegisterRoutes(api gin.IRouter, jwtProvider *appjwt.Provider, 
 	g.POST("/register", h.register)
 	g.POST("/save-from-url", h.saveFromURL)
 	g.GET("/download", h.download)
+	g.GET("/storage-usage", h.storageUsage)
 	g.GET("", h.list)
 	g.GET("/:id", h.get)
 	g.DELETE("/:id", h.delete)
@@ -86,7 +87,12 @@ func (h *Handler) upload(c *gin.Context) {
 		response.FailErr(c, err)
 		return
 	}
-	vo, err := h.svc.Upload(middleware.MustUserID(c), data, fh.Filename, fh.Header.Get("Content-Type"))
+	var vo *FileVO
+	if normalizeUploadPurpose(c.PostForm("purpose")) == "conversation" {
+		vo, err = h.svc.UploadConversationAttachment(middleware.MustUserID(c), data, fh.Filename, fh.Header.Get("Content-Type"))
+	} else {
+		vo, err = h.svc.Upload(middleware.MustUserID(c), data, fh.Filename, fh.Header.Get("Content-Type"))
+	}
 	if err != nil {
 		response.FailErr(c, err)
 		return
@@ -191,6 +197,15 @@ func (h *Handler) list(c *gin.Context) {
 		return
 	}
 	response.OK(c, response.Page(vos, total, q.PageNum, q.PageSize))
+}
+
+func (h *Handler) storageUsage(c *gin.Context) {
+	vo, err := h.svc.StorageUsage(middleware.MustUserID(c))
+	if err != nil {
+		response.FailErr(c, err)
+		return
+	}
+	response.OK(c, vo)
 }
 
 func (h *Handler) get(c *gin.Context) {

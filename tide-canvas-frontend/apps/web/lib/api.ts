@@ -1,4 +1,4 @@
-import { http, toParams } from "./http";
+import { fetchWithAuth, http, toParams } from "./http";
 import type { PageData, PageQuery, PageResult, Result } from "@/types/api";
 import type {
   UserVO, LoginVO, UserLoginDTO, UserRegisterDTO, UpdatePasswordDTO, UpdateProfileDTO,
@@ -9,10 +9,14 @@ import type {
   ProjectCreateDTO, ProjectUpdateDTO, CanvasSaveDTO, ProjectQuery,
 } from "@/types/canvas";
 import type {
-  AiTaskVO, AiModelVO, AiIconAssetVO, AiHandlerVO, AiGenerateDTO, AiTaskQuery,
+  AiTaskVO, AiModelVO, AiIconAssetVO, AiHandlerVO, AiGenerateDTO, AiTaskQuery, AiTaskStreamEvent,
   AiGenerationLogVO, AiGenerationLogQuery,
 } from "@/types/ai";
-import type { FileVO, FileQuery, SystemUploadVO } from "@/types/file";
+import type { FileVO, FileQuery, SystemUploadVO, StorageUsageVO } from "@/types/file";
+import type {
+  CreationConversationVO, CreationMode, AppendConversationMessageDTO,
+  ConversationMessageVO, UpdateConversationMessageDTO,
+} from "@/types/conversation";
 import type {
   DashboardOverviewVO, DashboardChartsVO, AdminUserVO, AdminUserQuery,
   AdminUserCreateDTO, AdminUserUpdateDTO, AdminUserPasswordResetDTO, BannerVO, BannerCreateDTO, BannerUpdateDTO,
@@ -120,6 +124,37 @@ export const aiApi = {
     http.post<string[]>("/api/ai/grid-split", { imageUrl, rows, cols, ...(cells && cells.length ? { cells } : {}) }),
   getTask: (taskId: string | number) =>
     http.get<AiTaskVO>(`/api/ai/tasks/${taskId}`),
+  streamTask: async (
+    taskId: string | number,
+    onEvent: (event: AiTaskStreamEvent) => void,
+    signal?: AbortSignal,
+  ) => {
+    const response = await fetchWithAuth(`/api/ai/tasks/${taskId}/stream`, {
+      method: "GET",
+      headers: { Accept: "text/event-stream" },
+      signal,
+    });
+    if (!response.ok || !response.body) throw new Error(`流式连接失败 (HTTP ${response.status})`);
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      let boundary = buffer.indexOf("\n\n");
+      while (boundary >= 0) {
+        const frame = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        const payload = frame.split("\n")
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice(5).trim())
+          .join("\n");
+        if (payload) onEvent(JSON.parse(payload) as AiTaskStreamEvent);
+        boundary = buffer.indexOf("\n\n");
+      }
+      if (done) break;
+    }
+  },
   cancelTask: (taskId: string | number) =>
     http.delete<void>(`/api/ai/tasks/${taskId}`),
   listTasks: (query: AiTaskQuery) =>
@@ -137,6 +172,23 @@ export const aiApi = {
 export const assistantApi = {
   petStyles: () =>
     http.get<AssistantPetStyle[]>("/api/settings/assistant-pet-styles"),
+};
+
+export const conversationApi = {
+  list: (query: { pageNum?: number; pageSize?: number } = {}) =>
+    http.get<PageResult<CreationConversationVO>["data"]>("/api/conversations", query),
+  create: (mode: CreationMode) =>
+    http.post<CreationConversationVO>("/api/conversations", { mode }),
+  get: (id: string) =>
+    http.get<CreationConversationVO>(`/api/conversations/${id}`),
+  update: (id: string, data: { title?: string; pinned?: boolean; activeLeafMessageId?: string }) =>
+    http.patch<CreationConversationVO>(`/api/conversations/${id}`, data),
+  delete: (id: string) =>
+    http.delete<void>(`/api/conversations/${id}`),
+  appendMessage: (id: string, data: AppendConversationMessageDTO) =>
+    http.post<ConversationMessageVO>(`/api/conversations/${id}/messages`, data),
+  updateMessage: (id: string, messageId: string, data: UpdateConversationMessageDTO) =>
+    http.patch<ConversationMessageVO>(`/api/conversations/${id}/messages/${messageId}`, data),
 };
 
 export const styleApi = {
@@ -187,12 +239,13 @@ export const fileApi = {
     }
     return http.upload<FileVO[]>("/api/files/upload/batch", formData);
   },
-  presign: (data: { filename: string; contentType: string; fileType?: string }) =>
+  presign: (data: { filename: string; contentType: string; fileType?: string; purpose?: "asset" | "conversation" }) =>
     http.post<FilePresignVO>("/api/files/presign", data),
   register: (data: { key: string; originalName: string; contentType: string; fileType?: string }) =>
     http.post<FileVO>("/api/files/register", data),
   list: (query: FileQuery) =>
     http.get<PageResult<FileVO>["data"]>("/api/files", toParams(query)),
+  storageUsage: () => http.get<StorageUsageVO>("/api/files/storage-usage"),
   saveFromUrl: (data: { url: string; fileType?: string; originalName?: string }) =>
     http.post<FileVO>("/api/files/save-from-url", data),
   get: (id: number) =>
@@ -205,13 +258,17 @@ export const fileApi = {
  * 鏅鸿兘涓婁紶锛歄SS 鐜璧般€屽墠绔洿浼犮€?presign 鈫?娴忚鍣?PUT 鍒?OSS 鈫?register)锛屾枃浠朵笉缁忓悗绔€佺渷甯﹀銆佹敮鎸佸ぇ鏂囦欢锛?
  * 鏈湴瀛樺偍鎴栫洿浼犱笉鍙敤鏃惰嚜鍔ㄥ洖閫€鍒版湇鍔″櫒涓浆涓婁紶銆備袱绉嶈矾寰勯兘閫氳繃 onProgress 涓婃姤杩涘害锛岃繑鍥?Result<FileVO>銆?
  */
-export async function uploadFileSmart(file: File, onProgress?: (pct: number) => void, options?: UploadLimitOptions): Promise<Result<FileVO>> {
+export async function uploadFileSmart(
+  file: File,
+  onProgress?: (pct: number) => void,
+  options?: UploadLimitOptions & { purpose?: "asset" | "conversation" },
+): Promise<Result<FileVO>> {
   const uploadLimit = resolveUploadLimitBytes(options?.maxBytes);
   const tooLarge = fileSizeExceededResult<FileVO>(file, { ...options, maxBytes: uploadLimit });
   if (tooLarge) return tooLarge;
   const contentType = file.type || "application/octet-stream";
   try {
-    const pre = await fileApi.presign({ filename: file.name, contentType });
+    const pre = await fileApi.presign({ filename: file.name, contentType, purpose: options?.purpose });
     if (pre.success && pre.data?.direct && pre.data.uploadUrl && pre.data.key) {
       const put = await http.putProgress(pre.data.uploadUrl, file, { "Content-Type": pre.data.contentType || contentType }, onProgress);
       if (put.ok) {
@@ -222,6 +279,12 @@ export async function uploadFileSmart(file: File, onProgress?: (pct: number) => 
     }
   } catch {
     // presign 寮傚父 鈫?鍥為€€涓浆涓婁紶
+  }
+  if (options?.purpose === "conversation") {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("purpose", "conversation");
+    return http.uploadProgress<FileVO>("/api/files/upload", formData, onProgress);
   }
   return http.uploadProgress<FileVO>("/api/files/upload", file, onProgress);
 }

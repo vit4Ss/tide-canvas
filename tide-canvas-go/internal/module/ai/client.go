@@ -1,8 +1,10 @@
 package ai
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"strings"
 	"time"
@@ -79,12 +81,14 @@ const maxReferenceImages = 8
 // service 启动任务时按当前 taskID 构造，传入 client；Runware 视频轮询期间回写 1~99 进度。
 type progressReporter interface {
 	report(progress int)
+	reportText(content string) bool
 }
 
 // noopProgress 空实现（同步/无进度场景）。
 type noopProgress struct{}
 
-func (noopProgress) report(int) {}
+func (noopProgress) report(int)             {}
+func (noopProgress) reportText(string) bool { return true }
 
 // upstreamLog 一次上游调用日志（client 产出，service 落库；替代旧 GenerationLogRecorder + 上下文回填）。
 // service 调用 client 前传入 taskID/userID/projectID/handler，client 仅填上游交互字段。
@@ -211,6 +215,13 @@ func (g *Gateway) chat(p *model.AiProvider, modelID string, input map[string]int
 	return g.relay.chat(p, modelID, input, ctx)
 }
 
+func (g *Gateway) chatStream(p *model.AiProvider, modelID string, input map[string]interface{}, pr progressReporter, ctx logCtx) (string, error) {
+	if isRunware(p) {
+		return "", fmt.Errorf("当前供应商不支持助手对话，请在后台给文本模型关联 OpenAI 兼容供应商")
+	}
+	return g.relay.chatStream(p, modelID, input, pr, ctx)
+}
+
 // logCtx 上游日志归属上下文（替代旧 GenerationLogContext.Ctx + ThreadLocal）。
 // recorded 为本次执行「是否已产生上游调用日志」的标志位指针：client 落库一条上游日志即置位，
 // service 据此决定要不要补记任务级 summary 日志。每次执行新建一个，goroutine 间互不干扰。
@@ -289,9 +300,9 @@ func (c *relayClient) generateVideo(p *model.AiProvider, modelID, prompt string,
 	if len(media) > 0 {
 		body["content"] = media
 	}
-	ratio := ratioOf(input)
+	ratio := requestedVideoRatio(input)
 	if hasText(ratio) {
-		// 文档比例集含 adaptive（自适应）；前端的 auto 归一为 adaptive
+		// Seedance 协议比例集含 adaptive（自适应）；前端的 auto 归一为 adaptive。
 		if ratio == "auto" {
 			body["ratio"] = "adaptive"
 		} else {
@@ -301,6 +312,7 @@ func (c *relayClient) generateVideo(p *model.AiProvider, modelID, prompt string,
 	putIfText(body, "resolution", resolutionOf(input))
 	putIfText(body, "duration", durationStr(input))
 	putIfText(body, "fps", strOf(input["fps"]))
+	body["generate_audio"] = requestedVideoAudio(input)
 	return c.submitAndResolve(p, "/contents/generations/tasks", body, ctx)
 }
 
@@ -362,6 +374,127 @@ func (c *relayClient) chat(p *model.AiProvider, modelID string, input map[string
 		return "", fmt.Errorf("%s", msg)
 	}
 	c.recordLog("chat", fullURL, body, code, raw, root.Get("id").String(), true, "", "", start, ctx)
+	return content, nil
+}
+
+// chatStream consumes an OpenAI-compatible SSE response and persists partial text through pr.
+func (c *relayClient) chatStream(p *model.AiProvider, modelID string, input map[string]interface{}, pr progressReporter, ctx logCtx) (string, error) {
+	body := map[string]interface{}{
+		"model":    c.resolveModelName(modelID, p, "gpt-4o-mini"),
+		"messages": buildChatMessages(input),
+		"stream":   true,
+	}
+	if temp, ok := input["temperature"].(float64); ok {
+		body["temperature"] = temp
+	}
+	if maxTokens := strOf(input["maxTokens"]); hasText(maxTokens) {
+		body["max_tokens"] = maxTokens
+	}
+
+	start := time.Now()
+	fullURL := baseURL(p) + "/chat/completions"
+	resp, err := c.http.R().
+		SetHeader("Authorization", "Bearer "+p.APIKey).
+		SetHeader("Content-Type", "application/json").
+		SetHeader("Accept", "text/event-stream").
+		SetDoNotParseResponse(true).
+		SetBody(body).
+		Post(fullURL)
+	if err != nil {
+		c.recordLog("chat_stream", fullURL, body, 0, "", "", false, "", err.Error(), start, ctx)
+		return "", err
+	}
+	if resp == nil || resp.RawResponse == nil {
+		return "", fmt.Errorf("上游返回为空")
+	}
+	defer func() { _ = resp.RawResponse.Body.Close() }()
+	if resp.StatusCode() >= 400 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.RawResponse.Body, 65536))
+		message := strings.TrimSpace(string(raw))
+		if root := tryParseJSON(message); root.Exists() {
+			message = errorMessage(root, resp.StatusCode())
+		}
+		c.recordLog("chat_stream", fullURL, body, resp.StatusCode(), string(raw), "", false, "", message, start, ctx)
+		return "", fmt.Errorf("%s", message)
+	}
+	if !strings.Contains(strings.ToLower(resp.Header().Get("Content-Type")), "text/event-stream") {
+		raw, readErr := io.ReadAll(io.LimitReader(resp.RawResponse.Body, 2*1024*1024))
+		if readErr != nil {
+			return "", readErr
+		}
+		root := tryParseJSON(string(raw))
+		content := extractChatContent(root)
+		if !hasText(content) {
+			return "", fmt.Errorf("上游未返回聊天内容")
+		}
+		if !pr.reportText(content) {
+			return "", fmt.Errorf("任务已取消")
+		}
+		c.recordLog("chat_stream", fullURL, body, resp.StatusCode(), string(raw), root.Get("id").String(), true, "", "", start, ctx)
+		return content, nil
+	}
+
+	scanner := bufio.NewScanner(resp.RawResponse.Body)
+	scanner.Buffer(make([]byte, 16*1024), 2*1024*1024)
+	var answer strings.Builder
+	var rawLog strings.Builder
+	lastReport := time.Time{}
+	upstreamID := ""
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, ":") {
+			continue
+		}
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if payload == "[DONE]" {
+			break
+		}
+		if rawLog.Len() < 65536 {
+			rawLog.WriteString(payload)
+			rawLog.WriteByte('\n')
+		}
+		root := tryParseJSON(payload)
+		if !root.Exists() {
+			continue
+		}
+		if upstreamID == "" {
+			upstreamID = root.Get("id").String()
+		}
+		if root.Get("error").Exists() {
+			message := errorMessage(root, resp.StatusCode())
+			c.recordLog("chat_stream", fullURL, body, resp.StatusCode(), rawLog.String(), upstreamID, false, "", message, start, ctx)
+			return "", fmt.Errorf("%s", message)
+		}
+		delta := root.Get("choices.0.delta.content").String()
+		if delta == "" {
+			delta = root.Get("delta.text").String()
+		}
+		if delta == "" {
+			continue
+		}
+		answer.WriteString(delta)
+		if time.Since(lastReport) >= 80*time.Millisecond {
+			if !pr.reportText(answer.String()) {
+				return "", fmt.Errorf("任务已取消")
+			}
+			lastReport = time.Now()
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		c.recordLog("chat_stream", fullURL, body, resp.StatusCode(), rawLog.String(), upstreamID, false, "", err.Error(), start, ctx)
+		return "", err
+	}
+	content := strings.TrimSpace(answer.String())
+	if content == "" {
+		return "", fmt.Errorf("上游未返回聊天内容")
+	}
+	if !pr.reportText(content) {
+		return "", fmt.Errorf("任务已取消")
+	}
+	c.recordLog("chat_stream", fullURL, body, resp.StatusCode(), rawLog.String(), upstreamID, true, "", "", start, ctx)
 	return content, nil
 }
 
@@ -520,7 +653,7 @@ func (c *relayClient) recordLog(operation, url string, body map[string]interface
 		OperationType:  "ai_generate",
 		RequestURL:     url,
 		Model:          strOf(body["model"]),
-		RequestBody:    jsonString(body),
+		RequestBody:    jsonString(redactLargeInlineContent(body)),
 		ResponseBody:   respBody,
 		UpstreamTaskID: upstreamTaskID,
 		Success:        success,
@@ -533,6 +666,34 @@ func (c *relayClient) recordLog(operation, url string, body map[string]interface
 	c.sink.sink(lg, ctx)
 	if ctx.recorded != nil {
 		*ctx.recorded = true
+	}
+}
+
+func redactLargeInlineContent(value interface{}) interface{} {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(typed))
+		for key, item := range typed {
+			if key == "dataURL" || key == "extractedText" {
+				out[key] = "[omitted]"
+				continue
+			}
+			out[key] = redactLargeInlineContent(item)
+		}
+		return out
+	case []interface{}:
+		out := make([]interface{}, len(typed))
+		for index, item := range typed {
+			out[index] = redactLargeInlineContent(item)
+		}
+		return out
+	case string:
+		if strings.HasPrefix(typed, "data:") && len(typed) > 256 {
+			return "[inline data omitted]"
+		}
+		return typed
+	default:
+		return value
 	}
 }
 
@@ -780,6 +941,7 @@ func (c *runwareClient) generateVideo(p *model.AiProvider, modelID, prompt strin
 		}
 	}
 	c.mergeModelExtras(task, p.ID, modelID)
+	applyRunwareVideoAudio(task, modelID, requestedVideoAudio(input))
 
 	start := time.Now()
 	fullURL := baseURL(p)

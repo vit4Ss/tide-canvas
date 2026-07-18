@@ -6,6 +6,7 @@ import { Box, Check, Heart, ImageIcon, Loader2, Plus, Search, Sparkles, X } from
 import { styleApi } from "@/lib/api";
 import { toast } from "@/components/shared/toast";
 import type { StylePresetSource, StylePresetVO } from "@/types/style";
+import { useExclusiveCanvasOverlay } from "../canvas-overlay-coordinator";
 
 export interface ImageStylePreset {
   id: string;
@@ -110,6 +111,8 @@ export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId,
   const [customForm, setCustomForm] = useState(emptyCustomForm);
   const [creating, setCreating] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const closeOverlay = useCallback(() => setOpen(false), []);
+  const announceOpen = useExclusiveCanvasOverlay(open, closeOverlay, "image-style");
 
   const activeStyle = useMemo<ImageStylePreset>(() => {
     if (!value || value === DEFAULT_STYLE_PRESET.id) return DEFAULT_STYLE_PRESET;
@@ -232,11 +235,11 @@ export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId,
         key={preset.id}
         type="button"
         onClick={() => choosePreset(toPickerPreset(preset, modelId))}
-        className={`group relative overflow-hidden rounded-xl border bg-white text-left transition hover:-translate-y-0.5 hover:shadow-lg ${
-          active ? "border-neutral-950 shadow-md" : "border-neutral-200 hover:border-neutral-300"
+        className={`group relative overflow-hidden rounded-xl border bg-white text-left transition hover:-translate-y-0.5 hover:shadow-lg dark:bg-[#25262b] ${
+          active ? "border-neutral-950 shadow-md dark:border-white" : "border-neutral-200 hover:border-neutral-300 dark:border-white/10 dark:hover:border-white/20"
         }`}
       >
-        <div className="relative aspect-[4/5] overflow-hidden bg-neutral-100">
+        <div className="relative aspect-[4/5] overflow-hidden bg-neutral-100 dark:bg-white/8">
           {preset.coverUrl ? (
 
             <img src={preset.coverUrl} alt={preset.name} className="h-full w-full object-cover" loading="lazy" />
@@ -252,8 +255,8 @@ export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId,
         <div className="space-y-2 p-3.5">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-neutral-950">{preset.name}</div>
-              <div className="mt-0.5 truncate text-xs text-neutral-500">{preset.authorName || "TideCanvas"}</div>
+              <div className="truncate text-sm font-semibold text-neutral-950 dark:text-white">{preset.name}</div>
+              <div className="mt-0.5 truncate text-xs text-neutral-500 dark:text-neutral-400">{preset.authorName || "TideCanvas"}</div>
             </div>
             <span
               role="button"
@@ -262,14 +265,14 @@ export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId,
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") toggleFavorite(event as unknown as ReactMouseEvent, preset);
               }}
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border transition ${preset.favorited ? "border-rose-200 bg-rose-50 text-rose-500" : "border-neutral-200 bg-white text-neutral-400 hover:text-neutral-700"}`}
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border transition ${preset.favorited ? "border-rose-200 bg-rose-50 text-rose-500 dark:border-rose-400/30 dark:bg-rose-400/10" : "border-neutral-200 bg-white text-neutral-400 hover:text-neutral-700 dark:border-white/10 dark:bg-white/5 dark:hover:text-white"}`}
               title={preset.favorited ? "取消收藏" : "收藏"}
             >
               <Heart className={`h-3.5 w-3.5 ${preset.favorited ? "fill-current" : ""}`} />
             </span>
           </div>
-          <p className="line-clamp-2 h-10 text-xs leading-5 text-neutral-500">{preset.description || preset.prompt}</p>
-          <div className="text-xs text-neutral-400">使用 {preset.usageCount ?? 0}</div>
+          <p className="line-clamp-2 h-10 text-xs leading-5 text-neutral-500 dark:text-neutral-400">{preset.description || preset.prompt}</p>
+          <div className="text-xs text-neutral-400 dark:text-neutral-500">使用 {preset.usageCount ?? 0}</div>
         </div>
       </button>
     );
@@ -282,7 +285,7 @@ export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId,
         aria-expanded={open}
         aria-haspopup="dialog"
         title={hasStyle ? activeStyle.name : "选择风格"}
-        onClick={(event) => { stop(event); setOpen(true); }}
+        onClick={(event) => { stop(event); announceOpen(); setOpen(true); }}
         className={`flex h-12 w-12 shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg border text-[11px] leading-tight transition-colors ${
           hasStyle
             ? "border-neutral-950 bg-neutral-950 text-white shadow-sm dark:border-white dark:bg-white dark:text-neutral-950"
@@ -294,22 +297,22 @@ export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId,
       </button>
 
       {open && typeof document !== "undefined" && createPortal(
-        <div className="fixed inset-0 z-[240] flex items-center justify-center bg-black/35 p-8 backdrop-blur-[2px]" onMouseDown={() => setOpen(false)}>
+        <div className="fixed inset-0 z-[1300] flex items-center justify-center bg-black/35 p-8 backdrop-blur-[2px]" onMouseDown={() => setOpen(false)}>
           <section
             role="dialog"
             aria-modal="true"
             aria-label="选择风格"
-            className="flex h-[min(820px,calc(100vh-80px))] w-[min(1360px,calc(100vw-96px))] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl shadow-black/25"
+            className="flex h-[min(820px,calc(100vh-80px))] w-[min(1360px,calc(100vw-96px))] flex-col overflow-hidden rounded-2xl border border-black/[0.06] bg-white text-neutral-950 shadow-2xl shadow-black/25 dark:border-white/10 dark:bg-[#202124] dark:text-white"
             onMouseDown={stop}
           >
-            <header className="flex items-center gap-5 border-b border-neutral-100 px-7 py-4">
-              <div className="flex gap-1 rounded-xl bg-neutral-100/80 p-1.5">
+            <header className="flex items-center gap-5 border-b border-neutral-100 px-7 py-4 dark:border-white/10">
+              <div className="flex gap-1 rounded-xl bg-neutral-100/80 p-1.5 dark:bg-white/8">
                 {SOURCE_TABS.map((tab) => (
                   <button
                     key={tab.value}
                     type="button"
                     onClick={() => setSource(tab.value)}
-                    className={`rounded-lg px-4 py-2 text-sm transition ${source === tab.value ? "bg-white text-neutral-950 shadow-sm" : "text-neutral-500 hover:text-neutral-900"}`}
+                    className={`rounded-lg px-4 py-2 text-sm transition ${source === tab.value ? "bg-white text-neutral-950 shadow-sm dark:bg-white dark:text-neutral-950" : "text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white"}`}
                   >
                     {tab.label}
                   </button>
@@ -321,28 +324,28 @@ export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId,
                   value={keyword}
                   onChange={(event) => setKeyword(event.target.value)}
                   placeholder="搜索风格名称、作者"
-                  className="h-10 w-full rounded-xl border border-neutral-200 bg-neutral-50 pl-9 pr-3 text-sm outline-none transition focus:border-neutral-300 focus:bg-white"
+                  className="h-10 w-full rounded-xl border border-neutral-200 bg-neutral-50 pl-9 pr-3 text-sm outline-none transition focus:border-neutral-300 focus:bg-white dark:border-white/10 dark:bg-white/5 dark:text-white dark:focus:border-white/25 dark:focus:bg-white/8"
                 />
               </div>
-              <label className="ml-auto flex items-center gap-2 text-sm text-neutral-500">
+              <label className="ml-auto flex items-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
                 <input type="checkbox" checked={commercialOnly} onChange={(event) => setCommercialOnly(event.target.checked)} />
                 仅看可商用
               </label>
-              <button type="button" onClick={() => setCreateOpen((v) => !v)} className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-neutral-200 px-4 text-sm text-neutral-800 hover:bg-neutral-50">
+              <button type="button" onClick={() => setCreateOpen((v) => !v)} className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-neutral-200 px-4 text-sm text-neutral-800 hover:bg-neutral-50 dark:border-white/10 dark:text-neutral-200 dark:hover:bg-white/8">
                 <Plus className="h-4 w-4" /> 自定义
               </button>
-              <button type="button" onClick={() => setOpen(false)} className="rounded-xl p-2 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900">
+              <button type="button" onClick={() => setOpen(false)} className="rounded-xl p-2 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-white/8 dark:hover:text-white">
                 <X className="h-5 w-5" />
               </button>
             </header>
 
-            <div className="flex flex-wrap items-center gap-3 border-b border-neutral-100 px-7 py-4">
+            <div className="flex flex-wrap items-center gap-3 border-b border-neutral-100 px-7 py-4 dark:border-white/10">
               {CATEGORY_OPTIONS.map((item) => (
                 <button
                   key={item}
                   type="button"
                   onClick={() => setCategory(item)}
-                  className={`rounded-lg px-3.5 py-2 text-sm transition ${category === item ? "bg-neutral-950 text-white" : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"}`}
+                  className={`rounded-lg px-3.5 py-2 text-sm transition ${category === item ? "bg-neutral-950 text-white dark:bg-white dark:text-neutral-950" : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-white/8 dark:hover:text-white"}`}
                 >
                   {item}
                 </button>
@@ -350,7 +353,7 @@ export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId,
             </div>
 
             {createOpen && (
-              <div className="grid grid-cols-[1fr_1fr_1.4fr_auto] gap-3 border-b border-neutral-100 bg-neutral-50 px-7 py-4">
+              <div className="grid grid-cols-[1fr_1fr_1.4fr_auto] gap-3 border-b border-neutral-100 bg-neutral-50 px-7 py-4 dark:border-white/10 dark:bg-white/[0.03]">
                 <input value={customForm.name} onChange={(event) => setCustomForm((v) => ({ ...v, name: event.target.value }))} placeholder="风格名称" className="h-10 rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-400" />
                 <input value={customForm.shortName} onChange={(event) => setCustomForm((v) => ({ ...v, shortName: event.target.value }))} placeholder="短名称" className="h-10 rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-400" />
                 <input value={customForm.description} onChange={(event) => setCustomForm((v) => ({ ...v, description: event.target.value }))} placeholder="一句话描述" className="h-10 rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-400" />
@@ -374,12 +377,12 @@ export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId,
                 </div>
               ) : (
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-6">
-                  <button type="button" onClick={() => choosePreset(DEFAULT_STYLE_PRESET)} className={`rounded-xl border bg-white p-5 text-left transition hover:shadow-md ${activeStyle.id === DEFAULT_STYLE_PRESET.id ? "border-neutral-950" : "border-neutral-200"}`}>
-                    <div className="mb-5 flex aspect-[4/5] items-center justify-center rounded-xl bg-neutral-100">
+                  <button type="button" onClick={() => choosePreset(DEFAULT_STYLE_PRESET)} className={`rounded-xl border bg-white p-5 text-left transition hover:shadow-md dark:bg-[#25262b] ${activeStyle.id === DEFAULT_STYLE_PRESET.id ? "border-neutral-950 dark:border-white" : "border-neutral-200 dark:border-white/10"}`}>
+                    <div className="mb-5 flex aspect-[4/5] items-center justify-center rounded-xl bg-neutral-100 dark:bg-white/8">
                       <ImageIcon className="h-10 w-10 text-neutral-400" />
                     </div>
-                    <div className="text-sm font-semibold text-neutral-950">默认风格</div>
-                    <p className="mt-1 text-xs leading-5 text-neutral-500">不追加风格提示词，只使用你输入的内容。</p>
+                    <div className="text-sm font-semibold text-neutral-950 dark:text-white">默认风格</div>
+                    <p className="mt-1 text-xs leading-5 text-neutral-500 dark:text-neutral-400">不追加风格提示词，只使用你输入的内容。</p>
                   </button>
                   {styles.map(renderCard)}
                 </div>

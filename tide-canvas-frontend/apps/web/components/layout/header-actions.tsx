@@ -1,15 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { LogOut, User, Settings, LayoutDashboard, Zap } from "lucide-react";
+import { HardDrive, LogOut, User, Settings, LayoutDashboard, Zap } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { MessageEntry } from "@/components/im";
 import { NotificationCenter } from "@/components/notification";
 import { LocaleSwitcher } from "./locale-switcher";
+import { fileApi } from "@/lib/api";
+import { formatFileSize } from "@/lib/utils";
+import type { StorageUsageVO } from "@/types/file";
 
 /**
  * 顶部右侧操作区：积分 / 通知 / 消息 / 用户菜单（含语言切换、退出）；未登录显示登录注册。
@@ -21,6 +24,20 @@ export function HeaderActions() {
   const logout = useAuthStore((s) => s.logout);
   const router = useRouter();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [storageUsage, setStorageUsage] = useState<StorageUsageVO | null>(null);
+  const [storageLoading, setStorageLoading] = useState(false);
+
+  useEffect(() => {
+    if (!userMenuOpen) return;
+    let active = true;
+    setStorageLoading(true);
+    fileApi.storageUsage().then((res) => {
+      if (active && res.success) setStorageUsage(res.data);
+    }).finally(() => {
+      if (active) setStorageLoading(false);
+    });
+    return () => { active = false; };
+  }, [userMenuOpen]);
 
   const handleLogout = async () => {
     await logout();
@@ -79,11 +96,33 @@ export function HeaderActions() {
 
         {userMenuOpen && (
           /* top-full + pt-1：紧贴触发区，pt-1 作为透明衔接，避免移动到菜单途中 hover 中断 */
-          <div className="absolute right-0 top-full z-50 w-48 pt-1">
-            <div className="rounded-lg border border-neutral-200 bg-white py-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-900">
+          <div className="absolute right-0 top-full z-50 w-80 pt-1">
+            <div className="rounded-2xl border border-neutral-200 bg-white p-2 shadow-[0_18px_55px_rgba(15,23,42,0.18)] dark:border-neutral-700 dark:bg-neutral-900">
+              <Link
+                href="/user/assets"
+                onClick={() => setUserMenuOpen(false)}
+                className="mb-2 block rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-3 transition-colors hover:bg-neutral-100 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/8"
+              >
+                <span className="flex items-center justify-between gap-3 text-xs text-neutral-500 dark:text-neutral-400">
+                  <span className="flex items-center gap-1.5"><HardDrive className="h-3.5 w-3.5" />存储空间</span>
+                  <span className="text-neutral-700 dark:text-neutral-200">管理资产</span>
+                </span>
+                <span className="mt-2 flex items-baseline gap-1 text-neutral-950 dark:text-white">
+                  <strong className="text-[15px] font-semibold">
+                    {storageLoading ? "读取中" : formatFileSize(storageUsage?.usedBytes ?? 0)}
+                  </strong>
+                  <span className="text-xs text-neutral-400">/ {storageUsage?.quotaBytes ? formatFileSize(storageUsage.quotaBytes) : "不限"}</span>
+                </span>
+                <span className="mt-2 block h-1.5 overflow-hidden rounded-full bg-neutral-200 dark:bg-white/10">
+                  <span
+                    className="block h-full rounded-full bg-neutral-950 transition-[width] dark:bg-white"
+                    style={{ width: `${Math.max(0, Math.min(100, storageUsage?.percentage ?? 0))}%` }}
+                  />
+                </span>
+              </Link>
               <Link
                 href="/user"
-                className="flex items-center gap-2 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
                 onClick={() => setUserMenuOpen(false)}
               >
                 <User className="h-4 w-4" />
@@ -91,7 +130,7 @@ export function HeaderActions() {
               </Link>
               <Link
                 href="/user/settings"
-                className="flex items-center gap-2 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
                 onClick={() => setUserMenuOpen(false)}
               >
                 <Settings className="h-4 w-4" />
@@ -102,7 +141,7 @@ export function HeaderActions() {
                   href="/admin"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-2 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
                   onClick={() => setUserMenuOpen(false)}
                 >
                   <LayoutDashboard className="h-4 w-4" />
@@ -114,7 +153,7 @@ export function HeaderActions() {
               <div className="my-1 border-t border-neutral-200 dark:border-neutral-700" />
               <button
                 onClick={handleLogout}
-                className="flex w-full cursor-pointer items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"
+                className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"
               >
                 <LogOut className="h-4 w-4" />
                 {t("userMenu.logout")}

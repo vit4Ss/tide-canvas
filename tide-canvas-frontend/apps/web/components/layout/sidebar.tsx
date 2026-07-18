@@ -6,6 +6,8 @@ import { useTranslations } from "next-intl";
 import { ActionIcon, Box, Group, NavLink, Stack, Text, Tooltip } from "@mantine/core";
 import { FolderOpen, LayoutGrid, Plus } from "lucide-react";
 import { BrandMark } from "@/components/shared/brand-mark";
+import { ConversationHistory } from "./conversation-history";
+import { NEW_CREATION_EVENT } from "@/types/conversation";
 import styles from "./sidebar.module.css";
 
 export const SIDEBAR_COLLAPSED_STORAGE_KEY = "tc:sidebar:collapsed";
@@ -57,6 +59,9 @@ export function Sidebar({
           title={label}
           aria-current={active ? "page" : undefined}
           className={styles.iconNavItem}
+          onClick={() => {
+            if (item.key === "create") window.dispatchEvent(new Event(NEW_CREATION_EVENT));
+          }}
           data-active={active || undefined}
           radius="md"
           size={36}
@@ -87,6 +92,9 @@ export function Sidebar({
           leftSection={<Icon size={16} strokeWidth={1.9} />}
           className={styles.navItem}
           classNames={{ label: styles.navLabel, section: styles.navSection }}
+          onClick={() => {
+            if (item.key === "create") window.dispatchEvent(new Event(NEW_CREATION_EVENT));
+          }}
           noWrap
         />
       </Box>
@@ -122,6 +130,7 @@ export function Sidebar({
             <Stack gap={6}>{PLATFORM_NAV.map(renderNavItem)}</Stack>
           </section>
         </Stack>
+        {!collapsed && <ConversationHistory />}
       </Box>
     </Box>
   );

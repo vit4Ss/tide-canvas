@@ -5,6 +5,7 @@ import { getLocale } from "next-intl/server";
 import "@mantine/core/styles.css";
 import "@douyinfe/semi-ui/lib/es/_base/base.css";
 import "@xyflow/react/dist/style.css";
+import "katex/dist/katex.min.css";
 import "./globals.css";
 import { MantineAppProvider } from "@/components/shared/mantine-provider";
 import { ToastContainer } from "@/components/shared/toast";

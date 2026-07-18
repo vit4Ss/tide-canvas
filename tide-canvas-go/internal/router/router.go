@@ -20,6 +20,7 @@ import (
 	"github.com/tidecanvas/tide-canvas-go/internal/module/canvas"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/community"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/content"
+	"github.com/tidecanvas/tide-canvas-go/internal/module/conversation"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/email"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/file"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/follow"
@@ -192,7 +193,8 @@ func New(db *gorm.DB, conf *viper.Viper, logger *logrus.Logger, rdb *redis.Clien
 		teamSvc, // TeamMemberProvider（GetTeamMemberIDs）
 		teamSvc, // TeamPriceProvider（GetPriceFactor）
 		ai.NewDBProjectFinder(db),
-		file.NewURLSaver(fileStorage, 0, logger), // FileSaver：把 AI 上游临时 URL 转存到自有 OSS（默认 100MB 上限）
+		file.NewURLSaver(fileSvc, 0, logger), // FileSaver：转存并登记为会话临时文件，纳入用户空间额度
+		fileSvc,                              // AttachmentReader：读取本人附件用于文档解析/RAG
 		logger,
 	)
 	aiAdminSvc := ai.NewAdminService(aiRepo, aiSvc.Gateway(), ai.NewDBUserFinder(db), logger)
@@ -200,6 +202,11 @@ func New(db *gorm.DB, conf *viper.Viper, logger *logrus.Logger, rdb *redis.Clien
 	// 任务收尾：进程就绪后收一次孤儿任务，并每 5 分钟扫描超时任务（兜底上游卡死/goroutine 泄漏）。
 	aiSvc.RecoverOnStartup()
 	ai.StartRecoveryScheduler(aiSvc, conf.GetInt64("ai.task.timeout-scan-ms"), logger)
+
+	// Persistent private AI creation conversations. Deleting an active conversation
+	// cancels its tasks (and refunds points), then removes only unretained physical files.
+	conversationSvc := conversation.NewService(conversation.NewRepository(db), fileSvc, aiSvc)
+	conversation.NewHandler(conversationSvc).RegisterRoutes(api, jwtProvider)
 
 	// oauth 第三方登录（GitHub/Google/微信，均为公开路由）
 	oauth.NewHandler(oauth.NewService(userRepo, jwtProvider, conf, logger), jwtProvider).RegisterRoutes(api)

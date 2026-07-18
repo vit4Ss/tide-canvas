@@ -368,11 +368,11 @@ type assistantChatHandler struct {
 }
 
 func (h *assistantChatHandler) name() string { return "assistant_chat" }
-func (h *assistantChatHandler) async() bool  { return false }
+func (h *assistantChatHandler) async() bool  { return true }
 func (h *assistantChatHandler) validate(input map[string]interface{}) error {
 	return requirePrompt(input)
 }
-func (h *assistantChatHandler) execute(execModel executionModel, input map[string]interface{}, _ progressReporter, ctx logCtx) handlerResult {
+func (h *assistantChatHandler) execute(execModel executionModel, input map[string]interface{}, pr progressReporter, ctx logCtx) handlerResult {
 	provider, usable, err := providerUsable(h.gw, execModel)
 	if err != nil {
 		return failResult("助手对话失败: " + err.Error())
@@ -380,7 +380,15 @@ func (h *assistantChatHandler) execute(execModel executionModel, input map[strin
 	if !usable {
 		return failResult("未配置可用的 AI 供应商（baseUrl/apiKey）")
 	}
-	answer, err := h.gw.chat(provider, execModel.ModelID, input, ctx)
+	var answer string
+	if enabled, ok := input["_streamingEnabled"].(bool); ok && !enabled {
+		answer, err = h.gw.chat(provider, execModel.ModelID, input, ctx)
+		if err == nil {
+			pr.reportText(answer)
+		}
+	} else {
+		answer, err = h.gw.chatStream(provider, execModel.ModelID, input, pr, ctx)
+	}
 	if err != nil {
 		logErr(h.logger, "助手对话调用失败", err)
 		return failResult("助手对话失败: " + err.Error())

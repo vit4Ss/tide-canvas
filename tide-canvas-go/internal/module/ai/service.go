@@ -23,12 +23,13 @@ type Service struct {
 	gateway  *Gateway
 	registry *handlerRegistry
 
-	points     PointsService
-	teamMember TeamMemberProvider
-	teamPrice  TeamPriceProvider
-	project    ProjectFinder
-	fileSaver  FileSaver // 可空：nil 时结果直接存上游原 URL
-	logger     *logrus.Logger
+	points      PointsService
+	teamMember  TeamMemberProvider
+	teamPrice   TeamPriceProvider
+	project     ProjectFinder
+	fileSaver   FileSaver // 可空：nil 时结果直接存上游原 URL
+	attachments AttachmentReader
+	logger      *logrus.Logger
 }
 
 // 编译期断言：Service 实现 logSink（接收 client 产出的上游日志并落库）。
@@ -53,17 +54,19 @@ func NewService(
 	teamPrice TeamPriceProvider,
 	project ProjectFinder,
 	fileSaver FileSaver,
+	attachments AttachmentReader,
 	logger *logrus.Logger,
 ) *Service {
 	s := &Service{
-		repo:       repo,
-		db:         repo.DB(),
-		points:     points,
-		teamMember: teamMember,
-		teamPrice:  teamPrice,
-		project:    project,
-		fileSaver:  fileSaver,
-		logger:     logger,
+		repo:        repo,
+		db:          repo.DB(),
+		points:      points,
+		teamMember:  teamMember,
+		teamPrice:   teamPrice,
+		project:     project,
+		fileSaver:   fileSaver,
+		attachments: attachments,
+		logger:      logger,
 	}
 	// gateway 的 logSink 即本 service（client 调用日志回填任务归属后落库）。
 	s.gateway = NewGateway(repo, cfg, s, logger)
@@ -109,6 +112,11 @@ func (s *Service) Generate(userID int64, dto *GenerateDTO) (*TaskVO, error) {
 	if err != nil {
 		return nil, err
 	}
+	if dto.Handler != "assistant_chat" && dto.Handler != "creative_desc" && s.fileSaver != nil {
+		if err := s.fileSaver.EnsureCapacity(userID); err != nil {
+			return nil, err
+		}
+	}
 
 	// 1.5) 并发上限：按用户会员等级(vip_level)取并发上限；管理员(role=9)与开启「免并发限制」(concurrency_unlimited=1)的用户豁免。0=不限。
 	if role, vipLevel, concurrencyUnlimited := s.repo.GetUserTier(userID); role != 9 && concurrencyUnlimited != 1 {
@@ -136,13 +144,35 @@ func (s *Service) Generate(userID int64, dto *GenerateDTO) (*TaskVO, error) {
 		return nil, ecode.BadRequest.WithMessage("提示词包含不允许的内容，请修改后再试")
 	}
 
-	// 3) 计费：单价 = model.pricing/pointCost × 张数 × 团队系数，向上取整为整数积分
+	// 3) 计费：图片按矩阵/固定价，视频按清晰度与音频档位的每秒价 × 时长；再乘团队系数并向上取整。
 	selectedModel, err := s.findModel(dto.ModelID)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.validateModelReferenceFileSizes(selectedModel, dto.Input); err != nil {
+	if selectedModel == nil || selectedModel.Status != 1 {
+		return nil, ecode.NotFound.WithMessage("模型不存在或未启用")
+	}
+	if isVideoGenerationHandler(dto.Handler) && selectedModel.Type != "video" {
+		return nil, ecode.BadRequest.WithMessage("视频生成必须选择视频模型")
+	}
+	if selectedModel.Type == "video" {
+		if err := validateVideoModelConfig(selectedModel.Config, true); err != nil {
+			return nil, ecode.BadRequest.WithMessage("视频模型配置不完整: " + err.Error())
+		}
+		if err := validateVideoModelInput(selectedModel.Config, dto.Input); err != nil {
+			return nil, ecode.BadRequest.WithMessage(err.Error())
+		}
+	}
+	if err := s.validateModelReferenceFiles(userID, selectedModel, dto.Input); err != nil {
 		return nil, err
+	}
+	if dto.Handler == "assistant_chat" {
+		streaming := true
+		capabilities := decodeCapabilities(selectedModel)
+		if _, configured := capabilities["streaming"]; configured {
+			streaming = boolCapability(capabilities, "streaming")
+		}
+		dto.Input["_streamingEnabled"] = streaming
 	}
 	execModel := s.resolveExecutionModel(selectedModel, dto.Handler, dto.Input, &preflight)
 	unitCost, err := s.resolvePointCost(selectedModel, dto.Handler, dto.Input)
@@ -195,6 +225,9 @@ func (s *Service) Generate(userID int64, dto *GenerateDTO) (*TaskVO, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := s.repo.LinkTaskToConversationMessage(userID, strings.TrimSpace(dto.ConversationID), strings.TrimSpace(dto.MessageID), task.ID); err != nil && s.logger != nil {
+		s.logger.Warnf("link AI task to conversation message failed: taskId=%d err=%v", task.ID, err)
+	}
 	s.recordRouteDecision(userID, task.ID, dto, selectedModel, execModel, &preflight)
 
 	// 5) 执行（异步 goroutine 轮询上游 / 同步阻塞）
@@ -243,7 +276,14 @@ func (s *Service) GetTask(userID int64, publicID string) (*TaskVO, error) {
 	if err != nil {
 		return nil, err
 	}
-	if task == nil || !containsInt64(members, task.UserID) {
+	privateConversationTask := false
+	if task != nil {
+		privateConversationTask, err = s.repo.IsConversationTask(task.ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if task == nil || (privateConversationTask && task.UserID != userID) || !containsInt64(members, task.UserID) {
 		return nil, ecode.NotFound.WithMessage("任务不存在")
 	}
 	return s.toTaskVOWithModel(task), nil
@@ -287,7 +327,7 @@ func (s *Service) ListTasks(userID int64, q *TaskQuery) ([]TaskVO, int64, error)
 		}
 		projectID = &pid
 	}
-	tasks, total, err := s.repo.PageTasks(members, q.Handler, q.Status, projectID, &q.PageQuery)
+	tasks, total, err := s.repo.PageTasks(members, userID, q.Handler, q.Status, projectID, &q.PageQuery)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -340,7 +380,7 @@ func (s *Service) MyLogs(userID int64, projectPublicID string, q *PageQuery) ([]
 		}
 		projectID = &pid
 	}
-	logs, total, err := s.repo.PageLogsByOwners(members, projectID, q)
+	logs, total, err := s.repo.PageLogsByOwners(members, userID, projectID, q)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -413,7 +453,10 @@ func (s *Service) runAsync(taskID int64, handler aiHandler, execModel executionM
 
 	// 执行完成后若任务已被取消，保留取消态不覆盖。
 	latest, _ := s.repo.FindTaskByID(taskID)
-	if latest != nil && latest.Status == TaskCancelled {
+	if latest == nil {
+		return
+	}
+	if latest.Status == TaskCancelled {
 		if s.logger != nil {
 			s.logger.Infof("AI task completed after cancellation, preserving cancelled status: taskId=%d", taskID)
 		}
@@ -460,14 +503,33 @@ func (s *Service) executeAndFill(task *model.AiTask, handler aiHandler, execMode
 	ctx := logCtx{taskID: &task.ID, userID: &task.UserID, projectID: task.ProjectID, handler: task.HandlerName, recorded: &recorded}
 	pr := &taskProgress{repo: s.repo, taskID: task.ID}
 
-	result := handler.execute(execModel, input, pr, ctx)
+	var result handlerResult
+	if task.HandlerName == "assistant_chat" && s.attachments != nil {
+		var logicalModel *model.AiModel
+		if task.ModelID != nil {
+			logicalModel, _ = s.repo.FindModelByID(*task.ModelID)
+		}
+		if err := s.prepareChatAttachments(task.UserID, logicalModel, input, ctx); err != nil {
+			result = failResult("附件读取失败: " + err.Error())
+		} else {
+			result = handler.execute(execModel, input, pr, ctx)
+		}
+	} else {
+		result = handler.execute(execModel, input, pr, ctx)
+	}
 	failed := !result.Success
 	resultURL := result.ResultURL
 	errMsg := result.ErrorMsg
 
-	// 转存：如配置 FileSaver 且结果为可转存 URL，则转存到自有 OSS（失败回退原 URL）。
+	// 转存：生成结果必须落入用户持久存储。额度已满或转存失败时任务失败并自动退款，
+	// 避免把会过期的上游临时 URL 当作成功结果。
 	if !failed && hasText(resultURL) {
-		resultURL = s.maybeSave(task.UserID, resultURL)
+		var saveErr error
+		resultURL, result.ResultMeta, saveErr = s.persistResultMedia(task.UserID, resultURL, result.ResultMeta)
+		if saveErr != nil {
+			failed = true
+			errMsg = "生成结果保存失败: " + saveErr.Error()
+		}
 	}
 
 	now := time.Now()
@@ -491,22 +553,58 @@ func (s *Service) executeAndFill(task *model.AiTask, handler aiHandler, execMode
 	return failed, errMsg
 }
 
+func (s *Service) persistResultMedia(userID int64, primaryURL, resultMeta string) (string, string, error) {
+	var meta map[string]interface{}
+	_ = json.Unmarshal([]byte(resultMeta), &meta)
+	rawURLs, hasURLs := meta["urls"].([]interface{})
+	if !hasURLs || len(rawURLs) == 0 {
+		saved, err := s.maybeSave(userID, primaryURL)
+		return saved, resultMeta, err
+	}
+	savedURLs := make([]string, 0, len(rawURLs))
+	seen := make(map[string]struct{}, len(rawURLs))
+	for _, value := range rawURLs {
+		url := strings.TrimSpace(strOf(value))
+		if url == "" {
+			continue
+		}
+		if _, exists := seen[url]; exists {
+			continue
+		}
+		seen[url] = struct{}{}
+		saved, err := s.maybeSave(userID, url)
+		if err != nil {
+			return "", resultMeta, err
+		}
+		savedURLs = append(savedURLs, saved)
+	}
+	if len(savedURLs) == 0 {
+		return "", resultMeta, fmt.Errorf("empty persisted media list")
+	}
+	meta["urls"] = savedURLs
+	updatedMeta, _ := json.Marshal(meta)
+	return savedURLs[0], string(updatedMeta), nil
+}
+
 // maybeSave 结果转存（FileSaver 可空；非 http(s) 资源如 data: 占位图不转存）。
-func (s *Service) maybeSave(userID int64, url string) string {
+func (s *Service) maybeSave(userID int64, url string) (string, error) {
 	if s.fileSaver == nil {
-		return url
+		return url, nil
 	}
 	if !isHTTPURL(url) {
-		return url
+		return url, nil
 	}
 	saved, err := s.fileSaver.SaveFromURL(userID, url)
 	if err != nil || !hasText(saved) {
 		if s.logger != nil {
-			s.logger.Warnf("AI 结果转存失败，回退原 URL: %v", err)
+			s.logger.Warnf("AI 结果转存失败: %v", err)
 		}
-		return url
+		if err == nil {
+			err = fmt.Errorf("empty persisted url")
+		}
+		return "", err
 	}
-	return saved
+	return saved, nil
 }
 
 // recordSummaryLog 补记一条任务级生成日志（对齐 recordSummary(Sync)Log）。
@@ -644,13 +742,20 @@ func (s *Service) assertProjectOwned(userID int64, projectPublicID string) (int6
 
 const maxReferenceFileBytes int64 = 50 * 1024 * 1024
 
-func (s *Service) validateModelReferenceFileSizes(m *model.AiModel, input map[string]interface{}) error {
+func (s *Service) validateModelReferenceFiles(userID int64, m *model.AiModel, input map[string]interface{}) error {
+	capabilities := decodeCapabilities(m)
+	if m != nil && m.Type == "text" {
+		count := int(int64FromConfigValue(input["currentAttachmentCount"]))
+		if count > 10 || (intCapability(capabilities, "maxInputFiles") > 0 && count > intCapability(capabilities, "maxInputFiles")) {
+			return ecode.BadRequest.WithMessage("当前消息附件数量超过模型限制")
+		}
+	}
 	urls := collectInputReferenceURLs(input)
 	if len(urls) == 0 || s.db == nil {
 		return nil
 	}
 	var files []model.SysFile
-	if err := s.db.Select("file_url,file_size,file_type,mime_type,original_name").Where("file_url IN ?", urls).Find(&files).Error; err != nil {
+	if err := s.db.Select("file_url,file_size,file_type,mime_type,original_name").Where("user_id = ? AND file_url IN ?", userID, urls).Find(&files).Error; err != nil {
 		return err
 	}
 	if len(files) == 0 {
@@ -661,6 +766,10 @@ func (s *Service) validateModelReferenceFileSizes(m *model.AiModel, input map[st
 		byURL[f.FileURL] = f
 	}
 	imageLimit, videoLimit := modelReferenceFileLimits(m)
+	allowedTypes := stringSliceCapability(capabilities, "allowedMimeTypes")
+	currentURLs := currentAttachmentURLs(input)
+	imageCount := 0
+	videoCount := 0
 	for _, url := range urls {
 		f, ok := byURL[url]
 		if !ok || f.FileSize <= 0 {
@@ -669,6 +778,18 @@ func (s *Service) validateModelReferenceFileSizes(m *model.AiModel, input map[st
 		limit := imageLimit
 		if isReferenceVideoFile(f) {
 			limit = videoLimit
+			videoCount++
+		} else if strings.HasPrefix(f.MimeType, "image/") || f.FileType == "image" {
+			imageCount++
+		}
+		applyModelInputLimits := m == nil || m.Type != "text" || currentURLs[url]
+		if applyModelInputLimits && len(allowedTypes) > 0 && !mimeAllowed(f.MimeType, allowedTypes) {
+			return ecode.FileTypeNotAllowed.WithMessage("当前模型不支持附件类型: " + f.MimeType)
+		}
+		if applyModelInputLimits && m != nil && m.Type == "text" {
+			if maxMB := intCapability(capabilities, "maxFileSizeMB"); maxMB > 0 {
+				limit = minInt64(limit, int64(maxMB)*1024*1024)
+			}
 		}
 		if f.FileSize > limit {
 			name := f.OriginalName
@@ -678,7 +799,71 @@ func (s *Service) validateModelReferenceFileSizes(m *model.AiModel, input map[st
 			return ecode.FileSizeExceeded.WithMessage(fmt.Sprintf("参考文件 %s 超过模型限制（最大 %s，当前 %s）", name, formatReferenceFileSize(limit), formatReferenceFileSize(f.FileSize)))
 		}
 	}
+	if m != nil {
+		switch m.Type {
+		case "image":
+			if limit := intCapability(capabilities, "maxReferenceImages"); limit >= 0 && imageCount > limit {
+				return ecode.BadRequest.WithMessage(fmt.Sprintf("当前模型最多支持 %d 张参考图", limit))
+			}
+		case "video":
+			if limit := intCapability(capabilities, "maxReferenceVideos"); limit >= 0 && videoCount > limit {
+				return ecode.BadRequest.WithMessage(fmt.Sprintf("当前模型最多支持 %d 个参考视频", limit))
+			}
+			if limit := intCapability(capabilities, "maxReferenceFiles"); limit >= 0 && imageCount+videoCount > limit {
+				return ecode.BadRequest.WithMessage(fmt.Sprintf("当前模型最多支持 %d 个参考文件", limit))
+			}
+		}
+	}
 	return nil
+}
+
+func currentAttachmentURLs(input map[string]interface{}) map[string]bool {
+	out := map[string]bool{}
+	attachments, _ := input["attachments"].([]interface{})
+	for _, value := range attachments {
+		item, ok := value.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		current, _ := item["current"].(bool)
+		if current {
+			out[strings.TrimSpace(strOf(item["url"]))] = true
+		}
+	}
+	return out
+}
+
+func stringSliceCapability(values map[string]interface{}, key string) []string {
+	raw, ok := values[key].([]interface{})
+	if !ok {
+		if typed, ok := values[key].([]string); ok {
+			return typed
+		}
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, value := range raw {
+		if text, ok := value.(string); ok && text != "" {
+			out = append(out, text)
+		}
+	}
+	return out
+}
+
+func mimeAllowed(mime string, allowed []string) bool {
+	for _, value := range allowed {
+		if value == mime || (strings.HasSuffix(value, "/*") && strings.HasPrefix(mime, strings.TrimSuffix(value, "*"))) {
+			return true
+		}
+	}
+	return false
+}
+
+func minInt64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func collectInputReferenceURLs(input map[string]interface{}) []string {
@@ -805,8 +990,9 @@ func (s *Service) findModel(modelID string) (*model.AiModel, error) {
 	return s.repo.FindModelByModelID(modelID)
 }
 
-// resolvePointCost 解析单价（对齐 resolvePointCost）：
-// 模型 config.pricing 矩阵 → model.point_cost → handler_config.point_cost → 默认 10。
+// resolvePointCost 解析基础价格：
+// 视频模型：config.secondPricing 每秒价 × 时长（不允许固定价兜底）；
+// 其它模型：config.pricing 矩阵 → model.point_cost → handler_config.point_cost → 默认 10。
 //
 // 说明：旧 Java 以「字段非 null」判断是否取该价（允许 0 积分单价）。Go 侧 AiModel.PointCost /
 // AiHandlerConfig.PointCost 为非指针 decimal（NULL 即零值），无法区分「未配置」与「配置为 0」。
@@ -814,6 +1000,13 @@ func (s *Service) findModel(modelID string) (*model.AiModel, error) {
 // 与旧实现唯一差异：handler.point_cost 配为 0 时回退默认 10（旧版会取 0）；模型侧无差异（模型存在即取其值）。
 func (s *Service) resolvePointCost(m *model.AiModel, handlerName string, input map[string]interface{}) (decimal.Decimal, error) {
 	if m != nil {
+		if m.Type == "video" {
+			price, err := videoBasePrice(m.Config, input)
+			if err != nil {
+				return decimal.Zero, ecode.BadRequest.WithMessage(err.Error())
+			}
+			return price, nil
+		}
 		if matrix, ok := pricingFromConfig(string(m.Config), input, m.Type); ok {
 			return matrix, nil
 		}

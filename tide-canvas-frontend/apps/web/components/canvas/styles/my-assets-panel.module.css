@@ -1,0 +1,527 @@
+/* 中文注释：资产管理采用参考图的全高画布侧栏，颜色复用画布级令牌以同步浅色/深色主题。 */
+.panel {
+  position: absolute;
+  inset: 4px auto 4px 4px;
+  z-index: 90;
+  display: flex;
+  width: 284px;
+  min-width: 284px;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--tc-canvas-border);
+  border-radius: 11px;
+  background: var(--tc-canvas-panel-solid);
+  color: var(--tc-canvas-text);
+  box-shadow: 5px 8px 26px rgba(15, 23, 42, 0.1);
+  animation: panel-enter 160ms ease-out;
+}
+
+.identityBlock {
+  flex: none;
+  min-height: 88px;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid var(--tc-canvas-border);
+}
+
+.brandRow,
+.projectTrail,
+.sectionToolbar,
+.sectionTitle,
+.toolbarActions,
+.viewTabs,
+.footer {
+  display: flex;
+  align-items: center;
+}
+
+.brandRow {
+  height: 32px;
+  gap: 8px;
+}
+
+.brandMark {
+  width: 29px;
+  height: 25px;
+  flex: none;
+}
+
+.brandName {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projectTrail {
+  min-width: 0;
+  height: 32px;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.projectName {
+  min-width: 0;
+  max-width: 154px;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projectSection {
+  flex: none;
+  color: var(--tc-canvas-text-muted);
+}
+
+.viewTabs {
+  flex: none;
+  height: 50px;
+  gap: 6px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--tc-canvas-border);
+}
+
+.tab,
+.activeTab,
+.inlineIconButton,
+.iconButton,
+.activeIconButton,
+.listRow,
+.assetOpenButton,
+.deleteButton,
+.footerCloseButton {
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tab,
+.activeTab {
+  height: 30px;
+  border-radius: 8px;
+  background: transparent;
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.tab {
+  color: var(--tc-canvas-text-muted);
+}
+
+.tab:hover {
+  background: var(--tc-canvas-hover);
+  color: var(--tc-canvas-text);
+}
+
+.activeTab {
+  background: var(--tc-canvas-panel-muted);
+  color: var(--tc-canvas-text);
+  font-weight: 600;
+}
+
+.content {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.sectionToolbar {
+  flex: none;
+  height: 49px;
+  justify-content: space-between;
+  padding: 0 12px 0 16px;
+}
+
+.sectionTitle {
+  gap: 4px;
+  color: var(--tc-canvas-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.inlineIconButton,
+.iconButton,
+.activeIconButton,
+.deleteButton,
+.footerCloseButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+}
+
+.inlineIconButton {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--tc-canvas-text-muted);
+}
+
+.inlineIconButton:hover,
+.iconButton:hover,
+.activeIconButton {
+  background: var(--tc-canvas-hover);
+  color: var(--tc-canvas-text);
+}
+
+.inlineIconButton svg {
+  width: 12px;
+  height: 12px;
+}
+
+.toolbarActions {
+  gap: 3px;
+}
+
+.filterControl {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.filterControl select {
+  height: 30px;
+  min-width: 61px;
+  appearance: none;
+  border: 0;
+  border-radius: 7px;
+  outline: 0;
+  background: transparent;
+  color: var(--tc-canvas-text);
+  padding: 0 22px 0 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.filterControl select:hover,
+.filterControl select:focus-visible {
+  background: var(--tc-canvas-hover);
+}
+
+.filterControl svg {
+  position: absolute;
+  right: 6px;
+  width: 12px;
+  height: 12px;
+  color: var(--tc-canvas-text-muted);
+  pointer-events: none;
+}
+
+.filterControl option {
+  background: var(--tc-canvas-panel-solid);
+  color: var(--tc-canvas-text);
+}
+
+.iconButton,
+.activeIconButton {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  color: var(--tc-canvas-text-muted);
+}
+
+.iconButton svg,
+.activeIconButton svg,
+.footerCloseButton svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.8;
+}
+
+.searchBox {
+  display: flex;
+  flex: none;
+  height: 34px;
+  align-items: center;
+  gap: 7px;
+  margin: 0 12px 8px;
+  border: 1px solid var(--tc-canvas-border);
+  border-radius: 8px;
+  background: var(--tc-canvas-panel-muted);
+  padding: 0 9px;
+}
+
+.searchBox:focus-within {
+  border-color: var(--tc-canvas-border-strong);
+  background: var(--tc-canvas-panel-solid);
+}
+
+.searchBox svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--tc-canvas-text-muted);
+}
+
+.searchBox input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--tc-canvas-text);
+  font-size: 12px;
+}
+
+.searchBox input::placeholder {
+  color: var(--tc-canvas-text-muted);
+}
+
+.searchBox input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.list {
+  min-height: 0;
+  flex: 1;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 0 8px 12px;
+  scrollbar-color: var(--tc-canvas-border-strong) transparent;
+  scrollbar-width: thin;
+}
+
+.listRow,
+.assetRow {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  border-radius: 8px;
+}
+
+.listRow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: transparent;
+  padding: 5px 8px;
+  text-align: left;
+  transition: background-color 130ms ease, color 130ms ease;
+}
+
+.listRow:hover,
+.listRow[data-selected="true"],
+.assetRow:hover {
+  background: var(--tc-canvas-hover);
+}
+
+.listRow[data-selected="true"] {
+  color: #2563eb;
+}
+
+.thumbnailMedia,
+.iconThumbnail {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 6px;
+}
+
+.thumbnailMedia {
+  border: 1px solid var(--tc-canvas-border);
+  object-fit: cover;
+  background: var(--tc-canvas-panel-muted);
+}
+
+.iconThumbnail {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--tc-canvas-text-muted);
+}
+
+.iconThumbnail svg {
+  width: 17px;
+  height: 17px;
+  stroke-width: 1.9;
+}
+
+.rowTitle {
+  display: block;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.locateHint {
+  flex: none;
+  color: var(--tc-canvas-text-muted);
+  font-size: 10px;
+  opacity: 0;
+  transform: translateX(3px);
+  transition: opacity 130ms ease, transform 130ms ease;
+}
+
+.listRow:hover .locateHint {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.assetRow {
+  display: flex;
+  align-items: center;
+  padding-right: 4px;
+}
+
+.assetOpenButton {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 9px;
+  background: transparent;
+  padding: 5px 8px;
+  text-align: left;
+}
+
+.assetText {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.rowMeta {
+  overflow: hidden;
+  color: var(--tc-canvas-text-muted);
+  font-size: 10px;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deleteButton {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 7px;
+  color: var(--tc-canvas-text-muted);
+  opacity: 0;
+  transition: opacity 130ms ease, background-color 130ms ease, color 130ms ease;
+}
+
+.assetRow:hover .deleteButton,
+.deleteButton:focus-visible,
+.deleteButton:disabled {
+  opacity: 1;
+}
+
+.deleteButton:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+}
+
+.deleteButton svg {
+  width: 14px;
+  height: 14px;
+}
+
+.emptyState,
+.loadingState {
+  display: flex;
+  min-height: 168px;
+  align-items: center;
+  justify-content: center;
+  color: var(--tc-canvas-text-muted);
+}
+
+.emptyState {
+  flex-direction: column;
+  gap: 8px;
+  padding: 24px 16px;
+  text-align: center;
+  font-size: 12px;
+}
+
+.emptyState > svg {
+  width: 28px;
+  height: 28px;
+  opacity: 0.62;
+  stroke-width: 1.7;
+}
+
+.emptyState small {
+  max-width: 190px;
+  font-size: 10px;
+  line-height: 16px;
+  opacity: 0.82;
+}
+
+.loadingState > svg {
+  width: 18px;
+  height: 18px;
+  animation: spin 800ms linear infinite;
+}
+
+.footer {
+  flex: none;
+  height: 44px;
+  justify-content: space-between;
+  border-top: 1px solid var(--tc-canvas-border);
+  padding: 0 12px;
+  color: var(--tc-canvas-text-muted);
+  font-size: 11px;
+}
+
+.footerCloseButton {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  color: var(--tc-canvas-text-muted);
+}
+
+.footerCloseButton:hover {
+  background: var(--tc-canvas-hover);
+  color: var(--tc-canvas-text);
+}
+
+.spinning {
+  animation: spin 800ms linear infinite;
+}
+
+:global(.dark) .brandMark {
+  filter: invert(1);
+}
+
+:global(.dark) .panel {
+  box-shadow: 5px 10px 30px rgba(0, 0, 0, 0.34);
+}
+
+:global(.dark) .listRow[data-selected="true"] {
+  color: #8ab4f8;
+}
+
+@keyframes panel-enter {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel,
+  .loadingState > svg,
+  .spinning {
+    animation: none;
+  }
+}

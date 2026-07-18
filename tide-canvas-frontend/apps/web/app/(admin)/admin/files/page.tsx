@@ -35,7 +35,7 @@ export default function AdminFilesPage() {
   const [keyword, setKeyword] = useState("");
   const [fileType, setFileType] = useState("");
   const [loading, setLoading] = useState(true);
-  const [deleting, setDeleting] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState<FileVO["id"] | null>(null);
   const [error, setError] = useState("");
 
   const loadFiles = useCallback(async (page: number, search: string, type: string) => {
@@ -60,7 +60,7 @@ export default function AdminFilesPage() {
 
   useEffect(() => { void loadFiles(1, "", ""); }, [loadFiles]);
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (id: FileVO["id"]) => {
     setDeleting(id);
     try {
       const res = await http.delete<void>(`/api/admin/files/${id}`);

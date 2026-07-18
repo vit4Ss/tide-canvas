@@ -92,6 +92,11 @@ export function CanvasContextMenu({
 
   if (!menu) return null;
 
+  const viewportWidth = typeof window === "undefined" ? 1920 : window.innerWidth;
+  const viewportHeight = typeof window === "undefined" ? 1080 : window.innerHeight;
+  const left = Math.min(Math.max(12, menu.x), Math.max(12, viewportWidth - 276));
+  const top = Math.min(Math.max(12, menu.y), Math.max(12, viewportHeight - 520));
+
   const handleAddNode = (type: string) => {
     onAddNode(type, menu.worldX, menu.worldY);
     onClose();
@@ -106,8 +111,8 @@ export function CanvasContextMenu({
   return (
     <div
       ref={menuRef}
-      className="fixed z-50 w-64 rounded-2xl border border-neutral-200 bg-white py-2.5 shadow-2xl dark:border-neutral-800 dark:bg-neutral-900"
-      style={{ left: menu.x, top: menu.y }}
+      className="fixed z-[1100] max-h-[calc(100vh-24px)] w-64 overflow-y-auto rounded-xl border border-neutral-200 bg-white py-2.5 shadow-[0_18px_52px_rgba(15,23,42,0.18)] dark:border-white/10 dark:bg-[#202124]"
+      style={{ left, top }}
     >
       {menu.type === "canvas" ? (
         view === "nodes" ? (

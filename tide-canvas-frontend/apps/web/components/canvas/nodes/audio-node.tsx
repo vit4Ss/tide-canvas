@@ -444,9 +444,10 @@ export const AudioNode = memo(function AudioNode({
     >
       <div className="relative">
         <div
-          className={`relative overflow-hidden rounded-[18px] bg-white shadow-sm ring-1 transition-all dark:bg-neutral-950 ${
+          data-node-selected={isSelected && !isConnectTarget ? "true" : undefined}
+          className={`canvas-node-selection-surface relative overflow-hidden rounded-[18px] bg-white shadow-sm ring-1 transition-all dark:bg-neutral-950 ${
             isConnectTarget ? "ring-2 ring-blue-500/70" :
-            isSelected ? "ring-2 ring-neutral-400 dark:ring-neutral-600" : "ring-neutral-200 hover:ring-neutral-300 dark:ring-neutral-800 dark:hover:ring-neutral-700"
+            "ring-neutral-200 hover:ring-neutral-300 dark:ring-neutral-800 dark:hover:ring-neutral-700"
           }`}
           style={{ height: cardHeight }}
         >
@@ -509,7 +510,7 @@ export const AudioNode = memo(function AudioNode({
           <NodeChrome zoom={zoom} placement="bottom-center" gap={18} damp={0.6}>
             <div
               onMouseDown={stop}
-              className="flex flex-col rounded-xl border border-neutral-200 bg-white p-3 shadow-xl shadow-neutral-900/10 dark:border-neutral-800 dark:bg-neutral-950 dark:shadow-black/30"
+              className="canvas-node-composer flex flex-col rounded-xl border border-neutral-200 bg-white p-3 shadow-xl shadow-neutral-900/10 dark:border-neutral-800 dark:bg-neutral-950 dark:shadow-black/30"
               style={{ width: 660, boxSizing: "border-box" }}
             >
               <AudioPromptEditor

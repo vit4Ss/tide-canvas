@@ -300,10 +300,11 @@ export const TextNode = memo(function TextNode({
             bordered={false}
             shadows="hover"
             aria-label={node.title || "文本节点"}
+            data-node-selected={isSelected && !isConnectTarget ? "true" : undefined}
             bodyStyle={{ height: "100%", padding: 0 }}
-            className={`relative h-full w-full overflow-hidden rounded-3xl bg-white shadow-sm ring-1 transition-all dark:bg-neutral-950 ${
+            className={`canvas-node-selection-surface relative h-full w-full overflow-hidden rounded-3xl bg-white shadow-sm ring-1 transition-all dark:bg-neutral-950 ${
               isConnectTarget ? "ring-2 ring-blue-500/70" :
-              isSelected ? "ring-2 ring-neutral-400 dark:ring-neutral-600" : "ring-transparent"
+              "ring-transparent"
             }`}
             style={{ height: "100%" }}
           >
@@ -402,7 +403,7 @@ export const TextNode = memo(function TextNode({
           <NodeChrome zoom={zoom} placement="bottom-center" gap={18} damp={0.6}>
             <div
               onMouseDown={stop}
-              className="flex flex-col rounded-xl border border-neutral-200 bg-white p-3 shadow-xl shadow-neutral-900/10 dark:border-neutral-800 dark:bg-neutral-950 dark:shadow-black/30"
+              className="canvas-node-composer flex flex-col rounded-xl border border-neutral-200 bg-white p-3 shadow-xl shadow-neutral-900/10 dark:border-neutral-800 dark:bg-neutral-950 dark:shadow-black/30"
               style={{ width: PANEL_WIDTH, boxSizing: "border-box" }}
             >
               <textarea

@@ -54,9 +54,11 @@ export const VideoComposeNode = memo(function VideoComposeNode({ node, isSelecte
 
       <div className="relative">
         <div
-          className={`relative overflow-hidden rounded-2xl border bg-white transition-all dark:bg-neutral-950 ${
+          data-node-selected={isSelected && !isConnectTarget ? "true" : undefined}
+          data-node-native-border="true"
+          className={`canvas-node-selection-surface relative overflow-hidden rounded-2xl border bg-white transition-all dark:bg-neutral-950 ${
             isConnectTarget ? "border-blue-500 ring-2 ring-blue-500/40" :
-            isSelected ? "border-neutral-300 dark:border-neutral-700" : "border-neutral-200 dark:border-neutral-800"
+            "border-neutral-200 dark:border-neutral-800"
           }`}
         >
           {/* 预览区 */}

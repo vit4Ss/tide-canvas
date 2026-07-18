@@ -1,11 +1,13 @@
 package ai
 
 import (
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
 	"time"
 
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 
 	"github.com/tidecanvas/tide-canvas-go/internal/model"
@@ -461,6 +463,26 @@ func (r *Repository) CreateTask(tx *gorm.DB, t *model.AiTask) error {
 	return tx.Create(t).Error
 }
 
+func (r *Repository) LinkTaskToConversationMessage(userID int64, conversationPublicID, messagePublicID string, taskID int64) error {
+	if conversationPublicID == "" || messagePublicID == "" {
+		return nil
+	}
+	conversationIDs := r.db.Model(&model.AiConversation{}).
+		Select("id").
+		Where("user_id = ? AND public_id = ?", userID, conversationPublicID)
+	return r.db.Model(&model.AiConversationMessage{}).
+		Where("conversation_id IN (?) AND public_id = ?", conversationIDs, messagePublicID).
+		Updates(map[string]interface{}{"task_id": taskID, "status": "streaming"}).Error
+}
+
+func (r *Repository) IsConversationTask(taskID int64) (bool, error) {
+	var count int64
+	err := r.db.Unscoped().Model(&model.AiConversationMessage{}).
+		Where("task_id = ?", taskID).
+		Count(&count).Error
+	return count > 0, err
+}
+
 // SaveTaskResult 任务完成后整行回写状态/结果（对齐 taskMapper.updateById）。
 func (r *Repository) SaveTaskResult(t *model.AiTask) error {
 	return r.db.Model(&model.AiTask{}).Where("id = ?", t.ID).Updates(map[string]interface{}{
@@ -492,13 +514,23 @@ func (r *Repository) UpdateProgressIfProcessing(taskID int64, progress int) erro
 		Update("progress", progress).Error
 }
 
+func (r *Repository) UpdateStreamingTextIfProcessing(taskID int64, content string) (bool, error) {
+	meta, _ := json.Marshal(map[string]interface{}{"answer": content, "streaming": true})
+	result := r.db.Model(&model.AiTask{}).
+		Where("id = ? AND status = ?", taskID, TaskProcessing).
+		Updates(map[string]interface{}{"result_meta": datatypes.JSON(meta), "progress": 50})
+	return result.RowsAffected == 1, result.Error
+}
+
 // PageTasks 任务分页（团队共享：归属用户在 ownerIDs 内），按 create_time 倒序（对齐 listTasks）。
 // handler/status/projectID 可选过滤；projectID 为 nil 表示不限项目。
-func (r *Repository) PageTasks(ownerIDs []int64, handler string, status *int, projectID *int64, q *PageQuery) ([]model.AiTask, int64, error) {
+func (r *Repository) PageTasks(ownerIDs []int64, viewerUserID int64, handler string, status *int, projectID *int64, q *PageQuery) ([]model.AiTask, int64, error) {
 	if len(ownerIDs) == 0 {
 		return []model.AiTask{}, 0, nil
 	}
-	tx := r.db.Model(&model.AiTask{}).Where("user_id IN ?", ownerIDs)
+	tx := r.db.Model(&model.AiTask{}).
+		Where("user_id IN ?", ownerIDs).
+		Where("NOT EXISTS (SELECT 1 FROM ai_conversation_message acm WHERE acm.task_id = ai_task.id) OR user_id = ?", viewerUserID)
 	if handler != "" {
 		tx = tx.Where("handler_name = ?", handler)
 	}
@@ -614,11 +646,13 @@ func (r *Repository) DeleteLogByID(id int64) error {
 
 // PageLogsByOwners 用户侧日志分页（团队共享：user_id IN ownerIDs，可按 projectID 过滤），按 id 倒序
 // （对齐 AiController.myLogs）。
-func (r *Repository) PageLogsByOwners(ownerIDs []int64, projectID *int64, q *PageQuery) ([]model.AiGenerationLog, int64, error) {
+func (r *Repository) PageLogsByOwners(ownerIDs []int64, viewerUserID int64, projectID *int64, q *PageQuery) ([]model.AiGenerationLog, int64, error) {
 	if len(ownerIDs) == 0 {
 		return []model.AiGenerationLog{}, 0, nil
 	}
-	tx := r.db.Model(&model.AiGenerationLog{}).Where("user_id IN ?", ownerIDs)
+	tx := r.db.Model(&model.AiGenerationLog{}).
+		Where("user_id IN ?", ownerIDs).
+		Where("task_id IS NULL OR NOT EXISTS (SELECT 1 FROM ai_conversation_message acm WHERE acm.task_id = ai_generation_log.task_id) OR user_id = ?", viewerUserID)
 	if projectID != nil {
 		tx = tx.Where("project_id = ?", *projectID)
 	}

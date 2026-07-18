@@ -1,0 +1,348 @@
+.panel {
+  position: fixed;
+  z-index: 1200;
+  box-sizing: border-box;
+  width: 344px;
+  max-width: calc(100vw - 24px);
+  padding: 12px;
+  overflow-x: hidden;
+  border: 1px solid rgb(229 229 229);
+  border-radius: 12px;
+  background: rgb(255 255 255);
+  color: rgb(23 23 23);
+  text-align: left;
+  box-shadow: 0 18px 48px rgb(15 23 42 / 15%);
+  scrollbar-width: thin;
+  animation: panel-enter 140ms ease-out;
+}
+
+.panelOpenUp {
+  transform: translateY(-100%);
+}
+
+.controls {
+  width: 100%;
+}
+
+.section + .section {
+  margin-top: 12px;
+}
+
+.sectionTitle {
+  margin-bottom: 7px;
+  color: rgb(82 82 82);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.ratioGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.ratioTile,
+.segmentButton {
+  appearance: none;
+  border: 1px solid rgb(229 229 229);
+  background: rgb(247 248 250);
+  color: rgb(115 115 115);
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease,
+    color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.ratioTile {
+  display: flex;
+  height: 56px;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 4px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.ratioTile:hover,
+.segmentButton:hover {
+  border-color: rgb(163 163 163);
+  background: rgb(250 250 250);
+  color: rgb(23 23 23);
+}
+
+.ratioTileActive,
+.ratioTileActive:hover,
+.segmentButtonActive,
+.segmentButtonActive:hover {
+  border-color: rgb(38 38 38);
+  background: rgb(255 255 255);
+  color: rgb(23 23 23);
+  box-shadow: 0 1px 2px rgb(15 23 42 / 6%);
+}
+
+.ratioShapeWrap {
+  display: flex;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+}
+
+.ratioShape {
+  display: block;
+  box-sizing: border-box;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+}
+
+.autoRatioIcon {
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.7;
+}
+
+.ratioLabel {
+  max-width: 100%;
+  overflow: hidden;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.segmentedRow {
+  display: grid;
+  gap: 0;
+  border-radius: 9px;
+  background: rgb(245 245 245);
+  padding: 4px;
+}
+
+.segmentButton {
+  display: flex;
+  height: 34px;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.segmentButtonActive,
+.segmentButtonActive:hover {
+  border-color: transparent;
+  background: rgb(255 255 255);
+  box-shadow: 0 1px 3px rgb(15 23 42 / 12%);
+}
+
+.segmentButton:disabled {
+  cursor: not-allowed;
+  color: rgb(163 163 163);
+  opacity: 0.55;
+}
+
+.durationSlider {
+  border-radius: 9px;
+  background: rgb(247 248 250);
+  padding: 9px 12px 8px;
+}
+
+.durationValueRow {
+  position: relative;
+  height: 20px;
+  margin: 0 9px 2px;
+}
+
+.durationValue {
+  position: absolute;
+  top: 0;
+  min-width: 32px;
+  transform: translateX(-50%);
+  color: rgb(23 23 23);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.durationRange {
+  width: 100%;
+  height: 18px;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.durationRange::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(to right, rgb(38 38 38) var(--duration-progress), rgb(212 212 212) var(--duration-progress));
+}
+
+.durationRange::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -5.5px;
+  appearance: none;
+  border: 2px solid rgb(255 255 255);
+  border-radius: 999px;
+  background: rgb(38 38 38);
+  box-shadow: 0 1px 4px rgb(15 23 42 / 24%);
+}
+
+.durationRange::-moz-range-track {
+  height: 3px;
+  border-radius: 999px;
+  background: rgb(212 212 212);
+}
+
+.durationRange::-moz-range-progress {
+  height: 3px;
+  border-radius: 999px;
+  background: rgb(38 38 38);
+}
+
+.durationRange::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgb(255 255 255);
+  border-radius: 999px;
+  background: rgb(38 38 38);
+  box-shadow: 0 1px 4px rgb(15 23 42 / 24%);
+}
+
+.durationRange:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.durationEndpoints {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: rgb(163 163 163);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.controlsComposer .section + .section {
+  margin-top: 16px;
+}
+
+.controlsComposer .sectionTitle {
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.controlsComposer .ratioGrid {
+  gap: 8px;
+}
+
+.controlsComposer .ratioTile {
+  height: 64px;
+  font-size: 12px;
+}
+
+.controlsComposer .segmentButton {
+  height: 38px;
+  font-size: 13px;
+}
+
+.controlsComposer .durationSlider {
+  padding: 10px 14px 9px;
+}
+
+.ratioTile:focus-visible,
+.segmentButton:focus-visible {
+  outline: 2px solid rgb(59 130 246 / 55%);
+  outline-offset: 2px;
+}
+
+:global(.dark) .panel {
+  border-color: rgb(255 255 255 / 12%);
+  background: rgb(35 36 40);
+  color: rgb(245 245 245);
+  box-shadow: 0 20px 52px rgb(0 0 0 / 38%);
+}
+
+:global(.dark) .sectionTitle {
+  color: rgb(212 212 212);
+}
+
+:global(.dark) .ratioTile,
+:global(.dark) .segmentButton {
+  border-color: rgb(255 255 255 / 12%);
+  background: rgb(255 255 255 / 3%);
+  color: rgb(163 163 163);
+}
+
+:global(.dark) .segmentedRow,
+:global(.dark) .durationSlider {
+  background: rgb(255 255 255 / 8%);
+}
+
+:global(.dark) .ratioTile:hover,
+:global(.dark) .segmentButton:hover {
+  border-color: rgb(255 255 255 / 25%);
+  background: rgb(255 255 255 / 7%);
+  color: rgb(245 245 245);
+}
+
+:global(.dark) .ratioTileActive,
+:global(.dark) .ratioTileActive:hover,
+:global(.dark) .segmentButtonActive,
+:global(.dark) .segmentButtonActive:hover {
+  border-color: rgb(163 163 163);
+  background: rgb(255 255 255 / 12%);
+  color: rgb(255 255 255);
+}
+
+:global(.dark) .durationValue {
+  color: rgb(245 245 245);
+}
+
+:global(.dark) .durationRange::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, rgb(245 245 245) var(--duration-progress), rgb(82 82 82) var(--duration-progress));
+}
+
+:global(.dark) .durationRange::-webkit-slider-thumb,
+:global(.dark) .durationRange::-moz-range-thumb {
+  border-color: rgb(35 36 40);
+  background: rgb(245 245 245);
+}
+
+:global(.dark) .durationRange::-moz-range-track {
+  background: rgb(82 82 82);
+}
+
+:global(.dark) .durationRange::-moz-range-progress {
+  background: rgb(245 245 245);
+}
+
+@keyframes panel-enter {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel {
+    animation: none;
+  }
+}

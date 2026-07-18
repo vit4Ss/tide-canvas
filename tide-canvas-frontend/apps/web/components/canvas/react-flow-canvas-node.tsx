@@ -8,7 +8,7 @@ import type { CanvasNode } from "@/stores/use-canvas-store";
 export type TideFlowNode = Node<{ node: CanvasNode }, "tideCanvasNode">;
 
 const handleBase =
-  "!h-5 !w-5 !rounded-full !border !border-neutral-300 !bg-white !text-neutral-500 !shadow-none !transition-all hover:!scale-105 hover:!border-blue-500 hover:!bg-blue-50 dark:!border-neutral-700 dark:!bg-neutral-900";
+  "!h-5 !w-5 !rounded-full !border !border-neutral-300 !bg-white !text-neutral-500 !shadow-none !transition-all hover:!scale-105 hover:!border-neutral-950 hover:!bg-neutral-50 dark:!border-neutral-600 dark:!bg-[#202124] dark:hover:!border-white dark:hover:!bg-neutral-800";
 
 const FLOAT_GAP = 16;
 

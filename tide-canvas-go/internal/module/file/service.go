@@ -52,7 +52,18 @@ func NewService(repo *Repository, store Storage, users UserFinder, teams TeamPro
 // Upload 单文件上传（对齐 upload）：校验 → 存储 → 计算哈希 → 落库 → 操作日志。
 // 失败也落一条操作日志便于后台排查，随后原样返回错误由 handler 收口。
 func (s *Service) Upload(userID int64, data []byte, originalName, mimeType string) (*FileVO, error) {
-	vo, err := s.doUpload(userID, data, originalName, mimeType)
+	vo, err := s.doUpload(userID, data, originalName, mimeType, "asset")
+	if err != nil {
+		s.opLog.RecordOperation("file_upload", userID, nil, originalName, false, "", err.Error())
+		return nil, err
+	}
+	s.opLog.RecordOperation("file_upload", userID, nil, originalName, true, vo.FileURL, "")
+	return vo, nil
+}
+
+// UploadConversationAttachment stores a quota-counted temporary attachment without adding it to the asset library.
+func (s *Service) UploadConversationAttachment(userID int64, data []byte, originalName, mimeType string) (*FileVO, error) {
+	vo, err := s.doUpload(userID, data, originalName, mimeType, "conversation")
 	if err != nil {
 		s.opLog.RecordOperation("file_upload", userID, nil, originalName, false, "", err.Error())
 		return nil, err
@@ -115,7 +126,7 @@ func normalizeAdminFileBizType(value string) string {
 	return value
 }
 
-func (s *Service) doUpload(userID int64, data []byte, originalName, mimeType string) (*FileVO, error) {
+func (s *Service) doUpload(userID int64, data []byte, originalName, mimeType, purpose string) (*FileVO, error) {
 	if err := s.validateFile(data, mimeType); err != nil {
 		return nil, err
 	}
@@ -146,6 +157,9 @@ func (s *Service) doUpload(userID int64, data []byte, originalName, mimeType str
 		StorageType:  s.store.Type(),
 	}
 	if err := s.repo.Create(f); err != nil {
+		return nil, err
+	}
+	if err := s.createInitialReference(userID, f.ID, purpose); err != nil {
 		return nil, err
 	}
 	return s.toFileVOSingle(f), nil
@@ -181,6 +195,9 @@ func (s *Service) SaveFromURL(userID int64, url, fileType, originalName string) 
 		return nil, err
 	}
 	if exist != nil {
+		if err := s.repo.CreateReference(&model.SysFileReference{UserID: userID, FileID: exist.ID, BizType: "asset", BizID: exist.ID}); err != nil {
+			return nil, err
+		}
 		return s.toFileVOSingle(exist), nil
 	}
 	typ := fileType
@@ -212,6 +229,9 @@ func (s *Service) SaveFromURL(userID int64, url, fileType, originalName string) 
 		StorageType:  storageType,
 	}
 	if err := s.repo.Create(f); err != nil {
+		return nil, err
+	}
+	if err := s.createInitialReference(userID, f.ID, "asset"); err != nil {
 		return nil, err
 	}
 	s.opLog.RecordOperation("asset_save", userID, nil, name, true, url, "")
@@ -247,7 +267,8 @@ func (s *Service) Presign(userID int64, req *PresignReq) (*PresignVO, error) {
 	}
 	// 存票据（key → 申请用户 | 内容类型 | 文件大类），供 register 闭环校验；有效期略大于预签名。
 	ttl := time.Duration(presignExpireSeconds+ticketExtraTTLSeconds) * time.Second
-	s.tickets.Set(presignTicketPrefix+ticket.Key, fmt.Sprintf("%d|%s|%s", userID, contentType, fileType), ttl)
+	purpose := normalizeUploadPurpose(req.Purpose)
+	s.tickets.Set(presignTicketPrefix+ticket.Key, fmt.Sprintf("%d|%s|%s|%s", userID, contentType, fileType, purpose), ttl)
 
 	return &PresignVO{
 		Direct:      true,
@@ -266,13 +287,17 @@ func (s *Service) Register(userID int64, req *RegisterReq) (*FileVO, error) {
 	if !ok {
 		return nil, ecode.BadRequest.WithMessage("上传凭据无效或已过期")
 	}
-	parts := strings.SplitN(raw, "|", 3)
+	parts := strings.SplitN(raw, "|", 4)
 	if len(parts) < 3 || parts[0] != fmt.Sprintf("%d", userID) {
 		return nil, ecode.Forbidden.WithMessage("无权登记该文件")
 	}
 	// 类型以票据为准（不信任 register 传入的 contentType/fileType，防绕过白名单）。
 	contentType := parts[1]
 	fileType := parts[2]
+	purpose := "asset"
+	if len(parts) == 4 {
+		purpose = parts[3]
+	}
 	originalName := req.OriginalName
 	if strings.TrimSpace(originalName) == "" {
 		originalName = keyFileName(key)
@@ -317,6 +342,9 @@ func (s *Service) Register(userID int64, req *RegisterReq) (*FileVO, error) {
 		StorageType:  s.store.Type(),
 	}
 	if err := s.repo.Create(f); err != nil {
+		return nil, err
+	}
+	if err := s.createInitialReference(userID, f.ID, purpose); err != nil {
 		return nil, err
 	}
 	// 一次性票据：登记后作废，防重复登记。
@@ -401,12 +429,106 @@ func (s *Service) DeleteFile(userID int64, publicID string) error {
 			return ecode.Forbidden.WithMessage("无权删除该文件")
 		}
 	}
-	s.store.Delete(f.FilePath)
-	if err := s.repo.DeleteByID(f.ID); err != nil {
+	// Removing an item from the asset library must not break a conversation or canvas
+	// that still references the same physical file.
+	if err := s.repo.DeleteReference(f.ID, "asset", f.ID); err != nil {
 		return err
+	}
+	remaining, err := s.repo.CountReferences(f.ID)
+	if err != nil {
+		return err
+	}
+	if remaining == 0 {
+		if err := s.repo.DeleteExtractedDocument(f.ID); err != nil {
+			return err
+		}
+		s.store.Delete(f.FilePath)
+		if err := s.repo.DeleteByID(f.ID); err != nil {
+			return err
+		}
 	}
 	s.opLog.RecordOperation("file_delete", userID, nil, f.OriginalName, true, f.FileURL, "")
 	return nil
+}
+
+// StorageUsage returns the current user's unique physical-file usage and configured quota.
+func (s *Service) StorageUsage(userID int64) (*StorageUsageVO, error) {
+	used, err := s.repo.SumSizeByUserIDs([]int64{userID})
+	if err != nil {
+		return nil, err
+	}
+	quota, ok, err := s.users.StorageQuotaOf(userID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		quota = 0
+	}
+	percentage := float64(0)
+	if quota > 0 {
+		percentage = float64(used) / float64(quota) * 100
+		if percentage > 100 {
+			percentage = 100
+		}
+	}
+	return &StorageUsageVO{UsedBytes: used, QuotaBytes: quota, Percentage: percentage}, nil
+}
+
+// DeleteUnreferencedFiles implements conversation.FileReleaser. Library/canvas references survive a conversation delete.
+func (s *Service) DeleteUnreferencedFiles(userID int64, fileIDs []int64) error {
+	files, err := s.repo.FindOwnedByIDs(userID, fileIDs)
+	if err != nil {
+		return err
+	}
+	for i := range files {
+		count, countErr := s.repo.CountReferences(files[i].ID)
+		if countErr != nil {
+			return countErr
+		}
+		if count > 0 {
+			continue
+		}
+		if deleteErr := s.repo.DeleteExtractedDocument(files[i].ID); deleteErr != nil {
+			return deleteErr
+		}
+		s.store.Delete(files[i].FilePath)
+		if deleteErr := s.repo.DeleteByID(files[i].ID); deleteErr != nil {
+			return deleteErr
+		}
+	}
+	return nil
+}
+
+// ReadOwnedFileByURL exposes private attachment bytes to the AI document pipeline.
+// The lookup is owner-scoped and never accepts an arbitrary storage path.
+func (s *Service) ReadOwnedFileByURL(userID int64, fileURL string, maxBytes int64) ([]byte, string, string, string, error) {
+	item, err := s.repo.FindByUserAndURL(userID, strings.TrimSpace(fileURL))
+	if err != nil {
+		return nil, "", "", "", err
+	}
+	if item == nil {
+		return nil, "", "", "", ecode.NotFound.WithMessage("附件不存在或无权访问")
+	}
+	data, err := s.store.Read(item.FilePath, maxBytes)
+	if err != nil {
+		return nil, "", "", "", err
+	}
+	return data, item.OriginalName, item.MimeType, item.PublicID, nil
+}
+
+func (s *Service) createInitialReference(userID, fileID int64, purpose string) error {
+	bizType := "asset"
+	if normalizeUploadPurpose(purpose) == "conversation" {
+		bizType = "conversation_temp"
+	}
+	return s.repo.CreateReference(&model.SysFileReference{UserID: userID, FileID: fileID, BizType: bizType, BizID: fileID})
+}
+
+func normalizeUploadPurpose(value string) string {
+	if strings.EqualFold(strings.TrimSpace(value), "conversation") {
+		return "conversation"
+	}
+	return "asset"
 }
 
 // ---- 内部校验/装配 ----

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ComponentType } from "react";
+import { useCallback, useRef, useState, type ComponentType } from "react";
 import {
   AlignLeft,
   AudioLines,
@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { useCanvasStore } from "@/stores/use-canvas-store";
 import styles from "./styles/canvas-bottom-toolbar.module.css";
+import { useDismissibleCanvasOverlay, useExclusiveCanvasOverlay } from "./canvas-overlay-coordinator";
 
 interface Props {
   zoom: number;
@@ -79,32 +80,11 @@ export function CanvasBottomToolbar({
   const undo = useCanvasStore((s) => s.undo);
   const redo = useCanvasStore((s) => s.redo);
   const [addOpen, setAddOpen] = useState(false);
+  const closeAddMenu = useCallback(() => setAddOpen(false), []);
+  const announceAddOpen = useExclusiveCanvasOverlay(addOpen, closeAddMenu, "canvas-add-menu");
   const addMenuRef = useRef<HTMLDivElement>(null);
   const zoomPercent = Math.round(zoom * 100);
-
-  useEffect(() => {
-    if (!addOpen) return;
-
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!addMenuRef.current?.contains(event.target as Node)) {
-        setAddOpen(false);
-      }
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setAddOpen(false);
-    };
-
-    const timer = window.setTimeout(() => {
-      document.addEventListener("mousedown", handlePointerDown);
-      document.addEventListener("keydown", handleKeyDown);
-    }, 0);
-
-    return () => {
-      window.clearTimeout(timer);
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [addOpen]);
+  useDismissibleCanvasOverlay(addOpen, closeAddMenu, [addMenuRef]);
 
   const pickNode = (type: string) => {
     onAddNode(type);
@@ -143,7 +123,10 @@ export function CanvasBottomToolbar({
           <button
             type="button"
             className={`${styles.dockButton} ${styles.primaryDockButton}`}
-            onClick={() => setAddOpen((value) => !value)}
+            onClick={() => {
+              if (!addOpen) announceAddOpen();
+              setAddOpen((value) => !value);
+            }}
             title="新增节点"
             aria-expanded={addOpen}
           >
