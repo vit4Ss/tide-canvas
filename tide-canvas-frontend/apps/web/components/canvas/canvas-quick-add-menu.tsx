@@ -44,11 +44,16 @@ export function CanvasQuickAddMenu({ menu, onClose, onSelect }: Props) {
 
   if (!menu) return null;
 
+  const viewportWidth = typeof window === "undefined" ? 1920 : window.innerWidth;
+  const viewportHeight = typeof window === "undefined" ? 1080 : window.innerHeight;
+  const left = Math.min(Math.max(12, menu.clientX), Math.max(12, viewportWidth - 188));
+  const top = Math.min(Math.max(12, menu.clientY), Math.max(12, viewportHeight - 326));
+
   return (
     <div
       ref={ref}
-      className="fixed z-50 w-44 rounded-xl border border-neutral-200 bg-white py-2 shadow-2xl dark:border-neutral-800 dark:bg-neutral-900"
-      style={{ left: menu.clientX, top: menu.clientY }}
+      className="fixed z-[1100] w-44 rounded-xl border border-neutral-200 bg-white py-2 shadow-[0_18px_52px_rgba(15,23,42,0.18)] dark:border-white/10 dark:bg-[#202124]"
+      style={{ left, top }}
     >
       <div className="px-3 pb-1 text-xs text-neutral-400">新建并连接</div>
       {NODE_TYPES.map((item) => (

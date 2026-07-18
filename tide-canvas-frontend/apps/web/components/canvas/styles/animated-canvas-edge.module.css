@@ -1,0 +1,70 @@
+/* 中文注释：蓝色保持跨主题一致；仅光晕透明度随深浅主题微调。 */
+.basePath {
+  stroke: var(--tc-canvas-text-muted);
+  stroke-width: 1.8;
+  opacity: 0.62;
+  transition: stroke 150ms ease, stroke-width 150ms ease, opacity 150ms ease;
+}
+
+.activeBasePath {
+  stroke: #1687ff;
+  stroke-width: 2.15;
+  opacity: 0.72;
+}
+
+.flowLayer {
+  pointer-events: none;
+}
+
+.flowGlow,
+.flowCore {
+  fill: none;
+  pointer-events: none;
+  stroke-linecap: round;
+  stroke-dasharray: 12 88;
+  stroke-dashoffset: 100;
+  animation: canvas-edge-flow 1.5s linear infinite;
+}
+
+.flowGlow {
+  stroke: #55adff;
+  stroke-width: 7;
+  opacity: 0.28;
+  filter: drop-shadow(0 0 5px rgba(22, 135, 255, 0.72));
+}
+
+.flowCore {
+  stroke: #1687ff;
+  stroke-width: 2.8;
+  opacity: 1;
+  filter: drop-shadow(0 0 2px rgba(122, 195, 255, 0.95));
+}
+
+:global(.dark) .flowGlow {
+  opacity: 0.36;
+}
+
+@keyframes canvas-edge-flow {
+  from {
+    stroke-dashoffset: 100;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flowGlow,
+  .flowCore {
+    stroke-dasharray: none;
+    animation: none;
+  }
+
+  .flowGlow {
+    opacity: 0.16;
+  }
+
+  .flowCore {
+    opacity: 0.72;
+  }
+}

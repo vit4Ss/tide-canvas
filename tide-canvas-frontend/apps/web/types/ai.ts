@@ -4,11 +4,13 @@ export interface AiGenerateDTO {
   handler: string;
   modelId: string;
   projectId?: string | number;
+  conversationId?: string;
+  messageId?: string;
   input: Record<string, unknown>;
 }
 
 export interface AiTaskVO {
-  id: number;
+  id: string | number;
   handler: string;
   modelName: string;
   status: AiTaskStatus;
@@ -20,6 +22,14 @@ export interface AiTaskVO {
   completeTime: string;
 }
 
+export interface AiTaskStreamEvent {
+  taskId: string;
+  status: AiTaskStatus;
+  progress: number;
+  content: string;
+  error?: string;
+}
+
 export interface AiModelVO {
   id: number;
   name: string;
@@ -28,8 +38,23 @@ export interface AiModelVO {
   type: AiModelType;
   /** 支持的生成方式(handler 列表)；空/缺省 = 不限制(支持全部) */
   supportedHandlers?: string[] | null;
+  capabilities?: AiModelCapabilities;
   config: string;
   pointCost: number;
+}
+
+export interface AiModelCapabilities {
+  multimodal?: boolean;
+  streaming?: boolean;
+  nativeFiles?: boolean;
+  contextWindow?: number;
+  allowedMimeTypes?: string[];
+  maxInputFiles?: number;
+  maxFileSizeMB?: number;
+  maxReferenceImages?: number;
+  maxReferenceVideos?: number;
+  maxReferenceFiles?: number;
+  [key: string]: unknown;
 }
 
 export interface AiIconAssetVO {

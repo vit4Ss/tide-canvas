@@ -3,6 +3,7 @@ package file
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -30,6 +31,8 @@ type Storage interface {
 	// Upload 上传字节内容到 directory 子目录，返回存储相对路径（key）。
 	// originalName 仅用于派生存储文件名；contentType 可空。
 	Upload(data []byte, originalName, contentType, directory string) (string, error)
+	// Read 读取对象内容；maxBytes>0 时超过限制返回错误。
+	Read(filePath string, maxBytes int64) ([]byte, error)
 	// Delete 删除对象（best-effort，失败仅记日志不抛错）。
 	Delete(filePath string)
 	// PublicURL 由存储相对路径（key）得到访问地址（本地为 /uploads/...，OSS 为公网 HTTPS）。
@@ -87,6 +90,33 @@ func (s *LocalStorage) Upload(data []byte, originalName, _ string, directory str
 		return "", fmt.Errorf("文件上传失败: %w", err)
 	}
 	return directory + "/" + fileName, nil
+}
+
+func (s *LocalStorage) Read(filePath string, maxBytes int64) ([]byte, error) {
+	root, err := filepath.Abs(s.LocalDir)
+	if err != nil {
+		return nil, err
+	}
+	target, err := filepath.Abs(filepath.Join(root, filePath))
+	if err != nil || (target != root && !strings.HasPrefix(target, root+string(os.PathSeparator))) {
+		return nil, fmt.Errorf("非法文件路径")
+	}
+	file, err := os.Open(target)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	if maxBytes <= 0 {
+		return io.ReadAll(file)
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("文件超过读取上限")
+	}
+	return data, nil
 }
 
 // sanitizeLocal 本地文件名安全化：剥离目录部分、上跳与特殊字符，避免路径穿越/覆盖
@@ -229,6 +259,29 @@ func (s *OSSStorage) Upload(data []byte, originalName, contentType, directory st
 	// 尽力将对象设为公网可读，确保中转站能直接拉取（桶禁用对象 ACL 时忽略失败）。
 	_ = bkt.SetObjectACL(key, oss.ACLPublicRead)
 	return key, nil
+}
+
+func (s *OSSStorage) Read(filePath string, maxBytes int64) ([]byte, error) {
+	bkt, err := s.bucketOf()
+	if err != nil {
+		return nil, err
+	}
+	body, err := bkt.GetObject(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = body.Close() }()
+	if maxBytes <= 0 {
+		return io.ReadAll(body)
+	}
+	data, err := io.ReadAll(io.LimitReader(body, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("文件超过读取上限")
+	}
+	return data, nil
 }
 
 // Delete 删除 OSS 对象（best-effort）。

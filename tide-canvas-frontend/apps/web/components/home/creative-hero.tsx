@@ -1,21 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import {
   ArrowUp,
   Box,
   Check,
   ChevronDown,
-  Clock3,
   Crop,
-  Download,
-  FolderPlus,
+  FileText,
   Image as ImageIcon,
   LayoutGrid,
   Loader2,
   Maximize2,
+  MessageSquare,
   Plus,
   RefreshCw,
   Trash2,
@@ -28,16 +27,36 @@ import {
   Zap,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
-import { aiApi, fileApi, uploadFileSmart } from "@/lib/api";
-import { AiModelType, AiTaskStatus, type AiModelVO, type AiTaskVO } from "@/types/ai";
+import { aiApi, conversationApi, fileApi, uploadFileSmart } from "@/lib/api";
+import { AiModelType, AiTaskStatus, type AiModelVO, type AiTaskStreamEvent, type AiTaskVO } from "@/types/ai";
 import { applyTeamFactor } from "@/lib/points";
 import { referenceKindFromFile, referenceKindFromMeta, resolveModelReferenceLimitBytes, validateKnownFileSize } from "@/lib/upload-limits";
 import { FileType, type FileVO } from "@/types/file";
 import { toast } from "@/components/shared/toast";
 import { BatchCountDropdown } from "@/components/canvas/nodes/components/batch-count-dropdown";
 import { QualityRatioDropdown } from "@/components/canvas/nodes/components/quality-ratio-dropdown";
+import { VideoParamControls, type VideoParamValue } from "@/components/canvas/nodes/video-param-picker";
+import parameterStyles from "@/components/canvas/nodes/styles/parameter-dropdown.module.css";
 import type { ImageQuality, QualityRatioValue } from "@/components/canvas/nodes/types/quality-ratio";
 import { getQualityLabel, normalizeBatchOptions } from "@/components/canvas/nodes/utils/quality-ratio";
+import { parseTaskResult } from "@/components/canvas/assistant/task-result";
+import { CHAT_POLL_INTERVAL, MAX_CHAT_POLL_TIME } from "@/components/canvas/assistant/constants";
+import { CreationMessageList } from "./creation-message-list";
+import {
+  calculateVideoBaseCost,
+  getVideoModelOptions,
+  normalizeVideoParamSelection,
+  parseVideoModelConfig,
+  readRememberedVideoParams,
+  rememberVideoParams,
+} from "@/lib/video-model-config";
+import {
+  notifyConversationsChanged,
+  NEW_CREATION_EVENT,
+  type ConversationMessageVO,
+  type CreationConversationVO,
+  type CreationMode,
+} from "@/types/conversation";
 const POLL_INTERVAL = 2000;
 const MAX_POLL_IMAGE = 5 * 60 * 1000;
 const MAX_POLL_VIDEO = 30 * 60 * 1000;
@@ -45,17 +64,20 @@ const MODEL_STORAGE_KEY = "tc:home:modelId";
 const IMAGE_REFERENCE_LIMIT = 4;
 const VIDEO_REFERENCE_LIMIT = 12;
 const IMAGE_RATIO_OPTIONS = ["auto", "1:1", "1:2", "2:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "5:4", "4:5", "21:9", "9:21"];
-const VIDEO_RATIO_OPTIONS = ["auto", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"];
-const VIDEO_RESOLUTION_OPTIONS = ["480P", "720P", "1080P"];
 const CREATION_TYPE_OPTIONS = [
   { id: "image", label: "图片生成", icon: ImageIcon },
   { id: "video", label: "视频生成", icon: Video },
+  { id: "text", label: "文本聊天", icon: MessageSquare },
 ] as const;
 const VIDEO_REFERENCE_MODE_OPTIONS = [
   { id: "omni", label: "全能参考", icon: Wand2 },
   { id: "firstLast", label: "首尾帧", icon: LayoutGrid },
   { id: "multiFrame", label: "智能多帧", icon: Video },
 ] as const;
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 type ReferencePickerTab = "all" | "generated" | "uploaded";
 const REFERENCE_PICKER_TABS: { id: ReferencePickerTab; label: string }[] = [
   { id: "all", label: "本地上传" },
@@ -65,6 +87,10 @@ const REFERENCE_PICKER_TABS: { id: ReferencePickerTab; label: string }[] = [
 
 function fileKey(file: FileVO): string {
   return file.fileUrl || String(file.id);
+}
+
+function isTemporaryFile(file: FileVO): boolean {
+  return typeof file.id === "number" && file.id < 0;
 }
 
 function isImageFile(file: Pick<FileVO, "fileType" | "mimeType">): boolean {
@@ -89,6 +115,23 @@ function mergeUniqueFiles(...groups: FileVO[][]): FileVO[] {
 
 function resultUrlLooksLikeVideo(url: string): boolean {
   return /\.(mp4|webm|mov|m4v)(?:$|\?)/i.test(url.split("#")[0]);
+}
+
+function taskMediaURLs(task: AiTaskVO): string[] {
+  let meta: Record<string, unknown> = {};
+  if (typeof task.resultMeta === "string" && task.resultMeta.trim()) {
+    try {
+      meta = JSON.parse(task.resultMeta) as Record<string, unknown>;
+    } catch {
+      meta = {};
+    }
+  } else if (task.resultMeta && typeof task.resultMeta === "object") {
+    meta = task.resultMeta;
+  }
+  const urls = Array.isArray(meta.urls)
+    ? meta.urls.filter((value): value is string => typeof value === "string" && value.length > 0)
+    : [];
+  return Array.from(new Set([task.resultUrl, ...urls].filter(Boolean)));
 }
 
 function negativeIdFromString(value: string): number {
@@ -132,13 +175,53 @@ function parseModelConfig(model?: AiModelVO): ModelFormatConfig {
   }
 }
 
-type Tab = "image" | "video";
-type GenStatus = "generating" | "done" | "error";
+function modelCapabilityNumber(model: AiModelVO | undefined, key: string, fallback: number): number {
+  const value = model?.capabilities?.[key];
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
+function modelAllowedMimeTypes(model: AiModelVO | undefined): string[] {
+  const value = model?.capabilities?.allowedMimeTypes;
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
+}
+
+function activeBranchMessages(messages: ConversationMessageVO[], activeLeafMessageId?: string): ConversationMessageVO[] {
+  if (!messages.length) return [];
+  const byID = new Map(messages.map((message) => [message.id, message]));
+  let current = activeLeafMessageId ? byID.get(activeLeafMessageId) : messages[messages.length - 1];
+  if (!current) return messages;
+  const branch: ConversationMessageVO[] = [];
+  const visited = new Set<string>();
+  while (current && !visited.has(current.id)) {
+    visited.add(current.id);
+    branch.push(current);
+    current = current.parentMessageId ? byID.get(current.parentMessageId) : undefined;
+  }
+  return branch.reverse();
+}
+
+function deepestLatestDescendant(root: ConversationMessageVO, messages: ConversationMessageVO[]): ConversationMessageVO {
+  let current = root;
+  const visited = new Set<string>();
+  while (!visited.has(current.id)) {
+    visited.add(current.id);
+    const children = messages
+      .filter((message) => message.parentMessageId === current.id)
+      .sort((a, b) => new Date(b.createTime).getTime() - new Date(a.createTime).getTime());
+    if (!children.length) break;
+    current = children[0];
+  }
+  return current;
+}
+
+type Tab = CreationMode;
+type MediaTab = Exclude<Tab, "text">;
 type VideoReferenceMode = (typeof VIDEO_REFERENCE_MODE_OPTIONS)[number]["id"];
 
 interface GenParams {
   prompt: string;
-  kind: Tab;
+  kind: MediaTab;
   modelId: string;
   modelName: string;
   ratio: string;
@@ -151,18 +234,12 @@ interface GenParams {
   videoReferenceMode?: VideoReferenceMode;
   references?: FileVO[];
   promptReferences?: FileVO[];
+  parentMessageId?: string;
 }
-interface GenResult extends GenParams {
-  id: string;
-  status: GenStatus;
-  url?: string;
-  error?: string;
-  saved?: boolean;
-}
-
 export function CreativeHero() {
   const t = useTranslations("home");
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { initialized, isLoggedIn, user } = useAuth();
   const [tab, setTab] = useState<Tab>("image");
   const [prompt, setPrompt] = useState("");
@@ -202,14 +279,18 @@ export function CreativeHero() {
   const [referencePickerPreviewFile, setReferencePickerPreviewFile] = useState<FileVO | null>(null);
   const [referencePickerDeleteTarget, setReferencePickerDeleteTarget] = useState<FileVO | null>(null);
   const [referencePickerDeletingKey, setReferencePickerDeletingKey] = useState("");
-  const [results, setResults] = useState<GenResult[]>([]);
+  const [activeConversation, setActiveConversation] = useState<CreationConversationVO | null>(null);
+  const [conversationMessages, setConversationMessages] = useState<ConversationMessageVO[]>([]);
+  const [chatAttachments, setChatAttachments] = useState<FileVO[]>([]);
+  const [conversationLoading, setConversationLoading] = useState(false);
+  const [editingParentMessageId, setEditingParentMessageId] = useState<string | undefined>(undefined);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const ratioButtonRef = useRef<HTMLButtonElement>(null);
   const ratioPanelRef = useRef<HTMLDivElement | null>(null);
   const [ratioPanelStyle, setRatioPanelStyle] = useState<React.CSSProperties>({ left: -9999, top: -9999 });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const seqRef = useRef(0);
+  const resumedTaskIDsRef = useRef(new Set<string>());
 
 
   const updateRatioPanelPosition = useCallback(() => {
@@ -219,7 +300,7 @@ export function CreativeHero() {
     const margin = 16;
     const minPanelHeight = 220;
     const anchorRect = anchor.getBoundingClientRect();
-    const panelWidth = Math.min(372, Math.max(240, window.innerWidth - margin * 2));
+    const panelWidth = Math.min(420, Math.max(240, window.innerWidth - margin * 2));
     const measuredHeight = ratioPanelRef.current?.offsetHeight ?? (tab === "video" ? 330 : 410);
     const panelHeight = Math.min(measuredHeight, Math.max(minPanelHeight, window.innerHeight - margin * 2));
     const spaceBelow = window.innerHeight - anchorRect.bottom - gap - margin;
@@ -258,7 +339,7 @@ export function CreativeHero() {
       .then((res) => {
         if (!res.success) return;
         const usable = res.data.filter(
-          (m) => m.type === AiModelType.IMAGE || m.type === AiModelType.VIDEO,
+          (m) => m.type === AiModelType.IMAGE || m.type === AiModelType.VIDEO || m.type === AiModelType.TEXT,
         );
         setModels(usable);
         const saved = typeof window !== "undefined" ? localStorage.getItem(MODEL_STORAGE_KEY) : null;
@@ -268,6 +349,51 @@ export function CreativeHero() {
       })
       .catch(() => {});
   }, []);
+
+  const requestedConversationID = searchParams.get("conversation") ?? "";
+
+  useEffect(() => {
+    if (!initialized || !isLoggedIn || !requestedConversationID) return;
+    let active = true;
+    setConversationLoading(true);
+    conversationApi.get(requestedConversationID).then((res) => {
+      if (!active) return;
+      if (!res.success) {
+        toast.error(res.message || "会话加载失败");
+        window.history.replaceState(null, "", "/");
+        return;
+      }
+      const conversation = res.data;
+      setActiveConversation(conversation);
+      setConversationMessages(conversation.messages ?? []);
+      setChatAttachments([]);
+      setReferences([]);
+      setPrompt("");
+      setPromptReferenceKeys([]);
+      setTab(conversation.mode);
+      const activeMessages = activeBranchMessages(conversation.messages ?? [], conversation.activeLeafMessageId);
+      const lastModelID = [...activeMessages].reverse().find((message) => message.modelId)?.modelId;
+      if (lastModelID) setSelectedModelId(lastModelID);
+    }).finally(() => {
+      if (active) setConversationLoading(false);
+    });
+    return () => { active = false; };
+  }, [initialized, isLoggedIn, requestedConversationID]);
+
+  const ensureConversation = async (mode: CreationMode): Promise<CreationConversationVO | null> => {
+    if (activeConversation?.mode === mode) return activeConversation;
+    const res = await conversationApi.create(mode);
+    if (!res.success) {
+      toast.error(res.message || "新建会话失败");
+      return null;
+    }
+    const conversation = res.data;
+    setActiveConversation(conversation);
+    setConversationMessages([]);
+    window.history.pushState(null, "", `/?conversation=${encodeURIComponent(conversation.id)}`);
+    notifyConversationsChanged();
+    return conversation;
+  };
   useEffect(() => {
     if (!initialized || !isLoggedIn) {
       queueMicrotask(() => setHandlerCosts({}));
@@ -318,16 +444,31 @@ export function CreativeHero() {
     return () => { active = false; };
   }, [referencePickerOpen, referencePickerRefreshKey, isLoggedIn]);
 
-  const tabModels = models.filter((m) =>
-    tab === "video" ? m.type === AiModelType.VIDEO : m.type === AiModelType.IMAGE,
-  );
+  const tabModels = models.filter((m) => {
+    if (tab === "video") return m.type === AiModelType.VIDEO;
+    if (tab === "text") return m.type === AiModelType.TEXT;
+    return m.type === AiModelType.IMAGE;
+  });
   const selectedModel = tabModels.find((m) => m.modelId === selectedModelId) ?? tabModels[0];
-  const ratioOptions = tab === "video" ? VIDEO_RATIO_OPTIONS : IMAGE_RATIO_OPTIONS;
-  const defaultRatio = tab === "video" ? "16:9" : "1:1";
+  const selectedVideoConfig = parseVideoModelConfig(selectedModel?.config);
+  const selectedVideoOptions = getVideoModelOptions(selectedVideoConfig);
+  const effectiveVideoParam = normalizeVideoParamSelection(selectedVideoConfig, {
+    ratio,
+    resolution: videoResolution,
+    duration: videoDuration,
+    audio: videoAudio,
+  });
+  const ratioOptions = tab === "video" ? selectedVideoOptions.ratios : IMAGE_RATIO_OPTIONS;
+  const defaultRatio = tab === "video" ? effectiveVideoParam.ratio : "1:1";
   const effectiveRatio = ratioOptions.includes(ratio) ? ratio : defaultRatio;
   const ratioForRequest = effectiveRatio === "auto" ? "" : effectiveRatio;
-  const referenceLimit = tab === "video" ? VIDEO_REFERENCE_LIMIT : IMAGE_REFERENCE_LIMIT;
-  const canUploadReferences = !uploading && references.length < referenceLimit;
+  const referenceLimit = tab === "text"
+    ? Math.min(10, modelCapabilityNumber(selectedModel, "maxInputFiles", 10))
+    : tab === "video"
+      ? modelCapabilityNumber(selectedModel, "maxReferenceFiles", VIDEO_REFERENCE_LIMIT)
+      : modelCapabilityNumber(selectedModel, "maxReferenceImages", IMAGE_REFERENCE_LIMIT);
+  const activeAttachments = tab === "text" ? chatAttachments : references;
+  const canUploadReferences = !uploading && activeAttachments.length < referenceLimit;
   const promptReferenceFiles = promptReferenceKeys
     .map((key) => references.find((file) => fileKey(file) === key))
     .filter((file): file is FileVO => Boolean(file));
@@ -339,26 +480,36 @@ export function CreativeHero() {
       ? referencePickerUploadedFiles
       : mergeUniqueFiles(referencePickerLocalFiles, referencePickerGeneratedFiles, referencePickerUploadedFiles);
   const referencePickerSelectedTotal = referencePickerSelectedFiles.length;
-  const composerPlaceholder = references.length
+  const composerPlaceholder = tab === "text"
+    ? (chatAttachments.length ? "围绕附件内容提问，或继续当前对话" : "输入消息，开始与 AI 对话")
+    : references.length
     ? (tab === "video"
         ? "输入 @ 引用参考素材，描述你想生成的视频"
         : "输入 @ 引用参考图，描述你想生成的图片")
     : (tab === "video"
         ? "输入视频生成的提示词，例如：电影感雨夜街头，镜头缓慢推进"
         : "输入图片生成的提示词，例如：浩瀚的银河中一艘宇宙飞船驶过");
-  const uploadLabel = tab === "video" ? "参考内容" : "参考图";
+  const uploadLabel = tab === "text" ? "附件" : tab === "video" ? "参考内容" : "参考图";
   const referenceMode = VIDEO_REFERENCE_MODE_OPTIONS.find((item) => item.id === videoReferenceMode) ?? VIDEO_REFERENCE_MODE_OPTIONS[0];
   const referenceModeLabel = references.length ? referenceMode.label + " " + references.length : referenceMode.label;
   const modelLabel = selectedModel?.name ?? "暂无可用模型";
   const ReferenceModeIcon = referenceMode.icon;
   const modelSelectable = tabModels.length > 0;
-  const busy = results.some((r) => r.status === "generating");
-  const hasPromptContent = Boolean(prompt.trim() || promptReferenceFiles.length);
+  const visibleConversationMessages = activeBranchMessages(
+    conversationMessages,
+    activeConversation?.activeLeafMessageId,
+  );
+  const hasConversationContent = visibleConversationMessages.length > 0;
+  const busy = conversationMessages.some(
+    (message) => message.role === "assistant" && (message.status === "pending" || message.status === "streaming"),
+  );
+  const hasPromptContent = Boolean(prompt.trim() || (tab === "text" ? chatAttachments.length : promptReferenceFiles.length));
   const canSubmit = hasPromptContent && !busy && !uploading;
   const selectedModelConfig = parseModelConfig(selectedModel);
   const safeImageCountOptions = normalizeBatchOptions(selectedModelConfig.batchSizes);
   const effectiveImageCount = safeImageCountOptions.includes(imageCount) ? imageCount : safeImageCountOptions[0] ?? 1;
   const imageMatrixCost = tab === "image" ? selectedModelConfig.pricing?.[imageQuality]?.[imageResolution] : undefined;
+  const videoBaseCost = tab === "video" ? calculateVideoBaseCost(selectedVideoConfig, effectiveVideoParam) : undefined;
   const paramSummary = tab === "image"
     ? [
         effectiveRatio === "auto" ? "自动" : effectiveRatio,
@@ -367,34 +518,60 @@ export function CreativeHero() {
       ].join(" · ")
     : [
         effectiveRatio === "auto" ? "自动" : effectiveRatio,
-        videoResolution,
+        effectiveVideoParam.resolution,
+        `${effectiveVideoParam.duration}s`,
       ].join(" · ");
   const imageParamValue: QualityRatioValue = { ratio: effectiveRatio, quality: imageQuality, clarity: imageResolution };
   const imageRefCount = references.filter((file) => file.fileType === "image" || file.mimeType?.startsWith("image/")).length;
   const videoRefCount = references.filter((file) => file.fileType === "video" || file.mimeType?.startsWith("video/")).length;
-  const handlerForCost = tab === "image"
+  const handlerForCost = tab === "text"
+    ? "assistant_chat"
+    : tab === "image"
     ? (imageRefCount > 0 ? "image_to_image" : "text_to_image")
     : (imageRefCount > 0 && videoReferenceMode === "firstLast"
         ? "start_end_to_video"
         : (imageRefCount > 0 || videoRefCount > 0 ? "reference_to_video" : "text_to_video"));
   const modelPointCost = selectedModel && selectedModel.pointCost > 0 ? selectedModel.pointCost : undefined;
   const handlerPointCost = handlerCosts[handlerForCost] && handlerCosts[handlerForCost] > 0 ? handlerCosts[handlerForCost] : undefined;
-  const basePointCost = imageMatrixCost ?? modelPointCost ?? handlerPointCost ?? (tab === "image" ? 18 : 0);
+  const basePointCost = tab === "video"
+    ? videoBaseCost ?? 0
+    : imageMatrixCost ?? modelPointCost ?? handlerPointCost ?? (tab === "image" ? 18 : 0);
   const displayPointCost = applyTeamFactor(basePointCost * (tab === "image" ? effectiveImageCount : 1), user);
 
   useEffect(() => {
+    if (tab !== "video" || !selectedModel?.modelId) return;
+    const next = normalizeVideoParamSelection(
+      parseVideoModelConfig(selectedModel.config),
+      readRememberedVideoParams(selectedModel.modelId),
+    );
+    setRatio(next.ratio);
+    setVideoResolution(next.resolution);
+    setVideoDuration(next.duration);
+    setVideoAudio(next.audio);
+  }, [selectedModel?.config, selectedModel?.modelId, tab]);
+
+  const updateVideoParam = (next: VideoParamValue) => {
+    const normalized = normalizeVideoParamSelection(selectedVideoConfig, next);
+    setRatio(normalized.ratio);
+    setVideoResolution(normalized.resolution);
+    setVideoDuration(normalized.duration);
+    setVideoAudio(normalized.audio);
+    if (selectedModel?.modelId) rememberVideoParams(selectedModel.modelId, normalized);
+  };
+
+  useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [results.length]);
+  }, [visibleConversationMessages.length]);
 
   useLayoutEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
-    const maxHeight = results.length === 0 ? 228 : 168;
+    const maxHeight = hasConversationContent ? 168 : 228;
     el.style.height = "auto";
     const nextHeight = Math.min(maxHeight, Math.max(86, el.scrollHeight));
     el.style.height = nextHeight + "px";
     el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
-  }, [prompt, promptReferenceKeys.length, results.length]);
+  }, [prompt, promptReferenceKeys.length, chatAttachments.length, hasConversationContent]);
   const getReferenceMention = (file: FileVO, index: number) => {
     const isVideoRef = file.fileType === "video" || file.mimeType?.startsWith("video/");
     return `@${isVideoRef ? "视频" : "图片"}${index + 1}`;
@@ -459,23 +636,51 @@ export function CreativeHero() {
     setRatioOpen(false);
     setCountOpen(false);
     setReferenceModeOpen(false);
-    if (next === "image") {
-      setReferences((current) => current.filter((file) => file.fileType === "image" || file.mimeType?.startsWith("image/")).slice(0, IMAGE_REFERENCE_LIMIT));
-    }
+    setActiveConversation(null);
+    setConversationMessages([]);
+    setPrompt("");
+    setPromptReferenceKeys([]);
+    setReferences([]);
+    setChatAttachments([]);
+    setEditingParentMessageId(undefined);
+    window.history.pushState(null, "", "/");
     const list = models.filter((m) =>
-      next === "video" ? m.type === AiModelType.VIDEO : m.type === AiModelType.IMAGE,
+      next === "video" ? m.type === AiModelType.VIDEO : next === "text" ? m.type === AiModelType.TEXT : m.type === AiModelType.IMAGE,
     );
     if (list[0]) setSelectedModelId(list[0].modelId);
   };
 
+  const resetToBlankImage = useCallback(() => {
+    setTab("image");
+    setRatio("1:1");
+    setActiveConversation(null);
+    setConversationMessages([]);
+    setPrompt("");
+    setPromptReferenceKeys([]);
+    setReferences([]);
+    setChatAttachments([]);
+    setEditingParentMessageId(undefined);
+    setTypeOpen(false);
+    setModelOpen(false);
+    setRatioOpen(false);
+    setCountOpen(false);
+    setReferenceModeOpen(false);
+    const firstImageModel = models.find((model) => model.type === AiModelType.IMAGE);
+    if (firstImageModel) setSelectedModelId(firstImageModel.modelId);
+    window.history.replaceState(null, "", "/");
+  }, [models]);
+
+  useEffect(() => {
+    window.addEventListener(NEW_CREATION_EVENT, resetToBlankImage);
+    return () => window.removeEventListener(NEW_CREATION_EVENT, resetToBlankImage);
+  }, [resetToBlankImage]);
+
   const selectCreationType = (id: (typeof CREATION_TYPE_OPTIONS)[number]["id"]) => {
-    if (id === "image" || id === "video") {
+    if (id === "image" || id === "video" || id === "text") {
       switchTab(id);
       setTypeOpen(false);
       return;
     }
-    setTypeOpen(false);
-    toast.info("该创作类型暂未开放");
   };
 
   const selectModel = (id: string) => {
@@ -485,36 +690,291 @@ export function CreativeHero() {
     localStorage.setItem(MODEL_STORAGE_KEY, id);
   };
 
-  const patch = (id: string, data: Partial<GenResult>) =>
-    setResults((rs) => rs.map((r) => (r.id === id ? { ...r, ...data } : r)));
+  const patchConversationMessage = (messageID: string, data: Partial<ConversationMessageVO>) => {
+    setConversationMessages((current) => current.map((message) => message.id === messageID ? { ...message, ...data } : message));
+  };
 
-  const poll = (taskId: number, id: string, maxPoll: number) => {
-    let deadline = 0;
-    const tick = async () => {
-      if (deadline === 0) deadline = Date.now() + maxPoll;
-      if (Date.now() > deadline) {
-        patch(id, { status: "error", error: t("genTimeout") });
+  const persistConversationMessagePatch = async (
+    conversationID: string,
+    messageID: string,
+    data: Parameters<typeof conversationApi.updateMessage>[2],
+  ) => {
+    patchConversationMessage(messageID, data as Partial<ConversationMessageVO>);
+    const res = await conversationApi.updateMessage(conversationID, messageID, data);
+    if (res.success) {
+      patchConversationMessage(messageID, res.data);
+      notifyConversationsChanged();
+    }
+  };
+
+  const pollTextTask = async (conversationID: string, messageID: string, taskID: string) => {
+    const deadline = Date.now() + MAX_CHAT_POLL_TIME;
+    while (Date.now() < deadline) {
+      await wait(CHAT_POLL_INTERVAL);
+      const res = await aiApi.getTask(taskID);
+      if (!res.success) {
+        await persistConversationMessagePatch(conversationID, messageID, { status: "error", content: res.message || "获取回复失败" });
         return;
       }
+      const task = res.data;
+      if (task.status === AiTaskStatus.SUCCESS) {
+        await persistConversationMessagePatch(conversationID, messageID, { status: "done", content: parseTaskResult(task), taskId: String(task.id) });
+        return;
+      }
+      if (task.status === AiTaskStatus.FAILED || task.status === AiTaskStatus.CANCELLED) {
+        await persistConversationMessagePatch(conversationID, messageID, { status: task.status === AiTaskStatus.CANCELLED ? "cancelled" : "error", content: task.errorMsg || "生成失败", taskId: String(task.id) });
+        return;
+      }
+    }
+    await persistConversationMessagePatch(conversationID, messageID, { status: "error", content: "回复超时，请稍后重试。" });
+  };
+
+  const streamTextTask = async (conversationID: string, messageID: string, taskID: string) => {
+    let streamedContent = "";
+    try {
+      await aiApi.streamTask(taskID, (event: AiTaskStreamEvent) => {
+        if (event.content) streamedContent = event.content;
+        patchConversationMessage(messageID, {
+          status: event.status === AiTaskStatus.PROCESSING ? "streaming"
+            : event.status === AiTaskStatus.SUCCESS ? "done"
+              : event.status === AiTaskStatus.CANCELLED ? "cancelled" : "error",
+          content: event.content || (event.error ? event.error : "正在思考..."),
+          taskId: String(event.taskId || taskID),
+        });
+      });
+    } catch {
+      await pollTextTask(conversationID, messageID, taskID);
+      return;
+    }
+    const final = await aiApi.getTask(taskID);
+    if (!final.success) {
+      await persistConversationMessagePatch(conversationID, messageID, {
+        status: "error",
+        content: final.message || "获取回复失败",
+      });
+      return;
+    }
+    const task = final.data;
+    if (task.status === AiTaskStatus.SUCCESS) {
+      await persistConversationMessagePatch(conversationID, messageID, {
+        status: "done",
+        content: streamedContent || parseTaskResult(task),
+        taskId: String(task.id),
+      });
+    } else {
+      await persistConversationMessagePatch(conversationID, messageID, {
+        status: task.status === AiTaskStatus.CANCELLED ? "cancelled" : "error",
+        content: task.errorMsg || (task.status === AiTaskStatus.CANCELLED ? "已停止生成，扣除的积分已退回。" : "生成失败"),
+        taskId: String(task.id),
+      });
+    }
+  };
+
+  const completeMediaMessage = async (
+    conversationID: string,
+    messageID: string,
+    task: AiTaskVO,
+    metadata: Record<string, unknown>,
+  ) => {
+    if (task.status === AiTaskStatus.SUCCESS) {
+      const urls = taskMediaURLs(task);
+      await persistConversationMessagePatch(conversationID, messageID, {
+        status: "done",
+        taskId: String(task.id),
+        content: "",
+        metadata: { ...metadata, url: urls[0] ?? task.resultUrl, urls, resultMeta: task.resultMeta, progress: 100 },
+      });
+      return true;
+    }
+    if (task.status === AiTaskStatus.FAILED || task.status === AiTaskStatus.CANCELLED) {
+      await persistConversationMessagePatch(conversationID, messageID, {
+        status: task.status === AiTaskStatus.CANCELLED ? "cancelled" : "error",
+        taskId: String(task.id),
+        content: task.errorMsg || t("genFailed"),
+        metadata: { ...metadata, progress: task.progress },
+      });
+      return true;
+    }
+    await persistConversationMessagePatch(conversationID, messageID, {
+      status: "streaming",
+      taskId: String(task.id),
+      metadata: { ...metadata, progress: task.progress },
+    });
+    return false;
+  };
+
+  const pollMediaTask = async (
+    conversationID: string,
+    messageID: string,
+    taskID: string,
+    maxPoll: number,
+    metadata: Record<string, unknown>,
+  ) => {
+    const deadline = Date.now() + maxPoll;
+    while (Date.now() < deadline) {
+      await wait(POLL_INTERVAL);
       try {
-        const res = await aiApi.getTask(taskId);
+        const res = await aiApi.getTask(taskID);
         if (!res.success) {
-          patch(id, { status: "error", error: res.message || t("genFailed") });
+          await persistConversationMessagePatch(conversationID, messageID, {
+            status: "error",
+            content: res.message || t("genFailed"),
+            metadata,
+          });
           return;
         }
-        const task = res.data;
-        if (task.status === AiTaskStatus.SUCCESS) {
-          patch(id, { status: "done", url: task.resultUrl });
-        } else if (task.status === AiTaskStatus.FAILED || task.status === AiTaskStatus.CANCELLED) {
-          patch(id, { status: "error", error: task.errorMsg || t("genFailed") });
-        } else {
-          setTimeout(tick, POLL_INTERVAL);
-        }
-      } catch {
-        patch(id, { status: "error", error: t("genFailed") });
+        if (await completeMediaMessage(conversationID, messageID, res.data, metadata)) return;
+      } catch (error) {
+        await persistConversationMessagePatch(conversationID, messageID, {
+          status: "error",
+          content: (error as Error)?.message || t("genFailed"),
+          metadata,
+        });
+        return;
       }
-    };
-    tick();
+    }
+    await aiApi.cancelTask(taskID).catch(() => undefined);
+    await persistConversationMessagePatch(conversationID, messageID, {
+      status: "error",
+      content: t("genTimeout"),
+      metadata,
+    });
+  };
+
+  const resumeTextTask = useEffectEvent(streamTextTask);
+  const resumeMediaTask = useEffectEvent(pollMediaTask);
+
+  useEffect(() => {
+    if (!activeConversation) return;
+    conversationMessages.forEach((message) => {
+      if (message.role !== "assistant" || !message.taskId) return;
+      if (message.status !== "pending" && message.status !== "streaming") return;
+      const taskID = String(message.taskId);
+      if (resumedTaskIDsRef.current.has(taskID)) return;
+      resumedTaskIDsRef.current.add(taskID);
+      const resume = message.contentType === "text"
+        ? resumeTextTask(activeConversation.id, message.id, taskID)
+        : resumeMediaTask(
+            activeConversation.id,
+            message.id,
+            taskID,
+            message.contentType === "video" ? MAX_POLL_VIDEO : MAX_POLL_IMAGE,
+            message.metadata ?? {},
+          );
+      void resume.finally(() => resumedTaskIDsRef.current.delete(taskID));
+    });
+  }, [activeConversation, conversationMessages]);
+
+  const sendTextMessage = async (override?: {
+    content: string;
+    attachments?: FileVO[];
+    parentMessageId?: string;
+  }) => {
+    const text = (override?.content ?? prompt).trim();
+    const attachments = override?.attachments ?? chatAttachments;
+    if ((!text && attachments.length === 0) || busy || uploading) return;
+    if (!isLoggedIn) {
+      router.push("/login");
+      return;
+    }
+    if (!selectedModel) {
+      toast.info("请先在后台配置可用文本模型");
+      return;
+    }
+
+    const conversation = await ensureConversation("text");
+    if (!conversation) return;
+    const parentMessageID = override
+      ? override.parentMessageId
+      : editingParentMessageId ?? activeConversation?.activeLeafMessageId;
+    const historyBranch = parentMessageID ? activeBranchMessages(conversationMessages, parentMessageID) : [];
+    const historyMessages = historyBranch
+      .filter((message) => message.status === "done" && (message.role === "user" || message.role === "assistant"))
+      .map((message) => ({ role: message.role, content: message.content }));
+    const contextAttachments = mergeUniqueFiles(
+      ...historyBranch
+        .filter((message) => message.role === "user")
+        .map((message) => filesFromMessage(message)),
+      attachments,
+    );
+    const currentAttachmentKeys = new Set(attachments.map(fileKey));
+    const userContent = text || "请分析这些附件";
+    const userRes = await conversationApi.appendMessage(conversation.id, {
+      parentMessageId: parentMessageID,
+      role: "user",
+      contentType: "text",
+      content: userContent,
+      status: "done",
+      files: attachments.map((file) => ({ fileId: String(file.id), relation: "attachment" })),
+    });
+    if (!userRes.success) {
+      toast.error(userRes.message || "发送失败");
+      return;
+    }
+    const userMessage = userRes.data;
+    const assistantRes = await conversationApi.appendMessage(conversation.id, {
+      parentMessageId: userMessage.id,
+      role: "assistant",
+      contentType: "text",
+      content: "正在思考...",
+      modelId: selectedModel.modelId,
+      modelName: selectedModel.name,
+      status: "pending",
+    });
+    if (!assistantRes.success) {
+      toast.error(assistantRes.message || "发送失败");
+      return;
+    }
+    const assistantMessage = assistantRes.data;
+    setConversationMessages((current) => [...current, userMessage, assistantMessage]);
+    setActiveConversation((current) => current ? { ...current, activeLeafMessageId: assistantMessage.id } : conversation);
+    setPrompt("");
+    setChatAttachments([]);
+    setEditingParentMessageId(undefined);
+    notifyConversationsChanged();
+
+    try {
+      const res = await aiApi.generate({
+        handler: "assistant_chat",
+        modelId: selectedModel.modelId,
+        conversationId: conversation.id,
+        messageId: assistantMessage.id,
+        input: {
+          prompt: userContent,
+          messages: historyMessages,
+          attachments: contextAttachments.map((file) => ({
+            name: file.originalName,
+            url: file.fileUrl,
+            type: file.fileType,
+            mimeType: file.mimeType,
+            size: file.fileSize,
+            current: currentAttachmentKeys.has(fileKey(file)),
+          })),
+          currentAttachmentCount: attachments.length,
+        },
+      });
+      if (!res.success) {
+        await persistConversationMessagePatch(conversation.id, assistantMessage.id, { status: "error", content: res.message || "发送失败" });
+        return;
+      }
+      const task = res.data;
+      await persistConversationMessagePatch(conversation.id, assistantMessage.id, { taskId: String(task.id), status: task.status === AiTaskStatus.SUCCESS ? "done" : "streaming" });
+      if (task.status === AiTaskStatus.SUCCESS) {
+        await persistConversationMessagePatch(conversation.id, assistantMessage.id, { status: "done", content: parseTaskResult(task), taskId: String(task.id) });
+      } else if (task.status === AiTaskStatus.FAILED || task.status === AiTaskStatus.CANCELLED) {
+        await persistConversationMessagePatch(conversation.id, assistantMessage.id, { status: task.status === AiTaskStatus.CANCELLED ? "cancelled" : "error", content: task.errorMsg || "生成失败", taskId: String(task.id) });
+      } else {
+        const taskID = String(task.id);
+        resumedTaskIDsRef.current.add(taskID);
+        try {
+          await streamTextTask(conversation.id, assistantMessage.id, taskID);
+        } finally {
+          resumedTaskIDsRef.current.delete(taskID);
+        }
+      }
+    } catch (error) {
+      await persistConversationMessagePatch(conversation.id, assistantMessage.id, { status: "error", content: (error as Error)?.message || "发送失败" });
+    }
   };
 
   const doGenerate = async (p: GenParams) => {
@@ -536,8 +996,6 @@ export function CreativeHero() {
       : "";
     const text = (referenceText + p.prompt).trim();
     if (!text) return;
-    seqRef.current += 1;
-    const id = "g" + seqRef.current;
     const modelForRequest = models.find((model) => model.modelId === p.modelId);
     for (const file of refs) {
       const kind = referenceKindFromMeta(file);
@@ -549,7 +1007,6 @@ export function CreativeHero() {
     }
     const imageUrls = refs.filter((file) => file.fileType === "image" || file.mimeType?.startsWith("image/")).map((file) => file.fileUrl).filter(Boolean);
     const videoUrls = refs.filter((file) => file.fileType === "video" || file.mimeType?.startsWith("video/")).map((file) => file.fileUrl).filter(Boolean);
-    setResults((rs) => [...rs, { ...p, prompt: text, id, status: "generating" }]);
     const mediaParams = p.kind === "video"
       ? {
           ...(p.videoResolution ? { resolution: p.videoResolution.toLowerCase() } : {}),
@@ -579,10 +1036,61 @@ export function CreativeHero() {
         referenceInput = { references: imageUrls };
       }
     }
+
+    const conversation = await ensureConversation(p.kind);
+    if (!conversation) return;
+    const parentMessageID = p.parentMessageId ?? (activeConversation?.mode === p.kind
+      ? activeConversation.activeLeafMessageId
+      : undefined);
+    const userRes = await conversationApi.appendMessage(conversation.id, {
+      parentMessageId: parentMessageID,
+      role: "user",
+      contentType: "text",
+      content: text,
+      status: "done",
+      files: refs
+        .filter((file) => !(typeof file.id === "number" && file.id < 0))
+        .map((file) => ({ fileId: String(file.id), relation: "reference" as const })),
+    });
+    if (!userRes.success) {
+      toast.error(userRes.message || "发送失败");
+      return;
+    }
+    const metadata: Record<string, unknown> = {
+      kind: p.kind,
+      prompt: text,
+      ratio: p.ratio,
+      handler,
+      params: mediaParams,
+      referenceMode: p.videoReferenceMode,
+      referenceUrls: refs.map((file) => file.fileUrl).filter(Boolean),
+      progress: 0,
+    };
+    const assistantRes = await conversationApi.appendMessage(conversation.id, {
+      parentMessageId: userRes.data.id,
+      role: "assistant",
+      contentType: p.kind,
+      content: p.kind === "video" ? "正在生成视频..." : "正在生成图片...",
+      modelId: p.modelId,
+      modelName: p.modelName,
+      status: "pending",
+      metadata,
+    });
+    if (!assistantRes.success) {
+      toast.error(assistantRes.message || "发送失败");
+      return;
+    }
+    const assistantMessage = assistantRes.data;
+    setConversationMessages((current) => [...current, userRes.data, assistantMessage]);
+    setActiveConversation({ ...conversation, activeLeafMessageId: assistantMessage.id });
+    notifyConversationsChanged();
+
     try {
       const res = await aiApi.generate({
         handler,
         modelId: p.modelId,
+        conversationId: conversation.id,
+        messageId: assistantMessage.id,
         input: {
           prompt: text,
           ...(p.ratio ? { aspectRatio: p.ratio, aspect_ratio: p.ratio, ratio: p.ratio } : {}),
@@ -591,16 +1099,41 @@ export function CreativeHero() {
         },
       });
       if (!res.success) {
-        patch(id, { status: "error", error: res.message || t("genFailed") });
+        await persistConversationMessagePatch(conversation.id, assistantMessage.id, {
+          status: "error",
+          content: res.message || t("genFailed"),
+          metadata,
+        });
         return;
       }
-      poll(res.data.id, id, p.kind === "video" ? MAX_POLL_VIDEO : MAX_POLL_IMAGE);
-    } catch {
-      patch(id, { status: "error", error: t("genFailed") });
+      if (await completeMediaMessage(conversation.id, assistantMessage.id, res.data, metadata)) return;
+      const taskID = String(res.data.id);
+      resumedTaskIDsRef.current.add(taskID);
+      try {
+        await pollMediaTask(
+          conversation.id,
+          assistantMessage.id,
+          taskID,
+          p.kind === "video" ? MAX_POLL_VIDEO : MAX_POLL_IMAGE,
+          metadata,
+        );
+      } finally {
+        resumedTaskIDsRef.current.delete(taskID);
+      }
+    } catch (error) {
+      await persistConversationMessagePatch(conversation.id, assistantMessage.id, {
+        status: "error",
+        content: (error as Error)?.message || t("genFailed"),
+        metadata,
+      });
     }
   };
   const submit = () => {
     if (!hasPromptContent || busy || uploading) return;
+    if (tab === "text") {
+      void sendTextMessage();
+      return;
+    }
     doGenerate({
       prompt,
       kind: tab,
@@ -610,16 +1143,18 @@ export function CreativeHero() {
       imageQuality,
       imageResolution,
       imageCount: effectiveImageCount,
-      videoResolution,
-      videoDuration,
-      videoAudio,
+      videoResolution: effectiveVideoParam.resolution,
+      videoDuration: effectiveVideoParam.duration,
+      videoAudio: effectiveVideoParam.audio,
       videoReferenceMode,
       references,
       promptReferences: promptReferenceFiles,
+      parentMessageId: editingParentMessageId,
     });
     setPrompt("");
     setPromptReferenceKeys([]);
     setReferenceMentionOpen(false);
+    setEditingParentMessageId(undefined);
   };
 
   const openReferencePicker = () => {
@@ -628,7 +1163,11 @@ export function CreativeHero() {
       return;
     }
     if (!canUploadReferences) {
-      toast.error(tab === "video" ? `最多上传 ${VIDEO_REFERENCE_LIMIT} 个参考素材` : `图片生成最多上传 ${IMAGE_REFERENCE_LIMIT} 张参考图`);
+      toast.error(tab === "text" ? `每条消息最多上传 ${referenceLimit} 个附件` : tab === "video" ? `最多上传 ${referenceLimit} 个参考素材` : `图片生成最多上传 ${referenceLimit} 张参考图`);
+      return;
+    }
+    if (tab === "text") {
+      fileInputRef.current?.click();
       return;
     }
     setReferencePickerSelected({});
@@ -676,27 +1215,54 @@ export function CreativeHero() {
       return;
     }
     const accepted = picked.filter((file) => {
+      const configuredTypes = modelAllowedMimeTypes(selectedModel);
+      if (configuredTypes.length) {
+        const mime = file.type || "application/octet-stream";
+        if (!configuredTypes.some((allowed) => allowed === mime || (allowed.endsWith("/*") && mime.startsWith(allowed.slice(0, -1))))) return false;
+      }
+      if (tab === "text") {
+        if (configuredTypes.length) return true;
+        return /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|md|markdown|csv)$/i.test(file.name) || file.type.startsWith("image/") || file.type.startsWith("text/");
+      }
       if (tab === "image") return file.type.startsWith("image/");
       return file.type.startsWith("image/") || file.type.startsWith("video/");
     });
     if (!accepted.length) {
-      toast.error(tab === "image" ? "请拖入图片文件" : "请拖入图片或视频文件");
+      toast.error(tab === "text" ? "请选择图片、PDF、Office、文本、Markdown 或 CSV 文件" : tab === "image" ? "请拖入图片文件" : "请拖入图片或视频文件");
       return;
     }
     if (accepted.length < picked.length) {
       toast.info(tab === "image" ? "已忽略非图片文件" : "已忽略不支持的文件类型");
     }
-    const maxReferences = tab === "video" ? VIDEO_REFERENCE_LIMIT : IMAGE_REFERENCE_LIMIT;
+    const maxReferences = referenceLimit;
+    const maxVideoReferences = modelCapabilityNumber(selectedModel, "maxReferenceVideos", VIDEO_REFERENCE_LIMIT);
+    const maxImageReferences = modelCapabilityNumber(selectedModel, "maxReferenceImages", referenceLimit);
+    let remainingVideos = Math.max(0, maxVideoReferences - activeAttachments.filter(isVideoFile).length);
+    let remainingImages = Math.max(0, maxImageReferences - activeAttachments.filter(isImageFile).length);
+    const typeLimited = tab === "video" ? accepted.filter((file) => {
+      if (file.type.startsWith("video/")) {
+        if (remainingVideos <= 0) return false;
+        remainingVideos -= 1;
+        return true;
+      }
+      if (file.type.startsWith("image/")) {
+        if (remainingImages <= 0) return false;
+        remainingImages -= 1;
+      }
+      return true;
+    }) : accepted;
     const selectedInPicker = target === "picker" ? Object.keys(referencePickerSelected).length : 0;
-    const usedReferences = references.length + selectedInPicker;
+    const usedReferences = activeAttachments.length + selectedInPicker;
     const available = Math.max(0, maxReferences - usedReferences);
-    const files = accepted.slice(0, available);
+    const files = typeLimited.slice(0, available);
     if (!files.length) {
-      toast.error(tab === "video" ? `最多上传 ${VIDEO_REFERENCE_LIMIT} 个参考素材` : `图片生成最多上传 ${IMAGE_REFERENCE_LIMIT} 张参考图`);
+      toast.error(tab === "text" ? `每条消息最多上传 ${maxReferences} 个附件` : tab === "video" ? `最多上传 ${maxReferences} 个参考素材` : `图片生成最多上传 ${maxReferences} 张参考图`);
       return;
     }
-    if (accepted.length > available) {
-      toast.info(tab === "video" ? `最多保留 ${VIDEO_REFERENCE_LIMIT} 个参考素材，已选择前 ${available} 个` : `图片生成最多保留 ${IMAGE_REFERENCE_LIMIT} 张参考图`);
+    if (typeLimited.length < accepted.length) {
+      toast.info("部分文件已达到当前模型的分类参考数量上限");
+    } else if (accepted.length > available) {
+      toast.info(tab === "text" ? `最多保留 ${maxReferences} 个附件，已选择前 ${available} 个` : tab === "video" ? `最多保留 ${maxReferences} 个参考素材，已选择前 ${available} 个` : `图片生成最多保留 ${maxReferences} 张参考图`);
     }
     setUploading(true);
     setUploadProgress(0);
@@ -705,8 +1271,11 @@ export function CreativeHero() {
       try {
         const kind = referenceKindFromFile(file);
         const result = await uploadFileSmart(file, (progress) => setUploadProgress(progress), {
-          maxBytes: resolveModelReferenceLimitBytes(selectedModel, kind),
-          label: kind === "video" ? "参考视频" : "参考图",
+          maxBytes: tab === "text"
+            ? Math.min(20, modelCapabilityNumber(selectedModel, "maxFileSizeMB", 20)) * 1024 * 1024
+            : resolveModelReferenceLimitBytes(selectedModel, kind),
+          label: tab === "text" ? "附件" : kind === "video" ? "参考视频" : "参考图",
+          purpose: tab === "text" ? "conversation" : "asset",
         });
         if (result.success && result.data?.fileUrl) {
           uploaded.push(result.data);
@@ -718,7 +1287,9 @@ export function CreativeHero() {
       }
     }
     if (uploaded.length) {
-      if (target === "picker") {
+      if (tab === "text") {
+        setChatAttachments((current) => mergeUniqueFiles(current, uploaded).slice(0, maxReferences));
+      } else if (target === "picker") {
         setReferencePickerLocalFiles((current) => mergeUniqueFiles(uploaded, current));
         setReferencePickerSelected((current) => {
           const next = { ...current };
@@ -735,7 +1306,7 @@ export function CreativeHero() {
       } else {
         setReferences((current) => mergeUniqueFiles(current, uploaded).slice(0, maxReferences));
       }
-      toast.success(uploaded.length > 1 ? "已上传 " + uploaded.length + " 个参考素材" : "参考素材已上传");
+      toast.success(uploaded.length > 1 ? `已上传 ${uploaded.length} 个${tab === "text" ? "附件" : "参考素材"}` : tab === "text" ? "附件已上传" : "参考素材已上传");
     }
     setUploading(false);
     setUploadProgress(0);
@@ -781,6 +1352,10 @@ export function CreativeHero() {
   };
 
   const removeReference = (fileUrl: string) => {
+    if (tab === "text") {
+      setChatAttachments((current) => current.filter((file) => file.fileUrl !== fileUrl));
+      return;
+    }
     setReferences((current) => current.filter((file) => file.fileUrl !== fileUrl));
     setPromptReferenceKeys((current) => current.filter((key) => key !== fileUrl));
   };
@@ -804,7 +1379,7 @@ export function CreativeHero() {
   const deleteReferencePickerFile = async (file: FileVO) => {
     const key = fileKey(file);
     if (referencePickerDeletingKey) return;
-    if (file.id < 0) {
+    if (isTemporaryFile(file)) {
       removeReferencePickerFile(file);
       toast.info("已从当前列表移除");
       return;
@@ -827,7 +1402,7 @@ export function CreativeHero() {
 
   const requestDeleteReferencePickerFile = (file: FileVO) => {
     if (referencePickerDeletingKey) return;
-    if (file.id < 0) {
+    if (isTemporaryFile(file)) {
       void deleteReferencePickerFile(file);
       return;
     }
@@ -841,7 +1416,7 @@ export function CreativeHero() {
     setReferencePickerDeleteTarget((current) => (current && fileKey(current) === fileKey(file) ? null : current));
   };
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Backspace") {
+    if (tab !== "text" && e.key === "Backspace") {
       const atPromptStart = e.currentTarget.selectionStart === 0 && e.currentTarget.selectionEnd === 0;
       if (promptReferenceKeys.length && (!prompt || atPromptStart)) {
         e.preventDefault();
@@ -851,7 +1426,7 @@ export function CreativeHero() {
         return;
       }
     }
-    if (e.key === "@") {
+    if (tab !== "text" && e.key === "@") {
       e.preventDefault();
       setPendingReferenceMentionRange(null);
       if (references.length) {
@@ -878,39 +1453,167 @@ export function CreativeHero() {
     }
   };
 
-  const download = async (r: GenResult) => {
-    if (!r.url) return;
-    const ext = r.kind === "video" ? "mp4" : "png";
+  const filesFromMessage = (message: ConversationMessageVO): FileVO[] =>
+    message.files.map((file) => ({ ...file, id: file.id } as FileVO));
+
+  const mediaURLsFromMessage = (message: ConversationMessageVO): string[] => {
+    const urls = Array.isArray(message.metadata?.urls)
+      ? message.metadata.urls.filter((value): value is string => typeof value === "string" && value.length > 0)
+      : [];
+    const primary = typeof message.metadata?.url === "string" ? message.metadata.url : "";
+    return Array.from(new Set([primary, ...urls].filter(Boolean)));
+  };
+
+  const handleCopyMessage = async (message: ConversationMessageVO) => {
     try {
-      const resp = await fetch(r.url);
-      const blob = await resp.blob();
-      const objUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = objUrl;
-      a.download = "tidecanvas-" + r.id + "." + ext;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(objUrl);
+      await navigator.clipboard.writeText(message.content);
+      toast.success("已复制");
     } catch {
-      window.open(r.url, "_blank", "noopener");
+      toast.error("复制失败，请手动选择文本");
     }
   };
 
-  const saveToLibrary = async (r: GenResult, thenOpenCanvas = false) => {
-    if (!r.url) return;
-    try {
-      const res = await fileApi.saveFromUrl({ url: r.url, fileType: r.kind, originalName: r.prompt.slice(0, 40) });
-      if (res.success) {
-        patch(r.id, { saved: true });
-        toast.success(thenOpenCanvas ? t("savedToCanvas") : t("savedToLibrary"));
-        if (thenOpenCanvas) window.open("/canvas/new", "_blank", "noopener");
-      } else {
-        toast.error(res.message || t("saveFailed"));
-      }
-    } catch {
-      toast.error(t("saveFailed"));
+  const handleEditMessage = (message: ConversationMessageVO) => {
+    if (message.role !== "user") return;
+    setPrompt(message.content);
+    setEditingParentMessageId(message.parentMessageId);
+    const files = filesFromMessage(message);
+    if (tab === "text") setChatAttachments(files);
+    else setReferences(files);
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(message.content.length, message.content.length);
+    });
+  };
+
+  const handleRegenerateMessage = (message: ConversationMessageVO) => {
+    if (message.role !== "assistant") return;
+    const userMessage = conversationMessages.find((item) => item.id === message.parentMessageId && item.role === "user");
+    if (!userMessage) return;
+    if (message.contentType === "text") {
+      void sendTextMessage({
+        content: userMessage.content,
+        attachments: filesFromMessage(userMessage),
+        parentMessageId: userMessage.parentMessageId,
+      });
+      return;
     }
+    const metadata = message.metadata ?? {};
+    const params = metadata.params && typeof metadata.params === "object"
+      ? metadata.params as Record<string, unknown>
+      : {};
+    const kind: MediaTab = message.contentType === "video" ? "video" : "image";
+    const model = models.find((item) => item.modelId === message.modelId)
+      ?? models.find((item) => item.type === (kind === "video" ? AiModelType.VIDEO : AiModelType.IMAGE));
+    void doGenerate({
+      prompt: userMessage.content,
+      kind,
+      modelId: model?.modelId ?? message.modelId ?? "",
+      modelName: model?.name ?? message.modelName ?? "",
+      ratio: typeof metadata.ratio === "string" ? metadata.ratio : "",
+      imageQuality: params.quality === "high" ? "high" : "standard",
+      imageResolution: typeof params.resolution === "string" ? params.resolution.toUpperCase() : imageResolution,
+      imageCount: typeof params.batchCount === "number" ? params.batchCount : 1,
+      videoResolution: typeof params.resolution === "string" ? params.resolution.toUpperCase() : videoResolution,
+      videoDuration: typeof params.duration === "number" ? params.duration : videoDuration,
+      videoAudio: params.generateAudio !== false,
+      videoReferenceMode: typeof metadata.referenceMode === "string" ? metadata.referenceMode as VideoReferenceMode : videoReferenceMode,
+      references: filesFromMessage(userMessage),
+      parentMessageId: userMessage.parentMessageId,
+    });
+  };
+
+  const handleStopMessage = async (message: ConversationMessageVO) => {
+    if (!activeConversation || !message.taskId) return;
+    const res = await aiApi.cancelTask(message.taskId);
+    if (!res.success) {
+      toast.error(res.message || "停止失败");
+      return;
+    }
+    await persistConversationMessagePatch(activeConversation.id, message.id, {
+      status: "cancelled",
+      content: "已停止生成，扣除的积分已退回。",
+      metadata: message.metadata,
+    });
+  };
+
+  const handleDownloadMessage = async (message: ConversationMessageVO) => {
+    const urls = mediaURLsFromMessage(message);
+    if (!urls.length) return;
+    const ext = message.contentType === "video" ? "mp4" : "png";
+    for (const [index, url] of urls.entries()) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error("download failed");
+        const blobURL = URL.createObjectURL(await response.blob());
+        const anchor = document.createElement("a");
+        anchor.href = blobURL;
+        anchor.download = `tidecanvas-${message.id}-${index + 1}.${ext}`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(blobURL);
+      } catch {
+        window.open(url, "_blank", "noopener,noreferrer");
+      }
+    }
+  };
+
+  const handleAddMessageToLibrary = async (message: ConversationMessageVO) => {
+    if (!activeConversation || message.metadata?.saved === true) return;
+    const urls = mediaURLsFromMessage(message);
+    if (!urls.length) return;
+    const userMessage = conversationMessages.find((item) => item.id === message.parentMessageId);
+    const assetFileIds: string[] = [];
+    for (const [index, url] of urls.entries()) {
+      const res = await fileApi.saveFromUrl({
+        url,
+        fileType: message.contentType,
+        originalName: `${(userMessage?.content || `${message.contentType} result`).slice(0, 36)}${urls.length > 1 ? `-${index + 1}` : ""}`,
+      });
+      if (!res.success) {
+        toast.error(res.message || "添加到素材库失败");
+        return;
+      }
+      assetFileIds.push(String(res.data.id));
+    }
+    await persistConversationMessagePatch(activeConversation.id, message.id, {
+      metadata: { ...(message.metadata ?? {}), saved: true, assetFileIds },
+    });
+    toast.success("已添加到素材库");
+  };
+
+  const handleContinueMessage = (message: ConversationMessageVO) => {
+    const url = typeof message.metadata?.url === "string" ? message.metadata.url : "";
+    if (!url || (message.contentType !== "image" && message.contentType !== "video")) return;
+    const existing = message.files.find((file) => file.relation === "result");
+    const reference = existing
+      ? ({ ...existing, id: existing.id } as FileVO)
+      : ({
+          id: negativeIdFromString(url),
+          originalName: message.contentType === "video" ? "生成视频.mp4" : "生成图片.png",
+          fileUrl: url,
+          fileSize: 0,
+          fileType: message.contentType === "video" ? FileType.VIDEO : FileType.IMAGE,
+          mimeType: message.contentType === "video" ? "video/mp4" : "image/png",
+          storageType: url.startsWith("/uploads/") ? "local" : "oss",
+          createTime: message.createTime,
+        } as FileVO);
+    setReferences([reference]);
+    setPrompt(message.contentType === "video" ? "基于这个视频继续修改：" : "基于这张图片继续修改：");
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
+  const handleSelectBranch = async (message: ConversationMessageVO) => {
+    if (!activeConversation) return;
+    const leaf = deepestLatestDescendant(message, conversationMessages);
+    const res = await conversationApi.update(activeConversation.id, { activeLeafMessageId: leaf.id });
+    if (!res.success) {
+      toast.error(res.message || "切换分支失败");
+      return;
+    }
+    setActiveConversation(res.data);
+    setConversationMessages(res.data.messages ?? conversationMessages);
   };
 
   return (
@@ -918,80 +1621,47 @@ export function CreativeHero() {
       <section className="relative z-30 flex min-h-screen flex-col overflow-hidden bg-[#f7f8fa] px-4 pt-14 text-neutral-950 sm:px-6 lg:px-8 dark:bg-[#101114] dark:text-white">
       <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[420px] bg-[linear-gradient(to_bottom,#f3f5f8,rgba(247,248,250,0.9)_64%,#f7f8fa)] dark:bg-[linear-gradient(to_bottom,#17181d,rgba(16,17,20,0.92)_64%,#101114)]" />
 
-      <div className={(results.length === 0
+      <div className={(!hasConversationContent
         ? "mx-auto flex min-h-[calc(100vh-56px)] w-full max-w-[1120px] flex-col justify-center pb-[10vh] pt-8"
         : "mx-auto flex min-h-[calc(100vh-64px)] w-full max-w-[1280px] flex-col")}>
-        <div className={(results.length === 0 ? "px-1" : "min-h-0 flex-1 px-1 pt-8 sm:pt-12")}>
-          {results.length === 0 ? null : (
-            <div className="mx-auto w-full max-w-[900px] space-y-5 pb-8 pt-4 text-left">
-              {results.map((r) => (
-                <div key={r.id} className="space-y-3">
-                  <div className="flex justify-end">
-                    <div className="max-w-[78%] rounded-3xl rounded-br-lg bg-neutral-950 px-4 py-3 text-sm leading-6 text-white shadow-[0_10px_28px_rgba(15,23,42,0.14)] dark:bg-white dark:text-neutral-950">
-                      {r.prompt}
-                    </div>
-                  </div>
-
-                  <div className="flex justify-start">
-                    <div className="max-w-[86%] rounded-3xl rounded-bl-lg bg-white/88 p-3 shadow-[0_16px_45px_rgba(15,23,42,0.10)] ring-1 ring-black/[0.05] backdrop-blur-xl dark:bg-white/8 dark:ring-white/10">
-                      <div className="flex flex-wrap items-center gap-2 px-1 pb-3 text-xs text-neutral-500 dark:text-neutral-400">
-                        <span className="flex items-center gap-1 rounded-full bg-neutral-100 px-2 py-1 dark:bg-white/8">
-                          {r.kind === "video" ? <Video className="h-3 w-3" /> : <ImageIcon className="h-3 w-3" />}
-                          {r.modelName || t("model")}
-                        </span>
-                        {r.ratio && (
-                          <span className="flex items-center gap-1 rounded-full bg-neutral-100 px-2 py-1 dark:bg-white/8">
-                            <Crop className="h-3 w-3" />
-                            {r.ratio}
-                          </span>
-                        )}
-                      </div>
-
-                      {r.status === "generating" && (
-                        <div className="flex h-44 w-[360px] max-w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-neutral-200 bg-neutral-50/70 text-sm text-neutral-400 dark:border-white/10 dark:bg-white/5">
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          {t("generating")}
-                        </div>
-                      )}
-                      {r.status === "done" && r.url && (
-                        r.kind === "video" ? (
-                          <video src={r.url} controls className="max-h-96 w-auto max-w-full rounded-2xl border border-neutral-200 dark:border-white/10" />
-                        ) : (
-                          <img src={r.url} alt={r.prompt} className="max-h-96 w-auto max-w-full rounded-2xl border border-neutral-200 dark:border-white/10" />
-                        )
-                      )}
-                      {r.status === "error" && <p className="px-1 py-3 text-sm text-red-500">生成失败</p>}
-
-                      {r.status === "done" && r.url && (
-                        <div className="mt-3 flex flex-wrap gap-2 px-1">
-                          <ActionBtn onClick={() => doGenerate(r)} icon={<RefreshCw className="h-3.5 w-3.5" />} label={t("regenerate")} />
-                          <ActionBtn onClick={() => download(r)} icon={<Download className="h-3.5 w-3.5" />} label={t("download")} />
-                          <ActionBtn onClick={() => saveToLibrary(r, true)} icon={<LayoutGrid className="h-3.5 w-3.5" />} label={t("saveToCanvas")} />
-                          <ActionBtn
-                            onClick={() => saveToLibrary(r)}
-                            disabled={r.saved}
-                            icon={r.saved ? <Check className="h-3.5 w-3.5" /> : <FolderPlus className="h-3.5 w-3.5" />}
-                            label={r.saved ? t("added") : t("addToLibrary")}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-              <div ref={chatEndRef} />
+        <div className={(!hasConversationContent ? "px-1" : "min-h-0 flex-1 px-1 pt-8 sm:pt-12")}>
+          {conversationLoading && (
+            <div className="flex min-h-36 items-center justify-center gap-2 text-sm text-neutral-400">
+              <Loader2 className="h-4 w-4 animate-spin" />正在加载会话...
             </div>
           )}
+          {!conversationLoading && visibleConversationMessages.length > 0 && (
+            <CreationMessageList
+              messages={visibleConversationMessages}
+              allMessages={conversationMessages}
+              onCopy={handleCopyMessage}
+              onEdit={handleEditMessage}
+              onRegenerate={handleRegenerateMessage}
+              onStop={handleStopMessage}
+              onDownload={handleDownloadMessage}
+              onAddToLibrary={handleAddMessageToLibrary}
+              onContinue={handleContinueMessage}
+              onSelectBranch={handleSelectBranch}
+            />
+          )}
+          <div ref={chatEndRef} />
         </div>
-        <div className={(results.length === 0
+        <div className={(!hasConversationContent
           ? "relative z-40 px-0 pb-0 pt-0"
-          : "sticky bottom-4 z-40 -mx-4 bg-[linear-gradient(to_top,#f7f8fa_74%,rgba(247,248,250,0))] px-4 pb-0 pt-3 sm:-mx-6 sm:px-6 dark:bg-[linear-gradient(to_top,#101114_74%,rgba(16,17,20,0))]")}> 
-          <div className={(results.length === 0 ? "mx-auto w-full max-w-[920px]" : "mx-auto w-full max-w-[960px]")}> 
+          : "sticky bottom-4 z-40 -mx-4 bg-[linear-gradient(to_top,#f7f8fa_74%,rgba(247,248,250,0))] px-4 pb-0 pt-3 sm:-mx-6 sm:px-6 dark:bg-[linear-gradient(to_top,#101114_74%,rgba(16,17,20,0))]")}>
+          <div className={(!hasConversationContent ? "mx-auto w-full max-w-[920px]" : "mx-auto w-full max-w-[960px]")}>
             <div
               data-type-open={typeOpen ? "true" : undefined}
               className="relative z-30 rounded-lg border border-neutral-200 bg-white p-3 text-left shadow-[0_18px_42px_rgba(15,23,42,0.08)] dark:border-white/10 dark:bg-neutral-950"
             >
-              <input ref={fileInputRef} type="file" multiple={referenceLimit > 1} accept={tab === "video" ? "image/*,video/*" : "image/*"} className="hidden" onChange={handleReferenceChange} />
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple={referenceLimit > 1}
+                accept={tab === "text" ? "image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,.markdown,.csv,text/plain,text/markdown,text/csv" : tab === "video" ? "image/*,video/*" : "image/*"}
+                className="hidden"
+                onChange={handleReferenceChange}
+              />
 
               <div
                 className="min-h-[154px]"
@@ -1005,7 +1675,7 @@ export function CreativeHero() {
                     {CREATION_TYPE_OPTIONS.map((item) => {
                       const Icon = item.icon;
                       const active = item.id === tab;
-                      const supported = item.id === "image" || item.id === "video";
+                      const supported = true;
                       return (
                         <button
                           key={item.id}
@@ -1016,7 +1686,7 @@ export function CreativeHero() {
                             : supported
                               ? "text-neutral-600 hover:bg-neutral-50 hover:text-neutral-950 dark:text-neutral-300 dark:hover:bg-white/8 dark:hover:text-white"
                               : "text-neutral-600 hover:bg-neutral-50 hover:text-neutral-950 dark:text-neutral-400 dark:hover:bg-white/8 dark:hover:text-white") +
-                            " flex h-9 items-center gap-1.5 rounded-md px-3 text-sm font-semibold transition-colors"}
+                            " flex h-9 items-center gap-1.5 rounded-md px-3 text-[13px] font-semibold transition-colors"}
                         >
                           <Icon className="h-4 w-4" />
                           {item.label}
@@ -1038,7 +1708,7 @@ export function CreativeHero() {
                   className="relative mt-2 flex min-h-[86px] w-full flex-wrap content-start items-start gap-1.5"
                   onClick={() => textareaRef.current?.focus()}
                 >
-                  {promptReferenceFiles.map((file) => {
+                  {tab !== "text" && promptReferenceFiles.map((file) => {
                     const referenceIndex = references.findIndex((item) => fileKey(item) === fileKey(file));
                     return (
                       <InlineReferenceChip
@@ -1054,13 +1724,13 @@ export function CreativeHero() {
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
                     onKeyDown={onKeyDown}
-                    onDoubleClick={handlePromptDoubleClick}
+                    onDoubleClick={tab === "text" ? undefined : handlePromptDoubleClick}
                     placeholder={promptReferenceFiles.length ? "" : composerPlaceholder}
                     rows={2}
                     style={{ outline: "none", boxShadow: "none", border: "none" }}
-                    className="prompt-scroll block min-h-[44px] min-w-[220px] flex-1 resize-none border-0 bg-transparent px-0 text-[14px] leading-6 text-neutral-800 placeholder:text-neutral-400 outline-none transition-[height] duration-150 ease-out focus:outline-none focus:ring-0 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+                    className="prompt-scroll block min-h-[44px] min-w-[220px] flex-1 resize-none border-0 bg-transparent px-0 text-[13px] leading-5 text-neutral-800 placeholder:text-neutral-400 outline-none transition-[height] duration-150 ease-out focus:outline-none focus:ring-0 dark:text-neutral-100 dark:placeholder:text-neutral-500"
                   />
-                  {referenceMentionOpen && references.length > 0 && (
+                  {tab !== "text" && referenceMentionOpen && references.length > 0 && (
                     <>
                       <div className="fixed inset-0 z-20" onClick={() => { setReferenceMentionOpen(false); setPendingReferenceMentionRange(null); }} />
                       <ReferenceMentionMenu
@@ -1073,7 +1743,7 @@ export function CreativeHero() {
                   )}
                 </div>
                 <div className="mt-5 flex min-h-[56px] items-end gap-3 overflow-visible">
-                  {references.length === 0 ? (
+                  {activeAttachments.length === 0 ? (
                     <button
                       type="button"
                       onClick={openReferencePicker}
@@ -1082,19 +1752,19 @@ export function CreativeHero() {
                         ? "border-neutral-950 bg-neutral-50 text-neutral-950 ring-2 ring-neutral-950/10 dark:border-white dark:bg-white/10 dark:text-white dark:ring-white/15"
                         : "border-neutral-200 bg-white text-neutral-500 hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-700 dark:border-white/10 dark:bg-white/8 dark:text-neutral-300 dark:hover:bg-white/12") +
                         " flex h-[52px] w-[52px] shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed transition-colors disabled:cursor-not-allowed disabled:opacity-60"}
-                      title={tab === "video" ? "点击或拖拽上传参考素材" : "点击或拖拽上传参考图"}
+                      title={tab === "text" ? "点击或拖拽添加附件" : tab === "video" ? "点击或拖拽上传参考素材" : "点击或拖拽上传参考图"}
                     >
                       {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                      <span className="text-[11px] font-medium leading-none">{tab === "video" ? "素材" : "图片"}</span>
+                      <span className="text-[13px] font-medium leading-none">{tab === "text" ? "附件" : tab === "video" ? "素材" : "图片"}</span>
                     </button>
                   ) : (
                     <div className="relative h-[74px] w-[82px] shrink-0 overflow-visible">
-                      {references.slice(0, 3).map((file, index) => (
-                        <ReferencePreviewTile key={fileKey(file)} file={file} index={index} stackIndex={index} onUse={addPromptReference} onRemove={removeReference} />
+                      {activeAttachments.slice(0, 3).map((file, index) => (
+                        <ReferencePreviewTile key={fileKey(file)} file={file} index={index} stackIndex={index} onUse={tab === "text" ? () => textareaRef.current?.focus() : addPromptReference} onRemove={removeReference} />
                       ))}
-                      {references.length > 3 && (
+                      {activeAttachments.length > 3 && (
                         <span className="absolute left-[46px] top-[7px] z-30 flex h-5 min-w-5 items-center justify-center rounded-full bg-neutral-950 px-1 text-[10px] font-semibold text-white shadow-sm dark:bg-white dark:text-neutral-950">
-                          +{references.length - 3}
+                          +{activeAttachments.length - 3}
                         </span>
                       )}
                       {canUploadReferences && (
@@ -1120,7 +1790,7 @@ export function CreativeHero() {
                     <button
                       type="button"
                       onClick={() => { if (!tabModels.length) return; setModelOpen((o) => !o); setTypeOpen(false); setRatioOpen(false); setCountOpen(false); setReferenceModeOpen(false); }}
-                      className={(modelSelectable ? "text-neutral-800 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-white/10" : "cursor-default text-neutral-400 dark:text-neutral-500") + " flex h-9 max-w-[240px] items-center gap-1.5 rounded-md border border-neutral-200 bg-white px-3 text-sm font-medium transition-colors dark:border-white/10 dark:bg-white/8"}
+                      className={(modelSelectable ? "text-neutral-800 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-white/10" : "cursor-default text-neutral-400 dark:text-neutral-500") + " flex h-9 max-w-[240px] items-center gap-1.5 rounded-md border border-neutral-200 bg-white px-3 text-[13px] font-medium transition-colors dark:border-white/10 dark:bg-white/8"}
                     >
                       <Box className="h-3.5 w-3.5" />
                       <span className="truncate">{modelLabel}</span>
@@ -1129,7 +1799,7 @@ export function CreativeHero() {
                     {modelOpen && modelSelectable && (
                       <>
                         <div className="fixed inset-0 z-10" onClick={() => setModelOpen(false)} />
-                        <div className="absolute left-0 top-full z-50 mt-2 max-h-72 w-[260px] overflow-auto rounded-lg border border-neutral-200 bg-white/96 p-1.5 shadow-[0_16px_42px_rgba(15,23,42,0.16)] backdrop-blur dark:border-white/10 dark:bg-neutral-950/96">
+                        <div className="absolute bottom-full left-0 z-50 mb-2 max-h-[min(18rem,calc(100vh-24px))] w-[260px] overflow-auto rounded-lg border border-neutral-200 bg-white/96 p-1.5 shadow-[0_16px_42px_rgba(15,23,42,0.16)] backdrop-blur dark:border-white/10 dark:bg-neutral-950/96">
                           {tabModels.map((m) => (
                             <button
                               key={m.modelId}
@@ -1137,7 +1807,7 @@ export function CreativeHero() {
                               onClick={() => selectModel(m.modelId)}
                               className={(m.modelId === selectedModelId
                                 ? "bg-neutral-950 text-white shadow-sm dark:bg-white dark:text-neutral-950"
-                                : "text-neutral-700 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-white/10") + " flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-sm font-medium transition-colors"}
+                                : "text-neutral-700 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-white/10") + " flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-[13px] font-medium transition-colors"}
                             >
                               <span
                                 className={(m.modelId === selectedModelId
@@ -1160,7 +1830,7 @@ export function CreativeHero() {
                       <button
                         type="button"
                         onClick={() => { setReferenceModeOpen((open) => !open); setTypeOpen(false); setModelOpen(false); setRatioOpen(false); setCountOpen(false); }}
-                        className="flex h-9 items-center gap-1.5 rounded-md border border-neutral-200 bg-white px-3 text-sm font-medium text-neutral-800 transition-colors hover:bg-neutral-100 dark:border-white/10 dark:bg-white/8 dark:text-neutral-200 dark:hover:bg-white/10"
+                        className="flex h-9 items-center gap-1.5 rounded-md border border-neutral-200 bg-white px-3 text-[13px] font-medium text-neutral-800 transition-colors hover:bg-neutral-100 dark:border-white/10 dark:bg-white/8 dark:text-neutral-200 dark:hover:bg-white/10"
                       >
                         <ReferenceModeIcon className="h-3.5 w-3.5" />
                         {referenceModeLabel}
@@ -1181,7 +1851,7 @@ export function CreativeHero() {
                                   className={(active
                                     ? "bg-neutral-100 text-neutral-950 dark:bg-white/10 dark:text-white"
                                     : "text-neutral-700 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-white/8") +
-                                    " flex h-10 w-full items-center gap-2 rounded-lg px-2.5 text-sm transition-colors"}
+                                    " flex h-10 w-full items-center gap-2 rounded-lg px-2.5 text-[13px] transition-colors"}
                                 >
                                   <Icon className="h-4 w-4 shrink-0" />
                                   <span className="min-w-0 flex-1 truncate text-left">{item.label}</span>
@@ -1216,14 +1886,18 @@ export function CreativeHero() {
                       ratios={IMAGE_RATIO_OPTIONS}
                       batchCount={effectiveImageCount}
                       compact
+                      composer
                     />
-                  ) : (
+                  ) : tab === "video" ? (
                     <div className="relative min-w-0">
                       <button
                         ref={ratioButtonRef}
                         type="button"
                         onClick={() => { setRatioOpen((o) => !o); setTypeOpen(false); setModelOpen(false); setCountOpen(false); setReferenceModeOpen(false); }}
-                        className="flex h-9 max-w-[280px] items-center gap-2 rounded-md border border-neutral-200 bg-white px-3 text-sm font-medium text-neutral-800 transition-colors hover:bg-neutral-100 dark:border-white/10 dark:bg-white/8 dark:text-neutral-200 dark:hover:bg-white/10"
+                        className="flex h-9 max-w-[280px] items-center gap-2 rounded-md border border-neutral-200 bg-white px-3 text-[13px] font-medium text-neutral-800 transition-colors hover:bg-neutral-100 dark:border-white/10 dark:bg-white/8 dark:text-neutral-200 dark:hover:bg-white/10"
+                        aria-expanded={ratioOpen}
+                        aria-haspopup="dialog"
+                        aria-controls="home-video-parameter-panel"
                       >
                         <Crop className="h-3.5 w-3.5" />
                         <span className="truncate">{paramSummary}</span>
@@ -1233,25 +1907,30 @@ export function CreativeHero() {
                         <>
                           <div className="fixed inset-0 z-10" onClick={() => setRatioOpen(false)} />
                           <div
+                            id="home-video-parameter-panel"
                             ref={ratioPanelRef}
-                            className="absolute z-50 rounded-lg border border-black/[0.06] bg-white p-3 text-left shadow-[0_22px_70px_rgba(15,23,42,0.18)] dark:border-white/10 dark:bg-[#25262b] dark:shadow-black/35"
+                            className={`${parameterStyles.panel} ${parameterStyles.panelComposer} absolute z-50 overflow-x-hidden`}
                             style={ratioPanelStyle}
+                            role="dialog"
+                            aria-label="视频参数"
+                            aria-modal="false"
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onWheel={(event) => event.stopPropagation()}
                           >
-                            <VideoParamPanel
-                              ratio={effectiveRatio}
-                              onRatioChange={setRatio}
-                              resolution={videoResolution}
-                              onResolutionChange={setVideoResolution}
-                              duration={videoDuration}
-                              onDurationChange={setVideoDuration}
-                              audio={videoAudio}
-                              onAudioChange={setVideoAudio}
+                            <VideoParamControls
+                              composer
+                              value={effectiveVideoParam}
+                              onChange={updateVideoParam}
+                              ratios={selectedVideoOptions.ratios}
+                              resolutions={selectedVideoOptions.resolutions}
+                              durations={selectedVideoOptions.durations}
+                              allowAudio={selectedVideoOptions.allowAudio}
                             />
                           </div>
                         </>
                       )}
                     </div>
-                  )}
+                  ) : null}
 
                   {tab === "image" && (
                     <BatchCountDropdown
@@ -1268,26 +1947,16 @@ export function CreativeHero() {
                         }
                       }}
                       onChange={setImageCount}
+                      composer
                     />
                   )}
-                  {tab === "video" && (
-                    <button
-                      type="button"
-                      onClick={() => setVideoDuration((value) => (value === 5 ? 10 : 5))}
-                      className="flex h-9 items-center gap-1.5 rounded-md border border-neutral-200 bg-white px-3 text-sm font-medium text-neutral-800 transition-colors hover:bg-neutral-100 dark:border-white/10 dark:bg-white/8 dark:text-neutral-200 dark:hover:bg-white/10"
-                    >
-                      <Clock3 className="h-3.5 w-3.5" />
-                      {videoDuration}s
-                    </button>
-                  )}
-
                 </div>
 
                 <div className="ml-auto flex h-9 shrink-0 items-center gap-1 rounded-md border border-neutral-200 bg-neutral-100 p-1 dark:border-white/10 dark:bg-white/10">
                   <span className={(canSubmit
                     ? "text-neutral-700 dark:text-neutral-100"
                     : "text-neutral-500 dark:text-white/50") +
-                    " flex h-7 items-center gap-1 rounded-md px-2.5 text-sm font-semibold"}
+                    " flex h-7 items-center gap-1 rounded-md px-2.5 text-[13px] font-semibold"}
                     title="本次生成消耗积分"
                   >
                     <Zap className="h-3.5 w-3.5 fill-current" />
@@ -1596,7 +2265,7 @@ function ReferencePickerCard({
   const [mediaFailed, setMediaFailed] = useState(false);
   const [mediaLoaded, setMediaLoaded] = useState(false);
   const isVideo = isVideoFile(file);
-  const generated = file.id < 0;
+  const generated = isTemporaryFile(file);
   const sourceLabel = generated ? "生成" : "上传";
   const title = file.originalName || (isVideo ? "视频素材" : "参考图片");
 
@@ -1633,7 +2302,6 @@ function ReferencePickerCard({
       ) : (
         <>
           {!mediaLoaded && <ReferenceMediaSkeleton />}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={file.fileUrl}
             alt=""
@@ -1801,7 +2469,7 @@ function ReferenceMediaPreviewDialog({ file, onClose }: { file: FileVO | null; o
         {isVideo ? (
           <video src={file.fileUrl} controls autoPlay className={mediaClass} style={mediaStyle} />
         ) : (
-          // eslint-disable-next-line @next/next/no-img-element
+
           <img src={file.fileUrl} alt={title} className={mediaClass} draggable={false} style={mediaStyle} />
         )}
       </div>
@@ -1952,7 +2620,7 @@ function ReferencePreviewTile({ file, index, stackIndex, onUse, onRemove }: { fi
           </div>
         ) : (
           <div className="flex h-full w-full items-center justify-center bg-neutral-100 text-neutral-500 dark:bg-white/10 dark:text-neutral-400">
-            <ImageIcon className="h-5 w-5" />
+            <FileText className="h-5 w-5" />
           </div>
         )}
       </div>
@@ -1966,137 +2634,5 @@ function ReferencePreviewTile({ file, index, stackIndex, onUse, onRemove }: { fi
         <X className="h-3 w-3" />
       </button>
     </div>
-  );
-}
-function VideoParamPanel({
-  ratio,
-  onRatioChange,
-  resolution,
-  onResolutionChange,
-  duration,
-  onDurationChange,
-  audio,
-  onAudioChange,
-}: {
-  ratio: string;
-  onRatioChange: (value: string) => void;
-  resolution: string;
-  onResolutionChange: (value: string) => void;
-  duration: number;
-  onDurationChange: (value: number) => void;
-  audio: boolean;
-  onAudioChange: (value: boolean) => void;
-}) {
-  return (
-    <div>
-      <ParamSection title="视频尺寸">
-        <div className="grid grid-cols-6 gap-x-1 gap-y-2 rounded-lg bg-neutral-100 p-2 dark:bg-white/8">
-          {VIDEO_RATIO_OPTIONS.map((item) => (
-            <RatioTile key={item} value={item} active={ratio === item} onClick={() => onRatioChange(item)} />
-          ))}
-        </div>
-      </ParamSection>
-      <ParamSection title="清晰度">
-        <SegmentedRow count={VIDEO_RESOLUTION_OPTIONS.length}>
-          {VIDEO_RESOLUTION_OPTIONS.map((item) => (
-            <SegmentButton key={item} active={resolution === item} onClick={() => onResolutionChange(item)}>
-              {item}
-            </SegmentButton>
-          ))}
-        </SegmentedRow>
-      </ParamSection>
-      <ParamSection title="视频时长">
-        <SegmentedRow count={2}>
-          <SegmentButton active={duration === 5} onClick={() => onDurationChange(5)}>5s</SegmentButton>
-          <SegmentButton active={duration === 10} onClick={() => onDurationChange(10)}>10s</SegmentButton>
-        </SegmentedRow>
-      </ParamSection>
-      <ParamSection title="生成音频">
-        <SegmentedRow count={2}>
-          <SegmentButton active={audio} onClick={() => onAudioChange(true)}>开启</SegmentButton>
-          <SegmentButton active={!audio} onClick={() => onAudioChange(false)}>关闭</SegmentButton>
-        </SegmentedRow>
-      </ParamSection>
-    </div>
-  );
-}
-
-function ParamSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="not-first:mt-4">
-      <div className="mb-1.5 text-[11px] font-semibold leading-4 text-neutral-700 dark:text-neutral-200">{title}</div>
-      {children}
-    </section>
-  );
-}
-
-function SegmentedRow({ children, count }: { children: React.ReactNode; count: number }) {
-  return (
-    <div className="grid rounded-lg bg-neutral-100 p-1 dark:bg-white/8" style={{ gridTemplateColumns: `repeat(${Math.max(1, count)}, minmax(0, 1fr))` }}>
-      {children}
-    </div>
-  );
-}
-
-function SegmentButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={(active
-        ? "bg-white text-neutral-950 shadow-sm dark:bg-white dark:text-neutral-950"
-        : "text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white") +
-        " flex h-7 items-center justify-center rounded-md px-2 text-[11px] font-normal transition-colors"}
-    >
-      {children}
-    </button>
-  );
-}
-
-function RatioTile({ value, active, onClick }: { value: string; active: boolean; onClick: () => void }) {
-  const label = value === "auto" ? "自动" : value;
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={(active
-        ? "bg-white text-neutral-950 shadow-sm dark:bg-white dark:text-neutral-950"
-        : "text-neutral-500 hover:bg-white/70 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-white/10 dark:hover:text-white") +
-        " flex h-[40px] flex-col items-center justify-center gap-0.5 rounded-md text-[9px] font-normal transition-colors"}
-    >
-      <RatioShape value={value} />
-      <span className="leading-none">{label}</span>
-    </button>
-  );
-}
-
-function RatioShape({ value }: { value: string }) {
-  if (value === "auto") {
-    return <span className="h-4 w-4 rounded-[2px] border border-current" />;
-  }
-  const [wRaw, hRaw] = value.split(":").map((part) => Number(part));
-  const w = Number.isFinite(wRaw) && wRaw > 0 ? wRaw : 1;
-  const h = Number.isFinite(hRaw) && hRaw > 0 ? hRaw : 1;
-  const max = 13;
-  let width = max;
-  let height = max;
-  if (w >= h) {
-    height = Math.max(4, Math.round((h / w) * max));
-  } else {
-    width = Math.max(4, Math.round((w / h) * max));
-  }
-  return <span className="rounded-[2px] border border-current" style={{ width, height }} />;
-}
-function ActionBtn({ onClick, icon, label, disabled }: { onClick: () => void; icon: React.ReactNode; label: string; disabled?: boolean }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className="flex items-center gap-1.5 rounded-full bg-neutral-100 px-3 py-1.5 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-200 disabled:opacity-50 dark:bg-white/8 dark:text-neutral-300 dark:hover:bg-white/12"
-    >
-      {icon}
-      {label}
-    </button>
   );
 }

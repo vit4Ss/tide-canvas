@@ -149,7 +149,7 @@ export default function UserAssetsPage() {
     }
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (id: FileVO["id"]) => {
     if (!confirm("确定要删除该文件吗？")) return;
     const res = await fileApi.delete(id);
     if (res.success) {

@@ -20,6 +20,7 @@ import (
 	"github.com/tidecanvas/tide-canvas-go/internal/module/canvas"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/community"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/content"
+	"github.com/tidecanvas/tide-canvas-go/internal/module/conversation"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/email"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/file"
 	"github.com/tidecanvas/tide-canvas-go/internal/module/follow"
@@ -117,6 +118,9 @@ func New(db *gorm.DB, conf *viper.Viper, logger *logrus.Logger, rdb *redis.Clien
 	pointsSvc := points.NewService(points.NewRepository(db), logger)
 	points.NewHandler(pointsSvc, jwtProvider).RegisterRoutes(api, jwtProvider)
 
+	// RBAC 按钮级权限加载器：读 sys_user+sys_role 解析权限串，管理端路由复用。
+	permLoader := middleware.NewDBPermissionLoader(db)
+
 	// canvas 模块（项目 CRUD / 画布数据存取 / 分享链接）。
 	// 团队共享可见性注入真实 team 服务；归属用户 public_id 映射用 DBUserFinder 直读 sys_user 投影。
 	canvasSvc := canvas.NewService(canvas.NewRepository(db), teamSvc, canvas.NewDBUserFinder(db))
@@ -138,7 +142,7 @@ func New(db *gorm.DB, conf *viper.Viper, logger *logrus.Logger, rdb *redis.Clien
 			AllowedTypes: conf.GetStringSlice("storage.allowed_types"),
 		},
 	)
-	file.NewHandler(fileSvc, jwtProvider).RegisterRoutes(api, jwtProvider)
+	file.NewHandler(fileSvc, jwtProvider).RegisterRoutes(api, jwtProvider, permLoader)
 
 	// banner 模块（公开轮播图列表 + 管理端 CRUD）
 	banner.NewHandler(banner.NewService(banner.NewRepository(db)), jwtProvider).RegisterRoutes(api, jwtProvider)
@@ -159,9 +163,6 @@ func New(db *gorm.DB, conf *viper.Viper, logger *logrus.Logger, rdb *redis.Clien
 	followSvc := follow.NewService(follow.NewRepository(db), follow.NewDBUserFinder(db), logger)
 	followSvc.SetNotifier(notificationSvc)
 	follow.NewHandler(followSvc).RegisterRoutes(api, jwtProvider)
-
-	// RBAC 按钮级权限加载器：读 sys_user+sys_role 解析权限串，admin / ai / log / recharge 管理端路由由 RequiresPermission 复用。
-	permLoader := middleware.NewDBPermissionLoader(db)
 
 	// recharge 充值订单 + 易支付（notify 回调公开 / 管理端订单 /api/admin/orders 挂 RBAC），注入积分服务
 	recharge.NewHandler(recharge.NewService(recharge.NewRepository(db), pointsSvc, logger), jwtProvider).RegisterRoutes(api, jwtProvider, permLoader)
@@ -192,7 +193,8 @@ func New(db *gorm.DB, conf *viper.Viper, logger *logrus.Logger, rdb *redis.Clien
 		teamSvc, // TeamMemberProvider（GetTeamMemberIDs）
 		teamSvc, // TeamPriceProvider（GetPriceFactor）
 		ai.NewDBProjectFinder(db),
-		file.NewURLSaver(fileStorage, 0, logger), // FileSaver：把 AI 上游临时 URL 转存到自有 OSS（默认 100MB 上限）
+		file.NewURLSaver(fileSvc, 0, logger), // FileSaver：转存并登记为会话临时文件，纳入用户空间额度
+		fileSvc,                              // AttachmentReader：读取本人附件用于文档解析/RAG
 		logger,
 	)
 	aiAdminSvc := ai.NewAdminService(aiRepo, aiSvc.Gateway(), ai.NewDBUserFinder(db), logger)
@@ -200,6 +202,11 @@ func New(db *gorm.DB, conf *viper.Viper, logger *logrus.Logger, rdb *redis.Clien
 	// 任务收尾：进程就绪后收一次孤儿任务，并每 5 分钟扫描超时任务（兜底上游卡死/goroutine 泄漏）。
 	aiSvc.RecoverOnStartup()
 	ai.StartRecoveryScheduler(aiSvc, conf.GetInt64("ai.task.timeout-scan-ms"), logger)
+
+	// Persistent private AI creation conversations. Deleting an active conversation
+	// cancels its tasks (and refunds points), then removes only unretained physical files.
+	conversationSvc := conversation.NewService(conversation.NewRepository(db), fileSvc, aiSvc)
+	conversation.NewHandler(conversationSvc).RegisterRoutes(api, jwtProvider)
 
 	// oauth 第三方登录（GitHub/Google/微信，均为公开路由）
 	oauth.NewHandler(oauth.NewService(userRepo, jwtProvider, conf, logger), jwtProvider).RegisterRoutes(api)

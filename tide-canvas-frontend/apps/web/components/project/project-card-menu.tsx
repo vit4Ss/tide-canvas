@@ -6,7 +6,9 @@ import { ActionIcon, Menu } from "@mantine/core";
 import { Copy, ExternalLink, Image as ImageIcon, MoreHorizontal, Pencil, Trash2, X } from "lucide-react";
 import { projectApi } from "@/lib/api";
 import { toast } from "@/components/shared/toast";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { CanvasCoverPicker } from "@/components/canvas/canvas-cover-picker";
+import { displayProjectName } from "@/lib/utils";
 import type { ProjectVO } from "@/types/canvas";
 
 interface Props {
@@ -21,6 +23,7 @@ export function ProjectCardMenu({ project, onChanged }: Props) {
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [coverOpen, setCoverOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [coverImages, setCoverImages] = useState<{ id: string; url: string; title: string }[]>([]);
 
   const stop = (event: React.MouseEvent) => {
@@ -118,13 +121,19 @@ export function ProjectCardMenu({ project, onChanged }: Props) {
   };
 
   const handleDelete = async () => {
-    if (!confirm("确定要删除该项目吗？")) return;
-    const res = await projectApi.delete(project.id);
-    if (res.success) {
-      toast.success("已删除");
-      onChanged();
-    } else {
-      toast.error(res.message || "删除失败");
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await projectApi.delete(project.id);
+      if (res.success) {
+        toast.success("已删除");
+        setDeleteOpen(false);
+        onChanged();
+      } else {
+        toast.error(res.message || "删除失败");
+      }
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -143,7 +152,7 @@ export function ProjectCardMenu({ project, onChanged }: Props) {
           <Menu.Item leftSection={<ImageIcon size={15} />} onClick={openCover}>修改封面</Menu.Item>
           <Menu.Item leftSection={<Copy size={15} />} onClick={handleDuplicate} disabled={busy}>创建副本</Menu.Item>
           <Menu.Divider />
-          <Menu.Item color="red" leftSection={<Trash2 size={15} />} onClick={handleDelete}>删除项目</Menu.Item>
+          <Menu.Item color="red" leftSection={<Trash2 size={15} />} onClick={() => setDeleteOpen(true)}>删除项目</Menu.Item>
         </Menu.Dropdown>
       </Menu>
 
@@ -174,6 +183,17 @@ export function ProjectCardMenu({ project, onChanged }: Props) {
       )}
 
       <CanvasCoverPicker open={coverOpen} currentUrl={project.thumbnail} images={coverImages} onClose={() => setCoverOpen(false)} onPick={pickCover} />
+      <ConfirmDialog
+        open={deleteOpen}
+        danger
+        loading={busy}
+        title="删除项目？"
+        message={`项目「${displayProjectName(project.name)}」删除后不可恢复，画布内容和封面也会一并删除。`}
+        confirmText="删除项目"
+        cancelText="取消"
+        onCancel={() => setDeleteOpen(false)}
+        onConfirm={() => void handleDelete()}
+      />
     </div>
   );
 }

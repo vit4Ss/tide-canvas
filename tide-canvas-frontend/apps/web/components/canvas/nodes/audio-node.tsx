@@ -18,7 +18,6 @@ import { aiApi } from "@/lib/api";
 import { AiModelType, type AiModelVO } from "@/types/ai";
 import { toast } from "@/components/shared/toast";
 import { NodeHeader } from "./base/node-header";
-import { NodePorts } from "./base/node-ports";
 import { NodeChrome } from "./base/node-chrome";
 import { ModelPicker } from "./model-picker";
 
@@ -27,8 +26,6 @@ interface Props {
   isSelected: boolean;
   isDragging?: boolean;
   isConnectTarget?: boolean;
-  onNodeMouseDown: (nodeId: string, e: React.MouseEvent) => void;
-  onPortMouseDown?: (nodeId: string, side: "input" | "output", clientX: number, clientY: number) => void;
 }
 
 const MAX_TEXT = 50000;
@@ -261,12 +258,6 @@ const AudioPromptEditor = forwardRef<AudioPromptEditorHandle, AudioPromptEditorP
 
   useEffect(() => {
     const editor = editorRef.current;
-    if (!editor) return;
-    syncAudioPromptEditor(editor, value || "");
-  }, []);
-
-  useEffect(() => {
-    const editor = editorRef.current;
     if (!editor || document.activeElement === editor) return;
     syncAudioPromptEditor(editor, value || "");
   }, [value]);
@@ -345,8 +336,6 @@ export const AudioNode = memo(function AudioNode({
   isSelected,
   isDragging = false,
   isConnectTarget = false,
-  onNodeMouseDown,
-  onPortMouseDown,
 }: Props) {
   const updateNode = useCanvasStore((s) => s.updateNode);
   const zoom = useCanvasStore((s) => s.transform.k);
@@ -396,10 +385,6 @@ export const AudioNode = memo(function AudioNode({
       updateNode(node.id, { prompt }, false);
     }
   }, [node.id, prompt, rawPrompt, updateNode]);
-
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    onNodeMouseDown(node.id, e);
-  }, [node.id, onNodeMouseDown]);
 
   const stop = (e: React.MouseEvent) => e.stopPropagation();
   const keepPanelFocus = (e: React.MouseEvent) => {
@@ -454,15 +439,15 @@ export const AudioNode = memo(function AudioNode({
   return (
     <div
       data-node-id={node.id}
-      className={`absolute select-none ${isSelected ? "z-10" : ""}`}
-      style={{ left: node.x, top: node.y, width: node.width, cursor: isDragging ? "grabbing" : "grab" }}
-      onMouseDown={handleMouseDown}
+      className={`relative select-none ${isSelected ? "z-10" : ""}`}
+      style={{ width: node.width, cursor: isDragging ? "grabbing" : "grab" }}
     >
       <div className="relative">
         <div
-          className={`relative overflow-hidden rounded-[18px] bg-white shadow-sm ring-1 transition-all dark:bg-neutral-950 ${
+          data-node-selected={isSelected && !isConnectTarget ? "true" : undefined}
+          className={`canvas-node-selection-surface relative overflow-hidden rounded-[18px] bg-white shadow-sm ring-1 transition-all dark:bg-neutral-950 ${
             isConnectTarget ? "ring-2 ring-blue-500/70" :
-            isSelected ? "ring-2 ring-neutral-400 dark:ring-neutral-600" : "ring-neutral-200 hover:ring-neutral-300 dark:ring-neutral-800 dark:hover:ring-neutral-700"
+            "ring-neutral-200 hover:ring-neutral-300 dark:ring-neutral-800 dark:hover:ring-neutral-700"
           }`}
           style={{ height: cardHeight }}
         >
@@ -520,13 +505,12 @@ export const AudioNode = memo(function AudioNode({
         </div>
 
         <NodeHeader icon={AudioLines} title={node.title || "音频节点"} visible={showAuxUI} zoom={zoom} />
-        <NodePorts nodeId={node.id} visible={showAuxUI} zoom={zoom} onPortMouseDown={onPortMouseDown} />
 
         {showAuxUI && (
           <NodeChrome zoom={zoom} placement="bottom-center" gap={18} damp={0.6}>
             <div
               onMouseDown={stop}
-              className="flex flex-col rounded-xl border border-neutral-200 bg-white p-3 shadow-xl shadow-neutral-900/10 dark:border-neutral-800 dark:bg-neutral-950 dark:shadow-black/30"
+              className="canvas-node-composer flex flex-col rounded-xl border border-neutral-200 bg-white p-3 shadow-xl shadow-neutral-900/10 dark:border-neutral-800 dark:bg-neutral-950 dark:shadow-black/30"
               style={{ width: 660, boxSizing: "border-box" }}
             >
               <AudioPromptEditor

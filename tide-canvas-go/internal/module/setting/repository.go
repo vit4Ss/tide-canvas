@@ -34,6 +34,19 @@ func (r *Repository) LoadAll() (map[string]string, error) {
 	return out, nil
 }
 
+// FindValue 按配置键读取值；未配置时返回空字符串。
+func (r *Repository) FindValue(key string) (string, error) {
+	var cfg model.SysConfig
+	err := r.db.Where("config_key = ?", key).First(&cfg).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return cfg.ConfigValue, nil
+}
+
 // Upsert 写入单个配置项：键已存在则更新 value，否则插入（对齐 update 中的 selectOne→update/insert）。
 // create_time/update_time 由模型基类(autoCreateTime/autoUpdateTime)与 BeforeCreate 维护。
 func (r *Repository) Upsert(key, value string) error {

@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState, type Key } from "react";
-import { Table, Tag, Button, Modal, Input, InputNumber, DatePicker, Select, Space, Typography, Popconfirm } from "antd";
+import { useCallback, useEffect, useMemo, useState, type Key } from "react";
+import { Table, Tag, Button, Modal, Input, InputNumber, DatePicker, Select, Space, Typography, Popconfirm, Tooltip } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { PlusOutlined, ReloadOutlined, CopyOutlined, DeleteOutlined, StopOutlined, PoweroffOutlined } from "@ant-design/icons";
 import { adminApi } from "@/lib/api";
@@ -18,12 +18,24 @@ const STATUS_TAG: Record<number, { label: string; color: string }> = {
   2: { label: "已停用", color: "red" },
 };
 
+function MetricItem({ label, value, hint, color }: { label: string; value: React.ReactNode; hint?: string; color?: string }) {
+  return (
+    <div style={{ minWidth: 128, padding: "10px 12px", border: "1px solid var(--ant-color-border-secondary, #f0f0f0)", borderRadius: 8, background: "#fff" }}>
+      <div style={{ color: "var(--ant-color-text-secondary, #8c8c8c)", fontSize: 12 }}>{label}</div>
+      <div style={{ marginTop: 2, fontSize: 20, fontWeight: 700, color }}>{value}</div>
+      {hint && <div style={{ marginTop: 2, color: "var(--ant-color-text-tertiary, #bfbfbf)", fontSize: 12 }}>{hint}</div>}
+    </div>
+  );
+}
+
 export default function AdminRedeemPage() {
   const can = useHasPerm();
   const [list, setList] = useState<RedeemCodeVO[]>([]);
   const [total, setTotal] = useState(0);
   const [pageNum, setPageNum] = useState(1);
   const [statusFilter, setStatusFilter] = useState<string>("");
+  const [codeKeyword, setCodeKeyword] = useState("");
+  const [batchKeyword, setBatchKeyword] = useState("");
   const [loading, setLoading] = useState(true);
   const [selectedKeys, setSelectedKeys] = useState<Key[]>([]);
 
@@ -38,14 +50,25 @@ export default function AdminRedeemPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await adminApi.redeem.list({ pageNum, pageSize: PAGE_SIZE, ...(statusFilter !== "" ? { status: Number(statusFilter) } : {}) });
+      const res = await adminApi.redeem.list({
+        pageNum,
+        pageSize: PAGE_SIZE,
+        ...(statusFilter !== "" ? { status: Number(statusFilter) } : {}),
+        ...(codeKeyword.trim() ? { code: codeKeyword.trim() } : {}),
+        ...(batchKeyword.trim() ? { batchNo: batchKeyword.trim() } : {}),
+      });
       if (res.success) { setList(res.data.records); setTotal(res.data.total); }
     } finally {
       setLoading(false);
     }
-  }, [pageNum, statusFilter]);
+  }, [pageNum, statusFilter, codeKeyword, batchKeyword]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const pageUnused = useMemo(() => list.filter((item) => item.status === 0).length, [list]);
+  const pageUsed = useMemo(() => list.filter((item) => item.status === 1).length, [list]);
+  const pageDisabled = useMemo(() => list.filter((item) => item.status === 2).length, [list]);
+  const pagePoints = useMemo(() => list.reduce((sum, item) => sum + item.points, 0), [list]);
 
   const handleGenerate = async () => {
     if (!genCount || !genPoints || genCount < 1 || genPoints < 1) { toast.error("数量和积分需大于 0"); return; }
@@ -92,15 +115,35 @@ export default function AdminRedeemPage() {
   };
 
   const columns: ColumnsType<RedeemCodeVO> = [
-    { title: "兑换码", dataIndex: "code", key: "code", render: (v: string) => <Button type="link" size="small" style={{ fontFamily: "monospace", padding: 0 }} icon={<CopyOutlined />} onClick={() => copyText(v)}>{v}</Button> },
-    { title: "积分", dataIndex: "points", key: "points", render: (v: number) => <span style={{ color: "#d97706", fontWeight: 500 }}>+{v}</span> },
-    { title: "状态", dataIndex: "status", key: "status", render: (s: number) => { const t = STATUS_TAG[s] ?? { label: String(s), color: "default" }; return <Tag color={t.color}>{t.label}</Tag>; } },
+    {
+      title: "兑换码",
+      key: "code",
+      render: (_, r) => <Button type="link" size="small" style={{ fontFamily: "monospace", padding: 0 }} icon={<CopyOutlined />} onClick={() => copyText(r.code)}>{r.code}</Button>,
+    },
+    { title: "批次", dataIndex: "batchNo", key: "batchNo", responsive: ["md"], render: (v) => v ? <span style={{ fontFamily: "monospace", fontSize: 12 }}>{v}</span> : <span style={{ color: "#bfbfbf" }}>-</span> },
+    { title: "积分", dataIndex: "points", key: "points", render: (v: number) => <span style={{ color: "#d97706", fontWeight: 600 }}>+{v}</span> },
+    {
+      title: "状态",
+      dataIndex: "status",
+      key: "status",
+      render: (status: number) => {
+        const tag = STATUS_TAG[status] ?? { label: String(status), color: "default" };
+        return <Tag color={tag.color}>{tag.label}</Tag>;
+      },
+    },
     { title: "生成者", dataIndex: "creatorName", key: "creatorName", responsive: ["md"], render: (v: string | undefined) => v || <span style={{ color: "#bfbfbf" }}>-</span> },
     { title: "使用者", dataIndex: "userName", key: "userName", responsive: ["md"], render: (v: string | undefined) => v || <span style={{ color: "#bfbfbf" }}>-</span> },
-    { title: "兑换时间", dataIndex: "usedTime", key: "usedTime", responsive: ["lg"], render: (v) => v ? formatDate(v) : <span style={{ color: "#bfbfbf" }}>-</span> },
-    { title: "有效期", dataIndex: "expireTime", key: "expireTime", responsive: ["md"], render: (v) => v ? formatDate(v) : "永久" },
-    { title: "备注", dataIndex: "remark", key: "remark", responsive: ["lg"], ellipsis: true, render: (v) => v || "-" },
-    { title: "创建时间", dataIndex: "createTime", key: "createTime", responsive: ["lg"], render: (v) => v ? formatDate(v) : "-" },
+    { title: "创建时间", dataIndex: "createTime", key: "createTime", responsive: ["lg"], render: (v) => v ? <span style={{ whiteSpace: "nowrap" }}>{formatDate(v)}</span> : "-" },
+    { title: "有效期", dataIndex: "expireTime", key: "expireTime", responsive: ["lg"], render: (v) => v ? <span style={{ whiteSpace: "nowrap" }}>{formatDate(v)}</span> : "永久" },
+    { title: "兑换时间", dataIndex: "usedTime", key: "usedTime", responsive: ["lg"], render: (v) => v ? <span style={{ whiteSpace: "nowrap" }}>{formatDate(v)}</span> : <span style={{ color: "#bfbfbf" }}>-</span> },
+    {
+      title: "备注",
+      dataIndex: "remark",
+      key: "remark",
+      responsive: ["lg"],
+      ellipsis: true,
+      render: (v) => v ? <Tooltip title={v}><span>{v}</span></Tooltip> : "-",
+    },
     {
       title: "操作", key: "action", align: "right", render: (_, r) => (
         <Space size={0}>
@@ -126,8 +169,6 @@ export default function AdminRedeemPage() {
         desc={`共 ${total} 条`}
         extra={
           <Space>
-            <Select style={{ width: 130 }} value={statusFilter} onChange={(v) => { setPageNum(1); setStatusFilter(v); }}
-              options={[{ value: "", label: "全部状态" }, { value: "0", label: "未使用" }, { value: "1", label: "已使用" }, { value: "2", label: "已停用" }]} />
             <Button icon={<CopyOutlined />} disabled={selectedKeys.length === 0} onClick={copySelected}>
               复制选中{selectedKeys.length > 0 ? ` (${selectedKeys.length})` : ""}
             </Button>
@@ -138,6 +179,39 @@ export default function AdminRedeemPage() {
           </Space>
         }
       />
+
+      <Space wrap>
+        <MetricItem label="兑换码总数" value={total} hint="当前筛选" />
+        <MetricItem label="本页未使用" value={pageUnused} color="#16a34a" />
+        <MetricItem label="本页已使用" value={pageUsed} />
+        <MetricItem label="本页停用" value={pageDisabled} color="#ef4444" />
+        <MetricItem label="本页积分面额" value={pagePoints} color="#d97706" />
+      </Space>
+
+      <Space wrap>
+        <Input.Search
+          allowClear
+          placeholder="搜索兑换码"
+          style={{ width: 220 }}
+          value={codeKeyword}
+          onChange={(event) => setCodeKeyword(event.target.value)}
+          onSearch={() => setPageNum(1)}
+        />
+        <Input.Search
+          allowClear
+          placeholder="按批次号筛选"
+          style={{ width: 220 }}
+          value={batchKeyword}
+          onChange={(event) => setBatchKeyword(event.target.value)}
+          onSearch={() => setPageNum(1)}
+        />
+        <Select
+          style={{ width: 130 }}
+          value={statusFilter}
+          onChange={(v) => { setPageNum(1); setStatusFilter(v); }}
+          options={[{ value: "", label: "全部状态" }, { value: "0", label: "未使用" }, { value: "1", label: "已使用" }, { value: "2", label: "已停用" }]}
+        />
+      </Space>
 
       <Table<RedeemCodeVO>
         rowKey="id"

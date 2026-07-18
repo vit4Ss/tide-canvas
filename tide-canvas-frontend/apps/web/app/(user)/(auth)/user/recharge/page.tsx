@@ -28,7 +28,7 @@ export default function RechargePage() {
   // 顶栏「开通会员」带 ?tab=member 进入时，默认展示会员 tab
   useEffect(() => {
     if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("tab") === "member") {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+
       setTab("member");
     }
   }, []);

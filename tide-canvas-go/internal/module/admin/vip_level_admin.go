@@ -14,9 +14,10 @@ const vipLevelsConfigKey = "vip.levels"
 
 // VipLevelVO 会员等级配置项（与前端及 sys_config 的 JSON 对齐）。
 type VipLevelVO struct {
-	Level       int    `json:"level"`
-	Name        string `json:"name"`
-	Concurrency int    `json:"concurrency"` // 该等级 AI 并发上限，0=不限
+	Level        int    `json:"level"`
+	Name         string `json:"name"`
+	Concurrency  int    `json:"concurrency"`  // 该等级 AI 并发上限，0=不限
+	StorageQuota int64  `json:"storageQuota"` // 该等级存储额度（字节），0=不额外覆盖用户额度
 }
 
 // VipLevelAdminService 会员等级配置（读写 sys_config 的 vip.levels）。
@@ -38,7 +39,7 @@ func (s *VipLevelAdminService) List() []VipLevelVO {
 			return levels
 		}
 	}
-	return []VipLevelVO{{Level: 1, Name: "VIP1", Concurrency: 0}}
+	return []VipLevelVO{{Level: 1, Name: "VIP1", Concurrency: 0, StorageQuota: 1073741824}}
 }
 
 // Save 保存等级配置（序列化为 JSON 存入 sys_config）。

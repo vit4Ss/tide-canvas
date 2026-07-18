@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
-  Alert,
   Button,
   Descriptions,
+  Empty,
+  Grid,
   Input,
   InputNumber,
   Modal,
@@ -17,11 +19,11 @@ import {
   Tooltip,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
+import { CloudDownloadOutlined, DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
 import { adminApi } from "@/lib/api";
 import { AdminPageHead } from "@/components/admin/page-head";
 import { CLARITY_OPTIONS, DEFAULT_IMAGE_COUNT_OPTIONS, QUALITY_OPTIONS, RATIO_OPTIONS } from "@/components/canvas/nodes/utils/quality-ratio";
-import { DURATION_OPTIONS, RESOLUTIONS, VIDEO_RATIOS } from "@/components/canvas/nodes/video-param-picker";
+import { getVideoModelOptions, parseVideoModelConfig, VIDEO_RATIOS } from "@/lib/video-model-config";
 import { toast } from "@/components/shared/toast";
 import { useHasPerm } from "@/stores/use-permission-store";
 import { formatDate } from "@/lib/utils";
@@ -40,7 +42,10 @@ interface LogicalModelVO {
   name: string;
   modelId: string;
   type: string;
+  providerId?: string;
   providerName?: string;
+  config?: string;
+  costPerCall?: number;
   status?: number;
 }
 
@@ -96,6 +101,21 @@ const ROUTE_STRATEGIES = [
   { value: "fallback", label: "故障转移" },
   { value: "latency", label: "低延迟" },
 ];
+
+const TAB_COPY: Record<TabKey, { title: string; desc: string }> = {
+  routes: {
+    title: "模型映射",
+    desc: "给用户展示逻辑模型，再映射到真实上游模型；用户端只看到逻辑模型",
+  },
+  upstream: {
+    title: "上游模型",
+    desc: "配置真实供应商模型，可手动新增，也可以从供应商接口拉取后添加",
+  },
+  decisions: {
+    title: "决策日志",
+    desc: "查看每次生成命中的路由、候选模型和兜底情况",
+  },
+};
 
 const COMPLEXITY_OPTIONS = [
   { value: "simple", label: "简单" },
@@ -171,10 +191,27 @@ function strategyLabel(strategy?: string) {
   return ROUTE_STRATEGIES.find((x) => x.value === strategy)?.label || strategy || "优先级";
 }
 
+function isTabKey(value: string | null): value is TabKey {
+  return value === "routes" || value === "upstream" || value === "decisions";
+}
+
 function shortJson(text?: string) {
   if (!text || text === "{}") return "-";
   const pretty = prettyJson(text);
   return pretty.length > 80 ? `${pretty.slice(0, 80)}...` : pretty;
+}
+
+function hasRouteConditions(text?: string) {
+  const config = parseRouteConditions(text);
+  return Boolean(
+    config.qualities.length ||
+    config.clarities.length ||
+    config.ratios.length ||
+    config.batchCounts.length ||
+    config.resolutions.length ||
+    config.durations.length ||
+    (text && text.trim() && text.trim() !== "{}"),
+  );
 }
 
 interface RouteMatchConfig {
@@ -299,15 +336,32 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-export default function AdminAiRoutingPage() {
+function MetricItem({ label, value, hint, color }: { label: string; value: React.ReactNode; hint?: string; color?: string }) {
+  return (
+    <div style={{ minWidth: 118, padding: "10px 12px", border: "1px solid var(--ant-color-border-secondary, #f0f0f0)", borderRadius: 8, background: "#fafafa" }}>
+      <div style={{ color: "var(--ant-color-text-secondary, #8c8c8c)", fontSize: 12 }}>{label}</div>
+      <div style={{ marginTop: 2, fontSize: 20, fontWeight: 700, color }}>{value}</div>
+      {hint && <div style={{ marginTop: 2, color: "var(--ant-color-text-tertiary, #bfbfbf)", fontSize: 12 }}>{hint}</div>}
+    </div>
+  );
+}
+
+export function AdminAiRoutingPageView({ defaultTab = "routes" }: { defaultTab?: TabKey }) {
+  const router = useRouter();
   const can = useHasPerm();
-  const [activeTab, setActiveTab] = useState<TabKey>("routes");
+  const screens = Grid.useBreakpoint();
+  const [activeTab, setActiveTab] = useState<TabKey>(() => {
+    if (typeof window === "undefined") return defaultTab;
+    const tab = new URLSearchParams(window.location.search).get("tab");
+    return isTabKey(tab) ? tab : defaultTab;
+  });
 
   const [providers, setProviders] = useState<AiProviderVO[]>([]);
   const [logicalModels, setLogicalModels] = useState<LogicalModelVO[]>([]);
   const [upstreamModels, setUpstreamModels] = useState<AiUpstreamModelVO[]>([]);
   const [handlers, setHandlers] = useState<AiHandlerVO[]>([]);
   const [selectedModelId, setSelectedModelId] = useState("");
+  const [modelKeyword, setModelKeyword] = useState("");
   const [requestedModelId] = useState(() => {
     if (typeof window === "undefined") return "";
     return new URLSearchParams(window.location.search).get("modelId") ?? "";
@@ -328,6 +382,14 @@ export default function AdminAiRoutingPage() {
   const [editingUpstreamId, setEditingUpstreamId] = useState<string | null>(null);
   const [upstreamForm, setUpstreamForm] = useState<UpstreamForm>({ ...emptyUpstreamForm });
   const [upstreamSaving, setUpstreamSaving] = useState(false);
+  const [remoteOpen, setRemoteOpen] = useState(false);
+  const [remoteProviderId, setRemoteProviderId] = useState("");
+  const [remoteKeyword, setRemoteKeyword] = useState("");
+  const [remoteType, setRemoteType] = useState("image");
+  const [remoteModels, setRemoteModels] = useState<string[]>([]);
+  const [remoteLoading, setRemoteLoading] = useState(false);
+  const [remoteImportingId, setRemoteImportingId] = useState("");
+  const [logicalImporting, setLogicalImporting] = useState(false);
 
   const [routeOpen, setRouteOpen] = useState(false);
   const [editingRouteId, setEditingRouteId] = useState<string | null>(null);
@@ -339,6 +401,41 @@ export default function AdminAiRoutingPage() {
     () => logicalModels.find((m) => m.id === selectedModelId),
     [logicalModels, selectedModelId],
   );
+  const selectedVideoOptions = useMemo(
+    () => getVideoModelOptions(parseVideoModelConfig(selectedLogicalModel?.config)),
+    [selectedLogicalModel?.config],
+  );
+
+  const filteredLogicalModels = useMemo(() => {
+    const keyword = modelKeyword.trim().toLowerCase();
+    if (!keyword) return logicalModels;
+    return logicalModels.filter((model) =>
+      [model.name, model.modelId, model.providerName, model.type]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(keyword)),
+    );
+  }, [logicalModels, modelKeyword]);
+
+  const enabledRoutes = useMemo(() => routes.filter((route) => route.status === 1).length, [routes]);
+  const defaultRouteCount = useMemo(() => routes.filter((route) => !hasRouteConditions(route.conditions)).length, [routes]);
+  const enabledUpstreamCount = useMemo(() => upstreamModels.filter((model) => model.status === 1).length, [upstreamModels]);
+  const existingUpstreamKeys = useMemo(
+    () => new Set(upstreamModels.map((model) => `${model.providerId}:${model.modelId}`)),
+    [upstreamModels],
+  );
+  const logicalImportCandidates = useMemo(
+    () => logicalModels.filter((model) => model.providerId && model.modelId && !existingUpstreamKeys.has(`${model.providerId}:${model.modelId}`)),
+    [existingUpstreamKeys, logicalModels],
+  );
+  const remoteModelRows = useMemo(() => remoteModels.map((modelId) => ({ modelId })), [remoteModels]);
+  const routeGridColumns = screens.lg ? "minmax(280px, 340px) minmax(0, 1fr)" : "1fr";
+  const conditionGridColumns = screens.md ? "repeat(3, minmax(0, 1fr))" : "1fr";
+  const pageCopy = TAB_COPY[activeTab];
+  const surfaceStyle = {
+    border: "1px solid var(--ant-color-border-secondary, #f0f0f0)",
+    borderRadius: 8,
+    background: "#fff",
+  };
 
   const handlerOptions = useMemo(() => {
     const base = handlers.map((h) => ({
@@ -435,10 +532,122 @@ export default function AdminAiRoutingPage() {
     if (activeTab === "decisions") void loadDecisionLogs();
   };
 
+  const switchTab = (value: string | number) => {
+    const nextTab = value as TabKey;
+    if (nextTab === "upstream" && defaultTab !== "upstream") {
+      router.push("/admin/ai/upstream");
+      return;
+    }
+    if (nextTab === "routes" && defaultTab === "upstream") {
+      router.push(selectedModelId ? `/admin/ai/routing?modelId=${selectedModelId}` : "/admin/ai/routing");
+      return;
+    }
+    setActiveTab(nextTab);
+  };
+
   const openCreateUpstream = () => {
     setEditingUpstreamId(null);
     setUpstreamForm({ ...emptyUpstreamForm });
     setUpstreamOpen(true);
+  };
+
+  const openRemoteImport = () => {
+    if (providers.length === 0) {
+      toast.error("请先配置 AI 供应商");
+      router.push("/admin/ai/providers");
+      return;
+    }
+    setRemoteProviderId((current) => current || providers.find((provider) => provider.status === 1)?.id || providers[0]?.id || "");
+    setRemoteKeyword("");
+    setRemoteModels([]);
+    setRemoteOpen(true);
+  };
+
+  const fetchRemoteModels = async () => {
+    if (!remoteProviderId) {
+      toast.error("请选择供应商");
+      return;
+    }
+    setRemoteLoading(true);
+    try {
+      const res = await adminApi.ai.providers.remoteModels(remoteProviderId, remoteKeyword.trim() || undefined);
+      if (res.success) {
+        setRemoteModels(res.data);
+        if (res.data.length === 0) toast.info("供应商没有返回模型");
+      } else {
+        toast.error(res.message || "获取上游模型失败");
+      }
+    } finally {
+      setRemoteLoading(false);
+    }
+  };
+
+  const importRemoteModel = async (modelId: string) => {
+    if (!remoteProviderId) {
+      toast.error("请选择供应商");
+      return;
+    }
+    setRemoteImportingId(modelId);
+    try {
+      const res = await adminApi.ai.upstreamModels.create({
+        providerId: remoteProviderId,
+        name: modelId,
+        modelId,
+        type: remoteType,
+        capabilities: {},
+        config: {},
+        costPerCall: 0,
+        timeoutMs: 0,
+        priority: 0,
+        status: 1,
+      });
+      if (res.success) {
+        toast.success("已添加上游模型");
+        await loadUpstreamModels();
+      } else {
+        toast.error(res.message || "添加上游模型失败");
+      }
+    } finally {
+      setRemoteImportingId("");
+    }
+  };
+
+  const importLogicalModelsAsUpstream = async () => {
+    if (logicalImportCandidates.length === 0) {
+      toast.info("当前模型没有可导入的上游记录");
+      return;
+    }
+    setLogicalImporting(true);
+    let imported = 0;
+    let failed = 0;
+    try {
+      for (const model of logicalImportCandidates) {
+        const res = await adminApi.ai.upstreamModels.create({
+          providerId: model.providerId,
+          name: model.name || model.modelId,
+          modelId: model.modelId,
+          type: model.type || "image",
+          capabilities: {},
+          config: model.config?.trim() ? model.config : {},
+          costPerCall: Number(model.costPerCall || 0),
+          timeoutMs: 0,
+          priority: 0,
+          status: model.status ?? 1,
+        });
+        if (res.success) imported += 1;
+        else failed += 1;
+      }
+      await loadUpstreamModels();
+      if (imported > 0) toast.success(`已导入 ${imported} 个上游模型`);
+      if (failed > 0) toast.error(`${failed} 个模型导入失败`);
+    } finally {
+      setLogicalImporting(false);
+    }
+  };
+
+  const openCreateUpstreamFromRoute = () => {
+    setRouteOpen(false);
+    openCreateUpstream();
   };
 
   const openEditUpstream = (item: AiUpstreamModelVO) => {
@@ -598,6 +807,21 @@ export default function AdminAiRoutingPage() {
     { title: "优先级", dataIndex: "priority", key: "priority", width: 90 },
     { title: "状态", dataIndex: "status", key: "status", render: statusTag },
     {
+      title: "添加时间",
+      dataIndex: "createTime",
+      key: "createTime",
+      width: 180,
+      responsive: ["md"],
+      render: (value) => <span style={{ whiteSpace: "nowrap", fontSize: 12, color: "#8c8c8c" }}>{value ? formatDate(value) : "-"}</span>,
+    },
+    {
+      title: "添加人",
+      dataIndex: "creatorName",
+      key: "creatorName",
+      width: 140,
+      render: (value, item) => value || (item.createdBy && item.createdBy !== "0" ? item.createdBy : "系统/历史数据"),
+    },
+    {
       title: "操作",
       key: "action",
       align: "right",
@@ -611,6 +835,44 @@ export default function AdminAiRoutingPage() {
           )}
         </Space>
       ),
+    },
+  ];
+
+  const remoteColumns: ColumnsType<{ modelId: string }> = [
+    {
+      title: "供应商模型 ID",
+      dataIndex: "modelId",
+      key: "modelId",
+      render: (modelId) => <span style={{ fontFamily: "monospace", fontSize: 12 }}>{modelId}</span>,
+    },
+    {
+      title: "状态",
+      key: "status",
+      width: 120,
+      render: (_, item) => {
+        const exists = existingUpstreamKeys.has(`${remoteProviderId}:${item.modelId}`);
+        return exists ? <Tag color="green">已添加</Tag> : <Tag>可添加</Tag>;
+      },
+    },
+    {
+      title: "操作",
+      key: "action",
+      align: "right",
+      width: 140,
+      render: (_, item) => {
+        const exists = existingUpstreamKeys.has(`${remoteProviderId}:${item.modelId}`);
+        return (
+          <Button
+            type="link"
+            size="small"
+            disabled={exists || !can("model:manage")}
+            loading={remoteImportingId === item.modelId}
+            onClick={() => importRemoteModel(item.modelId)}
+          >
+            添加为上游
+          </Button>
+        );
+      },
     },
   ];
 
@@ -680,100 +942,266 @@ export default function AdminAiRoutingPage() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <AdminPageHead
-        title="模型映射"
-        desc="给用户展示逻辑模型，再映射到真实上游模型；用户端只看到逻辑模型"
-        extra={
-          <Space>
-            <Button icon={<ReloadOutlined />} onClick={refreshCurrent}>刷新</Button>
-            {activeTab === "upstream" && can("model:manage") && <Button type="primary" icon={<PlusOutlined />} onClick={openCreateUpstream}>新增上游模型</Button>}
-            {activeTab === "routes" && can("model:manage") && <Button type="primary" icon={<PlusOutlined />} onClick={openCreateRoute}>新增映射</Button>}
-          </Space>
-        }
+        title={pageCopy.title}
+        desc={pageCopy.desc}
+        extra={<Button icon={<ReloadOutlined />} onClick={refreshCurrent}>刷新</Button>}
       />
 
-      <Alert
-        type="info"
-        showIcon
-        message="先在模型管理中创建用户可见模型，再在这里选择真实上游模型。未配置映射时，后端会直接调用逻辑模型自身的供应商与模型 ID。"
-      />
-
-      <Segmented
-        value={activeTab}
-        onChange={(value) => setActiveTab(value as TabKey)}
-        options={[
-          { value: "routes", label: "模型映射" },
-          { value: "upstream", label: "上游模型" },
-          { value: "decisions", label: "决策日志" },
-        ]}
-      />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <Segmented
+          value={activeTab}
+          onChange={switchTab}
+          options={[
+            { value: "routes", label: "模型映射" },
+            { value: "upstream", label: "上游模型" },
+            { value: "decisions", label: "决策日志" },
+          ]}
+        />
+        <Space wrap>
+          {activeTab === "routes" && can("model:manage") && <Button type="primary" icon={<PlusOutlined />} onClick={openCreateRoute} disabled={!selectedModelId}>新增映射</Button>}
+        </Space>
+      </div>
 
       {activeTab === "routes" && (
-        <>
-          <Space wrap>
-            <Select
-              style={{ minWidth: 320 }}
-              placeholder="选择用户可见模型"
-              value={selectedModelId || undefined}
-              loading={referenceLoading}
-              onChange={(v) => setSelectedModelId(v)}
-              showSearch
-              optionFilterProp="label"
-              options={logicalModels.map((m) => ({
-                value: m.id,
-                label: `${m.name} (${m.modelId})`,
-              }))}
+        <div style={{ display: "grid", gridTemplateColumns: routeGridColumns, gap: 16, alignItems: "start" }}>
+          <div style={{ ...surfaceStyle, padding: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+              <div>
+                <div style={{ fontWeight: 600 }}>用户可见模型</div>
+                <div style={{ marginTop: 2, color: "var(--ant-color-text-secondary, #8c8c8c)", fontSize: 12 }}>
+                  共 {logicalModels.length} 个，已筛选 {filteredLogicalModels.length} 个
+                </div>
+              </div>
+              <Tag>{referenceLoading ? "加载中" : "模型池"}</Tag>
+            </div>
+            <Input.Search
+              allowClear
+              value={modelKeyword}
+              onChange={(event) => setModelKeyword(event.target.value)}
+              placeholder="搜索名称 / model_id / 类型"
+              style={{ marginTop: 12 }}
             />
-            {selectedLogicalModel && (
+            <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8, maxHeight: screens.lg ? "calc(100vh - 360px)" : 360, overflowY: "auto", paddingRight: 2 }}>
+              {filteredLogicalModels.length === 0 ? (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={referenceLoading ? "模型加载中" : "没有匹配模型"} />
+              ) : filteredLogicalModels.map((model) => {
+                const active = model.id === selectedModelId;
+                return (
+                  <button
+                    key={model.id}
+                    type="button"
+                    onClick={() => setSelectedModelId(model.id)}
+                    style={{
+                      width: "100%",
+                      textAlign: "left",
+                      cursor: "pointer",
+                      border: `1px solid ${active ? "var(--ant-color-primary, #1677ff)" : "var(--ant-color-border-secondary, #f0f0f0)"}`,
+                      background: active ? "var(--ant-color-primary-bg, #e6f4ff)" : "#fff",
+                      borderRadius: 8,
+                      padding: 10,
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                      <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{model.name}</span>
+                      {statusTag(model.status ?? 1)}
+                    </div>
+                    <div style={{ marginTop: 4, fontFamily: "monospace", fontSize: 12, color: "var(--ant-color-text-secondary, #8c8c8c)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {model.modelId}
+                    </div>
+                    <Space size={[4, 4]} wrap style={{ marginTop: 8 }}>
+                      {typeTag(model.type)}
+                      {model.providerName && <Tag>{model.providerName}</Tag>}
+                    </Space>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{ ...surfaceStyle, minWidth: 0 }}>
+            {selectedLogicalModel ? (
               <>
-                {typeTag(selectedLogicalModel.type)}
-                <span style={{ color: "var(--ant-color-text-secondary, #8c8c8c)" }}>
-                  当前映射 {routes.length} 条
-                </span>
+                <div style={{ padding: 16, borderBottom: "1px solid var(--ant-color-border-secondary, #f0f0f0)" }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                    <div>
+                      <Space size={8} wrap>
+                        <h3 style={{ margin: 0, fontSize: 18 }}>{selectedLogicalModel.name}</h3>
+                        {typeTag(selectedLogicalModel.type)}
+                        {statusTag(selectedLogicalModel.status ?? 1)}
+                      </Space>
+                      <div style={{ marginTop: 4, fontFamily: "monospace", color: "var(--ant-color-text-secondary, #8c8c8c)", fontSize: 12 }}>
+                        {selectedLogicalModel.modelId}
+                      </div>
+                    </div>
+                    <Space>
+                      <Button icon={<ReloadOutlined />} onClick={loadRoutes} loading={routesLoading}>刷新规则</Button>
+                      {can("model:manage") && <Button type="primary" icon={<PlusOutlined />} onClick={openCreateRoute}>新增映射</Button>}
+                    </Space>
+                  </div>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
+                    <MetricItem label="映射规则" value={routes.length} hint="当前模型" />
+                    <MetricItem label="启用规则" value={enabledRoutes} color="#16a34a" />
+                    <MetricItem label="默认兜底" value={defaultRouteCount} />
+                    <MetricItem label="可用上游" value={enabledUpstreamCount} hint={`共 ${upstreamModels.length} 个`} />
+                  </div>
+                </div>
+                <Table<AiModelRouteVO>
+                  rowKey="id"
+                  columns={routeColumns}
+                  dataSource={routes}
+                  loading={routesLoading || referenceLoading}
+                  pagination={false}
+                  scroll={{ x: "max-content" }}
+                  locale={{ emptyText: "暂无模型映射" }}
+                />
               </>
+            ) : (
+              <div style={{ padding: 48 }}>
+                <Empty description="请选择一个用户可见模型" />
+              </div>
             )}
-          </Space>
-          <Table<AiModelRouteVO>
-            rowKey="id"
-            columns={routeColumns}
-            dataSource={routes}
-            loading={routesLoading || referenceLoading}
-            pagination={false}
-            scroll={{ x: "max-content" }}
-            locale={{ emptyText: selectedModelId ? "暂无模型映射" : "请先选择用户可见模型" }}
-          />
-        </>
+          </div>
+        </div>
       )}
 
       {activeTab === "upstream" && (
-        <Table<AiUpstreamModelVO>
-          rowKey="id"
-          columns={upstreamColumns}
-          dataSource={upstreamModels}
-          loading={upstreamLoading}
-          pagination={{ pageSize: 15, showTotal: (total) => `共 ${total} 条` }}
-          scroll={{ x: "max-content" }}
-          locale={{ emptyText: "暂无上游模型" }}
-        />
+        <div style={surfaceStyle}>
+          <div style={{ padding: 16, borderBottom: "1px solid var(--ant-color-border-secondary, #f0f0f0)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <MetricItem label="上游模型" value={upstreamModels.length} />
+              <MetricItem label="启用模型" value={enabledUpstreamCount} color="#16a34a" />
+              <MetricItem label="供应商" value={new Set(upstreamModels.map((model) => model.providerId).filter(Boolean)).size} />
+            </div>
+            <Space wrap>
+              {can("model:manage") && (
+                <Button loading={logicalImporting} disabled={logicalImportCandidates.length === 0} onClick={() => void importLogicalModelsAsUpstream()}>
+                  从当前模型导入
+                </Button>
+              )}
+              {can("model:manage") && <Button icon={<CloudDownloadOutlined />} onClick={openRemoteImport}>从供应商获取</Button>}
+              {can("model:manage") && <Button type="primary" icon={<PlusOutlined />} onClick={openCreateUpstream}>新增上游模型</Button>}
+            </Space>
+          </div>
+          <Table<AiUpstreamModelVO>
+            rowKey="id"
+            columns={upstreamColumns}
+            dataSource={upstreamModels}
+            loading={upstreamLoading}
+            pagination={{ pageSize: 15, showTotal: (total) => `共 ${total} 条` }}
+            scroll={{ x: "max-content" }}
+            locale={{
+              emptyText: (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前数据库还没有上游模型">
+                  <Space wrap>
+                    {can("model:manage") && (
+                      <Button loading={logicalImporting} disabled={logicalImportCandidates.length === 0} onClick={() => void importLogicalModelsAsUpstream()}>
+                        从当前模型导入
+                      </Button>
+                    )}
+                    {can("model:manage") && <Button type="primary" icon={<PlusOutlined />} onClick={openCreateUpstream}>手动新增</Button>}
+                    {can("model:manage") && <Button icon={<CloudDownloadOutlined />} onClick={openRemoteImport}>从供应商获取</Button>}
+                    {providers.length === 0 && <Button onClick={() => router.push("/admin/ai/providers")}>配置供应商</Button>}
+                  </Space>
+                </Empty>
+              ),
+            }}
+          />
+        </div>
       )}
 
       {activeTab === "decisions" && (
-        <Table<AiRouteDecisionLogVO>
-          rowKey="id"
-          columns={decisionColumns}
-          dataSource={decisions}
-          loading={decisionLoading}
-          scroll={{ x: "max-content" }}
-          locale={{ emptyText: "暂无路由决策日志" }}
-          pagination={{
-            current: decisionPage,
-            pageSize: PAGE_SIZE,
-            total: decisionTotal,
-            showSizeChanger: false,
-            showTotal: (total) => `共 ${total} 条`,
-            onChange: setDecisionPage,
-          }}
-        />
+        <div style={surfaceStyle}>
+          <div style={{ padding: 16, borderBottom: "1px solid var(--ant-color-border-secondary, #f0f0f0)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <Space size={[8, 8]} wrap>
+              <MetricItem label="日志总数" value={decisionTotal} />
+              <MetricItem label="本页记录" value={decisions.length} />
+            </Space>
+            <Button icon={<ReloadOutlined />} onClick={loadDecisionLogs} loading={decisionLoading}>刷新日志</Button>
+          </div>
+          <Table<AiRouteDecisionLogVO>
+            rowKey="id"
+            columns={decisionColumns}
+            dataSource={decisions}
+            loading={decisionLoading}
+            scroll={{ x: "max-content" }}
+            locale={{ emptyText: "暂无路由决策日志" }}
+            pagination={{
+              current: decisionPage,
+              pageSize: PAGE_SIZE,
+              total: decisionTotal,
+              showSizeChanger: false,
+              showTotal: (total) => `共 ${total} 条`,
+              onChange: setDecisionPage,
+            }}
+          />
+        </div>
       )}
+
+      <Modal
+        title="从供应商获取模型"
+        open={remoteOpen}
+        onCancel={() => setRemoteOpen(false)}
+        footer={null}
+        width={820}
+        destroyOnHidden
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, paddingTop: 8 }}>
+          <div style={{ border: "1px solid var(--ant-color-border-secondary, #f0f0f0)", borderRadius: 8, background: "#fafafa", padding: "10px 12px", color: "var(--ant-color-text-secondary, #8c8c8c)", fontSize: 13 }}>
+            这里会调用供应商的模型列表接口。拉到的只是候选模型，点击“添加为上游”后才会写入当前系统并出现在映射下拉框里。
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: screens.md ? "minmax(220px, 1fr) minmax(160px, 220px) minmax(220px, 1fr)" : "1fr", gap: 12 }}>
+            <Field label="供应商">
+              <Select
+                style={{ width: "100%" }}
+                value={remoteProviderId || undefined}
+                onChange={(value) => {
+                  setRemoteProviderId(value);
+                  setRemoteModels([]);
+                }}
+                placeholder="请选择供应商"
+                options={providers.map((provider) => ({
+                  value: provider.id,
+                  label: `${provider.name} (${provider.providerType})`,
+                }))}
+              />
+            </Field>
+            <Field label="添加类型">
+              <Select style={{ width: "100%" }} value={remoteType} onChange={setRemoteType} options={MODEL_TYPES} />
+            </Field>
+            <Field label="搜索关键词">
+              <Input.Search
+                allowClear
+                value={remoteKeyword}
+                onChange={(event) => setRemoteKeyword(event.target.value)}
+                onSearch={() => void fetchRemoteModels()}
+                placeholder="可选，留空获取全部"
+                enterButton="获取"
+                loading={remoteLoading}
+              />
+            </Field>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+            <Space size={[8, 8]} wrap>
+              <Button type="primary" icon={<CloudDownloadOutlined />} loading={remoteLoading} onClick={() => void fetchRemoteModels()}>
+                获取模型
+              </Button>
+              <Button onClick={() => setRemoteModels([])} disabled={remoteModels.length === 0}>清空结果</Button>
+            </Space>
+            <span style={{ color: "var(--ant-color-text-secondary, #8c8c8c)", fontSize: 12 }}>
+              已获取 {remoteModels.length} 个候选
+            </span>
+          </div>
+          <Table<{ modelId: string }>
+            rowKey="modelId"
+            columns={remoteColumns}
+            dataSource={remoteModelRows}
+            loading={remoteLoading}
+            pagination={{ pageSize: 8, showTotal: (total) => `共 ${total} 个候选` }}
+            scroll={{ x: "max-content" }}
+            locale={{ emptyText: "请选择供应商并点击获取模型" }}
+          />
+        </div>
+      </Modal>
 
       <Modal
         title={editingUpstreamId ? "编辑上游模型" : "新增上游模型"}
@@ -841,11 +1269,37 @@ export default function AdminAiRoutingPage() {
         width={760}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 14, paddingTop: 8 }}>
-          <Alert
-            type="info"
-            showIcon
-            message={selectedLogicalModel ? `当前逻辑模型：${selectedLogicalModel.name} (${selectedLogicalModel.modelId})` : "请先选择逻辑模型"}
-          />
+          <div style={{ border: "1px solid var(--ant-color-border-secondary, #f0f0f0)", borderRadius: 8, background: "#fafafa", padding: "10px 12px" }}>
+            <div style={{ color: "var(--ant-color-text-secondary, #8c8c8c)", fontSize: 12 }}>绑定到逻辑模型</div>
+            <div style={{ marginTop: 2, fontWeight: 600 }}>
+              {selectedLogicalModel ? selectedLogicalModel.name : "未选择逻辑模型"}
+            </div>
+            {selectedLogicalModel && (
+              <div style={{ marginTop: 2, fontFamily: "monospace", fontSize: 12, color: "var(--ant-color-text-secondary, #8c8c8c)" }}>
+                {selectedLogicalModel.modelId}
+              </div>
+            )}
+          </div>
+          {upstreamModels.length === 0 && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, border: "1px dashed var(--ant-color-border, #d9d9d9)", borderRadius: 8, padding: "10px 12px", background: "#fff" }}>
+              <div>
+                <div style={{ fontWeight: 600 }}>还没有上游模型</div>
+                <div style={{ marginTop: 2, color: "var(--ant-color-text-secondary, #8c8c8c)", fontSize: 12 }}>
+                  先创建真实供应商模型，再把它绑定到这个逻辑模型。
+                </div>
+              </div>
+              {can("model:manage") ? (
+                <Space size={8} wrap>
+                  <Button size="small" loading={logicalImporting} disabled={logicalImportCandidates.length === 0} onClick={() => void importLogicalModelsAsUpstream()}>
+                    从当前模型导入
+                  </Button>
+                  <Button size="small" icon={<PlusOutlined />} onClick={openCreateUpstreamFromRoute}>新增上游模型</Button>
+                </Space>
+              ) : (
+                <span style={{ color: "var(--ant-color-text-secondary, #8c8c8c)", fontSize: 12 }}>需要模型管理权限</span>
+              )}
+            </div>
+          )}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
             <Field label="上游模型 *">
               <Select
@@ -855,6 +1309,24 @@ export default function AdminAiRoutingPage() {
                 placeholder="请选择上游模型"
                 showSearch
                 optionFilterProp="label"
+                notFoundContent={
+                  <div style={{ padding: "12px 8px", textAlign: "center" }}>
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无上游模型" style={{ margin: 0 }} />
+                    {can("model:manage") ? (
+                      <Button
+                        type="link"
+                        size="small"
+                        icon={<PlusOutlined />}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={openCreateUpstreamFromRoute}
+                      >
+                        新增上游模型
+                      </Button>
+                    ) : (
+                      <div style={{ color: "var(--ant-color-text-secondary, #8c8c8c)", fontSize: 12 }}>请联系管理员添加</div>
+                    )}
+                  </div>
+                }
                 options={upstreamModels.map((m) => ({
                   value: m.id,
                   label: `${m.name || m.modelId} / ${m.providerName || "-"} / ${m.modelId}`,
@@ -895,29 +1367,29 @@ export default function AdminAiRoutingPage() {
               <Select style={{ width: "100%" }} value={routeForm.status} onChange={(v) => setRouteForm((prev) => ({ ...prev, status: v }))} options={STATUS_OPTIONS} />
             </Field>
           </div>
-          <div style={{ border: "1px solid var(--ant-color-border-secondary, #f0f0f0)", borderRadius: 8, padding: 12, background: "#fafafa" }}>
+          <div style={{ border: "1px solid var(--ant-color-border-secondary, #f0f0f0)", borderRadius: 8, padding: 14, background: "#fafafa" }}>
             <div style={{ fontWeight: 500, marginBottom: 4 }}>匹配条件</div>
             <div style={{ color: "var(--ant-color-text-secondary, #8c8c8c)", fontSize: 12, marginBottom: 12 }}>
               不选择任何条件时，这条映射会作为默认兜底；选择条件后，后端会按本次生成参数优先命中更精确的映射。
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: conditionGridColumns, gap: "14px 16px", alignItems: "start" }}>
               {routeConditionType === "video" ? (
                 <>
                   <RouteConditionGroup
                     label="视频分辨率"
-                    options={RESOLUTIONS.map((value) => ({ value, label: value }))}
+                    options={selectedVideoOptions.resolutions.map((value) => ({ value, label: value }))}
                     selected={routeForm.resolutions}
                     onToggle={(value) => setRouteForm((prev) => ({ ...prev, resolutions: toggleValue(prev.resolutions, String(value)) }))}
                   />
                   <RouteConditionGroup
                     label="视频比例"
-                    options={VIDEO_RATIOS.map((item) => ({ value: item.value, label: item.value === "auto" ? "自动" : item.label }))}
+                    options={VIDEO_RATIOS.filter((item) => selectedVideoOptions.ratios.includes(item.value)).map((item) => ({ value: item.value, label: item.label }))}
                     selected={routeForm.ratios}
                     onToggle={(value) => setRouteForm((prev) => ({ ...prev, ratios: toggleValue(prev.ratios, String(value)) }))}
                   />
                   <RouteConditionGroup
                     label="视频时长"
-                    options={DURATION_OPTIONS.map((value) => ({ value, label: `${value}s` }))}
+                    options={selectedVideoOptions.durations.map((value) => ({ value, label: `${value}s` }))}
                     selected={routeForm.durations}
                     onToggle={(value) => setRouteForm((prev) => ({ ...prev, durations: toggleValue(prev.durations, Number(value)) }))}
                   />
@@ -937,17 +1409,19 @@ export default function AdminAiRoutingPage() {
                     onToggle={(value) => setRouteForm((prev) => ({ ...prev, clarities: toggleValue(prev.clarities, String(value)) }))}
                   />
                   <RouteConditionGroup
-                    label="图片比例"
-                    options={RATIO_OPTIONS.map((item) => ({ value: item.value, label: item.value === "auto" ? "自动" : item.label }))}
-                    selected={routeForm.ratios}
-                    onToggle={(value) => setRouteForm((prev) => ({ ...prev, ratios: toggleValue(prev.ratios, String(value)) }))}
-                  />
-                  <RouteConditionGroup
                     label="出图张数"
                     options={DEFAULT_IMAGE_COUNT_OPTIONS.map((value) => ({ value, label: `${value}张` }))}
                     selected={routeForm.batchCounts}
                     onToggle={(value) => setRouteForm((prev) => ({ ...prev, batchCounts: toggleValue(prev.batchCounts, Number(value)) }))}
                   />
+                  <div style={{ gridColumn: screens.md ? "1 / -1" : undefined }}>
+                    <RouteConditionGroup
+                      label="图片比例"
+                      options={RATIO_OPTIONS.map((item) => ({ value: item.value, label: item.value === "auto" ? "自动" : item.label }))}
+                      selected={routeForm.ratios}
+                      onToggle={(value) => setRouteForm((prev) => ({ ...prev, ratios: toggleValue(prev.ratios, String(value)) }))}
+                    />
+                  </div>
                 </>
               )}
             </div>
@@ -981,4 +1455,8 @@ export default function AdminAiRoutingPage() {
       </Modal>
     </div>
   );
+}
+
+export default function AdminAiRoutingPage() {
+  return <AdminAiRoutingPageView />;
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 
+	"github.com/tidecanvas/tide-canvas-go/internal/middleware"
 	"github.com/tidecanvas/tide-canvas-go/internal/model"
 	"github.com/tidecanvas/tide-canvas-go/pkg/ecode"
 	"github.com/tidecanvas/tide-canvas-go/pkg/response"
@@ -25,6 +26,8 @@ type UpstreamModelVO struct {
 	TimeoutMs    int             `json:"timeoutMs"`
 	Priority     int             `json:"priority"`
 	Status       int             `json:"status"`
+	CreatedBy    int64           `json:"createdBy,string"`
+	CreatorName  string          `json:"creatorName"`
 	CreateTime   string          `json:"createTime"`
 }
 
@@ -87,9 +90,20 @@ func (s *AdminService) listUpstreamModels(c *gin.Context) {
 		response.FailErr(c, err)
 		return
 	}
+	creatorIDs := make([]int64, 0, len(list))
+	for i := range list {
+		if list[i].CreatedBy != 0 {
+			creatorIDs = append(creatorIDs, list[i].CreatedBy)
+		}
+	}
+	creatorNames, err := s.user.UsernamesByIDs(creatorIDs)
+	if err != nil {
+		response.FailErr(c, err)
+		return
+	}
 	out := make([]UpstreamModelVO, 0, len(list))
 	for i := range list {
-		out = append(out, toUpstreamModelVO(&list[i], providerNames[list[i].ProviderID]))
+		out = append(out, toUpstreamModelVO(&list[i], providerNames[list[i].ProviderID], creatorNames[list[i].CreatedBy]))
 	}
 	response.OK(c, out)
 }
@@ -122,6 +136,7 @@ func (s *AdminService) createUpstreamModel(c *gin.Context) {
 		TimeoutMs:  intOrDefault(body["timeoutMs"], 0),
 		Priority:   intOrDefault(body["priority"], 0),
 		Status:     intOrDefault(body["status"], 1),
+		CreatedBy:  middleware.MustUserID(c),
 	}
 	if !hasText(m.Name) {
 		m.Name = m.ModelID
@@ -141,7 +156,8 @@ func (s *AdminService) createUpstreamModel(c *gin.Context) {
 		response.FailErr(c, err)
 		return
 	}
-	response.OK(c, toUpstreamModelVO(m, provider.Name))
+	creatorNames, _ := s.user.UsernamesByIDs([]int64{m.CreatedBy})
+	response.OK(c, toUpstreamModelVO(m, provider.Name, creatorNames[m.CreatedBy]))
 }
 
 func (s *AdminService) updateUpstreamModel(c *gin.Context) {
@@ -279,6 +295,12 @@ func (s *AdminService) createModelRoute(c *gin.Context) {
 	if v, ok := body["conditions"]; ok && v != nil {
 		route.Conditions = jsonColumn(v)
 	}
+	if logicalModel.Type == "video" {
+		if err := validateVideoRouteConditions(logicalModel.Config, route.Conditions); err != nil {
+			response.Fail(c, ecode.BadRequest.WithMessage(err.Error()))
+			return
+		}
+	}
 	if err := s.repo.CreateModelRoute(route); err != nil {
 		response.FailErr(c, err)
 		return
@@ -319,7 +341,23 @@ func (s *AdminService) updateModelRoute(c *gin.Context) {
 	setIfPresent(body, "weight", columns, "weight", asInt)
 	setIfPresent(body, "status", columns, "status", asInt)
 	if v, ok := body["conditions"]; ok && v != nil {
-		columns["conditions"] = jsonColumn(v)
+		conditions := jsonColumn(v)
+		logicalModel, err := s.repo.FindModelByID(existing.LogicalModelID)
+		if err != nil {
+			response.FailErr(c, err)
+			return
+		}
+		if logicalModel == nil {
+			response.Fail(c, ecode.NotFound)
+			return
+		}
+		if logicalModel.Type == "video" {
+			if err := validateVideoRouteConditions(logicalModel.Config, conditions); err != nil {
+				response.Fail(c, ecode.BadRequest.WithMessage(err.Error()))
+				return
+			}
+		}
+		columns["conditions"] = conditions
 	}
 	if err := s.repo.UpdateModelRouteColumns(id, columns); err != nil {
 		response.FailErr(c, err)
@@ -372,7 +410,10 @@ func (s *AdminService) upstreamNames() (map[int64]string, error) {
 	return out, nil
 }
 
-func toUpstreamModelVO(m *model.AiUpstreamModel, providerName string) UpstreamModelVO {
+func toUpstreamModelVO(m *model.AiUpstreamModel, providerName, creatorName string) UpstreamModelVO {
+	if creatorName == "" && m.CreatedBy == 0 {
+		creatorName = "系统/历史数据"
+	}
 	return UpstreamModelVO{
 		ID:           m.ID,
 		ProviderID:   m.ProviderID,
@@ -386,6 +427,8 @@ func toUpstreamModelVO(m *model.AiUpstreamModel, providerName string) UpstreamMo
 		TimeoutMs:    m.TimeoutMs,
 		Priority:     m.Priority,
 		Status:       m.Status,
+		CreatedBy:    m.CreatedBy,
+		CreatorName:  creatorName,
 		CreateTime:   m.CreateTime.Format(dateTimeLayout),
 	}
 }

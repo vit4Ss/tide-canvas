@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ComponentType } from "react";
+import { useCallback, useRef, useState, type ComponentType } from "react";
 import {
   AlignLeft,
   AudioLines,
@@ -13,7 +13,6 @@ import {
   Magnet,
   Map,
   Minus,
-  PenTool,
   Plus,
   Redo2,
   Undo2,
@@ -22,6 +21,7 @@ import {
 } from "lucide-react";
 import { useCanvasStore } from "@/stores/use-canvas-store";
 import styles from "./styles/canvas-bottom-toolbar.module.css";
+import { useDismissibleCanvasOverlay, useExclusiveCanvasOverlay } from "./canvas-overlay-coordinator";
 
 interface Props {
   zoom: number;
@@ -80,32 +80,11 @@ export function CanvasBottomToolbar({
   const undo = useCanvasStore((s) => s.undo);
   const redo = useCanvasStore((s) => s.redo);
   const [addOpen, setAddOpen] = useState(false);
+  const closeAddMenu = useCallback(() => setAddOpen(false), []);
+  const announceAddOpen = useExclusiveCanvasOverlay(addOpen, closeAddMenu, "canvas-add-menu");
   const addMenuRef = useRef<HTMLDivElement>(null);
   const zoomPercent = Math.round(zoom * 100);
-
-  useEffect(() => {
-    if (!addOpen) return;
-
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!addMenuRef.current?.contains(event.target as Node)) {
-        setAddOpen(false);
-      }
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setAddOpen(false);
-    };
-
-    const timer = window.setTimeout(() => {
-      document.addEventListener("mousedown", handlePointerDown);
-      document.addEventListener("keydown", handleKeyDown);
-    }, 0);
-
-    return () => {
-      window.clearTimeout(timer);
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [addOpen]);
+  useDismissibleCanvasOverlay(addOpen, closeAddMenu, [addMenuRef]);
 
   const pickNode = (type: string) => {
     onAddNode(type);
@@ -144,7 +123,10 @@ export function CanvasBottomToolbar({
           <button
             type="button"
             className={`${styles.dockButton} ${styles.primaryDockButton}`}
-            onClick={() => setAddOpen((value) => !value)}
+            onClick={() => {
+              if (!addOpen) announceAddOpen();
+              setAddOpen((value) => !value);
+            }}
             title="新增节点"
             aria-expanded={addOpen}
           >
@@ -168,7 +150,7 @@ export function CanvasBottomToolbar({
 
         <DockButton icon={Workflow} label="自动排布" onClick={onArrange} />
         <DockButton icon={Frame} label="适应视图" onClick={onFitView} />
-        <DockButton icon={Clock} label="历史记录" active={historyActive} onClick={onOpenHistory} />
+        <DockButton icon={Clock} label="资源历史" active={historyActive} onClick={onOpenHistory} />
         <span className={styles.divider} />
         <DockButton icon={Undo2} label="撤销" disabled={undoStackLen === 0} onClick={undo} />
         <DockButton icon={Redo2} label="重做" disabled={redoStackLen === 0} onClick={redo} />

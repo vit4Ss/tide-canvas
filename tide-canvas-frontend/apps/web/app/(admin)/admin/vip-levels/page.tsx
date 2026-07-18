@@ -21,7 +21,7 @@ export default function AdminVipLevelsPage() {
     try {
       const res = await adminApi.vipLevels.list();
       if (res.success && res.data) {
-        setLevels(res.data.length ? res.data : [{ level: 1, name: "VIP1", concurrency: 0 }]);
+        setLevels(res.data.length ? res.data : [{ level: 1, name: "VIP1", concurrency: 0, storageQuota: 1073741824 }]);
       }
     } catch {
       toast.error("加载等级配置失败");
@@ -35,7 +35,7 @@ export default function AdminVipLevelsPage() {
     setLevels((prev) => prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
   const addLevel = () => {
     const maxLv = levels.reduce((m, l) => Math.max(m, l.level), 0);
-    setLevels((prev) => [...prev, { level: maxLv + 1, name: `VIP${maxLv + 1}`, concurrency: 0 }]);
+    setLevels((prev) => [...prev, { level: maxLv + 1, name: `VIP${maxLv + 1}`, concurrency: 0, storageQuota: 1073741824 }]);
   };
   const removeLevel = (idx: number) => setLevels((prev) => prev.filter((_, i) => i !== idx));
 
@@ -61,6 +61,7 @@ export default function AdminVipLevelsPage() {
     { title: "等级", dataIndex: "level", width: 130, render: (v: number, _r, idx) => <InputNumber min={1} value={v} onChange={(n) => update(idx, { level: n ?? 1 })} style={{ width: "100%" }} /> },
     { title: "名称", dataIndex: "name", render: (v: string, _r, idx) => <Input value={v} onChange={(e) => update(idx, { name: e.target.value })} placeholder="如 VIP1 / 黄金会员" /> },
     { title: "AI 并发上限（0=不限）", dataIndex: "concurrency", width: 210, render: (v: number, _r, idx) => <InputNumber min={0} value={v} onChange={(n) => update(idx, { concurrency: n ?? 0 })} style={{ width: "100%" }} /> },
+    { title: "存储空间（GB）", dataIndex: "storageQuota", width: 180, render: (v: number, _r, idx) => <InputNumber min={0} precision={1} value={Number(((v || 0) / 1024 / 1024 / 1024).toFixed(1))} onChange={(n) => update(idx, { storageQuota: Math.round((n ?? 0) * 1024 * 1024 * 1024) })} style={{ width: "100%" }} /> },
     { title: "操作", width: 80, render: (_v, _r, idx) => <Popconfirm title="删除该等级？" onConfirm={() => removeLevel(idx)} okText="删除" cancelText="取消"><Button type="text" danger size="small" icon={<DeleteOutlined />} disabled={levels.length <= 1} /></Popconfirm> },
   ];
 
@@ -68,7 +69,7 @@ export default function AdminVipLevelsPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <AdminPageHead title="会员等级" desc="自定义会员等级与各等级的 AI 并发上限；在「用户管理」里给用户分配等级" extra={saveBtn} />
+      <AdminPageHead title="会员等级" desc="自定义会员等级的 AI 并发上限和存储空间；在「用户管理」里给用户分配等级" extra={saveBtn} />
       {loading ? (
         <Card><Skeleton active paragraph={{ rows: 4 }} /></Card>
       ) : (

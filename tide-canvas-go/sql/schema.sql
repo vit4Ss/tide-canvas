@@ -124,6 +124,7 @@ CREATE TABLE `ai_model` (
     `model_id`           VARCHAR(128)  NOT NULL COMMENT '模型标识',
     `type`               VARCHAR(16)   NOT NULL COMMENT '类型(image/video/text)',
     `supported_handlers` JSON          DEFAULT NULL COMMENT '支持的handler列表',
+    `capabilities`       JSON          DEFAULT NULL COMMENT '模型能力(多模态/流式/附件限制/上下文等)',
     `config`             JSON          DEFAULT NULL COMMENT '模型参数配置',
     `cost_per_call`      DECIMAL(10,4) DEFAULT 0.0000 COMMENT '单次调用成本(上游USD,管理端参考,用户侧脱敏)',
     `point_cost`         DECIMAL(10,2) NOT NULL DEFAULT 10.00 COMMENT '每次调用消耗积分(支持小数,结算按总价向上取整)',
@@ -214,6 +215,101 @@ CREATE TABLE `ai_task` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='AI任务表';
 
 -- ----------------------------
+-- AI 创作会话与分支消息
+-- ----------------------------
+DROP TABLE IF EXISTS `ai_conversation`;
+CREATE TABLE `ai_conversation` (
+    `id`                     BIGINT       NOT NULL COMMENT '主键(雪花ID,应用层生成)',
+    `public_id`              CHAR(36)     CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL COMMENT '对外UUID',
+    `user_id`                BIGINT       NOT NULL COMMENT '创建用户',
+    `mode`                   VARCHAR(16)  NOT NULL COMMENT 'text/image/video',
+    `title`                  VARCHAR(120) NOT NULL DEFAULT '新对话',
+    `pinned`                 TINYINT      NOT NULL DEFAULT 0,
+    `active_leaf_message_id` BIGINT       DEFAULT NULL COMMENT '当前分支叶子消息',
+    `last_message_time`      DATETIME     DEFAULT NULL,
+    `create_time`            DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `update_time`            DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `deleted`                TINYINT      NOT NULL DEFAULT 0,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_ai_conversation_public_id` (`public_id`),
+    KEY `idx_ai_conversation_user_recent` (`user_id`, `pinned`, `last_message_time`),
+    KEY `idx_ai_conversation_user_mode` (`user_id`, `mode`, `update_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='AI创作会话';
+
+DROP TABLE IF EXISTS `ai_conversation_message`;
+CREATE TABLE `ai_conversation_message` (
+    `id`                BIGINT        NOT NULL COMMENT '主键(雪花ID,应用层生成)',
+    `public_id`         CHAR(36)      CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL COMMENT '对外UUID',
+    `conversation_id`   BIGINT        NOT NULL COMMENT 'ai_conversation.id',
+    `parent_message_id` BIGINT        DEFAULT NULL COMMENT '当前分支上一条消息',
+    `role`              VARCHAR(16)   NOT NULL COMMENT 'user/assistant/system',
+    `content_type`      VARCHAR(16)   NOT NULL DEFAULT 'text' COMMENT 'text/image/video/status',
+    `content`           LONGTEXT      NOT NULL,
+    `model_id`          BIGINT        DEFAULT NULL COMMENT 'ai_model.id',
+    `model_name`        VARCHAR(128)  NOT NULL DEFAULT '',
+    `task_id`           BIGINT        DEFAULT NULL COMMENT 'ai_task.id',
+    `status`            VARCHAR(16)   NOT NULL DEFAULT 'done' COMMENT 'pending/streaming/done/error/cancelled',
+    `metadata`          JSON          DEFAULT NULL,
+    `create_time`       DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `update_time`       DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `deleted`           TINYINT       NOT NULL DEFAULT 0,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_ai_conversation_message_public_id` (`public_id`),
+    KEY `idx_ai_message_conversation_time` (`conversation_id`, `create_time`),
+    KEY `idx_ai_message_parent` (`parent_message_id`),
+    KEY `idx_ai_message_task` (`task_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='AI会话分支消息';
+
+DROP TABLE IF EXISTS `ai_message_file`;
+CREATE TABLE `ai_message_file` (
+    `id`          BIGINT      NOT NULL COMMENT '主键(雪花ID,应用层生成)',
+    `message_id`  BIGINT      NOT NULL COMMENT 'ai_conversation_message.id',
+    `file_id`     BIGINT      NOT NULL COMMENT 'sys_file.id',
+    `relation`    VARCHAR(16) NOT NULL DEFAULT 'attachment' COMMENT 'attachment/result/reference',
+    `locator`     JSON        DEFAULT NULL COMMENT '页码/工作表/幻灯片等来源定位',
+    `create_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `update_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_ai_message_file_relation` (`message_id`, `file_id`, `relation`),
+    KEY `idx_ai_message_file_file` (`file_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='AI消息文件关联';
+
+DROP TABLE IF EXISTS `ai_document`;
+CREATE TABLE `ai_document` (
+    `id`              BIGINT      NOT NULL COMMENT '主键(雪花ID,应用层生成)',
+    `public_id`       CHAR(36)    CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL COMMENT '对外UUID',
+    `user_id`         BIGINT      NOT NULL COMMENT '所属用户',
+    `file_id`         BIGINT      NOT NULL COMMENT 'sys_file.id',
+    `status`          VARCHAR(16) NOT NULL DEFAULT 'pending' COMMENT 'pending/processing/ready/error',
+    `page_count`      INT         NOT NULL DEFAULT 0,
+    `character_count` BIGINT      NOT NULL DEFAULT 0,
+    `error_message`   TEXT        DEFAULT NULL,
+    `create_time`     DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `update_time`     DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `deleted`         TINYINT     NOT NULL DEFAULT 0,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_ai_document_public_id` (`public_id`),
+    UNIQUE KEY `uk_ai_document_file` (`file_id`),
+    KEY `idx_ai_document_user_status` (`user_id`, `status`, `update_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='AI附件解析记录';
+
+DROP TABLE IF EXISTS `ai_document_chunk`;
+CREATE TABLE `ai_document_chunk` (
+    `id`          BIGINT   NOT NULL COMMENT '主键(雪花ID,应用层生成)',
+    `document_id` BIGINT   NOT NULL COMMENT 'ai_document.id',
+    `chunk_index` INT      NOT NULL,
+    `content`     LONGTEXT NOT NULL,
+    `locator`     JSON     DEFAULT NULL COMMENT '页码/工作表/幻灯片/段落定位',
+    `token_count` INT      NOT NULL DEFAULT 0,
+    `embedding`   LONGBLOB DEFAULT NULL COMMENT '可选向量编码',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_ai_document_chunk` (`document_id`, `chunk_index`),
+    KEY `idx_ai_document_chunk_document` (`document_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='AI附件可检索文本分块';
+
+-- ----------------------------
 -- 操作日志表(AI生成/文件上传等,内部排障:无public_id)
 -- ----------------------------
 DROP TABLE IF EXISTS `ai_generation_log`;
@@ -296,6 +392,52 @@ CREATE TABLE `sys_file` (
     KEY `idx_user_type_time` (`user_id`, `file_type`, `create_time`),
     KEY `idx_hash` (`hash`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='文件表';
+
+-- ----------------------------
+-- 文件业务引用（同一物理文件可被会话、画布、素材库复用）
+-- ----------------------------
+DROP TABLE IF EXISTS `sys_file_reference`;
+CREATE TABLE `sys_file_reference` (
+    `id`          BIGINT      NOT NULL COMMENT '主键(雪花ID,应用层生成)',
+    `user_id`     BIGINT      NOT NULL COMMENT '文件所属用户',
+    `file_id`     BIGINT      NOT NULL COMMENT 'sys_file.id',
+    `biz_type`    VARCHAR(32) NOT NULL COMMENT 'asset/conversation_temp/message/canvas',
+    `biz_id`      BIGINT      NOT NULL COMMENT '业务内部ID',
+    `create_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `update_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_sys_file_reference` (`file_id`, `biz_type`, `biz_id`),
+    KEY `idx_sys_file_reference_user` (`user_id`, `biz_type`, `create_time`),
+    KEY `idx_sys_file_reference_biz` (`biz_type`, `biz_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='物理文件业务引用';
+
+-- ----------------------------
+-- 管理员资源表【后台配置类资源，与用户素材物理隔离】
+-- ----------------------------
+DROP TABLE IF EXISTS `sys_admin_file`;
+CREATE TABLE `sys_admin_file` (
+    `id`            BIGINT       NOT NULL COMMENT '主键(雪花ID,应用层生成)',
+    `public_id`     CHAR(36)     CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL COMMENT '对外公开ID(UUID v4)',
+    `admin_id`      BIGINT       NOT NULL DEFAULT 0 COMMENT '管理员用户ID',
+    `biz_type`      VARCHAR(64)  NOT NULL DEFAULT 'system' COMMENT '业务类型(assistant_pet等)',
+    `original_name` VARCHAR(255) NOT NULL COMMENT '原始文件名',
+    `stored_name`   VARCHAR(255) NOT NULL COMMENT '存储文件名',
+    `file_path`     VARCHAR(512) NOT NULL COMMENT '存储路径',
+    `file_url`      VARCHAR(512) NOT NULL COMMENT '访问URL',
+    `file_size`     BIGINT       NOT NULL DEFAULT 0 COMMENT '文件大小(bytes)',
+    `file_type`     VARCHAR(16)  NOT NULL COMMENT '文件类型(image/video/other)',
+    `mime_type`     VARCHAR(128) DEFAULT NULL COMMENT 'MIME类型',
+    `hash`          VARCHAR(64)  DEFAULT NULL COMMENT 'SHA-256哈希',
+    `storage_type`  VARCHAR(16)  NOT NULL DEFAULT 'local' COMMENT '存储方式(local/oss)',
+    `create_time`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `deleted`       TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_admin_file_public_id` (`public_id`),
+    KEY `idx_admin_biz_time` (`admin_id`, `biz_type`, `create_time`),
+    KEY `idx_file_url` (`file_url`(191)),
+    KEY `idx_deleted_time` (`deleted`, `create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='管理员资源表';
 
 -- ----------------------------
 -- Banner表(管理端配置,前端只读列表,不对外引用:无public_id)

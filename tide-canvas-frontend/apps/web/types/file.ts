@@ -1,7 +1,8 @@
 import type { PageQuery } from "./api";
 
 export interface FileVO {
-  id: number;
+  /** 后端公开 ID；历史生成预览在前端可使用负数临时 ID。 */
+  id: string | number;
   /** 归属用户ID（团队共享时区分自己/队友的素材） */
   ownerId?: string;
   originalName: string;
@@ -11,6 +12,21 @@ export interface FileVO {
   mimeType: string;
   storageType: StorageType;
   createTime: string;
+}
+
+export interface SystemUploadVO {
+  fileUrl: string;
+  fileSize: number;
+  fileType: FileType;
+  mimeType: string;
+  storageType: StorageType;
+  createTime: string;
+}
+
+export interface StorageUsageVO {
+  usedBytes: number;
+  quotaBytes: number;
+  percentage: number;
 }
 
 export interface FileQuery extends PageQuery {

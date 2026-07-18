@@ -24,6 +24,8 @@ const nextConfig: NextConfig = {
   experimental: {
     // rewrites 代理上传时默认 10MB 上限会截断请求体，提到与后端对齐
     proxyClientMaxBodySize: "100mb",
+    // Semi UI 的聚合入口会让 webpack 连带解析未使用的 DatePicker 及其旧版 date-fns-tz；按需改写为组件入口。
+    optimizePackageImports: ["@douyinfe/semi-ui"],
   },
 };
 

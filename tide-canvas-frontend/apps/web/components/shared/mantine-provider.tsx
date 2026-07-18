@@ -5,9 +5,9 @@ import type { PropsWithChildren } from "react";
 
 const theme = createTheme({
   defaultRadius: "md",
-  fontFamily: "var(--font-sans), Arial, Helvetica, sans-serif",
+  fontFamily: "var(--font-sans), 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', Arial, Helvetica, sans-serif",
   headings: {
-    fontFamily: "var(--font-sans), Arial, Helvetica, sans-serif",
+    fontFamily: "var(--font-sans), 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', Arial, Helvetica, sans-serif",
   },
   primaryColor: "dark",
 });

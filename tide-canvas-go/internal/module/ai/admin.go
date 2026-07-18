@@ -248,13 +248,16 @@ func (s *AdminService) createModel(c *gin.Context) {
 		Name:       strOf(body["name"]),
 		ModelID:    strOf(body["modelId"]),
 		Type:       strOf(body["type"]),
-		Status:     1,
+		Status:     intOrDefault(body["status"], 1),
 	}
 	if v, ok := body["icon"]; ok {
 		m.Icon = strOf(v)
 	}
 	if v, ok := body["config"]; ok && v != nil {
 		m.Config = jsonColumn(v)
+	}
+	if v, ok := body["capabilities"]; ok && v != nil {
+		m.Capabilities = jsonColumn(v)
 	}
 	if v, ok := body["pointCost"]; ok {
 		if d, ok := asDecimal(v); ok {
@@ -268,6 +271,12 @@ func (s *AdminService) createModel(c *gin.Context) {
 	}
 	if v, ok := body["supportedHandlers"]; ok {
 		m.SupportedHandlers = supportedHandlersJSON(v)
+	}
+	if m.Type == "video" {
+		if err := validateVideoModelConfig(m.Config, m.Status == 1); err != nil {
+			response.Fail(c, ecode.BadRequest.WithMessage(err.Error()))
+			return
+		}
 	}
 	if err := s.repo.CreateModel(m); err != nil {
 		response.FailErr(c, err)
@@ -303,12 +312,26 @@ func (s *AdminService) updateModel(c *gin.Context) {
 		return
 	}
 	columns := map[string]interface{}{}
+	nextType := m.Type
+	nextConfig := m.Config
+	nextStatus := m.Status
 	setIfPresent(body, "name", columns, "name", asString)
 	setIfPresent(body, "modelId", columns, "model_id", asString)
 	setIfPresent(body, "type", columns, "type", asString)
+	if v, ok := body["type"]; ok {
+		nextType = strOf(v)
+	}
 	setIfPresent(body, "icon", columns, "icon", asString)
 	if v, ok := body["config"]; ok && v != nil {
-		columns["config"] = jsonColumn(v)
+		nextConfig = jsonColumn(v)
+		columns["config"] = nextConfig
+	}
+	if v, ok := body["capabilities"]; ok {
+		if v == nil {
+			columns["capabilities"] = nil
+		} else {
+			columns["capabilities"] = jsonColumn(v)
+		}
 	}
 	if v, ok := body["pointCost"]; ok {
 		if d, ok := asDecimal(v); ok {
@@ -331,6 +354,11 @@ func (s *AdminService) updateModel(c *gin.Context) {
 		}
 	}
 	setIfPresent(body, "status", columns, "status", asInt)
+	if v, ok := body["status"]; ok {
+		if status, ok := toInt(v); ok {
+			nextStatus = status
+		}
+	}
 	// supported_handlers：空列表/缺省落 NULL（语义「不限制」），单独写入。
 	if v, ok := body["supportedHandlers"]; ok {
 		j := supportedHandlersJSON(v)
@@ -338,6 +366,12 @@ func (s *AdminService) updateModel(c *gin.Context) {
 			columns["supported_handlers"] = nil
 		} else {
 			columns["supported_handlers"] = j
+		}
+	}
+	if nextType == "video" {
+		if err := validateVideoModelConfig(nextConfig, nextStatus == 1); err != nil {
+			response.Fail(c, ecode.BadRequest.WithMessage(err.Error()))
+			return
 		}
 	}
 	if err := s.repo.UpdateModelColumns(m.ID, columns); err != nil {

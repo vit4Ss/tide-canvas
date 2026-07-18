@@ -12,8 +12,8 @@ export const NODE_TYPE_TITLES: Record<string, string> = {
 
 const NODE_TYPE_SIZES: Record<string, { width: number; height: number }> = {
   // 等比节点高度按默认比例的卡片高度设置，使连接线/缩略图对齐实际渲染
-  image: { width: 608, height: 342 },
-  video: { width: 608, height: 342 },
+  image: { width: 620, height: 348 },
+  video: { width: 620, height: 348 },
   video_compose: { width: 720, height: 580 },
   scene_3d: { width: 720, height: 360 },
   text: { width: 440, height: 440 },
@@ -34,7 +34,7 @@ export function createNode(type: string, worldX: number, worldY: number, existin
   const sameTypeCount = existingNodes.filter((n) => n.type === type).length;
   const baseTitle = getNodeTitle(type);
   const title = sameTypeCount === 0 ? `${baseTitle}节点` : `${baseTitle}节点 ${sameTypeCount + 1}`;
-  return {
+  const node: CanvasNode = {
     id: generateNodeId(),
     type,
     x: worldX - width / 2,
@@ -44,6 +44,11 @@ export function createNode(type: string, worldX: number, worldY: number, existin
     title,
     status: "idle",
   };
+  if (type === "image" || type === "video") {
+    node.contentW = width;
+    node.contentH = height;
+  }
+  return node;
 }
 
 interface LayoutGaps {

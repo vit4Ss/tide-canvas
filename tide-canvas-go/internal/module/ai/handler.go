@@ -1,14 +1,18 @@
 package ai
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/tidecanvas/tide-canvas-go/internal/middleware"
 	"github.com/tidecanvas/tide-canvas-go/pkg/ecode"
-	"github.com/tidecanvas/tide-canvas-go/pkg/response"
 	appjwt "github.com/tidecanvas/tide-canvas-go/pkg/jwt"
+	"github.com/tidecanvas/tide-canvas-go/pkg/response"
 )
 
 // Handler AI 用户侧 HTTP 层（挂载 /api/ai/*，全部需登录）。
@@ -46,10 +50,12 @@ func (h *Handler) RegisterRoutes(api gin.IRouter, jwtProvider *appjwt.Provider, 
 	}), h.generate)
 	ai.POST("/grid-split", h.gridSplit)
 	ai.GET("/tasks/:id", h.getTask)
+	ai.GET("/tasks/:id/stream", h.streamTask)
 	ai.DELETE("/tasks/:id", h.cancelTask)
 	ai.GET("/tasks", h.listTasks)
 	ai.GET("/handlers", h.listHandlers)
 	ai.GET("/logs", h.myLogs)
+	ai.DELETE("/logs/:id", h.deleteLog)
 
 	// ---- 管理端 /api/admin/ai ----
 	h.admin.RegisterRoutes(api, jwtProvider, permLoader)
@@ -115,6 +121,60 @@ func (h *Handler) getTask(c *gin.Context) {
 	response.OK(c, vo)
 }
 
+// streamTask emits persisted upstream deltas as Server-Sent Events. Ownership is
+// checked before headers are committed, and disconnecting the browser ends the loop.
+func (h *Handler) streamTask(c *gin.Context) {
+	userID := middleware.MustUserID(c)
+	taskID := c.Param("id")
+	if _, err := h.svc.GetTask(userID, taskID); err != nil {
+		response.FailErr(c, err)
+		return
+	}
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		response.Fail(c, ecode.ServerError.WithMessage("当前网关不支持流式响应"))
+		return
+	}
+	c.Header("Content-Type", "text/event-stream; charset=utf-8")
+	c.Header("Cache-Control", "no-cache, no-transform")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+	ticker := time.NewTicker(180 * time.Millisecond)
+	defer ticker.Stop()
+	lastPayload := ""
+	for {
+		select {
+		case <-c.Request.Context().Done():
+			return
+		case <-ticker.C:
+			task, err := h.svc.GetTask(userID, taskID)
+			if err != nil {
+				return
+			}
+			content := ""
+			if task.ResultMeta != "" {
+				var meta map[string]interface{}
+				if json.Unmarshal([]byte(task.ResultMeta), &meta) == nil {
+					content, _ = meta["answer"].(string)
+				}
+			}
+			event, _ := json.Marshal(map[string]interface{}{
+				"taskId": task.ID, "status": task.Status, "progress": task.Progress,
+				"content": content, "error": task.ErrorMsg,
+			})
+			payload := string(event)
+			if payload != lastPayload {
+				_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", payload)
+				flusher.Flush()
+				lastPayload = payload
+			}
+			if task.Status != TaskProcessing {
+				return
+			}
+		}
+	}
+}
+
 // cancelTask DELETE /api/ai/tasks/:id 取消任务（:id 为任务 public_id）。
 func (h *Handler) cancelTask(c *gin.Context) {
 	if err := h.svc.CancelTask(middleware.MustUserID(c), c.Param("id")); err != nil {
@@ -172,4 +232,18 @@ func (h *Handler) myLogs(c *gin.Context) {
 		return
 	}
 	response.OK(c, response.Page(records, total, q.PageNum, q.PageSize))
+}
+
+// deleteLog DELETE /api/ai/logs/:id 删除自己的生成资源记录。
+func (h *Handler) deleteLog(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Fail(c, ecode.BadRequest)
+		return
+	}
+	if err := h.svc.DeleteMyLog(middleware.MustUserID(c), id); err != nil {
+		response.FailErr(c, err)
+		return
+	}
+	response.OK(c, nil)
 }

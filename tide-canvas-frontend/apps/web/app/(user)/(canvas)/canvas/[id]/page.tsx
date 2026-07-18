@@ -8,11 +8,14 @@ import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { CanvasView } from "@/components/canvas/canvas-view";
 import { RechargeDialog } from "@/components/canvas/recharge-dialog";
-import { ArrowLeft, Share2, Loader2, Check, Pencil, Coins, User, LogOut, Settings, LayoutDashboard } from "lucide-react";
+import { ArrowLeft, Share2, Loader2, Check, Pencil, Coins, User, LogOut, Settings, LayoutDashboard, SlidersHorizontal } from "lucide-react";
+import { UiPreferencesDialog } from "@/components/canvas/ui-preferences-dialog";
 import Link from "next/link";
 import { toast } from "@/components/shared/toast";
+import canvasStyles from "@/components/canvas/styles/canvas-shell.module.css";
 
-const AUTOSAVE_DELAY = 3000; // 3 秒无变化触发自动保存
+const AUTOSAVE_DELAY = 800; // 普通节点编辑短防抖保存，避免拖拽/输入时频繁请求
+const STRUCTURAL_AUTOSAVE_DELAY = 0; // 新增/删除节点、连线、分组等结构变化立即保存
 const CANVAS_SCHEMA_VERSION = 2;
 
 type CanvasViewport = { x: number; y: number; k: number };
@@ -65,6 +68,29 @@ function serializeCanvasNodes(nodes: CanvasNode[]): CanvasNode[] {
       return persisted;
     });
 }
+
+function buildCanvasPersistenceSignature(
+  nodes: CanvasNode[],
+  connections: Connection[],
+  groups: CanvasGroup[],
+  viewport: CanvasViewport,
+): string {
+  return JSON.stringify({
+    viewport,
+    nodes: serializeCanvasNodes(nodes),
+    connections,
+    groups,
+  });
+}
+
+function buildCanvasStructuralSignature(nodes: CanvasNode[], connections: Connection[], groups: CanvasGroup[]): string {
+  return JSON.stringify({
+    nodeIds: nodes.map((node) => `${node.id}:${node.type}`),
+    connections: connections.map((connection) => `${connection.id}:${connection.sourceId}->${connection.targetId}`),
+    groups: groups.map((group) => `${group.id}:${group.nodeIds.join(",")}`),
+  });
+}
+
 export default function CanvasEditorPage() {
   const params = useParams();
   // URL 里的 [id] 实为不透明 url token，真实数值 ID 不在地址栏暴露
@@ -84,6 +110,7 @@ export default function CanvasEditorPage() {
   const router = useRouter();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [rechargeOpen, setRechargeOpen] = useState(false);
+  const [uiPreferencesOpen, setUiPreferencesOpen] = useState(false);
 
   const nodes = useCanvasStore((s) => s.nodes);
   const connections = useCanvasStore((s) => s.connections);
@@ -94,6 +121,7 @@ export default function CanvasEditorPage() {
   const setCurrentProjectId = useCanvasStore((s) => s.setCurrentProjectId);
 
   const autosaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const autosaveSnapshotRef = useRef<{ persist: string; structural: string } | null>(null);
   const savingRef = useRef(false);
   const pendingSaveRef = useRef(false);
   const canvasUpdateTimeRef = useRef<string | null>(null);
@@ -170,11 +198,20 @@ export default function CanvasEditorPage() {
     }
   }, [projectId, thumbnail]);
 
-  // 自动保存：监听 nodes/connections/groups 变化
+  // 自动保存：结构性变化立即保存；普通内容变化短防抖保存。
   useEffect(() => {
     if (!loaded) return;
+    const nextSnapshot = {
+      persist: buildCanvasPersistenceSignature(nodes, connections, groups, transform),
+      structural: buildCanvasStructuralSignature(nodes, connections, groups),
+    };
+    const prevSnapshot = autosaveSnapshotRef.current;
+    autosaveSnapshotRef.current = nextSnapshot;
+    if (!prevSnapshot || prevSnapshot.persist === nextSnapshot.persist) return;
+
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
-    autosaveTimerRef.current = setTimeout(() => save(true), AUTOSAVE_DELAY);
+    const delay = prevSnapshot.structural !== nextSnapshot.structural ? STRUCTURAL_AUTOSAVE_DELAY : AUTOSAVE_DELAY;
+    autosaveTimerRef.current = setTimeout(() => save(true), delay);
     return () => {
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     };
@@ -188,6 +225,23 @@ export default function CanvasEditorPage() {
     };
     window.addEventListener("tide-canvas-save-now", handleSaveNow);
     return () => window.removeEventListener("tide-canvas-save-now", handleSaveNow);
+  }, [loaded, save]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    const flushPendingSave = () => {
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+      void save(true);
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") flushPendingSave();
+    };
+    window.addEventListener("pagehide", flushPendingSave);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("pagehide", flushPendingSave);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [loaded, save]);
 
   const handleShare = async () => {
@@ -239,19 +293,19 @@ export default function CanvasEditorPage() {
   }
 
   return (
-    <div className="relative h-full w-full overflow-hidden">
-      <CanvasView />
+    <div className={`${canvasStyles.shell} relative h-full w-full overflow-hidden`}>
+      <CanvasView projectName={projectName} />
 
       {/* 左上浮层：返回 + 项目名（点击重命名） + 保存状态 */}
-      <div className="absolute left-4 top-4 z-20 flex items-center gap-2">
+      <div className={`${canvasStyles.topCluster} absolute left-4 top-4 z-50`}>
         <Link
           href="/user/projects"
           title="返回项目列表"
-          className="flex h-9 w-9 items-center justify-center rounded-xl border border-neutral-200 bg-white text-neutral-500 shadow-sm transition-colors hover:bg-neutral-100 hover:text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800"
+          className={canvasStyles.iconButton}
         >
           <ArrowLeft className="h-4 w-4" />
         </Link>
-        <div className="flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 py-2 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+        <div className={canvasStyles.projectPill}>
           {editingName ? (
             <input
               autoFocus
@@ -281,9 +335,9 @@ export default function CanvasEditorPage() {
       </div>
 
       {/* 右上浮层：积分余额 + 充值积分 + 头像菜单 + 分享 */}
-      <div className="absolute right-4 top-4 z-20 flex items-center gap-2">
+      <div className={`${canvasStyles.topCluster} absolute right-4 top-4 z-50`}>
         {/* 积分余额 + 充值积分 */}
-        <div className="flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+        <div className={canvasStyles.pointsPill}>
           <Coins className="h-4 w-4 text-amber-500" />
           <span className="font-medium tabular-nums">{user?.points ?? 0}</span>
           <span className="h-3.5 w-px bg-neutral-200 dark:bg-neutral-700" />
@@ -294,9 +348,9 @@ export default function CanvasEditorPage() {
 
         {/* 头像 + 账户菜单 */}
         <div className="relative" onMouseEnter={() => setUserMenuOpen(true)} onMouseLeave={() => setUserMenuOpen(false)}>
-          <button className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+          <button className={canvasStyles.avatarButton}>
             {user?.avatar ? (
-              // eslint-disable-next-line @next/next/no-img-element
+
               <img src={user.avatar} alt="" className="h-full w-full object-cover" />
             ) : (
               <User className="h-4 w-4 text-neutral-500" />
@@ -304,7 +358,7 @@ export default function CanvasEditorPage() {
           </button>
           {userMenuOpen && (
             <div className="absolute right-0 top-full z-50 w-44 pt-1">
-              <div className="rounded-lg border border-neutral-200 bg-white py-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-900">
+              <div className={`${canvasStyles.menuPanel} py-1`}>
                 <div className="truncate px-4 py-2 text-xs text-neutral-400">{user?.nickname || user?.username || "未登录"}</div>
                 <div className="my-1 border-t border-neutral-200 dark:border-neutral-700" />
                 <Link href="/user" onClick={() => setUserMenuOpen(false)} className="flex items-center gap-2 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"><User className="h-4 w-4" />个人中心</Link>
@@ -320,13 +374,24 @@ export default function CanvasEditorPage() {
           )}
         </div>
 
+        {/* 界面设置 */}
+        <button
+          type="button"
+          onClick={() => setUiPreferencesOpen(true)}
+          title="界面设置"
+          className={canvasStyles.secondaryButton}
+        >
+          <SlidersHorizontal className="h-4 w-4" />
+        </button>
+
         {/* 分享 */}
-        <button onClick={handleShare} title="分享" className="flex h-9 w-9 items-center justify-center rounded-full bg-neutral-900 text-white shadow-sm transition-colors hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200">
+        <button onClick={handleShare} title="分享" className={canvasStyles.primaryButton}>
           <Share2 className="h-4 w-4" />
         </button>
       </div>
 
       <RechargeDialog open={rechargeOpen} onOpenChange={setRechargeOpen} />
+      <UiPreferencesDialog open={uiPreferencesOpen} onOpenChange={setUiPreferencesOpen} />
     </div>
   );
 }

@@ -168,6 +168,8 @@ export interface AiUpstreamModelVO {
   timeoutMs: number;
   priority: number;
   status: number;
+  createdBy: string;
+  creatorName: string;
   createTime: string;
 }
 
@@ -285,4 +287,5 @@ export interface VipLevelVO {
   level: number;
   name: string;
   concurrency: number; // 该等级 AI 并发上限，0=不限
+  storageQuota: number; // 该等级存储额度（字节）
 }

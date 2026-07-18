@@ -32,13 +32,20 @@ import { useHasPerm } from "@/stores/use-permission-store";
 import { toast } from "@/components/shared/toast";
 import { AdminPageHead } from "@/components/admin/page-head";
 import { CLARITY_OPTIONS, QUALITY_OPTIONS, RATIO_OPTIONS } from "@/components/canvas/nodes/quality-ratio-picker";
-import { DURATION_OPTIONS, RESOLUTIONS, VIDEO_RATIOS } from "@/components/canvas/nodes/video-param-picker";
-import type { AiIconAssetVO } from "@/types/ai";
+import {
+  LEGACY_VIDEO_DURATIONS,
+  LEGACY_VIDEO_RESOLUTIONS,
+  VIDEO_DURATIONS,
+  VIDEO_RATIOS,
+  VIDEO_RESOLUTIONS,
+  type VideoSecondPrice,
+} from "@/lib/video-model-config";
+import type { AiIconAssetVO, AiModelCapabilities } from "@/types/ai";
 import styles from "./page.module.css";
 
 const { CheckableTag } = Tag;
 
-const DURATION_CHOICES = Array.from({ length: 12 }, (_, index) => index + 4);
+const DURATION_CHOICES = VIDEO_DURATIONS;
 const ICON_FILE_MAX_MB = 2;
 const ICON_FILE_MAX_BYTES = ICON_FILE_MAX_MB * 1024 * 1024;
 
@@ -85,6 +92,7 @@ interface AdminAiModelVO {
   costPerCall?: number;
   config?: string;
   supportedHandlers?: string[] | null;
+  capabilities?: AiModelCapabilities;
   status: number;
   createTime?: string;
 }
@@ -110,8 +118,19 @@ interface ModelForm {
   supportedHandlers: string[];
   voices: { id: string; name: string }[];
   pricing: Record<string, Record<string, number>>;
+  secondPricing: Record<string, VideoSecondPrice>;
   referenceImageMaxMB: number;
   referenceVideoMaxMB: number;
+  multimodal: boolean;
+  streaming: boolean;
+  nativeFiles: boolean;
+  contextWindow: number;
+  maxInputFiles: number;
+  maxFileSizeMB: number;
+  allowedMimeTypes: string[];
+  maxReferenceImages: number;
+  maxReferenceVideos: number;
+  maxReferenceFiles: number;
 }
 
 const emptyForm: ModelForm = {
@@ -128,15 +147,26 @@ const emptyForm: ModelForm = {
   batchSizes: [1, 2, 4],
   gridOutput: false,
   ratios: RATIO_OPTIONS.map((ratio) => ratio.value),
-  resolutions: [...RESOLUTIONS],
-  durations: [...DURATION_OPTIONS],
+  resolutions: [],
+  durations: [],
   audio: true,
   videoInputs: false,
   supportedHandlers: [],
   voices: [],
   pricing: {},
+  secondPricing: {},
   referenceImageMaxMB: 50,
   referenceVideoMaxMB: 50,
+  multimodal: false,
+  streaming: true,
+  nativeFiles: false,
+  contextWindow: 128000,
+  maxInputFiles: 10,
+  maxFileSizeMB: 20,
+  allowedMimeTypes: ["image/*", "application/pdf", "text/plain", "text/markdown", "text/csv", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.openxmlformats-officedocument.presentationml.presentation"],
+  maxReferenceImages: 4,
+  maxReferenceVideos: 2,
+  maxReferenceFiles: 12,
 };
 
 function normalizeIconName(filename: string) {
@@ -169,6 +199,14 @@ function ratioLabel(value: string) {
 
 function videoRatioLabel(value: string) {
   return value === "auto" ? "自动" : value;
+}
+
+function hasCompleteVideoPricing(form: Pick<ModelForm, "resolutions" | "audio" | "secondPricing">): boolean {
+  return form.resolutions.every((resolution) => {
+    const price = form.secondPricing[resolution];
+    if (!price || !Number.isFinite(Number(price.withoutAudio)) || Number(price.withoutAudio) <= 0) return false;
+    return !form.audio || (Number.isFinite(Number(price.withAudio)) && Number(price.withAudio) > 0);
+  });
 }
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
@@ -292,6 +330,72 @@ function PricingMatrix({
   );
 }
 
+function VideoSecondPricing({
+  resolutions,
+  allowAudio,
+  pricing,
+  onSet,
+}: {
+  resolutions: string[];
+  allowAudio: boolean;
+  pricing: Record<string, VideoSecondPrice>;
+  onSet: (resolution: string, field: keyof VideoSecondPrice, value: number | null) => void;
+}) {
+  return (
+    <div>
+      <div className={styles.sectionTitle}>每秒积分单价</div>
+      <div className={styles.fieldHint}>最终积分按“时长 × 对应单价 × 团队倍率”计算并向上取整；启用模型前必须补齐所有已选分辨率。</div>
+      {resolutions.length === 0 ? (
+        <div className={styles.fieldHint}>请先选择支持的清晰度。</div>
+      ) : (
+        <div className={styles.pricingWrap}>
+          <table className={styles.pricingTable}>
+            <thead>
+              <tr className={styles.pricingHead}>
+                <th className={styles.pricingHeader}>清晰度</th>
+                <th className={styles.pricingHeader}>无音频 / 秒</th>
+                <th className={styles.pricingHeader}>有音频 / 秒</th>
+              </tr>
+            </thead>
+            <tbody>
+              {resolutions.map((resolution) => (
+                <tr key={resolution} className={styles.pricingRow}>
+                  <td className={styles.pricingCell}>{resolution}</td>
+                  <td className={styles.pricingCell}>
+                    <InputNumber
+                      size="small"
+                      min={0}
+                      step={0.1}
+                      controls={false}
+                      style={{ width: 112 }}
+                      placeholder="必填"
+                      value={pricing[resolution]?.withoutAudio ?? null}
+                      onChange={(value) => onSet(resolution, "withoutAudio", value)}
+                    />
+                  </td>
+                  <td className={styles.pricingCell}>
+                    <InputNumber
+                      size="small"
+                      min={0}
+                      step={0.1}
+                      controls={false}
+                      disabled={!allowAudio}
+                      style={{ width: 112 }}
+                      placeholder={allowAudio ? "必填" : "不支持音频"}
+                      value={allowAudio ? pricing[resolution]?.withAudio ?? null : null}
+                      onChange={(value) => onSet(resolution, "withAudio", value)}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AdminAiModelsPage() {
   const can = useHasPerm();
   const router = useRouter();
@@ -301,6 +405,7 @@ export default function AdminAiModelsPage() {
   const [loading, setLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingStatus, setEditingStatus] = useState(0);
   const [form, setForm] = useState<ModelForm>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState("");
@@ -407,13 +512,18 @@ export default function AdminAiModelsPage() {
     }
 
     if (form.type === "video") {
+      const secondPricing = Object.fromEntries(
+        form.resolutions
+          .map((resolution) => [resolution, form.secondPricing[resolution]] as const)
+          .filter((entry): entry is readonly [string, VideoSecondPrice] => Boolean(entry[1])),
+      );
       return JSON.stringify({
         resolutions: form.resolutions,
         ratios: form.ratios,
         durations: form.durations,
         audio: form.audio,
+        ...(Object.keys(secondPricing).length ? { secondPricing } : {}),
         ...(form.videoInputs ? { videoInputs: true } : {}),
-        ...pricing,
         ...referenceLimits,
         ...meta,
       });
@@ -434,6 +544,7 @@ export default function AdminAiModelsPage() {
 
   const openCreate = () => {
     setEditingId(null);
+    setEditingStatus(0);
     setForm(emptyForm);
     setManualIconValue("");
     setFormOpen(true);
@@ -460,6 +571,7 @@ export default function AdminAiModelsPage() {
       videoInputs?: boolean;
       voices?: { id: string; name: string }[];
       pricing?: Record<string, Record<string, number>>;
+      secondPricing?: Record<string, VideoSecondPrice>;
       description?: string;
       estSeconds?: number;
       referenceImageMaxMB?: number;
@@ -469,6 +581,7 @@ export default function AdminAiModelsPage() {
     };
 
     setEditingId(model.id);
+    setEditingStatus(model.status);
     setManualIconValue(model.icon ?? "");
     setForm({
       name: model.name,
@@ -486,13 +599,24 @@ export default function AdminAiModelsPage() {
       batchSizes: config.batchSizes ?? [1, 2, 4],
       gridOutput: config.gridOutput ?? false,
       ratios: config.ratios ?? (model.type === "video" ? VIDEO_RATIOS.map((ratio) => ratio.value) : RATIO_OPTIONS.map((ratio) => ratio.value)),
-      resolutions: config.resolutions ?? [...RESOLUTIONS],
-      durations: config.durations ?? [...DURATION_OPTIONS],
+      resolutions: config.resolutions ?? [...LEGACY_VIDEO_RESOLUTIONS],
+      durations: config.durations ?? [...LEGACY_VIDEO_DURATIONS],
       audio: config.audio ?? true,
       videoInputs: config.videoInputs ?? false,
       supportedHandlers: model.supportedHandlers ?? [],
+      multimodal: model.capabilities?.multimodal ?? false,
+      streaming: model.capabilities?.streaming ?? true,
+      nativeFiles: model.capabilities?.nativeFiles ?? false,
+      contextWindow: Number(model.capabilities?.contextWindow ?? 128000),
+      maxInputFiles: Number(model.capabilities?.maxInputFiles ?? 10),
+      maxFileSizeMB: Number(model.capabilities?.maxFileSizeMB ?? 20),
+      allowedMimeTypes: model.capabilities?.allowedMimeTypes ?? emptyForm.allowedMimeTypes,
+      maxReferenceImages: Number(model.capabilities?.maxReferenceImages ?? 4),
+      maxReferenceVideos: Number(model.capabilities?.maxReferenceVideos ?? 2),
+      maxReferenceFiles: Number(model.capabilities?.maxReferenceFiles ?? 12),
       voices: config.voices ?? [],
       pricing: config.pricing ?? {},
+      secondPricing: config.secondPricing ?? {},
     });
     setFormOpen(true);
   };
@@ -577,6 +701,14 @@ export default function AdminAiModelsPage() {
       toast.error("请填写名称和前端模型标识");
       return;
     }
+    if (form.type === "video" && (!form.ratios.length || !form.resolutions.length || !form.durations.length)) {
+      toast.error("视频模型的比例、清晰度和时长都必须至少选择一项");
+      return;
+    }
+    if (form.type === "video" && editingStatus === 1 && !hasCompleteVideoPricing(form)) {
+      toast.error("启用中的视频模型必须补齐各清晰度的每秒积分单价");
+      return;
+    }
 
     setSaving(true);
     try {
@@ -585,10 +717,23 @@ export default function AdminAiModelsPage() {
         icon: form.icon.trim(),
         modelId: form.modelId.trim(),
         type: form.type,
-        pointCost: form.pointCost,
+        pointCost: form.type === "video" ? 0 : form.pointCost,
         costPerCall: form.costPerCall,
         config: buildConfig(),
         supportedHandlers: form.supportedHandlers,
+        ...(!editingId ? { status: form.type === "video" ? 0 : 1 } : {}),
+        capabilities: {
+          multimodal: form.multimodal,
+          streaming: form.streaming,
+          nativeFiles: form.nativeFiles,
+          contextWindow: Math.max(1024, Math.round(form.contextWindow || 128000)),
+          maxInputFiles: Math.min(10, Math.max(1, Math.round(form.maxInputFiles || 10))),
+          maxFileSizeMB: Math.min(20, Math.max(1, Math.round(form.maxFileSizeMB || 20))),
+          allowedMimeTypes: form.allowedMimeTypes,
+          maxReferenceImages: Math.max(0, Math.round(form.maxReferenceImages || 0)),
+          maxReferenceVideos: Math.max(0, Math.round(form.maxReferenceVideos || 0)),
+          maxReferenceFiles: Math.max(0, Math.round(form.maxReferenceFiles || 0)),
+        },
       };
       const response = editingId
         ? await adminApi.ai.models.update(editingId, payload)
@@ -598,6 +743,7 @@ export default function AdminAiModelsPage() {
         toast.success("已保存");
         setFormOpen(false);
         setEditingId(null);
+        setEditingStatus(0);
         setForm(emptyForm);
         await loadModels();
       } else {
@@ -630,7 +776,14 @@ export default function AdminAiModelsPage() {
   const toggleArr = (field: "qualities" | "clarities" | "ratios" | "resolutions" | "supportedHandlers", value: string) => {
     setForm((prev) => {
       const values = prev[field];
-      return { ...prev, [field]: values.includes(value) ? values.filter((item) => item !== value) : [...values, value] };
+      const removing = values.includes(value);
+      const next = { ...prev, [field]: removing ? values.filter((item) => item !== value) : [...values, value] } as ModelForm;
+      if (field === "resolutions" && removing) {
+        const secondPricing = { ...prev.secondPricing };
+        delete secondPricing[value];
+        next.secondPricing = secondPricing;
+      }
+      return next;
     });
   };
 
@@ -655,8 +808,12 @@ export default function AdminAiModelsPage() {
   const handleTypeChange = (type: string) => {
     updateForm({
       type,
-      ratios: type === "video" ? VIDEO_RATIOS.map((ratio) => ratio.value) : RATIO_OPTIONS.map((ratio) => ratio.value),
+      ratios: type === "video" ? [] : RATIO_OPTIONS.map((ratio) => ratio.value),
+      resolutions: [],
+      durations: [],
+      audio: true,
       pricing: {},
+      secondPricing: {},
     });
   };
 
@@ -675,6 +832,21 @@ export default function AdminAiModelsPage() {
         pricing[row] = rowValue;
       }
       return { ...prev, pricing };
+    });
+  };
+
+  const setSecondPricing = (resolution: string, field: keyof VideoSecondPrice, value: number | null) => {
+    setForm((prev) => {
+      const secondPricing = { ...prev.secondPricing };
+      const row = { ...(secondPricing[resolution] ?? {}) };
+      if (value == null || !Number.isFinite(value) || value <= 0) {
+        delete row[field];
+      } else {
+        row[field] = value;
+      }
+      if (Object.keys(row).length === 0) delete secondPricing[resolution];
+      else secondPricing[resolution] = row;
+      return { ...prev, secondPricing };
     });
   };
 
@@ -714,7 +886,9 @@ export default function AdminAiModelsPage() {
       title: "消耗积分",
       dataIndex: "pointCost",
       key: "pointCost",
-      render: (value: number) => <span style={{ color: "#d97706", fontWeight: 500 }}>{value}</span>,
+      render: (value: number, model) => model.type === "video"
+        ? <span style={{ color: "#2563eb", fontWeight: 500 }}>按秒计费</span>
+        : <span style={{ color: "#d97706", fontWeight: 500 }}>{value}</span>,
     },
     {
       title: "状态",
@@ -800,9 +974,11 @@ export default function AdminAiModelsPage() {
             <Field label="类型">
               <Select style={{ width: "100%" }} value={form.type} onChange={handleTypeChange} options={MODEL_TYPES} />
             </Field>
-            <Field label="消耗积分" hint="支持小数；最终扣费按生成张数、团队系数等规则向上取整。">
-              <InputNumber style={{ width: "100%" }} min={0} step={0.1} value={form.pointCost} onChange={(value) => updateForm({ pointCost: value ?? 0 })} />
-            </Field>
+            {form.type !== "video" && (
+              <Field label="消耗积分" hint="支持小数；最终扣费按生成张数、团队系数等规则向上取整。">
+                <InputNumber style={{ width: "100%" }} min={0} step={0.1} value={form.pointCost} onChange={(value) => updateForm({ pointCost: value ?? 0 })} />
+              </Field>
+            )}
             <Field label="成本价（USD）" hint="上游单次成本，仅后台参考毛利，不对用户暴露。">
               <InputNumber style={{ width: "100%" }} min={0} step={0.0001} value={form.costPerCall} onChange={(value) => updateForm({ costPerCall: value ?? 0 })} />
             </Field>
@@ -826,7 +1002,48 @@ export default function AdminAiModelsPage() {
             <Field label="参考视频上限（MB）" hint="单文件硬上限 50MB，可按模型设置更小。">
               <InputNumber style={{ width: "100%" }} min={1} max={50} precision={0} value={form.referenceVideoMaxMB} onChange={(value) => updateForm({ referenceVideoMaxMB: value ?? 50 })} />
             </Field>
+            {form.type === "image" && (
+              <Field label="最多参考图数量" hint="首页图片对话每次允许添加的参考图数量。">
+                <InputNumber style={{ width: "100%" }} min={0} max={20} precision={0} value={form.maxReferenceImages} onChange={(value) => updateForm({ maxReferenceImages: value ?? 4 })} />
+              </Field>
+            )}
+            {form.type === "video" && (
+              <>
+                <Field label="最多参考文件数量" hint="图片与视频参考素材合计上限。">
+                  <InputNumber style={{ width: "100%" }} min={0} max={20} precision={0} value={form.maxReferenceFiles} onChange={(value) => updateForm({ maxReferenceFiles: value ?? 12 })} />
+                </Field>
+                <Field label="最多参考视频数量">
+                  <InputNumber style={{ width: "100%" }} min={0} max={10} precision={0} value={form.maxReferenceVideos} onChange={(value) => updateForm({ maxReferenceVideos: value ?? 2 })} />
+                </Field>
+              </>
+            )}
           </div>
+
+          {form.type === "text" && (
+            <div className={styles.section}>
+              <div className={styles.sectionTitle}>文本对话能力</div>
+              <Space wrap>
+                <CheckableTag checked={form.streaming} onChange={() => updateForm({ streaming: !form.streaming })} className={styles.optionTag}>流式输出</CheckableTag>
+                <CheckableTag checked={form.multimodal} onChange={() => updateForm({ multimodal: !form.multimodal })} className={styles.optionTag}>原生多模态</CheckableTag>
+                <CheckableTag checked={form.nativeFiles} onChange={() => updateForm({ nativeFiles: !form.nativeFiles })} className={styles.optionTag}>原生文件输入</CheckableTag>
+              </Space>
+              <div className={styles.formGrid}>
+                <Field label="上下文窗口（tokens）">
+                  <InputNumber style={{ width: "100%" }} min={1024} step={1024} precision={0} value={form.contextWindow} onChange={(value) => updateForm({ contextWindow: value ?? 128000 })} />
+                </Field>
+                <Field label="每条消息附件数" hint="平台硬上限为 10。">
+                  <InputNumber style={{ width: "100%" }} min={1} max={10} precision={0} value={form.maxInputFiles} onChange={(value) => updateForm({ maxInputFiles: value ?? 10 })} />
+                </Field>
+                <Field label="单附件大小（MB）" hint="平台硬上限为 20MB。">
+                  <InputNumber style={{ width: "100%" }} min={1} max={20} precision={0} value={form.maxFileSizeMB} onChange={(value) => updateForm({ maxFileSizeMB: value ?? 20 })} />
+                </Field>
+                <Field label="允许的 MIME 类型" hint="支持 image/* 通配；可直接输入并回车添加。">
+                  <Select mode="tags" style={{ width: "100%" }} value={form.allowedMimeTypes} onChange={(values) => updateForm({ allowedMimeTypes: values })} tokenSeparators={[","]} />
+                </Field>
+              </div>
+              <div className={styles.fieldHint}>非多模态模型会通过文档解析、RAG 与已配置的多模态模型 OCR 后继续对话；切换模型不会清空会话上下文。</div>
+            </div>
+          )}
 
           {form.type !== "text" && (
             <div className={styles.section}>
@@ -858,9 +1075,15 @@ export default function AdminAiModelsPage() {
               {form.type === "video" && (
                 <>
                   <TagGroup label="支持的生成方式" hint="不勾选表示不限制；勾选后画布视频节点只显示所选模式 Tab。" options={HANDLER_CHOICES.video} selected={form.supportedHandlers} onToggle={(value) => toggleArr("supportedHandlers", value)} />
-                  <TagGroup label="支持清晰度" options={RESOLUTIONS.map((resolution) => ({ value: resolution, label: resolution }))} selected={form.resolutions} onToggle={(value) => toggleArr("resolutions", value)} />
-                  <TagGroup label="支持比例" options={videoRatioOptions} selected={form.ratios} onToggle={(value) => toggleArr("ratios", value)} />
-                  <TagGroup label="支持时长（秒）" options={DURATION_CHOICES.map((duration) => ({ value: String(duration), label: `${duration}s` }))} selected={form.durations.map(String)} onToggle={(value) => toggleDuration(Number(value))} />
+                  <TagGroup label="支持清晰度 *" options={VIDEO_RESOLUTIONS.map((resolution) => ({ value: resolution, label: resolution }))} selected={form.resolutions} onToggle={(value) => toggleArr("resolutions", value)} />
+                  <TagGroup label="支持比例 *" options={videoRatioOptions} selected={form.ratios} onToggle={(value) => toggleArr("ratios", value)} />
+                  <TagGroup
+                    label="支持时长（秒） *"
+                    hint="可选 4–30 秒；前台滑轨只展示已勾选档位。"
+                    options={DURATION_CHOICES.map((duration) => ({ value: String(duration), label: `${duration}s` }))}
+                    selected={form.durations.map(String)}
+                    onToggle={(value) => toggleDuration(Number(value))}
+                  />
                   <div>
                     <div className={styles.sectionTitle}>生成音频</div>
                     <Space>
@@ -876,12 +1099,11 @@ export default function AdminAiModelsPage() {
                     </Space>
                     <div className={styles.fieldHint}>Runware 新版视频模型（Seedance 2.0 等）通常使用 v2；非 Runware 或旧版保持“顶层平铺”。</div>
                   </div>
-                  <PricingMatrix
-                    corner="清晰度/时长"
-                    rows={form.resolutions.map((resolution) => ({ key: resolution, label: resolution }))}
-                    cols={[...form.durations].sort((a, b) => a - b).map((duration) => ({ key: String(duration), label: `${duration}s` }))}
-                    pricing={form.pricing}
-                    onSet={setPricing}
+                  <VideoSecondPricing
+                    resolutions={form.resolutions}
+                    allowAudio={form.audio}
+                    pricing={form.secondPricing}
+                    onSet={setSecondPricing}
                   />
                 </>
               )}

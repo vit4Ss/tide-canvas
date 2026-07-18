@@ -1,6 +1,7 @@
 package file
 
 import (
+	"encoding/json"
 	"errors"
 	"sync"
 	"time"
@@ -99,10 +100,11 @@ func (f *DBUserFinder) PublicIDsByIDs(ids []int64) (map[int64]string, error) {
 func (f *DBUserFinder) StorageQuotaOf(userID int64) (int64, bool, error) {
 	type row struct {
 		StorageQuota int64
+		VipLevel     int
 	}
 	var r row
 	err := f.db.Model(&model.SysUser{}).
-		Select("storage_quota").
+		Select("storage_quota", "vip_level").
 		Where("id = ?", userID).
 		Take(&r).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -111,7 +113,23 @@ func (f *DBUserFinder) StorageQuotaOf(userID int64) (int64, bool, error) {
 	if err != nil {
 		return 0, false, err
 	}
-	return r.StorageQuota, true, nil
+	effective := r.StorageQuota
+	var cfg model.SysConfig
+	if cfgErr := f.db.Where("config_key = ?", "vip.levels").First(&cfg).Error; cfgErr == nil {
+		var levels []struct {
+			Level        int   `json:"level"`
+			StorageQuota int64 `json:"storageQuota"`
+		}
+		if json.Unmarshal([]byte(cfg.ConfigValue), &levels) == nil {
+			for _, level := range levels {
+				if level.Level == r.VipLevel && level.StorageQuota > effective {
+					effective = level.StorageQuota
+					break
+				}
+			}
+		}
+	}
+	return effective, true, nil
 }
 
 // LogOperationLogger 开发期操作日志：仅打日志（真实落库实现待 ai 模块迁移）。

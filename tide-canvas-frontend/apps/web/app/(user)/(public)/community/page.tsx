@@ -61,7 +61,7 @@ export default function CommunityPage() {
   }, [pageNum, keyword, category]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+
     fetchPosts();
   }, [fetchPosts]);
 

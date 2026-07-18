@@ -9,6 +9,12 @@ export interface CanvasNode {
   height: number;
   title: string;
   prompt?: string;
+  /** 文本节点生成后的结构化输出(JSON 字符串)，与用户原始 prompt 分开保存。 */
+  textOutput?: string;
+  textAction?: string;
+  textActionInput?: string;
+  textSupplementary?: string;
+  textError?: string;
   /** 图片节点生成时选中的风格预设，默认风格不写入。 */
   stylePresetId?: string;
   /** 图片节点选中的风格短名称，用于按钮回显。 */
@@ -33,6 +39,11 @@ export interface CanvasNode {
   uploadProgress?: number;
   /** 生成时选择的目标画幅；有值时图片节点按该画幅展示，避免结果卡片被自然尺寸改成其它比例 */
   aspectRatio?: string;
+  /** 视频节点保存的模型与参数；优先于浏览器级“上次选择”恢复。 */
+  videoModelId?: string;
+  videoResolution?: string;
+  videoDuration?: number;
+  videoAudio?: boolean;
   /** 卡片实际渲染尺寸（按图片比例计算）；供连线层把端点锚定到卡片真实边缘中点，实现默认居中对齐 */
   contentW?: number;
   contentH?: number;

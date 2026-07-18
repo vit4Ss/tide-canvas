@@ -61,6 +61,12 @@ type UserFinder interface {
 // nil 时结果直接存上游原 URL。需要转存时由 router 注入 file 模块实现。
 type FileSaver interface {
 	SaveFromURL(userID int64, url string) (string, error)
+	EnsureCapacity(userID int64) error
+}
+
+// AttachmentReader resolves a user-owned file URL to bytes for document extraction/OCR.
+type AttachmentReader interface {
+	ReadOwnedFileByURL(userID int64, fileURL string, maxBytes int64) (data []byte, originalName, mimeType, publicID string, err error)
 }
 
 // ===== 默认 / 降级实现 =====

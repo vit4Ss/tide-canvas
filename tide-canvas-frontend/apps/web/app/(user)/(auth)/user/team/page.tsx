@@ -222,7 +222,7 @@ export default function TeamPage() {
               <div key={m.userId} className="flex items-center gap-3 rounded-xl px-4 py-3 hover:bg-neutral-50 dark:hover:bg-neutral-900">
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-neutral-100 dark:bg-neutral-800">
                   {m.avatar ? (
-                    // eslint-disable-next-line @next/next/no-img-element
+
                     <img src={m.avatar} alt="" className="h-full w-full object-cover" />
                   ) : (
                     <Users className="h-4 w-4 text-neutral-400" />

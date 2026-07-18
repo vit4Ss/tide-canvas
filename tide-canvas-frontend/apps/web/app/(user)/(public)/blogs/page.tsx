@@ -6,7 +6,6 @@ import {
   Search, Eye, Heart, Lock, Unlock, BookOpen, PenLine,
 } from "lucide-react";
 import { blogApi } from "@/lib/api";
-import { formatDate } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";

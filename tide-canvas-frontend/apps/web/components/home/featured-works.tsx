@@ -63,7 +63,6 @@ export function FeaturedWorks() {
                 className="group overflow-hidden rounded-2xl border border-neutral-200 bg-white transition-all hover:border-neutral-300 hover:shadow-lg dark:border-neutral-800 dark:bg-neutral-900 dark:hover:border-neutral-700"
               >
                 <div className="relative aspect-[4/3] overflow-hidden bg-neutral-100 dark:bg-neutral-800">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={work.contentImages[0]}
                     alt={work.title}

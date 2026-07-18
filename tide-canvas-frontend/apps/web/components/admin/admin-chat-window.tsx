@@ -87,7 +87,7 @@ function MessageRow({
           }}
         >
           {msg.contentType === "image" ? (
-            // eslint-disable-next-line @next/next/no-img-element
+
             <img src={msg.content} alt="image" style={{ maxWidth: 220, borderRadius: 6, display: "block" }} />
           ) : (
             msg.content

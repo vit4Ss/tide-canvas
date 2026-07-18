@@ -1,13 +1,13 @@
 /* 中文注释：画布节点和首页创作框共用的参数下拉样式，避免在 TSX 中重复堆叠长 className。 */
 .panel {
-  width: min(420px, calc(100vw - 24px));
+  width: min(344px, calc(100vw - 24px));
   max-width: calc(100vw - 24px);
   border-radius: 12px;
-  border: 1px solid rgba(0, 0, 0, 0.06);
+  border: 1px solid rgb(229, 229, 229);
   background: #ffffff;
-  padding: 16px;
+  padding: 12px;
   text-align: left;
-  box-shadow: 0 22px 70px rgba(15, 23, 42, 0.18);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.16);
 }
 
 .panelInner {
@@ -15,22 +15,20 @@
 }
 
 .section + .section {
-  margin-top: 18px;
+  margin-top: 14px;
 }
 
 .sectionTitle {
   margin-bottom: 8px;
   color: rgb(64, 64, 64);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   line-height: 19px;
 }
 
 .segmentedRow {
   display: grid;
-  border-radius: 8px;
-  background: rgb(245, 245, 245);
-  padding: 5px;
+  gap: 8px;
 }
 
 .segmentButton {
@@ -39,40 +37,42 @@
   align-items: center;
   justify-content: center;
   border-radius: 6px;
+  border: 1px solid rgb(229, 229, 229);
+  background: #ffffff;
   padding: 0 10px;
   color: rgb(115, 115, 115);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   transition: color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
 }
 
 .segmentButton:hover {
+  border-color: rgb(163, 163, 163);
   color: rgb(23, 23, 23);
 }
 
 .segmentButtonActive {
-  background: #ffffff;
+  border-color: rgb(23, 23, 23);
+  background: rgb(250, 250, 250);
   color: rgb(10, 10, 10);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
 }
 
 .ratioGrid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 10px 6px;
-  border-radius: 8px;
-  background: rgb(245, 245, 245);
-  padding: 10px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .ratioTile {
   display: flex;
-  height: 54px;
+  height: 62px;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 4px;
-  border-radius: 6px;
+  border-radius: 8px;
+  border: 1px solid rgb(229, 229, 229);
+  background: #ffffff;
   color: rgb(115, 115, 115);
   font-size: 12px;
   font-weight: 500;
@@ -81,13 +81,65 @@
 }
 
 .ratioTile:hover {
-  background: rgba(255, 255, 255, 0.7);
+  border-color: rgb(163, 163, 163);
+  background: rgb(250, 250, 250);
   color: rgb(23, 23, 23);
 }
 
 .ratioTileActive {
-  background: #ffffff;
+  border-color: rgb(23, 23, 23);
+  background: rgb(250, 250, 250);
   color: rgb(10, 10, 10);
+}
+
+.panelComposer {
+  width: min(420px, calc(100vw - 24px));
+  padding: 16px;
+}
+
+.panelComposer .section + .section {
+  margin-top: 18px;
+}
+
+.panelComposer .sectionTitle {
+  font-size: 13px;
+}
+
+.panelComposer .segmentedRow {
+  gap: 0;
+  border-radius: 8px;
+  background: rgb(245, 245, 245);
+  padding: 5px;
+}
+
+.panelComposer .segmentButton {
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+}
+
+.panelComposer .segmentButtonActive {
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+}
+
+.panelComposer .ratioGrid {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px 6px;
+  border-radius: 8px;
+  background: rgb(245, 245, 245);
+  padding: 10px;
+}
+
+.panelComposer .ratioTile {
+  height: 54px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+}
+
+.panelComposer .ratioTileActive {
+  background: #ffffff;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
 }
 
@@ -141,6 +193,14 @@
   font-size: 12px;
   font-weight: 400;
 }
+
+.triggerComposer {
+  height: 36px;
+  border-color: rgb(229, 229, 229);
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 500;
+}
 .triggerText {
   min-width: 0;
   overflow: hidden;
@@ -149,8 +209,9 @@
 }
 
 .countMenu {
-  width: 144px;
-  border-radius: 8px;
+  width: 156px;
+  box-sizing: border-box;
+  border-radius: 10px;
   border: 1px solid rgb(229, 229, 229);
   background: rgba(255, 255, 255, 0.96);
   padding: 6px;
@@ -184,14 +245,21 @@
 }
 
 .countItemActive {
+  background: rgb(245, 245, 245);
+  color: rgb(10, 10, 10);
+  box-shadow: inset 0 0 0 1px rgb(23, 23, 23);
+}
+
+.countMenuComposer .countItemActive {
   background: rgb(10, 10, 10);
   color: #ffffff;
+  box-shadow: none;
 }
 
 :global(.dark) .panel,
 :global(.dark) .countMenu {
-  border-color: rgba(255, 255, 255, 0.1);
-  background: rgba(23, 23, 23, 0.96);
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(32, 33, 36, 0.98);
 }
 
 :global(.dark) .sectionTitle,
@@ -200,9 +268,10 @@
   color: rgb(229, 229, 229);
 }
 
-:global(.dark) .segmentedRow,
-:global(.dark) .ratioGrid {
-  background: rgba(255, 255, 255, 0.08);
+:global(.dark) .segmentButton,
+:global(.dark) .ratioTile {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 :global(.dark) .segmentButton,
@@ -222,6 +291,22 @@
   color: rgb(10, 10, 10);
 }
 
+:global(.dark) .panelComposer .segmentedRow,
+:global(.dark) .panelComposer .ratioGrid {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+:global(.dark) .panelComposer .segmentButton,
+:global(.dark) .panelComposer .ratioTile {
+  border: 0;
+  background: transparent;
+}
+
+:global(.dark) .panelComposer .segmentButtonActive,
+:global(.dark) .panelComposer .ratioTileActive {
+  background: #ffffff;
+}
+
 :global(.dark) .trigger {
   border-color: rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.08);
@@ -238,6 +323,12 @@
 }
 
 :global(.dark) .countItemActive {
+  background: #ffffff;
+  color: rgb(10, 10, 10);
+  box-shadow: none;
+}
+
+:global(.dark) .countMenuComposer .countItemActive {
   background: #ffffff;
   color: rgb(10, 10, 10);
 }

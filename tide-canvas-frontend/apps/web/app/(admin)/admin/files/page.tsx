@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Table, Input, Segmented, Tag, Button, Space, Alert, Image as AntdImage, Popconfirm } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { DownloadOutlined, DeleteOutlined, FileOutlined, HddOutlined } from "@ant-design/icons";
@@ -35,10 +35,10 @@ export default function AdminFilesPage() {
   const [keyword, setKeyword] = useState("");
   const [fileType, setFileType] = useState("");
   const [loading, setLoading] = useState(true);
-  const [deleting, setDeleting] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState<FileVO["id"] | null>(null);
   const [error, setError] = useState("");
 
-  const loadFiles = async (page = pageNum, search = keyword, type = fileType) => {
+  const loadFiles = useCallback(async (page: number, search: string, type: string) => {
     setLoading(true);
     setError("");
     try {
@@ -56,15 +56,15 @@ export default function AdminFilesPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  useEffect(() => { loadFiles(1); }, []);
+  useEffect(() => { void loadFiles(1, "", ""); }, [loadFiles]);
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (id: FileVO["id"]) => {
     setDeleting(id);
     try {
       const res = await http.delete<void>(`/api/admin/files/${id}`);
-      if (res.success) loadFiles();
+      if (res.success) void loadFiles(pageNum, keyword, fileType);
     } finally {
       setDeleting(null);
     }
@@ -112,11 +112,11 @@ export default function AdminFilesPage() {
 
       <Space wrap>
         <Input.Search placeholder="搜索文件名..." allowClear enterButton style={{ width: 260 }}
-          onSearch={(v) => { setKeyword(v); setPageNum(1); loadFiles(1, v, fileType); }} />
+          onSearch={(v) => { setKeyword(v); setPageNum(1); void loadFiles(1, v, fileType); }} />
         <Segmented
           value={fileType}
           options={[{ label: "全部", value: "" }, { label: "图片", value: "image" }, { label: "视频", value: "video" }, { label: "其他", value: "other" }]}
-          onChange={(v) => { const t = String(v); setFileType(t); setPageNum(1); loadFiles(1, keyword, t); }}
+          onChange={(v) => { const t = String(v); setFileType(t); setPageNum(1); void loadFiles(1, keyword, t); }}
         />
       </Space>
 
@@ -127,7 +127,7 @@ export default function AdminFilesPage() {
         loading={loading}
         scroll={{ x: "max-content" }}
         locale={{ emptyText: "暂无文件数据" }}
-        pagination={{ current: pageNum, pageSize: PAGE_SIZE, total, showSizeChanger: false, showTotal: (t) => `共 ${t} 条`, onChange: (p) => { setPageNum(p); loadFiles(p); } }}
+        pagination={{ current: pageNum, pageSize: PAGE_SIZE, total, showSizeChanger: false, showTotal: (t) => `共 ${t} 条`, onChange: (p) => { setPageNum(p); void loadFiles(p, keyword, fileType); } }}
       />
     </div>
   );
