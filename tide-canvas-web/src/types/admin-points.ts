@@ -47,6 +47,8 @@ export interface AdminPointAdjustDTO {
  */
 export interface AdminPointsConfig {
   "points.checkinDaily": string;
+  /** 每月签到积分上限；空/0 = 不限制 */
+  "points.checkinMonthlyCap": string;
   "points.inviteReward": string;
   "points.signupBonus": string;
 }
@@ -55,6 +57,7 @@ export interface AdminPointsConfig {
  *（points.exchangeRate 已随「积分只随套餐发放」定稿整链下线，2026-07-10。）*/
 export const POINTS_CONFIG_KEYS = [
   "points.checkinDaily",
+  "points.checkinMonthlyCap",
   "points.inviteReward",
   "points.signupBonus",
 ] as const;

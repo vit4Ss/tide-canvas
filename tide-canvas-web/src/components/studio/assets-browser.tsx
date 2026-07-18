@@ -14,7 +14,7 @@ import { useRouter } from "next/navigation";
 import { aiApi, fileApi, uploadFileSmart } from "@/lib/api";
 import { useAuthStore } from "@/stores/use-auth-store";
 import type { FileVO } from "@/types/file";
-import type { AiTaskVO } from "@/types/ai";
+import { AiTaskStatus, type AiTaskVO } from "@/types/ai";
 import { mesh } from "@/lib/mesh";
 import { toast } from "@/components/shared/toast";
 import { confirmDialog } from "@/components/shared/confirm";
@@ -278,7 +278,9 @@ export function AssetsBrowser({
     if (tab !== "hist") return [];
     const want = filter === "image" || filter === "video" || filter === "audio" ? filter : null;
     if (!want) return [];
-    const matched = tasks.filter((t) => (HANDLER_TYPE[t.handler] ?? "image") === want);
+    // 未登记的 handler(assistant_chat 等纯文本任务)不属于任何媒体页签,直接跳过,
+    // 否则会以空白兜底卡的形式混进「图片」。
+    const matched = tasks.filter((t) => HANDLER_TYPE[t.handler] === want);
     return applySort(groupByDate(matched, (t) => t.createTime));
   }, [tab, filter, tasks, applySort]);
 
@@ -663,6 +665,15 @@ function TaskCard({
     task.resultUrl && kind !== "audio"
       ? `center / cover no-repeat url("${task.resultUrl}")`
       : fallbackCover(task.id);
+  // 非成功任务没有结果可看,兜底卡上标出状态,免得看起来像加载失败的空白图。
+  const statusLabel =
+    task.status === AiTaskStatus.PROCESSING
+      ? "生成中"
+      : task.status === AiTaskStatus.FAILED
+        ? "失败"
+        : task.status === AiTaskStatus.CANCELLED
+          ? "已取消"
+          : "";
 
   const onClick = () => {
     if (batchMode) {
@@ -700,8 +711,9 @@ function TaskCard({
       <span className="pick" />
       {batchMode && <SelectBadge selected={!!selected} />}
       {star && <span className="star">★</span>}
-      {isVid && <span className="vbadge">▶</span>}
-      {kind === "audio" && <span className="vbadge">♪</span>}
+      {!!task.resultUrl && isVid && <span className="vbadge">▶</span>}
+      {!!task.resultUrl && kind === "audio" && <span className="vbadge">♪</span>}
+      {statusLabel && <span className="as-status">{statusLabel}</span>}
     </button>
   );
 }

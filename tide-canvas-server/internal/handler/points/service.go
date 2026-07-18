@@ -27,6 +27,15 @@ const checkinReward = 10
 // checkinKeyTTL bounds the Redis dedup key lifetime so stale keys self-expire.
 const checkinKeyTTL = 36 * time.Hour
 
+// checkinCappedError reports that the user hit the admin-configured monthly
+// check-in points cap (sys_config points.checkinMonthlyCap)。Cap 供 handler
+// 拼用户可读的提示文案。
+type checkinCappedError struct{ Cap int }
+
+func (e *checkinCappedError) Error() string {
+	return fmt.Sprintf("points: monthly check-in cap (%d) reached", e.Cap)
+}
+
 type service struct {
 	repo *repo
 	rdb  *redis.Client
@@ -65,12 +74,21 @@ func (s *service) records(userID idgen.ID, q *RecordQuery) ([]PointRecordVO, int
 func (s *service) checkinStatus(userID idgen.ID) (*CheckinStatusVO, error) {
 	today := dayKey(time.Now())
 
+	// 月度上限状态：下一次签到会越过上限时置位，账户页据此把按钮置灰并提示。
+	capReached := false
+	if cap := s.repo.checkinMonthlyCap(); cap > 0 {
+		reward := s.repo.checkinDailyReward(checkinReward)
+		if got, err := s.repo.checkinMonthPoints(userID, monthKey(time.Now())); err == nil && got+reward > cap {
+			capReached = true
+		}
+	}
+
 	rec, err := s.repo.findCheckin(userID, today)
 	if err != nil {
 		return nil, err
 	}
 	if rec != nil {
-		return &CheckinStatusVO{CheckedToday: true, ContinuousDays: rec.ContinuousDays}, nil
+		return &CheckinStatusVO{CheckedToday: true, ContinuousDays: rec.ContinuousDays, MonthlyCapReached: capReached}, nil
 	}
 
 	// Not checked in today: surface the live streak only if yesterday was the
@@ -83,7 +101,7 @@ func (s *service) checkinStatus(userID idgen.ID) (*CheckinStatusVO, error) {
 	if latest != nil && latest.CheckinDate == dayKey(time.Now().AddDate(0, 0, -1)) {
 		streak = latest.ContinuousDays
 	}
-	return &CheckinStatusVO{CheckedToday: false, ContinuousDays: streak}, nil
+	return &CheckinStatusVO{CheckedToday: false, ContinuousDays: streak, MonthlyCapReached: capReached}, nil
 }
 
 // checkin performs the idempotent daily check-in. On the first call for the day
@@ -136,6 +154,18 @@ func (s *service) checkin(userID idgen.ID) (*CheckinResultVO, error) {
 	// Grant the admin-configured amount (falls back to checkinReward when unset).
 	reward := s.repo.checkinDailyReward(checkinReward)
 
+	// 月度上限（后台 points.checkinMonthlyCap，0=不限）：本月已领 + 本次 > 上限
+	// 则拒绝发放，handler 返回用户可读提示。不写签到记录，避免"签了却没分"。
+	if cap := s.repo.checkinMonthlyCap(); cap > 0 {
+		got, err := s.repo.checkinMonthPoints(userID, monthKey(now))
+		if err != nil {
+			return nil, err
+		}
+		if got+reward > cap {
+			return nil, &checkinCappedError{Cap: cap}
+		}
+	}
+
 	_, rewarded, err := s.repo.applyCheckin(userID, today, reward, continuousDays)
 	if err != nil {
 		return nil, err
@@ -163,6 +193,11 @@ func (s *service) checkin(userID idgen.ID) (*CheckinResultVO, error) {
 // Redis dedup key. Local time is used so a "day" matches the server's calendar.
 func dayKey(t time.Time) string {
 	return t.Format("2006-01-02")
+}
+
+// monthKey renders a time as the YYYY-MM prefix used by the monthly cap sum.
+func monthKey(t time.Time) string {
+	return t.Format("2006-01")
 }
 
 // checkinRedisKey builds the per-user, per-day check-in dedup key.

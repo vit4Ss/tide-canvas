@@ -135,6 +135,11 @@ func AutoMigrate(db *gorm.DB) error {
 	if err := ensureBaselineFloors(db); err != nil {
 		return err
 	}
+	// Ensure the baseline 用户/管理员 roles exist and every user has a role
+	// (idempotent) — 前台侧栏按角色的菜单配置展示，注册默认挂「用户」。
+	if err := ensureBaselineRoles(db); err != nil {
+		return err
+	}
 	// Ensure the canonical AI tools exist (idempotent) — 智能工具的能力由代码
 	// 注册，策略（提示词/参数/上下线/文案）由这些行驱动，后台「工具管理」
 	// 可编辑，已存在的行绝不覆盖管理员的修改。

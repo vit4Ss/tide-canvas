@@ -93,6 +93,7 @@ const BASELINE_KEYS = new Set([
   "llm.compressAtTokens",
   "market.typeOrder",
   "points.checkinDaily",
+  "points.checkinMonthlyCap",
   "points.inviteReward",
   "points.signupBonus",
 ]);

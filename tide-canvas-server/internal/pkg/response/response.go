@@ -7,10 +7,27 @@ package response
 import (
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+
+	"tidecanvas/internal/pkg/logger"
 )
+
+// defaultServerErrorMessage 是 500 统一对外话术的兜底值——后台配置缺失或读取
+// 失败（如 DB 本身故障）时使用。
+const defaultServerErrorMessage = "请联系客服"
+
+// serverErrorMsgSource, registered at boot (cmd/api), supplies the
+// admin-configured 500 话术 (sys_config server.errorMessage). Read per failure
+// so 后台改完即生效、无需重启; an empty return falls back to the default.
+var serverErrorMsgSource func() string
+
+// SetServerErrorMessageSource registers the runtime source of the unified 500
+// user-facing message.
+func SetServerErrorMessageSource(f func() string) { serverErrorMsgSource = f }
 
 // Business / HTTP status codes. The lower set mirrors HTTP semantics; the
 // higher (1xxx/2xxx/3xxx) are application-specific codes the frontend
@@ -106,6 +123,22 @@ func Fail(c *gin.Context, code int, msg string) {
 	switch code {
 	case CodeBadRequest, CodeUnauthorized, CodeForbidden, CodeNotFound, CodeRateLimited, CodeServerError:
 		httpStatus = code
+	}
+	// 500 类错误对外只回统一话术，不把内部错误细节透给用户（含 panic 恢复和个别
+	// 拼了 err.Error() 的调用点）；原始 msg 连同请求路径落服务端日志供排查。
+	// 话术取自后台「配置管理」server.errorMessage（保存即生效），读不到用兜底值。
+	// 业务码与 4xx 的可读提示不受影响。
+	if code == CodeServerError {
+		logger.L().Error("server error response",
+			zap.String("path", c.FullPath()),
+			zap.String("msg", msg),
+		)
+		msg = defaultServerErrorMessage
+		if serverErrorMsgSource != nil {
+			if m := strings.TrimSpace(serverErrorMsgSource()); m != "" {
+				msg = m
+			}
+		}
 	}
 	c.JSON(httpStatus, Result[any]{
 		Success:   false,

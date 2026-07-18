@@ -35,6 +35,9 @@ type PointRecordVO struct {
 type CheckinStatusVO struct {
 	CheckedToday   bool `json:"checkedToday"`
 	ContinuousDays int  `json:"continuousDays"`
+	// MonthlyCapReached 表示本月签到积分已达后台配置的上限（下一次签到无法发放），
+	// 账户页据此把签到按钮置灰并提示。
+	MonthlyCapReached bool `json:"monthlyCapReached"`
 }
 
 // CheckinResultVO is the response of POST /api/points/checkin: the points

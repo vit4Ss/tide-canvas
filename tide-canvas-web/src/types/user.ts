@@ -21,6 +21,9 @@ export interface UserVO {
   inTeam?: boolean;
   /** 团队模式 AI 消耗加价系数（不在团队为 1） */
   teamPriceFactor?: number;
+  /** 角色授予的前台侧栏菜单键（discover/studio/chat/canvas/explore/inspire/assets），
+      studio-rail 据此过滤展示；缺失（旧会话缓存）时侧栏回退全量 */
+  menus?: string[];
   createTime: string;
   lastLoginTime: string;
 }

@@ -94,6 +94,12 @@ const ConfigKeyChatContextTokenLimit = "llm.contextTokenLimit"
 // per send so admin edits apply without a restart.
 const ConfigKeyChatCompressAt = "llm.compressAtTokens"
 
+// ConfigKeyServerErrorMessage is the sys_config key for the user-facing message
+// every 500 response carries (response.Fail 统一对外话术，不透内部错误细节)。
+// Seeded on boot; edited in the admin 配置管理 screen and read per failure by
+// pkg/response, so changes apply WITHOUT a restart.
+const ConfigKeyServerErrorMessage = "server.errorMessage"
+
 // SysConfig is a key-value platform configuration entry (系统配置).
 type SysConfig struct {
 	BaseModel

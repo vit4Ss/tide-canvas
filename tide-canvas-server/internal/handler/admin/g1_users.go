@@ -539,9 +539,15 @@ func (h *userHandler) updateRole(c *gin.Context) {
 		return
 	}
 
+	// 基线角色（用户/管理员）的 code 是注册默认角色与菜单兜底的锚点，不随表单改走；
+	// 其余字段（名称/权限/描述/状态）照常可编辑。
+	code := strings.TrimSpace(dto.Code)
+	if role.Code == model.RoleCodeUser || role.Code == model.RoleCodeAdmin {
+		code = role.Code
+	}
 	fields := map[string]any{
 		"name":        strings.TrimSpace(dto.Name),
-		"code":        strings.TrimSpace(dto.Code),
+		"code":        code,
 		"permissions": strings.TrimSpace(dto.Permissions),
 		"description": strings.TrimSpace(dto.Description),
 	}
@@ -574,6 +580,15 @@ func (h *userHandler) deleteRole(c *gin.Context) {
 	id, ok := g1ParseID(c, "role")
 	if !ok {
 		return
+	}
+	// 基线角色（用户/管理员）拒绝删除：注册默认角色与侧栏菜单兜底都依赖它们，
+	// 与 sys_config 基线键的删除保护同口径。
+	var target model.SysRole
+	if err := h.db.Select("id", "code").Where("id = ?", id).First(&target).Error; err == nil {
+		if target.Code == model.RoleCodeUser || target.Code == model.RoleCodeAdmin {
+			response.Fail(c, response.CodeBadRequest, "内置角色（用户/管理员）不可删除")
+			return
+		}
 	}
 	res := h.db.Where("id = ?", id).Delete(&model.SysRole{})
 	if res.Error != nil {

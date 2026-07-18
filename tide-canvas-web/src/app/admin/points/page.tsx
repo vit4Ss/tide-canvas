@@ -92,6 +92,7 @@ const TX_PAGE_SIZE = 10;
 
 const EMPTY_CONFIG: AdminPointsConfig = {
   "points.checkinDaily": "",
+  "points.checkinMonthlyCap": "",
   "points.inviteReward": "",
   "points.signupBonus": "",
 };
@@ -429,6 +430,18 @@ export default function AdminPointsPage() {
                   min={0}
                   value={config["points.checkinDaily"]}
                   onChange={(e) => setConfigField("points.checkinDaily", e.target.value)}
+                />
+                <span className="unit">积分</span>
+              </div>
+              <div className="cfg-row">
+                <label className="lab" htmlFor="points-checkin-monthly-cap" title="每个用户每个自然月通过签到最多可领取的积分总额；0 或留空 = 不限制">每月签到上限</label>
+                <input
+                  id="points-checkin-monthly-cap"
+                  type="number"
+                  min={0}
+                  placeholder="0 = 不限"
+                  value={config["points.checkinMonthlyCap"]}
+                  onChange={(e) => setConfigField("points.checkinMonthlyCap", e.target.value)}
                 />
                 <span className="unit">积分</span>
               </div>

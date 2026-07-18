@@ -31,9 +31,10 @@ import (
 // （points.exchangeRate 已整链下线：积分只随套餐发放为用户定稿，充值汇率
 //   无任何业务消费方，2026-07-10 随后台 UI 一并移除。）
 var g4PointsConfigKeys = []string{
-	"points.checkinDaily", // daily check-in grant
-	"points.inviteReward", // invite reward
-	"points.signupBonus",  // new-user signup bonus
+	"points.checkinDaily",      // daily check-in grant
+	"points.checkinMonthlyCap", // per-month check-in points cap (0/unset = 不限)
+	"points.inviteReward",      // invite reward
+	"points.signupBonus",       // new-user signup bonus
 }
 
 const g4PointsConfigGroup = "points"

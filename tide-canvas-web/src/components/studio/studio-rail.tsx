@@ -26,6 +26,8 @@ import { useAuth } from "@/hooks/use-auth";
 interface NavItem {
   href: string;
   label: string;
+  /** 菜单权限键，与后端 model.FrontMenuKeys / sys_role.permissions 一一对应 */
+  key: string;
   icon: React.ReactNode;
 }
 
@@ -35,6 +37,7 @@ const NAV_TOP: NavItem[] = [
   {
     href: "/",
     label: "发现",
+    key: "discover",
     icon: (
       <svg viewBox="0 0 24 24">
         <circle cx="12" cy="12" r="9" />
@@ -45,6 +48,7 @@ const NAV_TOP: NavItem[] = [
   {
     href: "/studio",
     label: "创作",
+    key: "studio",
     // 魔杖 + 星芒（灯泡留给「灵感」，避免同一隐喻用两次）
     icon: (
       <svg viewBox="0 0 24 24">
@@ -57,6 +61,7 @@ const NAV_TOP: NavItem[] = [
   {
     href: "/chat",
     label: "生成",
+    key: "chat",
     icon: (
       <svg viewBox="0 0 24 24">
         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
@@ -66,6 +71,7 @@ const NAV_TOP: NavItem[] = [
   {
     href: "/projects",
     label: "画布",
+    key: "canvas",
     icon: (
       <svg viewBox="0 0 24 24">
         <path d="M3 8V5a2 2 0 0 1 2-2h3" />
@@ -79,6 +85,7 @@ const NAV_TOP: NavItem[] = [
   {
     href: "/explore",
     label: "作品广场",
+    key: "explore",
     icon: (
       <svg viewBox="0 0 24 24">
         <rect x="3" y="3" width="7" height="7" rx="1.5" />
@@ -91,6 +98,7 @@ const NAV_TOP: NavItem[] = [
   {
     href: "/inspire",
     label: "灵感",
+    key: "inspire",
     icon: (
       <svg viewBox="0 0 24 24">
         <path d="M9 18h6" />
@@ -105,6 +113,7 @@ const NAV_TOP: NavItem[] = [
 const ASSETS_ITEM: NavItem = {
   href: "/assets",
   label: "资产",
+  key: "assets",
   icon: (
     <svg viewBox="0 0 24 24">
       <path d="M3 7l2-3h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H3z" />
@@ -149,6 +158,13 @@ export default function StudioRail() {
   const toolClass = (href: string) =>
     `ws-tool${isActive(pathname, href) ? " on" : ""}`;
 
+  // 角色菜单过滤：登录用户按 /api/auth/me 的 menus(后台角色配置)展示,配置了才显示;
+  // 未登录或旧会话缓存无 menus 字段时回退全量(侧栏永不空白)。
+  const menuAllowed = (key: string) =>
+    !user || !Array.isArray(user.menus) || user.menus.includes(key);
+  const navTop = NAV_TOP.filter((item) => menuAllowed(item.key));
+  const showAssets = menuAllowed(ASSETS_ITEM.key);
+
   const accountName = user?.nickname || user?.username || user?.email || "";
   const initials = accountName.trim().slice(0, 1).toUpperCase() || "U";
 
@@ -163,7 +179,7 @@ export default function StudioRail() {
       <div className="ws-rail-sp" />
 
       <nav className="ws-nav">
-        {NAV_TOP.map((item) => (
+        {navTop.map((item) => (
           <Link
             key={item.href}
             className={toolClass(item.href)}
@@ -176,15 +192,19 @@ export default function StudioRail() {
         ))}
       </nav>
 
-      <div className="ws-nav-div" />
-      <Link
-        className={toolClass(ASSETS_ITEM.href)}
-        href={ASSETS_ITEM.href}
-        title={ASSETS_ITEM.label}
-      >
-        <span className="ic">{ASSETS_ITEM.icon}</span>
-        <span>{ASSETS_ITEM.label}</span>
-      </Link>
+      {showAssets && (
+        <>
+          <div className="ws-nav-div" />
+          <Link
+            className={toolClass(ASSETS_ITEM.href)}
+            href={ASSETS_ITEM.href}
+            title={ASSETS_ITEM.label}
+          >
+            <span className="ic">{ASSETS_ITEM.icon}</span>
+            <span>{ASSETS_ITEM.label}</span>
+          </Link>
+        </>
+      )}
 
       <div className="ws-rail-sp" />
 

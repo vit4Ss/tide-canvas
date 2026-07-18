@@ -2,6 +2,7 @@ package points
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/gin-gonic/gin"
 
@@ -71,9 +72,14 @@ func (h *handler) checkin(c *gin.Context) {
 
 // fail maps service errors to the appropriate response code.
 func (h *handler) fail(c *gin.Context, err error, fallbackMsg string) {
+	var capped *checkinCappedError
 	switch {
 	case errors.Is(err, ErrNotFound):
 		response.Fail(c, response.CodeNotFound, "user not found")
+	case errors.As(err, &capped):
+		// 月度上限业务提示：400 携带可读文案（500 统一话术不适用于业务拒绝）。
+		response.Fail(c, response.CodeBadRequest,
+			fmt.Sprintf("本月签到积分已达上限（%d 积分），下月再来吧", capped.Cap))
 	default:
 		response.Fail(c, response.CodeServerError, fallbackMsg)
 	}

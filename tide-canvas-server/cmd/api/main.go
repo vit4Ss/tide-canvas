@@ -103,6 +103,26 @@ func run() error {
 		}
 	}
 
+	// 500 统一对外话术：首启种入 sys_config（后台「配置管理」可改），response.Fail
+	// 每次失败时实时读取，保存即生效；DB 不可用等读取失败时回退包内兜底值。
+	var seedErrMsg model.SysConfig
+	if err := gdb.Where(model.SysConfig{ConfigKey: model.ConfigKeyServerErrorMessage}).
+		Attrs(model.SysConfig{
+			ConfigValue: "请联系客服",
+			Group:       "site",
+			Description: "服务端错误（500）返回给用户的统一提示文案，不透出内部细节（保存即生效）",
+		}).FirstOrCreate(&seedErrMsg).Error; err != nil {
+		logger.L().Warn("seed: server error message config", zap.Error(err))
+	}
+	response.SetServerErrorMessageSource(func() string {
+		var row model.SysConfig
+		if err := gdb.Where("config_key = ?", model.ConfigKeyServerErrorMessage).
+			First(&row).Error; err != nil {
+			return ""
+		}
+		return row.ConfigValue
+	})
+
 	// Start the async audit-log writer (access / login / business / model-call).
 	eventlog.Init(gdb)
 

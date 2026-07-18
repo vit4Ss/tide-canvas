@@ -62,6 +62,7 @@ var baselineConfigKeys = map[string]struct{}{
 	model.ConfigKeyChatCompressAt:        {},
 	model.ConfigKeyMarketTypeOrder:       {},
 	"points.checkinDaily":                {},
+	"points.checkinMonthlyCap":           {},
 	"points.inviteReward":                {},
 	"points.signupBonus":                 {},
 }

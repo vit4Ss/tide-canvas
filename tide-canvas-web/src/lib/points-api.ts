@@ -28,6 +28,8 @@ export interface PointRecordVO {
 export interface CheckinStatusVO {
   checkedToday: boolean;
   continuousDays: number;
+  /** 本月签到积分已达后台配置的上限(下次签到无法发放),账户页据此置灰按钮 */
+  monthlyCapReached?: boolean;
 }
 
 /** CheckinResultVO — points awarded by POST /checkin (rewarded=false when

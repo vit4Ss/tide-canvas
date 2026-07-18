@@ -32,8 +32,11 @@ type UserVO struct {
 	TeamID          *idgen.ID `json:"teamId"`
 	InTeam          bool      `json:"inTeam"`
 	TeamPriceFactor float64   `json:"teamPriceFactor"`
-	CreateTime      string    `json:"createTime"`
-	LastLoginTime   string    `json:"lastLoginTime"`
+	// Menus are the front sidebar menu keys the user's role grants
+	// (model.FrontMenuKeys 子集)；studio-rail 据此过滤展示（配置了才显示）。
+	Menus         []string `json:"menus"`
+	CreateTime    string   `json:"createTime"`
+	LastLoginTime string   `json:"lastLoginTime"`
 }
 
 // LoginVO is the response of POST /api/auth/login (tide-canvas-web LoginVO).
@@ -53,8 +56,9 @@ type RefreshVO struct {
 }
 
 // toUserVO maps a persisted user to its public VO. teamPriceFactor is supplied
-// by the caller (looked up from the user's team) and defaults to 1.
-func toUserVO(u *model.User, teamPriceFactor float64) UserVO {
+// by the caller (looked up from the user's team) and defaults to 1; menus is
+// the role-resolved sidebar menu list (model.MenusForUser).
+func toUserVO(u *model.User, teamPriceFactor float64, menus []string) UserVO {
 	if teamPriceFactor <= 0 {
 		teamPriceFactor = 1
 	}
@@ -84,6 +88,7 @@ func toUserVO(u *model.User, teamPriceFactor float64) UserVO {
 		TeamID:               teamID,
 		InTeam:               inTeam,
 		TeamPriceFactor:      teamPriceFactor,
+		Menus:                menus,
 		CreateTime:           formatTime(u.CreateTime),
 		LastLoginTime:        formatTime(u.LastLoginTime),
 	}

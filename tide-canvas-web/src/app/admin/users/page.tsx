@@ -126,11 +126,41 @@ interface RoleForm {
   status: number;
 }
 
+/** 前台侧栏菜单键，与后端 model.FrontMenuKeys / studio-rail.tsx 一一对应。
+    角色的 permissions 存 JSON 数组：勾选的菜单键 + 可选的 admin.access。 */
+const MENU_OPTIONS: { key: string; label: string }[] = [
+  { key: "discover", label: "发现" },
+  { key: "studio", label: "创作" },
+  { key: "chat", label: "生成" },
+  { key: "canvas", label: "画布" },
+  { key: "explore", label: "作品广场" },
+  { key: "inspire", label: "灵感" },
+  { key: "assets", label: "资产" },
+];
+const PERM_ADMIN = "admin.access";
+
+/** permissions JSON 字符串 → 键数组（解析失败按空处理，未知键保留）。 */
+function parsePerms(raw: string): string[] {
+  try {
+    const v = JSON.parse(raw || "[]");
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function togglePerm(raw: string, key: string): string {
+  const list = parsePerms(raw);
+  const next = list.includes(key) ? list.filter((k) => k !== key) : [...list, key];
+  return JSON.stringify(next);
+}
+
 const EMPTY_ROLE_FORM: RoleForm = {
   name: "",
   code: "",
   description: "",
-  permissions: "",
+  // 新角色默认勾满前台菜单（再按需取消），与「配置了才展示」的语义一致
+  permissions: JSON.stringify(MENU_OPTIONS.map((m) => m.key)),
   status: 1,
 };
 
@@ -789,12 +819,39 @@ function AdminUsersPageInner() {
                 onChange={(e) => setRoleForm({ ...roleForm, description: e.target.value })}
               />
             </Field>
-            <Field label="权限 (JSON 数组)" span={4} hint='如 ["user:read","user:write"]'>
-              <textarea
-                placeholder='["user:read"]'
-                value={roleForm.permissions}
-                onChange={(e) => setRoleForm({ ...roleForm, permissions: e.target.value })}
-              />
+            <Field label="前台菜单" span={4} hint="勾选后该角色的用户侧栏才会显示对应菜单（保存即生效）">
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 18px", padding: "4px 0" }}>
+                {MENU_OPTIONS.map((m) => {
+                  const checked = parsePerms(roleForm.permissions).includes(m.key);
+                  return (
+                    <label
+                      key={m.key}
+                      style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13 }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() =>
+                          setRoleForm({ ...roleForm, permissions: togglePerm(roleForm.permissions, m.key) })
+                        }
+                      />
+                      {m.label}
+                    </label>
+                  );
+                })}
+              </div>
+            </Field>
+            <Field label="后台权限" span={4} hint="标记该角色可访问后台管理（实际后台门禁仍按账号角色=管理员判定）">
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={parsePerms(roleForm.permissions).includes(PERM_ADMIN)}
+                  onChange={() =>
+                    setRoleForm({ ...roleForm, permissions: togglePerm(roleForm.permissions, PERM_ADMIN) })
+                  }
+                />
+                后台管理
+              </label>
             </Field>
           </FormGrid>
         </FormCard>

@@ -77,6 +77,32 @@ func (r *repo) checkinDailyReward(fallback int) int {
 	return n
 }
 
+// checkinMonthlyCap returns the admin-configured per-month check-in points cap
+// (sys_config key points.checkinMonthlyCap)。0 = 不限制（键缺失/非法/非正数）。
+func (r *repo) checkinMonthlyCap() int {
+	var row model.SysConfig
+	if err := r.db.Select("config_value").
+		Where("config_key = ?", "points.checkinMonthlyCap").First(&row).Error; err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(row.ConfigValue))
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
+}
+
+// checkinMonthPoints sums the points the user has earned from check-ins within
+// a YYYY-MM month (checkin_date is the YYYY-MM-DD day key).
+func (r *repo) checkinMonthPoints(userID idgen.ID, month string) (int, error) {
+	var total int
+	err := r.db.Model(&model.CheckinRecord{}).
+		Select("COALESCE(SUM(points), 0)").
+		Where("user_id = ? AND checkin_date LIKE ?", userID, month+"-%").
+		Scan(&total).Error
+	return total, err
+}
+
 // findCheckin loads the user's check-in row for a given YYYY-MM-DD day, if any.
 // A nil record with nil error means the user has not checked in that day.
 func (r *repo) findCheckin(userID idgen.ID, day string) (*model.CheckinRecord, error) {

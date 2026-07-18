@@ -600,8 +600,10 @@ function PointsPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const capReached = !!checkin?.monthlyCapReached;
+
   const onCheckin = async () => {
-    if (signing || checkin?.checkedToday) return;
+    if (signing || checkin?.checkedToday || capReached) return;
     setSigning(true);
     const res = await pointsApi.checkin();
     setSigning(false);
@@ -615,7 +617,11 @@ function PointsPanel() {
       fetchUser();
       void load(1);
     } else {
+      // 含月度上限拒绝：后端返回「本月签到积分已达上限（N 积分）」，直接透出。
       toast.error(res.message || "签到失败，请稍后重试");
+      pointsApi.checkinStatus().then((r) => {
+        if (r.success && r.data) setCheckin(r.data);
+      });
     }
   };
 
@@ -626,14 +632,17 @@ function PointsPanel() {
         <button
           type="button"
           className="ord-act"
-          disabled={signing || !!checkin?.checkedToday}
+          disabled={signing || !!checkin?.checkedToday || capReached}
           onClick={onCheckin}
+          title={capReached && !checkin?.checkedToday ? "本月签到积分已达上限，下月恢复" : undefined}
         >
           {checkin?.checkedToday
             ? `已签到 · 连续 ${checkin.continuousDays} 天`
-            : signing
-              ? "签到中…"
-              : "每日签到"}
+            : capReached
+              ? "本月签到已达上限"
+              : signing
+                ? "签到中…"
+                : "每日签到"}
         </button>
       </div>
       <p className="ph-note">充值、签到与生成消耗的积分流水。</p>
