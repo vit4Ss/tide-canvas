@@ -42,7 +42,7 @@ import { aiApi, uploadFileSmart } from "@/lib/api";
 import { pointsApi } from "@/lib/points-api";
 import { AiTaskStatus } from "@/types/ai";
 import { AssetsBrowser, type PickedAsset } from "@/components/studio/assets-browser";
-import { AudioPlayerCard } from "@/components/studio/audio-player-card";
+import { AudioPlayerCard, SongCard } from "@/components/studio/audio-player-card";
 import {
   MentionPromptEditor,
   buildMentionRefs,
@@ -610,6 +610,9 @@ interface HistItem {
   /** Suno 分轨：clip_id 供延长/翻唱引用；trackTitle 是 Suno 起的歌名。 */
   clipId?: string;
   trackTitle?: string;
+  /** Suno 歌曲封面（上游生成）与时长(秒)，SongCard 歌曲行展示用。 */
+  trackCover?: string;
+  trackDur?: number;
   /** reconstructed run settings (for restoring this result to the panel). */
   params?: RunParams;
 }
@@ -695,13 +698,20 @@ interface RunParams {
 type MusicMode = "inspire" | "custom" | "extend" | "cover";
 
 /** resultMeta.tracks 的宽松解析（后端 provider_relay 写入的形状）。 */
-function tracksFromMeta(meta: unknown): { clipId: string; title: string; url: string }[] {
+type MetaTrack = { clipId: string; title: string; url: string; coverUrl: string; duration: number };
+function tracksFromMeta(meta: unknown): MetaTrack[] {
   const raw = (meta as { tracks?: unknown })?.tracks;
   if (!Array.isArray(raw)) return [];
   return raw.map((t) => {
     const o = t && typeof t === "object" ? (t as Record<string, unknown>) : {};
     const s = (v: unknown) => (typeof v === "string" ? v : "");
-    return { clipId: s(o.clipId), title: s(o.title), url: s(o.url) };
+    return {
+      clipId: s(o.clipId),
+      title: s(o.title),
+      url: s(o.url),
+      coverUrl: s(o.coverUrl),
+      duration: typeof o.duration === "number" && Number.isFinite(o.duration) ? o.duration : 0,
+    };
   });
 }
 
@@ -1145,6 +1155,8 @@ export default function CreateStudio() {
             url,
             clipId: tracks[idx]?.clipId || undefined,
             trackTitle: tracks[idx]?.title || undefined,
+            trackCover: tracks[idx]?.coverUrl || undefined,
+            trackDur: tracks[idx]?.duration || undefined,
             params,
           }),
         );
@@ -1584,7 +1596,7 @@ export default function CreateStudio() {
       const isValidUrl = (u?: string): u is string =>
         !!u && (u.startsWith("https://") || u.startsWith("http://") || u.startsWith("data:"));
 
-      const finish = (urls: string[], tracks: { clipId: string; title: string; url: string }[] = []) => {
+      const finish = (urls: string[], tracks: MetaTrack[] = []) => {
         if (runIdRef.current !== myRun) return;
         stopTicks();
         clearActive();
@@ -1621,6 +1633,8 @@ export default function CreateStudio() {
             url: urls[cell.i] ?? urls[0],
             clipId: tracks[cell.i]?.clipId || undefined,
             trackTitle: tracks[cell.i]?.title || undefined,
+            trackCover: tracks[cell.i]?.coverUrl || undefined,
+            trackDur: tracks[cell.i]?.duration || undefined,
             params: lastRunRef.current ?? undefined,
           };
         });
@@ -3121,7 +3135,23 @@ export default function CreateStudio() {
                       </div>
                     )}
                     <div className="ws-run-imgs">
-                      {r.items.map((it) => {
+                      {/* 音频：Suno/Udio 式歌曲行列表（封面+歌名+波形+时间），
+                          两首纵向成列——不走通用的并排卡片。 */}
+                      {r.type === "audio" ? (
+                        <div className="ws-runimg audio songs">
+                          {r.items.map((it) => (
+                            <SongCard
+                              key={it.id}
+                              src={it.url || ""}
+                              title={it.trackTitle || it.title}
+                              subtitle={r.model || "AI 音乐"}
+                              cover={it.trackCover}
+                              duration={it.trackDur}
+                            />
+                          ))}
+                        </div>
+                      ) : (
+                      r.items.map((it) => {
                         const cell: ResultCell = { i: -1, hues: it.hues, url: it.url };
                         return (
                           <AmbientFrame
@@ -3181,7 +3211,8 @@ export default function CreateStudio() {
                             )}
                           </AmbientFrame>
                         );
-                      })}
+                      })
+                      )}
                     </div>
                     <div className="ws-run-foot">
                       <button

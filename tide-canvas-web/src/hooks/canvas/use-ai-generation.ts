@@ -192,11 +192,19 @@ export function useAiGeneration() {
             const rawUrls = taskMeta.urls;
             const urls = Array.isArray(rawUrls) ? rawUrls.filter((u): u is string => isValid(u as string)) : [];
             const isBatch = !isVideo && !isAudio && urls.length > 1;
-            // 视频写 videoSrc、音频写 audioSrc、图片写 imageSrc(+组图 images)
+            // 音乐分轨（Suno 一次两首）：url 与 resultMeta.tracks 同序，写入节点内切换
+            const audioTracks = isAudio && urls.length > 1
+              ? urls.map((u, i) => {
+                  const tr = Array.isArray(taskMeta.tracks) ? taskMeta.tracks[i] as Record<string, unknown> | undefined : undefined;
+                  const s = (v: unknown) => (typeof v === "string" ? v : undefined);
+                  return { url: u, title: s(tr?.title), clipId: s(tr?.clipId) };
+                })
+              : undefined;
+            // 视频写 videoSrc、音频写 audioSrc(+分轨 audioTracks)、图片写 imageSrc(+组图 images)
             updateNode(
               nodeId,
               isVideo ? { status: "success", videoSrc: primary }
-                : isAudio ? { status: "success", audioSrc: primary }
+                : isAudio ? { status: "success", audioSrc: primary, audioTracks }
                 : { status: "success", imageSrc: primary, images: isBatch ? urls : undefined, ...imageSize },
             );
             // 四宫格模型(如 Midjourney)返回单张合图：异步切成 4 张独立图后升级为组图
@@ -251,7 +259,10 @@ export function useAiGeneration() {
       toast.info("生成中，请稍候");
       return;
     }
-    if (!input.prompt || String(input.prompt).trim().length === 0) {
+    // 音乐的自定义歌词/延长/翻唱模式不发描述（歌词/原曲 clip 才是主输入），
+    // 带 lyrics 或 extras 的音频请求豁免空提示词校验。
+    const audioAltInput = handler === "text_to_audio" && (!!input.lyrics || !!input.extras);
+    if ((!input.prompt || String(input.prompt).trim().length === 0) && !audioAltInput) {
       toast.error("请先输入提示词");
       return;
     }

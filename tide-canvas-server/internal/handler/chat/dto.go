@@ -49,12 +49,12 @@ type AppendMessageDTO struct {
 
 // PersistTurnDTO records a completed 生成台 turn: the user prompt + its param
 // snapshot + the generation task it produced. The assistant message stores only
-// taskId. ContentType is the result media kind (image | video, default image).
+// taskId. ContentType is the result media kind (image | video | audio, default image).
 type PersistTurnDTO struct {
 	Prompt      string          `json:"prompt" binding:"required,max=8192"`
 	Params      json.RawMessage `json:"params"`
 	TaskID      string          `json:"taskId" binding:"required"`
-	ContentType string          `json:"contentType" binding:"omitempty,oneof=image video"`
+	ContentType string          `json:"contentType" binding:"omitempty,oneof=image video audio"`
 }
 
 // ListQuery is the pagination query for the conversation list and the message

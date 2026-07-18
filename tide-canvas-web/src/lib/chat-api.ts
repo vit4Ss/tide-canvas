@@ -161,7 +161,7 @@ export const chatApi = {
       prompt: string;
       params?: Record<string, unknown>;
       taskId: string | number;
-      contentType?: "image" | "video";
+      contentType?: "image" | "video" | "audio";
     },
   ) =>
     http.post<MessageVO[]>(`/api/im/conversations/${id}/turn`, {

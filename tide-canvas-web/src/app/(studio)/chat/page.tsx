@@ -48,6 +48,19 @@ import {
   type MentionEditorHandle,
 } from "@/components/studio/mention-prompt-editor";
 import { useAuthStore } from "@/stores/use-auth-store";
+import { SongCard } from "@/components/studio/audio-player-card";
+import {
+  AUDIO_STYLES,
+  DEFAULT_MUSIC_PARAMS,
+  MUSIC_MODES,
+  buildMusicInput,
+  fetchClipOptions,
+  isSfxModel,
+  tracksFromMeta,
+  validateMusicParams,
+  type ClipOption,
+  type MusicParams,
+} from "@/lib/music-modes";
 import type { ContextUsageVO, ConversationVO, MessageVO, MessageTaskVO } from "@/types/chat";
 import { mesh } from "@/lib/mesh";
 import { toast } from "@/components/shared/toast";
@@ -63,6 +76,8 @@ const MODE_LABEL: Record<string, string> = {
   i2v: "图生视频",
   keyframe: "首尾帧",
   omni_ref: "全能参考",
+  t2a: "音乐生成",
+  sfx: "音效生成",
 };
 
 /** config mode value → one-line hint shown in the 模式 dropdown. */
@@ -73,7 +88,26 @@ const MODE_HINT: Record<string, string> = {
   i2v: "参考图生成视频",
   keyframe: "首尾帧生成视频",
   omni_ref: "多参考生成视频",
+  t2a: "文字生成音乐",
+  sfx: "文字生成音效",
 };
+
+/** 音乐创作模式 → 下拉里的一句话说明（与创作台四模式语义一致）。 */
+const MUSIC_MODE_HINT: Record<string, string> = {
+  inspire: "只写描述，Suno 自动写词",
+  custom: "按你填写的歌词演唱",
+  extend: "从原曲结尾继续延长",
+  cover: "以新的风格翻唱原曲",
+};
+
+/** 音乐自定义/延长/翻唱在描述留空时的用户气泡兜底文案。 */
+function musicTurnSummary(p: MusicParams): string {
+  if (p.musicMode === "custom") {
+    const t = p.songTitle.trim() || p.lyrics.trim().split("\n")[0]?.slice(0, 30) || "";
+    return t ? `自定义歌词 · ${t}` : "自定义歌词生成";
+  }
+  return p.musicMode === "extend" ? "延长原曲" : "翻唱原曲";
+}
 
 /** swatch 样式+字形：后台配置 icon > 品牌官方 logo（自动匹配）> 首字母渐变。
  *  与创作台共用 model-brand.ts 的 resolveModelSwatch，保证两处选择器不漂移。 */
@@ -246,6 +280,10 @@ export default function ChatPage() {
   const [dur, setDur] = useState("");
   const [batch, setBatch] = useState(1);
   const [openSel, setOpenSel] = useState<string | null>(null);
+  // 音乐四创作模式（Suno，仅音频音乐模型时生效）——字段与请求口径对齐创作台。
+  const [music, setMusic] = useState<MusicParams>(DEFAULT_MUSIC_PARAMS);
+  // 延长/翻唱的原曲候选（用户生成历史里的分轨 clip）；null = 尚未拉取。
+  const [clipOpts, setClipOpts] = useState<ClipOption[] | null>(null);
 
   // reference media (P2): attached refs + drag state. refsRef mirrors refs for
   // race-guards (upload callbacks) and unmount revoke without stale closures.
@@ -389,6 +427,27 @@ export default function ChatPage() {
   // text-model uploads are OPTIONAL (a chat can be plain text); generation ref
   // modes (i2i/i2v/…) REQUIRE at least one reference before sending.
   const refOptional = selModel?.type === "text";
+
+  // 音频模型分流：音乐（四创作模式）vs 音效（只吃描述），判定与创作台一致
+  //（后台「生成方式」勾 sfx，modelKey 含 sfx 兜底）。
+  const isAudioSel = selModel?.type === "audio";
+  const isMusicSel = isAudioSel && !isSfxModel(selModel?.modelKey, mCfg?.modes ?? undefined);
+  const musicMode = music.musicMode;
+  // 非灵感模式的音乐生成不强制描述（歌词/原曲才是主输入），发送按钮据此放行。
+  const musicNoDraftOk = isMusicSel && musicMode !== "inspire";
+
+  // 每次进入延长/翻唱都重拉原曲候选（新生成的歌完成后，重新切入即可看到）；
+  // 已有列表在刷新期间保留展示，仅首次为 null 时显示加载态。
+  useEffect(() => {
+    if (!isMusicSel || (musicMode !== "extend" && musicMode !== "cover")) return;
+    let alive = true;
+    fetchClipOptions().then((opts) => {
+      if (alive) setClipOpts(opts);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [isMusicSel, musicMode]);
 
   // keep refsRef + the synchronous count in sync for stale-closure-free access
   // in callbacks/cleanup (re-syncs the count after adds/removals/dedup drops).
@@ -914,7 +973,16 @@ export default function ChatPage() {
 
   const send = useCallback(async () => {
     const v = draft.trim();
-    if (!v || busy) return;
+    if (busy) return;
+    // 音乐的自定义/延长/翻唱不强制描述；其余（含灵感模式/音效）仍需文字。
+    if (!v && !musicNoDraftOk) return;
+    if (isMusicSel) {
+      const musicErr = validateMusicParams(v, music);
+      if (musicErr) {
+        toast.info(musicErr);
+        return;
+      }
+    }
 
     // text-model sends are blocked once the conversation's context is full
     // (the server enforces the same cap; this just fails fast with guidance).
@@ -977,13 +1045,17 @@ export default function ChatPage() {
       ? refImageUrls.map((url) => ({ url, kind: "image" as const }))
       : [];
 
+    // 用户气泡/落库的提示词：音乐模式描述可留空，兜底一句模式摘要（persistTurn
+    // 的 prompt 为必填，气泡也不能是空白）。
+    const sendText = v || (isMusicSel ? musicTurnSummary(music) : "");
+
     // optimistic user bubble
     const optimistic: MessageVO = {
       id: `tmp-${Date.now()}`,
       conversationId: id,
       role: "user",
       contentType: "text",
-      content: v,
+      content: sendText,
       createTime: new Date().toISOString(),
       ...(attachSnapshot.length ? { params: { attachments: attachSnapshot } } : {}),
     };
@@ -1001,22 +1073,30 @@ export default function ChatPage() {
         return copy;
       });
 
-    // 选图片/视频模型 → 真实生成（一个 turn，助手消息只指向 task）；文本模型 → 文字对话。
+    // 选图片/视频/音频模型 → 真实生成（一个 turn，助手消息只指向 task）；文本模型 → 文字对话。
     const wantImage = selModel?.type === "image";
     const wantVideo = selModel?.type === "video";
+    const wantAudio = selModel?.type === "audio";
 
     try {
-      if ((wantImage || wantVideo) && selModel) {
+      if ((wantImage || wantVideo || wantAudio) && selModel) {
         // 先 submit（计费/配额走既有生成管线）；被拒时尚未持久化任何东西，无孤儿可清。
-        const input: Record<string, unknown> = {
-          prompt: v,
-          ...(ratio ? { aspectRatio: ratio, aspect_ratio: ratio, ratio } : {}),
-          ...(res ? { resolution: res } : {}),
-          ...(wantVideo && dur ? { duration: dur } : {}),
-        };
+        // 音频：音乐按四创作模式组装（与创作台同构），音效只发描述。
+        const input: Record<string, unknown> = wantAudio
+          ? isMusicSel
+            ? buildMusicInput(v, music)
+            : { prompt: v }
+          : {
+              prompt: v,
+              ...(ratio ? { aspectRatio: ratio, aspect_ratio: ratio, ratio } : {}),
+              ...(res ? { resolution: res } : {}),
+              ...(wantVideo && dur ? { duration: dur } : {}),
+            };
         // pick the handler by mode + attached references (P2).
         let handler: string;
-        if (wantVideo) {
+        if (wantAudio) {
+          handler = "text_to_audio";
+        } else if (wantVideo) {
           if (mode === "i2v" && refImageUrls.length) {
             handler = "image_to_video";
             input.sourceImage = refImageUrls[0];
@@ -1065,6 +1145,8 @@ export default function ChatPage() {
           ...(res ? { resolution: res } : {}),
           ...(wantVideo && dur ? { duration: dur } : {}),
           ...(wantImage && batch > 1 ? { batch } : {}),
+          // 音乐参数快照：重新编辑/再次生成时恢复四模式字段。
+          ...(wantAudio && isMusicSel ? { music: { ...music } } : {}),
           ...(refImageUrls.length || refVideoUrls.length || refAudioUrls.length
             ? {
                 references: [
@@ -1078,10 +1160,10 @@ export default function ChatPage() {
             : {}),
         };
         await chatApi.persistTurn(id, {
-          prompt: v,
+          prompt: sendText,
           params,
           taskId: gen.data.id,
-          contentType: wantVideo ? "video" : "image",
+          contentType: wantVideo ? "video" : wantAudio ? "audio" : "image",
         });
         clearRefs(); // turn committed → clear the composer references
         // only reload into the view if still on this conversation; otherwise the
@@ -1138,7 +1220,7 @@ export default function ChatPage() {
       setTyping(false);
       setBusy(false);
     }
-  }, [draft, busy, activeId, ensureSession, loadMessages, selModel, mode, ratio, res, dur, batch, refs, refPolicy, refOptional, clearRefs, forceBottom, scrollEnd, ctxUsage, refreshCtxUsage]);
+  }, [draft, busy, activeId, ensureSession, loadMessages, selModel, mode, ratio, res, dur, batch, refs, refPolicy, refOptional, clearRefs, forceBottom, scrollEnd, ctxUsage, refreshCtxUsage, music, isMusicSel, musicNoDraftOk]);
 
   // restore a turn's snapshot params into the composer (重新编辑 / 再次生成).
   const restoreFromParams = useCallback(
@@ -1150,6 +1232,13 @@ export default function ChatPage() {
       if (typeof p.resolution === "string") setRes(p.resolution);
       if (typeof p.duration === "string") setDur(p.duration);
       if (typeof p.batch === "number") setBatch(p.batch);
+      // 音乐参数：有快照按快照恢复，没有则回到默认（避免把上一轮的歌词/原曲
+      // 带进一个非音乐 turn 的重新编辑）。
+      setMusic(
+        p.music && typeof p.music === "object"
+          ? { ...DEFAULT_MUSIC_PARAMS, ...(p.music as Partial<MusicParams>) }
+          : DEFAULT_MUSIC_PARAMS,
+      );
       // restore reference media as url-only items (the originals are hosted; no
       // local blob/file is recreated). Lets 再次生成 work on a reference turn.
       clearRefs();
@@ -1252,9 +1341,10 @@ export default function ChatPage() {
 
 
   // approx points cost: the selected model's 消耗积分 × batch.
+  // 音频按次计费（Suno 一次两首一并结算），不乘数量。
   const points = useMemo(() => {
     const base = parseFloat(selModel?.pointCost ?? "0") || 0;
-    return Math.round(base * Math.max(1, batch));
+    return Math.round(base * (selModel?.type === "audio" ? 1 : Math.max(1, batch)));
   }, [selModel, batch]);
 
   return (
@@ -1487,9 +1577,100 @@ export default function ChatPage() {
                 refs={mentionRefs}
                 onSubmit={send}
                 onPasteFiles={refPolicy ? attachFiles : undefined}
-                placeholder="描述你想生成的内容，或上传参考素材让模型自由发挥…  @ 引用参考素材"
+                placeholder={
+                  isMusicSel && musicMode === "custom"
+                    ? "给这一轮写句备注（仅作记录，不参与生成）· 歌词请在下方填写"
+                    : isMusicSel && musicMode !== "inspire"
+                      ? "给这一轮写句备注（仅作记录，不参与生成）· 原曲在下方选择"
+                      : isAudioSel
+                        ? "描述你想生成的音乐或音效，Suno 自动作曲填词…"
+                        : "描述你想生成的内容，或上传参考素材让模型自由发挥…  @ 引用参考素材"
+                }
               />
             </div>
+
+            {/* 音乐四模式的参数区（自定义歌词/延长/翻唱时展开；灵感模式无额外字段） */}
+            {isMusicSel && musicMode !== "inspire" && (
+              <div className="cm-music">
+                {(musicMode === "extend" || musicMode === "cover") && (
+                  <div className="cm-music-row">
+                    <span className="cm-music-lab">原曲</span>
+                    <select
+                      className="cm-music-sel"
+                      value={music.sourceClipId}
+                      onChange={(e) => setMusic((m) => ({ ...m, sourceClipId: e.target.value }))}
+                    >
+                      <option value="">
+                        {clipOpts === null
+                          ? "加载原曲候选…"
+                          : clipOpts.length
+                            ? "选择一首你生成过的歌"
+                            : "暂无可选原曲 · 先生成一首音乐"}
+                      </option>
+                      {music.sourceClipId &&
+                        !(clipOpts ?? []).some((o) => o.clipId === music.sourceClipId) && (
+                          <option value={music.sourceClipId}>历史原曲</option>
+                        )}
+                      {(clipOpts ?? []).map((o) => (
+                        <option key={o.clipId} value={o.clipId}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                    {musicMode === "extend" && (
+                      <input
+                        className="cm-music-in num"
+                        inputMode="numeric"
+                        placeholder="延长起点 · 秒 · 选填"
+                        value={music.continueAt}
+                        onChange={(e) => setMusic((m) => ({ ...m, continueAt: e.target.value }))}
+                      />
+                    )}
+                  </div>
+                )}
+                <textarea
+                  className="cm-music-ta"
+                  value={music.lyrics}
+                  onChange={(e) => setMusic((m) => ({ ...m, lyrics: e.target.value }))}
+                  placeholder={
+                    musicMode === "custom"
+                      ? "歌词 · 必填 · Suno 按歌词演唱，支持段落标记\n[Verse]\n阳光洒在肩上\n[Chorus]\n这就是青春的模样"
+                      : musicMode === "extend"
+                        ? "续写歌词 · 选填 · 留空则由 Suno 续写"
+                        : "改编提示 / 歌词 · 选填 · 留空则保留原词"
+                  }
+                />
+                <div className="cm-music-row wrap">
+                  {AUDIO_STYLES.map((s) => {
+                    const on = music.songStyles.includes(s.v);
+                    return (
+                      <button
+                        key={s.v}
+                        type="button"
+                        className={`cm-tag${on ? " on" : ""}`}
+                        onClick={() =>
+                          setMusic((m) => ({
+                            ...m,
+                            songStyles: on
+                              ? m.songStyles.filter((x) => x !== s.v)
+                              : [...m.songStyles, s.v],
+                          }))
+                        }
+                      >
+                        {s.l}
+                      </button>
+                    );
+                  })}
+                  <input
+                    className="cm-music-in title"
+                    type="text"
+                    value={music.songTitle}
+                    onChange={(e) => setMusic((m) => ({ ...m, songTitle: e.target.value }))}
+                    placeholder="歌名 · 选填"
+                  />
+                </div>
+              </div>
+            )}
             <div className="composer-bar">
               <div className="cm-row">
               {webSearchAvail && (
@@ -1584,6 +1765,53 @@ export default function ChatPage() {
                 </CmSelect>
               )}
 
+              {/* 音乐创作模式（对齐创作台：灵感 / 自定义歌词 / 延长 / 翻唱） */}
+              {isMusicSel && (
+                <CmSelect
+                  open={openSel === "musicMode"}
+                  onToggle={() => toggleSel("musicMode")}
+                  menuH="创作模式"
+                  lead={<span className="cm-ico lead">♪</span>}
+                  label={MUSIC_MODES.find((o) => o.v === musicMode)?.l ?? "灵感模式"}
+                >
+                  {MUSIC_MODES.map((o) => (
+                    <button
+                      key={o.v}
+                      type="button"
+                      className={`cm-mitem${o.v === musicMode ? " on" : ""}`}
+                      onClick={() => {
+                        setMusic((m) => ({ ...m, musicMode: o.v }));
+                        setOpenSel(null);
+                      }}
+                    >
+                      <span className="cm-ico">♪</span>
+                      <span className="nfo">
+                        <span className="nm">{o.l}</span>
+                        <span className="ds">{MUSIC_MODE_HINT[o.v] ?? ""}</span>
+                      </span>
+                      <span className="ck">✓</span>
+                    </button>
+                  ))}
+                </CmSelect>
+              )}
+
+              {/* 人声/纯音乐开关（上游 make_instrumental，各创作模式通吃） */}
+              {isMusicSel && (
+                <button
+                  className={`cm-chip ${music.instrumental ? "on" : ""}`}
+                  type="button"
+                  title={music.instrumental ? "当前生成纯音乐（无人声）" : "当前生成带人声演唱"}
+                  onClick={() => setMusic((m) => ({ ...m, instrumental: !m.instrumental }))}
+                >
+                  <svg viewBox="0 0 24 24">
+                    <path d="M9 18V6l10-2v12" />
+                    <circle cx="6.5" cy="18" r="2.5" />
+                    <circle cx="16.5" cy="16" r="2.5" />
+                  </svg>
+                  纯音乐
+                </button>
+              )}
+
               {ratioOpts.length > 0 && (
                 <CmSelect
                   open={openSel === "ratio"}
@@ -1664,6 +1892,8 @@ export default function ChatPage() {
                 </CmSelect>
               )}
 
+              {/* 音频一次生成即整曲（Suno 两首一并返回），数量选择不适用 */}
+              {!isAudioSel && (
               <CmSelect
                 open={openSel === "count"}
                 onToggle={() => toggleSel("count")}
@@ -1691,6 +1921,7 @@ export default function ChatPage() {
                   </button>
                 ))}
               </CmSelect>
+              )}
               </div>
               <span className="cm-pts">约 {points} 积分</span>
               <button
@@ -1698,7 +1929,11 @@ export default function ChatPage() {
                 aria-label="发送"
                 type="button"
                 onClick={send}
-                disabled={busy || !draft.trim() || (selModel?.type === "text" && !!ctxUsage?.full)}
+                disabled={
+                  busy ||
+                  (!draft.trim() && !musicNoDraftOk) ||
+                  (selModel?.type === "text" && !!ctxUsage?.full)
+                }
               >
                 ↑
               </button>
@@ -1809,19 +2044,24 @@ function fallbackImage(id: string): string {
   return mesh(h, (h + 132) % 360, (h + 248) % 360);
 }
 
-/** all valid result URLs from a task (resultMeta.urls[], falling back to
- *  resultUrl). Multi-URL tasks (e.g. Midjourney 4-up) return every image. */
-function taskResultUrls(t: MessageTaskVO): string[] {
-  let meta: Record<string, unknown> = {};
+/** parsed resultMeta of a task (JSON string or object → object). */
+function taskMetaOf(t: MessageTaskVO): Record<string, unknown> {
   if (typeof t.resultMeta === "string") {
     try {
-      meta = JSON.parse(t.resultMeta) || {};
+      return JSON.parse(t.resultMeta) || {};
     } catch {
-      meta = {};
+      return {};
     }
-  } else if (t.resultMeta && typeof t.resultMeta === "object") {
-    meta = t.resultMeta as Record<string, unknown>;
   }
+  return t.resultMeta && typeof t.resultMeta === "object"
+    ? (t.resultMeta as Record<string, unknown>)
+    : {};
+}
+
+/** all valid result URLs from a task (resultMeta.urls[], falling back to
+ *  resultUrl). Multi-URL tasks (MJ 4-up / Suno 两首) return every entry. */
+function taskResultUrls(t: MessageTaskVO): string[] {
+  const meta = taskMetaOf(t);
   const arr = Array.isArray(meta.urls) ? (meta.urls as unknown[]) : [];
   const urls = arr.filter((u): u is string => typeof u === "string" && /^(https?:|data:)/.test(u));
   if (urls.length) return urls;
@@ -2102,6 +2342,7 @@ function AssistantResult({
 }) {
   const t = msg.task;
   const isVideo = msg.contentType === "video";
+  const isAudio = msg.contentType === "audio";
   // 生成结果的头像 = 生成该结果所用的模型图标：任务 modelName 优先，旧任务
   // 没存时回退该轮 params.model / 当前所选模型（fallbackModel），仍无则 ✦。
   const modelName = t?.modelName || fallbackModel || "";
@@ -2116,7 +2357,7 @@ function AssistantResult({
     // a preview placeholder sized like the final media, so the result reveals in
     // place instead of the layout jumping from a thin progress line to a full image.
     body = (
-      <div className={`chat-gen-loading${isVideo ? " video" : ""}`}>
+      <div className={`chat-gen-loading${isVideo ? " video" : isAudio ? " audio" : ""}`}>
         <span className="spin" />
         <span className="lbl">生成中 · {Math.round(t.progress || 0)}%</span>
         <span className="bar">
@@ -2135,6 +2376,23 @@ function AssistantResult({
     primaryUrl = urls[0] || "";
     if (!urls.length) {
       body = <div className="chat-gen-state err">⚠ 生成结果无效</div>;
+    } else if (isAudio) {
+      // Suno 一次两首：歌曲行列表（封面+歌名+波形+时间），封面/歌名来自 tracks。
+      const tracks = tracksFromMeta(taskMetaOf(t));
+      body = (
+        <div className="chat-gen-audio">
+          {urls.map((u, i) => (
+            <SongCard
+              key={u}
+              src={u}
+              title={tracks[i]?.title || (urls.length > 1 ? `曲目 ${i + 1}` : "AI 音乐")}
+              subtitle={modelName || "AI 音乐"}
+              cover={tracks[i]?.coverUrl}
+              duration={tracks[i]?.duration}
+            />
+          ))}
+        </div>
+      );
     } else if (isVideo) {
       // eslint-disable-next-line jsx-a11y/media-has-caption
       body = <video className="chat-gen-media" src={primaryUrl} controls />;
@@ -2189,7 +2447,10 @@ function AssistantResult({
               <button
                 type="button"
                 onClick={() =>
-                  downloadMedia(primaryUrl, isVideo ? `gen-${msg.id}.mp4` : `gen-${msg.id}.png`)
+                  downloadMedia(
+                    primaryUrl,
+                    isVideo ? `gen-${msg.id}.mp4` : isAudio ? `gen-${msg.id}.mp3` : `gen-${msg.id}.png`,
+                  )
                 }
               >
                 ⤓ 下载

@@ -1,21 +1,22 @@
 "use client";
 
 /* ============================================================================
-   AudioPlayerCard — 创作台音频结果的定制播放卡。
+   音频播放组件（创作台 / chat 共用）。
 
-   原生 <audio controls> 与产品语言脱节，这里用「圆形播放钮 + 波形 + 时间」
-   的经典音频形态替代：
+   - useWavePlayer：播放核心（真实波形解码 + 伪波形回退 + 进度扫过 + 拖动跳播
+     + 同页互斥播放），两种卡片形态共享。
+   - AudioPlayerCard：圆形播放钮 + 波形 + 时间的横条（资产库预览等紧凑场景）。
+   - SongCard：Suno/Udio 式「歌曲行」——封面(播放键叠层) + 歌名/副题 + 波形 +
+     时间。封面/歌名来自上游 tracks[]（Suno 每首歌都生成封面），多首纵向成列，
+     取代"两个裸波形条并排"的玩具感。
 
    - 波形优先用 Web Audio 解码真实峰值（模块级缓存，一首歌只解一次）；
      OSS 未配 CORS 时解码会失败，退回由 URL 哈希播种的伪波形（确定性,
      同一首歌每次渲染一致），交互不受影响。
-   - 已播进度以亮色扫过波形，点击/拖动波形跳播。
-   - 同页多张卡互斥播放（开始播放时暂停其它卡）。
-
-   仅消费 studio.css 的既有 token（--text/--bg/--mono 等），不引入新颜色。
+   - 仅消费 studio.css 的既有 token（--text/--bg/--mono 等），不引入新颜色。
    ============================================================================ */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 const BAR_COUNT = 56;
 
@@ -109,7 +110,8 @@ function fmtTime(sec: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-export function AudioPlayerCard({ src, autoPlay }: { src: string; autoPlay?: boolean }) {
+/** 播放核心：<audio> + 波形 canvas + 播放状态/时间 + 互斥播放 + 拖动跳播。 */
+function useWavePlayer(src: string, autoPlay?: boolean) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [playing, setPlaying] = useState(false);
@@ -140,9 +142,17 @@ export function AudioPlayerCard({ src, autoPlay }: { src: string; autoPlay?: boo
     ctx.clearRect(0, 0, W, H);
 
     const color = getComputedStyle(cv).color || "#fff";
-    const peaks = peaksRef.current;
-    const n = peaks.length;
+    // 按画布实际宽度降采样柱数：56 根 × (2px 柱 + 2.5px 隙) 需要 ~250px，
+    // 窄容器（chat 气泡等）放不下时不硬塞——柱子会溢出画布被裁掉，进度
+    // 位置也随之失真。降到能容纳的根数，等距抽取峰值，进度映射保持一致。
+    const all = peaksRef.current;
     const gap = 2.5;
+    const maxBars = Math.max(8, Math.floor((W + gap) / (2 + gap)));
+    const peaks =
+      all.length <= maxBars
+        ? all
+        : Array.from({ length: maxBars }, (_, i) => all[Math.floor((i * all.length) / maxBars)]);
+    const n = peaks.length;
     const bw = Math.max(2, (W - gap * (n - 1)) / n);
     const mid = H / 2;
     const played = au.duration > 0 ? au.currentTime / au.duration : 0;
@@ -233,8 +243,7 @@ export function AudioPlayerCard({ src, autoPlay }: { src: string; autoPlay?: boo
     void au.play().catch(() => {});
   }, [autoPlay]);
 
-  /* ── 播放控制 ─────────────────────────────────────────────────────────── */
-  const toggle = () => {
+  const toggle = useCallback(() => {
     const au = audioRef.current;
     if (!au) return;
     if (au.paused) {
@@ -244,69 +253,142 @@ export function AudioPlayerCard({ src, autoPlay }: { src: string; autoPlay?: boo
     } else {
       au.pause();
     }
-  };
+  }, []);
 
-  const seekTo = (clientX: number) => {
-    const au = audioRef.current;
-    const cv = canvasRef.current;
-    if (!au || !cv || !(au.duration > 0)) return;
-    const r = cv.getBoundingClientRect();
-    const ratio = Math.max(0, Math.min(1, (clientX - r.left) / r.width));
-    au.currentTime = ratio * au.duration;
-    setCur(au.currentTime);
-    draw();
-  };
+  const seekTo = useCallback(
+    (clientX: number) => {
+      const au = audioRef.current;
+      const cv = canvasRef.current;
+      if (!au || !cv || !(au.duration > 0)) return;
+      const r = cv.getBoundingClientRect();
+      const ratio = Math.max(0, Math.min(1, (clientX - r.left) / r.width));
+      au.currentTime = ratio * au.duration;
+      setCur(au.currentTime);
+      draw();
+    },
+    [draw],
+  );
 
+  const audioEl = (
+    <audio
+      ref={audioRef}
+      src={src}
+      preload="metadata"
+      onPlay={() => setPlaying(true)}
+      onPause={() => setPlaying(false)}
+      onEnded={() => setPlaying(false)}
+      onTimeUpdate={(e) => setCur((e.target as HTMLAudioElement).currentTime)}
+      onLoadedMetadata={(e) => setDur((e.target as HTMLAudioElement).duration)}
+      onDurationChange={(e) => setDur((e.target as HTMLAudioElement).duration)}
+    />
+  );
+
+  const waveEl = (
+    <canvas
+      ref={canvasRef}
+      className="ap-wave"
+      onPointerDown={(e) => {
+        draggingRef.current = true;
+        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+        seekTo(e.clientX);
+      }}
+      onPointerMove={(e) => {
+        if (draggingRef.current) seekTo(e.clientX);
+      }}
+      onPointerUp={() => {
+        draggingRef.current = false;
+      }}
+    />
+  );
+
+  return { audioEl, waveEl, playing, cur, dur, toggle };
+}
+
+function PlayGlyph({ playing }: { playing: boolean }) {
+  return playing ? (
+    <svg viewBox="0 0 24 24" aria-hidden>
+      <rect x="6.5" y="5" width="4" height="14" rx="1.4" />
+      <rect x="13.5" y="5" width="4" height="14" rx="1.4" />
+    </svg>
+  ) : (
+    <svg viewBox="0 0 24 24" aria-hidden>
+      {/* 三角微右移补偿视觉重心 */}
+      <path d="M9 5.6v12.8c0 .8.9 1.3 1.6.9l9.4-6.4c.6-.4.6-1.4 0-1.8L10.6 4.7c-.7-.4-1.6.1-1.6.9z" />
+    </svg>
+  );
+}
+
+function timeText(playing: boolean, cur: number, dur: number): ReactNode {
+  return (
+    <>
+      {fmtTime(playing || cur > 0 ? cur : dur)}
+      {(playing || cur > 0) && dur > 0 ? ` / ${fmtTime(dur)}` : ""}
+    </>
+  );
+}
+
+/** 紧凑横条形态（资产库预览等）：圆形播放钮 + 波形 + 时间。 */
+export function AudioPlayerCard({ src, autoPlay }: { src: string; autoPlay?: boolean }) {
+  const p = useWavePlayer(src, autoPlay);
   return (
     <div className="ap-card" onClick={(e) => e.stopPropagation()}>
-      <audio
-        ref={audioRef}
-        src={src}
-        preload="metadata"
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onEnded={() => setPlaying(false)}
-        onTimeUpdate={(e) => setCur((e.target as HTMLAudioElement).currentTime)}
-        onLoadedMetadata={(e) => setDur((e.target as HTMLAudioElement).duration)}
-        onDurationChange={(e) => setDur((e.target as HTMLAudioElement).duration)}
-      />
+      {p.audioEl}
+      <button type="button" className="ap-btn" aria-label={p.playing ? "暂停" : "播放"} onClick={p.toggle}>
+        <PlayGlyph playing={p.playing} />
+      </button>
+      {p.waveEl}
+      <span className="ap-time">{timeText(p.playing, p.cur, p.dur)}</span>
+    </div>
+  );
+}
+
+/** 歌曲行形态（Suno/Udio 的曲目行）：封面(播放键叠层) + 歌名/副题 + 波形 + 时间。
+ *  cover/title 来自上游 tracks[]；封面加载失败时退回 ♪ 占位。duration 是上游给的
+ *  时长(秒)，metadata 未就绪时先用它显示。 */
+export function SongCard({
+  src,
+  title,
+  subtitle,
+  cover,
+  duration,
+}: {
+  src: string;
+  title?: string;
+  subtitle?: string;
+  cover?: string;
+  duration?: number;
+}) {
+  const p = useWavePlayer(src);
+  const [coverBroken, setCoverBroken] = useState(false);
+  const dur = p.dur > 0 ? p.dur : duration ?? 0;
+  return (
+    <div className={`sc-row${p.playing ? " playing" : ""}`} onClick={(e) => e.stopPropagation()}>
+      {p.audioEl}
       <button
         type="button"
-        className="ap-btn"
-        aria-label={playing ? "暂停" : "播放"}
-        onClick={toggle}
+        className="sc-cover"
+        aria-label={p.playing ? "暂停" : "播放"}
+        onClick={p.toggle}
       >
-        {playing ? (
-          <svg viewBox="0 0 24 24" aria-hidden>
-            <rect x="6.5" y="5" width="4" height="14" rx="1.4" />
-            <rect x="13.5" y="5" width="4" height="14" rx="1.4" />
-          </svg>
-        ) : (
-          <svg viewBox="0 0 24 24" aria-hidden>
-            {/* 三角微右移补偿视觉重心 */}
-            <path d="M9 5.6v12.8c0 .8.9 1.3 1.6.9l9.4-6.4c.6-.4.6-1.4 0-1.8L10.6 4.7c-.7-.4-1.6.1-1.6.9z" />
-          </svg>
+        <span className="sc-cover-ph" aria-hidden>
+          ♪
+        </span>
+        {cover && !coverBroken && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={cover} alt="" loading="lazy" onError={() => setCoverBroken(true)} />
         )}
+        <span className="sc-cover-act" aria-hidden>
+          <PlayGlyph playing={p.playing} />
+        </span>
       </button>
-      <canvas
-        ref={canvasRef}
-        className="ap-wave"
-        onPointerDown={(e) => {
-          draggingRef.current = true;
-          (e.target as HTMLElement).setPointerCapture(e.pointerId);
-          seekTo(e.clientX);
-        }}
-        onPointerMove={(e) => {
-          if (draggingRef.current) seekTo(e.clientX);
-        }}
-        onPointerUp={() => {
-          draggingRef.current = false;
-        }}
-      />
-      <span className="ap-time">
-        {fmtTime(playing || cur > 0 ? cur : dur)}
-        {(playing || cur > 0) && dur > 0 ? ` / ${fmtTime(dur)}` : ""}
-      </span>
+      <div className="sc-info">
+        <div className="sc-title" title={title}>
+          {title || "未命名"}
+        </div>
+        {subtitle && <div className="sc-sub">{subtitle}</div>}
+      </div>
+      {p.waveEl}
+      <span className="ap-time">{timeText(p.playing, p.cur, dur)}</span>
     </div>
   );
 }

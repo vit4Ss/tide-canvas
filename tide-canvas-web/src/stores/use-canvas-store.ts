@@ -28,8 +28,10 @@ export interface CanvasNode {
   fileSize?: number;
   fileType?: string;
   mimeType?: string;
-  /** 语音合成结果（audio 节点） */
+  /** 语音合成/音乐生成结果（audio 节点）；audioSrc 始终等于当前选中分轨 */
   audioSrc?: string;
+  /** 音乐分轨（Suno 一次两首）：url + 歌名 + clip_id（延长/翻唱引用），节点内切换 */
+  audioTracks?: { url: string; title?: string; clipId?: string }[];
   status?: "idle" | "generating" | "success" | "error";
   uploading?: boolean;
   uploadProgress?: number;

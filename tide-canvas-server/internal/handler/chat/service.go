@@ -292,7 +292,7 @@ func (s *service) persistTurn(conversationID, ownerID idgen.ID, dto PersistTurnD
 	}
 
 	contentType := strings.TrimSpace(dto.ContentType)
-	if contentType != "video" {
+	if contentType != "video" && contentType != "audio" {
 		contentType = "image"
 	}
 
