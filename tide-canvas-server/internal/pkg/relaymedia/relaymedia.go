@@ -45,7 +45,7 @@ const (
 	pollInterval      = 2 * time.Second  // gap between task polls
 	imagePollDeadline = 6 * time.Minute  // overall budget for an image task (sync or polled)
 	videoPollDeadline = 20 * time.Minute // videos are slower; stay under the 30m UI cap
-	audioPollDeadline = 10 * time.Minute // TTS 通常同步秒回;Suno 音乐约 1–4 分钟(总是 202 轮询)
+	audioPollDeadline = 10 * time.Minute // TTS 通常同步秒回;Suno 音乐约 1–4 分钟(实测也会同步 200)
 )
 
 // maxRespBody caps a single relay response read. Generous enough to hold verbose
@@ -336,6 +336,12 @@ func (c *Client) submit(ctx context.Context, path string, body map[string]any, d
 		if urls := mediaURLs(mr); len(urls) > 0 {
 			res.URLs = urls
 			res.Tracks = mediaTracks(mr)
+			// Suno 实测(2026-07-18)会同步 200 且 data 只带主歌:两首全集
+			// output_urls 与分轨 tracks(clip_id 供延长/翻唱)只在 /v1/tasks/{id}。
+			// 带 task id 的音频结果补查一次任务详情取全集;失败不致命,保留内联结果。
+			if path == pathAudioSpeech && mr.ID != "" {
+				c.enrichAudio(ctx, mr.ID, &res)
+			}
 			return res, nil
 		}
 		// 2xx but no inline media: the relay deferred to a task (the usual 202
@@ -346,6 +352,33 @@ func (c *Client) submit(ctx context.Context, path string, body map[string]any, d
 		return res, fmt.Errorf("relaymedia: HTTP %d with neither media url nor task id", status)
 	}
 	return res, upstreamError(status, mr, respBody)
+}
+
+// enrichAudio swaps an inline audio result for the fuller /v1/tasks/{id} view
+// when the latter carries more:同步 200 的 data 只回主歌,两首全集在任务详情的
+// output_urls,clip_id(延长/翻唱引用)只在 tracks[]。Best-effort:请求失败、
+// 解析失败或详情不比内联结果全时,原样保留内联的单首结果。
+func (c *Client) enrichAudio(ctx context.Context, taskID string, res *Result) {
+	status, respBody, err := c.do(ctx, http.MethodGet, c.baseURL+"/v1/tasks/"+taskID, nil)
+	if err != nil || status < 200 || status >= 300 {
+		return
+	}
+	var mr mediaResp
+	if json.Unmarshal(respBody, &mr) != nil || mr.Error != nil {
+		return
+	}
+	urls := mediaURLs(mr)
+	tracks := mediaTracks(mr)
+	if len(urls) < len(res.URLs) || (len(urls) == len(res.URLs) && len(tracks) == 0) {
+		return
+	}
+	res.URLs = urls
+	res.Tracks = tracks
+	res.HTTPStatus = status
+	res.ResponseBody = string(respBody)
+	if mr.Status != "" {
+		res.Status = mr.Status
+	}
 }
 
 // poll repeatedly GETs /v1/tasks/{id} until the task reaches a terminal state or
