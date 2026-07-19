@@ -45,15 +45,9 @@ export function InlinePanorama({ src, gridOn = false, apiRef, interactive = true
         const buf = await resp.arrayBuffer();
         if (disposed) return;
         const blobUrl = URL.createObjectURL(new Blob([buf], { type: "image/png" }));
-        let texture: THREE_NS.Texture;
-        try {
-          texture = await new Promise<THREE_NS.Texture>((resolve, reject) => {
-            new THREE.TextureLoader().load(blobUrl, resolve, undefined, () => reject(new Error("贴图解析失败")));
-          });
-        } catch (e) {
-          URL.revokeObjectURL(blobUrl); // reject 路径也回收 blob,避免泄漏
-          throw e;
-        }
+        const texture = await new Promise<THREE_NS.Texture>((resolve, reject) => {
+          new THREE.TextureLoader().load(blobUrl, resolve, undefined, () => reject(new Error("贴图解析失败")));
+        });
         URL.revokeObjectURL(blobUrl);
         const mount = mountRef.current;
         if (disposed || !mount) { texture.dispose(); return; }

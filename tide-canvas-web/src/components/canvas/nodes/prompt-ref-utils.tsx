@@ -29,7 +29,7 @@ export function ReferenceThumb({ refItem, active, onPick }: { refItem: RefItem; 
       }`}
     >
       {refItem.thumb ? (
-        // eslint-disable-next-line @next/next/no-img-element
+
         <img src={refItem.thumb} alt="" className="h-full w-full object-cover" />
       ) : (
         <span className="flex h-full w-full items-center justify-center text-[10px] text-neutral-400">无图</span>

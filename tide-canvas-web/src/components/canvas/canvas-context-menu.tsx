@@ -99,6 +99,9 @@ export function CanvasContextMenu({
 
   const itemClass = "mx-2 flex w-[calc(100%-1rem)] items-center justify-between rounded-xl px-3.5 py-3 text-sm transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-800";
   const disabledClass = "mx-2 flex w-[calc(100%-1rem)] items-center justify-between rounded-xl px-3.5 py-3 text-sm text-neutral-300 dark:text-neutral-600 cursor-not-allowed";
+  const catalogItemClass = "group mx-2 flex h-14 w-[calc(100%-1rem)] items-center gap-3 rounded-xl px-2.5 text-sm transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-800";
+  const catalogTextClass = "min-w-0 flex-1 translate-y-2 text-left transition-transform duration-150 group-hover:translate-y-0";
+  const catalogDescClass = "block h-4 truncate text-xs leading-4 text-neutral-400 opacity-0 transition-opacity duration-150 group-hover:opacity-100";
 
   return (
     <div
@@ -121,14 +124,14 @@ export function CanvasContextMenu({
               <button
                 key={item.type}
                 onClick={() => handleAddNode(item.type)}
-                className="group mx-2 flex w-[calc(100%-1rem)] items-center gap-3 rounded-xl px-2.5 py-2 text-sm transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                className={catalogItemClass}
               >
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-600 transition-colors group-hover:bg-neutral-900 group-hover:text-white dark:bg-neutral-800 dark:text-neutral-300 dark:group-hover:bg-white dark:group-hover:text-neutral-900">
                   <item.icon className="h-4 w-4" />
                 </span>
-                <span className="min-w-0 flex-1 text-left">
+                <span className={catalogTextClass}>
                   <span className="block font-medium">{item.label}</span>
-                  <span className="block max-h-0 truncate text-xs leading-4 text-neutral-400 opacity-0 transition-all duration-200 group-hover:max-h-4 group-hover:opacity-100">{item.desc}</span>
+                  <span className={catalogDescClass}>{item.desc}</span>
                 </span>
               </button>
             ))}
@@ -138,14 +141,14 @@ export function CanvasContextMenu({
               <button
                 key={item.type}
                 onClick={() => { onClose(); if (item.type === "upload") onUpload?.(); }}
-                className="group mx-2 flex w-[calc(100%-1rem)] items-center gap-3 rounded-xl px-2.5 py-2 text-sm transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                className={catalogItemClass}
               >
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-600 transition-colors group-hover:bg-neutral-900 group-hover:text-white dark:bg-neutral-800 dark:text-neutral-300 dark:group-hover:bg-white dark:group-hover:text-neutral-900">
                   <item.icon className="h-4 w-4" />
                 </span>
-                <span className="min-w-0 flex-1 text-left">
+                <span className={catalogTextClass}>
                   <span className="block font-medium">{item.label}</span>
-                  <span className="block max-h-0 truncate text-xs leading-4 text-neutral-400 opacity-0 transition-all duration-200 group-hover:max-h-4 group-hover:opacity-100">{item.desc}</span>
+                  <span className={catalogDescClass}>{item.desc}</span>
                 </span>
               </button>
             ))}

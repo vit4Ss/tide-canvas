@@ -1,18 +1,15 @@
 "use client";
 
-import { memo, useCallback, useState } from "react";
+import { memo, useState } from "react";
 import type { CanvasNode } from "@/stores/use-canvas-store";
 import { Scissors, Plus, Play, Trash2, Volume2 } from "lucide-react";
 import { NodeHeader } from "./base/node-header";
-import { NodePorts } from "./base/node-ports";
 
 interface Props {
   node: CanvasNode;
   isSelected: boolean;
   isDragging?: boolean;
   isConnectTarget?: boolean;
-  onNodeMouseDown: (nodeId: string, e: React.MouseEvent) => void;
-  onPortMouseDown?: (nodeId: string, side: "input" | "output", clientX: number, clientY: number) => void;
 }
 
 interface Clip {
@@ -27,16 +24,12 @@ const CLIP_COLORS = [
   "bg-rose-400", "bg-cyan-400", "bg-orange-400",
 ];
 
-export const VideoComposeNode = memo(function VideoComposeNode({ node, isSelected, isDragging = false, isConnectTarget = false, onNodeMouseDown, onPortMouseDown }: Props) {
+export const VideoComposeNode = memo(function VideoComposeNode({ node, isSelected, isDragging = false, isConnectTarget = false }: Props) {
   const [clips, setClips] = useState<Clip[]>([
     { id: "c1", name: "片段 1", duration: 4, color: CLIP_COLORS[0] },
     { id: "c2", name: "片段 2", duration: 3, color: CLIP_COLORS[1] },
   ]);
   const showAuxUI = isSelected && !isDragging;
-
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    onNodeMouseDown(node.id, e);
-  }, [node.id, onNodeMouseDown]);
 
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
@@ -54,9 +47,8 @@ export const VideoComposeNode = memo(function VideoComposeNode({ node, isSelecte
   return (
     <div
       data-node-id={node.id}
-      className={`absolute select-none ${isSelected ? "z-10" : ""}`}
-      style={{ left: node.x, top: node.y, width: node.width, cursor: isDragging ? "grabbing" : "grab" }}
-      onMouseDown={handleMouseDown}
+      className={`relative select-none ${isSelected ? "z-10" : ""}`}
+      style={{ width: node.width, cursor: isDragging ? "grabbing" : "grab" }}
     >
       <NodeHeader icon={Scissors} title={node.title || "视频合成"} visible={showAuxUI} />
 
@@ -130,8 +122,6 @@ export const VideoComposeNode = memo(function VideoComposeNode({ node, isSelecte
               </div>
             </div>
           </div>
-
-          <NodePorts nodeId={node.id} visible={showAuxUI} onPortMouseDown={onPortMouseDown} />
         </div>
       </div>
     </div>

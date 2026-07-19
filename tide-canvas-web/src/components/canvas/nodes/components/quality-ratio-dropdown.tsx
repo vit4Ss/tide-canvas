@@ -14,15 +14,6 @@ import {
   getRatioShapeSize,
 } from "../utils/quality-ratio";
 
-// 后台画质取值 → 友好名的补充映射（内置 QUALITY_OPTIONS 只有 low/standard/high，
-// 而后台常用 medium 表示"标准"，与后端 normalizeQuality 的 standard→medium 对齐）。
-const QUALITY_LABEL_ALIAS: Record<string, string> = {
-  low: "低画质",
-  standard: "标准画质",
-  medium: "标准画质",
-  high: "高画质",
-};
-
 interface QualityRatioDropdownProps {
   value: QualityRatioValue;
   onChange: (value: QualityRatioValue) => void;
@@ -47,18 +38,9 @@ export function QualityRatioDropdown({
   batchCount,
   compact = false,
 }: QualityRatioDropdownProps) {
-  // 直接渲染后台配置的取值(与创作台一致)，不再拿死白名单过滤——否则后台配的
-  // "medium"(白名单只有 standard)、小写 "1k"(白名单是 "1K") 会被静默丢弃，
-  // 表现为"画质/清晰度选不了"。value 用配置原值，label 尽量查内置友好名、查不到
-  // 就回退原值。undefined = 未配置 → 用内置全集；[] = 后台明确全不勾 → 隐藏。
-  const qualityOptions: { value: string; label: string }[] = (qualities ?? QUALITY_OPTIONS.map((o) => o.value)).map((v) => ({
-    value: v,
-    label: QUALITY_OPTIONS.find((o) => o.value === v)?.label ?? QUALITY_LABEL_ALIAS[v.toLowerCase()] ?? v,
-  }));
-  const clarityOptions: readonly string[] = clarities ?? CLARITY_OPTIONS;
-  const ratioOptions = ratios
-    ? ratios.map((v) => RATIO_OPTIONS.find((o) => o.value === v) ?? { value: v, label: v, w: 14, h: 14 })
-    : RATIO_OPTIONS;
+  const qualityOptions = qualities ? QUALITY_OPTIONS.filter((option) => qualities.includes(option.value)) : QUALITY_OPTIONS;
+  const clarityOptions = clarities ? CLARITY_OPTIONS.filter((option) => clarities.includes(option)) : CLARITY_OPTIONS;
+  const ratioOptions = ratios ? RATIO_OPTIONS.filter((option) => ratios.includes(option.value)) : RATIO_OPTIONS;
 
   const dropdownPanel = (
     <div className={styles.panelInner} onMouseDown={(event) => event.stopPropagation()}>
@@ -79,7 +61,7 @@ export function QualityRatioDropdown({
           <SegmentedRow count={clarityOptions.length}>
             {clarityOptions.map((option) => (
               <SegmentButton key={option} active={value.clarity === option} onClick={() => onChange({ ...value, clarity: option })}>
-                {option.toUpperCase()}
+                {option}
               </SegmentButton>
             ))}
           </SegmentedRow>

@@ -266,15 +266,9 @@ export function Scene3DEditor({ node, onClose }: Props) {
                 if (disposed) return;
                 blobUrl = URL.createObjectURL(new Blob([buf], { type: "image/png" }));
               }
-              let tex: THREE_NS.Texture;
-              try {
-                tex = await new Promise<THREE_NS.Texture>((resolve, reject) => {
-                  new THREE.TextureLoader().load(blobUrl, resolve, undefined, () => reject(new Error("贴图解析失败")));
-                });
-              } catch (e) {
-                if (blobUrl.startsWith("blob:")) URL.revokeObjectURL(blobUrl); // reject 路径也回收 blob
-                throw e;
-              }
+              const tex = await new Promise<THREE_NS.Texture>((resolve, reject) => {
+                new THREE.TextureLoader().load(blobUrl, resolve, undefined, () => reject(new Error("贴图解析失败")));
+              });
               if (blobUrl.startsWith("blob:")) URL.revokeObjectURL(blobUrl);
               if (disposed) { tex.dispose(); return; }
               tex.colorSpace = THREE.SRGBColorSpace;
@@ -850,16 +844,13 @@ export function Scene3DEditor({ node, onClose }: Props) {
       if (!blob) { toast.error("截图失败，请重试"); return; }
       const file = new File([blob], `director_${Date.now()}.png`, { type: "image/png" });
       const up = await uploadFileSmart(file);
-      if (!up.success || !up.data) { toast.error(up.message || "截图上传失败"); return; }
+      if (!up.success) { toast.error(up.message || "截图上传失败"); return; }
       const url = up.data.fileUrl;
       persist();
       updateNode(node.id, { imageSrc: url, fileSize: up.data.fileSize, fileType: up.data.fileType, mimeType: up.data.mimeType }); // 导演台预览 = 最近一次截图
       spawnShotNode(up.data);
       setShotCount((c) => c + 1);
       toast.success("已截图，图片节点已放入画布");
-    } catch {
-      // 快照/上传异常:反馈并避免未处理 rejection。
-      toast.error("截图失败，请重试");
     } finally {
       setBusy(false);
     }
@@ -1071,7 +1062,6 @@ export function Scene3DEditor({ node, onClose }: Props) {
           <div className="mb-1.5 text-xs font-medium text-white/60">全景背景</div>
           {panoUrl ? (
             <>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={panoUrl} alt="" className="h-14 w-full rounded-lg object-cover" />
               <div className="mt-1 truncate text-[11px] text-white/40">{pano?.is360 ? "已连接全景图" : "已连接图片（按全景使用）"} · {pano?.title}</div>
               <div className="mt-2 space-y-2">

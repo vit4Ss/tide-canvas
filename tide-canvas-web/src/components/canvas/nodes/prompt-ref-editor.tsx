@@ -33,6 +33,8 @@ interface Props {
   leading?: React.ReactNode;
   /** 缩略图行右侧按钮（如展开） */
   trailing?: React.ReactNode;
+  /** 图片节点使用 Semi 视觉包装，保留 contentEditable 以支持 @ 引用 pill。 */
+  variant?: "plain" | "semi";
 }
 
 const stop = (e: React.MouseEvent) => e.stopPropagation();
@@ -41,7 +43,7 @@ const stop = (e: React.MouseEvent) => e.stopPropagation();
  * 富文本提示词输入框 + @ 引用系统：「图片N」以带缩略图的内联 pill 呈现，序列化回「图片N」文本。
  * 图片节点与视频节点共用（见 prompt-ref-utils 中搬移的纯函数）。
  */
-export function PromptRefEditor({ value, onChange, refs, zoom, placeholder, onSubmit, fill = false, leading, trailing }: Props) {
+export function PromptRefEditor({ value, onChange, refs, zoom, placeholder, onSubmit, fill = false, leading, trailing, variant = "plain" }: Props) {
   const promptEditorRef = useRef<HTMLDivElement>(null);
   const promptRangeRef = useRef<Range | null>(null);
   const [mentionOpen, setMentionOpen] = useState(false);
@@ -160,29 +162,42 @@ export function PromptRefEditor({ value, onChange, refs, zoom, placeholder, onSu
     overflowWrap: "anywhere" as const,
     boxSizing: "border-box" as const,
   };
+  const isSemi = variant === "semi";
+  const hasToolbar = !!leading || !!trailing || refs.length > 0;
+  const editorStyle = fill
+    ? { ...editorStyleBase, minHeight: 0, flex: 1 }
+    : { ...editorStyleBase, minHeight: `${MIN_ROWS * LINE_HEIGHT}px`, maxHeight: `${MAX_ROWS * LINE_HEIGHT}px` };
 
   return (
     <>
       {/* 缩略图行：节点专属按钮 + 可引用图片缩略图 */}
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {leading}
-          {refs.map((ref) => (
-            <ReferenceThumb
-              key={ref.id}
-              refItem={ref}
-              active={promptHasRef(ref.index)}
-              onPick={(e) => { stop(e); insertRefToken(ref); }}
-            />
-          ))}
+      {hasToolbar && (
+        <div className={`flex items-start justify-between gap-3 ${isSemi ? "px-3 pt-3" : ""}`}>
+          <div className="flex min-w-0 items-start gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {leading}
+            {refs.map((ref) => (
+              <ReferenceThumb
+                key={ref.id}
+                refItem={ref}
+                active={promptHasRef(ref.index)}
+                onPick={(e) => { stop(e); insertRefToken(ref); }}
+              />
+            ))}
+          </div>
+          {trailing}
         </div>
-        {trailing}
-      </div>
+      )}
 
       {/* 富文本编辑器 + @ 下拉 */}
-      <div className={`relative mt-3 ${fill ? "flex min-h-0 flex-1 flex-col" : ""}`}>
+      <div
+        className={`relative ${fill ? "flex min-h-0 flex-1 flex-col" : ""} ${
+          isSemi
+            ? `${hasToolbar ? "mt-2" : ""} mx-3 px-3 py-2`
+            : "mt-3"
+        }`}
+      >
         {!value && (
-          <span className="pointer-events-none absolute left-0 top-0 text-sm leading-6 text-neutral-400">
+          <span className={`pointer-events-none absolute text-sm leading-6 text-neutral-400 ${isSemi ? "left-3 top-2" : "left-0 top-0"}`}>
             {placeholder}
           </span>
         )}
@@ -219,7 +234,7 @@ export function PromptRefEditor({ value, onChange, refs, zoom, placeholder, onSu
           }}
           spellCheck={false}
           className="prompt-scroll relative block w-full overflow-y-auto whitespace-pre-wrap break-words border-0 bg-transparent pr-2 text-sm leading-6 text-neutral-900 caret-neutral-900 selection:bg-blue-200/60 focus:outline-none focus-visible:outline-none focus:ring-0 dark:text-neutral-100 dark:caret-neutral-100 dark:selection:bg-blue-500/40"
-          style={fill ? { ...editorStyleBase, minHeight: 0, flex: 1 } : { ...editorStyleBase, minHeight: `${MIN_ROWS * LINE_HEIGHT}px`, maxHeight: `${MAX_ROWS * LINE_HEIGHT}px` }}
+          style={editorStyle}
         />
 
         {/* @ 引用下拉：锚定到 @ 光标正下方 */}
@@ -235,7 +250,7 @@ export function PromptRefEditor({ value, onChange, refs, zoom, placeholder, onSu
                 className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-800"
               >
                 {ref.thumb ? (
-                  // eslint-disable-next-line @next/next/no-img-element
+
                   <img src={ref.thumb} alt="" className="h-6 w-6 rounded object-cover" />
                 ) : (
                   <span className="flex h-6 w-6 items-center justify-center rounded bg-neutral-100 text-[9px] text-neutral-400 dark:bg-neutral-800">图</span>
@@ -263,6 +278,7 @@ export function PromptEditorModal({
   onChange,
   refs,
   placeholder,
+  variant = "plain",
 }: {
   open: boolean;
   onClose: () => void;
@@ -270,6 +286,7 @@ export function PromptEditorModal({
   onChange: (value: string) => void;
   refs: RefItem[];
   placeholder?: string;
+  variant?: "plain" | "semi";
 }) {
   useEffect(() => {
     if (!open) return;
@@ -299,7 +316,7 @@ export function PromptEditorModal({
           </button>
         </div>
         <div className="flex min-h-0 flex-1 flex-col">
-          <PromptRefEditor fill value={value} onChange={onChange} refs={refs} zoom={1} placeholder={placeholder} />
+          <PromptRefEditor fill value={value} onChange={onChange} refs={refs} zoom={1} placeholder={placeholder} variant={variant} />
         </div>
       </div>
     </div>,

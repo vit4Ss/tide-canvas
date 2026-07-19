@@ -67,7 +67,6 @@ export function CanvasCoverPicker({ open, currentUrl, images: propImages, onClos
                       active ? "border-blue-500" : "border-transparent hover:border-neutral-300 dark:hover:border-neutral-600"
                     }`}
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={img.url} alt={img.title} className="h-full w-full object-cover" />
                     {active && (
                       <span className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-blue-500 text-white shadow">

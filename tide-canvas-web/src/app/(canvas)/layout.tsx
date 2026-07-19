@@ -1,7 +1,30 @@
 "use client";
 
+import "@mantine/core/styles.css";
+import "@douyinfe/semi-ui/lib/es/_base/base.css";
+import "@xyflow/react/dist/style.css";
 import { useEffect, useState } from "react";
 import { useAuthStore } from "@/stores/use-auth-store";
+import { MantineAppProvider } from "@/components/shared/mantine-provider";
+import { UiPreferencesProvider } from "@/components/shared/ui-preferences";
+
+// 界面偏好(ui-preferences)写到 documentElement 上的内联变量与 dataset——
+// 离开画布时必须清掉,否则字号/主色会泄漏到站点/工作台页面。
+const UI_PREF_INLINE_VARS = [
+  "--tc-root-font-size",
+  "--tc-font-scale",
+  "--tc-primary",
+  "--tc-primary-soft",
+  "--tc-primary-foreground",
+  "--tc-ring",
+  "--primary",
+  "--primary-foreground",
+  "--accent",
+  "--accent-foreground",
+  "--ring",
+  "--sidebar-primary",
+  "--sidebar-primary-foreground",
+];
 
 /**
  * 画布路由组外壳。登录态门禁:进入画布前先 ensureSession()——有 token 则确保拉过用户
@@ -18,6 +41,16 @@ export default function CanvasLayout({ children }: { children: React.ReactNode }
   useEffect(() => {
     document.body.classList.remove("imini");
     return () => document.body.classList.add("imini");
+  }, []);
+
+  // 离开画布时清理 ui-preferences 写入的根级内联变量与 dataset,防止偏好泄漏到站点页。
+  useEffect(() => {
+    return () => {
+      const root = document.documentElement;
+      for (const name of UI_PREF_INLINE_VARS) root.style.removeProperty(name);
+      delete root.dataset.tcDensity;
+      delete root.dataset.tcThemeColor;
+    };
   }, []);
 
   useEffect(() => {
@@ -52,5 +85,11 @@ export default function CanvasLayout({ children }: { children: React.ReactNode }
     );
   }
 
-  return <div className="canvas-app h-screen w-screen overflow-hidden">{children}</div>;
+  return (
+    <MantineAppProvider>
+      <UiPreferencesProvider>
+        <div className="canvas-app h-screen w-screen overflow-hidden">{children}</div>
+      </UiPreferencesProvider>
+    </MantineAppProvider>
+  );
 }

@@ -13,7 +13,6 @@ import {
   Magnet,
   Map,
   Minus,
-  PenTool,
   Plus,
   Redo2,
   Undo2,
@@ -168,7 +167,7 @@ export function CanvasBottomToolbar({
 
         <DockButton icon={Workflow} label="自动排布" onClick={onArrange} />
         <DockButton icon={Frame} label="适应视图" onClick={onFitView} />
-        <DockButton icon={Clock} label="历史记录" active={historyActive} onClick={onOpenHistory} />
+        <DockButton icon={Clock} label="资源历史" active={historyActive} onClick={onOpenHistory} />
         <span className={styles.divider} />
         <DockButton icon={Undo2} label="撤销" disabled={undoStackLen === 0} onClick={undo} />
         <DockButton icon={Redo2} label="重做" disabled={redoStackLen === 0} onClick={redo} />

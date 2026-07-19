@@ -36,22 +36,11 @@ interface Props {
   onChange: (value: VideoParamValue) => void;
   resolutions?: string[];
   ratios?: string[];
-  // 后台把时长存成带单位的字符串("4s")，甚至乱序；这里容错接收 string|number。
-  durations?: (string | number)[];
+  durations?: number[];
   allowAudio?: boolean;
 }
 
 const PANEL_WIDTH = 372;
-
-// 把后台时长(可能是 "4s"/"15s" 字符串且乱序)规整为去重、升序的秒数数组。
-// 不规整会渲染成 "4ss"（{n}s 又拼一个 s）且顺序错乱、选中态对不上（数字比字符串）。
-export function normalizeDurations(raw?: (string | number)[]): number[] {
-  if (!raw) return DURATION_OPTIONS;
-  const nums = raw
-    .map((d) => (typeof d === "number" ? d : parseInt(String(d), 10)))
-    .filter((n) => Number.isFinite(n) && n > 0);
-  return Array.from(new Set(nums)).sort((a, b) => a - b);
-}
 
 export function VideoParamPicker({ value, onChange, resolutions, ratios, durations, allowAudio }: Props) {
   const [open, setOpen] = useState(false);
@@ -80,17 +69,13 @@ export function VideoParamPicker({ value, onChange, resolutions, ratios, duratio
   }, [open]);
 
   const ratioOpts = ratios ? VIDEO_RATIOS.filter((r) => ratios.includes(r.value)) : VIDEO_RATIOS;
-  // 清晰度大小写容错：后台存小写 "720p"，内置是 "720P"——用内置显示值，按不区分
-  // 大小写匹配，避免整段被过滤空（表现为"清晰度选不了"）。
-  const resolutionOpts = resolutions
-    ? RESOLUTIONS.filter((r) => resolutions.some((x) => x.toLowerCase() === r.toLowerCase()))
-    : RESOLUTIONS;
-  const durationOpts = normalizeDurations(durations);
+  const resolutionOpts = resolutions ? RESOLUTIONS.filter((r) => resolutions.includes(r)) : RESOLUTIONS;
+  const durationOpts = durations ? [...durations].sort((a, b) => a - b) : DURATION_OPTIONS;
   const showAudio = allowAudio !== false;
 
   const summaryParts: string[] = [];
   if (ratioOpts.length) summaryParts.push(value.ratio === "auto" ? "智能比例" : value.ratio);
-  if (resolutionOpts.length) summaryParts.push(value.resolution.toUpperCase());
+  if (resolutionOpts.length) summaryParts.push(value.resolution);
   if (durationOpts.length) summaryParts.push(`${value.duration}s`);
   const summary = summaryParts.join(" · ") || "默认";
 
@@ -144,7 +129,7 @@ export function VideoParamPicker({ value, onChange, resolutions, ratios, duratio
             <ParamSection title="清晰度">
               <SegmentedRow count={resolutionOpts.length}>
                 {resolutionOpts.map((res) => (
-                  <SegmentButton key={res} active={value.resolution.toLowerCase() === res.toLowerCase()} onClick={() => onChange({ ...value, resolution: res })}>
+                  <SegmentButton key={res} active={value.resolution === res} onClick={() => onChange({ ...value, resolution: res })}>
                     {res}
                   </SegmentButton>
                 ))}

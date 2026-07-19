@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { sliceImageGrid } from "@/lib/image-slice";
 import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
@@ -57,16 +57,6 @@ function parseTaskMeta(meta: unknown): Record<string, unknown> {
   return typeof meta === "object" && !Array.isArray(meta) ? meta as Record<string, unknown> : {};
 }
 
-/** 文本任务(如 assistant_chat)的结果在 resultMeta 里而非 resultUrl；按常见键取回复文本 */
-function extractTextResult(task: AiTaskVO): string {
-  const meta = parseTaskMeta(task.resultMeta);
-  for (const key of ["text", "content", "answer", "message", "response", "output"]) {
-    const value = meta[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return "";
-}
-
 /**
  * 把单张 2×2 四宫格(如 Midjourney 原生输出)切成 4 张独立图并以组图展示：
  * 切块后先用本地 blob 立即升级为组图(秒显)，再后台静默上传，完成后无感替换为远端地址；
@@ -106,28 +96,16 @@ export function useAiGeneration() {
   const currentProjectId = useCanvasStore((s) => s.currentProjectId);
   const [activeTaskIds, setActiveTaskIds] = useState<Set<string>>(new Set());
   const pollTimersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
-  // 卸载守卫:离开画布(客户端导航)时停止所有轮询链、避免在已卸载组件上 setState。
-  const cancelledRef = useRef(false);
-  useEffect(() => {
-    cancelledRef.current = false;
-    const timers = pollTimersRef.current;
-    return () => {
-      cancelledRef.current = true;
-      timers.forEach((t) => clearTimeout(t));
-      timers.clear();
-    };
-  }, []);
 
   const markGenerationFailed = useCallback((nodeId: string) => {
     const node = useCanvasStore.getState().nodes.find((n) => n.id === nodeId);
-    const nextStatus: CanvasNode["status"] = node?.imageSrc || node?.videoSrc || node?.audioSrc || node?.content ? "success" : "error";
+    const nextStatus: CanvasNode["status"] = node?.imageSrc || node?.videoSrc || node?.audioSrc ? "success" : "error";
     updateNode(nodeId, { status: nextStatus });
   }, [updateNode]);
 
   /** 轮询任务状态直到完成 */
   const pollTask = useCallback((nodeId: string, taskId: string | number, startTime: number, input: Record<string, unknown>, maxPollMs: number, gridOutput?: boolean, onSuccess?: (resultUrl: string) => void) => {
     const poll = async () => {
-      if (cancelledRef.current) return; // 组件已卸载,停止轮询
       // 超时检查
       if (Date.now() - startTime > maxPollMs) {
         markGenerationFailed(nodeId);
@@ -142,8 +120,7 @@ export function useAiGeneration() {
 
       try {
         const res = await aiApi.getTask(String(taskId));
-        if (cancelledRef.current) return; // await 期间已卸载
-        if (!res.success || !res.data) {
+        if (!res.success) {
           markGenerationFailed(nodeId);
           setActiveTaskIds((prev) => {
             const next = new Set(prev);
@@ -155,26 +132,6 @@ export function useAiGeneration() {
         }
         const task: AiTaskVO = res.data;
         if (task.status === AiTaskStatus.SUCCESS) {
-          const store = useCanvasStore.getState();
-          const node = store.nodes.find((n) => n.id === nodeId);
-          // 文本节点：结果在 resultMeta 而非 resultUrl，直接写回 content
-          if (node?.type === "text") {
-            const text = extractTextResult(task);
-            if (!text) {
-              markGenerationFailed(nodeId);
-              toast.error("生成结果为空，请重试");
-            } else {
-              updateNode(nodeId, { status: "success", content: text });
-              toast.success("生成成功");
-              onSuccess?.(text);
-            }
-            setActiveTaskIds((prev) => {
-              const next = new Set(prev);
-              next.delete(nodeId);
-              return next;
-            });
-            return;
-          }
           // 校验 URL：只接受 http(s):// 或 data: 开头的合法地址
           const isValid = (u?: string): u is string =>
             !!u && (u.startsWith("https://") || u.startsWith("http://") || u.startsWith("data:"));
@@ -183,6 +140,8 @@ export function useAiGeneration() {
             markGenerationFailed(nodeId);
             toast.error("生成结果无效，可能未配置 AI 供应商");
           } else {
+            const store = useCanvasStore.getState();
+            const node = store.nodes.find((n) => n.id === nodeId);
             const isVideo = node?.type === "video";
             const isAudio = node?.type === "audio";
             const requestedAspect = input.aspectRatio ?? input.aspect_ratio ?? input.ratio;
@@ -192,19 +151,11 @@ export function useAiGeneration() {
             const rawUrls = taskMeta.urls;
             const urls = Array.isArray(rawUrls) ? rawUrls.filter((u): u is string => isValid(u as string)) : [];
             const isBatch = !isVideo && !isAudio && urls.length > 1;
-            // 音乐分轨（Suno 一次两首）：url 与 resultMeta.tracks 同序，写入节点内切换
-            const audioTracks = isAudio && urls.length > 1
-              ? urls.map((u, i) => {
-                  const tr = Array.isArray(taskMeta.tracks) ? taskMeta.tracks[i] as Record<string, unknown> | undefined : undefined;
-                  const s = (v: unknown) => (typeof v === "string" ? v : undefined);
-                  return { url: u, title: s(tr?.title), clipId: s(tr?.clipId) };
-                })
-              : undefined;
-            // 视频写 videoSrc、音频写 audioSrc(+分轨 audioTracks)、图片写 imageSrc(+组图 images)
+            // 视频写 videoSrc、音频写 audioSrc、图片写 imageSrc(+组图 images)
             updateNode(
               nodeId,
               isVideo ? { status: "success", videoSrc: primary }
-                : isAudio ? { status: "success", audioSrc: primary, audioTracks }
+                : isAudio ? { status: "success", audioSrc: primary }
                 : { status: "success", imageSrc: primary, images: isBatch ? urls : undefined, ...imageSize },
             );
             // 四宫格模型(如 Midjourney)返回单张合图：异步切成 4 张独立图后升级为组图
@@ -259,10 +210,7 @@ export function useAiGeneration() {
       toast.info("生成中，请稍候");
       return;
     }
-    // 音乐的自定义歌词/延长/翻唱模式不发描述（歌词/原曲 clip 才是主输入），
-    // 带 lyrics 或 extras 的音频请求豁免空提示词校验。
-    const audioAltInput = handler === "text_to_audio" && (!!input.lyrics || !!input.extras);
-    if ((!input.prompt || String(input.prompt).trim().length === 0) && !audioAltInput) {
+    if (!input.prompt || String(input.prompt).trim().length === 0) {
       toast.error("请先输入提示词");
       return;
     }
@@ -273,7 +221,7 @@ export function useAiGeneration() {
     const dto: AiGenerateDTO = { handler, modelId, input, ...(currentProjectId ? { projectId: currentProjectId } : {}) };
     try {
       const res = await aiApi.generate(dto);
-      if (!res.success || !res.data?.id) {
+      if (!res.success) {
         markGenerationFailed(nodeId);
         toast.error(res.message || "生成请求失败");
         setActiveTaskIds((prev) => {

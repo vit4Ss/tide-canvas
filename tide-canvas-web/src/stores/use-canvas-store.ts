@@ -9,8 +9,12 @@ export interface CanvasNode {
   height: number;
   title: string;
   prompt?: string;
-  /** 文本节点生成结果（relay 文本模型回复），卡片内展示 */
-  content?: string;
+  /** 文本节点生成后的结构化输出(JSON 字符串)，与用户原始 prompt 分开保存。 */
+  textOutput?: string;
+  textAction?: string;
+  textActionInput?: string;
+  textSupplementary?: string;
+  textError?: string;
   /** 图片节点生成时选中的风格预设，默认风格不写入。 */
   stylePresetId?: string;
   /** 图片节点选中的风格短名称，用于按钮回显。 */
@@ -28,10 +32,8 @@ export interface CanvasNode {
   fileSize?: number;
   fileType?: string;
   mimeType?: string;
-  /** 语音合成/音乐生成结果（audio 节点）；audioSrc 始终等于当前选中分轨 */
+  /** 语音合成结果（audio 节点） */
   audioSrc?: string;
-  /** 音乐分轨（Suno 一次两首）：url + 歌名 + clip_id（延长/翻唱引用），节点内切换 */
-  audioTracks?: { url: string; title?: string; clipId?: string }[];
   status?: "idle" | "generating" | "success" | "error";
   uploading?: boolean;
   uploadProgress?: number;

@@ -1,19 +1,106 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useParams, notFound } from "next/navigation";
+import { useParams, notFound, useRouter } from "next/navigation";
 import { projectApi } from "@/lib/api";
-import { useCanvasStore } from "@/stores/use-canvas-store";
+import { useCanvasStore, type CanvasGroup, type CanvasNode, type Connection } from "@/stores/use-canvas-store";
+import { useAuth } from "@/hooks/use-auth";
+import { useAuthStore } from "@/stores/use-auth-store";
 import { CanvasView } from "@/components/canvas/canvas-view";
-import { ArrowLeft, Loader2, Check, Pencil } from "lucide-react";
+import { ArrowLeft, Share2, Loader2, Check, Pencil, Coins, User, LogOut, LayoutDashboard, SlidersHorizontal } from "lucide-react";
+import { UiPreferencesDialog } from "@/components/canvas/ui-preferences-dialog";
 import Link from "next/link";
 import { toast } from "@/components/shared/toast";
 
-const AUTOSAVE_DELAY = 3000; // 3 秒无变化触发自动保存
+const AUTOSAVE_DELAY = 800; // 普通节点编辑短防抖保存，避免拖拽/输入时频繁请求
+const STRUCTURAL_AUTOSAVE_DELAY = 0; // 新增/删除节点、连线、分组等结构变化立即保存
+const CANVAS_SCHEMA_VERSION = 2;
+
+type CanvasViewport = { x: number; y: number; k: number };
+type CanvasDocument = {
+  schemaVersion?: number;
+  viewport?: Partial<CanvasViewport>;
+  transform?: Partial<CanvasViewport>;
+  nodes?: CanvasNode[];
+  connections?: Connection[];
+  groups?: CanvasGroup[];
+};
+
+function toFiniteNumber(value: unknown): number | null {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseViewport(value: unknown): CanvasViewport | null {
+  if (!value || typeof value !== "object") return null;
+  const source = value as Partial<Record<keyof CanvasViewport, unknown>>;
+  const x = toFiniteNumber(source.x);
+  const y = toFiniteNumber(source.y);
+  const k = toFiniteNumber(source.k);
+  if (x === null || y === null || k === null || k <= 0) return null;
+  return { x, y, k };
+}
+
+function parseCanvasDocument(raw: string): { nodes: CanvasNode[]; connections: Connection[]; groups: CanvasGroup[]; viewport: CanvasViewport | null } {
+  const data = JSON.parse(raw || "{}") as CanvasDocument;
+  return {
+    nodes: Array.isArray(data.nodes)
+      ? data.nodes.map((node) => {
+          // 旧 DOM 画布的文本节点正文存在 content 字段,新画布用 textOutput——载入时迁移
+          const legacy = node as CanvasNode & { content?: string };
+          if (legacy.type === "text" && legacy.content && !legacy.textOutput) {
+            return { ...legacy, textOutput: legacy.content };
+          }
+          return node;
+        })
+      : [],
+    connections: Array.isArray(data.connections) ? data.connections : [],
+    groups: Array.isArray(data.groups) ? data.groups : [],
+    viewport: parseViewport(data.viewport) ?? parseViewport(data.transform),
+  };
+}
+
+function serializeCanvasNodes(nodes: CanvasNode[]): CanvasNode[] {
+  return nodes
+    .filter((node) => {
+      const hasLocalPreview = node.imageSrc?.startsWith("blob:") || node.videoSrc?.startsWith("blob:");
+      return !(node.uploading && hasLocalPreview);
+    })
+    .map((node) => {
+      const persisted: CanvasNode = { ...node };
+      if (persisted.imageSrc?.startsWith("blob:")) delete persisted.imageSrc;
+      if (persisted.videoSrc?.startsWith("blob:")) delete persisted.videoSrc;
+      delete persisted.uploading;
+      delete persisted.uploadProgress;
+      return persisted;
+    });
+}
+
+function buildCanvasPersistenceSignature(
+  nodes: CanvasNode[],
+  connections: Connection[],
+  groups: CanvasGroup[],
+  viewport: CanvasViewport,
+): string {
+  return JSON.stringify({
+    viewport,
+    nodes: serializeCanvasNodes(nodes),
+    connections,
+    groups,
+  });
+}
+
+function buildCanvasStructuralSignature(nodes: CanvasNode[], connections: Connection[], groups: CanvasGroup[]): string {
+  return JSON.stringify({
+    nodeIds: nodes.map((node) => `${node.id}:${node.type}`),
+    connections: connections.map((connection) => `${connection.id}:${connection.sourceId}->${connection.targetId}`),
+    groups: groups.map((group) => `${group.id}:${group.nodeIds.join(",")}`),
+  });
+}
 
 export default function CanvasEditorPage() {
   const params = useParams();
-  // URL 里的 [id] 实为不透明 url token，真实数值ID不在地址栏暴露
+  // URL 里的 [id] 实为不透明 url token，真实数值 ID 不在地址栏暴露
   const token = params.id as string;
   const [projectId, setProjectId] = useState<string | null>(null);
   const [missing, setMissing] = useState(false);
@@ -25,17 +112,27 @@ export default function CanvasEditorPage() {
   const [loaded, setLoaded] = useState(false);
   const [thumbnail, setThumbnail] = useState<string | null>(null);
 
+  const { user, isAdmin } = useAuth();
+  const logout = useAuthStore((s) => s.logout);
+  const router = useRouter();
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [uiPreferencesOpen, setUiPreferencesOpen] = useState(false);
+
   const nodes = useCanvasStore((s) => s.nodes);
   const connections = useCanvasStore((s) => s.connections);
   const groups = useCanvasStore((s) => s.groups);
+  const transform = useCanvasStore((s) => s.transform);
   const loadCanvas = useCanvasStore((s) => s.loadCanvas);
+  const setTransform = useCanvasStore((s) => s.setTransform);
   const setCurrentProjectId = useCanvasStore((s) => s.setCurrentProjectId);
 
   const autosaveTimerRef = useRef<NodeJS.Timeout | null>(null);
-  // Latest `saving` read via a ref so `save` isn't recreated when it flips —
-  // otherwise the autosave effect (which depends on `save`) re-runs on every
-  // setSaving and self-perpetuates a ~3s save loop even with no edits.
+  const autosaveSnapshotRef = useRef<{ persist: string; structural: string } | null>(null);
   const savingRef = useRef(false);
+  const pendingSaveRef = useRef(false);
+  const canvasUpdateTimeRef = useRef<string | null>(null);
+  // 旧数据解析失败时置位:仍可查看画布,但停用自动保存,避免空画布覆盖原数据
+  const parseFailedRef = useRef(false);
 
   // 加载项目（按 url token；不存在/无权限 → 404）
   useEffect(() => {
@@ -47,17 +144,15 @@ export default function CanvasEditorPage() {
         setCurrentProjectId(String(res.data.id));
         setProjectName(res.data.name);
         setThumbnail(res.data.thumbnail || null);
-        if (res.data.canvasData && res.data.canvasData !== "{}") {
-          try {
-            const data = JSON.parse(res.data.canvasData);
-            loadCanvas(data.nodes || [], data.connections || [], data.groups || []);
-          } catch {
-            loadCanvas([], []);
-          }
-        } else {
-          // 空项目必须显式清空:store 是全局单例,不清则上一个项目的节点残留在此项目里
-          // 显示,且随后自动保存会把上个项目的画布写进本项目(数据串档)。
+        canvasUpdateTimeRef.current = res.data.updateTime || null;
+        try {
+          const data = parseCanvasDocument(res.data.canvasData || "{}");
+          loadCanvas(data.nodes, data.connections, data.groups);
+          if (data.viewport) setTransform(data.viewport);
+        } catch {
+          parseFailedRef.current = true;
           loadCanvas([], []);
+          toast.error("画布数据解析失败,已停用自动保存以保护原数据");
         }
         setLoaded(true);
       } else {
@@ -67,101 +162,151 @@ export default function CanvasEditorPage() {
       if (!cancelled) setMissing(true);
     });
     return () => { cancelled = true; setCurrentProjectId(null); };
-  }, [token, loadCanvas, setCurrentProjectId]);
+  }, [token, loadCanvas, setCurrentProjectId, setTransform]);
 
   const save = useCallback(async (silent = false) => {
-    if (savingRef.current || !projectId) return;
+    if (!projectId || parseFailedRef.current) return;
+    if (savingRef.current) {
+      pendingSaveRef.current = true;
+      return;
+    }
+
     savingRef.current = true;
     setSaving(true);
     try {
-      const canvasData = JSON.stringify({ nodes, connections, groups });
-      // 封面兜底：未手动设封面时，自动用画布中第一张图片。
-      // 仅取可持久化的 http(s) 地址——data:base64 会超出后端 thumbnail(VARCHAR 512) 导致保存 500，
-      // blob: 本地地址刷新即失效（如刚切分尚未上传完成的切片），都不能当封面。
-      const persistable = (u?: string): u is string => !!u && /^https?:\/\//.test(u);
+      const latest = useCanvasStore.getState();
+      const canvasData = JSON.stringify({
+        schemaVersion: CANVAS_SCHEMA_VERSION,
+        viewport: latest.transform,
+        nodes: serializeCanvasNodes(latest.nodes),
+        connections: latest.connections,
+        groups: latest.groups,
+      });
+      const persistable = (u?: string): u is string => !!u && new RegExp("^https?://").test(u);
       const cover = (persistable(thumbnail ?? undefined) ? thumbnail : null)
-        ?? nodes.find((n) => n.type === "image" && persistable(n.imageSrc))?.imageSrc
+        ?? latest.nodes.find((n) => n.type === "image" && persistable(n.imageSrc))?.imageSrc
         ?? null;
-      const res = await projectApi.saveCanvas(projectId, { canvasData, ...(cover ? { thumbnail: cover } : {}) });
+      const expectedUpdateTime = canvasUpdateTimeRef.current || undefined;
+      const res = await projectApi.saveCanvas(projectId, { canvasData, expectedUpdateTime, ...(cover ? { thumbnail: cover } : {}) });
       if (res.success) {
+        // 现后端 saveCanvas 返回 void(不回传 updateTime),乐观锁基线维持载入时的值
         setLastSaved(new Date().toLocaleTimeString("zh-CN"));
         if (!silent) toast.success("已保存");
+      } else if (res.code === 409) {
+        pendingSaveRef.current = false;
+        toast.error(res.message || "画布已被其他窗口更新，请刷新后再保存");
       } else if (!silent) {
         toast.error("保存失败");
       }
     } finally {
       savingRef.current = false;
       setSaving(false);
-    }
-  }, [nodes, connections, groups, projectId, thumbnail]);
-
-  // Keep a ref to the latest `save` so the unmount flush below (which has empty
-  // deps) always calls the current version without re-subscribing.
-  const saveRef = useRef(save);
-  useEffect(() => {
-    saveRef.current = save;
-  }, [save]);
-
-  // Flush a pending autosave on unmount/navigate: if the debounce timer is still
-  // armed when the canvas unmounts, the last edits would otherwise be dropped.
-  useEffect(() => {
-    return () => {
-      if (autosaveTimerRef.current) {
-        clearTimeout(autosaveTimerRef.current);
-        autosaveTimerRef.current = null;
-        // fire-and-forget; the request outlives this component.
-        void saveRef.current(true);
+      if (pendingSaveRef.current) {
+        pendingSaveRef.current = false;
+        window.setTimeout(() => { void save(true); }, 0);
       }
-    };
-  }, []);
+    }
+  }, [projectId, thumbnail]);
 
-  // 自动保存：监听 nodes/connections/groups 变化
+  // 自动保存：结构性变化立即保存；普通内容变化短防抖保存。
   useEffect(() => {
     if (!loaded) return;
+    const nextSnapshot = {
+      persist: buildCanvasPersistenceSignature(nodes, connections, groups, transform),
+      structural: buildCanvasStructuralSignature(nodes, connections, groups),
+    };
+    const prevSnapshot = autosaveSnapshotRef.current;
+    autosaveSnapshotRef.current = nextSnapshot;
+    if (!prevSnapshot || prevSnapshot.persist === nextSnapshot.persist) return;
+
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
-    autosaveTimerRef.current = setTimeout(() => {
-      autosaveTimerRef.current = null; // mark flushed so the unmount flush won't re-save
-      save(true);
-    }, AUTOSAVE_DELAY);
+    const delay = prevSnapshot.structural !== nextSnapshot.structural ? STRUCTURAL_AUTOSAVE_DELAY : AUTOSAVE_DELAY;
+    autosaveTimerRef.current = setTimeout(() => save(true), delay);
     return () => {
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     };
-  }, [nodes, connections, groups, loaded, save]);
+  }, [nodes, connections, groups, transform, loaded, save]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    const handleSaveNow = () => {
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+      void save(true);
+    };
+    window.addEventListener("tide-canvas-save-now", handleSaveNow);
+    return () => window.removeEventListener("tide-canvas-save-now", handleSaveNow);
+  }, [loaded, save]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    const flushPendingSave = () => {
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+      void save(true);
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") flushPendingSave();
+    };
+    window.addEventListener("pagehide", flushPendingSave);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("pagehide", flushPendingSave);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [loaded, save]);
+
+  const handleShare = async () => {
+    if (!projectId) return;
+    const res = await projectApi.share(projectId);
+    if (res.success) {
+      const url = window.location.origin + res.data.shareUrl;
+      await navigator.clipboard.writeText(url);
+      toast.success("分享链接已复制");
+    }
+  };
+
+  const handleLogout = async () => {
+    await logout();
+    router.push("/");
+  };
 
   const handleStartEditName = () => {
     setEditingNameValue(projectName);
     setEditingName(true);
   };
 
-  const confirmingNameRef = useRef(false);
   const handleConfirmName = async () => {
-    // Enter 会先 setEditingName(false) 使 input 失焦触发 onBlur → 二次调用;用 ref 去重,避免重复 update 请求。
-    if (confirmingNameRef.current) return;
-    confirmingNameRef.current = true;
-    try {
-      const newName = editingNameValue.trim();
-      if (!newName || newName === projectName) {
-        setEditingName(false);
-        return;
-      }
-      setProjectName(newName);
+    const newName = editingNameValue.trim();
+    if (!newName || newName === projectName) {
       setEditingName(false);
-      if (!projectId) return;
-      const res = await projectApi.update(projectId, { name: newName });
-      if (res.success) toast.success("项目名已更新");
-    } finally {
-      confirmingNameRef.current = false;
+      return;
     }
+    setProjectName(newName);
+    setEditingName(false);
+    if (!projectId) return;
+    const res = await projectApi.update(projectId, { name: newName });
+    if (res.success) toast.success("项目名已更新");
   };
 
-  // token 无效 / 项目不存在 → 404
+  // token 无效 / 项目不存在 / 无权限访问 → 404
   if (missing) notFound();
 
+  // 项目数据加载中：居中品牌色加载动画
+  if (!loaded) {
+    return (
+      <div className="flex h-full w-full items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="h-10 w-10 animate-spin rounded-full border-[3px] border-indigo-100 border-t-indigo-600 dark:border-indigo-500/20 dark:border-t-indigo-400" />
+          <p className="animate-pulse text-sm text-neutral-500 dark:text-neutral-400">项目加载中...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="relative h-screen w-screen overflow-hidden">
+    <div className="relative h-full w-full overflow-hidden">
       <CanvasView />
 
-      {/* 左上浮层：返回 + 项目名（点按重命名） + 保存状态 */}
+      {/* 左上浮层：返回 + 项目名（点击重命名） + 保存状态 */}
       <div className="absolute left-4 top-4 z-20 flex items-center gap-2">
         <Link
           href="/projects"
@@ -198,6 +343,63 @@ export default function CanvasEditorPage() {
           ) : null}
         </div>
       </div>
+
+      {/* 右上浮层：积分余额 + 充值积分 + 头像菜单 + 分享 */}
+      <div className="absolute right-4 top-4 z-20 flex items-center gap-2">
+        {/* 积分余额 + 充值积分 */}
+        <div className="flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+          <Coins className="h-4 w-4 text-amber-500" />
+          <span className="font-medium tabular-nums">{user?.points ?? 0}</span>
+          <span className="h-3.5 w-px bg-neutral-200 dark:bg-neutral-700" />
+          <Link href="/billing" target="_blank" rel="noopener noreferrer" className="text-neutral-600 transition-colors hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white">
+            充值积分
+          </Link>
+        </div>
+
+        {/* 头像 + 账户菜单 */}
+        <div className="relative" onMouseEnter={() => setUserMenuOpen(true)} onMouseLeave={() => setUserMenuOpen(false)}>
+          <button className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+            {user?.avatar ? (
+
+              <img src={user.avatar} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <User className="h-4 w-4 text-neutral-500" />
+            )}
+          </button>
+          {userMenuOpen && (
+            <div className="absolute right-0 top-full z-50 w-44 pt-1">
+              <div className="rounded-lg border border-neutral-200 bg-white py-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-900">
+                <div className="truncate px-4 py-2 text-xs text-neutral-400">{user?.nickname || user?.username || "未登录"}</div>
+                <div className="my-1 border-t border-neutral-200 dark:border-neutral-700" />
+                <Link href="/account" onClick={() => setUserMenuOpen(false)} className="flex items-center gap-2 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"><User className="h-4 w-4" />个人中心</Link>
+                <Link href="/billing" target="_blank" rel="noopener noreferrer" onClick={() => setUserMenuOpen(false)} className="flex items-center gap-2 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"><Coins className="h-4 w-4" />充值积分</Link>
+                {isAdmin && (
+                  <Link href="/admin" target="_blank" rel="noopener noreferrer" onClick={() => setUserMenuOpen(false)} className="flex items-center gap-2 px-4 py-2 text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"><LayoutDashboard className="h-4 w-4" />管理后台</Link>
+                )}
+                <div className="my-1 border-t border-neutral-200 dark:border-neutral-700" />
+                <button onClick={handleLogout} className="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"><LogOut className="h-4 w-4" />退出登录</button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 界面设置 */}
+        <button
+          type="button"
+          onClick={() => setUiPreferencesOpen(true)}
+          title="界面设置"
+          className="flex h-9 w-9 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 shadow-sm transition-colors hover:bg-neutral-100 hover:text-neutral-900 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:hover:text-white"
+        >
+          <SlidersHorizontal className="h-4 w-4" />
+        </button>
+
+        {/* 分享 */}
+        <button onClick={handleShare} title="分享" className="flex h-9 w-9 items-center justify-center rounded-full bg-neutral-900 text-white shadow-sm transition-colors hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200">
+          <Share2 className="h-4 w-4" />
+        </button>
+      </div>
+
+      <UiPreferencesDialog open={uiPreferencesOpen} onOpenChange={setUiPreferencesOpen} />
     </div>
   );
 }

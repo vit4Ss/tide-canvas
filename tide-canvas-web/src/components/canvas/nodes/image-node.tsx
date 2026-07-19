@@ -3,9 +3,10 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button, Center, Group, Paper, Stack, Text, TextInput, ThemeIcon, UnstyledButton } from "@mantine/core";
+import { Card as SemiCard } from "@douyinfe/semi-ui";
 import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-canvas-store";
 import {
-  Image as ImageIcon, Upload, Plus, Maximize2, Copy,
+  Image as ImageIcon, Upload, Maximize2, Copy,
   Camera, ArrowUp, ChevronDown, ChevronRight, Zap, Download, X, Minimize2,
   ArrowLeft, LayoutGrid, Layers,
   Images, Orbit, Sun, Table, Brush, FlipHorizontal2,
@@ -20,6 +21,7 @@ import { PromptRefEditor, PromptEditorModal } from "./prompt-ref-editor";
 import { PanoramaViewer } from "./panorama-viewer";
 import { InlinePanorama, type InlinePanoramaApi } from "./inline-panorama";
 import { type RefItem } from "./prompt-ref-utils";
+import { getTextNodeImageOutput } from "./text-node-output";
 import { NodeChrome } from "./base/node-chrome";
 import { useAiGeneration } from "@/hooks/canvas/use-ai-generation";
 import { aiApi, uploadFileSmart } from "@/lib/api";
@@ -38,8 +40,6 @@ interface Props {
   isSelected: boolean;
   isDragging?: boolean;
   isConnectTarget?: boolean;
-  onNodeMouseDown: (nodeId: string, e: React.MouseEvent) => void;
-  onPortMouseDown?: (nodeId: string, side: "input" | "output", clientX: number, clientY: number) => void;
 }
 
 // 自定义宫格选择器的最大行列（N×N 网格）
@@ -211,7 +211,7 @@ const closestRatioLabel = (aspect: number) =>
 
 // memo 化：仅当自身 props（node / 选中 / 拖拽 / 连接目标）变化时重渲染，
 // 画布平移、其他节点拖动都不会触发本节点重渲染。
-export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging = false, isConnectTarget = false, onNodeMouseDown, onPortMouseDown }: Props) {
+export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging = false, isConnectTarget = false }: Props) {
   const updateNode = useCanvasStore((s) => s.updateNode);
   const { user } = useAuth(); // 团队价：消耗按 inTeam 系数加价显示
   // 当前画布缩放：外置组件按 1/zoom 反向缩放，保持恒定屏幕尺寸
@@ -220,9 +220,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const isMultiSelect = useCanvasStore((s) => s.selectedNodeIds.size > 1);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const gridMenuRef = useRef<HTMLDivElement>(null);
-  // 卸载守卫:异步探测/上传回调完成时若节点已卸载,不再 setState。
-  const mountedRef = useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
   const [uploading, setUploading] = useState(false);
   const [gridMenuOpen, setGridMenuOpen] = useState(false);
   const [splitting, setSplitting] = useState(false);
@@ -245,6 +242,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const [angleYaw, setAngleYaw] = useState(MULTI_ANGLE_DEFAULT.yaw);
   const [anglePitch, setAnglePitch] = useState(MULTI_ANGLE_DEFAULT.pitch);
   const [angleZoom, setAngleZoom] = useState(MULTI_ANGLE_DEFAULT.zoom);
+  const [angleDragging, setAngleDragging] = useState(false);
   const [wideLens, setWideLens] = useState(MULTI_ANGLE_DEFAULT.wideLens);
   const angleDragRef = useRef<{ x: number; y: number; yaw: number; pitch: number } | null>(null);
   const [promptExpanded, setPromptExpanded] = useState(false);
@@ -265,11 +263,13 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       if (!src) continue;
       if (src.is360) return "2:1";
       if (isStandardRatio(src.aspectRatio)) return src.aspectRatio;
+      const textOutput = getTextNodeImageOutput(src);
+      if (isStandardRatio(textOutput?.aspectRatio)) return textOutput.aspectRatio;
     }
     return null;
   });
   const defaultRatio = (isStandardRatio(node.aspectRatio) ? node.aspectRatio : null) ?? upstreamRatio;
-  const ratioTouchedRef = useRef(false);
+  const [ratioTouched, setRatioTouched] = useState(false);
   const [qualityRatio, setQualityRatio] = useState<QualityRatioValue>({
     quality: "standard",
     clarity: "2K",
@@ -279,7 +279,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const [lastDefaultRatio, setLastDefaultRatio] = useState(defaultRatio);
   if (defaultRatio !== lastDefaultRatio) {
     setLastDefaultRatio(defaultRatio);
-    if (defaultRatio && !ratioTouchedRef.current) {
+    if (defaultRatio && !ratioTouched) {
       setQualityRatio((s) => ({ ...s, ratio: defaultRatio }));
     }
   }
@@ -314,6 +314,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       .join("|")
   );
   const existingPanorama = useMemo(() => {
+    if (!panoramaSig) return undefined;
     const st = useCanvasStore.getState();
     const conn = st.connections.find((c) => {
       if (c.sourceId !== node.id) return false;
@@ -338,7 +339,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       .filter((c) => c.targetId === node.id)
       .map((c) => {
         const src = s.nodes.find((n) => n.id === c.sourceId);
-        return src ? src.id + "~" + (src.imageSrc || src.videoSrc || "") + "~" + (src.title || "") : "";
+        return src && (src.imageSrc || src.videoSrc) ? src.id + "~" + (src.imageSrc || src.videoSrc || "") + "~" + (src.title || "") : "";
       })
       .filter(Boolean)
       .join("|")
@@ -352,7 +353,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     for (const c of st.connections) {
       if (c.targetId !== node.id) continue;
       const src = st.nodes.find((n) => n.id === c.sourceId);
-      if (!src) continue;
+      if (!src || !(src.imageSrc || src.videoSrc)) continue;
       out.push({ id: src.id, thumb: src.imageSrc || src.videoSrc || "", title: src.title || "", index: base + out.length + 1 });
     }
     return out;
@@ -380,6 +381,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       .join("|")
   );
   const linkedStyle = useMemo(() => {
+    if (!linkedStyleSig) return null;
     const st = useCanvasStore.getState();
     for (const connection of st.connections) {
       if (connection.targetId !== node.id) continue;
@@ -397,6 +399,34 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const selectedStyleId = linkedStyle?.id ?? DEFAULT_STYLE_PRESET.id;
   const selectedStyleName = linkedStyle?.name ?? DEFAULT_STYLE_PRESET.shortName;
   const selectedStylePrompt = linkedStyle?.prompt ?? "";
+  const linkedTextSig = useCanvasStore((s) =>
+    s.connections
+      .filter((c) => c.targetId === node.id)
+      .map((c) => {
+        const src = s.nodes.find((n) => n.id === c.sourceId);
+        return src?.type === "text"
+          ? [src.id, src.status || "", src.textOutput || "", src.textActionInput || "", src.aspectRatio || ""].join("~")
+          : "";
+      })
+      .filter(Boolean)
+      .join("|")
+  );
+  const linkedTextOutput = useMemo(() => {
+    if (!linkedTextSig) return null;
+    const st = useCanvasStore.getState();
+    for (const connection of st.connections) {
+      if (connection.targetId !== node.id) continue;
+      const source = st.nodes.find((item) => item.id === connection.sourceId);
+      if (!source || source.type !== "text") continue;
+      const output = getTextNodeImageOutput(source);
+      if (output) return output;
+    }
+    return null;
+  }, [linkedTextSig, node.id]);
+  const linkedTextPrompt = linkedTextOutput?.actionInput.trim() || "";
+  const linkedTextRatio = linkedTextOutput?.aspectRatio;
+  const effectivePrompt = (node.prompt?.trim() || linkedTextPrompt).trim();
+  const effectiveRatio = isStandardRatio(linkedTextRatio) ? linkedTextRatio : qualityRatio.ratio;
 
   const handleStylePresetChange = useCallback((preset: ImageStylePreset) => {
     const st = useCanvasStore.getState();
@@ -445,7 +475,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     st.addNode(styleNode, false);
     st.addConnection({ id: `conn_${styleNodeId}_${node.id}`, sourceId: styleNodeId, targetId: node.id }, false);
   }, [node.id, node.x, node.y]);
-  const formatConfig: { qualities?: string[]; clarities?: string[]; resolutions?: string[]; ratios?: string[]; batchSizes?: number[]; gridOutput?: boolean; pricing?: Record<string, Record<string, number>> } = (() => {
+  const formatConfig: { qualities?: string[]; clarities?: string[]; ratios?: string[]; batchSizes?: number[]; gridOutput?: boolean; pricing?: Record<string, Record<string, number>> } = (() => {
     if (!selectedModel?.config) return {};
     try {
       return JSON.parse(selectedModel.config);
@@ -461,9 +491,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const batchOptions = formatConfig.batchSizes?.length ? formatConfig.batchSizes : [1, 2, 4];
   // 各维度可选值：undefined(模型未配置) = 默认全集；空数组(后台明确全不勾) = 模型无此维度，选择器隐藏且参数不下发
   const qualityValues = formatConfig.qualities ?? QUALITY_OPTIONS.map((q) => q.value);
-  // 后台把图片清晰度存在 resolutions 键（值为小写 1k/2k/4k），历史上误读 clarities
-  // 导致选择器读不到模型真实档位——两者都兜住，resolutions 优先。
-  const clarityValues = formatConfig.clarities ?? formatConfig.resolutions ?? [...CLARITY_OPTIONS];
+  const clarityValues = formatConfig.clarities ?? [...CLARITY_OPTIONS];
   const ratioValues = formatConfig.ratios;
   const hasRatioDim = !ratioValues || ratioValues.length > 0;
   // 切换模型后当前张数/画质/清晰度/比例不在该模型的可选档位 → 自动校正为其首个档位
@@ -488,13 +516,13 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedModelId, batchCount]);
 
-  // 把卡片实际渲染尺寸同步到 store，供连线层将端点锚定到卡片真实边缘中点（默认对节点居中）。
+  // 把卡片实际渲染尺寸同步到 store，让 React Flow 的节点盒与可见卡片一致。
   // updateNode 默认不记历史；条件守卫确保仅在值变化时写入，自然收敛、不会循环。
   useEffect(() => {
-    if (node.contentW !== cardW || node.contentH !== cardH) {
-      updateNode(node.id, { contentW: cardW, contentH: cardH });
+    if (node.width !== cardW || node.height !== cardH || node.contentW !== cardW || node.contentH !== cardH) {
+      updateNode(node.id, { width: cardW, height: cardH, contentW: cardW, contentH: cardH });
     }
-  }, [cardW, cardH, node.contentW, node.contentH, node.id, updateNode]);
+  }, [cardW, cardH, node.contentW, node.contentH, node.height, node.id, node.width, updateNode]);
 
   const handleGenerate = useCallback(() => {
     const st = useCanvasStore.getState();
@@ -520,7 +548,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     const imageList = ownImage ? [ownImage, ...refImages] : refImages;
     const hasImage = imageList.length > 0;
     const stylePrompt = selectedStylePrompt.trim();
-    const mergedPrompt = [node.prompt?.trim(), stylePrompt ? `风格要求：${stylePrompt}` : ""].filter(Boolean).join("\n");
+    const mergedPrompt = [effectivePrompt, stylePrompt ? `风格要求：${stylePrompt}` : ""].filter(Boolean).join("\n");
     generate({
       nodeId: node.id,
       handler: hasImage ? "image_to_image" : "text_to_image",
@@ -531,14 +559,14 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         ...(stylePrompt ? { stylePreset: selectedStyleId, stylePrompt } : {}),
         ...(imageList.length ? { imageList, sourceImage: imageList[0], references: imageList.slice(1) } : {}),
         // 模型无某维度(后台全不勾)时该参数不下发，避免上游收到其不支持的字段
-        ...(hasRatioDim ? { aspectRatio: qualityRatio.ratio, aspect_ratio: qualityRatio.ratio, ratio: qualityRatio.ratio } : {}),
+        ...(hasRatioDim ? { aspectRatio: effectiveRatio, aspect_ratio: effectiveRatio, ratio: effectiveRatio } : {}),
         ...(qualityValues.length ? { quality: qualityRatio.quality } : {}),
         ...(clarityValues.length ? { clarity: qualityRatio.clarity, resolution: qualityRatio.clarity } : {}),
         ...(batchCount > 1 ? { batchCount } : {}),
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [generate, node, qualityRatio, selectedModelId, selectedModel, refs, batchCount, selectedStyleId, selectedStylePrompt]);
+  }, [generate, node, qualityRatio, selectedModelId, selectedModel, refs, batchCount, selectedStyleId, selectedStylePrompt, effectivePrompt, effectiveRatio]);
 
   const handlePromptChange = useCallback((value: string) => {
     updateNode(node.id, {
@@ -632,20 +660,16 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const handlePanoCapture = useCallback(async () => {
     const dataUrl = panoApiRef.current?.capture();
     if (!dataUrl) { toast.error("截图失败，请重试"); return; }
-    try {
-      const blob = await (await fetch(dataUrl)).blob();
-      const res = await uploadFileSmart(new File([blob], "全景截图.png", { type: "image/png" }), undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
-      if (!res.success || !res.data) { toast.error(res.message || "截图上传失败"); return; }
-      const st = useCanvasStore.getState();
-      const capH = Math.round(node.width / 2);
-      const nid = generateNodeId();
-      st.addNode({ id: nid, type: "image", x: node.x + node.width + 80, y: node.y, width: node.width, height: capH, contentW: node.width, contentH: capH, title: "全景截图", imageSrc: res.data.fileUrl, status: "success", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType }, true);
-      st.addConnection({ id: `conn_${node.id}_${nid}_c`, sourceId: node.id, targetId: nid }, false);
-      st.selectNode(nid);
-      toast.success("已截取当前视角");
-    } catch {
-      toast.error("截图失败，请重试");
-    }
+    const blob = await (await fetch(dataUrl)).blob();
+    const res = await uploadFileSmart(new File([blob], "全景截图.png", { type: "image/png" }), undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
+    if (!res.success) { toast.error(res.message || "截图上传失败"); return; }
+    const st = useCanvasStore.getState();
+    const capH = Math.round(node.width / 2);
+    const nid = generateNodeId();
+    st.addNode({ id: nid, type: "image", x: node.x + node.width + 80, y: node.y, width: node.width, height: capH, contentW: node.width, contentH: capH, title: "全景截图", imageSrc: res.data.fileUrl, status: "success", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType }, true);
+    st.addConnection({ id: `conn_${node.id}_${nid}_c`, sourceId: node.id, targetId: nid }, false);
+    st.selectNode(nid);
+    toast.success("已截取当前视角");
   }, [node.id, node.x, node.y, node.width, selectedModel]);
 
   // 全景「4 大视角截图」→ 当前/+90/+180/+270 平视各截一张 → 各上传 → 右侧竖排 4 个连线图片节点
@@ -658,18 +682,13 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     const baseX = node.x + node.width + 80;
     let ok = 0;
     for (let i = 0; i < urls.length; i++) {
-      // 单个视角 fetch/上传失败不应中断整批,也不产生未处理 rejection。
-      try {
-        const blob = await (await fetch(urls[i])).blob();
-        const res = await uploadFileSmart(new File([blob], `全景视角${i + 1}.png`, { type: "image/png" }), undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
-        if (!res.success || !res.data) continue;
-        const nid = generateNodeId();
-        st.addNode({ id: nid, type: "image", x: baseX, y: node.y + i * (capH + 24), width: node.width, height: capH, contentW: node.width, contentH: capH, title: `全景视角 ${i + 1}`, imageSrc: res.data.fileUrl, status: "success", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType }, i === 0);
-        st.addConnection({ id: `conn_${node.id}_${nid}_${i}`, sourceId: node.id, targetId: nid }, false);
-        ok++;
-      } catch {
-        /* 跳过此视角 */
-      }
+      const blob = await (await fetch(urls[i])).blob();
+      const res = await uploadFileSmart(new File([blob], `全景视角${i + 1}.png`, { type: "image/png" }), undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
+      if (!res.success) continue;
+      const nid = generateNodeId();
+      st.addNode({ id: nid, type: "image", x: baseX, y: node.y + i * (capH + 24), width: node.width, height: capH, contentW: node.width, contentH: capH, title: `全景视角 ${i + 1}`, imageSrc: res.data.fileUrl, status: "success", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType }, i === 0);
+      st.addConnection({ id: `conn_${node.id}_${nid}_${i}`, sourceId: node.id, targetId: nid }, false);
+      ok++;
     }
     if (ok > 0) toast.success(`已截取 ${ok} 个视角`); else toast.error("截图失败");
   }, [node.id, node.x, node.y, node.width, selectedModel]);
@@ -765,6 +784,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const beginAngleDrag = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     e.stopPropagation();
     angleDragRef.current = { x: e.clientX, y: e.clientY, yaw: angleYaw, pitch: anglePitch };
+    setAngleDragging(true);
     setAnglePreset("自定义");
   }, [anglePitch, angleYaw]);
 
@@ -778,6 +798,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
 
   const endAngleDrag = useCallback(() => {
     angleDragRef.current = null;
+    setAngleDragging(false);
   }, []);
 
   // 宫格切分：前端 canvas 秒切立即铺节点(本地 blob 即时显示)，随后后台静默上传、无感替换为远端地址
@@ -833,8 +854,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
           // 延迟回收 blob，等 React 用远端地址完成重渲，避免替换瞬间闪裂
           setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
         } catch {
-          // 上传失败:该切片无法持久化(刷新即失效),回收其 blob URL,避免永久泄漏。
-          URL.revokeObjectURL(blobUrl);
           toast.error(`切片 ${slice.cellIndex + 1} 上传失败，该切片刷新后将丢失`);
         }
       });
@@ -971,18 +990,15 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     if (!file) return;
     const objUrl = URL.createObjectURL(file);
     setLocalPreview(objUrl);
-    setImageDims(null); // 换新文件先清掉上一次的尺寸，成功后才由本次探测回填
     // 探测原始分辨率用于头部「W × H」展示
     const probe = document.createElement("img");
-    probe.onload = () => { if (mountedRef.current) setImageDims({ w: probe.naturalWidth, h: probe.naturalHeight }); };
+    probe.onload = () => setImageDims({ w: probe.naturalWidth, h: probe.naturalHeight });
     probe.src = objUrl;
     setUploadPct(0);
     setUploading(true);
-    let ok = false;
     try {
       const res = await uploadFileSmart(file, (pct) => setUploadPct(pct), { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
       if (res.success) {
-        ok = true;
         updateNode(node.id, { imageSrc: res.data.fileUrl, status: "idle", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType });
         toast.success("图片已上传，可输入指令进行编辑");
       } else {
@@ -993,8 +1009,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     } finally {
       setUploading(false);
       setLocalPreview(null);
-      // 失败(或探测晚于失败回填)时清掉尺寸标签，避免上传失败后残留孤立的 W×H。
-      if (!ok) setImageDims(null);
       URL.revokeObjectURL(objUrl);
     }
   }, [node.id, selectedModel, updateNode]);
@@ -1027,10 +1041,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     return () => { active = false; };
   }, []);
 
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    onNodeMouseDown(node.id, e);
-  }, [node.id, onNodeMouseDown]);
-
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
   // 仅选中且非拖动状态下显示辅助 UI
@@ -1061,9 +1071,8 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   return (
     <div
       data-node-id={node.id}
-      className={`absolute select-none ${isSelected ? "z-10" : ""}`}
-      style={{ left: node.x, top: node.y, width: node.width, cursor: isDragging ? "grabbing" : "grab" }}
-      onMouseDown={handleMouseDown}
+      className={`relative select-none ${isSelected ? "z-10" : ""}`}
+      style={{ width: cardW, height: cardH, cursor: isDragging ? "grabbing" : "grab" }}
     >
       {/* 卡片尺寸的定位容器（居中）；外置组件以卡片边缘为锚做恒定大小覆盖层 */}
       <div className="relative mx-auto" style={{ width: cardW }}>
@@ -1073,9 +1082,8 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
             <EditableImageNodeTitle node={node} />
           </NodeChrome>
         )}
-        {/* 右上角分辨率（上传/生成后展示 W × H）。只在确有图片时显示——探测异步，
-            上传失败后 probe 可能仍晚回填一次 imageDims，用 node.imageSrc 兜底防残留 */}
-        {showAuxUI && imageDims && node.imageSrc && (
+        {/* 右上角分辨率（上传/生成后展示 W × H） */}
+        {showAuxUI && imageDims && (
           <NodeChrome zoom={zoom} placement="top-right" gap={4}>
             <span className="whitespace-nowrap px-1 text-xs text-neutral-400">{imageDims.w} × {imageDims.h}</span>
           </NodeChrome>
@@ -1288,7 +1296,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                         height: ANGLE_CUBE.h,
                         transformStyle: "preserve-3d",
                         transform: `translate(-50%, -50%) rotateX(${anglePitch}deg) rotateY(${angleYaw}deg)`,
-                        transition: angleDragRef.current ? "none" : "transform 180ms ease",
+                        transition: angleDragging ? "none" : "transform 180ms ease",
                       }}
                     >
                       <div
@@ -1299,7 +1307,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                           transform: `translate(-50%, -50%) translateZ(${ANGLE_CUBE.d / 2}px)`,
                         }}
                       >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img src={node.imageSrc} alt="" className="h-full w-full object-cover" draggable={false} />
                       </div>
                       {/* 其余 5 个面（同色）：各面渲染时比真实尺寸大 2px，相邻面在公共棱边互相重叠 1px，
@@ -1421,7 +1428,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
             onMouseDown={(e) => e.stopPropagation()}
             onClick={() => setPreviewOpen(false)}
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={node.imageSrc}
               alt={node.title || ""}
@@ -1593,42 +1599,15 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
           )}
 
         </Paper>
-
-        {/* 左右连接端口：恒定大小，吸附卡片左右缘中点 */}
-        {showAuxUI && (
-          <>
-            <NodeChrome zoom={zoom} placement="left" gap={12}>
-              <button
-                onMouseDown={(e) => { e.stopPropagation(); onPortMouseDown?.(node.id, "input", e.clientX, e.clientY); }}
-                className="flex h-6 w-6 cursor-crosshair items-center justify-center rounded-full border border-neutral-300 bg-white text-neutral-400 shadow-sm transition-all duration-200 ease-out hover:scale-110 hover:border-blue-500 hover:bg-blue-50 hover:text-blue-600 hover:shadow-md active:scale-95 dark:border-neutral-600 dark:bg-neutral-900"
-                title="输入端口（从其他节点拖入）"
-              >
-                <Plus className="h-3 w-3" />
-              </button>
-            </NodeChrome>
-            <NodeChrome zoom={zoom} placement="right" gap={12}>
-              <button
-                onMouseDown={(e) => { e.stopPropagation(); onPortMouseDown?.(node.id, "output", e.clientX, e.clientY); }}
-                className="flex h-6 w-6 cursor-crosshair items-center justify-center rounded-full border border-neutral-300 bg-white text-neutral-400 shadow-sm transition-all duration-200 ease-out hover:scale-110 hover:border-blue-500 hover:bg-blue-50 hover:text-blue-600 hover:shadow-md active:scale-95 dark:border-neutral-600 dark:bg-neutral-900"
-                title="输出端口（拖到其他节点）"
-              >
-                <Plus className="h-3 w-3" />
-              </button>
-            </NodeChrome>
-          </>
-        )}
-
         {/* 提示词输入面板：恒定大小，吸附卡片正下方居中 */}
         {showAuxUI && !node.imageSrc && (
           <NodeChrome zoom={zoom} placement="bottom-center" gap={18}>
-            <Paper
-              component="div"
-              radius={10}
-              p={12}
-              shadow="sm"
-              withBorder
-              className="relative flex flex-col bg-white shadow-[0_10px_32px_rgba(15,23,42,0.10)] dark:bg-neutral-950 dark:shadow-black/30"
-              style={{ width: promptPanelW, minHeight: 176, boxSizing: "border-box" }}
+            <SemiCard
+              bordered={false}
+              shadows="hover"
+              bodyStyle={{ minHeight: 176, padding: 0, display: "flex", flexDirection: "column" }}
+              className="relative overflow-visible rounded-[18px] border border-neutral-200/80 bg-white shadow-[0_12px_36px_rgba(15,23,42,0.10)] dark:border-neutral-800 dark:bg-neutral-950 dark:shadow-black/30"
+              style={{ width: promptPanelW, minHeight: 176, boxSizing: "border-box", borderRadius: 18 }}
             >
               {/* 富文本输入框（@ 引用「图片N」内联绑定参考图）：风格作前置工具、展开作后置 */}
               <PromptRefEditor
@@ -1636,8 +1615,9 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                 zoom={zoom}
                 value={node.prompt || ""}
                 onChange={handlePromptChange}
-                onSubmit={() => { if (!generating && node.prompt?.trim()) handleGenerate(); }}
-                placeholder="可直接文字生图，或上传图片输入文字指令对图片进行编辑，如：将背景改为雪夜"
+                onSubmit={() => { if (!generating && effectivePrompt) handleGenerate(); }}
+                placeholder={linkedTextPrompt ? "已连接文本节点，可直接生成，或在这里补充画面要求" : "可直接文字生图，或上传图片输入文字指令对图片进行编辑，如：将背景改为雪夜"}
+                variant="semi"
                 leading={
                   <>
                     <ImageStylePicker
@@ -1666,20 +1646,21 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                 value={node.prompt || ""}
                 onChange={handlePromptChange}
                 refs={refs}
-                placeholder="可直接文字生图，或上传图片输入文字指令对图片进行编辑，如：将背景改为雪夜"
+                placeholder={linkedTextPrompt ? "已连接文本节点，可直接生成，或在这里补充画面要求" : "可直接文字生图，或上传图片输入文字指令对图片进行编辑，如：将背景改为雪夜"}
+                variant="semi"
               />
-              <div className="mt-auto flex items-center gap-2 pt-5">
+              <div className="mt-auto flex items-center gap-2 px-3 pb-3 pt-4">
                 <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-1.5 text-xs text-neutral-600 dark:text-neutral-400">
                   <ModelPicker models={imageModels} value={selectedModelId} onChange={setSelectedModelId} />
                   <QualityRatioPicker
                     value={qualityRatio}
                     onChange={(v) => {
                       // 用户手动改过比例后，不再跟随上游连接节点的默认比例
-                      if (v.ratio !== qualityRatio.ratio) ratioTouchedRef.current = true;
+                      if (v.ratio !== qualityRatio.ratio) setRatioTouched(true);
                       setQualityRatio(v);
                     }}
                     qualities={formatConfig.qualities}
-                    clarities={formatConfig.clarities ?? formatConfig.resolutions}
+                    clarities={formatConfig.clarities}
                     ratios={formatConfig.ratios}
                     compact
                   />
@@ -1702,10 +1683,10 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                   <button
                     onMouseDown={stop}
                     onClick={(e) => { stop(e); handleGenerate(); }}
-                    disabled={generating || !node.prompt?.trim()}
+                    disabled={generating || !effectivePrompt}
                     title={generating ? "生成中..." : "开始生成"}
                     className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-                      generating || !node.prompt?.trim()
+                      generating || !effectivePrompt
                         ? "bg-neutral-100 text-neutral-400 dark:bg-neutral-800"
                         : "bg-neutral-800 text-white hover:bg-neutral-950 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
                     }`}
@@ -1714,7 +1695,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                   </button>
                 </div>
               </div>
-            </Paper>
+            </SemiCard>
           </NodeChrome>
         )}
       </div>
