@@ -62,3 +62,6 @@ tide-canvas-server/target/
 
 # build logs
 be-build.log
+
+# cygwin/git-bash crash dumps
+*.stackdump
