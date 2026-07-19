@@ -4,6 +4,8 @@ package ai
 // It rewrites a user prompt into a richer, generation-ready prompt using the
 // relay text model designated in 模型管理 (the AI-optimization primary, else any
 // listed text model), via the OpenAI-compatible streaming chat completions.
+// Each call charges the configured text model's point price up front (guarded
+// against overspend) and refunds it if the relay call fails.
 
 import (
 	"context"
@@ -13,10 +15,13 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 
+	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
+	"tidecanvas/internal/pkg/logger"
 	"tidecanvas/internal/pkg/relaychat"
 	"tidecanvas/internal/pkg/response"
 )
@@ -40,13 +45,41 @@ func (h *handler) optimizePrompt(c *gin.Context) {
 	}
 	out, err := h.svc.optimizePrompt(c.Request.Context(), middleware.CurrentUserID(c), dto.Prompt)
 	if err != nil {
+		if errors.Is(err, errInsufficientPoints) {
+			response.Fail(c, response.CodeQuotaInsufficient, "积分不足，请充值后再试")
+			return
+		}
 		response.Fail(c, response.CodeServerError, err.Error())
 		return
 	}
 	response.OK(c, gin.H{"prompt": out})
 }
 
-// optimizePrompt rewrites the prompt via the configured relay text model.
+// optimizeCost GET /api/ai/optimize-cost -> {cost}
+// 创作台「AI 优化」按钮的积分角标：当前用户一次优化将实扣的积分（含团队倍率）。
+// 未配置中转站/文本模型时返回 0——按钮不显示积分，点击时才提示具体原因。
+func (h *handler) optimizeCost(c *gin.Context) {
+	response.OK(c, gin.H{"cost": h.svc.optimizeCost(c.Request.Context(), middleware.CurrentUserID(c))})
+}
+
+// optimizeCost computes the points one optimize call will charge for this user,
+// mirroring optimizePrompt's pricing exactly. 0 when the feature is unconfigured
+// or the model is free.
+func (s *service) optimizeCost(ctx context.Context, userID idgen.ID) int {
+	if s.relay == nil {
+		return 0
+	}
+	mm := s.repo.textModel()
+	if mm == nil {
+		return 0
+	}
+	am := marketToAiModel(mm)
+	return resolveCost(&am, nil, s.repo.teamPriceFactor(ctx, userID))
+}
+
+// optimizePrompt rewrites the prompt via the configured relay text model,
+// charging the model's configured point price (团队倍率同生成链路) up front and
+// refunding on relay failure. A model priced 0 is free.
 func (s *service) optimizePrompt(ctx context.Context, userID idgen.ID, prompt string) (string, error) {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
@@ -55,19 +88,40 @@ func (s *service) optimizePrompt(ctx context.Context, userID idgen.ID, prompt st
 	if s.relay == nil {
 		return "", errors.New("AI 优化未启用：未配置中转站密钥")
 	}
-	model := s.repo.textModelKey()
-	if model == "" {
+	mm := s.repo.textModel()
+	if mm == nil {
 		return "", errors.New("AI 优化未启用：请在模型管理添加文本模型并设为「AI 优化主模型」")
 	}
+
+	// Same pricing path as /generate (creditCost override → catalog price →
+	// team factor), with no per-call input dimensions for a text rewrite.
+	am := marketToAiModel(mm)
+	cost := resolveCost(&am, nil, s.repo.teamPriceFactor(ctx, userID))
+	refID := idgen.Next() // ledger correlation id (no task row exists for optimize)
+	if cost > 0 {
+		if err := points.Consume(s.repo.db, userID, cost, "AI 优化："+mm.Name, refID); err != nil {
+			if errors.Is(err, points.ErrInsufficient) {
+				return "", errInsufficientPoints
+			}
+			return "", errors.New("AI 优化失败，请稍后重试")
+		}
+	}
+
 	msgs := []relaychat.Msg{
 		{Role: "system", Content: optimizeSystemPrompt},
 		{Role: "user", Content: prompt},
 	}
 	start := time.Now()
-	reply, err := s.relay.Chat(ctx, model, msgs)
+	reply, err := s.relay.Chat(ctx, mm.ModelKey, msgs)
 	reqBody, _ := json.Marshal(msgs)
-	eventlog.ModelText(userID, "optimize", model, "/v1/chat/completions", string(reqBody), reply, time.Since(start).Milliseconds(), err)
+	eventlog.ModelText(userID, "optimize", mm.ModelKey, "/v1/chat/completions", string(reqBody), reply, time.Since(start).Milliseconds(), err)
 	if err != nil {
+		if cost > 0 {
+			if rerr := points.Refund(s.repo.db, userID, cost, "AI 优化失败退款", refID); rerr != nil {
+				logger.L().Error("ai: optimize refund failed",
+					zap.String("userId", userID.String()), zap.Error(rerr))
+			}
+		}
 		return "", errors.New("AI 优化失败，请稍后重试")
 	}
 	return reply, nil

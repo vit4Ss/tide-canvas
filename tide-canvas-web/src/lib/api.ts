@@ -66,6 +66,9 @@ export const aiApi = {
     http.post<AiTaskVO>("/api/ai/generate", data),
   optimizePrompt: (prompt: string) =>
     http.post<{ prompt: string }>("/api/ai/optimize-prompt", { prompt }),
+  // 「AI 优化」单次实扣积分（含团队倍率，后端为准）；未配置文本模型时为 0
+  optimizeCost: () =>
+    http.get<{ cost: number }>("/api/ai/optimize-cost"),
   gridSplit: (imageUrl: string, rows: number, cols: number, cells?: number[]) =>
     http.post<string[]>("/api/ai/grid-split", { imageUrl, rows, cols, ...(cells && cells.length ? { cells } : {}) }),
   // taskId 同为雪花 ID 字符串（>2^53，number 会丢精度）

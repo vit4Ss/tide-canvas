@@ -53,7 +53,9 @@ func (s *service) runAssistantChat(ctx context.Context, m *model.AiModel, dto ge
 		modelKey = strings.TrimSpace(m.ModelID)
 	}
 	if modelKey == "" {
-		modelKey = s.repo.textModelKey()
+		if mm := s.repo.textModel(); mm != nil {
+			modelKey = mm.ModelKey
+		}
 	}
 	if modelKey == "" {
 		return GenerateResult{}, errors.New("AI 助手未启用：请在模型管理添加文本模型")

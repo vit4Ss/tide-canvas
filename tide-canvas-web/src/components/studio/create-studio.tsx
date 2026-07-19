@@ -779,6 +779,8 @@ export default function CreateStudio() {
      per-model config; the picker + option pills are derived from this list. */
   const [studioList, setStudioList] = useState<StudioModelVO[]>([]);
   const [optimizing, setOptimizing] = useState(false);
+  // 「AI 优化」单次扣费（后端实算，含团队倍率）；0 = 免费/未配置，不显示角标
+  const [optCost, setOptCost] = useState(0);
   const ensureSession = useAuthStore((s) => s.ensureSession);
 
   /* stage state */
@@ -1369,6 +1371,7 @@ export default function CreateStudio() {
       const res = await aiApi.optimizePrompt(v);
       if (res.success && res.data?.prompt) {
         setPrompt(res.data.prompt);
+        refreshBalance(); // 优化按文本模型积分扣费，余额需同步
         // 优化模型不认识「图片N」引用 token，重写后引用大概率丢失——素材
         // 还在槽位里，提醒用户重新 @ 即可，不打断流程。用 token 解析而非
         // includes 子串比较：优化结果里的「图片1080p」含「图片1」子串但
@@ -1724,12 +1727,15 @@ export default function CreateStudio() {
     }
   }, [busy, refreshBalance]);
 
-  // 挂载时拉一次真实余额（需先确保会话，否则 401）。
+  // 挂载时拉一次真实余额与「AI 优化」单次扣费（需先确保会话，否则 401）。
   useEffect(() => {
     let cancelled = false;
     (async () => {
       await ensureSession();
-      if (!cancelled) refreshBalance();
+      if (cancelled) return;
+      refreshBalance();
+      const r = await aiApi.optimizeCost();
+      if (!cancelled && r.success && r.data) setOptCost(r.data.cost);
     })();
     return () => {
       cancelled = true;
@@ -2761,7 +2767,8 @@ export default function CreateStudio() {
               />
               <div className="ws-prompt-foot">
                 <button className="ws-aiopt" type="button" onClick={aiOptimize} disabled={optimizing}>
-                  <span className="spark">✦</span> {optimizing ? "优化中…" : "AI 优化"}
+                  <span className="spark">✦</span>{" "}
+                  {optimizing ? "优化中…" : optCost > 0 ? `AI 优化 · ${optCost} 积分` : "AI 优化"}
                 </button>
                 {/* 提示词「清空」按钮已按用户要求移除（2026-07-08）：全选删除足够 */}
               </div>

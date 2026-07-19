@@ -59,6 +59,7 @@ func SweepStaleTasks(d *app.Deps) (int64, error) {
 // Frontend contract (tide-canvas-web/src/lib/api.ts -> aiApi):
 //
 //	POST   /api/ai/generate     AiGenerateDTO -> AiTaskVO                     (auth)
+//	GET    /api/ai/optimize-cost -> {cost:int}                                (auth)
 //	POST   /api/ai/grid-split   {imageUrl,rows,cols,cells?} -> string[]       (auth)
 //	GET    /api/ai/tasks/:id     -> AiTaskVO                                  (auth)
 //	DELETE /api/ai/tasks/:id     -> void                                      (auth)
@@ -80,6 +81,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	authed.Use(middleware.JWTAuth(d))
 	authed.POST("/generate", h.generate)
 	authed.POST("/optimize-prompt", h.optimizePrompt)
+	authed.GET("/optimize-cost", h.optimizeCost)
 	authed.POST("/grid-split", h.gridSplit)
 	authed.GET("/tasks", h.listTasks)
 	authed.GET("/tasks/:id", h.getTask)
