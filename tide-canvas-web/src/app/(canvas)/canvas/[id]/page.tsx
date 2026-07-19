@@ -258,7 +258,10 @@ export default function CanvasEditorPage() {
     if (!projectId) return;
     const res = await projectApi.share(projectId);
     if (res.success) {
-      const url = window.location.origin + res.data.shareUrl;
+      // 现后端 shareUrl 为绝对 URL;兼容旧后端返回相对路径的情况
+      const url = res.data.shareUrl.startsWith("http")
+        ? res.data.shareUrl
+        : window.location.origin + res.data.shareUrl;
       await navigator.clipboard.writeText(url);
       toast.success("分享链接已复制");
     }
