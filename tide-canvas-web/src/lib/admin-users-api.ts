@@ -34,6 +34,9 @@ export const adminUsersApi = {
   update: (id: string, dto: AdminUserUpdateDTO) =>
     http.put<AdminUserVO>(`/api/admin/users/${id}`, dto),
 
+  /** DELETE /api/admin/users/:id -> void (soft delete; frees email for re-signup). */
+  delete: (id: string) => http.delete<null>(`/api/admin/users/${id}`),
+
   /** POST /api/admin/users/:id/points -> {points} (new balance). */
   adjustPoints: (id: string, dto: PointAdjustDTO) =>
     http.post<PointAdjustResult>(`/api/admin/users/${id}/points`, dto),

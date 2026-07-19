@@ -80,6 +80,12 @@ const MANAGED_ELSEWHERE: Record<string, { hint: string; href: string }> = {
   "pricing.compare": { hint: "在价格管理中编辑", href: "/admin/pricing" },
   "pricing.faq": { hint: "在价格管理中编辑", href: "/admin/pricing" },
   "home.global": { hint: "在首页楼层中编辑", href: "/admin/home-floors" },
+  // 积分 4 键的编辑入口收口到积分管理页的「积分全局配置」面板，
+  // 避免与本页双入口编辑同一批 sys_config 键。
+  "points.checkinDaily": { hint: "在积分管理中编辑", href: "/admin/points" },
+  "points.checkinMonthlyCap": { hint: "在积分管理中编辑", href: "/admin/points" },
+  "points.inviteReward": { hint: "在积分管理中编辑", href: "/admin/points" },
+  "points.signupBonus": { hint: "在积分管理中编辑", href: "/admin/points" },
 };
 
 /* 基线键（页面/策略消费方仍在读，后端同样拒绝删除）——不展示删除入口。

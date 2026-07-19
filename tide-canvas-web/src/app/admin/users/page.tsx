@@ -330,6 +330,25 @@ function AdminUsersPageInner() {
     else setError(res.message || "操作失败");
   }
 
+  async function deleteUser(u: AdminUserVO) {
+    if (
+      !(await confirmDialog({
+        title: "删除用户",
+        message: `确定删除用户「${u.nickname || u.username || u.email}」？删除后该账号将无法登录并从列表消失，其邮箱可重新注册；作品与订单流水保留用于审计。此操作不可恢复。`,
+        confirmText: "删除",
+      }))
+    )
+      return;
+    const res = await adminUsersApi.delete(u.id);
+    if (res.success) {
+      // 删除的是本页最后一行且不在第 1 页时退回上一页，避免落在空页。
+      if (rows.length === 1 && pageNum > 1) setPageNum(pageNum - 1);
+      else await loadUsers();
+    } else {
+      setError(res.message || "删除用户失败");
+    }
+  }
+
   function openPoints(u: AdminUserVO) {
     setError(null);
     setPointsUser(u);
@@ -510,6 +529,7 @@ function AdminUsersPageInner() {
             { label: "编辑", onClick: () => openEdit(u) },
             { label: "积分", onClick: () => openPoints(u) },
             { label: u.status === 1 ? "封禁" : "解封", danger: u.status === 1, onClick: () => toggleBan(u) },
+            { label: "删除", danger: true, onClick: () => deleteUser(u) },
           ]}
         />
       ),

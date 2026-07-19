@@ -340,6 +340,12 @@ type User struct {
 	CreateTime           time.Time `gorm:"autoCreateTime" json:"createTime"`
 	UpdateTime           time.Time `gorm:"autoUpdateTime" json:"updateTime"`
 	LastLoginTime        time.Time `json:"lastLoginTime"`
+	// Deleted marks admin-deleted accounts (soft delete). GORM auto-filters
+	// deleted rows from every query, so a deleted user cannot log in, refresh a
+	// session or appear in any list; ledger/order rows stay for audit. The delete
+	// handler tombstone-renames username/email first so the unique indexes are
+	// freed for re-registration.
+	Deleted gorm.DeletedAt `gorm:"column:deleted;index" json:"-"`
 }
 
 // TableName overrides the default pluralized table name.

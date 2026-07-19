@@ -31,6 +31,7 @@ import (
 //	GET    /users               AdminUserQuery -> PageData<AdminUserVO>
 //	GET    /users/:id           -> AdminUserVO
 //	PUT    /users/:id           AdminUserUpdateDTO -> AdminUserVO
+//	DELETE /users/:id           -> void
 //	POST   /users/:id/points    PointAdjustDTO -> {points}
 //	GET    /roles               -> []RoleVO
 //	POST   /roles               RoleSaveDTO -> RoleVO
@@ -45,6 +46,7 @@ func RegisterUsers(g *gin.RouterGroup, d *app.Deps) {
 	g.GET("/users", h.listUsers)
 	g.GET("/users/:id", h.getUser)
 	g.PUT("/users/:id", h.updateUser)
+	g.DELETE("/users/:id", h.deleteUser)
 	g.POST("/users/:id/points", h.adjustPoints)
 
 	g.GET("/roles", h.listRoles)
@@ -401,6 +403,82 @@ func g1SensitiveChangeSummary(dto AdminUserUpdateDTO) string {
 		parts = append(parts, fmt.Sprintf("API配额=%d", *dto.ApiQuota))
 	}
 	return strings.Join(parts, "，")
+}
+
+// deleteUser handles DELETE /users/:id (soft delete via User.Deleted).
+//
+// 语义：删除后账号立即无法登录/刷新会话，从前后台所有列表消失；作品、订单、
+// 积分流水等关联数据保留（审计需要），仅账号本体不可见。删除前先把
+// username/email 改写为 del.<id>. 前缀的墓碑值，释放唯一索引，让同邮箱可以
+// 重新注册。已签发的 access token 到期自然失效（refresh 会因查不到用户被拒）。
+//
+// 保护：不能删除自己；不能删除管理员账号（需先在编辑里降为普通用户），
+// 与内置角色的删除保护同口径。
+func (h *userHandler) deleteUser(c *gin.Context) {
+	id, ok := g1ParseID(c, "user")
+	if !ok {
+		return
+	}
+	if id == middleware.CurrentUserID(c) {
+		response.Fail(c, response.CodeBadRequest, "不能删除当前登录的账号")
+		return
+	}
+
+	u, err := h.findUser(id)
+	if err != nil {
+		h.failLookup(c, err, "failed to load user")
+		return
+	}
+	if u.Role == 9 {
+		response.Fail(c, response.CodeBadRequest, "管理员账号不可删除，请先将其降为普通用户")
+		return
+	}
+
+	// Keep a human-readable trace of who this was for the business log.
+	trace := u.Email
+	if trace == "" {
+		trace = u.Username
+	}
+
+	err = h.db.Transaction(func(tx *gorm.DB) error {
+		// Tombstone-rename to free the unique username/email indexes. The id
+		// prefix keeps the new values unique; truncate to the column sizes.
+		fields := map[string]any{
+			"username": g1Tombstone(u.Username, id, 64),
+			"email":    g1Tombstone(u.Email, id, 128),
+		}
+		if err := tx.Model(&model.User{}).Where("id = ?", id).Updates(fields).Error; err != nil {
+			return err
+		}
+		return tx.Where("id = ?", id).Delete(&model.User{}).Error
+	})
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "failed to delete user")
+		return
+	}
+
+	eventlog.Biz(&model.BizLog{
+		UserID:     id,
+		Action:     "user_delete",
+		Summary:    "管理员删除用户：" + trace,
+		RefID:      id,
+		RefType:    "user",
+		OperatorID: middleware.CurrentUserID(c),
+		Detail:     eventlog.Truncate(fmt.Sprintf("username=%s email=%s", u.Username, u.Email), 1024),
+	})
+
+	response.OK[any](c, nil)
+}
+
+// g1Tombstone rewrites a unique credential as "del.<id>.<original>" clipped to
+// the column size, so the original value is freed for re-registration while the
+// row keeps a readable trace. Empty originals stay empty-prefixed but unique.
+func g1Tombstone(original string, id idgen.ID, max int) string {
+	s := fmt.Sprintf("del.%s.%s", id.String(), original)
+	if len(s) > max {
+		s = s[:max]
+	}
+	return s
 }
 
 // adjustPoints handles POST /users/:id/points. It atomically adjusts the user's
