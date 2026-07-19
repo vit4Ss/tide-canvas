@@ -156,3 +156,9 @@ export const styleApi = {
   recordUse: (id: string) =>
     http.post<void>(`/api/styles/${id}/use`),
 };
+
+// ── 画布 AI 助手宠物样式——后端 /api/settings/assistant-pet-styles 暂未实现,
+//    404 时 Result.success=false,前端 pet-style.ts 降级为内置默认精灵,属预期行为 ──
+export const assistantApi = {
+  petStyles: () => http.get<unknown>("/api/settings/assistant-pet-styles"),
+};
