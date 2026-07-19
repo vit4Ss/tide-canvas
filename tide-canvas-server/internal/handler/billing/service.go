@@ -175,17 +175,67 @@ func vipForPlan(plan *model.Plan) int {
 	return 0
 }
 
-// listPlans returns the on-sale subscription plans as pricing-card VOs.
+// listPlans returns the on-sale subscription plans as pricing-card VOs. While a
+// 限时折扣活动 is live, participating plans get the Promo overlay (activity
+// prices + tag + end time) so the pricing cards can render 活动价+划线原价;
+// once the activity expires the overlay vanishes and cards fall back to 原价.
 func (s *service) listPlans() ([]PlanVO, error) {
 	rows, err := s.repo.listPlans()
 	if err != nil {
 		return nil, err
 	}
+	promo, promoErr := LoadPromo(s.repo.db)
+	promoLive := promoErr == nil && promo.Active(time.Now())
+
 	vos := make([]PlanVO, 0, len(rows))
 	for i := range rows {
-		vos = append(vos, toPlanVO(&rows[i]))
+		vo := toPlanVO(&rows[i])
+		if promoLive {
+			if p := promoOverlayFor(&promo, &rows[i]); p != nil {
+				vo.Promo = p
+			}
+		}
+		vos = append(vos, vo)
 	}
 	return vos, nil
+}
+
+// promoOverlayFor builds the card overlay for one plan, keeping only activity
+// prices that actually undercut the regular price (defensive: 后台保存时同样
+// 校验，这里兜底防脏数据把「活动价」渲染得比原价还贵)。nil = 不参与。
+func promoOverlayFor(promo *PromoVO, plan *model.Plan) *PlanPromoVO {
+	out := PlanPromoVO{Tag: promo.Tag, EndsAt: promo.EndsAt}
+	if p, ok := promo.DealPrice(plan.ID, CycleMonthly); ok && p.LessThan(plan.Price) {
+		out.Monthly, _ = p.Float64()
+	}
+	if p, ok := promo.DealPrice(plan.ID, CycleYearly); ok {
+		if f := decodePlanFeatures(plan); f.Yearly > 0 && p.LessThan(decimal.NewFromFloat(f.Yearly)) {
+			out.Yearly, _ = p.Float64()
+		}
+	}
+	if out.Monthly <= 0 && out.Yearly <= 0 {
+		return nil
+	}
+	return &out
+}
+
+// effectivePlanPricing resolves the authoritative charge for a plan order:
+// the regular planPricing, overridden by the live activity price when the
+// 限时折扣活动 covers this plan+cycle. Points grant is NOT affected by promos.
+// 与 listPlans/getPromo 共用 Active() 判定——展示价与结算价永不打架，活动
+// 过期瞬间的下单由服务端时钟裁决回原价。
+func (s *service) effectivePlanPricing(plan *model.Plan, cycle string) (decimal.Decimal, int, error) {
+	price, points, err := planPricing(plan, cycle)
+	if err != nil {
+		return price, points, err
+	}
+	promo, promoErr := LoadPromo(s.repo.db)
+	if promoErr == nil && promo.Active(time.Now()) {
+		if p, ok := promo.DealPrice(plan.ID, cycle); ok && p.LessThan(price) {
+			price = p
+		}
+	}
+	return price, points, nil
 }
 
 // createOrder creates a pending (status 0) order for the user. The order amount
@@ -239,7 +289,7 @@ func (s *service) createOrder(userID idgen.ID, dto CreateOrderDTO) (*OrderVO, er
 		if cycle == "" {
 			cycle = CycleMonthly
 		}
-		price, points, err := planPricing(plan, cycle)
+		price, points, err := s.effectivePlanPricing(plan, cycle)
 		if err != nil {
 			return nil, err
 		}
@@ -247,7 +297,13 @@ func (s *service) createOrder(userID idgen.ID, dto CreateOrderDTO) (*OrderVO, er
 		// Reuse an existing, still-payable pending order for the same
 		// plan+cycle instead of minting a new row on every 立即支付 click —
 		// no orphan spam, no double-charge from two live cashier tabs.
-		if prev, err := s.repo.findReusablePending(userID, planID, cycle, time.Now().Add(-payTTL)); err == nil && prev != nil {
+		// 例外：活动开始/结束会改变应收价，金额对不上的旧单必须作废重开——
+		// 复用活动前的原价单会多收，复用活动中的折扣单在活动结束后支付会少收。
+		if prev, err := s.repo.findReusablePending(userID, planID, cycle, time.Now().Add(-payTTL)); err == nil && prev != nil && !prev.Amount.Equal(price) {
+			if cancelErr := s.repo.cancelOrder(prev.ID, userID); cancelErr != nil {
+				return nil, cancelErr
+			}
+		} else if err == nil && prev != nil {
 			if prev.PayMethod != chKey {
 				if err := s.repo.updateOrderPayMethod(prev.ID, chKey); err == nil {
 					prev.PayMethod = chKey

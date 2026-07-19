@@ -3,6 +3,7 @@ package billing
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -54,13 +55,17 @@ func (h *handler) getFaq(c *gin.Context) {
 }
 
 // getPromo handles GET /api/billing/promo (public). Returns the pricing page's
-// 限时折扣横幅 config ({enabled,tag,title,subtitle,endsAt}), admin-editable in
-// 价格管理; the client hides the banner when disabled or expired.
+// 限时折扣活动 config ({enabled,tag,title,subtitle,endsAt,deals}), admin-editable
+// in 价格管理. 到期/关闭由服务端裁决：非 Active 时直接返回 enabled=false 的零值，
+// 前端（横幅、导航「限时」标签）据此隐藏，不再依赖客户端时钟。
 func (h *handler) getPromo(c *gin.Context) {
 	vo, err := LoadPromo(h.svc.repo.db)
 	if err != nil {
 		response.Fail(c, response.CodeServerError, "failed to load promo")
 		return
+	}
+	if !vo.Active(time.Now()) {
+		vo = PromoVO{}
 	}
 	response.OK(c, vo)
 }

@@ -27,6 +27,7 @@ import { Logo } from "@/components/flux/atoms";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "@/components/shared/toast";
+import { billingApi } from "@/lib/billing-api";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { fmt } from "@/mock";
@@ -48,12 +49,30 @@ const NAV: NavItem[] = [
   { k: "explore", label: "作品广场", href: "/explore", match: ["/explore"] },
   { k: "create", label: "创作台", href: "/studio", match: ["/studio"] },
   { k: "blog", label: "博客", href: "/blog", match: ["/blog"] },
-  { k: "pricing", label: "价格方案", href: "/pricing", match: ["/pricing"], tag: "限时" },
+  // 「限时」标签不再写死：活动进行中（GET /api/billing/promo enabled）才渲染，
+  // 活动结束/关闭后服务端返回 enabled=false，标签随之消失。见 usePromoLive()。
+  { k: "pricing", label: "价格方案", href: "/pricing", match: ["/pricing"] },
 ];
 
 function isActive(item: NavItem, pathname: string): boolean {
   if (item.href === "/") return pathname === "/";
   return item.match.some((p) => pathname === p || pathname.startsWith(p + "/"));
+}
+
+/** 限时折扣活动是否进行中（驱动「价格方案」旁的「限时」标签）。服务端在
+ *  活动关闭/到期时直接返回 enabled=false，这里不做客户端倒计时。 */
+function usePromoLive(): boolean {
+  const [live, setLive] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    billingApi.promo().then((res) => {
+      if (alive && res.success && !!res.data?.enabled) setLive(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return live;
 }
 
 /* helpers ported from shell.js (FX.initials / FX.avatarGrad) */
@@ -87,6 +106,8 @@ export default function SiteNav() {
   const [open, setOpen] = useState(false);
   // 移动端主导航抽屉（≤880px .nav-links 隐藏后的唯一入口）
   const [menuOpen, setMenuOpen] = useState(false);
+  // 限时折扣活动进行中 → 价格方案旁渲染「限时」标签
+  const promoLive = usePromoLive();
 
   // scroll-past-40px .solid toggle (mirrors shell.mountChrome)
   useEffect(() => {
@@ -163,6 +184,7 @@ export default function SiteNav() {
             >
               {n.label}
               {n.tag && <span className="tag">{n.tag}</span>}
+              {n.k === "pricing" && promoLive && <span className="tag">限时</span>}
             </Link>
           ))}
         </div>
@@ -320,6 +342,7 @@ export default function SiteNav() {
             >
               {n.label}
               {n.tag && <span className="tag">{n.tag}</span>}
+              {n.k === "pricing" && promoLive && <span className="tag">限时</span>}
             </Link>
           ))}
           {!user && (

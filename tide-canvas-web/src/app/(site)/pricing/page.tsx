@@ -70,20 +70,25 @@ export default function PricingPage() {
     }
     if (!requireLogin()) return;
     const yearly = cycle === "yr" && p.yearly > 0;
+    // 活动价（限时折扣）：展示与弹窗金额跟随活动价；实际收款价由服务端
+    // 用同一活动判定重算，弹窗只是镜像。
+    const promoM = p.promo && p.promo.monthly > 0 ? p.promo.monthly : 0;
+    const promoY = p.promo && p.promo.yearly > 0 ? p.promo.yearly : 0;
+    const payY = promoY > 0 ? promoY : p.yearly;
     setPayIntent(
       yearly
         ? {
             planId: p.id,
             cycle: "yearly",
             name: `${p.name}（年付）`,
-            amount: Math.round(p.yearly * 100) / 100,
-            amountNote: `折合 ¥${Math.round((p.yearly / 12) * 100) / 100}/月`,
+            amount: Math.round(payY * 100) / 100,
+            amountNote: `折合 ¥${Math.round((payY / 12) * 100) / 100}/月`,
           }
         : {
             planId: p.id,
             cycle: "monthly",
             name: p.name,
-            amount: p.monthly,
+            amount: promoM > 0 ? promoM : p.monthly,
           },
     );
   };
@@ -245,15 +250,26 @@ export default function PricingPage() {
             const free = p.monthly === 0;
             // 未配年付价的套餐在年付档回落月付展示（下单同样按月收）。
             const yr = cycle === "yr" && Number(p.yearly) > 0;
+            // 限时折扣活动价（服务端仅在活动进行中附加 promo 字段）：
+            // 命中当前周期时活动价做主价，原价划线；结算价服务端同判定重算。
+            const promoM = p.promo && p.promo.monthly > 0 ? Number(p.promo.monthly) : 0;
+            const promoY = p.promo && p.promo.yearly > 0 ? Number(p.promo.yearly) : 0;
+            const dealHit = yr ? promoY > 0 : !free && promoM > 0;
             // 年付主价 = 折合月价（yearly/12），旁边划线展示月付原价；
-            // 实际收款仍是年付总价，价格下方注明。
+            // 实际收款仍是年付总价，价格下方注明。活动价命中时主价换活动价，
+            // 划线价换成对应周期的常规价。
+            const payYearly = promoY > 0 ? promoY : Number(p.yearly);
             const eff = yr
-              ? Math.round((Number(p.yearly) / 12) * 100) / 100
-              : Number(p.monthly);
+              ? Math.round((payYearly / 12) * 100) / 100
+              : promoM > 0
+                ? promoM
+                : Number(p.monthly);
             const num = free ? "¥0" : "¥" + eff;
             const per = free ? "永久免费" : "/ 月";
-            const orig = Number(p.monthly);
-            const showOrig = !free && yr && Number(p.yearly) > 0 && orig > eff;
+            const orig = yr && promoY > 0
+              ? Math.round((Number(p.yearly) / 12) * 100) / 100
+              : Number(p.monthly);
+            const showOrig = !free && (dealHit || (yr && Number(p.yearly) > 0)) && orig > eff;
             // 会员态：等级相同 =「当前套餐」，已持有更高档 =「已包含」，均不可
             // 再购（套餐只能升级）。FREE 是默认档：登录且无付费等级 = 当前套餐，
             // 已是付费会员 = 已包含。
@@ -280,6 +296,10 @@ export default function PricingPage() {
                 <div className="plan-head">
                   <div className="plan-name">{p.name}</div>
                   {p.featured && <span className="plan-tag">最受欢迎</span>}
+                  {/* 活动角标：命中当前计费周期的活动价才显示，与横幅同色系 */}
+                  {dealHit && (
+                    <span className="plan-tag deal">{p.promo?.tag || "限时"}</span>
+                  )}
                 </div>
                 <div className="plan-desc">{p.desc}</div>
                 <div className="plan-price">
@@ -288,7 +308,11 @@ export default function PricingPage() {
                   <span className="per">{per}</span>
                 </div>
                 <div className="plan-meta">
-                  {!free && yr && Number(p.yearly) > 0 ? `按年支付 ¥${p.yearly}` : ""}
+                  {!free && yr && Number(p.yearly) > 0
+                    ? promoY > 0
+                      ? `按年支付 ¥${payYearly}（原价 ¥${p.yearly}）`
+                      : `按年支付 ¥${p.yearly}`
+                    : ""}
                 </div>
                 <div className="plan-cta-slot">
                   {/* hideCta：后台按套餐配置隐藏按钮；槽位保留，权益区跨卡齐线 */}

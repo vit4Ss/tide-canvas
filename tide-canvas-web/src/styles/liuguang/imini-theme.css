@@ -282,6 +282,8 @@ body.imini .sst-it.on,body.imini .xp-hero .sst-it.on{color:var(--tech);}
 body.imini .xp-pl-no{color:var(--tech); letter-spacing:.1em;}
 /* 徽标/选中态：白底黑字（与主按钮同语言），不再用蓝 */
 body.imini .plan-tag,body.imini .cmp-badge{background:#fff; color:#0A0A0B;}
+/* 限时折扣角标保持横幅冷青（既有促销语言），不随白底徽标走 */
+body.imini .plan-tag.deal{background:#22D3EE; color:#0A0A0B;}
 body.imini .cap-kick.core{background:#fff; color:#0A0A0B;}
 body.imini .cf-ticker .tk .nw{background:#fff; color:#0A0A0B;}
 body.imini .plan-feats .ck{color:#fff; background:rgba(255,255,255,.12);}

@@ -92,15 +92,25 @@ export default function HomePricing({
           const isFree = p.monthly === 0;
           // 未配年付价的套餐在年付档回落月付展示（与定价页同口径）。
           const yr = cycle === "yr" && Number(p.yearly) > 0;
+          // 限时折扣活动价（与定价页同语言）：命中当前周期时主价换活动价，
+          // 划线价换对应周期常规价。
+          const promoM = p.promo && p.promo.monthly > 0 ? Number(p.promo.monthly) : 0;
+          const promoY = p.promo && p.promo.yearly > 0 ? Number(p.promo.yearly) : 0;
+          const dealHit = yr ? promoY > 0 : !isFree && promoM > 0;
+          const payYearly = promoY > 0 ? promoY : Number(p.yearly);
           // 年付主价 = 折合月价（yearly/12），旁边划线展示月付原价（与定价页同语言）。
           const eff = yr
-            ? Math.round((Number(p.yearly) / 12) * 100) / 100
-            : Number(p.monthly);
+            ? Math.round((payYearly / 12) * 100) / 100
+            : promoM > 0
+              ? promoM
+              : Number(p.monthly);
           const per = isFree ? "永久免费" : "/ 月";
           const num = isFree ? "¥0" : "¥" + money(eff);
           const href = isFree ? "/studio" : "/pricing";
-          const orig = Number(p.monthly);
-          const showOrig = !isFree && yr && Number(p.yearly) > 0 && orig > eff;
+          const orig = yr && promoY > 0
+            ? Math.round((Number(p.yearly) / 12) * 100) / 100
+            : Number(p.monthly);
+          const showOrig = !isFree && (dealHit || (yr && Number(p.yearly) > 0)) && orig > eff;
           return (
             <div
               key={p.id}
@@ -112,6 +122,7 @@ export default function HomePricing({
               <div className="plan-head">
                 <div className="plan-name">{p.name}</div>
                 {p.featured && <span className="plan-tag">最受欢迎</span>}
+                {dealHit && <span className="plan-tag deal">{p.promo?.tag || "限时"}</span>}
               </div>
               <div className="plan-desc">{p.desc}</div>
               <div className="plan-price">
@@ -120,7 +131,11 @@ export default function HomePricing({
                 <span className="per">{per}</span>
               </div>
               <div className="plan-meta">
-                {!isFree && yr && Number(p.yearly) > 0 ? `按年支付 ¥${money(p.yearly)}` : ""}
+                {!isFree && yr && Number(p.yearly) > 0
+                  ? promoY > 0
+                    ? `按年支付 ¥${money(payYearly)}（原价 ¥${money(p.yearly)}）`
+                    : `按年支付 ¥${money(p.yearly)}`
+                  : ""}
               </div>
               <div className="plan-cta-slot">
                 {/* hideCta：后台按套餐配置隐藏按钮；槽位保留，权益区跨卡齐线 */}

@@ -16,6 +16,17 @@ export interface PlanVO {
   items: string[];
   /** 购买授予的会员等级（0=不授予）；与 user.vipLevel 对比渲染「当前套餐」态 */
   vipLevel: number;
+  /** 限时折扣活动进行中且覆盖本套餐时由服务端附加（活动绝对价，0=该周期
+   *  不参与）；结算价由服务端用同一判定重新计算，前端只做展示。 */
+  promo?: PlanPromoVO | null;
+}
+
+/** 定价卡上的活动价叠加层（仅活动进行中出现在 PlanVO.promo）。 */
+export interface PlanPromoVO {
+  monthly: number;
+  yearly: number;
+  tag: string;
+  endsAt: string;
 }
 
 /** 方案对比表的一行：能力名 + 每套餐一格（键=套餐 id；"✓" 支持 / "—" 不支持 / 文字）。 */
@@ -40,14 +51,24 @@ export interface FaqVO {
   items: FaqItem[];
 }
 
-/** GET /api/billing/promo — 定价页限时折扣横幅（后台价格管理可编辑）。
- *  enabled=false 或 endsAt 到点后前端隐藏；endsAt 为 RFC3339 时间戳。 */
+/** 限时折扣活动的一个参与套餐：各周期活动绝对价（月付价 / 年付总价，
+ *  与套餐原价字段同口径；0 = 该周期不参与）。 */
+export interface PromoDeal {
+  planId: string;
+  monthly: number;
+  yearly: number;
+}
+
+/** GET /api/billing/promo — 定价页限时折扣活动（后台价格管理可编辑）。
+ *  到期/关闭由服务端裁决：非活动期直接返回 enabled=false 的零值。
+ *  endsAt 为 RFC3339 时间戳；deals 为参与套餐及活动价。 */
 export interface PromoVO {
   enabled: boolean;
   tag: string;
   title: string;
   subtitle: string;
   endsAt: string;
+  deals?: PromoDeal[];
 }
 
 /** epay pay method. Maps to the backend payChannel → epay type. */

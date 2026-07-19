@@ -325,11 +325,64 @@ func (h *g4PricingHandler) savePromo(c *gin.Context) {
 			return
 		}
 	}
+	// 参与套餐校验（无论启用与否都校验，避免存脏数据）：套餐必须存在，活动价
+	// 必须低于对应周期原价——展示端与结算端都只认「低于原价」的活动价，等/高
+	// 于原价的配置毫无意义，直接拒绝并提示。
+	if msg := h.validatePromoDeals(vo.Deals); msg != "" {
+		response.Fail(c, response.CodeBadRequest, msg)
+		return
+	}
 	if err := billing.SavePromo(h.db, vo); err != nil {
 		response.Fail(c, response.CodeServerError, "failed to save promo")
 		return
 	}
 	response.OK(c, vo)
+}
+
+// validatePromoDeals checks every participating plan row of the 限时折扣活动:
+// the plan must exist, at least one cycle price must be set, and each set price
+// must undercut that cycle's regular price (年付要求套餐已配年付原价)。
+// Returns a user-readable message, or "" when valid.
+func (h *g4PricingHandler) validatePromoDeals(deals []billing.PromoDeal) string {
+	seen := map[idgen.ID]bool{}
+	for i := range deals {
+		d := &deals[i]
+		if d.PlanID == 0 {
+			return "参与套餐未选择"
+		}
+		if seen[d.PlanID] {
+			return "同一套餐重复配置了活动价"
+		}
+		seen[d.PlanID] = true
+		if d.Monthly < 0 || d.Yearly < 0 {
+			return "活动价不能为负数"
+		}
+		if d.Monthly == 0 && d.Yearly == 0 {
+			return "参与套餐至少要配置一个周期的活动价"
+		}
+		var plan model.Plan
+		if err := h.db.Where("id = ?", d.PlanID).First(&plan).Error; err != nil {
+			return "参与套餐不存在或已删除"
+		}
+		if d.Monthly > 0 && !decimal.NewFromFloat(d.Monthly).LessThan(plan.Price) {
+			return "「" + plan.Name + "」的月付活动价需低于月付原价"
+		}
+		if d.Yearly > 0 {
+			var f struct {
+				Yearly float64 `json:"yearly"`
+			}
+			if plan.Features != "" {
+				_ = json.Unmarshal([]byte(plan.Features), &f)
+			}
+			if f.Yearly <= 0 {
+				return "「" + plan.Name + "」未配置年付原价，不能设年付活动价"
+			}
+			if d.Yearly >= f.Yearly {
+				return "「" + plan.Name + "」的年付活动价需低于年付原价"
+			}
+		}
+	}
+	return ""
 }
 
 // ---- mapping helpers ----

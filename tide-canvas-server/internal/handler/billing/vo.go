@@ -35,6 +35,20 @@ type PlanVO struct {
 	// VipLevel 是购买该套餐授予的会员等级（0=不授予）。前台用它与
 	// user.vipLevel 对比渲染「当前套餐」态，服务端下单同样拦截。
 	VipLevel int `json:"vipLevel"`
+	// Promo carries the live 限时折扣 prices when an activity covers this plan
+	// (nil otherwise). Attached in listPlans only while the activity is Active,
+	// so the field's presence itself means "活动进行中"; 结算价由服务端用同一
+	// 判定重新计算，客户端仅做展示。
+	Promo *PlanPromoVO `json:"promo,omitempty"`
+}
+
+// PlanPromoVO is the activity-price overlay on a pricing card: absolute prices
+// per cycle (0 = 该周期不参与), plus the banner tag / end time for the card UI.
+type PlanPromoVO struct {
+	Monthly float64 `json:"monthly"`
+	Yearly  float64 `json:"yearly"`
+	Tag     string  `json:"tag"`
+	EndsAt  string  `json:"endsAt"`
 }
 
 // OrderVO is the order view returned by create/list/detail.

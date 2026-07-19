@@ -375,6 +375,10 @@
 .plan-tag{margin-left:auto; height:22px; padding:0 10px; border-radius:var(--pill); font-size:11px;
   font-weight:700; letter-spacing:.02em; color:#fff; background:var(--grad-warm);
   display:inline-flex; align-items:center; white-space:nowrap;}
+/* 限时折扣角标：与横幅 .promo-tag 同色系（冷青既有促销语言），命中活动价的卡才有 */
+.plan-tag.deal{color:#0A0A0B; background:#22D3EE;}
+/* 同卡叠「最受欢迎」时活动角标紧随其后，不再各自吃 auto 边距 */
+.plan-tag + .plan-tag.deal{margin-left:0;}
 /* ② 描述：最多两行截断；留空时行高占位由 subgrid 轨道统一 */
 .plan-desc{font-size:13px; line-height:1.5; color:var(--text-faint); margin:6px 0 0; min-height:20px;
   display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;}

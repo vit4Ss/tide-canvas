@@ -145,14 +145,23 @@ export default function AdminPricingPage() {
     faqDirtyRef.current = true;
   };
 
-  // 限时折扣横幅（sys_config: pricing.promo）。endsAt 在表单里用
-  // datetime-local 字符串，提交时转 RFC3339。
-  const [promoForm, setPromoForm] = useState({
+  // 限时折扣活动（sys_config: pricing.promo）。endsAt 在表单里用
+  // datetime-local 字符串，提交时转 RFC3339。deals = 参与套餐及活动价
+  //（输入框态存字符串，提交时转数字；空/0 = 该周期不参与）。
+  const [promoForm, setPromoForm] = useState<{
+    enabled: boolean;
+    tag: string;
+    title: string;
+    subtitle: string;
+    endsAt: string;
+    deals: { planId: string; monthly: string; yearly: string }[];
+  }>({
     enabled: false,
     tag: "",
     title: "",
     subtitle: "",
     endsAt: "",
+    deals: [],
   });
   const [promoDirty, setPromoDirty] = useState(false);
   const [promoSaving, setPromoSaving] = useState(false);
@@ -162,6 +171,12 @@ export default function AdminPricingPage() {
     setPromoDirty(true);
     promoDirtyRef.current = true;
   };
+  const setPromoDeal = (i: number, patch: Partial<{ planId: string; monthly: string; yearly: string }>) =>
+    setPromo({ deals: promoForm.deals.map((d, j) => (j === i ? { ...d, ...patch } : d)) });
+  const addPromoDeal = () =>
+    setPromo({ deals: [...promoForm.deals, { planId: "", monthly: "", yearly: "" }] });
+  const removePromoDeal = (i: number) =>
+    setPromo({ deals: promoForm.deals.filter((_, j) => j !== i) });
 
   // silent：跳过 loading 占位，静默换数据。排序等就地操作用它刷新，
   // 否则表格被「加载中…」卸载重建，行移动的过渡动画会被打断。
@@ -195,6 +210,11 @@ export default function AdminPricingPage() {
                   title: d.title,
                   subtitle: d.subtitle,
                   endsAt: isoToLocalInput(d.endsAt),
+                  deals: (d.deals ?? []).map((x) => ({
+                    planId: x.planId,
+                    monthly: x.monthly > 0 ? String(x.monthly) : "",
+                    yearly: x.yearly > 0 ? String(x.yearly) : "",
+                  })),
                 },
           );
         }
@@ -453,6 +473,43 @@ export default function AdminPricingPage() {
         return;
       }
     }
+    // 参与套餐（客户端预检，服务端同规则兜底）：套餐已选、至少一个周期有
+    // 活动价、活动价低于对应周期原价。
+    const deals: { planId: string; monthly: number; yearly: number }[] = [];
+    for (const row of promoForm.deals) {
+      if (!row.planId) {
+        toast.error("参与套餐未选择");
+        return;
+      }
+      const plan = plans.find((p) => p.id === row.planId);
+      const monthly = row.monthly.trim() === "" ? 0 : Number(row.monthly);
+      const yearly = row.yearly.trim() === "" ? 0 : Number(row.yearly);
+      if (!Number.isFinite(monthly) || !Number.isFinite(yearly) || monthly < 0 || yearly < 0) {
+        toast.error("活动价必须是非负数字");
+        return;
+      }
+      if (monthly === 0 && yearly === 0) {
+        toast.error(`「${plan?.name ?? "参与套餐"}」至少要配置一个周期的活动价`);
+        return;
+      }
+      if (plan && monthly > 0 && monthly >= plan.monthly) {
+        toast.error(`「${plan.name}」的月付活动价需低于月付原价 ¥${plan.monthly}`);
+        return;
+      }
+      if (plan && yearly > 0 && plan.yearly > 0 && yearly >= plan.yearly) {
+        toast.error(`「${plan.name}」的年付活动价需低于年付原价 ¥${plan.yearly}`);
+        return;
+      }
+      if (plan && yearly > 0 && plan.yearly <= 0) {
+        toast.error(`「${plan.name}」未配置年付原价，不能设年付活动价`);
+        return;
+      }
+      if (deals.some((d) => d.planId === row.planId)) {
+        toast.error(`「${plan?.name ?? row.planId}」重复配置了活动价`);
+        return;
+      }
+      deals.push({ planId: row.planId, monthly, yearly });
+    }
     setPromoSaving(true);
     try {
       const res = await adminPricingApi.savePromo({
@@ -461,6 +518,7 @@ export default function AdminPricingPage() {
         title,
         subtitle: promoForm.subtitle.trim(),
         endsAt: endsAtIso,
+        deals,
       });
       if (res.success) {
         setPromoDirty(false);
@@ -817,10 +875,10 @@ export default function AdminPricingPage() {
         )}
       </Panel>
 
-      {/* 限时折扣横幅：公开定价页套餐卡上方的促销条 */}
+      {/* 限时折扣活动：横幅 + 参与套餐活动价（展示与结算联动，到期自动恢复原价） */}
       <Panel
-        title="限时折扣横幅"
-        sub="公开定价页套餐卡上方的促销条 · 关闭或倒计时到点自动隐藏"
+        title="限时折扣活动"
+        sub="定价页促销横幅 + 参与套餐活动价 · 关闭或到点后横幅隐藏、价格自动恢复原价"
         tools={
           <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
             {promoDirty && (
@@ -878,6 +936,77 @@ export default function AdminPricingPage() {
                 value={promoForm.subtitle}
                 onChange={(e) => setPromo({ subtitle: e.target.value })}
               />
+            </Field>
+            <Field
+              label="参与套餐"
+              span={4}
+              hint="指定套餐的活动价（月付价 / 年付总价，留空 = 该周期不参与）。活动进行中定价卡显示活动价+划线原价，下单按活动价收款；活动结束自动恢复原价，无需手动改回"
+            >
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {promoForm.deals.map((d, i) => {
+                  const plan = plans.find((p) => p.id === d.planId);
+                  return (
+                    <div key={i} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                      <select
+                        aria-label="参与套餐"
+                        value={d.planId}
+                        onChange={(e) => setPromoDeal(i, { planId: e.target.value })}
+                        style={{ minWidth: 200 }}
+                      >
+                        <option value="">选择套餐…</option>
+                        {plans
+                          .filter((p) => p.monthly > 0)
+                          .map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}（月付 ¥{p.monthly}
+                              {p.yearly > 0 ? ` / 年付 ¥${p.yearly}` : ""}）
+                            </option>
+                          ))}
+                      </select>
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        placeholder={plan ? `月付活动价 < ¥${plan.monthly}` : "月付活动价"}
+                        aria-label="月付活动价"
+                        value={d.monthly}
+                        onChange={(e) => setPromoDeal(i, { monthly: e.target.value })}
+                        style={{ width: 170 }}
+                      />
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        placeholder={
+                          plan
+                            ? plan.yearly > 0
+                              ? `年付活动价 < ¥${plan.yearly}`
+                              : "未配年付原价"
+                            : "年付活动价"
+                        }
+                        aria-label="年付活动价"
+                        value={d.yearly}
+                        disabled={!!plan && plan.yearly <= 0}
+                        onChange={(e) => setPromoDeal(i, { yearly: e.target.value })}
+                        style={{ width: 170 }}
+                      />
+                      <button
+                        type="button"
+                        className="adm-btn ghost"
+                        onClick={() => removePromoDeal(i)}
+                      >
+                        移除
+                      </button>
+                    </div>
+                  );
+                })}
+                <div>
+                  <button type="button" className="adm-btn ghost" onClick={addPromoDeal}>
+                    <Plus aria-hidden size={14} />
+                    添加参与套餐
+                  </button>
+                </div>
+              </div>
             </Field>
           </FormGrid>
         </div>
