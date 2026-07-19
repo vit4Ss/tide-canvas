@@ -49,6 +49,9 @@ export default function PayModal({
   // null = loading; [] = admin disabled every channel (checkout closed).
   const [channels, setChannels] = useState<PayChannelVO[] | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // 服务端实际定价与展示价不一致时（页面停留恰好跨过限时活动开始/结束点）
+  // 记录服务端金额：不跳收银台，改为更新弹窗金额并提示，用户确认后再支付。
+  const [serverAmount, setServerAmount] = useState<number | null>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && !submitting && onClose();
@@ -117,6 +120,16 @@ export default function PayModal({
     };
     const res = await orderApi.create(dto);
     if (res.success && res.data?.payUrl) {
+      // 价格一致性防护：订单以服务端定价为准（限时活动由服务端时钟裁决）。
+      // 与当前展示价对不上时先亮新价，不带着用户跳到金额不同的收银台。
+      const priced = Number(res.data.amount);
+      const shown = serverAmount ?? intent.amount;
+      if (Number.isFinite(priced) && Math.abs(priced - shown) >= 0.01) {
+        setServerAmount(priced);
+        setSubmitting(false);
+        toast.error(`价格已按最新活动状态更新为 ¥${priced}，请确认后再支付`);
+        return;
+      }
       // Persist the order id so the /billing return page can verify + credit it
       // even if the gateway's async notify is delayed or dropped.
       try {
@@ -153,8 +166,11 @@ export default function PayModal({
         <div className="pm-line">
           <span className="pm-name">{intent.name}</span>
           <span className="pm-price">
-            <span className="pm-amt">¥{intent.amount}</span>
-            {intent.amountNote && <span className="pm-note">{intent.amountNote}</span>}
+            <span className="pm-amt">¥{serverAmount ?? intent.amount}</span>
+            {/* 金额被服务端修正后，原价格拆解说明已失真，不再展示 */}
+            {serverAmount == null && intent.amountNote && (
+              <span className="pm-note">{intent.amountNote}</span>
+            )}
           </span>
         </div>
 

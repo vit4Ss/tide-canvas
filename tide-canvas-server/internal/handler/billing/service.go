@@ -229,8 +229,14 @@ func (s *service) effectivePlanPricing(plan *model.Plan, cycle string) (decimal.
 	if err != nil {
 		return price, points, err
 	}
+	// 活动配置读取失败宁可让下单失败重试，也绝不静默回退原价——否则会出现
+	// 页面展示活动价、收银台却按原价收款的多收事故。（键不存在不算错误，
+	// LoadPromo 对 RecordNotFound 返回关闭零值。）
 	promo, promoErr := LoadPromo(s.repo.db)
-	if promoErr == nil && promo.Active(time.Now()) {
+	if promoErr != nil {
+		return decimal.Zero, 0, promoErr
+	}
+	if promo.Active(time.Now()) {
 		if p, ok := promo.DealPrice(plan.ID, cycle); ok && p.LessThan(price) {
 			price = p
 		}
