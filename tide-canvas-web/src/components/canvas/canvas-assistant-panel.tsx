@@ -897,7 +897,7 @@ export function CanvasAssistantPanel() {
                 className={(canSubmit
                   ? "bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
                   : "bg-neutral-100 text-neutral-400 dark:bg-neutral-700 dark:text-neutral-500") + " flex h-8 w-8 items-center justify-center rounded-full transition-colors"}
-                title="发送"
+                title={uploading ? "附件上传中…" : sending ? "发送中…" : !canSubmit ? "先输入内容或添加附件" : "发送"}
               >
                 {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}
               </button>

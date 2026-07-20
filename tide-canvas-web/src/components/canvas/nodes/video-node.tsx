@@ -961,7 +961,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                     onMouseDown={stop}
                     onClick={(e) => { stop(e); if (node.prompt?.trim() && !generating) handleGenerate(); }}
                     disabled={!node.prompt?.trim() || generating}
-                    title={generating ? "生成中..." : "开始生成"}
+                    title={generating ? "生成中..." : !node.prompt?.trim() ? "先输入提示词" : "开始生成"}
                     className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${(!node.prompt?.trim() || generating) ? "bg-neutral-100 text-neutral-400 dark:bg-neutral-800" : "bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"}`}
                   >
                     {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}

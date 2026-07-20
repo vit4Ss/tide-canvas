@@ -44,7 +44,13 @@ import { AiTaskStatus } from "@/types/ai";
 import { AssetsBrowser, type PickedAsset } from "@/components/studio/assets-browser";
 import { AudioPlayerCard, SongCard } from "@/components/studio/audio-player-card";
 import { ClipPicker } from "@/components/studio/clip-picker";
-import { clipDisplayLabel, findClipModel, uploadCostOf, type ClipOption } from "@/lib/music-modes";
+import {
+  findClipModel,
+  uploadAndRegisterClip,
+  uploadCostOf,
+  type ClipOption,
+  type UploadClipStage,
+} from "@/lib/music-modes";
 import {
   MentionPromptEditor,
   buildMentionRefs,
@@ -54,6 +60,7 @@ import {
 } from "@/components/studio/mention-prompt-editor";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";
+import { markRequiredField } from "@/lib/require-field";
 import styles from "@/app/(studio)/studio/create.module.css";
 
 /* ── constants (ported 1:1 from create.js) ───────────────────────────────── */
@@ -868,6 +875,49 @@ export default function CreateStudio() {
   }, [hist, extraClips]);
   // 原曲选择弹窗(替代下拉:Suno 同批两首同名,弹窗里能试听/看第 N 首区分)
   const [clipPickOpen, setClipPickOpen] = useState(false);
+  // 已选原曲时点「更换」→ 临时展开来源选项(本地上传 / 从资产库选取),
+  // 不清空当前选择,「取消」可退回卡片。未选原曲时来源选项常驻展示。
+  const [clipChanging, setClipChanging] = useState(false);
+  const clipFileRef = useRef<HTMLInputElement>(null);
+  // 上传登记进行中的阶段;期间触发按钮显示进度并禁止重复发起
+  const [clipUploadStage, setClipUploadStage] = useState<UploadClipStage | null>(null);
+  // 登记异步完成时读「此刻」的选中项:等待期间用户另选了原曲就不覆盖其选择
+  const sourceClipIdRef = useRef(sourceClipId);
+  useEffect(() => {
+    sourceClipIdRef.current = sourceClipId;
+  }, [sourceClipId]);
+
+  const onClipFilePicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // 同一文件再次选择也要触发 change
+    if (!file || !selModel || clipUploadStage) return;
+    const startClip = sourceClipIdRef.current;
+    setClipUploadStage("uploading");
+    try {
+      const opt = await uploadAndRegisterClip({
+        file,
+        generateModelId: selModel.modelKey || selModel.id,
+        modelRowId: selModel.id,
+        modelName: selModel.name,
+        onStage: setClipUploadStage,
+      });
+      // 无论是否自动选中都并入会话候选,保证歌单弹窗里能找到/回显
+      setExtraClips((prev) =>
+        prev.some((o) => o.clipId === opt.clipId) ? prev : [opt, ...prev]);
+      if (sourceClipIdRef.current === startClip) {
+        toast.success(`「${opt.label}」已登记为原曲`);
+        setSourceClipId(opt.clipId);
+        setSourceIsUpload(true);
+        setClipChanging(false);
+      } else {
+        toast.success(`「${opt.label}」已登记，可在原曲列表中选用`);
+      }
+    } catch (err) {
+      toast.error((err as Error)?.message || "上传登记失败，请重试");
+    } finally {
+      setClipUploadStage(null);
+    }
+  };
 
   /* full-image lightbox (click a finished result to zoom) */
   const [lightbox, setLightbox] = useState<string | null>(null);
@@ -1412,6 +1462,7 @@ export default function CreateStudio() {
     const v = prompt.trim();
     if (!v) {
       toast.info("先写一句提示词再优化 ✦");
+      markRequiredField(".ws-promptbox");
       promptRef.current?.focus();
       return;
     }
@@ -1939,14 +1990,17 @@ export default function CreateStudio() {
     const audLyrics = isAudio && !isSfx && musicMode !== "inspire" ? lyrics.trim() : "";
     if (musicCustom && !audLyrics) {
       toast.info("自定义歌词模式需先填写歌词 ✦");
+      markRequiredField("#fieldLyrics");
       return;
     }
     if (musicTask && !sourceClipId) {
       toast.info(musicTask === "extend" ? "延长模式需先选择原曲 ✦" : "翻唱模式需先选择原曲 ✦");
+      markRequiredField("#fieldSourceClip");
       return;
     }
     if (!musicTask && !p && !audLyrics) {
       toast.info(isAudio ? "先写一句音乐描述 ✦" : "先写一句提示词吧 ✦");
+      markRequiredField(".ws-promptbox");
       promptRef.current?.focus();
       return;
     }
@@ -1965,6 +2019,14 @@ export default function CreateStudio() {
       imageRefs.length > 0 || !!firstFrame || !!lastFrame || vidRefs.length > 0 || audRefs.length > 0;
     if (needsRef && !hasAnyRef) {
       toast.info(tool === "ref" ? "请先上传参考素材（图片 / 视频 / 音频）" : "请先上传参考图片");
+      markRequiredField("#dropFiles");
+      return;
+    }
+    // 首尾帧模式两帧都必填:只传其一时缺的那帧会被静默省略、上游必拒,
+    // 在这里就地拦下(画布视频节点缺尾帧是回退首帧,创作台按显式必填口径)。
+    if (tool === "flf" && (!firstFrame || !lastFrame)) {
+      toast.info(!firstFrame ? "首尾帧模式需要上传首帧 ✦" : "首尾帧模式需要上传尾帧 ✦");
+      markRequiredField("#dropFiles");
       return;
     }
     const refInput: Record<string, unknown> = {};
@@ -2762,35 +2824,128 @@ export default function CreateStudio() {
               <>
                 <div className="ws-field col" id="fieldSourceClip">
                   <label>原曲 · 必选</label>
-                  <button
-                    type="button"
-                    className="select flex w-full items-center gap-1.5 text-left"
-                    title="选择本站生成的歌，或上传本地音频（mp3 / wav）"
-                    onClick={() => setClipPickOpen(true)}
-                  >
-                    <span
-                      className="min-w-0 flex-1 truncate"
-                      style={sourceClipId ? undefined : { color: "var(--text-faint)" }}
-                    >
-                      {clipDisplayLabel(clipOptions, sourceClipId)}
-                    </span>
-                    <span aria-hidden style={{ color: "var(--text-faint)", fontSize: 10 }}>▾</span>
-                  </button>
+                  {(() => {
+                    const sel = clipOptions.find((o) => o.clipId === sourceClipId);
+                    const uploadCost = selModel
+                      ? uploadCostOf(selModel.config) || parseFloat(selModel.pointCost ?? "") || 0
+                      : 0;
+                    // 上传登记进行中:整块显示进度条态,禁交互
+                    if (clipUploadStage) {
+                      return (
+                        <div className="ws-clipcard is-busy">
+                          <span className="ws-rh-spin" aria-hidden />
+                          <span className="tx">
+                            <b>{clipUploadStage === "uploading" ? "音频上传中…" : "登记中，约需 1 分钟…"}</b>
+                            <i>完成后自动选为原曲，可先离开此页</i>
+                          </span>
+                        </div>
+                      );
+                    }
+                    // 已选且不在更换态:展示所选原曲卡片 + 更换
+                    if (sourceClipId && !clipChanging) {
+                      return (
+                        <div className="ws-clipcard">
+                          <span className="cover">
+                            {sel?.coverUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={sel.coverUrl} alt="" />
+                            ) : (
+                              <span aria-hidden>♪</span>
+                            )}
+                          </span>
+                          <span className="tx">
+                            <b className="truncate">
+                              {sel
+                                ? sel.trackCount > 1
+                                  ? `${sel.label} · 第 ${sel.trackNo} 首`
+                                  : sel.label
+                                : "历史原曲"}
+                            </b>
+                            <i className="truncate">
+                              {sel
+                                ? [
+                                    sel.modelName,
+                                    sel.duration
+                                      ? `${Math.floor(sel.duration / 60)}:${String(Math.round(sel.duration) % 60).padStart(2, "0")}`
+                                      : "",
+                                    sel.isUpload ? "上传" : "",
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" · ")
+                                : "已选择"}
+                            </i>
+                          </span>
+                          <button type="button" className="chg" onClick={() => setClipChanging(true)}>
+                            更换
+                          </button>
+                        </div>
+                      );
+                    }
+                    // 未选 / 更换态:两个来源选项内联展示(本地上传 / 从资产库选取)
+                    return (
+                      <div className="ws-clipsrc">
+                        <button
+                          type="button"
+                          className="ws-srcopt"
+                          disabled={!selModel}
+                          style={!selModel ? { opacity: 0.5, cursor: "default" } : undefined}
+                          onClick={() => clipFileRef.current?.click()}
+                        >
+                          <span className="ic">⤓</span>
+                          <span className="tx">
+                            <b>本地上传</b>
+                            <i>mp3 / wav{uploadCost ? ` · 登记一次 ${uploadCost} 积分` : ""}</i>
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          className="ws-srcopt"
+                          onClick={() => setClipPickOpen(true)}
+                        >
+                          <span className="ic">▦</span>
+                          <span className="tx">
+                            <b>从资产库选取</b>
+                            <i>选择你生成过的歌 · 可试听</i>
+                          </span>
+                        </button>
+                        {sourceClipId && (
+                          <button type="button" className="ws-clipsrc-cancel" onClick={() => setClipChanging(false)}>
+                            取消
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <ClipPicker
                     open={clipPickOpen}
-                    options={clipOptions}
+                    variant="dialog"
+                    extraOptions={extraClips}
+                    // 音效片段不可延长/翻唱,直接不进列表;模型卡匹配不上的
+                    // (已下架等)无从判定,保留展示,由 onPick 的拦截兜底
+                    filterOption={(opt) => {
+                      const src = findClipModel(studioList, opt);
+                      return !src || audioToolOf(src) !== "sfx";
+                    }}
                     current={sourceClipId}
                     onClose={() => setClipPickOpen(false)}
                     onPick={(opt) => {
+                      // 音效片段不可做原曲:选中会自动切到音效模型卡,isSfx 置真后
+                      // 整个延长/翻唱表单被隐藏,点生成会静默退化成普通音效生成。
+                      // 就地拦下,弹窗不关,让用户换选一首音乐。
+                      const src = findClipModel(studioList, opt);
+                      if (src && audioToolOf(src) === "sfx") {
+                        toast.info("音效片段不支持延长 / 翻唱，请选择一首音乐");
+                        return;
+                      }
                       setSourceClipId(opt.clipId);
                       // 上传登记的原曲延长时须发 upload_extend,来源标记随选中项走
                       setSourceIsUpload(!!opt.isUpload);
                       setClipPickOpen(false);
+                      setClipChanging(false);
                       // 刚登记完成的上传原曲还没进 hist,记入会话内附加候选供回显
                       setExtraClips((prev) =>
                         prev.some((o) => o.clipId === opt.clipId) ? prev : [opt, ...prev]);
                       // 上游把延长/翻唱任务钉到原曲的模型路由,选定原曲后自动切回原曲那张模型卡
-                      const src = findClipModel(studioList, opt);
                       if (src && src.name !== model) {
                         setModel(src.name);
                         toast.info(`已切换到原曲模型「${src.name}」`);
@@ -2798,16 +2953,6 @@ export default function CreateStudio() {
                         toast.info("原曲所用模型已下架，续写/翻唱可能失败");
                       }
                     }}
-                    // 登记完成即并入候选(可能不自动选中:用户等待期间已另选原曲)
-                    onUploaded={(opt) =>
-                      setExtraClips((prev) => (prev.some((o) => o.clipId === opt.clipId) ? prev : [opt, ...prev]))}
-                    upload={selModel ? {
-                      generateModelId: selModel.modelKey || selModel.id,
-                      modelRowId: selModel.id,
-                      modelName: selModel.name,
-                      // 登记价:模型 config.uploadCost,未配置时服务端按常规生成价扣,展示同口径
-                      cost: uploadCostOf(selModel.config) || parseFloat(selModel.pointCost ?? "") || 0,
-                    } : undefined}
                   />
                 </div>
                 {musicMode === "extend" && (
@@ -3400,6 +3545,15 @@ export default function CreateStudio() {
 
       {/* hidden input for 本地上传 */}
       <input ref={fileInputRef} type="file" multiple hidden onChange={onLocalFiles} />
+
+      {/* hidden input for 原曲本地上传(mp3/wav → 上传+登记) */}
+      <input
+        ref={clipFileRef}
+        type="file"
+        accept=".mp3,.wav,audio/mpeg,audio/wav"
+        hidden
+        onChange={onClipFilePicked}
+      />
 
       {/* 参考素材来源选择：本地上传 / 资产库（按槽类型 图片/视频/音频 适配文案） */}
       {srcMenu &&

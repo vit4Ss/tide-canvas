@@ -236,3 +236,18 @@
 [class*="immersive-translate"] {
   display: none !important;
 }
+
+/* ===== 必填项缺失反馈（lib/require-field.ts 的 markRequiredField 挂载） =====
+   提交命中空必填项时的短暂强调描边:1.6s 后由 JS 摘除。红色是功能色
+   (错误指示),不属于装饰用色;淡入淡出走 opacity,不做位移抖动。 */
+.req-miss {
+  position: relative;
+  animation: reqMissPulse 1.6s ease-out;
+}
+@keyframes reqMissPulse {
+  0%, 70% { box-shadow: 0 0 0 1.5px rgba(239, 68, 68, 0.75); }
+  100% { box-shadow: 0 0 0 1.5px rgba(239, 68, 68, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .req-miss { animation: none; box-shadow: 0 0 0 1.5px rgba(239, 68, 68, 0.75); }
+}

@@ -1963,6 +1963,15 @@ export default function ChatPage() {
                   (!draft.trim() && !musicNoDraftOk) ||
                   (selModel?.type === "text" && !!ctxUsage?.full)
                 }
+                title={
+                  busy
+                    ? "处理中…"
+                    : selModel?.type === "text" && ctxUsage?.full
+                      ? "会话上下文已满，请开启新会话"
+                      : !draft.trim() && !musicNoDraftOk
+                        ? "先输入内容"
+                        : "发送"
+                }
               >
                 ↑
               </button>

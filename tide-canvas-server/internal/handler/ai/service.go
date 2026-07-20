@@ -242,7 +242,7 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 			end := time.Now()
 			t := &model.AiTask{
 				ID: taskID, Status: statusFailed, Progress: 100,
-				ErrorMsg: "internal error during generation", UpdateTime: end, CompleteTime: &end,
+				ErrorMsg: userFacingGenErr, UpdateTime: end, CompleteTime: &end,
 			}
 			if _, err := s.repo.finalizeTask(context.Background(), t, statusProcessing); err != nil {
 				logger.L().Error("ai: finalize after panic failed", zap.String("taskId", taskID.String()), zap.Error(err))
@@ -305,7 +305,11 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 	if genErr != nil || (res.ResultURL == "" && !resultHasText(res)) {
 		task.Status = statusFailed
 		task.Progress = 100
-		task.ErrorMsg = errMessage(genErr)
+		// 用户可见的任务错误只给统一口径;原始错误(供应商响应等)记日志,
+		// admin 侧另有 ai_generation_logs 全量留档(见 writeGenLog 的 errMsg)。
+		task.ErrorMsg = userFacingGenErr
+		logger.L().Warn("ai: generation failed",
+			zap.String("taskId", taskID.String()), zap.String("detail", errMessage(genErr)))
 	} else {
 		task.Status = statusSuccess
 		task.Progress = 100
@@ -638,6 +642,11 @@ func errMessage(err error) string {
 	}
 	return err.Error()
 }
+
+// userFacingGenErr 是生成失败时下发给前端的统一文案。供应商/内部错误原文
+// (含上游 HTTP 细节、密钥路由等)一律不出站——详情进 zap 日志与
+// ai_generation_logs / model_call_log(admin 后台可查),用户侧只说系统异常。
+const userFacingGenErr = "系统异常，请联系客服"
 
 // pagination clamps page params to sane bounds and returns (offset, limit).
 func pagination(pageNum, pageSize int) (int, int) {

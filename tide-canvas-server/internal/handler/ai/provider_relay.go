@@ -239,9 +239,22 @@ func audioParams(model string, in map[string]any) relaymedia.AudioParams {
 	if v, ok := inputBool(in, "makeInstrumental", "make_instrumental"); ok {
 		extras["make_instrumental"] = v
 	}
+	input := inputStr(in, "prompt", "input")
+	// Suno 延长/翻唱允许歌词留空(由上游自由续写),但供应商校验 prompt 与
+	// gpt_description_prompt 不可同时缺席(否则 HTTP 400"can not both null")。
+	// 带 task 的引用型请求在描述与歌词都为空时补一个显式空串 prompt,
+	// 表示"有这个字段、内容留白",与网页版 Suno 的留空续写语义一致。
+	// 上传登记(task=upload)不吃这套校验,历史上无 prompt 也成功,保持原载荷。
+	if t, _ := extras["task"].(string); t != "" && t != "upload" && input == "" {
+		if _, hasLyrics := extras["lyrics"]; !hasLyrics {
+			if _, hasPrompt := extras["prompt"]; !hasPrompt {
+				extras["prompt"] = ""
+			}
+		}
+	}
 	return relaymedia.AudioParams{
 		Model:        model,
-		Input:        inputStr(in, "prompt", "input"),
+		Input:        input,
 		Voice:        inputStr(in, "voice"),
 		Instructions: inputStr(in, "instructions", "style"),
 		Extras:       extras,

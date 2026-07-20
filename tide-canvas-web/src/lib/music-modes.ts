@@ -184,11 +184,9 @@ export function clipDisplayLabel(opts: ClipOption[] | null, clipId: string): str
   return clipId ? "历史原曲" : "选择一首你生成过的歌";
 }
 
-/** 延长/翻唱的原曲候选：拉用户音频生成历史，取带 clip_id 的分轨(新→旧，按 clip
-    去重)。上游只认自己生成的歌，所以候选就是生成历史。 */
-export async function fetchClipOptions(): Promise<ClipOption[]> {
-  const res = await aiApi.listTasks({ pageNum: 1, pageSize: 100 }).catch(() => null);
-  const records = res?.success && res.data ? res.data.records : [];
+/** 音频生成任务 → 原曲候选:取带 clip_id 的分轨(顺序保持任务序,按 clip 去重)。
+    fetchClipOptions(一次 100 条)与 fetchClipOptionsPage(真分页)共用。 */
+export function clipOptionsFromTasks(records: AiTaskVO[]): ClipOption[] {
   const seen = new Set<string>();
   const out: ClipOption[] = [];
   for (const t of records) {
@@ -222,6 +220,30 @@ export async function fetchClipOptions(): Promise<ClipOption[]> {
     });
   }
   return out;
+}
+
+/** 延长/翻唱的原曲候选：拉用户音频生成历史，取带 clip_id 的分轨(新→旧，按 clip
+    去重)。上游只认自己生成的歌，所以候选就是生成历史。 */
+export async function fetchClipOptions(): Promise<ClipOption[]> {
+  const res = await aiApi.listTasks({ pageNum: 1, pageSize: 100 }).catch(() => null);
+  return clipOptionsFromTasks(res?.success && res.data ? res.data.records : []);
+}
+
+/** 原曲候选真分页(ClipPicker 自拉取模式):服务端按 handler 过滤音频任务,
+    一页 pageSize 条任务(一任务可展开成多首分轨)。歌多了也只按页取,
+    「加载更多」逐页追加。 */
+export async function fetchClipOptionsPage(
+  pageNum: number,
+  pageSize = 30,
+): Promise<{ options: ClipOption[]; hasMore: boolean }> {
+  const res = await aiApi
+    .listTasks({ pageNum, pageSize, handler: "text_to_audio" })
+    .catch(() => null);
+  if (!res?.success || !res.data) return { options: [], hasMore: false };
+  return {
+    options: clipOptionsFromTasks(res.data.records),
+    hasMore: pageNum < (res.data.pages ?? 0),
+  };
 }
 
 /** 从模型 config(后端为 JSON 字符串,studio 侧已解析为对象)读「上传登记」

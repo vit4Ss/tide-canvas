@@ -307,6 +307,50 @@ async function startGeneration({ nodeId, handler, modelId, input, gridOutput, on
     toast.error("请先输入提示词");
     return;
   }
+  // 按 handler 的必填参数统一兜底:各节点正常都做了前置校验,这里防的是
+  // 新增调用方漏写校验后裸发到后端(上游报错既贵又晚)。键名与服务端
+  // provider_relay 的取参口径一致(inputImageURLs / startEndFrames)。
+  const missingRequired = (): string | null => {
+    const has = (v: unknown) =>
+      Array.isArray(v) ? v.length > 0 : typeof v === "string" && v.trim() !== "";
+    const anyImage =
+      has(input.imageList) || has(input.image_urls) || has(input.imageUrls) ||
+      has(input.sourceImage) || has(input.imageUrl) || has(input.image_url) ||
+      has(input.references);
+    switch (handler) {
+      case "image_to_image":
+        return anyImage ? null : "图片编辑需要至少一张参考图";
+      case "image_to_video":
+        return anyImage || has(input.firstFrame) ? null : "图生视频需要一张源图片";
+      case "start_end_to_video":
+        // 尾帧服务端会回退首帧,首帧是硬必填
+        return has(input.firstFrame) || has(input.startImageUrl) || anyImage
+          ? null
+          : "首尾帧模式需要上传首帧";
+      case "reference_to_video": {
+        const anyRef =
+          anyImage ||
+          has(input.videoReferences) || has(input.video_urls) ||
+          has(input.audioReferences) || has(input.audio_urls);
+        return anyRef ? null : "参考生视频需要至少一个参考素材";
+      }
+      case "text_to_audio": {
+        const ex = (input.extras ?? {}) as Record<string, unknown>;
+        const t = typeof ex.task === "string" ? ex.task : "";
+        if (t === "extend" || t === "upload_extend")
+          return has(ex.continue_clip_id) ? null : "延长模式需先选择原曲";
+        if (t === "cover") return has(ex.cover_clip_id) ? null : "翻唱模式需先选择原曲";
+        return null;
+      }
+      default:
+        return null;
+    }
+  };
+  const missMsg = missingRequired();
+  if (missMsg) {
+    toast.error(missMsg);
+    return;
+  }
 
   track(nodeId, ""); // 占位登记:任务号未返回,先挡住双击
   const store = useCanvasStore.getState();

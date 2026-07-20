@@ -1729,7 +1729,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                     onMouseDown={stop}
                     onClick={(e) => { stop(e); handleGenerate(); }}
                     disabled={generating || !node.prompt?.trim()}
-                    title={generating ? "生成中..." : "开始生成"}
+                    title={generating ? "生成中..." : !node.prompt?.trim() ? "先输入提示词" : "开始生成"}
                     className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
                       generating || !node.prompt?.trim()
                         ? "bg-neutral-100 text-neutral-400 dark:bg-neutral-800"

@@ -238,7 +238,7 @@ export const TextNode = memo(function TextNode({
                     onMouseDown={stop}
                     onClick={(e) => { stop(e); handleGenerate(); }}
                     disabled={!canSubmit || generating}
-                    title="生成文本"
+                    title={generating ? "生成中..." : !canSubmit ? "先输入提示词" : "生成文本"}
                     className={"flex h-8 w-8 items-center justify-center rounded-full transition-colors " + (
                       canSubmit && !generating
                         ? "bg-neutral-950 text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-200"

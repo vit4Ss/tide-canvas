@@ -953,7 +953,15 @@ export const AudioNode = memo(function AudioNode({
                     onMouseDown={stop}
                     onClick={(e) => { stop(e); handleGenerate(); }}
                     disabled={!canGenerate || generating}
-                    title={generating ? "生成中..." : isMusic ? "开始生成" : "开始合成"}
+                    title={
+                      generating
+                        ? "生成中..."
+                        : !canGenerate
+                          ? (isMusic ? validateMusicParams(prompt, music) ?? "先填写必填项" : "先输入文案")
+                          : isMusic
+                            ? "开始生成"
+                            : "开始合成"
+                    }
                     className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
                       !canGenerate || generating
                         ? "bg-neutral-100 text-neutral-400 dark:bg-neutral-800"
