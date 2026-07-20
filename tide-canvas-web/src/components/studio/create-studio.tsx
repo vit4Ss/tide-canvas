@@ -60,6 +60,7 @@ import {
 } from "@/components/studio/mention-prompt-editor";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";
+import { confirmDialog } from "@/components/shared/confirm";
 import { markRequiredField } from "@/lib/require-field";
 import styles from "@/app/(studio)/studio/create.module.css";
 
@@ -2355,8 +2356,15 @@ export default function CreateStudio() {
   };
 
   // 重新生成: restore a feed run's settings to the panel and fire a fresh run.
-  const regenRun = (r: HistRun) => {
+  // 会重新扣费发起一次全新生成,先二次确认(带积分成本),避免误点白扣。
+  const regenRun = async (r: HistRun) => {
     if (busy) return;
+    const ok = await confirmDialog({
+      title: "重新生成",
+      message: "将用相同参数发起一次全新生成，并按当前模型消耗相应积分。",
+      confirmText: "重新生成",
+    });
+    if (!ok) return;
     if (r.params) {
       lastRunRef.current = r.params;
       restoreParams(r.params);
