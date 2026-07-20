@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
 import { aiApi } from "@/lib/api";
 import { AiModelType, type AiModelVO } from "@/types/ai";
@@ -88,6 +88,27 @@ export const TextNode = memo(function TextNode({
 
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
+  // 鼠标在可滚区域上滚动时，若内容可滚则滚内容、不冒泡到画布。画布平移用的是
+  // 原生冒泡 wheel 监听且会 preventDefault,先于 React 合成 onWheel 执行——
+  // React 的 onWheel stopPropagation 根本拦不住,必须在元素上挂原生 listener
+  // (同 prompt-ref-editor 的做法),否则生成的长文滚不动、滚轮只会平移画布。
+  const contentScrollRef = useRef<HTMLDivElement>(null);
+  const promptTaRef = useRef<HTMLTextAreaElement>(null);
+  const hasContent = !!node.content;
+  useEffect(() => {
+    const els: HTMLElement[] = [];
+    if (contentScrollRef.current) els.push(contentScrollRef.current);
+    if (promptTaRef.current) els.push(promptTaRef.current);
+    const bound = els.map((el) => {
+      const onWheel = (e: WheelEvent) => {
+        if (el.scrollHeight > el.clientHeight) e.stopPropagation();
+      };
+      el.addEventListener("wheel", onWheel, { passive: true });
+      return { el, onWheel };
+    });
+    return () => bound.forEach(({ el, onWheel }) => el.removeEventListener("wheel", onWheel));
+  }, [hasContent, showAuxUI]);
+
   const handleSuggestion = (value: string) => {
     if (!value) return;
     updateNode(node.id, { prompt: value }, false);
@@ -124,8 +145,8 @@ export const TextNode = memo(function TextNode({
 
           {node.content ? (
             <div
+              ref={contentScrollRef}
               className="relative h-full overflow-y-auto px-7 py-6 text-neutral-900 dark:text-neutral-100"
-              onWheel={(e) => e.stopPropagation()}
             >
               <p className="whitespace-pre-wrap break-words text-sm leading-7">{node.content}</p>
             </div>
@@ -181,6 +202,7 @@ export const TextNode = memo(function TextNode({
               style={{ width: PANEL_WIDTH, boxSizing: "border-box" }}
             >
               <textarea
+                ref={promptTaRef}
                 value={prompt}
                 onChange={(e) => updateNode(node.id, { prompt: e.target.value })}
                 onMouseDown={stop}

@@ -47,8 +47,9 @@ export function useCanvasKeyboard({ onEscape }: Options = {}) {
       if (ids.length >= 2) store.createGroup(ids);
       return;
     }
-    // Delete 删除选中节点或连接
-    if (e.key === "Delete") {
+    // Delete/Backspace 删除选中节点或连接(Mac 主键盘的删除键上报 Backspace;
+    // 输入框场景已被顶部 isEditableTarget 挡掉,不会误删)
+    if (e.key === "Delete" || e.key === "Backspace") {
       const nodeIds = Array.from(store.selectedNodeIds);
       if (nodeIds.length > 0) {
         e.preventDefault();

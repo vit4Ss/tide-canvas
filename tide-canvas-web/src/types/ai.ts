@@ -10,6 +10,9 @@ export interface AiGenerateDTO {
 export interface AiTaskVO {
   id: string; // 后端雪花 ID 序列化为字符串
   handler: string;
+  /** 生成所用模型的行 id(对应 AiModelVO.id;旧接口缓存可能缺省)。
+      延长/翻唱须发到与原曲相同的模型卡,前端据此回选原曲模型。 */
+  modelId?: string;
   modelName: string;
   status: AiTaskStatus;
   progress: number;

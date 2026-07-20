@@ -52,9 +52,11 @@ export function getRatioLabel(value: string): string {
 
 export function normalizeBatchOptions(options?: readonly number[]): number[] {
   const source = options?.length ? options : DEFAULT_IMAGE_COUNT_OPTIONS;
+  // 不设 ≤4 上限:后台可配任意档位(如 Midjourney 一组 8 张)。此前把 >4 的档位
+  // 过滤掉,下拉显示回落成「1张」而节点实际按配置张数下发计费,UI 与事实不符。
   return source
     .map((value) => Number(value))
-    .filter((value, index, values) => Number.isFinite(value) && value >= 1 && value <= 4 && values.indexOf(value) === index)
+    .filter((value, index, values) => Number.isFinite(value) && value >= 1 && values.indexOf(value) === index)
     .sort((a, b) => a - b);
 }
 

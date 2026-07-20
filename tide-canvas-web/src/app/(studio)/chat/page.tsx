@@ -49,12 +49,15 @@ import {
 } from "@/components/studio/mention-prompt-editor";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { SongCard } from "@/components/studio/audio-player-card";
+import { ClipPicker } from "@/components/studio/clip-picker";
 import {
   AUDIO_STYLES,
   DEFAULT_MUSIC_PARAMS,
   MUSIC_MODES,
   buildMusicInput,
+  clipDisplayLabel,
   fetchClipOptions,
+  findClipModel,
   isSfxModel,
   tracksFromMeta,
   validateMusicParams,
@@ -284,6 +287,8 @@ export default function ChatPage() {
   const [music, setMusic] = useState<MusicParams>(DEFAULT_MUSIC_PARAMS);
   // 延长/翻唱的原曲候选（用户生成历史里的分轨 clip）；null = 尚未拉取。
   const [clipOpts, setClipOpts] = useState<ClipOption[] | null>(null);
+  // 原曲选择弹窗(替代下拉:Suno 同批两首同名,弹窗里能试听/看第 N 首区分)
+  const [clipPickOpen, setClipPickOpen] = useState(false);
 
   // reference media (P2): attached refs + drag state. refsRef mirrors refs for
   // race-guards (upload callbacks) and unmount revoke without stale closures.
@@ -1595,28 +1600,38 @@ export default function ChatPage() {
                 {(musicMode === "extend" || musicMode === "cover") && (
                   <div className="cm-music-row">
                     <span className="cm-music-lab">原曲</span>
-                    <select
-                      className="cm-music-sel"
-                      value={music.sourceClipId}
-                      onChange={(e) => setMusic((m) => ({ ...m, sourceClipId: e.target.value }))}
+                    <button
+                      type="button"
+                      className="cm-music-sel flex items-center gap-1.5 text-left"
+                      title="上游仅支持续写/翻唱本站生成的音乐，暂不支持上传本地音频"
+                      onClick={() => setClipPickOpen(true)}
                     >
-                      <option value="">
-                        {clipOpts === null
-                          ? "加载原曲候选…"
-                          : clipOpts.length
-                            ? "选择一首你生成过的歌"
-                            : "暂无可选原曲 · 先生成一首音乐"}
-                      </option>
-                      {music.sourceClipId &&
-                        !(clipOpts ?? []).some((o) => o.clipId === music.sourceClipId) && (
-                          <option value={music.sourceClipId}>历史原曲</option>
-                        )}
-                      {(clipOpts ?? []).map((o) => (
-                        <option key={o.clipId} value={o.clipId}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
+                      <span
+                        className="min-w-0 flex-1 truncate"
+                        style={music.sourceClipId ? undefined : { color: "var(--text-faint)" }}
+                      >
+                        {clipDisplayLabel(clipOpts, music.sourceClipId)}
+                      </span>
+                      <span aria-hidden style={{ color: "var(--text-faint)", fontSize: 10 }}>▾</span>
+                    </button>
+                    <ClipPicker
+                      open={clipPickOpen}
+                      options={clipOpts}
+                      current={music.sourceClipId}
+                      onClose={() => setClipPickOpen(false)}
+                      onPick={(opt) => {
+                        setMusic((m) => ({ ...m, sourceClipId: opt.clipId }));
+                        setClipPickOpen(false);
+                        // 上游把延长/翻唱任务钉到原曲的模型路由,选定原曲后自动切回原曲那张模型卡
+                        const src = findClipModel(genModels, opt);
+                        if (src && src.name !== model) {
+                          setModel(src.name);
+                          toast.info(`已切换到原曲模型「${src.name}」`);
+                        } else if (!src && (opt.modelId || opt.modelName)) {
+                          toast.info("原曲所用模型已下架，续写/翻唱可能失败");
+                        }
+                      }}
+                    />
                     {musicMode === "extend" && (
                       <input
                         className="cm-music-in num"

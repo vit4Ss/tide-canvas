@@ -219,6 +219,9 @@ export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId,
       } else {
         toast.error(res.message || "保存失败");
       }
+    } catch {
+      // 网络异常时给出反馈,避免静默失败 + 未处理 rejection
+      toast.error("保存失败，请检查网络后重试");
     } finally {
       setCreating(false);
     }

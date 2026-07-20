@@ -298,6 +298,10 @@ export function PanoramaViewer({ src, title, onClose }: Props) {
           planetMat.dispose();
           planetTex.dispose();
           renderer.dispose();
+          // 显式释放 WebGL 上下文(与 inline-panorama/scene-3d-editor 一致):
+          // 浏览器活跃上下文上限约 16 个,反复开关查看器不 forceContextLoss
+          // 会在 GC 前触发 "Too many active WebGL contexts",后续全景/3D 黑屏
+          renderer.forceContextLoss();
           if (dom.parentNode) dom.parentNode.removeChild(dom);
         };
       } catch (e) {

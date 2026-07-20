@@ -100,6 +100,12 @@ export function useCanvasConnection({ containerRef }: Options) {
     const onUp = (e: MouseEvent) => {
       const c = connectingRef.current;
       if (!c) return;
+      // 右键/中键释放视为取消:否则拖线途中点右键会按落点提交连接或弹出
+      // 快捷新建,与同时弹出的右键菜单叠在一起
+      if (e.button !== 0) {
+        setConnecting(null);
+        return;
+      }
       if (c.hoverTargetNodeId) {
         // 落在某节点上 → 创建连接
         const store = useCanvasStore.getState();

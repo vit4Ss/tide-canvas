@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useRef } from "react";
 import type { CanvasNode } from "@/stores/use-canvas-store";
+import { nodeRenderRect } from "@/lib/canvas-helpers";
 
 interface Props {
   nodes: CanvasNode[];
@@ -41,10 +42,12 @@ export function CanvasMinimap({ nodes, transform, viewportSize, onNavigate }: Pr
 
     let minX = viewMinX, minY = viewMinY, maxX = viewMaxX, maxY = viewMaxY;
     nodes.forEach((n) => {
-      if (n.x < minX) minX = n.x;
-      if (n.y < minY) minY = n.y;
-      if (n.x + n.width > maxX) maxX = n.x + n.width;
-      if (n.y + n.height > maxY) maxY = n.y + n.height;
+      // 实际渲染矩形:名义 height 会让 9:21 竖图在小地图上只画出不到一半
+      const r = nodeRenderRect(n);
+      if (r.x < minX) minX = r.x;
+      if (r.y < minY) minY = r.y;
+      if (r.x + r.w > maxX) maxX = r.x + r.w;
+      if (r.y + r.h > maxY) maxY = r.y + r.h;
     });
 
     const pad = 200;
@@ -67,14 +70,18 @@ export function CanvasMinimap({ nodes, transform, viewportSize, onNavigate }: Pr
     [bounds]
   );
 
+  // 拖动会话用冻结的映射:每次 onNavigate 改 transform → bounds 重算 →
+  // 同一鼠标位置映射到新的世界点,视口矩形会追着光标橡皮筋式漂移抖动
+  const dragBoundsRef = useRef<typeof bounds | null>(null);
   const navigateFromEvent = useCallback(
     (e: React.MouseEvent<SVGSVGElement>) => {
       const rect = svgRef.current?.getBoundingClientRect();
       if (!rect) return;
+      const b = dragBoundsRef.current ?? bounds;
       const mx = ((e.clientX - rect.left) / rect.width) * MINI_WIDTH;
       const my = ((e.clientY - rect.top) / rect.height) * MINI_HEIGHT;
-      const wx = bounds.minX + (mx - bounds.offsetX) / bounds.scale;
-      const wy = bounds.minY + (my - bounds.offsetY) / bounds.scale;
+      const wx = b.minX + (mx - b.offsetX) / b.scale;
+      const wy = b.minY + (my - b.offsetY) / b.scale;
       onNavigate(wx, wy);
     },
     [bounds, onNavigate]
@@ -100,20 +107,21 @@ export function CanvasMinimap({ nodes, transform, viewportSize, onNavigate }: Pr
         width={MINI_WIDTH}
         height={MINI_HEIGHT}
         className="block cursor-pointer"
-        onMouseDown={(e) => { e.stopPropagation(); draggingRef.current = true; navigateFromEvent(e); }}
+        onMouseDown={(e) => { e.stopPropagation(); draggingRef.current = true; dragBoundsRef.current = bounds; navigateFromEvent(e); }}
         onMouseMove={(e) => { if (draggingRef.current) navigateFromEvent(e); }}
-        onMouseUp={() => { draggingRef.current = false; }}
-        onMouseLeave={() => { draggingRef.current = false; }}
+        onMouseUp={() => { draggingRef.current = false; dragBoundsRef.current = null; }}
+        onMouseLeave={() => { draggingRef.current = false; dragBoundsRef.current = null; }}
       >
         {nodes.map((n) => {
-          const tl = worldToMini(n.x, n.y);
+          const r = nodeRenderRect(n);
+          const tl = worldToMini(r.x, r.y);
           return (
             <rect
               key={n.id}
               x={tl.x}
               y={tl.y}
-              width={Math.max(2, n.width * bounds.scale)}
-              height={Math.max(2, n.height * bounds.scale)}
+              width={Math.max(2, r.w * bounds.scale)}
+              height={Math.max(2, r.h * bounds.scale)}
               rx={1.5}
               fill={NODE_COLORS[n.type] || "#a1a1aa"}
               opacity={0.85}

@@ -264,12 +264,14 @@ export function CanvasAssistantPanel() {
   useEffect(() => {
     if (!sessionLoadedRef.current) return;
     const normalized = normalizeStoredMessages(messages);
+    // 会话 id 的生成与 setActiveSessionId 必须在 updater 之外:React 更新函数要求纯,
+    // StrictMode 双调用时 createSessionId() 会生成两个不同 id、setState 属副作用。
+    const nextActiveSessionId = normalized.length ? activeSessionId || createSessionId() : activeSessionId;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 兜底:仅遗留无 id 会话首次触发一次
+    if (normalized.length && !activeSessionId) setActiveSessionId(nextActiveSessionId);
     setSessions((current) => {
       let next = current;
-      let nextActiveSessionId = activeSessionId;
       if (normalized.length) {
-        nextActiveSessionId = activeSessionId || createSessionId();
-        if (!activeSessionId) setActiveSessionId(nextActiveSessionId);
         const existing = current.find((session) => session.id === nextActiveSessionId);
         const now = Date.now();
         const savedSession: AssistantStoredSession = {
@@ -357,6 +359,11 @@ export function CanvasAssistantPanel() {
     };
   }, [historyOpen, modelOpen]);
 
+  // 拖宽会话的清理函数存进 ref,组件卸载时兜底执行——拖拽中途离开画布的话,
+  // window 监听与 body 的 ew-resize 光标/userSelect 会永久残留。
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => { resizeCleanupRef.current?.(); }, []);
+
   const beginResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     resizingRef.current = true;
@@ -380,7 +387,9 @@ export function CanvasAssistantPanel() {
       window.removeEventListener("pointerup", handleUp);
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
+      resizeCleanupRef.current = null;
     };
+    resizeCleanupRef.current = handleUp;
 
     document.body.style.cursor = "ew-resize";
     document.body.style.userSelect = "none";
@@ -454,8 +463,9 @@ export function CanvasAssistantPanel() {
     setUploadProgress(0);
   };
 
-  const removeAttachment = (fileUrl: string) => {
-    setAttachments((current) => current.filter((file) => file.fileUrl !== fileUrl));
+  // 按下标移除:同一文件上传两次 fileUrl 相同,按 URL 过滤会一删删两条
+  const removeAttachment = (index: number) => {
+    setAttachments((current) => current.filter((_, i) => i !== index));
   };
 
   // 轮询守卫:面板卸载(离开画布)或切换会话后停止聊天任务轮询,避免无谓请求 / 卸载后 setState。
@@ -464,7 +474,12 @@ export function CanvasAssistantPanel() {
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
-  useEffect(() => () => { assistantUnmountedRef.current = true; }, []);
+  // 挂载时复位:StrictMode 下 mount→unmount→remount,只在 cleanup 置 true
+  // 会让重挂载后的轮询被永久判为"已卸载"而全部空转退出。
+  useEffect(() => {
+    assistantUnmountedRef.current = false;
+    return () => { assistantUnmountedRef.current = true; };
+  }, []);
 
   const nextMessageId = (role: AssistantChatRole) => {
     messageSeqRef.current += 1;
@@ -485,8 +500,13 @@ export function CanvasAssistantPanel() {
       const res = await aiApi.getTask(String(taskId));
       if (assistantUnmountedRef.current || activeSessionIdRef.current !== startedSession) return;
       if (!res.success || !res.data) {
-        patchMessage(assistantId, { status: "error", content: res.message || "获取回复失败" });
-        return;
+        // 查询失败 ≠ 任务失败:断网/网关 5xx 都被 http 层归一为 success:false。
+        // 仅明确 4xx 终止;瞬时故障继续轮询,由 deadline 兜底。
+        if (res.code >= 400 && res.code < 500) {
+          patchMessage(assistantId, { status: "error", content: res.message || "获取回复失败" });
+          return;
+        }
+        continue;
       }
       const task = res.data;
       if (task.status === AiTaskStatus.SUCCESS) {
@@ -576,6 +596,8 @@ export function CanvasAssistantPanel() {
   };
 
   const handleInputKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // 中文输入法合成态:Enter 是在选拼音候选词,不是发送——不拦会把半截拼音发出去并扣积分
+    if (event.nativeEvent.isComposing) return;
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       sendMessage();
@@ -697,7 +719,7 @@ export function CanvasAssistantPanel() {
                 <Sparkles className="h-5 w-5" />
               </div>
               <h2 className="text-[28px] font-bold leading-tight tracking-normal text-neutral-950 dark:text-neutral-100">
-                <span className="text-red-500 dark:text-red-400">快来和AI小助理</span>聊天吧
+                <span className="text-red-500 dark:text-red-400">快来和 AI 小助手</span>聊天吧
               </h2>
               <ul className="mt-6 space-y-4 text-[15px] text-neutral-600 dark:text-red-200/90">
                 {SUGGESTIONS.map((item) => (
@@ -732,9 +754,9 @@ export function CanvasAssistantPanel() {
                         </div>
                         {item.attachments && item.attachments.length > 0 && (
                           <div className="mt-2 space-y-1.5">
-                            {item.attachments.map((file) => (
+                            {item.attachments.map((file, fileIndex) => (
                               <div
-                                key={file.fileUrl}
+                                key={`${file.fileUrl}-${fileIndex}`}
                                 className={(isUser ? "bg-white/12 text-white/85 dark:bg-neutral-950/8 dark:text-neutral-700" : "bg-neutral-50 text-neutral-600 dark:bg-white/6 dark:text-neutral-300") + " flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs"}
                               >
                                 <FileText className="h-3.5 w-3.5 shrink-0" />
@@ -764,9 +786,9 @@ export function CanvasAssistantPanel() {
           />
           {attachments.length > 0 && (
             <div className="mb-3 flex flex-wrap gap-2">
-              {attachments.map((file) => (
+              {attachments.map((file, index) => (
                 <div
-                  key={file.fileUrl}
+                  key={`${file.fileUrl}-${index}`}
                   className="flex max-w-full items-center gap-2 rounded-xl bg-neutral-50 px-2.5 py-2 text-xs text-neutral-700 ring-1 ring-neutral-200/70 dark:bg-white/6 dark:text-neutral-200 dark:ring-white/10"
                   title={file.originalName}
                 >
@@ -777,7 +799,7 @@ export function CanvasAssistantPanel() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => removeAttachment(file.fileUrl)}
+                    onClick={() => removeAttachment(index)}
                     className="rounded-md p-1 text-neutral-400 transition-colors hover:bg-neutral-200/70 hover:text-neutral-700 dark:hover:bg-white/10 dark:hover:text-white"
                     title="移除文件"
                   >

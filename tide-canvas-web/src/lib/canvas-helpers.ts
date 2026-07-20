@@ -25,6 +25,16 @@ export function getNodeTitle(type: string): string {
   return NODE_TYPE_TITLES[type] || type;
 }
 
+/** 节点的实际渲染矩形。图片/视频卡片按 contentW×contentH 在名义 node.width 容器内
+ *  水平居中、垂直自 node.y 起(与 connections-layer 的锚定约定一致)。
+ *  包围盒/命中测试/小地图必须用它,用名义 x/width/height 会与可见卡片错位
+ *  (竖图左偏、宽图被裁、高卡片下半截丢失)。 */
+export function nodeRenderRect(n: CanvasNode): { x: number; y: number; w: number; h: number } {
+  const w = n.contentW ?? n.width;
+  const h = n.contentH ?? n.height;
+  return { x: n.x + (n.width - w) / 2, y: n.y, w, h };
+}
+
 export function getNodeSize(type: string): { width: number; height: number } {
   return NODE_TYPE_SIZES[type] || { width: 240, height: 160 };
 }

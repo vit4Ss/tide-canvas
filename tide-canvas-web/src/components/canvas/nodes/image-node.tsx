@@ -221,8 +221,13 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const gridMenuRef = useRef<HTMLDivElement>(null);
   // 卸载守卫:异步探测/上传回调完成时若节点已卸载,不再 setState。
+  // 挂载时须重新置 true:StrictMode 会 mount→unmount→remount,只在 cleanup
+  // 置 false 会让 ref 在重挂载后永远为 false。
   const mountedRef = useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   const [uploading, setUploading] = useState(false);
   const [gridMenuOpen, setGridMenuOpen] = useState(false);
   const [splitting, setSplitting] = useState(false);
@@ -338,7 +343,10 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       .filter((c) => c.targetId === node.id)
       .map((c) => {
         const src = s.nodes.find((n) => n.id === c.sourceId);
-        return src ? src.id + "~" + (src.imageSrc || src.videoSrc || "") + "~" + (src.title || "") : "";
+        // 风格引用节点不参与参考图:其 imageSrc 是风格封面,混入会把文生图
+        // 静默变成「对着封面做图生图」,还挤乱「图片N」编号
+        if (!src || src.type === STYLE_REFERENCE_NODE_TYPE) return "";
+        return src.id + "~" + (src.imageSrc || src.videoSrc || "") + "~" + (src.title || "");
       })
       .filter(Boolean)
       .join("|")
@@ -352,7 +360,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     for (const c of st.connections) {
       if (c.targetId !== node.id) continue;
       const src = st.nodes.find((n) => n.id === c.sourceId);
-      if (!src) continue;
+      if (!src || src.type === STYLE_REFERENCE_NODE_TYPE) continue;
       out.push({ id: src.id, thumb: src.imageSrc || src.videoSrc || "", title: src.title || "", index: base + out.length + 1 });
     }
     return out;
@@ -477,7 +485,10 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         next = { ...next, quality: qualityValues[0] as QualityRatioValue["quality"] };
       }
       if (clarityValues.length && !clarityValues.includes(s.clarity)) {
-        next = { ...next, clarity: clarityValues[0] as QualityRatioValue["clarity"] };
+        // 大小写容错(后台存小写 1k/2k/4k,默认值是 "2K"):同档位仅大小写不同时
+        // 规整为配置里的原值,而不是掉到首个档位(默认 2K 被静默降成 1k)
+        const sameIgnoreCase = clarityValues.find((v) => v.toLowerCase() === s.clarity.toLowerCase());
+        next = { ...next, clarity: (sameIgnoreCase ?? clarityValues[0]) as QualityRatioValue["clarity"] };
       }
       if (ratioValues?.length && !ratioValues.includes(s.ratio)) {
         next = { ...next, ratio: ratioValues[0] };
@@ -503,7 +514,8 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       ...st.connections
         .filter((c) => c.targetId === node.id)
         .map((c) => st.nodes.find((n) => n.id === c.sourceId))
-        .filter((n): n is CanvasNode => !!n && !!(n.imageSrc || n.videoSrc)),
+        .filter((n): n is CanvasNode =>
+          !!n && n.type !== STYLE_REFERENCE_NODE_TYPE && !!(n.imageSrc || n.videoSrc)),
     ];
     for (const refNode of referenceNodes) {
       const kind = referenceKindFromMeta({ fileType: refNode.fileType, mimeType: refNode.mimeType, type: refNode.type });
@@ -549,42 +561,50 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
 
   // 全景：先 AI 生成 360° 全景扩图（新建图片节点并连线），完成后自动打开 360 查看器。
   // 比例跟随源图节点：源图钉死比例 → 当前面板选的比例 → 16:9 托底（16:9 源出 16:9、9:16 源出 9:16）。
-  const generatePanorama = useCallback(() => {
+  const generatePanorama = useCallback((reuse?: CanvasNode) => {
     if (!node.imageSrc) { toast.error("请先生成或上传图片"); return; }
     const st = useCanvasStore.getState();
-    const nid = generateNodeId();
-    const panoRatio = (isStandardRatio(node.aspectRatio) ? node.aspectRatio : null)
+    const panoRatio = (reuse && isStandardRatio(reuse.aspectRatio) ? reuse.aspectRatio : null)
+      ?? (isStandardRatio(node.aspectRatio) ? node.aspectRatio : null)
       ?? (isStandardRatio(qualityRatio.ratio) ? qualityRatio.ratio : null)
       ?? "16:9";
-    const pr = parseRatio(panoRatio);
-    const panoAspect = pr ? pr.w / pr.h : 16 / 9;
-    // 卡片尺寸与图片节点渲染规则一致：横图限宽、竖图限高
-    const { w: cw, h: ph } = fitCardSize(panoAspect, panoRatio);
-    // 放到右侧列下方，避免与已有节点堆叠
-    const targetX = node.x + cardW + 80;
-    const colNodes = st.nodes.filter((n) => {
-      const nw = n.contentW ?? n.width;
-      return n.x < targetX + cw && n.x + nw > targetX;
-    });
-    const targetY = colNodes.length
-      ? Math.max(...colNodes.map((n) => n.y + (n.contentH ?? n.height ?? 0))) + 24
-      : node.y;
-    st.addNode({
-      id: nid,
-      type: "image",
-      x: targetX,
-      y: targetY,
-      width: node.width,
-      height: ph,
-      contentW: cw,
-      contentH: ph,
-      title: "720° 全景图",
-      status: "idle",
-      is360: true,
-      aspectRatio: panoRatio,
-    }, true);
-    st.addConnection({ id: `conn_${node.id}_${nid}`, sourceId: node.id, targetId: nid }, false);
-    st.selectNode(nid);
+    let nid: string;
+    if (reuse) {
+      // 上次生成失败的全景子节点:复用重试,不再新建——否则失败几次画布上就堆几个空节点
+      nid = reuse.id;
+      st.selectNode(nid);
+    } else {
+      nid = generateNodeId();
+      const pr = parseRatio(panoRatio);
+      const panoAspect = pr ? pr.w / pr.h : 16 / 9;
+      // 卡片尺寸与图片节点渲染规则一致：横图限宽、竖图限高
+      const { w: cw, h: ph } = fitCardSize(panoAspect, panoRatio);
+      // 放到右侧列下方，避免与已有节点堆叠
+      const targetX = node.x + cardW + 80;
+      const colNodes = st.nodes.filter((n) => {
+        const nw = n.contentW ?? n.width;
+        return n.x < targetX + cw && n.x + nw > targetX;
+      });
+      const targetY = colNodes.length
+        ? Math.max(...colNodes.map((n) => n.y + (n.contentH ?? n.height ?? 0))) + 24
+        : node.y;
+      st.addNode({
+        id: nid,
+        type: "image",
+        x: targetX,
+        y: targetY,
+        width: node.width,
+        height: ph,
+        contentW: cw,
+        contentH: ph,
+        title: "720° 全景图",
+        status: "idle",
+        is360: true,
+        aspectRatio: panoRatio,
+      }, true);
+      st.addConnection({ id: `conn_${node.id}_${nid}`, sourceId: node.id, targetId: nid }, false);
+      st.selectNode(nid);
+    }
     toast.info(`正在生成 ${panoRatio} 的 360 全景图`);
     generate({
       nodeId: nid,
@@ -625,7 +645,8 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       toast.info("全景图正在生成中");
       return;
     }
-    generatePanorama();
+    // 走到这里若仍有全景子节点,说明上次生成失败(无结果也不在生成中)→ 复用重试
+    generatePanorama(existingPanorama ?? undefined);
   }, [existingPanorama, generatePanorama, node.imageSrc, node.is360, panoramaGenerating]);
 
   // 全景「当前视角截图」→ 上传 → 右侧生成一个连线图片节点
@@ -972,10 +993,15 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     const objUrl = URL.createObjectURL(file);
     setLocalPreview(objUrl);
     setImageDims(null); // 换新文件先清掉上一次的尺寸，成功后才由本次探测回填
-    // 探测原始分辨率用于头部「W × H」展示
+    // 探测原始分辨率用于头部「W × H」展示。探测用独立的 objectURL,在自身
+    // 回调里回收——共用预览 URL 的话,上传瞬间失败时 finally 的 revoke 会
+    // 抢在图片加载完成之前执行,探测报错、尺寸标签永远不出现。
     const probe = document.createElement("img");
-    probe.onload = () => { if (mountedRef.current) setImageDims({ w: probe.naturalWidth, h: probe.naturalHeight }); };
-    probe.src = objUrl;
+    const probeUrl = URL.createObjectURL(file);
+    const releaseProbe = () => { probe.onload = null; probe.onerror = null; URL.revokeObjectURL(probeUrl); };
+    probe.onload = () => { if (mountedRef.current) setImageDims({ w: probe.naturalWidth, h: probe.naturalHeight }); releaseProbe(); };
+    probe.onerror = releaseProbe;
+    probe.src = probeUrl;
     setUploadPct(0);
     setUploading(true);
     let ok = false;

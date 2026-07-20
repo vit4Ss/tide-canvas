@@ -44,11 +44,18 @@ export function CanvasQuickAddMenu({ menu, onClose, onSelect }: Props) {
 
   if (!menu) return null;
 
+  // 视口夹取:把连线拖到屏幕右缘/下缘松手时,菜单不能渲染出屏(选项点不到)。
+  // 高度按条目数估算(标题 ~28 + 每项 ~38 + padding)。
+  const MENU_W = 176;
+  const menuH = 28 + NODE_TYPES.length * 38 + 16;
+  const left = Math.max(8, Math.min(menu.clientX, window.innerWidth - MENU_W - 8));
+  const top = Math.max(8, Math.min(menu.clientY, window.innerHeight - menuH - 8));
+
   return (
     <div
       ref={ref}
       className="fixed z-50 w-44 rounded-xl border border-neutral-200 bg-white py-2 shadow-2xl dark:border-neutral-800 dark:bg-neutral-900"
-      style={{ left: menu.clientX, top: menu.clientY }}
+      style={{ left, top }}
     >
       <div className="px-3 pb-1 text-xs text-neutral-400">新建并连接</div>
       {NODE_TYPES.map((item) => (

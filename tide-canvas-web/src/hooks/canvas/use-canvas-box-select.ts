@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { useCanvasStore } from "@/stores/use-canvas-store";
+import { nodeRenderRect } from "@/lib/canvas-helpers";
 
 interface BoxSelectState {
   startWorldX: number;
@@ -48,7 +49,12 @@ export function useCanvasBoxSelect({ containerRef }: Options) {
       setBox({ ...b, currentWorldX: world.x, currentWorldY: world.y });
     };
 
-    const onUp = () => {
+    const onUp = (e: MouseEvent) => {
+      // 右键/中键释放不定格框选(否则拖框途中点右键会提前提交,还与右键菜单叠开)
+      if (e.button !== 0) {
+        setBox(null);
+        return;
+      }
       const b = boxRef.current;
       if (!b) {
         setBox(null);
@@ -63,10 +69,12 @@ export function useCanvasBoxSelect({ containerRef }: Options) {
       // 只有当框有实际大小时才选择
       if (Math.abs(maxX - minX) > 5 || Math.abs(maxY - minY) > 5) {
         const nodes = useCanvasStore.getState().nodes;
-        const inside = nodes.filter((n) =>
-          n.x + n.width >= minX && n.x <= maxX &&
-          n.y + n.height >= minY && n.y <= maxY
-        );
+        // 命中测试用实际渲染矩形:名义 x/width/height 与可见卡片错位,
+        // 框住宽图伸出左侧的可见部分选不中、框住竖图右侧的空白反而选中
+        const inside = nodes.filter((n) => {
+          const r = nodeRenderRect(n);
+          return r.x + r.w >= minX && r.x <= maxX && r.y + r.h >= minY && r.y <= maxY;
+        });
         useCanvasStore.getState().selectMany(inside.map((n) => n.id));
       }
 

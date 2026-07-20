@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-canvas-store";
+import { useCanvasStore, generateNodeId, reviveNode, type CanvasNode } from "@/stores/use-canvas-store";
 
 export function useCanvasClipboard() {
   // 选择器订阅，避免订阅整个 store 导致消费组件被无关变更频繁重渲染
@@ -13,8 +13,10 @@ export function useCanvasClipboard() {
     const node = useCanvasStore.getState().nodes.find((n) => n.id === nodeId);
     if (!node) return;
     setClipboard(node);
+    // reviveNode:克隆"生成中/上传中"的节点必须清洗瞬态状态——轮询/上传器
+    // 只指向原节点,克隆体带着 generating 会永久转圈且按钮永久禁用
     const newNode: CanvasNode = {
-      ...node,
+      ...reviveNode(node),
       id: generateNodeId(),
       x: node.x + 30,
       y: node.y + 30,
@@ -26,7 +28,7 @@ export function useCanvasClipboard() {
   const pasteNode = useCallback((worldX: number, worldY: number) => {
     if (!clipboard) return;
     const newNode: CanvasNode = {
-      ...clipboard,
+      ...reviveNode(clipboard),
       id: generateNodeId(),
       x: worldX - clipboard.width / 2,
       y: worldY - clipboard.height / 2,

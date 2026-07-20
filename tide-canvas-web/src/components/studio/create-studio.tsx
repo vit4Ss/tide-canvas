@@ -43,6 +43,8 @@ import { pointsApi } from "@/lib/points-api";
 import { AiTaskStatus } from "@/types/ai";
 import { AssetsBrowser, type PickedAsset } from "@/components/studio/assets-browser";
 import { AudioPlayerCard, SongCard } from "@/components/studio/audio-player-card";
+import { ClipPicker } from "@/components/studio/clip-picker";
+import { clipDisplayLabel, findClipModel, type ClipOption } from "@/lib/music-modes";
 import {
   MentionPromptEditor,
   buildMentionRefs,
@@ -815,18 +817,42 @@ export default function CreateStudio() {
   const [hist, setHist] = useState<HistItem[]>([]);
 
   /* 延长/翻唱的原曲候选：历史音频里带 clip_id 的分轨(新→旧,按 clip 去重)。
-     上游约束:只能引用自己生成的歌,所以候选就是用户的生成历史。 */
-  const clipOptions = useMemo(() => {
-    const seen = new Set<string>();
-    const out: { clipId: string; label: string }[] = [];
+     上游约束:只能引用自己生成的歌,所以候选就是用户的生成历史。
+     产出共享 ClipOption 形状喂给 ClipPicker 弹窗:封面/时长/日期 + 同一次
+     生成内的「第 N 首」编号(Suno 两首同名靠它与试听区分)。 */
+  const clipOptions = useMemo<ClipOption[]>(() => {
+    const runCounts = new Map<string, number>();
     for (const h of hist) {
-      if (h.type !== "audio" || !h.clipId || seen.has(h.clipId)) continue;
+      if (h.type === "audio" && h.clipId) runCounts.set(h.run, (runCounts.get(h.run) ?? 0) + 1);
+    }
+    const seen = new Set<string>();
+    const runSeen = new Map<string, number>();
+    const out: ClipOption[] = [];
+    for (const h of hist) {
+      if (h.type !== "audio" || !h.clipId) continue;
+      const trackNo = (runSeen.get(h.run) ?? 0) + 1;
+      runSeen.set(h.run, trackNo);
+      if (seen.has(h.clipId)) continue;
       seen.add(h.clipId);
       const name = h.trackTitle || h.title || h.model || "未命名";
-      out.push({ clipId: h.clipId, label: name.length > 24 ? name.slice(0, 24) + "…" : name });
+      out.push({
+        clipId: h.clipId,
+        label: name.length > 24 ? name.slice(0, 24) + "…" : name,
+        // hist 未携带模型行 id,置空走 findClipModel 的名称兜底匹配
+        modelId: "",
+        modelName: h.model || "",
+        url: h.url ?? "",
+        coverUrl: h.trackCover ?? "",
+        duration: h.trackDur ?? 0,
+        createTime: h.ts ?? "",
+        trackNo,
+        trackCount: runCounts.get(h.run) ?? 1,
+      });
     }
     return out;
   }, [hist]);
+  // 原曲选择弹窗(替代下拉:Suno 同批两首同名,弹窗里能试听/看第 N 首区分)
+  const [clipPickOpen, setClipPickOpen] = useState(false);
 
   /* full-image lightbox (click a finished result to zoom) */
   const [lightbox, setLightbox] = useState<string | null>(null);
@@ -2708,25 +2734,38 @@ export default function CreateStudio() {
               <>
                 <div className="ws-field col" id="fieldSourceClip">
                   <label>原曲 · 必选</label>
-                  <select
-                    className="select"
-                    value={sourceClipId}
-                    onChange={(e) => setSourceClipId(e.target.value)}
+                  <button
+                    type="button"
+                    className="select flex w-full items-center gap-1.5 text-left"
+                    title="上游仅支持续写/翻唱本站生成的音乐，暂不支持上传本地音频"
+                    onClick={() => setClipPickOpen(true)}
                   >
-                    <option value="">
-                      {clipOptions.length ? "选择一首你生成过的歌" : "暂无可选原曲 · 先生成一首音乐"}
-                    </option>
-                    {/* 历史恢复的 clip 不在候选时补一项，否则 select 显示占位
-                        而状态仍持有该值，提交内容与所见不符。 */}
-                    {sourceClipId && !clipOptions.some((o) => o.clipId === sourceClipId) && (
-                      <option value={sourceClipId}>原曲 {sourceClipId.slice(0, 8)}…</option>
-                    )}
-                    {clipOptions.map((o) => (
-                      <option key={o.clipId} value={o.clipId}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
+                    <span
+                      className="min-w-0 flex-1 truncate"
+                      style={sourceClipId ? undefined : { color: "var(--text-faint)" }}
+                    >
+                      {clipDisplayLabel(clipOptions, sourceClipId)}
+                    </span>
+                    <span aria-hidden style={{ color: "var(--text-faint)", fontSize: 10 }}>▾</span>
+                  </button>
+                  <ClipPicker
+                    open={clipPickOpen}
+                    options={clipOptions}
+                    current={sourceClipId}
+                    onClose={() => setClipPickOpen(false)}
+                    onPick={(opt) => {
+                      setSourceClipId(opt.clipId);
+                      setClipPickOpen(false);
+                      // 上游把延长/翻唱任务钉到原曲的模型路由,选定原曲后自动切回原曲那张模型卡
+                      const src = findClipModel(studioList, opt);
+                      if (src && src.name !== model) {
+                        setModel(src.name);
+                        toast.info(`已切换到原曲模型「${src.name}」`);
+                      } else if (!src && (opt.modelId || opt.modelName)) {
+                        toast.info("原曲所用模型已下架，续写/翻唱可能失败");
+                      }
+                    }}
+                  />
                 </div>
                 {musicMode === "extend" && (
                   <div className="ws-field col" id="fieldContinueAt">

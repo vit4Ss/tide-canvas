@@ -83,8 +83,9 @@ export function ProjectCardMenu({ project, onChanged }: Props) {
   const pickCover = async (url: string) => {
     setCoverOpen(false);
     const cv = await projectApi.getCanvas(project.id);
-    const canvasData = cv.success ? cv.data.canvasData || "{}" : "{}";
-    const res = await projectApi.saveCanvas(project.id, { canvasData, thumbnail: url });
+    // 拉取失败时绝不落盘:带着 "{}" 调 saveCanvas 会把整个画布数据抹掉
+    if (!cv.success) { toast.error("加载画布失败，封面未修改"); return; }
+    const res = await projectApi.saveCanvas(project.id, { canvasData: cv.data.canvasData || "{}", thumbnail: url });
     if (res.success) { toast.success("封面已更新"); onChanged(); } else toast.error("封面设置失败");
   };
 

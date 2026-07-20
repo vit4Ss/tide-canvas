@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Ungroup, Palette, Check } from "lucide-react";
 import { useCanvasStore, GROUP_COLORS, type CanvasGroup, type CanvasNode } from "@/stores/use-canvas-store";
+import { nodeRenderRect } from "@/lib/canvas-helpers";
 
 // 边框相对成员包围盒的内边距 / 标题栏高度（世界坐标，随画布缩放）
 const PAD = 28;
@@ -28,12 +29,13 @@ export function CanvasGroupsLayer({ groups, nodes, selectedNodeIds }: LayerProps
         if (members.length === 0) return null;
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         for (const n of members) {
-          const w = n.contentW ?? n.width;
-          const h = n.contentH ?? n.height;
-          if (n.x < minX) minX = n.x;
-          if (n.y < minY) minY = n.y;
-          if (n.x + w > maxX) maxX = n.x + w;
-          if (n.y + h > maxY) maxY = n.y + h;
+          // 用实际渲染矩形:卡片在名义宽内水平居中,以 n.x 为左缘会让
+          // 竖图边框整体左偏、宽图内容被边框切掉
+          const r = nodeRenderRect(n);
+          if (r.x < minX) minX = r.x;
+          if (r.y < minY) minY = r.y;
+          if (r.x + r.w > maxX) maxX = r.x + r.w;
+          if (r.y + r.h > maxY) maxY = r.y + r.h;
         }
         const active = g.nodeIds.every((id) => selectedNodeIds.has(id));
         return (
@@ -81,18 +83,34 @@ function CanvasGroupFrame({ group, active, left, top, width, height }: FrameProp
       .map((n) => ({ id: n.id, x: n.x, y: n.y }));
     const sx = e.clientX, sy = e.clientY;
     let moved = false, recorded = false;
-    const onMove = (ev: MouseEvent) => {
-      if (!moved && Math.abs(ev.clientX - sx) < DRAG_THRESHOLD && Math.abs(ev.clientY - sy) < DRAG_THRESHOLD) return;
-      moved = true;
-      if (!recorded) { store.pushHistory(); recorded = true; }
-      const k = useCanvasStore.getState().transform.k;
-      const dx = (ev.clientX - sx) / k, dy = (ev.clientY - sy) / k;
-      store.updateNodePositions(initials.map((i) => ({ id: i.id, x: i.x + dx, y: i.y + dy })));
-    };
-    const onUp = () => {
+    const unbind = () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
-      if (!moved) store.selectMany(group.nodeIds);
+    };
+    const onMove = (ev: MouseEvent) => {
+      const st = useCanvasStore.getState();
+      // 拖动中按 Ctrl+Z 撤销掉分组/成员后监听仍挂着:继续用过期 initials
+      // 覆写位置会让撤销"失效",此时直接终止本次拖拽
+      if (!st.groups.some((g) => g.id === group.id)
+        || !initials.every((i) => st.nodes.some((n) => n.id === i.id))) {
+        unbind();
+        return;
+      }
+      if (!moved && Math.abs(ev.clientX - sx) < DRAG_THRESHOLD && Math.abs(ev.clientY - sy) < DRAG_THRESHOLD) return;
+      moved = true;
+      if (!recorded) { st.pushHistory(); recorded = true; }
+      const k = st.transform.k;
+      const dx = (ev.clientX - sx) / k, dy = (ev.clientY - sy) / k;
+      st.updateNodePositions(initials.map((i) => ({ id: i.id, x: i.x + dx, y: i.y + dy })));
+    };
+    const onUp = (ev: MouseEvent) => {
+      if (ev.button !== 0) return; // 右键释放不结束左键拖拽
+      unbind();
+      const st = useCanvasStore.getState();
+      // 分组可能在拖动期间被撤销删除,选中前过滤仍存在的成员
+      if (!moved && st.groups.some((g) => g.id === group.id)) {
+        st.selectMany(group.nodeIds.filter((id) => st.nodes.some((n) => n.id === id)));
+      }
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);

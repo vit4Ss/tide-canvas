@@ -79,11 +79,27 @@ export function VideoParamPicker({ value, onChange, resolutions, ratios, duratio
     };
   }, [open]);
 
-  const ratioOpts = ratios ? VIDEO_RATIOS.filter((r) => ratios.includes(r.value)) : VIDEO_RATIOS;
-  // 清晰度大小写容错：后台存小写 "720p"，内置是 "720P"——用内置显示值，按不区分
-  // 大小写匹配，避免整段被过滤空（表现为"清晰度选不了"）。
+  // 后台配置的取值以配置为准,内置表仅提供显示样式:配了白名单外的值(如 "2:1"/"2K")
+  // 时不能整段过滤消失——节点校正 effect 已把参数设成该值、摘要也显示它,
+  // 选项一旦被滤掉用户就无处更改。白名单外的比例按数值推导缩略图形状。
+  const ratioOpts = ratios
+    ? ratios
+        .filter((v, i, arr) => arr.indexOf(v) === i)
+        .map((v) => {
+          const builtin = VIDEO_RATIOS.find((r) => r.value === v);
+          if (builtin) return builtin;
+          const [w, h] = v.split(":").map(Number);
+          if (!(w > 0) || !(h > 0)) return { value: v, label: v, w: 14, h: 14 };
+          const scale = 16 / Math.max(w, h);
+          return { value: v, label: v, w: Math.max(4, Math.round(w * scale)), h: Math.max(4, Math.round(h * scale)) };
+        })
+    : VIDEO_RATIOS;
+  // 清晰度大小写容错：后台存小写 "720p"，内置是 "720P"——命中内置用内置显示值,
+  // 白名单外的值(如 "2K")原样大写展示,不过滤。
   const resolutionOpts = resolutions
-    ? RESOLUTIONS.filter((r) => resolutions.some((x) => x.toLowerCase() === r.toLowerCase()))
+    ? resolutions
+        .map((x) => RESOLUTIONS.find((r) => r.toLowerCase() === x.toLowerCase()) ?? x.toUpperCase())
+        .filter((v, i, arr) => arr.indexOf(v) === i)
     : RESOLUTIONS;
   const durationOpts = normalizeDurations(durations);
   const showAudio = allowAudio !== false;

@@ -135,6 +135,45 @@ function parseMeta(meta: AiTaskVO["resultMeta"]): Record<string, unknown> {
 export interface ClipOption {
   clipId: string;
   label: string;
+  /** 原曲所用模型的行 id(AiModelVO.id;旧任务可能为空)。上游把延长/翻唱任务
+      钉到原曲的路由,发到别的模型卡可能失败——消费方据此把模型选回原曲那张。 */
+  modelId: string;
+  /** 原曲所用模型名(展示/兜底匹配用) */
+  modelName: string;
+  /** 分轨试听地址(选择器内试听区分同名歌) */
+  url: string;
+  /** Suno 歌曲封面(上游 CDN,可能为空) */
+  coverUrl: string;
+  /** 时长秒;0 = 未知 */
+  duration: number;
+  /** 所属生成任务的创建时间(ISO) */
+  createTime: string;
+  /** 同一次生成内的第几首(1 起);Suno 一次两首同名,靠它区分 */
+  trackNo: number;
+  /** 同一次生成共几首 */
+  trackCount: number;
+}
+
+/** 在可选模型里找到原曲所用的那张模型卡:行 id 精确匹配优先,行 id 失配(旧任务
+    缺字段等)时按名称兜底;都找不到(模型已下架)返回 null。
+    泛型以兼容画布(AiModelVO)与对话页(StudioModelVO)两种模型列表形状。 */
+export function findClipModel<T extends { id: string; name: string }>(
+  models: T[],
+  opt: ClipOption,
+): T | null {
+  return (
+    (opt.modelId ? models.find((m) => m.id === opt.modelId) : undefined) ??
+    (opt.modelName ? models.find((m) => m.name === opt.modelName) : undefined) ??
+    null
+  );
+}
+
+/** 原曲触发按钮的展示标签:同批多首附「第 N 首」;历史选中项不在候选里
+    (超出分页/已删)回显「历史原曲」;未选为占位文案。 */
+export function clipDisplayLabel(opts: ClipOption[] | null, clipId: string): string {
+  const sel = (opts ?? []).find((o) => o.clipId === clipId);
+  if (sel) return sel.trackCount > 1 ? `${sel.label} · 第 ${sel.trackNo} 首` : sel.label;
+  return clipId ? "历史原曲" : "选择一首你生成过的歌";
 }
 
 /** 延长/翻唱的原曲候选：拉用户音频生成历史，取带 clip_id 的分轨(新→旧，按 clip
@@ -147,12 +186,26 @@ export async function fetchClipOptions(): Promise<ClipOption[]> {
   for (const t of records) {
     if (t.handler !== "text_to_audio") continue;
     const meta = parseMeta(t.resultMeta);
-    for (const tr of tracksFromMeta(meta)) {
-      if (!tr.clipId || seen.has(tr.clipId)) continue;
+    const tracks = tracksFromMeta(meta);
+    tracks.forEach((tr, i) => {
+      if (!tr.clipId || seen.has(tr.clipId)) return;
       seen.add(tr.clipId);
       const name = tr.title || t.modelName || "未命名";
-      out.push({ clipId: tr.clipId, label: name.length > 24 ? name.slice(0, 24) + "…" : name });
-    }
+      out.push({
+        clipId: tr.clipId,
+        label: name.length > 24 ? name.slice(0, 24) + "…" : name,
+        // idgen 把零值序列化成 "0"(旧任务无模型关联):归一为空,
+        // 避免按 "0" 匹配失败后误报「模型已下架」
+        modelId: t.modelId && t.modelId !== "0" ? t.modelId : "",
+        modelName: t.modelName || "",
+        url: tr.url,
+        coverUrl: tr.coverUrl,
+        duration: tr.duration,
+        createTime: t.createTime || "",
+        trackNo: i + 1,
+        trackCount: tracks.length,
+      });
+    });
   }
   return out;
 }

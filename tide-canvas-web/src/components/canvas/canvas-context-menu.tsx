@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   AlignLeft, ImageIcon, Video, Layers, AudioLines, Clapperboard,
   Upload as UploadIcon, History,
@@ -90,6 +90,17 @@ export function CanvasContextMenu({
     }
   }, [menu, onClose]);
 
+  // 视口夹取:靠屏幕右缘/下缘右键时菜单不能渲染出屏(下方选项点不到)。
+  // 菜单高度随视图/类型变化,先隐藏渲染、绘制前实测尺寸后直写定位——
+  // useLayoutEffect 在绘制前执行不闪帧,直接改 DOM 避免多一轮 setState 渲染。
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!menu || !el) return;
+    el.style.left = `${Math.max(8, Math.min(menu.x, window.innerWidth - el.offsetWidth - 8))}px`;
+    el.style.top = `${Math.max(8, Math.min(menu.y, window.innerHeight - el.offsetHeight - 8))}px`;
+    el.style.visibility = "visible";
+  }, [menu, view]);
+
   if (!menu) return null;
 
   const handleAddNode = (type: string) => {
@@ -104,7 +115,7 @@ export function CanvasContextMenu({
     <div
       ref={menuRef}
       className="fixed z-50 w-64 rounded-2xl border border-neutral-200 bg-white py-2.5 shadow-2xl dark:border-neutral-800 dark:bg-neutral-900"
-      style={{ left: menu.x, top: menu.y }}
+      style={{ left: menu.x, top: menu.y, visibility: "hidden" }}
     >
       {menu.type === "canvas" ? (
         view === "nodes" ? (
@@ -155,7 +166,9 @@ export function CanvasContextMenu({
             <button onClick={() => { onUpload?.(); onClose(); }} className={`${itemClass} font-medium`}>
               <span>上传</span>
             </button>
-            <button className={disabledClass}>
+            {/* 画布空白处没有可保存的媒体,真禁用(此前无 disabled 属性,点击无反应
+                菜单也不关,键盘焦点还能落上去,像坏掉的按钮) */}
+            <button disabled className={disabledClass}>
               <span>保存到我的素材</span>
             </button>
             <button onClick={() => setView("nodes")} className={`${itemClass} font-medium`}>

@@ -31,9 +31,16 @@ export function CanvasHistoryPanel({ open, onClose }: Props) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const aliveRef = useRef(true);
-  useEffect(() => () => { aliveRef.current = false; }, []);
+  // 挂载时必须重新置 true:StrictMode 会 mount→unmount→remount,只在 cleanup
+  // 置 false 的话重挂载后 ref 永远为 false,面板卡在 loading。
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => { aliveRef.current = false; };
+  }, []);
 
   const load = useCallback(async () => {
+    // projectId 未就绪时不带过滤条件查询会拉到全部项目的记录,与「本画布」标题矛盾
+    if (!projectId) return;
     try {
       const [tRes, lRes] = await Promise.all([
         aiApi.listTasks({ pageNum: 1, pageSize: 50, status: AiTaskStatus.PROCESSING, ...(projectId ? { projectId } : {}) }),

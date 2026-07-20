@@ -57,8 +57,10 @@ export function MyAssetsPanel({ open, onClose, onPick, refreshKey }: Props) {
       const res = await fileApi.list({ pageNum: 1, pageSize: 60, ...(tab ? { fileType: tab as FileType } : {}) });
       if (id !== reqIdRef.current) return; // 已有更新的请求,丢弃本次过期响应
       if (res.success && res.data) setFiles(res.data.records);
+      else toast.error(res.message || "素材加载失败");
     } catch {
-      // 拉取失败:忽略,不抛未处理 rejection
+      // 不抛未处理 rejection,但要让用户知道失败了(否则错误分类的旧列表会一直挂着)
+      if (id === reqIdRef.current) toast.error("素材加载失败，请稍后重试");
     } finally {
       if (id === reqIdRef.current) setLoaded(true);
     }
@@ -88,7 +90,13 @@ export function MyAssetsPanel({ open, onClose, onPick, refreshKey }: Props) {
         {TABS.map((t) => (
           <button
             key={t.key}
-            onClick={() => setTab(t.key)}
+            onClick={() => {
+              if (t.key === tab) return;
+              // 切分类先清列表回 loading:否则新分类请求返回前一直展示上一分类的内容
+              setTab(t.key);
+              setFiles([]);
+              setLoaded(false);
+            }}
             className={`rounded-lg px-3 py-1 text-xs transition-colors ${
               tab === t.key
                 ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"

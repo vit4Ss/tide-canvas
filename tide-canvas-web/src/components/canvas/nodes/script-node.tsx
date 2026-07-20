@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback } from "react";
+import { memo, useCallback, useEffect, useRef } from "react";
 import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
 import { Clapperboard } from "lucide-react";
 import { NodeHeader } from "./base/node-header";
@@ -25,6 +25,19 @@ export const ScriptNode = memo(function ScriptNode({ node, isSelected, isDraggin
 
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
+  // 画布平移用原生冒泡 wheel 监听且 preventDefault,先于 React 合成 onWheel;
+  // 必须挂原生 listener(同 prompt-ref-editor),否则长剧本滚不动、滚轮只平移画布。
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const el = taRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (el.scrollHeight > el.clientHeight) e.stopPropagation();
+    };
+    el.addEventListener("wheel", onWheel, { passive: true });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
   return (
     <div
       data-node-id={node.id}
@@ -43,6 +56,7 @@ export const ScriptNode = memo(function ScriptNode({ node, isSelected, isDraggin
           style={{ minHeight: 200 }}
         >
           <textarea
+            ref={taRef}
             value={node.prompt || ""}
             onChange={(e) => updateNode(node.id, { prompt: e.target.value })}
             onMouseDown={stop}

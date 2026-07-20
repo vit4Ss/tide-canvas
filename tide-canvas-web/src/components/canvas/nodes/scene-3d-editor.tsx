@@ -180,7 +180,17 @@ export function Scene3DEditor({ node, onClose }: Props) {
           if (!disposed) toast.info("人物模型加载失败，已回退为基础木偶");
         }
         const mount = mountRef.current;
-        if (disposed || !mount) return;
+        if (disposed || !mount) {
+          // GLTF 加载期间编辑器已被关闭:这条早退路径走不到 cleanup,
+          // 模板的几何/材质必须就地释放,否则快开快关一次泄漏一份
+          xbotAsset?.scene.traverse((obj) => {
+            const mesh = obj as THREE_NS.Mesh;
+            if (mesh.geometry) mesh.geometry.dispose();
+            const mats = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
+            mats.forEach((m) => m.dispose());
+          });
+          return;
+        }
 
         const w = mount.clientWidth || 1, h = mount.clientHeight || 1;
         const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });

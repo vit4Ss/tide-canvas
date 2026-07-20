@@ -189,8 +189,13 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   const objUrlRef = useRef<string | null>(null);
   const resolvingRef = useRef(false);
   // 卸载守卫:异步探测/上传回调完成时若节点已卸载,不再 setState。
+  // 挂载时须重新置 true:StrictMode 会 mount→unmount→remount,只在 cleanup
+  // 置 false 会让 ref 在重挂载后永远为 false。
   const mountedRef = useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   const { generate, isGenerating } = useAiGeneration();
   const generating = isGenerating(node.id) || node.status === "generating";
   const nodeUploading = uploading || node.uploading === true;
@@ -326,7 +331,10 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     if (hovering && resolved && videoRef.current) playVideo(videoRef.current);
   }, [hovering, resolved, srcToUse]);
 
-  // 当前模式因连接变化而不再满足条件时，回退到「文生视频」
+  // 当前模式因连接变化而不再满足条件时，回退到无连接要求的模式。
+  // 回退目标必须在 visibleTabs 内:否则与下面「模式不被模型支持 → 回退」的
+  // effect 互相打架(A 设「文生视频」→ B 发现不可见设回 → A 再设……),
+  // 在仅支持 i2v 的模型 + 无连接素材时会进入 setState 死循环卡死页面。
   useEffect(() => {
     const lim = TAB_LIMITS[videoTab];
     if (!lim) return;
@@ -334,9 +342,13 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     if (lim.types.includes("image")) m += imgCount;
     if (lim.types.includes("video")) m += vidCount;
     if (m < lim.min || m > lim.max) {
-      setVideoTab("文生视频");
+      const fallback = visibleTabs.find((t) => !TAB_LIMITS[t]);
+      // 该模型没有任何无门槛模式时保持现状,仅靠发送按钮禁用挡住提交
+      if (fallback && fallback !== videoTab) setVideoTab(fallback);
     }
-  }, [imgCount, vidCount, videoTab]);
+    // visibleTabs 由 selectedModelId 派生(数组引用每次渲染变化),不列入依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imgCount, vidCount, videoTab, selectedModelId]);
 
   // 切换模型后当前模式不被该模型支持 → 回退到其第一个可用模式
   useEffect(() => {
@@ -438,11 +450,16 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     const objUrl = URL.createObjectURL(file);
     setLocalPreview(objUrl);
     setVideoDims(null); // 换新文件先清掉上一次的尺寸，成功后才由本次探测回填
-    // 探测原始分辨率用于头部「W × H」展示
+    // 探测原始分辨率用于头部「W × H」展示。探测用独立的 objectURL,在自身
+    // 回调里回收——共用预览 URL 的话,上传瞬间失败时 finally 的 revoke 会
+    // 抢在 metadata 加载完成之前执行,探测报错、尺寸标签永远不出现。
     const probe = document.createElement("video");
     probe.preload = "metadata";
-    probe.onloadedmetadata = () => { if (mountedRef.current) setVideoDims({ w: probe.videoWidth, h: probe.videoHeight }); };
-    probe.src = objUrl;
+    const probeUrl = URL.createObjectURL(file);
+    const releaseProbe = () => { probe.onloadedmetadata = null; probe.onerror = null; URL.revokeObjectURL(probeUrl); };
+    probe.onloadedmetadata = () => { if (mountedRef.current) setVideoDims({ w: probe.videoWidth, h: probe.videoHeight }); releaseProbe(); };
+    probe.onerror = releaseProbe;
+    probe.src = probeUrl;
     setUploadPct(0);
     setUploading(true);
     let ok = false;
@@ -470,11 +487,19 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   const ensureResolved = useCallback(async () => {
     if (resolved || resolvingRef.current || !node.videoSrc) return;
     resolvingRef.current = true;
-    const blobUrl = await fetchAndCacheVideo(node.videoSrc);
+    const requestedSrc = node.videoSrc;
+    const blobUrl = await fetchAndCacheVideo(requestedSrc);
+    resolvingRef.current = false;
+    // 竞态守卫:下载期间节点换源(重新生成)或已卸载,旧结果不能落地——
+    // 否则节点从此播放旧视频(resolved 已置位,新源永不解析),blob 也永不回收
+    const currentSrc = useCanvasStore.getState().nodes.find((n) => n.id === node.id)?.videoSrc;
+    if (!mountedRef.current || currentSrc !== requestedSrc) {
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      return;
+    }
     if (blobUrl) { objUrlRef.current = blobUrl; setSrcToUse(blobUrl); setResolved("blob"); }
     else setResolved("native");
-    resolvingRef.current = false;
-  }, [resolved, node.videoSrc]);
+  }, [resolved, node.videoSrc, node.id]);
 
   // hover 自动播放（优先带声；被自动播放策略拦截则静音重试），离开暂停
   const handleVidEnter = useCallback(() => {
@@ -648,7 +673,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       input = { ...base, references: imageUrls, videoReferences: videoUrls };
     }
 
-    // 非破坏性「重新发送」：本节点已出过结果或失败过 → 克隆一摸一样的新节点（同提示词、同入边参考、同画幅），
+    // 非破坏性「重新发送」：本节点已出过结果或失败过 → 克隆一模一样的新节点（同提示词、同入边参考、同画幅），
     // 在新节点生成新视频，原节点结果原样保留；首次生成则原地进行。
     let targetNodeId = node.id;
     const isRegen = !!node.videoSrc || node.status === "error";

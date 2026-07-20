@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { useCanvasStore } from "@/stores/use-canvas-store";
+import { nodeRenderRect } from "@/lib/canvas-helpers";
 
 interface UsePanZoomOptions {
   containerRef: RefObject<HTMLDivElement | null>;
@@ -12,7 +13,6 @@ export function useCanvasPanZoom({ containerRef }: UsePanZoomOptions) {
   const transform = useCanvasStore((s) => s.transform);
   const setTransform = useCanvasStore((s) => s.setTransform);
   const [isPanning, setIsPanning] = useState(false);
-  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
 
   // 用 ref 持有最新 transform，避免 effect 重绑事件 / 回调因 transform 变化频繁重建
   const transformRef = useRef(transform);
@@ -61,23 +61,39 @@ export function useCanvasPanZoom({ containerRef }: UsePanZoomOptions) {
     return () => el.removeEventListener("wheel", onWheel);
   }, [containerRef, setTransform]);
 
+  // 平移会话的清理函数:组件卸载时兜底解绑(拖拽中途离开画布不残留监听)
+  const panCleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => { panCleanupRef.current?.(); }, []);
+
+  // 平移改用 window 级监听:底部工具坞/小地图/助手面板都是画布容器的兄弟浮层,
+  // 靠 container 的 mousemove + onMouseLeave 兜底的话,指针一扫过浮层或冲出
+  // 窗口就触发 mouseleave → 平移半路被丢(框选/连线早已用 window 监听,对齐)。
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
-    if (target === containerRef.current || target.dataset.canvas) {
-      if (e.button === 0 || e.button === 1) {
-        setIsPanning(true);
-        setPanStart({ x: e.clientX - transform.x, y: e.clientY - transform.y });
-      }
-    }
-  }, [containerRef, transform]);
+    if (!(target === containerRef.current || target.dataset.canvas)) return;
+    if (e.button !== 0 && e.button !== 1) return;
+    if (e.button === 1) e.preventDefault(); // 阻止中键默认的自动滚动图标
+    const button = e.button;
+    const start = { x: e.clientX - transformRef.current.x, y: e.clientY - transformRef.current.y };
+    setIsPanning(true);
 
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (isPanning) {
-      setTransform({ ...transform, x: e.clientX - panStart.x, y: e.clientY - panStart.y });
-    }
-  }, [isPanning, panStart, transform, setTransform]);
-
-  const handleMouseUp = useCallback(() => setIsPanning(false), []);
+    const onMove = (ev: MouseEvent) => {
+      setTransform({ ...transformRef.current, x: ev.clientX - start.x, y: ev.clientY - start.y });
+    };
+    const cleanup = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      setIsPanning(false);
+      panCleanupRef.current = null;
+    };
+    const onUp = (ev: MouseEvent) => {
+      if (ev.button !== button) return; // 只有发起平移的那个键释放才结束
+      cleanup();
+    };
+    panCleanupRef.current = cleanup;
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [containerRef, setTransform]);
 
   const zoomAtCenter = useCallback((factor: number) => {
     const rect = containerRef.current?.getBoundingClientRect();
@@ -107,10 +123,12 @@ export function useCanvasPanZoom({ containerRef }: UsePanZoomOptions) {
     }
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     nodes.forEach((n) => {
-      minX = Math.min(minX, n.x);
-      minY = Math.min(minY, n.y);
-      maxX = Math.max(maxX, n.x + n.width);
-      maxY = Math.max(maxY, n.y + n.height);
+      // 实际渲染矩形:名义 height 会让「适应视图」把高卡片的下半截裁出视口
+      const r = nodeRenderRect(n);
+      minX = Math.min(minX, r.x);
+      minY = Math.min(minY, r.y);
+      maxX = Math.max(maxX, r.x + r.w);
+      maxY = Math.max(maxY, r.y + r.h);
     });
     const contentW = Math.max(1, maxX - minX);
     const contentH = Math.max(1, maxY - minY);
@@ -137,7 +155,7 @@ export function useCanvasPanZoom({ containerRef }: UsePanZoomOptions) {
   return {
     transform, isPanning,
     screenToWorld,
-    handleMouseDown, handleMouseMove, handleMouseUp,
+    handleMouseDown,
     zoomIn, zoomOut, zoomReset, fitView, centerOn,
   };
 }

@@ -70,10 +70,15 @@ function okTone(success: number): PillTone {
   return success === 1 ? "green" : "red";
 }
 
-/** Shorten a long body for a table cell; full text shows in the 详情 drawer. */
-function clip(s: string, n = 80): string {
-  if (!s) return "—";
-  return s.length > n ? s.slice(0, n) + "…" : s;
+/** 长串单元格(路径/信息/摘要等):CSS 单行截断,悬停 title 看全文。
+ *  固定表布局下无空格长串会溢进相邻列,不能靠字符数 clip。 */
+function Trunc({ text }: { text: string }) {
+  if (!text) return <>—</>;
+  return (
+    <span className="truncate" title={text}>
+      {text}
+    </span>
+  );
 }
 
 /** Pretty-print a JSON string; leave non-JSON untouched. */
@@ -275,6 +280,7 @@ function LogTable<T extends { id: string }>({
       {
         header: "操作",
         align: "right",
+        width: 96,
         cell: (r) => (
           <RowActions actions={[{ label: "详情", onClick: () => setDetailRow(r) }]} />
         ),
@@ -394,6 +400,8 @@ function fmtLogTime(s: string): string {
 const timeCol = <T extends { createTime: string }>(): Column<T> => ({
   header: "时间",
   className: "mono muted",
+  /* 190 = 19 字符等宽时间串(≈143px) + 两侧 18px 内边距(border-box),再窄会折行 */
+  width: 190,
   cell: (r) => fmtLogTime(r.createTime),
 });
 
@@ -412,8 +420,8 @@ function SystemTab() {
       timeCol<LogVO>(),
       { header: "级别", cell: (l) => <StatusPill tone={l.level === "ERROR" ? "red" : l.level === "WARN" ? "amber" : l.level === "SECURITY" ? "blue" : "gray"}>{l.level || "—"}</StatusPill> },
       { header: "模块", className: "mono", cell: (l) => l.module || "—" },
-      { header: "信息", className: "strong", cell: (l) => clip(l.message, 60) },
-      { header: "IP", className: "mono muted", cell: (l) => l.ip || "—" },
+      { header: "信息", className: "strong", cell: (l) => <Trunc text={l.message} /> },
+      { header: "IP", className: "mono muted", cell: (l) => <Trunc text={l.ip} /> },
       { header: "操作人", cell: (l) => l.operator || "—" },
     ],
     [],
@@ -451,12 +459,12 @@ function AccessTab() {
   const columns: Column<AccessLogVO>[] = useMemo(
     () => [
       timeCol<AccessLogVO>(),
-      { header: "用户", className: "mono muted", cell: (l) => userCell(l.userId, l.username) },
-      { header: "方法", className: "mono", cell: (l) => l.method },
-      { header: "路径", className: "mono strong", cell: (l) => clip(l.path, 48) },
-      { header: "状态", cell: (l) => <StatusPill tone={statusTone(l.status)}>{l.status}</StatusPill> },
-      { header: "耗时", className: "mono muted", cell: (l) => `${l.latencyMs}ms` },
-      { header: "IP", className: "mono muted", cell: (l) => l.ip || "—" },
+      { header: "用户", className: "mono muted", width: 120, cell: (l) => <Trunc text={userCell(l.userId, l.username)} /> },
+      { header: "方法", className: "mono", width: 80, cell: (l) => l.method },
+      { header: "路径", className: "mono strong", cell: (l) => <Trunc text={l.path} /> },
+      { header: "状态", width: 88, cell: (l) => <StatusPill tone={statusTone(l.status)}>{l.status}</StatusPill> },
+      { header: "耗时", className: "mono muted", width: 84, cell: (l) => `${l.latencyMs}ms` },
+      { header: "IP", className: "mono muted", width: 140, cell: (l) => <Trunc text={l.ip} /> },
     ],
     [],
   );
@@ -494,12 +502,12 @@ function LoginTab() {
   const columns: Column<LoginLogVO>[] = useMemo(
     () => [
       timeCol<LoginLogVO>(),
-      { header: "账号", className: "strong", cell: (l) => l.account || "—" },
+      { header: "账号", className: "strong", cell: (l) => <Trunc text={l.account} /> },
       { header: "动作", className: "mono", cell: (l) => l.action },
       { header: "渠道", className: "mono muted", cell: (l) => l.channel || "—" },
       { header: "结果", cell: (l) => <StatusPill tone={okTone(l.success)}>{l.success === 1 ? "成功" : "失败"}</StatusPill> },
-      { header: "原因", className: "muted", cell: (l) => clip(l.failReason, 32) },
-      { header: "IP", className: "mono muted", cell: (l) => l.ip || "—" },
+      { header: "原因", className: "muted", cell: (l) => <Trunc text={l.failReason} /> },
+      { header: "IP", className: "mono muted", cell: (l) => <Trunc text={l.ip} /> },
     ],
     [],
   );
@@ -538,12 +546,12 @@ function BizTab() {
   const columns: Column<BizLogVO>[] = useMemo(
     () => [
       timeCol<BizLogVO>(),
-      { header: "用户", className: "mono muted", cell: (l) => userCell(l.userId, l.username) },
+      { header: "用户", className: "mono muted", cell: (l) => <Trunc text={userCell(l.userId, l.username)} /> },
       { header: "动作", className: "mono", cell: (l) => l.action },
-      { header: "摘要", className: "strong", cell: (l) => clip(l.summary, 40) },
+      { header: "摘要", className: "strong", cell: (l) => <Trunc text={l.summary} /> },
       { header: "金额", className: "mono", cell: (l) => (Number(l.amount) > 0 ? `¥${l.amount}` : "—") },
       { header: "积分", className: "mono", cell: (l) => (l.points ? (l.points > 0 ? `+${l.points}` : String(l.points)) : "—") },
-      { header: "操作人", className: "mono muted", cell: (l) => (l.operatorId === "0" ? "系统" : l.operatorId) },
+      { header: "操作人", className: "mono muted", cell: (l) => <Trunc text={l.operatorId === "0" ? "系统" : l.operatorId} /> },
     ],
     [],
   );
@@ -579,9 +587,9 @@ function ModelTab() {
   const columns: Column<ModelCallLogVO>[] = useMemo(
     () => [
       timeCol<ModelCallLogVO>(),
-      { header: "用户", className: "mono muted", cell: (l) => userCell(l.userId, l.username) },
+      { header: "用户", className: "mono muted", cell: (l) => <Trunc text={userCell(l.userId, l.username)} /> },
       { header: "场景", cell: (l) => <StatusPill tone="blue">{l.scene}</StatusPill> },
-      { header: "模型", className: "mono strong", cell: (l) => l.model || "—" },
+      { header: "模型", className: "mono strong", cell: (l) => <Trunc text={l.model} /> },
       { header: "结果", cell: (l) => <StatusPill tone={okTone(l.success)}>{l.success === 1 ? "成功" : "失败"}</StatusPill> },
       { header: "耗时", className: "mono muted", cell: (l) => `${l.durationMs}ms` },
       { header: "消耗", className: "mono", cell: (l) => (Number(l.cost) > 0 ? l.cost : "—") },

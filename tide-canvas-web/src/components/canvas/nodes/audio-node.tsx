@@ -5,6 +5,7 @@ import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
 import {
   ArrowUp,
   AudioLines,
+  ChevronDown,
   Loader2,
   Mic2,
   Music2,
@@ -20,9 +21,11 @@ import {
   DEFAULT_MUSIC_PARAMS,
   MUSIC_MODES,
   buildMusicInput,
+  clipDisplayLabel,
   fetchClipOptions,
   isSfxModel,
   validateMusicParams,
+  findClipModel,
   type ClipOption,
   type MusicParams,
 } from "@/lib/music-modes";
@@ -32,6 +35,7 @@ import { NodeHeader } from "./base/node-header";
 import { NodePorts } from "./base/node-ports";
 import { NodeChrome } from "./base/node-chrome";
 import { ModelPicker } from "./model-picker";
+import { ClipPicker } from "@/components/studio/clip-picker";
 
 interface Props {
   node: CanvasNode;
@@ -388,6 +392,8 @@ export const AudioNode = memo(function AudioNode({
   const [music, setMusic] = useState<MusicParams>(DEFAULT_MUSIC_PARAMS);
   // 延长/翻唱的原曲候选（生成历史分轨）；null = 尚未拉取。
   const [clipOpts, setClipOpts] = useState<ClipOption[] | null>(null);
+  // 原曲选择弹窗(替代下拉:Suno 同批两首同名,弹窗里能试听/看第 N 首区分)
+  const [clipPickerOpen, setClipPickerOpen] = useState(false);
   // 分轨播放：Suno 一次两首，节点内切换（0 = 主歌）。
   const [trackIdx, setTrackIdx] = useState(0);
 
@@ -433,6 +439,21 @@ export const AudioNode = memo(function AudioNode({
     };
   }, [isMusic, musicMode]);
 
+  const clipLabel = clipDisplayLabel(clipOpts, music.sourceClipId);
+
+  const handlePickClip = useCallback((opt: ClipOption) => {
+    setMusic((m) => ({ ...m, sourceClipId: opt.clipId }));
+    setClipPickerOpen(false);
+    // 上游把延长/翻唱任务钉到原曲的模型路由,选定原曲后自动切回原曲那张模型卡
+    const src = findClipModel(models, opt);
+    if (src && src.modelId !== modelId) {
+      setModelId(src.modelId);
+      toast.info(`已切换到原曲模型「${src.name}」`);
+    } else if (!src && (opt.modelId || opt.modelName)) {
+      toast.info("原曲所用模型已下架，续写/翻唱可能失败");
+    }
+  }, [models, modelId]);
+
   const effectiveVoice = voice || voices[0]?.id || "";
   const cost = applyTeamFactor(Number(selectedModel?.pointCost ?? 10), user);
   const rawPrompt = node.prompt || "";
@@ -465,7 +486,10 @@ export const AudioNode = memo(function AudioNode({
     e.stopPropagation();
   };
 
-  const updatePrompt = useCallback((next: string, commit = true) => {
+  // commit 默认 false:该函数是提示词输入框的 onChange,每次键入都记历史会把
+  // 撤销栈灌满打字快照(Ctrl+Z 一次退一个字符、redo 被任何键入清空),与其它
+  // 节点的 prompt 更新口径一致(updateNode 默认不记历史)。
+  const updatePrompt = useCallback((next: string, commit = false) => {
     updateNode(node.id, { prompt: next.slice(0, MAX_TEXT) }, commit);
   }, [node.id, updateNode]);
 
@@ -699,29 +723,21 @@ export const AudioNode = memo(function AudioNode({
 
                   {(musicMode === "extend" || musicMode === "cover") && (
                     <div className="flex items-center gap-2">
-                      <select
-                        value={music.sourceClipId}
+                      <button
+                        type="button"
+                        title="上游仅支持续写/翻唱本站生成的音乐，暂不支持上传本地音频"
                         onMouseDown={stop}
-                        onChange={(e) => setMusic((m) => ({ ...m, sourceClipId: e.target.value }))}
-                        className="h-8 min-w-0 flex-1 cursor-pointer rounded-md border border-neutral-200 bg-white px-2 text-xs text-neutral-900 outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100"
+                        onClick={(e) => {
+                          stop(e);
+                          setClipPickerOpen(true);
+                        }}
+                        className="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-neutral-200 bg-white px-2 text-left text-xs text-neutral-900 outline-none transition-colors hover:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100 dark:hover:border-neutral-600"
                       >
-                        <option value="">
-                          {clipOpts === null
-                            ? "加载原曲候选…"
-                            : clipOpts.length
-                              ? "选择一首你生成过的歌"
-                              : "暂无可选原曲 · 先生成一首音乐"}
-                        </option>
-                        {music.sourceClipId &&
-                          !(clipOpts ?? []).some((o) => o.clipId === music.sourceClipId) && (
-                            <option value={music.sourceClipId}>历史原曲</option>
-                          )}
-                        {(clipOpts ?? []).map((o) => (
-                          <option key={o.clipId} value={o.clipId}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
+                        <span className={`min-w-0 flex-1 truncate ${music.sourceClipId ? "" : "text-neutral-400"}`}>
+                          {clipLabel}
+                        </span>
+                        <ChevronDown className="h-3 w-3 shrink-0 text-neutral-400" />
+                      </button>
                       {musicMode === "extend" && (
                         <input
                           value={music.continueAt}
@@ -734,6 +750,14 @@ export const AudioNode = memo(function AudioNode({
                       )}
                     </div>
                   )}
+
+                  <ClipPicker
+                    open={clipPickerOpen}
+                    options={clipOpts}
+                    current={music.sourceClipId}
+                    onClose={() => setClipPickerOpen(false)}
+                    onPick={handlePickClip}
+                  />
 
                   {musicMode !== "inspire" && (
                     <>

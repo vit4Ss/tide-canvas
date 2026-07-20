@@ -9,7 +9,7 @@ import { useCanvasClipboard } from "@/hooks/canvas/use-canvas-clipboard";
 import { useCanvasKeyboard } from "@/hooks/canvas/use-canvas-keyboard";
 import { useCanvasConnection } from "@/hooks/canvas/use-canvas-connection";
 import { useCanvasBoxSelect } from "@/hooks/canvas/use-canvas-box-select";
-import { createNode, autoArrangeNodes } from "@/lib/canvas-helpers";
+import { createNode, autoArrangeNodes, nodeRenderRect } from "@/lib/canvas-helpers";
 import { CanvasGridBackground } from "./canvas-grid-background";
 import { CanvasEmptyState } from "./canvas-empty-state";
 import { CanvasNodeComponent } from "./canvas-node";
@@ -155,10 +155,17 @@ export function CanvasView() {
     });
   }, [panZoom]);
 
-  // 画布空白处按下：开始平移 OR 框选
+  // 画布空白处按下：开始平移 OR 框选(拖拽/平移的 move/up 由各 hook 挂 window 监听)
   const handleCanvasMouseDown = useCallback((e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
     if (!(target === containerRef.current || target.dataset.canvas)) return;
+    // 中键平移:不清选择、不关菜单语义之外的东西;此前非左键被整体拦掉,
+    // pan-zoom 里的中键分支永不可达
+    if (e.button === 1) {
+      e.preventDefault();
+      panZoom.handleMouseDown(e);
+      return;
+    }
     if (e.button !== 0) return;
 
     setContextMenu(null);
@@ -171,16 +178,6 @@ export function CanvasView() {
       panZoom.handleMouseDown(e);
     }
   }, [boxSelect, clearSelection, panZoom, selectConnection]);
-
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    panZoom.handleMouseMove(e);
-    nodeDrag.onMove(e);
-  }, [panZoom, nodeDrag]);
-
-  const handleMouseUp = useCallback(() => {
-    panZoom.handleMouseUp();
-    nodeDrag.endDrag();
-  }, [panZoom, nodeDrag]);
 
   const handleArrange = useCallback(() => {
     const st = useCanvasStore.getState();
@@ -206,10 +203,11 @@ export function CanvasView() {
     if (sel.length < 2) return null;
     let minX = Infinity, minY = Infinity, maxX = -Infinity;
     for (const n of sel) {
-      const w = n.contentW ?? n.width;
-      if (n.x < minX) minX = n.x;
-      if (n.y < minY) minY = n.y;
-      if (n.x + w > maxX) maxX = n.x + w;
+      // 实际渲染矩形:卡片在名义宽内水平居中,用 n.x 会让按钮偏离选区视觉中心
+      const r = nodeRenderRect(n);
+      if (r.x < minX) minX = r.x;
+      if (r.y < minY) minY = r.y;
+      if (r.x + r.w > maxX) maxX = r.x + r.w;
     }
     return { cx: (minX + maxX) / 2, top: minY };
   }, [nodes, selectedNodeIds]);
@@ -250,20 +248,8 @@ export function CanvasView() {
     }
   }, []);
 
-  const handleFileDrop = useCallback(async (e: React.DragEvent) => {
-    if (!e.dataTransfer.types.includes("Files")) return;
-    e.preventDefault();
-    setIsDraggingFile(false);
-
-    const files = Array.from(e.dataTransfer.files).filter(
-      (f) => f.type.startsWith("image/") || f.type.startsWith("video/")
-    );
-    if (files.length === 0) {
-      if (e.dataTransfer.files.length > 0) toast.error("仅支持拖入图片或视频");
-      return;
-    }
-
-    const world = panZoom.screenToWorld(e.clientX, e.clientY);
+  // 上传文件并在指定世界坐标生成对应节点（多文件错开排列）；拖拽落入与右键「上传」共用
+  const uploadFilesAt = useCallback(async (files: File[], world: { x: number; y: number }) => {
     toast.info(files.length > 1 ? `正在上传 ${files.length} 个文件...` : "正在上传...");
     let ok = 0;
 
@@ -315,7 +301,48 @@ export function CanvasView() {
     );
 
     if (ok > 0) toast.success(ok > 1 ? `已添加 ${ok} 个节点` : "已添加到画布");
-  }, [panZoom, addNode, selectNode]);
+  }, [addNode, selectNode]);
+
+  // 从系统拖入文件：在落点上传生成节点
+  const handleFileDrop = useCallback(async (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    setIsDraggingFile(false);
+
+    const files = Array.from(e.dataTransfer.files).filter(
+      (f) => f.type.startsWith("image/") || f.type.startsWith("video/")
+    );
+    if (files.length === 0) {
+      if (e.dataTransfer.files.length > 0) toast.error("仅支持拖入图片或视频");
+      return;
+    }
+    await uploadFilesAt(files, panZoom.screenToWorld(e.clientX, e.clientY));
+  }, [panZoom, uploadFilesAt]);
+
+  // 右键「上传」：记住菜单落点的世界坐标后打开系统文件选择器
+  const uploadInputRef = useRef<HTMLInputElement>(null);
+  const uploadWorldRef = useRef<{ x: number; y: number } | null>(null);
+  const handleUploadRequest = useCallback(() => {
+    uploadWorldRef.current = contextMenu ? { x: contextMenu.worldX, y: contextMenu.worldY } : null;
+    uploadInputRef.current?.click();
+  }, [contextMenu]);
+
+  const handleUploadPick = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []).filter(
+      (f) => f.type.startsWith("image/") || f.type.startsWith("video/")
+    );
+    // 清空 value：同一文件连续选两次也要触发 change
+    e.target.value = "";
+    if (files.length === 0) return;
+    // 兜底视口中心：理论上菜单落点必存在,防御 contextMenu 已被清空的时序
+    let world = uploadWorldRef.current;
+    uploadWorldRef.current = null;
+    if (!world) {
+      const rect = containerRef.current?.getBoundingClientRect();
+      world = panZoom.screenToWorld(rect ? rect.left + rect.width / 2 : 0, rect ? rect.top + rect.height / 2 : 0);
+    }
+    await uploadFilesAt(files, world);
+  }, [panZoom, uploadFilesAt]);
 
   return (
     // translate="no" + notranslate：告知浏览器/翻译类扩展（如「沉浸式翻译」）整块画布勿翻译，
@@ -326,9 +353,6 @@ export function CanvasView() {
         ref={containerRef}
         className="h-full w-full cursor-grab active:cursor-grabbing"
         onMouseDown={handleCanvasMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
         onContextMenu={handleContextMenu}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -431,8 +455,17 @@ export function CanvasView() {
         onPaste={clipboard.pasteNode}
         onUndo={undo}
         onRedo={redo}
-        onUpload={() => alert("上传功能待接入")}
+        onUpload={handleUploadRequest}
         onSaveAsset={handleSaveAsset}
+      />
+      {/* 右键「上传」的隐藏文件选择器；与拖拽上传共用 uploadFilesAt 链路 */}
+      <input
+        ref={uploadInputRef}
+        type="file"
+        accept="image/*,video/*"
+        multiple
+        className="hidden"
+        onChange={handleUploadPick}
       />
       <MyAssetsPanel open={myAssetsOpen} onClose={() => setMyAssetsOpen(false)} onPick={addAssetToCanvas} refreshKey={assetsRefreshKey} />
       <CanvasHistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />

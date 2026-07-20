@@ -3,13 +3,40 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, notFound } from "next/navigation";
 import { projectApi } from "@/lib/api";
-import { useCanvasStore } from "@/stores/use-canvas-store";
+import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
+import { resumeGeneration, stopAllGeneration } from "@/hooks/canvas/use-ai-generation";
 import { CanvasView } from "@/components/canvas/canvas-view";
 import { ArrowLeft, Loader2, Check, Pencil } from "lucide-react";
 import Link from "next/link";
 import { toast } from "@/components/shared/toast";
 
 const AUTOSAVE_DELAY = 3000; // 3 秒无变化触发自动保存
+
+/** blob: 是本地临时预览地址(上传中/切图中),刷新即失效,持久化等于把内容变成死链 */
+const isBlobUrl = (u?: string): boolean => !!u && u.startsWith("blob:");
+
+/** 序列化前剥掉节点上的 blob: 地址:上传常超过自动保存的 3s 防抖窗口,
+ *  原样落盘会在"上传完成前关页"时把死链写进 canvasData,重开后内容永久丢失。
+ *  剥掉后该节点显示为空,待上传/切图完成写回真实 URL 时会自然触发下一轮保存。 */
+function sanitizeForSave(n: CanvasNode): CanvasNode {
+  const dirty =
+    isBlobUrl(n.imageSrc) || isBlobUrl(n.videoSrc) || isBlobUrl(n.audioSrc) ||
+    n.images?.some(isBlobUrl) || n.audioTracks?.some((t) => isBlobUrl(t.url));
+  if (!dirty) return n;
+  const c = { ...n };
+  if (isBlobUrl(c.imageSrc)) delete c.imageSrc;
+  if (isBlobUrl(c.videoSrc)) delete c.videoSrc;
+  if (isBlobUrl(c.audioSrc)) delete c.audioSrc;
+  if (c.images) {
+    c.images = c.images.filter((u) => !isBlobUrl(u));
+    if (c.images.length === 0) delete c.images;
+  }
+  if (c.audioTracks) {
+    c.audioTracks = c.audioTracks.filter((t) => !isBlobUrl(t.url));
+    if (c.audioTracks.length === 0) delete c.audioTracks;
+  }
+  return c;
+}
 
 export default function CanvasEditorPage() {
   const params = useParams();
@@ -36,6 +63,10 @@ export default function CanvasEditorPage() {
   // otherwise the autosave effect (which depends on `save`) re-runs on every
   // setSaving and self-perpetuates a ~3s save loop even with no edits.
   const savingRef = useRef(false);
+  // 保存在途时又触发保存(慢网络下防抖计时器到点):不能直接丢弃——那可能是
+  // 用户的最后一次编辑,之后再无触发源,改动会永远不落盘。记 pending,在途
+  // 请求结束后补跑一次。
+  const pendingSaveRef = useRef(false);
 
   // 加载项目（按 url token；不存在/无权限 → 404）
   useEffect(() => {
@@ -51,6 +82,8 @@ export default function CanvasEditorPage() {
           try {
             const data = JSON.parse(res.data.canvasData);
             loadCanvas(data.nodes || [], data.connections || [], data.groups || []);
+            // 上次会话遗留的生成中节点（带 taskId）：任务仍在后端执行，按任务号续轮回填结果
+            resumeGeneration();
           } catch {
             loadCanvas([], []);
           }
@@ -66,15 +99,21 @@ export default function CanvasEditorPage() {
     }).catch(() => {
       if (!cancelled) setMissing(true);
     });
-    return () => { cancelled = true; setCurrentProjectId(null); };
+    // stopAllGeneration:轮询是画布级单例,离开页面/切换项目必须显式停掉,
+    // 否则残留轮询会往已切换项目的全局 store 里写结果
+    return () => { cancelled = true; setCurrentProjectId(null); stopAllGeneration(); };
   }, [token, loadCanvas, setCurrentProjectId]);
 
   const save = useCallback(async (silent = false) => {
-    if (savingRef.current || !projectId) return;
+    if (!projectId) return;
+    if (savingRef.current) {
+      pendingSaveRef.current = true;
+      return;
+    }
     savingRef.current = true;
     setSaving(true);
     try {
-      const canvasData = JSON.stringify({ nodes, connections, groups });
+      const canvasData = JSON.stringify({ nodes: nodes.map(sanitizeForSave), connections, groups });
       // 封面兜底：未手动设封面时，自动用画布中第一张图片。
       // 仅取可持久化的 http(s) 地址——data:base64 会超出后端 thumbnail(VARCHAR 512) 导致保存 500，
       // blob: 本地地址刷新即失效（如刚切分尚未上传完成的切片），都不能当封面。
@@ -92,6 +131,11 @@ export default function CanvasEditorPage() {
     } finally {
       savingRef.current = false;
       setSaving(false);
+      if (pendingSaveRef.current) {
+        pendingSaveRef.current = false;
+        // 经 saveRef 取最新版本,带上在途期间的新编辑
+        void saveRef.current(true);
+      }
     }
   }, [nodes, connections, groups, projectId, thumbnail]);
 
@@ -144,11 +188,18 @@ export default function CanvasEditorPage() {
         setEditingName(false);
         return;
       }
+      const prevName = projectName;
       setProjectName(newName);
       setEditingName(false);
       if (!projectId) return;
       const res = await projectApi.update(projectId, { name: newName });
-      if (res.success) toast.success("项目名已更新");
+      if (res.success) {
+        toast.success("项目名已更新");
+      } else {
+        // 乐观更新失败要回滚,否则标题栏与服务端不一致直到刷新
+        setProjectName(prevName);
+        toast.error(res.message || "重命名失败");
+      }
     } finally {
       confirmingNameRef.current = false;
     }

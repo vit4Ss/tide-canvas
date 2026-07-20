@@ -33,6 +33,8 @@ export interface CanvasNode {
   /** 音乐分轨（Suno 一次两首）：url + 歌名 + clip_id（延长/翻唱引用），节点内切换 */
   audioTracks?: { url: string; title?: string; clipId?: string }[];
   status?: "idle" | "generating" | "success" | "error";
+  /** 生成中任务号：随画布持久化，重开项目时据此对账续轮（resumeGeneration）；任务终态即清除 */
+  taskId?: string;
   uploading?: boolean;
   uploadProgress?: number;
   /** 生成时选择的目标画幅；有值时图片节点按该画幅展示，避免结果卡片被自然尺寸改成其它比例 */
@@ -169,6 +171,28 @@ function pruneGroups(groups: CanvasGroup[], removed: Set<string>): CanvasGroup[]
     .filter((g) => g.nodeIds.length > 0);
 }
 
+/** 落地持久化数据时清洗瞬态状态:上传器活在页面会话里,关页即死。
+ *  生成中节点分两类:带 taskId 的交由 resumeGeneration() 按任务号续轮,加载时
+ *  (keepResumable)保留转圈状态;没有 taskId 的(旧数据/请求在途时关页)无从续轮,
+ *  必须清洗——否则节点永久转圈、按钮永久禁用。
+ *  克隆(复制/粘贴)一律不传 keepResumable:轮询登记按 nodeId 对账,克隆体若继承
+ *  taskId 会与原节点争抢同一任务,或在原任务已终态时永久转圈。 */
+export function reviveNode(node: CanvasNode, opts?: { keepResumable?: boolean }): CanvasNode {
+  const stuckGenerating = node.status === "generating";
+  if (opts?.keepResumable && stuckGenerating && node.taskId) {
+    return node.uploading ? { ...node, uploading: false, uploadProgress: undefined } : node;
+  }
+  if (!stuckGenerating && !node.uploading && !node.taskId) return node;
+  const hasResult = !!(node.imageSrc || node.videoSrc || node.audioSrc || node.content);
+  return {
+    ...node,
+    status: stuckGenerating ? (hasResult ? "success" : "idle") : node.status,
+    taskId: undefined,
+    uploading: false,
+    uploadProgress: undefined,
+  };
+}
+
 /** 拷贝当前 nodes+connections+groups 用于历史快照 */
 function snapshot(state: { nodes: CanvasNode[]; connections: Connection[]; groups: CanvasGroup[] }): HistorySnapshot {
   return {
@@ -210,6 +234,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       redoStack: [...state.redoStack, currentSnap],
       selectedNodeIds: new Set(),
       selectedNodeId: null,
+      // 回滚可能删掉当前选中的连线,悬空 id 会让 Delete 键触发无效删除并污染历史
+      selectedConnectionId: null,
     };
   }),
 
@@ -225,6 +251,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       redoStack: state.redoStack.slice(0, -1),
       selectedNodeIds: new Set(),
       selectedNodeId: null,
+      selectedConnectionId: null,
     };
   }),
 
@@ -262,15 +289,22 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   }),
 
   removeNode: (id, recordHistory = true) => set((state) => {
+    // 目标不存在时不做空操作:否则仍会压一条无效历史并清掉 redo 栈
+    if (!state.nodes.some((n) => n.id === id)) return state;
     const newSel = new Set(state.selectedNodeIds);
     newSel.delete(id);
     const undo = recordHistory ? [...state.undoStack.slice(-MAX_HISTORY + 1), snapshot(state)] : state.undoStack;
+    const connections = state.connections.filter((c) => c.sourceId !== id && c.targetId !== id);
     return {
       nodes: state.nodes.filter((n) => n.id !== id),
-      connections: state.connections.filter((c) => c.sourceId !== id && c.targetId !== id),
+      connections,
       groups: pruneGroups(state.groups, new Set([id])),
       selectedNodeIds: newSel,
       selectedNodeId: state.selectedNodeId === id ? null : state.selectedNodeId,
+      // 选中的连线可能随节点一起被删,悬空引用需同步清掉
+      selectedConnectionId: connections.some((c) => c.id === state.selectedConnectionId)
+        ? state.selectedConnectionId
+        : null,
       undoStack: undo,
       redoStack: recordHistory ? [] : state.redoStack,
     };
@@ -278,12 +312,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   removeNodes: (ids) => set((state) => {
     const idSet = new Set(ids);
+    if (!state.nodes.some((n) => idSet.has(n.id))) return state;
+    const connections = state.connections.filter((c) => !idSet.has(c.sourceId) && !idSet.has(c.targetId));
     return {
       nodes: state.nodes.filter((n) => !idSet.has(n.id)),
-      connections: state.connections.filter((c) => !idSet.has(c.sourceId) && !idSet.has(c.targetId)),
+      connections,
       groups: pruneGroups(state.groups, idSet),
       selectedNodeIds: new Set(),
       selectedNodeId: null,
+      selectedConnectionId: connections.some((c) => c.id === state.selectedConnectionId)
+        ? state.selectedConnectionId
+        : null,
       undoStack: [...state.undoStack.slice(-MAX_HISTORY + 1), snapshot(state)],
       redoStack: [],
     };
@@ -329,9 +368,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   }),
 
   removeConnection: (id, recordHistory = true) => set((state) => {
+    // 悬空 id(如撤销掉选中连线后按 Delete)不做空操作,避免压无效历史清掉 redo
+    if (!state.connections.some((c) => c.id === id)) return state;
     const undo = recordHistory ? [...state.undoStack.slice(-MAX_HISTORY + 1), snapshot(state)] : state.undoStack;
     return {
       connections: state.connections.filter((c) => c.id !== id),
+      selectedConnectionId: state.selectedConnectionId === id ? null : state.selectedConnectionId,
       undoStack: undo,
       redoStack: recordHistory ? [] : state.redoStack,
     };
@@ -386,11 +428,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   setTransform: (transform) => set({ transform }),
 
   loadCanvas: (nodes, connections, groups = []) => set({
-    nodes: nodes.map((n) => normalizeNode(n)),
+    nodes: nodes.map((n) => reviveNode(normalizeNode(n), { keepResumable: true })),
     connections,
     groups: (groups || []).filter((g) => g && Array.isArray(g.nodeIds) && g.nodeIds.length > 0),
     selectedNodeIds: new Set(),
     selectedNodeId: null,
+    selectedConnectionId: null,
     undoStack: [],
     redoStack: [],
   }),
@@ -401,6 +444,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     groups: [],
     selectedNodeIds: new Set(),
     selectedNodeId: null,
+    selectedConnectionId: null,
     undoStack: [],
     redoStack: [],
   }),
