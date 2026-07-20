@@ -579,18 +579,22 @@ function refGrad(seed: number): string {
 /* ── upload-file model ────────────────────────────────────────────────────── */
 
 interface UploadFile {
-  g?: string; // thumbnail: a CSS gradient (mock) OR a real image URL
+  g?: string; // thumbnail: a CSS gradient (mock) OR a real image URL (上传中=本地 blob 预览)
   n: string; // name
   s?: string; // size label (image)
   d?: string; // duration label (video/audio)
   url?: string; // real asset URL (local upload / 资产库) sent to the backend as a reference
+  key?: string; // 稳定标识:上传中占位→完成/失败的定位;缺省回退 url/name
+  uploading?: boolean; // 本地上传进行中(还没拿到 url)
+  progress?: number; // 上传进度 0–100(uploading 时展示)
 }
 
 /** background value for a slot thumbnail: a real URL → cover image, else the
  *  gradient string is used as-is. */
 function thumbBg(g?: string): string {
   if (!g) return "var(--surface-2)";
-  return /^(https?:|data:)/.test(g) ? `center / cover no-repeat url("${g}")` : g;
+  // blob: = 上传中占位的本地预览(URL.createObjectURL)
+  return /^(https?:|data:|blob:)/.test(g) ? `center / cover no-repeat url("${g}")` : g;
 }
 
 type SlotData = Record<string, UploadFile[]>;
@@ -793,6 +797,7 @@ export default function CreateStudio() {
   const [assetPick, setAssetPick] = useState<string | null>(null); // slot key the asset picker fills
   const fileInputRef = useRef<HTMLInputElement>(null);
   const localTargetRef = useRef<string | null>(null); // slot key awaiting a local file pick
+  const uploadSeqRef = useRef(0); // 上传中占位的唯一 key 计数
 
   /* real studio models for the current type (public, no auth), each carrying its
      per-model config; the picker + option pills are derived from this list. */
@@ -1554,17 +1559,58 @@ export default function CreateStudio() {
     const k = localTargetRef.current;
     const list = e.target.files;
     if (!k || !list || list.length === 0) return;
+    const slot = slots?.find((s) => s.k === k);
+    const isImg = slot?.type === "image";
     await ensureSession();
+    // slotData 上某个占位项打补丁的小工具(按 key 定位;找不到=已被移除,静默跳过)
+    const patch = (key: string, fn: (f: UploadFile) => UploadFile) =>
+      setSlotData((prev) => ({ ...prev, [k]: (prev[k] || []).map((f) => (f.key === key ? fn(f) : f)) }));
+    const drop = (key: string) =>
+      setSlotData((prev) => ({ ...prev, [k]: (prev[k] || []).filter((f) => f.key !== key) }));
+
+    // 上限用本地计数判定:不能依赖 setSlotData 更新函数里的标志(那是异步/渲染期
+    // 执行的,同步读取拿不到结果)。以当前 slotData 长度起算,每加一个自增。
+    const cap = slot ? slotMax(slot) : Infinity;
+    let curCount = (slotData[k] || []).length;
     for (const file of Array.from(list)) {
-      const res = await uploadFileSmart(file);
-      if (res.success && res.data?.fileUrl) {
-        addRealFile(k, {
-          url: res.data.fileUrl,
-          name: file.name,
-          size: (file.size / 1024 / 1024).toFixed(1) + " MB",
-        });
-      } else {
-        toast.error("上传失败：" + (res.message || file.name));
+      if (curCount >= cap) {
+        toast.info(slot ? `${slot.label}最多 ${cap} 个` : "已达上限");
+        break;
+      }
+      curCount++;
+      const sizeLabel = (file.size / 1024 / 1024).toFixed(1) + " MB";
+      const blobUrl = isImg ? URL.createObjectURL(file) : "";
+      const tkey = `up_${uploadSeqRef.current++}`;
+      // 立刻插入「上传中」占位:图片带本地预览,让用户马上有反馈,不再以为没传上
+      setSlotData((prev) => {
+        const uf: UploadFile = isImg
+          ? { key: tkey, g: blobUrl, n: file.name, s: sizeLabel, uploading: true, progress: 0 }
+          : { key: tkey, n: file.name, d: "", uploading: true, progress: 0 };
+        return { ...prev, [k]: [...(prev[k] || []), uf] };
+      });
+      try {
+        const res = await uploadFileSmart(file, (pct) =>
+          patch(tkey, (f) => ({ ...f, progress: Math.max(0, Math.min(100, Math.round(pct))) })),
+        );
+        if (res.success && res.data?.fileUrl) {
+          const url = res.data.fileUrl;
+          patch(tkey, (f) => ({
+            ...f,
+            uploading: false,
+            progress: 100,
+            url,
+            ...(isImg ? { g: url } : {}),
+          }));
+          if (blobUrl) URL.revokeObjectURL(blobUrl); // 换成远程地址后释放本地预览
+        } else {
+          drop(tkey);
+          if (blobUrl) URL.revokeObjectURL(blobUrl);
+          toast.error("上传失败：" + (res.message || file.name));
+        }
+      } catch {
+        drop(tkey);
+        if (blobUrl) URL.revokeObjectURL(blobUrl);
+        toast.error("上传失败：" + file.name);
       }
     }
     e.target.value = "";
@@ -2006,6 +2052,11 @@ export default function CreateStudio() {
       return;
     }
 
+    // 有参考素材仍在上传时先拦下:否则按「无 url」被当成没传,误报「请先上传参考图片」
+    if (Object.values(slotData).some((arr) => (arr || []).some((f) => f.uploading))) {
+      toast.info("参考素材上传中，请稍候…");
+      return;
+    }
     // reference assets from the upload slots (real URLs from 本地上传 / 资产库).
     const slotUrls = (key: string) =>
       (slotData[key] || []).map((f) => f.url).filter((u): u is string => !!u);
@@ -2465,13 +2516,20 @@ export default function CreateStudio() {
           <div className="ws-up-grid">
             {files.map((f, i) => (
               <div
-                className="ws-ref"
-                key={f.url ?? `${f.n}-${f.s ?? ""}`}
-                title="点击预览"
-                onClick={() => setPreview({ k: s.k, i })}
+                className={`ws-ref${f.uploading ? " uploading" : ""}`}
+                key={f.key ?? f.url ?? `${f.n}-${f.s ?? ""}`}
+                title={f.uploading ? "上传中…" : "点击预览"}
+                onClick={() => !f.uploading && setPreview({ k: s.k, i })}
               >
                 <span className="ws-ref-img" style={{ background: thumbBg(f.g) }} />
-                <span className="ws-ref-zoom">⚲</span>
+                {f.uploading ? (
+                  <span className="ws-ref-prog">
+                    <span className="ws-ref-spin" aria-hidden />
+                    <span className="ws-ref-pct">{f.progress ?? 0}%</span>
+                  </span>
+                ) : (
+                  <span className="ws-ref-zoom">⚲</span>
+                )}
                 <button
                   className="ws-ref-x"
                   type="button"
@@ -2485,7 +2543,7 @@ export default function CreateStudio() {
                 </button>
                 <span className="ws-ref-meta">
                   <span className="nm">{f.n}</span>
-                  <span className="sz">{f.s}</span>
+                  <span className="sz">{f.uploading ? `${f.progress ?? 0}%` : f.s}</span>
                 </span>
               </div>
             ))}
@@ -2499,14 +2557,16 @@ export default function CreateStudio() {
           <div className="ws-up-list">
             {files.map((f, i) => (
               <div
-                className="ws-file"
-                key={f.url ?? `${f.n}-${f.d ?? f.s ?? ""}`}
-                title="点击预览"
-                onClick={() => setPreview({ k: s.k, i })}
+                className={`ws-file${f.uploading ? " uploading" : ""}`}
+                key={f.key ?? f.url ?? `${f.n}-${f.d ?? f.s ?? ""}`}
+                title={f.uploading ? "上传中…" : "点击预览"}
+                onClick={() => !f.uploading && setPreview({ k: s.k, i })}
               >
-                <span className={`ic ${s.type}`}>{s.type === "video" ? "▶" : "♪"}</span>
+                <span className={`ic ${s.type}`}>
+                  {f.uploading ? <span className="ws-ref-spin" aria-hidden /> : s.type === "video" ? "▶" : "♪"}
+                </span>
                 <span className="fn">{f.n}</span>
-                <span className="fd">{f.d}</span>
+                <span className="fd">{f.uploading ? `上传中 ${f.progress ?? 0}%` : f.d}</span>
                 <button
                   className="ws-file-x"
                   type="button"
@@ -2548,11 +2608,17 @@ export default function CreateStudio() {
     }
     return (
       <div
-        className="ws-flf-box filled"
-        title="点击预览"
-        onClick={() => setPreview({ k: s.k, i: 0 })}
+        className={`ws-flf-box filled${f.uploading ? " uploading" : ""}`}
+        title={f.uploading ? "上传中…" : "点击预览"}
+        onClick={() => !f.uploading && setPreview({ k: s.k, i: 0 })}
       >
         <span className="ws-flf-img" style={{ background: thumbBg(f.g) }} />
+        {f.uploading && (
+          <span className="ws-ref-prog">
+            <span className="ws-ref-spin" aria-hidden />
+            <span className="ws-ref-pct">{f.progress ?? 0}%</span>
+          </span>
+        )}
         <button
           className="ws-flf-x"
           type="button"
