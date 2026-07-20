@@ -171,15 +171,17 @@ export function ClipPicker({ open, options, current, onClose, onPick, onUploaded
     // stopPropagation 必须做:portal 的事件沿 React 组件树(而非 DOM 树)冒泡,
     // 本组件挂在画布音频节点之下,遮罩上的 mousedown 不拦会一路冒到节点根部的
     // 拖拽处理器,点一下遮罩顺手把弹窗后面的节点拖走。
+    // 形态与画布 AI 助手面板同构:右侧停靠圆角岛(bottom/right/top-4),
+    // 轻遮罩点击即关;从右滑入 200ms,prefers-reduced-motion 降级为直接出现。
     <div
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 p-6"
+      className="fixed inset-0 z-[200] bg-black/20"
       onMouseDown={(e) => {
         e.stopPropagation();
         close();
       }}
     >
       <div
-        className="flex max-h-[70vh] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-neutral-900"
+        className="absolute right-4 top-4 flex max-h-[calc(100vh-32px)] w-[380px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-xl animate-in fade-in slide-in-from-right-8 duration-200 ease-out motion-reduce:animate-none dark:border-neutral-800 dark:bg-neutral-900"
         onMouseDown={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}
       >
@@ -252,11 +254,11 @@ export function ClipPicker({ open, options, current, onClose, onPick, onUploaded
 
         <div className="min-h-0 flex-1 overflow-y-auto py-1.5">
           {options === null ? (
-            <div className="flex h-36 items-center justify-center text-neutral-400">
+            <div className="flex h-full min-h-36 items-center justify-center text-neutral-400">
               <Loader2 className="h-5 w-5 animate-spin" />
             </div>
           ) : options.length === 0 ? (
-            <div className="flex h-36 flex-col items-center justify-center gap-2 px-6 text-center text-neutral-400">
+            <div className="flex h-full min-h-36 flex-col items-center justify-center gap-2 px-6 text-center text-neutral-400">
               <Music2 className="h-6 w-6" />
               <p className="text-xs leading-5">
                 暂无可选原曲
@@ -324,6 +326,11 @@ export function ClipPicker({ open, options, current, onClose, onPick, onUploaded
                       {opt.trackCount > 1 && (
                         <span className="shrink-0 rounded border border-neutral-200 px-1 text-[10px] leading-4 text-neutral-500 dark:border-neutral-700 dark:text-neutral-400">
                           第 {opt.trackNo} 首
+                        </span>
+                      )}
+                      {opt.isUpload && (
+                        <span className="shrink-0 rounded border border-neutral-200 px-1 text-[10px] leading-4 text-neutral-500 dark:border-neutral-700 dark:text-neutral-400">
+                          上传
                         </span>
                       )}
                     </div>
