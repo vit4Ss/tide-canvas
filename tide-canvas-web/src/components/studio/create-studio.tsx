@@ -44,7 +44,7 @@ import { AiTaskStatus } from "@/types/ai";
 import { AssetsBrowser, type PickedAsset } from "@/components/studio/assets-browser";
 import { AudioPlayerCard, SongCard } from "@/components/studio/audio-player-card";
 import { ClipPicker } from "@/components/studio/clip-picker";
-import { clipDisplayLabel, findClipModel, type ClipOption } from "@/lib/music-modes";
+import { clipDisplayLabel, findClipModel, uploadCostOf, type ClipOption } from "@/lib/music-modes";
 import {
   MentionPromptEditor,
   buildMentionRefs,
@@ -528,10 +528,13 @@ function paramsFromTask(handler: string, modelName: string, input: unknown): Run
               : {};
           const task = str(ex.task);
           const mode: MusicMode =
-            task === "extend" || task === "cover" ? task : str(inp.lyrics) ? "custom" : "inspire";
+            task === "extend" || task === "cover" ? task
+            : task === "upload_extend" ? "extend" // 上传音频的延长,恢复为延长模式+上传标记
+            : str(inp.lyrics) ? "custom" : "inspire";
           return {
             musicMode: mode,
             sourceClipId: str(ex.continue_clip_id) || str(ex.cover_clip_id) || undefined,
+            sourceIsUpload: task === "upload_extend" || undefined,
             continueAt: num(ex.continue_at) || undefined,
           };
         })()
@@ -611,6 +614,8 @@ interface HistItem {
   url?: string;
   /** Suno 分轨：clip_id 供延长/翻唱引用；trackTitle 是 Suno 起的歌名。 */
   clipId?: string;
+  /** 该任务是「上传登记」(extras.task=upload):其 clip 延长时须发 upload_extend */
+  clipUpload?: boolean;
   trackTitle?: string;
   /** Suno 歌曲封面（上游生成）与时长(秒)，SongCard 歌曲行展示用。 */
   trackCover?: string;
@@ -693,6 +698,8 @@ interface RunParams {
   /** 音频（Suno）创作模式与延长/翻唱的原曲引用 */
   musicMode?: MusicMode;
   sourceClipId?: string;
+  /** 原曲是上传登记的本地音频(延长须发 upload_extend) */
+  sourceIsUpload?: boolean;
   continueAt?: number;
 }
 
@@ -740,6 +747,8 @@ export default function CreateStudio() {
   const [musicMode, setMusicMode] = useState<MusicMode>("inspire");
   /* 延长/翻唱的原曲(clip_id)与延长起点秒数(字符串承载输入框,提交时转整数) */
   const [sourceClipId, setSourceClipId] = useState("");
+  /* 原曲来自「上传登记」的本地音频:延长时上游要求 task=upload_extend */
+  const [sourceIsUpload, setSourceIsUpload] = useState(false);
   const [continueAt, setContinueAt] = useState("");
   const [lyrics, setLyrics] = useState("");
   const [songStyle, setSongStyle] = useState("");
@@ -815,6 +824,8 @@ export default function CreateStudio() {
   /* history — the user's REAL generation tasks (aiApi.listTasks), newest first.
      Loaded post-mount (see loadHistory); empty until then. No mock seed. */
   const [hist, setHist] = useState<HistItem[]>([]);
+  /* 本次会话内刚「上传登记」的原曲(还没进 hist),合并进 clipOptions 供回显 */
+  const [extraClips, setExtraClips] = useState<ClipOption[]>([]);
 
   /* 延长/翻唱的原曲候选：历史音频里带 clip_id 的分轨(新→旧,按 clip 去重)。
      上游约束:只能引用自己生成的歌,所以候选就是用户的生成历史。
@@ -847,10 +858,14 @@ export default function CreateStudio() {
         createTime: h.ts ?? "",
         trackNo,
         trackCount: runCounts.get(h.run) ?? 1,
+        ...(h.clipUpload ? { isUpload: true } : {}),
       });
     }
-    return out;
-  }, [hist]);
+    // 刚在弹窗里登记完成的上传原曲还没进 hist(历史下次刷新才有),先合并进候选,
+    // 否则触发按钮回显成「历史原曲」
+    const fresh = extraClips.filter((e) => !out.some((o) => o.clipId === e.clipId));
+    return [...fresh, ...out];
+  }, [hist, extraClips]);
   // 原曲选择弹窗(替代下拉:Suno 同批两首同名,弹窗里能试听/看第 N 首区分)
   const [clipPickOpen, setClipPickOpen] = useState(false);
 
@@ -1166,6 +1181,15 @@ export default function CreateStudio() {
         const params = paramsFromTask(t.handler, t.modelName || "", t.input);
         // Suno 分轨明细：clip_id 供延长/翻唱引用，trackTitle 是 Suno 起的歌名。
         const tracks = tracksFromMeta(meta);
+        // 上传登记任务(extras.task=upload)产出的 clip:延长时须发 upload_extend,打标传给候选
+        const clipUpload = (() => {
+          const raw = t.input;
+          const obj = typeof raw === "string"
+            ? (() => { try { return JSON.parse(raw) as Record<string, unknown>; } catch { return {}; } })()
+            : (raw as Record<string, unknown> | null) ?? {};
+          const ex = obj.extras;
+          return !!ex && typeof ex === "object" && (ex as Record<string, unknown>).task === "upload";
+        })();
         const title = params.prompt
           ? params.prompt.slice(0, 14) + (params.prompt.length > 14 ? "…" : "")
           : t.modelName || "我的创作";
@@ -1182,6 +1206,7 @@ export default function CreateStudio() {
             model: t.modelName || "",
             url,
             clipId: tracks[idx]?.clipId || undefined,
+            clipUpload: clipUpload || undefined,
             trackTitle: tracks[idx]?.title || undefined,
             trackCover: tracks[idx]?.coverUrl || undefined,
             trackDur: tracks[idx]?.duration || undefined,
@@ -1990,6 +2015,7 @@ export default function CreateStudio() {
             instrumental: instrumental || undefined,
             musicMode,
             sourceClipId: musicTask ? sourceClipId : undefined,
+            sourceIsUpload: musicTask && sourceIsUpload ? true : undefined,
             continueAt:
               musicTask === "extend" ? parseInt(continueAt, 10) || undefined : undefined,
           }
@@ -2070,7 +2096,8 @@ export default function CreateStudio() {
                 extras:
                   musicTask === "extend"
                     ? {
-                        task: "extend",
+                        // 上传登记的本地音频延长走 upload_extend(上游对两种来源分开建模)
+                        task: sourceIsUpload ? "upload_extend" : "extend",
                         continue_clip_id: sourceClipId,
                         ...(parseInt(continueAt, 10) > 0
                           ? { continue_at: parseInt(continueAt, 10) }
@@ -2102,7 +2129,7 @@ export default function CreateStudio() {
       meta: { prompt: p, model: mdl, ratio: r, spec, count: n, isVid, kind: curType, label, hues, refThumbs },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busy, prompt, count, tool, curType, ratio, model, res, dur, imgRes, quality, musicMode, sourceClipId, continueAt, lyrics, songStyle, songTitle, instrumental, slotData, studioList, ratioOpts, resOpts, durOpts, qualOpts, pushHistory, startGeneration]);
+  }, [busy, prompt, count, tool, curType, ratio, model, res, dur, imgRes, quality, musicMode, sourceClipId, sourceIsUpload, continueAt, lyrics, songStyle, songTitle, instrumental, slotData, studioList, ratioOpts, resOpts, durOpts, qualOpts, pushHistory, startGeneration]);
 
   // Refresh-resume: on mount, if a generation was in flight (persisted at start),
   // restore the generating UI and resume polling — the task keeps running on the
@@ -2162,6 +2189,7 @@ export default function CreateStudio() {
     // 模式优先取显式字段；老数据按"有歌词 = 自定义"推导。
     setMusicMode(lr.musicMode ?? (lr.lyrics ? "custom" : "inspire"));
     setSourceClipId(lr.sourceClipId ?? "");
+    setSourceIsUpload(lr.sourceIsUpload ?? false);
     setContinueAt(lr.continueAt ? String(lr.continueAt) : "");
     // 参考素材回填：按 generate() 写入 refInput 的映射反向恢复各上传槽位。
     // 仅在参数确实带参考素材时覆盖 slotData——旧快照/纯文生成不动现有槽位，
@@ -2737,7 +2765,7 @@ export default function CreateStudio() {
                   <button
                     type="button"
                     className="select flex w-full items-center gap-1.5 text-left"
-                    title="上游仅支持续写/翻唱本站生成的音乐，暂不支持上传本地音频"
+                    title="选择本站生成的歌，或上传本地音频（mp3 / wav）"
                     onClick={() => setClipPickOpen(true)}
                   >
                     <span
@@ -2755,7 +2783,12 @@ export default function CreateStudio() {
                     onClose={() => setClipPickOpen(false)}
                     onPick={(opt) => {
                       setSourceClipId(opt.clipId);
+                      // 上传登记的原曲延长时须发 upload_extend,来源标记随选中项走
+                      setSourceIsUpload(!!opt.isUpload);
                       setClipPickOpen(false);
+                      // 刚登记完成的上传原曲还没进 hist,记入会话内附加候选供回显
+                      setExtraClips((prev) =>
+                        prev.some((o) => o.clipId === opt.clipId) ? prev : [opt, ...prev]);
                       // 上游把延长/翻唱任务钉到原曲的模型路由,选定原曲后自动切回原曲那张模型卡
                       const src = findClipModel(studioList, opt);
                       if (src && src.name !== model) {
@@ -2765,6 +2798,16 @@ export default function CreateStudio() {
                         toast.info("原曲所用模型已下架，续写/翻唱可能失败");
                       }
                     }}
+                    // 登记完成即并入候选(可能不自动选中:用户等待期间已另选原曲)
+                    onUploaded={(opt) =>
+                      setExtraClips((prev) => (prev.some((o) => o.clipId === opt.clipId) ? prev : [opt, ...prev]))}
+                    upload={selModel ? {
+                      generateModelId: selModel.modelKey || selModel.id,
+                      modelRowId: selModel.id,
+                      modelName: selModel.name,
+                      // 登记价:模型 config.uploadCost,未配置时服务端按常规生成价扣,展示同口径
+                      cost: uploadCostOf(selModel.config) || parseFloat(selModel.pointCost ?? "") || 0,
+                    } : undefined}
                   />
                 </div>
                 {musicMode === "extend" && (

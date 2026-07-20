@@ -26,6 +26,7 @@ import {
   isSfxModel,
   validateMusicParams,
   findClipModel,
+  uploadCostOf,
   type ClipOption,
   type MusicParams,
 } from "@/lib/music-modes";
@@ -442,8 +443,11 @@ export const AudioNode = memo(function AudioNode({
   const clipLabel = clipDisplayLabel(clipOpts, music.sourceClipId);
 
   const handlePickClip = useCallback((opt: ClipOption) => {
-    setMusic((m) => ({ ...m, sourceClipId: opt.clipId }));
+    // 上传登记的原曲延长时须发 upload_extend,来源标记随选中项走
+    setMusic((m) => ({ ...m, sourceClipId: opt.clipId, sourceIsUpload: !!opt.isUpload }));
     setClipPickerOpen(false);
+    // 刚登记完成的上传原曲不在已拉取的候选里,插到最前,否则回显成「历史原曲」
+    setClipOpts((prev) => (prev?.some((o) => o.clipId === opt.clipId) ? prev : [opt, ...(prev ?? [])]));
     // 上游把延长/翻唱任务钉到原曲的模型路由,选定原曲后自动切回原曲那张模型卡
     const src = findClipModel(models, opt);
     if (src && src.modelId !== modelId) {
@@ -725,7 +729,7 @@ export const AudioNode = memo(function AudioNode({
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        title="上游仅支持续写/翻唱本站生成的音乐，暂不支持上传本地音频"
+                        title="选择本站生成的歌，或上传本地音频（mp3 / wav）"
                         onMouseDown={stop}
                         onClick={(e) => {
                           stop(e);
@@ -757,6 +761,16 @@ export const AudioNode = memo(function AudioNode({
                     current={music.sourceClipId}
                     onClose={() => setClipPickerOpen(false)}
                     onPick={handlePickClip}
+                    // 登记完成即并入候选(可能不自动选中:用户等待期间已另选原曲)
+                    onUploaded={(opt) =>
+                      setClipOpts((prev) => (prev?.some((o) => o.clipId === opt.clipId) ? prev : [opt, ...(prev ?? [])]))}
+                    upload={{
+                      generateModelId: modelId || "default",
+                      modelRowId: selectedModel?.id,
+                      modelName: selectedModel?.name,
+                      // 登记价:模型 config.uploadCost,未配置时服务端按常规生成价扣,展示同口径
+                      cost: applyTeamFactor(uploadCostOf(selectedModel?.config) || Number(selectedModel?.pointCost ?? 0), user),
+                    }}
                   />
 
                   {musicMode !== "inspire" && (

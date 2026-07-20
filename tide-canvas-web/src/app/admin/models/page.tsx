@@ -680,6 +680,7 @@ function ModelModal({
     batchOptions: c0.batchOptions ?? [],
     gridOutput: c0.gridOutput ?? false,
     priceMatrix: c0.priceMatrix ?? {},
+    uploadCost: c0.uploadCost ?? "",
   });
   const setC = (patch: Partial<ModelConfig>) => setCfg((p) => ({ ...p, ...patch }));
 
@@ -963,6 +964,20 @@ function ModelModal({
               value={cfg.modes ?? []}
               onChange={(next) => setC({ modes: next })}
             />
+          </FormSection>
+          <FormSection
+            label="上传登记积分"
+            hint="Suno 本地音频延长/翻唱前需先「上传登记」为原曲（独立任务、单曲），此处为该步单次扣分；留空或 0 按上方消耗积分计"
+          >
+            <div className="fld" style={{ maxWidth: 180 }}>
+              <input
+                value={String(cfg.uploadCost ?? "")}
+                onChange={(e) => setC({ uploadCost: e.target.value })}
+                placeholder="0.0"
+                inputMode="decimal"
+                aria-label="上传登记积分"
+              />
+            </div>
           </FormSection>
         </FormCard>
       )}

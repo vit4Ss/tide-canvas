@@ -36,6 +36,18 @@ func resolveCost(m *model.AiModel, rawInput json.RawMessage, factor float64) int
 		_ = json.Unmarshal([]byte(m.Config), &cfg)
 	}
 
+	// Suno 上传参考音频(extras.task == "upload"):本地音频延长/翻唱前的登记
+	// 任务,单曲、非完整生成,上游按次计费——允许后台按模型单独定价
+	// (config.uploadCost);未配置时落回下方常规解析(与一次生成同价)。
+	if m.Type == "audio" && isUploadTask(in) {
+		if v := numField(cfg, "uploadCost"); v > 0 {
+			if factor < 1 {
+				factor = 1
+			}
+			return int(math.Ceil(v * factor))
+		}
+	}
+
 	isVideo := m.Type == "video"
 	resolution := strField(in, "resolution")
 	clarity := strField(in, "clarity")
@@ -89,6 +101,17 @@ func resolveCost(m *model.AiModel, rawInput json.RawMessage, factor float64) int
 		factor = 1
 	}
 	return int(math.Ceil(base * factor))
+}
+
+// isUploadTask reports whether the generate input carries Suno 的参考音频登记
+// 任务(extras.task == "upload";延长/翻唱本地音频前的独立一步)。
+func isUploadTask(in map[string]any) bool {
+	ex, _ := in["extras"].(map[string]any)
+	if ex == nil {
+		return false
+	}
+	t, _ := ex["task"].(string)
+	return strings.EqualFold(strings.TrimSpace(t), "upload")
 }
 
 // matrixLookup tries matrix[k1][k2] then matrix[k2][k1] (axis-order agnostic),

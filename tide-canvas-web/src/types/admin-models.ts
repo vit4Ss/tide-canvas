@@ -57,6 +57,9 @@ export interface ModelConfig {
   /** raw upstream price modifiers, kept for reference */
   priceModifiers?: unknown;
   creditCost?: number;
+  /** 音频(Suno)：本地音频「上传登记」任务的单次积分；空/0 = 按消耗积分计。
+      后端 toNum 兼容数字与数字字符串，输入框直接存字符串。 */
+  uploadCost?: number | string;
 }
 
 /** Admin list/detail view of a market_model row (AdminModelVO). */

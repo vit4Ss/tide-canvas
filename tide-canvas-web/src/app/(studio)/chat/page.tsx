@@ -55,6 +55,7 @@ import {
   DEFAULT_MUSIC_PARAMS,
   MUSIC_MODES,
   buildMusicInput,
+  uploadCostOf,
   clipDisplayLabel,
   fetchClipOptions,
   findClipModel,
@@ -1603,7 +1604,7 @@ export default function ChatPage() {
                     <button
                       type="button"
                       className="cm-music-sel flex items-center gap-1.5 text-left"
-                      title="上游仅支持续写/翻唱本站生成的音乐，暂不支持上传本地音频"
+                      title="选择本站生成的歌，或上传本地音频（mp3 / wav）"
                       onClick={() => setClipPickOpen(true)}
                     >
                       <span
@@ -1620,8 +1621,11 @@ export default function ChatPage() {
                       current={music.sourceClipId}
                       onClose={() => setClipPickOpen(false)}
                       onPick={(opt) => {
-                        setMusic((m) => ({ ...m, sourceClipId: opt.clipId }));
+                        // 上传登记的原曲延长时须发 upload_extend,来源标记随选中项走
+                        setMusic((m) => ({ ...m, sourceClipId: opt.clipId, sourceIsUpload: !!opt.isUpload }));
                         setClipPickOpen(false);
+                        // 刚登记完成的上传原曲不在已拉取的候选里,插到最前,否则回显成「历史原曲」
+                        setClipOpts((prev) => (prev?.some((o) => o.clipId === opt.clipId) ? prev : [opt, ...(prev ?? [])]));
                         // 上游把延长/翻唱任务钉到原曲的模型路由,选定原曲后自动切回原曲那张模型卡
                         const src = findClipModel(genModels, opt);
                         if (src && src.name !== model) {
@@ -1631,6 +1635,16 @@ export default function ChatPage() {
                           toast.info("原曲所用模型已下架，续写/翻唱可能失败");
                         }
                       }}
+                      // 登记完成即并入候选(可能不自动选中:用户等待期间已另选原曲)
+                      onUploaded={(opt) =>
+                        setClipOpts((prev) => (prev?.some((o) => o.clipId === opt.clipId) ? prev : [opt, ...(prev ?? [])]))}
+                      upload={selModel ? {
+                        generateModelId: selModel.modelKey || selModel.id,
+                        modelRowId: selModel.id,
+                        modelName: selModel.name,
+                        // 登记价:模型 config.uploadCost,未配置时服务端按常规生成价扣,展示同口径
+                        cost: uploadCostOf(mCfg) || parseFloat(selModel.pointCost ?? "0") || 0,
+                      } : undefined}
                     />
                     {musicMode === "extend" && (
                       <input
