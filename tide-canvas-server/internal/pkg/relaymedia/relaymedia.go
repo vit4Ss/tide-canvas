@@ -110,6 +110,7 @@ type VideoParams struct {
 type AudioParams struct {
 	Model        string
 	Input        string         // TTS 文本 / 音乐描述;Extras 含 lyrics 时可为空
+	Prompt       string         // 顶层 prompt:Suno 延长/翻唱的歌曲描述(供应商只认顶层 prompt)
 	Voice        string         // TTS 音色 id;音乐模型忽略
 	Instructions string         // 情绪/风格;Suno 传 "instrumental" 生成纯音乐
 	Extras       map[string]any // 供应商透传参数(≤32 键/16KB),如 Suno lyrics/tags/title
@@ -262,11 +263,13 @@ func (c *Client) GenerateAudio(ctx context.Context, p AudioParams) (Result, erro
 	if strings.TrimSpace(p.Model) == "" {
 		return Result{}, fmt.Errorf("relaymedia: model is required")
 	}
-	if strings.TrimSpace(p.Input) == "" && len(p.Extras) == 0 {
+	if strings.TrimSpace(p.Input) == "" && strings.TrimSpace(p.Prompt) == "" && len(p.Extras) == 0 {
 		return Result{}, fmt.Errorf("relaymedia: audio requires input text or extras")
 	}
 	body := map[string]any{"model": p.Model}
 	putNonEmpty(body, "input", p.Input)
+	// 顶层 prompt:Suno 延长/翻唱的歌曲描述必须走顶层(实测 extras 内无效)
+	putNonEmpty(body, "prompt", p.Prompt)
 	putNonEmpty(body, "voice", p.Voice)
 	putNonEmpty(body, "instructions", p.Instructions)
 	if len(p.Extras) > 0 {

@@ -4,10 +4,12 @@ import (
 	"errors"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/pkg/idgen"
+	"tidecanvas/internal/pkg/logger"
 	"tidecanvas/internal/pkg/response"
 )
 
@@ -68,17 +70,21 @@ func (h *handler) generate(c *gin.Context) {
 	uid := middleware.CurrentUserID(c)
 	vo, err := h.svc.generate(c.Request.Context(), uid, dto)
 	if err != nil {
+		// 用户可自行处理的情形给具体中文提示;其余(DB/内部故障)统一系统异常,
+		// 原始 err 记日志不出站(与 service.go 的 userFacingGenError 同口径)。
 		switch {
 		case errors.Is(err, errNoHandler):
-			response.Fail(c, response.CodeHandlerNotFound, "handler not found")
+			response.Fail(c, response.CodeHandlerNotFound, "该生成能力暂不可用")
 		case errors.Is(err, errNoModel):
-			response.Fail(c, response.CodeModelUnavailable, "model unavailable")
+			response.Fail(c, response.CodeModelUnavailable, "所选模型不可用，请更换后重试")
 		case errors.Is(err, errToolDisabled):
 			response.Fail(c, response.CodeToolDisabled, "该工具已下线")
 		case errors.Is(err, errInsufficientPoints):
 			response.Fail(c, response.CodeQuotaInsufficient, "积分不足，请充值后再试")
 		default:
-			response.Fail(c, response.CodeServerError, "failed to start generation")
+			logger.L().Warn("ai: start generation failed",
+				zap.String("handler", dto.Handler), zap.String("detail", err.Error()))
+			response.Fail(c, response.CodeServerError, "系统异常，请联系客服")
 		}
 		return
 	}

@@ -240,21 +240,31 @@ func audioParams(model string, in map[string]any) relaymedia.AudioParams {
 		extras["make_instrumental"] = v
 	}
 	input := inputStr(in, "prompt", "input")
-	// Suno 延长/翻唱允许歌词留空(由上游自由续写),但供应商校验 prompt 与
-	// gpt_description_prompt 不可同时缺席(否则 HTTP 400"can not both null")。
-	// 带 task 的引用型请求在描述与歌词都为空时补一个显式空串 prompt,
-	// 表示"有这个字段、内容留白",与网页版 Suno 的留空续写语义一致。
-	// 上传登记(task=upload)不吃这套校验,历史上无 prompt 也成功,保持原载荷。
-	if t, _ := extras["task"].(string); t != "" && t != "upload" && input == "" {
-		if _, hasLyrics := extras["lyrics"]; !hasLyrics {
-			if _, hasPrompt := extras["prompt"]; !hasPrompt {
-				extras["prompt"] = ""
+	// Suno 延长/翻唱:供应商校验顶层 prompt 与 gpt_description_prompt 不可同时缺席
+	// (否则 HTTP 400 "can not both null")。经实测,供应商只认「顶层 prompt」——
+	// extras.prompt / extras.gpt_description_prompt / 顶层 gpt_description_prompt
+	// 均无效,唯有顶层 prompt 或 extras.lyrics 能过。故引用型任务(extend/cover,
+	// 不含 upload 登记)的描述改走顶层 prompt,且**不再发 input**(避免 input+prompt
+	// 双发,与实测通过的最小载荷一致);既无歌词也无描述时补一句默认指令,
+	// 让「留空 = 自动续写」成立。灵感/TTS/音效不受影响,仍走原 input 载荷。
+	prompt := ""
+	switch t, _ := extras["task"].(string); t {
+	case "extend", "upload_extend", "cover":
+		if desc := strings.TrimSpace(input); desc != "" {
+			prompt = desc
+		} else if strings.TrimSpace(inputStr(extras, "lyrics")) == "" {
+			if t == "cover" {
+				prompt = "在保留原曲旋律与结构的基础上重新演绎，保持整体连贯。"
+			} else {
+				prompt = "在保持原曲旋律、风格与情绪的基础上自然续写，保持整体连贯。"
 			}
 		}
+		input = "" // 描述已进 prompt,清空 input 只保留一处,避免上游双字段歧义
 	}
 	return relaymedia.AudioParams{
 		Model:        model,
 		Input:        input,
+		Prompt:       prompt,
 		Voice:        inputStr(in, "voice"),
 		Instructions: inputStr(in, "instructions", "style"),
 		Extras:       extras,

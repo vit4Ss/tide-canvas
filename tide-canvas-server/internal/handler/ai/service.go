@@ -305,9 +305,10 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 	if genErr != nil || (res.ResultURL == "" && !resultHasText(res)) {
 		task.Status = statusFailed
 		task.Progress = 100
-		// 用户可见的任务错误只给统一口径;原始错误(供应商响应等)记日志,
-		// admin 侧另有 ai_generation_logs 全量留档(见 writeGenLog 的 errMsg)。
-		task.ErrorMsg = userFacingGenErr
+		// 用户可见错误分两类:能自行修正的「输入类」给出具体可操作提示;其余
+		// 系统/供应商故障统一「系统异常，请联系客服」。两类的原始错误都进 zap
+		// 日志,admin 侧另有 ai_generation_logs 全量留档(见 writeGenLog 的 errMsg)。
+		task.ErrorMsg = userFacingGenError(genErr)
 		logger.L().Warn("ai: generation failed",
 			zap.String("taskId", taskID.String()), zap.String("detail", errMessage(genErr)))
 	} else {
@@ -643,10 +644,41 @@ func errMessage(err error) string {
 	return err.Error()
 }
 
-// userFacingGenErr 是生成失败时下发给前端的统一文案。供应商/内部错误原文
-// (含上游 HTTP 细节、密钥路由等)一律不出站——详情进 zap 日志与
-// ai_generation_logs / model_call_log(admin 后台可查),用户侧只说系统异常。
+// userFacingGenErr 是生成失败时下发给前端的系统级统一文案。供应商/内部错误
+// 原文(含上游 HTTP 细节、密钥路由等)一律不出站——详情进 zap 日志与
+// ai_generation_logs / model_call_log(admin 后台可查)。
 const userFacingGenErr = "系统异常，请联系客服"
+
+// inputErrorRules 把「用户可自行修正的输入类」上游错误映射为具体、可操作的
+// 中文提示。仅做特征匹配后返回**我们自己撰写的**文案,绝不回显供应商原文——
+// 既满足「告诉用户缺什么」,又不泄露内部/供应商细节。命不中则按系统异常处理。
+var inputErrorRules = []struct {
+	// 高置信度特征片段(小写匹配):宁可漏判落到系统异常,也不误把系统故障
+	// 说成用户输入问题。命中任一片段即判定为该输入类问题。
+	markers []string
+	message string
+}{
+	{[]string{"can not both null", "both null"}, "请补充音乐描述或歌词后重试"},
+	{[]string{"lyrics is required", "lyrics required"}, "请填写歌词后重试"},
+	{[]string{"至少一张", "at least one reference", "reference required", "reference image is required"}, "请先上传所需的参考素材后重试"},
+	{[]string{"content policy", "sensitive content", "内容违规", "内容审核"}, "内容未通过安全审核，请调整后重试"},
+}
+
+// userFacingGenError 分级:命中输入类规则→具体提示;否则→系统异常统一文案。
+func userFacingGenError(err error) string {
+	if err == nil {
+		return userFacingGenErr
+	}
+	low := strings.ToLower(err.Error())
+	for _, rule := range inputErrorRules {
+		for _, mk := range rule.markers {
+			if strings.Contains(low, strings.ToLower(mk)) {
+				return rule.message
+			}
+		}
+	}
+	return userFacingGenErr
+}
 
 // pagination clamps page params to sane bounds and returns (offset, limit).
 func pagination(pageNum, pageSize int) (int, int) {
