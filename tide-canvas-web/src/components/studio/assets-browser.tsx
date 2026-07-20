@@ -280,7 +280,14 @@ export function AssetsBrowser({
     if (!want) return [];
     // 未登记的 handler(assistant_chat 等纯文本任务)不属于任何媒体页签,直接跳过,
     // 否则会以空白兜底卡的形式混进「图片」。
-    const matched = tasks.filter((t) => HANDLER_TYPE[t.handler] === want);
+    // 失败/已取消的任务没有资产可看(积分已退),不进资产库——留在创作台/画布
+    // 的任务流里提示即可;生成中的保留(马上会变成结果)。
+    const matched = tasks.filter(
+      (t) =>
+        HANDLER_TYPE[t.handler] === want &&
+        t.status !== AiTaskStatus.FAILED &&
+        t.status !== AiTaskStatus.CANCELLED,
+    );
     return applySort(groupByDate(matched, (t) => t.createTime));
   }, [tab, filter, tasks, applySort]);
 
