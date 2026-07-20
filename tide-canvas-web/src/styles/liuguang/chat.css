@@ -190,6 +190,8 @@
 .ref-thumb img, .ref-thumb video{width:100%; height:100%; object-fit:cover; display:block;}
 .ref-thumb .ref-aud{display:flex; align-items:center; justify-content:center; width:100%; height:100%; font-size:20px; color:var(--text-faint);}
 .ref-thumb.failed{border-color:#e0564f;}
+.ref-thumb.clickable{cursor:zoom-in;}
+.ref-thumb.clickable:hover{border-color:var(--accent);}
 .ref-x{position:absolute; top:2px; right:2px; width:18px; height:18px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:13px; line-height:1; color:#fff; background:rgba(0,0,0,.55); border:none; cursor:pointer; padding:0;}
 .ref-x:hover{background:rgba(0,0,0,.8);}
 .ref-spin{position:absolute; inset:0; margin:auto; width:18px; height:18px; border-radius:50%; border:2px solid rgba(255,255,255,.45); border-top-color:#fff; animation:refspin .8s linear infinite;}
@@ -200,6 +202,20 @@
 .lightbox{position:fixed; inset:0; z-index:1000; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.86); backdrop-filter:blur(4px);}
 .lb-stage{max-width:92vw; max-height:90vh; display:flex; align-items:center; justify-content:center;}
 .lb-stage img, .lb-stage video{max-width:92vw; max-height:90vh; border-radius:10px; box-shadow:0 12px 48px rgba(0,0,0,.5);}
+/* 音频预览：图标 + 文件名 + 播放器 */
+.lb-audio{display:flex; flex-direction:column; align-items:center; gap:16px; padding:32px 40px; border-radius:16px; background:rgba(255,255,255,.06); box-shadow:0 12px 48px rgba(0,0,0,.5);}
+.lb-audio-ic{font-size:48px; color:#fff; opacity:.85;}
+.lb-audio-name{font-size:14px; color:#fff; max-width:70vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.lb-audio audio{width:min(72vw,460px);}
+/* 文件预览：可内嵌则 iframe，否则给下载兜底 */
+.lb-doc{display:flex; flex-direction:column; align-items:center; gap:14px; max-width:92vw; max-height:90vh;}
+.lb-doc-frame{width:min(88vw,900px); height:78vh; border:none; border-radius:10px; background:#fff; box-shadow:0 12px 48px rgba(0,0,0,.5);}
+.lb-doc-fallback{display:flex; flex-direction:column; align-items:center; gap:10px; padding:40px 56px; border-radius:16px; background:rgba(255,255,255,.06);}
+.lb-doc-ic{font-size:52px;}
+.lb-doc-name{font-size:14px; color:#fff; max-width:70vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.lb-doc-hint{font-size:12px; color:rgba(255,255,255,.6);}
+.lb-doc-dl{font-size:13px; color:#fff; background:rgba(255,255,255,.14); padding:8px 18px; border-radius:var(--pill); text-decoration:none;}
+.lb-doc-dl:hover{background:rgba(255,255,255,.24);}
 .lb-x{position:absolute; top:18px; right:22px; width:40px; height:40px; border-radius:50%; font-size:26px; color:#fff; background:rgba(255,255,255,.12); border:none; cursor:pointer;}
 .lb-x:hover{background:rgba(255,255,255,.22);}
 .lb-nav{position:absolute; top:50%; transform:translateY(-50%); width:48px; height:48px; border-radius:50%; font-size:30px; color:#fff; background:rgba(255,255,255,.12); border:none; cursor:pointer;}
@@ -221,7 +237,8 @@
 .chat-msg-atts{display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; margin-bottom:6px;}
 .chat-msg-att{width:72px; height:72px; border-radius:10px; overflow:hidden; border:1px solid var(--border-strong); padding:0; cursor:zoom-in; flex:none; background-color:var(--panel);}
 .chat-msg-att:hover{border-color:var(--accent, #6b8afd);}
-.chat-msg-file{display:inline-flex; align-items:center; gap:4px; padding:6px 10px; border-radius:10px; border:1px solid var(--border-strong); background:var(--panel); color:var(--text-2, inherit); font-size:12px; text-decoration:none;}
+.chat-msg-file{display:inline-flex; align-items:center; gap:4px; padding:6px 10px; border-radius:10px; border:1px solid var(--border-strong); background:var(--panel); color:var(--text-2, inherit); font-size:12px; text-decoration:none; cursor:pointer;}
+.chat-msg-file:hover{border-color:var(--accent);}
 .copy-btn{display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; padding:0; border-radius:7px; color:var(--text-dim); background:var(--surface-2); border:1px solid var(--border); cursor:pointer; transition:color .14s, background .14s;}
 .copy-btn:hover{color:var(--text); background:var(--border);}
 .copy-btn svg{width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round;}

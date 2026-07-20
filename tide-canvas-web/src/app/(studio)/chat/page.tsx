@@ -136,6 +136,7 @@ interface RefItem {
   kind: RefKind;
   blobUrl: string; // local object URL for instant preview
   url?: string; // hosted URL after upload (sent to the backend)
+  name?: string; // 原始文件名(预览标题用)
   uploading: boolean;
   failed?: boolean;
 }
@@ -550,7 +551,7 @@ export default function ChatPage() {
           continue;
         }
         const blobUrl = URL.createObjectURL(file);
-        fresh.push({ item: { key: `r${refSeq.current++}`, kind, blobUrl, uploading: true }, file });
+        fresh.push({ item: { key: `r${refSeq.current++}`, kind, blobUrl, name: file.name, uploading: true }, file });
         count++;
       }
       if (!fresh.length) return;
@@ -595,7 +596,10 @@ export default function ChatPage() {
         return;
       }
       refCountRef.current += 1; // commit synchronously before any follow-up add
-      setRefs((prev) => [...prev, { key: `r${refSeq.current++}`, kind, blobUrl: "", url, uploading: false }]);
+      setRefs((prev) => [
+        ...prev,
+        { key: `r${refSeq.current++}`, kind, blobUrl: "", url, name: fileNameFromUrl(url), uploading: false },
+      ]);
     },
     [refPolicy],
   );
@@ -1546,7 +1550,15 @@ export default function ChatPage() {
             {refs.length > 0 && (
               <div className="ref-strip">
                 {refs.map((r) => (
-                  <RefThumb key={r.key} item={r} onRemove={() => removeRef(r.key)} />
+                  <RefThumb
+                    key={r.key}
+                    item={r}
+                    onRemove={() => removeRef(r.key)}
+                    onOpen={() => {
+                      const src = r.url || r.blobUrl;
+                      if (src) openLightbox([{ url: src, kind: r.kind, name: r.name }], 0);
+                    }}
+                  />
                 ))}
               </div>
             )}
@@ -2046,18 +2058,46 @@ export default function ChatPage() {
 
 /* ── reference thumbnail (composer strip) ─────────────────────────────────── */
 
-function RefThumb({ item, onRemove }: { item: RefItem; onRemove: () => void }) {
+function RefThumb({
+  item,
+  onRemove,
+  onOpen,
+}: {
+  item: RefItem;
+  onRemove: () => void;
+  onOpen: () => void;
+}) {
   const src = item.url || item.blobUrl;
+  // 有可用地址、且非上传中/失败时才可点开预览
+  const canPreview = !!src && !item.uploading && !item.failed;
   return (
-    <div className={`ref-thumb${item.failed ? " failed" : ""}`}>
+    <div
+      className={`ref-thumb${item.failed ? " failed" : ""}${canPreview ? " clickable" : ""}`}
+      role={canPreview ? "button" : undefined}
+      tabIndex={canPreview ? 0 : undefined}
+      title={canPreview ? "点击预览" : undefined}
+      onClick={canPreview ? onOpen : undefined}
+      onKeyDown={
+        canPreview
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onOpen();
+              }
+            }
+          : undefined
+      }
+    >
       {item.kind === "image" ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={src} alt="参考" />
+        <img src={src} alt={item.name || "参考"} />
       ) : item.kind === "video" ? (
         // eslint-disable-next-line jsx-a11y/media-has-caption
         <video src={src} muted />
       ) : (
-        <span className="ref-aud">♪</span>
+        <span className="ref-aud" aria-hidden>
+          ♪
+        </span>
       )}
       {item.uploading && <span className="ref-spin" aria-label="上传中" />}
       {item.failed && (
@@ -2065,7 +2105,15 @@ function RefThumb({ item, onRemove }: { item: RefItem; onRemove: () => void }) {
           !
         </span>
       )}
-      <button type="button" className="ref-x" onClick={onRemove} aria-label="移除参考">
+      <button
+        type="button"
+        className="ref-x"
+        onClick={(e) => {
+          e.stopPropagation(); // 别触发容器的预览
+          onRemove();
+        }}
+        aria-label="移除参考"
+      >
         ×
       </button>
     </div>
@@ -2157,8 +2205,25 @@ function CopyBtn({ text }: { text: string }) {
   );
 }
 
-/** Lightbox state: a set of media items with a current index. */
-type LightboxItem = { url: string; video: boolean };
+/** Lightbox state: a set of media items with a current index. kind 决定预览方式:
+    图片→img、视频→video、音频→audio 播放器、文件→内嵌预览 + 下载兜底。 */
+type LightboxKind = "image" | "video" | "audio" | "doc";
+type LightboxItem = { url: string; kind: LightboxKind; name?: string };
+
+/** 文件名(取 URL 末段,去查询串;解码失败回退原串)——文件预览标题用。 */
+function fileNameFromUrl(url: string): string {
+  try {
+    const path = new URL(url, "http://x").pathname;
+    return decodeURIComponent(path.split("/").pop() || "") || "文件";
+  } catch {
+    return "文件";
+  }
+}
+
+/** 可内嵌预览(iframe)的文档扩展名;其余只给下载。 */
+function isInlineDoc(url: string): boolean {
+  return /\.(pdf|txt|md|csv|json|log|html?)($|\?)/i.test(url);
+}
 
 /** Fullscreen lightbox with Esc-close and ←/→ wrap-around navigation. */
 function Lightbox({
@@ -2219,12 +2284,38 @@ function Lightbox({
         </>
       )}
       <div className="lb-stage" onClick={(e) => e.stopPropagation()}>
-        {cur.video ? (
+        {cur.kind === "video" ? (
           // eslint-disable-next-line jsx-a11y/media-has-caption
           <video src={cur.url} controls autoPlay />
+        ) : cur.kind === "audio" ? (
+          <div className="lb-audio">
+            <span className="lb-audio-ic" aria-hidden>
+              ♪
+            </span>
+            <span className="lb-audio-name">{cur.name || fileNameFromUrl(cur.url)}</span>
+            {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+            <audio src={cur.url} controls autoPlay />
+          </div>
+        ) : cur.kind === "doc" ? (
+          <div className="lb-doc">
+            {isInlineDoc(cur.url) ? (
+              <iframe className="lb-doc-frame" src={cur.url} title={cur.name || "文件预览"} />
+            ) : (
+              <div className="lb-doc-fallback">
+                <span className="lb-doc-ic" aria-hidden>
+                  📄
+                </span>
+                <span className="lb-doc-name">{cur.name || fileNameFromUrl(cur.url)}</span>
+                <span className="lb-doc-hint">该文件类型不支持预览</span>
+              </div>
+            )}
+            <a className="lb-doc-dl" href={cur.url} target="_blank" rel="noopener noreferrer" download>
+              下载 / 新窗口打开
+            </a>
+          </div>
         ) : (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={cur.url} alt="预览" />
+          <img src={cur.url} alt={cur.name || "预览"} />
         )}
       </div>
     </div>
@@ -2302,27 +2393,34 @@ function Bubble({
       <div className="msg-col">
         {isMe && atts.length > 0 && (
           <div className="chat-msg-atts">
-            {atts.map((a, i) =>
-              a.kind === "image" ? (
+            {atts.map((a, i) => {
+              const lbKind: LightboxKind =
+                a.kind === "video" || a.kind === "audio" || a.kind === "doc" ? a.kind : "image";
+              // 图片:整组一起进灯箱可左右翻;其余:单条进灯箱按类型预览
+              const open =
+                a.kind === "image"
+                  ? () =>
+                      onOpenLightbox(
+                        attImages.map((x) => ({ url: x.url, kind: "image" as const })),
+                        attImages.findIndex((x) => x.url === a.url),
+                      )
+                  : () => onOpenLightbox([{ url: a.url, kind: lbKind, name: fileNameFromUrl(a.url) }], 0);
+              return a.kind === "image" ? (
                 <button
                   key={i}
                   type="button"
                   className="chat-msg-att"
                   title="点击查看大图"
                   style={{ background: `center / cover no-repeat url("${a.url}")` }}
-                  onClick={() =>
-                    onOpenLightbox(
-                      attImages.map((x) => ({ url: x.url, video: false })),
-                      attImages.findIndex((x) => x.url === a.url),
-                    )
-                  }
+                  onClick={open}
                 />
               ) : (
-                <a key={i} className="chat-msg-file" href={a.url} target="_blank" rel="noopener noreferrer">
-                  📎 {a.kind}
-                </a>
-              ),
-            )}
+                <button key={i} type="button" className="chat-msg-file" title="点击预览" onClick={open}>
+                  {a.kind === "video" ? "🎬" : a.kind === "audio" ? "🎵" : "📎"}{" "}
+                  {a.kind === "video" ? "视频" : a.kind === "audio" ? "音频" : "文件"}
+                </button>
+              );
+            })}
           </div>
         )}
         <div className="bubble">
@@ -2336,7 +2434,7 @@ function Bubble({
                   ? `center / cover no-repeat url("${msg.content}")`
                   : fallbackImage(msg.id),
               }}
-              onClick={() => msg.content && onOpenLightbox([{ url: msg.content, video: false }], 0)}
+              onClick={() => msg.content && onOpenLightbox([{ url: msg.content, kind: "image" as const }], 0)}
             />
           ) : isVideo && msg.content ? (
             // eslint-disable-next-line jsx-a11y/media-has-caption
@@ -2435,7 +2533,7 @@ function AssistantResult({
       // eslint-disable-next-line jsx-a11y/media-has-caption
       body = <video className="chat-gen-media" src={primaryUrl} controls />;
     } else if (urls.length > 1) {
-      const items: LightboxItem[] = urls.map((u) => ({ url: u, video: false }));
+      const items: LightboxItem[] = urls.map((u) => ({ url: u, kind: "image" as const }));
       body = (
         <div className="chat-gen-grid">
           {urls.map((u, i) => (
@@ -2455,7 +2553,7 @@ function AssistantResult({
           className="chat-gen-media"
           title="点击查看大图"
           style={{ cursor: "zoom-in", background: `center / cover no-repeat url("${primaryUrl}")` }}
-          onClick={() => onOpenLightbox([{ url: primaryUrl, video: false }], 0)}
+          onClick={() => onOpenLightbox([{ url: primaryUrl, kind: "image" as const }], 0)}
         />
       );
     }
