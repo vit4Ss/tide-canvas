@@ -144,9 +144,14 @@ export const TextNode = memo(function TextNode({
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_8%,rgba(0,0,0,0.025),transparent_34%)] dark:bg-[radial-gradient(circle_at_50%_8%,rgba(255,255,255,0.04),transparent_34%)]" />
 
           {node.content ? (
+            // 已选中时内容可划选复制（mousedown 不再进入节点拖拽）；未选中时首次点击仍是选中/拖动节点。
+            // 拖动已选中的节点用标题栏或卡片边缘。
             <div
               ref={contentScrollRef}
-              className="relative h-full overflow-y-auto px-7 py-6 text-neutral-900 dark:text-neutral-100"
+              onMouseDown={isSelected ? stop : undefined}
+              className={`relative h-full overflow-y-auto px-7 py-6 text-neutral-900 dark:text-neutral-100 ${
+                isSelected ? "cursor-text select-text" : ""
+              }`}
             >
               <p className="whitespace-pre-wrap break-words text-sm leading-7">{node.content}</p>
             </div>
@@ -208,7 +213,7 @@ export const TextNode = memo(function TextNode({
                 onMouseDown={stop}
                 placeholder="写下你想讲的故事、场景或角色设定。例如：一个来自未来的机器人，在城市屋顶看星星。"
                 rows={3}
-                className="block w-full resize-none border-0 bg-transparent text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:outline-none focus-visible:outline-none focus:ring-0 dark:text-neutral-100"
+                className="block w-full select-text resize-none border-0 bg-transparent text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:outline-none focus-visible:outline-none focus:ring-0 dark:text-neutral-100"
                 style={{
                   cursor: "text",
                   outline: "none",
