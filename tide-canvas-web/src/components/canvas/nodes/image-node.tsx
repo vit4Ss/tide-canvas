@@ -53,6 +53,10 @@ function isStandardRatio(r?: string | null): r is string {
   return !!r && r !== "auto" && RATIO_OPTIONS.some((o) => o.value === r);
 }
 
+// 可作为「图片N」参考图来源的节点类型：只有这几类能携带画面素材（imageSrc/videoSrc），
+// 文本、脚本、音频等入边只提供上下文，不占参考图编号，也不显示「无图」占位缩略图
+const REF_SOURCE_TYPES = new Set(["image", "video", "scene_3d"]);
+
 // 提示词面板比图片卡片左右各宽出的总量（仅未生成图片时显示），居中伸出让底部控件更宽松
 const PANEL_EXTRA = 80;
 const STYLE_REFERENCE_WIDTH = 320;
@@ -345,7 +349,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         const src = s.nodes.find((n) => n.id === c.sourceId);
         // 风格引用节点不参与参考图:其 imageSrc 是风格封面,混入会把文生图
         // 静默变成「对着封面做图生图」,还挤乱「图片N」编号
-        if (!src || src.type === STYLE_REFERENCE_NODE_TYPE) return "";
+        if (!src || !REF_SOURCE_TYPES.has(src.type)) return "";
         return src.id + "~" + (src.imageSrc || src.videoSrc || "") + "~" + (src.title || "");
       })
       .filter(Boolean)
@@ -360,7 +364,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     for (const c of st.connections) {
       if (c.targetId !== node.id) continue;
       const src = st.nodes.find((n) => n.id === c.sourceId);
-      if (!src || src.type === STYLE_REFERENCE_NODE_TYPE) continue;
+      if (!src || !REF_SOURCE_TYPES.has(src.type)) continue;
       out.push({ id: src.id, thumb: src.imageSrc || src.videoSrc || "", title: src.title || "", index: base + out.length + 1 });
     }
     return out;
