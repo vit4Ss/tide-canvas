@@ -1,5 +1,6 @@
 /* SCARECROWAI 流光 — 对话式生成页 chat */
-.chat-wrap{display:grid; grid-template-columns:264px 1fr; grid-template-rows:minmax(0,1fr); flex:1 1 0%; height:100%; min-height:0;}
+/* 内容列宽：消息列 / 输入框 / 提示行共用一个值，改这里即可整体加减 */
+.chat-wrap{--chat-col:880px; display:grid; grid-template-columns:264px 1fr; grid-template-rows:minmax(0,1fr); flex:1 1 0%; height:100%; min-height:0;}
 @media(max-width:880px){.chat-wrap{grid-template-columns:1fr;} .chat-list{display:none;}}
 
 /* conversation list */
@@ -25,7 +26,7 @@
 .chat-top .acct{margin-left:auto; display:flex; align-items:center; gap:8px; height:34px; padding:0 12px; border-radius:var(--pill); font-size:12.5px; color:var(--text-dim); background:var(--panel); border:1px solid var(--border);}
 .chat-thread{flex:1; overflow-y:auto; padding:30px 0;}
 .chat-thread::-webkit-scrollbar{width:10px;} .chat-thread::-webkit-scrollbar-thumb{background:var(--border-strong); border-radius:99px;}
-.chat-inner{max-width:760px; margin:0 auto; padding:0 24px; display:flex; flex-direction:column; gap:26px;}
+.chat-inner{max-width:var(--chat-col); margin:0 auto; padding:0 24px; display:flex; flex-direction:column; gap:26px;}
 
 .msg{display:flex; gap:14px; animation:msgIn .3s var(--ease);}
 @keyframes msgIn{from{opacity:0; transform:translateY(8px);} to{opacity:1; transform:none;}}
@@ -40,6 +41,10 @@
 .msg.me .av{background:color-mix(in oklab,var(--accent) 26%, var(--surface)); position:relative;}
 .msg.me .av::after{content:'我'; position:absolute; inset:0; display:grid; place-items:center; color:var(--accent); font-size:12px; font-weight:700;}
 .bubble{max-width:80%; font-size:14.5px; line-height:1.7; color:var(--text);}
+/* AI 回复没有底色药丸，80% 上限只会白白压缩长文/表格的可用宽度：
+   放开用满内容列（min-width:0 保证宽内容收缩而不是撑破布局）。
+   用户消息保持 80% 药丸不变。 */
+.msg.ai > .bubble, .msg.ai .msg-col{flex:1 1 0%; max-width:none; min-width:0;}
 .msg.me .bubble{background:var(--accent); color:#fff; padding:11px 15px; border-radius:16px 16px 4px 16px;}
 .msg.ai .bubble{color:var(--text-dim);}
 .bubble strong{color:var(--text); font-weight:700;}
@@ -84,7 +89,7 @@
 
 /* composer */
 .chat-composer{flex:none; padding:14px 24px 20px; background:var(--bg);}
-.composer-box{max-width:760px; margin:0 auto; border:1px solid var(--border-strong); border-radius:18px; background:var(--surface); box-shadow:var(--shadow-sm); transition:border-color .15s, box-shadow .15s;}
+.composer-box{max-width:var(--chat-col); margin:0 auto; border:1px solid var(--border-strong); border-radius:18px; background:var(--surface); box-shadow:var(--shadow-sm); transition:border-color .15s, box-shadow .15s;}
 .composer-box:focus-within{border-color:color-mix(in oklab,var(--accent) 55%,transparent); box-shadow:0 0 0 3px var(--accent-soft);}
 .composer-head{display:flex; align-items:flex-start; gap:12px; padding:14px 14px 2px;}
 /* display:grid 居中必须显式写：按钮内是 SVG 加号，Tailwind preflight 把
@@ -170,12 +175,12 @@
 .cm-send{width:36px; height:36px; border-radius:11px; display:grid; place-items:center; color:#fff; background:var(--accent); transition:filter .15s, transform .12s;}
 .cm-send:hover{filter:brightness(1.07);} .cm-send:active{transform:scale(.94);}
 .cm-send:disabled{opacity:.4; cursor:default;}
-.chat-hint{max-width:760px; margin:8px auto 0; text-align:center; font-size:11px; color:var(--text-faint);}
+.chat-hint{max-width:var(--chat-col); margin:8px auto 0; text-align:center; font-size:11px; color:var(--text-faint);}
 
 /* 上下文用量提醒：≥80% 建议开新会话；full 时发送被禁止 */
 /* 自动压缩说明：安静的单行提示，不抢警示条的注意力 */
-.chat-ctx-note{max-width:760px; margin:0 auto 8px; padding:0 4px; font-size:11.5px; color:var(--text-faint);}
-.chat-ctx-warn{max-width:760px; margin:0 auto 8px; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 14px; border-radius:12px; font-size:12px; color:var(--text-dim); background:color-mix(in oklab, #e8a23d 12%, var(--panel)); border:1px solid color-mix(in oklab, #e8a23d 35%, transparent);}
+.chat-ctx-note{max-width:var(--chat-col); margin:0 auto 8px; padding:0 4px; font-size:11.5px; color:var(--text-faint);}
+.chat-ctx-warn{max-width:var(--chat-col); margin:0 auto 8px; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 14px; border-radius:12px; font-size:12px; color:var(--text-dim); background:color-mix(in oklab, #e8a23d 12%, var(--panel)); border:1px solid color-mix(in oklab, #e8a23d 35%, transparent);}
 .chat-ctx-warn.full{color:var(--text); background:color-mix(in oklab, #e0564f 12%, var(--panel)); border-color:color-mix(in oklab, #e0564f 40%, transparent);}
 .chat-ctx-warn button{flex:none; padding:4px 12px; border-radius:8px; font-size:12px; font-weight:600; color:#fff; background:var(--accent); border:none; cursor:pointer; transition:filter .15s;}
 .chat-ctx-warn button:hover{filter:brightness(1.07);}
@@ -258,11 +263,18 @@
 .bubble .md{font-size:14.5px; line-height:1.7; color:var(--text-dim);}
 .bubble .md > :first-child{margin-top:0;} .bubble .md > :last-child{margin-bottom:0;}
 .bubble .md p{margin:0 0 10px;}
-.bubble .md pre{background:var(--surface-2); border:1px solid var(--border); border-radius:10px; padding:12px 14px; overflow:auto; font-family:var(--mono); font-size:12.5px;}
+/* pre 里多是整行的提示词文案而非真代码：pre-wrap 折行展示，
+   否则每个块都长出一条横向滚动条，页面全是滚动条极其难看 */
+.bubble .md pre{background:var(--surface-2); border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin:8px 0 14px; font-family:var(--mono); font-size:12.5px; line-height:1.65; white-space:pre-wrap; overflow-wrap:anywhere;}
 .bubble .md code{font-family:var(--mono); font-size:12.5px; background:var(--surface-2); padding:1px 5px; border-radius:5px;}
 .bubble .md pre code{background:none; padding:0;}
+/* 标题节奏：preflight 清零了 h1-h6 边距，不补的话所有小节全挤在一起 */
+.bubble .md h1, .bubble .md h2, .bubble .md h3, .bubble .md h4, .bubble .md h5, .bubble .md h6{color:var(--text); font-weight:700; line-height:1.45; margin:20px 0 8px;}
+.bubble .md h1{font-size:17px;} .bubble .md h2{font-size:16px;} .bubble .md h3{font-size:15px;}
+.bubble .md h4, .bubble .md h5, .bubble .md h6{font-size:14.5px;}
 .bubble .md a{color:var(--accent); text-decoration:underline;}
-.bubble .md table{border-collapse:collapse; margin:8px 0;}
+/* 宽表格（如多列分镜表）超出气泡时在自身容器内横向滚动，不撑破页面 */
+.bubble .md table{border-collapse:collapse; margin:8px 0 14px; display:block; overflow-x:auto; max-width:100%;}
 .bubble .md th, .bubble .md td{border:1px solid var(--border); padding:5px 9px; font-size:13px;}
 .stream-caret{display:inline-block; width:7px; height:15px; margin-left:2px; vertical-align:text-bottom; background:var(--accent); border-radius:1px; animation:caret 1s steps(1) infinite;}
 @keyframes caret{50%{opacity:0;}}
