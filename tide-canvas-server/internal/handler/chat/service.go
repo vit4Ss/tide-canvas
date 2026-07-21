@@ -613,7 +613,7 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 		Content:        reply,
 	}
 	at := time.Now()
-	// 空回复 = 客户端中途断开且无实质内容：只 touch 用户消息，不落库空气泡。
+	// 空回复防御（生成已与客户端断连解耦，正常不会为空）：不落库空气泡。
 	if strings.TrimSpace(reply) != "" {
 		if err := s.repo.createMessage(aiMsg); err == nil {
 			_ = s.repo.touchConversation(conversationID, aiMsg.ID, at)
@@ -634,6 +634,11 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 // as one delta so the client still renders something. 上下文 = system 提示词 +
 // 压缩摘要（如有）+ 摘要之后的原文消息。
 func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, ownerID idgen.ID, userContent string, imageURLs []string, requestedModel string, onDelta func(string)) string {
+	// 客户端断开不中止生成：前端切页面/切会话都会 abort SSE，请求上下文随之
+	// 取消；若生成跟着停，回复只落库半截。分离请求上下文让上游把回复生成完整
+	// 并落库，用户切回来能看到全文；llmReplyTimeout 仍然兜底。断开后 onDelta
+	// 往已关闭的连接写帧只是静默失败，不影响生成。
+	ctx = context.WithoutCancel(ctx)
 	conversationID := conv.ID
 	if s.relay != nil {
 		if model := s.repo.resolveTextModelKey(requestedModel); model != "" {
@@ -682,11 +687,8 @@ func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, o
 				}
 				logger.L().Warn("chat: relay stream failed", zap.String("model", model), zap.Error(err))
 				if partial := strings.TrimSpace(streamed.String()); partial != "" {
-					// 已流出实质内容：持久化客户端实际看到的部分，跳过降级链。
+					// 已流出实质内容（如上游超时/中途出错）：持久化已生成的部分，跳过降级链。
 					return streamed.String()
-				}
-				if ctx.Err() != nil {
-					return "" // 客户端已断开：不降级空烧，也不落库占位回复
 				}
 			}
 		}
@@ -719,9 +721,6 @@ func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, o
 				return reply
 			}
 			logger.L().Warn("chat: LLM stream fallback failed, using canned reply", zap.Error(cerr))
-			if ctx.Err() != nil {
-				return ""
-			}
 		}
 	}
 
