@@ -1193,6 +1193,9 @@ export default function ChatPage() {
         await streamMessage(id, v, {
           signal: ac.signal,
           attachments: attachSnapshot,
+          // route the reply to the composer's selected text model (server
+          // validates against 模型管理 and falls back to the primary otherwise)
+          model: selModel?.type === "text" ? selModel.modelKey : undefined,
           onDelta: (d) => {
             acc += d;
             setStreaming(acc);

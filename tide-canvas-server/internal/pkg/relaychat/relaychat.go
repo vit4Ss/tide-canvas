@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -72,8 +73,18 @@ type Client struct {
 	hc      *http.Client
 }
 
+// defaultStreamDeadline caps a stream whose caller context carries no deadline,
+// so a stalled relay can never hang a request forever.
+const defaultStreamDeadline = 5 * time.Minute
+
 // New returns a client, or nil when no API key is configured (so the caller can
 // fall back). baseURL defaults to the relay host when empty.
+//
+// The http.Client deliberately has no overall Timeout: that field also covers
+// reading the response body, which for SSE would kill any generation longer
+// than the timeout regardless of the caller's context. Connection setup and
+// time-to-first-response are bounded via the Transport instead; total duration
+// is owned by the caller's context (with defaultStreamDeadline as fallback).
 func New(baseURL, apiKey string) *Client {
 	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
@@ -83,7 +94,20 @@ func New(baseURL, apiKey string) *Client {
 	if baseURL == "" {
 		baseURL = "https://relay.tcmzhan.com"
 	}
-	return &Client{baseURL: baseURL, apiKey: apiKey, hc: &http.Client{Timeout: 60 * time.Second}}
+	return &Client{baseURL: baseURL, apiKey: apiKey, hc: &http.Client{
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			// A custom dialer disables automatic HTTP/2; force-attempt it back on
+			// and keep DefaultTransport's idle-connection hygiene.
+			ForceAttemptHTTP2:     true,
+			DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 60 * time.Second,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
+	}}
 }
 
 type chatRequest struct {
@@ -126,6 +150,12 @@ func (c *Client) stream(ctx context.Context, model string, msgs []Msg, onDelta f
 		return "", errors.New("relaychat: empty transcript")
 	}
 
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, defaultStreamDeadline)
+		defer cancel()
+	}
+
 	payload, err := json.Marshal(chatRequest{Model: model, Messages: msgs, Stream: true})
 	if err != nil {
 		return "", err
@@ -138,6 +168,7 @@ func (c *Client) stream(ctx context.Context, model string, msgs []Msg, onDelta f
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 
+	start := time.Now()
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		return "", err
@@ -175,7 +206,11 @@ func (c *Client) stream(ctx context.Context, model string, msgs []Msg, onDelta f
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return "", fmt.Errorf("relaychat: read stream: %w", err)
+		// Include elapsed time and how much content had arrived: zero bytes at
+		// the deadline points at the relay stalling; a partial reply points at
+		// the caller's budget being too small for the generation.
+		return "", fmt.Errorf("relaychat: read stream (after %s, %d bytes received): %w",
+			time.Since(start).Round(time.Millisecond), sb.Len(), err)
 	}
 
 	content := strings.TrimSpace(sb.String())

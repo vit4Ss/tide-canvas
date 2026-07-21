@@ -81,4 +81,6 @@ export interface SendMessageDTO {
   content: string;
   type?: ChatContentType;
   attachments?: MessageAttachment[];
+  /** Upstream model_key of the selected text model (validated server-side). */
+  model?: string;
 }

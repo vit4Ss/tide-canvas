@@ -35,6 +35,9 @@ export async function streamMessage(
     onError?: (msg: string, code?: string) => void;
     signal?: AbortSignal;
     attachments?: MessageAttachment[];
+    /** Upstream model_key of the composer's selected text model; the server
+     *  validates it against 模型管理 and falls back to the primary text model. */
+    model?: string;
   },
 ): Promise<void> {
   const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
@@ -49,6 +52,7 @@ export async function streamMessage(
       body: JSON.stringify({
         content,
         ...(handlers.attachments?.length ? { attachments: handlers.attachments } : {}),
+        ...(handlers.model ? { model: handlers.model } : {}),
       }),
       signal: handlers.signal,
     });

@@ -2,6 +2,7 @@ package chat
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -36,6 +37,20 @@ func (r *repo) textModelKey() string {
 		return m.ModelKey
 	}
 	return ""
+}
+
+// resolveTextModelKey honors the composer's model pick when it names a listed
+// enabled text model (so a client can't route chat to arbitrary upstream
+// models), falling back to textModelKey() otherwise.
+func (r *repo) resolveTextModelKey(requested string) string {
+	if requested = strings.TrimSpace(requested); requested != "" {
+		var m model.MarketModel
+		if err := r.db.Where("type = ? AND status = 1 AND model_key = ?", "text", requested).
+			First(&m).Error; err == nil && m.ModelKey != "" {
+			return m.ModelKey
+		}
+	}
+	return r.textModelKey()
 }
 
 // listConversations returns a page of the owner's conversations plus the total

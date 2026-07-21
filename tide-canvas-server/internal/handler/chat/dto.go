@@ -25,6 +25,10 @@ type SendMessageDTO struct {
 	Content     string          `json:"content" binding:"required,max=8192"`
 	Type        string          `json:"type" binding:"omitempty,oneof=text image file"`
 	Attachments []MessageAttach `json:"attachments" binding:"omitempty,max=12,dive"`
+	// Model is the upstream model_key of the text model picked in the composer.
+	// Optional; the server only honors it when it names a listed enabled text
+	// model, otherwise it falls back to the configured primary text model.
+	Model string `json:"model" binding:"omitempty,max=128"`
 }
 
 // MessageAttach is one composer attachment: a hosted file URL plus its kind

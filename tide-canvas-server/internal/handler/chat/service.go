@@ -59,8 +59,9 @@ var errForbidden = errors.New("chat: not owner")
 var errContextFull = errors.New("chat: context token limit reached")
 
 // llmReplyTimeout bounds a single upstream generation so a slow/hung provider
-// never blocks the user's send indefinitely.
-const llmReplyTimeout = 60 * time.Second
+// never blocks the user's send indefinitely. Long replies stream token-by-token
+// and routinely run past a minute, so the budget covers a full long generation.
+const llmReplyTimeout = 180 * time.Second
 
 // ── 上下文自动压缩（compaction）────────────────────────────────────────────
 // 会话估算 token 越过阈值（默认=上限的 70%，sys_config llm.compressAtTokens
@@ -545,7 +546,7 @@ func (s *service) sendMessage(ctx context.Context, conversationID, ownerID idgen
 	// A failure to store the reply must not fail the user's send, so it is
 	// best-effort. 空回复（请求被取消时 generateReply 返回 ""）不落库——
 	// 否则断开的请求会往会话里塞一条空/占位气泡。
-	reply := s.generateReply(ctx, conv, ownerID, content, imageURLs)
+	reply := s.generateReply(ctx, conv, ownerID, content, imageURLs, dto.Model)
 	at := time.Now()
 	if strings.TrimSpace(reply) != "" {
 		aiMsg := &model.IMMessage{
@@ -573,7 +574,7 @@ func (s *service) sendMessage(ctx context.Context, conversationID, ownerID idgen
 // assistant message VO. Ownership is enforced. When no relay text model is
 // available it emits the canned reply as a single delta so the round-trip still
 // completes.
-func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idgen.ID, content string, attachments []MessageAttach, onDelta func(string)) (*MessageVO, error) {
+func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idgen.ID, content string, attachments []MessageAttach, requestedModel string, onDelta func(string)) (*MessageVO, error) {
 	conv, err := s.repo.findConversation(conversationID)
 	if err != nil {
 		return nil, err
@@ -603,7 +604,7 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 		return nil, err
 	}
 
-	reply := s.streamReply(ctx, conv, ownerID, content, imageURLs, onDelta)
+	reply := s.streamReply(ctx, conv, ownerID, content, imageURLs, requestedModel, onDelta)
 
 	aiMsg := &model.IMMessage{
 		ConversationID: conversationID,
@@ -632,10 +633,10 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 // no relay text model is configured) it falls back to the canned reply, emitted
 // as one delta so the client still renders something. 上下文 = system 提示词 +
 // 压缩摘要（如有）+ 摘要之后的原文消息。
-func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, ownerID idgen.ID, userContent string, imageURLs []string, onDelta func(string)) string {
+func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, ownerID idgen.ID, userContent string, imageURLs []string, requestedModel string, onDelta func(string)) string {
 	conversationID := conv.ID
 	if s.relay != nil {
-		if model := s.repo.textModelKey(); model != "" {
+		if model := s.repo.resolveTextModelKey(requestedModel); model != "" {
 			if rows, err := s.repo.recentMessages(conversationID, conv.SummaryUptoID, s.historyWindow()); err == nil {
 				msgs := make([]relaychat.Msg, 0, len(rows)+2)
 				if p := strings.TrimSpace(s.systemPrompt); p != "" {
@@ -813,7 +814,7 @@ func (s *service) appendMessage(conversationID, ownerID idgen.ID, dto AppendMess
 // (or when no LLM is configured) it falls back to the canned placeholder so the
 // chat round-trip always completes. 上下文 = system 提示词 + 压缩摘要（如有）+
 // 摘要之后的原文消息。
-func (s *service) generateReply(ctx context.Context, conv *model.IMConversation, ownerID idgen.ID, userContent string, imageURLs []string) string {
+func (s *service) generateReply(ctx context.Context, conv *model.IMConversation, ownerID idgen.ID, userContent string, imageURLs []string, requestedModel string) string {
 	if s.relay == nil && s.llmClient == nil {
 		return s.buildReply(userContent)
 	}
@@ -826,7 +827,7 @@ func (s *service) generateReply(ctx context.Context, conv *model.IMConversation,
 
 	// 1) Preferred: relay chat completions, routed to a configured text model.
 	if s.relay != nil {
-		if model := s.repo.textModelKey(); model != "" {
+		if model := s.repo.resolveTextModelKey(requestedModel); model != "" {
 			msgs := make([]relaychat.Msg, 0, len(rows)+2)
 			if p := strings.TrimSpace(s.systemPrompt); p != "" {
 				msgs = append(msgs, relaychat.TextMsg("system", p))
