@@ -79,6 +79,8 @@ export interface AiTaskQuery extends PageQuery {
   handler?: string;
   status?: AiTaskStatus;
   projectId?: string | number;
+  /** true = 只要不属于任何画布项目的任务（创作台/对话页发起的生成） */
+  noProject?: boolean;
 }
 
 export interface AiGenerationLogVO {

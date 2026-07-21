@@ -1210,10 +1210,12 @@ export default function CreateStudio() {
   // 生成历史: load the user's REAL generation tasks (persisted server-side). Each
   // SUCCESS task with a result URL becomes a card; a batch task (resultMeta.urls)
   // expands into one card per image. No mock seed — survives refresh.
+  // noProject 排除画布项目里的生成，创作台历史只展示创作台/对话页自己的产物；
+  // 延长/翻唱的原曲候选不受影响（ClipPicker 自拉取仍是全量,画布生成的歌可选）。
   const loadHistory = useCallback(async () => {
     try {
       await ensureSession();
-      const res = await aiApi.listTasks({ pageNum: 1, pageSize: 100 });
+      const res = await aiApi.listTasks({ pageNum: 1, pageSize: 100, noProject: true });
       const records = res.success && res.data ? res.data.records : [];
       const items: HistItem[] = [];
       for (const t of records) {

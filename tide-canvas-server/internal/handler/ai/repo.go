@@ -139,7 +139,9 @@ func (r *repo) listTasks(ctx context.Context, userID idgen.ID, q taskQuery, offs
 	if q.Status != nil {
 		tx = tx.Where("status = ?", *q.Status)
 	}
-	if q.ProjectID != 0 {
+	if q.NoProject {
+		tx = tx.Where("project_id = 0")
+	} else if q.ProjectID != 0 {
 		tx = tx.Where("project_id = ?", q.ProjectID)
 	}
 

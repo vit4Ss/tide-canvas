@@ -213,13 +213,14 @@ export function AssetsBrowser({
   // reqId 守卫(tasks/files 共用):切 tab 或 filter 时,旧 tab/筛选的响应后到不应覆盖当前视图。
   const reqIdRef = useRef(0);
 
-  // 生成历史: all of the user's generation tasks (filtered client-side by type).
+  // 生成历史: the user's studio/chat generation tasks (filtered client-side by
+  // type). noProject 排除画布项目里的生成——画布产物只属于画布，不进资产库。
   const loadTasks = useCallback(async () => {
     const id = ++reqIdRef.current;
     setLoading(true);
     try {
       await ensureSession();
-      const res = await aiApi.listTasks({ pageNum: 1, pageSize: 100 });
+      const res = await aiApi.listTasks({ pageNum: 1, pageSize: 100, noProject: true });
       if (id !== reqIdRef.current) return;
       setTasks(res.success && res.data ? res.data.records : []);
     } catch {

@@ -43,6 +43,9 @@ type taskQuery struct {
 	Handler        string   `form:"handler"`
 	Status         *int     `form:"status"`
 	ProjectID      idgen.ID `form:"projectId"`
+	// NoProject=true 只返回不属于任何画布项目的任务（project_id=0，即创作台/对话页
+	// 发起的生成）；与 ProjectID 互斥，同时传时以 NoProject 为准。
+	NoProject bool `form:"noProject"`
 }
 
 // logQuery is the query string of GET /api/ai/logs (AiGenerationLogQuery).
