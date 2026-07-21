@@ -34,7 +34,11 @@ type UserVO struct {
 	TeamPriceFactor float64   `json:"teamPriceFactor"`
 	// Menus are the front sidebar menu keys the user's role grants
 	// (model.FrontMenuKeys 子集)；studio-rail 据此过滤展示（配置了才显示）。
-	Menus         []string `json:"menus"`
+	Menus []string `json:"menus"`
+	// AdminPerms 是角色解析后的后台模块权限键(model.AdminModuleKeys 子集;
+	// role=9 为全量)。前端 AdminGuard/侧栏据此放行与过滤;实际接口门禁在
+	// middleware.AdminAccess/AdminPerm,此处仅为展示口径。
+	AdminPerms    []string `json:"adminPerms"`
 	CreateTime    string   `json:"createTime"`
 	LastLoginTime string   `json:"lastLoginTime"`
 }
@@ -57,8 +61,9 @@ type RefreshVO struct {
 
 // toUserVO maps a persisted user to its public VO. teamPriceFactor is supplied
 // by the caller (looked up from the user's team) and defaults to 1; menus is
-// the role-resolved sidebar menu list (model.MenusForUser).
-func toUserVO(u *model.User, teamPriceFactor float64, menus []string) UserVO {
+// the role-resolved sidebar menu list (model.MenusForUser); adminPerms is the
+// role-resolved后台模块权限 (model.AdminPermsForUser)。
+func toUserVO(u *model.User, teamPriceFactor float64, menus []string, adminPerms []string) UserVO {
 	if teamPriceFactor <= 0 {
 		teamPriceFactor = 1
 	}
@@ -89,6 +94,7 @@ func toUserVO(u *model.User, teamPriceFactor float64, menus []string) UserVO {
 		InTeam:               inTeam,
 		TeamPriceFactor:      teamPriceFactor,
 		Menus:                menus,
+		AdminPerms:           adminPerms,
 		CreateTime:           formatTime(u.CreateTime),
 		LastLoginTime:        formatTime(u.LastLoginTime),
 	}

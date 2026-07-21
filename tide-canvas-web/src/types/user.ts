@@ -24,6 +24,9 @@ export interface UserVO {
   /** 角色授予的前台侧栏菜单键（discover/studio/chat/canvas/explore/inspire/assets），
       studio-rail 据此过滤展示；缺失（旧会话缓存）时侧栏回退全量 */
   menus?: string[];
+  /** 角色解析后的后台模块权限键（admin.users 等；role=9 为全量）。
+      AdminGuard/后台侧栏据此放行与过滤；实际接口门禁在服务端 */
+  adminPerms?: string[];
   createTime: string;
   lastLoginTime: string;
 }

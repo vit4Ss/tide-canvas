@@ -6,6 +6,7 @@ package middleware
 import (
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -196,23 +197,104 @@ func JWTAuth(d *app.Deps) gin.HandlerFunc {
 	}
 }
 
-// AdminOnly requires the authenticated user to have the admin role (9). Must be
-// chained after JWTAuth.
-func AdminOnly() gin.HandlerFunc {
+// CtxAdminPerms is the context key for the caller's resolved后台模块权限
+// (set by AdminAccess, read by AdminPerm). Value type: map[string]bool。
+const CtxAdminPerms = "adminPerms"
+
+// adminPermsCache 按 uid 缓存角色解析结果,避免后台每个请求都查 user+sys_role。
+// TTL 内角色/权限的后台修改不即时生效(最长延迟 permsCacheTTL),对运营配置
+// 场景可接受。
+const permsCacheTTL = 30 * time.Second
+
+var (
+	adminPermsMu    sync.Mutex
+	adminPermsCache = map[idgen.ID]adminPermsEntry{}
+)
+
+type adminPermsEntry struct {
+	perms   map[string]bool
+	expires time.Time
+}
+
+// resolveAdminPerms returns the cached后台权限集合 for uid, loading user+role
+// from the DB on miss. role=9 走不到这里(AdminAccess 直接放行),所以缓存里
+// 只有运营角色用户,量级很小。
+func resolveAdminPerms(d *app.Deps, uid idgen.ID) map[string]bool {
+	now := time.Now()
+	adminPermsMu.Lock()
+	if e, ok := adminPermsCache[uid]; ok && now.Before(e.expires) {
+		adminPermsMu.Unlock()
+		return e.perms
+	}
+	adminPermsMu.Unlock()
+
+	perms := map[string]bool{}
+	var u model.User
+	if err := d.DB.Where("id = ?", uid).First(&u).Error; err == nil {
+		for _, k := range model.AdminPermsForUser(d.DB, &u) {
+			perms[k] = true
+		}
+	}
+	adminPermsMu.Lock()
+	adminPermsCache[uid] = adminPermsEntry{perms: perms, expires: now.Add(permsCacheTTL)}
+	adminPermsMu.Unlock()
+	return perms
+}
+
+// AdminAccess gates /api/admin:role=9 超管全量放行;其余用户按其角色
+// (sys_role.permissions)解析后台模块权限,持有任一 admin.* 模块键即可进入,
+// 具体模块再由 AdminPerm 细分。无任何后台权限 → 403。Must be chained after
+// JWTAuth.
+func AdminAccess(d *app.Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		role, ok := c.Get(CtxRole)
-		if !ok {
+		uid := CurrentUserID(c)
+		if uid == 0 {
 			response.Fail(c, response.CodeUnauthorized, "authentication required")
 			c.Abort()
 			return
 		}
-		if r, _ := role.(int); r != AdminRole {
+		if CurrentRole(c) == AdminRole {
+			// 超管:空集合 + 下方 AdminPerm 对超管直通,无需逐键展开
+			c.Set(CtxAdminPerms, map[string]bool(nil))
+			c.Next()
+			return
+		}
+		perms := resolveAdminPerms(d, uid)
+		if len(perms) == 0 {
 			response.Fail(c, response.CodeForbidden, "admin privileges required")
+			c.Abort()
+			return
+		}
+		c.Set(CtxAdminPerms, perms)
+		c.Next()
+	}
+}
+
+// AdminPerm requires the caller to hold指定后台模块权限键(如 "admin.models")。
+// 超管(role=9)直通;其余按 AdminAccess 解析进 context 的集合判定。
+func AdminPerm(key string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if CurrentRole(c) == AdminRole {
+			c.Next()
+			return
+		}
+		v, _ := c.Get(CtxAdminPerms)
+		perms, _ := v.(map[string]bool)
+		if !perms[key] {
+			response.Fail(c, response.CodeForbidden, "module permission required: "+key)
 			c.Abort()
 			return
 		}
 		c.Next()
 	}
+}
+
+// InvalidateAdminPermsCache clears the admin-perms cache。角色权限/用户角色
+// 在后台被修改后调用,让变更即时生效(否则最长延迟 permsCacheTTL)。
+func InvalidateAdminPermsCache() {
+	adminPermsMu.Lock()
+	adminPermsCache = map[idgen.ID]adminPermsEntry{}
+	adminPermsMu.Unlock()
 }
 
 // CurrentUserID returns the authenticated user's ID from context (0 if absent).

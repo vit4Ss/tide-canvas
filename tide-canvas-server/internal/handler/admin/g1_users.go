@@ -306,6 +306,27 @@ func (h *userHandler) updateUser(c *gin.Context) {
 		return
 	}
 
+	// 运营角色(非超管)不得触碰权限体系:变更账号角色/权限角色仅超管可做,
+	// 管理员账号本身也不许被运营改动(否则可禁用/清空超管账号)。
+	// 只拦「实际变更」——编辑表单会原样回传当前 role,值没变不算越权。
+	if middleware.CurrentRole(c) != middleware.AdminRole {
+		t, err := h.findUser(id)
+		if err != nil {
+			h.failLookup(c, err, "failed to load user")
+			return
+		}
+		if t.Role == middleware.AdminRole {
+			response.Fail(c, response.CodeForbidden, "仅超级管理员可操作管理员账号")
+			return
+		}
+		roleChanged := dto.Role != nil && *dto.Role != t.Role
+		roleIDChanged := dto.RoleID != nil && strings.TrimSpace(*dto.RoleID) != t.RoleID.String()
+		if roleChanged || roleIDChanged {
+			response.Fail(c, response.CodeForbidden, "仅超级管理员可变更用户角色")
+			return
+		}
+	}
+
 	fields := map[string]any{}
 	if dto.Role != nil {
 		fields["role"] = *dto.Role
@@ -362,6 +383,12 @@ func (h *userHandler) updateUser(c *gin.Context) {
 	if err != nil {
 		h.failLookup(c, err, "failed to load user")
 		return
+	}
+
+	// 改了账号角色(role/role_id)或状态(封禁即失权)会影响其后台模块权限,
+	// 清缓存即时生效
+	if dto.Role != nil || dto.RoleID != nil || dto.Status != nil {
+		middleware.InvalidateAdminPermsCache()
 	}
 
 	// Audit security/membership-relevant changes (role, status, vip, points).
@@ -495,6 +522,14 @@ func (h *userHandler) adjustPoints(c *gin.Context) {
 		return
 	}
 
+	// 运营不得调整管理员账号的积分(与 updateUser 的管理员账号保护同口径)
+	if middleware.CurrentRole(c) != middleware.AdminRole {
+		if t, err := h.findUser(id); err == nil && t.Role == middleware.AdminRole {
+			response.Fail(c, response.CodeForbidden, "仅超级管理员可操作管理员账号")
+			return
+		}
+	}
+
 	var newBalance int64
 	err := h.db.Transaction(func(tx *gorm.DB) error {
 		var u model.User
@@ -563,6 +598,9 @@ func (h *userHandler) listRoles(c *gin.Context) {
 
 // createRole handles POST /roles.
 func (h *userHandler) createRole(c *gin.Context) {
+	if !requireSuper(c, "管理权限角色") {
+		return
+	}
 	var dto RoleSaveDTO
 	if err := c.ShouldBindJSON(&dto); err != nil {
 		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
@@ -597,6 +635,9 @@ func (h *userHandler) createRole(c *gin.Context) {
 
 // updateRole handles PUT /roles/:id.
 func (h *userHandler) updateRole(c *gin.Context) {
+	if !requireSuper(c, "管理权限角色") {
+		return
+	}
 	id, ok := g1ParseID(c, "role")
 	if !ok {
 		return
@@ -641,6 +682,8 @@ func (h *userHandler) updateRole(c *gin.Context) {
 		response.Fail(c, response.CodeServerError, "failed to load role")
 		return
 	}
+	// 后台模块权限即时生效(否则最长延迟 permsCacheTTL)
+	middleware.InvalidateAdminPermsCache()
 
 	eventlog.Biz(&model.BizLog{
 		Action:     "role_update",
@@ -655,6 +698,9 @@ func (h *userHandler) updateRole(c *gin.Context) {
 
 // deleteRole handles DELETE /roles/:id (soft delete via gorm.DeletedAt).
 func (h *userHandler) deleteRole(c *gin.Context) {
+	if !requireSuper(c, "管理权限角色") {
+		return
+	}
 	id, ok := g1ParseID(c, "role")
 	if !ok {
 		return
@@ -677,6 +723,7 @@ func (h *userHandler) deleteRole(c *gin.Context) {
 		response.Fail(c, response.CodeNotFound, "role not found")
 		return
 	}
+	middleware.InvalidateAdminPermsCache()
 
 	eventlog.Biz(&model.BizLog{
 		Action:     "role_delete",
@@ -690,6 +737,17 @@ func (h *userHandler) deleteRole(c *gin.Context) {
 }
 
 // ----- helpers --------------------------------------------------------------
+
+// requireSuper 拒绝非超管(role≠9)调用:角色 CRUD、变更用户角色等能改写权限
+// 体系的操作只留给超管——否则拿到「用户管理」模块的运营可以给自己的角色勾满
+// 后台权限或把自己的账号改成管理员,整个模块权限体系就被绕穿了。
+func requireSuper(c *gin.Context, action string) bool {
+	if middleware.CurrentRole(c) == middleware.AdminRole {
+		return true
+	}
+	response.Fail(c, response.CodeForbidden, "仅超级管理员可"+action)
+	return false
+}
 
 // changeTypeAdmin is the PointRecord.ChangeType for an admin manual adjustment.
 const changeTypeAdmin = "admin"

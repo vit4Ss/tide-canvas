@@ -37,6 +37,7 @@ import {
   type Column,
   TableSkeleton,
 } from "@/components/admin";
+import { ADMIN_MODULES } from "@/components/admin/admin-sidebar";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminUsersApi } from "@/lib/admin-users-api";
 import { confirmDialog } from "@/components/shared/confirm";
@@ -166,6 +167,9 @@ const EMPTY_ROLE_FORM: RoleForm = {
 
 function AdminUsersPageInner() {
   const ensureSession = useAuthStore((s) => s.ensureSession);
+  // 角色 CRUD 与账号角色变更为超管专属(服务端 requireSuper 同口径),
+  // 运营视角直接收掉入口,避免点了必 403 的假按钮
+  const isSuper = useAuthStore((s) => s.user?.role === 9);
   const searchParams = useSearchParams();
   const urlKeyword = searchParams.get("keyword") ?? "";
 
@@ -300,7 +304,8 @@ function AdminUsersPageInner() {
     try {
       const dto: AdminUserUpdateDTO = {
         nickname: editForm.nickname,
-        role: editForm.role,
+        // 角色字段仅超管可变更(服务端 requireSuper 同口径),运营不发该字段
+        ...(isSuper ? { role: editForm.role } : {}),
         status: editForm.status,
         vipLevel: editForm.vipLevel,
         apiQuota: editForm.apiQuota,
@@ -563,14 +568,19 @@ function AdminUsersPageInner() {
     {
       header: "操作",
       align: "right",
-      cell: (r) => (
-        <RowActions
-          actions={[
-            { label: "编辑", onClick: () => openEditRole(r) },
-            { label: "删除", onClick: () => deleteRole(r) },
-          ]}
-        />
-      ),
+      cell: (r) =>
+        isSuper ? (
+          <RowActions
+            actions={[
+              { label: "编辑", onClick: () => openEditRole(r) },
+              { label: "删除", onClick: () => deleteRole(r) },
+            ]}
+          />
+        ) : (
+          <span className="muted" style={{ fontSize: 12 }}>
+            仅超管可改
+          </span>
+        ),
     },
   ];
 
@@ -658,10 +668,12 @@ function AdminUsersPageInner() {
         title="角色管理"
         sub="后台权限角色（sys_role）"
         tools={
-          <button type="button" className="adm-btn" onClick={openCreateRole}>
-            <Plus aria-hidden size={15} />
-            新建角色
-          </button>
+          isSuper ? (
+            <button type="button" className="adm-btn" onClick={openCreateRole}>
+              <Plus aria-hidden size={15} />
+              新建角色
+            </button>
+          ) : undefined
         }
       >
         {rolesLoading ? (
@@ -671,10 +683,12 @@ function AdminUsersPageInner() {
             title="尚未创建自定义角色"
             description="创建角色后，可为后台运营人员配置清晰的权限边界。"
             action={
-              <button type="button" className="adm-btn" onClick={openCreateRole}>
-                <Plus aria-hidden size={15} />
-                新建角色
-              </button>
+              isSuper ? (
+                <button type="button" className="adm-btn" onClick={openCreateRole}>
+                  <Plus aria-hidden size={15} />
+                  新建角色
+                </button>
+              ) : undefined
             }
           />
         ) : (
@@ -706,9 +720,10 @@ function AdminUsersPageInner() {
                   onChange={(e) => setEditForm({ ...editForm, nickname: e.target.value })}
                 />
               </Field>
-              <Field label="角色" span={2}>
+              <Field label="角色" span={2} hint={isSuper ? undefined : "仅超级管理员可变更"}>
                 <select
                   value={editForm.role}
+                  disabled={!isSuper}
                   onChange={(e) => setEditForm({ ...editForm, role: Number(e.target.value) })}
                 >
                   {/* role=1(VIP) 死档已移除：会员身份走 vipLevel，由购买结算提升 */}
@@ -861,17 +876,58 @@ function AdminUsersPageInner() {
                 })}
               </div>
             </Field>
-            <Field label="后台权限" span={4} hint="标记该角色可访问后台管理（实际后台门禁仍按账号角色=管理员判定）">
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13 }}>
-                <input
-                  type="checkbox"
-                  checked={parsePerms(roleForm.permissions).includes(PERM_ADMIN)}
-                  onChange={() =>
-                    setRoleForm({ ...roleForm, permissions: togglePerm(roleForm.permissions, PERM_ADMIN) })
-                  }
-                />
-                后台管理
-              </label>
+            <Field
+              label="后台权限"
+              span={4}
+              hint="「全部后台」授予所有模块；或不勾它、按模块勾选明细。拥有任一后台权限的账号即可进入后台，仅能看到/调用已授权模块（保存即生效）"
+            >
+              {(() => {
+                const perms = parsePerms(roleForm.permissions);
+                const allAdmin = perms.includes(PERM_ADMIN);
+                return (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "4px 0" }}>
+                    <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+                      <input
+                        type="checkbox"
+                        checked={allAdmin}
+                        onChange={() =>
+                          setRoleForm({ ...roleForm, permissions: togglePerm(roleForm.permissions, PERM_ADMIN) })
+                        }
+                      />
+                      全部后台
+                    </label>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 18px" }}>
+                      {ADMIN_MODULES.map((m) => {
+                        const key = `admin.${m.perm}`;
+                        const checked = allAdmin || perms.includes(key);
+                        return (
+                          <label
+                            key={m.perm}
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 6,
+                              cursor: allAdmin ? "default" : "pointer",
+                              fontSize: 13,
+                              opacity: allAdmin ? 0.55 : 1,
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={allAdmin}
+                              onChange={() =>
+                                setRoleForm({ ...roleForm, permissions: togglePerm(roleForm.permissions, key) })
+                              }
+                            />
+                            {m.label}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
             </Field>
           </FormGrid>
         </FormCard>

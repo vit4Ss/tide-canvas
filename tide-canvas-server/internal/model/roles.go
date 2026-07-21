@@ -21,10 +21,31 @@ const (
 	RoleCodeAdmin = "admin"
 )
 
-// PermAdminAccess marks 后台管理 access inside a role's permissions array.
-// 实际的 /api/admin 门禁仍走 JWT role=9（middleware.AdminGuard）；此键用于
-// 角色配置的语义完整与前台展示后台入口的依据。
+// PermAdminAccess 是「全部后台」总开关:角色带它即拥有全部后台模块权限
+// (基线管理员角色即此配置,兼容 2026-07-18 之前只有该键的旧数据)。
 const PermAdminAccess = "admin.access"
+
+// AdminModuleKeys 是后台管理各模块的细分权限键(admin.<模块>),与后台侧栏
+// admin-sidebar.tsx 的导航项一一对应(模型状态与中转站同步共用 admin.models,
+// 因为其接口挂在 /admin/models 之下)。新增后台模块时两端同步加键。
+var AdminModuleKeys = []string{
+	"admin.dashboard",     // 数据概览
+	"admin.users",         // 用户管理(含角色管理)
+	"admin.works",         // 作品管理
+	"admin.inspiration",   // 灵感管理
+	"admin.logs",          // 日志管理(访问/登录/业务/审计)
+	"admin.floors",        // 首页楼层
+	"admin.blog",          // 博客管理
+	"admin.styles",        // 风格管理
+	"admin.models",        // 模型管理(含模型状态/中转站同步)
+	"admin.tools",         // 工具管理
+	"admin.points",        // 积分管理
+	"admin.pricing",       // 价格管理
+	"admin.payments",      // 支付管理
+	"admin.notifications", // 消息管理
+	"admin.config",        // 配置管理
+	"admin.email",         // 邮件配置
+}
 
 // FrontMenuKeys are the studio-rail menu keys, 与前端 studio-rail.tsx 的
 // NAV 项一一对应。新增侧栏项时两端同步加键。
@@ -106,6 +127,46 @@ func RoleIDByCode(db *gorm.DB, code string) idgen.ID {
 		return 0
 	}
 	return r.ID
+}
+
+// AdminPermsForUser resolves后台模块权限:role=9 超管、或角色带 admin.access
+// (全部后台)→ 全量模块键;否则取角色 permissions 里配置的 admin.* 明细。
+// 与前台菜单的 fail-open 相反,这是后台门禁的依据,角色缺失/禁用/解析失败
+// 一律 fail-closed(返回空 = 无后台权限)。
+func AdminPermsForUser(db *gorm.DB, u *User) []string {
+	if u == nil {
+		return nil
+	}
+	if u.Role == 9 {
+		return append([]string{}, AdminModuleKeys...)
+	}
+	// 被禁用的账号立即失去后台权限(JWT 不查状态,若不拦,封禁的运营在
+	// token 有效期内仍能进后台)
+	if u.Status != 1 || u.RoleID == 0 {
+		return nil
+	}
+	var r SysRole
+	if err := db.Where("id = ?", u.RoleID).First(&r).Error; err != nil || r.Status != 1 {
+		return nil
+	}
+	var perms []string
+	if json.Unmarshal([]byte(r.Permissions), &perms) != nil {
+		return nil
+	}
+	has := map[string]bool{}
+	for _, p := range perms {
+		has[p] = true
+	}
+	if has[PermAdminAccess] {
+		return append([]string{}, AdminModuleKeys...)
+	}
+	out := make([]string, 0, 4)
+	for _, k := range AdminModuleKeys {
+		if has[k] {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // MenusForUser resolves the front-menu keys the user's role grants. 兜底
