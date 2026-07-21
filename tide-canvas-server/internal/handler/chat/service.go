@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -111,6 +112,9 @@ type service struct {
 	// ctxTokenLimit caps a conversation's cumulative estimated tokens (see
 	// tokens.go); text sends beyond it fail with errContextFull.
 	ctxTokenLimit int
+	// live 注册表：会话 → 生成中的回复缓存（断开重连续播，见 live.go）。
+	liveMu sync.Mutex
+	live   map[idgen.ID]*liveReply
 }
 
 func newService(db *gorm.DB, cfg *config.Config) *service {
@@ -120,6 +124,7 @@ func newService(db *gorm.DB, cfg *config.Config) *service {
 		systemPrompt:  cfg.LLM.SystemPrompt,
 		ctxTokenLimit: cfg.LLM.ContextTokenLimit,
 		relay:         relaychat.New(cfg.Relay.BaseURL, cfg.Relay.APIKey),
+		live:          map[idgen.ID]*liveReply{},
 	}
 	if s.historyLimit <= 0 {
 		s.historyLimit = 20
@@ -604,7 +609,17 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 		return nil, err
 	}
 
-	reply := s.streamReply(ctx, conv, ownerID, content, imageURLs, requestedModel, onDelta)
+	// 注册 live 缓存：增量同时进内存缓存,断开的客户端刷新后可通过
+	// GET /stream 重新附着续播（见 live.go）。liveEnd 兜底保证任何返回路径
+	// 都会终结订阅者的等待。
+	lr := s.liveStart(conversationID)
+	defer s.liveEnd(conversationID, lr)
+	reply := s.streamReply(ctx, conv, ownerID, content, imageURLs, requestedModel, func(d string) {
+		lr.append(d)
+		if onDelta != nil {
+			onDelta(d)
+		}
+	})
 
 	aiMsg := &model.IMMessage{
 		ConversationID: conversationID,
@@ -625,6 +640,7 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 	}
 
 	vo := toMessageVO(aiMsg, conv.OwnerID)
+	lr.finish(&vo)
 	return &vo, nil
 }
 

@@ -266,6 +266,12 @@
 /* pre 里多是整行的提示词文案而非真代码：pre-wrap 折行展示，
    否则每个块都长出一条横向滚动条，页面全是滚动条极其难看 */
 .bubble .md pre{background:var(--surface-2); border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin:8px 0 14px; font-family:var(--mono); font-size:12.5px; line-height:1.65; white-space:pre-wrap; overflow-wrap:anywhere;}
+/* 代码块外层（MdPre）：外边距移到 wrapper 上，:first/:last-child 去边距规则
+   才能继续命中；复制按钮悬浮右上，hover 时浮现 */
+.bubble .md .md-prewrap{position:relative; margin:8px 0 14px;}
+.bubble .md .md-prewrap > pre{margin:0;}
+.md-prewrap .md-precopy{position:absolute; top:8px; right:8px; opacity:0; transition:opacity .14s;}
+.md-prewrap:hover .md-precopy, .md-precopy:focus-visible{opacity:1;}
 .bubble .md code{font-family:var(--mono); font-size:12.5px; background:var(--surface-2); padding:1px 5px; border-radius:5px;}
 .bubble .md pre code{background:none; padding:0;}
 /* 标题节奏：preflight 清零了 h1-h6 边距，不补的话所有小节全挤在一起 */

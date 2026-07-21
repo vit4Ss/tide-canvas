@@ -35,7 +35,7 @@ import {
 } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { chatApi, streamMessage } from "@/lib/chat-api";
+import { chatApi, streamLive, streamMessage } from "@/lib/chat-api";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { AiTaskStatus } from "@/types/ai";
 import { marketApi, type StudioModelVO } from "@/lib/market-api";
@@ -1353,12 +1353,122 @@ export default function ChatPage() {
   );
 
 
-  // approx points cost: the selected model's 消耗积分 × batch.
-  // 音频按次计费（Suno 一次两首一并结算），不乘数量。
+  // approx points cost — 与服务端权威计费(pricing.go resolveCost)同序解析，
+  // 分辨率/时长切换要联动:
+  //   video: priceMatrix[时长][分辨率]（两个轴序都试）→ priceModifiers
+  //          ["duration@分辨率"][时长] → creditCost → pointCost；单条不乘数量
+  //   image: 对话页不选画质，矩阵无从命中，与服务端一致落到固定价 × 批量
+  //   audio: 按次计费（Suno 一次两首一并结算）
   const points = useMemo(() => {
-    const base = parseFloat(selModel?.pointCost ?? "0") || 0;
-    return Math.round(base * (selModel?.type === "audio" ? 1 : Math.max(1, batch)));
-  }, [selModel, batch]);
+    const cellNum = (v: unknown) => {
+      const n = typeof v === "string" ? parseFloat(v) : typeof v === "number" ? v : NaN;
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    };
+    const flat = cellNum(mCfg?.creditCost) || parseFloat(selModel?.pointCost ?? "0") || 0;
+    let base = 0;
+    if (isVid && dur && res) {
+      const pm = mCfg?.priceMatrix;
+      base = cellNum(pm?.[dur]?.[res]) || cellNum(pm?.[res]?.[dur]);
+      if (!base) {
+        const mods = mCfg?.priceModifiers as Record<string, Record<string, unknown> | undefined> | undefined;
+        base = cellNum(mods?.[`duration@${res}`]?.[dur]);
+      }
+    }
+    if (!base) base = flat;
+    // 服务端按向上取整结算（见 pricing.go），展示同口径
+    if (selModel?.type === "audio" || isVid) return Math.ceil(base);
+    return Math.ceil(base * Math.max(1, batch));
+  }, [mCfg, selModel, isVid, dur, res, batch]);
+
+  // —— 刷新/切页后的接续（GPT/Claude 式断线续播）——
+  // 服务端断连后仍继续生成并缓存增量（chat/live.go）。文本轮次里用户消息先
+  // 落库、回复生成完才落库，所以「最后一条是 200s 内的孤儿用户文本消息」
+  // = 服务端可能还在生成：附着 GET /stream 续播——先收到已生成快照，再逐字
+  // 直播，终态后拉取落库消息。附着到 none/出错（可能刚好落库、或服务端重
+  // 启）→ 拉一次消息，仍是孤儿则 3s 后重试；窗口 200s 略大于服务端生成上限
+  // (llmReplyTimeout 180s)，超窗放弃。本地发送中（busy）不介入；条件里刻意
+  // 不看 streaming——附着自身会置流式态，看了会自我打断。
+  const lastMsg = msgs[msgs.length - 1];
+  const resumeId =
+    !busy && !!lastMsg && lastMsg.role === "user" && !lastMsg.taskId ? lastMsg.id : null;
+  const resumeAt = resumeId ? lastMsg.createTime : null;
+  const msgsRef = useRef(msgs);
+  useEffect(() => {
+    msgsRef.current = msgs;
+  }, [msgs]);
+  useEffect(() => {
+    if (!resumeId || !resumeAt || !activeId) return;
+    const convId = activeId;
+    const ac = new AbortController();
+    const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+    (async () => {
+      await sleep(0); // 让出同步栈（effect 体内禁止同步 setState）
+      // 时效窗口依赖客户端与服务端的时钟差：解析失败(NaN)直接不接续,
+      // 客户端时钟偏慢时窗口判断失效,由硬性次数上限兜底(约 200s/3s)。
+      const sentAt = new Date(resumeAt).getTime();
+      if (!Number.isFinite(sentAt)) return;
+      let tries = 0;
+      for (;;) {
+        if (ac.signal.aborted) return;
+        if (Date.now() - sentAt >= 200_000 || ++tries > 70) return;
+        setStreaming((cur) => (cur === null ? "" : cur)); // "" = 思考中气泡
+        let acc = "";
+        let final: MessageVO | null = null;
+        await streamLive(convId, {
+          signal: ac.signal,
+          onDelta: (d) => {
+            acc += d;
+            setStreaming(acc);
+            if (nearBottomRef.current) requestAnimationFrame(scrollEnd);
+          },
+          onDone: (m) => {
+            final = m;
+          },
+        });
+        if (ac.signal.aborted) return;
+        setStreaming(null);
+        // 写回一律走「当前线程仍以这条孤儿消息收尾」的状态守卫，而不是
+        // loadMessages——后者会自增 reqId,与切会话瞬间的加载存在竞态窗口,
+        // 输了会把旧会话消息灌进新会话视图;状态守卫在内容层面杜绝了污染。
+        if (final) {
+          const done: MessageVO = final;
+          if (done.conversationId === convId) {
+            setMsgs((cur) => {
+              const l = cur[cur.length - 1];
+              return l && l.id === resumeId ? [...cur, done] : cur;
+            });
+            refreshCtxUsage(convId); // 存储按会话 id 键控,跨会话调用无污染
+          }
+          return;
+        }
+        // none / 断流：可能刚好落库或服务端重启——拉一次消息按守卫替换，
+        // 仍是孤儿则按节奏重试
+        try {
+          const res = await chatApi.messages(convId, { pageNum: 1, pageSize: 100 });
+          if (res.success && res.data) {
+            const records = res.data.records;
+            setMsgs((cur) => {
+              const l = cur[cur.length - 1];
+              return l && l.id === resumeId ? records : cur;
+            });
+          }
+        } catch {
+          /* 网络抖动：按重试节奏继续 */
+        }
+        if (ac.signal.aborted) return;
+        await sleep(3000);
+        const cur = msgsRef.current;
+        const l = cur[cur.length - 1];
+        if (!l || l.id !== resumeId) {
+          refreshCtxUsage(convId); // 回复已落库（none 路径拉到的）：同步用量条
+          return;
+        }
+      }
+    })();
+    // 中止只影响附着连接，服务端生成不受影响；流式气泡由接管方（切会话的
+    // stopStream / 新发送的 send）负责撤下，这里不动状态。
+    return () => ac.abort();
+  }, [resumeId, resumeAt, activeId, scrollEnd, refreshCtxUsage]);
 
   return (
     <div className="chat-wrap">
@@ -1497,7 +1607,7 @@ export default function ChatPage() {
                     </span>
                   ) : (
                     <div className="md">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{streaming}</ReactMarkdown>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{streaming}</ReactMarkdown>
                       <span className="stream-caret" />
                     </div>
                   )}
@@ -2208,6 +2318,46 @@ function CopyBtn({ text }: { text: string }) {
   );
 }
 
+/** markdown 代码块：右上角悬浮复制按钮。文案取渲染后 pre 的实际文本
+    （innerText），流式中途点击也能复制到当前已输出的内容。 */
+function MdPre({ node, ...props }: React.HTMLAttributes<HTMLPreElement> & { node?: unknown }) {
+  void node; // react-markdown 附带的 AST 节点，剥离掉不透传给 DOM
+  const ref = useRef<HTMLPreElement>(null);
+  const [done, setDone] = useState(false);
+  return (
+    <div className="md-prewrap">
+      <pre {...props} ref={ref} />
+      <button
+        type="button"
+        className="copy-btn md-precopy"
+        title="复制"
+        onClick={async () => {
+          if (await copyText(ref.current?.innerText ?? "")) {
+            setDone(true);
+            setTimeout(() => setDone(false), 1200);
+          } else {
+            toast.error("复制失败");
+          }
+        }}
+      >
+        {done ? (
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 12.5l5 5L20 6.5" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="9" y="9" width="11" height="11" rx="2" />
+            <path d="M5 15V5a2 2 0 0 1 2-2h8" />
+          </svg>
+        )}
+      </button>
+    </div>
+  );
+}
+
+/** 两处 ReactMarkdown 共用的组件覆写（模块级常量,避免每次渲染重建）。 */
+const MD_COMPONENTS = { pre: MdPre };
+
 /** Lightbox state: a set of media items with a current index. kind 决定预览方式:
     图片→img、视频→video、音频→audio 播放器、文件→内嵌预览 + 下载兜底。 */
 type LightboxKind = "image" | "video" | "audio" | "doc";
@@ -2446,7 +2596,7 @@ function Bubble({
             <span>{msg.content}</span>
           ) : (
             <div className="md">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{msg.content}</ReactMarkdown>
             </div>
           )}
         </div>

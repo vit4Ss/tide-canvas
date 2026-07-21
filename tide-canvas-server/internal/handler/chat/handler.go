@@ -246,6 +246,66 @@ func (h *handler) streamMessage(c *gin.Context) {
 	frame(map[string]any{"done": true, "message": vo})
 }
 
+// streamLiveMessage handles GET /api/im/conversations/:id/stream (auth): attach
+// to the conversation's in-progress assistant reply (断开重连续播). Frames match
+// POST /stream — {"delta"} / {"done","message"} — plus {"none":true} when nothing
+// is generating (already persisted / never started / server restarted), which
+// tells the client to just reload messages.
+func (h *handler) streamLiveMessage(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	ownerID := middleware.CurrentUserID(c)
+	lr, err := h.svc.attachLive(id, ownerID)
+	if err != nil {
+		response.Fail(c, response.CodeNotFound, "对话不存在")
+		return
+	}
+
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	flusher, _ := c.Writer.(http.Flusher)
+	frame := func(obj any) {
+		b, _ := json.Marshal(obj)
+		fmt.Fprintf(c.Writer, "data: %s\n\n", b)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+
+	if lr == nil {
+		frame(map[string]bool{"none": true})
+		return
+	}
+
+	// 快照 + 版本通知消费循环：先补发已生成部分，随后每被唤醒一次按 offset
+	// 切片补差，直到终态（done 带落库消息；final 缺失 = 生成异常终止）。
+	offset := 0
+	for {
+		text, wait, done, final := lr.state()
+		if len(text) > offset {
+			frame(map[string]string{"delta": text[offset:]})
+			offset = len(text)
+		}
+		if done {
+			if final != nil {
+				frame(map[string]any{"done": true, "message": final})
+			} else {
+				frame(map[string]string{"error": "生成失败"})
+			}
+			return
+		}
+		select {
+		case <-wait:
+		case <-c.Request.Context().Done():
+			return // 附着方又断开了：生成不受影响，下次再附着
+		}
+	}
+}
+
 // contextUsage handles GET /api/im/conversations/:id/context (auth): the
 // conversation's estimated context-token usage vs the configured cap.
 func (h *handler) contextUsage(c *gin.Context) {

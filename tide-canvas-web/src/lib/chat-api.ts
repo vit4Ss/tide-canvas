@@ -65,11 +65,89 @@ export async function streamMessage(
     handlers.onError?.("网络错误");
     return;
   }
-  const reader = res.body.getReader();
+  const terminal = await readSseFrames(res, (obj) => {
+    if (typeof obj.delta === "string") {
+      handlers.onDelta?.(obj.delta);
+      return false;
+    }
+    if (obj.done) {
+      handlers.onDone?.(obj.message as MessageVO);
+      return true;
+    }
+    if (obj.error) {
+      handlers.onError?.(String(obj.error), typeof obj.code === "string" ? obj.code : undefined);
+      return true;
+    }
+    return false;
+  });
+  // 没收到终结帧就结束 = 连接中途断掉（网络抖动 / 服务端崩溃），必须通知
+  // 调用方——否则回复静默消失、界面毫无解释。
+  if (!terminal && !handlers.signal?.aborted) {
+    handlers.onError?.("连接中断，回复可能不完整，请查看最新消息或重试");
+  }
+}
+
+/** Attach to the conversation's in-progress assistant reply（断开重连续播,
+ *  GET /stream）: the server first replays the already-generated snapshot as a
+ *  delta, then live deltas, then the same {done,message} terminal frame as
+ *  POST /stream. onNone fires when nothing is generating（回复已落库 / 从未
+ *  开始 / 服务端重启）—— caller should reload messages instead. */
+export async function streamLive(
+  id: string,
+  handlers: {
+    onDelta?: (delta: string) => void;
+    onDone?: (message: MessageVO) => void;
+    onNone?: () => void;
+    onError?: (msg: string) => void;
+    signal?: AbortSignal;
+  },
+): Promise<void> {
+  const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+  let res: Response;
+  try {
+    res = await fetch(`/api/im/conversations/${id}/stream`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      signal: handlers.signal,
+    });
+  } catch {
+    if (!handlers.signal?.aborted) handlers.onError?.("网络错误");
+    return;
+  }
+  if (!res.ok || !res.body) {
+    handlers.onError?.("网络错误");
+    return;
+  }
+  const terminal = await readSseFrames(res, (obj) => {
+    if (typeof obj.delta === "string") {
+      handlers.onDelta?.(obj.delta);
+      return false;
+    }
+    if (obj.none) {
+      handlers.onNone?.();
+      return true;
+    }
+    if (obj.done) {
+      handlers.onDone?.(obj.message as MessageVO);
+      return true;
+    }
+    if (obj.error) {
+      handlers.onError?.(String(obj.error));
+      return true;
+    }
+    return false;
+  });
+  if (!terminal && !handlers.signal?.aborted) handlers.onError?.("连接中断");
+}
+
+/** 逐帧消费 SSE 响应体。onFrame 对终结帧返回 true；整体返回是否见到终结帧
+ *  （中止/断流时为 false，由调用方决定如何提示）。 */
+async function readSseFrames(
+  res: Response,
+  onFrame: (obj: Record<string, unknown>) => boolean,
+): Promise<boolean> {
+  const reader = res.body!.getReader();
   const dec = new TextDecoder();
   let buf = "";
-  // 是否收到了终结帧（done/error）。没收到就结束 = 连接中途断掉（网络抖动 /
-  // 服务端崩溃），必须通知调用方——否则回复静默消失、界面毫无解释。
   let terminal = false;
   try {
     for (;;) {
@@ -83,27 +161,17 @@ export async function streamMessage(
         const line = frame.split("\n").find((l) => l.startsWith("data:"));
         if (!line) continue;
         try {
-          const obj = JSON.parse(line.slice(5).trim());
-          if (typeof obj.delta === "string") handlers.onDelta?.(obj.delta);
-          else if (obj.done) {
-            terminal = true;
-            handlers.onDone?.(obj.message as MessageVO);
-          } else if (obj.error) {
-            terminal = true;
-            handlers.onError?.(String(obj.error), typeof obj.code === "string" ? obj.code : undefined);
-          }
+          if (onFrame(JSON.parse(line.slice(5).trim()))) terminal = true;
         } catch {
           /* ignore malformed frame */
         }
       }
     }
   } catch {
-    // read threw: an abort (caller-initiated, silent) or a mid-stream network
-    // drop (reported below via the terminal check).
+    // read threw: an abort (caller-initiated) or a mid-stream network drop —
+    // both surface to the caller via the terminal flag.
   }
-  if (!terminal && !handlers.signal?.aborted) {
-    handlers.onError?.("连接中断，回复可能不完整，请查看最新消息或重试");
-  }
+  return terminal;
 }
 
 export const chatApi = {
