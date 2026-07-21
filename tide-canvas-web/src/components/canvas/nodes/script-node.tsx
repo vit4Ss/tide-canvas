@@ -55,14 +55,22 @@ export const ScriptNode = memo(function ScriptNode({ node, isSelected, isDraggin
           }`}
           style={{ minHeight: 200 }}
         >
+          {/* 卡片几乎整脸都是 textarea：未选中时它不接管鼠标（点击/拖动 = 选中/拖动节点），
+              选中后才进入编辑态，可划选复制；拖动已选中节点用标题栏或边框环。 */}
           <textarea
             ref={taRef}
             value={node.prompt || ""}
             onChange={(e) => updateNode(node.id, { prompt: e.target.value })}
-            onMouseDown={stop}
+            onMouseDown={isSelected ? stop : undefined}
             placeholder="在此撰写剧本 / 分镜脚本…"
-            className="w-full resize-none border-0 bg-transparent text-sm leading-7 text-neutral-800 outline-none placeholder:text-neutral-400 focus:outline-none focus-visible:outline-none focus:ring-0 dark:text-neutral-100"
-            style={{ outline: "none", boxShadow: "none", minHeight: 170, cursor: "text" }}
+            className="w-full select-text resize-none border-0 bg-transparent text-sm leading-7 text-neutral-800 outline-none placeholder:text-neutral-400 focus:outline-none focus-visible:outline-none focus:ring-0 dark:text-neutral-100"
+            style={{
+              outline: "none",
+              boxShadow: "none",
+              minHeight: 170,
+              cursor: isSelected ? "text" : "inherit",
+              pointerEvents: isSelected ? "auto" : "none",
+            }}
             rows={8}
             spellCheck={false}
           />
