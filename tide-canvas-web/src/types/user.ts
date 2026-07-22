@@ -54,6 +54,12 @@ export interface UserRegisterDTO {
   phone?: string;
 }
 
+/** 用户名+密码本地注册（免邮箱，注册即登录）；规范由服务端权威校验 */
+export interface RegisterLocalDTO {
+  username: string;
+  password: string;
+}
+
 export interface UserLoginDTO {
   account: string;
   password: string;

@@ -21,6 +21,14 @@ type RegisterDTO struct {
 	Phone    string `json:"phone" binding:"omitempty,max=32"`
 }
 
+// RegisterLocalDTO is the body for POST /api/auth/register-local:用户名+密码
+// 免邮箱注册。字段规范由服务端权威校验(validateUsername /
+// validatePasswordStrict),binding 只做粗筛。
+type RegisterLocalDTO struct {
+	Username string `json:"username" binding:"required,min=4,max=20"`
+	Password string `json:"password" binding:"required,min=8,max=64"`
+}
+
 // LoginDTO is the body for POST /api/auth/login (UserLoginDTO). account is a
 // username, email or phone.
 type LoginDTO struct {

@@ -1,7 +1,7 @@
 import { http, toParams } from "./http";
 import type { PageData, PageResult, Result } from "@/types/api";
 import type {
-  UserVO, LoginVO, UserLoginDTO, UserRegisterDTO, UpdatePasswordDTO, UpdateProfileDTO,
+  UserVO, LoginVO, UserLoginDTO, UserRegisterDTO, RegisterLocalDTO, UpdatePasswordDTO, UpdateProfileDTO,
   ResetPasswordDTO,
 } from "@/types/user";
 import type {
@@ -24,6 +24,9 @@ export const authApi = {
     http.post<void>("/api/auth/email-code", data),
   register: (data: UserRegisterDTO) =>
     http.post<UserVO>("/api/auth/register", data),
+  /** 用户名+密码免邮箱注册；成功即返回登录态（注册即登录） */
+  registerLocal: (data: RegisterLocalDTO) =>
+    http.post<LoginVO>("/api/auth/register-local", data),
   login: (data: UserLoginDTO) =>
     http.post<LoginVO>("/api/auth/login", data),
   loginCode: (data: { email: string; code: string }) =>

@@ -33,11 +33,61 @@ import { useAuthStore } from "@/stores/use-auth-store";
 
 type Mode = "login" | "register" | "reset";
 type SubMode = "pwd" | "code";
-type FieldKey = "email" | "code" | "pwd";
+/** 注册子模式：用户名注册(免邮箱) / 邮箱注册 */
+type RegMode = "user" | "email";
+type FieldKey = "email" | "code" | "pwd" | "account" | "username" | "pwd2";
 
 const isEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 // 用码点计数([...v])而非 UTF-16 长度(v.length)，与后端 rune 计数一致，避免星芒面字符(如 emoji)前端放行、后端 400。
 const isPwd = (v: string) => [...v].length >= 8 && /[a-zA-Z]/.test(v) && /\d/.test(v);
+
+/* ── 用户名注册的规范校验:与服务端 auth/local.go 逐条镜像(服务端权威) ── */
+const USERNAME_RE = /^[A-Za-z][A-Za-z0-9_]{3,19}$/;
+const RESERVED_USERNAMES = new Set([
+  "root", "system", "api", "support", "service", "operator", "moderator",
+  "superuser", "guest", "test", "user", "users", "null", "undefined",
+  "anonymous", "flowinglight", "liuguang", "kefu", "customer",
+]);
+/** 用户名不合规时返回提示文案，合规返回 null */
+const usernameIssue = (v: string): string | null => {
+  if (!USERNAME_RE.test(v)) return "用户名需 4-20 位，以字母开头，仅可包含字母、数字和下划线";
+  const lower = v.toLowerCase();
+  if (RESERVED_USERNAMES.has(lower) || lower.startsWith("admin") || lower.startsWith("official")) {
+    return "该用户名为系统保留，请更换";
+  }
+  return null;
+};
+
+const COMMON_PWDS = new Set([
+  "password", "password1", "password123", "passw0rd", "p@ssw0rd", "p@ssword1",
+  "12345678", "123456789", "1234567890", "87654321",
+  "qwerty123", "qwertyuiop", "1q2w3e4r", "1q2w3e4r5t", "1qaz2wsx", "qazwsxedc",
+  "q1w2e3r4", "1234qwer", "qwer1234", "123qweasd", "asd123456",
+  "abc12345", "abcd1234", "asdf1234", "zxcvbnm123", "a1b2c3d4",
+  "admin123", "admin@123", "root1234", "root@123", "letmein123",
+  "iloveyou", "iloveyou1", "welcome123", "monkey123", "dragon123",
+  "woaini520", "woaini1314", "wang123456", "aa123456", "abc123456",
+  "a12345678", "12345678a", "123456aa", "5201314520", "1314520520",
+  "11111111", "00000000", "66666666", "88888888", "aaaa1111",
+]);
+
+/** 严格密码策略的实时清单(用户名注册用)：每条 [文案, 是否通过] */
+function pwdRuleChecks(pw: string, uname: string): { label: string; ok: boolean }[] {
+  const runes = [...pw].length;
+  const classes =
+    (/[a-z]/.test(pw) ? 1 : 0) + (/[A-Z]/.test(pw) ? 1 : 0) +
+    (/\d/.test(pw) ? 1 : 0) + (/[^a-zA-Z0-9\s]/.test(pw) ? 1 : 0);
+  const lower = pw.toLowerCase();
+  return [
+    { label: "长度 8-64 位", ok: runes >= 8 && runes <= 64 && new TextEncoder().encode(pw).length <= 72 },
+    { label: "大写字母 / 小写字母 / 数字 / 符号，至少包含三类", ok: classes >= 3 },
+    {
+      label: "不含空格，不包含用户名",
+      ok: pw !== "" && !/\s/.test(pw) && (uname === "" || !lower.includes(uname.toLowerCase())),
+    },
+    { label: "不是常见弱密码", ok: pw !== "" && !COMMON_PWDS.has(lower) },
+  ];
+}
 
 function LoginInner() {
   const router = useRouter();
@@ -47,14 +97,20 @@ function LoginInner() {
   const login = useAuthStore((s) => s.login);
   const loginCode = useAuthStore((s) => s.loginCode);
   const register = useAuthStore((s) => s.register);
+  const registerLocal = useAuthStore((s) => s.registerLocal);
   const resetPassword = authApi.resetPassword;
 
   const [mode, setMode] = useState<Mode>("login");
   const [subMode, setSubMode] = useState<SubMode>("pwd");
+  const [regMode, setRegMode] = useState<RegMode>("user");
 
   const [email, setEmail] = useState("");
+  // 密码登录的账号(用户名或邮箱)与邮箱字段分离,避免验证码/注册流程串味
+  const [account, setAccount] = useState("");
+  const [username, setUsername] = useState("");
   const [code, setCode] = useState("");
   const [pwd, setPwd] = useState("");
+  const [pwd2, setPwd2] = useState("");
   const [showPwd, setShowPwd] = useState(false);
   const [remember, setRemember] = useState(true);
   const [agree, setAgree] = useState(false);
@@ -147,6 +203,8 @@ function LoginInner() {
     // 清空跨模式残留输入，避免登录/注册/重置之间的数据串味与误提交。
     setCode("");
     setPwd("");
+    setPwd2("");
+    setUsername("");
     setShowPwd(false);
     setAgree(false);
   };
@@ -156,9 +214,22 @@ function LoginInner() {
     clearErrors();
   };
 
-  // field visibility (mirrors syncFields). reset needs email + code + new password.
+  const switchReg = (next: RegMode) => {
+    setRegMode(next);
+    clearErrors();
+    setPwd("");
+    setPwd2("");
+  };
+
+  // field visibility. 登录+密码 = 账号(用户名/邮箱);验证码登录/邮箱注册/重置 = 邮箱;
+  // 用户名注册 = 用户名 + 密码 + 确认密码(无邮箱、无验证码)。
+  const isLocalReg = mode === "register" && regMode === "user";
+  const showAccountField = mode === "login" && subMode === "pwd";
+  const showUsernameField = isLocalReg;
+  const showEmailField =
+    mode === "reset" || (mode === "login" && subMode === "code") || (mode === "register" && regMode === "email");
   const showCodeField =
-    mode === "register" || mode === "reset" || (mode === "login" && subMode === "code");
+    mode === "reset" || (mode === "login" && subMode === "code") || (mode === "register" && regMode === "email");
   const showPwdField =
     mode === "register" || mode === "reset" || (mode === "login" && subMode === "pwd");
 
@@ -190,14 +261,50 @@ function LoginInner() {
     ev.preventDefault();
     if (loading) return;
 
+    // ── 用户名注册(免邮箱)：独立校验与提交路径，规范与服务端逐条镜像 ──
+    if (isLocalReg) {
+      const u = username.trim();
+      const nextErrors: Partial<Record<FieldKey, string>> = {};
+      const uIssue = usernameIssue(u);
+      if (uIssue) nextErrors.username = uIssue;
+      if (pwdRuleChecks(pwd, u).some((r) => !r.ok))
+        nextErrors.pwd = "密码不符合安全要求，请对照下方规则调整";
+      if (pwd2 !== pwd) nextErrors.pwd2 = "两次输入的密码不一致";
+      if (Object.keys(nextErrors).length) {
+        setErrors(nextErrors);
+        return;
+      }
+      if (!agree) {
+        toast("请先同意服务条款与隐私政策");
+        return;
+      }
+      setLoading(true);
+      try {
+        // 注册即登录：后端直接返回会话
+        await registerLocal({ username: u, password: pwd });
+        toast("账户已创建 · 正在进入创作台");
+        router.replace(redirect);
+      } catch (err) {
+        const raw = err instanceof Error ? err.message : "注册失败，请稍后重试";
+        // 注册限速(5 次/10 分钟/IP)触发时给可读的中文提示,而非透传英文错误
+        const msg = /too many|429|频繁/i.test(raw) ? "尝试过于频繁，请 10 分钟后再试" : raw;
+        if (/用户名|username/i.test(msg)) setErr("username", msg);
+        else setErr("pwd", msg);
+        toast(msg);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     const e = email.trim();
-    const needCode =
-      mode === "register" || mode === "reset" || (mode === "login" && subMode === "code");
-    const needPwd =
-      mode === "register" || mode === "reset" || (mode === "login" && subMode === "pwd");
+    const acc = account.trim();
+    const needCode = showCodeField;
+    const needPwd = showPwdField;
 
     const nextErrors: Partial<Record<FieldKey, string>> = {};
-    if (!isEmail(e)) nextErrors.email = "请输入有效的邮箱地址";
+    if (showAccountField && !acc) nextErrors.account = "请输入用户名或邮箱";
+    if (showEmailField && !isEmail(e)) nextErrors.email = "请输入有效的邮箱地址";
     // 验证码长度不写死 6：后端已改为由 verifyEmailCode 依配置(Email.CodeLength)权威校验，
     // 前端只要求「非空数字」即可，避免非默认长度时把合法验证码在客户端拦下。
     if (needCode && !/^\d+$/.test(code.trim())) nextErrors.code = "请输入收到的验证码";
@@ -239,7 +346,8 @@ function LoginInner() {
         await loginCode({ email: e, code: code.trim() });
         toast("登录成功 · 正在进入创作台");
       } else {
-        await login({ account: e, password: pwd, rememberMe: remember });
+        // 密码登录：账号可为用户名或邮箱（服务端 findByAccount 两者皆认）
+        await login({ account: acc, password: pwd, rememberMe: remember });
         toast("登录成功 · 正在进入创作台");
       }
       // success → honor ?redirect= (else /studio)
@@ -361,10 +469,19 @@ function LoginInner() {
             <p className="auth-sub">{sub}</p>
 
             <div className="email-note">
-              <span className="ic">✉</span>
-              <span>
-                目前仅支持<b style={{ color: "var(--text)" }}> 邮箱 </b>登录，其它登录方式即将开放。
-              </span>
+              <span className="ic">{isLocalReg ? "!" : "✉"}</span>
+              {isLocalReg ? (
+                <span>
+                  用户名账号<b style={{ color: "var(--text)" }}>不绑定邮箱</b>
+                  ，忘记密码将无法自助找回，请务必牢记密码。
+                </span>
+              ) : (
+                <span>
+                  支持<b style={{ color: "var(--text)" }}> 邮箱 </b>或
+                  <b style={{ color: "var(--text)" }}> 用户名密码 </b>
+                  登录注册，其它方式即将开放。
+                </span>
+              )}
             </div>
 
             {/* login: password / code segmented */}
@@ -385,35 +502,120 @@ function LoginInner() {
               </button>
             </div>
 
+            {/* register: username / email segmented */}
+            <div className={`submode${mode === "register" ? " show" : ""}`} data-only="register">
+              <button
+                className={regMode === "user" ? "on" : ""}
+                type="button"
+                onClick={() => switchReg("user")}
+              >
+                用户名注册
+              </button>
+              <button
+                className={regMode === "email" ? "on" : ""}
+                type="button"
+                onClick={() => switchReg("email")}
+              >
+                邮箱注册
+              </button>
+            </div>
+
             <form onSubmit={onSubmit} noValidate>
+              {/* account（密码登录：用户名或邮箱） */}
+              {showAccountField && (
+                <div className="field">
+                  <label htmlFor="account">用户名 / 邮箱</label>
+                  <div className={`inp${errors.account ? " bad" : ""}`}>
+                    <span className="lic">
+                      <svg viewBox="0 0 24 24">
+                        <circle cx="12" cy="8.2" r="3.6" />
+                        <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
+                      </svg>
+                    </span>
+                    <input
+                      id="account"
+                      type="text"
+                      autoComplete="username"
+                      placeholder="用户名或邮箱"
+                      value={account}
+                      onChange={(ev) => {
+                        const v = ev.target.value;
+                        setAccount(v);
+                        if (v.trim()) clearErr("account");
+                      }}
+                    />
+                  </div>
+                  <div className={`err${errors.account ? " show" : ""}`}>
+                    {errors.account || "请输入用户名或邮箱"}
+                  </div>
+                </div>
+              )}
+
+              {/* username（用户名注册） */}
+              {showUsernameField && (
+                <div className="field">
+                  <label htmlFor="username">用户名</label>
+                  <div
+                    className={`inp${
+                      errors.username ? " bad" : username && !usernameIssue(username.trim()) ? " ok" : ""
+                    }`}
+                  >
+                    <span className="lic">
+                      <svg viewBox="0 0 24 24">
+                        <circle cx="12" cy="8.2" r="3.6" />
+                        <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
+                      </svg>
+                    </span>
+                    <input
+                      id="username"
+                      type="text"
+                      autoComplete="username"
+                      maxLength={20}
+                      placeholder="4-20 位，字母开头"
+                      value={username}
+                      onChange={(ev) => {
+                        const v = ev.target.value;
+                        setUsername(v);
+                        if (!usernameIssue(v.trim())) clearErr("username");
+                      }}
+                    />
+                  </div>
+                  <div className={`err${errors.username ? " show" : ""}`}>
+                    {errors.username || "4-20 位，以字母开头，仅可包含字母、数字和下划线"}
+                  </div>
+                </div>
+              )}
+
               {/* email */}
-              <div className="field">
-                <label htmlFor="email">邮箱地址</label>
-                <div className={`inp${errors.email ? " bad" : isEmail(email) ? " ok" : ""}`}>
-                  <span className="lic">
-                    <svg viewBox="0 0 24 24">
-                      <rect x="3" y="5" width="18" height="14" rx="2.5" />
-                      <path d="M3.5 7l8.5 6 8.5-6" />
-                    </svg>
-                  </span>
-                  <input
-                    id="email"
-                    type="email"
-                    inputMode="email"
-                    autoComplete="email"
-                    placeholder="you@example.com"
-                    value={email}
-                    onChange={(ev) => {
-                      const v = ev.target.value;
-                      setEmail(v);
-                      if (isEmail(v.trim())) clearErr("email");
-                    }}
-                  />
+              {showEmailField && (
+                <div className="field">
+                  <label htmlFor="email">邮箱地址</label>
+                  <div className={`inp${errors.email ? " bad" : isEmail(email) ? " ok" : ""}`}>
+                    <span className="lic">
+                      <svg viewBox="0 0 24 24">
+                        <rect x="3" y="5" width="18" height="14" rx="2.5" />
+                        <path d="M3.5 7l8.5 6 8.5-6" />
+                      </svg>
+                    </span>
+                    <input
+                      id="email"
+                      type="email"
+                      inputMode="email"
+                      autoComplete="email"
+                      placeholder="you@example.com"
+                      value={email}
+                      onChange={(ev) => {
+                        const v = ev.target.value;
+                        setEmail(v);
+                        if (isEmail(v.trim())) clearErr("email");
+                      }}
+                    />
+                  </div>
+                  <div className={`err${errors.email ? " show" : ""}`}>
+                    {errors.email || "请输入有效的邮箱地址"}
+                  </div>
                 </div>
-                <div className={`err${errors.email ? " show" : ""}`}>
-                  {errors.email || "请输入有效的邮箱地址"}
-                </div>
-              </div>
+              )}
 
               {/* verification code */}
               {showCodeField && (
@@ -471,17 +673,20 @@ function LoginInner() {
                       type={showPwd ? "text" : "password"}
                       autoComplete={mode === "login" ? "current-password" : "new-password"}
                       placeholder={
-                        mode === "register"
-                          ? "设置密码（至少 8 位）"
-                          : mode === "reset"
-                            ? "设置新密码（至少 8 位）"
-                            : "请输入密码"
+                        isLocalReg
+                          ? "设置密码（按下方规则）"
+                          : mode === "register"
+                            ? "设置密码（至少 8 位）"
+                            : mode === "reset"
+                              ? "设置新密码（至少 8 位）"
+                              : "请输入密码"
                       }
                       value={pwd}
                       onChange={(ev) => {
                         const v = ev.target.value;
                         setPwd(v);
-                        if (isPwd(v)) clearErr("pwd");
+                        if (isLocalReg ? pwdRuleChecks(v, username.trim()).every((r) => r.ok) : isPwd(v))
+                          clearErr("pwd");
                       }}
                     />
                     <button
@@ -494,7 +699,48 @@ function LoginInner() {
                     </button>
                   </div>
                   <div className={`err${errors.pwd ? " show" : ""}`}>
-                    {errors.pwd || "密码至少 8 位，包含字母与数字"}
+                    {errors.pwd || (isLocalReg ? "请按下方规则设置密码" : "密码至少 8 位，包含字母与数字")}
+                  </div>
+                  {/* 用户名注册：安全规则实时清单（与服务端策略逐条镜像） */}
+                  {isLocalReg && (
+                    <ul className="pwd-rules">
+                      {pwdRuleChecks(pwd, username.trim()).map((r) => (
+                        <li key={r.label} className={r.ok ? "ok" : ""}>
+                          <span className="dot">✓</span>
+                          {r.label}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+
+              {/* confirm password（用户名注册：无邮箱可找回，双输防手滑锁死账号） */}
+              {isLocalReg && (
+                <div className="field">
+                  <label htmlFor="pwd2">确认密码</label>
+                  <div className={`inp${errors.pwd2 ? " bad" : pwd2 && pwd2 === pwd ? " ok" : ""}`}>
+                    <span className="lic">
+                      <svg viewBox="0 0 24 24">
+                        <rect x="4" y="10" width="16" height="11" rx="2.5" />
+                        <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+                      </svg>
+                    </span>
+                    <input
+                      id="pwd2"
+                      type={showPwd ? "text" : "password"}
+                      autoComplete="new-password"
+                      placeholder="再次输入密码"
+                      value={pwd2}
+                      onChange={(ev) => {
+                        const v = ev.target.value;
+                        setPwd2(v);
+                        if (v === pwd) clearErr("pwd2");
+                      }}
+                    />
+                  </div>
+                  <div className={`err${errors.pwd2 ? " show" : ""}`}>
+                    {errors.pwd2 || "两次输入需一致"}
                   </div>
                 </div>
               )}
@@ -525,7 +771,7 @@ function LoginInner() {
               {mode === "reset" && (
                 <div className="row-between" data-only="reset">
                   <span style={{ fontSize: "12.5px", color: "var(--text-faint)" }}>
-                    通过邮箱验证码验证身份后设置新密码
+                    通过邮箱验证码验证身份后设置新密码（用户名账号未绑定邮箱，无法自助找回）
                   </span>
                   <button
                     type="button"

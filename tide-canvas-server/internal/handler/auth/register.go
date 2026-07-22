@@ -34,6 +34,9 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	// Public routes.
 	g.POST("/email-code", h.emailCode)
 	g.POST("/register", h.register)
+	// 用户名+密码本地注册(免邮箱,注册即登录)。没有验证码摩擦,批量灌号/薅新手
+	// 积分只能靠 IP 限速兜底,窗口比登录更紧。
+	g.POST("/register-local", middleware.RateLimit(d, 5, 10*time.Minute), h.registerLocal)
 	// Throttle password / code login per-IP to blunt credential brute-force
 	// (findByAccount matches username OR email OR phone, so a known account can
 	// otherwise be sprayed unbounded — only bcrypt's cost slows it).

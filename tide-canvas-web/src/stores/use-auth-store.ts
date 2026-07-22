@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { UserVO } from "@/types/user";
 import { authApi } from "@/lib/api";
 import { setTokens, clearTokens } from "@/lib/http";
-import type { UserLoginDTO, UserRegisterDTO } from "@/types/user";
+import type { UserLoginDTO, UserRegisterDTO, RegisterLocalDTO } from "@/types/user";
 
 /** 去重：并发调用 ensureSession 只发一次 fetchUser 请求。 */
 let ensureSessionPromise: Promise<boolean> | null = null;
@@ -15,6 +15,8 @@ interface AuthState {
   login: (dto: UserLoginDTO) => Promise<void>;
   loginCode: (dto: { email: string; code: string }) => Promise<void>;
   register: (dto: UserRegisterDTO) => Promise<void>;
+  /** 用户名+密码免邮箱注册：成功即持有会话（注册即登录） */
+  registerLocal: (dto: RegisterLocalDTO) => Promise<void>;
   logout: () => Promise<void>;
   fetchUser: () => Promise<void>;
   setUser: (user: UserVO | null) => void;
@@ -53,6 +55,23 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ loading: true });
     try {
       const result = await authApi.loginCode(dto);
+      if (result.success) {
+        setTokens(result.data.accessToken, result.data.refreshToken);
+        set({ user: result.data.userInfo, loading: false, initialized: true });
+      } else {
+        set({ loading: false });
+        throw new Error(result.message);
+      }
+    } catch (error) {
+      set({ loading: false });
+      throw error;
+    }
+  },
+
+  registerLocal: async (dto) => {
+    set({ loading: true });
+    try {
+      const result = await authApi.registerLocal(dto);
       if (result.success) {
         setTokens(result.data.accessToken, result.data.refreshToken);
         set({ user: result.data.userInfo, loading: false, initialized: true });

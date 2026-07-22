@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"strings"
 	"time"
 
 	"tidecanvas/internal/model"
@@ -74,10 +75,15 @@ func toUserVO(u *model.User, teamPriceFactor float64, menus []string, adminPerms
 		teamID = &t
 		inTeam = true
 	}
+	// 本地账号(用户名注册)的占位邮箱不对外暴露:抹成空串,前台统一显示为未绑定
+	email := u.Email
+	if strings.HasSuffix(email, noEmailSuffix) {
+		email = ""
+	}
 	return UserVO{
 		ID:                   u.ID,
 		Username:             u.Username,
-		Email:                u.Email,
+		Email:                email,
 		Phone:                u.Phone,
 		Nickname:             u.Nickname,
 		Avatar:               u.Avatar,
