@@ -18,6 +18,7 @@ import { AiModelType, type AiModelVO } from "@/types/ai";
 import { NodeHeader } from "./base/node-header";
 import { NodePorts } from "./base/node-ports";
 import { NodeChrome } from "./base/node-chrome";
+import { VideoModeDropdown } from "./video-mode-dropdown";
 import { PromptRefEditor, PromptEditorModal } from "./prompt-ref-editor";
 import { type RefItem } from "./prompt-ref-utils";
 
@@ -165,9 +166,6 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   const [videoModels, setVideoModels] = useState<AiModelVO[]>([]);
   const [selectedModelId, setSelectedModelId] = useState("");
   const [videoTab, setVideoTab] = useState("文生视频");
-  const [hoveredTab, setHoveredTab] = useState<string | null>(null);
-  const [hoveredTabX, setHoveredTabX] = useState<number | null>(null);
-  const tabRowRef = useRef<HTMLDivElement>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -601,20 +599,6 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     }
   }, [node.prompt]);
 
-  const handleTabMouseEnter = useCallback((tab: string, e: React.MouseEvent<HTMLButtonElement>) => {
-    setHoveredTab(tab);
-    const row = tabRowRef.current?.getBoundingClientRect();
-    const button = e.currentTarget.getBoundingClientRect();
-    if (row) {
-      setHoveredTabX(button.left - row.left + button.width / 2);
-    }
-  }, []);
-
-  const handleTabMouseLeave = useCallback(() => {
-    setHoveredTab(null);
-    setHoveredTabX(null);
-  }, []);
-
   const handlePromptChange = (value: string) => {
     updateNode(node.id, {
       prompt: value,
@@ -872,55 +856,8 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         {showAuxUI && (
           <NodeChrome zoom={zoom} placement="bottom-center" gap={18} damp={0.6}>
             <div onMouseDown={stop} className="flex flex-col rounded-xl border border-neutral-200 bg-white p-3 shadow-xl shadow-neutral-900/10 dark:border-neutral-800 dark:bg-neutral-950 dark:shadow-black/30" style={{ width: promptPanelW, height: 250, boxSizing: "border-box" }}>
-              {/* 模式 Tab */}
-              <div ref={tabRowRef} className="relative flex items-center justify-between gap-1">
-                {hoveredTab && TAB_LIMITS[hoveredTab] && (
-                  <div className="pointer-events-none absolute bottom-full z-30 mb-2 -translate-x-1/2 whitespace-nowrap rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs text-neutral-600 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300" style={{ left: hoveredTabX ?? 0 }}>
-                    {TAB_LIMITS[hoveredTab].hint}
-                  </div>
-                )}
-                <div className="flex items-center gap-0.5 overflow-x-auto text-xs">
-                  {visibleTabs.map((t) => {
-                    const enabled = tabEnabled(t);
-                    return (
-                      <button
-                        key={t}
-                        onMouseDown={stop}
-                        onMouseEnter={(e) => handleTabMouseEnter(t, e)}
-                        onMouseLeave={handleTabMouseLeave}
-                        onClick={(e) => { stop(e); if (enabled) setVideoTab(t); }}
-                        aria-disabled={!enabled}
-                        className={`whitespace-nowrap rounded-lg px-2 py-1 transition-colors ${
-                          !enabled ? "cursor-not-allowed text-neutral-300 dark:text-neutral-700"
-                            : videoTab === t ? "cursor-pointer bg-neutral-100 font-medium text-neutral-900 dark:bg-neutral-800 dark:text-white"
-                            : "cursor-pointer text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-                        }`}
-                      >
-                        {t}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="ml-auto flex shrink-0 items-center gap-0.5">
-                  <button
-                    onMouseDown={stop}
-                    onClick={(e) => { stop(e); void copyPrompt(); }}
-                    title="复制提示词"
-                    className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800"
-                  >
-                    <Copy className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    onMouseDown={stop}
-                    onClick={(e) => { stop(e); setPromptExpanded(true); }}
-                    title="展开编辑"
-                    className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800"
-                  >
-                    <Maximize2 className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </div>
-              {/* 工具：标记 / 运镜 / 角色库 ＋ 富文本输入（@ 引用「图片N」内联绑定参考图，与图片节点统一） */}
+              {/* 富文本输入（@ 引用「图片N」内联绑定参考图，与图片节点统一）。
+                  模式选择收进底栏下拉(对齐参考产品),不再占顶部一行 Tab */}
               <PromptRefEditor
                 fill
                 refs={refs}
@@ -938,10 +875,17 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                 refs={refs}
                 placeholder="描述你想要生成的画面内容，@ 引用已连接图片（图片1/图片2…）"
               />
-              {/* 底部栏 */}
+              {/* 底部栏(对齐参考产品):左 = 模型 · 模式 · 参数摘要;右 = 复制/展开 · 积分 · 发送 */}
               <div className="mt-2 flex items-center justify-between gap-2">
-                <div className="flex flex-nowrap items-center gap-1 text-xs text-neutral-600 dark:text-neutral-400">
+                <div className="flex min-w-0 flex-nowrap items-center gap-0.5 text-xs text-neutral-600 dark:text-neutral-400">
                   <ModelPicker models={videoModels} value={selectedModelId} onChange={setSelectedModelId} />
+                  <VideoModeDropdown
+                    tabs={visibleTabs}
+                    value={videoTab}
+                    onChange={setVideoTab}
+                    enabledOf={tabEnabled}
+                    hintOf={(t) => TAB_LIMITS[t]?.hint}
+                  />
                   <VideoParamPicker
                     value={videoParam}
                     onChange={setVideoParam}
@@ -952,6 +896,22 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                   />
                 </div>
                 <div className="flex shrink-0 items-center gap-1 text-xs text-neutral-500">
+                  <button
+                    onMouseDown={stop}
+                    onClick={(e) => { stop(e); void copyPrompt(); }}
+                    title="复制提示词"
+                    className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onMouseDown={stop}
+                    onClick={(e) => { stop(e); setPromptExpanded(true); }}
+                    title="展开编辑"
+                    className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800"
+                  >
+                    <Maximize2 className="h-3.5 w-3.5" />
+                  </button>
                   <span className="flex items-center gap-0.5 px-0.5">
                     <Zap className="h-3 w-3 text-neutral-900 dark:text-neutral-100" fill="currentColor" />
                     {applyTeamFactor(pointCost, user)}
