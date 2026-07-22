@@ -3,6 +3,7 @@
 import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { Group } from "lucide-react";
 import { useCanvasStore } from "@/stores/use-canvas-store";
+import { useCanvasViewStore } from "@/stores/use-canvas-view-store";
 import { useCanvasPanZoom } from "@/hooks/canvas/use-canvas-pan-zoom";
 import { useCanvasNodeDrag } from "@/hooks/canvas/use-canvas-node-drag";
 import { useCanvasClipboard } from "@/hooks/canvas/use-canvas-clipboard";
@@ -359,15 +360,9 @@ export function CanvasView() {
         onDrop={handleFileDrop}
         data-canvas="true"
       >
-        <CanvasGridBackground transform={panZoom.transform} />
+        <CanvasGridBackground />
 
-        <div
-          style={{
-            transform: `translate(${panZoom.transform.x}px, ${panZoom.transform.y}px) scale(${panZoom.transform.k})`,
-            transformOrigin: "0 0",
-          }}
-          className="absolute"
-        >
+        <CanvasWorldLayer>
           <CanvasGroupsLayer groups={groups} nodes={nodes} selectedNodeIds={selectedNodeIds} />
           <ConnectionsLayer
             nodes={nodes}
@@ -396,23 +391,14 @@ export function CanvasView() {
               currentWorldY={boxSelect.box.currentWorldY}
             />
           )}
-        </div>
+        </CanvasWorldLayer>
       </div>
 
       {nodes.length === 0 && <CanvasEmptyState />}
 
       {/* 多选浮动操作：在选区顶部上方居中显示「创建分组」（拖动/框选/连线时隐藏） */}
       {selectionBox && !nodeDrag.draggingNodeId && !boxSelect.isBoxSelecting && !connection.connecting && (
-        <button
-          onClick={handleCreateGroup}
-          style={{
-            left: containerOrigin.left + panZoom.transform.x + selectionBox.cx * panZoom.transform.k,
-            top: containerOrigin.top + panZoom.transform.y + selectionBox.top * panZoom.transform.k - 12,
-          }}
-          className="fixed z-30 flex -translate-x-1/2 -translate-y-full items-center gap-1.5 rounded-lg bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white shadow-lg transition-colors hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-        >
-          <Group className="h-3.5 w-3.5" /> 创建分组 <kbd className="ml-0.5 opacity-60">⌘G</kbd>
-        </button>
+        <GroupCreateButton selectionBox={selectionBox} containerOrigin={containerOrigin} onClick={handleCreateGroup} />
       )}
 
       {isDraggingFile && (
@@ -428,7 +414,6 @@ export function CanvasView() {
         <div className="absolute bottom-16 left-4">
           <CanvasMinimap
             nodes={nodes}
-            transform={panZoom.transform}
             viewportSize={viewportSize}
             onNavigate={panZoom.centerOn}
           />
@@ -473,7 +458,6 @@ export function CanvasView() {
       <CanvasAssistantPanel />
 
       <CanvasBottomToolbar
-        zoom={panZoom.transform.k}
         gridSnap={gridSnap}
         minimapVisible={minimapVisible}
         assetsActive={myAssetsOpen}
@@ -491,5 +475,50 @@ export function CanvasView() {
       />
     </div>
     </MantineProvider>
+  );
+}
+
+/**
+ * 世界坐标层：唯一订阅 transform 做整层 CSS 变换的地方。
+ * 拆成独立组件后，平移/缩放每帧只重渲染这一个 div——children 由父组件
+ * （不订阅 transform）创建，元素引用不变，React 直接复用，节点零重渲染。
+ */
+function CanvasWorldLayer({ children }: { children: React.ReactNode }) {
+  const t = useCanvasViewStore((s) => s.transform);
+  return (
+    <div
+      style={{
+        transform: `translate(${t.x}px, ${t.y}px) scale(${t.k})`,
+        transformOrigin: "0 0",
+        // NodeChrome 反缩放系数：以 CSS 变量下发，节点组件无需订阅 transform.k
+        // （damp 指数 0.6 与 NodeChrome 各调用点一致，详见 node-chrome.tsx）
+        "--nc-inv": 1 / t.k,
+        "--nc-inv-damp": t.k > 1 ? Math.pow(t.k, -0.6) : 1 / t.k,
+      } as React.CSSProperties}
+      className="absolute"
+    >
+      {children}
+    </div>
+  );
+}
+
+/** 「创建分组」浮动按钮：独立订阅 transform，把世界坐标换算成屏幕坐标定位 */
+function GroupCreateButton({ selectionBox, containerOrigin, onClick }: {
+  selectionBox: { cx: number; top: number };
+  containerOrigin: { left: number; top: number };
+  onClick: () => void;
+}) {
+  const t = useCanvasViewStore((s) => s.transform);
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        left: containerOrigin.left + t.x + selectionBox.cx * t.k,
+        top: containerOrigin.top + t.y + selectionBox.top * t.k - 12,
+      }}
+      className="fixed z-30 flex -translate-x-1/2 -translate-y-full items-center gap-1.5 rounded-lg bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white shadow-lg transition-colors hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+    >
+      <Group className="h-3.5 w-3.5" /> 创建分组 <kbd className="ml-0.5 opacity-60">⌘G</kbd>
+    </button>
   );
 }

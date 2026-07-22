@@ -19,8 +19,8 @@ interface Props {
   topControls?: ReactNode;
   /** 底部工具栏中部的设置控件（如 比例 / 摄像机 / 全景 等） */
   middleControls?: ReactNode;
-  /** 传入画布缩放 k 则启用「恒定大小·跟随节点」覆盖层模式；省略则保持旧的流式布局 */
-  zoom?: number;
+  /** true 则启用「恒定大小·跟随节点」覆盖层模式；省略则保持旧的流式布局 */
+  overlay?: boolean;
   /** 覆盖层模式下面板宽度（屏幕像素），默认 320 */
   overlayWidth?: number;
   onPromptChange: (value: string) => void;
@@ -32,7 +32,7 @@ export function NodePromptPanel({
   prompt, placeholder, modelName = "默认模型",
   generating, canSubmit, pointCost = 18,
   topControls, middleControls,
-  zoom, overlayWidth = 320,
+  overlay = false, overlayWidth = 320,
   onPromptChange, onSubmit, onStop,
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -47,7 +47,6 @@ export function NodePromptPanel({
   }, [prompt]);
 
   const disabled = !canSubmit || generating;
-  const overlay = zoom != null;
 
   const panel = (
     <div
@@ -119,7 +118,7 @@ export function NodePromptPanel({
   // 覆盖层模式：恒定屏幕尺寸，吸附在卡片正下方居中
   if (overlay) {
     return (
-      <NodeChrome zoom={zoom} placement="bottom-center" gap={18}>
+      <NodeChrome placement="bottom-center" gap={18}>
         {panel}
       </NodeChrome>
     );

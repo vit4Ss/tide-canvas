@@ -1,10 +1,10 @@
 "use client";
 
-interface Props {
-  transform: { x: number; y: number; k: number };
-}
+import { useCanvasViewStore } from "@/stores/use-canvas-view-store";
 
-export function CanvasGridBackground({ transform }: Props) {
+export function CanvasGridBackground() {
+  // 自行订阅视口（而非由 CanvasView 传 prop）：平移/缩放时只有本组件与世界层重渲染
+  const transform = useCanvasViewStore((s) => s.transform);
   return (
     <svg className="pointer-events-none absolute inset-0 h-full w-full" data-canvas="true">
       <defs>

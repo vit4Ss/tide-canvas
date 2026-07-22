@@ -2,11 +2,11 @@
 
 import { useCallback, useMemo, useRef } from "react";
 import type { CanvasNode } from "@/stores/use-canvas-store";
+import { useCanvasViewStore } from "@/stores/use-canvas-view-store";
 import { nodeRenderRect } from "@/lib/canvas-helpers";
 
 interface Props {
   nodes: CanvasNode[];
-  transform: { x: number; y: number; k: number };
   viewportSize: { width: number; height: number };
   onNavigate: (worldX: number, worldY: number) => void;
 }
@@ -26,7 +26,9 @@ const NODE_COLORS: Record<string, string> = {
   script: "#94a3b8",
 };
 
-export function CanvasMinimap({ nodes, transform, viewportSize, onNavigate }: Props) {
+export function CanvasMinimap({ nodes, viewportSize, onNavigate }: Props) {
+  // 自行订阅视口：平移/缩放时可视区域矩形需要跟随，但不经由 CanvasView 传导
+  const transform = useCanvasViewStore((s) => s.transform);
   const svgRef = useRef<SVGSVGElement>(null);
   const draggingRef = useRef(false);
 

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
+import { useCanvasViewStore } from "@/stores/use-canvas-view-store";
 import {
   type RefItem,
   ReferenceThumb,
@@ -22,8 +23,9 @@ interface Props {
   value: string;
   onChange: (value: string) => void;
   refs: RefItem[];
-  /** 当前画布缩放，用于把 @ 浮层锚定到光标处 */
-  zoom: number;
+  /** 缩放系数，用于把 @ 浮层锚定到光标处。画布内省略（事件时读视口 store，
+   *  避免订阅 transform.k 导致缩放帧帧重渲染）；Portal 到 body 的场景显式传 1。 */
+  zoom?: number;
   placeholder?: string;
   /** 回车（非换行、非输入法组合、@ 下拉未开）触发 */
   onSubmit?: () => void;
@@ -75,7 +77,7 @@ export function PromptRefEditor({ value, onChange, refs, zoom, placeholder, onSu
     if (m && refs.length > 0) {
       setMentionQuery(m[1]);
       setMentionOpen(true);
-      setMentionPos(caretPosInEditor(editor, zoom));
+      setMentionPos(caretPosInEditor(editor, zoom ?? useCanvasViewStore.getState().transform.k));
     } else {
       setMentionOpen(false);
     }

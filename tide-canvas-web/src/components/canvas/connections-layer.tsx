@@ -21,7 +21,11 @@ interface Props {
 }
 
 function bezierPath(sx: number, sy: number, tx: number, ty: number): string {
-  const dx = Math.max(Math.abs(tx - sx) * 0.5, 50);
+  // 控制点偏移：水平间距的一半（水平长线保持接近直线），但垂直落差大、水平间距小时
+  // 只按水平算会让中段近乎竖直、两端急弯——用直线距离兜底抬高偏移；上限压到 160，
+  // 否则「横向很近、纵向很远」的连线（如源节点右侧竖排的多个结果）会甩出向左的大回环。
+  const dist = Math.hypot(tx - sx, ty - sy);
+  const dx = Math.max(Math.abs(tx - sx) * 0.5, Math.min(dist * 0.3, 160), 50);
   return `M ${sx} ${sy} C ${sx + dx} ${sy}, ${tx - dx} ${ty}, ${tx} ${ty}`;
 }
 

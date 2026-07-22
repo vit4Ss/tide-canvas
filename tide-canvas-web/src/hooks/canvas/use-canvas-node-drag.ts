@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useCanvasStore } from "@/stores/use-canvas-store";
+import { useCanvasViewStore } from "@/stores/use-canvas-view-store";
 
 interface Options {
   gridSnap: boolean;
@@ -72,7 +73,7 @@ export function useCanvasNodeDrag({ gridSnap }: Options) {
       return;
     }
 
-    const k = st.transform.k;
+    const k = useCanvasViewStore.getState().transform.k;
     const dx = (clientX - p.startClientX) / k;
     const dy = (clientY - p.startClientY) / k;
     const snap = gridSnapRef.current;
@@ -138,14 +139,29 @@ export function useCanvasNodeDrag({ gridSnap }: Options) {
     // window 级监听:拖拽期间指针会扫过底部工具坞/小地图等叠在画布上的兄弟
     // 浮层,此前依赖 container 的 mousemove + onMouseLeave 兜底,一进浮层
     // 就触发 mouseleave 把拖拽半路打断(框选/连线早已用 window 监听,对齐)。
-    const onWinMove = (ev: MouseEvent) => moveTo(ev.clientX, ev.clientY);
+    // rAF 合帧:mousemove 在高刷设备可达 120Hz+,每次都写 store 会让全部
+    // 订阅者的 selector 重算同样多次;只记录最新坐标,每帧最多落一次。
+    let raf = 0;
+    let last: { x: number; y: number } | null = null;
+    const onWinMove = (ev: MouseEvent) => {
+      last = { x: ev.clientX, y: ev.clientY };
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        if (last) moveTo(last.x, last.y);
+      });
+    };
     const cleanup = () => {
+      cancelAnimationFrame(raf);
+      raf = 0;
       window.removeEventListener("mousemove", onWinMove);
       window.removeEventListener("mouseup", onWinUp);
       dragCleanupRef.current = null;
     };
     const onWinUp = (ev: MouseEvent) => {
       if (ev.button !== 0) return; // 拖拽中点右键不结束左键拖拽
+      // 落帧:尚未提交的最后一次移动先落位,避免松手时丢掉最后 <1 帧的位移
+      if (raf && last) moveTo(last.x, last.y);
       cleanup();
       finishDrag();
     };

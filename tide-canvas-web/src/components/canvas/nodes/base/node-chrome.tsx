@@ -5,8 +5,6 @@ import type { CSSProperties, ReactNode } from "react";
 export type ChromePlacement = "top-left" | "top-right" | "top-center" | "bottom-center" | "left" | "right";
 
 interface Props {
-  /** 当前画布缩放 k；组件按 1/k 反向缩放，使自身在屏幕上保持恒定尺寸 */
-  zoom: number;
   /** 相对卡片的吸附位置 */
   placement: ChromePlacement;
   /** 与卡片边缘的固定间隙（屏幕像素） */
@@ -22,16 +20,21 @@ interface Props {
  * <p>
  * 用法：作为卡片定位容器（position: relative，尺寸等于卡片）的子元素放置。
  * 外层 anchor 贴在卡片某条边/角上，内层以贴边的那条边/角为 transform-origin
- * 做 scale(1/zoom) 反向缩放——抵消世界层的 scale(zoom)，于是子元素在任意缩放下
+ * 做反向缩放——抵消世界层的 scale(zoom)，于是子元素在任意缩放下
  * 都保持恒定屏幕尺寸，且吸附点始终钉在卡片边缘，随节点一起移动。
  * gap 作为内层 padding（处于反缩放空间内，故为恒定屏幕像素）。
+ * <p>
+ * 反缩放系数经 CSS 变量（canvas-view 世界层随 transform 一并写入
+ * --nc-inv / --nc-inv-damp）传入，节点组件因此不必订阅 transform.k——
+ * 否则缩放的每一帧都会整树重渲染所有节点。damp<1 的阻尼指数在世界层
+ * 统一按 0.6 预计算（当前所有调用点一致）。
  */
-export function NodeChrome({ zoom, placement, gap = 8, zIndex = 10, damp = 1, children }: Props) {
-  const z = zoom || 1;
-  // damp<1：放大（z>1）时减弱反缩放，让覆盖层随之适当放大；缩小 / 正常仍保持恒定屏幕尺寸
-  const inv = z > 1 ? 1 / Math.pow(z, damp) : 1 / z;
+export function NodeChrome({ placement, gap = 8, zIndex = 10, damp = 1, children }: Props) {
   const outer: CSSProperties = { position: "absolute", display: "flex", pointerEvents: "none", zIndex };
-  const inner: CSSProperties = { transform: `scale(${inv})`, pointerEvents: "auto" };
+  const inner: CSSProperties = {
+    transform: `scale(${damp === 1 ? "var(--nc-inv, 1)" : "var(--nc-inv-damp, 1)"})`,
+    pointerEvents: "auto",
+  };
 
   switch (placement) {
     case "bottom-center":

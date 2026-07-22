@@ -18,7 +18,6 @@ interface Props {
 
 /** 导演台节点：画布上只显示预览 + 「打开导演台」入口；真正的 3D 摆姿在全屏编辑器里。 */
 export const Scene3DNode = memo(function Scene3DNode({ node, isSelected, isDragging = false, isConnectTarget = false, onNodeMouseDown, onPortMouseDown }: Props) {
-  const zoom = useCanvasStore((s) => s.transform.k);
   // 是否已有图片/全景图连入（导演台编辑器会将其用作环境背景球）
   const panoConnected = useCanvasStore((s) =>
     s.connections.some((c) => {
@@ -42,7 +41,7 @@ export const Scene3DNode = memo(function Scene3DNode({ node, isSelected, isDragg
       style={{ left: node.x, top: node.y, width: node.width, cursor: isDragging ? "grabbing" : "grab" }}
       onMouseDown={handleMouseDown}
     >
-      <NodeHeader icon={Layers} title={node.title || "导演台"} visible={showAuxUI} zoom={zoom} />
+      <NodeHeader icon={Layers} title={node.title || "导演台"} visible={showAuxUI} overlay />
 
       <div className="relative">
         <div
@@ -88,7 +87,7 @@ export const Scene3DNode = memo(function Scene3DNode({ node, isSelected, isDragg
             </div>
           )}
 
-          <NodePorts nodeId={node.id} visible={showAuxUI} zoom={zoom} onPortMouseDown={onPortMouseDown} />
+          <NodePorts nodeId={node.id} visible={showAuxUI} overlay onPortMouseDown={onPortMouseDown} />
         </div>
       </div>
 

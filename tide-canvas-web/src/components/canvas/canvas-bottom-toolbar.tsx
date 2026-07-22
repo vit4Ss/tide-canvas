@@ -21,10 +21,10 @@ import {
   Workflow,
 } from "lucide-react";
 import { useCanvasStore } from "@/stores/use-canvas-store";
+import { useCanvasViewStore } from "@/stores/use-canvas-view-store";
 import styles from "./styles/canvas-bottom-toolbar.module.css";
 
 interface Props {
-  zoom: number;
   gridSnap: boolean;
   minimapVisible: boolean;
   assetsActive?: boolean;
@@ -59,7 +59,6 @@ const NODE_TYPES: NodeTypeAction[] = [
 ];
 
 export function CanvasBottomToolbar({
-  zoom,
   gridSnap,
   minimapVisible,
   assetsActive,
@@ -75,13 +74,15 @@ export function CanvasBottomToolbar({
   onOpenAssets,
   onOpenHistory,
 }: Props) {
+  // 自行订阅缩放显示，选择器直接量化成整数百分比：平移不触发，
+  // 连续缩放也只在显示值实际变化的帧重渲染
+  const zoomPercent = useCanvasViewStore((s) => Math.round(s.transform.k * 100));
   const undoStackLen = useCanvasStore((s) => s.undoStack.length);
   const redoStackLen = useCanvasStore((s) => s.redoStack.length);
   const undo = useCanvasStore((s) => s.undo);
   const redo = useCanvasStore((s) => s.redo);
   const [addOpen, setAddOpen] = useState(false);
   const addMenuRef = useRef<HTMLDivElement>(null);
-  const zoomPercent = Math.round(zoom * 100);
 
   useEffect(() => {
     if (!addOpen) return;
@@ -127,13 +128,13 @@ export function CanvasBottomToolbar({
         <IconButton icon={Map} label="小地图" active={minimapVisible} onClick={onToggleMinimap} />
         <IconButton icon={Magnet} label="网格吸附" active={gridSnap} onClick={onToggleGridSnap} />
         <div className={styles.zoomCluster} aria-label="画布缩放">
-          <button type="button" className={styles.zoomStepButton} onClick={onZoomOut} disabled={zoom <= 0.1} title="缩小画布">
+          <button type="button" className={styles.zoomStepButton} onClick={onZoomOut} disabled={zoomPercent <= 10} title="缩小画布">
             <Minus className={styles.statusIcon} />
           </button>
           <button type="button" className={styles.zoomPercentButton} onClick={onZoomReset} title="重置为 100%">
             {zoomPercent}%
           </button>
-          <button type="button" className={styles.zoomStepButton} onClick={onZoomIn} disabled={zoom >= 5} title="放大画布">
+          <button type="button" className={styles.zoomStepButton} onClick={onZoomIn} disabled={zoomPercent >= 500} title="放大画布">
             <Plus className={styles.statusIcon} />
           </button>
         </div>

@@ -78,7 +78,8 @@ interface CanvasState {
   selectedNodeIds: Set<string>;
   selectedNodeId: string | null; // 兼容字段：单选时为该 ID
   selectedConnectionId: string | null;
-  transform: { x: number; y: number; k: number };
+  // 视口 transform 已拆到 use-canvas-view-store（性能：平移/缩放高频 set 不应
+  // 触发本 store 全部订阅者的 selector 重算）
   /** 当前画布项目数值ID（字符串，雪花），供生成/历史按画布过滤 */
   currentProjectId: string | null;
 
@@ -113,8 +114,6 @@ interface CanvasState {
   /** 解组：删除分组框；deleteNodes=true 时连同成员节点一并删除 */
   removeGroup: (id: string, deleteNodes?: boolean) => void;
 
-  // 视口
-  setTransform: (transform: { x: number; y: number; k: number }) => void;
   setCurrentProjectId: (id: string | null) => void;
 
   // 画布加载/清空
@@ -209,7 +208,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   selectedNodeIds: new Set(),
   selectedNodeId: null,
   selectedConnectionId: null,
-  transform: { x: 0, y: 0, k: 1 },
   currentProjectId: null,
   undoStack: [],
   redoStack: [],
@@ -424,8 +422,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       redoStack: [],
     };
   }),
-
-  setTransform: (transform) => set({ transform }),
 
   loadCanvas: (nodes, connections, groups = []) => set({
     nodes: nodes.map((n) => reviveNode(normalizeNode(n), { keepResumable: true })),

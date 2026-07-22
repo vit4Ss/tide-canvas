@@ -3,6 +3,7 @@
 import { memo, useCallback, useState } from "react";
 import { Box, Image as ImageIcon, Plus, X } from "lucide-react";
 import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
+import { ossDisplayUrl } from "@/lib/oss-display";
 import { NodeChrome } from "./base/node-chrome";
 
 interface Props {
@@ -25,7 +26,6 @@ export const StyleReferenceNode = memo(function StyleReferenceNode({
   onPortMouseDown,
 }: Props) {
   const removeNode = useCanvasStore((s) => s.removeNode);
-  const zoom = useCanvasStore((s) => s.transform.k);
   const [hovered, setHovered] = useState(false);
   const [broken, setBroken] = useState(false);
   const coverUrl = node.stylePresetCoverUrl || node.imageSrc || "";
@@ -63,7 +63,7 @@ export const StyleReferenceNode = memo(function StyleReferenceNode({
         {coverUrl && !broken ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={coverUrl}
+            src={ossDisplayUrl(coverUrl, 1024)}
             alt={node.title}
             className="h-full w-full object-cover"
             draggable={false}
@@ -94,7 +94,7 @@ export const StyleReferenceNode = memo(function StyleReferenceNode({
       </div>
 
       {showControls && (
-        <NodeChrome zoom={zoom} placement="right" gap={10}>
+        <NodeChrome placement="right" gap={10}>
           <button
             type="button"
             onMouseDown={(event) => {

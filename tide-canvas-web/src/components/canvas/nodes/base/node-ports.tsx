@@ -6,15 +6,15 @@ import { NodeChrome } from "./node-chrome";
 interface Props {
   nodeId: string;
   visible: boolean;
-  /** 传入画布缩放 k 则启用「恒定大小·跟随节点」覆盖层模式；省略则保持旧的流式布局 */
-  zoom?: number;
+  /** true 则启用「恒定大小·跟随节点」覆盖层模式；省略则保持旧的流式布局 */
+  overlay?: boolean;
   onPortMouseDown?: (nodeId: string, side: "input" | "output", clientX: number, clientY: number) => void;
 }
 
 const PORT_VISUAL =
   "flex h-6 w-6 cursor-crosshair items-center justify-center rounded-full border border-neutral-300 bg-white text-neutral-400 shadow-sm transition-all duration-200 ease-out hover:scale-110 hover:border-blue-500 hover:bg-blue-50 hover:text-blue-600 hover:shadow-md active:scale-95 dark:border-neutral-600 dark:bg-neutral-900";
 
-export function NodePorts({ nodeId, visible, zoom, onPortMouseDown }: Props) {
+export function NodePorts({ nodeId, visible, overlay, onPortMouseDown }: Props) {
   if (!visible) return null;
 
   const input = (
@@ -37,11 +37,11 @@ export function NodePorts({ nodeId, visible, zoom, onPortMouseDown }: Props) {
   );
 
   // 覆盖层模式：恒定屏幕尺寸，吸附在卡片左/右缘中点
-  if (zoom != null) {
+  if (overlay) {
     return (
       <>
-        <NodeChrome zoom={zoom} placement="left" gap={12}>{input}</NodeChrome>
-        <NodeChrome zoom={zoom} placement="right" gap={12}>{output}</NodeChrome>
+        <NodeChrome placement="left" gap={12}>{input}</NodeChrome>
+        <NodeChrome placement="right" gap={12}>{output}</NodeChrome>
       </>
     );
   }

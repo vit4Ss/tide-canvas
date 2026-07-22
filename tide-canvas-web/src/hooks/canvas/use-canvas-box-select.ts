@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { useCanvasStore } from "@/stores/use-canvas-store";
+import { useCanvasViewStore } from "@/stores/use-canvas-view-store";
 import { nodeRenderRect } from "@/lib/canvas-helpers";
 
 interface BoxSelectState {
@@ -23,7 +24,7 @@ export function useCanvasBoxSelect({ containerRef }: Options) {
   const screenToWorld = useCallback((sx: number, sy: number) => {
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return { x: 0, y: 0 };
-    const t = useCanvasStore.getState().transform;
+    const t = useCanvasViewStore.getState().transform;
     return {
       x: (sx - rect.left - t.x) / t.k,
       y: (sy - rect.top - t.y) / t.k,

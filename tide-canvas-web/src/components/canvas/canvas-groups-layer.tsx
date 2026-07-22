@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Ungroup, Palette, Check } from "lucide-react";
 import { useCanvasStore, GROUP_COLORS, type CanvasGroup, type CanvasNode } from "@/stores/use-canvas-store";
+import { useCanvasViewStore } from "@/stores/use-canvas-view-store";
 import { nodeRenderRect } from "@/lib/canvas-helpers";
 
 // 边框相对成员包围盒的内边距 / 标题栏高度（世界坐标，随画布缩放）
@@ -83,11 +84,16 @@ function CanvasGroupFrame({ group, active, left, top, width, height }: FrameProp
       .map((n) => ({ id: n.id, x: n.x, y: n.y }));
     const sx = e.clientX, sy = e.clientY;
     let moved = false, recorded = false;
+    // rAF 合帧:高刷设备 mousemove 频率超过帧率,每帧最多写一次 store
+    let raf = 0;
+    let last: { x: number; y: number } | null = null;
     const unbind = () => {
+      cancelAnimationFrame(raf);
+      raf = 0;
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
-    const onMove = (ev: MouseEvent) => {
+    const applyMove = (cx: number, cy: number) => {
       const st = useCanvasStore.getState();
       // 拖动中按 Ctrl+Z 撤销掉分组/成员后监听仍挂着:继续用过期 initials
       // 覆写位置会让撤销"失效",此时直接终止本次拖拽
@@ -96,15 +102,24 @@ function CanvasGroupFrame({ group, active, left, top, width, height }: FrameProp
         unbind();
         return;
       }
-      if (!moved && Math.abs(ev.clientX - sx) < DRAG_THRESHOLD && Math.abs(ev.clientY - sy) < DRAG_THRESHOLD) return;
+      if (!moved && Math.abs(cx - sx) < DRAG_THRESHOLD && Math.abs(cy - sy) < DRAG_THRESHOLD) return;
       moved = true;
       if (!recorded) { st.pushHistory(); recorded = true; }
-      const k = st.transform.k;
-      const dx = (ev.clientX - sx) / k, dy = (ev.clientY - sy) / k;
+      const k = useCanvasViewStore.getState().transform.k;
+      const dx = (cx - sx) / k, dy = (cy - sy) / k;
       st.updateNodePositions(initials.map((i) => ({ id: i.id, x: i.x + dx, y: i.y + dy })));
+    };
+    const onMove = (ev: MouseEvent) => {
+      last = { x: ev.clientX, y: ev.clientY };
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        if (last) applyMove(last.x, last.y);
+      });
     };
     const onUp = (ev: MouseEvent) => {
       if (ev.button !== 0) return; // 右键释放不结束左键拖拽
+      if (raf && last) applyMove(last.x, last.y); // 落帧:补上未提交的最后位移
       unbind();
       const st = useCanvasStore.getState();
       // 分组可能在拖动期间被撤销删除,选中前过滤仍存在的成员

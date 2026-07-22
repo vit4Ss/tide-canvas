@@ -7,12 +7,12 @@ interface Props {
   icon: LucideIcon;
   title: string;
   visible: boolean;
-  /** 传入画布缩放 k 则启用「恒定大小·跟随节点」覆盖层模式；省略则保持旧的流式布局 */
-  zoom?: number;
+  /** true 则启用「恒定大小·跟随节点」覆盖层模式；省略则保持旧的流式布局 */
+  overlay?: boolean;
 }
 
 /** 节点外部标题栏 */
-export function NodeHeader({ icon: Icon, title, visible, zoom }: Props) {
+export function NodeHeader({ icon: Icon, title, visible, overlay }: Props) {
   const row = (
     <div className="flex items-center gap-1.5 whitespace-nowrap px-1 text-sm text-neutral-600 dark:text-neutral-300">
       <Icon className="h-4 w-4" />
@@ -21,10 +21,10 @@ export function NodeHeader({ icon: Icon, title, visible, zoom }: Props) {
   );
 
   // 覆盖层模式：恒定屏幕尺寸，吸附在卡片左上方
-  if (zoom != null) {
+  if (overlay) {
     if (!visible) return null;
     return (
-      <NodeChrome zoom={zoom} placement="top-left" gap={4}>
+      <NodeChrome placement="top-left" gap={4}>
         {row}
       </NodeChrome>
     );

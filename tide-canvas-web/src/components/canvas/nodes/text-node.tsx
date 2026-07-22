@@ -49,7 +49,6 @@ export const TextNode = memo(function TextNode({
   onPortMouseDown,
 }: Props) {
   const updateNode = useCanvasStore((s) => s.updateNode);
-  const zoom = useCanvasStore((s) => s.transform.k);
   const isMultiSelect = useCanvasStore((s) => s.selectedNodeIds.size > 1);
   const showAuxUI = isSelected && !isDragging && !isMultiSelect;
 
@@ -196,11 +195,11 @@ export const TextNode = memo(function TextNode({
           )}
         </div>
 
-        <NodeHeader icon={AlignLeft} title={node.title || "文本节点"} visible={showAuxUI} zoom={zoom} />
-        <NodePorts nodeId={node.id} visible={showAuxUI} zoom={zoom} onPortMouseDown={onPortMouseDown} />
+        <NodeHeader icon={AlignLeft} title={node.title || "文本节点"} visible={showAuxUI} overlay />
+        <NodePorts nodeId={node.id} visible={showAuxUI} overlay onPortMouseDown={onPortMouseDown} />
 
         {showAuxUI && (
-          <NodeChrome zoom={zoom} placement="bottom-center" gap={18} damp={0.6}>
+          <NodeChrome placement="bottom-center" gap={18} damp={0.6}>
             <div
               onMouseDown={stop}
               className="flex flex-col rounded-xl border border-neutral-200 bg-white p-3 shadow-xl shadow-neutral-900/10 dark:border-neutral-800 dark:bg-neutral-950 dark:shadow-black/30"
