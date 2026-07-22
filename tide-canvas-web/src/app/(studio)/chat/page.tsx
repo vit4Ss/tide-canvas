@@ -128,7 +128,7 @@ function typeTag(type: string): string {
 
 /* ── reference media (P2: 文件参考) ──────────────────────────────────────────── */
 
-type RefKind = "image" | "video" | "audio";
+type RefKind = "image" | "video" | "audio" | "file";
 
 /** A composer reference: local blob preview while uploading, hosted url after. */
 interface RefItem {
@@ -147,6 +147,10 @@ interface RefPolicy {
   max: number;
   /** per-file size limit in MB (0 / undefined = unlimited). */
   maxSizeMB?: number;
+  /** allowed file extensions (lowercase, no dot); undefined/empty = any. */
+  exts?: string[];
+  /** file-picker accept attribute; undefined = no restriction. */
+  accept?: string;
 }
 
 /** Which reference kinds + how many a given generation mode accepts. Modes not
@@ -161,16 +165,32 @@ const REF_POLICY: Record<string, RefPolicy> = {
 /** Hard cap on attachments per message — mirrors the backend DTO validation. */
 const MAX_ATTACHMENTS = 12;
 
-/** Classify a File into a reference kind by MIME type. */
+/** Classify a File into a reference kind by MIME type. Non-media files
+ *  (doc/xlsx/pdf/zip …) are "file" — media-only modes将其过滤掉。 */
 function fileKind(file: File): RefKind {
   if (file.type.startsWith("video/")) return "video";
   if (file.type.startsWith("audio/")) return "audio";
-  return "image";
+  if (file.type.startsWith("image/")) return "image";
+  return "file";
 }
 
-/** The accept attribute for a mode's file picker. */
+/** The accept attribute for a media mode's file picker. */
 function acceptFor(kinds: RefKind[]): string {
-  return kinds.map((k) => `${k}/*`).join(",");
+  return kinds.filter((k) => k !== "file").map((k) => `${k}/*`).join(",");
+}
+
+/** Lowercased filename extension without the dot ("" when absent). */
+function extOf(name: string): string {
+  const i = name.lastIndexOf(".");
+  return i >= 0 ? name.slice(i + 1).toLowerCase() : "";
+}
+
+/** Normalize an admin-configured format list (lowercase, strip dots, dedup);
+ *  undefined when empty → 不限制. */
+function normalizeFormats(raw?: string[]): string[] | undefined {
+  if (!raw?.length) return undefined;
+  const out = Array.from(new Set(raw.map((f) => f.trim().toLowerCase().replace(/^\./, "")).filter(Boolean)));
+  return out.length ? out : undefined;
 }
 
 /** an aspect-ratio glyph box for the ratio dropdown lead/item. */
@@ -423,13 +443,19 @@ export default function ChatPage() {
     if (selModel.type === "text") {
       if (!mCfg?.fileUpload) return undefined;
       const cfgMax = mCfg.maxFileCount && mCfg.maxFileCount > 0 ? mCfg.maxFileCount : MAX_ATTACHMENTS;
+      // 格式白名单来自模型管理 config.uploadFormats：未配置 = 任意格式（含文档），
+      // 配置了 = 仅允许所列扩展名。类型上放开全部 kind，由扩展名约束。
+      const exts = normalizeFormats(mCfg.uploadFormats);
       return {
-        kinds: ["image"],
+        kinds: ["image", "video", "audio", "file"],
         max: Math.min(cfgMax, MAX_ATTACHMENTS),
         maxSizeMB: mCfg.maxFileSizeMB ?? 0,
+        exts,
+        accept: exts ? exts.map((e) => `.${e}`).join(",") : undefined,
       };
     }
-    return REF_POLICY[mode];
+    const p = REF_POLICY[mode];
+    return p ? { ...p, accept: acceptFor(p.kinds) } : undefined;
   }, [selModel, mode, mCfg]);
   // text-model uploads are OPTIONAL (a chat can be plain text); generation ref
   // modes (i2i/i2v/…) REQUIRE at least one reference before sending.
@@ -542,6 +568,11 @@ export default function ChatPage() {
       for (const file of Array.from(files)) {
         const kind = fileKind(file);
         if (!policy.kinds.includes(kind)) continue;
+        // 后台配置了格式白名单 → 扩展名不在列直接拒收并提示
+        if (policy.exts && !policy.exts.includes(extOf(file.name))) {
+          toast.info(`「${file.name}」格式不支持，允许：${policy.exts.join(" / ")}`);
+          continue;
+        }
         if (count >= policy.max) {
           toast.info(`最多添加 ${policy.max} 个文件`);
           break;
@@ -585,6 +616,11 @@ export default function ChatPage() {
       if (!policy) return;
       if (!policy.kinds.includes(kind)) {
         toast.info("当前模式不支持该类型素材");
+        return;
+      }
+      // 与本地上传同口径:后台配置了格式白名单则校验扩展名
+      if (policy.exts && !policy.exts.includes(extOf(fileNameFromUrl(url)))) {
+        toast.info(`该素材格式不支持，允许：${policy.exts.join(" / ")}`);
         return;
       }
       if (refsRef.current.some((r) => r.url === url)) {
@@ -658,17 +694,19 @@ export default function ChatPage() {
     setAssetPickOpen(true);
   }, []);
 
-  // an asset chosen from 资产库 → add it as a hosted reference. Non-media kinds
-  // (文档) are rejected rather than folded into "image" (which would attach a doc
-  // URL as a broken image and ship it to the model).
+  // an asset chosen from 资产库 → add it as a hosted reference. 文档("doc")映射为
+  // RefKind "file"：文本模型（kinds 含 file）可挂文档附件；媒体生成模式仍会被
+  // addAssetRef 的 kinds 校验拒绝，不会把文档 URL 当图片发给模型。
   const chooseAsset = useCallback(
     (a: PickedAsset) => {
       setAssetPickOpen(false);
-      if (a.kind !== "image" && a.kind !== "video" && a.kind !== "audio") {
+      const kind: RefKind | null =
+        a.kind === "image" || a.kind === "video" || a.kind === "audio" ? a.kind : a.kind === "doc" ? "file" : null;
+      if (!kind) {
         toast.info("当前模式不支持该类型素材");
         return;
       }
-      addAssetRef(a.url, a.kind);
+      addAssetRef(a.url, kind);
     },
     [addAssetRef],
   );
@@ -1051,8 +1089,9 @@ export default function ChatPage() {
     // attachments snapshot — TEXT models only. Generation turns persist their
     // references via persistTurn (params.references), so attaching here would make
     // the optimistic bubble flash thumbnails that vanish on reload.
+    // 文本模型附件收全部类型（图片给模型做多模态,视频/音频/文档落库展示）
     const attachSnapshot = refOptional
-      ? refImageUrls.map((url) => ({ url, kind: "image" as const }))
+      ? refs.filter((r) => r.url).map((r) => ({ url: r.url as string, kind: r.kind }))
       : [];
 
     // 用户气泡/落库的提示词：音乐模式描述可留空，兜底一句模式摘要（persistTurn
@@ -1261,7 +1300,7 @@ export default function ChatPage() {
           const url = r && typeof r === "object" ? (r as { url?: unknown }).url : undefined;
           if (typeof url !== "string" || !url) continue;
           const k = (r as { kind?: unknown }).kind;
-          const kind: RefKind = k === "video" ? "video" : k === "audio" ? "audio" : "image";
+          const kind: RefKind = k === "video" ? "video" : k === "audio" ? "audio" : k === "file" ? "file" : "image";
           restored.push({ key: `r${refSeq.current++}`, kind, blobUrl: "", url, uploading: false });
         }
         if (restored.length) setRefs(restored);
@@ -1342,15 +1381,16 @@ export default function ChatPage() {
   // 编号必须覆盖「全部」已挂素材（含上传中的）再过滤出可选项：若只给传完的
   // 编号，先传完的那张会被编成图片1，等前面的传完后整体位移，已插入正文的
   // pill 会静默换绑到另一张图。send() 发送时按 refs 全序组装，编号天然对齐。
-  const mentionRefs = useMemo(
-    () =>
-      refPolicy
-        ? buildMentionRefs(
-            refs.map((r) => ({ key: r.key, kind: r.kind, thumb: r.url || r.blobUrl })),
-          ).filter((_, i) => !!refs[i].url)
-        : [],
-    [refPolicy, refs],
-  );
+  const mentionRefs = useMemo(() => {
+    if (!refPolicy) return [];
+    // 文档类("file")不参与 @ 引用：模型侧只接收图片，@文件N 无意义。
+    // 先过滤再编号，编号与过滤后的数组对齐（buildMentionRefs 按 kind 分别计数，
+    // 剔除 file 不影响 图片N/视频N/音频N 的序号）。
+    const mentionable = refs.filter((r) => r.kind !== "file");
+    return buildMentionRefs(
+      mentionable.map((r) => ({ key: r.key, kind: r.kind as Exclude<RefKind, "file">, thumb: r.url || r.blobUrl })),
+    ).filter((_, i) => !!mentionable[i].url);
+  }, [refPolicy, refs]);
 
 
   // approx points cost — 与服务端权威计费(pricing.go resolveCost)同序解析，
@@ -1669,7 +1709,8 @@ export default function ChatPage() {
                     onRemove={() => removeRef(r.key)}
                     onOpen={() => {
                       const src = r.url || r.blobUrl;
-                      if (src) openLightbox([{ url: src, kind: r.kind, name: r.name }], 0);
+                      // RefKind 的 "file" 在灯箱里按文档("doc")预览
+                      if (src) openLightbox([{ url: src, kind: r.kind === "file" ? "doc" : r.kind, name: r.name }], 0);
                     }}
                   />
                 ))}
@@ -1693,7 +1734,7 @@ export default function ChatPage() {
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept={refPolicy ? acceptFor(refPolicy.kinds) : undefined}
+                accept={refPolicy?.accept}
                 style={{ display: "none" }}
                 onChange={(e) => {
                   if (e.target.files?.length) attachFiles(e.target.files);
@@ -2158,7 +2199,7 @@ export default function ChatPage() {
               <AssetsBrowser
                 pickMode
                 onPick={chooseAsset}
-                defaultFilter={refPolicy?.kinds[0] ?? "image"}
+                defaultFilter={(refPolicy?.kinds[0] === "file" ? "doc" : refPolicy?.kinds[0]) ?? "image"}
                 defaultTab={refPolicy?.kinds[0] === "audio" ? "upload" : "hist"}
               />
             </div>
@@ -2207,9 +2248,13 @@ function RefThumb({
       ) : item.kind === "video" ? (
         // eslint-disable-next-line jsx-a11y/media-has-caption
         <video src={src} muted />
-      ) : (
+      ) : item.kind === "audio" ? (
         <span className="ref-aud" aria-hidden>
           ♪
+        </span>
+      ) : (
+        <span className="ref-aud" aria-hidden>
+          📄
         </span>
       )}
       {item.uploading && <span className="ref-spin" aria-label="上传中" />}
@@ -2548,7 +2593,7 @@ function Bubble({
           <div className="chat-msg-atts">
             {atts.map((a, i) => {
               const lbKind: LightboxKind =
-                a.kind === "video" || a.kind === "audio" || a.kind === "doc" ? a.kind : "image";
+                a.kind === "video" || a.kind === "audio" || a.kind === "doc" ? a.kind : a.kind === "file" ? "doc" : "image";
               // 图片:整组一起进灯箱可左右翻;其余:单条进灯箱按类型预览
               const open =
                 a.kind === "image"

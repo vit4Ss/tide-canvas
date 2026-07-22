@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -112,6 +113,9 @@ type service struct {
 	// ctxTokenLimit caps a conversation's cumulative estimated tokens (see
 	// tokens.go); text sends beyond it fail with errContextFull.
 	ctxTokenLimit int
+	// docSelfHost 是启动时 storage.publicURL 的 host，文档附件解析(docextract)
+	// 只允许抓取该 host 或 *.aliyuncs.com 的 URL（SSRF 防护）。
+	docSelfHost string
 	// live 注册表：会话 → 生成中的回复缓存（断开重连续播，见 live.go）。
 	liveMu sync.Mutex
 	live   map[idgen.ID]*liveReply
@@ -125,6 +129,9 @@ func newService(db *gorm.DB, cfg *config.Config) *service {
 		ctxTokenLimit: cfg.LLM.ContextTokenLimit,
 		relay:         relaychat.New(cfg.Relay.BaseURL, cfg.Relay.APIKey),
 		live:          map[idgen.ID]*liveReply{},
+	}
+	if pu, err := url.Parse(cfg.Storage.PublicURL); err == nil {
+		s.docSelfHost = pu.Host
 	}
 	if s.historyLimit <= 0 {
 		s.historyLimit = 20
@@ -533,6 +540,7 @@ func (s *service) sendMessage(ctx context.Context, conversationID, ownerID idgen
 		return nil, err
 	}
 	imageURLs := imageAttachmentURLs(dto.Attachments)
+	docFiles, docNote := s.docFileParts(ctx, dto.Attachments)
 
 	// Persist the user message (attachments snapshotted on Params for redisplay).
 	userMsg := &model.IMMessage{
@@ -551,7 +559,7 @@ func (s *service) sendMessage(ctx context.Context, conversationID, ownerID idgen
 	// A failure to store the reply must not fail the user's send, so it is
 	// best-effort. 空回复（请求被取消时 generateReply 返回 ""）不落库——
 	// 否则断开的请求会往会话里塞一条空/占位气泡。
-	reply := s.generateReply(ctx, conv, ownerID, content, imageURLs, dto.Model)
+	reply := s.generateReply(ctx, conv, ownerID, content, docNote, docFiles, imageURLs, dto.Model)
 	at := time.Now()
 	if strings.TrimSpace(reply) != "" {
 		aiMsg := &model.IMMessage{
@@ -594,9 +602,11 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 		return nil, err
 	}
 
-	// image attachments are forwarded to the model (multimodal); every attachment
-	// is also snapshotted on the user message so the bubble can re-render it.
+	// image attachments are forwarded as image_url parts; document attachments
+	// are fetched and forwarded as relay "file" parts (docextract.go); every
+	// attachment is also snapshotted on the user message for redisplay.
 	imageURLs := imageAttachmentURLs(attachments)
+	docFiles, docNote := s.docFileParts(ctx, attachments)
 
 	userMsg := &model.IMMessage{
 		ConversationID: conversationID,
@@ -614,7 +624,7 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 	// 都会终结订阅者的等待。
 	lr := s.liveStart(conversationID)
 	defer s.liveEnd(conversationID, lr)
-	reply := s.streamReply(ctx, conv, ownerID, content, imageURLs, requestedModel, func(d string) {
+	reply := s.streamReply(ctx, conv, ownerID, content, docNote, docFiles, imageURLs, requestedModel, func(d string) {
 		lr.append(d)
 		if onDelta != nil {
 			onDelta(d)
@@ -649,7 +659,7 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 // no relay text model is configured) it falls back to the canned reply, emitted
 // as one delta so the client still renders something. 上下文 = system 提示词 +
 // 压缩摘要（如有）+ 摘要之后的原文消息。
-func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, ownerID idgen.ID, userContent string, imageURLs []string, requestedModel string, onDelta func(string)) string {
+func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, ownerID idgen.ID, userContent string, docNote string, docFiles []relaychat.FileAttachment, imageURLs []string, requestedModel string, onDelta func(string)) string {
 	// 客户端断开不中止生成：前端切页面/切会话都会 abort SSE，请求上下文随之
 	// 取消；若生成跟着停，回复只落库半截。分离请求上下文让上游把回复生成完整
 	// 并落库，用户切回来能看到全文；llmReplyTimeout 仍然兜底。断开后 onDelta
@@ -673,12 +683,17 @@ func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, o
 					}
 					msgs = append(msgs, relaychat.TextMsg(role, rows[i].Content))
 				}
-				// attach the uploaded images to the latest user message so the model
-				// can actually see them (only the current turn carries attachments).
-				if len(imageURLs) > 0 {
+				// attach the uploaded images (image_url part) and documents (file part)
+				// to the latest user message so the model can actually see them —
+				// only the current turn carries attachments; 历史行取自落库消息。
+				if len(imageURLs) > 0 || len(docFiles) > 0 || docNote != "" {
+					combined := userContent
+					if docNote != "" {
+						combined = strings.TrimSpace(userContent + "\n\n" + docNote)
+					}
 					for i := len(msgs) - 1; i >= 0; i-- {
 						if msgs[i].Role == "user" {
-							msgs[i] = relaychat.UserMultimodal(userContent, imageURLs)
+							msgs[i] = relaychat.UserWithAttachments(combined, imageURLs, docFiles)
 							break
 						}
 					}
@@ -829,7 +844,7 @@ func (s *service) appendMessage(conversationID, ownerID idgen.ID, dto AppendMess
 // (or when no LLM is configured) it falls back to the canned placeholder so the
 // chat round-trip always completes. 上下文 = system 提示词 + 压缩摘要（如有）+
 // 摘要之后的原文消息。
-func (s *service) generateReply(ctx context.Context, conv *model.IMConversation, ownerID idgen.ID, userContent string, imageURLs []string, requestedModel string) string {
+func (s *service) generateReply(ctx context.Context, conv *model.IMConversation, ownerID idgen.ID, userContent string, docNote string, docFiles []relaychat.FileAttachment, imageURLs []string, requestedModel string) string {
 	if s.relay == nil && s.llmClient == nil {
 		return s.buildReply(userContent)
 	}
@@ -857,11 +872,16 @@ func (s *service) generateReply(ctx context.Context, conv *model.IMConversation,
 				}
 				msgs = append(msgs, relaychat.TextMsg(role, rows[i].Content))
 			}
-			// attach the uploaded images to the latest user message (multimodal).
-			if len(imageURLs) > 0 {
+			// attach the uploaded images (image_url) / documents (file part) to the
+			// latest user message.
+			if len(imageURLs) > 0 || len(docFiles) > 0 || docNote != "" {
+				combined := userContent
+				if docNote != "" {
+					combined = strings.TrimSpace(userContent + "\n\n" + docNote)
+				}
 				for i := len(msgs) - 1; i >= 0; i-- {
 					if msgs[i].Role == "user" {
-						msgs[i] = relaychat.UserMultimodal(userContent, imageURLs)
+						msgs[i] = relaychat.UserWithAttachments(combined, imageURLs, docFiles)
 						break
 					}
 				}

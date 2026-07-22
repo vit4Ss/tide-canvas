@@ -34,6 +34,9 @@ export interface ModelConfig {
   maxFileCount?: number;
   /** 文本模型：上传文件大小上限（MB），仅当 fileUpload 时有意义 */
   maxFileSizeMB?: number;
+  /** 文本模型：允许上传的文件扩展名（小写、不带点，如 ["doc","xlsx","mp4"]）。
+   *  空/未设 = 不限制格式；仅当 fileUpload 时有意义 */
+  uploadFormats?: string[];
   /** 文本模型：是否作为「AI 优化」主模型（全局唯一，创作台 AI 优化按钮走此模型） */
   aiOptimizePrimary?: boolean;
   /**

@@ -32,14 +32,28 @@ type Msg struct {
 
 // Part is one block of a multimodal message content array.
 type Part struct {
-	Type     string    `json:"type"` // "text" | "image_url"
+	Type     string    `json:"type"` // "text" | "image_url" | "file"
 	Text     string    `json:"text,omitempty"`
 	ImageURL *ImageURL `json:"image_url,omitempty"`
+	File     *FileData `json:"file,omitempty"`
 }
 
 // ImageURL is the OpenAI image reference (a hosted URL or a data: URI).
 type ImageURL struct {
 	URL string `json:"url"`
+}
+
+// FileData is a document attachment part（relay /v1/chat/completions 的 file
+// part 契约）：文件名 + base64 data URI。能否被理解取决于上游模型的文件能力。
+type FileData struct {
+	Filename string `json:"filename"`
+	FileData string `json:"file_data"` // "data:<mime>;base64,…"
+}
+
+// FileAttachment is one document to forward as a "file" content part.
+type FileAttachment struct {
+	Filename string
+	DataURI  string
 }
 
 // TextMsg builds a plain text message (content is a string).
@@ -51,10 +65,17 @@ func TextMsg(role, text string) Msg {
 // OpenAI content parts. With no image URLs it degrades to a plain text message so
 // the wire shape stays minimal.
 func UserMultimodal(text string, imageURLs []string) Msg {
-	if len(imageURLs) == 0 {
+	return UserWithAttachments(text, imageURLs, nil)
+}
+
+// UserWithAttachments builds a user message carrying text plus images and/or
+// document files as OpenAI content parts. With no attachments it degrades to a
+// plain text message so the wire shape stays minimal.
+func UserWithAttachments(text string, imageURLs []string, files []FileAttachment) Msg {
+	if len(imageURLs) == 0 && len(files) == 0 {
 		return TextMsg("user", text)
 	}
-	parts := make([]Part, 0, len(imageURLs)+1)
+	parts := make([]Part, 0, len(imageURLs)+len(files)+1)
 	if strings.TrimSpace(text) != "" {
 		parts = append(parts, Part{Type: "text", Text: text})
 	}
@@ -62,6 +83,16 @@ func UserMultimodal(text string, imageURLs []string) Msg {
 		if u = strings.TrimSpace(u); u != "" {
 			parts = append(parts, Part{Type: "image_url", ImageURL: &ImageURL{URL: u}})
 		}
+	}
+	for _, f := range files {
+		if f.DataURI == "" {
+			continue
+		}
+		name := f.Filename
+		if name == "" {
+			name = "附件"
+		}
+		parts = append(parts, Part{Type: "file", File: &FileData{Filename: name, FileData: f.DataURI}})
 	}
 	return Msg{Role: "user", Content: parts}
 }

@@ -81,6 +81,12 @@ const RESOLUTION_OPTIONS: Record<string, string[]> = {
 };
 const DURATION_OPTIONS = Array.from({ length: 15 }, (_, i) => `${i + 1}s`);
 const RATIO_OPTIONS = ["1:1", "3:2", "2:3", "16:9", "9:16", "4:3", "3:4", "21:9"];
+// 文本模型「可上传的文件格式」候选（扩展名，小写不带点）。不选 = 不限制。
+const UPLOAD_FORMAT_OPTIONS = [
+  "jpg", "jpeg", "png", "webp", "gif",
+  "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "md", "csv",
+  "mp4", "mov", "webm", "mp3", "wav", "m4a", "zip",
+];
 const RATIO_LABEL: Record<string, string> = {};
 
 const PAGE_SIZE = 20;
@@ -670,6 +676,7 @@ function ModelModal({
     fileUpload: c0.fileUpload ?? false,
     maxFileCount: c0.maxFileCount ?? 0,
     maxFileSizeMB: c0.maxFileSizeMB ?? 0,
+    uploadFormats: c0.uploadFormats ?? [],
     aiOptimizePrimary: c0.aiOptimizePrimary ?? false,
     refLimits: c0.refLimits ?? {},
     modes: c0.modes ?? [],
@@ -1151,6 +1158,16 @@ function ModelModal({
                   aria-label="支持的文件大小（MB）"
                 />
               </div>
+            </FormSection>
+          )}
+
+          {cfg.fileUpload && (
+            <FormSection label="可上传的文件格式" hint="不选 = 不限制格式；选择后仅允许所选扩展名的文件">
+              <Chips
+                options={UPLOAD_FORMAT_OPTIONS.map((f) => ({ v: f, l: f }))}
+                value={cfg.uploadFormats ?? []}
+                onChange={(next) => setC({ uploadFormats: next })}
+              />
             </FormSection>
           )}
         </FormCard>
