@@ -54,28 +54,41 @@ func resolveCost(m *model.AiModel, rawInput json.RawMessage, factor float64) int
 	if clarity == "" {
 		clarity = resolution
 	}
+	// duration 客户端可能发数字（画布视频节点发秒数 number）也可能发 "4s" 字符串，
+	// 全部收敛成字符串参与查表。
 	duration := strField(in, "duration")
+	if duration == "" {
+		if f := numField(in, "duration"); f > 0 {
+			duration = strconv.FormatFloat(f, 'f', -1, 64)
+		}
+	}
 	quality := strField(in, "quality")
 
 	base := 0.0
 
 	// 1. price matrix (priceMatrix, aliased to pricing by translateModelConfig).
+	// 容错查表：后台矩阵键可能是 "4s"/"720p"，客户端参数可能是 "4"/"720P"——
+	// 时长带不带 s、大小写、行列轴序全部兼容，避免 miss 后静默落到模型固定价。
 	matrix := asMatrix(cfg["priceMatrix"])
 	if matrix == nil {
 		matrix = asMatrix(cfg["pricing"])
 	}
 	if matrix != nil {
 		if isVideo {
-			base = matrixLookup(matrix, duration, resolution)
+			base = matrixLookupFuzzy(matrix, durationKeyVariants(duration), keyVariants(resolution))
 		} else {
-			base = matrixLookup(matrix, quality, clarity)
+			base = matrixLookupFuzzy(matrix, keyVariants(quality), keyVariants(clarity))
 		}
 	}
 
 	// 2. video duration@<res> modifier tables.
 	if base <= 0 && isVideo && resolution != "" {
 		if mods := asMatrix(cfg["priceModifiers"]); mods != nil {
-			base = matrixLookup(mods, "duration@"+resolution, duration)
+			for _, r := range keyVariants(resolution) {
+				if base = matrixLookupFuzzy(mods, []string{"duration@" + r}, durationKeyVariants(duration)); base > 0 {
+					break
+				}
+			}
 		}
 	}
 
@@ -112,6 +125,50 @@ func isUploadTask(in map[string]any) bool {
 	}
 	t, _ := ex["task"].(string)
 	return strings.EqualFold(strings.TrimSpace(t), "upload")
+}
+
+// keyVariants lists lookup candidates for one axis key: raw / lower / upper.
+func keyVariants(k string) []string {
+	k = strings.TrimSpace(k)
+	if k == "" {
+		return nil
+	}
+	out := []string{k}
+	for _, v := range []string{strings.ToLower(k), strings.ToUpper(k)} {
+		if v != k {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// durationKeyVariants additionally tries the "s" suffix both ways（后台存 "4s"，
+// 客户端常发 "4"/4）。
+func durationKeyVariants(k string) []string {
+	out := keyVariants(k)
+	if len(out) == 0 {
+		return nil
+	}
+	base := strings.TrimSpace(k)
+	if strings.HasSuffix(base, "s") {
+		out = append(out, keyVariants(strings.TrimSuffix(base, "s"))...)
+	} else {
+		out = append(out, keyVariants(base+"s")...)
+	}
+	return out
+}
+
+// matrixLookupFuzzy tries every candidate pair (both axis orders via matrixLookup),
+// returning the first positive value.
+func matrixLookupFuzzy(matrix map[string]any, k1s, k2s []string) float64 {
+	for _, a := range k1s {
+		for _, b := range k2s {
+			if v := matrixLookup(matrix, a, b); v > 0 {
+				return v
+			}
+		}
+	}
+	return 0
 }
 
 // matrixLookup tries matrix[k1][k2] then matrix[k2][k1] (axis-order agnostic),

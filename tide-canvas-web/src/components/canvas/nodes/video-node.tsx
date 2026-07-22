@@ -14,6 +14,7 @@ import { fetchWithAuth } from "@/lib/http";
 import { referenceKindFromMeta, resolveModelReferenceLimitBytes, validateKnownFileSize } from "@/lib/upload-limits";
 import { useAuth } from "@/hooks/use-auth";
 import { applyTeamFactor } from "@/lib/points";
+import { matrixPrice, keyVariants, durationVariants } from "@/lib/price-matrix";
 import { AiModelType, type AiModelVO } from "@/types/ai";
 import { NodeHeader } from "./base/node-header";
 import { NodePorts } from "./base/node-ports";
@@ -160,8 +161,6 @@ async function fetchAndCacheVideo(url: string): Promise<string | null> {
 export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging = false, isConnectTarget = false, onNodeMouseDown, onPortMouseDown }: Props) {
   const updateNode = useCanvasStore((s) => s.updateNode);
   const { user } = useAuth(); // 团队价：消耗按 inTeam 系数加价显示
-  // 当前画布缩放：外置组件按 1/zoom 反向缩放，保持恒定屏幕尺寸
-  const zoom = useCanvasStore((s) => s.transform.k);
   const [videoParam, setVideoParam] = useState<VideoParamValue>({ ratio: "16:9", resolution: "720P", duration: 5, audio: true });
   const [videoModels, setVideoModels] = useState<AiModelVO[]>([]);
   const [selectedModelId, setSelectedModelId] = useState("");
@@ -275,7 +274,10 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     ...rawConfig,
     durations: rawConfig.durations ? normalizeDurations(rawConfig.durations) : undefined,
   };
-  const matrixCost = formatConfig.pricing?.[videoParam.resolution]?.[String(videoParam.duration)];
+  // 积分显示与服务端 resolveCost 同口径的容错查表：后台视频矩阵是「行=时长(带 s)、
+  // 列=清晰度(常为小写)」，而选择器里是数字秒 + "720P" 大写——统一走 matrixPrice
+  // 兼容，查不到才落模型固定价（服务端同规则）。
+  const matrixCost = matrixPrice(formatConfig.pricing, durationVariants(videoParam.duration), keyVariants(videoParam.resolution));
   const pointCost = matrixCost ?? selectedModel?.pointCost ?? 135;
 
   // 切换模型后当前比例/清晰度/时长不在该模型的可选档位 → 自动校正为其首个档位
@@ -824,16 +826,16 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         </div>
 
         {/* 外置组件：恒定大小·跟随节点（按 1/zoom 反向缩放，吸附卡片边缘） */}
-        <NodeHeader icon={Video} title={node.title || "视频节点"} visible={showAuxUI} zoom={zoom} />
+        <NodeHeader icon={Video} title={node.title || "视频节点"} visible={showAuxUI} overlay />
         {/* 尺寸标签只在确有视频(上传成功/已生成)时显示——探测是异步的，上传失败后
             probe 可能仍晚回填一次 videoDims，用 node.videoSrc 兜底避免残留孤立标签 */}
         {showAuxUI && videoDims && node.videoSrc && (
-          <NodeChrome zoom={zoom} placement="top-right" gap={4}>
+          <NodeChrome placement="top-right" gap={4}>
             <span className="whitespace-nowrap px-1 text-xs text-neutral-400">{videoDims.w} × {videoDims.h}</span>
           </NodeChrome>
         )}
         {showAuxUI && !node.videoSrc && (
-          <NodeChrome zoom={zoom} placement="top-center" gap={8}>
+          <NodeChrome placement="top-center" gap={8}>
             <button onMouseDown={stop} onClick={openFilePicker} disabled={nodeUploading}
               className="flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 shadow-sm transition-colors hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
               <Upload className="h-3.5 w-3.5" /> 上传
@@ -842,7 +844,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         )}
         {/* 已生成：顶部操作工具栏（恒定大小胶囊，与图片节点一致风格） */}
         {showAuxUI && node.videoSrc && (
-          <NodeChrome zoom={zoom} placement="top-center" gap={10}>
+          <NodeChrome placement="top-center" gap={10}>
             <div onMouseDown={stop} className="flex items-center gap-0.5 whitespace-nowrap rounded-[18px] border border-neutral-200/80 bg-white px-2 py-1.5 text-sm text-neutral-700 shadow-lg dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
               <button onMouseDown={stop} onClick={openFilePicker} title="重新上传" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800"><Upload className="h-4 w-4" /></button>
               <button onMouseDown={stop} onClick={handleDownload} disabled={downloading} title="下载" className="rounded-xl p-2 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">{downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}</button>
@@ -850,18 +852,17 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
             </div>
           </NodeChrome>
         )}
-        <NodePorts nodeId={node.id} visible={showAuxUI} zoom={zoom} onPortMouseDown={onPortMouseDown} />
+        <NodePorts nodeId={node.id} visible={showAuxUI} overlay onPortMouseDown={onPortMouseDown} />
         <input ref={fileInputRef} type="file" accept="video/*" className="hidden" onChange={handleFileUpload} />
 
         {showAuxUI && (
-          <NodeChrome zoom={zoom} placement="bottom-center" gap={18} damp={0.6}>
+          <NodeChrome placement="bottom-center" gap={18} damp={0.6}>
             <div onMouseDown={stop} className="flex flex-col rounded-xl border border-neutral-200 bg-white p-3 shadow-xl shadow-neutral-900/10 dark:border-neutral-800 dark:bg-neutral-950 dark:shadow-black/30" style={{ width: promptPanelW, height: 250, boxSizing: "border-box" }}>
               {/* 富文本输入（@ 引用「图片N」内联绑定参考图，与图片节点统一）。
                   模式选择收进底栏下拉(对齐参考产品),不再占顶部一行 Tab */}
               <PromptRefEditor
                 fill
                 refs={refs}
-                zoom={zoom}
                 value={node.prompt || ""}
                 onChange={handlePromptChange}
                 onSubmit={() => { if (node.prompt?.trim() && !generating) handleGenerate(); }}
