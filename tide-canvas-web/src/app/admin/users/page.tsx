@@ -21,7 +21,7 @@
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Plus, RefreshCw, Search } from "lucide-react";
+import { Copy, Plus, RefreshCw, Search, UserPlus } from "lucide-react";
 import {
   AdminAlert,
   AdminEmptyState,
@@ -45,6 +45,7 @@ import { hueSwatch } from "@/lib/swatch";
 import type {
   AdminUserUpdateDTO,
   AdminUserVO,
+  GeneratedUserVO,
   RoleVO,
 } from "@/types/admin-users";
 
@@ -197,6 +198,11 @@ function AdminUsersPageInner() {
   const [pointsAmount, setPointsAmount] = useState("");
   const [pointsRemark, setPointsRemark] = useState("");
   const [savingPoints, setSavingPoints] = useState(false);
+
+  // 快速生成用户:结果弹窗内密码明文仅此一次展示,关闭即不可再查
+  const [genLoading, setGenLoading] = useState(false);
+  const [genUser, setGenUser] = useState<GeneratedUserVO | null>(null);
+  const [genCopied, setGenCopied] = useState<"" | "username" | "password" | "both">("");
 
   // role modal (create or edit)
   const [roleModalOpen, setRoleModalOpen] = useState(false);
@@ -351,6 +357,57 @@ function AdminUsersPageInner() {
       else await loadUsers();
     } else {
       setError(res.message || "删除用户失败");
+    }
+  }
+
+  // 快速生成用户:服务端随机凭据 + 与自助用户名注册同口径创建,结果弹窗展示明文密码
+  async function generateUser() {
+    if (genLoading) return;
+    setGenLoading(true);
+    setError(null);
+    try {
+      const res = await adminUsersApi.generateUser();
+      if (res.success && res.data) {
+        setGenCopied("");
+        setGenUser(res.data);
+        await loadUsers();
+      } else {
+        setError(res.message || "生成用户失败");
+      }
+    } catch {
+      setError("生成用户失败，请稍后重试");
+    } finally {
+      setGenLoading(false);
+    }
+  }
+
+  // 关闭结果弹窗:密码仅此一次展示,后台没有改密功能——一次都没复制就要关,
+  // 先二次确认(丢了只能删号重新生成)。onSave 路径返回 false 可保持弹窗打开。
+  async function closeGenModal(): Promise<boolean> {
+    if (genUser && genCopied === "") {
+      const ok = await confirmDialog({
+        title: "尚未复制凭据",
+        message: "密码关闭后将无法再次查看；若丢失只能删除该账号重新生成。确定已经保存好了吗？",
+        confirmText: "已保存，关闭",
+      });
+      if (!ok) return false;
+    }
+    setGenUser(null);
+    return true;
+  }
+
+  // 复制生成的凭据;哪个复制成功就在按钮上回显「已复制」
+  async function copyGenCred(kind: "username" | "password" | "both") {
+    if (!genUser) return;
+    const text =
+      kind === "username" ? genUser.username
+      : kind === "password" ? genUser.password
+      : `用户名：${genUser.username}\n密码：${genUser.password}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      setGenCopied(kind);
+    } catch {
+      setError("复制失败，请手动选择文本复制");
     }
   }
 
@@ -621,6 +678,10 @@ function AdminUsersPageInner() {
             <button type="button" className="adm-btn ghost" onClick={() => setKeyword(query.trim())}>
               搜索
             </button>
+            <button type="button" className="adm-btn" disabled={genLoading} onClick={generateUser}>
+              <UserPlus aria-hidden size={15} />
+              {genLoading ? "生成中…" : "生成用户"}
+            </button>
           </>
         }
       >
@@ -801,6 +862,63 @@ function AdminUsersPageInner() {
             </Field>
           </FormGrid>
         </FormCard>
+      </AdminModal>
+
+      {/* 快速生成用户结果:密码明文仅此一次展示,关闭即不可再查 */}
+      <AdminModal
+        open={genUser != null}
+        size="sm"
+        title="用户已生成"
+        subtitle="已按用户名注册口径创建，并关联默认「用户」角色"
+        footNote="密码仅此一次展示，关闭后无法再次查看；该账号未绑定邮箱，忘记密码无法自助找回。"
+        onClose={() => {
+          void closeGenModal();
+        }}
+        saveLabel="我已保存好"
+        onSave={closeGenModal}
+      >
+        {genUser ? (
+          <FormCard title="账号凭据">
+            <FormGrid>
+              <Field label="用户名" span={4}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input
+                    readOnly
+                    value={genUser.username}
+                    style={{ fontFamily: "var(--mono)", flex: 1 }}
+                    onFocus={(e) => e.currentTarget.select()}
+                    aria-label="生成的用户名"
+                  />
+                  <button type="button" className="adm-btn ghost" onClick={() => copyGenCred("username")}>
+                    <Copy aria-hidden size={14} />
+                    {genCopied === "username" ? "已复制" : "复制"}
+                  </button>
+                </div>
+              </Field>
+              <Field label="密码" span={4}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input
+                    readOnly
+                    value={genUser.password}
+                    style={{ fontFamily: "var(--mono)", flex: 1 }}
+                    onFocus={(e) => e.currentTarget.select()}
+                    aria-label="生成的密码"
+                  />
+                  <button type="button" className="adm-btn ghost" onClick={() => copyGenCred("password")}>
+                    <Copy aria-hidden size={14} />
+                    {genCopied === "password" ? "已复制" : "复制"}
+                  </button>
+                </div>
+              </Field>
+              <Field label="一键转交" span={4} hint="复制「用户名 + 密码」两行文本，可直接发给使用者">
+                <button type="button" className="adm-btn" onClick={() => copyGenCred("both")}>
+                  <Copy aria-hidden size={14} />
+                  {genCopied === "both" ? "已复制账号密码" : "复制账号密码"}
+                </button>
+              </Field>
+            </FormGrid>
+          </FormCard>
+        ) : null}
       </AdminModal>
 
       {/* 角色 新建 / 编辑 */}

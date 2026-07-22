@@ -45,6 +45,13 @@ export interface AdminUserVO {
 }
 
 /** Admin view of a permission role (sys_role). */
+/** POST /api/admin/users/generate 的响应：password 为明文且仅此一次返回 */
+export interface GeneratedUserVO {
+  id: string;
+  username: string;
+  password: string;
+}
+
 export interface RoleVO {
   id: string;
   name: string;

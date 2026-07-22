@@ -16,6 +16,7 @@ import type {
   AdminUserQuery,
   AdminUserUpdateDTO,
   AdminUserVO,
+  GeneratedUserVO,
   PointAdjustDTO,
   PointAdjustResult,
   RoleSaveDTO,
@@ -26,6 +27,10 @@ export const adminUsersApi = {
   /** GET /api/admin/users -> PageData<AdminUserVO>. */
   list: (query: AdminUserQuery) =>
     http.get<PageData<AdminUserVO>>("/api/admin/users", toParams(query)),
+
+  /** POST /api/admin/users/generate -> 随机生成本地账号（用户名+密码），
+      与自助用户名注册同口径；password 明文仅此一次返回。 */
+  generateUser: () => http.post<GeneratedUserVO>("/api/admin/users/generate", {}),
 
   /** GET /api/admin/users/:id -> AdminUserVO. */
   get: (id: string) => http.get<AdminUserVO>(`/api/admin/users/${id}`),

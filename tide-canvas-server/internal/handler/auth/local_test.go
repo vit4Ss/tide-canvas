@@ -33,6 +33,23 @@ func TestValidateUsername(t *testing.T) {
 	}
 }
 
+// 生成器自洽性:随机凭据必须永远通过自身的策略校验(否则 admin 快速生成会
+// 间歇性 500)。跑 200 轮覆盖字符集边界。
+func TestGenerateLocalCredentials(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		name, pw, err := GenerateLocalCredentials()
+		if err != nil {
+			t.Fatalf("GenerateLocalCredentials() error: %v", err)
+		}
+		if err := validateUsername(name); err != nil {
+			t.Fatalf("generated username %q fails policy: %v", name, err)
+		}
+		if err := validatePasswordStrict(pw, name); err != nil {
+			t.Fatalf("generated password %q fails policy: %v", pw, err)
+		}
+	}
+}
+
 func TestValidatePasswordStrict(t *testing.T) {
 	ok := []struct{ pw, uname string }{
 		{"Fl0wing!ight", "alice"},

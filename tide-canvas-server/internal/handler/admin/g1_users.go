@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"tidecanvas/internal/app"
+	"tidecanvas/internal/handler/auth"
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/eventlog"
@@ -44,6 +45,8 @@ func RegisterUsers(g *gin.RouterGroup, d *app.Deps) {
 	h := &userHandler{db: d.DB}
 
 	g.GET("/users", h.listUsers)
+	// 快速生成用户:静态段先于 :id 注册(gin 拒绝 static/param 兄弟段的歧义)
+	g.POST("/users/generate", h.generateUser)
 	g.GET("/users/:id", h.getUser)
 	g.PUT("/users/:id", h.updateUser)
 	g.DELETE("/users/:id", h.deleteUser)
@@ -435,6 +438,47 @@ func g1SensitiveChangeSummary(dto AdminUserUpdateDTO) string {
 // deleteUser handles DELETE /users/:id (soft delete via User.Deleted).
 //
 // 语义：删除后账号立即无法登录/刷新会话，从前后台所有列表消失；作品、订单、
+// GeneratedUserVO is the response of POST /users/generate. Password 为明文且
+// 仅此一次返回(不落库、不入审计日志),供管理员抄送给用户。
+type GeneratedUserVO struct {
+	ID       idgen.ID `json:"id"`
+	Username string   `json:"username"`
+	Password string   `json:"password"`
+}
+
+// generateUser handles POST /users/generate:随机生成一组符合本地账号规范的
+// 用户名+密码并创建用户(与自助注册 register-local 完全同口径:严格校验、
+// 占位邮箱、默认「用户」角色、新手积分)。用户名碰撞时重试。
+func (h *userHandler) generateUser(c *gin.Context) {
+	for attempt := 0; attempt < 5; attempt++ {
+		name, pw, err := auth.GenerateLocalCredentials()
+		if err != nil {
+			response.Fail(c, response.CodeServerError, "生成凭据失败")
+			return
+		}
+		u, err := auth.CreateLocalUser(h.db, name, pw)
+		if err != nil {
+			if errors.Is(err, auth.ErrUsernameTaken) {
+				continue // 随机撞名(约 36^-9 概率),换一组重试
+			}
+			response.Fail(c, response.CodeServerError, "生成用户失败")
+			return
+		}
+
+		eventlog.Biz(&model.BizLog{
+			UserID:     u.ID,
+			Action:     "user_generate",
+			Summary:    "管理员快速生成用户：" + u.Username,
+			RefID:      u.ID,
+			RefType:    "user",
+			OperatorID: middleware.CurrentUserID(c),
+		})
+		response.OK(c, GeneratedUserVO{ID: u.ID, Username: u.Username, Password: pw})
+		return
+	}
+	response.Fail(c, response.CodeServerError, "生成用户失败，请重试")
+}
+
 // 积分流水等关联数据保留（审计需要），仅账号本体不可见。删除前先把
 // username/email 改写为 del.<id>. 前缀的墓碑值，释放唯一索引，让同邮箱可以
 // 重新注册。已签发的 access token 到期自然失效（refresh 会因查不到用户被拒）。

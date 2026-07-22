@@ -13,13 +13,16 @@ package auth
 
 import (
 	"context"
+	crand "crypto/rand"
 	"errors"
+	"math/big"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 
 	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/model"
@@ -123,23 +126,31 @@ func validatePasswordStrict(pw, username string) error {
 	return nil
 }
 
-// registerLocal 创建用户名+密码本地账号并直接签发 token(注册即登录)。
-func (s *service) registerLocal(ctx context.Context, dto RegisterLocalDTO) (*LoginVO, error) {
-	username := strings.TrimSpace(dto.Username)
+// ErrUsernameTaken 是 CreateLocalUser 的「用户名已被使用」导出别名,供 admin
+// 快速生成用户在碰撞时重试。
+var ErrUsernameTaken = errUsernameExists
+
+// CreateLocalUser 按本地账号口径创建用户:规范校验(validateUsername /
+// validatePasswordStrict)、占位邮箱、默认「用户」角色、新手积分,与自助注册
+// registerLocal 共用同一实现——admin「快速生成用户」也走这里,保证零口径差。
+func CreateLocalUser(db *gorm.DB, username, password string) (*model.User, error) {
+	username = strings.TrimSpace(username)
 	if err := validateUsername(username); err != nil {
 		return nil, err
 	}
-	if err := validatePasswordStrict(dto.Password, username); err != nil {
+	if err := validatePasswordStrict(password, username); err != nil {
 		return nil, err
 	}
 	// 用户名唯一(users.username 唯一索引 + utf8mb4 CI 排序规则,大小写不敏感)
-	if exists, err := s.repo.existsUsername(username); err != nil {
+	var n int64
+	if err := db.Model(&model.User{}).Where("username = ?", username).Count(&n).Error; err != nil {
 		return nil, err
-	} else if exists {
+	}
+	if n > 0 {
 		return nil, errUsernameExists
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(dto.Password), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, err
 	}
@@ -153,11 +164,11 @@ func (s *service) registerLocal(ctx context.Context, dto RegisterLocalDTO) (*Log
 		Nickname:      username,
 		PasswordHash:  string(hash),
 		Role:          0,
-		RoleID:        model.RoleIDByCode(s.repo.db, model.RoleCodeUser),
+		RoleID:        model.RoleIDByCode(db, model.RoleCodeUser),
 		Status:        1,
 		LastLoginTime: now,
 	}
-	if err := s.repo.create(u); err != nil {
+	if err := db.Create(u).Error; err != nil {
 		// 并发抢注同名(exists 检查与写入之间):唯一索引兜底,归一为「已存在」
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 			return nil, errUsernameExists
@@ -165,12 +176,77 @@ func (s *service) registerLocal(ctx context.Context, dto RegisterLocalDTO) (*Log
 		return nil, err
 	}
 
-	// 新手积分与邮箱注册同口径(best-effort,失败不影响注册)。批量灌号风险由
-	// 路由层 IP 限速兜底。
-	if granted, err := points.GrantSignup(s.repo.db, u.ID); err != nil {
+	// 新手积分与邮箱注册同口径(best-effort,失败不影响创建)。自助注册的批量
+	// 灌号风险由路由层 IP 限速兜底。
+	if granted, err := points.GrantSignup(db, u.ID); err != nil {
 		logger.L().Warn("auth: signup point grant failed", zap.String("userId", u.ID.String()), zap.Error(err))
 	} else {
 		u.Points += int64(granted)
+	}
+	return u, nil
+}
+
+// 凭据随机生成的字符集。密码的特殊符号集避开引号/反斜杠等易在复制粘贴与
+// 终端场景出错的字符。
+const (
+	credLower    = "abcdefghijklmnopqrstuvwxyz"
+	credUpper    = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	credDigits   = "0123456789"
+	credSpecials = "!@#$%^&*_-+=?"
+)
+
+// randFrom 从 set 取 n 个 crypto/rand 随机字符。
+func randFrom(set string, n int) ([]byte, error) {
+	out := make([]byte, n)
+	for i := 0; i < n; i++ {
+		idx, err := crand.Int(crand.Reader, big.NewInt(int64(len(set))))
+		if err != nil {
+			return nil, err
+		}
+		out[i] = set[idx.Int64()]
+	}
+	return out, nil
+}
+
+// GenerateLocalCredentials 生成一组必然符合本地账号规范的随机凭据(admin
+// 「快速生成用户」用)。用户名 u+9 位小写字母/数字(约 36^9 空间,碰撞由调用方
+// 重试);密码 14 位且四类字符齐备,crypto/rand + Fisher-Yates 洗牌。
+func GenerateLocalCredentials() (username, password string, err error) {
+	uTail, err := randFrom(credLower+credDigits, 9)
+	if err != nil {
+		return "", "", err
+	}
+	username = "u" + string(uTail)
+
+	var pw []byte
+	for _, part := range []struct {
+		set string
+		n   int
+	}{
+		{credLower, 3}, {credUpper, 3}, {credDigits, 3}, {credSpecials, 2},
+		{credLower + credUpper + credDigits + credSpecials, 3},
+	} {
+		b, err := randFrom(part.set, part.n)
+		if err != nil {
+			return "", "", err
+		}
+		pw = append(pw, b...)
+	}
+	for i := len(pw) - 1; i > 0; i-- {
+		j, err := crand.Int(crand.Reader, big.NewInt(int64(i+1)))
+		if err != nil {
+			return "", "", err
+		}
+		pw[i], pw[j.Int64()] = pw[j.Int64()], pw[i]
+	}
+	return username, string(pw), nil
+}
+
+// registerLocal 创建用户名+密码本地账号并直接签发 token(注册即登录)。
+func (s *service) registerLocal(ctx context.Context, dto RegisterLocalDTO) (*LoginVO, error) {
+	u, err := CreateLocalUser(s.repo.db, dto.Username, dto.Password)
+	if err != nil {
+		return nil, err
 	}
 
 	access, refresh, expiresIn, err := token.Issue(u.ID, u.Role)
