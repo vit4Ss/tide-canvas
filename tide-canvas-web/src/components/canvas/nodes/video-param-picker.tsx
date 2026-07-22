@@ -142,13 +142,15 @@ export function VideoParamPicker({ value, onChange, resolutions, ratios, duratio
       {open && typeof document !== "undefined" && createPortal(
         <div
           ref={panelRef}
-          className={`fixed z-50 w-[372px] max-w-[calc(100vw-24px)] rounded-xl border border-black/[0.06] bg-white p-3 text-left shadow-[0_22px_70px_rgba(15,23,42,0.18)] dark:border-white/10 dark:bg-[#25262b] dark:shadow-black/35 ${openUp ? "-translate-y-full" : ""}`}
+          className={`fixed z-50 w-[372px] max-w-[calc(100vw-24px)] rounded-xl border border-black/[0.06] bg-white p-4 text-left shadow-[0_16px_50px_rgba(15,23,42,0.14)] dark:border-white/10 dark:bg-[#25262b] dark:shadow-black/35 ${openUp ? "-translate-y-full" : ""}`}
           style={{ left: panelPos.left, top: panelPos.top }}
           onMouseDown={stop}
         >
-          {ratioOpts.length > 0 && (
+          {/* 只有一个可选值的参数不渲染假按钮，直接在标题行右侧显示为只读值 */}
+          {ratioOpts.length === 1 && <ParamSection title="视频尺寸" aside={<StaticValue>{ratioOpts[0].label}</StaticValue>} />}
+          {ratioOpts.length > 1 && (
             <ParamSection title="视频尺寸">
-              <div className="grid grid-cols-6 gap-x-1 gap-y-2 rounded-lg bg-neutral-100 p-2 dark:bg-white/8">
+              <div className="grid grid-cols-6 gap-1.5">
                 {ratioOpts.map((ratio) => (
                   <RatioTile key={ratio.value} option={ratio} active={value.ratio === ratio.value} onClick={() => onChange({ ...value, ratio: ratio.value })} />
                 ))}
@@ -156,37 +158,52 @@ export function VideoParamPicker({ value, onChange, resolutions, ratios, duratio
             </ParamSection>
           )}
 
-          {resolutionOpts.length > 0 && (
+          {resolutionOpts.length === 1 && <ParamSection title="清晰度" aside={<StaticValue>{resolutionOpts[0]}</StaticValue>} />}
+          {resolutionOpts.length > 1 && (
             <ParamSection title="清晰度">
-              <SegmentedRow count={resolutionOpts.length}>
+              <ChipRow count={resolutionOpts.length}>
                 {resolutionOpts.map((res) => (
-                  <SegmentButton key={res} active={value.resolution.toLowerCase() === res.toLowerCase()} onClick={() => onChange({ ...value, resolution: res })}>
+                  <Chip key={res} active={value.resolution.toLowerCase() === res.toLowerCase()} onClick={() => onChange({ ...value, resolution: res })}>
                     {res}
-                  </SegmentButton>
+                  </Chip>
                 ))}
-              </SegmentedRow>
+              </ChipRow>
             </ParamSection>
           )}
 
-          {durationOpts.length > 0 && (
+          {durationOpts.length === 1 && <ParamSection title="视频时长" aside={<StaticValue>{durationOpts[0]}s</StaticValue>} />}
+          {durationOpts.length > 1 && durationOpts.length <= 6 && (
             <ParamSection title="视频时长">
-              <SegmentedRow count={durationOpts.length}>
+              <ChipRow count={durationOpts.length}>
                 {durationOpts.map((duration) => (
-                  <SegmentButton key={duration} active={value.duration === duration} onClick={() => onChange({ ...value, duration })}>
+                  <Chip key={duration} active={value.duration === duration} onClick={() => onChange({ ...value, duration })}>
                     {duration}s
-                  </SegmentButton>
+                  </Chip>
                 ))}
-              </SegmentedRow>
+              </ChipRow>
+            </ParamSection>
+          )}
+          {durationOpts.length > 6 && (
+            <ParamSection title="视频时长" aside={<StaticValue>{value.duration}s</StaticValue>}>
+              <DurationSlider options={durationOpts} value={value.duration} onChange={(duration) => onChange({ ...value, duration })} />
             </ParamSection>
           )}
 
           {showAudio && (
-            <ParamSection title="生成音频">
-              <SegmentedRow count={2}>
-                <SegmentButton active={value.audio} onClick={() => onChange({ ...value, audio: true })}>开启</SegmentButton>
-                <SegmentButton active={!value.audio} onClick={() => onChange({ ...value, audio: false })}>关闭</SegmentButton>
-              </SegmentedRow>
-            </ParamSection>
+            <ParamSection
+              title="生成音频"
+              aside={
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={value.audio}
+                  onClick={() => onChange({ ...value, audio: !value.audio })}
+                  className={`flex h-5 w-9 items-center rounded-full p-0.5 transition-colors ${value.audio ? "bg-neutral-900 dark:bg-white/85" : "bg-neutral-200 dark:bg-white/15"}`}
+                >
+                  <span className={`h-4 w-4 rounded-full bg-white transition-transform ${value.audio ? "translate-x-4 dark:bg-neutral-900" : "dark:bg-neutral-400"}`} />
+                </button>
+              }
+            />
           )}
         </div>,
         document.body,
@@ -195,29 +212,63 @@ export function VideoParamPicker({ value, onChange, resolutions, ratios, duratio
   );
 }
 
-function ParamSection({ title, children }: { title: string; children: ReactNode }) {
+// 标题行 = 小号灰色说明文字 + 右侧可选内容（只读值/开关）；正文可省（纯展示行）。
+function ParamSection({ title, aside, children }: { title: string; aside?: ReactNode; children?: ReactNode }) {
   return (
-    <section className="not-first:mt-4">
-      <div className="mb-2 text-[14px] font-semibold leading-5 text-neutral-700 dark:text-neutral-200">{title}</div>
+    <section className="not-first:mt-5">
+      <div className={`flex h-5 items-center justify-between ${children ? "mb-2" : ""}`}>
+        <span className="text-xs font-medium text-neutral-500 dark:text-white/50">{title}</span>
+        {aside}
+      </div>
       {children}
     </section>
   );
 }
 
-function SegmentedRow({ children, count }: { children: ReactNode; count: number }) {
+function StaticValue({ children }: { children: ReactNode }) {
+  return <span className="text-[13px] font-medium tabular-nums text-neutral-900 dark:text-white/90">{children}</span>;
+}
+
+// 选中态：细黑描边（安静、不抢内容）；未选中：弱边框轮廓。全面板统一这一套状态。
+const chipActive = "border-neutral-900 text-neutral-950 dark:border-white/80 dark:text-white";
+const chipRest =
+  "border-neutral-200 text-neutral-500 hover:border-neutral-300 hover:text-neutral-900 dark:border-white/12 dark:text-white/60 dark:hover:border-white/25 dark:hover:text-white/90";
+
+// 时长选项多(>6)时按钮挤不下，改用细轨道滑块（样式同图片节点的 .slider-thin），
+// 当前值显示在标题行右侧。选项可能不连续(如 4,6,8,12)，滑块走索引再映射回秒数。
+function DurationSlider({ options, value, onChange }: { options: number[]; value: number; onChange: (v: number) => void }) {
+  const idx = Math.max(0, options.indexOf(value));
+  const pct = options.length > 1 ? (idx / (options.length - 1)) * 100 : 100;
   return (
-    <div className="grid rounded-lg bg-neutral-100 p-1 dark:bg-white/8" style={{ gridTemplateColumns: `repeat(${Math.max(1, count)}, minmax(0, 1fr))` }}>
+    <div className="px-0.5 pt-1">
+      <input
+        type="range"
+        min={0}
+        max={options.length - 1}
+        step={1}
+        value={idx}
+        onChange={(e) => onChange(options[Number(e.target.value)])}
+        className="slider-thin w-full"
+        style={{ "--pct": `${pct}%` } as CSSProperties}
+      />
+    </div>
+  );
+}
+
+function ChipRow({ children, count }: { children: ReactNode; count: number }) {
+  return (
+    <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${Math.max(1, count)}, minmax(0, 1fr))` }}>
       {children}
     </div>
   );
 }
 
-function SegmentButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`${active ? "bg-white text-neutral-950 shadow-sm dark:bg-white dark:text-neutral-950" : "text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white"} flex h-9 items-center justify-center rounded-md px-2 text-sm font-medium transition-colors`}
+      className={`${active ? chipActive : chipRest} flex h-8 items-center justify-center rounded-lg border text-[13px] font-medium transition-colors`}
     >
       {children}
     </button>
@@ -233,7 +284,7 @@ function RatioTile({ option, active, onClick }: { option: RatioOption; active: b
     <button
       type="button"
       onClick={onClick}
-      className={`${active ? "bg-white text-neutral-950 shadow-sm dark:bg-white dark:text-neutral-950" : "text-neutral-500 hover:bg-white/70 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-white/10 dark:hover:text-white"} flex h-[50px] flex-col items-center justify-center gap-1 rounded-lg text-[11px] font-medium transition-colors`}
+      className={`${active ? chipActive : chipRest} flex h-[52px] flex-col items-center justify-center gap-1 rounded-[10px] border text-[11px] font-medium transition-colors`}
     >
       <span className="flex h-5 items-center justify-center">
         <span className="block rounded-[2px] border border-current" style={{ width, height } as CSSProperties} />

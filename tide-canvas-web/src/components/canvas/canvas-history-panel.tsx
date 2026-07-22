@@ -14,6 +14,12 @@ const HANDLER_LABEL: Record<string, string> = {
   start_end_to_video: "首尾帧视频",
   text_to_audio: "音频生成",
   creative_desc: "创意描述",
+  // 服务端预设图像编辑能力（画布「高清」入口产生 upscale,其余来自创作台/工具页）
+  upscale: "高清放大",
+  outpaint: "智能扩图",
+  remove_bg: "一键抠图",
+  remove_object: "物体移除",
+  relight: "智能打光",
 };
 const OP_LABEL: Record<string, string> = { generation: "文生图", edits: "图生图", video: "视频", audio: "音频" };
 

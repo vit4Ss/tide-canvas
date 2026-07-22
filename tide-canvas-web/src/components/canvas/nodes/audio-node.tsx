@@ -376,7 +376,6 @@ export const AudioNode = memo(function AudioNode({
   onPortMouseDown,
 }: Props) {
   const updateNode = useCanvasStore((s) => s.updateNode);
-  const zoom = useCanvasStore((s) => s.transform.k);
   const isMultiSelect = useCanvasStore((s) => s.selectedNodeIds.size > 1);
   const { generate, isGenerating } = useAiGeneration();
   const { user } = useAuth();
@@ -650,11 +649,11 @@ export const AudioNode = memo(function AudioNode({
           </div>
         </div>
 
-        <NodeHeader icon={AudioLines} title={node.title || "音频节点"} visible={showAuxUI} zoom={zoom} />
-        <NodePorts nodeId={node.id} visible={showAuxUI} zoom={zoom} onPortMouseDown={onPortMouseDown} />
+        <NodeHeader icon={AudioLines} title={node.title || "音频节点"} visible={showAuxUI} overlay />
+        <NodePorts nodeId={node.id} visible={showAuxUI} overlay onPortMouseDown={onPortMouseDown} />
 
         {showAuxUI && (
-          <NodeChrome zoom={zoom} placement="bottom-center" gap={18} damp={0.6}>
+          <NodeChrome placement="bottom-center" gap={18} damp={0.6}>
             <div
               onMouseDown={stop}
               className="flex flex-col rounded-xl border border-neutral-200 bg-white p-3 shadow-xl shadow-neutral-900/10 dark:border-neutral-800 dark:bg-neutral-950 dark:shadow-black/30"
@@ -694,7 +693,7 @@ export const AudioNode = memo(function AudioNode({
                         className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                           musicMode === o.v
                             ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
-                            : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200 hover:text-neutral-900 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700"
+                            : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-white"
                         }`}
                       >
                         {o.l}
@@ -717,7 +716,7 @@ export const AudioNode = memo(function AudioNode({
                         className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                           music.instrumental === o.v
                             ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
-                            : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200 hover:text-neutral-900 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700"
+                            : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-white"
                         }`}
                       >
                         {o.l}
@@ -786,7 +785,7 @@ export const AudioNode = memo(function AudioNode({
                               ? "续写歌词 · 选填 · 留空则由 Suno 续写"
                               : "改编提示 / 歌词 · 选填 · 留空则保留原词"
                         }
-                        className="min-h-[84px] w-full resize-y rounded-lg border border-neutral-200 bg-white px-2.5 py-2 text-xs leading-5 text-neutral-900 outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100"
+                        className="thin-scroll min-h-[96px] w-full resize-y rounded-lg border border-neutral-200 bg-white px-3 py-2.5 text-xs leading-5 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100"
                       />
                       <div className="flex flex-wrap items-center gap-1.5">
                         {AUDIO_STYLES.map((s) => {
@@ -805,10 +804,10 @@ export const AudioNode = memo(function AudioNode({
                                     : [...m.songStyles, s.v],
                                 }));
                               }}
-                              className={`rounded-md border px-2 py-0.5 text-xs transition-colors ${
+                              className={`flex h-7 items-center rounded-lg border px-2.5 text-xs font-medium transition-colors ${
                                 on
                                   ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
-                                  : "border-neutral-200 bg-transparent text-neutral-600 hover:border-neutral-400 hover:text-neutral-900 dark:border-neutral-800 dark:text-neutral-300 dark:hover:border-neutral-600"
+                                  : "border-neutral-200 text-neutral-500 hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-800 dark:text-neutral-400 dark:hover:border-neutral-600 dark:hover:text-white"
                               }`}
                             >
                               {s.l}
@@ -820,7 +819,7 @@ export const AudioNode = memo(function AudioNode({
                           onMouseDown={stop}
                           onChange={(e) => setMusic((m) => ({ ...m, songTitle: e.target.value }))}
                           placeholder="歌名 · 选填"
-                          className="h-7 min-w-[140px] flex-1 rounded-md border border-neutral-200 bg-white px-2 text-xs text-neutral-900 outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100"
+                          className="h-7 min-w-[140px] flex-1 rounded-lg border border-neutral-200 bg-white px-2.5 text-xs text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100"
                         />
                       </div>
                     </>
