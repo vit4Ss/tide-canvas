@@ -24,6 +24,7 @@ type handler struct{ db *gorm.DB }
 
 // Register mounts the public skill routes.
 func Register(api *gin.RouterGroup, d *app.Deps) {
+	_ = ensureBaselineSkills(d.DB)
 	h := &handler{db: d.DB}
 	g := api.Group("/skills")
 	g.Use(middleware.JWTAuth(d))
