@@ -27,6 +27,9 @@ type Skill struct {
 	// 各入口按自己支持的键应用,未知键忽略。
 	DefaultParams string `gorm:"column:default_params;type:text" json:"defaultParams"`
 	AuthorName    string `gorm:"column:author_name;size:64" json:"authorName"`
+	// SeedKey 官方种子的稳定标识(ensureBaselineSkills 按此判存,后台改标题/
+	// 删除都不会被种子重建)。空 = 非种子来源;不下发前端。
+	SeedKey string `gorm:"column:seed_key;size:64;default:'';index" json:"-"`
 	// Status:0 下架 / 1 上架(公开列表仅返回上架)。
 	Status    int   `gorm:"column:status;default:1" json:"status"`
 	SortOrder int   `gorm:"column:sort_order;default:0" json:"sortOrder"`
