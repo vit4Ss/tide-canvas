@@ -408,6 +408,20 @@ const timeCol = <T extends { createTime: string }>(): Column<T> => ({
 const pct = (num: number, den: number) => (den > 0 ? `${Math.round((num / den) * 100)}%` : "—");
 const avg = (nums: number[]) =>
   nums.length ? `${Math.round(nums.reduce((a, b) => a + b, 0) / nums.length)}ms` : "—";
+
+/** 模型调用耗时：这里的量级是几十秒到几分钟，ms 读不出数量级（147790ms 要
+ *  心算一次才知道是两分半），超过一分钟直接给分秒。接口/系统日志仍用 ms——
+ *  那边是毫秒级的 HTTP 往返，换算成秒全是 0.0。 */
+const dur = (ms: number) => {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  // 不加空格：这一列是 mono 字体，中日韩字形本身就是双宽，再补空格会散成
+  // 「1 分 44 秒」那样一字一顿。
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}秒`;
+  const t = Math.round(ms / 1000);
+  return `${Math.floor(t / 60)}分${t % 60}秒`;
+};
+const avgDur = (nums: number[]) =>
+  nums.length ? dur(nums.reduce((a, b) => a + b, 0) / nums.length) : "—";
 /** 用户列：后端已按页把 userId 批量解析成展示名（昵称优先）；查不到（已注销
  *  等）回退显示原始 id，0 表示未登录请求。 */
 const userCell = (uid: string, name?: string) => (uid === "0" ? "游客 / 系统" : name || uid);
@@ -591,7 +605,7 @@ function ModelTab() {
       { header: "场景", cell: (l) => <StatusPill tone="blue">{l.scene}</StatusPill> },
       { header: "模型", className: "mono strong", cell: (l) => <Trunc text={l.model} /> },
       { header: "结果", cell: (l) => <StatusPill tone={okTone(l.success)}>{l.success === 1 ? "成功" : "失败"}</StatusPill> },
-      { header: "耗时", className: "mono muted", cell: (l) => `${l.durationMs}ms` },
+      { header: "耗时", className: "mono muted", cell: (l) => dur(l.durationMs) },
       { header: "消耗", className: "mono", cell: (l) => (Number(l.cost) > 0 ? l.cost : "—") },
     ],
     [],
@@ -606,19 +620,21 @@ function ModelTab() {
       stats={(rows) => [
         { k: "本批调用", v: String(rows.length) },
         { k: "成功率", v: pct(rows.filter((l) => l.success === 1).length, rows.length) },
-        { k: "平均耗时", v: avg(rows.map((l) => l.durationMs)) },
+        { k: "平均耗时", v: avgDur(rows.map((l) => l.durationMs)) },
         { k: "总消耗", v: rows.reduce((a, l) => a + (Number(l.cost) || 0), 0).toFixed(2) },
       ]}
       detail={(l) => ({
         title: `模型日志 · ${l.model || "—"}`,
         fields: [
-          { label: "时间", value: l.createTime || "—" },
+          // 开始 / 结束 / 耗时三个都是本地打点，可直接相减对账（存量日志无开始时间）
+          { label: "开始时间", value: l.startTime || "—" },
+          { label: "结束时间", value: l.createTime || "—" },
           { label: "用户", value: userCell(l.userId, l.username) },
           { label: "场景", value: l.scene },
           { label: "模型", value: l.model || "—" },
           { label: "结果", value: <StatusPill tone={okTone(l.success)}>{l.success === 1 ? "成功" : "失败"}</StatusPill> },
           { label: "HTTP 状态", value: l.httpStatus },
-          { label: "耗时", value: `${l.durationMs}ms` },
+          { label: "耗时", value: dur(l.durationMs) },
           { label: "消耗", value: Number(l.cost) > 0 ? l.cost : "—" },
           { label: "上游任务 ID", value: l.upstreamTaskId || "—" },
           { label: "端点", value: l.endpoint || "—" },

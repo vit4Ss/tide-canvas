@@ -1,7 +1,8 @@
 // Package skill serves the public 技能广场 read API (JWTAuth-gated):
 //
-//	GET  /api/skills          SkillQuery -> PageData<SkillVO>(仅上架,按 sortOrder)
-//	POST /api/skills/:id/use  -> void(使用计数 +1,best-effort)
+//	GET  /api/skills            SkillQuery -> PageData<SkillVO>(仅上架,按 sortOrder)
+//	GET  /api/skills/categories -> []string(当前模态下非空的分类)
+//	POST /api/skills/:id/use    -> void(使用计数 +1,best-effort)
 //
 // 技能内容由后台 /api/admin/skills(admin/g2_skills.go)维护;两端共用
 // model.Skill,VO 即模型 JSON 形状(无用户态字段,直接下发)。
@@ -29,6 +30,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	g := api.Group("/skills")
 	g.Use(middleware.JWTAuth(d))
 	g.GET("", h.list)
+	g.GET("/categories", h.categories)
 	g.POST("/:id/use", h.recordUse)
 }
 
@@ -84,6 +86,23 @@ func (h *handler) list(c *gin.Context) {
 		return
 	}
 	response.Page(c, rows, total, pageNum, pageSize)
+}
+
+// categories returns 当前模态下确实有上架技能的分类。前端据此隐藏空页签——
+// 图片入口下「短剧漫剧」「音乐MV」点进去永远是空的,不如不展示。
+// 不吃 keyword:页签集合只随模态变,否则打字时页签会跟着跳。
+func (h *handler) categories(c *gin.Context) {
+	outputType := strings.TrimSpace(c.Query("outputType"))
+	tx := h.db.Model(&model.Skill{}).Where("status = 1").Where("category <> ''")
+	if outputType != "" {
+		tx = tx.Where("output_type = ?", outputType)
+	}
+	var rows []string
+	if err := tx.Distinct().Order("category ASC").Pluck("category", &rows).Error; err != nil {
+		response.Fail(c, response.CodeServerError, "failed to list skill categories")
+		return
+	}
+	response.OK(c, rows)
 }
 
 // recordUse bumps the skill use counter (best-effort;不存在也返回成功,

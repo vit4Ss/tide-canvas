@@ -19,8 +19,17 @@ type CommunityPost struct {
 	CommentCount int `gorm:"column:comment_count;type:int;not null;default:0" json:"commentCount"`
 	ViewCount    int `gorm:"column:view_count;type:int;not null;default:0" json:"viewCount"`
 
-	// Status: 0 待审核 / 1 已发布 / 2 已下架.
-	Status int `gorm:"column:status;type:tinyint;not null;default:1" json:"status"`
+	// TaskID 是产出这条作品的生成任务(ai_tasks.id)。生成成功后由 ai 服务自动
+	// 登记，靠它判重(一次生成只登记一条)。0 = 非生成来源(演示种子等)。
+	TaskID idgen.ID `gorm:"column:task_id;index;default:0" json:"taskId"`
+
+	// Status: 0 未发布 / 1 已发布 / 2 已下架。用户生成的作品一律落 0，
+	// 公开广场只查 1，所以未经后台发布不会外泄。
+	//
+	// 列默认值必须是 0：GORM 建记录时会跳过零值字段、让数据库默认值生效，
+	// 默认写 1 的话「未发布」的作品会被直接发布出去（已踩过）。需要已发布的
+	// 调用方（演示种子）自己显式赋值。
+	Status int `gorm:"column:status;type:tinyint;not null;default:0" json:"status"`
 }
 
 // TableName overrides the default pluralization.

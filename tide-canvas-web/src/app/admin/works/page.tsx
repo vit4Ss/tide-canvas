@@ -44,7 +44,7 @@ import {
   type AdminWorkVO,
 } from "@/types/admin-works";
 
-const WORK_FILTERS = ["全部", "图片", "视频", "精选", "已下架"] as const;
+const WORK_FILTERS = ["全部", "图片", "视频", "音频", "精选", "已下架"] as const;
 type WorkFilter = (typeof WORK_FILTERS)[number];
 
 const PAGE_SIZE = 20;
@@ -56,11 +56,11 @@ function statusTone(status: number): PillTone {
   return "gray"; // 已下架
 }
 
-/** Work type ("image"/"video") → localized label + tone. */
+/** Work type ("image"/"video"/"audio") → localized label + tone. */
 function typeLabel(type: string): { text: string; tone: PillTone } {
-  return type === "video"
-    ? { text: "视频", tone: "blue" }
-    : { text: "图片", tone: "gray" };
+  if (type === "video") return { text: "视频", tone: "blue" };
+  if (type === "audio") return { text: "音频", tone: "amber" };
+  return { text: "图片", tone: "gray" };
 }
 
 export default function AdminWorksPage() {
@@ -86,6 +86,8 @@ export default function AdminWorksPage() {
         return { ...base, type: "image" };
       case "视频":
         return { ...base, type: "video" };
+      case "音频":
+        return { ...base, type: "audio" };
       case "精选":
         return { ...base, featured: true };
       case "已下架":
@@ -292,7 +294,7 @@ export default function AdminWorksPage() {
     <div className="adm-page">
       <Panel
         title="作品库"
-        sub={`共 ${total.toLocaleString()} 件 · 本页待审 ${pendingCount} 件 · 公开作品广场内容`}
+        sub={`共 ${total.toLocaleString()} 件 · 本页未发布 ${pendingCount} 件 · 用户生成的全部作品`}
         tools={
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
             <FilterChips

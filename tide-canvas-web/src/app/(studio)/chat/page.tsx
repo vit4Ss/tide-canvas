@@ -71,7 +71,7 @@ import { toast } from "@/components/shared/toast";
 import { confirmDialog } from "@/components/shared/confirm";
 import { Sparkles, X as XIcon } from "lucide-react";
 import { SkillPicker } from "@/components/skill/skill-picker";
-import { skillApi, mergeSkillPrompt, parseSkillParams } from "@/lib/skill-api";
+import { skillApi, parseSkillParams } from "@/lib/skill-api";
 import type { SkillVO } from "@/types/skill";
 
 /* ── composer chips: model + options come from 模型管理 config (studio-models). ── */
@@ -99,6 +99,9 @@ const MODE_HINT: Record<string, string> = {
   t2a: "文字生成音乐",
   sfx: "文字生成音效",
 };
+
+/** 画质档位文案（与创作台 create-studio.tsx / 画布 quality-ratio.ts 同一套措辞）。 */
+const QUALITY_LABEL: Record<string, string> = { low: "低画质", medium: "标准画质", high: "高画质" };
 
 /** 音乐创作模式 → 下拉里的一句话说明（与创作台四模式语义一致）。 */
 const MUSIC_MODE_HINT: Record<string, string> = {
@@ -306,6 +309,7 @@ export default function ChatPage() {
   const [model, setModel] = useState("");
   const [ratio, setRatio] = useState("");
   const [res, setRes] = useState("");
+  const [quality, setQuality] = useState("");
   const [dur, setDur] = useState("");
   // 技能:附着为输入框上方 chip,发送时模板与描述合并;粘性(发完保留)直到手动移除
   const [skill, setSkill] = useState<SkillVO | null>(null);
@@ -437,6 +441,9 @@ export default function ChatPage() {
   const modeVals = mCfg?.modes ?? [];
   const ratioOpts = mCfg?.ratios ?? [];
   const resOpts = mCfg?.resolutions ?? [];
+  // 画质档位只对图片有意义：服务端 pricing.go 的图片单价按 [quality][clarity]
+  // 查表，视频走 [duration][resolution]，音频按次计费。
+  const qualOpts = selModel?.type === "image" ? mCfg?.qualities ?? [] : [];
   const durOpts = isVid ? mCfg?.durations ?? [] : [];
   const countOpts = mCfg?.batchOptions?.length ? mCfg.batchOptions : [1, 2, 3, 4];
   const batchMax = Math.max(...countOpts);
@@ -828,6 +835,7 @@ export default function ChatPage() {
     setMode((m) => (modeVals.length ? (modeVals.includes(m) ? m : modeVals[0]) : ""));
     setRatio((r) => (ratioOpts.length ? (ratioOpts.includes(r) ? r : ratioOpts[0]) : ""));
     setRes((r) => (resOpts.length ? (resOpts.includes(r) ? r : resOpts[0]) : ""));
+    setQuality((q) => (qualOpts.length ? (qualOpts.includes(q) ? q : qualOpts[0]) : ""));
     setDur((d) => (durOpts.length ? (durOpts.includes(d) ? d : durOpts[0]) : ""));
     setBatch((b) => Math.min(Math.max(1, b), batchMax));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1165,19 +1173,26 @@ export default function ChatPage() {
 
     try {
       if ((wantImage || wantVideo || wantAudio) && selModel) {
-        // 技能:模板在前、用户描述在后合并为最终生成提示词;气泡与落库仍是用户原文
-        const genPrompt =
-          skill && skill.outputType === selModel.type ? mergeSkillPrompt(skill.promptTemplate, v) : v;
+        // 技能:只发 skillId,模板由服务端拼到描述前面。客户端先拼好的话,落库的
+        // input 会变成「模板+描述」,作品标题和「重新编辑」读到的全是模板开头。
+        const genPrompt = v;
+        const skillInput =
+          skill && skill.outputType === selModel.type ? { skillId: skill.id } : {};
         // 先 submit（计费/配额走既有生成管线）；被拒时尚未持久化任何东西，无孤儿可清。
         // 音频：音乐按四创作模式组装（与创作台同构），音效只发描述。
         const input: Record<string, unknown> = wantAudio
           ? isMusicSel
-            ? buildMusicInput(genPrompt, music)
-            : { prompt: genPrompt }
+            ? { ...buildMusicInput(genPrompt, music), ...skillInput }
+            : { prompt: genPrompt, ...skillInput }
           : {
               prompt: genPrompt,
+              ...skillInput,
               ...(ratio ? { aspectRatio: ratio, aspect_ratio: ratio, ratio } : {}),
               ...(res ? { resolution: res } : {}),
+              // 图片：clarity + quality 必须一起发，服务端图片单价查的是
+              // [quality][clarity]；缺 quality 会查表落空、退回模型固定价。
+              ...(wantImage && res ? { clarity: res } : {}),
+              ...(wantImage && quality ? { quality } : {}),
               ...(wantVideo && dur ? { duration: dur } : {}),
             };
         // pick the handler by mode + attached references (P2).
@@ -1236,6 +1251,7 @@ export default function ChatPage() {
           ...(mode ? { mode } : {}),
           ...(ratio ? { ratio } : {}),
           ...(res ? { resolution: res } : {}),
+          ...(wantImage && quality ? { quality } : {}),
           ...(wantVideo && dur ? { duration: dur } : {}),
           ...(wantImage && batch > 1 ? { batch } : {}),
           // 音乐参数快照：重新编辑/再次生成时恢复四模式字段。
@@ -1316,7 +1332,7 @@ export default function ChatPage() {
       setTyping(false);
       setBusy(false);
     }
-  }, [draft, busy, activeId, ensureSession, loadMessages, selModel, mode, ratio, res, dur, batch, refs, refPolicy, refOptional, clearRefs, forceBottom, scrollEnd, ctxUsage, refreshCtxUsage, music, isMusicSel, musicNoDraftOk, skill]);
+  }, [draft, busy, activeId, ensureSession, loadMessages, selModel, mode, ratio, res, quality, dur, batch, refs, refPolicy, refOptional, clearRefs, forceBottom, scrollEnd, ctxUsage, refreshCtxUsage, music, isMusicSel, musicNoDraftOk, skill]);
 
   // restore a turn's snapshot params into the composer (重新编辑 / 再次生成).
   const restoreFromParams = useCallback(
@@ -1326,6 +1342,7 @@ export default function ChatPage() {
       if (typeof p.mode === "string") setMode(p.mode);
       if (typeof p.ratio === "string") setRatio(p.ratio);
       if (typeof p.resolution === "string") setRes(p.resolution);
+      if (typeof p.quality === "string") setQuality(p.quality);
       if (typeof p.duration === "string") setDur(p.duration);
       if (typeof p.batch === "number") setBatch(p.batch);
       // 音乐参数：有快照按快照恢复，没有则回到默认（避免把上一轮的歌词/原曲
@@ -1451,19 +1468,23 @@ export default function ChatPage() {
     };
     const flat = cellNum(mCfg?.creditCost) || parseFloat(selModel?.pointCost ?? "0") || 0;
     let base = 0;
+    const pm = mCfg?.priceMatrix;
     if (isVid && dur && res) {
-      const pm = mCfg?.priceMatrix;
       base = cellNum(pm?.[dur]?.[res]) || cellNum(pm?.[res]?.[dur]);
       if (!base) {
         const mods = mCfg?.priceModifiers as Record<string, Record<string, unknown> | undefined> | undefined;
         base = cellNum(mods?.[`duration@${res}`]?.[dur]);
       }
+    } else if (selModel?.type === "image" && quality && res) {
+      // 图片按 [画质][清晰度] 查表，与服务端 pricing.go 同口径；两种轴序都试，
+      // 后台矩阵横竖着写都能命中（漏查会静默落到模型固定价，4K 卖成 1K 的钱）。
+      base = cellNum(pm?.[quality]?.[res]) || cellNum(pm?.[res]?.[quality]);
     }
     if (!base) base = flat;
     // 服务端按向上取整结算（见 pricing.go），展示同口径；仅图片批量 ×数量
     if (selModel?.type === "image") return Math.ceil(base * Math.max(1, batch));
     return Math.ceil(base);
-  }, [mCfg, selModel, isVid, dur, res, batch]);
+  }, [mCfg, selModel, isVid, dur, res, quality, batch]);
 
   // —— 刷新/切页后的接续（GPT/Claude 式断线续播）——
   // 服务端断连后仍继续生成并缓存增量（chat/live.go）。文本轮次里用户消息先
@@ -2122,6 +2143,32 @@ export default function ChatPage() {
                     >
                       <span className="nfo">
                         <span className="nm">{r.toUpperCase()}</span>
+                      </span>
+                      <span className="ck">✓</span>
+                    </button>
+                  ))}
+                </CmSelect>
+              )}
+
+              {qualOpts.length > 0 && (
+                <CmSelect
+                  open={openSel === "qual"}
+                  onToggle={() => toggleSel("qual")}
+                  menuH="画质"
+                  label={QUALITY_LABEL[quality] ?? quality}
+                >
+                  {qualOpts.map((q) => (
+                    <button
+                      key={q}
+                      type="button"
+                      className={`cm-mitem${q === quality ? " on" : ""}`}
+                      onClick={() => {
+                        setQuality(q);
+                        setOpenSel(null);
+                      }}
+                    >
+                      <span className="nfo">
+                        <span className="nm">{QUALITY_LABEL[q] ?? q}</span>
                       </span>
                       <span className="ck">✓</span>
                     </button>

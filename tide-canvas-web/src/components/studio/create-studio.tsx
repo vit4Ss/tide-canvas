@@ -52,7 +52,7 @@ import {
   type UploadClipStage,
 } from "@/lib/music-modes";
 import { SkillPicker } from "@/components/skill/skill-picker";
-import { skillApi, mergeSkillPrompt, parseSkillParams } from "@/lib/skill-api";
+import { skillApi, parseSkillParams } from "@/lib/skill-api";
 import type { SkillVO } from "@/types/skill";
 import {
   MentionPromptEditor,
@@ -2233,15 +2233,17 @@ export default function CreateStudio() {
 
     // ── real generation: build the input, then hand off to startGeneration
     // (shared task-create → persist → drive path). ────────────────────────
-    // 技能:模板在前、用户描述在后合并为最终生成提示词(历史/回显仍是用户原文)
-    const genPrompt =
-      skill && skill.outputType === curType ? mergeSkillPrompt(skill.promptTemplate, p) : p;
+    // 技能:只发 skillId,模板由服务端拼到描述前面(客户端先拼会污染落库的 input,
+    // 作品标题/重新编辑读到的就全是模板开头)
+    const genPrompt = p;
+    const skillInput = skill && skill.outputType === curType ? { skillId: skill.id } : {};
     if (skill && skill.outputType === curType) void skillApi.recordUse(skill.id);
     const input: Record<string, unknown> = isAudio
       ? {
           // 音频：灵感模式只发描述；自定义歌词模式只发歌词/风格/歌名（描述不发，
           // 上游有 lyrics 时本就忽略 input）；延长/翻唱经 extras 传 task 与原曲
           // clip_id（此组合上游不做 tags 歧义校验）；SFX 卡只吃描述。
+          ...skillInput,
           ...(p && !musicCustom && !musicTask ? { prompt: genPrompt } : {}),
           ...(audLyrics ? { lyrics: audLyrics } : {}),
           ...((audLyrics || musicTask) && songStyle.trim() ? { tags: songStyle.trim() } : {}),
@@ -2265,6 +2267,7 @@ export default function CreateStudio() {
         }
       : {
           prompt: genPrompt,
+          ...skillInput,
           ...refInput,
           ...(ratioOpts.length ? { aspectRatio: r, aspect_ratio: r, ratio: r } : {}),
           ...(isVid

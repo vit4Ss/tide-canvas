@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -102,11 +103,27 @@ type Client struct {
 	baseURL string
 	apiKey  string
 	hc      *http.Client
+	// 空闲看门狗的两个阈值放在实例上而不是包级变量：测试要压到毫秒级才能在
+	// 合理时间内验证断流，包级变量会被别的用例仍在运行的看门狗并发读到（竞态）。
+	idleTimeout time.Duration
+	idleCheck   time.Duration
 }
 
 // defaultStreamDeadline caps a stream whose caller context carries no deadline,
 // so a stalled relay can never hang a request forever.
 const defaultStreamDeadline = 5 * time.Minute
+
+// streamIdleTimeout aborts a stream that stops producing bytes. 流式生成不能按
+// 总时长掐:只要还在吐字就说明上游活着,长回复本来就该允许跑久。真正的故障
+// 形态是「连接开着但不再有数据」,按空闲时长判定才对得上。
+//
+// 之前只有总时长上限(180s),一个还在正常输出的长回复会被拦腰截断——用户看到
+// 半截答案,上游那侧则报 Broken pipe(它下一次 flush 写到我们已关闭的 socket)。
+const streamIdleTimeout = 90 * time.Second
+
+// streamIdleCheck is how often the watchdog compares now against the last read.
+// 粒度取 5s:比空闲阈值小一个量级,又不至于空转太频繁。
+const streamIdleCheck = 5 * time.Second
 
 // New returns a client, or nil when no API key is configured (so the caller can
 // fall back). baseURL defaults to the relay host when empty.
@@ -125,15 +142,17 @@ func New(baseURL, apiKey string) *Client {
 	if baseURL == "" {
 		baseURL = "https://relay.tcmzhan.com"
 	}
-	return &Client{baseURL: baseURL, apiKey: apiKey, hc: &http.Client{
+	return &Client{baseURL: baseURL, apiKey: apiKey, idleTimeout: streamIdleTimeout, idleCheck: streamIdleCheck, hc: &http.Client{
 		Transport: &http.Transport{
 			Proxy: http.ProxyFromEnvironment,
 			// A custom dialer disables automatic HTTP/2; force-attempt it back on
 			// and keep DefaultTransport's idle-connection hygiene.
-			ForceAttemptHTTP2:     true,
-			DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: 60 * time.Second,
+			ForceAttemptHTTP2:   true,
+			DialContext:         (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+			TLSHandshakeTimeout: 10 * time.Second,
+			// 首字节前的等待上限。推理型模型(gpt-5.4 等)会先想很久才开口，
+			// 60s 会把正常的长思考判成失败(实测两条都卡在 60s 整)。
+			ResponseHeaderTimeout: 180 * time.Second,
 			MaxIdleConns:          100,
 			IdleConnTimeout:       90 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
@@ -186,6 +205,9 @@ func (c *Client) stream(ctx context.Context, model string, msgs []Msg, onDelta f
 		ctx, cancel = context.WithTimeout(ctx, defaultStreamDeadline)
 		defer cancel()
 	}
+	// 请求必须挂在这个可取消的上下文上，空闲看门狗才能真的把阻塞中的读打断。
+	ctx, cancelStream := context.WithCancel(ctx)
+	defer cancelStream()
 
 	payload, err := json.Marshal(chatRequest{Model: model, Messages: msgs, Stream: true})
 	if err != nil {
@@ -211,8 +233,34 @@ func (c *Client) stream(ctx context.Context, model string, msgs []Msg, onDelta f
 		return "", fmt.Errorf("relaychat: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
+	// 空闲看门狗：每收到一次字节就续命，连续 streamIdleTimeout 没有新数据才
+	// 取消请求。计的是原始字节而不是解析出的 delta——SSE 心跳注释行同样能证明
+	// 连接活着，用它续命才不会把「上游正在思考」误判成断流。
+	body := newIdleReader(resp.Body)
+	var idleAbort atomic.Bool
+	watchdogDone := make(chan struct{})
+	defer close(watchdogDone)
+	go func() {
+		t := time.NewTicker(c.idleCheck)
+		defer t.Stop()
+		for {
+			select {
+			case <-watchdogDone:
+				return
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if body.stalledFor() > c.idleTimeout {
+					idleAbort.Store(true)
+					cancelStream() // 取消请求上下文 → 阻塞中的 Read 立即返回错误
+					return
+				}
+			}
+		}
+	}()
+
 	var sb strings.Builder
-	sc := bufio.NewScanner(resp.Body)
+	sc := bufio.NewScanner(body)
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
@@ -240,6 +288,11 @@ func (c *Client) stream(ctx context.Context, model string, msgs []Msg, onDelta f
 		// Include elapsed time and how much content had arrived: zero bytes at
 		// the deadline points at the relay stalling; a partial reply points at
 		// the caller's budget being too small for the generation.
+		if idleAbort.Load() {
+			// 与「总时长到顶」区分开：这条说明上游连接还在但已经不吐字了。
+			return "", fmt.Errorf("relaychat: stream idle %s (after %s, %d bytes received)",
+				c.idleTimeout, time.Since(start).Round(time.Millisecond), sb.Len())
+		}
 		return "", fmt.Errorf("relaychat: read stream (after %s, %d bytes received): %w",
 			time.Since(start).Round(time.Millisecond), sb.Len(), err)
 	}
@@ -249,4 +302,44 @@ func (c *Client) stream(ctx context.Context, model string, msgs []Msg, onDelta f
 		return "", errors.New("relaychat: empty content")
 	}
 	return content, nil
+}
+
+// idleReader wraps the SSE body so the watchdog can measure 一件事、且只измер这
+// 一件事：「我们已经阻塞等待上游字节多久了」。
+//
+// 关键是 waiting 标志。读循环里 onDelta 是同步写 SSE 给客户端的，客户端半开
+// 时那个写能阻塞几分钟；如果只看「距上次收到字节多久」，这段时间会被算成上游
+// 断流，把健康的生成误杀——而 chat 那边特意用 context.WithoutCancel 解耦客户端
+// 断开，正是为了不发生这种事。只在 Read 真正在途时判超时，慢消费者就影响不到。
+type idleReader struct {
+	r       io.Reader
+	last    atomic.Int64 // unix nano：当前这次等待的起点，或最近一次收到字节的时刻
+	waiting atomic.Bool  // 是否正阻塞在底层 Read 上
+}
+
+func newIdleReader(r io.Reader) *idleReader {
+	ir := &idleReader{r: r}
+	ir.last.Store(time.Now().UnixNano())
+	return ir
+}
+
+func (ir *idleReader) Read(p []byte) (int, error) {
+	ir.last.Store(time.Now().UnixNano()) // 等待起点
+	ir.waiting.Store(true)
+	n, err := ir.r.Read(p)
+	ir.waiting.Store(false)
+	if n > 0 {
+		ir.last.Store(time.Now().UnixNano())
+	}
+	return n, err
+}
+
+// stalledFor reports how long the reader has been blocked waiting on upstream
+// bytes. 不在等待中（例如正在 onDelta 里写客户端、或 Scanner 正消费缓冲里的
+// 剩余行）时返回 0——那不是上游的问题，不该计入。
+func (ir *idleReader) stalledFor() time.Duration {
+	if !ir.waiting.Load() {
+		return 0
+	}
+	return time.Since(time.Unix(0, ir.last.Load()))
 }

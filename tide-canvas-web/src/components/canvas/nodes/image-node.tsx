@@ -626,7 +626,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   }, [cardW, cardH, node.contentW, node.contentH, node.id, updateNode]);
 
   // 技能附加应用:指定模型卡则切换(校正 effect 会收敛不合法档位);默认参数
-  // 回填画幅/画质/清晰度;skillId/skillPrompt 已由 NodeSkillButton 写回节点
+  // 回填画幅/画质/清晰度;skillId 已由 NodeSkillButton 写回节点
   const applySkillExtras = useCallback((s: SkillVO) => {
     if (s.modelId && imageModels.some((m) => m.modelId === s.modelId) && s.modelId !== selectedModelId) {
       setSelectedModelId(s.modelId);
@@ -667,9 +667,9 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     const imageList = ownImage ? [ownImage, ...refImages] : refImages;
     const hasImage = imageList.length > 0;
     const stylePrompt = selectedStylePrompt.trim();
-    // 技能模板在前定基调 → 用户描述 → 风格要求(与三入口统一的合并顺序)
-    const skillPrompt = node.skillPrompt?.trim() || "";
-    const mergedPrompt = [skillPrompt, node.prompt?.trim(), stylePrompt ? `风格要求：${stylePrompt}` : ""].filter(Boolean).join("\n");
+    // 技能只发 skillId，模板由服务端拼到最前面（客户端先拼会污染落库的 input，
+    // 作品标题读到的就是模板开头）；风格要求仍在客户端拼，它不是技能的一部分。
+    const mergedPrompt = [node.prompt?.trim(), stylePrompt ? `风格要求：${stylePrompt}` : ""].filter(Boolean).join("\n");
     if (node.skillId) void skillApi.recordUse(node.skillId);
     generate({
       nodeId: node.id,
@@ -678,6 +678,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       gridOutput: formatConfig.gridOutput,
       input: {
         prompt: mergedPrompt,
+        ...(node.skillId ? { skillId: node.skillId } : {}),
         ...(stylePrompt ? { stylePreset: selectedStyleId, stylePrompt } : {}),
         ...(imageList.length ? { imageList, sourceImage: imageList[0], references: imageList.slice(1) } : {}),
         // 模型无某维度(后台全不勾)时该参数不下发，避免上游收到其不支持的字段

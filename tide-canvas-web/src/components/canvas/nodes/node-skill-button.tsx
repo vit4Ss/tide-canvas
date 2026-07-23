@@ -4,7 +4,7 @@
    NodeSkillButton — 画布节点(图片/视频)的技能入口。
 
    形态对齐 ImageStylePicker 的触发按钮(12×12 方钮,图标+短名回显);点开
-   共享 SkillPicker(按节点模态过滤),选中把 skillId/skillName/skillPrompt
+   共享 SkillPicker(按节点模态过滤),选中把 skillId/skillName
    写回节点(随画布持久化,重开项目仍生效);已选时角标 × 可移除。
    参数/模型应用交由节点回调(各节点自己的状态形态不同)。
    ========================================================================== */
@@ -31,14 +31,14 @@ export function NodeSkillButton({ node, outputType, onPicked }: Props) {
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
   const pick = (s: SkillVO) => {
-    updateNode(node.id, { skillId: s.id, skillName: s.title, skillPrompt: s.promptTemplate });
+    updateNode(node.id, { skillId: s.id, skillName: s.title });
     setOpen(false);
     onPicked?.(s);
   };
 
   const clear = (e: React.MouseEvent) => {
     stop(e);
-    updateNode(node.id, { skillId: undefined, skillName: undefined, skillPrompt: undefined });
+    updateNode(node.id, { skillId: undefined, skillName: undefined });
   };
 
   return (

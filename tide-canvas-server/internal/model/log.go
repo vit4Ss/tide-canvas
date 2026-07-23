@@ -1,6 +1,8 @@
 package model
 
 import (
+	"time"
+
 	"github.com/shopspring/decimal"
 
 	"tidecanvas/internal/pkg/idgen"
@@ -83,7 +85,11 @@ type ModelCallLog struct {
 	HttpStatus     int      `gorm:"column:http_status;index" json:"httpStatus"`
 	Success        int      `gorm:"column:success;index" json:"success"` // 0 fail / 1 ok
 	ErrorMsg       string   `gorm:"column:error_msg;type:varchar(1024)" json:"errorMsg"`
-	DurationMs     int64    `gorm:"column:duration_ms" json:"durationMs"`
+	// StartTime 是本地打点的调用开始时刻（不取上游响应里的时间字段）。与
+	// CreateTime（落库/调用结束时刻）和 DurationMs 三者互为印证：耗时存疑时
+	// 可以直接拿两个时间戳相减对账。存量行为零值，展示端按空处理。
+	StartTime  time.Time `gorm:"column:start_time" json:"startTime"`
+	DurationMs int64     `gorm:"column:duration_ms" json:"durationMs"`
 	UpstreamTaskID string   `gorm:"column:upstream_task_id;type:varchar(128)" json:"upstreamTaskId"`
 	Cost           string   `gorm:"column:cost;type:varchar(64)" json:"cost"`
 }

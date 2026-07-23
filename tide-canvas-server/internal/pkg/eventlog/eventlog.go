@@ -6,6 +6,7 @@
 package eventlog
 
 import (
+	"time"
 	"unicode/utf8"
 
 	"gorm.io/gorm"
@@ -86,7 +87,10 @@ func ModelCall(e *model.ModelCallLog) {
 // ModelText is a convenience for the text relay calls (chat / optimize): it
 // derives success/status/error from err and enqueues a ModelCallLog. On failure
 // the response body is dropped (the error message carries the detail).
-func ModelText(userID idgen.ID, scene, modelID, endpoint, requestBody, responseBody string, durationMs int64, err error) {
+//
+// startedAt 是调用方在发起上游请求前打的本地时间点；耗时由本函数按它现算，
+// 保证「开始时间 + 耗时」永远自洽（调用方一律在上游返回后立刻调用本函数）。
+func ModelText(userID idgen.ID, scene, modelID, endpoint, requestBody, responseBody string, startedAt time.Time, err error) {
 	success, status, errMsg := 1, 200, ""
 	if err != nil {
 		success, status, errMsg, responseBody = 0, 0, err.Error(), ""
@@ -101,7 +105,8 @@ func ModelText(userID idgen.ID, scene, modelID, endpoint, requestBody, responseB
 		HttpStatus:   status,
 		Success:      success,
 		ErrorMsg:     Truncate(errMsg, 1024),
-		DurationMs:   durationMs,
+		StartTime:    startedAt,
+		DurationMs:   time.Since(startedAt).Milliseconds(),
 	})
 }
 

@@ -33,6 +33,36 @@ export function SkillPicker({ open, onClose, onPick, outputType, currentId }: Pr
   const [category, setCategory] = useState("");
   const [keyword, setKeyword] = useState("");
   const [rows, setRows] = useState<SkillVO[] | null>(null);
+  // 该模态下真正有技能的分类：页签只列这些，避免点进去是空的。
+  // null = 未取到（先只显示「推荐」，不预先摆一排可能全是空的页签）。
+  const [cats, setCats] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    skillApi
+      .categories(outputType)
+      .then((res) => {
+        if (!alive) return;
+        const have = new Set(res.success && res.data ? res.data : []);
+        // 排序以 SKILL_CATEGORIES 为准（推荐目录的既定次序），
+        // 后台自定义的分类是自由串、不在目录里，接在后面而不是被丢掉。
+        const known = SKILL_CATEGORIES.filter((c) => have.has(c));
+        const extra = [...have].filter((c) => !SKILL_CATEGORIES.includes(c as (typeof SKILL_CATEGORIES)[number]));
+        const list = [...known, ...extra];
+        setCats(list);
+        // 模态切换后当前分类可能已不存在（图片切视频时的「动漫游戏」），退回「推荐」，
+        // 否则会卡在一个永远查不到东西的分类上
+        setCategory((cur) => (cur && !list.includes(cur) ? "" : cur));
+      })
+      .catch(() => {
+        // 取不到就退回全目录，宁可多一个空页签也不要没有分类可切
+        if (alive) setCats([...SKILL_CATEGORIES]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open, outputType]);
 
   // seq 守卫:切分类/搜索的旧响应后到不覆盖新结果;关窗后丢弃。
   // 置 loading(rows=null)放在异步回调里,不在 effect 体内同步 setState。
@@ -111,7 +141,7 @@ export function SkillPicker({ open, onClose, onPick, outputType, currentId }: Pr
 
         {/* 分类页签 */}
         <div className="flex flex-wrap items-center gap-1.5 border-b border-white/8 px-5 py-2.5">
-          {["", ...SKILL_CATEGORIES].map((cat) => (
+          {["", ...(cats ?? [])].map((cat) => (
             <button
               key={cat || "all"}
               type="button"
@@ -153,23 +183,27 @@ export function SkillPicker({ open, onClose, onPick, outputType, currentId }: Pr
                         : "border-white/8 bg-white/[0.03] hover:border-white/20 hover:bg-white/6"
                     }`}
                   >
-                    <span className="relative h-[92px] w-[132px] shrink-0 overflow-hidden rounded-lg bg-neutral-800">
-                      {s.coverUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
+                    {/* 无封面时整块不渲染:一排空灰盒比没有图更碍眼,让文字占满卡片。
+                        模态角标随之落到底部信息行,信息不丢。 */}
+                    {s.coverUrl && (
+                      <span className="relative h-[92px] w-[132px] shrink-0 overflow-hidden rounded-lg bg-neutral-800">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img src={s.coverUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
-                      ) : (
-                        <span className="flex h-full w-full items-center justify-center text-neutral-600">
-                          <Sparkles className="h-6 w-6" />
+                        <span className="absolute right-1.5 top-1.5 rounded bg-black/60 px-1 text-[10px] leading-4 text-white/90 backdrop-blur-sm">
+                          {SKILL_OUTPUT_LABEL[s.outputType] ?? s.outputType}
                         </span>
-                      )}
-                      <span className="absolute right-1.5 top-1.5 rounded bg-black/60 px-1 text-[10px] leading-4 text-white/90 backdrop-blur-sm">
-                        {SKILL_OUTPUT_LABEL[s.outputType] ?? s.outputType}
                       </span>
-                    </span>
+                    )}
                     <span className="flex min-w-0 flex-1 flex-col py-0.5">
                       <span className="truncate text-[13px] font-semibold text-neutral-50">{s.title}</span>
                       <span className="mt-1 line-clamp-2 text-xs leading-5 text-neutral-400">{s.description}</span>
-                      <span className="mt-auto flex items-center gap-1.5 text-[11px] text-neutral-500">
+                      <span className="mt-auto flex items-center gap-1.5 pt-2 text-[11px] text-neutral-500">
+                        {!s.coverUrl && (
+                          <>
+                            <span>{SKILL_OUTPUT_LABEL[s.outputType] ?? s.outputType}</span>
+                            <span>·</span>
+                          </>
+                        )}
                         {s.authorName && <span className="truncate">{s.authorName}</span>}
                         {s.authorName && <span>·</span>}
                         <span>{fmtCount(s.useCount)} 次使用</span>

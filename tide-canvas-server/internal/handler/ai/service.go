@@ -270,7 +270,10 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 
 	s.setProgress(ctx, taskID, 30)
 
-	input := decodeInput(dto.Input)
+	// 技能:客户端只传 skillId,模板由服务端拼到用户描述前面。拼接放在这里而不是
+	// 客户端,是为了让落库的 input 保持用户原文——作品标题、日志、「重新编辑」
+	// 读的都是它,客户端先拼好的话它们看到的全是技能模板开头。
+	input := s.applySkill(decodeInput(dto.Input), gh)
 	req := GenerateRequest{
 		Handler:  dto.Handler,
 		Model:    m,
@@ -336,8 +339,14 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 		refund("生成失败退款")
 	}
 
+	// 生成成功 → 登记成一条未发布作品（后台「作品管理」的数据源）。放在
+	// finalizeTask 之后：只有真正落库成功的产出才算作品，被取消/丢弃的不算。
+	if task.Status == statusSuccess {
+		s.registerWork(ctx, task, gh, m, userID, dto, res)
+	}
+
 	// Audit log row (best-effort).
-	s.writeLog(ctx, task, gh, m, userID, dto, res, genErr, duration)
+	s.writeLog(ctx, task, gh, m, userID, dto, res, genErr, start, duration)
 }
 
 // cancelTask removes a task. A still-processing task is flagged cancelled first
@@ -473,7 +482,10 @@ func (s *service) listLogs(ctx context.Context, userID idgen.ID, isAdmin bool, q
 
 // ---- helpers ------------------------------------------------------------
 
-func (s *service) writeLog(ctx context.Context, task *model.AiTask, gh GenHandler, m *model.AiModel, userID idgen.ID, dto generateDTO, res GenerateResult, genErr error, durationMs int64) {
+// startedAt 与 durationMs 都由调用方给：durationMs 是上游返回那一刻量的，
+// startedAt 是发起前打的点。两个分开传而不是在这里现算——本函数在任务落库
+// 之后才被调用，现算会把 DB 写入时间算进耗时。
+func (s *service) writeLog(ctx context.Context, task *model.AiTask, gh GenHandler, m *model.AiModel, userID idgen.ID, dto generateDTO, res GenerateResult, genErr error, startedAt time.Time, durationMs int64) {
 	success := 1
 	errMsg := ""
 	if genErr != nil || res.ResultURL == "" {
@@ -507,9 +519,11 @@ func (s *service) writeLog(ctx context.Context, task *model.AiTask, gh GenHandle
 	}
 
 	// Mirror the upstream relay call into the unified model-call log.
-	scene := "image"
-	if gh.OperationType() == "video" {
-		scene = "video"
+	// 场景取自 handler 的 operation type：音频此前被归进 image，日志按场景
+	// 筛选时音乐/音效调用会混在图片里。
+	scene := workTypeOf(gh.OperationType())
+	if scene == "" {
+		scene = "image"
 	}
 	eventlog.ModelCall(&model.ModelCallLog{
 		UserID:         userID,
@@ -521,6 +535,7 @@ func (s *service) writeLog(ctx context.Context, task *model.AiTask, gh GenHandle
 		HttpStatus:     res.HttpStatus,
 		Success:        success,
 		ErrorMsg:       errMsg,
+		StartTime:      startedAt,
 		DurationMs:     durationMs,
 		UpstreamTaskID: res.UpstreamTaskID,
 		Cost:           res.Cost,

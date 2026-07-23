@@ -60,10 +60,14 @@ var errForbidden = errors.New("chat: not owner")
 // reached the configured cap; the user must start a new conversation.
 var errContextFull = errors.New("chat: context token limit reached")
 
-// llmReplyTimeout bounds a single upstream generation so a slow/hung provider
-// never blocks the user's send indefinitely. Long replies stream token-by-token
-// and routinely run past a minute, so the budget covers a full long generation.
-const llmReplyTimeout = 180 * time.Second
+// llmReplyTimeout is the OUTER bound on one upstream generation — a backstop for
+// a provider that hangs without ever closing the connection, not the liveness
+// check. 判活由 relaychat 的空闲看门狗做（连续 90s 没有新字节才断）。
+//
+// 原值 180s 是拿总时长当判活用的，长回复正在正常输出也会被拦腰截断（实测一条
+// 已收 29KB 仍被掐，上游随即报 Broken pipe）。放宽到 10 分钟：还在吐字就让它
+// 写完，真卡死则由空闲看门狗在 90s 内结束，不必等到这个上限。
+const llmReplyTimeout = 10 * time.Minute
 
 // ── 上下文自动压缩（compaction）────────────────────────────────────────────
 // 会话估算 token 越过阈值（默认=上限的 70%，sys_config llm.compressAtTokens
@@ -489,7 +493,7 @@ func (s *service) maybeCompact(ctx context.Context, conv *model.IMConversation) 
 		relaychat.TextMsg("user", sb.String()),
 	})
 	eventlog.ModelText(conv.OwnerID, "compact", modelKey, "/v1/chat/completions",
-		sb.String(), summary, time.Since(start).Milliseconds(), err)
+		sb.String(), summary, start, err)
 	if err != nil {
 		logger.L().Warn("chat: context compaction failed, keeping full history",
 			zap.String("model", modelKey), zap.Error(err))
@@ -712,7 +716,7 @@ func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, o
 					}
 				})
 				reqBody, _ := json.Marshal(msgs)
-				eventlog.ModelText(ownerID, "chat", model, "/v1/chat/completions", string(reqBody), reply, time.Since(start).Milliseconds(), err)
+				eventlog.ModelText(ownerID, "chat", model, "/v1/chat/completions", string(reqBody), reply, start, err)
 				if err == nil {
 					return reply
 				}
@@ -744,7 +748,7 @@ func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, o
 			start := time.Now()
 			reply, cerr := s.llmClient.Chat(cctx, turns)
 			reqBody, _ := json.Marshal(turns)
-			eventlog.ModelText(ownerID, "chat", s.fallbackModelID(), "anthropic", string(reqBody), reply, time.Since(start).Milliseconds(), cerr)
+			eventlog.ModelText(ownerID, "chat", s.fallbackModelID(), "anthropic", string(reqBody), reply, start, cerr)
 			if cerr == nil {
 				if onDelta != nil {
 					onDelta(reply)
@@ -891,7 +895,7 @@ func (s *service) generateReply(ctx context.Context, conv *model.IMConversation,
 			start := time.Now()
 			reply, err := s.relay.Chat(cctx, model, msgs)
 			reqBody, _ := json.Marshal(msgs)
-			eventlog.ModelText(ownerID, "chat", model, "/v1/chat/completions", string(reqBody), reply, time.Since(start).Milliseconds(), err)
+			eventlog.ModelText(ownerID, "chat", model, "/v1/chat/completions", string(reqBody), reply, start, err)
 			if err == nil {
 				return reply
 			}
@@ -917,7 +921,7 @@ func (s *service) generateReply(ctx context.Context, conv *model.IMConversation,
 		start := time.Now()
 		reply, err := s.llmClient.Chat(cctx, turns)
 		reqBody, _ := json.Marshal(turns)
-		eventlog.ModelText(ownerID, "chat", s.fallbackModelID(), "anthropic", string(reqBody), reply, time.Since(start).Milliseconds(), err)
+		eventlog.ModelText(ownerID, "chat", s.fallbackModelID(), "anthropic", string(reqBody), reply, start, err)
 		if err == nil {
 			return reply
 		}

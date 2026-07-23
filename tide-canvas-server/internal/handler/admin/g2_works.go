@@ -277,8 +277,14 @@ func (h *worksHandler) queryPosts(q *AdminWorkQuery) ([]model.CommunityPost, int
 	// sub-condition so it ANDs correctly with the other filters (GORM precedence).
 	if q.Type == "video" {
 		tx = tx.Where(`content LIKE ?`, `%"type":"video"%`)
+	} else if q.Type == "audio" {
+		tx = tx.Where(`content LIKE ?`, `%"type":"audio"%`)
 	} else if q.Type == "image" {
-		tx = tx.Where(h.db.Where(`content NOT LIKE ?`, `%"type":"video"%`).Or(`content IS NULL`))
+		// 图片 = 既不是视频也不是音频（含没有 type 键的历史行，workType 也把
+		// 它们归为图片）。少排除一类，音频就会混进图片筛选里。
+		tx = tx.Where(h.db.
+			Where(`content NOT LIKE ? AND content NOT LIKE ?`, `%"type":"video"%`, `%"type":"audio"%`).
+			Or(`content IS NULL`))
 	}
 	if q.Cat != "" {
 		tx = tx.Where("content LIKE ?", `%"cat":"`+g2EscapeLike(q.Cat)+`"%`)
@@ -468,8 +474,11 @@ func setFeatured(content string, featured bool) string {
 }
 
 func workType(m workMeta) string {
-	if strings.EqualFold(m.Type, "video") {
+	switch {
+	case strings.EqualFold(m.Type, "video"):
 		return "video"
+	case strings.EqualFold(m.Type, "audio"):
+		return "audio"
 	}
 	return "image"
 }
@@ -477,7 +486,9 @@ func workType(m workMeta) string {
 func workStatusText(status int) string {
 	switch status {
 	case postStatusPending:
-		return "待审核"
+		// 用户生成即入库、默认落这个状态；没有投稿动作，所以叫「未发布」而不是
+		// 「待审核」——后台点发布才进公开广场。
+		return "未发布"
 	case postStatusPublished:
 		return "已发布"
 	case postStatusOffline:

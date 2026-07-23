@@ -83,7 +83,9 @@ func (h *dashboardHandler) stats(c *gin.Context) {
 		Distinct("user_id").Count(&vo.PayingUsers)
 
 	// Content / marketplace totals (same tables the user pages read).
-	h.db.Model(&model.CommunityPost{}).Count(&vo.TotalPosts)
+	// 只数已发布：用户生成的作品一律先落「未发布」，把它们算进来会让概览的
+	// 作品数远大于广场上实际能看到的内容。
+	h.db.Model(&model.CommunityPost{}).Where("status = ?", 1).Count(&vo.TotalPosts)
 	h.db.Model(&model.MarketModel{}).Count(&vo.TotalModels)
 
 	// Orders + revenue (paid orders only contribute to revenue).

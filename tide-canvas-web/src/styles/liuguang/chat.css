@@ -289,7 +289,8 @@
    pill 与候选菜单的样式在 studio.css（.mention-*，(studio) 布局全组加载）；
    这里只补 composer 里 contentEditable 输入框的尺寸/字体（对齐原 textarea）。 */
 .composer-head .mention-wrap{flex:1; min-width:0;}
-.composer-input{width:100%; min-height:46px; max-height:180px; padding:11px 2px 6px; font:inherit; font-size:14.5px; line-height:1.6; color:var(--text);}
+/* min-height 72px：空态就留出 2~3 行的落笔空间，长提示词不至于一上来就挤在单行里 */
+.composer-input{width:100%; min-height:72px; max-height:180px; padding:11px 2px 6px; font:inherit; font-size:14.5px; line-height:1.6; color:var(--text);}
 
 /* ── 技能 chip:定义统一放在 studio.css(chat/studio 同一全局 CSS 空间,
    双处定义会按加载顺序互相覆盖);此处仅补 chat 布局差异。 ─────────────── */

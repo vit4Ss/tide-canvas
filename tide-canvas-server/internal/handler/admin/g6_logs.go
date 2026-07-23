@@ -278,6 +278,7 @@ type ModelCallLogVO struct {
 	HttpStatus     int      `json:"httpStatus"`
 	Success        int      `json:"success"`
 	ErrorMsg       string   `json:"errorMsg"`
+	StartTime      string   `json:"startTime"` // 本地打点的调用开始时刻；CreateTime = 结束(落库)时刻
 	DurationMs     int64    `json:"durationMs"`
 	UpstreamTaskID string   `json:"upstreamTaskId"`
 	Cost           string   `json:"cost"`
@@ -321,7 +322,7 @@ func listModelLogs(c *gin.Context, db *gorm.DB) {
 		vos = append(vos, ModelCallLogVO{
 			ID: r.ID, UserID: r.UserID, Username: names[r.UserID], Scene: r.Scene, Model: r.Model, Endpoint: r.Endpoint,
 			RequestBody: r.RequestBody, ResponseBody: r.ResponseBody, HttpStatus: r.HttpStatus,
-			Success: r.Success, ErrorMsg: r.ErrorMsg, DurationMs: r.DurationMs,
+			Success: r.Success, ErrorMsg: r.ErrorMsg, StartTime: g5FmtTime(r.StartTime), DurationMs: r.DurationMs,
 			UpstreamTaskID: r.UpstreamTaskID, Cost: r.Cost, CreateTime: g5FmtTime(r.CreateTime),
 		})
 	}

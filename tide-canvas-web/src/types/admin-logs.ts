@@ -108,6 +108,8 @@ export interface ModelCallLogVO {
   /** 0 fail / 1 ok */
   success: number;
   errorMsg: string;
+  /** 本地打点的调用开始时刻；createTime 是结束(落库)时刻。存量日志为空。 */
+  startTime: string;
   durationMs: number;
   upstreamTaskId: string;
   cost: string;

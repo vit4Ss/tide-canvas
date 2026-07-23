@@ -8,19 +8,18 @@ export const skillApi = {
   /** GET /api/skills -> PageData<SkillVO>（仅上架，sortOrder 升序） */
   list: (query: SkillQuery) => http.get<PageData<SkillVO>>("/api/skills", toParams(query)),
 
+  /** GET /api/skills/categories -> string[]（该模态下确实有技能的分类，用于隐藏空页签） */
+  categories: (outputType?: string) =>
+    http.get<string[]>("/api/skills/categories", toParams({ outputType })),
+
   /** POST /api/skills/:id/use —— 使用计数 +1（发送生成时 fire-and-forget） */
   recordUse: (id: string) => http.post<null>(`/api/skills/${id}/use`, {}),
 };
 
-/** 技能模板与用户描述的合并口径（三个入口统一）：模板在前定基调，用户描述随后。
-    用户没写描述时只发模板。 */
-export function mergeSkillPrompt(template: string, userText: string): string {
-  const t = template.trim();
-  const u = userText.trim();
-  if (!t) return u;
-  if (!u) return t;
-  return `${t}\n\n${u}`;
-}
+/* 模板与描述的合并已下沉到服务端（handler/ai/work.go 的 applySkill）：四个入口
+   只在 input 里带 skillId，后端按「模板在前、用户描述随后」拼好再发上游。
+   客户端先拼的话，落库的 input 会变成「模板+描述」，作品标题、日志与
+   「重新编辑」读到的就全是技能模板开头——同一技能生成的作品会全部同名。 */
 
 /** 技能默认参数（宽松解析；非法 JSON / 非对象返回空）。各入口只取自己认识的键。 */
 export interface SkillParams {

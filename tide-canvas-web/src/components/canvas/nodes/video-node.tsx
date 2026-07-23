@@ -652,11 +652,12 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     }
 
     // 按模式选 handler，把图片/视频/文字喂给生成；模型无某维度(后台全不勾)时该参数不下发
-    // 技能:模板在前、用户描述在后合并(与 /chat、创作台统一);使用计数 best-effort
-    const skillPrompt = node.skillPrompt?.trim() || "";
+    // 技能:只发 skillId,模板由服务端拼到描述前面(与 /chat、创作台统一);
+    // 使用计数 best-effort
     if (node.skillId) void skillApi.recordUse(node.skillId);
     const base: Record<string, unknown> = {
-      prompt: skillPrompt ? [skillPrompt, node.prompt?.trim()].filter(Boolean).join("\n") : node.prompt,
+      prompt: node.prompt,
+      ...(node.skillId ? { skillId: node.skillId } : {}),
       ...(!formatConfig.ratios || formatConfig.ratios.length ? { aspectRatio: videoParam.ratio } : {}),
       ...(!formatConfig.resolutions || formatConfig.resolutions.length ? { resolution: videoParam.resolution } : {}),
       ...(!formatConfig.durations || formatConfig.durations.length ? { duration: videoParam.duration } : {}),
@@ -702,7 +703,6 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         // 克隆技能附着:重新发送的新节点与原节点同一技能语境
         skillId: node.skillId,
         skillName: node.skillName,
-        skillPrompt: node.skillPrompt,
         status: "idle",
       }, true);
       // 克隆入边连线，使新节点拥有与原节点完全相同的参考输入

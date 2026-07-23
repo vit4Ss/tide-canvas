@@ -114,7 +114,7 @@ func (s *service) optimizePrompt(ctx context.Context, userID idgen.ID, prompt st
 	start := time.Now()
 	reply, err := s.relay.Chat(ctx, mm.ModelKey, msgs)
 	reqBody, _ := json.Marshal(msgs)
-	eventlog.ModelText(userID, "optimize", mm.ModelKey, "/v1/chat/completions", string(reqBody), reply, time.Since(start).Milliseconds(), err)
+	eventlog.ModelText(userID, "optimize", mm.ModelKey, "/v1/chat/completions", string(reqBody), reply, start, err)
 	if err != nil {
 		if cost > 0 {
 			if rerr := points.Refund(s.repo.db, userID, cost, "AI 优化失败退款", refID); rerr != nil {
