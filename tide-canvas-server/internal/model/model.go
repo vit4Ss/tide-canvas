@@ -65,6 +65,7 @@ func Models() []any {
 		&HomeFloor{},
 		// 风格预设(画布图片节点的风格选择器)
 		&StylePreset{},
+		&Skill{},
 		&StyleFavorite{},
 		&StyleUsage{},
 		// Billing / growth.（积分规则 point_rule 已整链下线 2026-07-12：无业务消费方）

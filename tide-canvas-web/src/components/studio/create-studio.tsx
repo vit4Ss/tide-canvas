@@ -51,6 +51,9 @@ import {
   type ClipOption,
   type UploadClipStage,
 } from "@/lib/music-modes";
+import { SkillPicker } from "@/components/skill/skill-picker";
+import { skillApi, mergeSkillPrompt, parseSkillParams } from "@/lib/skill-api";
+import type { SkillVO } from "@/types/skill";
 import {
   MentionPromptEditor,
   buildMentionRefs,
@@ -757,6 +760,9 @@ export default function CreateStudio() {
      歌词必填 + 风格/歌名，描述不发送；延长/翻唱 = 引用先前生成的 clip_id。
      各模式字段互斥展示（对齐上游 API 语义）。 */
   const [musicMode, setMusicMode] = useState<MusicMode>("inspire");
+  /* 技能:附着为提示词区 chip,生成时模板与描述合并;粘性直到手动移除 */
+  const [skill, setSkill] = useState<SkillVO | null>(null);
+  const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   /* 延长/翻唱的原曲(clip_id)与延长起点秒数(字符串承载输入框,提交时转整数) */
   const [sourceClipId, setSourceClipId] = useState("");
   /* 原曲来自「上传登记」的本地音频:延长时上游要求 task=upload_extend */
@@ -994,6 +1000,36 @@ export default function CreateStudio() {
     const r = resolveModelSwatch({ name });
     return { style: r.style, content: r.glyph };
   };
+
+  // 技能与当前创作类型不匹配(带着图片技能切到视频页签)时自动摘除
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 换页签后收敛：摘除错配技能
+    if (skill && skill.outputType !== curType) setSkill(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [curType]);
+
+  // 选中技能:附着 chip;指定了模型卡则自动切换;默认参数回填画幅/清晰度/时长
+  const pickSkill = useCallback(
+    (s: SkillVO) => {
+      setSkill(s);
+      setSkillPickerOpen(false);
+      if (s.modelId) {
+        const target = studioList.find((m) => m.modelKey === s.modelId);
+        if (target && target.name !== model) {
+          setModel(target.name);
+          toast.info(`已切换到技能模型「${target.name}」`);
+        }
+      }
+      const p = parseSkillParams(s.defaultParams);
+      if (p.aspectRatio) setRatio(p.aspectRatio);
+      if (p.resolution) {
+        if (s.outputType === "video") setRes(p.resolution);
+        else setImgRes(p.resolution);
+      }
+      if (p.duration) setDur(`${p.duration}s`);
+    },
+    [studioList, model],
+  );
 
   const selModel = useMemo(
     () => studioList.find((m) => m.name === model) ?? null,
@@ -2197,12 +2233,16 @@ export default function CreateStudio() {
 
     // ── real generation: build the input, then hand off to startGeneration
     // (shared task-create → persist → drive path). ────────────────────────
+    // 技能:模板在前、用户描述在后合并为最终生成提示词(历史/回显仍是用户原文)
+    const genPrompt =
+      skill && skill.outputType === curType ? mergeSkillPrompt(skill.promptTemplate, p) : p;
+    if (skill && skill.outputType === curType) void skillApi.recordUse(skill.id);
     const input: Record<string, unknown> = isAudio
       ? {
           // 音频：灵感模式只发描述；自定义歌词模式只发歌词/风格/歌名（描述不发，
           // 上游有 lyrics 时本就忽略 input）；延长/翻唱经 extras 传 task 与原曲
           // clip_id（此组合上游不做 tags 歧义校验）；SFX 卡只吃描述。
-          ...(p && !musicCustom && !musicTask ? { prompt: p } : {}),
+          ...(p && !musicCustom && !musicTask ? { prompt: genPrompt } : {}),
           ...(audLyrics ? { lyrics: audLyrics } : {}),
           ...((audLyrics || musicTask) && songStyle.trim() ? { tags: songStyle.trim() } : {}),
           ...((audLyrics || musicTask) && songTitle.trim() ? { title: songTitle.trim() } : {}),
@@ -2224,7 +2264,7 @@ export default function CreateStudio() {
             : {}),
         }
       : {
-          prompt: p,
+          prompt: genPrompt,
           ...refInput,
           ...(ratioOpts.length ? { aspectRatio: r, aspect_ratio: r, ratio: r } : {}),
           ...(isVid
@@ -2245,7 +2285,7 @@ export default function CreateStudio() {
       meta: { prompt: p, model: mdl, ratio: r, spec, count: n, isVid, kind: curType, label, hues, refThumbs },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busy, prompt, count, tool, curType, ratio, model, res, dur, imgRes, quality, musicMode, sourceClipId, sourceIsUpload, continueAt, lyrics, songStyle, songTitle, instrumental, slotData, studioList, ratioOpts, resOpts, durOpts, qualOpts, pushHistory, startGeneration]);
+  }, [busy, prompt, count, tool, curType, ratio, model, res, dur, imgRes, quality, musicMode, sourceClipId, sourceIsUpload, continueAt, lyrics, songStyle, songTitle, instrumental, slotData, studioList, ratioOpts, resOpts, durOpts, qualOpts, pushHistory, startGeneration, skill]);
 
   // Refresh-resume: on mount, if a generation was in flight (persisted at start),
   // restore the generating UI and resume polling — the task keeps running on the
@@ -3056,6 +3096,18 @@ export default function CreateStudio() {
                 <b id="pLen">{prompt.length}</b> 字
               </span>
             </div>
+            {/* 技能 chip:附着在提示词框上方,粘性直到手动移除 */}
+            {skill && (
+              <div className="skill-strip">
+                <span className="skill-chip" title={skill.description || skill.title}>
+                  <span className="spark" aria-hidden>✦</span>
+                  {skill.title}
+                  <button type="button" aria-label="移除技能" onClick={() => setSkill(null)}>
+                    ✕
+                  </button>
+                </span>
+              </div>
+            )}
             <div className="ws-promptbox">
               {/* 富文本提示词框：有参考素材时输入 @ 引用（图片N pill），Enter 保持换行 */}
               <MentionPromptEditor
@@ -3072,6 +3124,9 @@ export default function CreateStudio() {
                 <button className="ws-aiopt" type="button" onClick={aiOptimize} disabled={optimizing}>
                   <span className="spark">✦</span>{" "}
                   {optimizing ? "优化中…" : optCost > 0 ? `AI 优化 · ${optCost} 积分` : "AI 优化"}
+                </button>
+                <button className="ws-aiopt" type="button" onClick={() => setSkillPickerOpen(true)}>
+                  <span className="spark">✧</span> {skill ? "更换技能" : "使用技能"}
                 </button>
                 {/* 提示词「清空」按钮已按用户要求移除（2026-07-08）：全选删除足够 */}
               </div>
@@ -3663,6 +3718,15 @@ export default function CreateStudio() {
             </>
           );
         })()}
+
+      {/* 技能广场:按当前创作类型过滤 */}
+      <SkillPicker
+        open={skillPickerOpen}
+        onClose={() => setSkillPickerOpen(false)}
+        onPick={pickSkill}
+        outputType={curType}
+        currentId={skill?.id}
+      />
 
       {/* 资产库弹窗：复用整个资产页 UI 作为选择器，按槽类型默认到对应筛选 */}
       {assetPick &&

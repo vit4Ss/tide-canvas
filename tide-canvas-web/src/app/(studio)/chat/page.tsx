@@ -69,6 +69,10 @@ import type { ContextUsageVO, ConversationVO, MessageVO, MessageTaskVO } from "@
 import { mesh } from "@/lib/mesh";
 import { toast } from "@/components/shared/toast";
 import { confirmDialog } from "@/components/shared/confirm";
+import { Sparkles, X as XIcon } from "lucide-react";
+import { SkillPicker } from "@/components/skill/skill-picker";
+import { skillApi, mergeSkillPrompt, parseSkillParams } from "@/lib/skill-api";
+import type { SkillVO } from "@/types/skill";
 
 /* ── composer chips: model + options come from 模型管理 config (studio-models). ── */
 
@@ -303,6 +307,9 @@ export default function ChatPage() {
   const [ratio, setRatio] = useState("");
   const [res, setRes] = useState("");
   const [dur, setDur] = useState("");
+  // 技能:附着为输入框上方 chip,发送时模板与描述合并;粘性(发完保留)直到手动移除
+  const [skill, setSkill] = useState<SkillVO | null>(null);
+  const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   const [batch, setBatch] = useState(1);
   const [openSel, setOpenSel] = useState<string | null>(null);
   // 音乐四创作模式（Suno，仅音频音乐模型时生效）——字段与请求口径对齐创作台。
@@ -826,6 +833,35 @@ export default function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mCfg, isVid]);
 
+  // 技能与当前模型模态不匹配(如带着图片技能切到视频模型)时自动摘除,
+  // 避免把图片模板发给视频生成。
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 同上方芯片收敛：换模型后摘除错配技能
+    if (skill && selModel && skill.outputType !== selModel.type) setSkill(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selModel?.type]);
+
+  // 选中技能:附着 chip;技能指定了模型卡则自动切换;默认参数回填画幅/清晰度/时长
+  // (随后的收敛 effect 会把不在该模型档位内的值校正掉)。
+  const pickSkill = useCallback(
+    (s: SkillVO) => {
+      setSkill(s);
+      setSkillPickerOpen(false);
+      if (s.modelId) {
+        const target = genModels.find((m) => m.modelKey === s.modelId);
+        if (target && target.name !== model) {
+          setModel(target.name);
+          toast.info(`已切换到技能模型「${target.name}」`);
+        }
+      }
+      const p = parseSkillParams(s.defaultParams);
+      if (p.aspectRatio) setRatio(p.aspectRatio);
+      if (p.resolution) setRes(p.resolution);
+      if (p.duration) setDur(`${p.duration}s`);
+    },
+    [genModels, model],
+  );
+
   // 切到不支持联网的模型时，强制关闭联网开关。
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- 能力开关随模型收敛，一次性复位
@@ -1129,14 +1165,17 @@ export default function ChatPage() {
 
     try {
       if ((wantImage || wantVideo || wantAudio) && selModel) {
+        // 技能:模板在前、用户描述在后合并为最终生成提示词;气泡与落库仍是用户原文
+        const genPrompt =
+          skill && skill.outputType === selModel.type ? mergeSkillPrompt(skill.promptTemplate, v) : v;
         // 先 submit（计费/配额走既有生成管线）；被拒时尚未持久化任何东西，无孤儿可清。
         // 音频：音乐按四创作模式组装（与创作台同构），音效只发描述。
         const input: Record<string, unknown> = wantAudio
           ? isMusicSel
-            ? buildMusicInput(v, music)
-            : { prompt: v }
+            ? buildMusicInput(genPrompt, music)
+            : { prompt: genPrompt }
           : {
-              prompt: v,
+              prompt: genPrompt,
               ...(ratio ? { aspectRatio: ratio, aspect_ratio: ratio, ratio } : {}),
               ...(res ? { resolution: res } : {}),
               ...(wantVideo && dur ? { duration: dur } : {}),
@@ -1184,11 +1223,16 @@ export default function ChatPage() {
           toast.error(gen.message || "生成请求失败");
           return;
         }
+        // 技能使用计数(fire-and-forget,失败不影响链路)
+        if (skill && skill.outputType === selModel.type) void skillApi.recordUse(skill.id);
         // 成功 → 原子持久化整个 turn（用户提示词+参数快照 / 助手 taskId）。
         const params: Record<string, unknown> = {
           model: selModel.name,
           modelKey: selModel.modelKey,
           type: selModel.type,
+          ...(skill && skill.outputType === selModel.type
+            ? { skill: { id: skill.id, title: skill.title } }
+            : {}),
           ...(mode ? { mode } : {}),
           ...(ratio ? { ratio } : {}),
           ...(res ? { resolution: res } : {}),
@@ -1272,7 +1316,7 @@ export default function ChatPage() {
       setTyping(false);
       setBusy(false);
     }
-  }, [draft, busy, activeId, ensureSession, loadMessages, selModel, mode, ratio, res, dur, batch, refs, refPolicy, refOptional, clearRefs, forceBottom, scrollEnd, ctxUsage, refreshCtxUsage, music, isMusicSel, musicNoDraftOk]);
+  }, [draft, busy, activeId, ensureSession, loadMessages, selModel, mode, ratio, res, dur, batch, refs, refPolicy, refOptional, clearRefs, forceBottom, scrollEnd, ctxUsage, refreshCtxUsage, music, isMusicSel, musicNoDraftOk, skill]);
 
   // restore a turn's snapshot params into the composer (重新编辑 / 再次生成).
   const restoreFromParams = useCallback(
@@ -1399,6 +1443,7 @@ export default function ChatPage() {
   //          ["duration@分辨率"][时长] → creditCost → pointCost；单条不乘数量
   //   image: 对话页不选画质，矩阵无从命中，与服务端一致落到固定价 × 批量
   //   audio: 按次计费（Suno 一次两首一并结算）
+  //   text: 按条计费，不乘数量（数量选择器对文本模型隐藏）
   const points = useMemo(() => {
     const cellNum = (v: unknown) => {
       const n = typeof v === "string" ? parseFloat(v) : typeof v === "number" ? v : NaN;
@@ -1415,9 +1460,9 @@ export default function ChatPage() {
       }
     }
     if (!base) base = flat;
-    // 服务端按向上取整结算（见 pricing.go），展示同口径
-    if (selModel?.type === "audio" || isVid) return Math.ceil(base);
-    return Math.ceil(base * Math.max(1, batch));
+    // 服务端按向上取整结算（见 pricing.go），展示同口径；仅图片批量 ×数量
+    if (selModel?.type === "image") return Math.ceil(base * Math.max(1, batch));
+    return Math.ceil(base);
   }, [mCfg, selModel, isVid, dur, res, batch]);
 
   // —— 刷新/切页后的接续（GPT/Claude 式断线续播）——
@@ -1700,6 +1745,18 @@ export default function ChatPage() {
             onDrop={onDrop}
           >
             {dragOver && <div className="composer-drop">松开以添加参考素材</div>}
+            {/* 技能 chip:附着在输入框上方(对齐参考产品),粘性直到手动移除 */}
+            {skill && (
+              <div className="skill-strip">
+                <span className="skill-chip" title={skill.description || skill.title}>
+                  <Sparkles size={12} aria-hidden />
+                  {skill.title}
+                  <button type="button" aria-label="移除技能" onClick={() => setSkill(null)}>
+                    <XIcon size={12} aria-hidden />
+                  </button>
+                </span>
+              </div>
+            )}
             {refs.length > 0 && (
               <div className="ref-strip">
                 {refs.map((r) => (
@@ -1728,6 +1785,17 @@ export default function ChatPage() {
                   <svg viewBox="0 0 24 24" aria-hidden style={{ width: 15, height: 15, fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" }}>
                     <path d="M12 5v14M5 12h14" />
                   </svg>
+                </button>
+              )}
+              {/* 技能入口:生成类模型可用(文本对话不参与技能) */}
+              {selModel && selModel.type !== "text" && (
+                <button
+                  className="cm-upload"
+                  title="使用技能（提示词模板一键附着）"
+                  type="button"
+                  onClick={() => setSkillPickerOpen(true)}
+                >
+                  <Sparkles size={14} aria-hidden />
                 </button>
               )}
               <input
@@ -2087,8 +2155,9 @@ export default function ChatPage() {
                 </CmSelect>
               )}
 
-              {/* 音频一次生成即整曲（Suno 两首一并返回），数量选择不适用 */}
-              {!isAudioSel && (
+              {/* 数量仅图片批量适用（batchCount 只随图片请求发出，与创作台同口径）：
+                  音频一次即整曲、文本按条对话、视频单段生成 */}
+              {selModel?.type === "image" && (
               <CmSelect
                 open={openSel === "count"}
                 onToggle={() => toggleSel("count")}
@@ -2108,9 +2177,7 @@ export default function ChatPage() {
                   >
                     <span className="cm-ico">⚲</span>
                     <span className="nfo">
-                      <span className="nm">
-                        {c} {isVid ? "段" : "张"}
-                      </span>
+                      <span className="nm">{c} 张</span>
                     </span>
                     <span className="ck">✓</span>
                   </button>
@@ -2186,6 +2253,15 @@ export default function ChatPage() {
       )}
 
       {/* 资产库弹窗：复用整个资产页 UI 作为选择器 */}
+      {/* 技能广场:按当前模型模态过滤 */}
+      <SkillPicker
+        open={skillPickerOpen}
+        onClose={() => setSkillPickerOpen(false)}
+        onPick={pickSkill}
+        outputType={selModel?.type}
+        currentId={skill?.id}
+      />
+
       {assetPickOpen && (
         <div className="ws-srcmask" onClick={() => setAssetPickOpen(false)}>
           <div className="ws-assetbox" onClick={(e) => e.stopPropagation()}>

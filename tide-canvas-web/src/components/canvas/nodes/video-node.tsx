@@ -20,6 +20,9 @@ import { NodeHeader } from "./base/node-header";
 import { NodePorts } from "./base/node-ports";
 import { NodeChrome } from "./base/node-chrome";
 import { VideoModeDropdown } from "./video-mode-dropdown";
+import { NodeSkillButton } from "./node-skill-button";
+import { skillApi, parseSkillParams } from "@/lib/skill-api";
+import type { SkillVO } from "@/types/skill";
 import { PromptRefEditor, PromptEditorModal } from "./prompt-ref-editor";
 import { type RefItem } from "./prompt-ref-utils";
 
@@ -608,6 +611,22 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     });
   };
 
+  // 技能附加应用:指定模型卡则切换(收敛 effect 会校正不合法档位);
+  // 默认参数回填画幅/清晰度/时长
+  const applySkillExtras = useCallback((s: SkillVO) => {
+    if (s.modelId && videoModels.some((m) => m.modelId === s.modelId) && s.modelId !== selectedModelId) {
+      setSelectedModelId(s.modelId);
+      toast.info("已切换到技能指定模型");
+    }
+    const p = parseSkillParams(s.defaultParams);
+    setVideoParam((prev) => ({
+      ...prev,
+      ...(p.aspectRatio ? { ratio: p.aspectRatio } : {}),
+      ...(p.resolution ? { resolution: p.resolution } : {}),
+      ...(p.duration ? { duration: p.duration } : {}),
+    }));
+  }, [videoModels, selectedModelId]);
+
   const handleGenerate = () => {
     const st = useCanvasStore.getState();
     const incoming = st.connections.filter((c) => c.targetId === node.id);
@@ -633,8 +652,11 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     }
 
     // 按模式选 handler，把图片/视频/文字喂给生成；模型无某维度(后台全不勾)时该参数不下发
+    // 技能:模板在前、用户描述在后合并(与 /chat、创作台统一);使用计数 best-effort
+    const skillPrompt = node.skillPrompt?.trim() || "";
+    if (node.skillId) void skillApi.recordUse(node.skillId);
     const base: Record<string, unknown> = {
-      prompt: node.prompt,
+      prompt: skillPrompt ? [skillPrompt, node.prompt?.trim()].filter(Boolean).join("\n") : node.prompt,
       ...(!formatConfig.ratios || formatConfig.ratios.length ? { aspectRatio: videoParam.ratio } : {}),
       ...(!formatConfig.resolutions || formatConfig.resolutions.length ? { resolution: videoParam.resolution } : {}),
       ...(!formatConfig.durations || formatConfig.durations.length ? { duration: videoParam.duration } : {}),
@@ -677,6 +699,10 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         title: node.title || "视频节点",
         prompt: node.prompt,
         aspectRatio: node.aspectRatio,
+        // 克隆技能附着:重新发送的新节点与原节点同一技能语境
+        skillId: node.skillId,
+        skillName: node.skillName,
+        skillPrompt: node.skillPrompt,
         status: "idle",
       }, true);
       // 克隆入边连线，使新节点拥有与原节点完全相同的参考输入
@@ -867,6 +893,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                 onChange={handlePromptChange}
                 onSubmit={() => { if (node.prompt?.trim() && !generating) handleGenerate(); }}
                 placeholder="描述你想要生成的画面内容，@ 引用已连接图片（图片1/图片2…）"
+                leading={<NodeSkillButton node={node} outputType="video" onPicked={applySkillExtras} />}
               />
               <PromptEditorModal
                 open={promptExpanded}

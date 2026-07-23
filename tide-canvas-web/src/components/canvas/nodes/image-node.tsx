@@ -22,6 +22,9 @@ import { PanoramaViewer } from "./panorama-viewer";
 import { InlinePanorama, type InlinePanoramaApi } from "./inline-panorama";
 import { type RefItem } from "./prompt-ref-utils";
 import { NodeChrome } from "./base/node-chrome";
+import { NodeSkillButton } from "./node-skill-button";
+import { skillApi, parseSkillParams } from "@/lib/skill-api";
+import type { SkillVO } from "@/types/skill";
 import { useAiGeneration } from "@/hooks/canvas/use-ai-generation";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/http";
@@ -622,6 +625,23 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     }
   }, [cardW, cardH, node.contentW, node.contentH, node.id, updateNode]);
 
+  // 技能附加应用:指定模型卡则切换(校正 effect 会收敛不合法档位);默认参数
+  // 回填画幅/画质/清晰度;skillId/skillPrompt 已由 NodeSkillButton 写回节点
+  const applySkillExtras = useCallback((s: SkillVO) => {
+    if (s.modelId && imageModels.some((m) => m.modelId === s.modelId) && s.modelId !== selectedModelId) {
+      setSelectedModelId(s.modelId);
+      toast.info("已切换到技能指定模型");
+    }
+    const p = parseSkillParams(s.defaultParams);
+    setQualityRatio((q) => ({
+      ...q,
+      ...(p.aspectRatio ? { ratio: p.aspectRatio } : {}),
+      ...(p.quality ? { quality: p.quality as QualityRatioValue["quality"] } : {}),
+      ...(p.resolution ? { clarity: p.resolution as QualityRatioValue["clarity"] } : {}),
+    }));
+    if (p.aspectRatio) ratioTouchedRef.current = true;
+  }, [imageModels, selectedModelId]);
+
   const handleGenerate = useCallback(() => {
     const st = useCanvasStore.getState();
     const referenceNodes = [
@@ -647,7 +667,10 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     const imageList = ownImage ? [ownImage, ...refImages] : refImages;
     const hasImage = imageList.length > 0;
     const stylePrompt = selectedStylePrompt.trim();
-    const mergedPrompt = [node.prompt?.trim(), stylePrompt ? `风格要求：${stylePrompt}` : ""].filter(Boolean).join("\n");
+    // 技能模板在前定基调 → 用户描述 → 风格要求(与三入口统一的合并顺序)
+    const skillPrompt = node.skillPrompt?.trim() || "";
+    const mergedPrompt = [skillPrompt, node.prompt?.trim(), stylePrompt ? `风格要求：${stylePrompt}` : ""].filter(Boolean).join("\n");
+    if (node.skillId) void skillApi.recordUse(node.skillId);
     generate({
       nodeId: node.id,
       handler: hasImage ? "image_to_image" : "text_to_image",
@@ -2117,6 +2140,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                       modelId={selectedModelId}
                       onChange={handleStylePresetChange}
                     />
+                    <NodeSkillButton node={node} outputType="image" onPicked={applySkillExtras} />
                   </>
                 }
                 trailing={

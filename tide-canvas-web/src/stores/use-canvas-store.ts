@@ -21,6 +21,11 @@ export interface CanvasNode {
   stylePresetModelPrompts?: Record<string, string>;
   /** 图片节点选中的风格封面，用于后续回显或历史恢复。 */
   stylePresetCoverUrl?: string;
+  /** 节点附着的技能（图片/视频节点）：生成时 skillPrompt 在用户提示词前合并。
+      随画布持久化，重开项目仍生效；skillName 供按钮回显。 */
+  skillId?: string;
+  skillName?: string;
+  skillPrompt?: string;
   imageSrc?: string;
   /** 组图：一次生成的全部图片(如 Midjourney 一组 4 张)；imageSrc 始终等于其中的「主图」 */
   images?: string[];
