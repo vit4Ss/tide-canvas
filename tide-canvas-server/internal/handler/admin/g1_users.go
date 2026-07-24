@@ -87,6 +87,8 @@ type AdminUserVO struct {
 	StorageUsed   int64    `json:"storageUsed"`
 	ProjectCount  int64    `json:"projectCount"`
 	PostCount     int64    `json:"postCount"`
+	// Remark 运营备注(仅管理端;来源 users.remark,不随用户侧接口下发)。
+	Remark        string   `json:"remark"`
 	CreateTime    string   `json:"createTime"`
 	LastLoginTime string   `json:"lastLoginTime"`
 }
@@ -148,6 +150,7 @@ type AdminUserUpdateDTO struct {
 	VipLevel *int   `json:"vipLevel"`
 	RoleID   *string `json:"roleId"`
 	Nickname *string `json:"nickname"`
+	Remark   *string `json:"remark" binding:"omitempty,max=255"`
 }
 
 // PointAdjustDTO is the body for POST /users/:id/points. amount may be negative
@@ -348,6 +351,9 @@ func (h *userHandler) updateUser(c *gin.Context) {
 	}
 	if dto.Nickname != nil {
 		fields["nickname"] = strings.TrimSpace(*dto.Nickname)
+	}
+	if dto.Remark != nil {
+		fields["remark"] = strings.TrimSpace(*dto.Remark)
 	}
 	if dto.RoleID != nil {
 		rid, err := idgen.Parse(strings.TrimSpace(*dto.RoleID))
@@ -858,6 +864,7 @@ func toAdminUserVO(u *model.User) AdminUserVO {
 		IsAuthor:      u.IsAuthor,
 		StorageQuota:  u.StorageQuota,
 		StorageUsed:   u.StorageUsed,
+		Remark:        u.Remark,
 		CreateTime:    g1FormatTime(u.CreateTime),
 		LastLoginTime: g1FormatTime(u.LastLoginTime),
 	}

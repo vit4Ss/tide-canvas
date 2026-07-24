@@ -39,6 +39,8 @@ export interface AdminUserVO {
   storageUsed: number;
   projectCount: number;
   postCount: number;
+  /** 运营备注(仅管理端可见,来源 users.remark)。 */
+  remark: string;
   /** RFC3339 string, or "" for the zero value. */
   createTime: string;
   lastLoginTime: string;
@@ -84,6 +86,8 @@ export interface AdminUserUpdateDTO {
   vipLevel?: number;
   roleId?: string;
   nickname?: string;
+  /** 运营备注,≤255 字符;空串 = 清除。 */
+  remark?: string;
 }
 
 /** Body for POST /admin/users/:id/points. amount may be negative. */

@@ -344,6 +344,9 @@ type User struct {
 	StorageQuota         int64     `gorm:"default:0" json:"storageQuota"`
 	StorageUsed          int64     `gorm:"default:0" json:"storageUsed"`
 	TeamID               idgen.ID  `gorm:"default:0" json:"teamId"`
+	// Remark 后台运营备注(仅管理端可见可改)。json:"-" 防止随 User 直接序列化
+	// 泄给前台;管理端经 AdminUserVO 显式下发。
+	Remark string `gorm:"size:255" json:"-"`
 	CreateTime           time.Time `gorm:"autoCreateTime" json:"createTime"`
 	UpdateTime           time.Time `gorm:"autoUpdateTime" json:"updateTime"`
 	LastLoginTime        time.Time `json:"lastLoginTime"`

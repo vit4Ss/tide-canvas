@@ -112,6 +112,7 @@ const PAGE_SIZE = 20;
 /** Edit-form local state (controlled inputs for the user edit modal). */
 interface EditForm {
   nickname: string;
+  remark: string;
   role: number;
   status: number;
   vipLevel: number;
@@ -296,6 +297,7 @@ function AdminUsersPageInner() {
     setEditUser(u);
     setEditForm({
       nickname: u.nickname,
+      remark: u.remark || "",
       role: u.role,
       status: u.status,
       vipLevel: u.vipLevel,
@@ -310,6 +312,7 @@ function AdminUsersPageInner() {
     try {
       const dto: AdminUserUpdateDTO = {
         nickname: editForm.nickname,
+        remark: editForm.remark.trim(),
         // 角色字段仅超管可变更(服务端 requireSuper 同口径),运营不发该字段
         ...(isSuper ? { role: editForm.role } : {}),
         status: editForm.status,
@@ -521,7 +524,7 @@ function AdminUsersPageInner() {
   const userColumns: Column<AdminUserVO>[] = [
     {
       header: "用户",
-      width: "18%",
+      width: "16%",
       cell: (u) => (
         <div className="cellflex">
           <span
@@ -557,21 +560,45 @@ function AdminUsersPageInner() {
     },
     {
       header: "积分余额",
-      width: "8%",
+      width: "7%",
       align: "right",
       className: "mono",
       cell: (u) => fmtNum(u.points),
     },
     {
       header: "API 额度",
-      width: "8%",
+      width: "7%",
       align: "right",
       className: "mono",
       cell: (u) => fmtNum(u.apiQuota),
     },
-    { header: "作品 / 项目", width: "8%", className: "mono", cell: (u) => `${fmtNum(u.postCount)} / ${fmtNum(u.projectCount)}` },
-    { header: "注册时间", width: "11%", className: "muted", cell: (u) => fmtTime(u.createTime) },
-    { header: "最近登录", width: "10%", className: "muted", cell: (u) => fmtTime(u.lastLoginTime) },
+    { header: "作品 / 项目", width: "7%", className: "mono", cell: (u) => `${fmtNum(u.postCount)} / ${fmtNum(u.projectCount)}` },
+    {
+      // 运营备注:单行截断,悬停看全文;空值弱化为「—」
+      header: "备注",
+      width: "9%",
+      className: "muted",
+      cell: (u) =>
+        u.remark ? (
+          <span
+            title={u.remark}
+            style={{
+              display: "inline-block",
+              maxWidth: "100%",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              verticalAlign: "bottom",
+            }}
+          >
+            {u.remark}
+          </span>
+        ) : (
+          "—"
+        ),
+    },
+    { header: "注册时间", width: "10%", className: "muted", cell: (u) => fmtTime(u.createTime) },
+    { header: "最近登录", width: "9%", className: "muted", cell: (u) => fmtTime(u.lastLoginTime) },
     {
       header: "状态",
       width: "7%",
@@ -583,7 +610,7 @@ function AdminUsersPageInner() {
     },
     {
       header: "操作",
-      width: "14%",
+      width: "12%",
       align: "right",
       cell: (u) => (
         <RowActions
@@ -779,6 +806,14 @@ function AdminUsersPageInner() {
                 <input
                   value={editForm.nickname}
                   onChange={(e) => setEditForm({ ...editForm, nickname: e.target.value })}
+                />
+              </Field>
+              <Field label="备注" span={2} hint="仅后台可见的运营备注,不下发给用户">
+                <input
+                  value={editForm.remark}
+                  maxLength={255}
+                  placeholder="如:渠道来源、对接人、风险标记…"
+                  onChange={(e) => setEditForm({ ...editForm, remark: e.target.value })}
                 />
               </Field>
               <Field label="角色" span={2} hint={isSuper ? undefined : "仅超级管理员可变更"}>
