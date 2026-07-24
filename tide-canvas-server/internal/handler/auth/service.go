@@ -52,7 +52,27 @@ var (
 	// errSendFailed is returned when SMTP delivery fails. The cooldown is NOT
 	// set in this case so the user can retry immediately.
 	errSendFailed = errors.New("auth: failed to send verification email")
+
+	// errRegisterClosed is returned when self-service registration is switched
+	// off in 后台配置管理 (sys_config auth.registerClosed). Gates /register、
+	// /register-local and login-code's first-use account creation; existing
+	// users keep logging in and admin 生成用户 is unaffected.
+	errRegisterClosed = errors.New("auth: registration closed by admin")
 )
+
+// registerClosed reports whether self-service registration is switched off
+// (sys_config auth.registerClosed = "1"/"true"). Read per request so the
+// admin toggle applies without a restart; fail-open on read errors so a DB
+// hiccup can't lock new users out permanently.
+func (s *service) registerClosed() bool {
+	var row model.SysConfig
+	if err := s.repo.db.Where("config_key = ?", model.ConfigKeyRegisterClosed).
+		First(&row).Error; err != nil {
+		return false
+	}
+	v := strings.TrimSpace(row.ConfigValue)
+	return v == "1" || strings.EqualFold(v, "true")
+}
 
 type service struct {
 	repo  *repo
@@ -196,6 +216,9 @@ func (s *service) verifyEmailCode(ctx context.Context, email, code string) error
 // register creates a new account after verifying the email code, then returns
 // the created user's VO.
 func (s *service) register(ctx context.Context, dto RegisterDTO) (*UserVO, error) {
+	if s.registerClosed() {
+		return nil, errRegisterClosed
+	}
 	email := strings.TrimSpace(strings.ToLower(dto.Email))
 
 	// Check strength before consuming the one-time email code, so a weak password
@@ -313,7 +336,11 @@ func (s *service) loginCode(ctx context.Context, dto LoginCodeDTO) (*LoginVO, er
 		if !errors.Is(err, ErrNotFound) {
 			return nil, err
 		}
-		// First-time login: create the account.
+		// First-time login: create the account —— 也是注册路径,受关闭注册开关约束
+		// (存量用户不受影响,照常验证码登录)。
+		if s.registerClosed() {
+			return nil, errRegisterClosed
+		}
 		u, err = s.createCodeUser(email)
 		if err != nil {
 			return nil, err

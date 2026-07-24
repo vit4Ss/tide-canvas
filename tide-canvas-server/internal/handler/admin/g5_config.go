@@ -56,6 +56,7 @@ type ConfigUpsertDTO struct {
 var baselineConfigKeys = map[string]struct{}{
 	model.ConfigKeyFooterLinks:           {},
 	model.ConfigKeyHomeGlobal:            {},
+	model.ConfigKeyRegisterClosed:        {},
 	model.ConfigKeyPricingCompare:        {},
 	model.ConfigKeyPricingFaq:            {},
 	model.ConfigKeyChatContextTokenLimit: {},
@@ -128,6 +129,12 @@ func RegisterConfig(g *gin.RouterGroup, d *app.Deps) {
 		}
 
 		// Upsert each by configKey; conflict updates value/group/description.
+		// map 简写形态只带 key/value——按「只更新值」语义收窄更新列,否则会把
+		// 已有行的分组/描述抹成空串(种子行的 group 就曾被这样洗掉过)。
+		assign := []string{"config_value", "config_group", "description", "update_time"}
+		if mapForm {
+			assign = []string{"config_value", "update_time"}
+		}
 		txErr := db.Transaction(func(tx *gorm.DB) error {
 			for i := range items {
 				it := items[i]
@@ -143,7 +150,7 @@ func RegisterConfig(g *gin.RouterGroup, d *app.Deps) {
 				}
 				if err := tx.Clauses(clause.OnConflict{
 					Columns:   []clause.Column{{Name: "config_key"}},
-					DoUpdates: clause.AssignmentColumns([]string{"config_value", "config_group", "description", "update_time"}),
+					DoUpdates: clause.AssignmentColumns(assign),
 				}).Create(&row).Error; err != nil {
 					return err
 				}

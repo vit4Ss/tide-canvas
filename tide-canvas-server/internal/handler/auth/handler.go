@@ -58,6 +58,8 @@ func (h *handler) register(c *gin.Context) {
 	if err != nil {
 		logAuth(c, 0, dto.Email, "register", "code", err)
 		switch {
+		case errors.Is(err, errRegisterClosed):
+			response.Fail(c, response.CodeForbidden, "管理员已关闭注册")
 		case errors.Is(err, errUsernameExists):
 			response.Fail(c, response.CodeUsernameExists, "username already exists")
 		case errors.Is(err, errEmailExists):
@@ -113,6 +115,8 @@ func (h *handler) loginCode(c *gin.Context) {
 	if err != nil {
 		logAuth(c, 0, dto.Email, "login_code", "code", err)
 		switch {
+		case errors.Is(err, errRegisterClosed):
+			response.Fail(c, response.CodeForbidden, "管理员已关闭注册,新账号暂无法创建")
 		case errors.Is(err, errBadCode):
 			response.Fail(c, response.CodePasswordIncorrect, "验证码错误或已过期")
 		case errors.Is(err, errAccountDisabled):

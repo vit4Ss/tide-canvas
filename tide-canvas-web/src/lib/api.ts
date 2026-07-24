@@ -20,6 +20,9 @@ import type {
 import { fileSizeExceededResult, resolveUploadLimitBytes, type UploadLimitOptions } from "@/lib/upload-limits";
 
 export const authApi = {
+  /** 注册开关(后台配置管理 auth.registerClosed);登录页据此隐藏注册入口 */
+  registerConfig: () =>
+    http.get<{ registerClosed: boolean }>("/api/auth/register-config"),
   emailCode: (data: { email: string }) =>
     http.post<void>("/api/auth/email-code", data),
   register: (data: UserRegisterDTO) =>

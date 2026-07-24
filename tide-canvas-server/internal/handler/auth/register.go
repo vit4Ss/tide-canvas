@@ -9,12 +9,14 @@ import (
 
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/middleware"
+	"tidecanvas/internal/pkg/response"
 )
 
 // Register mounts the auth routes on the /api group.
 //
 // Frontend contract (tide-canvas-web/src/lib/api.ts -> authApi):
 //
+//	GET  /api/auth/register-config                      -> {registerClosed}
 //	POST /api/auth/email-code   {email}                 -> void
 //	POST /api/auth/register     UserRegisterDTO         -> UserVO
 //	POST /api/auth/login        UserLoginDTO            -> LoginVO
@@ -32,6 +34,12 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	g := api.Group("/auth")
 
 	// Public routes.
+	// 注册开关(后台配置管理 auth.registerClosed):登录页据此隐藏/禁用注册入口。
+	// 服务端三个建号路径(register/register-local/login-code 首次建号)各自硬拦,
+	// 这里只是给前端的展示信号。
+	g.GET("/register-config", func(c *gin.Context) {
+		response.OK(c, gin.H{"registerClosed": svc.registerClosed()})
+	})
 	g.POST("/email-code", h.emailCode)
 	g.POST("/register", h.register)
 	// 用户名+密码本地注册(免邮箱,注册即登录)。没有验证码摩擦,批量灌号/薅新手

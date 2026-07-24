@@ -162,6 +162,12 @@ func ensureBaselineConfig(db *gorm.DB) error {
 			Group:       "home",
 			Description: "首页全局配置（背景流光 + 首屏 CTA），后台「首页楼层」编辑，前台 /api/site/home-config 读取",
 		},
+		{
+			ConfigKey:   ConfigKeyRegisterClosed,
+			ConfigValue: "0",
+			Group:       "auth",
+			Description: "关闭自助注册：1=关闭（注册接口拒绝并提示管理员已关闭注册），0=开放。即时生效，不影响已有用户登录与后台生成用户",
+		},
 	}
 	for i := range baseline {
 		var row SysConfig

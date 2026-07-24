@@ -94,6 +94,14 @@ const ConfigKeyChatContextTokenLimit = "llm.contextTokenLimit"
 // per send so admin edits apply without a restart.
 const ConfigKeyChatCompressAt = "llm.compressAtTokens"
 
+// ConfigKeyRegisterClosed is the sys_config key for the self-service
+// registration switch: "1"/"true" = 关闭注册(注册接口拒绝并提示「管理员已
+// 关闭注册」),其余值 = 开放。Gates /api/auth/register、/register-local 与
+// login-code 的首次建号分支;后台「生成用户」不受影响。Edited in the admin
+// 配置管理 screen and read per request by handler/auth, so changes apply
+// WITHOUT a restart.
+const ConfigKeyRegisterClosed = "auth.registerClosed"
+
 // ConfigKeyServerErrorMessage is the sys_config key for the user-facing message
 // every 500 response carries (response.Fail 统一对外话术，不透内部错误细节)。
 // Seeded on boot; edited in the admin 配置管理 screen and read per failure by

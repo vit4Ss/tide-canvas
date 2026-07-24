@@ -244,6 +244,9 @@ func GenerateLocalCredentials() (username, password string, err error) {
 
 // registerLocal 创建用户名+密码本地账号并直接签发 token(注册即登录)。
 func (s *service) registerLocal(ctx context.Context, dto RegisterLocalDTO) (*LoginVO, error) {
+	if s.registerClosed() {
+		return nil, errRegisterClosed
+	}
 	u, err := CreateLocalUser(s.repo.db, dto.Username, dto.Password)
 	if err != nil {
 		return nil, err
@@ -273,6 +276,8 @@ func (h *handler) registerLocal(c *gin.Context) {
 		logAuth(c, 0, dto.Username, "register", "local", err)
 		var pe *policyError
 		switch {
+		case errors.Is(err, errRegisterClosed):
+			response.Fail(c, response.CodeForbidden, "管理员已关闭注册")
 		case errors.As(err, &pe):
 			response.Fail(c, response.CodeBadRequest, pe.msg)
 		case errors.Is(err, errUsernameExists):

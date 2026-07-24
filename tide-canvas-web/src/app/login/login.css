@@ -436,6 +436,18 @@
   background: transparent;
   cursor: default;
 }
+/* 注册开关关闭时的说明条:安静的弱边框信息框,不做警示红 */
+.reg-closed {
+  margin: 4px 0 14px;
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  background: color-mix(in oklab, var(--text-faint) 8%, transparent);
+}
+
 .err {
   font-size: 11.5px;
   color: #ee6b78;
@@ -525,6 +537,12 @@
 .submit:hover {
   filter: brightness(0.94);
   transform: translateY(-1px);
+}
+.submit:disabled {
+  filter: grayscale(1) brightness(0.55);
+  transform: none;
+  box-shadow: none;
+  cursor: not-allowed;
 }
 .submit:active {
   transform: translateY(0);

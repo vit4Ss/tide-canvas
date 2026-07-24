@@ -136,6 +136,25 @@ function LoginInner() {
     return () => clearTimeout(t);
   }, []);
 
+  // 注册开关(后台配置管理 auth.registerClosed):关闭时注册表单降级为提示,
+  // 提交与注册验证码一并拦截。拉取失败按开放处理——服务端三个建号路径仍会
+  // 硬拦,这里只是展示层。
+  const [regClosed, setRegClosed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    authApi
+      .registerConfig()
+      .then((res) => {
+        if (alive && res.success && res.data) setRegClosed(!!res.data.registerClosed);
+      })
+      .catch(() => {
+        /* 按开放处理 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   // 侧栏 =「美术馆入口」：正在展出的社区热门作品全幅铺底轮展 + 底部铭牌
   // （延续作品广场的展厅身份）。公开接口，未登录可取；无数据时回退品牌陈述版。
   const [feats, setFeats] = useState<
@@ -236,6 +255,10 @@ function LoginInner() {
   // ── 获取验证码 ──────────────────────────────────────────────
   const sendCode = async () => {
     if (countdown > 0) return;
+    if (mode === "register" && regClosed) {
+      toast("管理员已关闭注册");
+      return;
+    }
     const e = email.trim();
     if (!isEmail(e)) {
       setErr("email", "请先输入有效的邮箱地址");
@@ -260,6 +283,10 @@ function LoginInner() {
   const onSubmit = async (ev: React.FormEvent) => {
     ev.preventDefault();
     if (loading) return;
+    if (mode === "register" && regClosed) {
+      toast("管理员已关闭注册");
+      return;
+    }
 
     // ── 用户名注册(免邮箱)：独立校验与提交路径，规范与服务端逐条镜像 ──
     if (isLocalReg) {
@@ -519,6 +546,13 @@ function LoginInner() {
                 邮箱注册
               </button>
             </div>
+
+            {/* 注册开关关闭:表单保留但降级为只读说明,提交/验证码均被拦截 */}
+            {mode === "register" && regClosed && (
+              <div className="reg-closed" data-only="register" role="status">
+                管理员已关闭注册，如需账号请联系管理员开通。
+              </div>
+            )}
 
             <form onSubmit={onSubmit} noValidate>
               {/* account（密码登录：用户名或邮箱） */}
@@ -798,7 +832,11 @@ function LoginInner() {
                 </div>
               )}
 
-              <button className={`submit${loading ? " loading" : ""}`} type="submit">
+              <button
+                className={`submit${loading ? " loading" : ""}`}
+                type="submit"
+                disabled={mode === "register" && regClosed}
+              >
                 <span className="spin" />
                 <span className="lbl">{submitLabel}</span>
               </button>

@@ -35,6 +35,7 @@ import {
   FormGrid,
   SectionHeader,
   ListSkeleton,
+  SwitchToggle,
 } from "@/components/admin";
 import { adminConfigApi } from "@/lib/admin-config-api";
 import type { ConfigVO, ConfigItemDTO } from "@/types/admin-config";
@@ -47,6 +48,7 @@ import { toast } from "@/components/shared/toast";
 const GROUP_LABEL: Record<string, string> = {
   site: "站点信息",
   home: "首页",
+  auth: "注册登录",
   ai: "AI 服务",
   "AI 对话": "AI 对话",
   mail: "邮件",
@@ -54,10 +56,11 @@ const GROUP_LABEL: Record<string, string> = {
   points: "积分",
   存储配置: "存储配置",
 };
-const GROUP_ORDER = ["site", "home", "ai", "AI 对话", "mail", "pricing", "points", "存储配置"];
+const GROUP_ORDER = ["site", "home", "auth", "ai", "AI 对话", "mail", "pricing", "points", "存储配置"];
 const GROUP_DESCRIPTION: Record<string, string> = {
   site: "站点名称、品牌信息与公共页面内容",
   home: "首页展示与内容入口",
+  auth: "账号注册与登录策略",
   ai: "AI 服务接入与生成参数",
   "AI 对话": "对话模型与会话行为",
   mail: "邮件发送服务与发件身份",
@@ -88,11 +91,18 @@ const MANAGED_ELSEWHERE: Record<string, { hint: string; href: string }> = {
   "points.signupBonus": { hint: "在积分管理中编辑", href: "/admin/points" },
 };
 
+/* 开关型配置键：渲染为切换开关而非自由文本（"1"=开启，其余=关闭），
+   附各自的状态文案。存的仍是 "1"/"0" 字符串，与后端读取口径一致。 */
+const BOOL_KEYS: Record<string, { on: string; off: string }> = {
+  "auth.registerClosed": { on: "已关闭注册：新用户无法自助注册", off: "开放注册：用户可自助注册" },
+};
+
 /* 基线键（页面/策略消费方仍在读，后端同样拒绝删除）——不展示删除入口。
    与 g5_config.go 的 baselineConfigKeys 保持一致。 */
 const BASELINE_KEYS = new Set([
   "site.footerLinks",
   "home.global",
+  "auth.registerClosed",
   "pricing.compare",
   "pricing.faq",
   "llm.contextTokenLimit",
@@ -584,8 +594,10 @@ export default function AdminConfigPage() {
                     {rows.map((it) => {
                       const managed = MANAGED_ELSEWHERE[it.configKey];
                       const isFooterLinks = it.configKey === "site.footerLinks";
+                      const boolCfg = BOOL_KEYS[it.configKey];
                       const secret = /secret|password|access[_-]?key|api[_-]?key/i.test(it.configKey);
-                      const block = !managed && !isFooterLinks && !secret && isBlockValue(it.configValue);
+                      const block =
+                        !managed && !isFooterLinks && !boolCfg && !secret && isBlockValue(it.configValue);
                       const fl = isFooterLinks ? parseFooterLinks(valueOf(it)) : null;
                       const dirty = it.configKey in edits;
                       const displayLabel = isFooterLinks
@@ -633,6 +645,17 @@ export default function AdminConfigPage() {
                               >
                                 编辑
                               </button>
+                            </div>
+                          ) : boolCfg ? (
+                            <div className="config-row-actions">
+                              <span className="set-summary">
+                                {valueOf(it).trim() === "1" ? boolCfg.on : boolCfg.off}
+                              </span>
+                              <SwitchToggle
+                                checked={valueOf(it).trim() === "1"}
+                                onChange={(next) => onEdit(it, next ? "1" : "0")}
+                                aria-label={controlLabel}
+                              />
                             </div>
                           ) : block ? (
                             <textarea
