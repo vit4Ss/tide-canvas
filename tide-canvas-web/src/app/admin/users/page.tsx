@@ -524,7 +524,7 @@ function AdminUsersPageInner() {
   const userColumns: Column<AdminUserVO>[] = [
     {
       header: "用户",
-      width: "16%",
+      width: "20%",
       cell: (u) => (
         <div className="cellflex">
           <span
@@ -539,6 +539,12 @@ function AdminUsersPageInner() {
             <div className="muted mono" style={{ fontSize: 11.5 }}>
               {u.email || u.phone || u.id}
             </div>
+            {/* 运营备注并入身份格第三行:不占独立列,避免把 11 列表格挤变形 */}
+            {u.remark ? (
+              <div className="muted" style={{ fontSize: 11.5 }} title={u.remark}>
+                备注：{u.remark}
+              </div>
+            ) : null}
           </div>
         </div>
       ),
@@ -572,33 +578,9 @@ function AdminUsersPageInner() {
       className: "mono",
       cell: (u) => fmtNum(u.apiQuota),
     },
-    { header: "作品 / 项目", width: "7%", className: "mono", cell: (u) => `${fmtNum(u.postCount)} / ${fmtNum(u.projectCount)}` },
-    {
-      // 运营备注:单行截断,悬停看全文;空值弱化为「—」
-      header: "备注",
-      width: "9%",
-      className: "muted",
-      cell: (u) =>
-        u.remark ? (
-          <span
-            title={u.remark}
-            style={{
-              display: "inline-block",
-              maxWidth: "100%",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              verticalAlign: "bottom",
-            }}
-          >
-            {u.remark}
-          </span>
-        ) : (
-          "—"
-        ),
-    },
-    { header: "注册时间", width: "10%", className: "muted", cell: (u) => fmtTime(u.createTime) },
-    { header: "最近登录", width: "9%", className: "muted", cell: (u) => fmtTime(u.lastLoginTime) },
+    { header: "作品 / 项目", width: "8%", className: "mono", cell: (u) => `${fmtNum(u.postCount)} / ${fmtNum(u.projectCount)}` },
+    { header: "注册时间", width: "11%", className: "muted", cell: (u) => fmtTime(u.createTime) },
+    { header: "最近登录", width: "10%", className: "muted", cell: (u) => fmtTime(u.lastLoginTime) },
     {
       header: "状态",
       width: "7%",
@@ -610,7 +592,7 @@ function AdminUsersPageInner() {
     },
     {
       header: "操作",
-      width: "12%",
+      width: "14%",
       align: "right",
       cell: (u) => (
         <RowActions
@@ -747,6 +729,8 @@ function AdminUsersPageInner() {
             rowKey={(u) => u.id}
             columns={userColumns}
             label="用户列表"
+            // 10 列 + 4 个行操作:窄容器下宁可面板内横向滚动,也不让「删除」被裁掉
+            className="adm-users-table"
             server={{ page: pageNum, pageSize: PAGE_SIZE, total, onPage: setPageNum }}
           />
         )}

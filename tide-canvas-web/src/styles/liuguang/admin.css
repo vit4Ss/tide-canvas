@@ -686,6 +686,11 @@
 .adm-table-wrap .adm-table {
   min-width: 880px;
 }
+/* 用户表 10 列 + 4 个行操作:880 下操作列会被 fixed 布局裁掉,
+   提高门槛让窄容器改走面板内横向滚动 */
+.adm-table-wrap .adm-table.adm-users-table {
+  min-width: 1280px;
+}
 .adm-phead {
   display: flex;
   align-items: center;
