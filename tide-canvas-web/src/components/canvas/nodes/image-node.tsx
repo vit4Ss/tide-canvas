@@ -20,7 +20,7 @@ import { ModelPicker } from "./model-picker";
 import { PromptRefEditor, PromptEditorModal } from "./prompt-ref-editor";
 import { PanoramaViewer } from "./panorama-viewer";
 import { InlinePanorama, type InlinePanoramaApi } from "./inline-panorama";
-import { type RefItem } from "./prompt-ref-utils";
+import { type RefItem, inlineTextRefs } from "./prompt-ref-utils";
 import { NodeChrome } from "./base/node-chrome";
 import { NodeSkillButton } from "./node-skill-button";
 import { skillApi, parseSkillParams } from "@/lib/skill-api";
@@ -461,7 +461,9 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         const src = s.nodes.find((n) => n.id === c.sourceId);
         // 风格引用节点不参与参考图:其 imageSrc 是风格封面,混入会把文生图
         // 静默变成「对着封面做图生图」,还挤乱「图片N」编号
-        if (!src || !REF_SOURCE_TYPES.has(src.type)) return "";
+        if (!src) return "";
+        if (src.type === "text") return src.content ? "t~" + src.id + "~" + src.content + "~" + (src.title || "") : "";
+        if (!REF_SOURCE_TYPES.has(src.type)) return "";
         return src.id + "~" + (src.imageSrc || src.videoSrc || "") + "~" + (src.title || "");
       })
       .filter(Boolean)
@@ -470,19 +472,44 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const refs = useMemo<RefItem[]>(() => {
     const st = useCanvasStore.getState();
     const out: RefItem[] = [];
+    // 文本另立一套「文本N」编号：它不占 image_urls 的位置（正文直接拼进 prompt），
+    // 混进 out 会把后面每张参考图的序号顶偏一位。
+    const texts: RefItem[] = [];
     // 有自有底图时，本节点图占「图片1」（待编辑主图），入边引用图从「图片2」起编号，
     // 与后端 image_urls = [主图, ...参考图] 的下发顺序严格对齐。
     const base = node.imageSrc ? 1 : 0;
     for (const c of st.connections) {
       if (c.targetId !== node.id) continue;
       const src = st.nodes.find((n) => n.id === c.sourceId);
-      if (!src || !REF_SOURCE_TYPES.has(src.type)) continue;
-      out.push({ id: src.id, thumb: src.imageSrc || src.videoSrc || "", title: src.title || "", index: base + out.length + 1 });
+      if (!src) continue;
+      if (src.type === "text") {
+        if (src.content?.trim()) texts.push({ id: src.id, thumb: "", title: src.title || "", index: texts.length + 1, kind: "text", text: src.content });
+        continue;
+      }
+      if (!REF_SOURCE_TYPES.has(src.type)) continue;
+      // 连了但还没出图的空节点不占号：imageList 由 refs 的 src filter(Boolean) 而来，
+      // 给它编号会让其后每张参考图的「图片N」比模型实际收到的位次大一位。
+      // 视频节点一直是这么跳的，这里对齐。
+      if (!src.imageSrc && !src.videoSrc) continue;
+      // 入边视频在这里仍编成「图片N」（imageList 确实按这个位次下发），但渲染要按视频走：
+      // thumb 只放真图片，视频 URL 塞进 <img> 是一个坏图图标。
+      out.push({
+        id: src.id,
+        thumb: src.imageSrc || "",
+        title: src.title || "",
+        index: base + out.length + 1,
+        media: src.imageSrc ? "image" : "video",
+        src: src.imageSrc || src.videoSrc || "",
+      });
     }
-    return out;
+    // 图片在前：handleGenerate 的 imageList 直接取 refs 的 src 顺序，文本没有 src 会被滤掉
+    return [...out, ...texts];
     // refsSig 作为相等触发器：仅当引用签名变化时才重建（body 内用 getState 非响应式读取）
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refsSig, node.id, node.imageSrc]);
+  // 入边文本节点的正文会拼进 prompt，所以输入框空着照样有提示词可发——
+  // 否则「文本节点写好提示词直接连过来生成」这条路会被按钮的空值禁用挡死。
+  const hasPromptSource = !!node.prompt?.trim() || refs.some((r) => r.kind === "text");
 
   // 卡片比例：生成结果优先沿用本次选择的目标画幅，避免返回图自然尺寸把 16:9 卡片改成竖图。
   const explicitRatio = node.aspectRatio || (!node.imageSrc ? qualityRatio.ratio : null);
@@ -644,13 +671,13 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
 
   const handleGenerate = useCallback(() => {
     const st = useCanvasStore.getState();
+    const incomingSources = st.connections
+      .filter((c) => c.targetId === node.id)
+      .map((c) => st.nodes.find((n) => n.id === c.sourceId))
+      .filter((n): n is CanvasNode => !!n);
     const referenceNodes = [
       ...(node.imageSrc || node.videoSrc ? [node] : []),
-      ...st.connections
-        .filter((c) => c.targetId === node.id)
-        .map((c) => st.nodes.find((n) => n.id === c.sourceId))
-        .filter((n): n is CanvasNode =>
-          !!n && n.type !== STYLE_REFERENCE_NODE_TYPE && !!(n.imageSrc || n.videoSrc)),
+      ...incomingSources.filter((n) => n.type !== STYLE_REFERENCE_NODE_TYPE && !!(n.imageSrc || n.videoSrc)),
     ];
     for (const refNode of referenceNodes) {
       const kind = referenceKindFromMeta({ fileType: refNode.fileType, mimeType: refNode.mimeType, type: refNode.type });
@@ -662,14 +689,19 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     }
     // 引用图片参与编辑：按画布连接顺序完整下发 imageList，保证 prompt 里的「图片N / {{Image N}}」
     // 对齐到第 N 张输入图；若本节点已有图，则它固定作为 Image 1。
-    const refImages = refs.map((r) => r.thumb).filter(Boolean);
+    const refImages = refs.map((r) => r.src || "").filter(Boolean);
     const ownImage = node.imageSrc || "";
     const imageList = ownImage ? [ownImage, ...refImages] : refImages;
     const hasImage = imageList.length > 0;
     const stylePrompt = selectedStylePrompt.trim();
     // 技能只发 skillId，模板由服务端拼到最前面（客户端先拼会污染落库的 input，
     // 作品标题读到的就是模板开头）；风格要求仍在客户端拼，它不是技能的一部分。
-    const mergedPrompt = [node.prompt?.trim(), stylePrompt ? `风格要求：${stylePrompt}` : ""].filter(Boolean).join("\n");
+    // 文本节点没有独立下发通道，正文只能落进 prompt——顺序与 refs 的「文本N」编号同源
+    const promptWithText = inlineTextRefs(
+      node.prompt || "",
+      incomingSources.filter((n) => n.type === "text" && n.content?.trim()).map((n, i) => ({ label: `文本${i + 1}`, content: n.content || "" })),
+    );
+    const mergedPrompt = [promptWithText.trim(), stylePrompt ? `风格要求：${stylePrompt}` : ""].filter(Boolean).join("\n");
     if (node.skillId) void skillApi.recordUse(node.skillId);
     generate({
       nodeId: node.id,
@@ -2130,7 +2162,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                 refs={refs}
                 value={node.prompt || ""}
                 onChange={handlePromptChange}
-                onSubmit={() => { if (!generating && node.prompt?.trim()) handleGenerate(); }}
+                onSubmit={() => { if (!generating && hasPromptSource) handleGenerate(); }}
                 placeholder="可直接文字生图，或上传图片输入文字指令对图片进行编辑，如：将背景改为雪夜"
                 leading={
                   <>
@@ -2197,10 +2229,10 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                   <button
                     onMouseDown={stop}
                     onClick={(e) => { stop(e); handleGenerate(); }}
-                    disabled={generating || !node.prompt?.trim()}
-                    title={generating ? "生成中..." : !node.prompt?.trim() ? "先输入提示词" : "开始生成"}
+                    disabled={generating || !hasPromptSource}
+                    title={generating ? "生成中..." : !hasPromptSource ? "先输入提示词" : "开始生成"}
                     className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-                      generating || !node.prompt?.trim()
+                      generating || !hasPromptSource
                         ? "bg-neutral-100 text-neutral-400 dark:bg-neutral-800"
                         : "bg-neutral-800 text-white hover:bg-neutral-950 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
                     }`}

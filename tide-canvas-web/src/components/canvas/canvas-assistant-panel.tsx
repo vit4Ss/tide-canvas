@@ -85,7 +85,7 @@ function buildMentionRefs(files: FileVO[]): { mentionRefs: RefItem[]; refLabels:
     const url = (file.fileUrl ?? "").trim();
     if (referenceKindFromMeta(file) === "image" && /^(https?:|data:)/.test(url)) {
       const index = mentionRefs.length + 1;
-      mentionRefs.push({ id: `${file.id}-${index}`, thumb: url, title: file.originalName, index, kind: "image" });
+      mentionRefs.push({ id: `${file.id}-${index}`, thumb: url, title: file.originalName, index, kind: "image", src: url });
       refLabels.push(`图片${index}`);
     } else {
       refLabels.push(null);

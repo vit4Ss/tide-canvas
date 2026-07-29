@@ -24,7 +24,7 @@ import { NodeSkillButton } from "./node-skill-button";
 import { skillApi, parseSkillParams } from "@/lib/skill-api";
 import type { SkillVO } from "@/types/skill";
 import { PromptRefEditor, PromptEditorModal } from "./prompt-ref-editor";
-import { type RefItem } from "./prompt-ref-utils";
+import { type RefItem, inlineTextRefs } from "./prompt-ref-utils";
 
 interface Props {
   node: CanvasNode;
@@ -34,6 +34,11 @@ interface Props {
   onNodeMouseDown: (nodeId: string, e: React.MouseEvent) => void;
   onPortMouseDown?: (nodeId: string, side: "input" | "output", clientX: number, clientY: number) => void;
 }
+
+/** 可当作「参考图」的入边节点类型：导演台(scene_3d)的产出就是一张渲染图，
+ *  与图片节点同等对待——图片节点早已这么收，视频节点此前漏了，导致导演台连过来
+ *  既不显示缩略图也不参与生成，连线静默失效。 */
+const IMAGE_SOURCE_TYPES = new Set(["image", "scene_3d"]);
 
 // 各模式（Tab）对连接源节点的数量/类型限制：hover 时提示，生成时校验。文生视频无需连接。
 const TAB_LIMITS: Record<string, { hint: string; min: number; max: number; types: string[] }> = {
@@ -216,8 +221,9 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       .filter((c) => c.targetId === node.id)
       .map((c) => {
         const src = s.nodes.find((n) => n.id === c.sourceId);
-        if (src && src.type === "image" && src.imageSrc) return "i~" + src.id + "~" + src.imageSrc + "~" + (src.title || "");
+        if (src && IMAGE_SOURCE_TYPES.has(src.type) && src.imageSrc) return "i~" + src.id + "~" + src.imageSrc + "~" + (src.title || "");
         if (src && src.type === "video" && src.videoSrc) return "v~" + src.id + "~" + src.videoSrc + "~" + (src.title || "");
+        if (src && src.type === "text" && src.content) return "t~" + src.id + "~" + src.content + "~" + (src.title || "");
         return "";
       })
       .filter(Boolean)
@@ -225,27 +231,35 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   );
   const refs = useMemo<RefItem[]>(() => {
     const st = useCanvasStore.getState();
-    // 两类各自从 1 起编号，且都按 st.connections 的遍历序——handleGenerate 里的
-    // sources 用的是同一个顺序，imageUrls / videoUrls 由它 filter 而来，
-    // 因此「图片N」严格对齐第 N 张参考图、「视频N」对齐第 N 个参考视频。
+    // 三类各自从 1 起编号，且都按 st.connections 的遍历序——handleGenerate 里的
+    // sources 用的是同一个顺序，imageUrls / videoUrls / textNodes 由它 filter 而来，
+    // 因此「图片N」严格对齐第 N 张参考图、「视频N」对齐第 N 个参考视频、
+    // 「文本N」对齐第 N 个文本节点。
     const images: RefItem[] = [];
     const videos: RefItem[] = [];
+    const texts: RefItem[] = [];
     for (const c of st.connections) {
       if (c.targetId !== node.id) continue;
       const src = st.nodes.find((n) => n.id === c.sourceId);
       if (!src) continue;
-      if (src.type === "image" && src.imageSrc) {
-        images.push({ id: src.id, thumb: src.imageSrc, title: src.title || "", index: images.length + 1, kind: "image" });
+      if (IMAGE_SOURCE_TYPES.has(src.type) && src.imageSrc) {
+        images.push({ id: src.id, thumb: src.imageSrc, title: src.title || "", index: images.length + 1, kind: "image", src: src.imageSrc });
       } else if (src.type === "video" && src.videoSrc) {
         // 视频没有可直接放进 <img> 的封面，thumb 留空走 ▶ 降级字形
-        videos.push({ id: src.id, thumb: "", title: src.title || "", index: videos.length + 1, kind: "video" });
+        videos.push({ id: src.id, thumb: "", title: src.title || "", index: videos.length + 1, kind: "video", src: src.videoSrc });
+      } else if (src.type === "text" && src.content?.trim()) {
+        texts.push({ id: src.id, thumb: "", title: src.title || "", index: texts.length + 1, kind: "text", text: src.content });
       }
     }
     // 只有「全能参考」会把 videoReferences 下发给模型；其余模式下入边视频根本不参与
     // 生成，给它编号等于让用户引用一个模型收不到的东西。
-    return videoTab === "全能参考" ? [...images, ...videos] : images;
+    // 文本不占模型的参考位（正文直接拼进 prompt），所以各模式一律可引用。
+    return [...images, ...(videoTab === "全能参考" ? videos : []), ...texts];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refsSig, node.id, videoTab]);
+  // 入边文本节点的正文会拼进 prompt，所以输入框空着照样有提示词可发——
+  // 否则「文本节点写好提示词直接连过来生成」这条路会被按钮的空值禁用挡死。
+  const hasPromptSource = !!node.prompt?.trim() || refs.some((r) => r.kind === "text");
   // 实时统计连接到本节点的「有素材」源节点数（图片/视频），用于按模式启用/禁用 Tab
   const connSig = useCanvasStore((s) => {
     let img = 0;
@@ -253,7 +267,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     for (const c of s.connections) {
       if (c.targetId !== node.id) continue;
       const src = s.nodes.find((n) => n.id === c.sourceId);
-      if (src?.type === "image" && src.imageSrc) img++;
+      if (src && IMAGE_SOURCE_TYPES.has(src.type) && src.imageSrc) img++;
       else if (src?.type === "video" && src.videoSrc) vid++;
     }
     return `${img},${vid}`;
@@ -654,8 +668,14 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       if (message) { toast.error(message); return; }
     }    const limit = TAB_LIMITS[videoTab];
     // 分别收集「真正有素材」的图片 / 视频参考 URL
-    const imageUrls = sources.filter((n) => n.type === "image" && n.imageSrc).map((n) => n.imageSrc as string);
+    const imageUrls = sources.filter((n) => IMAGE_SOURCE_TYPES.has(n.type) && n.imageSrc).map((n) => n.imageSrc as string);
     const videoUrls = sources.filter((n) => n.type === "video" && n.videoSrc).map((n) => n.videoSrc as string);
+    // 文本节点没有独立下发通道，正文只能落进 prompt——顺序与 refs 的「文本N」编号同源
+    const textSources = sources.filter((n) => n.type === "text" && n.content?.trim());
+    const finalPrompt = inlineTextRefs(
+      node.prompt || "",
+      textSources.map((n, i) => ({ label: `文本${i + 1}`, content: n.content || "" })),
+    );
     // 校验基于实际可用素材数（排除连了但还没生成的空节点）
     const total = imageUrls.length + videoUrls.length;
     if (limit && (total < limit.min || total > limit.max)) {
@@ -668,7 +688,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     // 使用计数 best-effort
     if (node.skillId) void skillApi.recordUse(node.skillId);
     const base: Record<string, unknown> = {
-      prompt: node.prompt,
+      prompt: finalPrompt,
       ...(node.skillId ? { skillId: node.skillId } : {}),
       ...(!formatConfig.ratios || formatConfig.ratios.length ? { aspectRatio: videoParam.ratio } : {}),
       ...(!formatConfig.resolutions || formatConfig.resolutions.length ? { resolution: videoParam.resolution } : {}),
@@ -903,8 +923,8 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                 refs={refs}
                 value={node.prompt || ""}
                 onChange={handlePromptChange}
-                onSubmit={() => { if (node.prompt?.trim() && !generating) handleGenerate(); }}
-                placeholder="描述你想要生成的画面内容，@ 引用已连接图片（图片1/图片2…）"
+                onSubmit={() => { if (hasPromptSource && !generating) handleGenerate(); }}
+                placeholder="描述你想要生成的画面内容，@ 引用已连接素材（图片1/文本1…）"
                 leading={<NodeSkillButton node={node} outputType="video" onPicked={applySkillExtras} />}
               />
               <PromptEditorModal
@@ -913,7 +933,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                 value={node.prompt || ""}
                 onChange={handlePromptChange}
                 refs={refs}
-                placeholder="描述你想要生成的画面内容，@ 引用已连接图片（图片1/图片2…）"
+                placeholder="描述你想要生成的画面内容，@ 引用已连接素材（图片1/文本1…）"
               />
               {/* 底部栏(对齐参考产品):左 = 模型 · 模式 · 参数摘要;右 = 复制/展开 · 积分 · 发送 */}
               <div className="mt-2 flex items-center justify-between gap-2">
@@ -959,10 +979,10 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                   </span>
                   <button
                     onMouseDown={stop}
-                    onClick={(e) => { stop(e); if (node.prompt?.trim() && !generating) handleGenerate(); }}
-                    disabled={!node.prompt?.trim() || generating}
-                    title={generating ? "生成中..." : !node.prompt?.trim() ? "先输入提示词" : "开始生成"}
-                    className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${(!node.prompt?.trim() || generating) ? "bg-neutral-100 text-neutral-400 dark:bg-neutral-800" : "bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"}`}
+                    onClick={(e) => { stop(e); if (hasPromptSource && !generating) handleGenerate(); }}
+                    disabled={!hasPromptSource || generating}
+                    title={generating ? "生成中..." : !hasPromptSource ? "先输入提示词" : "开始生成"}
+                    className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${(!hasPromptSource || generating) ? "bg-neutral-100 text-neutral-400 dark:bg-neutral-800" : "bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"}`}
                   >
                     {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}
                   </button>

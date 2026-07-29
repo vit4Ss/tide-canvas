@@ -8,6 +8,9 @@
 // 不加载 studio.css（(canvas)/layout.tsx 一行 CSS 都不 import，还主动摘掉 imini
 // 类），.mention-* 依赖的主题变量在画布里不存在，只能走 Tailwind 内联。
 
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+
 export const LINE_HEIGHT = 24;
 export const MIN_ROWS = 3;
 export const MAX_ROWS = 4;
@@ -17,15 +20,15 @@ export const MAX_ROWS = 4;
 export const ZERO_WIDTH_SPACE = String.fromCharCode(0x200b);
 const NON_BREAKING_SPACE = String.fromCharCode(0x00a0);
 
-export type RefKind = "image" | "video" | "audio";
+export type RefKind = "image" | "video" | "audio" | "text";
 
-const KIND_LABEL: Record<RefKind, string> = { image: "图片", video: "视频", audio: "音频" };
+const KIND_LABEL: Record<RefKind, string> = { image: "图片", video: "视频", audio: "音频", text: "文本" };
 
-/** 无缩略图时的降级字形：视频节点只有 videoSrc（放进 <img> 是坏图），音频没有画面。 */
-const KIND_GLYPH: Record<RefKind, string> = { image: "图", video: "▶", audio: "♪" };
+/** 无缩略图时的降级字形：视频节点只有 videoSrc（放进 <img> 是坏图），音频与文本没有画面。 */
+const KIND_GLYPH: Record<RefKind, string> = { image: "图", video: "▶", audio: "♪", text: "文" };
 
 export function refGlyph(ref: RefItem): string {
-  return KIND_GLYPH[ref.kind ?? "image"];
+  return KIND_GLYPH[refMedia(ref)];
 }
 
 /** 一条可引用素材：画布节点来自入边连接，助手面板来自已上传附件。 */
@@ -37,6 +40,19 @@ export interface RefItem {
   index: number;
   /** 省略即 image：图片/视频节点的既有调用点因此无需改动 */
   kind?: RefKind;
+  /** 缩略图/悬停预览按哪种素材渲染，省略即同 kind。
+   *  两者会分家是因为**编号口径**与**素材本身**未必一致：图片节点把入边视频也编成
+   *  「图片N」（imageList 确实按图片位次下发），但它得按视频预览，塞进 <img> 是坏图。 */
+  media?: RefKind;
+  /** 素材地址（图片/视频/音频）。视频与音频的 thumb 为空，预览只能靠它。 */
+  src?: string;
+  /** 文本节点正文，供悬停预览显示。 */
+  text?: string;
+}
+
+/** 渲染口径（缩略图字形 / 悬停预览用哪种控件），与决定 token 标签的 kind 分开。 */
+function refMedia(ref: RefItem): RefKind {
+  return ref.media ?? ref.kind ?? "image";
 }
 
 /** 序列化 token 文本，如「图片1」「视频2」。DOM 的 data-prompt-ref 直接存它，
@@ -51,14 +67,119 @@ export function refCaption(ref: RefItem): string {
   return (ref.title || "").trim() || refLabel(ref);
 }
 
+const PREVIEW_W = 260;
+/** 上方剩余空间少于这个高度就翻到下方——节点面板常贴屏幕底部，固定朝上会顶出视口 */
+const PREVIEW_FLIP_H = 240;
+const PREVIEW_EDGE = 8;
+/** 开合各留一段延时：横扫缩略图行时不该一路弹窗；离开后留一手让鼠标能移进浮层
+ *  （长文本要滚动、音频要点播放）。取值落在既有动效档位内。 */
+const PREVIEW_OPEN_DELAY = 160;
+const PREVIEW_CLOSE_DELAY = 120;
+
+/** 悬停预览正文：四类素材各自的呈现方式完全不同——图片直出、视频静音循环、
+ *  音频给原生控件、文本给可滚动正文。素材缺失（连了但还没生成）时给一句说明，
+ *  不留空白浮层。 */
+function RefPreviewBody({ refItem }: { refItem: RefItem }) {
+  const media = refMedia(refItem);
+  const url = (refItem.src || refItem.thumb || "").trim();
+  const frame = "max-h-44 w-full rounded-md object-contain";
+
+  if (media === "text") {
+    const body = (refItem.text || "").trim();
+    if (!body) return <p className="text-xs text-neutral-400">文本节点还没有内容</p>;
+    return (
+      <p className="max-h-44 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-6 text-neutral-700 dark:text-neutral-300">
+        {body}
+      </p>
+    );
+  }
+  if (!url) return <p className="text-xs text-neutral-400">该素材还没有内容</p>;
+  if (media === "video") {
+    // 静音循环自动播放:悬停就能看清是哪段片子,又不会有声音突然响起来
+    return <video src={url} muted loop autoPlay playsInline className={`${frame} bg-neutral-950`} />;
+  }
+  if (media === "audio") {
+    return <audio src={url} controls preload="metadata" className="w-full" />;
+  }
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={url} alt="" className={`${frame} bg-neutral-50 dark:bg-neutral-900`} />;
+}
+
 export function ReferenceThumb({ refItem, active, onPick }: { refItem: RefItem; active: boolean; onPick: (e: React.MouseEvent) => void }) {
   const caption = refCaption(refItem);
+  const anchorRef = useRef<HTMLSpanElement>(null);
+  const [preview, setPreview] = useState<{ left: number; top?: number; bottom?: number } | null>(null);
+  const openTimer = useRef<number | null>(null);
+  const closeTimer = useRef<number | null>(null);
+
+  const clearTimers = useCallback(() => {
+    if (openTimer.current) { window.clearTimeout(openTimer.current); openTimer.current = null; }
+    if (closeTimer.current) { window.clearTimeout(closeTimer.current); closeTimer.current = null; }
+  }, []);
+  useEffect(() => clearTimers, [clearTimers]);
+
+  // 浮层走 portal + fixed:缩略图行是 overflow-x-auto,内联渲染会被它裁掉;
+  // 且脱离画布的缩放变换后,预览在任何缩放级别下都是同一个可读尺寸。
+  const openPreview = useCallback(() => {
+    clearTimers();
+    openTimer.current = window.setTimeout(() => {
+      const rect = anchorRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const left = Math.min(Math.max(PREVIEW_EDGE, rect.left), window.innerWidth - PREVIEW_W - PREVIEW_EDGE);
+      setPreview(rect.top >= PREVIEW_FLIP_H
+        ? { left, bottom: window.innerHeight - rect.top + PREVIEW_EDGE }
+        : { left, top: rect.bottom + PREVIEW_EDGE });
+    }, PREVIEW_OPEN_DELAY);
+  }, [clearTimers]);
+
+  const closePreview = useCallback(() => {
+    clearTimers();
+    closeTimer.current = window.setTimeout(() => setPreview(null), PREVIEW_CLOSE_DELAY);
+  }, [clearTimers]);
+
+  // 滚轮缩放画布时立刻收掉：浮层是 fixed 的，画布一缩放它就停在旧坐标上，
+  // 与缩略图脱节地悬在半空。不拦冒泡，画布该缩放照缩放。
+  const closePreviewNow = useCallback(() => {
+    clearTimers();
+    setPreview(null);
+  }, [clearTimers]);
+
   return (
     // 列宽对齐左邻的「技能」按钮（同为 w-12），整行缩略图落在同一栅格上；
-    // 44px 缩略图在 48px 列内居中，文件名占满列宽后截断，完整名走原生 title。
+    // 44px 缩略图在 48px 列内居中，文件名占满列宽后截断，完整名在悬停预览里给全。
     // stopPropagation 提到外层：文件名那一行也在面板内，漏掉会让按住文件名拖动整个节点
     // （图片节点的提示词面板自身不拦 mousedown）。
-    <span className="flex w-12 shrink-0 flex-col items-center gap-1" title={caption} onMouseDown={(e) => e.stopPropagation()}>
+    // 不挂原生 title：它与悬停预览同一触发点，两个浮层会前后脚一起冒出来。
+    <span
+      ref={anchorRef}
+      className="flex w-12 shrink-0 flex-col items-center gap-1"
+      onMouseDown={(e) => e.stopPropagation()}
+      onMouseEnter={openPreview}
+      onMouseLeave={closePreview}
+      onWheel={closePreviewNow}
+    >
+      {preview && typeof document !== "undefined" && createPortal(
+        <div
+          // z 必须压过提示词放大弹层（PromptEditorModal 的 z-[200] 全屏 portal）——
+          // 那里同样渲染缩略图行，层级低了预览会被它的遮罩盖住，等于悬停无反应。
+          className="fixed z-[300] overflow-hidden rounded-[10px] border border-neutral-200 bg-white p-2 shadow-lg dark:border-neutral-700 dark:bg-neutral-900"
+          style={{ width: PREVIEW_W, left: preview.left, top: preview.top, bottom: preview.bottom }}
+          // 浮层自己也接管开合：鼠标移进来时取消待关闭，长文本才滚得动、音频才点得了
+          onMouseEnter={clearTimers}
+          onMouseLeave={closePreview}
+          onMouseDown={(e) => e.stopPropagation()}
+          // portal 里的事件仍会沿 React 树冒泡到上面那个 onWheel——不掐断的话，
+          // 在预览里滚动长文本会把预览自己关掉。
+          onWheel={(e) => e.stopPropagation()}
+        >
+          <RefPreviewBody refItem={refItem} />
+          <div className="mt-2 flex items-baseline gap-2 border-t border-neutral-100 pt-2 dark:border-neutral-800">
+            <span className="min-w-0 flex-1 break-all text-xs text-neutral-700 dark:text-neutral-200">{caption}</span>
+            <span className="shrink-0 text-[11px] text-neutral-400">{refLabel(refItem)}</span>
+          </div>
+        </div>,
+        document.body,
+      )}
       <button
         onClick={onPick}
         aria-label={`引用 ${refLabel(refItem)}：${caption}`}
@@ -91,7 +212,7 @@ export function ReferenceThumb({ refItem, active, onPick }: { refItem: RefItem; 
  *     （「主体参考图片\n1、背景…」的换行会消失）；
  *  ③ 那样 value 也不再是 serialize∘sync 的不动点，聚焦态的等值判断会
  *     每次 refs 变化都误判成外部改写、重建 DOM 并把光标甩到末尾。 */
-export const PROMPT_REF_TOKEN = /(图片|视频|音频)(\d+)(?!\d)/g;
+export const PROMPT_REF_TOKEN = /(图片|视频|音频|文本)(\d+)(?!\d)/g;
 
 /** 序列化时按「一个块级元素 = 一行」处理的标签。
  *  必须按 tagName 判定而不是 getComputedStyle：textBeforePromptCaret 序列化的是
@@ -169,6 +290,39 @@ export function resolvePastedRefTokens(text: string, refs: RefItem[]): string {
     i += 1;
   }
   return out;
+}
+
+/** 生成前把入边文本节点的正文落进提示词。图片/视频有 imageUrls / videoUrls 这种独立通道，
+ *  文本没有——唯一的去处就是 prompt 正文，因此必须在提交前展开：
+ *  - 提示词里出现的「文本N」原地替换成对应正文，出现位置由用户决定；
+ *  - 连了但没被引用的，正文按连接顺序拼在描述最前面。与图片同口径「连进来即参与生成」，
+ *    不必为了用上它再回输入框点一次。
+ *  空白正文一律跳过，避免拼出前导空行。注意调用方筛选文本节点时必须**同样按 trim 判空**：
+ *  两边口径不一致的话，只含空白的文本节点会白占一个「文本N」号，其后每个文本引用都错位，
+ *  而且它还会让生成按钮亮起来（以为有提示词可发），最终发出去的却是空 prompt。 */
+export function inlineTextRefs(prompt: string, texts: { label: string; content: string }[]): string {
+  const usable = texts
+    .map((t) => ({ label: t.label, content: t.content.trim() }))
+    .filter((t) => t.content.length > 0);
+  if (usable.length === 0) return prompt;
+
+  const referenced = new Set<string>();
+  // String.replace 对 /g 正则会自行归零 lastIndex，不像 exec/test 那样残留游标
+  const body = prompt.replace(PROMPT_REF_TOKEN, (matched, prefix: string, index: string) => {
+    // 前缀必须先判——图片/视频/音频有各自的下发通道，「图片1」是后端认得的位次约定，
+    // 落进下面的删除分支会把用户的参考图引用一并抹掉。
+    if (prefix !== "文本") return matched;
+    const hit = usable.find((t) => t.label === prefix + index);
+    // 悬空的「文本N」：对应文本节点已被断开或删除。它不像「图片N」那样有下发通道
+    // 兜底，纯粹是客户端占位符，留着就是发给模型的一段乱码，就地抹掉。
+    // 仅在本节点确有文本入边时才走到这里（见上方 early return），
+    // 所以不会误伤"一个文本节点都没连、却把「文本1」当普通行文写进去"的提示词。
+    if (!hit) return "";
+    referenced.add(hit.label);
+    return hit.content;
+  });
+  const leading = usable.filter((t) => !referenced.has(t.label)).map((t) => t.content);
+  return [...leading, body.trim()].filter(Boolean).join("\n");
 }
 
 /** 提示词文本 → 编辑器子节点（「图片N」渲染成 pill，其余为文本节点）。
