@@ -117,6 +117,8 @@ export function CanvasView() {
     node.fileSize = file.fileSize;
     node.fileType = file.fileType;
     node.mimeType = file.mimeType;
+    // 与拖入上传同口径：标题即文件名，下游节点的引用缩略图才认得出选的是哪张
+    if (file.originalName) node.title = file.originalName;
     addNode(node);
     selectNode(node.id);
   }, [panZoom, nodes, addNode, selectNode]);

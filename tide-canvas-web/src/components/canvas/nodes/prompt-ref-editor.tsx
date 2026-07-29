@@ -8,7 +8,10 @@ import {
   type CaretAnchor,
   ReferenceThumb,
   refLabel,
+  refCaption,
   refGlyph,
+  resolvePastedRefTokens,
+  buildPromptNodes,
   LINE_HEIGHT,
   MIN_ROWS,
   MAX_ROWS,
@@ -76,10 +79,15 @@ export function PromptRefEditor({
     (ref: RefItem) => new RegExp(`${refLabel(ref)}(?!\\d)`).test(value || ""),
     [value]
   );
+  // 查询串同时匹配序号标签「图片1」与素材名（缩略图下方显示的文件名）——用户记得住的
+  // 是文件名，只按标签过滤的话「@角色三视图」会筛空、菜单直接不弹。
   const mentionList = useMemo(
-    () => refs.filter(
-      (r) => !promptHasRef(r) && (!mentionQuery || refLabel(r).includes(mentionQuery) || String(r.index) === mentionQuery)
-    ),
+    () => refs.filter((r) => {
+      if (promptHasRef(r)) return false;
+      if (!mentionQuery) return true;
+      const q = mentionQuery.toLowerCase();
+      return refLabel(r).toLowerCase().includes(q) || refCaption(r).toLowerCase().includes(q) || String(r.index) === mentionQuery;
+    }),
     [refs, promptHasRef, mentionQuery]
   );
 
@@ -186,6 +194,37 @@ export function PromptRefEditor({
     const ref = refs.find((r) => r.id === id);
     if (ref) insertRefToken(ref);
   };
+
+  // 粘贴：先把「@文件名」改写成规范 token「图片N」，再按 token 建 pill 一次性插入。
+  // 从别处抄来的提示词里写的是人看得懂的名字，靠 @ 下拉逐个重选既繁琐又容易漏。
+  const insertPastedText = useCallback((raw: string) => {
+    const editor = promptEditorRef.current;
+    if (!editor) return;
+    const text = resolvePastedRefTokens(raw, refs);
+    const nodes = buildPromptNodes(text, refs);
+    // 不含可绑定引用时走 execCommand：手工改 DOM 会打断浏览器原生撤销栈，
+    // 而绝大多数粘贴都是纯文本，不该为这条罕见路径整体牺牲 Ctrl+Z。
+    if (nodes.length <= 1) {
+      if (text) document.execCommand("insertText", false, text);
+      return;
+    }
+    editor.focus({ preventScroll: true });
+    const range = getRangeInEditor(editor, promptRangeRef.current);
+    range.deleteContents();
+    const tail = nodes[nodes.length - 1];
+    const fragment = document.createDocumentFragment();
+    fragment.append(...nodes);
+    range.insertNode(fragment);
+    // 光标落到粘贴内容末尾。以 pill 收尾时 buildPromptNodes 已补零宽空格文本节点，
+    // 落不进 pill 内部；tail 非文本节点只可能是防御性分支。
+    if (tail.nodeType === Node.TEXT_NODE) {
+      placeCaretInsideText(tail as Text, (tail.textContent || "").length);
+    } else {
+      const caretText = document.createTextNode(ZERO_WIDTH_SPACE);
+      tail.after(caretText);
+      placeCaretInsideText(caretText, caretText.length);
+    }
+  }, [refs]);
 
   const handlePromptKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     // 消费端兜底：选区非折叠时菜单一律不生效。
@@ -361,7 +400,7 @@ export function PromptRefEditor({
             e.preventDefault();
             const text = e.clipboardData?.getData("text/plain") ?? "";
             // \r\n 归一化：Windows 剪贴板是 CRLF，\r 混进 value 会污染下发的 prompt
-            if (text) document.execCommand("insertText", false, text.replace(/\r\n?/g, "\n"));
+            if (text) insertPastedText(text.replace(/\r\n?/g, "\n"));
             updatePromptFromEditor();
           }}
           onMouseDown={stop}
@@ -445,8 +484,12 @@ export function PromptRefEditor({
                 ) : (
                   <span className="flex h-6 w-6 items-center justify-center rounded bg-neutral-100 text-[10px] text-neutral-400 dark:bg-neutral-800">{refGlyph(ref)}</span>
                 )}
-                <span className="text-sm text-neutral-700 dark:text-neutral-200">{refLabel(ref)}</span>
-                <span className="ml-auto text-xs text-neutral-400">@{ref.index}</span>
+                {/* 主文本是素材名（认得出选的是哪张），右侧标注实际插入的 token；
+                    未命名素材两者相同，此时不重复显示 */}
+                <span className="min-w-0 flex-1 truncate text-sm text-neutral-700 dark:text-neutral-200">{refCaption(ref)}</span>
+                {refCaption(ref) !== refLabel(ref) && (
+                  <span className="shrink-0 text-xs text-neutral-400">{refLabel(ref)}</span>
+                )}
               </button>
             ))}
           </div>

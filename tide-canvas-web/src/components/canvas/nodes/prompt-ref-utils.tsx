@@ -45,26 +45,39 @@ export function refLabel(ref: RefItem): string {
   return KIND_LABEL[ref.kind ?? "image"] + ref.index;
 }
 
+/** 素材显示名：优先上游节点标题（拖入上传/我的素材都会写成文件名），
+ *  节点未命名时退回「图片1」这类序号标签——缩略图下方不留空行，pill 悬停也不留空 title。 */
+export function refCaption(ref: RefItem): string {
+  return (ref.title || "").trim() || refLabel(ref);
+}
+
 export function ReferenceThumb({ refItem, active, onPick }: { refItem: RefItem; active: boolean; onPick: (e: React.MouseEvent) => void }) {
+  const caption = refCaption(refItem);
   return (
-    <button
-      onMouseDown={(e) => e.stopPropagation()}
-      onClick={onPick}
-      aria-label={`引用 ${refLabel(refItem)}`}
-      className={`relative h-11 w-11 shrink-0 overflow-hidden rounded-lg border bg-neutral-100 transition-colors duration-150 dark:bg-neutral-800 ${
-        active ? "border-blue-500 ring-2 ring-blue-400/40" : "border-neutral-200 hover:border-blue-400 hover:shadow-sm dark:border-neutral-700"
-      }`}
-    >
-      {refItem.thumb ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={refItem.thumb} alt="" className="h-full w-full object-cover" />
-      ) : (
-        <span className="flex h-full w-full items-center justify-center text-sm text-neutral-400">{refGlyph(refItem)}</span>
-      )}
-      <span className="absolute right-0.5 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-neutral-900/85 px-1 text-[10px] font-semibold leading-none text-white">
-        {refItem.index}
-      </span>
-    </button>
+    // 列宽对齐左邻的「技能」按钮（同为 w-12），整行缩略图落在同一栅格上；
+    // 44px 缩略图在 48px 列内居中，文件名占满列宽后截断，完整名走原生 title。
+    // stopPropagation 提到外层：文件名那一行也在面板内，漏掉会让按住文件名拖动整个节点
+    // （图片节点的提示词面板自身不拦 mousedown）。
+    <span className="flex w-12 shrink-0 flex-col items-center gap-1" title={caption} onMouseDown={(e) => e.stopPropagation()}>
+      <button
+        onClick={onPick}
+        aria-label={`引用 ${refLabel(refItem)}：${caption}`}
+        className={`relative h-11 w-11 shrink-0 overflow-hidden rounded-lg border bg-neutral-100 transition-colors duration-150 dark:bg-neutral-800 ${
+          active ? "border-blue-500 ring-2 ring-blue-400/40" : "border-neutral-200 hover:border-blue-400 hover:shadow-sm dark:border-neutral-700"
+        }`}
+      >
+        {refItem.thumb ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={refItem.thumb} alt="" className="h-full w-full object-cover" />
+        ) : (
+          <span className="flex h-full w-full items-center justify-center text-sm text-neutral-400">{refGlyph(refItem)}</span>
+        )}
+        <span className="absolute right-0.5 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-neutral-900/85 px-1 text-[10px] font-semibold leading-none text-white">
+          {refItem.index}
+        </span>
+      </button>
+      <span className="w-full select-none truncate text-center text-[10px] leading-none text-neutral-500 dark:text-neutral-400">{caption}</span>
+    </span>
   );
 }
 
@@ -105,7 +118,7 @@ export function createPromptRefElement(ref: RefItem) {
   const token = document.createElement("span");
   token.contentEditable = "false";
   token.dataset.promptRef = refLabel(ref);
-  token.title = ref.title || refLabel(ref);
+  token.title = refCaption(ref);
   token.className =
     "mx-0.5 inline-flex h-6 max-w-[132px] items-center gap-1 rounded-md border border-neutral-200 bg-neutral-50 px-1 align-[-5px] text-xs font-medium text-neutral-800 shadow-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100";
 
@@ -128,7 +141,39 @@ export function createPromptRefElement(ref: RefItem) {
   return token;
 }
 
-export function syncPromptEditorContent(editor: HTMLDivElement, prompt: string, refs: RefItem[]) {
+/** 把「@文件名」改写成规范 token 文本「图片N」。粘贴专用：用户从别处抄来的提示词里
+ *  写的是人看得懂的名字（缩略图下方就是这么显示的），而全系统的唯一真值是「图片N」。
+ *
+ *  长名优先匹配——短名是长名前缀时（素材同时叫「角色」和「角色三视图」），
+ *  按短的先匹配会把长名截成「图片1三视图」。 */
+export function resolvePastedRefTokens(text: string, refs: RefItem[]): string {
+  if (!text || refs.length === 0) return text;
+  const names = refs
+    .flatMap((ref) => [refCaption(ref), refLabel(ref)].map((key) => ({ key, ref })))
+    .filter((n) => n.key.length > 0)
+    .sort((a, b) => b.key.length - a.key.length);
+
+  let out = "";
+  for (let i = 0; i < text.length; ) {
+    // 全角＠一并认：AT_QUERY_RE 也收，两条路径口径必须一致
+    if (text[i] === "@" || text[i] === "＠") {
+      const rest = text.slice(i + 1);
+      const hit = names.find((n) => rest.startsWith(n.key));
+      if (hit) {
+        out += refLabel(hit.ref);
+        i += 1 + hit.key.length;
+        continue;
+      }
+    }
+    out += text[i];
+    i += 1;
+  }
+  return out;
+}
+
+/** 提示词文本 → 编辑器子节点（「图片N」渲染成 pill，其余为文本节点）。
+ *  失焦重建与粘贴插入共用，两条路径产出的 DOM 形态因此必然一致。 */
+export function buildPromptNodes(prompt: string, refs: RefItem[]): ChildNode[] {
   const nodes: ChildNode[] = [];
   PROMPT_REF_TOKEN.lastIndex = 0;
   let lastIndex = 0;
@@ -159,7 +204,11 @@ export function syncPromptEditorContent(editor: HTMLDivElement, prompt: string, 
     nodes.push(document.createTextNode(prompt.slice(lastIndex)));
   }
 
-  editor.replaceChildren(...nodes);
+  return nodes;
+}
+
+export function syncPromptEditorContent(editor: HTMLDivElement, prompt: string, refs: RefItem[]) {
+  editor.replaceChildren(...buildPromptNodes(prompt, refs));
   // 内容以换行收尾时补一个占位符文本节点，复刻 Blink 自己敲出同样内容时的 DOM
   // 形态。否则 sync 写出的 DOM 没有占位符，serializePromptEditor 的剥离会把这个
   // **真实**的结尾换行吃掉，每次失焦重建就少一个换行（往返不幂等，等值判断也
