@@ -2,6 +2,7 @@ package ai
 
 import (
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -293,4 +294,29 @@ func toLogVO(l *model.AiGenerationLog) AiGenerationLogVO {
 		}
 	}
 	return vo
+}
+
+// redactForUser 抹掉普通用户不该拿到的上游细节。
+//
+// GET /api/ai/logs 只挂 JWTAuth(见 register.go),isAdmin 决定的是「看谁的行」
+// 而不是「能不能看」——画布「历史」面板正是走这条路,且把 errorMsg 原样渲染。
+// 不脱敏的话 userFacingGenError 在这条链路上等于没做:供应商名、上游 request
+// ID、中转站地址、请求/响应原文全都出站。
+//
+// errorMsg 走与任务失败完全相同的话术(同一个 userFacingGenError,口径不分叉);
+// 其余字段对用户无用且属内部信息,整体清空:
+//   - requestUrl/requestBody/responseBody:中转站地址与上游原文
+//   - upstreamTaskId:供应商侧任务标识
+//   - cost:上游 USD 成本,属经营数据
+//
+// 管理员不走这里(后台「模型调用日志」仍是全量原文,排查能力不变)。
+func (vo *AiGenerationLogVO) redactForUser() {
+	if vo.ErrorMsg != "" {
+		vo.ErrorMsg = userFacingGenError(errors.New(vo.ErrorMsg))
+	}
+	vo.RequestURL = ""
+	vo.RequestBody = ""
+	vo.ResponseBody = ""
+	vo.UpstreamTaskID = ""
+	vo.Cost = nil
 }

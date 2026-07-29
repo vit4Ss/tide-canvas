@@ -14,6 +14,7 @@ import (
 
 	"tidecanvas/internal/config"
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/chatattach"
 	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/llm"
@@ -769,16 +770,7 @@ func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, o
 // imageAttachmentURLs returns the hosted URLs of the image attachments (the only
 // kind forwarded to the model as multimodal content).
 func imageAttachmentURLs(atts []MessageAttach) []string {
-	urls := make([]string, 0, len(atts))
-	for _, a := range atts {
-		kind := strings.TrimSpace(a.Kind)
-		u := strings.TrimSpace(a.URL)
-		// only absolute URLs are fetchable by the upstream model; skip relative paths.
-		if (kind == "" || kind == "image") && (strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") || strings.HasPrefix(u, "data:")) {
-			urls = append(urls, u)
-		}
-	}
-	return urls
+	return chatattach.ImageURLs(toAttaches(atts))
 }
 
 // attachmentsParams snapshots the composer attachments as a JSON object stored on

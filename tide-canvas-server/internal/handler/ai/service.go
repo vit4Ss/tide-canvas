@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -45,6 +46,9 @@ type service struct {
 	systemPrompt string
 	// storage backs durable server-side artifacts (e.g. grid-split cells).
 	storage storage.StorageStrategy
+	// docHost 是启动时 storage.publicURL 的 host：画布 AI 助手转发文档附件时
+	// 只允许抓取该 host 或 *.aliyuncs.com 的 URL（SSRF 防护，见 pkg/chatattach）。
+	docHost string
 	// sem 限制并发执行的 runTask 数(每个会打无上限时长的上游 relay 调用),避免突发
 	// 请求产生无上限 goroutine + 无上限上游连接;超额任务在 goroutine 内排队等待。
 	sem chan struct{}
@@ -54,7 +58,7 @@ type service struct {
 const maxConcurrentGenerations = 32
 
 func newService(d *app.Deps) *service {
-	return &service{
+	s := &service{
 		repo:         newRepo(d.DB),
 		rdb:          d.RDB,
 		registry:     newHandlerRegistry(),
@@ -64,6 +68,10 @@ func newService(d *app.Deps) *service {
 		storage:      d.Storage,
 		sem:          make(chan struct{}, maxConcurrentGenerations),
 	}
+	if pu, err := url.Parse(d.Cfg.Storage.PublicURL); err == nil {
+		s.docHost = pu.Host
+	}
+	return s
 }
 
 // ---- catalog ------------------------------------------------------------
@@ -450,7 +458,13 @@ func (s *service) listLogs(ctx context.Context, userID idgen.ID, isAdmin bool, q
 	vos := make([]AiGenerationLogVO, 0, len(rows))
 	var userIDs, projIDs, taskIDs []idgen.ID
 	for i := range rows {
-		vos = append(vos, toLogVO(&rows[i]))
+		vo := toLogVO(&rows[i])
+		// 非管理员:抹掉上游原文再出站。放在这里而不是 toLogVO 里,是因为后台
+		// 「模型调用日志」要的正是全量原文。
+		if !isAdmin {
+			vo.redactForUser()
+		}
+		vos = append(vos, vo)
 		if rows[i].UserID != 0 {
 			userIDs = append(userIDs, rows[i].UserID)
 		}
@@ -488,7 +502,11 @@ func (s *service) listLogs(ctx context.Context, userID idgen.ID, isAdmin bool, q
 func (s *service) writeLog(ctx context.Context, task *model.AiTask, gh GenHandler, m *model.AiModel, userID idgen.ID, dto generateDTO, res GenerateResult, genErr error, startedAt time.Time, durationMs int64) {
 	success := 1
 	errMsg := ""
-	if genErr != nil || res.ResultURL == "" {
+	// 判失败口径必须与 runTask 落库任务状态时完全一致（见上方 finalizeTask 前的
+	// 分支）：纯文本产出(assistant_chat / 文本节点)没有 ResultURL,回复在
+	// Meta["text"]。少了 resultHasText 的话,这类**成功**的生成会被记成
+	// success=0 + errMsg="generation failed",用户在画布历史面板里看到红叉报错。
+	if genErr != nil || (res.ResultURL == "" && !resultHasText(res)) {
 		success = 0
 		errMsg = errMessage(genErr)
 	}
@@ -667,16 +685,88 @@ const userFacingGenErr = "系统异常，请联系客服"
 // inputErrorRules 把「用户可自行修正的输入类」上游错误映射为具体、可操作的
 // 中文提示。仅做特征匹配后返回**我们自己撰写的**文案,绝不回显供应商原文——
 // 既满足「告诉用户缺什么」,又不泄露内部/供应商细节。命不中则按系统异常处理。
+//
+// 顺序即优先级:自上而下首个命中者生效,所以更具体的规则要排在更宽泛的前面
+// (审核类回执常同时带 prompt/image 字样,必须先判,否则会被输入类规则截胡)。
+//
+// 入表门槛:只收「用户改了输入就能成功」的情形。中转站余额不足、密钥失效、
+// 网关抖动、上游 5xx 一律不入表——那是我们的问题,不该让用户去改提示词。
 var inputErrorRules = []struct {
 	// 高置信度特征片段(小写匹配):宁可漏判落到系统异常,也不误把系统故障
 	// 说成用户输入问题。命中任一片段即判定为该输入类问题。
 	markers []string
 	message string
 }{
-	{[]string{"can not both null", "both null"}, "请补充音乐描述或歌词后重试"},
-	{[]string{"lyrics is required", "lyrics required"}, "请填写歌词后重试"},
-	{[]string{"至少一张", "at least one reference", "reference required", "reference image is required"}, "请先上传所需的参考素材后重试"},
-	{[]string{"content policy", "sensitive content", "内容违规", "内容审核"}, "内容未通过安全审核，请调整后重试"},
+	// —— 安全审核 ——
+	{[]string{
+		"content policy", "content_policy", "sensitive content", "safety system",
+		"prohibited content", "moderation", "nsfw", "flagged",
+		"内容违规", "内容审核", "违规内容", "敏感词",
+	}, "内容未通过安全审核，请调整后重试"},
+	// 参考图版权要先于下面的通用版权规则:同样是审核,但用户该做的是「换图」而不是
+	// 「改描述」,给通用文案会把人指到错误的方向上。
+	{[]string{
+		"参考图可能涉及版权", "参考图涉及版权", "参考图版权", "参考图涉嫌侵权",
+		"image copyright", "reference image copyright", "image may infringe",
+	}, "参考图可能涉及版权限制，请更换参考素材后重试"},
+	// 版权/名人同属审核,但用户要改的是「别写具体艺人、角色、作品名」,给单独文案。
+	{[]string{
+		"copyright", "trademark", "public figure", "celebrity", "artist name",
+		"版权", "侵权",
+	}, "内容涉及受保护的名称或作品，请改用描述性表达后重试"},
+
+	// —— 音乐 ——
+	{[]string{"can not both null", "both null", "gpt_description_prompt"}, "请补充音乐描述或歌词后重试"},
+	{[]string{"lyrics is too long", "lyrics too long", "lyrics exceeds"}, "歌词过长，请精简后重试"},
+	{[]string{"lyrics is required", "lyrics required", "lyrics can not be empty"}, "请填写歌词后重试"},
+
+	// —— 参考素材(图/音频)——
+	// "at least one image" 兼容 relaymedia 自抛的 "edits require at least one image url"。
+	{[]string{
+		"至少一张", "at least one reference", "reference required",
+		"reference image is required", "at least one image", "image_urls is required",
+	}, "请先上传所需的参考素材后重试"},
+	{[]string{
+		"failed to download image", "download image failed", "cannot fetch image",
+		"fetch image failed", "invalid image url", "unable to access image",
+		"image url is not accessible",
+	}, "参考素材无法读取，请重新上传后重试"},
+	{[]string{
+		"unsupported image format", "invalid image format", "image format not supported",
+		"unsupported file type", "unsupported mime", "invalid file format",
+	}, "参考素材格式不支持，请改用 JPG / PNG 后重试"},
+	{[]string{
+		"image too large", "image is too large", "image size exceeds",
+		"file too large", "file size exceeds", "resolution too high",
+	}, "参考素材体积或分辨率超限，请压缩后重试"},
+
+	// —— 提示词 ——
+	{[]string{
+		"prompt is too long", "prompt too long", "exceeds maximum length",
+		"maximum context length", "too many tokens", "string too long",
+	}, "提示词过长，请精简后重试"},
+	{[]string{
+		"prompt is required", "prompt required", "prompt can not be empty",
+		"prompt cannot be empty", "missing prompt", "input text is required",
+		"requires input text", "请输入内容", "请先输入提示词",
+	}, "请输入提示词后重试"},
+
+	// —— 生成参数 ——
+	{[]string{
+		"unsupported aspect ratio", "invalid aspect ratio", "invalid aspect_ratio",
+		"aspect ratio must", "unsupported size", "invalid size", "unsupported resolution",
+	}, "所选画面比例或尺寸不受支持，请调整后重试"},
+	{[]string{
+		"unsupported duration", "invalid duration", "duration must be",
+		"duration is not supported",
+	}, "所选时长不受支持，请调整后重试"},
+
+	// —— 限流 ——
+	// 唯一一条非输入类:上游 429 可能是我们的共享密钥被限,所以文案不写「你请求
+	// 太频繁」而写排队,既不甩锅给用户,又给出可操作动作(稍后重试)。
+	{[]string{
+		"rate limit", "rate_limit", "too many requests", "请求过于频繁",
+	}, "当前生成排队较多，请稍后重试"},
 }
 
 // userFacingGenError 分级:命中输入类规则→具体提示;否则→系统异常统一文案。

@@ -435,8 +435,10 @@ func (h *modelsHandler) effectiveTypeOrder() []string {
 // market_model (add new / update existing by name), returning add/update counts.
 // New rows are listed (status 1) and authored by the current admin.
 func (h *modelsHandler) syncRelay(c *gin.Context) {
+	// 未配置 ≠ 服务器故障：这是写给管理员的操作指引，用 500 会被统一话术抹成
+	// 「请联系客服」，而管理员自己就是客服，等于把唯一可操作的信息弄丢了。
 	if strings.TrimSpace(h.relay.APIKey) == "" {
-		response.Fail(c, response.CodeServerError, "中转站未配置：请在 config.yaml 设置 relay.apiKey")
+		response.Fail(c, response.CodeBadRequest, "中转站未配置：请在 config.yaml 设置 relay.apiKey")
 		return
 	}
 	res, err := SyncRelayModels(h.db, h.relay.BaseURL, h.relay.APIKey, 1, middleware.CurrentUserID(c))

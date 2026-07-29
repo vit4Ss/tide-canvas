@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/chatattach"
 	"tidecanvas/internal/pkg/relaychat"
 )
 
@@ -31,6 +32,45 @@ type assistantChatInput struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
 	} `json:"messages"`
+	Attachments []assistantAttach `json:"attachments"`
+}
+
+// assistantAttach 是面板发来的一条附件（canvas-assistant-panel.tsx 的
+// attachments.map）。注意它带的是 FileVO 的 type/mimeType，没有 kind——
+// 种类由 attachKind 在服务端推导，与前端 referenceKindFromMeta 同口径。
+type assistantAttach struct {
+	Name     string `json:"name"`
+	URL      string `json:"url"`
+	Type     string `json:"type"`     // FileVO.fileType: image | video | other
+	MimeType string `json:"mimeType"` // 如 image/png、application/pdf、audio/mpeg
+}
+
+// attachKind 把附件归到 chatattach 认识的四类。镜像前端
+// upload-limits.ts 的 referenceKindFromMeta，额外单独识别 audio——
+// chatattach 对音频有专门的「无法收听」说明文案，归进 file 会被当文档去抓取。
+func attachKind(a assistantAttach) string {
+	t := strings.ToLower(strings.TrimSpace(a.Type))
+	mt := strings.ToLower(strings.TrimSpace(a.MimeType))
+	switch {
+	case t == "image" || strings.HasPrefix(mt, "image/"):
+		return "image"
+	case t == "video" || strings.HasPrefix(mt, "video/"):
+		return "video"
+	case strings.HasPrefix(mt, "audio/"):
+		return "audio"
+	default:
+		return "file"
+	}
+}
+
+func toChatAttaches(atts []assistantAttach) []chatattach.Attach {
+	out := make([]chatattach.Attach, 0, len(atts))
+	for _, a := range atts {
+		if u := strings.TrimSpace(a.URL); u != "" {
+			out = append(out, chatattach.Attach{URL: u, Kind: attachKind(a)})
+		}
+	}
+	return out
 }
 
 // runAssistantChat handles handler == "assistant_chat": call the relay text model
@@ -43,7 +83,9 @@ func (s *service) runAssistantChat(ctx context.Context, m *model.AiModel, dto ge
 	var in assistantChatInput
 	_ = json.Unmarshal(dto.Input, &in)
 	prompt := strings.TrimSpace(in.Prompt)
-	if prompt == "" {
+	atts := toChatAttaches(in.Attachments)
+	// 只有附件没正文也算有效输入（面板会补默认提示词，这里是防御）。
+	if prompt == "" && len(atts) == 0 {
 		return GenerateResult{}, errors.New("请输入内容")
 	}
 
@@ -74,7 +116,15 @@ func (s *service) runAssistantChat(ctx context.Context, m *model.AiModel, dto ge
 		}
 		msgs = append(msgs, relaychat.Msg{Role: role, Content: content})
 	}
-	msgs = append(msgs, relaychat.Msg{Role: "user", Content: prompt})
+	// 当前轮挂附件：图片走 image_url part，文档抓下来走 file part，视频/音频
+	// 与读取失败的情况由 note 以文字说明并入正文（与生成页对话同一套实现，
+	// 见 pkg/chatattach）。历史消息不带附件——它们只有落库的纯文本。
+	imageURLs := chatattach.ImageURLs(atts)
+	docFiles, docNote := chatattach.Extractor{SelfHost: s.docHost}.FileParts(ctx, atts)
+	if docNote != "" {
+		prompt = strings.TrimSpace(prompt + "\n\n" + docNote)
+	}
+	msgs = append(msgs, relaychat.UserWithAttachments(prompt, imageURLs, docFiles))
 
 	reply, err := s.relay.Chat(ctx, modelKey, msgs)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -25,6 +26,24 @@ import (
 	"tidecanvas/internal/pkg/relaychat"
 	"tidecanvas/internal/pkg/response"
 )
+
+// errOptimizeUnusable 标记「调用方自己能处理」的失败：缺输入、未配置文本模型。
+// 用哨兵包装而不是靠比对文案，是因为 handler 必须据此选错误码——这类要走
+// 400 让文案原样到达用户/管理员；真正的上游故障仍走 500 收敛成统一话术。
+var errOptimizeUnusable = errors.New("optimize unusable")
+
+func optimizeUnusable(msg string) error {
+	return fmt.Errorf("%w: %s", errOptimizeUnusable, msg)
+}
+
+// optimizeUnusableMsg 取回 optimizeUnusable 包装的原始文案（去掉哨兵前缀）。
+func optimizeUnusableMsg(err error) string {
+	msg := err.Error()
+	if i := strings.Index(msg, ": "); i >= 0 {
+		return msg[i+2:]
+	}
+	return msg
+}
 
 // optimizePromptDTO is the request body for prompt optimization.
 type optimizePromptDTO struct {
@@ -49,6 +68,13 @@ func (h *handler) optimizePrompt(c *gin.Context) {
 			response.Fail(c, response.CodeQuotaInsufficient, "积分不足，请充值后再试")
 			return
 		}
+		// 调用方可自行处理的（缺输入 / 未配置文本模型）走 400，文案原样到达；
+		// 其余是上游/内部故障，仍按 500 收敛成统一话术，原文只进日志。
+		if errors.Is(err, errOptimizeUnusable) {
+			response.Fail(c, response.CodeBadRequest, optimizeUnusableMsg(err))
+			return
+		}
+		logger.L().Warn("ai: optimize prompt failed", zap.Error(err))
 		response.Fail(c, response.CodeServerError, err.Error())
 		return
 	}
@@ -83,14 +109,14 @@ func (s *service) optimizeCost(ctx context.Context, userID idgen.ID) int {
 func (s *service) optimizePrompt(ctx context.Context, userID idgen.ID, prompt string) (string, error) {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
-		return "", errors.New("请先输入提示词")
+		return "", optimizeUnusable("请先输入提示词")
 	}
 	if s.relay == nil {
-		return "", errors.New("AI 优化未启用：未配置中转站密钥")
+		return "", optimizeUnusable("AI 优化未启用：未配置中转站密钥")
 	}
 	mm := s.repo.textModel()
 	if mm == nil {
-		return "", errors.New("AI 优化未启用：请在模型管理添加文本模型并设为「AI 优化主模型」")
+		return "", optimizeUnusable("AI 优化未启用：请在模型管理添加文本模型并设为「AI 优化主模型」")
 	}
 
 	// Same pricing path as /generate (creditCost override → catalog price →

@@ -87,6 +87,49 @@ func TestUserFacingGenError(t *testing.T) {
 		{"blocked by content policy", "内容未通过安全审核，请调整后重试"},
 		{"relaymedia: mxapi: 502 BAD_GATEWAY connection reset", sys},
 		{"context deadline exceeded", sys},
+
+		// 审核类优先于输入类:回执带 prompt 字样也不能被「提示词」规则截胡。
+		{"relaymedia: your prompt was flagged by our moderation system", "内容未通过安全审核，请调整后重试"},
+		{"relaymedia: NSFW content detected", "内容未通过安全审核，请调整后重试"},
+		// OpenAI 安审真实回执(经中转站透传):含 request ID 与 help.openai.com,
+		// 一个字都不能出站,只认 "safety system" 特征。
+		{`relaymedia: HTTP 400: {"error":{"message":"Your request was rejected by the ` +
+			`safety system. If you believe this is an error, contact us at help.openai.com ` +
+			`and include the request ID e04b5e0d-02da-4649-b0ff-23b97c91fc5a.","code":400,` +
+			`"metadata":{"provider_name":"OpenAI"}}}`, "内容未通过安全审核，请调整后重试"},
+		{"relaymedia: request rejected: artist name not allowed", "内容涉及受保护的名称或作品，请改用描述性表达后重试"},
+		// 参考图版权:上游文案已是中文,但带厂商名与内部码,仍不能出站;且必须走
+		// 「换图」而不是通用的「改描述」。
+		{"dimensio: 参考图可能涉及版权限制，请修改后重试 (2039)", "参考图可能涉及版权限制，请更换参考素材后重试"},
+
+		// 音乐:歌词过长要先于「歌词必填」命中。
+		{"relaymedia: lyrics is too long (max 3000 chars)", "歌词过长，请精简后重试"},
+		{"relaymedia: lyrics is required for this task", "请填写歌词后重试"},
+
+		// 参考素材:含我们自抛的 edits 校验。
+		{"relaymedia: edits require at least one image url", "请先上传所需的参考素材后重试"},
+		{"relaymedia: failed to download image from url", "参考素材无法读取，请重新上传后重试"},
+		{"relaymedia: unsupported image format: image/heic", "参考素材格式不支持，请改用 JPG / PNG 后重试"},
+		{"relaymedia: HTTP 400: image too large", "参考素材体积或分辨率超限，请压缩后重试"},
+
+		// 提示词:空与超长分流。
+		{"relaymedia: prompt is required", "请输入提示词后重试"},
+		{"relaymedia: audio requires input text or extras", "请输入提示词后重试"},
+		{"relaymedia: prompt is too long", "提示词过长，请精简后重试"},
+
+		// 生成参数。
+		{"relaymedia: HTTP 400: unsupported aspect ratio 21:9", "所选画面比例或尺寸不受支持，请调整后重试"},
+		{"relaymedia: invalid duration: must be 5 or 10", "所选时长不受支持，请调整后重试"},
+
+		// 限流:不甩锅给用户,但给可操作动作。
+		{"relaymedia: HTTP 429: rate limit exceeded", "当前生成排队较多，请稍后重试"},
+
+		// 我们的问题,必须留在系统异常——不能让用户去改提示词。
+		{"relaymedia: HTTP 402: insufficient balance", sys},
+		{"relaymedia: HTTP 401: invalid api key", sys},
+		{"relaymedia: task abc timed out: context deadline exceeded", sys},
+		{"relaymedia: response body exceeds 1048576 bytes", sys},
+		{"relaymedia: task abc succeeded with no media url", sys},
 	}
 	for _, c := range cases {
 		got := userFacingGenError(errStr(c.raw))

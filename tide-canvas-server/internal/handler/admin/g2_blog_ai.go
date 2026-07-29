@@ -65,13 +65,15 @@ func (h *blogHandler) aiPolish(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, "请先填写正文")
 		return
 	}
+	// 未配置 ≠ 服务器故障：这两条是写给管理员看的操作指引，用 500 会被
+	// response.Fail 的统一话术抹成「请联系客服」——而管理员自己就是客服。
 	if h.relay == nil {
-		response.Fail(c, response.CodeServerError, "AI 优化未启用：未配置中转站密钥")
+		response.Fail(c, response.CodeBadRequest, "AI 优化未启用：未配置中转站密钥")
 		return
 	}
 	modelKey := h.polishModelKey()
 	if modelKey == "" {
-		response.Fail(c, response.CodeServerError, "AI 优化未启用：请在模型管理添加文本模型并设为「AI 优化主模型」")
+		response.Fail(c, response.CodeBadRequest, "AI 优化未启用：请在模型管理添加文本模型并设为「AI 优化主模型」")
 		return
 	}
 

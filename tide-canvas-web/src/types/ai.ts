@@ -92,19 +92,23 @@ export interface AiGenerationLogVO {
   operationType: string;
   model: string;
   operation: string;
+  /** 仅管理员：非管理员调 /api/ai/logs 时后端置空（下同） */
   requestUrl: string;
-  /** 上游请求体:后端实际发给供应商/中转站的 payload */
+  /** 仅管理员：上游请求体,后端实际发给供应商/中转站的 payload */
   requestBody: string;
   /** 用户输入参数:前端发给后端的原始参数(仅详情接口返回) */
   inputParams?: string;
   httpStatus: number;
+  /** 仅管理员：上游响应原文 */
   responseBody: string;
+  /** 仅管理员：供应商侧任务标识 */
   upstreamTaskId: string;
   success: number;
   resultUrl: string;
+  /** 非管理员拿到的是统一话术（与任务失败同源），不是上游原文 */
   errorMsg: string;
   durationMs: number;
-  /** 上游成本（USD）；中转站无此字段时为空 */
+  /** 仅管理员：上游成本（USD）；中转站无此字段时为空 */
   cost?: number;
   createTime: string;
   // 关联展示字段（后端按 id 回填）
