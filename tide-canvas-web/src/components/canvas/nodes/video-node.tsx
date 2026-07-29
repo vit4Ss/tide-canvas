@@ -210,30 +210,42 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   const isMultiSelect = useCanvasStore((s) => s.selectedNodeIds.size > 1);
   const showAuxUI = isSelected && !isDragging && !isMultiSelect;
 
-  // ===== 引用（@ 提及）系统：入边图片源节点 → 可内联引用的「图片N」 =====
+  // ===== 引用（@ 提及）系统：入边源节点 → 可内联引用的「图片N」/「视频N」 =====
   const refsSig = useCanvasStore((s) =>
     s.connections
       .filter((c) => c.targetId === node.id)
       .map((c) => {
         const src = s.nodes.find((n) => n.id === c.sourceId);
-        return src && src.type === "image" && src.imageSrc ? src.id + "~" + src.imageSrc + "~" + (src.title || "") : "";
+        if (src && src.type === "image" && src.imageSrc) return "i~" + src.id + "~" + src.imageSrc + "~" + (src.title || "");
+        if (src && src.type === "video" && src.videoSrc) return "v~" + src.id + "~" + src.videoSrc + "~" + (src.title || "");
+        return "";
       })
       .filter(Boolean)
       .join("|")
   );
   const refs = useMemo<RefItem[]>(() => {
     const st = useCanvasStore.getState();
-    const out: RefItem[] = [];
-    // 仅入边「图片」源节点参与编号，顺序与 handleGenerate 收集的 imageUrls 一致 → 「图片N」严格对齐第 N 张参考图
+    // 两类各自从 1 起编号，且都按 st.connections 的遍历序——handleGenerate 里的
+    // sources 用的是同一个顺序，imageUrls / videoUrls 由它 filter 而来，
+    // 因此「图片N」严格对齐第 N 张参考图、「视频N」对齐第 N 个参考视频。
+    const images: RefItem[] = [];
+    const videos: RefItem[] = [];
     for (const c of st.connections) {
       if (c.targetId !== node.id) continue;
       const src = st.nodes.find((n) => n.id === c.sourceId);
-      if (!src || src.type !== "image" || !src.imageSrc) continue;
-      out.push({ id: src.id, thumb: src.imageSrc, title: src.title || "", index: out.length + 1 });
+      if (!src) continue;
+      if (src.type === "image" && src.imageSrc) {
+        images.push({ id: src.id, thumb: src.imageSrc, title: src.title || "", index: images.length + 1, kind: "image" });
+      } else if (src.type === "video" && src.videoSrc) {
+        // 视频没有可直接放进 <img> 的封面，thumb 留空走 ▶ 降级字形
+        videos.push({ id: src.id, thumb: "", title: src.title || "", index: videos.length + 1, kind: "video" });
+      }
     }
-    return out;
+    // 只有「全能参考」会把 videoReferences 下发给模型；其余模式下入边视频根本不参与
+    // 生成，给它编号等于让用户引用一个模型收不到的东西。
+    return videoTab === "全能参考" ? [...images, ...videos] : images;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refsSig, node.id]);
+  }, [refsSig, node.id, videoTab]);
   // 实时统计连接到本节点的「有素材」源节点数（图片/视频），用于按模式启用/禁用 Tab
   const connSig = useCanvasStore((s) => {
     let img = 0;

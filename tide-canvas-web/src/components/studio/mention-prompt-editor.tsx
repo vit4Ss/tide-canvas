@@ -228,7 +228,7 @@ function hasUnpilledToken(editor: HTMLDivElement, refs: MentionRef[]): boolean {
       return (node.textContent || "").split(ZERO_WIDTH_SPACE).join("");
     }
     if (!(node instanceof HTMLElement)) return "";
-    if (node.dataset.mention) return " "; // pill 哨兵：隔断相邻文本
+    if (node.dataset.mention) return " "; // pill 哨兵：隔断相邻文本
     if (node.tagName === "BR") return "\n";
     const inner = Array.from(node.childNodes).map(plain).join("");
     return node.tagName === "DIV" ? "\n" + inner : inner;

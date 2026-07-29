@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, Bot, ChevronDown, ChevronRight, Expand, FileText, Loader2, Maximize2, Menu, Minimize2, Plus, Sparkles, X, Zap } from "lucide-react";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { referenceKindFromFile, referenceKindFromMeta, resolveModelReferenceLimitBytes, validateKnownFileSize } from "@/lib/upload-limits";
+import { PromptRefEditor } from "./nodes/prompt-ref-editor";
+import type { RefItem } from "./nodes/prompt-ref-utils";
 import { toast } from "@/components/shared/toast";
 import { AiModelType, AiTaskStatus, type AiModelVO, type AiTaskVO } from "@/types/ai";
 import type { FileVO } from "@/types/file";
@@ -66,6 +68,53 @@ function formatFileSize(size: number) {
 
 function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** 附件 → 可 @ 引用的「图片N」列表 + 与 files 等长的标签数组（不可引用处为 null）。
+ *
+ *  只有**图片**可引用：服务端 assistant_chat 把图片作为 image_url part 下发，
+ *  视频/音频/文档不进模型（转成一句文字说明或 file part），给它们编号等于让用户
+ *  引用一个模型看不见的东西。
+ *  过滤条件与服务端 chatattach.ImageURLs 逐条对齐（只收绝对 URL / data:）——
+ *  否则前端编到「图片2」的那张在模型那边可能是第 1 张，错位比不给更糟。
+ *  编号规则只此一份：memo 与 removeAttachment 的重映射共用，避免两处漂移。 */
+function buildMentionRefs(files: FileVO[]): { mentionRefs: RefItem[]; refLabels: (string | null)[] } {
+  const mentionRefs: RefItem[] = [];
+  const refLabels: (string | null)[] = [];
+  for (const file of files) {
+    const url = (file.fileUrl ?? "").trim();
+    if (referenceKindFromMeta(file) === "image" && /^(https?:|data:)/.test(url)) {
+      const index = mentionRefs.length + 1;
+      mentionRefs.push({ id: `${file.id}-${index}`, thumb: url, title: file.originalName, index, kind: "image" });
+      refLabels.push(`图片${index}`);
+    } else {
+      refLabels.push(null);
+    }
+  }
+  return { mentionRefs, refLabels };
+}
+
+/** 附件删除后重写正文里已写下的 token。
+ *
+ *  「图片N」是位置编号，删掉一张会让其后编号整体前移，两类 token 都要处理：
+ *   · **幸存者**：旧 label → 新 label（「图片3」→「图片2」）；
+ *   · **被删那张自己的 token**：after 为 null，必须**删掉**而不是留着。
+ *     留着的话它会与重编号后的幸存者撞号——[A,B] 里删掉 A，正文
+ *     「对比图片1和图片2」会变成「对比图片1和图片1」，两个 pill 都绑到 B，
+ *     模型被要求「拿同一张图和自己对比」，还照扣积分。
+ *  所以 map 必须区分「没这个 key」和「映射到 null」：前者保留，后者删除。
+ *
+ *  一次性替换（单趟 replace），避免「图片1→图片2、图片2→图片3」链式误替。 */
+function remapRefTokens(text: string, before: (string | null)[], after: (string | null)[]): string {
+  const remap = new Map<string, string | null>();
+  for (let i = 0; i < before.length; i += 1) {
+    const from = before[i];
+    if (!from) continue; // 非图片槽位不参与，永不作为 key
+    const to = after[i];
+    if (to !== from) remap.set(from, to); // to === null ⇒ 该 token 整个删掉
+  }
+  if (!remap.size) return text;
+  return text.replace(/(图片)(\d+)(?!\d)/g, (m) => (remap.has(m) ? (remap.get(m) ?? "") : m));
 }
 
 function attachmentSummary(files?: FileVO[]) {
@@ -233,7 +282,6 @@ export function CanvasAssistantPanel() {
   const [inputExpanded, setInputExpanded] = useState(false);
   const [resizing, setResizing] = useState(false);
   const [resizeHover, setResizeHover] = useState(false);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messageSeqRef = useRef(0);
@@ -242,12 +290,13 @@ export function CanvasAssistantPanel() {
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const resizingRef = useRef(false);
 
-  useLayoutEffect(() => {
-    const input = inputRef.current;
-    if (!input) return;
-    input.style.height = "auto";
-    input.style.height = Math.max(56, input.scrollHeight) + "px";
-  }, [message]);
+  // ── @ 引用 ────────────────────────────────────────────────────────────────
+  // 只有**图片**附件可引用：服务端 assistant_chat 把图片作为 image_url part 下发，
+  // 而视频/音频/文档不进模型（分别转成一句文字说明或 file part），给它们编号等于
+  // 让用户引用一个模型看不见的东西。
+  // 过滤条件必须与服务端 chatattach.ImageURLs 逐条对齐（只收绝对 URL / data:），
+  // 否则前端编到「图片2」的那张，在模型那边可能是第 1 张——编号错位比不给更糟。
+  const { mentionRefs, refLabels } = useMemo(() => buildMentionRefs(attachments), [attachments]);
 
   useEffect(() => {
     const restored = loadStoredSessions();
@@ -463,9 +512,21 @@ export function CanvasAssistantPanel() {
     setUploadProgress(0);
   };
 
-  // 按下标移除:同一文件上传两次 fileUrl 相同,按 URL 过滤会一删删两条
+  // 按下标移除:同一文件上传两次 fileUrl 相同,按 URL 过滤会一删删两条。
+  // 删除会让其后的「图片N」整体前移，正文里已写下的 token 必须同步重写，
+  // 否则会静默改指另一张图或越界。映射在 updater 之外算好（本文件约定：
+  // state updater 里不做副作用），再一次性写回。
   const removeAttachment = (index: number) => {
-    setAttachments((current) => current.filter((_, i) => i !== index));
+    const next = attachments.filter((_, i) => i !== index);
+    const nextLabels = buildMentionRefs(next).refLabels;
+    // nextLabels 对齐**新**数组，refLabels 对齐**旧**数组，长度差一。
+    // 必须先把新标签映射回旧下标再配对：删掉 index 后，旧 k>index 落到新 k-1。
+    const alignedNext = attachments.map((_, k) =>
+      k === index ? null : nextLabels[k < index ? k : k - 1] ?? null,
+    );
+    const remapped = remapRefTokens(message, refLabels, alignedNext);
+    setAttachments(next);
+    if (remapped !== message) setMessage(remapped);
   };
 
   // 轮询守卫:面板卸载(离开画布)或切换会话后停止聊天任务轮询,避免无谓请求 / 卸载后 setState。
@@ -595,14 +656,8 @@ export function CanvasAssistantPanel() {
     }
   };
 
-  const handleInputKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // 中文输入法合成态:Enter 是在选拼音候选词,不是发送——不拦会把半截拼音发出去并扣积分
-    if (event.nativeEvent.isComposing) return;
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      sendMessage();
-    }
-  };
+  // 回车发送 / Shift+回车换行、以及中文输入法合成态不误发，都由 PromptRefEditor
+  // 内部处理（它还要在 @ 菜单打开时把回车让给候选选中），这里只提供 onSubmit。
 
   const canSubmit = Boolean(message.trim() || attachments.length) && !sending && !uploading;
 
@@ -795,7 +850,11 @@ export function CanvasAssistantPanel() {
                   <FileText className="h-3.5 w-3.5 shrink-0 text-neutral-500 dark:text-neutral-400" />
                   <div className="min-w-0">
                     <div className="max-w-[210px] truncate font-medium">{file.originalName}</div>
-                    <div className="text-[11px] text-neutral-500 dark:text-neutral-400">{formatFileSize(file.fileSize)}</div>
+                    <div className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                      {/* 可 @ 引用的图片标出编号，与正文里的「图片N」对应 */}
+                      {refLabels[index] ? `${refLabels[index]} · ` : ""}
+                      {formatFileSize(file.fileSize)}
+                    </div>
                   </div>
                   <button
                     type="button"
@@ -816,20 +875,18 @@ export function CanvasAssistantPanel() {
             </div>
           )}
           <div className="relative">
-            <textarea
-              ref={inputRef}
+            <PromptRefEditor
               value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={handleInputKeyDown}
+              onChange={setMessage}
+              refs={mentionRefs}
+              // 附件卡片已带「图片N」角标，不再重复一行缩略图
+              showThumbs={false}
               placeholder="开启你的灵感之旅"
-              rows={2}
-              className={(inputExpanded ? "min-h-[180px]" : "min-h-[64px]") + " block w-full resize-none overflow-hidden rounded-none border-0 bg-transparent p-0 pr-8 text-sm leading-5 text-neutral-900 outline-none ring-0 placeholder:text-neutral-400 focus:border-transparent focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 dark:text-neutral-100 dark:placeholder:text-neutral-500"}
-              style={{
-                appearance: "none",
-                WebkitAppearance: "none",
-                border: "none",
-                outline: "none",
-                boxShadow: "none",
+              onSubmit={() => { if (canSubmit) void sendMessage(); }}
+              editorClassName="block w-full overflow-y-auto whitespace-pre-wrap break-words rounded-none border-0 bg-transparent p-0 pr-8 text-sm leading-5 text-neutral-900 outline-none ring-0 focus:border-transparent focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 dark:text-neutral-100"
+              editorStyle={{
+                minHeight: inputExpanded ? 180 : 64,
+                maxHeight: inputExpanded ? 360 : 160,
               }}
             />
             <button
