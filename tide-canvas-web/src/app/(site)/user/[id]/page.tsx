@@ -15,7 +15,7 @@ import { useAuthStore } from "@/stores/use-auth-store";
 import { Avatar } from "@/components/flux/atoms";
 import { toast } from "@/components/shared/toast";
 import { mesh } from "@/lib/mesh";
-import { fmt } from "@/mock";
+import { fmt } from "@/lib/utils";
 
 function coverFallback(id: string): string {
   let h = 0;

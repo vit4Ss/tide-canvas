@@ -38,7 +38,7 @@ import {
   FLOOR_SOURCE_OPTIONS,
   FLOOR_TYPE_OPTIONS,
   WORKS_FLOOR_TYPES,
-} from "@/mock/admin-home-floors";
+} from "@/components/admin/admin-constants";
 import { HOME_CTA_TARGETS } from "@/lib/flux-presets";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminHomeFloorsApi } from "@/lib/admin-home-floors-api";

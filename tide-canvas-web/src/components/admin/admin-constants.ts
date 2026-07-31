@@ -1,15 +1,13 @@
 // ============================================================================
-// Admin console shared primitives — types + color helpers + sidebar icons.
+// Admin console shared primitives — types + color helpers + sidebar icons +
+// chart palette + 首页楼层 UI 选项集。
 //
-// 历史：本模块最初承载 design-ref/liuguang/admin.js 的整套 dashboard mock 数据。
-// 后台各页面已全部接入真实 /api/admin/* 接口（2026-07 审计确认无任何页面消费
-// mock 数据），这里只保留仍被引用的共享原语：
+// 后台各页面已全部接入真实 /api/admin/* 接口，这里只保留跨页面复用的共享原语：
 //  - 类型：Kpi / PillTone / 图表行类型（charts.tsx 复用）
 //  - adminSwatch(name)：名字哈希 → 双色渐变（头像/模型芯片/榜单字形）
 //  - CHART_COLORS：recharts 类目色板（用户定稿 v3）
 //  - ADMIN_ICONS：侧边栏 SVG path 表
-// 已废弃的 mock 数据集（DASHBOARD_* / TREND / *_LEADERBOARD / OPS_ROWS …）
-// 与各 section 的 mock 文件（admin-users/-works/…）一并删除。
+//  - FLOOR_*：/admin/home-floors 编辑弹窗的 select/chip 选项集
 // ============================================================================
 
 import { hueSwatch } from "@/lib/swatch";
@@ -138,7 +136,39 @@ export const ADMIN_ICONS: Record<string, string> = {
   pay: "M2 7h20v12H2zM2 11h20M6 15h4",
   chart: "M3 3v18h18M7 14l3-4 3 3 4-6",
   promo: "M3 11l18-5v12L3 14v-3zM7 12v6a2 2 0 0 0 4 0v-5",
-  cog: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 13a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-2.82 1.17V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 14H4a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 6 8.4l-.38-.38a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 11 4.6V4a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 2.82 1.17l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 11H20a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z",
+  cog: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 13a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-2.82 1.17V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 14H4a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 6 8.4l-.38-.38a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 11 4.6V4a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 2.82 1.17l.06-.06A1.65 1.65 0 0 0 19.4 11H20a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z",
   mail: "M3 6h18v12H3zM3 7l9 7 9-7",
   bell: "M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0",
 };
+
+/* ──────────────────────────────────────────────────────────────────────────
+   首页楼层 (Home floors) — floorModal 的 UI 选项集（select/chip options）。
+   楼层数据本身来自真实接口 /api/admin/home/floors（adminHomeFloorsApi）。
+   ──────────────────────────────────────────────────────────────────────── */
+
+/** floorModal — 楼层类型 select options。前 7 项与公开首页的区块一一对应
+ *  （type 即匹配键，见 (site)/page.tsx DEFAULT_FLOOR_TYPES）；创作者榜/自定义
+ *  暂无对应区块，首页会忽略。 */
+export const FLOOR_TYPE_OPTIONS = [
+  "英雄区",
+  "能力展示",
+  "无限画布",
+  "作品流",
+  "模型跑马灯",
+  "FAQ",
+  "价格",
+  "创作者榜",
+  "自定义",
+] as const;
+
+/** floorModal — 内容源选项（多选、可组合）。key 存库（home_floor.content_source，
+ *  逗号分隔），label 展示。仅「吃作品」的楼层出现该控件（见 WORKS_FLOOR_TYPES）；
+ *  后端按选择顺序取审核通过作品、去重合并（内容源解析见 content/service.go）。 */
+export const FLOOR_SOURCE_OPTIONS = [
+  { key: "hot", label: "实时热度" },
+  { key: "latest", label: "最新发布" },
+] as const;
+
+/** 需要「内容源」的楼层类型 —— 目前只有作品流吃动态社区作品；其余楼层为静态或
+ *  有自己的固有来源（模型跑马灯=模型），编辑弹窗里不显示内容源。 */
+export const WORKS_FLOOR_TYPES = ["作品流"] as const;

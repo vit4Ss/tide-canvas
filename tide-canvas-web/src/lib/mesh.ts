@@ -8,6 +8,9 @@
 //
 // Pure, framework-agnostic. Returns a CSS `background` shorthand string.
 
+/** Raw hue triplet [h1, h2, h3] stored on covers/avatars; derive CSS via mesh(). */
+export type MeshHues = [h1: number, h2: number, h3: number];
+
 /** Map any raw hue into the cool 198..318 band, matching the design exactly. */
 function mapHue(h: number): number {
   return 198 + ((((h % 360) + 360) % 360) / 360) * 120; // 198..318
@@ -31,6 +34,11 @@ export function mesh(h1: number, h2: number, h3: number): string {
     `radial-gradient(140% 140% at 50% 108%, hsl(${c} 8% 26%) 0%, transparent 58%)`,
     `linear-gradient(155deg, hsl(${a} 14% 13%) 0%, hsl(${b} 16% 7%) 100%)`,
   ].join(', ');
+}
+
+/** Build the CSS `background` value from a stored hue triplet. */
+export function coverBg(hues: MeshHues): string {
+  return mesh(hues[0], hues[1], hues[2]);
 }
 
 /**

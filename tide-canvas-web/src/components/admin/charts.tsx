@@ -34,7 +34,7 @@ import {
   type LineSeries,
   type ModelHealth,
   type Segment,
-} from "@/mock/admin";
+} from "@/components/admin/admin-constants";
 
 /* Chart palette aligned with dense admin console tokens. */
 const GRID = "#f0f0f2";

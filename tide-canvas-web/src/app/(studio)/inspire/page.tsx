@@ -20,7 +20,7 @@ import { parseTags, type PromptVO, type CollectionVO } from "@/types/inspiration
 import { useReveal } from "@/components/site/use-reveal";
 import { toast } from "@/components/shared/toast";
 import { mesh } from "@/lib/mesh";
-import { fmt } from "@/mock";
+import { fmt } from "@/lib/utils";
 import styles from "./inspire.module.css";
 
 type SortKey = "hot" | "new";

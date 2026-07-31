@@ -18,7 +18,7 @@
 import Link from "next/link";
 import { useMemo } from "react";
 import type { CSSProperties } from "react";
-import { fmt } from "@/mock";
+import { fmt } from "@/lib/utils";
 import { matchBrandIcon } from "@/lib/model-brand";
 import { grayscaleSwatch } from "@/lib/swatch";
 import type { ModelLiteVO } from "@/types/content";

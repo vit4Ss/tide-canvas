@@ -23,7 +23,7 @@ import { marketApi, type StudioModelVO } from "@/lib/market-api";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";
 import { AiTaskStatus, type AiToolVO } from "@/types/ai";
-import { coverBg } from "@/mock";
+import { coverBg } from "@/lib/mesh";
 
 interface ToolDef {
   title: string;
@@ -34,7 +34,7 @@ interface ToolDef {
   hd?: boolean;
   /** requires a user prompt describing the change (局部重绘) */
   needPrompt?: boolean;
-  /** mesh-gradient cover hues — 与首页核心能力卡同源（mock/home.ts CAPS） */
+  /** mesh-gradient cover hues — 与首页核心能力卡同源（@/content/home CAPS） */
   cover: [number, number, number];
   placeholder?: string;
   /** 额外生成参数——随请求原样下发（计费按这些原始入参解析，须由客户端发送） */

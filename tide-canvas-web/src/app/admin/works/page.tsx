@@ -31,7 +31,7 @@ import {
   type Column,
   TableSkeleton,
 } from "@/components/admin";
-import type { PillTone } from "@/mock/admin";
+import type { PillTone } from "@/components/admin/admin-constants";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminWorksApi } from "@/lib/admin-works-api";
 import { confirmDialog } from "@/components/shared/confirm";

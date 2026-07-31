@@ -7,7 +7,7 @@
    <StatusPill tone="green">正常</StatusPill>
    ============================================================================ */
 
-import type { PillTone } from "@/mock/admin";
+import type { PillTone } from "@/components/admin/admin-constants";
 
 export interface StatusPillProps {
   /** Tone → maps to `.tag2.<tone>` (green | gray | amber | red | blue). */

@@ -36,8 +36,8 @@ import {
   TableSkeleton,
   useFormSectionLabelId,
 } from "@/components/admin";
-import type { PillTone } from "@/mock/admin";
-import { adminSwatch } from "@/mock/admin";
+import type { PillTone } from "@/components/admin/admin-constants";
+import { adminSwatch } from "@/components/admin/admin-constants";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";
 import { confirmDialog } from "@/components/shared/confirm";

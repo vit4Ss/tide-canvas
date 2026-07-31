@@ -16,7 +16,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { HERO_PROMPTS, fmt } from "@/mock";
+import { HERO_PROMPTS } from "@/content/home";
+import { fmt } from "@/lib/utils";
 import { ctaTargetHref } from "@/lib/flux-presets";
 import { toast } from "@/components/shared/toast";
 import HeroWall from "@/components/site/hero-wall";

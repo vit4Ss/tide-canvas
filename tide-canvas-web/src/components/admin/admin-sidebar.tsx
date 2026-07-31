@@ -9,7 +9,7 @@
 import Link from "next/link";
 import { Logo } from "@/components/flux/atoms";
 import { usePathname, useRouter } from "next/navigation";
-import { ADMIN_ICONS } from "@/mock/admin";
+import { ADMIN_ICONS } from "@/components/admin/admin-constants";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";

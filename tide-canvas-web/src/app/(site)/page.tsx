@@ -4,7 +4,7 @@
    HOME (route "/") — React App-Router port of the liuguang home page.
    Source: design-ref/首页-流光.html (structure/copy) +
            design-ref/liuguang/home-render.js (dynamic logic) +
-           design-ref/liuguang/home-data.js (now @/mock).
+           design-ref/liuguang/home-data.js (now @/content/home).
 
    The (site) layout already renders <SiteNav/>, <SiteFooter/> and
    imports flux.css + pages.css — this file renders ONLY the page content using
@@ -24,7 +24,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { CAPS, coverBg, type Cap, type MeshHues } from "@/mock";
+import { CAPS, type Cap } from "@/content/home";
+import { coverBg, type MeshHues } from "@/lib/mesh";
 import { contentApi } from "@/lib/content-api";
 import { billingApi } from "@/lib/billing-api";
 import { aiApi } from "@/lib/api";
@@ -59,7 +60,7 @@ const DEFAULT_FLOOR_TYPES = [
 /** 能力卡分流：CORE 生成品类 → 创作台对应模式；TOOL 编辑功能 → 独立工具页
     （封装好提示词的一键处理，/tools/[op]）。工具卡现由后台「工具管理」
     （/api/ai/tools）下发，href 直接是 /tools/<key>；此表用于创作台卡片与
-    mock CAPS 兜底条目（接口未应答/失败时按出厂条目分流）。 */
+    出厂 CAPS 兜底条目（接口未应答/失败时按出厂条目分流）。 */
 /** 首页全局配置的出厂默认（与后端 DefaultHomeGlobalJSON 一致）——接口失败时
     背景与 CTA 仍按此渲染，首页不因配置接口降级。 */
 const DEFAULT_HOME_GLOBAL: HomeGlobalVO = {
@@ -92,7 +93,7 @@ export default function HomePage() {
   // 首页全局配置（背景流光 + 首屏 CTA）：null = 未返回（背景暂不挂载，
   // 避免先按默认预设渲染再跳变到后台配置）。
   const [homeCfg, setHomeCfg] = useState<HomeGlobalVO | null>(null);
-  // 独立工具配置（后台「工具管理」）：null = 未返回/失败（工具卡按 mock CAPS 兜底）。
+  // 独立工具配置（后台「工具管理」）：null = 未返回/失败（工具卡按出厂 CAPS 兜底）。
   const [tools, setTools] = useState<AiToolVO[] | null>(null);
 
   useEffect(() => {
@@ -151,7 +152,7 @@ export default function HomePage() {
   }, [floors]);
 
   // 能力卡列表：前 3 张（文生图/文生视频/图生图）固定为创作台入口；工具卡来自
-  // 后台「工具管理」（/tools/<key>），接口未应答/失败时回退 mock CAPS 出厂条目。
+  // 后台「工具管理」（/tools/<key>），接口未应答/失败时回退出厂 CAPS 条目。
   const capList = useMemo<(Cap & { href: string })[]>(() => {
     const withLink = (c: Cap) => ({ ...c, href: CAP_LINK[c.t] ?? "/studio" });
     const studio = CAPS.slice(0, 3).map(withLink);

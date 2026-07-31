@@ -30,7 +30,7 @@ import { toast } from "@/components/shared/toast";
 import { billingApi } from "@/lib/billing-api";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/stores/use-auth-store";
-import { fmt } from "@/mock";
+import { fmt } from "@/lib/utils";
 import { grayscaleSwatch } from "@/lib/swatch";
 import "./site-nav.css";
 

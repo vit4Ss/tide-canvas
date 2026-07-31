@@ -9,7 +9,7 @@
    ========================================================================== */
 
 import { useState } from "react";
-import { FAQS } from "@/mock";
+import { FAQS } from "@/content/home";
 
 export default function HomeFaq() {
   const [open, setOpen] = useState(0); // -1 = none

@@ -40,7 +40,7 @@ import { authApi, fileApi, projectApi } from "@/lib/api";
 import { pointsApi } from "@/lib/points-api";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { toast } from "@/components/shared/toast";
-import { fmt } from "@/mock";
+import { fmt } from "@/lib/utils";
 import { grayscaleSwatch } from "@/lib/swatch";
 import type { UserVO } from "@/types/user";
 import { OrdersPanel, PointsPanel } from "./ledger-panels";

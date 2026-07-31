@@ -38,3 +38,14 @@ export function formatFileSize(bytes: number): string {
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }
+
+/**
+ * Compact count formatter used by feeds/cards:
+ * 4820 -> "4.8k", 12400 -> "12k", 980 -> "980".
+ * Ported from the liuguang design's `fmt`.
+ */
+export function fmt(n: number): string {
+  if (n >= 10000) return (n / 1000).toFixed(0) + "k";
+  if (n >= 1000) return (n / 1000).toFixed(1) + "k";
+  return "" + n;
+}

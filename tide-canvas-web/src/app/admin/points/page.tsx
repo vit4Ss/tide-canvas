@@ -33,7 +33,7 @@ import {
   TableSkeleton,
   ListSkeleton,
 } from "@/components/admin";
-import type { Kpi, PillTone } from "@/mock/admin";
+import type { Kpi, PillTone } from "@/components/admin/admin-constants";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminPointsApi } from "@/lib/admin-points-api";
 import { toast } from "@/components/shared/toast";

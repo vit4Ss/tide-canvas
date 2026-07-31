@@ -5,7 +5,8 @@
 
    四列作品封面以不同速度缓慢纵向循环流动（纯 CSS transform 动画），整体
    轻微倾斜制造纵深感；真实作品来自 /api/community/posts（与作品广场同源），
-   接口为空或失败时回退到 mock 的 mesh 渐变磁贴，保证首屏永不空白。
+   接口为空或失败时回退到静态 mesh 渐变磁贴（@/content/home），保证首屏
+   永不空白。
 
    可读性由 pages.css 的 .hero-scrim 蒙版层保证（左侧重、右侧轻）。
    prefers-reduced-motion 下停止流动。
@@ -13,7 +14,8 @@
 
 import { useEffect, useState } from "react";
 import { communityApi } from "@/lib/community-api";
-import { ARTWORKS, coverBg } from "@/mock";
+import { HERO_WALL_FALLBACK_COVERS } from "@/content/home";
+import { coverBg } from "@/lib/mesh";
 
 type WallTile = { key: string; img?: string; bg?: string };
 
@@ -24,7 +26,7 @@ const RATIOS = ["3/4", "1/1", "4/5", "5/7", "1/1", "3/4"];
 const DURS = [58, 74, 64, 82];
 
 const fallbackTiles = (): WallTile[] =>
-  ARTWORKS.map((a) => ({ key: `m-${a.id}`, bg: coverBg(a.cover) }));
+  HERO_WALL_FALLBACK_COVERS.map((hues, i) => ({ key: `m-${i}`, bg: coverBg(hues) }));
 
 export default function HeroWall() {
   const [tiles, setTiles] = useState<WallTile[]>(fallbackTiles);

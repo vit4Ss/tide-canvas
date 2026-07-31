@@ -13,7 +13,7 @@ import { useAuthStore } from "@/stores/use-auth-store";
 import { orderApi, PENDING_ORDER_KEY } from "@/lib/billing-api";
 import { pointsApi, type CheckinStatusVO, type PointRecordVO } from "@/lib/points-api";
 import { toast } from "@/components/shared/toast";
-import { fmt } from "@/mock";
+import { fmt } from "@/lib/utils";
 import type { OrderVO } from "@/types/billing";
 
 /** RFC3339 → "YYYY-MM-DD HH:mm" for compact row metadata. */

@@ -21,8 +21,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { Artwork } from "@/mock";
-import { fmt } from "@/mock";
+import type { Artwork } from "@/types/artwork";
+import { fmt } from "@/lib/utils";
 import { mesh } from "@/lib/mesh";
 import { toast } from "@/components/shared/toast";
 import WorkModal from "@/components/site/work-modal";

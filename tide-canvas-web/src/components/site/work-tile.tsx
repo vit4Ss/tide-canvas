@@ -12,9 +12,9 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { communityApi } from "@/lib/community-api";
 import type { PostVO } from "@/types/community";
-import { mesh } from "@/lib/mesh";
-import type { Artwork, MeshHues } from "@/mock";
-import { fmt } from "@/mock";
+import { mesh, type MeshHues } from "@/lib/mesh";
+import type { Artwork } from "@/types/artwork";
+import { fmt } from "@/lib/utils";
 import { toast } from "@/components/shared/toast";
 
 /** 由作品 id 派生确定性 mesh 色相三元组（无封面时的渐变回退）。 */

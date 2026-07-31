@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { AdminAlert, AdminEmptyState, FilterBar, Panel, TableSkeleton } from "@/components/admin";
-import { adminSwatch } from "@/mock/admin";
+import { adminSwatch } from "@/components/admin/admin-constants";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminModelsApi } from "@/lib/admin-models-api";
 import { resolveModelSwatch } from "@/lib/model-brand";

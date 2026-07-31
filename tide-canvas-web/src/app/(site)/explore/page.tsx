@@ -31,7 +31,7 @@ import WorkModal from "@/components/site/work-modal";
 import WorkTile, { toArtwork, type ArtworkX } from "@/components/site/work-tile";
 import { toast } from "@/components/shared/toast";
 import { mesh } from "@/lib/mesh";
-import { fmt } from "@/mock";
+import { fmt } from "@/lib/utils";
 
 type SortKey = "hot" | "new" | "like";
 type TypeKey = "all" | "image" | "video";

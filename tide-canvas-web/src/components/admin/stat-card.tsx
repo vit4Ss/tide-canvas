@@ -7,7 +7,7 @@
    - bare annotation text (d without dir) stays muted
    ============================================================================ */
 
-import type { Kpi } from "@/mock/admin";
+import type { Kpi } from "@/components/admin/admin-constants";
 
 export type StatCardProps = Kpi;
 
