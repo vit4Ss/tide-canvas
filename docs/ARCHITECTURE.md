@@ -9,7 +9,7 @@ tide-canvas/
 │   ├── src/app/          # App Router:(site) (studio) (canvas) admin + projects
 │   ├── src/components/   # canvas/ flux/ site/ studio/ admin/ project/ shared/ ui/
 │   ├── src/styles/liuguang/  # 设计原版 CSS(flux/pages/studio/admin/chat)
-│   ├── src/mock/         # 移植自设计的 mock 数据(带 TS 类型)
+│   ├── src/content/      # 静态营销文案(FAQ/HERO_PROMPTS 等,带 TS 类型)
 │   ├── src/lib/ src/stores/ src/types/ src/hooks/
 │   └── design-ref/       # claude.ai/design「流光」原始稿(HTML/CSS/JS + app/*.jsx 参考)
 ├── tide-canvas-server/   # 后端 Go(Gin+GORM+MySQL+Redis)(59 个 .go)
@@ -28,7 +28,7 @@ tide-canvas/
 **分层:**
 - 视图:每页 `"use client"` TSX,沿用 liuguang 原 class;动态逻辑(打字机/筛选/手风琴/生成模拟)从 `liuguang/*.js` 改写为 React state。
 - 共享:`components/flux`(FluxField WebGL 背景、Icon、Avatar/Cover/Logo)、`lib/mesh.ts`(渐变占位)、`components/admin`(AdminTable/Modal/StatCard…)。
-- 数据:`src/mock/*`(全 mock,封面是 mesh 渐变三元组,空值回退渐变);真实接口层在 `lib/api.ts` + `lib/http.ts`(`Result` 信封解析、401 自动刷新、上传进度/OSS 直传回退)。
+- 数据:全部页面已接真实接口(`lib/api.ts` + `lib/http.ts`,`Result` 信封解析、401 自动刷新、上传进度/OSS 直传回退);静态营销文案在 `src/content/`,封面是 mesh 渐变三元组(`lib/mesh.ts`),空值回退渐变。`src/mock/` 已删除(2026-07)。
 - 状态:Zustand(`use-canvas-store` 画布、`use-auth-store` 鉴权)。
 
 ## 3. 后端架构(Go)
