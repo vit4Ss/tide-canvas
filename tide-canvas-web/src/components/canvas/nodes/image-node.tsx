@@ -1,11 +1,10 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { Button, Center, Group, Paper, Stack, Text, TextInput, ThemeIcon, UnstyledButton } from "@mantine/core";
 import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-canvas-store";
 import {
-  Image as ImageIcon, Upload, Plus, Maximize2, Copy,
+  Image as ImageIcon, Upload, Maximize2, Copy,
   Camera, ArrowUp, ChevronDown, ChevronRight, Zap, Download, X, Minimize2,
   ArrowLeft, LayoutGrid, Layers,
   Images, Orbit, Sun, Table, Brush, FlipHorizontal2,
@@ -20,33 +19,29 @@ import { ModelPicker } from "./model-picker";
 import { PromptRefEditor, PromptEditorModal } from "./prompt-ref-editor";
 import { PanoramaViewer } from "./panorama-viewer";
 import { InlinePanorama, type InlinePanoramaApi } from "./inline-panorama";
-import { type RefItem, inlineTextRefs } from "./prompt-ref-utils";
+import { type RefItem } from "./prompt-ref-utils";
 import { NodeChrome } from "./base/node-chrome";
+import { NodePorts } from "./base/node-ports";
 import { NodeSkillButton } from "./node-skill-button";
 import { skillApi, parseSkillParams } from "@/lib/skill-api";
 import type { SkillVO } from "@/types/skill";
-import { useAiGeneration } from "@/hooks/canvas/use-ai-generation";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/http";
-import { referenceKindFromMeta, resolveModelReferenceLimitBytes, validateKnownFileSize } from "@/lib/upload-limits";
+import { resolveModelReferenceLimitBytes } from "@/lib/upload-limits";
 import { sliceImageGrid } from "@/lib/image-slice";
-import { useAuth } from "@/hooks/use-auth";
 import { applyTeamFactor } from "@/lib/points";
 import { ossDisplayUrl } from "@/lib/oss-display";
 import { matrixPrice, keyVariants } from "@/lib/price-matrix";
 import { getImageCardSizeForRatio } from "@/lib/image-card-size";
-import { AiModelType, type AiModelVO } from "@/types/ai";
+import { AiModelType } from "@/types/ai";
 import { toast } from "@/components/shared/toast";
 import { Loader2 } from "lucide-react";
-
-interface Props {
-  node: CanvasNode;
-  isSelected: boolean;
-  isDragging?: boolean;
-  isConnectTarget?: boolean;
-  onNodeMouseDown: (nodeId: string, e: React.MouseEvent) => void;
-  onPortMouseDown?: (nodeId: string, side: "input" | "output", clientX: number, clientY: number) => void;
-}
+import type { CanvasNodeProps } from "./types/node-props";
+import { useAiModels, useMediaErrorRecovery, useNodePrompt, useNodeRuntime, useSyncContentSize } from "./shared/use-node-runtime";
+import { useMediaUpload } from "./shared/use-media-upload";
+import { useFileDownload } from "./shared/use-file-download";
+import { findRightColumnSpot, getIncomingSources, inlineIncomingTextRefs, parseModelConfig, stopEvent as stop, switchSkillModel, validateReferenceFileSizes } from "./shared/node-utils";
+import { NodeDimsBadge, NodeErrorBadge, NodeGeneratingOverlay, NodeMediaLightbox, NodeShell, NodeUploadingOverlay } from "./shared/node-overlays";
 
 // 自定义宫格选择器的最大行列（N×N 网格）
 const CUSTOM_MAX = 8;
@@ -317,22 +312,9 @@ const closestRatioLabel = (aspect: number) =>
 
 // memo 化：仅当自身 props（node / 选中 / 拖拽 / 连接目标）变化时重渲染，
 // 画布平移、其他节点拖动都不会触发本节点重渲染。
-export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging = false, isConnectTarget = false, onNodeMouseDown, onPortMouseDown }: Props) {
-  const updateNode = useCanvasStore((s) => s.updateNode);
-  const { user } = useAuth(); // 团队价：消耗按 inTeam 系数加价显示
-  // 多选时隐藏单节点辅助 UI（工具栏/端口/输入框等），仅保留选中边框
-  const isMultiSelect = useCanvasStore((s) => s.selectedNodeIds.size > 1);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging = false, isConnectTarget = false, onNodeMouseDown, onPortMouseDown }: CanvasNodeProps) {
+  const { user, generate, isGenerating, generating, showAuxUI } = useNodeRuntime(node, isSelected, isDragging);
   const gridMenuRef = useRef<HTMLDivElement>(null);
-  // 卸载守卫:异步探测/上传回调完成时若节点已卸载,不再 setState。
-  // 挂载时须重新置 true:StrictMode 会 mount→unmount→remount,只在 cleanup
-  // 置 false 会让 ref 在重挂载后永远为 false。
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => { mountedRef.current = false; };
-  }, []);
-  const [uploading, setUploading] = useState(false);
   const [gridMenuOpen, setGridMenuOpen] = useState(false);
   const [splitting, setSplitting] = useState(false);
   // 宫格切分：选定宫格数后进入预览模式（图片叠网格线 + 顶栏切换为切分操作栏），再执行切分
@@ -365,17 +347,24 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const [angleZoom, setAngleZoom] = useState(MULTI_ANGLE_DEFAULT.zoom);
   const [wideLens, setWideLens] = useState(MULTI_ANGLE_DEFAULT.wideLens);
   const angleDragRef = useRef<{ x: number; y: number; yaw: number; pitch: number } | null>(null);
-  const [promptExpanded, setPromptExpanded] = useState(false);
-  const [downloading, setDownloading] = useState(false);
-  const [uploadPct, setUploadPct] = useState(0);
-  const [localPreview, setLocalPreview] = useState<string | null>(null);
-  const [imageDims, setImageDims] = useState<{ w: number; h: number } | null>(null);
   // 卡片展示图:OSS 原图(常为 2K~4K)降采样到 2048 宽。几十张原图同屏参与
   // GPU 合成是画布掉帧大头;全屏查看/下载/生成参考仍用原始 node.imageSrc。
   const cardDisplaySrc = ossDisplayUrl(node.imageSrc, 2048);
   const [handlerCosts, setHandlerCosts] = useState<Record<string, number>>({});
-  const [imageModels, setImageModels] = useState<AiModelVO[]>([]);
-  const [selectedModelId, setSelectedModelId] = useState("");
+  const { models: imageModels, modelId: selectedModelId, setModelId: setSelectedModelId, selectedModel } = useAiModels(AiModelType.IMAGE);
+  const {
+    fileInputRef,
+    openFilePicker,
+    handleFileUpload: handleFileChange,
+    nodeUploading,
+    nodeUploadPct,
+    uploadPreviewSrc,
+    dims: imageDims,
+    setDims: setImageDims,
+    mountedRef,
+  } = useMediaUpload(node, "image", selectedModel);
+  const { downloading, download: handleDownload } = useFileDownload();
+  const { promptExpanded, setPromptExpanded, handlePromptChange } = useNodePrompt(node, node.imageSrc);
   // ===== 比例默认值：与上游连接节点统一 =====
   // 优先级：本节点钉死的比例（如 720° 全景节点 aspectRatio="2:1"）→ 第一个有明确比例的
   // 上游连接节点（全景源按 2:1）→ 兜底 16:9。仅作默认值：用户手动改过比例后不再跟随。
@@ -419,11 +408,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   // 已生成图片的真实宽高比（onLoad 时测量），用于让卡片严丝合缝贴合图片
   const [imgAspectState, setImgAspectState] = useState<{ src: string; aspect: number } | null>(null);
   const imgAspect = imgAspectState && imgAspectState.src === node.imageSrc ? imgAspectState.aspect : null;
-  const { generate, isGenerating } = useAiGeneration();
-  const generating = isGenerating(node.id) || node.status === "generating";
-  const nodeUploading = uploading || node.uploading === true;
-  const nodeUploadPct = uploading ? uploadPct : node.uploadProgress ?? 0;
-  const uploadPreviewSrc = localPreview || node.imageSrc || null;
   const panoramaSig = useCanvasStore((s) =>
     s.connections
       .filter((c) => c.sourceId === node.id)
@@ -445,11 +429,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   }, [node.id, panoramaSig]);
   const panoramaGenerating = existingPanorama ? isGenerating(existingPanorama.id) || existingPanorama.status === "generating" : false;
 
-  useEffect(() => {
-    if (node.imageSrc && node.status === "error" && !generating && !node.uploading) {
-      updateNode(node.id, { status: "success" });
-    }
-  }, [generating, node.id, node.imageSrc, node.status, node.uploading, updateNode]);
+  useMediaErrorRecovery(node, node.imageSrc, generating);
 
   // ===== 引用（@ 提及）系统 =====
   // 取入边连接对应的源节点图片，编号 图片1/图片2…。用字符串签名做选择器，
@@ -517,7 +497,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const cardAspect = ratioParsed ? ratioParsed.w / ratioParsed.h : (node.imageSrc && imgAspect ? imgAspect : 1);
   const { w: cardW, h: cardH } = fitCardSize(cardAspect, explicitRatio);
   const promptPanelW = Math.max(640, cardW + PANEL_EXTRA);
-  const selectedModel = imageModels.find((m) => m.modelId === selectedModelId);
   const linkedStyleSig = useCanvasStore((s) =>
     s.connections
       .filter((c) => c.targetId === node.id)
@@ -596,14 +575,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     st.addNode(styleNode, false);
     st.addConnection({ id: `conn_${styleNodeId}_${node.id}`, sourceId: styleNodeId, targetId: node.id }, false);
   }, [node.id, node.x, node.y]);
-  const formatConfig: { qualities?: string[]; clarities?: string[]; resolutions?: string[]; ratios?: string[]; batchSizes?: number[]; gridOutput?: boolean; pricing?: Record<string, Record<string, number>> } = (() => {
-    if (!selectedModel?.config) return {};
-    try {
-      return JSON.parse(selectedModel.config);
-    } catch {
-      return {};
-    }
-  })();
+  const formatConfig = parseModelConfig<{ qualities?: string[]; clarities?: string[]; resolutions?: string[]; ratios?: string[]; batchSizes?: number[]; gridOutput?: boolean; pricing?: Record<string, Record<string, number>> }>(selectedModel);
   // 积分消耗：优先按「画质×清晰度」矩阵价，其次模型固定价，其次 Handler 配置，最后兜底 18。
   // 查表走与服务端 resolveCost 同口径的大小写/轴序容错（matrixPrice），
   // 否则内置清晰度 "2K" 大写遇到后台小写矩阵键会显示模型价、实扣矩阵价。
@@ -645,20 +617,12 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   }, [selectedModelId, batchCount]);
 
   // 把卡片实际渲染尺寸同步到 store，供连线层将端点锚定到卡片真实边缘中点（默认对节点居中）。
-  // updateNode 默认不记历史；条件守卫确保仅在值变化时写入，自然收敛、不会循环。
-  useEffect(() => {
-    if (node.contentW !== cardW || node.contentH !== cardH) {
-      updateNode(node.id, { contentW: cardW, contentH: cardH });
-    }
-  }, [cardW, cardH, node.contentW, node.contentH, node.id, updateNode]);
+  useSyncContentSize(node, cardW, cardH);
 
   // 技能附加应用:指定模型卡则切换(校正 effect 会收敛不合法档位);默认参数
   // 回填画幅/画质/清晰度;skillId 已由 NodeSkillButton 写回节点
   const applySkillExtras = useCallback((s: SkillVO) => {
-    if (s.modelId && imageModels.some((m) => m.modelId === s.modelId) && s.modelId !== selectedModelId) {
-      setSelectedModelId(s.modelId);
-      toast.info("已切换到技能指定模型");
-    }
+    switchSkillModel(s, imageModels, selectedModelId, setSelectedModelId);
     const p = parseSkillParams(s.defaultParams);
     setQualityRatio((q) => ({
       ...q,
@@ -667,26 +631,16 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       ...(p.resolution ? { clarity: p.resolution as QualityRatioValue["clarity"] } : {}),
     }));
     if (p.aspectRatio) ratioTouchedRef.current = true;
-  }, [imageModels, selectedModelId]);
+  }, [imageModels, selectedModelId, setSelectedModelId]);
 
   const handleGenerate = useCallback(() => {
     const st = useCanvasStore.getState();
-    const incomingSources = st.connections
-      .filter((c) => c.targetId === node.id)
-      .map((c) => st.nodes.find((n) => n.id === c.sourceId))
-      .filter((n): n is CanvasNode => !!n);
+    const incomingSources = getIncomingSources(st, node.id);
     const referenceNodes = [
       ...(node.imageSrc || node.videoSrc ? [node] : []),
       ...incomingSources.filter((n) => n.type !== STYLE_REFERENCE_NODE_TYPE && !!(n.imageSrc || n.videoSrc)),
     ];
-    for (const refNode of referenceNodes) {
-      const kind = referenceKindFromMeta({ fileType: refNode.fileType, mimeType: refNode.mimeType, type: refNode.type });
-      const message = validateKnownFileSize(refNode.fileSize, refNode.title, {
-        maxBytes: resolveModelReferenceLimitBytes(selectedModel, kind),
-        label: "参考文件",
-      });
-      if (message) { toast.error(message); return; }
-    }
+    if (!validateReferenceFileSizes(referenceNodes, selectedModel)) return;
     // 引用图片参与编辑：按画布连接顺序完整下发 imageList，保证 prompt 里的「图片N / {{Image N}}」
     // 对齐到第 N 张输入图；若本节点已有图，则它固定作为 Image 1。
     const refImages = refs.map((r) => r.src || "").filter(Boolean);
@@ -697,10 +651,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     // 技能只发 skillId，模板由服务端拼到最前面（客户端先拼会污染落库的 input，
     // 作品标题读到的就是模板开头）；风格要求仍在客户端拼，它不是技能的一部分。
     // 文本节点没有独立下发通道，正文只能落进 prompt——顺序与 refs 的「文本N」编号同源
-    const promptWithText = inlineTextRefs(
-      node.prompt || "",
-      incomingSources.filter((n) => n.type === "text" && n.content?.trim()).map((n, i) => ({ label: `文本${i + 1}`, content: n.content || "" })),
-    );
+    const promptWithText = inlineIncomingTextRefs(node.prompt || "", incomingSources);
     const mergedPrompt = [promptWithText.trim(), stylePrompt ? `风格要求：${stylePrompt}` : ""].filter(Boolean).join("\n");
     if (node.skillId) void skillApi.recordUse(node.skillId);
     generate({
@@ -723,13 +674,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [generate, node, qualityRatio, selectedModelId, selectedModel, refs, batchCount, selectedStyleId, selectedStylePrompt]);
 
-  const handlePromptChange = useCallback((value: string) => {
-    updateNode(node.id, {
-      prompt: value,
-      ...(node.status === "error" ? { status: node.imageSrc ? "success" : "idle" } : {}),
-    });
-  }, [node.id, node.imageSrc, node.status, updateNode]);
-
   // 全景：先 AI 生成 360° 全景扩图（新建图片节点并连线），完成后自动打开 360 查看器。
   // 比例跟随源图节点：源图钉死比例 → 当前面板选的比例 → 16:9 托底（16:9 源出 16:9、9:16 源出 9:16）。
   const generatePanorama = useCallback((reuse?: CanvasNode) => {
@@ -751,14 +695,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       // 卡片尺寸与图片节点渲染规则一致：横图限宽、竖图限高
       const { w: cw, h: ph } = fitCardSize(panoAspect, panoRatio);
       // 放到右侧列下方，避免与已有节点堆叠
-      const targetX = node.x + cardW + 80;
-      const colNodes = st.nodes.filter((n) => {
-        const nw = n.contentW ?? n.width;
-        return n.x < targetX + cw && n.x + nw > targetX;
-      });
-      const targetY = colNodes.length
-        ? Math.max(...colNodes.map((n) => n.y + (n.contentH ?? n.height ?? 0))) + 24
-        : node.y;
+      const { x: targetX, y: targetY } = findRightColumnSpot(st.nodes, node, cardW, cw);
       st.addNode({
         id: nid,
         type: "image",
@@ -794,7 +731,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       },
       // 生成后不自动弹全屏：结果已在新的 720° 节点内嵌环视；需要全屏再点工具栏全屏/「查看全景」
     });
-  }, [cardW, generate, node.id, node.x, node.y, node.width, node.aspectRatio, node.imageSrc, qualityRatio, selectedModelId]);
+  }, [cardW, generate, node, qualityRatio, selectedModelId]);
 
   const handlePanorama = useCallback(() => {
     if (!node.imageSrc) {
@@ -921,14 +858,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     const outRatio = opts?.ratio ?? multiAngleRatio;
     const st = useCanvasStore.getState();
     const nid = generateNodeId();
-    const targetX = node.x + cardW + 80;
-    const colNodes = st.nodes.filter((n) => {
-      const nw = n.contentW ?? n.width;
-      return n.x < targetX + cardW && n.x + nw > targetX;
-    });
-    const targetY = colNodes.length
-      ? Math.max(...colNodes.map((n) => n.y + (n.contentH ?? n.height ?? 0))) + 24
-      : node.y;
+    const { x: targetX, y: targetY } = findRightColumnSpot(st.nodes, node, cardW, cardW);
 
     st.addNode({
       id: nid,
@@ -962,7 +892,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         ...opts?.input,
       },
     });
-  }, [cardH, cardW, generate, multiAngleRatio, node.id, node.imageSrc, node.x, node.y, qualityRatio.clarity, qualityRatio.quality, selectedModelId]);
+  }, [cardH, cardW, generate, multiAngleRatio, node, qualityRatio.clarity, qualityRatio.quality, selectedModelId]);
 
   const handleGenerateMultiAngle = useCallback(() => {
     setAngleOpen(false);
@@ -1128,22 +1058,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     setSelectedCells(new Set());
   }, [gridPreview, selectedCells, handleGridSplit]);
 
-  // 下载图片：经后端代理拉取（同源、无跨域），转 blob 触发浏览器下载，全程不导航刷新
-  const downloadUrl = useCallback(async (url: string, name: string) => {
-    const api = `/api/files/download?url=${encodeURIComponent(url)}&name=${encodeURIComponent(name)}`;
-    const res = await fetchWithAuth(api);
-    if (!res.ok) throw new Error("download failed");
-    const blob = await res.blob();
-    const objUrl = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = objUrl;
-    a.download = `${name}.png`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(objUrl);
-  }, []);
-
   // 镜像：纯前端确定性变换（代理取字节→canvas 水平翻转→上传），不走 AI、不耗积分；
   // 结果落在右侧新节点并连线（非破坏性，原图保留）。
   const [mirroring, setMirroring] = useState(false);
@@ -1185,14 +1099,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       // 右侧空位生成结果节点并连线（落位逻辑与多角度/打光一致）
       const st = useCanvasStore.getState();
       const nid = generateNodeId();
-      const targetX = node.x + cardW + 80;
-      const colNodes = st.nodes.filter((n) => {
-        const nw = n.contentW ?? n.width;
-        return n.x < targetX + cardW && n.x + nw > targetX;
-      });
-      const targetY = colNodes.length
-        ? Math.max(...colNodes.map((n) => n.y + (n.contentH ?? n.height ?? 0))) + 24
-        : node.y;
+      const { x: targetX, y: targetY } = findRightColumnSpot(st.nodes, node, cardW, cardW);
       st.addNode({
         id: nid,
         type: "image",
@@ -1218,21 +1125,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     } finally {
       setMirroring(false);
     }
-  }, [cardH, cardW, mirroring, node.aspectRatio, node.id, node.imageSrc, node.mimeType, node.title, node.uploading, node.x, node.y]);
-
-  const handleDownload = useCallback(async (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!node.imageSrc || downloading) return;
-    setDownloading(true);
-    try {
-      await downloadUrl(node.imageSrc, node.title || "image");
-    } catch {
-      toast.error("下载失败，请稍后重试");
-    } finally {
-      setDownloading(false);
-    }
-  }, [node.imageSrc, node.title, downloading, downloadUrl]);
+  }, [cardH, cardW, mirroring, node]);
 
   // 组图展开：把 node.images 拆成多个独立图片节点(右侧网格铺开、各自连回源节点)，与「宫格切分」一致。
   // 子节点用确定性 ID(${源id}_g${i})，已存在则跳过 —— 保证幂等：重复点击不再叠加覆盖，删掉某张还能补建。
@@ -1283,60 +1176,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     toast.info("已收起");
   }, [node.id]);
 
-  // 大图预览：Esc 关闭
-  useEffect(() => {
-    if (!previewOpen) return;
-    const onKey = (ev: KeyboardEvent) => { if (ev.key === "Escape") setPreviewOpen(false); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [previewOpen]);
-
-  // 打开文件选择器
-  const openFilePicker = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    fileInputRef.current?.click();
-  }, []);
-
-  // 上传图片并设为节点图片（带进度；之后输入指令即可做图生图编辑）
-  const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    const objUrl = URL.createObjectURL(file);
-    setLocalPreview(objUrl);
-    setImageDims(null); // 换新文件先清掉上一次的尺寸，成功后才由本次探测回填
-    // 探测原始分辨率用于头部「W × H」展示。探测用独立的 objectURL,在自身
-    // 回调里回收——共用预览 URL 的话,上传瞬间失败时 finally 的 revoke 会
-    // 抢在图片加载完成之前执行,探测报错、尺寸标签永远不出现。
-    const probe = document.createElement("img");
-    const probeUrl = URL.createObjectURL(file);
-    const releaseProbe = () => { probe.onload = null; probe.onerror = null; URL.revokeObjectURL(probeUrl); };
-    probe.onload = () => { if (mountedRef.current) setImageDims({ w: probe.naturalWidth, h: probe.naturalHeight }); releaseProbe(); };
-    probe.onerror = releaseProbe;
-    probe.src = probeUrl;
-    setUploadPct(0);
-    setUploading(true);
-    let ok = false;
-    try {
-      const res = await uploadFileSmart(file, (pct) => setUploadPct(pct), { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
-      if (res.success) {
-        ok = true;
-        updateNode(node.id, { imageSrc: res.data.fileUrl, status: "idle", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType });
-        toast.success("图片已上传，可输入指令进行编辑");
-      } else {
-        toast.error(res.message || "上传失败");
-      }
-    } catch {
-      toast.error("上传失败");
-    } finally {
-      setUploading(false);
-      setLocalPreview(null);
-      // 失败(或探测晚于失败回填)时清掉尺寸标签，避免上传失败后残留孤立的 W×H。
-      if (!ok) setImageDims(null);
-      URL.revokeObjectURL(objUrl);
-    }
-  }, [node.id, selectedModel, updateNode]);
-
   // 拉取各 Handler 的积分消耗（后台可配置）
   useEffect(() => {
     let active = true;
@@ -1351,28 +1190,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     }).catch(() => {});
     return () => { active = false; };
   }, []);
-
-  // 拉取可用图片模型（后台配置，含图标与支持的格式）
-  useEffect(() => {
-    let active = true;
-    aiApi.listModels().then((res) => {
-      if (active && res.success) {
-        const imgs = res.data.filter((m) => m.type === AiModelType.IMAGE);
-        setImageModels(imgs);
-        if (imgs.length > 0) setSelectedModelId((prev) => prev || imgs[0].modelId);
-      }
-    }).catch(() => {});
-    return () => { active = false; };
-  }, []);
-
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    onNodeMouseDown(node.id, e);
-  }, [node.id, onNodeMouseDown]);
-
-  const stop = (e: React.MouseEvent) => e.stopPropagation();
-
-  // 仅选中且非拖动状态下显示辅助 UI
-  const showAuxUI = isSelected && !isDragging && !isMultiSelect;
 
   // 失焦/拖拽/多选时关闭顶部下拉，避免重新选中时下拉仍残留
   useEffect(() => {
@@ -1420,12 +1237,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   }, [gridGenMenuOpen]);
 
   return (
-    <div
-      data-node-id={node.id}
-      className={`absolute select-none ${isSelected ? "z-10" : ""}`}
-      style={{ left: node.x, top: node.y, width: node.width, cursor: isDragging ? "grabbing" : "grab" }}
-      onMouseDown={handleMouseDown}
-    >
+    <NodeShell node={node} isSelected={isSelected} isDragging={isDragging} onNodeMouseDown={onNodeMouseDown}>
       {/* 卡片尺寸的定位容器（居中）；外置组件以卡片边缘为锚做恒定大小覆盖层 */}
       <div className="relative mx-auto" style={{ width: cardW }}>
         {/* 标题：恒定大小，吸附卡片左上方 */}
@@ -1437,9 +1249,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         {/* 右上角分辨率（上传/生成后展示 W × H）。只在确有图片时显示——探测异步，
             上传失败后 probe 可能仍晚回填一次 imageDims，用 node.imageSrc 兜底防残留 */}
         {showAuxUI && imageDims && node.imageSrc && (
-          <NodeChrome placement="top-right" gap={4}>
-            <span className="whitespace-nowrap px-1 text-xs text-neutral-400">{imageDims.w} × {imageDims.h}</span>
-          </NodeChrome>
+          <NodeDimsBadge dims={imageDims} />
         )}
         {/* 未生成：顶部「上传」按钮（恒定大小，吸附卡片正上方） */}
         {showAuxUI && !node.imageSrc && (
@@ -1595,7 +1405,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
               {/* 笔（编辑 / 图生图）· 镜像 · 下载 · 放大 */}
               <button onMouseDown={stop} onClick={openFilePicker} title="重新上传 / 图生图" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800"><Brush className="h-4 w-4" /></button>
               <button onMouseDown={stop} onClick={handleMirror} disabled={mirroring} title="镜像（水平翻转）" className="rounded-xl p-2 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">{mirroring ? <Loader2 className="h-4 w-4 animate-spin" /> : <FlipHorizontal2 className="h-4 w-4" />}</button>
-              <button onMouseDown={stop} onClick={handleDownload} disabled={downloading} title="下载" className="rounded-xl p-2 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">{downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}</button>
+              <button onMouseDown={stop} onClick={(e) => handleDownload(e, node.imageSrc, node.title || "image", "png")} disabled={downloading} title="下载" className="rounded-xl p-2 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">{downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}</button>
               <button onMouseDown={stop} onClick={(e) => { stop(e); setPreviewOpen(true); }} title="查看大图" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800"><Maximize2 className="h-4 w-4" /></button>
             </div>
           </NodeChrome>
@@ -1609,7 +1419,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
               <button onMouseDown={stop} onClick={(e) => { stop(e); setPanoGrid((v) => !v); }} title="构图参考线" className={`rounded-xl p-2 transition-colors ${panoGrid ? "bg-neutral-100 text-blue-600 dark:bg-neutral-800 dark:text-blue-400" : "hover:bg-neutral-100 dark:hover:bg-neutral-800"}`}><Hash className="h-4 w-4" /></button>
               <button onMouseDown={stop} onClick={(e) => { stop(e); panoApiRef.current?.reset(); }} title="复位视角" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800"><RotateCcw className="h-4 w-4" /></button>
               <button onMouseDown={stop} onClick={(e) => { stop(e); handlePanorama(); }} title="全屏查看" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800"><Maximize2 className="h-4 w-4" /></button>
-              <button onMouseDown={stop} onClick={handleDownload} disabled={downloading} title="下载" className="rounded-xl p-2 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">{downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}</button>
+              <button onMouseDown={stop} onClick={(e) => handleDownload(e, node.imageSrc, node.title || "image", "png")} disabled={downloading} title="下载" className="rounded-xl p-2 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">{downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}</button>
             </div>
           </NodeChrome>
         )}
@@ -1928,12 +1738,8 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         )}
 
         {/* 查看大图：全屏 lightbox（Portal 到 body，脱离画布缩放层） */}
-        {previewOpen && node.imageSrc && createPortal(
-          <div
-            className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 p-6 backdrop-blur-sm"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={() => setPreviewOpen(false)}
-          >
+        {previewOpen && node.imageSrc && (
+          <NodeMediaLightbox onClose={() => setPreviewOpen(false)}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={node.imageSrc}
@@ -1941,15 +1747,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
               className="max-h-[92vh] max-w-[92vw] rounded-xl object-contain shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             />
-            <button
-              onClick={() => setPreviewOpen(false)}
-              className="absolute right-6 top-6 rounded-full bg-white/10 p-2 text-white backdrop-blur transition-colors hover:bg-white/20"
-              title="关闭 (Esc)"
-            >
-              <X className="h-5 w-5" />
-            </button>
-          </div>,
-          document.body,
+          </NodeMediaLightbox>
         )}
 
         {/* 组图：右侧堆叠纸张效果（置于主卡之下） */}
@@ -1990,33 +1788,11 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
             </button>
           )}
           {/* 生成中遮罩 */}
-          {generating && (
-            <div className="absolute inset-0 z-[5] flex items-center justify-center bg-white/70 backdrop-blur-sm dark:bg-neutral-900/70">
-              <div className="flex flex-col items-center gap-2">
-                <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
-                <p className="text-sm text-neutral-600 dark:text-neutral-400">AI 生成中...</p>
-              </div>
-            </div>
-          )}
+          {generating && <NodeGeneratingOverlay label="AI 生成中..." />}
           {/* 上传中遮罩：模糊预览 + 百分比 */}
-          {nodeUploading && (
-            <div className="absolute inset-0 z-[6] overflow-hidden">
-              {uploadPreviewSrc ? (
-                <img src={uploadPreviewSrc} alt="" className="h-full w-full scale-110 object-cover blur-xl" />
-              ) : (
-                <div className="h-full w-full bg-neutral-900" />
-              )}
-              <div className="absolute inset-0 flex items-center justify-center bg-black/55">
-                <p className="text-sm text-white/90">上传中 ({nodeUploadPct}%) ...</p>
-              </div>
-            </div>
-          )}
+          {nodeUploading && <NodeUploadingOverlay pct={nodeUploadPct} previewSrc={uploadPreviewSrc} kind="image" />}
           {/* 错误状态 */}
-          {node.status === "error" && !generating && !node.imageSrc && (
-            <div className="absolute right-3 top-3 z-[5] rounded-full bg-red-100 px-2.5 py-1 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400">
-              生成失败
-            </div>
-          )}
+          {node.status === "error" && !generating && !node.imageSrc && <NodeErrorBadge />}
           {/* 宫格切分预览：网格线 + 可点选格子（选中则只切选中，不选则全部） */}
           {gridPreview && node.imageSrc && (
             <div className="absolute inset-0 z-[4] overflow-hidden rounded-[12px]">
@@ -2122,28 +1898,14 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         </Paper>
 
         {/* 左右连接端口：恒定大小，吸附卡片左右缘中点 */}
-        {showAuxUI && (
-          <>
-            <NodeChrome placement="left" gap={12}>
-              <button
-                onMouseDown={(e) => { e.stopPropagation(); onPortMouseDown?.(node.id, "input", e.clientX, e.clientY); }}
-                className="flex h-6 w-6 cursor-crosshair items-center justify-center rounded-full border border-neutral-300 bg-white text-neutral-400 shadow-sm transition-all duration-200 ease-out hover:scale-110 hover:border-blue-500 hover:bg-blue-50 hover:text-blue-600 hover:shadow-md active:scale-95 dark:border-neutral-600 dark:bg-neutral-900"
-                title="输入端口（从其他节点拖入）"
-              >
-                <Plus className="h-3 w-3" />
-              </button>
-            </NodeChrome>
-            <NodeChrome placement="right" gap={12}>
-              <button
-                onMouseDown={(e) => { e.stopPropagation(); onPortMouseDown?.(node.id, "output", e.clientX, e.clientY); }}
-                className="flex h-6 w-6 cursor-crosshair items-center justify-center rounded-full border border-neutral-300 bg-white text-neutral-400 shadow-sm transition-all duration-200 ease-out hover:scale-110 hover:border-blue-500 hover:bg-blue-50 hover:text-blue-600 hover:shadow-md active:scale-95 dark:border-neutral-600 dark:bg-neutral-900"
-                title="输出端口（拖到其他节点）"
-              >
-                <Plus className="h-3 w-3" />
-              </button>
-            </NodeChrome>
-          </>
-        )}
+        <NodePorts
+          nodeId={node.id}
+          visible={showAuxUI}
+          overlay
+          onPortMouseDown={onPortMouseDown}
+          inputTitle="输入端口（从其他节点拖入）"
+          outputTitle="输出端口（拖到其他节点）"
+        />
 
         {/* 提示词输入面板：恒定大小，吸附卡片正下方居中 */}
         {showAuxUI && !node.imageSrc && (
@@ -2245,6 +2007,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
           </NodeChrome>
         )}
       </div>
-    </div>
+    </NodeShell>
   );
 });

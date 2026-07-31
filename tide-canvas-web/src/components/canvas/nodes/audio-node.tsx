@@ -1,9 +1,8 @@
 "use client";
 
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
+import { useCanvasStore } from "@/stores/use-canvas-store";
 import {
-  ArrowUp,
   AudioLines,
   ChevronDown,
   Loader2,
@@ -12,10 +11,7 @@ import {
   SlidersHorizontal,
   Zap,
 } from "lucide-react";
-import { useAiGeneration } from "@/hooks/canvas/use-ai-generation";
-import { useAuth } from "@/hooks/use-auth";
 import { applyTeamFactor } from "@/lib/points";
-import { aiApi } from "@/lib/api";
 import {
   AUDIO_STYLES,
   DEFAULT_MUSIC_PARAMS,
@@ -34,18 +30,12 @@ import { AiModelType, type AiModelVO } from "@/types/ai";
 import { toast } from "@/components/shared/toast";
 import { NodeHeader } from "./base/node-header";
 import { NodePorts } from "./base/node-ports";
-import { NodeChrome } from "./base/node-chrome";
 import { ModelPicker } from "./model-picker";
 import { ClipPicker } from "@/components/studio/clip-picker";
-
-interface Props {
-  node: CanvasNode;
-  isSelected: boolean;
-  isDragging?: boolean;
-  isConnectTarget?: boolean;
-  onNodeMouseDown: (nodeId: string, e: React.MouseEvent) => void;
-  onPortMouseDown?: (nodeId: string, side: "input" | "output", clientX: number, clientY: number) => void;
-}
+import type { CanvasNodeProps } from "./types/node-props";
+import { useAiModels, useNodeRuntime } from "./shared/use-node-runtime";
+import { parseModelConfig, stopEvent as stop } from "./shared/node-utils";
+import { GenerateSubmitButton, NodePanelChrome, NodeShell } from "./shared/node-overlays";
 
 const MAX_TEXT = 50000;
 const WAVE_BARS = [16, 28, 44, 60, 40, 24, 34, 54, 70, 48, 30, 18, 42, 56, 36, 22];
@@ -89,26 +79,16 @@ interface VoiceOption {
 
 /** 模型配置里的生成方式（t2a=音乐 / sfx=音效；TTS 模型通常不配）。 */
 function modesOf(model?: AiModelVO): string[] {
-  if (!model?.config) return [];
-  try {
-    const cfg = JSON.parse(model.config) as { modes?: unknown };
-    return Array.isArray(cfg.modes) ? cfg.modes.filter((m): m is string => typeof m === "string") : [];
-  } catch {
-    return [];
-  }
+  const cfg = parseModelConfig<{ modes?: unknown }>(model);
+  return Array.isArray(cfg.modes) ? cfg.modes.filter((m): m is string => typeof m === "string") : [];
 }
 
 function voicesOf(model?: AiModelVO): VoiceOption[] {
-  if (!model?.config) return [];
-  try {
-    const cfg = JSON.parse(model.config) as { voices?: unknown };
-    if (!Array.isArray(cfg.voices)) return [];
-    return cfg.voices
-      .filter((v): v is VoiceOption => !!v && typeof (v as VoiceOption).id === "string" && !!(v as VoiceOption).id)
-      .map((v) => ({ id: v.id, name: v.name || v.id }));
-  } catch {
-    return [];
-  }
+  const cfg = parseModelConfig<{ voices?: unknown }>(model);
+  if (!Array.isArray(cfg.voices)) return [];
+  return cfg.voices
+    .filter((v): v is VoiceOption => !!v && typeof (v as VoiceOption).id === "string" && !!(v as VoiceOption).id)
+    .map((v) => ({ id: v.id, name: v.name || v.id }));
 }
 
 function decodeUnicodeEscapes(value: string): string {
@@ -374,16 +354,11 @@ export const AudioNode = memo(function AudioNode({
   isConnectTarget = false,
   onNodeMouseDown,
   onPortMouseDown,
-}: Props) {
+}: CanvasNodeProps) {
   const updateNode = useCanvasStore((s) => s.updateNode);
-  const isMultiSelect = useCanvasStore((s) => s.selectedNodeIds.size > 1);
-  const { generate, isGenerating } = useAiGeneration();
-  const { user } = useAuth();
-  const generating = isGenerating(node.id) || node.status === "generating";
-  const showAuxUI = isSelected && !isDragging && !isMultiSelect;
+  const { user, generate, generating, showAuxUI } = useNodeRuntime(node, isSelected, isDragging);
+  const { models, modelId, setModelId, selectedModel } = useAiModels(AiModelType.AUDIO);
 
-  const [models, setModels] = useState<AiModelVO[]>([]);
-  const [modelId, setModelId] = useState("");
   const [voice, setVoice] = useState("");
   const [activeTokenMenu, setActiveTokenMenu] = useState<AudioTokenMenu>(null);
   const [customPauseValue, setCustomPauseValue] = useState("2.0");
@@ -397,19 +372,6 @@ export const AudioNode = memo(function AudioNode({
   // 分轨播放：Suno 一次两首，节点内切换（0 = 主歌）。
   const [trackIdx, setTrackIdx] = useState(0);
 
-  useEffect(() => {
-    let active = true;
-    aiApi.listModels().then((res) => {
-      if (active && res.success) {
-        const audios = res.data.filter((m) => m.type === AiModelType.AUDIO);
-        setModels(audios);
-        if (audios.length) setModelId((prev) => prev || audios[0].modelId);
-      }
-    }).catch(() => {});
-    return () => { active = false; };
-  }, []);
-
-  const selectedModel = models.find((m) => m.modelId === modelId);
   const voices = voicesOf(selectedModel);
   const [lastModelId, setLastModelId] = useState(modelId);
   if (modelId !== lastModelId) {
@@ -455,7 +417,7 @@ export const AudioNode = memo(function AudioNode({
     } else if (!src && (opt.modelId || opt.modelName)) {
       toast.info("原曲所用模型已下架，续写/翻唱可能失败");
     }
-  }, [models, modelId]);
+  }, [models, modelId, setModelId]);
 
   const effectiveVoice = voice || voices[0]?.id || "";
   const cost = applyTeamFactor(Number(selectedModel?.pointCost ?? 10), user);
@@ -479,11 +441,6 @@ export const AudioNode = memo(function AudioNode({
     }
   }, [node.id, prompt, rawPrompt, updateNode]);
 
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    onNodeMouseDown(node.id, e);
-  }, [node.id, onNodeMouseDown]);
-
-  const stop = (e: React.MouseEvent) => e.stopPropagation();
   const keepPanelFocus = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -554,12 +511,7 @@ export const AudioNode = memo(function AudioNode({
 
 
   return (
-    <div
-      data-node-id={node.id}
-      className={`absolute select-none ${isSelected ? "z-10" : ""}`}
-      style={{ left: node.x, top: node.y, width: node.width, cursor: isDragging ? "grabbing" : "grab" }}
-      onMouseDown={handleMouseDown}
-    >
+    <NodeShell node={node} isSelected={isSelected} isDragging={isDragging} onNodeMouseDown={onNodeMouseDown}>
       <div className="relative">
         <div
           className={`relative overflow-hidden rounded-[18px] bg-white shadow-sm ring-1 transition-all dark:bg-neutral-950 ${
@@ -653,12 +605,7 @@ export const AudioNode = memo(function AudioNode({
         <NodePorts nodeId={node.id} visible={showAuxUI} overlay onPortMouseDown={onPortMouseDown} />
 
         {showAuxUI && (
-          <NodeChrome placement="bottom-center" gap={18} damp={0.6}>
-            <div
-              onMouseDown={stop}
-              className="flex flex-col rounded-xl border border-neutral-200 bg-white p-3 shadow-xl shadow-neutral-900/10 dark:border-neutral-800 dark:bg-neutral-950 dark:shadow-black/30"
-              style={{ width: 660, boxSizing: "border-box" }}
-            >
+          <NodePanelChrome width={660}>
               <AudioPromptEditor
                 ref={promptEditorRef}
                 value={prompt}
@@ -948,10 +895,9 @@ export const AudioNode = memo(function AudioNode({
                     <Zap className="h-3 w-3 text-neutral-900 dark:text-neutral-100" fill="currentColor" />
                     {cost}
                   </span>
-                  <button
-                    onMouseDown={stop}
-                    onClick={(e) => { stop(e); handleGenerate(); }}
+                  <GenerateSubmitButton
                     disabled={!canGenerate || generating}
+                    generating={generating}
                     title={
                       generating
                         ? "生成中..."
@@ -961,20 +907,13 @@ export const AudioNode = memo(function AudioNode({
                             ? "开始生成"
                             : "开始合成"
                     }
-                    className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
-                      !canGenerate || generating
-                        ? "bg-neutral-100 text-neutral-400 dark:bg-neutral-800"
-                        : "bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-                    }`}
-                  >
-                    {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}
-                  </button>
+                    onClick={handleGenerate}
+                  />
                 </div>
               </div>
-            </div>
-          </NodeChrome>
+          </NodePanelChrome>
         )}
       </div>
-    </div>
+    </NodeShell>
   );
 });
