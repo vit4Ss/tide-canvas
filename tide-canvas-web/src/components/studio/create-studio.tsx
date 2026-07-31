@@ -21,41 +21,30 @@
 
    Handoff: reads sessionStorage 'flux_prompt' / 'flux_model' on mount to
    prefill the prompt / model (mirrors create.js + work-modal.tsx).
+
+   结构（2026-07 拆分，纯结构重构、行为不变）：本文件只做组合——面板/舞台 state、
+   派生选项与各区块的装配。子组件与 hook 位于 ./create-studio/：
+   constants/types/utils（常量·类型·纯函数）、icons、use-ambient + ambient-frame
+   （环境光泛光）、use-studio-models（模型列表）、use-history（生成历史）、
+   use-source-clip（音频原曲）、use-upload-slots（参考素材槽位）、use-generation
+   （生成引擎：建任务/轮询/刷新续跑/一键编辑）、model-picker / upload-slots /
+   prompt-section / music-source-fields / song-fields / option-fields / type-tabs /
+   stage-feed / preview-modal / lightbox / src-menu / asset-picker-modal。
    ========================================================================== */
 
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
-  type ReactNode,
 } from "react";
-import type { ArtworkType, MeshHues } from "@/mock";
-import { CREATE_MODELS, mesh } from "@/mock";
-import { marketApi, type StudioModelVO } from "@/lib/market-api";
-import { resolveModelSwatch } from "@/lib/model-brand";
-import { copyText } from "@/lib/clipboard";
-import { aiApi, uploadFileSmart } from "@/lib/api";
+import { aiApi } from "@/lib/api";
 import { pointsApi } from "@/lib/points-api";
-import { AiTaskStatus } from "@/types/ai";
-import { AssetsBrowser, type PickedAsset } from "@/components/studio/assets-browser";
-import { AudioPlayerCard, SongCard } from "@/components/studio/audio-player-card";
-import { ClipPicker } from "@/components/studio/clip-picker";
-import {
-  findClipModel,
-  uploadAndRegisterClip,
-  uploadCostOf,
-  type ClipOption,
-  type UploadClipStage,
-} from "@/lib/music-modes";
 import { SkillPicker } from "@/components/skill/skill-picker";
-import { skillApi, parseSkillParams } from "@/lib/skill-api";
+import { parseSkillParams } from "@/lib/skill-api";
 import type { SkillVO } from "@/types/skill";
 import {
-  MentionPromptEditor,
   buildMentionRefs,
   extractMentionTokens,
   type MentionEditorHandle,
@@ -66,680 +55,51 @@ import { toast } from "@/components/shared/toast";
 import { confirmDialog } from "@/components/shared/confirm";
 import { markRequiredField } from "@/lib/require-field";
 import styles from "@/app/(studio)/studio/create.module.css";
-
-/* ── constants (ported 1:1 from create.js) ───────────────────────────────── */
-
-const RATIOS = ["1:1", "3:4", "4:3", "16:9", "9:16"] as const;
-const IMG_RES = ["1K", "2K", "4K"] as const;
-const VIDEO_RES = ["720p", "1080p", "4K"] as const;
-const VIDEO_DUR = ["5s", "10s", "15s"] as const;
-
-const QUALITY_LABEL: Record<string, string> = { low: "低画质", medium: "标准画质", high: "高画质" };
-
-const IMG_RES_COST: Record<string, number> = { "1K": 8, "2K": 14, "4K": 30 };
-const RES_COST: Record<string, number> = { "720p": 30, "1080p": 50, "4K": 90 };
-const DUR_SEC: Record<string, number> = { "5s": 5, "10s": 10, "15s": 15 };
-
-const IDEAS = [
-  "赛博朋克城市夜景，霓虹倒影，电影感，8K",
-  "青绿山水工笔，石青石绿设色，宋代院体",
-  "液态金属机器人，纯白工作室布光，C4D 渲染",
-  "黄昏侧颜人像，85mm f/1.4，柯达胶片颗粒",
-  "深海发光水母，慢镜头，4K 微距，蓝紫光束",
-] as const;
-
-type ToolKey = "t2i" | "i2i" | "edit" | "t2v" | "i2v" | "flf" | "ref" | "t2a" | "sfx";
-type ToolMode = "t2i" | "i2i" | "t2v" | "t2a";
-
-/* ── 内容感知环境光（YouTube Ambient Mode 思路）─────────────────────────────
-   取生成图的平均主色，作为该灯箱片泛光的颜色（CSS 变量 --amb，studio.css 的
-   .ws-runimg box-shadow 消费）。跨域图片直接进 canvas 会污染画布，所以优先
-   借道 Next 图片优化器（/_next/image 同源代理）取 64px 缩略图；失败再试
-   crossOrigin 直连；都不行则静默回退中性黑影（--amb 缺省值）。 */
-
-const ambientCache = new Map<string, string | null>();
-
-function extractAmbient(img: HTMLImageElement): string | null {
-  try {
-    const c = document.createElement("canvas");
-    c.width = c.height = 10;
-    const ctx = c.getContext("2d", { willReadFrequently: true });
-    if (!ctx) return null;
-    ctx.drawImage(img, 0, 0, 10, 10);
-    const d = ctx.getImageData(0, 0, 10, 10).data;
-    let r = 0, g = 0, b = 0;
-    const n = d.length / 4;
-    for (let i = 0; i < d.length; i += 4) {
-      r += d[i]; g += d[i + 1]; b += d[i + 2];
-    }
-    r /= n; g /= n; b /= n;
-    // 平均色往往偏暗，提亮到可作泛光的亮度（暗房底本来就黑，太暗看不见）。
-    const boost = Math.max(1, 110 / Math.max(r, g, b, 1));
-    const f = (v: number) => Math.min(255, Math.round(v * boost));
-    return `${f(r)} ${f(g)} ${f(b)}`;
-  } catch {
-    return null; // canvas 被跨域污染
-  }
-}
-
-function useAmbient(url?: string): string | null {
-  // 缓存命中时在渲染期直接取值；effect 只负责未命中时的异步提取（完成后
-  // bump 触发一次重渲染，再从缓存读到结果）。
-  const [, bump] = useState(0);
-  useEffect(() => {
-    if (!url || ambientCache.has(url)) return;
-    let alive = true;
-    const finish = (v: string | null) => {
-      ambientCache.set(url, v);
-      if (alive) bump((n) => n + 1);
-    };
-    // 1) 同源优化器缩略图（不污染 canvas）；2) 失败退回 CORS 直连。
-    const viaProxy = new Image();
-    viaProxy.onload = () => finish(extractAmbient(viaProxy));
-    viaProxy.onerror = () => {
-      const direct = new Image();
-      direct.crossOrigin = "anonymous";
-      direct.onload = () => finish(extractAmbient(direct));
-      direct.onerror = () => finish(null);
-      direct.src = url;
-    };
-    // 注意 Next 16 只接受 images.qualities 白名单里的 q（默认仅 75）。
-    viaProxy.src = `/_next/image?url=${encodeURIComponent(url)}&w=64&q=75`;
-    return () => {
-      alive = false;
-    };
-  }, [url]);
-  return (url ? ambientCache.get(url) : null) ?? null;
-}
-
-/** 灯箱片外框：把主色写进 --amb，泛光颜色由 studio.css 消费。 */
-function AmbientFrame({
-  url,
-  className,
-  onClick,
-  children,
-}: {
-  url?: string;
-  className: string;
-  onClick?: () => void;
-  children: ReactNode;
-}) {
-  const amb = useAmbient(url);
-  return (
-    <div
-      className={className}
-      style={amb ? ({ "--amb": amb } as CSSProperties) : undefined}
-      onClick={onClick}
-    >
-      {children}
-    </div>
-  );
-}
-
-interface ToolCfg {
-  mode: ToolMode;
-  label: string;
-  head: string;
-  drop: boolean;
-  ph: string;
-}
-
-const TOOLS: Record<ToolKey, ToolCfg> = {
-  t2i: { mode: "t2i", label: "文生图", head: "生成图片", drop: false, ph: "描述你想要的画面，越具体越好…\n例：赛博朋克城市夜景，霓虹倒影，电影感，8K 超写实" },
-  i2i: { mode: "i2i", label: "图生图", head: "图生图", drop: true, ph: "上传参考图，再描述想要的改动…\n例：保留构图，改成赛博朋克霓虹风格" },
-  edit: { mode: "i2i", label: "改图", head: "改图 · 扩图", drop: true, ph: "上传图片，描述要修改或扩展的部分…\n例：把背景扩展为开阔的雪山草原" },
-  t2v: { mode: "t2v", label: "文生视频", head: "生成视频", drop: false, ph: "描述镜头与运动…\n例：金色麦田，强风掠过，慢镜头航拍，电影调色" },
-  i2v: { mode: "t2v", label: "图生视频", head: "图生视频", drop: true, ph: "上传首帧图片，再描述运动…\n例：人物缓缓回头，发丝随风飘动，电影质感" },
-  flf: { mode: "t2v", label: "首尾帧", head: "首尾帧生成", drop: true, ph: "上传首帧与尾帧，描述过渡…\n例：从清晨到日落的平滑时间流逝" },
-  ref: { mode: "t2v", label: "全能参考", head: "全能参考", drop: true, ph: "上传参考图（人物 / 风格 / 动作），描述想要的视频…\n例：参考人物形象，生成其在雪山奔跑的镜头" },
-  t2a: { mode: "t2a", label: "音乐生成", head: "生成音乐", drop: false, ph: "描述你想要的音乐，Suno 会自动谱曲写词…\n例：温柔的中文民谣，木吉他伴奏，关于夏天傍晚的回忆" },
-  sfx: { mode: "t2a", label: "音效生成", head: "生成音效", drop: false, ph: "描述你想要的音效，越具体越好…\n例：雨打铁皮屋顶，远处传来低沉的雷声" },
-};
-
-const MODES_BY_TYPE: Record<ArtworkType, ToolKey[]> = {
-  image: ["t2i", "i2i"],
-  video: ["t2v", "i2v", "flf", "ref"],
-  audio: ["t2a", "sfx"],
-};
-
-/* typed reference uploads per tool (create.js UPLOADS) */
-type SlotType = "image" | "video" | "audio";
-interface SlotDef {
-  k: string;
-  label: string;
-  type: SlotType;
-  max: number;
-  hint: string;
-}
-
-const UPLOADS: Partial<Record<ToolKey, SlotDef[]>> = {
-  i2i: [{ k: "img", label: "参考图片", type: "image", max: 4, hint: "上传图片，作为生成参考" }],
-  edit: [{ k: "img", label: "原图", type: "image", max: 1, hint: "上传需要修改 / 扩展的图片" }],
-  i2v: [{ k: "first", label: "首帧图片", type: "image", max: 1, hint: "上传作为视频首帧的图片" }],
-  flf: [
-    { k: "first", label: "首帧", type: "image", max: 1, hint: "上传起始画面" },
-    { k: "last", label: "尾帧", type: "image", max: 1, hint: "上传结束画面" },
-  ],
-  ref: [
-    { k: "img", label: "参考图片", type: "image", max: 4, hint: "上传图片（人物 / 风格 / 场景）" },
-    { k: "video", label: "参考视频", type: "video", max: 3, hint: "最多 3 段，总时长 ≤ 15 秒。支持 mp4 / mov。" },
-    { k: "audio", label: "参考音频", type: "audio", max: 3, hint: "最多 3 段，总时长 ≤ 15 秒。支持 wav / mp3。" },
-  ],
-};
-
-const SLOT_ICON: Record<SlotType, ReactNode> = {
-  image: (
-    <svg viewBox="0 0 24 24">
-      <rect x="3" y="4" width="18" height="16" rx="2.5" />
-      <circle cx="8.5" cy="9.5" r="1.5" />
-      <path d="M21 15l-5-5L5 20" />
-    </svg>
-  ),
-  video: (
-    <svg viewBox="0 0 24 24">
-      <rect x="3" y="5" width="13" height="14" rx="2.5" />
-      <path d="M16 10l5-3v10l-5-3z" />
-    </svg>
-  ),
-  audio: (
-    <svg viewBox="0 0 24 24">
-      <path d="M9 18V6l10-2v12" />
-      <circle cx="6" cy="18" r="3" />
-      <circle cx="16" cy="16" r="3" />
-    </svg>
-  ),
-};
-
-/* per-result floating toolbar (hover a finished image). The first three load the
-   image into a tool's reference slot (作为垫图 / 生成视频 / 精细编辑); the rest are
-   one-click edit ops wired to dedicated backend handlers (扩图 / 高清放大 /
-   移除背景 / 物体移除). The `real` flag drives styling only — all are functional. */
-interface CellTool {
-  act: string;
-  label: string;
-  real: boolean;
-  icon: ReactNode;
-}
-const CELL_TOOLS: CellTool[] = [
-  {
-    act: "pad",
-    label: "作为垫图",
-    real: true,
-    icon: (
-      <svg viewBox="0 0 24 24">
-        <path d="M12 3l8 4-8 4-8-4 8-4z" />
-        <path d="M4 12l8 4 8-4" />
-        <path d="M4 16.5l8 4 8-4" />
-      </svg>
-    ),
-  },
-  {
-    act: "video",
-    label: "生成视频",
-    real: true,
-    icon: (
-      <svg viewBox="0 0 24 24">
-        <rect x="3" y="5" width="13" height="14" rx="2.5" />
-        <path d="M16 10l5-3v10l-5-3z" />
-      </svg>
-    ),
-  },
-  {
-    act: "edit",
-    label: "精细编辑",
-    real: true,
-    icon: (
-      <svg viewBox="0 0 24 24">
-        <path d="M4 20h4L18.5 9.5a2 2 0 0 0-3-3L5 17v3z" />
-        <path d="M13.5 6.5l3 3" />
-      </svg>
-    ),
-  },
-  {
-    act: "expand",
-    label: "扩图",
-    real: true,
-    icon: (
-      <svg viewBox="0 0 24 24">
-        <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M3 16v3a2 2 0 0 0 2 2h3" />
-      </svg>
-    ),
-  },
-  {
-    act: "hd",
-    label: "高清放大",
-    real: true,
-    icon: <span className="hd-glyph">HD</span>,
-  },
-  {
-    act: "rmbg",
-    label: "移除背景",
-    real: true,
-    icon: (
-      <svg viewBox="0 0 24 24">
-        <circle cx="6" cy="6" r="2.6" />
-        <circle cx="6" cy="18" r="2.6" />
-        <path d="M8.4 7.6L20 18M8.4 16.4L20 6" />
-      </svg>
-    ),
-  },
-  {
-    act: "rmobj",
-    label: "物体移除",
-    real: true,
-    icon: (
-      <svg viewBox="0 0 24 24">
-        <path d="M5.5 15.5l5-5 5 5-3.5 3.5H9l-3.5-3.5z" />
-        <path d="M10.5 10.5l5-5a2 2 0 0 1 3 0l1.5 1.5a2 2 0 0 1 0 3l-5 5" />
-        <path d="M8.5 19H20" />
-      </svg>
-    ),
-  },
-];
-
-interface ModelMeta {
-  tag: string;
-  by: string;
-  desc: string;
-}
-
-const MODEL_META: Record<string, ModelMeta> = {
-  "GPT Image 2": { tag: "HD", by: "OpenAI", desc: "万能画风 · 超清细节" },
-  "Flux.1 Pro": { tag: "PRO", by: "Black Forest", desc: "写实质感 · 精准构图" },
-  "Midjourney v6": { tag: "ART", by: "Midjourney", desc: "艺术氛围 · 电影光影" },
-  "Nano Banana 2": { tag: "NEW", by: "Google", desc: "极速出图 · 风格百变" },
-  "SDXL Lightning": { tag: "4×", by: "Stability", desc: "秒级生成 · 开源高效" },
-  "即梦 3.0": { tag: "CN", by: "字节跳动", desc: "中文语义 · 国风擅长" },
-  "Seedance 2.0": { tag: "VID", by: "字节跳动", desc: "视听双绝 · 镜头流畅" },
-  "可灵 Kling 1.6": { tag: "VID", by: "快手", desc: "长镜头 · 物理真实" },
-};
-
-const DEFAULT_META: ModelMeta = { tag: "AI", by: "模型", desc: "高质量生成" };
-
-/** 音乐风格预设（2026-07-17 由自由输入改为点选多选）：值用 Suno 识别度最高的
- *  英文 tag，界面展示中文；选中项逗号拼接进 tags。历史记录恢复的手填旧值不在
- *  预设中时原样保留发送，仅不高亮。 */
-const AUDIO_STYLES: Array<{ v: string; l: string }> = [
-  { v: "pop", l: "流行" },
-  { v: "folk", l: "民谣" },
-  { v: "rock", l: "摇滚" },
-  { v: "electronic", l: "电子" },
-  { v: "hip-hop", l: "嘻哈" },
-  { v: "r&b", l: "R&B" },
-  { v: "jazz", l: "爵士" },
-  { v: "ballad", l: "抒情" },
-  { v: "chinese traditional", l: "古风" },
-  { v: "cinematic", l: "电影感" },
-];
-
-/** derive a ModelMeta for a studio model purely from its model-management config:
- *  the right-side tag shows 预计耗时 only——积分不在选择器里显示（用户定稿
- *  2026-07-14：消耗已在「立即生成 · N 积分」按钮上呈现，选择器满屏积分是噪音），
- *  没有耗时就不渲染徽标；the subtitle is the 描述 (or capabilities when no
- *  description is set). */
-function metaOfStudio(m: StudioModelVO): ModelMeta {
-  const c = m.config;
-  const est = c?.estSeconds ?? 0;
-  return {
-    tag: est > 0 ? `~${est}s` : "",
-    by: "",
-    desc: m.desc || (c?.capabilities?.length ? c.capabilities.join(" · ") : "高质量生成"),
-  };
-}
-
-/** map a config mode value (t2i/i2i/t2v/i2v/keyframe/omni_ref) to a studio ToolKey. */
-const MODE_TO_TOOL: Record<string, ToolKey> = {
-  t2i: "t2i",
-  i2i: "i2i",
-  t2v: "t2v",
-  i2v: "i2v",
-  keyframe: "flf",
-  omni_ref: "ref",
-  t2a: "t2a",
-  sfx: "sfx",
-};
-
-/** 音频模型归属页签：后台配置 modes 含 sfx → 音效生成；显式配了 t2a → 音乐生成；
- *  都没配时按 modelKey 里的 sfx 兜底（中转站同步下来未配置的新模型也能归对）。 */
-function audioToolOf(m: StudioModelVO): ToolKey {
-  const modes = m.config?.modes ?? [];
-  if (modes.includes("sfx")) return "sfx";
-  if (modes.includes("t2a")) return "t2a";
-  return /sfx/i.test(m.modelKey ?? "") ? "sfx" : "t2a";
-}
-
-/** studio ToolKey → backend generation handler name (internal/handler/ai handlerRegistry). */
-const TOOL_TO_HANDLER: Record<ToolKey, string> = {
-  t2i: "text_to_image",
-  i2i: "image_to_image",
-  edit: "image_to_image",
-  t2v: "text_to_video",
-  i2v: "image_to_video",
-  flf: "start_end_to_video",
-  ref: "reference_to_video",
-  t2a: "text_to_audio",
-  sfx: "text_to_audio",
-};
-
-/** display label for a ratio value (auto → 自适应). */
-function ratioLabel(r: string): string {
-  return r === "auto" ? "自适应" : r;
-}
-
-/** meta lookup by display name, optionally backed by the real models map. */
-function metaOf(name: string, metaMap?: Record<string, ModelMeta>): ModelMeta {
-  return metaMap?.[name] || MODEL_META[name] || DEFAULT_META;
-}
-
-/** stable hue seed from a prompt (create.js generate()). */
-function promptHue(prompt: string): number {
-  let h = 0;
-  for (let i = 0; i < prompt.length; i++) h = (h * 31 + prompt.charCodeAt(i)) % 360;
-  return h;
-}
-
-/** backend generation handler → media type for 生成历史 cards. */
-const HIST_HANDLER_TYPE: Record<string, ArtworkType> = {
-  text_to_image: "image",
-  image_to_image: "image",
-  text_to_video: "video",
-  image_to_video: "video",
-  start_end_to_video: "video",
-  reference_to_video: "video",
-  text_to_audio: "audio",
-  // one-click image-edit ops (per-result toolbar)
-  remove_bg: "image",
-  remove_object: "image",
-  upscale: "image",
-  outpaint: "image",
-};
-
-/** backend generation handler → studio ToolKey (reverse of TOOL_TO_HANDLER). */
-const HIST_HANDLER_TOOL: Record<string, ToolKey> = {
-  text_to_image: "t2i",
-  image_to_image: "i2i",
-  text_to_video: "t2v",
-  image_to_video: "i2v",
-  start_end_to_video: "flf",
-  reference_to_video: "ref",
-  text_to_audio: "t2a",
-  // edit ops restore into the 改图 tool (i2i family)
-  remove_bg: "edit",
-  remove_object: "edit",
-  upscale: "edit",
-  outpaint: "edit",
-};
-
-/** one-click edit op → its backend handler name (per-result toolbar buttons). */
-const EDIT_OP_HANDLER: Record<string, string> = {
-  rmbg: "remove_bg",
-  rmobj: "remove_object",
-  hd: "upscale",
-  expand: "outpaint",
-};
-
-/** parse a stored task input (object or JSON string) into a plain record. */
-function parseTaskInput(input: unknown): Record<string, unknown> {
-  if (input && typeof input === "object") return input as Record<string, unknown>;
-  if (typeof input === "string") {
-    try {
-      const o = JSON.parse(input || "{}");
-      return o && typeof o === "object" ? (o as Record<string, unknown>) : {};
-    } catch {
-      return {};
-    }
-  }
-  return {};
-}
-
-/** reconstruct the 创作台 RunParams from a task's handler + stored input, so a
- *  history item (or the restored last result) can be re-edited / re-generated. */
-function paramsFromTask(handler: string, modelName: string, input: unknown): RunParams {
-  const inp = parseTaskInput(input);
-  const str = (v: unknown) => (typeof v === "string" ? v : "");
-  const num = (v: unknown) => (typeof v === "number" ? v : parseInt(String(v ?? ""), 10) || 0);
-  const strArr = (v: unknown) =>
-    Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && !!x) : [];
-  const type: ArtworkType = HIST_HANDLER_TYPE[handler] ?? "image";
-  const reso = str(inp.clarity) || str(inp.resolution);
-  // 参考素材：任务 input 里持久化了 imageList/sourceImage 等，取回来恢复上传槽位。
-  const imageRefs = strArr(inp.imageList);
-  if (!imageRefs.length && str(inp.sourceImage)) imageRefs.push(str(inp.sourceImage));
-  return {
-    prompt: str(inp.prompt),
-    model: modelName,
-    // 音频共用 text_to_audio handler，音效模型的历史按名称归回音效页签。
-    tool:
-      handler === "text_to_audio" && /sfx|音效/i.test(modelName)
-        ? "sfx"
-        : (HIST_HANDLER_TOOL[handler] ?? "t2i"),
-    curType: type,
-    // 音频无画面比例——留空，否则历史里的音频卡会顶着一枚假 "1:1" 徽标。
-    ratio: type === "audio" ? "" : str(inp.aspectRatio) || str(inp.aspect_ratio) || str(inp.ratio) || "1:1",
-    imgRes: type === "image" ? reso || "2K" : "2K",
-    res: type === "video" ? reso || "1080p" : "1080p",
-    dur: str(inp.duration) || "5s",
-    quality: str(inp.quality),
-    count: Math.max(1, num(inp.batchCount) || 1),
-    imageRefs,
-    firstFrame: str(inp.firstFrame) || undefined,
-    lastFrame: str(inp.lastFrame) || undefined,
-    videoRefs: strArr(inp.videoReferences),
-    audioRefs: strArr(inp.audioReferences),
-    lyrics: str(inp.lyrics) || undefined,
-    songStyle: str(inp.tags) || undefined,
-    songTitle: str(inp.title) || undefined,
-    instrumental: inp.makeInstrumental === true || undefined,
-    ...(type === "audio"
-      ? (() => {
-          // 延长/翻唱的任务参数在 input.extras 里；据此反推创作模式与原曲引用。
-          const ex =
-            inp.extras && typeof inp.extras === "object"
-              ? (inp.extras as Record<string, unknown>)
-              : {};
-          const task = str(ex.task);
-          const mode: MusicMode =
-            task === "extend" || task === "cover" ? task
-            : task === "upload_extend" ? "extend" // 上传音频的延长,恢复为延长模式+上传标记
-            : str(inp.lyrics) ? "custom" : "inspire";
-          return {
-            musicMode: mode,
-            sourceClipId: str(ex.continue_clip_id) || str(ex.cover_clip_id) || undefined,
-            sourceIsUpload: task === "upload_extend" || undefined,
-            continueAt: num(ex.continue_at) || undefined,
-          };
-        })()
-      : {}),
-  };
-}
-
-/** deterministic mesh-hue triplet from a string id (cover fallback when no url). */
-function huesFromId(id: string): MeshHues {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360;
-  return [h, (h + 80) % 360, (h + 200) % 360];
-}
-
-function isHttpUrl(u: unknown): u is string {
-  return typeof u === "string" && /^https?:\/\//.test(u.trim());
-}
-
-/** RFC3339 / ISO timestamp → "YYYY.MM.DD HH:mm" for the feed run header. */
-function fmtTs(iso?: string): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-}
-
-/** deterministic reference-thumb gradient (create.js refGrad). */
-function refGrad(seed: number): string {
-  const h = (seed * 61 + 30) % 360;
-  return `linear-gradient(135deg, hsl(0 0% ${24 + (h % 16)}%), hsl(0 0% ${12 + (h % 10)}%))`;
-}
-
-/* ── upload-file model ────────────────────────────────────────────────────── */
-
-interface UploadFile {
-  g?: string; // thumbnail: a CSS gradient (mock) OR a real image URL (上传中=本地 blob 预览)
-  n: string; // name
-  s?: string; // size label (image)
-  d?: string; // duration label (video/audio)
-  url?: string; // real asset URL (local upload / 资产库) sent to the backend as a reference
-  key?: string; // 稳定标识:上传中占位→完成/失败的定位;缺省回退 url/name
-  uploading?: boolean; // 本地上传进行中(还没拿到 url)
-  progress?: number; // 上传进度 0–100(uploading 时展示)
-}
-
-/** background value for a slot thumbnail: a real URL → cover image, else the
- *  gradient string is used as-is. */
-function thumbBg(g?: string): string {
-  if (!g) return "var(--surface-2)";
-  // blob: = 上传中占位的本地预览(URL.createObjectURL)
-  return /^(https?:|data:|blob:)/.test(g) ? `center / cover no-repeat url("${g}")` : g;
-}
-
-type SlotData = Record<string, UploadFile[]>;
-
-/* ── result / history models (hue triplets back the mesh placeholders) ───── */
-
-interface ResultCell {
-  i: number;
-  /** hue triplet → mesh() for the loading-placeholder background. */
-  hues: MeshHues;
-  /** real result image URL (real generations); when set it replaces the mesh placeholder. */
-  url?: string;
-}
-
-interface HistItem {
-  id: string;
-  /** run/task group key — every image of one generation shares it (feed grouping). */
-  run: string;
-  /** ISO timestamp of the run (for the feed header). */
-  ts?: string;
-  /** aspect ratio of the run (e.g. "16:9"), used to size loading placeholders. */
-  ratio?: string;
-  hues: MeshHues;
-  type: ArtworkType;
-  title: string;
-  prompt: string;
-  model: string;
-  /** real result image URL (real generations). */
-  url?: string;
-  /** Suno 分轨：clip_id 供延长/翻唱引用；trackTitle 是 Suno 起的歌名。 */
-  clipId?: string;
-  /** 该任务是「上传登记」(extras.task=upload):其 clip 延长时须发 upload_extend */
-  clipUpload?: boolean;
-  trackTitle?: string;
-  /** Suno 歌曲封面（上游生成）与时长(秒)，SongCard 歌曲行展示用。 */
-  trackCover?: string;
-  trackDur?: number;
-  /** reconstructed run settings (for restoring this result to the panel). */
-  params?: RunParams;
-}
-
-/** One generation run = a feed block (header + a row of its result images). */
-interface HistRun {
-  run: string;
-  ts?: string;
-  ratio?: string;
-  title: string;
-  prompt: string;
-  model: string;
-  type: ArtworkType;
-  params?: RunParams;
-  items: HistItem[];
-}
-
-interface RunMeta {
-  prompt: string;
-  model: string;
-  ratio: string;
-  spec: string;
-  count: number;
-  label: string;
-  isVid: boolean;
-  /** 媒体类型；缺省时按 isVid 推导（兼容旧持久化数据），audio 由此区分 */
-  kind?: ArtworkType;
-  refThumbs: string[];
-}
-
-/** A backend generation in flight, persisted so a page refresh can resume it
- *  (the task keeps running server-side). Stored under ACTIVE_RUN_KEY. */
-interface ActiveRun {
-  taskId: string; // 后端雪花 ID 序列化为字符串
-  prompt: string;
-  model: string;
-  ratio: string;
-  spec: string;
-  count: number;
-  isVid: boolean;
-  /** 媒体类型；缺省按 isVid 推导（旧快照兼容），audio 由此区分 */
-  kind?: ArtworkType;
-  label: string;
-  hues: MeshHues[];
-  refThumbs: string[];
-  startedAt: number;
-}
-
-const ACTIVE_RUN_KEY = "studio_active_run";
-
-/** Full panel settings of a generation, captured so 重新编辑 / 再次生成 can restore
- *  or reproduce that exact run rather than whatever the panel currently shows. */
-interface RunParams {
-  prompt: string;
-  model: string;
-  tool: ToolKey;
-  curType: ArtworkType;
-  ratio: string;
-  imgRes: string;
-  res: string;
-  dur: string;
-  quality: string;
-  count: number;
-  /** 参考素材 URL（可选）：slotData 本身不持久化，刷新后靠这些字段把上传槽位
-   *  一并恢复，否则 i2i/i2v 的「编辑/重新生成」会卡在“请先上传参考图片”。 */
-  imageRefs?: string[];
-  firstFrame?: string;
-  lastFrame?: string;
-  videoRefs?: string[];
-  audioRefs?: string[];
-  /** 音频（Suno）：自定义模式的歌词/风格/歌名与纯音乐开关 */
-  lyrics?: string;
-  songStyle?: string;
-  songTitle?: string;
-  instrumental?: boolean;
-  /** 音频（Suno）创作模式与延长/翻唱的原曲引用 */
-  musicMode?: MusicMode;
-  sourceClipId?: string;
-  /** 原曲是上传登记的本地音频(延长须发 upload_extend) */
-  sourceIsUpload?: boolean;
-  continueAt?: number;
-}
-
-/** Suno 音乐创作模式（对齐上游 API：extras.task = extend / cover）。 */
-type MusicMode = "inspire" | "custom" | "extend" | "cover";
-
-/** resultMeta.tracks 的宽松解析（后端 provider_relay 写入的形状）。 */
-type MetaTrack = { clipId: string; title: string; url: string; coverUrl: string; duration: number };
-function tracksFromMeta(meta: unknown): MetaTrack[] {
-  const raw = (meta as { tracks?: unknown })?.tracks;
-  if (!Array.isArray(raw)) return [];
-  return raw.map((t) => {
-    const o = t && typeof t === "object" ? (t as Record<string, unknown>) : {};
-    const s = (v: unknown) => (typeof v === "string" ? v : "");
-    return {
-      clipId: s(o.clipId),
-      title: s(o.title),
-      url: s(o.url),
-      coverUrl: s(o.coverUrl),
-      duration: typeof o.duration === "number" && Number.isFinite(o.duration) ? o.duration : 0,
-    };
-  });
-}
-
-let histSeq = 0;
+import {
+  ACTIVE_RUN_KEY,
+  CREATE_MODELS,
+  DUR_SEC,
+  IDEAS,
+  IMG_RES,
+  IMG_RES_COST,
+  MODES_BY_TYPE,
+  MODE_TO_TOOL,
+  RATIOS,
+  RES_COST,
+  TOOLS,
+  UPLOADS,
+  VIDEO_DUR,
+  VIDEO_RES,
+} from "./create-studio/constants";
+import { CELL_TOOLS } from "./create-studio/icons";
+import type {
+  ArtworkType,
+  HistRun,
+  MusicMode,
+  ResultCell,
+  RunParams,
+  SlotData,
+  ToolKey,
+  UploadFile,
+} from "./create-studio/types";
+import { audioToolOf, histItemsFromTasks, huesFromId, slotTypeOf } from "./create-studio/utils";
+import { useStudioModels } from "./create-studio/use-studio-models";
+import { useSourceClip } from "./create-studio/use-source-clip";
+import { useHistory } from "./create-studio/use-history";
+import { useUploadSlots } from "./create-studio/use-upload-slots";
+import { useGeneration } from "./create-studio/use-generation";
+import { TypeTabs } from "./create-studio/type-tabs";
+import { ModelPicker } from "./create-studio/model-picker";
+import { UploadSlots } from "./create-studio/upload-slots";
+import { MusicSourceFields } from "./create-studio/music-source-fields";
+import { PromptSection } from "./create-studio/prompt-section";
+import { SongFields, VocalField } from "./create-studio/song-fields";
+import { OptionFields } from "./create-studio/option-fields";
+import { StageFeed } from "./create-studio/stage-feed";
+import { PreviewModal } from "./create-studio/preview-modal";
+import { Lightbox } from "./create-studio/lightbox";
+import { SrcMenu } from "./create-studio/src-menu";
+import { AssetPickerModal } from "./create-studio/asset-picker-modal";
 
 /* ── component ───────────────────────────────────────────────────────────── */
 
@@ -748,7 +108,6 @@ export default function CreateStudio() {
   const [curType, setCurType] = useState<ArtworkType>("image");
   const [tool, setTool] = useState<ToolKey>("t2i");
   const [model, setModel] = useState<string>("GPT Image 2");
-  const [modelOpen, setModelOpen] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [ratio, setRatio] = useState<string>(RATIOS[0]);
   const [count, setCount] = useState(1);
@@ -763,11 +122,6 @@ export default function CreateStudio() {
   /* 技能:附着为提示词区 chip,生成时模板与描述合并;粘性直到手动移除 */
   const [skill, setSkill] = useState<SkillVO | null>(null);
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
-  /* 延长/翻唱的原曲(clip_id)与延长起点秒数(字符串承载输入框,提交时转整数) */
-  const [sourceClipId, setSourceClipId] = useState("");
-  /* 原曲来自「上传登记」的本地音频:延长时上游要求 task=upload_extend */
-  const [sourceIsUpload, setSourceIsUpload] = useState(false);
-  const [continueAt, setContinueAt] = useState("");
   const [lyrics, setLyrics] = useState("");
   const [songStyle, setSongStyle] = useState("");
   /* songStyle 底层仍是逗号串（发送/历史恢复不变），芯片按成员关系点亮/切换。 */
@@ -785,36 +139,12 @@ export default function CreateStudio() {
   /* typed reference uploads (per slot key) + preview modal target */
   const [slotData, setSlotData] = useState<SlotData>({});
   const [preview, setPreview] = useState<{ k: string; i: number } | null>(null);
-  /* reference-image source flow: 来源选择菜单 / 资产库弹窗 / 本地上传 */
-  const [srcMenu, setSrcMenu] = useState<string | null>(null); // slot key whose 来源 menu is open
-  const [srcMenuPos, setSrcMenuPos] = useState<{ x: number; y: number } | null>(null); // anchor (right of trigger)
 
-  // 来源菜单是 fixed 定位、坐标一次性采集：页面/面板一滚动就会与触发槽位脱锚
-  // （移动端可滚动布局下悬浮在错误位置），滚动时直接收起。
-  useEffect(() => {
-    if (!srcMenu) return;
-    const close = () => {
-      setSrcMenu(null);
-      setSrcMenuPos(null);
-    };
-    window.addEventListener("scroll", close, true);
-    return () => window.removeEventListener("scroll", close, true);
-  }, [srcMenu]);
-  const [assetPick, setAssetPick] = useState<string | null>(null); // slot key the asset picker fills
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const localTargetRef = useRef<string | null>(null); // slot key awaiting a local file pick
-  const uploadSeqRef = useRef(0); // 上传中占位的唯一 key 计数
-
-  /* real studio models for the current type (public, no auth), each carrying its
-     per-model config; the picker + option pills are derived from this list. */
-  const [studioList, setStudioList] = useState<StudioModelVO[]>([]);
   const [optimizing, setOptimizing] = useState(false);
   // 「AI 优化」单次扣费（后端实算，含团队倍率）；0 = 免费/未配置，不显示角标
   const [optCost, setOptCost] = useState(0);
   const ensureSession = useAuthStore((s) => s.ensureSession);
 
-  /* stage state */
-  const [busy, setBusy] = useState(false);
   // 真实积分余额（替代原硬编码假数据）。生成结算后刷新——扣减/退款在后端完成。
   const [balance, setBalance] = useState<number | null>(null);
   const refreshBalance = useCallback(async () => {
@@ -825,128 +155,57 @@ export default function CreateStudio() {
       /* 忽略：余额展示非关键路径 */
     }
   }, []);
-  const [cells, setCells] = useState<ResultCell[]>([]);
-  const [progs, setProgs] = useState<number[]>([]);
-  const [runMeta, setRunMeta] = useState<RunMeta | null>(null);
   // full settings of the last started run (for 重新编辑 / 再次生成) + a one-shot
   // flag that fires generate() after those settings are restored to the panel.
-  const lastRunRef = useRef<RunParams | null>(null);
-  // synchronous in-flight latch: `busy` state is set asynchronously (and, for the
-  // one-click edit ops, only after a network round-trip), so it cannot prevent a
-  // rapid double-click from firing two backend tasks. This ref is flipped true
-  // before any await and cleared wherever the run settles (every setBusy(false)).
-  const genInFlightRef = useRef(false);
   const [pendingGen, setPendingGen] = useState(false);
   // ensures the stage is seeded with the last past result at most once per mount.
   const stageSeededRef = useRef(false);
 
-  /* history — the user's REAL generation tasks (aiApi.listTasks), newest first.
-     Loaded post-mount (see loadHistory); empty until then. No mock seed. */
-  const [hist, setHist] = useState<HistItem[]>([]);
-  /* 本次会话内刚「上传登记」的原曲(还没进 hist),合并进 clipOptions 供回显 */
-  const [extraClips, setExtraClips] = useState<ClipOption[]>([]);
-
-  /* 延长/翻唱的原曲候选：历史音频里带 clip_id 的分轨(新→旧,按 clip 去重)。
-     上游约束:只能引用自己生成的歌,所以候选就是用户的生成历史。
-     产出共享 ClipOption 形状喂给 ClipPicker 弹窗:封面/时长/日期 + 同一次
-     生成内的「第 N 首」编号(Suno 两首同名靠它与试听区分)。 */
-  const clipOptions = useMemo<ClipOption[]>(() => {
-    const runCounts = new Map<string, number>();
-    for (const h of hist) {
-      if (h.type === "audio" && h.clipId) runCounts.set(h.run, (runCounts.get(h.run) ?? 0) + 1);
-    }
-    const seen = new Set<string>();
-    const runSeen = new Map<string, number>();
-    const out: ClipOption[] = [];
-    for (const h of hist) {
-      if (h.type !== "audio" || !h.clipId) continue;
-      const trackNo = (runSeen.get(h.run) ?? 0) + 1;
-      runSeen.set(h.run, trackNo);
-      if (seen.has(h.clipId)) continue;
-      seen.add(h.clipId);
-      const name = h.trackTitle || h.title || h.model || "未命名";
-      out.push({
-        clipId: h.clipId,
-        label: name.length > 24 ? name.slice(0, 24) + "…" : name,
-        // hist 未携带模型行 id,置空走 findClipModel 的名称兜底匹配
-        modelId: "",
-        modelName: h.model || "",
-        url: h.url ?? "",
-        coverUrl: h.trackCover ?? "",
-        duration: h.trackDur ?? 0,
-        createTime: h.ts ?? "",
-        trackNo,
-        trackCount: runCounts.get(h.run) ?? 1,
-        ...(h.clipUpload ? { isUpload: true } : {}),
-      });
-    }
-    // 刚在弹窗里登记完成的上传原曲还没进 hist(历史下次刷新才有),先合并进候选,
-    // 否则触发按钮回显成「历史原曲」
-    const fresh = extraClips.filter((e) => !out.some((o) => o.clipId === e.clipId));
-    return [...fresh, ...out];
-  }, [hist, extraClips]);
-  // 原曲选择弹窗(替代下拉:Suno 同批两首同名,弹窗里能试听/看第 N 首区分)
-  const [clipPickOpen, setClipPickOpen] = useState(false);
-  // 已选原曲时点「更换」→ 临时展开来源选项(本地上传 / 从资产库选取),
-  // 不清空当前选择,「取消」可退回卡片。未选原曲时来源选项常驻展示。
-  const [clipChanging, setClipChanging] = useState(false);
-  const clipFileRef = useRef<HTMLInputElement>(null);
-  // 上传登记进行中的阶段;期间触发按钮显示进度并禁止重复发起
-  const [clipUploadStage, setClipUploadStage] = useState<UploadClipStage | null>(null);
-  // 登记异步完成时读「此刻」的选中项:等待期间用户另选了原曲就不覆盖其选择
-  const sourceClipIdRef = useRef(sourceClipId);
-  useEffect(() => {
-    sourceClipIdRef.current = sourceClipId;
-  }, [sourceClipId]);
-
-  const onClipFilePicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = ""; // 同一文件再次选择也要触发 change
-    if (!file || !selModel || clipUploadStage) return;
-    const startClip = sourceClipIdRef.current;
-    setClipUploadStage("uploading");
-    try {
-      const opt = await uploadAndRegisterClip({
-        file,
-        generateModelId: selModel.modelKey || selModel.id,
-        modelRowId: selModel.id,
-        modelName: selModel.name,
-        onStage: setClipUploadStage,
-      });
-      // 无论是否自动选中都并入会话候选,保证歌单弹窗里能找到/回显
-      setExtraClips((prev) =>
-        prev.some((o) => o.clipId === opt.clipId) ? prev : [opt, ...prev]);
-      if (sourceClipIdRef.current === startClip) {
-        toast.success(`「${opt.label}」已登记为原曲`);
-        setSourceClipId(opt.clipId);
-        setSourceIsUpload(true);
-        setClipChanging(false);
-      } else {
-        toast.success(`「${opt.label}」已登记，可在原曲列表中选用`);
-      }
-    } catch (err) {
-      toast.error((err as Error)?.message || "上传登记失败，请重试");
-    } finally {
-      setClipUploadStage(null);
-    }
-  };
-
   /* full-image lightbox (click a finished result to zoom) */
   const [lightbox, setLightbox] = useState<string | null>(null);
-
-  const ticksRef = useRef<ReturnType<typeof setInterval>[]>([]);
-  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // bumped on every reset/cancel so in-flight poll callbacks from a stale run bail out.
-  const runIdRef = useRef(0);
-  const modelWrapRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<MentionEditorHandle>(null);
 
-  /* ── derived ─────────────────────────────────────────────────────────── */
+  /* ── derived (pre-hook basics) ─────────────────────────────────────────── */
 
   const cfg = TOOLS[tool];
   const isVideo = curType === "video";
   const isAudio = curType === "audio";
   const slots = UPLOADS[tool] ?? null;
+
+  /* ── hooks ─────────────────────────────────────────────────────────────── */
+
+  const { studioList, deepModelRef } = useStudioModels({ curType, setModel });
+
+  const selModel = useMemo(
+    () => studioList.find((m) => m.name === model) ?? null,
+    [studioList, model],
+  );
+  const mCfg = selModel?.config ?? null;
+  // Suno 音效卡与音乐卡用法不同（不吃歌词/风格/歌名，只按描述出短音效）。
+  // 页签拆分后以工具为准，modelKey 里的 sfx 作兜底（未配置 modes 的旧数据）。
+  const isSfx = isAudio && (tool === "sfx" || /sfx/i.test(selModel?.modelKey ?? ""));
+
+  const clip = useSourceClip({ selModel });
+  // 渲染期直接读 hook 返回对象的成员会被 react-hooks/refs 按「渲染期访问 ref」
+  // 误报（拆分前这些都是 useRef/useState 的局部量）；JSX 直接用到的先解构出来。
+  const { clipFileRef, onClipFilePicked } = clip;
+  const { hist, setHist, pushHistory, clipOptions } = useHistory(clip.extraClips);
+
+  const {
+    srcMenu,
+    setSrcMenu,
+    srcMenuPos,
+    assetPick,
+    setAssetPick,
+    fileInputRef,
+    addFile,
+    pickLocal,
+    onLocalFiles,
+    openAssets,
+    chooseAsset,
+    removeFile,
+    swapFlf,
+  } = useUploadSlots({ slots, tool, mCfg, slotData, setSlotData, ensureSession });
 
   /* @ 引用候选：按提交顺序给槽位素材编号（图片N/视频N/音频N）。顺序必须与
      generate() 组装 imageList / firstFrame·lastFrame / videoReferences /
@@ -967,7 +226,7 @@ export default function CreateStudio() {
     return buildMentionRefs(items);
   }, [slots, slotData]);
 
-  /* ── studio models → picker names/meta + selected model's config ───────── */
+  /* ── studio models → picker names + selected model's config ────────────── */
   const noBackend = studioList.length === 0;
   const modelNames = useMemo(() => {
     if (!studioList.length) return CREATE_MODELS;
@@ -978,67 +237,6 @@ export default function CreateStudio() {
         : studioList;
     return (pool.length ? pool : studioList).map((m) => m.name);
   }, [studioList, curType, tool]);
-  const modelMeta = useMemo(() => {
-    const map: Record<string, ModelMeta> = {};
-    for (const m of studioList) map[m.name] = metaOfStudio(m);
-    return map;
-  }, [studioList]);
-  const meta = metaOf(model, modelMeta);
-
-  // swatch 样式+字形：后台配置 icon > 品牌官方 logo > 首字母渐变——与 chat 共用
-  // model-brand.ts 的 resolveModelSwatch；按模型名 memo，避免每次渲染重跑正则。
-  const swatchByName = useMemo(() => {
-    const map: Record<string, { style: CSSProperties; content: string }> = {};
-    for (const m of studioList) {
-      const r = resolveModelSwatch({ name: m.name, modelKey: m.modelKey, icon: m.config?.icon });
-      map[m.name] = { style: r.style, content: r.glyph };
-    }
-    return map;
-  }, [studioList]);
-  const swatchFor = (name: string): { style: CSSProperties; content: string } => {
-    if (swatchByName[name]) return swatchByName[name];
-    const r = resolveModelSwatch({ name });
-    return { style: r.style, content: r.glyph };
-  };
-
-  // 技能与当前创作类型不匹配(带着图片技能切到视频页签)时自动摘除
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- 换页签后收敛：摘除错配技能
-    if (skill && skill.outputType !== curType) setSkill(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [curType]);
-
-  // 选中技能:附着 chip;指定了模型卡则自动切换;默认参数回填画幅/清晰度/时长
-  const pickSkill = useCallback(
-    (s: SkillVO) => {
-      setSkill(s);
-      setSkillPickerOpen(false);
-      if (s.modelId) {
-        const target = studioList.find((m) => m.modelKey === s.modelId);
-        if (target && target.name !== model) {
-          setModel(target.name);
-          toast.info(`已切换到技能模型「${target.name}」`);
-        }
-      }
-      const p = parseSkillParams(s.defaultParams);
-      if (p.aspectRatio) setRatio(p.aspectRatio);
-      if (p.resolution) {
-        if (s.outputType === "video") setRes(p.resolution);
-        else setImgRes(p.resolution);
-      }
-      if (p.duration) setDur(`${p.duration}s`);
-    },
-    [studioList, model],
-  );
-
-  const selModel = useMemo(
-    () => studioList.find((m) => m.name === model) ?? null,
-    [studioList, model],
-  );
-  const mCfg = selModel?.config ?? null;
-  // Suno 音效卡与音乐卡用法不同（不吃歌词/风格/歌名，只按描述出短音效）。
-  // 页签拆分后以工具为准，modelKey 里的 sfx 作兜底（未配置 modes 的旧数据）。
-  const isSfx = isAudio && (tool === "sfx" || /sfx/i.test(selModel?.modelKey ?? ""));
 
   // dynamic option lists: a model's configured options only; when the backend
   // returned no models at all, fall back to the built-in defaults so the panel
@@ -1102,6 +300,52 @@ export default function CreateStudio() {
       : fb(IMG_RES_COST, imgRes, 14) * count;
   }, [mCfg, selModel, isVideo, isAudio, dur, res, imgRes, quality, count]);
 
+  const {
+    busy,
+    cells,
+    progs,
+    runMeta,
+    setCells,
+    setProgs,
+    setRunMeta,
+    generate,
+    oneClickEdit,
+    lastRunRef,
+  } = useGeneration({
+    prompt,
+    count,
+    tool,
+    curType,
+    ratio,
+    model,
+    res,
+    dur,
+    imgRes,
+    quality,
+    musicMode,
+    sourceClipId: clip.sourceClipId,
+    sourceIsUpload: clip.sourceIsUpload,
+    continueAt: clip.continueAt,
+    lyrics,
+    songStyle,
+    songTitle,
+    instrumental,
+    slotData,
+    studioList,
+    ratioOpts,
+    resOpts,
+    durOpts,
+    qualOpts,
+    skill,
+    isAudio,
+    isSfx,
+    ensureSession,
+    refreshBalance,
+    pushHistory,
+    setHist,
+    promptRef,
+  });
+
   // group the flat history into runs (one block per generation), newest first —
   // `hist` is already newest-first, so first-seen order is preserved.
   const runs = useMemo<HistRun[]>(() => {
@@ -1128,7 +372,6 @@ export default function CreateStudio() {
     }
     return order;
   }, [hist]);
-
 
   /* ── prompt / model handoff (mount) ──────────────────────────────────── */
 
@@ -1183,7 +426,6 @@ export default function CreateStudio() {
   // 能力卡直达创作台）。类型立即切换（默认选对应的文生工具，tool 参数可指定
   // 如 i2i）；模型名先存 ref，等该类型的模型列表加载完成后再落位——直接
   // setModel 会被列表加载的兜底重置覆盖。
-  const deepModelRef = useRef<string | null>(null);
   useEffect(() => {
     try {
       const sp = new URLSearchParams(window.location.search);
@@ -1208,40 +450,7 @@ export default function CreateStudio() {
     } catch {
       /* URL API unavailable — ignore */
     }
-  }, []);
-
-  // load the studio models for the current type (public endpoint). Each carries
-  // its per-model config; the picker + option pills derive from this list. On
-  // empty/failure the built-in fallback lists keep the panel usable. Selection is
-  // preserved if the chosen model still exists (so a refetch never resets it).
-  // 请求序号防过期：深链把 curType 从默认 image 切到 video 时，两次加载并发，
-  // 先发后至的 image 响应不能覆盖 video 列表。
-  const modelsReqSeq = useRef(0);
-  const reloadModels = useCallback(async () => {
-    const seq = ++modelsReqSeq.current;
-    try {
-      const res = await marketApi.studioModels(curType);
-      if (seq !== modelsReqSeq.current) return; // stale response
-      const list = res.success && Array.isArray(res.data) ? res.data : [];
-      setStudioList(list);
-      if (list.length) {
-        const names = list.map((m) => m.name);
-        const deep = deepModelRef.current;
-        if (deep && names.includes(deep)) {
-          deepModelRef.current = null;
-          setModel(deep);
-        } else {
-          setModel((cur) => (names.includes(cur) ? cur : names[0]));
-        }
-      }
-    } catch {
-      if (seq === modelsReqSeq.current) setStudioList([]);
-    }
-  }, [curType]);
-
-  useEffect(() => {
-    reloadModels();
-  }, [reloadModels]);
+  }, [deepModelRef]);
 
   // 生成历史: load the user's REAL generation tasks (persisted server-side). Each
   // SUCCESS task with a result URL becomes a card; a batch task (resultMeta.urls)
@@ -1253,61 +462,7 @@ export default function CreateStudio() {
       await ensureSession();
       const res = await aiApi.listTasks({ pageNum: 1, pageSize: 100, noProject: true });
       const records = res.success && res.data ? res.data.records : [];
-      const items: HistItem[] = [];
-      for (const t of records) {
-        let urls: string[] = [];
-        const meta =
-          typeof t.resultMeta === "string"
-            ? (() => {
-                try {
-                  return JSON.parse(t.resultMeta || "{}");
-                } catch {
-                  return {};
-                }
-              })()
-            : t.resultMeta;
-        const rawUrls = (meta as { urls?: unknown })?.urls;
-        if (Array.isArray(rawUrls)) urls = rawUrls.filter(isHttpUrl);
-        if (!urls.length && isHttpUrl(t.resultUrl)) urls = [t.resultUrl];
-        if (!urls.length) continue; // skip failed / urlless tasks (real data only)
-
-        const type = HIST_HANDLER_TYPE[t.handler] ?? "image";
-        const params = paramsFromTask(t.handler, t.modelName || "", t.input);
-        // Suno 分轨明细：clip_id 供延长/翻唱引用，trackTitle 是 Suno 起的歌名。
-        const tracks = tracksFromMeta(meta);
-        // 上传登记任务(extras.task=upload)产出的 clip:延长时须发 upload_extend,打标传给候选
-        const clipUpload = (() => {
-          const raw = t.input;
-          const obj = typeof raw === "string"
-            ? (() => { try { return JSON.parse(raw) as Record<string, unknown>; } catch { return {}; } })()
-            : (raw as Record<string, unknown> | null) ?? {};
-          const ex = obj.extras;
-          return !!ex && typeof ex === "object" && (ex as Record<string, unknown>).task === "upload";
-        })();
-        const title = params.prompt
-          ? params.prompt.slice(0, 14) + (params.prompt.length > 14 ? "…" : "")
-          : t.modelName || "我的创作";
-        urls.forEach((url, idx) =>
-          items.push({
-            id: `task-${t.id}-${idx}`,
-            run: `task-${t.id}`,
-            ts: t.createTime,
-            ratio: params.ratio,
-            hues: huesFromId(`${t.id}-${idx}`),
-            type,
-            title: tracks[idx]?.title || title,
-            prompt: params.prompt,
-            model: t.modelName || "",
-            url,
-            clipId: tracks[idx]?.clipId || undefined,
-            clipUpload: clipUpload || undefined,
-            trackTitle: tracks[idx]?.title || undefined,
-            trackCover: tracks[idx]?.coverUrl || undefined,
-            trackDur: tracks[idx]?.duration || undefined,
-            params,
-          }),
-        );
-      }
+      const items = histItemsFromTasks(records);
       setHist(items);
 
       // First load only: if the user has past results and nothing is currently
@@ -1342,32 +497,17 @@ export default function CreateStudio() {
     } catch {
       setHist([]);
     }
-  }, [ensureSession]);
+  }, [ensureSession, setHist, setRunMeta, setCells, setProgs, lastRunRef]);
 
   useEffect(() => {
     loadHistory();
   }, [loadHistory]);
 
-  // make admin edits feel live: re-fetch when the tab regains focus / becomes
-  // visible, so returning from 模型管理 reflects the latest per-model config
-  // without a manual refresh.
-  useEffect(() => {
-    const onFocus = () => reloadModels();
-    const onVisible = () => {
-      if (document.visibilityState === "visible") reloadModels();
-    };
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [reloadModels]);
-
   // when the selected model (its config) changes, snap each option control to a
   // value the model actually supports (so a stale ratio/res/quality can't linger).
   useEffect(() => {
     if (!mCfg) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 模型配置(异步外部数据)变化后收敛各选项到其支持的取值，与拆分前一致
     if (mCfg.ratios?.length) setRatio((r) => (mCfg.ratios!.includes(r) ? r : mCfg.ratios![0]));
     if (mCfg.resolutions?.length) {
       if (curType === "image") {
@@ -1385,91 +525,29 @@ export default function CreateStudio() {
       const mx = Math.max(...mCfg.batchOptions);
       setCount((c) => Math.min(Math.max(c, mn), mx));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mCfg, curType]);
 
-  // close the model dropdown on outside click (create.js document click).
+  // 技能与当前创作类型不匹配(带着图片技能切到视频页签)时自动摘除
   useEffect(() => {
-    if (!modelOpen) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!modelWrapRef.current?.contains(e.target as Node)) setModelOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setModelOpen(false);
-    };
-    document.addEventListener("click", onDoc);
-    document.addEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 换页签后收敛：摘除错配技能
+    if (skill && skill.outputType !== curType) setSkill(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [curType]);
+
+  // 挂载时拉一次真实余额与「AI 优化」单次扣费（需先确保会话，否则 401）。
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      await ensureSession();
+      if (cancelled) return;
+      refreshBalance();
+      const r = await aiApi.optimizeCost();
+      if (!cancelled && r.success && r.data) setOptCost(r.data.cost);
+    })();
     return () => {
-      document.removeEventListener("click", onDoc);
-      document.removeEventListener("keydown", onKey);
+      cancelled = true;
     };
-  }, [modelOpen]);
-
-  // 模型下拉用 fixed 定位锚到触发卡下沿：原来的 absolute 定位会被
-  // .ws-panel-scroll(overflow-y:auto) 的滚动口在矮窗口下裁掉下半截；
-  // fixed 悬浮于面板之上，并按视口剩余空间收缩高度（菜单内部可滚动）。
-  const [modelMenuStyle, setModelMenuStyle] = useState<CSSProperties>({});
-  useLayoutEffect(() => {
-    if (!modelOpen) return;
-    const place = () => {
-      const wrap = modelWrapRef.current;
-      if (!wrap) return;
-      const r = wrap.getBoundingClientRect();
-      setModelMenuStyle({
-        position: "fixed",
-        top: r.bottom + 8,
-        left: r.left,
-        right: "auto",
-        width: r.width,
-        maxHeight: Math.max(160, Math.min(340, window.innerHeight - r.bottom - 24)),
-      });
-    };
-    place();
-    window.addEventListener("scroll", place, true);
-    window.addEventListener("resize", place);
-    return () => {
-      window.removeEventListener("scroll", place, true);
-      window.removeEventListener("resize", place);
-    };
-  }, [modelOpen]);
-
-  // close the upload preview on Escape (create.js openPreview esc handler).
-  useEffect(() => {
-    if (!preview) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setPreview(null);
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [preview]);
-
-  // close the image lightbox on Escape.
-  useEffect(() => {
-    if (!lightbox) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setLightbox(null);
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [lightbox]);
-
-  // Tear down all timers on unmount. Beyond the progress intervals, this must
-  // also clear the self-rescheduling poll timeout and bump runIdRef — otherwise
-  // `poll` keeps re-arming after navigation, hits getTask forever, and on
-  // completion runs setState on an unmounted component + pops a toast on whatever
-  // page the user is now on.
-  useEffect(
-    () => () => {
-      ticksRef.current.forEach((t) => clearInterval(t));
-      ticksRef.current = [];
-      if (pollRef.current) {
-        clearTimeout(pollRef.current);
-        pollRef.current = null;
-      }
-      runIdRef.current += 1; // invalidate any in-flight poll
-    },
-    [],
-  );
+  }, [ensureSession, refreshBalance]);
 
   /* ── panel handlers ──────────────────────────────────────────────────── */
 
@@ -1499,6 +577,29 @@ export default function CreateStudio() {
     setCurType(t);
     selectTool(MODES_BY_TYPE[t][0]); // renderModes() → setTool(keys[0])
   };
+
+  // 选中技能:附着 chip;指定了模型卡则自动切换;默认参数回填画幅/清晰度/时长
+  const pickSkill = useCallback(
+    (s: SkillVO) => {
+      setSkill(s);
+      setSkillPickerOpen(false);
+      if (s.modelId) {
+        const target = studioList.find((m) => m.modelKey === s.modelId);
+        if (target && target.name !== model) {
+          setModel(target.name);
+          toast.info(`已切换到技能模型「${target.name}」`);
+        }
+      }
+      const p = parseSkillParams(s.defaultParams);
+      if (p.aspectRatio) setRatio(p.aspectRatio);
+      if (p.resolution) {
+        if (s.outputType === "video") setRes(p.resolution);
+        else setImgRes(p.resolution);
+      }
+      if (p.duration) setDur(`${p.duration}s`);
+    },
+    [studioList, model],
+  );
 
   // AI 优化: rewrite the prompt via the backend (relay text model). Falls back to
   // a clear toast when no text model is configured / the call fails.
@@ -1541,792 +642,6 @@ export default function CreateStudio() {
     }
   };
 
-  /* ── typed reference uploads (create.js addFile / removeFile / swap) ──── */
-
-  // adding a reference asset: every slot offers a source choice (本地上传 / 资产库).
-  const addFile = (k: string, e?: React.MouseEvent) => {
-    const slot = slots?.find((s) => s.k === k);
-    if (!slot) return;
-    if ((slotData[k] || []).length >= slotMax(slot)) {
-      toast.info(slot.label + "最多 " + slotMax(slot) + " 个");
-      return;
-    }
-    // anchor the 来源 menu just to the right of the clicked trigger (flips left if it would overflow)
-    if (e) {
-      const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-      const W = 300;
-      const gap = 8;
-      let x = r.right + gap;
-      if (x + W > window.innerWidth - 12) x = Math.max(12, r.left - W - gap);
-      const y = Math.min(r.top, Math.max(12, window.innerHeight - 200));
-      setSrcMenuPos({ x, y });
-    } else {
-      setSrcMenuPos(null);
-    }
-    setSrcMenu(k);
-  };
-
-  // push a real asset (uploaded or picked from 资产库) into a slot, honoring its max.
-  const addRealFile = (k: string, file: { url: string; name?: string; size?: string }) => {
-    const slot = slots?.find((s) => s.k === k);
-    if (!slot) return;
-    setSlotData((prev) => {
-      const arr = prev[k] || [];
-      if (arr.length >= slotMax(slot)) return prev; // silently cap (already warned on open)
-      const uf: UploadFile =
-        slot.type === "image"
-          ? { g: file.url, url: file.url, n: file.name || "参考图", s: file.size || "" }
-          : { n: file.name || (slot.type === "video" ? "video.mp4" : "audio.mp3"), d: "", url: file.url };
-      return { ...prev, [k]: [...arr, uf] };
-    });
-  };
-
-  // 本地上传: open the OS file picker for the slot, then upload each chosen file.
-  const pickLocal = (k: string) => {
-    setSrcMenu(null);
-    localTargetRef.current = k;
-    const slot = slots?.find((s) => s.k === k);
-    const el = fileInputRef.current;
-    if (!el) return;
-    el.accept = slot?.type === "video" ? "video/*" : slot?.type === "audio" ? "audio/*" : "image/*";
-    el.value = "";
-    el.click();
-  };
-
-  const onLocalFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const k = localTargetRef.current;
-    const list = e.target.files;
-    if (!k || !list || list.length === 0) return;
-    const slot = slots?.find((s) => s.k === k);
-    const isImg = slot?.type === "image";
-    await ensureSession();
-    // slotData 上某个占位项打补丁的小工具(按 key 定位;找不到=已被移除,静默跳过)
-    const patch = (key: string, fn: (f: UploadFile) => UploadFile) =>
-      setSlotData((prev) => ({ ...prev, [k]: (prev[k] || []).map((f) => (f.key === key ? fn(f) : f)) }));
-    const drop = (key: string) =>
-      setSlotData((prev) => ({ ...prev, [k]: (prev[k] || []).filter((f) => f.key !== key) }));
-
-    // 上限用本地计数判定:不能依赖 setSlotData 更新函数里的标志(那是异步/渲染期
-    // 执行的,同步读取拿不到结果)。以当前 slotData 长度起算,每加一个自增。
-    const cap = slot ? slotMax(slot) : Infinity;
-    let curCount = (slotData[k] || []).length;
-    for (const file of Array.from(list)) {
-      if (curCount >= cap) {
-        toast.info(slot ? `${slot.label}最多 ${cap} 个` : "已达上限");
-        break;
-      }
-      curCount++;
-      const sizeLabel = (file.size / 1024 / 1024).toFixed(1) + " MB";
-      const blobUrl = isImg ? URL.createObjectURL(file) : "";
-      const tkey = `up_${uploadSeqRef.current++}`;
-      // 立刻插入「上传中」占位:图片带本地预览,让用户马上有反馈,不再以为没传上
-      setSlotData((prev) => {
-        const uf: UploadFile = isImg
-          ? { key: tkey, g: blobUrl, n: file.name, s: sizeLabel, uploading: true, progress: 0 }
-          : { key: tkey, n: file.name, d: "", uploading: true, progress: 0 };
-        return { ...prev, [k]: [...(prev[k] || []), uf] };
-      });
-      try {
-        const res = await uploadFileSmart(file, (pct) =>
-          patch(tkey, (f) => ({ ...f, progress: Math.max(0, Math.min(100, Math.round(pct))) })),
-        );
-        if (res.success && res.data?.fileUrl) {
-          const url = res.data.fileUrl;
-          patch(tkey, (f) => ({
-            ...f,
-            uploading: false,
-            progress: 100,
-            url,
-            ...(isImg ? { g: url } : {}),
-          }));
-          if (blobUrl) URL.revokeObjectURL(blobUrl); // 换成远程地址后释放本地预览
-        } else {
-          drop(tkey);
-          if (blobUrl) URL.revokeObjectURL(blobUrl);
-          toast.error("上传失败：" + (res.message || file.name));
-        }
-      } catch {
-        drop(tkey);
-        if (blobUrl) URL.revokeObjectURL(blobUrl);
-        toast.error("上传失败：" + file.name);
-      }
-    }
-    e.target.value = "";
-  };
-
-  // 资产库: open the full assets browser as a picker dialog for this slot.
-  const openAssets = (k: string) => {
-    setSrcMenu(null);
-    setAssetPick(k);
-  };
-
-  const chooseAsset = (a: PickedAsset) => {
-    const k = assetPick;
-    setAssetPick(null);
-    if (k) addRealFile(k, { url: a.url, name: a.name });
-  };
-
-  const removeFile = (k: string, i: number) =>
-    setSlotData((prev) => {
-      const arr = (prev[k] || []).slice();
-      arr.splice(i, 1);
-      return { ...prev, [k]: arr };
-    });
-
-  const swapFlf = () =>
-    setSlotData((prev) => {
-      if (!(prev.first || prev.last)) return prev;
-      toast.success("已交换首尾帧");
-      return { ...prev, first: prev.last, last: prev.first };
-    });
-
-  const slotTypeOf = (k: string): SlotType =>
-    slots?.find((s) => s.k === k)?.type ?? "image";
-
-  // reference-asset limits configured per mode in 模型管理 (0 / unset = no limit):
-  //   i2i 图生图 → top-level maxRefImages/maxRefImageSizeMB
-  //   i2v 图生视频 → refLimits i2v.*
-  //   ref 全能参考 → refLimits omniRef.{image|video|audio}*
-  // (flf 首尾帧 uses fixed first/last boxes, so its config isn't applied here.)
-  const refLimitFor = (s: SlotDef): { count: number; size: number } => {
-    const rl = mCfg?.refLimits ?? {};
-    if (tool === "i2i" && s.type === "image") {
-      return { count: mCfg?.maxRefImages ?? 0, size: mCfg?.maxRefImageSizeMB ?? 0 };
-    }
-    if (tool === "i2v" && s.type === "image") {
-      return { count: rl["i2v.imageCount"] ?? 0, size: rl["i2v.imageSizeMB"] ?? 0 };
-    }
-    if (tool === "ref") {
-      if (s.type === "image") return { count: rl["omniRef.imageCount"] ?? 0, size: rl["omniRef.imageSizeMB"] ?? 0 };
-      if (s.type === "video") return { count: rl["omniRef.videoCount"] ?? 0, size: rl["omniRef.videoSizeMB"] ?? 0 };
-      if (s.type === "audio") return { count: rl["omniRef.audioCount"] ?? 0, size: rl["omniRef.audioSizeMB"] ?? 0 };
-    }
-    return { count: 0, size: 0 };
-  };
-  const slotMax = (s: SlotDef): number => {
-    const { count } = refLimitFor(s);
-    return count > 0 ? count : s.max;
-  };
-  const slotHint = (s: SlotDef): string => {
-    const { size } = refLimitFor(s);
-    if (size <= 0) return s.hint;
-    const unit = s.type === "image" ? "单张" : s.type === "video" ? "单段视频" : "单段音频";
-    return `${s.hint} · ${unit} ≤ ${size}MB`;
-  };
-
-  /* gather reference thumbnails for the result header (create.js rhRefThumbs). */
-  const refThumbsForRun = (seed: number): string[] => {
-    const imgs: string[] = [];
-    Object.values(slotData).forEach((arr) =>
-      arr.forEach((f) => {
-        if (f.g) imgs.push(f.g);
-      }),
-    );
-    const out = imgs.length
-      ? imgs
-      : Array.from({ length: 4 }, (_, i) => {
-          const h = (seed * 7 + i * 53) % 360;
-          return `linear-gradient(135deg, hsl(0 0% ${26 + (h % 14)}%), hsl(0 0% ${12 + (h % 10)}%))`;
-        });
-    return out.slice(0, 4);
-  };
-
-  const pushHistory = useCallback((item: Omit<HistItem, "id">) => {
-    // Compute the id OUTSIDE the updater: a state updater must be pure, and React
-    // dev double-invokes it — mutating histSeq inside produced duplicate keys.
-    histSeq += 1;
-    const id = `h-${histSeq}`;
-    setHist((prev) => [{ id, ...item }, ...prev]);
-  }, []);
-
-  /* Drive the generating UI + poll a known backend task to completion. Shared by
-     a fresh generation AND by the refresh-resume path (same task id either way),
-     so an in-flight generation survives a page reload. */
-  const driveRun = useCallback(
-    (run: ActiveRun) => {
-      const { taskId, prompt: p, model: mdl, ratio: r, spec, count: n, isVid, label, hues } = run;
-      const kind: ArtworkType = run.kind ?? (isVid ? "video" : "image");
-      const myRun = (runIdRef.current += 1);
-
-      const newCells: ResultCell[] = hues.map((h, i) => ({ i, hues: h }));
-      setRunMeta({ prompt: p, model: mdl, ratio: r, spec, count: n, label, isVid, kind, refThumbs: run.refThumbs });
-      setCells(newCells);
-      setBusy(true);
-
-      ticksRef.current.forEach((t) => clearInterval(t));
-      ticksRef.current = [];
-      if (pollRef.current) {
-        clearTimeout(pollRef.current);
-        pollRef.current = null;
-      }
-
-      // progress floor + gentle creep between polls (poll raises it to task.progress).
-      const PROG_FLOOR = 6;
-      const local = new Array(n).fill(PROG_FLOOR);
-      setProgs([...local]);
-      newCells.forEach((_, i) => {
-        const tick = setInterval(() => {
-          local[i] = Math.min(90, local[i] + 1.5);
-          setProgs([...local]);
-        }, 500);
-        ticksRef.current.push(tick);
-      });
-
-      const stopTicks = () => {
-        ticksRef.current.forEach((t) => clearInterval(t));
-        ticksRef.current = [];
-      };
-      const clearActive = () => {
-        try {
-          localStorage.removeItem(ACTIVE_RUN_KEY);
-        } catch {
-          /* storage unavailable */
-        }
-      };
-      const isValidUrl = (u?: string): u is string =>
-        !!u && (u.startsWith("https://") || u.startsWith("http://") || u.startsWith("data:"));
-
-      const finish = (urls: string[], tracks: MetaTrack[] = []) => {
-        if (runIdRef.current !== myRun) return;
-        stopTicks();
-        clearActive();
-        // Suno 一次返回两首：结果多于占位格时按结果数展开（仅音频；图片批量的
-        // n 与结果数本就一致）。补出的格子沿用首格色相。
-        const outCells =
-          kind === "audio" && urls.length > newCells.length
-            ? urls.map(
-                (_, i) => newCells[i] ?? { i, hues: newCells[0]?.hues ?? ([0, 80, 200] as MeshHues) },
-              )
-            : newCells;
-        setProgs(new Array(outCells.length).fill(100));
-        setCells(outCells.map((c) => ({ ...c, url: urls[c.i] ?? urls[0] })));
-        setBusy(false);
-        // group every image of this run under one feed key. Insert the whole run as
-        // one block (0..n order) with a dedup guard: on refresh-resume, loadHistory
-        // may have already seeded this task's items (same run key), and finishing the
-        // resumed poll would otherwise render every image twice. Ids are computed
-        // outside the updater so it stays pure (React dev double-invokes it).
-        const runKey = `task-${taskId}`;
-        const ts = new Date().toISOString();
-        const built = outCells.map((cell) => {
-          histSeq += 1;
-          return {
-            id: `h-${histSeq}`,
-            run: runKey,
-            ts,
-            ratio: r,
-            hues: cell.hues,
-            type: kind,
-            title: tracks[cell.i]?.title || p || mdl,
-            prompt: p,
-            model: mdl,
-            url: urls[cell.i] ?? urls[0],
-            clipId: tracks[cell.i]?.clipId || undefined,
-            trackTitle: tracks[cell.i]?.title || undefined,
-            trackCover: tracks[cell.i]?.coverUrl || undefined,
-            trackDur: tracks[cell.i]?.duration || undefined,
-            params: lastRunRef.current ?? undefined,
-          };
-        });
-        setHist((prev) => (prev.some((h) => h.run === runKey) ? prev : [...built, ...prev]));
-        toast.success(kind === "audio" ? "生成完成 · 点击播放试听" : "生成完成 · 点击图片放大查看");
-      };
-
-      const fail = (msg?: string) => {
-        if (runIdRef.current !== myRun) return;
-        stopTicks();
-        clearActive();
-        setBusy(false);
-        toast.error(msg || "生成失败");
-      };
-
-      const poll = async () => {
-        if (runIdRef.current !== myRun) return;
-        try {
-          const res = await aiApi.getTask(taskId);
-          if (runIdRef.current !== myRun) return;
-          if (!res.success) {
-            fail(res.message);
-            return;
-          }
-          const task = res.data;
-          if (task.status === AiTaskStatus.SUCCESS) {
-            let meta: Record<string, unknown> = {};
-            if (typeof task.resultMeta === "string") {
-              try {
-                meta = JSON.parse(task.resultMeta) || {};
-              } catch {
-                meta = {};
-              }
-            } else if (task.resultMeta && typeof task.resultMeta === "object") {
-              meta = task.resultMeta as Record<string, unknown>;
-            }
-            const rawUrls = meta.urls;
-            const urls = Array.isArray(rawUrls) ? rawUrls.filter(isValidUrl) : [];
-            const all = urls.length ? urls : isValidUrl(task.resultUrl) ? [task.resultUrl] : [];
-            if (!all.length) {
-              fail("生成结果无效，可能未配置 AI 供应商");
-              return;
-            }
-            finish(all, tracksFromMeta(meta));
-          } else if (task.status === AiTaskStatus.FAILED) {
-            fail(task.errorMsg);
-          } else if (task.status === AiTaskStatus.CANCELLED) {
-            if (runIdRef.current !== myRun) return;
-            stopTicks();
-            clearActive();
-            setBusy(false);
-          } else {
-            // still processing: raise the bar to the real progress (kept as a floor).
-            if (typeof task.progress === "number") {
-              const pv = Math.min(95, Math.max(PROG_FLOOR, task.progress));
-              for (let i = 0; i < n; i++) local[i] = Math.max(local[i], pv);
-              setProgs([...local]);
-            }
-            // deadline checked AFTER reading the task, so a completed task is always
-            // picked up even when resumed long after it was started.
-            // 音频（Suno）1–4 分钟 + 回存,给 12 分钟;后端整体预算 10 分钟。
-            const maxMs = isVid ? 30 * 60 * 1000 : kind === "audio" ? 12 * 60 * 1000 : 7 * 60 * 1000;
-            if (Date.now() - run.startedAt > maxMs) {
-              fail("生成超时，请重试");
-              return;
-            }
-            pollRef.current = setTimeout(poll, 1500);
-          }
-        } catch {
-          fail("网络错误");
-        }
-      };
-      poll();
-    },
-    [pushHistory],
-  );
-
-  // Release the synchronous in-flight latch whenever a run settles (busy → false).
-  // This single effect covers every setBusy(false) path (driveRun finish/fail/
-  // cancelled, startGeneration failure, the simulation branch); paths that set the
-  // latch but never start a run (a thrown one-click op) clear it themselves.
-  useEffect(() => {
-    if (!busy) {
-      genInFlightRef.current = false;
-      // 结算即刷新余额：成功已扣减、失败/取消已退款，都以后端为准。
-      refreshBalance();
-    }
-  }, [busy, refreshBalance]);
-
-  // 挂载时拉一次真实余额与「AI 优化」单次扣费（需先确保会话，否则 401）。
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      await ensureSession();
-      if (cancelled) return;
-      refreshBalance();
-      const r = await aiApi.optimizeCost();
-      if (!cancelled && r.success && r.data) setOptCost(r.data.cost);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [ensureSession, refreshBalance]);
-
-  /* Create a backend task and hand the progress UI + polling to driveRun. Shared
-     by the panel generate() and the one-click per-result edit ops, so both go
-     through the exact same task-create → persist → drive path. */
-  const startGeneration = useCallback(
-    async (args: {
-      handler: string;
-      modelId: string;
-      input: Record<string, unknown>;
-      meta: Omit<ActiveRun, "taskId" | "startedAt">;
-    }) => {
-      const myRun = (runIdRef.current += 1);
-      setBusy(true);
-      try {
-        await ensureSession();
-        if (runIdRef.current !== myRun) return;
-        const res2 = await aiApi.generate({
-          handler: args.handler,
-          modelId: args.modelId,
-          input: args.input,
-        });
-        if (runIdRef.current !== myRun) return;
-        if (!res2.success) {
-          setBusy(false);
-          toast.error(res2.message || "生成请求失败");
-          return;
-        }
-        const run: ActiveRun = { taskId: res2.data.id, ...args.meta, startedAt: Date.now() };
-        try {
-          localStorage.setItem(ACTIVE_RUN_KEY, JSON.stringify(run));
-        } catch {
-          /* storage unavailable — generation still works, just no refresh-resume */
-        }
-        driveRun(run);
-      } catch {
-        setBusy(false);
-        toast.error("网络错误");
-      }
-    },
-    [ensureSession, driveRun],
-  );
-
-  /* One-click per-result edit op (移除背景 / 物体移除 / 高清放大 / 扩图). Fires a
-     real generation on the clicked image with a fixed backend handler — the
-     server owns the edit instruction, so the user types nothing. The op always
-     runs on an image-edit model (resolved independently of the current panel
-     model, which may be a video model), and 高清放大 prefers a 4K-capable one. */
-  const oneClickEdit = useCallback(
-    async (op: string, imageUrl: string, label: string) => {
-      if (busy || genInFlightRef.current) {
-        toast.info("正在生成中，请稍候…");
-        return;
-      }
-      const handler = EDIT_OP_HANDLER[op];
-      if (!handler || !imageUrl) {
-        toast.info("该结果暂无可用图片");
-        return;
-      }
-      // latch synchronously, before the awaits below, so a rapid double-click
-      // can't slip a second task through (busy is only set later, inside
-      // startGeneration). Cleared on every exit that doesn't hand off to a run.
-      genInFlightRef.current = true;
-      try {
-        await ensureSession();
-        // resolve an image-edit-capable model (independent of the current panel
-        // type, since the panel may be on 视频 while editing an image result).
-        const r = await marketApi.studioModels("image");
-        const models = (r.success && r.data ? r.data : []) as StudioModelVO[];
-        const editable = models.filter((m) => {
-          const c = m.config;
-          return (c?.operations?.includes("edits") ?? false) || (c?.modes?.includes("i2i") ?? false);
-        });
-        const pool = editable.length ? editable : models;
-        const is4k = (m: StudioModelVO) =>
-          /4k/i.test(m.modelKey || "") || /4k|4K/.test(m.name);
-        let pick: StudioModelVO | undefined;
-        if (op === "hd") {
-          pick = pool.find(is4k) ?? pool.find((m) => model === m.name) ?? pool[0];
-        } else {
-          pick =
-            pool.find((m) => m.name === model) ??
-            pool.find((m) => /nano-banana-2$/.test(m.modelKey || "")) ??
-            pool.find((m) => /gpt-image-2/.test(m.modelKey || "")) ??
-            pool[0];
-        }
-        const modelId = pick?.modelKey || pick?.id || "";
-        if (!modelId) {
-          genInFlightRef.current = false;
-          toast.error("没有可用的图像编辑模型");
-          return;
-        }
-        // input carries only the source image (+ a human label under prompt for
-        // history display; the backend overrides it with the engineered prompt)
-        // and, for 高清放大, the 4K resolution hint.
-        const input: Record<string, unknown> = {
-          imageList: [imageUrl],
-          sourceImage: imageUrl,
-          prompt: label,
-          ...(op === "hd" ? { resolution: "4k", clarity: "4k", quality: "high" } : {}),
-        };
-        const hsh = promptHue(imageUrl);
-        const hues: MeshHues[] = [[hsh, (hsh + 80) % 360, (hsh + 200) % 360]];
-        // a one-click edit is server-driven with no panel params, so clear the
-        // last-run snapshot: the result's 再次生成 / 重新编辑 foot actions must not
-        // replay the previous (unrelated) panel run.
-        lastRunRef.current = null;
-        await startGeneration({
-          handler,
-          modelId,
-          input,
-          meta: {
-            prompt: label,
-            model: pick?.name || model,
-            ratio: runMeta?.ratio ?? "1:1",
-            spec: label,
-            count: 1,
-            isVid: false,
-            label,
-            hues,
-            refThumbs: [imageUrl],
-          },
-        });
-      } catch {
-        genInFlightRef.current = false;
-        toast.error("网络错误，请重试");
-      }
-    },
-    [busy, ensureSession, model, runMeta, startGeneration],
-  );
-
-  /* ── generation ───────────────────────────────────────────────────────────
-     Calls the real backend (/api/ai/generate → poll /api/ai/tasks/:id) when a
-     real studio model is selected; falls back to the design-preview simulation
-     only when no backend model is available (studioList empty). */
-
-  const generate = useCallback(() => {
-    if (busy || genInFlightRef.current) return;
-    const p = prompt.trim();
-    // 音乐创作模式互斥（对齐上游 API）：灵感=只看描述;自定义=歌词必填、描述不发;
-    // 延长/翻唱=原曲 clip 必选、歌词选填。旧版"风格需搭配歌词"歧义由模式结构消除。
-    const musicCustom = isAudio && !isSfx && musicMode === "custom";
-    const musicTask = isAudio && !isSfx && (musicMode === "extend" || musicMode === "cover")
-      ? musicMode
-      : "";
-    const audLyrics = isAudio && !isSfx && musicMode !== "inspire" ? lyrics.trim() : "";
-    if (musicCustom && !audLyrics) {
-      toast.info("自定义歌词模式需先填写歌词 ✦");
-      markRequiredField("#fieldLyrics");
-      return;
-    }
-    if (musicTask && !sourceClipId) {
-      toast.info(musicTask === "extend" ? "延长模式需先选择原曲 ✦" : "翻唱模式需先选择原曲 ✦");
-      markRequiredField("#fieldSourceClip");
-      return;
-    }
-    if (!musicTask && !p && !audLyrics) {
-      toast.info(isAudio ? "先写一句音乐描述 ✦" : "先写一句提示词吧 ✦");
-      markRequiredField(".ws-promptbox");
-      promptRef.current?.focus();
-      return;
-    }
-
-    // 有参考素材仍在上传时先拦下:否则按「无 url」被当成没传,误报「请先上传参考图片」
-    if (Object.values(slotData).some((arr) => (arr || []).some((f) => f.uploading))) {
-      toast.info("参考素材上传中，请稍候…");
-      return;
-    }
-    // reference assets from the upload slots (real URLs from 本地上传 / 资产库).
-    const slotUrls = (key: string) =>
-      (slotData[key] || []).map((f) => f.url).filter((u): u is string => !!u);
-    const imageRefs = tool === "i2v" ? slotUrls("first") : slotUrls("img");
-    const firstFrame = slotUrls("first")[0];
-    const lastFrame = slotUrls("last")[0];
-    // 全能参考 (ref) accepts image / video / audio references — any one is enough.
-    const vidRefs = tool === "ref" ? slotUrls("video") : [];
-    const audRefs = tool === "ref" ? slotUrls("audio") : [];
-    const needsRef = (UPLOADS[tool] ?? []).length > 0;
-    const hasAnyRef =
-      imageRefs.length > 0 || !!firstFrame || !!lastFrame || vidRefs.length > 0 || audRefs.length > 0;
-    if (needsRef && !hasAnyRef) {
-      toast.info(tool === "ref" ? "请先上传参考素材（图片 / 视频 / 音频）" : "请先上传参考图片");
-      markRequiredField("#dropFiles");
-      return;
-    }
-    // 首尾帧模式两帧都必填:只传其一时缺的那帧会被静默省略、上游必拒,
-    // 在这里就地拦下(画布视频节点缺尾帧是回退首帧,创作台按显式必填口径)。
-    if (tool === "flf" && (!firstFrame || !lastFrame)) {
-      toast.info(!firstFrame ? "首尾帧模式需要上传首帧 ✦" : "首尾帧模式需要上传尾帧 ✦");
-      markRequiredField("#dropFiles");
-      return;
-    }
-    const refInput: Record<string, unknown> = {};
-    if (imageRefs.length) {
-      refInput.imageList = imageRefs;
-      refInput.sourceImage = imageRefs[0];
-      if (imageRefs.length > 1) refInput.references = imageRefs.slice(1);
-    }
-    if (tool === "flf") {
-      if (firstFrame) refInput.firstFrame = firstFrame;
-      if (lastFrame) refInput.lastFrame = lastFrame;
-    }
-    if (tool === "ref") {
-      if (vidRefs.length) refInput.videoReferences = vidRefs;
-      if (audRefs.length) refInput.audioReferences = audRefs;
-    }
-
-    // all early-return guards passed → latch synchronously (before any state
-    // update / the async startGeneration) so a double-click can't double-fire.
-    genInFlightRef.current = true;
-    setBusy(true);
-
-    const isVid = TOOLS[tool].mode === "t2v";
-    // video/audio tools always produce a single result; only image batches honor
-    // 生成数量 (the count slider is image-only, but `count` persists across type
-    // switches — without this a leftover count>1 would spawn N duplicate cells).
-    const n = isVid || isAudio ? 1 : count;
-    const label = TOOLS[tool].label;
-    const r = isAudio ? "" : ratio; // 音频无画面比例
-    const mdl = model;
-    const hsh = promptHue(p || audLyrics);
-    const spec = isAudio ? "" : isVid ? `${r} · ${res} · ${dur}` : `${r} · ${imgRes}`;
-    const hues: MeshHues[] = Array.from(
-      { length: n },
-      (_, i) => [hsh + i * 36, hsh + i * 36 + 80, hsh + i * 36 + 200] as MeshHues,
-    );
-    const refThumbs = refThumbsForRun(hsh);
-
-    // snapshot the exact settings of this run for 重新编辑 / 再次生成.
-    lastRunRef.current = {
-      prompt: p, model: mdl, tool, curType, ratio: r, imgRes, res, dur, quality, count: n,
-      imageRefs, firstFrame, lastFrame, videoRefs: vidRefs, audioRefs: audRefs,
-      ...(isAudio && !isSfx
-        ? {
-            lyrics: audLyrics || undefined,
-            songStyle: songStyle.trim() || undefined,
-            songTitle: songTitle.trim() || undefined,
-            instrumental: instrumental || undefined,
-            musicMode,
-            sourceClipId: musicTask ? sourceClipId : undefined,
-            sourceIsUpload: musicTask && sourceIsUpload ? true : undefined,
-            continueAt:
-              musicTask === "extend" ? parseInt(continueAt, 10) || undefined : undefined,
-          }
-        : {}),
-    };
-
-    setRunMeta({ prompt: p, model: mdl, ratio: r, spec, count: n, label, isVid, refThumbs });
-    setCells(hues.map((h, i) => ({ i, hues: h })));
-    setProgs(new Array(n).fill(0));
-
-    // clear any stragglers from a previous run + invalidate its poll.
-    ticksRef.current.forEach((t) => clearInterval(t));
-    ticksRef.current = [];
-    if (pollRef.current) {
-      clearTimeout(pollRef.current);
-      pollRef.current = null;
-    }
-    // invalidate any in-flight poll from a previous run (startGeneration/driveRun
-    // each take their own run id from here).
-    runIdRef.current += 1;
-
-    const selStudio = studioList.find((m) => m.name === model) ?? null;
-    const modelId = selStudio?.modelKey || selStudio?.id || "";
-
-    // ── design-preview simulation (no backend model configured) ───────────
-    if (!modelId) {
-      const simRun = `sim-${Date.now()}`;
-      const simTs = new Date().toISOString();
-      const local = new Array(n).fill(0);
-      const doneLocal = new Array(n).fill(false);
-      let doneCountLocal = 0;
-      hues.forEach((hu, i) => {
-        const speed = 1.4 + Math.random() * 1.2;
-        const tick = setInterval(() => {
-          local[i] = Math.min(100, local[i] + speed + Math.random() * 3);
-          setProgs([...local]);
-          if (local[i] >= 100) {
-            clearInterval(tick);
-            if (doneLocal[i]) return;
-            doneLocal[i] = true;
-            doneCountLocal += 1;
-            pushHistory({
-              run: simRun,
-              ts: simTs,
-              ratio: r,
-              hues: hu,
-              type: isAudio ? "audio" : isVid ? "video" : "image",
-              title: p,
-              prompt: p,
-              model: mdl,
-              params: lastRunRef.current ?? undefined,
-            });
-            if (doneCountLocal >= n) {
-              setBusy(false);
-              toast.success("生成完成 · 点击图片放大查看");
-            }
-          }
-        }, 90 + i * 40);
-        ticksRef.current.push(tick);
-      });
-      return;
-    }
-
-    // ── real generation: build the input, then hand off to startGeneration
-    // (shared task-create → persist → drive path). ────────────────────────
-    // 技能:只发 skillId,模板由服务端拼到描述前面(客户端先拼会污染落库的 input,
-    // 作品标题/重新编辑读到的就全是模板开头)
-    const genPrompt = p;
-    const skillInput = skill && skill.outputType === curType ? { skillId: skill.id } : {};
-    if (skill && skill.outputType === curType) void skillApi.recordUse(skill.id);
-    const input: Record<string, unknown> = isAudio
-      ? {
-          // 音频：灵感模式只发描述；自定义歌词模式只发歌词/风格/歌名（描述不发，
-          // 上游有 lyrics 时本就忽略 input）；延长/翻唱经 extras 传 task 与原曲
-          // clip_id（此组合上游不做 tags 歧义校验）；SFX 卡只吃描述。
-          ...skillInput,
-          ...(p && !musicCustom && !musicTask ? { prompt: genPrompt } : {}),
-          ...(audLyrics ? { lyrics: audLyrics } : {}),
-          ...((audLyrics || musicTask) && songStyle.trim() ? { tags: songStyle.trim() } : {}),
-          ...((audLyrics || musicTask) && songTitle.trim() ? { title: songTitle.trim() } : {}),
-          ...(!isSfx && instrumental ? { makeInstrumental: true } : {}),
-          ...(musicTask
-            ? {
-                extras:
-                  musicTask === "extend"
-                    ? {
-                        // 上传登记的本地音频延长走 upload_extend(上游对两种来源分开建模)
-                        task: sourceIsUpload ? "upload_extend" : "extend",
-                        continue_clip_id: sourceClipId,
-                        ...(parseInt(continueAt, 10) > 0
-                          ? { continue_at: parseInt(continueAt, 10) }
-                          : {}),
-                      }
-                    : { task: "cover", cover_clip_id: sourceClipId },
-              }
-            : {}),
-        }
-      : {
-          prompt: genPrompt,
-          ...skillInput,
-          ...refInput,
-          ...(ratioOpts.length ? { aspectRatio: r, aspect_ratio: r, ratio: r } : {}),
-          ...(isVid
-            ? {
-                ...(resOpts.length ? { resolution: res } : {}),
-                ...(durOpts.length ? { duration: dur } : {}),
-              }
-            : {
-                ...(resOpts.length ? { clarity: imgRes, resolution: imgRes } : {}),
-                ...(qualOpts.length ? { quality } : {}),
-              }),
-          ...(n > 1 ? { batchCount: n } : {}),
-        };
-    void startGeneration({
-      handler: TOOL_TO_HANDLER[tool],
-      modelId,
-      input,
-      meta: { prompt: p, model: mdl, ratio: r, spec, count: n, isVid, kind: curType, label, hues, refThumbs },
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busy, prompt, count, tool, curType, ratio, model, res, dur, imgRes, quality, musicMode, sourceClipId, sourceIsUpload, continueAt, lyrics, songStyle, songTitle, instrumental, slotData, studioList, ratioOpts, resOpts, durOpts, qualOpts, pushHistory, startGeneration, skill]);
-
-  // Refresh-resume: on mount, if a generation was in flight (persisted at start),
-  // restore the generating UI and resume polling — the task keeps running on the
-  // server, so a reload no longer loses it.
-  useEffect(() => {
-    let raw: string | null = null;
-    try {
-      raw = localStorage.getItem(ACTIVE_RUN_KEY);
-    } catch {
-      return;
-    }
-    if (!raw) return;
-    let saved: ActiveRun | null = null;
-    try {
-      saved = JSON.parse(raw) as ActiveRun;
-    } catch {
-      saved = null;
-    }
-    // taskId 是后端雪花 ID，序列化为字符串（见 ActiveRun.taskId: string）。原先误判
-    // typeof !== "number" 恒真，导致刷新后在飞的生成任务总被丢弃、"刷新续跑"永久失效。
-    if (!saved || typeof saved.taskId !== "string" || !saved.taskId || !Array.isArray(saved.hues)) {
-      try {
-        localStorage.removeItem(ACTIVE_RUN_KEY);
-      } catch {
-        /* ignore */
-      }
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      await ensureSession();
-      if (!cancelled) driveRun(saved);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [ensureSession, driveRun]);
-
   // 重新编辑 / 再次生成: restore the captured run's full settings back into the
   // panel (type/mode/model/ratio/resolution/quality/count + prompt). Returns
   // false when there is nothing to restore.
@@ -2347,9 +662,9 @@ export default function CreateStudio() {
     setInstrumental(lr.instrumental ?? false);
     // 模式优先取显式字段；老数据按"有歌词 = 自定义"推导。
     setMusicMode(lr.musicMode ?? (lr.lyrics ? "custom" : "inspire"));
-    setSourceClipId(lr.sourceClipId ?? "");
-    setSourceIsUpload(lr.sourceIsUpload ?? false);
-    setContinueAt(lr.continueAt ? String(lr.continueAt) : "");
+    clip.setSourceClipId(lr.sourceClipId ?? "");
+    clip.setSourceIsUpload(lr.sourceIsUpload ?? false);
+    clip.setContinueAt(lr.continueAt ? String(lr.continueAt) : "");
     // 参考素材回填：按 generate() 写入 refInput 的映射反向恢复各上传槽位。
     // 仅在参数确实带参考素材时覆盖 slotData——旧快照/纯文生成不动现有槽位，
     // 保持会话内“先传图再重新生成”的既有行为。
@@ -2363,34 +678,17 @@ export default function CreateStudio() {
     if (lr.videoRefs?.length) slots.video = toFiles(lr.videoRefs, "参考视频");
     if (lr.audioRefs?.length) slots.audio = toFiles(lr.audioRefs, "参考音频");
     if (Object.keys(slots).length) setSlotData(slots);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 再次生成: after restoring the run's settings to the panel (above), fire
   // generate() on the next commit so it reads the just-restored state.
   useEffect(() => {
     if (!pendingGen) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 一次性闸门：消费标记，让 generate() 读到刚恢复的面板状态，与拆分前一致
     setPendingGen(false);
     generate();
   }, [pendingGen, generate]);
-
-  // tear down the current run's intervals + result state (no busy guard).
-  const resetRun = useCallback(() => {
-    ticksRef.current.forEach((t) => clearInterval(t));
-    ticksRef.current = [];
-    if (pollRef.current) {
-      clearTimeout(pollRef.current);
-      pollRef.current = null;
-    }
-    runIdRef.current += 1; // invalidate any in-flight poll for the previous run
-    try {
-      localStorage.removeItem(ACTIVE_RUN_KEY); // a cancelled/cleared run won't resume on refresh
-    } catch {
-      /* ignore */
-    }
-    setCells([]);
-    setProgs([]);
-    setRunMeta(null);
-  }, []);
 
   // load a finished result into a tool's reference slot, then switch to that tool
   // so the user can immediately describe the change. selectTool() clears slotData,
@@ -2485,39 +783,6 @@ export default function CreateStudio() {
     toast.success("已载入该次生成的参数，可修改后重新生成");
   };
 
-  // copy a run's prompt（共享 copyText：clipboard API + execCommand 回退）。
-  const copyPrompt = async (text: string) => {
-    if (await copyText(text)) toast.success("已复制提示词");
-    else toast.error("复制失败");
-  };
-
-  // download every image of a run (cross-origin URLs fall back to opening a tab).
-  const downloadRun = async (r: HistRun) => {
-    const urls = r.items.map((it) => it.url).filter((u): u is string => !!u);
-    if (!urls.length) {
-      toast.info("该作品暂无可下载的图片");
-      return;
-    }
-    for (let i = 0; i < urls.length; i++) {
-      const url = urls[i];
-      try {
-        const resp = await fetch(url);
-        const blob = await resp.blob();
-        const obj = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = obj;
-        a.download = `${(r.prompt || "creation").slice(0, 20)}-${i + 1}`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(obj);
-      } catch {
-        window.open(url, "_blank", "noopener");
-      }
-    }
-    toast.success(urls.length > 1 ? `已开始下载 ${urls.length} 张图片` : "已开始下载");
-  };
-
   // delete a run: drop it from the feed locally and best-effort remove it server-side.
   const deleteRun = (r: HistRun) => {
     setHist((prev) => prev.filter((h) => h.run !== r.run));
@@ -2526,260 +791,14 @@ export default function CreateStudio() {
     toast.success("已删除");
   };
 
-  /* ── render: typed upload slots (create.js renderUploads) ─────────────── */
-
-  const renderSlotCard = (s: SlotDef) => {
-    const files = slotData[s.k] || [];
-    if (files.length === 0) {
-      return (
-        <div className="ws-up" key={s.k}>
-          <button className="ws-up-slot" type="button" onClick={(e) => addFile(s.k, e)}>
-            <span className="ws-up-slot-ic">{SLOT_ICON[s.type]}</span>
-            <span className="ws-up-slot-tx">
-              <span className="t">{s.label}</span>
-              <span className="h">{slotHint(s)}</span>
-            </span>
-            <span className="ws-up-slot-go">上传 ↗</span>
-          </button>
-        </div>
-      );
-    }
-    return (
-      <div className="ws-up" key={s.k}>
-        <div className="ws-up-head">
-          <label>
-            {s.label}
-            <span className="ws-up-n">
-              {files.length}/{slotMax(s)}
-            </span>
-          </label>
-          <button className="ws-up-act" type="button" onClick={(e) => addFile(s.k, e)}>
-            ⤓ 上传
-          </button>
-        </div>
-        {s.type === "image" ? (
-          <div className="ws-up-grid">
-            {files.map((f, i) => (
-              <div
-                className={`ws-ref${f.uploading ? " uploading" : ""}`}
-                key={f.key ?? f.url ?? `${f.n}-${f.s ?? ""}`}
-                title={f.uploading ? "上传中…" : "点击预览"}
-                onClick={() => !f.uploading && setPreview({ k: s.k, i })}
-              >
-                <span className="ws-ref-img" style={{ background: thumbBg(f.g) }} />
-                {f.uploading ? (
-                  <span className="ws-ref-prog">
-                    <span className="ws-ref-spin" aria-hidden />
-                    <span className="ws-ref-pct">{f.progress ?? 0}%</span>
-                  </span>
-                ) : (
-                  <span className="ws-ref-zoom">⚲</span>
-                )}
-                <button
-                  className="ws-ref-x"
-                  type="button"
-                  title="移除"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    removeFile(s.k, i);
-                  }}
-                >
-                  ✕
-                </button>
-                <span className="ws-ref-meta">
-                  <span className="nm">{f.n}</span>
-                  <span className="sz">{f.uploading ? `${f.progress ?? 0}%` : f.s}</span>
-                </span>
-              </div>
-            ))}
-            {files.length < slotMax(s) && (
-              <button className="ws-ref-add" type="button" onClick={(e) => addFile(s.k, e)}>
-                <span className="p">＋</span>添加
-              </button>
-            )}
-          </div>
-        ) : (
-          <div className="ws-up-list">
-            {files.map((f, i) => (
-              <div
-                className={`ws-file${f.uploading ? " uploading" : ""}`}
-                key={f.key ?? f.url ?? `${f.n}-${f.d ?? f.s ?? ""}`}
-                title={f.uploading ? "上传中…" : "点击预览"}
-                onClick={() => !f.uploading && setPreview({ k: s.k, i })}
-              >
-                <span className={`ic ${s.type}`}>
-                  {f.uploading ? <span className="ws-ref-spin" aria-hidden /> : s.type === "video" ? "▶" : "♪"}
-                </span>
-                <span className="fn">{f.n}</span>
-                <span className="fd">{f.uploading ? `上传中 ${f.progress ?? 0}%` : f.d}</span>
-                <button
-                  className="ws-file-x"
-                  type="button"
-                  title="移除"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    removeFile(s.k, i);
-                  }}
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
-            {files.length < slotMax(s) && (
-              <button className="ws-up-more" type="button" onClick={(e) => addFile(s.k, e)}>
-                ＋ 继续添加
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  const renderFlfBox = (s: SlotDef) => {
-    const f = (slotData[s.k] || [])[0];
-    if (!f) {
-      return (
-        <button className="ws-flf-box" type="button" onClick={(e) => addFile(s.k, e)}>
-          {/* SVG 加号：全角「＋」字形字面不居中，会与下方文字视觉错位 */}
-          <span className="plus" aria-hidden>
-            <svg viewBox="0 0 24 24">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-          </span>
-          <span className="lb">{s.label}</span>
-        </button>
-      );
-    }
-    return (
-      <div
-        className={`ws-flf-box filled${f.uploading ? " uploading" : ""}`}
-        title={f.uploading ? "上传中…" : "点击预览"}
-        onClick={() => !f.uploading && setPreview({ k: s.k, i: 0 })}
-      >
-        <span className="ws-flf-img" style={{ background: thumbBg(f.g) }} />
-        {f.uploading && (
-          <span className="ws-ref-prog">
-            <span className="ws-ref-spin" aria-hidden />
-            <span className="ws-ref-pct">{f.progress ?? 0}%</span>
-          </span>
-        )}
-        <button
-          className="ws-flf-x"
-          type="button"
-          title="移除"
-          onClick={(e) => {
-            e.stopPropagation();
-            removeFile(s.k, 0);
-          }}
-        >
-          ✕
-        </button>
-        <span className="ws-flf-lb">{s.label}</span>
-      </div>
-    );
-  };
-
-  const renderUploads = () => {
-    if (!slots) return null;
-    if (tool === "flf") {
-      const [rw, rh] = ratio.split(":");
-      return (
-        <div className="ws-reffiles" id="dropFiles" style={{ display: "block" }}>
-          <div className="ws-up ws-up--flf">
-            <div className="ws-up-head">
-              <label>首尾帧</label>
-              <span className="ws-up-tip">上传起止画面，生成平滑过渡</span>
-            </div>
-            <div
-              className="ws-flf"
-              style={{ ["--flf-ar" as string]: `${rw}/${rh}` } as CSSProperties}
-            >
-              {renderFlfBox(slots[0])}
-              <button
-                className="ws-flf-arrow"
-                type="button"
-                title="交换首尾帧"
-                onClick={swapFlf}
-              >
-                <svg viewBox="0 0 24 24" aria-hidden>
-                  <path d="M7 4 3 8l4 4M3 8h18M17 20l4-4-4-4M21 16H3" />
-                </svg>
-              </button>
-              {renderFlfBox(slots[1])}
-            </div>
-          </div>
-        </div>
-      );
-    }
-    return (
-      <div className="ws-reffiles" id="dropFiles" style={{ display: "block" }}>
-        {slots.map(renderSlotCard)}
-      </div>
-    );
-  };
-
-  /* ── render: upload preview modal (create.js openPreview) ─────────────── */
-
-  const renderPreview = () => {
-    if (!preview) return null;
-    const f = (slotData[preview.k] || [])[preview.i];
-    if (!f) return null;
-    const type = slotTypeOf(preview.k);
-    let media: ReactNode;
-    if (type === "image") {
-      media = <div className="ws-prev-media" style={{ background: thumbBg(f.g) }} />;
-    } else if (type === "video") {
-      media = (
-        <div className="ws-prev-media dark" style={{ background: refGrad(preview.i * 9 + 40) }}>
-          <span className="ws-prev-play">▶</span>
-          <span className="ws-prev-badge">{f.d}</span>
-        </div>
-      );
-    } else {
-      media = (
-        <div className="ws-prev-media dark">
-          <div className="ws-prev-wave">
-            {Array.from({ length: 42 }, (_, i) => (
-              <i key={i} style={{ height: `${18 + ((i * 37) % 64)}%` }} />
-            ))}
-          </div>
-          <span className="ws-prev-play sm">▶</span>
-          <span className="ws-prev-badge">{f.d}</span>
-        </div>
-      );
-    }
-    return (
-      <div
-        className="ws-prev-mask show"
-        onClick={(e) => {
-          if (e.target === e.currentTarget) setPreview(null);
-        }}
-      >
-        <div className="ws-prev" role="dialog" aria-modal>
-          <button
-            className="ws-prev-x"
-            type="button"
-            aria-label="关闭"
-            onClick={() => setPreview(null)}
-          >
-            ✕
-          </button>
-          {media}
-          <div className="ws-prev-meta">
-            <span className="nm">{f.n}</span>
-            <span className="sz">
-              {f.s || (type === "video" ? "视频 · " : "音频 · ") + (f.d ?? "")}
-            </span>
-          </div>
-        </div>
-      </div>
-    );
+  // 空状态快捷入口：切到对应类型/工具并聚焦提示词。
+  const quickStart = (t: ArtworkType, tk: ToolKey) => {
+    setCurType(t);
+    selectTool(tk);
+    promptRef.current?.focus();
   };
 
   /* ── render ──────────────────────────────────────────────────────────── */
-
-  const selSwatch = swatchFor(model);
 
   return (
     <>
@@ -2787,44 +806,8 @@ export default function CreateStudio() {
         {/* ── control panel ───────────────────────────────────────────── */}
         <aside className="ws-panel">
           <div className="ws-panel-scroll">
-            {/* type tabs: 图片 / 视频 */}
-            <div className="ws-typetabs" id="type-tabs">
-              <button
-                type="button"
-                className={curType === "image" ? "on" : undefined}
-                onClick={() => pickType("image")}
-              >
-                <svg viewBox="0 0 24 24">
-                  <rect x="3" y="4" width="18" height="16" rx="2" />
-                  <circle cx="8.5" cy="9.5" r="1.6" />
-                  <path d="M21 16l-5-5L5 20" />
-                </svg>
-                图片
-              </button>
-              <button
-                type="button"
-                className={curType === "video" ? "on" : undefined}
-                onClick={() => pickType("video")}
-              >
-                <svg viewBox="0 0 24 24">
-                  <rect x="3" y="5" width="13" height="14" rx="2" />
-                  <path d="M16 10l5-3v10l-5-3z" />
-                </svg>
-                视频
-              </button>
-              <button
-                type="button"
-                className={curType === "audio" ? "on" : undefined}
-                onClick={() => pickType("audio")}
-              >
-                <svg viewBox="0 0 24 24">
-                  <path d="M9 18V6l10-2v12" />
-                  <circle cx="6" cy="18" r="3" />
-                  <circle cx="16" cy="16" r="3" />
-                </svg>
-                音频
-              </button>
-            </div>
+            {/* type tabs: 图片 / 视频 / 音频 */}
+            <TypeTabs curType={curType} onPick={pickType} />
 
             {/* mode tabs (generation tool) */}
             <div className="seg" id="mode-tabs">
@@ -2841,511 +824,92 @@ export default function CreateStudio() {
             </div>
 
             {/* model picker */}
-            <div
-              className={`ws-model-wrap${modelOpen ? " open" : ""}`}
-              ref={modelWrapRef}
-            >
-              <button
-                className="ws-model"
-                id="modelCard"
-                type="button"
-                aria-haspopup="listbox"
-                aria-expanded={modelOpen}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setModelOpen((v) => !v);
-                }}
-              >
-                <span className="ws-model-sw" style={selSwatch.style}>
-                  {selSwatch.content}
-                </span>
-                <span className="ws-model-info">
-                  <span className="ws-model-row">
-                    <span className="ws-model-name">{model}</span>
-                    {meta.tag && <span className="ws-model-tag">{meta.tag}</span>}
-                  </span>
-                  <span className="ws-model-desc">
-                    {meta.by ? `${meta.by} · ${meta.desc}` : meta.desc}
-                  </span>
-                </span>
-                <span className="ws-model-switch">
-                  <span className="cv">▾</span>
-                </span>
-              </button>
-
-              <div className="ws-model-menu" id="modelMenu" role="listbox" style={modelMenuStyle}>
-                {modelNames.map((m) => {
-                  const mm = metaOf(m, modelMeta);
-                  const sw = swatchFor(m);
-                  return (
-                    <button
-                      key={m}
-                      type="button"
-                      role="option"
-                      aria-selected={m === model}
-                      className={`ws-mopt${m === model ? " on" : ""}`}
-                      onClick={() => {
-                        setModel(m);
-                        setModelOpen(false);
-                      }}
-                    >
-                      <span className="ws-mopt-sw" style={sw.style}>
-                        {sw.content}
-                      </span>
-                      <span className="ws-mopt-info">
-                        <span className="ws-mopt-row">
-                          <span className="ws-mopt-name">{m}</span>
-                          {mm.tag && <span className="ws-model-tag">{mm.tag}</span>}
-                        </span>
-                        <span className="ws-mopt-desc">
-                          {mm.by ? `${mm.by} · ${mm.desc}` : mm.desc}
-                        </span>
-                      </span>
-                      <span className="ws-mopt-ck">✓</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+            <ModelPicker model={model} names={modelNames} studioList={studioList} onSelect={setModel} />
 
             {/* typed reference uploads (per-tool slots; create.js renderUploads) */}
-            {renderUploads()}
+            <UploadSlots
+              tool={tool}
+              slots={slots}
+              ratio={ratio}
+              slotData={slotData}
+              mCfg={mCfg}
+              onAdd={addFile}
+              onRemove={removeFile}
+              onSwapFlf={swapFlf}
+              onPreview={setPreview}
+            />
 
-            {/* 音乐创作模式（对齐 Suno API：灵感 = 描述生成，自定义 = 按歌词演唱，
-                延长/翻唱 = 引用先前生成的原曲 clip） */}
+            {/* 音乐创作模式 + 原曲选择 + 延长起点（仅音频·非音效卡） */}
             {isAudio && !isSfx && (
-              <div className="ws-field col" id="fieldMusicMode">
-                <label>创作模式</label>
-                <div className="ws-ratios">
-                  {(
-                    [
-                      { v: "inspire", l: "灵感模式" },
-                      { v: "custom", l: "自定义歌词" },
-                      { v: "extend", l: "延长" },
-                      { v: "cover", l: "翻唱" },
-                    ] as const
-                  ).map((o) => (
-                    <button
-                      key={o.v}
-                      type="button"
-                      className={`ratio${musicMode === o.v ? " on" : ""}`}
-                      onClick={() => setMusicMode(o.v)}
-                    >
-                      {o.l}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* 延长/翻唱：原曲选择（候选 = 用户历史生成的分轨；上游只认自己的 clip） */}
-            {isAudio && !isSfx && (musicMode === "extend" || musicMode === "cover") && (
-              <>
-                <div className="ws-field col" id="fieldSourceClip">
-                  <label>原曲 · 必选</label>
-                  {(() => {
-                    const sel = clipOptions.find((o) => o.clipId === sourceClipId);
-                    const uploadCost = selModel
-                      ? uploadCostOf(selModel.config) || parseFloat(selModel.pointCost ?? "") || 0
-                      : 0;
-                    // 上传登记进行中:整块显示进度条态,禁交互
-                    if (clipUploadStage) {
-                      return (
-                        <div className="ws-clipcard is-busy">
-                          <span className="ws-rh-spin" aria-hidden />
-                          <span className="tx">
-                            <b>{clipUploadStage === "uploading" ? "音频上传中…" : "登记中，约需 1 分钟…"}</b>
-                            <i>完成后自动选为原曲，可先离开此页</i>
-                          </span>
-                        </div>
-                      );
-                    }
-                    // 已选且不在更换态:展示所选原曲卡片 + 更换
-                    if (sourceClipId && !clipChanging) {
-                      return (
-                        <div className="ws-clipcard">
-                          <span className="cover">
-                            {sel?.coverUrl ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img src={sel.coverUrl} alt="" />
-                            ) : (
-                              <span aria-hidden>♪</span>
-                            )}
-                          </span>
-                          <span className="tx">
-                            <b className="truncate">
-                              {sel
-                                ? sel.trackCount > 1
-                                  ? `${sel.label} · 第 ${sel.trackNo} 首`
-                                  : sel.label
-                                : "历史原曲"}
-                            </b>
-                            <i className="truncate">
-                              {sel
-                                ? [
-                                    sel.modelName,
-                                    sel.duration
-                                      ? `${Math.floor(sel.duration / 60)}:${String(Math.round(sel.duration) % 60).padStart(2, "0")}`
-                                      : "",
-                                    sel.isUpload ? "上传" : "",
-                                  ]
-                                    .filter(Boolean)
-                                    .join(" · ")
-                                : "已选择"}
-                            </i>
-                          </span>
-                          <button type="button" className="chg" onClick={() => setClipChanging(true)}>
-                            更换
-                          </button>
-                        </div>
-                      );
-                    }
-                    // 未选 / 更换态:两个来源选项内联展示(本地上传 / 从资产库选取)
-                    return (
-                      <div className="ws-clipsrc">
-                        <button
-                          type="button"
-                          className="ws-srcopt"
-                          disabled={!selModel}
-                          style={!selModel ? { opacity: 0.5, cursor: "default" } : undefined}
-                          onClick={() => clipFileRef.current?.click()}
-                        >
-                          <span className="ic">⤓</span>
-                          <span className="tx">
-                            <b>本地上传</b>
-                            <i>mp3 / wav{uploadCost ? ` · 登记一次 ${uploadCost} 积分` : ""}</i>
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          className="ws-srcopt"
-                          onClick={() => setClipPickOpen(true)}
-                        >
-                          <span className="ic">▦</span>
-                          <span className="tx">
-                            <b>从资产库选取</b>
-                            <i>选择你生成过的歌 · 可试听</i>
-                          </span>
-                        </button>
-                        {sourceClipId && (
-                          <button type="button" className="ws-clipsrc-cancel" onClick={() => setClipChanging(false)}>
-                            取消
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })()}
-                  <ClipPicker
-                    open={clipPickOpen}
-                    variant="dialog"
-                    extraOptions={extraClips}
-                    // 音效片段不可延长/翻唱,直接不进列表;模型卡匹配不上的
-                    // (已下架等)无从判定,保留展示,由 onPick 的拦截兜底
-                    filterOption={(opt) => {
-                      const src = findClipModel(studioList, opt);
-                      return !src || audioToolOf(src) !== "sfx";
-                    }}
-                    current={sourceClipId}
-                    onClose={() => setClipPickOpen(false)}
-                    onPick={(opt) => {
-                      // 音效片段不可做原曲:选中会自动切到音效模型卡,isSfx 置真后
-                      // 整个延长/翻唱表单被隐藏,点生成会静默退化成普通音效生成。
-                      // 就地拦下,弹窗不关,让用户换选一首音乐。
-                      const src = findClipModel(studioList, opt);
-                      if (src && audioToolOf(src) === "sfx") {
-                        toast.info("音效片段不支持延长 / 翻唱，请选择一首音乐");
-                        return;
-                      }
-                      setSourceClipId(opt.clipId);
-                      // 上传登记的原曲延长时须发 upload_extend,来源标记随选中项走
-                      setSourceIsUpload(!!opt.isUpload);
-                      setClipPickOpen(false);
-                      setClipChanging(false);
-                      // 刚登记完成的上传原曲还没进 hist,记入会话内附加候选供回显
-                      setExtraClips((prev) =>
-                        prev.some((o) => o.clipId === opt.clipId) ? prev : [opt, ...prev]);
-                      // 上游把延长/翻唱任务钉到原曲的模型路由,选定原曲后自动切回原曲那张模型卡
-                      if (src && src.name !== model) {
-                        setModel(src.name);
-                        toast.info(`已切换到原曲模型「${src.name}」`);
-                      } else if (!src && (opt.modelId || opt.modelName)) {
-                        toast.info("原曲所用模型已下架，续写/翻唱可能失败");
-                      }
-                    }}
-                  />
-                </div>
-                {musicMode === "extend" && (
-                  <div className="ws-field col" id="fieldContinueAt">
-                    <label>延长起点 · 秒 · 选填</label>
-                    <input
-                      className="ws-audio-in"
-                      type="text"
-                      inputMode="numeric"
-                      value={continueAt}
-                      onChange={(e) => setContinueAt(e.target.value.replace(/[^0-9]/g, ""))}
-                      placeholder="留空 = 从原曲结尾续写"
-                    />
-                  </div>
-                )}
-              </>
+              <MusicSourceFields
+                musicMode={musicMode}
+                onMusicModeChange={setMusicMode}
+                clip={clip}
+                clipOptions={clipOptions}
+                selModel={selModel}
+                studioList={studioList}
+                model={model}
+                onModelChange={setModel}
+              />
             )}
 
             {/* prompt（自定义歌词/延长/翻唱模式下描述不参与生成，整块隐藏避免误导） */}
             {!(isAudio && !isSfx && musicMode !== "inspire") && (
-              <>
-            <div className="ws-seclabel">
-              提示词{" "}
-              <span className="ws-pcount">
-                <b id="pLen">{prompt.length}</b> 字
-              </span>
-            </div>
-            {/* 技能 chip:附着在提示词框上方,粘性直到手动移除 */}
-            {skill && (
-              <div className="skill-strip">
-                <span className="skill-chip" title={skill.description || skill.title}>
-                  <span className="spark" aria-hidden>✦</span>
-                  {skill.title}
-                  <button type="button" aria-label="移除技能" onClick={() => setSkill(null)}>
-                    ✕
-                  </button>
-                </span>
-              </div>
-            )}
-            <div className="ws-promptbox">
-              {/* 富文本提示词框：有参考素材时输入 @ 引用（图片N pill），Enter 保持换行 */}
-              <MentionPromptEditor
-                ref={promptRef}
-                id="prompt"
-                className="ws-prompt"
-                value={prompt}
-                onChange={setPrompt}
-                refs={mentionRefs}
+              <PromptSection
+                prompt={prompt}
+                onPromptChange={setPrompt}
+                promptRef={promptRef}
+                mentionRefs={mentionRefs}
                 placeholder={mCfg?.defaultPrompt || cfg.ph}
-                submitOnEnter={false}
+                skill={skill}
+                onRemoveSkill={() => setSkill(null)}
+                optimizing={optimizing}
+                optCost={optCost}
+                onOptimize={aiOptimize}
+                onOpenSkillPicker={() => setSkillPickerOpen(true)}
+                ideaOpts={ideaOpts}
               />
-              <div className="ws-prompt-foot">
-                <button className="ws-aiopt" type="button" onClick={aiOptimize} disabled={optimizing}>
-                  <span className="spark">✦</span>{" "}
-                  {optimizing ? "优化中…" : optCost > 0 ? `AI 优化 · ${optCost} 积分` : "AI 优化"}
-                </button>
-                <button className="ws-aiopt" type="button" onClick={() => setSkillPickerOpen(true)}>
-                  <span className="spark">✧</span> {skill ? "更换技能" : "使用技能"}
-                </button>
-                {/* 提示词「清空」按钮已按用户要求移除（2026-07-08）：全选删除足够 */}
-              </div>
-            </div>
-
-            {/* idea chips (only when the model configures 灵感提示词) */}
-            {ideaOpts.length > 0 && (
-              <>
-                <div className="ws-chips-head">灵感提示词 · 点击填入</div>
-                <div className="ws-chips" id="ideas">
-                  {ideaOpts.map((t) => (
-                    <button key={t} type="button" onClick={() => setPrompt(t)}>
-                      {t.length > 10 ? t.slice(0, 10) + "…" : t}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-              </>
             )}
 
-            {/* 音频（Suno）自定义/延长/翻唱的参数：歌词（自定义必填，延长 = 续写
-                歌词、翻唱 = 改编提示，均选填）+ 风格/歌名。音效卡（SFX）隐藏。 */}
+            {/* 音频（Suno）自定义/延长/翻唱的歌词/风格/歌名 */}
             {isAudio && !isSfx && musicMode !== "inspire" && (
-              <>
-                <div className="ws-field col" id="fieldLyrics">
-                  <label>
-                    {musicMode === "custom"
-                      ? "歌词 · 必填"
-                      : musicMode === "extend"
-                        ? "续写歌词 · 选填"
-                        : "改编提示 / 歌词 · 选填"}{" "}
-                    <span className="ws-pcount">
-                      <b>{lyrics.length}</b> 字
-                    </span>
-                  </label>
-                  <textarea
-                    className="ws-audio-ta"
-                    value={lyrics}
-                    onChange={(e) => setLyrics(e.target.value)}
-                    placeholder={
-                      musicMode === "custom"
-                        ? "Suno 按歌词演唱，支持段落标记\n[Verse]\n阳光洒在肩上\n[Chorus]\n这就是青春的模样"
-                        : musicMode === "extend"
-                          ? "为延长的部分续写歌词，留空则由 Suno 续写\n[Verse]\n…"
-                          : "描述想要的改编方向，或直接给出歌词，留空则保留原词"
-                    }
-                  />
-                </div>
-                <div className="ws-field col" id="fieldSongStyle">
-                  <label>音乐风格 · 可多选</label>
-                  <div className="ws-ratios">
-                    {AUDIO_STYLES.map((s) => {
-                      const on = songStyleList.includes(s.v);
-                      return (
-                        <button
-                          key={s.v}
-                          type="button"
-                          className={`ratio${on ? " on" : ""}`}
-                          onClick={() => toggleSongStyle(s.v)}
-                        >
-                          {s.l}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-                <div className="ws-field col" id="fieldSongTitle">
-                  <label>歌名</label>
-                  <input
-                    className="ws-audio-in"
-                    type="text"
-                    value={songTitle}
-                    onChange={(e) => setSongTitle(e.target.value)}
-                    placeholder="给这首歌起个名字"
-                  />
-                </div>
-              </>
+              <SongFields
+                musicMode={musicMode}
+                lyrics={lyrics}
+                onLyricsChange={setLyrics}
+                songStyleList={songStyleList}
+                onToggleStyle={toggleSongStyle}
+                songTitle={songTitle}
+                onSongTitleChange={setSongTitle}
+              />
             )}
 
-            {/* 人声/纯音乐两种创作模式都支持（上游 make_instrumental 通吃） */}
-            {isAudio && !isSfx && (
-              <div className="ws-field col" id="fieldVocal">
-                <label>人声</label>
-                <div className="ws-ratios">
-                  {[
-                    { v: false, l: "有人声" },
-                    { v: true, l: "纯音乐" },
-                  ].map((o) => (
-                    <button
-                      key={o.l}
-                      type="button"
-                      className={`ratio${instrumental === o.v ? " on" : ""}`}
-                      onClick={() => setInstrumental(o.v)}
-                    >
-                      {o.l}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+            {/* 人声/纯音乐（仅音频·非音效卡） */}
+            {isAudio && !isSfx && <VocalField instrumental={instrumental} onChange={setInstrumental} />}
 
-            {/* 画面比例 (configured ratios only) */}
-            {!isAudio && ratioOpts.length > 0 && (
-              <div className="ws-field col" id="fieldRatio">
-                <label>画面比例</label>
-                <div className="ws-ratios" id="ratios">
-                  {ratioOpts.map((r) => (
-                    <button
-                      key={r}
-                      type="button"
-                      className={`ratio${r === ratio ? " on" : ""}`}
-                      onClick={() => setRatio(r)}
-                    >
-                      {ratioLabel(r)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* 分辨率 (image, configured resolutions only) */}
-            {!isVideo && !isAudio && resOpts.length > 0 && (
-              <div className="ws-field col" id="fieldImgRes">
-                <label>分辨率</label>
-                <div className="ws-ratios" id="imgResPills">
-                  {resOpts.map((r) => (
-                    <button
-                      key={r}
-                      type="button"
-                      className={`ratio${r === imgRes ? " on" : ""}`}
-                      onClick={() => setImgRes(r)}
-                    >
-                      {r.toUpperCase()}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* 质量 (image, configured qualities only) */}
-            {!isVideo && !isAudio && qualOpts.length > 0 && (
-              <div className="ws-field col" id="fieldQuality">
-                <label>质量</label>
-                <div className="ws-ratios" id="qualityPills">
-                  {qualOpts.map((q) => (
-                    <button
-                      key={q}
-                      type="button"
-                      className={`ratio${q === quality ? " on" : ""}`}
-                      onClick={() => setQuality(q)}
-                    >
-                      {QUALITY_LABEL[q] ?? q}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* 清晰度 (video, configured resolutions only) */}
-            {isVideo && resOpts.length > 0 && (
-              <div className="ws-field col" id="fieldRes">
-                <label>清晰度</label>
-                <div className="ws-ratios" id="resPills">
-                  {resOpts.map((r) => (
-                    <button
-                      key={r}
-                      type="button"
-                      className={`ratio${r === res ? " on" : ""}`}
-                      onClick={() => setRes(r)}
-                    >
-                      {r.toUpperCase()}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* 生成数量 (image). 始终显示；仅 1 个可选数量时滑块固定且禁用。 */}
-            {!isVideo && !isAudio && (
-              <div className="ws-field col" id="fieldCount">
-                <label>
-                  生成数量 · <span id="countVal">{count}</span>
-                </label>
-                <input
-                  className="slider"
-                  id="count"
-                  type="range"
-                  min={batchMin}
-                  max={batchMax}
-                  step={1}
-                  value={count}
-                  disabled={batchMax <= batchMin}
-                  onChange={(e) => setCount(+e.target.value)}
-                />
-              </div>
-            )}
-
-            {/* 时长 (video, configured durations only) */}
-            {isVideo && durOpts.length > 0 && (
-              <div className="ws-field col" id="fieldDur">
-                <label>时长</label>
-                <div className="ws-ratios" id="durPills">
-                  {durOpts.map((d) => (
-                    <button
-                      key={d}
-                      type="button"
-                      className={`ratio${d === dur ? " on" : ""}`}
-                      onClick={() => setDur(d)}
-                    >
-                      {d}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+            {/* 画面比例 / 分辨率 / 质量 / 清晰度 / 生成数量 / 时长 */}
+            <OptionFields
+              isVideo={isVideo}
+              isAudio={isAudio}
+              ratioOpts={ratioOpts}
+              ratio={ratio}
+              onRatioChange={setRatio}
+              resOpts={resOpts}
+              imgRes={imgRes}
+              onImgResChange={setImgRes}
+              qualOpts={qualOpts}
+              quality={quality}
+              onQualityChange={setQuality}
+              count={count}
+              onCountChange={setCount}
+              batchMin={batchMin}
+              batchMax={batchMax}
+              res={res}
+              onResChange={setRes}
+              durOpts={durOpts}
+              dur={dur}
+              onDurChange={setDur}
+            />
           </div>
 
           {/* footer */}
@@ -3369,313 +933,25 @@ export default function CreateStudio() {
         </aside>
 
         {/* ── center stage ────────────────────────────────────────────── */}
-        <main className="ws-stage" id="stage">
-          <div className="ws-stage-main">
-            <div className="ws-stage-top">
-              <div className="ws-crumb">
-                <span className="d" />
-                创作台 · STUDIO
-              </div>
-              {/* 「清空画布」按钮已按用户要求移除（2026-07-08）：结果卡自带逐条删除 */}
-            </div>
-
-            {/* empty state — only when nothing is generating and there's no history */}
-            {!busy && runs.length === 0 && (
-              <div className="ws-empty" id="empty">
-                <div className="ws-empty-glyph">
-                  <span className="glyph" />
-                </div>
-                <h2>准备好开始创作了吗？</h2>
-                <p>写下一句提示词，挑个模型与比例 —— 数秒之后，作品就在这里浮现。</p>
-                <div className="ws-empty-tags">
-                  {(
-                    [
-                      { type: "image", tool: "t2i", label: "✦ 文生图" },
-                      { type: "image", tool: "i2i", label: "↻ 图生图" },
-                      { type: "video", tool: "t2v", label: "▶ 文生视频" },
-                      { type: "video", tool: "i2v", label: "⤢ 图生视频" },
-                      { type: "audio", tool: "t2a", label: "♪ 音乐生成" },
-                      { type: "audio", tool: "sfx", label: "≈ 音效生成" },
-                    ] as { type: ArtworkType; tool: ToolKey; label: string }[]
-                  ).map((t) => (
-                    <button
-                      key={t.tool}
-                      type="button"
-                      onClick={() => {
-                        setCurType(t.type);
-                        selectTool(t.tool);
-                        promptRef.current?.focus();
-                      }}
-                    >
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* result feed — newest run on top; each run shows its images at their
-                TRUE aspect ratio (no crop). The in-flight run renders first; once it
-                finishes it joins the history feed below. Replaces the old cropped grid
-                + separate 生成历史 strip. */}
-            {(busy || runs.length > 0) && (
-              <div className="ws-feed" id="feed">
-                {/* in-flight run (placeholders with progress) */}
-                {busy && runMeta && (
-                  <div className={`ws-run inflight${cells.length <= 1 ? " single" : ""}${runMeta.kind === "audio" ? " audio" : ""}`}>
-                    <div className="ws-run-head">
-                      <span className="ws-run-kind">
-                        {SLOT_ICON[runMeta.kind ?? (runMeta.isVid ? "video" : "image")]}
-                        {runMeta.kind === "audio" ? "AI 音乐" : runMeta.isVid ? "AI 视频" : "AI 图片"}
-                      </span>
-                      <span className="ws-run-div" />
-                      {runMeta.model && <span className="ws-run-chip">{runMeta.model}</span>}
-                      {runMeta.ratio && (
-                        <span className="ws-run-chip">{ratioLabel(runMeta.ratio)}</span>
-                      )}
-                      <span className="ws-run-time">生成中…</span>
-                    </div>
-                    {runMeta.prompt && (
-                      <div className="ws-run-prompt">
-                        <span className="tx" title={runMeta.prompt}>
-                          {runMeta.prompt}
-                        </span>
-                      </div>
-                    )}
-                    <div className="ws-run-imgs">
-                      {cells.map((cell) => {
-                        const [rw, rh] = runMeta.ratio.split(":").map(Number);
-                        const pct = Math.round(progs[cell.i] ?? 0);
-                        return (
-                          <div
-                            key={cell.i}
-                            className="ws-runimg loading"
-                            style={{ aspectRatio: `${rw || 1}/${rh || 1}` }}
-                          >
-                            <div
-                              className="done-cov on"
-                              style={{ background: mesh(cell.hues[0], cell.hues[1], cell.hues[2]) }}
-                            />
-                            <div className="shimmer" />
-                            <div className="ph">
-                              生成中 · <span className="pct">{pct}%</span>
-                            </div>
-                            <div className="bar">
-                              <i style={{ width: `${progs[cell.i] ?? 0}%` }} />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {/* finished runs */}
-                {runs.map((r) => (
-                  <div key={r.run} className={`ws-run${r.items.length <= 1 ? " single" : ""}`}>
-                    <div className="ws-run-head">
-                      <span className="ws-run-kind">
-                        {SLOT_ICON[r.type]}
-                        {r.type === "video" ? "AI 视频" : r.type === "audio" ? "AI 音乐" : "AI 图片"}
-                      </span>
-                      <span className="ws-run-div" />
-                      {r.model && <span className="ws-run-chip">{r.model}</span>}
-                      {r.ratio && <span className="ws-run-chip">{ratioLabel(r.ratio)}</span>}
-                      {r.ts && <span className="ws-run-time">{fmtTs(r.ts)}</span>}
-                    </div>
-                    {r.prompt && (
-                      <div className="ws-run-prompt">
-                        <span className="tx" title={r.prompt}>
-                          {r.prompt}
-                        </span>
-                        <button
-                          type="button"
-                          className="cp"
-                          title="复制提示词"
-                          aria-label="复制提示词"
-                          onClick={() => copyPrompt(r.prompt)}
-                        >
-                          <svg viewBox="0 0 24 24">
-                            <rect x="9" y="9" width="11" height="11" rx="2" />
-                            <path d="M5 15V5a2 2 0 0 1 2-2h10" />
-                          </svg>
-                        </button>
-                      </div>
-                    )}
-                    <div className="ws-run-imgs">
-                      {/* 音频：Suno/Udio 式歌曲行列表（封面+歌名+波形+时间），
-                          两首纵向成列——不走通用的并排卡片。 */}
-                      {r.type === "audio" ? (
-                        <div className="ws-runimg audio songs">
-                          {r.items.map((it) => (
-                            <SongCard
-                              key={it.id}
-                              src={it.url || ""}
-                              title={it.trackTitle || it.title}
-                              subtitle={r.model || "AI 音乐"}
-                              cover={it.trackCover}
-                              duration={it.trackDur}
-                            />
-                          ))}
-                        </div>
-                      ) : (
-                      r.items.map((it) => {
-                        const cell: ResultCell = { i: -1, hues: it.hues, url: it.url };
-                        return (
-                          <AmbientFrame
-                            key={it.id}
-                            url={it.type === "image" ? it.url || undefined : undefined}
-                            className={`ws-runimg done${it.type === "video" ? " video" : it.type === "audio" ? " audio" : ""}`}
-                            onClick={() => {
-                              // images zoom in the lightbox; video/audio play inline via controls.
-                              if (it.url && it.type === "image") setLightbox(it.url);
-                            }}
-                          >
-                            {it.url ? (
-                              it.type === "video" ? (
-                                <video
-                                  className="done-img"
-                                  src={it.url}
-                                  controls
-                                  playsInline
-                                  preload="metadata"
-                                  onClick={(e) => e.stopPropagation()}
-                                />
-                              ) : it.type === "audio" ? (
-                                <AudioPlayerCard src={it.url} />
-                              ) : (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img className="done-img" src={it.url} alt={r.prompt} loading="lazy" />
-                              )
-                            ) : (
-                              <div
-                                className="done-cov on"
-                                style={{ background: mesh(it.hues[0], it.hues[1], it.hues[2]) }}
-                              />
-                            )}
-                            {/* the per-result edit toolbar is image-only (作为垫图/精修/扩图/高清…) */}
-                            {it.type === "image" && (
-                              <div
-                                className="gen-acts"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const btn = (e.target as HTMLElement).closest("button");
-                                  if (btn) cellTool(btn.dataset.act || "", cell);
-                                }}
-                              >
-                                {CELL_TOOLS.map((t) => (
-                                  <button
-                                    key={t.act}
-                                    type="button"
-                                    data-act={t.act}
-                                    className={t.real ? undefined : "soon"}
-                                    title={t.label}
-                                    aria-label={t.label}
-                                  >
-                                    {t.icon}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </AmbientFrame>
-                        );
-                      })
-                      )}
-                    </div>
-                    <div className="ws-run-foot">
-                      <button
-                        type="button"
-                        onClick={() => editRun(r)}
-                        disabled={busy}
-                        title="载入该次参数到面板修改"
-                      >
-                        <svg viewBox="0 0 24 24">
-                          <path d="M4 20h4L18.5 9.5a2 2 0 0 0-3-3L5 17v3z" />
-                          <path d="M13.5 6.5l3 3" />
-                        </svg>
-                        编辑
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => regenRun(r)}
-                        disabled={busy}
-                        title="用相同参数重新生成"
-                      >
-                        <svg viewBox="0 0 24 24">
-                          <path d="M21 12a9 9 0 1 1-2.6-6.4" />
-                          <path d="M21 3v6h-6" />
-                        </svg>
-                        重新生成
-                      </button>
-                      <button type="button" onClick={() => downloadRun(r)} title="下载">
-                        <svg viewBox="0 0 24 24">
-                          <path d="M12 3v12" />
-                          <path d="M7 10l5 5 5-5" />
-                          <path d="M4 21h16" />
-                        </svg>
-                        下载
-                      </button>
-                      <button
-                        type="button"
-                        className="danger"
-                        onClick={() => deleteRun(r)}
-                        title="删除"
-                      >
-                        <svg viewBox="0 0 24 24">
-                          <path d="M4 7h16" />
-                          <path d="M9 7V4h6v3" />
-                          <path d="M6 7l1 14h10l1-14" />
-                        </svg>
-                        删除
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </main>
+        <StageFeed
+          busy={busy}
+          runs={runs}
+          runMeta={runMeta}
+          cells={cells}
+          progs={progs}
+          onQuickStart={quickStart}
+          onEditRun={editRun}
+          onRegenRun={regenRun}
+          onDeleteRun={deleteRun}
+          onCellTool={cellTool}
+          onZoom={setLightbox}
+        />
       </div>
 
-      {renderPreview()}
+      <PreviewModal preview={preview} slotData={slotData} slots={slots} onClose={() => setPreview(null)} />
 
       {/* full-image lightbox — click a finished result to zoom; backdrop / ✕ / Esc closes */}
-      {lightbox && (
-        <div className="ws-lightbox" onClick={() => setLightbox(null)}>
-          <button
-            type="button"
-            className="ws-lb-x"
-            aria-label="关闭"
-            onClick={() => setLightbox(null)}
-          >
-            ✕
-          </button>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={lightbox} alt="生成结果预览" onClick={(e) => e.stopPropagation()} />
-          {/* same per-result edit toolbar, always visible in the zoom view */}
-          <div
-            className="gen-acts ws-lb-tools"
-            onClick={(e) => {
-              e.stopPropagation();
-              const btn = (e.target as HTMLElement).closest("button");
-              if (btn) lightboxTool(btn.dataset.act || "");
-            }}
-          >
-            {CELL_TOOLS.map((t) => (
-              <button
-                key={t.act}
-                type="button"
-                data-act={t.act}
-                className={t.real ? undefined : "soon"}
-                title={t.label}
-                aria-label={t.label}
-              >
-                {t.icon}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      {lightbox && <Lightbox url={lightbox} onClose={() => setLightbox(null)} onTool={lightboxTool} />}
 
       {/* hidden input for 本地上传 */}
       <input ref={fileInputRef} type="file" multiple hidden onChange={onLocalFiles} />
@@ -3690,37 +966,16 @@ export default function CreateStudio() {
       />
 
       {/* 参考素材来源选择：本地上传 / 资产库（按槽类型 图片/视频/音频 适配文案） */}
-      {srcMenu &&
-        (() => {
-          const kind = slotTypeOf(srcMenu);
-          const lb = kind === "video" ? "视频" : kind === "audio" ? "音频" : "图片";
-          return (
-            <>
-              <div className="ws-srcpop-catch" onClick={() => setSrcMenu(null)} />
-              <div
-                className="ws-srcmenu ws-srcmenu-pop"
-                style={srcMenuPos ? { left: srcMenuPos.x, top: srcMenuPos.y } : undefined}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="ws-srcmenu-h">选择{lb}来源</div>
-                <button type="button" className="ws-srcopt" onClick={() => pickLocal(srcMenu)}>
-                  <span className="ic">⤓</span>
-                  <span className="tx">
-                    <b>本地上传</b>
-                    <i>从你的电脑选择{lb}</i>
-                  </span>
-                </button>
-                <button type="button" className="ws-srcopt" onClick={() => openAssets(srcMenu)}>
-                  <span className="ic">▦</span>
-                  <span className="tx">
-                    <b>从资产库选取</b>
-                    <i>选择已上传 / 已生成的{lb}</i>
-                  </span>
-                </button>
-              </div>
-            </>
-          );
-        })()}
+      {srcMenu && (
+        <SrcMenu
+          slotKey={srcMenu}
+          pos={srcMenuPos}
+          kind={slotTypeOf(slots, srcMenu)}
+          onClose={() => setSrcMenu(null)}
+          onPickLocal={pickLocal}
+          onOpenAssets={openAssets}
+        />
+      )}
 
       {/* 技能广场:按当前创作类型过滤 */}
       <SkillPicker
@@ -3732,30 +987,13 @@ export default function CreateStudio() {
       />
 
       {/* 资产库弹窗：复用整个资产页 UI 作为选择器，按槽类型默认到对应筛选 */}
-      {assetPick &&
-        (() => {
-          const kind = slotTypeOf(assetPick);
-          return (
-            <div className="ws-srcmask" onClick={() => setAssetPick(null)}>
-              <div className="ws-assetbox" onClick={(e) => e.stopPropagation()}>
-                <div className="ws-assetbox-h">
-                  <span>从资产库选取</span>
-                  <button type="button" aria-label="关闭" onClick={() => setAssetPick(null)}>
-                    ✕
-                  </button>
-                </div>
-                <div className="ws-assetbox-body">
-                  <AssetsBrowser
-                    pickMode
-                    onPick={chooseAsset}
-                    defaultFilter={kind}
-                    defaultTab={kind === "audio" ? "upload" : "hist"}
-                  />
-                </div>
-              </div>
-            </div>
-          );
-        })()}
+      {assetPick && (
+        <AssetPickerModal
+          kind={slotTypeOf(slots, assetPick)}
+          onPick={chooseAsset}
+          onClose={() => setAssetPick(null)}
+        />
+      )}
     </>
   );
 }
