@@ -327,4 +327,4 @@ export const http = {
     putWithProgress(url, body, headers, onProgress),
 };
 
-export { setTokens, clearTokens, fetchWithAuth };
+export { setTokens, clearTokens, fetchWithAuth, refreshTokenOnce, getAccessToken };

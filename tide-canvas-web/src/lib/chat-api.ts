@@ -3,12 +3,19 @@
 // useAuthStore.getState().ensureSession() before invoking these.
 //
 // Backend routes (tide-canvas-server/internal/handler/chat/register.go):
-//   GET    /api/im/conversations               -> PageData<ConversationVO>
-//   POST   /api/im/conversations  {title?}      -> ConversationVO
-//   GET    /api/im/conversations/:id/messages   -> PageData<MessageVO>
-//   POST   /api/im/conversations/:id/messages {content,type?} -> MessageVO
+//   GET    /api/im/conversations                     -> PageData<ConversationVO>
+//   POST   /api/im/conversations  {title?}           -> ConversationVO
+//   PUT    /api/im/conversations/:id  {title}        -> ConversationVO (rename)
+//   DELETE /api/im/conversations/:id                 -> void
+//   GET    /api/im/conversations/:id/messages        -> PageData<MessageVO>
+//   POST   /api/im/conversations/:id/messages {content,type?,attachments?} -> MessageVO
+//   POST   /api/im/conversations/:id/messages/append {role,content,type?} -> MessageVO
+//   POST   /api/im/conversations/:id/turn  {prompt,params,taskId} -> MessageVO[]
+//   GET    /api/im/conversations/:id/context         -> ContextUsageVO
+//   POST   /api/im/conversations/:id/stream  (SSE)   -> delta/done/error frames
+//   GET    /api/im/conversations/:id/stream  (SSE)   -> 断线重连续播
 
-import { http, toParams } from "./http";
+import { http, toParams, refreshTokenOnce, getAccessToken } from "./http";
 import type { PageData } from "@/types/api";
 import type {
   ConversationVO,
@@ -20,6 +27,37 @@ import type {
 } from "@/types/chat";
 
 export type { MessageAttachment };
+
+/** SSE 流式 fetch，带一次 401 刷新重试。http.request 的 Result 信封封装不适用
+ *  流式响应（要拿裸 Response 读 body reader），这里复用同一个单飞刷新：
+ *  access token 过期时长对话不再直接报"网络错误"，而是静默续期后重发；
+ *   refresh 被明确拒绝（凭据已清）则与 http.request 同口径跳登录。 */
+async function fetchStream(
+  url: string,
+  init: RequestInit,
+  signal?: AbortSignal,
+): Promise<Response> {
+  const send = (token: string | null) =>
+    fetch(url, {
+      ...init,
+      headers: {
+        ...(init.headers as Record<string, string> | undefined),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      signal,
+    });
+  const token = getAccessToken();
+  let res = await send(token);
+  if (res.status === 401 && token) {
+    const newToken = await refreshTokenOnce();
+    if (newToken) {
+      res = await send(newToken);
+    } else if (!getAccessToken() && typeof window !== "undefined") {
+      window.location.href = "/login";
+    }
+  }
+  return res;
+}
 
 /** Consume the SSE stream from POST /api/im/conversations/:id/stream. Each frame
  *  is a JSON object: {delta} per token, {done,message} at the end, or
@@ -40,29 +78,28 @@ export async function streamMessage(
     model?: string;
   },
 ): Promise<void> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
   let res: Response;
   try {
-    res = await fetch(`/api/im/conversations/${id}/stream`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    res = await fetchStream(
+      `/api/im/conversations/${id}/stream`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content,
+          ...(handlers.attachments?.length ? { attachments: handlers.attachments } : {}),
+          ...(handlers.model ? { model: handlers.model } : {}),
+        }),
       },
-      body: JSON.stringify({
-        content,
-        ...(handlers.attachments?.length ? { attachments: handlers.attachments } : {}),
-        ...(handlers.model ? { model: handlers.model } : {}),
-      }),
-      signal: handlers.signal,
-    });
+      handlers.signal,
+    );
   } catch {
     // 主动中止（切会话/离开页面）不是错误，别对用户弹"网络错误"假警报。
     if (!handlers.signal?.aborted) handlers.onError?.("网络错误");
     return;
   }
   if (!res.ok || !res.body) {
-    handlers.onError?.("网络错误");
+    handlers.onError?.(res.status === 401 ? "登录状态已过期，请重新登录" : "网络错误");
     return;
   }
   const terminal = await readSseFrames(res, (obj) => {
@@ -102,19 +139,19 @@ export async function streamLive(
     signal?: AbortSignal;
   },
 ): Promise<void> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
   let res: Response;
   try {
-    res = await fetch(`/api/im/conversations/${id}/stream`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      signal: handlers.signal,
-    });
+    res = await fetchStream(
+      `/api/im/conversations/${id}/stream`,
+      { method: "GET" },
+      handlers.signal,
+    );
   } catch {
     if (!handlers.signal?.aborted) handlers.onError?.("网络错误");
     return;
   }
   if (!res.ok || !res.body) {
-    handlers.onError?.("网络错误");
+    handlers.onError?.(res.status === 401 ? "登录状态已过期，请重新登录" : "网络错误");
     return;
   }
   const terminal = await readSseFrames(res, (obj) => {
