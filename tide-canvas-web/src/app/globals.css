@@ -1,6 +1,5 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "shadcn/tailwind.css";
 @import "highlight.js/styles/github.css";
 
 @plugin "@tailwindcss/typography";
@@ -211,7 +210,7 @@
   background: rgba(255, 255, 255, 0.35);
 }
 
-/* 细滚动条：白底/暗底通用（中性灰 thumb），用于 antd Modal 等浅色容器的滚动区 */
+/* 细滚动条：白底/暗底通用（中性灰 thumb），用于浅色容器的滚动区 */
 .thin-scroll {
   scrollbar-width: thin;
   scrollbar-color: rgba(120, 120, 120, 0.4) transparent;
