@@ -1,0 +1,248 @@
+"use client";
+
+/* ── composer chip config state machine (extracted verbatim from page.tsx) ─────
+   联网 / 模式 / 模型 / 比例 / 分辨率 / 画质 / 时长 / 批量 / 技能 / 音乐四模式
+   的全部状态、按模型能力的收敛 effects、参考策略推导与积分预估。 */
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "@/components/shared/toast";
+import { parseSkillParams } from "@/lib/skill-api";
+import type { SkillVO } from "@/types/skill";
+import {
+  DEFAULT_MUSIC_PARAMS,
+  fetchClipOptions,
+  isSfxModel,
+  type ClipOption,
+  type MusicParams,
+} from "@/lib/music-modes";
+import {
+  MAX_ATTACHMENTS,
+  REF_POLICY,
+  acceptFor,
+  normalizeFormats,
+  type RefPolicy,
+} from "../_components/chat-utils";
+import type { GenModelsApi } from "./use-gen-models";
+
+export function useComposerConfig(models: GenModelsApi) {
+  const { genModels, model, setModel, selModel, mCfg, isVid, webSearchAvail } = models;
+
+  // composer chips — driven by the selected model's 模型管理 config
+  const [web, setWeb] = useState(false);
+  const [mode, setMode] = useState("");
+  const [ratio, setRatio] = useState("");
+  const [res, setRes] = useState("");
+  const [quality, setQuality] = useState("");
+  const [dur, setDur] = useState("");
+  // 技能:附着为输入框上方 chip,发送时模板与描述合并;粘性(发完保留)直到手动移除
+  const [skill, setSkill] = useState<SkillVO | null>(null);
+  const [skillPickerOpen, setSkillPickerOpen] = useState(false);
+  const [batch, setBatch] = useState(1);
+  const [openSel, setOpenSel] = useState<string | null>(null);
+  // 音乐四创作模式（Suno，仅音频音乐模型时生效）——字段与请求口径对齐创作台。
+  const [music, setMusic] = useState<MusicParams>(DEFAULT_MUSIC_PARAMS);
+  // 延长/翻唱的原曲候选（用户生成历史里的分轨 clip）；null = 尚未拉取。
+  const [clipOpts, setClipOpts] = useState<ClipOption[] | null>(null);
+  // 原曲选择弹窗(替代下拉:Suno 同批两首同名,弹窗里能试听/看第 N 首区分)
+  const [clipPickOpen, setClipPickOpen] = useState(false);
+
+  const modeVals = mCfg?.modes ?? [];
+  const ratioOpts = mCfg?.ratios ?? [];
+  const resOpts = mCfg?.resolutions ?? [];
+  // 画质档位只对图片有意义：服务端 pricing.go 的图片单价按 [quality][clarity]
+  // 查表，视频走 [duration][resolution]，音频按次计费。
+  const qualOpts = selModel?.type === "image" ? mCfg?.qualities ?? [] : [];
+  const durOpts = isVid ? mCfg?.durations ?? [] : [];
+  const countOpts = mCfg?.batchOptions?.length ? mCfg.batchOptions : [1, 2, 3, 4];
+  const batchMax = Math.max(...countOpts);
+  const toggleSel = (k: string) => setOpenSel((cur) => (cur === k ? null : k));
+
+  // reference policy for the current model/mode. For a 文本模型 it is driven by
+  // 模型管理 config (fileUpload on → 图片附件，数量 maxFileCount、单文件 maxFileSizeMB)；
+  // for image/video models it is the per-mode REF_POLICY (t2i / t2v take none).
+  const refPolicy = useMemo<RefPolicy | undefined>(() => {
+    if (!selModel) return undefined;
+    if (selModel.type === "text") {
+      if (!mCfg?.fileUpload) return undefined;
+      const cfgMax = mCfg.maxFileCount && mCfg.maxFileCount > 0 ? mCfg.maxFileCount : MAX_ATTACHMENTS;
+      // 格式白名单来自模型管理 config.uploadFormats：未配置 = 任意格式（含文档），
+      // 配置了 = 仅允许所列扩展名。类型上放开全部 kind，由扩展名约束。
+      const exts = normalizeFormats(mCfg.uploadFormats);
+      return {
+        kinds: ["image", "video", "audio", "file"],
+        max: Math.min(cfgMax, MAX_ATTACHMENTS),
+        maxSizeMB: mCfg.maxFileSizeMB ?? 0,
+        exts,
+        accept: exts ? exts.map((e) => `.${e}`).join(",") : undefined,
+      };
+    }
+    const p = REF_POLICY[mode];
+    return p ? { ...p, accept: acceptFor(p.kinds) } : undefined;
+  }, [selModel, mode, mCfg]);
+  // text-model uploads are OPTIONAL (a chat can be plain text); generation ref
+  // modes (i2i/i2v/…) REQUIRE at least one reference before sending.
+  const refOptional = selModel?.type === "text";
+
+  // 音频模型分流：音乐（四创作模式）vs 音效（只吃描述），判定与创作台一致
+  //（后台「生成方式」勾 sfx，modelKey 含 sfx 兜底）。
+  const isAudioSel = selModel?.type === "audio";
+  const isMusicSel = isAudioSel && !isSfxModel(selModel?.modelKey, mCfg?.modes ?? undefined);
+  const musicMode = music.musicMode;
+  // 非灵感模式的音乐生成不强制描述（歌词/原曲才是主输入），发送按钮据此放行。
+  const musicNoDraftOk = isMusicSel && musicMode !== "inspire";
+
+  // 每次进入延长/翻唱都重拉原曲候选（新生成的歌完成后，重新切入即可看到）；
+  // 已有列表在刷新期间保留展示，仅首次为 null 时显示加载态。
+  useEffect(() => {
+    if (!isMusicSel || (musicMode !== "extend" && musicMode !== "cover")) return;
+    let alive = true;
+    fetchClipOptions().then((opts) => {
+      if (alive) setClipOpts(opts);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [isMusicSel, musicMode]);
+
+  // close any open composer dropdown on an outside click / Escape.
+  useEffect(() => {
+    if (!openSel) return;
+    const onDoc = () => setOpenSel(null);
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") setOpenSel(null);
+    };
+    document.addEventListener("click", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("click", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [openSel]);
+
+  // snap chip selections to values the selected model actually supports.
+  useEffect(() => {
+    if (!mCfg) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 换模型后把芯片选择收敛到该模型支持的取值，全部函数式更新
+    setMode((m) => (modeVals.length ? (modeVals.includes(m) ? m : modeVals[0]) : ""));
+    setRatio((r) => (ratioOpts.length ? (ratioOpts.includes(r) ? r : ratioOpts[0]) : ""));
+    setRes((r) => (resOpts.length ? (resOpts.includes(r) ? r : resOpts[0]) : ""));
+    setQuality((q) => (qualOpts.length ? (qualOpts.includes(q) ? q : qualOpts[0]) : ""));
+    setDur((d) => (durOpts.length ? (durOpts.includes(d) ? d : durOpts[0]) : ""));
+    setBatch((b) => Math.min(Math.max(1, b), batchMax));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mCfg, isVid]);
+
+  // 技能与当前模型模态不匹配(如带着图片技能切到视频模型)时自动摘除,
+  // 避免把图片模板发给视频生成。
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 同上方芯片收敛：换模型后摘除错配技能
+    if (skill && selModel && skill.outputType !== selModel.type) setSkill(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selModel?.type]);
+
+  // 选中技能:附着 chip;技能指定了模型卡则自动切换;默认参数回填画幅/清晰度/时长
+  // (随后的收敛 effect 会把不在该模型档位内的值校正掉)。
+  const pickSkill = useCallback(
+    (s: SkillVO) => {
+      setSkill(s);
+      setSkillPickerOpen(false);
+      if (s.modelId) {
+        const target = genModels.find((m) => m.modelKey === s.modelId);
+        if (target && target.name !== model) {
+          setModel(target.name);
+          toast.info(`已切换到技能模型「${target.name}」`);
+        }
+      }
+      const p = parseSkillParams(s.defaultParams);
+      if (p.aspectRatio) setRatio(p.aspectRatio);
+      if (p.resolution) setRes(p.resolution);
+      if (p.duration) setDur(`${p.duration}s`);
+    },
+    [genModels, model, setModel],
+  );
+
+  // 切到不支持联网的模型时，强制关闭联网开关。
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 能力开关随模型收敛，一次性复位
+    if (!webSearchAvail) setWeb(false);
+  }, [webSearchAvail]);
+
+  // approx points cost — 与服务端权威计费(pricing.go resolveCost)同序解析，
+  // 分辨率/时长切换要联动:
+  //   video: priceMatrix[时长][分辨率]（两个轴序都试）→ priceModifiers
+  //          ["duration@分辨率"][时长] → creditCost → pointCost；单条不乘数量
+  //   image: 对话页不选画质，矩阵无从命中，与服务端一致落到固定价 × 批量
+  //   audio: 按次计费（Suno 一次两首一并结算）
+  //   text: 按条计费，不乘数量（数量选择器对文本模型隐藏）
+  const points = useMemo(() => {
+    const cellNum = (v: unknown) => {
+      const n = typeof v === "string" ? parseFloat(v) : typeof v === "number" ? v : NaN;
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    };
+    const flat = cellNum(mCfg?.creditCost) || parseFloat(selModel?.pointCost ?? "0") || 0;
+    let base = 0;
+    const pm = mCfg?.priceMatrix;
+    if (isVid && dur && res) {
+      base = cellNum(pm?.[dur]?.[res]) || cellNum(pm?.[res]?.[dur]);
+      if (!base) {
+        const mods = mCfg?.priceModifiers as Record<string, Record<string, unknown> | undefined> | undefined;
+        base = cellNum(mods?.[`duration@${res}`]?.[dur]);
+      }
+    } else if (selModel?.type === "image" && quality && res) {
+      // 图片按 [画质][清晰度] 查表，与服务端 pricing.go 同口径；两种轴序都试，
+      // 后台矩阵横竖着写都能命中（漏查会静默落到模型固定价，4K 卖成 1K 的钱）。
+      base = cellNum(pm?.[quality]?.[res]) || cellNum(pm?.[res]?.[quality]);
+    }
+    if (!base) base = flat;
+    // 服务端按向上取整结算（见 pricing.go），展示同口径；仅图片批量 ×数量
+    if (selModel?.type === "image") return Math.ceil(base * Math.max(1, batch));
+    return Math.ceil(base);
+  }, [mCfg, selModel, isVid, dur, res, quality, batch]);
+
+  return {
+    web,
+    setWeb,
+    mode,
+    setMode,
+    ratio,
+    setRatio,
+    res,
+    setRes,
+    quality,
+    setQuality,
+    dur,
+    setDur,
+    skill,
+    setSkill,
+    skillPickerOpen,
+    setSkillPickerOpen,
+    batch,
+    setBatch,
+    openSel,
+    setOpenSel,
+    music,
+    setMusic,
+    clipOpts,
+    setClipOpts,
+    clipPickOpen,
+    setClipPickOpen,
+    modeVals,
+    ratioOpts,
+    resOpts,
+    qualOpts,
+    durOpts,
+    countOpts,
+    batchMax,
+    toggleSel,
+    refPolicy,
+    refOptional,
+    isAudioSel,
+    isMusicSel,
+    musicMode,
+    musicNoDraftOk,
+    pickSkill,
+    points,
+  };
+}
+
+export type ComposerConfigApi = ReturnType<typeof useComposerConfig>;
