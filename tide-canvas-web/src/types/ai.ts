@@ -81,6 +81,9 @@ export interface AiTaskQuery extends PageQuery {
   projectId?: string | number;
   /** true = 只要不属于任何画布项目的任务（创作台/对话页发起的生成） */
   noProject?: boolean;
+  /** 时间筛选(YYYY-MM-DD):create_time 当天 00:00 起 / 次日 00:00 前 */
+  startDate?: string;
+  endDate?: string;
 }
 
 export interface AiGenerationLogVO {

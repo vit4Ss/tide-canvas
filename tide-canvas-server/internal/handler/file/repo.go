@@ -3,6 +3,8 @@ package file
 import (
 	"context"
 	"errors"
+	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -47,6 +49,7 @@ func (r *repo) list(ctx context.Context, ownerID idgen.ID, q fileQuery, offset, 
 	if q.Keyword != "" {
 		tx = tx.Where("original_name LIKE ?", "%"+q.Keyword+"%")
 	}
+	tx = applyDateRange(tx, "create_time", q.StartDate, q.EndDate)
 
 	var total int64
 	if err := tx.Count(&total).Error; err != nil {
@@ -57,6 +60,36 @@ func (r *repo) list(ctx context.Context, ownerID idgen.ID, q fileQuery, offset, 
 		return nil, 0, err
 	}
 	return rows, total, nil
+}
+
+// applyDateRange 追加 create_time 范围筛选(与 ai 任务列表同口径):startDate
+// 当天 00:00 起;endDate 纯日期按次日 00:00 前(含当天)。解析不了静默忽略。
+func applyDateRange(tx *gorm.DB, column, startDate, endDate string) *gorm.DB {
+	if t := parseFlexDate(startDate); !t.IsZero() {
+		tx = tx.Where(column+" >= ?", t)
+	}
+	if t := parseFlexDate(endDate); !t.IsZero() {
+		end := t
+		if len(strings.TrimSpace(endDate)) <= 10 {
+			end = t.Add(24 * time.Hour)
+		}
+		tx = tx.Where(column+" < ?", end)
+	}
+	return tx
+}
+
+// parseFlexDate 解析 YYYY-MM-DD / RFC3339 / 常见日期时间,失败返回零值。
+func parseFlexDate(s string) time.Time {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02 15:04:05", "2006-01-02T15:04:05", "2006-01-02"} {
+		if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
 }
 
 // addStorageUsed atomically increments the user's storage usage counter.

@@ -213,47 +213,126 @@ export function AssetsBrowser({
   // reqId 守卫(tasks/files 共用):切 tab 或 filter 时,旧 tab/筛选的响应后到不应覆盖当前视图。
   const reqIdRef = useRef(0);
 
+  /* ── 懒加载 + 时间筛选 ────────────────────────────────────────────────
+     首屏一页(PAGE_SIZE),底部哨兵续页;时间筛选(startDate/endDate)走服务端
+     (懒加载下客户端只能筛已加载部分,会漏)。loadedCountRef 记已取「记录条数」,
+     分页依据;append 时按 id 去重;loadingRef 只挡续页重入——全新加载(切 tab/
+     筛选/日期)必须放行并靠 reqId 丢弃旧响应。 */
+  const PAGE_SIZE = 24;
+  const pageRef = useRef(1);
+  const loadedCountRef = useRef(0);
+  const loadingRef = useRef(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
   // 生成历史: the user's studio/chat generation tasks (filtered client-side by
   // type). noProject 排除画布项目里的生成——画布产物只属于画布，不进资产库。
-  const loadTasks = useCallback(async () => {
+  const fetchTasks = useCallback(async (page: number, append: boolean) => {
+    if (append && loadingRef.current) return;
+    loadingRef.current = true;
     const id = ++reqIdRef.current;
-    setLoading(true);
     try {
       await ensureSession();
-      const res = await aiApi.listTasks({ pageNum: 1, pageSize: 100, noProject: true });
-      if (id !== reqIdRef.current) return;
-      setTasks(res.success && res.data ? res.data.records : []);
-    } catch {
-      if (id === reqIdRef.current) setTasks([]);
-    } finally {
-      if (id === reqIdRef.current) setLoading(false);
-    }
-  }, [ensureSession]);
-
-  // 上传历史: the user's uploaded files for the current filter.
-  const loadFiles = useCallback(async () => {
-    const id = ++reqIdRef.current;
-    setLoading(true);
-    try {
-      await ensureSession();
-      const res = await fileApi.list({
-        pageNum: 1,
-        pageSize: 100,
-        fileType: FILTER_TO_FILETYPE[filter] as FileVO["fileType"],
+      if (!append) setLoading(true);
+      else setLoadingMore(true);
+      const res = await aiApi.listTasks({
+        pageNum: page,
+        pageSize: PAGE_SIZE,
+        noProject: true,
+        startDate: startDate || undefined,
+        endDate: endDate || undefined,
       });
       if (id !== reqIdRef.current) return;
-      setFiles(res.success && res.data ? res.data.records : []);
+      const records = res.success && res.data ? res.data.records : [];
+      const total = res.success && res.data ? res.data.total : 0;
+      pageRef.current = page;
+      loadedCountRef.current = append ? loadedCountRef.current + records.length : records.length;
+      setHasMore(loadedCountRef.current < total);
+      setTasks((prev) => {
+        if (!append) return records;
+        const seen = new Set(prev.map((t) => t.id));
+        return [...prev, ...records.filter((t) => !seen.has(t.id))];
+      });
     } catch {
-      if (id === reqIdRef.current) setFiles([]);
+      if (id === reqIdRef.current && !append) setTasks([]);
     } finally {
-      if (id === reqIdRef.current) setLoading(false);
+      if (id === reqIdRef.current) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
+      loadingRef.current = false;
     }
-  }, [ensureSession, filter]);
+  }, [ensureSession, startDate, endDate]);
 
+  // 上传历史: the user's uploaded files for the current filter.
+  const fetchFiles = useCallback(async (page: number, append: boolean) => {
+    if (append && loadingRef.current) return;
+    loadingRef.current = true;
+    const id = ++reqIdRef.current;
+    try {
+      await ensureSession();
+      if (!append) setLoading(true);
+      else setLoadingMore(true);
+      const res = await fileApi.list({
+        pageNum: page,
+        pageSize: PAGE_SIZE,
+        fileType: FILTER_TO_FILETYPE[filter] as FileVO["fileType"],
+        startDate: startDate || undefined,
+        endDate: endDate || undefined,
+      });
+      if (id !== reqIdRef.current) return;
+      const records = res.success && res.data ? res.data.records : [];
+      const total = res.success && res.data ? res.data.total : 0;
+      pageRef.current = page;
+      loadedCountRef.current = append ? loadedCountRef.current + records.length : records.length;
+      setHasMore(loadedCountRef.current < total);
+      setFiles((prev) => {
+        if (!append) return records;
+        const seen = new Set(prev.map((f) => f.id));
+        return [...prev, ...records.filter((f) => !seen.has(f.id))];
+      });
+    } catch {
+      if (id === reqIdRef.current && !append) setFiles([]);
+    } finally {
+      if (id === reqIdRef.current) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
+      loadingRef.current = false;
+    }
+  }, [ensureSession, filter, startDate, endDate]);
+
+  // 切 tab / 类型筛选 / 日期:回到第 1 页重新加载。
   useEffect(() => {
-    if (tab === "hist") loadTasks();
-    else loadFiles();
-  }, [tab, loadTasks, loadFiles]);
+    pageRef.current = 1;
+    loadedCountRef.current = 0;
+    void (async () => {
+      if (tab === "hist") await fetchTasks(1, false);
+      else await fetchFiles(1, false);
+    })();
+  }, [tab, filter, startDate, endDate, fetchTasks, fetchFiles]);
+
+  const loadMore = useCallback(() => {
+    if (tab === "hist") void fetchTasks(pageRef.current + 1, true);
+    else void fetchFiles(pageRef.current + 1, true);
+  }, [tab, fetchTasks, fetchFiles]);
+
+  // 底部哨兵:进入视口提前量即续页。
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !hasMore) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) loadMore();
+      },
+      { rootMargin: "320px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasMore, loadMore]);
 
   // Escape closes the preview overlay.
   useEffect(() => {
@@ -303,11 +382,26 @@ export function AssetsBrowser({
 
   const groupsEmpty = tab === "hist" ? taskGroups.length === 0 : fileGroups.length === 0;
 
-  // 切换 tab/筛选时重置多选(条目集合已变)。
-  useEffect(() => {
+  // 切换 tab/筛选/日期时重置多选(条目集合已变)——在事件回调里做,不进 effect。
+  const resetBatch = useCallback(() => {
     setBatchMode(false);
     setSelected(new Set());
-  }, [tab, filter]);
+  }, []);
+
+  const switchTab = useCallback((t: TabKey) => {
+    setTab(t);
+    resetBatch();
+  }, [resetBatch]);
+
+  const switchFilter = useCallback((f: FilterKey) => {
+    setFilter(f);
+    resetBatch();
+  }, [resetBatch]);
+
+  const changeDates = useCallback((setter: (v: string) => void) => (v: string) => {
+    setter(v);
+    resetBatch();
+  }, [resetBatch]);
 
   const toggleSelect = useCallback((id: string) => {
     setSelected((prev) => {
@@ -358,8 +452,11 @@ export function AssetsBrowser({
     toast[ok > 0 ? "success" : "error"](ok > 0 ? `已删除 ${ok} 项` : "删除失败，请稍后重试");
     exitBatch();
     setBusy(false);
-    if (tab === "hist") await loadTasks();
-    else await loadFiles();
+    // 删除后回到第 1 页重拉(条目减少,续页游标失效)
+    pageRef.current = 1;
+    loadedCountRef.current = 0;
+    if (tab === "hist") await fetchTasks(1, false);
+    else await fetchFiles(1, false);
   };
 
   // 批量下载:通过下载代理逐个触发(强制附件下载)。
@@ -393,7 +490,11 @@ export function AssetsBrowser({
         if (res.success) ok++;
       }
       toast[ok > 0 ? "success" : "error"](ok > 0 ? `已上传 ${ok} 个文件` : "上传失败，请稍后重试");
-      if (ok > 0) await loadFiles();
+      if (ok > 0) {
+        pageRef.current = 1;
+        loadedCountRef.current = 0;
+        await fetchFiles(1, false);
+      }
     } catch {
       toast.error("上传失败，请稍后重试");
     } finally {
@@ -411,7 +512,7 @@ export function AssetsBrowser({
               key={x.t}
               type="button"
               className={tab === x.t ? "on" : undefined}
-              onClick={() => setTab(x.t)}
+              onClick={() => switchTab(x.t)}
             >
               {x.label}
             </button>
@@ -447,11 +548,39 @@ export function AssetsBrowser({
             key={x.f}
             type="button"
             className={filter === x.f ? "on" : undefined}
-            onClick={() => setFilter(x.f)}
+            onClick={() => switchFilter(x.f)}
           >
             {x.label}
           </button>
         ))}
+        <span className="as-dates">
+          <input
+            type="date"
+            aria-label="开始日期"
+            value={startDate}
+            onChange={(e) => changeDates(setStartDate)(e.target.value)}
+          />
+          <i>→</i>
+          <input
+            type="date"
+            aria-label="结束日期"
+            value={endDate}
+            onChange={(e) => changeDates(setEndDate)(e.target.value)}
+          />
+          {(startDate || endDate) && (
+            <button
+              type="button"
+              title="清除时间筛选"
+              onClick={() => {
+                setStartDate("");
+                setEndDate("");
+                resetBatch();
+              }}
+            >
+              ×
+            </button>
+          )}
+        </span>
         <button
           type="button"
           onClick={() => setSortAsc((v) => !v)}
@@ -540,48 +669,70 @@ export function AssetsBrowser({
               : "该类型暂无生成资产 —— 生成后会归档到这里 ✦"}
           </div>
         ) : tab === "hist" ? (
-          taskGroups.map((g) => (
-            <div className="asset-group" key={g.date}>
-              <div className="asset-date">{g.date}</div>
-              <div className="asset-grid">
-                {g.items.map((t, i) => (
-                  <TaskCard
-                    key={t.id}
-                    task={t}
-                    delay={(i % 8) * 0.02}
-                    star={i === 1 || i === 9}
-                    pickMode={pickMode}
-                    onPick={onPick}
-                    onOpen={openAsset}
-                    batchMode={batchMode}
-                    selected={selected.has(String(t.id))}
-                    onToggle={toggleSelect}
-                  />
-                ))}
+          <>
+            {taskGroups.map((g) => (
+              <div className="asset-group" key={g.date}>
+                <div className="asset-date">{g.date}</div>
+                <div className="asset-grid">
+                  {g.items.map((t, i) => (
+                    <TaskCard
+                      key={t.id}
+                      task={t}
+                      delay={(i % 8) * 0.02}
+                      star={i === 1 || i === 9}
+                      pickMode={pickMode}
+                      onPick={onPick}
+                      onOpen={openAsset}
+                      batchMode={batchMode}
+                      selected={selected.has(String(t.id))}
+                      onToggle={toggleSelect}
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
-          ))
+            ))}
+            {hasMore ? (
+              <div ref={sentinelRef} className="as-more" aria-hidden>
+                {loadingMore ? "加载中…" : "下拉加载更多"}
+              </div>
+            ) : (
+              <div className="as-more end" aria-hidden>
+                — 已经到底了 —
+              </div>
+            )}
+          </>
         ) : (
-          fileGroups.map((g) => (
-            <div className="asset-group" key={g.date}>
-              <div className="asset-date">{g.date}</div>
-              <div className="asset-grid">
-                {g.items.map((f, i) => (
-                  <UploadCard
-                    key={f.id}
-                    file={f}
-                    delay={(i % 8) * 0.02}
-                    pickMode={pickMode}
-                    onPick={onPick}
-                    onOpen={openAsset}
-                    batchMode={batchMode}
-                    selected={selected.has(String(f.id))}
-                    onToggle={toggleSelect}
-                  />
-                ))}
+          <>
+            {fileGroups.map((g) => (
+              <div className="asset-group" key={g.date}>
+                <div className="asset-date">{g.date}</div>
+                <div className="asset-grid">
+                  {g.items.map((f, i) => (
+                    <UploadCard
+                      key={f.id}
+                      file={f}
+                      delay={(i % 8) * 0.02}
+                      pickMode={pickMode}
+                      onPick={onPick}
+                      onOpen={openAsset}
+                      batchMode={batchMode}
+                      selected={selected.has(String(f.id))}
+                      onToggle={toggleSelect}
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
-          ))
+            ))}
+            {hasMore ? (
+              <div ref={sentinelRef} className="as-more" aria-hidden>
+                {loadingMore ? "加载中…" : "下拉加载更多"}
+              </div>
+            ) : (
+              <div className="as-more end" aria-hidden>
+                — 已经到底了 —
+              </div>
+            )}
+          </>
         )}
       </div>
 

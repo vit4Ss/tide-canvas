@@ -16,6 +16,9 @@ export interface FileVO {
 export interface FileQuery extends PageQuery {
   fileType?: FileType;
   keyword?: string;
+  /** 时间筛选(YYYY-MM-DD):create_time 当天 00:00 起 / 次日 00:00 前 */
+  startDate?: string;
+  endDate?: string;
 }
 
 export enum FileType {

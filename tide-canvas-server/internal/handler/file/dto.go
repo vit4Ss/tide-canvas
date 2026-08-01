@@ -38,4 +38,7 @@ type fileQuery struct {
 	OrderDirection string `form:"orderDirection"`
 	FileType       string `form:"fileType"`
 	Keyword        string `form:"keyword"`
+	// 时间筛选(资产库「时间筛选」):按 create_time 过滤,口径同 ai 任务列表。
+	StartDate string `form:"startDate"`
+	EndDate   string `form:"endDate"`
 }

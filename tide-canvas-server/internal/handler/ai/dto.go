@@ -46,6 +46,10 @@ type taskQuery struct {
 	// NoProject=true 只返回不属于任何画布项目的任务（project_id=0，即创作台/对话页
 	// 发起的生成）；与 ProjectID 互斥，同时传时以 NoProject 为准。
 	NoProject bool `form:"noProject"`
+	// 时间筛选(资产库「时间筛选」):按 create_time 过滤,startDate 当天 00:00 起,
+	// endDate 纯日期按「次日 00:00 前」含当天;支持 YYYY-MM-DD 或完整时间。
+	StartDate string `form:"startDate"`
+	EndDate   string `form:"endDate"`
 }
 
 // logQuery is the query string of GET /api/ai/logs (AiGenerationLogQuery).

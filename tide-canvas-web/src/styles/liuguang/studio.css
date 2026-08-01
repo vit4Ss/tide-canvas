@@ -919,6 +919,16 @@
 .asset-filter{display:flex; align-items:center; gap:18px; padding:12px clamp(18px,3vw,32px); border-bottom:1px solid var(--border);}
 .asset-filter button{font-size:13.5px; font-weight:600; color:var(--text-faint); transition:color .15s;}
 .asset-filter button:hover{color:var(--text-dim);}
+/* 时间筛选:与类型筛选同排的日期输入,深色静默 */
+.as-dates{display:inline-flex; align-items:center; gap:6px; margin-left:6px;}
+.as-dates input[type="date"]{height:28px; padding:0 8px; border-radius:8px; border:1px solid var(--border);
+  background:var(--panel, rgba(255,255,255,.04)); color:var(--text-dim); font-size:12px; color-scheme:dark;}
+.as-dates i{font-style:normal; font-size:11px; color:var(--text-faint);}
+.as-dates button{padding:0 4px; font-size:13px;}
+/* 懒加载哨兵 */
+.as-more{padding:26px 0 34px; text-align:center; font-size:12px; color:var(--text-faint);
+  letter-spacing:.04em; user-select:none;}
+.as-more.end{opacity:.7;}
 .asset-filter button.on{color:var(--accent);}
 .asset-body{padding:8px clamp(18px,3vw,32px) 48px;}
 .asset-group{margin-top:26px;}
