@@ -217,13 +217,18 @@ export function AssetsBrowser({
      首屏一页(PAGE_SIZE),底部哨兵续页;时间筛选(startDate/endDate)走服务端
      (懒加载下客户端只能筛已加载部分,会漏)。loadedCountRef 记已取「记录条数」,
      分页依据;append 时按 id 去重;loadingRef 只挡续页重入——全新加载(切 tab/
-     筛选/日期)必须放行并靠 reqId 丢弃旧响应。 */
+     筛选/日期)必须放行并靠 reqId 丢弃旧响应。cooldownRef 压住哨兵连发:
+     一次触发后 700ms 内忽略后续交点,消除机枪式连翻的抽搐感。 */
   const PAGE_SIZE = 24;
   const pageRef = useRef(1);
   const loadedCountRef = useRef(0);
   const loadingRef = useRef(false);
+  const cooldownRef = useRef(0);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  // 「翻过页」用 state 记:到底提示判定(JSX 不能读 ref)。重置时清回 false。
+  const [multiPage, setMultiPage] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -251,6 +256,8 @@ export function AssetsBrowser({
       pageRef.current = page;
       loadedCountRef.current = append ? loadedCountRef.current + records.length : records.length;
       setHasMore(loadedCountRef.current < total);
+      setLoadError(false);
+      if (page > 1) setMultiPage(true);
       setTasks((prev) => {
         if (!append) return records;
         const seen = new Set(prev.map((t) => t.id));
@@ -258,6 +265,7 @@ export function AssetsBrowser({
       });
     } catch {
       if (id === reqIdRef.current && !append) setTasks([]);
+      else if (id === reqIdRef.current) setLoadError(true); // 续页失败给重试
     } finally {
       if (id === reqIdRef.current) {
         setLoading(false);
@@ -289,6 +297,8 @@ export function AssetsBrowser({
       pageRef.current = page;
       loadedCountRef.current = append ? loadedCountRef.current + records.length : records.length;
       setHasMore(loadedCountRef.current < total);
+      setLoadError(false);
+      if (page > 1) setMultiPage(true);
       setFiles((prev) => {
         if (!append) return records;
         const seen = new Set(prev.map((f) => f.id));
@@ -296,6 +306,7 @@ export function AssetsBrowser({
       });
     } catch {
       if (id === reqIdRef.current && !append) setFiles([]);
+      else if (id === reqIdRef.current) setLoadError(true); // 续页失败给重试
     } finally {
       if (id === reqIdRef.current) {
         setLoading(false);
@@ -305,8 +316,8 @@ export function AssetsBrowser({
     }
   }, [ensureSession, filter, startDate, endDate]);
 
-  // 切 tab / 类型筛选 / 日期:回到第 1 页重新加载(哨兵在事件回调里已摘下,
-  // 见 resetBatch——否则 hasMore 还是旧数据的 true,窗口期滚底会新旧混流)。
+  // 切 tab / 类型筛选 / 日期:回到第 1 页重新加载(哨兵与「翻过页」标记已在
+  // 事件回调 resetBatch 里复位——effect 同步路径不进 setState)。
   useEffect(() => {
     pageRef.current = 1;
     loadedCountRef.current = 0;
@@ -317,6 +328,11 @@ export function AssetsBrowser({
   }, [tab, filter, startDate, endDate, fetchTasks, fetchFiles]);
 
   const loadMore = useCallback(() => {
+    // 触发冷却:一次点火后 700ms 内忽略后续交点,消除连发的抽搐感
+    const now = Date.now();
+    if (now - cooldownRef.current < 700) return;
+    cooldownRef.current = now;
+    setLoadError(false);
     if (tab === "hist") void fetchTasks(pageRef.current + 1, true);
     else void fetchFiles(pageRef.current + 1, true);
   }, [tab, fetchTasks, fetchFiles]);
@@ -383,12 +399,13 @@ export function AssetsBrowser({
 
   const groupsEmpty = tab === "hist" ? taskGroups.length === 0 : fileGroups.length === 0;
 
-  // 切换 tab/筛选/日期时重置多选 + 摘下续页哨兵(条目集合已变)——全部在事件
-  // 回调里做,不进 effect(setState 同步路径过不了 hooks lint,也容易混流)。
+  // 切换 tab/筛选/日期时重置多选 + 摘下续页哨兵 + 清「翻过页」标记(条目集合
+  // 已变)——全部在事件回调里做,不进 effect(setState 同步路径过不了 hooks lint)。
   const resetBatch = useCallback(() => {
     setBatchMode(false);
     setSelected(new Set());
     setHasMore(false);
+    setMultiPage(false);
   }, []);
 
   const switchTab = useCallback((t: TabKey) => {
@@ -697,14 +714,20 @@ export function AssetsBrowser({
               </div>
             ))}
             {hasMore ? (
-              <div ref={sentinelRef} className="as-more" aria-hidden>
-                {loadingMore ? <span className="more-dots"><i /><i /><i /></span> : "下拉加载更多"}
-              </div>
-            ) : (
+              loadError ? (
+                <button type="button" className="as-more retry" onClick={loadMore}>
+                  加载失败，点击重试
+                </button>
+              ) : (
+                <div ref={sentinelRef} className="as-more" aria-hidden>
+                  {loadingMore ? <span className="more-dots"><i /><i /><i /></span> : "下拉加载更多"}
+                </div>
+              )
+            ) : multiPage ? (
               <div className="as-more end" aria-hidden>
                 — 已经到底了 —
               </div>
-            )}
+            ) : null}
           </>
         ) : (
           <>
@@ -729,14 +752,20 @@ export function AssetsBrowser({
               </div>
             ))}
             {hasMore ? (
-              <div ref={sentinelRef} className="as-more" aria-hidden>
-                {loadingMore ? <span className="more-dots"><i /><i /><i /></span> : "下拉加载更多"}
-              </div>
-            ) : (
+              loadError ? (
+                <button type="button" className="as-more retry" onClick={loadMore}>
+                  加载失败，点击重试
+                </button>
+              ) : (
+                <div ref={sentinelRef} className="as-more" aria-hidden>
+                  {loadingMore ? <span className="more-dots"><i /><i /><i /></span> : "下拉加载更多"}
+                </div>
+              )
+            ) : multiPage ? (
               <div className="as-more end" aria-hidden>
                 — 已经到底了 —
               </div>
-            )}
+            ) : null}
           </>
         )}
       </div>

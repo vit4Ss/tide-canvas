@@ -460,13 +460,19 @@ export default function CreateStudio() {
   //
   // 懒加载:首屏只拉一页(HIST_PAGE_SIZE),滚到底部哨兵再续页(见 stage-feed);
   // histLoadedCountRef 记录已取的「任务条数」(批量任务会展开多卡,不能拿 hist
-  // 长度当分页依据)。
+  // 长度当分页依据)。sentinelCooldownRef 压住连发:一次触发后 700ms 内不再
+  // 响应——否则加载完成哨兵立即可见会机枪式连翻,视觉上就是抽搐。
   const HIST_PAGE_SIZE = 20;
   const histPageRef = useRef(1);
   const histLoadedCountRef = useRef(0);
   const histLoadingRef = useRef(false);
+  const sentinelCooldownRef = useRef(0);
   const [histHasMore, setHistHasMore] = useState(false);
   const [histLoadingMore, setHistLoadingMore] = useState(false);
+  const [histInitialLoading, setHistInitialLoading] = useState(true);
+  const [histLoadError, setHistLoadError] = useState(false);
+  // 「翻过页」用 state 记:JSX 的到底提示判定不能读 ref(render 期禁止)。
+  const [histMultiPage, setHistMultiPage] = useState(false);
 
   const fetchHistory = useCallback(async (page: number, append: boolean) => {
     if (histLoadingRef.current) return;
@@ -482,6 +488,8 @@ export default function CreateStudio() {
       histPageRef.current = page;
       histLoadedCountRef.current = append ? histLoadedCountRef.current + records.length : records.length;
       setHistHasMore(histLoadedCountRef.current < total);
+      setHistLoadError(false);
+      if (page > 1) setHistMultiPage(true);
 
       if (append) {
         // 续页去重:新生成经 pushHistory 先入了列表,翻页拉到旧页时 id 不会撞,
@@ -525,13 +533,22 @@ export default function CreateStudio() {
       }
     } catch {
       if (!append) setHist([]);
+      else setHistLoadError(true); // 续页失败:哨兵显示「点击重试」而不是静默
     } finally {
       histLoadingRef.current = false;
       setHistLoadingMore(false);
+      setHistInitialLoading(false);
     }
   }, [ensureSession, setHist, setRunMeta, setCells, setProgs, lastRunRef]);
 
-  const loadMoreHistory = useCallback(async () => fetchHistory(histPageRef.current + 1, true), [fetchHistory]);
+  const loadMoreHistory = useCallback(async () => {
+    // 触发冷却:一次点火后 700ms 内忽略后续交点,消除连发的抽搐感
+    const now = Date.now();
+    if (now - sentinelCooldownRef.current < 700) return;
+    sentinelCooldownRef.current = now;
+    setHistLoadError(false);
+    await fetchHistory(histPageRef.current + 1, true);
+  }, [fetchHistory]);
 
   useEffect(() => {
     // setTimeout 0:首屏拉取推迟到挂载后(effect 同步路径不触发 setState,过 lint)
@@ -984,6 +1001,9 @@ export default function CreateStudio() {
           hasMore={histHasMore}
           loadingMore={histLoadingMore}
           onLoadMore={loadMoreHistory}
+          initialLoading={histInitialLoading}
+          loadError={histLoadError}
+          endReached={!histHasMore && histMultiPage}
         />
       </div>
 

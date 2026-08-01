@@ -29,6 +29,9 @@ export function StageFeed({
   hasMore,
   loadingMore,
   onLoadMore,
+  initialLoading,
+  loadError,
+  endReached,
 }: {
   busy: boolean;
   runs: HistRun[];
@@ -45,6 +48,12 @@ export function StageFeed({
   hasMore?: boolean;
   loadingMore?: boolean;
   onLoadMore?: () => void;
+  /** 首页加载中:压制空态闪屏(有历史的用户先进来看到「准备好创作了吗」)。 */
+  initialLoading?: boolean;
+  /** 续页失败:哨兵改为可点击的重试。 */
+  loadError?: boolean;
+  /** 拉满判定:翻过页才显示「已经到底了」(只有一页时不扰屏)。 */
+  endReached?: boolean;
 }) {
   // 底部哨兵:进入视口提前量(rootMargin)就触发续页;组合层有加载中去重守卫。
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -105,8 +114,9 @@ export function StageFeed({
           {/* 「清空画布」按钮已按用户要求移除（2026-07-08）：结果卡自带逐条删除 */}
         </div>
 
-        {/* empty state — only when nothing is generating and there's no history */}
-        {!busy && runs.length === 0 && (
+        {/* empty state — only when nothing is generating and there's no history
+            (首页未返回前不亮,避免有历史的用户看到空态闪屏) */}
+        {!busy && !initialLoading && runs.length === 0 && (
           <div className="ws-empty" id="empty">
             <div className="ws-empty-glyph">
               <span className="glyph" />
@@ -354,16 +364,23 @@ export function StageFeed({
               </div>
             ))}
 
-            {/* 懒加载哨兵:到底提前触发续页;固定高度+三点脉冲,不跳版式 */}
+            {/* 懒加载哨兵:到底提前触发续页;固定高度+三点脉冲,不跳版式;
+                失败给可点重试;翻过页才给到底提示 */}
             {hasMore ? (
-              <div ref={sentinelRef} className="ws-feed-more" aria-hidden>
-                {loadingMore ? (
-                  <span className="more-dots"><i /><i /><i /></span>
-                ) : (
-                  "下拉加载更多"
-                )}
-              </div>
-            ) : runs.length > 0 ? (
+              loadError ? (
+                <button type="button" className="ws-feed-more retry" onClick={onLoadMore}>
+                  加载失败，点击重试
+                </button>
+              ) : (
+                <div ref={sentinelRef} className="ws-feed-more" aria-hidden>
+                  {loadingMore ? (
+                    <span className="more-dots"><i /><i /><i /></span>
+                  ) : (
+                    "下拉加载更多"
+                  )}
+                </div>
+              )
+            ) : endReached ? (
               <div className="ws-feed-more end" aria-hidden>
                 — 已经到底了 —
               </div>
