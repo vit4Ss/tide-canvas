@@ -7,23 +7,24 @@
 #   TIDECANVAS_MYSQL_HOST / TIDECANVAS_MYSQL_PASSWORD
 #   TIDECANVAS_REDIS_ADDR / TIDECANVAS_REDIS_PASSWORD
 #   TIDECANVAS_JWT_SECRET
-#   TIDECANVAS_RELAY_APIKEY
-#   TIDECANVAS_ELIANDAPAY_MD5KEY / TIDECANVAS_ELIANDAPAY_MERCHANTID
 # 密钥类建议一律走环境变量，不要提交到仓库。
 
 server:
   mode: release # 关闭 gin 调试日志
 
 mysql:
-  host: prod-mysql.internal # 【生产请替换】生产库地址
+  # 生产后端与 MySQL 同机部署(生产服务器),走 127.0.0.1 回环;账号密码/库名
+  # 与测试相同——生产与测试是两台不同服务器,命名空间天然隔离,无需区分。
+  host: 127.0.0.1
   port: 3306
   user: root
-  password: "" # 【生产请替换】务必通过 TIDECANVAS_MYSQL_PASSWORD 注入
+  password: "mbfczzzz@123" # 与测试同账号(用户确认);要改走 TIDECANVAS_MYSQL_PASSWORD
   database: canvas
 
 redis:
-  addr: prod-redis.internal:6379 # 【生产请替换】
-  password: "" # 【生产请替换】务必通过 TIDECANVAS_REDIS_PASSWORD 注入
+  # 生产服务器本机回环;db 0 与测试相同无冲突(不同服务器)。
+  addr: 127.0.0.1:6379
+  password: "mbfczzzz@123" # 与测试同密码(用户确认);要改走 TIDECANVAS_REDIS_PASSWORD
   db: 0
 
 jwt:
@@ -31,14 +32,19 @@ jwt:
 
 cors:
   allowOrigins:
-    - https://www.yourdomain.com # 【生产请替换】前端正式域名
+    - https://flowlight.tcmzhan.com # 生产站前端域名（2026-08-01 定）
 
-# 支付回调必须是网关可访问的公网 https 地址；returnUrl 指向前端正式域名。
+# 支付回调必须是网关可访问的公网 https 地址；returnUrl 指向生产站前端。
+# 商户号/md5Key 与测试环境共用（商户级，不随域名变），无需改。
 eliandapay:
-  notifyUrl: https://api.yourdomain.com/api/billing/notify # 【生产请替换】
-  returnUrl: https://www.yourdomain.com/billing?pay_status=success # 【生产请替换】
+  notifyUrl: https://flowlight.tcmzhan.com/api/billing/notify
+  returnUrl: https://flowlight.tcmzhan.com/billing?pay_status=success
 
 storage:
-  # 存储配置首启会种子进 sys_config，之后以后台「配置管理」为准；
-  # OSS accessKey/secretKey 继续走环境变量或后台录入，不写在这里。
-  publicURL: https://api.yourdomain.com/static # 【生产请替换】仅 local 存储模式使用
+  # 生产专用桶（与测试隔离）。注意：存储配置只在首启种子进 sys_config，
+  # 之后以后台「配置管理」/数据库值为准；若生产库已有种子值，去后台改而不是这里。
+  bucket: flowlinght
+  # 传输加速域名=跨境上传与上游取图。⚠️ 上线前先在阿里云控制台为 flowlinght
+  # 桶开启传输加速（参照测试桶 2026-07-13 的操作），否则加速端点 400。
+  accelerateDomain: flowlinght.oss-accelerate.aliyuncs.com
+  publicURL: https://flowlight.tcmzhan.com/static # 仅 local 存储模式使用（生产走 OSS 用不到）

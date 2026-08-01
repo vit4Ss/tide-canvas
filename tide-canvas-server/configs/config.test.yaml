@@ -13,12 +13,12 @@ server:
 cors:
   allowOrigins:
     - http://localhost:3000
-    - https://flowlight.tcmzhan.com # 测试站正式域名（边缘 nginx 分流）
+    - https://test-flowlight.tcmzhan.com # 测试站前端域名（2026-08-01 定:flowlight 主域名留给生产）
 
-# 测试站有公网 https 域名后，支付网关的异步回调可以真正打进来了
+# 支付回调必须是网关可访问的公网 https 地址；returnUrl 指向测试站前端。
 eliandapay:
-  notifyUrl: https://flowlight.tcmzhan.com/api/billing/notify
-  returnUrl: https://flowlight.tcmzhan.com/billing?pay_status=success
+  notifyUrl: https://test-flowlight.tcmzhan.com/api/billing/notify
+  returnUrl: https://test-flowlight.tcmzhan.com/billing?pay_status=success
 
 storage:
   # 测试环境专用桶（与生产隔离）。注意：存储配置首启已种子进 sys_config，
