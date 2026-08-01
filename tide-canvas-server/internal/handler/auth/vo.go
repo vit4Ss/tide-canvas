@@ -29,10 +29,6 @@ type UserVO struct {
 	Points               int64    `json:"points"`
 	IsAuthor             int      `json:"isAuthor"`
 	StorageQuota         int64    `json:"storageQuota"`
-	// TeamID is null when the user belongs to no team (frontend: teamId?: number|null).
-	TeamID          *idgen.ID `json:"teamId"`
-	InTeam          bool      `json:"inTeam"`
-	TeamPriceFactor float64   `json:"teamPriceFactor"`
 	// Menus are the front sidebar menu keys the user's role grants
 	// (model.FrontMenuKeys 子集)；studio-rail 据此过滤展示（配置了才显示）。
 	Menus []string `json:"menus"`
@@ -60,21 +56,10 @@ type RefreshVO struct {
 	ExpiresIn    int64  `json:"expiresIn"`
 }
 
-// toUserVO maps a persisted user to its public VO. teamPriceFactor is supplied
-// by the caller (looked up from the user's team) and defaults to 1; menus is
-// the role-resolved sidebar menu list (model.MenusForUser); adminPerms is the
-// role-resolved后台模块权限 (model.AdminPermsForUser)。
-func toUserVO(u *model.User, teamPriceFactor float64, menus []string, adminPerms []string) UserVO {
-	if teamPriceFactor <= 0 {
-		teamPriceFactor = 1
-	}
-	var teamID *idgen.ID
-	inTeam := false
-	if u.TeamID != 0 {
-		t := u.TeamID
-		teamID = &t
-		inTeam = true
-	}
+// toUserVO maps a persisted user to its public VO. menus is the role-resolved
+// sidebar menu list (model.MenusForUser); adminPerms is the role-resolved后台
+// 模块权限 (model.AdminPermsForUser)。
+func toUserVO(u *model.User, menus []string, adminPerms []string) UserVO {
 	// 本地账号(用户名注册)的占位邮箱不对外暴露:抹成空串,前台统一显示为未绑定
 	email := u.Email
 	if strings.HasSuffix(email, noEmailSuffix) {
@@ -96,9 +81,6 @@ func toUserVO(u *model.User, teamPriceFactor float64, menus []string, adminPerms
 		Points:               u.Points,
 		IsAuthor:             u.IsAuthor,
 		StorageQuota:         u.StorageQuota,
-		TeamID:               teamID,
-		InTeam:               inTeam,
-		TeamPriceFactor:      teamPriceFactor,
 		Menus:                menus,
 		AdminPerms:           adminPerms,
 		CreateTime:           formatTime(u.CreateTime),

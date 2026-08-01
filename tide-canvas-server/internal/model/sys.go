@@ -26,23 +26,6 @@ type Notification struct {
 // TableName overrides the default pluralization.
 func (Notification) TableName() string { return "notification" }
 
-// Team is a collaboration team; users reference it via User.TeamID.
-type Team struct {
-	BaseModel
-
-	Name    string   `gorm:"column:name;type:varchar(128);not null" json:"name"`
-	OwnerID idgen.ID `gorm:"column:owner_id;index;not null" json:"ownerId"`
-	Avatar  string   `gorm:"column:avatar;type:varchar(512)" json:"avatar"`
-	// PriceFactor is the AI consumption markup applied to team members.
-	PriceFactor float64 `gorm:"column:price_factor;type:decimal(6,3);not null;default:1" json:"priceFactor"`
-	MemberLimit int     `gorm:"column:member_limit;type:int;not null;default:0" json:"memberLimit"`
-	// Status: 0 禁用 / 1 正常.
-	Status int `gorm:"column:status;type:tinyint;not null;default:1" json:"status"`
-}
-
-// TableName overrides the default pluralization.
-func (Team) TableName() string { return "team" }
-
 // SysRole is an admin permission role (sys_role); User.RoleID references it.
 type SysRole struct {
 	BaseModel

@@ -38,6 +38,9 @@ export type { TableSkeletonProps, ListSkeletonProps } from "./table-skeleton";
 export { AdminAlert, AdminEmptyState } from "./feedback";
 export type { AdminAlertTone } from "./feedback";
 
+export { AdminDrawer } from "./admin-drawer";
+export type { AdminDrawerProps } from "./admin-drawer";
+
 export { AdminShell } from "./admin-shell";
 export { AdminSidebar, findActive, ADMIN_NAV, ADMIN_NAV_ITEMS } from "./admin-sidebar";
 export type { AdminNavItem, AdminNavEntry } from "./admin-sidebar";

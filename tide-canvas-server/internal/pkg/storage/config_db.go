@@ -58,7 +58,7 @@ var storageFields = []storageField{
 	{"storage.ossCdnDomain", "CDN 域名（可选），用于生成展示 URL",
 		func(c config.StorageConfig) string { return c.CDNDomain },
 		func(c *config.StorageConfig, v string) { c.CDNDomain = v }},
-	{"storage.ossAccelerateDomain", "OSS 传输加速域名（可选），跨境上游取图用",
+	{"storage.ossAccelerateDomain", "OSS 传输加速域名（可选），跨境上传与上游取图用",
 		func(c config.StorageConfig) string { return c.AccelerateDomain },
 		func(c *config.StorageConfig, v string) { c.AccelerateDomain = v }},
 }

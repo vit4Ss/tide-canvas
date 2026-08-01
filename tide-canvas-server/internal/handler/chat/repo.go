@@ -43,14 +43,33 @@ func (r *repo) textModelKey() string {
 // enabled text model (so a client can't route chat to arbitrary upstream
 // models), falling back to textModelKey() otherwise.
 func (r *repo) resolveTextModelKey(requested string) string {
+	if m := r.resolveTextModel(requested); m != nil {
+		return m.ModelKey
+	}
+	return ""
+}
+
+// resolveTextModel 同 resolveTextModelKey,但返回整行——计费需要模型的
+// 目录价(Price)与名称。
+func (r *repo) resolveTextModel(requested string) *model.MarketModel {
 	if requested = strings.TrimSpace(requested); requested != "" {
 		var m model.MarketModel
 		if err := r.db.Where("type = ? AND status = 1 AND model_key = ?", "text", requested).
 			First(&m).Error; err == nil && m.ModelKey != "" {
-			return m.ModelKey
+			return &m
 		}
 	}
-	return r.textModelKey()
+	const base = "type = ? AND status = 1 AND model_key <> ''"
+	var m model.MarketModel
+	if err := r.db.Where(base, "text").
+		Where("config LIKE ?", `%"aiOptimizePrimary":true%`).
+		Order("update_time DESC").First(&m).Error; err == nil && m.ModelKey != "" {
+		return &m
+	}
+	if err := r.db.Where(base, "text").Order("update_time DESC").First(&m).Error; err == nil {
+		return &m
+	}
+	return nil
 }
 
 // listConversations returns a page of the owner's conversations plus the total
@@ -271,4 +290,3 @@ func (r *repo) touchConversation(id, lastMessageID idgen.ID, at time.Time) error
 			"last_message_at": at,
 		}).Error
 }
-

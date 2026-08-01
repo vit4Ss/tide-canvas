@@ -140,10 +140,11 @@ type ModelCallPoint struct {
 
 // ModelTopVO is one row of the model-call leaderboard.
 type ModelTopVO struct {
-	Model   string `json:"model"`
-	Count   int64  `json:"count"`
-	Success int64  `json:"success"`
-	AvgMs   int64  `json:"avgMs"`
+	Model     string `json:"model"`
+	ModelName string `json:"modelName"` // 目录显示名,查不到为空→前端回退 key
+	Count     int64  `json:"count"`
+	Success   int64  `json:"success"`
+	AvgMs     int64  `json:"avgMs"`
 }
 
 // ChartPoint is a single {date,count} sample.
@@ -272,7 +273,7 @@ func (h *dashboardHandler) topModelCalls(since time.Time, limit int) []ModelTopV
 	out := []ModelTopVO{}
 	// AVG 返回带小数的 DECIMAL，直接扫 int64 会整查询报错——ROUND+CAST 落整。
 	err := h.db.Model(&model.ModelCallLog{}).
-		Select("model, COUNT(*) AS n, COALESCE(SUM(success), 0) AS okn, " +
+		Select("model, COUNT(*) AS n, COALESCE(SUM(success), 0) AS okn, "+
 			"CAST(COALESCE(ROUND(AVG(duration_ms)), 0) AS SIGNED) AS avg_ms").
 		Where("create_time >= ? AND model <> ''", since).
 		Group("model").
@@ -282,12 +283,18 @@ func (h *dashboardHandler) topModelCalls(since time.Time, limit int) []ModelTopV
 	if err != nil {
 		return out
 	}
+	keys := make([]string, 0, len(rows))
+	for i := range rows {
+		keys = append(keys, rows[i].Model)
+	}
+	names := resolveModelNames(h.db, keys)
 	for i := range rows {
 		out = append(out, ModelTopVO{
-			Model:   rows[i].Model,
-			Count:   rows[i].N,
-			Success: rows[i].OkN,
-			AvgMs:   rows[i].AvgMs,
+			Model:     rows[i].Model,
+			ModelName: names[rows[i].Model],
+			Count:     rows[i].N,
+			Success:   rows[i].OkN,
+			AvgMs:     rows[i].AvgMs,
 		})
 	}
 	return out

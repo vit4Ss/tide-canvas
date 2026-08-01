@@ -93,7 +93,7 @@ func (h *blogHandler) aiPolish(c *gin.Context) {
 	reply, err := h.relay.Chat(ctx, modelKey, msgs)
 	reqBody, _ := json.Marshal(msgs)
 	eventlog.ModelText(middleware.CurrentUserID(c), "blog-polish", modelKey,
-		"/v1/chat/completions", string(reqBody), reply, start, err)
+		"/v1/chat/completions", string(reqBody), reply, start, err, 0)
 	if err != nil {
 		response.Fail(c, response.CodeServerError, "AI 优化失败，请稍后重试")
 		return

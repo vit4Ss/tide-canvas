@@ -29,7 +29,6 @@ import { aiApi, uploadFileSmart } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/http";
 import { resolveModelReferenceLimitBytes } from "@/lib/upload-limits";
 import { sliceImageGrid } from "@/lib/image-slice";
-import { applyTeamFactor } from "@/lib/points";
 import { ossDisplayUrl } from "@/lib/oss-display";
 import { matrixPrice, keyVariants } from "@/lib/price-matrix";
 import { getImageCardSizeForRatio } from "@/lib/image-card-size";
@@ -313,7 +312,7 @@ const closestRatioLabel = (aspect: number) =>
 // memo 化：仅当自身 props（node / 选中 / 拖拽 / 连接目标）变化时重渲染，
 // 画布平移、其他节点拖动都不会触发本节点重渲染。
 export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging = false, isConnectTarget = false, onNodeMouseDown, onPortMouseDown }: CanvasNodeProps) {
-  const { user, generate, isGenerating, generating, showAuxUI } = useNodeRuntime(node, isSelected, isDragging);
+  const { generate, isGenerating, generating, showAuxUI } = useNodeRuntime(node, isSelected, isDragging);
   const gridMenuRef = useRef<HTMLDivElement>(null);
   const [gridMenuOpen, setGridMenuOpen] = useState(false);
   const [splitting, setSplitting] = useState(false);
@@ -1334,7 +1333,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                         <span className="flex items-center gap-0.5 text-xs text-neutral-400">
                           <Zap className="h-3 w-3" fill="currentColor" />
                           {/* 与服务端 resolveCost 同口径:pricing["high"][档位] → 模型固定价（matrixPrice 容错） */}
-                          {applyTeamFactor(matrixPrice(formatConfig.pricing, keyVariants("high"), keyVariants(o.res)) ?? selectedModel?.pointCost ?? 18, user)}
+                          {Math.ceil(matrixPrice(formatConfig.pricing, keyVariants("high"), keyVariants(o.res)) ?? selectedModel?.pointCost ?? 18)}
                         </span>
                       </button>
                     ))}
@@ -1610,8 +1609,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                 <div className="flex items-center gap-4">
                   <span className="flex items-center gap-1 text-xs text-neutral-400 dark:text-white/38">
                     <Zap className="h-3.5 w-3.5" fill="currentColor" />
-                    {applyTeamFactor(pointCost, user)}
-                    {user?.inTeam && <span className="text-[10px] font-medium text-amber-500">团队价</span>}
+                    {Math.ceil(pointCost)}
                   </span>
                   <button
                     onMouseDown={stop}
@@ -1720,8 +1718,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                 <div className="flex items-center gap-4">
                   <span className="flex items-center gap-1 text-xs text-neutral-400 dark:text-white/38">
                     <Zap className="h-3.5 w-3.5" fill="currentColor" />
-                    {applyTeamFactor(pointCost, user)}
-                    {user?.inTeam && <span className="text-[10px] font-medium text-amber-500">团队价</span>}
+                    {Math.ceil(pointCost)}
                   </span>
                   <button
                     onMouseDown={stop}
@@ -1985,8 +1982,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                   />
                   <span className="flex items-center gap-0.5 text-xs text-neutral-500">
                     <Zap className="h-3 w-3 text-neutral-900 dark:text-neutral-100" fill="currentColor" />
-                    {applyTeamFactor(pointCost * batchCount, user)}
-                    {user?.inTeam && <span className="text-[10px] font-medium text-amber-500">团队价</span>}
+                    {Math.ceil(pointCost * batchCount)}
                   </span>
                   <button
                     onMouseDown={stop}

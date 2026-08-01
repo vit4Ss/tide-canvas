@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 	"time"
 
@@ -46,9 +45,10 @@ type service struct {
 	systemPrompt string
 	// storage backs durable server-side artifacts (e.g. grid-split cells).
 	storage storage.StorageStrategy
-	// docHost 是启动时 storage.publicURL 的 host：画布 AI 助手转发文档附件时
-	// 只允许抓取该 host 或 *.aliyuncs.com 的 URL（SSRF 防护，见 pkg/chatattach）。
-	docHost string
+	// docHosts 是启动时存储策略 FetchHosts() 的本站资产 host 列表（CDN/区域/
+	// 加速域名）：画布 AI 助手转发文档附件时只允许抓取这些 host 或
+	// *.aliyuncs.com 的 URL（SSRF 防护，见 pkg/chatattach）。
+	docHosts []string
 	// sem 限制并发执行的 runTask 数(每个会打无上限时长的上游 relay 调用),避免突发
 	// 请求产生无上限 goroutine + 无上限上游连接;超额任务在 goroutine 内排队等待。
 	sem chan struct{}
@@ -68,8 +68,8 @@ func newService(d *app.Deps) *service {
 		storage:      d.Storage,
 		sem:          make(chan struct{}, maxConcurrentGenerations),
 	}
-	if pu, err := url.Parse(d.Cfg.Storage.PublicURL); err == nil {
-		s.docHost = pu.Host
+	if d.Storage != nil {
+		s.docHosts = d.Storage.FetchHosts()
 	}
 	return s
 }
@@ -183,7 +183,7 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 	// rejects the generation before any task/row exists. cost==0 models are free.
 	// The cost is persisted on the task so a crash-recovery sweep can refund the
 	// exact amount; runTask refunds it on any non-success outcome too.
-	cost := resolveCost(m, dto.Input, s.repo.teamPriceFactor(ctx, userID))
+	cost := resolveCost(m, dto.Input)
 	task.PointCost = int64(cost)
 	if cost > 0 {
 		if err := points.Consume(s.repo.db, userID, cost, "生成消耗："+m.Name, task.ID); err != nil {
@@ -299,7 +299,8 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 	var genErr error
 	if gh.Name() == assistantChatHandler {
 		// 画布 AI 助手:走 relay 文本对话,回复在 Meta["text"](无 URL 结果)。
-		res, genErr = s.runAssistantChat(ctx, m, dto)
+		// 积分由 generate() 按模型定价预扣,随任务 PointCost 传入日志。
+		res, genErr = s.runAssistantChat(ctx, task.UserID, m, dto, task.PointCost)
 	} else {
 		res, genErr = gh.Execute(ctx, s.provider, req)
 	}
@@ -539,6 +540,11 @@ func (s *service) writeLog(ctx context.Context, task *model.AiTask, gh GenHandle
 	// Mirror the upstream relay call into the unified model-call log.
 	// 场景取自 handler 的 operation type：音频此前被归进 image，日志按场景
 	// 筛选时音乐/音效调用会混在图片里。
+	// 画布 AI 助手(assistant_chat)跳过镜像:它的调用在 runAssistantChat 里已用
+	// ModelText 记录(带完整请求/响应体与积分),镜像只会多一条空报文的重复行。
+	if gh.Name() == assistantChatHandler {
+		return
+	}
 	scene := workTypeOf(gh.OperationType())
 	if scene == "" {
 		scene = "image"
@@ -557,6 +563,7 @@ func (s *service) writeLog(ctx context.Context, task *model.AiTask, gh GenHandle
 		DurationMs:     durationMs,
 		UpstreamTaskID: res.UpstreamTaskID,
 		Cost:           res.Cost,
+		PointCost:      task.PointCost,
 	})
 }
 

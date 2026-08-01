@@ -100,7 +100,7 @@ func (s *service) optimizeCost(ctx context.Context, userID idgen.ID) int {
 		return 0
 	}
 	am := marketToAiModel(mm)
-	return resolveCost(&am, nil, s.repo.teamPriceFactor(ctx, userID))
+	return resolveCost(&am, nil)
 }
 
 // optimizePrompt rewrites the prompt via the configured relay text model,
@@ -119,10 +119,10 @@ func (s *service) optimizePrompt(ctx context.Context, userID idgen.ID, prompt st
 		return "", optimizeUnusable("AI 优化未启用：请在模型管理添加文本模型并设为「AI 优化主模型」")
 	}
 
-	// Same pricing path as /generate (creditCost override → catalog price →
-	// team factor), with no per-call input dimensions for a text rewrite.
+	// Same pricing path as /generate (creditCost override → catalog price),
+	// with no per-call input dimensions for a text rewrite.
 	am := marketToAiModel(mm)
-	cost := resolveCost(&am, nil, s.repo.teamPriceFactor(ctx, userID))
+	cost := resolveCost(&am, nil)
 	refID := idgen.Next() // ledger correlation id (no task row exists for optimize)
 	if cost > 0 {
 		if err := points.Consume(s.repo.db, userID, cost, "AI 优化："+mm.Name, refID); err != nil {
@@ -140,7 +140,7 @@ func (s *service) optimizePrompt(ctx context.Context, userID idgen.ID, prompt st
 	start := time.Now()
 	reply, err := s.relay.Chat(ctx, mm.ModelKey, msgs)
 	reqBody, _ := json.Marshal(msgs)
-	eventlog.ModelText(userID, "optimize", mm.ModelKey, "/v1/chat/completions", string(reqBody), reply, start, err)
+	eventlog.ModelText(userID, "optimize", mm.ModelKey, "/v1/chat/completions", string(reqBody), reply, start, err, int64(cost))
 	if err != nil {
 		if cost > 0 {
 			if rerr := points.Refund(s.repo.db, userID, cost, "AI 优化失败退款", refID); rerr != nil {

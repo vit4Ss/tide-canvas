@@ -11,9 +11,12 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/chatattach"
+	"tidecanvas/internal/pkg/eventlog"
+	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/relaychat"
 )
 
@@ -76,7 +79,7 @@ func toChatAttaches(atts []assistantAttach) []chatattach.Attach {
 // runAssistantChat handles handler == "assistant_chat": call the relay text model
 // with the conversation history and return the reply in Meta["text"]. Empty reply
 // / no relay / no text model surface as a task failure with a clear message.
-func (s *service) runAssistantChat(ctx context.Context, m *model.AiModel, dto generateDTO) (GenerateResult, error) {
+func (s *service) runAssistantChat(ctx context.Context, userID idgen.ID, m *model.AiModel, dto generateDTO, pointCost int64) (GenerateResult, error) {
 	if s.relay == nil {
 		return GenerateResult{}, errors.New("AI 助手未启用：未配置中转站密钥")
 	}
@@ -120,13 +123,30 @@ func (s *service) runAssistantChat(ctx context.Context, m *model.AiModel, dto ge
 	// 与读取失败的情况由 note 以文字说明并入正文（与生成页对话同一套实现，
 	// 见 pkg/chatattach）。历史消息不带附件——它们只有落库的纯文本。
 	imageURLs := chatattach.ImageURLs(atts)
-	docFiles, docNote := chatattach.Extractor{SelfHost: s.docHost}.FileParts(ctx, atts)
+	// 本站存储的图片改写成传输加速域名,境外上游取图才不会超时（与生成参考图
+	// 同一规则,见 provider_relay）。
+	if s.storage != nil {
+		for i, u := range imageURLs {
+			imageURLs[i] = s.storage.UpstreamURL(u)
+		}
+	}
+	docFiles, docNote := chatattach.Extractor{Hosts: s.docHosts}.FileParts(ctx, atts)
 	if docNote != "" {
 		prompt = strings.TrimSpace(prompt + "\n\n" + docNote)
 	}
 	msgs = append(msgs, relaychat.UserWithAttachments(prompt, imageURLs, docFiles))
 
+	// 与生成页对话同一口径记录模型调用（生成记录模块按它审计每次调用）;
+	// 只记当前轮（最后一条 user 消息,历史在面板持久化消息里）,附件 base64
+	// 净化后再落库,保留文件名/类型。
+	start := time.Now()
 	reply, err := s.relay.Chat(ctx, modelKey, msgs)
+	turn := msgs
+	if n := len(msgs); n > 1 {
+		turn = msgs[n-1:]
+	}
+	reqBody, _ := json.Marshal(turn)
+	eventlog.ModelText(userID, "assistant", modelKey, "/v1/chat/completions", eventlog.SanitizeDataURIs(string(reqBody)), reply, start, err, pointCost)
 	if err != nil {
 		return GenerateResult{}, err
 	}

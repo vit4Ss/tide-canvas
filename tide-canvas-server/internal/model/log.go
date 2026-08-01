@@ -39,9 +39,9 @@ type LoginLog struct {
 
 	UserID     idgen.ID `gorm:"column:user_id;index" json:"userId"`
 	Account    string   `gorm:"column:account;type:varchar(128);index" json:"account"`
-	Action     string   `gorm:"column:action;type:varchar(32);index" json:"action"`   // login|register|logout|login_code
-	Channel    string   `gorm:"column:channel;type:varchar(32)" json:"channel"`        // password|code
-	Success    int      `gorm:"column:success;index" json:"success"`                   // 0 fail / 1 ok
+	Action     string   `gorm:"column:action;type:varchar(32);index" json:"action"` // login|register|logout|login_code
+	Channel    string   `gorm:"column:channel;type:varchar(32)" json:"channel"`     // password|code
+	Success    int      `gorm:"column:success;index" json:"success"`                // 0 fail / 1 ok
 	FailReason string   `gorm:"column:fail_reason;type:varchar(255)" json:"failReason"`
 	IP         string   `gorm:"column:ip;type:varchar(64)" json:"ip"`
 	UserAgent  string   `gorm:"column:user_agent;type:varchar(512)" json:"userAgent"`
@@ -76,22 +76,26 @@ func (BizLog) TableName() string { return "biz_log" }
 type ModelCallLog struct {
 	BaseModel
 
-	UserID         idgen.ID `gorm:"column:user_id;index" json:"userId"`
-	Scene          string   `gorm:"column:scene;type:varchar(32);index" json:"scene"` // chat|optimize|image|video
-	Model          string   `gorm:"column:model;type:varchar(128);index" json:"model"`
-	Endpoint       string   `gorm:"column:endpoint;type:varchar(255)" json:"endpoint"`
-	RequestBody    string   `gorm:"column:request_body;type:longtext" json:"requestBody"`
-	ResponseBody   string   `gorm:"column:response_body;type:longtext" json:"responseBody"`
-	HttpStatus     int      `gorm:"column:http_status;index" json:"httpStatus"`
-	Success        int      `gorm:"column:success;index" json:"success"` // 0 fail / 1 ok
-	ErrorMsg       string   `gorm:"column:error_msg;type:varchar(1024)" json:"errorMsg"`
+	UserID       idgen.ID `gorm:"column:user_id;index" json:"userId"`
+	Scene        string   `gorm:"column:scene;type:varchar(32);index" json:"scene"` // chat|optimize|image|video
+	Model        string   `gorm:"column:model;type:varchar(128);index" json:"model"`
+	Endpoint     string   `gorm:"column:endpoint;type:varchar(255)" json:"endpoint"`
+	RequestBody  string   `gorm:"column:request_body;type:longtext" json:"requestBody"`
+	ResponseBody string   `gorm:"column:response_body;type:longtext" json:"responseBody"`
+	HttpStatus   int      `gorm:"column:http_status;index" json:"httpStatus"`
+	Success      int      `gorm:"column:success;index" json:"success"` // 0 fail / 1 ok
+	ErrorMsg     string   `gorm:"column:error_msg;type:varchar(1024)" json:"errorMsg"`
 	// StartTime 是本地打点的调用开始时刻（不取上游响应里的时间字段）。与
 	// CreateTime（落库/调用结束时刻）和 DurationMs 三者互为印证：耗时存疑时
 	// 可以直接拿两个时间戳相减对账。存量行为零值，展示端按空处理。
-	StartTime  time.Time `gorm:"column:start_time" json:"startTime"`
-	DurationMs int64     `gorm:"column:duration_ms" json:"durationMs"`
-	UpstreamTaskID string   `gorm:"column:upstream_task_id;type:varchar(128)" json:"upstreamTaskId"`
-	Cost           string   `gorm:"column:cost;type:varchar(64)" json:"cost"`
+	StartTime      time.Time `gorm:"column:start_time" json:"startTime"`
+	DurationMs     int64     `gorm:"column:duration_ms" json:"durationMs"`
+	UpstreamTaskID string    `gorm:"column:upstream_task_id;type:varchar(128)" json:"upstreamTaskId"`
+	Cost           string    `gorm:"column:cost;type:varchar(64)" json:"cost"`
+	// PointCost 是这次调用实扣的平台积分(0=免费/未扣)。写日志时就地记录,
+	// 生成记录直接读本列——不再靠 upstream_task_id 反查任务链(同步调用
+	// 没有上游任务 id,反查会丢)。
+	PointCost int64 `gorm:"column:point_cost;not null;default:0" json:"pointCost"`
 }
 
 // TableName overrides the default pluralization.

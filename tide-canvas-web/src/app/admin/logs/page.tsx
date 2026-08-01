@@ -603,7 +603,7 @@ function ModelTab() {
       timeCol<ModelCallLogVO>(),
       { header: "用户", className: "mono muted", cell: (l) => <Trunc text={userCell(l.userId, l.username)} /> },
       { header: "场景", cell: (l) => <StatusPill tone="blue">{l.scene}</StatusPill> },
-      { header: "模型", className: "mono strong", cell: (l) => <Trunc text={l.model} /> },
+      { header: "模型", className: "strong", cell: (l) => <Trunc text={l.modelName || l.model} /> },
       { header: "结果", cell: (l) => <StatusPill tone={okTone(l.success)}>{l.success === 1 ? "成功" : "失败"}</StatusPill> },
       { header: "耗时", className: "mono muted", cell: (l) => dur(l.durationMs) },
       { header: "消耗", className: "mono", cell: (l) => (Number(l.cost) > 0 ? l.cost : "—") },
@@ -624,14 +624,14 @@ function ModelTab() {
         { k: "总消耗", v: rows.reduce((a, l) => a + (Number(l.cost) || 0), 0).toFixed(2) },
       ]}
       detail={(l) => ({
-        title: `模型日志 · ${l.model || "—"}`,
+        title: `模型日志 · ${l.modelName || l.model || "—"}`,
         fields: [
           // 开始 / 结束 / 耗时三个都是本地打点，可直接相减对账（存量日志无开始时间）
           { label: "开始时间", value: l.startTime || "—" },
           { label: "结束时间", value: l.createTime || "—" },
           { label: "用户", value: userCell(l.userId, l.username) },
           { label: "场景", value: l.scene },
-          { label: "模型", value: l.model || "—" },
+          { label: "模型", value: l.modelName || l.model || "—" },
           { label: "结果", value: <StatusPill tone={okTone(l.success)}>{l.success === 1 ? "成功" : "失败"}</StatusPill> },
           { label: "HTTP 状态", value: l.httpStatus },
           { label: "耗时", value: dur(l.durationMs) },

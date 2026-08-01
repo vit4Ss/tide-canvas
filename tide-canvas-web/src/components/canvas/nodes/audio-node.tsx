@@ -11,7 +11,6 @@ import {
   SlidersHorizontal,
   Zap,
 } from "lucide-react";
-import { applyTeamFactor } from "@/lib/points";
 import {
   AUDIO_STYLES,
   DEFAULT_MUSIC_PARAMS,
@@ -356,7 +355,7 @@ export const AudioNode = memo(function AudioNode({
   onPortMouseDown,
 }: CanvasNodeProps) {
   const updateNode = useCanvasStore((s) => s.updateNode);
-  const { user, generate, generating, showAuxUI } = useNodeRuntime(node, isSelected, isDragging);
+  const { generate, generating, showAuxUI } = useNodeRuntime(node, isSelected, isDragging);
   const { models, modelId, setModelId, selectedModel } = useAiModels(AiModelType.AUDIO);
 
   const [voice, setVoice] = useState("");
@@ -420,7 +419,7 @@ export const AudioNode = memo(function AudioNode({
   }, [models, modelId, setModelId]);
 
   const effectiveVoice = voice || voices[0]?.id || "";
-  const cost = applyTeamFactor(Number(selectedModel?.pointCost ?? 10), user);
+  const cost = Math.ceil(Number(selectedModel?.pointCost ?? 10));
   const rawPrompt = node.prompt || "";
   const prompt = decodeUnicodeEscapes(rawPrompt);
   const textLen = prompt.length;
@@ -715,7 +714,7 @@ export const AudioNode = memo(function AudioNode({
                       modelRowId: selectedModel?.id,
                       modelName: selectedModel?.name,
                       // 登记价:模型 config.uploadCost,未配置时服务端按常规生成价扣,展示同口径
-                      cost: applyTeamFactor(uploadCostOf(selectedModel?.config) || Number(selectedModel?.pointCost ?? 0), user),
+                      cost: Math.ceil(uploadCostOf(selectedModel?.config) || Number(selectedModel?.pointCost ?? 0)),
                     }}
                   />
 

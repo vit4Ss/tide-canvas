@@ -281,7 +281,7 @@ func (s *service) register(ctx context.Context, dto RegisterDTO) (*UserVO, error
 		u.Points += int64(granted)
 	}
 
-	vo := toUserVO(u, 1, model.MenusForUser(s.repo.db, u), model.AdminPermsForUser(s.repo.db, u))
+	vo := toUserVO(u, model.MenusForUser(s.repo.db, u), model.AdminPermsForUser(s.repo.db, u))
 	return &vo, nil
 }
 
@@ -311,12 +311,11 @@ func (s *service) login(ctx context.Context, dto LoginDTO) (*LoginVO, error) {
 	_ = s.repo.updateFields(u.ID, map[string]any{"last_login_time": now})
 	u.LastLoginTime = now
 
-	factor, _ := s.repo.teamPriceFactor(u.TeamID)
 	return &LoginVO{
 		AccessToken:  access,
 		RefreshToken: refresh,
 		ExpiresIn:    expiresIn,
-		UserInfo:     toUserVO(u, factor, model.MenusForUser(s.repo.db, u), model.AdminPermsForUser(s.repo.db, u)),
+		UserInfo:     toUserVO(u, model.MenusForUser(s.repo.db, u), model.AdminPermsForUser(s.repo.db, u)),
 	}, nil
 }
 
@@ -360,12 +359,11 @@ func (s *service) loginCode(ctx context.Context, dto LoginCodeDTO) (*LoginVO, er
 	_ = s.repo.updateFields(u.ID, map[string]any{"last_login_time": now})
 	u.LastLoginTime = now
 
-	factor, _ := s.repo.teamPriceFactor(u.TeamID)
 	return &LoginVO{
 		AccessToken:  access,
 		RefreshToken: refresh,
 		ExpiresIn:    expiresIn,
-		UserInfo:     toUserVO(u, factor, model.MenusForUser(s.repo.db, u), model.AdminPermsForUser(s.repo.db, u)),
+		UserInfo:     toUserVO(u, model.MenusForUser(s.repo.db, u), model.AdminPermsForUser(s.repo.db, u)),
 	}, nil
 }
 
@@ -445,8 +443,7 @@ func (s *service) me(uid idgen.ID) (*UserVO, error) {
 	if err != nil {
 		return nil, err
 	}
-	factor, _ := s.repo.teamPriceFactor(u.TeamID)
-	vo := toUserVO(u, factor, model.MenusForUser(s.repo.db, u), model.AdminPermsForUser(s.repo.db, u))
+	vo := toUserVO(u, model.MenusForUser(s.repo.db, u), model.AdminPermsForUser(s.repo.db, u))
 	return &vo, nil
 }
 

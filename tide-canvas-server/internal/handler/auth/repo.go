@@ -78,22 +78,3 @@ func (r *repo) updateFields(id idgen.ID, fields map[string]any) error {
 	return r.db.Model(&model.User{}).Where("id = ?", id).Updates(fields).Error
 }
 
-// teamPriceFactor returns the price markup factor of the user's team, or 1 when
-// the user is in no team (or the team row is missing).
-func (r *repo) teamPriceFactor(teamID idgen.ID) (float64, error) {
-	if teamID == 0 {
-		return 1, nil
-	}
-	var t model.Team
-	err := r.db.Select("price_factor").Where("id = ?", teamID).First(&t).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return 1, nil
-		}
-		return 1, err
-	}
-	if t.PriceFactor <= 0 {
-		return 1, nil
-	}
-	return t.PriceFactor, nil
-}

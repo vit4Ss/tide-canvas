@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { aiApi } from "@/lib/api";
 import { useAiGeneration } from "@/hooks/canvas/use-ai-generation";
-import { useAuth } from "@/hooks/use-auth";
 import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
 import type { AiModelType, AiModelVO } from "@/types/ai";
 
@@ -19,16 +18,15 @@ export function useMountedRef() {
   return mountedRef;
 }
 
-/** 媒体节点共用的运行态：画布级生成轮询接线 + 团队价用户 + 多选/选中推导的辅助 UI 可见性 */
+/** 媒体节点共用的运行态：画布级生成轮询接线 + 多选/选中推导的辅助 UI 可见性 */
 export function useNodeRuntime(node: CanvasNode, isSelected: boolean, isDragging: boolean) {
-  const { user } = useAuth(); // 团队价：消耗按 inTeam 系数加价显示
   const { generate, isGenerating } = useAiGeneration();
   const generating = isGenerating(node.id) || node.status === "generating";
   // 多选时隐藏单节点辅助 UI（工具栏/端口/输入框等），仅保留选中边框
   const isMultiSelect = useCanvasStore((s) => s.selectedNodeIds.size > 1);
   // 仅选中且非拖动状态下显示辅助 UI
   const showAuxUI = isSelected && !isDragging && !isMultiSelect;
-  return { user, generate, isGenerating, generating, isMultiSelect, showAuxUI };
+  return { generate, isGenerating, generating, isMultiSelect, showAuxUI };
 }
 
 /** 把卡片实际渲染尺寸同步到 store，供连线层将端点锚定到卡片真实边缘中点（默认对节点居中）。

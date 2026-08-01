@@ -65,15 +65,10 @@ type RelayConfig struct {
 	APIKey  string `mapstructure:"apiKey"`
 }
 
-// LLMConfig holds the chat large-language-model settings. When APIKey is empty
-// the chat service falls back to a canned placeholder reply (no upstream call),
-// so the server stays runnable without credentials. Configure via
-// TIDECANVAS_LLM_APIKEY / TIDECANVAS_LLM_MODEL / TIDECANVAS_LLM_BASEURL.
+// LLMConfig holds the chat assistant's prompt/context settings（对话走 relay
+// 中转站;直连 Anthropic 的遗留兜底已于 2026-08-01 整链删除,apiKey/baseUrl/
+// model/maxTokens 随之移除——relay 未配置时回复退化为占位文案,服务可裸奔）。
 type LLMConfig struct {
-	APIKey       string `mapstructure:"apiKey"`
-	BaseURL      string `mapstructure:"baseUrl"`      // optional; overrides the Anthropic API base
-	Model        string `mapstructure:"model"`        // e.g. claude-opus-4-8
-	MaxTokens    int    `mapstructure:"maxTokens"`    // response cap
 	SystemPrompt string `mapstructure:"systemPrompt"` // persona/instructions for the assistant
 	HistoryLimit int    `mapstructure:"historyLimit"` // recent messages sent as context
 	// ContextTokenLimit caps a conversation's cumulative estimated tokens; once
@@ -81,9 +76,6 @@ type LLMConfig struct {
 	// the user to start a new conversation.
 	ContextTokenLimit int `mapstructure:"contextTokenLimit"`
 }
-
-// Enabled reports whether a real LLM is configured (an API key is present).
-func (l LLMConfig) Enabled() bool { return strings.TrimSpace(l.APIKey) != "" }
 
 // ServerConfig holds HTTP server settings.
 type ServerConfig struct {
@@ -155,10 +147,11 @@ type StorageConfig struct {
 	// CDNDomain, when set, is the base host used to build public asset URLs
 	// (e.g. https://cdn.example.com) instead of the regional OSS endpoint.
 	CDNDomain string `mapstructure:"cdnDomain"`
-	// AccelerateDomain is the OSS Transfer-Acceleration host. When set, URLs sent
-	// to OVERSEAS upstream suppliers (the relay) are rewritten from the regional
-	// host to this global host so cross-border downloads stop timing out; the
-	// frontend display keeps the regional/CDN host.
+	// AccelerateDomain is the OSS Transfer-Acceleration host. When set, the OSS
+	// client uses it for uploads/deletes/presigns (cross-border speedup), and URLs
+	// sent to OVERSEAS upstream suppliers (the relay) are rewritten from the
+	// regional host to this global host so cross-border downloads stop timing
+	// out; the frontend display keeps the regional/CDN host.
 	AccelerateDomain string `mapstructure:"accelerateDomain"`
 }
 
@@ -397,12 +390,6 @@ func normalize(cfg *Config) {
 		cfg.Email.ReplyTo = cfg.Email.FromAddress
 	}
 
-	if strings.TrimSpace(cfg.LLM.Model) == "" {
-		cfg.LLM.Model = "claude-opus-4-8"
-	}
-	if cfg.LLM.MaxTokens <= 0 {
-		cfg.LLM.MaxTokens = 2048
-	}
 	if cfg.LLM.HistoryLimit <= 0 {
 		cfg.LLM.HistoryLimit = 20
 	}

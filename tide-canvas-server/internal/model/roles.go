@@ -33,6 +33,7 @@ var AdminModuleKeys = []string{
 	"admin.users",         // 用户管理(含角色管理)
 	"admin.works",         // 作品管理
 	"admin.inspiration",   // 灵感管理
+	"admin.generations",   // 生成记录(每次模型调用的审计视图)
 	"admin.logs",          // 日志管理(访问/登录/业务/审计)
 	"admin.floors",        // 首页楼层
 	"admin.blog",          // 博客管理

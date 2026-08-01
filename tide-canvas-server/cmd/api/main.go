@@ -200,6 +200,9 @@ func run() error {
 		middleware.ZapLogger(),
 		middleware.AccessLog(),
 		middleware.CORS(deps),
+		// 读时拼:JSON 响应里历史存储域名统一改写为当前 publicBase(CDN),
+		// 换域名只需改配置+重启,不再迁移数据。SSE/下载等非 JSON 直通。
+		middleware.DisplayURL(store),
 	)
 
 	// Liveness probe.

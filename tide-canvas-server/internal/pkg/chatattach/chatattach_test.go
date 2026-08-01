@@ -36,7 +36,7 @@ func TestImageURLs(t *testing.T) {
 // SSRF 白名单：只放行本站存储 host 与 *.aliyuncs.com。
 // 附件 URL 是客户端提交的任意字符串，这条守住内网探测。
 func TestHostAllowed(t *testing.T) {
-	e := Extractor{SelfHost: "cdn.example.com"}
+	e := Extractor{Hosts: []string{"cdn.example.com"}}
 	cases := []struct {
 		raw  string
 		want bool
@@ -59,11 +59,11 @@ func TestHostAllowed(t *testing.T) {
 	}
 }
 
-// SelfHost 未配置时不得放行任意 host（只剩 aliyuncs 白名单）。
-func TestHostAllowedEmptySelfHost(t *testing.T) {
+// Hosts 未配置时不得放行任意 host（只剩 aliyuncs 白名单）。
+func TestHostAllowedEmptyHosts(t *testing.T) {
 	e := Extractor{}
 	if e.hostAllowed("https://cdn.example.com/a.pdf") {
-		t.Error("empty SelfHost must not allow arbitrary hosts")
+		t.Error("empty Hosts must not allow arbitrary hosts")
 	}
 	if !e.hostAllowed("https://b.aliyuncs.com/a.pdf") {
 		t.Error("aliyuncs should still be allowed")
@@ -106,7 +106,7 @@ func TestMimeOf(t *testing.T) {
 
 // 视频/音频不进模型，但要留下说明，避免模型误答「请上传文件」。
 func TestFilePartsNotesMediaWithoutFetching(t *testing.T) {
-	e := Extractor{SelfHost: "cdn.example.com"}
+	e := Extractor{Hosts: []string{"cdn.example.com"}}
 	files, note := e.FileParts(context.Background(), []Attach{
 		{URL: "https://cdn.example.com/clip.mp4", Kind: "video"},
 		{URL: "https://cdn.example.com/song.mp3", Kind: "audio"},
@@ -125,7 +125,7 @@ func TestFilePartsNotesMediaWithoutFetching(t *testing.T) {
 
 // 白名单外的文档不抓取，但要注明原因，不静默丢弃。
 func TestFilePartsRejectsForeignHost(t *testing.T) {
-	e := Extractor{SelfHost: "cdn.example.com"}
+	e := Extractor{Hosts: []string{"cdn.example.com"}}
 	files, note := e.FileParts(context.Background(), []Attach{
 		{URL: "https://evil.com/secret.pdf", Kind: "file"},
 	})
@@ -146,7 +146,7 @@ func TestFilePartsForwardsAllowedDoc(t *testing.T) {
 	defer srv.Close()
 	u, _ := url.Parse(srv.URL)
 
-	e := Extractor{SelfHost: u.Host}
+	e := Extractor{Hosts: []string{u.Host}}
 	files, note := e.FileParts(context.Background(), []Attach{
 		{URL: srv.URL + "/report.pdf", Kind: "file"},
 	})
@@ -168,7 +168,7 @@ func TestFilePartsForwardsAllowedDoc(t *testing.T) {
 
 // 无附件时 note 为空——不能凭空往用户正文里拼一段括号说明。
 func TestFilePartsEmpty(t *testing.T) {
-	files, note := Extractor{SelfHost: "cdn.example.com"}.FileParts(context.Background(), nil)
+	files, note := Extractor{Hosts: []string{"cdn.example.com"}}.FileParts(context.Background(), nil)
 	if len(files) != 0 || note != "" {
 		t.Errorf("want empty, got files=%+v note=%q", files, note)
 	}

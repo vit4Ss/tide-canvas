@@ -41,19 +41,19 @@ func fmtTimePtr(t *time.Time) string {
 // as a JSON object (RawMessage) when the stored value is valid JSON, else as a
 // string; the frontend (parseTaskMeta) accepts either form.
 type AiTaskVO struct {
-	ID           idgen.ID        `json:"id"`
-	Handler      string          `json:"handler"`
+	ID      idgen.ID `json:"id"`
+	Handler string   `json:"handler"`
 	// ModelID is the AiModel row id (matches AiModelVO.id)。延长/翻唱须发到
 	// 与原曲相同的模型卡(上游按 key 钉路由),前端据此把模型选回原曲那张。
-	ModelID      idgen.ID        `json:"modelId"`
-	ModelName    string          `json:"modelName"`
-	Status       int             `json:"status"`
-	Progress     int             `json:"progress"`
+	ModelID   idgen.ID `json:"modelId"`
+	ModelName string   `json:"modelName"`
+	Status    int      `json:"status"`
+	Progress  int      `json:"progress"`
 	// PointCost is the points charged for this task (server-computed at submit).
-	PointCost    int64           `json:"pointCost"`
-	ResultURL    string          `json:"resultUrl"`
-	ResultMeta   json.RawMessage `json:"resultMeta"`
-	ErrorMsg     string          `json:"errorMsg"`
+	PointCost  int64           `json:"pointCost"`
+	ResultURL  string          `json:"resultUrl"`
+	ResultMeta json.RawMessage `json:"resultMeta"`
+	ErrorMsg   string          `json:"errorMsg"`
 	// Input is the original generation request (prompt/ratio/resolution/…) so the
 	// 创作台 can restore the run's settings from history (重新编辑 / 再次生成).
 	Input        json.RawMessage `json:"input"`

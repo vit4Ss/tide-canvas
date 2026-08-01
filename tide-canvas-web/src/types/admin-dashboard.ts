@@ -48,6 +48,8 @@ export interface ModelCallPoint {
 /** One row of the model-call leaderboard (近 14 天). */
 export interface ModelTopVO {
   model: string;
+  /** 目录显示名;查不到为空 → 展示回退 model */
+  modelName: string;
   count: number;
   success: number;
   avgMs: number;

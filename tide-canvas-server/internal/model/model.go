@@ -51,7 +51,6 @@ func Models() []any {
 		&IMMessage{},
 		// System / misc.
 		&Notification{},
-		&Team{},
 		&SysRole{},
 
 		// Blog（前台 /blog + 后台「博客管理」；来源=自建 self / Telegram 频道同步）.
@@ -343,7 +342,6 @@ type User struct {
 	IsAuthor             int       `gorm:"default:0" json:"isAuthor"`
 	StorageQuota         int64     `gorm:"default:0" json:"storageQuota"`
 	StorageUsed          int64     `gorm:"default:0" json:"storageUsed"`
-	TeamID               idgen.ID  `gorm:"default:0" json:"teamId"`
 	// Remark 后台运营备注(仅管理端可见可改)。json:"-" 防止随 User 直接序列化
 	// 泄给前台;管理端经 AdminUserVO 显式下发。
 	Remark string `gorm:"size:255" json:"-"`

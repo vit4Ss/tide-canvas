@@ -7,7 +7,7 @@
 // 白名单改一处漏一处就是漏洞。
 //
 // 约束：
-//   - 只抓本站存储的 URL（storage.publicURL 同 host 或 *.aliyuncs.com）——
+//   - 只抓本站存储的 URL（存储策略 FetchHosts() 的 host 或 *.aliyuncs.com）——
 //     附件是客户端提交的任意字符串，放开抓取就是 SSRF。
 //   - base64 会膨胀 4/3，单文件原始体积限 15MB、多文件合计限 20MB，超限的
 //     文件不转发、注入一条文字说明让模型得体回应。
@@ -60,10 +60,11 @@ func ImageURLs(atts []Attach) []string {
 	return urls
 }
 
-// Extractor 持有抓取白名单所需的配置。SelfHost 是启动时 storage.publicURL 的
-// host；运行期在后台改了 publicURL 需重启才对文档转发生效。
+// Extractor 持有抓取白名单所需的配置。Hosts 是启动时存储策略 FetchHosts()
+// 返回的本站资产 host 列表（CDN/区域/加速域名）；运行期在后台改了存储配置
+// 需重启才对文档转发生效。
 type Extractor struct {
-	SelfHost string
+	Hosts []string
 }
 
 // FileParts 把文档附件转成 relay file part 列表；同时汇总一段附件说明（note）
@@ -126,7 +127,8 @@ func (e Extractor) FileParts(ctx context.Context, atts []Attach) (files []relayc
 	return files, note
 }
 
-// hostAllowed 限定服务端抓取范围：本站存储 host 或阿里云 OSS 域名。
+// hostAllowed 限定服务端抓取范围：本站存储 host（CDN/区域/加速域名）或阿里云
+// OSS 域名。
 func (e Extractor) hostAllowed(raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -139,7 +141,12 @@ func (e Extractor) hostAllowed(raw string) bool {
 	if strings.HasSuffix(host, ".aliyuncs.com") {
 		return true
 	}
-	return e.SelfHost != "" && strings.EqualFold(u.Host, e.SelfHost)
+	for _, h := range e.Hosts {
+		if h != "" && strings.EqualFold(u.Host, h) {
+			return true
+		}
+	}
+	return false
 }
 
 // FileName 从 URL 取出展示用文件名（取不到时回退「附件」）。

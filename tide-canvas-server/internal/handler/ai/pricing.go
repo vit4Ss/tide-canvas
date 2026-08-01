@@ -10,9 +10,9 @@ import (
 )
 
 // pricing.go computes the authoritative point cost of a generation server-side.
-// The frontend (points.ts applyTeamFactor + the model's price matrix) only
-// renders an estimate; this is the value the balance is actually charged
-// against. Resolution order, per generation:
+// The frontend (points estimate + the model's price matrix) only renders an
+// estimate; this is the value the balance is actually charged against.
+// Resolution order, per generation:
 //
 //	1. price matrix (config priceMatrix, aliased to pricing): spec-indexed unit
 //	   price. image = [quality][clarity], video = [duration][resolution]. Looked
@@ -21,12 +21,12 @@ import (
 //	3. config creditCost (model-level flat override).
 //	4. model.PointCost (= MarketModel.Price integer part).
 //
-// The base is then ×batchCount for images and ×team price factor (ceil),
-// mirroring the frontend applyTeamFactor so 所见 ≈ 所扣.
+// The base is then ×batchCount for images, rounding up.
+//（团队加价倍率已随团队功能整链下线,2026-08-01:倍率恒为 1,不再参与。）
 
 // resolveCost returns the points to charge for one generation of model m given
-// the raw generate input and the caller's team price factor (>=1).
-func resolveCost(m *model.AiModel, rawInput json.RawMessage, factor float64) int {
+// the raw generate input.
+func resolveCost(m *model.AiModel, rawInput json.RawMessage) int {
 	in := map[string]any{}
 	if len(rawInput) > 0 {
 		_ = json.Unmarshal(rawInput, &in)
@@ -41,10 +41,7 @@ func resolveCost(m *model.AiModel, rawInput json.RawMessage, factor float64) int
 	// (config.uploadCost);未配置时落回下方常规解析(与一次生成同价)。
 	if m.Type == "audio" && isUploadTask(in) {
 		if v := numField(cfg, "uploadCost"); v > 0 {
-			if factor < 1 {
-				factor = 1
-			}
-			return int(math.Ceil(v * factor))
+			return int(math.Ceil(v))
 		}
 	}
 
@@ -110,10 +107,7 @@ func resolveCost(m *model.AiModel, rawInput json.RawMessage, factor float64) int
 		}
 	}
 
-	if factor < 1 {
-		factor = 1
-	}
-	return int(math.Ceil(base * factor))
+	return int(math.Ceil(base))
 }
 
 // isUploadTask reports whether the generate input carries Suno 的参考音频登记

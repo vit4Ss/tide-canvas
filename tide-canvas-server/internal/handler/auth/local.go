@@ -260,7 +260,7 @@ func (s *service) registerLocal(ctx context.Context, dto RegisterLocalDTO) (*Log
 		AccessToken:  access,
 		RefreshToken: refresh,
 		ExpiresIn:    expiresIn,
-		UserInfo:     toUserVO(u, 1, model.MenusForUser(s.repo.db, u), model.AdminPermsForUser(s.repo.db, u)),
+		UserInfo:     toUserVO(u, model.MenusForUser(s.repo.db, u), model.AdminPermsForUser(s.repo.db, u)),
 	}, nil
 }
 

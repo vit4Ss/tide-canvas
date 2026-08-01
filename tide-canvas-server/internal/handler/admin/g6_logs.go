@@ -87,6 +87,38 @@ func resolveUserNames(db *gorm.DB, ids []idgen.ID) map[idgen.ID]string {
 	return out
 }
 
+// resolveModelNames batch-resolves upstream model keys -> 目录显示名
+// (market_model.name)，用于日志/生成记录/概览把 gpt-5.6-sol 这类上游 ID
+// 显示成 GPT-5.6 Sol。查不到（已删除的模型）不出现在 map 里，前端回退显示 key。
+func resolveModelNames(db *gorm.DB, keys []string) map[string]string {
+	uniq := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		if k != "" {
+			uniq[k] = struct{}{}
+		}
+	}
+	if len(uniq) == 0 {
+		return nil
+	}
+	list := make([]string, 0, len(uniq))
+	for k := range uniq {
+		list = append(list, k)
+	}
+	var rows []struct {
+		ModelKey string
+		Name     string
+	}
+	if err := db.Model(&model.MarketModel{}).Select("model_key, name").
+		Where("model_key IN ?", list).Scan(&rows).Error; err != nil {
+		return nil
+	}
+	out := make(map[string]string, len(rows))
+	for _, r := range rows {
+		out[r.ModelKey] = r.Name
+	}
+	return out
+}
+
 // ---- access ----------------------------------------------------------------
 
 // AccessLogVO is the list view of an API access log.
@@ -272,6 +304,7 @@ type ModelCallLogVO struct {
 	Username       string   `json:"username"` // 展示名（昵称优先），查不到为空
 	Scene          string   `json:"scene"`
 	Model          string   `json:"model"`
+	ModelName      string   `json:"modelName"` // 目录显示名(market_model.name),查不到为空→前端回退 key
 	Endpoint       string   `json:"endpoint"`
 	RequestBody    string   `json:"requestBody"`
 	ResponseBody   string   `json:"responseBody"`
@@ -312,15 +345,20 @@ func listModelLogs(c *gin.Context, db *gorm.DB) {
 		return
 	}
 	ids := make([]idgen.ID, 0, len(rows))
+	keys := make([]string, 0, len(rows))
 	for i := range rows {
 		ids = append(ids, rows[i].UserID)
+		keys = append(keys, rows[i].Model)
 	}
 	names := resolveUserNames(db, ids)
+	modelNames := resolveModelNames(db, keys)
 	vos := make([]ModelCallLogVO, 0, len(rows))
 	for i := range rows {
 		r := &rows[i]
 		vos = append(vos, ModelCallLogVO{
-			ID: r.ID, UserID: r.UserID, Username: names[r.UserID], Scene: r.Scene, Model: r.Model, Endpoint: r.Endpoint,
+			ID: r.ID, UserID: r.UserID, Username: names[r.UserID], Scene: r.Scene, Model: r.Model,
+			ModelName:   modelNames[r.Model],
+			Endpoint:    r.Endpoint,
 			RequestBody: r.RequestBody, ResponseBody: r.ResponseBody, HttpStatus: r.HttpStatus,
 			Success: r.Success, ErrorMsg: r.ErrorMsg, StartTime: g5FmtTime(r.StartTime), DurationMs: r.DurationMs,
 			UpstreamTaskID: r.UpstreamTaskID, Cost: r.Cost, CreateTime: g5FmtTime(r.CreateTime),

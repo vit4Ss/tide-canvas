@@ -390,8 +390,8 @@ export default function AdminDashboardPage() {
               {modelTop.map((m) => (
                 <div className="vb" key={m.model}>
                   <div className="vb-line">
-                    <span className="vb-name" title={m.model}>
-                      {m.model}
+                    <span className="vb-name" title={m.modelName || m.model}>
+                      {m.modelName || m.model}
                     </span>
                     <span className="vb-n">{fmtNum(m.count)}</span>
                   </div>

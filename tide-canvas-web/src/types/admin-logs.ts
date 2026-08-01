@@ -101,6 +101,8 @@ export interface ModelCallLogVO {
   /** chat | optimize | image | video */
   scene: string;
   model: string;
+  /** 目录显示名(market_model.name);查不到为空 → 展示回退 model */
+  modelName?: string;
   endpoint: string;
   requestBody: string;
   responseBody: string;

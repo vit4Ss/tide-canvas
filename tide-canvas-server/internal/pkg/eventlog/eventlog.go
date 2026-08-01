@@ -6,6 +6,9 @@
 package eventlog
 
 import (
+	"encoding/json"
+	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -87,10 +90,11 @@ func ModelCall(e *model.ModelCallLog) {
 // ModelText is a convenience for the text relay calls (chat / optimize): it
 // derives success/status/error from err and enqueues a ModelCallLog. On failure
 // the response body is dropped (the error message carries the detail).
+// pointCost 是本次调用实扣的平台积分(免费/系统内部调用传 0)。
 //
 // startedAt 是调用方在发起上游请求前打的本地时间点；耗时由本函数按它现算，
 // 保证「开始时间 + 耗时」永远自洽（调用方一律在上游返回后立刻调用本函数）。
-func ModelText(userID idgen.ID, scene, modelID, endpoint, requestBody, responseBody string, startedAt time.Time, err error) {
+func ModelText(userID idgen.ID, scene, modelID, endpoint, requestBody, responseBody string, startedAt time.Time, err error, pointCost int64) {
 	success, status, errMsg := 1, 200, ""
 	if err != nil {
 		success, status, errMsg, responseBody = 0, 0, err.Error(), ""
@@ -107,6 +111,7 @@ func ModelText(userID idgen.ID, scene, modelID, endpoint, requestBody, responseB
 		ErrorMsg:     Truncate(errMsg, 1024),
 		StartTime:    startedAt,
 		DurationMs:   time.Since(startedAt).Milliseconds(),
+		PointCost:    pointCost,
 	})
 }
 
@@ -122,4 +127,43 @@ func Truncate(s string, n int) string {
 		cut = cut[:len(cut)-1]
 	}
 	return cut + "…(truncated)"
+}
+
+// SanitizeDataURIs 把序列化请求体里的 base64 data URI 载荷替换成体积占位
+// （保留 data: 前缀与原始字节数）。文档附件的 file_data 动辄几十 MB,不净化
+// 的话 ModelCall 的 16KB 截断会把后续所有字段（含其它附件的文件名）连同
+// JSON 结构一起切掉,生成记录详情将无法展示「用户传了什么」。非 JSON 或
+// 无 data URI 时原样返回。
+func SanitizeDataURIs(body string) string {
+	if !strings.Contains(body, "data:") {
+		return body
+	}
+	var v any
+	if err := json.Unmarshal([]byte(body), &v); err != nil {
+		return body
+	}
+	scrubDataURIs(v)
+	out, err := json.Marshal(v)
+	if err != nil {
+		return body
+	}
+	return string(out)
+}
+
+// scrubDataURIs 深度遍历解码后的 JSON,就地替换超长 data: 字符串。
+func scrubDataURIs(v any) {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, val := range t {
+			if s, ok := val.(string); ok && strings.HasPrefix(s, "data:") && len(s) > 256 {
+				t[k] = "data:…(base64 omitted, " + strconv.Itoa(len(s)) + " bytes)"
+				continue
+			}
+			scrubDataURIs(val)
+		}
+	case []any:
+		for _, val := range t {
+			scrubDataURIs(val)
+		}
+	}
 }

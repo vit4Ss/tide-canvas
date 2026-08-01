@@ -9,7 +9,6 @@ import { VideoParamPicker, normalizeDurations, type VideoParamValue } from "./vi
 import { ModelPicker } from "./model-picker";
 import { uploadFileSmart } from "@/lib/api";
 import { resolveModelReferenceLimitBytes } from "@/lib/upload-limits";
-import { applyTeamFactor } from "@/lib/points";
 import { matrixPrice, keyVariants, durationVariants } from "@/lib/price-matrix";
 import { AiModelType } from "@/types/ai";
 import { NodeHeader } from "./base/node-header";
@@ -161,7 +160,7 @@ async function fetchAndCacheVideo(url: string): Promise<string | null> {
 
 export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging = false, isConnectTarget = false, onNodeMouseDown, onPortMouseDown }: CanvasNodeProps) {
   const updateNode = useCanvasStore((s) => s.updateNode);
-  const { user, generate, generating, showAuxUI } = useNodeRuntime(node, isSelected, isDragging);
+  const { generate, generating, showAuxUI } = useNodeRuntime(node, isSelected, isDragging);
   const [videoParam, setVideoParam] = useState<VideoParamValue>({ ratio: "16:9", resolution: "720P", duration: 5, audio: true });
   const { models: videoModels, modelId: selectedModelId, setModelId: setSelectedModelId, selectedModel } = useAiModels(AiModelType.VIDEO);
   const [videoTab, setVideoTab] = useState("文生视频");
@@ -782,8 +781,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                   </button>
                   <span className="flex items-center gap-0.5 px-0.5">
                     <Zap className="h-3 w-3 text-neutral-900 dark:text-neutral-100" fill="currentColor" />
-                    {applyTeamFactor(pointCost, user)}
-                    {user?.inTeam && <span className="text-[10px] font-medium text-amber-500">团队价</span>}
+                    {Math.ceil(pointCost)}
                   </span>
                   <GenerateSubmitButton
                     disabled={!hasPromptSource || generating}

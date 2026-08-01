@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,9 +16,9 @@ import (
 	"tidecanvas/internal/pkg/chatattach"
 	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
-	"tidecanvas/internal/pkg/llm"
 	"tidecanvas/internal/pkg/logger"
 	"tidecanvas/internal/pkg/relaychat"
+	"tidecanvas/internal/pkg/storage"
 
 	"go.uber.org/zap"
 )
@@ -103,30 +102,28 @@ const summaryInjectPrefix = "以下是本会话较早内容的摘要（原文已
 
 type service struct {
 	repo *repo
-	// relay is the primary assistant backend: the ScarecrowToken relay's
+	// relay is the assistant backend: the ScarecrowToken relay's
 	// OpenAI-compatible chat completions, routed to a configured text model.
-	// nil when no relay API key is set.
-	relay *relaychat.Client
-	// llmClient is the legacy fallback (Anthropic) used when the relay is not
-	// configured or has no text model available. nil when no LLM key is set.
-	llmClient *llm.Client
-	// fallbackModel is the configured Anthropic model name used by llmClient; it
-	// labels the ModelCallLog for fallback conversations. Empty when unset.
-	fallbackModel string
-	systemPrompt  string
-	historyLimit  int
+	// nil when no relay API key is set (回复退化为占位文案)。
+	relay        *relaychat.Client
+	systemPrompt string
+	historyLimit int
 	// ctxTokenLimit caps a conversation's cumulative estimated tokens (see
 	// tokens.go); text sends beyond it fail with errContextFull.
 	ctxTokenLimit int
-	// docSelfHost 是启动时 storage.publicURL 的 host，文档附件解析(docextract)
-	// 只允许抓取该 host 或 *.aliyuncs.com 的 URL（SSRF 防护）。
-	docSelfHost string
+	// docHosts 是启动时存储策略 FetchHosts() 的本站资产 host 列表（CDN/区域/
+	// 加速域名），文档附件解析(docextract)只允许抓取这些 host 或
+	// *.aliyuncs.com 的 URL（SSRF 防护）。
+	docHosts []string
+	// store 用于把发给上游模型的图片 URL 改写为传输加速域名（UpstreamURL）——
+	// 境外上游取图走区域/CDN 域名会超时。
+	store storage.StorageStrategy
 	// live 注册表：会话 → 生成中的回复缓存（断开重连续播，见 live.go）。
 	liveMu sync.Mutex
 	live   map[idgen.ID]*liveReply
 }
 
-func newService(db *gorm.DB, cfg *config.Config) *service {
+func newService(db *gorm.DB, cfg *config.Config, store storage.StorageStrategy) *service {
 	s := &service{
 		repo:          newRepo(db),
 		historyLimit:  cfg.LLM.HistoryLimit,
@@ -135,8 +132,9 @@ func newService(db *gorm.DB, cfg *config.Config) *service {
 		relay:         relaychat.New(cfg.Relay.BaseURL, cfg.Relay.APIKey),
 		live:          map[idgen.ID]*liveReply{},
 	}
-	if pu, err := url.Parse(cfg.Storage.PublicURL); err == nil {
-		s.docSelfHost = pu.Host
+	if store != nil {
+		s.store = store
+		s.docHosts = store.FetchHosts()
 	}
 	if s.historyLimit <= 0 {
 		s.historyLimit = 20
@@ -166,15 +164,6 @@ func newService(db *gorm.DB, cfg *config.Config) *service {
 	}
 	if s.relay != nil {
 		logger.L().Info("chat: relay assistant enabled (text models via /v1/chat/completions)")
-	}
-	if client, err := llm.New(cfg.LLM); err != nil {
-		if !errors.Is(err, llm.ErrDisabled) {
-			logger.L().Warn("chat: LLM client init failed, using canned replies", zap.Error(err))
-		}
-	} else {
-		s.llmClient = client
-		s.fallbackModel = strings.TrimSpace(cfg.LLM.Model)
-		logger.L().Info("chat: LLM fallback enabled", zap.String("model", cfg.LLM.Model))
 	}
 	return s
 }
@@ -494,7 +483,7 @@ func (s *service) maybeCompact(ctx context.Context, conv *model.IMConversation) 
 		relaychat.TextMsg("user", sb.String()),
 	})
 	eventlog.ModelText(conv.OwnerID, "compact", modelKey, "/v1/chat/completions",
-		sb.String(), summary, start, err)
+		sb.String(), summary, start, err, 0)
 	if err != nil {
 		logger.L().Warn("chat: context compaction failed, keeping full history",
 			zap.String("model", modelKey), zap.Error(err))
@@ -544,8 +533,17 @@ func (s *service) sendMessage(ctx context.Context, conversationID, ownerID idgen
 	if err := s.guardContext(conv, content); err != nil {
 		return nil, err
 	}
-	imageURLs := imageAttachmentURLs(dto.Attachments)
+	imageURLs := s.imageAttachmentURLs(dto.Attachments)
 	docFiles, docNote := s.docFileParts(ctx, dto.Attachments)
+
+	// 按次计费:relay 可用时按所选文本模型目录价预扣,余额不足直接拒发
+	// (消息不落库);上游失败在 generateReply 里原额退款。
+	var charge *textCharge
+	if s.relay != nil {
+		if charge, err = s.chargeTextCall(ctx, ownerID, dto.Model); err != nil {
+			return nil, err
+		}
+	}
 
 	// Persist the user message (attachments snapshotted on Params for redisplay).
 	userMsg := &model.IMMessage{
@@ -557,6 +555,7 @@ func (s *service) sendMessage(ctx context.Context, conversationID, ownerID idgen
 		Status:         0,
 	}
 	if err := s.repo.createMessage(userMsg); err != nil {
+		s.refundTextCall(charge)
 		return nil, err
 	}
 
@@ -564,7 +563,7 @@ func (s *service) sendMessage(ctx context.Context, conversationID, ownerID idgen
 	// A failure to store the reply must not fail the user's send, so it is
 	// best-effort. 空回复（请求被取消时 generateReply 返回 ""）不落库——
 	// 否则断开的请求会往会话里塞一条空/占位气泡。
-	reply := s.generateReply(ctx, conv, ownerID, content, docNote, docFiles, imageURLs, dto.Model)
+	reply := s.generateReply(ctx, conv, ownerID, content, docNote, docFiles, imageURLs, dto.Model, charge)
 	at := time.Now()
 	if strings.TrimSpace(reply) != "" {
 		aiMsg := &model.IMMessage{
@@ -610,8 +609,17 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 	// image attachments are forwarded as image_url parts; document attachments
 	// are fetched and forwarded as relay "file" parts (docextract.go); every
 	// attachment is also snapshotted on the user message for redisplay.
-	imageURLs := imageAttachmentURLs(attachments)
+	imageURLs := s.imageAttachmentURLs(attachments)
 	docFiles, docNote := s.docFileParts(ctx, attachments)
+
+	// 按次计费:relay 可用时按所选文本模型目录价预扣,余额不足直接拒发
+	// (消息不落库);上游失败在 streamReply 里原额退款。
+	var charge *textCharge
+	if s.relay != nil {
+		if charge, err = s.chargeTextCall(ctx, ownerID, requestedModel); err != nil {
+			return nil, err
+		}
+	}
 
 	userMsg := &model.IMMessage{
 		ConversationID: conversationID,
@@ -621,6 +629,7 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 		Params:         attachmentsParams(attachments),
 	}
 	if err := s.repo.createMessage(userMsg); err != nil {
+		s.refundTextCall(charge)
 		return nil, err
 	}
 
@@ -634,7 +643,7 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 		if onDelta != nil {
 			onDelta(d)
 		}
-	})
+	}, charge)
 
 	aiMsg := &model.IMMessage{
 		ConversationID: conversationID,
@@ -664,7 +673,7 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 // no relay text model is configured) it falls back to the canned reply, emitted
 // as one delta so the client still renders something. 上下文 = system 提示词 +
 // 压缩摘要（如有）+ 摘要之后的原文消息。
-func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, ownerID idgen.ID, userContent string, docNote string, docFiles []relaychat.FileAttachment, imageURLs []string, requestedModel string, onDelta func(string)) string {
+func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, ownerID idgen.ID, userContent string, docNote string, docFiles []relaychat.FileAttachment, imageURLs []string, requestedModel string, onDelta func(string), charge *textCharge) string {
 	// 客户端断开不中止生成：前端切页面/切会话都会 abort SSE，请求上下文随之
 	// 取消；若生成跟着停，回复只落库半截。分离请求上下文让上游把回复生成完整
 	// 并落库，用户切回来能看到全文；llmReplyTimeout 仍然兜底。断开后 onDelta
@@ -716,47 +725,28 @@ func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, o
 						onDelta(d)
 					}
 				})
-				reqBody, _ := json.Marshal(msgs)
-				eventlog.ModelText(ownerID, "chat", model, "/v1/chat/completions", string(reqBody), reply, start, err)
+				// 日志只记当前轮（messages 数组的最后一条即当前 user 消息）:
+				// 全量历史会撑爆 eventlog 的 16KB 截断,把末尾的当前轮 prompt/附件
+				// 切没;历史轮次本就落在消息表里,审计只需当前输入。附件 base64
+				// 净化后再落库:保留文件名/类型。
+				turn := msgs
+				if n := len(msgs); n > 1 {
+					turn = msgs[n-1:]
+				}
+				reqBody, _ := json.Marshal(turn)
+				eventlog.ModelText(ownerID, "chat", model, "/v1/chat/completions", eventlog.SanitizeDataURIs(string(reqBody)), reply, start, err, charge.cost64())
 				if err == nil {
 					return reply
 				}
 				logger.L().Warn("chat: relay stream failed", zap.String("model", model), zap.Error(err))
 				if partial := strings.TrimSpace(streamed.String()); partial != "" {
 					// 已流出实质内容（如上游超时/中途出错）：持久化已生成的部分，跳过降级链。
+					// 用户已拿到内容,积分照收不退。
 					return streamed.String()
 				}
+				// 未产出内容:退回预扣积分(降级链拿到的回复不再计费)。
+				s.refundTextCall(charge)
 			}
-		}
-	}
-
-	// Fallback: legacy Anthropic client. It cannot stream, so the full reply is
-	// emitted as a single delta. Audit/cost tracking must still record the call.
-	// （压缩摘要不注入此路径：Turn 只有 user/assistant 两种角色且要求交替，
-	// 强插伪造轮次弊大于利——legacy 回退本就是降级体验。）
-	if s.llmClient != nil {
-		if rows, err := s.repo.recentMessages(conversationID, conv.SummaryUptoID, s.historyWindow()); err == nil {
-			turns := make([]llm.Turn, 0, len(rows))
-			for i := range rows {
-				role := llm.RoleUser
-				if rows[i].SenderID == assistantSenderID {
-					role = llm.RoleAssistant
-				}
-				turns = append(turns, llm.Turn{Role: role, Text: rows[i].Content})
-			}
-			cctx, cancel := context.WithTimeout(ctx, llmReplyTimeout)
-			defer cancel()
-			start := time.Now()
-			reply, cerr := s.llmClient.Chat(cctx, turns)
-			reqBody, _ := json.Marshal(turns)
-			eventlog.ModelText(ownerID, "chat", s.fallbackModelID(), "anthropic", string(reqBody), reply, start, cerr)
-			if cerr == nil {
-				if onDelta != nil {
-					onDelta(reply)
-				}
-				return reply
-			}
-			logger.L().Warn("chat: LLM stream fallback failed, using canned reply", zap.Error(cerr))
 		}
 	}
 
@@ -768,9 +758,18 @@ func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, o
 }
 
 // imageAttachmentURLs returns the hosted URLs of the image attachments (the only
-// kind forwarded to the model as multimodal content).
-func imageAttachmentURLs(atts []MessageAttach) []string {
-	return chatattach.ImageURLs(toAttaches(atts))
+// kind forwarded to the model as multimodal content). URLs on this site's
+// storage are rewritten to the transfer-acceleration host so the overseas
+// upstream can fetch them (same rule as generation references, see
+// handler/ai provider_relay).
+func (s *service) imageAttachmentURLs(atts []MessageAttach) []string {
+	urls := chatattach.ImageURLs(toAttaches(atts))
+	if s.store != nil {
+		for i, u := range urls {
+			urls[i] = s.store.UpstreamURL(u)
+		}
+	}
+	return urls
 }
 
 // attachmentsParams snapshots the composer attachments as a JSON object stored on
@@ -785,15 +784,6 @@ func attachmentsParams(atts []MessageAttach) string {
 		return ""
 	}
 	return string(b)
-}
-
-// fallbackModelID labels the ModelCallLog for the Anthropic fallback path. It
-// uses the configured fallback model name when known, else a stable sentinel.
-func (s *service) fallbackModelID() string {
-	if s.fallbackModel != "" {
-		return s.fallbackModel
-	}
-	return "anthropic-fallback"
 }
 
 // appendMessage persists a single message with NO auto assistant reply. Role
@@ -834,14 +824,13 @@ func (s *service) appendMessage(conversationID, ownerID idgen.ID, dto AppendMess
 	return &vo, nil
 }
 
-
-// generateReply produces the assistant reply for the latest user message. When
-// an LLM is configured it sends the recent transcript to the model; on any error
-// (or when no LLM is configured) it falls back to the canned placeholder so the
-// chat round-trip always completes. 上下文 = system 提示词 + 压缩摘要（如有）+
+// generateReply produces the assistant reply for the latest user message: the
+// recent transcript goes to the relay text model; on any error (or when the
+// relay is unconfigured) it falls back to the canned placeholder so the chat
+// round-trip always completes. 上下文 = system 提示词 + 压缩摘要（如有）+
 // 摘要之后的原文消息。
-func (s *service) generateReply(ctx context.Context, conv *model.IMConversation, ownerID idgen.ID, userContent string, docNote string, docFiles []relaychat.FileAttachment, imageURLs []string, requestedModel string) string {
-	if s.relay == nil && s.llmClient == nil {
+func (s *service) generateReply(ctx context.Context, conv *model.IMConversation, ownerID idgen.ID, userContent string, docNote string, docFiles []relaychat.FileAttachment, imageURLs []string, requestedModel string, charge *textCharge) string {
+	if s.relay == nil {
 		return s.buildReply(userContent)
 	}
 
@@ -886,11 +875,19 @@ func (s *service) generateReply(ctx context.Context, conv *model.IMConversation,
 			defer cancel()
 			start := time.Now()
 			reply, err := s.relay.Chat(cctx, model, msgs)
-			reqBody, _ := json.Marshal(msgs)
-			eventlog.ModelText(ownerID, "chat", model, "/v1/chat/completions", string(reqBody), reply, start, err)
+			// 日志只记当前轮（最后一条即当前 user 消息）,附件 base64 净化;
+			// 积分随 charge 落 point_cost。
+			turn := msgs
+			if n := len(msgs); n > 1 {
+				turn = msgs[n-1:]
+			}
+			reqBody, _ := json.Marshal(turn)
+			eventlog.ModelText(ownerID, "chat", model, "/v1/chat/completions", eventlog.SanitizeDataURIs(string(reqBody)), reply, start, err, charge.cost64())
 			if err == nil {
 				return reply
 			}
+			// 调用失败且未产出内容:退回预扣积分(降级链拿到的回复不再计费)。
+			s.refundTextCall(charge)
 			logger.L().Warn("chat: relay generation failed, falling back", zap.String("model", model), zap.Error(err))
 			if ctx.Err() != nil {
 				return "" // 请求已取消（客户端断开）：不再降级空烧，也不落库占位
@@ -898,32 +895,7 @@ func (s *service) generateReply(ctx context.Context, conv *model.IMConversation,
 		}
 	}
 
-	// 2) Fallback: legacy Anthropic client.
-	if s.llmClient != nil {
-		turns := make([]llm.Turn, 0, len(rows))
-		for i := range rows {
-			role := llm.RoleUser
-			if rows[i].SenderID == assistantSenderID {
-				role = llm.RoleAssistant
-			}
-			turns = append(turns, llm.Turn{Role: role, Text: rows[i].Content})
-		}
-		cctx, cancel := context.WithTimeout(ctx, llmReplyTimeout)
-		defer cancel()
-		start := time.Now()
-		reply, err := s.llmClient.Chat(cctx, turns)
-		reqBody, _ := json.Marshal(turns)
-		eventlog.ModelText(ownerID, "chat", s.fallbackModelID(), "anthropic", string(reqBody), reply, start, err)
-		if err == nil {
-			return reply
-		}
-		logger.L().Warn("chat: LLM generation failed, using canned reply", zap.Error(err))
-		if ctx.Err() != nil {
-			return ""
-		}
-	}
-
-	// 3) Canned placeholder.
+	// Canned placeholder.
 	return s.buildReply(userContent)
 }
 
