@@ -305,7 +305,8 @@ export function AssetsBrowser({
     }
   }, [ensureSession, filter, startDate, endDate]);
 
-  // 切 tab / 类型筛选 / 日期:回到第 1 页重新加载。
+  // 切 tab / 类型筛选 / 日期:回到第 1 页重新加载(哨兵在事件回调里已摘下,
+  // 见 resetBatch——否则 hasMore 还是旧数据的 true,窗口期滚底会新旧混流)。
   useEffect(() => {
     pageRef.current = 1;
     loadedCountRef.current = 0;
@@ -382,10 +383,12 @@ export function AssetsBrowser({
 
   const groupsEmpty = tab === "hist" ? taskGroups.length === 0 : fileGroups.length === 0;
 
-  // 切换 tab/筛选/日期时重置多选(条目集合已变)——在事件回调里做,不进 effect。
+  // 切换 tab/筛选/日期时重置多选 + 摘下续页哨兵(条目集合已变)——全部在事件
+  // 回调里做,不进 effect(setState 同步路径过不了 hooks lint,也容易混流)。
   const resetBatch = useCallback(() => {
     setBatchMode(false);
     setSelected(new Set());
+    setHasMore(false);
   }, []);
 
   const switchTab = useCallback((t: TabKey) => {
@@ -452,9 +455,10 @@ export function AssetsBrowser({
     toast[ok > 0 ? "success" : "error"](ok > 0 ? `已删除 ${ok} 项` : "删除失败，请稍后重试");
     exitBatch();
     setBusy(false);
-    // 删除后回到第 1 页重拉(条目减少,续页游标失效)
+    // 删除后回到第 1 页重拉(条目减少,续页游标失效);摘哨兵防窗口期混流。
     pageRef.current = 1;
     loadedCountRef.current = 0;
+    setHasMore(false);
     if (tab === "hist") await fetchTasks(1, false);
     else await fetchFiles(1, false);
   };
@@ -493,6 +497,7 @@ export function AssetsBrowser({
       if (ok > 0) {
         pageRef.current = 1;
         loadedCountRef.current = 0;
+        setHasMore(false);
         await fetchFiles(1, false);
       }
     } catch {
