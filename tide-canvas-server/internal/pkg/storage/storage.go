@@ -57,11 +57,12 @@ type StorageStrategy interface {
 	// results it wrote directly into our directory (apikey storage_prefix).
 	OwnsURL(url string) (canonical string, ok bool)
 	// PublicRewrites returns [from→to] base-URL pairs the response layer rewrites
-	// on the way out, so asset URLs persisted under an old base (e.g. the
-	// regional OSS host) are always served on the current public base (CDN).
-	// The acceleration host is deliberately NOT a rewrite source: presign
-	// responses carry signed URLs on that host and rewriting them would break
-	// the signature. Empty when no rewriting is needed.
+	// on the way out, so asset URLs persisted under any older base (regional,
+	// acceleration, or configured legacy hosts) are always served on the current
+	// public base (CDN). Signed upload URLs are safe despite the acceleration
+	// host being a rewrite source: they are only ever emitted by the presign
+	// route, which the middleware exempts as a whole. Empty when no rewriting
+	// is needed.
 	PublicRewrites() [][2]string
 }
 

@@ -157,14 +157,16 @@ func (o *OSSStorage) Presign(ctx context.Context, key, contentType string) (Pres
 }
 
 // UpstreamURL rewrites a public asset URL to the transfer-acceleration host so an
-// overseas upstream supplier can fetch it cross-border without timing out. Only
-// URLs on this bucket's public/regional host are rewritten; anything else (e.g. a
-// relay-hosted generated image) is returned unchanged.
+// overseas upstream supplier can fetch it cross-border without timing out. URLs
+// on any of this bucket's known hosts (public/regional/acceleration/legacy) are
+// rewritten; anything else (e.g. a relay-hosted generated image) is returned
+// unchanged.
 func (o *OSSStorage) UpstreamURL(u string) string {
 	if o.accelerateBase == "" || u == "" {
 		return u
 	}
-	for _, base := range []string{o.publicBase, o.regionalBase} {
+	bases := append([]string{o.publicBase, o.regionalBase}, o.legacyBases...)
+	for _, base := range bases {
 		if base != "" && strings.HasPrefix(u, base+"/") {
 			return o.accelerateBase + strings.TrimPrefix(u, base)
 		}
@@ -173,10 +175,13 @@ func (o *OSSStorage) UpstreamURL(u string) string {
 }
 
 // FetchHosts returns every host that may serve this bucket's assets: the public
-// (CDN or regional) host, the regional host and the acceleration host. Used as
-// the self-site allowlist for server-side fetches (chat document attachments).
+// (CDN or regional) host, the regional host, the acceleration host, and any
+// configured legacy hosts (老数据里的历史域名,服务端回源抓取也要放行——
+// 否则带老域名的文档附件会被 SSRF 白名单误杀). Used as the self-site
+// allowlist for server-side fetches (chat document attachments).
 func (o *OSSStorage) FetchHosts() []string {
-	return hostsOf(o.publicBase, o.regionalBase, o.accelerateBase)
+	bases := append([]string{o.publicBase, o.regionalBase, o.accelerateBase}, o.legacyBases...)
+	return hostsOf(bases...)
 }
 
 // OwnsURL reports whether u already points at an object under this project's

@@ -10,8 +10,8 @@
 // Only JSON responses are buffered and rewritten. Streaming responses (SSE,
 // the download proxy, static files) pass through untouched — chunked/streamed
 // bodies cannot be safely string-replaced (a URL may span a chunk boundary).
-// Signed presign URLs survive because PublicRewrites never targets the
-// acceleration host.
+// Signed presign URLs survive because the presign route is exempted wholesale
+// (it is the only place SignURL is used, see storage.OSSStorage.Presign).
 package middleware
 
 import (
