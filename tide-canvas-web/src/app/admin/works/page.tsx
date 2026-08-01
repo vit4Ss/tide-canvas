@@ -140,6 +140,40 @@ export default function AdminWorksPage() {
 
   // --- CRUD actions ---
 
+  // 外链封面转存:下载第三方封面经加速域名转存进桶并改写为 CDN URL。
+  const [syncing, setSyncing] = useState(false);
+  const syncCovers = useCallback(async () => {
+    if (syncing) return;
+    const ok = await confirmDialog({
+      title: "转存外链封面",
+      message: "将把作品里仍是第三方链接的封面下载并经加速域名转存到本站存储，链接改写为 CDN 地址。已是本站的封面不受影响。",
+      confirmText: "开始转存",
+    });
+    if (!ok) return;
+    setSyncing(true);
+    try {
+      await ensureSession();
+      const res = await adminWorksApi.syncCovers();
+      if (res.success && res.data) {
+        const r = res.data;
+        if (r.failed.length > 0) {
+          toast.error(`转存 ${r.synced} 张,${r.failed.length} 条失败:${r.failed[0]}${r.failed.length > 1 ? " 等" : ""}`);
+        } else if (r.synced > 0) {
+          toast.success(`已转存 ${r.synced} 张外链封面`);
+        } else {
+          toast.info("没有需要转存的外链封面");
+        }
+        if (r.synced > 0) await load();
+      } else {
+        toast.error(res.message || "转存失败");
+      }
+    } catch {
+      toast.error("转存失败,请稍后重试");
+    } finally {
+      setSyncing(false);
+    }
+  }, [syncing, ensureSession, load]);
+
   const setStatus = useCallback(
     async (w: AdminWorkVO, status: number) => {
       setBusyId(w.id);
@@ -297,6 +331,10 @@ export default function AdminWorksPage() {
         sub={`共 ${total.toLocaleString()} 件 · 本页未发布 ${pendingCount} 件 · 用户生成的全部作品`}
         tools={
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <button type="button" className="adm-btn ghost" disabled={syncing} onClick={() => void syncCovers()}>
+              <RefreshCw aria-hidden size={14} />
+              {syncing ? "转存中…" : "转存外链封面"}
+            </button>
             <FilterChips
               label="作品类型与状态"
               options={[...WORK_FILTERS]}

@@ -45,4 +45,15 @@ export const adminInspirationApi = {
 
   deletePrompt: (id: string): Promise<Result<null>> =>
     http.delete<null>(`/api/admin/inspiration/prompts/${id}`),
+
+  /** POST /api/admin/inspiration/sync-covers — 合集+提示词的外链封面转存到本站存储。 */
+  syncCovers: (): Promise<Result<CoverSyncResult>> =>
+    http.post<CoverSyncResult>(`/api/admin/inspiration/sync-covers`),
 };
+
+/** 外链封面转存结果(与后端 coverSyncResult 对应)。 */
+export interface CoverSyncResult {
+  scanned: number;
+  synced: number;
+  failed: string[];
+}

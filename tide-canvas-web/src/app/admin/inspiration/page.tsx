@@ -106,6 +106,7 @@ export default function AdminInspirationPage() {
   const [promptLoading, setPromptLoading] = useState(true);
   const [promptError, setPromptError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   const [collFilter, setCollFilter] = useState<CollectionFilter>(COLLECTION_FILTERS[0]);
   const [collDraft, setCollDraft] = useState<CollDraft | null>(null);
@@ -176,6 +177,43 @@ export default function AdminInspirationPage() {
       if (id === promptReqRef.current) setPromptLoading(false);
     }
   }, [ensureSession, promptPage]);
+
+  // 外链封面转存:合集+提示词里仍是第三方链接的封面,下载后经加速域名
+  // 转存进桶并改写为 CDN URL;已是本站的跳过,幂等。
+  const syncCovers = useCallback(async () => {
+    if (syncing) return;
+    const ok = await confirmDialog({
+      title: "转存外链封面",
+      message: "将把合集与提示词里仍是第三方链接的封面下载并经加速域名转存到本站存储，链接改写为 CDN 地址。已是本站的封面不受影响。",
+      confirmText: "开始转存",
+    });
+    if (!ok) return;
+    setSyncing(true);
+    try {
+      await ensureSession();
+      const res = await adminInspirationApi.syncCovers();
+      if (res.success && res.data) {
+        const r = res.data;
+        if (r.failed.length > 0) {
+          toast.error(`转存 ${r.synced} 张,${r.failed.length} 条失败:${r.failed[0]}${r.failed.length > 1 ? " 等" : ""}`);
+        } else if (r.synced > 0) {
+          toast.success(`已转存 ${r.synced} 张外链封面`);
+        } else {
+          toast.info("没有需要转存的外链封面");
+        }
+        if (r.synced > 0) {
+          await loadCollections();
+          await loadPrompts();
+        }
+      } else {
+        toast.error(res.message || "转存失败");
+      }
+    } catch {
+      toast.error("转存失败,请稍后重试");
+    } finally {
+      setSyncing(false);
+    }
+  }, [syncing, ensureSession, loadCollections, loadPrompts]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadCollections(), 0);
@@ -406,6 +444,10 @@ export default function AdminInspirationPage() {
         sub={`共 ${collTotal.toLocaleString()} 个内容组 · 本页 ${collections.filter((c) => c.visible).length} 个正在展示`}
         tools={
           <>
+            <button type="button" className="adm-btn ghost" disabled={syncing} onClick={() => void syncCovers()}>
+              <RefreshCw aria-hidden size={14} />
+              {syncing ? "转存中…" : "转存外链封面"}
+            </button>
             <FilterChips
               label="灵感内容类型"
               options={[...COLLECTION_FILTERS]}

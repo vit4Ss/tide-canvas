@@ -22,4 +22,15 @@ export const adminWorksApi = {
   /** DELETE /api/admin/works/:id. */
   remove: (id: string): Promise<Result<null>> =>
     http.delete<null>(`/api/admin/works/${id}`),
+
+  /** POST /api/admin/works/sync-covers — 外链封面转存到本站存储(经加速域名上传)。 */
+  syncCovers: (): Promise<Result<CoverSyncResult>> =>
+    http.post<CoverSyncResult>(`/api/admin/works/sync-covers`),
 };
+
+/** 外链封面转存结果(与后端 coverSyncResult 对应)。 */
+export interface CoverSyncResult {
+  scanned: number;
+  synced: number;
+  failed: string[];
+}

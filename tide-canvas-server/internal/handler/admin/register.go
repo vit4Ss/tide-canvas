@@ -31,6 +31,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	RegisterWorks(mod("works"), d)
 	RegisterInspiration(mod("inspiration"), d)
 	RegisterGenerations(mod("generations"), d)
+	RegisterCoverSync(mod("works"), mod("inspiration"), d)
 	RegisterStyles(mod("styles"), d)
 	RegisterSkills(mod("skills"), d)
 	RegisterBlog(mod("blog"), d)
