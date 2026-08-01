@@ -29,12 +29,12 @@ type Config struct {
 	// TIDECANVAS_ENV at load time; it is not read from the yaml files.
 	Env string `mapstructure:"-"`
 
-	Server  ServerConfig  `mapstructure:"server"`
-	MySQL   MySQLConfig   `mapstructure:"mysql"`
-	Redis   RedisConfig   `mapstructure:"redis"`
-	JWT     JWTConfig     `mapstructure:"jwt"`
-	Storage StorageConfig `mapstructure:"storage"`
-	CORS    CORSConfig    `mapstructure:"cors"`
+	Server     ServerConfig     `mapstructure:"server"`
+	MySQL      MySQLConfig      `mapstructure:"mysql"`
+	Redis      RedisConfig      `mapstructure:"redis"`
+	JWT        JWTConfig        `mapstructure:"jwt"`
+	Storage    StorageConfig    `mapstructure:"storage"`
+	CORS       CORSConfig       `mapstructure:"cors"`
 	Email      EmailConfig      `mapstructure:"email"`
 	LLM        LLMConfig        `mapstructure:"llm"`
 	Relay      RelayConfig      `mapstructure:"relay"`
@@ -153,6 +153,10 @@ type StorageConfig struct {
 	// regional host to this global host so cross-border downloads stop timing
 	// out; the frontend display keeps the regional/CDN host.
 	AccelerateDomain string `mapstructure:"accelerateDomain"`
+	// LegacyHosts 是历史存储域名（逗号分隔，可含 scheme 也可裸 host）——老数据
+	// 里遗留的前任桶/加速域名。配了 CDN 时,响应层把这些 host 上的 URL 也统一
+	// 改写为当前 publicBase（对象已按同 key 迁入当前桶的前提）。
+	LegacyHosts string `mapstructure:"legacyHosts"`
 }
 
 // CORSConfig holds allowed origins for the browser frontend.

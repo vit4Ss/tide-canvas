@@ -31,9 +31,10 @@ type OSSStorage struct {
 	bucket *oss.Bucket
 	prefix string // normalized, no leading slash, trailing slash kept off
 
-	publicBase     string // base for frontend-facing URLs (CDN or regional)
-	regionalBase   string // bucket virtual-host on the regional endpoint
-	accelerateBase string // bucket host on the transfer-acceleration endpoint
+	publicBase     string   // base for frontend-facing URLs (CDN or regional)
+	regionalBase   string   // bucket virtual-host on the regional endpoint
+	accelerateBase string   // bucket host on the transfer-acceleration endpoint
+	legacyBases    []string // 历史存储域名(老数据遗留),读时一并改写为 publicBase
 }
 
 // NewOSSStorage builds an OSS strategy from the config. It validates the minimum
@@ -74,7 +75,19 @@ func NewOSSStorage(cfg config.StorageConfig) (*OSSStorage, error) {
 		publicBase:     publicBase,
 		regionalBase:   regionalBase,
 		accelerateBase: accelerateBase,
+		legacyBases:    parseLegacyHosts(cfg.LegacyHosts),
 	}, nil
+}
+
+// parseLegacyHosts 把逗号分隔的历史域名规整成 scheme://host 形态(跳过空项)。
+func parseLegacyHosts(raw string) []string {
+	var out []string
+	for _, h := range strings.Split(raw, ",") {
+		if b := normalizeBase(h); b != "" {
+			out = append(out, b)
+		}
+	}
+	return out
 }
 
 // Type returns "oss".
@@ -204,15 +217,28 @@ func (o *OSSStorage) OwnsURL(u string) (string, bool) {
 	return o.publicBase + "/" + key, true
 }
 
-// PublicRewrites maps the regional base onto the public base when they differ
-// (i.e. a CDN domain is configured), so URLs persisted before the CDN existed
-// are served on the current public base at read time. The acceleration host is
-// intentionally excluded — presign responses carry signed URLs on it.
+// PublicRewrites maps every host that may appear in persisted asset URLs onto
+// the current public base: the regional host, the acceleration host (chat 附件
+// 以它落日志), and any configured legacy hosts (老桶/老域名)。配了 CDN
+// (publicBase ≠ regionalBase)才启用——响应层由此实现「配置一处,读时统一拼
+// 当前 CDN」,换域名/换桶零数据迁移。
+//
+// ⚠️ 加速域名签名 URL(presign 直传)绝不能被改写——中间件对 presign 路由
+// 整体豁免(见 middleware.DisplayURL),所以把 accelerate 放进这里是安全的。
 func (o *OSSStorage) PublicRewrites() [][2]string {
 	if o.publicBase == "" || o.regionalBase == "" || o.publicBase == o.regionalBase {
 		return nil
 	}
-	return [][2]string{{o.regionalBase, o.publicBase}}
+	out := [][2]string{{o.regionalBase, o.publicBase}}
+	if o.accelerateBase != "" && o.accelerateBase != o.publicBase {
+		out = append(out, [2]string{o.accelerateBase, o.publicBase})
+	}
+	for _, b := range o.legacyBases {
+		if b != "" && b != o.publicBase && b != o.regionalBase && b != o.accelerateBase {
+			out = append(out, [2]string{b, o.publicBase})
+		}
+	}
+	return out
 }
 
 // accelerateClient 把配置的加速域名转成 SDK 的 endpoint。标准形态

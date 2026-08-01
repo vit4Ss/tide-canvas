@@ -27,6 +27,9 @@ import (
 // DisplayURL rewrites old-base asset URLs in JSON responses to the current
 // public base. No-op passthrough when the storage backend has nothing to
 // rewrite (local storage, or OSS without a CDN domain).
+//
+// presign 路由整体豁免:直传签名 URL 在加速域名上,改写 host 会让签名失效。
+// 这也是唯一会产生签名 URL 的地方(SignURL 仅在 Presign 使用)。
 func DisplayURL(store storage.StorageStrategy) gin.HandlerFunc {
 	var pairs [][2][]byte
 	if store != nil {
@@ -40,6 +43,10 @@ func DisplayURL(store storage.StorageStrategy) gin.HandlerFunc {
 		return func(c *gin.Context) { c.Next() }
 	}
 	return func(c *gin.Context) {
+		if isPresignPath(c.Request.URL.Path) {
+			c.Next()
+			return
+		}
 		w := &displayURLWriter{ResponseWriter: c.Writer, pairs: pairs}
 		c.Writer = w
 		// defer 而非 c.Next() 之后同步调用:handler panic 时 c.Next() 不返回,
@@ -48,6 +55,12 @@ func DisplayURL(store storage.StorageStrategy) gin.HandlerFunc {
 		defer w.finish()
 		c.Next()
 	}
+}
+
+// isPresignPath 直传签名接口(/api/files/presign 及批量):响应里的 uploadUrl
+// 是加速域名签名 URL,绝不能参与改写。
+func isPresignPath(p string) bool {
+	return strings.HasPrefix(p, "/api/files/presign")
 }
 
 // displayURLWriter buffers JSON response bodies for end-of-request rewriting;

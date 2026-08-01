@@ -88,22 +88,60 @@ func TestDisplayURLRewritesJSON(t *testing.T) {
 	}
 }
 
-// 加速域名签名 URL(presign)绝不能被改写——签名会失效。
+// 加速域名签名 URL(presign)绝不能被改写——签名会失效。即使改写对里包含
+// 加速域名,presign 路由也整体豁免。
 func TestDisplayURLKeepsSignedAccelerateURL(t *testing.T) {
-	signed := "https://bucket.oss-accelerate.aliyuncs.com/canvas/uploads/a.png?OSSAccessKeyId=x&Signature=y"
-	srv := setup(fakeStore{pairs: [][2]string{{oldBase, newBase}}}, func(c *gin.Context) {
+	accel := "https://bucket.oss-accelerate.aliyuncs.com"
+	signed := accel + "/canvas/uploads/a.png?OSSAccessKeyId=x&Signature=y"
+	pairs := [][2]string{{oldBase, newBase}, {accel, newBase}}
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(DisplayURL(fakeStore{pairs: pairs}))
+	r.POST("/api/files/presign", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"uploadUrl": signed, "fileUrl": oldBase + "/canvas/uploads/a.png"})
+	})
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/api/files/presign", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	body := string(b)
+	// gin 默认把 & 转义为 &;签名 URL host+query 必须原样保留
+	if !strings.Contains(body, accel+"/canvas/uploads/a.png?OSSAccessKeyId=x\\u0026Signature=y") {
+		t.Errorf("signed upload url must survive verbatim on presign route: %s", body)
+	}
+}
+
+// 加速域名在非 presign 路由会被改写为 CDN(chat 附件以加速域名落日志的场景)。
+func TestDisplayURLRewritesAccelerateOffPresign(t *testing.T) {
+	accel := "https://bucket.oss-accelerate.aliyuncs.com"
+	srv := setup(fakeStore{pairs: [][2]string{{oldBase, newBase}, {accel, newBase}}}, func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"fileUrl": accel + "/canvas/uploads/a.png"})
 	})
 	defer srv.Close()
 
 	_, _, body := get(t, srv.URL+"/x")
-	// gin 默认把 & 转义为 &;host+query 参数必须原样保留
-	if !strings.Contains(body, "https://bucket.oss-accelerate.aliyuncs.com/canvas/uploads/a.png?OSSAccessKeyId=x\\u0026Signature=y") {
-		t.Errorf("signed upload url must survive verbatim: %s", body)
+	if strings.Contains(body, accel) || !strings.Contains(body, newBase+"/canvas/uploads/a.png") {
+		t.Errorf("accelerate url should be rewritten to CDN off presign: %s", body)
 	}
-	// 同一响应里的展示 URL 仍然被改写
-	if !strings.Contains(body, newBase+"/canvas/uploads/a.png") {
-		t.Errorf("display url should be rewritten: %s", body)
+}
+
+// 历史存储域名(老桶遗留)同样统一改写为当前 CDN。
+func TestDisplayURLRewritesLegacyHosts(t *testing.T) {
+	legacy := "https://scaecrowtoken-test.oss-accelerate.aliyuncs.com"
+	srv := setup(fakeStore{pairs: [][2]string{{oldBase, newBase}, {legacy, newBase}}}, func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"fileUrl": legacy + "/canvas/uploads/old.png"})
+	})
+	defer srv.Close()
+
+	_, _, body := get(t, srv.URL+"/x")
+	if strings.Contains(body, legacy) || !strings.Contains(body, newBase+"/canvas/uploads/old.png") {
+		t.Errorf("legacy host should be rewritten to CDN: %s", body)
 	}
 }
 

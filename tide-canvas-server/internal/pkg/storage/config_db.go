@@ -61,6 +61,9 @@ var storageFields = []storageField{
 	{"storage.ossAccelerateDomain", "OSS 传输加速域名（可选），跨境上传与上游取图用",
 		func(c config.StorageConfig) string { return c.AccelerateDomain },
 		func(c *config.StorageConfig, v string) { c.AccelerateDomain = v }},
+	{"storage.ossLegacyHosts", "历史存储域名（逗号分隔），读时统一改写为 CDN 域名",
+		func(c config.StorageConfig) string { return c.LegacyHosts },
+		func(c *config.StorageConfig, v string) { c.LegacyHosts = v }},
 }
 
 // SeedAndLoadConfig seeds the storage sys_config keys from base on first boot
