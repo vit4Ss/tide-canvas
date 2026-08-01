@@ -79,7 +79,7 @@ const RESOLUTION_OPTIONS: Record<string, string[]> = {
   image: ["1k", "2k", "4k"],
   video: ["480p", "720p", "1080p", "4k"],
 };
-const DURATION_OPTIONS = Array.from({ length: 15 }, (_, i) => `${i + 1}s`);
+const DURATION_OPTIONS = Array.from({ length: 30 }, (_, i) => `${i + 1}s`);
 const RATIO_OPTIONS = ["1:1", "3:2", "2:3", "16:9", "9:16", "4:3", "3:4", "21:9"];
 // 文本模型「可上传的文件格式」候选（扩展名，小写不带点）。不选 = 不限制。
 const UPLOAD_FORMAT_OPTIONS = [
