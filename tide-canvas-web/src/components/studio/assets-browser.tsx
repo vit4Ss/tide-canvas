@@ -20,7 +20,7 @@ import { ossDisplayUrl } from "@/lib/oss-display";
 import { toast } from "@/components/shared/toast";
 import { confirmDialog } from "@/components/shared/confirm";
 import { useReveal } from "@/components/site/use-reveal";
-import { AudioPlayerCard } from "@/components/studio/audio-player-card";
+import { AudioPlayerCard, SongCard } from "@/components/studio/audio-player-card";
 
 type TabKey = "hist" | "upload";
 type FilterKey = "image" | "video" | "audio" | "doc";
@@ -77,6 +77,22 @@ function fallbackCover(seed: string): string {
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) % 360;
   return mesh(h, (h + 132) % 360, (h + 248) % 360);
+}
+
+/** firstTrackOf 取音频任务 resultMeta.tracks 的第一轨(歌名/封面/时长)。 */
+function firstTrackOf(task: AiTaskVO): { title?: string; coverUrl?: string; duration?: number } | null {
+  const meta =
+    typeof task.resultMeta === "string"
+      ? (() => {
+          try {
+            return JSON.parse(task.resultMeta || "{}") as Record<string, unknown>;
+          } catch {
+            return {} as Record<string, unknown>;
+          }
+        })()
+      : (task.resultMeta as Record<string, unknown> | null) ?? {};
+  const tracks = (meta as { tracks?: Array<{ title?: string; coverUrl?: string; duration?: number }> }).tracks;
+  return Array.isArray(tracks) && tracks.length > 0 ? tracks[0] : null;
 }
 
 /** createTime "YYYY-MM-DDTHH:MM:SS" → design's "M 月 D 日" header. */
@@ -855,9 +871,11 @@ function TaskCard({
   const kind = HANDLER_TYPE[task.handler] ?? "image";
   const isVid = kind === "video";
   // 卡片封面一律走降采样:原图动辄 2K~4K 几 MB,卡片才 ~340px(2x 余量取 640)。
-  // 音频结果是 mp3,不能当封面图铺——用回退渐变 + ♪ 角标。
-  const coverUrl = task.resultUrl && kind !== "audio" ? (ossDisplayUrl(task.resultUrl, 640) ?? task.resultUrl) : undefined;
+  // 音频结果是 mp3,不能当封面图铺——改走 SongCard 歌曲行(见下)。
+  const coverUrl = task.resultUrl && kind === "image" ? (ossDisplayUrl(task.resultUrl, 640) ?? task.resultUrl) : undefined;
   const cover = coverUrl ? `center / cover no-repeat url("${coverUrl}")` : fallbackCover(task.id);
+  // 音频分轨信息(歌名/封面/时长)取自 resultMeta.tracks,没有就退模型名。
+  const track = useMemo(() => firstTrackOf(task), [task]);
   // 非成功任务没有结果可看,兜底卡上标出状态,免得看起来像加载失败的空白图。
   const statusLabel =
     task.status === AiTaskStatus.PROCESSING
@@ -888,6 +906,36 @@ function TaskCard({
     }
   };
 
+  // 音频:方形卡片换成 SongCard 歌曲行(封面+歌名+波形+时间,整行即播放器);
+  // 批量/选取走行上角标,行内 sc-row 自己拦截点击用于播放。
+  if (kind === "audio" && task.resultUrl) {
+    return (
+      <div className="as-songrow reveal in" style={{ ["--rd" as string]: `${delay}s` }}>
+        <SongCard
+          src={task.resultUrl}
+          title={track?.title || task.modelName || "未命名"}
+          subtitle={task.modelName}
+          cover={track?.coverUrl}
+          duration={track?.duration}
+        />
+        {batchMode && (
+          <span onClick={() => onToggle?.(String(task.id))}>
+            <SelectBadge selected={!!selected} />
+          </span>
+        )}
+        {pickMode && (
+          <button
+            type="button"
+            className="as-songrow-pick"
+            onClick={() => onPick?.({ url: task.resultUrl!, name: track?.title || "生成音乐", kind })}
+          >
+            选取
+          </button>
+        )}
+      </div>
+    );
+  }
+
   return (
     <button
       type="button"
@@ -900,7 +948,19 @@ function TaskCard({
       title={task.modelName}
       onClick={onClick}
     >
-      <span className="cov" style={{ background: cover }} />
+      {/* 视频:背景图铺不了 mp4(浏览器不渲染),用 video 首帧做卡片视觉 */}
+      {isVid && task.resultUrl ? (
+        <video
+          className="cov as-vid"
+          muted
+          playsInline
+          preload="metadata"
+          src={task.resultUrl}
+          style={{ background: cover }}
+        />
+      ) : (
+        <span className="cov" style={{ background: cover }} />
+      )}
       <span className="pick" />
       {batchMode && <SelectBadge selected={!!selected} />}
       {star && <span className="star">★</span>}
@@ -982,6 +1042,33 @@ function UploadCard({
     }
   };
 
+  // 音频:方形卡片换成 SongCard 歌曲行(与生成历史同形态)。
+  if (kind === "audio" && file.fileUrl) {
+    return (
+      <div className="as-songrow reveal in" style={{ ["--rd" as string]: `${delay}s` }}>
+        <SongCard
+          src={file.fileUrl}
+          title={file.originalName || "未命名"}
+          subtitle={`上传 · ${fmtSize(file.fileSize)}`}
+        />
+        {batchMode && (
+          <span onClick={() => onToggle?.(String(file.id))}>
+            <SelectBadge selected={!!selected} />
+          </span>
+        )}
+        {pickMode && (
+          <button
+            type="button"
+            className="as-songrow-pick"
+            onClick={() => onPick?.({ url: file.fileUrl!, name: file.originalName || "音频", kind })}
+          >
+            选取
+          </button>
+        )}
+      </div>
+    );
+  }
+
   return (
     <button
       type="button"
@@ -1002,6 +1089,12 @@ function UploadCard({
             background: `center / cover no-repeat url("${ossDisplayUrl(file.fileUrl, 640) ?? file.fileUrl}")`,
           }}
         />
+      ) : kind === "video" && file.fileUrl ? (
+        // 视频:video 首帧做卡片视觉(背景图铺不了 mp4),配 ▶ 角标
+        <>
+          <video className="cov as-vid" muted playsInline preload="metadata" src={file.fileUrl} />
+          <span className="vbadge">▶</span>
+        </>
       ) : (
         <span className="cov as-file">
           <span className="as-file-ic">{FILE_GLYPH[kind] || "▤"}</span>
