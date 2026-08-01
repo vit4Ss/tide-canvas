@@ -16,6 +16,7 @@ import { useAuthStore } from "@/stores/use-auth-store";
 import type { FileVO } from "@/types/file";
 import { AiTaskStatus, type AiTaskVO } from "@/types/ai";
 import { mesh } from "@/lib/mesh";
+import { ossDisplayUrl } from "@/lib/oss-display";
 import { toast } from "@/components/shared/toast";
 import { confirmDialog } from "@/components/shared/confirm";
 import { useReveal } from "@/components/site/use-reveal";
@@ -853,11 +854,10 @@ function TaskCard({
 }) {
   const kind = HANDLER_TYPE[task.handler] ?? "image";
   const isVid = kind === "video";
+  // 卡片封面一律走降采样:原图动辄 2K~4K 几 MB,卡片才 ~340px(2x 余量取 640)。
   // 音频结果是 mp3,不能当封面图铺——用回退渐变 + ♪ 角标。
-  const cover =
-    task.resultUrl && kind !== "audio"
-      ? `center / cover no-repeat url("${task.resultUrl}")`
-      : fallbackCover(task.id);
+  const coverUrl = task.resultUrl && kind !== "audio" ? (ossDisplayUrl(task.resultUrl, 640) ?? task.resultUrl) : undefined;
+  const cover = coverUrl ? `center / cover no-repeat url("${coverUrl}")` : fallbackCover(task.id);
   // 非成功任务没有结果可看,兜底卡上标出状态,免得看起来像加载失败的空白图。
   const statusLabel =
     task.status === AiTaskStatus.PROCESSING
@@ -998,7 +998,9 @@ function UploadCard({
       {isImg && file.fileUrl ? (
         <span
           className="cov"
-          style={{ background: `center / cover no-repeat url("${file.fileUrl}")` }}
+          style={{
+            background: `center / cover no-repeat url("${ossDisplayUrl(file.fileUrl, 640) ?? file.fileUrl}")`,
+          }}
         />
       ) : (
         <span className="cov as-file">

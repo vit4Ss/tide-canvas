@@ -6,6 +6,7 @@
 
 import { useEffect, useRef } from "react";
 import { mesh } from "@/lib/mesh";
+import { ossDisplayUrl } from "@/lib/oss-display";
 import { copyText } from "@/lib/clipboard";
 import { AudioPlayerCard, SongCard } from "@/components/studio/audio-player-card";
 import { toast } from "@/components/shared/toast";
@@ -276,8 +277,15 @@ export function StageFeed({
                           ) : it.type === "audio" ? (
                             <AudioPlayerCard src={it.url} />
                           ) : (
+                            // 展示用降采样(大图宽约 1100px,取 1280 兼顾高分屏);
+                            // 灯箱/下载/参考图仍走原始 URL。
                             // eslint-disable-next-line @next/next/no-img-element
-                            <img className="done-img" src={it.url} alt={r.prompt} loading="lazy" />
+                            <img
+                              className="done-img"
+                              src={ossDisplayUrl(it.url, 1280) ?? it.url}
+                              alt={r.prompt}
+                              loading="lazy"
+                            />
                           )
                         ) : (
                           <div
