@@ -354,10 +354,14 @@ export function StageFeed({
               </div>
             ))}
 
-            {/* 懒加载哨兵:到底提前触发续页;全部拉完给出到底提示 */}
+            {/* 懒加载哨兵:到底提前触发续页;固定高度+三点脉冲,不跳版式 */}
             {hasMore ? (
               <div ref={sentinelRef} className="ws-feed-more" aria-hidden>
-                {loadingMore ? "加载中…" : "下拉加载更多"}
+                {loadingMore ? (
+                  <span className="more-dots"><i /><i /><i /></span>
+                ) : (
+                  "下拉加载更多"
+                )}
               </div>
             ) : runs.length > 0 ? (
               <div className="ws-feed-more end" aria-hidden>

@@ -698,7 +698,7 @@ export function AssetsBrowser({
             ))}
             {hasMore ? (
               <div ref={sentinelRef} className="as-more" aria-hidden>
-                {loadingMore ? "加载中…" : "下拉加载更多"}
+                {loadingMore ? <span className="more-dots"><i /><i /><i /></span> : "下拉加载更多"}
               </div>
             ) : (
               <div className="as-more end" aria-hidden>
@@ -730,7 +730,7 @@ export function AssetsBrowser({
             ))}
             {hasMore ? (
               <div ref={sentinelRef} className="as-more" aria-hidden>
-                {loadingMore ? "加载中…" : "下拉加载更多"}
+                {loadingMore ? <span className="more-dots"><i /><i /><i /></span> : "下拉加载更多"}
               </div>
             ) : (
               <div className="as-more end" aria-hidden>
