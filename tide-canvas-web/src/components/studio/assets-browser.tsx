@@ -79,8 +79,16 @@ function fallbackCover(seed: string): string {
   return mesh(h, (h + 132) % 360, (h + 248) % 360);
 }
 
-/** firstTrackOf 取音频任务 resultMeta.tracks 的第一轨(歌名/封面/时长)。 */
-function firstTrackOf(task: AiTaskVO): { title?: string; coverUrl?: string; duration?: number } | null {
+/** 音频分轨信息(歌名/封面/时长/播放地址)取自 resultMeta.tracks。 */
+interface AudioTrack {
+  url?: string;
+  title?: string;
+  coverUrl?: string;
+  duration?: number;
+}
+
+/** tracksOf 取音频任务 resultMeta.tracks 全部分轨(Suno 一次两首,缺一不可)。 */
+function tracksOf(task: AiTaskVO): AudioTrack[] {
   const meta =
     typeof task.resultMeta === "string"
       ? (() => {
@@ -91,8 +99,8 @@ function firstTrackOf(task: AiTaskVO): { title?: string; coverUrl?: string; dura
           }
         })()
       : (task.resultMeta as Record<string, unknown> | null) ?? {};
-  const tracks = (meta as { tracks?: Array<{ title?: string; coverUrl?: string; duration?: number }> }).tracks;
-  return Array.isArray(tracks) && tracks.length > 0 ? tracks[0] : null;
+  const tracks = (meta as { tracks?: AudioTrack[] }).tracks;
+  return Array.isArray(tracks) ? tracks : [];
 }
 
 /** createTime "YYYY-MM-DDTHH:MM:SS" → design's "M 月 D 日" header. */
@@ -874,8 +882,9 @@ function TaskCard({
   // 音频结果是 mp3,不能当封面图铺——改走 SongCard 歌曲行(见下)。
   const coverUrl = task.resultUrl && kind === "image" ? (ossDisplayUrl(task.resultUrl, 640) ?? task.resultUrl) : undefined;
   const cover = coverUrl ? `center / cover no-repeat url("${coverUrl}")` : fallbackCover(task.id);
-  // 音频分轨信息(歌名/封面/时长)取自 resultMeta.tracks,没有就退模型名。
-  const track = useMemo(() => firstTrackOf(task), [task]);
+  // 音频分轨信息(歌名/封面/时长/地址)取自 resultMeta.tracks;Suno 一次两首,
+  // 两轨都要成行,少了第二首就等于丢歌。
+  const tracks = useMemo(() => tracksOf(task), [task]);
   // 非成功任务没有结果可看,兜底卡上标出状态,免得看起来像加载失败的空白图。
   const statusLabel =
     task.status === AiTaskStatus.PROCESSING
@@ -907,17 +916,25 @@ function TaskCard({
   };
 
   // 音频:方形卡片换成 SongCard 歌曲行(封面+歌名+波形+时间,整行即播放器);
-  // 批量/选取走行上角标,行内 sc-row 自己拦截点击用于播放。
+  // Suno 一次两首按分轨逐行铺开;批量/选取走行上角标,行内 sc-row 自己拦截
+  // 点击用于播放。
   if (kind === "audio" && task.resultUrl) {
+    const rows =
+      tracks.length > 0
+        ? tracks
+        : [{ url: task.resultUrl, title: task.modelName || "未命名" } as AudioTrack];
     return (
       <div className="as-songrow reveal in" style={{ ["--rd" as string]: `${delay}s` }}>
-        <SongCard
-          src={task.resultUrl}
-          title={track?.title || task.modelName || "未命名"}
-          subtitle={task.modelName}
-          cover={track?.coverUrl}
-          duration={track?.duration}
-        />
+        {rows.map((t, i) => (
+          <SongCard
+            key={t.url ?? i}
+            src={t.url || task.resultUrl!}
+            title={t.title || task.modelName || "未命名"}
+            subtitle={task.modelName}
+            cover={t.coverUrl}
+            duration={t.duration}
+          />
+        ))}
         {batchMode && (
           <span onClick={() => onToggle?.(String(task.id))}>
             <SelectBadge selected={!!selected} />
@@ -927,7 +944,7 @@ function TaskCard({
           <button
             type="button"
             className="as-songrow-pick"
-            onClick={() => onPick?.({ url: task.resultUrl!, name: track?.title || "生成音乐", kind })}
+            onClick={() => onPick?.({ url: task.resultUrl!, name: rows[0]?.title || "生成音乐", kind })}
           >
             选取
           </button>
