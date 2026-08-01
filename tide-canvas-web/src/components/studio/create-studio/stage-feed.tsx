@@ -4,6 +4,7 @@
    复制提示词 / 整 run 下载是本块的自足行为，一并内聚；编辑 / 重新生成 / 删除 /
    单图工具条经 props 回调组合层。 */
 
+import { useEffect, useRef } from "react";
 import { mesh } from "@/lib/mesh";
 import { copyText } from "@/lib/clipboard";
 import { AudioPlayerCard, SongCard } from "@/components/studio/audio-player-card";
@@ -25,6 +26,9 @@ export function StageFeed({
   onDeleteRun,
   onCellTool,
   onZoom,
+  hasMore,
+  loadingMore,
+  onLoadMore,
 }: {
   busy: boolean;
   runs: HistRun[];
@@ -37,7 +41,26 @@ export function StageFeed({
   onDeleteRun: (r: HistRun) => void;
   onCellTool: (act: string, cell: ResultCell) => void;
   onZoom: (url: string) => void;
+  /** 历史懒加载:还有更早的页可拉。 */
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  onLoadMore?: () => void;
 }) {
+  // 底部哨兵:进入视口提前量(rootMargin)就触发续页;组合层有加载中去重守卫。
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !hasMore || !onLoadMore) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) onLoadMore();
+      },
+      { rootMargin: "320px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasMore, onLoadMore]);
+
   // copy a run's prompt（共享 copyText：clipboard API + execCommand 回退）。
   const copyPrompt = async (text: string) => {
     if (await copyText(text)) toast.success("已复制提示词");
@@ -330,6 +353,17 @@ export function StageFeed({
                 </div>
               </div>
             ))}
+
+            {/* 懒加载哨兵:到底提前触发续页;全部拉完给出到底提示 */}
+            {hasMore ? (
+              <div ref={sentinelRef} className="ws-feed-more" aria-hidden>
+                {loadingMore ? "加载中…" : "下拉加载更多"}
+              </div>
+            ) : runs.length > 0 ? (
+              <div className="ws-feed-more end" aria-hidden>
+                — 已经到底了 —
+              </div>
+            ) : null}
           </div>
         )}
       </div>

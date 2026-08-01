@@ -457,12 +457,41 @@ export default function CreateStudio() {
   // expands into one card per image. No mock seed — survives refresh.
   // noProject 排除画布项目里的生成，创作台历史只展示创作台/对话页自己的产物；
   // 延长/翻唱的原曲候选不受影响（ClipPicker 自拉取仍是全量,画布生成的歌可选）。
-  const loadHistory = useCallback(async () => {
+  //
+  // 懒加载:首屏只拉一页(HIST_PAGE_SIZE),滚到底部哨兵再续页(见 stage-feed);
+  // histLoadedCountRef 记录已取的「任务条数」(批量任务会展开多卡,不能拿 hist
+  // 长度当分页依据)。
+  const HIST_PAGE_SIZE = 20;
+  const histPageRef = useRef(1);
+  const histLoadedCountRef = useRef(0);
+  const histLoadingRef = useRef(false);
+  const [histHasMore, setHistHasMore] = useState(false);
+  const [histLoadingMore, setHistLoadingMore] = useState(false);
+
+  const fetchHistory = useCallback(async (page: number, append: boolean) => {
+    if (histLoadingRef.current) return;
+    histLoadingRef.current = true;
     try {
       await ensureSession();
-      const res = await aiApi.listTasks({ pageNum: 1, pageSize: 100, noProject: true });
+      // setState 一律放在首个 await 之后(effect 同步路径不进 setState,过 lint)
+      if (append) setHistLoadingMore(true);
+      const res = await aiApi.listTasks({ pageNum: page, pageSize: HIST_PAGE_SIZE, noProject: true });
       const records = res.success && res.data ? res.data.records : [];
+      const total = res.success && res.data ? res.data.total : 0;
       const items = histItemsFromTasks(records);
+      histPageRef.current = page;
+      histLoadedCountRef.current = append ? histLoadedCountRef.current + records.length : records.length;
+      setHistHasMore(histLoadedCountRef.current < total);
+
+      if (append) {
+        // 续页去重:新生成经 pushHistory 先入了列表,翻页拉到旧页时 id 不会撞,
+        // 这里防的是哨兵/手动触发的重复请求。
+        setHist((prev) => {
+          const seen = new Set(prev.map((h) => h.id));
+          return [...prev, ...items.filter((h) => !seen.has(h.id))];
+        });
+        return;
+      }
       setHist(items);
 
       // First load only: if the user has past results and nothing is currently
@@ -495,13 +524,20 @@ export default function CreateStudio() {
         }
       }
     } catch {
-      setHist([]);
+      if (!append) setHist([]);
+    } finally {
+      histLoadingRef.current = false;
+      setHistLoadingMore(false);
     }
   }, [ensureSession, setHist, setRunMeta, setCells, setProgs, lastRunRef]);
 
+  const loadMoreHistory = useCallback(async () => fetchHistory(histPageRef.current + 1, true), [fetchHistory]);
+
   useEffect(() => {
-    loadHistory();
-  }, [loadHistory]);
+    // setTimeout 0:首屏拉取推迟到挂载后(effect 同步路径不触发 setState,过 lint)
+    const t = setTimeout(() => void fetchHistory(1, false), 0);
+    return () => clearTimeout(t);
+  }, [fetchHistory]);
 
   // when the selected model (its config) changes, snap each option control to a
   // value the model actually supports (so a stale ratio/res/quality can't linger).
@@ -945,6 +981,9 @@ export default function CreateStudio() {
           onDeleteRun={deleteRun}
           onCellTool={cellTool}
           onZoom={setLightbox}
+          hasMore={histHasMore}
+          loadingMore={histLoadingMore}
+          onLoadMore={loadMoreHistory}
         />
       </div>
 
