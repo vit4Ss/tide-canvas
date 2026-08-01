@@ -378,6 +378,18 @@ const rehostRetries = 3
 // retried on transient failures; the OSS upload is not (it is reliable and a
 // retry would re-download needlessly).
 func (p *relayProviderClient) saveRemote(ctx context.Context, srcURL string) (string, error) {
+	// Zero-copy fast path: the relay writes results straight into OUR bucket
+	// directory when the calling API key carries a storage_prefix (relay V88).
+	// Such URLs are already ours — persist the canonical display URL instead of
+	// downloading + re-uploading the same bytes under a second key (which also
+	// doubled the bucket's storage bill). OwnsURL deliberately excludes objects
+	// outside our project prefix (e.g. the relay's own uploads/ dir): those
+	// still fall through to the copy below so their lifecycle stays ours.
+	if p.store != nil {
+		if canonical, ok := p.store.OwnsURL(srcURL); ok {
+			return canonical, nil
+		}
+	}
 	data, ct, err := fetchRemote(ctx, srcURL)
 	if err != nil {
 		return "", err

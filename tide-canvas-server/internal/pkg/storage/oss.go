@@ -17,9 +17,11 @@ import (
 // oss.go is the Alibaba Cloud OSS-backed StorageStrategy. Every object key is
 // namespaced under a configurable project prefix (e.g. "canvas/uploads/") so a
 // bucket shared across projects never collides. Public URLs are built from the
-// CDN domain when set, else the bucket's regional virtual-host. URLs handed to
-// overseas upstream suppliers are rewritten to the transfer-acceleration host
-// (UpstreamURL) so cross-border downloads do not time out.
+// CDN domain when set, else the bucket's regional virtual-host. When a
+// transfer-acceleration host is configured it is used for (a) server-side
+// uploads and direct-upload presigns (cross-border upload speedup) and (b)
+// rewriting URLs handed to overseas upstream suppliers (UpstreamURL) so
+// cross-border downloads do not time out.
 
 // presignTTL bounds a direct-upload signed URL.
 const presignTTL = 10 * time.Minute
@@ -43,7 +45,21 @@ func NewOSSStorage(cfg config.StorageConfig) (*OSSStorage, error) {
 		return nil, errors.New("storage: oss requires endpoint, bucket, accessKey and secretKey")
 	}
 
-	client, err := oss.New(endpoint, cfg.AccessKey, cfg.SecretKey)
+	regionalBase := bucketVirtualHost(endpoint, bucketName)
+	publicBase := regionalBase
+	if cdn := normalizeBase(cfg.CDNDomain); cdn != "" {
+		publicBase = cdn
+	}
+	accelerateBase := normalizeBase(cfg.AccelerateDomain)
+
+	// 配了传输加速域名时,上传/删除/直传签名统一走加速 endpoint(跨境提速);
+	// 展示 URL 不受影响,仍由 publicBase(CDN 优先)决定。
+	clientEndpoint := endpoint
+	var clientOpts []oss.ClientOption
+	if accelerateBase != "" {
+		clientEndpoint, clientOpts = accelerateClient(accelerateBase, bucketName)
+	}
+	client, err := oss.New(clientEndpoint, cfg.AccessKey, cfg.SecretKey, clientOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("storage: oss client: %w", err)
 	}
@@ -51,13 +67,6 @@ func NewOSSStorage(cfg config.StorageConfig) (*OSSStorage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("storage: oss bucket: %w", err)
 	}
-
-	regionalBase := bucketVirtualHost(endpoint, bucketName)
-	publicBase := regionalBase
-	if cdn := normalizeBase(cfg.CDNDomain); cdn != "" {
-		publicBase = cdn
-	}
-	accelerateBase := normalizeBase(cfg.AccelerateDomain)
 
 	return &OSSStorage{
 		bucket:         bucket,
@@ -148,6 +157,74 @@ func (o *OSSStorage) UpstreamURL(u string) string {
 		}
 	}
 	return u
+}
+
+// FetchHosts returns every host that may serve this bucket's assets: the public
+// (CDN or regional) host, the regional host and the acceleration host. Used as
+// the self-site allowlist for server-side fetches (chat document attachments).
+func (o *OSSStorage) FetchHosts() []string {
+	return hostsOf(o.publicBase, o.regionalBase, o.accelerateBase)
+}
+
+// OwnsURL reports whether u already points at an object under this project's
+// prefix in our own bucket — on ANY serving host variant (public/CDN/regional/
+// acceleration, since the relay hands back whichever its own config produced).
+// The canonical return re-bases the object key onto the current publicBase and
+// drops the query, so persisted display URLs stay uniform regardless of the
+// inbound host. URLs on our hosts but OUTSIDE the project prefix (e.g. the
+// relay's own uploads/ directory in the shared bucket) are NOT ours: their
+// lifecycle belongs to someone else, so callers must still copy them.
+func (o *OSSStorage) OwnsURL(u string) (string, bool) {
+	if u == "" {
+		return "", false
+	}
+	parsed, err := url.Parse(u)
+	if err != nil || parsed.Host == "" {
+		return "", false
+	}
+	own := false
+	for _, h := range o.FetchHosts() {
+		if h == parsed.Host {
+			own = true
+			break
+		}
+	}
+	if !own {
+		return "", false
+	}
+	key := strings.TrimPrefix(parsed.Path, "/")
+	if o.prefix != "" {
+		if !strings.HasPrefix(key, o.prefix+"/") {
+			return "", false
+		}
+	}
+	if key == "" {
+		return "", false
+	}
+	return o.publicBase + "/" + key, true
+}
+
+// PublicRewrites maps the regional base onto the public base when they differ
+// (i.e. a CDN domain is configured), so URLs persisted before the CDN existed
+// are served on the current public base at read time. The acceleration host is
+// intentionally excluded — presign responses carry signed URLs on it.
+func (o *OSSStorage) PublicRewrites() [][2]string {
+	if o.publicBase == "" || o.regionalBase == "" || o.publicBase == o.regionalBase {
+		return nil
+	}
+	return [][2]string{{o.regionalBase, o.publicBase}}
+}
+
+// accelerateClient 把配置的加速域名转成 SDK 的 endpoint。标准形态
+// "https://bucket.oss-accelerate.aliyuncs.com" 剥掉 bucket 前缀即可（SDK 会自己
+// 拼回）；host 前缀与 bucket 不一致（配置笔误，或自定义加速域）时按 CNAME
+// 处理——SDK 不再拼 bucket，避免造出 "bucket.bucket.oss-accelerate..." 的坏 host。
+func accelerateClient(base, bucket string) (endpoint string, opts []oss.ClientOption) {
+	scheme, host := splitScheme(base)
+	if strings.HasPrefix(host, bucket+".") {
+		return scheme + "://" + strings.TrimPrefix(host, bucket+"."), nil
+	}
+	return scheme + "://" + host, []oss.ClientOption{oss.UseCname(true)}
 }
 
 // bucketVirtualHost builds the bucket's regional virtual-host base

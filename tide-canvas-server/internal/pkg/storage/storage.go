@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -43,6 +44,25 @@ type StorageStrategy interface {
 	// the transfer-acceleration host. Backends that need no rewrite (local) return
 	// the URL unchanged.
 	UpstreamURL(url string) string
+	// FetchHosts returns the hosts that serve this backend's assets (public/CDN
+	// host, regional and acceleration hosts for OSS). Server-side fetchers use it
+	// as the self-site SSRF allowlist (see pkg/chatattach).
+	FetchHosts() []string
+	// OwnsURL reports whether url already points at an object inside this
+	// backend's own namespace (a serving host from FetchHosts AND the project
+	// prefix, for OSS). When it does, it also returns the canonical public URL
+	// for that object (host normalized to the current public base, query
+	// dropped) so callers can persist a clean display URL instead of whatever
+	// host variant they were handed. The relay uses this to skip re-hosting
+	// results it wrote directly into our directory (apikey storage_prefix).
+	OwnsURL(url string) (canonical string, ok bool)
+	// PublicRewrites returns [from→to] base-URL pairs the response layer rewrites
+	// on the way out, so asset URLs persisted under an old base (e.g. the
+	// regional OSS host) are always served on the current public base (CDN).
+	// The acceleration host is deliberately NOT a rewrite source: presign
+	// responses carry signed URLs on that host and rewriting them would break
+	// the signature. Empty when no rewriting is needed.
+	PublicRewrites() [][2]string
 }
 
 // ErrUnsupported is returned by operations a backend cannot perform.
@@ -148,3 +168,33 @@ func (l *LocalStorage) Presign(ctx context.Context, key, contentType string) (Pr
 // UpstreamURL returns the URL unchanged: local assets need no host rewrite (and
 // are only reachable on the same host anyway).
 func (l *LocalStorage) UpstreamURL(url string) string { return url }
+
+// FetchHosts returns the host of the local public URL prefix.
+func (l *LocalStorage) FetchHosts() []string { return hostsOf(l.publicURL) }
+
+// OwnsURL matches URLs already under the local public prefix; they are
+// canonical by construction, so they are returned unchanged.
+func (l *LocalStorage) OwnsURL(u string) (string, bool) {
+	if u != "" && strings.HasPrefix(u, l.publicURL+"/") {
+		return u, true
+	}
+	return "", false
+}
+
+// PublicRewrites returns nil: local assets are served from a single stable
+// prefix, nothing to normalize.
+func (l *LocalStorage) PublicRewrites() [][2]string { return nil }
+
+// hostsOf extracts the host (with port) from each base URL, skipping empties
+// and unparseable entries.
+func hostsOf(bases ...string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, b := range bases {
+		if u, err := url.Parse(b); err == nil && u.Host != "" && !seen[u.Host] {
+			seen[u.Host] = true
+			out = append(out, u.Host)
+		}
+	}
+	return out
+}
