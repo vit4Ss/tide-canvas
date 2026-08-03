@@ -81,6 +81,10 @@ func (h *handler) generate(c *gin.Context) {
 			response.Fail(c, response.CodeModelUnavailable, "所选模型不可用，请更换后重试")
 		case errors.Is(err, errToolDisabled):
 			response.Fail(c, response.CodeToolDisabled, "该工具已下线")
+		case errors.Is(err, errProjectUnavailable):
+			// Hide whether the supplied numeric project ID exists or belongs to
+			// somebody else.
+			response.Fail(c, response.CodeNotFound, "项目不存在")
 		case errors.Is(err, errInsufficientPoints):
 			response.Fail(c, response.CodeQuotaInsufficient, "积分不足，请充值后再试")
 		default:

@@ -10,12 +10,20 @@ import { useCallback, useEffect, useRef, useState, type Dispatch, type RefObject
 import { marketApi, type StudioModelVO } from "@/lib/market-api";
 import { aiApi } from "@/lib/api";
 import { skillKindOf, skillSupportsOutput, type SkillVO } from "@/types/skill";
-import { AiTaskStatus } from "@/types/ai";
+import { AiTaskStatus, type AiTaskVO } from "@/types/ai";
+import {
+  commitAcceptedAiGeneration,
+  isAmbiguousAiCreateCode,
+  recoverableAiGenerations,
+  type PendingAiGeneration,
+} from "@/lib/ai-generation-idempotency";
 import type { MentionEditorHandle } from "@/components/studio/mention-prompt-editor";
 import { toast } from "@/components/shared/toast";
 import { markRequiredField } from "@/lib/require-field";
+import { useAuthStore } from "@/stores/use-auth-store";
 import {
   ACTIVE_RUN_KEY,
+  activeRunStorageKey,
   EDIT_OP_HANDLER,
   TOOL_TO_HANDLER,
   TOOLS,
@@ -73,6 +81,104 @@ export interface GenerationParams {
   promptRef: RefObject<MentionEditorHandle | null>;
 }
 
+const STUDIO_GENERATION_SCOPES = ["studio:image", "studio:video", "studio:audio"] as const;
+
+function persistActiveRun(run: ActiveRun): boolean {
+  const key = activeRunStorageKey(run.ownerUserId);
+  try {
+    localStorage.setItem(key, JSON.stringify(run));
+    const stored = JSON.parse(localStorage.getItem(key) || "null") as Partial<ActiveRun> | null;
+    return stored?.taskId === run.taskId &&
+      stored?.journalScope === run.journalScope &&
+      stored?.ownerUserId === run.ownerUserId;
+  } catch {
+    return false;
+  }
+}
+
+function removePersistedActiveRun(run: Pick<ActiveRun, "taskId" | "ownerUserId">): void {
+  const key = activeRunStorageKey(run.ownerUserId);
+  try {
+    const stored = JSON.parse(localStorage.getItem(key) || "null") as Partial<ActiveRun> | null;
+    // A different tab may have replaced this account's foreground pointer. Its
+    // accepted journal is independent, so only remove the exact task we own.
+    if (stored?.taskId === run.taskId && stored?.ownerUserId === run.ownerUserId) {
+      localStorage.removeItem(key);
+    }
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+function validHues(value: unknown): value is MeshHues[] {
+  return Array.isArray(value) && value.length > 0 && value.every((row) =>
+    Array.isArray(row) && row.length === 3 && row.every((part) => typeof part === "number" && Number.isFinite(part)),
+  );
+}
+
+/** Rebuild enough Studio UI state from the frozen create when ACTIVE_RUN_KEY was
+ * not committed before a reload. New journals carry the exact meta; the payload
+ * fallback keeps already-written journals recoverable across deployments. */
+function activeRunFromJournal(
+  scope: string,
+  entry: PendingAiGeneration,
+  task: AiTaskVO,
+  ownerUserId: string,
+): ActiveRun | null {
+  if (!entry.payload) return null;
+  const recovery = entry.recovery && typeof entry.recovery === "object"
+    ? entry.recovery as Partial<Omit<ActiveRun, "taskId" | "startedAt">>
+    : {};
+  const input = entry.payload.input && typeof entry.payload.input === "object"
+    ? entry.payload.input
+    : {};
+  const inferredKind: ArtworkType = entry.payload.handler.includes("video")
+    ? "video"
+    : entry.payload.handler.includes("audio")
+      ? "audio"
+      : "image";
+  const kind: ArtworkType = recovery.kind === "video" || recovery.kind === "audio" || recovery.kind === "image"
+    ? recovery.kind
+    : inferredKind;
+  const rawCount = typeof input.batchCount === "number" ? input.batchCount : 1;
+  const count = Math.max(1, Math.min(16, Number(recovery.count) || rawCount || 1));
+  const prompt = typeof recovery.prompt === "string"
+    ? recovery.prompt
+    : typeof input.prompt === "string"
+      ? input.prompt
+      : "";
+  const hue = promptHue(prompt || task.id);
+  const hues = validHues(recovery.hues)
+    ? recovery.hues
+    : Array.from(
+        { length: count },
+        (_, index) => [hue + index * 36, hue + index * 36 + 80, hue + index * 36 + 200] as MeshHues,
+      );
+  const ratio = typeof recovery.ratio === "string"
+    ? recovery.ratio
+    : typeof input.aspectRatio === "string"
+      ? input.aspectRatio
+      : "";
+  return {
+    taskId: task.id,
+    ownerUserId,
+    journalScope: scope,
+    prompt,
+    model: typeof recovery.model === "string" ? recovery.model : task.modelName || entry.payload.modelId,
+    ratio,
+    spec: typeof recovery.spec === "string" ? recovery.spec : ratio,
+    count,
+    isVid: kind === "video",
+    kind,
+    label: typeof recovery.label === "string" ? recovery.label : "生成任务",
+    hues,
+    refThumbs: Array.isArray(recovery.refThumbs)
+      ? recovery.refThumbs.filter((value): value is string => typeof value === "string")
+      : [],
+    startedAt: entry.updatedAt,
+  };
+}
+
 export function useGeneration(p: GenerationParams) {
   const {
     prompt,
@@ -108,6 +214,7 @@ export function useGeneration(p: GenerationParams) {
     setHist,
     promptRef,
   } = p;
+  const authenticatedUserId = useAuthStore((state) => state.user?.id ?? "");
 
   /* stage state */
   const [busy, setBusy] = useState(false);
@@ -127,12 +234,16 @@ export function useGeneration(p: GenerationParams) {
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // bumped on every reset/cancel so in-flight poll callbacks from a stale run bail out.
   const runIdRef = useRef(0);
+  const activeRunRef = useRef<ActiveRun | null>(null);
 
   /* Drive the generating UI + poll a known backend task to completion. Shared by
      a fresh generation AND by the refresh-resume path (same task id either way),
      so an in-flight generation survives a page reload. */
   const driveRun = useCallback(
     (run: ActiveRun) => {
+      const currentUserId = useAuthStore.getState().user?.id ?? "";
+      if (!run.ownerUserId || currentUserId !== run.ownerUserId) return;
+      activeRunRef.current = run;
       const { taskId, prompt: p, model: mdl, ratio: r, spec, count: n, isVid, label, hues } = run;
       const kind: ArtworkType = run.kind ?? (isVid ? "video" : "image");
       const myRun = (runIdRef.current += 1);
@@ -166,10 +277,10 @@ export function useGeneration(p: GenerationParams) {
         ticksRef.current = [];
       };
       const clearActive = () => {
-        try {
-          localStorage.removeItem(ACTIVE_RUN_KEY);
-        } catch {
-          /* storage unavailable */
+        removePersistedActiveRun(run);
+        if (activeRunRef.current?.taskId === taskId) activeRunRef.current = null;
+        if (run.journalScope) {
+          void commitAcceptedAiGeneration(run.journalScope, taskId, run.ownerUserId);
         }
       };
       const isValidUrl = (u?: string): u is string =>
@@ -226,15 +337,53 @@ export function useGeneration(p: GenerationParams) {
         toast.error(msg || "生成失败");
       };
 
+      let transientFailures = 0;
+      let reconnectNoticeShown = false;
+      let deadlineNoticeShown = false;
       const poll = async () => {
         if (runIdRef.current !== myRun) return;
+        if ((useAuthStore.getState().user?.id ?? "") !== run.ownerUserId) {
+          stopTicks();
+          if (activeRunRef.current?.taskId === taskId) activeRunRef.current = null;
+          setBusy(false);
+          return;
+        }
+        const maxMs = isVid ? 30 * 60 * 1000 : kind === "audio" ? 12 * 60 * 1000 : 7 * 60 * 1000;
+        // This is only the foreground polling budget. It must never be treated
+        // as proof that a paid backend task failed; after the budget we keep the
+        // durable ACTIVE_RUN_KEY and reconcile at a slower cadence.
+        const beyondPollingBudget = Date.now() - run.startedAt > maxMs;
+        if (beyondPollingBudget && !deadlineNoticeShown) {
+          deadlineNoticeShown = true;
+          toast.info("生成时间较长，仍在后台继续确认结果");
+        }
         try {
           const res = await aiApi.getTask(taskId);
           if (runIdRef.current !== myRun) return;
-          if (!res.success) {
-            fail(res.message);
+          if ((useAuthStore.getState().user?.id ?? "") !== run.ownerUserId) {
+            stopTicks();
+            if (activeRunRef.current?.taskId === taskId) activeRunRef.current = null;
+            setBusy(false);
             return;
           }
+          if (!res.success || !res.data) {
+            // 401 may mean the refresh endpoint was temporarily unavailable;
+            // code 0/5xx/408/429 are likewise transport or capacity failures.
+            // Only an explicit missing/forbidden task is unrecoverable.
+            if (res.code === 403 || res.code === 404) {
+              fail(res.message);
+              return;
+            }
+            transientFailures += 1;
+            if (!reconnectNoticeShown) {
+              reconnectNoticeShown = true;
+              toast.info("连接暂时中断，正在自动恢复生成状态");
+            }
+            const retryDelay = Math.min(15_000, 1500 * (2 ** Math.min(3, transientFailures - 1)));
+            pollRef.current = setTimeout(poll, beyondPollingBudget ? Math.max(10_000, retryDelay) : retryDelay);
+            return;
+          }
+          transientFailures = 0;
           const task = res.data;
           if (task.status === AiTaskStatus.SUCCESS) {
             let meta: Record<string, unknown> = {};
@@ -269,18 +418,19 @@ export function useGeneration(p: GenerationParams) {
               for (let i = 0; i < n; i++) local[i] = Math.max(local[i], pv);
               setProgs([...local]);
             }
-            // deadline checked AFTER reading the task, so a completed task is always
-            // picked up even when resumed long after it was started.
-            // 音频（Suno）1–4 分钟 + 回存,给 12 分钟;后端整体预算 10 分钟。
-            const maxMs = isVid ? 30 * 60 * 1000 : kind === "audio" ? 12 * 60 * 1000 : 7 * 60 * 1000;
-            if (Date.now() - run.startedAt > maxMs) {
-              fail("生成超时，请重试");
-              return;
-            }
-            pollRef.current = setTimeout(poll, 1500);
+            pollRef.current = setTimeout(poll, beyondPollingBudget ? 10_000 : 1500);
           }
         } catch {
-          fail("网络错误");
+          // Preserve ACTIVE_RUN_KEY and retry the same task. Clearing it here
+          // makes a still-running, already-billed job impossible to recover.
+          if (runIdRef.current !== myRun) return;
+          transientFailures += 1;
+          if (!reconnectNoticeShown) {
+            reconnectNoticeShown = true;
+            toast.info("连接暂时中断，正在自动恢复生成状态");
+          }
+          const retryDelay = Math.min(15_000, 1500 * (2 ** Math.min(3, transientFailures - 1)));
+          pollRef.current = setTimeout(poll, retryDelay);
         }
       };
       poll();
@@ -326,32 +476,69 @@ export function useGeneration(p: GenerationParams) {
       handler: string;
       modelId: string;
       input: Record<string, unknown>;
-      meta: Omit<ActiveRun, "taskId" | "startedAt">;
+      meta: Omit<ActiveRun, "taskId" | "startedAt" | "journalScope" | "ownerUserId">;
     }) => {
       const myRun = (runIdRef.current += 1);
       setBusy(true);
       try {
-        await ensureSession();
+        if (!(await ensureSession())) {
+          setBusy(false);
+          return;
+        }
         if (runIdRef.current !== myRun) return;
-        const res2 = await aiApi.generateIdempotent({
+        const ownerUserId = useAuthStore.getState().user?.id ?? "";
+        if (!ownerUserId) {
+          setBusy(false);
+          toast.error("无法确认当前账号，生成任务尚未启动，请刷新后重试");
+          return;
+        }
+        const journalScope = `studio:${args.meta.kind ?? (args.meta.isVid ? "video" : "image")}`;
+        const createInput = {
           handler: args.handler,
           modelId: args.modelId,
           ...(typeof args.input.skillId === "string"
             ? { entryPoint: "studio" as const, targetType: args.meta.kind }
             : {}),
           input: args.input,
-        }, `studio:${args.meta.kind}`);
-        if (runIdRef.current !== myRun) return;
-        if (!res2.success) {
-          setBusy(false);
-          toast.error(res2.message || "生成请求失败");
-          return;
+        };
+        let res2: Awaited<ReturnType<typeof aiApi.generateIdempotent>>;
+        let reconnectNoticeShown = false;
+        for (;;) {
+          if (runIdRef.current !== myRun) return;
+          res2 = await aiApi.generateIdempotent(createInput, journalScope, {
+            requireDurableJournal: true,
+            retainAccepted: true,
+            recovery: args.meta,
+            ownerUserId,
+          });
+          if (runIdRef.current !== myRun) return;
+          if (res2.success && res2.data?.id) break;
+          if (!isAmbiguousAiCreateCode(res2.code)) {
+            setBusy(false);
+            toast.error(res2.message || "生成请求失败");
+            return;
+          }
+          if (!reconnectNoticeShown) {
+            reconnectNoticeShown = true;
+            toast.info("生成请求正在确认中，请保持页面打开");
+          }
+          await new Promise((resolve) => setTimeout(resolve, 3_000));
         }
-        const run: ActiveRun = { taskId: res2.data.id, ...args.meta, startedAt: Date.now() };
-        try {
-          localStorage.setItem(ACTIVE_RUN_KEY, JSON.stringify(run));
-        } catch {
-          /* storage unavailable — generation still works, just no refresh-resume */
+        const run: ActiveRun = {
+          taskId: res2.data.id,
+          ownerUserId,
+          journalScope,
+          ...args.meta,
+          startedAt: Date.now(),
+        };
+        if (persistActiveRun(run)) {
+          // Keep the accepted journal as a second pointer until terminal. A
+          // single ACTIVE_RUN_KEY can be overwritten by another Studio tab;
+          // retaining both prevents the older paid task from becoming hidden.
+        } else {
+          // The accepted journal still owns recovery. This should only be
+          // reachable if storage was revoked between preflight and response.
+          toast.info("任务已启动，请保持当前页面打开以等待结果");
         }
         driveRun(run);
       } catch {
@@ -455,8 +642,18 @@ export function useGeneration(p: GenerationParams) {
      real studio model is selected; falls back to the design-preview simulation
      only when no backend model is available (studioList empty). */
 
-  const generate = useCallback(() => {
+  const generate = useCallback((options?: { requireBackendModel?: boolean; expectedModelId?: string }) => {
     if (busy || genInFlightRef.current) return;
+    const selectedStudio = studioList.find((item) => item.name === model) ?? null;
+    if (options?.expectedModelId && selectedStudio?.id !== options.expectedModelId) {
+      toast.info("历史模型目录已变化，请确认当前模型后重新生成");
+      return;
+    }
+    const selectedBackendModelId = selectedStudio?.modelKey || selectedStudio?.id || "";
+    if (options?.requireBackendModel && !selectedBackendModelId) {
+      toast.info("历史模型当前不可用，已停止重新生成");
+      return;
+    }
     const p = prompt.trim();
     // 音乐创作模式互斥（对齐上游 API）：灵感=只看描述;自定义=歌词必填、描述不发;
     // 延长/翻唱=原曲 clip 必选、歌词选填。旧版"风格需搭配歌词"歧义由模式结构消除。
@@ -546,10 +743,16 @@ export function useGeneration(p: GenerationParams) {
       (_, i) => [hsh + i * 36, hsh + i * 36 + 80, hsh + i * 36 + 200] as MeshHues,
     );
     const refThumbs = refThumbsForRun(slotData, hsh);
+    const presetSkill =
+      skill && skillKindOf(skill) === "preset" && skillSupportsOutput(skill, curType)
+        ? skill
+        : null;
 
     // snapshot the exact settings of this run for 重新编辑 / 再次生成.
     lastRunRef.current = {
-      prompt: p, model: mdl, tool, curType, ratio: r, imgRes, res, dur, quality, count: n,
+      prompt: p, model: mdl, ...(selectedStudio?.id ? { modelId: selectedStudio.id } : {}),
+      tool, curType, ratio: r, imgRes, res, dur, quality, count: n,
+      ...(presetSkill ? { skill: { id: presetSkill.id, title: presetSkill.title } } : {}),
       imageRefs, firstFrame, lastFrame, videoRefs: vidRefs, audioRefs: audRefs,
       ...(isAudio && !isSfx
         ? {
@@ -581,8 +784,7 @@ export function useGeneration(p: GenerationParams) {
     // each take their own run id from here).
     runIdRef.current += 1;
 
-    const selStudio = studioList.find((m) => m.name === model) ?? null;
-    const modelId = selStudio?.modelKey || selStudio?.id || "";
+    const modelId = selectedBackendModelId;
 
     // ── design-preview simulation (no backend model configured) ───────────
     if (!modelId) {
@@ -628,10 +830,6 @@ export function useGeneration(p: GenerationParams) {
     // 技能:只发 skillId,模板由服务端拼到描述前面(客户端先拼会污染落库的 input,
     // 作品标题/重新编辑读到的就全是模板开头)
     const genPrompt = p;
-    const presetSkill =
-      skill && skillKindOf(skill) === "preset" && skillSupportsOutput(skill, curType)
-        ? skill
-        : null;
     const skillInput = presetSkill ? { skillId: presetSkill.id } : {};
     const input: Record<string, unknown> = isAudio
       ? {
@@ -685,42 +883,134 @@ export function useGeneration(p: GenerationParams) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy, prompt, count, tool, curType, ratio, model, res, dur, imgRes, quality, musicMode, sourceClipId, sourceIsUpload, continueAt, lyrics, songStyle, songTitle, instrumental, slotData, studioList, ratioOpts, resOpts, durOpts, qualOpts, pushHistory, startGeneration, skill]);
 
-  // Refresh-resume: on mount, if a generation was in flight (persisted at start),
-  // restore the generating UI and resume polling — the task keeps running on the
-  // server, so a reload no longer loses it.
+  // Refresh-resume has two durable layers. ACTIVE_RUN_KEY is the normal pointer;
+  // the accepted-create journal closes the response→ACTIVE_RUN_KEY crash window
+  // and can replay an ambiguous create with the original clientRequestId.
   useEffect(() => {
-    let raw: string | null = null;
-    try {
-      raw = localStorage.getItem(ACTIVE_RUN_KEY);
-    } catch {
-      return;
-    }
-    if (!raw) return;
-    let saved: ActiveRun | null = null;
-    try {
-      saved = JSON.parse(raw) as ActiveRun;
-    } catch {
-      saved = null;
-    }
-    // taskId 是后端雪花 ID，序列化为字符串（见 ActiveRun.taskId: string）。原先误判
-    // typeof !== "number" 恒真，导致刷新后在飞的生成任务总被丢弃、"刷新续跑"永久失效。
-    if (!saved || typeof saved.taskId !== "string" || !saved.taskId || !Array.isArray(saved.hues)) {
-      try {
-        localStorage.removeItem(ACTIVE_RUN_KEY);
-      } catch {
-        /* ignore */
-      }
-      return;
-    }
     let cancelled = false;
     (async () => {
-      await ensureSession();
-      if (!cancelled) driveRun(saved);
+      if (!(await ensureSession()) || cancelled) return;
+      const ownerUserId = useAuthStore.getState().user?.id ?? "";
+      // A paid create must not start or recover until /me has confirmed which
+      // account owns its local partition.
+      if (!ownerUserId) return;
+
+      const activeKey = activeRunStorageKey(ownerUserId);
+      let raw: string | null = null;
+      try {
+        raw = localStorage.getItem(activeKey);
+      } catch {
+        raw = null;
+      }
+      let saved: ActiveRun | null = null;
+      try {
+        saved = JSON.parse(raw || "null") as ActiveRun | null;
+      } catch {
+        saved = null;
+      }
+      // One-release migration for an already-running task written by the old
+      // global key. Never assign it by assumption: the authenticated detail
+      // endpoint must prove this account owns the task first. A 403 leaves the
+      // legacy row untouched so its real owner can migrate it later.
+      if (!saved && !raw) {
+        let legacyRaw: string | null = null;
+        try {
+          legacyRaw = localStorage.getItem(ACTIVE_RUN_KEY);
+        } catch {
+          legacyRaw = null;
+        }
+        let legacy: Partial<ActiveRun> | null = null;
+        try {
+          legacy = JSON.parse(legacyRaw || "null") as Partial<ActiveRun> | null;
+        } catch {
+          legacy = null;
+        }
+        if (
+          legacy &&
+          typeof legacy.taskId === "string" &&
+          !!legacy.taskId &&
+          Array.isArray(legacy.hues)
+        ) {
+          const ownership = await aiApi.getTask(legacy.taskId);
+          if (cancelled) return;
+          if (ownership.success && ownership.data) {
+            saved = { ...legacy, ownerUserId } as ActiveRun;
+            if (persistActiveRun(saved)) {
+              try {
+                const latest = JSON.parse(localStorage.getItem(ACTIVE_RUN_KEY) || "null") as Partial<ActiveRun> | null;
+                if (latest?.taskId === saved.taskId) localStorage.removeItem(ACTIVE_RUN_KEY);
+              } catch {
+                /* keep the legacy pointer */
+              }
+            }
+          }
+        }
+      }
+      if (
+        !saved ||
+        saved.ownerUserId !== ownerUserId ||
+        typeof saved.taskId !== "string" ||
+        !saved.taskId ||
+        !Array.isArray(saved.hues)
+      ) {
+        try {
+          if (raw) localStorage.removeItem(activeKey);
+        } catch {
+          /* ignore */
+        }
+        saved = null;
+      }
+      if (saved) {
+        driveRun(saved);
+        return;
+      }
+
+      for (;;) {
+        if (cancelled) return;
+        const candidates = STUDIO_GENERATION_SCOPES.flatMap((scope) =>
+          recoverableAiGenerations(scope, ownerUserId).map((entry) => ({ scope, entry })),
+        ).sort((left, right) => right.entry.updatedAt - left.entry.updatedAt);
+        const candidate = candidates[0];
+        if (!candidate) return;
+        const { scope, entry } = candidate;
+
+        const result = entry.taskId
+          ? await aiApi.getTask(entry.taskId)
+          : entry.payload
+            ? await aiApi.generateIdempotent(
+                { ...entry.payload, clientRequestId: entry.clientRequestId },
+                scope,
+                {
+                  requireDurableJournal: true,
+                  retainAccepted: true,
+                  recovery: entry.recovery,
+                  ownerUserId,
+                },
+              )
+            : null;
+        if (cancelled) return;
+        if (result?.success && result.data) {
+          const run = activeRunFromJournal(scope, entry, result.data, ownerUserId);
+          if (!run) return;
+          persistActiveRun(run);
+          if (!cancelled) driveRun(run);
+          return;
+        }
+
+        if (entry.taskId && result && (result.code === 404 || result.code === 400)) {
+          // A deleted/invalid task cannot be recovered and cannot still charge;
+          // retire it so an older valid journal can be considered.
+          await commitAcceptedAiGeneration(scope, entry.taskId, ownerUserId);
+          continue;
+        }
+        if (result && !isAmbiguousAiCreateCode(result.code)) return;
+        await new Promise((resolve) => setTimeout(resolve, 3_000));
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [ensureSession, driveRun]);
+  }, [authenticatedUserId, ensureSession, driveRun]);
 
   // tear down the current run's intervals + result state (no busy guard).
   const resetRun = useCallback(() => {
@@ -731,11 +1021,9 @@ export function useGeneration(p: GenerationParams) {
       pollRef.current = null;
     }
     runIdRef.current += 1; // invalidate any in-flight poll for the previous run
-    try {
-      localStorage.removeItem(ACTIVE_RUN_KEY); // a cancelled/cleared run won't resume on refresh
-    } catch {
-      /* ignore */
-    }
+    const active = activeRunRef.current;
+    if (active) removePersistedActiveRun(active);
+    activeRunRef.current = null;
     setCells([]);
     setProgs([]);
     setRunMeta(null);

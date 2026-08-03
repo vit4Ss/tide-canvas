@@ -16,9 +16,6 @@ import { NodeHeader } from "./base/node-header";
 import { NodePorts } from "./base/node-ports";
 import { NodeChrome } from "./base/node-chrome";
 import { VideoModeDropdown } from "./video-mode-dropdown";
-import { NodeSkillButton } from "./node-skill-button";
-import { parseSkillParams } from "@/lib/skill-api";
-import type { SkillVO } from "@/types/skill";
 import { PromptRefEditor, PromptEditorModal } from "./prompt-ref-editor";
 import { type RefItem } from "./prompt-ref-utils";
 import type { CanvasNodeProps } from "./types/node-props";
@@ -27,9 +24,8 @@ import { useMediaUpload } from "./shared/use-media-upload";
 import { useFileDownload } from "./shared/use-file-download";
 import { ConfigurableNodeToolbar, type ConfigurableNodeToolbarAction } from "./shared/configurable-node-toolbar";
 import { useCanvasNodeFeatures } from "@/stores/use-canvas-node-config-store";
-import { findRightColumnSpot, getIncomingSources, inlineIncomingTextRefs, parseModelConfig, stopEvent as stop, switchSkillModel, validateReferenceFileSizes } from "./shared/node-utils";
+import { findRightColumnSpot, getIncomingSources, inlineIncomingTextRefs, parseModelConfig, stopEvent as stop, validateReferenceFileSizes } from "./shared/node-utils";
 import { GenerateSubmitButton, NodeDimsBadge, NodeErrorBadge, NodeGeneratingOverlay, NodeMediaLightbox, NodePanelChrome, NodeShell, NodeUploadingOverlay } from "./shared/node-overlays";
-import { CanvasSkillRunToolbarButton } from "../skill-run/canvas-skill-run-workspace";
 
 // 各模式（Tab）对连接源节点的数量/类型限制：hover 时提示，生成时校验。文生视频无需连接。
 const TAB_LIMITS: Record<string, { hint: string; min: number; max: number; types: string[] }> = {
@@ -503,19 +499,6 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     }
   }, [node.prompt]);
 
-  // 技能附加应用:指定模型卡则切换(收敛 effect 会校正不合法档位);
-  // 默认参数回填画幅/清晰度/时长
-  const applySkillExtras = useCallback((s: SkillVO) => {
-    switchSkillModel(s, videoModels, selectedModelId, setSelectedModelId);
-    const p = parseSkillParams(s.defaultParams);
-    setVideoParam((prev) => ({
-      ...prev,
-      ...(p.aspectRatio ? { ratio: p.aspectRatio } : {}),
-      ...(p.resolution ? { resolution: p.resolution } : {}),
-      ...(p.duration ? { duration: p.duration } : {}),
-    }));
-  }, [videoModels, selectedModelId, setSelectedModelId]);
-
   const handleGenerate = () => {
     const st = useCanvasStore.getState();
     const incoming = st.connections.filter((c) => c.targetId === node.id);
@@ -535,11 +518,8 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     }
 
     // 按模式选 handler，把图片/视频/文字喂给生成；模型无某维度(后台全不勾)时该参数不下发
-    // 技能:只发 skillId,模板由服务端拼到描述前面(与 /chat、创作台统一)。
-    // 使用次数由服务端在实际创建任务时统一统计，客户端不重复上报。
     const base: Record<string, unknown> = {
       prompt: finalPrompt,
-      ...(node.skillId ? { skillId: node.skillId } : {}),
       ...(!formatConfig.ratios || formatConfig.ratios.length ? { aspectRatio: videoParam.ratio } : {}),
       ...(!formatConfig.resolutions || formatConfig.resolutions.length ? { resolution: videoParam.resolution } : {}),
       ...(!formatConfig.durations || formatConfig.durations.length ? { duration: videoParam.duration } : {}),
@@ -582,9 +562,6 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         title: node.title || "视频节点",
         prompt: node.prompt,
         aspectRatio: node.aspectRatio,
-        // 克隆技能附着:重新发送的新节点与原节点同一技能语境
-        skillId: node.skillId,
-        skillName: node.skillName,
         status: "idle",
       }, true);
       // 克隆入边连线，使新节点拥有与原节点完全相同的参考输入
@@ -603,15 +580,16 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
 
   const topToolbarActions: ConfigurableNodeToolbarAction[] = [
     {
-      key: "skill.launcher",
-      group: "creative",
-      content: <CanvasSkillRunToolbarButton nodeId={node.id} />,
-    },
-    {
       key: "media.replace",
       group: "media",
       content: (
-        <button onMouseDown={stop} onClick={openFilePicker} title="重新上传" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800">
+        <button
+          onMouseDown={stop}
+          onClick={openFilePicker}
+          disabled={nodeUploading || generating}
+          title={generating ? "生成完成后可替换素材" : "重新上传"}
+          className="rounded-xl p-2 hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-neutral-800"
+        >
           <Upload className="h-4 w-4" />
         </button>
       ),
@@ -748,21 +726,14 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         {showAuxUI && videoDims && node.videoSrc && (
           <NodeDimsBadge dims={videoDims} />
         )}
-        {showAuxUI && !node.videoSrc && (
-          configuredFeatures.includes("media.replace") || configuredFeatures.includes("skill.launcher")
-        ) && (
+        {showAuxUI && !node.videoSrc && configuredFeatures.includes("media.replace") && (
           <NodeChrome placement="top-center" gap={8} zIndex={20}>
             <div onMouseDown={stop} className="flex items-center gap-0.5 whitespace-nowrap rounded-[18px] border border-neutral-200/80 bg-white px-2 py-1.5 text-sm text-neutral-700 shadow-lg dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
-              {configuredFeatures.includes("media.replace") && (
-                <button onMouseDown={stop} onClick={openFilePicker} disabled={nodeUploading}
-                  className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">
-                  {nodeUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} 上传
-                </button>
-              )}
-              {configuredFeatures.includes("media.replace") && configuredFeatures.includes("skill.launcher") && (
-                <span className="mx-1 h-5 w-px bg-neutral-200 dark:bg-neutral-700" aria-hidden />
-              )}
-              {configuredFeatures.includes("skill.launcher") && <CanvasSkillRunToolbarButton nodeId={node.id} />}
+              <button onMouseDown={stop} onClick={openFilePicker} disabled={nodeUploading || generating}
+                title={generating ? "生成完成后可上传素材" : "上传视频"}
+                className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">
+                {nodeUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} 上传
+              </button>
             </div>
           </NodeChrome>
         )}
@@ -789,9 +760,8 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                 refs={refs}
                 value={node.prompt || ""}
                 onChange={handlePromptChange}
-                onSubmit={() => { if (hasPromptSource && !generating) handleGenerate(); }}
+                onSubmit={() => { if (hasPromptSource && !generating && !nodeUploading) handleGenerate(); }}
                 placeholder="描述你想要生成的画面内容，@ 引用已连接素材（图片1/文本1…）"
-                leading={<NodeSkillButton node={node} outputType="video" onPicked={applySkillExtras} />}
               />
               <PromptEditorModal
                 open={promptExpanded}
@@ -843,10 +813,10 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                     {Math.ceil(pointCost)}
                   </span>
                   <GenerateSubmitButton
-                    disabled={!hasPromptSource || generating}
+                    disabled={!hasPromptSource || generating || nodeUploading}
                     generating={generating}
-                    title={generating ? "生成中..." : !hasPromptSource ? "先输入提示词" : "开始生成"}
-                    onClick={() => { if (hasPromptSource && !generating) handleGenerate(); }}
+                    title={generating ? "生成中..." : nodeUploading ? "素材上传中..." : !hasPromptSource ? "先输入提示词" : "开始生成"}
+                    onClick={() => { if (hasPromptSource && !generating && !nodeUploading) handleGenerate(); }}
                   />
                 </div>
               </div>

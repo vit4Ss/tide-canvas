@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { X, Check, ImageOff } from "lucide-react";
 import { useCanvasStore } from "@/stores/use-canvas-store";
 import { isImageCanvasNodeType } from "@/lib/canvas-node-types";
+import { useFocusTrap } from "@/hooks/use-focus-trap";
 
 interface Props {
   open: boolean;
@@ -22,6 +23,7 @@ interface Props {
  */
 export function CanvasCoverPicker({ open, currentUrl, images: propImages, onClose, onPick }: Props) {
   const nodes = useCanvasStore((s) => s.nodes);
+  const dialogRef = useFocusTrap<HTMLDivElement>(open);
   const images = useMemo(
     () =>
       propImages ??
@@ -34,17 +36,32 @@ export function CanvasCoverPicker({ open, currentUrl, images: propImages, onClos
   if (!open) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm" onMouseDown={onClose}>
+    <div
+      className="dark fixed inset-0 z-[200] flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm"
+      onMouseDown={onClose}
+      onKeyDown={(e) => {
+        if (e.key !== "Escape") return;
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }}
+    >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="canvas-cover-picker-title"
+        aria-describedby="canvas-cover-picker-description"
         className="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-neutral-900"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-neutral-200 px-5 py-3.5 dark:border-neutral-800">
           <div>
-            <h3 className="text-sm font-semibold text-neutral-900 dark:text-white">选择项目封面</h3>
-            <p className="mt-0.5 text-xs text-neutral-400">从画布中的图片里挑一张作为项目封面</p>
+            <h3 id="canvas-cover-picker-title" className="text-sm font-semibold text-neutral-900 dark:text-white">选择项目封面</h3>
+            <p id="canvas-cover-picker-description" className="mt-0.5 text-xs text-neutral-400">从画布中的图片里挑一张作为项目封面</p>
           </div>
-          <button onClick={onClose} title="关闭" className="rounded-full p-1.5 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800">
+          <button type="button" onClick={onClose} aria-label="关闭封面选择窗口" title="关闭" className="rounded-full p-1.5 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -62,6 +79,7 @@ export function CanvasCoverPicker({ open, currentUrl, images: propImages, onClos
                 return (
                   <button
                     key={img.id}
+                    type="button"
                     onClick={() => onPick(img.url)}
                     title={img.title}
                     className={`group relative aspect-square overflow-hidden rounded-xl border-2 transition-colors ${

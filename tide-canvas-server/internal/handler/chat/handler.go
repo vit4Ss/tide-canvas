@@ -129,6 +129,10 @@ func (h *handler) sendMessage(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, "content is blank")
 		return
 	}
+	if err := validateClientRequestID(dto.ClientRequestID); err != nil {
+		response.Fail(c, response.CodeBadRequest, "invalid clientRequestId")
+		return
+	}
 	ownerID := middleware.CurrentUserID(c)
 	// 请求上下文贯通到压缩与生成：客户端断开即取消，不再空烧上游。
 	vo, err := h.svc.sendMessage(c.Request.Context(), id, ownerID, dto)
@@ -212,6 +216,10 @@ func (h *handler) streamMessage(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, "content is blank")
 		return
 	}
+	if err := validateClientRequestID(dto.ClientRequestID); err != nil {
+		response.Fail(c, response.CodeBadRequest, "invalid clientRequestId")
+		return
+	}
 	ownerID := middleware.CurrentUserID(c)
 
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
@@ -228,11 +236,17 @@ func (h *handler) streamMessage(c *gin.Context) {
 		}
 	}
 
-	vo, err := h.svc.streamMessage(c.Request.Context(), id, ownerID, dto.Content, dto.Attachments, dto.Model, dto.SkillID, func(delta string) {
+	vo, err := h.svc.streamMessage(c.Request.Context(), id, ownerID, dto.Content, dto.Attachments, dto.Model, dto.SkillID, dto.ClientRequestID, func(delta string) {
 		frame(map[string]string{"delta": delta})
 	})
 	if err != nil {
 		switch {
+		case errors.Is(err, errTextTurnInProgress):
+			frame(map[string]any{
+				"error":        "上一条消息仍在生成中",
+				"code":         "TURN_IN_PROGRESS",
+				"retryAfterMs": textTurnRetryAfter(err).Milliseconds(),
+			})
 		case errors.Is(err, errInvalidSkill):
 			frame(map[string]string{"error": "selected skill is unavailable", "code": "SKILL_UNAVAILABLE"})
 		case errors.Is(err, ErrNotFound) || errors.Is(err, errForbidden):
@@ -261,7 +275,12 @@ func (h *handler) streamLiveMessage(c *gin.Context) {
 		return
 	}
 	ownerID := middleware.CurrentUserID(c)
-	lr, err := h.svc.attachLive(id, ownerID)
+	clientRequestID := c.Query("clientRequestId")
+	if err := validateClientRequestID(clientRequestID); err != nil {
+		response.Fail(c, response.CodeBadRequest, "invalid clientRequestId")
+		return
+	}
+	lr, err := h.svc.attachLive(id, ownerID, clientRequestID)
 	if err != nil {
 		response.Fail(c, response.CodeNotFound, "对话不存在")
 		return
@@ -340,6 +359,8 @@ func (h *handler) fail(c *gin.Context, err error, fallbackMsg string) {
 	case errors.Is(err, errForbidden):
 		// Hide existence: treat a non-owner as not found so IDs cannot be probed.
 		response.Fail(c, response.CodeNotFound, "conversation not found")
+	case errors.Is(err, errConversationBusy):
+		response.Fail(c, response.CodeConflict, "当前对话正在生成，请完成后再试")
 	case errors.Is(err, errContextFull):
 		response.Fail(c, response.CodeContextLimit, contextFullMsg)
 	case errors.Is(err, errInsufficientPoints):

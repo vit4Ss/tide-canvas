@@ -16,9 +16,13 @@ import (
 )
 
 const (
-	SkillKindPreset   = "preset"
-	SkillKindAgent    = "agent"
-	SkillKindWorkflow = "workflow"
+	SkillKindPreset = "preset"
+	SkillKindAgent  = "agent"
+
+	// legacySkillKindWorkflow is a persisted compatibility value only. It is
+	// normalized to agent during startup and is deliberately not accepted by
+	// ValidSkillKind or exposed as a third public Skill kind.
+	legacySkillKindWorkflow = "workflow"
 
 	SkillVersionDraft     = "draft"
 	SkillVersionPublished = "published"
@@ -183,10 +187,272 @@ func (SkillSurfaceBinding) TableName() string { return "skill_surface_binding" }
 
 func ValidSkillKind(kind string) bool {
 	switch kind {
-	case SkillKindPreset, SkillKindAgent, SkillKindWorkflow:
+	case SkillKindPreset, SkillKindAgent:
 		return true
 	}
 	return false
+}
+
+type normalizedSkillBinding struct {
+	Surface    string          `json:"surface"`
+	TargetType string          `json:"targetType"`
+	Enabled    bool            `json:"enabled"`
+	SortOrder  int             `json:"sortOrder"`
+	Defaults   json.RawMessage `json:"defaults"`
+}
+
+// NormalizeSkillKinds collapses the historical workflow public kind into
+// agent without deleting versions, files, runs, steps or artifacts. Multi-step
+// manifests remain intact and are still executed by the Agent runner. The same
+// pass enforces the current product contract on persisted snapshots:
+//   - preset has exactly one declared output;
+//   - agent is placed on canvas only.
+//
+// It is idempotent and runs after the legacy preset-version backfill.
+func NormalizeSkillKinds(db *gorm.DB) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		var versions []SkillVersion
+		if err := tx.Where("kind IN ?", []string{SkillKindPreset, SkillKindAgent, legacySkillKindWorkflow}).
+			Order("id ASC").Find(&versions).Error; err != nil {
+			return err
+		}
+
+		for i := range versions {
+			version := &versions[i]
+			kind := strings.ToLower(strings.TrimSpace(version.Kind))
+			if kind == legacySkillKindWorkflow {
+				kind = SkillKindAgent
+			}
+			primary := strings.ToLower(strings.TrimSpace(version.PrimaryOutputType))
+			if primary == "" {
+				primary = "text"
+			}
+			outputs := JSONStrings(version.OutputTypes, []string{primary})
+			entryPoints := version.EntryPoints
+			bindingsJSON := version.BindingsJSON
+			if kind == SkillKindPreset {
+				outputs = []string{primary}
+				entryPoints = JSONString([]string{"chat", "studio", "canvas"})
+				bindingsJSON = JSONString(presetSkillBindings(version.BindingsJSON))
+			} else if kind == SkillKindAgent {
+				entryPoints = JSONString([]string{"canvas"})
+				bindingsJSON = JSONString(canvasOnlySkillBindings(version.BindingsJSON))
+			}
+			manifestJSON := normalizePersistedSkillManifest(version.ManifestJSON, kind, primary, outputs)
+
+			if version.Kind == kind && version.PrimaryOutputType == primary &&
+				version.OutputTypes == JSONString(outputs) && version.EntryPoints == entryPoints &&
+				version.BindingsJSON == bindingsJSON && version.ManifestJSON == manifestJSON {
+				continue
+			}
+			var files []SkillFile
+			if err := tx.Where("skill_version_id = ?", version.ID).Order("path ASC").Find(&files).Error; err != nil {
+				return err
+			}
+			parts := []string{kind, entryPoints, primary, JSONString(outputs), version.InputSchema,
+				manifestJSON, version.PromptTemplate, version.ModelID, version.DefaultParams,
+				bindingsJSON, version.PrimaryFilePath}
+			for j := range files {
+				parts = append(parts, files[j].Path, files[j].SHA256)
+			}
+			if err := tx.Model(&SkillVersion{}).Where("id = ?", version.ID).Updates(map[string]any{
+				"kind": kind, "entry_points": entryPoints, "primary_output_type": primary,
+				"output_types": JSONString(outputs), "manifest_json": manifestJSON,
+				"bindings_json": bindingsJSON, "content_hash": skillContentHash(parts...),
+			}).Error; err != nil {
+				return err
+			}
+		}
+
+		if err := tx.Model(&Skill{}).Where("kind = ?", legacySkillKindWorkflow).
+			Update("kind", SkillKindAgent).Error; err != nil {
+			return err
+		}
+		// Keep the mutable catalog row aligned with its immutable current version
+		// for both public kinds. Public filters use the version snapshot, while
+		// cards and legacy admin views still read Skill.OutputType.
+		var catalogSkills []Skill
+		if err := tx.Where("current_version_id <> 0").Order("id ASC").Find(&catalogSkills).Error; err != nil {
+			return err
+		}
+		for i := range catalogSkills {
+			var current SkillVersion
+			if err := tx.Select("id", "kind", "primary_output_type").
+				First(&current, "id = ? AND skill_id = ?", catalogSkills[i].CurrentVersionID, catalogSkills[i].ID).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					continue
+				}
+				return err
+			}
+			kind := strings.ToLower(strings.TrimSpace(current.Kind))
+			if kind == legacySkillKindWorkflow {
+				kind = SkillKindAgent
+			}
+			if !ValidSkillKind(kind) {
+				continue
+			}
+			outputType := strings.ToLower(strings.TrimSpace(current.PrimaryOutputType))
+			if outputType == "" {
+				outputType = "text"
+			}
+			if err := tx.Model(&Skill{}).Where("id = ?", catalogSkills[i].ID).Updates(map[string]any{
+				"kind": kind, "output_type": outputType,
+			}).Error; err != nil {
+				return err
+			}
+		}
+		// Retire placements that no longer belong to either public surface
+		// contract. Public version snapshots are normalized above as well.
+		if err := tx.Unscoped().Where("skill_id IN (?) AND surface NOT IN ?",
+			tx.Model(&Skill{}).Select("id").Where("kind = ?", SkillKindPreset),
+			[]string{"chat", "studio", "canvas"}).Delete(&SkillSurfaceBinding{}).Error; err != nil {
+			return err
+		}
+		var agentSkills []Skill
+		if err := tx.Where("kind = ?", SkillKindAgent).Order("id ASC").Find(&agentSkills).Error; err != nil {
+			return err
+		}
+		for i := range agentSkills {
+			skill := &agentSkills[i]
+			bindings := []normalizedSkillBinding{{Surface: "canvas", TargetType: "*", Enabled: true, Defaults: json.RawMessage(`{}`)}}
+			if skill.CurrentVersionID != 0 {
+				var current SkillVersion
+				if err := tx.Select("id", "kind", "primary_output_type", "bindings_json").
+					First(&current, "id = ? AND skill_id = ?", skill.CurrentVersionID, skill.ID).Error; err == nil {
+					bindings = canvasOnlySkillBindings(current.BindingsJSON)
+					if err := tx.Model(&Skill{}).Where("id = ?", skill.ID).Updates(map[string]any{
+						"kind": SkillKindAgent, "output_type": current.PrimaryOutputType,
+					}).Error; err != nil {
+						return err
+					}
+				} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+					return err
+				}
+			}
+			var live []SkillSurfaceBinding
+			if err := tx.Where("skill_id = ?", skill.ID).Order("sort_order ASC, target_type ASC, id ASC").Find(&live).Error; err != nil {
+				return err
+			}
+			if liveSkillBindingsMatch(live, bindings) {
+				continue
+			}
+			if err := tx.Unscoped().Where("skill_id = ?", skill.ID).Delete(&SkillSurfaceBinding{}).Error; err != nil {
+				return err
+			}
+			for j := range bindings {
+				row := SkillSurfaceBinding{SkillID: skill.ID, Surface: "canvas", TargetType: bindings[j].TargetType,
+					Enabled: bindings[j].Enabled, SortOrder: bindings[j].SortOrder, Defaults: string(bindings[j].Defaults)}
+				if err := tx.Create(&row).Error; err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+}
+
+func liveSkillBindingsMatch(live []SkillSurfaceBinding, expected []normalizedSkillBinding) bool {
+	if len(live) != len(expected) {
+		return false
+	}
+	used := make([]bool, len(live))
+	for i := range expected {
+		found := false
+		for j := range live {
+			if used[j] || live[j].Surface != "canvas" || live[j].TargetType != expected[i].TargetType ||
+				live[j].Enabled != expected[i].Enabled || live[j].SortOrder != expected[i].SortOrder ||
+				canonicalSkillJSON(live[j].Defaults) != canonicalSkillJSON(string(expected[i].Defaults)) {
+				continue
+			}
+			used[j] = true
+			found = true
+			break
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func canonicalSkillJSON(raw string) string {
+	var value any
+	if json.Unmarshal([]byte(raw), &value) != nil {
+		return raw
+	}
+	encoded, _ := json.Marshal(value)
+	return string(encoded)
+}
+
+func canvasOnlySkillBindings(raw string) []normalizedSkillBinding {
+	var parsed []normalizedSkillBinding
+	if json.Unmarshal([]byte(raw), &parsed) != nil {
+		parsed = nil
+	}
+	out := make([]normalizedSkillBinding, 0, len(parsed))
+	for i := range parsed {
+		if !strings.EqualFold(strings.TrimSpace(parsed[i].Surface), "canvas") {
+			continue
+		}
+		parsed[i].Surface = "canvas"
+		parsed[i].TargetType = strings.ToLower(strings.TrimSpace(parsed[i].TargetType))
+		if parsed[i].TargetType == "" {
+			parsed[i].TargetType = "*"
+		}
+		if len(parsed[i].Defaults) == 0 || !json.Valid(parsed[i].Defaults) {
+			parsed[i].Defaults = json.RawMessage(`{}`)
+		}
+		out = append(out, parsed[i])
+	}
+	if len(out) == 0 {
+		out = append(out, normalizedSkillBinding{Surface: "canvas", TargetType: "*", Enabled: true, Defaults: json.RawMessage(`{}`)})
+	}
+	return out
+}
+
+func presetSkillBindings(raw string) []normalizedSkillBinding {
+	var parsed []normalizedSkillBinding
+	if json.Unmarshal([]byte(raw), &parsed) != nil {
+		parsed = nil
+	}
+	allowed := map[string]bool{"chat": true, "studio": true, "canvas": true}
+	out := make([]normalizedSkillBinding, 0, len(parsed))
+	for i := range parsed {
+		surface := strings.ToLower(strings.TrimSpace(parsed[i].Surface))
+		if !allowed[surface] {
+			continue
+		}
+		parsed[i].Surface = surface
+		parsed[i].TargetType = strings.ToLower(strings.TrimSpace(parsed[i].TargetType))
+		if parsed[i].TargetType == "" {
+			parsed[i].TargetType = "*"
+		}
+		if len(parsed[i].Defaults) == 0 || !json.Valid(parsed[i].Defaults) {
+			parsed[i].Defaults = json.RawMessage(`{}`)
+		}
+		out = append(out, parsed[i])
+	}
+	if len(out) == 0 {
+		for _, surface := range []string{"chat", "studio", "canvas"} {
+			out = append(out, normalizedSkillBinding{Surface: surface, TargetType: "*", Enabled: true, Defaults: json.RawMessage(`{}`)})
+		}
+	}
+	return out
+}
+
+func normalizePersistedSkillManifest(raw, kind, primary string, outputs []string) string {
+	var manifest map[string]any
+	if json.Unmarshal([]byte(raw), &manifest) != nil || manifest == nil {
+		return raw
+	}
+	manifest["kind"] = kind
+	manifest["primaryOutputType"] = primary
+	manifest["outputTypes"] = outputs
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		return raw
+	}
+	return string(encoded)
 }
 
 func JSONStrings(raw string, fallback []string) []string {
@@ -233,7 +499,7 @@ func EnsurePresetSkillVersion(db *gorm.DB, skill *Skill) (*SkillVersion, error) 
 	}
 
 	now := time.Now()
-	entryPoints := []string{"chat", "studio", "canvas", "asset", "api"}
+	entryPoints := []string{"chat", "studio", "canvas"}
 	var liveBindings []SkillSurfaceBinding
 	if err := db.Where("skill_id = ?", skill.ID).Order("surface ASC, sort_order ASC, target_type ASC").Find(&liveBindings).Error; err != nil {
 		return nil, err
@@ -425,7 +691,7 @@ func ensureLegacySkillVersionBindings(db *gorm.DB, skill *Skill, version *SkillV
 	if skill == nil || version == nil {
 		return nil
 	}
-	entryPoints := JSONStrings(version.EntryPoints, []string{"chat", "studio", "canvas", "asset", "api"})
+	entryPoints := JSONStrings(version.EntryPoints, []string{"chat", "studio", "canvas"})
 	var rows []SkillSurfaceBinding
 	if err := db.Where("skill_id = ?", skill.ID).Order("surface ASC, sort_order ASC, target_type ASC").Find(&rows).Error; err != nil {
 		return err

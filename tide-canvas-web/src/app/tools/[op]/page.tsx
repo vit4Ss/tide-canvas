@@ -24,6 +24,12 @@ import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";
 import { AiTaskStatus, type AiToolVO } from "@/types/ai";
 import { coverBg } from "@/lib/mesh";
+import {
+  commitAcceptedAiGeneration,
+  isAmbiguousAiCreateCode,
+  recoverableAiGenerations,
+  type PendingAiGeneration,
+} from "@/lib/ai-generation-idempotency";
 
 interface ToolDef {
   title: string;
@@ -74,6 +80,22 @@ const FALLBACK_OPS: Record<string, ToolDef> = {
 };
 
 type Phase = "idle" | "uploading" | "prompt" | "running" | "done" | "failed";
+
+function recoveryRecord(entry: PendingAiGeneration): Record<string, unknown> {
+  return entry.recovery && typeof entry.recovery === "object"
+    ? entry.recovery as Record<string, unknown>
+    : {};
+}
+
+function sourceFromJournal(entry: PendingAiGeneration): string {
+  const recovery = recoveryRecord(entry);
+  if (typeof recovery.source === "string") return recovery.source;
+  const input = entry.payload?.input;
+  if (input && typeof input.sourceImage === "string") return input.sourceImage;
+  return input && Array.isArray(input.imageList) && typeof input.imageList[0] === "string"
+    ? input.imageList[0]
+    : "";
+}
 
 /** 图像编辑模型解析 —— 与创作台一键操作同策略：优先 edits/i2i 能力，
     高清放大偏好 4K 模型，再退到 nano-banana-2 / gpt-image-2 / 首个。 */
@@ -140,30 +162,36 @@ export default function ToolPage() {
   }, [tools, params.op]);
 
   const ensureSession = useAuthStore((s) => s.ensureSession);
+  const authenticatedUserId = useAuthStore((s) => s.user?.id ?? "");
   const [phase, setPhase] = useState<Phase>("idle");
   const [source, setSource] = useState("");
   const [result, setResult] = useState("");
   const [progress, setProgress] = useState(0);
+  const [background, setBackground] = useState(false);
   const [error, setError] = useState("");
   const [prompt, setPrompt] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   // 轮询取消：卸载 / 重开时置 true，滞后的响应直接丢弃
   const pollGen = useRef(0);
 
-  useEffect(() => () => void pollGen.current++, []);
-
   const fail = useCallback((msg: string) => {
     setError(msg);
     setPhase("failed");
   }, []);
 
+  const journalScope = `tool:${params.op}`;
+
+  useEffect(() => () => void pollGen.current++, [authenticatedUserId, journalScope]);
+
   const poll = useCallback(
-    (taskId: string) => {
+    (taskId: string, ownerUserId: string, startedAt = Date.now()) => {
       const gen = ++pollGen.current;
-      const tick = async (n: number) => {
+      const tick = async () => {
         if (gen !== pollGen.current) return;
+        if ((useAuthStore.getState().user?.id ?? "") !== ownerUserId) return;
         const r = await aiApi.getTask(taskId);
         if (gen !== pollGen.current) return;
+        if ((useAuthStore.getState().user?.id ?? "") !== ownerUserId) return;
         if (r.success && r.data) {
           const t = r.data;
           if (t.status === AiTaskStatus.SUCCESS) {
@@ -186,24 +214,38 @@ export default function ToolPage() {
             } else {
               fail("处理完成但未返回图片，请稍后在创作台的生成历史中查看");
             }
+            void commitAcceptedAiGeneration(journalScope, taskId, ownerUserId);
             return;
           }
           if (t.status === AiTaskStatus.FAILED || t.status === AiTaskStatus.CANCELLED) {
             fail(t.errorMsg || "处理失败，请重试");
+            void commitAcceptedAiGeneration(journalScope, taskId, ownerUserId);
             return;
           }
           setProgress(t.progress || 0);
-        }
-        if (n > 150) {
-          // ~5 分钟兜底：任务还在跑，结果会留在生成历史里
-          fail("处理时间较长，请稍后在创作台的生成历史中查看结果");
+        } else if (r.code === 400 || r.code === 404) {
+          // The task was explicitly removed/invalidated. It cannot later charge
+          // or complete, so the accepted pointer may be retired.
+          void commitAcceptedAiGeneration(journalScope, taskId, ownerUserId);
+          fail(r.message || "任务已不存在，请重新处理");
+          return;
+        } else if (r.code === 403) {
+          // Keep the journal partition intact for the owning account, but do
+          // not spin forever or display a retry as if this task had failed.
+          fail("当前账号无权访问这个处理中任务");
           return;
         }
-        setTimeout(() => void tick(n + 1), 2000);
+        // A foreground timeout is not a terminal backend status. Keep the UI
+        // non-retryable and reconcile slowly after the normal image budget so
+        // a still-running paid task cannot be duplicated.
+        const beyondForegroundBudget = Date.now() - startedAt > 7 * 60 * 1000;
+        if (beyondForegroundBudget) setBackground(true);
+        const delay = beyondForegroundBudget ? 10_000 : 2_000;
+        setTimeout(() => void tick(), delay);
       };
-      void tick(0);
+      void tick();
     },
-    [fail],
+    [fail, journalScope],
   );
 
   const run = useCallback(
@@ -211,8 +253,18 @@ export default function ToolPage() {
       if (!def) return;
       setPhase("running");
       setProgress(0);
+      setBackground(false);
       setError("");
       try {
+        if (!(await ensureSession())) {
+          setPhase("idle");
+          return;
+        }
+        const ownerUserId = useAuthStore.getState().user?.id ?? "";
+        if (!ownerUserId) {
+          fail("无法确认当前账号，任务尚未启动，请刷新后重试");
+          return;
+        }
         const pick = await pickModel(def);
         if (!pick) {
           fail("没有可用的图像编辑模型");
@@ -224,22 +276,97 @@ export default function ToolPage() {
           prompt: promptText,
           ...(def.extra ?? {}),
         };
-        const res = await aiApi.generateIdempotent({
-          handler: def.handler,
-          modelId: pick.modelKey || pick.id,
-          input,
-        }, `tool:${params.op}`);
-        if (!res.success || !res.data) {
-          fail(res.message || "任务创建失败，请重试");
-          return;
+        const createGeneration = ++pollGen.current;
+        let reconnectNoticeShown = false;
+        for (;;) {
+          if (createGeneration !== pollGen.current) return;
+          const res = await aiApi.generateIdempotent({
+            handler: def.handler,
+            modelId: pick.modelKey || pick.id,
+            input,
+          }, journalScope, {
+            requireDurableJournal: true,
+            retainAccepted: true,
+            recovery: { source: imgUrl, prompt: promptText, op: params.op },
+            ownerUserId,
+          });
+          if (createGeneration !== pollGen.current) return;
+          if (res.success && res.data?.id) {
+            poll(res.data.id, ownerUserId);
+            return;
+          }
+          if (!isAmbiguousAiCreateCode(res.code)) {
+            fail(res.message || "任务创建失败，请重试");
+            return;
+          }
+          if (!reconnectNoticeShown) {
+            reconnectNoticeShown = true;
+            toast.info("任务正在确认中，请保持页面打开");
+          }
+          await new Promise((resolve) => setTimeout(resolve, 3_000));
         }
-        poll(res.data.id);
       } catch {
         fail("网络错误，请重试");
       }
     },
-    [def, fail, params.op, poll],
+    [def, ensureSession, fail, journalScope, params.op, poll],
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const resume = async () => {
+      if (cancelled) return;
+      if (!(await ensureSession()) || cancelled) return;
+      const ownerUserId = useAuthStore.getState().user?.id ?? "";
+      if (!ownerUserId) return;
+      const entry = recoverableAiGenerations(journalScope, ownerUserId)
+        .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+      if (!entry) return;
+      const sourceUrl = sourceFromJournal(entry);
+      const recovery = recoveryRecord(entry);
+      if (sourceUrl) setSource(sourceUrl);
+      if (typeof recovery.prompt === "string") setPrompt(recovery.prompt);
+      setProgress(0);
+      setBackground(Date.now() - entry.updatedAt > 7 * 60 * 1000);
+      setError("");
+      setPhase("running");
+      if (entry.taskId) {
+        poll(entry.taskId, ownerUserId, entry.updatedAt);
+        return;
+      }
+      if (!entry.payload) {
+        fail("旧版任务缺少恢复信息，请到生成历史查看结果后重新处理");
+        return;
+      }
+      const result = await aiApi.generateIdempotent(
+        { ...entry.payload, clientRequestId: entry.clientRequestId },
+        journalScope,
+        {
+          requireDurableJournal: true,
+          retainAccepted: true,
+          recovery: entry.recovery,
+          ownerUserId,
+        },
+      );
+      if (cancelled) return;
+      if (result.success && result.data?.id) {
+        poll(result.data.id, ownerUserId, entry.updatedAt);
+        return;
+      }
+      if (isAmbiguousAiCreateCode(result.code)) {
+        retryTimer = setTimeout(() => void resume(), 3_000);
+        return;
+      }
+      fail(result.message || "任务创建失败，请重试");
+    };
+    void resume();
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
+  }, [authenticatedUserId, ensureSession, fail, journalScope, poll]);
 
   const onFile = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -275,6 +402,7 @@ export default function ToolPage() {
     setResult("");
     setPrompt("");
     setError("");
+    setBackground(false);
   }, []);
 
   const close = useCallback(() => {
@@ -388,7 +516,9 @@ export default function ToolPage() {
               </span>
             </div>
           </div>
-          <p className="tp-meta">处理由 AI 模型完成，通常需要几十秒。</p>
+          <p className="tp-meta">
+            {background ? "任务仍在后台处理中，本页会自动同步结果。" : "处理由 AI 模型完成，通常需要几十秒。"}
+          </p>
         </div>
       )}
 

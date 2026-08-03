@@ -12,6 +12,9 @@ package chat
 import (
 	"context"
 	"errors"
+	"strings"
+
+	"gorm.io/gorm"
 
 	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/model"
@@ -35,35 +38,63 @@ type textCharge struct {
 // chargeTextCall 解析本轮所用文本模型并预扣积分。模型未配置或定价为 0 时
 // 返回免费 charge（cost=0），不触碰积分。
 func (s *service) chargeTextCall(ctx context.Context, ownerID idgen.ID, requestedModel string) (*textCharge, error) {
-	m := s.repo.resolveTextModel(requestedModel)
-	ch := &textCharge{ownerID: ownerID, model: m}
-	if m == nil {
-		return ch, nil
-	}
-	ch.cost = int(m.Price.IntPart())
-	if ch.cost <= 0 {
-		ch.cost = 0
-		return ch, nil
-	}
-	ch.refID = idgen.Next()
-	if err := points.Consume(s.repo.db, ownerID, ch.cost, "对话消耗："+m.Name, ch.refID); err != nil {
-		if errors.Is(err, points.ErrInsufficient) {
-			return nil, errInsufficientPoints
-		}
+	ch := s.prepareTextCharge(ownerID, requestedModel)
+	if err := consumeTextCharge(s.repo.db.WithContext(ctx), ch); err != nil {
 		return nil, err
 	}
 	return ch, nil
 }
 
+// prepareTextCharge resolves the immutable charge metadata without mutating the
+// balance. Idempotent streamed requests persist this metadata beside their user
+// fence, then consume it in the same database transaction as that insert.
+func (s *service) prepareTextCharge(ownerID idgen.ID, requestedModel string) *textCharge {
+	m := s.repo.resolveTextModel(requestedModel)
+	ch := &textCharge{ownerID: ownerID, model: m}
+	if m == nil {
+		return ch
+	}
+	ch.cost = int(m.Price.IntPart())
+	if ch.cost <= 0 {
+		ch.cost = 0
+		return ch
+	}
+	ch.refID = idgen.Next()
+	return ch
+}
+
+func consumeTextCharge(db *gorm.DB, ch *textCharge) error {
+	if ch == nil || ch.cost <= 0 {
+		return nil
+	}
+	modelName := "文本模型"
+	if ch.model != nil && strings.TrimSpace(ch.model.Name) != "" {
+		modelName = ch.model.Name
+	}
+	if err := points.Consume(db, ch.ownerID, ch.cost, "对话消耗："+modelName, ch.refID); err != nil {
+		if errors.Is(err, points.ErrInsufficient) {
+			return errInsufficientPoints
+		}
+		return err
+	}
+	return nil
+}
+
 // refundTextCall 上游调用失败后退回预扣积分。
 func (s *service) refundTextCall(ch *textCharge) {
-	if ch == nil || ch.cost <= 0 || ch.refID == 0 {
-		return
-	}
-	if err := points.Refund(s.repo.db, ch.ownerID, ch.cost, "对话失败退款", ch.refID); err != nil {
+	if err := refundTextCallDB(s.repo.db, ch); err != nil {
 		logger.L().Error("chat: refund failed",
 			zap.String("refId", ch.refID.String()), zap.Error(err))
 	}
+}
+
+// refundTextCallDB is transaction-aware so an idempotent fallback can persist
+// its assistant, release its lease, and record the refund as one durable unit.
+func refundTextCallDB(db *gorm.DB, ch *textCharge) error {
+	if ch == nil || ch.cost <= 0 || ch.refID == 0 {
+		return nil
+	}
+	return points.Refund(db, ch.ownerID, ch.cost, "对话失败退款", ch.refID)
 }
 
 // cost64 给日志用的积分数值（免费/空 charge 为 0）。

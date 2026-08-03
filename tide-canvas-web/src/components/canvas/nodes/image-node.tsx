@@ -23,9 +23,6 @@ import { InlinePanorama, type InlinePanoramaApi } from "./inline-panorama";
 import { type RefItem } from "./prompt-ref-utils";
 import { NodeChrome } from "./base/node-chrome";
 import { NodePorts } from "./base/node-ports";
-import { NodeSkillButton } from "./node-skill-button";
-import { parseSkillParams } from "@/lib/skill-api";
-import type { SkillVO } from "@/types/skill";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { resolveModelReferenceLimitBytes } from "@/lib/upload-limits";
 import { sliceImageGrid, transformImageRaster, type RasterTransform } from "@/lib/image-slice";
@@ -48,9 +45,8 @@ import {
   type PortraitFeaturePanelMode,
 } from "./shared/portrait-feature-panel";
 import { useCanvasNodeFeatures } from "@/stores/use-canvas-node-config-store";
-import { findRightColumnSpot, getIncomingSources, inlineIncomingTextRefs, parseModelConfig, stopEvent as stop, switchSkillModel, validateReferenceFileSizes } from "./shared/node-utils";
+import { findRightColumnSpot, getIncomingSources, inlineIncomingTextRefs, parseModelConfig, stopEvent as stop, validateReferenceFileSizes } from "./shared/node-utils";
 import { NodeDimsBadge, NodeErrorBadge, NodeGeneratingOverlay, NodeMediaLightbox, NodeShell, NodeUploadingOverlay } from "./shared/node-overlays";
-import { CanvasSkillRunToolbarButton } from "../skill-run/canvas-skill-run-workspace";
 
 // 自定义宫格选择器的最大行列（N×N 网格）
 const CUSTOM_MAX = 8;
@@ -766,20 +762,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   // 把卡片实际渲染尺寸同步到 store，供连线层将端点锚定到卡片真实边缘中点（默认对节点居中）。
   useSyncContentSize(node, cardW, cardH);
 
-  // 技能附加应用:指定模型卡则切换(校正 effect 会收敛不合法档位);默认参数
-  // 回填画幅/画质/清晰度;skillId 已由 NodeSkillButton 写回节点
-  const applySkillExtras = useCallback((s: SkillVO) => {
-    switchSkillModel(s, imageModels, selectedModelId, setSelectedModelId);
-    const p = parseSkillParams(s.defaultParams);
-    setQualityRatio((q) => ({
-      ...q,
-      ...(p.aspectRatio ? { ratio: p.aspectRatio } : {}),
-      ...(p.quality ? { quality: p.quality as QualityRatioValue["quality"] } : {}),
-      ...(p.resolution ? { clarity: p.resolution as QualityRatioValue["clarity"] } : {}),
-    }));
-    if (p.aspectRatio) setRatioTouched(true);
-  }, [imageModels, selectedModelId, setQualityRatio, setRatioTouched, setSelectedModelId]);
-
   const handleGenerate = useCallback(() => {
     const st = useCanvasStore.getState();
     const incomingSources = getIncomingSources(st, node.id);
@@ -795,8 +777,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     const imageList = ownImage ? [ownImage, ...refImages] : refImages;
     const hasImage = imageList.length > 0;
     const stylePrompt = selectedStylePrompt.trim();
-    // 技能只发 skillId，模板由服务端拼到最前面（客户端先拼会污染落库的 input，
-    // 作品标题读到的就是模板开头）；风格要求仍在客户端拼，它不是技能的一部分。
     // 文本节点没有独立下发通道，正文只能落进 prompt——顺序与 refs 的「文本N」编号同源
     const promptWithText = inlineIncomingTextRefs(node.prompt || "", incomingSources);
     const mergedPrompt = [promptWithText.trim(), stylePrompt ? `风格要求：${stylePrompt}` : ""].filter(Boolean).join("\n");
@@ -807,7 +787,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       gridOutput: formatConfig.gridOutput,
       input: {
         prompt: mergedPrompt,
-        ...(node.skillId ? { skillId: node.skillId } : {}),
         ...(stylePrompt ? { stylePreset: selectedStyleId, stylePrompt } : {}),
         ...(imageList.length ? { imageList, sourceImage: imageList[0], references: imageList.slice(1) } : {}),
         // 模型无某维度(后台全不勾)时该参数不下发，避免上游收到其不支持的字段
@@ -1543,11 +1522,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   // handler、提示词、积分和状态机仍由本组件掌控。
   const topToolbarActions: ConfigurableNodeToolbarAction[] = [
     {
-      key: "skill.launcher",
-      group: "creative",
-      content: <CanvasSkillRunToolbarButton nodeId={node.id} />,
-    },
-    {
       key: "image.subjectTurnaround",
       group: "creative",
       content: (
@@ -1784,7 +1758,13 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       key: "media.replace",
       group: "media",
       content: (
-        <button onMouseDown={stop} onClick={openFilePicker} title="重新上传 / 图生图" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800">
+        <button
+          onMouseDown={stop}
+          onClick={openFilePicker}
+          disabled={nodeUploading || generating}
+          title={generating ? "生成完成后可替换素材" : "重新上传 / 图生图"}
+          className="rounded-xl p-2 hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-neutral-800"
+        >
           <Brush className="h-4 w-4" />
         </button>
       ),
@@ -1827,11 +1807,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   // node. Controls that only make sense inside the panorama viewer are
   // registered as their own capabilities instead of being rendered implicitly.
   const panoramaToolbarActions: ConfigurableNodeToolbarAction[] = [
-    {
-      key: "skill.launcher",
-      group: "creative",
-      content: <CanvasSkillRunToolbarButton nodeId={node.id} />,
-    },
     {
       key: "image.panoramaCapture",
       group: "process",
@@ -1971,29 +1946,20 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         {showAuxUI && imageDims && node.imageSrc && (
           <NodeDimsBadge dims={imageDims} />
         )}
-        {/* 空节点的上传与 Skill 必须共用一个 chrome；两个 top-center
-            overlay 会完全重叠并互相遮挡点击区域。 */}
-        {showAuxUI && !node.imageSrc && (
-          configuredFeatures.includes("media.replace") || configuredFeatures.includes("skill.launcher")
-        ) && (
+        {showAuxUI && !node.imageSrc && configuredFeatures.includes("media.replace") && (
           <NodeChrome placement="top-center" gap={8} zIndex={20}>
             <div onMouseDown={stop} className="flex items-center gap-0.5 whitespace-nowrap rounded-[18px] border border-neutral-200/80 bg-white px-2 py-1.5 text-sm text-neutral-700 shadow-lg dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
-              {configuredFeatures.includes("media.replace") && (
-                <button
-                  type="button"
-                  onMouseDown={stop}
-                  onClick={openFilePicker}
-                  disabled={nodeUploading}
-                  className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800"
-                >
-                  {nodeUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                  上传
-                </button>
-              )}
-              {configuredFeatures.includes("media.replace") && configuredFeatures.includes("skill.launcher") && (
-                <span className="mx-1 h-5 w-px bg-neutral-200 dark:bg-neutral-700" aria-hidden />
-              )}
-              {configuredFeatures.includes("skill.launcher") && <CanvasSkillRunToolbarButton nodeId={node.id} />}
+              <button
+                type="button"
+                onMouseDown={stop}
+                onClick={openFilePicker}
+                disabled={nodeUploading || generating}
+                title={generating ? "生成完成后可上传素材" : "上传图片"}
+                className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800"
+              >
+                {nodeUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                上传
+              </button>
             </div>
           </NodeChrome>
         )}
@@ -2473,7 +2439,8 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                 <Button
                   onMouseDown={stop}
                   onClick={openFilePicker}
-                  disabled={nodeUploading}
+                  disabled={nodeUploading || generating}
+                  title={generating ? "生成完成后可上传素材" : undefined}
                   variant="subtle"
                   color="dark"
                   radius="md"
@@ -2536,19 +2503,16 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                 refs={refs}
                 value={node.prompt || ""}
                 onChange={handlePromptChange}
-                onSubmit={() => { if (!generating && hasPromptSource) handleGenerate(); }}
+                onSubmit={() => { if (!generating && !nodeUploading && hasPromptSource) handleGenerate(); }}
                 placeholder={promptPlaceholder}
                 leading={
-                  <>
-                    <ImageStylePicker
-                      value={selectedStyleId}
-                      selectedName={selectedStyleName}
-                      selectedPrompt={selectedStylePrompt}
-                      modelId={selectedModelId}
-                      onChange={handleStylePresetChange}
-                    />
-                    <NodeSkillButton node={node} outputType="image" onPicked={applySkillExtras} />
-                  </>
+                  <ImageStylePicker
+                    value={selectedStyleId}
+                    selectedName={selectedStyleName}
+                    selectedPrompt={selectedStylePrompt}
+                    modelId={selectedModelId}
+                    onChange={handleStylePresetChange}
+                  />
                 }
                 trailing={
                   <div className="flex items-center gap-0.5">
@@ -2602,10 +2566,10 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                   <button
                     onMouseDown={stop}
                     onClick={(e) => { stop(e); handleGenerate(); }}
-                    disabled={generating || !hasPromptSource}
-                    title={generating ? "生成中..." : !hasPromptSource ? "先输入提示词" : "开始生成"}
+                    disabled={generating || nodeUploading || !hasPromptSource}
+                    title={generating ? "生成中..." : nodeUploading ? "素材上传中..." : !hasPromptSource ? "先输入提示词" : "开始生成"}
                     className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-                      generating || !hasPromptSource
+                      generating || nodeUploading || !hasPromptSource
                         ? "bg-neutral-100 text-neutral-400 dark:bg-neutral-800"
                         : "bg-neutral-800 text-white hover:bg-neutral-950 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
                     }`}

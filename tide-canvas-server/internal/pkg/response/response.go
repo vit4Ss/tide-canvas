@@ -38,6 +38,7 @@ const (
 	CodeUnauthorized = 401
 	CodeForbidden    = 403
 	CodeNotFound     = 404
+	CodeConflict     = 409
 	CodeRateLimited  = 429
 	CodeServerError  = 500
 
@@ -113,7 +114,7 @@ func Page[T any](c *gin.Context, records []T, total int64, pageNum, pageSize int
 }
 
 // Fail writes a failure Result. The HTTP status mirrors the code only for the
-// standard HTTP codes {400,401,403,404,429,500}; all other (business) codes are
+// standard HTTP codes {400,401,403,404,409,429,500}; all other (business) codes are
 // returned with HTTP 200 so the frontend can read the body uniformly.
 //
 // CRITICAL: auth failures pass code 401 here, which lands in the JSON body —
@@ -121,7 +122,7 @@ func Page[T any](c *gin.Context, records []T, total int64, pageNum, pageSize int
 func Fail(c *gin.Context, code int, msg string) {
 	httpStatus := http.StatusOK
 	switch code {
-	case CodeBadRequest, CodeUnauthorized, CodeForbidden, CodeNotFound, CodeRateLimited, CodeServerError:
+	case CodeBadRequest, CodeUnauthorized, CodeForbidden, CodeNotFound, CodeConflict, CodeRateLimited, CodeServerError:
 		httpStatus = code
 	}
 	// 500 类错误对外只回统一话术，不把内部错误细节透给用户（含 panic 恢复和个别

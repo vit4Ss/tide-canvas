@@ -17,7 +17,10 @@ export function useTaskPolling({
   msgs: MessageVO[];
   activeId: string | null;
   busy: boolean;
-  loadMessages: (id: string) => Promise<void>;
+  loadMessages: (
+    id: string,
+    isVisible?: (records: readonly MessageVO[]) => boolean,
+  ) => Promise<boolean>;
 }) {
   const hasInflight = useMemo(
     () =>

@@ -6,7 +6,6 @@
    / 积分预估 / 发送按钮。状态全部来自 _hooks 的三个 bag，本文件纯渲染。 */
 
 import { Sparkles, X as XIcon } from "lucide-react";
-import { SkillInputFields } from "@/components/skill/skill-input-fields";
 import { toast } from "@/components/shared/toast";
 import {
   MentionPromptEditor,
@@ -21,7 +20,6 @@ import {
   findClipModel,
 } from "@/lib/music-modes";
 import type { ContextUsageVO } from "@/types/chat";
-import { skillKindOf } from "@/types/skill";
 import { CmSelect, RatioBox } from "./cm-select";
 import { RefThumb } from "./ref-thumb";
 import {
@@ -65,7 +63,6 @@ export function Composer({
   const {
     genModels,
     model,
-    setModel,
     selModel,
     mCfg,
     isVid,
@@ -89,10 +86,6 @@ export function Composer({
     setDur,
     skill,
     removeSkill,
-    skillInputValues,
-    setSkillInputValues,
-    skillInputErrors,
-    setSkillInputErrors,
     setSkillPickerOpen,
     batch,
     setBatch,
@@ -116,9 +109,9 @@ export function Composer({
     isMusicSel,
     musicMode,
     musicNoDraftOk,
+    selectModel,
     points,
   } = cfg;
-  const isFlowSkill = !!skill && skillKindOf(skill) !== "preset";
   const {
     refs,
     removeRef,
@@ -172,25 +165,6 @@ export function Composer({
             </span>
           </div>
         )}
-        {isFlowSkill && skill && (
-          <SkillInputFields
-            schema={skill.inputSchema}
-            values={skillInputValues}
-            errors={skillInputErrors}
-            disabled={busy}
-            compact
-            style={{ padding: "0 12px 10px" }}
-            onChange={(key, value) => {
-              setSkillInputValues((current) => ({ ...current, [key]: value }));
-              setSkillInputErrors((current) => {
-                if (!current[key]) return current;
-                const next = { ...current };
-                delete next[key];
-                return next;
-              });
-            }}
-          />
-        )}
         {refs.length > 0 && (
           <div className="ref-strip">
             {refs.map((r) => (
@@ -221,11 +195,11 @@ export function Composer({
               </svg>
             </button>
           )}
-          {/* 预设、智能技能与工作流共用同一个入口。 */}
+          {/* 对话生成只使用单输出预设；智能技能从画布入口启动。 */}
           {selModel && (
             <button
               className="cm-upload"
-              title="选择技能或工作流"
+              title="选择预设技能"
               type="button"
               onClick={() => setSkillPickerOpen(true)}
             >
@@ -297,7 +271,7 @@ export function Composer({
                     // 上游把延长/翻唱任务钉到原曲的模型路由,选定原曲后自动切回原曲那张模型卡
                     const src = findClipModel(genModels, opt);
                     if (src && src.name !== model) {
-                      setModel(src.name);
+                      selectModel(src.name);
                       toast.info(`已切换到原曲模型「${src.name}」`);
                     } else if (!src && (opt.modelId || opt.modelName)) {
                       toast.info("原曲所用模型已下架，续写/翻唱可能失败");
@@ -405,9 +379,11 @@ export function Composer({
                   <button
                     key={m.id}
                     type="button"
+                    role="menuitemradio"
+                    aria-checked={m.name === model}
                     className={`cm-mitem${m.name === model ? " on" : ""}`}
                     onClick={() => {
-                      setModel(m.name);
+                      selectModel(m.name);
                       setOpenSel(null);
                     }}
                   >
@@ -426,7 +402,7 @@ export function Composer({
                       </span>
                       <span className="ds">{desc}</span>
                     </span>
-                    <span className="ck">✓</span>
+                    <span className="ck" aria-hidden="true">✓</span>
                   </button>
                 );
               })}
@@ -445,6 +421,8 @@ export function Composer({
                 <button
                   key={v}
                   type="button"
+                  role="menuitemradio"
+                  aria-checked={v === mode}
                   className={`cm-mitem${v === mode ? " on" : ""}`}
                   onClick={() => {
                     setMode(v);
@@ -456,7 +434,7 @@ export function Composer({
                     <span className="nm">{MODE_LABEL[v] ?? v}</span>
                     <span className="ds">{MODE_HINT[v] ?? ""}</span>
                   </span>
-                  <span className="ck">✓</span>
+                  <span className="ck" aria-hidden="true">✓</span>
                 </button>
               ))}
             </CmSelect>
@@ -475,6 +453,8 @@ export function Composer({
                 <button
                   key={o.v}
                   type="button"
+                  role="menuitemradio"
+                  aria-checked={o.v === musicMode}
                   className={`cm-mitem${o.v === musicMode ? " on" : ""}`}
                   onClick={() => {
                     setMusic((m) => ({ ...m, musicMode: o.v }));
@@ -486,7 +466,7 @@ export function Composer({
                     <span className="nm">{o.l}</span>
                     <span className="ds">{MUSIC_MODE_HINT[o.v] ?? ""}</span>
                   </span>
-                  <span className="ck">✓</span>
+                  <span className="ck" aria-hidden="true">✓</span>
                 </button>
               ))}
             </CmSelect>
@@ -521,6 +501,8 @@ export function Composer({
                 <button
                   key={r}
                   type="button"
+                  role="menuitemradio"
+                  aria-checked={r === ratio}
                   className={`cm-mitem${r === ratio ? " on" : ""}`}
                   onClick={() => {
                     setRatio(r);
@@ -531,7 +513,7 @@ export function Composer({
                   <span className="nfo">
                     <span className="nm">{r}</span>
                   </span>
-                  <span className="ck">✓</span>
+                  <span className="ck" aria-hidden="true">✓</span>
                 </button>
               ))}
             </CmSelect>
@@ -548,6 +530,8 @@ export function Composer({
                 <button
                   key={r}
                   type="button"
+                  role="menuitemradio"
+                  aria-checked={r === res}
                   className={`cm-mitem${r === res ? " on" : ""}`}
                   onClick={() => {
                     setRes(r);
@@ -557,7 +541,7 @@ export function Composer({
                   <span className="nfo">
                     <span className="nm">{r.toUpperCase()}</span>
                   </span>
-                  <span className="ck">✓</span>
+                  <span className="ck" aria-hidden="true">✓</span>
                 </button>
               ))}
             </CmSelect>
@@ -574,6 +558,8 @@ export function Composer({
                 <button
                   key={q}
                   type="button"
+                  role="menuitemradio"
+                  aria-checked={q === quality}
                   className={`cm-mitem${q === quality ? " on" : ""}`}
                   onClick={() => {
                     setQuality(q);
@@ -583,7 +569,7 @@ export function Composer({
                   <span className="nfo">
                     <span className="nm">{QUALITY_LABEL[q] ?? q}</span>
                   </span>
-                  <span className="ck">✓</span>
+                  <span className="ck" aria-hidden="true">✓</span>
                 </button>
               ))}
             </CmSelect>
@@ -600,6 +586,8 @@ export function Composer({
                 <button
                   key={d}
                   type="button"
+                  role="menuitemradio"
+                  aria-checked={d === dur}
                   className={`cm-mitem${d === dur ? " on" : ""}`}
                   onClick={() => {
                     setDur(d);
@@ -609,7 +597,7 @@ export function Composer({
                   <span className="nfo">
                     <span className="nm">{d}</span>
                   </span>
-                  <span className="ck">✓</span>
+                  <span className="ck" aria-hidden="true">✓</span>
                 </button>
               ))}
             </CmSelect>
@@ -629,6 +617,8 @@ export function Composer({
               <button
                 key={c}
                 type="button"
+                role="menuitemradio"
+                aria-checked={c === batch}
                 className={`cm-mitem${c === batch ? " on" : ""}`}
                 onClick={() => {
                   setBatch(c);
@@ -639,7 +629,7 @@ export function Composer({
                 <span className="nfo">
                   <span className="nm">{c} 张</span>
                 </span>
-                <span className="ck">✓</span>
+                <span className="ck" aria-hidden="true">✓</span>
               </button>
             ))}
           </CmSelect>
@@ -653,15 +643,15 @@ export function Composer({
             onClick={send}
             disabled={
               busy ||
-              (!draft.trim() && !musicNoDraftOk && !isFlowSkill) ||
-              (selModel?.type === "text" && !isFlowSkill && !!ctxUsage?.full)
+              (!draft.trim() && !musicNoDraftOk) ||
+              (selModel?.type === "text" && !!ctxUsage?.full)
             }
             title={
               busy
                 ? "处理中…"
-                : selModel?.type === "text" && !isFlowSkill && ctxUsage?.full
+                : selModel?.type === "text" && ctxUsage?.full
                   ? "会话上下文已满，请开启新会话"
-                  : !draft.trim() && !musicNoDraftOk && !isFlowSkill
+                  : !draft.trim() && !musicNoDraftOk
                     ? "先输入内容"
                     : "发送"
             }

@@ -11,7 +11,7 @@
    ============================================================================ */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bot, GitBranch, Plus, RefreshCw, Search, Sparkles, Upload } from "lucide-react";
+import { Bot, Plus, RefreshCw, Search, Sparkles, Upload } from "lucide-react";
 import {
   AdminAlert,
   AdminEmptyState,
@@ -45,7 +45,9 @@ import type { AiModelVO } from "@/types/ai";
 import type { AdminSkillImportPackage, AdminSkillVO } from "@/types/admin-skill";
 import {
   ADMIN_SKILL_ENTRY_POINTS,
+  constrainAdminSkillEntryPoints,
   defaultAdminSkillBindings,
+  defaultAdminSkillEntryPoints,
   defaultAdminSkillOutputTypes,
   starterAdminSkillManifest,
 } from "@/lib/admin-skill-defaults";
@@ -65,7 +67,6 @@ const KIND_OPTIONS: Array<{
   title: string;
   description: string;
   icon: typeof Sparkles;
-  disabled?: boolean;
 }> = [
   {
     key: "preset",
@@ -76,16 +77,8 @@ const KIND_OPTIONS: Array<{
   {
     key: "agent",
     title: "智能技能",
-    description: "自主规划并调用多个 Skill，相关能力正在建设中。",
+    description: "在画布中与用户持续沟通，可跨图片、视频、音频等节点完成任务。",
     icon: Bot,
-    disabled: true,
-  },
-  {
-    key: "workflow",
-    title: "工作流",
-    description: "多步骤编排、中间结果与人工确认能力正在建设中。",
-    icon: GitBranch,
-    disabled: true,
   },
 ];
 
@@ -110,7 +103,7 @@ interface SkillForm {
 
 const EMPTY_FORM: SkillForm = {
   kind: "preset",
-  entryPoints: ADMIN_SKILL_ENTRY_POINTS.map((entry) => entry.key),
+  entryPoints: defaultAdminSkillEntryPoints("preset"),
   title: "",
   description: "",
   coverUrl: "",
@@ -166,7 +159,7 @@ export default function AdminSkillsPage() {
   const defaultParamsInputRef = useRef<HTMLInputElement>(null);
   const [contentAccess, setContentAccess] = useState<"editable" | "checking" | "locked">("editable");
   const [coverPreviewFailed, setCoverPreviewFailed] = useState(false);
-  const editingVersionedSkill = !!editing && (editing.kind === "agent" || editing.kind === "workflow");
+  const editingVersionedSkill = !!editing && editing.kind === "agent";
 
   // 关联模型下拉：全部启用模型，按表单 outputType 过滤同模态的卡
   const [models, setModels] = useState<AiModelVO[]>([]);
@@ -236,11 +229,10 @@ export default function AdminSkillsPage() {
   };
 
   const openEdit = (r: AdminSkillVO) => {
+    const kind = r.kind || "preset";
     const nextForm: SkillForm = {
-      kind: r.kind || "preset",
-      entryPoints: r.entryPoints?.length
-        ? [...new Set(r.entryPoints)]
-        : ADMIN_SKILL_ENTRY_POINTS.map((entry) => entry.key),
+      kind,
+      entryPoints: constrainAdminSkillEntryPoints(kind, r.entryPoints),
       title: r.title,
       description: r.description,
       coverUrl: r.coverUrl,
@@ -316,12 +308,15 @@ export default function AdminSkillsPage() {
   };
 
   const toggleEntryPoint = (entryPoint: SkillEntryPoint) => {
-    setForm((current) => ({
-      ...current,
-      entryPoints: current.entryPoints.includes(entryPoint)
-        ? current.entryPoints.filter((item) => item !== entryPoint)
-        : [...current.entryPoints, entryPoint],
-    }));
+    setForm((current) => {
+      if (current.kind === "agent") return current;
+      return {
+        ...current,
+        entryPoints: current.entryPoints.includes(entryPoint)
+          ? current.entryPoints.filter((item) => item !== entryPoint)
+          : [...current.entryPoints, entryPoint],
+      };
+    });
   };
 
   const uploadCover = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -453,10 +448,6 @@ export default function AdminSkillsPage() {
       toast.info("封面仍在上传，请稍候再保存");
       return false;
     }
-    if (!editing && KIND_OPTIONS.some((option) => option.key === form.kind && option.disabled)) {
-      toast.info("该执行形态暂未开放");
-      return false;
-    }
     const prepared = buildDTO();
     if (!prepared) return false;
     setSaving(true);
@@ -469,6 +460,7 @@ export default function AdminSkillsPage() {
         }
       } else {
         const primaryOutputType = form.outputType as SkillOutputType;
+        const entryPoints = constrainAdminSkillEntryPoints(form.kind, form.entryPoints);
         const outputTypes = defaultAdminSkillOutputTypes(form.kind, primaryOutputType);
         const skillPackage: AdminSkillImportPackage = {
           title: prepared.dto.title,
@@ -482,7 +474,7 @@ export default function AdminSkillsPage() {
           status: prepared.dto.status,
           sortOrder: prepared.dto.sortOrder,
           kind: form.kind,
-          entryPoints: [...form.entryPoints],
+          entryPoints,
           primaryOutputType,
           outputTypes,
           inputSchema: { type: "object", properties: {} },
@@ -490,7 +482,7 @@ export default function AdminSkillsPage() {
           promptTemplate: prepared.dto.promptTemplate,
           modelId: form.modelId,
           defaultParams: prepared.defaultParams,
-          bindings: defaultAdminSkillBindings(form.entryPoints, primaryOutputType),
+          bindings: defaultAdminSkillBindings(entryPoints, primaryOutputType),
           publish: true,
         };
         const res = await adminSkillsApi.importSkills([skillPackage]);
@@ -746,16 +738,17 @@ export default function AdminSkillsPage() {
                     type="button"
                     role="radio"
                     aria-checked={selected}
-                    aria-disabled={option.disabled || undefined}
-                    disabled={option.disabled}
-                    className={`adm-skill-kind-card${selected ? " selected" : ""}${option.disabled ? " is-disabled" : ""}`}
-                    onClick={() => setForm((current) => ({ ...current, kind: option.key }))}
+                    className={`adm-skill-kind-card${selected ? " selected" : ""}`}
+                    onClick={() => setForm((current) => ({
+                      ...current,
+                      kind: option.key,
+                      entryPoints: defaultAdminSkillEntryPoints(option.key),
+                    }))}
                   >
                     <span className="adm-skill-kind-icon"><Icon aria-hidden size={18} /></span>
                     <span>
                       <strong>
                         {option.title}
-                        {option.disabled ? <span className="adm-skill-kind-badge">暂未开放</span> : null}
                       </strong>
                       <small>{option.description}</small>
                     </span>
@@ -923,7 +916,7 @@ export default function AdminSkillsPage() {
         {editingVersionedSkill ? (
           <FormCard title="运行配置受版本保护">
             <p className="muted" style={{ margin: 0, lineHeight: 1.7 }}>
-              {editing?.kind === "agent" ? "智能技能" : "工作流"}的 Manifest、输入 Schema、模型与文件均属于不可变版本，
+              智能技能的 Manifest、输入 Schema、模型与文件均属于不可变版本，
               不会在资料编辑中被覆盖。关闭此窗口后，请使用列表中的“版本与运行配置”。
             </p>
           </FormCard>
@@ -944,7 +937,9 @@ export default function AdminSkillsPage() {
                   required
                   span={4}
                   group
-                  hint="决定用户可以从哪些模块发现并运行这个 Skill"
+                  hint={form.kind === "agent"
+                    ? "智能技能只在画布中运行，通过对话跨多种节点生成内容"
+                    : "预设技能可用于创作台、生成页和画布，每次只输出一种内容"}
                 >
                   <div className="adm-skill-entry-list">
                     {ADMIN_SKILL_ENTRY_POINTS.map((entry) => (
@@ -952,6 +947,7 @@ export default function AdminSkillsPage() {
                         <input
                           type="checkbox"
                           checked={form.entryPoints.includes(entry.key)}
+                          disabled={form.kind === "agent"}
                           onChange={() => toggleEntryPoint(entry.key)}
                         />
                         {entry.label}

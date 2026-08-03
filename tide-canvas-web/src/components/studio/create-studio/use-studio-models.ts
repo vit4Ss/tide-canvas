@@ -17,6 +17,11 @@ export function useStudioModels({
   /* real studio models for the current type (public, no auth), each carrying its
      per-model config; the picker + option pills are derived from this list. */
   const [studioList, setStudioList] = useState<StudioModelVO[]>([]);
+  // `studioList` deliberately keeps the previous type while a new request is in
+  // flight so the picker does not flash empty. Consumers that must make a paid
+  // decision (history regenerate) need to know which type the list actually
+  // belongs to instead of assuming it already follows `curType`.
+  const [loadedType, setLoadedType] = useState<ArtworkType | null>(null);
   // 深链 /studio?model=<名称>：模型名先存 ref，等该类型的模型列表加载完成后再
   // 落位——直接 setModel 会被列表加载的兜底重置覆盖。
   const deepModelRef = useRef<string | null>(null);
@@ -35,6 +40,7 @@ export function useStudioModels({
       if (seq !== modelsReqSeq.current) return; // stale response
       const list = res.success && Array.isArray(res.data) ? res.data : [];
       setStudioList(list);
+      setLoadedType(curType);
       if (list.length) {
         const names = list.map((m) => m.name);
         const deep = deepModelRef.current;
@@ -46,7 +52,10 @@ export function useStudioModels({
         }
       }
     } catch {
-      if (seq === modelsReqSeq.current) setStudioList([]);
+      if (seq === modelsReqSeq.current) {
+        setStudioList([]);
+        setLoadedType(curType);
+      }
     }
   }, [curType, setModel]);
 
@@ -71,5 +80,19 @@ export function useStudioModels({
     };
   }, [reloadModels]);
 
-  return { studioList, reloadModels, deepModelRef };
+  // History restoration already fetches the exact target type so it can verify
+  // a paid regenerate before proceeding. Adopt that verified response into the
+  // picker as well; otherwise a second catalog request could fail transiently
+  // and leave generate() reading the previous type's list (or simulation mode).
+  const adoptModels = useCallback((type: ArtworkType, list: StudioModelVO[]) => {
+    modelsReqSeq.current += 1;
+    setStudioList(list);
+    setLoadedType(type);
+    if (list.length) {
+      const names = list.map((item) => item.name);
+      setModel((current) => (names.includes(current) ? current : names[0]));
+    }
+  }, [setModel]);
+
+  return { studioList, loadedType, reloadModels, adoptModels, deepModelRef };
 }

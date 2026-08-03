@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "@/components/shared/toast";
-import { defaultSkillInputValues, parseSkillParams } from "@/lib/skill-api";
+import { parseSkillParams } from "@/lib/skill-api";
 import { skillKindOf, type SkillVO } from "@/types/skill";
 import {
   DEFAULT_MUSIC_PARAMS,
@@ -36,8 +36,6 @@ export function useComposerConfig(models: GenModelsApi) {
   const [dur, setDur] = useState("");
   // 技能:附着为输入框上方 chip,发送时模板与描述合并;粘性(发完保留)直到手动移除
   const [skill, setSkill] = useState<SkillVO | null>(null);
-  const [skillInputValues, setSkillInputValues] = useState<Record<string, unknown>>({});
-  const [skillInputErrors, setSkillInputErrors] = useState<Record<string, string>>({});
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   const [batch, setBatch] = useState(1);
   const [openSel, setOpenSel] = useState<string | null>(null);
@@ -63,10 +61,6 @@ export function useComposerConfig(models: GenModelsApi) {
   // 模型管理 config (fileUpload on → 图片附件，数量 maxFileCount、单文件 maxFileSizeMB)；
   // for image/video models it is the per-mode REF_POLICY (t2i / t2v take none).
   const refPolicy = useMemo<RefPolicy | undefined>(() => {
-    if (skill && skillKindOf(skill) !== "preset") {
-      const kinds: RefPolicy["kinds"] = ["image", "video", "audio", "file"];
-      return { kinds, max: MAX_ATTACHMENTS, accept: acceptFor(kinds) };
-    }
     if (!selModel) return undefined;
     if (selModel.type === "text") {
       if (!mCfg?.fileUpload) return undefined;
@@ -84,10 +78,10 @@ export function useComposerConfig(models: GenModelsApi) {
     }
     const p = REF_POLICY[mode];
     return p ? { ...p, accept: acceptFor(p.kinds) } : undefined;
-  }, [skill, selModel, mode, mCfg]);
+  }, [selModel, mode, mCfg]);
   // text-model uploads are OPTIONAL (a chat can be plain text); generation ref
   // modes (i2i/i2v/…) REQUIRE at least one reference before sending.
-  const refOptional = (!!skill && skillKindOf(skill) !== "preset") || selModel?.type === "text";
+  const refOptional = selModel?.type === "text";
 
   // 音频模型分流：音乐（四创作模式）vs 音效（只吃描述），判定与创作台一致
   //（后台「生成方式」勾 sfx，modelKey 含 sfx 兜底）。
@@ -144,8 +138,6 @@ export function useComposerConfig(models: GenModelsApi) {
   useEffect(() => {
     if (skill) {
       setSkill(null);
-      setSkillInputValues({});
-      setSkillInputErrors({});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selModel?.type]);
@@ -155,9 +147,11 @@ export function useComposerConfig(models: GenModelsApi) {
   // (随后的收敛 effect 会把不在该模型档位内的值校正掉)。
   const pickSkill = useCallback(
     (s: SkillVO) => {
+      if (skillKindOf(s) !== "preset") {
+        toast.info("智能技能请在画布中使用");
+        return;
+      }
       setSkill(s);
-      setSkillInputValues(defaultSkillInputValues(s.inputSchema, s.defaultParams));
-      setSkillInputErrors({});
       setSkillPickerOpen(false);
       if (skillKindOf(s) === "preset" && s.modelId) {
         const target = genModels.find((m) => m.modelKey === s.modelId);
@@ -179,9 +173,17 @@ export function useComposerConfig(models: GenModelsApi) {
 
   const removeSkill = useCallback(() => {
     setSkill(null);
-    setSkillInputValues({});
-    setSkillInputErrors({});
   }, []);
+
+  // 用户主动切换模型时，当前预设技能必须一并移除。预设的已发布版本可能
+  // 固定了另一张模型卡，服务端会以技能模型为准；若只更新模型下拉，界面
+  // 的模型/积分预估就会与实际执行不一致。技能自身触发的自动切模仍直接走
+  // setModel，因此不会把刚选中的技能误清掉。
+  const selectModel = useCallback((nextModel: string) => {
+    if (!nextModel || nextModel === model) return;
+    setSkill(null);
+    setModel(nextModel);
+  }, [model, setModel]);
 
   // 切到不支持联网的模型时，强制关闭联网开关。
   useEffect(() => {
@@ -237,10 +239,6 @@ export function useComposerConfig(models: GenModelsApi) {
     skill,
     setSkill,
     removeSkill,
-    skillInputValues,
-    setSkillInputValues,
-    skillInputErrors,
-    setSkillInputErrors,
     skillPickerOpen,
     setSkillPickerOpen,
     batch,
@@ -268,6 +266,7 @@ export function useComposerConfig(models: GenModelsApi) {
     musicMode,
     musicNoDraftOk,
     pickSkill,
+    selectModel,
     points,
   };
 }

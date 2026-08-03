@@ -301,6 +301,10 @@ func (h *skillsHandler) publishVersion(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, err.Error())
 		return
 	}
+	if err := validateSkillKindContract(&version); err != nil {
+		response.Fail(c, response.CodeBadRequest, err.Error())
+		return
+	}
 	if err := validateSkillFileReferences(version.ManifestJSON, files, version.PrimaryFilePath); err != nil {
 		response.Fail(c, response.CodeBadRequest, err.Error())
 		return
@@ -359,6 +363,10 @@ func (h *skillsHandler) replaceBindings(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, err.Error())
 		return
 	}
+	if err := validateSkillKindBindings(current.Kind, snapshots); err != nil {
+		response.Fail(c, response.CodeBadRequest, err.Error())
+		return
+	}
 	version := &model.SkillVersion{SkillID: skill.ID, Kind: current.Kind, Status: model.SkillVersionDraft,
 		EntryPoints: current.EntryPoints, PrimaryOutputType: current.PrimaryOutputType, OutputTypes: current.OutputTypes,
 		InputSchema: current.InputSchema, ManifestJSON: current.ManifestJSON, PromptTemplate: current.PromptTemplate,
@@ -395,14 +403,28 @@ func buildSkillVersion(_ *gorm.DB, skill *model.Skill, dto AdminSkillVersionCrea
 		kind = model.SkillKindPreset
 	}
 	if !model.ValidSkillKind(kind) {
-		return nil, nil, errors.New("kind must be preset, agent or workflow")
+		return nil, nil, errors.New("kind must be preset or agent")
 	}
-	entryPoints, err := strictEnumList("entryPoints", dto.EntryPoints, map[string]bool{"chat": true, "studio": true, "canvas": true, "asset": true, "api": true})
+	entryPoints, err := strictEnumList("entryPoints", dto.EntryPoints, map[string]bool{"chat": true, "studio": true, "canvas": true})
 	if err != nil {
 		return nil, nil, err
 	}
 	if len(entryPoints) == 0 {
-		entryPoints = []string{"chat", "studio", "canvas", "asset", "api"}
+		if kind == model.SkillKindAgent {
+			entryPoints = []string{"canvas"}
+		} else {
+			entryPoints = []string{"chat", "studio", "canvas"}
+		}
+	}
+	if kind == model.SkillKindAgent && (len(entryPoints) != 1 || entryPoints[0] != "canvas") {
+		return nil, nil, errors.New("agent entryPoints must contain canvas only")
+	}
+	if kind == model.SkillKindPreset {
+		for _, entryPoint := range entryPoints {
+			if entryPoint != "chat" && entryPoint != "studio" && entryPoint != "canvas" {
+				return nil, nil, errors.New("preset entryPoints may only contain chat, studio or canvas")
+			}
+		}
 	}
 	validOutputs := map[string]bool{"text": true, "image": true, "video": true, "audio": true, "file": true}
 	outputTypes, err := strictEnumList("outputTypes", dto.OutputTypes, validOutputs)
@@ -424,6 +446,9 @@ func buildSkillVersion(_ *gorm.DB, skill *model.Skill, dto AdminSkillVersionCrea
 	}
 	if !containsAdminString(outputTypes, primaryOutput) {
 		outputTypes = append([]string{primaryOutput}, outputTypes...)
+	}
+	if kind == model.SkillKindPreset && (len(outputTypes) != 1 || outputTypes[0] != primaryOutput) {
+		return nil, nil, errors.New("preset must declare exactly one output type matching primaryOutputType")
 	}
 
 	files, primary, err := normalizeSkillFiles(dto.Files, dto.PrimaryFilePath)
@@ -451,9 +476,6 @@ func buildSkillVersion(_ *gorm.DB, skill *model.Skill, dto AdminSkillVersionCrea
 	}
 	manifest := dto.Manifest
 	if len(manifest) == 0 {
-		if kind == model.SkillKindWorkflow {
-			return nil, nil, errors.New("workflow manifest.steps is required")
-		}
 		manifest, _ = json.Marshal(map[string]any{"kind": kind, "primaryOutputType": primaryOutput, "outputTypes": outputTypes})
 	} else if err := validateSkillManifest(manifest, kind, primaryOutput, outputTypes); err != nil {
 		return nil, nil, err
@@ -488,7 +510,13 @@ func buildSkillVersion(_ *gorm.DB, skill *model.Skill, dto AdminSkillVersionCrea
 		if err != nil {
 			return nil, nil, err
 		}
+		if err := validateSkillKindBindings(kind, snapshots); err != nil {
+			return nil, nil, err
+		}
 		version.BindingsJSON = model.JSONString(snapshots)
+	}
+	if err := validateSkillKindContract(version); err != nil {
+		return nil, nil, err
 	}
 	version.ContentHash = skillVersionContentHash(version, files)
 	return version, files, nil
@@ -534,7 +562,7 @@ func isSimpleLegacyPresetVersion(version *model.SkillVersion, files []model.Skil
 	if version == nil || version.Kind != model.SkillKindPreset || version.Status != model.SkillVersionPublished {
 		return false
 	}
-	if !sameAdminStringSet(version.EntryPoints, []string{"chat", "studio", "canvas", "asset", "api"}) {
+	if !sameAdminStringSet(version.EntryPoints, []string{"chat", "studio", "canvas"}) {
 		return false
 	}
 	outputs := []string{}
@@ -676,16 +704,25 @@ func persistSkillVersionTx(tx *gorm.DB, skill *model.Skill, version *model.Skill
 		return err
 	}
 	if strings.TrimSpace(version.BindingsJSON) == "" {
-		snapshots, err := currentOrDefaultBindingSnapshotsTx(
-			tx,
-			skill.ID,
-			version.EntryPoints,
-			version.PrimaryOutputType,
-		)
-		if err != nil {
-			return err
+		var snapshots []skillBindingSnapshot
+		if version.Kind == model.SkillKindAgent {
+			snapshots = []skillBindingSnapshot{{Surface: "canvas", TargetType: "*", Enabled: true, Defaults: json.RawMessage(`{}`)}}
+		} else {
+			var err error
+			snapshots, err = currentOrDefaultBindingSnapshotsTx(
+				tx,
+				skill.ID,
+				version.EntryPoints,
+				version.PrimaryOutputType,
+			)
+			if err != nil {
+				return err
+			}
 		}
 		version.BindingsJSON = model.JSONString(snapshots)
+	}
+	if err := validateSkillKindContract(version); err != nil {
+		return err
 	}
 	if err := validateAssetBindingOutputs(version); err != nil {
 		return err
@@ -726,6 +763,9 @@ func publishSkillVersion(db *gorm.DB, skill *model.Skill, version *model.SkillVe
 func publishSkillVersionTx(tx *gorm.DB, skill *model.Skill, version *model.SkillVersion) error {
 	if skill == nil || skill.ID == 0 {
 		return errors.New("invalid skill")
+	}
+	if err := validateSkillKindContract(version); err != nil {
+		return err
 	}
 	var locked model.Skill
 	// Every publish path takes the same parent lock used by legacy update and
@@ -770,7 +810,7 @@ func publishLegacyPresetVersion(db *gorm.DB, skill *model.Skill, actor idgen.ID)
 
 func publishLegacyPresetVersionTx(tx *gorm.DB, skill *model.Skill, actor idgen.ID) error {
 	dto := AdminSkillVersionCreateDTO{Kind: model.SkillKindPreset,
-		EntryPoints:       []string{"chat", "studio", "canvas", "asset", "api"},
+		EntryPoints:       []string{"chat", "studio", "canvas"},
 		PrimaryOutputType: skill.OutputType, OutputTypes: []string{skill.OutputType},
 		InputSchema:    json.RawMessage(`{"type":"object"}`),
 		PromptTemplate: skill.PromptTemplate, ModelID: skill.ModelID,
@@ -791,7 +831,7 @@ func replaceSkillBindingsTx(tx *gorm.DB, skillID idgen.ID, input []AdminSkillBin
 		if count > 0 {
 			return nil
 		}
-		for _, surface := range model.JSONStrings(entryPointsJSON, []string{"chat", "studio", "canvas", "asset", "api"}) {
+		for _, surface := range model.JSONStrings(entryPointsJSON, []string{"chat", "studio", "canvas"}) {
 			row := model.SkillSurfaceBinding{SkillID: skillID, Surface: surface, TargetType: "*", Enabled: true}
 			if err := tx.Create(&row).Error; err != nil {
 				return err
@@ -799,7 +839,7 @@ func replaceSkillBindingsTx(tx *gorm.DB, skillID idgen.ID, input []AdminSkillBin
 		}
 		return nil
 	}
-	validSurfaces := map[string]bool{"chat": true, "studio": true, "canvas": true, "asset": true, "api": true}
+	validSurfaces := map[string]bool{"chat": true, "studio": true, "canvas": true}
 	normalized := make([]model.SkillSurfaceBinding, 0, len(input))
 	seen := map[string]bool{}
 	for _, item := range input {
@@ -847,7 +887,7 @@ func replaceSkillBindingsTx(tx *gorm.DB, skillID idgen.ID, input []AdminSkillBin
 }
 
 func normalizeSkillBindingSnapshots(input []AdminSkillBindingDTO) ([]skillBindingSnapshot, error) {
-	validSurfaces := map[string]bool{"chat": true, "studio": true, "canvas": true, "asset": true, "api": true}
+	validSurfaces := map[string]bool{"chat": true, "studio": true, "canvas": true}
 	out := make([]skillBindingSnapshot, 0, len(input))
 	seen := map[string]bool{}
 	for _, item := range input {
@@ -892,6 +932,67 @@ func normalizeSkillBindingSnapshots(input []AdminSkillBindingDTO) ([]skillBindin
 	return out, nil
 }
 
+func validateSkillKindBindings(kind string, bindings []skillBindingSnapshot) error {
+	if kind == model.SkillKindAgent {
+		if len(bindings) == 0 {
+			return errors.New("agent must have at least one canvas binding")
+		}
+		for i := range bindings {
+			if bindings[i].Surface != "canvas" {
+				return errors.New("agent bindings must use the canvas surface only")
+			}
+		}
+		return nil
+	}
+	if kind == model.SkillKindPreset {
+		for i := range bindings {
+			surface := bindings[i].Surface
+			if surface != "chat" && surface != "studio" && surface != "canvas" {
+				return errors.New("preset bindings may only use chat, studio or canvas")
+			}
+		}
+	}
+	return nil
+}
+
+func validateSkillKindContract(version *model.SkillVersion) error {
+	if version == nil || !model.ValidSkillKind(version.Kind) {
+		return errors.New("kind must be preset or agent")
+	}
+	primary := strings.ToLower(strings.TrimSpace(version.PrimaryOutputType))
+	outputs := model.JSONStrings(version.OutputTypes, nil)
+	if version.Kind == model.SkillKindPreset {
+		if len(outputs) != 1 || strings.ToLower(strings.TrimSpace(outputs[0])) != primary {
+			return errors.New("preset must declare exactly one output type matching primaryOutputType")
+		}
+		entryPoints := model.JSONStrings(version.EntryPoints, nil)
+		if len(entryPoints) == 0 {
+			return errors.New("preset must declare at least one entry point")
+		}
+		for _, entryPoint := range entryPoints {
+			entryPoint = strings.ToLower(strings.TrimSpace(entryPoint))
+			if entryPoint != "chat" && entryPoint != "studio" && entryPoint != "canvas" {
+				return errors.New("preset entryPoints may only contain chat, studio or canvas")
+			}
+		}
+	} else {
+		entryPoints := model.JSONStrings(version.EntryPoints, nil)
+		if len(entryPoints) != 1 || strings.ToLower(strings.TrimSpace(entryPoints[0])) != "canvas" {
+			return errors.New("agent entryPoints must contain canvas only")
+		}
+	}
+	if strings.TrimSpace(version.BindingsJSON) != "" {
+		var bindings []skillBindingSnapshot
+		if json.Unmarshal([]byte(version.BindingsJSON), &bindings) != nil {
+			return errors.New("skill version bindings are invalid")
+		}
+		if err := validateSkillKindBindings(version.Kind, bindings); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func validateAssetBindingOutputs(version *model.SkillVersion) error {
 	var bindings []skillBindingSnapshot
 	if json.Unmarshal([]byte(version.BindingsJSON), &bindings) != nil {
@@ -909,7 +1010,7 @@ func validateAssetBindingOutputs(version *model.SkillVersion) error {
 		return nil
 	}
 	finalTypes := map[string]bool{}
-	if version.Kind == model.SkillKindWorkflow {
+	if version.Kind == model.SkillKindAgent {
 		var manifest struct {
 			Steps []struct {
 				Type            string `json:"type"`
@@ -964,7 +1065,7 @@ func currentOrDefaultBindingSnapshotsTx(
 	}
 	if len(rows) == 0 {
 		out := make([]skillBindingSnapshot, 0)
-		for _, surface := range model.JSONStrings(entryPointsJSON, []string{"chat", "studio", "canvas", "asset", "api"}) {
+		for _, surface := range model.JSONStrings(entryPointsJSON, []string{"chat", "studio", "canvas"}) {
 			out = append(out, skillBindingSnapshot{
 				Surface: surface, TargetType: defaultAdminSkillBindingTarget(surface, primaryOutputType),
 				Enabled: true, Defaults: json.RawMessage(`{}`),
@@ -1309,10 +1410,10 @@ func validateSkillManifest(
 	}
 	rawSteps, exists := manifest["steps"]
 	if !exists {
-		if kind == model.SkillKindWorkflow {
-			return errors.New("workflow manifest.steps is required")
-		}
 		return nil
+	}
+	if kind == model.SkillKindPreset {
+		return errors.New("preset manifest.steps is not supported; use agent for multi-step skills")
 	}
 	steps, ok := rawSteps.([]any)
 	if !ok || len(steps) == 0 || len(steps) > 64 {
@@ -1478,13 +1579,13 @@ func validateSkillManifest(
 			}
 		}
 	}
-	if kind == model.SkillKindWorkflow {
+	if kind == model.SkillKindAgent {
 		if len(finalOutputTypes) == 0 {
-			return errors.New("workflow must declare a final output or an approval-finalized draft")
+			return errors.New("agent steps must declare a final output or an approval-finalized draft")
 		}
 		primary := strings.ToLower(strings.TrimSpace(primaryOutputType))
 		if !finalOutputTypes[primary] {
-			return errors.New("workflow final outputs must include primaryOutputType")
+			return errors.New("agent final outputs must include primaryOutputType")
 		}
 	}
 	return nil

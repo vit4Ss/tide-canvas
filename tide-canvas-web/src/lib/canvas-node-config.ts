@@ -16,7 +16,7 @@ import type {
   CanvasNodeTypeConfigVO,
 } from "@/types/canvas-node-config";
 
-export const CANVAS_NODE_CONFIG_VERSION = 5;
+export const CANVAS_NODE_CONFIG_VERSION = 6;
 
 export const PORTRAIT_NODE_DEFAULT_FEATURES: CanvasNodeFeatureKey[] = [
   "image.subjectTurnaround",
@@ -44,14 +44,12 @@ export const IMAGE_NODE_DEFAULT_FEATURES: CanvasNodeFeatureKey[] = [
   "media.replace",
   "media.download",
   "media.preview",
-  "skill.launcher",
 ];
 
 export const VIDEO_NODE_FEATURES: CanvasNodeFeatureKey[] = [
   "media.replace",
   "media.download",
   "media.preview",
-  "skill.launcher",
 ];
 
 const IMAGE_RENDERER_FEATURES: CanvasNodeFeatureKey[] = [
@@ -67,10 +65,10 @@ const KNOWN_FEATURES = new Set<CanvasNodeFeatureKey>([
 const RENDERER_FEATURES: Record<CanvasNodeRenderer, ReadonlySet<CanvasNodeFeatureKey>> = {
   image: new Set(IMAGE_RENDERER_FEATURES),
   video: new Set(VIDEO_NODE_FEATURES),
-  scene_3d: new Set(["skill.launcher"]),
-  text: new Set(["skill.launcher"]),
-  audio: new Set(["skill.launcher"]),
-  script: new Set(["skill.launcher"]),
+  scene_3d: new Set<CanvasNodeFeatureKey>(),
+  text: new Set<CanvasNodeFeatureKey>(),
+  audio: new Set<CanvasNodeFeatureKey>(),
+  script: new Set<CanvasNodeFeatureKey>(),
 };
 
 /**
@@ -160,7 +158,7 @@ function defaultFeatures(renderer: CanvasNodeRenderer, nodeType: string): Canvas
   if (nodeType === "character") return [...PORTRAIT_NODE_DEFAULT_FEATURES, ...IMAGE_NODE_DEFAULT_FEATURES];
   if (renderer === "image") return [...IMAGE_NODE_DEFAULT_FEATURES];
   if (renderer === "video") return [...VIDEO_NODE_FEATURES];
-  return ["skill.launcher"];
+  return [];
 }
 
 function makeDefaults(): CanvasNodeTypeConfigVO[] {

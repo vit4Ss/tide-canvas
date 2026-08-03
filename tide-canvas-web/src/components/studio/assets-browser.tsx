@@ -23,16 +23,10 @@ import { confirmDialog } from "@/components/shared/confirm";
 import { useReveal } from "@/components/site/use-reveal";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { AudioPlayerCard, SongCard } from "@/components/studio/audio-player-card";
-import { AssetSkillWorkspace } from "@/components/studio/asset-skill-workspace";
-import { SkillPicker } from "@/components/skill/skill-picker";
-import type { SkillVO } from "@/types/skill";
-import type { SkillRunAssetInput } from "@/types/skill-run";
 
 type TabKey = "hist" | "upload";
 type MediaKind = "image" | "video" | "audio" | "doc";
 type FilterKey = MediaKind | "character" | "scene";
-type AssetTargetType = "character" | "scene" | "general";
-type AssetOutputType = "image" | "video" | "audio" | "file";
 
 /** A picked asset handed back to the caller in pick mode. */
 export interface PickedAsset {
@@ -73,24 +67,6 @@ const FILTER_TO_CATEGORY: Record<FilterKey, FileCategory> = {
   video: FileCategory.GENERAL,
   audio: FileCategory.GENERAL,
   doc: FileCategory.GENERAL,
-};
-
-const FILTER_TO_SKILL_TARGET: Record<FilterKey, AssetTargetType> = {
-  character: "character",
-  scene: "scene",
-  image: "general",
-  video: "general",
-  audio: "general",
-  doc: "general",
-};
-
-const FILTER_TO_SKILL_OUTPUT: Record<FilterKey, AssetOutputType> = {
-  character: "image",
-  scene: "image",
-  image: "image",
-  video: "video",
-  audio: "audio",
-  doc: "file",
 };
 
 /** generation handler → media type, for the 生成历史 filter. */
@@ -268,9 +244,6 @@ export function AssetsBrowser({
   const [batchMode, setBatchMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
-  const [skillPickerOpen, setSkillPickerOpen] = useState(false);
-  const [assetSkillOpen, setAssetSkillOpen] = useState(false);
-  const [selectedSkill, setSelectedSkill] = useState<SkillVO | null>(null);
   // 排序方向(更多筛选):false=最新在前(默认),true=最早在前。
   const [sortAsc, setSortAsc] = useState(false);
 
@@ -580,78 +553,10 @@ export function AssetsBrowser({
   const allSelected = currentIds.length > 0 && currentIds.every((id) => selected.has(id));
   const toggleAll = () => setSelected(allSelected ? new Set() : new Set(currentIds));
 
-  // Only the current view can be selected, so every reference has an unambiguous
-  // media role and ownership trail. Uploaded files carry their File id; generated
-  // history uses the owned AiTask result URL (including all audio tracks).
-  const skillReferences = useMemo<SkillRunAssetInput[]>(() => {
-    if (selected.size === 0) return [];
-    if (tab === "upload") {
-      return files.flatMap((file) => {
-        if (!selected.has(String(file.id)) || !file.fileUrl) return [];
-        const kind = fileMediaKind(file);
-        return [{
-          id: String(file.id),
-          type: kind === "doc" ? "file" : kind,
-          url: file.fileUrl,
-          role: "reference",
-          name: file.originalName || "资产文件",
-          metadata: { source: "asset_file", category: file.category },
-        } satisfies SkillRunAssetInput];
-      });
-    }
-    return tasks.flatMap((task): SkillRunAssetInput[] => {
-      if (!selected.has(String(task.id))) return [];
-      const kind = HANDLER_TYPE[task.handler];
-      if (!kind) return [];
-      if (kind === "audio") {
-        const tracks = tracksOf(task);
-        const rows = tracks.length ? tracks : [{ url: task.resultUrl, title: task.modelName }];
-        return rows.flatMap((track, index) =>
-          track.url
-            ? [{
-                type: "audio" as const,
-                url: track.url,
-                role: "reference",
-                name: track.title || `${task.modelName || "生成音频"} ${index + 1}`,
-                metadata: { source: "ai_task", taskId: task.id },
-              } satisfies SkillRunAssetInput]
-            : [],
-        );
-      }
-      if (!task.resultUrl) return [];
-      return [{
-        type: kind,
-        url: task.resultUrl,
-        role: "reference",
-        name: task.modelName || "生成资产",
-        metadata: { source: "ai_task", taskId: task.id },
-      } satisfies SkillRunAssetInput];
-    });
-  }, [files, selected, tab, tasks]);
-
   const exitBatch = () => {
     setBatchMode(false);
     setSelected(new Set());
   };
-
-  const refreshAfterSkillArchive = useCallback(async (
-    _count: number,
-    target: AssetTargetType,
-    mediaType: "image" | "video" | "audio" | "file",
-  ) => {
-    const nextFilter: FilterKey =
-      target === "character" || target === "scene" ? target : mediaType === "file" ? "doc" : mediaType;
-    const viewChanged = tab !== "upload" || filter !== nextFilter;
-    setTab("upload");
-    setFilter(nextFilter);
-    resetBatch();
-    pageRef.current = 1;
-    loadedCountRef.current = 0;
-    setHasMore(false);
-    // Changing the tab/filter triggers the normal guarded loader. If the run
-    // already targets this exact view, refresh it explicitly.
-    if (!viewChanged) await fetchFiles(1, false);
-  }, [fetchFiles, filter, resetBatch, tab]);
 
   // 批量删除:生成历史→cancelTask,上传历史→file delete;逐条调用现有接口。
   const batchDelete = async () => {
@@ -758,16 +663,6 @@ export function AssetsBrowser({
           ))}
         </div>
         <div className="asset-actions">
-          {!pickMode && (
-            <button
-              type="button"
-              className="skill"
-              onClick={() => setSkillPickerOpen(true)}
-              title={selected.size ? `以已选 ${skillReferences.length} 个资产作为引用` : "运行资产技能"}
-            >
-              ✦ 运行技能{selected.size ? ` · ${skillReferences.length}` : ""}
-            </button>
-          )}
           {!pickMode && (
             <button
               type="button"
@@ -1079,35 +974,6 @@ export function AssetsBrowser({
         </div>
       )}
 
-      {!pickMode && (
-        <>
-          <SkillPicker
-            open={skillPickerOpen}
-            onClose={() => setSkillPickerOpen(false)}
-            onPick={(picked) => {
-              setSelectedSkill(picked);
-              setSkillPickerOpen(false);
-              setAssetSkillOpen(true);
-            }}
-            outputType={FILTER_TO_SKILL_OUTPUT[filter]}
-            kinds={["agent", "workflow"]}
-            entryPoint="asset"
-            targetType={FILTER_TO_SKILL_TARGET[filter]}
-          />
-          <AssetSkillWorkspace
-            open={assetSkillOpen}
-            skill={selectedSkill}
-            targetType={FILTER_TO_SKILL_TARGET[filter]}
-            outputType={FILTER_TO_SKILL_OUTPUT[filter]}
-            references={skillReferences}
-            onRequestClose={() => {
-              setAssetSkillOpen(false);
-              setSelectedSkill(null);
-            }}
-            onArchived={refreshAfterSkillArchive}
-          />
-        </>
-      )}
     </main>
   );
 }

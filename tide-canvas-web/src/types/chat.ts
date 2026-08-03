@@ -61,6 +61,7 @@ export interface MessageVO {
   createTime: string;
   taskId?: string;
   skillRunId?: string;
+  clientRequestId?: string;
   params?: Record<string, unknown>;
   task?: MessageTaskVO;
   skillRun?: MessageSkillRunVO;
@@ -98,6 +99,7 @@ export interface SendMessageDTO {
   content: string;
   type?: ChatContentType;
   attachments?: MessageAttachment[];
+  clientRequestId?: string;
   /** Upstream model_key of the selected text model (validated server-side). */
   model?: string;
 }

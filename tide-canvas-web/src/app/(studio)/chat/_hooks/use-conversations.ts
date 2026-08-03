@@ -9,6 +9,7 @@ import { chatApi } from "@/lib/chat-api";
 import { toast } from "@/components/shared/toast";
 import { confirmDialog } from "@/components/shared/confirm";
 import type { ConversationVO, MessageVO } from "@/types/chat";
+import { clearPendingChatTurnsForConversation } from "./use-send-message";
 
 export function useConversations({
   ensureSession,
@@ -43,14 +44,24 @@ export function useConversations({
   const msgsReqRef = useRef(0);
 
   // load a conversation's message history
-  const loadMessages = useCallback(async (id: string) => {
+  const loadMessages = useCallback(async (
+    id: string,
+    isVisible?: (records: readonly MessageVO[]) => boolean,
+  ): Promise<boolean> => {
     const myReq = ++msgsReqRef.current;
     setMsgsLoading(true);
     try {
-      const res = await chatApi.messages(id, { pageNum: 1, pageSize: 100 });
-      if (myReq !== msgsReqRef.current) return; // superseded by a newer load/switch
-      if (res.success && res.data) setMsgs(res.data.records);
-      else setMsgs([]);
+      const res = await chatApi.latestMessages(id);
+      if (myReq !== msgsReqRef.current) return false; // superseded by a newer load/switch
+      if (res.success && res.data) {
+        setMsgs(res.data.records);
+        return isVisible ? isVisible(res.data.records) : true;
+      }
+      // A failed reconciliation must not erase the last visible history. More
+      // importantly, callers need an explicit false so they retain any durable
+      // task journal instead of treating a resolved Promise as a successful
+      // reload and allowing the same paid request to be sent again.
+      return false;
     } finally {
       if (myReq === msgsReqRef.current) setMsgsLoading(false);
     }
@@ -138,6 +149,10 @@ export function useConversations({
 
   const removeConvo = useCallback(
     async (c: ConversationVO) => {
+      if (busy) {
+        toast.info("当前对话正在生成，请完成后再删除");
+        return;
+      }
       if (
         !(await confirmDialog({
           title: "删除对话",
@@ -151,6 +166,7 @@ export function useConversations({
         toast.error(res.message || "删除失败");
         return;
       }
+      await clearPendingChatTurnsForConversation(c.id);
       const remaining = convos.filter((x) => x.id !== c.id);
       setConvos(remaining);
       if (activeId === c.id) {
@@ -166,7 +182,7 @@ export function useConversations({
         }
       }
     },
-    [convos, activeId, loadMessages, stopStream],
+    [busy, convos, activeId, loadMessages, stopStream],
   );
 
   const activeTitle = useMemo(

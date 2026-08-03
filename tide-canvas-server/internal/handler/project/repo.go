@@ -62,6 +62,20 @@ func (r *repo) findByID(id idgen.ID) (*model.Project, error) {
 	return &p, nil
 }
 
+// findByClientRequest returns the durable result of a keyed create request.
+// Client request IDs are owner-scoped so two users may safely use the same ID.
+func (r *repo) findByClientRequest(ownerID idgen.ID, clientRequestID string) (*model.Project, error) {
+	var p model.Project
+	err := r.db.Where("owner_id = ? AND client_request_id = ?", ownerID, clientRequestID).First(&p).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &p, nil
+}
+
 // findByToken loads a project by its public url_token or share_token (public
 // share lookup). Only projects that are public OR have a share token set are
 // considered; the service enforces visibility rules.
@@ -98,6 +112,37 @@ func (r *repo) updateFields(id, ownerID idgen.ID, fields map[string]any) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// saveCanvasCAS atomically replaces the whole-canvas snapshot only when the
+// caller still owns the revision it loaded. Incrementing revision guarantees a
+// matched UPDATE is observable even when the JSON payload is byte-identical.
+func (r *repo) saveCanvasCAS(
+	id, ownerID idgen.ID,
+	expectedRevision int64,
+	fields map[string]any,
+) (int64, error) {
+	fields["revision"] = gorm.Expr("revision + 1")
+	res := r.db.Model(&model.Project{}).
+		Where("id = ? AND owner_id = ? AND revision = ?", id, ownerID, expectedRevision).
+		Updates(fields)
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	if res.RowsAffected == 1 {
+		return expectedRevision + 1, nil
+	}
+
+	var count int64
+	if err := r.db.Model(&model.Project{}).
+		Where("id = ? AND owner_id = ?", id, ownerID).
+		Count(&count).Error; err != nil {
+		return 0, err
+	}
+	if count == 0 {
+		return 0, ErrNotFound
+	}
+	return 0, errRevisionConflict
 }
 
 // delete removes a project scoped to (id, ownerID). Returns ErrNotFound when no

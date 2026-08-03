@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo } from "react";
 import { create } from "zustand";
-import { skillRunApi } from "@/lib/skill-run-api";
+import { isAmbiguousSkillRunCode, skillRunApi } from "@/lib/skill-run-api";
 import {
   isSkillRunActive,
   type SkillRunActionInput,
@@ -11,6 +11,7 @@ import {
 } from "@/types/skill-run";
 
 const POLL_INTERVAL_MS = 2_000;
+const AMBIGUOUS_CREATE_POLL_INTERVAL_MS = 10_000;
 
 interface CanvasSkillRunState {
   projectId: string | null;
@@ -19,6 +20,10 @@ interface CanvasSkillRunState {
   actionBusy: Set<string>;
   /** 持久化 run ID 尚未成功对账的集合；网络恢复前保留并重试。 */
   pendingRecoveryIds: Set<string>;
+  /** Create 响应不明确时，用幂等请求号向服务端对账，避免终态运行从 active 列表消失。 */
+  pendingCreateRequestIds: Set<string>;
+  /** Successful lookup misses are kept briefly to cover a late server commit. */
+  pendingCreateMisses: Record<string, number>;
   /** 当前项目的 active 列表尚未成功拉取。 */
   discoveryPending: boolean;
   resume: (projectId: string, recoveryRunIds?: readonly string[]) => Promise<void>;
@@ -95,12 +100,13 @@ function isCanvasRunForProject(run: SkillRunVO, projectId: string): boolean {
 }
 
 function shouldRetry(code: number | undefined): boolean {
-  return !code || code === 408 || code === 429 || code >= 500;
+  return code === undefined || isAmbiguousSkillRunCode(code);
 }
 
 function needsPolling(state: CanvasSkillRunState): boolean {
   return state.discoveryPending
     || state.pendingRecoveryIds.size > 0
+    || state.pendingCreateRequestIds.size > 0
     || Object.values(state.runs).some((run) => isSkillRunActive(run.status));
 }
 
@@ -108,11 +114,14 @@ function schedulePoll(session: PollSession) {
   if (session.timer) clearTimeout(session.timer);
   session.timer = null;
   if (!isCurrentSession(session) || !needsPolling(useCanvasSkillRunStore.getState())) return;
+  const state = useCanvasSkillRunStore.getState();
+  const ambiguousCreateHasRepeatedMisses = [...state.pendingCreateRequestIds]
+    .some((requestId) => (state.pendingCreateMisses[requestId] ?? 0) >= 5);
   session.timer = setTimeout(() => {
     session.timer = null;
     if (!isCurrentSession(session)) return;
     void refreshSession(session);
-  }, POLL_INTERVAL_MS);
+  }, ambiguousCreateHasRepeatedMisses ? AMBIGUOUS_CREATE_POLL_INTERVAL_MS : POLL_INTERVAL_MS);
 }
 
 function refreshSession(session: PollSession): Promise<void> {
@@ -122,15 +131,27 @@ function refreshSession(session: PollSession): Promise<void> {
   session.timer = null;
 
   const snapshot = useCanvasSkillRunStore.getState();
+  const createScope = `create:canvas:${session.projectId}`;
+  // The durable journal owns the ambiguity window. Once its 24h pending TTL
+  // expires, the in-memory poll set must stop too instead of empty-querying forever.
+  const durablePendingCreateRequestIds = new Set(
+    skillRunApi.unresolvedCreateRequestIds(createScope),
+  );
+  const snapshotPendingCreateRequestIds = new Set(snapshot.pendingCreateRequestIds);
   const detailIds = normalizeRunIds([
     ...snapshot.pendingRecoveryIds,
     ...Object.values(snapshot.runs)
       .filter((run) => isSkillRunActive(run.status))
       .map((run) => run.id),
   ]);
-
+  const pendingCreateRequestIds = [...snapshot.pendingCreateRequestIds]
+    .filter((requestId) => durablePendingCreateRequestIds.has(requestId));
+  const pendingCreateBatches: string[][] = [];
+  for (let index = 0; index < pendingCreateRequestIds.length; index += 10) {
+    pendingCreateBatches.push(pendingCreateRequestIds.slice(index, index + 10));
+  }
   const request = (async () => {
-    const [activeResponse, detailResponses] = await Promise.all([
+    const [activeResponse, detailResponses, pendingCreateResponses] = await Promise.all([
       skillRunApi.listActive({
         projectId: session.projectId,
         entryPoint: "canvas",
@@ -141,14 +162,76 @@ function refreshSession(session: PollSession): Promise<void> {
         runId,
         response: await skillRunApi.detail(runId),
       }))),
+      Promise.all(pendingCreateBatches.map(async (requestIds) => ({
+        requestIds,
+        response: await skillRunApi.list({
+          projectId: session.projectId,
+          entryPoint: "canvas",
+          clientRequestIds: JSON.stringify(requestIds),
+          pageNum: 1,
+          pageSize: requestIds.length,
+        }),
+      }))),
     ]);
+
+    const recoveredCreates: SkillRunVO[] = [];
+    const settledCreateRequestIds = new Set<string>();
+    const missedCreateRequests = new Map<string, number>();
+    const settlementTasks: Promise<void>[] = [];
+    for (const { requestIds, response } of pendingCreateResponses) {
+      if (response.success && response.data) {
+        const byRequestId = new Map(
+          (response.data.records ?? [])
+            .filter((run) => isCanvasRunForProject(run, session.projectId) && !!run.clientRequestId)
+            .map((run) => [run.clientRequestId as string, run]),
+        );
+        for (const requestId of requestIds) {
+          const run = byRequestId.get(requestId);
+          if (run) {
+            recoveredCreates.push(run);
+            settledCreateRequestIds.add(requestId);
+            settlementTasks.push(skillRunApi.settlePendingCreate(createScope, requestId, run.id));
+            continue;
+          }
+          // A successful empty lookup is still not proof that an ambiguous
+          // POST was never accepted (gateway buffering/server commit can lag).
+          // Retain the original request id and only reduce poll frequency.
+          missedCreateRequests.set(requestId, (snapshot.pendingCreateMisses[requestId] ?? 0) + 1);
+        }
+      } else {
+        for (const requestId of requestIds) {
+          missedCreateRequests.set(requestId, (snapshot.pendingCreateMisses[requestId] ?? 0) + 1);
+        }
+      }
+    }
+    await Promise.all(settlementTasks);
 
     if (!isCurrentSession(session)) return;
     useCanvasSkillRunStore.setState((state) => {
       if (state.projectId !== session.projectId) return state;
       let runs = state.runs;
       const pendingRecoveryIds = new Set(state.pendingRecoveryIds);
+      const nextPendingCreateRequestIds = new Set(state.pendingCreateRequestIds);
+      const pendingCreateMisses = { ...state.pendingCreateMisses };
       let discoveryPending = state.discoveryPending;
+
+      for (const requestId of nextPendingCreateRequestIds) {
+        if (
+          !snapshotPendingCreateRequestIds.has(requestId) ||
+          durablePendingCreateRequestIds.has(requestId)
+        ) continue;
+        nextPendingCreateRequestIds.delete(requestId);
+        delete pendingCreateMisses[requestId];
+      }
+
+      for (const requestId of settledCreateRequestIds) {
+        nextPendingCreateRequestIds.delete(requestId);
+        delete pendingCreateMisses[requestId];
+      }
+      for (const [requestId, misses] of missedCreateRequests) {
+        if (nextPendingCreateRequestIds.has(requestId)) pendingCreateMisses[requestId] = misses;
+      }
+      runs = mergeRuns(runs, recoveredCreates);
 
       if (activeResponse.success && activeResponse.data) {
         runs = mergeRuns(
@@ -175,7 +258,14 @@ function refreshSession(session: PollSession): Promise<void> {
         }
       }
       runs = mergeRuns(runs, recovered);
-      return { runs, pendingRecoveryIds, discoveryPending, loading: false };
+      return {
+        runs,
+        pendingRecoveryIds,
+        pendingCreateRequestIds: nextPendingCreateRequestIds,
+        pendingCreateMisses,
+        discoveryPending,
+        loading: false,
+      };
     });
   })().finally(() => {
     // 旧项目请求的 finally 不能清空或重排新项目的轮询。
@@ -198,18 +288,24 @@ export const useCanvasSkillRunStore = create<CanvasSkillRunState>((set) => ({
   loading: false,
   actionBusy: new Set(),
   pendingRecoveryIds: new Set(),
+  pendingCreateRequestIds: new Set(),
+  pendingCreateMisses: {},
   discoveryPending: false,
 
   resume: async (projectId, recoveryRunIds = []) => {
     const normalizedProjectId = String(projectId);
     const session = beginSession(normalizedProjectId);
-    const acceptedButUncommitted = skillRunApi.resolvedCreateIds(`create:canvas:${normalizedProjectId}`);
+    const createScope = `create:canvas:${normalizedProjectId}`;
+    const acceptedButUncommitted = skillRunApi.resolvedCreateIds(createScope);
+    const ambiguousCreateRequests = skillRunApi.unresolvedCreateRequestIds(createScope);
     set({
       projectId: normalizedProjectId,
       runs: {},
       loading: true,
       actionBusy: new Set(),
       pendingRecoveryIds: new Set(normalizeRunIds([...recoveryRunIds, ...acceptedButUncommitted])),
+      pendingCreateRequestIds: new Set(ambiguousCreateRequests),
+      pendingCreateMisses: Object.fromEntries(ambiguousCreateRequests.map((requestId) => [requestId, 0])),
       discoveryPending: true,
     });
     await refreshSession(session);
@@ -250,14 +346,42 @@ export const useCanvasSkillRunStore = create<CanvasSkillRunState>((set) => ({
     ) {
       throw new Error("画布已切换，请在当前画布重新启动 Skill");
     }
-    const response = await skillRunApi.createIdempotent(dto, `create:canvas:${session.projectId}`);
-    if (!response.success || !response.data) throw new Error(response.message || "Skill 启动失败");
+    const clientRequestId = dto.clientRequestId?.trim() || actionRequestId("create");
+    const response = await skillRunApi.createIdempotent(
+      { ...dto, clientRequestId },
+      `create:canvas:${session.projectId}`,
+    );
+    if (!response.success || !response.data) {
+      if (shouldRetry(response.code) && isCurrentSession(session)) {
+        const unresolvedRequestIds = skillRunApi.unresolvedCreateRequestIds(
+          `create:canvas:${session.projectId}`,
+        );
+        set((state) => ({
+          pendingCreateRequestIds: new Set([
+            ...state.pendingCreateRequestIds,
+            ...unresolvedRequestIds,
+          ]),
+          pendingCreateMisses: {
+            ...state.pendingCreateMisses,
+            ...Object.fromEntries(unresolvedRequestIds.map((requestId) => [requestId, 0])),
+          },
+        }));
+        schedulePoll(session);
+      }
+      throw new Error(response.message || "Skill 启动失败");
+    }
     if (!isCurrentSession(session)) throw new Error("画布已切换，运行不会写入当前画布");
     const run = response.data;
     if (!isCanvasRunForProject(run, session.projectId)) {
       throw new Error("Skill 返回了不属于当前画布的运行");
     }
-    set((state) => ({ runs: mergeRuns(state.runs, [run]) }));
+    set((state) => {
+      const pendingCreateRequestIds = new Set(state.pendingCreateRequestIds);
+      pendingCreateRequestIds.delete(clientRequestId);
+      const pendingCreateMisses = { ...state.pendingCreateMisses };
+      delete pendingCreateMisses[clientRequestId];
+      return { runs: mergeRuns(state.runs, [run]), pendingCreateRequestIds, pendingCreateMisses };
+    });
     schedulePoll(session);
     return run;
   },
@@ -319,6 +443,8 @@ export function stopCanvasSkillRunPolling() {
     loading: false,
     actionBusy: new Set(),
     pendingRecoveryIds: new Set(),
+    pendingCreateRequestIds: new Set(),
+    pendingCreateMisses: {},
     discoveryPending: false,
   });
 }

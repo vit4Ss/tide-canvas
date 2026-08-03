@@ -5,7 +5,7 @@ import type {
   ResetPasswordDTO,
 } from "@/types/user";
 import type {
-  ProjectVO, ProjectDetailVO, CanvasDataVO, ShareVO,
+  ProjectVO, ProjectDetailVO, CanvasDataVO, CanvasSaveVO, ShareVO,
   ProjectCreateDTO, ProjectUpdateDTO, CanvasSaveDTO, ProjectQuery,
 } from "@/types/canvas";
 import type {
@@ -18,7 +18,10 @@ import type {
   StylePresetQuery, StylePresetVO, StyleFavoriteToggleVO, StylePresetSaveDTO,
 } from "@/types/style";
 import { fileSizeExceededResult, resolveUploadLimitBytes, type UploadLimitOptions } from "@/lib/upload-limits";
-import { generateAiTaskIdempotent } from "@/lib/ai-generation-idempotency";
+import {
+  generateAiTaskIdempotent,
+  type AiGenerationJournalOptions,
+} from "@/lib/ai-generation-idempotency";
 
 export const authApi = {
   /** 注册开关(后台配置管理 auth.registerClosed);登录页据此隐藏注册入口 */
@@ -61,7 +64,7 @@ export const projectApi = {
   delete: (id: string | number) =>
     http.delete<void>(`/api/projects/${id}`),
   saveCanvas: (id: string | number, data: CanvasSaveDTO) =>
-    http.put<void>(`/api/projects/${id}/canvas`, data),
+    http.put<CanvasSaveVO>(`/api/projects/${id}/canvas`, data),
   getCanvas: (id: string | number) =>
     http.get<CanvasDataVO>(`/api/projects/${id}/canvas`),
   share: (id: string | number) =>
@@ -71,8 +74,11 @@ export const projectApi = {
 export const aiApi = {
   generate: (data: AiGenerateDTO) =>
     http.post<AiTaskVO>("/api/ai/generate", data),
-  generateIdempotent: (data: AiGenerateInput, scope: string) =>
-    generateAiTaskIdempotent(data, scope),
+  generateIdempotent: (
+    data: AiGenerateInput,
+    scope: string,
+    options?: AiGenerationJournalOptions,
+  ) => generateAiTaskIdempotent(data, scope, options),
   optimizePrompt: (prompt: string) =>
     http.post<{ prompt: string }>("/api/ai/optimize-prompt", { prompt }),
   // 「AI 优化」单次实扣积分（含团队倍率，后端为准）；未配置文本模型时为 0

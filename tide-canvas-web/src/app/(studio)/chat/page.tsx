@@ -66,6 +66,7 @@ export default function ChatPage() {
   // cross-cutting state shared by several hooks (送出态 / 输入草稿 / typing 圆点)
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const [textRecovering, setTextRecovering] = useState(false);
   const [typing, setTyping] = useState(false);
 
   const models = useGenModels();
@@ -74,7 +75,7 @@ export default function ChatPage() {
   const streamingApi = useStreaming();
   const conv = useConversations({
     ensureSession,
-    busy,
+    busy: busy || textRecovering,
     setBusy,
     setDraft,
     stopStream: streamingApi.stopStream,
@@ -107,7 +108,8 @@ export default function ChatPage() {
     refs: refsApi.refs,
     refPolicy: cfg.refPolicy,
     refOptional: cfg.refOptional,
-    clearRefs: refsApi.clearRefs,
+    clearRefsIfUnchanged: refsApi.clearRefsIfUnchanged,
+    restoreRefsIfEmpty: refsApi.restoreRefsIfEmpty,
     forceBottom: scroll.forceBottom,
     scrollEnd: scroll.scrollEnd,
     nearBottomRef: scroll.nearBottomRef,
@@ -117,16 +119,17 @@ export default function ChatPage() {
     isMusicSel: cfg.isMusicSel,
     musicNoDraftOk: cfg.musicNoDraftOk,
     skill: cfg.skill,
-    skillInputValues: cfg.skillInputValues,
-    setSkillInputErrors: cfg.setSkillInputErrors,
     setStreaming: streamingApi.setStreaming,
     chatAbortRef: streamingApi.chatAbortRef,
     activeIdRef: conv.activeIdRef,
+    textRecovering,
+    setTextRecovering,
   });
 
-  const { reEdit, regenerate } = useTurnActions({
+  const { reEdit, regenerate, restoringTurn } = useTurnActions({
     msgs: conv.msgs,
-    busy,
+    busy: busy || textRecovering,
+    activeId: conv.activeId,
     genModels: models.genModels,
     send,
     setModel: models.setModel,
@@ -137,6 +140,7 @@ export default function ChatPage() {
     setDur: cfg.setDur,
     setBatch: cfg.setBatch,
     setMusic: cfg.setMusic,
+    setSkill: cfg.setSkill,
     restoreRefs: refsApi.restoreRefs,
     setDraft,
     taRef,
@@ -228,7 +232,11 @@ export default function ChatPage() {
   }, [conv.msgs]);
 
   return (
-    <div className="chat-wrap">
+    <div
+      className="chat-wrap"
+      inert={restoringTurn ? true : undefined}
+      aria-busy={restoringTurn}
+    >
       {/* conversation list */}
       <ConversationSidebar
         convos={conv.convos}
@@ -279,7 +287,7 @@ export default function ChatPage() {
           setDraft={setDraft}
           taRef={taRef}
           send={send}
-          busy={busy}
+          busy={busy || textRecovering || restoringTurn}
           ctxUsage={ctxUsage}
           newChat={conv.newChat}
           openLightbox={openLightbox}
@@ -311,6 +319,7 @@ export default function ChatPage() {
         open={cfg.skillPickerOpen}
         onClose={() => cfg.setSkillPickerOpen(false)}
         onPick={cfg.pickSkill}
+        kinds={["preset"]}
         entryPoint="chat"
         outputType={models.selModel?.type}
         targetType={models.selModel?.type ?? "text"}

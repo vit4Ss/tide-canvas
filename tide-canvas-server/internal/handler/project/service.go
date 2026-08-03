@@ -2,7 +2,9 @@ package project
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -21,7 +23,11 @@ const emptyCanvas = "{}"
 
 // Sentinel errors mapped to business codes by the handler.
 var (
-	errForbidden = errors.New("project: not owner")
+	errForbidden              = errors.New("project: not owner")
+	errClientRequestIDTooLong = errors.New("clientRequestId is too long")
+	errClientRequestConflict  = errors.New("clientRequestId was already used for a different request")
+	errRevisionConflict       = errors.New("project canvas revision conflict")
+	errInvalidRevision        = errors.New("expectedRevision must be zero or greater")
 )
 
 type service struct {
@@ -48,6 +54,38 @@ func (s *service) list(ownerID idgen.ID, q *ListQuery) ([]ProjectVO, int64, erro
 
 // create makes a new empty project owned by ownerID.
 func (s *service) create(ownerID idgen.ID, dto CreateDTO) (*ProjectVO, error) {
+	clientRequestID := strings.TrimSpace(dto.ClientRequestID)
+	if len(clientRequestID) > 96 {
+		return nil, errClientRequestIDTooLong
+	}
+	requestHash, err := createRequestFingerprint(dto)
+	if err != nil {
+		return nil, err
+	}
+	if clientRequestID != "" {
+		if existing, lookupErr := s.repo.findByClientRequest(ownerID, clientRequestID); lookupErr == nil {
+			return replayCreate(existing, requestHash)
+		} else if !errors.Is(lookupErr, ErrNotFound) {
+			return nil, lookupErr
+		}
+	}
+
+	p := newProjectForCreate(ownerID, dto, clientRequestID, requestHash)
+	if err := s.repo.create(p); err != nil {
+		// A concurrent retry can lose the unique-key race. Its insert failed
+		// atomically, so return the winner after verifying the payload hash.
+		if clientRequestID != "" {
+			if existing, lookupErr := s.repo.findByClientRequest(ownerID, clientRequestID); lookupErr == nil {
+				return replayCreate(existing, requestHash)
+			}
+		}
+		return nil, err
+	}
+	vo := toProjectVO(p)
+	return &vo, nil
+}
+
+func newProjectForCreate(ownerID idgen.ID, dto CreateDTO, clientRequestID, requestHash string) *model.Project {
 	p := &model.Project{
 		ID:          idgen.Next(),
 		OwnerID:     ownerID,
@@ -58,10 +96,33 @@ func (s *service) create(ownerID idgen.ID, dto CreateDTO) (*ProjectVO, error) {
 		IsPublic:    false,
 		UrlToken:    genToken(),
 	}
-	if err := s.repo.create(p); err != nil {
-		return nil, err
+	if clientRequestID != "" {
+		p.ClientRequestID = &clientRequestID
+		p.ClientRequestHash = requestHash
 	}
-	vo := toProjectVO(p)
+	return p
+}
+
+func createRequestFingerprint(dto CreateDTO) (string, error) {
+	payload := struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}{
+		Name: strings.TrimSpace(dto.Name), Description: strings.TrimSpace(dto.Description),
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func replayCreate(existing *model.Project, requestHash string) (*ProjectVO, error) {
+	if existing.ClientRequestHash != requestHash {
+		return nil, errClientRequestConflict
+	}
+	vo := toProjectVO(existing)
 	return &vo, nil
 }
 
@@ -145,12 +206,26 @@ func (s *service) remove(id, ownerID idgen.ID) error {
 
 // saveCanvas persists canvas data (and optional thumbnail) for the owner's
 // project.
-func (s *service) saveCanvas(id, ownerID idgen.ID, dto CanvasSaveDTO) error {
+func (s *service) saveCanvas(id, ownerID idgen.ID, dto CanvasSaveDTO) (*CanvasSaveVO, error) {
+	if dto.ExpectedRevision == nil || *dto.ExpectedRevision < 0 {
+		return nil, errInvalidRevision
+	}
+	p, err := s.repo.findByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if p.OwnerID != ownerID {
+		return nil, errForbidden
+	}
 	fields := map[string]any{"canvas_data": dto.CanvasData}
 	if dto.Thumbnail != "" {
 		fields["thumbnail"] = dto.Thumbnail
 	}
-	return s.repo.updateFields(id, ownerID, fields)
+	nextRevision, err := s.repo.saveCanvasCAS(id, ownerID, *dto.ExpectedRevision, fields)
+	if err != nil {
+		return nil, err
+	}
+	return &CanvasSaveVO{Revision: nextRevision}, nil
 }
 
 // getCanvas returns just the canvas data for the owner's project.
@@ -162,7 +237,7 @@ func (s *service) getCanvas(id, ownerID idgen.ID) (*CanvasDataVO, error) {
 	if p.OwnerID != ownerID {
 		return nil, errForbidden
 	}
-	return &CanvasDataVO{CanvasData: p.CanvasData}, nil
+	return &CanvasDataVO{CanvasData: p.CanvasData, Revision: p.Revision}, nil
 }
 
 // share ensures the project has a share token (generating one on first call),

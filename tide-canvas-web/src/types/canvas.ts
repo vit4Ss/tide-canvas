@@ -11,6 +11,8 @@ export interface ProjectVO {
   status: ProjectStatus;
   isPublic: boolean;
   urlToken: string;
+  /** Whole-canvas optimistic-lock version; metadata edits do not change it. */
+  revision: number;
   createTime: string;
   updateTime: string;
 }
@@ -23,7 +25,11 @@ export interface ProjectDetailVO extends ProjectVO {
 
 export interface CanvasDataVO {
   canvasData: string;
-  updateTime?: string;
+  revision: number;
+}
+
+export interface CanvasSaveVO {
+  revision: number;
 }
 
 export interface ShareVO {
@@ -34,6 +40,8 @@ export interface ShareVO {
 export interface ProjectCreateDTO {
   name: string;
   description?: string;
+  /** 客户端稳定请求号；响应丢失时以同一值重放，避免重复创建项目。 */
+  clientRequestId?: string;
 }
 
 export interface ProjectUpdateDTO {
@@ -46,7 +54,7 @@ export interface ProjectUpdateDTO {
 export interface CanvasSaveDTO {
   canvasData: string;
   thumbnail?: string;
-  expectedUpdateTime?: string;
+  expectedRevision: number;
 }
 
 export interface ProjectQuery extends PageQuery {

@@ -8,8 +8,7 @@ import {
   buildMentionRefs,
   type MentionEditorHandle,
 } from "@/components/studio/mention-prompt-editor";
-import { SkillInputFields } from "@/components/skill/skill-input-fields";
-import { skillKindOf, type SkillVO } from "@/types/skill";
+import type { SkillVO } from "@/types/skill";
 
 export function PromptSection({
   prompt,
@@ -24,9 +23,6 @@ export function PromptSection({
   onOptimize,
   onOpenSkillPicker,
   ideaOpts,
-  skillInputValues,
-  skillInputErrors,
-  onSkillInputChange,
 }: {
   prompt: string;
   onPromptChange: (v: string) => void;
@@ -40,9 +36,6 @@ export function PromptSection({
   onOptimize: () => void;
   onOpenSkillPicker: () => void;
   ideaOpts: string[];
-  skillInputValues?: Record<string, unknown>;
-  skillInputErrors?: Record<string, string>;
-  onSkillInputChange?: (key: string, value: unknown) => void;
 }) {
   return (
     <>
@@ -87,18 +80,6 @@ export function PromptSection({
           {/* 提示词「清空」按钮已按用户要求移除（2026-07-08）：全选删除足够 */}
         </div>
       </div>
-
-      {skill && skillKindOf(skill) !== "preset" && onSkillInputChange && (
-        <div style={{ marginTop: 12 }}>
-          <SkillInputFields
-            schema={skill.inputSchema}
-            values={skillInputValues ?? {}}
-            errors={skillInputErrors}
-            onChange={onSkillInputChange}
-            compact
-          />
-        </div>
-      )}
 
       {/* idea chips (only when the model configures 灵感提示词) */}
       {ideaOpts.length > 0 && (

@@ -150,6 +150,11 @@ func AutoMigrate(db *gorm.DB) error {
 	if err := BackfillSkillVersions(db); err != nil {
 		return err
 	}
+	// Skill has two public execution kinds. Historical workflow rows become
+	// canvas-only agents while retaining their version files and step manifests.
+	if err := NormalizeSkillKinds(db); err != nil {
+		return err
+	}
 	// 模型主动探测已整链下线（2026-07-13 用户定稿，模型状态改为按真实调用
 	// 统计）：清掉旧库的探测样本表与探测间隔配置行，避免后台配置管理里
 	// 残留一个不再控制任何东西的键。均幂等。
@@ -212,6 +217,9 @@ func prepareNullableIdempotencyColumns(db *gorm.DB) error {
 		clearSQL string
 	}
 	migrations := []migration{
+		{&Project{}, "client_request_id",
+			"ALTER TABLE `projects` MODIFY COLUMN `client_request_id` varchar(96) NULL",
+			"UPDATE `projects` SET `client_request_id` = NULL WHERE `client_request_id` = ''"},
 		{&AiTask{}, "client_request_id",
 			"ALTER TABLE `ai_tasks` MODIFY COLUMN `client_request_id` varchar(96) NULL",
 			"UPDATE `ai_tasks` SET `client_request_id` = NULL WHERE `client_request_id` = ''"},
@@ -475,18 +483,25 @@ func (User) TableName() string { return "users" }
 
 // Project is a canvas project owned by a user.
 type Project struct {
-	ID          idgen.ID  `gorm:"primaryKey;autoIncrement:false" json:"id"`
-	OwnerID     idgen.ID  `gorm:"index" json:"ownerId"`
-	Name        string    `gorm:"size:255" json:"name"`
-	Description string    `gorm:"size:1024" json:"description"`
-	Thumbnail   string    `gorm:"size:512" json:"thumbnail"`
-	CanvasData  string    `gorm:"type:longtext" json:"canvasData"`
-	Status      int       `gorm:"default:0" json:"status"` // 0 draft, 1 published
-	IsPublic    bool      `gorm:"default:false" json:"isPublic"`
-	UrlToken    string    `gorm:"size:64;index" json:"urlToken"`
-	ShareToken  string    `gorm:"size:64;index" json:"shareToken"`
-	CreateTime  time.Time `gorm:"autoCreateTime" json:"createTime"`
-	UpdateTime  time.Time `gorm:"autoUpdateTime" json:"updateTime"`
+	ID      idgen.ID `gorm:"primaryKey;autoIncrement:false" json:"id"`
+	OwnerID idgen.ID `gorm:"index;uniqueIndex:idx_project_owner_client,priority:1" json:"ownerId"`
+	// Optional for legacy callers. A nullable value keeps ordinary project
+	// creation unconstrained while keyed retries are exactly-once per owner.
+	ClientRequestID   *string `gorm:"column:client_request_id;size:96;uniqueIndex:idx_project_owner_client,priority:2" json:"-"`
+	ClientRequestHash string  `gorm:"column:client_request_hash;size:64" json:"-"`
+	Name              string  `gorm:"size:255" json:"name"`
+	Description       string  `gorm:"size:1024" json:"description"`
+	Thumbnail         string  `gorm:"size:512" json:"thumbnail"`
+	CanvasData        string  `gorm:"type:longtext" json:"canvasData"`
+	// Revision is an independent optimistic-lock version for whole-canvas
+	// snapshots. Project metadata updates must not invalidate an editor save.
+	Revision   int64     `gorm:"not null;default:0" json:"revision"`
+	Status     int       `gorm:"default:0" json:"status"` // 0 draft, 1 published
+	IsPublic   bool      `gorm:"default:false" json:"isPublic"`
+	UrlToken   string    `gorm:"size:64;index" json:"urlToken"`
+	ShareToken string    `gorm:"size:64;index" json:"shareToken"`
+	CreateTime time.Time `gorm:"autoCreateTime" json:"createTime"`
+	UpdateTime time.Time `gorm:"autoUpdateTime" json:"updateTime"`
 }
 
 // TableName overrides the default pluralized table name.

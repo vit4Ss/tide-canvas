@@ -14,6 +14,8 @@ import { toast } from "@/components/shared/toast";
 import { adminSkillsApi } from "@/lib/admin-skills-api";
 import {
   ADMIN_SKILL_ENTRY_POINTS as ENTRY_POINTS,
+  constrainAdminSkillEntryPoints,
+  defaultAdminSkillEntryPoints,
   defaultAdminSkillOutputTypes,
   defaultAdminSkillTarget,
   starterAdminSkillManifest,
@@ -210,15 +212,29 @@ function defaultBindings(
   }));
 }
 
+function constrainBindingRows(
+  kind: SkillKind,
+  entryPoints: readonly SkillEntryPoint[],
+  primaryOutputType: SkillOutputType,
+  rows: readonly BindingFormRow[],
+): BindingFormRow[] {
+  const allowedEntries = constrainAdminSkillEntryPoints(kind, entryPoints);
+  const allowed = new Set(allowedEntries);
+  const constrained = rows.filter((row) => allowed.has(row.surface));
+  for (const surface of allowedEntries) {
+    if (constrained.some((row) => row.surface === surface)) continue;
+    constrained.push(...defaultBindings([surface], primaryOutputType));
+  }
+  return constrained;
+}
+
 function emptyForm(skill: AdminSkillVO): VersionForm {
   const kind = skill.kind || "preset";
   const output = (skill.outputType || "text") as SkillOutputType;
   const supportedEntries = [...new Set((skill.entryPoints ?? []).filter((entry) =>
     ENTRY_POINTS.some((candidate) => candidate.key === entry),
   ))];
-  const entryPoints = supportedEntries.length
-    ? supportedEntries
-    : ENTRY_POINTS.map((entry) => entry.key);
+  const entryPoints = constrainAdminSkillEntryPoints(kind, supportedEntries);
   return {
     kind,
     entryPoints,
@@ -510,7 +526,12 @@ export function SkillVersionModal({
         ) return;
         setForm((current) => current && ({
           ...current,
-          bindings: bindingRows(res.data, "live"),
+          bindings: constrainBindingRows(
+            current.kind,
+            current.entryPoints,
+            current.primaryOutputType,
+            bindingRows(res.data, "live"),
+          ),
         }));
       });
     });
@@ -533,6 +554,7 @@ export function SkillVersionModal({
   if (!skill || !form) return null;
 
   const toggleEntry = (key: SkillEntryPoint) => {
+    if (form.kind === "agent") return;
     bindingHydrationRef.current += 1;
     setBindingErrors({});
     setForm((current) => {
@@ -626,6 +648,7 @@ export function SkillVersionModal({
   const toggleOutput = (key: SkillOutputType) => {
     setForm((current) => {
       if (!current) return current;
+      if (current.kind === "preset") return current;
       if (key === current.primaryOutputType) return current;
       const exists = current.outputTypes.includes(key);
       return {
@@ -694,9 +717,16 @@ export function SkillVersionModal({
       return;
     }
     const version = detail.data;
-    const entryPoints = parseAdminStringList<SkillEntryPoint>(version.entryPoints);
+    const parsedEntryPoints = parseAdminStringList<SkillEntryPoint>(version.entryPoints);
+    const entryPoints = constrainAdminSkillEntryPoints(version.kind, parsedEntryPoints);
     const outputTypes = parseAdminStringList<SkillOutputType>(version.outputTypes);
     const versionBindings = parseAdminBindings(version.bindings);
+    const sourceBindings = versionBindings.length
+      ? bindingRows(versionBindings, `version-${version.id}`)
+      : form.bindings.map((binding) => ({
+          ...binding,
+          key: bindingRowKey(`version-${version.id}-fallback`),
+        }));
     const stringify = (value: unknown) =>
       typeof value === "string"
         ? (() => {
@@ -710,9 +740,11 @@ export function SkillVersionModal({
     setBindingErrors({});
     setForm({
       kind: version.kind,
-      entryPoints: entryPoints.length ? entryPoints : ["studio", "chat", "canvas", "asset", "api"],
+      entryPoints,
       primaryOutputType: version.primaryOutputType,
-      outputTypes: outputTypes.length ? outputTypes : [version.primaryOutputType],
+      outputTypes: version.kind === "preset"
+        ? [version.primaryOutputType]
+        : outputTypes.length ? outputTypes : [version.primaryOutputType],
       inputSchema: stringify(version.inputSchema),
       manifest: stringify(version.manifest),
       promptTemplate: version.promptTemplate || "",
@@ -725,26 +757,30 @@ export function SkillVersionModal({
         mimeType: file.mimeType,
       }]),
       publish: false,
-      bindings: versionBindings.length
-        ? bindingRows(versionBindings, `version-${version.id}`)
-        : form.bindings.map((binding) => ({
-            ...binding,
-            key: bindingRowKey(`version-${version.id}-fallback`),
-          })),
+      bindings: constrainBindingRows(
+        version.kind,
+        entryPoints,
+        version.primaryOutputType,
+        sourceBindings,
+      ),
     });
     toast.info(`已复制 v${version.version} 配置和文件，请检查后创建新版本`);
   };
 
   const save = async () => {
-    if (!form.entryPoints.length) {
+    const entryPoints = constrainAdminSkillEntryPoints(form.kind, form.entryPoints);
+    const outputTypes = form.kind === "preset"
+      ? [form.primaryOutputType]
+      : [...new Set([form.primaryOutputType, ...form.outputTypes])];
+    if (!entryPoints.length) {
       toast.error("请至少选择一个使用入口");
       return false;
     }
-    if (!form.outputTypes.length) {
+    if (!outputTypes.length) {
       toast.error("请至少选择一个输出类型");
       return false;
     }
-    for (const entryPoint of form.entryPoints) {
+    for (const entryPoint of entryPoints) {
       if (!form.bindings.some((binding) => binding.surface === entryPoint)) {
         toast.error(`请为${ENTRY_LABEL[entryPoint]}至少添加一个落点`);
         return false;
@@ -766,7 +802,7 @@ export function SkillVersionModal({
     const nextBindingErrors: Record<string, string> = {};
     const seenBindings = new Set<string>();
     const bindings: AdminSkillBindingDTO[] = [];
-    for (const binding of form.bindings.filter((row) => form.entryPoints.includes(row.surface))) {
+    for (const binding of form.bindings.filter((row) => entryPoints.includes(row.surface))) {
       const issues: string[] = [];
       const targetType = binding.targetType.trim().toLowerCase();
       if (!targetType || targetType.length > 32 || /[ /\\\0]/.test(targetType)) {
@@ -820,9 +856,9 @@ export function SkillVersionModal({
 
     const dto: AdminSkillVersionCreateDTO = {
       kind: form.kind,
-      entryPoints: form.entryPoints,
+      entryPoints,
       primaryOutputType: form.primaryOutputType,
-      outputTypes: [...new Set([form.primaryOutputType, ...form.outputTypes])],
+      outputTypes,
       inputSchema,
       manifest: { ...manifest, kind: form.kind },
       promptTemplate: form.promptTemplate || undefined,
@@ -962,12 +998,20 @@ export function SkillVersionModal({
                 }
                 setForm((current) => {
                   if (!current || current.kind === kind) return current;
+                  const entryPoints = defaultAdminSkillEntryPoints(kind);
                   return {
                     ...current,
                     kind,
+                    entryPoints,
                     outputTypes: defaultAdminSkillOutputTypes(
                       kind,
                       current.primaryOutputType,
+                    ),
+                    bindings: constrainBindingRows(
+                      kind,
+                      entryPoints,
+                      current.primaryOutputType,
+                      current.bindings,
                     ),
                     manifest: JSON.stringify(
                       starterAdminSkillManifest(kind, current.primaryOutputType, current.modelId),
@@ -979,8 +1023,7 @@ export function SkillVersionModal({
               }}
             >
               <option value="preset">预设 · 单次生成兼容链路</option>
-              <option value="agent">智能技能 · 文档驱动执行</option>
-              <option value="workflow">工作流 · 多步骤与确认门</option>
+              <option value="agent">智能技能 · 画布对话与跨节点执行</option>
             </select>
           </Field>
           <Field label="主输出" required span={2}>
@@ -1011,12 +1054,11 @@ export function SkillVersionModal({
                       null,
                       2,
                     ),
-                    bindings: current.bindings.map((binding) =>
-                      binding.surface === "asset" &&
-                      value !== "image" &&
-                      binding.targetType === "*"
-                        ? { ...binding, targetType: "general" }
-                        : binding,
+                    bindings: constrainBindingRows(
+                      current.kind,
+                      current.entryPoints,
+                      value,
+                      current.bindings,
                     ),
                   };
                 });
@@ -1034,6 +1076,7 @@ export function SkillVersionModal({
                   <input
                     type="checkbox"
                     checked={form.entryPoints.includes(entry.key)}
+                    disabled={form.kind === "agent"}
                     onChange={() => toggleEntry(entry.key)}
                   />
                   {entry.label}
@@ -1041,14 +1084,22 @@ export function SkillVersionModal({
               ))}
             </div>
           </Field>
-          <Field label="可能输出" required span={4} group hint="运行可以产生多种产物，主输出必须包含在其中。">
+          <Field
+            label="可能输出"
+            required
+            span={4}
+            group
+            hint={form.kind === "preset"
+              ? "预设技能始终只生成主输出这一种内容。"
+              : "智能技能可以在画布中产生多种节点，主输出必须包含在其中。"}
+          >
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
               {OUTPUT_TYPES.map((type) => (
                 <label key={type} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <input
                     type="checkbox"
                     checked={form.outputTypes.includes(type)}
-                    disabled={form.primaryOutputType === type}
+                    disabled={form.kind === "preset" || form.primaryOutputType === type}
                     onChange={() => toggleOutput(type)}
                   />
                   {SKILL_OUTPUT_LABEL[type]}

@@ -1,20 +1,72 @@
 // 公开技能广场 API（JWTAuth）：列表 + 使用计数。内容由后台 /admin/skills 维护。
 
 import { http, toParams } from "@/lib/http";
-import type { PageData } from "@/types/api";
+import type { PageData, Result } from "@/types/api";
 import type {
   SkillEntryPoint,
   SkillInputField,
   SkillInputSchema,
   SkillKind,
+  SkillOutputType,
   SkillQuery,
   SkillVO,
 } from "@/types/skill";
+import { normalizeSkillKind } from "@/types/skill";
 import type { SkillRunInput } from "@/types/skill-run";
+
+const PRESET_ENTRY_POINTS: readonly SkillEntryPoint[] = ["studio", "chat", "canvas"];
+
+function normalizeSkill(skill: SkillVO): SkillVO {
+  const kind = normalizeSkillKind((skill as { kind?: unknown }).kind);
+  const entryPoints = kind === "agent"
+    ? ["canvas" as const]
+    : [...new Set((skill.entryPoints ?? PRESET_ENTRY_POINTS).filter((entry) =>
+        PRESET_ENTRY_POINTS.includes(entry),
+      ))];
+  return {
+    ...skill,
+    kind,
+    entryPoints: entryPoints.length ? entryPoints : [...PRESET_ENTRY_POINTS],
+    outputTypes: kind === "preset"
+      ? [skill.outputType as SkillOutputType]
+      : skill.outputTypes,
+  };
+}
+
+function normalizeSkillPage(result: Result<PageData<SkillVO>>): Result<PageData<SkillVO>> {
+  if (!result.success || !result.data) return result;
+  return {
+    ...result,
+    data: {
+      ...result.data,
+      records: result.data.records.map(normalizeSkill),
+    },
+  };
+}
 
 export const skillApi = {
   /** GET /api/skills -> PageData<SkillVO>（仅上架，sortOrder 升序） */
-  list: (query: SkillQuery) => http.get<PageData<SkillVO>>("/api/skills", toParams(query)),
+  list: async (query: SkillQuery) => normalizeSkillPage(
+    await http.get<PageData<SkillVO>>("/api/skills", toParams(query)),
+  ),
+
+  /**
+   * GET /api/skills/:id —— 重新编辑/再次生成前重新读取当前已发布版本。
+   * entryPoint + targetType 让服务端同时校验该技能仍在当前入口启用，避免
+   * 历史快照把已下架或已解绑的技能静默套到新一轮生成上。
+   */
+  get: async (
+    id: string,
+    entryPoint?: SkillEntryPoint,
+    targetType?: string,
+  ): Promise<Result<SkillVO>> => {
+    const result = await http.get<SkillVO>(
+      `/api/skills/${encodeURIComponent(id)}`,
+      toParams({ entryPoint, targetType }),
+    );
+    if (!result.success || !result.data) return result;
+    return { ...result, data: normalizeSkill(result.data) };
+  },
 
   /** GET /api/skills/categories -> string[]（该模态下确实有技能的分类，用于隐藏空页签） */
   categories: (

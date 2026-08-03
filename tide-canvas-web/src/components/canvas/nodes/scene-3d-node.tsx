@@ -7,7 +7,6 @@ import { NodeHeader } from "./base/node-header";
 import { NodePorts } from "./base/node-ports";
 import { Scene3DEditor } from "./scene-3d-editor";
 import { CHARACTER_NODE_TYPE } from "@/lib/canvas-node-types";
-import { CanvasSkillRunNodeShortcut } from "../skill-run/canvas-skill-run-workspace";
 
 interface Props {
   node: CanvasNode;
@@ -92,7 +91,6 @@ export const Scene3DNode = memo(function Scene3DNode({ node, isSelected, isDragg
           )}
 
           <NodePorts nodeId={node.id} visible={showAuxUI} overlay onPortMouseDown={onPortMouseDown} />
-          <CanvasSkillRunNodeShortcut nodeId={node.id} nodeType={node.type} visible={showAuxUI} />
         </div>
       </div>
 

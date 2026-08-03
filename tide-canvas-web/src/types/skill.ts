@@ -1,9 +1,9 @@
 // ============================================================================
-// 技能(Skill)类型。preset 保留「提示词模板 + 单模型 + 默认参数」的旧链路；
-// agent / workflow 由 SkillRun 执行器运行，可跨多个模型、步骤与输出类型。
+// 技能(Skill)只有两种产品形态：preset 是单一输出的预设生成；
+// agent 由 SkillRun 执行器在画布中持续对话与编排，可跨多个节点和输出类型。
 // ============================================================================
 
-export type SkillKind = "preset" | "agent" | "workflow";
+export type SkillKind = "preset" | "agent";
 
 export type SkillEntryPoint = "studio" | "chat" | "canvas" | "asset" | "api";
 
@@ -57,7 +57,7 @@ export interface SkillVO {
   currentVersionId?: string;
   /** 允许启动该技能的产品入口；空数组/缺省表示兼容全部旧入口。 */
   entryPoints?: SkillEntryPoint[];
-  /** 工作流可产生多个类型；缺省时回退到 outputType。 */
+  /** 智能技能可产生多个类型；预设技能始终只使用 outputType。 */
   outputTypes?: SkillOutputType[];
   /** 动态输入表单定义。后端迁移期间同时兼容 JSON 字符串与对象。 */
   inputSchema?: SkillInputSchema | string | null;
@@ -135,31 +135,42 @@ export const SKILL_OUTPUT_LABEL: Record<string, string> = {
 export const SKILL_KIND_LABEL: Record<SkillKind, string> = {
   preset: "预设",
   agent: "智能技能",
-  workflow: "工作流",
 };
 
-export function skillKindOf(skill: Pick<SkillVO, "kind">): SkillKind {
-  return skill.kind === "agent" || skill.kind === "workflow" ? skill.kind : "preset";
+/**
+ * 数据迁移期可能仍收到历史 workflow。它已是智能技能的旧名，
+ * 只在边界归一，不再向产品层暴露第三种类型。
+ */
+export function normalizeSkillKind(kind: unknown): SkillKind {
+  return kind === "agent" || kind === "workflow" ? "agent" : "preset";
+}
+
+export function skillKindOf(skill: { kind?: unknown }): SkillKind {
+  return normalizeSkillKind(skill.kind);
 }
 
 export function skillOutputTypesOf(
-  skill: Pick<SkillVO, "outputType" | "outputTypes">,
+  skill: Pick<SkillVO, "kind" | "outputType" | "outputTypes">,
 ): SkillOutputType[] {
+  const fallback = skill.outputType as SkillOutputType;
+  if (skillKindOf(skill) === "preset") return fallback ? [fallback] : [];
   const values = Array.isArray(skill.outputTypes)
     ? skill.outputTypes.filter((v): v is SkillOutputType =>
         v === "image" || v === "video" || v === "audio" || v === "text" || v === "file",
       )
     : [];
   if (values.length) return [...new Set(values)];
-  const fallback = skill.outputType as SkillOutputType;
   return fallback ? [fallback] : [];
 }
 
 export function skillSupportsEntryPoint(
-  skill: Pick<SkillVO, "entryPoints">,
+  skill: Pick<SkillVO, "kind" | "entryPoints">,
   entryPoint?: SkillEntryPoint,
 ): boolean {
-  if (!entryPoint || !Array.isArray(skill.entryPoints) || skill.entryPoints.length === 0) return true;
+  if (!entryPoint) return true;
+  if (skillKindOf(skill) === "agent") return entryPoint === "canvas";
+  if (entryPoint !== "studio" && entryPoint !== "chat" && entryPoint !== "canvas") return false;
+  if (!Array.isArray(skill.entryPoints) || skill.entryPoints.length === 0) return true;
   return skill.entryPoints.includes(entryPoint);
 }
 
@@ -169,7 +180,7 @@ export function skillSupportsOutput(
 ): boolean {
   if (!outputType) return true;
   const outputs = skillOutputTypesOf(skill);
-  // Published preset placement is validated against every declared immutable
-  // output type by the server, just like agent/workflow runs.
+  // Presets are deliberately single-output; agents may declare multiple
+  // products from one conversational canvas run.
   return outputs.includes(outputType as SkillOutputType);
 }

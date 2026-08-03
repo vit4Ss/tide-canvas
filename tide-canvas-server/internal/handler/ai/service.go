@@ -131,6 +131,7 @@ var (
 	errNoHandler          = errors.New("handler not found")
 	errNoModel            = errors.New("model unavailable")
 	errInsufficientPoints = errors.New("insufficient points")
+	errProjectUnavailable = errors.New("project unavailable")
 	// errToolDisabled：后台把预设工具下线（ai_tools.enabled=false）后拒绝生成。
 	errToolDisabled = errors.New("tool disabled")
 )
@@ -167,6 +168,12 @@ func refundTaskOnce(db *gorm.DB, taskID idgen.ID, reason string) error {
 // generate creates a task in PROCESSING state, kicks off async execution, and
 // returns the task VO immediately so the frontend can start polling.
 func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO) (*AiTaskVO, error) {
+	// HTTP/direct calls may only associate tasks and derived works with a canvas
+	// owned by the caller. SkillRun creation already validates its project and
+	// carries a non-zero step ID, so avoid repeating this query for every step.
+	if err := validateDirectProjectOwnership(ctx, userID, dto, s.repo.projectOwnedBy); err != nil {
+		return nil, err
+	}
 	clientRequestID := strings.TrimSpace(dto.ClientRequestID)
 	requestHash := ""
 	if clientRequestID != "" {
@@ -329,6 +336,27 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 
 	vo := toTaskVO(task)
 	return &vo, nil
+}
+
+type projectOwnershipLookup func(context.Context, idgen.ID, idgen.ID) (bool, error)
+
+func validateDirectProjectOwnership(
+	ctx context.Context,
+	userID idgen.ID,
+	dto generateDTO,
+	lookup projectOwnershipLookup,
+) error {
+	if dto.ProjectID == 0 || dto.SkillRunStepID != 0 {
+		return nil
+	}
+	owned, err := lookup(ctx, dto.ProjectID, userID)
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return errProjectUnavailable
+	}
+	return nil
 }
 
 func directGenerationFingerprint(dto generateDTO) (string, error) {
@@ -713,9 +741,9 @@ func (s *service) validateDirectSkillPlacement(ctx context.Context, dto *generat
 	}
 	entryPoint := strings.ToLower(strings.TrimSpace(dto.EntryPoint))
 	if entryPoint == "" {
-		entryPoint = "api"
+		entryPoint = "studio"
 	}
-	validSurface := map[string]bool{"chat": true, "studio": true, "canvas": true, "asset": true, "api": true}
+	validSurface := map[string]bool{"chat": true, "studio": true, "canvas": true}
 	if !validSurface[entryPoint] {
 		return 0, skillPlacementError{message: "entryPoint is invalid"}
 	}

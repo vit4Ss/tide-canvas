@@ -3,7 +3,6 @@ import { referenceKindFromMeta, resolveModelReferenceLimitBytes, validateKnownFi
 import { CHARACTER_NODE_TYPE, isConceptCanvasNodeType } from "@/lib/canvas-node-types";
 import type { CanvasNode } from "@/stores/use-canvas-store";
 import type { AiModelVO } from "@/types/ai";
-import type { SkillVO } from "@/types/skill";
 import { inlineTextRefs } from "../prompt-ref-utils";
 
 /** 阻止画布拖拽的通用 mousedown 拦截（媒体节点的工具栏/面板到处在用） */
@@ -58,11 +57,11 @@ export function inlineIncomingTextRefs(prompt: string, sources: CanvasNode[]): s
 }
 
 /** 生成前校验参考素材的已知文件大小（按所选模型的参考上限）；不通过则弹错并返回 false */
-export function validateReferenceFileSizes(refNodes: CanvasNode[], selectedModel: AiModelVO | undefined): boolean {
+export function validateReferenceFileSizes(refNodes: CanvasNode[], selectedModel: AiModelVO | undefined, handler?: string): boolean {
   for (const refNode of refNodes) {
     const kind = referenceKindFromMeta({ fileType: refNode.fileType, mimeType: refNode.mimeType, type: refNode.type });
     const message = validateKnownFileSize(refNode.fileSize, refNode.title, {
-      maxBytes: resolveModelReferenceLimitBytes(selectedModel, kind),
+      maxBytes: resolveModelReferenceLimitBytes(selectedModel, kind, handler),
       label: "参考文件",
     });
     if (message) {
@@ -71,14 +70,6 @@ export function validateReferenceFileSizes(refNodes: CanvasNode[], selectedModel
     }
   }
   return true;
-}
-
-/** 技能指定了模型卡且存在 → 切换并提示（切换后不合法的档位由调用方的校正 effect 收敛） */
-export function switchSkillModel(s: SkillVO, models: AiModelVO[], selectedModelId: string, setSelectedModelId: (id: string) => void) {
-  if (s.modelId && models.some((m) => m.modelId === s.modelId) && s.modelId !== selectedModelId) {
-    setSelectedModelId(s.modelId);
-    toast.info("已切换到技能指定模型");
-  }
 }
 
 /** 「右侧生成结果节点」类操作的落位：源卡片右侧一列，叠到列内已有节点（含上次结果）下方。

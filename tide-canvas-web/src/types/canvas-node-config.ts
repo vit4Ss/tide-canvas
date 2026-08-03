@@ -14,7 +14,6 @@ export type CanvasNodeRenderer =
   | "script";
 
 export type CanvasNodeFeatureKey =
-  | "skill.launcher"
   | "image.subjectTurnaround"
   | "image.subjectCloseup"
   | "image.expressionGrid"

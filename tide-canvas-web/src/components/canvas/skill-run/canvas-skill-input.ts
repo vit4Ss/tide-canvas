@@ -8,7 +8,7 @@ interface CanvasSnapshot {
 }
 
 interface SourceOptions {
-  /** 节点顶部入口：当前节点优先，随后按连线落库顺序加入所有入边。 */
+  /** 兼容旧调用：显式节点作为来源，并按连线顺序补充它的所有入边。 */
   triggerNodeId?: string;
   /** 画布级入口：显式多选覆盖自动入边收集。 */
   sourceNodeIds?: readonly string[];
@@ -17,6 +17,8 @@ interface SourceOptions {
 interface BuildOptions extends SourceOptions {
   prompt?: string;
   parameters?: Record<string, unknown>;
+  /** 跨页 Agent 启动时可直接携带已上传素材；进入画布后无需重复上传。 */
+  assets?: readonly SkillRunAssetInput[];
 }
 
 function uniqueExistingNodes(nodes: CanvasNode[], ids: readonly string[]): CanvasNode[] {
@@ -31,7 +33,7 @@ function uniqueExistingNodes(nodes: CanvasNode[], ids: readonly string[]): Canva
 }
 
 /**
- * 统一解析 Skill 来源。多选入口只使用多选；节点顶部入口则使用「当前节点 + 入边」。
+ * 统一解析 Skill 来源。助手优先使用当前多选；兼容调用可使用「显式节点 + 入边」。
  * 这避免了每个节点组件分别维护一套素材拼装规则。
  */
 export function resolveCanvasSkillSources(
@@ -146,7 +148,10 @@ export function buildCanvasSkillRunInput(
 
   return {
     prompt: options.prompt?.trim() || suggestedPrompt(sources),
-    assets: sources.flatMap((node) => canvasNodeToSkillAssets(node, slotBySourceId.get(node.id))),
+    assets: [
+      ...(options.assets ?? []),
+      ...sources.flatMap((node) => canvasNodeToSkillAssets(node, slotBySourceId.get(node.id))),
+    ],
     sourceNodeIds: sources.map((node) => node.id),
     parameters: options.parameters ?? {},
   };

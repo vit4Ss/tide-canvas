@@ -19,6 +19,16 @@ type repo struct {
 
 func newRepo(db *gorm.DB) *repo { return &repo{db: db} }
 
+func projectOwnershipScope(db *gorm.DB, projectID, userID idgen.ID) *gorm.DB {
+	return db.Model(&model.Project{}).Where("id = ? AND owner_id = ?", projectID, userID)
+}
+
+func (r *repo) projectOwnedBy(ctx context.Context, projectID, userID idgen.ID) (bool, error) {
+	var count int64
+	err := projectOwnershipScope(r.db.WithContext(ctx), projectID, userID).Count(&count).Error
+	return count > 0, err
+}
+
 // textModel returns the market model used for prompt optimization: the listed
 // text model flagged as the AI-optimization primary if any, else any listed text
 // model. nil when none is configured. The full row (not just model_key) is

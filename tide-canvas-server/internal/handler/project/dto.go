@@ -5,8 +5,9 @@ package project
 
 // CreateDTO is the body for POST /api/projects (ProjectCreateDTO).
 type CreateDTO struct {
-	Name        string `json:"name" binding:"required,max=255"`
-	Description string `json:"description" binding:"omitempty,max=1024"`
+	Name            string `json:"name" binding:"required,max=255"`
+	Description     string `json:"description" binding:"omitempty,max=1024"`
+	ClientRequestID string `json:"clientRequestId" binding:"omitempty,max=96"`
 }
 
 // UpdateDTO is the body for PUT /api/projects/:id (ProjectUpdateDTO). All fields
@@ -21,8 +22,9 @@ type UpdateDTO struct {
 
 // CanvasSaveDTO is the body for PUT /api/projects/:id/canvas (CanvasSaveDTO).
 type CanvasSaveDTO struct {
-	CanvasData string `json:"canvasData" binding:"required"`
-	Thumbnail  string `json:"thumbnail" binding:"omitempty,max=1048576"`
+	CanvasData       string `json:"canvasData" binding:"required"`
+	Thumbnail        string `json:"thumbnail" binding:"omitempty,max=1048576"`
+	ExpectedRevision *int64 `json:"expectedRevision" binding:"required"`
 }
 
 // ListQuery is the query for GET /api/projects (ProjectQuery + PageQuery).

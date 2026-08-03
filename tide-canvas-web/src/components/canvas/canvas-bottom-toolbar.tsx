@@ -10,7 +10,6 @@ import {
   Minus,
   Plus,
   Redo2,
-  Sparkles,
   Undo2,
   Workflow,
 } from "lucide-react";
@@ -35,7 +34,6 @@ interface Props {
   onArrange: () => void;
   onOpenAssets: () => void;
   onOpenHistory: () => void;
-  onRunSkill: () => void;
 }
 
 export function CanvasBottomToolbar({
@@ -53,7 +51,6 @@ export function CanvasBottomToolbar({
   onArrange,
   onOpenAssets,
   onOpenHistory,
-  onRunSkill,
 }: Props) {
   // 自行订阅缩放显示，选择器直接量化成整数百分比：平移不触发，
   // 连续缩放也只在显示值实际变化的帧重渲染
@@ -155,7 +152,6 @@ export function CanvasBottomToolbar({
           )}
         </div>
 
-        <DockButton icon={Sparkles} label="运行 Skill" onClick={onRunSkill} />
         <DockButton icon={Workflow} label="自动排布" onClick={onArrange} />
         <DockButton icon={Frame} label="适应视图" onClick={onFitView} />
         <DockButton icon={Clock} label="历史记录" active={historyActive} onClick={onOpenHistory} />

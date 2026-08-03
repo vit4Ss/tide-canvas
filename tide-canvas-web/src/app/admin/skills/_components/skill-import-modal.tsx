@@ -12,10 +12,13 @@ import type {
 import {
   SKILL_CATEGORIES,
   type SkillEntryPoint,
+  type SkillKind,
 } from "@/types/skill";
 import {
   ADMIN_SKILL_ENTRY_POINTS,
+  constrainAdminSkillEntryPoints,
   defaultAdminSkillBindings,
+  defaultAdminSkillEntryPoints,
   defaultAdminSkillOutputTypes,
   starterAdminSkillManifest,
 } from "@/lib/admin-skill-defaults";
@@ -134,12 +137,12 @@ export function SkillImportModal({
 }) {
   const [packages, setPackages] = useState<PreparedPackage[]>([]);
   const [reading, setReading] = useState(false);
-  const [kind, setKind] = useState<"agent" | "workflow">("agent");
+  const [kind, setKind] = useState<SkillKind>("agent");
   const [category, setCategory] = useState<string>(SKILL_CATEGORIES[0]);
   const [authorName, setAuthorName] = useState("官方");
-  const [entryPoints, setEntryPoints] = useState<SkillEntryPoint[]>([
-    ...ADMIN_SKILL_ENTRY_POINTS.map((entry) => entry.key),
-  ]);
+  const [entryPoints, setEntryPoints] = useState<SkillEntryPoint[]>(
+    defaultAdminSkillEntryPoints("agent"),
+  );
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const readSeqRef = useRef(0);
@@ -176,6 +179,7 @@ export function SkillImportModal({
   };
 
   const toggleEntry = (entry: SkillEntryPoint) => {
+    if (kind === "agent") return;
     setEntryPoints((current) => current.includes(entry)
       ? current.filter((item) => item !== entry)
       : [...current, entry]);
@@ -194,6 +198,7 @@ export function SkillImportModal({
       toast.error("Skill 名称不能为空");
       return false;
     }
+    const normalizedEntryPoints = constrainAdminSkillEntryPoints(kind, entryPoints);
     const skills: AdminSkillImportPackage[] = packages.map((pkg, index) => ({
       title: truncateRunes(pkg.title.trim(), 64),
       description: pkg.description.trim(),
@@ -204,7 +209,7 @@ export function SkillImportModal({
       status: 0,
       sortOrder: index,
       kind,
-      entryPoints,
+      entryPoints: normalizedEntryPoints,
       primaryOutputType: "text",
       outputTypes: defaultAdminSkillOutputTypes(kind, "text"),
       inputSchema: {
@@ -213,7 +218,7 @@ export function SkillImportModal({
       },
       manifest: starterAdminSkillManifest(kind, "text"),
       defaultParams: {},
-      bindings: defaultAdminSkillBindings(entryPoints, "text"),
+      bindings: defaultAdminSkillBindings(normalizedEntryPoints, "text"),
       primaryFilePath: pkg.primaryFilePath,
       files: pkg.files,
       publish: true,
@@ -304,10 +309,17 @@ export function SkillImportModal({
 
       <FormCard title="导入策略">
         <FormGrid>
-          <Field label="执行形态" required span={2} hint="普通说明文档先导入为智能技能；确定门和多模型步骤使用工作流。">
-            <select value={kind} onChange={(event) => setKind(event.target.value as "agent" | "workflow") }>
+          <Field label="执行形态" required span={2} hint="预设技能单次生成一种内容；智能技能在画布中通过对话跨节点执行。">
+            <select
+              value={kind}
+              onChange={(event) => {
+                const nextKind = event.target.value as SkillKind;
+                setKind(nextKind);
+                setEntryPoints(defaultAdminSkillEntryPoints(nextKind));
+              }}
+            >
+              <option value="preset">预设技能</option>
               <option value="agent">智能技能</option>
-              <option value="workflow">工作流</option>
             </select>
           </Field>
           <Field label="分类" span={2}>
@@ -328,6 +340,7 @@ export function SkillImportModal({
                   <input
                     type="checkbox"
                     checked={entryPoints.includes(entry.key)}
+                    disabled={kind === "agent"}
                     onChange={() => toggleEntry(entry.key)}
                   />
                   {entry.label}

@@ -28,9 +28,17 @@ func TestDefaultCanvasNodeFeaturesConfig(t *testing.T) {
 		t.Errorf("video features = %#v, want %#v", byKey["video"].Features, videoNodeDefaultFeatures)
 	}
 	for _, key := range []string{"scene_3d", "text", "audio", "script"} {
-		if !reflect.DeepEqual(byKey[key].Features, skillLauncherOnlyDefaultFeatures) {
-			t.Errorf("%s features = %#v, want %#v", key, byKey[key].Features, skillLauncherOnlyDefaultFeatures)
+		if features := byKey[key].Features; features == nil || len(features) != 0 {
+			t.Errorf("%s features = %#v, want explicit empty", key, features)
 		}
+	}
+	for key, item := range byKey {
+		if containsString(item.Features, "skill.launcher") {
+			t.Errorf("%s defaults still expose retired skill.launcher", key)
+		}
+	}
+	if _, exists := canvasNodeFeatureByKey["skill.launcher"]; exists {
+		t.Error("retired skill.launcher is still exposed by the admin feature catalog")
 	}
 
 	wantPanoramaSequence := append([]string{"image.panorama"}, panoramaNodeFeatures...)
@@ -111,7 +119,7 @@ func TestNormalizeCanvasNodeFeaturesConfigPreservesGranularPanoramaPolicyOrder(t
 	}
 }
 
-func TestStoredCanvasNodeFeaturesConfigMigratesUntouchedV3DefaultsToCurrentVersion(t *testing.T) {
+func TestStoredCanvasNodeFeaturesConfigMigratesUntouchedV3DefaultsWithoutRetiredLauncher(t *testing.T) {
 	input := CanvasNodeFeaturesConfig{Version: canvasNodeFeaturesV3}
 	for _, def := range CanonicalCanvasNodeTypes {
 		var features []string
@@ -133,8 +141,35 @@ func TestStoredCanvasNodeFeaturesConfigMigratesUntouchedV3DefaultsToCurrentVersi
 	}
 	got := StoredCanvasNodeFeaturesConfig(string(raw))
 	for key, item := range canvasNodeConfigByKey(got.NodeTypes) {
-		if !containsString(item.Features, "skill.launcher") {
-			t.Errorf("%s missing skill.launcher after untouched V3 migration", key)
+		if containsString(item.Features, "skill.launcher") {
+			t.Errorf("%s retained retired skill.launcher after V3 migration", key)
+		}
+	}
+}
+
+func TestStoredCanvasNodeFeaturesConfigMigratesV5ByRemovingOnlyRetiredLauncher(t *testing.T) {
+	raw := `{"version":5,"nodeTypes":[` +
+		`{"key":"image","enabled":false,"sortOrder":41,"features":["media.preview"," skill.launcher ","image.panorama","media.download"]},` +
+		`{"key":"text","enabled":true,"sortOrder":3,"features":["skill.launcher"]},` +
+		`{"key":"scene","enabled":true,"sortOrder":1,"features":[]}` +
+		`]}`
+
+	got := StoredCanvasNodeFeaturesConfig(raw)
+	if got.Version != CanvasNodeFeaturesVersion {
+		t.Fatalf("version = %d, want %d", got.Version, CanvasNodeFeaturesVersion)
+	}
+	byKey := canvasNodeConfigByKey(got.NodeTypes)
+	image := byKey["image"]
+	if image.Enabled || image.SortOrder != 41 {
+		t.Fatalf("custom image policy was replaced during V5 migration: %#v", image)
+	}
+	wantImage := []string{"media.preview", "image.panorama", "media.download"}
+	if !reflect.DeepEqual(image.Features, wantImage) {
+		t.Fatalf("V5 image features = %#v, want %#v", image.Features, wantImage)
+	}
+	for _, key := range []string{"text", "scene"} {
+		if features := byKey[key].Features; features == nil || len(features) != 0 {
+			t.Fatalf("V5 %s features = %#v, want preserved explicit empty", key, features)
 		}
 	}
 }

@@ -1,5 +1,18 @@
 import { create } from "zustand";
 
+export interface CanvasPendingGeneration {
+  version: 1;
+  handler: string;
+  modelId: string;
+  input: Record<string, unknown>;
+  clientRequestId: string;
+  projectId?: string;
+  entryPoint?: "canvas";
+  targetType?: string;
+  gridOutput?: boolean;
+  createdAt: number;
+}
+
 export interface CanvasNode {
   id: string;
   type: string;
@@ -21,11 +34,8 @@ export interface CanvasNode {
   stylePresetModelPrompts?: Record<string, string>;
   /** 图片节点选中的风格封面，用于后续回显或历史恢复。 */
   stylePresetCoverUrl?: string;
-  /** 节点附着的技能（图片/视频节点）：生成时只把 skillId 发给服务端，模板由
-      服务端按当前技能内容拼接。随画布持久化，重开项目仍生效；skillName 供
-      按钮回显。
-      注意别再往节点里存一份模板正文——它会与后台改过的技能内容漂移，且没有
-      任何读取方会用到。 */
+  /** 旧项目/跨页启动留下的技能溯源字段。节点自身不再提供 Skill 入口，也不会
+      在单节点生成时隐式透传；新运行统一由右侧助手创建 SkillRun。 */
   skillId?: string;
   skillName?: string;
   /**
@@ -55,6 +65,12 @@ export interface CanvasNode {
   status?: "idle" | "generating" | "success" | "error";
   /** 生成中任务号：随画布持久化，重开项目时据此对账续轮（resumeGeneration）；任务终态即清除 */
   taskId?: string;
+  /**
+   * POST /ai/generate 的响应尚未确认时保存的冻结请求。服务端可能已经建任务并
+   * 扣费，刷新后必须以同一 clientRequestId 重放来取回 taskId，不能把节点复位
+   * 后让用户重新生成。取得 taskId 或收到确定性拒绝后立即清除。
+   */
+  pendingGeneration?: CanvasPendingGeneration;
   uploading?: boolean;
   uploadProgress?: number;
   /** 生成时选择的目标画幅；有值时图片节点按该画幅展示，避免结果卡片被自然尺寸改成其它比例 */
@@ -270,15 +286,16 @@ function pruneGroups(groups: CanvasGroup[], removed: Set<string>): CanvasGroup[]
 export function reviveNode(node: CanvasNode, opts?: { keepResumable?: boolean }): CanvasNode {
   const stuckGenerating = node.status === "generating";
   const clonedActiveSkillRun = !opts?.keepResumable && !!node.skillRunId;
-  if (opts?.keepResumable && stuckGenerating && node.taskId) {
+  if (opts?.keepResumable && stuckGenerating && (node.taskId || node.pendingGeneration)) {
     return node.uploading ? { ...node, uploading: false, uploadProgress: undefined } : node;
   }
-  if (!stuckGenerating && !node.uploading && !node.taskId && !clonedActiveSkillRun) return node;
+  if (!stuckGenerating && !node.uploading && !node.taskId && !node.pendingGeneration && !clonedActiveSkillRun) return node;
   const hasResult = !!(node.imageSrc || node.videoSrc || node.audioSrc || node.content);
   return {
     ...node,
     status: stuckGenerating ? (hasResult ? "success" : "idle") : node.status,
     taskId: undefined,
+    pendingGeneration: undefined,
     skillRunId: clonedActiveSkillRun ? undefined : node.skillRunId,
     uploading: false,
     uploadProgress: undefined,
@@ -292,6 +309,69 @@ function snapshot(state: { nodes: CanvasNode[]; connections: Connection[]; group
     connections: state.connections.map((c) => ({ ...c })),
     groups: state.groups.map((g) => ({ ...g, nodeIds: [...g.nodeIds] })),
   };
+}
+
+/**
+ * A generating node is also the durable recovery receipt for a paid request.
+ * It must not disappear merely because the user restores an older visual
+ * editing snapshot: doing so would orphan the accepted task and make a second
+ * click look safe even though the first request may already have been charged.
+ */
+function hasRecoverableGeneration(node: CanvasNode): boolean {
+  return node.status === "generating" && !!(node.taskId || node.pendingGeneration);
+}
+
+/** Fields written by the generation lifecycle, rather than ordinary canvas history. */
+function keepGenerationState(historical: CanvasNode, current: CanvasNode): CanvasNode {
+  return normalizeNode({
+    ...historical,
+    status: current.status,
+    taskId: current.taskId,
+    pendingGeneration: current.pendingGeneration,
+    imageSrc: current.imageSrc,
+    images: current.images,
+    videoSrc: current.videoSrc,
+    audioSrc: current.audioSrc,
+    audioTracks: current.audioTracks,
+    content: current.content,
+    fileSize: current.fileSize,
+    fileType: current.fileType,
+    mimeType: current.mimeType,
+    aspectRatio: current.aspectRatio,
+    height: current.height,
+    contentW: current.contentW,
+    contentH: current.contentH,
+    is360: current.is360,
+  });
+}
+
+/**
+ * Undo/redo applies only the editable canvas snapshot. Paid generation state is
+ * reconciled from the live node. Historical snapshots captured while a task
+ * was running are also scrubbed after that task settles, so redo cannot revive
+ * a stale spinner/task id.
+ */
+function restoreHistoryNodes(currentNodes: CanvasNode[], historicalNodes: CanvasNode[]): CanvasNode[] {
+  const currentById = new Map(currentNodes.map((node) => [node.id, node]));
+  const restoredIds = new Set(historicalNodes.map((node) => node.id));
+  const restored = historicalNodes.map((historical) => {
+    const current = currentById.get(historical.id);
+    if (current && hasRecoverableGeneration(current)) {
+      return keepGenerationState(historical, current);
+    }
+    if (current && (historical.status === "generating" || historical.taskId || historical.pendingGeneration)) {
+      return keepGenerationState(historical, current);
+    }
+    return reviveNode(historical);
+  });
+
+  // Undoing the creation of a node that already owns an accepted request must
+  // keep that node until the request reaches a terminal state. It can be
+  // deleted normally afterwards.
+  for (const current of currentNodes) {
+    if (hasRecoverableGeneration(current) && !restoredIds.has(current.id)) restored.push(current);
+  }
+  return restored;
 }
 
 export const useCanvasStore = create<CanvasState>((set, get) => ({
@@ -348,7 +428,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const prev = state.undoStack[state.undoStack.length - 1];
     const currentSnap = snapshot(state);
     return {
-      nodes: prev.nodes,
+      nodes: restoreHistoryNodes(state.nodes, prev.nodes),
       connections: prev.connections,
       groups: prev.groups,
       undoStack: state.undoStack.slice(0, -1),
@@ -365,7 +445,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const next = state.redoStack[state.redoStack.length - 1];
     const currentSnap = snapshot(state);
     return {
-      nodes: next.nodes,
+      nodes: restoreHistoryNodes(state.nodes, next.nodes),
       connections: next.connections,
       groups: next.groups,
       undoStack: [...state.undoStack, currentSnap],
@@ -441,7 +521,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   removeNode: (id, recordHistory = true) => set((state) => {
     // 目标不存在时不做空操作:否则仍会压一条无效历史并清掉 redo 栈
-    if (!state.nodes.some((n) => n.id === id)) return state;
+    const target = state.nodes.find((n) => n.id === id);
+    if (!target || hasRecoverableGeneration(target)) return state;
     const newSel = new Set(state.selectedNodeIds);
     newSel.delete(id);
     const undo = recordHistory ? [...state.undoStack.slice(-MAX_HISTORY + 1), snapshot(state)] : state.undoStack;
@@ -462,8 +543,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   }),
 
   removeNodes: (ids) => set((state) => {
-    const idSet = new Set(ids);
-    if (!state.nodes.some((n) => idSet.has(n.id))) return state;
+    const requested = new Set(ids);
+    const idSet = new Set(
+      state.nodes
+        .filter((node) => requested.has(node.id) && !hasRecoverableGeneration(node))
+        .map((node) => node.id),
+    );
+    if (idSet.size === 0) return state;
     const connections = state.connections.filter((c) => !idSet.has(c.sourceId) && !idSet.has(c.targetId));
     return {
       nodes: state.nodes.filter((n) => !idSet.has(n.id)),
@@ -558,7 +644,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const group = state.groups.find((g) => g.id === id);
     const undo = [...state.undoStack.slice(-MAX_HISTORY + 1), snapshot(state)];
     if (group && deleteNodes) {
-      const memberIds = new Set(group.nodeIds);
+      const requested = new Set(group.nodeIds);
+      const memberIds = new Set(
+        state.nodes
+          .filter((node) => requested.has(node.id) && !hasRecoverableGeneration(node))
+          .map((node) => node.id),
+      );
       return {
         nodes: state.nodes.filter((n) => !memberIds.has(n.id)),
         connections: state.connections.filter((c) => !memberIds.has(c.sourceId) && !memberIds.has(c.targetId)),

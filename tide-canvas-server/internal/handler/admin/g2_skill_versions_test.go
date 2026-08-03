@@ -74,10 +74,50 @@ func TestBuildSkillVersionLimitsExecutablePromptAndPrimaryFile(t *testing.T) {
 	}
 }
 
+func TestBuildSkillVersionEnforcesTwoKindContracts(t *testing.T) {
+	skill := &model.Skill{OutputType: "image"}
+	base := AdminSkillVersionCreateDTO{Kind: model.SkillKindPreset, PrimaryOutputType: "image", PromptTemplate: "instructions"}
+	if _, _, err := buildSkillVersion(nil, skill, base, 0); err != nil {
+		t.Fatalf("valid preset was rejected: %v", err)
+	}
+
+	invalid := []AdminSkillVersionCreateDTO{
+		{Kind: "workflow", PrimaryOutputType: "image", PromptTemplate: "instructions"},
+		{Kind: model.SkillKindPreset, PrimaryOutputType: "image", OutputTypes: []string{"image", "video"}, PromptTemplate: "instructions"},
+		{Kind: model.SkillKindPreset, EntryPoints: []string{"api"}, PrimaryOutputType: "image", PromptTemplate: "instructions"},
+		{Kind: model.SkillKindPreset, PrimaryOutputType: "image", PromptTemplate: "instructions",
+			Bindings: []AdminSkillBindingDTO{{Surface: "asset", TargetType: "*"}}},
+		{Kind: model.SkillKindAgent, EntryPoints: []string{"studio"}, PrimaryOutputType: "image", PromptTemplate: "instructions"},
+		{Kind: model.SkillKindAgent, EntryPoints: []string{"canvas"}, PrimaryOutputType: "image", PromptTemplate: "instructions",
+			Bindings: []AdminSkillBindingDTO{{Surface: "chat", TargetType: "*"}}},
+		{Kind: model.SkillKindPreset, PrimaryOutputType: "image", PromptTemplate: "instructions",
+			Manifest: json.RawMessage(`{"kind":"preset","steps":[{"type":"generate","outputType":"image","outputRole":"final"}]}`)},
+	}
+	for index, dto := range invalid {
+		if _, _, err := buildSkillVersion(nil, skill, dto, 0); err == nil {
+			t.Fatalf("invalid kind contract case %d was accepted", index)
+		}
+	}
+
+	agent := AdminSkillVersionCreateDTO{
+		Kind: model.SkillKindAgent, EntryPoints: []string{"canvas"},
+		PrimaryOutputType: "video", OutputTypes: []string{"image", "video"}, PromptTemplate: "instructions",
+		Manifest: json.RawMessage(`{"kind":"agent","steps":[{"type":"generate","outputType":"image","outputRole":"intermediate"},{"type":"generate","outputType":"video","outputRole":"final"}]}`),
+		Bindings: []AdminSkillBindingDTO{{Surface: "canvas", TargetType: "*"}},
+	}
+	version, _, err := buildSkillVersion(nil, skill, agent, 0)
+	if err != nil {
+		t.Fatalf("valid multi-output canvas agent was rejected: %v", err)
+	}
+	if version.Kind != model.SkillKindAgent || version.EntryPoints != `["canvas"]` {
+		t.Fatalf("unexpected agent version: %#v", version)
+	}
+}
+
 func TestSimpleLegacyPresetVersionGuard(t *testing.T) {
 	version := model.SkillVersion{
 		Kind: model.SkillKindPreset, Status: model.SkillVersionPublished,
-		EntryPoints:       `["studio","chat","canvas","asset","api"]`,
+		EntryPoints:       `["studio","chat","canvas"]`,
 		PrimaryOutputType: "image", OutputTypes: `["image"]`,
 		InputSchema:    `{"type":"object","properties":{}}`,
 		ManifestJSON:   `{"kind":"preset","primaryOutputType":"image","outputTypes":["image"]}`,
@@ -174,7 +214,7 @@ func TestLegacyPresetExecutionEditableTxLoadsPinnedVersion(t *testing.T) {
 	version := model.SkillVersion{
 		BaseModel: model.BaseModel{ID: idgen.ID(2)}, SkillID: skill.ID, Version: 1,
 		Kind: model.SkillKindPreset, Status: model.SkillVersionPublished,
-		EntryPoints: `["chat","studio","canvas","asset","api"]`, PrimaryOutputType: "image", OutputTypes: `["image"]`,
+		EntryPoints: `["chat","studio","canvas"]`, PrimaryOutputType: "image", OutputTypes: `["image"]`,
 		InputSchema: `{"type":"object"}`, ManifestJSON: `{"kind":"preset","primaryOutputType":"image","outputTypes":["image"]}`,
 		PromptTemplate: "cinematic", PrimaryFilePath: "SKILL.md",
 	}
@@ -237,18 +277,18 @@ func TestValidateSkillFileReferencesSupportsNestedPackageRoot(t *testing.T) {
 }
 
 func TestValidateSkillManifestRejectsGenerateHandlerModalityMismatch(t *testing.T) {
-	raw := json.RawMessage(`{"kind":"workflow","steps":[{"key":"make","type":"generate","handler":"text_to_video","outputType":"image","outputRole":"final"}]}`)
-	if err := validateSkillManifest(raw, model.SkillKindWorkflow, "image", []string{"image", "video"}); err == nil {
+	raw := json.RawMessage(`{"kind":"agent","steps":[{"key":"make","type":"generate","handler":"text_to_video","outputType":"image","outputRole":"final"}]}`)
+	if err := validateSkillManifest(raw, model.SkillKindAgent, "image", []string{"image", "video"}); err == nil {
 		t.Fatal("expected modality mismatch to be rejected")
 	}
 }
 
 func TestValidateSkillManifestRejectsStepTypeOutputMismatch(t *testing.T) {
 	for _, raw := range []json.RawMessage{
-		json.RawMessage(`{"kind":"workflow","steps":[{"type":"text","handler":"skill_text_completion","outputType":"image","outputRole":"final"}]}`),
-		json.RawMessage(`{"kind":"workflow","steps":[{"type":"generate","outputType":"text","outputRole":"final"}]}`),
+		json.RawMessage(`{"kind":"agent","steps":[{"type":"text","handler":"skill_text_completion","outputType":"image","outputRole":"final"}]}`),
+		json.RawMessage(`{"kind":"agent","steps":[{"type":"generate","outputType":"text","outputRole":"final"}]}`),
 	} {
-		if err := validateSkillManifest(raw, model.SkillKindWorkflow, "image", []string{"image", "text"}); err == nil {
+		if err := validateSkillManifest(raw, model.SkillKindAgent, "image", []string{"image", "text"}); err == nil {
 			t.Fatalf("step type/output mismatch was accepted: %s", raw)
 		}
 	}
@@ -301,26 +341,26 @@ func TestValidateInputSchemaDefinitionRejectsUnsupportedOrMalformedConstraints(t
 }
 
 func TestValidateSkillManifestApprovalPromotionIsExplicit(t *testing.T) {
-	raw := json.RawMessage(`{"kind":"workflow","steps":[{"key":"draft","type":"generate","outputType":"image","outputRole":"intermediate"},{"key":"approve","type":"approval","promotePrevious":true}]}`)
-	if err := validateSkillManifest(raw, model.SkillKindWorkflow, "image", []string{"image"}); err != nil {
+	raw := json.RawMessage(`{"kind":"agent","steps":[{"key":"draft","type":"generate","outputType":"image","outputRole":"intermediate"},{"key":"approve","type":"approval","promotePrevious":true}]}`)
+	if err := validateSkillManifest(raw, model.SkillKindAgent, "image", []string{"image"}); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestValidateSkillManifestRequiresPrimaryFinalOutput(t *testing.T) {
-	raw := json.RawMessage(`{"kind":"workflow","steps":[{"type":"text","outputType":"text","outputRole":"final"}]}`)
-	if err := validateSkillManifest(raw, model.SkillKindWorkflow, "image", []string{"image", "text"}); err == nil {
-		t.Fatal("workflow with a text-only final output accepted image as its primary output")
+	raw := json.RawMessage(`{"kind":"agent","steps":[{"type":"text","outputType":"text","outputRole":"final"}]}`)
+	if err := validateSkillManifest(raw, model.SkillKindAgent, "image", []string{"image", "text"}); err == nil {
+		t.Fatal("agent with a text-only final output accepted image as its primary output")
 	}
 }
 
 func TestValidateSkillManifestRejectsControlStepOutputs(t *testing.T) {
 	for _, raw := range []json.RawMessage{
-		json.RawMessage(`{"kind":"workflow","steps":[{"type":"generate","outputType":"image","outputRole":"intermediate"},{"type":"approval","promotePrevious":true,"outputRole":"final"}]}`),
-		json.RawMessage(`{"kind":"workflow","steps":[{"type":"generate","outputType":"image","outputRole":"intermediate"},{"type":"approval","promotePrevious":true,"registerWork":true}]}`),
-		json.RawMessage(`{"kind":"workflow","steps":[{"type":"generate","outputType":"image","outputRole":"intermediate"},{"type":"approval","promotePrevious":true,"outputType":"image"}]}`),
+		json.RawMessage(`{"kind":"agent","steps":[{"type":"generate","outputType":"image","outputRole":"intermediate"},{"type":"approval","promotePrevious":true,"outputRole":"final"}]}`),
+		json.RawMessage(`{"kind":"agent","steps":[{"type":"generate","outputType":"image","outputRole":"intermediate"},{"type":"approval","promotePrevious":true,"registerWork":true}]}`),
+		json.RawMessage(`{"kind":"agent","steps":[{"type":"generate","outputType":"image","outputRole":"intermediate"},{"type":"approval","promotePrevious":true,"outputType":"image"}]}`),
 	} {
-		if err := validateSkillManifest(raw, model.SkillKindWorkflow, "image", []string{"image"}); err == nil {
+		if err := validateSkillManifest(raw, model.SkillKindAgent, "image", []string{"image"}); err == nil {
 			t.Fatalf("control-step output configuration was accepted: %s", raw)
 		}
 	}
@@ -328,11 +368,11 @@ func TestValidateSkillManifestRejectsControlStepOutputs(t *testing.T) {
 
 func TestValidateSkillManifestStrictJSONAndWorkVisibility(t *testing.T) {
 	invalid := []json.RawMessage{
-		json.RawMessage(`{"kind":"workflow","steps":[{"type":"generate","outputType":"image","outputRole":"final","strictJson":true}]}`),
-		json.RawMessage(`{"kind":"workflow","steps":[{"type":"text","outputType":"text","outputRole":"intermediate","registerWork":true},{"type":"text","outputType":"text","outputRole":"final"}]}`),
+		json.RawMessage(`{"kind":"agent","steps":[{"type":"generate","outputType":"image","outputRole":"final","strictJson":true}]}`),
+		json.RawMessage(`{"kind":"agent","steps":[{"type":"text","outputType":"text","outputRole":"intermediate","registerWork":true},{"type":"text","outputType":"text","outputRole":"final"}]}`),
 	}
 	for _, raw := range invalid {
-		if err := validateSkillManifest(raw, model.SkillKindWorkflow, "image", []string{"image", "text"}); err == nil {
+		if err := validateSkillManifest(raw, model.SkillKindAgent, "image", []string{"image", "text"}); err == nil {
 			t.Fatalf("invalid manifest was accepted: %s", raw)
 		}
 	}
@@ -340,10 +380,10 @@ func TestValidateSkillManifestStrictJSONAndWorkVisibility(t *testing.T) {
 
 func TestValidateSkillManifestRejectsInvalidWaitingStepSchema(t *testing.T) {
 	for _, raw := range []json.RawMessage{
-		json.RawMessage(`{"kind":"workflow","steps":[{"type":"input","schema":{"type":"notatype"}},{"type":"text","outputType":"text","outputRole":"final"}]}`),
-		json.RawMessage(`{"kind":"workflow","steps":[{"type":"text","outputType":"text","outputRole":"intermediate"},{"type":"approval","promotePrevious":true,"schema":{"type":"object","properties":{"x":{"minLenght":2}}}}]}`),
+		json.RawMessage(`{"kind":"agent","steps":[{"type":"input","schema":{"type":"notatype"}},{"type":"text","outputType":"text","outputRole":"final"}]}`),
+		json.RawMessage(`{"kind":"agent","steps":[{"type":"text","outputType":"text","outputRole":"intermediate"},{"type":"approval","promotePrevious":true,"schema":{"type":"object","properties":{"x":{"minLenght":2}}}}]}`),
 	} {
-		if err := validateSkillManifest(raw, model.SkillKindWorkflow, "text", []string{"text"}); err == nil {
+		if err := validateSkillManifest(raw, model.SkillKindAgent, "text", []string{"text"}); err == nil {
 			t.Fatalf("invalid waiting-step schema was accepted: %s", raw)
 		}
 	}

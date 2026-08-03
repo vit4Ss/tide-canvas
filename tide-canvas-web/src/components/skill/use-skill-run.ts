@@ -19,6 +19,8 @@ export function createSkillRunRequestId(prefix = "skill-run"): string {
 
 interface UseSkillRunOptions {
   storageKey?: string;
+  /** Confirmed account id used to partition pointers and request journals. */
+  ownerUserId?: string;
   pollIntervalMs?: number;
   onUpdate?: (run: SkillRunVO) => void;
   onTerminal?: (run: SkillRunVO) => void;
@@ -39,34 +41,54 @@ function storedRunIds(key: string): string[] {
   }
 }
 
-function writeStoredRunIds(key: string, ids: readonly string[]): void {
-  if (typeof window === "undefined") return;
+function normalizedRunIds(ids: readonly string[]): string[] {
+  return [...new Set(ids.map((id) => id.trim()).filter(Boolean))].slice(-20);
+}
+
+function writeStoredRunIds(key: string, ids: readonly string[]): boolean {
+  if (typeof window === "undefined") return false;
   try {
-    const normalized = [...new Set(ids.map((id) => id.trim()).filter(Boolean))].slice(-20);
+    const normalized = normalizedRunIds(ids);
     if (normalized.length) localStorage.setItem(key, JSON.stringify(normalized));
     else localStorage.removeItem(key);
+    const stored = storedRunIds(key);
+    return stored.length === normalized.length && stored.every((id, index) => id === normalized[index]);
   } catch {
-    // Private mode / blocked storage must not make a run unusable.
+    return false;
   }
 }
 
-function addStoredRunId(key: string, id: string): void {
-  const ids = storedRunIds(key);
-  // Do not move an existing ID to the tail on every polling update: another
-  // tab may have appended a newer run that should remain the restore target.
-  if (!ids.includes(id)) writeStoredRunIds(key, [...ids, id]);
+async function mutateStoredRunIds(
+  key: string,
+  mutate: (ids: string[]) => string[],
+): Promise<boolean> {
+  if (typeof navigator === "undefined" || !navigator.locks) return false;
+  const lockName = `tidecanvas.skill-run.active:${encodeURIComponent(key).slice(0, 180)}`;
+  return navigator.locks.request(lockName, () => {
+    const current = storedRunIds(key);
+    return writeStoredRunIds(key, mutate(current));
+  });
 }
 
-function removeStoredRunId(key: string, id: string): void {
-  writeStoredRunIds(key, storedRunIds(key).filter((value) => value !== id));
+function addStoredRunId(key: string, id: string): Promise<boolean> {
+  return mutateStoredRunIds(key, (ids) => ids.includes(id) ? ids : [...ids, id]);
+}
+
+function removeStoredRunId(key: string, id: string): Promise<boolean> {
+  return mutateStoredRunIds(key, (ids) => ids.filter((value) => value !== id));
 }
 
 export function useSkillRun({
   storageKey,
+  ownerUserId,
   pollIntervalMs = 1500,
   onUpdate,
   onTerminal,
 }: UseSkillRunOptions = {}) {
+  const owner = ownerUserId?.trim() ?? "";
+  const scopedStorageKey = storageKey && owner
+    ? `${storageKey}:user:${encodeURIComponent(owner)}`
+    : undefined;
   const [run, setRun] = useState<SkillRunVO | null>(null);
   const [loading, setLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
@@ -93,7 +115,7 @@ export function useSkillRun({
   }, [onTerminal]);
 
   const persist = useCallback(
-    (next: SkillRunVO | null) => {
+    async (next: SkillRunVO | null): Promise<boolean> => {
       const previous = currentRunRef.current;
       const previousId = previous?.id ?? currentRunIdRef.current;
       // Polling/detail requests can cross an action from this or another tab.
@@ -102,27 +124,33 @@ export function useSkillRun({
       if (next && previous?.id === next.id) {
         const previousRevision = previous.revision ?? 0;
         const nextRevision = next.revision ?? 0;
-        if (nextRevision < previousRevision) return;
+        if (nextRevision < previousRevision) return false;
         if (
           nextRevision === previousRevision &&
           (next.updateTime ?? "") < (previous.updateTime ?? "")
-        ) return;
+        ) return false;
       }
       currentRunRef.current = next;
       currentRunIdRef.current = next?.id ?? null;
       setRun(next);
       if (next) onUpdateRef.current?.(next);
-      if (storageKey && typeof window !== "undefined") {
-        if (next && isSkillRunActive(next.status)) addStoredRunId(storageKey, next.id);
-        else if (next) removeStoredRunId(storageKey, next.id);
-        else if (previousId) removeStoredRunId(storageKey, previousId);
+      let durablePointer = true;
+      if (scopedStorageKey && typeof window !== "undefined") {
+        if (next && isSkillRunActive(next.status)) {
+          durablePointer = await addStoredRunId(scopedStorageKey, next.id);
+        } else if (next) {
+          await removeStoredRunId(scopedStorageKey, next.id);
+        } else if (previousId) {
+          await removeStoredRunId(scopedStorageKey, previousId);
+        }
       }
       if (next && isSkillRunTerminal(next.status) && lastTerminalRef.current !== next.id) {
         lastTerminalRef.current = next.id;
         onTerminalRef.current?.(next);
       }
+      return durablePointer;
     },
-    [storageKey],
+    [scopedStorageKey],
   );
 
   const resume = useCallback(
@@ -141,16 +169,20 @@ export function useSkillRun({
         setError(result.message || "技能运行加载失败");
         resumeRetryableRef.current =
           !result.code || result.code === 408 || result.code === 429 || result.code >= 500;
-        if (!resumeRetryableRef.current && storageKey) removeStoredRunId(storageKey, clean);
+        if (!resumeRetryableRef.current && scopedStorageKey) {
+          await removeStoredRunId(scopedStorageKey, clean);
+        }
         return null;
       }
       resumeRetryableRef.current = false;
       setError("");
-      persist(result.data);
-      if (storageKey) await skillRunApi.commitCreate(`create:${storageKey}`, result.data.id);
+      const durablePointer = await persist(result.data);
+      if (scopedStorageKey && durablePointer) {
+        await skillRunApi.commitCreate(`create:${scopedStorageKey}`, result.data.id);
+      }
       return result.data;
     },
-    [persist, storageKey],
+    [persist, scopedStorageKey],
   );
 
   const start = useCallback(
@@ -160,9 +192,14 @@ export function useSkillRun({
       setLoading(true);
       setError("");
       try {
+        if (!owner || !scopedStorageKey) {
+          setError("无法确认当前账号或安全保存运行状态，Skill 尚未启动");
+          return null;
+        }
+        const createScope = `create:${scopedStorageKey}`;
         const result = await skillRunApi.createIdempotent(
           dto,
-          storageKey ? `create:${storageKey}` : `create:${dto.entryPoint}`,
+          createScope,
         );
         if (seq !== mutationSeqRef.current) return null;
         if (!result.success || !result.data) {
@@ -170,17 +207,14 @@ export function useSkillRun({
           return null;
         }
         lastTerminalRef.current = "";
-        persist(result.data);
-        await skillRunApi.commitCreate(
-          storageKey ? `create:${storageKey}` : `create:${dto.entryPoint}`,
-          result.data.id,
-        );
+        const durablePointer = await persist(result.data);
+        if (durablePointer) await skillRunApi.commitCreate(createScope, result.data.id);
         return result.data;
       } finally {
         if (seq === mutationSeqRef.current) setLoading(false);
       }
     },
-    [persist, storageKey],
+    [owner, persist, scopedStorageKey],
   );
 
   const performAction = useCallback(
@@ -197,14 +231,21 @@ export function useSkillRun({
       // A failed/cancelled run is normally no longer in the active pointer list.
       // Re-add it *before* retry reaches the server so a lost success response can
       // still be recovered after refresh instead of creating an invisible run.
-      if (action === "retry" && storageKey) addStoredRunId(storageKey, runId);
       try {
+        if (!owner || !scopedStorageKey) {
+          setError("无法确认当前账号或安全保存运行状态，操作尚未执行");
+          return null;
+        }
+        if (action === "retry" && !await addStoredRunId(scopedStorageKey, runId)) {
+          setError("当前浏览器无法安全保存重试任务，操作尚未执行");
+          return null;
+        }
         const result = await skillRunApi.actionIdempotent(runId, {
           action,
           expectedRevision: runRevision,
           ...payload,
           clientRequestId: createSkillRunRequestId(`skill-${action}`),
-        }, `action:${storageKey || "shared"}:${runId}`);
+        }, `action:${scopedStorageKey}:${runId}`);
         if (seq !== mutationSeqRef.current) return null;
         if (!result.success || !result.data) {
           setError(result.message || "操作失败，请重试");
@@ -212,18 +253,17 @@ export function useSkillRun({
           // timeout, rate-limit and server errors retain the pointer for recovery.
           if (
             action === "retry" &&
-            storageKey &&
             result.code >= 400 &&
             result.code < 500 &&
             result.code !== 408 &&
             result.code !== 429
           ) {
-            removeStoredRunId(storageKey, runId);
+            await removeStoredRunId(scopedStorageKey, runId);
           }
           return null;
         }
         if (action === "retry") lastTerminalRef.current = "";
-        persist(result.data);
+        await persist(result.data);
         return result.data;
       } finally {
         if (seq === mutationSeqRef.current) {
@@ -232,7 +272,7 @@ export function useSkillRun({
         }
       }
     },
-    [persist, runId, runRevision, storageKey],
+    [owner, persist, runId, runRevision, scopedStorageKey],
   );
 
   const refresh = useCallback(async () => {
@@ -247,7 +287,7 @@ export function useSkillRun({
     setLoading(false);
     setActionBusy(false);
     setError("");
-    persist(null);
+    void persist(null);
     // A second tab may have appended another active run while this hook was
     // displaying a terminal one. Trigger a fresh storage scan after dismiss.
     setRestoreGeneration((value) => value + 1);
@@ -257,16 +297,17 @@ export function useSkillRun({
   // cannot delete each other's pointer. The former single-ID value is migrated
   // on read; terminal IDs remove only themselves.
   useEffect(() => {
-    if (!storageKey || typeof window === "undefined") return;
+    if (!scopedStorageKey || typeof window === "undefined") return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let backoff = 1_000;
     const restore = async (quiet = false) => {
-      for (const id of skillRunApi.resolvedCreateIds(`create:${storageKey}`)) {
-        addStoredRunId(storageKey, id);
+      const resolvedIds = skillRunApi.resolvedCreateIds(`create:${scopedStorageKey}`);
+      for (const id of resolvedIds) {
+        await addStoredRunId(scopedStorageKey, id);
       }
-      const ids = storedRunIds(storageKey);
-      const id = ids.at(-1);
+      const ids = storedRunIds(scopedStorageKey);
+      const id = ids.at(-1) ?? resolvedIds.at(-1);
       if (cancelled || !id || currentRunIdRef.current) return;
       const restored = await resume(id, quiet);
       if (cancelled || restored) return;
@@ -276,7 +317,7 @@ export function useSkillRun({
           void restore(true);
         }, backoff);
         backoff = Math.min(backoff * 2, 15_000);
-      } else if (storedRunIds(storageKey).length) {
+      } else if (storedRunIds(scopedStorageKey).length) {
         // The latest pointer was permanently invalid; try an older active ID.
         timer = setTimeout(() => {
           timer = null;
@@ -289,7 +330,7 @@ export function useSkillRun({
       void restore(false);
     }, 0);
     const onStorage = (event: StorageEvent) => {
-      if (event.key !== storageKey || currentRunIdRef.current || timer) return;
+      if (event.key !== scopedStorageKey || currentRunIdRef.current || timer) return;
       backoff = 1_000;
       timer = setTimeout(() => {
         timer = null;
@@ -302,7 +343,7 @@ export function useSkillRun({
       if (timer) clearTimeout(timer);
       window.removeEventListener("storage", onStorage);
     };
-  }, [resume, restoreGeneration, storageKey]);
+  }, [resume, restoreGeneration, scopedStorageKey]);
 
   useEffect(() => {
     if (!runId || !isSkillRunActive(runStatus)) return;

@@ -50,8 +50,8 @@ func (IMConversationMember) TableName() string { return "im_conversation_member"
 type IMMessage struct {
 	BaseModel
 
-	ConversationID idgen.ID `gorm:"column:conversation_id;index;not null" json:"conversationId"`
-	SenderID       idgen.ID `gorm:"column:sender_id;index;not null" json:"senderId"`
+	ConversationID idgen.ID `gorm:"column:conversation_id;index;not null;uniqueIndex:idx_im_message_request,priority:1" json:"conversationId"`
+	SenderID       idgen.ID `gorm:"column:sender_id;index;not null;uniqueIndex:idx_im_message_request,priority:2" json:"senderId"`
 	// ContentType: text / image / file / system.
 	ContentType string `gorm:"column:content_type;type:varchar(16);not null;default:'text'" json:"contentType"`
 	Content     string `gorm:"column:content;type:text" json:"content"`
@@ -65,6 +65,28 @@ type IMMessage struct {
 	// SkillRun. It coexists with TaskID so legacy single-generation turns remain
 	// unchanged.
 	SkillRunID *idgen.ID `gorm:"column:skill_run_id;index" json:"skillRunId,omitempty"`
+	// ClientRequestID correlates a text-chat request across an ambiguous SSE
+	// disconnect. It is set on both the user and assistant rows. Including
+	// sender_id in the nullable unique index permits exactly one row per role
+	// while fencing concurrent retries before a second provider call/charge.
+	ClientRequestID *string `gorm:"column:client_request_id;type:varchar(96);uniqueIndex:idx_im_message_request,priority:3" json:"clientRequestId,omitempty"`
+	// RequestLeaseUntil is the cross-instance generation lease carried by the
+	// user row of an idempotent text turn. A retry may resume the durable request
+	// only after this timestamp, using a conditional UPDATE as the atomic claim.
+	RequestLeaseUntil *time.Time `gorm:"column:request_lease_until" json:"-"`
+	// RequestLeaseToken is the CAS owner of RequestLeaseUntil. Releases from a
+	// slow, expired worker match this token and therefore cannot clear the lease
+	// already transferred to a recovery worker.
+	RequestLeaseToken *idgen.ID `gorm:"column:request_lease_token" json:"-"`
+	// RequestChargeRefID/Cost persist the one successful debit with the request.
+	// A process-restart recovery reuses these values for an idempotent refund and
+	// never charges the user a second time.
+	RequestChargeRefID *idgen.ID `gorm:"column:request_charge_ref_id" json:"-"`
+	RequestChargeCost  int       `gorm:"column:request_charge_cost;type:int;not null;default:0" json:"-"`
+	// RequestSnapshot contains the server-resolved model, skill prompt and
+	// attachments needed to resume after a restart. It is deliberately excluded
+	// from JSON because a published skill's system prompt is not public data.
+	RequestSnapshot string `gorm:"column:request_snapshot;type:longtext" json:"-"`
 	// Params is the generation parameter snapshot (JSON) stored on the *user*
 	// message of a turn — used to render the result detail row and to power
 	// 重新编辑 / 再次生成. Empty for plain text messages.

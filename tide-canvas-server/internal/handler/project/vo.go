@@ -20,6 +20,7 @@ type ProjectVO struct {
 	Status      int      `json:"status"`
 	IsPublic    bool     `json:"isPublic"`
 	UrlToken    string   `json:"urlToken"`
+	Revision    int64    `json:"revision"`
 	CreateTime  string   `json:"createTime"`
 	UpdateTime  string   `json:"updateTime"`
 }
@@ -44,6 +45,12 @@ type ProjectDetailVO struct {
 // CanvasDataVO is the response of GET /api/projects/:id/canvas.
 type CanvasDataVO struct {
 	CanvasData string `json:"canvasData"`
+	Revision   int64  `json:"revision"`
+}
+
+// CanvasSaveVO acknowledges the exact revision committed by a CAS save.
+type CanvasSaveVO struct {
+	Revision int64 `json:"revision"`
 }
 
 // ShareVO is the response of POST /api/projects/:id/share.
@@ -63,6 +70,7 @@ func toProjectVO(p *model.Project) ProjectVO {
 		Status:      p.Status,
 		IsPublic:    p.IsPublic,
 		UrlToken:    p.UrlToken,
+		Revision:    p.Revision,
 		CreateTime:  formatTime(p.CreateTime),
 		UpdateTime:  formatTime(p.UpdateTime),
 	}

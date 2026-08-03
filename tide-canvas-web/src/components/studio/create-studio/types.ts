@@ -115,6 +115,10 @@ export interface RunMeta {
  *  (the task keeps running server-side). Stored under ACTIVE_RUN_KEY. */
 export interface ActiveRun {
   taskId: string; // 后端雪花 ID 序列化为字符串
+  /** Confirmed account that owns the task and its recovery storage partition. */
+  ownerUserId: string;
+  /** Accepted-create journal to commit after ACTIVE_RUN_KEY is verified. */
+  journalScope?: string;
   prompt: string;
   model: string;
   ratio: string;
@@ -134,6 +138,8 @@ export interface ActiveRun {
 export interface RunParams {
   prompt: string;
   model: string;
+  /** Stable catalog row id. Older history may only have the display name. */
+  modelId?: string;
   tool: ToolKey;
   curType: ArtworkType;
   ratio: string;
@@ -142,6 +148,9 @@ export interface RunParams {
   dur: string;
   quality: string;
   count: number;
+  /** 该轮使用的预设技能快照。刷新后的历史至少能从任务 input 恢复 id，
+   *  title 会在重新编辑/再次生成前通过公开 API 拉取当前已发布版本补齐。 */
+  skill?: { id: string; title?: string };
   /** 参考素材 URL（可选）：slotData 本身不持久化，刷新后靠这些字段把上传槽位
    *  一并恢复，否则 i2i/i2v 的「编辑/重新生成」会卡在“请先上传参考图片”。 */
   imageRefs?: string[];

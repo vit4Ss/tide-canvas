@@ -41,3 +41,377 @@
 .cv-name .cv-card-menu:focus-within {
   opacity: 1;
 }
+
+.cv-lib .cv-lib-glow {
+  display: none;
+}
+
+.cv-card {
+  animation: none;
+}
+
+.cv-card:hover .cv-thumb {
+  transform: translateY(-2px);
+}
+
+@media (hover: none), (pointer: coarse) {
+  .cv-name .cv-card-menu {
+    opacity: 1;
+  }
+
+  .cv-name .cv-card-menu .project-menu-trigger {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+/* 首屏是一个完整的居中任务台：说明建立语境，生成器承担第一视觉权重，
+   示例降低首次输入门槛；搜索/排序仍归属于最近项目。 */
+.cv-lib-in.cv-lib-in--quick-start {
+  container: cv-library / inline-size;
+  padding-top: 32px;
+}
+
+.cv-create-hero {
+  display: flex;
+  width: 100%;
+  max-width: 1120px;
+  align-items: center;
+  flex-direction: column;
+  margin: 0 auto 32px;
+  padding-bottom: 40px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cv-create-intro {
+  min-width: 0;
+  max-width: 680px;
+  text-align: center;
+}
+
+.cv-create-intro .cv-crumb {
+  margin-bottom: 12px;
+  justify-content: center;
+}
+
+.cv-create-intro .cv-lib-title {
+  font-size: 36px;
+  line-height: 1.16;
+  text-wrap: balance;
+}
+
+.cv-create-intro .cv-lib-sub {
+  margin-top: 12px;
+  margin-inline: auto;
+  max-width: 56ch;
+  text-wrap: pretty;
+}
+
+.cv-create-blank {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: color 160ms ease-out;
+}
+
+.cv-create-blank span {
+  transition: transform 160ms ease-out;
+}
+
+.cv-create-blank:hover {
+  color: var(--text);
+}
+
+.cv-create-blank:hover span {
+  transform: translateX(2px);
+}
+
+.cv-create-blank:focus-visible {
+  border-radius: 6px;
+  outline: 2px solid #22d3ee;
+  outline-offset: 3px;
+}
+
+.cv-quick-start-slot {
+  width: 100%;
+  max-width: 1120px;
+  min-width: 0;
+  margin-top: 28px;
+}
+
+.cv-create-after {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-top: 14px;
+}
+
+.cv-prompt-examples {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.cv-prompt-examples-label {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.cv-prompt-example-list {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cv-prompt-example-list button {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  background: var(--panel);
+  font-size: 12px;
+  white-space: nowrap;
+  transition: color 160ms ease-out, border-color 160ms ease-out, background 160ms ease-out;
+}
+
+.cv-prompt-example-list button:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text);
+  background: var(--panel-hover);
+}
+
+.cv-prompt-example-list button:focus-visible {
+  outline: 2px solid #22d3ee;
+  outline-offset: 2px;
+}
+
+.cv-prompt-example-list button:disabled {
+  cursor: not-allowed;
+  opacity: .42;
+}
+
+.cv-projects-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 18px;
+}
+
+.cv-projects-head .cv-secline {
+  flex: none;
+  margin: 0;
+}
+
+.cv-launch-resume {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 12px;
+  margin: 0 4px 8px;
+  color: var(--muted, #929298);
+  font-size: 12px;
+}
+
+.cv-launch-resume > span {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.cv-launch-resume strong {
+  flex: none;
+  color: var(--text, #f5f5f7);
+  font-weight: 600;
+}
+
+.cv-launch-resume small {
+  overflow: hidden;
+  color: inherit;
+  font-size: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cv-launch-resume button {
+  min-height: 32px;
+  flex: none;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: var(--text, #f5f5f7);
+  background: rgb(255 255 255 / 6%);
+  transition: border-color 160ms ease-out, background 160ms ease-out;
+}
+
+.cv-launch-resume button:hover:not(:disabled) {
+  border-color: rgb(255 255 255 / 24%);
+  background: rgb(255 255 255 / 10%);
+}
+
+.cv-launch-resume button:focus-visible {
+  outline: 2px solid #22d3ee;
+  outline-offset: 2px;
+}
+
+.cv-launch-resume button:disabled {
+  cursor: wait;
+  opacity: .55;
+}
+
+.cv-launch-resume .cv-launch-dismiss {
+  border-color: transparent;
+  color: var(--muted, #929298);
+  background: transparent;
+}
+
+@media (max-width: 820px) {
+  .cv-create-after {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .cv-create-blank {
+    align-self: flex-start;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 640px) {
+  .cv-lib-in.cv-lib-in--quick-start {
+    padding-top: 24px;
+  }
+
+  .cv-create-hero {
+    align-items: stretch;
+    margin-bottom: 24px;
+    padding-bottom: 32px;
+  }
+
+  .cv-create-intro {
+    max-width: none;
+    text-align: left;
+  }
+
+  .cv-create-intro .cv-crumb {
+    margin-bottom: 8px;
+    justify-content: flex-start;
+  }
+
+  .cv-create-intro .cv-lib-title {
+    font-size: 32px;
+    line-height: 1.2;
+  }
+
+  .cv-create-intro .cv-lib-sub {
+    margin-top: 8px;
+    margin-inline: 0;
+  }
+
+  .cv-quick-start-slot {
+    margin-top: 20px;
+  }
+
+  .cv-create-after {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 12px;
+  }
+
+  .cv-prompt-examples {
+    display: block;
+  }
+
+  .cv-prompt-examples-label {
+    display: block;
+    margin-bottom: 8px;
+  }
+
+  .cv-prompt-example-list button {
+    min-height: 44px;
+  }
+
+  .cv-create-blank {
+    min-height: 44px;
+  }
+
+  .cv-projects-head {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .cv-lib-tools {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .cv-search {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .cv-search input {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .cv-sort {
+    flex: none;
+  }
+
+  .cv-launch-resume {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .cv-launch-resume > span {
+    flex-basis: 100%;
+  }
+
+  .cv-launch-resume button {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 360px) {
+  .cv-prompt-example-list {
+    column-gap: 6px;
+  }
+
+  .cv-prompt-example-list button {
+    padding-inline: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cv-create-blank,
+  .cv-create-blank span,
+  .cv-prompt-example-list button,
+  .cv-card .cv-thumb {
+    transition: none;
+  }
+
+  .cv-create-blank:hover span,
+  .cv-card:hover .cv-thumb {
+    transform: none;
+  }
+}

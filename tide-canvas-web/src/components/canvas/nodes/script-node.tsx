@@ -5,7 +5,6 @@ import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
 import { Clapperboard } from "lucide-react";
 import { NodeHeader } from "./base/node-header";
 import { NodePorts } from "./base/node-ports";
-import { CanvasSkillRunNodeShortcut } from "../skill-run/canvas-skill-run-workspace";
 
 interface Props {
   node: CanvasNode;
@@ -76,7 +75,6 @@ export const ScriptNode = memo(function ScriptNode({ node, isSelected, isDraggin
             spellCheck={false}
           />
           <NodePorts nodeId={node.id} visible={showAuxUI} onPortMouseDown={onPortMouseDown} />
-          <CanvasSkillRunNodeShortcut nodeId={node.id} nodeType={node.type} visible={showAuxUI} />
         </div>
       </div>
     </div>

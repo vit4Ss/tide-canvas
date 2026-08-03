@@ -27,11 +27,18 @@ export interface SkillRunAssetInput {
   metadata?: Record<string, unknown>;
 }
 
+export interface SkillRunMessageInput {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export interface SkillRunInput {
   prompt: string;
   assets: SkillRunAssetInput[];
   sourceNodeIds: string[];
   parameters: Record<string, unknown>;
+  /** Previous completed turns. The current request remains in prompt. */
+  messages?: SkillRunMessageInput[];
 }
 
 export interface SkillRunCreateDTO {
@@ -152,6 +159,8 @@ export interface SkillRunQuery extends PageQuery {
   entryPoint?: SkillEntryPoint;
   projectId?: string;
   conversationId?: string;
+  /** JSON-encoded idempotency keys used to reconcile ambiguous create responses. */
+  clientRequestIds?: string;
   status?: SkillRunStatus;
   active?: boolean;
 }

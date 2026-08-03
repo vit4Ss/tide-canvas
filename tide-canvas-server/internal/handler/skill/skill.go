@@ -278,10 +278,11 @@ func (h *handler) publicVOs(rows []model.Skill, entryPoint, targetType string) (
 	for i := range rows {
 		row := rows[i]
 		version, ok := byID[row.CurrentVersionID]
-		entryPoints := []string{"chat", "studio", "canvas", "asset", "api"}
+		entryPoints := []string{"chat", "studio", "canvas"}
 		outputTypes := []string{row.OutputType}
 		inputSchema := json.RawMessage(`{"type":"object"}`)
 		kind := row.Kind
+		outputType := row.OutputType
 		modelID := row.ModelID
 		defaultParams := row.DefaultParams
 		if strings.TrimSpace(defaultParams) == "" {
@@ -289,6 +290,7 @@ func (h *handler) publicVOs(rows []model.Skill, entryPoint, targetType string) (
 		}
 		if ok {
 			kind = version.Kind
+			outputType = version.PrimaryOutputType
 			entryPoints = model.JSONStrings(version.EntryPoints, entryPoints)
 			outputTypes = model.JSONStrings(version.OutputTypes, outputTypes)
 			if json.Valid([]byte(version.InputSchema)) {
@@ -300,6 +302,13 @@ func (h *handler) publicVOs(rows []model.Skill, entryPoint, targetType string) (
 				defaultParams = "{}"
 			}
 		}
+		if kind == "workflow" { // defensive read compatibility before startup normalization completes
+			kind = model.SkillKindAgent
+		}
+		if !model.ValidSkillKind(kind) {
+			continue
+		}
+		entryPoints = publicSkillEntryPoints(kind, entryPoints)
 		sortOrder := row.SortOrder
 		if entryPoint != "" {
 			if ok && strings.TrimSpace(version.BindingsJSON) != "" {
@@ -327,7 +336,7 @@ func (h *handler) publicVOs(rows []model.Skill, entryPoint, targetType string) (
 			ID: row.ID, Title: row.Title, Description: row.Description,
 			UsageScenario: row.UsageScenario, HowTo: row.HowTo, OutputDescription: row.OutputDescription,
 			CoverURL: row.CoverURL,
-			Category: row.Category, OutputType: row.OutputType, Kind: kind,
+			Category: row.Category, OutputType: outputType, Kind: kind,
 			CurrentVersionID: row.CurrentVersionID, EntryPoints: entryPoints, OutputTypes: outputTypes,
 			InputSchema: inputSchema, PromptTemplate: "", ModelID: modelID, DefaultParams: defaultParams,
 			AuthorName: row.AuthorName, Status: row.Status, SortOrder: sortOrder, UseCount: row.UseCount,
@@ -335,6 +344,23 @@ func (h *handler) publicVOs(rows []model.Skill, entryPoint, targetType string) (
 		})
 	}
 	return result, nil
+}
+
+func publicSkillEntryPoints(kind string, values []string) []string {
+	if kind == model.SkillKindAgent {
+		return []string{"canvas"}
+	}
+	allowed := map[string]bool{"chat": true, "studio": true, "canvas": true}
+	out := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if allowed[value] && !seen[value] {
+			seen[value] = true
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 type publicSkillBinding struct {

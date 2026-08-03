@@ -47,6 +47,10 @@ func (h *handler) create(c *gin.Context) {
 	ownerID := middleware.CurrentUserID(c)
 	vo, err := h.svc.create(ownerID, dto)
 	if err != nil {
+		if errors.Is(err, errClientRequestIDTooLong) || errors.Is(err, errClientRequestConflict) {
+			response.Fail(c, response.CodeBadRequest, err.Error())
+			return
+		}
 		response.Fail(c, response.CodeServerError, "failed to create project")
 		return
 	}
@@ -129,11 +133,12 @@ func (h *handler) saveCanvas(c *gin.Context) {
 		return
 	}
 	ownerID := middleware.CurrentUserID(c)
-	if err := h.svc.saveCanvas(id, ownerID, dto); err != nil {
+	vo, err := h.svc.saveCanvas(id, ownerID, dto)
+	if err != nil {
 		h.fail(c, err, "failed to save canvas")
 		return
 	}
-	response.OK[any](c, nil)
+	response.OK(c, vo)
 }
 
 // getCanvas handles GET /api/projects/:id/canvas (auth).
@@ -174,6 +179,10 @@ func (h *handler) fail(c *gin.Context, err error, fallbackMsg string) {
 	case errors.Is(err, errForbidden):
 		// Hide existence: treat as not found so a non-owner cannot probe IDs.
 		response.Fail(c, response.CodeNotFound, "project not found")
+	case errors.Is(err, errRevisionConflict):
+		response.Fail(c, response.CodeConflict, "画布已在其他窗口更新")
+	case errors.Is(err, errInvalidRevision):
+		response.Fail(c, response.CodeBadRequest, "invalid expectedRevision")
 	default:
 		response.Fail(c, response.CodeServerError, fallbackMsg)
 	}

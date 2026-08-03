@@ -163,6 +163,56 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
     });
   }, []);
 
+  /** Clear only the exact set consumed by a completed request. Users may start
+   * preparing the next prompt while a request is in flight; a blanket clear at
+   * completion would otherwise delete newly-added references. */
+  const clearRefsIfUnchanged = useCallback(
+    (snapshot: readonly Pick<RefItem, "key" | "kind" | "url">[]) => {
+      setRefs((prev) => {
+        const unchanged =
+          prev.length === snapshot.length &&
+          prev.every((ref, index) => {
+            const expected = snapshot[index];
+            return ref.key === expected.key && ref.kind === expected.kind && ref.url === expected.url;
+          });
+        if (!unchanged) return prev;
+        for (const ref of prev) URL.revokeObjectURL(ref.blobUrl);
+        return [];
+      });
+    },
+    [],
+  );
+
+  /** Restore a retry journal's hosted references only when the composer is
+   * still empty. This is used after a definitive text-turn rejection following
+   * a reload; it never replaces files the user has since attached. */
+  const restoreRefsIfEmpty = useCallback(
+    (snapshot: readonly Pick<RefItem, "key" | "kind" | "url" | "name">[]) => {
+      setRefs((prev) => {
+        if (prev.length) return prev;
+        const restored = snapshot
+          .filter((ref): ref is typeof ref & { url: string } => typeof ref.url === "string" && !!ref.url)
+          .map((ref) => ({
+            key: ref.key,
+            kind: ref.kind,
+            blobUrl: "",
+            url: ref.url,
+            name: ref.name,
+            uploading: false,
+          }));
+        if (!restored.length) return prev;
+        // Avoid colliding with restored rN keys when the user attaches another
+        // file in this tab after recovery.
+        for (const ref of restored) {
+          const match = /^r(\d+)$/.exec(ref.key);
+          if (match) refSeq.current = Math.max(refSeq.current, Number(match[1]) + 1);
+        }
+        return restored;
+      });
+    },
+    [],
+  );
+
   // add an already-hosted asset (picked from 资产库) directly as a reference — no
   // upload needed; honors the policy kinds/max and dedups by url.
   const addAssetRef = useCallback(
@@ -346,6 +396,8 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
     attachFiles,
     removeRef,
     clearRefs,
+    clearRefsIfUnchanged,
+    restoreRefsIfEmpty,
     addAssetRef,
     restoreRefs,
     mentionRefs,

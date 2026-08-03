@@ -3,22 +3,39 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { sliceImageGrid } from "@/lib/image-slice";
-import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
+import {
+  useCanvasStore,
+  type CanvasNode,
+  type CanvasPendingGeneration,
+} from "@/stores/use-canvas-store";
 import type { AiTaskVO, AiGenerateInput } from "@/types/ai";
 import { AiTaskStatus } from "@/types/ai";
 import { toast } from "@/components/shared/toast";
 import { getImageCardSizeForRatio } from "@/lib/image-card-size";
+import { requestCanvasSave } from "@/lib/canvas-save";
+import { isAmbiguousAiCreateCode } from "@/lib/ai-generation-idempotency";
+import {
+  matchesCanvasGeneration,
+  pendingGenerationIdentity,
+} from "@/lib/canvas-generation-guard";
 
 interface GenerateParams {
   nodeId: string;
   handler: string;
   modelId: string;
   input: Record<string, unknown>;
+  /** 跨页启动等可恢复流程传入稳定请求号，刷新重放时复用同一后端任务。 */
+  clientRequestId?: string;
   /** 上游返回单张 2×2 四宫格(如 Midjourney)：成功后前端切成 4 张独立图并以组图展示 */
   gridOutput?: boolean;
   /** 生成成功回调，参数为结果地址（如全景生成后用于打开 360 查看器） */
   onSuccess?: (resultUrl: string) => void;
 }
+
+export type GenerationStartResult =
+  | { status: "started"; taskId: string }
+  | { status: "rejected" }
+  | { status: "ambiguous" };
 
 const POLL_INTERVAL = 2000; // 2 秒轮询
 // 后端允许图片上游最多运行 6 分钟，成功后还可能需要约 90 秒把结果转存到自有 OSS。
@@ -36,9 +53,11 @@ const MAX_POLL_TIME_VIDEO = 30 * 60 * 1000;
 // 生命周期只跟画布页面(stopAllGeneration)和节点存活挂钩。
 // ---------------------------------------------------------------------------
 
-/** nodeId → taskId；空串表示生成请求在途、任务号未返回（用于防双击） */
+/** nodeId → taskId；`pending:<requestId>` 表示创建响应尚未确认。 */
 const activeTasks = new Map<string, string>();
 const pollTimers = new Map<string, NodeJS.Timeout>();
+const pendingCreateAttempts = new Map<string, number>();
+const pendingCreateNotified = new Set<string>();
 const listeners = new Set<() => void>();
 /** useSyncExternalStore 快照：每次登记表变化重建，引用变化即触发订阅组件重渲染 */
 let activeSnapshot: ReadonlySet<string> = new Set();
@@ -63,12 +82,15 @@ function track(nodeId: string, taskId: string) {
 }
 
 /** 终态收尾：摘除登记与待触发的 timer */
-function finish(nodeId: string) {
+function finish(nodeId: string, expectedIdentity?: string) {
+  if (expectedIdentity && activeTasks.get(nodeId) !== expectedIdentity) return;
   const timer = pollTimers.get(nodeId);
   if (timer) {
     clearTimeout(timer);
     pollTimers.delete(nodeId);
   }
+  pendingCreateAttempts.delete(nodeId);
+  pendingCreateNotified.delete(nodeId);
   if (activeTasks.delete(nodeId)) emit();
 }
 
@@ -76,10 +98,49 @@ function finish(nodeId: string) {
 export function stopAllGeneration() {
   pollTimers.forEach((t) => clearTimeout(t));
   pollTimers.clear();
+  pendingCreateAttempts.clear();
+  pendingCreateNotified.clear();
   if (activeTasks.size > 0) {
     activeTasks.clear();
     emit();
   }
+}
+
+function createGenerationRequestId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `canvas-gen-${crypto.randomUUID()}`;
+  }
+  return `canvas-gen-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function pendingMarker(requestId: string) {
+  return pendingGenerationIdentity(requestId);
+}
+
+function validTaskId(value: unknown): value is string {
+  // idgen IDs are positive signed-64-bit decimal strings. A strict shape check
+  // prevents damaged legacy canvasData from entering an endless 400 retry loop.
+  return typeof value === "string" && /^[1-9]\d{0,18}$/.test(value);
+}
+
+function pendingMatches(node: CanvasNode | undefined, pending: CanvasPendingGeneration) {
+  return node?.status === "generating"
+    && node.pendingGeneration?.clientRequestId === pending.clientRequestId;
+}
+
+function validPendingGeneration(value: unknown): value is CanvasPendingGeneration {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Partial<CanvasPendingGeneration>;
+  return row.version === 1
+    && typeof row.handler === "string" && row.handler.trim() === row.handler && row.handler.length > 0
+    && typeof row.modelId === "string" && row.modelId.trim() === row.modelId && row.modelId.length > 0
+    && !!row.input && typeof row.input === "object" && !Array.isArray(row.input)
+    && typeof row.clientRequestId === "string"
+    && row.clientRequestId.trim() === row.clientRequestId
+    && row.clientRequestId.length > 0 && row.clientRequestId.length <= 96
+    && typeof row.projectId === "string"
+    && row.projectId.trim() === row.projectId && row.projectId.length > 0
+    && typeof row.createdAt === "number" && Number.isFinite(row.createdAt);
 }
 
 function parseAspectRatio(value: unknown): number | null {
@@ -172,52 +233,88 @@ async function sliceGridAndApply(nodeId: string, gridUrl: string) {
   }
 }
 
-function markGenerationFailed(nodeId: string) {
+function markGenerationFailed(nodeId: string, expectedIdentity?: string) {
   const store = useCanvasStore.getState();
   const node = store.nodes.find((n) => n.id === nodeId);
+  if (expectedIdentity && !matchesCanvasGeneration(node, expectedIdentity)) return false;
   const nextStatus: CanvasNode["status"] = node?.imageSrc || node?.videoSrc || node?.audioSrc || node?.content ? "success" : "error";
-  store.updateNode(nodeId, { status: nextStatus, taskId: undefined });
+  store.updateNode(nodeId, {
+    status: nextStatus,
+    taskId: undefined,
+    pendingGeneration: undefined,
+  });
+  return true;
 }
 
 /** 轮询任务状态直到完成 */
 function pollTask(nodeId: string, taskId: string, startTime: number, input: Record<string, unknown>, maxPollMs: number, gridOutput?: boolean, onSuccess?: (resultUrl: string) => void) {
+  let transientFailures = 0;
+  let reconnectNoticeShown = false;
+  let deadlineNoticeShown = false;
   const poll = async () => {
     // 本轮 timer 已触发,从表中摘除;继续轮询时会重新登记
     pollTimers.delete(nodeId);
     // 登记表比对:本任务已被停止(离开画布)或被同节点的新一轮生成替换 → 静默退出
     if (activeTasks.get(nodeId) !== taskId) return;
+    // Node state is the durable compare-and-swap token. A stale provider task
+    // must never overwrite a later upload/generation merely because its module
+    // level polling entry survived longer.
+    if (!matchesCanvasGeneration(
+      useCanvasStore.getState().nodes.find((node) => node.id === nodeId),
+      taskId,
+    )) {
+      finish(nodeId, taskId);
+      return;
+    }
     // 目标节点已被删除:静默停轮,否则会对着空节点空转最长 30 分钟,
     // 结束时还会给不存在的节点弹「生成成功/失败」
     if (!useCanvasStore.getState().nodes.some((n) => n.id === nodeId)) {
-      finish(nodeId);
+      finish(nodeId, taskId);
       return;
     }
-    // 超时检查
-    if (Date.now() - startTime > maxPollMs) {
-      markGenerationFailed(nodeId);
-      toast.error("生成超时，请重试");
-      finish(nodeId);
-      return;
+    // maxPollMs is a UI polling budget, not a backend terminal state. A long
+    // provider queue may legitimately outlive it, so keep the taskId and switch
+    // to a slower reconciliation cadence instead of making the task orphaned.
+    const beyondPollingBudget = Date.now() - startTime > maxPollMs;
+    if (beyondPollingBudget && !deadlineNoticeShown) {
+      deadlineNoticeShown = true;
+      toast.info("生成时间较长，仍在后台继续确认结果");
     }
 
     try {
       const res = await aiApi.getTask(taskId);
       if (activeTasks.get(nodeId) !== taskId) return; // await 期间被停止/替换
+      if (!matchesCanvasGeneration(
+        useCanvasStore.getState().nodes.find((node) => node.id === nodeId),
+        taskId,
+      )) {
+        finish(nodeId, taskId);
+        return;
+      }
       const updateNode = useCanvasStore.getState().updateNode;
       if (!res.success || !res.data) {
         // 查询失败 ≠ 任务失败:http 层把断网/网关 5xx 都归一为 success:false。
         // 长任务(视频可达 30 分钟)期间一次 Wi-Fi 抖动/瞬时 502 不能把仍在
-        // 执行且已扣积分的任务判死。仅明确 4xx(任务不存在/无权)终止,
-        // 其余视为瞬时故障继续轮询,由整体超时兜底。
-        if (res.code >= 400 && res.code < 500) {
-          markGenerationFailed(nodeId);
-          finish(nodeId);
+        // 执行且已扣积分的任务判死。401 可能只是 refresh 服务暂时失败；
+        // 408/429 也不能证明任务不存在。明确业务拒绝或其它 4xx 则终止；
+        // 尤其 400 表示持久化 taskId 已损坏，继续轮询只会永久转圈。
+        const unrecoverableLookup = !isAmbiguousAiCreateCode(res.code);
+        if (unrecoverableLookup) {
+          markGenerationFailed(nodeId, taskId);
+          finish(nodeId, taskId);
           toast.error(res.message || "生成失败");
           return;
         }
-        pollTimers.set(nodeId, setTimeout(poll, POLL_INTERVAL));
+        transientFailures += 1;
+        if (!reconnectNoticeShown) {
+          reconnectNoticeShown = true;
+          toast.info("连接暂时中断，正在自动恢复生成状态");
+        }
+        const retryDelay = Math.min(15_000, POLL_INTERVAL * (2 ** Math.min(3, transientFailures - 1)));
+        pollTimers.set(nodeId, setTimeout(poll, beyondPollingBudget ? Math.max(10_000, retryDelay) : retryDelay));
         return;
       }
+      transientFailures = 0;
       const task: AiTaskVO = res.data;
       if (task.status === AiTaskStatus.SUCCESS) {
         const node = useCanvasStore.getState().nodes.find((n) => n.id === nodeId);
@@ -225,14 +322,14 @@ function pollTask(nodeId: string, taskId: string, startTime: number, input: Reco
         if (node?.type === "text") {
           const text = extractTextResult(task);
           if (!text) {
-            markGenerationFailed(nodeId);
+            markGenerationFailed(nodeId, taskId);
             toast.error("生成结果为空，请重试");
           } else {
             updateNode(nodeId, { status: "success", content: text, taskId: undefined });
             toast.success("生成成功");
             onSuccess?.(text);
           }
-          finish(nodeId);
+          finish(nodeId, taskId);
           return;
         }
         // 校验 URL：只接受 http(s):// 或 data: 开头的合法地址
@@ -240,7 +337,7 @@ function pollTask(nodeId: string, taskId: string, startTime: number, input: Reco
           !!u && (u.startsWith("https://") || u.startsWith("http://") || u.startsWith("data:"));
         const primary = task.resultUrl;
         if (!isValid(primary)) {
-          markGenerationFailed(nodeId);
+          markGenerationFailed(nodeId, taskId);
           toast.error("生成结果无效，可能未配置 AI 供应商");
         } else {
           const isVideo = node?.type === "video";
@@ -274,40 +371,149 @@ function pollTask(nodeId: string, taskId: string, startTime: number, input: Reco
           toast.success("生成成功");
           onSuccess?.(primary);
         }
-        finish(nodeId);
+        finish(nodeId, taskId);
       } else if (task.status === AiTaskStatus.FAILED) {
-        markGenerationFailed(nodeId);
+        markGenerationFailed(nodeId, taskId);
         toast.error(task.errorMsg || "生成失败");
-        finish(nodeId);
+        finish(nodeId, taskId);
       } else if (task.status === AiTaskStatus.CANCELLED) {
         updateNode(nodeId, { status: "idle", taskId: undefined });
-        finish(nodeId);
+        finish(nodeId, taskId);
       } else {
         // 仍在处理中，继续轮询
-        pollTimers.set(nodeId, setTimeout(poll, POLL_INTERVAL));
+        pollTimers.set(nodeId, setTimeout(poll, beyondPollingBudget ? 10_000 : POLL_INTERVAL));
       }
     } catch {
-      markGenerationFailed(nodeId);
-      toast.error("网络错误");
-      finish(nodeId);
+      // fetch/http normally returns code:0 instead of throwing, but keep the
+      // exceptional path equally recoverable. Never clear a durable taskId on
+      // a transport exception: refresh/reopen can still reconcile this task.
+      if (activeTasks.get(nodeId) !== taskId) return;
+      transientFailures += 1;
+      if (!reconnectNoticeShown) {
+        reconnectNoticeShown = true;
+        toast.info("连接暂时中断，正在自动恢复生成状态");
+      }
+      const retryDelay = Math.min(15_000, POLL_INTERVAL * (2 ** Math.min(3, transientFailures - 1)));
+      pollTimers.set(nodeId, setTimeout(poll, retryDelay));
     }
   };
   poll();
 }
 
+function saveGenerationState(projectId?: string) {
+  if (projectId) void requestCanvasSave(projectId);
+}
+
+/**
+ * Replays a frozen create request with the same clientRequestId until the
+ * backend returns its task id. The first POST may already have charged the
+ * user, so an ambiguous response is a recoverable state, never an idle/error
+ * state that invites a second generation.
+ */
+async function reconcilePendingGeneration(
+  nodeId: string,
+  pending: CanvasPendingGeneration,
+  onSuccess?: (resultUrl: string) => void,
+): Promise<GenerationStartResult> {
+  const marker = pendingMarker(pending.clientRequestId);
+  if (activeTasks.get(nodeId) !== marker) return { status: "ambiguous" };
+  const currentNode = useCanvasStore.getState().nodes.find((node) => node.id === nodeId);
+  if (!pendingMatches(currentNode, pending)) {
+    finish(nodeId, marker);
+    return { status: "rejected" };
+  }
+
+  const dto: AiGenerateInput = {
+    handler: pending.handler,
+    modelId: pending.modelId,
+    input: pending.input,
+    clientRequestId: pending.clientRequestId,
+    ...(pending.projectId ? { projectId: pending.projectId } : {}),
+    ...(pending.entryPoint ? { entryPoint: pending.entryPoint } : {}),
+    ...(pending.targetType ? { targetType: pending.targetType } : {}),
+  };
+
+  try {
+    const res = await aiApi.generateIdempotent(
+      dto,
+      `canvas:${pending.projectId || "unsaved"}:${nodeId}`,
+    );
+    if (activeTasks.get(nodeId) !== marker) return { status: "ambiguous" };
+    if (!matchesCanvasGeneration(
+      useCanvasStore.getState().nodes.find((node) => node.id === nodeId),
+      marker,
+    )) {
+      finish(nodeId, marker);
+      return { status: "rejected" };
+    }
+    if (res.success && res.data?.id) {
+      const taskId = String(res.data.id);
+      if (!validTaskId(taskId)) {
+        markGenerationFailed(nodeId, marker);
+        saveGenerationState(pending.projectId);
+        finish(nodeId, marker);
+        toast.error("生成任务标识无效，请稍后重试");
+        return { status: "rejected" };
+      }
+      pendingCreateAttempts.delete(nodeId);
+      pendingCreateNotified.delete(nodeId);
+      track(nodeId, taskId);
+      useCanvasStore.getState().updateNode(nodeId, {
+        status: "generating",
+        taskId,
+        pendingGeneration: undefined,
+      }, false);
+      saveGenerationState(pending.projectId);
+      const node = useCanvasStore.getState().nodes.find((item) => item.id === nodeId);
+      const maxPollMs = node?.type === "video" || node?.type === "audio"
+        ? MAX_POLL_TIME_VIDEO
+        : MAX_POLL_TIME;
+      pollTask(nodeId, taskId, Date.now(), pending.input, maxPollMs, pending.gridOutput, onSuccess);
+      return { status: "started", taskId };
+    }
+
+    if (!isAmbiguousAiCreateCode(res.code)) {
+      markGenerationFailed(nodeId, marker);
+      saveGenerationState(pending.projectId);
+      finish(nodeId, marker);
+      toast.error(res.message || "生成请求失败");
+      return { status: "rejected" };
+    }
+  } catch {
+    // Transport exceptions are indistinguishable from a response lost after
+    // commit. Keep the durable snapshot and retry below.
+  }
+
+  const attempts = (pendingCreateAttempts.get(nodeId) ?? 0) + 1;
+  pendingCreateAttempts.set(nodeId, attempts);
+  if (!pendingCreateNotified.has(nodeId)) {
+    pendingCreateNotified.add(nodeId);
+    toast.info("生成请求已提交，正在确认任务状态");
+  }
+  const age = Date.now() - pending.createdAt;
+  const retryDelay = age > 30 * 60 * 1000
+    ? 30_000
+    : Math.min(15_000, 1500 * (2 ** Math.min(3, attempts - 1)));
+  pollTimers.set(nodeId, setTimeout(() => {
+    pollTimers.delete(nodeId);
+    void reconcilePendingGeneration(nodeId, pending, onSuccess);
+  }, retryDelay));
+  return { status: "ambiguous" };
+}
+
 /** 开始生成（批量多图的多余图片以组图存入本节点，首张为主图） */
-async function startGeneration({ nodeId, handler, modelId, input, gridOutput, onSuccess }: GenerateParams) {
+async function startGeneration({ nodeId, handler, modelId, input, clientRequestId, gridOutput, onSuccess }: GenerateParams): Promise<GenerationStartResult> {
   // 防止重复触发（登记表是画布级的,跨组件对同一节点的并发生成同样被拦）
   if (activeTasks.has(nodeId)) {
     toast.info("生成中，请稍候");
-    return;
+    return { status: "rejected" };
   }
   // 音乐的自定义歌词/延长/翻唱模式不发描述（歌词/原曲 clip 才是主输入），
   // 带 lyrics 或 extras 的音频请求豁免空提示词校验。
   const audioAltInput = handler === "text_to_audio" && (!!input.lyrics || !!input.extras);
   if ((!input.prompt || String(input.prompt).trim().length === 0) && !audioAltInput) {
     toast.error("请先输入提示词");
-    return;
+    return { status: "rejected" };
   }
   // 按 handler 的必填参数统一兜底:各节点正常都做了前置校验,这里防的是
   // 新增调用方漏写校验后裸发到后端(上游报错既贵又晚)。键名与服务端
@@ -351,68 +557,123 @@ async function startGeneration({ nodeId, handler, modelId, input, gridOutput, on
   const missMsg = missingRequired();
   if (missMsg) {
     toast.error(missMsg);
-    return;
+    return { status: "rejected" };
   }
 
-  track(nodeId, ""); // 占位登记:任务号未返回,先挡住双击
   const store = useCanvasStore.getState();
-  store.updateNode(nodeId, { status: "generating" });
-
   const targetNode = store.nodes.find((item) => item.id === nodeId);
+  if (!targetNode) {
+    toast.error("生成节点不存在，请重新选择节点");
+    return { status: "rejected" };
+  }
+  if (targetNode.uploading) {
+    toast.info("素材上传完成后再开始生成");
+    return { status: "rejected" };
+  }
+  if (targetNode.status === "generating" || targetNode.taskId || targetNode.pendingGeneration) {
+    toast.info("生成中，请稍候");
+    return { status: "rejected" };
+  }
+  const projectId = store.currentProjectId || undefined;
+  if (!projectId) {
+    toast.error("画布尚未保存，请稍后再试");
+    return { status: "rejected" };
+  }
   const hasPresetSkill = typeof input.skillId === "string" && input.skillId.trim() !== "";
-  const dto: AiGenerateInput = {
+  const explicitRequestId = clientRequestId;
+  if (
+    explicitRequestId !== undefined
+    && (
+      explicitRequestId.trim() !== explicitRequestId
+      || explicitRequestId.length === 0
+      || explicitRequestId.length > 96
+    )
+  ) {
+    toast.error("生成请求标识无效，请刷新后重试");
+    return { status: "rejected" };
+  }
+  const stableClientRequestId = explicitRequestId || createGenerationRequestId();
+  let frozenInput: Record<string, unknown>;
+  try {
+    // The recovery snapshot is written into canvasData as JSON. Freeze the
+    // exact JSON payload that fetch will send, rather than accepting cloneable
+    // values (File/Blob/Map) that JSON.stringify would later collapse and make
+    // a refresh replay a different request.
+    frozenInput = JSON.parse(JSON.stringify(input)) as Record<string, unknown>;
+    if (!frozenInput || typeof frozenInput !== "object" || Array.isArray(frozenInput)) {
+      throw new Error("generation input is not a JSON object");
+    }
+  } catch {
+    toast.error("生成参数无法保存，请重新选择素材后再试");
+    return { status: "rejected" };
+  }
+  const pending: CanvasPendingGeneration = {
+    version: 1,
     handler,
     modelId,
-    input,
-    ...(store.currentProjectId ? { projectId: store.currentProjectId } : {}),
+    input: frozenInput,
+    clientRequestId: stableClientRequestId,
+    projectId,
     ...(hasPresetSkill
       ? { entryPoint: "canvas", targetType: targetNode?.type }
       : {}),
+    ...(gridOutput ? { gridOutput: true } : {}),
+    createdAt: Date.now(),
   };
-  try {
-    const res = await aiApi.generateIdempotent(
-      dto,
-      `canvas:${store.currentProjectId || "unsaved"}:${nodeId}`,
-    );
-    // await 期间离开画布(stopAllGeneration)：不再起轮询,也不能往可能已切换项目的 store 写
-    if (activeTasks.get(nodeId) !== "") return;
-    if (!res.success || !res.data?.id) {
-      markGenerationFailed(nodeId);
-      toast.error(res.message || "生成请求失败");
-      finish(nodeId);
-      return;
-    }
-    const taskId = String(res.data.id);
-    track(nodeId, taskId);
-    // 任务号写上节点并随画布持久化:刷新/重开项目后据此对账续轮(resumeGeneration)
-    useCanvasStore.getState().updateNode(nodeId, { taskId });
-    // 启动轮询：视频任务后端可能需 10min+，前端上限按节点类型放宽，避免早于后端放弃而误判失败
-    const startedNode = useCanvasStore.getState().nodes.find((n) => n.id === nodeId);
-    // 音乐(Suno 双曲)排队+生成同样常超 5 分钟,与视频一致走长上限,
-    // 否则前端先于后端放弃,把已成功的任务误标失败且不回填结果
-    const maxPollMs = startedNode?.type === "video" || startedNode?.type === "audio"
-      ? MAX_POLL_TIME_VIDEO
-      : MAX_POLL_TIME;
-    pollTask(nodeId, taskId, Date.now(), input, maxPollMs, gridOutput, onSuccess);
-  } catch {
-    markGenerationFailed(nodeId);
-    toast.error("网络错误");
-    finish(nodeId);
+  const marker = pendingMarker(stableClientRequestId);
+  track(nodeId, marker);
+  store.updateNode(nodeId, {
+    status: "generating",
+    taskId: undefined,
+    pendingGeneration: pending,
+  }, false);
+
+  // Persist the frozen recovery request before the paid create call. If the
+  // canvas itself cannot be saved, do not start a task that a refresh could
+  // orphan; the user can retry after persistence recovers without any charge.
+  const recoverySaved = await requestCanvasSave(projectId);
+  if (activeTasks.get(nodeId) !== marker) return { status: "ambiguous" };
+  if (!recoverySaved) {
+    const current = useCanvasStore.getState().nodes.find((node) => node.id === nodeId);
+    const hasResult = !!(current?.imageSrc || current?.videoSrc || current?.audioSrc || current?.content);
+    useCanvasStore.getState().updateNode(nodeId, {
+      status: hasResult ? "success" : "idle",
+      pendingGeneration: undefined,
+      taskId: undefined,
+    }, false);
+    finish(nodeId, marker);
+    toast.error("画布暂时无法保存，未开始生成，请重试");
+    return { status: "rejected" };
   }
+  return reconcilePendingGeneration(nodeId, pending, onSuccess);
 }
 
-/** 画布加载后调用：对仍在 generating 且带 taskId 的节点按任务号续轮。
- *  刷新/重开项目时轮询器已死,任务却仍在后端执行(且已扣积分)——不续轮的话
- *  结果永远不回填。gridOutput/onSuccess 等仅存在于发起会话的信息不可恢复,
- *  四宫格切图在续轮场景下降级为单图展示。 */
+/** 画布加载后调用：已有 taskId 的按任务号续轮；创建响应尚未确认的节点用
+ *  持久化 frozen request + clientRequestId 重新取回同一 taskId。 */
 export function resumeGeneration() {
-  const { nodes } = useCanvasStore.getState();
+  const { nodes, currentProjectId } = useCanvasStore.getState();
   for (const node of nodes) {
-    if (node.status !== "generating" || !node.taskId || activeTasks.has(node.id)) continue;
-    const maxPollMs = node.type === "video" || node.type === "audio" ? MAX_POLL_TIME_VIDEO : MAX_POLL_TIME;
-    track(node.id, node.taskId);
-    // 画幅从节点已持久化的 aspectRatio 恢复;超时预算从当前时刻重新起算(有整体上限兜底)
-    pollTask(node.id, node.taskId, Date.now(), node.aspectRatio ? { aspectRatio: node.aspectRatio } : {}, maxPollMs);
+    if (node.status !== "generating" || activeTasks.has(node.id)) continue;
+    if (validTaskId(node.taskId)) {
+      const maxPollMs = node.type === "video" || node.type === "audio" ? MAX_POLL_TIME_VIDEO : MAX_POLL_TIME;
+      track(node.id, node.taskId);
+      // 画幅从节点已持久化的 aspectRatio 恢复;超时预算从当前时刻重新起算(有整体上限兜底)
+      pollTask(node.id, node.taskId, Date.now(), node.aspectRatio ? { aspectRatio: node.aspectRatio } : {}, maxPollMs);
+      continue;
+    }
+    const pending = node.pendingGeneration;
+    if (
+      validPendingGeneration(pending)
+      && (!pending.projectId || pending.projectId === currentProjectId)
+    ) {
+      track(node.id, pendingMarker(pending.clientRequestId));
+      void reconcilePendingGeneration(node.id, pending);
+      continue;
+    }
+    // Invalid legacy/transient state cannot safely create a task. Clear it
+    // instead of leaving a permanent spinner or inventing a new request id.
+    markGenerationFailed(node.id);
+    saveGenerationState(currentProjectId || undefined);
   }
 }
 

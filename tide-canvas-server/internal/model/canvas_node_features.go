@@ -17,7 +17,7 @@ import (
 // registered features are enabled for each registered node type.
 const ConfigKeyCanvasNodeFeatures = "canvas.nodeFeatures.v1"
 
-const CanvasNodeFeaturesVersion = 5
+const CanvasNodeFeaturesVersion = 6
 
 const canvasNodeFeaturesV1 = 1
 
@@ -26,6 +26,8 @@ const canvasNodeFeaturesV2 = 2
 const canvasNodeFeaturesV3 = 3
 
 const canvasNodeFeaturesV4 = 4
+
+const canvasNodeFeaturesV5 = 5
 
 const canvasNodeFeaturesDescription = "Canvas node type and toolbar feature policy (versioned JSON)"
 
@@ -120,7 +122,7 @@ var panoramaNodeFeatures = []string{
 var canvasNodeV4ImageDefaultFeatures = append(cloneStrings(canvasNodeV3ImageDefaultFeatures), "skill.launcher")
 
 var imageNodeDefaultFeatures = insertFeaturesAfter(
-	canvasNodeV4ImageDefaultFeatures,
+	canvasNodeV3ImageDefaultFeatures,
 	"image.panorama",
 	panoramaNodeFeatures,
 )
@@ -157,7 +159,7 @@ var canvasNodeV3CharacterDefaultFeatures = []string{
 var canvasNodeV4CharacterDefaultFeatures = append(cloneStrings(canvasNodeV3CharacterDefaultFeatures), "skill.launcher")
 
 var characterNodeDefaultFeatures = insertFeaturesAfter(
-	canvasNodeV4CharacterDefaultFeatures,
+	canvasNodeV3CharacterDefaultFeatures,
 	"image.panorama",
 	panoramaNodeFeatures,
 )
@@ -168,9 +170,13 @@ var canvasNodeV3VideoDefaultFeatures = []string{
 	"media.preview",
 }
 
-var videoNodeDefaultFeatures = append(cloneStrings(canvasNodeV3VideoDefaultFeatures), "skill.launcher")
+var canvasNodeV4VideoDefaultFeatures = append(cloneStrings(canvasNodeV3VideoDefaultFeatures), "skill.launcher")
 
-var skillLauncherOnlyDefaultFeatures = []string{"skill.launcher"}
+var videoNodeDefaultFeatures = cloneStrings(canvasNodeV3VideoDefaultFeatures)
+
+var canvasNodeV4SkillLauncherOnlyDefaultFeatures = []string{"skill.launcher"}
+
+var emptyNodeDefaultFeatures = []string{}
 
 // CanonicalCanvasNodeTypes is the complete set of node renderers implemented by
 // the canvas application. Admin configuration cannot add another key because a
@@ -189,12 +195,12 @@ var CanonicalCanvasNodeTypes = []CanvasNodeTypeDefinition{
 	{
 		Key: "scene_3d", Title: "3D 导演台", Description: "角色动作与空间编排",
 		Renderer: "scene_3d", Icon: "layers", DefaultEnabled: true, DefaultSortOrder: 2,
-		DefaultFeatures: skillLauncherOnlyDefaultFeatures,
+		DefaultFeatures: emptyNodeDefaultFeatures,
 	},
 	{
 		Key: "text", Title: "文本", Description: "提示词、脚本说明",
 		Renderer: "text", Icon: "align-left", DefaultEnabled: true, DefaultSortOrder: 3,
-		DefaultFeatures: skillLauncherOnlyDefaultFeatures,
+		DefaultFeatures: emptyNodeDefaultFeatures,
 	},
 	{
 		Key: "image", Title: "图片", Description: "图像生成、参考图编辑",
@@ -209,12 +215,12 @@ var CanonicalCanvasNodeTypes = []CanvasNodeTypeDefinition{
 	{
 		Key: "audio", Title: "音频", Description: "音色、配乐与旁白",
 		Renderer: "audio", Icon: "audio-lines", DefaultEnabled: true, DefaultSortOrder: 6,
-		DefaultFeatures: skillLauncherOnlyDefaultFeatures,
+		DefaultFeatures: emptyNodeDefaultFeatures,
 	},
 	{
 		Key: "script", Title: "脚本", Description: "分镜和内容结构",
 		Renderer: "script", Icon: "clapperboard", DefaultEnabled: true, DefaultSortOrder: 7,
-		DefaultFeatures: skillLauncherOnlyDefaultFeatures,
+		DefaultFeatures: emptyNodeDefaultFeatures,
 	},
 }
 
@@ -222,10 +228,6 @@ var CanonicalCanvasNodeTypes = []CanvasNodeTypeDefinition{
 // admin editor. A feature may only be assigned to one of its supported
 // renderers.
 var CanvasNodeFeatureCatalog = []CanvasNodeFeatureDefinition{
-	{
-		Key: "skill.launcher", Title: "\u8fd0\u884c Skill", Description: "\u6253\u5f00\u9002\u7528\u4e8e\u5f53\u524d\u8282\u70b9\u7684\u667a\u80fd\u6280\u80fd\u4e0e\u5de5\u4f5c\u6d41",
-		Group: "skill", SupportedRenderers: []string{"image", "video", "text", "audio", "scene_3d", "script"},
-	},
 	{
 		Key: "image.subjectTurnaround", Title: "主体三视图", Description: "基于当前图片生成主体正面、侧面与背面三视图",
 		Group: "image", SupportedRenderers: []string{"image"},
@@ -450,6 +452,9 @@ func StoredCanvasNodeFeaturesConfig(raw string) CanvasNodeFeaturesConfig {
 	if parsed.Version == canvasNodeFeaturesV4 {
 		parsed = migrateCanvasNodeFeaturesV4(parsed)
 	}
+	if parsed.Version == canvasNodeFeaturesV5 {
+		parsed = migrateCanvasNodeFeaturesV5(parsed)
+	}
 	normalized, err := NormalizeCanvasNodeFeaturesConfig(parsed)
 	if err != nil {
 		return DefaultCanvasNodeFeaturesConfig()
@@ -522,11 +527,11 @@ func migrateCanvasNodeFeaturesV3(input CanvasNodeFeaturesConfig) CanvasNodeFeatu
 			}
 		case "video":
 			if sameTrimmedStrings(input.NodeTypes[i].Features, canvasNodeV3VideoDefaultFeatures) {
-				input.NodeTypes[i].Features = cloneStrings(videoNodeDefaultFeatures)
+				input.NodeTypes[i].Features = cloneStrings(canvasNodeV4VideoDefaultFeatures)
 			}
 		case "scene_3d", "text", "audio", "script":
 			if wholeDocumentIsDefault {
-				input.NodeTypes[i].Features = cloneStrings(skillLauncherOnlyDefaultFeatures)
+				input.NodeTypes[i].Features = cloneStrings(canvasNodeV4SkillLauncherOnlyDefaultFeatures)
 			}
 		}
 	}
@@ -539,7 +544,7 @@ func migrateCanvasNodeFeaturesV3(input CanvasNodeFeaturesConfig) CanvasNodeFeatu
 // previously implicit controls immediately after it. Policies that opted out
 // of panorama (including an explicitly empty list) remain untouched.
 func migrateCanvasNodeFeaturesV4(input CanvasNodeFeaturesConfig) CanvasNodeFeaturesConfig {
-	input.Version = CanvasNodeFeaturesVersion
+	input.Version = canvasNodeFeaturesV5
 	for i := range input.NodeTypes {
 		def, ok := canonicalCanvasNodeTypeByKey[strings.TrimSpace(input.NodeTypes[i].Key)]
 		if !ok || def.Renderer != "image" {
@@ -550,6 +555,26 @@ func migrateCanvasNodeFeaturesV4(input CanvasNodeFeaturesConfig) CanvasNodeFeatu
 			"image.panorama",
 			panoramaNodeFeatures,
 		)
+	}
+	return input
+}
+
+// migrateCanvasNodeFeaturesV5 retires the node-level Skill launcher without
+// disturbing any administrator-authored capability order or opt-out. This must
+// run before normalization because skill.launcher is no longer in the public
+// feature catalog; otherwise a valid V5 document would be rejected wholesale
+// and replaced with defaults.
+func migrateCanvasNodeFeaturesV5(input CanvasNodeFeaturesConfig) CanvasNodeFeaturesConfig {
+	input.Version = CanvasNodeFeaturesVersion
+	for i := range input.NodeTypes {
+		features := make([]string, 0, len(input.NodeTypes[i].Features))
+		for _, feature := range input.NodeTypes[i].Features {
+			if strings.TrimSpace(feature) == "skill.launcher" {
+				continue
+			}
+			features = append(features, feature)
+		}
+		input.NodeTypes[i].Features = features
 	}
 	return input
 }

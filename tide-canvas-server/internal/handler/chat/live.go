@@ -1,10 +1,20 @@
 package chat
 
 import (
+	"strings"
 	"sync"
 
 	"tidecanvas/internal/pkg/idgen"
 )
+
+// liveReplyKey prevents a reconnect for request A from ever attaching to the
+// deltas or terminal message of request B. The database fence permits one
+// unfinished text turn per conversation, but keeping the in-memory registry
+// request-scoped is defense in depth for legacy callers and lease hand-offs.
+type liveReplyKey struct {
+	conversationID  idgen.ID
+	clientRequestID string
+}
 
 // live.go — 生成中回复的内存缓存与订阅（GPT/Claude 式「断开重连续播」）。
 //
@@ -65,31 +75,36 @@ func (lr *liveReply) state() (text string, wait chan struct{}, done bool, final 
 	return string(lr.buf), lr.wait, lr.done, lr.final
 }
 
-// liveStart registers a fresh live reply for the conversation (replacing any
-// stale one) and returns it.
-func (s *service) liveStart(conversationID idgen.ID) *liveReply {
+// liveStart registers a fresh live reply for the exact request and returns it.
+func (s *service) liveStart(conversationID idgen.ID, clientRequestID string) *liveReply {
 	lr := newLiveReply()
+	key := liveReplyKey{conversationID: conversationID, clientRequestID: strings.TrimSpace(clientRequestID)}
 	s.liveMu.Lock()
-	s.live[conversationID] = lr
+	if s.live == nil {
+		s.live = make(map[liveReplyKey]*liveReply)
+	}
+	s.live[key] = lr
 	s.liveMu.Unlock()
 	return lr
 }
 
 // liveEnd removes the registry entry (only if still ours) and force-finishes
 // the reply so no subscriber can wait forever — safety net for error returns.
-func (s *service) liveEnd(conversationID idgen.ID, lr *liveReply) {
+func (s *service) liveEnd(conversationID idgen.ID, clientRequestID string, lr *liveReply) {
+	key := liveReplyKey{conversationID: conversationID, clientRequestID: strings.TrimSpace(clientRequestID)}
 	s.liveMu.Lock()
-	if s.live[conversationID] == lr {
-		delete(s.live, conversationID)
+	if s.live[key] == lr {
+		delete(s.live, key)
 	}
 	s.liveMu.Unlock()
 	lr.finish(nil)
 }
 
-// attachLive returns the conversation's in-progress reply after an ownership
-// check; nil when nothing is generating (reply already persisted, never started
-// or the server restarted).
-func (s *service) attachLive(conversationID, ownerID idgen.ID) (*liveReply, error) {
+// attachLive returns the exact request's in-progress reply after an ownership
+// check. Legacy callers without a request id are served only when the
+// conversation has exactly one live entry; ambiguity returns nil instead of
+// leaking another turn's stream.
+func (s *service) attachLive(conversationID, ownerID idgen.ID, clientRequestID string) (*liveReply, error) {
 	conv, err := s.repo.findConversation(conversationID)
 	if err != nil {
 		return nil, err
@@ -98,7 +113,20 @@ func (s *service) attachLive(conversationID, ownerID idgen.ID) (*liveReply, erro
 		return nil, errForbidden
 	}
 	s.liveMu.Lock()
-	lr := s.live[conversationID]
-	s.liveMu.Unlock()
+	defer s.liveMu.Unlock()
+	requestID := strings.TrimSpace(clientRequestID)
+	if requestID != "" {
+		return s.live[liveReplyKey{conversationID: conversationID, clientRequestID: requestID}], nil
+	}
+	var lr *liveReply
+	for key, candidate := range s.live {
+		if key.conversationID != conversationID {
+			continue
+		}
+		if lr != nil {
+			return nil, nil
+		}
+		lr = candidate
+	}
 	return lr, nil
 }

@@ -379,7 +379,7 @@ export function PromptRefEditor({
       {/* mt-3 只是与上方缩略图行的间距——助手面板不渲染那行，也就不要这段留白 */}
       <div className={`relative ${showThumbs ? "mt-3" : ""} ${fill ? "flex min-h-0 flex-1 flex-col" : ""}`}>
         {!value && (
-          <span className="pointer-events-none absolute left-0 top-0 text-sm leading-6 text-neutral-400">
+          <span className="pointer-events-none absolute left-0 top-0 text-sm leading-6 text-neutral-500 dark:text-neutral-400">
             {placeholder}
           </span>
         )}
@@ -461,7 +461,7 @@ export function PromptRefEditor({
         {mentionOpen && mentionList.length > 0 && mentionPos && (
           <div
             ref={mentionMenuRef}
-            className="prompt-scroll absolute z-30 max-h-48 overflow-auto rounded-xl border border-neutral-200 bg-white p-1 shadow-lg dark:border-neutral-700 dark:bg-neutral-900"
+            className="prompt-scroll absolute z-30 max-h-48 overflow-auto rounded-xl border border-neutral-200 bg-white p-1 shadow-[0_16px_40px_rgba(15,23,42,0.16)] dark:border-white/12 dark:bg-[#1c1c20] dark:shadow-black/35"
             style={{
               left: mentionPos.left,
               width: MENTION_MENU_W,
@@ -474,10 +474,11 @@ export function PromptRefEditor({
             {mentionList.map((ref, i) => (
               <button
                 key={ref.id}
+                type="button"
                 ref={i === Math.min(mentionIndex, mentionList.length - 1) ? activeItemRef : null}
                 onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); selectMention(ref.id); }}
                 onMouseEnter={() => setMentionIndex(i)}
-                className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors ${
+                className={`flex min-h-11 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors ${
                   i === Math.min(mentionIndex, mentionList.length - 1)
                     ? "bg-neutral-100 dark:bg-neutral-800"
                     : "hover:bg-neutral-100 dark:hover:bg-neutral-800"

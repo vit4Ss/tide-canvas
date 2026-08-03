@@ -190,6 +190,7 @@ export function AssetSkillWorkspace({
   onArchived,
 }: AssetSkillWorkspaceProps) {
   const ensureSession = useAuthStore((state) => state.ensureSession);
+  const ownerUserId = useAuthStore((state) => state.user?.id ?? "");
   const [prompt, setPrompt] = useState("");
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -343,6 +344,7 @@ export function AssetSkillWorkspace({
 
   const skillRun = useSkillRun({
     storageKey: "tidecanvas.asset.active-skill-run",
+    ownerUserId,
     onTerminal: (finished) => {
       if (finished.status === "succeeded") void archiveRun(finished);
       else if (finished.status === "failed") toast.error("资产技能运行失败，请查看运行详情");

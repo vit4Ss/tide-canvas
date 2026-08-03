@@ -84,7 +84,7 @@ func TestLegacyUpdateAllowsAdvancedPresetMetadataOnlyAndRejectsExecutionChange(t
 	version := model.SkillVersion{
 		BaseModel: model.BaseModel{ID: idgen.ID(102)}, SkillID: skill.ID, Version: 1,
 		Kind: model.SkillKindPreset, Status: model.SkillVersionPublished,
-		EntryPoints: `["chat","studio","canvas","asset","api"]`, PrimaryOutputType: "image", OutputTypes: `["image"]`,
+		EntryPoints: `["chat","studio","canvas"]`, PrimaryOutputType: "image", OutputTypes: `["image"]`,
 		InputSchema:    `{"type":"object"}`,
 		ManifestJSON:   `{"kind":"preset","primaryOutputType":"image","outputTypes":["image"],"preferredNodeType":"character"}`,
 		PromptTemplate: "cinematic", ModelID: "model-a", DefaultParams: "{}", PrimaryFilePath: "SKILL.md",

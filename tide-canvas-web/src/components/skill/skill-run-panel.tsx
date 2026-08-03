@@ -278,6 +278,7 @@ export function SkillRunPanel({
             rows={compact ? 2 : 3}
             value={feedback}
             disabled={busy}
+            aria-label="修改意见"
             placeholder="需要调整时，在这里写下修改意见"
             onChange={(event) => setFeedback(event.target.value)}
           />

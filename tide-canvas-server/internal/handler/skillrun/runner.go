@@ -29,12 +29,12 @@ type runUserError struct{ message string }
 
 func (e runUserError) Error() string { return e.message }
 
-type workflowManifest struct {
-	PreferredNodeType string         `json:"preferredNodeType"`
-	Steps             []workflowStep `json:"steps"`
+type agentManifest struct {
+	PreferredNodeType string      `json:"preferredNodeType"`
+	Steps             []agentStep `json:"steps"`
 }
 
-type workflowStep struct {
+type agentStep struct {
 	Key               string          `json:"key"`
 	Title             string          `json:"title"`
 	Type              string          `json:"type"`
@@ -56,6 +56,11 @@ type stepResult struct {
 	Step      *model.SkillRunStep
 	Artifacts []model.SkillRunArtifact
 	Text      string
+}
+
+func agentManifestHasSteps(raw string) bool {
+	var manifest agentManifest
+	return json.Unmarshal([]byte(raw), &manifest) == nil && len(manifest.Steps) > 0
 }
 
 func (s *service) enqueue(runID idgen.ID) {
@@ -136,9 +141,11 @@ func (s *service) execute(runID idgen.ID) {
 	case model.SkillKindPreset:
 		err = s.runPreset(ctx, &run, &version, input)
 	case model.SkillKindAgent:
-		err = s.runAgent(ctx, &run, &version, input)
-	case model.SkillKindWorkflow:
-		err = s.runWorkflow(ctx, &run, &version, input)
+		if agentManifestHasSteps(version.ManifestJSON) {
+			err = s.runAgentSteps(ctx, &run, &version, input)
+		} else {
+			err = s.runAgent(ctx, &run, &version, input)
+		}
 	default:
 		err = errors.New("unsupported skill kind")
 	}
@@ -170,7 +177,7 @@ func (s *service) runPreset(ctx context.Context, run *model.SkillRun, version *m
 	if err != nil {
 		return err
 	}
-	_, err = s.executeGenerationStep(ctx, run, version, workflowStep{
+	_, err = s.executeGenerationStep(ctx, run, version, agentStep{
 		Key: "generate", Title: "Generate", Type: "generate", Handler: handler,
 		ModelID: modelID, OutputType: outputType, OutputRole: "final", PreferredNodeType: preferred,
 	}, 0, 1, commandInput, pinnedPrompt, true)
@@ -178,6 +185,7 @@ func (s *service) runPreset(ctx context.Context, run *model.SkillRun, version *m
 }
 
 func (s *service) runAgent(ctx context.Context, run *model.SkillRun, version *model.SkillVersion, input RunInput) error {
+	input = withAgentConversationContext(input)
 	outputType := normalizedOutput(version.PrimaryOutputType)
 	systemPrompt, err := s.expandSkillTemplate(version, s.primarySkillText(version))
 	if err != nil {
@@ -190,7 +198,7 @@ func (s *service) runAgent(ctx context.Context, run *model.SkillRun, version *mo
 		}
 		commandInput := buildGenerationInput(version.DefaultParams, input, input.Prompt)
 		commandInput["systemPrompt"] = systemPrompt
-		_, err = s.executeGenerationStep(ctx, run, version, workflowStep{
+		_, err = s.executeGenerationStep(ctx, run, version, agentStep{
 			Key: "respond", Title: "Respond", Type: "text", Handler: "skill_text_completion",
 			ModelID: modelID, OutputType: outputType, OutputRole: "final",
 		}, 0, 1, commandInput, "", true)
@@ -205,7 +213,7 @@ func (s *service) runAgent(ctx context.Context, run *model.SkillRun, version *mo
 	planInput := buildGenerationInput("{}", input, planPrompt)
 	planInput["systemPrompt"] = systemPrompt
 	planInput["strictJson"] = true
-	plan, err := s.executeGenerationStep(ctx, run, version, workflowStep{
+	plan, err := s.executeGenerationStep(ctx, run, version, agentStep{
 		Key: "plan", Title: "Plan", Type: "text", Handler: "skill_text_completion", ModelID: textModel,
 		OutputType: "text", OutputRole: "intermediate", StrictJSON: true,
 	}, 0, 2, planInput, "", false)
@@ -221,7 +229,7 @@ func (s *service) runAgent(ctx context.Context, run *model.SkillRun, version *mo
 		return err
 	}
 	commandInput := buildGenerationInput(version.DefaultParams, input, prompt)
-	_, err = s.executeGenerationStep(ctx, run, version, workflowStep{
+	_, err = s.executeGenerationStep(ctx, run, version, agentStep{
 		Key: "generate", Title: "Generate", Type: "generate", Handler: handlerFor(outputType, input.Assets),
 		ModelID: mediaModel, OutputType: outputType, OutputRole: "final",
 		PreferredNodeType: manifestPreferredNode(version.ManifestJSON),
@@ -229,10 +237,11 @@ func (s *service) runAgent(ctx context.Context, run *model.SkillRun, version *mo
 	return err
 }
 
-func (s *service) runWorkflow(ctx context.Context, run *model.SkillRun, version *model.SkillVersion, input RunInput) error {
-	var manifest workflowManifest
+func (s *service) runAgentSteps(ctx context.Context, run *model.SkillRun, version *model.SkillVersion, input RunInput) error {
+	input = withAgentConversationContext(input)
+	var manifest agentManifest
 	if err := json.Unmarshal([]byte(version.ManifestJSON), &manifest); err != nil || len(manifest.Steps) == 0 {
-		return errors.New("workflow manifest has no executable steps")
+		return errors.New("agent manifest has no executable steps")
 	}
 	previous := ""
 	for index := range manifest.Steps {
@@ -301,7 +310,7 @@ func (s *service) runWorkflow(ctx context.Context, run *model.SkillRun, version 
 		if configuredModel == "" && expectedModelType == versionModelType {
 			configuredModel = version.ModelID
 		}
-		requested := requestedWorkflowModel(input.Parameters, step.Type, versionModelType)
+		requested := requestedAgentStepModel(input.Parameters, step.Type, versionModelType)
 		modelID, err := s.resolveModel(configuredModel, requested, expectedModelType)
 		if err != nil {
 			return err
@@ -335,7 +344,7 @@ func (s *service) runWorkflow(ctx context.Context, run *model.SkillRun, version 
 		}
 		commandInput := buildGenerationInput(version.DefaultParams, input, prompt)
 		if step.Type == "text" {
-			systemPrompt, err := s.expandSkillTemplate(version, workflowSystemPrompt(step.SystemPrompt, s.primarySkillText(version)))
+			systemPrompt, err := s.expandSkillTemplate(version, agentStepSystemPrompt(step.SystemPrompt, s.primarySkillText(version)))
 			if err != nil {
 				return err
 			}
@@ -359,7 +368,7 @@ func (s *service) runWorkflow(ctx context.Context, run *model.SkillRun, version 
 	return nil
 }
 
-func (s *service) executeGenerationStep(ctx context.Context, run *model.SkillRun, version *model.SkillVersion, spec workflowStep, sequence, total int, input map[string]any, pinnedPrompt string, registerWork bool) (*stepResult, error) {
+func (s *service) executeGenerationStep(ctx context.Context, run *model.SkillRun, version *model.SkillVersion, spec agentStep, sequence, total int, input map[string]any, pinnedPrompt string, registerWork bool) (*stepResult, error) {
 	step, alreadyDone, err := s.ensureStep(run, spec.Key, sequence, spec.Type, input, registerWork)
 	if err != nil {
 		return nil, err
@@ -522,7 +531,7 @@ func (s *service) completedStepResult(step *model.SkillRunStep) (*stepResult, er
 	return &stepResult{Step: step, Artifacts: artifacts, Text: text}, nil
 }
 
-func (s *service) waitForApproval(run *model.SkillRun, spec workflowStep, sequence, total int) (bool, error) {
+func (s *service) waitForApproval(run *model.SkillRun, spec agentStep, sequence, total int) (bool, error) {
 	step, done, err := s.ensureStep(run, spec.Key, sequence, "approval", map[string]any{}, false)
 	if err != nil || done {
 		return false, err
@@ -572,7 +581,7 @@ func (s *service) promoteApprovedStep(_ context.Context, run *model.SkillRun, ap
 	return nil
 }
 
-func (s *service) waitForInput(run *model.SkillRun, spec workflowStep, sequence, total int) (bool, error) {
+func (s *service) waitForInput(run *model.SkillRun, spec agentStep, sequence, total int) (bool, error) {
 	step, done, err := s.ensureStep(run, spec.Key, sequence, "input", map[string]any{}, false)
 	if err != nil || done {
 		return false, err
@@ -635,7 +644,7 @@ func (s *service) transitionToWaiting(run *model.SkillRun, step *model.SkillRunS
 	})
 }
 
-func (s *service) persistArtifacts(run *model.SkillRun, step *model.SkillRunStep, snapshot *ai.TaskSnapshot, spec workflowStep, version *model.SkillVersion, sequence, total int) ([]model.SkillRunArtifact, string, error) {
+func (s *service) persistArtifacts(run *model.SkillRun, step *model.SkillRunStep, snapshot *ai.TaskSnapshot, spec agentStep, version *model.SkillVersion, sequence, total int) ([]model.SkillRunArtifact, string, error) {
 	meta := map[string]any{}
 	if strings.TrimSpace(snapshot.ResultMeta) != "" {
 		_ = json.Unmarshal([]byte(snapshot.ResultMeta), &meta)
@@ -1203,6 +1212,35 @@ func buildGenerationInput(defaultsJSON string, input RunInput, prompt string) ma
 	return result
 }
 
+// withAgentConversationContext turns recent assistant history into one explicit
+// execution prompt. Only Agent runners call this helper: Preset keeps its
+// single-turn contract and sees input.Prompt unchanged. The original user
+// message also remains unchanged in storage because RunInput is copied by value.
+func withAgentConversationContext(input RunInput) RunInput {
+	if len(input.Messages) == 0 {
+		return input
+	}
+
+	var context strings.Builder
+	context.WriteString("以下是最近对话上下文，仅用于理解指代、延续创作意图和保持一致性；当前请求是本轮需要执行的任务。\n\n<recent_conversation>\n")
+	for _, message := range input.Messages {
+		role := "用户"
+		if message.Role == "assistant" {
+			role = "助手"
+		}
+		context.WriteString(role)
+		context.WriteString("：")
+		context.WriteString(strings.TrimSpace(message.Content))
+		context.WriteByte('\n')
+	}
+	context.WriteString("</recent_conversation>\n\n<current_request>\n")
+	context.WriteString(strings.TrimSpace(input.Prompt))
+	context.WriteString("\n</current_request>")
+
+	input.Prompt = context.String()
+	return input
+}
+
 func requestedModel(parameters map[string]any) string {
 	value, _ := parameters["modelId"].(string)
 	return value
@@ -1213,14 +1251,14 @@ func requestedTextModel(parameters map[string]any) string {
 	return value
 }
 
-func requestedWorkflowModel(parameters map[string]any, stepType, versionModelType string) string {
+func requestedAgentStepModel(parameters map[string]any, stepType, versionModelType string) string {
 	if stepType != "text" {
 		return requestedModel(parameters)
 	}
 	if textModel := requestedTextModel(parameters); textModel != "" {
 		return textModel
 	}
-	// A text/file-primary workflow historically exposed modelId as its only
+	// A text/file-primary agent historically exposed modelId as its only
 	// model override. Keep that compatible while ensuring a media modelId is
 	// never applied to a text planning step.
 	if versionModelType == "text" {
@@ -1305,7 +1343,7 @@ func templateScalar(value any) (string, bool) {
 	return "", false
 }
 
-func workflowSystemPrompt(explicit, primarySkillText string) string {
+func agentStepSystemPrompt(explicit, primarySkillText string) string {
 	if strings.TrimSpace(explicit) != "" {
 		return explicit
 	}
@@ -1322,7 +1360,7 @@ func promptFromJSON(value string) string {
 }
 
 func manifestPreferredNode(raw string) string {
-	var manifest workflowManifest
+	var manifest agentManifest
 	if json.Unmarshal([]byte(raw), &manifest) != nil {
 		return ""
 	}

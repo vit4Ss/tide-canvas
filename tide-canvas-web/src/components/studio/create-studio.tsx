@@ -40,18 +40,16 @@ import {
   useState,
 } from "react";
 import { aiApi } from "@/lib/api";
+import { marketApi } from "@/lib/market-api";
 import { pointsApi } from "@/lib/points-api";
 import { SkillPicker } from "@/components/skill/skill-picker";
-import { SkillRunPanel, type SkillRunPanelActionPayload } from "@/components/skill/skill-run-panel";
-import { useSkillRun } from "@/components/skill/use-skill-run";
+import { parseSkillParams, skillApi } from "@/lib/skill-api";
 import {
-  defaultSkillInputValues,
-  parseSkillParams,
-  validateSkillRunInputValues,
-} from "@/lib/skill-api";
-import { skillKindOf, type SkillVO } from "@/types/skill";
-import type { SkillRunAction, SkillRunArtifactVO, SkillRunAssetInput } from "@/types/skill-run";
-import { isSkillRunActive, isSkillRunTerminal } from "@/types/skill-run";
+  skillKindOf,
+  skillSupportsEntryPoint,
+  skillSupportsOutput,
+  type SkillVO,
+} from "@/types/skill";
 import {
   buildMentionRefs,
   extractMentionTokens,
@@ -64,7 +62,7 @@ import { confirmDialog } from "@/components/shared/confirm";
 import { markRequiredField } from "@/lib/require-field";
 import styles from "@/app/(studio)/studio/create.module.css";
 import {
-  ACTIVE_RUN_KEY,
+  activeRunStorageKey,
   CREATE_MODELS,
   DUR_SEC,
   IDEAS,
@@ -82,7 +80,6 @@ import {
 import { CELL_TOOLS } from "./create-studio/icons";
 import type {
   ArtworkType,
-  HistItem,
   HistRun,
   MusicMode,
   ResultCell,
@@ -110,6 +107,22 @@ import { Lightbox } from "./create-studio/lightbox";
 import { SrcMenu } from "./create-studio/src-menu";
 import { AssetPickerModal } from "./create-studio/asset-picker-modal";
 
+function withHistoryRestoreTimeout<T>(promise: Promise<T>, timeoutMs = 15_000): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error("history restore timeout")), timeoutMs);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 /* ── component ───────────────────────────────────────────────────────────── */
 
 export default function CreateStudio() {
@@ -131,8 +144,7 @@ export default function CreateStudio() {
   /* 技能:附着为提示词区 chip,生成时模板与描述合并;粘性直到手动移除 */
   const [skill, setSkill] = useState<SkillVO | null>(null);
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
-  const [skillInputValues, setSkillInputValues] = useState<Record<string, unknown>>({});
-  const [skillInputErrors, setSkillInputErrors] = useState<Record<string, string>>({});
+  const skillRestoreSeqRef = useRef(0);
   const [lyrics, setLyrics] = useState("");
   const [songStyle, setSongStyle] = useState("");
   /* songStyle 底层仍是逗号串（发送/历史恢复不变），芯片按成员关系点亮/切换。 */
@@ -169,6 +181,14 @@ export default function CreateStudio() {
   // full settings of the last started run (for 重新编辑 / 再次生成) + a one-shot
   // flag that fires generate() after those settings are restored to the panel.
   const [pendingGen, setPendingGen] = useState(false);
+  const [restoringRun, setRestoringRun] = useState(false);
+  const historyActionLockRef = useRef(false);
+  const pendingGenTargetRef = useRef<{
+    curType: ArtworkType;
+    model: string;
+    modelId: string;
+    skillId?: string;
+  } | null>(null);
   // ensures the stage is seeded with the last past result at most once per mount.
   const stageSeededRef = useRef(false);
 
@@ -182,11 +202,10 @@ export default function CreateStudio() {
   const isVideo = curType === "video";
   const isAudio = curType === "audio";
   const slots = UPLOADS[tool] ?? null;
-  const isFlowSkill = !!skill && skillKindOf(skill) !== "preset";
 
   /* ── hooks ─────────────────────────────────────────────────────────────── */
 
-  const { studioList, deepModelRef } = useStudioModels({ curType, setModel });
+  const { studioList, loadedType, adoptModels, deepModelRef } = useStudioModels({ curType, setModel });
 
   const selModel = useMemo(
     () => studioList.find((m) => m.name === model) ?? null,
@@ -348,7 +367,7 @@ export default function CreateStudio() {
     resOpts,
     durOpts,
     qualOpts,
-    skill: isFlowSkill ? null : skill,
+    skill,
     isAudio,
     isSfx,
     ensureSession,
@@ -357,76 +376,6 @@ export default function CreateStudio() {
     setHist,
     promptRef,
   });
-
-  const skillRun = useSkillRun({
-    storageKey: "tidecanvas.studio.active-skill-run",
-    onTerminal: (finished) => {
-      void refreshBalance();
-      if (finished.status === "succeeded") toast.success("技能运行已完成");
-    },
-  });
-  const skillRunBusy =
-    skillRun.loading || skillRun.actionBusy || isSkillRunActive(skillRun.run?.status);
-
-  // A workflow can return several media types. Materialize final media as normal
-  // Studio history runs (one group per type), so all existing preview/download/
-  // one-click image actions remain available without teaching StageFeed about the
-  // workflow protocol itself.
-  useEffect(() => {
-    const finished = skillRun.run;
-    if (!finished || finished.status !== "succeeded") return;
-    const artifacts = [
-      ...(finished.artifacts ?? []),
-      ...(finished.steps ?? []).flatMap((step) => step.artifacts ?? []),
-    ];
-    const seen = new Set<string>();
-    const media = artifacts.filter((artifact): artifact is SkillRunArtifactVO & { type: ArtworkType; url: string } => {
-      if (
-        !artifact.url ||
-        artifact.isFinal === false ||
-        (artifact.type !== "image" && artifact.type !== "video" && artifact.type !== "audio")
-      ) return false;
-      const key = artifact.id || `${artifact.type}:${artifact.url}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-    if (!media.length) return;
-    const input =
-      finished.input && typeof finished.input === "object" && !Array.isArray(finished.input)
-        ? finished.input as Record<string, unknown>
-        : null;
-    const inputParameters =
-      input?.parameters && typeof input.parameters === "object" && !Array.isArray(input.parameters)
-        ? input.parameters as Record<string, unknown>
-        : {};
-    const runPrompt = typeof input?.prompt === "string" ? input.prompt : "";
-    const persistedRatio = [
-      inputParameters.aspectRatio,
-      inputParameters.aspect_ratio,
-      inputParameters.ratio,
-    ].find((value): value is string => typeof value === "string" && value.trim() !== "");
-    const built = media.map((artifact) => {
-      const artifactKey = artifact.id || `${artifact.type}:${artifact.url}`;
-      return {
-        id: `skill-artifact-${finished.id}-${encodeURIComponent(artifactKey)}`,
-        run: `skill-run-${finished.id}-${artifact.type}`,
-        ts: artifact.createTime || finished.completeTime || finished.updateTime || finished.createTime,
-        ratio: persistedRatio || "1:1",
-        hues: huesFromId(artifact.id || artifact.url || finished.id),
-        type: artifact.type,
-        title: artifact.title || finished.skillTitle || "技能产物",
-        prompt: runPrompt,
-        model: finished.skillTitle || "AI 技能",
-        url: artifact.url,
-      } satisfies HistItem;
-    });
-    setHist((current) => {
-      const ids = new Set(current.map((item) => item.id));
-      const additions = built.filter((item) => !ids.has(item.id));
-      return additions.length ? [...additions, ...current] : current;
-    });
-  }, [setHist, skillRun.run]);
 
   // group the flat history into runs (one block per generation), newest first —
   // `hist` is already newest-first, so first-seen order is preserved.
@@ -591,7 +540,8 @@ export default function CreateStudio() {
         stageSeededRef.current = true; // mark attempted, so a later 清空 stays empty
         let resuming = false;
         try {
-          resuming = !!localStorage.getItem(ACTIVE_RUN_KEY);
+          const ownerUserId = useAuthStore.getState().user?.id ?? "";
+          resuming = !!ownerUserId && !!localStorage.getItem(activeRunStorageKey(ownerUserId));
         } catch {
           /* ignore */
         }
@@ -668,8 +618,6 @@ export default function CreateStudio() {
   useEffect(() => {
     if (skill) {
       setSkill(null);
-      setSkillInputValues({});
-      setSkillInputErrors({});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [curType]);
@@ -692,6 +640,16 @@ export default function CreateStudio() {
 
   /* ── panel handlers ──────────────────────────────────────────────────── */
 
+  // 用户主动切换模型时清除预设技能。已发布技能可能固定另一张模型卡，服务端
+  // 会以技能模型为准；保留 chip 会让界面模型与实际执行/计费不一致。
+  // 技能选择与历史恢复使用 setModel 直设，因此不会误清刚恢复的技能。
+  const selectModel = useCallback((nextModel: string) => {
+    if (!nextModel || nextModel === model) return;
+    skillRestoreSeqRef.current += 1;
+    setSkill(null);
+    setModel(nextModel);
+  }, [model]);
+
   // setTool clears the typed uploads (create.js setTool → slotData = {}).
   const selectTool = (t: ToolKey) => {
     setTool(t);
@@ -699,7 +657,7 @@ export default function CreateStudio() {
     // 音频页签切换时把选中模型对齐到该页签的模型池（下拉只显示本池）。
     if ((t === "t2a" || t === "sfx") && studioList.length) {
       const pool = studioList.filter((m) => audioToolOf(m) === t);
-      if (pool.length) setModel((cur) => (pool.some((m) => m.name === cur) ? cur : pool[0].name));
+      if (pool.length && !pool.some((m) => m.name === model)) selectModel(pool[0].name);
     }
   };
 
@@ -715,6 +673,8 @@ export default function CreateStudio() {
   }, [model, studioList, isAudio]);
 
   const pickType = (t: ArtworkType) => {
+    skillRestoreSeqRef.current += 1;
+    setSkill(null);
     setCurType(t);
     selectTool(MODES_BY_TYPE[t][0]); // renderModes() → setTool(keys[0])
   };
@@ -722,135 +682,36 @@ export default function CreateStudio() {
   // 选中技能:附着 chip;指定了模型卡则自动切换;默认参数回填画幅/清晰度/时长
   const pickSkill = useCallback(
     (s: SkillVO) => {
+      skillRestoreSeqRef.current += 1;
+      if (skillKindOf(s) !== "preset") {
+        toast.info("智能技能请在画布中使用");
+        return;
+      }
       setSkill(s);
       setSkillPickerOpen(false);
-      setSkillInputValues(defaultSkillInputValues(s.inputSchema, s.defaultParams));
-      setSkillInputErrors({});
-      // A workflow owns a model policy per step. Only a legacy preset may steer
-      // the single-model Studio panel.
-      if (skillKindOf(s) === "preset" && s.modelId) {
+      if (s.modelId) {
         const target = studioList.find((m) => m.modelKey === s.modelId);
         if (target && target.type === curType && target.name !== model) {
           setModel(target.name);
           toast.info(`已切换到技能模型「${target.name}」`);
         }
       }
-      if (skillKindOf(s) === "preset") {
-        const defaults = parseSkillParams(s.defaultParams);
-        if (defaults.aspectRatio) setRatio(defaults.aspectRatio);
-        if (defaults.resolution) {
-          if (curType === "video") setRes(defaults.resolution);
-          else setImgRes(defaults.resolution);
-        }
-        if (defaults.duration) setDur(`${defaults.duration}s`);
-        if (defaults.quality) setQuality(defaults.quality);
+      const defaults = parseSkillParams(s.defaultParams);
+      if (defaults.aspectRatio) setRatio(defaults.aspectRatio);
+      if (defaults.resolution) {
+        if (curType === "video") setRes(defaults.resolution);
+        else setImgRes(defaults.resolution);
       }
+      if (defaults.duration) setDur(`${defaults.duration}s`);
+      if (defaults.quality) setQuality(defaults.quality);
     },
     [curType, studioList, model],
   );
 
   const removeSkill = useCallback(() => {
+    skillRestoreSeqRef.current += 1;
     setSkill(null);
-    setSkillInputValues({});
-    setSkillInputErrors({});
   }, []);
-
-  const startSelectedSkill = useCallback(async () => {
-    if (!skill || skillKindOf(skill) === "preset") {
-      if (isSkillRunTerminal(skillRun.run?.status)) skillRun.clear();
-      generate();
-      return;
-    }
-    if (busy || skillRunBusy) {
-      toast.info("已有任务正在运行，请先完成当前步骤");
-      return;
-    }
-    if (Object.values(slotData).some((items) => items.some((item) => item.uploading))) {
-      toast.info("参考素材上传中，请稍候");
-      return;
-    }
-    const roleOf = (key: string) => {
-      if (key === "first") return "first_frame";
-      if (key === "last") return "last_frame";
-      if (key === "video") return "video_reference";
-      if (key === "audio") return "audio_reference";
-      return "reference";
-    };
-    const assets: SkillRunAssetInput[] = [];
-    for (const [key, items] of Object.entries(slotData)) {
-      const slotType = slots?.find((slot) => slot.k === key)?.type;
-      for (const item of items) {
-        if (!item.url) continue;
-        assets.push({
-          type: slotType === "video" || slotType === "audio" ? slotType : "image",
-          url: item.url,
-          role: roleOf(key),
-          name: item.n,
-        });
-      }
-    }
-    const parameters = {
-      ...skillInputValues,
-      outputType: curType,
-      mode: tool,
-      modelId: selModel?.modelKey || selModel?.id || "",
-      modelName: model,
-      aspectRatio: ratio,
-      resolution: isVideo ? res : imgRes,
-      ...(isVideo ? { duration: dur } : {}),
-      ...(!isVideo && quality ? { quality } : {}),
-      ...(!isVideo && !isAudio && count > 1 ? { batchCount: count } : {}),
-    };
-    const input = { prompt: prompt.trim(), assets, sourceNodeIds: [], parameters };
-    const errors = validateSkillRunInputValues(skill.inputSchema, input);
-    setSkillInputErrors(errors);
-    if (Object.keys(errors).length) {
-      toast.info(errors.prompt || errors.assets || errors.sourceNodeIds || errors.parameters || "请检查技能输入");
-      return;
-    }
-    await ensureSession();
-    const started = await skillRun.start({
-      skillId: skill.id,
-      entryPoint: "studio",
-      targetType: curType,
-      input,
-    });
-    if (!started) toast.error("技能启动失败，请稍后重试");
-  }, [
-    busy,
-    count,
-    curType,
-    dur,
-    ensureSession,
-    generate,
-    imgRes,
-    isAudio,
-    isVideo,
-    model,
-    prompt,
-    quality,
-    ratio,
-    res,
-    selModel,
-    skill,
-    skillInputValues,
-    skillRun,
-    skillRunBusy,
-    slotData,
-    slots,
-    tool,
-  ]);
-
-  const handleSkillRunAction = useCallback(
-    async (action: SkillRunAction, payload?: SkillRunPanelActionPayload) => {
-      const updated = await skillRun.performAction(action, {
-        ...(payload?.feedback ? { feedback: payload.feedback } : {}),
-        ...(payload?.input ? { input: payload.input } : {}),
-      });
-      if (!updated) toast.error("操作失败，请重试");
-    },
-    [skillRun],
-  );
 
   // AI 优化: rewrite the prompt via the backend (relay text model). Falls back to
   // a clear toast when no text model is configured / the call fails.
@@ -894,9 +755,10 @@ export default function CreateStudio() {
   };
 
   // 重新编辑 / 再次生成: restore the captured run's full settings back into the
-  // panel (type/mode/model/ratio/resolution/quality/count + prompt). Returns
-  // false when there is nothing to restore.
+  // panel (type/mode/model/ratio/resolution/quality/count + prompt).
   const restoreParams = useCallback((lr: RunParams) => {
+    // 无技能的旧轮次也必须显式清空当前 chip，不能把当前技能套进历史生成。
+    setSkill(null);
     setCurType(lr.curType);
     setTool(lr.tool);
     setModel(lr.model);
@@ -917,8 +779,8 @@ export default function CreateStudio() {
     clip.setSourceIsUpload(lr.sourceIsUpload ?? false);
     clip.setContinueAt(lr.continueAt ? String(lr.continueAt) : "");
     // 参考素材回填：按 generate() 写入 refInput 的映射反向恢复各上传槽位。
-    // 仅在参数确实带参考素材时覆盖 slotData——旧快照/纯文生成不动现有槽位，
-    // 保持会话内“先传图再重新生成”的既有行为。
+    // 历史动作承诺“相同参数”，所以即使旧轮次没有参考素材也必须把当前槽位
+    // 清空；否则纯文历史会静默带上用户刚上传的新素材并按错误输入扣费。
     const toFiles = (urls: string[], label: string): UploadFile[] =>
       urls.map((u, i) => ({ g: u, url: u, n: urls.length > 1 ? `${label} ${i + 1}` : label, s: "" }));
     const imgs = lr.imageRefs ?? [];
@@ -928,18 +790,124 @@ export default function CreateStudio() {
     if (lr.lastFrame) slots.last = toFiles([lr.lastFrame], "尾帧");
     if (lr.videoRefs?.length) slots.video = toFiles(lr.videoRefs, "参考视频");
     if (lr.audioRefs?.length) slots.audio = toFiles(lr.audioRefs, "参考音频");
-    if (Object.keys(slots).length) setSlotData(slots);
+    setSlotData(slots);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const restoreRunSkill = useCallback(async (
+    lr: RunParams,
+  ): Promise<{ ok: boolean; modelName?: string; modelId?: string; skillId?: string }> => {
+    const seq = ++skillRestoreSeqRef.current;
+    restoreParams(lr);
+    const saved = lr.skill;
+    // Fetch the target type explicitly. `studioList` still belongs to the
+    // currently visible type until React commits setCurType and its request
+    // returns; using that old closure makes image -> video history look delisted.
+    const [modelsResult, skillResult] = await withHistoryRestoreTimeout(Promise.all([
+      marketApi.studioModels(lr.curType),
+      saved?.id ? skillApi.get(saved.id, "studio", lr.curType) : Promise.resolve(null),
+    ]));
+    if (seq !== skillRestoreSeqRef.current) return { ok: false };
+    if (!modelsResult.success || !Array.isArray(modelsResult.data)) {
+      toast.info("模型目录暂时无法加载，请稍后重试");
+      return { ok: false };
+    }
+    const targetModels = modelsResult.data;
+    adoptModels(lr.curType, targetModels);
+    const historicalModel = targetModels.find((candidate) =>
+      candidate.type === lr.curType
+      && (lr.modelId ? candidate.id === lr.modelId : candidate.name === lr.model),
+    );
+    if (!saved?.id) {
+      if (!historicalModel) {
+        toast.info(`模型「${lr.model}」已下架，请重新选择模型后生成`);
+        return { ok: false };
+      }
+      setModel(historicalModel.name);
+      return { ok: true, modelName: historicalModel.name, modelId: historicalModel.id };
+    }
+    const restored = skillResult?.success ? skillResult.data : undefined;
+    if (
+      !restored
+      || restored.status !== 1
+      || skillKindOf(restored) !== "preset"
+      || !skillSupportsEntryPoint(restored, "studio")
+      || !skillSupportsOutput(restored, lr.curType)
+    ) {
+      toast.info(`技能「${saved.title || "原技能"}」当前不可用，已移除，请重新选择后生成`);
+      return { ok: false };
+    }
+    let fixedModel: (typeof targetModels)[number] | undefined;
+    if (restored.modelId) {
+      fixedModel = targetModels.find((candidate) =>
+        candidate.modelKey === restored.modelId && candidate.type === lr.curType,
+      );
+      if (!fixedModel) {
+        toast.info(`技能「${restored.title || saved.title || "原技能"}」关联的模型已下架，请重新选择技能`);
+        return { ok: false };
+      }
+      setModel(fixedModel.name);
+    } else if (!historicalModel) {
+      toast.info(`模型「${lr.model}」已下架，请重新选择模型后生成`);
+      return { ok: false };
+    } else {
+      setModel(historicalModel.name);
+    }
+    setSkill(restored);
+    return {
+      ok: true,
+      modelName: fixedModel?.name || historicalModel?.name || lr.model,
+      modelId: fixedModel?.id || historicalModel?.id,
+      skillId: restored.id,
+    };
+  }, [restoreParams, adoptModels]);
 
   // 再次生成: after restoring the run's settings to the panel (above), fire
   // generate() on the next commit so it reads the just-restored state.
   useEffect(() => {
     if (!pendingGen) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- 一次性闸门：消费标记，让 generate() 读到刚恢复的面板状态，与拆分前一致
+    const target = pendingGenTargetRef.current;
+    // Wait until both the restored state and the model directory for that exact
+    // media type have committed. The effect then calls the fresh `generate`
+    // closure; it can no longer observe the previous type's catalog.
+    if (
+      target
+      && (
+        curType !== target.curType
+        || loadedType !== target.curType
+        || model !== target.model
+        || (skill?.id || undefined) !== target.skillId
+        || !studioList.some((candidate) =>
+          candidate.id === target.modelId
+          && candidate.name === target.model
+          && candidate.type === target.curType,
+        )
+      )
+    ) return;
     setPendingGen(false);
-    generate();
-  }, [pendingGen, generate]);
+    pendingGenTargetRef.current = null;
+    historyActionLockRef.current = false;
+    setRestoringRun(false);
+    generate(target
+      ? { requireBackendModel: true, expectedModelId: target.modelId }
+      : undefined);
+  }, [pendingGen, generate, curType, loadedType, model, skill, studioList]);
+
+  // State restoration and catalog adoption normally settle in the same commit.
+  // A later focus refresh can nevertheless invalidate the target. Never leave
+  // the whole workspace inert forever waiting for a model that no longer exists.
+  useEffect(() => {
+    if (!pendingGen || !pendingGenTargetRef.current) return;
+    const timer = window.setTimeout(() => {
+      if (!pendingGenTargetRef.current) return;
+      setPendingGen(false);
+      pendingGenTargetRef.current = null;
+      historyActionLockRef.current = false;
+      setRestoringRun(false);
+      toast.info("模型目录已变化，已停止重新生成，请确认模型后重试");
+    }, 8_000);
+    return () => window.clearTimeout(timer);
+  }, [pendingGen]);
 
   // load a finished result into a tool's reference slot, then switch to that tool
   // so the user can immediately describe the change. selectTool() clears slotData,
@@ -1003,35 +971,86 @@ export default function CreateStudio() {
   // 重新生成: restore a feed run's settings to the panel and fire a fresh run.
   // 会重新扣费发起一次全新生成,先二次确认(带积分成本),避免误点白扣。
   const regenRun = async (r: HistRun) => {
-    if (busy) return;
+    if (busy || restoringRun || historyActionLockRef.current) return;
+    historyActionLockRef.current = true;
     const ok = await confirmDialog({
       title: "重新生成",
       message: "将用相同参数发起一次全新生成，并按当前模型消耗相应积分。",
       confirmText: "重新生成",
     });
-    if (!ok) return;
-    if (r.params) {
-      lastRunRef.current = r.params;
-      restoreParams(r.params);
-    } else {
-      // no captured params (legacy item): seed prompt only so the user can adjust.
-      setPrompt(r.prompt);
+    if (!ok) {
+      historyActionLockRef.current = false;
+      return;
+    }
+    setRestoringRun(true);
+    try {
+      if (r.params) {
+        lastRunRef.current = r.params;
+        const restored = await restoreRunSkill(r.params);
+        if (!restored.ok) {
+          historyActionLockRef.current = false;
+          setRestoringRun(false);
+          return;
+        }
+        if (!restored.modelId) {
+          historyActionLockRef.current = false;
+          setRestoringRun(false);
+          toast.info("历史模型当前不可用，请确认模型后重试");
+          return;
+        }
+        pendingGenTargetRef.current = {
+          curType: r.params.curType,
+          model: restored.modelName || r.params.model,
+          modelId: restored.modelId,
+          skillId: restored.skillId,
+        };
+      } else {
+        // No captured params (legacy item): there is no truthful "same
+        // parameters" request to replay. Restore only the prompt and require an
+        // explicit manual generate after the user confirms the current model.
+        skillRestoreSeqRef.current += 1;
+        setSkill(null);
+        setPrompt(r.prompt);
+        pendingGenTargetRef.current = null;
+        historyActionLockRef.current = false;
+        setRestoringRun(false);
+        toast.info("旧历史缺少完整参数，已载入提示词，请确认模型后手动生成");
+        return;
+      }
+    } catch {
+      historyActionLockRef.current = false;
+      setRestoringRun(false);
+      toast.info("历史参数暂时无法恢复，请稍后重试");
+      return;
     }
     setPendingGen(true);
   };
 
   // 编辑: restore the run's settings into the panel (WITHOUT firing) and focus
   // the prompt, so the user can tweak parameters before regenerating.
-  const editRun = (r: HistRun) => {
-    if (busy) return;
-    if (r.params) {
-      lastRunRef.current = r.params;
-      restoreParams(r.params);
-    } else {
-      setPrompt(r.prompt);
+  const editRun = async (r: HistRun) => {
+    if (busy || restoringRun || historyActionLockRef.current) return;
+    historyActionLockRef.current = true;
+    setRestoringRun(true);
+    let restored = true;
+    try {
+      if (r.params) {
+        lastRunRef.current = r.params;
+        restored = (await restoreRunSkill(r.params)).ok;
+      } else {
+        skillRestoreSeqRef.current += 1;
+        setSkill(null);
+        setPrompt(r.prompt);
+      }
+    } catch {
+      restored = false;
+      toast.info("历史参数暂时无法恢复，请稍后重试");
+    } finally {
+      historyActionLockRef.current = false;
+      setRestoringRun(false);
     }
     setTimeout(() => promptRef.current?.focus(), 0);
-    toast.success("已载入该次生成的参数，可修改后重新生成");
+    if (restored) toast.success("已载入该次生成的参数，可修改后重新生成");
   };
 
   // delete a run: drop it from the feed locally and best-effort remove it server-side.
@@ -1053,7 +1072,11 @@ export default function CreateStudio() {
 
   return (
     <>
-      <div className={styles.cols}>
+      <div
+        className={styles.cols}
+        inert={restoringRun ? true : undefined}
+        aria-busy={restoringRun}
+      >
         {/* ── control panel ───────────────────────────────────────────── */}
         <aside className="ws-panel">
           <div className="ws-panel-scroll">
@@ -1075,7 +1098,7 @@ export default function CreateStudio() {
             </div>
 
             {/* model picker */}
-            <ModelPicker model={model} names={modelNames} studioList={studioList} onSelect={setModel} />
+            <ModelPicker model={model} names={modelNames} studioList={studioList} onSelect={selectModel} />
 
             {/* typed reference uploads (per-tool slots; create.js renderUploads) */}
             <UploadSlots
@@ -1100,7 +1123,7 @@ export default function CreateStudio() {
                 selModel={selModel}
                 studioList={studioList}
                 model={model}
-                onModelChange={setModel}
+                onModelChange={selectModel}
               />
             )}
 
@@ -1119,17 +1142,6 @@ export default function CreateStudio() {
                 onOptimize={aiOptimize}
                 onOpenSkillPicker={() => setSkillPickerOpen(true)}
                 ideaOpts={ideaOpts}
-                skillInputValues={skillInputValues}
-                skillInputErrors={skillInputErrors}
-                onSkillInputChange={(key, value) => {
-                  setSkillInputValues((current) => ({ ...current, [key]: value }));
-                  setSkillInputErrors((current) => {
-                    if (!current[key]) return current;
-                    const next = { ...current };
-                    delete next[key];
-                    return next;
-                  });
-                }}
               />
             )}
 
@@ -1177,19 +1189,15 @@ export default function CreateStudio() {
           {/* footer */}
           <div className="ws-panel-foot">
             <button
-              className={`ws-gen${busy || skillRunBusy ? " busy" : ""}`}
+              className={`ws-gen${busy || restoringRun ? " busy" : ""}`}
               id="gen"
               type="button"
-              disabled={busy || skillRunBusy}
-              onClick={() => void startSelectedSkill()}
+              disabled={busy || restoringRun}
+              onClick={() => generate()}
             >
-              <span className="spark">✦</span> {isFlowSkill ? "运行技能" : "立即生成"}{" "}
+              <span className="spark">✦</span> {restoringRun ? "正在恢复历史参数…" : "立即生成"}{" "}
               <span className="ws-gen-cost">
-                {isFlowSkill ? (
-                  <>·&nbsp;按步骤计费</>
-                ) : (
-                  <>·&nbsp;<b id="cost">{cost}</b>&nbsp;积分</>
-                )}
+                <>·&nbsp;<b id="cost">{cost}</b>&nbsp;积分</>
               </span>
             </button>
             <div className="ws-balance">
@@ -1201,7 +1209,7 @@ export default function CreateStudio() {
 
         {/* ── center stage ────────────────────────────────────────────── */}
         <StageFeed
-          busy={busy}
+          busy={busy || restoringRun}
           runs={runs}
           runMeta={runMeta}
           cells={cells}
@@ -1218,21 +1226,6 @@ export default function CreateStudio() {
           initialLoading={histInitialLoading}
           loadError={histLoadError}
           endReached={!histHasMore && histMultiPage}
-          skillRunPanel={
-            skillRun.run ? (
-              <SkillRunPanel
-                run={skillRun.run}
-                actionBusy={skillRun.actionBusy}
-                onAction={handleSkillRunAction}
-                onDismiss={skillRun.clear}
-                onArtifact={(artifact) => {
-                  if (!artifact.url) return;
-                  if (artifact.type === "image") setLightbox(artifact.url);
-                  else window.open(artifact.url, "_blank", "noopener");
-                }}
-              />
-            ) : null
-          }
         />
       </div>
 
@@ -1273,6 +1266,7 @@ export default function CreateStudio() {
         outputType={curType}
         targetType={curType}
         currentId={skill?.id}
+        kinds={["preset"]}
         entryPoint="studio"
       />
 

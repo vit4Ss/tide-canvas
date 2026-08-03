@@ -67,11 +67,12 @@ type MessageVO struct {
 	// TaskID links an assistant message to its generation task; Params is the
 	// snapshot stored on the user message; Task is the batch-loaded live task
 	// status (nil when the task was deleted/expired → frontend shows 已过期).
-	TaskID     *idgen.ID          `json:"taskId,omitempty"`
-	SkillRunID *idgen.ID          `json:"skillRunId,omitempty"`
-	Params     json.RawMessage    `json:"params,omitempty"`
-	Task       *MessageTaskVO     `json:"task,omitempty"`
-	SkillRun   *MessageSkillRunVO `json:"skillRun,omitempty"`
+	TaskID          *idgen.ID          `json:"taskId,omitempty"`
+	SkillRunID      *idgen.ID          `json:"skillRunId,omitempty"`
+	ClientRequestID *string            `json:"clientRequestId,omitempty"`
+	Params          json.RawMessage    `json:"params,omitempty"`
+	Task            *MessageTaskVO     `json:"task,omitempty"`
+	SkillRun        *MessageSkillRunVO `json:"skillRun,omitempty"`
 }
 
 // ContextUsageVO reports a conversation's estimated context-token usage against
@@ -123,15 +124,16 @@ func toMessageVO(m *model.IMMessage, ownerID idgen.ID) MessageVO {
 		role = roleUser
 	}
 	return MessageVO{
-		ID:             m.ID,
-		ConversationID: m.ConversationID,
-		Role:           role,
-		ContentType:    m.ContentType,
-		Content:        m.Content,
-		CreateTime:     formatTime(m.CreateTime),
-		TaskID:         m.TaskID,
-		SkillRunID:     m.SkillRunID,
-		Params:         rawJSONOrNil(m.Params),
+		ID:              m.ID,
+		ConversationID:  m.ConversationID,
+		Role:            role,
+		ContentType:     m.ContentType,
+		Content:         m.Content,
+		CreateTime:      formatTime(m.CreateTime),
+		TaskID:          m.TaskID,
+		SkillRunID:      m.SkillRunID,
+		ClientRequestID: m.ClientRequestID,
+		Params:          rawJSONOrNil(m.Params),
 	}
 }
 

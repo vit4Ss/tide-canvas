@@ -6,13 +6,20 @@ import { useEffect, useRef } from "react";
 import { chatApi, streamLive } from "@/lib/chat-api";
 import type { MessageVO } from "@/types/chat";
 
+// Mirrors the server's 10 minute provider bound plus its 2 minute safety
+// margin. A cross-device browser has no local journal, so live/history resume
+// must remain available for the full durable lease rather than the old 200s.
+const LIVE_RESUME_WINDOW_MS = 12 * 60 * 1000;
+const LIVE_RESUME_RETRY_MS = 3000;
+const LIVE_RESUME_MAX_TRIES = Math.ceil(LIVE_RESUME_WINDOW_MS / LIVE_RESUME_RETRY_MS) + 2;
+
 // —— 刷新/切页后的接续（GPT/Claude 式断线续播）——
 // 服务端断连后仍继续生成并缓存增量（chat/live.go）。文本轮次里用户消息先
-// 落库、回复生成完才落库，所以「最后一条是 200s 内的孤儿用户文本消息」
+// 落库、回复生成完才落库，所以「最后一条仍在服务端硬租约内的孤儿用户文本消息」
 // = 服务端可能还在生成：附着 GET /stream 续播——先收到已生成快照，再逐字
 // 直播，终态后拉取落库消息。附着到 none/出错（可能刚好落库、或服务端重
-// 启）→ 拉一次消息，仍是孤儿则 3s 后重试；窗口 200s 略大于服务端生成上限
-// (llmReplyTimeout 180s)，超窗放弃。本地发送中（busy）不介入；条件里刻意
+// 启）→ 拉一次消息，仍是孤儿则 3s 后重试；窗口覆盖服务端完整 12m 租约，
+// 超窗后由消息列表的后端终态化/退款兜底。本地发送中（busy）不介入；条件里刻意
 // 不看 streaming——附着自身会置流式态，看了会自我打断。
 export function useResumeStream({
   msgs,
@@ -37,6 +44,7 @@ export function useResumeStream({
   const resumeId =
     !busy && !!lastMsg && lastMsg.role === "user" && !lastMsg.taskId ? lastMsg.id : null;
   const resumeAt = resumeId ? lastMsg.createTime : null;
+  const resumeRequestId = resumeId ? lastMsg.clientRequestId : undefined;
   const msgsRef = useRef(msgs);
   useEffect(() => {
     msgsRef.current = msgs;
@@ -55,12 +63,13 @@ export function useResumeStream({
       let tries = 0;
       for (;;) {
         if (ac.signal.aborted) return;
-        if (Date.now() - sentAt >= 200_000 || ++tries > 70) return;
+        if (Date.now() - sentAt >= LIVE_RESUME_WINDOW_MS || ++tries > LIVE_RESUME_MAX_TRIES) return;
         setStreaming((cur) => (cur === null ? "" : cur)); // "" = 思考中气泡
         let acc = "";
         let final: MessageVO | null = null;
         await streamLive(convId, {
           signal: ac.signal,
+          clientRequestId: resumeRequestId,
           onDelta: (d) => {
             acc += d;
             setStreaming(acc);
@@ -89,7 +98,7 @@ export function useResumeStream({
         // none / 断流：可能刚好落库或服务端重启——拉一次消息按守卫替换，
         // 仍是孤儿则按节奏重试
         try {
-          const res = await chatApi.messages(convId, { pageNum: 1, pageSize: 100 });
+          const res = await chatApi.latestMessages(convId);
           if (res.success && res.data) {
             const records = res.data.records;
             setMsgs((cur) => {
@@ -101,7 +110,7 @@ export function useResumeStream({
           /* 网络抖动：按重试节奏继续 */
         }
         if (ac.signal.aborted) return;
-        await sleep(3000);
+        await sleep(LIVE_RESUME_RETRY_MS);
         const cur = msgsRef.current;
         const l = cur[cur.length - 1];
         if (!l || l.id !== resumeId) {
@@ -113,5 +122,5 @@ export function useResumeStream({
     // 中止只影响附着连接，服务端生成不受影响；流式气泡由接管方（切会话的
     // stopStream / 新发送的 send）负责撤下，这里不动状态。
     return () => ac.abort();
-  }, [resumeId, resumeAt, activeId, scrollEnd, refreshCtxUsage, nearBottomRef, setMsgs, setStreaming]);
+  }, [resumeId, resumeAt, resumeRequestId, activeId, scrollEnd, refreshCtxUsage, nearBottomRef, setMsgs, setStreaming]);
 }

@@ -21,7 +21,7 @@ type generateDTO struct {
 	ProjectID idgen.ID        `json:"projectId"`
 	Input     json.RawMessage `json:"input"`
 	// Placement is required when input.skillId is present. Legacy HTTP callers
-	// default to the API surface and wildcard target.
+	// default to the Studio surface and wildcard target.
 	EntryPoint string `json:"entryPoint"`
 	TargetType string `json:"targetType"`
 	// Optional for legacy compatibility; official clients always send it.

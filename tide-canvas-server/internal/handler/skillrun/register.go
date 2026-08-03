@@ -59,8 +59,17 @@ type AssetInput struct {
 	Metadata map[string]any `json:"metadata"`
 }
 
+// RunMessage is recent conversational context supplied by an assistant surface.
+// It is execution metadata, not a user-configurable Skill input field: schema
+// validation therefore continues to apply only to prompt/assets/parameters.
+type RunMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
 type RunInput struct {
 	Prompt        string         `json:"prompt"`
+	Messages      []RunMessage   `json:"messages,omitempty"`
 	Assets        []AssetInput   `json:"assets"`
 	SourceNodeIDs []string       `json:"sourceNodeIds"`
 	Parameters    map[string]any `json:"parameters"`
@@ -232,6 +241,14 @@ func (h *handler) list(c *gin.Context) {
 	if value := strings.TrimSpace(c.Query("entryPoint")); value != "" {
 		tx = tx.Where("entry_point = ?", value)
 	}
+	if raw := strings.TrimSpace(c.Query("clientRequestIds")); raw != "" {
+		requestIDs, err := parseClientRequestIDs(raw)
+		if err != nil {
+			response.Fail(c, response.CodeBadRequest, "invalid clientRequestIds")
+			return
+		}
+		tx = tx.Where("client_request_id IN ?", requestIDs)
+	}
 	if value := strings.TrimSpace(c.Query("status")); value != "" {
 		tx = tx.Where("status = ?", value)
 	}
@@ -372,6 +389,21 @@ func (s *service) createRun(ctx context.Context, userID idgen.ID, dto CreateDTO)
 		return nil, false, invalid("published skill version not found")
 	}
 	entryPoint := strings.ToLower(strings.TrimSpace(dto.EntryPoint))
+	if !model.ValidSkillKind(version.Kind) {
+		return nil, false, invalid("skill kind is unsupported")
+	}
+	if version.Kind == model.SkillKindAgent && entryPoint != "canvas" {
+		return nil, false, invalid("agent skills can only run on canvas")
+	}
+	if version.Kind == model.SkillKindPreset {
+		if entryPoint != "chat" && entryPoint != "studio" && entryPoint != "canvas" {
+			return nil, false, invalid("preset skills can only run in chat, studio or canvas")
+		}
+		outputs := model.JSONStrings(version.OutputTypes, nil)
+		if len(outputs) != 1 || !strings.EqualFold(strings.TrimSpace(outputs[0]), strings.TrimSpace(version.PrimaryOutputType)) {
+			return nil, false, invalid("preset skill must have exactly one output type")
+		}
+	}
 	targetType := strings.ToLower(strings.TrimSpace(dto.TargetType))
 	if len(targetType) > 32 || strings.ContainsAny(targetType, " /\\\x00") {
 		return nil, false, invalid("invalid targetType")
@@ -972,7 +1004,7 @@ func (s *service) toVO(run *model.SkillRun) (RunVO, error) {
 	var version model.SkillVersion
 	_ = s.db.Select("id", "kind", "manifest_json").First(&version, "id = ?", run.SkillVersionID).Error
 	titles := map[string]string{}
-	var manifest workflowManifest
+	var manifest agentManifest
 	if json.Unmarshal([]byte(version.ManifestJSON), &manifest) == nil {
 		for i := range manifest.Steps {
 			titles[manifest.Steps[i].Key] = manifest.Steps[i].Title
@@ -1055,6 +1087,22 @@ func validateRunInput(input RunInput) error {
 	if len([]byte(input.Prompt)) > 32<<10 {
 		return invalid("input.prompt exceeds 32 KiB")
 	}
+	if len(input.Messages) > 40 {
+		return invalid("input.messages exceeds 40 items")
+	}
+	messageBytes := 0
+	for index, message := range input.Messages {
+		if message.Role != "user" && message.Role != "assistant" {
+			return invalidf("input.messages[%d].role must be user or assistant", index)
+		}
+		if strings.TrimSpace(message.Content) == "" {
+			return invalidf("input.messages[%d].content is required", index)
+		}
+		messageBytes += len(message.Role) + len([]byte(message.Content))
+		if messageBytes > 256<<10 {
+			return invalid("input.messages exceeds 256 KiB")
+		}
+	}
 	if len(input.Assets) > 32 {
 		return invalid("input.assets exceeds 32 items")
 	}
@@ -1065,7 +1113,7 @@ func validateRunInput(input RunInput) error {
 	if err != nil || len(parameters) > 64<<10 {
 		return invalid("input.parameters exceeds 64 KiB or is invalid")
 	}
-	total := len([]byte(input.Prompt)) + len(parameters)
+	total := len([]byte(input.Prompt)) + messageBytes + len(parameters)
 	for index, asset := range input.Assets {
 		if len([]byte(asset.Content)) > 256<<10 {
 			return invalidf("input.assets[%d].content exceeds 256 KiB", index)
@@ -1547,6 +1595,33 @@ func parsePositive(raw string, fallback int) int {
 		return fallback
 	}
 	return value
+}
+
+func parseClientRequestIDs(raw string) ([]string, error) {
+	var parts []string
+	if err := json.Unmarshal([]byte(raw), &parts); err != nil {
+		return nil, errors.New("client request ids must be a JSON array")
+	}
+	if len(parts) == 0 || len(parts) > 40 {
+		return nil, errors.New("client request id count is invalid")
+	}
+	seen := make(map[string]struct{}, len(parts))
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value == "" || len(value) > 96 {
+			return nil, errors.New("client request id is invalid")
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		values = append(values, value)
+	}
+	if len(values) == 0 {
+		return nil, errors.New("client request ids are empty")
+	}
+	return values, nil
 }
 
 func contains(values []string, want string) bool {

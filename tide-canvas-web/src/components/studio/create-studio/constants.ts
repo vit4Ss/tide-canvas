@@ -163,3 +163,9 @@ export const EDIT_OP_HANDLER: Record<string, string> = {
 
 /** localStorage key of the persisted in-flight run (refresh-resume). */
 export const ACTIVE_RUN_KEY = "studio_active_run";
+
+/** In-flight Studio pointers are account-private. A shared browser must never
+ * let the next signed-in account resume or clear the previous account's task. */
+export function activeRunStorageKey(ownerUserId: string): string {
+  return `${ACTIVE_RUN_KEY}:${encodeURIComponent(ownerUserId.trim())}`;
+}

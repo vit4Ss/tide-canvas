@@ -44,13 +44,42 @@ func TestCreateDTORequiresClientRequestID(t *testing.T) {
 	}
 }
 
+func TestParseClientRequestIDs(t *testing.T) {
+	values, err := parseClientRequestIDs(`[" canvas,a ","line\nbreak"," canvas,a "]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(values) != 2 || values[0] != "canvas,a" || values[1] != "line\nbreak" {
+		t.Fatalf("unexpected ids: %#v", values)
+	}
+	for _, raw := range []string{
+		`[]`,
+		`not-json`,
+		`["` + strings.Repeat("x", 97) + `"]`,
+		`[` + strings.TrimSuffix(strings.Repeat(`"id",`, 41), ",") + `]`,
+	} {
+		if _, err := parseClientRequestIDs(raw); err == nil {
+			t.Fatalf("invalid clientRequestIds accepted: %q", raw)
+		}
+	}
+}
+
 func TestValidateRunInputLimits(t *testing.T) {
-	valid := RunInput{Prompt: "hello", Parameters: map[string]any{"tone": "calm"}, Assets: []AssetInput{{Type: "text", Content: "context"}}}
+	valid := RunInput{
+		Prompt:     "hello",
+		Messages:   []RunMessage{{Role: "user", Content: "earlier request"}, {Role: "assistant", Content: "earlier answer"}},
+		Parameters: map[string]any{"tone": "calm"},
+		Assets:     []AssetInput{{Type: "text", Content: "context"}},
+	}
 	if err := validateRunInput(valid); err != nil {
 		t.Fatalf("valid input rejected: %v", err)
 	}
 	tests := []RunInput{
 		{Prompt: strings.Repeat("x", (32<<10)+1)},
+		{Messages: make([]RunMessage, 41)},
+		{Messages: []RunMessage{{Role: "system", Content: "not allowed"}}},
+		{Messages: []RunMessage{{Role: "user", Content: "   "}}},
+		{Messages: []RunMessage{{Role: "user", Content: strings.Repeat("x", (256<<10)+1)}}},
 		{Assets: make([]AssetInput, 33)},
 		{SourceNodeIDs: make([]string, 65)},
 		{Assets: []AssetInput{{Content: strings.Repeat("x", (256<<10)+1)}}},

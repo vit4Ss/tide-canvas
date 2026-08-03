@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"gorm.io/gorm"
 
@@ -54,6 +56,12 @@ const assistantSenderID idgen.ID = 0
 // wired in. It is intentionally explicit that no model is connected yet.
 const cannedReply = "[占位回复] AI 暂未接入：当前还没有配置大模型密钥，这是一条自动生成的占位回复。你的消息已收到：%s"
 
+// interruptedTextReply is the durable terminal state for an idempotent text
+// turn whose hard lease expired after its worker disappeared. Keeping the same
+// clientRequestId lets every browser reconcile the original optimistic turn;
+// textChargeFromMessage is refunded in the same transaction that writes it.
+const interruptedTextReply = "上次回复因服务中断未能完成；如有积分消耗，已自动退还。请重新发送。"
+
 // errForbidden is returned when a user tries to access a conversation they do
 // not own. The handler maps it to a 404 to avoid leaking existence.
 var errForbidden = errors.New("chat: not owner")
@@ -64,6 +72,60 @@ var errContextFull = errors.New("chat: context token limit reached")
 
 var errInvalidSkill = errors.New("chat: invalid skill")
 
+var errInvalidClientRequestID = errors.New("chat: invalid client request id")
+
+var errConversationBusy = errors.New("chat: conversation has an unfinished turn")
+
+func validateClientRequestID(value string) error {
+	if value == "" {
+		return nil // optional for legacy callers
+	}
+	if strings.TrimSpace(value) != value || utf8.RuneCountInString(value) > 96 {
+		return errInvalidClientRequestID
+	}
+	return nil
+}
+
+// errTextTurnInProgress means a retry-safe clientRequestId already owns a
+// persisted user row, while its assistant row is not durable yet. The HTTP
+// layer tells the browser to attach/poll instead of starting and charging a
+// second text generation.
+var errTextTurnInProgress = errors.New("chat: text turn is still in progress")
+
+// errTextTurnLeaseLost means this worker's lease expired and was transferred
+// before it could commit. It is intentionally mapped to retryable pending at
+// the service boundary; the stale worker must not mutate durable state.
+var errTextTurnLeaseLost = errors.New("chat: text turn lease ownership lost")
+
+type textTurnPendingError struct {
+	retryAfter time.Duration
+	cause      error
+}
+
+func (e *textTurnPendingError) Error() string {
+	if e.cause != nil {
+		return e.cause.Error()
+	}
+	return errTextTurnInProgress.Error()
+}
+
+func (e *textTurnPendingError) Unwrap() error { return errTextTurnInProgress }
+
+func pendingTextTurn(retryAfter time.Duration, cause error) error {
+	if retryAfter < time.Second {
+		retryAfter = time.Second
+	}
+	return &textTurnPendingError{retryAfter: retryAfter, cause: cause}
+}
+
+func textTurnRetryAfter(err error) time.Duration {
+	var pending *textTurnPendingError
+	if errors.As(err, &pending) {
+		return pending.retryAfter
+	}
+	return textTurnLeaseDuration
+}
+
 // llmReplyTimeout is the OUTER bound on one upstream generation — a backstop for
 // a provider that hangs without ever closing the connection, not the liveness
 // check. 判活由 relaychat 的空闲看门狗做（连续 90s 没有新字节才断）。
@@ -72,6 +134,11 @@ var errInvalidSkill = errors.New("chat: invalid skill")
 // 已收 29KB 仍被掐，上游随即报 Broken pipe）。放宽到 10 分钟：还在吐字就让它
 // 写完，真卡死则由空闲看门狗在 90s 内结束，不必等到这个上限。
 const llmReplyTimeout = 10 * time.Minute
+
+// textTurnLeaseDuration is deliberately longer than the provider's hard
+// timeout. An active instance therefore cannot be overtaken, while a crashed
+// instance leaves a request that another process can eventually reclaim.
+const textTurnLeaseDuration = llmReplyTimeout + 2*time.Minute
 
 // ── 上下文自动压缩（compaction）────────────────────────────────────────────
 // 会话估算 token 越过阈值（默认=上限的 70%，sys_config llm.compressAtTokens
@@ -122,9 +189,10 @@ type service struct {
 	// store 用于把发给上游模型的图片 URL 改写为传输加速域名（UpstreamURL）——
 	// 境外上游取图走区域/CDN 域名会超时。
 	store storage.StorageStrategy
-	// live 注册表：会话 → 生成中的回复缓存（断开重连续播，见 live.go）。
+	// live 注册表：(会话, clientRequestId) → 生成中的回复缓存（断开重连
+	// 续播，见 live.go）。请求级键防止任何附着方读到另一轮的增量。
 	liveMu sync.Mutex
-	live   map[idgen.ID]*liveReply
+	live   map[liveReplyKey]*liveReply
 }
 
 func newService(db *gorm.DB, cfg *config.Config, store storage.StorageStrategy) *service {
@@ -134,7 +202,7 @@ func newService(db *gorm.DB, cfg *config.Config, store storage.StorageStrategy) 
 		systemPrompt:  cfg.LLM.SystemPrompt,
 		ctxTokenLimit: cfg.LLM.ContextTokenLimit,
 		relay:         relaychat.New(cfg.Relay.BaseURL, cfg.Relay.APIKey),
-		live:          map[idgen.ID]*liveReply{},
+		live:          map[liveReplyKey]*liveReply{},
 	}
 	if store != nil {
 		s.store = store
@@ -252,6 +320,12 @@ func (s *service) listMessages(conversationID, ownerID idgen.ID, q *ListQuery) (
 	if conv.OwnerID != ownerID {
 		return nil, 0, errForbidden
 	}
+	// Loading history is also the crash-recovery trigger. Unlike a browser
+	// journal, this durable path has no TTL: once the provider's hard lease is
+	// safely past, the request is terminalized and refunded exactly once.
+	if err := s.repo.reconcileExpiredTextRequests(conversationID, ownerID, time.Now()); err != nil {
+		return nil, 0, err
+	}
 
 	rows, total, err := s.repo.listMessages(conversationID, q)
 	if err != nil {
@@ -338,7 +412,7 @@ func (s *service) persistTurn(conversationID, ownerID idgen.ID, dto PersistTurnD
 		TaskID:         &taskID,
 		Status:         0,
 	}
-	if err := s.repo.createTurn(userMsg, aiMsg); err != nil {
+	if err := s.repo.createTurn(ownerID, taskID, userMsg, aiMsg); err != nil {
 		return nil, err
 	}
 
@@ -597,7 +671,7 @@ func (s *service) sendMessage(ctx context.Context, conversationID, ownerID idgen
 	// A failure to store the reply must not fail the user's send, so it is
 	// best-effort. 空回复（请求被取消时 generateReply 返回 ""）不落库——
 	// 否则断开的请求会往会话里塞一条空/占位气泡。
-	reply := s.generateReply(ctx, conv, ownerID, content, docNote, docFiles, imageURLs, dto.Model, skillPrompt, charge)
+	reply := s.generateReply(ctx, conv, ownerID, userMsg.ID, content, docNote, docFiles, imageURLs, dto.Model, skillPrompt, charge)
 	at := time.Now()
 	if strings.TrimSpace(reply) != "" {
 		aiMsg := &model.IMMessage{
@@ -620,12 +694,48 @@ func (s *service) sendMessage(ctx context.Context, conversationID, ownerID idgen
 	return &vo, nil
 }
 
+// claimTextRequestRecovery closes the check→complete→claim race. A winner may
+// persist the assistant and clear its user lease after a retry's first
+// assistant lookup but before the retry claims NULL; after every successful
+// claim we therefore read the assistant again before invoking the provider.
+func (s *service) claimTextRequestRecovery(userMsg *model.IMMessage, conversationID, ownerID idgen.ID, clientRequestID string) (*model.IMMessage, bool, time.Duration, error) {
+	now := time.Now()
+	leaseUntil := now.Add(textTurnLeaseDuration)
+	leaseToken := idgen.Next()
+	claimed, err := s.repo.claimExpiredTextRequest(userMsg.ID, conversationID, ownerID, clientRequestID, now, leaseUntil, leaseToken)
+	if err != nil {
+		return nil, false, 0, err
+	}
+	if !claimed {
+		retryAfter := textTurnLeaseDuration
+		if userMsg.RequestLeaseUntil != nil {
+			retryAfter = time.Until(*userMsg.RequestLeaseUntil)
+		}
+		return nil, false, retryAfter, nil
+	}
+	completed, err := s.repo.messageByClientRequest(conversationID, assistantSenderID, clientRequestID)
+	if err != nil {
+		_ = s.repo.releaseTextRequestLease(userMsg.ID, leaseToken)
+		return nil, false, 0, err
+	}
+	if completed != nil {
+		_ = s.repo.releaseTextRequestLease(userMsg.ID, leaseToken)
+		return completed, false, 0, nil
+	}
+	userMsg.RequestLeaseUntil = &leaseUntil
+	userMsg.RequestLeaseToken = &leaseToken
+	return nil, true, 0, nil
+}
+
 // streamMessage persists the user message, streams the assistant reply token by
 // token via onDelta, persists the full assistant reply, and returns the
 // assistant message VO. Ownership is enforced. When no relay text model is
 // available it emits the canned reply as a single delta so the round-trip still
 // completes.
-func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idgen.ID, content string, attachments []MessageAttach, requestedModel, skillID string, onDelta func(string)) (*MessageVO, error) {
+func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idgen.ID, content string, attachments []MessageAttach, requestedModel, skillID, clientRequestID string, onDelta func(string)) (*MessageVO, error) {
+	if err := validateClientRequestID(clientRequestID); err != nil {
+		return nil, err
+	}
 	conv, err := s.repo.findConversation(conversationID)
 	if err != nil {
 		return nil, err
@@ -634,21 +744,70 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 		return nil, errForbidden
 	}
 	content = strings.TrimSpace(content)
-	preset, err := s.resolveChatPreset(ctx, skillID)
-	if err != nil {
-		return nil, err
+	requestedModel = strings.TrimSpace(requestedModel)
+	skillID = strings.TrimSpace(skillID)
+
+	var (
+		userMsg          *model.IMMessage
+		charge           *textCharge
+		skillPrompt      string
+		preset           *ai.PublishedPreset
+		resuming         bool
+		leaseToken       idgen.ID
+		persistedRequest textRequestSnapshot
+	)
+	if clientRequestID != "" {
+		// A completed replay returns the original assistant message without a
+		// provider call. An incomplete user row carries a cross-instance lease;
+		// exactly one retry may claim it after expiry and resume without charging.
+		if existing, findErr := s.repo.messageByClientRequest(conversationID, assistantSenderID, clientRequestID); findErr != nil {
+			return nil, findErr
+		} else if existing != nil {
+			vo := toMessageVO(existing, conv.OwnerID)
+			return &vo, nil
+		}
+		if existing, findErr := s.repo.messageByClientRequest(conversationID, ownerID, clientRequestID); findErr != nil {
+			return nil, findErr
+		} else if existing != nil {
+			if existing.RequestLeaseUntil != nil && existing.RequestLeaseUntil.After(time.Now()) {
+				return nil, pendingTextTurn(time.Until(*existing.RequestLeaseUntil), nil)
+			}
+			resuming = true
+			userMsg = existing
+			content = strings.TrimSpace(existing.Content)
+			if snapshot, ok := parseTextRequestSnapshot(existing.RequestSnapshot); ok {
+				persistedRequest = snapshot
+				attachments = snapshot.Attachments
+				requestedModel = snapshot.Model
+				skillID = snapshot.SkillID
+				skillPrompt = snapshot.SkillPrompt
+			}
+			charge = textChargeFromMessage(existing, ownerID)
+		}
 	}
-	if preset != nil {
-		requestedModel = presetModel(preset, requestedModel)
+
+	// A current-format recovery uses the private server snapshot and therefore
+	// does not depend on a skill still being published. Legacy/in-flight rows
+	// without that snapshot are resolved from the exact retry payload.
+	if !resuming || persistedRequest.Version == 0 {
+		preset, err = s.resolveChatPreset(ctx, skillID)
+		if err != nil {
+			return nil, err
+		}
+		if preset != nil {
+			requestedModel = presetModel(preset, requestedModel)
+		}
+		skillPrompt, err = presetPrompt(preset, content)
+		if err != nil {
+			return nil, errInvalidSkill
+		}
 	}
-	skillPrompt, err := presetPrompt(preset, content)
-	if err != nil {
-		return nil, errInvalidSkill
-	}
-	// 越过阈值先自动压缩（就地更新 conv），压缩后仍超硬上限才拒绝。
-	s.maybeCompact(ctx, conv)
-	if err := s.guardContext(conv, content); err != nil {
-		return nil, err
+	if !resuming {
+		// 越过阈值先自动压缩（就地更新 conv），压缩后仍超硬上限才拒绝。
+		s.maybeCompact(ctx, conv)
+		if err := s.guardContext(conv, content); err != nil {
+			return nil, err
+		}
 	}
 
 	// image attachments are forwarded as image_url parts; document attachments
@@ -656,28 +815,103 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 	// attachment is also snapshotted on the user message for redisplay.
 	imageURLs := s.imageAttachmentURLs(attachments)
 	docFiles, docNote := s.docFileParts(ctx, attachments)
+	if resuming {
+		completed, claimed, retryAfter, claimErr := s.claimTextRequestRecovery(userMsg, conversationID, ownerID, clientRequestID)
+		if claimErr != nil {
+			return nil, claimErr
+		}
+		if completed != nil {
+			vo := toMessageVO(completed, conv.OwnerID)
+			return &vo, nil
+		}
+		if !claimed {
+			return nil, pendingTextTurn(retryAfter, nil)
+		}
+		if userMsg.RequestLeaseToken == nil {
+			return nil, errors.New("chat: recovered request lease has no owner token")
+		}
+		leaseToken = *userMsg.RequestLeaseToken
+		defer func() {
+			if releaseErr := s.repo.releaseTextRequestLease(userMsg.ID, leaseToken); releaseErr != nil {
+				logger.L().Error("chat: release recovered text request lease failed",
+					zap.String("requestId", clientRequestID), zap.Error(releaseErr))
+			}
+		}()
+	}
 
-	// 按次计费:relay 可用时按所选文本模型目录价预扣,余额不足直接拒发
-	// (消息不落库);上游失败在 streamReply 里原额退款。
-	var charge *textCharge
-	if s.relay != nil {
-		if charge, err = s.chargeTextCall(ctx, ownerID, requestedModel); err != nil {
-			return nil, err
+	if !resuming {
+		userMsg = &model.IMMessage{
+			ConversationID: conversationID,
+			SenderID:       ownerID,
+			ContentType:    "text",
+			Content:        content,
+			Params:         attachmentsParams(attachments),
+		}
+		if clientRequestID != "" {
+			requestID := clientRequestID
+			leaseUntil := time.Now().Add(textTurnLeaseDuration)
+			requestLeaseToken := idgen.Next()
+			userMsg.ClientRequestID = &requestID
+			userMsg.RequestLeaseUntil = &leaseUntil
+			userMsg.RequestLeaseToken = &requestLeaseToken
+			userMsg.RequestSnapshot = encodeTextRequestSnapshot(textRequestSnapshot{
+				Version:     1,
+				Attachments: attachments,
+				Model:       requestedModel,
+				SkillID:     skillID,
+				SkillPrompt: skillPrompt,
+			})
+			if s.relay != nil {
+				charge = s.prepareTextCharge(ownerID, requestedModel)
+			} else {
+				charge = &textCharge{ownerID: ownerID}
+			}
+			userMsg.RequestChargeCost = charge.cost
+			if charge.refID != 0 {
+				refID := charge.refID
+				userMsg.RequestChargeRefID = &refID
+			}
+			claimed, claimErr := s.repo.claimTextRequest(ctx, userMsg, func(tx *gorm.DB) error {
+				return consumeTextCharge(tx, charge)
+			})
+			if claimErr != nil {
+				return nil, claimErr
+			}
+			if !claimed {
+				if existing, findErr := s.repo.messageByClientRequest(conversationID, assistantSenderID, clientRequestID); findErr != nil {
+					return nil, findErr
+				} else if existing != nil {
+					vo := toMessageVO(existing, conv.OwnerID)
+					return &vo, nil
+				}
+				retryAfter := textTurnLeaseDuration
+				if userMsg.RequestLeaseUntil != nil {
+					retryAfter = time.Until(*userMsg.RequestLeaseUntil)
+				}
+				return nil, pendingTextTurn(retryAfter, nil)
+			}
+			leaseToken = requestLeaseToken
+			defer func() {
+				if releaseErr := s.repo.releaseTextRequestLease(userMsg.ID, leaseToken); releaseErr != nil {
+					logger.L().Error("chat: release text request lease failed",
+						zap.String("requestId", clientRequestID), zap.Error(releaseErr))
+				}
+			}()
+		} else {
+			// Legacy callers without a request key keep their old behavior. New
+			// clients always use the transactional durable path above.
+			if s.relay != nil {
+				if charge, err = s.chargeTextCall(ctx, ownerID, requestedModel); err != nil {
+					return nil, err
+				}
+			}
+			if err := s.repo.createMessage(userMsg); err != nil {
+				s.refundTextCall(charge)
+				return nil, err
+			}
 		}
 	}
-
-	userMsg := &model.IMMessage{
-		ConversationID: conversationID,
-		SenderID:       ownerID,
-		ContentType:    "text",
-		Content:        content,
-		Params:         attachmentsParams(attachments),
-	}
-	if err := s.repo.createMessage(userMsg); err != nil {
-		s.refundTextCall(charge)
-		return nil, err
-	}
-	if preset != nil {
+	if preset != nil && !resuming {
 		_ = s.repo.db.Model(&model.Skill{}).Where("id = ? AND status = 1", preset.SkillID).
 			UpdateColumn("use_count", gorm.Expr("use_count + 1")).Error
 	}
@@ -685,9 +919,9 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 	// 注册 live 缓存：增量同时进内存缓存,断开的客户端刷新后可通过
 	// GET /stream 重新附着续播（见 live.go）。liveEnd 兜底保证任何返回路径
 	// 都会终结订阅者的等待。
-	lr := s.liveStart(conversationID)
-	defer s.liveEnd(conversationID, lr)
-	reply := s.streamReply(ctx, conv, ownerID, content, docNote, docFiles, imageURLs, requestedModel, skillPrompt, func(d string) {
+	lr := s.liveStart(conversationID, clientRequestID)
+	defer s.liveEnd(conversationID, clientRequestID, lr)
+	reply, refundRequired := s.streamReply(ctx, conv, ownerID, userMsg.ID, content, docNote, docFiles, imageURLs, requestedModel, skillPrompt, func(d string) {
 		lr.append(d)
 		if onDelta != nil {
 			onDelta(d)
@@ -700,19 +934,45 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 		ContentType:    "text",
 		Content:        reply,
 	}
-	at := time.Now()
-	// 空回复防御（生成已与客户端断连解耦，正常不会为空）：不落库空气泡。
-	if strings.TrimSpace(reply) != "" {
-		if err := s.repo.createMessage(aiMsg); err == nil {
-			_ = s.repo.touchConversation(conversationID, aiMsg.ID, at)
-		} else {
-			_ = s.repo.touchConversation(conversationID, userMsg.ID, at)
-		}
-	} else {
-		_ = s.repo.touchConversation(conversationID, userMsg.ID, at)
+	if clientRequestID != "" {
+		requestID := clientRequestID
+		aiMsg.ClientRequestID = &requestID
 	}
+	at := time.Now()
+	// Never emit a done frame for a row that is not durable. Idempotent callers
+	// receive TURN_IN_PROGRESS and may atomically reclaim the released lease;
+	// legacy callers receive the persistence error instead of a phantom VO.
+	if strings.TrimSpace(reply) == "" {
+		_ = s.repo.touchConversation(conversationID, userMsg.ID, at)
+		if clientRequestID != "" {
+			return nil, pendingTextTurn(time.Second, errors.New("chat: assistant reply is empty"))
+		}
+		return nil, errors.New("chat: assistant reply is empty")
+	}
+	var finalize func(*gorm.DB) error
+	if refundRequired && clientRequestID != "" {
+		finalize = func(tx *gorm.DB) error {
+			return refundTextCallDB(tx, charge)
+		}
+	}
+	persistedAI, persistErr := s.repo.completeTextRequestWithFinalize(userMsg.ID, leaseToken, aiMsg, finalize)
+	if persistErr != nil {
+		_ = s.repo.touchConversation(conversationID, userMsg.ID, at)
+		logger.L().Error("chat: persist streamed assistant failed",
+			zap.String("requestId", clientRequestID), zap.Error(persistErr))
+		if clientRequestID != "" {
+			return nil, pendingTextTurn(time.Second, fmt.Errorf("chat: persist assistant: %w", persistErr))
+		}
+		return nil, persistErr
+	}
+	if refundRequired && clientRequestID == "" {
+		// Legacy callers have no durable lease owner. Delay their best-effort
+		// refund until after the fallback assistant is safely persisted.
+		s.refundTextCall(charge)
+	}
+	_ = s.repo.touchConversation(conversationID, persistedAI.ID, at)
 
-	vo := toMessageVO(aiMsg, conv.OwnerID)
+	vo := toMessageVO(persistedAI, conv.OwnerID)
 	lr.finish(&vo)
 	return &vo, nil
 }
@@ -722,7 +982,7 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 // no relay text model is configured) it falls back to the canned reply, emitted
 // as one delta so the client still renders something. 上下文 = system 提示词 +
 // 压缩摘要（如有）+ 摘要之后的原文消息。
-func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, ownerID idgen.ID, userContent string, docNote string, docFiles []relaychat.FileAttachment, imageURLs []string, requestedModel, skillPrompt string, onDelta func(string), charge *textCharge) string {
+func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, ownerID, userMessageID idgen.ID, userContent string, docNote string, docFiles []relaychat.FileAttachment, imageURLs []string, requestedModel, skillPrompt string, onDelta func(string), charge *textCharge) (string, bool) {
 	// 客户端断开不中止生成：前端切页面/切会话都会 abort SSE，请求上下文随之
 	// 取消；若生成跟着停，回复只落库半截。分离请求上下文让上游把回复生成完整
 	// 并落库，用户切回来能看到全文；llmReplyTimeout 仍然兜底。断开后 onDelta
@@ -731,7 +991,7 @@ func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, o
 	conversationID := conv.ID
 	if s.relay != nil {
 		if model := s.repo.resolveTextModelKey(requestedModel); model != "" {
-			if rows, err := s.repo.recentMessages(conversationID, conv.SummaryUptoID, s.historyWindow()); err == nil {
+			if rows, err := s.repo.recentMessages(conversationID, conv.SummaryUptoID, userMessageID, s.historyWindow()); err == nil {
 				msgs := make([]relaychat.Msg, 0, len(rows)+2)
 				if p := strings.TrimSpace(s.systemPrompt); p != "" {
 					msgs = append(msgs, relaychat.TextMsg("system", p))
@@ -788,16 +1048,23 @@ func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, o
 				reqBody, _ := json.Marshal(turn)
 				eventlog.ModelText(ownerID, "chat", model, "/v1/chat/completions", eventlog.SanitizeDataURIs(string(reqBody)), reply, start, err, charge.cost64())
 				if err == nil {
-					return reply
+					return reply, false
 				}
 				logger.L().Warn("chat: relay stream failed", zap.String("model", model), zap.Error(err))
 				if partial := strings.TrimSpace(streamed.String()); partial != "" {
 					// 已流出实质内容（如上游超时/中途出错）：持久化已生成的部分，跳过降级链。
 					// 用户已拿到内容,积分照收不退。
-					return streamed.String()
+					return streamed.String(), false
 				}
-				// 未产出内容:退回预扣积分(降级链拿到的回复不再计费)。
-				s.refundTextCall(charge)
+				// 未产出内容:降级链拿到的回复不计费。退款延迟到
+				// assistant 与当前 lease owner 一起原子提交，避免旧 worker
+				// 在租约转移后误退新 worker 的成功调用。
+				fallbackNeedsRefund := charge != nil && charge.cost > 0 && charge.refID != 0
+				fallbackReply := s.buildReply(userContent)
+				if onDelta != nil {
+					onDelta(fallbackReply)
+				}
+				return fallbackReply, fallbackNeedsRefund
 			}
 		}
 	}
@@ -806,7 +1073,10 @@ func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, o
 	if onDelta != nil {
 		onDelta(reply)
 	}
-	return reply
+	// A paid fence may already exist even when model resolution or history
+	// loading fails before ChatStream is reached. No provider call happened, so
+	// the durable completion must refund it together with the fallback reply.
+	return reply, charge != nil && charge.cost > 0 && charge.refID != 0
 }
 
 // imageAttachmentURLs returns the hosted URLs of the image attachments (the only
@@ -873,6 +1143,45 @@ func attachmentsParams(atts []MessageAttach) string {
 	return string(b)
 }
 
+// textRequestSnapshot is private recovery state for a streamed text turn. It
+// lives in IMMessage.RequestSnapshot rather than Params so skill system prompts
+// are never exposed through MessageVO.
+type textRequestSnapshot struct {
+	Version     int             `json:"version"`
+	Attachments []MessageAttach `json:"attachments,omitempty"`
+	Model       string          `json:"model,omitempty"`
+	SkillID     string          `json:"skillId,omitempty"`
+	SkillPrompt string          `json:"skillPrompt,omitempty"`
+}
+
+func encodeTextRequestSnapshot(snapshot textRequestSnapshot) string {
+	b, err := json.Marshal(snapshot)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+func parseTextRequestSnapshot(raw string) (textRequestSnapshot, bool) {
+	var snapshot textRequestSnapshot
+	if strings.TrimSpace(raw) == "" || json.Unmarshal([]byte(raw), &snapshot) != nil || snapshot.Version <= 0 {
+		return textRequestSnapshot{}, false
+	}
+	return snapshot, true
+}
+
+func textChargeFromMessage(message *model.IMMessage, ownerID idgen.ID) *textCharge {
+	charge := &textCharge{ownerID: ownerID}
+	if message == nil || message.RequestChargeCost <= 0 {
+		return charge
+	}
+	charge.cost = message.RequestChargeCost
+	if message.RequestChargeRefID != nil {
+		charge.refID = *message.RequestChargeRefID
+	}
+	return charge
+}
+
 // appendMessage persists a single message with NO auto assistant reply. Role
 // "ai" stores it under the assistant sentinel sender (so toMessageVO marks it as
 // an assistant bubble); anything else is the owner's own message. Used by 对话式
@@ -916,12 +1225,12 @@ func (s *service) appendMessage(conversationID, ownerID idgen.ID, dto AppendMess
 // relay is unconfigured) it falls back to the canned placeholder so the chat
 // round-trip always completes. 上下文 = system 提示词 + 压缩摘要（如有）+
 // 摘要之后的原文消息。
-func (s *service) generateReply(ctx context.Context, conv *model.IMConversation, ownerID idgen.ID, userContent string, docNote string, docFiles []relaychat.FileAttachment, imageURLs []string, requestedModel, skillPrompt string, charge *textCharge) string {
+func (s *service) generateReply(ctx context.Context, conv *model.IMConversation, ownerID, userMessageID idgen.ID, userContent string, docNote string, docFiles []relaychat.FileAttachment, imageURLs []string, requestedModel, skillPrompt string, charge *textCharge) string {
 	if s.relay == nil {
 		return s.buildReply(userContent)
 	}
 
-	rows, err := s.repo.recentMessages(conv.ID, conv.SummaryUptoID, s.historyWindow())
+	rows, err := s.repo.recentMessages(conv.ID, conv.SummaryUptoID, userMessageID, s.historyWindow())
 	if err != nil {
 		logger.L().Warn("chat: load context failed, using canned reply", zap.Error(err))
 		return s.buildReply(userContent)

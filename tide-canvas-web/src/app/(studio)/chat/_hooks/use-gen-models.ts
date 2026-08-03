@@ -2,7 +2,7 @@
 
 /* ── studio model list + selection (extracted verbatim from page.tsx) ────────── */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { marketApi, type StudioModelVO } from "@/lib/market-api";
 import { swatchOf } from "../_components/chat-utils";
 
@@ -11,13 +11,16 @@ import { swatchOf } from "../_components/chat-utils";
 export function useGenModels() {
   const [genModels, setGenModels] = useState<StudioModelVO[]>([]);
   const [model, setModel] = useState("");
+  const requestSeqRef = useRef(0);
 
   // load every studio model (text + image + video). Text models drive the chat
   // assistant and may expose the 联网 toggle when their config enables webSearch.
   // Refetch on focus/visibility so 模型管理 edits reflect without a manual refresh.
   const reloadGenModels = useCallback(async () => {
+    const seq = ++requestSeqRef.current;
     try {
       const res = await marketApi.studioModels();
+      if (seq !== requestSeqRef.current) return;
       // 顺序由后端决定：类型顺序=后台「模型管理·类型排序」（sys_config
       // market.typeOrder），类型内=行内上移/下移（sort_order）。
       const list = res.success && Array.isArray(res.data) ? res.data : [];
@@ -26,7 +29,10 @@ export function useGenModels() {
         setModel((cur) => (list.some((m) => m.name === cur) ? cur : list[0].name));
       }
     } catch {
-      setGenModels([]);
+      if (seq !== requestSeqRef.current) return;
+      // A transient focus-refresh failure must not turn an already selected
+      // paid media model into selModel=null. Keep the last verified catalog;
+      // first-load failures naturally retain the initial empty state.
     }
   }, []);
 

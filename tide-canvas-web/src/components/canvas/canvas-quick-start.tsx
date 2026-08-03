@@ -1,28 +1,37 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowUp,
   AtSign,
+  Check,
   ChevronDown,
-  ChevronUp,
-  Clapperboard,
-  ImageIcon,
+  Clock3,
   Loader2,
   Paperclip,
+  PencilLine,
   Plus,
-  Sparkles,
-  Volume2,
-  VolumeX,
-  WandSparkles,
+  Ratio,
+  ScanLine,
+  Wand2,
   X,
 } from "lucide-react";
 import { SkillPicker } from "@/components/skill/skill-picker";
 import { toast } from "@/components/shared/toast";
-import { useAiGeneration } from "@/hooks/canvas/use-ai-generation";
+import { resumeGeneration, useAiGeneration } from "@/hooks/canvas/use-ai-generation";
 import { createNode } from "@/lib/canvas-helpers";
 import { aiApi, uploadFileSmart } from "@/lib/api";
+import {
+  clearCanvasLaunchJournal,
+  readCanvasLaunchJournal,
+  updateCanvasLaunchJournal,
+  type CanvasLaunchGenerationPayload,
+  type CanvasLaunchJournal,
+  type CanvasLaunchPlan,
+} from "@/lib/canvas-launch";
+import { requestCanvasSave } from "@/lib/canvas-save";
+import { canvasLaunchCanSubmit, canvasLaunchKindFor, canvasLaunchNeedsDirectModel } from "@/lib/canvas-launch-policy";
 import {
   CHARACTER_NODE_TYPE,
   isConceptCanvasNodeType,
@@ -34,14 +43,13 @@ import {
   resolveModelReferenceLimitBytes,
   validateKnownFileSize,
 } from "@/lib/upload-limits";
-import { useAuthStore } from "@/stores/use-auth-store";
 import { useCanvasStore, type CanvasNode, type Connection } from "@/stores/use-canvas-store";
 import { AiModelType, type AiModelVO } from "@/types/ai";
 import { FileType, type FileVO } from "@/types/file";
-import type { SkillVO } from "@/types/skill";
+import { skillKindOf, skillOutputTypesOf, type SkillVO } from "@/types/skill";
 import { ModelPicker } from "./nodes/model-picker";
 import { PromptRefEditor } from "./nodes/prompt-ref-editor";
-import { inlineTextRefs, refLabel, type RefItem, type RefKind } from "./nodes/prompt-ref-utils";
+import { inlineTextRefs, refGlyph, refLabel, type RefItem, type RefKind } from "./nodes/prompt-ref-utils";
 import { RATIO_OPTIONS } from "./nodes/quality-ratio-picker";
 import { parseModelConfig, validateReferenceFileSizes } from "./nodes/shared/node-utils";
 import { normalizeDurations, VIDEO_RATIOS } from "./nodes/video-param-picker";
@@ -49,9 +57,23 @@ import { CANVAS_ASSISTANT_VISIBILITY_EVENT } from "./canvas-assistant-panel";
 import styles from "./styles/canvas-quick-start.module.css";
 
 type QuickStartMode = "image" | "video";
+type QuickStartVariant = "canvas" | "launcher" | "consumer";
 
 interface Props {
-  getViewportCenter: () => { x: number; y: number };
+  getViewportCenter?: () => { x: number; y: number };
+  variant?: QuickStartVariant;
+  onLaunch?: (draft: CanvasLaunchPlan) => Promise<boolean>;
+  /** 项目页示例按钮发起的一次性填充请求；id 用于允许重复选择同一示例。 */
+  promptFillRequest?: { id: number; text: string } | null;
+  /** 仅在示例文本确实写入内部 prompt 后确认，供外层提供准确的无障碍反馈。 */
+  onPromptFillApplied?: (id: number) => void;
+  /** 上次跨页创建尚未处理时，锁住新提交以避免产生第二个幂等请求号。 */
+  launchBlocked?: boolean;
+  launchBlockedReason?: string;
+  initialPlan?: CanvasLaunchPlan | null;
+  launchJournal?: CanvasLaunchJournal | null;
+  onLaunchConsumed?: () => void;
+  persistenceReady?: boolean;
 }
 
 interface QuickRef extends RefItem {
@@ -67,7 +89,6 @@ interface QuickModelConfig {
   clarities?: string[];
   resolutions?: string[];
   durations?: Array<string | number>;
-  audio?: boolean;
   batchSizes?: number[];
   gridOutput?: boolean;
 }
@@ -76,8 +97,27 @@ const DEFAULT_IMAGE_RATIOS = RATIO_OPTIONS.map((option) => option.value);
 const DEFAULT_VIDEO_RATIOS = VIDEO_RATIOS.map((option) => option.value);
 const MAX_QUICK_ATTACHMENTS = 8;
 
+const HANDLER_CONFIG_MODES: Record<string, string> = {
+  text_to_image: "t2i",
+  image_to_image: "i2i",
+  text_to_video: "t2v",
+  image_to_video: "i2v",
+  start_end_to_video: "keyframe",
+  reference_to_video: "omni_ref",
+};
+
 function supportsHandler(model: AiModelVO, handler: string) {
-  return !model.supportedHandlers?.length || model.supportedHandlers.includes(handler);
+  if (model.supportedHandlers?.length) return model.supportedHandlers.includes(handler);
+  const configuredModes = stringArray(parseModelConfig<Record<string, unknown>>(model).modes);
+  if (!configuredModes?.length) return true;
+  const mode = HANDLER_CONFIG_MODES[handler];
+  return mode ? configuredModes.includes(mode) : true;
+}
+
+function quickModeFromModel(model?: AiModelVO): QuickStartMode | null {
+  if (model?.type === AiModelType.IMAGE) return "image";
+  if (model?.type === AiModelType.VIDEO) return "video";
+  return null;
 }
 
 function stringArray(value: unknown): string[] | undefined {
@@ -100,9 +140,29 @@ function safeModelConfig(model?: AiModelVO): QuickModelConfig {
     clarities: stringArray(raw.clarities),
     resolutions: stringArray(raw.resolutions),
     durations: durationArray(raw.durations),
-    ...(typeof raw.audio === "boolean" ? { audio: raw.audio } : {}),
     ...(typeof raw.gridOutput === "boolean" ? { gridOutput: raw.gridOutput } : {}),
   };
+}
+
+function positiveLimit(value: unknown): number | undefined {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
+}
+
+function referenceCountLimit(model: AiModelVO, handler: string, kind: "image" | "video" | "audio") {
+  const config = parseModelConfig<Record<string, unknown>>(model);
+  if (handler === "image_to_image" && kind === "image") return positiveLimit(config.maxRefImages);
+  const refLimits = config.refLimits && typeof config.refLimits === "object" && !Array.isArray(config.refLimits)
+    ? config.refLimits as Record<string, unknown>
+    : {};
+  const key = handler === "image_to_video"
+    ? kind === "image" ? "i2v.imageCount" : ""
+    : handler === "start_end_to_video"
+      ? kind === "image" ? "keyframe.imageCount" : ""
+      : handler === "reference_to_video"
+        ? `omniRef.${kind}Count`
+        : "";
+  return key ? positiveLimit(refLimits[key]) : undefined;
 }
 
 function tokenPattern(label: string) {
@@ -150,6 +210,17 @@ function buildQuickRefs(nodes: CanvasNode[], attachments: FileVO[]): QuickRef[] 
       });
       continue;
     }
+    if (node.type === "audio" && node.audioSrc) {
+      pushQuickRef(refs, counters, {
+        id: `canvas:${node.id}`,
+        sourceNodeId: node.id,
+        thumb: "",
+        src: node.audioSrc,
+        title: node.title || "画布音频",
+        kind: "audio",
+      });
+      continue;
+    }
     const text = node.type === "text"
       ? node.content?.trim()
       : isConceptCanvasNodeType(node.type)
@@ -187,6 +258,15 @@ function buildQuickRefs(nodes: CanvasNode[], attachments: FileVO[]): QuickRef[] 
         src: file.fileUrl,
         title: file.originalName,
         kind: "video",
+      });
+    } else if (file.mimeType?.startsWith("audio/")) {
+      pushQuickRef(refs, counters, {
+        id: `upload:${file.id}`,
+        file,
+        thumb: "",
+        src: file.fileUrl,
+        title: file.originalName,
+        kind: "audio",
       });
     }
   }
@@ -250,34 +330,228 @@ function optionValue(value: string, options: string[], fallback: string) {
   return caseInsensitive ?? options[0] ?? fallback;
 }
 
-function QuickSelect({ label, value, options, onChange, disabled, formatOption }: {
+function defaultOptionLabel(value: string) {
+  const labels: Record<string, string> = {
+    auto: "自动",
+    low: "低",
+    medium: "中",
+    high: "高",
+    standard: "标准",
+    ultra: "超高",
+  };
+  return labels[value.toLowerCase()] ?? value;
+}
+
+function QuickSelect({ label, value, options, onChange, disabled, formatOption, icon, dark = false }: {
   label: string;
   value: string;
   options: string[];
   onChange: (value: string) => void;
   disabled?: boolean;
   formatOption?: (value: string) => string;
+  icon?: ReactNode;
+  dark?: boolean;
 }) {
+  const [open, setOpen] = useState(false);
+  const [openUp, setOpenUp] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [panelPos, setPanelPos] = useState({ left: 12, top: 12, width: 160, maxHeight: 240 });
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const panelId = useId();
+  const optionLabel = (option: string) => formatOption?.(option) ?? defaultOptionLabel(option);
+  const currentLabel = optionLabel(value);
+  const unavailable = disabled || options.length === 0;
+
+  const focusNextToolbarControl = (backward: boolean) => {
+    const focusable = Array.from(document.querySelectorAll<HTMLElement>(
+      'a[href], button:not(:disabled), input:not(:disabled), [tabindex]:not([tabindex="-1"])',
+    )).filter((element) =>
+      !panelRef.current?.contains(element) &&
+      element.getClientRects().length > 0 &&
+      getComputedStyle(element).visibility !== "hidden",
+    );
+    const triggerIndex = triggerRef.current ? focusable.indexOf(triggerRef.current) : -1;
+    if (triggerIndex < 0) return;
+    const nextIndex = backward ? triggerIndex - 1 : triggerIndex + 1;
+    focusable[(nextIndex + focusable.length) % focusable.length]?.focus();
+  };
+
+  const positionPanel = () => {
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const gutter = 12;
+    const gap = 8;
+    const panelWidth = Math.min(184, Math.max(152, Math.ceil(rect.width) + 32));
+    const estimatedHeight = Math.min(240, options.length * 38 + 12);
+    const spaceBelow = window.innerHeight - rect.bottom - gap - gutter;
+    const spaceAbove = rect.top - gap - gutter;
+    const nextOpenUp = spaceBelow < estimatedHeight && spaceAbove > spaceBelow;
+    const availableHeight = nextOpenUp ? spaceAbove : spaceBelow;
+    setOpenUp(nextOpenUp);
+    setPanelPos({
+      left: Math.min(Math.max(gutter, Math.round(rect.left)), Math.max(gutter, window.innerWidth - panelWidth - gutter)),
+      top: Math.round(nextOpenUp ? rect.top - gap : rect.bottom + gap),
+      width: panelWidth,
+      maxHeight: Math.max(64, Math.min(240, availableHeight)),
+    });
+  };
+
+  const openMenu = (preferredIndex?: number) => {
+    if (unavailable) return;
+    const selectedIndex = Math.max(0, options.indexOf(value));
+    setActiveIndex(preferredIndex ?? selectedIndex);
+    positionPanel();
+    setOpen(true);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const focusFrame = requestAnimationFrame(() => {
+      panelRef.current
+        ?.querySelector<HTMLButtonElement>('[role="option"][aria-selected="true"]')
+        ?.focus();
+    });
+    const closeOutside = (event: PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Node &&
+        (triggerRef.current?.contains(target) || panelRef.current?.contains(target))
+      ) return;
+      setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setOpen(false);
+      requestAnimationFrame(() => triggerRef.current?.focus());
+    };
+    const closeOnViewportResize = () => setOpen(false);
+    const closeOnViewportScroll = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Node && panelRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOutside, true);
+    document.addEventListener("keydown", closeOnEscape, true);
+    window.addEventListener("resize", closeOnViewportResize);
+    window.addEventListener("scroll", closeOnViewportScroll, true);
+    return () => {
+      cancelAnimationFrame(focusFrame);
+      document.removeEventListener("pointerdown", closeOutside, true);
+      document.removeEventListener("keydown", closeOnEscape, true);
+      window.removeEventListener("resize", closeOnViewportResize);
+      window.removeEventListener("scroll", closeOnViewportScroll, true);
+    };
+  }, [open]);
+
+  const handlePanelKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Tab") {
+      event.preventDefault();
+      setOpen(false);
+      requestAnimationFrame(() => focusNextToolbarControl(event.shiftKey));
+      return;
+    }
+    const items = panelRef.current
+      ? Array.from(panelRef.current.querySelectorAll<HTMLButtonElement>('[role="option"]'))
+      : [];
+    if (!items.length) return;
+    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+    let nextIndex = currentIndex;
+    if (event.key === "ArrowDown") nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % items.length;
+    else if (event.key === "ArrowUp") nextIndex = currentIndex <= 0 ? items.length - 1 : currentIndex - 1;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = items.length - 1;
+    else return;
+    event.preventDefault();
+    setActiveIndex(nextIndex);
+    items[nextIndex]?.focus();
+  };
+
   return (
-    <label className={styles.selectControl} title={label}>
-      <span className={styles.controlLabel}>{label}</span>
-      <select
-        aria-label={label}
-        value={value}
-        disabled={disabled || options.length === 0}
-        onChange={(event) => onChange(event.target.value)}
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={styles.selectControl}
+        title={`${label}：${currentLabel}`}
+        aria-label={`${label}，当前 ${currentLabel}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? panelId : undefined}
+        disabled={unavailable}
+        onClick={() => {
+          if (open) setOpen(false);
+          else openMenu();
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+          event.preventDefault();
+          if (open) return;
+          const selectedIndex = Math.max(0, options.indexOf(value));
+          openMenu(event.key === "ArrowUp" ? Math.max(0, selectedIndex) : selectedIndex);
+        }}
       >
-        {options.length === 0
-          ? <option value={value}>模型默认</option>
-          : options.map((option) => <option key={option} value={option}>{formatOption?.(option) ?? option}</option>)}
-      </select>
-      <ChevronDown aria-hidden className={styles.chevron} />
-    </label>
+      {icon && <span className={styles.controlIcon} aria-hidden>{icon}</span>}
+      <span className={styles.controlLabel}>{label}</span>
+        <span className={styles.selectValue}>{options.length ? currentLabel : "模型默认"}</span>
+        <ChevronDown aria-hidden className={`${styles.chevron} ${open ? styles.chevronOpen : ""}`} />
+      </button>
+
+      {open && typeof document !== "undefined" && createPortal(
+        <div
+          id={panelId}
+          ref={panelRef}
+          role="listbox"
+          aria-label={label}
+          className={`${styles.selectMenu} ${dark ? styles.selectMenuDark : ""} ${openUp ? styles.selectMenuOpenUp : ""}`}
+          style={{ left: panelPos.left, top: panelPos.top, width: panelPos.width, maxHeight: panelPos.maxHeight }}
+          onMouseDown={(event) => event.stopPropagation()}
+          onKeyDown={handlePanelKeyDown}
+        >
+          {options.map((option, index) => {
+            const selected = option === value;
+            return (
+              <button
+                key={option}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                tabIndex={index === activeIndex ? 0 : -1}
+                className={`${styles.selectOption} ${selected ? styles.selectOptionActive : ""}`}
+                onFocus={() => setActiveIndex(index)}
+                onClick={() => {
+                  onChange(option);
+                  setOpen(false);
+                  requestAnimationFrame(() => triggerRef.current?.focus());
+                }}
+              >
+                <span>{optionLabel(option)}</span>
+                {selected && <Check aria-hidden className={styles.selectCheck} />}
+              </button>
+            );
+          })}
+        </div>,
+        document.body,
+      )}
+    </>
   );
 }
 
-export function CanvasQuickStart({ getViewportCenter }: Props) {
-  const user = useAuthStore((state) => state.user);
+export function CanvasQuickStart({
+  getViewportCenter,
+  variant = "canvas",
+  onLaunch,
+  promptFillRequest,
+  onPromptFillApplied,
+  launchBlocked = false,
+  launchBlockedReason = "请先处理上次未完成的创作",
+  initialPlan,
+  launchJournal,
+  onLaunchConsumed,
+  persistenceReady = false,
+}: Props) {
+  const isLauncher = variant === "launcher";
   const referenceSignature = useCanvasStore((state) => JSON.stringify(state.nodes.map((node) => ({
     id: node.id,
     type: node.type,
@@ -286,6 +560,7 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
     content: node.content,
     imageSrc: node.imageSrc,
     videoSrc: node.videoSrc,
+    audioSrc: node.audioSrc,
     fileSize: node.fileSize,
     fileType: node.fileType,
     mimeType: node.mimeType,
@@ -293,14 +568,16 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
   const projectId = useCanvasStore((state) => state.currentProjectId);
   const referenceNodes = useMemo(() => {
     void referenceSignature;
-    return useCanvasStore.getState().nodes;
-  }, [referenceSignature]);
+    return variant === "canvas" ? useCanvasStore.getState().nodes : [];
+  }, [referenceSignature, variant]);
   const { generate } = useAiGeneration();
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const [mode, setMode] = useState<QuickStartMode>("image");
   const [prompt, setPrompt] = useState("");
   const [models, setModels] = useState<AiModelVO[]>([]);
   const [modelsLoaded, setModelsLoaded] = useState(false);
+  const [modelsLoadError, setModelsLoadError] = useState(false);
+  const [modelsRetryNonce, setModelsRetryNonce] = useState(0);
   const [selectedModelId, setSelectedModelId] = useState("");
   const [selectedSkill, setSelectedSkill] = useState<SkillVO | null>(null);
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
@@ -317,7 +594,7 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
   const [videoRatio, setVideoRatio] = useState("16:9");
   const [videoResolution, setVideoResolution] = useState("720P");
   const [videoDuration, setVideoDuration] = useState(5);
-  const [videoAudio, setVideoAudio] = useState(true);
+  const [launchSubmitNonce, setLaunchSubmitNonce] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const promptValueRef = useRef(prompt);
   const refMenuWrapRef = useRef<HTMLDivElement>(null);
@@ -328,29 +605,76 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
   const optimizeSeqRef = useRef(0);
   const uploadSeqRef = useRef(0);
   const lastProjectIdRef = useRef<string | null>(null);
+  const launchAppliedProjectRef = useRef<string | null>(null);
+  const appliedPromptFillIdRef = useRef<number | null>(null);
+  const initialPlanAppliedRef = useRef(false);
+  const launchAttemptRef = useRef(0);
+  const launchRetryCountRef = useRef(0);
+  const launchRetryTimerRef = useRef<number | null>(null);
   const previousRefsRef = useRef<{ projectId: string | null; refs: QuickRef[] }>({ projectId: null, refs: [] });
-  const [refMenuPosition, setRefMenuPosition] = useState({ left: 12, top: 12, openUp: false });
+  const [refMenuPosition, setRefMenuPosition] = useState({ left: 12, top: 12, openUp: false, maxHeight: 288 });
 
   useEffect(() => {
     promptValueRef.current = prompt;
   }, [prompt]);
 
   useEffect(() => {
+    if (
+      variant !== "launcher" ||
+      !promptFillRequest ||
+      appliedPromptFillIdRef.current === promptFillRequest.id
+    ) return;
+    const frame = requestAnimationFrame(() => {
+      appliedPromptFillIdRef.current = promptFillRequest.id;
+      if (launchBlocked || submitLockRef.current || initialPlan) return;
+      const nextPrompt = promptFillRequest.text.replace(/\r\n?/g, "\n").trim();
+      if (!nextPrompt) return;
+      optimizeSeqRef.current += 1;
+      setOptimizing(false);
+      setSkillPickerOpen(false);
+      setRefMenuOpen(false);
+      promptValueRef.current = nextPrompt;
+      setPrompt(nextPrompt);
+      onPromptFillApplied?.(promptFillRequest.id);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [initialPlan, launchBlocked, onPromptFillApplied, promptFillRequest, variant]);
+
+  useEffect(() => () => {
+    if (launchRetryTimerRef.current != null) window.clearTimeout(launchRetryTimerRef.current);
+  }, []);
+
+  useEffect(() => {
     let active = true;
     void aiApi.listModels()
       .then((result) => {
-        if (active && result.success) setModels(result.data ?? []);
+        if (!active) return;
+        if (result.success) {
+          setModels(result.data ?? []);
+        } else {
+          setModels([]);
+          setModelsLoadError(true);
+        }
       })
       .catch(() => {
-        if (active) setModels([]);
+        if (!active) return;
+        setModels([]);
+        setModelsLoadError(true);
       })
       .finally(() => {
         if (active) setModelsLoaded(true);
       });
     return () => { active = false; };
-  }, []);
+  }, [modelsRetryNonce]);
+
+  const retryModels = () => {
+    setModelsLoaded(false);
+    setModelsLoadError(false);
+    setModelsRetryNonce((current) => current + 1);
+  };
 
   useEffect(() => {
+    if (variant !== "canvas") return;
     const handleAssistantVisibility = (rawEvent: Event) => {
       const event = rawEvent as CustomEvent<{ open?: boolean }>;
       if (!event.detail?.open) return;
@@ -360,7 +684,7 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
     };
     window.addEventListener(CANVAS_ASSISTANT_VISIBILITY_EVENT, handleAssistantVisibility);
     return () => window.removeEventListener(CANVAS_ASSISTANT_VISIBILITY_EVENT, handleAssistantVisibility);
-  }, []);
+  }, [variant]);
 
   useEffect(() => {
     if (!refMenuOpen) return;
@@ -379,18 +703,24 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
       if (event.key !== "Escape") return;
       event.stopPropagation();
       setRefMenuOpen(false);
+      requestAnimationFrame(() => refMenuTriggerRef.current?.focus());
     };
-    const closeOnViewportChange = () => setRefMenuOpen(false);
+    const closeOnViewportResize = () => setRefMenuOpen(false);
+    const closeOnViewportScroll = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Node && refMenuPanelRef.current?.contains(target)) return;
+      setRefMenuOpen(false);
+    };
     document.addEventListener("pointerdown", closeOutside, true);
     document.addEventListener("keydown", closeOnEscape, true);
-    window.addEventListener("resize", closeOnViewportChange);
-    window.addEventListener("scroll", closeOnViewportChange, true);
+    window.addEventListener("resize", closeOnViewportResize);
+    window.addEventListener("scroll", closeOnViewportScroll, true);
     return () => {
       cancelAnimationFrame(focusFrame);
       document.removeEventListener("pointerdown", closeOutside, true);
       document.removeEventListener("keydown", closeOnEscape, true);
-      window.removeEventListener("resize", closeOnViewportChange);
-      window.removeEventListener("scroll", closeOnViewportChange, true);
+      window.removeEventListener("resize", closeOnViewportResize);
+      window.removeEventListener("scroll", closeOnViewportScroll, true);
     };
   }, [refMenuOpen]);
 
@@ -416,12 +746,66 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
       setUploadProgress(0);
       setOptimizing(false);
       setSubmitting(false);
-      setExpanded(useCanvasStore.getState().nodes.length === 0);
+      setExpanded(true);
     });
     return () => cancelAnimationFrame(frame);
     // quickRefs is deliberately excluded: this reset is scoped to a project epoch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
+
+  useEffect(() => {
+    if (
+      variant !== "consumer" ||
+      !projectId ||
+      !launchJournal ||
+      launchJournal.projectId !== projectId ||
+      launchAppliedProjectRef.current === projectId
+    ) return;
+    const frame = requestAnimationFrame(() => {
+      if (useCanvasStore.getState().currentProjectId !== projectId) return;
+      launchAppliedProjectRef.current = projectId;
+      launchRetryCountRef.current = 0;
+      setMode(launchJournal.mode);
+      setPrompt(launchJournal.prompt);
+      setAttachments(launchJournal.attachments);
+      setSelectedSkill(launchJournal.selectedSkill);
+      setSelectedModelId(launchJournal.modelId);
+      setCanvasMode(launchJournal.canvasMode);
+      setImageRatio(launchJournal.imageRatio);
+      setImageQuality(launchJournal.imageQuality);
+      setImageResolution(launchJournal.imageResolution);
+      setVideoRatio(launchJournal.videoRatio);
+      setVideoResolution(launchJournal.videoResolution);
+      setVideoDuration(launchJournal.videoDuration);
+      setExpanded(true);
+      if (launchJournal.state === "failed") {
+        toast.error(launchJournal.error || "自动创作未完成，请在画布节点中重试");
+      } else if (!launchJournal.selectedSkill) {
+        setLaunchSubmitNonce((current) => current + 1);
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [launchJournal, projectId, variant]);
+
+  useEffect(() => {
+    if (variant !== "launcher" || !initialPlan || initialPlanAppliedRef.current) return;
+    initialPlanAppliedRef.current = true;
+    const frame = requestAnimationFrame(() => {
+      setMode(initialPlan.mode);
+      setPrompt(initialPlan.prompt);
+      setAttachments(initialPlan.attachments);
+      setSelectedSkill(initialPlan.selectedSkill);
+      setSelectedModelId(initialPlan.modelId);
+      setCanvasMode(initialPlan.canvasMode);
+      setImageRatio(initialPlan.imageRatio);
+      setImageQuality(initialPlan.imageQuality);
+      setImageResolution(initialPlan.imageResolution);
+      setVideoRatio(initialPlan.videoRatio);
+      setVideoResolution(initialPlan.videoResolution);
+      setVideoDuration(initialPlan.videoDuration);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [initialPlan, variant]);
 
   useEffect(() => {
     const previous = previousRefsRef.current;
@@ -440,22 +824,41 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
     () => quickRefs.filter((ref) => !!ref.file || containsRef(prompt, ref)),
     [prompt, quickRefs],
   );
-  const modelType = mode === "image" ? AiModelType.IMAGE : AiModelType.VIDEO;
-  const typeModels = models.filter((model) => model.type === modelType);
   const imageRefCount = usedRefs.filter((ref) => ref.kind === "image").length;
   const videoRefCount = usedRefs.filter((ref) => ref.kind === "video").length;
-  const preferredHandler = mode === "image"
+  const audioRefCount = usedRefs.filter((ref) => ref.kind === "audio").length;
+  const hasSkillSelection = !!selectedSkill;
+  const isAgentSelection = !!selectedSkill && skillKindOf(selectedSkill) === "agent";
+  const preferredHandlerFor = (targetMode: QuickStartMode) => targetMode === "image"
     ? imageRefCount > 0 ? "image_to_image" : "text_to_image"
-    : videoRefCount > 0 || imageRefCount > 1
+    : videoRefCount > 0 || audioRefCount > 0 || imageRefCount > 1
       ? "reference_to_video"
       : imageRefCount === 1
         ? "image_to_video"
         : "text_to_video";
-  const handler = preferredHandler === "image_to_video" && !typeModels.some((model) => supportsHandler(model, preferredHandler))
-    && typeModels.some((model) => supportsHandler(model, "reference_to_video"))
+  const modelType = mode === "image" ? AiModelType.IMAGE : AiModelType.VIDEO;
+  const typeModels = models.filter((model) => model.type === modelType);
+  const preferredHandler = preferredHandlerFor(mode);
+  const requestedModel = typeModels.find((model) => model.modelId === selectedModelId)
+    ?? typeModels.find((model) => model.modelId === selectedSkill?.modelId);
+  const handler = preferredHandler === "image_to_video"
+    && (
+      requestedModel
+        ? !supportsHandler(requestedModel, preferredHandler) && supportsHandler(requestedModel, "reference_to_video")
+        : !typeModels.some((model) => supportsHandler(model, preferredHandler))
+          && typeModels.some((model) => supportsHandler(model, "reference_to_video"))
+    )
     ? "reference_to_video"
     : preferredHandler;
   const compatibleModels = typeModels.filter((model) => supportsHandler(model, handler));
+  const selectableModels = models.filter((model) => {
+    const candidateMode = quickModeFromModel(model);
+    if (!candidateMode) return false;
+    if (candidateMode === "image" && (videoRefCount > 0 || audioRefCount > 0)) return false;
+    const candidateHandler = preferredHandlerFor(candidateMode);
+    return supportsHandler(model, candidateHandler)
+      || (candidateHandler === "image_to_video" && supportsHandler(model, "reference_to_video"));
+  });
   const selectedModel = compatibleModels.find((model) => model.modelId === selectedModelId)
     ?? compatibleModels.find((model) => model.modelId === selectedSkill?.modelId)
     ?? compatibleModels[0];
@@ -474,6 +877,45 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
   const durationOptions = normalizeDurations(modelConfig.durations);
   const activeDuration = durationOptions.includes(videoDuration) ? videoDuration : durationOptions[0] ?? videoDuration;
   const activeRefCount = usedRefs.length;
+  const submitActionLabel = isLauncher && selectedSkill
+    ? `创建新画布并运行「${selectedSkill.title}」`
+    : isLauncher
+    ? canvasMode
+      ? `创建新画布并生成${mode === "image" ? "图片" : "视频"}`
+      : "创建新画布并添加待生成节点"
+    : canvasMode
+      ? `生成${mode === "image" ? "图片" : "视频"}并添加到画布`
+      : "添加待生成节点";
+
+  const cancelOptimization = () => {
+    optimizeSeqRef.current += 1;
+    setOptimizing(false);
+  };
+
+  const selectModel = (modelId: string) => {
+    if (uploading) {
+      toast.info("参考素材上传完成后再切换模型");
+      return;
+    }
+    // 预设技能可能固定另一张模型卡，服务端执行时会以技能模型为准。
+    // 用户主动选了不同模型就移除预设，确保下拉展示/积分预估与实际执行一致。
+    if (
+      modelId !== selectedModel?.modelId
+      && selectedSkill
+      && skillKindOf(selectedSkill) === "preset"
+    ) {
+      setSelectedSkill(null);
+    }
+    const nextModel = models.find((model) => model.modelId === modelId);
+    const nextMode = quickModeFromModel(nextModel);
+    if (nextMode && nextMode !== mode) {
+      setMode(nextMode);
+      setSelectedSkill(null);
+      setRefMenuOpen(false);
+      cancelOptimization();
+    }
+    setSelectedModelId(modelId);
+  };
 
   const toggleRefMenu = () => {
     if (refMenuOpen) {
@@ -485,15 +927,35 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
     const panelWidth = 286;
     const panelHeight = 288;
     const openUp = window.innerHeight - rect.bottom < panelHeight + 20 && rect.top > window.innerHeight - rect.bottom;
+    const availableHeight = openUp ? rect.top - 20 : window.innerHeight - rect.bottom - 20;
     setRefMenuPosition({
       left: Math.min(Math.max(10, rect.left), Math.max(10, window.innerWidth - panelWidth - 10)),
       top: openUp ? rect.top - 8 : rect.bottom + 8,
       openUp,
+      maxHeight: Math.max(64, Math.min(panelHeight, availableHeight)),
     });
     setRefMenuOpen(true);
   };
 
   const handleRefMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Tab") {
+      event.preventDefault();
+      setRefMenuOpen(false);
+      requestAnimationFrame(() => {
+        const focusable = Array.from(document.querySelectorAll<HTMLElement>(
+          'a[href], button:not(:disabled), input:not(:disabled), [tabindex]:not([tabindex="-1"])',
+        )).filter((element) =>
+          !refMenuPanelRef.current?.contains(element) &&
+          element.getClientRects().length > 0 &&
+          getComputedStyle(element).visibility !== "hidden",
+        );
+        const triggerIndex = refMenuTriggerRef.current ? focusable.indexOf(refMenuTriggerRef.current) : -1;
+        if (triggerIndex < 0) return;
+        const nextIndex = event.shiftKey ? triggerIndex - 1 : triggerIndex + 1;
+        focusable[(nextIndex + focusable.length) % focusable.length]?.focus();
+      });
+      return;
+    }
     if (!refMenuPanelRef.current) return;
     const items = Array.from(refMenuPanelRef.current.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"));
     if (!items.length) return;
@@ -508,26 +970,65 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
     items[next]?.focus();
   };
 
-  const switchMode = (nextMode: QuickStartMode) => {
-    if (nextMode === mode) return;
-    setMode(nextMode);
-    setSelectedModelId("");
-    setSelectedSkill(null);
-    setRefMenuOpen(false);
-    optimizeSeqRef.current += 1;
+  const updatePrompt = (nextPrompt: string) => {
+    if (isLauncher && !skillPickerOpen && /(^|[\s\u200b])\/$/.test(nextPrompt)) {
+      setPrompt(nextPrompt.slice(0, -1));
+      setSkillPickerOpen(true);
+      return;
+    }
+    if (mode === "image" && quickRefs.some((ref) =>
+      (ref.kind === "video" || ref.kind === "audio") && containsRef(nextPrompt, ref),
+    )) {
+      setMode("video");
+      if (!hasSkillSelection) {
+        setSelectedModelId("");
+        setSelectedSkill(null);
+      }
+      cancelOptimization();
+    }
+    setPrompt(nextPrompt);
   };
 
   const pickSkill = (skill: SkillVO) => {
+    const kind = skillKindOf(skill);
+    // 项目页只负责把 Agent 输入交接到新画布；已在画布中的快速生成栏
+    // 仍只接受单输出预设，避免误发到普通 ai.generate。
+    if (kind === "agent" && variant !== "launcher") {
+      toast.info("智能技能请进入画布后使用");
+      return;
+    }
+    if (kind !== "preset" && kind !== "agent") return;
+    const launcherPresetMode = kind === "preset" && variant === "launcher"
+      ? skillOutputTypesOf(skill).find((output): output is QuickStartMode => output === "image" || output === "video")
+      : undefined;
+    if (kind === "preset" && variant === "launcher" && !launcherPresetMode) {
+      toast.info("顶部创作栏仅支持图片或视频预设");
+      return;
+    }
     setSelectedSkill(skill);
     setSkillPickerOpen(false);
+    // A selected Skill always runs through the new canvas assistant. Deferred
+    // idle nodes use the ordinary model path and therefore cannot retain Skill semantics.
+    if (variant === "launcher") setCanvasMode(true);
+    if (kind === "agent") {
+      return;
+    }
+    const presetMode = variant === "launcher"
+      ? launcherPresetMode ?? mode
+      : mode;
+    if (presetMode !== mode) {
+      setMode(presetMode);
+      setSelectedModelId("");
+      cancelOptimization();
+    }
     if (skill.modelId) setSelectedModelId(skill.modelId);
     const defaults = parseSkillParams(skill.defaultParams);
     if (defaults.aspectRatio) {
-      if (mode === "image") setImageRatio(defaults.aspectRatio);
+      if (presetMode === "image") setImageRatio(defaults.aspectRatio);
       else setVideoRatio(defaults.aspectRatio);
     }
     if (defaults.resolution) {
-      if (mode === "image") setImageResolution(defaults.resolution);
+      if (presetMode === "image") setImageResolution(defaults.resolution);
       else setVideoResolution(defaults.resolution);
     }
     if (defaults.quality) setImageQuality(defaults.quality);
@@ -542,7 +1043,7 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
     const files = Array.from(event.target.files ?? []);
     event.target.value = "";
     if (!files.length || uploading) return;
-    if (!projectId) {
+    if (!isLauncher && !projectId) {
       toast.info("画布仍在加载，请稍后再添加参考素材");
       return;
     }
@@ -552,17 +1053,58 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
     const isCurrent = () =>
       uploadSeq === uploadSeqRef.current &&
       projectEpoch === projectEpochRef.current &&
-      useCanvasStore.getState().currentProjectId === launchProjectId;
+      (isLauncher || useCanvasStore.getState().currentProjectId === launchProjectId);
     const remaining = Math.max(0, MAX_QUICK_ATTACHMENTS - attachments.length);
     if (remaining === 0) {
       toast.info(`快速开始最多添加 ${MAX_QUICK_ATTACHMENTS} 个参考素材`);
       return;
     }
-    const accepted = files
-      .filter((file) => file.type.startsWith("image/") || file.type.startsWith("video/"))
-      .slice(0, remaining);
-    if (accepted.length !== files.length) toast.info("快速开始当前仅支持图片和视频参考");
+    const supportedFiles = files.filter((file) =>
+      file.type.startsWith("image/") || file.type.startsWith("video/") || file.type.startsWith("audio/"),
+    );
+    const accepted = supportedFiles.slice(0, remaining);
+    if (supportedFiles.length !== files.length) toast.info("画布创作栏当前支持图片、视频和音频参考");
+    if (supportedFiles.length > remaining) toast.info(`本次仅添加前 ${remaining} 个素材，创作栏最多保留 ${MAX_QUICK_ATTACHMENTS} 个`);
     if (!accepted.length) return;
+
+    const includesVideoOrAudio = accepted.some((file) => file.type.startsWith("video/") || file.type.startsWith("audio/"));
+    const uploadMode: QuickStartMode = includesVideoOrAudio ? "video" : mode;
+    const prospectiveImageCount = imageRefCount + accepted.filter((file) => file.type.startsWith("image/")).length;
+    const prospectiveVideoCount = videoRefCount + accepted.filter((file) => file.type.startsWith("video/")).length;
+    const prospectiveAudioCount = audioRefCount + accepted.filter((file) => file.type.startsWith("audio/")).length;
+    const preferredUploadHandler = uploadMode === "image"
+      ? "image_to_image"
+      : prospectiveVideoCount > 0 || prospectiveAudioCount > 0 || prospectiveImageCount > 1
+        ? "reference_to_video"
+        : prospectiveImageCount === 1
+          ? "image_to_video"
+          : "text_to_video";
+    const skillHandoff = hasSkillSelection;
+    const uploadType = uploadMode === "image" ? AiModelType.IMAGE : AiModelType.VIDEO;
+    const uploadModels = models.filter((model) => model.type === uploadType);
+    const currentUploadModel = skillHandoff
+      ? undefined
+      : uploadModels.find((model) => model.modelId === selectedModel?.modelId);
+    let uploadHandler = preferredUploadHandler;
+    let uploadModel = currentUploadModel && supportsHandler(currentUploadModel, uploadHandler)
+      ? currentUploadModel
+      : undefined;
+    if (!skillHandoff && preferredUploadHandler === "image_to_video") {
+      if (!uploadModel && currentUploadModel && supportsHandler(currentUploadModel, "reference_to_video")) {
+        uploadHandler = "reference_to_video";
+        uploadModel = currentUploadModel;
+      } else if (!uploadModel) {
+        uploadModel = uploadModels.find((model) => supportsHandler(model, "image_to_video"))
+          ?? uploadModels.find((model) => supportsHandler(model, "reference_to_video"));
+        if (uploadModel && !supportsHandler(uploadModel, "image_to_video")) uploadHandler = "reference_to_video";
+      }
+    } else if (!skillHandoff && !uploadModel) {
+      uploadModel = uploadModels.find((model) => supportsHandler(model, uploadHandler));
+    }
+    if (!skillHandoff && modelsLoaded && !uploadModel) {
+      toast.info("没有支持这些参考素材的可用模型");
+      return;
+    }
 
     setUploading(true);
     setUploadProgress(0);
@@ -570,11 +1112,16 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
     for (const file of accepted) {
       try {
         const kind = referenceKindFromFile(file);
+        const referenceLabel = file.type.startsWith("video/")
+          ? "参考视频"
+          : file.type.startsWith("audio/")
+            ? "参考音频"
+            : "参考图片";
         const result = await uploadFileSmart(file, (progress) => {
           if (isCurrent()) setUploadProgress(progress);
         }, {
-          maxBytes: resolveModelReferenceLimitBytes(selectedModel, kind),
-          label: kind === "video" ? "参考视频" : "参考图片",
+          maxBytes: resolveModelReferenceLimitBytes(uploadModel, kind, uploadHandler),
+          label: referenceLabel,
         });
         if (!isCurrent()) return;
         if (result.success && result.data) uploaded.push(result.data);
@@ -584,6 +1131,14 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
       }
     }
     if (isCurrent() && uploaded.length) {
+      if (!skillHandoff && uploadMode !== mode) {
+        setMode(uploadMode);
+        cancelOptimization();
+      }
+      if (!skillHandoff && uploadModel && uploadModel.modelId !== selectedModelId) setSelectedModelId(uploadModel.modelId);
+      if (!skillHandoff && uploadMode !== mode) {
+        setSelectedSkill(null);
+      }
       setAttachments((current) => [...current, ...uploaded]);
       toast.success(uploaded.length > 1 ? `已添加 ${uploaded.length} 个参考素材` : "参考素材已添加");
     }
@@ -605,7 +1160,7 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
       const isCurrent =
         optimizeSeq === optimizeSeqRef.current &&
         projectEpoch === projectEpochRef.current &&
-        useCanvasStore.getState().currentProjectId === launchProjectId;
+        (isLauncher || useCanvasStore.getState().currentProjectId === launchProjectId);
       if (!isCurrent) return;
       if (result.success && result.data?.prompt) {
         if (promptValueRef.current.trim() === value) {
@@ -626,8 +1181,26 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
     }
   };
 
+  const scheduleConsumerRetry = useCallback((message: string) => {
+    if (variant !== "consumer" || !launchJournal) return;
+    if (launchRetryCountRef.current >= 3) {
+      toast.info(`${message}。网络恢复后刷新画布可继续确认`);
+      return;
+    }
+    launchRetryCountRef.current += 1;
+    if (launchRetryTimerRef.current != null) window.clearTimeout(launchRetryTimerRef.current);
+    launchRetryTimerRef.current = window.setTimeout(() => {
+      launchRetryTimerRef.current = null;
+      setLaunchSubmitNonce((current) => current + 1);
+    }, 1600 * launchRetryCountRef.current);
+  }, [launchJournal, variant]);
+
   const submit = async () => {
     if (submitLockRef.current || submitting) return;
+    if (isLauncher && launchBlocked) {
+      toast.info(launchBlockedReason);
+      return;
+    }
     if (uploading) {
       toast.info("参考素材仍在上传，请稍候");
       return;
@@ -641,51 +1214,119 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
       toast.info("先描述你想创作的内容");
       return;
     }
-    if (!projectId) {
+    if (!isLauncher && !projectId) {
       toast.info("画布仍在加载，请稍后再试");
       return;
     }
-    if (!selectedModel) {
-      toast.error(modelsLoaded ? "没有支持当前生成方式的模型" : "模型正在加载");
-      return;
-    }
-    const pinnedSkillModel = selectedSkill?.modelId
-      ? models.find((model) => model.modelId === selectedSkill.modelId)
-      : undefined;
-    if (canvasMode && pinnedSkillModel && !supportsHandler(pinnedSkillModel, handler)) {
-      toast.info("当前 Skill 指定的模型不支持这些参考素材，请移除引用或更换 Skill");
-      return;
-    }
-    if (mode === "image" && usedRefs.some((ref) => ref.kind === "video")) {
-      toast.info("图片创作暂不支持视频参考，请切到短剧 Agent 或移除视频引用");
-      return;
-    }
-
     const state = useCanvasStore.getState();
     const existingSources = usedRefs
       .flatMap((ref) => ref.sourceNodeId ? state.nodes.filter((node) => node.id === ref.sourceNodeId) : []);
-    if (!validateReferenceFileSizes(existingSources, selectedModel)) return;
-    for (const ref of usedRefs) {
-      if (!ref.file) continue;
-      const message = validateKnownFileSize(ref.file.fileSize, ref.file.originalName, {
-        maxBytes: resolveModelReferenceLimitBytes(selectedModel, ref.kind === "video" ? "video" : "image"),
-        label: "参考素材",
-      });
-      if (message) {
-        toast.error(message);
+    if (canvasLaunchNeedsDirectModel(selectedSkill)) {
+      if (!selectedModel) {
+        toast.error(modelsLoaded ? "没有支持当前生成方式的模型" : "模型正在加载");
         return;
       }
+      if (mode === "image" && usedRefs.some((ref) => ref.kind === "video" || ref.kind === "audio")) {
+        toast.info("图片模型仅支持图片参考，请切换视频模型或移除视频/音频引用");
+        return;
+      }
+      for (const [kind, count, label] of [
+        ["image", imageRefCount, "参考图片"],
+        ["video", videoRefCount, "参考视频"],
+        ["audio", audioRefCount, "参考音频"],
+      ] as const) {
+        const limit = referenceCountLimit(selectedModel, handler, kind);
+        if (limit && count > limit) {
+          toast.info(`${selectedModel.name} 最多支持 ${limit} 个${label}，当前为 ${count} 个`);
+          return;
+        }
+      }
+
+      if (!validateReferenceFileSizes(existingSources, selectedModel, handler)) return;
+      for (const ref of usedRefs) {
+        if (!ref.file) continue;
+        const message = validateKnownFileSize(ref.file.fileSize, ref.file.originalName, {
+          maxBytes: resolveModelReferenceLimitBytes(
+            selectedModel,
+            ref.kind === "video" ? "video" : ref.kind === "image" ? "image" : ref.kind === "audio" ? "audio" : "file",
+            handler,
+          ),
+          label: "参考素材",
+        });
+        if (message) {
+          toast.error(message);
+          return;
+        }
+      }
+    }
+
+    if (isLauncher) {
+      if (!onLaunch) {
+        toast.error("新建画布入口暂不可用");
+        return;
+      }
+      submitLockRef.current = true;
+      optimizeSeqRef.current += 1;
+      setSubmitting(true);
+      try {
+        const launched = await onLaunch({
+          launchKind: canvasLaunchKindFor(selectedSkill),
+          prompt: trimmedPrompt,
+          mode,
+          modelId: hasSkillSelection ? "" : selectedModel?.modelId ?? "",
+          selectedSkill,
+          attachments,
+          canvasMode,
+          imageRatio,
+          imageQuality,
+          imageResolution,
+          videoRatio,
+          videoResolution,
+          videoDuration,
+        });
+        // router.push 本身不可等待；成功时保持锁与忙碌态直到页面卸载，
+        // 避免慢导航窗口内再次点击而重复创建项目。
+        if (!launched) {
+          submitLockRef.current = false;
+          setSubmitting(false);
+        }
+      } catch (error) {
+        toast.error((error as Error)?.message || "创建画布失败，请重试");
+        submitLockRef.current = false;
+        setSubmitting(false);
+      }
+      return;
+    }
+
+    // 所有 Skill 都由助手 SkillRun 执行；快速栏自身只负责无 Skill 的单模型生成。
+    if (selectedSkill) {
+      toast.info("所选技能正在画布助手中执行");
+      return;
+    }
+    if (!selectedModel) return;
+
+    const canvasProjectId = projectId;
+    if (!canvasProjectId) {
+      toast.info("画布仍在加载，请稍后再试");
+      return;
     }
 
     submitLockRef.current = true;
     optimizeSeqRef.current += 1;
     setSubmitting(true);
+    const submittedPrompt = prompt;
+    const submittedAttachmentIds = new Set(attachments.map((file) => file.id));
     try {
-      const world = getViewportCenter();
+      const world = getViewportCenter?.();
+      if (!world) throw new Error("画布视口尚未就绪");
       const snapshot = useCanvasStore.getState();
-      if (snapshot.currentProjectId !== projectId) throw new Error("画布已切换，请重新提交");
+      if (snapshot.currentProjectId !== canvasProjectId) throw new Error("画布已切换，请重新提交");
       const nodePrompt = promptForConnectedNode(trimmedPrompt, usedRefs);
-      const target = createNode(mode, world.x, world.y, snapshot.nodes);
+      const persistedTarget = variant === "consumer" && launchJournal
+        ? snapshot.nodes.find((node) => node.id === launchJournal.targetNodeId)
+        : undefined;
+      const target = persistedTarget ?? createNode(mode, world.x, world.y, snapshot.nodes);
+      if (!persistedTarget && variant === "consumer" && launchJournal) target.id = launchJournal.targetNodeId;
       const generationConfig = mode === "image"
         ? {
             modelId: selectedModel.modelId,
@@ -697,32 +1338,47 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
             modelId: selectedModel.modelId,
             resolution: activeResolution,
             duration: activeDuration,
-            audio: modelConfig.audio === false ? false : videoAudio,
           };
-      Object.assign(target, {
-        prompt: nodePrompt,
-        status: "idle" as const,
-        ...(activeRatio && activeRatio !== "auto" ? { aspectRatio: activeRatio } : {}),
-        ...(selectedSkill ? { skillId: selectedSkill.id, skillName: selectedSkill.title } : {}),
-        generationConfig,
-      });
+      if (!persistedTarget) {
+        Object.assign(target, {
+          prompt: nodePrompt,
+          status: "idle" as const,
+          ...(activeRatio && activeRatio !== "auto" ? { aspectRatio: activeRatio } : {}),
+          generationConfig,
+        });
+      }
 
-      const addedNodes: CanvasNode[] = [target];
+      const addedNodes: CanvasNode[] = persistedTarget ? [] : [target];
       const fileNodeIds = new Map<string, string>();
       let uploadIndex = 0;
       for (const ref of usedRefs) {
         if (!ref.file || fileNodeIds.has(ref.file.id)) continue;
         const file = ref.file;
-        const sourceType = file.fileType === FileType.VIDEO ? "video" : "image";
+        const stableSourceId = variant === "consumer" ? launchJournal?.sourceNodeIds[file.id] : undefined;
+        const persistedSource = stableSourceId
+          ? snapshot.nodes.find((node) => node.id === stableSourceId)
+          : undefined;
+        if (persistedSource) {
+          fileNodeIds.set(file.id, persistedSource.id);
+          uploadIndex += 1;
+          continue;
+        }
+        const sourceType = file.fileType === FileType.VIDEO
+          ? "video"
+          : file.mimeType?.startsWith("audio/")
+            ? "audio"
+            : "image";
         const sourceWorldX = world.x - 700;
         const sourceWorldY = world.y + uploadIndex * 390 - ((attachments.length - 1) * 195);
         const source = createNode(sourceType, sourceWorldX, sourceWorldY, [...snapshot.nodes, ...addedNodes]);
+        if (stableSourceId) source.id = stableSourceId;
         source.title = file.originalName || source.title;
         source.status = "success";
         source.fileSize = file.fileSize;
         source.fileType = file.fileType;
         source.mimeType = file.mimeType;
         if (sourceType === "video") source.videoSrc = file.fileUrl;
+        else if (sourceType === "audio") source.audioSrc = file.fileUrl;
         else source.imageSrc = file.fileUrl;
         addedNodes.push(source);
         fileNodeIds.set(file.id, source.id);
@@ -732,17 +1388,37 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
       const connections: Connection[] = [];
       for (const ref of usedRefs) {
         const sourceId = ref.sourceNodeId ?? (ref.file ? fileNodeIds.get(ref.file.id) : undefined);
-        if (!sourceId || connections.some((connection) => connection.sourceId === sourceId)) continue;
+        const alreadyConnected = snapshot.connections.some((connection) =>
+          connection.sourceId === sourceId && connection.targetId === target.id,
+        );
+        if (!sourceId || alreadyConnected || connections.some((connection) => connection.sourceId === sourceId)) continue;
         connections.push({
-          id: `conn_qs_${sourceId}_${target.id}`,
+          id: variant === "consumer" && launchJournal
+            ? `launch_conn_${launchJournal.id}_${sourceId}`
+            : `conn_qs_${sourceId}_${target.id}`,
           sourceId,
           targetId: target.id,
         });
       }
-      snapshot.addNodesAndConnections(addedNodes, connections, target.id);
+      if (addedNodes.length || connections.length) {
+        snapshot.addNodesAndConnections(addedNodes, connections, target.id);
+      }
+
+      if (variant === "consumer" && launchJournal) {
+        const materialized = await requestCanvasSave(canvasProjectId);
+        if (!materialized) {
+          toast.error("新画布暂未保存，自动创作尚未开始");
+          scheduleConsumerRetry("新画布保存仍未确认");
+          return;
+        }
+      }
 
       if (!canvasMode) {
         toast.success("已添加待生成节点，可在节点中继续调整");
+        if (variant === "consumer" && launchJournal) {
+          clearCanvasLaunchJournal(launchJournal.id);
+          onLaunchConsumed?.();
+        }
       } else {
         const textRefs = usedRefs
           .filter((ref) => ref.kind === "text" && !ref.isConcept && ref.textContent?.trim())
@@ -755,9 +1431,9 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
           .join("\n");
         const imageURLs = usedRefs.filter((ref) => ref.kind === "image" && ref.src).map((ref) => ref.src as string);
         const videoURLs = usedRefs.filter((ref) => ref.kind === "video" && ref.src).map((ref) => ref.src as string);
+        const audioURLs = usedRefs.filter((ref) => ref.kind === "audio" && ref.src).map((ref) => ref.src as string);
         const commonInput: Record<string, unknown> = {
           prompt: finalPrompt,
-          ...(selectedSkill ? { skillId: selectedSkill.id } : {}),
           ...(ratioOptions.length ? { aspectRatio: activeRatio, aspect_ratio: activeRatio, ratio: activeRatio } : {}),
           ...(resolutionOptions.length ? { resolution: activeResolution } : {}),
         };
@@ -772,28 +1448,113 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
           : {
               ...commonInput,
               ...(durationOptions.length ? { duration: activeDuration } : {}),
-              ...(modelConfig.audio !== false ? { audio: videoAudio } : {}),
               ...(handler === "image_to_video" && imageURLs.length
                 ? { sourceImage: imageURLs[0] }
                 : imageURLs.length
                   ? { references: imageURLs }
                   : {}),
               ...(handler === "reference_to_video" && videoURLs.length ? { videoReferences: videoURLs } : {}),
+              ...(handler === "reference_to_video" && audioURLs.length ? { audioReferences: audioURLs } : {}),
             };
-        await generate({
-          nodeId: target.id,
+        const computedPayload: CanvasLaunchGenerationPayload = {
           handler,
           modelId: selectedModel.modelId,
           input,
           ...(mode === "image" && modelConfig.gridOutput ? { gridOutput: true } : {}),
+        };
+        let generationPayload = computedPayload;
+        if (variant === "consumer" && launchJournal) {
+          const latestJournal = readCanvasLaunchJournal(launchJournal.id);
+          generationPayload = latestJournal?.generationPayload ?? computedPayload;
+          if (!latestJournal?.generationPayload) {
+            const frozen = updateCanvasLaunchJournal(launchJournal.id, {
+              state: "materialized",
+              generationPayload: computedPayload,
+              error: undefined,
+            });
+            if (!frozen) {
+              toast.error("自动创作恢复信息保存失败，尚未发起生成");
+              scheduleConsumerRetry("恢复信息仍未保存");
+              return;
+            }
+            generationPayload = frozen.generationPayload ?? computedPayload;
+          }
+        }
+        const readyState = useCanvasStore.getState();
+        if (readyState.currentProjectId !== canvasProjectId || !readyState.nodes.some((node) => node.id === target.id)) {
+          toast.info("启动节点已发生变化，正在重新准备");
+          scheduleConsumerRetry("启动节点仍未准备完成");
+          return;
+        }
+        const generationResult = await generate({
+          nodeId: target.id,
+          handler: generationPayload.handler,
+          modelId: generationPayload.modelId,
+          input: generationPayload.input,
+          ...(variant === "consumer" && launchJournal ? { clientRequestId: launchJournal.clientRequestId } : {}),
+          ...(generationPayload.gridOutput ? { gridOutput: true } : {}),
         });
+        if (generationResult.status !== "started") {
+          if (variant === "consumer" && launchJournal) {
+            const ambiguous = generationResult.status === "ambiguous";
+            updateCanvasLaunchJournal(launchJournal.id, ambiguous
+              ? { state: "materialized", error: "生成结果尚未确认" }
+              : { state: "failed", error: "生成请求未能启动，请在画布节点中重试" });
+            await requestCanvasSave(canvasProjectId);
+            if (ambiguous) scheduleConsumerRetry("生成结果仍待确认");
+          } else if (generationResult.status === "rejected" && useCanvasStore.getState().currentProjectId === canvasProjectId) {
+            for (const node of addedNodes) useCanvasStore.getState().removeNode(node.id, false);
+          }
+          return;
+        }
+        if (variant === "consumer" && launchJournal) {
+          const taskId = generationResult.taskId;
+          const acceptedState = useCanvasStore.getState();
+          if (!acceptedState.nodes.some((node) => node.id === target.id)) {
+            const availableNodeIds = new Set(acceptedState.nodes.map((node) => node.id));
+            const restoredConnections: Connection[] = [];
+            for (const ref of usedRefs) {
+              const sourceId = ref.sourceNodeId ?? (ref.file ? fileNodeIds.get(ref.file.id) : undefined);
+              if (!sourceId || !availableNodeIds.has(sourceId)) continue;
+              if (acceptedState.connections.some((connection) =>
+                connection.sourceId === sourceId && connection.targetId === target.id,
+              )) continue;
+              restoredConnections.push({
+                id: `launch_conn_${launchJournal.id}_${sourceId}`,
+                sourceId,
+                targetId: target.id,
+              });
+            }
+            acceptedState.addNodesAndConnections(
+              [{ ...target, status: "generating", taskId }],
+              restoredConnections,
+              target.id,
+            );
+          } else {
+            acceptedState.updateNode(target.id, { status: "generating", taskId }, false);
+          }
+          // startGeneration 会立即启动轮询；若目标节点恰在请求在途时被删除，
+          // 首轮会按设计停止。节点恢复后显式续轮，避免任务永久停在 generating。
+          resumeGeneration();
+          const journalLinked = !!updateCanvasLaunchJournal(launchJournal.id, {
+            state: "submitted",
+            taskId,
+            error: undefined,
+          });
+          if (!journalLinked) toast.info("任务已提交，正在改由画布保存任务号");
+          const taskLinked = await requestCanvasSave(canvasProjectId);
+          if (taskLinked) {
+            clearCanvasLaunchJournal(launchJournal.id);
+            onLaunchConsumed?.();
+          } else {
+            toast.info("任务已开始，画布正在等待保存确认");
+            scheduleConsumerRetry("任务号仍未保存到画布");
+          }
+        }
       }
 
-      setPrompt("");
-      setAttachments([]);
-      setSelectedSkill(null);
-      setRefMenuOpen(false);
-      setExpanded(false);
+      setPrompt((current) => current === submittedPrompt ? "" : current);
+      setAttachments((current) => current.filter((file) => !submittedAttachmentIds.has(file.id)));
     } catch (error) {
       toast.error((error as Error)?.message || "快速开始失败，请重试");
     } finally {
@@ -802,59 +1563,143 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
     }
   };
 
-  const displayName = (user?.nickname || user?.username || "创作者").trim();
+  const submitRef = useRef(submit);
+  useEffect(() => {
+    submitRef.current = submit;
+  });
 
-  if (!expanded) {
+  useEffect(() => {
+    if (
+      variant !== "consumer" ||
+      !persistenceReady ||
+      !projectId ||
+      !launchJournal ||
+      launchJournal.projectId !== projectId ||
+      launchSubmitNonce === 0 ||
+      launchAttemptRef.current === launchSubmitNonce ||
+      submitting ||
+      uploading ||
+      optimizing
+    ) return;
+    const frame = requestAnimationFrame(() => {
+      if (launchAttemptRef.current === launchSubmitNonce) return;
+      const durableJournal = readCanvasLaunchJournal(launchJournal.id) ?? launchJournal;
+      const state = useCanvasStore.getState();
+      const target = state.nodes.find((node) => node.id === durableJournal.targetNodeId);
+      const durableTaskId = target?.taskId || (durableJournal.state === "submitted" ? durableJournal.taskId : undefined);
+      if (target?.status === "success" || target?.status === "error") {
+        launchAttemptRef.current = launchSubmitNonce;
+        void requestCanvasSave(projectId).then((saved) => {
+          if (!saved) {
+            scheduleConsumerRetry("任务结果仍未保存到画布");
+            return;
+          }
+          clearCanvasLaunchJournal(durableJournal.id);
+          onLaunchConsumed?.();
+        });
+        return;
+      }
+      if (target && durableTaskId) {
+        launchAttemptRef.current = launchSubmitNonce;
+        state.updateNode(target.id, { status: "generating", taskId: durableTaskId }, false);
+        updateCanvasLaunchJournal(durableJournal.id, {
+          state: "submitted",
+          taskId: durableTaskId,
+          error: undefined,
+        });
+        void requestCanvasSave(projectId).then((saved) => {
+          resumeGeneration();
+          if (!saved) {
+            scheduleConsumerRetry("任务号仍未保存到画布");
+            return;
+          }
+          clearCanvasLaunchJournal(durableJournal.id);
+          onLaunchConsumed?.();
+        });
+        return;
+      }
+      // preset/agent 的创建、恢复与产物落画布均由 CanvasAssistantPanel +
+      // SkillRun runtime 接管，不能再落回普通模型校验或 direct generate。
+      if (durableJournal.selectedSkill) {
+        launchAttemptRef.current = launchSubmitNonce;
+        return;
+      }
+      if (!modelsLoaded) return;
+      if (modelsLoadError) {
+        launchAttemptRef.current = launchSubmitNonce;
+        if (launchRetryCountRef.current >= 3) {
+          toast.info("模型列表仍未恢复，网络恢复后刷新画布可继续自动创作");
+          return;
+        }
+        launchRetryCountRef.current += 1;
+        launchRetryTimerRef.current = window.setTimeout(() => {
+          launchRetryTimerRef.current = null;
+          setModelsLoaded(false);
+          setModelsLoadError(false);
+          setModelsRetryNonce((current) => current + 1);
+          setLaunchSubmitNonce((current) => current + 1);
+        }, 1600 * launchRetryCountRef.current);
+        return;
+      }
+      if (!selectedModel || selectedModel.modelId !== durableJournal.modelId) {
+        launchAttemptRef.current = launchSubmitNonce;
+        const error = "原先选择的模型当前不可用，已停止自动创作";
+        updateCanvasLaunchJournal(durableJournal.id, { state: "failed", error });
+        toast.error(error);
+        return;
+      }
+      launchAttemptRef.current = launchSubmitNonce;
+      if (durableJournal.state !== "failed") void submitRef.current();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [
+    launchJournal,
+    launchSubmitNonce,
+    modelsLoaded,
+    modelsLoadError,
+    onLaunchConsumed,
+    optimizing,
+    persistenceReady,
+    projectId,
+    scheduleConsumerRetry,
+    selectedModel,
+    submitting,
+    uploading,
+    variant,
+  ]);
+
+  if (!expanded && variant === "canvas") {
     return (
-      <button type="button" className={styles.collapsed} onClick={() => setExpanded(true)}>
-        <Sparkles aria-hidden className="h-4 w-4" />
-        快速开始
+      <button type="button" className={styles.collapsed} onClick={() => setExpanded(true)} aria-label="展开画布创作栏">
+        <PencilLine aria-hidden className="h-4 w-4" />
+        创作
         <ChevronDown aria-hidden className="h-3.5 w-3.5" />
       </button>
     );
   }
 
   return (
-    <section className={styles.root} aria-label="画布快速开始" onMouseDown={(event) => event.stopPropagation()}>
-      <button type="button" className={styles.collapseButton} onClick={() => setExpanded(false)} title="收起快速开始" aria-label="收起快速开始">
-        <ChevronUp aria-hidden className="h-4 w-4" />
-      </button>
-      <div className={styles.hero}>
-        <p className={styles.greeting}>Hi {displayName}，和小云雀一起聊聊创作想法</p>
-        <div className={styles.modes} role="group" aria-label="快速开始模式">
-          <button
-            type="button"
-            aria-pressed={mode === "image"}
-            className={mode === "image" ? styles.modeActive : styles.modeButton}
-            onClick={() => switchMode("image")}
-            title="快速生成图片节点"
-          >
-            <ImageIcon aria-hidden className="h-3.5 w-3.5" /> 创作快启
-          </button>
-          <button
-            type="button"
-            aria-pressed={mode === "video"}
-            className={mode === "video" ? styles.modeActive : styles.modeButton}
-            onClick={() => switchMode("video")}
-            title="快速生成短剧视频节点"
-          >
-            <Clapperboard aria-hidden className="h-3.5 w-3.5" /> 短剧快启
-          </button>
-        </div>
-      </div>
-
+    <section
+      className={`${styles.root} ${isLauncher ? "dark" : ""}`}
+      data-mode={mode}
+      data-variant={variant}
+      aria-label={isLauncher ? "新建画布创作栏" : "画布创作栏"}
+      onMouseDown={(event) => event.stopPropagation()}
+    >
       <div className={styles.composer}>
         <div className={styles.editorWrap}>
           <PromptRefEditor
             value={prompt}
-            onChange={setPrompt}
+            onChange={updatePrompt}
             refs={quickRefs}
             showThumbs={false}
             onSubmit={() => { void submit(); }}
-            placeholder="描述你的想法，用 @ 引用画布素材，用 Skill 注入专业经验"
-            ariaLabel="快速开始创作描述"
+            placeholder={isLauncher
+              ? "描述你的想法，可添加图片、视频或音频作为参考，用 / 使用技能"
+              : "描述你的想法，用 @ 引用画布里的图片、视频或音频"}
+            ariaLabel={isLauncher ? "新画布创作描述" : "画布创作描述"}
             editorClassName={styles.editor}
-            editorStyle={{ minHeight: 54, maxHeight: 104 }}
+            editorStyle={{ minHeight: isLauncher ? 64 : 58, maxHeight: 112 }}
           />
         </div>
 
@@ -865,7 +1710,7 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
                 {ref.thumb
                   // eslint-disable-next-line @next/next/no-img-element
                   ? <img src={ref.thumb} alt="" />
-                  : <span className={styles.refGlyph}>{ref.kind === "video" ? "▶" : "文"}</span>}
+                  : <span className={styles.refGlyph}>{refGlyph(ref)}</span>}
                 <span>{ref.title || refLabel(ref)}</span>
                 {ref.file && (
                   <button type="button" aria-label={`移除 ${ref.title}`} onClick={() => removeAttachment(ref.file!.id)}>
@@ -878,32 +1723,60 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
         )}
 
         <div className={styles.toolbar}>
-          <div className={styles.toolbarLeft}>
+          <div className={styles.toolbarLeft} role="group" aria-label="模型与生成设置">
             <button
               type="button"
               className={styles.iconButton}
               onClick={() => fileInputRef.current?.click()}
-              disabled={uploading || !projectId}
-              title="上传参考图片或视频"
+              disabled={uploading || (!isLauncher && !projectId)}
+              title="上传参考图片、视频或音频"
+              aria-label="上传参考图片、视频或音频"
             >
               {uploading ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <Plus aria-hidden className="h-4 w-4" />}
-              <span className="sr-only">上传参考素材</span>
             </button>
-            <input ref={fileInputRef} className="hidden" type="file" accept="image/*,video/*" multiple onChange={handleUpload} />
+            <input ref={fileInputRef} className="hidden" type="file" accept="image/*,video/*,audio/*" multiple onChange={handleUpload} />
 
             <div className={styles.modelControl}>
-              <span className={styles.leadingIcon}><Sparkles aria-hidden className="h-3.5 w-3.5" /> 模型</span>
-              {modelsLoaded && compatibleModels.length === 0
-                ? <span className={styles.unavailable}>暂无可用模型</span>
+              {hasSkillSelection
+                ? <span className={styles.unavailable}>技能自动编排</span>
+                : modelsLoadError
+                ? (
+                  <button
+                    type="button"
+                    className={styles.modelRetry}
+                    onClick={retryModels}
+                    aria-label="模型加载失败，重新加载"
+                  >
+                    模型加载失败 · 重试
+                  </button>
+                )
                 : !modelsLoaded
                   ? <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin text-neutral-400" />
-                  : <ModelPicker models={compatibleModels} value={selectedModel?.modelId ?? ""} onChange={setSelectedModelId} />}
+                  : selectableModels.length === 0
+                    ? <span className={styles.unavailable}>暂无可用模型</span>
+                    : (
+                      <ModelPicker
+                        models={selectableModels}
+                        value={selectedModel?.modelId ?? ""}
+                        onChange={selectModel}
+                        triggerLabel="模型"
+                        showType
+                        tone={isLauncher ? "dark" : "default"}
+                      />
+                    )}
             </div>
 
-            <div className={styles.skillControlWrap}>
-              <button type="button" className={selectedSkill ? styles.skillActive : styles.controlButton} onClick={() => setSkillPickerOpen(true)}>
-                <WandSparkles aria-hidden className="h-3.5 w-3.5" />
-                <span>{selectedSkill?.title || "Skill"}</span>
+            {isLauncher && <div className={styles.skillControlWrap}>
+              <button
+                type="button"
+                className={selectedSkill ? styles.skillActive : styles.controlButton}
+                onClick={() => setSkillPickerOpen(true)}
+                aria-haspopup="dialog"
+                aria-expanded={skillPickerOpen}
+                title={selectedSkill ? `当前技能：${selectedSkill.title}` : "选择技能，也可以在输入框键入 /"}
+              >
+                <Wand2 aria-hidden className="h-3.5 w-3.5" />
+                <span>{selectedSkill?.title || "技能"}</span>
                 <ChevronDown aria-hidden className="h-3 w-3" />
               </button>
               {selectedSkill && (
@@ -916,22 +1789,38 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
                   <X aria-hidden className="h-3 w-3" />
                 </button>
               )}
-            </div>
+            </div>}
 
-            <QuickSelect
-              label="比例"
-              value={activeRatio}
-              options={ratioOptions}
-              onChange={mode === "image" ? setImageRatio : setVideoRatio}
-            />
-            {mode === "image" ? (
+            {!isAgentSelection && <>
+              <QuickSelect
+                label="比例"
+                value={activeRatio}
+                options={ratioOptions}
+                onChange={mode === "image" ? setImageRatio : setVideoRatio}
+                icon={<Ratio className="h-3.5 w-3.5" />}
+                dark={isLauncher}
+              />
+              {mode === "image" ? (
               <>
-                <QuickSelect label="清晰度" value={activeResolution} options={resolutionOptions} onChange={setImageResolution} />
+                <QuickSelect
+                  label="清晰度"
+                  value={activeResolution}
+                  options={resolutionOptions}
+                  onChange={setImageResolution}
+                  icon={<ScanLine className="h-3.5 w-3.5" />}
+                  dark={isLauncher}
+                />
                 {qualityOptions.length > 1 && (
-                  <QuickSelect label="画质" value={activeQuality} options={qualityOptions} onChange={setImageQuality} />
+                  <QuickSelect
+                    label="画质"
+                    value={activeQuality}
+                    options={qualityOptions}
+                    onChange={setImageQuality}
+                    dark={isLauncher}
+                  />
                 )}
               </>
-            ) : (
+              ) : (
               <>
                 <QuickSelect
                   label="时长"
@@ -939,42 +1828,51 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
                   options={durationOptions.map(String)}
                   onChange={(value) => setVideoDuration(Number(value))}
                   formatOption={(value) => `${value}s`}
+                  icon={<Clock3 className="h-3.5 w-3.5" />}
+                  dark={isLauncher}
                 />
-                {modelConfig.audio !== false && (
-                  <button
-                    type="button"
-                    className={styles.controlButton}
-                    onClick={() => setVideoAudio((current) => !current)}
-                    title={videoAudio ? "生成有声视频" : "生成静音视频"}
-                  >
-                    {videoAudio
-                      ? <Volume2 aria-hidden className="h-3.5 w-3.5" />
-                      : <VolumeX aria-hidden className="h-3.5 w-3.5" />}
-                    {videoAudio ? "有声" : "静音"}
-                  </button>
-                )}
               </>
-            )}
+              )}
+            </>}
 
-            <div ref={refMenuWrapRef} className={styles.refMenuWrap}>
-              <button
-                ref={refMenuTriggerRef}
-                type="button"
-                className={styles.controlButton}
-                onClick={toggleRefMenu}
-                disabled={quickRefs.length === 0}
-                title={quickRefs.length ? "引用画布里的素材" : "画布里暂无可引用素材"}
-                aria-haspopup="menu"
-                aria-expanded={refMenuOpen}
-              >
-                <AtSign aria-hidden className="h-3.5 w-3.5" /> 引用
-                {activeRefCount > 0 && <span className={styles.countBadge}>{activeRefCount}</span>}
-              </button>
-            </div>
+            {!isLauncher && (
+              <div ref={refMenuWrapRef} className={styles.refMenuWrap}>
+                <button
+                  ref={refMenuTriggerRef}
+                  type="button"
+                  className={`${styles.controlButton} ${styles.refButton}`}
+                  onClick={toggleRefMenu}
+                  disabled={quickRefs.length === 0}
+                  title={quickRefs.length ? "引用画布里的素材" : "画布里暂无可引用素材"}
+                  aria-label={quickRefs.length ? `引用画布素材，已引用 ${activeRefCount} 项` : "画布里暂无可引用素材"}
+                  aria-haspopup="menu"
+                  aria-expanded={refMenuOpen}
+                  aria-controls="canvas-quick-start-ref-menu"
+                >
+                  <AtSign aria-hidden className="h-4 w-4" />
+                  {activeRefCount > 0 && <span className={styles.countBadge}>{activeRefCount}</span>}
+                </button>
+              </div>
+            )}
           </div>
 
-          <div className={styles.toolbarRight}>
+          <div className={styles.toolbarRight} role="group" aria-label="执行设置">
             {uploading && <span className={styles.progress} aria-live="polite"><Paperclip aria-hidden className="h-3.5 w-3.5" /> {uploadProgress}%</span>}
+            <button
+              type="button"
+              role="switch"
+              aria-checked={canvasMode}
+              aria-label={selectedSkill ? "所选技能将在新画布助手中运行" : canvasMode ? "画布模式已开启，创建画布后立即生成" : "画布模式已关闭，仅创建待生成节点"}
+              className={styles.canvasToggle}
+              title={selectedSkill ? "技能会在新画布的助手中运行" : isLauncher ? "控制新画布打开后是否立即生成" : "关闭后只添加待生成节点，方便继续精调"}
+              onClick={() => setCanvasMode((current) => !current)}
+              disabled={!!selectedSkill}
+            >
+              <span>画布模式</span>
+              <span className={canvasMode ? styles.switchOn : styles.switchOff} aria-hidden>
+                <span />
+              </span>
+            </button>
             <button
               type="button"
               className={styles.optimizeButton}
@@ -983,28 +1881,16 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
               title="AI 优化提示词"
               aria-label="AI 优化提示词"
             >
-              {optimizing ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <WandSparkles aria-hidden className="h-4 w-4" />}
+              {optimizing ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <PencilLine aria-hidden className="h-4 w-4" />}
             </button>
-            <div className={styles.canvasToggle} title="关闭后只添加待生成节点，方便继续精调">
-              <span>{canvasMode ? "画布模式" : "仅添加节点"}</span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={canvasMode}
-                aria-label={canvasMode ? "画布模式已开启，提交后立即生成" : "画布模式已关闭，仅添加待生成节点"}
-                className={canvasMode ? styles.switchOn : styles.switchOff}
-                onClick={() => setCanvasMode((current) => !current)}
-              >
-                <span />
-              </button>
-            </div>
             <button
               type="button"
               className={styles.submitButton}
               onClick={() => { void submit(); }}
-              disabled={submitting || uploading || optimizing || !prompt.trim() || !projectId || !selectedModel}
-              title={canvasMode ? `生成${mode === "image" ? "图片" : "视频"}并添加到画布` : "添加待生成节点"}
-              aria-label={canvasMode ? `生成${mode === "image" ? "图片" : "视频"}并添加到画布` : "添加待生成节点"}
+              disabled={launchBlocked || submitting || uploading || optimizing || !prompt.trim() || (!isLauncher && !projectId) || !canvasLaunchCanSubmit(selectedSkill, selectedModel?.modelId) || (!isLauncher && hasSkillSelection)}
+              title={launchBlocked ? launchBlockedReason : submitting ? isLauncher ? "正在创建新画布" : "正在提交生成" : submitActionLabel}
+              aria-label={launchBlocked ? launchBlockedReason : submitting ? isLauncher ? "正在创建新画布" : "正在提交生成" : submitActionLabel}
+              aria-busy={submitting}
             >
               {submitting ? <Loader2 aria-hidden className="h-4 w-4 animate-spin" /> : <ArrowUp aria-hidden className="h-4 w-4" />}
             </button>
@@ -1014,11 +1900,12 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
 
       {refMenuOpen && typeof document !== "undefined" && createPortal(
         <div
+          id="canvas-quick-start-ref-menu"
           ref={refMenuPanelRef}
           className={`${styles.refMenu} ${refMenuPosition.openUp ? styles.refMenuOpenUp : ""}`}
           role="menu"
           aria-label="引用画布素材"
-          style={{ left: refMenuPosition.left, top: refMenuPosition.top }}
+          style={{ left: refMenuPosition.left, top: refMenuPosition.top, maxHeight: refMenuPosition.maxHeight }}
           onKeyDown={handleRefMenuKeyDown}
         >
           {quickRefs.map((ref) => {
@@ -1030,7 +1917,7 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
                 role="menuitem"
                 disabled={active}
                 onClick={() => {
-                  setPrompt((current) => `${current}${current && !/\s$/.test(current) ? " " : ""}${refLabel(ref)} `);
+                  updatePrompt(`${prompt}${prompt && !/\s$/.test(prompt) ? " " : ""}${refLabel(ref)} `);
                   setRefMenuOpen(false);
                   refMenuTriggerRef.current?.focus();
                 }}
@@ -1038,7 +1925,7 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
                 {ref.thumb
                   // eslint-disable-next-line @next/next/no-img-element
                   ? <img src={ref.thumb} alt="" />
-                  : <span className={styles.refGlyph}>{ref.kind === "video" ? "▶" : "文"}</span>}
+                  : <span className={styles.refGlyph}>{refGlyph(ref)}</span>}
                 <span><strong>{ref.title || refLabel(ref)}</strong><small>{refLabel(ref)}</small></span>
                 {active && <span className={styles.usedMark}>已引用</span>}
               </button>
@@ -1048,16 +1935,16 @@ export function CanvasQuickStart({ getViewportCenter }: Props) {
         document.body,
       )}
 
-      <SkillPicker
+      {isLauncher && <SkillPicker
         open={skillPickerOpen}
         onClose={() => setSkillPickerOpen(false)}
         onPick={pickSkill}
         currentId={selectedSkill?.id}
-        kinds={["preset"]}
+        kinds={["preset", "agent"]}
         entryPoint="canvas"
         targetType={mode}
         outputType={mode}
-      />
+      />}
     </section>
   );
 }

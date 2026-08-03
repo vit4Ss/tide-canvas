@@ -30,16 +30,30 @@ import { CanvasMinimap } from "./canvas-minimap";
 import { CanvasQuickAddMenu } from "./canvas-quick-add-menu";
 import { CanvasAssistantPanel } from "./canvas-assistant-panel";
 import { CanvasQuickStart } from "./canvas-quick-start";
-import {
-  CanvasSkillRunWorkspace,
-  openCanvasSkillRunLauncher,
-} from "./skill-run/canvas-skill-run-workspace";
+import type { CanvasLaunchJournal } from "@/lib/canvas-launch";
 // 画布内部分节点(image-node / quality-ratio-dropdown)使用 @mantine/core,需 Provider + 其 CSS。
 // 就近包在画布视图内,避免改动画布入口路由。
 import { MantineProvider } from "@mantine/core";
 import "@mantine/core/styles.css";
 
-export function CanvasView() {
+interface CanvasViewProps {
+  launchJournal?: CanvasLaunchJournal | null;
+  persistenceReady?: boolean;
+  onLaunchConsumed?: () => void;
+}
+
+export function CanvasView({ launchJournal, persistenceReady = false, onLaunchConsumed }: CanvasViewProps) {
+  // A journal that already froze/submitted the legacy single-model payload
+  // must resume that exact request. Fresh journals with a selected Skill are
+  // handed to the assistant only when the user asked to run immediately.
+  // Canvas mode off keeps its explicit promise: materialize an idle node.
+  const resumeDirectLaunch = !!launchJournal && (
+    !launchJournal.selectedSkill ||
+    !launchJournal.canvasMode ||
+    !!launchJournal.generationPayload ||
+    !!launchJournal.taskId
+  );
+  const assistantLaunchJournal = launchJournal && !resumeDirectLaunch ? launchJournal : null;
   const containerRef = useRef<HTMLDivElement>(null);
   const nodes = useCanvasStore((s) => s.nodes);
   const connections = useCanvasStore((s) => s.connections);
@@ -437,7 +451,15 @@ export function CanvasView() {
         </CanvasWorldLayer>
       </div>
 
-      <CanvasQuickStart getViewportCenter={getViewportCenter} />
+      {launchJournal && resumeDirectLaunch && (
+        <CanvasQuickStart
+          variant="consumer"
+          getViewportCenter={getViewportCenter}
+          launchJournal={launchJournal}
+          persistenceReady={persistenceReady}
+          onLaunchConsumed={onLaunchConsumed}
+        />
+      )}
 
       {nodes.length === 0 && <CanvasEmptyState />}
 
@@ -501,8 +523,11 @@ export function CanvasView() {
       <MyAssetsPanel open={myAssetsOpen} onClose={() => setMyAssetsOpen(false)} onPick={addAssetToCanvas} refreshKey={assetsRefreshKey} />
       <CanvasHistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />
 
-      <CanvasSkillRunWorkspace />
-      <CanvasAssistantPanel />
+      <CanvasAssistantPanel
+        launchJournal={assistantLaunchJournal}
+        persistenceReady={persistenceReady}
+        onLaunchConsumed={onLaunchConsumed}
+      />
 
       <CanvasBottomToolbar
         gridSnap={gridSnap}
@@ -519,7 +544,6 @@ export function CanvasView() {
         onArrange={handleArrange}
         onOpenAssets={() => { setMyAssetsOpen((v) => !v); setHistoryOpen(false); }}
         onOpenHistory={() => { setHistoryOpen((v) => !v); setMyAssetsOpen(false); }}
-        onRunSkill={() => openCanvasSkillRunLauncher({ sourceNodeIds: Array.from(selectedNodeIds) })}
       />
     </div>
     </MantineProvider>

@@ -115,7 +115,7 @@ export function parseTaskInput(input: unknown): Record<string, unknown> {
 
 /** reconstruct the 创作台 RunParams from a task's handler + stored input, so a
  *  history item (or the restored last result) can be re-edited / re-generated. */
-export function paramsFromTask(handler: string, modelName: string, input: unknown): RunParams {
+export function paramsFromTask(handler: string, modelName: string, input: unknown, modelId?: string): RunParams {
   const inp = parseTaskInput(input);
   const str = (v: unknown) => (typeof v === "string" ? v : "");
   const num = (v: unknown) => (typeof v === "number" ? v : parseInt(String(v ?? ""), 10) || 0);
@@ -129,6 +129,7 @@ export function paramsFromTask(handler: string, modelName: string, input: unknow
   return {
     prompt: str(inp.prompt),
     model: modelName,
+    ...(modelId ? { modelId } : {}),
     // 音频共用 text_to_audio handler，音效模型的历史按名称归回音效页签。
     tool:
       handler === "text_to_audio" && /sfx|音效/i.test(modelName)
@@ -142,6 +143,7 @@ export function paramsFromTask(handler: string, modelName: string, input: unknow
     dur: str(inp.duration) || "5s",
     quality: str(inp.quality),
     count: Math.max(1, num(inp.batchCount) || 1),
+    ...(str(inp.skillId) ? { skill: { id: str(inp.skillId) } } : {}),
     imageRefs,
     firstFrame: str(inp.firstFrame) || undefined,
     lastFrame: str(inp.lastFrame) || undefined,
@@ -280,7 +282,7 @@ export function histItemsFromTasks(records: AiTaskVO[]): HistItem[] {
     if (!urls.length) continue; // skip failed / urlless tasks (real data only)
 
     const type = HIST_HANDLER_TYPE[t.handler] ?? "image";
-    const params = paramsFromTask(t.handler, t.modelName || "", t.input);
+    const params = paramsFromTask(t.handler, t.modelName || "", t.input, t.modelId);
     // Suno 分轨明细：clip_id 供延长/翻唱引用，trackTitle 是 Suno 起的歌名。
     const tracks = tracksFromMeta(meta);
     // 上传登记任务(extras.task=upload)产出的 clip:延长时须发 upload_extend,打标传给候选

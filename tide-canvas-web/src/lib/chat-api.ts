@@ -16,6 +16,7 @@
 //   GET    /api/im/conversations/:id/stream  (SSE)   -> 断线重连续播
 
 import { http, toParams, refreshTokenOnce, getAccessToken } from "./http";
+import { loadLatestChronologicalMessageTail } from "./chat-message-tail";
 import type { PageData } from "@/types/api";
 import type {
   ConversationVO,
@@ -64,6 +65,13 @@ async function fetchStream(
  *  {error,code?} — code "CONTEXT_LIMIT" means the conversation hit the context
  *  cap and the user should start a new one.
  *  Pass an AbortSignal to cancel (switching conversation / leaving the page). */
+export interface StreamMessageOutcome {
+  status: "completed" | "rejected" | "pending" | "ambiguous" | "aborted";
+  code?: string;
+  message?: string;
+  retryAfterMs?: number;
+}
+
 export async function streamMessage(
   id: string,
   content: string,
@@ -78,8 +86,11 @@ export async function streamMessage(
     model?: string;
     /** Optional public preset. The server resolves its template and defaults. */
     skillId?: string;
+    /** Stable retry key for a text turn. The server stores it on both message
+     * rows and fences concurrent/replayed requests before charging again. */
+    clientRequestId?: string;
   },
-): Promise<void> {
+): Promise<StreamMessageOutcome> {
   let res: Response;
   try {
     res = await fetchStream(
@@ -92,19 +103,28 @@ export async function streamMessage(
           ...(handlers.attachments?.length ? { attachments: handlers.attachments } : {}),
           ...(handlers.model ? { model: handlers.model } : {}),
           ...(handlers.skillId ? { skillId: handlers.skillId } : {}),
+          ...(handlers.clientRequestId ? { clientRequestId: handlers.clientRequestId } : {}),
         }),
       },
       handlers.signal,
     );
   } catch {
     // 主动中止（切会话/离开页面）不是错误，别对用户弹"网络错误"假警报。
-    if (!handlers.signal?.aborted) handlers.onError?.("网络错误");
-    return;
+    if (handlers.signal?.aborted) return { status: "aborted" };
+    handlers.onError?.("网络错误");
+    return { status: "ambiguous", message: "网络错误" };
   }
-  if (!res.ok || !res.body) {
-    handlers.onError?.(res.status === 401 ? "登录状态已过期，请重新登录" : "网络错误");
-    return;
+  if (!res.ok) {
+    const message = res.status === 401 ? "登录状态已过期，请重新登录" : "网络错误";
+    handlers.onError?.(message);
+    const ambiguous = res.status === 408 || res.status === 429 || res.status >= 500;
+    return { status: ambiguous ? "ambiguous" : "rejected", code: String(res.status), message };
   }
+  if (!res.body) {
+    handlers.onError?.("连接中断，正在确认消息状态");
+    return { status: "ambiguous", message: "连接中断" };
+  }
+  let outcome: StreamMessageOutcome | null = null;
   const terminal = await readSseFrames(res, (obj) => {
     if (typeof obj.delta === "string") {
       handlers.onDelta?.(obj.delta);
@@ -112,10 +132,22 @@ export async function streamMessage(
     }
     if (obj.done) {
       handlers.onDone?.(obj.message as MessageVO);
+      outcome = { status: "completed" };
       return true;
     }
     if (obj.error) {
-      handlers.onError?.(String(obj.error), typeof obj.code === "string" ? obj.code : undefined);
+      const code = typeof obj.code === "string" ? obj.code : undefined;
+      const message = String(obj.error);
+      const retryAfterMs = typeof obj.retryAfterMs === "number" && Number.isFinite(obj.retryAfterMs)
+        ? Math.max(0, obj.retryAfterMs)
+        : undefined;
+      handlers.onError?.(message, code);
+      outcome = {
+        status: code === "TURN_IN_PROGRESS" ? "pending" : "rejected",
+        code,
+        message,
+        ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+      };
       return true;
     }
     return false;
@@ -125,6 +157,8 @@ export async function streamMessage(
   if (!terminal && !handlers.signal?.aborted) {
     handlers.onError?.("连接中断，回复可能不完整，请查看最新消息或重试");
   }
+  if (handlers.signal?.aborted) return { status: "aborted" };
+  return outcome ?? { status: "ambiguous", message: "连接中断" };
 }
 
 /** Attach to the conversation's in-progress assistant reply（断开重连续播,
@@ -140,12 +174,17 @@ export async function streamLive(
     onNone?: () => void;
     onError?: (msg: string) => void;
     signal?: AbortSignal;
+    /** Exact durable text-turn key. Without it the server only attaches when
+     * the conversation has one unambiguous legacy live stream. */
+    clientRequestId?: string;
   },
 ): Promise<void> {
   let res: Response;
   try {
     res = await fetchStream(
-      `/api/im/conversations/${id}/stream`,
+      `/api/im/conversations/${id}/stream${handlers.clientRequestId
+        ? `?clientRequestId=${encodeURIComponent(handlers.clientRequestId)}`
+        : ""}`,
       { method: "GET" },
       handlers.signal,
     );
@@ -214,6 +253,20 @@ async function readSseFrames(
   return terminal;
 }
 
+/** Load exactly the newest message tail in chronological order. The backend is
+ * oldest-first, so a partial last physical page must be joined with its
+ * predecessor; the collector also follows a last-page boundary crossed while
+ * the requests are in flight. */
+async function latestMessages(id: string, pageSize = 100) {
+  return loadLatestChronologicalMessageTail(
+    (pageNum, effectivePageSize) => http.get<PageData<MessageVO>>(
+      `/api/im/conversations/${id}/messages`,
+      toParams({ pageNum, pageSize: effectivePageSize }),
+    ),
+    pageSize,
+  );
+}
+
 export const chatApi = {
   /** List the current user's conversations (paged, newest first server-side). */
   conversations: (params?: { pageNum?: number; pageSize?: number }) =>
@@ -236,6 +289,9 @@ export const chatApi = {
       `/api/im/conversations/${id}/messages`,
       toParams(params ?? {}),
     ),
+
+  /** Newest chronological page (used by the live thread and recovery checks). */
+  latestMessages,
 
   /** Estimated context-token usage of a conversation vs the server cap. */
   contextUsage: (id: string) =>

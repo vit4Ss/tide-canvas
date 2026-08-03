@@ -9,6 +9,10 @@ import { toast } from "@/components/shared/toast";
 import type { AiModelVO } from "@/types/ai";
 import { FileCategory } from "@/types/file";
 import { useMountedRef } from "./use-node-runtime";
+import {
+  canCommitCanvasMediaUpload,
+  canReplaceCanvasMedia,
+} from "@/lib/canvas-generation-guard";
 
 export type UploadMediaKind = "image" | "video";
 
@@ -28,6 +32,7 @@ export function useMediaUpload(node: CanvasNode, kind: UploadMediaKind, selected
   const [localPreview, setLocalPreview] = useState<string | null>(null);
   // 上传/加载探测到的原始分辨率，供头部「W × H」展示（节点侧展示图 onLoad 也会回填）
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
+  const uploadAttemptRef = useRef(0);
   const mountedRef = useMountedRef();
   const assetCategory =
     node.type === CHARACTER_NODE_TYPE
@@ -39,14 +44,29 @@ export function useMediaUpload(node: CanvasNode, kind: UploadMediaKind, selected
   // 打开文件选择器
   const openFilePicker = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
+    const current = useCanvasStore.getState().nodes.find((item) => item.id === node.id);
+    if (!canReplaceCanvasMedia(current)) {
+      toast.info(current?.uploading ? "素材正在上传，请稍候" : "生成期间暂不能替换素材");
+      return;
+    }
     fileInputRef.current?.click();
-  }, []);
+  }, [node.id]);
 
   // 上传媒体文件并设为节点素材（带进度；上传中显示模糊预览 + 百分比）
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
+    const current = useCanvasStore.getState().nodes.find((item) => item.id === node.id);
+    if (!canReplaceCanvasMedia(current)) {
+      toast.info(current?.uploading ? "素材正在上传，请稍候" : "生成期间暂不能替换素材");
+      return;
+    }
+    const attempt = uploadAttemptRef.current + 1;
+    uploadAttemptRef.current = attempt;
+    // Store-level uploading is the cross-entry mutex: every generation path
+    // sees it synchronously, including actions outside this component.
+    updateNode(node.id, { uploading: true, uploadProgress: 0 }, false);
     const objUrl = URL.createObjectURL(file);
     setLocalPreview(objUrl);
     setDims(null); // 换新文件先清掉上一次的尺寸，成功后才由本次探测回填
@@ -72,22 +92,36 @@ export function useMediaUpload(node: CanvasNode, kind: UploadMediaKind, selected
     setUploading(true);
     let ok = false;
     try {
-      const res = await uploadFileSmart(file, (pct) => setUploadPct(pct), {
+      const res = await uploadFileSmart(file, (pct) => {
+        if (mountedRef.current) setUploadPct(pct);
+      }, {
         maxBytes: resolveModelReferenceLimitBytes(selectedModel, kind),
         label: KIND_META[kind].label,
         category: assetCategory,
       });
       if (res.success) {
-        ok = true;
+        const latest = useCanvasStore.getState().nodes.find((item) => item.id === node.id);
+        if (attempt !== uploadAttemptRef.current || !canCommitCanvasMediaUpload(latest)) {
+          toast.info("节点已开始生成，本次上传未替换当前素材");
+          return;
+        }
         const patch: Partial<CanvasNode> = {
           status: KIND_META[kind].status,
           fileSize: res.data.fileSize,
           fileType: res.data.fileType,
           mimeType: res.data.mimeType,
         };
-        if (kind === "image") patch.imageSrc = res.data.fileUrl;
+        if (kind === "image") {
+          patch.imageSrc = res.data.fileUrl;
+          patch.images = undefined;
+        }
         else patch.videoSrc = res.data.fileUrl;
-        updateNode(node.id, patch);
+        // Clear the transient mutex before recording history, otherwise Undo
+        // would restore a permanently uploading node. The user-visible media
+        // replacement itself is one deliberate, reversible history step.
+        updateNode(node.id, { uploading: false, uploadProgress: undefined }, false);
+        updateNode(node.id, patch, true);
+        ok = true;
         toast.success(KIND_META[kind].successToast);
       } else {
         toast.error(res.message || "上传失败");
@@ -95,10 +129,15 @@ export function useMediaUpload(node: CanvasNode, kind: UploadMediaKind, selected
     } catch {
       toast.error("上传失败");
     } finally {
-      setUploading(false);
-      setLocalPreview(null);
-      // 失败(或探测晚于失败回填)时清掉尺寸标签，避免上传失败后残留一枚孤立的 W×H。
-      if (!ok) setDims(null);
+      if (attempt === uploadAttemptRef.current) {
+        updateNode(node.id, { uploading: false, uploadProgress: undefined }, false);
+      }
+      if (mountedRef.current) {
+        setUploading(false);
+        setLocalPreview(null);
+        // 失败(或探测晚于失败回填)时清掉尺寸标签，避免上传失败后残留一枚孤立的 W×H。
+        if (!ok) setDims(null);
+      }
       URL.revokeObjectURL(objUrl);
     }
   }, [assetCategory, kind, mountedRef, node.id, selectedModel, updateNode]);

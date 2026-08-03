@@ -25,6 +25,10 @@ type SendMessageDTO struct {
 	Content     string          `json:"content" binding:"required,max=8192"`
 	Type        string          `json:"type" binding:"omitempty,oneof=text image file"`
 	Attachments []MessageAttach `json:"attachments" binding:"omitempty,max=12,dive"`
+	// ClientRequestID makes a streamed text turn retry-safe when the transport
+	// disconnects after the server accepted the request but before the browser
+	// received a terminal SSE frame.
+	ClientRequestID string `json:"clientRequestId" binding:"omitempty,max=96"`
 	// Model is the upstream model_key of the text model picked in the composer.
 	// Optional; the server only honors it when it names a listed enabled text
 	// model, otherwise it falls back to the configured primary text model.

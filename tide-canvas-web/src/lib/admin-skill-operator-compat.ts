@@ -4,7 +4,12 @@ import {
 } from "@/types/admin-skill";
 import type { SkillEntryPoint, SkillOutputType } from "@/types/skill";
 
-const LEGACY_ENTRY_POINTS: SkillEntryPoint[] = ["chat", "studio", "canvas", "asset", "api"];
+const CURRENT_PRESET_ENTRY_POINTS: SkillEntryPoint[] = ["studio", "chat", "canvas"];
+const LEGACY_ENTRY_POINTS: SkillEntryPoint[] = [
+  ...CURRENT_PRESET_ENTRY_POINTS,
+  "asset",
+  "api",
+];
 const SIMPLE_MANIFEST_KEYS = new Set([
   "kind",
   "primaryOutputType",
@@ -96,7 +101,10 @@ export function isOperatorEditablePresetVersion(
   if (outputs.length !== 1 || outputs[0] !== primaryOutput) return false;
 
   const entries = parseAdminStringList<SkillEntryPoint>(version.entryPoints);
-  if (!sameStringSet(entries, LEGACY_ENTRY_POINTS)) return false;
+  if (
+    !sameStringSet(entries, CURRENT_PRESET_ENTRY_POINTS) &&
+    !sameStringSet(entries, LEGACY_ENTRY_POINTS)
+  ) return false;
   if (!isEmptyObjectSchema(version.inputSchema)) return false;
 
   const manifest = objectValue(version.manifest);

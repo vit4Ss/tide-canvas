@@ -6,6 +6,13 @@
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import type { AiTaskVO } from "@/types/ai";
 import { AiTaskStatus } from "@/types/ai";
+import {
+  commitAcceptedAiGeneration,
+  isAmbiguousAiCreateCode,
+  recoverableAiGenerations,
+  type PendingAiGeneration,
+} from "@/lib/ai-generation-idempotency";
+import { useAuthStore } from "@/stores/use-auth-store";
 
 export type MusicMode = "inspire" | "custom" | "extend" | "cover";
 
@@ -273,9 +280,117 @@ export function validateAudioFile(file: File): string | null {
 }
 
 const REGISTER_POLL_INTERVAL = 3000;
-const REGISTER_MAX_WAIT = 10 * 60 * 1000;
 
 export type UploadClipStage = "uploading" | "registering";
+
+interface AudioUploadRecovery {
+  fileName: string;
+  audioUrl: string;
+  modelRowId?: string;
+  modelName?: string;
+}
+
+function audioUploadRecovery(entry: PendingAiGeneration): AudioUploadRecovery | null {
+  const stored = entry.recovery && typeof entry.recovery === "object"
+    ? entry.recovery as Partial<AudioUploadRecovery>
+    : {};
+  const extras = entry.payload?.input?.extras;
+  const payloadUrl = extras && typeof extras === "object"
+    ? (extras as Record<string, unknown>).audio_url
+    : undefined;
+  const audioUrl = typeof stored.audioUrl === "string"
+    ? stored.audioUrl
+    : typeof payloadUrl === "string"
+      ? payloadUrl
+      : "";
+  if (!audioUrl) return null;
+  return {
+    fileName: typeof stored.fileName === "string" ? stored.fileName : "上传的音频",
+    audioUrl,
+    modelRowId: typeof stored.modelRowId === "string" ? stored.modelRowId : undefined,
+    modelName: typeof stored.modelName === "string" ? stored.modelName : undefined,
+  };
+}
+
+async function ensureAudioUploadTask(
+  scope: string,
+  entry: PendingAiGeneration,
+  ownerUserId: string,
+): Promise<string> {
+  if (entry.taskId) return entry.taskId;
+  if (!entry.payload) throw new Error("上传登记恢复信息已失效，请重新上传");
+  for (;;) {
+    const result = await aiApi.generateIdempotent(
+      { ...entry.payload, clientRequestId: entry.clientRequestId },
+      scope,
+      {
+        requireDurableJournal: true,
+        retainAccepted: true,
+        recovery: entry.recovery,
+        ownerUserId,
+      },
+    );
+    if (result.success && result.data?.id) return String(result.data.id);
+    if (!isAmbiguousAiCreateCode(result.code)) {
+      throw new Error(result.message || "上传登记请求失败");
+    }
+    await new Promise((resolve) => setTimeout(resolve, REGISTER_POLL_INTERVAL));
+  }
+}
+
+async function waitForAudioUpload(
+  scope: string,
+  taskId: string,
+  recovery: AudioUploadRecovery,
+  ownerUserId: string,
+): Promise<ClipOption> {
+  for (;;) {
+    if ((useAuthStore.getState().user?.id ?? "") !== ownerUserId) {
+      throw new Error("账号已切换，原账号的上传登记任务仍会继续，可切回后恢复");
+    }
+    const response = await aiApi.getTask(taskId).catch(() => null);
+    if ((useAuthStore.getState().user?.id ?? "") !== ownerUserId) {
+      throw new Error("账号已切换，原账号的上传登记任务仍会继续，可切回后恢复");
+    }
+    if (!response?.success || !response.data) {
+      if (response?.code === 400 || response?.code === 404) {
+        await commitAcceptedAiGeneration(scope, taskId, ownerUserId);
+        throw new Error(response.message || "上传登记任务已不存在，请重新上传");
+      }
+      if (response?.code === 403) throw new Error("当前账号无权访问这个上传登记任务");
+      await new Promise((resolve) => setTimeout(resolve, REGISTER_POLL_INTERVAL));
+      continue;
+    }
+    const task = response.data;
+    if (task.status === AiTaskStatus.FAILED || task.status === AiTaskStatus.CANCELLED) {
+      await commitAcceptedAiGeneration(scope, taskId, ownerUserId);
+      throw new Error(task.errorMsg || "上传登记失败");
+    }
+    if (task.status !== AiTaskStatus.SUCCESS) {
+      // Processing beyond a UI budget is not failure. Keep this promise and the
+      // accepted journal attached to the original paid task until terminal.
+      await new Promise((resolve) => setTimeout(resolve, REGISTER_POLL_INTERVAL));
+      continue;
+    }
+    const track = tracksFromMeta(parseMeta(task.resultMeta)).find((item) => item.clipId);
+    await commitAcceptedAiGeneration(scope, taskId, ownerUserId);
+    if (!track) throw new Error("上传登记结果缺少 clip，请联系客服处理");
+    const label = recovery.fileName.replace(/\.(mp3|wav)$/i, "");
+    return {
+      clipId: track.clipId,
+      label: label.length > 24 ? label.slice(0, 24) + "…" : label || "上传的音频",
+      modelId: recovery.modelRowId || "",
+      modelName: recovery.modelName || "",
+      url: track.url || recovery.audioUrl,
+      coverUrl: track.coverUrl,
+      duration: track.duration,
+      createTime: new Date().toISOString(),
+      trackNo: 1,
+      trackCount: 1,
+      isUpload: true,
+    };
+  }
+}
 
 /** 本地音频 → 可延长/翻唱的原曲(上游三步流的前两步):
     ① 传到本站存储拿公网 URL;② 以 extras {task:"upload", audio_url} 发起
@@ -296,6 +411,22 @@ export async function uploadAndRegisterClip(opts: {
   const { file, generateModelId, modelRowId, modelName, onStage } = opts;
   const invalid = validateAudioFile(file);
   if (invalid) throw new Error(invalid);
+  const ownerUserId = useAuthStore.getState().user?.id ?? "";
+  if (!ownerUserId) {
+    throw new Error("无法确认当前账号，上传登记任务尚未启动，请刷新后重试");
+  }
+
+  const scope = `audio-upload:${generateModelId}`;
+  const existing = recoverableAiGenerations(scope, ownerUserId)
+    .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+  const existingRecovery = existing ? audioUploadRecovery(existing) : null;
+  if (existing && existingRecovery) {
+    // A previous response may have been lost or the page may have reloaded.
+    // Resolve that exact clientRequestId before accepting another paid upload.
+    onStage?.("registering");
+    const taskId = await ensureAudioUploadTask(scope, existing, ownerUserId);
+    return waitForAudioUpload(scope, taskId, existingRecovery, ownerUserId);
+  }
 
   onStage?.("uploading");
   const up = await uploadFileSmart(file);
@@ -322,43 +453,34 @@ export async function uploadAndRegisterClip(opts: {
   }
 
   onStage?.("registering");
+  const recovery: AudioUploadRecovery = {
+    fileName: file.name,
+    audioUrl,
+    modelRowId,
+    modelName,
+  };
   const res = await aiApi.generateIdempotent({
     handler: "text_to_audio",
     modelId: generateModelId,
     input: { extras: { task: "upload", audio_url: audioUrl } },
-  }, `audio-upload:${generateModelId}`);
+  }, scope, {
+    requireDurableJournal: true,
+    retainAccepted: true,
+    recovery,
+    ownerUserId,
+  });
   if (!res.success || !res.data?.id) {
+    if (isAmbiguousAiCreateCode(res.code)) {
+      const pending = recoverableAiGenerations(scope, ownerUserId)
+        .find((entry) => audioUploadRecovery(entry)?.audioUrl === audioUrl);
+      if (pending) {
+        const recoveredTaskId = await ensureAudioUploadTask(scope, pending, ownerUserId);
+        return waitForAudioUpload(scope, recoveredTaskId, recovery, ownerUserId);
+      }
+    }
     throw new Error(res.message || "上传登记请求失败");
   }
 
   const taskId = String(res.data.id);
-  const deadline = Date.now() + REGISTER_MAX_WAIT;
-  for (;;) {
-    await new Promise((r) => setTimeout(r, REGISTER_POLL_INTERVAL));
-    if (Date.now() > deadline) throw new Error("上传登记超时，请重试");
-    const tr = await aiApi.getTask(taskId).catch(() => null);
-    // 断网/瞬时 5xx 不判死,由整体超时兜底(与画布轮询同口径)
-    if (!tr?.success || !tr.data) continue;
-    const task = tr.data;
-    if (task.status === AiTaskStatus.FAILED || task.status === AiTaskStatus.CANCELLED) {
-      throw new Error(task.errorMsg || "上传登记失败");
-    }
-    if (task.status !== AiTaskStatus.SUCCESS) continue;
-    const track = tracksFromMeta(parseMeta(task.resultMeta)).find((x) => x.clipId);
-    if (!track) throw new Error("上传登记结果缺少 clip，请重试");
-    const label = file.name.replace(/\.(mp3|wav)$/i, "");
-    return {
-      clipId: track.clipId,
-      label: label.length > 24 ? label.slice(0, 24) + "…" : label || "上传的音频",
-      modelId: modelRowId || "",
-      modelName: modelName || "",
-      url: track.url || audioUrl,
-      coverUrl: track.coverUrl,
-      duration: track.duration,
-      createTime: new Date().toISOString(),
-      trackNo: 1,
-      trackCount: 1,
-      isUpload: true,
-    };
-  }
+  return waitForAudioUpload(scope, taskId, recovery, ownerUserId);
 }
