@@ -42,8 +42,35 @@ func (r *repo) delete(ctx context.Context, id idgen.ID) error {
 
 // list returns a page of the owner's files filtered by the query.
 func (r *repo) list(ctx context.Context, ownerID idgen.ID, q fileQuery, offset, limit int) ([]model.File, int64, error) {
-	tx := r.db.WithContext(ctx).Model(&model.File{}).Where("owner_id = ?", ownerID)
-	if q.FileType != "" {
+	tx := applyFileListFilters(r.db.WithContext(ctx).Model(&model.File{}), ownerID, q)
+
+	var total int64
+	if err := tx.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var rows []model.File
+	if err := tx.Order(fileListOrder(q)).Offset(offset).Limit(limit).Find(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+	return rows, total, nil
+}
+
+func applyFileListFilters(tx *gorm.DB, ownerID idgen.ID, q fileQuery) *gorm.DB {
+	tx = tx.Where("owner_id = ?", ownerID)
+	if q.MediaKind != "" {
+		switch strings.ToLower(strings.TrimSpace(q.MediaKind)) {
+		case "image":
+			tx = tx.Where("file_type = ?", "image")
+		case "video":
+			tx = tx.Where("file_type = ?", "video")
+		case "audio":
+			tx = tx.Where("file_type = ? AND mime_type LIKE ?", "other", "audio/%")
+		case "doc":
+			tx = tx.Where("file_type = ? AND COALESCE(mime_type, '') NOT LIKE ?", "other", "audio/%")
+		default:
+			tx = tx.Where("1 = 0")
+		}
+	} else if q.FileType != "" {
 		tx = tx.Where("file_type = ?", q.FileType)
 	}
 	if q.Category != "" {
@@ -57,16 +84,14 @@ func (r *repo) list(ctx context.Context, ownerID idgen.ID, q fileQuery, offset, 
 		tx = tx.Where("original_name LIKE ?", "%"+q.Keyword+"%")
 	}
 	tx = applyDateRange(tx, "create_time", q.StartDate, q.EndDate)
+	return tx
+}
 
-	var total int64
-	if err := tx.Count(&total).Error; err != nil {
-		return nil, 0, err
+func fileListOrder(q fileQuery) string {
+	if strings.EqualFold(strings.TrimSpace(q.OrderDirection), "asc") {
+		return "create_time ASC"
 	}
-	var rows []model.File
-	if err := tx.Order("create_time DESC").Offset(offset).Limit(limit).Find(&rows).Error; err != nil {
-		return nil, 0, err
-	}
-	return rows, total, nil
+	return "create_time DESC"
 }
 
 // applyDateRange 追加 create_time 范围筛选(与 ai 任务列表同口径):startDate

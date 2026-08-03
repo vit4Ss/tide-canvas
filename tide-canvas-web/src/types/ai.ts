@@ -87,6 +87,10 @@ export interface AiToolVO {
 
 export interface AiTaskQuery extends PageQuery {
   handler?: string;
+  /** 资产页服务端媒体筛选，保证分页发生在类型过滤之后。 */
+  mediaType?: "image" | "video" | "audio";
+  /** 仅返回可进入资产库的任务（排除失败和已取消）。 */
+  assetOnly?: boolean;
   status?: AiTaskStatus;
   projectId?: string | number;
   /** true = 只要不属于任何画布项目的任务（创作台/对话页发起的生成） */

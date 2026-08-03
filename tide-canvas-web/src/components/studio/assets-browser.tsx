@@ -9,24 +9,31 @@
      the card shows a 选择 affordance; the 批量操作 / 同步 actions are hidden.
    ========================================================================== */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { aiApi, fileApi, uploadFileSmart } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/http";
 import { useAuthStore } from "@/stores/use-auth-store";
-import { FileCategory, FileType, type FileVO } from "@/types/file";
+import { FileCategory, type FileVO } from "@/types/file";
 import { AiTaskStatus, type AiTaskVO } from "@/types/ai";
 import { mesh } from "@/lib/mesh";
 import { ossDisplayUrl } from "@/lib/oss-display";
 import { toast } from "@/components/shared/toast";
 import { confirmDialog } from "@/components/shared/confirm";
-import { useReveal } from "@/components/site/use-reveal";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { AudioPlayerCard, SongCard } from "@/components/studio/audio-player-card";
+import {
+  HANDLER_MEDIA_KIND,
+  assetViewKey,
+  filtersForAssetTab,
+  initialAssetTab,
+  isHistoryFilter,
+  type AssetFilterKey as FilterKey,
+  type AssetMediaKind as MediaKind,
+  type AssetTabKey as TabKey,
+  type HistoryFilterKey,
+} from "@/components/studio/assets-browser-policy";
 
-type TabKey = "hist" | "upload";
-type MediaKind = "image" | "video" | "audio" | "doc";
-type FilterKey = MediaKind | "character" | "scene";
 
 /** A picked asset handed back to the caller in pick mode. */
 export interface PickedAsset {
@@ -49,17 +56,6 @@ const FILTERS: { f: FilterKey; label: string }[] = [
   { f: "doc", label: "文档" },
 ];
 
-/** 上传历史 filter → backend FileType (image|video|other). 音频/文档 collapse to
- *  "other"; we then split them client-side by mimeType. */
-const FILTER_TO_FILETYPE: Record<FilterKey, FileType> = {
-  character: FileType.IMAGE,
-  scene: FileType.IMAGE,
-  image: FileType.IMAGE,
-  video: FileType.VIDEO,
-  audio: FileType.OTHER,
-  doc: FileType.OTHER,
-};
-
 const FILTER_TO_CATEGORY: Record<FilterKey, FileCategory> = {
   character: FileCategory.CHARACTER,
   scene: FileCategory.SCENE,
@@ -67,16 +63,6 @@ const FILTER_TO_CATEGORY: Record<FilterKey, FileCategory> = {
   video: FileCategory.GENERAL,
   audio: FileCategory.GENERAL,
   doc: FileCategory.GENERAL,
-};
-
-/** generation handler → media type, for the 生成历史 filter. */
-const HANDLER_TYPE: Record<string, Exclude<MediaKind, "doc">> = {
-  text_to_image: "image",
-  image_to_image: "image",
-  text_to_video: "video",
-  image_to_video: "video",
-  start_end_to_video: "video",
-  text_to_audio: "audio",
 };
 
 const FILE_GLYPH: Record<string, string> = { audio: "♪", doc: "▤", video: "▶" };
@@ -88,6 +74,31 @@ const ACCEPT: Record<FilterKey, string> = {
   audio: "audio/*",
   doc: ".pdf,.doc,.docx,.txt,.md,.ppt,.pptx,.xls,.xlsx",
 };
+
+const ACCEPT_HINT: Record<FilterKey, string> = {
+  character: "仅支持角色图片",
+  scene: "仅支持场景图片",
+  image: "仅支持图片",
+  video: "仅支持视频",
+  audio: "仅支持音频",
+  doc: "支持 PDF、Office 与文本文件",
+};
+
+const AUDIO_EXTENSIONS = new Set(["mp3", "wav", "m4a", "aac", "flac", "ogg"]);
+const VIDEO_EXTENSIONS = new Set(["mp4", "mov", "webm", "mkv", "avi"]);
+const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "gif", "avif", "bmp"]);
+const DOC_EXTENSIONS = new Set(["pdf", "doc", "docx", "txt", "md", "ppt", "pptx", "xls", "xlsx"]);
+
+function uploadMatchesFilter(file: File, filter: FilterKey): boolean {
+  const mime = file.type.toLowerCase();
+  const extension = file.name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? "";
+  if (filter === "character" || filter === "scene" || filter === "image") {
+    return mime.startsWith("image/") || IMAGE_EXTENSIONS.has(extension);
+  }
+  if (filter === "video") return mime.startsWith("video/") || VIDEO_EXTENSIONS.has(extension);
+  if (filter === "audio") return mime.startsWith("audio/") || AUDIO_EXTENSIONS.has(extension);
+  return DOC_EXTENSIONS.has(extension);
+}
 
 /** Deterministic mesh fallback for an item without a usable cover URL. */
 function fallbackCover(seed: string): string {
@@ -128,12 +139,6 @@ function dateLabel(createTime: string): string {
   if (Number.isNaN(t)) return createTime;
   const d = new Date(t);
   return `${d.getMonth() + 1} 月 ${d.getDate()} 日`;
-}
-
-function timeKey(s: string): number {
-  if (!s) return 0;
-  const t = Date.parse(s);
-  return Number.isNaN(t) ? 0 : t;
 }
 
 function fmtSize(bytes: number): string {
@@ -200,11 +205,40 @@ interface Group<T> {
   items: T[];
 }
 
+interface AssetViewState {
+  tasks: AiTaskVO[];
+  files: FileVO[];
+  page: number;
+  hasMore: boolean;
+  multiPage: boolean;
+  loading: boolean;
+  loadingMore: boolean;
+  loadError: boolean;
+}
+
+const EMPTY_VIEW: AssetViewState = {
+  tasks: [],
+  files: [],
+  page: 1,
+  hasMore: false,
+  multiPage: false,
+  loading: true,
+  loadingMore: false,
+  loadError: false,
+};
+
+function appendUnique<T extends { id: string }>(current: T[], incoming: T[]): T[] {
+  const seen = new Set(current.map((item) => item.id));
+  return [...current, ...incoming.filter((item) => !seen.has(item.id))];
+}
+
 function groupByDate<T>(rows: T[], getTime: (r: T) => string): Group<T>[] {
   const buckets = new Map<string, T[]>();
   const order: string[] = [];
-  const sorted = rows.slice().sort((a, b) => timeKey(getTime(b)) - timeKey(getTime(a)));
-  for (const r of sorted) {
+  // The server already returns the requested global order. Preserve it so
+  // ascending pagination appends at the bottom instead of jumping older rows
+  // to the top after every page.
+  for (const r of rows) {
     const key = dateLabel(getTime(r));
     let arr = buckets.get(key);
     if (!arr) {
@@ -226,16 +260,19 @@ export function AssetsBrowser({
   /** when true, cards select instead of opening, and 批量/同步 actions are hidden */
   pickMode?: boolean;
   onPick?: (asset: PickedAsset) => void;
-  /** initial tab — 生成历史 has no audio/doc, so audio picks should pass "upload" */
+  /** initial tab; unsupported generation filters are normalized to 上传历史 */
   defaultTab?: TabKey;
   /** initial media filter (image | video | audio | doc) */
   defaultFilter?: FilterKey;
 }) {
-  const [tab, setTab] = useState<TabKey>(() => (isConceptFilter(defaultFilter) ? "upload" : defaultTab));
-  const [filter, setFilter] = useState<FilterKey>(defaultFilter);
-  const [tasks, setTasks] = useState<AiTaskVO[]>([]);
-  const [files, setFiles] = useState<FileVO[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<TabKey>(() => initialAssetTab(defaultTab, defaultFilter));
+  const [historyFilter, setHistoryFilter] = useState<HistoryFilterKey>(() =>
+    isHistoryFilter(defaultFilter) ? defaultFilter : "image",
+  );
+  const [uploadFilter, setUploadFilter] = useState<FilterKey>(defaultFilter);
+  const filter: FilterKey = tab === "hist" ? historyFilter : uploadFilter;
+  const visibleFilters = useMemo(() => new Set(filtersForAssetTab(tab)), [tab]);
+  const [viewStates, setViewStates] = useState<Record<string, AssetViewState>>({});
   const [uploading, setUploading] = useState(false);
   // in-app preview overlay target (image/video/audio); docs never set this.
   const [preview, setPreview] = useState<OpenAsset | null>(null);
@@ -277,173 +314,133 @@ export function AssetsBrowser({
     [preview, router],
   );
 
-  // reqId 守卫(tasks/files 共用):切 tab 或 filter 时,旧 tab/筛选的响应后到不应覆盖当前视图。
-  const reqIdRef = useRef(0);
-
-
-  /* ── 懒加载 + 时间筛选 ────────────────────────────────────────────────
-     首屏一页(PAGE_SIZE),底部哨兵续页;时间筛选(startDate/endDate)走服务端
-     (懒加载下客户端只能筛已加载部分,会漏)。loadedCountRef 记已取「记录条数」,
-     分页依据;append 时按 id 去重;loadingRef 只挡续页重入——全新加载(切 tab/
-     筛选/日期)必须放行并靠 reqId 丢弃旧响应。cooldownRef 压住哨兵连发:
-     一次触发后 700ms 内忽略后续交点,消除机枪式连翻的抽搐感。 */
+  /* ── 懒加载 + 视图缓存 ────────────────────────────────────────────────
+     每个 tab/filter/date/sort 组合有独立缓存。切回已加载视图立即显示，不重复
+     请求；服务端先完成媒体/状态过滤再分页，避免客户端过滤导致漏页。 */
   const PAGE_SIZE = 24;
-  const pageRef = useRef(1);
-  const loadedCountRef = useRef(0);
-  const loadingRef = useRef(false);
   const cooldownRef = useRef(0);
-  const [hasMore, setHasMore] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [loadError, setLoadError] = useState(false);
-  // 「翻过页」用 state 记:到底提示判定(JSX 不能读 ref)。重置时清回 false。
-  const [multiPage, setMultiPage] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const sentinelRef = useRef<HTMLDivElement>(null);
+  const requestSeqRef = useRef(0);
+  const activeRequestsRef = useRef(new Map<string, number>());
+  const mountedRef = useRef(true);
+  const viewKey = useMemo(
+    () => assetViewKey({ tab, filter, startDate, endDate, sortAsc }),
+    [tab, filter, startDate, endDate, sortAsc],
+  );
+  const hasCachedView = Object.prototype.hasOwnProperty.call(viewStates, viewKey);
+  const currentView = viewStates[viewKey] ?? EMPTY_VIEW;
+  const { tasks, files, loading, loadingMore, loadError, hasMore, multiPage } = currentView;
 
   useEffect(() => () => {
-    reqIdRef.current += 1;
-    loadingRef.current = false;
+    mountedRef.current = false;
+    activeRequestsRef.current.clear();
   }, []);
 
-  // 生成历史: the user's studio/chat generation tasks (filtered client-side by
-  // type). noProject 排除画布项目里的生成——画布产物只属于画布，不进资产库。
-  const fetchTasks = useCallback(async (page: number, append: boolean) => {
-    if (append && loadingRef.current) return;
-    loadingRef.current = true;
-    const id = ++reqIdRef.current;
+  const fetchView = useCallback(async (page: number, append: boolean, force = false) => {
+    if (!force && activeRequestsRef.current.has(viewKey)) return;
+    const requestId = ++requestSeqRef.current;
+    activeRequestsRef.current.set(viewKey, requestId);
     try {
       await ensureSession();
-      if (!append) setLoading(true);
-      else setLoadingMore(true);
-      const res = await aiApi.listTasks({
-        pageNum: page,
-        pageSize: PAGE_SIZE,
-        noProject: true,
-        startDate: startDate || undefined,
-        endDate: endDate || undefined,
+      if (!mountedRef.current || activeRequestsRef.current.get(viewKey) !== requestId) return;
+      setViewStates((prev) => {
+        const prior = prev[viewKey];
+        return {
+          ...prev,
+          [viewKey]: {
+            ...(prior ?? EMPTY_VIEW),
+            loading: !append && !prior,
+            loadingMore: append,
+            loadError: false,
+          },
+        };
       });
-      if (id !== reqIdRef.current) return;
-      if (!res.success || !res.data) {
-        if (!append) {
-          setTasks([]);
-          setHasMore(false);
-        }
-        setLoadError(true);
-        return;
-      }
+
+      const res = tab === "hist"
+        ? await aiApi.listTasks({
+            pageNum: page,
+            pageSize: PAGE_SIZE,
+            noProject: true,
+            mediaType: filter as HistoryFilterKey,
+            assetOnly: true,
+            orderDirection: sortAsc ? "asc" : "desc",
+            startDate: startDate || undefined,
+            endDate: endDate || undefined,
+          })
+        : await fileApi.list({
+            pageNum: page,
+            pageSize: PAGE_SIZE,
+            mediaKind: isConceptFilter(filter) ? "image" : filter,
+            category: FILTER_TO_CATEGORY[filter],
+            orderDirection: sortAsc ? "asc" : "desc",
+            startDate: startDate || undefined,
+            endDate: endDate || undefined,
+          });
+      if (!mountedRef.current || activeRequestsRef.current.get(viewKey) !== requestId) return;
+      if (!res.success || !res.data) throw new Error(res.message || "asset list failed");
+
       const records = res.data.records;
-      const total = res.data.total;
-      pageRef.current = page;
-      loadedCountRef.current = append ? loadedCountRef.current + records.length : records.length;
-      setHasMore(loadedCountRef.current < total);
-      setLoadError(false);
-      if (page > 1) setMultiPage(true);
-      setTasks((prev) => {
-        if (!append) return records;
-        const seen = new Set(prev.map((t) => t.id));
-        return [...prev, ...records.filter((t) => !seen.has(t.id))];
+      const hasNextPage = page * res.data.pageSize < res.data.total;
+      setViewStates((prev) => {
+        const prior = prev[viewKey] ?? EMPTY_VIEW;
+        return {
+          ...prev,
+          [viewKey]: {
+            tasks: tab === "hist"
+              ? appendUnique(append ? prior.tasks : [], records as AiTaskVO[])
+              : [],
+            files: tab === "upload"
+              ? appendUnique(append ? prior.files : [], records as FileVO[])
+              : [],
+            page,
+            hasMore: hasNextPage,
+            multiPage: append || page > 1 || prior.multiPage,
+            loading: false,
+            loadingMore: false,
+            loadError: false,
+          },
+        };
       });
     } catch {
-      if (id === reqIdRef.current) {
-        if (!append) {
-          setTasks([]);
-          setHasMore(false);
-        }
-        setLoadError(true);
-      }
+      if (!mountedRef.current || activeRequestsRef.current.get(viewKey) !== requestId) return;
+      setViewStates((prev) => {
+        const prior = prev[viewKey] ?? EMPTY_VIEW;
+        return {
+          ...prev,
+          [viewKey]: {
+            ...prior,
+            loading: false,
+            loadingMore: false,
+            loadError: true,
+          },
+        };
+      });
     } finally {
-      if (id === reqIdRef.current) {
-        setLoading(false);
-        setLoadingMore(false);
-        loadingRef.current = false;
+      if (activeRequestsRef.current.get(viewKey) === requestId) {
+        activeRequestsRef.current.delete(viewKey);
       }
     }
-  }, [ensureSession, startDate, endDate]);
+  }, [ensureSession, endDate, filter, sortAsc, startDate, tab, viewKey]);
 
-  // 上传历史: the user's uploaded files for the current filter.
-  const fetchFiles = useCallback(async (page: number, append: boolean) => {
-    if (append && loadingRef.current) return;
-    loadingRef.current = true;
-    const id = ++reqIdRef.current;
-    try {
-      await ensureSession();
-      if (!append) setLoading(true);
-      else setLoadingMore(true);
-      const res = await fileApi.list({
-        pageNum: page,
-        pageSize: PAGE_SIZE,
-        fileType: FILTER_TO_FILETYPE[filter],
-        category: FILTER_TO_CATEGORY[filter],
-        startDate: startDate || undefined,
-        endDate: endDate || undefined,
-      });
-      if (id !== reqIdRef.current) return;
-      if (!res.success || !res.data) {
-        if (!append) {
-          setFiles([]);
-          setHasMore(false);
-        }
-        setLoadError(true);
-        return;
-      }
-      const records = res.data.records;
-      const total = res.data.total;
-      pageRef.current = page;
-      loadedCountRef.current = append ? loadedCountRef.current + records.length : records.length;
-      setHasMore(loadedCountRef.current < total);
-      setLoadError(false);
-      if (page > 1) setMultiPage(true);
-      setFiles((prev) => {
-        if (!append) return records;
-        const seen = new Set(prev.map((f) => f.id));
-        return [...prev, ...records.filter((f) => !seen.has(f.id))];
-      });
-    } catch {
-      if (id === reqIdRef.current) {
-        if (!append) {
-          setFiles([]);
-          setHasMore(false);
-        }
-        setLoadError(true);
-      }
-    } finally {
-      if (id === reqIdRef.current) {
-        setLoading(false);
-        setLoadingMore(false);
-        loadingRef.current = false;
-      }
-    }
-  }, [ensureSession, filter, startDate, endDate]);
-
-  // 切 tab / 类型筛选 / 日期:回到第 1 页重新加载(哨兵与「翻过页」标记已在
-  // 事件回调 resetBatch 里复位——effect 同步路径不进 setState)。
   useEffect(() => {
-    pageRef.current = 1;
-    loadedCountRef.current = 0;
-    void (async () => {
-      if (tab === "hist") await fetchTasks(1, false);
-      else await fetchFiles(1, false);
-    })();
-  }, [tab, filter, startDate, endDate, fetchTasks, fetchFiles]);
+    if (hasCachedView) return;
+    const frame = window.requestAnimationFrame(() => void fetchView(1, false));
+    return () => window.cancelAnimationFrame(frame);
+  }, [fetchView, hasCachedView]);
 
   const loadMore = useCallback(() => {
     // 触发冷却:一次点火后 700ms 内忽略后续交点,消除连发的抽搐感
     const now = Date.now();
     if (now - cooldownRef.current < 700) return;
     cooldownRef.current = now;
-    setLoadError(false);
-    if (tab === "hist") void fetchTasks(pageRef.current + 1, true);
-    else void fetchFiles(pageRef.current + 1, true);
-  }, [tab, fetchTasks, fetchFiles]);
+    void fetchView(currentView.page + 1, true);
+  }, [currentView.page, fetchView]);
 
   const retryCurrentView = useCallback(() => {
-    setLoadError(false);
-    pageRef.current = 1;
-    loadedCountRef.current = 0;
-    if (tab === "hist") void fetchTasks(1, false);
-    else void fetchFiles(1, false);
-  }, [tab, fetchTasks, fetchFiles]);
+    void fetchView(1, false, true);
+  }, [fetchView]);
 
   // 底部哨兵:进入视口提前量即续页。
   useEffect(() => {
@@ -459,6 +456,18 @@ export function AssetsBrowser({
     return () => io.disconnect();
   }, [hasMore, loadMore]);
 
+  // A processing task otherwise remains stuck at “生成中” until navigation.
+  // Poll only the first page and refresh it in place so the list never flashes.
+  useEffect(() => {
+    if (
+      tab !== "hist" ||
+      currentView.page !== 1 ||
+      !tasks.some((task) => task.status === AiTaskStatus.PROCESSING)
+    ) return;
+    const timer = window.setTimeout(() => void fetchView(1, false, true), 3_000);
+    return () => window.clearTimeout(timer);
+  }, [currentView.page, fetchView, tab, tasks]);
+
   // Escape closes the preview overlay.
   useEffect(() => {
     if (!preview) return;
@@ -469,64 +478,46 @@ export function AssetsBrowser({
     return () => document.removeEventListener("keydown", onKey);
   }, [preview]);
 
-  // groupByDate returns newest-first; when sortAsc, reverse groups + items.
-  const applySort = useCallback(
-    <T,>(groups: Group<T>[]): Group<T>[] =>
-      sortAsc
-        ? groups.slice().reverse().map((g) => ({ ...g, items: g.items.slice().reverse() }))
-        : groups,
-    [sortAsc],
-  );
-
-  // tasks of the active media type, date-grouped (doc → none for 生成历史).
+  // The server filters media/status before pagination. The small defensive
+  // checks below keep malformed legacy responses from leaking into the UI.
   const taskGroups = useMemo(() => {
     if (tab !== "hist") return [];
-    const want = filter === "image" || filter === "video" || filter === "audio" ? filter : null;
-    if (!want) return [];
-    // 未登记的 handler(assistant_chat 等纯文本任务)不属于任何媒体页签,直接跳过,
-    // 否则会以空白兜底卡的形式混进「图片」。
-    // 失败/已取消的任务没有资产可看(积分已退),不进资产库——留在创作台/画布
-    // 的任务流里提示即可;生成中的保留(马上会变成结果)。
     const matched = tasks.filter(
       (t) =>
-        HANDLER_TYPE[t.handler] === want &&
+        HANDLER_MEDIA_KIND[t.handler] === historyFilter &&
         t.status !== AiTaskStatus.FAILED &&
         t.status !== AiTaskStatus.CANCELLED,
     );
-    return applySort(groupByDate(matched, (t) => t.createTime));
-  }, [tab, filter, tasks, applySort]);
+    return groupByDate(matched, (t) => t.createTime);
+  }, [historyFilter, tab, tasks]);
 
   // uploaded files of the active media kind, date-grouped.
   const fileGroups = useMemo(() => {
     if (tab !== "upload") return [];
     const matched = files.filter((f) => fileMatchesFilter(f, filter));
-    return applySort(groupByDate(matched, (f) => f.createTime));
-  }, [tab, filter, files, applySort]);
-
-  useReveal([tab, filter, taskGroups, fileGroups]);
+    return groupByDate(matched, (f) => f.createTime);
+  }, [tab, filter, files]);
 
   const groupsEmpty = tab === "hist" ? taskGroups.length === 0 : fileGroups.length === 0;
 
-  // 切换 tab/筛选/日期时重置多选 + 摘下续页哨兵 + 清「翻过页」标记(条目集合
-  // 已变)——全部在事件回调里做,不进 effect(setState 同步路径过不了 hooks lint)。
+  // 切换视图时只重置选择；分页/加载状态属于各自缓存，互不覆盖。
   const resetBatch = useCallback(() => {
     setBatchMode(false);
     setSelected(new Set());
-    setHasMore(false);
-    setMultiPage(false);
   }, []);
 
   const switchTab = useCallback((t: TabKey) => {
-    if (t === "hist" && isConceptFilter(filter)) setFilter("image");
+    if (t === tab) return;
     setTab(t);
     resetBatch();
-  }, [filter, resetBatch]);
+  }, [resetBatch, tab]);
 
   const switchFilter = useCallback((f: FilterKey) => {
-    if (isConceptFilter(f)) setTab("upload");
-    setFilter(f);
+    if (f === filter) return;
+    if (tab === "hist" && isHistoryFilter(f)) setHistoryFilter(f);
+    if (tab === "upload") setUploadFilter(f);
     resetBatch();
-  }, [resetBatch]);
+  }, [filter, resetBatch, tab]);
 
   const changeDates = useCallback((setter: (v: string) => void) => (v: string) => {
     setter(v);
@@ -558,6 +549,14 @@ export function AssetsBrowser({
     setSelected(new Set());
   };
 
+  const invalidateAndRefresh = useCallback(async () => {
+    // Mutations can affect totals and every cached sort/date view. Retire all
+    // older responses, clear the cache, then refresh the view that initiated it.
+    activeRequestsRef.current.clear();
+    setViewStates({});
+    await fetchView(1, false, true);
+  }, [fetchView]);
+
   // 批量删除:生成历史→cancelTask,上传历史→file delete;逐条调用现有接口。
   const batchDelete = async () => {
     if (selected.size === 0 || busy) return;
@@ -582,12 +581,7 @@ export function AssetsBrowser({
     toast[ok > 0 ? "success" : "error"](ok > 0 ? `已删除 ${ok} 项` : "删除失败，请稍后重试");
     exitBatch();
     setBusy(false);
-    // 删除后回到第 1 页重拉(条目减少,续页游标失效);摘哨兵防窗口期混流。
-    pageRef.current = 1;
-    loadedCountRef.current = 0;
-    setHasMore(false);
-    if (tab === "hist") await fetchTasks(1, false);
-    else await fetchFiles(1, false);
+    await invalidateAndRefresh();
   };
 
   // 批量下载:通过下载代理逐个触发(强制附件下载)。
@@ -595,7 +589,7 @@ export function AssetsBrowser({
     const urls = new Map<string, Array<{ url: string; name: string }>>();
     if (tab === "hist") {
       tasks.forEach((task) => {
-        const tracks = HANDLER_TYPE[task.handler] === "audio" ? tracksOf(task) : [];
+        const tracks = HANDLER_MEDIA_KIND[task.handler] === "audio" ? tracksOf(task) : [];
         const items = tracks.flatMap((track, index) =>
           track.url
             ? [{ url: track.url, name: track.title || `${task.modelName || "生成音频"} ${index + 1}` }]
@@ -624,20 +618,35 @@ export function AssetsBrowser({
   // dropzone → real upload of the picked files, then reload the upload list.
   const onPickFiles = async (list: FileList | null) => {
     if (!list || list.length === 0) return;
+    const selectedFiles = Array.from(list);
+    const pickedFiles = selectedFiles.filter((file) => uploadMatchesFilter(file, filter));
+    const rejected = selectedFiles.length - pickedFiles.length;
+    if (pickedFiles.length === 0) {
+      toast.error(`请选择符合“${FILTERS.find((item) => item.f === filter)?.label ?? "当前分类"}”类型的文件`);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
     setUploading(true);
     try {
       await ensureSession();
       let ok = 0;
-      for (const file of Array.from(list)) {
-        const res = await uploadFileSmart(file, undefined, { category: FILTER_TO_CATEGORY[filter] });
-        if (res.success) ok++;
+      const category = FILTER_TO_CATEGORY[filter];
+      // Three concurrent uploads keep multi-file batches responsive without
+      // saturating the browser, OSS connection pool, or server fallback path.
+      for (let i = 0; i < pickedFiles.length; i += 3) {
+        const results = await Promise.all(
+          pickedFiles.slice(i, i + 3).map((file) => uploadFileSmart(file, undefined, { category })),
+        );
+        ok += results.filter((result) => result.success).length;
       }
-      toast[ok > 0 ? "success" : "error"](ok > 0 ? `已上传 ${ok} 个文件` : "上传失败，请稍后重试");
+      const failed = pickedFiles.length - ok + rejected;
+      toast[ok > 0 ? "success" : "error"](
+        ok > 0
+          ? failed > 0 ? `已上传 ${ok} 个，${failed} 个失败` : `已上传 ${ok} 个文件`
+          : "上传失败，请稍后重试",
+      );
       if (ok > 0) {
-        pageRef.current = 1;
-        loadedCountRef.current = 0;
-        setHasMore(false);
-        await fetchFiles(1, false);
+        await invalidateAndRefresh();
       }
     } catch {
       toast.error("上传失败，请稍后重试");
@@ -656,6 +665,7 @@ export function AssetsBrowser({
               key={x.t}
               type="button"
               className={tab === x.t ? "on" : undefined}
+              aria-pressed={tab === x.t}
               onClick={() => switchTab(x.t)}
             >
               {x.label}
@@ -687,11 +697,12 @@ export function AssetsBrowser({
       </div>
 
       <div className="asset-filter" id="asset-filter">
-        {FILTERS.map((x) => (
+        {FILTERS.filter((x) => visibleFilters.has(x.f)).map((x) => (
           <button
             key={x.f}
             type="button"
             className={filter === x.f ? "on" : undefined}
+            aria-pressed={filter === x.f}
             onClick={() => switchFilter(x.f)}
           >
             {x.label}
@@ -727,8 +738,12 @@ export function AssetsBrowser({
         </span>
         <button
           type="button"
-          onClick={() => setSortAsc((v) => !v)}
+          onClick={() => {
+            setSortAsc((v) => !v);
+            resetBatch();
+          }}
           title="切换排序"
+          aria-pressed={sortAsc}
           style={{ marginLeft: "auto" }}
         >
           {sortAsc ? "最早在前 ↑" : "最新在前 ↓"}
@@ -807,9 +822,7 @@ export function AssetsBrowser({
                     : "上传本地文件"}
             </b>
             <i>
-              {isConceptFilter(filter)
-                ? "点击选择 · 仅支持图片"
-                : "点击选择 · 支持图片 / 视频 / 音频 / 文档"}
+              点击选择 · {ACCEPT_HINT[filter]}
             </i>
           </button>
         )}
@@ -837,12 +850,10 @@ export function AssetsBrowser({
               <div className="asset-group" key={g.date}>
                 <div className="asset-date">{g.date}</div>
                 <div className="asset-grid">
-                  {g.items.map((t, i) => (
+                  {g.items.map((t) => (
                     <TaskCard
                       key={t.id}
                       task={t}
-                      delay={(i % 8) * 0.02}
-                      star={i === 1 || i === 9}
                       pickMode={pickMode}
                       onPick={onPick}
                       onOpen={openAsset}
@@ -876,11 +887,10 @@ export function AssetsBrowser({
               <div className="asset-group" key={g.date}>
                 <div className="asset-date">{g.date}</div>
                 <div className="asset-grid">
-                  {g.items.map((f, i) => (
+                  {g.items.map((f) => (
                     <UploadCard
                       key={f.id}
                       file={f}
-                      delay={(i % 8) * 0.02}
                       pickMode={pickMode}
                       onPick={onPick}
                       onOpen={openAsset}
@@ -980,10 +990,8 @@ export function AssetsBrowser({
 
 /* ── TaskCard — a generation result (生成历史) over a real AiTaskVO ──────────── */
 
-function TaskCard({
+const TaskCard = memo(function TaskCard({
   task,
-  delay,
-  star,
   pickMode,
   onPick,
   onOpen,
@@ -992,8 +1000,6 @@ function TaskCard({
   onToggle,
 }: {
   task: AiTaskVO;
-  delay: number;
-  star: boolean;
   pickMode?: boolean;
   onPick?: (asset: PickedAsset) => void;
   onOpen?: (asset: OpenAsset) => void;
@@ -1001,12 +1007,12 @@ function TaskCard({
   selected?: boolean;
   onToggle?: (id: string) => void;
 }) {
-  const kind = HANDLER_TYPE[task.handler] ?? "image";
+  const kind = HANDLER_MEDIA_KIND[task.handler] ?? "image";
   const isVid = kind === "video";
   // 卡片封面一律走降采样:原图动辄 2K~4K 几 MB,卡片才 ~340px(2x 余量取 640)。
   // 音频结果是 mp3,不能当封面图铺——改走 SongCard 歌曲行(见下)。
   const coverUrl = task.resultUrl && kind === "image" ? (ossDisplayUrl(task.resultUrl, 640) ?? task.resultUrl) : undefined;
-  const cover = coverUrl ? `center / cover no-repeat url("${coverUrl}")` : fallbackCover(task.id);
+  const fallback = fallbackCover(task.id);
   // 音频分轨信息(歌名/封面/时长/地址)取自 resultMeta.tracks;Suno 一次两首,
   // 两轨都要成行,少了第二首就等于丢歌。
   const tracks = useMemo(() => tracksOf(task), [task]);
@@ -1052,7 +1058,7 @@ function TaskCard({
   // 点击用于播放。
   if (kind === "audio" && audioRows.length > 0) {
     return (
-      <div className="as-songrow reveal in" style={{ ["--rd" as string]: `${delay}s` }}>
+      <div className="as-songrow">
         {audioRows.map((t, i) => (
           <SongCard
             key={t.url ?? i}
@@ -1090,35 +1096,62 @@ function TaskCard({
   return (
     <button
       type="button"
-      className="as-card reveal in"
+      className="as-card"
       style={{
-        ["--rd" as string]: `${delay}s`,
         outline: selected ? "3px solid var(--accent, #7c8cff)" : undefined,
         outlineOffset: -3,
       }}
       title={task.modelName}
+      aria-label={`${batchMode ? selected ? "取消选择" : "选择" : pickMode ? "选取" : "打开"}${task.modelName || "生成结果"}`}
       onClick={onClick}
     >
       {/* 视频:背景图铺不了 mp4(浏览器不渲染),用 video 首帧做卡片视觉 */}
       {isVid && task.resultUrl ? (
-        <video
-          className="cov as-vid"
-          muted
-          playsInline
-          preload="metadata"
-          src={task.resultUrl}
-          style={{ background: cover }}
-        />
+        <LazyVideoCover src={task.resultUrl} fallback={fallback} />
+      ) : coverUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img className="cov" src={coverUrl} alt="" loading="lazy" decoding="async" />
       ) : (
-        <span className="cov" style={{ background: cover }} />
+        <span className="cov" style={{ background: fallback }} />
       )}
-      <span className="pick" />
+      {pickMode && <span className="pick" />}
       {batchMode && <SelectBadge selected={!!selected} />}
-      {star && <span className="star">★</span>}
       {!!task.resultUrl && isVid && <span className="vbadge">▶</span>}
       {!!task.resultUrl && kind === "audio" && <span className="vbadge">♪</span>}
       {statusLabel && <span className="as-status">{statusLabel}</span>}
     </button>
+  );
+});
+
+function LazyVideoCover({ src, fallback }: { src: string; fallback?: string }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const element = ref.current;
+    if (!element || visible) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        setVisible(true);
+        observer.disconnect();
+      },
+      { rootMargin: "240px" },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [visible]);
+
+  return (
+    <video
+      ref={ref}
+      className="cov as-vid"
+      muted
+      playsInline
+      preload={visible ? "metadata" : "none"}
+      src={visible ? src : undefined}
+      style={{ background: fallback }}
+    />
   );
 }
 
@@ -1151,9 +1184,8 @@ function SelectBadge({ selected }: { selected: boolean }) {
 
 /* ── UploadCard — an uploaded file (上传历史) over a real FileVO ─────────────── */
 
-function UploadCard({
+const UploadCard = memo(function UploadCard({
   file,
-  delay,
   pickMode,
   onPick,
   onOpen,
@@ -1162,7 +1194,6 @@ function UploadCard({
   onToggle,
 }: {
   file: FileVO;
-  delay: number;
   pickMode?: boolean;
   onPick?: (asset: PickedAsset) => void;
   onOpen?: (asset: OpenAsset) => void;
@@ -1196,7 +1227,7 @@ function UploadCard({
   // 音频:方形卡片换成 SongCard 歌曲行(与生成历史同形态)。
   if (kind === "audio" && file.fileUrl) {
     return (
-      <div className="as-songrow reveal in" style={{ ["--rd" as string]: `${delay}s` }}>
+      <div className="as-songrow">
         <SongCard
           src={file.fileUrl}
           title={file.originalName || "未命名"}
@@ -1229,27 +1260,29 @@ function UploadCard({
   return (
     <button
       type="button"
-      className="as-card as-up reveal in"
+      className="as-card as-up"
       style={{
-        ["--rd" as string]: `${delay}s`,
         outline: selected ? "3px solid var(--accent, #7c8cff)" : undefined,
         outlineOffset: -3,
       }}
       title={file.originalName}
+      aria-label={`${batchMode ? selected ? "取消选择" : "选择" : pickMode ? "选取" : "打开"}${file.originalName || "文件"}`}
       onClick={onClick}
     >
       {batchMode && <SelectBadge selected={!!selected} />}
       {isImg && file.fileUrl ? (
-        <span
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
           className="cov"
-          style={{
-            background: `center / cover no-repeat url("${ossDisplayUrl(file.fileUrl, 640) ?? file.fileUrl}")`,
-          }}
+          src={ossDisplayUrl(file.fileUrl, 640) ?? file.fileUrl}
+          alt=""
+          loading="lazy"
+          decoding="async"
         />
       ) : kind === "video" && file.fileUrl ? (
         // 视频:video 首帧做卡片视觉(背景图铺不了 mp4),配 ▶ 角标
         <>
-          <video className="cov as-vid" muted playsInline preload="metadata" src={file.fileUrl} />
+          <LazyVideoCover src={file.fileUrl} fallback={fallbackCover(file.id)} />
           <span className="vbadge">▶</span>
         </>
       ) : (
@@ -1257,7 +1290,7 @@ function UploadCard({
           <span className="as-file-ic">{FILE_GLYPH[kind] || "▤"}</span>
         </span>
       )}
-      <span className="pick" />
+      {pickMode && <span className="pick" />}
       <span className="as-up-badge">
         {file.category === FileCategory.CHARACTER
           ? "角色"
@@ -1271,4 +1304,4 @@ function UploadCard({
       </span>
     </button>
   );
-}
+});

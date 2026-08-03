@@ -27,6 +27,39 @@ func TestVisibleTaskHistoryScopeHidesInternalSkillRunTasks(t *testing.T) {
 	}
 }
 
+func TestAssetTaskFiltersRunBeforePagination(t *testing.T) {
+	db, err := gorm.Open(mysql.New(mysql.Config{DSN: "gorm:gorm@tcp(localhost:9911)/gorm?charset=utf8mb4&parseTime=True&loc=Local", SkipInitializeWithVersion: true}),
+		&gorm.Config{DryRun: true, DisableAutomaticPing: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := taskQuery{MediaType: "video", AssetOnly: true, OrderDirection: "asc"}
+	sql := db.ToSQL(func(tx *gorm.DB) *gorm.DB {
+		return applyTaskListFilters(tx.Model(&model.AiTask{}), 7, q).
+			Order(taskListOrder(q)).Offset(24).Limit(24).Find(&[]model.AiTask{})
+	})
+	for _, fragment := range []string{
+		"handler IN",
+		"reference_to_video",
+		"status NOT IN (2,3)",
+		"ORDER BY create_time ASC",
+		"LIMIT 24 OFFSET 24",
+	} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("asset task query SQL is missing %q: %s", fragment, sql)
+		}
+	}
+}
+
+func TestTaskMediaHandlersIncludeEveryVideoMode(t *testing.T) {
+	got := strings.Join(taskMediaHandlers("video"), ",")
+	for _, handler := range []string{"text_to_video", "image_to_video", "start_end_to_video", "reference_to_video"} {
+		if !strings.Contains(got, handler) {
+			t.Fatalf("video handler list is missing %q: %s", handler, got)
+		}
+	}
+}
+
 func TestStaleTaskTerminalUpdatesUseActualCompletionTime(t *testing.T) {
 	terminalAt := time.Date(2026, 8, 2, 20, 30, 0, 0, time.UTC)
 	updates := staleTaskTerminalUpdates(statusFailed, "interrupted", terminalAt)

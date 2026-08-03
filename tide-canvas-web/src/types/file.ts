@@ -17,6 +17,8 @@ export interface FileVO {
 
 export interface FileQuery extends PageQuery {
   fileType?: FileType;
+  /** 资产页媒体筛选；audio/doc 会在服务端按 MIME 拆分后再分页。 */
+  mediaKind?: "image" | "video" | "audio" | "doc";
   category?: FileCategory;
   keyword?: string;
   /** 时间筛选(YYYY-MM-DD):create_time 当天 00:00 起 / 次日 00:00 前 */

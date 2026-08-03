@@ -132,9 +132,34 @@ func (r *repo) getTask(ctx context.Context, id idgen.ID) (*model.AiTask, error) 
 
 // listTasks returns a page of the user's tasks filtered by the query.
 func (r *repo) listTasks(ctx context.Context, userID idgen.ID, q taskQuery, offset, limit int) ([]model.AiTask, int64, error) {
-	tx := visibleTaskHistoryScope(r.db.WithContext(ctx).Model(&model.AiTask{}).Where("user_id = ?", userID))
+	tx := applyTaskListFilters(r.db.WithContext(ctx).Model(&model.AiTask{}), userID, q)
+
+	var total int64
+	if err := tx.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var rows []model.AiTask
+	if err := tx.Order(taskListOrder(q)).Offset(offset).Limit(limit).Find(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+	return rows, total, nil
+}
+
+func applyTaskListFilters(tx *gorm.DB, userID idgen.ID, q taskQuery) *gorm.DB {
+	tx = visibleTaskHistoryScope(tx.Where("user_id = ?", userID))
 	if q.Handler != "" {
 		tx = tx.Where("handler = ?", q.Handler)
+	}
+	if q.MediaType != "" {
+		handlers := taskMediaHandlers(q.MediaType)
+		if len(handlers) == 0 {
+			tx = tx.Where("1 = 0")
+		} else {
+			tx = tx.Where("handler IN ?", handlers)
+		}
+	}
+	if q.AssetOnly {
+		tx = tx.Where("status NOT IN ?", []int{statusFailed, statusCancelled})
 	}
 	if q.Status != nil {
 		tx = tx.Where("status = ?", *q.Status)
@@ -145,16 +170,27 @@ func (r *repo) listTasks(ctx context.Context, userID idgen.ID, q taskQuery, offs
 		tx = tx.Where("project_id = ?", q.ProjectID)
 	}
 	tx = applyDateRange(tx, "create_time", q.StartDate, q.EndDate)
+	return tx
+}
 
-	var total int64
-	if err := tx.Count(&total).Error; err != nil {
-		return nil, 0, err
+func taskMediaHandlers(mediaType string) []string {
+	switch strings.ToLower(strings.TrimSpace(mediaType)) {
+	case "image":
+		return []string{"text_to_image", "image_to_image"}
+	case "video":
+		return []string{"text_to_video", "image_to_video", "start_end_to_video", "reference_to_video"}
+	case "audio":
+		return []string{"text_to_audio"}
+	default:
+		return nil
 	}
-	var rows []model.AiTask
-	if err := tx.Order("create_time DESC").Offset(offset).Limit(limit).Find(&rows).Error; err != nil {
-		return nil, 0, err
+}
+
+func taskListOrder(q taskQuery) string {
+	if strings.EqualFold(strings.TrimSpace(q.OrderDirection), "asc") {
+		return "create_time ASC"
 	}
-	return rows, total, nil
+	return "create_time DESC"
 }
 
 func visibleTaskHistoryScope(tx *gorm.DB) *gorm.DB {
