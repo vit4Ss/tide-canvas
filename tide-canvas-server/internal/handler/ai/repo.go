@@ -74,15 +74,21 @@ func (r *repo) finalizeTask(ctx context.Context, t *model.AiTask, fromStatus int
 // so nothing will ever write their terminal state and the frontend would poll
 // forever). Returns the number of rows reconciled.
 func (r *repo) sweepStaleTasks(ctx context.Context, fromStatus, toStatus int, before time.Time, errMsg string) (int64, error) {
+	terminalAt := time.Now()
 	res := r.db.WithContext(ctx).Model(&model.AiTask{}).
 		Where("status = ? AND update_time < ?", fromStatus, before).
-		Updates(map[string]any{
-			"status":      toStatus,
-			"progress":    100,
-			"error_msg":   errMsg,
-			"update_time": before,
-		})
+		Updates(staleTaskTerminalUpdates(toStatus, errMsg, terminalAt))
 	return res.RowsAffected, res.Error
+}
+
+func staleTaskTerminalUpdates(toStatus int, errMsg string, terminalAt time.Time) map[string]any {
+	return map[string]any{
+		"status":        toStatus,
+		"progress":      100,
+		"error_msg":     errMsg,
+		"update_time":   terminalAt,
+		"complete_time": terminalAt,
+	}
 }
 
 // deleteTask removes a task row by id (used by the user-facing 删除 in 生成记录).
@@ -116,7 +122,7 @@ func (r *repo) getTask(ctx context.Context, id idgen.ID) (*model.AiTask, error) 
 
 // listTasks returns a page of the user's tasks filtered by the query.
 func (r *repo) listTasks(ctx context.Context, userID idgen.ID, q taskQuery, offset, limit int) ([]model.AiTask, int64, error) {
-	tx := r.db.WithContext(ctx).Model(&model.AiTask{}).Where("user_id = ?", userID)
+	tx := visibleTaskHistoryScope(r.db.WithContext(ctx).Model(&model.AiTask{}).Where("user_id = ?", userID))
 	if q.Handler != "" {
 		tx = tx.Where("handler = ?", q.Handler)
 	}
@@ -139,6 +145,13 @@ func (r *repo) listTasks(ctx context.Context, userID idgen.ID, q taskQuery, offs
 		return nil, 0, err
 	}
 	return rows, total, nil
+}
+
+func visibleTaskHistoryScope(tx *gorm.DB) *gorm.DB {
+	// Orchestration planning/draft tasks are internal implementation details.
+	// A SkillRun task appears in ordinary generation history only after it has
+	// been explicitly promoted to a final, registered output.
+	return tx.Where("(origin IS NULL OR origin = '' OR origin = 'direct') OR (origin = 'skill_run' AND register_work = ? AND output_role = ?)", true, "final")
 }
 
 // applyDateRange 追加 create_time 范围筛选:startDate 当天 00:00 起;endDate

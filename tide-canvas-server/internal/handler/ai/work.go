@@ -12,10 +12,13 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"unicode/utf8"
 
 	"go.uber.org/zap"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
@@ -47,6 +50,16 @@ func workTypeOf(op string) string {
 	default:
 		return ""
 	}
+}
+
+func skillOutputTypeOf(handler GenHandler) string {
+	if handler == nil {
+		return ""
+	}
+	if handler.Name() == assistantChatHandler || handler.Name() == skillTextCompletionHandler {
+		return "text"
+	}
+	return workTypeOf(handler.OperationType())
 }
 
 // workTitle derives a short display title from the prompt (首行、最多 40 字)。
@@ -92,7 +105,7 @@ func (s *service) applySkill(input map[string]any, gh GenHandler) map[string]any
 		return input
 	}
 	tmpl := strings.TrimSpace(sk.PromptTemplate)
-	if tmpl == "" || sk.OutputType != workTypeOf(gh.OperationType()) {
+	if tmpl == "" || sk.OutputType != skillOutputTypeOf(gh) {
 		return input
 	}
 	return applyPromptTemplate(input, tmpl)
@@ -121,16 +134,22 @@ func applyPromptTemplate(input map[string]any, tmpl string) map[string]any {
 // registerWork inserts the finished generation as an unpublished work. Failures
 // are logged and swallowed — 登记不成功不该影响用户已经拿到的生成结果。
 func (s *service) registerWork(ctx context.Context, task *model.AiTask, gh GenHandler, m *model.AiModel, userID idgen.ID, dto generateDTO, res GenerateResult) {
+	if err := s.registerWorkOnDB(s.repo.db.WithContext(ctx), task, gh, m, userID, dto, res); err != nil {
+		logger.L().Warn("ai: register work failed", zap.String("taskId", task.ID.String()), zap.Error(err))
+	}
+}
+
+func (s *service) registerWorkOnDB(db *gorm.DB, task *model.AiTask, gh GenHandler, m *model.AiModel, userID idgen.ID, dto generateDTO, res GenerateResult) error {
 	kind := workTypeOf(gh.OperationType())
 	if kind == "" || res.ResultURL == "" || userID == 0 {
-		return
+		return nil
 	}
 
 	// 判重：同一个任务只登记一条(重试/重复调用时是空操作)。
 	var n int64
-	if err := s.repo.db.Model(&model.CommunityPost{}).
+	if err := db.Model(&model.CommunityPost{}).
 		Where("task_id = ?", task.ID).Count(&n).Error; err != nil || n > 0 {
-		return
+		return err
 	}
 
 	// dto.Input 里存的是用户原文（技能模板由 applySkill 在发上游时才拼），
@@ -162,7 +181,7 @@ func (s *service) registerWork(ctx context.Context, task *model.AiTask, gh GenHa
 		}
 		blob, err := json.Marshal(meta)
 		if err != nil {
-			continue
+			return err
 		}
 		post := &model.CommunityPost{
 			UserID:   userID,
@@ -172,9 +191,57 @@ func (s *service) registerWork(ctx context.Context, task *model.AiTask, gh GenHa
 			CoverURL: cover,
 			Status:   0, // 未发布
 		}
-		if err := s.repo.db.WithContext(ctx).Create(post).Error; err != nil {
-			logger.L().Warn("ai: register work failed",
-				zap.String("taskId", task.ID.String()), zap.Error(err))
+		if err := db.Create(post).Error; err != nil {
+			return err
 		}
 	}
+	return nil
+}
+
+// promoteTask turns a successful orchestration draft into a final, visible
+// generation after an approval step. The AiTask row is locked and the work rows
+// are created in the same transaction, making retries after a crash idempotent.
+func (s *service) promoteTask(ctx context.Context, userID, taskID idgen.ID) error {
+	return s.repo.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return s.promoteTaskTx(ctx, tx, userID, taskID)
+	})
+}
+
+func (s *service) promoteTaskTx(ctx context.Context, tx *gorm.DB, userID, taskID idgen.ID) error {
+	var task model.AiTask
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, "id = ?", taskID).Error; err != nil {
+		return err
+	}
+	if task.UserID != userID {
+		return errTaskForbidden
+	}
+	if task.Status != statusSuccess {
+		return errors.New("only successful generation tasks can be promoted")
+	}
+	gh, ok := s.registry.get(task.Handler)
+	if !ok {
+		return errNoHandler
+	}
+	// Promotion does not perform inference, so it must remain possible if the
+	// catalog model was delisted after this task had already succeeded.
+	m := &model.AiModel{ID: task.ModelID, Name: task.ModelName}
+	meta := map[string]any{}
+	if strings.TrimSpace(task.ResultMeta) != "" {
+		_ = json.Unmarshal([]byte(task.ResultMeta), &meta)
+	}
+	urls := []string{}
+	if raw, ok := meta["urls"].([]any); ok {
+		for _, value := range raw {
+			if url, ok := value.(string); ok && strings.TrimSpace(url) != "" {
+				urls = append(urls, strings.TrimSpace(url))
+			}
+		}
+	}
+	res := GenerateResult{ResultURL: task.ResultUrl, URLs: urls, Meta: meta}
+	dto := generateDTO{Handler: task.Handler, ProjectID: task.ProjectID, Input: json.RawMessage(task.Input)}
+	if err := s.registerWorkOnDB(tx, &task, gh, m, userID, dto, res); err != nil {
+		return err
+	}
+	return tx.Model(&model.AiTask{}).Where("id = ?", task.ID).
+		Updates(map[string]any{"register_work": true, "output_role": "final"}).Error
 }

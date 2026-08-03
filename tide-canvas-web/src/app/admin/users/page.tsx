@@ -288,8 +288,6 @@ function AdminUsersPageInner() {
     return () => window.clearTimeout(timer);
   }, [filter, keyword]);
 
-  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
-
   /* ---- user actions -------------------------------------------------------- */
 
   function openEdit(u: AdminUserVO) {
@@ -524,7 +522,7 @@ function AdminUsersPageInner() {
   const userColumns: Column<AdminUserVO>[] = [
     {
       header: "用户",
-      width: "20%",
+      width: "26%",
       cell: (u) => (
         <div className="cellflex">
           <span
@@ -539,7 +537,7 @@ function AdminUsersPageInner() {
             <div className="muted mono" style={{ fontSize: 11.5 }}>
               {u.email || u.phone || u.id}
             </div>
-            {/* 运营备注并入身份格第三行:不占独立列,避免把 11 列表格挤变形 */}
+            {/* 运营备注并入身份格第三行:不占独立列,避免把表格挤变形 */}
             {u.remark ? (
               <div className="muted" style={{ fontSize: 11.5 }} title={u.remark}>
                 备注：{u.remark}
@@ -551,7 +549,7 @@ function AdminUsersPageInner() {
     },
     {
       header: "角色",
-      width: "8%",
+      width: "7%",
       cell: (u) => <StatusPill tone={ROLE_TONE[u.role] ?? "gray"}>{roleLabel(u.role)}</StatusPill>,
     },
     {
@@ -579,8 +577,13 @@ function AdminUsersPageInner() {
       cell: (u) => fmtNum(u.apiQuota),
     },
     { header: "作品 / 项目", width: "8%", className: "mono", cell: (u) => `${fmtNum(u.postCount)} / ${fmtNum(u.projectCount)}` },
-    { header: "注册时间", width: "11%", className: "muted", cell: (u) => fmtTime(u.createTime) },
-    { header: "最近登录", width: "10%", className: "muted", cell: (u) => fmtTime(u.lastLoginTime) },
+    {
+      // 最近登录单行呈现，保持整行节奏一致；注册时间收进 hover 提示，需要再看
+      header: "最近登录",
+      width: "13%",
+      className: "muted",
+      cell: (u) => <span title={`注册于 ${fmtTime(u.createTime)}`}>{fmtTime(u.lastLoginTime)}</span>,
+    },
     {
       header: "状态",
       width: "7%",
@@ -592,7 +595,7 @@ function AdminUsersPageInner() {
     },
     {
       header: "操作",
-      width: "14%",
+      width: "17%",
       align: "right",
       cell: (u) => (
         <RowActions
@@ -669,7 +672,7 @@ function AdminUsersPageInner() {
 
       <Panel
         title="用户列表"
-        sub={`共 ${fmtNum(total)} 人 · 角色 ${fmtNum(roles.length)} · 第 ${pageNum}/${pageCount} 页`}
+        sub={`共 ${fmtNum(total)} 人`}
         tools={
           <>
             <div className="adm-search" role="search">
@@ -694,7 +697,7 @@ function AdminUsersPageInner() {
           </>
         }
       >
-        <div className="adm-tools" style={{ padding: "14px 20px 6px" }}>
+        <div className="adm-filter-row">
           <FilterChips
             label="用户类型"
             options={FILTERS.map((f) => f.label)}
@@ -729,7 +732,7 @@ function AdminUsersPageInner() {
             rowKey={(u) => u.id}
             columns={userColumns}
             label="用户列表"
-            // 10 列 + 4 个行操作:窄容器下宁可面板内横向滚动,也不让「删除」被裁掉
+            // 9 列 + 4 个行操作:窄容器下宁可面板内横向滚动,也不让「删除」被裁掉
             className="adm-users-table"
             server={{ page: pageNum, pageSize: PAGE_SIZE, total, onPage: setPageNum }}
           />
@@ -738,7 +741,7 @@ function AdminUsersPageInner() {
 
       <Panel
         title="角色管理"
-        sub="后台权限角色（sys_role）"
+        sub="配置前台菜单可见性与后台模块权限"
         tools={
           isSuper ? (
             <button type="button" className="adm-btn" onClick={openCreateRole}>
@@ -792,7 +795,7 @@ function AdminUsersPageInner() {
                   onChange={(e) => setEditForm({ ...editForm, nickname: e.target.value })}
                 />
               </Field>
-              <Field label="备注" span={2} hint="仅后台可见的运营备注,不下发给用户">
+              <Field label="备注" span={4} hint="仅后台可见的运营备注,不下发给用户">
                 <input
                   value={editForm.remark}
                   maxLength={255}

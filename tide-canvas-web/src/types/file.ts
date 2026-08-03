@@ -8,6 +8,8 @@ export interface FileVO {
   fileUrl: string;
   fileSize: number;
   fileType: FileType;
+  /** 资产业务分类；不改变图片/视频等物理媒体类型。 */
+  category: FileCategory;
   mimeType: string;
   storageType: StorageType;
   createTime: string;
@@ -15,6 +17,7 @@ export interface FileVO {
 
 export interface FileQuery extends PageQuery {
   fileType?: FileType;
+  category?: FileCategory;
   keyword?: string;
   /** 时间筛选(YYYY-MM-DD):create_time 当天 00:00 起 / 次日 00:00 前 */
   startDate?: string;
@@ -25,6 +28,12 @@ export enum FileType {
   IMAGE = "image",
   VIDEO = "video",
   OTHER = "other",
+}
+
+export enum FileCategory {
+  GENERAL = "general",
+  CHARACTER = "character",
+  SCENE = "scene",
 }
 
 export enum StorageType {

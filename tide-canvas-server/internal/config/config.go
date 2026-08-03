@@ -19,8 +19,10 @@ import (
 
 // Environment names selectable via TIDECANVAS_ENV.
 const (
-	EnvTest = "test"
-	EnvProd = "prod"
+	EnvTest          = "test"
+	EnvProd          = "prod"
+	testRelayBaseURL = "https://test-relay.tcmzhan.com"
+	prodRelayBaseURL = "https://relay.tcmzhan.com"
 )
 
 // Config is the root configuration.
@@ -257,6 +259,9 @@ func validate(cfg *Config) error {
 	if secret == "" || secret == "change-me-in-production" {
 		return fmt.Errorf("config: prod requires a real JWT secret — set TIDECANVAS_JWT_SECRET or jwt.secret in configs/config.prod.yaml")
 	}
+	if strings.TrimSpace(cfg.Relay.APIKey) == "" {
+		return fmt.Errorf("config: prod requires a relay API key — set TIDECANVAS_RELAY_APIKEY")
+	}
 	if strings.TrimSpace(cfg.Server.Mode) != "release" {
 		cfg.Server.Mode = "release"
 	}
@@ -335,7 +340,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.contextTokenLimit", 32000)
 	v.SetDefault("llm.systemPrompt", defaultLLMSystemPrompt)
 
-	v.SetDefault("relay.baseUrl", "https://relay.tcmzhan.com")
+	// Missing/empty TIDECANVAS_ENV resolves to test, so the safe default must
+	// never send local development traffic to the production relay.
+	v.SetDefault("relay.baseUrl", testRelayBaseURL)
 	v.SetDefault("relay.apiKey", "")
 
 	v.SetDefault("eliandapay.enabled", true)
@@ -354,6 +361,14 @@ const defaultLLMSystemPrompt = "你是 TideCanvas（流光）创作平台的 AI 
 	"请用简洁、专业且有启发性的中文回答用户，必要时给出可执行的创意方向或步骤。"
 
 func normalize(cfg *Config) {
+	// Relay routing is environment-owned, not a free-form deployment override.
+	// This prevents a misspelled/leftover variable from sending test traffic to
+	// production (or production traffic to the test relay).
+	if cfg.IsProd() {
+		cfg.Relay.BaseURL = prodRelayBaseURL
+	} else {
+		cfg.Relay.BaseURL = testRelayBaseURL
+	}
 	if cfg.JWT.AccessTTL <= 0 {
 		cfg.JWT.AccessTTL = 2 * time.Hour
 	}

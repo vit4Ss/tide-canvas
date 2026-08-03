@@ -10,8 +10,21 @@ export interface GridSlice {
   blob: Blob;
 }
 
+export type RasterTransform =
+  | { type: "mirror" }
+  | { type: "rotate"; degrees: -90 | 90 | 180 }
+  | { type: "crop"; aspect: number; focusX?: number; focusY?: number };
+
+export interface RasterTransformResult {
+  blob: Blob;
+  width: number;
+  height: number;
+  mimeType: "image/png" | "image/jpeg";
+  extension: "png" | "jpg";
+}
+
 /** 经后端下载代理加载图片为可读像素的 HTMLImageElement(返回的 objUrl 由调用方负责 revoke) */
-async function loadImageViaProxy(url: string): Promise<{ img: HTMLImageElement; objUrl: string }> {
+async function loadImageViaProxy(url: string): Promise<{ img: HTMLImageElement; objUrl: string; mimeType: string }> {
   let res: Response;
   if (url.startsWith("blob:") || url.startsWith("data:")) {
     // 本地 blob:/data: 已是同源可读像素，直接加载,无需(也无法)走后端下载代理。
@@ -23,7 +36,8 @@ async function loadImageViaProxy(url: string): Promise<{ img: HTMLImageElement; 
     res = await fetch(`/api/files/download?url=${encodeURIComponent(url)}&name=source`, { headers });
   }
   if (!res.ok) throw new Error(`fetch source failed: ${res.status}`);
-  const objUrl = URL.createObjectURL(await res.blob());
+  const sourceBlob = await res.blob();
+  const objUrl = URL.createObjectURL(sourceBlob);
   const img = new Image();
   try {
     await new Promise<void>((resolve, reject) => {
@@ -35,30 +49,107 @@ async function loadImageViaProxy(url: string): Promise<{ img: HTMLImageElement; 
     URL.revokeObjectURL(objUrl);
     throw e;
   }
-  return { img, objUrl };
+  return { img, objUrl, mimeType: sourceBlob.type };
+}
+
+const clampUnit = (value: number) => Math.min(1, Math.max(0, value));
+
+/**
+ * 对整张图片执行非破坏性的本地栅格变换。源图统一经下载代理读取，避免 OSS
+ * 未配置 CORS 时污染 canvas；调用方只需上传返回的 blob 并创建派生节点。
+ */
+export async function transformImageRaster(
+  sourceUrl: string,
+  transform: RasterTransform,
+  sourceMimeType?: string,
+): Promise<RasterTransformResult> {
+  const { img, objUrl, mimeType: downloadedMimeType } = await loadImageViaProxy(sourceUrl);
+  try {
+    const sourceWidth = img.naturalWidth;
+    const sourceHeight = img.naturalHeight;
+    if (!sourceWidth || !sourceHeight) throw new Error("empty image");
+
+    let outputWidth = sourceWidth;
+    let outputHeight = sourceHeight;
+    let cropX = 0;
+    let cropY = 0;
+    let cropWidth = sourceWidth;
+    let cropHeight = sourceHeight;
+
+    if (transform.type === "rotate" && Math.abs(transform.degrees) === 90) {
+      outputWidth = sourceHeight;
+      outputHeight = sourceWidth;
+    } else if (transform.type === "crop") {
+      if (!Number.isFinite(transform.aspect) || transform.aspect <= 0) {
+        throw new Error("invalid crop aspect");
+      }
+      const sourceAspect = sourceWidth / sourceHeight;
+      if (sourceAspect > transform.aspect) {
+        cropHeight = sourceHeight;
+        cropWidth = cropHeight * transform.aspect;
+      } else {
+        cropWidth = sourceWidth;
+        cropHeight = cropWidth / transform.aspect;
+      }
+      const focusX = clampUnit(transform.focusX ?? 0.5);
+      const focusY = clampUnit(transform.focusY ?? 0.5);
+      cropX = Math.min(sourceWidth - cropWidth, Math.max(0, sourceWidth * focusX - cropWidth / 2));
+      cropY = Math.min(sourceHeight - cropHeight, Math.max(0, sourceHeight * focusY - cropHeight / 2));
+      outputWidth = Math.max(1, Math.round(cropWidth));
+      outputHeight = Math.max(1, Math.round(cropHeight));
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = outputWidth;
+    canvas.height = outputHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("canvas unavailable");
+
+    if (transform.type === "mirror") {
+      ctx.translate(outputWidth, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(img, 0, 0, sourceWidth, sourceHeight);
+    } else if (transform.type === "rotate") {
+      ctx.translate(outputWidth / 2, outputHeight / 2);
+      ctx.rotate((transform.degrees * Math.PI) / 180);
+      ctx.drawImage(img, -sourceWidth / 2, -sourceHeight / 2, sourceWidth, sourceHeight);
+    } else {
+      ctx.drawImage(
+        img,
+        cropX,
+        cropY,
+        cropWidth,
+        cropHeight,
+        0,
+        0,
+        outputWidth,
+        outputHeight,
+      );
+    }
+
+    const inputMimeType = sourceMimeType || downloadedMimeType;
+    const preserveAlpha = ["image/png", "image/webp", "image/gif"].includes(inputMimeType);
+    const outputMimeType = preserveAlpha ? "image/png" : "image/jpeg";
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, outputMimeType, preserveAlpha ? undefined : 0.92),
+    );
+    if (!blob) throw new Error("encode failed");
+
+    return {
+      blob,
+      width: outputWidth,
+      height: outputHeight,
+      mimeType: outputMimeType,
+      extension: preserveAlpha ? "png" : "jpg",
+    };
+  } finally {
+    URL.revokeObjectURL(objUrl);
+  }
 }
 
 /** 水平镜像整张图片，返回 PNG blob(经后端下载代理加载，规避 canvas 跨域污染)。 */
 export async function flipImageHorizontal(sourceUrl: string): Promise<Blob> {
-  const { img, objUrl } = await loadImageViaProxy(sourceUrl);
-  try {
-    const w = img.naturalWidth;
-    const h = img.naturalHeight;
-    if (!w || !h) throw new Error("empty image");
-    const canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("canvas unavailable");
-    ctx.translate(w, 0);
-    ctx.scale(-1, 1);
-    ctx.drawImage(img, 0, 0);
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
-    if (!blob) throw new Error("encode failed");
-    return blob;
-  } finally {
-    URL.revokeObjectURL(objUrl);
-  }
+  return (await transformImageRaster(sourceUrl, { type: "mirror" }, "image/png")).blob;
 }
 
 /**

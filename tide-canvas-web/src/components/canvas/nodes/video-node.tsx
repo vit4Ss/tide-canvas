@@ -10,13 +10,14 @@ import { ModelPicker } from "./model-picker";
 import { uploadFileSmart } from "@/lib/api";
 import { resolveModelReferenceLimitBytes } from "@/lib/upload-limits";
 import { matrixPrice, keyVariants, durationVariants } from "@/lib/price-matrix";
+import { isConceptCanvasNodeType, isImageReferenceNodeType } from "@/lib/canvas-node-types";
 import { AiModelType } from "@/types/ai";
 import { NodeHeader } from "./base/node-header";
 import { NodePorts } from "./base/node-ports";
 import { NodeChrome } from "./base/node-chrome";
 import { VideoModeDropdown } from "./video-mode-dropdown";
 import { NodeSkillButton } from "./node-skill-button";
-import { skillApi, parseSkillParams } from "@/lib/skill-api";
+import { parseSkillParams } from "@/lib/skill-api";
 import type { SkillVO } from "@/types/skill";
 import { PromptRefEditor, PromptEditorModal } from "./prompt-ref-editor";
 import { type RefItem } from "./prompt-ref-utils";
@@ -24,13 +25,11 @@ import type { CanvasNodeProps } from "./types/node-props";
 import { useAiModels, useMediaErrorRecovery, useNodePrompt, useNodeRuntime, useSyncContentSize } from "./shared/use-node-runtime";
 import { useMediaUpload } from "./shared/use-media-upload";
 import { useFileDownload } from "./shared/use-file-download";
+import { ConfigurableNodeToolbar, type ConfigurableNodeToolbarAction } from "./shared/configurable-node-toolbar";
+import { useCanvasNodeFeatures } from "@/stores/use-canvas-node-config-store";
 import { findRightColumnSpot, getIncomingSources, inlineIncomingTextRefs, parseModelConfig, stopEvent as stop, switchSkillModel, validateReferenceFileSizes } from "./shared/node-utils";
 import { GenerateSubmitButton, NodeDimsBadge, NodeErrorBadge, NodeGeneratingOverlay, NodeMediaLightbox, NodePanelChrome, NodeShell, NodeUploadingOverlay } from "./shared/node-overlays";
-
-/** 可当作「参考图」的入边节点类型：导演台(scene_3d)的产出就是一张渲染图，
- *  与图片节点同等对待——图片节点早已这么收，视频节点此前漏了，导致导演台连过来
- *  既不显示缩略图也不参与生成，连线静默失效。 */
-const IMAGE_SOURCE_TYPES = new Set(["image", "scene_3d"]);
+import { CanvasSkillRunToolbarButton } from "../skill-run/canvas-skill-run-workspace";
 
 // 各模式（Tab）对连接源节点的数量/类型限制：hover 时提示，生成时校验。文生视频无需连接。
 const TAB_LIMITS: Record<string, { hint: string; min: number; max: number; types: string[] }> = {
@@ -159,10 +158,19 @@ async function fetchAndCacheVideo(url: string): Promise<string | null> {
 }
 
 export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging = false, isConnectTarget = false, onNodeMouseDown, onPortMouseDown }: CanvasNodeProps) {
+  const configuredFeatures = useCanvasNodeFeatures(node.type);
   const updateNode = useCanvasStore((s) => s.updateNode);
   const { generate, generating, showAuxUI } = useNodeRuntime(node, isSelected, isDragging);
-  const [videoParam, setVideoParam] = useState<VideoParamValue>({ ratio: "16:9", resolution: "720P", duration: 5, audio: true });
-  const { models: videoModels, modelId: selectedModelId, setModelId: setSelectedModelId, selectedModel } = useAiModels(AiModelType.VIDEO);
+  const [videoParam, setVideoParam] = useState<VideoParamValue>({
+    ratio: node.aspectRatio ?? "16:9",
+    resolution: node.generationConfig?.resolution ?? "720P",
+    duration: node.generationConfig?.duration ?? 5,
+    audio: node.generationConfig?.audio ?? true,
+  });
+  const { models: videoModels, modelId: selectedModelId, setModelId: setSelectedModelId, selectedModel } = useAiModels(
+    AiModelType.VIDEO,
+    node.generationConfig?.modelId,
+  );
   const [videoTab, setVideoTab] = useState("文生视频");
   const [previewOpen, setPreviewOpen] = useState(false);
   const { promptExpanded, setPromptExpanded, handlePromptChange } = useNodePrompt(node, node.videoSrc);
@@ -198,7 +206,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       .filter((c) => c.targetId === node.id)
       .map((c) => {
         const src = s.nodes.find((n) => n.id === c.sourceId);
-        if (src && IMAGE_SOURCE_TYPES.has(src.type) && src.imageSrc) return "i~" + src.id + "~" + src.imageSrc + "~" + (src.title || "");
+        if (src && isImageReferenceNodeType(src.type) && src.imageSrc) return "i~" + src.id + "~" + src.imageSrc + "~" + (src.title || "");
         if (src && src.type === "video" && src.videoSrc) return "v~" + src.id + "~" + src.videoSrc + "~" + (src.title || "");
         if (src && src.type === "text" && src.content) return "t~" + src.id + "~" + src.content + "~" + (src.title || "");
         return "";
@@ -219,7 +227,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       if (c.targetId !== node.id) continue;
       const src = st.nodes.find((n) => n.id === c.sourceId);
       if (!src) continue;
-      if (IMAGE_SOURCE_TYPES.has(src.type) && src.imageSrc) {
+      if (isImageReferenceNodeType(src.type) && src.imageSrc) {
         images.push({ id: src.id, thumb: src.imageSrc, title: src.title || "", index: images.length + 1, kind: "image", src: src.imageSrc });
       } else if (src.type === "video" && src.videoSrc) {
         // 视频没有可直接放进 <img> 的封面，thumb 留空走 ▶ 降级字形
@@ -234,9 +242,15 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     return [...images, ...(videoTab === "全能参考" ? videos : []), ...texts];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refsSig, node.id, videoTab]);
-  // 入边文本节点的正文会拼进 prompt，所以输入框空着照样有提示词可发——
-  // 否则「文本节点写好提示词直接连过来生成」这条路会被按钮的空值禁用挡死。
-  const hasPromptSource = !!node.prompt?.trim() || refs.some((r) => r.kind === "text");
+  const hasConceptPrompt = useCanvasStore((s) =>
+    s.connections.some((c) => {
+      if (c.targetId !== node.id) return false;
+      const src = s.nodes.find((n) => n.id === c.sourceId);
+      return !!src && isConceptCanvasNodeType(src.type) && !!src.prompt?.trim();
+    })
+  );
+  // 入边文本、角色或场景设定会拼进 prompt，所以输入框空着照样有提示词可发。
+  const hasPromptSource = !!node.prompt?.trim() || refs.some((r) => r.kind === "text") || hasConceptPrompt;
   // 实时统计连接到本节点的「有素材」源节点数（图片/视频），用于按模式启用/禁用 Tab
   const connSig = useCanvasStore((s) => {
     let img = 0;
@@ -244,7 +258,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     for (const c of s.connections) {
       if (c.targetId !== node.id) continue;
       const src = s.nodes.find((n) => n.id === c.sourceId);
-      if (src && IMAGE_SOURCE_TYPES.has(src.type) && src.imageSrc) img++;
+      if (src && isImageReferenceNodeType(src.type) && src.imageSrc) img++;
       else if (src?.type === "video" && src.videoSrc) vid++;
     }
     return `${img},${vid}`;
@@ -509,7 +523,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     if (!validateReferenceFileSizes(sources.filter((n) => n.imageSrc || n.videoSrc), selectedModel)) return;
     const limit = TAB_LIMITS[videoTab];
     // 分别收集「真正有素材」的图片 / 视频参考 URL
-    const imageUrls = sources.filter((n) => IMAGE_SOURCE_TYPES.has(n.type) && n.imageSrc).map((n) => n.imageSrc as string);
+    const imageUrls = sources.filter((n) => isImageReferenceNodeType(n.type) && n.imageSrc).map((n) => n.imageSrc as string);
     const videoUrls = sources.filter((n) => n.type === "video" && n.videoSrc).map((n) => n.videoSrc as string);
     // 文本节点没有独立下发通道，正文只能落进 prompt——顺序与 refs 的「文本N」编号同源
     const finalPrompt = inlineIncomingTextRefs(node.prompt || "", sources);
@@ -521,9 +535,8 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     }
 
     // 按模式选 handler，把图片/视频/文字喂给生成；模型无某维度(后台全不勾)时该参数不下发
-    // 技能:只发 skillId,模板由服务端拼到描述前面(与 /chat、创作台统一);
-    // 使用计数 best-effort
-    if (node.skillId) void skillApi.recordUse(node.skillId);
+    // 技能:只发 skillId,模板由服务端拼到描述前面(与 /chat、创作台统一)。
+    // 使用次数由服务端在实际创建任务时统一统计，客户端不重复上报。
     const base: Record<string, unknown> = {
       prompt: finalPrompt,
       ...(node.skillId ? { skillId: node.skillId } : {}),
@@ -587,6 +600,41 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
 
     generate({ nodeId: targetNodeId, handler, modelId: selectedModelId || "default", input });
   };
+
+  const topToolbarActions: ConfigurableNodeToolbarAction[] = [
+    {
+      key: "skill.launcher",
+      group: "creative",
+      content: <CanvasSkillRunToolbarButton nodeId={node.id} />,
+    },
+    {
+      key: "media.replace",
+      group: "media",
+      content: (
+        <button onMouseDown={stop} onClick={openFilePicker} title="重新上传" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800">
+          <Upload className="h-4 w-4" />
+        </button>
+      ),
+    },
+    {
+      key: "media.download",
+      group: "media",
+      content: (
+        <button onMouseDown={stop} onClick={(e) => handleDownload(e, node.videoSrc, node.title || "video", "mp4")} disabled={downloading} title="下载" className="rounded-xl p-2 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">
+          {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+        </button>
+      ),
+    },
+    {
+      key: "media.preview",
+      group: "media",
+      content: (
+        <button onMouseDown={stop} onClick={(e) => { stop(e); setPreviewOpen(true); }} title="查看视频" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800">
+          <Maximize2 className="h-4 w-4" />
+        </button>
+      ),
+    },
+  ];
 
   return (
     <NodeShell node={node} isSelected={isSelected} isDragging={isDragging} onNodeMouseDown={onNodeMouseDown}>
@@ -701,21 +749,32 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
           <NodeDimsBadge dims={videoDims} />
         )}
         {showAuxUI && !node.videoSrc && (
-          <NodeChrome placement="top-center" gap={8}>
-            <button onMouseDown={stop} onClick={openFilePicker} disabled={nodeUploading}
-              className="flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 shadow-sm transition-colors hover:bg-neutral-50 disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
-              <Upload className="h-3.5 w-3.5" /> 上传
-            </button>
+          configuredFeatures.includes("media.replace") || configuredFeatures.includes("skill.launcher")
+        ) && (
+          <NodeChrome placement="top-center" gap={8} zIndex={20}>
+            <div onMouseDown={stop} className="flex items-center gap-0.5 whitespace-nowrap rounded-[18px] border border-neutral-200/80 bg-white px-2 py-1.5 text-sm text-neutral-700 shadow-lg dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
+              {configuredFeatures.includes("media.replace") && (
+                <button onMouseDown={stop} onClick={openFilePicker} disabled={nodeUploading}
+                  className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">
+                  {nodeUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} 上传
+                </button>
+              )}
+              {configuredFeatures.includes("media.replace") && configuredFeatures.includes("skill.launcher") && (
+                <span className="mx-1 h-5 w-px bg-neutral-200 dark:bg-neutral-700" aria-hidden />
+              )}
+              {configuredFeatures.includes("skill.launcher") && <CanvasSkillRunToolbarButton nodeId={node.id} />}
+            </div>
           </NodeChrome>
         )}
         {/* 已生成：顶部操作工具栏（恒定大小胶囊，与图片节点一致风格） */}
-        {showAuxUI && node.videoSrc && (
+        {showAuxUI && node.videoSrc && configuredFeatures.length > 0 && (
           <NodeChrome placement="top-center" gap={10}>
-            <div onMouseDown={stop} className="flex items-center gap-0.5 whitespace-nowrap rounded-[18px] border border-neutral-200/80 bg-white px-2 py-1.5 text-sm text-neutral-700 shadow-lg dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
-              <button onMouseDown={stop} onClick={openFilePicker} title="重新上传" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800"><Upload className="h-4 w-4" /></button>
-              <button onMouseDown={stop} onClick={(e) => handleDownload(e, node.videoSrc, node.title || "video", "mp4")} disabled={downloading} title="下载" className="rounded-xl p-2 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">{downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}</button>
-              <button onMouseDown={stop} onClick={(e) => { stop(e); setPreviewOpen(true); }} title="查看大图" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800"><Maximize2 className="h-4 w-4" /></button>
-            </div>
+            <ConfigurableNodeToolbar
+              featureKeys={configuredFeatures}
+              actions={topToolbarActions}
+              onMouseDown={stop}
+              ariaLabel={`${node.title || "视频节点"}顶部功能`}
+            />
           </NodeChrome>
         )}
         <NodePorts nodeId={node.id} visible={showAuxUI} overlay onPortMouseDown={onPortMouseDown} />

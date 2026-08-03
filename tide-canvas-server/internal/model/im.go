@@ -61,6 +61,10 @@ type IMMessage struct {
 	// The task is the single source of truth for status/result; the assistant
 	// message stores no product, only this pointer. Null for text/user messages.
 	TaskID *idgen.ID `gorm:"column:task_id;index" json:"taskId,omitempty"`
+	// SkillRunID links an assistant run-card message to a durable multi-step
+	// SkillRun. It coexists with TaskID so legacy single-generation turns remain
+	// unchanged.
+	SkillRunID *idgen.ID `gorm:"column:skill_run_id;index" json:"skillRunId,omitempty"`
 	// Params is the generation parameter snapshot (JSON) stored on the *user*
 	// message of a turn — used to render the result detail row and to power
 	// 重新编辑 / 再次生成. Empty for plain text messages.

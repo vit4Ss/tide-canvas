@@ -45,6 +45,16 @@ func sseServer(t *testing.T, n int, gap time.Duration, stallAfter int) *httptest
 	}))
 }
 
+func TestNewDefaultsToTestRelay(t *testing.T) {
+	c := New("", "test-key")
+	if c == nil {
+		t.Fatal("New returned nil with a key set")
+	}
+	if c.baseURL != "https://test-relay.tcmzhan.com" {
+		t.Errorf("baseURL = %q, want test relay", c.baseURL)
+	}
+}
+
 func testClient(t *testing.T, url string) *Client {
 	t.Helper()
 	c := New(url, "test-key")

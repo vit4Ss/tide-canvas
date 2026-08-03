@@ -10,8 +10,8 @@ import (
 	"go.uber.org/zap"
 
 	"tidecanvas/internal/app"
-	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/middleware"
+	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/logger"
 )
 
@@ -20,38 +20,102 @@ import (
 // (video ≈ 20m) and equal to the Redis task-state TTL, so a live task is never
 // swept.
 const staleTaskCutoff = 30 * time.Minute
+const taskReconcileInterval = time.Minute
 
 // SweepStaleTasks reconciles tasks left in Processing by a prior crash/restart —
 // their detached goroutine died, so nothing will ever write their terminal
-// state. Call once at startup before serving. Returns the number reconciled.
+// state. It is safe to call from startup and the periodic reconciler: terminal
+// transitions use status predicates and refunds use a durable exactly-once row.
+// Returns the number reconciled.
 func SweepStaleTasks(d *app.Deps) (int64, error) {
 	r := newRepo(d.DB)
-	cutoff := time.Now().Add(-staleTaskCutoff)
+	now := time.Now()
+	cutoff := now.Add(-staleTaskCutoff)
 	ctx := context.Background()
+	const interruptedMessage = "generation interrupted (server restart)"
 
-	// Snapshot the doomed tasks (with their charged cost) BEFORE flipping them to
-	// Failed, so we know whom to refund.
-	stale, _ := r.staleProcessingTasks(ctx, statusProcessing, cutoff)
+	// A SkillRun action commits its cancellation receipt before making best-
+	// effort provider/task cancellation calls. Reconcile any child task that was
+	// still Processing when that call transiently failed; runTask's terminal CAS
+	// will then drop a late upstream result and the refund pass below repairs the
+	// charge exactly once.
+	cancelledRuns := d.DB.WithContext(ctx).Model(&model.SkillRun{}).Select("id").Where("status = ?", model.SkillRunCancelled)
+	// Preserve cancelTask's billing boundary: queued children are refundable,
+	// while dispatched children are settled so recovery cannot turn an already
+	// issued provider call into free work.
+	cancelledQueued := d.DB.WithContext(ctx).Model(&model.AiTask{}).
+		Where("status = ? AND progress < ? AND skill_run_id <> 0 AND skill_run_id IN (?)", statusProcessing, 30, cancelledRuns).
+		Updates(map[string]any{"status": statusCancelled, "progress": 100, "error_msg": "generation cancelled by skill run",
+			"update_time": now, "complete_time": now})
+	if cancelledQueued.Error != nil {
+		return 0, cancelledQueued.Error
+	}
+	cancelledStarted := d.DB.WithContext(ctx).Model(&model.AiTask{}).
+		Where("status = ? AND progress >= ? AND skill_run_id <> 0 AND skill_run_id IN (?)", statusProcessing, 30, cancelledRuns).
+		Updates(map[string]any{"status": statusCancelled, "progress": 100, "refunded": true,
+			"error_msg": "generation cancelled by skill run", "update_time": now, "complete_time": now})
+	if cancelledStarted.Error != nil {
+		return cancelledQueued.RowsAffected, cancelledStarted.Error
+	}
 
 	n, err := r.sweepStaleTasks(ctx, statusProcessing, statusFailed, cutoff,
-		"generation interrupted (server restart)")
+		interruptedMessage)
+	n += cancelledQueued.RowsAffected + cancelledStarted.RowsAffected
 	if err != nil {
 		return n, err
 	}
 
-	// Refund each interrupted task's up-front charge. After the sweep these rows
-	// are Failed (not Processing), so a subsequent restart can't re-select them —
-	// no double refund. A crash mid-loop only under-refunds (safe), never over.
-	for i := range stale {
-		t := &stale[i]
-		if t.PointCost > 0 {
-			if rerr := points.Refund(d.DB, t.UserID, int(t.PointCost), "生成中断退款（服务重启）", t.ID); rerr != nil {
-				logger.L().Warn("ai: sweep refund failed",
-					zap.String("taskId", t.ID.String()), zap.Error(rerr))
-			}
+	// Reconcile every failed/cancelled charged task, not only rows transitioned by
+	// this stale sweep. This repairs transient refund failures and process crashes
+	// between a terminal status commit and its refund. Unscoped includes a small
+	// amount of legacy data deleted before refund completion.
+	var pending []model.AiTask
+	if qerr := d.DB.WithContext(ctx).Unscoped().Select("id", "user_id", "status", "point_cost", "refunded").
+		Where("status IN ? AND refunded = ? AND point_cost > 0", []int{statusFailed, statusCancelled}, false).
+		Order("update_time ASC, id ASC").
+		Limit(1000).Find(&pending).Error; qerr != nil {
+		return n, qerr
+	}
+	for i := range pending {
+		t := &pending[i]
+		if rerr := refundTaskOnce(d.DB, t.ID, "generation terminal-state recovery refund"); rerr != nil {
+			logger.L().Warn("ai: sweep refund failed",
+				zap.String("taskId", t.ID.String()), zap.Error(rerr))
 		}
 	}
 	return n, nil
+}
+
+// StartTaskReconciler retries terminal refunds and stale-task recovery without
+// coupling AI correctness to the SkillRun scheduler. The initial pass runs in
+// this worker rather than on the startup goroutine, and the periodic ticker is
+// created only after that pass completes so two sweeps never overlap.
+func StartTaskReconciler(ctx context.Context, d *app.Deps) {
+	if d == nil || d.DB == nil {
+		return
+	}
+	go func() {
+		if n, err := SweepStaleTasks(d); err != nil {
+			logger.L().Warn("ai: startup task reconciliation failed", zap.Error(err))
+		} else if n > 0 {
+			logger.L().Info("ai: reconciled stale tasks", zap.Int64("count", n))
+		}
+
+		ticker := time.NewTicker(taskReconcileInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if n, err := SweepStaleTasks(d); err != nil {
+					logger.L().Warn("ai: periodic task reconciliation failed", zap.Error(err))
+				} else if n > 0 {
+					logger.L().Info("ai: periodically reconciled tasks", zap.Int64("count", n))
+				}
+			}
+		}
+	}()
 }
 
 // Register mounts the AI routes on the /api group.

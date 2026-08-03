@@ -7,15 +7,12 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/pkg/response"
 )
-
-// downloadClient fetches remote assets for the server-side download proxy.
-var downloadClient = &http.Client{Timeout: 60 * time.Second}
 
 // filenameSanitizer strips characters that would break a Content-Disposition header.
 var filenameSanitizer = strings.NewReplacer("\"", "", "\\", "", "\r", "", "\n", "", "/", "_")
@@ -27,19 +24,38 @@ var filenameSanitizer = strings.NewReplacer("\"", "", "\\", "", "\r", "", "\n", 
 // an attachment, without tripping CORS. Used across the canvas nodes
 // (image/video/panorama/scene-3d) and lib/image-slice.ts.
 //
-// Public on purpose: the canvas runs without login. NOTE: this is an outbound
-// fetch of a client-supplied URL (SSRF surface) — restrict to allowed hosts /
-// require auth before shipping to production.
+// The route is authenticated and accepts only a URL already owned by the
+// caller (File, AiTask result or SkillRun artifact). The shared remote client
+// validates redirects and every dialed IP, blocking private-network SSRF.
 func (h *handler) download(c *gin.Context) {
-	raw := c.Query("url")
+	raw := strings.TrimSpace(c.Query("url"))
 	if raw == "" {
 		response.Fail(c, response.CodeBadRequest, "missing url")
 		return
 	}
-	u, err := url.Parse(raw)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+	u, err := url.ParseRequestURI(raw)
+	if err != nil || u.Hostname() == "" || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") {
 		response.Fail(c, response.CodeBadRequest, "invalid url")
 		return
+	}
+	owned, err := h.svc.ownsDownloadURL(c.Request.Context(), middleware.CurrentUserID(c), raw)
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "failed to verify remote file")
+		return
+	}
+	if !owned {
+		response.Fail(c, response.CodeForbidden, "not allowed to download this url")
+		return
+	}
+	localOwned := false
+	if h.svc.store != nil && h.svc.store.Type() == "local" {
+		_, localOwned = h.svc.store.OwnsURL(raw)
+	}
+	if !localOwned {
+		if _, err := validateRemoteAssetURL(raw); err != nil {
+			response.Fail(c, response.CodeBadRequest, "invalid url")
+			return
+		}
 	}
 
 	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, raw, nil)
@@ -47,7 +63,19 @@ func (h *handler) download(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, "invalid url")
 		return
 	}
-	resp, err := downloadClient.Do(req)
+	client := h.svc.httpcli
+	if localOwned {
+		// Local development stores are commonly served from 127.0.0.1:8080.
+		// This exception is safe only after the exact URL ownership check above,
+		// and redirects are refused so it cannot escape the static namespace.
+		client = &http.Client{
+			Timeout: saveFromURLTimeout,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		response.Fail(c, response.CodeServerError, "failed to fetch remote file")
 		return
@@ -55,6 +83,10 @@ func (h *handler) download(c *gin.Context) {
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		response.Fail(c, response.CodeServerError, "remote returned status "+strconv.Itoa(resp.StatusCode))
+		return
+	}
+	if resp.ContentLength > maxFileSize {
+		response.Fail(c, response.CodeBadRequest, "remote file exceeds size limit")
 		return
 	}
 
@@ -74,9 +106,11 @@ func (h *handler) download(c *gin.Context) {
 
 	c.Header("Content-Type", ct)
 	c.Header("Content-Disposition", "attachment; filename=\""+filenameSanitizer.Replace(name)+"\"")
-	if cl := resp.Header.Get("Content-Length"); cl != "" {
+	if cl := resp.Header.Get("Content-Length"); cl != "" && resp.ContentLength >= 0 {
 		c.Header("Content-Length", cl)
 	}
 	c.Status(http.StatusOK)
-	_, _ = io.Copy(c.Writer, resp.Body)
+	// Unknown/chunked bodies are still hard-capped; a dishonest origin cannot
+	// turn this endpoint into an unbounded bandwidth relay.
+	_, _ = io.Copy(c.Writer, io.LimitReader(resp.Body, maxFileSize+1))
 }

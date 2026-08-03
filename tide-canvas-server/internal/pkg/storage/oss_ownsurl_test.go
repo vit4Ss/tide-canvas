@@ -23,7 +23,13 @@ func TestOSSOwnsURL(t *testing.T) {
 	}{
 		{"regional host, own prefix", "https://scaecrowtoken.oss-cn-shanghai.aliyuncs.com/canvas/uploads/u1/up_1_task.png", true},
 		{"accelerate host, own prefix (relay prod returns this variant)", "https://scaecrowtoken.oss-accelerate.aliyuncs.com/canvas/uploads/u1/up_1_task.png", true},
-		{"query string dropped from canonical", "https://scaecrowtoken.oss-accelerate.aliyuncs.com/canvas/uploads/u1/up_1_task.png?x=1", true},
+		{"query string is not trusted", "https://scaecrowtoken.oss-accelerate.aliyuncs.com/canvas/uploads/u1/up_1_task.png?x=1", false},
+		{"fragment is not trusted", "https://scaecrowtoken.oss-accelerate.aliyuncs.com/canvas/uploads/u1/up_1_task.png#x", false},
+		{"userinfo is not trusted", "https://attacker@scaecrowtoken.oss-accelerate.aliyuncs.com/canvas/uploads/u1/up_1_task.png", false},
+		{"non-http scheme is not trusted", "ftp://scaecrowtoken.oss-accelerate.aliyuncs.com/canvas/uploads/u1/up_1_task.png", false},
+		{"encoded traversal is not trusted", "https://scaecrowtoken.oss-accelerate.aliyuncs.com/canvas/uploads/%2e%2e/private.png", false},
+		{"plain traversal is not trusted", "https://scaecrowtoken.oss-accelerate.aliyuncs.com/canvas/uploads/a/../private.png", false},
+		{"repeated slash is not trusted", "https://scaecrowtoken.oss-accelerate.aliyuncs.com/canvas/uploads//u1/a.png", false},
 		{"relay's own uploads/ dir in the shared bucket is NOT ours", "https://scaecrowtoken.oss-cn-shanghai.aliyuncs.com/uploads/u1/up_1_task.png", false},
 		{"sibling project prefix is NOT ours", "https://scaecrowtoken.oss-cn-shanghai.aliyuncs.com/other/uploads/u1/up_1_task.png", false},
 		{"prefix must be a path segment, not a string prefix", "https://scaecrowtoken.oss-cn-shanghai.aliyuncs.com/canvas/uploadsx/u1.png", false},
@@ -73,4 +79,23 @@ func TestOSSOwnsURL(t *testing.T) {
 			t.Fatal("root path is not an object")
 		}
 	})
+}
+
+func TestLocalOwnsURLRequiresCanonicalURL(t *testing.T) {
+	l := &LocalStorage{publicURL: "http://localhost:8080/static"}
+	if got, ok := l.OwnsURL("http://localhost:8080/static/u1/image.png"); !ok || got != "http://localhost:8080/static/u1/image.png" {
+		t.Fatalf("canonical local URL = %q, %v", got, ok)
+	}
+	for _, raw := range []string{
+		"http://localhost:8080/static/../secret",
+		"http://localhost:8080/static/%2e%2e/secret",
+		"http://localhost:8080/static//u1/image.png",
+		"http://user@localhost:8080/static/u1/image.png",
+		"ftp://localhost:8080/static/u1/image.png",
+		"http://localhost:8080/static/u1/image.png?download=1",
+	} {
+		if got, ok := l.OwnsURL(raw); ok || got != "" {
+			t.Fatalf("unsafe local URL accepted: %q -> %q", raw, got)
+		}
+	}
 }

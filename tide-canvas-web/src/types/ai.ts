@@ -4,8 +4,18 @@ export interface AiGenerateDTO {
   handler: string;
   modelId: string;
   projectId?: string | number;
+  /** Direct preset placement. Agent/workflow executions use SkillRun instead. */
+  entryPoint?: "studio" | "chat" | "canvas" | "asset" | "api";
+  /** Canvas node type or asset category used by the server-side binding check. */
+  targetType?: string;
+  /** Required by the wire API. Prefer aiApi.generateIdempotent at UI entry points. */
+  clientRequestId: string;
   input: Record<string, unknown>;
 }
+
+export type AiGenerateInput = Omit<AiGenerateDTO, "clientRequestId"> & {
+  clientRequestId?: string;
+};
 
 export interface AiTaskVO {
   id: string; // 后端雪花 ID 序列化为字符串

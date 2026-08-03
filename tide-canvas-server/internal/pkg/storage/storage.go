@@ -5,7 +5,9 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
 	"os"
@@ -16,6 +18,29 @@ import (
 	"tidecanvas/internal/config"
 )
 
+// ScopeID returns a non-secret fingerprint of the physical storage namespace.
+// Direct-upload grants persist it so a grant minted for one bucket/prefix can
+// never be registered or garbage-collected through a later storage config.
+// Credentials and public/CDN domains are deliberately excluded.
+func ScopeID(cfg config.StorageConfig) string {
+	typ := strings.ToLower(strings.TrimSpace(cfg.Type))
+	var identity string
+	switch typ {
+	case "oss":
+		identity = strings.Join([]string{
+			"oss",
+			strings.TrimRight(strings.ToLower(strings.TrimSpace(cfg.Endpoint)), "/"),
+			strings.ToLower(strings.TrimSpace(cfg.Bucket)),
+			strings.Trim(strings.TrimSpace(cfg.Prefix), "/"),
+		}, "\x00")
+	default:
+		typ = "local"
+		identity = strings.Join([]string{"local", filepath.Clean(strings.TrimSpace(cfg.LocalDir))}, "\x00")
+	}
+	sum := sha256.Sum256([]byte(identity))
+	return fmt.Sprintf("%s:%x", typ, sum)
+}
+
 // PresignResult describes a direct-to-storage upload grant. For local storage
 // direct upload is unsupported, so Direct is false and the caller must fall
 // back to a server-mediated upload (matches the frontend's uploadFileSmart).
@@ -25,6 +50,16 @@ type PresignResult struct {
 	Key         string `json:"key,omitempty"`
 	FileURL     string `json:"fileUrl,omitempty"`
 	ContentType string `json:"contentType,omitempty"`
+	// Headers are mandatory request headers covered by the storage signature.
+	// Callers must forward every entry when uploading to UploadURL.
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
+// ObjectMeta is authoritative metadata read from the storage service after a
+// direct upload. It must never be populated from browser-provided values.
+type ObjectMeta struct {
+	Size        int64
+	ContentType string
 }
 
 // StorageStrategy is the storage backend contract.
@@ -36,7 +71,10 @@ type StorageStrategy interface {
 	// URL returns the public URL for a stored key.
 	URL(key string) string
 	// Presign requests a direct-upload grant. Local storage returns Direct=false.
-	Presign(ctx context.Context, key, contentType string) (PresignResult, error)
+	Presign(ctx context.Context, key, contentType string, expectedSize int64) (PresignResult, error)
+	// Stat verifies that a directly uploaded object exists and reports its
+	// server-observed size and content type before it is registered as an asset.
+	Stat(ctx context.Context, key string) (ObjectMeta, error)
 	// Type reports the storage type identifier ("local" | "oss").
 	Type() string
 	// UpstreamURL rewrites a public asset URL into the form an overseas upstream
@@ -157,13 +195,29 @@ func (l *LocalStorage) URL(key string) string {
 
 // Presign reports that direct upload is unsupported for local storage; the
 // caller should perform a server-mediated upload (Direct=false).
-func (l *LocalStorage) Presign(ctx context.Context, key, contentType string) (PresignResult, error) {
+func (l *LocalStorage) Presign(ctx context.Context, key, contentType string, expectedSize int64) (PresignResult, error) {
+	_ = expectedSize
 	return PresignResult{
 		Direct:      false,
 		Key:         cleanKey(key),
 		FileURL:     l.URL(key),
 		ContentType: contentType,
 	}, nil
+}
+
+// Stat reports local object metadata. Direct uploads are disabled for local
+// storage, but implementing the contract keeps the backend interchangeable.
+func (l *LocalStorage) Stat(ctx context.Context, key string) (ObjectMeta, error) {
+	_ = ctx
+	rel := cleanKey(key)
+	if rel == "" {
+		return ObjectMeta{}, errors.New("storage: empty key")
+	}
+	info, err := os.Stat(filepath.Join(l.baseDir, filepath.FromSlash(rel)))
+	if err != nil {
+		return ObjectMeta{}, err
+	}
+	return ObjectMeta{Size: info.Size()}, nil
 }
 
 // UpstreamURL returns the URL unchanged: local assets need no host rewrite (and
@@ -176,10 +230,11 @@ func (l *LocalStorage) FetchHosts() []string { return hostsOf(l.publicURL) }
 // OwnsURL matches URLs already under the local public prefix; they are
 // canonical by construction, so they are returned unchanged.
 func (l *LocalStorage) OwnsURL(u string) (string, bool) {
-	if u != "" && strings.HasPrefix(u, l.publicURL+"/") {
-		return u, true
+	key, ok := ownedObjectKey(u, []string{l.publicURL}, "")
+	if !ok {
+		return "", false
 	}
-	return "", false
+	return canonicalObjectURL(l.publicURL, key)
 }
 
 // PublicRewrites returns nil: local assets are served from a single stable
@@ -198,4 +253,69 @@ func hostsOf(bases ...string) []string {
 		}
 	}
 	return out
+}
+
+// ownedObjectKey validates a URL before it is trusted as a same-storage object.
+// It deliberately rejects query-bearing and non-canonical paths: OwnsURL is a
+// security boundary used to skip an HTTP fetch, so host-prefix string matching
+// is not sufficient (userinfo, encoded traversal and repeated slashes are all
+// ambiguous at proxies/object stores).
+func ownedObjectKey(raw string, bases []string, namespace string) (string, bool) {
+	// ParseRequestURI treats a literal '#' in some absolute request targets as
+	// path data, so Fragment remains empty and the URL can slip through this
+	// canonicality boundary. Parse the absolute URL form directly instead.
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" {
+		return "", false
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", false
+	}
+	decoded, err := url.PathUnescape(parsed.EscapedPath())
+	if err != nil || decoded == "" || decoded[0] != '/' || decoded != path.Clean(decoded) || strings.Contains(decoded, "\\") {
+		return "", false
+	}
+
+	namespace = strings.Trim(namespace, "/")
+	for _, rawBase := range bases {
+		base, err := url.Parse(strings.TrimSpace(rawBase))
+		if err != nil || base.Host == "" || (base.Scheme != "http" && base.Scheme != "https") || !strings.EqualFold(parsed.Host, base.Host) {
+			continue
+		}
+		candidatePath := decoded
+		basePath := strings.TrimSuffix(base.Path, "/")
+		if basePath != "" {
+			if candidatePath == basePath || !strings.HasPrefix(candidatePath, basePath+"/") {
+				continue
+			}
+			candidatePath = strings.TrimPrefix(candidatePath, basePath)
+		}
+		key := strings.TrimPrefix(candidatePath, "/")
+		if key == "" {
+			continue
+		}
+		if namespace != "" && key != namespace && !strings.HasPrefix(key, namespace+"/") {
+			continue
+		}
+		// A namespace itself is a directory, not an object.
+		if key == namespace && namespace != "" {
+			continue
+		}
+		return key, true
+	}
+	return "", false
+}
+
+func canonicalObjectURL(rawBase, key string) (string, bool) {
+	base, err := url.Parse(strings.TrimSpace(rawBase))
+	if err != nil || base.Host == "" || (base.Scheme != "http" && base.Scheme != "https") {
+		return "", false
+	}
+	base.User = nil
+	base.RawQuery = ""
+	base.Fragment = ""
+	base.Path = strings.TrimSuffix(base.Path, "/") + "/" + strings.TrimLeft(key, "/")
+	base.RawPath = ""
+	return base.String(), true
 }

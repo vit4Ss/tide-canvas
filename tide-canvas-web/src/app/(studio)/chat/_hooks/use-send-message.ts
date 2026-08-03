@@ -8,11 +8,13 @@
 import { useCallback } from "react";
 import { chatApi, streamMessage } from "@/lib/chat-api";
 import { aiApi } from "@/lib/api";
-import { skillApi } from "@/lib/skill-api";
+import { skillRunApi } from "@/lib/skill-run-api";
+import { validateSkillRunInputValues } from "@/lib/skill-api";
 import { toast } from "@/components/shared/toast";
 import { buildMusicInput, validateMusicParams, type MusicParams } from "@/lib/music-modes";
 import type { StudioModelVO } from "@/lib/market-api";
-import type { SkillVO } from "@/types/skill";
+import { skillKindOf, skillSupportsOutput, type SkillVO } from "@/types/skill";
+import type { SkillRunAssetInput } from "@/types/skill-run";
 import type { ContextUsageVO, ConversationVO, MessageVO } from "@/types/chat";
 import { musicTurnSummary, type RefItem, type RefPolicy } from "../_components/chat-utils";
 
@@ -48,6 +50,8 @@ export function useSendMessage({
   isMusicSel,
   musicNoDraftOk,
   skill,
+  skillInputValues,
+  setSkillInputErrors,
   setStreaming,
   chatAbortRef,
   activeIdRef,
@@ -83,16 +87,19 @@ export function useSendMessage({
   isMusicSel: boolean;
   musicNoDraftOk: boolean;
   skill: SkillVO | null;
+  skillInputValues: Record<string, unknown>;
+  setSkillInputErrors: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setStreaming: React.Dispatch<React.SetStateAction<string | null>>;
   chatAbortRef: React.RefObject<AbortController | null>;
   activeIdRef: React.RefObject<string | null>;
 }) {
   const send = useCallback(async () => {
     const v = draft.trim();
+    const isFlowSkill = !!skill && skillKindOf(skill) !== "preset";
     if (busy) return;
     // 音乐的自定义/延长/翻唱不强制描述；其余（含灵感模式/音效）仍需文字。
-    if (!v && !musicNoDraftOk) return;
-    if (isMusicSel) {
+    if (!v && !musicNoDraftOk && !isFlowSkill) return;
+    if (isMusicSel && !isFlowSkill) {
       const musicErr = validateMusicParams(v, music);
       if (musicErr) {
         toast.info(musicErr);
@@ -102,7 +109,7 @@ export function useSendMessage({
 
     // text-model sends are blocked once the conversation's context is full
     // (the server enforces the same cap; this just fails fast with guidance).
-    if (selModel?.type === "text" && ctxUsage?.full) {
+    if (selModel?.type === "text" && !isFlowSkill && ctxUsage?.full) {
       toast.error("当前会话上下文已达上限，请开启新会话");
       return;
     }
@@ -126,12 +133,53 @@ export function useSendMessage({
       // omni_ref 的策略允许纯音频参考（音频驱动的视频生成），音频也算数——
       // 否则界面明示「音频已添加、可 @ 引用」，发送却被拦，自相矛盾。
       if (
+        !isFlowSkill &&
         !refOptional &&
         refImageUrls.length === 0 &&
         refVideoUrls.length === 0 &&
         refAudioUrls.length === 0
       ) {
         toast.error("当前模式需要先添加参考素材");
+        return;
+      }
+    }
+
+    const flowAssets: SkillRunAssetInput[] = refs
+      .filter((ref) => !!ref.url)
+      .map((ref) => ({
+        // ref.key (for example "r0") is only a React-side attachment key,
+        // not a File/Artifact id. The hosted URL is ownership-checked server-side.
+        type: ref.kind,
+        url: ref.url,
+        role: "reference",
+        name: ref.name,
+      }));
+    const flowParameters: Record<string, unknown> = {
+      ...skillInputValues,
+      ...(selModel
+        ? {
+            outputType: selModel.type,
+            modelId: selModel.modelKey || selModel.id,
+            modelName: selModel.name,
+          }
+        : {}),
+      ...(mode ? { mode } : {}),
+      ...(ratio ? { aspectRatio: ratio } : {}),
+      ...(res ? { resolution: res } : {}),
+      ...(quality ? { quality } : {}),
+      ...(dur ? { duration: dur } : {}),
+      ...(batch > 1 ? { batchCount: batch } : {}),
+    };
+    if (isFlowSkill && skill) {
+      const errors = validateSkillRunInputValues(skill.inputSchema, {
+        prompt: v,
+        assets: flowAssets,
+        sourceNodeIds: [],
+        parameters: flowParameters,
+      });
+      setSkillInputErrors(errors);
+      if (Object.keys(errors).length) {
+        toast.info(errors.prompt || errors.assets || errors.sourceNodeIds || errors.parameters || "请检查技能输入");
         return;
       }
     }
@@ -158,13 +206,13 @@ export function useSendMessage({
     // references via persistTurn (params.references), so attaching here would make
     // the optimistic bubble flash thumbnails that vanish on reload.
     // 文本模型附件收全部类型（图片给模型做多模态,视频/音频/文档落库展示）
-    const attachSnapshot = refOptional
+    const attachSnapshot = refOptional || isFlowSkill
       ? refs.filter((r) => r.url).map((r) => ({ url: r.url as string, kind: r.kind }))
       : [];
 
     // 用户气泡/落库的提示词：音乐模式描述可留空，兜底一句模式摘要（persistTurn
     // 的 prompt 为必填，气泡也不能是空白）。
-    const sendText = v || (isMusicSel ? musicTurnSummary(music) : "");
+    const sendText = v || (isFlowSkill ? skill?.title || "运行技能" : isMusicSel ? musicTurnSummary(music) : "");
 
     // optimistic user bubble
     const optimistic: MessageVO = {
@@ -196,12 +244,46 @@ export function useSendMessage({
     const wantAudio = selModel?.type === "audio";
 
     try {
-      if ((wantImage || wantVideo || wantAudio) && selModel) {
+      if (isFlowSkill && skill) {
+        const started = await skillRunApi.createIdempotent({
+          skillId: skill.id,
+          entryPoint: "chat",
+          targetType: selModel?.type ?? "text",
+          conversationId: id,
+          clientRequestId:
+            typeof crypto !== "undefined" && "randomUUID" in crypto
+              ? crypto.randomUUID()
+              : `chat-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          input: {
+            prompt: v,
+            assets: flowAssets,
+            sourceNodeIds: [],
+            parameters: flowParameters,
+          },
+        }, `create:chat:${id}`);
+        if (!started.success || !started.data) {
+          setMsgs((prev) => prev.filter((message) => message.id !== optimistic.id));
+          setDraft((current) => current || v);
+          toast.error(started.message || "技能启动失败，请稍后重试");
+          return;
+        }
+        // Chat creation persists the SkillRun message server-side in the same
+        // transaction. Only now retire the local accepted-but-uncommitted token.
+        await skillRunApi.commitCreate(`create:chat:${id}`, started.data.id);
+        setSkillInputErrors({});
+        clearRefs();
+        if (activeIdRef.current === id) await loadMessages(id);
+        bump(id);
+        refreshCtxUsage(id);
+      } else if ((wantImage || wantVideo || wantAudio) && selModel) {
         // 技能:只发 skillId,模板由服务端拼到描述前面。客户端先拼好的话,落库的
         // input 会变成「模板+描述」,作品标题和「重新编辑」读到的全是模板开头。
         const genPrompt = v;
-        const skillInput =
-          skill && skill.outputType === selModel.type ? { skillId: skill.id } : {};
+        const presetSkill =
+          skill && skillKindOf(skill) === "preset" && skillSupportsOutput(skill, selModel.type)
+            ? skill
+            : null;
+        const skillInput = presetSkill ? { skillId: presetSkill.id } : {};
         // 先 submit（计费/配额走既有生成管线）；被拒时尚未持久化任何东西，无孤儿可清。
         // 音频：音乐按四创作模式组装（与创作台同构），音效只发描述。
         const input: Record<string, unknown> = wantAudio
@@ -252,25 +334,27 @@ export function useSendMessage({
         }
         // image handlers loop on batchCount → request N images when 批量 > 1 (not video).
         if (wantImage && batch > 1) input.batchCount = batch;
-        const gen = await aiApi.generate({
+        const gen = await aiApi.generateIdempotent({
           handler,
           modelId: selModel.modelKey || selModel.id,
+          ...(presetSkill
+            ? { entryPoint: "chat" as const, targetType: selModel.type }
+            : {}),
           input,
-        });
+        }, `chat:${id}`);
         if (!gen.success) {
           setMsgs((prev) => prev.filter((m) => m.id !== optimistic.id)); // roll back optimistic
           toast.error(gen.message || "生成请求失败");
           return;
         }
         // 技能使用计数(fire-and-forget,失败不影响链路)
-        if (skill && skill.outputType === selModel.type) void skillApi.recordUse(skill.id);
         // 成功 → 原子持久化整个 turn（用户提示词+参数快照 / 助手 taskId）。
         const params: Record<string, unknown> = {
           model: selModel.name,
           modelKey: selModel.modelKey,
           type: selModel.type,
-          ...(skill && skill.outputType === selModel.type
-            ? { skill: { id: skill.id, title: skill.title } }
+          ...(presetSkill
+            ? { skill: { id: presetSkill.id, title: presetSkill.title } }
             : {}),
           ...(mode ? { mode } : {}),
           ...(ratio ? { ratio } : {}),
@@ -319,6 +403,10 @@ export function useSendMessage({
           // route the reply to the composer's selected text model (server
           // validates against 模型管理 and falls back to the primary otherwise)
           model: selModel?.type === "text" ? selModel.modelKey : undefined,
+          skillId:
+            skill && skillKindOf(skill) === "preset" && skillSupportsOutput(skill, "text")
+              ? skill.id
+              : undefined,
           onDelta: (d) => {
             acc += d;
             setStreaming(acc);
@@ -356,7 +444,7 @@ export function useSendMessage({
       setTyping(false);
       setBusy(false);
     }
-  }, [draft, busy, activeId, ensureSession, loadMessages, selModel, mode, ratio, res, quality, dur, batch, refs, refPolicy, refOptional, clearRefs, forceBottom, scrollEnd, ctxUsage, refreshCtxUsage, music, isMusicSel, musicNoDraftOk, skill, activeIdRef, chatAbortRef, nearBottomRef, setActiveId, setBusy, setConvos, setDraft, setMsgs, setStreaming, setTyping]);
+  }, [draft, busy, activeId, ensureSession, loadMessages, selModel, mode, ratio, res, quality, dur, batch, refs, refPolicy, refOptional, clearRefs, forceBottom, scrollEnd, ctxUsage, refreshCtxUsage, music, isMusicSel, musicNoDraftOk, skill, skillInputValues, activeIdRef, chatAbortRef, nearBottomRef, setActiveId, setBusy, setConvos, setDraft, setMsgs, setSkillInputErrors, setStreaming, setTyping]);
 
   return send;
 }

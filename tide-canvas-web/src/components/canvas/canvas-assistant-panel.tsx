@@ -31,6 +31,8 @@ const MAX_CHAT_POLL_TIME = 60 * 1000;
 const MAX_STORED_MESSAGES = 80;
 const MAX_STORED_SESSIONS = 20;
 
+export const CANVAS_ASSISTANT_VISIBILITY_EVENT = "tidecanvas:canvas-assistant-visibility";
+
 type AssistantChatRole = "user" | "assistant";
 type AssistantChatStatus = "done" | "pending" | "error";
 
@@ -271,7 +273,7 @@ export function CanvasAssistantPanel() {
   const [sending, setSending] = useState(false);
   const [models, setModels] = useState<AiModelVO[]>([]);
   const [selectedModelId, setSelectedModelId] = useState("");
-  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsLoading, setModelsLoading] = useState(true);
   const [attachments, setAttachments] = useState<FileVO[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -290,6 +292,10 @@ export function CanvasAssistantPanel() {
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const resizingRef = useRef(false);
 
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent(CANVAS_ASSISTANT_VISIBILITY_EVENT, { detail: { open } }));
+  }, [open]);
+
   // ── @ 引用 ────────────────────────────────────────────────────────────────
   // 只有**图片**附件可引用：服务端 assistant_chat 把图片作为 image_url part 下发，
   // 而视频/音频/文档不进模型（分别转成一句文字说明或 file part），给它们编号等于
@@ -299,15 +305,18 @@ export function CanvasAssistantPanel() {
   const { mentionRefs, refLabels } = useMemo(() => buildMentionRefs(attachments), [attachments]);
 
   useEffect(() => {
-    const restored = loadStoredSessions();
-    setSessions(restored.sessions);
-    setActiveSessionId(restored.activeSessionId);
-    const activeSession = restored.sessions.find((session) => session.id === restored.activeSessionId);
-    if (activeSession) {
-      setMessages(activeSession.messages);
-      messageSeqRef.current = activeSession.messages.length;
-    }
-    sessionLoadedRef.current = true;
+    const frame = requestAnimationFrame(() => {
+      const restored = loadStoredSessions();
+      setSessions(restored.sessions);
+      setActiveSessionId(restored.activeSessionId);
+      const activeSession = restored.sessions.find((session) => session.id === restored.activeSessionId);
+      if (activeSession) {
+        setMessages(activeSession.messages);
+        messageSeqRef.current = activeSession.messages.length;
+      }
+      sessionLoadedRef.current = true;
+    });
+    return () => cancelAnimationFrame(frame);
   }, []);
 
   useEffect(() => {
@@ -346,10 +355,12 @@ export function CanvasAssistantPanel() {
   }, [messages, activeSessionId]);
 
   useEffect(() => {
-    if (!open) {
+    if (open) return;
+    const frame = requestAnimationFrame(() => {
       setHistoryOpen(false);
       setModelOpen(false);
-    }
+    });
+    return () => cancelAnimationFrame(frame);
   }, [open]);
 
   useEffect(() => {
@@ -359,7 +370,6 @@ export function CanvasAssistantPanel() {
 
   useEffect(() => {
     let cancelled = false;
-    setModelsLoading(true);
     aiApi
       .listModels()
       .then((res) => {
@@ -620,7 +630,7 @@ export function CanvasAssistantPanel() {
     setSending(true);
 
     try {
-      const res = await aiApi.generate({
+      const res = await aiApi.generateIdempotent({
         handler: ASSISTANT_HANDLER,
         modelId: selectedModel?.modelId ?? "default",
         input: {
@@ -634,7 +644,7 @@ export function CanvasAssistantPanel() {
             size: file.fileSize,
           })),
         },
-      });
+      }, `canvas-assistant:${nextActiveSessionId}`);
 
       if (!res.success) {
         patchMessage(assistantId, { status: "error", content: res.message || "发送失败" });

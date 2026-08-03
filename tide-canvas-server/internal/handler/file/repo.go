@@ -46,6 +46,13 @@ func (r *repo) list(ctx context.Context, ownerID idgen.ID, q fileQuery, offset, 
 	if q.FileType != "" {
 		tx = tx.Where("file_type = ?", q.FileType)
 	}
+	if q.Category != "" {
+		if q.Category == assetCategoryGeneral {
+			tx = tx.Where("(category = ? OR category = '' OR category IS NULL)", assetCategoryGeneral)
+		} else {
+			tx = tx.Where("category = ?", q.Category)
+		}
+	}
 	if q.Keyword != "" {
 		tx = tx.Where("original_name LIKE ?", "%"+q.Keyword+"%")
 	}

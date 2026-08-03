@@ -105,3 +105,13 @@ func TestSubmitAudioSyncKeepsInlineWhenDetailFails(t *testing.T) {
 		t.Errorf("URLs = %v, want inline main song kept", res.URLs)
 	}
 }
+
+func TestNewDefaultsToTestRelay(t *testing.T) {
+	c := New("", "test-key")
+	if c == nil {
+		t.Fatal("New returned nil with a key set")
+	}
+	if c.baseURL != "https://test-relay.tcmzhan.com" {
+		t.Errorf("baseURL = %q, want test relay", c.baseURL)
+	}
+}

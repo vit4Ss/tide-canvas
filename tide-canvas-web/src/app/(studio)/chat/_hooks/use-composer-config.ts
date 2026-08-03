@@ -6,8 +6,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "@/components/shared/toast";
-import { parseSkillParams } from "@/lib/skill-api";
-import type { SkillVO } from "@/types/skill";
+import { defaultSkillInputValues, parseSkillParams } from "@/lib/skill-api";
+import { skillKindOf, type SkillVO } from "@/types/skill";
 import {
   DEFAULT_MUSIC_PARAMS,
   fetchClipOptions,
@@ -36,6 +36,8 @@ export function useComposerConfig(models: GenModelsApi) {
   const [dur, setDur] = useState("");
   // 技能:附着为输入框上方 chip,发送时模板与描述合并;粘性(发完保留)直到手动移除
   const [skill, setSkill] = useState<SkillVO | null>(null);
+  const [skillInputValues, setSkillInputValues] = useState<Record<string, unknown>>({});
+  const [skillInputErrors, setSkillInputErrors] = useState<Record<string, string>>({});
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   const [batch, setBatch] = useState(1);
   const [openSel, setOpenSel] = useState<string | null>(null);
@@ -61,6 +63,10 @@ export function useComposerConfig(models: GenModelsApi) {
   // 模型管理 config (fileUpload on → 图片附件，数量 maxFileCount、单文件 maxFileSizeMB)；
   // for image/video models it is the per-mode REF_POLICY (t2i / t2v take none).
   const refPolicy = useMemo<RefPolicy | undefined>(() => {
+    if (skill && skillKindOf(skill) !== "preset") {
+      const kinds: RefPolicy["kinds"] = ["image", "video", "audio", "file"];
+      return { kinds, max: MAX_ATTACHMENTS, accept: acceptFor(kinds) };
+    }
     if (!selModel) return undefined;
     if (selModel.type === "text") {
       if (!mCfg?.fileUpload) return undefined;
@@ -78,10 +84,10 @@ export function useComposerConfig(models: GenModelsApi) {
     }
     const p = REF_POLICY[mode];
     return p ? { ...p, accept: acceptFor(p.kinds) } : undefined;
-  }, [selModel, mode, mCfg]);
+  }, [skill, selModel, mode, mCfg]);
   // text-model uploads are OPTIONAL (a chat can be plain text); generation ref
   // modes (i2i/i2v/…) REQUIRE at least one reference before sending.
-  const refOptional = selModel?.type === "text";
+  const refOptional = (!!skill && skillKindOf(skill) !== "preset") || selModel?.type === "text";
 
   // 音频模型分流：音乐（四创作模式）vs 音效（只吃描述），判定与创作台一致
   //（后台「生成方式」勾 sfx，modelKey 含 sfx 兜底）。
@@ -132,34 +138,50 @@ export function useComposerConfig(models: GenModelsApi) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mCfg, isVid]);
 
-  // 技能与当前模型模态不匹配(如带着图片技能切到视频模型)时自动摘除,
-  // 避免把图片模板发给视频生成。
+  // 模态就是 chat binding 的 target。切换 target 后重新选择，确保目录
+  // 过滤和实际 create/generate 使用的是同一条绑定。
+  /* eslint-disable react-hooks/set-state-in-effect -- changing model invalidates a previously selected skill */
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- 同上方芯片收敛：换模型后摘除错配技能
-    if (skill && selModel && skill.outputType !== selModel.type) setSkill(null);
+    if (skill) {
+      setSkill(null);
+      setSkillInputValues({});
+      setSkillInputErrors({});
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selModel?.type]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // 选中技能:附着 chip;技能指定了模型卡则自动切换;默认参数回填画幅/清晰度/时长
   // (随后的收敛 effect 会把不在该模型档位内的值校正掉)。
   const pickSkill = useCallback(
     (s: SkillVO) => {
       setSkill(s);
+      setSkillInputValues(defaultSkillInputValues(s.inputSchema, s.defaultParams));
+      setSkillInputErrors({});
       setSkillPickerOpen(false);
-      if (s.modelId) {
+      if (skillKindOf(s) === "preset" && s.modelId) {
         const target = genModels.find((m) => m.modelKey === s.modelId);
-        if (target && target.name !== model) {
+        if (target && target.type === selModel?.type && target.name !== model) {
           setModel(target.name);
           toast.info(`已切换到技能模型「${target.name}」`);
         }
       }
-      const p = parseSkillParams(s.defaultParams);
-      if (p.aspectRatio) setRatio(p.aspectRatio);
-      if (p.resolution) setRes(p.resolution);
-      if (p.duration) setDur(`${p.duration}s`);
+      if (skillKindOf(s) === "preset") {
+        const defaults = parseSkillParams(s.defaultParams);
+        if (defaults.aspectRatio) setRatio(defaults.aspectRatio);
+        if (defaults.resolution) setRes(defaults.resolution);
+        if (defaults.quality) setQuality(defaults.quality);
+        if (defaults.duration) setDur(`${defaults.duration}s`);
+      }
     },
-    [genModels, model, setModel],
+    [genModels, model, selModel?.type, setModel],
   );
+
+  const removeSkill = useCallback(() => {
+    setSkill(null);
+    setSkillInputValues({});
+    setSkillInputErrors({});
+  }, []);
 
   // 切到不支持联网的模型时，强制关闭联网开关。
   useEffect(() => {
@@ -214,6 +236,11 @@ export function useComposerConfig(models: GenModelsApi) {
     setDur,
     skill,
     setSkill,
+    removeSkill,
+    skillInputValues,
+    setSkillInputValues,
+    skillInputErrors,
+    setSkillInputErrors,
     skillPickerOpen,
     setSkillPickerOpen,
     batch,

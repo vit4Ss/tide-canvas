@@ -4,6 +4,7 @@ import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { Group } from "lucide-react";
 import { useCanvasStore } from "@/stores/use-canvas-store";
 import { useCanvasViewStore } from "@/stores/use-canvas-view-store";
+import { useCanvasNodeConfigStore } from "@/stores/use-canvas-node-config-store";
 import { useCanvasPanZoom } from "@/hooks/canvas/use-canvas-pan-zoom";
 import { useCanvasNodeDrag } from "@/hooks/canvas/use-canvas-node-drag";
 import { useCanvasClipboard } from "@/hooks/canvas/use-canvas-clipboard";
@@ -21,12 +22,18 @@ import { CanvasContextMenu, type ContextMenuState } from "./canvas-context-menu"
 import { CanvasBottomToolbar } from "./canvas-bottom-toolbar";
 import { MyAssetsPanel } from "./my-assets-panel";
 import { CanvasHistoryPanel } from "./canvas-history-panel";
-import { FileType, type FileVO } from "@/types/file";
+import { FileCategory, FileType, type FileVO } from "@/types/file";
 import { fileApi, uploadFileSmart } from "@/lib/api";
+import { CHARACTER_NODE_TYPE, SCENE_NODE_TYPE } from "@/lib/canvas-node-types";
 import { toast } from "@/components/shared/toast";
 import { CanvasMinimap } from "./canvas-minimap";
 import { CanvasQuickAddMenu } from "./canvas-quick-add-menu";
 import { CanvasAssistantPanel } from "./canvas-assistant-panel";
+import { CanvasQuickStart } from "./canvas-quick-start";
+import {
+  CanvasSkillRunWorkspace,
+  openCanvasSkillRunLauncher,
+} from "./skill-run/canvas-skill-run-workspace";
 // 画布内部分节点(image-node / quality-ratio-dropdown)使用 @mantine/core,需 Provider + 其 CSS。
 // 就近包在画布视图内,避免改动画布入口路由。
 import { MantineProvider } from "@mantine/core";
@@ -49,6 +56,7 @@ export function CanvasView() {
   const redo = useCanvasStore((s) => s.redo);
   const canUndo = useCanvasStore((s) => s.undoStack.length > 0);
   const canRedo = useCanvasStore((s) => s.redoStack.length > 0);
+  const loadNodeConfig = useCanvasNodeConfigStore((s) => s.load);
 
   const [gridSnap, setGridSnap] = useState(false);
   const [minimapVisible, setMinimapVisible] = useState(false);
@@ -68,6 +76,22 @@ export function CanvasView() {
   const boxSelect = useCanvasBoxSelect({ containerRef });
 
   useCanvasKeyboard({ onEscape: () => setContextMenu(null) });
+
+  // 节点能力属于平台配置，不写入 canvas_data/undo。画布只加载一份；回到页面
+  // 时强制重验，后台刚保存的开关无需刷新整个项目即可生效。
+  useEffect(() => {
+    void loadNodeConfig(true);
+    const refresh = () => void loadNodeConfig(true);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [loadNodeConfig]);
 
   // 跟踪容器尺寸（供小地图绘制可视区域 + 适应视图计算）
   useEffect(() => {
@@ -91,14 +115,18 @@ export function CanvasView() {
     selectNode(node.id);
   }, [addNode, selectNode, nodes]);
 
-  // 侧边工具栏「+」：在当前视口中心新建节点
-  const addNodeAtViewportCenter = useCallback((type: string) => {
+  const getViewportCenter = useCallback(() => {
     const rect = containerRef.current?.getBoundingClientRect();
     const sx = rect ? rect.left + rect.width / 2 : 0;
     const sy = rect ? rect.top + rect.height / 2 : 0;
-    const world = panZoom.screenToWorld(sx, sy);
+    return panZoom.screenToWorld(sx, sy);
+  }, [panZoom]);
+
+  // 侧边工具栏「+」：在当前视口中心新建节点
+  const addNodeAtViewportCenter = useCallback((type: string) => {
+    const world = getViewportCenter();
     handleAddNode(type, world.x, world.y);
-  }, [panZoom, handleAddNode]);
+  }, [getViewportCenter, handleAddNode]);
 
   // 「我的素材」点选：在视口中心新建图片/视频节点并填入该素材 URL
   const addAssetToCanvas = useCallback((file: FileVO) => {
@@ -106,7 +134,14 @@ export function CanvasView() {
     const sx = rect ? rect.left + rect.width / 2 : 0;
     const sy = rect ? rect.top + rect.height / 2 : 0;
     const world = panZoom.screenToWorld(sx, sy);
-    const type = file.fileType === FileType.VIDEO ? "video" : "image";
+    const type =
+      file.category === FileCategory.CHARACTER
+        ? CHARACTER_NODE_TYPE
+        : file.category === FileCategory.SCENE
+          ? SCENE_NODE_TYPE
+          : file.fileType === FileType.VIDEO
+            ? "video"
+            : "image";
     const node = createNode(type, world.x, world.y, nodes);
     if (type === "video") {
       node.videoSrc = file.fileUrl;
@@ -134,6 +169,12 @@ export function CanvasView() {
     const res = await fileApi.saveFromUrl({
       url,
       fileType: node?.videoSrc ? "video" : "image",
+      category:
+        node?.type === CHARACTER_NODE_TYPE
+          ? FileCategory.CHARACTER
+          : node?.type === SCENE_NODE_TYPE
+            ? FileCategory.SCENE
+            : FileCategory.GENERAL,
       originalName: node?.title,
     });
     if (res.success) {
@@ -396,6 +437,8 @@ export function CanvasView() {
         </CanvasWorldLayer>
       </div>
 
+      <CanvasQuickStart getViewportCenter={getViewportCenter} />
+
       {nodes.length === 0 && <CanvasEmptyState />}
 
       {/* 多选浮动操作：在选区顶部上方居中显示「创建分组」（拖动/框选/连线时隐藏） */}
@@ -443,6 +486,7 @@ export function CanvasView() {
         onUndo={undo}
         onRedo={redo}
         onUpload={handleUploadRequest}
+        onOpenHistory={() => { setHistoryOpen(true); setMyAssetsOpen(false); }}
         onSaveAsset={handleSaveAsset}
       />
       {/* 右键「上传」的隐藏文件选择器；与拖拽上传共用 uploadFilesAt 链路 */}
@@ -457,6 +501,7 @@ export function CanvasView() {
       <MyAssetsPanel open={myAssetsOpen} onClose={() => setMyAssetsOpen(false)} onPick={addAssetToCanvas} refreshKey={assetsRefreshKey} />
       <CanvasHistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />
 
+      <CanvasSkillRunWorkspace />
       <CanvasAssistantPanel />
 
       <CanvasBottomToolbar
@@ -474,6 +519,7 @@ export function CanvasView() {
         onArrange={handleArrange}
         onOpenAssets={() => { setMyAssetsOpen((v) => !v); setHistoryOpen(false); }}
         onOpenHistory={() => { setHistoryOpen((v) => !v); setMyAssetsOpen(false); }}
+        onRunSkill={() => openCanvasSkillRunLauncher({ sourceNodeIds: Array.from(selectedNodeIds) })}
       />
     </div>
     </MantineProvider>

@@ -4,7 +4,7 @@ import { useCallback, useSyncExternalStore } from "react";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { sliceImageGrid } from "@/lib/image-slice";
 import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
-import type { AiTaskVO, AiGenerateDTO } from "@/types/ai";
+import type { AiTaskVO, AiGenerateInput } from "@/types/ai";
 import { AiTaskStatus } from "@/types/ai";
 import { toast } from "@/components/shared/toast";
 import { getImageCardSizeForRatio } from "@/lib/image-card-size";
@@ -21,7 +21,9 @@ interface GenerateParams {
 }
 
 const POLL_INTERVAL = 2000; // 2 秒轮询
-const MAX_POLL_TIME = 5 * 60 * 1000; // 图片等快任务：最多 5 分钟
+// 后端允许图片上游最多运行 6 分钟，成功后还可能需要约 90 秒把结果转存到自有 OSS。
+// 前端必须覆盖完整后端预算，否则会在一个最终成功的任务上提前显示“生成失败”。
+const MAX_POLL_TIME = 10 * 60 * 1000;
 // 视频较慢（后端轮询可达 10min+），前端上限须 ≥ 后端，否则前端会先放弃、把已成功的任务误标失败、且不回填结果
 const MAX_POLL_TIME_VIDEO = 30 * 60 * 1000;
 
@@ -356,9 +358,22 @@ async function startGeneration({ nodeId, handler, modelId, input, gridOutput, on
   const store = useCanvasStore.getState();
   store.updateNode(nodeId, { status: "generating" });
 
-  const dto: AiGenerateDTO = { handler, modelId, input, ...(store.currentProjectId ? { projectId: store.currentProjectId } : {}) };
+  const targetNode = store.nodes.find((item) => item.id === nodeId);
+  const hasPresetSkill = typeof input.skillId === "string" && input.skillId.trim() !== "";
+  const dto: AiGenerateInput = {
+    handler,
+    modelId,
+    input,
+    ...(store.currentProjectId ? { projectId: store.currentProjectId } : {}),
+    ...(hasPresetSkill
+      ? { entryPoint: "canvas", targetType: targetNode?.type }
+      : {}),
+  };
   try {
-    const res = await aiApi.generate(dto);
+    const res = await aiApi.generateIdempotent(
+      dto,
+      `canvas:${store.currentProjectId || "unsaved"}:${nodeId}`,
+    );
     // await 期间离开画布(stopAllGeneration)：不再起轮询,也不能往可能已切换项目的 store 写
     if (activeTasks.get(nodeId) !== "") return;
     if (!res.success || !res.data?.id) {

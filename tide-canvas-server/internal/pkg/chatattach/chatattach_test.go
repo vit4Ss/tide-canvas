@@ -43,7 +43,7 @@ func TestHostAllowed(t *testing.T) {
 	}{
 		{"https://cdn.example.com/a.pdf", true},
 		{"https://CDN.EXAMPLE.COM/a.pdf", true}, // host 比较大小写不敏感
-		{"https://bucket.oss-cn-hangzhou.aliyuncs.com/a.pdf", true},
+		{"https://bucket.oss-cn-hangzhou.aliyuncs.com/a.pdf", false},
 		{"http://169.254.169.254/latest/meta-data/", false}, // 云元数据
 		{"http://localhost:8080/admin", false},
 		{"http://127.0.0.1/", false},
@@ -65,8 +65,8 @@ func TestHostAllowedEmptyHosts(t *testing.T) {
 	if e.hostAllowed("https://cdn.example.com/a.pdf") {
 		t.Error("empty Hosts must not allow arbitrary hosts")
 	}
-	if !e.hostAllowed("https://b.aliyuncs.com/a.pdf") {
-		t.Error("aliyuncs should still be allowed")
+	if e.hostAllowed("https://b.aliyuncs.com/a.pdf") {
+		t.Error("an arbitrary aliyuncs bucket must not be allowed")
 	}
 }
 
@@ -146,7 +146,7 @@ func TestFilePartsForwardsAllowedDoc(t *testing.T) {
 	defer srv.Close()
 	u, _ := url.Parse(srv.URL)
 
-	e := Extractor{Hosts: []string{u.Host}}
+	e := Extractor{Hosts: []string{u.Host}, httpClient: srv.Client()}
 	files, note := e.FileParts(context.Background(), []Attach{
 		{URL: srv.URL + "/report.pdf", Kind: "file"},
 	})

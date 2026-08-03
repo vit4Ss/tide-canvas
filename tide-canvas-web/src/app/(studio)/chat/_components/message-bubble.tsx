@@ -4,7 +4,7 @@
    Bubble renders a user / plain-assistant message; AssistantResult renders a
    生成台 result bubble from its linked task (single source of truth). */
 
-import { useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AiTaskStatus } from "@/types/ai";
@@ -13,7 +13,13 @@ import { mesh } from "@/lib/mesh";
 import { copyText } from "@/lib/clipboard";
 import { toast } from "@/components/shared/toast";
 import { SongCard } from "@/components/studio/audio-player-card";
+import {
+  SkillRunPanel,
+  type SkillRunPanelActionPayload,
+} from "@/components/skill/skill-run-panel";
 import { tracksFromMeta } from "@/lib/music-modes";
+import { skillRunApi } from "@/lib/skill-run-api";
+import type { SkillRunAction, SkillRunArtifactVO, SkillRunVO } from "@/types/skill-run";
 import { fileNameFromUrl, type LightboxItem, type LightboxKind } from "./chat-utils";
 
 /** Deterministic mesh-gradient fallback for an image-type message whose content
@@ -164,6 +170,7 @@ export function Bubble({
   onReEdit,
   onRegenerate,
   onOpenLightbox,
+  onSkillRunAction,
   swatchFor,
   fallbackModel,
 }: {
@@ -171,11 +178,27 @@ export function Bubble({
   onReEdit: (m: MessageVO) => void;
   onRegenerate: (m: MessageVO) => void;
   onOpenLightbox: (items: LightboxItem[], index: number) => void;
+  onSkillRunAction: (
+    runId: string,
+    action: SkillRunAction,
+    payload?: SkillRunPanelActionPayload,
+    expectedRevision?: number,
+  ) => void | Promise<unknown>;
   /** 模型名 → 图标 swatch（生成结果的 AI 头像显示生成所用模型）。 */
   swatchFor: (name: string) => { style: React.CSSProperties; glyph: string };
   /** 任务没存 modelName 时的兜底模型名（该轮 params.model，再退当前所选）。 */
   fallbackModel?: string;
 }) {
+  if (msg.role !== "user" && (msg.skillRunId || msg.skillRun)) {
+    return (
+      <AssistantSkillRun
+        message={msg}
+        onAction={onSkillRunAction}
+        onOpenLightbox={onOpenLightbox}
+      />
+    );
+  }
+
   // 生成台 assistant result: rendered from its linked task (single source of truth).
   if (msg.role !== "user" && msg.taskId) {
     return (
@@ -277,6 +300,142 @@ export function Bubble({
 /** AssistantResult renders a 生成台 result bubble from its task's live state:
  *  processing / failed / cancelled / expired(no task) / success(image|video).
  *  Multi-URL results (MJ 4-up) render a grid; clicking any opens the lightbox. */
+function runArtifacts(run: SkillRunVO): SkillRunArtifactVO[] {
+  const rows = [...(run.artifacts ?? []), ...(run.steps ?? []).flatMap((step) => step.artifacts ?? [])];
+  const seen = new Set<string>();
+  return rows.filter((artifact) => {
+    const key = artifact.id || `${artifact.type}:${artifact.url || artifact.text || artifact.content || ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function AssistantSkillRun({
+  message,
+  onAction,
+  onOpenLightbox,
+}: {
+  message: MessageVO;
+  onAction: (
+    runId: string,
+    action: SkillRunAction,
+    payload?: SkillRunPanelActionPayload,
+    expectedRevision?: number,
+  ) => void | Promise<unknown>;
+  onOpenLightbox: (items: LightboxItem[], index: number) => void;
+}) {
+  const [fetchedRun, setFetchedRun] = useState<SkillRunVO | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const latestRunRef = useRef<SkillRunVO | null>(null);
+  const runId = message.skillRunId || message.skillRun?.id || "";
+  const run = fetchedRun;
+  const fetchedStatus = fetchedRun?.status;
+  const summaryStatus = message.skillRun?.status;
+
+  const acceptRun = useCallback((next: SkillRunVO): SkillRunVO => {
+    const previous = latestRunRef.current;
+    if (previous?.id === next.id) {
+      const previousRevision = previous.revision ?? 0;
+      const nextRevision = next.revision ?? 0;
+      if (nextRevision < previousRevision) return previous;
+      if (
+        nextRevision === previousRevision &&
+        (next.updateTime ?? "") < (previous.updateTime ?? "")
+      ) return previous;
+    }
+    latestRunRef.current = next;
+    setFetchedRun(next);
+    return next;
+  }, []);
+
+  useEffect(() => {
+    if (!runId) return;
+    if (latestRunRef.current?.id !== runId) latestRunRef.current = null;
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const load = async () => {
+      const result = await skillRunApi.detail(runId);
+      if (!alive) return;
+      if (result.success && result.data) {
+        const accepted = acceptRun(result.data);
+        setLoadFailed(false);
+        if (accepted.status === "queued" || accepted.status === "running") {
+          timer = setTimeout(() => void load(), 1500);
+        } else if (
+          accepted.status === "waiting_input" ||
+          accepted.status === "waiting_confirmation"
+        ) {
+          // Slow polling keeps a second tab's confirm/cancel visible without
+          // hammering the API while this tab is waiting for a decision.
+          timer = setTimeout(() => void load(), 5000);
+        }
+      } else {
+        setLoadFailed(true);
+        if (!result.code || result.code === 408 || result.code === 429 || result.code >= 500) {
+          timer = setTimeout(() => void load(), 2500);
+        }
+      }
+    };
+    void load();
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [acceptRun, runId, summaryStatus, fetchedStatus]);
+
+  const openArtifact = async (artifact: SkillRunArtifactVO) => {
+    if (artifact.type === "text") {
+      const text = artifact.text?.trim() || artifact.content?.trim() || "";
+      if (text && (await copyText(text))) toast.success("已复制文本产物");
+      return;
+    }
+    if (!artifact.url) return;
+    if (artifact.type === "image") {
+      const images = run
+        ? runArtifacts(run).filter(
+            (row): row is SkillRunArtifactVO & { url: string } =>
+              row.type === "image" && !!row.url,
+          )
+        : [artifact as SkillRunArtifactVO & { url: string }];
+      const index = Math.max(0, images.findIndex((row) => row.id === artifact.id));
+      onOpenLightbox(
+        images.map((row) => ({ url: row.url, kind: "image" as const, name: row.title })),
+        index,
+      );
+      return;
+    }
+    const kind: LightboxKind =
+      artifact.type === "video" ? "video" : artifact.type === "audio" ? "audio" : "doc";
+    onOpenLightbox([{ url: artifact.url, kind, name: artifact.title }], 0);
+  };
+
+  return (
+    <div className="msg ai">
+      <span className="av" />
+      <div className="bubble">
+        {run ? (
+          <SkillRunPanel
+            run={run}
+            compact
+            onAction={async (action, payload) => {
+              await onAction(run.id, action, payload, run.revision);
+              const result = await skillRunApi.detail(run.id);
+              if (result.success && result.data) acceptRun(result.data);
+            }}
+            onArtifact={(artifact) => void openArtifact(artifact)}
+            artifactActionLabel={(artifact) => (artifact.type === "text" ? "复制" : "查看")}
+          />
+        ) : (
+          <div className={`chat-gen-state${loadFailed ? " err" : ""}`}>
+            {loadFailed ? "技能运行记录暂时无法加载" : "正在加载技能运行记录…"}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AssistantResult({
   msg,
   onReEdit,

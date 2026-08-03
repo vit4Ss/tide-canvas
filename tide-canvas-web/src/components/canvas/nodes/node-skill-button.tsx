@@ -13,7 +13,7 @@ import { useState } from "react";
 import { Sparkles, X } from "lucide-react";
 import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
 import { SkillPicker } from "@/components/skill/skill-picker";
-import type { SkillVO } from "@/types/skill";
+import { skillKindOf, type SkillVO } from "@/types/skill";
 
 interface Props {
   node: CanvasNode;
@@ -31,6 +31,8 @@ export function NodeSkillButton({ node, outputType, onPicked }: Props) {
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
   const pick = (s: SkillVO) => {
+    // 旧节点按钮只负责「单提示词预设」附着；Agent/Workflow 必须从 SkillRunLauncher 启动。
+    if (skillKindOf(s) !== "preset") return;
     updateNode(node.id, { skillId: s.id, skillName: s.title });
     setOpen(false);
     onPicked?.(s);
@@ -76,6 +78,9 @@ export function NodeSkillButton({ node, outputType, onPicked }: Props) {
         onClose={() => setOpen(false)}
         onPick={pick}
         outputType={outputType}
+        kinds={["preset"]}
+        entryPoint="canvas"
+        targetType={node.type}
         currentId={node.skillId}
       />
     </div>

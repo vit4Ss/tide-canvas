@@ -2,15 +2,31 @@
 
 import { http, toParams } from "@/lib/http";
 import type { PageData } from "@/types/api";
-import type { SkillQuery, SkillVO } from "@/types/skill";
+import type {
+  SkillEntryPoint,
+  SkillInputField,
+  SkillInputSchema,
+  SkillKind,
+  SkillQuery,
+  SkillVO,
+} from "@/types/skill";
+import type { SkillRunInput } from "@/types/skill-run";
 
 export const skillApi = {
   /** GET /api/skills -> PageData<SkillVO>（仅上架，sortOrder 升序） */
   list: (query: SkillQuery) => http.get<PageData<SkillVO>>("/api/skills", toParams(query)),
 
   /** GET /api/skills/categories -> string[]（该模态下确实有技能的分类，用于隐藏空页签） */
-  categories: (outputType?: string) =>
-    http.get<string[]>("/api/skills/categories", toParams({ outputType })),
+  categories: (
+    outputType?: string,
+    entryPoint?: SkillEntryPoint,
+    kinds?: SkillKind[],
+    targetType?: string,
+  ) =>
+    http.get<string[]>(
+      "/api/skills/categories",
+      toParams({ outputType, entryPoint, kinds: kinds?.length ? kinds.join(",") : undefined, targetType }),
+    ),
 
   /** POST /api/skills/:id/use —— 使用计数 +1（发送生成时 fire-and-forget） */
   recordUse: (id: string) => http.post<null>(`/api/skills/${id}/use`, {}),
@@ -29,12 +45,25 @@ export interface SkillParams {
   quality?: string;
 }
 
-export function parseSkillParams(raw: string | undefined): SkillParams {
-  if (!raw?.trim()) return {};
+export function parseSkillDefaultValues(
+  raw: string | Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  if (!raw) return {};
+  if (typeof raw === "object") return Array.isArray(raw) ? {} : { ...raw };
+  if (!raw.trim()) return {};
   try {
     const v = JSON.parse(raw);
-    if (!v || typeof v !== "object" || Array.isArray(v)) return {};
-    const o = v as Record<string, unknown>;
+    return v && typeof v === "object" && !Array.isArray(v)
+      ? (v as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+export function parseSkillParams(raw: string | undefined): SkillParams {
+  const o = parseSkillDefaultValues(raw);
+  try {
     const s = (x: unknown) => (typeof x === "string" && x.trim() ? x.trim() : undefined);
     const n = (x: unknown) =>
       typeof x === "number" && Number.isFinite(x) && x > 0
@@ -51,4 +80,167 @@ export function parseSkillParams(raw: string | undefined): SkillParams {
   } catch {
     return {};
   }
+}
+
+/** Parse the versioned dynamic-input schema without letting malformed admin data break an entry surface. */
+export function parseSkillInputSchema(
+  raw: SkillInputSchema | string | null | undefined,
+): SkillInputSchema | null {
+  if (!raw) return null;
+  if (typeof raw === "object") return raw;
+  try {
+    const value = JSON.parse(raw) as unknown;
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? (value as SkillInputSchema)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Normalize our compact fields format and the common JSON-Schema properties
+ * format into one predictable form used by every Skill launcher.
+ */
+export function skillInputFields(
+  raw: SkillInputSchema | string | null | undefined,
+): SkillInputField[] {
+  const schema = parseSkillInputSchema(raw);
+  if (!schema) return [];
+  const reserved = new Set(["prompt", "assets", "sourceNodeIds", "parameters"]);
+  const required = new Set(Array.isArray(schema.required) ? schema.required : []);
+  if (Array.isArray(schema.fields)) {
+    return schema.fields
+      .filter((field): field is SkillInputField =>
+        !!field &&
+        typeof field.key === "string" &&
+        !!field.key.trim() &&
+        !reserved.has(field.key.trim()),
+      )
+      .map((field) => ({ ...field, key: field.key.trim(), required: field.required || required.has(field.key) }));
+  }
+  if (!schema.properties || typeof schema.properties !== "object") return [];
+  return Object.entries(schema.properties).flatMap(([key, spec]) => {
+    if (reserved.has(key)) return [];
+    if (!spec || typeof spec !== "object") return [];
+    const type = String(spec.type ?? "string");
+    const enumValues = Array.isArray(spec.enum)
+      ? spec.enum.filter((v): v is string | number => typeof v === "string" || typeof v === "number")
+      : undefined;
+    const uiWidget = String(spec["x-ui-widget"] ?? spec.format ?? "");
+    const fieldType: SkillInputField["type"] = enumValues?.length
+      ? "select"
+      : type === "boolean"
+        ? "boolean"
+        : type === "number" || type === "integer"
+          ? "number"
+          : uiWidget === "textarea" || uiWidget === "multiline"
+            ? "textarea"
+            : "text";
+    return [{
+      key,
+      label: String(spec.title ?? key),
+      type: fieldType,
+      description: typeof spec.description === "string" ? spec.description : undefined,
+      placeholder: typeof spec.placeholder === "string" ? spec.placeholder : undefined,
+      required: required.has(key),
+      default:
+        typeof spec.default === "string" || typeof spec.default === "number" || typeof spec.default === "boolean"
+          ? spec.default
+          : undefined,
+      enum: enumValues,
+      min: typeof spec.minimum === "number" ? spec.minimum : undefined,
+      max: typeof spec.maximum === "number" ? spec.maximum : undefined,
+      step: typeof spec.multipleOf === "number" ? spec.multipleOf : undefined,
+    } satisfies SkillInputField];
+  });
+}
+
+export function defaultSkillInputValues(
+  raw: SkillInputSchema | string | null | undefined,
+  defaultParams?: string | Record<string, unknown> | null,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const fields = skillInputFields(raw);
+  for (const field of fields) {
+    if (field.default !== undefined) out[field.key] = field.default;
+    else if (field.type === "boolean") out[field.key] = false;
+  }
+  const configured = parseSkillDefaultValues(defaultParams);
+  for (const field of fields) {
+    if (configured[field.key] !== undefined) out[field.key] = configured[field.key];
+  }
+  return out;
+}
+
+export function validateSkillInputValues(
+  raw: SkillInputSchema | string | null | undefined,
+  values: Record<string, unknown>,
+): Record<string, string> {
+  const errors: Record<string, string> = {};
+  for (const field of skillInputFields(raw)) {
+    const value = values[field.key];
+    if (
+      field.required &&
+      (value === undefined || value === null || (typeof value === "string" && value.trim() === ""))
+    ) {
+      errors[field.key] = `请填写${field.label}`;
+      continue;
+    }
+    if (value === undefined || value === null || value === "") continue;
+    if (field.type === "number" && (typeof value !== "number" || !Number.isFinite(value))) {
+      errors[field.key] = `${field.label}必须是数字`;
+      continue;
+    }
+    if (field.type === "boolean" && typeof value !== "boolean") {
+      errors[field.key] = `${field.label}必须是布尔值`;
+      continue;
+    }
+    if ((field.type === "text" || field.type === "textarea" || !field.type) && typeof value !== "string") {
+      errors[field.key] = `${field.label}必须是文本`;
+      continue;
+    }
+    if (field.type === "select") {
+      const allowed = field.options?.map((option) => option.value) ?? field.enum ?? [];
+      if (allowed.length && !allowed.some((item) => Object.is(item, value))) {
+        errors[field.key] = `请选择有效的${field.label}`;
+        continue;
+      }
+    }
+    if (typeof value === "number" && field.min !== undefined && value < field.min) {
+      errors[field.key] = `${field.label}不能小于 ${field.min}`;
+      continue;
+    }
+    if (typeof value === "number" && field.max !== undefined && value > field.max) {
+      errors[field.key] = `${field.label}不能大于 ${field.max}`;
+    }
+  }
+  return errors;
+}
+
+/** Validate both dynamic parameters and the stable top-level run inputs that a
+ * JSON Schema may explicitly mark as required. Reserved keys are rendered by
+ * each product surface, so they are intentionally absent from SkillInputFields. */
+export function validateSkillRunInputValues(
+  raw: SkillInputSchema | string | null | undefined,
+  input: SkillRunInput,
+): Record<string, string> {
+  const errors = validateSkillInputValues(raw, input.parameters);
+  const schema = parseSkillInputSchema(raw);
+  if (!schema) return errors;
+  const required = new Set(Array.isArray(schema.required) ? schema.required : []);
+  if (Array.isArray(schema.fields)) {
+    for (const field of schema.fields) {
+      if (field?.required && typeof field.key === "string") required.add(field.key);
+    }
+  }
+  if (required.has("prompt") && !input.prompt.trim()) errors.prompt = "请填写创作描述";
+  if (required.has("assets") && input.assets.length === 0) errors.assets = "请至少添加一个参考素材";
+  if (required.has("sourceNodeIds") && input.sourceNodeIds.length === 0) {
+    errors.sourceNodeIds = "请至少选择一个来源节点";
+  }
+  if (required.has("parameters") && Object.keys(input.parameters).length === 0) {
+    errors.parameters = "请填写技能参数";
+  }
+  return errors;
 }

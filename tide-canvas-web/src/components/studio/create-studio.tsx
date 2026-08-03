@@ -42,8 +42,16 @@ import {
 import { aiApi } from "@/lib/api";
 import { pointsApi } from "@/lib/points-api";
 import { SkillPicker } from "@/components/skill/skill-picker";
-import { parseSkillParams } from "@/lib/skill-api";
-import type { SkillVO } from "@/types/skill";
+import { SkillRunPanel, type SkillRunPanelActionPayload } from "@/components/skill/skill-run-panel";
+import { useSkillRun } from "@/components/skill/use-skill-run";
+import {
+  defaultSkillInputValues,
+  parseSkillParams,
+  validateSkillRunInputValues,
+} from "@/lib/skill-api";
+import { skillKindOf, type SkillVO } from "@/types/skill";
+import type { SkillRunAction, SkillRunArtifactVO, SkillRunAssetInput } from "@/types/skill-run";
+import { isSkillRunActive, isSkillRunTerminal } from "@/types/skill-run";
 import {
   buildMentionRefs,
   extractMentionTokens,
@@ -74,6 +82,7 @@ import {
 import { CELL_TOOLS } from "./create-studio/icons";
 import type {
   ArtworkType,
+  HistItem,
   HistRun,
   MusicMode,
   ResultCell,
@@ -122,6 +131,8 @@ export default function CreateStudio() {
   /* 技能:附着为提示词区 chip,生成时模板与描述合并;粘性直到手动移除 */
   const [skill, setSkill] = useState<SkillVO | null>(null);
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
+  const [skillInputValues, setSkillInputValues] = useState<Record<string, unknown>>({});
+  const [skillInputErrors, setSkillInputErrors] = useState<Record<string, string>>({});
   const [lyrics, setLyrics] = useState("");
   const [songStyle, setSongStyle] = useState("");
   /* songStyle 底层仍是逗号串（发送/历史恢复不变），芯片按成员关系点亮/切换。 */
@@ -171,6 +182,7 @@ export default function CreateStudio() {
   const isVideo = curType === "video";
   const isAudio = curType === "audio";
   const slots = UPLOADS[tool] ?? null;
+  const isFlowSkill = !!skill && skillKindOf(skill) !== "preset";
 
   /* ── hooks ─────────────────────────────────────────────────────────────── */
 
@@ -336,7 +348,7 @@ export default function CreateStudio() {
     resOpts,
     durOpts,
     qualOpts,
-    skill,
+    skill: isFlowSkill ? null : skill,
     isAudio,
     isSfx,
     ensureSession,
@@ -345,6 +357,76 @@ export default function CreateStudio() {
     setHist,
     promptRef,
   });
+
+  const skillRun = useSkillRun({
+    storageKey: "tidecanvas.studio.active-skill-run",
+    onTerminal: (finished) => {
+      void refreshBalance();
+      if (finished.status === "succeeded") toast.success("技能运行已完成");
+    },
+  });
+  const skillRunBusy =
+    skillRun.loading || skillRun.actionBusy || isSkillRunActive(skillRun.run?.status);
+
+  // A workflow can return several media types. Materialize final media as normal
+  // Studio history runs (one group per type), so all existing preview/download/
+  // one-click image actions remain available without teaching StageFeed about the
+  // workflow protocol itself.
+  useEffect(() => {
+    const finished = skillRun.run;
+    if (!finished || finished.status !== "succeeded") return;
+    const artifacts = [
+      ...(finished.artifacts ?? []),
+      ...(finished.steps ?? []).flatMap((step) => step.artifacts ?? []),
+    ];
+    const seen = new Set<string>();
+    const media = artifacts.filter((artifact): artifact is SkillRunArtifactVO & { type: ArtworkType; url: string } => {
+      if (
+        !artifact.url ||
+        artifact.isFinal === false ||
+        (artifact.type !== "image" && artifact.type !== "video" && artifact.type !== "audio")
+      ) return false;
+      const key = artifact.id || `${artifact.type}:${artifact.url}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    if (!media.length) return;
+    const input =
+      finished.input && typeof finished.input === "object" && !Array.isArray(finished.input)
+        ? finished.input as Record<string, unknown>
+        : null;
+    const inputParameters =
+      input?.parameters && typeof input.parameters === "object" && !Array.isArray(input.parameters)
+        ? input.parameters as Record<string, unknown>
+        : {};
+    const runPrompt = typeof input?.prompt === "string" ? input.prompt : "";
+    const persistedRatio = [
+      inputParameters.aspectRatio,
+      inputParameters.aspect_ratio,
+      inputParameters.ratio,
+    ].find((value): value is string => typeof value === "string" && value.trim() !== "");
+    const built = media.map((artifact) => {
+      const artifactKey = artifact.id || `${artifact.type}:${artifact.url}`;
+      return {
+        id: `skill-artifact-${finished.id}-${encodeURIComponent(artifactKey)}`,
+        run: `skill-run-${finished.id}-${artifact.type}`,
+        ts: artifact.createTime || finished.completeTime || finished.updateTime || finished.createTime,
+        ratio: persistedRatio || "1:1",
+        hues: huesFromId(artifact.id || artifact.url || finished.id),
+        type: artifact.type,
+        title: artifact.title || finished.skillTitle || "技能产物",
+        prompt: runPrompt,
+        model: finished.skillTitle || "AI 技能",
+        url: artifact.url,
+      } satisfies HistItem;
+    });
+    setHist((current) => {
+      const ids = new Set(current.map((item) => item.id));
+      const additions = built.filter((item) => !ids.has(item.id));
+      return additions.length ? [...additions, ...current] : current;
+    });
+  }, [setHist, skillRun.run]);
 
   // group the flat history into runs (one block per generation), newest first —
   // `hist` is already newest-first, so first-seen order is preserved.
@@ -580,12 +662,18 @@ export default function CreateStudio() {
     }
   }, [mCfg, curType]);
 
-  // 技能与当前创作类型不匹配(带着图片技能切到视频页签)时自动摘除
+  // 入口 binding 不随 VO 暴露完整矩阵。切换具体 target 后必须重新从
+  // picker 校验，不能仅凭 outputTypes 猜测新 target 也已启用。
+  /* eslint-disable react-hooks/set-state-in-effect -- changing the studio output tab invalidates a mismatched skill */
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- 换页签后收敛：摘除错配技能
-    if (skill && skill.outputType !== curType) setSkill(null);
+    if (skill) {
+      setSkill(null);
+      setSkillInputValues({});
+      setSkillInputErrors({});
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [curType]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // 挂载时拉一次真实余额与「AI 优化」单次扣费（需先确保会话，否则 401）。
   useEffect(() => {
@@ -636,22 +724,132 @@ export default function CreateStudio() {
     (s: SkillVO) => {
       setSkill(s);
       setSkillPickerOpen(false);
-      if (s.modelId) {
+      setSkillInputValues(defaultSkillInputValues(s.inputSchema, s.defaultParams));
+      setSkillInputErrors({});
+      // A workflow owns a model policy per step. Only a legacy preset may steer
+      // the single-model Studio panel.
+      if (skillKindOf(s) === "preset" && s.modelId) {
         const target = studioList.find((m) => m.modelKey === s.modelId);
-        if (target && target.name !== model) {
+        if (target && target.type === curType && target.name !== model) {
           setModel(target.name);
           toast.info(`已切换到技能模型「${target.name}」`);
         }
       }
-      const p = parseSkillParams(s.defaultParams);
-      if (p.aspectRatio) setRatio(p.aspectRatio);
-      if (p.resolution) {
-        if (s.outputType === "video") setRes(p.resolution);
-        else setImgRes(p.resolution);
+      if (skillKindOf(s) === "preset") {
+        const defaults = parseSkillParams(s.defaultParams);
+        if (defaults.aspectRatio) setRatio(defaults.aspectRatio);
+        if (defaults.resolution) {
+          if (curType === "video") setRes(defaults.resolution);
+          else setImgRes(defaults.resolution);
+        }
+        if (defaults.duration) setDur(`${defaults.duration}s`);
+        if (defaults.quality) setQuality(defaults.quality);
       }
-      if (p.duration) setDur(`${p.duration}s`);
     },
-    [studioList, model],
+    [curType, studioList, model],
+  );
+
+  const removeSkill = useCallback(() => {
+    setSkill(null);
+    setSkillInputValues({});
+    setSkillInputErrors({});
+  }, []);
+
+  const startSelectedSkill = useCallback(async () => {
+    if (!skill || skillKindOf(skill) === "preset") {
+      if (isSkillRunTerminal(skillRun.run?.status)) skillRun.clear();
+      generate();
+      return;
+    }
+    if (busy || skillRunBusy) {
+      toast.info("已有任务正在运行，请先完成当前步骤");
+      return;
+    }
+    if (Object.values(slotData).some((items) => items.some((item) => item.uploading))) {
+      toast.info("参考素材上传中，请稍候");
+      return;
+    }
+    const roleOf = (key: string) => {
+      if (key === "first") return "first_frame";
+      if (key === "last") return "last_frame";
+      if (key === "video") return "video_reference";
+      if (key === "audio") return "audio_reference";
+      return "reference";
+    };
+    const assets: SkillRunAssetInput[] = [];
+    for (const [key, items] of Object.entries(slotData)) {
+      const slotType = slots?.find((slot) => slot.k === key)?.type;
+      for (const item of items) {
+        if (!item.url) continue;
+        assets.push({
+          type: slotType === "video" || slotType === "audio" ? slotType : "image",
+          url: item.url,
+          role: roleOf(key),
+          name: item.n,
+        });
+      }
+    }
+    const parameters = {
+      ...skillInputValues,
+      outputType: curType,
+      mode: tool,
+      modelId: selModel?.modelKey || selModel?.id || "",
+      modelName: model,
+      aspectRatio: ratio,
+      resolution: isVideo ? res : imgRes,
+      ...(isVideo ? { duration: dur } : {}),
+      ...(!isVideo && quality ? { quality } : {}),
+      ...(!isVideo && !isAudio && count > 1 ? { batchCount: count } : {}),
+    };
+    const input = { prompt: prompt.trim(), assets, sourceNodeIds: [], parameters };
+    const errors = validateSkillRunInputValues(skill.inputSchema, input);
+    setSkillInputErrors(errors);
+    if (Object.keys(errors).length) {
+      toast.info(errors.prompt || errors.assets || errors.sourceNodeIds || errors.parameters || "请检查技能输入");
+      return;
+    }
+    await ensureSession();
+    const started = await skillRun.start({
+      skillId: skill.id,
+      entryPoint: "studio",
+      targetType: curType,
+      input,
+    });
+    if (!started) toast.error("技能启动失败，请稍后重试");
+  }, [
+    busy,
+    count,
+    curType,
+    dur,
+    ensureSession,
+    generate,
+    imgRes,
+    isAudio,
+    isVideo,
+    model,
+    prompt,
+    quality,
+    ratio,
+    res,
+    selModel,
+    skill,
+    skillInputValues,
+    skillRun,
+    skillRunBusy,
+    slotData,
+    slots,
+    tool,
+  ]);
+
+  const handleSkillRunAction = useCallback(
+    async (action: SkillRunAction, payload?: SkillRunPanelActionPayload) => {
+      const updated = await skillRun.performAction(action, {
+        ...(payload?.feedback ? { feedback: payload.feedback } : {}),
+        ...(payload?.input ? { input: payload.input } : {}),
+      });
+      if (!updated) toast.error("操作失败，请重试");
+    },
+    [skillRun],
   );
 
   // AI 优化: rewrite the prompt via the backend (relay text model). Falls back to
@@ -915,12 +1113,23 @@ export default function CreateStudio() {
                 mentionRefs={mentionRefs}
                 placeholder={mCfg?.defaultPrompt || cfg.ph}
                 skill={skill}
-                onRemoveSkill={() => setSkill(null)}
+                onRemoveSkill={removeSkill}
                 optimizing={optimizing}
                 optCost={optCost}
                 onOptimize={aiOptimize}
                 onOpenSkillPicker={() => setSkillPickerOpen(true)}
                 ideaOpts={ideaOpts}
+                skillInputValues={skillInputValues}
+                skillInputErrors={skillInputErrors}
+                onSkillInputChange={(key, value) => {
+                  setSkillInputValues((current) => ({ ...current, [key]: value }));
+                  setSkillInputErrors((current) => {
+                    if (!current[key]) return current;
+                    const next = { ...current };
+                    delete next[key];
+                    return next;
+                  });
+                }}
               />
             )}
 
@@ -968,14 +1177,19 @@ export default function CreateStudio() {
           {/* footer */}
           <div className="ws-panel-foot">
             <button
-              className={`ws-gen${busy ? " busy" : ""}`}
+              className={`ws-gen${busy || skillRunBusy ? " busy" : ""}`}
               id="gen"
               type="button"
-              onClick={generate}
+              disabled={busy || skillRunBusy}
+              onClick={() => void startSelectedSkill()}
             >
-              <span className="spark">✦</span> 立即生成{" "}
+              <span className="spark">✦</span> {isFlowSkill ? "运行技能" : "立即生成"}{" "}
               <span className="ws-gen-cost">
-                ·&nbsp;<b id="cost">{cost}</b>&nbsp;积分
+                {isFlowSkill ? (
+                  <>·&nbsp;按步骤计费</>
+                ) : (
+                  <>·&nbsp;<b id="cost">{cost}</b>&nbsp;积分</>
+                )}
               </span>
             </button>
             <div className="ws-balance">
@@ -1004,6 +1218,21 @@ export default function CreateStudio() {
           initialLoading={histInitialLoading}
           loadError={histLoadError}
           endReached={!histHasMore && histMultiPage}
+          skillRunPanel={
+            skillRun.run ? (
+              <SkillRunPanel
+                run={skillRun.run}
+                actionBusy={skillRun.actionBusy}
+                onAction={handleSkillRunAction}
+                onDismiss={skillRun.clear}
+                onArtifact={(artifact) => {
+                  if (!artifact.url) return;
+                  if (artifact.type === "image") setLightbox(artifact.url);
+                  else window.open(artifact.url, "_blank", "noopener");
+                }}
+              />
+            ) : null
+          }
         />
       </div>
 
@@ -1042,7 +1271,9 @@ export default function CreateStudio() {
         onClose={() => setSkillPickerOpen(false)}
         onPick={pickSkill}
         outputType={curType}
+        targetType={curType}
         currentId={skill?.id}
+        entryPoint="studio"
       />
 
       {/* 资产库弹窗：复用整个资产页 UI 作为选择器，按槽类型默认到对应筛选 */}

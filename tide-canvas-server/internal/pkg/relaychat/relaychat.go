@@ -126,7 +126,8 @@ const streamIdleTimeout = 90 * time.Second
 const streamIdleCheck = 5 * time.Second
 
 // New returns a client, or nil when no API key is configured (so the caller can
-// fall back). baseURL defaults to the relay host when empty.
+// fall back). An empty baseURL defaults to the test relay so an incompletely
+// configured local process cannot send traffic to production.
 //
 // The http.Client deliberately has no overall Timeout: that field also covers
 // reading the response body, which for SSE would kill any generation longer
@@ -140,7 +141,7 @@ func New(baseURL, apiKey string) *Client {
 	}
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" {
-		baseURL = "https://relay.tcmzhan.com"
+		baseURL = "https://test-relay.tcmzhan.com"
 	}
 	return &Client{baseURL: baseURL, apiKey: apiKey, idleTimeout: streamIdleTimeout, idleCheck: streamIdleCheck, hc: &http.Client{
 		Transport: &http.Transport{

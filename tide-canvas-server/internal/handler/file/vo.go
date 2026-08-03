@@ -17,8 +17,8 @@ func fmtTime(t time.Time) string {
 	return t.Format(timeLayout)
 }
 
-// FileVO mirrors tide-canvas-web/src/types/file.ts FileVO. fileType is one of
-// image|video|other; storageType is local|oss.
+// FileVO mirrors tide-canvas-web/src/types/file.ts FileVO. fileType is the
+// physical media type; category is the business grouping used by assets UI.
 type FileVO struct {
 	ID           idgen.ID `json:"id"`
 	OwnerID      idgen.ID `json:"ownerId"`
@@ -26,6 +26,7 @@ type FileVO struct {
 	FileURL      string   `json:"fileUrl"`
 	FileSize     int64    `json:"fileSize"`
 	FileType     string   `json:"fileType"`
+	Category     string   `json:"category"`
 	MimeType     string   `json:"mimeType"`
 	StorageType  string   `json:"storageType"`
 	CreateTime   string   `json:"createTime"`
@@ -39,6 +40,7 @@ func toFileVO(f *model.File) FileVO {
 		FileURL:      f.FileUrl,
 		FileSize:     f.FileSize,
 		FileType:     f.FileType,
+		Category:     f.Category,
 		MimeType:     f.MimeType,
 		StorageType:  f.StorageType,
 		CreateTime:   fmtTime(f.CreateTime),
@@ -49,11 +51,12 @@ func toFileVO(f *model.File) FileVO {
 // PresignResult. For local storage Direct is false, so uploadFileSmart falls
 // back to a server-mediated upload.
 type FilePresignVO struct {
-	Direct      bool   `json:"direct"`
-	UploadURL   string `json:"uploadUrl,omitempty"`
-	Key         string `json:"key,omitempty"`
-	FileURL     string `json:"fileUrl,omitempty"`
-	ContentType string `json:"contentType,omitempty"`
+	Direct      bool              `json:"direct"`
+	UploadURL   string            `json:"uploadUrl,omitempty"`
+	Key         string            `json:"key,omitempty"`
+	FileURL     string            `json:"fileUrl,omitempty"`
+	ContentType string            `json:"contentType,omitempty"`
+	Headers     map[string]string `json:"headers,omitempty"`
 }
 
 func toPresignVO(p storage.PresignResult) FilePresignVO {
@@ -63,5 +66,6 @@ func toPresignVO(p storage.PresignResult) FilePresignVO {
 		Key:         p.Key,
 		FileURL:     p.FileURL,
 		ContentType: p.ContentType,
+		Headers:     p.Headers,
 	}
 }

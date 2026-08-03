@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
@@ -19,6 +20,11 @@ import (
 // ErrInsufficient is returned by Consume when the user's usable balance is below
 // the requested amount (or the user does not exist).
 var ErrInsufficient = errors.New("points: insufficient balance")
+
+// ErrRefundConflict means a refID was already claimed with different refund
+// ownership or amount. Treating that as success would hide a caller bug; doing
+// another credit would violate the exactly-once guarantee.
+var ErrRefundConflict = errors.New("points: refund receipt conflict")
 
 // Ledger ChangeType values written to PointRecord.ChangeType.
 const (
@@ -92,8 +98,56 @@ func Refund(db *gorm.DB, userID idgen.ID, amount int, remark string, refID idgen
 		return nil
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
-		_, err := mutate(tx, userID, amount, ChangeRefund, remark, refID)
-		return err
+		claimedReceipt := false
+		if refID != 0 {
+			claimID := idgen.Next()
+			receipt := model.PointRefundReceipt{RefID: refID, ClaimID: claimID, UserID: userID, Amount: amount}
+			claimed := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&receipt)
+			if claimed.Error != nil {
+				return claimed.Error
+			}
+			var existing model.PointRefundReceipt
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&existing, "ref_id = ?", refID).Error; err != nil {
+				return err
+			}
+			if existing.UserID != userID || existing.Amount != amount {
+				return ErrRefundConflict
+			}
+			claimedReceipt = existing.ClaimID == claimID
+		}
+
+		var task model.AiTask
+		taskExists := false
+		if refID != 0 {
+			err := tx.Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).Select("id", "user_id", "point_cost", "refunded").First(&task, "id = ?", refID).Error
+			if err == nil {
+				taskExists = true
+				if task.UserID != userID || task.PointCost != int64(amount) {
+					return ErrRefundConflict
+				}
+				if task.Refunded {
+					return nil
+				}
+			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+		}
+		if refID != 0 && !claimedReceipt {
+			// A receipt backfilled from a legacy refund proves the credit already
+			// happened. Keep AiTask's denormalized flag in sync so the stale-task
+			// recovery sweep does not select this task forever.
+			if taskExists {
+				return tx.Unscoped().Model(&model.AiTask{}).Where("id = ?", refID).Update("refunded", true).Error
+			}
+			return nil
+		}
+		if _, err := mutate(tx, userID, amount, ChangeRefund, remark, refID); err != nil {
+			return err
+		}
+		if taskExists {
+			return tx.Unscoped().Model(&model.AiTask{}).Where("id = ?", refID).Update("refunded", true).Error
+		}
+		return nil
 	})
 }
 

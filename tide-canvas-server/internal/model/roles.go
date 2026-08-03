@@ -41,6 +41,7 @@ var AdminModuleKeys = []string{
 	"admin.skills",        // 技能管理(技能广场)
 	"admin.models",        // 模型管理(含模型状态/中转站同步)
 	"admin.tools",         // 工具管理
+	"admin.canvas",        // 画布节点配置
 	"admin.points",        // 积分管理
 	"admin.pricing",       // 价格管理
 	"admin.payments",      // 支付管理

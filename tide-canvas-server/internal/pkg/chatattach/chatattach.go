@@ -17,6 +17,7 @@ package chatattach
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -27,6 +28,8 @@ import (
 	"time"
 
 	"tidecanvas/internal/pkg/relaychat"
+	"tidecanvas/internal/pkg/safefetch"
+	"tidecanvas/internal/pkg/storage"
 )
 
 const (
@@ -35,7 +38,18 @@ const (
 	fileTotalBytes = 20 << 20 // 多文件合计上限
 )
 
-var httpClient = &http.Client{Timeout: fetchTimeout}
+var trustedStorageClient = &http.Client{
+	Timeout: fetchTimeout,
+	Transport: &http.Transport{
+		Proxy:                 nil,
+		ForceAttemptHTTP2:     true,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 15 * time.Second,
+	},
+	CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+		return errors.New("storage attachment redirects are not allowed")
+	},
+}
 
 // Attach 是一条待转发的附件。Kind 为 image | video | audio | file，空视为 image。
 // URL 不约束成严格的 URL 形态：存储可能返回绝对 OSS URL 或 publicURL 相对路径，
@@ -65,6 +79,10 @@ func ImageURLs(atts []Attach) []string {
 // 需重启才对文档转发生效。
 type Extractor struct {
 	Hosts []string
+	Store storage.StorageStrategy
+	// httpClient is a package-test hook for httptest loopback servers. Runtime
+	// callers cannot set it and always use the hardened clients below.
+	httpClient *http.Client
 }
 
 // FileParts 把文档附件转成 relay file part 列表；同时汇总一段附件说明（note）
@@ -96,11 +114,12 @@ func (e Extractor) FileParts(ctx context.Context, atts []Attach) (files []relayc
 		if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
 			continue
 		}
-		if !e.hostAllowed(u) {
+		fetchURL, client, allowed := e.fetchTarget(u)
+		if !allowed {
 			notes = append(notes, fmt.Sprintf("「%s」不在本站存储，未能读取", name))
 			continue
 		}
-		data, err := fetch(ctx, u)
+		data, err := fetch(ctx, client, fetchURL)
 		if err != nil {
 			notes = append(notes, fmt.Sprintf("「%s」读取失败，未能附上内容", name))
 			continue
@@ -130,16 +149,16 @@ func (e Extractor) FileParts(ctx context.Context, atts []Attach) (files []relayc
 // hostAllowed 限定服务端抓取范围：本站存储 host（CDN/区域/加速域名）或阿里云
 // OSS 域名。
 func (e Extractor) hostAllowed(raw string) bool {
-	u, err := url.Parse(raw)
+	u, err := url.ParseRequestURI(raw)
 	if err != nil {
+		return false
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
 		return false
 	}
 	host := strings.ToLower(u.Hostname())
 	if host == "" {
 		return false
-	}
-	if strings.HasSuffix(host, ".aliyuncs.com") {
-		return true
 	}
 	for _, h := range e.Hosts {
 		if h != "" && strings.EqualFold(u.Host, h) {
@@ -147,6 +166,60 @@ func (e Extractor) hostAllowed(raw string) bool {
 		}
 	}
 	return false
+}
+
+// fetchTarget accepts only a URL owned by the configured storage strategy. The
+// Hosts fallback exists for older callers, but is exact-host and public-IP only;
+// the former blanket *.aliyuncs.com trust allowed attacker-owned buckets.
+func (e Extractor) fetchTarget(raw string) (string, *http.Client, bool) {
+	if e.Store != nil {
+		if canonical, ok := trustedOwnedAttachmentURL(e.Store, raw); ok {
+			return canonical, trustedStorageClient, true
+		}
+		return "", nil, false
+	}
+	if !e.hostAllowed(raw) {
+		return "", nil, false
+	}
+	if e.httpClient != nil {
+		return raw, e.httpClient, true
+	}
+	if _, err := safefetch.ValidateURL(raw); err != nil {
+		return "", nil, false
+	}
+	client := safefetch.NewClient(fetchTimeout, func(next *url.URL) error {
+		if !e.hostAllowed(next.String()) {
+			return errors.New("attachment redirect left the storage allowlist")
+		}
+		return nil
+	})
+	return raw, client, true
+}
+
+func trustedOwnedAttachmentURL(store storage.StorageStrategy, raw string) (string, bool) {
+	canonical, owned := store.OwnsURL(strings.TrimSpace(raw))
+	if !owned {
+		return "", false
+	}
+	parsed, err := url.Parse(canonical)
+	if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", false
+	}
+	probe, err := url.Parse(store.URL("__chat_attachment_probe__"))
+	if err != nil || parsed.Scheme != probe.Scheme || parsed.Host != probe.Host {
+		return "", false
+	}
+	decoded, err := url.PathUnescape(parsed.EscapedPath())
+	if err != nil || decoded != path.Clean(decoded) {
+		return "", false
+	}
+	allowedPrefix := strings.TrimSuffix(path.Dir(probe.Path), "/") + "/"
+	if !strings.HasPrefix(decoded, allowedPrefix) || decoded == allowedPrefix {
+		return "", false
+	}
+	parsed.Path = decoded
+	parsed.RawPath = ""
+	return parsed.String(), true
 }
 
 // FileName 从 URL 取出展示用文件名（取不到时回退「附件」）。
@@ -210,18 +283,24 @@ func mimeOf(name string) string {
 	return "application/octet-stream"
 }
 
-func fetch(ctx context.Context, u string) ([]byte, error) {
+func fetch(ctx context.Context, client *http.Client, u string) ([]byte, error) {
+	if client == nil {
+		return nil, errors.New("chatattach: no safe HTTP client")
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := httpClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("chatattach: status %d", resp.StatusCode)
+	}
+	if resp.ContentLength > filePerBytes {
+		return nil, fmt.Errorf("chatattach: file too large")
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, filePerBytes+1))
 	if err != nil {

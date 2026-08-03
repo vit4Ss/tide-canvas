@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -138,11 +139,19 @@ func (o *OSSStorage) URL(key string) string {
 
 // Presign returns a direct-to-OSS upload grant (a signed PUT URL). The frontend
 // PUTs the bytes straight to OSS, then registers the file by Key/FileURL.
-func (o *OSSStorage) Presign(ctx context.Context, key, contentType string) (PresignResult, error) {
+
+func (o *OSSStorage) Presign(ctx context.Context, key, contentType string, expectedSize int64) (PresignResult, error) {
+	_ = ctx
+	if expectedSize <= 0 {
+		return PresignResult{}, errors.New("storage: expected upload size must be positive")
+	}
 	var opts []oss.Option
 	if strings.TrimSpace(contentType) != "" {
 		opts = append(opts, oss.ContentType(contentType))
 	}
+	// The signed x-oss-forbid-overwrite header makes each random key immutable:
+	// replaying the URL cannot replace an asset after it has been registered.
+	opts = append(opts, oss.ForbidOverWrite(true), oss.ContentLength(expectedSize))
 	signed, err := o.bucket.SignURL(o.objectKey(key), oss.HTTPPut, int64(presignTTL/time.Second), opts...)
 	if err != nil {
 		return PresignResult{}, fmt.Errorf("storage: oss sign: %w", err)
@@ -153,7 +162,26 @@ func (o *OSSStorage) Presign(ctx context.Context, key, contentType string) (Pres
 		Key:         cleanKey(key),
 		FileURL:     o.URL(key),
 		ContentType: contentType,
+		Headers: map[string]string{
+			"Content-Type":           contentType,
+			"x-oss-forbid-overwrite": "true",
+		},
 	}, nil
+}
+
+// Stat reads metadata from OSS itself, closing the trust boundary between a
+// browser PUT and the subsequent asset registration request.
+func (o *OSSStorage) Stat(ctx context.Context, key string) (ObjectMeta, error) {
+	_ = ctx
+	meta, err := o.bucket.GetObjectDetailedMeta(o.objectKey(key))
+	if err != nil {
+		return ObjectMeta{}, fmt.Errorf("storage: oss stat: %w", err)
+	}
+	size, err := strconv.ParseInt(strings.TrimSpace(meta.Get("Content-Length")), 10, 64)
+	if err != nil || size < 0 {
+		return ObjectMeta{}, errors.New("storage: oss stat returned invalid content length")
+	}
+	return ObjectMeta{Size: size, ContentType: strings.TrimSpace(meta.Get("Content-Type"))}, nil
 }
 
 // UpstreamURL rewrites a public asset URL to the transfer-acceleration host so an
@@ -193,33 +221,12 @@ func (o *OSSStorage) FetchHosts() []string {
 // relay's own uploads/ directory in the shared bucket) are NOT ours: their
 // lifecycle belongs to someone else, so callers must still copy them.
 func (o *OSSStorage) OwnsURL(u string) (string, bool) {
-	if u == "" {
+	bases := append([]string{o.publicBase, o.regionalBase, o.accelerateBase}, o.legacyBases...)
+	key, ok := ownedObjectKey(u, bases, o.prefix)
+	if !ok {
 		return "", false
 	}
-	parsed, err := url.Parse(u)
-	if err != nil || parsed.Host == "" {
-		return "", false
-	}
-	own := false
-	for _, h := range o.FetchHosts() {
-		if h == parsed.Host {
-			own = true
-			break
-		}
-	}
-	if !own {
-		return "", false
-	}
-	key := strings.TrimPrefix(parsed.Path, "/")
-	if o.prefix != "" {
-		if !strings.HasPrefix(key, o.prefix+"/") {
-			return "", false
-		}
-	}
-	if key == "" {
-		return "", false
-	}
-	return o.publicBase + "/" + key, true
+	return canonicalObjectURL(o.publicBase, key)
 }
 
 // PublicRewrites maps every host that may appear in persisted asset URLs onto

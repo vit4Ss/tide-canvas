@@ -33,6 +33,8 @@ interface Props {
   onChange: (value: string) => void;
   refs: RefItem[];
   placeholder?: string;
+  /** contentEditable 的无障碍名称；未传时由具体节点周边可见标签提供上下文。 */
+  ariaLabel?: string;
   /** 回车（非换行、非输入法组合、@ 下拉未开）触发 */
   onSubmit?: () => void;
   /** true=flex-1 填充剩余空间（视频节点）；false=按 MIN/MAX_ROWS 固定高（图片节点） */
@@ -56,7 +58,7 @@ const stop = (e: React.MouseEvent) => e.stopPropagation();
  * 图片节点与视频节点共用（见 prompt-ref-utils 中搬移的纯函数）。
  */
 export function PromptRefEditor({
-  value, onChange, refs, placeholder, onSubmit,
+  value, onChange, refs, placeholder, ariaLabel, onSubmit,
   fill = false, showThumbs = true, editorClassName, editorStyle, leading, trailing,
 }: Props) {
   const promptEditorRef = useRef<HTMLDivElement>(null);
@@ -384,6 +386,9 @@ export function PromptRefEditor({
         <div
           ref={promptEditorRef}
           contentEditable
+          role="textbox"
+          aria-label={ariaLabel}
+          aria-multiline="true"
           suppressContentEditableWarning
           onInput={updatePromptFromEditor}
           onKeyDown={handlePromptKeyDown}

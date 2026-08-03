@@ -3,7 +3,7 @@
 // 权限),每个子域再按 AdminPerm(admin.<模块>) 细分,so only被授权者 reach
 // the dashboard, user/content/work moderation, AI provider/model/floor/tool
 // management, pricing/payments/points, logs, config, and email endpoints.
-//（营销管理已于 2026-07-10 整链下线,资源管理已于 2026-07-09 整链下线。）
+// （营销管理已于 2026-07-10 整链下线,资源管理已于 2026-07-09 整链下线。）
 package admin
 
 import (
@@ -38,6 +38,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	RegisterModels(mod("models"), d)
 	RegisterFloors(mod("floors"), d)
 	RegisterTools(mod("tools"), d)
+	RegisterCanvasNodes(mod("canvas"), d)
 	RegisterPricing(mod("pricing"), d)
 	RegisterPayments(mod("payments"), d)
 	RegisterPoints(mod("points"), d)

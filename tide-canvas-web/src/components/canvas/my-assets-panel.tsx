@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fileApi } from "@/lib/api";
-import { FileType, type FileVO } from "@/types/file";
-import { X, RefreshCw, Inbox, Video, Loader2, Trash2 } from "lucide-react";
+import { FileCategory, FileType, type FileQuery, type FileVO } from "@/types/file";
+import { X, RefreshCw, Inbox, Video, Loader2, Trash2, UserRound, Mountain } from "lucide-react";
 import { toast } from "@/components/shared/toast";
 
 interface Props {
@@ -15,16 +15,18 @@ interface Props {
   refreshKey?: number;
 }
 
-const TABS: { key: string; label: string }[] = [
-  { key: "", label: "全部" },
-  { key: FileType.IMAGE, label: "图片" },
-  { key: FileType.VIDEO, label: "视频" },
+const TABS: { key: string; label: string; query: Pick<FileQuery, "fileType" | "category"> }[] = [
+  { key: "all", label: "全部", query: {} },
+  { key: FileCategory.CHARACTER, label: "角色", query: { fileType: FileType.IMAGE, category: FileCategory.CHARACTER } },
+  { key: FileCategory.SCENE, label: "场景", query: { fileType: FileType.IMAGE, category: FileCategory.SCENE } },
+  { key: FileType.IMAGE, label: "图片", query: { fileType: FileType.IMAGE, category: FileCategory.GENERAL } },
+  { key: FileType.VIDEO, label: "视频", query: { fileType: FileType.VIDEO, category: FileCategory.GENERAL } },
 ];
 
 /** 「我的素材」面板：拉取当前用户已上传/生成的文件，点击即在画布中心新建对应节点 */
 export function MyAssetsPanel({ open, onClose, onPick, refreshKey }: Props) {
   const [files, setFiles] = useState<FileVO[]>([]);
-  const [tab, setTab] = useState<string>("");
+  const [tab, setTab] = useState<string>("all");
   const [loaded, setLoaded] = useState(false);
   const [deleting, setDeleting] = useState<FileVO["id"] | null>(null);
 
@@ -54,7 +56,8 @@ export function MyAssetsPanel({ open, onClose, onPick, refreshKey }: Props) {
   const load = useCallback(async () => {
     const id = ++reqIdRef.current;
     try {
-      const res = await fileApi.list({ pageNum: 1, pageSize: 60, ...(tab ? { fileType: tab as FileType } : {}) });
+      const activeTab = TABS.find((item) => item.key === tab) ?? TABS[0];
+      const res = await fileApi.list({ pageNum: 1, pageSize: 60, ...activeTab.query });
       if (id !== reqIdRef.current) return; // 已有更新的请求,丢弃本次过期响应
       if (res.success && res.data) setFiles(res.data.records);
       else toast.error(res.message || "素材加载失败");
@@ -67,7 +70,9 @@ export function MyAssetsPanel({ open, onClose, onPick, refreshKey }: Props) {
   }, [tab]);
 
   useEffect(() => {
-    if (open) void load();
+    if (!open) return;
+    const frame = window.requestAnimationFrame(() => void load());
+    return () => window.cancelAnimationFrame(frame);
   }, [open, load, refreshKey]);
 
   if (!open) return null;
@@ -86,7 +91,7 @@ export function MyAssetsPanel({ open, onClose, onPick, refreshKey }: Props) {
         </div>
       </div>
 
-      <div className="flex gap-1 px-3 py-2">
+      <div className="flex flex-wrap gap-1 px-3 py-2">
         {TABS.map((t) => (
           <button
             key={t.key}
@@ -135,8 +140,20 @@ export function MyAssetsPanel({ open, onClose, onPick, refreshKey }: Props) {
                     </span>
                   </>
                 ) : (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={f.fileUrl} alt={f.originalName} className="h-full w-full object-cover" />
+                  <>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={f.fileUrl} alt={f.originalName} className="h-full w-full object-cover" />
+                    {f.category === FileCategory.CHARACTER && (
+                      <span className="absolute left-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-md bg-black/50 text-white" title="角色素材">
+                        <UserRound className="h-3 w-3" />
+                      </span>
+                    )}
+                    {f.category === FileCategory.SCENE && (
+                      <span className="absolute left-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-md bg-black/50 text-white" title="场景素材">
+                        <Mountain className="h-3 w-3" />
+                      </span>
+                    )}
+                  </>
                 )}
                 {/* 删除：hover 显示右上角 */}
                 <button

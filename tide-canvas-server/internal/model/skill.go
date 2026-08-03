@@ -1,5 +1,7 @@
 package model
 
+import "tidecanvas/internal/pkg/idgen"
+
 // skill.go — 技能(Skill):把「提示词模板 + 指定模型 + 默认参数」打包成可复用
 // 卡片,在 /chat、创作台与画布节点的输入框以 chip 附着,发送时模板与用户描述
 // 合并生成。v1 仅官方运营(后台 /admin/skills 管理),无 UGC;多步骤工作流类
@@ -12,7 +14,13 @@ type Skill struct {
 
 	Title       string `gorm:"column:title;size:64;not null" json:"title"`
 	Description string `gorm:"column:description;size:255" json:"description"`
-	CoverURL    string `gorm:"column:cover_url;size:512" json:"coverUrl"`
+	// Operator-facing guidance belongs to the mutable catalog metadata layer.
+	// It is intentionally separate from PromptTemplate so copy edits do not
+	// change execution behavior or create a new immutable version.
+	UsageScenario     string `gorm:"column:usage_scenario;type:text" json:"usageScenario"`
+	HowTo             string `gorm:"column:how_to;type:text" json:"howTo"`
+	OutputDescription string `gorm:"column:output_description;type:text" json:"outputDescription"`
+	CoverURL          string `gorm:"column:cover_url;size:512" json:"coverUrl"`
 	// Category:专业影视/商业广告/短剧漫剧/动漫游戏/音乐MV/自媒体创作/通用技能…
 	// 自由串,前后台用同一份推荐目录(web types/skill.ts SKILL_CATEGORIES)。
 	Category string `gorm:"column:category;size:32;index" json:"category"`
@@ -20,7 +28,7 @@ type Skill struct {
 	// (图片节点只列 image 技能)。
 	OutputType string `gorm:"column:output_type;size:16;index" json:"outputType"`
 	// PromptTemplate 为技能的核心提示词;发送时与用户描述合并(模板在前)。
-	PromptTemplate string `gorm:"column:prompt_template;type:text" json:"promptTemplate"`
+	PromptTemplate string `gorm:"column:prompt_template;type:longtext" json:"promptTemplate"`
 	// ModelID 关联的模型卡(AiModelVO.modelId 上游键;空 = 不指定,用户当前模型)。
 	ModelID string `gorm:"column:model_id;size:128" json:"modelId"`
 	// DefaultParams JSON 对象,如 {"aspectRatio":"16:9","resolution":"720P","duration":5};
@@ -34,6 +42,13 @@ type Skill struct {
 	Status    int   `gorm:"column:status;default:1" json:"status"`
 	SortOrder int   `gorm:"column:sort_order;default:0" json:"sortOrder"`
 	UseCount  int64 `gorm:"column:use_count;default:0" json:"useCount"`
+	// Kind identifies the runtime semantics of the currently published version.
+	// Existing rows are backfilled as preset, preserving the original v1 behavior.
+	Kind string `gorm:"column:kind;size:16;not null;default:'preset';index" json:"kind"`
+	// CurrentVersionID pins the version served by the public catalog and selected
+	// for new runs. Existing direct /api/ai/generate + skillId calls continue to
+	// read the legacy fields above during the compatibility window.
+	CurrentVersionID idgen.ID `gorm:"column:current_version_id;default:0;index" json:"currentVersionId"`
 }
 
 // TableName overrides the default pluralization.

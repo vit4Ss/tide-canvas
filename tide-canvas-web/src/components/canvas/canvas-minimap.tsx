@@ -4,6 +4,7 @@ import { useCallback, useMemo, useRef } from "react";
 import type { CanvasNode } from "@/stores/use-canvas-store";
 import { useCanvasViewStore } from "@/stores/use-canvas-view-store";
 import { nodeRenderRect } from "@/lib/canvas-helpers";
+import { CHARACTER_NODE_TYPE, SCENE_NODE_TYPE } from "@/lib/canvas-node-types";
 
 interface Props {
   nodes: CanvasNode[];
@@ -17,6 +18,8 @@ const PADDING = 10;
 
 // 各节点类型在小地图上的颜色（明暗两色皆可读）
 const NODE_COLORS: Record<string, string> = {
+  [CHARACTER_NODE_TYPE]: "#60a5fa",
+  [SCENE_NODE_TYPE]: "#2dd4bf",
   text: "#22d3ee",
   image: "#34d399",
   video: "#fb923c",

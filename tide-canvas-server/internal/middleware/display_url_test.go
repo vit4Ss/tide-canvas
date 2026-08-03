@@ -32,8 +32,11 @@ func (f fakeStore) UpstreamURL(u string) string          { return u }
 func (f fakeStore) FetchHosts() []string                 { return nil }
 func (f fakeStore) OwnsURL(u string) (string, bool)      { return "", false }
 func (f fakeStore) PublicRewrites() [][2]string          { return f.pairs }
-func (f fakeStore) Presign(context.Context, string, string) (storage.PresignResult, error) {
+func (f fakeStore) Presign(context.Context, string, string, int64) (storage.PresignResult, error) {
 	return storage.PresignResult{}, nil
+}
+func (f fakeStore) Stat(context.Context, string) (storage.ObjectMeta, error) {
+	return storage.ObjectMeta{}, nil
 }
 
 func setup(store storage.StorageStrategy, route func(*gin.Context)) *httptest.Server {

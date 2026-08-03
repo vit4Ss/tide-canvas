@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { createPortal } from "react-dom";
 import { X, Check, ImageOff } from "lucide-react";
 import { useCanvasStore } from "@/stores/use-canvas-store";
+import { isImageCanvasNodeType } from "@/lib/canvas-node-types";
 
 interface Props {
   open: boolean;
@@ -25,7 +26,7 @@ export function CanvasCoverPicker({ open, currentUrl, images: propImages, onClos
     () =>
       propImages ??
       nodes
-        .filter((n) => n.type === "image" && n.imageSrc)
+        .filter((n) => isImageCanvasNodeType(n.type) && n.imageSrc)
         .map((n) => ({ id: n.id, url: n.imageSrc as string, title: n.title || "图片" })),
     [propImages, nodes],
   );

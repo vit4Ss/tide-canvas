@@ -51,20 +51,30 @@ export function useMediaErrorRecovery(node: CanvasNode, mediaSrc: string | undef
 }
 
 /** 拉取指定类型的可用模型（后台配置，含图标与支持的格式），默认选第一个 */
-export function useAiModels(type: AiModelType) {
+export function useAiModels(type: AiModelType, preferredModelId?: string) {
   const [models, setModels] = useState<AiModelVO[]>([]);
-  const [modelId, setModelId] = useState("");
+  const [modelId, setModelId] = useState(preferredModelId ?? "");
   useEffect(() => {
     let active = true;
     aiApi.listModels().then((res) => {
       if (active && res.success) {
         const filtered = res.data.filter((m) => m.type === type);
         setModels(filtered);
-        if (filtered.length > 0) setModelId((prev) => prev || filtered[0].modelId);
+        if (filtered.length > 0) {
+          setModelId((prev) => {
+            if (prev && filtered.some((model) => model.modelId === prev)) return prev;
+            if (preferredModelId && filtered.some((model) => model.modelId === preferredModelId)) {
+              return preferredModelId;
+            }
+            return filtered[0].modelId;
+          });
+        } else {
+          setModelId("");
+        }
       }
     }).catch(() => {});
     return () => { active = false; };
-  }, [type]);
+  }, [preferredModelId, type]);
   const selectedModel = models.find((m) => m.modelId === modelId);
   return { models, modelId, setModelId, selectedModel };
 }

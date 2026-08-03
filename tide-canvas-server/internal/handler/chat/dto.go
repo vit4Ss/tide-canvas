@@ -29,6 +29,9 @@ type SendMessageDTO struct {
 	// Optional; the server only honors it when it names a listed enabled text
 	// model, otherwise it falls back to the configured primary text model.
 	Model string `json:"model" binding:"omitempty,max=128"`
+	// SkillID pins an optional published text preset for this turn. The server
+	// validates chat/text placement and never trusts a client-supplied prompt.
+	SkillID string `json:"skillId" binding:"omitempty,max=32"`
 }
 
 // MessageAttach is one composer attachment: a hosted file URL plus its kind

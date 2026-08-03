@@ -322,11 +322,11 @@ export async function uploadAndRegisterClip(opts: {
   }
 
   onStage?.("registering");
-  const res = await aiApi.generate({
+  const res = await aiApi.generateIdempotent({
     handler: "text_to_audio",
     modelId: generateModelId,
     input: { extras: { task: "upload", audio_url: audioUrl } },
-  });
+  }, `audio-upload:${generateModelId}`);
   if (!res.success || !res.data?.id) {
     throw new Error(res.message || "上传登记请求失败");
   }

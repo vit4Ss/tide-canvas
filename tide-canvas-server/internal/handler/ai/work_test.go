@@ -63,6 +63,15 @@ func TestApplySkillAlwaysStripsSkillID(t *testing.T) {
 	}
 }
 
+func TestSkillOutputTypeIncludesTextHandlers(t *testing.T) {
+	for _, name := range []string{assistantChatHandler, skillTextCompletionHandler} {
+		got := skillOutputTypeOf(genHandler{name: name, op: "chat", isAsync: true})
+		if got != "text" {
+			t.Fatalf("%s skill output type = %q, want text", name, got)
+		}
+	}
+}
+
 // 模板拼接口径：模板在前、空行分隔；描述为空只发模板。
 func TestApplyPromptTemplate(t *testing.T) {
 	got := applyPromptTemplate(map[string]any{"prompt": "一只猫"}, "电影级画面质感")
@@ -86,6 +95,15 @@ func TestApplyPromptTemplateNeverCreatesPrompt(t *testing.T) {
 	}
 	if got["lyrics"] != "第一句歌词" {
 		t.Error("other fields must be untouched")
+	}
+}
+
+func TestValidateGenerationPromptSize(t *testing.T) {
+	if err := validateGenerationPromptSize(map[string]any{"prompt": strings.Repeat("x", maxRenderedSkillPromptBytes)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateGenerationPromptSize(map[string]any{"systemPrompt": strings.Repeat("x", maxRenderedSkillPromptBytes+1)}); err == nil {
+		t.Fatal("oversized rendered prompt was accepted")
 	}
 }
 

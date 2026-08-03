@@ -1,5 +1,6 @@
 import { toast } from "@/components/shared/toast";
 import { referenceKindFromMeta, resolveModelReferenceLimitBytes, validateKnownFileSize } from "@/lib/upload-limits";
+import { CHARACTER_NODE_TYPE, isConceptCanvasNodeType } from "@/lib/canvas-node-types";
 import type { CanvasNode } from "@/stores/use-canvas-store";
 import type { AiModelVO } from "@/types/ai";
 import type { SkillVO } from "@/types/skill";
@@ -32,14 +33,28 @@ export function getIncomingSources(st: CanvasSnapshot, nodeId: string): CanvasNo
     .filter((n): n is CanvasNode => !!n);
 }
 
-/** 入边文本节点的正文拼进 prompt（文本节点没有独立下发通道，顺序与 refs 的「文本N」编号同源） */
+/**
+ * 入边的文字上下文拼进 prompt：文本节点展开「文本N」，角色/场景节点则携带自身设定。
+ * 后两类即使尚未出图，也能先作为结构化设定驱动下游图片或视频生成。
+ */
 export function inlineIncomingTextRefs(prompt: string, sources: CanvasNode[]): string {
-  return inlineTextRefs(
+  const textPrompt = inlineTextRefs(
     prompt,
     sources
       .filter((n) => n.type === "text" && n.content?.trim())
       .map((n, i) => ({ label: `文本${i + 1}`, content: n.content || "" })),
   );
+  const conceptPrompts = sources
+    .filter((n) => isConceptCanvasNodeType(n.type) && n.prompt?.trim())
+    .map((n) => {
+      const kind = n.type === CHARACTER_NODE_TYPE ? "角色设定" : "场景设定";
+      const title = n.title?.trim();
+      const content = n.prompt?.trim() || "";
+      return `${kind}${title ? `（${title}）` : ""}：${content}`;
+    });
+  return conceptPrompts.length > 0
+    ? [...conceptPrompts, textPrompt.trim()].filter(Boolean).join("\n")
+    : textPrompt;
 }
 
 /** 生成前校验参考素材的已知文件大小（按所选模型的参考上限）；不通过则弹错并返回 false */

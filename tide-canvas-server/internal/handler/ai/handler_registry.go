@@ -145,6 +145,7 @@ func builtinHandlers() []GenHandler {
 		// 画布 AI 助手:runTask 特判该 handler 走 relay 文本模型(见 assistant_chat.go),
 		// 结果放 Meta["text"],不产出 URL。
 		genHandler{name: assistantChatHandler, op: "chat", isAsync: true},
+		genHandler{name: skillTextCompletionHandler, op: "text", isAsync: true},
 	}
 	base := map[string]bool{}
 	for _, h := range handlers {

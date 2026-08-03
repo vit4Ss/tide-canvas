@@ -1,22 +1,72 @@
 // ============================================================================
-// 技能(Skill)类型 — mirror Go model.Skill / handler/skill / admin/g2_skills。
-// 技能 = 「提示词模板 + 指定模型 + 默认参数」的官方打包卡片,在 /chat、创作台
-// 与画布节点以 chip 附着,发送时模板与用户描述合并生成。
+// 技能(Skill)类型。preset 保留「提示词模板 + 单模型 + 默认参数」的旧链路；
+// agent / workflow 由 SkillRun 执行器运行，可跨多个模型、步骤与输出类型。
 // ============================================================================
+
+export type SkillKind = "preset" | "agent" | "workflow";
+
+export type SkillEntryPoint = "studio" | "chat" | "canvas" | "asset" | "api";
+
+export type SkillOutputType = "image" | "video" | "audio" | "text" | "file";
+
+export interface SkillInputFieldOption {
+  label: string;
+  value: string | number;
+}
+
+/**
+ * 后台可以直接保存 fields 结构，也可以保存标准 JSON Schema 的 properties。
+ * 前端动态表单只消费这组稳定的最小字段，未知扩展会被安全忽略。
+ */
+export interface SkillInputField {
+  key: string;
+  label: string;
+  type?: "text" | "textarea" | "number" | "select" | "boolean";
+  description?: string;
+  placeholder?: string;
+  required?: boolean;
+  default?: string | number | boolean;
+  options?: SkillInputFieldOption[];
+  enum?: Array<string | number>;
+  min?: number;
+  max?: number;
+  step?: number;
+}
+
+export interface SkillInputSchema {
+  fields?: SkillInputField[];
+  required?: string[];
+  properties?: Record<string, Record<string, unknown>>;
+  [key: string]: unknown;
+}
 
 export interface SkillVO {
   id: string;
   title: string;
   description: string;
+  usageScenario?: string;
+  howTo?: string;
+  outputDescription?: string;
   coverUrl: string;
   category: string;
   /** image | video | audio | text —— 卡片角标 + 各入口按模态过滤 */
   outputType: string;
-  promptTemplate: string;
+  /** 旧数据可能暂时不返回；消费端统一用 skillKindOf 回退为 preset。 */
+  kind?: SkillKind;
+  /** 当前已发布版本。preset/旧数据没有版本时为空。 */
+  currentVersionId?: string;
+  /** 允许启动该技能的产品入口；空数组/缺省表示兼容全部旧入口。 */
+  entryPoints?: SkillEntryPoint[];
+  /** 工作流可产生多个类型；缺省时回退到 outputType。 */
+  outputTypes?: SkillOutputType[];
+  /** 动态输入表单定义。后端迁移期间同时兼容 JSON 字符串与对象。 */
+  inputSchema?: SkillInputSchema | string | null;
+  /** Legacy-only preset internals. Public callers send skillId and let the server resolve these. */
+  promptTemplate?: string;
   /** 关联模型卡（AiModelVO.modelId 上游键；空 = 不指定） */
-  modelId: string;
+  modelId?: string;
   /** JSON 对象串，如 {"aspectRatio":"16:9","resolution":"720P","duration":5} */
-  defaultParams: string;
+  defaultParams?: string;
   authorName: string;
   /** 0 下架 / 1 上架 */
   status: number;
@@ -32,6 +82,11 @@ export interface SkillQuery {
   keyword?: string;
   category?: string;
   outputType?: string;
+  kind?: SkillKind;
+  kinds?: string;
+  entryPoint?: SkillEntryPoint;
+  /** Surface-specific placement target, e.g. a canvas node type or asset category. */
+  targetType?: string;
   /** admin 专用：按状态过滤 */
   status?: number;
 }
@@ -40,9 +95,16 @@ export interface SkillQuery {
 export interface SkillSaveDTO {
   title: string;
   description?: string;
+  usageScenario?: string;
+  howTo?: string;
+  outputDescription?: string;
   coverUrl?: string;
   category?: string;
   outputType: string;
+  kind?: SkillKind;
+  entryPoints?: SkillEntryPoint[];
+  outputTypes?: SkillOutputType[];
+  inputSchema?: SkillInputSchema | string;
   promptTemplate: string;
   modelId?: string;
   defaultParams?: string;
@@ -67,4 +129,47 @@ export const SKILL_OUTPUT_LABEL: Record<string, string> = {
   video: "视频",
   audio: "音频",
   text: "文本",
+  file: "文件",
 };
+
+export const SKILL_KIND_LABEL: Record<SkillKind, string> = {
+  preset: "预设",
+  agent: "智能技能",
+  workflow: "工作流",
+};
+
+export function skillKindOf(skill: Pick<SkillVO, "kind">): SkillKind {
+  return skill.kind === "agent" || skill.kind === "workflow" ? skill.kind : "preset";
+}
+
+export function skillOutputTypesOf(
+  skill: Pick<SkillVO, "outputType" | "outputTypes">,
+): SkillOutputType[] {
+  const values = Array.isArray(skill.outputTypes)
+    ? skill.outputTypes.filter((v): v is SkillOutputType =>
+        v === "image" || v === "video" || v === "audio" || v === "text" || v === "file",
+      )
+    : [];
+  if (values.length) return [...new Set(values)];
+  const fallback = skill.outputType as SkillOutputType;
+  return fallback ? [fallback] : [];
+}
+
+export function skillSupportsEntryPoint(
+  skill: Pick<SkillVO, "entryPoints">,
+  entryPoint?: SkillEntryPoint,
+): boolean {
+  if (!entryPoint || !Array.isArray(skill.entryPoints) || skill.entryPoints.length === 0) return true;
+  return skill.entryPoints.includes(entryPoint);
+}
+
+export function skillSupportsOutput(
+  skill: Pick<SkillVO, "kind" | "outputType" | "outputTypes">,
+  outputType?: string,
+): boolean {
+  if (!outputType) return true;
+  const outputs = skillOutputTypesOf(skill);
+  // Published preset placement is validated against every declared immutable
+  // output type by the server, just like agent/workflow runs.
+  return outputs.includes(outputType as SkillOutputType);
+}

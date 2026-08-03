@@ -2,14 +2,18 @@ package ai
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/handler/points"
@@ -33,6 +37,8 @@ const (
 // taskStateTTL is how long transient task state lives in Redis.
 const taskStateTTL = 30 * time.Minute
 
+const maxRenderedSkillPromptBytes = 1 << 20
+
 // service holds AI domain business logic.
 type service struct {
 	repo     *repo
@@ -52,6 +58,9 @@ type service struct {
 	// sem 限制并发执行的 runTask 数(每个会打无上限时长的上游 relay 调用),避免突发
 	// 请求产生无上限 goroutine + 无上限上游连接;超额任务在 goroutine 内排队等待。
 	sem chan struct{}
+	// taskCancels stops this process's provider request immediately. A DB
+	// heartbeat/status watcher supplies the same cancellation across instances.
+	taskCancels sync.Map // map[idgen.ID]context.CancelFunc
 }
 
 // maxConcurrentGenerations 是同时执行的生成任务上限(排队而非拒绝)。
@@ -126,14 +135,62 @@ var (
 	errToolDisabled = errors.New("tool disabled")
 )
 
+type skillPlacementError struct{ message string }
+
+func (e skillPlacementError) Error() string { return e.message }
+
+// refundTaskOnce serializes refunds on the persisted task row. It makes
+// cancellation, worker completion and periodic stale-task recovery safe to run
+// concurrently and across multiple server instances.
+func refundTaskOnce(db *gorm.DB, taskID idgen.ID, reason string) error {
+	var task model.AiTask
+	err := db.Unscoped().Select("id", "user_id", "status", "point_cost", "refunded").First(&task, "id = ?", taskID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		// New code deletes terminal tasks only after their refund commits. A
+		// missing row is therefore either uncharged or already handled legacy data.
+		return nil
+	}
+	if err != nil || task.Refunded || task.PointCost <= 0 {
+		return err
+	}
+	// Never infer a refund from a caller-side/transport error. Only the
+	// persisted failed/cancelled terminal state is eligible; a success row can
+	// therefore not become free if a finalize response was ambiguous.
+	if task.Status != statusFailed && task.Status != statusCancelled {
+		return nil
+	}
+	// points.Refund locks the task row and flips refunded in the same balance+
+	// ledger transaction. Its Unscoped lookup also covers legacy soft deletes.
+	return points.Refund(db, task.UserID, int(task.PointCost), reason, taskID)
+}
+
 // generate creates a task in PROCESSING state, kicks off async execution, and
 // returns the task VO immediately so the frontend can start polling.
 func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO) (*AiTaskVO, error) {
+	clientRequestID := strings.TrimSpace(dto.ClientRequestID)
+	requestHash := ""
+	if clientRequestID != "" {
+		if len(clientRequestID) > 96 {
+			return nil, skillPlacementError{message: "clientRequestId is too long"}
+		}
+		var err error
+		requestHash, err = directGenerationFingerprint(dto)
+		if err != nil {
+			return nil, skillPlacementError{message: "generation request is invalid"}
+		}
+		if existing, found, err := s.replayDirectTask(ctx, userID, clientRequestID, requestHash); err != nil || found {
+			return existing, err
+		}
+	}
 	gh, ok := s.registry.get(dto.Handler)
 	if !ok {
 		// Also accept a DB-registered handler whose impl isn't built in: treat as
 		// missing capability so the frontend shows HANDLER_NOT_FOUND cleanly.
 		return nil, errNoHandler
+	}
+	directSkillID, err := s.validateDirectSkillPlacement(ctx, &dto, gh)
+	if err != nil {
+		return nil, err
 	}
 
 	// 预设工具的服务端配置（ai_tools 行）——只对 presetEditHandler 生效，绝不
@@ -164,18 +221,39 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 	}
 
 	now := time.Now()
+	origin := strings.TrimSpace(dto.Origin)
+	if origin == "" {
+		origin = "direct"
+	}
+	outputRole := strings.TrimSpace(dto.OutputRole)
+	if outputRole == "" {
+		outputRole = "final"
+	}
+	registerWork := true
+	if dto.RegisterWork != nil {
+		registerWork = *dto.RegisterWork
+	}
 	task := &model.AiTask{
-		ID:         idgen.Next(),
-		UserID:     userID,
-		ProjectID:  dto.ProjectID,
-		Handler:    dto.Handler,
-		ModelID:    m.ID,
-		ModelName:  m.Name,
-		Status:     statusProcessing,
-		Progress:   5,
-		Input:      string(normalizeInput(dto.Input)),
-		CreateTime: now,
-		UpdateTime: now,
+		ID:             idgen.Next(),
+		UserID:         userID,
+		ProjectID:      dto.ProjectID,
+		Handler:        dto.Handler,
+		ModelID:        m.ID,
+		ModelName:      m.Name,
+		Status:         statusProcessing,
+		Progress:       5,
+		Origin:         origin,
+		SkillRunID:     dto.SkillRunID,
+		SkillRunStepID: dto.SkillRunStepID,
+		OutputRole:     outputRole,
+		RegisterWork:   registerWork,
+		Input:          string(normalizeInput(dto.Input)),
+		CreateTime:     now,
+		UpdateTime:     now,
+	}
+	if clientRequestID != "" {
+		task.ClientRequestID = &clientRequestID
+		task.ClientRequestHash = requestHash
 	}
 
 	// Charge the server-computed point cost up front (guarded against concurrent
@@ -185,44 +263,208 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 	// exact amount; runTask refunds it on any non-success outcome too.
 	cost := resolveCost(m, dto.Input)
 	task.PointCost = int64(cost)
-	if cost > 0 {
-		if err := points.Consume(s.repo.db, userID, cost, "生成消耗："+m.Name, task.ID); err != nil {
+	if dto.SkillRunStepID != 0 {
+		key := "skill-run-step:" + dto.SkillRunStepID.String()
+		task.OrchestrationKey = &key
+		created, err := s.createSkillRunTask(ctx, userID, dto, task, cost, m.Name)
+		if err != nil {
 			if errors.Is(err, points.ErrInsufficient) {
 				return nil, errInsufficientPoints
+			}
+			if clientRequestID != "" {
+				if existing, found, lookupErr := s.replayDirectTask(ctx, userID, clientRequestID, requestHash); lookupErr != nil || found {
+					return existing, lookupErr
+				}
+			}
+			return nil, err
+		}
+		if !created {
+			vo := toTaskVO(task)
+			return &vo, nil
+		}
+	} else {
+		// The task row is the durable refund receipt. Charge and create it in one
+		// transaction so a create failure cannot leave a deducted balance with no
+		// row for the recovery reconciler to find.
+		err := s.repo.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if cost > 0 {
+				if err := points.Consume(tx, userID, cost, "生成消耗："+m.Name, task.ID); err != nil {
+					return err
+				}
+			}
+			return tx.Create(task).Error
+		})
+		if err != nil {
+			if errors.Is(err, points.ErrInsufficient) {
+				return nil, errInsufficientPoints
+			}
+			// A concurrent retry can lose the unique-key race after the winning
+			// transaction commits. Return that durable task instead of surfacing a
+			// spurious 500 (this attempt's debit rolled back with the transaction).
+			if clientRequestID != "" {
+				if existing, found, lookupErr := s.replayDirectTask(ctx, userID, clientRequestID, requestHash); lookupErr != nil || found {
+					return existing, lookupErr
+				}
 			}
 			return nil, err
 		}
 	}
-
-	if err := s.repo.createTask(ctx, task); err != nil {
-		// Charged but the task row failed to persist: refund so the user isn't
-		// billed for a generation that never started.
-		if cost > 0 {
-			if rerr := points.Refund(s.repo.db, userID, cost, "生成创建失败退款", task.ID); rerr != nil {
-				logger.L().Error("ai: refund after createTask failed",
-					zap.String("taskId", task.ID.String()), zap.Error(rerr))
-			}
-		}
-		return nil, err
+	// Usage is authoritative at the accepted server-side execution boundary.
+	// SkillRun increments in its own creation transaction; internal pinned runs
+	// do not carry skillId and therefore cannot double count here.
+	if origin == "direct" && directSkillID != 0 {
+		_ = s.repo.db.Model(&model.Skill{}).Where("id = ? AND status = 1", directSkillID).
+			UpdateColumn("use_count", gorm.Expr("use_count + 1")).Error
 	}
 	s.writeTaskState(ctx, task)
 
 	// Execute in the background; the HTTP request returns the PROCESSING task.
-	go s.runTask(context.Background(), task.ID, gh, m, userID, dto, cost, tool)
+	taskCtx, cancelTask := context.WithCancel(context.Background())
+	s.taskCancels.Store(task.ID, context.CancelFunc(cancelTask))
+	go func() {
+		defer s.taskCancels.Delete(task.ID)
+		defer cancelTask()
+		s.runTask(taskCtx, task.ID, gh, m, userID, dto, cost, tool)
+	}()
 
 	vo := toTaskVO(task)
 	return &vo, nil
+}
+
+func directGenerationFingerprint(dto generateDTO) (string, error) {
+	var input any = map[string]any{}
+	if len(dto.Input) > 0 && strings.TrimSpace(string(dto.Input)) != "" {
+		if err := json.Unmarshal(dto.Input, &input); err != nil {
+			return "", err
+		}
+	}
+	payload := struct {
+		Handler    string   `json:"handler"`
+		ModelID    string   `json:"modelId"`
+		ProjectID  idgen.ID `json:"projectId"`
+		Input      any      `json:"input"`
+		EntryPoint string   `json:"entryPoint"`
+		TargetType string   `json:"targetType"`
+	}{
+		Handler: strings.TrimSpace(dto.Handler), ModelID: strings.TrimSpace(dto.ModelID), ProjectID: dto.ProjectID,
+		Input: input, EntryPoint: strings.ToLower(strings.TrimSpace(dto.EntryPoint)), TargetType: strings.ToLower(strings.TrimSpace(dto.TargetType)),
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(encoded)
+	return fmt.Sprintf("%x", sum[:]), nil
+}
+
+func (s *service) replayDirectTask(ctx context.Context, userID idgen.ID, clientRequestID, requestHash string) (*AiTaskVO, bool, error) {
+	var existing model.AiTask
+	err := s.repo.db.WithContext(ctx).Unscoped().Where("user_id = ? AND client_request_id = ?", userID, clientRequestID).First(&existing).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if existing.ClientRequestHash != requestHash {
+		return nil, true, skillPlacementError{message: "clientRequestId was already used for a different request"}
+	}
+	vo := toTaskVO(&existing)
+	return &vo, true, nil
+}
+
+// createSkillRunTask atomically fences the owning run, creates and charges one
+// child task, and attaches it to the step attempt. If recovery submits the same
+// attempt again, it returns the already attached task without another charge or
+// provider invocation.
+func (s *service) createSkillRunTask(ctx context.Context, userID idgen.ID, dto generateDTO, task *model.AiTask, cost int, modelName string) (bool, error) {
+	created := false
+	err := s.repo.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Keep the global lock order run -> step, matching action/cancel paths.
+		var run model.SkillRun
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Select("id", "user_id", "status", "revision", "worker_id").First(&run, "id = ?", dto.SkillRunID).Error; err != nil {
+			return err
+		}
+		if run.UserID != userID || run.Status != model.SkillRunRunning ||
+			run.Revision != dto.SkillRunRevision || run.WorkerID != dto.SkillRunWorkerID || strings.TrimSpace(dto.SkillRunWorkerID) == "" {
+			return errors.New("skill run is no longer active")
+		}
+		var step model.SkillRunStep
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Select("id", "run_id", "status", "ai_task_id").
+			First(&step, "id = ? AND run_id = ?", dto.SkillRunStepID, dto.SkillRunID).Error; err != nil {
+			return err
+		}
+		if step.Status != model.SkillStepRunning {
+			return errors.New("skill run step is no longer active")
+		}
+
+		var existing model.AiTask
+		lookup := tx.Where("orchestration_key = ? OR skill_run_step_id = ?", *task.OrchestrationKey, dto.SkillRunStepID).
+			Order("create_time ASC").First(&existing)
+		if lookup.Error == nil {
+			if existing.UserID != userID || existing.SkillRunID != dto.SkillRunID {
+				return errors.New("skill run task correlation is invalid")
+			}
+			if step.AiTaskID != 0 && step.AiTaskID != existing.ID {
+				return errors.New("skill run step is attached to another task")
+			}
+			if step.AiTaskID == 0 {
+				result := tx.Model(&model.SkillRunStep{}).Where("id = ? AND ai_task_id = 0", step.ID).Update("ai_task_id", existing.ID)
+				if result.Error != nil {
+					return result.Error
+				}
+				if result.RowsAffected != 1 {
+					return errors.New("skill run step changed while attaching task")
+				}
+			}
+			if existing.OrchestrationKey == nil {
+				if err := tx.Model(&model.AiTask{}).Where("id = ? AND orchestration_key IS NULL", existing.ID).
+					Update("orchestration_key", *task.OrchestrationKey).Error; err != nil {
+					return err
+				}
+				existing.OrchestrationKey = task.OrchestrationKey
+			}
+			*task = existing
+			return nil
+		}
+		if !errors.Is(lookup.Error, gorm.ErrRecordNotFound) {
+			return lookup.Error
+		}
+		if step.AiTaskID != 0 {
+			return errors.New("skill run step task is unavailable")
+		}
+
+		// Task creation precedes the debit inside the same transaction. If either
+		// write fails, both task and points ledger roll back together.
+		if err := tx.Create(task).Error; err != nil {
+			return err
+		}
+		if cost > 0 {
+			if err := points.Consume(tx, userID, cost, "generation: "+modelName, task.ID); err != nil {
+				return err
+			}
+		}
+		result := tx.Model(&model.SkillRunStep{}).
+			Where("id = ? AND run_id = ? AND status = ? AND ai_task_id = 0", step.ID, dto.SkillRunID, model.SkillStepRunning).
+			Update("ai_task_id", task.ID)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("skill run step changed while attaching task")
+		}
+		created = true
+		return nil
+	})
+	return created, err
 }
 
 // runTask performs the generation and persists the terminal state. It is run in
 // a detached goroutine; errors are logged, not returned. tool is the preset op's
 // pre-loaded ai_tools config (nil for base handlers / when the row is missing).
 func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m *model.AiModel, userID idgen.ID, dto generateDTO, cost int, tool *model.AiTool) {
-	// 并发闸:超过 maxConcurrentGenerations 的任务在此排队(任务已处于 PROCESSING),
-	// 限制同时打到上游 relay 的连接数。
-	s.sem <- struct{}{}
-	defer func() { <-s.sem }()
-
 	// refund credits the up-front charge back on any non-success outcome
 	// (failure / cancel / panic). It is single-shot: once a refund transaction
 	// commits, later terminal paths are no-ops, so the user is never double-paid.
@@ -231,11 +473,43 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 		if cost <= 0 || refunded {
 			return
 		}
-		if err := points.Refund(s.repo.db, userID, cost, reason, taskID); err != nil {
+		if err := refundTaskOnce(s.repo.db, taskID, reason); err != nil {
 			logger.L().Error("ai: refund failed", zap.String("taskId", taskID.String()), zap.Error(err))
 			return
 		}
 		refunded = true
+	}
+
+	// Heartbeats cover both the semaphore queue and a long provider request.
+	// The CAS also stops a worker whose task was cancelled/deleted by another
+	// process. Local cancellation calls the same context immediately.
+	if !s.heartbeatProcessingTask(ctx, taskID) {
+		refund("generation cancelled refund")
+		return
+	}
+	watchCtx, cancelWatch := context.WithCancel(context.Background())
+	watchDone := make(chan struct{})
+	go func() {
+		defer close(watchDone)
+		s.watchProcessingTask(watchCtx, taskID)
+	}()
+	var stopWatchOnce sync.Once
+	stopWatch := func() {
+		stopWatchOnce.Do(func() {
+			cancelWatch()
+			<-watchDone
+		})
+	}
+	defer stopWatch()
+
+	// Waiting for a generation slot must itself be cancellable; otherwise a
+	// refunded/deleted queued task could later reach the provider.
+	select {
+	case s.sem <- struct{}{}:
+		defer func() { <-s.sem }()
+	case <-ctx.Done():
+		refund("generation cancelled refund")
+		return
 	}
 
 	// This goroutine is detached from Gin's request scope, so Gin's Recovery
@@ -271,17 +545,35 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 		refund("生成取消退款")
 		return
 	}
-	if task.Status == statusCancelled {
+	if !taskCanExecute(task) {
 		refund("生成取消退款")
 		return
 	}
 
+	// progress=30 is the durable provider-dispatch boundary. Cancellation before
+	// this CAS is refundable; after it, the remote job may be irreversible and
+	// the charge is retained to prevent cancel/refund abuse.
+	started := s.repo.db.WithContext(ctx).Model(&model.AiTask{}).
+		Where("id = ? AND status = ?", taskID, statusProcessing).
+		Updates(map[string]any{"progress": 30, "update_time": time.Now(), "heartbeat_seq": gorm.Expr("heartbeat_seq + 1")})
+	if started.Error != nil || started.RowsAffected != 1 {
+		refund("generation cancelled refund")
+		return
+	}
+	task.Progress = 30
 	s.setProgress(ctx, taskID, 30)
 
 	// 技能:客户端只传 skillId,模板由服务端拼到用户描述前面。拼接放在这里而不是
 	// 客户端,是为了让落库的 input 保持用户原文——作品标题、日志、「重新编辑」
 	// 读的都是它,客户端先拼好的话它们看到的全是技能模板开头。
-	input := s.applySkill(decodeInput(dto.Input), gh)
+	input := decodeInput(dto.Input)
+	if strings.TrimSpace(dto.PinnedSkillPrompt) != "" {
+		delete(input, "skillId")
+		input = applyPromptTemplate(input, strings.TrimSpace(dto.PinnedSkillPrompt))
+	} else {
+		input = s.applySkill(input, gh)
+	}
+	promptErr := validateGenerationPromptSize(input)
 	req := GenerateRequest{
 		Handler:  dto.Handler,
 		Model:    m,
@@ -297,13 +589,21 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 
 	var res GenerateResult
 	var genErr error
-	if gh.Name() == assistantChatHandler {
+	if promptErr != nil {
+		genErr = promptErr
+	} else if gh.Name() == assistantChatHandler {
 		// 画布 AI 助手:走 relay 文本对话,回复在 Meta["text"](无 URL 结果)。
 		// 积分由 generate() 按模型定价预扣,随任务 PointCost 传入日志。
-		res, genErr = s.runAssistantChat(ctx, task.UserID, m, dto, task.PointCost)
+		res, genErr = s.runAssistantChat(ctx, task.UserID, m, input, task.PointCost)
+	} else if gh.Name() == skillTextCompletionHandler {
+		res, genErr = s.runSkillTextCompletion(ctx, task.UserID, m, input, task.PointCost)
 	} else {
 		res, genErr = gh.Execute(ctx, s.provider, req)
 	}
+	// Stop and join the status watcher before finalizing. Otherwise its next
+	// tick can observe our own terminal transition, cancel the shared provider
+	// context, and make post-processing (work registration/audit) fail.
+	stopWatch()
 	duration := time.Since(start).Milliseconds()
 
 	// Persist terminal task state atomically: finalizeTask only transitions a row
@@ -350,12 +650,195 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 
 	// 生成成功 → 登记成一条未发布作品（后台「作品管理」的数据源）。放在
 	// finalizeTask 之后：只有真正落库成功的产出才算作品，被取消/丢弃的不算。
-	if task.Status == statusSuccess {
+	if task.Status == statusSuccess && task.RegisterWork {
 		s.registerWork(ctx, task, gh, m, userID, dto, res)
 	}
 
 	// Audit log row (best-effort).
 	s.writeLog(ctx, task, gh, m, userID, dto, res, genErr, start, duration)
+}
+
+const taskHeartbeatInterval = 5 * time.Second
+
+func taskCanExecute(task *model.AiTask) bool {
+	return task != nil && task.Status == statusProcessing
+}
+
+func (s *service) heartbeatProcessingTask(ctx context.Context, taskID idgen.ID) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	result := s.repo.db.WithContext(ctx).Model(&model.AiTask{}).
+		Where("id = ? AND status = ?", taskID, statusProcessing).
+		Updates(map[string]any{"update_time": time.Now(), "heartbeat_seq": gorm.Expr("heartbeat_seq + 1")})
+	if result.Error != nil {
+		logger.L().Warn("ai: task heartbeat failed", zap.String("taskId", taskID.String()), zap.Error(result.Error))
+		// A transient DB failure should not cancel a paid provider operation. The
+		// stale sweeper uses a 30-minute cutoff, leaving ample time to recover.
+		return true
+	}
+	return result.RowsAffected == 1
+}
+
+func (s *service) watchProcessingTask(ctx context.Context, taskID idgen.ID) {
+	ticker := time.NewTicker(taskHeartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !s.heartbeatProcessingTask(ctx, taskID) {
+				if cancel, ok := s.taskCancels.Load(taskID); ok {
+					cancel.(context.CancelFunc)()
+				}
+				return
+			}
+		}
+	}
+}
+
+func (s *service) validateDirectSkillPlacement(ctx context.Context, dto *generateDTO, gh GenHandler) (idgen.ID, error) {
+	if dto == nil || (strings.TrimSpace(dto.Origin) != "" && strings.TrimSpace(dto.Origin) != "direct") {
+		return 0, nil
+	}
+	input := decodeInput(dto.Input)
+	raw := strings.TrimSpace(strField(input, "skillId"))
+	if raw == "" {
+		return 0, nil
+	}
+	skillID, err := idgen.Parse(raw)
+	if err != nil || skillID == 0 {
+		return 0, skillPlacementError{message: "skillId is invalid"}
+	}
+	entryPoint := strings.ToLower(strings.TrimSpace(dto.EntryPoint))
+	if entryPoint == "" {
+		entryPoint = "api"
+	}
+	validSurface := map[string]bool{"chat": true, "studio": true, "canvas": true, "asset": true, "api": true}
+	if !validSurface[entryPoint] {
+		return 0, skillPlacementError{message: "entryPoint is invalid"}
+	}
+	targetType := strings.ToLower(strings.TrimSpace(dto.TargetType))
+	if targetType == "" {
+		targetType = "*"
+	}
+	if len(targetType) > 32 || strings.ContainsAny(targetType, " /\\\x00") {
+		return 0, skillPlacementError{message: "targetType is invalid"}
+	}
+	var skill model.Skill
+	if err := s.repo.db.WithContext(ctx).Where("id = ? AND status = 1", skillID).First(&skill).Error; err != nil {
+		return 0, skillPlacementError{message: "skill is unavailable"}
+	}
+	if skill.CurrentVersionID == 0 {
+		return 0, skillPlacementError{message: "skill has no published version"}
+	}
+	var version model.SkillVersion
+	if err := s.repo.db.WithContext(ctx).Where("id = ? AND skill_id = ? AND status = ?", skill.CurrentVersionID, skill.ID, model.SkillVersionPublished).
+		First(&version).Error; err != nil || version.Kind != model.SkillKindPreset {
+		return 0, skillPlacementError{message: "only a published preset skill can be used by this endpoint"}
+	}
+	if !containsString(model.JSONStrings(version.EntryPoints, nil), entryPoint) {
+		return 0, skillPlacementError{message: "skill is not available on this entry point"}
+	}
+	modality := skillOutputTypeOf(gh)
+	if modality == "" || !presetSupportsOutput(&version, modality) {
+		return 0, skillPlacementError{message: "skill output type does not match the generation handler"}
+	}
+	matched := false
+	bindingDefaults := "{}"
+	if strings.TrimSpace(version.BindingsJSON) != "" {
+		var bindings []skillPlacementBinding
+		if err := json.Unmarshal([]byte(version.BindingsJSON), &bindings); err != nil {
+			return 0, skillPlacementError{message: "skill placement configuration is invalid"}
+		}
+		if binding := resolveSkillPlacement(bindings, entryPoint, targetType); binding != nil {
+			matched = true
+			if len(binding.Defaults) > 0 {
+				bindingDefaults = string(binding.Defaults)
+			}
+		}
+	} else {
+		// Compatibility for a pre-migration version; startup backfill normally
+		// fills BindingsJSON before requests are served.
+		var binding model.SkillSurfaceBinding
+		if err := s.repo.db.WithContext(ctx).
+			Where("skill_id = ? AND surface = ? AND target_type IN ?", skill.ID, entryPoint, []string{"*", targetType}).
+			Order(clause.Expr{SQL: "CASE WHEN target_type = ? THEN 0 ELSE 1 END, sort_order ASC, id ASC", Vars: []any{targetType}, WithoutParentheses: true}).First(&binding).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, err
+		} else if err == nil && binding.Enabled {
+			matched = true
+			bindingDefaults = binding.Defaults
+		}
+	}
+	if !matched {
+		return 0, skillPlacementError{message: "skill is not enabled for this target type"}
+	}
+	prompt, err := expandPublishedSkillPrompt(ctx, s.repo.db, &version)
+	if err != nil {
+		return 0, skillPlacementError{message: "skill prompt package is invalid"}
+	}
+	mergedInput, err := mergeSkillInput(version.DefaultParams, bindingDefaults, input)
+	if err != nil {
+		return 0, skillPlacementError{message: "skill default parameters are invalid"}
+	}
+	if _, hasPrompt := mergedInput["prompt"]; hasPrompt {
+		renderedBytes := len(prompt)
+		if userPrompt := strings.TrimSpace(strField(mergedInput, "prompt")); userPrompt != "" {
+			renderedBytes += 2 + len(userPrompt)
+		}
+		if renderedBytes > maxRenderedSkillPromptBytes {
+			return 0, skillPlacementError{message: "rendered skill prompt exceeds 1 MiB"}
+		}
+	}
+	configuredModel := ""
+	for _, candidate := range []string{
+		version.ModelID,
+		strField(input, "modelId"),
+		dto.ModelID,
+		strField(mergedInput, "modelId"),
+	} {
+		compatible, resolveErr := compatiblePresetModel(ctx, s.repo.db, candidate, modality)
+		if resolveErr != nil {
+			return 0, resolveErr
+		}
+		if compatible != "" {
+			configuredModel = compatible
+			break
+		}
+	}
+	if configuredModel == "" {
+		return 0, skillPlacementError{message: "no compatible model is available for this skill output"}
+	}
+	dto.ModelID = configuredModel
+	mergedInput["modelId"] = configuredModel
+	encodedInput, err := json.Marshal(mergedInput)
+	if err != nil {
+		return 0, skillPlacementError{message: "skill input is invalid"}
+	}
+	dto.Input = encodedInput
+	dto.EntryPoint = entryPoint
+	dto.TargetType = targetType
+	dto.PinnedSkillPrompt = prompt
+	return skill.ID, nil
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func validateGenerationPromptSize(input map[string]any) error {
+	for _, key := range []string{"prompt", "systemPrompt"} {
+		if value, ok := input[key].(string); ok && len(value) > maxRenderedSkillPromptBytes {
+			return fmt.Errorf("rendered %s exceeds 1 MiB", key)
+		}
+	}
+	return nil
 }
 
 // cancelTask removes a task. A still-processing task is flagged cancelled first
@@ -374,13 +857,52 @@ func (s *service) cancelTask(ctx context.Context, userID idgen.ID, id idgen.ID) 
 		return errTaskForbidden
 	}
 	if task.Status == statusProcessing {
-		// flag cancelled first: if runTask's recheck reads the row before the delete
-		// commits, it still sees "cancelled" and drops the result cleanly.
+		// Two CAS branches fence the provider-dispatch race. Queued work is
+		// refundable. Once progress reaches 30, the remote job may already be
+		// irreversible, so refunded=true records the charge as settled without
+		// crediting it back (prevents cancel/refund abuse).
 		nowT := time.Now()
-		task.Status = statusCancelled
-		task.UpdateTime = nowT
-		task.CompleteTime = &nowT
-		if err := s.repo.updateTask(ctx, task); err != nil {
+		result := s.repo.db.WithContext(ctx).Model(&model.AiTask{}).
+			Where("id = ? AND user_id = ? AND status = ? AND progress < ?", task.ID, userID, statusProcessing, 30).
+			Updates(map[string]any{"status": statusCancelled, "progress": 100, "update_time": nowT, "complete_time": nowT})
+		if result.Error != nil {
+			return result.Error
+		}
+		nonRefundable := false
+		if result.RowsAffected != 1 {
+			result = s.repo.db.WithContext(ctx).Model(&model.AiTask{}).
+				Where("id = ? AND user_id = ? AND status = ? AND progress >= ?", task.ID, userID, statusProcessing, 30).
+				Updates(map[string]any{"status": statusCancelled, "progress": 100, "refunded": true, "update_time": nowT, "complete_time": nowT})
+			if result.Error != nil {
+				return result.Error
+			}
+			nonRefundable = result.RowsAffected == 1
+		}
+		if result.RowsAffected == 1 {
+			task.Status = statusCancelled
+			task.Progress = 100
+			task.Refunded = nonRefundable
+			task.UpdateTime = nowT
+			task.CompleteTime = &nowT
+		} else {
+			// A terminal worker transition won the race; reload its authoritative
+			// status before deciding whether any refund is due.
+			task, err = s.repo.getTask(ctx, id)
+			if err != nil {
+				return err
+			}
+			if task == nil {
+				return nil
+			}
+		}
+	}
+	if task.Status == statusCancelled {
+		if cancel, ok := s.taskCancels.Load(id); ok {
+			cancel.(context.CancelFunc)()
+		}
+	}
+	if (task.Status == statusFailed || task.Status == statusCancelled) && task.PointCost > 0 && !task.Refunded {
+		if err := refundTaskOnce(s.repo.db, task.ID, "generation terminal task refund"); err != nil {
 			return err
 		}
 	}
@@ -760,7 +1282,7 @@ var inputErrorRules = []struct {
 
 	// —— 生成参数 ——
 	{[]string{
-		"unsupported aspect ratio", "invalid aspect ratio", "invalid aspect_ratio",
+		"unsupported aspect ratio", "invalid aspect ratio", "invalid aspect_ratio", "invalid aspect '",
 		"aspect ratio must", "unsupported size", "invalid size", "unsupported resolution",
 	}, "所选画面比例或尺寸不受支持，请调整后重试"},
 	{[]string{

@@ -19,6 +19,7 @@ import { NodeHeader } from "./base/node-header";
 import { NodePorts } from "./base/node-ports";
 import { NodeChrome } from "./base/node-chrome";
 import { ModelPicker } from "./model-picker";
+import { CanvasSkillRunNodeShortcut } from "../skill-run/canvas-skill-run-workspace";
 
 interface Props {
   node: CanvasNode;
@@ -197,6 +198,7 @@ export const TextNode = memo(function TextNode({
 
         <NodeHeader icon={AlignLeft} title={node.title || "文本节点"} visible={showAuxUI} overlay />
         <NodePorts nodeId={node.id} visible={showAuxUI} overlay onPortMouseDown={onPortMouseDown} />
+        <CanvasSkillRunNodeShortcut nodeId={node.id} nodeType={node.type} visible={showAuxUI} />
 
         {showAuxUI && (
           <NodeChrome placement="bottom-center" gap={18} damp={0.6}>

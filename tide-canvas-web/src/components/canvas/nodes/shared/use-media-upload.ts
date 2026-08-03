@@ -2,10 +2,12 @@
 
 import { useCallback, useRef, useState } from "react";
 import { uploadFileSmart } from "@/lib/api";
+import { CHARACTER_NODE_TYPE, SCENE_NODE_TYPE } from "@/lib/canvas-node-types";
 import { resolveModelReferenceLimitBytes } from "@/lib/upload-limits";
 import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
 import { toast } from "@/components/shared/toast";
 import type { AiModelVO } from "@/types/ai";
+import { FileCategory } from "@/types/file";
 import { useMountedRef } from "./use-node-runtime";
 
 export type UploadMediaKind = "image" | "video";
@@ -27,6 +29,12 @@ export function useMediaUpload(node: CanvasNode, kind: UploadMediaKind, selected
   // 上传/加载探测到的原始分辨率，供头部「W × H」展示（节点侧展示图 onLoad 也会回填）
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
   const mountedRef = useMountedRef();
+  const assetCategory =
+    node.type === CHARACTER_NODE_TYPE
+      ? FileCategory.CHARACTER
+      : node.type === SCENE_NODE_TYPE
+        ? FileCategory.SCENE
+        : FileCategory.GENERAL;
 
   // 打开文件选择器
   const openFilePicker = useCallback((e: React.MouseEvent) => {
@@ -64,7 +72,11 @@ export function useMediaUpload(node: CanvasNode, kind: UploadMediaKind, selected
     setUploading(true);
     let ok = false;
     try {
-      const res = await uploadFileSmart(file, (pct) => setUploadPct(pct), { maxBytes: resolveModelReferenceLimitBytes(selectedModel, kind), label: KIND_META[kind].label });
+      const res = await uploadFileSmart(file, (pct) => setUploadPct(pct), {
+        maxBytes: resolveModelReferenceLimitBytes(selectedModel, kind),
+        label: KIND_META[kind].label,
+        category: assetCategory,
+      });
       if (res.success) {
         ok = true;
         const patch: Partial<CanvasNode> = {
@@ -89,7 +101,7 @@ export function useMediaUpload(node: CanvasNode, kind: UploadMediaKind, selected
       if (!ok) setDims(null);
       URL.revokeObjectURL(objUrl);
     }
-  }, [kind, mountedRef, node.id, selectedModel, updateNode]);
+  }, [assetCategory, kind, mountedRef, node.id, selectedModel, updateNode]);
 
   const mediaSrc = kind === "image" ? node.imageSrc : node.videoSrc;
   const nodeUploading = uploading || node.uploading === true;

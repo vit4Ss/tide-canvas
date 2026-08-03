@@ -17,6 +17,7 @@
    ============================================================================ */
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { fetchWithAuth } from "@/lib/http";
 
 const BAR_COUNT = 56;
 
@@ -64,7 +65,7 @@ function pseudoPeaks(url: string): number[] {
  *  拦下并在控制台刷错;代理由后端出网抓取(下载按钮同款通道),天然免 CORS。 */
 async function decodePeaks(url: string): Promise<number[] | null> {
   try {
-    const resp = await fetch(`/api/files/download?url=${encodeURIComponent(url)}`);
+    const resp = await fetchWithAuth(`/api/files/download?url=${encodeURIComponent(url)}`);
     if (!resp.ok) return null;
     const buf = await resp.arrayBuffer();
     type AudioContextCtor = new () => AudioContext;

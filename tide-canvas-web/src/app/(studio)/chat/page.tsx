@@ -35,7 +35,11 @@ import "@/styles/liuguang/chat.css";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { SkillPicker } from "@/components/skill/skill-picker";
+import type { SkillRunPanelActionPayload } from "@/components/skill/skill-run-panel";
+import { toast } from "@/components/shared/toast";
 import type { MentionEditorHandle } from "@/components/studio/mention-prompt-editor";
+import { skillRunApi } from "@/lib/skill-run-api";
+import type { SkillRunAction } from "@/types/skill-run";
 import { type LightboxItem } from "./_components/chat-utils";
 import { Lightbox } from "./_components/lightbox";
 import { ConversationSidebar } from "./_components/conversation-sidebar";
@@ -113,6 +117,8 @@ export default function ChatPage() {
     isMusicSel: cfg.isMusicSel,
     musicNoDraftOk: cfg.musicNoDraftOk,
     skill: cfg.skill,
+    skillInputValues: cfg.skillInputValues,
+    setSkillInputErrors: cfg.setSkillInputErrors,
     setStreaming: streamingApi.setStreaming,
     chatAbortRef: streamingApi.chatAbortRef,
     activeIdRef: conv.activeIdRef,
@@ -160,6 +166,42 @@ export default function ChatPage() {
         lb ? { ...lb, index: (lb.index + delta + lb.items.length) % lb.items.length } : lb,
       ),
     [],
+  );
+  const activeConversationId = conv.activeId;
+  const loadConversationMessages = conv.loadMessages;
+
+  const handleSkillRunAction = useCallback(
+    async (
+      runId: string,
+      action: SkillRunAction,
+      payload?: SkillRunPanelActionPayload,
+      expectedRevision?: number,
+    ) => {
+      if (expectedRevision === undefined) {
+        toast.error("技能状态尚未同步，请刷新后重试");
+        return;
+      }
+      const conversationId = activeConversationId;
+      await ensureSession();
+      const result = await skillRunApi.actionIdempotent(runId, {
+        action,
+        expectedRevision,
+        ...(payload?.feedback ? { feedback: payload.feedback } : {}),
+        ...(payload?.input ? { input: payload.input } : {}),
+        clientRequestId:
+          typeof crypto !== "undefined" && "randomUUID" in crypto
+            ? crypto.randomUUID()
+            : `chat-action-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      }, `action:chat:${activeConversationId || "unknown"}:${runId}`);
+      if (!result.success) {
+        toast.error(result.message || "技能操作失败，请重试");
+        return;
+      }
+      if (conversationId && conv.activeIdRef.current === conversationId) {
+        await loadConversationMessages(conversationId);
+      }
+    },
+    [activeConversationId, conv.activeIdRef, ensureSession, loadConversationMessages],
   );
 
   // 当前所选模型的头像（发送占位/流式回复/文字回复的 AI 头像都用它，
@@ -219,6 +261,7 @@ export default function ChatPage() {
           onReEdit={reEdit}
           onRegenerate={regenerate}
           onOpenLightbox={openLightbox}
+          onSkillRunAction={handleSkillRunAction}
           swatchFor={models.swatchForName}
           fallbackModelByMsg={fallbackModelByMsg}
           curModelName={models.model}
@@ -268,7 +311,9 @@ export default function ChatPage() {
         open={cfg.skillPickerOpen}
         onClose={() => cfg.setSkillPickerOpen(false)}
         onPick={cfg.pickSkill}
+        entryPoint="chat"
         outputType={models.selModel?.type}
+        targetType={models.selModel?.type ?? "text"}
         currentId={cfg.skill?.id}
       />
 

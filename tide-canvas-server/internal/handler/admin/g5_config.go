@@ -62,6 +62,7 @@ var baselineConfigKeys = map[string]struct{}{
 	model.ConfigKeyChatContextTokenLimit: {},
 	model.ConfigKeyChatCompressAt:        {},
 	model.ConfigKeyMarketTypeOrder:       {},
+	model.ConfigKeyCanvasNodeFeatures:    {},
 	"points.checkinDaily":                {},
 	"points.checkinMonthlyCap":           {},
 	"points.inviteReward":                {},
@@ -78,7 +79,8 @@ func RegisterConfig(g *gin.RouterGroup, d *app.Deps) {
 
 	g.GET("/config", func(c *gin.Context) {
 		var rows []model.SysConfig
-		if err := db.Order("config_group ASC, config_key ASC").Find(&rows).Error; err != nil {
+		if err := db.Where("config_key <> ?", model.ConfigKeyCanvasNodeFeatures).
+			Order("config_group ASC, config_key ASC").Find(&rows).Error; err != nil {
 			response.Fail(c, response.CodeServerError, "failed to load config")
 			return
 		}
@@ -98,6 +100,12 @@ func RegisterConfig(g *gin.RouterGroup, d *app.Deps) {
 		if len(items) == 0 {
 			response.Fail(c, response.CodeBadRequest, "no config items provided")
 			return
+		}
+		for i := range items {
+			if strings.TrimSpace(items[i].ConfigKey) == model.ConfigKeyCanvasNodeFeatures {
+				response.Fail(c, response.CodeBadRequest, "canvas node configuration must be edited through /api/admin/canvas/nodes")
+				return
+			}
 		}
 
 		// The flat-map convenience shape is update-only: any JSON object would
@@ -163,7 +171,8 @@ func RegisterConfig(g *gin.RouterGroup, d *app.Deps) {
 		}
 
 		var rows []model.SysConfig
-		if err := db.Order("config_group ASC, config_key ASC").Find(&rows).Error; err != nil {
+		if err := db.Where("config_key <> ?", model.ConfigKeyCanvasNodeFeatures).
+			Order("config_group ASC, config_key ASC").Find(&rows).Error; err != nil {
 			response.Fail(c, response.CodeServerError, "failed to reload config")
 			return
 		}

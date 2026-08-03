@@ -34,6 +34,12 @@ cors:
   allowOrigins:
     - https://flowlight.tcmzhan.com # 生产站前端域名（2026-08-01 定）
 
+relay:
+  baseUrl: https://relay.tcmzhan.com
+  # 不把测试密钥带入生产。生产启动时必须通过
+  # TIDECANVAS_RELAY_APIKEY 注入生产 relay 凭据。
+  apiKey: ""
+
 # 支付回调必须是网关可访问的公网 https 地址；returnUrl 指向生产站前端。
 # 商户号/md5Key 与测试环境共用（商户级，不随域名变），无需改。
 eliandapay:

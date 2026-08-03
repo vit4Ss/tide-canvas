@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -38,6 +39,7 @@ import (
 	"tidecanvas/internal/handler/ai"
 	"tidecanvas/internal/handler/auth"
 	"tidecanvas/internal/handler/billing"
+	"tidecanvas/internal/handler/canvasconfig"
 	"tidecanvas/internal/handler/chat"
 	"tidecanvas/internal/handler/community"
 	"tidecanvas/internal/handler/content"
@@ -46,8 +48,9 @@ import (
 	"tidecanvas/internal/handler/market"
 	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/handler/project"
-	"tidecanvas/internal/handler/stub"
 	"tidecanvas/internal/handler/skill"
+	"tidecanvas/internal/handler/skillrun"
+	"tidecanvas/internal/handler/stub"
 	"tidecanvas/internal/handler/style"
 )
 
@@ -73,6 +76,20 @@ func run() error {
 	if err := idgen.InitNode(1); err != nil {
 		return fmt.Errorf("init id generator: %w", err)
 	}
+
+	// Reserve the HTTP port before running migrations, janitors or recovery
+	// workers.  Without this early bind a second process could fail to listen
+	// only after it had already mutated the database/object store, leaving an
+	// old binary serving HTTP while the new binary ran background work.
+	addr := fmt.Sprintf(":%d", cfg.Server.Port)
+	if cfg.Server.Port == 0 {
+		addr = ":8080"
+	}
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", addr, err)
+	}
+	defer listener.Close()
 
 	// 2. Datastores.
 	gdb, err := db.Open(cfg.MySQL)
@@ -171,14 +188,16 @@ func run() error {
 	mailer.Init(cfg.Email)
 
 	deps := &app.Deps{DB: gdb, RDB: rdb, Cfg: cfg, Storage: store}
+	workerCtx, stopWorkers := context.WithCancel(context.Background())
+	defer stopWorkers()
+	file.StartUploadGrantJanitor(workerCtx, deps)
 
-	// Reconcile AI tasks stranded in Processing by a prior crash/restart, so the
-	// frontend doesn't poll them forever. Best-effort; never blocks startup.
-	if n, err := ai.SweepStaleTasks(deps); err != nil {
-		logger.L().Warn("ai: sweep stale tasks failed", zap.Error(err))
-	} else if n > 0 {
-		logger.L().Info("ai: reconciled stale tasks", zap.Int64("count", n))
-	}
+	// Reconcile AI tasks stranded by a prior crash/restart in the background.
+	// The test database may contain a large refund backlog, so doing the initial
+	// pass synchronously here would reserve the HTTP port without serving any
+	// requests for minutes. StartTaskReconciler serializes the initial pass and
+	// all periodic retries in one worker.
+	ai.StartTaskReconciler(workerCtx, deps)
 
 	// 模型主动探测已整链下线（2026-07-13 用户定稿）：后台「模型状态」页改为
 	// 聚合 model_call_log 里的真实用户调用，不再定时消耗上游额度。
@@ -232,9 +251,11 @@ func run() error {
 	content.Register(api, deps)
 	style.Register(api, deps)
 	skill.Register(api, deps)
+	skillrun.Register(api, deps)
 	points.Register(api, deps)
 	billing.Register(api, deps)
 	market.Register(api, deps)
+	canvasconfig.Register(api, deps)
 	admin.Register(api, deps)
 
 	// Unmatched paths return the standard 404 envelope.
@@ -243,23 +264,28 @@ func run() error {
 	})
 
 	// 6. Serve with graceful shutdown.
-	addr := fmt.Sprintf(":%d", cfg.Server.Port)
-	if cfg.Server.Port == 0 {
-		addr = ":8080"
-	}
 	srv := &http.Server{Addr: addr, Handler: r}
 
+	serveErr := make(chan error, 1)
 	go func() {
 		logger.L().Info("server listening", zap.String("addr", addr), zap.String("env", cfg.Env), zap.String("mode", cfg.Server.Mode))
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.L().Error("listen", zap.Error(err))
+			serveErr <- err
 		}
 	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	defer signal.Stop(quit)
+	select {
+	case <-quit:
+	case err := <-serveErr:
+		stopWorkers()
+		return fmt.Errorf("serve: %w", err)
+	}
 	logger.L().Info("shutting down server")
+	stopWorkers()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

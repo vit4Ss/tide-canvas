@@ -10,6 +10,7 @@ import (
 
 func TestLoadDefaultsToTestEnv(t *testing.T) {
 	t.Setenv("TIDECANVAS_ENV", "")
+	t.Setenv("TIDECANVAS_RELAY_BASEURL", prodRelayBaseURL)
 
 	cfg, err := Load()
 	if err != nil {
@@ -23,6 +24,9 @@ func TestLoadDefaultsToTestEnv(t *testing.T) {
 	}
 	if cfg.Server.Mode != "debug" {
 		t.Errorf("Server.Mode = %q, want debug (config.test.yaml overlay)", cfg.Server.Mode)
+	}
+	if cfg.Relay.BaseURL != testRelayBaseURL {
+		t.Errorf("Relay.BaseURL = %q, want environment-pinned test relay %q", cfg.Relay.BaseURL, testRelayBaseURL)
 	}
 }
 
@@ -38,6 +42,8 @@ func TestLoadProdRequiresJWTSecret(t *testing.T) {
 func TestLoadProdAppliesOverlay(t *testing.T) {
 	t.Setenv("TIDECANVAS_ENV", "prod")
 	t.Setenv("TIDECANVAS_JWT_SECRET", "unit-test-secret")
+	t.Setenv("TIDECANVAS_RELAY_APIKEY", "unit-test-prod-relay-key")
+	t.Setenv("TIDECANVAS_RELAY_BASEURL", testRelayBaseURL)
 
 	cfg, err := Load()
 	if err != nil {
@@ -54,6 +60,22 @@ func TestLoadProdAppliesOverlay(t *testing.T) {
 	}
 	if !strings.HasPrefix(cfg.Eliandapay.NotifyURL, "https://") {
 		t.Errorf("Eliandapay.NotifyURL = %q, want https prod URL from overlay", cfg.Eliandapay.NotifyURL)
+	}
+	if cfg.Relay.BaseURL != prodRelayBaseURL {
+		t.Errorf("Relay.BaseURL = %q, want environment-pinned production relay %q", cfg.Relay.BaseURL, prodRelayBaseURL)
+	}
+	if cfg.Relay.APIKey != "unit-test-prod-relay-key" {
+		t.Errorf("Relay.APIKey did not use the production environment override")
+	}
+}
+
+func TestLoadProdRejectsInheritedTestRelayKey(t *testing.T) {
+	t.Setenv("TIDECANVAS_ENV", "prod")
+	t.Setenv("TIDECANVAS_JWT_SECRET", "unit-test-secret")
+	t.Setenv("TIDECANVAS_RELAY_APIKEY", "")
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "relay API key") {
+		t.Fatalf("Load with prod + empty relay key: err = %v, want relay API key error", err)
 	}
 }
 

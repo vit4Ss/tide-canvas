@@ -1,6 +1,7 @@
 import type { Result } from "@/types/api";
 import { ResultCode } from "@/types/api";
 import type { AiModelVO } from "@/types/ai";
+import { isImageReferenceNodeType } from "@/lib/canvas-node-types";
 
 const BYTES_PER_MB = 1024 * 1024;
 
@@ -103,7 +104,7 @@ export function referenceKindFromFile(file: Pick<File, "type">): ReferenceFileKi
 }
 
 export function referenceKindFromMeta(meta: { fileType?: string; mimeType?: string; type?: string }): ReferenceFileKind {
-  if (meta.fileType === "image" || meta.mimeType?.startsWith("image/") || meta.type === "image") return "image";
+  if (meta.fileType === "image" || meta.mimeType?.startsWith("image/") || isImageReferenceNodeType(meta.type)) return "image";
   if (meta.fileType === "video" || meta.mimeType?.startsWith("video/") || meta.type === "video") return "video";
   return "file";
 }

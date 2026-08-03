@@ -1,6 +1,9 @@
 import { generateNodeId, type CanvasNode, type CanvasGroup, type Connection } from "@/stores/use-canvas-store";
+import { CHARACTER_NODE_TYPE, SCENE_NODE_TYPE } from "@/lib/canvas-node-types";
 
 export const NODE_TYPE_TITLES: Record<string, string> = {
+  [CHARACTER_NODE_TYPE]: "角色",
+  [SCENE_NODE_TYPE]: "场景",
   text: "文本",
   image: "图片",
   video: "视频",
@@ -12,6 +15,8 @@ export const NODE_TYPE_TITLES: Record<string, string> = {
 
 const NODE_TYPE_SIZES: Record<string, { width: number; height: number }> = {
   // 等比节点高度按默认比例的卡片高度设置，使连接线/缩略图对齐实际渲染
+  [CHARACTER_NODE_TYPE]: { width: 608, height: 465 },
+  [SCENE_NODE_TYPE]: { width: 608, height: 348 },
   image: { width: 608, height: 342 },
   video: { width: 608, height: 342 },
   video_compose: { width: 720, height: 580 },
@@ -44,6 +49,7 @@ export function createNode(type: string, worldX: number, worldY: number, existin
   const sameTypeCount = existingNodes.filter((n) => n.type === type).length;
   const baseTitle = getNodeTitle(type);
   const title = sameTypeCount === 0 ? `${baseTitle}节点` : `${baseTitle}节点 ${sameTypeCount + 1}`;
+  const aspectRatio = type === CHARACTER_NODE_TYPE ? "3:4" : type === SCENE_NODE_TYPE ? "16:9" : undefined;
   return {
     id: generateNodeId(),
     type,
@@ -53,6 +59,7 @@ export function createNode(type: string, worldX: number, worldY: number, existin
     height,
     title,
     status: "idle",
+    ...(aspectRatio ? { aspectRatio } : {}),
   };
 }
 

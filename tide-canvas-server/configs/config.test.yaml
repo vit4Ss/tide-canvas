@@ -15,6 +15,12 @@ cors:
     - http://localhost:3000
     - https://test-flowlight.tcmzhan.com # 测试站前端域名（2026-08-01 定:flowlight 主域名留给生产）
 
+# relay 地址由运行环境强制固定；凭据不能提交到仓库。本地/测试部署通过
+# TIDECANVAS_RELAY_APIKEY 注入，生产环境同样必须显式注入自己的凭据。
+relay:
+  baseUrl: https://test-relay.tcmzhan.com
+  apiKey: ""
+
 # 支付回调必须是网关可访问的公网 https 地址；returnUrl 指向测试站前端。
 eliandapay:
   notifyUrl: https://test-flowlight.tcmzhan.com/api/billing/notify

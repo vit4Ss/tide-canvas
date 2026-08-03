@@ -15,7 +15,19 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Loader2, Search, Sparkles, X } from "lucide-react";
 import { skillApi } from "@/lib/skill-api";
-import { SKILL_CATEGORIES, SKILL_OUTPUT_LABEL, type SkillVO } from "@/types/skill";
+import { useFocusTrap } from "@/hooks/use-focus-trap";
+import {
+  SKILL_CATEGORIES,
+  SKILL_KIND_LABEL,
+  SKILL_OUTPUT_LABEL,
+  skillKindOf,
+  skillOutputTypesOf,
+  skillSupportsEntryPoint,
+  skillSupportsOutput,
+  type SkillEntryPoint,
+  type SkillKind,
+  type SkillVO,
+} from "@/types/skill";
 
 interface Props {
   open: boolean;
@@ -25,14 +37,25 @@ interface Props {
   outputType?: string;
   /** 当前已选技能 id（高亮回显） */
   currentId?: string;
+  /** 按执行形态过滤；旧调用不传时仍显示全部技能。 */
+  kinds?: SkillKind[];
+  /** 当前产品入口，用于隐藏不支持该入口的工作流。 */
+  entryPoint?: SkillEntryPoint;
+  /** 当前入口的具体落点，如画布节点类型或资产分类。 */
+  targetType?: string;
 }
 
 const fmtCount = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 
-export function SkillPicker({ open, onClose, onPick, outputType, currentId }: Props) {
+export function SkillPicker({ open, onClose, onPick, outputType, currentId, kinds, entryPoint, targetType }: Props) {
+  const dialogRef = useFocusTrap<HTMLElement>(open);
+  const kindsKey = kinds?.join(",") ?? "";
   const [category, setCategory] = useState("");
   const [keyword, setKeyword] = useState("");
   const [rows, setRows] = useState<SkillVO[] | null>(null);
+  const [loadedQueryKey, setLoadedQueryKey] = useState("");
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [retryNonce, setRetryNonce] = useState(0);
   // 该模态下真正有技能的分类：页签只列这些，避免点进去是空的。
   // null = 未取到（先只显示「推荐」，不预先摆一排可能全是空的页签）。
   const [cats, setCats] = useState<string[] | null>(null);
@@ -41,7 +64,12 @@ export function SkillPicker({ open, onClose, onPick, outputType, currentId }: Pr
     if (!open) return;
     let alive = true;
     skillApi
-      .categories(outputType)
+      .categories(
+        outputType,
+        entryPoint,
+        kindsKey ? (kindsKey.split(",") as SkillKind[]) : undefined,
+        targetType,
+      )
       .then((res) => {
         if (!alive) return;
         const have = new Set(res.success && res.data ? res.data : []);
@@ -62,28 +90,69 @@ export function SkillPicker({ open, onClose, onPick, outputType, currentId }: Pr
     return () => {
       alive = false;
     };
-  }, [open, outputType]);
+  }, [open, outputType, entryPoint, kindsKey, targetType]);
 
   // seq 守卫:切分类/搜索的旧响应后到不覆盖新结果;关窗后丢弃。
   // 置 loading(rows=null)放在异步回调里,不在 effect 体内同步 setState。
   const seqRef = useRef(0);
+  const queryKey = JSON.stringify({ open, category, keyword: keyword.trim(), outputType, entryPoint, kindsKey, targetType, retryNonce });
+  // Keep a debounced search responsive without exposing the previous surface's
+  // cards as clickable results while the new request is still in flight.
+  const visibleRows = loadedQueryKey === queryKey ? rows : null;
   useEffect(() => {
     if (!open) return;
     const seq = ++seqRef.current;
     const timer = setTimeout(() => {
       setRows(null);
+      setLoadFailed(false);
       skillApi
-        .list({ pageNum: 1, pageSize: 60, category: category || undefined, keyword: keyword.trim() || undefined, outputType })
+        .list({
+          pageNum: 1,
+          pageSize: 60,
+          category: category || undefined,
+          keyword: keyword.trim() || undefined,
+          outputType,
+          entryPoint,
+          targetType,
+          ...(kindsKey.includes(",")
+            ? { kinds: kindsKey }
+            : kindsKey
+              ? { kind: kindsKey as SkillKind }
+              : {}),
+        })
         .then((res) => {
           if (seq !== seqRef.current) return;
-          setRows(res.success && res.data ? res.data.records : []);
+          if (!res.success || !res.data) {
+            setRows([]);
+            setLoadFailed(true);
+            setLoadedQueryKey(queryKey);
+            return;
+          }
+          const records = res.data.records;
+          const kindSet = new Set(kindsKey ? (kindsKey.split(",") as SkillKind[]) : []);
+          setRows(
+            records.filter(
+              (skill) =>
+                (!kindSet.size || kindSet.has(skillKindOf(skill))) &&
+                skillSupportsEntryPoint(skill, entryPoint) &&
+                skillSupportsOutput(skill, outputType),
+            ),
+          );
+          setLoadedQueryKey(queryKey);
         })
         .catch(() => {
-          if (seq === seqRef.current) setRows([]);
+          if (seq === seqRef.current) {
+            setRows([]);
+            setLoadFailed(true);
+            setLoadedQueryKey(queryKey);
+          }
         });
     }, keyword ? 250 : 0); // 输入搜索词做轻防抖
-    return () => clearTimeout(timer);
-  }, [open, category, keyword, outputType]);
+    return () => {
+      clearTimeout(timer);
+      if (seqRef.current === seq) seqRef.current += 1;
+    };
+  }, [open, category, keyword, outputType, entryPoint, kindsKey, targetType, queryKey]);
 
   useEffect(() => {
     if (!open) return;
@@ -107,6 +176,8 @@ export function SkillPicker({ open, onClose, onPick, outputType, currentId }: Pr
       }}
     >
       <section
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label="选择技能"
@@ -159,24 +230,47 @@ export function SkillPicker({ open, onClose, onPick, outputType, currentId }: Pr
 
         {/* 卡片栅格 */}
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
-          {rows === null ? (
+          {visibleRows === null ? (
             <div className="flex h-full items-center justify-center text-neutral-500">
               <Loader2 className="h-5 w-5 animate-spin" />
             </div>
-          ) : rows.length === 0 ? (
+          ) : loadFailed ? (
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-neutral-400" role="status">
+              <p className="text-xs">技能加载失败，请检查网络后重试</p>
+              <button
+                type="button"
+                className="rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs text-neutral-100 transition-colors hover:bg-white/10"
+                onClick={() => setRetryNonce((value) => value + 1)}
+              >
+                重新加载
+              </button>
+            </div>
+          ) : visibleRows.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center gap-2 text-neutral-500">
               <Sparkles className="h-6 w-6" />
               <p className="text-xs">暂无匹配的技能</p>
             </div>
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
-              {rows.map((s) => {
+              {visibleRows.map((s) => {
                 const selected = currentId === s.id;
+                const kind = skillKindOf(s);
+                const outputLabel = skillOutputTypesOf(s)
+                  .map((type) => SKILL_OUTPUT_LABEL[type] ?? type)
+                  .join(" / ");
+                const guidance = [
+                  s.usageScenario ? `适用场景：${s.usageScenario}` : "",
+                  s.howTo ? `如何使用：${s.howTo}` : "",
+                  s.outputDescription ? `输出内容：${s.outputDescription}` : "",
+                ].filter(Boolean).join("\n");
+                const guidanceSummary = guidance.length > 600 ? `${guidance.slice(0, 600)}…` : guidance;
                 return (
                   <button
                     key={s.id}
                     type="button"
                     onClick={() => onPick(s)}
+                    title={guidanceSummary || undefined}
+                    aria-label={guidanceSummary ? `${s.title}。${guidanceSummary.replaceAll("\n", "。")}` : s.title}
                     className={`group flex gap-3 rounded-xl border p-2.5 text-left transition-colors ${
                       selected
                         ? "border-white/40 bg-white/8"
@@ -190,17 +284,28 @@ export function SkillPicker({ open, onClose, onPick, outputType, currentId }: Pr
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img src={s.coverUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
                         <span className="absolute right-1.5 top-1.5 rounded bg-black/60 px-1 text-[10px] leading-4 text-white/90 backdrop-blur-sm">
-                          {SKILL_OUTPUT_LABEL[s.outputType] ?? s.outputType}
+                          {outputLabel}
                         </span>
                       </span>
                     )}
                     <span className="flex min-w-0 flex-1 flex-col py-0.5">
                       <span className="truncate text-[13px] font-semibold text-neutral-50">{s.title}</span>
                       <span className="mt-1 line-clamp-2 text-xs leading-5 text-neutral-400">{s.description}</span>
+                      {s.usageScenario && (
+                        <span className="mt-0.5 line-clamp-1 text-[11px] leading-4 text-neutral-500">
+                          适用：{s.usageScenario}
+                        </span>
+                      )}
                       <span className="mt-auto flex items-center gap-1.5 pt-2 text-[11px] text-neutral-500">
                         {!s.coverUrl && (
                           <>
-                            <span>{SKILL_OUTPUT_LABEL[s.outputType] ?? s.outputType}</span>
+                            <span>{outputLabel}</span>
+                            <span>·</span>
+                          </>
+                        )}
+                        {kind !== "preset" && (
+                          <>
+                            <span>{SKILL_KIND_LABEL[kind]}</span>
                             <span>·</span>
                           </>
                         )}

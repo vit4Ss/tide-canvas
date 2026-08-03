@@ -15,10 +15,12 @@ package admin
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/middleware"
@@ -30,14 +32,21 @@ import (
 
 type skillsHandler struct{ db *gorm.DB }
 
+var (
+	errInvalidLegacyPresetSave           = errors.New("invalid legacy preset save")
+	errLegacyPresetRequiresVersionEditor = errors.New("advanced preset execution must be edited through version management")
+)
+
 // RegisterSkills mounts the admin skill routes on the admin group g.
 func RegisterSkills(g *gin.RouterGroup, d *app.Deps) {
 	h := &skillsHandler{db: d.DB}
 	s := g.Group("/skills")
 	s.GET("", h.list)
 	s.POST("", h.create)
+	s.POST("/import", h.importSkills)
 	s.PUT("/:id", h.update)
 	s.DELETE("/:id", h.remove)
+	registerSkillVersionRoutes(s, h)
 }
 
 // validDefaultParams 校验技能默认参数:空串或 JSON 对象。前端表单已拦,
@@ -48,23 +57,66 @@ func validDefaultParams(raw string) bool {
 		return true
 	}
 	var v map[string]any
-	return json.Unmarshal([]byte(raw), &v) == nil
+	return json.Unmarshal([]byte(raw), &v) == nil && v != nil
+}
+
+func validateLegacyPresetSave(dto AdminSkillSaveDTO, enforcePromptLimit bool) string {
+	if !validLegacyOutputType(dto.OutputType) || strings.TrimSpace(dto.PromptTemplate) == "" {
+		return "preset skill requires promptTemplate and a valid outputType"
+	}
+	if enforcePromptLimit && len([]byte(dto.PromptTemplate)) > maxSkillExecutablePromptBytes {
+		return "promptTemplate exceeds 1 MiB"
+	}
+	if !validDefaultParams(strings.TrimSpace(dto.DefaultParams)) {
+		return "defaultParams must be a JSON object"
+	}
+	return ""
+}
+
+func validLegacyOutputType(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "image", "video", "audio", "text", "file":
+		return true
+	}
+	return false
 }
 
 // AdminSkillSaveDTO is the create/update body(前端 SkillSaveDTO)。
 // defaultParams 为 JSON 对象字符串(如 {"aspectRatio":"16:9"}),空串 = 无默认参数。
 type AdminSkillSaveDTO struct {
-	Title          string `json:"title" binding:"required,max=64"`
-	Description    string `json:"description" binding:"omitempty,max=255"`
-	CoverURL       string `json:"coverUrl" binding:"omitempty,max=512"`
-	Category       string `json:"category" binding:"omitempty,max=32"`
-	OutputType     string `json:"outputType" binding:"required,oneof=image video audio text"`
-	PromptTemplate string `json:"promptTemplate" binding:"required"`
-	ModelID        string `json:"modelId" binding:"omitempty,max=128"`
-	DefaultParams  string `json:"defaultParams" binding:"omitempty,max=2048"`
-	AuthorName     string `json:"authorName" binding:"omitempty,max=64"`
-	Status         *int   `json:"status"`
-	SortOrder      *int   `json:"sortOrder"`
+	Title             string  `json:"title" binding:"required,max=64"`
+	Description       string  `json:"description" binding:"omitempty,max=255"`
+	UsageScenario     *string `json:"usageScenario" binding:"omitempty,max=2000"`
+	HowTo             *string `json:"howTo" binding:"omitempty,max=2000"`
+	OutputDescription *string `json:"outputDescription" binding:"omitempty,max=2000"`
+	CoverURL          string  `json:"coverUrl" binding:"omitempty,max=512"`
+	Category          string  `json:"category" binding:"omitempty,max=32"`
+	OutputType        string  `json:"outputType" binding:"omitempty,max=16"`
+	PromptTemplate    string  `json:"promptTemplate"`
+	ModelID           string  `json:"modelId" binding:"omitempty,max=128"`
+	DefaultParams     string  `json:"defaultParams" binding:"omitempty,max=2048"`
+	AuthorName        string  `json:"authorName" binding:"omitempty,max=64"`
+	Status            *int    `json:"status"`
+	SortOrder         *int    `json:"sortOrder"`
+}
+
+func adminOptionalText(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
+}
+
+func applyAdminSkillGuidanceFields(fields map[string]any, dto AdminSkillSaveDTO) {
+	if dto.UsageScenario != nil {
+		fields["usage_scenario"] = strings.TrimSpace(*dto.UsageScenario)
+	}
+	if dto.HowTo != nil {
+		fields["how_to"] = strings.TrimSpace(*dto.HowTo)
+	}
+	if dto.OutputDescription != nil {
+		fields["output_description"] = strings.TrimSpace(*dto.OutputDescription)
+	}
 }
 
 func (h *skillsHandler) list(c *gin.Context) {
@@ -112,25 +164,29 @@ func (h *skillsHandler) list(c *gin.Context) {
 
 func (h *skillsHandler) create(c *gin.Context) {
 	var dto AdminSkillSaveDTO
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxSkillImportBodyBytes)
 	if err := c.ShouldBindJSON(&dto); err != nil {
 		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
 		return
 	}
-	if !validDefaultParams(strings.TrimSpace(dto.DefaultParams)) {
-		response.Fail(c, response.CodeBadRequest, "默认参数需为 JSON 对象")
+	if message := validateLegacyPresetSave(dto, true); message != "" {
+		response.Fail(c, response.CodeBadRequest, message)
 		return
 	}
 	row := &model.Skill{
-		Title:          strings.TrimSpace(dto.Title),
-		Description:    strings.TrimSpace(dto.Description),
-		CoverURL:       strings.TrimSpace(dto.CoverURL),
-		Category:       strings.TrimSpace(dto.Category),
-		OutputType:     dto.OutputType,
-		PromptTemplate: dto.PromptTemplate,
-		ModelID:        strings.TrimSpace(dto.ModelID),
-		DefaultParams:  strings.TrimSpace(dto.DefaultParams),
-		AuthorName:     strings.TrimSpace(dto.AuthorName),
-		Status:         1,
+		Title:             strings.TrimSpace(dto.Title),
+		Description:       strings.TrimSpace(dto.Description),
+		UsageScenario:     adminOptionalText(dto.UsageScenario),
+		HowTo:             adminOptionalText(dto.HowTo),
+		OutputDescription: adminOptionalText(dto.OutputDescription),
+		CoverURL:          strings.TrimSpace(dto.CoverURL),
+		Category:          strings.TrimSpace(dto.Category),
+		OutputType:        dto.OutputType,
+		PromptTemplate:    dto.PromptTemplate,
+		ModelID:           strings.TrimSpace(dto.ModelID),
+		DefaultParams:     strings.TrimSpace(dto.DefaultParams),
+		AuthorName:        strings.TrimSpace(dto.AuthorName),
+		Status:            1,
 	}
 	if dto.Status != nil {
 		row.Status = *dto.Status
@@ -138,8 +194,13 @@ func (h *skillsHandler) create(c *gin.Context) {
 	if dto.SortOrder != nil {
 		row.SortOrder = *dto.SortOrder
 	}
-	if err := h.db.Create(row).Error; err != nil {
-		response.Fail(c, response.CodeServerError, "failed to create skill")
+	if err := h.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(row).Error; err != nil {
+			return err
+		}
+		return publishLegacyPresetVersionTx(tx, row, middleware.CurrentUserID(c))
+	}); err != nil {
+		response.Fail(c, response.CodeServerError, "failed to create initial skill version")
 		return
 	}
 
@@ -160,48 +221,88 @@ func (h *skillsHandler) update(c *gin.Context) {
 		return
 	}
 	var dto AdminSkillSaveDTO
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxSkillImportBodyBytes)
 	if err := c.ShouldBindJSON(&dto); err != nil {
 		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
 		return
 	}
-	if !validDefaultParams(strings.TrimSpace(dto.DefaultParams)) {
-		response.Fail(c, response.CodeBadRequest, "默认参数需为 JSON 对象")
-		return
-	}
 
 	var row model.Skill
-	if err := h.db.Where("id = ?", id).First(&row).Error; err != nil {
+	validationMessage := ""
+	err = h.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", id).First(&row).Error; err != nil {
+			return err
+		}
+		isPreset := row.Kind == "" || row.Kind == model.SkillKindPreset
+		promptChanged := isPreset && row.PromptTemplate != dto.PromptTemplate
+		if isPreset {
+			if validationMessage = validateLegacyPresetSave(dto, promptChanged); validationMessage != "" {
+				return errInvalidLegacyPresetSave
+			}
+		}
+
+		fields := map[string]any{
+			"title":           strings.TrimSpace(dto.Title),
+			"description":     strings.TrimSpace(dto.Description),
+			"cover_url":       strings.TrimSpace(dto.CoverURL),
+			"category":        strings.TrimSpace(dto.Category),
+			"output_type":     dto.OutputType,
+			"prompt_template": dto.PromptTemplate,
+			"model_id":        strings.TrimSpace(dto.ModelID),
+			"default_params":  strings.TrimSpace(dto.DefaultParams),
+			"author_name":     strings.TrimSpace(dto.AuthorName),
+		}
+		applyAdminSkillGuidanceFields(fields, dto)
+		if !isPreset {
+			delete(fields, "output_type")
+			delete(fields, "prompt_template")
+			delete(fields, "model_id")
+			delete(fields, "default_params")
+		}
+		if dto.Status != nil {
+			fields["status"] = *dto.Status
+		}
+		if dto.SortOrder != nil {
+			fields["sort_order"] = *dto.SortOrder
+		}
+		executionChanged := isPreset && (row.OutputType != dto.OutputType ||
+			row.PromptTemplate != dto.PromptTemplate ||
+			row.ModelID != strings.TrimSpace(dto.ModelID) ||
+			row.DefaultParams != strings.TrimSpace(dto.DefaultParams))
+		if executionChanged {
+			editable, err := legacyPresetExecutionEditableTx(tx, &row)
+			if err != nil {
+				return err
+			}
+			if !editable {
+				return errLegacyPresetRequiresVersionEditor
+			}
+		}
+		if err := tx.Model(&model.Skill{}).Where("id = ?", id).Updates(fields).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("id = ?", id).First(&row).Error; err != nil {
+			return err
+		}
+		if executionChanged {
+			return publishLegacyPresetVersionTx(tx, &row, middleware.CurrentUserID(c))
+		}
+		return nil
+	})
+	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			response.Fail(c, response.CodeNotFound, "skill not found")
 			return
 		}
-		response.Fail(c, response.CodeServerError, "failed to load skill")
-		return
-	}
-
-	fields := map[string]any{
-		"title":           strings.TrimSpace(dto.Title),
-		"description":     strings.TrimSpace(dto.Description),
-		"cover_url":       strings.TrimSpace(dto.CoverURL),
-		"category":        strings.TrimSpace(dto.Category),
-		"output_type":     dto.OutputType,
-		"prompt_template": dto.PromptTemplate,
-		"model_id":        strings.TrimSpace(dto.ModelID),
-		"default_params":  strings.TrimSpace(dto.DefaultParams),
-		"author_name":     strings.TrimSpace(dto.AuthorName),
-	}
-	if dto.Status != nil {
-		fields["status"] = *dto.Status
-	}
-	if dto.SortOrder != nil {
-		fields["sort_order"] = *dto.SortOrder
-	}
-	if err := h.db.Model(&model.Skill{}).Where("id = ?", id).Updates(fields).Error; err != nil {
+		if errors.Is(err, errLegacyPresetRequiresVersionEditor) {
+			response.Fail(c, response.CodeBadRequest, "advanced preset execution must be edited through version management")
+			return
+		}
+		if errors.Is(err, errInvalidLegacyPresetSave) {
+			response.Fail(c, response.CodeBadRequest, validationMessage)
+			return
+		}
 		response.Fail(c, response.CodeServerError, "failed to update skill")
-		return
-	}
-	if err := h.db.Where("id = ?", id).First(&row).Error; err != nil {
-		response.Fail(c, response.CodeServerError, "failed to load skill")
 		return
 	}
 

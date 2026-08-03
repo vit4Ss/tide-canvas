@@ -61,7 +61,8 @@ type Client struct {
 }
 
 // New returns a client, or nil when no API key is configured (so the caller can
-// fall back to the stub). baseURL defaults to the relay host when empty.
+// fall back to the stub). An empty baseURL defaults to the test relay so an
+// incompletely configured local process cannot send traffic to production.
 func New(baseURL, apiKey string) *Client {
 	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
@@ -69,7 +70,7 @@ func New(baseURL, apiKey string) *Client {
 	}
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" {
-		baseURL = "https://relay.tcmzhan.com"
+		baseURL = "https://test-relay.tcmzhan.com"
 	}
 	// No fixed client Timeout: each request is bounded by the per-medium context
 	// deadline (see submit), so a slow synchronous generation isn't cut off early.
@@ -93,7 +94,7 @@ type ImageParams struct {
 // omitted so the relay's per-model schema validation only sees what was set.
 type VideoParams struct {
 	Model      string
-	Mode       string   // text_to_video | image_to_video | first_last_frame | multi_ref
+	Mode       string // text_to_video | image_to_video | first_last_frame | multi_ref
 	Prompt     string
 	ImageURL   string   // image_to_video: single source frame
 	ImageURLs  []string // first_last_frame: [first,last]; multi_ref: reference images
@@ -201,7 +202,7 @@ func mediaTracks(mr mediaResp) []Track {
 // mediaError tolerates the relay's两种错误体：OpenAI 对象形
 // {"error":{"message","type","code"}} 与部分 4xx 返回的纯字符串形
 // {"error":"..."}——严格结构曾让 400 的真实原因被解析错误吞掉
-//（用户实测 2026-07-13）。code 兼容数字与字符串。
+// （用户实测 2026-07-13）。code 兼容数字与字符串。
 type mediaError struct {
 	Message string `json:"message"`
 	Type    string `json:"type"`

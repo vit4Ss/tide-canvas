@@ -3,6 +3,7 @@ package file
 import (
 	"errors"
 	"mime/multipart"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 
@@ -10,6 +11,12 @@ import (
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/response"
+)
+
+const (
+	maxMultipartOverhead = 1 << 20
+	maxBatchFiles        = 20
+	maxBatchTotalSize    = maxFileSize
 )
 
 // handler is the file domain's HTTP layer.
@@ -23,8 +30,15 @@ func newHandler(d *app.Deps) *handler {
 
 // upload POST /api/files/upload (multipart "file") -> FileVO
 func (h *handler) upload(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxFileSize+maxMultipartOverhead)
+	defer removeMultipartTempFiles(c)
 	fh, err := c.FormFile("file")
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeUploadErr(c, errFileTooLarge)
+			return
+		}
 		response.Fail(c, response.CodeBadRequest, "missing file field")
 		return
 	}
@@ -39,11 +53,18 @@ func (h *handler) upload(c *gin.Context) {
 
 // uploadBatch POST /api/files/upload/batch (multipart, multiple "file") -> FileVO[]
 func (h *handler) uploadBatch(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBatchTotalSize+maxMultipartOverhead)
 	form, err := c.MultipartForm()
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeUploadErr(c, errFileTooLarge)
+			return
+		}
 		response.Fail(c, response.CodeBadRequest, "invalid multipart form")
 		return
 	}
+	defer form.RemoveAll()
 	files := form.File["file"]
 	if len(files) == 0 {
 		files = form.File["files"] // tolerate either field name
@@ -52,17 +73,44 @@ func (h *handler) uploadBatch(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, "no files uploaded")
 		return
 	}
+	if len(files) > maxBatchFiles {
+		response.Fail(c, response.CodeBadRequest, "too many files")
+		return
+	}
+	var totalSize int64
+	for _, fh := range files {
+		if fh.Size <= 0 {
+			writeUploadErr(c, errEmptyFile)
+			return
+		}
+		if fh.Size > maxFileSize || totalSize > maxBatchTotalSize-fh.Size {
+			writeUploadErr(c, errFileTooLarge)
+			return
+		}
+		totalSize += fh.Size
+	}
 	uid := middleware.CurrentUserID(c)
 	out := make([]FileVO, 0, len(files))
 	for _, fh := range files {
 		vo, err := h.saveHeader(c, uid, fh)
 		if err != nil {
+			// Batch is all-or-nothing from the caller's perspective. Remove any
+			// assets already persisted before the first failure.
+			for _, saved := range out {
+				_ = h.svc.delete(c.Request.Context(), uid, saved.ID)
+			}
 			writeUploadErr(c, err)
 			return
 		}
 		out = append(out, *vo)
 	}
 	response.OK(c, out)
+}
+
+func removeMultipartTempFiles(c *gin.Context) {
+	if c.Request.MultipartForm != nil {
+		_ = c.Request.MultipartForm.RemoveAll()
+	}
 }
 
 // saveHeader opens a multipart file header and persists it.
@@ -79,6 +127,8 @@ func (h *handler) saveHeader(c *gin.Context, uid idgen.ID, fh *multipart.FileHea
 	return h.svc.upload(c.Request.Context(), uid, uploadInput{
 		OriginalName: fh.Filename,
 		ContentType:  ct,
+		FileTypeHint: c.PostForm("fileType"),
+		CategoryHint: c.PostForm("category"),
 		Size:         fh.Size,
 		Reader:       src,
 	})
@@ -150,6 +200,10 @@ func (h *handler) list(c *gin.Context) {
 	offset, limit := pagination(q.PageNum, q.PageSize)
 	rows, total, err := h.svc.list(c.Request.Context(), uid, q, offset, limit)
 	if err != nil {
+		if errors.Is(err, errInvalidCategory) {
+			response.Fail(c, response.CodeBadRequest, "invalid asset category")
+			return
+		}
 		response.Fail(c, response.CodeServerError, "failed to list files")
 		return
 	}
@@ -194,8 +248,16 @@ func writeUploadErr(c *gin.Context, err error) {
 		response.Fail(c, response.CodeFileSizeExceeded, "file size exceeds the limit")
 	case errors.Is(err, errFileTypeRejected):
 		response.Fail(c, response.CodeFileTypeNotAllowed, "file type is not allowed")
+	case errors.Is(err, errInvalidCategory):
+		response.Fail(c, response.CodeBadRequest, "invalid asset category")
 	case errors.Is(err, errEmptyFile):
 		response.Fail(c, response.CodeBadRequest, "empty file")
+	case errors.Is(err, errStorageInsufficient):
+		response.Fail(c, response.CodeStorageInsufficient, "storage quota is insufficient")
+	case errors.Is(err, errUploadGrantInvalid):
+		response.Fail(c, response.CodeBadRequest, "direct upload expired or is invalid")
+	case errors.Is(err, errUploadMismatch):
+		response.Fail(c, response.CodeBadRequest, "uploaded file does not match the upload grant")
 	case errors.Is(err, errBadURL):
 		response.Fail(c, response.CodeBadRequest, "invalid request")
 	default:

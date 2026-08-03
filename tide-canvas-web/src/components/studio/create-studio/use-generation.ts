@@ -9,8 +9,7 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from "react";
 import { marketApi, type StudioModelVO } from "@/lib/market-api";
 import { aiApi } from "@/lib/api";
-import { skillApi } from "@/lib/skill-api";
-import type { SkillVO } from "@/types/skill";
+import { skillKindOf, skillSupportsOutput, type SkillVO } from "@/types/skill";
 import { AiTaskStatus } from "@/types/ai";
 import type { MentionEditorHandle } from "@/components/studio/mention-prompt-editor";
 import { toast } from "@/components/shared/toast";
@@ -334,11 +333,14 @@ export function useGeneration(p: GenerationParams) {
       try {
         await ensureSession();
         if (runIdRef.current !== myRun) return;
-        const res2 = await aiApi.generate({
+        const res2 = await aiApi.generateIdempotent({
           handler: args.handler,
           modelId: args.modelId,
+          ...(typeof args.input.skillId === "string"
+            ? { entryPoint: "studio" as const, targetType: args.meta.kind }
+            : {}),
           input: args.input,
-        });
+        }, `studio:${args.meta.kind}`);
         if (runIdRef.current !== myRun) return;
         if (!res2.success) {
           setBusy(false);
@@ -626,8 +628,11 @@ export function useGeneration(p: GenerationParams) {
     // 技能:只发 skillId,模板由服务端拼到描述前面(客户端先拼会污染落库的 input,
     // 作品标题/重新编辑读到的就全是模板开头)
     const genPrompt = p;
-    const skillInput = skill && skill.outputType === curType ? { skillId: skill.id } : {};
-    if (skill && skill.outputType === curType) void skillApi.recordUse(skill.id);
+    const presetSkill =
+      skill && skillKindOf(skill) === "preset" && skillSupportsOutput(skill, curType)
+        ? skill
+        : null;
+    const skillInput = presetSkill ? { skillId: presetSkill.id } : {};
     const input: Record<string, unknown> = isAudio
       ? {
           // 音频：灵感模式只发描述；自定义歌词模式只发歌词/风格/歌名（描述不发，

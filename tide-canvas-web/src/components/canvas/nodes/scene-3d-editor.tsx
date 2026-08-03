@@ -8,6 +8,7 @@ import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-ca
 import { uploadFileSmart } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/http";
 import { toast } from "@/components/shared/toast";
+import { CHARACTER_NODE_TYPE, SCENE_NODE_TYPE } from "@/lib/canvas-node-types";
 import {
   buildMannequinFigure, buildSkinnedFigure, parseState, lightPositionFromAngles, makeLabelSprite, characterNameByIndex,
   LIGHT_NAMES, LIGHT_PRESETS, CHARACTER_COLORS, DEFAULT_ENV, POSE_SLIDER_GROUPS,
@@ -119,8 +120,8 @@ export function Scene3DEditor({ node, onClose }: Props) {
     const ins = st.connections
       .filter((c) => c.targetId === node.id)
       .map((c) => st.nodes.find((n) => n.id === c.sourceId))
-      .filter((n): n is CanvasNode => !!n && !!n.imageSrc && !n.videoSrc);
-    return ins.find((n) => n.is360) ?? ins[0] ?? null;
+      .filter((n): n is CanvasNode => !!n && !!n.imageSrc && !n.videoSrc && n.type !== CHARACTER_NODE_TYPE);
+    return ins.find((n) => n.is360) ?? ins.find((n) => n.type === SCENE_NODE_TYPE) ?? ins[0] ?? null;
   }, [node.id]);
   const panoUrl = pano?.imageSrc ?? null;
 

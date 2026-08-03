@@ -4,12 +4,14 @@
 // All id / FK fields are serialized by the backend as quoted decimal strings
 // (idgen.ID), so they are typed as `string` here. JSON is camelCase.
 
+import type { SkillRunStatus } from "@/types/skill-run";
+
 /** A message role surfaced to the frontend. Derived server-side: a message from
  *  the conversation owner is "user"; the placeholder assistant is "ai". */
 export type ChatRole = "user" | "ai";
 
 /** Content type of a message. Backend defaults to "text". */
-export type ChatContentType = "text" | "image" | "video" | "file";
+export type ChatContentType = "text" | "image" | "video" | "audio" | "file" | "skill_run";
 
 /** Summary view of a conversation (GET/POST /api/im/conversations). */
 export interface ConversationVO {
@@ -34,6 +36,19 @@ export interface MessageTaskVO {
   errorMsg: string;
 }
 
+/** Compact run state joined in the message list. Full steps/artifacts are read
+ * from /api/skill-runs/:id so listing a long conversation stays bounded. */
+export interface MessageSkillRunVO {
+  id: string;
+  skillId: string;
+  status: SkillRunStatus;
+  currentStep?: string;
+  progress: number;
+  pendingAction?: Record<string, unknown> | string | null;
+  errorMessage?: string;
+  pointCost: number;
+}
+
 /** A single message within a conversation. 生成台 assistant messages carry a
  *  `task` (live status, null when the task expired); the user message of a turn
  *  carries the `params` snapshot used for the detail row / 重新编辑 / 再次生成. */
@@ -45,8 +60,10 @@ export interface MessageVO {
   content: string;
   createTime: string;
   taskId?: string;
+  skillRunId?: string;
   params?: Record<string, unknown>;
   task?: MessageTaskVO;
+  skillRun?: MessageSkillRunVO;
 }
 
 /** Estimated context-token usage of a conversation vs the server cap

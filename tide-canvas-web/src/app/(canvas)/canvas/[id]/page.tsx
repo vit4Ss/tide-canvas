@@ -9,6 +9,8 @@ import { CanvasView } from "@/components/canvas/canvas-view";
 import { ArrowLeft, Loader2, Check, Pencil } from "lucide-react";
 import Link from "next/link";
 import { toast } from "@/components/shared/toast";
+import { isImageCanvasNodeType } from "@/lib/canvas-node-types";
+import { CANVAS_SAVE_NOW_EVENT, type CanvasSaveRequestDetail } from "@/lib/canvas-save";
 
 const AUTOSAVE_DELAY = 3000; // 3 秒无变化触发自动保存
 
@@ -55,6 +57,8 @@ export default function CanvasEditorPage() {
   const nodes = useCanvasStore((s) => s.nodes);
   const connections = useCanvasStore((s) => s.connections);
   const groups = useCanvasStore((s) => s.groups);
+  const trackedSkillRunIds = useCanvasStore((s) => s.trackedSkillRunIds);
+  const materializedArtifactIds = useCanvasStore((s) => s.materializedArtifactIds);
   const loadCanvas = useCanvasStore((s) => s.loadCanvas);
   const setCurrentProjectId = useCanvasStore((s) => s.setCurrentProjectId);
 
@@ -67,6 +71,9 @@ export default function CanvasEditorPage() {
   // 用户的最后一次编辑,之后再无触发源,改动会永远不落盘。记 pending,在途
   // 请求结束后补跑一次。
   const pendingSaveRef = useRef(false);
+  // Acknowledgements are captured per save attempt. Requests arriving while a
+  // save is in flight stay queued for the follow-up snapshot, never the stale one.
+  const saveAcknowledgementsRef = useRef<Array<(saved: boolean) => void>>([]);
 
   // 加载项目（按 url token；不存在/无权限 → 404）
   useEffect(() => {
@@ -81,7 +88,12 @@ export default function CanvasEditorPage() {
         if (res.data.canvasData && res.data.canvasData !== "{}") {
           try {
             const data = JSON.parse(res.data.canvasData);
-            loadCanvas(data.nodes || [], data.connections || [], data.groups || []);
+            loadCanvas(
+              data.nodes || [],
+              data.connections || [],
+              data.groups || [],
+              data.skillRuns || data.skillRunState,
+            );
             // 上次会话遗留的生成中节点（带 taskId）：任务仍在后端执行，按任务号续轮回填结果
             resumeGeneration();
           } catch {
@@ -105,30 +117,45 @@ export default function CanvasEditorPage() {
   }, [token, loadCanvas, setCurrentProjectId]);
 
   const save = useCallback(async (silent = false) => {
-    if (!projectId) return;
+    if (!projectId) return false;
     if (savingRef.current) {
       pendingSaveRef.current = true;
-      return;
+      return false;
     }
+    const acknowledgements = saveAcknowledgementsRef.current.splice(0);
+    let persisted = false;
     savingRef.current = true;
     setSaving(true);
     try {
-      const canvasData = JSON.stringify({ nodes: nodes.map(sanitizeForSave), connections, groups });
+      // 保存触发可能来自卸载 flush；此时 React 闭包未必已经跟上最后一次 store 更新。
+      // 直接读取 store 快照，确保刚物化的节点和 artifact 消费标记一起落盘。
+      const canvasSnapshot = useCanvasStore.getState();
+      const canvasData = JSON.stringify({
+        nodes: canvasSnapshot.nodes.map(sanitizeForSave),
+        connections: canvasSnapshot.connections,
+        groups: canvasSnapshot.groups,
+        skillRuns: {
+          trackedRunIds: canvasSnapshot.trackedSkillRunIds,
+          materializedArtifactIds: canvasSnapshot.materializedArtifactIds,
+        },
+      });
       // 封面兜底：未手动设封面时，自动用画布中第一张图片。
       // 仅取可持久化的 http(s) 地址——data:base64 会超出后端 thumbnail(VARCHAR 512) 导致保存 500，
       // blob: 本地地址刷新即失效（如刚切分尚未上传完成的切片），都不能当封面。
       const persistable = (u?: string): u is string => !!u && /^https?:\/\//.test(u);
       const cover = (persistable(thumbnail ?? undefined) ? thumbnail : null)
-        ?? nodes.find((n) => n.type === "image" && persistable(n.imageSrc))?.imageSrc
+        ?? canvasSnapshot.nodes.find((n) => isImageCanvasNodeType(n.type) && persistable(n.imageSrc))?.imageSrc
         ?? null;
       const res = await projectApi.saveCanvas(projectId, { canvasData, ...(cover ? { thumbnail: cover } : {}) });
       if (res.success) {
+        persisted = true;
         setLastSaved(new Date().toLocaleTimeString("zh-CN"));
         if (!silent) toast.success("已保存");
       } else if (!silent) {
         toast.error("保存失败");
       }
     } finally {
+      for (const acknowledge of acknowledgements) acknowledge(persisted);
       savingRef.current = false;
       setSaving(false);
       if (pendingSaveRef.current) {
@@ -137,7 +164,8 @@ export default function CanvasEditorPage() {
         void saveRef.current(true);
       }
     }
-  }, [nodes, connections, groups, projectId, thumbnail]);
+    return persisted;
+  }, [projectId, thumbnail]);
 
   // Keep a ref to the latest `save` so the unmount flush below (which has empty
   // deps) always calls the current version without re-subscribing.
@@ -145,6 +173,36 @@ export default function CanvasEditorPage() {
   useEffect(() => {
     saveRef.current = save;
   }, [save]);
+
+  // SkillRun recovery journaling needs a real persistence boundary. A caller
+  // receives success only from the request that serialized its latest changes.
+  useEffect(() => {
+    const acknowledgements = saveAcknowledgementsRef.current;
+    const handleSaveNow = (rawEvent: Event) => {
+      const event = rawEvent as CustomEvent<CanvasSaveRequestDetail | undefined>;
+      const detail = event.detail;
+      if (detail?.projectId && detail.projectId !== projectId) return;
+      if (detail) {
+        detail.handled = true;
+        acknowledgements.push(detail.acknowledge);
+      }
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+      if (savingRef.current) {
+        pendingSaveRef.current = true;
+      } else {
+        void saveRef.current(true);
+      }
+    };
+    window.addEventListener(CANVAS_SAVE_NOW_EVENT, handleSaveNow);
+    return () => {
+      window.removeEventListener(CANVAS_SAVE_NOW_EVENT, handleSaveNow);
+      const pending = acknowledgements.splice(0);
+      for (const acknowledge of pending) acknowledge(false);
+    };
+  }, [projectId]);
 
   // Flush a pending autosave on unmount/navigate: if the debounce timer is still
   // armed when the canvas unmounts, the last edits would otherwise be dropped.
@@ -159,7 +217,7 @@ export default function CanvasEditorPage() {
     };
   }, []);
 
-  // 自动保存：监听 nodes/connections/groups 变化
+  // 自动保存：除画布图结构外，也持久化 SkillRun 恢复/消费状态。
   useEffect(() => {
     if (!loaded) return;
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
@@ -170,7 +228,7 @@ export default function CanvasEditorPage() {
     return () => {
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     };
-  }, [nodes, connections, groups, loaded, save]);
+  }, [nodes, connections, groups, trackedSkillRunIds, materializedArtifactIds, loaded, save]);
 
   const handleStartEditName = () => {
     setEditingNameValue(projectName);

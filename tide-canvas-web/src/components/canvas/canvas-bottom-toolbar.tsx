@@ -2,26 +2,22 @@
 
 import { useEffect, useRef, useState, type ComponentType } from "react";
 import {
-  AlignLeft,
-  AudioLines,
-  Clapperboard,
   Clock,
   Frame,
-  Image as ImageIcon,
-  Layers,
   LayoutGrid,
   Magnet,
   Map,
   Minus,
-  PenTool,
   Plus,
   Redo2,
+  Sparkles,
   Undo2,
-  Video,
   Workflow,
 } from "lucide-react";
 import { useCanvasStore } from "@/stores/use-canvas-store";
 import { useCanvasViewStore } from "@/stores/use-canvas-view-store";
+import { useCanvasNodeConfigStore } from "@/stores/use-canvas-node-config-store";
+import { canvasNodeIcon } from "@/lib/canvas-node-config";
 import styles from "./styles/canvas-bottom-toolbar.module.css";
 
 interface Props {
@@ -39,24 +35,8 @@ interface Props {
   onArrange: () => void;
   onOpenAssets: () => void;
   onOpenHistory: () => void;
+  onRunSkill: () => void;
 }
-
-interface NodeTypeAction {
-  type: string;
-  label: string;
-  hint: string;
-  icon: ComponentType<{ className?: string }>;
-}
-
-// 中文注释：底部新增节点菜单复用画布已有节点类型，避免侧边工具条与底部工具坞重复维护。
-const NODE_TYPES: NodeTypeAction[] = [
-  { type: "image", label: "图片", hint: "图像生成、参考图编辑", icon: ImageIcon },
-  { type: "video", label: "视频", hint: "视频生成、镜头创作", icon: Video },
-  { type: "text", label: "文本", hint: "提示词、脚本说明", icon: AlignLeft },
-  { type: "audio", label: "音频", hint: "音色、配乐与旁白", icon: AudioLines },
-  { type: "scene_3d", label: "导演台", hint: "角色动作与空间编排", icon: Layers },
-  { type: "script", label: "脚本", hint: "分镜和内容结构", icon: Clapperboard },
-];
 
 export function CanvasBottomToolbar({
   gridSnap,
@@ -73,6 +53,7 @@ export function CanvasBottomToolbar({
   onArrange,
   onOpenAssets,
   onOpenHistory,
+  onRunSkill,
 }: Props) {
   // 自行订阅缩放显示，选择器直接量化成整数百分比：平移不触发，
   // 连续缩放也只在显示值实际变化的帧重渲染
@@ -81,6 +62,7 @@ export function CanvasBottomToolbar({
   const redoStackLen = useCanvasStore((s) => s.redoStack.length);
   const undo = useCanvasStore((s) => s.undo);
   const redo = useCanvasStore((s) => s.redo);
+  const nodeTypes = useCanvasNodeConfigStore((s) => s.nodeTypes);
   const [addOpen, setAddOpen] = useState(false);
   const addMenuRef = useRef<HTMLDivElement>(null);
 
@@ -121,21 +103,22 @@ export function CanvasBottomToolbar({
           className={`${styles.assetButton} ${assetsActive ? styles.activeTextButton : ""}`}
           onClick={onOpenAssets}
           title="资产管理"
+          aria-pressed={!!assetsActive}
         >
-          <LayoutGrid className={styles.statusIcon} />
+          <LayoutGrid className={styles.statusIcon} aria-hidden />
           <span>资产管理</span>
         </button>
         <IconButton icon={Map} label="小地图" active={minimapVisible} onClick={onToggleMinimap} />
         <IconButton icon={Magnet} label="网格吸附" active={gridSnap} onClick={onToggleGridSnap} />
         <div className={styles.zoomCluster} aria-label="画布缩放">
           <button type="button" className={styles.zoomStepButton} onClick={onZoomOut} disabled={zoomPercent <= 10} title="缩小画布">
-            <Minus className={styles.statusIcon} />
+            <Minus className={styles.statusIcon} aria-hidden />
           </button>
           <button type="button" className={styles.zoomPercentButton} onClick={onZoomReset} title="重置为 100%">
             {zoomPercent}%
           </button>
           <button type="button" className={styles.zoomStepButton} onClick={onZoomIn} disabled={zoomPercent >= 500} title="放大画布">
-            <Plus className={styles.statusIcon} />
+            <Plus className={styles.statusIcon} aria-hidden />
           </button>
         </div>
       </div>
@@ -147,26 +130,32 @@ export function CanvasBottomToolbar({
             className={`${styles.dockButton} ${styles.primaryDockButton}`}
             onClick={() => setAddOpen((value) => !value)}
             title="新增节点"
+            aria-label="新增节点"
             aria-expanded={addOpen}
+            aria-haspopup="menu"
           >
-            <Plus className={styles.dockIcon} />
+            <Plus className={styles.dockIcon} aria-hidden />
           </button>
           {addOpen && (
             <div className={styles.addMenu} role="menu">
               <div className={styles.addMenuHeader}>新增节点</div>
-              {NODE_TYPES.map((item) => (
-                <button key={item.type} type="button" className={styles.addMenuItem} onClick={() => pickNode(item.type)} role="menuitem">
-                  <span className={styles.addMenuIcon}><item.icon className={styles.menuIcon} /></span>
-                  <span className={styles.addMenuText}>
-                    <span className={styles.addMenuLabel}>{item.label}</span>
-                    <span className={styles.addMenuHint}>{item.hint}</span>
-                  </span>
-                </button>
-              ))}
+              {nodeTypes.filter((item) => item.enabled).map((item) => {
+                const Icon = canvasNodeIcon(item.key);
+                return (
+                  <button key={item.key} type="button" className={styles.addMenuItem} onClick={() => pickNode(item.key)} role="menuitem">
+                    <span className={styles.addMenuIcon}><Icon className={styles.menuIcon} aria-hidden /></span>
+                    <span className={styles.addMenuText}>
+                      <span className={styles.addMenuLabel}>{item.title}</span>
+                      <span className={styles.addMenuHint}>{item.description}</span>
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
 
+        <DockButton icon={Sparkles} label="运行 Skill" onClick={onRunSkill} />
         <DockButton icon={Workflow} label="自动排布" onClick={onArrange} />
         <DockButton icon={Frame} label="适应视图" onClick={onFitView} />
         <DockButton icon={Clock} label="历史记录" active={historyActive} onClick={onOpenHistory} />
@@ -190,8 +179,15 @@ function IconButton({
   onClick: () => void;
 }) {
   return (
-    <button type="button" className={`${styles.statusIconButton} ${active ? styles.activeIconButton : ""}`} onClick={onClick} title={label}>
-      <Icon className={styles.statusIcon} />
+    <button
+      type="button"
+      className={`${styles.statusIconButton} ${active ? styles.activeIconButton : ""}`}
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      aria-pressed={active === undefined ? undefined : active}
+    >
+      <Icon className={styles.statusIcon} aria-hidden />
     </button>
   );
 }
@@ -216,8 +212,10 @@ function DockButton({
       onClick={onClick}
       disabled={disabled}
       title={label}
+      aria-label={label}
+      aria-pressed={active === undefined ? undefined : active}
     >
-      <Icon className={styles.dockIcon} />
+      <Icon className={styles.dockIcon} aria-hidden />
     </button>
   );
 }

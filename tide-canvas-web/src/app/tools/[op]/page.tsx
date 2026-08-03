@@ -224,11 +224,11 @@ export default function ToolPage() {
           prompt: promptText,
           ...(def.extra ?? {}),
         };
-        const res = await aiApi.generate({
+        const res = await aiApi.generateIdempotent({
           handler: def.handler,
           modelId: pick.modelKey || pick.id,
           input,
-        });
+        }, `tool:${params.op}`);
         if (!res.success || !res.data) {
           fail(res.message || "任务创建失败，请重试");
           return;
@@ -238,7 +238,7 @@ export default function ToolPage() {
         fail("网络错误，请重试");
       }
     },
-    [def, fail, poll],
+    [def, fail, params.op, poll],
   );
 
   const onFile = useCallback(

@@ -24,5 +24,5 @@ func toAttaches(atts []MessageAttach) []chatattach.Attach {
 // docFileParts 见 chatattach.Extractor.FileParts：返回可转发的文件 part 列表，
 // 以及一段拼进当前轮 user 消息的附件说明。
 func (s *service) docFileParts(ctx context.Context, atts []MessageAttach) ([]relaychat.FileAttachment, string) {
-	return chatattach.Extractor{Hosts: s.docHosts}.FileParts(ctx, toAttaches(atts))
+	return chatattach.Extractor{Hosts: s.docHosts, Store: s.store}.FileParts(ctx, toAttaches(atts))
 }

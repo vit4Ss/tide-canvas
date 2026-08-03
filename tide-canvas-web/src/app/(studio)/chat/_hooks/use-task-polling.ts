@@ -20,7 +20,13 @@ export function useTaskPolling({
   loadMessages: (id: string) => Promise<void>;
 }) {
   const hasInflight = useMemo(
-    () => msgs.some((m) => m.task && m.task.status === AiTaskStatus.PROCESSING),
+    () =>
+      msgs.some(
+        (message) =>
+          (message.task && message.task.status === AiTaskStatus.PROCESSING) ||
+          message.skillRun?.status === "queued" ||
+          message.skillRun?.status === "running",
+      ),
     [msgs],
   );
   useEffect(() => {

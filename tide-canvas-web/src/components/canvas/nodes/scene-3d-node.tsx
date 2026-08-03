@@ -6,6 +6,8 @@ import { Layers, Box } from "lucide-react";
 import { NodeHeader } from "./base/node-header";
 import { NodePorts } from "./base/node-ports";
 import { Scene3DEditor } from "./scene-3d-editor";
+import { CHARACTER_NODE_TYPE } from "@/lib/canvas-node-types";
+import { CanvasSkillRunNodeShortcut } from "../skill-run/canvas-skill-run-workspace";
 
 interface Props {
   node: CanvasNode;
@@ -23,7 +25,7 @@ export const Scene3DNode = memo(function Scene3DNode({ node, isSelected, isDragg
     s.connections.some((c) => {
       if (c.targetId !== node.id) return false;
       const src = s.nodes.find((n) => n.id === c.sourceId);
-      return !!src?.imageSrc && !src.videoSrc;
+      return !!src?.imageSrc && !src.videoSrc && src.type !== CHARACTER_NODE_TYPE;
     })
   );
   const [editorOpen, setEditorOpen] = useState(false);
@@ -55,6 +57,8 @@ export const Scene3DNode = memo(function Scene3DNode({ node, isSelected, isDragg
         >
           {node.imageSrc ? (
             <>
+              {/* Canvas previews can be blob/data URLs and must remain unoptimized. */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={node.imageSrc} alt="" draggable={false} className="h-full w-full object-contain" />
               {/* 选中时悬浮重开入口：继续摆姿/再截图 */}
               {showAuxUI && (
@@ -88,6 +92,7 @@ export const Scene3DNode = memo(function Scene3DNode({ node, isSelected, isDragg
           )}
 
           <NodePorts nodeId={node.id} visible={showAuxUI} overlay onPortMouseDown={onPortMouseDown} />
+          <CanvasSkillRunNodeShortcut nodeId={node.id} nodeType={node.type} visible={showAuxUI} />
         </div>
       </div>
 

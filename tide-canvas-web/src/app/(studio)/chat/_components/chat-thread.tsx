@@ -7,6 +7,8 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { MessageVO } from "@/types/chat";
+import type { SkillRunAction } from "@/types/skill-run";
+import type { SkillRunPanelActionPayload } from "@/components/skill/skill-run-panel";
 import { Bubble, MD_COMPONENTS } from "./message-bubble";
 import type { LightboxItem } from "./chat-utils";
 
@@ -19,6 +21,7 @@ export function ChatThread({
   onReEdit,
   onRegenerate,
   onOpenLightbox,
+  onSkillRunAction,
   swatchFor,
   fallbackModelByMsg,
   curModelName,
@@ -36,6 +39,12 @@ export function ChatThread({
   onReEdit: (m: MessageVO) => void;
   onRegenerate: (m: MessageVO) => void;
   onOpenLightbox: (items: LightboxItem[], index: number) => void;
+  onSkillRunAction: (
+    runId: string,
+    action: SkillRunAction,
+    payload?: SkillRunPanelActionPayload,
+    expectedRevision?: number,
+  ) => void | Promise<unknown>;
   swatchFor: (name: string) => { style: React.CSSProperties; glyph: string };
   /** 任务没存 modelName 时的兜底模型名表（该轮 params.model）。 */
   fallbackModelByMsg: Map<string, string>;
@@ -78,6 +87,7 @@ export function ChatThread({
               onReEdit={onReEdit}
               onRegenerate={onRegenerate}
               onOpenLightbox={onOpenLightbox}
+              onSkillRunAction={onSkillRunAction}
               swatchFor={swatchFor}
               fallbackModel={fallbackModelByMsg.get(m.id) || curModelName}
             />

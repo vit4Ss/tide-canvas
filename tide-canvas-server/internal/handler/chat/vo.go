@@ -44,6 +44,17 @@ type MessageTaskVO struct {
 	ErrorMsg   string          `json:"errorMsg"`
 }
 
+type MessageSkillRunVO struct {
+	ID            idgen.ID        `json:"id"`
+	SkillID       idgen.ID        `json:"skillId"`
+	Status        string          `json:"status"`
+	CurrentStep   string          `json:"currentStep,omitempty"`
+	Progress      int             `json:"progress"`
+	PendingAction json.RawMessage `json:"pendingAction,omitempty"`
+	ErrorMessage  string          `json:"errorMessage,omitempty"`
+	PointCost     int64           `json:"pointCost"`
+}
+
 // MessageVO is a single message within a conversation. Role is derived (see the
 // constants above) rather than stored on the model.
 type MessageVO struct {
@@ -56,9 +67,11 @@ type MessageVO struct {
 	// TaskID links an assistant message to its generation task; Params is the
 	// snapshot stored on the user message; Task is the batch-loaded live task
 	// status (nil when the task was deleted/expired → frontend shows 已过期).
-	TaskID *idgen.ID       `json:"taskId,omitempty"`
-	Params json.RawMessage `json:"params,omitempty"`
-	Task   *MessageTaskVO  `json:"task,omitempty"`
+	TaskID     *idgen.ID          `json:"taskId,omitempty"`
+	SkillRunID *idgen.ID          `json:"skillRunId,omitempty"`
+	Params     json.RawMessage    `json:"params,omitempty"`
+	Task       *MessageTaskVO     `json:"task,omitempty"`
+	SkillRun   *MessageSkillRunVO `json:"skillRun,omitempty"`
 }
 
 // ContextUsageVO reports a conversation's estimated context-token usage against
@@ -117,8 +130,18 @@ func toMessageVO(m *model.IMMessage, ownerID idgen.ID) MessageVO {
 		Content:        m.Content,
 		CreateTime:     formatTime(m.CreateTime),
 		TaskID:         m.TaskID,
+		SkillRunID:     m.SkillRunID,
 		Params:         rawJSONOrNil(m.Params),
 	}
+}
+
+func toMessageSkillRunVO(run *model.SkillRun) *MessageSkillRunVO {
+	if run == nil {
+		return nil
+	}
+	return &MessageSkillRunVO{ID: run.ID, SkillID: run.SkillID, Status: run.Status,
+		CurrentStep: run.CurrentStep, Progress: run.Progress, PendingAction: rawJSONOrNil(run.PendingAction),
+		ErrorMessage: run.ErrorMessage, PointCost: run.PointCost}
 }
 
 // rawJSONOrNil returns s as a JSON value when it is non-blank valid JSON,

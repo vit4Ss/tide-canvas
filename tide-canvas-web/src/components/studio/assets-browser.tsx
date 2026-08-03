@@ -12,24 +12,33 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { aiApi, fileApi, uploadFileSmart } from "@/lib/api";
+import { fetchWithAuth } from "@/lib/http";
 import { useAuthStore } from "@/stores/use-auth-store";
-import type { FileVO } from "@/types/file";
+import { FileCategory, FileType, type FileVO } from "@/types/file";
 import { AiTaskStatus, type AiTaskVO } from "@/types/ai";
 import { mesh } from "@/lib/mesh";
 import { ossDisplayUrl } from "@/lib/oss-display";
 import { toast } from "@/components/shared/toast";
 import { confirmDialog } from "@/components/shared/confirm";
 import { useReveal } from "@/components/site/use-reveal";
+import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { AudioPlayerCard, SongCard } from "@/components/studio/audio-player-card";
+import { AssetSkillWorkspace } from "@/components/studio/asset-skill-workspace";
+import { SkillPicker } from "@/components/skill/skill-picker";
+import type { SkillVO } from "@/types/skill";
+import type { SkillRunAssetInput } from "@/types/skill-run";
 
 type TabKey = "hist" | "upload";
-type FilterKey = "image" | "video" | "audio" | "doc";
+type MediaKind = "image" | "video" | "audio" | "doc";
+type FilterKey = MediaKind | "character" | "scene";
+type AssetTargetType = "character" | "scene" | "general";
+type AssetOutputType = "image" | "video" | "audio" | "file";
 
 /** A picked asset handed back to the caller in pick mode. */
 export interface PickedAsset {
   url: string;
   name: string;
-  kind: FilterKey;
+  kind: MediaKind;
 }
 
 const TABS: { t: TabKey; label: string }[] = [
@@ -38,6 +47,8 @@ const TABS: { t: TabKey; label: string }[] = [
 ];
 
 const FILTERS: { f: FilterKey; label: string }[] = [
+  { f: "character", label: "角色" },
+  { f: "scene", label: "场景" },
   { f: "image", label: "图片" },
   { f: "video", label: "视频" },
   { f: "audio", label: "音频" },
@@ -46,15 +57,44 @@ const FILTERS: { f: FilterKey; label: string }[] = [
 
 /** 上传历史 filter → backend FileType (image|video|other). 音频/文档 collapse to
  *  "other"; we then split them client-side by mimeType. */
-const FILTER_TO_FILETYPE: Record<FilterKey, string> = {
+const FILTER_TO_FILETYPE: Record<FilterKey, FileType> = {
+  character: FileType.IMAGE,
+  scene: FileType.IMAGE,
+  image: FileType.IMAGE,
+  video: FileType.VIDEO,
+  audio: FileType.OTHER,
+  doc: FileType.OTHER,
+};
+
+const FILTER_TO_CATEGORY: Record<FilterKey, FileCategory> = {
+  character: FileCategory.CHARACTER,
+  scene: FileCategory.SCENE,
+  image: FileCategory.GENERAL,
+  video: FileCategory.GENERAL,
+  audio: FileCategory.GENERAL,
+  doc: FileCategory.GENERAL,
+};
+
+const FILTER_TO_SKILL_TARGET: Record<FilterKey, AssetTargetType> = {
+  character: "character",
+  scene: "scene",
+  image: "general",
+  video: "general",
+  audio: "general",
+  doc: "general",
+};
+
+const FILTER_TO_SKILL_OUTPUT: Record<FilterKey, AssetOutputType> = {
+  character: "image",
+  scene: "image",
   image: "image",
   video: "video",
-  audio: "other",
-  doc: "other",
+  audio: "audio",
+  doc: "file",
 };
 
 /** generation handler → media type, for the 生成历史 filter. */
-const HANDLER_TYPE: Record<string, "image" | "video" | "audio"> = {
+const HANDLER_TYPE: Record<string, Exclude<MediaKind, "doc">> = {
   text_to_image: "image",
   image_to_image: "image",
   text_to_video: "video",
@@ -65,6 +105,8 @@ const HANDLER_TYPE: Record<string, "image" | "video" | "audio"> = {
 
 const FILE_GLYPH: Record<string, string> = { audio: "♪", doc: "▤", video: "▶" };
 const ACCEPT: Record<FilterKey, string> = {
+  character: "image/*",
+  scene: "image/*",
   image: "image/*",
   video: "video/*",
   audio: "audio/*",
@@ -126,32 +168,55 @@ function fmtSize(bytes: number): string {
 }
 
 /** media kind of an uploaded file (image|video|audio|doc) from its type/mime. */
-function fileKind(f: FileVO): FilterKey {
+function fileMediaKind(f: FileVO): MediaKind {
   if (f.fileType === "image") return "image";
   if (f.fileType === "video") return "video";
   if ((f.mimeType || "").startsWith("audio/")) return "audio";
   return "doc";
 }
 
+function isConceptFilter(filter: FilterKey): filter is "character" | "scene" {
+  return filter === "character" || filter === "scene";
+}
+
+function fileMatchesFilter(file: FileVO, filter: FilterKey): boolean {
+  const category = file.category || FileCategory.GENERAL;
+  if (filter === "character") return category === FileCategory.CHARACTER;
+  if (filter === "scene") return category === FileCategory.SCENE;
+  return category === FileCategory.GENERAL && fileMediaKind(file) === filter;
+}
+
 /** A previewable / downloadable asset surfaced from a card click. */
 interface OpenAsset {
   url: string;
-  kind: FilterKey;
+  kind: MediaKind;
   name: string;
 }
 
-/** Force a download through the public server proxy, which adds a
+/** Force a download through the authenticated server proxy, which adds a
  *  Content-Disposition: attachment header (so cross-origin OSS files actually
  *  download instead of opening) and bypasses CORS. Same-origin /api path is
  *  rewritten to the backend by next.config. */
-function downloadAsset(url: string, name: string): void {
-  const href = `/api/files/download?url=${encodeURIComponent(url)}&name=${encodeURIComponent(name || "download")}`;
-  const a = document.createElement("a");
-  a.href = href;
-  a.rel = "noopener";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+async function downloadAsset(url: string, name: string): Promise<void> {
+  try {
+    const href = `/api/files/download?url=${encodeURIComponent(url)}&name=${encodeURIComponent(name || "download")}`;
+    const response = await fetchWithAuth(href);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const blobUrl = URL.createObjectURL(await response.blob());
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = name || "download";
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Firefox / Safari may not have started consuming the object URL when the
+    // synthetic click returns. Revoke it after the browser has had a chance to
+    // enqueue the download instead of invalidating the URL synchronously.
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 5_000);
+  } catch {
+    toast.error("下载失败，请稍后重试");
+  }
 }
 
 interface Group<T> {
@@ -190,7 +255,7 @@ export function AssetsBrowser({
   /** initial media filter (image | video | audio | doc) */
   defaultFilter?: FilterKey;
 }) {
-  const [tab, setTab] = useState<TabKey>(defaultTab);
+  const [tab, setTab] = useState<TabKey>(() => (isConceptFilter(defaultFilter) ? "upload" : defaultTab));
   const [filter, setFilter] = useState<FilterKey>(defaultFilter);
   const [tasks, setTasks] = useState<AiTaskVO[]>([]);
   const [files, setFiles] = useState<FileVO[]>([]);
@@ -198,10 +263,14 @@ export function AssetsBrowser({
   const [uploading, setUploading] = useState(false);
   // in-app preview overlay target (image/video/audio); docs never set this.
   const [preview, setPreview] = useState<OpenAsset | null>(null);
+  const previewDialogRef = useFocusTrap<HTMLDivElement>(!!preview);
   // 批量操作:进入多选模式后卡片改为勾选;selected 存当前 tab 内条目 id(字符串)。
   const [batchMode, setBatchMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [skillPickerOpen, setSkillPickerOpen] = useState(false);
+  const [assetSkillOpen, setAssetSkillOpen] = useState(false);
+  const [selectedSkill, setSelectedSkill] = useState<SkillVO | null>(null);
   // 排序方向(更多筛选):false=最新在前(默认),true=最早在前。
   const [sortAsc, setSortAsc] = useState(false);
 
@@ -238,6 +307,7 @@ export function AssetsBrowser({
   // reqId 守卫(tasks/files 共用):切 tab 或 filter 时,旧 tab/筛选的响应后到不应覆盖当前视图。
   const reqIdRef = useRef(0);
 
+
   /* ── 懒加载 + 时间筛选 ────────────────────────────────────────────────
      首屏一页(PAGE_SIZE),底部哨兵续页;时间筛选(startDate/endDate)走服务端
      (懒加载下客户端只能筛已加载部分,会漏)。loadedCountRef 记已取「记录条数」,
@@ -258,6 +328,11 @@ export function AssetsBrowser({
   const [endDate, setEndDate] = useState("");
   const sentinelRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => () => {
+    reqIdRef.current += 1;
+    loadingRef.current = false;
+  }, []);
+
   // 生成历史: the user's studio/chat generation tasks (filtered client-side by
   // type). noProject 排除画布项目里的生成——画布产物只属于画布，不进资产库。
   const fetchTasks = useCallback(async (page: number, append: boolean) => {
@@ -276,8 +351,16 @@ export function AssetsBrowser({
         endDate: endDate || undefined,
       });
       if (id !== reqIdRef.current) return;
-      const records = res.success && res.data ? res.data.records : [];
-      const total = res.success && res.data ? res.data.total : 0;
+      if (!res.success || !res.data) {
+        if (!append) {
+          setTasks([]);
+          setHasMore(false);
+        }
+        setLoadError(true);
+        return;
+      }
+      const records = res.data.records;
+      const total = res.data.total;
       pageRef.current = page;
       loadedCountRef.current = append ? loadedCountRef.current + records.length : records.length;
       setHasMore(loadedCountRef.current < total);
@@ -289,14 +372,19 @@ export function AssetsBrowser({
         return [...prev, ...records.filter((t) => !seen.has(t.id))];
       });
     } catch {
-      if (id === reqIdRef.current && !append) setTasks([]);
-      else if (id === reqIdRef.current) setLoadError(true); // 续页失败给重试
+      if (id === reqIdRef.current) {
+        if (!append) {
+          setTasks([]);
+          setHasMore(false);
+        }
+        setLoadError(true);
+      }
     } finally {
       if (id === reqIdRef.current) {
         setLoading(false);
         setLoadingMore(false);
+        loadingRef.current = false;
       }
-      loadingRef.current = false;
     }
   }, [ensureSession, startDate, endDate]);
 
@@ -312,13 +400,22 @@ export function AssetsBrowser({
       const res = await fileApi.list({
         pageNum: page,
         pageSize: PAGE_SIZE,
-        fileType: FILTER_TO_FILETYPE[filter] as FileVO["fileType"],
+        fileType: FILTER_TO_FILETYPE[filter],
+        category: FILTER_TO_CATEGORY[filter],
         startDate: startDate || undefined,
         endDate: endDate || undefined,
       });
       if (id !== reqIdRef.current) return;
-      const records = res.success && res.data ? res.data.records : [];
-      const total = res.success && res.data ? res.data.total : 0;
+      if (!res.success || !res.data) {
+        if (!append) {
+          setFiles([]);
+          setHasMore(false);
+        }
+        setLoadError(true);
+        return;
+      }
+      const records = res.data.records;
+      const total = res.data.total;
       pageRef.current = page;
       loadedCountRef.current = append ? loadedCountRef.current + records.length : records.length;
       setHasMore(loadedCountRef.current < total);
@@ -330,14 +427,19 @@ export function AssetsBrowser({
         return [...prev, ...records.filter((f) => !seen.has(f.id))];
       });
     } catch {
-      if (id === reqIdRef.current && !append) setFiles([]);
-      else if (id === reqIdRef.current) setLoadError(true); // 续页失败给重试
+      if (id === reqIdRef.current) {
+        if (!append) {
+          setFiles([]);
+          setHasMore(false);
+        }
+        setLoadError(true);
+      }
     } finally {
       if (id === reqIdRef.current) {
         setLoading(false);
         setLoadingMore(false);
+        loadingRef.current = false;
       }
-      loadingRef.current = false;
     }
   }, [ensureSession, filter, startDate, endDate]);
 
@@ -360,6 +462,14 @@ export function AssetsBrowser({
     setLoadError(false);
     if (tab === "hist") void fetchTasks(pageRef.current + 1, true);
     else void fetchFiles(pageRef.current + 1, true);
+  }, [tab, fetchTasks, fetchFiles]);
+
+  const retryCurrentView = useCallback(() => {
+    setLoadError(false);
+    pageRef.current = 1;
+    loadedCountRef.current = 0;
+    if (tab === "hist") void fetchTasks(1, false);
+    else void fetchFiles(1, false);
   }, [tab, fetchTasks, fetchFiles]);
 
   // 底部哨兵:进入视口提前量即续页。
@@ -416,7 +526,7 @@ export function AssetsBrowser({
   // uploaded files of the active media kind, date-grouped.
   const fileGroups = useMemo(() => {
     if (tab !== "upload") return [];
-    const matched = files.filter((f) => fileKind(f) === filter);
+    const matched = files.filter((f) => fileMatchesFilter(f, filter));
     return applySort(groupByDate(matched, (f) => f.createTime));
   }, [tab, filter, files, applySort]);
 
@@ -434,11 +544,13 @@ export function AssetsBrowser({
   }, []);
 
   const switchTab = useCallback((t: TabKey) => {
+    if (t === "hist" && isConceptFilter(filter)) setFilter("image");
     setTab(t);
     resetBatch();
-  }, [resetBatch]);
+  }, [filter, resetBatch]);
 
   const switchFilter = useCallback((f: FilterKey) => {
+    if (isConceptFilter(f)) setTab("upload");
     setFilter(f);
     resetBatch();
   }, [resetBatch]);
@@ -468,10 +580,78 @@ export function AssetsBrowser({
   const allSelected = currentIds.length > 0 && currentIds.every((id) => selected.has(id));
   const toggleAll = () => setSelected(allSelected ? new Set() : new Set(currentIds));
 
+  // Only the current view can be selected, so every reference has an unambiguous
+  // media role and ownership trail. Uploaded files carry their File id; generated
+  // history uses the owned AiTask result URL (including all audio tracks).
+  const skillReferences = useMemo<SkillRunAssetInput[]>(() => {
+    if (selected.size === 0) return [];
+    if (tab === "upload") {
+      return files.flatMap((file) => {
+        if (!selected.has(String(file.id)) || !file.fileUrl) return [];
+        const kind = fileMediaKind(file);
+        return [{
+          id: String(file.id),
+          type: kind === "doc" ? "file" : kind,
+          url: file.fileUrl,
+          role: "reference",
+          name: file.originalName || "资产文件",
+          metadata: { source: "asset_file", category: file.category },
+        } satisfies SkillRunAssetInput];
+      });
+    }
+    return tasks.flatMap((task): SkillRunAssetInput[] => {
+      if (!selected.has(String(task.id))) return [];
+      const kind = HANDLER_TYPE[task.handler];
+      if (!kind) return [];
+      if (kind === "audio") {
+        const tracks = tracksOf(task);
+        const rows = tracks.length ? tracks : [{ url: task.resultUrl, title: task.modelName }];
+        return rows.flatMap((track, index) =>
+          track.url
+            ? [{
+                type: "audio" as const,
+                url: track.url,
+                role: "reference",
+                name: track.title || `${task.modelName || "生成音频"} ${index + 1}`,
+                metadata: { source: "ai_task", taskId: task.id },
+              } satisfies SkillRunAssetInput]
+            : [],
+        );
+      }
+      if (!task.resultUrl) return [];
+      return [{
+        type: kind,
+        url: task.resultUrl,
+        role: "reference",
+        name: task.modelName || "生成资产",
+        metadata: { source: "ai_task", taskId: task.id },
+      } satisfies SkillRunAssetInput];
+    });
+  }, [files, selected, tab, tasks]);
+
   const exitBatch = () => {
     setBatchMode(false);
     setSelected(new Set());
   };
+
+  const refreshAfterSkillArchive = useCallback(async (
+    _count: number,
+    target: AssetTargetType,
+    mediaType: "image" | "video" | "audio" | "file",
+  ) => {
+    const nextFilter: FilterKey =
+      target === "character" || target === "scene" ? target : mediaType === "file" ? "doc" : mediaType;
+    const viewChanged = tab !== "upload" || filter !== nextFilter;
+    setTab("upload");
+    setFilter(nextFilter);
+    resetBatch();
+    pageRef.current = 1;
+    loadedCountRef.current = 0;
+    setHasMore(false);
+    // Changing the tab/filter triggers the normal guarded loader. If the run
+    // already targets this exact view, refresh it explicitly.
+    if (!viewChanged) await fetchFiles(1, false);
+  }, [fetchFiles, filter, resetBatch, tab]);
 
   // 批量删除:生成历史→cancelTask,上传历史→file delete;逐条调用现有接口。
   const batchDelete = async () => {
@@ -507,17 +687,29 @@ export function AssetsBrowser({
 
   // 批量下载:通过下载代理逐个触发(强制附件下载)。
   const batchDownload = () => {
-    const urls = new Map<string, { url: string; name: string }>();
+    const urls = new Map<string, Array<{ url: string; name: string }>>();
     if (tab === "hist") {
-      tasks.forEach((t) => t.resultUrl && urls.set(String(t.id), { url: t.resultUrl, name: t.modelName || "生成结果" }));
+      tasks.forEach((task) => {
+        const tracks = HANDLER_TYPE[task.handler] === "audio" ? tracksOf(task) : [];
+        const items = tracks.flatMap((track, index) =>
+          track.url
+            ? [{ url: track.url, name: track.title || `${task.modelName || "生成音频"} ${index + 1}` }]
+            : [],
+        );
+        if (!items.length && task.resultUrl) {
+          items.push({ url: task.resultUrl, name: task.modelName || "生成结果" });
+        }
+        if (items.length) urls.set(String(task.id), items);
+      });
     } else {
-      files.forEach((f) => f.fileUrl && urls.set(String(f.id), { url: f.fileUrl, name: f.originalName || "文件" }));
+      files.forEach((file) => {
+        if (file.fileUrl) urls.set(String(file.id), [{ url: file.fileUrl, name: file.originalName || "文件" }]);
+      });
     }
     let n = 0;
     selected.forEach((id) => {
-      const a = urls.get(id);
-      if (a) {
-        downloadAsset(a.url, a.name);
+      for (const asset of urls.get(id) ?? []) {
+        void downloadAsset(asset.url, asset.name);
         n++;
       }
     });
@@ -532,7 +724,7 @@ export function AssetsBrowser({
       await ensureSession();
       let ok = 0;
       for (const file of Array.from(list)) {
-        const res = await uploadFileSmart(file);
+        const res = await uploadFileSmart(file, undefined, { category: FILTER_TO_CATEGORY[filter] });
         if (res.success) ok++;
       }
       toast[ok > 0 ? "success" : "error"](ok > 0 ? `已上传 ${ok} 个文件` : "上传失败，请稍后重试");
@@ -566,6 +758,16 @@ export function AssetsBrowser({
           ))}
         </div>
         <div className="asset-actions">
+          {!pickMode && (
+            <button
+              type="button"
+              className="skill"
+              onClick={() => setSkillPickerOpen(true)}
+              title={selected.size ? `以已选 ${skillReferences.length} 个资产作为引用` : "运行资产技能"}
+            >
+              ✦ 运行技能{selected.size ? ` · ${skillReferences.length}` : ""}
+            </button>
+          )}
           {!pickMode && (
             <button
               type="button"
@@ -700,14 +902,33 @@ export function AssetsBrowser({
             onClick={() => fileInputRef.current?.click()}
           >
             <span className="as-dz-ic">↑</span>
-            <b>{uploading ? "正在上传…" : "上传本地文件"}</b>
-            <i>点击选择 · 支持图片 / 视频 / 音频 / 文档</i>
+            <b>
+              {uploading
+                ? "正在上传…"
+                : filter === "character"
+                  ? "上传角色参考图片"
+                  : filter === "scene"
+                    ? "上传场景参考图片"
+                    : "上传本地文件"}
+            </b>
+            <i>
+              {isConceptFilter(filter)
+                ? "点击选择 · 仅支持图片"
+                : "点击选择 · 支持图片 / 视频 / 音频 / 文档"}
+            </i>
           </button>
         )}
 
         {loading ? (
           <div className="empty" style={{ padding: "80px 0" }}>
             正在加载资产…
+          </div>
+        ) : loadError && groupsEmpty ? (
+          <div className="empty" style={{ padding: tab === "upload" ? "60px 0" : "80px 0" }}>
+            <p>资产加载失败，请检查网络后重试</p>
+            <button type="button" className="as-more retry" onClick={retryCurrentView}>
+              重新加载
+            </button>
           </div>
         ) : groupsEmpty ? (
           <div className="empty" style={{ padding: tab === "upload" ? "60px 0" : "80px 0" }}>
@@ -797,7 +1018,15 @@ export function AssetsBrowser({
 
       {/* in-app preview overlay — image / video / audio; backdrop / ✕ / Esc closes */}
       {preview && (
-        <div className="as-preview" onClick={() => setPreview(null)}>
+        <div
+          ref={previewDialogRef}
+          tabIndex={-1}
+          className="as-preview"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${preview.name} 预览`}
+          onClick={() => setPreview(null)}
+        >
           <div className="as-preview-bar" onClick={(e) => e.stopPropagation()}>
             <span className="as-preview-name">{preview.name}</span>
             <button
@@ -849,6 +1078,36 @@ export function AssetsBrowser({
           )}
         </div>
       )}
+
+      {!pickMode && (
+        <>
+          <SkillPicker
+            open={skillPickerOpen}
+            onClose={() => setSkillPickerOpen(false)}
+            onPick={(picked) => {
+              setSelectedSkill(picked);
+              setSkillPickerOpen(false);
+              setAssetSkillOpen(true);
+            }}
+            outputType={FILTER_TO_SKILL_OUTPUT[filter]}
+            kinds={["agent", "workflow"]}
+            entryPoint="asset"
+            targetType={FILTER_TO_SKILL_TARGET[filter]}
+          />
+          <AssetSkillWorkspace
+            open={assetSkillOpen}
+            skill={selectedSkill}
+            targetType={FILTER_TO_SKILL_TARGET[filter]}
+            outputType={FILTER_TO_SKILL_OUTPUT[filter]}
+            references={skillReferences}
+            onRequestClose={() => {
+              setAssetSkillOpen(false);
+              setSelectedSkill(null);
+            }}
+            onArchived={refreshAfterSkillArchive}
+          />
+        </>
+      )}
     </main>
   );
 }
@@ -885,6 +1144,13 @@ function TaskCard({
   // 音频分轨信息(歌名/封面/时长/地址)取自 resultMeta.tracks;Suno 一次两首,
   // 两轨都要成行,少了第二首就等于丢歌。
   const tracks = useMemo(() => tracksOf(task), [task]);
+  const audioRows = useMemo(() => {
+    const usable = tracks.filter((track): track is AudioTrack & { url: string } => Boolean(track.url));
+    if (usable.length > 0) return usable;
+    return task.resultUrl
+      ? [{ url: task.resultUrl, title: task.modelName || "未命名" }]
+      : [];
+  }, [tracks, task.resultUrl, task.modelName]);
   // 非成功任务没有结果可看,兜底卡上标出状态,免得看起来像加载失败的空白图。
   const statusLabel =
     task.status === AiTaskStatus.PROCESSING
@@ -918,17 +1184,13 @@ function TaskCard({
   // 音频:方形卡片换成 SongCard 歌曲行(封面+歌名+波形+时间,整行即播放器);
   // Suno 一次两首按分轨逐行铺开;批量/选取走行上角标,行内 sc-row 自己拦截
   // 点击用于播放。
-  if (kind === "audio" && task.resultUrl) {
-    const rows =
-      tracks.length > 0
-        ? tracks
-        : [{ url: task.resultUrl, title: task.modelName || "未命名" } as AudioTrack];
+  if (kind === "audio" && audioRows.length > 0) {
     return (
       <div className="as-songrow reveal in" style={{ ["--rd" as string]: `${delay}s` }}>
-        {rows.map((t, i) => (
+        {audioRows.map((t, i) => (
           <SongCard
             key={t.url ?? i}
-            src={t.url || task.resultUrl!}
+            src={t.url}
             title={t.title || task.modelName || "未命名"}
             subtitle={task.modelName}
             cover={t.coverUrl}
@@ -936,15 +1198,21 @@ function TaskCard({
           />
         ))}
         {batchMode && (
-          <span onClick={() => onToggle?.(String(task.id))}>
+          <button
+            type="button"
+            className="as-songrow-select"
+            aria-label={selected ? "取消选择该音频" : "选择该音频"}
+            aria-pressed={!!selected}
+            onClick={() => onToggle?.(String(task.id))}
+          >
             <SelectBadge selected={!!selected} />
-          </span>
+          </button>
         )}
         {pickMode && (
           <button
             type="button"
             className="as-songrow-pick"
-            onClick={() => onPick?.({ url: task.resultUrl!, name: rows[0]?.title || "生成音乐", kind })}
+            onClick={() => onPick?.({ url: audioRows[0].url, name: audioRows[0].title || "生成音乐", kind })}
           >
             选取
           </button>
@@ -1036,7 +1304,7 @@ function UploadCard({
   selected?: boolean;
   onToggle?: (id: string) => void;
 }) {
-  const kind = fileKind(file);
+  const kind = fileMediaKind(file);
   const isImg = kind === "image";
 
   const onClick = () => {
@@ -1069,9 +1337,15 @@ function UploadCard({
           subtitle={`上传 · ${fmtSize(file.fileSize)}`}
         />
         {batchMode && (
-          <span onClick={() => onToggle?.(String(file.id))}>
+          <button
+            type="button"
+            className="as-songrow-select"
+            aria-label={selected ? "取消选择该音频" : "选择该音频"}
+            aria-pressed={!!selected}
+            onClick={() => onToggle?.(String(file.id))}
+          >
             <SelectBadge selected={!!selected} />
-          </span>
+          </button>
         )}
         {pickMode && (
           <button
@@ -1118,7 +1392,13 @@ function UploadCard({
         </span>
       )}
       <span className="pick" />
-      <span className="as-up-badge">↑ 上传</span>
+      <span className="as-up-badge">
+        {file.category === FileCategory.CHARACTER
+          ? "角色"
+          : file.category === FileCategory.SCENE
+            ? "场景"
+            : "↑ 上传"}
+      </span>
       <span className="as-meta">
         <b>{file.originalName}</b>
         <i>{fmtSize(file.fileSize)}</i>

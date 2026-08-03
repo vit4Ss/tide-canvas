@@ -1,15 +1,16 @@
 package ai
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"strconv"
 	"strings"
@@ -17,12 +18,18 @@ import (
 	"time"
 
 	"tidecanvas/internal/pkg/relaymedia"
+	"tidecanvas/internal/pkg/safefetch"
 	"tidecanvas/internal/pkg/storage"
 )
 
 // rehostHC downloads relay-hosted result media so it can be re-uploaded to our
 // own storage; generous timeout for multi-MB images.
-var rehostHC = &http.Client{Timeout: 90 * time.Second}
+var rehostHC = safefetch.NewClient(90*time.Second, nil)
+
+// rehostSlots bounds relay-result downloads across all generation tasks in this
+// process. Each transfer may spool up to maxRehostBytes, so a per-run limit is
+// insufficient when several tasks finish together.
+var rehostSlots = make(chan struct{}, 2)
 
 // provider_relay.go is the real AiProviderClient: it routes a generation request
 // to the ScarecrowToken relay's media endpoints via the relaymedia client. It
@@ -343,12 +350,18 @@ func (p *relayProviderClient) rehost(ctx context.Context, urls []string) []strin
 	if p.store == nil || len(urls) == 0 {
 		return urls
 	}
-	out := make([]string, len(urls))
+	out := append([]string(nil), urls...)
 	var wg sync.WaitGroup
 	for i, u := range urls {
 		wg.Add(1)
 		go func(i int, u string) {
 			defer wg.Done()
+			select {
+			case rehostSlots <- struct{}{}:
+				defer func() { <-rehostSlots }()
+			case <-ctx.Done():
+				return
+			}
 			// 子 goroutine panic 需就地 recover(否则崩进程);失败/异常都回退原始 URL。
 			defer func() {
 				if r := recover(); r != nil {
@@ -386,35 +399,66 @@ func (p *relayProviderClient) saveRemote(ctx context.Context, srcURL string) (st
 	// outside our project prefix (e.g. the relay's own uploads/ dir): those
 	// still fall through to the copy below so their lifecycle stays ours.
 	if p.store != nil {
-		if canonical, ok := p.store.OwnsURL(srcURL); ok {
+		if canonical, ok := strictOwnedRelayURL(p.store, srcURL); ok {
 			return canonical, nil
 		}
 	}
-	data, ct, err := fetchRemote(ctx, srcURL)
+	spool, ct, err := fetchRemote(ctx, srcURL)
 	if err != nil {
 		return "", err
 	}
+	spoolName := spool.Name()
+	defer func() {
+		_ = spool.Close()
+		_ = os.Remove(spoolName)
+	}()
 	key := "gen/" + sha1Hex(srcURL) + mediaExt(srcURL, ct)
 	if ct == "" {
 		ct = "application/octet-stream"
 	}
-	// Hand storage a *bytes.Reader, never the raw *io.LimitedReader: the Aliyun OSS
-	// SDK reads a LimitedReader's .N field as the Content-Length, advertising 64MB
-	// for a 700KB image, which the HTTP transport rejects ("ContentLength=... with
-	// Body length ...") so the upload fails and we silently fall back to the
-	// ephemeral relay URL. A bytes.Reader exposes its true length.
-	return p.store.Save(ctx, key, bytes.NewReader(data), ct)
+	// *os.File exposes its real length to the OSS SDK and avoids retaining an
+	// entire image/video in heap memory while it is uploaded.
+	return p.store.Save(ctx, key, spool, ct)
+}
+
+func strictOwnedRelayURL(store storage.StorageStrategy, raw string) (string, bool) {
+	canonical, owned := store.OwnsURL(strings.TrimSpace(raw))
+	if !owned {
+		return "", false
+	}
+	parsed, err := url.Parse(canonical)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", false
+	}
+	probe, err := url.Parse(store.URL("__relay_rehost_probe__"))
+	if err != nil || parsed.Scheme != probe.Scheme || parsed.Host != probe.Host {
+		return "", false
+	}
+	decoded, err := url.PathUnescape(parsed.EscapedPath())
+	if err != nil || decoded != path.Clean(decoded) {
+		return "", false
+	}
+	allowedPrefix := strings.TrimSuffix(path.Dir(probe.Path), "/") + "/"
+	if !strings.HasPrefix(decoded, allowedPrefix) || decoded == allowedPrefix {
+		return "", false
+	}
+	parsed.Path = decoded
+	parsed.RawPath = ""
+	return parsed.String(), true
 }
 
 // fetchRemote downloads srcURL into memory (capped at maxRehostBytes so a
 // misbehaving upstream can't exhaust memory), retrying the whole fetch+read on
 // transient network/HTTP errors. Returns the bytes and the response Content-Type.
-func fetchRemote(ctx context.Context, srcURL string) ([]byte, string, error) {
+func fetchRemote(ctx context.Context, srcURL string) (*os.File, string, error) {
+	if _, err := safefetch.ValidateURL(srcURL); err != nil {
+		return nil, "", err
+	}
 	var lastErr error
 	for attempt := 1; attempt <= rehostRetries; attempt++ {
-		data, ct, err := fetchOnce(ctx, srcURL)
+		spool, ct, err := fetchOnce(ctx, srcURL)
 		if err == nil {
-			return data, ct, nil
+			return spool, ct, nil
 		}
 		lastErr = err
 		if ctx.Err() != nil {
@@ -434,10 +478,10 @@ func fetchRemote(ctx context.Context, srcURL string) ([]byte, string, error) {
 // maxRehostBytes caps an in-memory rehost download. Generous enough for short AI
 // videos; images are far smaller. A body that exceeds it is treated as an error
 // (not silently truncated) so we never store a corrupt file under a SUCCESS URL.
-const maxRehostBytes = 256 << 20
+const maxRehostBytes int64 = 100 << 20
 
 // fetchOnce performs a single download attempt.
-func fetchOnce(ctx context.Context, srcURL string) ([]byte, string, error) {
+func fetchOnce(ctx context.Context, srcURL string) (*os.File, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srcURL, nil)
 	if err != nil {
 		return nil, "", err
@@ -450,17 +494,93 @@ func fetchOnce(ctx context.Context, srcURL string) ([]byte, string, error) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, "", fmt.Errorf("relay rehost: fetch %s: HTTP %d", srcURL, resp.StatusCode)
 	}
-	// Read one byte past the cap so an oversized body is detected rather than
-	// silently truncated to a corrupt file (io.LimitReader + io.ReadAll would
-	// otherwise return the truncated bytes with a nil error).
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxRehostBytes+1))
-	if err != nil {
-		return nil, "", fmt.Errorf("relay rehost: read body: %w", err)
-	}
-	if int64(len(data)) > maxRehostBytes {
+	if resp.ContentLength > maxRehostBytes {
 		return nil, "", fmt.Errorf("relay rehost: %s exceeds %d MB cap", srcURL, maxRehostBytes>>20)
 	}
-	return data, strings.TrimSpace(resp.Header.Get("Content-Type")), nil
+	spool, err := os.CreateTemp("", "tide-relay-rehost-*")
+	if err != nil {
+		return nil, "", fmt.Errorf("relay rehost: create spool: %w", err)
+	}
+	cleanup := func() {
+		name := spool.Name()
+		_ = spool.Close()
+		_ = os.Remove(name)
+	}
+	written, err := io.Copy(spool, io.LimitReader(resp.Body, maxRehostBytes+1))
+	if err != nil {
+		cleanup()
+		return nil, "", fmt.Errorf("relay rehost: read body: %w", err)
+	}
+	if written > maxRehostBytes {
+		cleanup()
+		return nil, "", fmt.Errorf("relay rehost: %s exceeds %d MB cap", srcURL, maxRehostBytes>>20)
+	}
+	if _, err := spool.Seek(0, io.SeekStart); err != nil {
+		cleanup()
+		return nil, "", fmt.Errorf("relay rehost: rewind spool: %w", err)
+	}
+	contentType, err := normalizeRehostContentType(resp.Header.Get("Content-Type"), srcURL)
+	if err != nil {
+		cleanup()
+		return nil, "", err
+	}
+	return spool, contentType, nil
+}
+
+func normalizeRehostContentType(raw, srcURL string) (string, error) {
+	contentType, _, err := mime.ParseMediaType(strings.TrimSpace(raw))
+	if err != nil {
+		contentType = ""
+	}
+	contentType = strings.ToLower(contentType)
+	if contentType == "" || contentType == "application/octet-stream" {
+		contentType = rehostMIMEByExtension(strings.ToLower(path.Ext(parsedURLPath(srcURL))))
+	}
+	if (strings.HasPrefix(contentType, "image/") && contentType != "image/svg+xml") ||
+		strings.HasPrefix(contentType, "video/") || strings.HasPrefix(contentType, "audio/") {
+		return contentType, nil
+	}
+	return "", errors.New("relay rehost: response is not a supported media type")
+}
+
+func parsedURLPath(raw string) string {
+	if parsed, err := url.Parse(raw); err == nil {
+		return parsed.Path
+	}
+	return ""
+}
+
+func rehostMIMEByExtension(ext string) string {
+	switch ext {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".webp":
+		return "image/webp"
+	case ".gif":
+		return "image/gif"
+	case ".avif":
+		return "image/avif"
+	case ".mp4", ".m4v":
+		return "video/mp4"
+	case ".webm":
+		return "video/webm"
+	case ".mov":
+		return "video/quicktime"
+	case ".mp3":
+		return "audio/mpeg"
+	case ".wav":
+		return "audio/wav"
+	case ".m4a":
+		return "audio/mp4"
+	case ".ogg":
+		return "audio/ogg"
+	case ".flac":
+		return "audio/flac"
+	default:
+		return ""
+	}
 }
 
 func sha1Hex(s string) string {
@@ -472,7 +592,10 @@ func sha1Hex(s string) string {
 // content-type, then ".png".
 func mediaExt(srcURL, contentType string) string {
 	if u, err := url.Parse(srcURL); err == nil {
-		if e := strings.ToLower(path.Ext(u.Path)); e != "" && len(e) <= 5 {
+		if e := strings.ToLower(path.Ext(u.Path)); rehostMIMEByExtension(e) != "" {
+			if e == ".jpeg" {
+				return ".jpg"
+			}
 			return e
 		}
 	}
@@ -481,6 +604,14 @@ func mediaExt(srcURL, contentType string) string {
 		return ".jpg"
 	case strings.Contains(contentType, "webp"):
 		return ".webp"
+	case strings.Contains(contentType, "gif"):
+		return ".gif"
+	case strings.Contains(contentType, "avif"):
+		return ".avif"
+	case strings.Contains(contentType, "webm"):
+		return ".webm"
+	case strings.Contains(contentType, "quicktime"):
+		return ".mov"
 	case strings.Contains(contentType, "mp4"):
 		return ".mp4"
 	case strings.Contains(contentType, "png"):
@@ -491,6 +622,8 @@ func mediaExt(srcURL, contentType string) string {
 		return ".wav"
 	case strings.Contains(contentType, "ogg"):
 		return ".ogg"
+	case strings.Contains(contentType, "flac"):
+		return ".flac"
 	}
 	return ".png"
 }

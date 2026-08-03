@@ -209,6 +209,23 @@ func (r *repo) tasksByIDs(ids []idgen.ID, ownerID idgen.ID) (map[idgen.ID]*model
 	return out, nil
 }
 
+func (r *repo) skillRunsByIDs(ids []idgen.ID, ownerID idgen.ID) (map[idgen.ID]*model.SkillRun, error) {
+	out := make(map[idgen.ID]*model.SkillRun, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	var rows []model.SkillRun
+	if err := r.db.Model(&model.SkillRun{}).
+		Select("id", "skill_id", "status", "current_step", "progress", "pending_action", "error_message", "point_cost").
+		Where("id IN ? AND user_id = ?", ids, ownerID).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		out[rows[i].ID] = &rows[i]
+	}
+	return out, nil
+}
+
 // taskOwnedBy reports whether the generation task exists AND belongs to userID.
 // persistTurn 的归属闸门：taskId 由客户端上送，不校验会让任意用户把他人任务挂进
 // 自己的会话，再经消息列表的 task join 读走他人生成结果。
@@ -235,7 +252,7 @@ func (r *repo) recentMessages(conversationID, afterID idgen.ID, limit int) ([]mo
 	}
 	var rows []model.IMMessage
 	if err := r.db.
-		Where("conversation_id = ? AND id > ? AND content_type = ? AND content <> ''", conversationID, afterID, "text").
+		Where("conversation_id = ? AND id > ? AND content <> '' AND (content_type = ? OR (content_type = ? AND EXISTS (SELECT 1 FROM skill_run_artifact sra WHERE sra.run_id = im_message.skill_run_id AND sra.deleted IS NULL AND sra.is_final = ? AND sra.text_content <> '')))", conversationID, afterID, "text", "skill_run", true).
 		Order("create_time DESC").
 		Order("id DESC").
 		Limit(limit).
@@ -256,7 +273,7 @@ func (r *repo) textMessagesAfter(conversationID, afterID idgen.ID) ([]model.IMMe
 	var rows []model.IMMessage
 	err := r.db.Model(&model.IMMessage{}).
 		Select("id", "sender_id", "content").
-		Where("conversation_id = ? AND content_type = ? AND id > ?", conversationID, "text", afterID).
+		Where("conversation_id = ? AND id > ? AND content <> '' AND (content_type = ? OR (content_type = ? AND EXISTS (SELECT 1 FROM skill_run_artifact sra WHERE sra.run_id = im_message.skill_run_id AND sra.deleted IS NULL AND sra.is_final = ? AND sra.text_content <> '')))", conversationID, afterID, "text", "skill_run", true).
 		Order("id ASC").
 		Find(&rows).Error
 	return rows, err

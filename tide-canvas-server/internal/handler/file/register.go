@@ -19,7 +19,7 @@ import (
 //
 //	POST   /api/files/upload         multipart file        -> FileVO          (auth)
 //	POST   /api/files/upload/batch   multipart files       -> FileVO[]        (auth)
-//	POST   /api/files/presign        {filename,contentType,fileType?} -> FilePresignVO (auth)
+//	POST   /api/files/presign        {filename,contentType,size,fileType?} -> FilePresignVO (auth)
 //	POST   /api/files/register       {key,originalName,contentType,fileType?} -> FileVO (auth)
 //	GET    /api/files                FileQuery -> PageData<FileVO>            (auth)
 //	POST   /api/files/save-from-url  {url,fileType?,originalName?} -> FileVO   (auth)
@@ -28,13 +28,10 @@ import (
 func Register(api *gin.RouterGroup, d *app.Deps) {
 	h := newHandler(d)
 
-	// Public fetch-and-stream proxy (no auth — canvas runs without login).
-	// Registered on its own group so it does NOT inherit JWTAuth below.
-	api.Group("/files").GET("/download", h.download)
-
 	g := api.Group("/files")
 	g.Use(middleware.JWTAuth(d))
 
+	g.GET("/download", h.download)
 	g.POST("/upload", h.upload)
 	g.POST("/upload/batch", h.uploadBatch)
 	g.POST("/presign", h.presign)

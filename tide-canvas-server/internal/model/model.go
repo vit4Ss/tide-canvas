@@ -28,6 +28,7 @@ func Models() []any {
 		&AiTask{},
 		&AiGenerationLog{},
 		&File{},
+		&FileUploadGrant{},
 
 		// Extended-domain skeleton entities (see *.go in this package).
 		// Community.
@@ -38,6 +39,7 @@ func Models() []any {
 		&UserFollow{},
 		// Points / billing.
 		&PointRecord{},
+		&PointRefundReceipt{},
 		&CheckinRecord{},
 		&Plan{},
 		&PointPackage{},
@@ -65,6 +67,13 @@ func Models() []any {
 		// 风格预设(画布图片节点的风格选择器)
 		&StylePreset{},
 		&Skill{},
+		&SkillVersion{},
+		&SkillFile{},
+		&SkillRun{},
+		&SkillRunActionReceipt{},
+		&SkillRunStep{},
+		&SkillRunArtifact{},
+		&SkillSurfaceBinding{},
 		&StyleFavorite{},
 		&StyleUsage{},
 		// Billing / growth.（积分规则 point_rule 已整链下线 2026-07-12：无业务消费方）
@@ -96,7 +105,49 @@ func AutoMigrate(db *gorm.DB) error {
 			return err
 		}
 	}
+	// A few intermediate development builds created idempotency columns as
+	// NOT NULL with an empty/zero default. Normalize those schemas and values
+	// before AutoMigrate creates the nullable unique indexes used by the final
+	// models; otherwise duplicate sentinels can make startup fail with 1062.
+	if err := prepareNullableIdempotencyColumns(db); err != nil {
+		return err
+	}
 	if err := db.AutoMigrate(Models()...); err != nil {
+		return err
+	}
+	// state_revision was split from the worker lease revision during SkillRun
+	// development. Preserve monotonic client revisions when upgrading a database
+	// that already has live rows from the single-revision intermediate schema.
+	if err := db.Exec(`
+		UPDATE skill_run
+		SET state_revision = revision
+		WHERE state_revision = 0 AND revision > 0`).Error; err != nil {
+		return err
+	}
+	// Seed the new idempotency table from the legacy ledger. This preserves the
+	// fact that an old refund already happened without requiring a unique index
+	// on point_record (which may contain duplicates in existing installations).
+	// AutoMigrate is MySQL-backed in this service; INSERT IGNORE also makes the
+	// backfill safe on every subsequent startup.
+	if err := db.Exec(`
+		INSERT IGNORE INTO point_refund_receipt (ref_id, user_id, amount, create_time)
+		SELECT ref_id, MIN(user_id), MIN(amount), MIN(create_time)
+		FROM point_record
+		WHERE change_type = ? AND ref_id IS NOT NULL AND ref_id <> 0
+		GROUP BY ref_id`, "refund").Error; err != nil {
+		return err
+	}
+	// files.category 是资产的业务分类；旧数据都属于普通素材。显式回填空值，
+	// 保证新增「角色/场景」筛选后，历史图片和视频仍出现在原分类中。
+	if err := db.Model(&File{}).
+		Where("category IS NULL OR category = ?", "").
+		Update("category", "general").Error; err != nil {
+		return err
+	}
+	// Every pre-versioning skill remains available as an immutable published
+	// preset v1. This only mirrors existing rows; repository-local skill files are
+	// deliberately imported through the explicit admin API, never at startup.
+	if err := BackfillSkillVersions(db); err != nil {
 		return err
 	}
 	// 模型主动探测已整链下线（2026-07-13 用户定稿，模型状态改为按真实调用
@@ -146,6 +197,63 @@ func AutoMigrate(db *gorm.DB) error {
 	return ensureBaselineTools(db)
 }
 
+// prepareNullableIdempotencyColumns is intentionally limited to fixed,
+// whitelisted MySQL DDL. Fresh databases skip every entry because the columns
+// do not exist yet; databases already on the final nullable schema only run the
+// cheap sentinel cleanup UPDATEs.
+func prepareNullableIdempotencyColumns(db *gorm.DB) error {
+	if db.Dialector.Name() != "mysql" {
+		return nil
+	}
+	type migration struct {
+		model    any
+		column   string
+		alterSQL string
+		clearSQL string
+	}
+	migrations := []migration{
+		{&AiTask{}, "client_request_id",
+			"ALTER TABLE `ai_tasks` MODIFY COLUMN `client_request_id` varchar(96) NULL",
+			"UPDATE `ai_tasks` SET `client_request_id` = NULL WHERE `client_request_id` = ''"},
+		{&AiTask{}, "orchestration_key",
+			"ALTER TABLE `ai_tasks` MODIFY COLUMN `orchestration_key` varchar(96) NULL",
+			"UPDATE `ai_tasks` SET `orchestration_key` = NULL WHERE `orchestration_key` = ''"},
+		{&SkillRun{}, "client_request_id",
+			"ALTER TABLE `skill_run` MODIFY COLUMN `client_request_id` varchar(96) NULL",
+			"UPDATE `skill_run` SET `client_request_id` = NULL WHERE `client_request_id` = ''"},
+		{&File{}, "source_artifact_id",
+			"ALTER TABLE `files` MODIFY COLUMN `source_artifact_id` bigint NULL",
+			"UPDATE `files` SET `source_artifact_id` = NULL WHERE `source_artifact_id` = 0"},
+	}
+	for _, item := range migrations {
+		if !db.Migrator().HasTable(item.model) || !db.Migrator().HasColumn(item.model, item.column) {
+			continue
+		}
+		columnTypes, err := db.Migrator().ColumnTypes(item.model)
+		if err != nil {
+			return err
+		}
+		nullable := false
+		nullableKnown := false
+		for _, columnType := range columnTypes {
+			if columnType.Name() != item.column {
+				continue
+			}
+			nullable, nullableKnown = columnType.Nullable()
+			break
+		}
+		if !nullableKnown || !nullable {
+			if err := db.Exec(item.alterSQL).Error; err != nil {
+				return err
+			}
+		}
+		if err := db.Exec(item.clearSQL).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ensureBaselineConfig inserts must-exist sys_config rows when missing.
 func ensureBaselineConfig(db *gorm.DB) error {
 	baseline := []SysConfig{
@@ -166,6 +274,12 @@ func ensureBaselineConfig(db *gorm.DB) error {
 			ConfigValue: "0",
 			Group:       "auth",
 			Description: "关闭自助注册：1=关闭（注册接口拒绝并提示管理员已关闭注册），0=开放。即时生效，不影响已有用户登录与后台生成用户",
+		},
+		{
+			ConfigKey:   ConfigKeyCanvasNodeFeatures,
+			ConfigValue: DefaultCanvasNodeFeaturesJSON(),
+			Group:       "canvas",
+			Description: canvasNodeFeaturesDescription,
 		},
 	}
 	for i := range baseline {
@@ -302,7 +416,7 @@ func ensureBaselineTools(db *gorm.DB) error {
 // fixupFreeTextColumns alters the mis-typed json columns to varchar. Idempotent:
 // on a fresh DB the columns are already varchar (no-op alter); on an existing DB they
 // are converted from json. Skips columns/tables that don't exist yet.
-//（Campaign 的 Audience/Channels 两项已随营销管理整链下线移除,2026-07-10。）
+// （Campaign 的 Audience/Channels 两项已随营销管理整链下线移除,2026-07-10。）
 func fixupFreeTextColumns(db *gorm.DB) error {
 	fixes := []struct {
 		dst   any
@@ -325,29 +439,29 @@ func fixupFreeTextColumns(db *gorm.DB) error {
 
 // User is an application user / account.
 type User struct {
-	ID                   idgen.ID  `gorm:"primaryKey;autoIncrement:false" json:"id"`
-	Username             string    `gorm:"size:64;uniqueIndex" json:"username"`
-	Email                string    `gorm:"size:128;uniqueIndex" json:"email"`
-	Phone                string    `gorm:"size:32" json:"phone"`
-	Nickname             string    `gorm:"size:64" json:"nickname"`
-	Avatar               string    `gorm:"size:512" json:"avatar"`
-	PasswordHash         string    `gorm:"size:255" json:"-"`
-	Role                 int       `gorm:"default:0" json:"role"` // 0 user, 1 vip, 9 admin
-	RoleID               idgen.ID  `gorm:"default:0" json:"roleId"`
-	VipLevel             int       `gorm:"default:0" json:"vipLevel"`
-	ConcurrencyUnlimited int       `gorm:"default:0" json:"concurrencyUnlimited"`
-	Status               int       `gorm:"default:1" json:"status"` // 0 disabled, 1 active
-	ApiQuota             int64     `gorm:"default:0" json:"apiQuota"`
-	Points               int64     `gorm:"default:0" json:"points"`
-	IsAuthor             int       `gorm:"default:0" json:"isAuthor"`
-	StorageQuota         int64     `gorm:"default:0" json:"storageQuota"`
-	StorageUsed          int64     `gorm:"default:0" json:"storageUsed"`
+	ID                   idgen.ID `gorm:"primaryKey;autoIncrement:false" json:"id"`
+	Username             string   `gorm:"size:64;uniqueIndex" json:"username"`
+	Email                string   `gorm:"size:128;uniqueIndex" json:"email"`
+	Phone                string   `gorm:"size:32" json:"phone"`
+	Nickname             string   `gorm:"size:64" json:"nickname"`
+	Avatar               string   `gorm:"size:512" json:"avatar"`
+	PasswordHash         string   `gorm:"size:255" json:"-"`
+	Role                 int      `gorm:"default:0" json:"role"` // 0 user, 1 vip, 9 admin
+	RoleID               idgen.ID `gorm:"default:0" json:"roleId"`
+	VipLevel             int      `gorm:"default:0" json:"vipLevel"`
+	ConcurrencyUnlimited int      `gorm:"default:0" json:"concurrencyUnlimited"`
+	Status               int      `gorm:"default:1" json:"status"` // 0 disabled, 1 active
+	ApiQuota             int64    `gorm:"default:0" json:"apiQuota"`
+	Points               int64    `gorm:"default:0" json:"points"`
+	IsAuthor             int      `gorm:"default:0" json:"isAuthor"`
+	StorageQuota         int64    `gorm:"default:0" json:"storageQuota"`
+	StorageUsed          int64    `gorm:"default:0" json:"storageUsed"`
 	// Remark 后台运营备注(仅管理端可见可改)。json:"-" 防止随 User 直接序列化
 	// 泄给前台;管理端经 AdminUserVO 显式下发。
-	Remark string `gorm:"size:255" json:"-"`
-	CreateTime           time.Time `gorm:"autoCreateTime" json:"createTime"`
-	UpdateTime           time.Time `gorm:"autoUpdateTime" json:"updateTime"`
-	LastLoginTime        time.Time `json:"lastLoginTime"`
+	Remark        string    `gorm:"size:255" json:"-"`
+	CreateTime    time.Time `gorm:"autoCreateTime" json:"createTime"`
+	UpdateTime    time.Time `gorm:"autoUpdateTime" json:"updateTime"`
+	LastLoginTime time.Time `json:"lastLoginTime"`
 	// Deleted marks admin-deleted accounts (soft delete). GORM auto-filters
 	// deleted rows from every query, so a deleted user cannot log in, refresh a
 	// session or appear in any list; ledger/order rows stay for audit. The delete
@@ -463,26 +577,46 @@ func (t *AiTool) BeforeCreate(_ *gorm.DB) error {
 // AiTask is a single AI generation task.
 type AiTask struct {
 	ID        idgen.ID `gorm:"primaryKey;autoIncrement:false" json:"id"`
-	UserID    idgen.ID `gorm:"index" json:"userId"`
+	UserID    idgen.ID `gorm:"index;uniqueIndex:idx_ai_task_user_client,priority:1" json:"userId"`
 	ProjectID idgen.ID `gorm:"index" json:"projectId"`
 	Handler   string   `gorm:"size:64" json:"handler"`
 	ModelID   idgen.ID `gorm:"default:0" json:"modelId"`
 	ModelName string   `gorm:"size:128" json:"modelName"`
 	Status    int      `gorm:"default:0" json:"status"` // 0 processing,1 success,2 failed,3 cancelled
 	Progress  int      `gorm:"default:0" json:"progress"`
+	// HeartbeatSeq guarantees every live-worker heartbeat changes the row, so a
+	// CAS can distinguish a processing task from a cancelled/deleted one even
+	// when MySQL timestamps round two consecutive updates to the same value.
+	HeartbeatSeq int64 `gorm:"column:heartbeat_seq;not null;default:0" json:"-"`
+	// ClientRequestID is optional for legacy callers. When present, the
+	// user-scoped unique key and request hash make HTTP retries exactly-once.
+	ClientRequestID   *string `gorm:"column:client_request_id;size:96;uniqueIndex:idx_ai_task_user_client,priority:2" json:"clientRequestId,omitempty"`
+	ClientRequestHash string  `gorm:"column:client_request_hash;size:64" json:"-"`
 	// PointCost is the points charged up front for this task, persisted so a
 	// crash-recovery sweep can refund the exact amount without recomputing it.
-	PointCost  int64     `gorm:"default:0" json:"pointCost"`
-	Input      string    `gorm:"type:text" json:"input"`
-	ResultUrl  string    `gorm:"size:1024" json:"resultUrl"`
-	ResultMeta string    `gorm:"type:text" json:"resultMeta"`
-	ErrorMsg   string    `gorm:"size:1024" json:"errorMsg"`
-	CreateTime time.Time `gorm:"autoCreateTime" json:"createTime"`
-	UpdateTime time.Time `gorm:"autoUpdateTime" json:"updateTime"`
+	PointCost int64 `gorm:"default:0" json:"pointCost"`
+	Refunded  bool  `gorm:"column:refunded;not null;default:false;index" json:"refunded"`
+	// Origin/correlation fields let the SkillRun orchestrator reuse this exact
+	// task pipeline without leaking orchestration metadata to the upstream input.
+	Origin         string   `gorm:"column:origin;size:16;not null;default:'direct';index" json:"origin"`
+	SkillRunID     idgen.ID `gorm:"column:skill_run_id;default:0;index" json:"skillRunId"`
+	SkillRunStepID idgen.ID `gorm:"column:skill_run_step_id;default:0;index" json:"skillRunStepId"`
+	// OrchestrationKey is nullable so direct tasks remain unconstrained while a
+	// SkillRun step attempt can create/charge at most one child task.
+	OrchestrationKey *string   `gorm:"column:orchestration_key;size:96;uniqueIndex" json:"-"`
+	OutputRole       string    `gorm:"column:output_role;size:32;not null;default:'final'" json:"outputRole"`
+	RegisterWork     bool      `gorm:"column:register_work;not null;default:false" json:"registerWork"`
+	Input            string    `gorm:"type:longtext" json:"input"`
+	ResultUrl        string    `gorm:"size:1024" json:"resultUrl"`
+	ResultMeta       string    `gorm:"type:text" json:"resultMeta"`
+	ErrorMsg         string    `gorm:"size:1024" json:"errorMsg"`
+	CreateTime       time.Time `gorm:"autoCreateTime" json:"createTime"`
+	UpdateTime       time.Time `gorm:"autoUpdateTime" json:"updateTime"`
 	// Nullable: an in-progress task has no completion time. A non-pointer
 	// time.Time would serialize the zero value as '0000-00-00 00:00:00', which
 	// MySQL rejects under the default strict sql_mode (NO_ZERO_DATE).
-	CompleteTime *time.Time `gorm:"default:null" json:"completeTime"`
+	CompleteTime *time.Time     `gorm:"default:null" json:"completeTime"`
+	Deleted      gorm.DeletedAt `gorm:"column:deleted;index" json:"-"`
 }
 
 // TableName overrides the default pluralized table name.
@@ -517,16 +651,20 @@ func (AiGenerationLog) TableName() string { return "ai_generation_logs" }
 
 // File is an uploaded asset.
 type File struct {
-	ID           idgen.ID  `gorm:"primaryKey;autoIncrement:false" json:"id"`
-	OwnerID      idgen.ID  `gorm:"index" json:"ownerId"`
-	OriginalName string    `gorm:"size:512" json:"originalName"`
-	StorageKey   string    `gorm:"size:512" json:"storageKey"`
-	FileUrl      string    `gorm:"size:1024" json:"fileUrl"`
-	FileSize     int64     `gorm:"default:0" json:"fileSize"`
-	FileType     string    `gorm:"size:32" json:"fileType"` // image|video|other
-	MimeType     string    `gorm:"size:128" json:"mimeType"`
-	StorageType  string    `gorm:"size:32" json:"storageType"` // local|oss
-	CreateTime   time.Time `gorm:"autoCreateTime" json:"createTime"`
+	ID      idgen.ID `gorm:"primaryKey;autoIncrement:false" json:"id"`
+	OwnerID idgen.ID `gorm:"index" json:"ownerId"`
+	// SourceArtifactID is set only for server-archived SkillRun outputs. Nullable
+	// uniqueness provides an idempotency key without constraining normal uploads.
+	SourceArtifactID *idgen.ID `gorm:"column:source_artifact_id;uniqueIndex" json:"sourceArtifactId,omitempty"`
+	OriginalName     string    `gorm:"size:512" json:"originalName"`
+	StorageKey       string    `gorm:"size:512" json:"storageKey"`
+	FileUrl          string    `gorm:"size:1024" json:"fileUrl"`
+	FileSize         int64     `gorm:"default:0" json:"fileSize"`
+	FileType         string    `gorm:"size:32" json:"fileType"`                                // image|video|other
+	Category         string    `gorm:"size:32;not null;index;default:general" json:"category"` // general|character|scene
+	MimeType         string    `gorm:"size:128" json:"mimeType"`
+	StorageType      string    `gorm:"size:32" json:"storageType"` // local|oss
+	CreateTime       time.Time `gorm:"autoCreateTime" json:"createTime"`
 }
 
 // TableName overrides the default pluralized table name.

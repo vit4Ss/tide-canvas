@@ -4,11 +4,13 @@ package file
 //
 // Matches the frontend fileApi.presign payload:
 //
-//	{ filename: string; contentType: string; fileType?: string }
+//	{ filename: string; contentType: string; size: number; fileType?: string }
 type presignDTO struct {
 	Filename    string `json:"filename"`
 	ContentType string `json:"contentType"`
+	Size        int64  `json:"size"`
 	FileType    string `json:"fileType"`
+	Category    string `json:"category"`
 }
 
 // registerDTO is the body of POST /api/files/register (post direct-upload).
@@ -19,6 +21,7 @@ type registerDTO struct {
 	OriginalName string `json:"originalName"`
 	ContentType  string `json:"contentType"`
 	FileType     string `json:"fileType"`
+	Category     string `json:"category"`
 }
 
 // saveFromURLDTO is the body of POST /api/files/save-from-url.
@@ -27,6 +30,7 @@ type registerDTO struct {
 type saveFromURLDTO struct {
 	URL          string `json:"url"`
 	FileType     string `json:"fileType"`
+	Category     string `json:"category"`
 	OriginalName string `json:"originalName"`
 }
 
@@ -37,6 +41,7 @@ type fileQuery struct {
 	OrderBy        string `form:"orderBy"`
 	OrderDirection string `form:"orderDirection"`
 	FileType       string `form:"fileType"`
+	Category       string `form:"category"`
 	Keyword        string `form:"keyword"`
 	// 时间筛选(资产库「时间筛选」):按 create_time 过滤,口径同 ai 任务列表。
 	StartDate string `form:"startDate"`

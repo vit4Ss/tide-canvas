@@ -8,6 +8,7 @@ import { projectApi } from "@/lib/api";
 import { toast } from "@/components/shared/toast";
 import { confirmDialog } from "@/components/shared/confirm";
 import { CanvasCoverPicker } from "@/components/canvas/canvas-cover-picker";
+import { isImageCanvasNodeType } from "@/lib/canvas-node-types";
 import type { ProjectVO } from "@/types/canvas";
 
 interface Props {
@@ -73,7 +74,7 @@ export function ProjectCardMenu({ project, onChanged }: Props) {
     try {
       const data = JSON.parse(res.data.canvasData || "{}");
       imgs = (data.nodes || [])
-        .filter((n: { type?: string; imageSrc?: string }) => n.type === "image" && n.imageSrc)
+        .filter((n: { type?: string; imageSrc?: string }) => isImageCanvasNodeType(n.type) && n.imageSrc)
         .map((n: { id: string; imageSrc: string; title?: string }) => ({ id: n.id, url: n.imageSrc, title: n.title || "图片" }));
     } catch { /* ignore parse error */ }
     if (imgs.length === 0) { toast.info("该项目画布暂无图片，无法设置封面"); return; }

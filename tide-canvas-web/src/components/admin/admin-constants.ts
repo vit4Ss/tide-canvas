@@ -132,6 +132,7 @@ export const ADMIN_ICONS: Record<string, string> = {
   pulse: "M22 12h-4l-3 9L9 3l-3 9H2",
   toolkit:
     "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z",
+  nodes: "M5 3h6v6H5zM13 15h6v6h-6zM5 15h6v6H5zM8 9v3h8v3M8 12h8",
   credit:
     "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM9.5 9.5a2.5 2.5 0 0 1 5 0M12 7v1M12 16v1M9 14h6",
   price: "M20 12l-8 8-9-9V4h7zM7.5 7.5h.01",

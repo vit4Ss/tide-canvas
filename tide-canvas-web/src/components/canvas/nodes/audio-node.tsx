@@ -35,6 +35,7 @@ import type { CanvasNodeProps } from "./types/node-props";
 import { useAiModels, useNodeRuntime } from "./shared/use-node-runtime";
 import { parseModelConfig, stopEvent as stop } from "./shared/node-utils";
 import { GenerateSubmitButton, NodePanelChrome, NodeShell } from "./shared/node-overlays";
+import { CanvasSkillRunNodeShortcut } from "../skill-run/canvas-skill-run-workspace";
 
 const MAX_TEXT = 50000;
 const WAVE_BARS = [16, 28, 44, 60, 40, 24, 34, 54, 70, 48, 30, 18, 42, 56, 36, 22];
@@ -264,12 +265,6 @@ const AudioPromptEditor = forwardRef<AudioPromptEditorHandle, AudioPromptEditorP
       return next;
     },
   }), [onChange]);
-
-  useEffect(() => {
-    const editor = editorRef.current;
-    if (!editor) return;
-    syncAudioPromptEditor(editor, value || "");
-  }, []);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -602,6 +597,7 @@ export const AudioNode = memo(function AudioNode({
 
         <NodeHeader icon={AudioLines} title={node.title || "音频节点"} visible={showAuxUI} overlay />
         <NodePorts nodeId={node.id} visible={showAuxUI} overlay onPortMouseDown={onPortMouseDown} />
+        <CanvasSkillRunNodeShortcut nodeId={node.id} nodeType={node.type} visible={showAuxUI} />
 
         {showAuxUI && (
           <NodePanelChrome width={660}>

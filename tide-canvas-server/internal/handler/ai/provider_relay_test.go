@@ -119,6 +119,7 @@ func TestUserFacingGenError(t *testing.T) {
 
 		// 生成参数。
 		{"relaymedia: HTTP 400: unsupported aspect ratio 21:9", "所选画面比例或尺寸不受支持，请调整后重试"},
+		{"relaymedia: invalid aspect '3:4' for model 'gpt-image-2'; supported: 1:1, 2:3", "所选画面比例或尺寸不受支持，请调整后重试"},
 		{"relaymedia: invalid duration: must be 5 or 10", "所选时长不受支持，请调整后重试"},
 
 		// 限流:不甩锅给用户,但给可操作动作。

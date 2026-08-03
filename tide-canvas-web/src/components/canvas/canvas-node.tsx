@@ -11,11 +11,14 @@ import { VideoComposeNode } from "./nodes/video-compose-node";
 import { STYLE_REFERENCE_NODE_TYPE, StyleReferenceNode } from "./nodes/style-reference-node";
 import { DefaultNode } from "./nodes/components/default-node";
 import type { CanvasNodeProps } from "./nodes/types/node-props";
+import { CHARACTER_NODE_TYPE, SCENE_NODE_TYPE } from "@/lib/canvas-node-types";
 
 // 中文注释：节点注册入口只负责根据类型路由到对应组件，节点内部 UI 和样式放在各自模块中维护。
 export const CanvasNodeComponent = memo(function CanvasNodeComponent(props: CanvasNodeProps) {
   switch (props.node.type) {
     case "image":
+    case CHARACTER_NODE_TYPE:
+    case SCENE_NODE_TYPE:
       return <ImageNode {...props} />;
     case "video":
       return <VideoNode {...props} />;

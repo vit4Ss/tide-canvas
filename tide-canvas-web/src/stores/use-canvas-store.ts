@@ -28,6 +28,19 @@ export interface CanvasNode {
       任何读取方会用到。 */
   skillId?: string;
   skillName?: string;
+  /**
+   * 正在以该节点为输入执行的 SkillRun。它只用于刷新后把运行面板重新锚定到来源节点；
+   * 真正的运行状态以服务端 SkillRun 为准，不能复用 taskId/status 的单任务状态机。
+   */
+  skillRunId?: string;
+  /** Skill 产物来源。随 canvasData 持久化，并用 artifactId 防止续跑/重连时重复落节点。 */
+  provenance?: {
+    skillRunId: string;
+    artifactId: string;
+    skillId?: string;
+    skillVersion?: string;
+    stepKey?: string;
+  };
   imageSrc?: string;
   /** 组图：一次生成的全部图片(如 Midjourney 一组 4 张)；imageSrc 始终等于其中的「主图」 */
   images?: string[];
@@ -46,6 +59,19 @@ export interface CanvasNode {
   uploadProgress?: number;
   /** 生成时选择的目标画幅；有值时图片节点按该画幅展示，避免结果卡片被自然尺寸改成其它比例 */
   aspectRatio?: string;
+  /**
+   * 快速开始/历史恢复所用的生成面板快照。模型与质量参数属于节点，而不是
+   * 某次组件挂载的临时 state；保存在画布数据里后，快速开始创建的节点再次
+   * 选中或刷新页面时仍能回显当时的选择。
+   */
+  generationConfig?: {
+    modelId?: string;
+    quality?: string;
+    resolution?: string;
+    duration?: number;
+    audio?: boolean;
+    batchCount?: number;
+  };
   /** 卡片实际渲染尺寸（按图片比例计算）；供连线层把端点锚定到卡片真实边缘中点，实现默认居中对齐 */
   contentW?: number;
   contentH?: number;
@@ -60,6 +86,9 @@ export interface Connection {
   id: string;
   sourceId: string;
   targetId: string;
+  /** 可选的结构化 Skill 输入槽；旧连线没有该字段时继续按连接顺序解释。 */
+  targetSlot?: string;
+  sourceOutput?: string;
 }
 
 /** 分组（libTV 风格）：标题栏 + 自动外扩边框紧贴成员包围盒。一个节点至多属于一个分组。 */
@@ -70,6 +99,15 @@ export interface CanvasGroup {
   color: string;
   /** 成员节点 id（显式归属；边框由成员位置实时计算） */
   nodeIds: string[];
+}
+
+/**
+ * SkillRun 的画布级消费状态。它独立于 undo 历史：用户撤销/删除产物节点时，
+ * 已消费标记仍然保留，避免下一次轮询把相同产物重新插回画布。
+ */
+export interface CanvasSkillRunPersistence {
+  trackedRunIds?: string[];
+  materializedArtifactIds?: string[];
 }
 
 interface HistorySnapshot {
@@ -90,12 +128,19 @@ interface CanvasState {
   /** 当前画布项目数值ID（字符串，雪花），供生成/历史按画布过滤 */
   currentProjectId: string | null;
 
+  /** 需要在刷新后向服务端恢复详情的运行；随 canvasData 持久化。 */
+  trackedSkillRunIds: string[];
+  /** 已经由该画布消费过的产物；不进入 undo/redo，保证一次物化。 */
+  materializedArtifactIds: string[];
+
   // 历史栈
   undoStack: HistorySnapshot[];
   redoStack: HistorySnapshot[];
 
   // 节点操作
   addNode: (node: CanvasNode, recordHistory?: boolean) => void;
+  /** Skill 多产物一次性落画布：单次 undo、单次 store 通知，避免自动保存中间态。 */
+  addNodesAndConnections: (nodes: CanvasNode[], connections: Connection[], selectNodeId?: string) => void;
   updateNode: (id: string, data: Partial<CanvasNode>, recordHistory?: boolean) => void;
   /** 批量移动节点位置（拖拽多选时使用，单次 set，不记录历史） */
   updateNodePositions: (updates: Array<{ id: string; x: number; y: number }>) => void;
@@ -123,8 +168,17 @@ interface CanvasState {
 
   setCurrentProjectId: (id: string | null) => void;
 
+  trackSkillRun: (runId: string) => void;
+  settleSkillRun: (runId: string) => void;
+  markSkillArtifactsMaterialized: (artifactIds: readonly string[]) => void;
+
   // 画布加载/清空
-  loadCanvas: (nodes: CanvasNode[], connections: Connection[], groups?: CanvasGroup[]) => void;
+  loadCanvas: (
+    nodes: CanvasNode[],
+    connections: Connection[],
+    groups?: CanvasGroup[],
+    skillRuns?: CanvasSkillRunPersistence,
+  ) => void;
   clearCanvas: () => void;
 
   // Undo/Redo
@@ -138,6 +192,36 @@ interface CanvasState {
 let nodeCounter = 0;
 let groupCounter = 0;
 const MAX_HISTORY = 50;
+// Recovery is only needed for recent/in-flight runs. Bounding this list avoids
+// turning a long-lived canvas into hundreds of detail requests on every open;
+// provenance and consumed artifact IDs still preserve historical traceability.
+const MAX_TRACKED_SKILL_RUNS = 50;
+
+function uniqueNonEmptyStrings(values: readonly unknown[]): string[] {
+  return [...new Set(values.filter((value): value is string => typeof value === "string" && value.trim().length > 0))];
+}
+
+function restoredSkillRunState(
+  nodes: readonly CanvasNode[],
+  persisted?: CanvasSkillRunPersistence,
+): Required<CanvasSkillRunPersistence> {
+  const persistedRunIds = Array.isArray(persisted?.trackedRunIds) ? persisted.trackedRunIds : [];
+  const persistedArtifactIds = Array.isArray(persisted?.materializedArtifactIds)
+    ? persisted.materializedArtifactIds
+    : [];
+  return {
+    // 旧 canvasData 没有顶层 SkillRun 状态时，从运行锚点和产物来源自动迁移。
+    trackedRunIds: uniqueNonEmptyStrings([
+      ...persistedRunIds,
+      ...nodes.map((node) => node.skillRunId),
+      ...nodes.map((node) => node.provenance?.skillRunId),
+    ]).slice(-MAX_TRACKED_SKILL_RUNS),
+    materializedArtifactIds: uniqueNonEmptyStrings([
+      ...persistedArtifactIds,
+      ...nodes.map((node) => node.provenance?.artifactId),
+    ]),
+  };
+}
 
 /** 分组默认配色（按现有分组数轮转，相邻分组颜色不同） */
 export const GROUP_COLORS = ["#3b82f6", "#22c55e", "#f59e0b", "#ec4899", "#8b5cf6", "#06b6d4", "#ef4444"];
@@ -185,15 +269,17 @@ function pruneGroups(groups: CanvasGroup[], removed: Set<string>): CanvasGroup[]
  *  taskId 会与原节点争抢同一任务,或在原任务已终态时永久转圈。 */
 export function reviveNode(node: CanvasNode, opts?: { keepResumable?: boolean }): CanvasNode {
   const stuckGenerating = node.status === "generating";
+  const clonedActiveSkillRun = !opts?.keepResumable && !!node.skillRunId;
   if (opts?.keepResumable && stuckGenerating && node.taskId) {
     return node.uploading ? { ...node, uploading: false, uploadProgress: undefined } : node;
   }
-  if (!stuckGenerating && !node.uploading && !node.taskId) return node;
+  if (!stuckGenerating && !node.uploading && !node.taskId && !clonedActiveSkillRun) return node;
   const hasResult = !!(node.imageSrc || node.videoSrc || node.audioSrc || node.content);
   return {
     ...node,
     status: stuckGenerating ? (hasResult ? "success" : "idle") : node.status,
     taskId: undefined,
+    skillRunId: clonedActiveSkillRun ? undefined : node.skillRunId,
     uploading: false,
     uploadProgress: undefined,
   };
@@ -216,11 +302,41 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   selectedNodeId: null,
   selectedConnectionId: null,
   currentProjectId: null,
+  trackedSkillRunIds: [],
+  materializedArtifactIds: [],
   undoStack: [],
   redoStack: [],
 
   selectConnection: (id) => set({ selectedConnectionId: id }),
   setCurrentProjectId: (id) => set({ currentProjectId: id }),
+
+  trackSkillRun: (runId) => set((state) => {
+    if (!runId || state.trackedSkillRunIds.includes(runId)) return state;
+    return {
+      trackedSkillRunIds: [...state.trackedSkillRunIds, runId].slice(-MAX_TRACKED_SKILL_RUNS),
+    };
+  }),
+
+  settleSkillRun: (runId) => set((state) => {
+    const hasAnchor = state.nodes.some((node) => node.skillRunId === runId);
+    const alreadyTracked = state.trackedSkillRunIds.includes(runId);
+    if (!hasAnchor && alreadyTracked) return state;
+    return {
+      nodes: hasAnchor
+        ? state.nodes.map((node) => node.skillRunId === runId ? { ...node, skillRunId: undefined } : node)
+        : state.nodes,
+      trackedSkillRunIds: alreadyTracked
+        ? state.trackedSkillRunIds
+        : [...state.trackedSkillRunIds, runId].slice(-MAX_TRACKED_SKILL_RUNS),
+    };
+  }),
+
+  markSkillArtifactsMaterialized: (artifactIds) => set((state) => {
+    const additions = uniqueNonEmptyStrings(artifactIds)
+      .filter((artifactId) => !state.materializedArtifactIds.includes(artifactId));
+    if (additions.length === 0) return state;
+    return { materializedArtifactIds: [...state.materializedArtifactIds, ...additions] };
+  }),
 
   pushHistory: () => set((state) => ({
     undoStack: [...state.undoStack.slice(-MAX_HISTORY + 1), snapshot(state)],
@@ -269,6 +385,36 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       nodes: [...state.nodes, normalizeNode(node)],
       undoStack: undo,
       redoStack: recordHistory ? [] : state.redoStack,
+    };
+  }),
+
+  addNodesAndConnections: (nodes, connections, selectNodeId) => set((state) => {
+    const existingNodeIds = new Set(state.nodes.map((node) => node.id));
+    const nextNodes = nodes.filter((node, index, list) =>
+      !existingNodeIds.has(node.id) && list.findIndex((candidate) => candidate.id === node.id) === index,
+    );
+    const availableNodeIds = new Set([...existingNodeIds, ...nextNodes.map((node) => node.id)]);
+    const existingConnectionIds = new Set(state.connections.map((connection) => connection.id));
+    const existingPairs = new Set(state.connections.map((connection) => `${connection.sourceId}\u0000${connection.targetId}\u0000${connection.targetSlot ?? ""}`));
+    const nextConnections = connections.filter((connection, index, list) => {
+      if (!availableNodeIds.has(connection.sourceId) || !availableNodeIds.has(connection.targetId)) return false;
+      if (existingConnectionIds.has(connection.id)) return false;
+      const pair = `${connection.sourceId}\u0000${connection.targetId}\u0000${connection.targetSlot ?? ""}`;
+      if (existingPairs.has(pair)) return false;
+      return list.findIndex((candidate) =>
+        `${candidate.sourceId}\u0000${candidate.targetId}\u0000${candidate.targetSlot ?? ""}` === pair,
+      ) === index;
+    });
+    if (nextNodes.length === 0 && nextConnections.length === 0) return state;
+
+    const canSelect = !!selectNodeId && availableNodeIds.has(selectNodeId);
+    return {
+      nodes: [...state.nodes, ...nextNodes.map(normalizeNode)],
+      connections: [...state.connections, ...nextConnections],
+      selectedNodeId: canSelect ? selectNodeId! : state.selectedNodeId,
+      selectedNodeIds: canSelect ? new Set([selectNodeId]) : state.selectedNodeIds,
+      undoStack: [...state.undoStack.slice(-MAX_HISTORY + 1), snapshot(state)],
+      redoStack: [],
     };
   }),
 
@@ -430,21 +576,29 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     };
   }),
 
-  loadCanvas: (nodes, connections, groups = []) => set({
-    nodes: nodes.map((n) => reviveNode(normalizeNode(n), { keepResumable: true })),
-    connections,
-    groups: (groups || []).filter((g) => g && Array.isArray(g.nodeIds) && g.nodeIds.length > 0),
-    selectedNodeIds: new Set(),
-    selectedNodeId: null,
-    selectedConnectionId: null,
-    undoStack: [],
-    redoStack: [],
-  }),
+  loadCanvas: (nodes, connections, groups = [], skillRuns) => {
+    const restoredNodes = nodes.map((n) => reviveNode(normalizeNode(n), { keepResumable: true }));
+    const restoredRuns = restoredSkillRunState(restoredNodes, skillRuns);
+    set({
+      nodes: restoredNodes,
+      connections,
+      groups: (groups || []).filter((g) => g && Array.isArray(g.nodeIds) && g.nodeIds.length > 0),
+      trackedSkillRunIds: restoredRuns.trackedRunIds,
+      materializedArtifactIds: restoredRuns.materializedArtifactIds,
+      selectedNodeIds: new Set(),
+      selectedNodeId: null,
+      selectedConnectionId: null,
+      undoStack: [],
+      redoStack: [],
+    });
+  },
 
   clearCanvas: () => set({
     nodes: [],
     connections: [],
     groups: [],
+    trackedSkillRunIds: [],
+    materializedArtifactIds: [],
     selectedNodeIds: new Set(),
     selectedNodeId: null,
     selectedConnectionId: null,

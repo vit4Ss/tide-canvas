@@ -20,6 +20,23 @@ type generateDTO struct {
 	ModelID   string          `json:"modelId"`
 	ProjectID idgen.ID        `json:"projectId"`
 	Input     json.RawMessage `json:"input"`
+	// Placement is required when input.skillId is present. Legacy HTTP callers
+	// default to the API surface and wildcard target.
+	EntryPoint string `json:"entryPoint"`
+	TargetType string `json:"targetType"`
+	// Optional for legacy compatibility; official clients always send it.
+	// When supplied, retries with the same request return the original task.
+	ClientRequestID string `json:"clientRequestId"`
+	// The fields below are internal-only orchestration metadata populated by the
+	// exported GenerationFacade. They are never accepted from the HTTP body.
+	Origin            string   `json:"-"`
+	SkillRunID        idgen.ID `json:"-"`
+	SkillRunStepID    idgen.ID `json:"-"`
+	SkillRunRevision  int64    `json:"-"`
+	SkillRunWorkerID  string   `json:"-"`
+	OutputRole        string   `json:"-"`
+	RegisterWork      *bool    `json:"-"`
+	PinnedSkillPrompt string   `json:"-"`
 }
 
 // gridSplitDTO is the body of POST /api/ai/grid-split.

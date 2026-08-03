@@ -4,7 +4,7 @@
    复制提示词 / 整 run 下载是本块的自足行为，一并内聚；编辑 / 重新生成 / 删除 /
    单图工具条经 props 回调组合层。 */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { mesh } from "@/lib/mesh";
 import { ossDisplayUrl } from "@/lib/oss-display";
 import { copyText } from "@/lib/clipboard";
@@ -33,6 +33,7 @@ export function StageFeed({
   initialLoading,
   loadError,
   endReached,
+  skillRunPanel,
 }: {
   busy: boolean;
   runs: HistRun[];
@@ -55,6 +56,8 @@ export function StageFeed({
   loadError?: boolean;
   /** 拉满判定:翻过页才显示「已经到底了」(只有一页时不扰屏)。 */
   endReached?: boolean;
+  /** Agent/workflow run timeline. It remains separate from one-task media history. */
+  skillRunPanel?: ReactNode;
 }) {
   // 底部哨兵:进入视口提前量(rootMargin)就触发续页;组合层有加载中去重守卫。
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -117,7 +120,7 @@ export function StageFeed({
 
         {/* empty state — only when nothing is generating and there's no history
             (首页未返回前不亮,避免有历史的用户看到空态闪屏) */}
-        {!busy && !initialLoading && runs.length === 0 && (
+        {!busy && !initialLoading && runs.length === 0 && !skillRunPanel && (
           <div className="ws-empty" id="empty">
             <div className="ws-empty-glyph">
               <span className="glyph" />
@@ -151,8 +154,9 @@ export function StageFeed({
             TRUE aspect ratio (no crop). The in-flight run renders first; once it
             finishes it joins the history feed below. Replaces the old cropped grid
             + separate 生成历史 strip. */}
-        {(busy || runs.length > 0) && (
+        {(busy || runs.length > 0 || skillRunPanel) && (
           <div className="ws-feed" id="feed">
+            {skillRunPanel}
             {/* in-flight run (placeholders with progress) */}
             {busy && runMeta && (
               <div className={`ws-run inflight${cells.length <= 1 ? " single" : ""}${runMeta.kind === "audio" ? " audio" : ""}`}>

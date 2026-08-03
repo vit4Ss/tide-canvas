@@ -85,10 +85,10 @@ Health check: `GET /healthz`.
 
 ```bash
 # 测试环境（缺省，等价于不设 TIDECANVAS_ENV）
-go run ./cmd/api
+TIDECANVAS_RELAY_APIKEY=... go run ./cmd/api
 
-# 生产环境（jwt.secret 缺失或为默认值时会拒绝启动）
-TIDECANVAS_ENV=prod TIDECANVAS_JWT_SECRET=... go run ./cmd/api
+# 生产环境（JWT 或 Relay 密钥缺失时会拒绝启动）
+TIDECANVAS_ENV=prod TIDECANVAS_JWT_SECRET=... TIDECANVAS_RELAY_APIKEY=... go run ./cmd/api
 ```
 
 | Setting            | Env var                          |
@@ -98,9 +98,12 @@ TIDECANVAS_ENV=prod TIDECANVAS_JWT_SECRET=... go run ./cmd/api
 | `mysql.password`   | `TIDECANVAS_MYSQL_PASSWORD`      |
 | `redis.addr`       | `TIDECANVAS_REDIS_ADDR`          |
 | `jwt.secret`       | `TIDECANVAS_JWT_SECRET`          |
+| `relay.apiKey`     | `TIDECANVAS_RELAY_APIKEY`        |
 
 > 生产环境密钥（JWT/MySQL/Redis/支付/Relay）一律走环境变量注入，
 > 不要写进 `config.prod.yaml` 提交到仓库。
+> Relay 地址由环境固定：`prod` 使用 `https://relay.tcmzhan.com`，其他环境
+> 使用 `https://test-relay.tcmzhan.com`，避免配置串线。
 >
 > 前端对应机制：`tide-canvas-web/.env.development`（`next dev` 加载）与
 > `.env.production`（`next build` 加载）；Docker 构建时 `--build-arg

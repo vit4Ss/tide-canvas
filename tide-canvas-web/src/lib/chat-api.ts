@@ -76,6 +76,8 @@ export async function streamMessage(
     /** Upstream model_key of the composer's selected text model; the server
      *  validates it against 模型管理 and falls back to the primary text model. */
     model?: string;
+    /** Optional public preset. The server resolves its template and defaults. */
+    skillId?: string;
   },
 ): Promise<void> {
   let res: Response;
@@ -89,6 +91,7 @@ export async function streamMessage(
           content,
           ...(handlers.attachments?.length ? { attachments: handlers.attachments } : {}),
           ...(handlers.model ? { model: handlers.model } : {}),
+          ...(handlers.skillId ? { skillId: handlers.skillId } : {}),
         }),
       },
       handlers.signal,

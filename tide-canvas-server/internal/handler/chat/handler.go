@@ -228,11 +228,13 @@ func (h *handler) streamMessage(c *gin.Context) {
 		}
 	}
 
-	vo, err := h.svc.streamMessage(c.Request.Context(), id, ownerID, dto.Content, dto.Attachments, dto.Model, func(delta string) {
+	vo, err := h.svc.streamMessage(c.Request.Context(), id, ownerID, dto.Content, dto.Attachments, dto.Model, dto.SkillID, func(delta string) {
 		frame(map[string]string{"delta": delta})
 	})
 	if err != nil {
 		switch {
+		case errors.Is(err, errInvalidSkill):
+			frame(map[string]string{"error": "selected skill is unavailable", "code": "SKILL_UNAVAILABLE"})
 		case errors.Is(err, ErrNotFound) || errors.Is(err, errForbidden):
 			frame(map[string]string{"error": "对话不存在"})
 		case errors.Is(err, errContextFull):
@@ -331,6 +333,8 @@ const contextFullMsg = "当前会话上下文已达上限，请开启新会话"
 // fail maps service errors to the appropriate response code.
 func (h *handler) fail(c *gin.Context, err error, fallbackMsg string) {
 	switch {
+	case errors.Is(err, errInvalidSkill):
+		response.Fail(c, response.CodeBadRequest, "selected skill is unavailable")
 	case errors.Is(err, ErrNotFound):
 		response.Fail(c, response.CodeNotFound, "conversation not found")
 	case errors.Is(err, errForbidden):

@@ -73,6 +73,8 @@ func (h *handler) generate(c *gin.Context) {
 		// 用户可自行处理的情形给具体中文提示;其余(DB/内部故障)统一系统异常,
 		// 原始 err 记日志不出站(与 service.go 的 userFacingGenError 同口径)。
 		switch {
+		case func() bool { var placement skillPlacementError; return errors.As(err, &placement) }():
+			response.Fail(c, response.CodeBadRequest, err.Error())
 		case errors.Is(err, errNoHandler):
 			response.Fail(c, response.CodeHandlerNotFound, "该生成能力暂不可用")
 		case errors.Is(err, errNoModel):

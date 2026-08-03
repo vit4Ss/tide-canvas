@@ -171,7 +171,10 @@
   left: 0;
   bottom: calc(100% + 12px);
   width: 248px;
-  overflow: hidden;
+  max-height: calc(100vh - 96px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.98);
@@ -292,7 +295,7 @@
 @media (max-width: 768px) {
   .statusBar {
     left: 12px;
-    bottom: 12px;
+    bottom: calc(72px + env(safe-area-inset-bottom, 0px));
     gap: 4px;
   }
 
@@ -301,10 +304,13 @@
   }
 
   .actionDock {
-    right: 12px;
-    left: auto;
-    bottom: 12px;
-    transform: none;
+    right: auto;
+    left: 50%;
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    max-width: calc(100vw - 24px);
+    gap: 6px;
+    padding: 6px;
+    transform: translateX(-50%);
   }
 
   .addMenu {

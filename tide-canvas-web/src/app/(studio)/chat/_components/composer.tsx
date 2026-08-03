@@ -6,6 +6,7 @@
    / 积分预估 / 发送按钮。状态全部来自 _hooks 的三个 bag，本文件纯渲染。 */
 
 import { Sparkles, X as XIcon } from "lucide-react";
+import { SkillInputFields } from "@/components/skill/skill-input-fields";
 import { toast } from "@/components/shared/toast";
 import {
   MentionPromptEditor,
@@ -20,6 +21,7 @@ import {
   findClipModel,
 } from "@/lib/music-modes";
 import type { ContextUsageVO } from "@/types/chat";
+import { skillKindOf } from "@/types/skill";
 import { CmSelect, RatioBox } from "./cm-select";
 import { RefThumb } from "./ref-thumb";
 import {
@@ -86,7 +88,11 @@ export function Composer({
     dur,
     setDur,
     skill,
-    setSkill,
+    removeSkill,
+    skillInputValues,
+    setSkillInputValues,
+    skillInputErrors,
+    setSkillInputErrors,
     setSkillPickerOpen,
     batch,
     setBatch,
@@ -112,6 +118,7 @@ export function Composer({
     musicNoDraftOk,
     points,
   } = cfg;
+  const isFlowSkill = !!skill && skillKindOf(skill) !== "preset";
   const {
     refs,
     removeRef,
@@ -159,11 +166,30 @@ export function Composer({
             <span className="skill-chip" title={skill.description || skill.title}>
               <Sparkles size={12} aria-hidden />
               {skill.title}
-              <button type="button" aria-label="移除技能" onClick={() => setSkill(null)}>
+              <button type="button" aria-label="移除技能" onClick={removeSkill}>
                 <XIcon size={12} aria-hidden />
               </button>
             </span>
           </div>
+        )}
+        {isFlowSkill && skill && (
+          <SkillInputFields
+            schema={skill.inputSchema}
+            values={skillInputValues}
+            errors={skillInputErrors}
+            disabled={busy}
+            compact
+            style={{ padding: "0 12px 10px" }}
+            onChange={(key, value) => {
+              setSkillInputValues((current) => ({ ...current, [key]: value }));
+              setSkillInputErrors((current) => {
+                if (!current[key]) return current;
+                const next = { ...current };
+                delete next[key];
+                return next;
+              });
+            }}
+          />
         )}
         {refs.length > 0 && (
           <div className="ref-strip">
@@ -195,11 +221,11 @@ export function Composer({
               </svg>
             </button>
           )}
-          {/* 技能入口:生成类模型可用(文本对话不参与技能) */}
-          {selModel && selModel.type !== "text" && (
+          {/* 预设、智能技能与工作流共用同一个入口。 */}
+          {selModel && (
             <button
               className="cm-upload"
-              title="使用技能（提示词模板一键附着）"
+              title="选择技能或工作流"
               type="button"
               onClick={() => setSkillPickerOpen(true)}
             >
@@ -627,15 +653,15 @@ export function Composer({
             onClick={send}
             disabled={
               busy ||
-              (!draft.trim() && !musicNoDraftOk) ||
-              (selModel?.type === "text" && !!ctxUsage?.full)
+              (!draft.trim() && !musicNoDraftOk && !isFlowSkill) ||
+              (selModel?.type === "text" && !isFlowSkill && !!ctxUsage?.full)
             }
             title={
               busy
                 ? "处理中…"
-                : selModel?.type === "text" && ctxUsage?.full
+                : selModel?.type === "text" && !isFlowSkill && ctxUsage?.full
                   ? "会话上下文已满，请开启新会话"
-                  : !draft.trim() && !musicNoDraftOk
+                  : !draft.trim() && !musicNoDraftOk && !isFlowSkill
                     ? "先输入内容"
                     : "发送"
             }

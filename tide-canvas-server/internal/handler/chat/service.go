@@ -12,7 +12,9 @@ import (
 	"gorm.io/gorm"
 
 	"tidecanvas/internal/config"
+	"tidecanvas/internal/handler/ai"
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/boundedtext"
 	"tidecanvas/internal/pkg/chatattach"
 	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
@@ -59,6 +61,8 @@ var errForbidden = errors.New("chat: not owner")
 // errContextFull is returned when a conversation's cumulative estimated tokens
 // reached the configured cap; the user must start a new conversation.
 var errContextFull = errors.New("chat: context token limit reached")
+
+var errInvalidSkill = errors.New("chat: invalid skill")
 
 // llmReplyTimeout is the OUTER bound on one upstream generation — a backstop for
 // a provider that hangs without ever closing the connection, not the liveness
@@ -271,6 +275,21 @@ func (s *service) listMessages(conversationID, ownerID idgen.ID, q *ListQuery) (
 			for i := range vos {
 				if vos[i].TaskID != nil {
 					vos[i].Task = toMessageTaskVO(tasks[*vos[i].TaskID]) // nil → 已过期 on the client
+				}
+			}
+		}
+	}
+	var runIDs []idgen.ID
+	for i := range vos {
+		if vos[i].SkillRunID != nil {
+			runIDs = append(runIDs, *vos[i].SkillRunID)
+		}
+	}
+	if len(runIDs) > 0 {
+		if runs, runErr := s.repo.skillRunsByIDs(runIDs, ownerID); runErr == nil {
+			for i := range vos {
+				if vos[i].SkillRunID != nil {
+					vos[i].SkillRun = toMessageSkillRunVO(runs[*vos[i].SkillRunID])
 				}
 			}
 		}
@@ -528,6 +547,17 @@ func (s *service) sendMessage(ctx context.Context, conversationID, ownerID idgen
 		contentType = "text"
 	}
 	content := strings.TrimSpace(dto.Content)
+	preset, err := s.resolveChatPreset(ctx, dto.SkillID)
+	if err != nil {
+		return nil, err
+	}
+	if preset != nil {
+		dto.Model = presetModel(preset, dto.Model)
+	}
+	skillPrompt, err := presetPrompt(preset, content)
+	if err != nil {
+		return nil, errInvalidSkill
+	}
 	// 越过阈值先自动压缩（就地更新 conv），压缩后仍超硬上限才拒绝。
 	s.maybeCompact(ctx, conv)
 	if err := s.guardContext(conv, content); err != nil {
@@ -558,12 +588,16 @@ func (s *service) sendMessage(ctx context.Context, conversationID, ownerID idgen
 		s.refundTextCall(charge)
 		return nil, err
 	}
+	if preset != nil {
+		_ = s.repo.db.Model(&model.Skill{}).Where("id = ? AND status = 1", preset.SkillID).
+			UpdateColumn("use_count", gorm.Expr("use_count + 1")).Error
+	}
 
 	// Generate the assistant reply (real LLM when configured, canned otherwise).
 	// A failure to store the reply must not fail the user's send, so it is
 	// best-effort. 空回复（请求被取消时 generateReply 返回 ""）不落库——
 	// 否则断开的请求会往会话里塞一条空/占位气泡。
-	reply := s.generateReply(ctx, conv, ownerID, content, docNote, docFiles, imageURLs, dto.Model, charge)
+	reply := s.generateReply(ctx, conv, ownerID, content, docNote, docFiles, imageURLs, dto.Model, skillPrompt, charge)
 	at := time.Now()
 	if strings.TrimSpace(reply) != "" {
 		aiMsg := &model.IMMessage{
@@ -591,7 +625,7 @@ func (s *service) sendMessage(ctx context.Context, conversationID, ownerID idgen
 // assistant message VO. Ownership is enforced. When no relay text model is
 // available it emits the canned reply as a single delta so the round-trip still
 // completes.
-func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idgen.ID, content string, attachments []MessageAttach, requestedModel string, onDelta func(string)) (*MessageVO, error) {
+func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idgen.ID, content string, attachments []MessageAttach, requestedModel, skillID string, onDelta func(string)) (*MessageVO, error) {
 	conv, err := s.repo.findConversation(conversationID)
 	if err != nil {
 		return nil, err
@@ -600,6 +634,17 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 		return nil, errForbidden
 	}
 	content = strings.TrimSpace(content)
+	preset, err := s.resolveChatPreset(ctx, skillID)
+	if err != nil {
+		return nil, err
+	}
+	if preset != nil {
+		requestedModel = presetModel(preset, requestedModel)
+	}
+	skillPrompt, err := presetPrompt(preset, content)
+	if err != nil {
+		return nil, errInvalidSkill
+	}
 	// 越过阈值先自动压缩（就地更新 conv），压缩后仍超硬上限才拒绝。
 	s.maybeCompact(ctx, conv)
 	if err := s.guardContext(conv, content); err != nil {
@@ -632,13 +677,17 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 		s.refundTextCall(charge)
 		return nil, err
 	}
+	if preset != nil {
+		_ = s.repo.db.Model(&model.Skill{}).Where("id = ? AND status = 1", preset.SkillID).
+			UpdateColumn("use_count", gorm.Expr("use_count + 1")).Error
+	}
 
 	// 注册 live 缓存：增量同时进内存缓存,断开的客户端刷新后可通过
 	// GET /stream 重新附着续播（见 live.go）。liveEnd 兜底保证任何返回路径
 	// 都会终结订阅者的等待。
 	lr := s.liveStart(conversationID)
 	defer s.liveEnd(conversationID, lr)
-	reply := s.streamReply(ctx, conv, ownerID, content, docNote, docFiles, imageURLs, requestedModel, func(d string) {
+	reply := s.streamReply(ctx, conv, ownerID, content, docNote, docFiles, imageURLs, requestedModel, skillPrompt, func(d string) {
 		lr.append(d)
 		if onDelta != nil {
 			onDelta(d)
@@ -673,7 +722,7 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 // no relay text model is configured) it falls back to the canned reply, emitted
 // as one delta so the client still renders something. 上下文 = system 提示词 +
 // 压缩摘要（如有）+ 摘要之后的原文消息。
-func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, ownerID idgen.ID, userContent string, docNote string, docFiles []relaychat.FileAttachment, imageURLs []string, requestedModel string, onDelta func(string), charge *textCharge) string {
+func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, ownerID idgen.ID, userContent string, docNote string, docFiles []relaychat.FileAttachment, imageURLs []string, requestedModel, skillPrompt string, onDelta func(string), charge *textCharge) string {
 	// 客户端断开不中止生成：前端切页面/切会话都会 abort SSE，请求上下文随之
 	// 取消；若生成跟着停，回复只落库半截。分离请求上下文让上游把回复生成完整
 	// 并落库，用户切回来能看到全文；llmReplyTimeout 仍然兜底。断开后 onDelta
@@ -685,6 +734,9 @@ func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, o
 			if rows, err := s.repo.recentMessages(conversationID, conv.SummaryUptoID, s.historyWindow()); err == nil {
 				msgs := make([]relaychat.Msg, 0, len(rows)+2)
 				if p := strings.TrimSpace(s.systemPrompt); p != "" {
+					msgs = append(msgs, relaychat.TextMsg("system", p))
+				}
+				if p := strings.TrimSpace(skillPrompt); p != "" {
 					msgs = append(msgs, relaychat.TextMsg("system", p))
 				}
 				if sum := strings.TrimSpace(conv.ContextSummary); sum != "" {
@@ -772,6 +824,41 @@ func (s *service) imageAttachmentURLs(atts []MessageAttach) []string {
 	return urls
 }
 
+func (s *service) resolveChatPreset(ctx context.Context, skillID string) (*ai.PublishedPreset, error) {
+	if strings.TrimSpace(skillID) == "" {
+		return nil, nil
+	}
+	preset, err := ai.ResolvePublishedPreset(ctx, s.repo.db, skillID, "chat", "text", "text")
+	if err != nil {
+		logger.L().Warn("chat: rejected skill preset", zap.String("skillId", skillID), zap.Error(err))
+		return nil, errInvalidSkill
+	}
+	return preset, nil
+}
+
+func presetModel(preset *ai.PublishedPreset, requested string) string {
+	if preset == nil {
+		return strings.TrimSpace(requested)
+	}
+	if configured := strings.TrimSpace(preset.ModelID); configured != "" {
+		return configured
+	}
+	if requested = strings.TrimSpace(requested); requested != "" {
+		return requested
+	}
+	if value, ok := preset.Defaults["modelId"].(string); ok && strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
+	}
+	return ""
+}
+
+func presetPrompt(preset *ai.PublishedPreset, userContent string) (string, error) {
+	if preset == nil {
+		return "", nil
+	}
+	return boundedtext.Replace(preset.Prompt, 1<<20, "{{prompt}}", userContent, "{{input.prompt}}", userContent)
+}
+
 // attachmentsParams snapshots the composer attachments as a JSON object stored on
 // the user message's Params column ({"attachments":[…]}), so the bubble can
 // re-render them after a reload. Returns "" when there are none.
@@ -829,7 +916,7 @@ func (s *service) appendMessage(conversationID, ownerID idgen.ID, dto AppendMess
 // relay is unconfigured) it falls back to the canned placeholder so the chat
 // round-trip always completes. 上下文 = system 提示词 + 压缩摘要（如有）+
 // 摘要之后的原文消息。
-func (s *service) generateReply(ctx context.Context, conv *model.IMConversation, ownerID idgen.ID, userContent string, docNote string, docFiles []relaychat.FileAttachment, imageURLs []string, requestedModel string, charge *textCharge) string {
+func (s *service) generateReply(ctx context.Context, conv *model.IMConversation, ownerID idgen.ID, userContent string, docNote string, docFiles []relaychat.FileAttachment, imageURLs []string, requestedModel, skillPrompt string, charge *textCharge) string {
 	if s.relay == nil {
 		return s.buildReply(userContent)
 	}
@@ -845,6 +932,9 @@ func (s *service) generateReply(ctx context.Context, conv *model.IMConversation,
 		if model := s.repo.resolveTextModelKey(requestedModel); model != "" {
 			msgs := make([]relaychat.Msg, 0, len(rows)+2)
 			if p := strings.TrimSpace(s.systemPrompt); p != "" {
+				msgs = append(msgs, relaychat.TextMsg("system", p))
+			}
+			if p := strings.TrimSpace(skillPrompt); p != "" {
 				msgs = append(msgs, relaychat.TextMsg("system", p))
 			}
 			if sum := strings.TrimSpace(conv.ContextSummary); sum != "" {
