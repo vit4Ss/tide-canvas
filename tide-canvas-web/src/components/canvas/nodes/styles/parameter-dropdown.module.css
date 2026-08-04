@@ -1,13 +1,16 @@
-/* 中文注释：画布节点和首页创作框共用的参数下拉样式，避免在 TSX 中重复堆叠长 className。 */
+/* 中文注释：画布节点和首页创作框共用的参数下拉样式，避免在 TSX 中重复堆叠长 className。
+   颜色一律 shadcn 令牌（--popover/--border/--muted 等）；阴影为 Tailwind shadow-lg / shadow-sm 标准值，
+   不写自定义 rgba 阴影。画布无 .dark 切换，令牌随主题自动适配，无需额外 dark 覆盖。 */
 .panel {
   width: min(420px, calc(100vw - 24px));
   max-width: calc(100vw - 24px);
   border-radius: 12px;
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  background: #ffffff;
+  border: 1px solid var(--border);
+  background: var(--popover);
+  color: var(--popover-foreground);
   padding: 16px;
   text-align: left;
-  box-shadow: 0 22px 70px rgba(15, 23, 42, 0.18);
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1); /* Tailwind shadow-lg */
 }
 
 .panelInner {
@@ -20,7 +23,7 @@
 
 .sectionTitle {
   margin-bottom: 8px;
-  color: rgb(64, 64, 64);
+  color: var(--muted-foreground);
   font-size: 13px;
   font-weight: 600;
   line-height: 19px;
@@ -29,7 +32,7 @@
 .segmentedRow {
   display: grid;
   border-radius: 8px;
-  background: rgb(245, 245, 245);
+  background: var(--muted);
   padding: 5px;
 }
 
@@ -40,20 +43,20 @@
   justify-content: center;
   border-radius: 6px;
   padding: 0 10px;
-  color: rgb(115, 115, 115);
+  color: var(--muted-foreground);
   font-size: 13px;
   font-weight: 500;
   transition: color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
 }
 
 .segmentButton:hover {
-  color: rgb(23, 23, 23);
+  color: var(--popover-foreground);
 }
 
 .segmentButtonActive {
-  background: #ffffff;
-  color: rgb(10, 10, 10);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1); /* Tailwind shadow-sm */
 }
 
 .ratioGrid {
@@ -61,7 +64,7 @@
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 10px 6px;
   border-radius: 8px;
-  background: rgb(245, 245, 245);
+  background: var(--muted);
   padding: 10px;
 }
 
@@ -73,7 +76,7 @@
   justify-content: center;
   gap: 4px;
   border-radius: 6px;
-  color: rgb(115, 115, 115);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 500;
   line-height: 15px;
@@ -81,14 +84,14 @@
 }
 
 .ratioTile:hover {
-  background: rgba(255, 255, 255, 0.7);
-  color: rgb(23, 23, 23);
+  background: color-mix(in oklab, var(--popover) 70%, transparent);
+  color: var(--popover-foreground);
 }
 
 .ratioTileActive {
-  background: #ffffff;
-  color: rgb(10, 10, 10);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1); /* Tailwind shadow-sm */
 }
 
 .ratioShapeWrap {
@@ -111,17 +114,17 @@
   align-items: center;
   gap: 8px;
   border-radius: 6px;
-  border: 1px solid rgb(229, 229, 229);
-  background: #ffffff;
+  border: 1px solid var(--border);
+  background: var(--popover);
   padding: 0 12px;
-  color: rgb(38, 38, 38);
+  color: var(--popover-foreground);
   font-size: 12px;
   font-weight: 400;
   transition: background-color 160ms ease, border-color 160ms ease;
 }
 
 .trigger:hover {
-  background: rgb(245, 245, 245);
+  background: var(--accent);
 }
 
 .triggerCompact {
@@ -146,98 +149,4 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.countMenu {
-  width: 144px;
-  border-radius: 8px;
-  border: 1px solid rgb(229, 229, 229);
-  background: rgba(255, 255, 255, 0.96);
-  padding: 6px;
-  box-shadow: 0 16px 42px rgba(15, 23, 42, 0.16);
-  backdrop-filter: blur(12px);
-}
-
-.countTitle {
-  padding: 4px 8px;
-  color: rgb(115, 115, 115);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.countItem {
-  display: flex;
-  height: 34px;
-  width: 100%;
-  align-items: center;
-  justify-content: space-between;
-  border-radius: 6px;
-  padding: 0 10px;
-  color: rgb(64, 64, 64);
-  font-size: 13px;
-  font-weight: 500;
-  transition: background-color 160ms ease, color 160ms ease;
-}
-
-.countItem:hover {
-  background: rgb(245, 245, 245);
-}
-
-.countItemActive {
-  background: rgb(10, 10, 10);
-  color: #ffffff;
-}
-
-:global(.dark) .panel,
-:global(.dark) .countMenu {
-  border-color: rgba(255, 255, 255, 0.1);
-  background: rgba(23, 23, 23, 0.96);
-}
-
-:global(.dark) .sectionTitle,
-:global(.dark) .trigger,
-:global(.dark) .countItem {
-  color: rgb(229, 229, 229);
-}
-
-:global(.dark) .segmentedRow,
-:global(.dark) .ratioGrid {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-:global(.dark) .segmentButton,
-:global(.dark) .ratioTile,
-:global(.dark) .countTitle {
-  color: rgb(163, 163, 163);
-}
-
-:global(.dark) .segmentButton:hover,
-:global(.dark) .ratioTile:hover {
-  color: #ffffff;
-}
-
-:global(.dark) .segmentButtonActive,
-:global(.dark) .ratioTileActive {
-  background: #ffffff;
-  color: rgb(10, 10, 10);
-}
-
-:global(.dark) .trigger {
-  border-color: rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.08);
-}
-
-:global(.dark) .triggerGhost {
-  border-color: transparent;
-  background: transparent;
-}
-
-:global(.dark) .trigger:hover,
-:global(.dark) .countItem:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-:global(.dark) .countItemActive {
-  background: #ffffff;
-  color: rgb(10, 10, 10);
 }

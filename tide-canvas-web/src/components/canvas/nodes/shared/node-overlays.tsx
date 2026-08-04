@@ -77,8 +77,8 @@ export function NodeDimsBadge({ dims }: { dims: { w: number; h: number } }) {
   );
 }
 
-/** 查看大图：全屏 lightbox（Portal 到 body，脱离画布缩放层）；Esc 关闭 */
-export function NodeMediaLightbox({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+/** 查看大图：全屏 lightbox（Portal 到 body，脱离画布缩放层）；Esc 关闭；顶栏左侧文件名、右侧关闭钮 */
+export function NodeMediaLightbox({ onClose, title, children }: { onClose: () => void; title?: string; children: ReactNode }) {
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => { if (ev.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
@@ -86,18 +86,23 @@ export function NodeMediaLightbox({ onClose, children }: { onClose: () => void; 
   }, [onClose]);
   return createPortal(
     <div
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 p-6 backdrop-blur-sm"
+      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 p-6 backdrop-blur-sm"
       onMouseDown={(e) => e.stopPropagation()}
       onClick={onClose}
     >
+      <div className="absolute inset-x-0 top-0 flex h-14 items-center justify-between gap-4 px-4">
+        <span className="min-w-0 truncate text-sm text-white/90">{title ?? ""}</span>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="关闭预览"
+          title="关闭 (Esc)"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur transition-colors hover:bg-white/20"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
       {children}
-      <button
-        onClick={onClose}
-        className="absolute right-6 top-6 rounded-full bg-white/10 p-2 text-white backdrop-blur transition-colors hover:bg-white/20"
-        title="关闭 (Esc)"
-      >
-        <X className="h-5 w-5" />
-      </button>
     </div>,
     document.body,
   );

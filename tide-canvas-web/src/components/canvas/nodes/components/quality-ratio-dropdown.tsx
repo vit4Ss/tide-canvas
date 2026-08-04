@@ -112,7 +112,7 @@ export function QualityRatioDropdown({
       offset={8}
       withinPortal
       floatingStrategy="fixed"
-      zIndex={1000}
+      zIndex={90}
       radius={12}
       shadow="none"
       middlewares={{ flip: true, shift: { padding: 12 }, inline: true }}
@@ -132,7 +132,7 @@ export function QualityRatioDropdown({
         >
           {compact ? <RectangleHorizontal className="h-3.5 w-3.5 shrink-0" /> : <SlidersHorizontal className="h-3.5 w-3.5 shrink-0" />}
           <span className={styles.triggerText}>{buildQualityRatioSummary(value, batchCount)}</span>
-          <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-neutral-400 transition-transform", open && "rotate-180")} />
+          <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
         </button>
       </Popover.Target>
 

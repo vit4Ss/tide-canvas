@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Button, Center, Group, Paper, Stack, Text, TextInput, ThemeIcon, UnstyledButton } from "@mantine/core";
 import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-canvas-store";
 import {
@@ -312,6 +313,20 @@ const COMMON_RATIOS = [
 const closestRatioLabel = (aspect: number) =>
   COMMON_RATIOS.reduce((best, item) => (Math.abs(item.value - aspect) < Math.abs(best.value - aspect) ? item : best), COMMON_RATIOS[0]).label;
 
+const CROP_OPTIONS: { ratio: string; aspect: number }[] = [
+  { ratio: "1:1", aspect: 1 },
+  { ratio: "3:4", aspect: 3 / 4 },
+  { ratio: "4:3", aspect: 4 / 3 },
+  { ratio: "9:16", aspect: 9 / 16 },
+  { ratio: "16:9", aspect: 16 / 9 },
+];
+
+const ROTATE_OPTIONS: { label: string; degrees: -90 | 90 | 180 }[] = [
+  { label: "向左旋转 90°", degrees: -90 },
+  { label: "向右旋转 90°", degrees: 90 },
+  { label: "旋转 180°", degrees: 180 },
+];
+
 function resolvePresetRatio(preferred: readonly string[], configured?: readonly string[]) {
   if (!configured?.length) return preferred[0];
   return preferred.find((ratio) => configured.includes(ratio)) ?? configured[0];
@@ -343,29 +358,62 @@ function ImageTransformMenu({
   onRotate?: (degrees: -90 | 90 | 180) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number; up: boolean } | null>(null);
   const isCrop = mode === "crop";
   const Icon = isCrop ? Crop : RotateCw;
 
+  const close = useCallback((refocus = true) => {
+    setOpen(false);
+    if (refocus) triggerRef.current?.focus();
+  }, []);
+
+  const pickCrop = (ratio: string, aspect: number) => {
+    close();
+    onCrop?.(ratio, aspect);
+  };
+
+  const pickRotate = (degrees: -90 | 90 | 180) => {
+    close();
+    onRotate?.(degrees);
+  };
+
+  // 菜单 portal 到 body：打开时按触发器 rect 计算 fixed 定位（脱离画布 transform 层，下方空间不足上翻）
   useEffect(() => {
     if (!open) return;
-    const onOutside = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) setOpen(false);
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const menuWidth = 160;
+    const estHeight = (isCrop ? 5 : 3) * 36 + 12;
+    const below = window.innerHeight - rect.bottom;
+    const up = below < estHeight && rect.top > below;
+    setPos({ left: Math.max(8, rect.right - menuWidth), top: up ? rect.top : rect.bottom, up });
+  }, [open, isCrop]);
+
+  // Esc / 外部点击关闭（外部点击关闭时不把焦点拉回触发器）
+  useEffect(() => {
+    if (!open) return;
+    const onOutside = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (menuRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
+      close(false);
     };
     const onEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") close();
     };
-    document.addEventListener("mousedown", onOutside);
+    document.addEventListener("pointerdown", onOutside);
     document.addEventListener("keydown", onEscape);
     return () => {
-      document.removeEventListener("mousedown", onOutside);
+      document.removeEventListener("pointerdown", onOutside);
       document.removeEventListener("keydown", onEscape);
     };
-  }, [open]);
+  }, [open, close]);
 
   return (
-    <div ref={menuRef} className="relative">
+    <>
       <button
+        ref={triggerRef}
         type="button"
         onMouseDown={stop}
         onClick={(event) => {
@@ -373,61 +421,53 @@ function ImageTransformMenu({
           setOpen((current) => !current);
         }}
         disabled={busy}
-        className={`flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 transition-colors disabled:opacity-55 ${open ? "bg-neutral-100 dark:bg-neutral-800" : "hover:bg-neutral-100 dark:hover:bg-neutral-800"}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={`flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-55 ${open ? "bg-neutral-100 dark:bg-neutral-800" : "hover:bg-neutral-100 dark:hover:bg-neutral-800"}`}
       >
         {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Icon className="h-4 w-4" />}
         {isCrop ? "裁剪" : "旋转"}
       </button>
-      {open ? (
-        <div
-          onMouseDown={stop}
-          className="absolute right-0 top-full z-[60] mt-1.5 w-40 rounded-xl border border-neutral-200 bg-white p-1.5 shadow-[0_12px_40px_rgba(15,23,42,0.14)] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40"
-        >
-          {isCrop
-            ? [
-                ["1:1", 1],
-                ["3:4", 3 / 4],
-                ["4:3", 4 / 3],
-                ["9:16", 9 / 16],
-                ["16:9", 16 / 9],
-              ].map(([ratio, aspect]) => (
-                <button
-                  type="button"
-                  key={ratio}
-                  onMouseDown={stop}
-                  onClick={(event) => {
-                    stop(event);
-                    setOpen(false);
-                    onCrop?.(String(ratio), Number(aspect));
-                  }}
-                  className="flex h-9 w-full items-center justify-between rounded-md px-2.5 text-[13px] text-neutral-700 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-800"
-                >
-                  <span>裁剪为 {ratio}</span>
-                  <span className="text-[11px] text-neutral-400">居中</span>
-                </button>
-              ))
-            : ([
-                ["向左旋转 90°", -90],
-                ["向右旋转 90°", 90],
-                ["旋转 180°", 180],
-              ] as const).map(([label, degrees]) => (
-                <button
-                  type="button"
-                  key={degrees}
-                  onMouseDown={stop}
-                  onClick={(event) => {
-                    stop(event);
-                    setOpen(false);
-                    onRotate?.(degrees);
-                  }}
-                  className="flex h-9 w-full items-center rounded-md px-2.5 text-[13px] text-neutral-700 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-800"
-                >
-                  {label}
-                </button>
-              ))}
-        </div>
-      ) : null}
-    </div>
+      {open && pos
+        ? createPortal(
+            <div
+              ref={menuRef}
+              role="menu"
+              className="fixed z-[90] w-40 rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-lg"
+              style={{
+                left: pos.left,
+                ...(pos.up ? { bottom: window.innerHeight - pos.top + 4 } : { top: pos.top + 4 }),
+              }}
+            >
+              {isCrop
+                ? CROP_OPTIONS.map(({ ratio, aspect }) => (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      key={ratio}
+                      onClick={() => pickCrop(ratio, aspect)}
+                      className="flex h-9 w-full items-center justify-between rounded-md px-2.5 text-[13px] text-popover-foreground transition-colors hover:bg-accent"
+                    >
+                      <span>裁剪为 {ratio}</span>
+                      <span className="text-[11px] text-muted-foreground">居中</span>
+                    </button>
+                  ))
+                : ROTATE_OPTIONS.map(({ label, degrees }) => (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      key={degrees}
+                      onClick={() => pickRotate(degrees)}
+                      className="flex h-9 w-full items-center rounded-md px-2.5 text-[13px] text-popover-foreground transition-colors hover:bg-accent"
+                    >
+                      {label}
+                    </button>
+                  ))}
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
   );
 }
 
@@ -2316,7 +2356,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
 
         {/* 查看大图：全屏 lightbox（Portal 到 body，脱离画布缩放层） */}
         {previewOpen && node.imageSrc && (
-          <NodeMediaLightbox onClose={() => setPreviewOpen(false)}>
+          <NodeMediaLightbox onClose={() => setPreviewOpen(false)} title={node.title}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={node.imageSrc}
