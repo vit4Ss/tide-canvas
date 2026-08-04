@@ -585,8 +585,22 @@ export function CanvasAssistantPanel({
     assistantChatDeadlineNoticesRef.current.clear();
   }, [assistantScope]);
 
+  // 画布创作栏要按助手实际占位右缩：开关、拖宽、展开都改变占位，随既有
+  // 可见性事件把当前占位宽度（面板宽 + 右缘 16px 偏移 + 16px 间隔）一并广播。
   useEffect(() => {
-    window.dispatchEvent(new CustomEvent(CANVAS_ASSISTANT_VISIBILITY_EVENT, { detail: { open } }));
+    const broadcast = () => {
+      const panelPx = Math.min(expanded ? MAX_PANEL_WIDTH : panelWidth, window.innerWidth - 32);
+      window.dispatchEvent(new CustomEvent(CANVAS_ASSISTANT_VISIBILITY_EVENT, {
+        detail: { open, width: open ? panelPx + 32 : 0 },
+      }));
+    };
+    broadcast();
+    if (!open) return;
+    window.addEventListener("resize", broadcast);
+    return () => window.removeEventListener("resize", broadcast);
+  }, [open, panelWidth, expanded]);
+
+  useEffect(() => {
     const frame = requestAnimationFrame(() => {
       if (open) {
         assistantPanelRef.current?.querySelector<HTMLElement>("[contenteditable='true']")?.focus();

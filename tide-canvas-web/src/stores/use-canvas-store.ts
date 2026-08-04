@@ -85,7 +85,6 @@ export interface CanvasNode {
     quality?: string;
     resolution?: string;
     duration?: number;
-    audio?: boolean;
     batchCount?: number;
   };
   /** 卡片实际渲染尺寸（按图片比例计算）；供连线层把端点锚定到卡片真实边缘中点，实现默认居中对齐 */

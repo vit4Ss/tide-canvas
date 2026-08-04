@@ -161,7 +161,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     ratio: node.aspectRatio ?? "16:9",
     resolution: node.generationConfig?.resolution ?? "720P",
     duration: node.generationConfig?.duration ?? 5,
-    audio: node.generationConfig?.audio ?? true,
+    audio: true,
   });
   const { models: videoModels, modelId: selectedModelId, setModelId: setSelectedModelId, selectedModel } = useAiModels(
     AiModelType.VIDEO,

@@ -7,7 +7,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  color: rgb(38, 38, 38);
+  color: var(--foreground);
   font-size: 13px;
   line-height: 1;
 }
@@ -30,14 +30,14 @@
   align-items: center;
   gap: 6px;
   padding: 0 2px;
-  color: rgb(55, 65, 81);
+  color: var(--muted-foreground);
   font-weight: 500;
   transition: color 160ms ease;
 }
 
 .assetButton:hover,
 .activeTextButton {
-  color: rgb(10, 10, 10);
+  color: var(--foreground);
 }
 
 .statusIconButton,
@@ -48,15 +48,15 @@
   align-items: center;
   justify-content: center;
   border-radius: 8px;
-  color: rgb(82, 82, 82);
+  color: var(--muted-foreground);
   transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
 }
 
 .statusIconButton:hover,
 .zoomStepButton:hover:not(:disabled),
 .activeIconButton {
-  background: rgba(10, 10, 10, 0.08);
-  color: rgb(10, 10, 10);
+  background: var(--accent);
+  color: var(--accent-foreground);
 }
 
 .statusIcon {
@@ -71,9 +71,9 @@
   align-items: center;
   gap: 2px;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--popover);
   padding: 2px;
-  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--shadow-lg, 0 10px 15px -3px rgb(0 0 0 / 10%), 0 4px 6px -4px rgb(0 0 0 / 10%));
   backdrop-filter: blur(12px);
 }
 
@@ -82,14 +82,14 @@
   height: 28px;
   border-radius: 8px;
   padding: 0 8px;
-  color: rgb(23, 23, 23);
+  color: var(--foreground);
   font-size: 12px;
   font-weight: 600;
   transition: background-color 160ms ease;
 }
 
 .zoomPercentButton:hover {
-  background: rgb(245, 245, 245);
+  background: var(--accent);
 }
 
 .zoomStepButton:disabled {
@@ -106,10 +106,10 @@
   align-items: center;
   gap: 8px;
   padding: 8px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--border);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 10px 34px rgba(15, 23, 42, 0.12);
+  background: var(--popover);
+  box-shadow: var(--shadow-lg, 0 10px 15px -3px rgb(0 0 0 / 10%), 0 4px 6px -4px rgb(0 0 0 / 10%));
   transform: translateX(-50%);
   backdrop-filter: blur(14px);
 }
@@ -125,14 +125,14 @@
   align-items: center;
   justify-content: center;
   border-radius: 8px;
-  color: rgb(38, 38, 38);
+  color: var(--foreground);
   transition: background-color 160ms ease, color 160ms ease, transform 160ms ease;
 }
 
 .dockButton:hover:not(:disabled),
 .activeDockButton {
-  background: rgb(245, 245, 245);
-  color: rgb(10, 10, 10);
+  background: var(--accent);
+  color: var(--accent-foreground);
 }
 
 .dockButton:active:not(:disabled) {
@@ -145,13 +145,13 @@
 }
 
 .primaryDockButton {
-  background: rgb(10, 10, 10);
-  color: #ffffff;
+  background: var(--primary);
+  color: var(--primary-foreground);
 }
 
 .primaryDockButton:hover:not(:disabled) {
-  background: rgb(38, 38, 38);
-  color: #ffffff;
+  background: color-mix(in oklab, var(--primary) 85%, var(--primary-foreground));
+  color: var(--primary-foreground);
 }
 
 .dockIcon {
@@ -163,7 +163,7 @@
 .divider {
   height: 20px;
   width: 1px;
-  background: rgb(229, 229, 229);
+  background: var(--border);
 }
 
 .addMenu {
@@ -175,17 +175,17 @@
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--border);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.98);
+  background: var(--popover);
   padding: 8px;
-  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.18);
+  box-shadow: var(--shadow-lg, 0 10px 15px -3px rgb(0 0 0 / 10%), 0 4px 6px -4px rgb(0 0 0 / 10%));
   backdrop-filter: blur(16px);
 }
 
 .addMenuHeader {
   padding: 4px 8px 8px;
-  color: rgb(115, 115, 115);
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 600;
 }
@@ -199,14 +199,14 @@
   border-radius: 10px;
   background: transparent;
   padding: 8px;
-  color: rgb(23, 23, 23);
+  color: var(--foreground);
   text-align: left;
   cursor: pointer;
   transition: background-color 160ms ease;
 }
 
 .addMenuItem:hover {
-  background: rgb(245, 245, 245);
+  background: var(--accent);
 }
 
 .addMenuIcon {
@@ -217,8 +217,8 @@
   align-items: center;
   justify-content: center;
   border-radius: 10px;
-  background: rgb(245, 245, 245);
-  color: rgb(64, 64, 64);
+  background: var(--accent);
+  color: var(--accent-foreground);
 }
 
 .menuIcon {
@@ -235,61 +235,45 @@
 }
 
 .addMenuLabel {
-  color: rgb(23, 23, 23);
+  color: var(--foreground);
   font-size: 13px;
   font-weight: 600;
 }
 
 .addMenuHint {
   overflow: hidden;
-  color: rgb(115, 115, 115);
+  color: var(--muted-foreground);
   font-size: 11px;
   line-height: 15px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-:global(.dark) .assetButton,
-:global(.dark) .statusBar,
-:global(.dark) .dockButton {
-  color: rgb(229, 229, 229);
-}
+/* 画布为浅色主题且不存在 .dark 祖先：原 :global(.dark) 覆写均为死代码，已移除。 */
 
-:global(.dark) .actionDock,
-:global(.dark) .zoomCluster,
-:global(.dark) .addMenu {
-  border-color: rgba(255, 255, 255, 0.12);
-  background: rgba(23, 23, 23, 0.92);
-}
+@media (hover: none) and (pointer: coarse) {
+  .assetButton {
+    height: 40px;
+  }
 
-:global(.dark) .statusIconButton:hover,
-:global(.dark) .zoomStepButton:hover:not(:disabled),
-:global(.dark) .activeIconButton,
-:global(.dark) .dockButton:hover:not(:disabled),
-:global(.dark) .activeDockButton,
-:global(.dark) .zoomPercentButton:hover,
-:global(.dark) .addMenuItem:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #ffffff;
-}
+  .statusIconButton,
+  .zoomStepButton {
+    height: 40px;
+    width: 40px;
+  }
 
-:global(.dark) .zoomPercentButton,
-:global(.dark) .addMenuLabel {
-  color: #ffffff;
-}
+  .zoomPercentButton {
+    height: 40px;
+  }
 
-:global(.dark) .divider {
-  background: rgba(255, 255, 255, 0.12);
-}
+  .zoomCluster {
+    height: 44px;
+  }
 
-:global(.dark) .addMenuHeader,
-:global(.dark) .addMenuHint {
-  color: rgb(163, 163, 163);
-}
-
-:global(.dark) .addMenuIcon {
-  background: rgba(255, 255, 255, 0.08);
-  color: rgb(229, 229, 229);
+  .dockButton {
+    height: 40px;
+    width: 40px;
+  }
 }
 
 @media (max-width: 768px) {

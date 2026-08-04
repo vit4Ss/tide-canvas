@@ -240,7 +240,7 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
 
   if (models.length === 0) {
     return (
-      <span className="flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-normal text-neutral-500 dark:text-neutral-400">
+      <span className="flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[11px] font-normal text-neutral-500 dark:text-neutral-400">
         <Sparkles className="h-3.5 w-3.5 text-neutral-500 dark:text-neutral-300" />
         {triggerLabel || "暂无模型"}
       </span>
@@ -261,7 +261,7 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
             stop(event);
             onChange(selected.modelId);
           }}
-          className="flex h-8 max-w-[190px] items-center gap-1.5 rounded-md px-2.5 text-xs text-neutral-800 transition-[background-color,box-shadow] hover:bg-neutral-100/80 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 dark:text-neutral-200 dark:hover:bg-white/8 dark:hover:shadow-black/20"
+          className="flex h-8 max-w-[190px] items-center gap-1.5 rounded-lg px-2.5 text-[11px] text-neutral-800 transition-colors hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 dark:text-neutral-200 dark:hover:bg-white/8"
         >
           <ModelGlyph icon={selected.icon} className="h-3.5 w-3.5" />
           <span className="min-w-0 max-w-[134px] truncate font-normal">{triggerLabel || selected.name || "选择模型"}</span>
@@ -272,7 +272,7 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
       <span
         title={selected?.name || "选择模型"}
         onMouseDown={stop}
-        className="flex h-8 max-w-[190px] items-center gap-1.5 rounded-md px-2.5 text-xs text-neutral-800 transition-[background-color,box-shadow] hover:bg-neutral-100/80 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 dark:text-neutral-200 dark:hover:bg-white/8 dark:hover:shadow-black/20"
+        className="flex h-8 max-w-[190px] items-center gap-1.5 rounded-lg px-2.5 text-[11px] text-neutral-800 transition-colors hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 dark:text-neutral-200 dark:hover:bg-white/8"
       >
         <ModelGlyph icon={selected?.icon} className="h-3.5 w-3.5" />
         <span className="min-w-0 max-w-[134px] truncate font-normal">{triggerLabel || selected?.name || "选择模型"}</span>
@@ -292,7 +292,7 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
         aria-label={`${triggerLabel || "模型"}，当前 ${selected?.name || "未选择"}`}
         title={`${triggerLabel || "模型"}：${selected?.name || "未选择"}`}
         onClick={toggle}
-        className="flex h-8 max-w-[190px] items-center gap-1.5 rounded-md px-2.5 text-xs text-neutral-700 dark:text-neutral-300"
+        className="flex h-8 max-w-[190px] items-center gap-1.5 rounded-lg px-2.5 text-[11px] text-neutral-700 transition-colors hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 dark:text-neutral-300 dark:hover:bg-white/8"
       >
         <ModelGlyph icon={selected?.icon} className="h-3.5 w-3.5" />
         <span className="min-w-0 max-w-[134px] truncate font-normal">{triggerLabel || selected?.name || "选择模型"}</span>
@@ -308,7 +308,7 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
           className={`fixed z-[90] w-[360px] max-w-[calc(100vw-24px)] rounded-xl border p-1.5 text-left ${
             tone === "dark"
               ? "dark border-white/12 bg-[#1c1c20] text-white shadow-[0_16px_44px_rgba(0,0,0,0.34)]"
-              : "border-neutral-200 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.16)] dark:border-white/12 dark:bg-[#1c1c20] dark:text-white dark:shadow-black/35"
+              : "border-border bg-popover text-popover-foreground shadow-lg dark:border-white/12 dark:bg-[#1c1c20] dark:text-white dark:shadow-black/35"
           } ${openUp ? "-translate-y-full" : ""}`}
           style={{ left: panelPos.left, top: panelPos.top }}
           onMouseDown={stop}

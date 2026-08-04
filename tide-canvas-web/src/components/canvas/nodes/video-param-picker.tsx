@@ -69,7 +69,9 @@ export function VideoParamPicker({ value, onChange, resolutions, ratios, duratio
       setOpen(false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      requestAnimationFrame(() => triggerRef.current?.focus());
     };
     document.addEventListener("mousedown", onMouseDown);
     document.addEventListener("keydown", onKeyDown);
@@ -131,7 +133,7 @@ export function VideoParamPicker({ value, onChange, resolutions, ratios, duratio
         ref={triggerRef}
         type="button"
         onClick={toggle}
-        className="flex h-8 max-w-[250px] items-center gap-1.5 rounded-md px-2 text-xs text-neutral-700 transition-colors hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
+        className="flex h-8 max-w-[250px] items-center gap-1.5 rounded-lg px-2 text-[11px] text-neutral-700 transition-colors hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 dark:text-neutral-300 dark:hover:bg-neutral-800"
       >
         <Monitor className="h-3.5 w-3.5 shrink-0" />
         <span className="truncate">{summary}</span>
@@ -142,7 +144,7 @@ export function VideoParamPicker({ value, onChange, resolutions, ratios, duratio
       {open && typeof document !== "undefined" && createPortal(
         <div
           ref={panelRef}
-          className={`fixed z-50 w-[372px] max-w-[calc(100vw-24px)] rounded-xl border border-black/[0.06] bg-white p-4 text-left shadow-[0_16px_50px_rgba(15,23,42,0.14)] dark:border-white/10 dark:bg-[#25262b] dark:shadow-black/35 ${openUp ? "-translate-y-full" : ""}`}
+          className={`fixed z-[90] w-[372px] max-w-[calc(100vw-24px)] rounded-xl border border-border bg-popover p-4 text-left text-popover-foreground shadow-lg dark:border-white/10 dark:bg-[#25262b] dark:shadow-black/35 ${openUp ? "-translate-y-full" : ""}`}
           style={{ left: panelPos.left, top: panelPos.top }}
           onMouseDown={stop}
         >

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowUp,
@@ -577,12 +577,16 @@ export function CanvasQuickStart({
   }, [referenceSignature, variant]);
   const { generate } = useAiGeneration();
   const [expanded, setExpanded] = useState(true);
+  // 助手打开时其占位宽度（含右缘偏移与间隔）由可见性事件广播，根容器按它右缩避让。
+  const [assistantInset, setAssistantInset] = useState(0);
   const [mode, setMode] = useState<QuickStartMode>(isLauncher ? "video" : "image");
   const [prompt, setPrompt] = useState("");
   const [models, setModels] = useState<AiModelVO[]>([]);
   const [modelsLoaded, setModelsLoaded] = useState(false);
   const [modelsLoadError, setModelsLoadError] = useState(false);
   const [modelsRetryNonce, setModelsRetryNonce] = useState(0);
+  // 拿到过一次列表（含空列表）后，后台静默重取失败不再清空列表、不亮失败态。
+  const hasModelsDataRef = useRef(false);
   const [selectedModelId, setSelectedModelId] = useState("");
   const [selectedSkill, setSelectedSkill] = useState<SkillVO | null>(null);
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
@@ -655,16 +659,20 @@ export function CanvasQuickStart({
       .then((result) => {
         if (!active) return;
         if (result.success) {
+          hasModelsDataRef.current = true;
           setModels(result.data ?? []);
-        } else {
+          setModelsLoadError(false);
+        } else if (!hasModelsDataRef.current) {
           setModels([]);
           setModelsLoadError(true);
         }
       })
       .catch(() => {
         if (!active) return;
-        setModels([]);
-        setModelsLoadError(true);
+        if (!hasModelsDataRef.current) {
+          setModels([]);
+          setModelsLoadError(true);
+        }
       })
       .finally(() => {
         if (active) setModelsLoaded(true);
@@ -678,11 +686,28 @@ export function CanvasQuickStart({
     setModelsRetryNonce((current) => current + 1);
   };
 
+  // 参照创作台 use-studio-models：窗口重回焦点/可见时静默重取，偶发失败
+  // 自动恢复，后台模型改动也免刷新生效；重取不清空已有列表（见上方守卫）。
+  useEffect(() => {
+    const reloadModels = () => setModelsRetryNonce((current) => current + 1);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") reloadModels();
+    };
+    window.addEventListener("focus", reloadModels);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", reloadModels);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+
   useEffect(() => {
     if (variant !== "canvas") return;
     const handleAssistantVisibility = (rawEvent: Event) => {
-      const event = rawEvent as CustomEvent<{ open?: boolean }>;
-      if (!event.detail?.open) return;
+      const event = rawEvent as CustomEvent<{ open?: boolean; width?: number }>;
+      const open = !!event.detail?.open;
+      setAssistantInset(open ? Math.max(0, event.detail?.width ?? 0) : 0);
+      if (!open) return;
       setExpanded(false);
       setRefMenuOpen(false);
       setSkillPickerOpen(false);
@@ -1711,6 +1736,7 @@ export function CanvasQuickStart({
       data-mode={mode}
       data-variant={variant}
       aria-label={isLauncher ? "新建画布创作栏" : "画布创作栏"}
+      style={{ "--assistant-inset": `${assistantInset}px` } as CSSProperties}
       onMouseDown={(event) => event.stopPropagation()}
     >
       <div className={styles.composer}>
