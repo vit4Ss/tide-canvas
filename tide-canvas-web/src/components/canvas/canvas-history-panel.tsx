@@ -70,6 +70,19 @@ export function CanvasHistoryPanel({ open, onClose }: Props) {
     return () => clearInterval(timer);
   }, [open, load]);
 
+  // Esc 关闭：仅在没有更上层浮层（模态/下拉/菜单）打开时响应，
+  // 避免与 SkillPicker 等弹层的 Esc 处理共存时互相误关。
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (document.querySelector('[aria-modal="true"], [role="listbox"], [role="menu"]')) return;
+      onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
   if (!open) return null;
 
   return (
@@ -88,7 +101,11 @@ export function CanvasHistoryPanel({ open, onClose }: Props) {
 
       <div className="flex-1 overflow-y-auto">
         {!loaded ? (
-          <div className="flex h-40 items-center justify-center text-neutral-400"><Loader2 className="h-5 w-5 animate-spin" /></div>
+          <div className="space-y-2 px-3 pt-3" role="status" aria-label="正在加载历史">
+            {[92, 100, 84, 96, 70].map((w, i) => (
+              <div key={i} className="h-9 rounded-lg bg-neutral-100 motion-safe:animate-pulse dark:bg-neutral-800" style={{ width: `${w}%` }} />
+            ))}
+          </div>
         ) : (
           <>
             {/* 进行中任务 */}

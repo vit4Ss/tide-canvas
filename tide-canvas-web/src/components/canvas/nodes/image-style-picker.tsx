@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
-import { Box, Check, Heart, ImageIcon, Loader2, Plus, Search, Sparkles, X } from "lucide-react";
+import { Box, Check, Heart, Loader2, Plus, Search, Sparkles, X } from "lucide-react";
 import { styleApi } from "@/lib/api";
 import { toast } from "@/components/shared/toast";
+import { PopoverSelect } from "@/components/shared/popover-select";
 import type { StylePresetSource, StylePresetVO } from "@/types/style";
 
 export interface ImageStylePreset {
@@ -109,6 +110,8 @@ export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId,
   const [createOpen, setCreateOpen] = useState(false);
   const [customForm, setCustomForm] = useState(emptyCustomForm);
   const [creating, setCreating] = useState(false);
+  // 封面图加载失败（404/防盗链）的风格 id：退回到渐变兜底，而不是裂图灰盒
+  const [brokenCovers, setBrokenCovers] = useState<ReadonlySet<string>>(new Set());
   const containerRef = useRef<HTMLDivElement>(null);
 
   const activeStyle = useMemo<ImageStylePreset>(() => {
@@ -240,9 +243,15 @@ export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId,
         }`}
       >
         <div className="relative aspect-[4/5] overflow-hidden bg-neutral-100">
-          {preset.coverUrl ? (
+          {preset.coverUrl && !brokenCovers.has(preset.id) ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={preset.coverUrl} alt={preset.name} className="h-full w-full object-cover" loading="lazy" />
+            <img
+              src={preset.coverUrl}
+              alt={preset.name}
+              className="h-full w-full object-cover"
+              loading="lazy"
+              onError={() => setBrokenCovers((current) => new Set(current).add(preset.id))}
+            />
           ) : (
             <div className={`flex h-full w-full items-center justify-center bg-gradient-to-br ${fallback}`}>
               <Sparkles className="h-9 w-9 text-neutral-500/70" />
@@ -297,7 +306,7 @@ export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId,
       </button>
 
       {open && typeof document !== "undefined" && createPortal(
-        <div className="fixed inset-0 z-[240] flex items-center justify-center bg-black/35 p-6 backdrop-blur-[2px]" onMouseDown={() => setOpen(false)}>
+        <div className="fixed inset-0 z-[240] flex items-center justify-center bg-black/50 p-6 backdrop-blur-[2px]" onMouseDown={() => setOpen(false)}>
           <section
             role="dialog"
             aria-modal="true"
@@ -357,9 +366,13 @@ export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId,
                 <input value={customForm.name} onChange={(event) => setCustomForm((v) => ({ ...v, name: event.target.value }))} placeholder="风格名称" className="h-10 rounded-lg border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-400" />
                 <input value={customForm.shortName} onChange={(event) => setCustomForm((v) => ({ ...v, shortName: event.target.value }))} placeholder="短名称" className="h-10 rounded-lg border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-400" />
                 <input value={customForm.description} onChange={(event) => setCustomForm((v) => ({ ...v, description: event.target.value }))} placeholder="一句话描述" className="h-10 rounded-lg border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-400" />
-                <select value={customForm.category} onChange={(event) => setCustomForm((v) => ({ ...v, category: event.target.value }))} className="h-10 rounded-lg border border-neutral-200 px-3 text-sm outline-none focus:border-neutral-400">
-                  {CATEGORY_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
-                </select>
+                <PopoverSelect
+                  value={customForm.category}
+                  options={CATEGORY_OPTIONS.map((item) => ({ value: item, label: item }))}
+                  onChange={(item) => setCustomForm((v) => ({ ...v, category: item }))}
+                  label="风格分类"
+                  className="h-10 w-full border-neutral-200 bg-white px-3 text-sm hover:bg-neutral-50"
+                />
                 <textarea value={customForm.prompt} onChange={(event) => setCustomForm((v) => ({ ...v, prompt: event.target.value }))} placeholder="风格提示词，例如：电影级布光、真实材质、浅景深、低饱和高级调色" className="col-span-3 min-h-20 resize-none rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400" />
                 <div className="flex flex-col justify-between gap-2">
                   <label className="flex items-center gap-2 text-sm text-neutral-600"><input type="checkbox" checked={customForm.publicFlag} onChange={(event) => setCustomForm((v) => ({ ...v, publicFlag: event.target.checked }))} />公开到广场</label>
@@ -377,12 +390,18 @@ export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId,
                 </div>
               ) : (
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-4">
-                  <button type="button" onClick={() => choosePreset(DEFAULT_STYLE_PRESET)} className={`rounded-lg border bg-white p-4 text-left transition hover:shadow-md ${activeStyle.id === DEFAULT_STYLE_PRESET.id ? "border-neutral-950" : "border-neutral-200"}`}>
-                    <div className="mb-4 flex aspect-[4/5] items-center justify-center rounded-lg bg-neutral-100">
-                      <ImageIcon className="h-10 w-10 text-neutral-400" />
+                  <button type="button" onClick={() => choosePreset(DEFAULT_STYLE_PRESET)} className={`group relative overflow-hidden rounded-lg border bg-white text-left transition hover:-translate-y-0.5 hover:shadow-lg ${activeStyle.id === DEFAULT_STYLE_PRESET.id ? "border-neutral-950 shadow-md" : "border-neutral-200 hover:border-neutral-300"}`}>
+                    <div className="relative aspect-[4/5] overflow-hidden bg-neutral-100">
+                      <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-neutral-300 via-neutral-100 to-white">
+                        <Sparkles className="h-9 w-9 text-neutral-500/70" />
+                      </div>
+                      <span className="absolute left-2 top-2 rounded-md bg-black/55 px-1.5 py-0.5 text-[11px] text-white backdrop-blur">推荐</span>
+                      {activeStyle.id === DEFAULT_STYLE_PRESET.id && <span className="absolute left-2 bottom-2 flex h-6 w-6 items-center justify-center rounded-full bg-neutral-950 text-white"><Check className="h-3.5 w-3.5" /></span>}
                     </div>
-                    <div className="text-sm font-semibold text-neutral-950">默认风格</div>
-                    <p className="mt-1 text-xs leading-5 text-neutral-500">不追加风格提示词，只使用你输入的内容。</p>
+                    <div className="space-y-1 p-2.5">
+                      <div className="truncate text-[13px] font-semibold text-neutral-950">默认风格</div>
+                      <p className="line-clamp-2 h-8 text-[11px] leading-4 text-neutral-500">不追加风格提示词，只使用你输入的内容。</p>
+                    </div>
                   </button>
                   {styles.map(renderCard)}
                 </div>

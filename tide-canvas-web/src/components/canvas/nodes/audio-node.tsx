@@ -30,6 +30,7 @@ import { toast } from "@/components/shared/toast";
 import { NodeHeader } from "./base/node-header";
 import { NodePorts } from "./base/node-ports";
 import { ModelPicker } from "./model-picker";
+import { PopoverSelect } from "@/components/shared/popover-select";
 import { ClipPicker } from "@/components/studio/clip-picker";
 import type { CanvasNodeProps } from "./types/node-props";
 import { useAiModels, useNodeRuntime } from "./shared/use-node-runtime";
@@ -862,18 +863,15 @@ export const AudioNode = memo(function AudioNode({
                 <div className="flex min-w-0 items-center gap-1 text-xs text-neutral-600 dark:text-neutral-400">
                   <ModelPicker models={models} value={modelId} onChange={setModelId} />
                   {!isMusic && voices.length > 0 && (
-                    <span className="flex min-w-0 items-center gap-1 rounded-md px-2 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-800">
-                      <Mic2 className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
-                      <select
+                    <span className="flex min-w-0 items-center gap-1">
+                      <Mic2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <PopoverSelect
                         value={effectiveVoice}
-                        onChange={(e) => setVoice(e.target.value)}
-                        onMouseDown={stop}
-                        className="max-w-[132px] cursor-pointer truncate bg-transparent text-xs font-medium outline-none dark:bg-neutral-950"
-                      >
-                        {voices.map((v) => (
-                          <option key={v.id} value={v.id}>{v.name}</option>
-                        ))}
-                      </select>
+                        options={voices.map((v) => ({ value: v.id, label: v.name }))}
+                        onChange={setVoice}
+                        label="选择音色"
+                        className="h-7 max-w-[132px] border-transparent bg-transparent px-1.5 py-1 text-xs font-medium"
+                      />
                     </span>
                   )}
                   <button onMouseDown={stop} title="音频参数" className="rounded-md p-1.5 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800">

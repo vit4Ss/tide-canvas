@@ -186,10 +186,16 @@ export function SkillPicker({ open, onClose, onPick, outputType, currentId, kind
   if (!open || typeof document === "undefined") return null;
 
   const stop = (e: React.MouseEvent) => e.stopPropagation();
+  // 主题自适应:深色工作室/站点(body.imini)维持深色画廊;
+  // 浅色画布((canvas) 布局摘除 body.imini)切换为令牌化浅色变体。打开时读取即可。
+  const dark = document.body.classList.contains("imini");
+  const focusRing = dark
+    ? "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60"
+    : "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[240] flex items-center justify-center bg-black/70 p-3 sm:p-6"
+      className={`fixed inset-0 z-[240] flex items-center justify-center p-3 sm:p-6 ${dark ? "bg-black/70" : "bg-black/50"}`}
       onPointerDown={(e) => {
         e.stopPropagation();
         onClose();
@@ -201,48 +207,58 @@ export function SkillPicker({ open, onClose, onPick, outputType, currentId, kind
         role="dialog"
         aria-modal="true"
         aria-label="选择技能"
-        className="flex h-[min(640px,calc(100dvh-24px))] w-[min(960px,calc(100vw-24px))] flex-col overflow-hidden rounded-xl border border-white/12 bg-[#141416] text-neutral-100 shadow-[0_24px_80px_rgba(0,0,0,0.46)] sm:h-[min(640px,calc(100dvh-64px))] sm:w-[min(960px,calc(100vw-48px))] sm:rounded-2xl"
+        className={`flex h-[min(640px,calc(100dvh-24px))] w-[min(960px,calc(100vw-24px))] flex-col overflow-hidden rounded-xl border sm:h-[min(640px,calc(100dvh-64px))] sm:w-[min(960px,calc(100vw-48px))] sm:rounded-2xl ${
+          dark
+            ? "border-white/12 bg-[#141416] text-neutral-100 shadow-[0_24px_80px_rgba(0,0,0,0.46)]"
+            : "border-border bg-popover text-popover-foreground shadow-lg"
+        }`}
         onPointerDown={stop}
         onClick={stop}
       >
         {/* 头部:标题 + 搜索 + 关闭 */}
-        <header className="flex flex-wrap items-center gap-3 border-b border-white/8 px-4 py-3.5 sm:flex-nowrap sm:gap-4 sm:px-5">
+        <header className={`flex flex-wrap items-center gap-3 border-b px-4 py-3.5 sm:flex-nowrap sm:gap-4 sm:px-5 ${dark ? "border-white/8" : "border-border"}`}>
           <h3 className="flex items-center gap-2 text-sm font-semibold">
             <Sparkles className="h-4 w-4" />
             技能
           </h3>
           <div className="relative order-last w-full sm:order-none sm:ml-auto sm:w-64">
-            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-400" />
+            <Search className={`absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 ${dark ? "text-neutral-400" : "text-muted-foreground"}`} />
             <input
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
               aria-label="搜索技能"
               placeholder="搜索技能"
-              className="h-11 w-full rounded-lg border border-white/10 bg-white/5 pl-8 pr-3 text-xs text-neutral-100 outline-none placeholder:text-neutral-400 focus:border-white/25 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60"
+              className={`h-11 w-full rounded-lg border pl-8 pr-3 text-xs outline-none ${
+                dark
+                  ? "border-white/10 bg-white/5 text-neutral-100 placeholder:text-neutral-400 focus:border-white/25 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60"
+                  : "border-border bg-background text-foreground placeholder:text-muted-foreground focus:border-ring focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              }`}
             />
           </div>
           <button
             type="button"
             aria-label="关闭"
             onClick={onClose}
-            className="ml-auto grid h-11 w-11 place-items-center rounded-lg text-neutral-400 transition-colors hover:bg-white/8 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 sm:ml-0"
+            className={`ml-auto grid h-11 w-11 place-items-center rounded-lg transition-colors sm:ml-0 ${focusRing} ${
+              dark ? "text-neutral-400 hover:bg-white/8 hover:text-neutral-100" : "text-muted-foreground hover:bg-accent hover:text-foreground"
+            }`}
           >
             <X className="h-4 w-4" />
           </button>
         </header>
 
         {/* 分类页签 */}
-        <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto overscroll-x-contain border-b border-white/8 px-4 py-2.5 [scrollbar-width:none] sm:px-5 [&::-webkit-scrollbar]:hidden">
+        <div className={`flex flex-nowrap items-center gap-1.5 overflow-x-auto overscroll-x-contain border-b px-4 py-2.5 [scrollbar-width:none] sm:px-5 [&::-webkit-scrollbar]:hidden ${dark ? "border-white/8" : "border-border"}`}>
           {["", ...(cats ?? [])].map((cat) => (
             <button
               key={cat || "all"}
               type="button"
               onClick={() => setCategory(cat)}
               aria-pressed={category === cat}
-              className={`min-h-11 shrink-0 rounded-lg px-2.5 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 ${
+              className={`min-h-11 shrink-0 rounded-lg px-2.5 py-1 text-xs transition-colors ${focusRing} ${
                 category === cat
-                  ? "bg-white text-neutral-950"
-                  : "text-neutral-400 hover:bg-white/8 hover:text-neutral-100"
+                  ? (dark ? "bg-white text-neutral-950" : "bg-foreground text-background")
+                  : (dark ? "text-neutral-400 hover:bg-white/8 hover:text-neutral-100" : "text-muted-foreground hover:bg-accent hover:text-foreground")
               }`}
             >
               {cat || "推荐"}
@@ -253,23 +269,27 @@ export function SkillPicker({ open, onClose, onPick, outputType, currentId, kind
         {/* 卡片栅格 */}
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 sm:p-5">
           {visibleRows === null ? (
-            <div className="flex h-full items-center justify-center text-neutral-500" role="status" aria-live="polite">
+            <div className={`flex h-full items-center justify-center ${dark ? "text-neutral-500" : "text-muted-foreground"}`} role="status" aria-live="polite">
               <Loader2 className="h-5 w-5 animate-spin" />
               <span className="sr-only">正在加载技能</span>
             </div>
           ) : loadFailed ? (
-            <div className="flex h-full flex-col items-center justify-center gap-3 text-neutral-400" role="status">
+            <div className={`flex h-full flex-col items-center justify-center gap-3 ${dark ? "text-neutral-400" : "text-muted-foreground"}`} role="status">
               <p className="text-xs">技能加载失败，请检查网络后重试</p>
               <button
                 type="button"
-                className="min-h-11 rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs text-neutral-100 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60"
+                className={`min-h-11 rounded-lg border px-3 py-1.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 ${
+                  dark
+                    ? "border-white/15 bg-white/5 text-neutral-100 hover:bg-white/10 focus-visible:ring-cyan-400/60"
+                    : "border-border bg-background text-foreground hover:bg-accent focus-visible:ring-ring"
+                }`}
                 onClick={() => setRetryNonce((value) => value + 1)}
               >
                 重新加载
               </button>
             </div>
           ) : visibleRows.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center gap-2 text-neutral-400">
+            <div className={`flex h-full flex-col items-center justify-center gap-2 ${dark ? "text-neutral-400" : "text-muted-foreground"}`}>
               <Sparkles className="h-6 w-6" />
               <p className="text-xs">暂无匹配的技能</p>
             </div>
@@ -296,16 +316,16 @@ export function SkillPicker({ open, onClose, onPick, outputType, currentId, kind
                     title={guidanceSummary || undefined}
                     aria-label={accessibleSummary}
                     aria-pressed={selected}
-                    className={`group flex gap-3 rounded-xl border p-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 ${
+                    className={`group flex gap-3 rounded-xl border p-2.5 text-left transition-colors ${focusRing} ${
                       selected
-                        ? "border-white/35 bg-white/8 ring-1 ring-inset ring-white/20"
-                        : "border-white/8 bg-white/[0.03] hover:border-white/20 hover:bg-white/6"
+                        ? (dark ? "border-white/35 bg-white/8 ring-1 ring-inset ring-white/20" : "border-foreground/40 bg-accent ring-1 ring-inset ring-foreground/15")
+                        : (dark ? "border-white/8 bg-white/[0.03] hover:border-white/20 hover:bg-white/6" : "border-border bg-card hover:border-foreground/25 hover:bg-accent/60")
                     }`}
                   >
                     {/* 无封面时整块不渲染:一排空灰盒比没有图更碍眼,让文字占满卡片。
                         模态角标随之落到底部信息行,信息不丢。 */}
                     {s.coverUrl && (
-                      <span className="relative h-[92px] w-[132px] shrink-0 overflow-hidden rounded-lg bg-neutral-800 max-[360px]:h-[76px] max-[360px]:w-[104px]">
+                      <span className={`relative h-[92px] w-[132px] shrink-0 overflow-hidden rounded-lg max-[360px]:h-[76px] max-[360px]:w-[104px] ${dark ? "bg-neutral-800" : "bg-muted"}`}>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img src={s.coverUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
                         <span className="absolute right-1.5 top-1.5 rounded bg-black/60 px-1 text-[10px] leading-4 text-white/90 backdrop-blur-sm">
@@ -315,16 +335,16 @@ export function SkillPicker({ open, onClose, onPick, outputType, currentId, kind
                     )}
                     <span className="flex min-w-0 flex-1 flex-col py-0.5">
                       <span className="flex min-w-0 items-center gap-2">
-                        <span className="truncate text-[13px] font-semibold text-neutral-50">{s.title}</span>
-                        {selected && <Check aria-hidden className="h-3.5 w-3.5 shrink-0 text-neutral-100" />}
+                        <span className={`truncate text-[13px] font-semibold ${dark ? "text-neutral-50" : "text-foreground"}`}>{s.title}</span>
+                        {selected && <Check aria-hidden className={`h-3.5 w-3.5 shrink-0 ${dark ? "text-neutral-100" : "text-foreground"}`} />}
                       </span>
-                      <span className="mt-1 line-clamp-2 text-xs leading-5 text-neutral-400">{s.description}</span>
+                      <span className={`mt-1 line-clamp-2 text-xs leading-5 ${dark ? "text-neutral-400" : "text-muted-foreground"}`}>{s.description}</span>
                       {s.usageScenario && (
-                        <span className="mt-0.5 line-clamp-1 text-[11px] leading-4 text-neutral-400">
+                        <span className={`mt-0.5 line-clamp-1 text-[11px] leading-4 ${dark ? "text-neutral-400" : "text-muted-foreground"}`}>
                           适用：{s.usageScenario}
                         </span>
                       )}
-                      <span className="mt-auto flex items-center gap-1.5 pt-2 text-[11px] text-neutral-400">
+                      <span className={`mt-auto flex items-center gap-1.5 pt-2 text-[11px] ${dark ? "text-neutral-400" : "text-muted-foreground"}`}>
                         {!s.coverUrl && (
                           <>
                             <span>{outputLabel}</span>

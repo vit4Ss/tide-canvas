@@ -2,6 +2,7 @@
 
 import { useId, useMemo, type CSSProperties } from "react";
 import { skillInputFields } from "@/lib/skill-api";
+import { PopoverSelect } from "@/components/shared/popover-select";
 import type { SkillInputSchema } from "@/types/skill";
 import styles from "./skill-run-panel.module.css";
 
@@ -60,24 +61,20 @@ export function SkillInputFields({
                 <span>{field.description || "启用"}</span>
               </span>
             ) : field.type === "select" ? (
-              <select
-                id={id}
+              <PopoverSelect
                 value={typeof value === "string" || typeof value === "number" ? String(value) : ""}
-                disabled={disabled}
-                aria-invalid={!!error}
-                aria-describedby={error ? errorId : undefined}
-                onChange={(event) => {
-                  const picked = options.find((option) => String(option.value) === event.target.value);
-                  onChange(field.key, picked?.value ?? event.target.value);
+                options={[
+                  { value: "", label: "请选择" },
+                  ...options.map((option) => ({ value: String(option.value), label: option.label })),
+                ]}
+                onChange={(picked) => {
+                  const hit = options.find((option) => String(option.value) === picked);
+                  onChange(field.key, hit?.value ?? picked);
                 }}
-              >
-                <option value="">请选择</option>
-                {options.map((option) => (
-                  <option key={String(option.value)} value={String(option.value)}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+                label={field.label}
+                disabled={disabled}
+                className="min-h-9 w-full px-2.5 py-1.5 text-xs"
+              />
             ) : field.type === "textarea" ? (
               <textarea
                 id={id}
