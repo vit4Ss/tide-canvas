@@ -4,6 +4,7 @@ import {
   canvasLaunchCanSubmit,
   canvasLaunchKindFor,
   canvasLaunchNeedsDirectModel,
+  canvasLauncherAllowsDirectModel,
 } from "./canvas-launch-policy.ts";
 
 test("only a launch without Skill requires a direct model", () => {
@@ -20,4 +21,13 @@ test("only a launch without Skill requires a direct model", () => {
 test("legacy workflow Skills use the agent handoff", () => {
   assert.equal(canvasLaunchKindFor({ kind: "workflow" }), "agent");
   assert.equal(canvasLaunchNeedsDirectModel({ kind: "workflow" }), false);
+});
+
+test("the project launcher only exposes explicit video models for direct generation", () => {
+  assert.equal(canvasLauncherAllowsDirectModel({ type: "video" }), true);
+  assert.equal(canvasLauncherAllowsDirectModel({ type: "image" }), false);
+  assert.equal(canvasLauncherAllowsDirectModel({ type: "audio" }), false);
+  assert.equal(canvasLauncherAllowsDirectModel({ type: "text" }), false);
+  assert.equal(canvasLauncherAllowsDirectModel({}), false);
+  assert.equal(canvasLauncherAllowsDirectModel(null), false);
 });

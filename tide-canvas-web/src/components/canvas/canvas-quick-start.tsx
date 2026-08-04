@@ -31,7 +31,12 @@ import {
   type CanvasLaunchPlan,
 } from "@/lib/canvas-launch";
 import { requestCanvasSave } from "@/lib/canvas-save";
-import { canvasLaunchCanSubmit, canvasLaunchKindFor, canvasLaunchNeedsDirectModel } from "@/lib/canvas-launch-policy";
+import {
+  canvasLaunchCanSubmit,
+  canvasLaunchKindFor,
+  canvasLauncherAllowsDirectModel,
+  canvasLaunchNeedsDirectModel,
+} from "@/lib/canvas-launch-policy";
 import {
   CHARACTER_NODE_TYPE,
   isConceptCanvasNodeType,
@@ -572,7 +577,7 @@ export function CanvasQuickStart({
   }, [referenceSignature, variant]);
   const { generate } = useAiGeneration();
   const [expanded, setExpanded] = useState(true);
-  const [mode, setMode] = useState<QuickStartMode>("image");
+  const [mode, setMode] = useState<QuickStartMode>(isLauncher ? "video" : "image");
   const [prompt, setPrompt] = useState("");
   const [models, setModels] = useState<AiModelVO[]>([]);
   const [modelsLoaded, setModelsLoaded] = useState(false);
@@ -791,11 +796,12 @@ export function CanvasQuickStart({
     if (variant !== "launcher" || !initialPlan || initialPlanAppliedRef.current) return;
     initialPlanAppliedRef.current = true;
     const frame = requestAnimationFrame(() => {
-      setMode(initialPlan.mode);
+      const initialMode = initialPlan.selectedSkill ? initialPlan.mode : "video";
+      setMode(initialMode);
       setPrompt(initialPlan.prompt);
       setAttachments(initialPlan.attachments);
       setSelectedSkill(initialPlan.selectedSkill);
-      setSelectedModelId(initialPlan.modelId);
+      setSelectedModelId(initialMode === initialPlan.mode ? initialPlan.modelId : "");
       setCanvasMode(initialPlan.canvasMode);
       setImageRatio(initialPlan.imageRatio);
       setImageQuality(initialPlan.imageQuality);
@@ -854,6 +860,7 @@ export function CanvasQuickStart({
   const selectableModels = models.filter((model) => {
     const candidateMode = quickModeFromModel(model);
     if (!candidateMode) return false;
+    if (isLauncher && !canvasLauncherAllowsDirectModel(model)) return false;
     if (candidateMode === "image" && (videoRefCount > 0 || audioRefCount > 0)) return false;
     const candidateHandler = preferredHandlerFor(candidateMode);
     return supportsHandler(model, candidateHandler)
@@ -862,6 +869,9 @@ export function CanvasQuickStart({
   const selectedModel = compatibleModels.find((model) => model.modelId === selectedModelId)
     ?? compatibleModels.find((model) => model.modelId === selectedSkill?.modelId)
     ?? compatibleModels[0];
+  const directModelId = isLauncher && !canvasLauncherAllowsDirectModel(selectedModel)
+    ? ""
+    : selectedModel?.modelId ?? "";
   const modelConfig = safeModelConfig(selectedModel);
 
   const ratioOptions = mode === "image"
@@ -892,6 +902,15 @@ export function CanvasQuickStart({
     setOptimizing(false);
   };
 
+  const clearSelectedSkill = () => {
+    setSelectedSkill(null);
+    if (!isLauncher) return;
+    setMode("video");
+    setSelectedModelId("");
+    setRefMenuOpen(false);
+    cancelOptimization();
+  };
+
   const selectModel = (modelId: string) => {
     if (uploading) {
       toast.info("参考素材上传完成后再切换模型");
@@ -907,6 +926,10 @@ export function CanvasQuickStart({
       setSelectedSkill(null);
     }
     const nextModel = models.find((model) => model.modelId === modelId);
+    if (isLauncher && !canvasLauncherAllowsDirectModel(nextModel)) {
+      toast.info("画布入口仅支持视频模型");
+      return;
+    }
     const nextMode = quickModeFromModel(nextModel);
     if (nextMode && nextMode !== mode) {
       setMode(nextMode);
@@ -1226,6 +1249,10 @@ export function CanvasQuickStart({
         toast.error(modelsLoaded ? "没有支持当前生成方式的模型" : "模型正在加载");
         return;
       }
+      if (isLauncher && !canvasLauncherAllowsDirectModel(selectedModel)) {
+        toast.error("画布入口请选择视频模型");
+        return;
+      }
       if (mode === "image" && usedRefs.some((ref) => ref.kind === "video" || ref.kind === "audio")) {
         toast.info("图片模型仅支持图片参考，请切换视频模型或移除视频/音频引用");
         return;
@@ -1273,7 +1300,7 @@ export function CanvasQuickStart({
           launchKind: canvasLaunchKindFor(selectedSkill),
           prompt: trimmedPrompt,
           mode,
-          modelId: hasSkillSelection ? "" : selectedModel?.modelId ?? "",
+          modelId: hasSkillSelection ? "" : directModelId,
           selectedSkill,
           attachments,
           canvasMode,
@@ -1753,14 +1780,14 @@ export function CanvasQuickStart({
                 : !modelsLoaded
                   ? <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin text-neutral-400" />
                   : selectableModels.length === 0
-                    ? <span className={styles.unavailable}>暂无可用模型</span>
+                    ? <span className={styles.unavailable}>{isLauncher ? "暂无可用视频模型" : "暂无可用模型"}</span>
                     : (
                       <ModelPicker
                         models={selectableModels}
                         value={selectedModel?.modelId ?? ""}
                         onChange={selectModel}
-                        triggerLabel="模型"
-                        showType
+                        triggerLabel={isLauncher ? "视频模型" : "模型"}
+                        showType={!isLauncher}
                         tone={isLauncher ? "dark" : "default"}
                       />
                     )}
@@ -1784,7 +1811,7 @@ export function CanvasQuickStart({
                   type="button"
                   className={styles.clearSkill}
                   aria-label={`移除 Skill：${selectedSkill.title}`}
-                  onClick={() => setSelectedSkill(null)}
+                  onClick={clearSelectedSkill}
                 >
                   <X aria-hidden className="h-3 w-3" />
                 </button>
@@ -1822,6 +1849,14 @@ export function CanvasQuickStart({
               </>
               ) : (
               <>
+                <QuickSelect
+                  label="清晰度"
+                  value={activeResolution}
+                  options={resolutionOptions}
+                  onChange={setVideoResolution}
+                  icon={<ScanLine className="h-3.5 w-3.5" />}
+                  dark={isLauncher}
+                />
                 <QuickSelect
                   label="时长"
                   value={String(activeDuration)}
@@ -1887,7 +1922,7 @@ export function CanvasQuickStart({
               type="button"
               className={styles.submitButton}
               onClick={() => { void submit(); }}
-              disabled={launchBlocked || submitting || uploading || optimizing || !prompt.trim() || (!isLauncher && !projectId) || !canvasLaunchCanSubmit(selectedSkill, selectedModel?.modelId) || (!isLauncher && hasSkillSelection)}
+              disabled={launchBlocked || submitting || uploading || optimizing || !prompt.trim() || (!isLauncher && !projectId) || !canvasLaunchCanSubmit(selectedSkill, directModelId) || (!isLauncher && hasSkillSelection)}
               title={launchBlocked ? launchBlockedReason : submitting ? isLauncher ? "正在创建新画布" : "正在提交生成" : submitActionLabel}
               aria-label={launchBlocked ? launchBlockedReason : submitting ? isLauncher ? "正在创建新画布" : "正在提交生成" : submitActionLabel}
               aria-busy={submitting}

@@ -276,6 +276,7 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
       >
         <ModelGlyph icon={selected?.icon} className="h-3.5 w-3.5" />
         <span className="min-w-0 max-w-[134px] truncate font-normal">{triggerLabel || selected?.name || "选择模型"}</span>
+        <span className="sr-only">当前模型：{selected?.name || "未选择"}</span>
       </span>
     );
   }
@@ -303,7 +304,7 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
           id={panelId}
           ref={panelRef}
           role="listbox"
-          aria-label="选择模型"
+          aria-label={triggerLabel ? `选择${triggerLabel}` : "选择模型"}
           className={`fixed z-[90] w-[360px] max-w-[calc(100vw-24px)] rounded-xl border p-1.5 text-left ${
             tone === "dark"
               ? "dark border-white/12 bg-[#1c1c20] text-white shadow-[0_16px_44px_rgba(0,0,0,0.34)]"
