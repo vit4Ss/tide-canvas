@@ -41,7 +41,7 @@ import { ADMIN_MODULES } from "@/components/admin/admin-sidebar";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminUsersApi } from "@/lib/admin-users-api";
 import { confirmDialog } from "@/components/shared/confirm";
-import { hueSwatch } from "@/lib/swatch";
+import { defaultAvatar, isPlaceholderEmail } from "@/lib/default-avatar";
 import type {
   AdminUserUpdateDTO,
   AdminUserVO,
@@ -51,12 +51,6 @@ import type {
 
 /** Status-pill tone keys (mirror the liuguang `.tag2.<tone>` classes). */
 type PillTone = "green" | "gray" | "amber" | "red" | "blue";
-
-/** Deterministic 2-tone avatar gradient from a name. */
-function avatarSwatch(name: string): string {
-  // 浅色工作台：柔和彩色头像（同 adminSwatch）
-  return hueSwatch(name);
-}
 
 /* role / status maps (User.Role 0 user / 1 vip / 9 admin; Status 0/1). */
 const ROLE_LABEL: Record<number, string> = { 0: "普通用户", 1: "VIP", 9: "管理员" };
@@ -522,30 +516,34 @@ function AdminUsersPageInner() {
   const userColumns: Column<AdminUserVO>[] = [
     {
       header: "用户",
-      width: "26%",
-      cell: (u) => (
-        <div className="cellflex">
-          <span
-            className="av"
-            style={{ background: u.avatar ? `center / cover no-repeat url("${u.avatar}")` : avatarSwatch(u.nickname || u.username || u.id) }}
-          >
-            {/* 无头像时渲染首字符，色块不再是空心圆 */}
-            {!u.avatar && (u.nickname || u.username || "U").trim().charAt(0).toUpperCase()}
-          </span>
-          <div>
-            <div className="strong">{u.nickname || u.username || `用户 ${u.id}`}</div>
-            <div className="muted mono" style={{ fontSize: 11.5 }}>
-              {u.email || u.phone || u.id}
+      width: "22%",
+      cell: (u) => {
+        // 身份格层级：运营认人靠备注，备注提升为主显示；占位邮箱（noemail.internal）
+        // 不是信息不展示；昵称==用户名（本地账号默认同值）时第二行不再重复。
+        const name = u.nickname || u.username || `用户 ${u.id}`;
+        const realEmail = isPlaceholderEmail(u.email) ? "" : u.email || "";
+        const sub = u.remark
+          ? [name, realEmail || u.phone || ""].filter(Boolean).join(" · ")
+          : realEmail || u.phone || (u.nickname && u.nickname !== u.username ? `账号 ${u.username}` : "");
+        return (
+          <div className="cellflex">
+            <span
+              className="av"
+              style={{
+                background: `center / cover no-repeat url("${u.avatar || defaultAvatar(u.id)}")`,
+              }}
+            />
+            <div>
+              <div className="strong">{u.remark || name}</div>
+              {sub ? (
+                <div className="muted mono" style={{ fontSize: 11.5 }} title={sub}>
+                  {sub}
+                </div>
+              ) : null}
             </div>
-            {/* 运营备注并入身份格第三行:不占独立列,避免把表格挤变形 */}
-            {u.remark ? (
-              <div className="muted" style={{ fontSize: 11.5 }} title={u.remark}>
-                备注：{u.remark}
-              </div>
-            ) : null}
           </div>
-        </div>
-      ),
+        );
+      },
     },
     {
       header: "角色",
@@ -558,7 +556,7 @@ function AdminUsersPageInner() {
       width: "8%",
       cell: (u) => (
         <StatusPill tone={u.vipLevel >= 1 ? "blue" : "gray"}>
-          {u.planName || (u.vipLevel >= 1 ? `VIP ${u.vipLevel}` : "FREE")}
+          {u.planName || (u.vipLevel >= 1 ? `VIP ${u.vipLevel}` : "免费")}
         </StatusPill>
       ),
     },
@@ -570,13 +568,18 @@ function AdminUsersPageInner() {
       cell: (u) => fmtNum(u.points),
     },
     {
-      header: "API 额度",
-      width: "7%",
+      header: "作品 / 项目",
+      width: "10%",
       align: "right",
       className: "mono",
-      cell: (u) => fmtNum(u.apiQuota),
+      cell: (u) => (
+        <span>
+          {fmtNum(u.postCount)} <span className="muted">作品</span>
+          <span className="muted"> / </span>
+          {fmtNum(u.projectCount)} <span className="muted">项目</span>
+        </span>
+      ),
     },
-    { header: "作品 / 项目", width: "8%", className: "mono", cell: (u) => `${fmtNum(u.postCount)} / ${fmtNum(u.projectCount)}` },
     {
       // 最近登录单行呈现，保持整行节奏一致；注册时间收进 hover 提示，需要再看
       header: "最近登录",

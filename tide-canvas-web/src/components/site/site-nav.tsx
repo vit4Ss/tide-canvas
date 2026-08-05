@@ -31,7 +31,7 @@ import { billingApi } from "@/lib/billing-api";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { fmt } from "@/lib/utils";
-import { grayscaleSwatch } from "@/lib/swatch";
+import { defaultAvatar, isPlaceholderEmail } from "@/lib/default-avatar";
 import "./site-nav.css";
 
 interface NavItem {
@@ -75,14 +75,7 @@ function usePromoLive(): boolean {
   return live;
 }
 
-/* helpers ported from shell.js (FX.initials / FX.avatarGrad) */
-function initials(name: string): string {
-  const s = (name || "").trim();
-  return (s.slice(0, 2) || "U").toUpperCase();
-}
-function avatarGrad(seed: string): string {
-  return grayscaleSwatch(seed || "u");
-}
+/* 头像统一走 defaultAvatar 预置图（无头像用户按 id 稳定分配） */
 function planLabel(vipLevel?: number): string {
   switch (vipLevel) {
     case 1:
@@ -165,7 +158,7 @@ export default function SiteNav() {
   };
 
   const name = user ? user.nickname || user.username : "";
-  const grad = user ? avatarGrad(user.email || name) : "";
+  const avatarBg = user ? `center / cover no-repeat url("${user.avatar || defaultAvatar(user.id)}")` : "";
 
   return (
     <nav className="nav" id="nav" ref={navRef}>
@@ -234,22 +227,18 @@ export default function SiteNav() {
                   setOpen((v) => !v);
                 }}
               >
-                <span className="acct-av" style={{ background: grad }}>
-                  {initials(name)}
-                </span>
+                <span className="acct-av" style={{ background: avatarBg }} />
               </button>
 
               <div className="acct-menu" role="menu">
                 <div className="acct-head">
-                  <span className="acct-av lg" style={{ background: grad }}>
-                    {initials(name)}
-                  </span>
+                  <span className="acct-av lg" style={{ background: avatarBg }} />
                   <div className="acct-id">
                     <div className="acct-nm">
                       {name}
                       {isAdmin && <span className="acct-role">管理员</span>}
                     </div>
-                    <div className="acct-em">{user.email}</div>
+                    <div className="acct-em">{isPlaceholderEmail(user.email) ? "未绑定邮箱" : user.email}</div>
                   </div>
                 </div>
 

@@ -9,7 +9,8 @@ interface Props {
   models: AiModelVO[];
   value: string;
   onChange: (modelId: string) => void;
-  /** 紧凑入口使用固定触发文案；模型详情仍在 title 与弹层内完整呈现。 */
+  /** 触发器始终展示当前选中模型名（未显式选择时回落到列表首个，与弹层勾选一致）；
+      triggerLabel 仅用于无障碍文案与空列表兜底。 */
   triggerLabel?: string;
   /** 混合图片/视频模型时在选项旁显示类型，单类型节点选择器默认不显示。 */
   showType?: boolean;
@@ -264,7 +265,7 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
           className="flex h-8 max-w-[190px] items-center gap-1.5 rounded-lg px-2.5 text-[11px] text-neutral-800 transition-colors hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 dark:text-neutral-200 dark:hover:bg-white/8"
         >
           <ModelGlyph icon={selected.icon} className="h-3.5 w-3.5" />
-          <span className="min-w-0 max-w-[134px] truncate font-normal">{triggerLabel || selected.name || "选择模型"}</span>
+          <span className="min-w-0 max-w-[134px] truncate font-normal">{selected.name || triggerLabel || "选择模型"}</span>
         </button>
       );
     }
@@ -275,7 +276,7 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
         className="flex h-8 max-w-[190px] items-center gap-1.5 rounded-lg px-2.5 text-[11px] text-neutral-800 transition-colors hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 dark:text-neutral-200 dark:hover:bg-white/8"
       >
         <ModelGlyph icon={selected?.icon} className="h-3.5 w-3.5" />
-        <span className="min-w-0 max-w-[134px] truncate font-normal">{triggerLabel || selected?.name || "选择模型"}</span>
+        <span className="min-w-0 max-w-[134px] truncate font-normal">{selected?.name || triggerLabel || "选择模型"}</span>
         <span className="sr-only">当前模型：{selected?.name || "未选择"}</span>
       </span>
     );
@@ -295,7 +296,7 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
         className="flex h-8 max-w-[190px] items-center gap-1.5 rounded-lg px-2.5 text-[11px] text-neutral-700 transition-colors hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 dark:text-neutral-300 dark:hover:bg-white/8"
       >
         <ModelGlyph icon={selected?.icon} className="h-3.5 w-3.5" />
-        <span className="min-w-0 max-w-[134px] truncate font-normal">{triggerLabel || selected?.name || "选择模型"}</span>
+        <span className="min-w-0 max-w-[134px] truncate font-normal">{selected?.name || triggerLabel || "选择模型"}</span>
         <ChevronDown className={`h-3 w-3 shrink-0 text-neutral-400 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
 

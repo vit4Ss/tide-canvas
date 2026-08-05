@@ -41,7 +41,7 @@ import { pointsApi } from "@/lib/points-api";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { toast } from "@/components/shared/toast";
 import { fmt } from "@/lib/utils";
-import { grayscaleSwatch } from "@/lib/swatch";
+import { defaultAvatar } from "@/lib/default-avatar";
 import type { UserVO } from "@/types/user";
 import { OrdersPanel, PointsPanel } from "./ledger-panels";
 import "./account.css";
@@ -51,15 +51,6 @@ import "./account.css";
 /** 密码规则与登录页保持一致(≥8 位且含字母与数字)，避免此处设的密码在登录页被拒。
     用码点计数([...v])对齐后端 rune 计数，避免星芒面字符边界不一致。 */
 const isPwd = (v: string) => [...v].length >= 8 && /[a-zA-Z]/.test(v) && /\d/.test(v);
-
-function initials(name: string): string {
-  const s = (name || "").trim();
-  return (s.slice(0, 2) || "U").toUpperCase();
-}
-
-function avatarGrad(seed: string): string {
-  return grayscaleSwatch(seed || "u");
-}
 
 /** Stable FX-###### id, seeded from the real user id (falls back to email). */
 function displayId(user: UserVO): string {
@@ -409,7 +400,7 @@ export default function AccountPage() {
   const isAdmin = user.role === 9;
   const plan = planLabel(user.vipLevel);
   const isFree = !user.vipLevel; // 0 / undefined → 免费版
-  const grad = avatarGrad(user.email || name);
+  const avatarBg = `center / cover no-repeat url("${user.avatar || defaultAvatar(user.id)}")`;
   const joined = (user.createTime || "").slice(0, 7) || "—";
 
   const onLogout = async () => {
@@ -440,9 +431,7 @@ export default function AccountPage() {
           {/* profile header */}
           <div className="pf-card reveal-scale in">
             <div className="pf-glow" />
-            <div className="pf-av" style={{ background: grad }}>
-              {initials(name)}
-            </div>
+            <div className="pf-av" style={{ background: avatarBg }} />
             <div className="pf-id">
               <div className="pf-name">
                 <span>{name}</span>

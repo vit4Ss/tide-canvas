@@ -1097,8 +1097,9 @@ tr:hover .rowacts,
   color: var(--text);
   background: var(--panel);
 }
+/* 危险操作（删除/封禁/驳回）常态淡红可辨识，hover 加深——而不是常态灰、hover 才红 */
 .rowacts button.danger {
-  color: var(--text-faint);
+  color: var(--danger);
 }
 .rowacts button.danger:hover {
   color: var(--danger);
@@ -1594,20 +1595,13 @@ tr:hover .rowacts,
 .genr-select {
   padding-right: 6px;
 }
+/* 分区小标题：左对齐小字重题（旧版为居中双线分隔符，与后台 Linear 风词汇不符） */
 .genr-sec-t {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
-  color: var(--text);
-  margin: 0 0 12px;
-}
-.genr-sec-t::before,
-.genr-sec-t::after {
-  content: "";
-  flex: 1;
-  border-top: 1px solid var(--border-weak);
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+  margin: 0 0 10px;
 }
 .genr-media video,
 .genr-media img {
@@ -1733,6 +1727,14 @@ tr:hover .rowacts,
 .genr-tech dd.mono {
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 12.5px;
+}
+/* 原始报文折叠头：可选中态 + hover 反馈 */
+.adm-drawer-body details > summary {
+  user-select: none;
+  transition: color 0.12s;
+}
+.adm-drawer-body details > summary:hover {
+  color: var(--text);
 }
 
 /* form */

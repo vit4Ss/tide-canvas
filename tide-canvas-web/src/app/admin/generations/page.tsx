@@ -56,6 +56,7 @@ const SCENE_LABEL: Record<string, string> = {
   optimize: "提示词优化",
   compact: "对话压缩",
   "blog-polish": "博客润色",
+  skill: "技能",
 };
 
 function sceneLabel(scene: string): string {
@@ -282,16 +283,31 @@ function GenerationDetailDrawer({ id, onClose }: { id: string; onClose: () => vo
       {error ? (
         <AdminAlert tone="error" title="详情加载失败">{error}</AdminAlert>
       ) : !d ? (
-        <TableSkeleton />
+        <div aria-busy="true">
+          <span className="sr-only" role="status">正在加载详情</span>
+          <div className="skel" style={{ height: 14, width: "38%", borderRadius: 4 }} />
+          <div className="skel" style={{ height: 200, borderRadius: 8, marginTop: 16 }} />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginTop: 16 }}>
+            {[0, 1, 2].map((i) => (
+              <div className="skel" key={i} style={{ height: 52, borderRadius: 8 }} />
+            ))}
+          </div>
+          <div className="skel" style={{ height: 14, width: "24%", borderRadius: 4, marginTop: 16 }} />
+          <div className="skel" style={{ height: 88, borderRadius: 8, marginTop: 10 }} />
+        </div>
       ) : (
         <>
-          {/* 头部摘要:类型 + 模型 + 时间 */}
+          {/* 头部摘要:场景 pill + 模型 + 时间·用户 */}
           <div>
-            <div className="muted" style={{ fontSize: 12.5 }}>{sceneLabel(d.scene)}生成</div>
-            <div className="strong" style={{ fontSize: 15, marginTop: 2, wordBreak: "break-all" }}>
-              {d.modelName || d.model || "—"}
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <StatusPill tone={sceneTone(d.scene)}>{sceneLabel(d.scene)}</StatusPill>
+              <span className="strong" style={{ fontSize: 15, wordBreak: "break-all" }}>
+                {d.modelName || d.model || "—"}
+              </span>
             </div>
-            <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>{fmtTime(d.createTime)}</div>
+            <div className="muted" style={{ fontSize: 12.5, marginTop: 6 }}>
+              {fmtTime(d.createTime)} · {d.username || d.userId || "—"}
+            </div>
           </div>
 
           <section>
@@ -469,6 +485,9 @@ export default function AdminGenerationsPage() {
       },
       {
         header: "模型",
+        /* 固定 200：模型名最长 ~160px("Nano Banana 2 (4K)")，不设宽时 fixed 布局
+           把剩余空间均分给模型/Prompt 两列，模型列留下一大块空白死区 */
+        width: 200,
         className: "strong",
         cell: (r) => <Trunc text={r.modelName || r.model} />,
       },
@@ -495,6 +514,7 @@ export default function AdminGenerationsPage() {
       {
         header: "耗时",
         width: 88,
+        align: "right",
         className: "mono muted",
         cell: (r) => dur(r.durationMs),
       },
@@ -532,7 +552,7 @@ export default function AdminGenerationsPage() {
     <div className="adm-page">
       <Panel
         title="生成记录"
-        sub={`共 ${total.toLocaleString()} 条 · 查看每一次模型调用,排查失败原因,审计积分消耗`}
+        sub={loading && !rows.length ? "正在加载记录…" : `共 ${total.toLocaleString()} 条记录`}
         tools={
           <>
             <div className="adm-search" role="search">
@@ -544,43 +564,6 @@ export default function AdminGenerationsPage() {
                 onChange={(e) => applyFilter(setKeyword)(e.target.value)}
               />
             </div>
-            {/* 类型/状态用下拉而非 chips:7+3 个 chip 会把工具栏撑换行(实测 1920
-                下刷新按钮掉行),下拉与参考设计同形态 */}
-            <select
-              className="genr-select"
-              aria-label="类型筛选"
-              value={sceneOpt}
-              onChange={(e) => applyFilter(setSceneOpt)(e.target.value)}
-            >
-              {SCENE_OPTIONS.map((o) => (
-                <option key={o} value={o}>{o === "全部" ? "类型：全部" : o}</option>
-              ))}
-            </select>
-            <select
-              className="genr-select"
-              aria-label="状态筛选"
-              value={statusOpt}
-              onChange={(e) => applyFilter(setStatusOpt)(e.target.value)}
-            >
-              {STATUS_OPTIONS.map((o) => (
-                <option key={o} value={o}>{o === "全部" ? "状态：全部" : o}</option>
-              ))}
-            </select>
-            <input
-              type="date"
-              className="genr-date"
-              aria-label="开始日期"
-              value={startDate}
-              onChange={(e) => applyFilter(setStartDate)(e.target.value)}
-            />
-            <span className="muted" style={{ fontSize: 12 }}>→</span>
-            <input
-              type="date"
-              className="genr-date"
-              aria-label="结束日期"
-              value={endDate}
-              onChange={(e) => applyFilter(setEndDate)(e.target.value)}
-            />
             <button type="button" className="adm-btn ghost" onClick={() => run()}>
               <RefreshCw aria-hidden size={15} />
               刷新
@@ -588,6 +571,45 @@ export default function AdminGenerationsPage() {
           </>
         }
       >
+        {/* 筛选行：与表格左缘对齐（adm-filter-row 惯例，同用户管理页），
+            避免全部挤进头部工具栏导致窄视口换行掉行 */}
+        <div className="adm-filter-row">
+          <select
+            className="genr-select"
+            aria-label="类型筛选"
+            value={sceneOpt}
+            onChange={(e) => applyFilter(setSceneOpt)(e.target.value)}
+          >
+            {SCENE_OPTIONS.map((o) => (
+              <option key={o} value={o}>{o === "全部" ? "类型：全部" : o}</option>
+            ))}
+          </select>
+          <select
+            className="genr-select"
+            aria-label="状态筛选"
+            value={statusOpt}
+            onChange={(e) => applyFilter(setStatusOpt)(e.target.value)}
+          >
+            {STATUS_OPTIONS.map((o) => (
+              <option key={o} value={o}>{o === "全部" ? "状态：全部" : o}</option>
+            ))}
+          </select>
+          <input
+            type="date"
+            className="genr-date"
+            aria-label="开始日期"
+            value={startDate}
+            onChange={(e) => applyFilter(setStartDate)(e.target.value)}
+          />
+          <span className="muted" style={{ fontSize: 12 }}>至</span>
+          <input
+            type="date"
+            className="genr-date"
+            aria-label="结束日期"
+            value={endDate}
+            onChange={(e) => applyFilter(setEndDate)(e.target.value)}
+          />
+        </div>
         {loading ? (
           <TableSkeleton />
         ) : error ? (
