@@ -42,6 +42,7 @@ import { ConfigurableNodeToolbar, type ConfigurableNodeToolbarAction } from "./s
 import {
   PortraitFeaturePanel,
   preloadExpressionPreviewSprite,
+  preloadMakeupPresetSprites,
   type PortraitFeatureGenerateRequest,
   type PortraitFeaturePanelMode,
 } from "./shared/portrait-feature-panel";
@@ -1074,6 +1075,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
 
   const togglePortraitPanel = useCallback((mode: PortraitFeaturePanelMode) => {
     if (mode === "expression") preloadExpressionPreviewSprite();
+    else if (mode === "makeup") preloadMakeupPresetSprites();
     setAngleOpen(false);
     setLightOpen(false);
     setGridGenMenuOpen(false);
@@ -1593,7 +1595,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       key: "image.makeupAdjust",
       group: "creative",
       content: (
-        <button onMouseDown={stop} onClick={(e) => { stop(e); togglePortraitPanel("makeup"); }} className={`flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 ${activePortraitPanel === "makeup" ? "bg-neutral-100 dark:bg-neutral-800" : "hover:bg-neutral-100 dark:hover:bg-neutral-800"}`}>
+        <button onPointerEnter={preloadMakeupPresetSprites} onFocus={preloadMakeupPresetSprites} onMouseDown={stop} onClick={(e) => { stop(e); togglePortraitPanel("makeup"); }} className={`flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 ${activePortraitPanel === "makeup" ? "bg-neutral-100 dark:bg-neutral-800" : "hover:bg-neutral-100 dark:hover:bg-neutral-800"}`}>
           <WandSparkles className="h-4 w-4" /> 妆容调节
         </button>
       ),

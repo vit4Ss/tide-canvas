@@ -39,21 +39,27 @@ interface MakeupPreset {
   spriteIndex: number;
 }
 
-const MAKEUP_PRESET_SPRITE = "/assets/canvas/makeup-presets-v1.png";
-const MAKEUP_COSTUME_PRESET_SPRITE = "/assets/canvas/makeup-costume-presets-v1.png";
-const MAKEUP_STORY_PRESET_SPRITE = "/assets/canvas/makeup-story-presets-v1.png";
-const EXPRESSION_PREVIEW_SPRITE = "/assets/canvas/expression-preview-v1.png";
-let expressionPreviewPreloader: HTMLImageElement | null = null;
+const MAKEUP_PRESET_SPRITE = "/assets/canvas/makeup-presets-v1.webp";
+const MAKEUP_COSTUME_PRESET_SPRITE = "/assets/canvas/makeup-costume-presets-v1.webp";
+const MAKEUP_STORY_PRESET_SPRITE = "/assets/canvas/makeup-story-presets-v1.webp";
+const EXPRESSION_PREVIEW_SPRITE = "/assets/canvas/expression-preview-v1.webp";
+const spritePreloaders = new Map<string, HTMLImageElement>();
+
+function preloadSprite(src: string) {
+  if (typeof window === "undefined") return;
+  let preloader = spritePreloaders.get(src);
+  if (!preloader) {
+    preloader = new window.Image();
+    preloader.decoding = "async";
+    preloader.fetchPriority = "high";
+    preloader.src = src;
+    spritePreloaders.set(src, preloader);
+  }
+  void preloader.decode?.().catch(() => undefined);
+}
 
 export function preloadExpressionPreviewSprite() {
-  if (typeof window === "undefined") return;
-  if (!expressionPreviewPreloader) {
-    expressionPreviewPreloader = new window.Image();
-    expressionPreviewPreloader.decoding = "async";
-    expressionPreviewPreloader.fetchPriority = "high";
-    expressionPreviewPreloader.src = EXPRESSION_PREVIEW_SPRITE;
-  }
-  void expressionPreviewPreloader.decode?.().catch(() => undefined);
+  preloadSprite(EXPRESSION_PREVIEW_SPRITE);
 }
 
 const MAKEUP_GROUPS: Array<{
@@ -112,6 +118,10 @@ const MAKEUP_GROUPS: Array<{
     ],
   },
 ];
+
+export function preloadMakeupPresetSprites() {
+  for (const group of MAKEUP_GROUPS) preloadSprite(group.sprite);
+}
 
 const EXPRESSIONS = [
   { key: "joy", label: "喜", prompt: "喜悦、自然微笑" },
@@ -209,6 +219,7 @@ export function PortraitFeaturePanel({
 
   useEffect(() => {
     if (mode === "expression") preloadExpressionPreviewSprite();
+    else if (mode === "makeup") preloadMakeupPresetSprites();
   }, [mode]);
 
   const selectExpressionCell = (emotionIndex: number, strengthValue: number) => {
