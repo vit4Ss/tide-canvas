@@ -406,14 +406,14 @@ export function PortraitFeaturePanel({
               onClick={() => makeupInputRef.current?.click()}
               title={allowReferenceUpload ? "上传妆容参考图" : "当前模型只支持一张参考图，无法使用自定义参考妆"}
               aria-label={allowReferenceUpload ? "上传参考，自定义妆容" : "当前模型不支持自定义妆容参考"}
-              className={`relative flex aspect-square flex-col items-center justify-center overflow-hidden rounded-[8px] border bg-white text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${makeupPreset === "custom" ? "border-neutral-400 ring-1 ring-black/15 dark:border-white/50" : "border-neutral-200 hover:border-neutral-400 dark:border-white/12 dark:bg-white/[.03] dark:hover:border-white/30"}`}
+              className={`relative block h-0 w-full pt-[100%] overflow-hidden rounded-[8px] border bg-white text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${makeupPreset === "custom" ? "border-neutral-400 ring-1 ring-black/15 dark:border-white/50" : "border-neutral-200 hover:border-neutral-400 dark:border-white/12 dark:bg-white/[.03] dark:hover:border-white/30"}`}
             >
               {makeupReference ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={ossDisplayUrl(makeupReference, 256)} alt="自定义妆容参考" className="absolute inset-0 h-full w-full object-cover" />
               ) : null}
               {makeupReference ? <span className="absolute inset-0 bg-gradient-to-t from-black/65 via-transparent to-transparent" /> : null}
-              <span className={`relative z-[1] flex flex-col items-center ${makeupReference ? "mt-auto pb-1.5 text-white" : "text-neutral-500 dark:text-white/60"}`}>
+              <span className={`absolute inset-0 z-[1] flex flex-col items-center ${makeupReference ? "justify-end pb-1.5 text-white" : "justify-center text-neutral-500 dark:text-white/60"}`}>
                 {uploadingReference ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
                 <span className="mt-1 text-[10px] leading-none opacity-70">上传参考</span>
                 <span className="mt-1 text-[11px] font-medium leading-none">自定义妆容</span>
@@ -440,7 +440,7 @@ export function PortraitFeaturePanel({
                   onClick={() => setMakeupPreset(preset.id)}
                   aria-pressed={selected}
                   aria-label={preset.label}
-                  className={`relative aspect-square overflow-hidden rounded-[8px] border bg-neutral-100 text-left transition-all ${selected ? "border-neutral-400 ring-1 ring-black/15 dark:border-white/50" : "border-neutral-200 hover:border-neutral-400 dark:border-white/12 dark:hover:border-white/30"}`}
+                  className={`relative block h-0 w-full pt-[100%] overflow-hidden rounded-[8px] border bg-neutral-100 text-left transition-all ${selected ? "border-neutral-400 ring-1 ring-black/15 dark:border-white/50" : "border-neutral-200 hover:border-neutral-400 dark:border-white/12 dark:hover:border-white/30"}`}
                 >
                   <span
                     aria-hidden="true"
