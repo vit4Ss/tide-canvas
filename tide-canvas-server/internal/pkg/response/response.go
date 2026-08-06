@@ -51,6 +51,7 @@ const (
 	CodeHandlerNotFound   = 2003
 	CodeContextLimit      = 2004
 	CodeToolDisabled      = 2005
+	CodeConcurrentLimit   = 2006
 
 	CodeFileTypeNotAllowed  = 3001
 	CodeFileSizeExceeded    = 3002

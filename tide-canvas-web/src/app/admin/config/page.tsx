@@ -97,6 +97,10 @@ const BOOL_KEYS: Record<string, { on: string; off: string }> = {
   "auth.registerClosed": { on: "已关闭注册：新用户无法自助注册", off: "开放注册：用户可自助注册" },
 };
 
+const NUMBER_KEYS: Record<string, { min: number; max: number }> = {
+  "ai.userConcurrentLimit": { min: 1, max: 100 },
+};
+
 /* 基线键（页面/策略消费方仍在读，后端同样拒绝删除）——不展示删除入口。
    与 g5_config.go 的 baselineConfigKeys 保持一致。 */
 const BASELINE_KEYS = new Set([
@@ -108,6 +112,7 @@ const BASELINE_KEYS = new Set([
   "llm.contextTokenLimit",
   "llm.compressAtTokens",
   "market.typeOrder",
+  "ai.userConcurrentLimit",
   "points.checkinDaily",
   "points.checkinMonthlyCap",
   "points.inviteReward",
@@ -595,9 +600,10 @@ export default function AdminConfigPage() {
                       const managed = MANAGED_ELSEWHERE[it.configKey];
                       const isFooterLinks = it.configKey === "site.footerLinks";
                       const boolCfg = BOOL_KEYS[it.configKey];
+                      const numberCfg = NUMBER_KEYS[it.configKey];
                       const secret = /secret|password|access[_-]?key|api[_-]?key/i.test(it.configKey);
                       const block =
-                        !managed && !isFooterLinks && !boolCfg && !secret && isBlockValue(it.configValue);
+                        !managed && !isFooterLinks && !boolCfg && !numberCfg && !secret && isBlockValue(it.configValue);
                       const fl = isFooterLinks ? parseFooterLinks(valueOf(it)) : null;
                       const dirty = it.configKey in edits;
                       const displayLabel = isFooterLinks
@@ -667,10 +673,14 @@ export default function AdminConfigPage() {
                             />
                           ) : (
                             <input
-                              type={secret ? "password" : "text"}
+                              type={secret ? "password" : numberCfg ? "number" : "text"}
                               value={valueOf(it)}
                               onChange={(e) => onEdit(it, e.target.value)}
                               aria-label={controlLabel}
+                              min={numberCfg?.min}
+                              max={numberCfg?.max}
+                              step={numberCfg ? 1 : undefined}
+                              inputMode={numberCfg ? "numeric" : undefined}
                               autoComplete={secret ? "new-password" : undefined}
                               spellCheck={false}
                             />

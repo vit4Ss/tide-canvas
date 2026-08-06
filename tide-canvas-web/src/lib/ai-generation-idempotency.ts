@@ -244,9 +244,15 @@ export async function generateAiTaskIdempotent(
   const { clientRequestId: requestedId, ...payload } = input;
   const explicitRequestId = requestedId?.trim();
   const payloadFingerprint = await fingerprint(payload);
+  // Explicit request IDs identify distinct user clicks even when the prompt and
+  // model are identical. Keeping them in separate journal rows allows true
+  // concurrent submissions while retries of either click remain exactly-once.
+  const journalFingerprint = explicitRequestId
+    ? `${payloadFingerprint}:${explicitRequestId}`
+    : payloadFingerprint;
   const prepared = await withScopeLock(scope, ownerUserId || undefined, () => {
     const rows = readPending(scope, ownerUserId || undefined);
-    const previous = rows.find((row) => row.fingerprint === payloadFingerprint);
+    const previous = rows.find((row) => row.fingerprint === journalFingerprint);
     const next: PendingAiGeneration =
       // Recovery callers persist their own request id beside the frozen DTO.
       // That persisted id is authoritative: an older, same-payload browser
@@ -262,7 +268,7 @@ export async function generateAiTaskIdempotent(
           }
         : {
             clientRequestId: explicitRequestId || requestId(),
-            fingerprint: payloadFingerprint,
+            fingerprint: journalFingerprint,
             updatedAt: Date.now(),
             ...(ownerUserId ? { ownerUserId } : {}),
             payload,
@@ -271,7 +277,7 @@ export async function generateAiTaskIdempotent(
           };
     const durable = writePending(
       scope,
-      [...rows.filter((row) => row.fingerprint !== payloadFingerprint), next],
+      [...rows.filter((row) => row.fingerprint !== journalFingerprint), next],
       ownerUserId || undefined,
     );
     return { pending: next, durable };

@@ -63,6 +63,7 @@ var baselineConfigKeys = map[string]struct{}{
 	model.ConfigKeyChatCompressAt:        {},
 	model.ConfigKeyMarketTypeOrder:       {},
 	model.ConfigKeyCanvasNodeFeatures:    {},
+	model.ConfigKeyAIUserConcurrentLimit: {},
 	"points.checkinDaily":                {},
 	"points.checkinMonthlyCap":           {},
 	"points.inviteReward":                {},
@@ -102,9 +103,16 @@ func RegisterConfig(g *gin.RouterGroup, d *app.Deps) {
 			return
 		}
 		for i := range items {
-			if strings.TrimSpace(items[i].ConfigKey) == model.ConfigKeyCanvasNodeFeatures {
+			key := strings.TrimSpace(items[i].ConfigKey)
+			if key == model.ConfigKeyCanvasNodeFeatures {
 				response.Fail(c, response.CodeBadRequest, "canvas node configuration must be edited through /api/admin/canvas/nodes")
 				return
+			}
+			if key == model.ConfigKeyAIUserConcurrentLimit {
+				if _, ok := model.ParseAIUserConcurrentLimit(items[i].ConfigValue); !ok {
+					response.Fail(c, response.CodeBadRequest, "单用户生成并发上限必须是 1-100 的整数")
+					return
+				}
 			}
 		}
 

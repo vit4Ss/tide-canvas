@@ -87,6 +87,8 @@ func (h *handler) generate(c *gin.Context) {
 			response.Fail(c, response.CodeNotFound, "项目不存在")
 		case errors.Is(err, errInsufficientPoints):
 			response.Fail(c, response.CodeQuotaInsufficient, "积分不足，请充值后再试")
+		case errors.Is(err, errConcurrentLimit):
+			response.Fail(c, response.CodeConcurrentLimit, "当前生成任务已达到并发上限，请等待任一任务完成后再试")
 		default:
 			logger.L().Warn("ai: start generation failed",
 				zap.String("handler", dto.Handler), zap.String("detail", err.Error()))

@@ -83,6 +83,19 @@ export interface GenerationParams {
 
 const STUDIO_GENERATION_SCOPES = ["studio:image", "studio:video", "studio:audio"] as const;
 
+interface ConcurrentRunControl {
+  token: symbol;
+  ticks: ReturnType<typeof setInterval>[];
+  poll: ReturnType<typeof setTimeout> | null;
+}
+
+function studioClientRequestID(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `studio-${crypto.randomUUID()}`;
+  }
+  return `studio-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function persistActiveRun(run: ActiveRun): boolean {
   const key = activeRunStorageKey(run.ownerUserId);
   try {
@@ -137,6 +150,7 @@ function activeRunFromJournal(
     : entry.payload.handler.includes("audio")
       ? "audio"
       : "image";
+  const taskStartedAt = Date.parse(task.createTime);
   const kind: ArtworkType = recovery.kind === "video" || recovery.kind === "audio" || recovery.kind === "image"
     ? recovery.kind
     : inferredKind;
@@ -175,7 +189,13 @@ function activeRunFromJournal(
     refThumbs: Array.isArray(recovery.refThumbs)
       ? recovery.refThumbs.filter((value): value is string => typeof value === "string")
       : [],
-    startedAt: entry.updatedAt,
+    params: recovery.params && typeof recovery.params === "object"
+      ? recovery.params as RunParams
+      : undefined,
+    // Prefer the authoritative task creation time. Journal timestamps can move
+    // forward during an ambiguous-response retry and would otherwise make an
+    // older task look newer than the real foreground run after a reload.
+    startedAt: Number.isFinite(taskStartedAt) ? taskStartedAt : entry.updatedAt,
   };
 }
 
@@ -224,61 +244,74 @@ export function useGeneration(p: GenerationParams) {
   // full settings of the last started run (for 重新编辑 / 再次生成) + a one-shot
   // flag that fires generate() after those settings are restored to the panel.
   const lastRunRef = useRef<RunParams | null>(null);
-  // synchronous in-flight latch: `busy` state is set asynchronously (and, for the
-  // one-click edit ops, only after a network round-trip), so it cannot prevent a
-  // rapid double-click from firing two backend tasks. This ref is flipped true
-  // before any await and cleared wherever the run settles (every setBusy(false)).
+  // One-click edit operations keep their own short-lived latch. Normal panel
+  // generation intentionally has no client-side run lock: the server owns the
+  // cross-model per-user concurrency limit.
   const genInFlightRef = useRef(false);
 
+  // Design-preview simulation still uses the legacy single foreground timers.
   const ticksRef = useRef<ReturnType<typeof setInterval>[]>([]);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // bumped on every reset/cancel so in-flight poll callbacks from a stale run bail out.
+  // Only invalidates the local design-preview simulation now; real backend runs
+  // have independent controls in runControlsRef.
   const runIdRef = useRef(0);
   const activeRunRef = useRef<ActiveRun | null>(null);
+  const runControlsRef = useRef<Map<string, ConcurrentRunControl>>(new Map());
+  const createSeqRef = useRef(0);
 
-  /* Drive the generating UI + poll a known backend task to completion. Shared by
-     a fresh generation AND by the refresh-resume path (same task id either way),
-     so an in-flight generation survives a page reload. */
+  /* Poll every accepted task independently. Only the most recently submitted
+     run owns the large in-flight card; older runs continue in the background
+     and enter history as soon as they settle. */
   const driveRun = useCallback(
-    (run: ActiveRun) => {
+    (run: ActiveRun, makeForeground = true) => {
       const currentUserId = useAuthStore.getState().user?.id ?? "";
       if (!run.ownerUserId || currentUserId !== run.ownerUserId) return;
-      activeRunRef.current = run;
+
       const { taskId, prompt: p, model: mdl, ratio: r, spec, count: n, isVid, label, hues } = run;
       const kind: ArtworkType = run.kind ?? (isVid ? "video" : "image");
-      const myRun = (runIdRef.current += 1);
+      const previous = runControlsRef.current.get(taskId);
+      if (previous) {
+        previous.ticks.forEach((timer) => clearInterval(timer));
+        if (previous.poll) clearTimeout(previous.poll);
+      }
+      const control: ConcurrentRunControl = { token: Symbol(taskId), ticks: [], poll: null };
+      runControlsRef.current.set(taskId, control);
+      const isActive = () => runControlsRef.current.get(taskId)?.token === control.token;
+      const isForeground = () => activeRunRef.current?.taskId === taskId;
 
       const newCells: ResultCell[] = hues.map((h, i) => ({ i, hues: h }));
-      setRunMeta({ prompt: p, model: mdl, ratio: r, spec, count: n, label, isVid, kind, refThumbs: run.refThumbs });
-      setCells(newCells);
-      setBusy(true);
-
-      ticksRef.current.forEach((t) => clearInterval(t));
-      ticksRef.current = [];
-      if (pollRef.current) {
-        clearTimeout(pollRef.current);
-        pollRef.current = null;
-      }
-
-      // progress floor + gentle creep between polls (poll raises it to task.progress).
       const PROG_FLOOR = 6;
       const local = new Array(n).fill(PROG_FLOOR);
-      setProgs([...local]);
+      if (makeForeground) {
+        activeRunRef.current = run;
+        setRunMeta({ prompt: p, model: mdl, ratio: r, spec, count: n, label, isVid, kind, refThumbs: run.refThumbs });
+        setCells(newCells);
+        setProgs([...local]);
+        setBusy(true);
+      }
+
       newCells.forEach((_, i) => {
         const tick = setInterval(() => {
           local[i] = Math.min(90, local[i] + 1.5);
-          setProgs([...local]);
+          if (isForeground()) setProgs([...local]);
         }, 500);
-        ticksRef.current.push(tick);
+        control.ticks.push(tick);
       });
 
-      const stopTicks = () => {
-        ticksRef.current.forEach((t) => clearInterval(t));
-        ticksRef.current = [];
+      const clearTimers = () => {
+        control.ticks.forEach((timer) => clearInterval(timer));
+        control.ticks = [];
+        if (control.poll) {
+          clearTimeout(control.poll);
+          control.poll = null;
+        }
       };
-      const clearActive = () => {
+      const clearActive = (commit = true) => {
+        clearTimers();
+        if (isActive()) runControlsRef.current.delete(taskId);
+        if (isForeground()) activeRunRef.current = null;
+        if (!commit) return;
         removePersistedActiveRun(run);
-        if (activeRunRef.current?.taskId === taskId) activeRunRef.current = null;
         if (run.journalScope) {
           void commitAcceptedAiGeneration(run.journalScope, taskId, run.ownerUserId);
         }
@@ -287,25 +320,21 @@ export function useGeneration(p: GenerationParams) {
         !!u && (u.startsWith("https://") || u.startsWith("http://") || u.startsWith("data:"));
 
       const finish = (urls: string[], tracks: MetaTrack[] = []) => {
-        if (runIdRef.current !== myRun) return;
-        stopTicks();
-        clearActive();
-        // Suno 一次返回两首：结果多于占位格时按结果数展开（仅音频；图片批量的
-        // n 与结果数本就一致）。补出的格子沿用首格色相。
+        if (!isActive()) return;
+        const foreground = isForeground();
+        // Suno 一次返回两首：结果多于占位格时按结果数展开。
         const outCells =
           kind === "audio" && urls.length > newCells.length
             ? urls.map(
                 (_, i) => newCells[i] ?? { i, hues: newCells[0]?.hues ?? ([0, 80, 200] as MeshHues) },
               )
             : newCells;
-        setProgs(new Array(outCells.length).fill(100));
-        setCells(outCells.map((c) => ({ ...c, url: urls[c.i] ?? urls[0] })));
-        setBusy(false);
-        // group every image of this run under one feed key. Insert the whole run as
-        // one block (0..n order) with a dedup guard: on refresh-resume, loadHistory
-        // may have already seeded this task's items (same run key), and finishing the
-        // resumed poll would otherwise render every image twice. Ids are computed
-        // outside the updater so it stays pure (React dev double-invokes it).
+        clearActive();
+        if (foreground) {
+          setProgs(new Array(outCells.length).fill(100));
+          setCells(outCells.map((cell) => ({ ...cell, url: urls[cell.i] ?? urls[0] })));
+          setBusy(false);
+        }
         const runKey = `task-${taskId}`;
         const ts = new Date().toISOString();
         const built = outCells.map((cell) => ({
@@ -323,17 +352,25 @@ export function useGeneration(p: GenerationParams) {
           trackTitle: tracks[cell.i]?.title || undefined,
           trackCover: tracks[cell.i]?.coverUrl || undefined,
           trackDur: tracks[cell.i]?.duration || undefined,
-          params: lastRunRef.current ?? undefined,
+          params: run.params,
         }));
-        setHist((prev) => (prev.some((h) => h.run === runKey) ? prev : [...built, ...prev]));
-        toast.success(kind === "audio" ? "生成完成 · 点击播放试听" : "生成完成 · 点击图片放大查看");
+        setHist((prev) => (prev.some((item) => item.run === runKey) ? prev : [...built, ...prev]));
+        void refreshBalance();
+        toast.success(
+          kind === "audio"
+            ? "生成完成 · 点击播放试听"
+            : kind === "video"
+              ? "视频生成完成 · 点击播放查看"
+              : "生成完成 · 点击图片放大查看",
+        );
       };
 
       const fail = (msg?: string) => {
-        if (runIdRef.current !== myRun) return;
-        stopTicks();
+        if (!isActive()) return;
+        const foreground = isForeground();
         clearActive();
-        setBusy(false);
+        if (foreground) setBusy(false);
+        void refreshBalance();
         toast.error(msg || "生成失败");
       };
 
@@ -341,17 +378,14 @@ export function useGeneration(p: GenerationParams) {
       let reconnectNoticeShown = false;
       let deadlineNoticeShown = false;
       const poll = async () => {
-        if (runIdRef.current !== myRun) return;
+        if (!isActive()) return;
         if ((useAuthStore.getState().user?.id ?? "") !== run.ownerUserId) {
-          stopTicks();
-          if (activeRunRef.current?.taskId === taskId) activeRunRef.current = null;
-          setBusy(false);
+          const foreground = isForeground();
+          clearActive(false);
+          if (foreground) setBusy(false);
           return;
         }
         const maxMs = isVid ? 30 * 60 * 1000 : kind === "audio" ? 12 * 60 * 1000 : 7 * 60 * 1000;
-        // This is only the foreground polling budget. It must never be treated
-        // as proof that a paid backend task failed; after the budget we keep the
-        // durable ACTIVE_RUN_KEY and reconcile at a slower cadence.
         const beyondPollingBudget = Date.now() - run.startedAt > maxMs;
         if (beyondPollingBudget && !deadlineNoticeShown) {
           deadlineNoticeShown = true;
@@ -359,17 +393,14 @@ export function useGeneration(p: GenerationParams) {
         }
         try {
           const res = await aiApi.getTask(taskId);
-          if (runIdRef.current !== myRun) return;
+          if (!isActive()) return;
           if ((useAuthStore.getState().user?.id ?? "") !== run.ownerUserId) {
-            stopTicks();
-            if (activeRunRef.current?.taskId === taskId) activeRunRef.current = null;
-            setBusy(false);
+            const foreground = isForeground();
+            clearActive(false);
+            if (foreground) setBusy(false);
             return;
           }
           if (!res.success || !res.data) {
-            // 401 may mean the refresh endpoint was temporarily unavailable;
-            // code 0/5xx/408/429 are likewise transport or capacity failures.
-            // Only an explicit missing/forbidden task is unrecoverable.
             if (res.code === 403 || res.code === 404) {
               fail(res.message);
               return;
@@ -380,7 +411,7 @@ export function useGeneration(p: GenerationParams) {
               toast.info("连接暂时中断，正在自动恢复生成状态");
             }
             const retryDelay = Math.min(15_000, 1500 * (2 ** Math.min(3, transientFailures - 1)));
-            pollRef.current = setTimeout(poll, beyondPollingBudget ? Math.max(10_000, retryDelay) : retryDelay);
+            control.poll = setTimeout(poll, beyondPollingBudget ? Math.max(10_000, retryDelay) : retryDelay);
             return;
           }
           transientFailures = 0;
@@ -407,35 +438,32 @@ export function useGeneration(p: GenerationParams) {
           } else if (task.status === AiTaskStatus.FAILED) {
             fail(task.errorMsg);
           } else if (task.status === AiTaskStatus.CANCELLED) {
-            if (runIdRef.current !== myRun) return;
-            stopTicks();
+            const foreground = isForeground();
             clearActive();
-            setBusy(false);
+            if (foreground) setBusy(false);
+            void refreshBalance();
           } else {
-            // still processing: raise the bar to the real progress (kept as a floor).
             if (typeof task.progress === "number") {
-              const pv = Math.min(95, Math.max(PROG_FLOOR, task.progress));
-              for (let i = 0; i < n; i++) local[i] = Math.max(local[i], pv);
-              setProgs([...local]);
+              const progress = Math.min(95, Math.max(PROG_FLOOR, task.progress));
+              for (let i = 0; i < n; i++) local[i] = Math.max(local[i], progress);
+              if (isForeground()) setProgs([...local]);
             }
-            pollRef.current = setTimeout(poll, beyondPollingBudget ? 10_000 : 1500);
+            control.poll = setTimeout(poll, beyondPollingBudget ? 10_000 : 1500);
           }
         } catch {
-          // Preserve ACTIVE_RUN_KEY and retry the same task. Clearing it here
-          // makes a still-running, already-billed job impossible to recover.
-          if (runIdRef.current !== myRun) return;
+          if (!isActive()) return;
           transientFailures += 1;
           if (!reconnectNoticeShown) {
             reconnectNoticeShown = true;
             toast.info("连接暂时中断，正在自动恢复生成状态");
           }
           const retryDelay = Math.min(15_000, 1500 * (2 ** Math.min(3, transientFailures - 1)));
-          pollRef.current = setTimeout(poll, retryDelay);
+          control.poll = setTimeout(poll, retryDelay);
         }
       };
-      poll();
+      void poll();
     },
-    [setHist],
+    [refreshBalance, setHist],
   );
 
   // Release the synchronous in-flight latch whenever a run settles (busy → false).
@@ -463,6 +491,11 @@ export function useGeneration(p: GenerationParams) {
         clearTimeout(pollRef.current);
         pollRef.current = null;
       }
+      for (const control of runControlsRef.current.values()) {
+        control.ticks.forEach((timer) => clearInterval(timer));
+        if (control.poll) clearTimeout(control.poll);
+      }
+      runControlsRef.current.clear();
       runIdRef.current += 1; // invalidate any in-flight poll
     },
     [],
@@ -478,17 +511,24 @@ export function useGeneration(p: GenerationParams) {
       input: Record<string, unknown>;
       meta: Omit<ActiveRun, "taskId" | "startedAt" | "journalScope" | "ownerUserId">;
     }) => {
-      const myRun = (runIdRef.current += 1);
+      const createSeq = (createSeqRef.current += 1);
+      // A rejected newer click must not hide an older task that is still the
+      // foreground run. This matters most when the server rejects click N+1
+      // because the configured concurrency cap is already full.
+      const settleLatestCreate = () => {
+        if (createSeqRef.current === createSeq) {
+          setBusy(activeRunRef.current !== null);
+        }
+      };
       setBusy(true);
       try {
         if (!(await ensureSession())) {
-          setBusy(false);
+          settleLatestCreate();
           return;
         }
-        if (runIdRef.current !== myRun) return;
         const ownerUserId = useAuthStore.getState().user?.id ?? "";
         if (!ownerUserId) {
-          setBusy(false);
+          settleLatestCreate();
           toast.error("无法确认当前账号，生成任务尚未启动，请刷新后重试");
           return;
         }
@@ -499,22 +539,21 @@ export function useGeneration(p: GenerationParams) {
           ...(typeof args.input.skillId === "string"
             ? { entryPoint: "studio" as const, targetType: args.meta.kind }
             : {}),
+          clientRequestId: studioClientRequestID(),
           input: args.input,
         };
         let res2: Awaited<ReturnType<typeof aiApi.generateIdempotent>>;
         let reconnectNoticeShown = false;
         for (;;) {
-          if (runIdRef.current !== myRun) return;
           res2 = await aiApi.generateIdempotent(createInput, journalScope, {
             requireDurableJournal: true,
             retainAccepted: true,
             recovery: args.meta,
             ownerUserId,
           });
-          if (runIdRef.current !== myRun) return;
           if (res2.success && res2.data?.id) break;
           if (!isAmbiguousAiCreateCode(res2.code)) {
-            setBusy(false);
+            settleLatestCreate();
             toast.error(res2.message || "生成请求失败");
             return;
           }
@@ -531,7 +570,11 @@ export function useGeneration(p: GenerationParams) {
           ...args.meta,
           startedAt: Date.now(),
         };
-        if (persistActiveRun(run)) {
+        const makeForeground = createSeqRef.current === createSeq;
+        if (!makeForeground) {
+          // A newer click already owns the foreground pointer. This task stays
+          // durable in its accepted journal and is polled independently.
+        } else if (persistActiveRun(run)) {
           // Keep the accepted journal as a second pointer until terminal. A
           // single ACTIVE_RUN_KEY can be overwritten by another Studio tab;
           // retaining both prevents the older paid task from becoming hidden.
@@ -540,9 +583,9 @@ export function useGeneration(p: GenerationParams) {
           // reachable if storage was revoked between preflight and response.
           toast.info("任务已启动，请保持当前页面打开以等待结果");
         }
-        driveRun(run);
+        driveRun(run, makeForeground);
       } catch {
-        setBusy(false);
+        settleLatestCreate();
         toast.error("网络错误");
       }
     },
@@ -643,7 +686,6 @@ export function useGeneration(p: GenerationParams) {
      only when no backend model is available (studioList empty). */
 
   const generate = useCallback((options?: { requireBackendModel?: boolean; expectedModelId?: string }) => {
-    if (busy || genInFlightRef.current) return;
     const selectedStudio = studioList.find((item) => item.name === model) ?? null;
     if (options?.expectedModelId && selectedStudio?.id !== options.expectedModelId) {
       toast.info("历史模型目录已变化，请确认当前模型后重新生成");
@@ -723,9 +765,9 @@ export function useGeneration(p: GenerationParams) {
       if (audRefs.length) refInput.audioReferences = audRefs;
     }
 
-    // all early-return guards passed → latch synchronously (before any state
-    // update / the async startGeneration) so a double-click can't double-fire.
-    genInFlightRef.current = true;
+    // All early-return guards passed. Do not lock the client until completion:
+    // each click is a distinct idempotent request and the backend enforces the
+    // configured cross-model per-user concurrency cap.
     setBusy(true);
 
     const isVid = TOOLS[tool].mode === "t2v";
@@ -878,7 +920,19 @@ export function useGeneration(p: GenerationParams) {
       handler: TOOL_TO_HANDLER[tool],
       modelId,
       input,
-      meta: { prompt: p, model: mdl, ratio: r, spec, count: n, isVid, kind: curType, label, hues, refThumbs },
+      meta: {
+        prompt: p,
+        model: mdl,
+        ratio: r,
+        spec,
+        count: n,
+        isVid,
+        kind: curType,
+        label,
+        hues,
+        refThumbs,
+        params: lastRunRef.current ?? undefined,
+      },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy, prompt, count, tool, curType, ratio, model, res, dur, imgRes, quality, musicMode, sourceClipId, sourceIsUpload, continueAt, lyrics, songStyle, songTitle, instrumental, slotData, studioList, ratioOpts, resOpts, durOpts, qualOpts, pushHistory, startGeneration, skill]);
@@ -960,16 +1014,19 @@ export function useGeneration(p: GenerationParams) {
         }
         saved = null;
       }
+      const recoveredTaskIds = new Set<string>();
       if (saved) {
+        recoveredTaskIds.add(saved.taskId);
         driveRun(saved);
-        return;
       }
 
       for (;;) {
         if (cancelled) return;
         const candidates = STUDIO_GENERATION_SCOPES.flatMap((scope) =>
           recoverableAiGenerations(scope, ownerUserId).map((entry) => ({ scope, entry })),
-        ).sort((left, right) => right.entry.updatedAt - left.entry.updatedAt);
+        )
+          .filter(({ entry }) => !entry.taskId || !recoveredTaskIds.has(entry.taskId))
+          .sort((left, right) => left.entry.updatedAt - right.entry.updatedAt);
         const candidate = candidates[0];
         if (!candidate) return;
         const { scope, entry } = candidate;
@@ -991,10 +1048,19 @@ export function useGeneration(p: GenerationParams) {
         if (cancelled) return;
         if (result?.success && result.data) {
           const run = activeRunFromJournal(scope, entry, result.data, ownerUserId);
-          if (!run) return;
-          persistActiveRun(run);
-          if (!cancelled) driveRun(run);
-          return;
+          if (!run) {
+            await commitAcceptedAiGeneration(scope, result.data.id, ownerUserId);
+            continue;
+          }
+          // ACTIVE_RUN is the single foreground pointer. Accepted journals
+          // retain every other task, so an older recovered run must not
+          // overwrite a newer pointer merely because it was restored later.
+          const currentStartedAt = activeRunRef.current?.startedAt ?? 0;
+          const makeForeground = !activeRunRef.current || run.startedAt >= currentStartedAt;
+          if (makeForeground) persistActiveRun(run);
+          recoveredTaskIds.add(run.taskId);
+          if (!cancelled) driveRun(run, makeForeground);
+          continue;
         }
 
         if (entry.taskId && result && (result.code === 404 || result.code === 400)) {
@@ -1003,7 +1069,7 @@ export function useGeneration(p: GenerationParams) {
           await commitAcceptedAiGeneration(scope, entry.taskId, ownerUserId);
           continue;
         }
-        if (result && !isAmbiguousAiCreateCode(result.code)) return;
+        if (result && !isAmbiguousAiCreateCode(result.code)) continue;
         await new Promise((resolve) => setTimeout(resolve, 3_000));
       }
     })();

@@ -284,6 +284,12 @@ func ensureBaselineConfig(db *gorm.DB) error {
 			Description: "关闭自助注册：1=关闭（注册接口拒绝并提示管理员已关闭注册），0=开放。即时生效，不影响已有用户登录与后台生成用户",
 		},
 		{
+			ConfigKey:   ConfigKeyAIUserConcurrentLimit,
+			ConfigValue: "5",
+			Group:       "ai",
+			Description: "单用户生成并发上限（跨全部模型，1-100）；成功、失败或取消立即释放，处理中超过5分钟也自动释放",
+		},
+		{
 			ConfigKey:   ConfigKeyCanvasNodeFeatures,
 			ConfigValue: DefaultCanvasNodeFeaturesJSON(),
 			Group:       "canvas",

@@ -1189,10 +1189,10 @@ export default function CreateStudio() {
           {/* footer */}
           <div className="ws-panel-foot">
             <button
-              className={`ws-gen${busy || restoringRun ? " busy" : ""}`}
+              className={`ws-gen${restoringRun ? " busy" : ""}`}
               id="gen"
               type="button"
-              disabled={busy || restoringRun}
+              disabled={restoringRun}
               onClick={() => generate()}
             >
               <span className="spark">✦</span> {restoringRun ? "正在恢复历史参数…" : "立即生成"}{" "}

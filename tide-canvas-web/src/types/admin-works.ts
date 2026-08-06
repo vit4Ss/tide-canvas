@@ -28,7 +28,11 @@ export interface AdminWorkVO {
   id: string;
   title: string;
   cover: string;
-  /** "image" | "video" (workType() always normalizes to one of these). */
+  /** Playable source for video works; cover remains the optional poster. */
+  videoUrl: string;
+  /** Playable source for audio works. */
+  audioUrl: string;
+  /** "image" | "video" | "audio" (normalized by the backend). */
   type: string;
   cat: string;
   model: string;

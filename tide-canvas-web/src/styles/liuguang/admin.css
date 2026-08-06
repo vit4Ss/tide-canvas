@@ -1015,6 +1015,20 @@
   color: rgba(15, 23, 42, 0.6);
   overflow: hidden;
 }
+.adm-table .adm-user-name {
+  overflow: hidden;
+  color: var(--text-title);
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.adm-user-column-title {
+  display: block;
+  padding-left: 38px;
+}
 .admin-body .muted {
   color: var(--text-faint);
   font-weight: 400;

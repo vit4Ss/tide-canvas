@@ -1,6 +1,8 @@
 package model
 
 import (
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -107,6 +109,26 @@ const ConfigKeyRegisterClosed = "auth.registerClosed"
 // Seeded on boot; edited in the admin 配置管理 screen and read per failure by
 // pkg/response, so changes apply WITHOUT a restart.
 const ConfigKeyServerErrorMessage = "server.errorMessage"
+
+// ConfigKeyAIUserConcurrentLimit caps the number of recently-started,
+// still-processing generation tasks owned by one user across every model.
+// The generation service reads it for every accepted request, so admin changes
+// apply immediately without a restart. A task stops occupying a slot as soon as
+// it becomes terminal, or after five minutes even if the provider is still stuck.
+const ConfigKeyAIUserConcurrentLimit = "ai.userConcurrentLimit"
+
+const (
+	DefaultAIUserConcurrentLimit = 5
+	MinAIUserConcurrentLimit     = 1
+	MaxAIUserConcurrentLimit     = 100
+)
+
+// ParseAIUserConcurrentLimit validates the admin value without silently
+// accepting partial strings such as "5x".
+func ParseAIUserConcurrentLimit(raw string) (int, bool) {
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	return n, err == nil && n >= MinAIUserConcurrentLimit && n <= MaxAIUserConcurrentLimit
+}
 
 // SysConfig is a key-value platform configuration entry (系统配置).
 type SysConfig struct {

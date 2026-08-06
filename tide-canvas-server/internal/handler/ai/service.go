@@ -228,6 +228,7 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 	}
 
 	now := time.Now()
+	concurrentLimit := generationConcurrentLimit(s.repo.db.WithContext(ctx))
 	origin := strings.TrimSpace(dto.Origin)
 	if origin == "" {
 		origin = "direct"
@@ -273,7 +274,7 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 	if dto.SkillRunStepID != 0 {
 		key := "skill-run-step:" + dto.SkillRunStepID.String()
 		task.OrchestrationKey = &key
-		created, err := s.createSkillRunTask(ctx, userID, dto, task, cost, m.Name)
+		created, err := s.createSkillRunTask(ctx, userID, dto, task, cost, m.Name, concurrentLimit)
 		if err != nil {
 			if errors.Is(err, points.ErrInsufficient) {
 				return nil, errInsufficientPoints
@@ -294,6 +295,9 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 		// transaction so a create failure cannot leave a deducted balance with no
 		// row for the recovery reconciler to find.
 		err := s.repo.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := reserveGenerationSlot(tx, userID, concurrentLimit, now); err != nil {
+				return err
+			}
 			if cost > 0 {
 				if err := points.Consume(tx, userID, cost, "生成消耗："+m.Name, task.ID); err != nil {
 					return err
@@ -405,7 +409,7 @@ func (s *service) replayDirectTask(ctx context.Context, userID idgen.ID, clientR
 // child task, and attaches it to the step attempt. If recovery submits the same
 // attempt again, it returns the already attached task without another charge or
 // provider invocation.
-func (s *service) createSkillRunTask(ctx context.Context, userID idgen.ID, dto generateDTO, task *model.AiTask, cost int, modelName string) (bool, error) {
+func (s *service) createSkillRunTask(ctx context.Context, userID idgen.ID, dto generateDTO, task *model.AiTask, cost int, modelName string, concurrentLimit int) (bool, error) {
 	created := false
 	err := s.repo.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Keep the global lock order run -> step, matching action/cancel paths.
@@ -462,6 +466,9 @@ func (s *service) createSkillRunTask(ctx context.Context, userID idgen.ID, dto g
 		}
 		if step.AiTaskID != 0 {
 			return errors.New("skill run step task is unavailable")
+		}
+		if err := reserveGenerationSlot(tx, userID, concurrentLimit, task.CreateTime); err != nil {
+			return err
 		}
 
 		// Task creation precedes the debit inside the same transaction. If either

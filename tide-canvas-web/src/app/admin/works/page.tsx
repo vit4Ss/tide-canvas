@@ -18,7 +18,7 @@
    ============================================================================ */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw, Search, X } from "lucide-react";
+import { Film, ImageIcon, Music2, RefreshCw, Search, X } from "lucide-react";
 import {
   AdminAlert,
   AdminEmptyState,
@@ -61,6 +61,196 @@ function typeLabel(type: string): { text: string; tone: PillTone } {
   if (type === "video") return { text: "视频", tone: "blue" };
   if (type === "audio") return { text: "音频", tone: "amber" };
   return { text: "图片", tone: "gray" };
+}
+
+/** Compact list thumbnail; clicking it opens the same full preview as 查看. */
+function WorkThumbnail({ work, onPreview }: { work: AdminWorkVO; onPreview: () => void }) {
+  if (work.cover) {
+    return (
+      <button
+        type="button"
+        className="sw"
+        aria-label={`预览作品：${work.title || work.id}`}
+        title="点击放大预览"
+        onClick={onPreview}
+        style={{
+          padding: 0,
+          border: 0,
+          cursor: "zoom-in",
+          background: `center / cover no-repeat url("${work.cover}")`,
+        }}
+      />
+    );
+  }
+
+  if (work.type === "video") {
+    return (
+      <button
+        type="button"
+        className="sw"
+        aria-label={`预览视频作品：${work.title || work.id}`}
+        title="点击放大预览"
+        onClick={onPreview}
+        style={{
+          position: "relative",
+          padding: 0,
+          border: 0,
+          cursor: "zoom-in",
+          background: "#111827",
+          color: "white",
+        }}
+      >
+        {work.videoUrl ? (
+          <video
+            src={work.videoUrl}
+            muted
+            playsInline
+            preload="metadata"
+            tabIndex={-1}
+            style={{ width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none" }}
+          />
+        ) : null}
+        <Film
+          size={13}
+          strokeWidth={1.8}
+          style={{ position: "absolute", inset: 0, margin: "auto", filter: "drop-shadow(0 1px 2px #000)" }}
+        />
+      </button>
+    );
+  }
+
+  if (work.type === "audio") {
+    return (
+      <button
+        type="button"
+        className="sw"
+        aria-label={`预览音频作品：${work.title || work.id}`}
+        title="点击播放预览"
+        onClick={onPreview}
+        style={{
+          padding: 0,
+          border: 0,
+          cursor: "pointer",
+          background: "var(--accent-soft)",
+          color: "var(--accent)",
+        }}
+      >
+        <Music2 size={14} strokeWidth={1.8} />
+      </button>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className="sw"
+      aria-label={`预览作品：${work.title || work.id}`}
+      title="点击放大预览"
+      onClick={onPreview}
+      style={{
+        padding: 0,
+        border: 0,
+        cursor: "zoom-in",
+        background: "var(--surface-2)",
+        color: "var(--text-faint)",
+      }}
+    >
+      <ImageIcon size={14} strokeWidth={1.7} />
+    </button>
+  );
+}
+
+/** Render the real work output instead of treating every work as an image. */
+function WorkPreview({ work }: { work: AdminWorkVO }) {
+  const frameStyle = {
+    minHeight: 320,
+    aspectRatio: "4 / 3",
+  } as const;
+
+  if (work.type === "video" && work.videoUrl) {
+    return (
+      // Generated videos store their playable URL in Content.videoUrl; cover is only a poster.
+      <video
+        src={work.videoUrl}
+        poster={work.cover || undefined}
+        controls
+        playsInline
+        preload="metadata"
+        style={{
+          ...frameStyle,
+          display: "block",
+          width: "100%",
+          objectFit: "contain",
+          background: "#0b0b0b",
+        }}
+      />
+    );
+  }
+
+  if (work.type === "audio" && work.audioUrl) {
+    return (
+      <div
+        style={{
+          ...frameStyle,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 14,
+          padding: 28,
+          background: "var(--surface-2)",
+        }}
+      >
+        <span
+          aria-hidden
+          style={{
+            width: 64,
+            height: 64,
+            borderRadius: 12,
+            display: "grid",
+            placeItems: "center",
+            color: "var(--accent)",
+            background: "var(--accent-soft)",
+          }}
+        >
+          <Music2 size={28} strokeWidth={1.7} />
+        </span>
+        <span className="strong" style={{ maxWidth: "100%", textAlign: "center" }}>
+          {work.title || "音频作品"}
+        </span>
+        <span className="muted">{work.model || "音频生成"}</span>
+        <audio
+          src={work.audioUrl}
+          controls
+          preload="metadata"
+          style={{ width: "min(100%, 440px)" }}
+        />
+      </div>
+    );
+  }
+
+  if (work.cover) {
+    return (
+      <div
+        role="img"
+        aria-label={`${work.title || "作品"}封面预览`}
+        style={{
+          ...frameStyle,
+          background: `var(--surface-2) center / contain no-repeat url("${work.cover}")`,
+        }}
+      />
+    );
+  }
+
+  const mediaName = typeLabel(work.type).text;
+  return (
+    <div style={frameStyle}>
+      <AdminEmptyState
+        title={`暂无可用${mediaName}预览`}
+        description={`${mediaName}作品未提供可播放的源地址，可通过右侧信息确认内容。`}
+      />
+    </div>
+  );
 }
 
 export default function AdminWorksPage() {
@@ -249,14 +439,7 @@ export default function AdminWorksPage() {
       width: "28%",
       cell: (w) => (
         <div className="cellflex">
-          <span
-            className="sw"
-            style={
-              w.cover
-                ? { background: `center / cover no-repeat url("${w.cover}")` }
-                : undefined
-            }
-          />
+          <WorkThumbnail work={w} onPreview={() => setDetail(w)} />
           <span className="strong" title={w.title || w.id}>
             {w.title || w.id}
           </span>
@@ -456,24 +639,7 @@ export default function AdminWorksPage() {
         {detail ? (
           <div className="cfg-grid">
             <div className="cfg-card" style={{ padding: 0, overflow: "hidden" }}>
-              {detail.cover ? (
-                <div
-                  role="img"
-                  aria-label={`${detail.title || "作品"}封面预览`}
-                  style={{
-                    minHeight: 320,
-                    aspectRatio: "4 / 3",
-                    background: `var(--surface-2) center / contain no-repeat url("${detail.cover}")`,
-                  }}
-                />
-              ) : (
-                <div style={{ minHeight: 320 }}>
-                  <AdminEmptyState
-                    title="暂无可用预览"
-                    description="作品未提供封面地址，可通过右侧信息确认内容。"
-                  />
-                </div>
-              )}
+              <WorkPreview work={detail} />
             </div>
             <div className="cfg-card">
               <h3>作品信息</h3>
@@ -484,14 +650,6 @@ export default function AdminWorksPage() {
               <div className="cfg-row">
                 <span className="lab">模型</span>
                 <span className="muted">{detail.model || "—"}</span>
-              </div>
-              <div className="cfg-row">
-                <span className="lab">分类</span>
-                <span className="muted">{detail.cat || "未分类"}</span>
-              </div>
-              <div className="cfg-row">
-                <span className="lab">标签</span>
-                <span className="muted" title={detail.tags || undefined}>{detail.tags || "未标记"}</span>
               </div>
               <div className="cfg-row">
                 <span className="lab">类型</span>

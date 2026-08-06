@@ -130,6 +130,8 @@ export interface ActiveRun {
   label: string;
   hues: MeshHues[];
   refThumbs: string[];
+  /** Exact panel settings for this task; required when several runs overlap. */
+  params?: RunParams;
   startedAt: number;
 }
 

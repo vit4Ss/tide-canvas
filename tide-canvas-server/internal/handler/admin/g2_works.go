@@ -64,12 +64,14 @@ type AdminWorkAuthorVO struct {
 // AdminWorkVO is the admin row view of a community post (a work). It exposes ALL
 // statuses (unlike the public feed) plus the moderation/curation fields.
 //
-//	{id,title,cover,type,cat,model,tags,author{id,name,avatar},
+//	{id,title,cover,videoUrl,audioUrl,type,cat,model,tags,author{id,name,avatar},
 //	 likes,comments,views,featured,status,statusText,createTime,updateTime}
 type AdminWorkVO struct {
 	ID         idgen.ID          `json:"id"`
 	Title      string            `json:"title"`
 	Cover      string            `json:"cover"`
+	VideoURL   string            `json:"videoUrl"`
+	AudioURL   string            `json:"audioUrl"`
 	Type       string            `json:"type"`
 	Cat        string            `json:"cat"`
 	Model      string            `json:"model"`
@@ -415,6 +417,8 @@ func (h *worksHandler) toVO(p *model.CommunityPost, author *model.User, commentC
 		ID:         p.ID,
 		Title:      p.Title,
 		Cover:      p.CoverURL,
+		VideoURL:   m.VideoURL,
+		AudioURL:   m.AudioURL,
 		Type:       workType(m),
 		Cat:        m.Cat,
 		Model:      m.Model,
@@ -437,6 +441,8 @@ type workMeta struct {
 	Type     string `json:"type"`
 	Cat      string `json:"cat"`
 	Model    string `json:"model"`
+	VideoURL string `json:"videoUrl"`
+	AudioURL string `json:"audioUrl"`
 	Featured bool   `json:"featured"`
 }
 

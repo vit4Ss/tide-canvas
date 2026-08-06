@@ -511,20 +511,15 @@ function AdminUsersPageInner() {
 
   /* ---- columns ------------------------------------------------------------- */
 
-  // 列宽百分比均摊整行（table-layout:fixed 下不给宽度会均分，
-  // 用户列装不下「头像+名称+邮箱」）
+  // 列宽合计 100%；用户身份集中在首列，其他业务字段按独立列对齐。
   const userColumns: Column<AdminUserVO>[] = [
     {
-      header: "用户",
-      width: "22%",
+      header: <span className="adm-user-column-title">用户</span>,
+      width: "18%",
       cell: (u) => {
-        // 身份格层级：运营认人靠备注，备注提升为主显示；占位邮箱（noemail.internal）
-        // 不是信息不展示；昵称==用户名（本地账号默认同值）时第二行不再重复。
-        const name = u.nickname || u.username || `用户 ${u.id}`;
-        const realEmail = isPlaceholderEmail(u.email) ? "" : u.email || "";
-        const sub = u.remark
-          ? [name, realEmail || u.phone || ""].filter(Boolean).join(" · ")
-          : realEmail || u.phone || (u.nickname && u.nickname !== u.username ? `账号 ${u.username}` : "");
+        const username = u.username || "—";
+        const email = !u.email || isPlaceholderEmail(u.email) ? "未绑定邮箱" : u.email;
+        const remark = u.remark?.trim() || "—";
         return (
           <div className="cellflex">
             <span
@@ -534,12 +529,9 @@ function AdminUsersPageInner() {
               }}
             />
             <div>
-              <div className="strong">{u.remark || name}</div>
-              {sub ? (
-                <div className="muted mono" style={{ fontSize: 11.5 }} title={sub}>
-                  {sub}
-                </div>
-              ) : null}
+              <div className="adm-user-name" title={username}>{username}</div>
+              <div className="muted mono" style={{ fontSize: 11.5 }} title={email}>{email}</div>
+              <div className="muted" style={{ fontSize: 11.5 }} title={remark}>{remark}</div>
             </div>
           </div>
         );
@@ -547,7 +539,7 @@ function AdminUsersPageInner() {
     },
     {
       header: "角色",
-      width: "7%",
+      width: "8%",
       cell: (u) => <StatusPill tone={ROLE_TONE[u.role] ?? "gray"}>{roleLabel(u.role)}</StatusPill>,
     },
     {
@@ -562,14 +554,14 @@ function AdminUsersPageInner() {
     },
     {
       header: "积分余额",
-      width: "7%",
+      width: "9%",
       align: "right",
       className: "mono",
       cell: (u) => fmtNum(u.points),
     },
     {
       header: "作品 / 项目",
-      width: "10%",
+      width: "13%",
       align: "right",
       className: "mono",
       cell: (u) => (
@@ -583,13 +575,13 @@ function AdminUsersPageInner() {
     {
       // 最近登录单行呈现，保持整行节奏一致；注册时间收进 hover 提示，需要再看
       header: "最近登录",
-      width: "13%",
+      width: "16%",
       className: "muted",
       cell: (u) => <span title={`注册于 ${fmtTime(u.createTime)}`}>{fmtTime(u.lastLoginTime)}</span>,
     },
     {
       header: "状态",
-      width: "7%",
+      width: "9%",
       cell: (u) => (
         <StatusPill tone={u.status === 1 ? "green" : "red"}>
           {u.status === 1 ? "正常" : "已封禁"}
@@ -598,7 +590,7 @@ function AdminUsersPageInner() {
     },
     {
       header: "操作",
-      width: "17%",
+      width: "19%",
       align: "right",
       cell: (u) => (
         <RowActions
@@ -779,7 +771,13 @@ function AdminUsersPageInner() {
         open={editUser != null && editForm != null}
         size="lg"
         title="编辑用户"
-        subtitle={editUser ? editUser.email || editUser.username : ""}
+        subtitle={
+          editUser
+            ? isPlaceholderEmail(editUser.email)
+              ? editUser.username
+              : editUser.email || editUser.username
+            : ""
+        }
         footNote={error ? <span role="alert">{error}</span> : "谨慎修改角色、余额与账号状态"}
         onClose={() => {
           setError(null);
