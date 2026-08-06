@@ -22,6 +22,14 @@ export default function RootLayout({
   return (
     <html lang="zh-CN" className={`${inter.variable} h-full antialiased`} data-scroll-behavior="smooth">
       <head>
+        {/* CSS chunk 加载失败自愈：_next/static 资源按构建哈希命名，部署后（或网络抖动时）
+            样式表可能 404/加载失败且不会自动重试——页面会带着缺失的样式一直坏到手动刷新。
+            捕获同源样式表的 error 事件后整页刷新（最多 2 次，防止死循环）。 */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){var K="css-fail-reloads";window.addEventListener("error",function(e){var t=e.target;if(!t||t.tagName!=="LINK"||t.rel!=="stylesheet")return;var h=t.href||"";if(h.indexOf("/_next/")===-1)return;try{var n=Number(sessionStorage.getItem(K)||"0");if(n>=2)return;sessionStorage.setItem(K,String(n+1));}catch(_){ }location.reload();},true);window.addEventListener("load",function(){try{sessionStorage.removeItem(K);}catch(_){ }});})();`,
+          }}
+        />
         {/* 流光设计字体：Sora / Space Grotesk / JetBrains Mono / Noto Sans SC（site/studio/admin 的 liuguang 样式按名引用） */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />

@@ -36,6 +36,17 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  async headers() {
+    return [
+      {
+        // HTML 文档每次校验：_next/static 按构建哈希命名，部署后旧 HTML 引用的 chunk 会 404
+        // （浏览器/中间缓存若保留旧 HTML，首屏就会缺样式）。静态 chunk 自身有 immutable 长缓存，不受影响。
+        source: "/:path*",
+        has: [{ type: "header" as const, key: "accept", value: ".*text/html.*" }],
+        headers: [{ key: "Cache-Control", value: "private, no-cache, no-store, max-age=0, must-revalidate" }],
+      },
+    ];
+  },
 };
 
 export default nextConfig;
