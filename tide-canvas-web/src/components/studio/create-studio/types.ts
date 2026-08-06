@@ -111,6 +111,15 @@ export interface RunMeta {
   refThumbs: string[];
 }
 
+/** One visible in-flight generation. Each backend task owns its own progress
+ * cells so concurrent submissions never overwrite one another in the feed. */
+export interface InflightRun {
+  taskId: string;
+  meta: RunMeta;
+  cells: ResultCell[];
+  progs: number[];
+}
+
 /** A backend generation in flight, persisted so a page refresh can resume it
  *  (the task keeps running server-side). Stored under ACTIVE_RUN_KEY. */
 export interface ActiveRun {

@@ -333,9 +333,7 @@ export default function CreateStudio() {
 
   const {
     busy,
-    cells,
-    progs,
-    runMeta,
+    inflightRuns,
     setCells,
     setProgs,
     setRunMeta,
@@ -1211,9 +1209,7 @@ export default function CreateStudio() {
         <StageFeed
           busy={busy || restoringRun}
           runs={runs}
-          runMeta={runMeta}
-          cells={cells}
-          progs={progs}
+          inflightRuns={inflightRuns}
           onQuickStart={quickStart}
           onEditRun={editRun}
           onRegenRun={regenRun}

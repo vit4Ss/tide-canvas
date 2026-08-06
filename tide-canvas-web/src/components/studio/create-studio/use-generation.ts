@@ -33,6 +33,7 @@ import type {
   ActiveRun,
   ArtworkType,
   HistItem,
+  InflightRun,
   MeshHues,
   MetaTrack,
   MusicMode,
@@ -241,6 +242,7 @@ export function useGeneration(p: GenerationParams) {
   const [cells, setCells] = useState<ResultCell[]>([]);
   const [progs, setProgs] = useState<number[]>([]);
   const [runMeta, setRunMeta] = useState<RunMeta | null>(null);
+  const [inflightRuns, setInflightRuns] = useState<InflightRun[]>([]);
   // full settings of the last started run (for 重新编辑 / 再次生成) + a one-shot
   // flag that fires generate() after those settings are restored to the panel.
   const lastRunRef = useRef<RunParams | null>(null);
@@ -259,9 +261,8 @@ export function useGeneration(p: GenerationParams) {
   const runControlsRef = useRef<Map<string, ConcurrentRunControl>>(new Map());
   const createSeqRef = useRef(0);
 
-  /* Poll every accepted task independently. Only the most recently submitted
-     run owns the large in-flight card; older runs continue in the background
-     and enter history as soon as they settle. */
+  /* Poll every accepted task independently. Every task also owns a separate
+     feed entry; a newer submission must never replace an older loading card. */
   const driveRun = useCallback(
     (run: ActiveRun, makeForeground = true) => {
       const currentUserId = useAuthStore.getState().user?.id ?? "";
@@ -289,10 +290,23 @@ export function useGeneration(p: GenerationParams) {
         setProgs([...local]);
         setBusy(true);
       }
+      setInflightRuns((prev) => [
+        ...prev.filter((item) => item.taskId !== taskId),
+        {
+          taskId,
+          meta: { prompt: p, model: mdl, ratio: r, spec, count: n, label, isVid, kind, refThumbs: run.refThumbs },
+          cells: newCells,
+          progs: [...local],
+        },
+      ]);
+      setBusy(true);
 
       newCells.forEach((_, i) => {
         const tick = setInterval(() => {
           local[i] = Math.min(90, local[i] + 1.5);
+          setInflightRuns((prev) => prev.map((item) =>
+            item.taskId === taskId ? { ...item, progs: [...local] } : item,
+          ));
           if (isForeground()) setProgs([...local]);
         }, 500);
         control.ticks.push(tick);
@@ -310,6 +324,8 @@ export function useGeneration(p: GenerationParams) {
         clearTimers();
         if (isActive()) runControlsRef.current.delete(taskId);
         if (isForeground()) activeRunRef.current = null;
+        setInflightRuns((prev) => prev.filter((item) => item.taskId !== taskId));
+        setBusy(runControlsRef.current.size > 0);
         if (!commit) return;
         removePersistedActiveRun(run);
         if (run.journalScope) {
@@ -333,7 +349,7 @@ export function useGeneration(p: GenerationParams) {
         if (foreground) {
           setProgs(new Array(outCells.length).fill(100));
           setCells(outCells.map((cell) => ({ ...cell, url: urls[cell.i] ?? urls[0] })));
-          setBusy(false);
+          setBusy(runControlsRef.current.size > 0);
         }
         const runKey = `task-${taskId}`;
         const ts = new Date().toISOString();
@@ -369,7 +385,7 @@ export function useGeneration(p: GenerationParams) {
         if (!isActive()) return;
         const foreground = isForeground();
         clearActive();
-        if (foreground) setBusy(false);
+        if (foreground) setBusy(runControlsRef.current.size > 0);
         void refreshBalance();
         toast.error(msg || "生成失败");
       };
@@ -440,12 +456,15 @@ export function useGeneration(p: GenerationParams) {
           } else if (task.status === AiTaskStatus.CANCELLED) {
             const foreground = isForeground();
             clearActive();
-            if (foreground) setBusy(false);
+            if (foreground) setBusy(runControlsRef.current.size > 0);
             void refreshBalance();
           } else {
             if (typeof task.progress === "number") {
               const progress = Math.min(95, Math.max(PROG_FLOOR, task.progress));
               for (let i = 0; i < n; i++) local[i] = Math.max(local[i], progress);
+              setInflightRuns((prev) => prev.map((item) =>
+                item.taskId === taskId ? { ...item, progs: [...local] } : item,
+              ));
               if (isForeground()) setProgs([...local]);
             }
             control.poll = setTimeout(poll, beyondPollingBudget ? 10_000 : 1500);
@@ -1090,6 +1109,7 @@ export function useGeneration(p: GenerationParams) {
     const active = activeRunRef.current;
     if (active) removePersistedActiveRun(active);
     activeRunRef.current = null;
+    setInflightRuns([]);
     setCells([]);
     setProgs([]);
     setRunMeta(null);
@@ -1100,6 +1120,7 @@ export function useGeneration(p: GenerationParams) {
     cells,
     progs,
     runMeta,
+    inflightRuns,
     setCells,
     setProgs,
     setRunMeta,

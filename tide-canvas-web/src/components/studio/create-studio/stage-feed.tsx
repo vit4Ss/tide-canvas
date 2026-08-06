@@ -12,15 +12,13 @@ import { AudioPlayerCard, SongCard } from "@/components/studio/audio-player-card
 import { toast } from "@/components/shared/toast";
 import { AmbientFrame } from "./ambient-frame";
 import { CELL_TOOLS, SLOT_ICON } from "./icons";
-import type { ArtworkType, HistRun, ResultCell, RunMeta, ToolKey } from "./types";
+import type { ArtworkType, HistRun, InflightRun, ResultCell, ToolKey } from "./types";
 import { fmtTs, ratioLabel } from "./utils";
 
 export function StageFeed({
   busy,
   runs,
-  runMeta,
-  cells,
-  progs,
+  inflightRuns,
   onQuickStart,
   onEditRun,
   onRegenRun,
@@ -37,9 +35,7 @@ export function StageFeed({
 }: {
   busy: boolean;
   runs: HistRun[];
-  runMeta: RunMeta | null;
-  cells: ResultCell[];
-  progs: number[];
+  inflightRuns: InflightRun[];
   onQuickStart: (type: ArtworkType, tool: ToolKey) => void;
   onEditRun: (r: HistRun) => void;
   onRegenRun: (r: HistRun) => void;
@@ -158,54 +154,57 @@ export function StageFeed({
           <div className="ws-feed" id="feed">
             {skillRunPanel}
             {/* in-flight run (placeholders with progress) */}
-            {busy && runMeta && (
-              <div className={`ws-run inflight${cells.length <= 1 ? " single" : ""}${runMeta.kind === "audio" ? " audio" : ""}`}>
-                <div className="ws-run-head">
-                  <span className="ws-run-kind">
-                    {SLOT_ICON[runMeta.kind ?? (runMeta.isVid ? "video" : "image")]}
-                    {runMeta.kind === "audio" ? "AI 音乐" : runMeta.isVid ? "AI 视频" : "AI 图片"}
-                  </span>
-                  <span className="ws-run-div" />
-                  {runMeta.model && <span className="ws-run-chip">{runMeta.model}</span>}
-                  {runMeta.ratio && (
-                    <span className="ws-run-chip">{ratioLabel(runMeta.ratio)}</span>
-                  )}
-                  <span className="ws-run-time">生成中…</span>
-                </div>
-                {runMeta.prompt && (
-                  <div className="ws-run-prompt">
-                    <span className="tx" title={runMeta.prompt}>
-                      {runMeta.prompt}
+            {inflightRuns.map((inflight) => {
+              const { meta, cells: runCells, progs: runProgs } = inflight;
+              return (
+                <div key={inflight.taskId} className={`ws-run inflight${runCells.length <= 1 ? " single" : ""}${meta.kind === "audio" ? " audio" : ""}`}>
+                  <div className="ws-run-head">
+                    <span className="ws-run-kind">
+                      {SLOT_ICON[meta.kind ?? (meta.isVid ? "video" : "image")]}
+                      {meta.kind === "audio" ? "AI 音乐" : meta.isVid ? "AI 视频" : "AI 图片"}
                     </span>
+                    <span className="ws-run-div" />
+                    {meta.model && <span className="ws-run-chip">{meta.model}</span>}
+                    {meta.ratio && (
+                      <span className="ws-run-chip">{ratioLabel(meta.ratio)}</span>
+                    )}
+                    <span className="ws-run-time">生成中…</span>
                   </div>
-                )}
-                <div className="ws-run-imgs">
-                  {cells.map((cell) => {
-                    const [rw, rh] = runMeta.ratio.split(":").map(Number);
-                    const pct = Math.round(progs[cell.i] ?? 0);
-                    return (
-                      <div
-                        key={cell.i}
-                        className="ws-runimg loading"
-                        style={{ aspectRatio: `${rw || 1}/${rh || 1}` }}
-                      >
+                  {meta.prompt && (
+                    <div className="ws-run-prompt">
+                      <span className="tx" title={meta.prompt}>
+                        {meta.prompt}
+                      </span>
+                    </div>
+                  )}
+                  <div className="ws-run-imgs">
+                    {runCells.map((cell) => {
+                      const [rw, rh] = meta.ratio.split(":").map(Number);
+                      const pct = Math.round(runProgs[cell.i] ?? 0);
+                      return (
                         <div
-                          className="done-cov on"
-                          style={{ background: mesh(cell.hues[0], cell.hues[1], cell.hues[2]) }}
-                        />
-                        <div className="shimmer" />
-                        <div className="ph">
-                          生成中 · <span className="pct">{pct}%</span>
+                          key={cell.i}
+                          className="ws-runimg loading"
+                          style={{ aspectRatio: `${rw || 1}/${rh || 1}` }}
+                        >
+                          <div
+                            className="done-cov on"
+                            style={{ background: mesh(cell.hues[0], cell.hues[1], cell.hues[2]) }}
+                          />
+                          <div className="shimmer" />
+                          <div className="ph">
+                            生成中 · <span className="pct">{pct}%</span>
+                          </div>
+                          <div className="bar">
+                            <i style={{ width: `${runProgs[cell.i] ?? 0}%` }} />
+                          </div>
                         </div>
-                        <div className="bar">
-                          <i style={{ width: `${progs[cell.i] ?? 0}%` }} />
-                        </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })}
 
             {/* finished runs */}
             {runs.map((r) => (
