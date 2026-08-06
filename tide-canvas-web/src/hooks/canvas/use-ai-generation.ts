@@ -579,7 +579,6 @@ async function startGeneration({ nodeId, handler, modelId, input, clientRequestI
     toast.error("画布尚未保存，请稍后再试");
     return { status: "rejected" };
   }
-  const hasPresetSkill = typeof input.skillId === "string" && input.skillId.trim() !== "";
   const explicitRequestId = clientRequestId;
   if (
     explicitRequestId !== undefined
@@ -614,9 +613,10 @@ async function startGeneration({ nodeId, handler, modelId, input, clientRequestI
     input: frozenInput,
     clientRequestId: stableClientRequestId,
     projectId,
-    ...(hasPresetSkill
-      ? { entryPoint: "canvas", targetType: targetNode?.type }
-      : {}),
+    // Preserve the canvas node semantic so generation history can distinguish
+    // ordinary images from generated character/scene assets.
+    entryPoint: "canvas",
+    ...(targetNode?.type ? { targetType: targetNode.type } : {}),
     ...(gridOutput ? { gridOutput: true } : {}),
     createdAt: Date.now(),
   };

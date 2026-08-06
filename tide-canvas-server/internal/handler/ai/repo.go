@@ -158,6 +158,16 @@ func applyTaskListFilters(tx *gorm.DB, userID idgen.ID, q taskQuery) *gorm.DB {
 			tx = tx.Where("handler IN ?", handlers)
 		}
 	}
+	if q.AssetCategory != "" {
+		switch strings.ToLower(strings.TrimSpace(q.AssetCategory)) {
+		case "character", "scene":
+			tx = tx.Where("target_type = ?", strings.ToLower(strings.TrimSpace(q.AssetCategory)))
+		case "general":
+			tx = tx.Where("COALESCE(target_type, '') NOT IN ?", []string{"character", "scene"})
+		default:
+			tx = tx.Where("1 = 0")
+		}
+	}
 	if q.AssetOnly {
 		tx = tx.Where("status NOT IN ?", []int{statusFailed, statusCancelled})
 	}

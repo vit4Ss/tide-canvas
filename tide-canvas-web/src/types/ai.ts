@@ -20,6 +20,8 @@ export type AiGenerateInput = Omit<AiGenerateDTO, "clientRequestId"> & {
 export interface AiTaskVO {
   id: string; // 后端雪花 ID 序列化为字符串
   handler: string;
+  /** Canvas target type, e.g. image | character | scene. */
+  targetType?: string;
   /** 生成所用模型的行 id(对应 AiModelVO.id;旧接口缓存可能缺省)。
       延长/翻唱须发到与原曲相同的模型卡,前端据此回选原曲模型。 */
   modelId?: string;
@@ -89,6 +91,8 @@ export interface AiTaskQuery extends PageQuery {
   handler?: string;
   /** 资产页服务端媒体筛选，保证分页发生在类型过滤之后。 */
   mediaType?: "image" | "video" | "audio";
+  /** Generated asset category; character/scene are image target types. */
+  assetCategory?: "general" | "character" | "scene";
   /** 仅返回可进入资产库的任务（排除失败和已取消）。 */
   assetOnly?: boolean;
   status?: AiTaskStatus;

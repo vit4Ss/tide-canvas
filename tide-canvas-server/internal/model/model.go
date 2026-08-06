@@ -601,10 +601,13 @@ type AiTask struct {
 	UserID    idgen.ID `gorm:"index;uniqueIndex:idx_ai_task_user_client,priority:1" json:"userId"`
 	ProjectID idgen.ID `gorm:"index" json:"projectId"`
 	Handler   string   `gorm:"size:64" json:"handler"`
-	ModelID   idgen.ID `gorm:"default:0" json:"modelId"`
-	ModelName string   `gorm:"size:128" json:"modelName"`
-	Status    int      `gorm:"default:0" json:"status"` // 0 processing,1 success,2 failed,3 cancelled
-	Progress  int      `gorm:"default:0" json:"progress"`
+	// TargetType preserves the originating canvas semantic (image|character|scene)
+	// so asset history can filter generated concept assets separately from uploads.
+	TargetType string   `gorm:"column:target_type;size:32;index" json:"targetType"`
+	ModelID    idgen.ID `gorm:"default:0" json:"modelId"`
+	ModelName  string   `gorm:"size:128" json:"modelName"`
+	Status     int      `gorm:"default:0" json:"status"` // 0 processing,1 success,2 failed,3 cancelled
+	Progress   int      `gorm:"default:0" json:"progress"`
 	// HeartbeatSeq guarantees every live-worker heartbeat changes the row, so a
 	// CAS can distinguish a processing task from a cancelled/deleted one even
 	// when MySQL timestamps round two consecutive updates to the same value.

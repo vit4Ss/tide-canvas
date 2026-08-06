@@ -41,8 +41,9 @@ func fmtTimePtr(t *time.Time) string {
 // as a JSON object (RawMessage) when the stored value is valid JSON, else as a
 // string; the frontend (parseTaskMeta) accepts either form.
 type AiTaskVO struct {
-	ID      idgen.ID `json:"id"`
-	Handler string   `json:"handler"`
+	ID         idgen.ID `json:"id"`
+	Handler    string   `json:"handler"`
+	TargetType string   `json:"targetType"`
 	// ModelID is the AiModel row id (matches AiModelVO.id)。延长/翻唱须发到
 	// 与原曲相同的模型卡(上游按 key 钉路由),前端据此把模型选回原曲那张。
 	ModelID   idgen.ID `json:"modelId"`
@@ -79,6 +80,7 @@ func toTaskVO(t *model.AiTask) AiTaskVO {
 	return AiTaskVO{
 		ID:           t.ID,
 		Handler:      t.Handler,
+		TargetType:   t.TargetType,
 		ModelID:      t.ModelID,
 		ModelName:    t.ModelName,
 		Status:       t.Status,

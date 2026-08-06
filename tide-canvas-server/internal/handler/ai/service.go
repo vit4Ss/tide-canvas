@@ -246,6 +246,7 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 		UserID:         userID,
 		ProjectID:      dto.ProjectID,
 		Handler:        dto.Handler,
+		TargetType:     strings.ToLower(strings.TrimSpace(dto.TargetType)),
 		ModelID:        m.ID,
 		ModelName:      m.Name,
 		Status:         statusProcessing,

@@ -7,15 +7,15 @@ import {
   initialAssetTab,
 } from "./assets-browser-policy.ts";
 
-test("concept and document filters never silently live under generation history", () => {
-  assert.equal(initialAssetTab("hist", "character"), "upload");
-  assert.equal(initialAssetTab("hist", "scene"), "upload");
+test("concept filters are available in both histories while documents stay upload-only", () => {
+  assert.equal(initialAssetTab("hist", "character"), "hist");
+  assert.equal(initialAssetTab("hist", "scene"), "hist");
   assert.equal(initialAssetTab("hist", "doc"), "upload");
   assert.equal(initialAssetTab("hist", "image"), "hist");
 });
 
-test("generation history only exposes filters supported by generated tasks", () => {
-  assert.deepEqual(filtersForAssetTab("hist"), ["image", "video", "audio"]);
+test("both histories expose concept filters, while documents stay upload-only", () => {
+  assert.deepEqual(filtersForAssetTab("hist"), ["character", "scene", "image", "video", "audio"]);
   assert.deepEqual(filtersForAssetTab("upload"), ["character", "scene", "image", "video", "audio", "doc"]);
 });
 

@@ -160,6 +160,16 @@ function isConceptFilter(filter: FilterKey): filter is "character" | "scene" {
   return filter === "character" || filter === "scene";
 }
 
+function taskMatchesHistoryFilter(task: AiTaskVO, filter: HistoryFilterKey): boolean {
+  const mediaKind = HANDLER_MEDIA_KIND[task.handler];
+  if (isConceptFilter(filter)) {
+    return mediaKind === "image" && task.targetType === filter;
+  }
+  if (mediaKind !== filter) return false;
+  // The plain 图片 bucket excludes generated character/scene canvas nodes.
+  return filter !== "image" || !isConceptFilter(task.targetType as FilterKey);
+}
+
 function fileMatchesFilter(file: FileVO, filter: FilterKey): boolean {
   const category = file.category || FileCategory.GENERAL;
   if (filter === "character") return category === FileCategory.CHARACTER;
@@ -362,8 +372,8 @@ export function AssetsBrowser({
         ? await aiApi.listTasks({
             pageNum: page,
             pageSize: PAGE_SIZE,
-            noProject: true,
-            mediaType: filter as HistoryFilterKey,
+            mediaType: isConceptFilter(filter) ? "image" : filter as "image" | "video" | "audio",
+            assetCategory: isConceptFilter(filter) ? filter : filter === "image" ? "general" : undefined,
             assetOnly: true,
             orderDirection: sortAsc ? "asc" : "desc",
             startDate: startDate || undefined,
@@ -484,7 +494,7 @@ export function AssetsBrowser({
     if (tab !== "hist") return [];
     const matched = tasks.filter(
       (t) =>
-        HANDLER_MEDIA_KIND[t.handler] === historyFilter &&
+        taskMatchesHistoryFilter(t, historyFilter) &&
         t.status !== AiTaskStatus.FAILED &&
         t.status !== AiTaskStatus.CANCELLED,
     );

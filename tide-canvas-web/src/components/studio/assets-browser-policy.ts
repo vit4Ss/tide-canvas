@@ -1,9 +1,10 @@
 export type AssetTabKey = "hist" | "upload";
 export type AssetMediaKind = "image" | "video" | "audio" | "doc";
 export type AssetFilterKey = AssetMediaKind | "character" | "scene";
-export type HistoryFilterKey = Exclude<AssetMediaKind, "doc">;
+export type GeneratedMediaKind = Exclude<AssetMediaKind, "doc">;
+export type HistoryFilterKey = GeneratedMediaKind | "character" | "scene";
 
-export const HISTORY_FILTER_KEYS: readonly HistoryFilterKey[] = ["image", "video", "audio"];
+export const HISTORY_FILTER_KEYS: readonly HistoryFilterKey[] = ["character", "scene", "image", "video", "audio"];
 export const UPLOAD_FILTER_KEYS: readonly AssetFilterKey[] = [
   "character",
   "scene",
@@ -13,7 +14,7 @@ export const UPLOAD_FILTER_KEYS: readonly AssetFilterKey[] = [
   "doc",
 ];
 
-export const HANDLER_MEDIA_KIND: Readonly<Record<string, HistoryFilterKey>> = {
+export const HANDLER_MEDIA_KIND: Readonly<Record<string, GeneratedMediaKind>> = {
   text_to_image: "image",
   image_to_image: "image",
   text_to_video: "video",
@@ -24,11 +25,11 @@ export const HANDLER_MEDIA_KIND: Readonly<Record<string, HistoryFilterKey>> = {
 };
 
 export function isHistoryFilter(filter: AssetFilterKey): filter is HistoryFilterKey {
-  return filter === "image" || filter === "video" || filter === "audio";
+  return filter !== "doc";
 }
 
 export function initialAssetTab(defaultTab: AssetTabKey, defaultFilter: AssetFilterKey): AssetTabKey {
-  return defaultTab === "hist" && !isHistoryFilter(defaultFilter) ? "upload" : defaultTab;
+  return defaultTab === "hist" && defaultFilter === "doc" ? "upload" : defaultTab;
 }
 
 export function filtersForAssetTab(tab: AssetTabKey): readonly AssetFilterKey[] {
