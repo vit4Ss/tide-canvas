@@ -3,6 +3,8 @@ package relaymedia
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -48,6 +50,61 @@ func TestMediaErrorFlexibleUnmarshal(t *testing.T) {
 	_ = json.Unmarshal([]byte(`{"error":{"message":"m","code":400}}`), &mr)
 	if mr.Error.Code != "400" {
 		t.Errorf("numeric code = %q, want \"400\"", mr.Error.Code)
+	}
+}
+
+func TestUpstreamErrorPreservesBusinessCode(t *testing.T) {
+	t.Parallel()
+
+	err := upstreamError(http.StatusBadGateway, mediaResp{
+		Error: &mediaError{Message: "内容不符合要求", Type: "task_failed", Code: "5002"},
+	}, nil)
+	upstream, ok := err.(*UpstreamError)
+	if !ok {
+		t.Fatalf("error type = %T, want *UpstreamError", err)
+	}
+	if upstream.HTTPStatus != http.StatusBadGateway || upstream.Code != "5002" || upstream.Type != "task_failed" || upstream.Message != "内容不符合要求" {
+		t.Fatalf("unexpected upstream error: %#v", upstream)
+	}
+	if got := upstream.Error(); got != "relaymedia: code 5002: 内容不符合要求" {
+		t.Fatalf("Error() = %q", got)
+	}
+}
+
+func TestSubmitReturnsStructuredErrorFromHTTPResponses(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name       string
+		httpStatus int
+		codeJSON   string
+		wantCode   string
+	}{
+		{name: "HTTP 200 numeric code", httpStatus: http.StatusOK, codeJSON: "5002", wantCode: "5002"},
+		{name: "HTTP 502 string code", httpStatus: http.StatusBadGateway, codeJSON: `"5003"`, wantCode: "5003"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.httpStatus)
+				_, _ = fmt.Fprintf(w, `{
+					"error":{"message":"内容不符合要求","type":"task_failed","code":%s},
+					"id":"task_xxx",
+					"status":"failed"
+				}`, tc.codeJSON)
+			}))
+			defer server.Close()
+
+			client := &Client{baseURL: server.URL, hc: server.Client()}
+			_, err := client.submit(context.Background(), "/v1/images/generations", map[string]any{}, time.Second)
+			var upstream *UpstreamError
+			if !errors.As(err, &upstream) {
+				t.Fatalf("error type = %T, want *UpstreamError", err)
+			}
+			if upstream.HTTPStatus != tc.httpStatus || upstream.Code != tc.wantCode || upstream.Message != "内容不符合要求" {
+				t.Fatalf("unexpected upstream error: %#v", upstream)
+			}
+		})
 	}
 }
 

@@ -23,6 +23,7 @@ import (
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/logger"
 	"tidecanvas/internal/pkg/relaychat"
+	"tidecanvas/internal/pkg/relaymedia"
 	"tidecanvas/internal/pkg/storage"
 )
 
@@ -1037,7 +1038,7 @@ func (s *service) listLogs(ctx context.Context, userID idgen.ID, isAdmin bool, q
 	// Enrich association display fields (best-effort).
 	names, _ := s.repo.userNames(ctx, userIDs)
 	pnames, _ := s.repo.projectNames(ctx, projIDs)
-	statuses, _ := s.repo.taskStatuses(ctx, taskIDs)
+	taskStates, _ := s.repo.taskLogStates(ctx, taskIDs)
 	for i := range vos {
 		if n, ok := names[vos[i].UserID]; ok {
 			vos[i].UserName = n
@@ -1045,12 +1046,22 @@ func (s *service) listLogs(ctx context.Context, userID idgen.ID, isAdmin bool, q
 		if n, ok := pnames[vos[i].ProjectID]; ok {
 			vos[i].ProjectName = n
 		}
-		if st, ok := statuses[vos[i].TaskID]; ok {
-			v := st
-			vos[i].TaskStatus = &v
+		if state, ok := taskStates[vos[i].TaskID]; ok {
+			applyTaskLogState(&vos[i], state, isAdmin)
 		}
 	}
 	return vos, total, nil
+}
+
+func applyTaskLogState(vo *AiGenerationLogVO, state taskLogState, isAdmin bool) {
+	v := state.Status
+	vo.TaskStatus = &v
+	// AiTask.ErrorMsg is the already-classified user-facing message. Reuse it
+	// for non-admin history so structured Relay codes (notably 5002/5003) do not
+	// get lost when the raw audit error is converted back to a string.
+	if !isAdmin && state.ErrorMsg != "" {
+		vo.ErrorMsg = state.ErrorMsg
+	}
 }
 
 // ---- helpers ------------------------------------------------------------
@@ -1339,6 +1350,15 @@ func userFacingGenError(err error) string {
 	if err == nil {
 		return userFacingGenErr
 	}
+	// Relay 数字业务码优先于旧的 msg 关键词分类。5002（安全审核）和
+	// 5003（输入不合法）由 Relay 给出可操作文案，按产品约定直接展示；
+	// 其余业务码保持旧逻辑，继续按 msg 规则映射或落到系统异常兜底。
+	var relayErr *relaymedia.UpstreamError
+	if errors.As(err, &relayErr) && (relayErr.Code == "5002" || relayErr.Code == "5003") {
+		if message := strings.TrimSpace(relayErr.Message); message != "" {
+			return truncateUserFacingMessage(message)
+		}
+	}
 	low := strings.ToLower(err.Error())
 	for _, rule := range inputErrorRules {
 		for _, mk := range rule.markers {
@@ -1348,6 +1368,19 @@ func userFacingGenError(err error) string {
 		}
 	}
 	return userFacingGenErr
+}
+
+// ai_tasks.error_msg is varchar(1024). Relay owns the direct 5002/5003 copy, so
+// cap it defensively without splitting a UTF-8 rune; otherwise an unexpectedly
+// large upstream message can make the terminal task update fail and leave the
+// frontend polling forever.
+func truncateUserFacingMessage(message string) string {
+	const maxRunes = 1024
+	runes := []rune(message)
+	if len(runes) <= maxRunes {
+		return message
+	}
+	return string(runes[:maxRunes-1]) + "…"
 }
 
 // pagination clamps page params to sane bounds and returns (offset, limit).

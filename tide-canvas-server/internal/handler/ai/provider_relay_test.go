@@ -1,8 +1,11 @@
 package ai
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+
+	"tidecanvas/internal/pkg/relaymedia"
 )
 
 // Suno 延长/翻唱的歌曲描述必须走「顶层 prompt」(实测 extras 内无效)。
@@ -140,6 +143,47 @@ func TestUserFacingGenError(t *testing.T) {
 	}
 	if userFacingGenError(nil) != sys {
 		t.Errorf("nil err should map to system message")
+	}
+}
+
+func TestUserFacingGenErrorUsesSelectedRelayBusinessMessages(t *testing.T) {
+	t.Parallel()
+
+	for _, code := range []string{"5002", "5003"} {
+		message := "Relay 返回的可操作提示 " + code
+		got := userFacingGenError(&relaymedia.UpstreamError{Code: code, Type: "task_failed", Message: message})
+		if got != message {
+			t.Errorf("code %s: got %q, want %q", code, got, message)
+		}
+	}
+
+	// The business code takes priority over the legacy keyword classifier, and
+	// errors.As must still find it when an intermediate layer wraps the error.
+	direct := "rate limit exceeded"
+	wrapped := fmt.Errorf("provider failed: %w", &relaymedia.UpstreamError{Code: "5002", Message: direct})
+	if got := userFacingGenError(wrapped); got != direct {
+		t.Errorf("wrapped code 5002: got %q, want direct message %q", got, direct)
+	}
+
+	// Empty selected-code messages still use the old safe fallback.
+	if got := userFacingGenError(&relaymedia.UpstreamError{Code: "5003"}); got != userFacingGenErr {
+		t.Errorf("empty code 5003 message: got %q, want fallback %q", got, userFacingGenErr)
+	}
+
+	// Keep the persisted task error within ai_tasks.error_msg varchar(1024),
+	// without corrupting multi-byte text.
+	longMessage := strings.Repeat("错", 1100)
+	got := userFacingGenError(&relaymedia.UpstreamError{Code: "5002", Message: longMessage})
+	if len([]rune(got)) != 1024 || !strings.HasSuffix(got, "…") {
+		t.Errorf("long direct message was not safely capped: runes=%d suffix=%q", len([]rune(got)), got[len(got)-3:])
+	}
+
+	// 其它业务码不得因为结构化 code 而直接透传，仍走原有关键词/兜底规则。
+	if got := userFacingGenError(&relaymedia.UpstreamError{Code: "5004", Message: "relay account balance: secret detail"}); got != userFacingGenErr {
+		t.Errorf("code 5004 leaked relay message: %q", got)
+	}
+	if got := userFacingGenError(&relaymedia.UpstreamError{Code: "5008", Message: "rate limit exceeded"}); got != "当前生成排队较多，请稍后重试" {
+		t.Errorf("code 5008 did not use legacy msg mapping: %q", got)
 	}
 }
 

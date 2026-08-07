@@ -38,9 +38,9 @@ export type GenerationStartResult =
   | { status: "ambiguous" };
 
 const POLL_INTERVAL = 2000; // 2 秒轮询
-// 后端允许图片上游最多运行 6 分钟，成功后还可能需要约 90 秒把结果转存到自有 OSS。
+// 后端允许图片上游最多运行 10 分钟，成功后还可能需要约 90 秒把结果转存到自有 OSS。
 // 前端必须覆盖完整后端预算，否则会在一个最终成功的任务上提前显示“生成失败”。
-const MAX_POLL_TIME = 10 * 60 * 1000;
+const MAX_POLL_TIME = 15 * 60 * 1000;
 // 视频较慢（后端轮询可达 10min+），前端上限须 ≥ 后端，否则前端会先放弃、把已成功的任务误标失败、且不回填结果
 const MAX_POLL_TIME_VIDEO = 30 * 60 * 1000;
 

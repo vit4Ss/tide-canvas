@@ -83,3 +83,19 @@ func TestRedactForUserKeepsEmptyError(t *testing.T) {
 		t.Error("resultUrl must survive: 用户要靠它看自己的产出")
 	}
 }
+
+func TestUserHistoryReusesTaskFacingRelayMessage(t *testing.T) {
+	vo := AiGenerationLogVO{ErrorMsg: "relaymedia: code 5002: raw audit copy"}
+	vo.redactForUser()
+	applyTaskLogState(&vo, taskLogState{
+		Status:   statusFailed,
+		ErrorMsg: "请调整图片内容后重试",
+	}, false)
+
+	if vo.ErrorMsg != "请调整图片内容后重试" {
+		t.Fatalf("history error = %q, want persisted task-facing Relay message", vo.ErrorMsg)
+	}
+	if vo.TaskStatus == nil || *vo.TaskStatus != statusFailed {
+		t.Fatalf("history task status was not populated: %#v", vo.TaskStatus)
+	}
+}

@@ -43,7 +43,7 @@ const (
 // would preempt that deadline and abort a still-running synchronous generation.
 const (
 	pollInterval      = 2 * time.Second  // gap between task polls
-	imagePollDeadline = 6 * time.Minute  // overall budget for an image task (sync or polled)
+	imagePollDeadline = 10 * time.Minute // overall budget for an image task (sync or polled)
 	videoPollDeadline = 20 * time.Minute // videos are slower; stay under the 30m UI cap
 	audioPollDeadline = 10 * time.Minute // TTS 通常同步秒回;Suno 音乐约 1–4 分钟(实测也会同步 200)
 )
@@ -209,6 +209,33 @@ type mediaError struct {
 	Code    string `json:"code"`
 }
 
+// UpstreamError preserves the relay's structured error envelope across the
+// provider boundary. Callers may make product decisions from Code while Error()
+// still contains Message for logs and the legacy keyword-based classifier.
+type UpstreamError struct {
+	HTTPStatus int
+	Message    string
+	Type       string
+	Code       string
+}
+
+func (e *UpstreamError) Error() string {
+	if e == nil {
+		return "relaymedia: upstream error"
+	}
+	message := strings.TrimSpace(e.Message)
+	if e.Code != "" && message != "" {
+		return fmt.Sprintf("relaymedia: code %s: %s", e.Code, message)
+	}
+	if message != "" {
+		return "relaymedia: " + message
+	}
+	if e.Code != "" {
+		return fmt.Sprintf("relaymedia: code %s", e.Code)
+	}
+	return fmt.Sprintf("relaymedia: HTTP %d", e.HTTPStatus)
+}
+
 func (e *mediaError) UnmarshalJSON(data []byte) error {
 	var s string
 	if json.Unmarshal(data, &s) == nil {
@@ -334,6 +361,14 @@ func (c *Client) submit(ctx context.Context, path string, body map[string]any, d
 	}
 	res.TaskID = mr.ID
 	res.Status = mr.Status
+
+	// Relay may report a terminal task failure in an HTTP 2xx response. Handle
+	// the structured envelope before treating a task id as deferred work, so a
+	// failed create response is not needlessly polled and its business code is
+	// preserved for the caller.
+	if mr.Error != nil {
+		return res, upstreamError(status, mr, respBody)
+	}
 
 	// A 2xx with the result already inline is a synchronous success.
 	if status >= 200 && status < 300 {
@@ -543,8 +578,13 @@ func mediaURLs(mr mediaResp) []string {
 // upstreamError builds an error from the relay's OpenAI error envelope, falling
 // back to the raw body when the envelope is absent.
 func upstreamError(status int, mr mediaResp, raw []byte) error {
-	if mr.Error != nil && strings.TrimSpace(mr.Error.Message) != "" {
-		return fmt.Errorf("relaymedia: %s", mr.Error.Message)
+	if mr.Error != nil {
+		return &UpstreamError{
+			HTTPStatus: status,
+			Message:    strings.TrimSpace(mr.Error.Message),
+			Type:       strings.TrimSpace(mr.Error.Type),
+			Code:       strings.TrimSpace(mr.Error.Code),
+		}
 	}
 	if s := strings.TrimSpace(string(raw)); s != "" {
 		return fmt.Errorf("relaymedia: HTTP %d: %s", status, truncate(s, 300))

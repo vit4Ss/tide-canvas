@@ -440,18 +440,26 @@ func (r *repo) projectNames(ctx context.Context, ids []idgen.ID) (map[idgen.ID]s
 	return out, nil
 }
 
-// taskStatuses returns id->status for the given task ids.
-func (r *repo) taskStatuses(ctx context.Context, ids []idgen.ID) (map[idgen.ID]int, error) {
-	out := map[idgen.ID]int{}
+type taskLogState struct {
+	ID       idgen.ID
+	Status   int
+	ErrorMsg string
+}
+
+// taskLogStates returns the terminal display fields needed to enrich user-facing
+// generation history without exposing the raw provider error kept in audit logs.
+func (r *repo) taskLogStates(ctx context.Context, ids []idgen.ID) (map[idgen.ID]taskLogState, error) {
+	out := map[idgen.ID]taskLogState{}
 	if len(ids) == 0 {
 		return out, nil
 	}
-	var rows []model.AiTask
-	if err := r.db.WithContext(ctx).Select("id", "status").Where("id IN ?", ids).Find(&rows).Error; err != nil {
+	var rows []taskLogState
+	if err := r.db.WithContext(ctx).Model(&model.AiTask{}).
+		Select("id", "status", "error_msg").Where("id IN ?", ids).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	for i := range rows {
-		out[rows[i].ID] = rows[i].Status
+		out[rows[i].ID] = rows[i]
 	}
 	return out, nil
 }
