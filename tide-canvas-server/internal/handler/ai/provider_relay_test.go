@@ -157,6 +157,31 @@ func TestUserFacingGenErrorUsesSelectedRelayBusinessMessages(t *testing.T) {
 		}
 	}
 
+	const (
+		innerSafety = "The generated image was filtered by the safety policy. Please adjust your prompt and try again."
+		apiYIOuter  = `APIYI: 400 BAD_REQUEST {"error":{"message":"The generated image was filtered by the safety policy. Please adjust your prompt and try again.","localized_message":"Unknown error","type":"invalid_request_error","param":"","code":"image_safety"}}`
+	)
+	if got := userFacingGenError(&relaymedia.UpstreamError{Code: "5002", Message: apiYIOuter}); got != innerSafety {
+		t.Errorf("nested provider error: got %q, want %q", got, innerSafety)
+	}
+
+	// Do not assume the first brace begins the provider envelope. Some relays
+	// prepend structured metadata before the actual nested error.
+	multiObject := `metadata {"attempt":1} APIYI: 400 BAD_REQUEST {"error":{"message":"inner input error"}}`
+	if got := userFacingGenError(&relaymedia.UpstreamError{Code: "5003", Message: multiObject}); got != "inner input error" {
+		t.Errorf("later nested provider error: got %q", got)
+	}
+
+	// Malformed or message-less nested JSON must preserve the outer Relay copy.
+	for _, outer := range []string{
+		`APIYI: 400 BAD_REQUEST {"error":{"message":`,
+		`APIYI: 400 BAD_REQUEST {"error":{"message":""}}`,
+	} {
+		if got := userFacingGenError(&relaymedia.UpstreamError{Code: "5002", Message: outer}); got != outer {
+			t.Errorf("nested fallback: got %q, want outer %q", got, outer)
+		}
+	}
+
 	// The business code takes priority over the legacy keyword classifier, and
 	// errors.As must still find it when an intermediate layer wraps the error.
 	direct := "rate limit exceeded"

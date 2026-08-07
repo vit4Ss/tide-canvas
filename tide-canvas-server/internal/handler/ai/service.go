@@ -1356,7 +1356,7 @@ func userFacingGenError(err error) string {
 	var relayErr *relaymedia.UpstreamError
 	if errors.As(err, &relayErr) && (relayErr.Code == "5002" || relayErr.Code == "5003") {
 		if message := strings.TrimSpace(relayErr.Message); message != "" {
-			return truncateUserFacingMessage(message)
+			return relayDirectUserMessage(message)
 		}
 	}
 	low := strings.ToLower(err.Error())
@@ -1368,6 +1368,37 @@ func userFacingGenError(err error) string {
 		}
 	}
 	return userFacingGenErr
+}
+
+// relayDirectUserMessage unwraps providers that serialize their own error
+// envelope inside Relay's outer error.message, for example:
+//
+//	APIYI: 400 BAD_REQUEST {"error":{"message":"..."}}
+//
+// For the selected direct-display business codes, the useful copy is the inner
+// error.message. If no valid nested envelope is present, preserve the product
+// contract by falling back to Relay's outer message.
+func relayDirectUserMessage(message string) string {
+	message = strings.TrimSpace(message)
+	for offset, candidates := 0, 0; offset < len(message) && candidates < 16; candidates++ {
+		relative := strings.IndexByte(message[offset:], '{')
+		if relative < 0 {
+			break
+		}
+		start := offset + relative
+		var envelope struct {
+			Error *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.NewDecoder(strings.NewReader(message[start:])).Decode(&envelope); err == nil && envelope.Error != nil {
+			if inner := strings.TrimSpace(envelope.Error.Message); inner != "" {
+				return truncateUserFacingMessage(inner)
+			}
+		}
+		offset = start + 1
+	}
+	return truncateUserFacingMessage(message)
 }
 
 // ai_tasks.error_msg is varchar(1024). Relay owns the direct 5002/5003 copy, so
