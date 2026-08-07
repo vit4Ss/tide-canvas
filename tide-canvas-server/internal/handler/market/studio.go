@@ -10,6 +10,7 @@ package market
 import (
 	"encoding/json"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -67,10 +68,6 @@ func (s *service) studioModels(typ string) ([]StudioModelVO, error) {
 	vos := make([]StudioModelVO, 0, len(rows))
 	for i := range rows {
 		m := &rows[i]
-		var cfg json.RawMessage
-		if c := strings.TrimSpace(m.Config); c != "" && json.Valid([]byte(c)) {
-			cfg = json.RawMessage(c)
-		}
 		vos = append(vos, StudioModelVO{
 			ID:        m.ID,
 			Name:      m.Name,
@@ -78,10 +75,80 @@ func (s *service) studioModels(typ string) ([]StudioModelVO, error) {
 			Type:      m.Type,
 			Desc:      m.Description,
 			PointCost: m.Price.String(),
-			Config:    cfg,
+			Config:    normalizedStudioConfig(m.Config),
 		})
 	}
 	return vos, nil
+}
+
+// normalizedStudioConfig keeps the database payload untouched while returning
+// duration options in numeric order to every studio consumer. Relay-synced
+// models may provide values in an arbitrary order (for example 4s,15s,5s), and
+// the admin pricing table sorts only its presentation, which can otherwise hide
+// that raw ordering until the chat dropdown renders it.
+func normalizedStudioConfig(raw string) json.RawMessage {
+	c := strings.TrimSpace(raw)
+	if c == "" || !json.Valid([]byte(c)) {
+		return nil
+	}
+
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(c), &obj); err != nil || obj == nil {
+		return json.RawMessage(c)
+	}
+	encodedDurations, ok := obj["durations"]
+	if !ok {
+		return json.RawMessage(c)
+	}
+	var durations []json.RawMessage
+	if err := json.Unmarshal(encodedDurations, &durations); err != nil || len(durations) < 2 {
+		return json.RawMessage(c)
+	}
+
+	seconds := make([]float64, len(durations))
+	for i := range durations {
+		value, ok := studioDurationSeconds(durations[i])
+		if !ok {
+			return json.RawMessage(c)
+		}
+		seconds[i] = value
+	}
+	type durationEntry struct {
+		raw     json.RawMessage
+		seconds float64
+	}
+	entries := make([]durationEntry, len(durations))
+	for i := range durations {
+		entries[i] = durationEntry{raw: durations[i], seconds: seconds[i]}
+	}
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].seconds < entries[j].seconds })
+	for i := range entries {
+		durations[i] = entries[i].raw
+	}
+	sortedDurations, err := json.Marshal(durations)
+	if err != nil {
+		return json.RawMessage(c)
+	}
+	obj["durations"] = sortedDurations
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return json.RawMessage(c)
+	}
+	return out
+}
+
+func studioDurationSeconds(raw json.RawMessage) (float64, bool) {
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		text = strings.TrimSpace(strings.TrimSuffix(strings.ToLower(text), "s"))
+		seconds, err := strconv.ParseFloat(text, 64)
+		return seconds, err == nil && seconds > 0
+	}
+	var seconds float64
+	if err := json.Unmarshal(raw, &seconds); err != nil || seconds <= 0 {
+		return 0, false
+	}
+	return seconds, true
 }
 
 // studioModels (repo) returns listed models of a type (all types when empty),

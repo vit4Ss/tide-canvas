@@ -40,6 +40,7 @@ const COLORS = {
 function ToastCard({ item, onRemove }: { item: ToastItem; onRemove: (id: number) => void }) {
   const [paused, setPaused] = useState(false);
   const Icon = ICONS[item.type];
+  const isError = item.type === "error";
 
   useEffect(() => {
     if (paused) return;
@@ -59,12 +60,16 @@ function ToastCard({ item, onRemove }: { item: ToastItem; onRemove: (id: number)
       onBlurCapture={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setPaused(false);
       }}
-      className={`pointer-events-auto flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm shadow-md ${COLORS[item.type]}`}
+      className={`pointer-events-auto flex items-center rounded-lg border shadow-md ${COLORS[item.type]} ${
+        isError
+          ? "min-h-14 w-[min(760px,calc(100vw-32px))] gap-3 px-5 py-3.5 text-[15px]"
+          : "gap-2 px-4 py-2.5 text-sm"
+      }`}
     >
-      <Icon className="h-4 w-4 shrink-0" aria-hidden />
-      <span>{item.message}</span>
-      <button type="button" aria-label="关闭提示" onClick={() => onRemove(item.id)} className="ml-2 opacity-60 hover:opacity-100">
-        <X className="h-3.5 w-3.5" aria-hidden />
+      <Icon className={isError ? "h-5 w-5 shrink-0" : "h-4 w-4 shrink-0"} aria-hidden />
+      <span className={isError ? "min-w-0 flex-1 break-words leading-6" : undefined}>{item.message}</span>
+      <button type="button" aria-label="关闭提示" onClick={() => onRemove(item.id)} className={`${isError ? "p-1" : "ml-2"} shrink-0 opacity-60 hover:opacity-100`}>
+        <X className={isError ? "h-4 w-4" : "h-3.5 w-3.5"} aria-hidden />
       </button>
     </div>
   );
