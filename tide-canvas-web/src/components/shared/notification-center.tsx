@@ -24,6 +24,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { isHiddenPricingRoute } from "@/lib/public-routes";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { notificationApi } from "@/lib/content-api";
@@ -262,7 +263,7 @@ export default function NotificationCenter({
   const goDetailLink = () => {
     const url = detail?.linkUrl;
     setDetail(null);
-    if (!url) return;
+    if (!url || isHiddenPricingRoute(url)) return;
     if (/^https?:\/\//i.test(url)) {
       window.open(url, "_blank", "noopener");
       return;
@@ -439,7 +440,7 @@ export default function NotificationCenter({
               <div className="nd-body" id={detailBodyId}>
                 {detail.content || "（该通知没有正文）"}
               </div>
-              {detail.linkUrl && (
+              {detail.linkUrl && !isHiddenPricingRoute(detail.linkUrl) && (
                 <div className="nd-acts">
                   <button type="button" className="nd-btn pri" onClick={goDetailLink}>
                     前往查看 →

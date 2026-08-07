@@ -15,6 +15,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Logo } from "@/components/flux/atoms";
 import { contentApi } from "@/lib/content-api";
+import { isHiddenPricingRoute } from "@/lib/public-routes";
 import type { FooterColVO } from "@/types/content";
 
 /** 内置默认列 — 与服务端 model.DefaultFooterLinksJSON 保持一致。 */
@@ -39,8 +40,6 @@ const DEFAULT_COLS: FooterColVO[] = [
   {
     title: "关于",
     links: [
-      { label: "价格方案", href: "/pricing" },
-      { label: "企业版", href: "/pricing" },
       { label: "服务条款", href: "/terms" },
       { label: "隐私政策", href: "/privacy" },
     ],
@@ -72,6 +71,12 @@ export default function SiteFooter() {
     };
   }, []);
 
+  const visibleCols = cols.map((col) => ({
+    ...col,
+    // 后台可能仍保存旧的定价页链接，公开端统一过滤，避免配置回流后重新出现。
+    links: col.links.filter((link) => !isHiddenPricingRoute(link.href)),
+  }));
+
   return (
     <footer>
       <div className="wrap">
@@ -86,7 +91,7 @@ export default function SiteFooter() {
             </p>
           </div>
 
-          {cols.map((col) => (
+          {visibleCols.map((col) => (
             <div className="foot-col" key={col.title}>
               <h4>{col.title}</h4>
               {col.links.map((l) => (

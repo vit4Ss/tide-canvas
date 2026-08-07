@@ -1199,8 +1199,7 @@ export default function CreateStudio() {
               </span>
             </button>
             <div className="ws-balance">
-              {balance !== null ? `余额 ${balance.toLocaleString()} 积分` : "余额 —"} ·{" "}
-              <a href="/pricing">充值</a>
+              {balance !== null ? `余额 ${balance.toLocaleString()} 积分` : "余额 —"}
             </div>
           </div>
         </aside>

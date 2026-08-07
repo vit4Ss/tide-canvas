@@ -7,8 +7,7 @@
    `plans`). Uses the liuguang .bill-toggle / .plans / .plan[.feat] / .plan-tag /
    .plan-name / .plan-desc / .plan-price / .plan-cta / .plan-feats classes.
 
-   CTA wiring: the free plan (monthly === 0) → /studio (开始创作); paid plans →
-   /pricing (查看完整方案与对比).
+   CTA wiring: all visible plans lead to the creation studio.
    ========================================================================== */
 
 import Link from "next/link";
@@ -106,7 +105,7 @@ export default function HomePricing({
               : Number(p.monthly);
           const per = isFree ? "永久免费" : "/ 月";
           const num = isFree ? "¥0" : "¥" + money(eff);
-          const href = isFree ? "/studio" : "/pricing";
+          const href = "/studio";
           const orig = yr && promoY > 0
             ? Math.round((Number(p.yearly) / 12) * 100) / 100
             : Number(p.monthly);

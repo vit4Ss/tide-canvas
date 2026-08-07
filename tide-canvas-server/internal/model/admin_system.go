@@ -46,8 +46,6 @@ const DefaultFooterLinksJSON = `[
     {"label":"玩法教程","href":"/inspire"},
     {"label":"灵感周报","href":"/inspire"}]},
   {"title":"关于","links":[
-    {"label":"价格方案","href":"/pricing"},
-    {"label":"企业版","href":"/pricing"},
     {"label":"服务条款","href":"/terms"},
     {"label":"隐私政策","href":"/privacy"}]}
 ]`

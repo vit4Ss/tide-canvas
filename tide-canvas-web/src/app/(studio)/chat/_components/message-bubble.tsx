@@ -5,7 +5,7 @@
    生成台 result bubble from its linked task (single source of truth). */
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AiTaskStatus } from "@/types/ai";
 import type { MessageVO, MessageTaskVO } from "@/types/chat";
@@ -21,6 +21,7 @@ import { tracksFromMeta } from "@/lib/music-modes";
 import { skillRunApi } from "@/lib/skill-run-api";
 import type { SkillRunAction, SkillRunArtifactVO, SkillRunVO } from "@/types/skill-run";
 import { fileNameFromUrl, type LightboxItem, type LightboxKind } from "./chat-utils";
+import { isHiddenPricingRoute } from "@/lib/public-routes";
 
 /** Deterministic mesh-gradient fallback for an image-type message whose content
  *  URL is empty, seeded from the message id. */
@@ -142,8 +143,15 @@ function MdPre({ node, ...props }: React.HTMLAttributes<HTMLPreElement> & { node
   );
 }
 
+const MdLink: Components["a"] = ({ href, children, ...props }) =>
+  isHiddenPricingRoute(href) ? null : (
+    <a href={href} {...props}>
+      {children}
+    </a>
+  );
+
 /** 两处 ReactMarkdown 共用的组件覆写（模块级常量,避免每次渲染重建）。 */
-export const MD_COMPONENTS = { pre: MdPre };
+export const MD_COMPONENTS: Components = { pre: MdPre, a: MdLink };
 
 /** Read the composer attachments snapshotted on a user message's params
  *  ({attachments:[{url,kind}]}), filtering to entries with a usable URL. */

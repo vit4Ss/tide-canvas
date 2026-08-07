@@ -50,7 +50,7 @@ func seedNotifications(db *gorm.DB) error {
 			Type:      "system",
 			Title:     "积分赠送到账",
 			Content:   "新用户专属积分已发放到你的账户，可用于 AI 生成。",
-			LinkURL:   "/pricing",
+			LinkURL:   "/account/points",
 			IsRead:    0,
 		},
 		{

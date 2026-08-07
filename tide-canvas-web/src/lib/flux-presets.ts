@@ -7,7 +7,6 @@
 /** 首屏 CTA 跳转选项 — key 存库（home.global.ctaTarget），label 后台展示。 */
 export const HOME_CTA_TARGETS = [
   { key: "studio", label: "创作台", href: "/studio" },
-  { key: "pricing", label: "定价", href: "/pricing" },
 ] as const;
 
 export type HomeCtaTargetKey = (typeof HOME_CTA_TARGETS)[number]["key"];

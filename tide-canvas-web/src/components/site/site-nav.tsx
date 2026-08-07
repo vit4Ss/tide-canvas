@@ -6,11 +6,9 @@
    flux.css (.nav / .nav-in / .brand / .glyph / .nlink[.on] / .tag / .nav-right
    / .icbtn / .vip / .signin) so the shared styles apply unchanged.
 
-   What changed this sync: navHTML() now renders an account entry after 会员特惠.
-   When signed in it's the user AVATAR (the new .acct dropdown — the round
-   element between the 会员特惠 button and the edge of the nav, replacing the
-   old plain "登录" text). Clicking it opens a small menu with the user's plan +
-   积分 and links to 个人中心 / 我的作品 / 创作台 (and 管理后台 for admins) plus
+   When signed in the account entry is the user AVATAR (the new .acct dropdown,
+   replacing the old plain "登录" text). Clicking it opens a small menu with
+   links to 个人中心 / 我的作品 / 创作台 (and 管理后台 for admins) plus
    退出登录. Signed out, it stays a plain 登录 → /login link. The .acct* styles
    are new (not yet in flux.css) and are co-located in ./site-nav.css.
 
@@ -27,10 +25,8 @@ import { Logo } from "@/components/flux/atoms";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "@/components/shared/toast";
-import { billingApi } from "@/lib/billing-api";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/stores/use-auth-store";
-import { fmt } from "@/lib/utils";
 import { defaultAvatar, isPlaceholderEmail } from "@/lib/default-avatar";
 import "./site-nav.css";
 
@@ -49,44 +45,11 @@ const NAV: NavItem[] = [
   { k: "explore", label: "作品广场", href: "/explore", match: ["/explore"] },
   { k: "create", label: "创作台", href: "/studio", match: ["/studio"] },
   { k: "blog", label: "博客", href: "/blog", match: ["/blog"] },
-  // 「限时」标签不再写死：活动进行中（GET /api/billing/promo enabled）才渲染，
-  // 活动结束/关闭后服务端返回 enabled=false，标签随之消失。见 usePromoLive()。
-  { k: "pricing", label: "价格方案", href: "/pricing", match: ["/pricing"] },
 ];
 
 function isActive(item: NavItem, pathname: string): boolean {
   if (item.href === "/") return pathname === "/";
   return item.match.some((p) => pathname === p || pathname.startsWith(p + "/"));
-}
-
-/** 限时折扣活动是否进行中（驱动「价格方案」旁的「限时」标签）。服务端在
- *  活动关闭/到期时直接返回 enabled=false，这里不做客户端倒计时。 */
-function usePromoLive(): boolean {
-  const [live, setLive] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    billingApi.promo().then((res) => {
-      if (alive && res.success && !!res.data?.enabled) setLive(true);
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
-  return live;
-}
-
-/* 头像统一走 defaultAvatar 预置图（无头像用户按 id 稳定分配） */
-function planLabel(vipLevel?: number): string {
-  switch (vipLevel) {
-    case 1:
-      return "专业版";
-    case 2:
-      return "团队版";
-    case 3:
-      return "旗舰版";
-    default:
-      return "免费版";
-  }
 }
 
 export default function SiteNav() {
@@ -99,9 +62,6 @@ export default function SiteNav() {
   const [open, setOpen] = useState(false);
   // 移动端主导航抽屉（≤880px .nav-links 隐藏后的唯一入口）
   const [menuOpen, setMenuOpen] = useState(false);
-  // 限时折扣活动进行中 → 价格方案旁渲染「限时」标签
-  const promoLive = usePromoLive();
-
   // scroll-past-40px .solid toggle (mirrors shell.mountChrome)
   useEffect(() => {
     const nav = navRef.current;
@@ -133,8 +93,11 @@ export default function SiteNav() {
 
   // close menus on navigation
   useEffect(() => {
-    setOpen(false);
-    setMenuOpen(false);
+    const id = window.setTimeout(() => {
+      setOpen(false);
+      setMenuOpen(false);
+    }, 0);
+    return () => window.clearTimeout(id);
   }, [pathname]);
 
   // mobile drawer: close on Escape
@@ -177,7 +140,6 @@ export default function SiteNav() {
             >
               {n.label}
               {n.tag && <span className="tag">{n.tag}</span>}
-              {n.k === "pricing" && promoLive && <span className="tag">限时</span>}
             </Link>
           ))}
         </div>
@@ -211,10 +173,6 @@ export default function SiteNav() {
             文
           </button>
 
-          <Link className="vip" href="/pricing">
-            会员特惠
-          </Link>
-
           {user ? (
             <div className={`acct${open ? " open" : ""}`} ref={acctRef}>
               <button
@@ -241,15 +199,6 @@ export default function SiteNav() {
                     <div className="acct-em">{isPlaceholderEmail(user.email) ? "未绑定邮箱" : user.email}</div>
                   </div>
                 </div>
-
-                <Link className="acct-credits" href="/pricing">
-                  <div>
-                    {/* 类名避开 pages.css 的 .plan 定价卡样式（曾泄漏成大圆块） */}
-                    <span className="acct-plan">{planLabel(user.vipLevel)}</span>
-                    <span className="cr">{fmt(user.points || 0)} 积分</span>
-                  </div>
-                  <span className="up">升级 →</span>
-                </Link>
 
                 {/* 菜单图标：emoji（彩色、跨平台不一致）→ 统一线性 SVG */}
                 <div className="acct-list">
@@ -331,7 +280,6 @@ export default function SiteNav() {
             >
               {n.label}
               {n.tag && <span className="tag">{n.tag}</span>}
-              {n.k === "pricing" && promoLive && <span className="tag">限时</span>}
             </Link>
           ))}
           {!user && (

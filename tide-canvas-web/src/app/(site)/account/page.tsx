@@ -596,19 +596,7 @@ export default function AccountPage() {
                   </div>
                   <Link href="/admin">进入后台</Link>
                 </div>
-              ) : (
-                <Link
-                  className="pf-btn pri"
-                  href="/pricing"
-                  style={{
-                    width: "100%",
-                    justifyContent: "center",
-                    marginTop: 18,
-                  }}
-                >
-                  升级解锁更多权益 →
-                </Link>
-              )}
+              ) : null}
             </div>
           </div>
 

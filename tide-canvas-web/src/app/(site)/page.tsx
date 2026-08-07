@@ -11,14 +11,14 @@
    the exact liuguang class names so the shared styles apply.
 
    Sections in order: HERO · CAPABILITIES · INFINITE CANVAS · LIVE GALLERY ·
-   MODEL MARQUEE · FAQ · PRICING.
+   MODEL MARQUEE · FAQ.
 
    Interactivity is split into small client components under
-   src/components/site/ (hero, infinite-canvas, feed-coverflow, faq, pricing,
+   src/components/site/ (hero, infinite-canvas, feed-coverflow, faq,
    marquee). `useReveal()` drives the scroll reveal-on-view for .reveal nodes.
 
    Link wiring: capability tiles / 全部工具 → /studio; INFINITE CANVAS 试一试 →
-   /projects; 浏览全部作品 → /explore; 查看完整方案 → /pricing.
+   /projects; 浏览全部作品 → /explore.
    ========================================================================== */
 
 import Link from "next/link";
@@ -27,7 +27,6 @@ import { useEffect, useMemo, useState } from "react";
 import { CAPS, type Cap } from "@/content/home";
 import { coverBg, type MeshHues } from "@/lib/mesh";
 import { contentApi } from "@/lib/content-api";
-import { billingApi } from "@/lib/billing-api";
 import { aiApi } from "@/lib/api";
 import type {
   PostLiteVO,
@@ -35,7 +34,6 @@ import type {
   HomeFloorLiteVO,
   HomeGlobalVO,
 } from "@/types/content";
-import type { PlanVO } from "@/types/billing";
 import type { AiToolVO } from "@/types/ai";
 import { useReveal } from "@/components/site/use-reveal";
 import HomeHero from "@/components/site/home-hero";
@@ -43,7 +41,6 @@ import InfiniteCanvas from "@/components/site/infinite-canvas";
 import FeedCoverflow from "@/components/site/feed-coverflow";
 import ModelMarquee from "@/components/site/model-marquee";
 import HomeFaq from "@/components/site/home-faq";
-import HomePricing from "@/components/site/home-pricing";
 
 /** 首页楼层的出厂顺序（type = 后台「首页楼层」的楼层类型）。楼层接口失败 /
     为空时按此渲染，首页永不空白；接口返回后以后台的启用+排序为准。 */
@@ -54,7 +51,6 @@ const DEFAULT_FLOOR_TYPES = [
   "作品流",
   "模型跑马灯",
   "FAQ",
-  "价格",
 ] as const;
 
 /** 能力卡分流：CORE 生成品类 → 创作台对应模式；TOOL 编辑功能 → 独立工具页
@@ -81,13 +77,11 @@ const CAP_LINK: Record<string, string> = {
 export default function HomePage() {
   const router = useRouter();
 
-  // Real home data. /api/home/feed + /api/billing/plans are PUBLIC reads — no
-  // session needed. Hero / capabilities / faq stay static design content.
+  // Real home data. /api/home/feed is a PUBLIC read — no session needed.
+  // Hero / capabilities / faq stay static design content.
   const [works, setWorks] = useState<PostLiteVO[]>([]);
   const [models, setModels] = useState<ModelLiteVO[]>([]);
-  const [plans, setPlans] = useState<PlanVO[]>([]);
   const [feedLoading, setFeedLoading] = useState(true);
-  const [plansLoading, setPlansLoading] = useState(true);
   // 首页楼层配置（后台「首页楼层」）：null = 未返回（按出厂顺序渲染）。
   const [floors, setFloors] = useState<HomeFloorLiteVO[] | null>(null);
   // 首页全局配置（背景流光 + 首屏 CTA）：null = 未返回（背景暂不挂载，
@@ -123,13 +117,6 @@ export default function HomePage() {
         setTools(res.data);
       }
     });
-    billingApi
-      .plans()
-      .then((res) => {
-        if (!alive) return;
-        if (res.success && res.data) setPlans(res.data);
-      })
-      .finally(() => alive && setPlansLoading(false));
     return () => {
       alive = false;
     };
@@ -175,7 +162,7 @@ export default function HomePage() {
   // 去AI味预览已升级为 (site) 组级挂载 — 见 layout 里的 <DeaiPreview/>。
 
   // Reveal .reveal/.reveal-scale on scroll (re-scan after mount paints).
-  useReveal([works, models, plans, floorList, capList]);
+  useReveal([works, models, floorList, capList]);
 
   /* ── 楼层 → 区块渲染（后台「首页楼层」驱动显隐/顺序/数量）───────────── */
   const renderFloor = (f: HomeFloorLiteVO) => {
@@ -198,8 +185,6 @@ export default function HomePage() {
         return <ModelMarquee key={f.type} models={models} />;
       case "FAQ":
         return renderFaq(f.type);
-      case "价格":
-        return renderPricing(f.type);
       default:
         return null;
     }
@@ -365,32 +350,6 @@ export default function HomePage() {
             </div>
           </div>
           <HomeFaq />
-        </div>
-      </section>
-  );
-
-  const renderPricing = (key: string) => (
-      <section className="block" id="cta-sec" key={key}>
-        <div className="wrap">
-          <div className="sec-head center">
-            <div>
-              <span className="eyebrow reveal">
-                <span className="d" />价格方案 · PRICING
-              </span>
-              <h2 className="sec-title reveal">
-                选一个节奏，<span className="gtext">开始创作</span>
-              </h2>
-              <p className="sec-sub reveal">
-                免费开始，无需信用卡。随时升级或取消——你只为真正用到的算力付费。
-              </p>
-            </div>
-          </div>
-          <HomePricing plans={plans} loading={plansLoading} />
-          <div style={{ textAlign: "center", marginTop: 30 }}>
-            <Link className="see-all reveal" href="/pricing">
-              查看完整方案与对比 →
-            </Link>
-          </div>
         </div>
       </section>
   );

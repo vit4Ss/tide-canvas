@@ -339,8 +339,7 @@ function parseHomeGlobal(raw: string): HomeGlobalForm {
     }>;
     return {
       ctaLabel: v.ctaLabel?.trim() || HOME_GLOBAL_DEFAULTS.ctaLabel,
-      ctaTarget:
-        v.ctaTarget === "pricing" ? "pricing" : HOME_GLOBAL_DEFAULTS.ctaTarget,
+      ctaTarget: HOME_GLOBAL_DEFAULTS.ctaTarget,
     };
   } catch {
     return { ...HOME_GLOBAL_DEFAULTS };

@@ -30,6 +30,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { authApi } from "@/lib/api";
 import { communityApi } from "@/lib/community-api";
 import { useAuthStore } from "@/stores/use-auth-store";
+import { isHiddenPricingRoute } from "@/lib/public-routes";
 
 type Mode = "login" | "register" | "reset";
 type SubMode = "pwd" | "code";
@@ -92,7 +93,10 @@ function pwdRuleChecks(pw: string, uname: string): { label: string; ok: boolean 
 function LoginInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const redirect = searchParams.get("redirect") || "/studio";
+  const requestedRedirect = searchParams.get("redirect");
+  const redirect = requestedRedirect && !isHiddenPricingRoute(requestedRedirect)
+    ? requestedRedirect
+    : "/studio";
 
   const login = useAuthStore((s) => s.login);
   const loginCode = useAuthStore((s) => s.loginCode);

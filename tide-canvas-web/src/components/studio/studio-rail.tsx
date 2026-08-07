@@ -7,7 +7,7 @@
    Routing (design's dead links wired to real app routes):
      发现     → /            创作     → /studio       生成     → /chat
      画布     → /projects (EXISTING canvas hub)        作品广场 → /explore
-     灵感     → /inspire      资产     → /assets        升级 Pro → /pricing
+     灵感     → /inspire      资产     → /assets
      brand    → /             登录     → /login
    通知 → 真实通知中心(NotificationCenter,登录后显示,含未读红点/下拉列表)。
 
@@ -132,7 +132,7 @@ const RAIL_COLLAPSED_KEY = "ws_rail_collapsed";
 
 export default function StudioRail() {
   const pathname = usePathname() ?? "";
-  const { user, initialized } = useAuth();
+  const { user } = useAuth();
 
   // 折叠态：SSR 恒为展开，挂载后从 localStorage 同步（避免 hydration 不一致）。
   const [collapsed, setCollapsed] = useState(false);
@@ -167,10 +167,6 @@ export default function StudioRail() {
 
   const accountName = user?.nickname || user?.username || user?.email || "";
   const initials = accountName.trim().slice(0, 1).toUpperCase() || "U";
-
-  // 已购套餐(vipLevel>=1,购买结算时提升)不再推销升级;
-  // 会话未解析完先不渲染,避免 Pro 用户每次进页闪一下升级卡
-  const showUpgrade = initialized && (user?.vipLevel ?? 0) < 1;
 
   return (
     <>
@@ -211,18 +207,6 @@ export default function StudioRail() {
       )}
 
       <div className="ws-rail-sp" />
-
-      {showUpgrade && (
-        <Link className="ws-upgrade" href="/pricing">
-          <div className="ws-upgrade-top">
-            <b>
-              <span className="star">★</span> 升级 Pro
-            </b>
-            <span className="sub">解锁全部模型，低至 ¥39/月</span>
-          </div>
-          <div className="ws-upgrade-btn">立即升级</div>
-        </Link>
-      )}
 
       {user && (
         <NotificationCenter

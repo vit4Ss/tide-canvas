@@ -2,6 +2,7 @@ package content
 
 import (
 	"encoding/json"
+	"net/url"
 	"strings"
 
 	"gorm.io/gorm"
@@ -67,7 +68,7 @@ func parseFooterCols(raw string) ([]FooterColVO, bool) {
 	for _, c := range cols {
 		links := make([]FooterLinkVO, 0, len(c.Links))
 		for _, l := range c.Links {
-			if strings.TrimSpace(l.Label) != "" && strings.TrimSpace(l.Href) != "" {
+			if strings.TrimSpace(l.Label) != "" && strings.TrimSpace(l.Href) != "" && !isHiddenPricingRoute(l.Href) {
 				links = append(links, l)
 			}
 		}
@@ -81,12 +82,26 @@ func parseFooterCols(raw string) ([]FooterColVO, bool) {
 	return out, true
 }
 
+// isHiddenPricingRoute also catches absolute URLs, query strings and fragments
+// so legacy admin configuration cannot put the retired public route back.
+func isHiddenPricingRoute(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	path := strings.TrimSuffix(strings.ToLower(u.Path), "/")
+	if path != "" && !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return path == "/pricing" || strings.HasPrefix(path, "/pricing/")
+}
+
 // --- site home global settings ---
 
 // HomeGlobalVO is the public view of the homepage's global settings（后台
 // 首页楼层「楼层全局配置」panel）。流光背景功能已按产品定稿整体移除，
-// 只剩 hero 首屏 CTA：CtaTarget is a route key (studio/pricing) the client
-// maps to a path. 旧库里残留的 flux* 字段在反序列化时被自然忽略。
+// 只剩 hero 首屏 CTA；公开定价页隐藏后目标统一为 studio。
+// 旧库里残留的 flux* 字段在反序列化时被自然忽略。
 type HomeGlobalVO struct {
 	CtaLabel  string `json:"ctaLabel"`
 	CtaTarget string `json:"ctaTarget"`
@@ -118,9 +133,7 @@ func parseHomeGlobal(raw string) (HomeGlobalVO, bool) {
 	if strings.TrimSpace(vo.CtaLabel) == "" {
 		vo.CtaLabel = "生成"
 	}
-	if vo.CtaTarget != "pricing" {
-		vo.CtaTarget = "studio"
-	}
+	vo.CtaTarget = "studio"
 	return vo, true
 }
 
@@ -163,6 +176,9 @@ func (s *service) siteFloors() ([]HomeFloorLiteVO, error) {
 	}
 	vos := make([]HomeFloorLiteVO, 0, len(rows))
 	for i := range rows {
+		if rows[i].Type == "价格" {
+			continue
+		}
 		vo := HomeFloorLiteVO{
 			Type:      rows[i].Type,
 			Name:      rows[i].Name,
@@ -325,7 +341,11 @@ func (s *service) listNotifications(userID idgen.ID, q *NotificationQuery) ([]No
 	}
 	vos := make([]NotificationVO, 0, len(rows))
 	for i := range rows {
-		vos = append(vos, toNotificationVO(&rows[i]))
+		vo := toNotificationVO(&rows[i])
+		if isHiddenPricingRoute(vo.LinkUrl) {
+			vo.LinkUrl = ""
+		}
+		vos = append(vos, vo)
 	}
 	return vos, total, nil
 }

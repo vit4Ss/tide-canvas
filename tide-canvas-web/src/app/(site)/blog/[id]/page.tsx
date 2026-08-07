@@ -15,10 +15,11 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { blogApi } from "@/lib/blog-api";
 import type { BlogPostVO } from "@/types/blog";
+import { isHiddenPricingRoute } from "@/lib/public-routes";
 import "../blog.css";
 
 function fmtDate(s: string): string {
@@ -28,6 +29,13 @@ function fmtDate(s: string): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
+
+const markdownLink: Components["a"] = ({ href, children, ...props }) =>
+  isHiddenPricingRoute(href) ? null : (
+    <a href={href} {...props}>
+      {children}
+    </a>
+  );
 
 export default function BlogDetailPage() {
   const params = useParams<{ id: string }>();
@@ -101,6 +109,7 @@ export default function BlogDetailPage() {
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
                   components={{
+                    a: markdownLink,
                     img: ({ src, alt, title }) =>
                       alt === "video" && typeof src === "string" ? (
                         <video

@@ -320,7 +320,7 @@ var CanonicalHomeFloors = []HomeFloor{
 	{Name: "作品广场", Subtitle: "社区实时作品 Coverflow", Type: "作品流", ContentSource: "hot,latest", Count: 8, SortOrder: 4, Enabled: true},
 	{Name: "模型跑马灯", Subtitle: "在库热门模型滚动展示", Type: "模型跑马灯", ContentSource: "", Count: 0, SortOrder: 5, Enabled: true},
 	{Name: "常见问题", Subtitle: "首页 FAQ 折叠列表", Type: "FAQ", ContentSource: "", Count: 0, SortOrder: 6, Enabled: true},
-	{Name: "价格方案", Subtitle: "套餐卡 + 完整方案入口", Type: "价格", ContentSource: "", Count: 0, SortOrder: 7, Enabled: true},
+	{Name: "价格方案", Subtitle: "套餐卡 + 完整方案入口", Type: "价格", ContentSource: "", Count: 0, SortOrder: 7, Enabled: false},
 }
 
 // ensureBaselineFloors makes home_floor rows match the homepage's real

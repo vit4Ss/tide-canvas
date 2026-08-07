@@ -374,9 +374,9 @@ export default function AdminNotificationsPage() {
                 onChange={(e) => setSendForm((f) => ({ ...f, content: e.target.value }))}
               />
             </Field>
-            <Field label="跳转链接" span={4} hint="可选；站内路径（如 /pricing）或完整 URL，点击通知后跳转">
+            <Field label="跳转链接" span={4} hint="可选；站内路径（如 /studio）或完整 URL，点击通知后跳转">
               <input
-                placeholder="如：/pricing"
+                placeholder="如：/studio"
                 value={sendForm.linkUrl}
                 onChange={(e) => setSendForm((f) => ({ ...f, linkUrl: e.target.value }))}
               />

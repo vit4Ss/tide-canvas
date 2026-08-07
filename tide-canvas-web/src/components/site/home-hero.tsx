@@ -59,7 +59,7 @@ export default function HomeHero({
 }: {
   /** 首屏主按钮文案（后台「首页楼层 · 楼层全局配置」home.global.ctaLabel）。 */
   ctaLabel?: string;
-  /** 主按钮跳转键 studio/pricing（home.global.ctaTarget），经 ctaTargetHref 解析。 */
+  /** 主按钮跳转键（当前仅 studio），经 ctaTargetHref 解析。 */
   ctaTarget?: string;
 }) {
   const router = useRouter();
