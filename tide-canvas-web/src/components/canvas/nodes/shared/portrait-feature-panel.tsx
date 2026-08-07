@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -183,6 +184,7 @@ export function PortraitFeaturePanel({
   const [makeupReference, setMakeupReference] = useState<string | null>(null);
   const [uploadingReference, setUploadingReference] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const makeupGridRef = useRef<HTMLDivElement>(null);
   const makeupInputRef = useRef<HTMLInputElement>(null);
   const [expression, setExpression] = useState<ExpressionSelection>({ emotion: "joy", strength: 1 });
   const [isExpressionScrubbing, setIsExpressionScrubbing] = useState(false);
@@ -220,6 +222,27 @@ export function PortraitFeaturePanel({
   useEffect(() => {
     if (mode === "expression") preloadExpressionPreviewSprite();
     else if (mode === "makeup") preloadMakeupPresetSprites();
+  }, [mode]);
+
+  useLayoutEffect(() => {
+    if (mode !== "makeup") return;
+    const grid = makeupGridRef.current;
+    if (!grid) return;
+
+    const updateCardSize = () => {
+      const styles = window.getComputedStyle(grid);
+      const paddingLeft = Number.parseFloat(styles.paddingLeft) || 0;
+      const paddingRight = Number.parseFloat(styles.paddingRight) || 0;
+      const columnGap = Number.parseFloat(styles.columnGap) || 0;
+      const contentWidth = grid.clientWidth - paddingLeft - paddingRight;
+      const cardSize = Math.max(0, (contentWidth - columnGap * 4) / 5);
+      grid.style.setProperty("--makeup-card-size", `${cardSize}px`);
+    };
+
+    updateCardSize();
+    const observer = new ResizeObserver(updateCardSize);
+    observer.observe(grid);
+    return () => observer.disconnect();
   }, [mode]);
 
   const selectExpressionCell = (emotionIndex: number, strengthValue: number) => {
@@ -410,14 +433,15 @@ export function PortraitFeaturePanel({
             </div>
           </div>
 
-          <div className="thin-scroll grid min-h-0 flex-1 grid-cols-5 content-start gap-2 overflow-y-auto px-3 py-4">
+          <div ref={makeupGridRef} className="thin-scroll flex min-h-0 flex-1 flex-wrap content-start items-start gap-2 overflow-y-auto px-3 py-4">
             <button
               type="button"
               disabled={!allowReferenceUpload}
               onClick={() => makeupInputRef.current?.click()}
               title={allowReferenceUpload ? "上传妆容参考图" : "当前模型只支持一张参考图，无法使用自定义参考妆"}
               aria-label={allowReferenceUpload ? "上传参考，自定义妆容" : "当前模型不支持自定义妆容参考"}
-              className={`relative block h-0 w-full pt-[100%] overflow-hidden rounded-[8px] border bg-white text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${makeupPreset === "custom" ? "border-neutral-400 ring-1 ring-black/15 dark:border-white/50" : "border-neutral-200 hover:border-neutral-400 dark:border-white/12 dark:bg-white/[.03] dark:hover:border-white/30"}`}
+              className={`relative block min-w-0 shrink-0 overflow-hidden rounded-[8px] border bg-white text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${makeupPreset === "custom" ? "border-neutral-400 ring-1 ring-black/15 dark:border-white/50" : "border-neutral-200 hover:border-neutral-400 dark:border-white/12 dark:bg-white/[.03] dark:hover:border-white/30"}`}
+              style={{ width: "var(--makeup-card-size, 78px)", height: "var(--makeup-card-size, 78px)" }}
             >
               {makeupReference ? (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -451,7 +475,8 @@ export function PortraitFeaturePanel({
                   onClick={() => setMakeupPreset(preset.id)}
                   aria-pressed={selected}
                   aria-label={preset.label}
-                  className={`relative block h-0 w-full pt-[100%] overflow-hidden rounded-[8px] border bg-neutral-100 text-left transition-all ${selected ? "border-neutral-400 ring-1 ring-black/15 dark:border-white/50" : "border-neutral-200 hover:border-neutral-400 dark:border-white/12 dark:hover:border-white/30"}`}
+                  className={`relative block min-w-0 shrink-0 overflow-hidden rounded-[8px] border bg-neutral-100 text-left transition-all ${selected ? "border-neutral-400 ring-1 ring-black/15 dark:border-white/50" : "border-neutral-200 hover:border-neutral-400 dark:border-white/12 dark:hover:border-white/30"}`}
+                  style={{ width: "var(--makeup-card-size, 78px)", height: "var(--makeup-card-size, 78px)" }}
                 >
                   <span
                     aria-hidden="true"
