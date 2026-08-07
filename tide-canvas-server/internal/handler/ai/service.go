@@ -1256,7 +1256,10 @@ func errMessage(err error) string {
 // userFacingGenErr 是生成失败时下发给前端的系统级统一文案。供应商/内部错误
 // 原文(含上游 HTTP 细节、密钥路由等)一律不出站——详情进 zap 日志与
 // ai_generation_logs / model_call_log(admin 后台可查)。
-const userFacingGenErr = "系统异常，请联系客服"
+const (
+	userFacingGenErr    = "系统异常，请联系客服"
+	userFacingSafetyErr = "内容未通过安全审核，请调整后重试"
+)
 
 // inputErrorRules 把「用户可自行修正的输入类」上游错误映射为具体、可操作的
 // 中文提示。仅做特征匹配后返回**我们自己撰写的**文案,绝不回显供应商原文——
@@ -1278,7 +1281,7 @@ var inputErrorRules = []struct {
 		"content policy", "content_policy", "sensitive content", "safety system",
 		"prohibited content", "moderation", "nsfw", "flagged",
 		"内容违规", "内容审核", "违规内容", "敏感词",
-	}, "内容未通过安全审核，请调整后重试"},
+	}, userFacingSafetyErr},
 	// 参考图版权要先于下面的通用版权规则:同样是审核,但用户该做的是「换图」而不是
 	// 「改描述」,给通用文案会把人指到错误的方向上。
 	{[]string{
@@ -1350,13 +1353,18 @@ func userFacingGenError(err error) string {
 	if err == nil {
 		return userFacingGenErr
 	}
-	// Relay 数字业务码优先于旧的 msg 关键词分类。5002（安全审核）和
-	// 5003（输入不合法）由 Relay 给出可操作文案，按产品约定直接展示；
+	// Relay 数字业务码优先于旧的 msg 关键词分类。5002（安全审核）统一
+	// 使用产品中文文案；5003（输入不合法）展示 Relay 给出的具体原因；
 	// 其余业务码保持旧逻辑，继续按 msg 规则映射或落到系统异常兜底。
 	var relayErr *relaymedia.UpstreamError
-	if errors.As(err, &relayErr) && (relayErr.Code == "5002" || relayErr.Code == "5003") {
-		if message := strings.TrimSpace(relayErr.Message); message != "" {
-			return relayDirectUserMessage(message)
+	if errors.As(err, &relayErr) {
+		switch relayErr.Code {
+		case "5002":
+			return userFacingSafetyErr
+		case "5003":
+			if message := strings.TrimSpace(relayErr.Message); message != "" {
+				return relayDirectUserMessage(message)
+			}
 		}
 	}
 	low := strings.ToLower(err.Error())
@@ -1375,9 +1383,9 @@ func userFacingGenError(err error) string {
 //
 //	APIYI: 400 BAD_REQUEST {"error":{"message":"..."}}
 //
-// For the selected direct-display business codes, the useful copy is the inner
-// error.message. If no valid nested envelope is present, preserve the product
-// contract by falling back to Relay's outer message.
+// For Relay's direct-display invalid-input code (5003), the useful copy is the
+// inner error.message. If no valid nested envelope is present, preserve the
+// product contract by falling back to Relay's outer message.
 func relayDirectUserMessage(message string) string {
 	message = strings.TrimSpace(message)
 	for offset, candidates := 0, 0; offset < len(message) && candidates < 16; candidates++ {

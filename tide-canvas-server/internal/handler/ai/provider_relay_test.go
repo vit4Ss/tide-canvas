@@ -149,20 +149,24 @@ func TestUserFacingGenError(t *testing.T) {
 func TestUserFacingGenErrorUsesSelectedRelayBusinessMessages(t *testing.T) {
 	t.Parallel()
 
-	for _, code := range []string{"5002", "5003"} {
-		message := "Relay 返回的可操作提示 " + code
-		got := userFacingGenError(&relaymedia.UpstreamError{Code: code, Type: "task_failed", Message: message})
-		if got != message {
-			t.Errorf("code %s: got %q, want %q", code, got, message)
+	const apiYIOuter = `APIYI: 400 BAD_REQUEST {"error":{"message":"The generated image was filtered by the safety policy. Please adjust your prompt and try again.","localized_message":"Unknown error","type":"invalid_request_error","param":"","code":"image_safety"}}`
+	// 5002 always uses the stable Chinese safety copy, regardless of Relay's
+	// language, nested provider details, empty message, or error wrapping.
+	for _, err := range []error{
+		&relaymedia.UpstreamError{Code: "5002", Type: "task_failed", Message: "English safety detail"},
+		&relaymedia.UpstreamError{Code: "5002", Message: apiYIOuter},
+		&relaymedia.UpstreamError{Code: "5002"},
+		fmt.Errorf("provider failed: %w", &relaymedia.UpstreamError{Code: "5002", Message: "rate limit exceeded"}),
+	} {
+		if got := userFacingGenError(err); got != userFacingSafetyErr {
+			t.Errorf("code 5002: got %q, want %q", got, userFacingSafetyErr)
 		}
 	}
 
-	const (
-		innerSafety = "The generated image was filtered by the safety policy. Please adjust your prompt and try again."
-		apiYIOuter  = `APIYI: 400 BAD_REQUEST {"error":{"message":"The generated image was filtered by the safety policy. Please adjust your prompt and try again.","localized_message":"Unknown error","type":"invalid_request_error","param":"","code":"image_safety"}}`
-	)
-	if got := userFacingGenError(&relaymedia.UpstreamError{Code: "5002", Message: apiYIOuter}); got != innerSafety {
-		t.Errorf("nested provider error: got %q, want %q", got, innerSafety)
+	// 5003 keeps Relay's actionable invalid-input detail.
+	message5003 := "Relay 返回的可操作提示 5003"
+	if got := userFacingGenError(&relaymedia.UpstreamError{Code: "5003", Type: "task_failed", Message: message5003}); got != message5003 {
+		t.Errorf("code 5003: got %q, want %q", got, message5003)
 	}
 
 	// Do not assume the first brace begins the provider envelope. Some relays
@@ -177,7 +181,7 @@ func TestUserFacingGenErrorUsesSelectedRelayBusinessMessages(t *testing.T) {
 		`APIYI: 400 BAD_REQUEST {"error":{"message":`,
 		`APIYI: 400 BAD_REQUEST {"error":{"message":""}}`,
 	} {
-		if got := userFacingGenError(&relaymedia.UpstreamError{Code: "5002", Message: outer}); got != outer {
+		if got := userFacingGenError(&relaymedia.UpstreamError{Code: "5003", Message: outer}); got != outer {
 			t.Errorf("nested fallback: got %q, want outer %q", got, outer)
 		}
 	}
@@ -185,9 +189,9 @@ func TestUserFacingGenErrorUsesSelectedRelayBusinessMessages(t *testing.T) {
 	// The business code takes priority over the legacy keyword classifier, and
 	// errors.As must still find it when an intermediate layer wraps the error.
 	direct := "rate limit exceeded"
-	wrapped := fmt.Errorf("provider failed: %w", &relaymedia.UpstreamError{Code: "5002", Message: direct})
+	wrapped := fmt.Errorf("provider failed: %w", &relaymedia.UpstreamError{Code: "5003", Message: direct})
 	if got := userFacingGenError(wrapped); got != direct {
-		t.Errorf("wrapped code 5002: got %q, want direct message %q", got, direct)
+		t.Errorf("wrapped code 5003: got %q, want direct message %q", got, direct)
 	}
 
 	// Empty selected-code messages still use the old safe fallback.
@@ -198,7 +202,7 @@ func TestUserFacingGenErrorUsesSelectedRelayBusinessMessages(t *testing.T) {
 	// Keep the persisted task error within ai_tasks.error_msg varchar(1024),
 	// without corrupting multi-byte text.
 	longMessage := strings.Repeat("错", 1100)
-	got := userFacingGenError(&relaymedia.UpstreamError{Code: "5002", Message: longMessage})
+	got := userFacingGenError(&relaymedia.UpstreamError{Code: "5003", Message: longMessage})
 	if len([]rune(got)) != 1024 || !strings.HasSuffix(got, "…") {
 		t.Errorf("long direct message was not safely capped: runes=%d suffix=%q", len([]rune(got)), got[len(got)-3:])
 	}
