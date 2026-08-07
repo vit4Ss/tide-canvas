@@ -17,6 +17,7 @@ import { AreaTrend, MultiLine } from "@/components/admin/charts";
 import {
   AdminAlert,
   AdminEmptyState,
+  AdminTable,
   FilterChips,
   ListSkeleton,
 } from "@/components/admin";
@@ -26,6 +27,9 @@ import type {
   AdminChartsVO,
   AdminStatsVO,
   ChartPoint,
+  PointModelTopVO,
+  PointUserTopVO,
+  RecentPointConsumptionVO,
   RevenuePoint,
 } from "@/types/admin-dashboard";
 
@@ -58,6 +62,12 @@ function shortDate(d: string): string {
 
 const fmtNum = (n: number) => n.toLocaleString("zh-Hans-CN");
 
+function fmtTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value || "—";
+  return date.toLocaleString("zh-Hans-CN", { hour12: false });
+}
+
 function fmtMoney(s: string): string {
   const n = Number(s);
   return Number.isFinite(n)
@@ -82,6 +92,7 @@ export default function AdminDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [series, setSeries] = useState<SeriesKey>("user");
+  const [todayConsumedPoints, setTodayConsumedPoints] = useState(0);
 
   const ensureSession = useAuthStore((s) => s.ensureSession);
 
@@ -96,7 +107,10 @@ export default function AdminDashboardPage() {
       ]);
       if (statsRes.success && statsRes.data) setStats(statsRes.data);
       else setError(statsRes.message || "加载统计数据失败");
-      if (chartsRes.success && chartsRes.data) setCharts(chartsRes.data);
+      if (chartsRes.success && chartsRes.data) {
+        setCharts(chartsRes.data);
+        setTodayConsumedPoints(chartsRes.data.pointSummary?.todayPoints ?? 0);
+      }
     } catch {
       setError("加载数据失败，请稍后重试");
     } finally {
@@ -104,10 +118,25 @@ export default function AdminDashboardPage() {
     }
   }, [ensureSession]);
 
+  const refreshTodayConsumedPoints = useCallback(async () => {
+    try {
+      await ensureSession();
+      const res = await adminDashboardApi.todayPointConsumption();
+      if (res.success && res.data) setTodayConsumedPoints(res.data.points);
+    } catch {
+      // Keep the last good value; the next polling cycle retries silently.
+    }
+  }, [ensureSession]);
+
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => void refreshTodayConsumedPoints(), 15_000);
+    return () => window.clearInterval(timer);
+  }, [refreshTodayConsumedPoints]);
 
   const revenueVals = useMemo(
     () => (charts?.revenue ?? []).map((p: RevenuePoint) => Number(p.amount) || 0),
@@ -184,6 +213,24 @@ export default function AdminDashboardPage() {
   const modelTop = charts?.modelTop ?? [];
   const topMax = modelTop.length ? Math.max(...modelTop.map((m) => m.count)) : 0;
 
+  const pointSummary = charts?.pointSummary ?? {
+    todayPoints: 0,
+    periodPoints: 0,
+    periodUsers: 0,
+    periodRecords: 0,
+  };
+  const pointAreaData = useMemo(
+    () => (charts?.pointConsumption ?? []).map((item) => ({
+      label: shortDate(item.date),
+      value: item.points,
+    })),
+    [charts],
+  );
+  const pointHasSignal = pointAreaData.some((item) => item.value > 0);
+  const pointUserTop = charts?.pointUserTop ?? [];
+  const pointModelTop = charts?.pointModelTop ?? [];
+  const recentPointConsumption = charts?.recentPointConsumption ?? [];
+
   const dayRange = useMemo(() => {
     const days = charts?.userGrowth ?? [];
     if (days.length === 0) return { first: "", last: "" };
@@ -231,13 +278,23 @@ export default function AdminDashboardPage() {
     <div className="adm-page">
       <div className="viz-hero">
         <div className="viz-hero-row">
-          <div className="lead">
-            <div className="lbl">
-              <span className="live" />
-              今日营收
+          <div className="viz-hero-primary">
+            <div className="lead">
+              <div className="lbl">
+                <span className="live" />
+                今日营收
+              </div>
+              <div className="big">{stats ? fmtMoney(stats.todayRevenue) : "¥0.00"}</div>
+              <div className="chg">累计 {stats ? fmtMoney(stats.totalRevenue) : "¥0.00"}</div>
             </div>
-            <div className="big">{stats ? fmtMoney(stats.todayRevenue) : "¥0.00"}</div>
-            <div className="chg">累计 {stats ? fmtMoney(stats.totalRevenue) : "¥0.00"}</div>
+            <div className="lead point-lead">
+              <div className="lbl">
+                <span className="live" />
+                今日消费积分
+              </div>
+              <div className="big">{fmtNum(todayConsumedPoints)}</div>
+              <div className="chg">每 15 秒自动更新</div>
+            </div>
           </div>
           {revenueVals.some((v) => v > 0) ? (
             <div className="hspark">
@@ -409,6 +466,115 @@ export default function AdminDashboardPage() {
             <AdminEmptyState title="暂无调用记录" description="有真实模型调用后显示排行。" />
           )}
         </div>
+      </div>
+
+      <div className="viz-grid">
+        <div className="viz-card span12">
+          <div className="viz-h">
+            <div>
+              <h3>积分消耗趋势</h3>
+              <div className="sub">
+                近 14 天 · 消耗 {fmtNum(pointSummary.periodPoints)} 积分 · {fmtNum(pointSummary.periodUsers)} 位用户 · {fmtNum(pointSummary.periodRecords)} 笔
+              </div>
+            </div>
+            <div className="sub">今日 {fmtNum(pointSummary.todayPoints)} 积分</div>
+          </div>
+          {pointHasSignal ? (
+            <>
+              <AreaTrend data={pointAreaData} color={CHART_BLUE} />
+              <div className="viz-dot">
+                <span>{dayRange.first}</span>
+                <span>{dayRange.last}</span>
+              </div>
+            </>
+          ) : (
+            <AdminEmptyState
+              title="暂无积分消耗"
+              description="用户发起付费生成并产生真实积分流水后，这里会显示每日消耗趋势。"
+            />
+          )}
+        </div>
+      </div>
+
+      <div className="viz-grid">
+        <div className="viz-card span6">
+          <div className="viz-h">
+            <div>
+              <h3>用户积分消耗排行</h3>
+              <div className="sub">近 14 天 · 按真实消费流水汇总</div>
+            </div>
+          </div>
+          <AdminTable<PointUserTopVO>
+            label="用户积分消耗排行"
+            className="dashboard-compact-table"
+            rows={pointUserTop}
+            rowKey={(row) => row.userId}
+            empty="近 14 天暂无用户积分消费"
+            columns={[
+              {
+                header: "用户",
+                width: "30%",
+                className: "strong",
+                cell: (row) => row.nickname || row.username || row.userId,
+              },
+              { header: "消耗积分", width: "18%", align: "right", className: "mono strong", cell: (row) => fmtNum(row.points) },
+              { header: "笔数", width: "12%", align: "right", className: "mono", cell: (row) => fmtNum(row.records) },
+              { header: "最近消费", width: "40%", className: "mono muted", cell: (row) => fmtTime(row.lastTime) },
+            ]}
+          />
+        </div>
+
+        <div className="viz-card span6">
+          <div className="viz-h">
+            <div>
+              <h3>模型积分消耗排行</h3>
+              <div className="sub">近 14 天 · 按调用日志中的平台积分汇总</div>
+            </div>
+          </div>
+          <AdminTable<PointModelTopVO>
+            label="模型积分消耗排行"
+            className="dashboard-compact-table"
+            rows={pointModelTop}
+            rowKey={(row) => row.model}
+            empty="近 14 天暂无模型积分记录"
+            columns={[
+              { header: "模型", width: "35%", className: "strong", cell: (row) => row.modelName || row.model },
+              { header: "消耗积分", width: "19%", align: "right", className: "mono strong", cell: (row) => fmtNum(row.points) },
+              { header: "调用", width: "13%", align: "right", className: "mono", cell: (row) => fmtNum(row.calls) },
+              { header: "用户", width: "13%", align: "right", className: "mono", cell: (row) => fmtNum(row.users) },
+              {
+                header: "成功率",
+                width: "20%",
+                align: "right",
+                className: "mono",
+                cell: (row) => `${row.calls > 0 ? ((row.success / row.calls) * 100).toFixed(1) : "0.0"}%`,
+              },
+            ]}
+          />
+        </div>
+      </div>
+
+      <div className="viz-card span12">
+        <div className="viz-h">
+          <div>
+            <h3>最近积分消费</h3>
+            <div className="sub">全站最新 10 笔真实消费流水</div>
+          </div>
+          <Link href="/admin/points" className="adm-btn ghost">查看完整流水</Link>
+        </div>
+        <AdminTable<RecentPointConsumptionVO>
+          label="最近积分消费"
+          rows={recentPointConsumption}
+          rowKey={(row) => row.id}
+          empty="暂无积分消费流水"
+          columns={[
+            { header: "时间", className: "mono muted", cell: (row) => fmtTime(row.createTime) },
+            { header: "用户", className: "strong", cell: (row) => row.nickname || row.username || row.userId },
+            { header: "消耗积分", align: "right", className: "mono strong", cell: (row) => fmtNum(row.points) },
+            { header: "消费后余额", align: "right", className: "mono", cell: (row) => fmtNum(row.balance) },
+            { header: "说明", className: "muted", cell: (row) => row.remark || "—" },
+          ]}
+        />
       </div>
 
       <div className="viz-card span12">

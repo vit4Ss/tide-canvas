@@ -7,7 +7,11 @@
 // ============================================================================
 
 import { http } from "@/lib/http";
-import type { AdminChartsVO, AdminStatsVO } from "@/types/admin-dashboard";
+import type {
+  AdminChartsVO,
+  AdminStatsVO,
+  TodayPointConsumptionVO,
+} from "@/types/admin-dashboard";
 
 export const adminDashboardApi = {
   /** GET /api/admin/dashboard/stats -> AdminStatsVO (aggregate KPI block). */
@@ -15,4 +19,8 @@ export const adminDashboardApi = {
 
   /** GET /api/admin/dashboard/charts -> AdminChartsVO (trailing 14-day series). */
   charts: () => http.get<AdminChartsVO>("/api/admin/dashboard/charts"),
+
+  /** Lightweight live KPI, refreshed independently from the chart payload. */
+  todayPointConsumption: () =>
+    http.get<TodayPointConsumptionVO>("/api/admin/dashboard/points/today"),
 };

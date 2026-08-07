@@ -55,6 +55,54 @@ export interface ModelTopVO {
   avgMs: number;
 }
 
+export interface PointSummaryVO {
+  todayPoints: number;
+  periodPoints: number;
+  periodUsers: number;
+  periodRecords: number;
+}
+
+export interface TodayPointConsumptionVO {
+  points: number;
+  asOf: string;
+}
+
+export interface PointConsumptionPoint {
+  date: string;
+  points: number;
+  users: number;
+  records: number;
+}
+
+export interface PointUserTopVO {
+  userId: string;
+  username: string;
+  nickname: string;
+  points: number;
+  records: number;
+  lastTime: string;
+}
+
+export interface PointModelTopVO {
+  model: string;
+  modelName: string;
+  points: number;
+  calls: number;
+  users: number;
+  success: number;
+}
+
+export interface RecentPointConsumptionVO {
+  id: string;
+  userId: string;
+  username: string;
+  nickname: string;
+  points: number;
+  balance: number;
+  remark: string;
+  createTime: string;
+}
+
 /** Dashboard time series (trailing 14-day window, oldest first). */
 export interface AdminChartsVO {
   userGrowth: ChartPoint[];
@@ -65,4 +113,10 @@ export interface AdminChartsVO {
   modelCalls: ModelCallPoint[];
   /** 近 14 天调用量 Top5 模型 */
   modelTop: ModelTopVO[];
+  /** 近 14 天真实积分消费汇总与明细。 */
+  pointSummary: PointSummaryVO;
+  pointConsumption: PointConsumptionPoint[];
+  pointUserTop: PointUserTopVO[];
+  pointModelTop: PointModelTopVO[];
+  recentPointConsumption: RecentPointConsumptionVO[];
 }

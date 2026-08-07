@@ -35,12 +35,14 @@ const g1DayFmt = "%Y-%m-%d"
 
 // RegisterDashboard mounts the dashboard routes on the admin group.
 //
-//	GET /dashboard/stats  -> AdminStatsVO
-//	GET /dashboard/charts -> AdminChartsVO
+//	GET /dashboard/stats        -> AdminStatsVO
+//	GET /dashboard/charts       -> AdminChartsVO
+//	GET /dashboard/points/today -> TodayPointConsumptionVO
 func RegisterDashboard(g *gin.RouterGroup, d *app.Deps) {
 	h := &dashboardHandler{db: d.DB}
 	g.GET("/dashboard/stats", h.stats)
 	g.GET("/dashboard/charts", h.charts)
+	g.GET("/dashboard/points/today", h.todayPointConsumption)
 }
 
 type dashboardHandler struct {
@@ -129,6 +131,66 @@ type AdminChartsVO struct {
 	ModelCalls []ModelCallPoint `json:"modelCalls"`
 	// ModelTop：近 14 天调用量 Top5 模型（含成功量与平均耗时）。
 	ModelTop []ModelTopVO `json:"modelTop"`
+	// PointConsumption / point leaderboards use the real point ledger and the
+	// point_cost stamped on model_call_log over the same trailing window.
+	PointSummary           PointSummaryVO             `json:"pointSummary"`
+	PointConsumption       []PointConsumptionPoint    `json:"pointConsumption"`
+	PointUserTop           []PointUserTopVO           `json:"pointUserTop"`
+	PointModelTop          []PointModelTopVO          `json:"pointModelTop"`
+	RecentPointConsumption []RecentPointConsumptionVO `json:"recentPointConsumption"`
+}
+
+// PointSummaryVO is the gross consume-ledger summary for the dashboard window.
+// Refunds remain separate positive ledger rows and are intentionally not folded
+// into consumption activity.
+type PointSummaryVO struct {
+	TodayPoints   int64 `json:"todayPoints"`
+	PeriodPoints  int64 `json:"periodPoints"`
+	PeriodUsers   int64 `json:"periodUsers"`
+	PeriodRecords int64 `json:"periodRecords"`
+}
+
+// TodayPointConsumptionVO is intentionally small so the dashboard can refresh
+// its live KPI without repeatedly loading all 14-day charts and rankings.
+type TodayPointConsumptionVO struct {
+	Points int64     `json:"points"`
+	AsOf   time.Time `json:"asOf"`
+}
+
+type PointConsumptionPoint struct {
+	Date    string `json:"date"`
+	Points  int64  `json:"points"`
+	Users   int64  `json:"users"`
+	Records int64  `json:"records"`
+}
+
+type PointUserTopVO struct {
+	UserID   string `json:"userId"`
+	Username string `json:"username"`
+	Nickname string `json:"nickname"`
+	Points   int64  `json:"points"`
+	Records  int64  `json:"records"`
+	LastTime string `json:"lastTime"`
+}
+
+type PointModelTopVO struct {
+	Model     string `json:"model"`
+	ModelName string `json:"modelName"`
+	Points    int64  `json:"points"`
+	Calls     int64  `json:"calls"`
+	Users     int64  `json:"users"`
+	Success   int64  `json:"success"`
+}
+
+type RecentPointConsumptionVO struct {
+	ID         string `json:"id"`
+	UserID     string `json:"userId"`
+	Username   string `json:"username"`
+	Nickname   string `json:"nickname"`
+	Points     int64  `json:"points"`
+	Balance    int64  `json:"balance"`
+	Remark     string `json:"remark"`
+	CreateTime string `json:"createTime"`
 }
 
 // ModelCallPoint is a single {date,count,success} sample of model calls.
@@ -181,14 +243,21 @@ func (h *dashboardHandler) charts(c *gin.Context) {
 	orderCounts := h.dailyCounts(&model.Order{}, "create_time", start)
 	revenueByDay := h.dailyRevenue(start)
 	callsByDay := h.dailyModelCalls(start)
+	pointByDay := h.dailyPointConsumption(start)
+	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 
 	vo := AdminChartsVO{
-		UserGrowth:  make([]ChartPoint, 0, g1ChartDays),
-		PostGrowth:  make([]ChartPoint, 0, g1ChartDays),
-		OrderGrowth: make([]ChartPoint, 0, g1ChartDays),
-		Revenue:     make([]RevenuePoint, 0, g1ChartDays),
-		ModelCalls:  make([]ModelCallPoint, 0, g1ChartDays),
-		ModelTop:    h.topModelCalls(start, 5),
+		UserGrowth:             make([]ChartPoint, 0, g1ChartDays),
+		PostGrowth:             make([]ChartPoint, 0, g1ChartDays),
+		OrderGrowth:            make([]ChartPoint, 0, g1ChartDays),
+		Revenue:                make([]RevenuePoint, 0, g1ChartDays),
+		ModelCalls:             make([]ModelCallPoint, 0, g1ChartDays),
+		ModelTop:               h.topModelCalls(start, 5),
+		PointSummary:           h.pointSummary(start, startOfToday),
+		PointConsumption:       make([]PointConsumptionPoint, 0, g1ChartDays),
+		PointUserTop:           h.topPointUsers(start, 8),
+		PointModelTop:          h.topPointModels(start, 8),
+		RecentPointConsumption: h.recentPointConsumption(10),
 	}
 	for _, day := range days {
 		vo.UserGrowth = append(vo.UserGrowth, ChartPoint{Date: day, Count: userCounts[day]})
@@ -198,6 +267,10 @@ func (h *dashboardHandler) charts(c *gin.Context) {
 		vo.Revenue = append(vo.Revenue, RevenuePoint{Date: day, Amount: amount.StringFixed(2)})
 		call := callsByDay[day]
 		vo.ModelCalls = append(vo.ModelCalls, ModelCallPoint{Date: day, Count: call.N, Success: call.OkN})
+		point := pointByDay[day]
+		vo.PointConsumption = append(vo.PointConsumption, PointConsumptionPoint{
+			Date: day, Points: point.Points, Users: point.Users, Records: point.Records,
+		})
 	}
 	response.OK(c, vo)
 }
@@ -298,6 +371,134 @@ func (h *dashboardHandler) topModelCalls(since time.Time, limit int) []ModelTopV
 		})
 	}
 	return out
+}
+
+type g1PointDailyRow struct {
+	Day     string `gorm:"column:day"`
+	Points  int64  `gorm:"column:points"`
+	Users   int64  `gorm:"column:users"`
+	Records int64  `gorm:"column:records"`
+}
+
+func pointConsumeScope(db *gorm.DB, since time.Time) *gorm.DB {
+	return db.Model(&model.PointRecord{}).
+		Where("create_time >= ? AND change_type = ? AND amount < 0", since, "consume")
+}
+
+func (h *dashboardHandler) todayPointConsumption(c *gin.Context) {
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	var row struct {
+		Points int64 `gorm:"column:points"`
+	}
+	if err := pointConsumeScope(h.db, today).
+		Select("COALESCE(SUM(-amount), 0) AS points").
+		Scan(&row).Error; err != nil {
+		response.Fail(c, response.CodeServerError, "failed to load today's point consumption")
+		return
+	}
+	response.OK(c, TodayPointConsumptionVO{Points: row.Points, AsOf: now})
+}
+
+func (h *dashboardHandler) dailyPointConsumption(since time.Time) map[string]g1PointDailyRow {
+	out := map[string]g1PointDailyRow{}
+	var rows []g1PointDailyRow
+	err := pointConsumeScope(h.db, since).
+		Select("DATE_FORMAT(create_time, ?) AS day, COALESCE(SUM(-amount), 0) AS points, "+
+			"COUNT(DISTINCT user_id) AS users, COUNT(*) AS records", g1DayFmt).
+		Group("day").
+		Scan(&rows).Error
+	if err != nil {
+		return out
+	}
+	for i := range rows {
+		out[rows[i].Day] = rows[i]
+	}
+	return out
+}
+
+func (h *dashboardHandler) pointSummary(since, today time.Time) PointSummaryVO {
+	var row struct {
+		TodayPoints   int64 `gorm:"column:today_points"`
+		PeriodPoints  int64 `gorm:"column:period_points"`
+		PeriodUsers   int64 `gorm:"column:period_users"`
+		PeriodRecords int64 `gorm:"column:period_records"`
+	}
+	_ = pointConsumeScope(h.db, since).
+		Select("COALESCE(SUM(CASE WHEN create_time >= ? THEN -amount ELSE 0 END), 0) AS today_points, "+
+			"COALESCE(SUM(-amount), 0) AS period_points, COUNT(DISTINCT user_id) AS period_users, "+
+			"COUNT(*) AS period_records", today).
+		Scan(&row).Error
+	return PointSummaryVO(row)
+}
+
+func (h *dashboardHandler) topPointUsers(since time.Time, limit int) []PointUserTopVO {
+	rows := []PointUserTopVO{}
+	err := h.db.Table("point_record AS pr").
+		Select("CAST(pr.user_id AS CHAR) AS user_id, COALESCE(u.username, '') AS username, "+
+			"COALESCE(u.nickname, '') AS nickname, COALESCE(SUM(-pr.amount), 0) AS points, "+
+			"COUNT(*) AS records, MAX(pr.create_time) AS last_time").
+		Joins("LEFT JOIN users AS u ON u.id = pr.user_id AND u.deleted IS NULL").
+		Where("pr.deleted IS NULL AND pr.create_time >= ? AND pr.change_type = ? AND pr.amount < 0", since, "consume").
+		Group("pr.user_id, u.username, u.nickname").
+		Order("points DESC").
+		Limit(limit).
+		Scan(&rows).Error
+	if err != nil {
+		return []PointUserTopVO{}
+	}
+	return rows
+}
+
+func (h *dashboardHandler) topPointModels(since time.Time, limit int) []PointModelTopVO {
+	var rows []struct {
+		Model   string `gorm:"column:model"`
+		Points  int64  `gorm:"column:points"`
+		Calls   int64  `gorm:"column:calls"`
+		Users   int64  `gorm:"column:users"`
+		Success int64  `gorm:"column:success"`
+	}
+	err := h.db.Model(&model.ModelCallLog{}).
+		Select("model, COALESCE(SUM(point_cost), 0) AS points, COUNT(*) AS calls, "+
+			"COUNT(DISTINCT user_id) AS users, COALESCE(SUM(success), 0) AS success").
+		Where("create_time >= ? AND point_cost > 0 AND model <> ''", since).
+		Group("model").
+		Order("points DESC").
+		Limit(limit).
+		Scan(&rows).Error
+	if err != nil {
+		return []PointModelTopVO{}
+	}
+	keys := make([]string, 0, len(rows))
+	for i := range rows {
+		keys = append(keys, rows[i].Model)
+	}
+	names := resolveModelNames(h.db, keys)
+	out := make([]PointModelTopVO, 0, len(rows))
+	for i := range rows {
+		out = append(out, PointModelTopVO{
+			Model: rows[i].Model, ModelName: names[rows[i].Model], Points: rows[i].Points,
+			Calls: rows[i].Calls, Users: rows[i].Users, Success: rows[i].Success,
+		})
+	}
+	return out
+}
+
+func (h *dashboardHandler) recentPointConsumption(limit int) []RecentPointConsumptionVO {
+	rows := []RecentPointConsumptionVO{}
+	err := h.db.Table("point_record AS pr").
+		Select("CAST(pr.id AS CHAR) AS id, CAST(pr.user_id AS CHAR) AS user_id, "+
+			"COALESCE(u.username, '') AS username, COALESCE(u.nickname, '') AS nickname, "+
+			"-pr.amount AS points, pr.balance, pr.remark, pr.create_time").
+		Joins("LEFT JOIN users AS u ON u.id = pr.user_id AND u.deleted IS NULL").
+		Where("pr.deleted IS NULL AND pr.change_type = ? AND pr.amount < 0", "consume").
+		Order("pr.create_time DESC").
+		Limit(limit).
+		Scan(&rows).Error
+	if err != nil {
+		return []RecentPointConsumptionVO{}
+	}
+	return rows
 }
 
 // dailyRevenue returns a map of YYYY-MM-DD -> summed paid amount, grouped by the

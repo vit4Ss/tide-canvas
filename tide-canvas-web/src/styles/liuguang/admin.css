@@ -692,6 +692,11 @@
 .adm-table-wrap .adm-table.adm-users-table {
   min-width: 1120px;
 }
+/* Dashboard ranking cards share one row, so their short 4/5-column tables
+   should fit the card instead of inheriting the 880px list-page minimum. */
+.adm-table-wrap .adm-table.dashboard-compact-table {
+  min-width: 540px;
+}
 /* 面板内的筛选行：与表格左缘对齐（adm-tools 是右对齐，不能复用） */
 .adm-filter-row {
   display: flex;
@@ -2068,6 +2073,16 @@ tr:hover .rowacts,
   justify-content: space-between;
   gap: 28px;
   flex-wrap: wrap;
+}
+.viz-hero-primary {
+  display: flex;
+  align-items: flex-end;
+  gap: 36px;
+}
+.viz-hero .point-lead {
+  min-width: 170px;
+  padding-left: 36px;
+  border-left: 1px solid var(--border-weak);
 }
 .viz-hero .lbl {
   font-size: 12.5px;
@@ -3547,6 +3562,15 @@ tr:hover .rowacts,
   }
   .viz-hero-row {
     gap: 20px;
+  }
+  .viz-hero-primary {
+    width: 100%;
+    justify-content: space-between;
+    gap: 20px;
+  }
+  .viz-hero .point-lead {
+    min-width: 0;
+    padding-left: 20px;
   }
   .viz-hero-metrics {
     grid-template-columns: repeat(2, 1fr);
