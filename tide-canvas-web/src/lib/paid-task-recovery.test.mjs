@@ -40,10 +40,14 @@ test("tool and Studio surfaces commit only after retaining a recovery path", () 
   assert.match(tool, /任务仍在后台处理中，本页会自动同步结果/);
   assert.match(tool, /recoverableAiGenerations\(journalScope, ownerUserId\)/);
 
-  const persist = studio.indexOf("if (persistActiveRun(run))");
-  const drive = studio.indexOf("driveRun(run)", persist);
+  const foregroundDecision = studio.indexOf("const makeForeground =");
+  const persist = studio.indexOf("persistActiveRun(run)", foregroundDecision);
+  const drive = studio.indexOf("driveRun(run, makeForeground)", persist);
   const terminalCommit = studio.indexOf("void commitAcceptedAiGeneration(run.journalScope, taskId, run.ownerUserId)");
-  assert.ok(persist >= 0 && drive > persist, "Studio must persist ACTIVE_RUN_KEY before polling");
+  assert.ok(
+    foregroundDecision >= 0 && persist > foregroundDecision && drive > persist,
+    "Studio must decide and persist the foreground recovery pointer before polling",
+  );
   assert.ok(terminalCommit >= 0, "Studio must retain the accepted journal until terminal cleanup");
   assert.match(studio, /clientRequestId: entry\.clientRequestId/);
 });

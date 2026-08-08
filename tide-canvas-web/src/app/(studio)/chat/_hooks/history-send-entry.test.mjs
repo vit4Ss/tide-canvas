@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("./use-send-message.ts", import.meta.url), "utf8");
+const composer = readFileSync(new URL("../_components/composer.tsx", import.meta.url), "utf8");
 
 test("history target guard executes before state changes, auth, and paid APIs", () => {
   const sendStart = source.indexOf("const send = useCallback(async (candidate?: unknown) => {");
@@ -26,4 +27,11 @@ test("history target guard executes before state changes, auth, and paid APIs", 
   ]) {
     assert.ok(boundary > mismatchReturn, `${label} must occur after the mismatch return`);
   }
+});
+
+test("composer never forwards React submit or click events as history targets", () => {
+  assert.match(composer, /onSubmit=\{\(\) => send\(\)\}/);
+  assert.match(composer, /onClick=\{\(\) => send\(\)\}/);
+  assert.doesNotMatch(composer, /onSubmit=\{send\}/);
+  assert.doesNotMatch(composer, /onClick=\{send\}/);
 });
