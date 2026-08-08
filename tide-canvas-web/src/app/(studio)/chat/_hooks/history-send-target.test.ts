@@ -23,7 +23,6 @@ test("accepts only the exact committed history target", () => {
 for (const [label, current] of [
   ["changed conversation", { conversationId: "32", draft: target.draft, model: { ...target.model }, skillId: target.skillId }],
   ["fallback model", { conversationId: target.conversationId, draft: target.draft, model: { ...target.model, id: "12" }, skillId: target.skillId }],
-  ["renamed catalog row", { conversationId: target.conversationId, draft: target.draft, model: { ...target.model, name: "Image Pro 2" }, skillId: target.skillId }],
   ["missing catalog", { conversationId: target.conversationId, draft: target.draft, model: null, skillId: target.skillId }],
   ["changed skill", { conversationId: target.conversationId, draft: target.draft, model: { ...target.model }, skillId: "22" }],
   ["changed draft", { conversationId: target.conversationId, draft: "另一条提示词", model: { ...target.model }, skillId: target.skillId }],
@@ -32,3 +31,17 @@ for (const [label, current] of [
     assert.equal(historySendTargetMatches(target, current), false);
   });
 }
+
+test("accepts catalog metadata edits on the same model row", () => {
+  assert.equal(historySendTargetMatches(target, {
+    conversationId: target.conversationId,
+    draft: target.draft,
+    model: {
+      ...target.model,
+      name: "Image Pro 2",
+      modelKey: "image-pro-v2",
+      type: "video",
+    },
+    skillId: target.skillId,
+  }), true);
+});

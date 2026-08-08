@@ -33,7 +33,10 @@ type ConversationVO struct {
 // assistant message points to (the task is the single source of truth). Attached
 // only to assistant messages whose linked task still exists.
 type MessageTaskVO struct {
-	ID       idgen.ID `json:"id"`
+	ID idgen.ID `json:"id"`
+	// ModelID is the persisted market-model row id. Unlike the display name it
+	// remains stable when an existing row is renamed or taken off shelf.
+	ModelID  idgen.ID `json:"modelId,omitempty"`
 	Status   int      `json:"status"` // 0 processing,1 success,2 failed,3 cancelled
 	Progress int      `json:"progress"`
 	// ModelName is the display name of the model that ran this generation; the
@@ -164,6 +167,7 @@ func toMessageTaskVO(t *model.AiTask) *MessageTaskVO {
 	}
 	vo := &MessageTaskVO{
 		ID:        t.ID,
+		ModelID:   t.ModelID,
 		Status:    t.Status,
 		Progress:  t.Progress,
 		ModelName: t.ModelName,

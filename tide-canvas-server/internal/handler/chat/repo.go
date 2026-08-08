@@ -648,7 +648,7 @@ func (r *repo) tasksByIDs(ids []idgen.ID, ownerID idgen.ID) (map[idgen.ID]*model
 	}
 	var rows []model.AiTask
 	if err := r.db.Model(&model.AiTask{}).
-		Select("id", "status", "progress", "result_url", "result_meta", "error_msg").
+		Select("id", "model_id", "model_name", "status", "progress", "result_url", "result_meta", "error_msg").
 		Where("id IN ? AND user_id = ?", ids, ownerID).
 		Find(&rows).Error; err != nil {
 		return nil, err

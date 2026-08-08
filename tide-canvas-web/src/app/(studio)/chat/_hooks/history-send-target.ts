@@ -17,9 +17,9 @@ export interface HistorySendState {
 }
 
 /**
- * A paid history replay may only use the exact model/Skill target that was
- * validated before it was queued. Focus-driven catalog refreshes can otherwise
- * replace the selected model between the async validation and send effect.
+ * A paid history replay may only use the same persisted model row/Skill target
+ * that was validated before it was queued. Catalog labels and upstream keys may
+ * be edited in place, so the database row id is the stable model identity.
  */
 export function historySendTargetMatches(
   expected: HistorySendTarget,
@@ -29,8 +29,5 @@ export function historySendTargetMatches(
     && expected.draft === current.draft
     && expected.skillId === current.skillId
     && !!current.model
-    && expected.model.id === current.model.id
-    && expected.model.name === current.model.name
-    && expected.model.modelKey === current.model.modelKey
-    && expected.model.type === current.model.type;
+    && expected.model.id === current.model.id;
 }

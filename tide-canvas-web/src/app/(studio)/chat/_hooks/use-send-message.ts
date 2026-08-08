@@ -994,7 +994,10 @@ export function useSendMessage({
         skillId: effectiveSkillId,
       });
       if (!targetStillCurrent) {
-        toast.info("历史参数已变化，已停止再次生成，请确认后手动发送");
+        const modelChanged = !selModel || expected.model.id !== selModel.id;
+        toast.info(modelChanged
+          ? "原模型已下架或当前模型已切换，请确认当前模型后手动发送"
+          : "历史输入或技能已变化，请确认后手动发送");
         return;
       }
     }
@@ -1206,6 +1209,7 @@ export function useSendMessage({
         // settings from its original request, even if the visible catalog label
         // changes before the user retries.
         const params: Record<string, unknown> = {
+          modelRowId: selModel.id,
           model: selModel.name,
           modelKey: selModel.modelKey,
           type: selModel.type,

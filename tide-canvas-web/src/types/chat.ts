@@ -26,6 +26,9 @@ export interface ConversationVO {
  *  The task is the single source of truth; the message stores only its id. */
 export interface MessageTaskVO {
   id: string;
+  /** Persisted model-row id. It remains stable when the catalog row is renamed
+   * or taken off shelf and lets history restoration avoid name-based matching. */
+  modelId?: string;
   /** 0 processing · 1 success · 2 failed · 3 cancelled */
   status: number;
   progress: number;

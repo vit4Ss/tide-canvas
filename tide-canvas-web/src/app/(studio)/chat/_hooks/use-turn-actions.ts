@@ -17,6 +17,7 @@ import {
 } from "@/types/skill";
 import type { MentionEditorHandle } from "@/components/studio/mention-prompt-editor";
 import type { HistorySendTarget } from "./history-send-target";
+import { historicalModelOf } from "./history-model";
 
 function withHistoryRestoreTimeout<T>(promise: Promise<T>, timeoutMs = 15_000): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -32,26 +33,6 @@ function withHistoryRestoreTimeout<T>(promise: Promise<T>, timeoutMs = 15_000): 
       },
     );
   });
-}
-
-function historicalModelOf(
-  p: Record<string, unknown> | undefined,
-  models: readonly StudioModelVO[],
-): StudioModelVO | undefined {
-  const modelKey = typeof p?.modelKey === "string" ? p.modelKey : "";
-  const modelName = typeof p?.model === "string" ? p.model : "";
-  const outputType = typeof p?.type === "string" ? p.type : "";
-  if (modelKey) {
-    const matches = models.filter((candidate) =>
-      candidate.modelKey === modelKey && (!outputType || candidate.type === outputType),
-    );
-    return matches.length === 1 ? matches[0] : undefined;
-  }
-  if (!modelName) return undefined;
-  const matches = models.filter((candidate) =>
-    candidate.name === modelName && (!outputType || candidate.type === outputType),
-  );
-  return matches.length === 1 ? matches[0] : undefined;
 }
 
 function storedSkillOf(p?: Record<string, unknown>): { id: string; title: string } | null {
@@ -134,7 +115,6 @@ export function useTurnActions({
       // 无技能的历史轮次也必须显式清空当前技能，不能把当前 chip 静默套用过去。
       setSkill(null);
       if (!p) return;
-      if (typeof p.model === "string") setModel(p.model);
       if (typeof p.mode === "string") setMode(p.mode);
       if (typeof p.ratio === "string") setRatio(p.ratio);
       if (typeof p.resolution === "string") setRes(p.resolution);
@@ -152,21 +132,22 @@ export function useTurnActions({
       // local blob/file is recreated). Lets 再次生成 work on a reference turn.
       restoreRefs(p.references);
     },
-    [restoreRefs, setModel, setMode, setRatio, setRes, setQuality, setDur, setBatch, setMusic, setSkill],
+    [restoreRefs, setMode, setRatio, setRes, setQuality, setDur, setBatch, setMusic, setSkill],
   );
 
   const restoreSkillFromParams = useCallback(async (
     p: Record<string, unknown> | undefined,
     seq: number,
+    modelRowId?: string,
   ): Promise<{ ok: boolean; model?: StudioModelVO; skillId?: string }> => {
     const saved = storedSkillOf(p);
     let availableModels = genModelsRef.current;
-    let savedModel = historicalModelOf(p, availableModels);
+    let savedModel = historicalModelOf(p, availableModels, modelRowId);
     const requestedOutputType = typeof p?.type === "string" ? p.type : savedModel?.type;
     if (!saved) {
       if (!savedModel) {
         const label = typeof p?.model === "string" ? p.model : "原模型";
-        toast.info(`模型「${label}」已下架，请重新选择模型后发送`);
+        toast.info(`历史模型「${label}」已下架，已保留当前模型，请确认后手动发送`);
         return { ok: false };
       }
       setModel(savedModel.name);
@@ -177,7 +158,7 @@ export function useTurnActions({
     // Focus/visibility reloads may replace the catalog while the Skill request
     // is in flight. Validate against the list current at resolution time.
     availableModels = genModelsRef.current;
-    savedModel = historicalModelOf(p, availableModels);
+    savedModel = historicalModelOf(p, availableModels, modelRowId);
     const outputType = typeof p?.type === "string" ? p.type : savedModel?.type;
     const restored = result.success ? result.data : undefined;
     if (
@@ -203,7 +184,7 @@ export function useTurnActions({
       setModel(fixedModel.name);
     } else if (!savedModel) {
       const label = typeof p?.model === "string" ? p.model : "原模型";
-      toast.info(`模型「${label}」已下架，请重新选择模型后发送`);
+      toast.info(`历史模型「${label}」已下架，已保留当前模型，请确认后手动发送`);
       return { ok: false };
     } else {
       setModel(savedModel.name);
@@ -233,7 +214,7 @@ export function useTurnActions({
       restoreFromParams(u.params);
       setDraft(u.content);
       try {
-        await restoreSkillFromParams(u.params, seq);
+        await restoreSkillFromParams(u.params, seq, aiMsg.task?.modelId);
       } catch {
         if (seq === restoreSeqRef.current) toast.info("历史参数暂时无法恢复，请稍后重试");
       } finally {
@@ -265,7 +246,7 @@ export function useTurnActions({
       setDraft(u.content);
       let queued = false;
       try {
-        const restoredSkill = await restoreSkillFromParams(u.params, seq);
+        const restoredSkill = await restoreSkillFromParams(u.params, seq, aiMsg.task?.modelId);
         const stillCurrent = msgsRef.current.some((message) => message.id === aiMsg.id)
           && msgsRef.current.some((message) => message.id === u.id);
         if (seq !== restoreSeqRef.current || !stillCurrent || !restoredSkill.ok) return;
