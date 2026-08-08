@@ -18,7 +18,7 @@ import { skillKindOf, skillSupportsOutput, type SkillVO } from "@/types/skill";
 import type { ContextUsageVO, ConversationVO, MessageAttachment, MessageVO } from "@/types/chat";
 import { musicTurnSummary, type RefItem, type RefPolicy } from "../_components/chat-utils";
 import { arbitratePendingTurn, removePendingTurnIfOwned } from "./pending-turn-arbitration";
-import { historySendTargetMatches, type HistorySendTarget } from "./history-send-target";
+import { historySendTargetMatches, isHistorySendTarget } from "./history-send-target";
 
 type ComposerRefSnapshot = Pick<RefItem, "key" | "kind" | "url" | "name">;
 
@@ -973,7 +973,8 @@ export function useSendMessage({
     setTextRecovering,
   ]);
 
-  const send = useCallback(async (expected?: HistorySendTarget) => {
+  const send = useCallback(async (candidate?: unknown) => {
+    const expected = isHistorySendTarget(candidate) ? candidate : undefined;
     if (expected) {
       const effectiveSkillId = skill && selModel
         && skillKindOf(skill) === "preset"

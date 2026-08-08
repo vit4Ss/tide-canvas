@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 // @ts-expect-error Node's native TypeScript loader requires the source suffix.
-import { historySendTargetMatches, type HistorySendTarget } from "./history-send-target.ts";
+import {
+  historySendTargetMatches,
+  isHistorySendTarget,
+  type HistorySendTarget,
+} from "./history-send-target.ts";
 
 const target: HistorySendTarget = {
   conversationId: "31",
@@ -10,6 +14,13 @@ const target: HistorySendTarget = {
   model: { id: "11", name: "Image Pro", modelKey: "image-pro", type: "image" },
   skillId: "21",
 };
+
+test("distinguishes a history target from ordinary UI event arguments", () => {
+  assert.equal(isHistorySendTarget(target), true);
+  assert.equal(isHistorySendTarget({ type: "click", target: {} }), false);
+  assert.equal(isHistorySendTarget({ ...target, model: undefined }), false);
+  assert.equal(isHistorySendTarget(undefined), false);
+});
 
 test("accepts only the exact committed history target", () => {
   assert.equal(historySendTargetMatches(target, {

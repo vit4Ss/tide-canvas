@@ -16,6 +16,21 @@ export interface HistorySendState {
   skillId: string | null;
 }
 
+/** React event handlers pass their event argument to callbacks. Keep ordinary
+ * composer sends from being mistaken for a history replay target at runtime. */
+export function isHistorySendTarget(value: unknown): value is HistorySendTarget {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<HistorySendTarget>;
+  return typeof candidate.conversationId === "string"
+    && typeof candidate.draft === "string"
+    && (candidate.skillId === null || typeof candidate.skillId === "string")
+    && !!candidate.model
+    && typeof candidate.model.id === "string"
+    && typeof candidate.model.name === "string"
+    && typeof candidate.model.modelKey === "string"
+    && typeof candidate.model.type === "string";
+}
+
 /**
  * A paid history replay may only use the same persisted model row/Skill target
  * that was validated before it was queued. Catalog labels and upstream keys may

@@ -223,7 +223,7 @@ export function Composer({
             value={draft}
             onChange={setDraft}
             refs={mentionRefs}
-            onSubmit={send}
+            onSubmit={() => send()}
             onPasteFiles={refPolicy ? attachFiles : undefined}
             placeholder={
               isMusicSel && musicMode === "custom"
@@ -640,7 +640,7 @@ export function Composer({
             className="cm-send"
             aria-label="发送"
             type="button"
-            onClick={send}
+            onClick={() => send()}
             disabled={
               busy ||
               (!draft.trim() && !musicNoDraftOk) ||
