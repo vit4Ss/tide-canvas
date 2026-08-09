@@ -285,7 +285,7 @@ export function useGeneration(p: GenerationParams) {
       const local = new Array(n).fill(PROG_FLOOR);
       if (makeForeground) {
         activeRunRef.current = run;
-        setRunMeta({ prompt: p, model: mdl, ratio: r, spec, count: n, label, isVid, kind, refThumbs: run.refThumbs });
+        setRunMeta({ prompt: p, model: mdl, ratio: r, spec, count: n, label, isVid, kind, refThumbs: run.refThumbs, params: run.params });
         setCells(newCells);
         setProgs([...local]);
         setBusy(true);
@@ -294,7 +294,7 @@ export function useGeneration(p: GenerationParams) {
         ...prev.filter((item) => item.taskId !== taskId),
         {
           taskId,
-          meta: { prompt: p, model: mdl, ratio: r, spec, count: n, label, isVid, kind, refThumbs: run.refThumbs },
+          meta: { prompt: p, model: mdl, ratio: r, spec, count: n, label, isVid, kind, refThumbs: run.refThumbs, params: run.params },
           cells: newCells,
           progs: [...local],
         },
@@ -830,7 +830,7 @@ export function useGeneration(p: GenerationParams) {
         : {}),
     };
 
-    setRunMeta({ prompt: p, model: mdl, ratio: r, spec, count: n, label, isVid, refThumbs });
+    setRunMeta({ prompt: p, model: mdl, ratio: r, spec, count: n, label, isVid, refThumbs, params: lastRunRef.current ?? undefined });
     setCells(hues.map((h, i) => ({ i, hues: h })));
     setProgs(new Array(n).fill(0));
 

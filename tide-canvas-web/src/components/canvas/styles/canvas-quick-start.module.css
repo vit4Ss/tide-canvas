@@ -25,6 +25,22 @@
   padding: 20px 20px 6px;
 }
 
+.editorRow {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.editorField {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.inlineSkill {
+  margin-top: 1px;
+}
+
 .editor {
   position: relative;
   display: block;
@@ -256,29 +272,9 @@
   align-items: center;
 }
 
-.skillControlWrap:has(.clearSkill) .skillActive {
-  padding-right: 26px;
-}
-
 .skillActive {
   color: var(--accent-foreground);
   background: var(--accent);
-}
-
-.clearSkill {
-  position: absolute;
-  right: 3px;
-  display: grid;
-  width: 24px;
-  height: 24px;
-  place-items: center;
-  border-radius: 999px;
-  color: var(--muted-foreground);
-}
-
-.clearSkill:hover {
-  color: var(--foreground);
-  background: var(--border);
 }
 
 .selectControl {
@@ -609,7 +605,6 @@
 .iconButton:focus-visible,
 .controlButton:focus-visible,
 .skillActive:focus-visible,
-.clearSkill:focus-visible,
 .optimizeButton:focus-visible,
 .switchOn:focus-visible,
 .switchOff:focus-visible,
@@ -744,10 +739,6 @@
     width: 40px;
   }
 
-  .clearSkill {
-    width: 32px;
-    height: 32px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -908,8 +899,7 @@
 }
 
 .root[data-variant="launcher"] .refChip > button:hover,
-.root[data-variant="launcher"] .modelRetry:hover,
-.root[data-variant="launcher"] .clearSkill:hover {
+.root[data-variant="launcher"] .modelRetry:hover {
   color: var(--text, #f5f5f7);
   background: var(--panel-hover, rgb(255 255 255 / 9%));
 }
@@ -944,19 +934,8 @@
   .root[data-variant="launcher"] .modelControl button,
   .root[data-variant="launcher"] .modelControl > span,
   .root[data-variant="launcher"] .refChip,
-  .root[data-variant="launcher"] .refChip > button,
-  .root[data-variant="launcher"] .clearSkill {
+  .root[data-variant="launcher"] .refChip > button {
     min-height: 44px;
-  }
-
-  .root[data-variant="launcher"] .clearSkill {
-    width: 44px;
-    height: 44px;
-    right: 0;
-  }
-
-  .root[data-variant="launcher"] .skillControlWrap:has(.clearSkill) .skillActive {
-    padding-right: 44px;
   }
 }
 

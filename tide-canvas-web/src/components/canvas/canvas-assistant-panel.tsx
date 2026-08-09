@@ -9,9 +9,11 @@ import { ModelPicker } from "./nodes/model-picker";
 import type { RefItem } from "./nodes/prompt-ref-utils";
 import { toast } from "@/components/shared/toast";
 import { SkillPicker } from "@/components/skill/skill-picker";
+import { SkillPromptChip } from "@/components/skill/skill-prompt-chip";
 import { SkillInputFields } from "@/components/skill/skill-input-fields";
 import { SkillRunPanel } from "@/components/skill/skill-run-panel";
 import { defaultSkillInputValues, validateSkillRunInputValues } from "@/lib/skill-api";
+import { promptAfterSkillPick } from "@/lib/skill-prompt";
 import { clearCanvasLaunchJournal, type CanvasLaunchJournal } from "@/lib/canvas-launch";
 import { requestCanvasSave } from "@/lib/canvas-save";
 import { useCanvasStore } from "@/stores/use-canvas-store";
@@ -906,6 +908,7 @@ export function CanvasAssistantPanel({
   const pickSkill = (skill: SkillVO) => {
     const pending = pendingHandoffRef.current;
     if (pending && pending.skillId !== skill.id) consumeCanvasHandoff(pending.id);
+    setMessage((current) => promptAfterSkillPick(current, skill, selectedSkill));
     setSelectedSkill(skill);
     setSkillParameters(defaultSkillInputValues(skill.inputSchema, skill.defaultParams));
     setSkillParameterErrors({});
@@ -1971,21 +1974,28 @@ export function CanvasAssistantPanel({
             </div>
           )}
           <div className="relative">
-            <PromptRefEditor
-              value={message}
-              onChange={setMessage}
-              refs={mentionRefs}
-              ariaLabel="给画布 AI 助手发送消息"
-              // 附件卡片已带「图片N」角标，不再重复一行缩略图
-              showThumbs={false}
-              placeholder={selectedSkill ? `告诉「${selectedSkill.title}」要完成什么` : "描述你的想法，或选择技能开始创作"}
-              onSubmit={() => { if (canSubmit) void sendMessage(); }}
-              editorClassName="block w-full overflow-y-auto whitespace-pre-wrap break-words rounded-none border-0 bg-transparent p-0 pr-8 text-sm leading-5 text-neutral-900 outline-none ring-0 focus:border-transparent focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 dark:text-neutral-100"
-              editorStyle={{
-                minHeight: inputExpanded ? 180 : 64,
-                maxHeight: inputExpanded ? 360 : 160,
-              }}
-            />
+            <div className="flex min-w-0 items-start gap-2 pr-8">
+              {selectedSkill && (
+                <SkillPromptChip skill={selectedSkill} onRemove={clearSkill} className="mt-px" />
+              )}
+              <div className="min-w-0 flex-1">
+                <PromptRefEditor
+                  value={message}
+                  onChange={setMessage}
+                  refs={mentionRefs}
+                  ariaLabel="给画布 AI 助手发送消息"
+                  // 附件卡片已带「图片N」角标，不再重复一行缩略图
+                  showThumbs={false}
+                  placeholder={selectedSkill ? `告诉「${selectedSkill.title}」要完成什么` : "描述你的想法，或选择技能开始创作"}
+                  onSubmit={() => { if (canSubmit) void sendMessage(); }}
+                  editorClassName="block w-full overflow-y-auto whitespace-pre-wrap break-words rounded-none border-0 bg-transparent p-0 text-sm leading-5 text-neutral-900 outline-none ring-0 focus:border-transparent focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 dark:text-neutral-100"
+                  editorStyle={{
+                    minHeight: inputExpanded ? 180 : 64,
+                    maxHeight: inputExpanded ? 360 : 160,
+                  }}
+                />
+              </div>
+            </div>
             <button
               type="button"
               onClick={() => setInputExpanded((value) => !value)}
@@ -2038,20 +2048,9 @@ export function CanvasAssistantPanel({
                   aria-expanded={skillPickerOpen}
                 >
                   <Wand2 className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">{selectedSkill?.title || "技能"}</span>
+                  <span className="truncate">{selectedSkill ? "技能 1" : "技能"}</span>
                   <ChevronDown className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
                 </button>
-                {selectedSkill && (
-                  <button
-                    type="button"
-                    onClick={clearSkill}
-                    className="ml-0.5 rounded-md p-1 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-700 dark:hover:bg-white/10 dark:hover:text-white"
-                    title="移除技能，切回普通对话"
-                    aria-label={`移除技能：${selectedSkill.title}`}
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                )}
               </div>
             </div>
             <div className="ml-auto inline-flex h-11 shrink-0 items-center gap-2 rounded-full bg-neutral-50 px-2 pl-3 shadow-sm ring-1 ring-neutral-100 dark:bg-[#303137] dark:ring-white/8">

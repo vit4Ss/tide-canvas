@@ -5,8 +5,9 @@
    / 音乐四模式参数区 / 芯片行(联网·模型·模式·比例·分辨率·画质·时长·批量)
    / 积分预估 / 发送按钮。状态全部来自 _hooks 的三个 bag，本文件纯渲染。 */
 
-import { Sparkles, X as XIcon } from "lucide-react";
+import { Plus, Sparkles } from "lucide-react";
 import { toast } from "@/components/shared/toast";
+import { SkillPromptChip } from "@/components/skill/skill-prompt-chip";
 import {
   MentionPromptEditor,
   type MentionEditorHandle,
@@ -153,18 +154,6 @@ export function Composer({
         onDrop={onDrop}
       >
         {dragOver && <div className="composer-drop">松开以添加参考素材</div>}
-        {/* 技能 chip:附着在输入框上方(对齐参考产品),粘性直到手动移除 */}
-        {skill && (
-          <div className="skill-strip">
-            <span className="skill-chip" title={skill.description || skill.title}>
-              <Sparkles size={12} aria-hidden />
-              {skill.title}
-              <button type="button" aria-label="移除技能" onClick={removeSkill}>
-                <XIcon size={12} aria-hidden />
-              </button>
-            </span>
-          </div>
-        )}
         {refs.length > 0 && (
           <div className="ref-strip">
             {refs.map((r) => (
@@ -182,29 +171,12 @@ export function Composer({
           </div>
         )}
         <div className="composer-head">
-          {refPolicy && (
-            <button
-              className="cm-upload"
-              title="添加参考素材（本地上传 / 资产库）"
-              type="button"
-              onClick={openSrcMenu}
-            >
-              {/* SVG 加号：全角＋字形字面不居中，在圆钮里会偏位 */}
-              <svg viewBox="0 0 24 24" aria-hidden style={{ width: 15, height: 15, fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" }}>
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-            </button>
-          )}
-          {/* 对话生成只使用单输出预设；智能技能从画布入口启动。 */}
-          {selModel && (
-            <button
-              className="cm-upload"
-              title="选择预设技能"
-              type="button"
-              onClick={() => setSkillPickerOpen(true)}
-            >
-              <Sparkles size={14} aria-hidden />
-            </button>
+          {skill && (
+            <SkillPromptChip
+              skill={skill}
+              onRemove={removeSkill}
+              className="composer-skill-chip"
+            />
           )}
           <input
             ref={fileInputRef}
@@ -344,6 +316,30 @@ export function Composer({
         )}
         <div className="composer-bar">
           <div className="cm-row">
+          {refPolicy && (
+            <button
+              className="cm-chip"
+              title="添加参考素材（本地上传 / 资产库）"
+              aria-label="添加参考素材"
+              type="button"
+              onClick={openSrcMenu}
+            >
+              <Plus size={14} aria-hidden />
+            </button>
+          )}
+          {/* 对话生成只使用单输出预设；智能技能从画布入口启动。 */}
+          {selModel && (
+            <button
+              className={`cm-chip${skill ? " on" : ""}`}
+              title={skill ? `当前技能：${skill.title}，点击选择更多技能` : "选择预设技能"}
+              type="button"
+              onClick={() => setSkillPickerOpen(true)}
+            >
+              <Sparkles size={14} aria-hidden />
+              技能
+              {skill && <span className="cm-skill-count">1</span>}
+            </button>
+          )}
           {webSearchAvail && (
             <button
               className={`cm-chip ${web ? "on" : ""}`}

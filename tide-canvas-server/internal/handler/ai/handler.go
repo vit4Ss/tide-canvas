@@ -8,6 +8,7 @@ import (
 
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/middleware"
+	"tidecanvas/internal/pkg/authz"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/logger"
 	"tidecanvas/internal/pkg/response"
@@ -192,7 +193,7 @@ func (h *handler) listLogs(c *gin.Context) {
 		return
 	}
 	uid := middleware.CurrentUserID(c)
-	isAdmin := middleware.CurrentRole(c) == middleware.AdminRole
+	isAdmin := authz.IsActiveAdministrator(c, h.svc.repo.db)
 	offset, limit := pagination(q.PageNum, q.PageSize)
 	rows, total, err := h.svc.listLogs(c.Request.Context(), uid, isAdmin, q, offset, limit)
 	if err != nil {

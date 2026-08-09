@@ -34,7 +34,7 @@ export function useComposerConfig(models: GenModelsApi) {
   const [res, setRes] = useState("");
   const [quality, setQuality] = useState("");
   const [dur, setDur] = useState("");
-  // 技能:附着为输入框上方 chip,发送时模板与描述合并;粘性(发完保留)直到手动移除
+  // 技能以内联 chip 附着到输入框；执行模板由服务端按 skillId 解析并保持粘性。
   const [skill, setSkill] = useState<SkillVO | null>(null);
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   const [batch, setBatch] = useState(1);

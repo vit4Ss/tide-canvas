@@ -16,7 +16,7 @@ test("clearing a Skill restores the launcher direct-video invariant", () => {
     quickStartSource,
     /const clearSelectedSkill = \(\) => \{[\s\S]*?setSelectedSkill\(null\);[\s\S]*?setMode\("video"\);[\s\S]*?setSelectedModelId\(""\);/,
   );
-  assert.match(quickStartSource, /onClick=\{clearSelectedSkill\}/);
+  assert.match(quickStartSource, /<SkillPromptChip[\s\S]*?onRemove=\{clearSelectedSkill\}/);
 });
 
 test("direct launch submission fails closed while Skill and consumer paths remain available", () => {

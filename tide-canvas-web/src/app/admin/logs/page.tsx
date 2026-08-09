@@ -44,6 +44,7 @@ import type {
 } from "@/types/admin-logs";
 import type { PageData, Result } from "@/types/api";
 import { useAuthStore } from "@/stores/use-auth-store";
+import { UserRole } from "@/types/user";
 
 type PillTone = StatusPillProps["tone"];
 
@@ -598,6 +599,7 @@ function BizTab() {
 }
 
 function ModelTab() {
+  const canViewRawBodies = useAuthStore((s) => s.user?.role === UserRole.ADMIN);
   const columns: Column<ModelCallLogVO>[] = useMemo(
     () => [
       timeCol<ModelCallLogVO>(),
@@ -638,10 +640,17 @@ function ModelTab() {
           { label: "消耗", value: Number(l.cost) > 0 ? l.cost : "—" },
           { label: "上游任务 ID", value: l.upstreamTaskId || "—" },
           { label: "端点", value: l.endpoint || "—" },
-          { label: "请求体", block: l.requestBody || "", json: true },
-          ...(l.success === 1
-            ? [{ label: "响应体", block: l.responseBody || "", json: true } as DetailField]
-            : [{ label: "错误信息", block: l.errorMsg || "" } as DetailField]),
+          ...(canViewRawBodies &&
+          (l.requestBody !== undefined || l.responseBody !== undefined)
+            ? [
+                { label: "请求体", block: l.requestBody || "", json: true } as DetailField,
+                ...(l.success === 1
+                  ? [{ label: "响应体", block: l.responseBody || "", json: true } as DetailField]
+                  : [{ label: "错误信息", block: l.errorMsg || "" } as DetailField]),
+              ]
+            : l.success === 1
+              ? []
+              : [{ label: "错误信息", block: l.errorMsg || "" } as DetailField]),
         ],
       })}
     />

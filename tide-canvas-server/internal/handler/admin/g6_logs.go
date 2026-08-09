@@ -6,6 +6,7 @@ import (
 
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/authz"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/response"
 )
@@ -306,8 +307,8 @@ type ModelCallLogVO struct {
 	Model          string   `json:"model"`
 	ModelName      string   `json:"modelName"` // 目录显示名(market_model.name),查不到为空→前端回退 key
 	Endpoint       string   `json:"endpoint"`
-	RequestBody    string   `json:"requestBody"`
-	ResponseBody   string   `json:"responseBody"`
+	RequestBody    string   `json:"requestBody,omitempty"`
+	ResponseBody   string   `json:"responseBody,omitempty"`
 	HttpStatus     int      `json:"httpStatus"`
 	Success        int      `json:"success"`
 	ErrorMsg       string   `json:"errorMsg"`
@@ -352,17 +353,23 @@ func listModelLogs(c *gin.Context, db *gorm.DB) {
 	}
 	names := resolveUserNames(db, ids)
 	modelNames := resolveModelNames(db, keys)
+	includeRawPayloads := authz.IsActiveAdministrator(c, db)
 	vos := make([]ModelCallLogVO, 0, len(rows))
 	for i := range rows {
 		r := &rows[i]
-		vos = append(vos, ModelCallLogVO{
+		vo := ModelCallLogVO{
 			ID: r.ID, UserID: r.UserID, Username: names[r.UserID], Scene: r.Scene, Model: r.Model,
-			ModelName:   modelNames[r.Model],
-			Endpoint:    r.Endpoint,
-			RequestBody: r.RequestBody, ResponseBody: r.ResponseBody, HttpStatus: r.HttpStatus,
-			Success: r.Success, ErrorMsg: r.ErrorMsg, StartTime: g5FmtTime(r.StartTime), DurationMs: r.DurationMs,
+			ModelName:  modelNames[r.Model],
+			Endpoint:   r.Endpoint,
+			HttpStatus: r.HttpStatus,
+			Success:    r.Success, ErrorMsg: r.ErrorMsg, StartTime: g5FmtTime(r.StartTime), DurationMs: r.DurationMs,
 			UpstreamTaskID: r.UpstreamTaskID, Cost: r.Cost, CreateTime: g5FmtTime(r.CreateTime),
-		})
+		}
+		if includeRawPayloads {
+			vo.RequestBody = r.RequestBody
+			vo.ResponseBody = r.ResponseBody
+		}
+		vos = append(vos, vo)
 	}
 	response.Page(c, vos, total, q.PageNum, q.PageSize)
 }

@@ -49,8 +49,9 @@ export interface GenerationDetailVO extends GenerationRowVO {
   results: GenAsset[];
   /** 文本场景:助手回复 */
   reply: string;
-  requestBody: string;
-  responseBody: string;
+  /** Only returned to the built-in administrator role (role=9). */
+  requestBody?: string;
+  responseBody?: string;
 }
 
 /** 列表查询参数。 */

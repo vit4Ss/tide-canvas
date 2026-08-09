@@ -109,6 +109,8 @@ export interface RunMeta {
   /** 媒体类型；缺省时按 isVid 推导（兼容旧持久化数据），audio 由此区分 */
   kind?: ArtworkType;
   refThumbs: string[];
+  /** Captured inputs used to restore read-only reference pills in the feed. */
+  params?: RunParams;
 }
 
 /** One visible in-flight generation. Each backend task owns its own progress

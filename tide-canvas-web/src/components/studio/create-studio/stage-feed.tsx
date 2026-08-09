@@ -4,16 +4,62 @@
    复制提示词 / 整 run 下载是本块的自足行为，一并内聚；编辑 / 重新生成 / 删除 /
    单图工具条经 props 回调组合层。 */
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { mesh } from "@/lib/mesh";
-import { ossDisplayUrl } from "@/lib/oss-display";
+import { fallbackOssDisplayImage, ossDisplayUrl, restoreOssDisplayImage } from "@/lib/oss-display";
 import { copyText } from "@/lib/clipboard";
 import { AudioPlayerCard, SongCard } from "@/components/studio/audio-player-card";
 import { toast } from "@/components/shared/toast";
 import { AmbientFrame } from "./ambient-frame";
 import { CELL_TOOLS, SLOT_ICON } from "./icons";
-import type { ArtworkType, HistRun, InflightRun, ResultCell, ToolKey } from "./types";
+import type { ArtworkType, HistRun, InflightRun, ResultCell, RunParams, ToolKey } from "./types";
 import { fmtTs, ratioLabel } from "./utils";
+import {
+  runPromptReferences,
+  splitRunPrompt,
+  type RunPromptReference,
+} from "./run-prompt-mentions";
+
+const PROMPT_REFERENCE_GLYPH = { image: "图", video: "▶", audio: "♪" } as const;
+
+function RunPromptMention({ reference }: { reference: RunPromptReference }) {
+  const [failedSource, setFailedSource] = useState("");
+  const showImage = reference.kind === "image" && failedSource !== reference.source;
+  return (
+    <span className="mention-pill ws-run-mention" title={reference.label}>
+      {showImage ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={ossDisplayUrl(reference.source, 64) ?? reference.source}
+          alt=""
+          loading="lazy"
+          onLoad={(event) => restoreOssDisplayImage(event.currentTarget)}
+          onError={(event) => {
+            if (!fallbackOssDisplayImage(event.currentTarget, reference.source)) {
+              setFailedSource(reference.source);
+            }
+          }}
+        />
+      ) : (
+        <span className="mp-ic">{PROMPT_REFERENCE_GLYPH[reference.kind]}</span>
+      )}
+      <span className="mp-label">{reference.label}</span>
+    </span>
+  );
+}
+
+function RunPromptText({ prompt, params }: { prompt: string; params?: RunParams }) {
+  const parts = splitRunPrompt(prompt, runPromptReferences(params));
+  return (
+    <span className="tx" title={prompt}>
+      {parts.map((part, index) => part.kind === "reference" ? (
+        <RunPromptMention key={`${part.value.key}-${index}`} reference={part.value} />
+      ) : (
+        <span key={`text-${index}`}>{part.value}</span>
+      ))}
+    </span>
+  );
+}
 
 export function StageFeed({
   busy,
@@ -172,9 +218,7 @@ export function StageFeed({
                   </div>
                   {meta.prompt && (
                     <div className="ws-run-prompt">
-                      <span className="tx" title={meta.prompt}>
-                        {meta.prompt}
-                      </span>
+                      <RunPromptText prompt={meta.prompt} params={meta.params} />
                     </div>
                   )}
                   <div className="ws-run-imgs">
@@ -221,9 +265,7 @@ export function StageFeed({
                 </div>
                 {r.prompt && (
                   <div className="ws-run-prompt">
-                    <span className="tx" title={r.prompt}>
-                      {r.prompt}
-                    </span>
+                    <RunPromptText prompt={r.prompt} params={r.params} />
                     <button
                       type="button"
                       className="cp"
@@ -286,8 +328,10 @@ export function StageFeed({
                             <img
                               className="done-img"
                               src={ossDisplayUrl(it.url, 1280) ?? it.url}
-                              alt={r.prompt}
+                              alt=""
                               loading="lazy"
+                              onLoad={(event) => restoreOssDisplayImage(event.currentTarget)}
+                              onError={(event) => fallbackOssDisplayImage(event.currentTarget, it.url)}
                             />
                           )
                         ) : (

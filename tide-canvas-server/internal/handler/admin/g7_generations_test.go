@@ -1,11 +1,22 @@
 package admin
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
 
 var testHosts = []string{"cdn.example.com", "bucket.oss-cn-shanghai.aliyuncs.com"}
+
+func TestGenerationDetailOmitsEmptyRawBodies(t *testing.T) {
+	body, err := json.Marshal(GenerationDetailVO{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "requestBody") || strings.Contains(string(body), "responseBody") {
+		t.Fatalf("empty raw bodies must be omitted from non-admin JSON: %s", body)
+	}
+}
 
 // chat 落库的是顶层 messages 数组,当前轮 user 挂 image_url + file 附件。
 func TestParseRequestChatWithAttachments(t *testing.T) {

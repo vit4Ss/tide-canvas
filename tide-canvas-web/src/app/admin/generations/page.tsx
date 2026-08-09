@@ -42,6 +42,7 @@ import type {
   GenerationRowVO,
 } from "@/types/admin-generations";
 import { useAuthStore } from "@/stores/use-auth-store";
+import { UserRole } from "@/types/user";
 
 type PillTone = StatusPillProps["tone"];
 
@@ -125,6 +126,10 @@ function pretty(s: string): string {
   } catch {
     return s;
   }
+}
+
+function displayModelName(row: Pick<GenerationRowVO, "modelName" | "model">): string {
+  return row.modelName || row.model || "—";
 }
 
 function CopyBtn({ text }: { text: string }) {
@@ -252,6 +257,7 @@ function TechRow({ k, mono, children }: { k: string; mono?: boolean; children: R
 
 function GenerationDetailDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   const ensureSession = useAuthStore((s) => s.ensureSession);
+  const canViewRawBodies = useAuthStore((s) => s.user?.role === UserRole.ADMIN);
   const [d, setD] = useState<GenerationDetailVO | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -302,7 +308,7 @@ function GenerationDetailDrawer({ id, onClose }: { id: string; onClose: () => vo
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <StatusPill tone={sceneTone(d.scene)}>{sceneLabel(d.scene)}</StatusPill>
               <span className="strong" style={{ fontSize: 15, wordBreak: "break-all" }}>
-                {d.modelName || d.model || "—"}
+                {displayModelName(d)}
               </span>
             </div>
             <div className="muted" style={{ fontSize: 12.5, marginTop: 6 }}>
@@ -321,7 +327,9 @@ function GenerationDetailDrawer({ id, onClose }: { id: string; onClose: () => vo
               {(d.params ?? []).map((p) => (
                 <div className="genr-cell" key={p.key}>
                   <div className="k">{p.key}</div>
-                  <div className="v">{p.value}</div>
+                  <div className="v">
+                    {p.key.trim().toLowerCase() === "model" ? displayModelName(d) : p.value}
+                  </div>
                 </div>
               ))}
               <div className="genr-cell">
@@ -377,23 +385,26 @@ function GenerationDetailDrawer({ id, onClose }: { id: string; onClose: () => vo
             </dl>
           </section>
 
-          <section>
-            <SecTitle>原始报文</SecTitle>
-            <details>
-              <summary className="muted" style={{ cursor: "pointer", fontSize: 12.5 }}>请求体</summary>
-              <div className="adm-tools" style={{ margin: "8px 0" }}>
-                <CopyBtn text={pretty(d.requestBody)} />
-              </div>
-              <pre className="genr-prompt mono" style={{ fontSize: 12 }}>{pretty(d.requestBody) || "—"}</pre>
-            </details>
-            <details style={{ marginTop: 12 }}>
-              <summary className="muted" style={{ cursor: "pointer", fontSize: 12.5 }}>响应体</summary>
-              <div className="adm-tools" style={{ margin: "8px 0" }}>
-                <CopyBtn text={pretty(d.responseBody)} />
-              </div>
-              <pre className="genr-prompt mono" style={{ fontSize: 12 }}>{pretty(d.responseBody) || "—"}</pre>
-            </details>
-          </section>
+          {canViewRawBodies &&
+          (d.requestBody !== undefined || d.responseBody !== undefined) ? (
+            <section>
+              <SecTitle>原始报文</SecTitle>
+              <details>
+                <summary className="muted" style={{ cursor: "pointer", fontSize: 12.5 }}>请求体</summary>
+                <div className="adm-tools" style={{ margin: "8px 0" }}>
+                  <CopyBtn text={pretty(d.requestBody ?? "")} />
+                </div>
+                <pre className="genr-prompt mono" style={{ fontSize: 12 }}>{pretty(d.requestBody ?? "") || "—"}</pre>
+              </details>
+              <details style={{ marginTop: 12 }}>
+                <summary className="muted" style={{ cursor: "pointer", fontSize: 12.5 }}>响应体</summary>
+                <div className="adm-tools" style={{ margin: "8px 0" }}>
+                  <CopyBtn text={pretty(d.responseBody ?? "")} />
+                </div>
+                <pre className="genr-prompt mono" style={{ fontSize: 12 }}>{pretty(d.responseBody ?? "") || "—"}</pre>
+              </details>
+            </section>
+          ) : null}
         </>
       )}
     </AdminDrawer>
@@ -489,7 +500,7 @@ export default function AdminGenerationsPage() {
            把剩余空间均分给模型/Prompt 两列，模型列留下一大块空白死区 */
         width: 200,
         className: "strong",
-        cell: (r) => <Trunc text={r.modelName || r.model} />,
+        cell: (r) => <Trunc text={displayModelName(r)} />,
       },
       {
         header: "Prompt",

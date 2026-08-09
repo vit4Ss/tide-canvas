@@ -104,8 +104,9 @@ export interface ModelCallLogVO {
   /** 目录显示名(market_model.name);查不到为空 → 展示回退 model */
   modelName?: string;
   endpoint: string;
-  requestBody: string;
-  responseBody: string;
+  /** Only returned for an active built-in administrator (role=9). */
+  requestBody?: string;
+  responseBody?: string;
   httpStatus: number;
   /** 0 fail / 1 ok */
   success: number;

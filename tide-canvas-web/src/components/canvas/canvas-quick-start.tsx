@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { SkillPicker } from "@/components/skill/skill-picker";
+import { SkillPromptChip } from "@/components/skill/skill-prompt-chip";
 import { toast } from "@/components/shared/toast";
 import { resumeGeneration, useAiGeneration } from "@/hooks/canvas/use-ai-generation";
 import { createNode } from "@/lib/canvas-helpers";
@@ -43,6 +44,7 @@ import {
   isImageReferenceNodeType,
 } from "@/lib/canvas-node-types";
 import { parseSkillParams } from "@/lib/skill-api";
+import { promptAfterSkillPick } from "@/lib/skill-prompt";
 import {
   referenceKindFromFile,
   resolveModelReferenceLimitBytes,
@@ -1053,6 +1055,11 @@ export function CanvasQuickStart({
       toast.info("顶部创作栏仅支持图片或视频预设");
       return;
     }
+    setPrompt((current) => {
+      const next = promptAfterSkillPick(current, skill, selectedSkill);
+      promptValueRef.current = next;
+      return next;
+    });
     setSelectedSkill(skill);
     setSkillPickerOpen(false);
     // A selected Skill always runs through the new canvas assistant. Deferred
@@ -1741,19 +1748,30 @@ export function CanvasQuickStart({
     >
       <div className={styles.composer}>
         <div className={styles.editorWrap}>
-          <PromptRefEditor
-            value={prompt}
-            onChange={updatePrompt}
-            refs={quickRefs}
-            showThumbs={false}
-            onSubmit={() => { void submit(); }}
-            placeholder={isLauncher
-              ? "描述你的想法，可添加图片、视频或音频作为参考，用 / 使用技能"
-              : "描述你的想法，用 @ 引用画布里的图片、视频或音频"}
-            ariaLabel={isLauncher ? "新画布创作描述" : "画布创作描述"}
-            editorClassName={styles.editor}
-            editorStyle={{ minHeight: isLauncher ? 64 : 58, maxHeight: 112 }}
-          />
+          <div className={styles.editorRow}>
+            {selectedSkill && (
+              <SkillPromptChip
+                skill={selectedSkill}
+                onRemove={clearSelectedSkill}
+                className={styles.inlineSkill}
+              />
+            )}
+            <div className={styles.editorField}>
+              <PromptRefEditor
+                value={prompt}
+                onChange={updatePrompt}
+                refs={quickRefs}
+                showThumbs={false}
+                onSubmit={() => { void submit(); }}
+                placeholder={isLauncher
+                  ? "描述你的想法，可添加图片、视频或音频作为参考，用 / 使用技能"
+                  : "描述你的想法，用 @ 引用画布里的图片、视频或音频"}
+                ariaLabel={isLauncher ? "新画布创作描述" : "画布创作描述"}
+                editorClassName={styles.editor}
+                editorStyle={{ minHeight: isLauncher ? 64 : 58, maxHeight: 112 }}
+              />
+            </div>
+          </div>
         </div>
 
         {activeRefCount > 0 && (
@@ -1829,19 +1847,9 @@ export function CanvasQuickStart({
                 title={selectedSkill ? `当前技能：${selectedSkill.title}` : "选择技能，也可以在输入框键入 /"}
               >
                 <Wand2 aria-hidden className="h-3.5 w-3.5" />
-                <span>{selectedSkill?.title || "技能"}</span>
+                <span>{selectedSkill ? "技能 1" : "技能"}</span>
                 <ChevronDown aria-hidden className="h-3 w-3" />
               </button>
-              {selectedSkill && (
-                <button
-                  type="button"
-                  className={styles.clearSkill}
-                  aria-label={`移除 Skill：${selectedSkill.title}`}
-                  onClick={clearSelectedSkill}
-                >
-                  <X aria-hidden className="h-3 w-3" />
-                </button>
-              )}
             </div>}
 
             {!isAgentSelection && <>

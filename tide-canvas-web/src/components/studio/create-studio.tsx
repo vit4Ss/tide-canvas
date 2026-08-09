@@ -44,6 +44,7 @@ import { marketApi } from "@/lib/market-api";
 import { pointsApi } from "@/lib/points-api";
 import { SkillPicker } from "@/components/skill/skill-picker";
 import { parseSkillParams, skillApi } from "@/lib/skill-api";
+import { promptAfterSkillPick } from "@/lib/skill-prompt";
 import {
   skillKindOf,
   skillSupportsEntryPoint,
@@ -141,7 +142,7 @@ export default function CreateStudio() {
      歌词必填 + 风格/歌名，描述不发送；延长/翻唱 = 引用先前生成的 clip_id。
      各模式字段互斥展示（对齐上游 API 语义）。 */
   const [musicMode, setMusicMode] = useState<MusicMode>("inspire");
-  /* 技能:附着为提示词区 chip,生成时模板与描述合并;粘性直到手动移除 */
+  /* 技能：以内联 chip 附着到提示词框；执行模板由服务端按 skillId 解析。 */
   const [skill, setSkill] = useState<SkillVO | null>(null);
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   const skillRestoreSeqRef = useRef(0);
@@ -555,6 +556,7 @@ export default function CreateStudio() {
             isVid: h.type === "video",
             kind: h.type,
             refThumbs: [],
+            params: h.params,
           });
           setCells([{ i: 0, hues: h.hues, url: h.url }]);
           setProgs([100]);
@@ -685,6 +687,7 @@ export default function CreateStudio() {
         toast.info("智能技能请在画布中使用");
         return;
       }
+      setPrompt((current) => promptAfterSkillPick(current, s, skill));
       setSkill(s);
       setSkillPickerOpen(false);
       if (s.modelId) {
@@ -703,7 +706,7 @@ export default function CreateStudio() {
       if (defaults.duration) setDur(`${defaults.duration}s`);
       if (defaults.quality) setQuality(defaults.quality);
     },
-    [curType, studioList, model],
+    [curType, studioList, model, skill],
   );
 
   const removeSkill = useCallback(() => {

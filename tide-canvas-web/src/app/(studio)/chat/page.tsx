@@ -35,6 +35,7 @@ import "@/styles/liuguang/chat.css";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { SkillPicker } from "@/components/skill/skill-picker";
+import { promptAfterSkillPick } from "@/lib/skill-prompt";
 import type { SkillRunPanelActionPayload } from "@/components/skill/skill-run-panel";
 import { toast } from "@/components/shared/toast";
 import type { MentionEditorHandle } from "@/components/studio/mention-prompt-editor";
@@ -318,7 +319,10 @@ export default function ChatPage() {
       <SkillPicker
         open={cfg.skillPickerOpen}
         onClose={() => cfg.setSkillPickerOpen(false)}
-        onPick={cfg.pickSkill}
+        onPick={(nextSkill) => {
+          setDraft((current) => promptAfterSkillPick(current, nextSkill, cfg.skill));
+          cfg.pickSkill(nextSkill);
+        }}
         kinds={["preset"]}
         entryPoint="chat"
         outputType={models.selModel?.type}

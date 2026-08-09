@@ -17,7 +17,7 @@ import { useAuthStore } from "@/stores/use-auth-store";
 import { FileCategory, type FileVO } from "@/types/file";
 import { AiTaskStatus, type AiTaskVO } from "@/types/ai";
 import { mesh } from "@/lib/mesh";
-import { ossDisplayUrl } from "@/lib/oss-display";
+import { fallbackOssDisplayImage, ossDisplayUrl, restoreOssDisplayImage } from "@/lib/oss-display";
 import { toast } from "@/components/shared/toast";
 import { confirmDialog } from "@/components/shared/confirm";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
@@ -1120,7 +1120,15 @@ const TaskCard = memo(function TaskCard({
         <LazyVideoCover src={task.resultUrl} fallback={fallback} />
       ) : coverUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img className="cov" src={coverUrl} alt="" loading="lazy" decoding="async" />
+        <img
+          className="cov"
+          src={coverUrl}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          onLoad={(event) => restoreOssDisplayImage(event.currentTarget)}
+          onError={(event) => fallbackOssDisplayImage(event.currentTarget, task.resultUrl)}
+        />
       ) : (
         <span className="cov" style={{ background: fallback }} />
       )}
@@ -1288,6 +1296,8 @@ const UploadCard = memo(function UploadCard({
           alt=""
           loading="lazy"
           decoding="async"
+          onLoad={(event) => restoreOssDisplayImage(event.currentTarget)}
+          onError={(event) => fallbackOssDisplayImage(event.currentTarget, file.fileUrl)}
         />
       ) : kind === "video" && file.fileUrl ? (
         // 视频:video 首帧做卡片视觉(背景图铺不了 mp4),配 ▶ 角标

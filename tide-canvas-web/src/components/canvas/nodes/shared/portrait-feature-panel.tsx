@@ -10,7 +10,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { Check, ChevronsUpDown, ImagePlus, Loader2 } from "lucide-react";
-import { ossDisplayUrl } from "@/lib/oss-display";
+import { fallbackOssDisplayImage, ossDisplayUrl, restoreOssDisplayImage } from "@/lib/oss-display";
 
 export type PortraitFeaturePanelMode = "makeup" | "expression" | "texture";
 export type PortraitFeatureResolution = string;
@@ -445,7 +445,13 @@ export function PortraitFeaturePanel({
             >
               {makeupReference ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={ossDisplayUrl(makeupReference, 256)} alt="自定义妆容参考" className="absolute inset-0 h-full w-full object-cover" />
+                <img
+                  src={ossDisplayUrl(makeupReference, 256)}
+                  alt=""
+                  className="absolute inset-0 h-full w-full object-cover"
+                  onLoad={(event) => restoreOssDisplayImage(event.currentTarget)}
+                  onError={(event) => fallbackOssDisplayImage(event.currentTarget, makeupReference)}
+                />
               ) : null}
               {makeupReference ? <span className="absolute inset-0 bg-gradient-to-t from-black/65 via-transparent to-transparent" /> : null}
               <span className={`absolute inset-0 z-[1] flex flex-col items-center ${makeupReference ? "justify-end pb-1.5 text-white" : "justify-center text-neutral-500 dark:text-white/60"}`}>

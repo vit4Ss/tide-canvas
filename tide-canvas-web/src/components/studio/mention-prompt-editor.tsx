@@ -116,23 +116,72 @@ function createPillElement(ref: MentionRef): HTMLSpanElement {
   pill.title = ref.label;
   pill.className = "mention-pill";
   if (ref.kind === "image" && ref.thumb) {
-    const img = document.createElement("img");
-    img.src = ref.thumb;
-    img.alt = "";
-    pill.appendChild(img);
+    pill.appendChild(createPillImage(ref.thumb));
   } else {
-    // 视频/音频用静态字形：16px 下视频首帧不可辨识，而活的 <video> 每次
-    // 创建/克隆/重建都会重新发起 metadata 请求（OSS 计流量），得不偿失。
-    const ic = document.createElement("span");
-    ic.className = "mp-ic";
-    ic.textContent = KIND_GLYPH[ref.kind];
-    pill.appendChild(ic);
+    pill.appendChild(createPillGlyph(ref.kind));
   }
   const label = document.createElement("span");
   label.className = "mp-label";
   label.textContent = ref.label;
   pill.appendChild(label);
   return pill;
+}
+
+function createPillGlyph(kind: MentionKind): HTMLSpanElement {
+  // 视频/音频用静态字形：16px 下视频首帧不可辨识，而活的 <video> 每次
+  // 创建/克隆/重建都会重新发起 metadata 请求（OSS 计流量），得不偿失。
+  const icon = document.createElement("span");
+  icon.className = "mp-ic";
+  icon.textContent = KIND_GLYPH[kind];
+  return icon;
+}
+
+function createPillImage(source: string): HTMLImageElement {
+  const image = document.createElement("img");
+  image.src = source;
+  image.alt = "";
+  image.addEventListener("error", () => {
+    // 远程缩略图过期或暂时不可用时显示稳定字形，绝不把浏览器破图图标
+    // 暴露在输入框里。后续 source 更新时同步函数会重新换回真实图片。
+    if (image.parentNode) image.replaceWith(createPillGlyph("image"));
+  }, { once: true });
+  return image;
+}
+
+/**
+ * refs-only 更新（最常见是本地 blob 上传完成后切成远程 URL）不能重建整个
+ * contentEditable，否则会打断输入法并把光标甩到末尾。这里只原位替换 pill
+ * 的首个媒体节点；返回 false 表示存在增删引用，需要在失焦时完整重建。
+ */
+function syncMentionPillMedia(editor: HTMLDivElement, refs: MentionRef[]): boolean {
+  const byLabel = new Map(refs.map((ref) => [ref.label, ref]));
+  let complete = true;
+  editor.querySelectorAll<HTMLElement>(".mention-pill[data-mention]").forEach((pill) => {
+    const ref = byLabel.get(pill.dataset.mention ?? "");
+    if (!ref) {
+      complete = false;
+      return;
+    }
+    const current = pill.firstElementChild;
+    if (ref.kind === "image" && ref.thumb) {
+      if (current instanceof HTMLImageElement) {
+        if (current.getAttribute("src") !== ref.thumb) current.src = ref.thumb;
+        return;
+      }
+      const image = createPillImage(ref.thumb);
+      if (current) current.replaceWith(image);
+      else pill.prepend(image);
+      return;
+    }
+    if (current?.classList.contains("mp-ic")) {
+      current.textContent = KIND_GLYPH[ref.kind];
+      return;
+    }
+    const icon = createPillGlyph(ref.kind);
+    if (current) current.replaceWith(icon);
+    else pill.prepend(icon);
+  });
+  return complete;
 }
 
 /** 把 prompt 文本渲染进编辑器：能匹配到素材的 token 变 pill，其余保持纯文本。
@@ -358,6 +407,9 @@ export const MentionPromptEditor = forwardRef<MentionEditorHandle, Props>(
     // 组字期间到达的外部 value 写入（如 AI 优化异步返回）先暂存，
     // compositionEnd 再应用——组字中回写 DOM 会打断输入法。
     const pendingExternalRef = useRef<string | null>(null);
+    // refs-only 更新同样可能替换 pill 的媒体节点；即使文本值没有变化，
+    // 也必须等输入法完成组字后再触碰 contentEditable DOM。
+    const pendingRefsSyncRef = useRef(false);
 
     const [menuOpen, setMenuOpen] = useState(false);
     const [menuQuery, setMenuQuery] = useState("");
@@ -664,21 +716,29 @@ export const MentionPromptEditor = forwardRef<MentionEditorHandle, Props>(
     // 外部 value/refs 同步。回声（value === 自己刚 emit 的值）且 refs 内容
     // 未变 → 不动 DOM，用户打字/组字永不被重建打断。真正的外部写入
     // （AI 优化、灵感 chip、恢复草稿、发送后清空）→ 重渲染；聚焦中光标置尾。
-    // refs 内容变化（上传完成换 URL、增删素材）仅在未聚焦时重建——聚焦中
-    // 重建会把光标甩到结尾，缩略图的更新等失焦再补。
+    // refs 内容变化（上传完成换 URL、增删素材）在聚焦时只原位更新 pill
+    // 媒体，不重建编辑器；结构性增删仍留到失焦时完整同步。
     useEffect(() => {
       const editor = editorRef.current;
       if (!editor) return;
       const v = value || "";
       const isEcho = v === lastEmittedRef.current;
+      const sigSame = refsSig === lastRefsSigRef.current;
       if (composingRef.current) {
-        // 组字中不能回写 DOM；真正的外部写入暂存，compositionEnd 应用
+        // 组字中不能回写任何 contentEditable DOM；value 与 refs 都暂存到
+        // compositionEnd，避免替换 pill 媒体时中断中文输入法候选。
         if (!isEcho) pendingExternalRef.current = v;
+        if (!sigSame) pendingRefsSyncRef.current = true;
         return;
       }
-      const sigSame = refsSig === lastRefsSigRef.current;
       if (isEcho && sigSame) return;
-      if (isEcho && !sigSame && focusedRef.current) return; // refs-only 变化，聚焦中不打断
+      if (isEcho && !sigSame && focusedRef.current) {
+        const mediaComplete = syncMentionPillMedia(editor, refs);
+        if (mediaComplete && !hasUnpilledToken(editor, refs)) {
+          lastRefsSigRef.current = refsSig;
+        }
+        return;
+      }
       syncEditorContent(editor, v, refs);
       lastEmittedRef.current = v;
       lastRefsSigRef.current = refsSig;
@@ -759,6 +819,7 @@ export const MentionPromptEditor = forwardRef<MentionEditorHandle, Props>(
               syncEditorContent(editor, pending, refs);
               lastEmittedRef.current = pending;
               lastRefsSigRef.current = refsSig;
+              pendingRefsSyncRef.current = false;
               const range = document.createRange();
               range.selectNodeContents(editor);
               range.collapse(false);
@@ -768,6 +829,13 @@ export const MentionPromptEditor = forwardRef<MentionEditorHandle, Props>(
               return;
             }
             updateFromEditor();
+            if (pendingRefsSyncRef.current && editor) {
+              pendingRefsSyncRef.current = false;
+              const mediaComplete = syncMentionPillMedia(editor, refs);
+              if (mediaComplete && !hasUnpilledToken(editor, refs)) {
+                lastRefsSigRef.current = refsSig;
+              }
+            }
           }}
           onFocus={() => {
             focusedRef.current = true;
@@ -814,14 +882,7 @@ export const MentionPromptEditor = forwardRef<MentionEditorHandle, Props>(
                 onMouseEnter={() => setMenuIndex(i)}
                 onClick={() => insertMention(r)}
               >
-                {r.kind === "image" && r.thumb ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={r.thumb} alt="" />
-                ) : r.kind === "video" && r.thumb ? (
-                  <video src={r.thumb} muted playsInline preload="metadata" />
-                ) : (
-                  <span className="mi-ic">{KIND_GLYPH[r.kind]}</span>
-                )}
+                <MentionMenuMedia refItem={r} />
                 <span className="mi-lab">{r.label}</span>
                 <span className="mi-at">@{r.index}</span>
               </button>
@@ -832,6 +893,19 @@ export const MentionPromptEditor = forwardRef<MentionEditorHandle, Props>(
     );
   },
 );
+
+function MentionMenuMedia({ refItem }: { refItem: MentionRef }) {
+  const [failedSource, setFailedSource] = useState("");
+  const source = refItem.thumb ?? "";
+  if (source && failedSource !== source && refItem.kind === "image") {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={source} alt="" onError={() => setFailedSource(source)} />;
+  }
+  if (source && failedSource !== source && refItem.kind === "video") {
+    return <video src={source} muted playsInline preload="metadata" onError={() => setFailedSource(source)} />;
+  }
+  return <span className="mi-ic">{KIND_GLYPH[refItem.kind]}</span>;
+}
 
 /** 按提交顺序给素材编号并生成 MentionRef 列表（页面侧共用的小工具）。 */
 export function buildMentionRefs(

@@ -3,7 +3,7 @@
 import { memo, useCallback, useState } from "react";
 import { Box, Image as ImageIcon, Plus, X } from "lucide-react";
 import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
-import { ossDisplayUrl } from "@/lib/oss-display";
+import { fallbackOssDisplayImage, ossDisplayUrl, restoreOssDisplayImage } from "@/lib/oss-display";
 import { NodeChrome } from "./base/node-chrome";
 
 interface Props {
@@ -27,8 +27,9 @@ export const StyleReferenceNode = memo(function StyleReferenceNode({
 }: Props) {
   const removeNode = useCanvasStore((s) => s.removeNode);
   const [hovered, setHovered] = useState(false);
-  const [broken, setBroken] = useState(false);
   const coverUrl = node.stylePresetCoverUrl || node.imageSrc || "";
+  const [brokenUrl, setBrokenUrl] = useState("");
+  const broken = !!coverUrl && brokenUrl === coverUrl;
   const showControls = (isSelected || hovered || isConnectTarget) && !isDragging;
 
   const handleMouseDown = useCallback(
@@ -67,7 +68,10 @@ export const StyleReferenceNode = memo(function StyleReferenceNode({
             alt={node.title}
             className="h-full w-full object-cover"
             draggable={false}
-            onError={() => setBroken(true)}
+            onLoad={(event) => restoreOssDisplayImage(event.currentTarget)}
+            onError={(event) => {
+              if (!fallbackOssDisplayImage(event.currentTarget, coverUrl)) setBrokenUrl(coverUrl);
+            }}
           />
         ) : (
           <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-neutral-100 via-neutral-50 to-white text-neutral-400 dark:from-neutral-900 dark:via-neutral-900 dark:to-neutral-950">

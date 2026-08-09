@@ -12,9 +12,62 @@
 
 /** 支持 x-oss-process 图片处理的本站存储域（CDN 域名与后台存储配置保持一致）。 */
 const PROCESSABLE_HOSTS = ["cdn.mbfczzzz.top"];
+const MAX_DISABLED_URLS = 256;
+// Deliberately memory-only: reading sessionStorage during the first client
+// render would make its src differ from SSR and cause a hydration mismatch.
+// A full reload may retry processing once, then immediately falls back again.
+const processingDisabledUrls = new Set<string>();
+
+/**
+ * Remember source images that OSS cannot process (most commonly files over
+ * the 20 MB source-image limit). The original object remains a valid display
+ * URL, so subsequent renders should skip x-oss-process for this page session.
+ */
+export function disableOssDisplayProcessing(url: string | undefined | null): void {
+  if (!url || processingDisabledUrls.has(url)) return;
+  processingDisabledUrls.add(url);
+  while (processingDisabledUrls.size > MAX_DISABLED_URLS) {
+    const oldest = processingDisabledUrls.values().next().value;
+    if (typeof oldest !== "string") break;
+    processingDisabledUrls.delete(oldest);
+  }
+}
+
+/** Clear imperative failure styles when an image (including an updated src)
+ * loads successfully in a reused DOM element. */
+export function restoreOssDisplayImage(image: HTMLImageElement): void {
+  image.style.visibility = "";
+  delete image.dataset.ossOriginalFallback;
+}
+
+/**
+ * <img> error recovery for an OSS-derived display URL. The first failure
+ * falls back to the original object and disables processing for later views;
+ * if the original itself also fails, hide the native broken-image glyph.
+ */
+export function fallbackOssDisplayImage(
+  image: HTMLImageElement,
+  originalUrl: string | undefined | null,
+): boolean {
+  if (!originalUrl) {
+    image.style.visibility = "hidden";
+    return false;
+  }
+  const alreadyTriedOriginal =
+    image.dataset.ossOriginalFallback === "1" || image.getAttribute("src") === originalUrl;
+  if (!alreadyTriedOriginal) {
+    disableOssDisplayProcessing(originalUrl);
+    image.dataset.ossOriginalFallback = "1";
+    image.src = originalUrl;
+    return true;
+  }
+  image.style.visibility = "hidden";
+  return false;
+}
 
 export function ossDisplayUrl(url: string | undefined | null, width: number): string | undefined {
   if (!url) return url ?? undefined;
+  if (processingDisabledUrls.has(url)) return url;
   if (!/^https?:\/\//i.test(url) || url.includes("?")) return url;
   try {
     const host = new URL(url).hostname;

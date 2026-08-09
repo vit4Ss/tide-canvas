@@ -25,6 +25,7 @@ import (
 
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/authz"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/response"
 )
@@ -567,8 +568,8 @@ type GenerationDetailVO struct {
 	Inputs       []genAsset `json:"inputs"`
 	Results      []genAsset `json:"results"`
 	Reply        string     `json:"reply"`
-	RequestBody  string     `json:"requestBody"`
-	ResponseBody string     `json:"responseBody"`
+	RequestBody  string     `json:"requestBody,omitempty"`
+	ResponseBody string     `json:"responseBody,omitempty"`
 }
 
 // genListQuery 在共享分页参数上加日期范围。
@@ -711,15 +712,17 @@ func generationDetail(c *gin.Context, d *app.Deps) {
 			DurationMs:     r.DurationMs,
 			UpstreamTaskID: r.UpstreamTaskID, CreateTime: g5FmtTime(r.CreateTime),
 		},
-		StartTime:    g5FmtTime(r.StartTime),
-		Endpoint:     r.Endpoint,
-		Cost:         r.Cost,
-		Params:       req.Params,
-		Inputs:       req.Inputs,
-		Results:      resp.Results,
-		Reply:        resp.Reply,
-		RequestBody:  r.RequestBody,
-		ResponseBody: r.ResponseBody,
+		StartTime: g5FmtTime(r.StartTime),
+		Endpoint:  r.Endpoint,
+		Cost:      r.Cost,
+		Params:    req.Params,
+		Inputs:    req.Inputs,
+		Results:   resp.Results,
+		Reply:     resp.Reply,
+	}
+	if authz.IsActiveAdministrator(c, db) {
+		vo.RequestBody = r.RequestBody
+		vo.ResponseBody = r.ResponseBody
 	}
 	response.OK(c, vo)
 }

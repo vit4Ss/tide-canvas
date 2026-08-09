@@ -27,7 +27,7 @@ import { NodePorts } from "./base/node-ports";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { resolveModelReferenceLimitBytes } from "@/lib/upload-limits";
 import { sliceImageGrid, transformImageRaster, type RasterTransform } from "@/lib/image-slice";
-import { ossDisplayUrl } from "@/lib/oss-display";
+import { disableOssDisplayProcessing, fallbackOssDisplayImage, ossDisplayUrl, restoreOssDisplayImage } from "@/lib/oss-display";
 import { matrixPrice, keyVariants } from "@/lib/price-matrix";
 import { getImageCardSizeForRatio } from "@/lib/image-card-size";
 import { CHARACTER_NODE_TYPE, SCENE_NODE_TYPE, isConceptCanvasNodeType, isVisualReferenceNodeType } from "@/lib/canvas-node-types";
@@ -496,6 +496,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const [selectedCells, setSelectedCells] = useState<Set<number>>(new Set());
   // 查看大图：应用内 lightbox 模态
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewMediaState, setPreviewMediaState] = useState({ src: "", failed: false, retry: 0 });
   // 360° 全景查看器（src 为生成出的全景扩图地址）
   const [panoramaOpen, setPanoramaOpen] = useState(false);
   const [panoramaSrc, setPanoramaSrc] = useState<string | null>(null);
@@ -528,6 +529,15 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   // 卡片展示图:OSS 原图(常为 2K~4K)降采样到 2048 宽。几十张原图同屏参与
   // GPU 合成是画布掉帧大头;全屏查看/下载/生成参考仍用原始 node.imageSrc。
   const cardDisplaySrc = ossDisplayUrl(node.imageSrc, 2048);
+  const [cardMediaState, setCardMediaState] = useState({ src: "", useOriginal: false, failed: false, retry: 0 });
+  const currentImageSrc = node.imageSrc ?? "";
+  const currentCardMedia = cardMediaState.src === currentImageSrc
+    ? cardMediaState
+    : { src: currentImageSrc, useOriginal: false, failed: false, retry: 0 };
+  const currentPreviewMedia = previewMediaState.src === currentImageSrc
+    ? previewMediaState
+    : { src: currentImageSrc, failed: false, retry: 0 };
+  const activeCardImageSrc = currentCardMedia.useOriginal ? node.imageSrc : cardDisplaySrc;
   const [handlerCosts, setHandlerCosts] = useState<Record<string, number>>({});
   const { models: imageModels, modelId: selectedModelId, setModelId: setSelectedModelId, selectedModel } = useAiModels(
     AiModelType.IMAGE,
@@ -2133,7 +2143,14 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                         }}
                       >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={ossDisplayUrl(node.imageSrc, 512)} alt="" className="h-full w-full object-cover" draggable={false} />
+                        <img
+                          src={ossDisplayUrl(node.imageSrc, 512)}
+                          alt=""
+                          className="h-full w-full object-cover"
+                          draggable={false}
+                          onLoad={(event) => restoreOssDisplayImage(event.currentTarget)}
+                          onError={(event) => fallbackOssDisplayImage(event.currentTarget, node.imageSrc)}
+                        />
                       </div>
                       {/* 其余 5 个面（同色）：各面渲染时比真实尺寸大 2px，相邻面在公共棱边互相重叠 1px，
                           消除透视下面与面之间露出背景底色的「裂缝」 */}
@@ -2359,13 +2376,43 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         {/* 查看大图：全屏 lightbox（Portal 到 body，脱离画布缩放层） */}
         {previewOpen && node.imageSrc && (
           <NodeMediaLightbox onClose={() => setPreviewOpen(false)} title={node.title}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={node.imageSrc}
-              alt={node.title || ""}
-              className="max-h-[92vh] max-w-[92vw] rounded-xl object-contain shadow-2xl"
-              onClick={(e) => e.stopPropagation()}
-            />
+            {currentPreviewMedia.failed ? (
+              <div
+                className="flex min-h-48 min-w-72 flex-col items-center justify-center gap-3 rounded-xl border border-white/10 bg-neutral-950/90 px-8 text-white shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <ImageIcon className="h-8 w-8 text-white/35" aria-hidden />
+                <span className="text-sm text-white/70">图片暂时无法加载</span>
+                <button
+                  type="button"
+                  className="rounded-md border border-white/15 px-3 py-1.5 text-xs text-white/80 transition-colors hover:bg-white/10"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPreviewMediaState({
+                      src: currentImageSrc,
+                      failed: false,
+                      retry: currentPreviewMedia.retry + 1,
+                    });
+                  }}
+                >
+                  重新加载
+                </button>
+              </div>
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                key={`${currentImageSrc}:${currentPreviewMedia.retry}`}
+                src={node.imageSrc}
+                alt=""
+                className="max-h-[92vh] max-w-[92vw] rounded-xl object-contain shadow-2xl"
+                onError={() => setPreviewMediaState({
+                  src: currentImageSrc,
+                  failed: true,
+                  retry: currentPreviewMedia.retry,
+                })}
+                onClick={(e) => e.stopPropagation()}
+              />
+            )}
           </NodeMediaLightbox>
         )}
 
@@ -2438,12 +2485,52 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
           {node.imageSrc ? (
             node.is360 ? (
               <InlinePanorama src={node.imageSrc} gridOn={panoGrid} apiRef={panoApiRef} interactive={showAuxUI} />
+            ) : currentCardMedia.failed ? (
+              <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-neutral-50 text-neutral-500 dark:bg-neutral-950 dark:text-white/45">
+                <ImageIcon className="h-7 w-7 opacity-60" aria-hidden />
+                <span className="text-xs">图片暂时无法加载</span>
+                <button
+                  type="button"
+                  onMouseDown={stop}
+                  onClick={(e) => {
+                    stop(e);
+                    setCardMediaState({
+                      src: currentImageSrc,
+                      useOriginal: false,
+                      failed: false,
+                      retry: currentCardMedia.retry + 1,
+                    });
+                  }}
+                  className="rounded-md border border-neutral-300 px-2.5 py-1 text-[11px] text-neutral-600 transition-colors hover:bg-neutral-100 dark:border-neutral-700 dark:text-white/65 dark:hover:bg-neutral-900"
+                >
+                  重试
+                </button>
+              </div>
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={cardDisplaySrc}
+                key={`${currentImageSrc}:${currentCardMedia.useOriginal ? "original" : "optimized"}:${currentCardMedia.retry}`}
+                src={activeCardImageSrc}
                 alt=""
                 draggable={false}
+                onError={() => {
+                  if (!currentCardMedia.useOriginal && node.imageSrc && cardDisplaySrc !== node.imageSrc) {
+                    disableOssDisplayProcessing(node.imageSrc);
+                    setCardMediaState({
+                      src: currentImageSrc,
+                      useOriginal: true,
+                      failed: false,
+                      retry: currentCardMedia.retry,
+                    });
+                    return;
+                  }
+                  setCardMediaState({
+                    src: currentImageSrc,
+                    useOriginal: currentCardMedia.useOriginal,
+                    failed: true,
+                    retry: currentCardMedia.retry,
+                  });
+                }}
                 onLoad={(e) => {
                   const t = e.currentTarget;
                   if (t.naturalWidth > 0 && t.naturalHeight > 0) {

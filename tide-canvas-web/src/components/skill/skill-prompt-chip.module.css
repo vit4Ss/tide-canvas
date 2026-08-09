@@ -1,0 +1,73 @@
+.root {
+  display: inline-flex;
+  width: fit-content;
+  max-width: min(180px, 42%);
+  height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  padding: 0 5px 0 8px;
+  border: 1px solid var(--border-strong, rgb(24 24 27 / 16%));
+  border-radius: 8px;
+  color: var(--text, var(--foreground, #18181b));
+  background: var(--panel, rgb(24 24 27 / 5%));
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+:global(.dark) .root {
+  border-color: var(--border-strong, rgb(255 255 255 / 14%));
+  color: var(--text, #f5f5f7);
+  background: var(--panel, rgb(255 255 255 / 7%));
+}
+
+.icon {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  opacity: .72;
+}
+
+.label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+.remove {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  color: currentColor;
+  background: transparent;
+  cursor: pointer;
+  opacity: .48;
+  transition: opacity 160ms ease-out, background 160ms ease-out;
+}
+
+.remove:hover {
+  background: rgb(127 127 127 / 14%);
+  opacity: .88;
+}
+
+.remove:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 1px;
+}
+
+.remove svg {
+  width: 12px;
+  height: 12px;
+}
+
+@media (max-width: 520px) {
+  .root {
+    max-width: min(132px, 42%);
+  }
+}
