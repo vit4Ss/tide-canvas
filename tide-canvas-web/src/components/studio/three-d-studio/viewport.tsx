@@ -144,6 +144,30 @@ export function ThreeDViewport({
       let loadSeq = 0;
       const loader = new GLTFLoader();
 
+      // 取模型字节：优先后端代理（鉴权 + SSRF 防护）；代理不可用时回退浏览器
+      // 直连——开发机服务端出网走不了系统代理（remote client 是 Proxy:nil 直连），
+      // 而对象存储对 GET 普遍开 CORS，浏览器反而取得到。GLB 魔数（"glTF"）校验
+      // 兜住代理回 JSON 错误体 / 中转页的情况，坏字节不进解析器。
+      const isGlb = (buf: ArrayBuffer) =>
+        buf.byteLength >= 4 && new DataView(buf).getUint32(0, true) === 0x46546c67;
+      const fetchModelBytes = async (url: string): Promise<ArrayBuffer> => {
+        let proxyErr: Error;
+        try {
+          const resp = await fetchWithAuth(`/api/files/download?url=${encodeURIComponent(url)}`);
+          if (!resp.ok) throw new Error(`代理 HTTP ${resp.status}`);
+          const buf = await resp.arrayBuffer();
+          if (isGlb(buf)) return buf;
+          throw new Error("代理返回的不是 GLB 内容");
+        } catch (err) {
+          proxyErr = err instanceof Error ? err : new Error(String(err));
+        }
+        const direct = await fetch(url, { mode: "cors", credentials: "omit" }).catch(() => null);
+        if (!direct?.ok) throw proxyErr;
+        const buf = await direct.arrayBuffer();
+        if (!isGlb(buf)) throw new Error("文件不是 GLB 格式");
+        return buf;
+      };
+
       const clearModel = () => {
         if (!model) return;
         scene.remove(model);
@@ -168,10 +192,7 @@ export function ThreeDViewport({
         (async () => {
           let blobUrl = "";
           try {
-            // 后端代理拿字节（外链直连会 CORS）；GLB 自包含，blob URL 可整档解析
-            const resp = await fetchWithAuth(`/api/files/download?url=${encodeURIComponent(url)}`);
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const buf = await resp.arrayBuffer();
+            const buf = await fetchModelBytes(url);
             if (disposed || seq !== loadSeq) return;
             blobUrl = URL.createObjectURL(new Blob([buf], { type: "model/gltf-binary" }));
             const gltf = await loader.loadAsync(blobUrl);
@@ -220,7 +241,8 @@ export function ThreeDViewport({
             if (disposed || seq !== loadSeq) return;
             console.error("[3D 工作台] 模型加载失败:", url, err);
             setLoading(false);
-            setError("模型加载失败，可尝试直接下载源文件");
+            const detail = err instanceof Error && err.message ? `（${err.message}）` : "";
+            setError(`模型加载失败${detail}，可尝试直接下载源文件`);
           } finally {
             if (blobUrl) URL.revokeObjectURL(blobUrl);
           }
