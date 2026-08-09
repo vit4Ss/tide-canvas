@@ -579,12 +579,27 @@ function Chips<T extends string | number>({
   single?: boolean;
 }) {
   const sectionLabelId = useFormSectionLabelId();
-  // 配置里存在但不在预设清单里的值（如上游同步预填的取值）也要画出来：
-  // 不画的话后台看不到也删不掉，只有前台在渲染它。追加到预设之后。
+  // 配置里存在但不在预设清单里的值（如上游同步预填的 landscape/portrait）也要
+  // 画出来：不画的话后台看不到也删不掉，只有前台在渲染它。挂进会话池而不是
+  // 直接从 value 派生——点掉只是取消选中（芯片保留、误点可点回），真正移除
+  // 发生在保存时 value 不含它；从 value 派生的话一点就整颗消失。
   const known = new Set(options.map((o) => o.v));
+  const [extraPool, setExtraPool] = useState<T[]>(() => [
+    ...new Set(value.filter((v) => !known.has(v))),
+  ]);
+  // value 里新冒出的预设外值也吸收进池（如类型切换换了预设清单，原选中值
+  // 相对新清单变成预设外）——渲染期条件 setState 是 React 认可的 props 派生
+  // 态调整模式，吸收后即收敛，不会循环。
+  const missing = value.filter((v) => !known.has(v) && !extraPool.includes(v));
+  if (missing.length) {
+    setExtraPool((p) => [...new Set([...p, ...missing])]);
+  }
   const merged = [
     ...options,
-    ...value.filter((v) => !known.has(v)).map((v) => ({ v, l: String(v) })),
+    // known 每次渲染重算：预设清单随类型切换变化时，已入预设的值不再重复画
+    ...[...new Set([...extraPool, ...missing])]
+      .filter((v) => !known.has(v))
+      .map((v) => ({ v, l: String(v) })),
   ];
   const toggle = (v: T) => {
     if (single) {
