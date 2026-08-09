@@ -1,0 +1,23 @@
+/* 3D 模型工作台 inner column layout — panel (360px) + viewport (1fr)，与
+   创作台 create.module.css 同参数，填满 (studio) layout 的 .content 区。
+   viewport/条带等组件样式在 liuguang/studio.css 的 t3d- 段（全局类，吃 imini
+   令牌）；此处只负责列布局。Page-owned: does NOT touch globals/layout css. */
+
+.cols {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 360px 1fr;
+}
+
+@media (max-width: 1180px) {
+  .cols {
+    grid-template-columns: 320px 1fr;
+  }
+}
+
+@media (max-width: 820px) {
+  .cols {
+    grid-template-columns: 1fr;
+  }
+}

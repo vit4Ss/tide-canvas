@@ -39,6 +39,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useRouter } from "next/navigation";
 import { aiApi } from "@/lib/api";
 import { marketApi } from "@/lib/market-api";
 import { pointsApi } from "@/lib/points-api";
@@ -129,6 +130,7 @@ function withHistoryRestoreTimeout<T>(promise: Promise<T>, timeoutMs = 15_000): 
 /* ── component ───────────────────────────────────────────────────────────── */
 
 export default function CreateStudio() {
+  const router = useRouter();
   /* panel state */
   const [curType, setCurType] = useState<ArtworkType>("image");
   const [tool, setTool] = useState<ToolKey>("t2i");
@@ -400,6 +402,9 @@ export default function CreateStudio() {
     const byRun = new Map<string, HistRun>();
     const order: HistRun[] = [];
     for (const h of hist) {
+      // 3D 归 /three-d 展示；引擎恢复的在飞 3D 任务完成后 pushHistory 仍会入
+      // hist，这里在展示层滤掉，避免信息流冒出无法交互的 3D 卡。
+      if (h.type === "3d") continue;
       let g = byRun.get(h.run);
       if (!g) {
         g = {
@@ -480,7 +485,16 @@ export default function CreateStudio() {
       const t = sp.get("type");
       const tl = sp.get("tool");
       const m = sp.get("model");
-      if (t === "image" || t === "video" || t === "audio" || t === "3d") {
+      // 3D 已独立成页：旧深链 /studio?type=3d 原参转发到 /three-d，收藏/外链不断。
+      if (t === "3d") {
+        const q = new URLSearchParams();
+        if (tl) q.set("tool", tl);
+        if (m) q.set("model", m);
+        const qs = q.toString();
+        router.replace(qs ? `/three-d?${qs}` : "/three-d");
+        return;
+      }
+      if (t === "image" || t === "video" || t === "audio") {
         // eslint-disable-next-line react-hooks/set-state-in-effect
         setCurType(t);
         const tools = MODES_BY_TYPE[t] ?? [];
@@ -491,16 +505,14 @@ export default function CreateStudio() {
               ? "t2v"
             : t === "audio"
               ? "t2a"
-              : t === "3d"
-                ? "t2_3d"
-                : "t2i",
+              : "t2i",
         );
       }
       if (m) deepModelRef.current = m;
     } catch {
       /* URL API unavailable — ignore */
     }
-  }, [deepModelRef]);
+  }, [deepModelRef, router]);
 
   // 生成历史: load the user's REAL generation tasks (persisted server-side). Each
   // SUCCESS task with a result URL becomes a card; a batch task (resultMeta.urls)
@@ -534,7 +546,9 @@ export default function CreateStudio() {
       const res = await aiApi.listTasks({ pageNum: page, pageSize: HIST_PAGE_SIZE, noProject: true });
       const records = res.success && res.data ? res.data.records : [];
       const total = res.success && res.data ? res.data.total : 0;
-      const items = histItemsFromTasks(records);
+      // 3D 产物归 /three-d 页展示（listTasks 无排除型过滤，客户端滤掉；
+      // 分页按 records 数记账，不受此过滤影响）。
+      const items = histItemsFromTasks(records).filter((h) => h.type !== "3d");
       histPageRef.current = page;
       histLoadedCountRef.current = append ? histLoadedCountRef.current + records.length : records.length;
       setHistHasMore(histLoadedCountRef.current < total);
@@ -1093,8 +1107,12 @@ export default function CreateStudio() {
     toast.success("已删除");
   };
 
-  // 空状态快捷入口：切到对应类型/工具并聚焦提示词。
+  // 空状态快捷入口：切到对应类型/工具并聚焦提示词；3D 已独立成页，转过去。
   const quickStart = (t: ArtworkType, tk: ToolKey) => {
+    if (t === "3d") {
+      router.push(`/three-d?tool=${tk}`);
+      return;
+    }
     setCurType(t);
     selectTool(tk);
     promptRef.current?.focus();
@@ -1112,7 +1130,7 @@ export default function CreateStudio() {
         {/* ── control panel ───────────────────────────────────────────── */}
         <aside className="ws-panel">
           <div className="ws-panel-scroll">
-            {/* type tabs: 图片 / 视频 / 音频 / 3D */}
+            {/* type tabs: 图片 / 视频 / 音频（3D 独立成页 /three-d） */}
             <TypeTabs curType={curType} onPick={pickType} />
 
             {/* mode tabs (generation tool) */}
@@ -1254,10 +1272,11 @@ export default function CreateStudio() {
         </aside>
 
         {/* ── center stage ────────────────────────────────────────────── */}
+        {/* 引擎恢复的在飞 3D 任务不在创作台渲染进度卡（展示归 /three-d） */}
         <StageFeed
           busy={busy || restoringRun}
           runs={runs}
-          inflightRuns={inflightRuns}
+          inflightRuns={inflightRuns.filter((r) => r.meta.kind !== "3d")}
           onQuickStart={quickStart}
           onEditRun={editRun}
           onRegenRun={regenRun}

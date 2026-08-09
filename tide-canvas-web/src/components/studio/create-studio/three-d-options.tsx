@@ -21,7 +21,7 @@ export function ThreeDOptions({
     <>
       <div className="ws-field col">
         <label>生成类型</label>
-        <div className="ws-ratios">
+        <div className="ws-ratios ws-3d-gentype">
           {(["Normal", "Geometry"] as const).map((value) => (
             <button
               key={value}
@@ -36,8 +36,9 @@ export function ThreeDOptions({
       </div>
 
       <div className="ws-field col">
-        <label>
-          模型面数 · <span>{faceCount.toLocaleString()}</span>
+        <label className="ws-3d-facelabel">
+          模型面数
+          <output>{faceCount.toLocaleString()}</output>
         </label>
         <input
           className="slider"

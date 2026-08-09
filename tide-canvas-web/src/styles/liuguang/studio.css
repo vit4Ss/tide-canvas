@@ -103,17 +103,20 @@
 .ws-phead{display:flex; align-items:center; gap:8px; font-family:var(--disp); font-size:17px; font-weight:800; margin-bottom:16px;}
 .ws-phead .spark{color:var(--accent);}
 
-/* type tabs: 图片 / 视频 / 音频 / 3D — clean segmented track */
-.ws-typetabs{display:grid; grid-template-columns:repeat(4,1fr); gap:4px; padding:4px; margin-bottom:22px;
+/* type tabs: 图片 / 视频 / 音频 — clean segmented track（3D 已独立成页 /three-d） */
+.ws-typetabs{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:4px; padding:4px; margin-bottom:22px;
   background:var(--bg); border-radius:13px;}
-.ws-typetabs button{display:flex; align-items:center; justify-content:center; gap:6px; height:44px; border-radius:10px;
-  font-size:14.5px; font-weight:700; color:var(--text-faint); transition:all .18s var(--ease);}
-.ws-typetabs button svg{width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round;}
+.ws-typetabs button{display:flex; align-items:center; justify-content:center; gap:6px; height:44px; padding:0 2px; border-radius:10px;
+  white-space:nowrap; font-size:14.5px; font-weight:700; color:var(--text-faint); transition:all .18s var(--ease);}
+.ws-typetabs button svg{flex:none; width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round;}
 .ws-typetabs button:hover{color:var(--text-dim);}
 .ws-typetabs button.on{color:#fff; background:var(--btn-grad); box-shadow:var(--btn-shadow);}
 .ws-typetabs button.on svg{stroke:#fff;}
-.ws-3d-range-note{display:flex; justify-content:space-between; margin-top:6px; color:var(--text-faint); font-size:11px;}
-.ws-3d-formats{grid-template-columns:repeat(2,minmax(0,1fr));}
+/* 面数标签行：名称居左、当前值居右（tabular-nums 防拖动时数字抖动） */
+.ws-3d-facelabel{display:flex; align-items:baseline; justify-content:space-between;}
+.ws-3d-facelabel output{font-size:12.5px; font-weight:600; color:var(--text); font-variant-numeric:tabular-nums;}
+.ws-3d-range-note{display:flex; justify-content:space-between; margin-top:6px; color:var(--text-faint); font-size:11px;
+  font-variant-numeric:tabular-nums;}
 .ws-3d-pbr{display:flex; align-items:center; justify-content:space-between; gap:16px;}
 .ws-3d-pbr>span{display:flex; flex-direction:column; gap:4px;}
 .ws-3d-pbr strong{font-size:13px; font-weight:600; color:var(--text);}
@@ -137,7 +140,66 @@
 .ws-3d-asset-links{display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px;}
 .ws-3d-asset-links a{height:30px; display:inline-flex; align-items:center; gap:6px; padding:0 10px; border:1px solid rgba(255,255,255,.12); border-radius:6px; color:rgba(255,255,255,.68); font-size:11px; font-weight:600; text-decoration:none;}
 .ws-3d-asset-links a:hover{color:#fff; border-color:rgba(255,255,255,.26); background:rgba(255,255,255,.06);}
-.ws-3d-formats .ratio{flex:1 1 calc(50% - 4px);}
+/* 生成类型 / 输出格式：芯片两列铺满行，与面板其余控件同宽同节奏 */
+.ws-3d-gentype .ratio,.ws-3d-formats .ratio{flex:1 1 calc(50% - 4px);}
+
+/* ── 3D 模型工作台 /three-d：viewport + 历史条带（t3d- 前缀） ─────────────
+   暗房是刻意的主题无关深色（与 .ws-3d-preview 同语言）：模型查看需要恒定
+   中性底，不随 imini 明暗令牌翻转。 */
+.t3d-stage{position:relative; z-index:1; min-height:0; display:flex; flex-direction:column; overflow:hidden;
+  background:linear-gradient(150deg,#17161f,#0e0d15);}
+.t3d-viewport{position:relative; flex:1; min-height:0;}
+.t3d-canvas{position:absolute; inset:0;}
+.t3d-canvas canvas{display:block;}
+/* 左上角网格统计：标签暗、数值亮，等宽数字防换模型时抖列 */
+.t3d-stats{position:absolute; top:18px; left:20px; z-index:3; display:grid; grid-template-columns:auto auto;
+  gap:6px 18px; font-size:12px; color:rgba(255,255,255,.42); pointer-events:none;}
+.t3d-stats b{color:rgba(255,255,255,.88); font-weight:600; font-variant-numeric:tabular-nums;}
+.t3d-gridrow{position:absolute; top:16px; right:18px; z-index:3; display:flex; align-items:center; gap:8px;
+  color:rgba(255,255,255,.55); font-size:12px;}
+/* 查看模式工具条：底部居中，实底暗面板 + 弱边框 */
+.t3d-toolbar{position:absolute; left:50%; bottom:14px; transform:translateX(-50%); z-index:3;
+  display:flex; gap:2px; padding:3px; border:1px solid rgba(255,255,255,.1); border-radius:9px;
+  background:rgba(12,11,18,.88);}
+.t3d-toolbar button{height:28px; padding:0 12px; border-radius:6px; font-size:12px; font-weight:600;
+  color:rgba(255,255,255,.55); transition:all .15s var(--ease);}
+.t3d-toolbar button:hover{color:rgba(255,255,255,.85);}
+.t3d-toolbar button.on{color:#fff; background:rgba(255,255,255,.13);}
+.t3d-note{position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:3;
+  display:flex; align-items:center; gap:8px; color:rgba(255,255,255,.6); font-size:12.5px; pointer-events:none;}
+.t3d-spin{width:14px; height:14px; border-radius:50%; border:2px solid rgba(255,255,255,.18);
+  border-top-color:#22D3EE; animation:t3dspin .8s linear infinite;}
+@keyframes t3dspin{to{transform:rotate(360deg);}}
+/* 空态 / 生成中覆盖层：纯展示，点击穿透到底部条带 */
+.t3d-overlay{position:absolute; inset:0; z-index:4; display:flex; flex-direction:column; align-items:center;
+  justify-content:center; gap:10px; text-align:center; pointer-events:none; color:rgba(255,255,255,.5);}
+.t3d-overlay b{font-size:15px; font-weight:600; color:rgba(255,255,255,.88);}
+.t3d-overlay-sub{max-width:320px; font-size:12.5px; line-height:1.7; color:rgba(255,255,255,.45);}
+.t3d-cube{width:72px; height:72px; display:grid; place-items:center; margin-bottom:6px; color:rgba(255,255,255,.4);
+  border:1px solid rgba(255,255,255,.1); border-radius:14px; background:rgba(255,255,255,.03);}
+.t3d-cube svg{width:36px; height:36px; fill:none; stroke:currentColor; stroke-width:1.4; stroke-linecap:round; stroke-linejoin:round;}
+.t3d-progress{width:220px; height:3px; margin-top:4px; border-radius:99px; background:rgba(255,255,255,.1); overflow:hidden;}
+.t3d-progress i{display:block; height:100%; border-radius:99px; background:#22D3EE; transition:width .3s var(--ease);}
+/* 底部：作品信息 + 各格式下载（左信息右动作，复用 ws-3d-asset-links） */
+.t3d-foot{flex:none; display:flex; align-items:center; justify-content:space-between; gap:16px; padding:12px 18px;
+  border-top:1px solid rgba(255,255,255,.08); background:rgba(12,11,18,.66);}
+.t3d-foot-info{min-width:0; display:flex; flex-direction:column; gap:3px;}
+.t3d-foot-info strong{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:rgba(255,255,255,.9); font-size:13px; font-weight:600;}
+.t3d-foot-info span{font-size:11px; color:rgba(255,255,255,.4);}
+/* 历史条带：横向缩略图，选中亮边框 */
+.t3d-strip{flex:none; display:flex; gap:8px; align-items:center; padding:10px 18px; overflow-x:auto;
+  border-top:1px solid rgba(255,255,255,.08); scrollbar-width:thin; scrollbar-color:var(--border-strong) transparent;}
+.t3d-strip::-webkit-scrollbar{height:6px;}
+.t3d-strip::-webkit-scrollbar-thumb{background:var(--border-strong); border-radius:99px;}
+.t3d-thumb{flex:none; width:56px; height:56px; display:grid; place-items:center; overflow:hidden; padding:0;
+  border:1px solid rgba(255,255,255,.1); border-radius:8px; background:#1b1a24; color:rgba(255,255,255,.35);
+  transition:border-color .15s var(--ease);}
+.t3d-thumb:hover{border-color:rgba(255,255,255,.28);}
+.t3d-thumb.on{border-color:rgba(255,255,255,.85);}
+.t3d-thumb img{display:block; width:100%; height:100%; object-fit:cover;}
+.t3d-thumb svg{width:22px; height:22px; fill:none; stroke:currentColor; stroke-width:1.5;}
+.t3d-more{font-size:11px; font-weight:600; color:rgba(255,255,255,.55);}
+@media (max-width:820px){.t3d-stage{min-height:70vh;}}
 
 /* mode tabs: underline style (override pages.css .seg pill) */
 #mode-tabs.seg{display:flex; gap:22px; margin-bottom:20px; padding:0 2px;

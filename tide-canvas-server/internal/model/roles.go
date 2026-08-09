@@ -55,6 +55,7 @@ var AdminModuleKeys = []string{
 var FrontMenuKeys = []string{
 	"discover", // 发现 /
 	"studio",   // 创作 /studio
+	"three_d",  // 3D模型 /three-d
 	"chat",     // 生成 /chat
 	"canvas",   // 画布 /projects
 	"explore",  // 作品广场 /explore

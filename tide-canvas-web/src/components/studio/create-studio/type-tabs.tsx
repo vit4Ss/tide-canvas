@@ -1,4 +1,5 @@
-/* 类型页签（图片 / 视频 / 音频 / 3D）。 */
+/* 类型页签（图片 / 视频 / 音频）。3D 已独立成页 /three-d（2026-08）：
+   交互式模型预览需要整幅 viewport，不再挤在创作台信息流里。 */
 
 import type { ArtworkType } from "./types";
 
@@ -45,18 +46,6 @@ export function TypeTabs({
           <circle cx="16" cy="16" r="3" />
         </svg>
         音频
-      </button>
-      <button
-        type="button"
-        className={curType === "3d" ? "on" : undefined}
-        onClick={() => onPick("3d")}
-      >
-        <svg viewBox="0 0 24 24">
-          <path d="M12 3 20 7.5 12 12 4 7.5 12 3Z" />
-          <path d="M4 7.5V16.5L12 21V12" />
-          <path d="M20 7.5V16.5L12 21" />
-        </svg>
-        3D模型
       </button>
     </div>
   );

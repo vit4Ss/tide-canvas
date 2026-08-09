@@ -59,6 +59,19 @@ const NAV_TOP: NavItem[] = [
     ),
   },
   {
+    href: "/three-d",
+    label: "3D模型",
+    key: "three_d",
+    // 立方体（与创作台原 3D 页签同形，语义延续）
+    icon: (
+      <svg viewBox="0 0 24 24">
+        <path d="M12 3 20 7.5 12 12 4 7.5 12 3Z" />
+        <path d="M4 7.5V16.5L12 21V12" />
+        <path d="M20 7.5V16.5L12 21" />
+      </svg>
+    ),
+  },
+  {
     href: "/chat",
     label: "生成",
     key: "chat",
