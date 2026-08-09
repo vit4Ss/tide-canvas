@@ -17,6 +17,10 @@ import { fetchWithAuth } from "@/lib/http";
 
 export type ViewMode = "shaded" | "solid" | "wire";
 
+/** 会话级通道记忆：代理在网络层失败/首包超时过一次，本会话后续加载直接走
+ *  直连，免得每个模型都白等一次探测。HTTP 业务错（403/404）不记——代理本身可用。 */
+let preferDirectFetch = false;
+
 interface ViewerApi {
   loadModel: (url: string | null) => void;
   setMode: (m: ViewMode) => void;
@@ -59,6 +63,8 @@ export function ThreeDViewport({
   const apiRef = useRef<ViewerApi | null>(null);
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(false);
+  /** 下载进度 0–99；null = 长度未知（不定态，只转圈不报数）。 */
+  const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<ViewMode>("shaded");
   const [grid, setGrid] = useState(true);
@@ -142,30 +148,111 @@ export function ThreeDViewport({
       };
 
       let loadSeq = 0;
+      let loadCtrl: AbortController | null = null;
       const loader = new GLTFLoader();
 
-      // 取模型字节：优先后端代理（鉴权 + SSRF 防护）；代理不可用时回退浏览器
-      // 直连——开发机服务端出网走不了系统代理（remote client 是 Proxy:nil 直连），
-      // 而对象存储对 GET 普遍开 CORS，浏览器反而取得到。GLB 魔数（"glTF"）校验
-      // 兜住代理回 JSON 错误体 / 中转页的情况，坏字节不进解析器。
+      // GLB 魔数（"glTF"）校验：代理回 JSON 错误体 / 中转页的坏字节不进解析器
       const isGlb = (buf: ArrayBuffer) =>
         buf.byteLength >= 4 && new DataView(buf).getUint32(0, true) === 0x46546c67;
-      const fetchModelBytes = async (url: string): Promise<ArrayBuffer> => {
-        let proxyErr: Error;
-        try {
-          const resp = await fetchWithAuth(`/api/files/download?url=${encodeURIComponent(url)}`);
-          if (!resp.ok) throw new Error(`代理 HTTP ${resp.status}`);
-          const buf = await resp.arrayBuffer();
-          if (isGlb(buf)) return buf;
-          throw new Error("代理返回的不是 GLB 内容");
-        } catch (err) {
-          proxyErr = err instanceof Error ? err : new Error(String(err));
+
+      // 流式读响应体，按 content-length 上报整数百分比（长度未知报 null）
+      const readBody = async (
+        resp: Response,
+        onProgress: (pct: number | null) => void,
+      ): Promise<ArrayBuffer> => {
+        const total = Number(resp.headers.get("content-length") || 0);
+        if (!resp.body || !total) {
+          onProgress(null);
+          return resp.arrayBuffer();
         }
-        const direct = await fetch(url, { mode: "cors", credentials: "omit" }).catch(() => null);
-        if (!direct?.ok) throw proxyErr;
-        const buf = await direct.arrayBuffer();
-        if (!isGlb(buf)) throw new Error("文件不是 GLB 格式");
-        return buf;
+        const reader = resp.body.getReader();
+        const chunks: Uint8Array[] = [];
+        let received = 0;
+        let lastPct = -1;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.length;
+          const pct = Math.min(99, Math.floor((received / total) * 100));
+          if (pct !== lastPct) {
+            lastPct = pct;
+            onProgress(pct);
+          }
+        }
+        const out = new Uint8Array(received);
+        let offset = 0;
+        for (const chunk of chunks) {
+          out.set(chunk, offset);
+          offset += chunk.length;
+        }
+        return out.buffer as ArrayBuffer;
+      };
+
+      /* 取模型字节，两条通道自动择优：
+         - 代理 /api/files/download（鉴权 + SSRF 防护）：服务端出网受阻的环境
+           会挂满 60s 超时，这里只给 4s 首包时限，超了立刻换直连，不让用户干等；
+         - 浏览器直连：对象存储对 GET 普遍开 CORS。
+         首选通道由 preferDirectFetch（会话记忆）决定，失败自动落到另一条。 */
+      const PROXY_HEADER_TIMEOUT = 4_000;
+      const fetchModelBytes = async (
+        url: string,
+        signal: AbortSignal,
+        onProgress: (pct: number | null) => void,
+      ): Promise<ArrayBuffer> => {
+        const viaProxy = async () => {
+          const ctrl = new AbortController();
+          const propagate = () => ctrl.abort();
+          signal.addEventListener("abort", propagate);
+          if (signal.aborted) propagate(); // 监听器不补发既往事件，已中止就即刻传播
+          // 首包时限只护到响应头到达；正文下载不限时（大 GLB 本来就慢）
+          let timedOut = false;
+          const headerTimer = setTimeout(() => {
+            timedOut = true;
+            propagate();
+          }, PROXY_HEADER_TIMEOUT);
+          try {
+            const resp = await fetchWithAuth(
+              `/api/files/download?url=${encodeURIComponent(url)}`,
+              { signal: ctrl.signal },
+            );
+            clearTimeout(headerTimer);
+            if (!resp.ok) throw new Error(`代理 HTTP ${resp.status}`);
+            const buf = await readBody(resp, onProgress);
+            if (!isGlb(buf)) throw new Error("代理返回的不是 GLB 内容");
+            return buf;
+          } catch (err) {
+            // 首包超时的 AbortError 是浏览器英文话术，换成能看懂的原因
+            if (timedOut && !signal.aborted) throw new Error("代理连接超时");
+            throw err;
+          } finally {
+            clearTimeout(headerTimer);
+            signal.removeEventListener("abort", propagate);
+          }
+        };
+        const direct = async () => {
+          const resp = await fetch(url, { mode: "cors", credentials: "omit", signal });
+          if (!resp.ok) throw new Error(`直连 HTTP ${resp.status}`);
+          const buf = await readBody(resp, onProgress);
+          if (!isGlb(buf)) throw new Error("文件不是 GLB 格式");
+          return buf;
+        };
+
+        const attempts = preferDirectFetch ? [direct, viaProxy] : [viaProxy, direct];
+        let firstErr: Error | null = null;
+        for (const attempt of attempts) {
+          try {
+            return await attempt();
+          } catch (err) {
+            const e = err instanceof Error ? err : new Error(String(err));
+            if (signal.aborted) throw e;
+            // 代理网络层失败/首包超时（消息不带 HTTP 状态）→ 本会话记住走直连
+            if (attempt === viaProxy && !/HTTP \d/.test(e.message)) preferDirectFetch = true;
+            firstErr = firstErr ?? e;
+            onProgress(null); // 换通道重下，进度回到不定态
+          }
+        }
+        throw firstErr ?? new Error("模型下载失败");
       };
 
       const clearModel = () => {
@@ -180,6 +267,9 @@ export function ThreeDViewport({
 
       const loadModel = (url: string | null) => {
         const seq = ++loadSeq;
+        loadCtrl?.abort(); // 掐掉上一个模型仍在途的下载，不浪费带宽
+        loadCtrl = new AbortController();
+        const signal = loadCtrl.signal;
         clearModel();
         onStatsRef.current?.(null);
         if (!url) {
@@ -188,11 +278,14 @@ export function ThreeDViewport({
           return;
         }
         setLoading(true);
+        setProgress(null);
         setError(null);
         (async () => {
           let blobUrl = "";
           try {
-            const buf = await fetchModelBytes(url);
+            const buf = await fetchModelBytes(url, signal, (pct) => {
+              if (!disposed && seq === loadSeq) setProgress(pct);
+            });
             if (disposed || seq !== loadSeq) return;
             blobUrl = URL.createObjectURL(new Blob([buf], { type: "model/gltf-binary" }));
             const gltf = await loader.loadAsync(blobUrl);
@@ -280,6 +373,7 @@ export function ThreeDViewport({
         cancelAnimationFrame(raf);
         ro.disconnect();
         loadSeq += 1; // 掐掉在途加载
+        loadCtrl?.abort();
         clearModel();
         solidMat.dispose();
         wireMat.dispose();
@@ -350,7 +444,7 @@ export function ThreeDViewport({
       {loading && (
         <div className="t3d-note">
           <span className="t3d-spin" aria-hidden />
-          正在加载模型…
+          正在加载模型…{progress !== null ? ` ${progress}%` : ""}
         </div>
       )}
       {error && <div className="t3d-note">{error}</div>}
