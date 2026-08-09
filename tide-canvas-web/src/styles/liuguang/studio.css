@@ -449,13 +449,15 @@
   background:color-mix(in oklab,var(--accent) 16%, transparent);}
 .ws-model-desc{font-size:11.5px; color:var(--text-faint); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
 /* 模型标签（后台可配，创作台/生成页模型列表共用）：hot 红底 / new 青底 / info 灰字。
-   固定配色不随主题令牌翻转——语义色在明暗两套面板上都成立。 */
-.mbadge{flex:none; height:17px; padding:0 7px; border-radius:999px; display:inline-flex; align-items:center;
+   固定配色不随主题令牌翻转——语义色在明暗两套面板上都成立。
+   类名 mlabel：不能叫 mbadge——flux.css 的 .mbadge 是模型市场卡片的绝对定位角标，
+   撞名会把这里的行内标签钉到容器左上角。 */
+.mlabel{flex:none; height:17px; padding:0 7px; border-radius:999px; display:inline-flex; align-items:center;
   font-size:10px; font-weight:600; line-height:1; white-space:nowrap;
   max-width:12em; overflow:hidden; text-overflow:ellipsis;}
-.mbadge.hot{background:#E5484D; color:#fff;}
-.mbadge.new{background:#22D3EE; color:#08272e;}
-.mbadge.info{height:auto; padding:0; border-radius:0; background:none; color:var(--text-faint); font-size:10.5px; font-weight:500;}
+.mlabel.hot{background:#E5484D; color:#fff;}
+.mlabel.new{background:#22D3EE; color:#08272e;}
+.mlabel.info{height:auto; padding:0; border-radius:0; background:none; color:var(--text-faint); font-size:10.5px; font-weight:500;}
 .ws-model-switch{flex:none; display:grid; place-items:center; width:24px; height:24px; color:var(--text-faint);
   font-size:12px; transition:transform .2s var(--ease), color .15s;}
 .ws-model:hover .ws-model-switch{color:var(--text);}

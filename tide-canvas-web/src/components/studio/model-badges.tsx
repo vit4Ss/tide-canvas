@@ -14,7 +14,7 @@ export function ModelBadges({ badges }: { badges?: ModelBadge[] | null }) {
       {list.map((b, i) => (
         <span
           key={`${b.text}-${i}`}
-          className={`mbadge ${b.tone === "new" ? "new" : b.tone === "info" ? "info" : "hot"}`}
+          className={`mlabel ${b.tone === "new" ? "new" : b.tone === "info" ? "info" : "hot"}`}
         >
           {b.text.trim()}
         </span>
