@@ -449,7 +449,12 @@ func TestClaimTextRequestInsufficientBalanceRollsBackFence(t *testing.T) {
 
 func TestExpiredTextLeaseIsRecoveredOnceAcrossInstances(t *testing.T) {
 	db := openPersistTurnTestDB(t)
-	if err := db.AutoMigrate(&model.IMConversation{}, &model.User{}, &model.PointRecord{}); err != nil {
+	if err := db.AutoMigrate(
+		&model.IMConversation{},
+		&model.User{},
+		&model.PointRecord{},
+		&model.PointRefundReceipt{},
+	); err != nil {
 		t.Fatalf("migrate recovery rows: %v", err)
 	}
 	ownerID, conversationID, chargeRefID := idgen.Next(), idgen.Next(), idgen.Next()
@@ -528,8 +533,14 @@ func TestExpiredTextLeaseIsRecoveredOnceAcrossInstances(t *testing.T) {
 	if err := db.Select("id", "points").First(&user, "id = ?", ownerID).Error; err != nil {
 		t.Fatalf("load user: %v", err)
 	}
-	if user.Points != 5 {
-		t.Fatalf("balance = %d, want 5 (no recovery debit)", user.Points)
+	var refunds int64
+	if err := db.Model(&model.PointRecord{}).
+		Where("user_id = ? AND change_type = ? AND ref_id = ?", ownerID, points.ChangeRefund, chargeRefID).
+		Count(&refunds).Error; err != nil {
+		t.Fatalf("count recovery refunds: %v", err)
+	}
+	if user.Points != 10 || refunds != 1 {
+		t.Fatalf("balance/refunds = %d/%d, want 10/1 (fallback call is not billed)", user.Points, refunds)
 	}
 }
 
@@ -1026,6 +1037,7 @@ func TestListMessagesTerminalizesExpiredTextRequestAndRefundsOnce(t *testing.T) 
 	db := openPersistTurnTestDB(t)
 	if err := db.AutoMigrate(
 		&model.IMConversation{},
+		&model.IMConversationMember{},
 		&model.User{},
 		&model.PointRecord{},
 		&model.PointRefundReceipt{},
