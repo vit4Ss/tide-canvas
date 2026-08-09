@@ -49,3 +49,24 @@ func TestResolveCostImageFuzzyMatrix(t *testing.T) {
 		t.Errorf("miss should fall back to model point cost: got %d, want 18", got)
 	}
 }
+
+// 图片模型不配画质档位时，矩阵以「default」单行按清晰度定价（画质留空的
+// 兼容形态）；请求带画质时不吃 default 行，行为与原先一致。
+func TestResolveCostImageDefaultQualityRow(t *testing.T) {
+	m := &model.AiModel{
+		Type:      "image",
+		PointCost: 18,
+		Config:    `{"pricing":{"default":{"1k":8,"2k":14}}}`,
+	}
+	if got := resolveCost(m, json.RawMessage(`{"clarity":"2K"}`)); got != 14 {
+		t.Errorf("empty quality should hit the default row: got %d, want 14", got)
+	}
+	// 批量与 default 行组合：×batchCount 向上取整
+	if got := resolveCost(m, json.RawMessage(`{"clarity":"1k","batchCount":3}`)); got != 24 {
+		t.Errorf("default row × batch: got %d, want 24", got)
+	}
+	// 显式画质不吃 default 行 → 未命中落固定价（原有语义不变）
+	if got := resolveCost(m, json.RawMessage(`{"quality":"high","clarity":"2k"}`)); got != 18 {
+		t.Errorf("explicit quality must not hit default row: got %d, want 18", got)
+	}
+}

@@ -202,7 +202,8 @@ export function useComposerConfig(models: GenModelsApi) {
   // 分辨率/时长切换要联动:
   //   video: priceMatrix[时长][分辨率]（两个轴序都试）→ priceModifiers
   //          ["duration@分辨率"][时长] → creditCost → pointCost；单条不乘数量
-  //   image: 对话页不选画质，矩阵无从命中，与服务端一致落到固定价 × 批量
+  //   image: priceMatrix[画质||default][清晰度]（两个轴序都试；不配画质档位
+  //          时服务端与此处同查 default 行）→ creditCost → pointCost × 批量
   //   audio: 按次计费（Suno 一次两首一并结算）
   //   text: 按条计费，不乘数量（数量选择器对文本模型隐藏）
   const points = useMemo(() => {
@@ -219,10 +220,12 @@ export function useComposerConfig(models: GenModelsApi) {
         const mods = mCfg?.priceModifiers as Record<string, Record<string, unknown> | undefined> | undefined;
         base = cellNum(mods?.[`duration@${res}`]?.[dur]);
       }
-    } else if (selModel?.type === "image" && quality && res) {
+    } else if (selModel?.type === "image" && res) {
       // 图片按 [画质][清晰度] 查表，与服务端 pricing.go 同口径；两种轴序都试，
       // 后台矩阵横竖着写都能命中（漏查会静默落到模型固定价，4K 卖成 1K 的钱）。
-      base = cellNum(pm?.[quality]?.[res]) || cellNum(pm?.[res]?.[quality]);
+      // 不配画质档位时（quality 为空）查 default 行——服务端同样如此。
+      const q = quality || "default";
+      base = cellNum(pm?.[q]?.[res]) || cellNum(pm?.[res]?.[q]);
     }
     if (!base) base = flat;
     // 服务端按向上取整结算（见 pricing.go），展示同口径；仅图片批量 ×数量

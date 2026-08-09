@@ -334,7 +334,8 @@ export default function CreateStudio() {
       return mCfg?.creditCost ?? (parseFloat(selModel?.pointCost ?? "") || 0);
     }
     const pm = mCfg?.priceMatrix;
-    const row = isVideo ? dur : quality;
+    // 图片不配画质档位时（quality 为空）矩阵查 default 行，与服务端同口径
+    const row = isVideo ? dur : quality || "default";
     const col = isVideo ? res : imgRes;
     const cell = pm?.[row]?.[col];
     const per = cell != null ? parseFloat(cell) : NaN;

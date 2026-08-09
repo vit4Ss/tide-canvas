@@ -74,7 +74,14 @@ func resolveCost(m *model.AiModel, rawInput json.RawMessage) int {
 		if isVideo {
 			base = matrixLookupFuzzy(matrix, durationKeyVariants(duration), keyVariants(resolution))
 		} else {
-			base = matrixLookupFuzzy(matrix, keyVariants(quality), keyVariants(clarity))
+			qKeys := keyVariants(quality)
+			if len(qKeys) == 0 {
+				// 图片模型未配置画质档位（生成请求不带 quality）：后台矩阵以
+				// 「default」单行存清晰度定价（画质留空的兼容形态）；画质有值时
+				// 行为与原先完全一致。
+				qKeys = []string{"default"}
+			}
+			base = matrixLookupFuzzy(matrix, qKeys, keyVariants(clarity))
 		}
 	}
 

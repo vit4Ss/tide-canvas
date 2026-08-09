@@ -737,14 +737,18 @@ function ModelModal({
   const showPrompt = showGen || is3D;
 
   // price-matrix rows: image → qualities, video → durations; cols → resolutions.
+  // 图片不配画质档位时给一行「default」按清晰度单独定价（服务端 pricing.go
+  // 对空画质请求查 default 行）；配了画质则行为与原先完全一致。
   const matrixRows = isVideo
     ? [...(cfg.durations ?? [])]
         .sort((a, b) => parseFloat(a) - parseFloat(b))
         .map((d) => ({ key: d, label: d }))
-    : (cfg.qualities ?? []).map((q) => ({
-        key: q,
-        label: QUALITY_OPTIONS.find((o) => o.v === q)?.l ?? q,
-      }));
+    : (cfg.qualities ?? []).length
+      ? (cfg.qualities ?? []).map((q) => ({
+          key: q,
+          label: QUALITY_OPTIONS.find((o) => o.v === q)?.l ?? q,
+        }))
+      : [{ key: "default", label: "默认（不分画质）" }];
   const matrixCols = cfg.resolutions ?? [];
 
   const setCell = (row: string, col: string, val: string) =>

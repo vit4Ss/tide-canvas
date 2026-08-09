@@ -807,7 +807,14 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   // 积分消耗：优先按「画质×清晰度」矩阵价，其次模型固定价，其次 Handler 配置，最后兜底 18。
   // 查表走与服务端 resolveCost 同口径的大小写/轴序容错（matrixPrice），
   // 否则内置清晰度 "2K" 大写遇到后台小写矩阵键会显示模型价、实扣矩阵价。
-  const matrixCost = matrixPrice(formatConfig.pricing, keyVariants(qualityRatio.quality), keyVariants(qualityRatio.clarity));
+  // 模型不配画质档位时请求不带 quality（见 handleGenerate），服务端按 default
+  // 行扣费——展示查同一行，否则显示固定价、实扣矩阵价。memo 保持数组引用稳定，
+  // 不击穿下方 portraitPointCost 的 useCallback。
+  const qualityKeys = useMemo(
+    () => (qualityValues.length ? keyVariants(qualityRatio.quality) : ["default"]),
+    [qualityValues, qualityRatio.quality],
+  );
+  const matrixCost = matrixPrice(formatConfig.pricing, qualityKeys, keyVariants(qualityRatio.clarity));
   const pointCost = matrixCost ?? selectedModel?.pointCost ?? handlerCosts[node.imageSrc ? "image_to_image" : "text_to_image"] ?? 18;
 
   // 把卡片实际渲染尺寸同步到 store，供连线层将端点锚定到卡片真实边缘中点（默认对节点居中）。
@@ -1179,10 +1186,10 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
 
   const portraitPointCost = useCallback((resolution?: string) => {
     if (!resolution) return pointCost;
-    return matrixPrice(formatConfig.pricing, keyVariants(qualityRatio.quality), keyVariants(resolution))
+    return matrixPrice(formatConfig.pricing, qualityKeys, keyVariants(resolution))
       ?? selectedModel?.pointCost
       ?? pointCost;
-  }, [formatConfig.pricing, pointCost, qualityRatio.quality, selectedModel?.pointCost]);
+  }, [formatConfig.pricing, pointCost, qualityKeys, selectedModel?.pointCost]);
 
   const handleGenerateMultiAngle = useCallback(() => {
     setAngleOpen(false);
