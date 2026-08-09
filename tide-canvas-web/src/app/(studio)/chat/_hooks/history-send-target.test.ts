@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+// 单行书写：@ts-expect-error 只覆盖下一行，多行 import 的 TS5097 报在模块
+// 说明符那行会脱靶（还连带 TS2578 未使用指令）。
 // @ts-expect-error Node's native TypeScript loader requires the source suffix.
-import {
-  historySendTargetMatches,
-  isHistorySendTarget,
-  type HistorySendTarget,
-} from "./history-send-target.ts";
+import { historySendTargetMatches, isHistorySendTarget, type HistorySendTarget } from "./history-send-target.ts";
 
 const target: HistorySendTarget = {
   conversationId: "31",

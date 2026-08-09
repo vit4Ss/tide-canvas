@@ -48,6 +48,8 @@ import {
   MODEL_TYPE_LABEL,
   MODEL_TYPE_FORM_LABEL,
   type AdminModelVO,
+  type ModelBadge,
+  type ModelBadgeTone,
   type ModelConfig,
 } from "@/types/admin-models";
 
@@ -442,6 +444,7 @@ function TypeOrderModal({ open, onClose }: { open: boolean; onClose: () => void 
 
   useEffect(() => {
     if (!open) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 重新打开弹窗先清掉上次数据回到加载态，真实数据异步回包后填充
     setTypes(null);
     (async () => {
       try {
@@ -676,6 +679,7 @@ function ModelModal({
     icon: c0.icon ?? "",
     costUsd: c0.costUsd ?? "",
     estSeconds: c0.estSeconds ?? 0,
+    badges: c0.badges ?? [],
     defaultPrompt: c0.defaultPrompt ?? "",
     ideas: c0.ideas ?? [],
     maxRefImages: c0.maxRefImages ?? 0,
@@ -732,6 +736,18 @@ function ModelModal({
   const setRef = (k: string, v: number) =>
     setCfg((p) => ({ ...p, refLimits: { ...(p.refLimits ?? {}), [k]: v } }));
 
+  // 模型标签 list editor（模型选择列表名称旁的小徽标）
+  const addBadge = () =>
+    setCfg((p) => ({ ...p, badges: [...(p.badges ?? []), { text: "", tone: "hot" as const }] }));
+  const setBadge = (i: number, patch: Partial<ModelBadge>) =>
+    setCfg((p) => {
+      const arr = [...(p.badges ?? [])];
+      arr[i] = { ...arr[i], ...patch };
+      return { ...p, badges: arr };
+    });
+  const removeBadge = (i: number) =>
+    setCfg((p) => ({ ...p, badges: (p.badges ?? []).filter((_, j) => j !== i) }));
+
   // 灵感提示词 list editor
   const addIdea = () => setCfg((p) => ({ ...p, ideas: [...(p.ideas ?? []), ""] }));
   const setIdea = (i: number, val: string) =>
@@ -758,7 +774,13 @@ function ModelModal({
         description: description.trim(),
         pointCost: pointCost.trim() || "0",
         status,
-        config: cfg,
+        config: {
+          ...cfg,
+          // 落库前清掉空文本标签，文本去首尾空格（渲染端也会过滤，双保险）
+          badges: (cfg.badges ?? [])
+            .map((b) => ({ text: (b.text ?? "").trim(), tone: b.tone ?? ("hot" as const) }))
+            .filter((b) => b.text),
+        },
       };
       const res = model
         ? await adminModelsApi.update(model.id, payload)
@@ -860,6 +882,52 @@ function ModelModal({
             />
           </Field>
         </FormGrid>
+
+        <FormSection
+          label="模型标签"
+          hint="模型选择列表名称旁的小标签（如 热门 / 新品 / 限时会员权益）；留空 = 不显示，建议不超过 2 个"
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {(cfg.badges ?? []).map((b, i) => (
+              <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div className="fld" style={{ width: 148 }}>
+                  <select
+                    value={b.tone ?? "hot"}
+                    onChange={(e) => setBadge(i, { tone: e.target.value as ModelBadgeTone })}
+                    aria-label={`标签 ${i + 1} 样式`}
+                  >
+                    <option value="hot">红色 · 热门类</option>
+                    <option value="new">青色 · 新品类</option>
+                    <option value="info">灰字 · 说明类</option>
+                  </select>
+                </div>
+                <div className="fld" style={{ flex: 1 }}>
+                  <input
+                    value={b.text ?? ""}
+                    onChange={(e) => setBadge(i, { text: e.target.value })}
+                    placeholder="如：热门 / 新品 / 限时会员权益"
+                    aria-label={`标签 ${i + 1} 文本`}
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="adm-btn ghost"
+                  onClick={() => removeBadge(i)}
+                  aria-label={`移除标签 ${i + 1}`}
+                >
+                  <Trash2 aria-hidden size={14} />
+                  移除
+                </button>
+              </div>
+            ))}
+            <div>
+              <button type="button" className="adm-btn ghost" onClick={addBadge}>
+                <Plus aria-hidden size={14} />
+                添加标签
+              </button>
+            </div>
+          </div>
+        </FormSection>
       </FormCard>
 
       {showGen && (

@@ -8,12 +8,23 @@
 // below. Decimal prices arrive as strings.
 // ============================================================================
 
+/** 模型标签的配色档：hot 红底（热门类）/ new 青底（新品类）/ info 灰字（说明类）。 */
+export type ModelBadgeTone = "hot" | "new" | "info";
+
+/** 模型选择列表名称旁的小标签（后台模型管理配置；空 = 不显示）。 */
+export interface ModelBadge {
+  text: string;
+  tone?: ModelBadgeTone;
+}
+
 /**
  * Per-model generation settings edited via the admin GUI form and consumed by
  * the 创作台. Stored as a JSON object on the market_model row; the relay sync
  * pre-fills it from the upstream params_schema.
  */
 export interface ModelConfig {
+  /** 模型选择列表名称旁的标签（热门/新品/权益说明等）；空/未设 = 不显示 */
+  badges?: ModelBadge[];
   provider?: string;
   icon?: string;
   costUsd?: string;

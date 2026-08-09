@@ -4,6 +4,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { StudioModelVO } from "@/lib/market-api";
 import { resolveModelSwatch } from "@/lib/model-brand";
+import { ModelBadges } from "@/components/studio/model-badges";
+import type { ModelBadge } from "@/types/admin-models";
 import type { ModelMeta } from "./types";
 import { metaOf, metaOfStudio } from "./utils";
 
@@ -24,6 +26,15 @@ export function ModelPicker({
   const modelMeta = useMemo(() => {
     const map: Record<string, ModelMeta> = {};
     for (const m of studioList) map[m.name] = metaOfStudio(m);
+    return map;
+  }, [studioList]);
+  // 后台配置的模型标签（热门/新品/说明），未配置的模型无条目 → 不渲染
+  const badgesByName = useMemo(() => {
+    const map: Record<string, ModelBadge[]> = {};
+    for (const m of studioList) {
+      const list = m.config?.badges;
+      if (list?.length) map[m.name] = list;
+    }
     return map;
   }, [studioList]);
   const selectedName = names.includes(model) ? model : names[0] || "暂无可用模型";
@@ -116,6 +127,7 @@ export function ModelPicker({
         <span className="ws-model-info">
           <span className="ws-model-row">
             <span className="ws-model-name">{selectedName}</span>
+            <ModelBadges badges={badgesByName[selectedName]} />
             {meta.tag && <span className="ws-model-tag">{meta.tag}</span>}
           </span>
           <span className="ws-model-desc">
@@ -149,6 +161,7 @@ export function ModelPicker({
               <span className="ws-mopt-info">
                 <span className="ws-mopt-row">
                   <span className="ws-mopt-name">{m}</span>
+                  <ModelBadges badges={badgesByName[m]} />
                   {mm.tag && <span className="ws-model-tag">{mm.tag}</span>}
                 </span>
                 <span className="ws-mopt-desc">

@@ -13,6 +13,7 @@ import {
   type MentionEditorHandle,
 } from "@/components/studio/mention-prompt-editor";
 import { ClipPicker } from "@/components/studio/clip-picker";
+import { ModelBadges } from "@/components/studio/model-badges";
 import {
   AUDIO_STYLES,
   MUSIC_MODES,
@@ -394,6 +395,7 @@ export function Composer({
                     <span className="nfo">
                       <span className="nm">
                         <span className="nm-t">{m.name}</span>
+                        <ModelBadges badges={m.config?.badges} />
                         <i>{tag}</i>
                       </span>
                       <span className="ds">{desc}</span>

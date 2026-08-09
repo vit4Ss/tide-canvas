@@ -134,8 +134,10 @@
 .cm-mitem .cm-rt{margin:3px 5px;}
 .cm-mitem .nfo{min-width:0; flex:1;}
 .cm-mitem .nm{display:flex; align-items:center; gap:7px; min-width:0; font-size:13px; font-weight:600; color:var(--text);}
-.cm-mitem .nm .nm-t{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
-.cm-mitem .nm i{flex:none; font-style:normal; font-size:8.5px; font-weight:800; letter-spacing:.03em; color:#fff; background:var(--grad-warm); padding:1px 5px; border-radius:4px; line-height:1.5;}
+/* 名字自适应宽（缩略仍生效），模型标签紧跟其后；耗时徽标 margin-left:auto 保持
+   右贴——无标签时与旧布局（nm-t flex:1 撑开）视觉一致 */
+.cm-mitem .nm .nm-t{flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.cm-mitem .nm i{flex:none; margin-left:auto; font-style:normal; font-size:8.5px; font-weight:800; letter-spacing:.03em; color:#fff; background:var(--grad-warm); padding:1px 5px; border-radius:4px; line-height:1.5;}
 .cm-mitem .ds{font-size:11px; color:var(--text-faint); margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
 .cm-mitem .cm-ico{width:18px; text-align:center;}
 .cm-mitem .ck{margin-left:auto; color:var(--accent); opacity:0; font-size:12px; flex:none;}
