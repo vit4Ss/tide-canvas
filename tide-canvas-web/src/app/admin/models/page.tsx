@@ -81,7 +81,8 @@ const QUALITY_OPTIONS = [
   { v: "high", l: "高画质" },
 ];
 const RESOLUTION_OPTIONS: Record<string, string[]> = {
-  image: ["1k", "2k", "4k"],
+  // auto = 交给模型自行决定输出尺寸（qwen 等上游支持并会同步预填进配置）
+  image: ["auto", "1k", "2k", "4k"],
   video: ["480p", "720p", "1080p", "4k"],
 };
 const DURATION_OPTIONS = Array.from({ length: 30 }, (_, i) => `${i + 1}s`);
@@ -578,19 +579,26 @@ function Chips<T extends string | number>({
   single?: boolean;
 }) {
   const sectionLabelId = useFormSectionLabelId();
+  // 配置里存在但不在预设清单里的值（如上游同步预填的取值）也要画出来：
+  // 不画的话后台看不到也删不掉，只有前台在渲染它。追加到预设之后。
+  const known = new Set(options.map((o) => o.v));
+  const merged = [
+    ...options,
+    ...value.filter((v) => !known.has(v)).map((v) => ({ v, l: String(v) })),
+  ];
   const toggle = (v: T) => {
     if (single) {
       onChange([v]);
       return;
     }
     const next = value.includes(v) ? value.filter((x) => x !== v) : [...value, v];
-    // 按 options 顺序归一化，避免存下「点选顺序」（如 4s, 15s, 5s…）
-    const order = new Map(options.map((o, i) => [o.v, i]));
-    onChange([...next].sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0)));
+    // 按 merged 顺序归一化，避免存下「点选顺序」（如 4s, 15s, 5s…）
+    const order = new Map(merged.map((o, i) => [o.v, i]));
+    onChange([...next].sort((a, b) => (order.get(a) ?? merged.length) - (order.get(b) ?? merged.length)));
   };
   return (
     <div className="mchips" role="group" aria-labelledby={sectionLabelId}>
-      {options.map((o) => (
+      {merged.map((o) => (
         <button
           type="button"
           key={String(o.v)}
@@ -1005,7 +1013,10 @@ function ModelModal({
 
           <FormSection label="支持清晰度">
             <Chips
-              options={(RESOLUTION_OPTIONS[type] ?? []).map((r) => ({ v: r, l: r.toUpperCase() }))}
+              options={(RESOLUTION_OPTIONS[type] ?? []).map((r) => ({
+                v: r,
+                l: r === "auto" ? "自动" : r.toUpperCase(),
+              }))}
               value={cfg.resolutions ?? []}
               onChange={(next) => setC({ resolutions: next })}
             />

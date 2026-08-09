@@ -56,6 +56,11 @@ export function ratioLabel(r: string): string {
   return r === "auto" ? "自适应" : r;
 }
 
+/** display label for a resolution/clarity value（auto → 自适应，其余大写）。 */
+export function resolutionLabel(r: string): string {
+  return r === "auto" ? "自适应" : r.toUpperCase();
+}
+
 /** 清晰度/分辨率的展示排序权重：auto 最前，随后按像素规模升序
  *  （K 档 ×1000：480p < 720p < 1080p < 1K < 2K < 4K）。上游同步预填的配置
  *  顺序常是乱的（720p/480p/1080p），展示层统一排齐；识别不了的值权重

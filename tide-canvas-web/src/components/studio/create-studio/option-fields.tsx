@@ -3,7 +3,7 @@
    条件与原 JSX 完全一致。 */
 
 import { QUALITY_LABEL } from "./constants";
-import { ratioLabel } from "./utils";
+import { ratioLabel, resolutionLabel } from "./utils";
 
 export function OptionFields({
   isVideo,
@@ -81,7 +81,7 @@ export function OptionFields({
                 className={`ratio${r === imgRes ? " on" : ""}`}
                 onClick={() => onImgResChange(r)}
               >
-                {r.toUpperCase()}
+                {resolutionLabel(r)}
               </button>
             ))}
           </div>
@@ -119,7 +119,7 @@ export function OptionFields({
                 className={`ratio${r === res ? " on" : ""}`}
                 onClick={() => onResChange(r)}
               >
-                {r.toUpperCase()}
+                {resolutionLabel(r)}
               </button>
             ))}
           </div>

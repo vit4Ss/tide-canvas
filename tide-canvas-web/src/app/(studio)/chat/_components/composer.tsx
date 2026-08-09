@@ -14,6 +14,7 @@ import {
 } from "@/components/studio/mention-prompt-editor";
 import { ClipPicker } from "@/components/studio/clip-picker";
 import { ModelBadges } from "@/components/studio/model-badges";
+import { resolutionLabel } from "@/components/studio/create-studio/utils";
 import {
   AUDIO_STYLES,
   MUSIC_MODES,
@@ -522,7 +523,7 @@ export function Composer({
               open={openSel === "res"}
               onToggle={() => toggleSel("res")}
               menuH="分辨率"
-              label={res.toUpperCase()}
+              label={resolutionLabel(res)}
             >
               {resOpts.map((r) => (
                 <button
@@ -537,7 +538,7 @@ export function Composer({
                   }}
                 >
                   <span className="nfo">
-                    <span className="nm">{r.toUpperCase()}</span>
+                    <span className="nm">{resolutionLabel(r)}</span>
                   </span>
                   <span className="ck" aria-hidden="true">✓</span>
                 </button>
