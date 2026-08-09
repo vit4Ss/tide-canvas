@@ -71,18 +71,20 @@ function CanvasGroupFrame({ group, active, left, top, width, height }: FrameProp
   const [name, setName] = useState(group.title);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
-  const stop = (e: React.MouseEvent) => e.stopPropagation();
+  const stop = (event: React.SyntheticEvent) => event.stopPropagation();
   const startEdit = () => { setName(group.title); setEditing(true); };
 
   // 拖标题栏 → 整组成员同步平移（首帧记历史，可撤销）；未拖动则选中成员
-  const startDrag = (e: React.MouseEvent) => {
-    if (e.button !== 0 || editing) return;
-    e.stopPropagation();
+  const startDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if ((event.pointerType === "mouse" && event.button !== 0) || editing) return;
+    event.preventDefault();
+    event.stopPropagation();
     const store = useCanvasStore.getState();
     const initials = store.nodes
       .filter((n) => group.nodeIds.includes(n.id))
       .map((n) => ({ id: n.id, x: n.x, y: n.y }));
-    const sx = e.clientX, sy = e.clientY;
+    const pointerId = event.pointerId;
+    const sx = event.clientX, sy = event.clientY;
     let moved = false, recorded = false;
     // rAF 合帧:高刷设备 mousemove 频率超过帧率,每帧最多写一次 store
     let raf = 0;
@@ -90,8 +92,9 @@ function CanvasGroupFrame({ group, active, left, top, width, height }: FrameProp
     const unbind = () => {
       cancelAnimationFrame(raf);
       raf = 0;
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
     };
     const applyMove = (cx: number, cy: number) => {
       const st = useCanvasStore.getState();
@@ -109,7 +112,8 @@ function CanvasGroupFrame({ group, active, left, top, width, height }: FrameProp
       const dx = (cx - sx) / k, dy = (cy - sy) / k;
       st.updateNodePositions(initials.map((i) => ({ id: i.id, x: i.x + dx, y: i.y + dy })));
     };
-    const onMove = (ev: MouseEvent) => {
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
       last = { x: ev.clientX, y: ev.clientY };
       if (raf) return;
       raf = requestAnimationFrame(() => {
@@ -117,8 +121,8 @@ function CanvasGroupFrame({ group, active, left, top, width, height }: FrameProp
         if (last) applyMove(last.x, last.y);
       });
     };
-    const onUp = (ev: MouseEvent) => {
-      if (ev.button !== 0) return; // 右键释放不结束左键拖拽
+    const onUp = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
       if (raf && last) applyMove(last.x, last.y); // 落帧:补上未提交的最后位移
       unbind();
       const st = useCanvasStore.getState();
@@ -127,8 +131,12 @@ function CanvasGroupFrame({ group, active, left, top, width, height }: FrameProp
         st.selectMany(group.nodeIds.filter((id) => st.nodes.some((n) => n.id === id)));
       }
     };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    const onCancel = (ev: PointerEvent) => {
+      if (ev.pointerId === pointerId) unbind();
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
   };
 
   const commitName = () => {
@@ -149,9 +157,9 @@ function CanvasGroupFrame({ group, active, left, top, width, height }: FrameProp
       }}
     >
       <div
-        className="group/gp pointer-events-auto absolute inset-x-0 top-0 flex h-[34px] cursor-grab active:cursor-grabbing items-center gap-1.5 rounded-t-2xl px-2.5"
+        className="group/gp pointer-events-auto absolute inset-x-0 top-0 flex h-[34px] touch-none cursor-grab active:cursor-grabbing items-center gap-1.5 rounded-t-2xl px-2.5"
         style={{ backgroundColor: `${group.color}26` }}
-        onMouseDown={startDrag}
+        onPointerDown={startDrag}
         onDoubleClick={(e) => { stop(e); startEdit(); }}
         title="拖动移动分组 · 双击重命名"
       >

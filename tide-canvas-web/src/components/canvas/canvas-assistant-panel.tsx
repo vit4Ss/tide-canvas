@@ -6,7 +6,6 @@ import { aiApi, uploadFileSmart } from "@/lib/api";
 import { referenceKindFromFile, referenceKindFromMeta, resolveModelReferenceLimitBytes, validateKnownFileSize } from "@/lib/upload-limits";
 import { PromptRefEditor } from "./nodes/prompt-ref-editor";
 import { ModelPicker } from "./nodes/model-picker";
-import type { RefItem } from "./nodes/prompt-ref-utils";
 import { toast } from "@/components/shared/toast";
 import { SkillPicker } from "@/components/skill/skill-picker";
 import { SkillInputFields } from "@/components/skill/skill-input-fields";
@@ -19,7 +18,7 @@ import { useAuthStore } from "@/stores/use-auth-store";
 import { AiModelType, AiTaskStatus, type AiModelVO, type AiTaskVO } from "@/types/ai";
 import type { FileVO } from "@/types/file";
 import { SKILL_KIND_LABEL, skillKindOf, type SkillVO } from "@/types/skill";
-import { isSkillRunActive, type SkillRunArtifactVO, type SkillRunAssetInput, type SkillRunMessageInput, type SkillRunVO } from "@/types/skill-run";
+import { isSkillRunActive, type SkillRunArtifactVO, type SkillRunMessageInput, type SkillRunVO } from "@/types/skill-run";
 import { buildCanvasSkillRunInput } from "./skill-run/canvas-skill-input";
 import { buildSkillArtifactNodes } from "./skill-run/materialize-artifacts";
 import { useSkillRuns } from "./skill-run/use-skill-runs";
@@ -29,77 +28,54 @@ import {
   createCanvasSkillClientRequestId,
   pendingCanvasCreateRunIds,
   persistCanvasRunAndCommit,
-} from "./skill-run/canvas-skill-runtime";
+} from "@/features/canvas/application/assistant/canvas-skill-runtime";
 import {
   assistantChatRetryDelay,
   createAssistantChatClientRequestId,
   isAmbiguousAssistantCreateCode,
   isTerminalAssistantLookupCode,
-  normalizeAssistantChatRequest,
-  normalizeAssistantTaskId,
-  writeVerifiedAssistantRecoverySnapshot,
   type AssistantChatRequestSnapshot,
-} from "./canvas-assistant-chat-recovery";
+} from "@/features/canvas/application/assistant/assistant-chat-recovery";
+import {
+  ASSISTANT_HANDLER,
+  CHAT_FOREGROUND_POLL_TIME,
+  CHAT_POLL_INTERVAL,
+  MAX_RECOVERY_RUNS,
+  MAX_SKILL_ASSETS,
+  MAX_SKILL_PROMPT_BYTES,
+  MAX_SKILL_SOURCE_NODES,
+  MAX_STORED_SESSIONS,
+  assistantStorageKeys,
+  buildMentionRefs,
+  canvasLaunchSkillParameters,
+  clampPanelWidth,
+  createSessionId,
+  filesToSkillAssets,
+  formatFileSize,
+  loadStoredSessions,
+  messageContentForHistory,
+  normalizeStoredMessages,
+  normalizeStoredSessions,
+  parseTaskResult,
+  persistAssistantChatBeforeCreate,
+  remapRefTokens,
+  saveStoredSessions,
+  sessionTitleFromMessages,
+  skillRunHistoryContent,
+  trimSkillHistory,
+  uniqueSkillAssets,
+  utf8Length,
+  type AssistantChatRole,
+  type AssistantChatMessage,
+  type AssistantStoredSession,
+} from "@/features/canvas/application/assistant/assistant-session";
 
 const SUGGESTIONS = ["梳理创作思路", "生成图片或视频", "编排跨媒体内容"];
-
-
 const MIN_PANEL_WIDTH = 380;
 const MAX_PANEL_WIDTH = 720;
 const DEFAULT_PANEL_WIDTH = 460;
-const ASSISTANT_STORAGE_PREFIX = "tc:assistant:v2";
-const LEGACY_ASSISTANT_STORAGE_KEYS = [
-  "tc:assistant:session",
-  "tc:assistant:sessions",
-  "tc:assistant:activeSessionId",
-] as const;
-const ASSISTANT_HANDLER = "assistant_chat";
-const CHAT_POLL_INTERVAL = 1500;
-const CHAT_FOREGROUND_POLL_TIME = 60 * 1000;
-const MAX_STORED_MESSAGES = 80;
-const MAX_STORED_SESSIONS = 20;
-const MAX_SKILL_HISTORY_BYTES = 240 * 1024;
-const MAX_SKILL_PROMPT_BYTES = 32 * 1024;
-const MAX_SKILL_ASSETS = 32;
-const MAX_SKILL_SOURCE_NODES = 64;
-const MAX_RECOVERY_RUNS = 50;
 
 export const CANVAS_ASSISTANT_VISIBILITY_EVENT = "tidecanvas:canvas-assistant-visibility";
-
-type AssistantChatRole = "user" | "assistant";
-type AssistantChatStatus = "done" | "pending" | "error";
-
-interface AssistantChatMessage {
-  id: string;
-  role: AssistantChatRole;
-  content: string;
-  attachments?: FileVO[];
-  status: AssistantChatStatus;
-  skillRunId?: string;
-  skillTitle?: string;
-  /** Stable create id used to rebind an ambiguous network response after recovery. */
-  clientRequestId?: string;
-  /** Ordinary assistant task id; retained until a backend terminal state is observed. */
-  taskId?: string;
-  /** Frozen create payload. Retries must replay this byte-for-byte equivalent request. */
-  chatRequest?: AssistantChatRequestSnapshot;
-  includeInHistory?: boolean;
-}
-
-interface AssistantStoredSession {
-  id: string;
-  title: string;
-  messages: AssistantChatMessage[];
-  selectedSkill: SkillVO | null;
-  skillParameters: Record<string, unknown>;
-  createdAt: number;
-  updatedAt: number;
-}
-
-interface AssistantStoredSessionsPayload {
-  sessions: AssistantStoredSession[];
-  activeSessionId?: string;
-}
 
 interface CanvasAssistantPanelProps {
   launchJournal?: CanvasLaunchJournal | null;
@@ -131,374 +107,6 @@ type AssistantChatRecoveryOutcome = "active" | "completed" | "rejected";
 
 function assistantChatRecoveryKey(job: AssistantChatRecoveryJob) {
   return `${job.scope}:${job.sessionId}:${job.assistantId}`;
-}
-
-function clampPanelWidth(width: number) {
-  return Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, width));
-}
-
-function formatFileSize(size: number) {
-  if (!Number.isFinite(size) || size <= 0) return "未知大小";
-  if (size < 1024) return size + " B";
-  if (size < 1024 * 1024) return Math.round(size / 1024) + " KB";
-  return (size / 1024 / 1024).toFixed(1) + " MB";
-}
-
-function utf8Length(value: string): number {
-  return new TextEncoder().encode(value).byteLength;
-}
-
-function trimSkillHistory(messages: SkillRunMessageInput[]): SkillRunMessageInput[] {
-  const kept: SkillRunMessageInput[] = [];
-  let used = 0;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const item = messages[index];
-    const bytes = utf8Length(item.content) + utf8Length(item.role) + 16;
-    if (bytes > MAX_SKILL_HISTORY_BYTES) continue;
-    if (used + bytes > MAX_SKILL_HISTORY_BYTES) break;
-    kept.push(item);
-    used += bytes;
-  }
-  return kept.reverse();
-}
-
-function skillRunHistoryContent(run: SkillRunVO, fallbackTitle?: string): string {
-  const title = run.skillTitle || fallbackTitle || "技能";
-  const finals = canvasSkillRunArtifacts(run).filter((artifact) => artifact.isFinal !== false);
-  const text = finals
-    .map((artifact) => artifact.text?.trim() || artifact.content?.trim() || "")
-    .filter(Boolean)
-    .join("\n\n")
-    .slice(0, 24 * 1024);
-  const media = finals
-    .filter((artifact) => !artifact.text?.trim() && !artifact.content?.trim())
-    .map((artifact) => `${artifact.type}${artifact.title ? `「${artifact.title}」` : ""}`)
-    .join("、");
-  return [`「${title}」已完成。`, text, media ? `画布产物：${media}` : ""].filter(Boolean).join("\n");
-}
-
-/** 附件 → 可 @ 引用的「图片N」列表 + 与 files 等长的标签数组（不可引用处为 null）。
- *
- *  只有**图片**可引用：服务端 assistant_chat 把图片作为 image_url part 下发，
- *  视频/音频/文档不进模型（转成一句文字说明或 file part），给它们编号等于让用户
- *  引用一个模型看不见的东西。
- *  过滤条件与服务端 chatattach.ImageURLs 逐条对齐（只收绝对 URL / data:）——
- *  否则前端编到「图片2」的那张在模型那边可能是第 1 张，错位比不给更糟。
- *  编号规则只此一份：memo 与 removeAttachment 的重映射共用，避免两处漂移。 */
-function buildMentionRefs(files: FileVO[]): { mentionRefs: RefItem[]; refLabels: (string | null)[] } {
-  const mentionRefs: RefItem[] = [];
-  const refLabels: (string | null)[] = [];
-  for (const file of files) {
-    const url = (file.fileUrl ?? "").trim();
-    if (referenceKindFromMeta(file) === "image" && /^(https?:|data:)/.test(url)) {
-      const index = mentionRefs.length + 1;
-      mentionRefs.push({ id: `${file.id}-${index}`, thumb: url, title: file.originalName, index, kind: "image", src: url });
-      refLabels.push(`图片${index}`);
-    } else {
-      refLabels.push(null);
-    }
-  }
-  return { mentionRefs, refLabels };
-}
-
-/** 附件删除后重写正文里已写下的 token。
- *
- *  「图片N」是位置编号，删掉一张会让其后编号整体前移，两类 token 都要处理：
- *   · **幸存者**：旧 label → 新 label（「图片3」→「图片2」）；
- *   · **被删那张自己的 token**：after 为 null，必须**删掉**而不是留着。
- *     留着的话它会与重编号后的幸存者撞号——[A,B] 里删掉 A，正文
- *     「对比图片1和图片2」会变成「对比图片1和图片1」，两个 pill 都绑到 B，
- *     模型被要求「拿同一张图和自己对比」，还照扣积分。
- *  所以 map 必须区分「没这个 key」和「映射到 null」：前者保留，后者删除。
- *
- *  一次性替换（单趟 replace），避免「图片1→图片2、图片2→图片3」链式误替。 */
-function remapRefTokens(text: string, before: (string | null)[], after: (string | null)[]): string {
-  const remap = new Map<string, string | null>();
-  for (let i = 0; i < before.length; i += 1) {
-    const from = before[i];
-    if (!from) continue; // 非图片槽位不参与，永不作为 key
-    const to = after[i];
-    if (to !== from) remap.set(from, to); // to === null ⇒ 该 token 整个删掉
-  }
-  if (!remap.size) return text;
-  return text.replace(/(图片)(\d+)(?!\d)/g, (m) => (remap.has(m) ? (remap.get(m) ?? "") : m));
-}
-
-function attachmentSummary(files?: FileVO[]) {
-  if (!files?.length) return "";
-  return files
-    .map((file) => {
-      const parts = [file.originalName || "未命名文件"];
-      if (file.mimeType) parts.push("(" + file.mimeType + ")");
-      if (file.fileUrl) parts.push(file.fileUrl);
-      return "- " + parts.join(" ");
-    })
-    .join("\n");
-}
-
-function messageContentForHistory(item: AssistantChatMessage) {
-  const summary = attachmentSummary(item.attachments);
-  return summary ? item.content + "\n\n附件：\n" + summary : item.content;
-}
-
-function normalizeStoredSkill(value: unknown): SkillVO | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const skill = value as Partial<SkillVO>;
-  if (typeof skill.id !== "string" || !skill.id.trim() || typeof skill.title !== "string" || !skill.title.trim()) return null;
-  return { ...skill, kind: skillKindOf(skill) } as SkillVO;
-}
-
-function normalizeStoredParameters(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
-function filesToSkillAssets(files: FileVO[]) {
-  return files.map((file) => ({
-    id: file.id,
-    type: referenceKindFromMeta(file),
-    url: file.fileUrl,
-    role: "reference",
-    name: file.originalName,
-    metadata: {
-      source: "canvas_assistant",
-      fileSize: file.fileSize,
-      mimeType: file.mimeType,
-    },
-  }));
-}
-
-function skillAssetKey(asset: SkillRunAssetInput): string {
-  if (asset.url?.trim()) return `${asset.type}:url:${asset.url.trim()}`;
-  if (asset.content?.trim()) return `${asset.type}:content:${asset.nodeId ?? ""}:${asset.content.trim()}`;
-  if (asset.id?.trim()) return `${asset.type}:id:${asset.id.trim()}`;
-  if (asset.nodeId?.trim()) return `${asset.type}:node:${asset.nodeId.trim()}`;
-  return `${asset.type}:${asset.role ?? ""}:${asset.name ?? ""}`;
-}
-
-function uniqueSkillAssets(assets: readonly SkillRunAssetInput[]): SkillRunAssetInput[] {
-  const seen = new Set<string>();
-  return assets.filter((asset) => {
-    const key = skillAssetKey(asset);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-function canvasLaunchSkillParameters(journal: CanvasLaunchJournal, skill: SkillVO): Record<string, unknown> {
-  const defaults = defaultSkillInputValues(skill.inputSchema, skill.defaultParams);
-  // Agent Skills own their cross-media planning. Hidden single-model controls
-  // from the project launcher must not override the Agent's published defaults.
-  if (skillKindOf(skill) === "agent") return defaults;
-  const ratio = journal.mode === "image" ? journal.imageRatio : journal.videoRatio;
-  const resolution = journal.mode === "image" ? journal.imageResolution : journal.videoResolution;
-  return {
-    ...defaults,
-    ...(journal.modelId ? { modelId: journal.modelId } : {}),
-    ...(ratio && ratio !== "auto" ? { aspectRatio: ratio, aspect_ratio: ratio, ratio } : {}),
-    ...(resolution ? { resolution } : {}),
-    ...(journal.mode === "image"
-      ? { quality: journal.imageQuality, clarity: journal.imageResolution }
-      : { duration: journal.videoDuration }),
-  };
-}
-
-function normalizeStoredMessages(messages: AssistantChatMessage[]): AssistantChatMessage[] {
-  return messages
-    .filter((item) => item.role === "user" || item.role === "assistant")
-    .filter((item) => item.content.trim() || item.attachments?.length)
-    .map((item) => {
-      const chatRequest = normalizeAssistantChatRequest(item.chatRequest);
-      const taskId = normalizeAssistantTaskId(item.taskId);
-      const recoverableSkillRun = item.status === "pending" && !!item.skillRunId;
-      const recoverableAssistantTask = item.status === "pending" && !!chatRequest;
-      return {
-        ...item,
-        taskId,
-        ...(chatRequest ? { chatRequest, clientRequestId: chatRequest.clientRequestId } : { chatRequest: undefined }),
-        status: item.status === "pending" && !recoverableSkillRun && !recoverableAssistantTask ? "error" as const : item.status,
-        content: item.status === "pending" && !recoverableSkillRun && !recoverableAssistantTask ? "上次回复中断，请重新发送。" : item.content,
-      };
-    })
-    .slice(-MAX_STORED_MESSAGES);
-}
-
-function createSessionId() {
-  return "session-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
-}
-
-function normalizeSessionTitle(value: string) {
-  const title = value.replace(/\s+/g, " ").trim();
-  if (!title) return "";
-  return title.length > 18 ? title.slice(0, 18) + "..." : title;
-}
-
-function sessionTitleFromMessages(messages: AssistantChatMessage[]) {
-  const firstUserMessage = messages.find((item) => item.role === "user" && (item.content.trim() || item.attachments?.length));
-  const contentTitle = normalizeSessionTitle(firstUserMessage?.content ?? "");
-  if (contentTitle) return contentTitle;
-  const attachmentName = firstUserMessage?.attachments?.[0]?.originalName;
-  return attachmentName ? normalizeSessionTitle("附件 " + attachmentName) : "未命名会话";
-}
-
-function normalizeStoredSessions(value: unknown): AssistantStoredSession[] {
-  if (!Array.isArray(value)) return [] as AssistantStoredSession[];
-  return value
-    .map((item) => {
-      if (!item || typeof item !== "object") return null;
-      const session = item as Partial<AssistantStoredSession>;
-      const messages = normalizeStoredMessages(Array.isArray(session.messages) ? session.messages : []);
-      if (!messages.length) return null;
-      const updatedAt = Number.isFinite(session.updatedAt) ? Number(session.updatedAt) : Date.now();
-      const createdAt = Number.isFinite(session.createdAt) ? Number(session.createdAt) : updatedAt;
-      return {
-        id: typeof session.id === "string" && session.id.trim() ? session.id : createSessionId(),
-        title: normalizeSessionTitle(typeof session.title === "string" ? session.title : "") || sessionTitleFromMessages(messages),
-        messages,
-        selectedSkill: normalizeStoredSkill(session.selectedSkill),
-        skillParameters: normalizeStoredParameters(session.skillParameters),
-        createdAt,
-        updatedAt,
-      } satisfies AssistantStoredSession;
-    })
-    .filter((item): item is AssistantStoredSession => Boolean(item))
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, MAX_STORED_SESSIONS);
-}
-
-function assistantStorageKeys(scope: string) {
-  const prefix = `${ASSISTANT_STORAGE_PREFIX}:${scope}`;
-  return {
-    sessions: `${prefix}:sessions`,
-    activeSession: `${prefix}:activeSessionId`,
-    model: `${prefix}:modelId`,
-  };
-}
-
-function loadStoredSessions(scope: string) {
-  if (typeof window === "undefined") return { sessions: [] as AssistantStoredSession[], activeSessionId: "" };
-  try {
-    const keys = assistantStorageKeys(scope);
-    for (const key of LEGACY_ASSISTANT_STORAGE_KEYS) localStorage.removeItem(key);
-    const raw = localStorage.getItem(keys.sessions);
-    if (raw) {
-      const parsed = JSON.parse(raw) as AssistantStoredSessionsPayload | AssistantStoredSession[];
-      const payloadSessions = Array.isArray(parsed) ? parsed : parsed.sessions;
-      const sessions = normalizeStoredSessions(payloadSessions);
-      const storedActiveId = localStorage.getItem(keys.activeSession);
-      const payloadActiveId = Array.isArray(parsed) ? "" : parsed.activeSessionId;
-      const activeSessionId = storedActiveId || payloadActiveId || sessions[0]?.id || "";
-      return { sessions, activeSessionId };
-    }
-    // The old keys were global across accounts/projects. Never migrate their
-    // contents into an authenticated scope because that could expose another
-    // user's prompts or attachment URLs on a shared browser.
-    return { sessions: [] as AssistantStoredSession[], activeSessionId: "" };
-  } catch {
-    return { sessions: [] as AssistantStoredSession[], activeSessionId: "" };
-  }
-}
-
-function saveStoredSessions(sessions: AssistantStoredSession[], activeSessionId: string, scope: string) {
-  if (typeof window === "undefined") return;
-  const keys = assistantStorageKeys(scope);
-  const normalized = normalizeStoredSessions(sessions);
-  if (!normalized.length && !activeSessionId) {
-    localStorage.removeItem(keys.sessions);
-    localStorage.removeItem(keys.activeSession);
-    return;
-  }
-  localStorage.setItem(keys.sessions, JSON.stringify({ sessions: normalized, activeSessionId } satisfies AssistantStoredSessionsPayload));
-  if (activeSessionId) {
-    localStorage.setItem(keys.activeSession, activeSessionId);
-  } else {
-    localStorage.removeItem(keys.activeSession);
-  }
-}
-
-/**
- * The first paid POST must never outrun React's persistence effect. Commit the
- * frozen request in the scoped session key and read it back before creating the
- * task. The active-session key is only a convenience pointer; the sessions
- * payload is the durable source of truth and is written atomically first.
- */
-function persistAssistantChatBeforeCreate(
-  sessions: AssistantStoredSession[],
-  activeSessionId: string,
-  scope: string,
-  assistantId: string,
-  request: AssistantChatRequestSnapshot,
-): boolean {
-  if (typeof window === "undefined" || !scope || !activeSessionId) return false;
-  try {
-    const normalized = normalizeStoredSessions(sessions);
-    const pendingMessage = normalized
-      .find((session) => session.id === activeSessionId)
-      ?.messages.find((item) => item.id === assistantId);
-    if (
-      pendingMessage?.status !== "pending"
-      || pendingMessage.chatRequest?.clientRequestId !== request.clientRequestId
-      || pendingMessage.chatRequest.userMessageId !== request.userMessageId
-      || JSON.stringify(pendingMessage.chatRequest) !== JSON.stringify(request)
-    ) return false;
-
-    const keys = assistantStorageKeys(scope);
-    const serialized = JSON.stringify({
-      sessions: normalized,
-      activeSessionId,
-    } satisfies AssistantStoredSessionsPayload);
-    if (!writeVerifiedAssistantRecoverySnapshot(localStorage, keys.sessions, serialized)) return false;
-
-    // Confirm the exact frozen request is readable before the paid request.
-    const persistedRaw = localStorage.getItem(keys.sessions);
-    if (!persistedRaw) return false;
-    const persisted = JSON.parse(persistedRaw) as AssistantStoredSessionsPayload;
-    const persistedMessage = normalizeStoredSessions(persisted.sessions)
-      .find((session) => session.id === activeSessionId)
-      ?.messages.find((item) => item.id === assistantId);
-    if (
-      persistedMessage?.status !== "pending"
-      || persistedMessage.chatRequest?.clientRequestId !== request.clientRequestId
-      || persistedMessage.chatRequest.userMessageId !== request.userMessageId
-      || JSON.stringify(persistedMessage.chatRequest) !== JSON.stringify(request)
-    ) return false;
-
-    // A stale pointer cannot hide recovery because every stored session is
-    // scanned, so pointer persistence is intentionally best effort.
-    try {
-      localStorage.setItem(keys.activeSession, activeSessionId);
-    } catch {
-      /* the verified sessions payload remains sufficient for recovery */
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function parseTaskResult(task: AiTaskVO) {
-  const rawMeta = task.resultMeta;
-  const meta = typeof rawMeta === "string"
-    ? (() => {
-        try {
-          return JSON.parse(rawMeta) as Record<string, unknown>;
-        } catch {
-          return { text: rawMeta };
-        }
-      })()
-    : rawMeta;
-
-  if (meta && typeof meta === "object") {
-    for (const key of ["answer", "content", "text", "message", "response", "output", "enhancedPrompt"]) {
-      const value = meta[key];
-      if (typeof value === "string" && value.trim()) return value.trim();
-    }
-  }
-
-  if (typeof task.resultUrl === "string" && task.resultUrl.trim()) return task.resultUrl.trim();
-  return "已完成，但接口没有返回可展示的文本。";
 }
 
 export function CanvasAssistantPanel({

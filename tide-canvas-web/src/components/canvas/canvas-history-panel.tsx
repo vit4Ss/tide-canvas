@@ -65,9 +65,12 @@ export function CanvasHistoryPanel({ open, onClose }: Props) {
   // 打开时拉取，并每 4s 刷新（进行中任务进度）
   useEffect(() => {
     if (!open) return;
-    void load();
+    const initialLoad = window.setTimeout(() => void load(), 0);
     const timer = setInterval(() => void load(), 4000);
-    return () => clearInterval(timer);
+    return () => {
+      window.clearTimeout(initialLoad);
+      clearInterval(timer);
+    };
   }, [open, load]);
 
   // Esc 关闭：仅在没有更上层浮层（模态/下拉/菜单）打开时响应，

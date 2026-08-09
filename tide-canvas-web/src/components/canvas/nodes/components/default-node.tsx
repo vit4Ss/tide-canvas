@@ -6,6 +6,7 @@ import { useCanvasStore } from "@/stores/use-canvas-store";
 import { cn } from "@/lib/utils";
 import type { CanvasNodeProps } from "../types/node-props";
 import { getNodeIcon } from "../utils/node-icons";
+import { NodePorts } from "../base/node-ports";
 import styles from "../styles/default-node.module.css";
 
 // 中文注释：默认节点只兜底未知节点类型，具体业务节点应继续使用各自的专用组件。
@@ -70,22 +71,7 @@ export const DefaultNode = memo(function DefaultNode({
         />
       </div>
 
-      <div
-        onMouseDown={(event) => {
-          event.stopPropagation();
-          onPortMouseDown?.(node.id, "input", event.clientX, event.clientY);
-        }}
-        className={cn(styles.port, styles.inputPort)}
-        title="输入端口"
-      />
-      <div
-        onMouseDown={(event) => {
-          event.stopPropagation();
-          onPortMouseDown?.(node.id, "output", event.clientX, event.clientY);
-        }}
-        className={cn(styles.port, styles.outputPort)}
-        title="输出端口"
-      />
+      <NodePorts nodeId={node.id} visible overlay onPortMouseDown={onPortMouseDown} />
     </div>
   );
 });

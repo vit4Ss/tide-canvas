@@ -10,6 +10,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import type {
+  CanvasReferenceItem,
+  CanvasReferenceKind,
+} from "@/features/canvas/domain/models/canvas-reference";
+
+export type {
+  CanvasReferenceItem as RefItem,
+  CanvasReferenceKind as RefKind,
+} from "@/features/canvas/domain/models/canvas-reference";
 
 export const LINE_HEIGHT = 24;
 export const MIN_ROWS = 3;
@@ -20,7 +29,8 @@ export const MAX_ROWS = 4;
 export const ZERO_WIDTH_SPACE = String.fromCharCode(0x200b);
 const NON_BREAKING_SPACE = String.fromCharCode(0x00a0);
 
-export type RefKind = "image" | "video" | "audio" | "text";
+type RefKind = CanvasReferenceKind;
+type RefItem = CanvasReferenceItem;
 
 const KIND_LABEL: Record<RefKind, string> = { image: "图片", video: "视频", audio: "音频", text: "文本" };
 
@@ -29,25 +39,6 @@ const KIND_GLYPH: Record<RefKind, string> = { image: "图", video: "▶", audio:
 
 export function refGlyph(ref: RefItem): string {
   return KIND_GLYPH[refMedia(ref)];
-}
-
-/** 一条可引用素材：画布节点来自入边连接，助手面板来自已上传附件。 */
-export interface RefItem {
-  id: string;
-  thumb: string;
-  title: string;
-  /** 同类素材内的 1 起序号——必须与提交时该类素材的顺序一致 */
-  index: number;
-  /** 省略即 image：图片/视频节点的既有调用点因此无需改动 */
-  kind?: RefKind;
-  /** 缩略图/悬停预览按哪种素材渲染，省略即同 kind。
-   *  两者会分家是因为**编号口径**与**素材本身**未必一致：图片节点把入边视频也编成
-   *  「图片N」（imageList 确实按图片位次下发），但它得按视频预览，塞进 <img> 是坏图。 */
-  media?: RefKind;
-  /** 素材地址（图片/视频/音频）。视频与音频的 thumb 为空，预览只能靠它。 */
-  src?: string;
-  /** 文本节点正文，供悬停预览显示。 */
-  text?: string;
 }
 
 /** 渲染口径（缩略图字形 / 悬停预览用哪种控件），与决定 token 标签的 kind 分开。 */

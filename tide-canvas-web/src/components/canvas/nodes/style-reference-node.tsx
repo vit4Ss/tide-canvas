@@ -1,10 +1,10 @@
 "use client";
 
 import { memo, useCallback, useState } from "react";
-import { Box, Image as ImageIcon, Plus, X } from "lucide-react";
+import { Box, Image as ImageIcon, X } from "lucide-react";
 import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
 import { ossDisplayUrl } from "@/lib/oss-display";
-import { NodeChrome } from "./base/node-chrome";
+import { NodePorts } from "./base/node-ports";
 
 interface Props {
   node: CanvasNode;
@@ -93,21 +93,14 @@ export const StyleReferenceNode = memo(function StyleReferenceNode({
         </div>
       </div>
 
-      {showControls && (
-        <NodeChrome placement="right" gap={10}>
-          <button
-            type="button"
-            onMouseDown={(event) => {
-              event.stopPropagation();
-              onPortMouseDown?.(node.id, "output", event.clientX, event.clientY);
-            }}
-            className="flex h-6 w-6 cursor-crosshair items-center justify-center rounded-full border border-neutral-300 bg-white text-neutral-500 shadow-sm transition hover:scale-110 hover:border-blue-500 hover:bg-blue-50 hover:text-blue-600 active:scale-95 dark:border-neutral-700 dark:bg-neutral-900"
-            title="拖到图片节点作为风格引用"
-          >
-            <Plus className="h-3 w-3" />
-          </button>
-        </NodeChrome>
-      )}
+      <NodePorts
+        nodeId={node.id}
+        visible={showControls}
+        overlay
+        input={false}
+        onPortMouseDown={onPortMouseDown}
+        outputTitle="拖到图片节点作为风格引用"
+      />
     </div>
   );
 });

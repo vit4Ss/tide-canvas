@@ -7,7 +7,7 @@ import {
   normalizeAssistantChatRequest,
   normalizeAssistantTaskId,
   writeVerifiedAssistantRecoverySnapshot,
-} from "./canvas-assistant-chat-recovery.ts";
+} from "../../features/canvas/application/assistant/assistant-chat-recovery.ts";
 
 const validSnapshot = {
   clientRequestId: "canvas-chat-request-1",

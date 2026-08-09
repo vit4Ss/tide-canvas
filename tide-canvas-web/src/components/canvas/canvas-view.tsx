@@ -1,32 +1,30 @@
 "use client";
 
 import { useRef, useState, useCallback, useEffect, useMemo } from "react";
-import { Group } from "lucide-react";
+import {
+  Background,
+  BackgroundVariant,
+  MiniMap,
+  ReactFlow,
+  ReactFlowProvider,
+  SelectionMode,
+  ViewportPortal,
+  useReactFlow,
+  type EdgeTypes,
+  type NodeTypes,
+} from "@xyflow/react";
 import { useCanvasStore } from "@/stores/use-canvas-store";
-import { useCanvasViewStore } from "@/stores/use-canvas-view-store";
 import { useCanvasNodeConfigStore } from "@/stores/use-canvas-node-config-store";
-import { useCanvasPanZoom } from "@/hooks/canvas/use-canvas-pan-zoom";
-import { useCanvasNodeDrag } from "@/hooks/canvas/use-canvas-node-drag";
 import { useCanvasClipboard } from "@/hooks/canvas/use-canvas-clipboard";
 import { useCanvasKeyboard } from "@/hooks/canvas/use-canvas-keyboard";
-import { useCanvasConnection } from "@/hooks/canvas/use-canvas-connection";
-import { useCanvasBoxSelect } from "@/hooks/canvas/use-canvas-box-select";
-import { createNode, autoArrangeNodes, nodeRenderRect } from "@/lib/canvas-helpers";
-import { CanvasGridBackground } from "./canvas-grid-background";
+import { createNode, autoArrangeNodes } from "@/lib/canvas-helpers";
 import { CanvasEmptyState } from "./canvas-empty-state";
-import { CanvasNodeComponent } from "./canvas-node";
-import { ConnectionsLayer } from "./connections-layer";
 import { CanvasGroupsLayer } from "./canvas-groups-layer";
-import { CanvasSelectionBox } from "./canvas-selection-box";
 import { CanvasContextMenu, type ContextMenuState } from "./canvas-context-menu";
 import { CanvasBottomToolbar } from "./canvas-bottom-toolbar";
 import { MyAssetsPanel } from "./my-assets-panel";
 import { CanvasHistoryPanel } from "./canvas-history-panel";
-import { FileCategory, FileType, type FileVO } from "@/types/file";
-import { fileApi, uploadFileSmart } from "@/lib/api";
-import { CHARACTER_NODE_TYPE, SCENE_NODE_TYPE } from "@/lib/canvas-node-types";
 import { toast } from "@/components/shared/toast";
-import { CanvasMinimap } from "./canvas-minimap";
 import { CanvasQuickAddMenu } from "./canvas-quick-add-menu";
 import { CanvasAssistantPanel } from "./canvas-assistant-panel";
 import { CanvasQuickStart } from "./canvas-quick-start";
@@ -35,6 +33,18 @@ import type { CanvasLaunchJournal } from "@/lib/canvas-launch";
 // 就近包在画布视图内,避免改动画布入口路由。
 import { MantineProvider } from "@mantine/core";
 import "@mantine/core/styles.css";
+import "@xyflow/react/dist/style.css";
+import type {
+  CanvasFlowEdge,
+  CanvasFlowNode,
+} from "@/features/canvas/infrastructure/react-flow/canvas-flow-types";
+import { CanvasFlowNodeView } from "@/features/canvas/presentation/flow/canvas-flow-node";
+import { CanvasFlowEdgeView } from "@/features/canvas/presentation/flow/canvas-flow-edge";
+import { useCanvasFlowController } from "@/features/canvas/presentation/flow/use-canvas-flow-controller";
+import { useCanvasMediaTransfer } from "@/features/canvas/application/media/use-canvas-media-transfer";
+import { getCanvasSelectionAnchor } from "@/features/canvas/application/selection/canvas-selection";
+import { CanvasGroupCreateButton } from "@/features/canvas/presentation/groups/canvas-group-create-button";
+import flowStyles from "@/features/canvas/presentation/flow/canvas-flow.module.css";
 
 interface CanvasViewProps {
   launchJournal?: CanvasLaunchJournal | null;
@@ -42,7 +52,30 @@ interface CanvasViewProps {
   onLaunchConsumed?: () => void;
 }
 
-export function CanvasView({ launchJournal, persistenceReady = false, onLaunchConsumed }: CanvasViewProps) {
+const FLOW_NODE_TYPES: NodeTypes = { canvasNode: CanvasFlowNodeView };
+const FLOW_EDGE_TYPES: EdgeTypes = { canvasEdge: CanvasFlowEdgeView };
+const HIDE_REACT_FLOW_ATTRIBUTION = process.env.NEXT_PUBLIC_REACT_FLOW_PRO === "true";
+const MINI_MAP_COLORS: Record<string, string> = {
+  character: "#60a5fa",
+  scene: "#2dd4bf",
+  text: "#22d3ee",
+  image: "#34d399",
+  video: "#fb923c",
+  video_compose: "#f472b6",
+  scene_3d: "#a78bfa",
+  audio: "#c084fc",
+  script: "#94a3b8",
+};
+
+export function CanvasView(props: CanvasViewProps) {
+  return (
+    <ReactFlowProvider>
+      <CanvasViewContent {...props} />
+    </ReactFlowProvider>
+  );
+}
+
+function CanvasViewContent({ launchJournal, persistenceReady = false, onLaunchConsumed }: CanvasViewProps) {
   // A journal that already froze/submitted the legacy single-model payload
   // must resume that exact request. Fresh journals with a selected Skill are
   // handed to the assistant only when the user asked to run immediately.
@@ -63,9 +96,6 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
   const addNode = useCanvasStore((s) => s.addNode);
   const removeNode = useCanvasStore((s) => s.removeNode);
   const selectNode = useCanvasStore((s) => s.selectNode);
-  const clearSelection = useCanvasStore((s) => s.clearSelection);
-  const selectConnection = useCanvasStore((s) => s.selectConnection);
-  const addConnection = useCanvasStore((s) => s.addConnection);
   const undo = useCanvasStore((s) => s.undo);
   const redo = useCanvasStore((s) => s.redo);
   const canUndo = useCanvasStore((s) => s.undoStack.length > 0);
@@ -74,20 +104,13 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
 
   const [gridSnap, setGridSnap] = useState(false);
   const [minimapVisible, setMinimapVisible] = useState(false);
-  const [myAssetsOpen, setMyAssetsOpen] = useState(false);
-  const [assetsRefreshKey, setAssetsRefreshKey] = useState(0);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
-  const [isDraggingFile, setIsDraggingFile] = useState(false);
-  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   // 容器在屏幕中的原点（用于把世界坐标换算成 fixed 屏幕坐标；在 effect 里更新，避免 render 读 ref）
   const [containerOrigin, setContainerOrigin] = useState({ left: 0, top: 0 });
 
-  const panZoom = useCanvasPanZoom({ containerRef });
-  const nodeDrag = useCanvasNodeDrag({ gridSnap });
+  const reactFlow = useReactFlow<CanvasFlowNode, CanvasFlowEdge>();
   const clipboard = useCanvasClipboard();
-  const connection = useCanvasConnection({ containerRef });
-  const boxSelect = useCanvasBoxSelect({ containerRef });
 
   useCanvasKeyboard({ onEscape: () => setContextMenu(null) });
 
@@ -107,13 +130,12 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
     };
   }, [loadNodeConfig]);
 
-  // 跟踪容器尺寸（供小地图绘制可视区域 + 适应视图计算）
+  // 跟踪容器原点，供世界坐标上的浮动操作换算为 fixed 屏幕坐标。
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const update = () => {
       const r = el.getBoundingClientRect();
-      setViewportSize({ width: r.width, height: r.height });
       setContainerOrigin({ left: r.left, top: r.top });
     };
     update();
@@ -129,12 +151,50 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
     selectNode(node.id);
   }, [addNode, selectNode, nodes]);
 
+  const screenToWorld = useCallback((clientX: number, clientY: number) => {
+    return reactFlow.screenToFlowPosition({ x: clientX, y: clientY });
+  }, [reactFlow]);
+
+  const closeTransientUi = useCallback(() => setContextMenu(null), []);
+  const mediaContextTarget = useMemo(() => contextMenu ? {
+    x: contextMenu.worldX,
+    y: contextMenu.worldY,
+    nodeId: contextMenu.nodeId,
+  } : null, [contextMenu]);
+  const {
+    assetsOpen,
+    setAssetsOpen,
+    assetsRefreshKey,
+    isDraggingFile,
+    uploadInputRef,
+    addAssetToCanvas,
+    saveContextAsset,
+    handleDragOver,
+    handleDragLeave,
+    handleFileDrop,
+    requestUpload,
+    handleUploadPick,
+  } = useCanvasMediaTransfer({
+    containerRef,
+    contextTarget: mediaContextTarget,
+    screenToWorld,
+  });
+  const flow = useCanvasFlowController({
+    containerRef,
+    nodes,
+    connections,
+    selectedNodeIds,
+    selectedConnectionId,
+    screenToWorld,
+    closeTransientUi,
+  });
+
   const getViewportCenter = useCallback(() => {
     const rect = containerRef.current?.getBoundingClientRect();
     const sx = rect ? rect.left + rect.width / 2 : 0;
     const sy = rect ? rect.top + rect.height / 2 : 0;
-    return panZoom.screenToWorld(sx, sy);
-  }, [panZoom]);
+    return screenToWorld(sx, sy);
+  }, [screenToWorld]);
 
   // 侧边工具栏「+」：在当前视口中心新建节点
   const addNodeAtViewportCenter = useCallback((type: string) => {
@@ -142,100 +202,18 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
     handleAddNode(type, world.x, world.y);
   }, [getViewportCenter, handleAddNode]);
 
-  // 「我的素材」点选：在视口中心新建图片/视频节点并填入该素材 URL
-  const addAssetToCanvas = useCallback((file: FileVO) => {
-    const rect = containerRef.current?.getBoundingClientRect();
-    const sx = rect ? rect.left + rect.width / 2 : 0;
-    const sy = rect ? rect.top + rect.height / 2 : 0;
-    const world = panZoom.screenToWorld(sx, sy);
-    const type =
-      file.category === FileCategory.CHARACTER
-        ? CHARACTER_NODE_TYPE
-        : file.category === FileCategory.SCENE
-          ? SCENE_NODE_TYPE
-          : file.fileType === FileType.VIDEO
-            ? "video"
-            : "image";
-    const node = createNode(type, world.x, world.y, nodes);
-    if (type === "video") {
-      node.videoSrc = file.fileUrl;
-    } else {
-      node.imageSrc = file.fileUrl;
-    }
-    node.status = "success";
-    node.fileSize = file.fileSize;
-    node.fileType = file.fileType;
-    node.mimeType = file.mimeType;
-    // 与拖入上传同口径：标题即文件名，下游节点的引用缩略图才认得出选的是哪张
-    if (file.originalName) node.title = file.originalName;
-    addNode(node);
-    selectNode(node.id);
-  }, [panZoom, nodes, addNode, selectNode]);
-
-  // 右键「保存到我的素材」：把节点图片/视频 URL 记入素材库，并打开/刷新面板
-  const handleSaveAsset = useCallback(async () => {
-    const node = nodes.find((n) => n.id === contextMenu?.nodeId);
-    const url = node?.videoSrc || node?.imageSrc;
-    if (!url) {
-      toast.info("该节点暂无可保存的图片/视频");
-      return;
-    }
-    const res = await fileApi.saveFromUrl({
-      url,
-      fileType: node?.videoSrc ? "video" : "image",
-      category:
-        node?.type === CHARACTER_NODE_TYPE
-          ? FileCategory.CHARACTER
-          : node?.type === SCENE_NODE_TYPE
-            ? FileCategory.SCENE
-            : FileCategory.GENERAL,
-      originalName: node?.title,
-    });
-    if (res.success) {
-      toast.success("已保存到我的素材");
-      setMyAssetsOpen(true);
-      setAssetsRefreshKey((k) => k + 1);
-    } else {
-      toast.error(res.message || "保存失败");
-    }
-  }, [nodes, contextMenu]);
-
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     const target = e.target as HTMLElement;
     const nodeEl = target.closest("[data-node-id]") as HTMLElement | null;
-    const world = panZoom.screenToWorld(e.clientX, e.clientY);
+    const world = screenToWorld(e.clientX, e.clientY);
     setContextMenu({
       x: e.clientX, y: e.clientY,
       worldX: world.x, worldY: world.y,
       type: nodeEl ? "node" : "canvas",
       nodeId: nodeEl?.dataset.nodeId,
     });
-  }, [panZoom]);
-
-  // 画布空白处按下：开始平移 OR 框选(拖拽/平移的 move/up 由各 hook 挂 window 监听)
-  const handleCanvasMouseDown = useCallback((e: React.MouseEvent) => {
-    const target = e.target as HTMLElement;
-    if (!(target === containerRef.current || target.dataset.canvas)) return;
-    // 中键平移:不清选择、不关菜单语义之外的东西;此前非左键被整体拦掉,
-    // pan-zoom 里的中键分支永不可达
-    if (e.button === 1) {
-      e.preventDefault();
-      panZoom.handleMouseDown(e);
-      return;
-    }
-    if (e.button !== 0) return;
-
-    setContextMenu(null);
-    selectConnection(null);
-    // Shift 按下时框选，否则平移
-    if (e.shiftKey) {
-      boxSelect.startBoxSelect(e.clientX, e.clientY);
-    } else {
-      clearSelection();
-      panZoom.handleMouseDown(e);
-    }
-  }, [boxSelect, clearSelection, panZoom, selectConnection]);
+  }, [screenToWorld]);
 
   const handleArrange = useCallback(() => {
     const st = useCanvasStore.getState();
@@ -243,8 +221,10 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
     st.pushHistory();
     // 纯函数算位 → 单次批量落位（一次渲染），随后视口适配新布局
     st.updateNodePositions(autoArrangeNodes(st.nodes, st.connections, st.groups));
-    panZoom.fitView();
-  }, [panZoom]);
+    requestAnimationFrame(() => {
+      void reactFlow.fitView({ padding: 0.12, maxZoom: 1.5, duration: 160 });
+    });
+  }, [reactFlow]);
 
   // 把当前多选节点创建为一个分组
   const handleCreateGroup = useCallback(() => {
@@ -254,153 +234,23 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
     if (gid) toast.success("已创建分组");
   }, []);
 
-  // 多选时（≥2）计算包围盒顶部中点 → 供浮动「创建分组」按钮定位
-  const selectionBox = useMemo(() => {
-    if (selectedNodeIds.size < 2) return null;
-    const sel = nodes.filter((n) => selectedNodeIds.has(n.id));
-    if (sel.length < 2) return null;
-    let minX = Infinity, minY = Infinity, maxX = -Infinity;
-    for (const n of sel) {
-      // 实际渲染矩形:卡片在名义宽内水平居中,用 n.x 会让按钮偏离选区视觉中心
-      const r = nodeRenderRect(n);
-      if (r.x < minX) minX = r.x;
-      if (r.y < minY) minY = r.y;
-      if (r.x + r.w > maxX) maxX = r.x + r.w;
-    }
-    return { cx: (minX + maxX) / 2, top: minY };
-  }, [nodes, selectedNodeIds]);
+  const selectionAnchor = useMemo(
+    () => getCanvasSelectionAnchor(nodes, selectedNodeIds),
+    [nodes, selectedNodeIds],
+  );
 
-  const handleConnectionClick = useCallback((id: string) => {
-    clearSelection();
-    selectConnection(id);
-  }, [clearSelection, selectConnection]);
+  const zoomIn = useCallback(() => { void reactFlow.zoomIn({ duration: 120 }); }, [reactFlow]);
+  const zoomOut = useCallback(() => { void reactFlow.zoomOut({ duration: 120 }); }, [reactFlow]);
+  const zoomReset = useCallback(() => {
+    void reactFlow.setViewport({ x: 0, y: 0, zoom: 1 }, { duration: 160 });
+  }, [reactFlow]);
+  const fitView = useCallback(() => {
+    void reactFlow.fitView({ padding: 0.12, maxZoom: 1.5, duration: 160 });
+  }, [reactFlow]);
 
-  // 从端口拖线到空白处松手 → 选择类型即新建节点并自动连线
-  const handleQuickAdd = useCallback((type: string) => {
-    const qa = connection.quickAdd;
-    if (!qa) return;
-    const node = createNode(type, qa.worldX, qa.worldY, nodes);
-    addNode(node);
-    const sourceId = qa.sourceSide === "output" ? qa.sourceNodeId : node.id;
-    const targetId = qa.sourceSide === "output" ? node.id : qa.sourceNodeId;
-    if (sourceId !== targetId) {
-      addConnection({ id: `conn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, sourceId, targetId });
-    }
-    selectNode(node.id);
-    connection.clearQuickAdd();
-  }, [connection, nodes, addNode, addConnection, selectNode]);
-
-  // 从系统拖入文件到画布：上传图片/视频，并在落点生成对应节点（多文件错开排列）
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    if (e.dataTransfer.types.includes("Files")) {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "copy";
-      setIsDraggingFile(true);
-    }
+  const miniMapNodeColor = useCallback((node: CanvasFlowNode) => {
+    return MINI_MAP_COLORS[node.data.node.type] || "#a1a1aa";
   }, []);
-
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    // 仅在真正离开画布容器（而非进入子元素）时取消高亮
-    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-      setIsDraggingFile(false);
-    }
-  }, []);
-
-  // 上传文件并在指定世界坐标生成对应节点（多文件错开排列）；拖拽落入与右键「上传」共用
-  const uploadFilesAt = useCallback(async (files: File[], world: { x: number; y: number }) => {
-    toast.info(files.length > 1 ? `正在上传 ${files.length} 个文件...` : "正在上传...");
-    let ok = 0;
-
-    await Promise.all(
-      files.map(async (file, i) => {
-        const isVideo = file.type.startsWith("video/");
-        const previewUrl = URL.createObjectURL(file);
-        const st = useCanvasStore.getState();
-        const node = createNode(isVideo ? "video" : "image", world.x + i * 48, world.y + i * 48, st.nodes);
-        if (isVideo) node.videoSrc = previewUrl;
-        else node.imageSrc = previewUrl;
-        node.status = "idle";
-        node.uploading = true;
-        node.uploadProgress = 0;
-        node.fileSize = file.size;
-        node.fileType = isVideo ? "video" : "image";
-        node.mimeType = file.type;
-        if (file.name) node.title = file.name;
-        addNode(node);
-        selectNode(node.id);
-
-        try {
-          const res = await uploadFileSmart(file, (pct) => {
-            useCanvasStore.getState().updateNode(node.id, { uploadProgress: pct });
-          });
-          if (res.success && res.data?.fileUrl) {
-            const patch = isVideo
-              ? { videoSrc: res.data.fileUrl, status: "success" as const, uploading: false, uploadProgress: 100, fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType }
-              : { imageSrc: res.data.fileUrl, status: "success" as const, uploading: false, uploadProgress: 100, fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType };
-            useCanvasStore.getState().updateNode(node.id, patch);
-            ok++;
-          } else {
-            const patch = isVideo
-              ? { videoSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 }
-              : { imageSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 };
-            useCanvasStore.getState().updateNode(node.id, patch);
-            toast.error(`上传失败：${res.message || file.name}`);
-          }
-        } catch (err) {
-          const patch = isVideo
-            ? { videoSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 }
-            : { imageSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 };
-          useCanvasStore.getState().updateNode(node.id, patch);
-          toast.error(`上传失败：${(err as Error)?.message || file.name}`);
-        } finally {
-          URL.revokeObjectURL(previewUrl);
-        }
-      })
-    );
-
-    if (ok > 0) toast.success(ok > 1 ? `已添加 ${ok} 个节点` : "已添加到画布");
-  }, [addNode, selectNode]);
-
-  // 从系统拖入文件：在落点上传生成节点
-  const handleFileDrop = useCallback(async (e: React.DragEvent) => {
-    if (!e.dataTransfer.types.includes("Files")) return;
-    e.preventDefault();
-    setIsDraggingFile(false);
-
-    const files = Array.from(e.dataTransfer.files).filter(
-      (f) => f.type.startsWith("image/") || f.type.startsWith("video/")
-    );
-    if (files.length === 0) {
-      if (e.dataTransfer.files.length > 0) toast.error("仅支持拖入图片或视频");
-      return;
-    }
-    await uploadFilesAt(files, panZoom.screenToWorld(e.clientX, e.clientY));
-  }, [panZoom, uploadFilesAt]);
-
-  // 右键「上传」：记住菜单落点的世界坐标后打开系统文件选择器
-  const uploadInputRef = useRef<HTMLInputElement>(null);
-  const uploadWorldRef = useRef<{ x: number; y: number } | null>(null);
-  const handleUploadRequest = useCallback(() => {
-    uploadWorldRef.current = contextMenu ? { x: contextMenu.worldX, y: contextMenu.worldY } : null;
-    uploadInputRef.current?.click();
-  }, [contextMenu]);
-
-  const handleUploadPick = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []).filter(
-      (f) => f.type.startsWith("image/") || f.type.startsWith("video/")
-    );
-    // 清空 value：同一文件连续选两次也要触发 change
-    e.target.value = "";
-    if (files.length === 0) return;
-    // 兜底视口中心：理论上菜单落点必存在,防御 contextMenu 已被清空的时序
-    let world = uploadWorldRef.current;
-    uploadWorldRef.current = null;
-    if (!world) {
-      const rect = containerRef.current?.getBoundingClientRect();
-      world = panZoom.screenToWorld(rect ? rect.left + rect.width / 2 : 0, rect ? rect.top + rect.height / 2 : 0);
-    }
-    await uploadFilesAt(files, world);
-  }, [panZoom, uploadFilesAt]);
 
   return (
     // translate="no" + notranslate：告知浏览器/翻译类扩展（如「沉浸式翻译」）整块画布勿翻译，
@@ -409,46 +259,66 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
     <div translate="no" className="notranslate relative h-full w-full overflow-hidden bg-neutral-50 dark:bg-neutral-900">
       <div
         ref={containerRef}
-        className="h-full w-full cursor-grab active:cursor-grabbing"
-        onMouseDown={handleCanvasMouseDown}
+        className={`${flowStyles.root} h-full w-full`}
         onContextMenu={handleContextMenu}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleFileDrop}
         data-canvas="true"
       >
-        <CanvasGridBackground />
-
-        <CanvasWorldLayer>
-          <CanvasGroupsLayer groups={groups} nodes={nodes} selectedNodeIds={selectedNodeIds} />
-          <ConnectionsLayer
-            nodes={nodes}
-            connections={connections}
-            temp={connection.connecting}
-            selectedConnectionId={selectedConnectionId}
-            selectedNodeIds={selectedNodeIds}
-            onConnectionClick={handleConnectionClick}
+        <ReactFlow<CanvasFlowNode, CanvasFlowEdge>
+          nodes={flow.flowNodes}
+          edges={flow.flowEdges}
+          nodeTypes={FLOW_NODE_TYPES}
+          edgeTypes={FLOW_EDGE_TYPES}
+          onNodesChange={flow.handleNodesChange}
+          onSelectionChange={flow.handleSelectionChange}
+          onNodeDragStart={flow.handleNodeDragStart}
+          onNodeDragStop={flow.handleNodeDragStop}
+          onConnect={flow.handleConnect}
+          onConnectEnd={flow.handleConnectEnd}
+          onPaneClick={flow.handlePaneClick}
+          onMove={flow.handleMove}
+          onInit={flow.handleInit}
+          minZoom={0.1}
+          maxZoom={5}
+          snapToGrid={gridSnap}
+          snapGrid={[20, 20]}
+          panOnDrag={[0, 1]}
+          panOnScroll
+          zoomOnScroll={false}
+          zoomOnPinch
+          zoomOnDoubleClick={false}
+          selectionKeyCode="Shift"
+          multiSelectionKeyCode={["Meta", "Control"]}
+          selectionMode={SelectionMode.Partial}
+          deleteKeyCode={null}
+          connectionRadius={28}
+          connectOnClick
+          preventScrolling
+          onlyRenderVisibleElements
+          proOptions={{ hideAttribution: HIDE_REACT_FLOW_ATTRIBUTION }}
+        >
+          <Background
+            variant={BackgroundVariant.Dots}
+            gap={20}
+            size={2}
+            color="var(--canvas-grid-color)"
           />
-          {nodes.map((node) => (
-            <CanvasNodeComponent
-              key={node.id}
-              node={node}
-              isSelected={selectedNodeIds.has(node.id)}
-              isDragging={nodeDrag.draggingNodeId === node.id}
-              isConnectTarget={connection.hoverTargetNodeId === node.id}
-              onNodeMouseDown={nodeDrag.onNodeMouseDown}
-              onPortMouseDown={connection.startConnection}
-            />
-          ))}
-          {boxSelect.box && (
-            <CanvasSelectionBox
-              startWorldX={boxSelect.box.startWorldX}
-              startWorldY={boxSelect.box.startWorldY}
-              currentWorldX={boxSelect.box.currentWorldX}
-              currentWorldY={boxSelect.box.currentWorldY}
+          <ViewportPortal>
+            <CanvasGroupsLayer groups={groups} nodes={nodes} selectedNodeIds={selectedNodeIds} />
+          </ViewportPortal>
+          {minimapVisible && (
+            <MiniMap
+              position="bottom-left"
+              nodeColor={miniMapNodeColor}
+              pannable
+              zoomable
+              style={{ width: 200, height: 140, left: 16, bottom: 64 }}
+              maskColor="rgb(59 130 246 / 0.08)"
             />
           )}
-        </CanvasWorldLayer>
+        </ReactFlow>
       </div>
 
       {launchJournal && resumeDirectLaunch && (
@@ -464,8 +334,12 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
       {nodes.length === 0 && <CanvasEmptyState />}
 
       {/* 多选浮动操作：在选区顶部上方居中显示「创建分组」（拖动/框选/连线时隐藏） */}
-      {selectionBox && !nodeDrag.draggingNodeId && !boxSelect.isBoxSelecting && !connection.connecting && (
-        <GroupCreateButton selectionBox={selectionBox} containerOrigin={containerOrigin} onClick={handleCreateGroup} />
+      {selectionAnchor && !flow.isNodeDragging && (
+        <CanvasGroupCreateButton
+          anchor={selectionAnchor}
+          containerOrigin={containerOrigin}
+          onClick={handleCreateGroup}
+        />
       )}
 
       {isDraggingFile && (
@@ -477,20 +351,10 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
         </div>
       )}
 
-      {minimapVisible && (
-        <div className="absolute bottom-16 left-4">
-          <CanvasMinimap
-            nodes={nodes}
-            viewportSize={viewportSize}
-            onNavigate={panZoom.centerOn}
-          />
-        </div>
-      )}
-
       <CanvasQuickAddMenu
-        menu={connection.quickAdd}
-        onClose={connection.clearQuickAdd}
-        onSelect={handleQuickAdd}
+        menu={flow.quickAdd}
+        onClose={() => flow.setQuickAdd(null)}
+        onSelect={flow.handleQuickAdd}
       />
 
       <CanvasContextMenu
@@ -507,9 +371,9 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
         onPaste={clipboard.pasteNode}
         onUndo={undo}
         onRedo={redo}
-        onUpload={handleUploadRequest}
-        onOpenHistory={() => { setHistoryOpen(true); setMyAssetsOpen(false); }}
-        onSaveAsset={handleSaveAsset}
+        onUpload={requestUpload}
+        onOpenHistory={() => { setHistoryOpen(true); setAssetsOpen(false); }}
+        onSaveAsset={saveContextAsset}
       />
       {/* 右键「上传」的隐藏文件选择器；与拖拽上传共用 uploadFilesAt 链路 */}
       <input
@@ -520,7 +384,12 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
         className="hidden"
         onChange={handleUploadPick}
       />
-      <MyAssetsPanel open={myAssetsOpen} onClose={() => setMyAssetsOpen(false)} onPick={addAssetToCanvas} refreshKey={assetsRefreshKey} />
+      <MyAssetsPanel
+        open={assetsOpen}
+        onClose={() => setAssetsOpen(false)}
+        onPick={addAssetToCanvas}
+        refreshKey={assetsRefreshKey}
+      />
       <CanvasHistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />
 
       <CanvasAssistantPanel
@@ -532,65 +401,20 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
       <CanvasBottomToolbar
         gridSnap={gridSnap}
         minimapVisible={minimapVisible}
-        assetsActive={myAssetsOpen}
+        assetsActive={assetsOpen}
         historyActive={historyOpen}
         onAddNode={addNodeAtViewportCenter}
-        onZoomIn={panZoom.zoomIn}
-        onZoomOut={panZoom.zoomOut}
-        onZoomReset={panZoom.zoomReset}
-        onFitView={panZoom.fitView}
+        onZoomIn={zoomIn}
+        onZoomOut={zoomOut}
+        onZoomReset={zoomReset}
+        onFitView={fitView}
         onToggleGridSnap={() => setGridSnap(!gridSnap)}
         onToggleMinimap={() => setMinimapVisible(!minimapVisible)}
         onArrange={handleArrange}
-        onOpenAssets={() => { setMyAssetsOpen((v) => !v); setHistoryOpen(false); }}
-        onOpenHistory={() => { setHistoryOpen((v) => !v); setMyAssetsOpen(false); }}
+        onOpenAssets={() => { setAssetsOpen((value) => !value); setHistoryOpen(false); }}
+        onOpenHistory={() => { setHistoryOpen((value) => !value); setAssetsOpen(false); }}
       />
     </div>
     </MantineProvider>
-  );
-}
-
-/**
- * 世界坐标层：唯一订阅 transform 做整层 CSS 变换的地方。
- * 拆成独立组件后，平移/缩放每帧只重渲染这一个 div——children 由父组件
- * （不订阅 transform）创建，元素引用不变，React 直接复用，节点零重渲染。
- */
-function CanvasWorldLayer({ children }: { children: React.ReactNode }) {
-  const t = useCanvasViewStore((s) => s.transform);
-  return (
-    <div
-      style={{
-        transform: `translate(${t.x}px, ${t.y}px) scale(${t.k})`,
-        transformOrigin: "0 0",
-        // NodeChrome 反缩放系数：以 CSS 变量下发，节点组件无需订阅 transform.k
-        // （damp 指数 0.6 与 NodeChrome 各调用点一致，详见 node-chrome.tsx）
-        "--nc-inv": 1 / t.k,
-        "--nc-inv-damp": t.k > 1 ? Math.pow(t.k, -0.6) : 1 / t.k,
-      } as React.CSSProperties}
-      className="absolute"
-    >
-      {children}
-    </div>
-  );
-}
-
-/** 「创建分组」浮动按钮：独立订阅 transform，把世界坐标换算成屏幕坐标定位 */
-function GroupCreateButton({ selectionBox, containerOrigin, onClick }: {
-  selectionBox: { cx: number; top: number };
-  containerOrigin: { left: number; top: number };
-  onClick: () => void;
-}) {
-  const t = useCanvasViewStore((s) => s.transform);
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        left: containerOrigin.left + t.x + selectionBox.cx * t.k,
-        top: containerOrigin.top + t.y + selectionBox.top * t.k - 12,
-      }}
-      className="fixed z-30 flex -translate-x-1/2 -translate-y-full items-center gap-1.5 rounded-lg bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white shadow-lg transition-colors hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-    >
-      <Group className="h-3.5 w-3.5" /> 创建分组 <kbd className="ml-0.5 opacity-60">⌘G</kbd>
-    </button>
   );
 }

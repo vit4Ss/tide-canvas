@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/stores/use-auth-store";
 
 /**
@@ -9,6 +10,7 @@ import { useAuthStore } from "@/stores/use-auth-store";
  * loading 直到导航完成,避免未登录用户看到画布(其带鉴权的创建/保存调用必然 401)。
  */
 export default function CanvasLayout({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
   const ensureSession = useAuthStore((s) => s.ensureSession);
   const [ready, setReady] = useState(false);
 
@@ -33,16 +35,16 @@ export default function CanvasLayout({ children }: { children: React.ReactNode }
         if (ok) setReady(true);
         else if (typeof window !== "undefined" && window.location.pathname !== "/login") {
           const here = window.location.pathname + window.location.search;
-          window.location.href = `/login?redirect=${encodeURIComponent(here)}`;
+          router.replace(`/login?redirect=${encodeURIComponent(here)}`);
         }
       })
       .catch(() => {
-        if (mounted && typeof window !== "undefined") window.location.href = "/login";
+        if (mounted) router.replace("/login");
       });
     return () => {
       mounted = false;
     };
-  }, [ensureSession]);
+  }, [ensureSession, router]);
 
   if (!ready) {
     return (

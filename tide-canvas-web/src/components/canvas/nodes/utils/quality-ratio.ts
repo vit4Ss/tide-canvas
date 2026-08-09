@@ -1,4 +1,4 @@
-import type { ImageClarity, ImageQuality, QualityOption, QualityRatioValue, RatioOption } from "../types/quality-ratio";
+import type { ImageClarity, QualityOption, QualityRatioValue, RatioOption } from "../types/quality-ratio";
 
 // 中文注释：这里放所有纯数据与纯函数，供首页创作框和画布节点共同复用。
 export const QUALITY_OPTIONS: readonly QualityOption[] = [

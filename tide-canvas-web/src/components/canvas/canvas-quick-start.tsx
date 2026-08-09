@@ -1,11 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowUp,
   AtSign,
-  Check,
   ChevronDown,
   Clock3,
   Loader2,
@@ -40,7 +39,6 @@ import {
 import {
   CHARACTER_NODE_TYPE,
   isConceptCanvasNodeType,
-  isImageReferenceNodeType,
 } from "@/lib/canvas-node-types";
 import { parseSkillParams } from "@/lib/skill-api";
 import {
@@ -54,14 +52,29 @@ import { FileType, type FileVO } from "@/types/file";
 import { skillKindOf, skillOutputTypesOf, type SkillVO } from "@/types/skill";
 import { ModelPicker } from "./nodes/model-picker";
 import { PromptRefEditor } from "./nodes/prompt-ref-editor";
-import { inlineTextRefs, refGlyph, refLabel, type RefItem, type RefKind } from "./nodes/prompt-ref-utils";
+import { inlineTextRefs, refGlyph, refLabel } from "./nodes/prompt-ref-utils";
 import { RATIO_OPTIONS } from "./nodes/quality-ratio-picker";
-import { parseModelConfig, validateReferenceFileSizes } from "./nodes/shared/node-utils";
+import { validateReferenceFileSizes } from "./nodes/shared/node-utils";
 import { normalizeDurations, VIDEO_RATIOS } from "./nodes/video-param-picker";
 import { CANVAS_ASSISTANT_VISIBILITY_EVENT } from "./canvas-assistant-panel";
+import {
+  MAX_QUICK_ATTACHMENTS,
+  buildQuickReferences as buildQuickRefs,
+  compactReferenceLabel as compactRefLabel,
+  compatibleOptionValue as optionValue,
+  containsQuickReference as containsRef,
+  promptForConnectedNode,
+  quickModeFromModel,
+  referenceCountLimit,
+  remapPromptReferences as remapPromptRefs,
+  safeModelConfig,
+  supportsHandler,
+  type QuickReference as QuickRef,
+  type QuickStartMode,
+} from "@/features/canvas/application/quick-start/quick-start-policy";
+import { QuickSelect } from "@/features/canvas/presentation/quick-start/quick-select";
 import styles from "./styles/canvas-quick-start.module.css";
 
-type QuickStartMode = "image" | "video";
 type QuickStartVariant = "canvas" | "launcher" | "consumer";
 
 interface Props {
@@ -81,467 +94,9 @@ interface Props {
   persistenceReady?: boolean;
 }
 
-interface QuickRef extends RefItem {
-  sourceNodeId?: string;
-  file?: FileVO;
-  textContent?: string;
-  isConcept?: boolean;
-}
-
-interface QuickModelConfig {
-  ratios?: string[];
-  qualities?: string[];
-  clarities?: string[];
-  resolutions?: string[];
-  durations?: Array<string | number>;
-  batchSizes?: number[];
-  gridOutput?: boolean;
-}
 
 const DEFAULT_IMAGE_RATIOS = RATIO_OPTIONS.map((option) => option.value);
 const DEFAULT_VIDEO_RATIOS = VIDEO_RATIOS.map((option) => option.value);
-const MAX_QUICK_ATTACHMENTS = 8;
-
-const HANDLER_CONFIG_MODES: Record<string, string> = {
-  text_to_image: "t2i",
-  image_to_image: "i2i",
-  text_to_video: "t2v",
-  image_to_video: "i2v",
-  start_end_to_video: "keyframe",
-  reference_to_video: "omni_ref",
-};
-
-function supportsHandler(model: AiModelVO, handler: string) {
-  if (model.supportedHandlers?.length) return model.supportedHandlers.includes(handler);
-  const configuredModes = stringArray(parseModelConfig<Record<string, unknown>>(model).modes);
-  if (!configuredModes?.length) return true;
-  const mode = HANDLER_CONFIG_MODES[handler];
-  return mode ? configuredModes.includes(mode) : true;
-}
-
-function quickModeFromModel(model?: AiModelVO): QuickStartMode | null {
-  if (model?.type === AiModelType.IMAGE) return "image";
-  if (model?.type === AiModelType.VIDEO) return "video";
-  return null;
-}
-
-function stringArray(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  return [...new Set(value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim()))];
-}
-
-function durationArray(value: unknown): Array<string | number> | undefined {
-  if (!Array.isArray(value)) return undefined;
-  return value.filter((item): item is string | number =>
-    (typeof item === "number" && Number.isFinite(item)) || typeof item === "string",
-  );
-}
-
-function safeModelConfig(model?: AiModelVO): QuickModelConfig {
-  const raw = parseModelConfig<Record<string, unknown>>(model);
-  return {
-    ratios: stringArray(raw.ratios),
-    qualities: stringArray(raw.qualities),
-    clarities: stringArray(raw.clarities),
-    resolutions: stringArray(raw.resolutions),
-    durations: durationArray(raw.durations),
-    ...(typeof raw.gridOutput === "boolean" ? { gridOutput: raw.gridOutput } : {}),
-  };
-}
-
-function positiveLimit(value: unknown): number | undefined {
-  const parsed = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
-}
-
-function referenceCountLimit(model: AiModelVO, handler: string, kind: "image" | "video" | "audio") {
-  const config = parseModelConfig<Record<string, unknown>>(model);
-  if (handler === "image_to_image" && kind === "image") return positiveLimit(config.maxRefImages);
-  const refLimits = config.refLimits && typeof config.refLimits === "object" && !Array.isArray(config.refLimits)
-    ? config.refLimits as Record<string, unknown>
-    : {};
-  const key = handler === "image_to_video"
-    ? kind === "image" ? "i2v.imageCount" : ""
-    : handler === "start_end_to_video"
-      ? kind === "image" ? "keyframe.imageCount" : ""
-      : handler === "reference_to_video"
-        ? `omniRef.${kind}Count`
-        : "";
-  return key ? positiveLimit(refLimits[key]) : undefined;
-}
-
-function tokenPattern(label: string) {
-  return new RegExp(`${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!\\d)`, "g");
-}
-
-function containsRef(prompt: string, ref: RefItem) {
-  return tokenPattern(refLabel(ref)).test(prompt);
-}
-
-function pushQuickRef(
-  target: QuickRef[],
-  counters: Record<RefKind, number>,
-  ref: Omit<QuickRef, "index"> & { kind: RefKind },
-) {
-  counters[ref.kind] += 1;
-  target.push({ ...ref, index: counters[ref.kind] });
-}
-
-function buildQuickRefs(nodes: CanvasNode[], attachments: FileVO[]): QuickRef[] {
-  const refs: QuickRef[] = [];
-  const counters: Record<RefKind, number> = { image: 0, video: 0, audio: 0, text: 0 };
-
-  for (const node of nodes) {
-    if (isImageReferenceNodeType(node.type) && node.imageSrc) {
-      pushQuickRef(refs, counters, {
-        id: `canvas:${node.id}`,
-        sourceNodeId: node.id,
-        thumb: node.imageSrc,
-        src: node.imageSrc,
-        title: node.title || "画布图片",
-        kind: "image",
-        isConcept: isConceptCanvasNodeType(node.type),
-      });
-      continue;
-    }
-    if (node.type === "video" && node.videoSrc) {
-      pushQuickRef(refs, counters, {
-        id: `canvas:${node.id}`,
-        sourceNodeId: node.id,
-        thumb: "",
-        src: node.videoSrc,
-        title: node.title || "画布视频",
-        kind: "video",
-      });
-      continue;
-    }
-    if (node.type === "audio" && node.audioSrc) {
-      pushQuickRef(refs, counters, {
-        id: `canvas:${node.id}`,
-        sourceNodeId: node.id,
-        thumb: "",
-        src: node.audioSrc,
-        title: node.title || "画布音频",
-        kind: "audio",
-      });
-      continue;
-    }
-    const text = node.type === "text"
-      ? node.content?.trim()
-      : isConceptCanvasNodeType(node.type)
-        ? node.prompt?.trim()
-        : "";
-    if (text) {
-      pushQuickRef(refs, counters, {
-        id: `canvas:${node.id}`,
-        sourceNodeId: node.id,
-        thumb: "",
-        title: node.title || "画布文本",
-        text,
-        textContent: text,
-        kind: "text",
-        isConcept: isConceptCanvasNodeType(node.type),
-      });
-    }
-  }
-
-  for (const file of attachments) {
-    if (file.fileType === FileType.IMAGE) {
-      pushQuickRef(refs, counters, {
-        id: `upload:${file.id}`,
-        file,
-        thumb: file.fileUrl,
-        src: file.fileUrl,
-        title: file.originalName,
-        kind: "image",
-      });
-    } else if (file.fileType === FileType.VIDEO) {
-      pushQuickRef(refs, counters, {
-        id: `upload:${file.id}`,
-        file,
-        thumb: "",
-        src: file.fileUrl,
-        title: file.originalName,
-        kind: "video",
-      });
-    } else if (file.mimeType?.startsWith("audio/")) {
-      pushQuickRef(refs, counters, {
-        id: `upload:${file.id}`,
-        file,
-        thumb: "",
-        src: file.fileUrl,
-        title: file.originalName,
-        kind: "audio",
-      });
-    }
-  }
-  return refs;
-}
-
-/** 用稳定 id 做两阶段替换，避免「图片1 → 图片2」后又被下一条规则二次命中。 */
-function remapPromptRefs(prompt: string, previous: QuickRef[], next: QuickRef[]) {
-  let value = prompt;
-  const sentinels = new Map<string, string>();
-  previous.forEach((ref, index) => {
-    const sentinel = `__QS_REF_${index}_${Date.now()}__`;
-    sentinels.set(ref.id, sentinel);
-    value = value.replace(tokenPattern(refLabel(ref)), sentinel);
-  });
-  for (const [id, sentinel] of sentinels) {
-    const replacement = next.find((ref) => ref.id === id);
-    value = value.replaceAll(sentinel, replacement ? refLabel(replacement) : "");
-  }
-  return value.replace(/[ \t]{2,}/g, " ");
-}
-
-function compactPromptRefs(prompt: string, usedRefs: QuickRef[]) {
-  let value = prompt;
-  const byKind: Record<RefKind, QuickRef[]> = { image: [], video: [], audio: [], text: [] };
-  for (const ref of usedRefs) byKind[ref.kind ?? "image"].push(ref);
-  const sentinels: Array<{ sentinel: string; nextLabel: string }> = [];
-  for (const kind of ["image", "video", "audio", "text"] as const) {
-    byKind[kind].forEach((ref, index) => {
-      const sentinel = `__QS_USED_${kind}_${index}_${Date.now()}__`;
-      value = value.replace(tokenPattern(refLabel(ref)), sentinel);
-      const prefix = kind === "image" ? "图片" : kind === "video" ? "视频" : kind === "audio" ? "音频" : "文本";
-      sentinels.push({ sentinel, nextLabel: `${prefix}${index + 1}` });
-    });
-  }
-  for (const item of sentinels) value = value.replaceAll(item.sentinel, item.nextLabel);
-  return value;
-}
-
-function compactRefLabel(ref: QuickRef, usedRefs: QuickRef[]) {
-  const kind = ref.kind ?? "image";
-  const index = usedRefs.filter((item) => (item.kind ?? "image") === kind).findIndex((item) => item.id === ref.id);
-  const prefix = kind === "image" ? "图片" : kind === "video" ? "视频" : kind === "audio" ? "音频" : "文本";
-  return index >= 0 ? `${prefix}${index + 1}` : "";
-}
-
-/** 概念节点没有图片时只靠连接注入角色/场景设定，节点正文里不保留悬空的「文本N」。 */
-function promptForConnectedNode(prompt: string, usedRefs: QuickRef[]) {
-  let value = compactPromptRefs(prompt, usedRefs);
-  for (const ref of usedRefs) {
-    if (!ref.isConcept || ref.kind !== "text") continue;
-    const label = compactRefLabel(ref, usedRefs);
-    if (label) value = value.replace(tokenPattern(label), "");
-  }
-  return value.replace(/[ \t]{2,}/g, " ").trim();
-}
-
-function optionValue(value: string, options: string[], fallback: string) {
-  if (options.includes(value)) return value;
-  const caseInsensitive = options.find((option) => option.toLowerCase() === value.toLowerCase());
-  return caseInsensitive ?? options[0] ?? fallback;
-}
-
-function defaultOptionLabel(value: string) {
-  const labels: Record<string, string> = {
-    auto: "自动",
-    low: "低",
-    medium: "中",
-    high: "高",
-    standard: "标准",
-    ultra: "超高",
-  };
-  return labels[value.toLowerCase()] ?? value;
-}
-
-function QuickSelect({ label, value, options, onChange, disabled, formatOption, icon, dark = false }: {
-  label: string;
-  value: string;
-  options: string[];
-  onChange: (value: string) => void;
-  disabled?: boolean;
-  formatOption?: (value: string) => string;
-  icon?: ReactNode;
-  dark?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [openUp, setOpenUp] = useState(false);
-  const [activeIndex, setActiveIndex] = useState(0);
-  const [panelPos, setPanelPos] = useState({ left: 12, top: 12, width: 160, maxHeight: 240 });
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
-  const panelId = useId();
-  const optionLabel = (option: string) => formatOption?.(option) ?? defaultOptionLabel(option);
-  const currentLabel = optionLabel(value);
-  const unavailable = disabled || options.length === 0;
-
-  const focusNextToolbarControl = (backward: boolean) => {
-    const focusable = Array.from(document.querySelectorAll<HTMLElement>(
-      'a[href], button:not(:disabled), input:not(:disabled), [tabindex]:not([tabindex="-1"])',
-    )).filter((element) =>
-      !panelRef.current?.contains(element) &&
-      element.getClientRects().length > 0 &&
-      getComputedStyle(element).visibility !== "hidden",
-    );
-    const triggerIndex = triggerRef.current ? focusable.indexOf(triggerRef.current) : -1;
-    if (triggerIndex < 0) return;
-    const nextIndex = backward ? triggerIndex - 1 : triggerIndex + 1;
-    focusable[(nextIndex + focusable.length) % focusable.length]?.focus();
-  };
-
-  const positionPanel = () => {
-    const rect = triggerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const gutter = 12;
-    const gap = 8;
-    const panelWidth = Math.min(184, Math.max(152, Math.ceil(rect.width) + 32));
-    const estimatedHeight = Math.min(240, options.length * 38 + 12);
-    const spaceBelow = window.innerHeight - rect.bottom - gap - gutter;
-    const spaceAbove = rect.top - gap - gutter;
-    const nextOpenUp = spaceBelow < estimatedHeight && spaceAbove > spaceBelow;
-    const availableHeight = nextOpenUp ? spaceAbove : spaceBelow;
-    setOpenUp(nextOpenUp);
-    setPanelPos({
-      left: Math.min(Math.max(gutter, Math.round(rect.left)), Math.max(gutter, window.innerWidth - panelWidth - gutter)),
-      top: Math.round(nextOpenUp ? rect.top - gap : rect.bottom + gap),
-      width: panelWidth,
-      maxHeight: Math.max(64, Math.min(240, availableHeight)),
-    });
-  };
-
-  const openMenu = (preferredIndex?: number) => {
-    if (unavailable) return;
-    const selectedIndex = Math.max(0, options.indexOf(value));
-    setActiveIndex(preferredIndex ?? selectedIndex);
-    positionPanel();
-    setOpen(true);
-  };
-
-  useEffect(() => {
-    if (!open) return;
-    const focusFrame = requestAnimationFrame(() => {
-      panelRef.current
-        ?.querySelector<HTMLButtonElement>('[role="option"][aria-selected="true"]')
-        ?.focus();
-    });
-    const closeOutside = (event: PointerEvent) => {
-      const target = event.target;
-      if (
-        target instanceof Node &&
-        (triggerRef.current?.contains(target) || panelRef.current?.contains(target))
-      ) return;
-      setOpen(false);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      setOpen(false);
-      requestAnimationFrame(() => triggerRef.current?.focus());
-    };
-    const closeOnViewportResize = () => setOpen(false);
-    const closeOnViewportScroll = (event: Event) => {
-      const target = event.target;
-      if (target instanceof Node && panelRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    document.addEventListener("pointerdown", closeOutside, true);
-    document.addEventListener("keydown", closeOnEscape, true);
-    window.addEventListener("resize", closeOnViewportResize);
-    window.addEventListener("scroll", closeOnViewportScroll, true);
-    return () => {
-      cancelAnimationFrame(focusFrame);
-      document.removeEventListener("pointerdown", closeOutside, true);
-      document.removeEventListener("keydown", closeOnEscape, true);
-      window.removeEventListener("resize", closeOnViewportResize);
-      window.removeEventListener("scroll", closeOnViewportScroll, true);
-    };
-  }, [open]);
-
-  const handlePanelKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Tab") {
-      event.preventDefault();
-      setOpen(false);
-      requestAnimationFrame(() => focusNextToolbarControl(event.shiftKey));
-      return;
-    }
-    const items = panelRef.current
-      ? Array.from(panelRef.current.querySelectorAll<HTMLButtonElement>('[role="option"]'))
-      : [];
-    if (!items.length) return;
-    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
-    let nextIndex = currentIndex;
-    if (event.key === "ArrowDown") nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % items.length;
-    else if (event.key === "ArrowUp") nextIndex = currentIndex <= 0 ? items.length - 1 : currentIndex - 1;
-    else if (event.key === "Home") nextIndex = 0;
-    else if (event.key === "End") nextIndex = items.length - 1;
-    else return;
-    event.preventDefault();
-    setActiveIndex(nextIndex);
-    items[nextIndex]?.focus();
-  };
-
-  return (
-    <>
-      <button
-        ref={triggerRef}
-        type="button"
-        className={styles.selectControl}
-        title={`${label}：${currentLabel}`}
-        aria-label={`${label}，当前 ${currentLabel}`}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={open ? panelId : undefined}
-        disabled={unavailable}
-        onClick={() => {
-          if (open) setOpen(false);
-          else openMenu();
-        }}
-        onKeyDown={(event) => {
-          if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-          event.preventDefault();
-          if (open) return;
-          const selectedIndex = Math.max(0, options.indexOf(value));
-          openMenu(event.key === "ArrowUp" ? Math.max(0, selectedIndex) : selectedIndex);
-        }}
-      >
-      {icon && <span className={styles.controlIcon} aria-hidden>{icon}</span>}
-      <span className={styles.controlLabel}>{label}</span>
-        <span className={styles.selectValue}>{options.length ? currentLabel : "模型默认"}</span>
-        <ChevronDown aria-hidden className={`${styles.chevron} ${open ? styles.chevronOpen : ""}`} />
-      </button>
-
-      {open && typeof document !== "undefined" && createPortal(
-        <div
-          id={panelId}
-          ref={panelRef}
-          role="listbox"
-          aria-label={label}
-          className={`${styles.selectMenu} ${dark ? styles.selectMenuDark : ""} ${openUp ? styles.selectMenuOpenUp : ""}`}
-          style={{ left: panelPos.left, top: panelPos.top, width: panelPos.width, maxHeight: panelPos.maxHeight }}
-          onMouseDown={(event) => event.stopPropagation()}
-          onKeyDown={handlePanelKeyDown}
-        >
-          {options.map((option, index) => {
-            const selected = option === value;
-            return (
-              <button
-                key={option}
-                type="button"
-                role="option"
-                aria-selected={selected}
-                tabIndex={index === activeIndex ? 0 : -1}
-                className={`${styles.selectOption} ${selected ? styles.selectOptionActive : ""}`}
-                onFocus={() => setActiveIndex(index)}
-                onClick={() => {
-                  onChange(option);
-                  setOpen(false);
-                  requestAnimationFrame(() => triggerRef.current?.focus());
-                }}
-              >
-                <span>{optionLabel(option)}</span>
-                {selected && <Check aria-hidden className={styles.selectCheck} />}
-              </button>
-            );
-          })}
-        </div>,
-        document.body,
-      )}
-    </>
-  );
-}
 
 export function CanvasQuickStart({
   getViewportCenter,

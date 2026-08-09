@@ -1,8 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { Button, Center, Group, Paper, Stack, Text, TextInput, ThemeIcon, UnstyledButton } from "@mantine/core";
+import { Button, Center, Paper, Stack, Text, ThemeIcon } from "@mantine/core";
 import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-canvas-store";
 import {
   Image as ImageIcon, Upload, Maximize2, Copy,
@@ -10,10 +9,10 @@ import {
   ArrowLeft, LayoutGrid, Layers,
   Images, Orbit, Sun, Table, Brush, FlipHorizontal2,
   Grid2x2, Hash, RotateCcw,
-  ScanFace, UserRound, Mountain, Package, Film, Contrast, PersonStanding,
-  Smile, Crop, RotateCw, Gem, WandSparkles,
+  ScanFace, UserRound, PersonStanding,
+  Smile, Gem, WandSparkles,
 } from "lucide-react";
-import { QualityRatioPicker, parseRatio, RATIO_OPTIONS, QUALITY_OPTIONS, CLARITY_OPTIONS, type QualityRatioValue } from "./quality-ratio-picker";
+import { QualityRatioPicker, parseRatio, type QualityRatioValue } from "./quality-ratio-picker";
 import { BatchCountDropdown } from "./components/batch-count-dropdown";
 import { ImageStylePicker, DEFAULT_STYLE_PRESET, type ImageStylePreset } from "./image-style-picker";
 import { STYLE_REFERENCE_NODE_TYPE } from "./style-reference-node";
@@ -29,7 +28,6 @@ import { resolveModelReferenceLimitBytes } from "@/lib/upload-limits";
 import { sliceImageGrid, transformImageRaster, type RasterTransform } from "@/lib/image-slice";
 import { ossDisplayUrl } from "@/lib/oss-display";
 import { matrixPrice, keyVariants } from "@/lib/price-matrix";
-import { getImageCardSizeForRatio } from "@/lib/image-card-size";
 import { CHARACTER_NODE_TYPE, SCENE_NODE_TYPE, isConceptCanvasNodeType, isVisualReferenceNodeType } from "@/lib/canvas-node-types";
 import { AiModelType } from "@/types/ai";
 import { toast } from "@/components/shared/toast";
@@ -49,428 +47,38 @@ import {
 import { useCanvasNodeFeatures } from "@/stores/use-canvas-node-config-store";
 import { findRightColumnSpot, getIncomingSources, inlineIncomingTextRefs, parseModelConfig, stopEvent as stop, validateReferenceFileSizes } from "./shared/node-utils";
 import { NodeDimsBadge, NodeErrorBadge, NodeGeneratingOverlay, NodeMediaLightbox, NodeShell, NodeUploadingOverlay } from "./shared/node-overlays";
-
-// 自定义宫格选择器的最大行列（N×N 网格）
-const CUSTOM_MAX = 8;
-function fitCardSize(aspect: number, ratio?: string | null) {
-  return getImageCardSizeForRatio(ratio, aspect);
-}
-
-/** 是否为比例选择器里存在的明确比例（排除 auto/空值），用于比例继承判断 */
-function isStandardRatio(r?: string | null): r is string {
-  return !!r && r !== "auto" && RATIO_OPTIONS.some((o) => o.value === r);
-}
-
-// 提示词面板比图片卡片左右各宽出的总量（仅未生成图片时显示），居中伸出让底部控件更宽松
-const PANEL_EXTRA = 80;
-const STYLE_REFERENCE_WIDTH = 320;
-const STYLE_REFERENCE_HEIGHT = 356;
-const STYLE_REFERENCE_GAP = 92;
-const DEFAULT_BATCH_OPTIONS: number[] = [1, 2, 4];
-const DEFAULT_QUALITY_VALUES: string[] = QUALITY_OPTIONS.map((quality) => quality.value);
-const DEFAULT_CLARITY_VALUES: string[] = [...CLARITY_OPTIONS];
-
-function getStyleReferenceTitle(preset: ImageStylePreset): string {
-  return `素材-风格-${preset.shortName || preset.name || "未命名风格"}`;
-}
-
-function getStyleReferencePatch(preset: ImageStylePreset): Partial<CanvasNode> {
-  const displayName = preset.shortName || preset.name;
-  const coverUrl = preset.coverUrl || "";
-  return {
-    type: STYLE_REFERENCE_NODE_TYPE,
-    title: getStyleReferenceTitle(preset),
-    width: STYLE_REFERENCE_WIDTH,
-    height: STYLE_REFERENCE_HEIGHT,
-    contentW: STYLE_REFERENCE_WIDTH,
-    contentH: STYLE_REFERENCE_HEIGHT,
-    status: "success",
-    imageSrc: coverUrl || undefined,
-    stylePresetId: preset.id,
-    stylePresetName: displayName,
-    stylePresetPrompt: preset.prompt,
-    stylePresetModelIds: preset.modelIds,
-    stylePresetModelPrompts: preset.modelPrompts,
-    stylePresetCoverUrl: coverUrl || undefined,
-  };
-}
-
-function getStylePromptForModel(prompt: string, modelPrompts?: Record<string, string>, modelId?: string): string {
-  const modelPrompt = modelId ? modelPrompts?.[modelId]?.trim() : "";
-  return modelPrompt || prompt || "";
-}
-
-// 全景扩图提示词：让模型把当前图扩展为可环绕的 360° 全景（比例跟随源图节点）
-function EditableImageNodeTitle({ node }: { node: CanvasNode }) {
-  const updateNode = useCanvasStore((state) => state.updateNode);
-  const presentation = node.type === CHARACTER_NODE_TYPE
-    ? { fallbackTitle: "角色节点", renameTitle: "双击重命名角色节点", Icon: UserRound }
-    : node.type === SCENE_NODE_TYPE
-      ? { fallbackTitle: "场景节点", renameTitle: "双击重命名场景节点", Icon: Mountain }
-      : { fallbackTitle: "图片节点", renameTitle: "双击重命名图片节点", Icon: ImageIcon };
-  const currentTitle = node.title?.trim() || presentation.fallbackTitle;
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(currentTitle);
-
-  const startEdit = useCallback((event: React.MouseEvent) => {
-    event.stopPropagation();
-    setDraft(currentTitle);
-    setEditing(true);
-  }, [currentTitle]);
-
-  const commit = useCallback(() => {
-    const nextTitle = draft.trim() || presentation.fallbackTitle;
-    if (nextTitle !== node.title) {
-      updateNode(node.id, { title: nextTitle }, true);
-    }
-    setEditing(false);
-  }, [draft, node.id, node.title, presentation.fallbackTitle, updateNode]);
-
-  const cancel = useCallback(() => {
-    setDraft(currentTitle);
-    setEditing(false);
-  }, [currentTitle]);
-
-  if (editing) {
-    return (
-      <Group gap={4} wrap="nowrap" px={4} c="dimmed">
-        <presentation.Icon className="h-3.5 w-3.5 shrink-0" />
-        <TextInput
-          autoFocus
-          value={draft}
-          onFocus={(event) => event.currentTarget.select()}
-          onMouseDown={(event) => event.stopPropagation()}
-          onClick={(event) => event.stopPropagation()}
-          onChange={(event) => setDraft(event.target.value)}
-          onBlur={commit}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              commit();
-            }
-            if (event.key === "Escape") {
-              event.preventDefault();
-              cancel();
-            }
-          }}
-          size="xs"
-          variant="unstyled"
-          styles={{
-            root: { width: 176 },
-            input: {
-              minHeight: 22,
-              height: 22,
-              paddingInline: 6,
-              border: "1px solid var(--mantine-color-gray-4)",
-              borderRadius: 5,
-              background: "var(--mantine-color-white)",
-              fontSize: 12,
-              fontWeight: 500,
-              lineHeight: "20px",
-            },
-          }}
-        />
-      </Group>
-    );
-  }
-
-  return (
-    <Group gap={4} wrap="nowrap" px={4} c="dimmed">
-      <presentation.Icon className="h-3.5 w-3.5 shrink-0" />
-      <UnstyledButton
-        onMouseDown={(event) => event.stopPropagation()}
-        onDoubleClick={startEdit}
-        title={presentation.renameTitle}
-        px={4}
-        py={2}
-        style={{ maxWidth: 180, borderRadius: 5 }}
-      >
-        <Text size="12px" fw={500} truncate c="dimmed">
-          {currentTitle}
-        </Text>
-      </UnstyledButton>
-    </Group>
-  );
-}
-const panoramaPrompt = (ratio: string) =>
-  `将这张图扩展生成 360° 环绕全景图（equirectangular panorama，宽高比 ${ratio}）。必须让画面最左边缘与最右边缘无缝闭合，纹理、光照、颜色和透视连续，不能出现垂直拼接线、色块断层或重复硬边。向四周自然延展场景，保持主体、风格与光照一致，适合球面环绕观看。`;
-
-const MULTI_ANGLE_DEFAULT = { yaw: -28, pitch: -8, zoom: 0, wideLens: false };
-const ANGLE_CUBE = { w: 164, h: 92, d: 92 };
-const MULTI_ANGLE_PRESETS = [
-  { label: "自定义", ...MULTI_ANGLE_DEFAULT },
-  { label: "鱼眼视角", yaw: -42, pitch: 6, zoom: -12, wideLens: true },
-  { label: "倾斜视角", yaw: -36, pitch: -22, zoom: 8, wideLens: false },
-  { label: "正面俯拍", yaw: 0, pitch: -32, zoom: 4, wideLens: false },
-  { label: "正面仰拍", yaw: 0, pitch: 24, zoom: 6, wideLens: false },
-  { label: "全景俯拍", yaw: -54, pitch: -36, zoom: -8, wideLens: true },
-];
-
-// ===== 打光：光源方向 + 色温/强度 + 预设方案，组重打光提示词走图生图 =====
-const LIGHT_DIRECTIONS = [
-  { value: "left", label: "左侧", text: "主光从画面左侧打来，右侧留出自然阴影" },
-  { value: "front", label: "正面", text: "主光从正面均匀照亮主体" },
-  { value: "right", label: "右侧", text: "主光从画面右侧打来，左侧留出自然阴影" },
-  { value: "top", label: "顶光", text: "主光从上方打下，形成顶光" },
-  { value: "back", label: "逆光", text: "光源位于主体后方，形成逆光轮廓" },
-];
-const LIGHT_DEFAULT = { direction: "front", temp: 0, intensity: 0 };
-const LIGHT_PRESETS = [
-  { label: "自定义", ...LIGHT_DEFAULT, desc: "" },
-  { label: "黄金时刻", direction: "left", temp: 35, intensity: 10, desc: "傍晚黄金时刻的低角度阳光，暖金色调，拉出细长柔和的影子" },
-  { label: "窗边柔光", direction: "left", temp: 10, intensity: -25, desc: "大窗漫射进来的柔和自然光，明暗过渡细腻通透" },
-  { label: "摄影棚", direction: "front", temp: 0, intensity: 15, desc: "专业摄影棚三点布光，主体受光均匀，背景干净" },
-  { label: "霓虹夜景", direction: "right", temp: -35, intensity: 20, desc: "夜晚霓虹灯氛围，冷暖对比的城市夜色光效" },
-  { label: "剪影逆光", direction: "back", temp: 10, intensity: 35, desc: "强烈逆光勾出主体轮廓光，主体偏暗接近剪影" },
-];
-
-// ===== 九宫格：预设生成模式（多机位/分镜/设定图等），以源图为参考走图生图，
-// 一条工程化提示词产出一张排版好的宫格/设定图。ratio 缺省沿用源图画幅
-//（N×N 等比宫格整图画幅 = 单格画幅）；三视图/设定图类固定横幅排版。=====
-const GRID_GEN_PRESETS: { label: string; icon: typeof LayoutGrid; ratio?: string; prompt: string }[] = [
-  {
-    label: "多机位九宫格",
-    icon: LayoutGrid,
-    prompt:
-      "将参考图的主体生成一张 3×3 九宫格图片：九个格子是同一主体、同一场景在九个不同机位与景别下的画面——" +
-      "特写、近景、中景、全景、低角度仰拍、高角度俯拍、正侧面、背面、四分之三侧。" +
-      "必须保持主体身份、服饰/材质、色调、光照与画风完全一致；格子之间用细分隔线整齐排布，每格构图完整独立。",
-  },
-  {
-    label: "剧情推演四宫格",
-    icon: Grid2x2,
-    prompt:
-      "以参考图为第一格起点，生成一张 2×2 四宫格连续剧情分镜：四个画面按时间顺序自然推进一段合理的短剧情，" +
-      "镜头与动作前后衔接流畅。保持主体身份与画风一致，光照与场景连贯；格子间用细分隔线排布，阅读顺序从左到右、从上到下。",
-  },
-  {
-    label: "角色脸部三视图",
-    icon: ScanFace,
-    ratio: "16:9",
-    prompt:
-      "生成参考图角色脸部的三视图，在一张图中从左到右横向排列：正面、四分之三侧面、正侧面。" +
-      "三个头像的五官、发型、肤色、神态严格一致，比例统一、视线水平；干净纯色浅背景，角色设定图排版风格，画风与参考图一致。",
-  },
-  {
-    label: "角色设定图",
-    icon: UserRound,
-    ratio: "16:9",
-    prompt:
-      "把参考图角色生成一张完整的角色设定图（character sheet）：包含全身正面、侧面、背面三视图，" +
-      "头部特写，2~3 个表情小图，以及服饰/道具细节放大。白底设定图排版，标注区留白干净，" +
-      "所有视图的身份、体型比例、服饰细节与配色严格一致，画风与参考图一致。",
-  },
-  {
-    label: "场景设定图",
-    icon: Mountain,
-    ratio: "16:9",
-    prompt:
-      "基于参考图生成一张场景美术设定图：主视角大图为核心，周围排布同一场景的不同视角小图与关键道具/结构的细节放大图，" +
-      "可附白天与夜晚两种光照的小图对比。概念设定图排版，构造与风格与参考图严格一致，整体干净专业。",
-  },
-  {
-    label: "产品设定图",
-    icon: Package,
-    ratio: "16:9",
-    prompt:
-      "把参考图中的产品生成一张商业产品设定图：包含正面、侧面、背面、俯视多角度视图，外加材质与细节特写放大图，" +
-      "干净浅色背景、柔和摄影棚光。产品的造型、材质、配色与参考图严格一致，商业渲染排版风格。",
-  },
-  {
-    label: "25宫格连贯分镜",
-    icon: Film,
-    prompt:
-      "以参考图为起点生成一张 5×5 二十五宫格连贯分镜：二十五个画面是同一主体的连续镜头序列，" +
-      "按从左到右、从上到下的顺序推进剧情，景别与机位有节奏地变化（远近交替、角度变化）。" +
-      "主体身份与画风全程一致，光照与场景连贯；格子间用细分隔线整齐排布。",
-  },
-  {
-    label: "电影级光影校正",
-    icon: Contrast,
-    prompt:
-      "对参考图进行电影级调色与光影校正：优化曝光与对比度、平衡色彩、增加自然的高光层次与柔和阴影，" +
-      "赋予电影胶片质感的色调与氛围。严格保持画面内容、主体与构图不变，只提升光影与色彩品质。",
-  },
-];
-
-const SUBJECT_TURNAROUND_PROMPT = [
-  "基于参考图中的核心主体生成一张专业三视图设定图，在同一张图中从左到右横向排列：正面、正侧面、背面。",
-  "如果主体是人物，必须使用全身视图，三个视图身高比例与脚底基线严格对齐，身份、体型、五官、发型、服饰、饰品、配色和材质细节完全一致；如果主体是产品或物体，则保持结构、尺度、材质与标识细节一致。",
-  "使用干净纯色浅背景和标准正交设定图排版，只改变观察方向，不增加文字、水印、额外人物或无关物体。",
-].join(" ");
-
-const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
-const COMMON_RATIOS = [
-  { label: "1:1", value: 1 },
-  { label: "4:3", value: 4 / 3 },
-  { label: "3:4", value: 3 / 4 },
-  { label: "16:9", value: 16 / 9 },
-  { label: "9:16", value: 9 / 16 },
-  { label: "3:2", value: 3 / 2 },
-  { label: "2:3", value: 2 / 3 },
-  { label: "2:1", value: 2 },
-];
-
-const closestRatioLabel = (aspect: number) =>
-  COMMON_RATIOS.reduce((best, item) => (Math.abs(item.value - aspect) < Math.abs(best.value - aspect) ? item : best), COMMON_RATIOS[0]).label;
-
-const CROP_OPTIONS: { ratio: string; aspect: number }[] = [
-  { ratio: "1:1", aspect: 1 },
-  { ratio: "3:4", aspect: 3 / 4 },
-  { ratio: "4:3", aspect: 4 / 3 },
-  { ratio: "9:16", aspect: 9 / 16 },
-  { ratio: "16:9", aspect: 16 / 9 },
-];
-
-const ROTATE_OPTIONS: { label: string; degrees: -90 | 90 | 180 }[] = [
-  { label: "向左旋转 90°", degrees: -90 },
-  { label: "向右旋转 90°", degrees: 90 },
-  { label: "旋转 180°", degrees: 180 },
-];
-
-function resolvePresetRatio(preferred: readonly string[], configured?: readonly string[]) {
-  if (!configured?.length) return preferred[0];
-  return preferred.find((ratio) => configured.includes(ratio)) ?? configured[0];
-}
-
-const PORTRAIT_PANEL_FEATURES = {
-  makeup: "image.makeupAdjust",
-  expression: "image.expressionAdjust",
-  texture: "image.portraitTexture",
-} as const;
-
-type LocalTransformKind = "mirror" | "crop" | "rotate";
-
-function swapRatio(ratio?: string | null): string | undefined {
-  if (!ratio) return undefined;
-  const match = ratio.match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/);
-  return match ? `${match[2]}:${match[1]}` : undefined;
-}
-
-function ImageTransformMenu({
-  mode,
-  busy,
-  onCrop,
-  onRotate,
-}: {
-  mode: "crop" | "rotate";
-  busy: boolean;
-  onCrop?: (ratio: string, aspect: number) => void;
-  onRotate?: (degrees: -90 | 90 | 180) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ left: number; top: number; up: boolean } | null>(null);
-  const isCrop = mode === "crop";
-  const Icon = isCrop ? Crop : RotateCw;
-
-  const close = useCallback((refocus = true) => {
-    setOpen(false);
-    if (refocus) triggerRef.current?.focus();
-  }, []);
-
-  const pickCrop = (ratio: string, aspect: number) => {
-    close();
-    onCrop?.(ratio, aspect);
-  };
-
-  const pickRotate = (degrees: -90 | 90 | 180) => {
-    close();
-    onRotate?.(degrees);
-  };
-
-  // 菜单 portal 到 body：打开时按触发器 rect 计算 fixed 定位（脱离画布 transform 层，下方空间不足上翻）
-  useEffect(() => {
-    if (!open) return;
-    const rect = triggerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const menuWidth = 160;
-    const estHeight = (isCrop ? 5 : 3) * 36 + 12;
-    const below = window.innerHeight - rect.bottom;
-    const up = below < estHeight && rect.top > below;
-    setPos({ left: Math.max(8, rect.right - menuWidth), top: up ? rect.top : rect.bottom, up });
-  }, [open, isCrop]);
-
-  // Esc / 外部点击关闭（外部点击关闭时不把焦点拉回触发器）
-  useEffect(() => {
-    if (!open) return;
-    const onOutside = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (menuRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
-      close(false);
-    };
-    const onEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
-    };
-    document.addEventListener("pointerdown", onOutside);
-    document.addEventListener("keydown", onEscape);
-    return () => {
-      document.removeEventListener("pointerdown", onOutside);
-      document.removeEventListener("keydown", onEscape);
-    };
-  }, [open, close]);
-
-  return (
-    <>
-      <button
-        ref={triggerRef}
-        type="button"
-        onMouseDown={stop}
-        onClick={(event) => {
-          stop(event);
-          setOpen((current) => !current);
-        }}
-        disabled={busy}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        className={`flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-55 ${open ? "bg-neutral-100 dark:bg-neutral-800" : "hover:bg-neutral-100 dark:hover:bg-neutral-800"}`}
-      >
-        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Icon className="h-4 w-4" />}
-        {isCrop ? "裁剪" : "旋转"}
-      </button>
-      {open && pos
-        ? createPortal(
-            <div
-              ref={menuRef}
-              role="menu"
-              className="fixed z-[90] w-40 rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-lg"
-              style={{
-                left: pos.left,
-                ...(pos.up ? { bottom: window.innerHeight - pos.top + 4 } : { top: pos.top + 4 }),
-              }}
-            >
-              {isCrop
-                ? CROP_OPTIONS.map(({ ratio, aspect }) => (
-                    <button
-                      type="button"
-                      role="menuitem"
-                      key={ratio}
-                      onClick={() => pickCrop(ratio, aspect)}
-                      className="flex h-9 w-full items-center justify-between rounded-md px-2.5 text-[13px] text-popover-foreground transition-colors hover:bg-accent"
-                    >
-                      <span>裁剪为 {ratio}</span>
-                      <span className="text-[11px] text-muted-foreground">居中</span>
-                    </button>
-                  ))
-                : ROTATE_OPTIONS.map(({ label, degrees }) => (
-                    <button
-                      type="button"
-                      role="menuitem"
-                      key={degrees}
-                      onClick={() => pickRotate(degrees)}
-                      className="flex h-9 w-full items-center rounded-md px-2.5 text-[13px] text-popover-foreground transition-colors hover:bg-accent"
-                    >
-                      {label}
-                    </button>
-                  ))}
-            </div>,
-            document.body,
-          )
-        : null}
-    </>
-  );
-}
+import { EditableImageNodeTitle } from "@/features/canvas/presentation/nodes/image/editable-image-node-title";
+import { ImageTransformMenu } from "@/features/canvas/presentation/nodes/image/image-transform-menu";
+import {
+  ANGLE_CUBE,
+  CUSTOM_MAX,
+  DEFAULT_BATCH_OPTIONS,
+  DEFAULT_CLARITY_VALUES,
+  DEFAULT_QUALITY_VALUES,
+  GRID_GEN_PRESETS,
+  LIGHT_DEFAULT,
+  LIGHT_DIRECTIONS,
+  LIGHT_PRESETS,
+  MULTI_ANGLE_DEFAULT,
+  MULTI_ANGLE_PRESETS,
+  PANEL_EXTRA,
+  PORTRAIT_PANEL_FEATURES,
+  STYLE_REFERENCE_GAP,
+  STYLE_REFERENCE_HEIGHT,
+  STYLE_REFERENCE_WIDTH,
+  SUBJECT_TURNAROUND_PROMPT,
+  clamp,
+  closestRatioLabel,
+  fitCardSize,
+  getStylePromptForModel,
+  getStyleReferencePatch,
+  getStyleReferenceTitle,
+  isStandardRatio,
+  panoramaPrompt,
+  resolvePresetRatio,
+  swapRatio,
+  type LocalTransformKind,
+} from "@/features/canvas/presentation/nodes/image/image-node-config";
 
 // memo 化：仅当自身 props（node / 选中 / 拖拽 / 连接目标）变化时重渲染，
 // 画布平移、其他节点拖动都不会触发本节点重渲染。

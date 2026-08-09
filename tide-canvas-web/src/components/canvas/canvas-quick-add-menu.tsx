@@ -21,21 +21,21 @@ export function CanvasQuickAddMenu({ menu, onClose, onSelect }: Props) {
     const focusFrame = requestAnimationFrame(() => {
       ref.current?.querySelector<HTMLButtonElement>("button")?.focus();
     });
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    const onDown = (event: PointerEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) onClose();
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     // 下一帧再绑定，避免开启它的这次交互立即把它关掉
     const t = setTimeout(() => {
-      document.addEventListener("mousedown", onDown);
+      document.addEventListener("pointerdown", onDown);
       document.addEventListener("keydown", onKey);
     }, 0);
     return () => {
       cancelAnimationFrame(focusFrame);
       clearTimeout(t);
-      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("pointerdown", onDown);
       document.removeEventListener("keydown", onKey);
     };
   }, [menu, onClose]);
