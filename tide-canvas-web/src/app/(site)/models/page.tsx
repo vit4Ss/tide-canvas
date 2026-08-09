@@ -86,8 +86,10 @@ export default function ModelsPage() {
   // doesn't refetch on every keystroke. Public read → no session.
   useEffect(() => {
     let alive = true;
-    setLoading(true);
-    const t = window.setTimeout(async () => {
+    const loadingTask = window.setTimeout(() => {
+      if (alive) setLoading(true);
+    }, 0);
+    const requestTask = window.setTimeout(async () => {
       const res = await marketApi.list({
         base: baseSlug,
         sort,
@@ -107,7 +109,8 @@ export default function ModelsPage() {
     }, q ? 280 : 0);
     return () => {
       alive = false;
-      window.clearTimeout(t);
+      window.clearTimeout(loadingTask);
+      window.clearTimeout(requestTask);
     };
   }, [baseSlug, sort, q]);
 

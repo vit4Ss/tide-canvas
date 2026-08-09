@@ -42,23 +42,26 @@ export default function WorkModal({ postId, onClose, onPrev, onNext }: WorkModal
   // fetch the detail whenever the target post changes. 翻页时保留上一件的
   // detail 以免整屏闪白 —— 加载新详情期间只叠加载指示。
   useEffect(() => {
-    if (!postId) {
-      setDetail(null);
-      return;
-    }
     let cancelled = false;
-    setLoading(true);
-    communityApi.get(postId).then((res) => {
-      if (cancelled) return;
-      setLoading(false);
-      if (res.success && res.data) setDetail(res.data);
-      else {
-        toast.error("作品详情加载失败");
-        onCloseRef.current();
+    const task = window.setTimeout(() => {
+      if (!postId) {
+        setDetail(null);
+        return;
       }
-    });
+      setLoading(true);
+      void communityApi.get(postId).then((res) => {
+        if (cancelled) return;
+        setLoading(false);
+        if (res.success && res.data) setDetail(res.data);
+        else {
+          toast.error("作品详情加载失败");
+          onCloseRef.current();
+        }
+      });
+    }, 0);
     return () => {
       cancelled = true;
+      window.clearTimeout(task);
     };
   }, [postId]);
 

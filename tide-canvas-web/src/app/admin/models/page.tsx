@@ -438,16 +438,25 @@ function TypeOrderModal({ open, onClose }: { open: boolean; onClose: () => void 
 
   useEffect(() => {
     if (!open) return;
-    setTypes(null);
-    (async () => {
-      try {
-        await ensureSession();
-        const res = await adminModelsApi.getTypeOrder();
-        setTypes(res.success && res.data?.types?.length ? res.data.types : [...DEFAULT_TYPE_ORDER]);
-      } catch {
-        setTypes([...DEFAULT_TYPE_ORDER]);
-      }
-    })();
+    let cancelled = false;
+    const task = window.setTimeout(() => {
+      setTypes(null);
+      void (async () => {
+        try {
+          await ensureSession();
+          const res = await adminModelsApi.getTypeOrder();
+          if (!cancelled) {
+            setTypes(res.success && res.data?.types?.length ? res.data.types : [...DEFAULT_TYPE_ORDER]);
+          }
+        } catch {
+          if (!cancelled) setTypes([...DEFAULT_TYPE_ORDER]);
+        }
+      })();
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(task);
+    };
   }, [open, ensureSession]);
 
   const move = (i: number, d: -1 | 1) =>

@@ -25,18 +25,21 @@ export default function WorkDetailPage() {
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
-    setState("loading");
-    communityApi.get(id).then((res) => {
-      if (cancelled) return;
-      if (res.success && res.data) {
-        setDetail(res.data);
-        setState("ok");
-      } else {
-        setState("error");
-      }
-    });
+    const task = window.setTimeout(() => {
+      setState("loading");
+      void communityApi.get(id).then((res) => {
+        if (cancelled) return;
+        if (res.success && res.data) {
+          setDetail(res.data);
+          setState("ok");
+        } else {
+          setState("error");
+        }
+      });
+    }, 0);
     return () => {
       cancelled = true;
+      window.clearTimeout(task);
     };
   }, [id]);
 

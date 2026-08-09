@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // 设计参考稿不是运行时代码；保留原样，避免其原型写法污染生产代码门禁。
+    "design-ref/**",
   ]),
 ]);
 

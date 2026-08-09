@@ -133,8 +133,11 @@ export default function SiteNav() {
 
   // close menus on navigation
   useEffect(() => {
-    setOpen(false);
-    setMenuOpen(false);
+    const task = window.setTimeout(() => {
+      setOpen(false);
+      setMenuOpen(false);
+    }, 0);
+    return () => window.clearTimeout(task);
   }, [pathname]);
 
   // mobile drawer: close on Escape

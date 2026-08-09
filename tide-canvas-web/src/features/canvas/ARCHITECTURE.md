@@ -148,4 +148,3 @@ interface CanvasCollaborationPort {
 - 注释解释约束、时序和风险，不复述代码。
 - 组件不直接解析持久化 JSON，不直接调用监控 SDK，不持有第二份领域状态。
 - 合并前执行 `npm run typecheck`、`npm run lint`、`npm run build`，并完成手动验收清单。
-

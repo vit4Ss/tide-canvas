@@ -115,6 +115,7 @@ export function ClipPicker({
   const [fetched, setFetched] = useState<ClipOption[] | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadedPage, setLoadedPage] = useState(0);
   const pageRef = useRef(0);
   const fetchSeqRef = useRef(0);
   // 检索:歌名客户端过滤。后端不支持按标题搜(歌名在 resultMeta JSON 里),
@@ -131,6 +132,7 @@ export function ClipPicker({
     const { options: opts, hasMore: more } = await fetchClipOptionsPage(page);
     if (seq !== fetchSeqRef.current) return;
     pageRef.current = page;
+    setLoadedPage(page);
     setFetched((prev) => {
       const base = prev ?? [];
       return [...base, ...opts.filter((o) => !base.some((b) => b.clipId === o.clipId))];
@@ -147,12 +149,16 @@ export function ClipPicker({
   useEffect(() => {
     if (!open || !selfFetch) return;
     const seq = ++fetchSeqRef.current;
-    pageRef.current = 0;
-    setFetched(null);
-    setHasMore(false);
-    setLoadingMore(false);
-    setQuery("");
-    void loadPage(1, seq);
+    const task = window.setTimeout(() => {
+      pageRef.current = 0;
+      setLoadedPage(0);
+      setFetched(null);
+      setHasMore(false);
+      setLoadingMore(false);
+      setQuery("");
+      void loadPage(1, seq);
+    }, 0);
+    return () => window.clearTimeout(task);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, selfFetch]);
 
@@ -182,7 +188,7 @@ export function ClipPicker({
           )
         : list;
   // 检索覆盖不到的历史:有关键字且后端还有下一页且未到上限,后台继续拉
-  const searchExhausted = selfFetch && q !== "" && (!hasMore || pageRef.current >= SEARCH_PAGE_CAP);
+  const searchExhausted = selfFetch && q !== "" && (!hasMore || loadedPage >= SEARCH_PAGE_CAP);
 
   // 滚动到底自动加载(无关键字时);IntersectionObserver 命中列表底部哨兵即翻页
   useEffect(() => {

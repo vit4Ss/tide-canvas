@@ -91,7 +91,7 @@ export default function WorkDetailBody({
   };
 
   /* 作为垫图 / 生成视频：与资产库同一 studio_use_asset 交接 */
-  const useAsAsset = (op: "pad" | "video") => {
+  const sendAssetToStudio = (op: "pad" | "video") => {
     if (!cover) return;
     try {
       sessionStorage.setItem("studio_use_asset", JSON.stringify({ url: cover, op }));
@@ -109,7 +109,6 @@ export default function WorkDetailBody({
       {/* ── 舞台 ── */}
       <div className="wv-stage">
         {isVid && detail.videoUrl ? (
-          // eslint-disable-next-line jsx-a11y/media-has-caption
           <video src={detail.videoUrl} poster={cover || undefined} controls playsInline preload="metadata" />
         ) : cover ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -221,10 +220,10 @@ export default function WorkDetailBody({
           </button>
           {!isVid && cover && (
             <div className="wv-sub">
-              <button type="button" className="wv-btn ghost" onClick={() => useAsAsset("pad")}>
+              <button type="button" className="wv-btn ghost" onClick={() => sendAssetToStudio("pad")}>
                 作为垫图
               </button>
-              <button type="button" className="wv-btn ghost" onClick={() => useAsAsset("video")}>
+              <button type="button" className="wv-btn ghost" onClick={() => sendAssetToStudio("video")}>
                 生成视频
               </button>
             </div>

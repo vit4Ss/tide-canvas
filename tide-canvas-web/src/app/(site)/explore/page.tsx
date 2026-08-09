@@ -123,7 +123,8 @@ export default function ExplorePage() {
   }, [queryFor]);
 
   useEffect(() => {
-    reload();
+    const task = window.setTimeout(() => void reload(), 0);
+    return () => window.clearTimeout(task);
   }, [reload]);
 
   // append the next page (infinite scroll). Bails if a filter change superseded

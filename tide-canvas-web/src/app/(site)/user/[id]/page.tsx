@@ -42,19 +42,22 @@ export default function AuthorPage() {
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
-    setState("loading");
-    communityApi.authorProfile(id).then((res) => {
-      if (cancelled) return;
-      if (res.success && res.data) {
-        setProfile(res.data);
-        setFollowing(res.data.isFollowing);
-        setState("ok");
-      } else {
-        setState("error");
-      }
-    });
+    const task = window.setTimeout(() => {
+      setState("loading");
+      void communityApi.authorProfile(id).then((res) => {
+        if (cancelled) return;
+        if (res.success && res.data) {
+          setProfile(res.data);
+          setFollowing(res.data.isFollowing);
+          setState("ok");
+        } else {
+          setState("error");
+        }
+      });
+    }, 0);
     return () => {
       cancelled = true;
+      window.clearTimeout(task);
     };
   }, [id]);
 
@@ -88,8 +91,11 @@ export default function AuthorPage() {
 
   useEffect(() => {
     worksReq.current++; // invalidate any in-flight page from the previous author
-    setPosts([]);
-    loadPage(1);
+    const task = window.setTimeout(() => {
+      setPosts([]);
+      void loadPage(1);
+    }, 0);
+    return () => window.clearTimeout(task);
   }, [loadPage]);
 
   const toggleFollow = useCallback(async () => {

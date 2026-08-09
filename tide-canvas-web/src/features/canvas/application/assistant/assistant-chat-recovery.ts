@@ -2,7 +2,6 @@ export interface AssistantChatHistoryItem {
   role: "user" | "assistant";
   content: string;
 }
-
 export interface AssistantChatAttachmentSnapshot {
   name: string;
   url: string;
@@ -125,4 +124,3 @@ export function writeVerifiedAssistantRecoverySnapshot(
     return false;
   }
 }
-

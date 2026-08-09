@@ -99,7 +99,8 @@ export default function InspirePage() {
   }, [sort, keyword]);
 
   useEffect(() => {
-    load();
+    const task = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(task);
   }, [load]);
 
   useReveal([sort, theme, debouncedQ, loading]);

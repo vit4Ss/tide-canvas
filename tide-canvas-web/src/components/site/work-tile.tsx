@@ -9,7 +9,7 @@
    ========================================================================== */
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { communityApi } from "@/lib/community-api";
 import type { PostVO } from "@/types/community";
 import { mesh, type MeshHues } from "@/lib/mesh";
@@ -70,13 +70,22 @@ export default function WorkTile({
   onRemix: () => void;
   onToggleLike: () => Promise<boolean>;
 }) {
-  const [liked, setLiked] = useState(art.liked);
-  const [likes, setLikes] = useState(art.likes);
+  const [likeOverride, setLikeOverride] = useState<{
+    artworkId: string;
+    sourceLiked: boolean;
+    sourceLikes: number;
+    liked: boolean;
+    likes: number;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // 父级更新该作品时同步本地点赞态（如在详情弹窗里点了赞）。
-  useEffect(() => setLiked(art.liked), [art.liked]);
-  useEffect(() => setLikes(art.likes), [art.likes]);
+  // 乐观值只在其来源 props 仍有效时生效；父级刷新点赞数据后自动回落到新 props。
+  const hasCurrentOverride =
+    likeOverride?.artworkId === art.id &&
+    likeOverride.sourceLiked === art.liked &&
+    likeOverride.sourceLikes === art.likes;
+  const liked = hasCurrentOverride ? likeOverride.liked : art.liked;
+  const likes = hasCurrentOverride ? likeOverride.likes : art.likes;
 
   const cover = art.coverUrl
     ? `center / cover no-repeat url("${art.coverUrl}")`
@@ -87,8 +96,16 @@ export default function WorkTile({
     if (busy) return;
     setBusy(true);
     const next = !liked;
-    setLiked(next);
-    setLikes((n) => n + (next ? 1 : -1));
+    const setOptimisticLike = (nextLiked: boolean, nextLikes: number) => {
+      setLikeOverride({
+        artworkId: art.id,
+        sourceLiked: art.liked,
+        sourceLikes: art.likes,
+        liked: nextLiked,
+        likes: nextLikes,
+      });
+    };
+    setOptimisticLike(next, likes + (next ? 1 : -1));
     try {
       const ok = await onToggleLike();
       if (!ok) throw new Error("no session");
@@ -96,14 +113,12 @@ export default function WorkTile({
         ? await communityApi.like(art.id)
         : await communityApi.unlike(art.id);
       if (res.success && res.data) {
-        setLiked(res.data.liked);
-        setLikes(res.data.likeCount);
+        setOptimisticLike(res.data.liked, res.data.likeCount);
       } else {
         throw new Error(res.message);
       }
     } catch {
-      setLiked(!next);
-      setLikes((n) => n + (next ? -1 : 1));
+      setLikeOverride(null);
       toast.error("操作失败，请稍后重试");
     } finally {
       setBusy(false);
