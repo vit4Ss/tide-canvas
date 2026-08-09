@@ -24,6 +24,8 @@ export function PromptSection({
   onOptimize,
   onOpenSkillPicker,
   ideaOpts,
+  allowSkills = true,
+  label = "提示词",
 }: {
   prompt: string;
   onPromptChange: (v: string) => void;
@@ -37,11 +39,13 @@ export function PromptSection({
   onOptimize: () => void;
   onOpenSkillPicker: () => void;
   ideaOpts: string[];
+  allowSkills?: boolean;
+  label?: string;
 }) {
   return (
     <>
       <div className="ws-seclabel">
-        提示词{" "}
+        {label}{" "}
         <span className="ws-pcount">
           <b id="pLen">{prompt.length}</b> 字
         </span>
@@ -72,9 +76,11 @@ export function PromptSection({
             <span className="spark">✦</span>{" "}
             {optimizing ? "优化中…" : optCost > 0 ? `AI 优化 · ${optCost} 积分` : "AI 优化"}
           </button>
-          <button className="ws-aiopt" type="button" onClick={onOpenSkillPicker}>
-            <span className="spark">✧</span> {skill ? "更多技能 · 1" : "使用技能"}
-          </button>
+          {allowSkills && (
+            <button className="ws-aiopt" type="button" onClick={onOpenSkillPicker}>
+              <span className="spark">✧</span> {skill ? "更多技能 · 1" : "使用技能"}
+            </button>
+          )}
           {/* 提示词「清空」按钮已按用户要求移除（2026-07-08）：全选删除足够 */}
         </div>
       </div>

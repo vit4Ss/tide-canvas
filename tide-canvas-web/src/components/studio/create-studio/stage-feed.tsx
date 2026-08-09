@@ -61,6 +61,60 @@ function RunPromptText({ prompt, params }: { prompt: string; params?: RunParams 
   );
 }
 
+function ThreeDResultCard({ item }: { item: HistRun["items"][number] }) {
+  const fallbackType = (() => {
+    try {
+      const ext = new URL(item.url || "").pathname.split(".").pop();
+      return ext && ext.length <= 5 ? ext.toLowerCase() : "model";
+    } catch {
+      return "model";
+    }
+  })();
+  const assets = item.assets?.length
+    ? item.assets
+    : item.url
+      ? [{ type: fallbackType, url: item.url }]
+      : [];
+  return (
+    <div className="ws-runimg done three-d">
+      <div className="ws-3d-preview">
+        {item.previewImageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={ossDisplayUrl(item.previewImageUrl, 1280) ?? item.previewImageUrl}
+            alt="3D 模型预览"
+            loading="lazy"
+            onLoad={(event) => restoreOssDisplayImage(event.currentTarget)}
+            onError={(event) => fallbackOssDisplayImage(event.currentTarget, item.previewImageUrl!)}
+          />
+        ) : (
+          <span className="ws-3d-cube" aria-hidden>{SLOT_ICON["3d"]}</span>
+        )}
+        <span className="ws-3d-ready">3D ASSET READY</span>
+      </div>
+      <div className="ws-3d-assets">
+        <div>
+          <strong>{item.title || "3D 模型"}</strong>
+          <span>{assets.length ? `${assets.length} 种可下载格式` : "模型文件正在整理"}</span>
+        </div>
+        <div className="ws-3d-asset-links">
+          {assets.map((asset) => (
+            <a
+              key={`${asset.type}-${asset.url}`}
+              href={asset.url}
+              target="_blank"
+              rel="noreferrer"
+              title={`下载 ${asset.type.toUpperCase()}`}
+            >
+              {asset.type.toUpperCase()} <span>↓</span>
+            </a>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function StageFeed({
   busy,
   runs,
@@ -124,20 +178,29 @@ export function StageFeed({
 
   // download every image of a run (cross-origin URLs fall back to opening a tab).
   const downloadRun = async (r: HistRun) => {
-    const urls = r.items.map((it) => it.url).filter((u): u is string => !!u);
-    if (!urls.length) {
-      toast.info("该作品暂无可下载的图片");
+    const rawFiles = r.type === "3d"
+      ? r.items.flatMap((item) => item.assets?.map((asset) => ({ url: asset.url, ext: asset.type })) ?? (item.url ? [{ url: item.url, ext: "glb" }] : []))
+      : r.items.flatMap((item) => item.url ? [{ url: item.url, ext: "" }] : []);
+    const seen = new Set<string>();
+    const files = rawFiles.filter((file) => {
+      if (seen.has(file.url)) return false;
+      seen.add(file.url);
+      return true;
+    });
+    if (!files.length) {
+      toast.info(r.type === "3d" ? "该作品暂无可下载的模型文件" : "该作品暂无可下载的图片");
       return;
     }
-    for (let i = 0; i < urls.length; i++) {
-      const url = urls[i];
+    for (let i = 0; i < files.length; i++) {
+      const { url, ext } = files[i];
       try {
         const resp = await fetch(url);
         const blob = await resp.blob();
         const obj = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = obj;
-        a.download = `${(r.prompt || "creation").slice(0, 20)}-${i + 1}`;
+        const baseName = (r.prompt || r.model || "creation").slice(0, 20);
+        a.download = `${baseName}-${i + 1}${ext ? `.${ext.toLowerCase()}` : ""}`;
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -146,7 +209,11 @@ export function StageFeed({
         window.open(url, "_blank", "noopener");
       }
     }
-    toast.success(urls.length > 1 ? `已开始下载 ${urls.length} 张图片` : "已开始下载");
+    toast.success(
+      files.length > 1
+        ? `已开始下载 ${files.length} 个${r.type === "3d" ? "模型文件" : "作品"}`
+        : "已开始下载",
+    );
   };
 
   return (
@@ -168,7 +235,7 @@ export function StageFeed({
               <span className="glyph" />
             </div>
             <h2>准备好开始创作了吗？</h2>
-            <p>写下一句提示词，挑个模型与比例 —— 数秒之后，作品就在这里浮现。</p>
+            <p>写下一句提示词或上传参考素材，挑选模型与参数，作品会在这里浮现。</p>
             <div className="ws-empty-tags">
               {(
                 [
@@ -178,6 +245,8 @@ export function StageFeed({
                   { type: "video", tool: "i2v", label: "⤢ 图生视频" },
                   { type: "audio", tool: "t2a", label: "♪ 音乐生成" },
                   { type: "audio", tool: "sfx", label: "≈ 音效生成" },
+                  { type: "3d", tool: "t2_3d", label: "◇ 文生 3D" },
+                  { type: "3d", tool: "i2_3d", label: "▱ 图生 3D" },
                 ] as { type: ArtworkType; tool: ToolKey; label: string }[]
               ).map((t) => (
                 <button
@@ -203,11 +272,11 @@ export function StageFeed({
             {inflightRuns.map((inflight) => {
               const { meta, cells: runCells, progs: runProgs } = inflight;
               return (
-                <div key={inflight.taskId} className={`ws-run inflight${runCells.length <= 1 ? " single" : ""}${meta.kind === "audio" ? " audio" : ""}`}>
+                <div key={inflight.taskId} className={`ws-run inflight${runCells.length <= 1 ? " single" : ""}${meta.kind === "audio" ? " audio" : ""}${meta.kind === "3d" ? " three-d" : ""}`}>
                   <div className="ws-run-head">
                     <span className="ws-run-kind">
                       {SLOT_ICON[meta.kind ?? (meta.isVid ? "video" : "image")]}
-                      {meta.kind === "audio" ? "AI 音乐" : meta.isVid ? "AI 视频" : "AI 图片"}
+                      {meta.kind === "audio" ? "AI 音乐" : meta.kind === "3d" ? "AI 3D" : meta.isVid ? "AI 视频" : "AI 图片"}
                     </span>
                     <span className="ws-run-div" />
                     {meta.model && <span className="ws-run-chip">{meta.model}</span>}
@@ -256,7 +325,7 @@ export function StageFeed({
                 <div className="ws-run-head">
                   <span className="ws-run-kind">
                     {SLOT_ICON[r.type]}
-                    {r.type === "video" ? "AI 视频" : r.type === "audio" ? "AI 音乐" : "AI 图片"}
+                    {r.type === "video" ? "AI 视频" : r.type === "audio" ? "AI 音乐" : r.type === "3d" ? "AI 3D" : "AI 图片"}
                   </span>
                   <span className="ws-run-div" />
                   {r.model && <span className="ws-run-chip">{r.model}</span>}
@@ -283,7 +352,9 @@ export function StageFeed({
                 <div className="ws-run-imgs">
                   {/* 音频：Suno/Udio 式歌曲行列表（封面+歌名+波形+时间），
                       两首纵向成列——不走通用的并排卡片。 */}
-                  {r.type === "audio" ? (
+                  {r.type === "3d" ? (
+                    r.items.map((item) => <ThreeDResultCard key={item.id} item={item} />)
+                  ) : r.type === "audio" ? (
                     <div className="ws-runimg audio songs">
                       {r.items.map((it) => (
                         <SongCard

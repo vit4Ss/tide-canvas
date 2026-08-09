@@ -78,6 +78,29 @@ func TestAudioParamsTopLevelPrompt(t *testing.T) {
 	})
 }
 
+func TestThreeDParamsMapsStudioInput(t *testing.T) {
+	p := (&relayProviderClient{}).threeDParams("hy-3d-3.1", map[string]any{
+		"prompt":       "机械小狗",
+		"enablePbr":    true,
+		"faceCount":    float64(640000),
+		"generateType": "Geometry",
+		"resultFormat": "FBX",
+		"multiViewImages": []any{
+			map[string]any{"viewType": "front", "viewImageUrl": "https://cdn/front.png"},
+			map[string]any{"view_type": "back", "view_image_url": "https://cdn/back.png"},
+		},
+	})
+	if p.Model != "hy-3d-3.1" || p.Prompt != "机械小狗" || !p.EnablePBR || p.FaceCount != 640000 {
+		t.Fatalf("threeDParams = %+v", p)
+	}
+	if p.GenerateType != "Geometry" || p.ResultFormat != "FBX" {
+		t.Fatalf("3D options = %+v", p)
+	}
+	if len(p.MultiViewImages) != 2 || p.MultiViewImages[0].ViewType != "front" || p.MultiViewImages[1].ViewImageURL != "https://cdn/back.png" {
+		t.Fatalf("views = %+v", p.MultiViewImages)
+	}
+}
+
 // 错误分级:输入类映射到具体可操作文案,其余一律系统异常统一口径。
 func TestUserFacingGenError(t *testing.T) {
 	sys := "系统异常，请联系客服"

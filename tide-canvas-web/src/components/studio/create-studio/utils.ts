@@ -21,6 +21,9 @@ import type {
   SlotData,
   SlotDef,
   SlotType,
+  ThreeDAsset,
+  ThreeDViewImage,
+  ThreeDViewType,
   ToolKey,
 } from "./types";
 
@@ -126,18 +129,43 @@ export function paramsFromTask(handler: string, modelName: string, input: unknow
   // 参考素材：任务 input 里持久化了 imageList/sourceImage 等，取回来恢复上传槽位。
   const imageRefs = strArr(inp.imageList);
   if (!imageRefs.length && str(inp.sourceImage)) imageRefs.push(str(inp.sourceImage));
+  if (!imageRefs.length && str(inp.imageUrl)) imageRefs.push(str(inp.imageUrl));
+  if (!imageRefs.length && str(inp.image_url)) imageRefs.push(str(inp.image_url));
+  const rawViews = Array.isArray(inp.multiViewImages)
+    ? inp.multiViewImages
+    : Array.isArray(inp.multi_view_images)
+      ? inp.multi_view_images
+      : [];
+  const validViews = new Set<ThreeDViewType>([
+    "front", "left", "right", "back", "top", "bottom", "left_front", "right_front",
+  ]);
+  const multiViewImages: ThreeDViewImage[] = rawViews.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const row = item as Record<string, unknown>;
+    const viewType = str(row.viewType) || str(row.view_type);
+    const viewImageUrl = str(row.viewImageUrl) || str(row.view_image_url);
+    return validViews.has(viewType as ThreeDViewType) && viewImageUrl
+      ? [{ viewType: viewType as ThreeDViewType, viewImageUrl }]
+      : [];
+  });
   return {
     prompt: str(inp.prompt),
     model: modelName,
     ...(modelId ? { modelId } : {}),
     // 音频共用 text_to_audio handler，音效模型的历史按名称归回音效页签。
     tool:
-      handler === "text_to_audio" && /sfx|音效/i.test(modelName)
+      handler === "generate_3d"
+        ? multiViewImages.length
+          ? "mv2_3d"
+          : imageRefs.length
+            ? "i2_3d"
+            : "t2_3d"
+      : handler === "text_to_audio" && /sfx|音效/i.test(modelName)
         ? "sfx"
         : (HIST_HANDLER_TOOL[handler] ?? "t2i"),
     curType: type,
     // 音频无画面比例——留空，否则历史里的音频卡会顶着一枚假 "1:1" 徽标。
-    ratio: type === "audio" ? "" : str(inp.aspectRatio) || str(inp.aspect_ratio) || str(inp.ratio) || "1:1",
+    ratio: type === "audio" || type === "3d" ? "" : str(inp.aspectRatio) || str(inp.aspect_ratio) || str(inp.ratio) || "1:1",
     imgRes: type === "image" ? reso || "2K" : "2K",
     res: type === "video" ? reso || "1080p" : "1080p",
     dur: str(inp.duration) || "5s",
@@ -149,6 +177,19 @@ export function paramsFromTask(handler: string, modelName: string, input: unknow
     lastFrame: str(inp.lastFrame) || undefined,
     videoRefs: strArr(inp.videoReferences),
     audioRefs: strArr(inp.audioReferences),
+    multiViewImages,
+    enablePbr: inp.enablePbr === true || inp.enable_pbr === true || undefined,
+    faceCount: num(inp.faceCount) || num(inp.face_count) || undefined,
+    generateType:
+      str(inp.generateType) === "Geometry" || str(inp.generate_type) === "Geometry"
+        ? "Geometry"
+        : type === "3d"
+          ? "Normal"
+          : undefined,
+    resultFormat: (() => {
+      const value = (str(inp.resultFormat) || str(inp.result_format)).toUpperCase();
+      return value === "STL" || value === "USDZ" || value === "FBX" ? value : undefined;
+    })(),
     lyrics: str(inp.lyrics) || undefined,
     songStyle: str(inp.tags) || undefined,
     songTitle: str(inp.title) || undefined,
@@ -190,6 +231,22 @@ export function tracksFromMeta(meta: unknown): MetaTrack[] {
       coverUrl: s(o.coverUrl),
       duration: typeof o.duration === "number" && Number.isFinite(o.duration) ? o.duration : 0,
     };
+  });
+}
+
+/** 3D result metadata is retained as one card with several downloadable formats. */
+export function threeDAssetsFromMeta(meta: unknown): ThreeDAsset[] {
+  const raw = (meta as { assets?: unknown })?.assets;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const row = item as Record<string, unknown>;
+    const value = (key: string) => typeof row[key] === "string" ? (row[key] as string).trim() : "";
+    const url = value("url");
+    if (!isHttpUrl(url)) return [];
+    const type = (value("type") || "model").toLowerCase();
+    const previewImageUrl = value("previewImageUrl") || value("preview_image_url");
+    return [{ type, url, ...(isHttpUrl(previewImageUrl) ? { previewImageUrl } : {}) }];
   });
 }
 
@@ -278,7 +335,9 @@ export function histItemsFromTasks(records: AiTaskVO[]): HistItem[] {
         : t.resultMeta;
     const rawUrls = (meta as { urls?: unknown })?.urls;
     if (Array.isArray(rawUrls)) urls = rawUrls.filter(isHttpUrl);
+    const assets = threeDAssetsFromMeta(meta);
     if (!urls.length && isHttpUrl(t.resultUrl)) urls = [t.resultUrl];
+    if (!urls.length && assets.length) urls = assets.map((asset) => asset.url);
     if (!urls.length) continue; // skip failed / urlless tasks (real data only)
 
     const type = HIST_HANDLER_TYPE[t.handler] ?? "image";
@@ -297,6 +356,27 @@ export function histItemsFromTasks(records: AiTaskVO[]): HistItem[] {
     const title = params.prompt
       ? params.prompt.slice(0, 14) + (params.prompt.length > 14 ? "…" : "")
       : t.modelName || "我的创作";
+    if (type === "3d") {
+      const primary = isHttpUrl(t.resultUrl)
+        ? t.resultUrl
+        : assets.find((asset) => asset.type === "glb")?.url || assets[0]?.url || urls[0];
+      items.push({
+        id: `task-${t.id}-3d`,
+        run: `task-${t.id}`,
+        ts: t.createTime,
+        ratio: "",
+        hues: huesFromId(`${t.id}-3d`),
+        type,
+        title,
+        prompt: params.prompt,
+        model: t.modelName || "",
+        url: primary,
+        assets,
+        previewImageUrl: assets.find((asset) => asset.previewImageUrl)?.previewImageUrl,
+        params,
+      });
+      continue;
+    }
     urls.forEach((url, idx) =>
       items.push({
         id: `task-${t.id}-${idx}`,

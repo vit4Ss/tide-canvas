@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -160,6 +161,77 @@ func TestSubmitAudioSyncKeepsInlineWhenDetailFails(t *testing.T) {
 	}
 	if len(res.URLs) != 1 || res.URLs[0] != "https://cdn/a.mp3" {
 		t.Errorf("URLs = %v, want inline main song kept", res.URLs)
+	}
+}
+
+func TestGenerate3DAsyncPreservesAssetsAndPromotesGLB(t *testing.T) {
+	var submitted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer relay-key" {
+			t.Errorf("Authorization = %q", got)
+		}
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == path3DGenerations:
+			if err := json.NewDecoder(r.Body).Decode(&submitted); err != nil {
+				t.Fatalf("decode submit body: %v", err)
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"id":"task_3d","status":"processing","model":"hy-3d-3.1"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tasks/task_3d":
+			_, _ = w.Write([]byte(`{
+				"id":"task_3d","status":"succeeded","output_url":"https://cdn/dog.glb",
+				"assets":[
+					{"type":"obj","url":"https://cdn/dog.obj","preview_image_url":"https://cdn/dog.png"},
+					{"type":"glb","url":"https://cdn/dog.glb","preview_image_url":"https://cdn/dog.png"}
+				]
+			}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := &Client{baseURL: srv.URL, apiKey: "relay-key", hc: srv.Client()}
+	res, err := c.Generate3D(context.Background(), ThreeDParams{
+		Model:        "hy-3d-3.1",
+		Prompt:       "一只小狗",
+		EnablePBR:    true,
+		FaceCount:    500000,
+		GenerateType: "Normal",
+	})
+	if err != nil {
+		t.Fatalf("Generate3D: %v", err)
+	}
+	if len(res.URLs) != 2 || res.URLs[0] != "https://cdn/dog.glb" || res.URLs[1] != "https://cdn/dog.obj" {
+		t.Fatalf("URLs = %v, want GLB promoted before OBJ", res.URLs)
+	}
+	if len(res.Assets) != 2 || res.Assets[0].PreviewImageURL != "https://cdn/dog.png" {
+		t.Fatalf("Assets = %+v", res.Assets)
+	}
+	if submitted["model"] != "hy-3d-3.1" || submitted["prompt"] != "一只小狗" || submitted["enable_pbr"] != true {
+		t.Fatalf("submit body = %#v", submitted)
+	}
+	if got := int(submitted["face_count"].(float64)); got != 500000 {
+		t.Fatalf("face_count = %d", got)
+	}
+}
+
+func TestGenerate3DRejectsConflictingAndDuplicateInputs(t *testing.T) {
+	c := &Client{}
+	if _, err := c.Generate3D(context.Background(), ThreeDParams{
+		Model: "hy-3d-3.1", Prompt: "dog", ImageURL: "https://cdn/dog.png",
+	}); err == nil || !strings.Contains(err.Error(), "cannot be used together") {
+		t.Fatalf("prompt + image error = %v", err)
+	}
+	if _, err := c.Generate3D(context.Background(), ThreeDParams{
+		Model: "hy-3d-3.1",
+		MultiViewImages: []ThreeDViewImage{
+			{ViewType: "front", ViewImageURL: "https://cdn/front.png"},
+			{ViewType: "front", ViewImageURL: "https://cdn/front-2.png"},
+		},
+	}); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("duplicate view error = %v", err)
 	}
 }
 

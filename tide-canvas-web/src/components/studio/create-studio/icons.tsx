@@ -1,9 +1,9 @@
 /* 创作台 CreateStudio 的内联 SVG 图标集 — 从 create-studio.tsx 抽出（纯移动）。 */
 
 import type { ReactNode } from "react";
-import type { SlotType } from "./types";
+import type { ArtworkType } from "./types";
 
-export const SLOT_ICON: Record<SlotType, ReactNode> = {
+export const SLOT_ICON: Record<ArtworkType, ReactNode> = {
   image: (
     <svg viewBox="0 0 24 24">
       <rect x="3" y="4" width="18" height="16" rx="2.5" />
@@ -22,6 +22,13 @@ export const SLOT_ICON: Record<SlotType, ReactNode> = {
       <path d="M9 18V6l10-2v12" />
       <circle cx="6" cy="18" r="3" />
       <circle cx="16" cy="16" r="3" />
+    </svg>
+  ),
+  "3d": (
+    <svg viewBox="0 0 24 24">
+      <path d="M12 3 20 7.5 12 12 4 7.5 12 3Z" />
+      <path d="M4 7.5V16.5L12 21V12" />
+      <path d="M20 7.5V16.5L12 21" />
     </svg>
   ),
 };

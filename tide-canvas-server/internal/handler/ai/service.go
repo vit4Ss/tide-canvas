@@ -1115,6 +1115,9 @@ func (s *service) writeLog(ctx context.Context, task *model.AiTask, gh GenHandle
 		return
 	}
 	scene := workTypeOf(gh.OperationType())
+	if gh.OperationType() == "3d" {
+		scene = "3d"
+	}
 	if scene == "" {
 		scene = "image"
 	}

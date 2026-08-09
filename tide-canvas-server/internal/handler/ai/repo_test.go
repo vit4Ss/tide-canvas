@@ -60,6 +60,13 @@ func TestTaskMediaHandlersIncludeEveryVideoMode(t *testing.T) {
 	}
 }
 
+func TestTaskMediaHandlersIncludes3DGeneration(t *testing.T) {
+	got := taskMediaHandlers("3d")
+	if len(got) != 1 || got[0] != "generate_3d" {
+		t.Fatalf("3d handlers = %v", got)
+	}
+}
+
 func TestStaleTaskTerminalUpdatesUseActualCompletionTime(t *testing.T) {
 	terminalAt := time.Date(2026, 8, 2, 20, 30, 0, 0, time.UTC)
 	updates := staleTaskTerminalUpdates(statusFailed, "interrupted", terminalAt)

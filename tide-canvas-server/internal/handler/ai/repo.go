@@ -191,6 +191,8 @@ func taskMediaHandlers(mediaType string) []string {
 		return []string{"text_to_video", "image_to_video", "start_end_to_video", "reference_to_video"}
 	case "audio":
 		return []string{"text_to_audio"}
+	case "3d":
+		return []string{"generate_3d"}
 	default:
 		return nil
 	}

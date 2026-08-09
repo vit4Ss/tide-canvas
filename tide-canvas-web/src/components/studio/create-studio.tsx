@@ -74,6 +74,7 @@ import {
   RATIOS,
   RES_COST,
   TOOLS,
+  THREE_D_VIEW_SLOTS,
   UPLOADS,
   VIDEO_DUR,
   VIDEO_RES,
@@ -102,6 +103,7 @@ import { MusicSourceFields } from "./create-studio/music-source-fields";
 import { PromptSection } from "./create-studio/prompt-section";
 import { SongFields, VocalField } from "./create-studio/song-fields";
 import { OptionFields } from "./create-studio/option-fields";
+import { ThreeDOptions } from "./create-studio/three-d-options";
 import { StageFeed } from "./create-studio/stage-feed";
 import { PreviewModal } from "./create-studio/preview-modal";
 import { Lightbox } from "./create-studio/lightbox";
@@ -138,6 +140,10 @@ export default function CreateStudio() {
   const [res, setRes] = useState<string>("1080p");
   const [dur, setDur] = useState<string>("5s");
   const [quality, setQuality] = useState<string>("");
+  const [enablePbr, setEnablePbr] = useState(false);
+  const [faceCount, setFaceCount] = useState(500_000);
+  const [generateType, setGenerateType] = useState<"Normal" | "Geometry">("Normal");
+  const [resultFormat, setResultFormat] = useState<"" | "STL" | "USDZ" | "FBX">("");
   /* 音频（Suno）音乐创作模式：灵感 = 只填描述，Suno 自动写词；自定义歌词 =
      歌词必填 + 风格/歌名，描述不发送；延长/翻唱 = 引用先前生成的 clip_id。
      各模式字段互斥展示（对齐上游 API 语义）。 */
@@ -202,15 +208,20 @@ export default function CreateStudio() {
   const cfg = TOOLS[tool];
   const isVideo = curType === "video";
   const isAudio = curType === "audio";
+  const is3D = curType === "3d";
   const slots = UPLOADS[tool] ?? null;
 
   /* ── hooks ─────────────────────────────────────────────────────────────── */
 
   const { studioList, loadedType, adoptModels, deepModelRef } = useStudioModels({ curType, setModel });
 
+  const currentStudioList = useMemo(
+    () => studioList.filter((candidate) => candidate.type === curType),
+    [studioList, curType],
+  );
   const selModel = useMemo(
-    () => studioList.find((m) => m.name === model) ?? null,
-    [studioList, model],
+    () => currentStudioList.find((m) => m.name === model) ?? null,
+    [currentStudioList, model],
   );
   const mCfg = selModel?.config ?? null;
   // Suno 音效卡与音乐卡用法不同（不吃歌词/风格/歌名，只按描述出短音效）。
@@ -259,16 +270,16 @@ export default function CreateStudio() {
   }, [slots, slotData]);
 
   /* ── studio models → picker names + selected model's config ────────────── */
-  const noBackend = studioList.length === 0;
+  const noBackend = currentStudioList.length === 0;
   const modelNames = useMemo(() => {
-    if (!studioList.length) return CREATE_MODELS;
+    if (!currentStudioList.length) return is3D ? [] : CREATE_MODELS;
     // 音频两页签各自持有模型池，下拉只显示本池；池空时回退全量（防呆）。
     const pool =
       curType === "audio"
-        ? studioList.filter((m) => audioToolOf(m) === (tool === "sfx" ? "sfx" : "t2a"))
-        : studioList;
-    return (pool.length ? pool : studioList).map((m) => m.name);
-  }, [studioList, curType, tool]);
+        ? currentStudioList.filter((m) => audioToolOf(m) === (tool === "sfx" ? "sfx" : "t2a"))
+        : currentStudioList;
+    return (pool.length ? pool : currentStudioList).map((m) => m.name);
+  }, [currentStudioList, curType, tool, is3D]);
 
   // dynamic option lists: a model's configured options only; when the backend
   // returned no models at all, fall back to the built-in defaults so the panel
@@ -285,7 +296,7 @@ export default function CreateStudio() {
     (a, b) => parseFloat(a) - parseFloat(b),
   );
   const qualOpts = mCfg?.qualities ?? [];
-  const ideaOpts = mCfg?.ideas?.length ? mCfg.ideas : noBackend ? [...IDEAS] : [];
+  const ideaOpts = mCfg?.ideas?.length ? mCfg.ideas : noBackend && !is3D ? [...IDEAS] : [];
   const batchOpts =
     mCfg?.batchOptions && mCfg.batchOptions.length ? mCfg.batchOptions : [1, 2, 3, 4];
   const batchMin = Math.min(...batchOpts);
@@ -298,10 +309,12 @@ export default function CreateStudio() {
     .filter(Boolean) as ToolKey[];
   // 音频例外：页签按"全目录里有没有模型"决定（音乐/音效是两族模型，不是同一
   // 模型的两种模式），否则选中音乐模型时音效页签会消失、永远点不过去。
-  const modeKeys = isAudio
+  const modeKeys = is3D
+    ? MODES_BY_TYPE["3d"]
+    : isAudio
     ? noBackend
       ? MODES_BY_TYPE.audio
-      : MODES_BY_TYPE.audio.filter((k) => studioList.some((m) => audioToolOf(m) === k))
+      : MODES_BY_TYPE.audio.filter((k) => currentStudioList.some((m) => audioToolOf(m) === k))
     : configuredTools.length
       ? MODES_BY_TYPE[curType].filter((k) => configuredTools.includes(k))
       : MODES_BY_TYPE[curType];
@@ -312,7 +325,7 @@ export default function CreateStudio() {
   //   3) built-in fallback map (case-insensitive: 后台用 1k/2k/4k, 预览用 1K/2K/4K)
   const cost = useMemo(() => {
     // 音频按次计费（Suno 两首一次结算），无画质/清晰度矩阵与数量倍乘。
-    if (isAudio) {
+    if (isAudio || is3D) {
       return mCfg?.creditCost ?? (parseFloat(selModel?.pointCost ?? "") || 0);
     }
     const pm = mCfg?.priceMatrix;
@@ -330,7 +343,7 @@ export default function CreateStudio() {
     return isVideo
       ? Math.round((fb(RES_COST, res, 50) * (DUR_SEC[dur] || 5)) / 5)
       : fb(IMG_RES_COST, imgRes, 14) * count;
-  }, [mCfg, selModel, isVideo, isAudio, dur, res, imgRes, quality, count]);
+  }, [mCfg, selModel, isVideo, isAudio, is3D, dur, res, imgRes, quality, count]);
 
   const {
     busy,
@@ -360,14 +373,19 @@ export default function CreateStudio() {
     songStyle,
     songTitle,
     instrumental,
+    enablePbr,
+    faceCount,
+    generateType,
+    resultFormat,
     slotData,
-    studioList,
+    studioList: currentStudioList,
     ratioOpts,
     resOpts,
     durOpts,
     qualOpts,
     skill,
     isAudio,
+    is3D,
     isSfx,
     ensureSession,
     refreshBalance,
@@ -452,7 +470,7 @@ export default function CreateStudio() {
     }
   }, []);
 
-  // 深链：/studio?type=image|video&tool=<工具>&model=<名称>（首页跑马灯 /
+  // 深链：/studio?type=image|video|audio|3d&tool=<工具>&model=<名称>（首页跑马灯 /
   // 能力卡直达创作台）。类型立即切换（默认选对应的文生工具，tool 参数可指定
   // 如 i2i）；模型名先存 ref，等该类型的模型列表加载完成后再落位——直接
   // setModel 会被列表加载的兜底重置覆盖。
@@ -462,7 +480,7 @@ export default function CreateStudio() {
       const t = sp.get("type");
       const tl = sp.get("tool");
       const m = sp.get("model");
-      if (t === "image" || t === "video" || t === "audio") {
+      if (t === "image" || t === "video" || t === "audio" || t === "3d") {
         // eslint-disable-next-line react-hooks/set-state-in-effect
         setCurType(t);
         const tools = MODES_BY_TYPE[t] ?? [];
@@ -471,8 +489,10 @@ export default function CreateStudio() {
             ? (tl as ToolKey)
             : t === "video"
               ? "t2v"
-              : t === "audio"
-                ? "t2a"
+            : t === "audio"
+              ? "t2a"
+              : t === "3d"
+                ? "t2_3d"
                 : "t2i",
         );
       }
@@ -655,8 +675,8 @@ export default function CreateStudio() {
     setTool(t);
     setSlotData({});
     // 音频页签切换时把选中模型对齐到该页签的模型池（下拉只显示本池）。
-    if ((t === "t2a" || t === "sfx") && studioList.length) {
-      const pool = studioList.filter((m) => audioToolOf(m) === t);
+    if ((t === "t2a" || t === "sfx") && currentStudioList.length) {
+      const pool = currentStudioList.filter((m) => audioToolOf(m) === t);
       if (pool.length && !pool.some((m) => m.name === model)) selectModel(pool[0].name);
     }
   };
@@ -664,13 +684,13 @@ export default function CreateStudio() {
   // 反向对齐：历史恢复 / 深链直接设了音频模型时，页签自动跟随模型所属池
   //（点页签换模型走 selectTool，这里只处理"模型先变"的路径，等值守卫防环）。
   useEffect(() => {
-    if (!isAudio || !studioList.length) return;
-    const m = studioList.find((x) => x.name === model);
+    if (!isAudio || !currentStudioList.length) return;
+    const m = currentStudioList.find((x) => x.name === model);
     if (!m) return;
     const t = audioToolOf(m);
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setTool((cur) => ((cur === "t2a" || cur === "sfx") && cur !== t ? t : cur));
-  }, [model, studioList, isAudio]);
+  }, [model, currentStudioList, isAudio]);
 
   const pickType = (t: ArtworkType) => {
     skillRestoreSeqRef.current += 1;
@@ -691,7 +711,7 @@ export default function CreateStudio() {
       setSkill(s);
       setSkillPickerOpen(false);
       if (s.modelId) {
-        const target = studioList.find((m) => m.modelKey === s.modelId);
+        const target = currentStudioList.find((m) => m.modelKey === s.modelId);
         if (target && target.type === curType && target.name !== model) {
           setModel(target.name);
           toast.info(`已切换到技能模型「${target.name}」`);
@@ -706,7 +726,7 @@ export default function CreateStudio() {
       if (defaults.duration) setDur(`${defaults.duration}s`);
       if (defaults.quality) setQuality(defaults.quality);
     },
-    [curType, studioList, model, skill],
+    [curType, currentStudioList, model, skill],
   );
 
   const removeSkill = useCallback(() => {
@@ -770,6 +790,10 @@ export default function CreateStudio() {
     setDur(lr.dur);
     setQuality(lr.quality);
     setCount(lr.count);
+    setEnablePbr(lr.enablePbr ?? false);
+    setFaceCount(lr.faceCount ?? 500_000);
+    setGenerateType(lr.generateType ?? "Normal");
+    setResultFormat(lr.resultFormat ?? "");
     setLyrics(lr.lyrics ?? "");
     setSongStyle(lr.songStyle ?? "");
     setSongTitle(lr.songTitle ?? "");
@@ -786,11 +810,18 @@ export default function CreateStudio() {
       urls.map((u, i) => ({ g: u, url: u, n: urls.length > 1 ? `${label} ${i + 1}` : label, s: "" }));
     const imgs = lr.imageRefs ?? [];
     const slots: SlotData = {};
-    if (imgs.length) slots[lr.tool === "i2v" ? "first" : "img"] = toFiles(imgs, "参考图");
+    if (imgs.length) {
+      const key = lr.tool === "i2v" ? "first" : lr.tool === "i2_3d" ? "threeDImage" : "img";
+      slots[key] = toFiles(imgs, "参考图");
+    }
     if (lr.firstFrame) slots.first = toFiles([lr.firstFrame], "首帧");
     if (lr.lastFrame) slots.last = toFiles([lr.lastFrame], "尾帧");
     if (lr.videoRefs?.length) slots.video = toFiles(lr.videoRefs, "参考视频");
     if (lr.audioRefs?.length) slots.audio = toFiles(lr.audioRefs, "参考音频");
+    for (const view of lr.multiViewImages ?? []) {
+      const key = THREE_D_VIEW_SLOTS.find((item) => item.viewType === view.viewType)?.key;
+      if (key) slots[key] = toFiles([view.viewImageUrl], `${view.viewType} 视图`);
+    }
     setSlotData(slots);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -878,7 +909,7 @@ export default function CreateStudio() {
         || loadedType !== target.curType
         || model !== target.model
         || (skill?.id || undefined) !== target.skillId
-        || !studioList.some((candidate) =>
+        || !currentStudioList.some((candidate) =>
           candidate.id === target.modelId
           && candidate.name === target.model
           && candidate.type === target.curType,
@@ -892,7 +923,7 @@ export default function CreateStudio() {
     generate(target
       ? { requireBackendModel: true, expectedModelId: target.modelId }
       : undefined);
-  }, [pendingGen, generate, curType, loadedType, model, skill, studioList]);
+  }, [pendingGen, generate, curType, loadedType, model, skill, currentStudioList]);
 
   // State restoration and catalog adoption normally settle in the same commit.
   // A later focus refresh can nevertheless invalidate the target. Never leave
@@ -1081,7 +1112,7 @@ export default function CreateStudio() {
         {/* ── control panel ───────────────────────────────────────────── */}
         <aside className="ws-panel">
           <div className="ws-panel-scroll">
-            {/* type tabs: 图片 / 视频 / 音频 */}
+            {/* type tabs: 图片 / 视频 / 音频 / 3D */}
             <TypeTabs curType={curType} onPick={pickType} />
 
             {/* mode tabs (generation tool) */}
@@ -1099,7 +1130,7 @@ export default function CreateStudio() {
             </div>
 
             {/* model picker */}
-            <ModelPicker model={model} names={modelNames} studioList={studioList} onSelect={selectModel} />
+            <ModelPicker model={model} names={modelNames} studioList={currentStudioList} onSelect={selectModel} />
 
             {/* typed reference uploads (per-tool slots; create.js renderUploads) */}
             <UploadSlots
@@ -1122,14 +1153,14 @@ export default function CreateStudio() {
                 clip={clip}
                 clipOptions={clipOptions}
                 selModel={selModel}
-                studioList={studioList}
+                studioList={currentStudioList}
                 model={model}
                 onModelChange={selectModel}
               />
             )}
 
             {/* prompt（自定义歌词/延长/翻唱模式下描述不参与生成，整块隐藏避免误导） */}
-            {!(isAudio && !isSfx && musicMode !== "inspire") && (
+            {tool !== "i2_3d" && !(isAudio && !isSfx && musicMode !== "inspire") && (
               <PromptSection
                 prompt={prompt}
                 onPromptChange={setPrompt}
@@ -1143,6 +1174,8 @@ export default function CreateStudio() {
                 onOptimize={aiOptimize}
                 onOpenSkillPicker={() => setSkillPickerOpen(true)}
                 ideaOpts={ideaOpts}
+                allowSkills={!is3D}
+                label={tool === "mv2_3d" ? "提示词（可选）" : "提示词"}
               />
             )}
 
@@ -1162,29 +1195,42 @@ export default function CreateStudio() {
             {/* 人声/纯音乐（仅音频·非音效卡） */}
             {isAudio && !isSfx && <VocalField instrumental={instrumental} onChange={setInstrumental} />}
 
-            {/* 画面比例 / 分辨率 / 质量 / 清晰度 / 生成数量 / 时长 */}
-            <OptionFields
-              isVideo={isVideo}
-              isAudio={isAudio}
-              ratioOpts={ratioOpts}
-              ratio={ratio}
-              onRatioChange={setRatio}
-              resOpts={resOpts}
-              imgRes={imgRes}
-              onImgResChange={setImgRes}
-              qualOpts={qualOpts}
-              quality={quality}
-              onQualityChange={setQuality}
-              count={count}
-              onCountChange={setCount}
-              batchMin={batchMin}
-              batchMax={batchMax}
-              res={res}
-              onResChange={setRes}
-              durOpts={durOpts}
-              dur={dur}
-              onDurChange={setDur}
-            />
+            {is3D ? (
+              <ThreeDOptions
+                enablePbr={enablePbr}
+                onEnablePbrChange={setEnablePbr}
+                faceCount={faceCount}
+                onFaceCountChange={setFaceCount}
+                generateType={generateType}
+                onGenerateTypeChange={setGenerateType}
+                resultFormat={resultFormat}
+                onResultFormatChange={setResultFormat}
+              />
+            ) : (
+              /* 画面比例 / 分辨率 / 质量 / 清晰度 / 生成数量 / 时长 */
+              <OptionFields
+                isVideo={isVideo}
+                isAudio={isAudio}
+                ratioOpts={ratioOpts}
+                ratio={ratio}
+                onRatioChange={setRatio}
+                resOpts={resOpts}
+                imgRes={imgRes}
+                onImgResChange={setImgRes}
+                qualOpts={qualOpts}
+                quality={quality}
+                onQualityChange={setQuality}
+                count={count}
+                onCountChange={setCount}
+                batchMin={batchMin}
+                batchMax={batchMax}
+                res={res}
+                onResChange={setRes}
+                durOpts={durOpts}
+                dur={dur}
+                onDurChange={setDur}
+              />
+            )}
           </div>
 
           {/* footer */}
@@ -1257,16 +1303,18 @@ export default function CreateStudio() {
       )}
 
       {/* 技能广场:按当前创作类型过滤 */}
-      <SkillPicker
-        open={skillPickerOpen}
-        onClose={() => setSkillPickerOpen(false)}
-        onPick={pickSkill}
-        outputType={curType}
-        targetType={curType}
-        currentId={skill?.id}
-        kinds={["preset"]}
-        entryPoint="studio"
-      />
+      {!is3D && (
+        <SkillPicker
+          open={skillPickerOpen}
+          onClose={() => setSkillPickerOpen(false)}
+          onPick={pickSkill}
+          outputType={curType}
+          targetType={curType}
+          currentId={skill?.id}
+          kinds={["preset"]}
+          entryPoint="studio"
+        />
+      )}
 
       {/* 资产库弹窗：复用整个资产页 UI 作为选择器，按槽类型默认到对应筛选 */}
       {assetPick && (

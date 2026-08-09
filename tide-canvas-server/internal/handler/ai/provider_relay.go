@@ -65,6 +65,7 @@ func (p *relayProviderClient) Type() string { return "relay" }
 //	image_to_video      -> …                               (mode image_to_video)
 //	start_end_to_video  -> …                               (mode first_last_frame)
 //	reference_to_video  -> …                               (mode multi_ref)
+//	generate_3d         -> POST /v1/3d/generations
 func (p *relayProviderClient) Generate(ctx context.Context, req GenerateRequest) (GenerateResult, error) {
 	if req.Model == nil {
 		return GenerateResult{}, errNoModel
@@ -107,6 +108,9 @@ func (p *relayProviderClient) Generate(ctx context.Context, req GenerateRequest)
 		return p.result(ctx, res, err)
 	case "text_to_audio":
 		res, err := p.c.GenerateAudio(ctx, audioParams(model, req.Input))
+		return p.result(ctx, res, err)
+	case "generate_3d":
+		res, err := p.c.Generate3D(ctx, p.threeDParams(model, req.Input))
 		return p.result(ctx, res, err)
 	default:
 		return GenerateResult{}, errUnsupportedHandler
@@ -278,6 +282,39 @@ func audioParams(model string, in map[string]any) relaymedia.AudioParams {
 	}
 }
 
+func (p *relayProviderClient) threeDParams(model string, in map[string]any) relaymedia.ThreeDParams {
+	views := make([]relaymedia.ThreeDViewImage, 0, 8)
+	for _, key := range []string{"multiViewImages", "multi_view_images"} {
+		raw, ok := in[key].([]any)
+		if !ok {
+			continue
+		}
+		for _, item := range raw {
+			row, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			views = append(views, relaymedia.ThreeDViewImage{
+				ViewType:        inputStr(row, "viewType", "view_type"),
+				ViewImageURL:    p.upstreamURL(inputStr(row, "viewImageUrl", "view_image_url")),
+				ViewImageBase64: inputStr(row, "viewImageBase64", "view_image_base64"),
+			})
+		}
+		break
+	}
+	enablePBR, _ := inputBool(in, "enablePbr", "enable_pbr")
+	return relaymedia.ThreeDParams{
+		Model:           model,
+		Prompt:          inputStr(in, "prompt"),
+		ImageURL:        p.upstreamURL(inputStr(in, "imageUrl", "image_url", "sourceImage")),
+		MultiViewImages: views,
+		EnablePBR:       enablePBR,
+		FaceCount:       inputInt(in, "faceCount", "face_count"),
+		GenerateType:    inputStr(in, "generateType", "generate_type"),
+		ResultFormat:    inputStr(in, "resultFormat", "result_format"),
+	}
+}
+
 // inputBool returns the first key present coerced to a bool, and whether any
 // key was found (absent ≠ false: Suno 的 make_instrumental 不传与传 false 不同).
 func inputBool(in map[string]any, keys ...string) (bool, bool) {
@@ -310,6 +347,25 @@ func (p *relayProviderClient) result(ctx context.Context, res relaymedia.Result,
 	}
 	if err != nil {
 		return out, err
+	}
+	if len(res.Assets) > 0 {
+		// Relay mirrors the canonical GLB/requested format to persistent storage.
+		// Preserve model-file URLs directly: the image/video rehost pipeline rejects
+		// model MIME types and would otherwise discard format + preview metadata.
+		if len(res.URLs) > 0 {
+			out.ResultURL = res.URLs[0]
+			out.URLs = append([]string(nil), res.URLs...)
+		}
+		assets := make([]map[string]any, 0, len(res.Assets))
+		for _, asset := range res.Assets {
+			row := map[string]any{"type": asset.Type, "url": asset.URL}
+			if asset.PreviewImageURL != "" {
+				row["previewImageUrl"] = asset.PreviewImageURL
+			}
+			assets = append(assets, row)
+		}
+		out.Meta = map[string]any{"assets": assets}
+		return out, nil
 	}
 	if len(res.URLs) > 0 {
 		urls := p.rehost(ctx, res.URLs)

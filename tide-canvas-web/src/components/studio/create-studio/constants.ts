@@ -3,7 +3,7 @@
    不可用/返回空时模型下拉的本地兜底列表，真数据源始终是后端接口；按任务要求
    作为带类型常量落到本地，消除对 src/mock 的 import。 */
 
-import type { ArtworkType, ModelMeta, SlotDef, ToolCfg, ToolKey } from "./types";
+import type { ArtworkType, ModelMeta, SlotDef, ThreeDViewType, ToolCfg, ToolKey } from "./types";
 
 /* ── constants (ported 1:1 from create.js) ───────────────────────────────── */
 
@@ -11,6 +11,17 @@ export const RATIOS = ["1:1", "3:4", "4:3", "16:9", "9:16"] as const;
 export const IMG_RES = ["1K", "2K", "4K"] as const;
 export const VIDEO_RES = ["720p", "1080p", "4K"] as const;
 export const VIDEO_DUR = ["5s", "10s", "15s"] as const;
+
+export const THREE_D_VIEW_SLOTS: ReadonlyArray<{ key: string; viewType: ThreeDViewType }> = [
+  { key: "mv_front", viewType: "front" },
+  { key: "mv_left", viewType: "left" },
+  { key: "mv_right", viewType: "right" },
+  { key: "mv_back", viewType: "back" },
+  { key: "mv_top", viewType: "top" },
+  { key: "mv_bottom", viewType: "bottom" },
+  { key: "mv_left_front", viewType: "left_front" },
+  { key: "mv_right_front", viewType: "right_front" },
+];
 
 export const QUALITY_LABEL: Record<string, string> = { low: "低画质", medium: "标准画质", high: "高画质" };
 
@@ -44,12 +55,16 @@ export const TOOLS: Record<ToolKey, ToolCfg> = {
   ref: { mode: "t2v", label: "全能参考", head: "全能参考", drop: true, ph: "上传参考图（人物 / 风格 / 动作），描述想要的视频…\n例：参考人物形象，生成其在雪山奔跑的镜头" },
   t2a: { mode: "t2a", label: "音乐生成", head: "生成音乐", drop: false, ph: "描述你想要的音乐，Suno 会自动谱曲写词…\n例：温柔的中文民谣，木吉他伴奏，关于夏天傍晚的回忆" },
   sfx: { mode: "t2a", label: "音效生成", head: "生成音效", drop: false, ph: "描述你想要的音效，越具体越好…\n例：雨打铁皮屋顶，远处传来低沉的雷声" },
+  t2_3d: { mode: "t2_3d", label: "文生 3D", head: "生成 3D 模型", drop: false, ph: "描述你想生成的 3D 资产…\n例：一只戴红色项圈的可爱小狗，完整身体，适合游戏场景" },
+  i2_3d: { mode: "t2_3d", label: "图生 3D", head: "图片生成 3D", drop: true, ph: "" },
+  mv2_3d: { mode: "t2_3d", label: "多视图", head: "多视图生成 3D", drop: true, ph: "可选：补充材质、风格或结构要求" },
 };
 
 export const MODES_BY_TYPE: Record<ArtworkType, ToolKey[]> = {
   image: ["t2i", "i2i"],
   video: ["t2v", "i2v", "flf", "ref"],
   audio: ["t2a", "sfx"],
+  "3d": ["t2_3d", "i2_3d", "mv2_3d"],
 };
 
 export const UPLOADS: Partial<Record<ToolKey, SlotDef[]>> = {
@@ -64,6 +79,19 @@ export const UPLOADS: Partial<Record<ToolKey, SlotDef[]>> = {
     { k: "img", label: "参考图片", type: "image", max: 4, hint: "上传图片（人物 / 风格 / 场景）" },
     { k: "video", label: "参考视频", type: "video", max: 3, hint: "最多 3 段，总时长 ≤ 15 秒。支持 mp4 / mov。" },
     { k: "audio", label: "参考音频", type: "audio", max: 3, hint: "最多 3 段，总时长 ≤ 15 秒。支持 wav / mp3。" },
+  ],
+  i2_3d: [
+    { k: "threeDImage", label: "参考图片", type: "image", max: 1, hint: "上传物体单图；此模式不同时使用提示词" },
+  ],
+  mv2_3d: [
+    { k: "mv_front", label: "正视图 · Front", type: "image", max: 1, hint: "建议优先上传正视图" },
+    { k: "mv_left", label: "左视图 · Left", type: "image", max: 1, hint: "可选视角" },
+    { k: "mv_right", label: "右视图 · Right", type: "image", max: 1, hint: "可选视角" },
+    { k: "mv_back", label: "后视图 · Back", type: "image", max: 1, hint: "可选视角" },
+    { k: "mv_top", label: "顶视图 · Top", type: "image", max: 1, hint: "可选视角" },
+    { k: "mv_bottom", label: "底视图 · Bottom", type: "image", max: 1, hint: "可选视角" },
+    { k: "mv_left_front", label: "左前视图", type: "image", max: 1, hint: "可选视角" },
+    { k: "mv_right_front", label: "右前视图", type: "image", max: 1, hint: "可选视角" },
   ],
 };
 
@@ -106,6 +134,7 @@ export const MODE_TO_TOOL: Record<string, ToolKey> = {
   omni_ref: "ref",
   t2a: "t2a",
   sfx: "sfx",
+  t2_3d: "t2_3d",
 };
 
 /** studio ToolKey → backend generation handler name (internal/handler/ai handlerRegistry). */
@@ -119,6 +148,9 @@ export const TOOL_TO_HANDLER: Record<ToolKey, string> = {
   ref: "reference_to_video",
   t2a: "text_to_audio",
   sfx: "text_to_audio",
+  t2_3d: "generate_3d",
+  i2_3d: "generate_3d",
+  mv2_3d: "generate_3d",
 };
 
 /** backend generation handler → media type for 生成历史 cards. */
@@ -130,6 +162,7 @@ export const HIST_HANDLER_TYPE: Record<string, ArtworkType> = {
   start_end_to_video: "video",
   reference_to_video: "video",
   text_to_audio: "audio",
+  generate_3d: "3d",
   // one-click image-edit ops (per-result toolbar)
   remove_bg: "image",
   remove_object: "image",
@@ -146,6 +179,7 @@ export const HIST_HANDLER_TOOL: Record<string, ToolKey> = {
   start_end_to_video: "flf",
   reference_to_video: "ref",
   text_to_audio: "t2a",
+  generate_3d: "t2_3d",
   // edit ops restore into the 改图 tool (i2i family)
   remove_bg: "edit",
   remove_object: "edit",

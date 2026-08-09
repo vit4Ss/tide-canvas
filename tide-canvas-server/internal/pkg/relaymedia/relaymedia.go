@@ -5,6 +5,7 @@
 //	POST {baseURL}/v1/images/edits        — image edit (參考图 → 新图)
 //	POST {baseURL}/openapi/v1/generations — video (mode-driven: t2v/i2v/keyframe/multi_ref)
 //	POST {baseURL}/v1/audio/speech        — audio (TTS 与音乐/音效共用,由模型决定上游)
+//	POST {baseURL}/v1/3d/generations      — Hunyuan 3D 3.1 (text/image/multi-view)
 //	GET  {baseURL}/v1/tasks/{id}          — poll an async task
 //
 // All generation endpoints share one response contract: a synchronous 200
@@ -34,6 +35,7 @@ const (
 	pathImageEdits       = "/v1/images/edits"
 	pathVideoGenerations = "/openapi/v1/generations"
 	pathAudioSpeech      = "/v1/audio/speech"
+	path3DGenerations    = "/v1/3d/generations"
 )
 
 // Tuning constants. The relay's synchronous image path can hold the connection
@@ -42,10 +44,11 @@ const (
 // deadline below — we deliberately do NOT set a fixed http.Client.Timeout, which
 // would preempt that deadline and abort a still-running synchronous generation.
 const (
-	pollInterval      = 2 * time.Second  // gap between task polls
-	imagePollDeadline = 10 * time.Minute // overall budget for an image task (sync or polled)
-	videoPollDeadline = 20 * time.Minute // videos are slower; stay under the 30m UI cap
-	audioPollDeadline = 10 * time.Minute // TTS 通常同步秒回;Suno 音乐约 1–4 分钟(实测也会同步 200)
+	pollInterval       = 2 * time.Second  // gap between task polls
+	imagePollDeadline  = 10 * time.Minute // overall budget for an image task (sync or polled)
+	videoPollDeadline  = 20 * time.Minute // videos are slower; stay under the 30m UI cap
+	audioPollDeadline  = 10 * time.Minute // TTS 通常同步秒回;Suno 音乐约 1–4 分钟(实测也会同步 200)
+	threeDPollDeadline = 25 * time.Minute // 3D 通常异步，留足网格与材质生成时间
 )
 
 // maxRespBody caps a single relay response read. Generous enough to hold verbose
@@ -117,12 +120,30 @@ type AudioParams struct {
 	Extras       map[string]any // 供应商透传参数(≤32 键/16KB),如 Suno lyrics/tags/title
 }
 
+type ThreeDViewImage struct {
+	ViewType        string
+	ViewImageURL    string
+	ViewImageBase64 string
+}
+
+type ThreeDParams struct {
+	Model           string
+	Prompt          string
+	ImageURL        string
+	MultiViewImages []ThreeDViewImage
+	EnablePBR       bool
+	FaceCount       int
+	GenerateType    string
+	ResultFormat    string
+}
+
 // Result is the normalized terminal outcome. URLs holds every produced media file
 // (usually one). The audit fields mirror the upstream call for the generation
 // log; they are populated even when the call ultimately fails.
 type Result struct {
 	URLs   []string
 	Tracks []Track // Suno 音乐任务的分轨明细(与 URLs 同序);其它任务为空
+	Assets []Asset // 3D 的多格式文件（通常 OBJ + GLB）及预览图
 	TaskID string
 	Status string
 
@@ -130,6 +151,12 @@ type Result struct {
 	RequestBody  string
 	ResponseBody string
 	HTTPStatus   int
+}
+
+type Asset struct {
+	Type            string `json:"type"`
+	URL             string `json:"url"`
+	PreviewImageURL string `json:"preview_image_url,omitempty"`
 }
 
 // Track is one Suno song from /v1/tasks/{id}'s tracks[]. ClipID 是延长(extend)/
@@ -144,15 +171,20 @@ type Track struct {
 
 // mediaResp is the OpenAI-shaped response, reused for the create call and the
 // task-poll call (the relay returns the same envelope on success).
+type mediaAsset struct {
+	Type            string `json:"type"`
+	URL             string `json:"url"`
+	PreviewImageURL string `json:"preview_image_url"`
+	B64JSON         string `json:"b64_json"`
+}
+
 type mediaResp struct {
-	Created int64  `json:"created"`
-	ID      string `json:"id"`
-	Status  string `json:"status"`
-	Model   string `json:"model"`
-	Data    []struct {
-		URL     string `json:"url"`
-		B64JSON string `json:"b64_json"`
-	} `json:"data"`
+	Created int64        `json:"created"`
+	ID      string       `json:"id"`
+	Status  string       `json:"status"`
+	Model   string       `json:"model"`
+	Data    []mediaAsset `json:"data"`
+	Assets  []mediaAsset `json:"assets"`
 	// 音频任务的结果字段:/v1/audio/speech 同步 200 带 audio.url;/v1/tasks/{id}
 	// 上多输出(Suno 两首)的全集在 output_urls,单输出在 output_url。
 	OutputURL  string   `json:"output_url"`
@@ -328,6 +360,118 @@ func (c *Client) GenerateVideo(ctx context.Context, p VideoParams) (Result, erro
 	return c.submit(ctx, pathVideoGenerations, body, videoPollDeadline)
 }
 
+// Generate3D submits Hunyuan 3D 3.1 text, single-image, or multi-view input.
+// The relay normally answers 202; submit transparently polls the task to a
+// terminal response and this method promotes GLB (or the requested format) to
+// URLs[0] while retaining every returned asset.
+func (c *Client) Generate3D(ctx context.Context, p ThreeDParams) (Result, error) {
+	if strings.TrimSpace(p.Model) == "" {
+		return Result{}, fmt.Errorf("relaymedia: model is required")
+	}
+	prompt := strings.TrimSpace(p.Prompt)
+	imageURL := strings.TrimSpace(p.ImageURL)
+	if prompt == "" && imageURL == "" && len(p.MultiViewImages) == 0 {
+		return Result{}, fmt.Errorf("relaymedia: 3d requires prompt, image_url, or multi_view_images")
+	}
+	if prompt != "" && imageURL != "" {
+		return Result{}, fmt.Errorf("relaymedia: 3d prompt and single image cannot be used together")
+	}
+	if len([]rune(prompt)) > 1024 {
+		return Result{}, fmt.Errorf("relaymedia: 3d prompt is too long (maximum 1024 characters)")
+	}
+	if p.FaceCount != 0 && (p.FaceCount < 3000 || p.FaceCount > 1500000) {
+		return Result{}, fmt.Errorf("relaymedia: 3d face_count must be between 3000 and 1500000")
+	}
+
+	generateType := strings.TrimSpace(p.GenerateType)
+	if generateType == "" || strings.EqualFold(generateType, "normal") {
+		generateType = "Normal"
+	} else if strings.EqualFold(generateType, "geometry") {
+		generateType = "Geometry"
+	} else {
+		return Result{}, fmt.Errorf("relaymedia: unsupported 3d generate_type %q", p.GenerateType)
+	}
+	resultFormat := strings.ToUpper(strings.TrimSpace(p.ResultFormat))
+	if resultFormat != "" && resultFormat != "STL" && resultFormat != "USDZ" && resultFormat != "FBX" {
+		return Result{}, fmt.Errorf("relaymedia: unsupported 3d result_format %q", p.ResultFormat)
+	}
+
+	viewNames := map[string]bool{
+		"front": true, "left": true, "right": true, "back": true,
+		"top": true, "bottom": true, "left_front": true, "right_front": true,
+	}
+	if len(p.MultiViewImages) > 8 {
+		return Result{}, fmt.Errorf("relaymedia: 3d multi_view_images supports at most 8 views")
+	}
+	seen := map[string]bool{}
+	views := make([]map[string]any, 0, len(p.MultiViewImages))
+	for _, view := range p.MultiViewImages {
+		viewType := strings.ToLower(strings.TrimSpace(view.ViewType))
+		if !viewNames[viewType] {
+			return Result{}, fmt.Errorf("relaymedia: unsupported 3d view_type %q", view.ViewType)
+		}
+		if seen[viewType] {
+			return Result{}, fmt.Errorf("relaymedia: duplicate 3d view_type %q", viewType)
+		}
+		seen[viewType] = true
+		row := map[string]any{"view_type": viewType}
+		if value := strings.TrimSpace(view.ViewImageURL); value != "" {
+			row["view_image_url"] = value
+		} else if value := strings.TrimSpace(view.ViewImageBase64); value != "" {
+			row["view_image_base64"] = value
+		} else {
+			return Result{}, fmt.Errorf("relaymedia: 3d view %q requires an image", viewType)
+		}
+		views = append(views, row)
+	}
+
+	body := map[string]any{
+		"model":         p.Model,
+		"enable_pbr":    p.EnablePBR,
+		"generate_type": generateType,
+	}
+	putNonEmpty(body, "prompt", prompt)
+	putNonEmpty(body, "image_url", imageURL)
+	if len(views) > 0 {
+		body["multi_view_images"] = views
+	}
+	if p.FaceCount > 0 {
+		body["face_count"] = p.FaceCount
+	}
+	putNonEmpty(body, "result_format", resultFormat)
+
+	res, err := c.submit(ctx, path3DGenerations, body, threeDPollDeadline)
+	if err != nil {
+		return res, err
+	}
+	promoteType := strings.ToLower(resultFormat)
+	if promoteType == "" {
+		promoteType = "glb"
+	}
+	for _, asset := range res.Assets {
+		if strings.EqualFold(asset.Type, promoteType) {
+			res.URLs = promoteURL(asset.URL, res.URLs)
+			break
+		}
+	}
+	return res, nil
+}
+
+func promoteURL(primary string, urls []string) []string {
+	primary = strings.TrimSpace(primary)
+	if primary == "" {
+		return urls
+	}
+	out := []string{primary}
+	for _, item := range urls {
+		item = strings.TrimSpace(item)
+		if item != "" && item != primary {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
 // submit posts a generation request and resolves it to a terminal result,
 // polling the task when the relay answers 202 (async). deadline bounds the whole
 // operation (initial call + polling).
@@ -374,6 +518,7 @@ func (c *Client) submit(ctx context.Context, path string, body map[string]any, d
 	if status >= 200 && status < 300 {
 		if urls := mediaURLs(mr); len(urls) > 0 {
 			res.URLs = urls
+			res.Assets = mediaAssets(mr)
 			res.Tracks = mediaTracks(mr)
 			// Suno 实测(2026-07-18)会同步 200 且 data 只带主歌:两首全集
 			// output_urls 与分轨 tracks(clip_id 供延长/翻唱)只在 /v1/tasks/{id}。
@@ -412,6 +557,7 @@ func (c *Client) enrichAudio(ctx context.Context, taskID string, res *Result) {
 		return
 	}
 	res.URLs = urls
+	res.Assets = mediaAssets(mr)
 	res.Tracks = tracks
 	res.HTTPStatus = status
 	res.ResponseBody = string(respBody)
@@ -459,6 +605,7 @@ func (c *Client) poll(ctx context.Context, taskID string, base Result) (Result, 
 				return base, fmt.Errorf("relaymedia: task %s succeeded with no media url", taskID)
 			}
 			base.URLs = urls
+			base.Assets = mediaAssets(mr)
 			base.Tracks = mediaTracks(mr)
 			return base, nil
 		case "failed", "error", "cancelled", "canceled":
@@ -552,6 +699,12 @@ func mediaURLs(mr mediaResp) []string {
 			out = append(out, u)
 		}
 	}
+	if assets := mediaAssets(mr); len(assets) > len(out) {
+		out = out[:0]
+		for _, asset := range assets {
+			out = append(out, asset.URL)
+		}
+	}
 	if len(mr.OutputURLs) > len(out) {
 		alt := make([]string, 0, len(mr.OutputURLs))
 		for _, u := range mr.OutputURLs {
@@ -571,6 +724,29 @@ func mediaURLs(mr mediaResp) []string {
 				out = append(out, u)
 			}
 		}
+	}
+	return out
+}
+
+func mediaAssets(mr mediaResp) []Asset {
+	raw := mr.Assets
+	fromAssetField := len(raw) > 0
+	if len(raw) == 0 {
+		raw = mr.Data
+	}
+	out := make([]Asset, 0, len(raw))
+	for _, item := range raw {
+		url := strings.TrimSpace(item.URL)
+		typeName := strings.ToLower(strings.TrimSpace(item.Type))
+		preview := strings.TrimSpace(item.PreviewImageURL)
+		// Synchronous 3D uses data[] while async polling uses assets[]. When
+		// falling back to data[], only accept known model-file formats so a future
+		// image/audio response carrying a generic `type` does not bypass rehosting.
+		known3DType := typeName == "obj" || typeName == "glb" || typeName == "stl" || typeName == "usdz" || typeName == "fbx"
+		if url == "" || (!fromAssetField && !known3DType) {
+			continue
+		}
+		out = append(out, Asset{Type: typeName, URL: url, PreviewImageURL: preview})
 	}
 	return out
 }

@@ -27,6 +27,7 @@ import {
   EDIT_OP_HANDLER,
   TOOL_TO_HANDLER,
   TOOLS,
+  THREE_D_VIEW_SLOTS,
   UPLOADS,
 } from "./constants";
 import type {
@@ -41,9 +42,11 @@ import type {
   RunMeta,
   RunParams,
   SlotData,
+  ThreeDAsset,
+  ThreeDViewImage,
   ToolKey,
 } from "./types";
-import { nextHistId, promptHue, refThumbsForRun, tracksFromMeta } from "./utils";
+import { nextHistId, promptHue, refThumbsForRun, threeDAssetsFromMeta, tracksFromMeta } from "./utils";
 
 export interface GenerationParams {
   /* panel state (fresh each render) */
@@ -65,6 +68,10 @@ export interface GenerationParams {
   songStyle: string;
   songTitle: string;
   instrumental: boolean;
+  enablePbr: boolean;
+  faceCount: number;
+  generateType: "Normal" | "Geometry";
+  resultFormat: "" | "STL" | "USDZ" | "FBX";
   slotData: SlotData;
   studioList: StudioModelVO[];
   ratioOpts: string[];
@@ -73,6 +80,7 @@ export interface GenerationParams {
   qualOpts: string[];
   skill: SkillVO | null;
   isAudio: boolean;
+  is3D: boolean;
   isSfx: boolean;
   /* services */
   ensureSession: () => Promise<boolean>;
@@ -82,7 +90,7 @@ export interface GenerationParams {
   promptRef: RefObject<MentionEditorHandle | null>;
 }
 
-const STUDIO_GENERATION_SCOPES = ["studio:image", "studio:video", "studio:audio"] as const;
+const STUDIO_GENERATION_SCOPES = ["studio:image", "studio:video", "studio:audio", "studio:3d"] as const;
 
 interface ConcurrentRunControl {
   token: symbol;
@@ -146,13 +154,15 @@ function activeRunFromJournal(
   const input = entry.payload.input && typeof entry.payload.input === "object"
     ? entry.payload.input
     : {};
-  const inferredKind: ArtworkType = entry.payload.handler.includes("video")
+  const inferredKind: ArtworkType = entry.payload.handler === "generate_3d"
+    ? "3d"
+    : entry.payload.handler.includes("video")
     ? "video"
     : entry.payload.handler.includes("audio")
       ? "audio"
       : "image";
   const taskStartedAt = Date.parse(task.createTime);
-  const kind: ArtworkType = recovery.kind === "video" || recovery.kind === "audio" || recovery.kind === "image"
+  const kind: ArtworkType = recovery.kind === "video" || recovery.kind === "audio" || recovery.kind === "image" || recovery.kind === "3d"
     ? recovery.kind
     : inferredKind;
   const rawCount = typeof input.batchCount === "number" ? input.batchCount : 1;
@@ -220,6 +230,10 @@ export function useGeneration(p: GenerationParams) {
     songStyle,
     songTitle,
     instrumental,
+    enablePbr,
+    faceCount,
+    generateType,
+    resultFormat,
     slotData,
     studioList,
     ratioOpts,
@@ -228,6 +242,7 @@ export function useGeneration(p: GenerationParams) {
     qualOpts,
     skill,
     isAudio,
+    is3D,
     isSfx,
     ensureSession,
     refreshBalance,
@@ -335,7 +350,7 @@ export function useGeneration(p: GenerationParams) {
       const isValidUrl = (u?: string): u is string =>
         !!u && (u.startsWith("https://") || u.startsWith("http://") || u.startsWith("data:"));
 
-      const finish = (urls: string[], tracks: MetaTrack[] = []) => {
+      const finish = (urls: string[], tracks: MetaTrack[] = [], assets: ThreeDAsset[] = []) => {
         if (!isActive()) return;
         const foreground = isForeground();
         // Suno 一次返回两首：结果多于占位格时按结果数展开。
@@ -364,6 +379,12 @@ export function useGeneration(p: GenerationParams) {
           prompt: p,
           model: mdl,
           url: urls[cell.i] ?? urls[0],
+          ...(kind === "3d"
+            ? {
+                assets,
+                previewImageUrl: assets.find((asset) => asset.previewImageUrl)?.previewImageUrl,
+              }
+            : {}),
           clipId: tracks[cell.i]?.clipId || undefined,
           trackTitle: tracks[cell.i]?.title || undefined,
           trackCover: tracks[cell.i]?.coverUrl || undefined,
@@ -377,6 +398,8 @@ export function useGeneration(p: GenerationParams) {
             ? "生成完成 · 点击播放试听"
             : kind === "video"
               ? "视频生成完成 · 点击播放查看"
+              : kind === "3d"
+                ? "3D 模型生成完成 · 可预览并下载模型文件"
               : "生成完成 · 点击图片放大查看",
         );
       };
@@ -401,7 +424,7 @@ export function useGeneration(p: GenerationParams) {
           if (foreground) setBusy(false);
           return;
         }
-        const maxMs = isVid ? 30 * 60 * 1000 : kind === "audio" ? 12 * 60 * 1000 : 7 * 60 * 1000;
+        const maxMs = isVid || kind === "3d" ? 30 * 60 * 1000 : kind === "audio" ? 12 * 60 * 1000 : 7 * 60 * 1000;
         const beyondPollingBudget = Date.now() - run.startedAt > maxMs;
         if (beyondPollingBudget && !deadlineNoticeShown) {
           deadlineNoticeShown = true;
@@ -450,7 +473,7 @@ export function useGeneration(p: GenerationParams) {
               fail("生成结果无效，可能未配置 AI 供应商");
               return;
             }
-            finish(all, tracksFromMeta(meta));
+            finish(all, tracksFromMeta(meta), threeDAssetsFromMeta(meta));
           } else if (task.status === AiTaskStatus.FAILED) {
             fail(task.errorMsg);
           } else if (task.status === AiTaskStatus.CANCELLED) {
@@ -711,11 +734,17 @@ export function useGeneration(p: GenerationParams) {
       return;
     }
     const selectedBackendModelId = selectedStudio?.modelKey || selectedStudio?.id || "";
+    if (is3D && !selectedBackendModelId) {
+      toast.error("暂无可用的 3D 模型，请先在模型管理上架并启用模型");
+      return;
+    }
     if (options?.requireBackendModel && !selectedBackendModelId) {
       toast.info("历史模型当前不可用，已停止重新生成");
       return;
     }
-    const p = prompt.trim();
+    // 普通单图生 3D 与 prompt 互斥；切换页签后保留在面板 state 里的旧提示词
+    // 既不发送，也不写入本轮历史。
+    const p = tool === "i2_3d" ? "" : prompt.trim();
     // 音乐创作模式互斥（对齐上游 API）：灵感=只看描述;自定义=歌词必填、描述不发;
     // 延长/翻唱=原曲 clip 必选、歌词选填。旧版"风格需搭配歌词"歧义由模式结构消除。
     const musicCustom = isAudio && !isSfx && musicMode === "custom";
@@ -733,7 +762,8 @@ export function useGeneration(p: GenerationParams) {
       markRequiredField("#fieldSourceClip");
       return;
     }
-    if (!musicTask && !p && !audLyrics) {
+    const inputOnly3D = is3D && (tool === "i2_3d" || tool === "mv2_3d");
+    if (!musicTask && !p && !audLyrics && !inputOnly3D) {
       toast.info(isAudio ? "先写一句音乐描述 ✦" : "先写一句提示词吧 ✦");
       markRequiredField(".ws-promptbox");
       promptRef.current?.focus();
@@ -748,17 +778,33 @@ export function useGeneration(p: GenerationParams) {
     // reference assets from the upload slots (real URLs from 本地上传 / 资产库).
     const slotUrls = (key: string) =>
       (slotData[key] || []).map((f) => f.url).filter((u): u is string => !!u);
-    const imageRefs = tool === "i2v" ? slotUrls("first") : slotUrls("img");
+    const imageRefs = tool === "i2v"
+      ? slotUrls("first")
+      : tool === "i2_3d"
+        ? slotUrls("threeDImage")
+        : slotUrls("img");
     const firstFrame = slotUrls("first")[0];
     const lastFrame = slotUrls("last")[0];
+    const multiViewImages: ThreeDViewImage[] = tool === "mv2_3d"
+      ? THREE_D_VIEW_SLOTS.flatMap(({ key, viewType }) => {
+          const viewImageUrl = slotUrls(key)[0];
+          return viewImageUrl ? [{ viewType, viewImageUrl }] : [];
+        })
+      : [];
     // 全能参考 (ref) accepts image / video / audio references — any one is enough.
     const vidRefs = tool === "ref" ? slotUrls("video") : [];
     const audRefs = tool === "ref" ? slotUrls("audio") : [];
     const needsRef = (UPLOADS[tool] ?? []).length > 0;
     const hasAnyRef =
-      imageRefs.length > 0 || !!firstFrame || !!lastFrame || vidRefs.length > 0 || audRefs.length > 0;
+      imageRefs.length > 0 || !!firstFrame || !!lastFrame || vidRefs.length > 0 || audRefs.length > 0 || multiViewImages.length > 0;
     if (needsRef && !hasAnyRef) {
-      toast.info(tool === "ref" ? "请先上传参考素材（图片 / 视频 / 音频）" : "请先上传参考图片");
+      toast.info(
+        tool === "ref"
+          ? "请先上传参考素材（图片 / 视频 / 音频）"
+          : tool === "mv2_3d"
+            ? "请至少上传一个视角图片"
+            : "请先上传参考图片",
+      );
       markRequiredField("#dropFiles");
       return;
     }
@@ -771,9 +817,13 @@ export function useGeneration(p: GenerationParams) {
     }
     const refInput: Record<string, unknown> = {};
     if (imageRefs.length) {
-      refInput.imageList = imageRefs;
-      refInput.sourceImage = imageRefs[0];
-      if (imageRefs.length > 1) refInput.references = imageRefs.slice(1);
+      if (tool === "i2_3d") {
+        refInput.imageUrl = imageRefs[0];
+      } else {
+        refInput.imageList = imageRefs;
+        refInput.sourceImage = imageRefs[0];
+        if (imageRefs.length > 1) refInput.references = imageRefs.slice(1);
+      }
     }
     if (tool === "flf") {
       if (firstFrame) refInput.firstFrame = firstFrame;
@@ -783,6 +833,7 @@ export function useGeneration(p: GenerationParams) {
       if (vidRefs.length) refInput.videoReferences = vidRefs;
       if (audRefs.length) refInput.audioReferences = audRefs;
     }
+    if (multiViewImages.length) refInput.multiViewImages = multiViewImages;
 
     // All early-return guards passed. Do not lock the client until completion:
     // each click is a distinct idempotent request and the backend enforces the
@@ -793,12 +844,18 @@ export function useGeneration(p: GenerationParams) {
     // video/audio tools always produce a single result; only image batches honor
     // 生成数量 (the count slider is image-only, but `count` persists across type
     // switches — without this a leftover count>1 would spawn N duplicate cells).
-    const n = isVid || isAudio ? 1 : count;
+    const n = isVid || isAudio || is3D ? 1 : count;
     const label = TOOLS[tool].label;
-    const r = isAudio ? "" : ratio; // 音频无画面比例
+    const r = isAudio || is3D ? "" : ratio; // 音频/3D 无画面比例
     const mdl = model;
     const hsh = promptHue(p || audLyrics);
-    const spec = isAudio ? "" : isVid ? `${r} · ${res} · ${dur}` : `${r} · ${imgRes}`;
+    const spec = isAudio
+      ? ""
+      : is3D
+        ? `${enablePbr ? "PBR" : "标准材质"} · ${faceCount.toLocaleString()} 面 · ${resultFormat || "OBJ + GLB"}`
+        : isVid
+          ? `${r} · ${res} · ${dur}`
+          : `${r} · ${imgRes}`;
     const hues: MeshHues[] = Array.from(
       { length: n },
       (_, i) => [hsh + i * 36, hsh + i * 36 + 80, hsh + i * 36 + 200] as MeshHues,
@@ -815,6 +872,9 @@ export function useGeneration(p: GenerationParams) {
       tool, curType, ratio: r, imgRes, res, dur, quality, count: n,
       ...(presetSkill ? { skill: { id: presetSkill.id, title: presetSkill.title } } : {}),
       imageRefs, firstFrame, lastFrame, videoRefs: vidRefs, audioRefs: audRefs,
+      ...(is3D
+        ? { multiViewImages, enablePbr, faceCount, generateType, resultFormat }
+        : {}),
       ...(isAudio && !isSfx
         ? {
             lyrics: audLyrics || undefined,
@@ -830,7 +890,7 @@ export function useGeneration(p: GenerationParams) {
         : {}),
     };
 
-    setRunMeta({ prompt: p, model: mdl, ratio: r, spec, count: n, label, isVid, refThumbs, params: lastRunRef.current ?? undefined });
+    setRunMeta({ prompt: p, model: mdl, ratio: r, spec, count: n, label, isVid, kind: curType, refThumbs, params: lastRunRef.current ?? undefined });
     setCells(hues.map((h, i) => ({ i, hues: h })));
     setProgs(new Array(n).fill(0));
 
@@ -892,7 +952,16 @@ export function useGeneration(p: GenerationParams) {
     // 作品标题/重新编辑读到的就全是模板开头)
     const genPrompt = p;
     const skillInput = presetSkill ? { skillId: presetSkill.id } : {};
-    const input: Record<string, unknown> = isAudio
+    const input: Record<string, unknown> = is3D
+      ? {
+          ...(tool !== "i2_3d" && p ? { prompt: genPrompt } : {}),
+          ...refInput,
+          enablePbr,
+          faceCount,
+          generateType,
+          ...(resultFormat ? { resultFormat } : {}),
+        }
+      : isAudio
       ? {
           // 音频：灵感模式只发描述；自定义歌词模式只发歌词/风格/歌名（描述不发，
           // 上游有 lyrics 时本就忽略 input）；延长/翻唱经 extras 传 task 与原曲
@@ -954,7 +1023,7 @@ export function useGeneration(p: GenerationParams) {
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busy, prompt, count, tool, curType, ratio, model, res, dur, imgRes, quality, musicMode, sourceClipId, sourceIsUpload, continueAt, lyrics, songStyle, songTitle, instrumental, slotData, studioList, ratioOpts, resOpts, durOpts, qualOpts, pushHistory, startGeneration, skill]);
+  }, [busy, prompt, count, tool, curType, ratio, model, res, dur, imgRes, quality, musicMode, sourceClipId, sourceIsUpload, continueAt, lyrics, songStyle, songTitle, instrumental, enablePbr, faceCount, generateType, resultFormat, slotData, studioList, ratioOpts, resOpts, durOpts, qualOpts, pushHistory, startGeneration, skill, isAudio, isSfx, is3D, promptRef]);
 
   // Refresh-resume has two durable layers. ACTIVE_RUN_KEY is the normal pointer;
   // the accepted-create journal closes the response→ACTIVE_RUN_KEY crash window

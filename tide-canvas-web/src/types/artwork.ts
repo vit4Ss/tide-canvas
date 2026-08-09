@@ -10,7 +10,7 @@ import type { MeshHues } from "@/lib/mesh";
 
 export type { MeshHues };
 
-export type ArtworkType = "image" | "video" | "audio";
+export type ArtworkType = "image" | "video" | "audio" | "3d";
 
 /** Liuguang category labels (Chinese, as authored in the design). */
 export type ArtworkCategory =

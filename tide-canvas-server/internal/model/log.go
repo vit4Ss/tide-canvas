@@ -77,7 +77,7 @@ type ModelCallLog struct {
 	BaseModel
 
 	UserID       idgen.ID `gorm:"column:user_id;index" json:"userId"`
-	Scene        string   `gorm:"column:scene;type:varchar(32);index" json:"scene"` // chat|optimize|image|video
+	Scene        string   `gorm:"column:scene;type:varchar(32);index" json:"scene"` // chat|optimize|image|video|audio|3d
 	Model        string   `gorm:"column:model;type:varchar(128);index" json:"model"`
 	Endpoint     string   `gorm:"column:endpoint;type:varchar(255)" json:"endpoint"`
 	RequestBody  string   `gorm:"column:request_body;type:longtext" json:"requestBody"`

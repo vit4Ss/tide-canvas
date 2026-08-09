@@ -6,8 +6,12 @@ import type { ArtworkType, MeshHues } from "@/types/artwork";
 
 export type { ArtworkType, MeshHues };
 
-export type ToolKey = "t2i" | "i2i" | "edit" | "t2v" | "i2v" | "flf" | "ref" | "t2a" | "sfx";
-export type ToolMode = "t2i" | "i2i" | "t2v" | "t2a";
+export type ToolKey =
+  | "t2i" | "i2i" | "edit"
+  | "t2v" | "i2v" | "flf" | "ref"
+  | "t2a" | "sfx"
+  | "t2_3d" | "i2_3d" | "mv2_3d";
+export type ToolMode = "t2i" | "i2i" | "t2v" | "t2a" | "t2_3d";
 
 export interface ToolCfg {
   mode: ToolMode;
@@ -48,6 +52,21 @@ export interface UploadFile {
 
 export type SlotData = Record<string, UploadFile[]>;
 
+export type ThreeDViewType =
+  | "front" | "left" | "right" | "back"
+  | "top" | "bottom" | "left_front" | "right_front";
+
+export interface ThreeDViewImage {
+  viewType: ThreeDViewType;
+  viewImageUrl: string;
+}
+
+export interface ThreeDAsset {
+  type: string;
+  url: string;
+  previewImageUrl?: string;
+}
+
 /* ── result / history models (hue triplets back the mesh placeholders) ───── */
 
 export interface ResultCell {
@@ -73,6 +92,9 @@ export interface HistItem {
   model: string;
   /** real result image URL (real generations). */
   url?: string;
+  /** 3D generation keeps every returned format on one history card. */
+  assets?: ThreeDAsset[];
+  previewImageUrl?: string;
   /** Suno 分轨：clip_id 供延长/翻唱引用；trackTitle 是 Suno 起的歌名。 */
   clipId?: string;
   /** 该任务是「上传登记」(extras.task=upload):其 clip 延长时须发 upload_extend */
@@ -171,6 +193,12 @@ export interface RunParams {
   lastFrame?: string;
   videoRefs?: string[];
   audioRefs?: string[];
+  /** 混元生 3D 3.1 参数。单图沿用 imageRefs，多视图保留视角语义。 */
+  multiViewImages?: ThreeDViewImage[];
+  enablePbr?: boolean;
+  faceCount?: number;
+  generateType?: "Normal" | "Geometry";
+  resultFormat?: "" | "STL" | "USDZ" | "FBX";
   /** 音频（Suno）：自定义模式的歌词/风格/歌名与纯音乐开关 */
   lyrics?: string;
   songStyle?: string;

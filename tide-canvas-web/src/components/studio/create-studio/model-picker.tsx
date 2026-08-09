@@ -26,7 +26,8 @@ export function ModelPicker({
     for (const m of studioList) map[m.name] = metaOfStudio(m);
     return map;
   }, [studioList]);
-  const meta = metaOf(model, modelMeta);
+  const selectedName = names.includes(model) ? model : names[0] || "暂无可用模型";
+  const meta = names.length ? metaOf(selectedName, modelMeta) : { tag: "", by: "", desc: "请先在模型管理上架对应模型" };
 
   // swatch 样式+字形：后台配置 icon > 品牌官方 logo > 首字母渐变——与 chat 共用
   // model-brand.ts 的 resolveModelSwatch；按模型名 memo，避免每次渲染重跑正则。
@@ -89,7 +90,7 @@ export function ModelPicker({
     };
   }, [modelOpen]);
 
-  const selSwatch = swatchFor(model);
+  const selSwatch = swatchFor(selectedName);
 
   return (
     <div
@@ -100,10 +101,12 @@ export function ModelPicker({
         className="ws-model"
         id="modelCard"
         type="button"
+        disabled={!names.length}
         aria-haspopup="listbox"
         aria-expanded={modelOpen}
         onClick={(e) => {
           e.stopPropagation();
+          if (!names.length) return;
           setModelOpen((v) => !v);
         }}
       >
@@ -112,7 +115,7 @@ export function ModelPicker({
         </span>
         <span className="ws-model-info">
           <span className="ws-model-row">
-            <span className="ws-model-name">{model}</span>
+            <span className="ws-model-name">{selectedName}</span>
             {meta.tag && <span className="ws-model-tag">{meta.tag}</span>}
           </span>
           <span className="ws-model-desc">
@@ -133,8 +136,8 @@ export function ModelPicker({
               key={m}
               type="button"
               role="option"
-              aria-selected={m === model}
-              className={`ws-mopt${m === model ? " on" : ""}`}
+              aria-selected={m === selectedName}
+              className={`ws-mopt${m === selectedName ? " on" : ""}`}
               onClick={() => {
                 onSelect(m);
                 setModelOpen(false);

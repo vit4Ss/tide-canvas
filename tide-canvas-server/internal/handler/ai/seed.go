@@ -66,6 +66,12 @@ func SeedCatalog(db *gorm.DB) error {
 			InputSchema: `{"prompt":{"type":"string","required":true},"references":{"type":"array"},"videoReferences":{"type":"array"}}`,
 			IsAsync:     true, SortOrder: 6,
 		},
+		{
+			HandlerName: "generate_3d", Name: "generate_3d", DisplayName: "3D 模型生成",
+			Description: "Generate a 3D asset from text, one image, or multi-view images.",
+			InputSchema: `{"prompt":{"type":"string"},"imageUrl":{"type":"string"},"multiViewImages":{"type":"array"}}`,
+			IsAsync:     true, SortOrder: 7,
+		},
 	}
 
 	for i := range seeds {
