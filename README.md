@@ -27,8 +27,8 @@ docker compose down
 `docker compose down` preserves MySQL, Redis, and uploaded-file volumes. Do not
 use `down -v` unless deleting local data is intentional.
 
-The root composition is local-only: mail, payments, and cloud storage are
-disabled, and all published ports bind to `127.0.0.1`.
+The root composition binds all published ports to `127.0.0.1` and uses local
+file storage. Existing mail and payment configuration remains unchanged.
 
 ## Native development
 
@@ -108,11 +108,9 @@ docker compose \
   up -d --pull always --wait
 ```
 
-## Security
+## Configuration scope
 
-- Never commit `.env` files or real credentials.
-- Production/test credentials must be injected through protected environment
-  variables or a secret manager.
-- Mail, payments, and OSS are disabled unless explicitly enabled.
-- Credentials that have ever appeared in Git history must be rotated; deleting
-  them from the current branch does not revoke them.
+The CI and Compose setup does not relocate or delete existing backend
+integration configuration. Mail and payment values continue to load through
+the existing `tide-canvas-server/configs` configuration chain. Local `.env`
+files remain available for explicit runtime overrides and are ignored by Git.

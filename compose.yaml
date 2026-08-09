@@ -58,8 +58,6 @@ services:
       TIDECANVAS_STORAGE_TYPE: local
       TIDECANVAS_STORAGE_LOCALDIR: /app/data/uploads
       TIDECANVAS_STORAGE_PUBLICURL: ${PUBLIC_API_ORIGIN:-http://localhost:8080}/static
-      TIDECANVAS_EMAIL_ENABLED: "false"
-      TIDECANVAS_ELIANDAPAY_ENABLED: "false"
       TIDECANVAS_SEED_DEMO: ${SEED_DEMO:-0}
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
