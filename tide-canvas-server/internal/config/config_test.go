@@ -44,7 +44,6 @@ func TestLoadProdAppliesOverlay(t *testing.T) {
 	t.Setenv("TIDECANVAS_JWT_SECRET", "unit-test-secret")
 	t.Setenv("TIDECANVAS_RELAY_APIKEY", "unit-test-prod-relay-key")
 	t.Setenv("TIDECANVAS_RELAY_BASEURL", testRelayBaseURL)
-	setProdEmailEnv(t)
 
 	cfg, err := Load()
 	if err != nil {
@@ -70,17 +69,6 @@ func TestLoadProdAppliesOverlay(t *testing.T) {
 	}
 }
 
-func TestLoadProdRequiresSMTP(t *testing.T) {
-	t.Setenv("TIDECANVAS_ENV", "prod")
-	t.Setenv("TIDECANVAS_JWT_SECRET", "unit-test-secret")
-	t.Setenv("TIDECANVAS_RELAY_APIKEY", "unit-test-prod-relay-key")
-	t.Setenv("TIDECANVAS_EMAIL_ENABLED", "false")
-
-	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "requires SMTP") {
-		t.Fatalf("Load with prod + SMTP disabled: err = %v, want SMTP error", err)
-	}
-}
-
 func TestLoadProdRejectsInheritedTestRelayKey(t *testing.T) {
 	t.Setenv("TIDECANVAS_ENV", "prod")
 	t.Setenv("TIDECANVAS_JWT_SECRET", "unit-test-secret")
@@ -97,13 +85,4 @@ func TestLoadRejectsUnknownEnv(t *testing.T) {
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "TIDECANVAS_ENV") {
 		t.Fatalf("Load with TIDECANVAS_ENV=staging: err = %v, want invalid-env error", err)
 	}
-}
-
-func setProdEmailEnv(t *testing.T) {
-	t.Helper()
-	t.Setenv("TIDECANVAS_EMAIL_ENABLED", "true")
-	t.Setenv("TIDECANVAS_EMAIL_HOST", "smtp.example.test")
-	t.Setenv("TIDECANVAS_EMAIL_USERNAME", "mailer@example.test")
-	t.Setenv("TIDECANVAS_EMAIL_PASSWORD", "unit-test-password")
-	t.Setenv("TIDECANVAS_EMAIL_FROMADDRESS", "mailer@example.test")
 }

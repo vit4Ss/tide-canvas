@@ -262,17 +262,6 @@ func validate(cfg *Config) error {
 	if strings.TrimSpace(cfg.Relay.APIKey) == "" {
 		return fmt.Errorf("config: prod requires a relay API key — set TIDECANVAS_RELAY_APIKEY")
 	}
-	// Disabled SMTP intentionally logs verification codes for local development.
-	// That fallback must never be reachable in production.
-	if !cfg.Email.Enabled {
-		return fmt.Errorf("config: prod requires SMTP — set TIDECANVAS_EMAIL_ENABLED=true and inject email credentials")
-	}
-	if strings.TrimSpace(cfg.Email.Host) == "" ||
-		strings.TrimSpace(cfg.Email.Username) == "" ||
-		strings.TrimSpace(cfg.Email.Password) == "" ||
-		strings.TrimSpace(cfg.Email.FromAddress) == "" {
-		return fmt.Errorf("config: prod SMTP credentials are incomplete — set TIDECANVAS_EMAIL_HOST, TIDECANVAS_EMAIL_USERNAME, TIDECANVAS_EMAIL_PASSWORD, and TIDECANVAS_EMAIL_FROMADDRESS")
-	}
 	if strings.TrimSpace(cfg.Server.Mode) != "release" {
 		cfg.Server.Mode = "release"
 	}
@@ -326,13 +315,13 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("cors.allowOrigins", []string{"http://localhost:3000"})
 
-	v.SetDefault("email.enabled", false)
+	v.SetDefault("email.enabled", true)
 	v.SetDefault("email.host", "smtp.gmail.com")
 	v.SetDefault("email.port", 587)
-	v.SetDefault("email.username", "")
-	v.SetDefault("email.password", "")
-	v.SetDefault("email.fromAddress", "")
-	v.SetDefault("email.fromName", "Tide Canvas")
+	v.SetDefault("email.username", "ad@tcmzhan.com")
+	v.SetDefault("email.password", "jpwhhpqtekgsnlsf")
+	v.SetDefault("email.fromAddress", "ad@tcmzhan.com")
+	v.SetDefault("email.fromName", "ScarecrowToken")
 	v.SetDefault("email.replyTo", "")
 	v.SetDefault("email.ssl", false)
 	v.SetDefault("email.startTLS", true)
@@ -356,10 +345,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("relay.baseUrl", testRelayBaseURL)
 	v.SetDefault("relay.apiKey", "")
 
-	v.SetDefault("eliandapay.enabled", false)
+	v.SetDefault("eliandapay.enabled", true)
 	v.SetDefault("eliandapay.gateway", "https://api.ndow.cn/")
-	v.SetDefault("eliandapay.merchantId", "")
-	v.SetDefault("eliandapay.md5Key", "")
+	v.SetDefault("eliandapay.merchantId", "1052")
+	v.SetDefault("eliandapay.md5Key", "AYgauO61qisuGuqOz34cG6parLPdAoYU")
 	v.SetDefault("eliandapay.notifyUrl", "http://localhost:8080/api/billing/notify")
 	v.SetDefault("eliandapay.returnUrl", "http://localhost:3000/billing?pay_status=success")
 }

@@ -1,80 +1,112 @@
-# Shared, non-secret defaults. Environment-specific values are layered from
-# config.test.yaml / config.prod.yaml and TIDECANVAS_* variables always win.
+# Tide Canvas server base configuration（两个环境共享的底座，取值 = 测试环境默认）。
+#
+# 分层加载（后者覆盖前者）：
+#   1. config.yaml            —— 本文件（基础/测试默认值）
+#   2. config.<env>.yaml      —— 环境叠加，由 TIDECANVAS_ENV 选择：
+#                                test（缺省）-> config.test.yaml
+#                                prod        -> config.prod.yaml
+#   3. 环境变量               —— TIDECANVAS_ 前缀，点换下划线，例如：
+#                                TIDECANVAS_SERVER_PORT=8080
+#                                TIDECANVAS_JWT_SECRET=...
+#                                TIDECANVAS_MYSQL_PASSWORD=...
+#                                TIDECANVAS_REDIS_ADDR=127.0.0.1:6379
+#
+# 环境相关的差异请写进对应的 config.test.yaml / config.prod.yaml，不要改这里。
 
 server:
   port: 8080
-  mode: debug
+  mode: debug # debug | release | test
 
 mysql:
+  # If dsn is set it takes precedence over the discrete fields below.
+  # 测试环境后端与 MySQL 同机部署，走 127.0.0.1 回环（MySQL 不对外网开放 3306）。
   dsn: ""
   host: 127.0.0.1
   port: 3306
   user: root
-  password: root
+  password: "mbfczzzz@123"
   database: canvas
+  # sql_mode keeps STRICT_TRANS_TABLES (data-integrity) but drops NO_ZERO_DATE so
+  # optional/empty datetimes (campaign dates, api-key expiry = no-expiry) store as
+  # zero instead of being rejected with Error 1292.
   params: "charset=utf8mb4&parseTime=True&loc=Local&sql_mode=%27STRICT_TRANS_TABLES%2CNO_ENGINE_SUBSTITUTION%27"
   maxOpenConns: 100
   maxIdleConns: 10
-  maxLifetime: 3600
+  maxLifetime: 3600 # seconds
 
 redis:
   addr: 127.0.0.1:6379
-  password: ""
+  password: "mbfczzzz@123"
   db: 0
 
 jwt:
-  secret: change-me-in-production
+  secret: "change-me-in-production" # MUST override in production
   accessTTL: 2h
-  refreshTTL: 168h
+  refreshTTL: 168h # 7 days
   issuer: tidecanvas
 
 storage:
-  type: local
+  # These values seed the 存储配置 group in sys_config on first boot; afterwards the
+  # admin 配置管理 screen is the source of truth (changes apply on restart).
+  type: oss # local | oss
   localDir: ./data/uploads
   publicURL: http://localhost:8080/static
-  endpoint: ""
-  bucket: ""
-  accessKey: ""
-  secretKey: ""
+  # OSS settings (used when type == oss).
+  # SECRETS: do NOT commit accessKey/secretKey. Provide them via env
+  #   TIDECANVAS_STORAGE_ACCESSKEY / TIDECANVAS_STORAGE_SECRETKEY
+  # or enter them in the admin 配置管理 → 存储配置 screen (persisted to sys_config).
+  endpoint: https://oss-cn-shanghai.aliyuncs.com
+  bucket: scaecrowtoken
+  accessKey: "" # set via env or admin UI
+  secretKey: "" # set via env or admin UI
   region: ""
-  prefix: canvas/uploads/
-  cdnDomain: ""
-  accelerateDomain: ""
-  legacyHosts: ""
+  prefix: canvas/uploads/ # project root inside the (possibly shared) bucket
+  cdnDomain: "" # optional CDN host for display URLs
+  accelerateDomain: scaecrowtoken.oss-accelerate.aliyuncs.com # cross-border upstream fetch
 
 cors:
   allowOrigins:
     - http://localhost:3000
 
+# Chat assistant LLM (Anthropic / Claude). Leave apiKey blank to keep the canned
+# placeholder reply; set it (or TIDECANVAS_LLM_APIKEY) to enable real replies.
 llm:
-  historyLimit: 20
-  contextTokenLimit: 32000
+  historyLimit: 20 # recent messages sent as context
+  contextTokenLimit: 32000 # 会话累计 token 估算上限，达到后需开启新会话
+  # systemPrompt: "" # optional override of the built-in 流光 creative-assistant persona
 
+# Upstream model relay (ScarecrowToken Relay). The admin 模型管理「刷新」按钮 pulls
+# {baseUrl}/v1/models with apiKey as a Bearer token and upserts the catalog into
+# market_model. The credential is deliberately not shared here: test keeps its
+# key in config.test.yaml, while production must inject TIDECANVAS_RELAY_APIKEY.
 relay:
+  # Local/test default. Production overrides this in config.prod.yaml.
   baseUrl: https://test-relay.tcmzhan.com
-  apiKey: ""
 
-# External side effects are disabled by default. Enable them only with explicit
-# environment variables in a protected deployment environment.
+# 易联达Pay (eliandapay / api.ndow.cn) 聚合收银台 —— 一个接口同时支持支付宝 + 微信，
+# MD5 签名。下单在 /api/orders 生成 submit.php 跳转 URL；网关异步回调打到
+# notify-url（= /api/billing/notify）完成结算与积分发放。生产环境请用 env 覆盖密钥：
+#   TIDECANVAS_ELIANDAPAY_MD5KEY / TIDECANVAS_ELIANDAPAY_MERCHANTID
+# notifyUrl 必须是网关能访问的公网 https 地址。
 eliandapay:
-  enabled: false
+  enabled: true
   gateway: https://api.ndow.cn/
-  merchantId: ""
-  md5Key: ""
+  merchantId: "1052"
+  md5Key: "AYgauO61qisuGuqOz34cG6parLPdAoYU"
   notifyUrl: http://localhost:8080/api/billing/notify
   returnUrl: http://localhost:3000/billing?pay_status=success
 
 email:
-  enabled: false
+  enabled: true
   host: smtp.gmail.com
   port: 587
-  username: ""
-  password: ""
-  fromAddress: ""
-  fromName: Tide Canvas
-  replyTo: ""
-  ssl: false
-  startTLS: true
+  username: ad@tcmzhan.com
+  password: jpwhhpqtekgsnlsf # Gmail app password, spaces removed
+  fromAddress: ad@tcmzhan.com
+  fromName: ScarecrowToken
+  replyTo: "" # blank -> falls back to fromAddress
+  ssl: false # 465 -> true
+  startTLS: true # 587 -> true
   codeLength: 6
   codeTTLSeconds: 600
   resendCooldownSeconds: 60
