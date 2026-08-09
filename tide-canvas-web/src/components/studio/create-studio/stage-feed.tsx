@@ -22,11 +22,18 @@ import {
 
 const PROMPT_REFERENCE_GLYPH = { image: "图", video: "▶", audio: "♪" } as const;
 
-function RunPromptMention({ reference }: { reference: RunPromptReference }) {
+function RunPromptMention({
+  reference,
+  onZoom,
+}: {
+  reference: RunPromptReference;
+  /** 图片引用可点击放大（复用结果图同一个灯箱）；视频/音频引用无预览不接。 */
+  onZoom?: (url: string) => void;
+}) {
   const [failedSource, setFailedSource] = useState("");
   const showImage = reference.kind === "image" && failedSource !== reference.source;
-  return (
-    <span className="mention-pill ws-run-mention" title={reference.label}>
+  const inner = (
+    <>
       {showImage ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
@@ -44,16 +51,41 @@ function RunPromptMention({ reference }: { reference: RunPromptReference }) {
         <span className="mp-ic">{PROMPT_REFERENCE_GLYPH[reference.kind]}</span>
       )}
       <span className="mp-label">{reference.label}</span>
+    </>
+  );
+  if (showImage && onZoom) {
+    return (
+      <button
+        type="button"
+        className="mention-pill ws-run-mention zoomable"
+        title={`${reference.label} · 点击放大`}
+        onClick={() => onZoom(reference.source)}
+      >
+        {inner}
+      </button>
+    );
+  }
+  return (
+    <span className="mention-pill ws-run-mention" title={reference.label}>
+      {inner}
     </span>
   );
 }
 
-function RunPromptText({ prompt, params }: { prompt: string; params?: RunParams }) {
+function RunPromptText({
+  prompt,
+  params,
+  onZoom,
+}: {
+  prompt: string;
+  params?: RunParams;
+  onZoom?: (url: string) => void;
+}) {
   const parts = splitRunPrompt(prompt, runPromptReferences(params));
   return (
     <span className="tx" title={prompt}>
       {parts.map((part, index) => part.kind === "reference" ? (
-        <RunPromptMention key={`${part.value.key}-${index}`} reference={part.value} />
+        <RunPromptMention key={`${part.value.key}-${index}`} reference={part.value} onZoom={onZoom} />
       ) : (
         <span key={`text-${index}`}>{part.value}</span>
       ))}
@@ -287,7 +319,7 @@ export function StageFeed({
                   </div>
                   {meta.prompt && (
                     <div className="ws-run-prompt">
-                      <RunPromptText prompt={meta.prompt} params={meta.params} />
+                      <RunPromptText prompt={meta.prompt} params={meta.params} onZoom={onZoom} />
                     </div>
                   )}
                   <div className="ws-run-imgs">
@@ -334,7 +366,7 @@ export function StageFeed({
                 </div>
                 {r.prompt && (
                   <div className="ws-run-prompt">
-                    <RunPromptText prompt={r.prompt} params={r.params} />
+                    <RunPromptText prompt={r.prompt} params={r.params} onZoom={onZoom} />
                     <button
                       type="button"
                       className="cp"
