@@ -39,18 +39,19 @@ type AuthorVO struct {
 
 // MarketModelVO is the list/detail view of a marketplace model.
 type MarketModelVO struct {
-	ID     idgen.ID `json:"id"`
-	Type   string   `json:"type"`
-	NameCn string   `json:"nameCn"`
-	NameEn string   `json:"nameEn"`
-	Base   string   `json:"base"`
-	Author AuthorVO `json:"author"`
-	Runs   int      `json:"runs"`
-	Likes  int      `json:"likes"`
-	Ver    string   `json:"ver"`
-	Tags   []string `json:"tags"`
-	Badge  string   `json:"badge"`
-	Cover  string   `json:"cover"`
+	ID        idgen.ID `json:"id"`
+	Type      string   `json:"type"`      // legacy subtype from the type: pseudo-tag
+	MediaType string   `json:"mediaType"` // canonical market_model.type category
+	NameCn    string   `json:"nameCn"`
+	NameEn    string   `json:"nameEn"`
+	Base      string   `json:"base"`
+	Author    AuthorVO `json:"author"`
+	Runs      int      `json:"runs"`
+	Likes     int      `json:"likes"`
+	Ver       string   `json:"ver"`
+	Tags      []string `json:"tags"`
+	Badge     string   `json:"badge"`
+	Cover     string   `json:"cover"`
 }
 
 // toCategoryVO maps a persisted category to its VO.
@@ -77,18 +78,19 @@ func toMarketModelVO(m *model.MarketModel, authorName, categoryName string) Mark
 	}
 
 	return MarketModelVO{
-		ID:     m.ID,
-		Type:   meta["type"],
-		NameCn: cn,
-		NameEn: en,
-		Base:   base,
-		Author: AuthorVO{ID: m.AuthorID, Name: authorName},
-		Runs:   m.UseCount,
-		Likes:  m.LikeCount,
-		Ver:    meta["ver"],
-		Tags:   tags,
-		Badge:  meta["badge"],
-		Cover:  m.CoverURL,
+		ID:        m.ID,
+		Type:      meta["type"],
+		MediaType: m.Type,
+		NameCn:    cn,
+		NameEn:    en,
+		Base:      base,
+		Author:    AuthorVO{ID: m.AuthorID, Name: authorName},
+		Runs:      m.UseCount,
+		Likes:     m.LikeCount,
+		Ver:       meta["ver"],
+		Tags:      tags,
+		Badge:     meta["badge"],
+		Cover:     m.CoverURL,
 	}
 }
 

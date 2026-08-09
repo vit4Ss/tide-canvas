@@ -30,7 +30,7 @@ export interface StudioModelVO {
 export const marketApi = {
   categories: () =>
     http.get<ModelCategoryVO[]>("/api/market/categories"),
-  /** Studio models of a media type (image|video|…) with per-model config. */
+  /** Studio models of a media type (image|video|audio|text|3d) with per-model config. */
   studioModels: (type?: string) =>
     http.get<StudioModelVO[]>("/api/market/studio-models", toParams({ type })),
   list: (query: MarketModelQuery) =>

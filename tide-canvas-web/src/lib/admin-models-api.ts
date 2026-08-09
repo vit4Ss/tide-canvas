@@ -50,7 +50,7 @@ export const adminModelsApi = {
   /** GET /api/admin/models/type-order — 模型选择器的类型顺序。 */
   getTypeOrder: () => http.get<{ types: string[] }>(`${BASE}/type-order`),
 
-  /** PUT /api/admin/models/type-order — 保存类型顺序（text/image/video/audio 排列）。 */
+  /** PUT /api/admin/models/type-order — 保存类型顺序（text/image/video/audio/3d 排列）。 */
   saveTypeOrder: (types: string[]) =>
     http.put<{ types: string[] }>(`${BASE}/type-order`, { types }),
 

@@ -87,7 +87,7 @@ type AdminModelVO struct {
 	Description string    `json:"description"`
 	CoverUrl    string          `json:"coverUrl"`
 	Tags        string          `json:"tags"`
-	Type        string          `json:"type"`     // media category: text | image | video | audio
+	Type        string          `json:"type"`     // media category: text | image | video | audio | 3d
 	ModelKey    string          `json:"modelKey"` // upstream model id
 	Config      json.RawMessage `json:"config"`   // per-model generation settings (object or null)
 	CategoryId  *idgen.ID       `json:"categoryId"`
@@ -140,7 +140,7 @@ type AdminModelQuery struct {
 	Keyword    string `form:"keyword"`    // matches name/description/tags
 	Status     *int   `form:"status"`     // 0/1/2 exact match
 	CategoryId string `form:"categoryId"` // filter by category
-	Type       string `form:"type"`       // media category: text|image|video|audio
+	Type       string `form:"type"`       // media category: text|image|video|audio|3d
 }
 
 func (q *AdminModelQuery) normalize() {
@@ -166,7 +166,7 @@ type AdminModelCreateDTO struct {
 	Description string  `json:"description" binding:"omitempty,max=8192"`
 	CoverUrl    string  `json:"coverUrl" binding:"omitempty,max=512"`
 	Tags        string  `json:"tags" binding:"omitempty,max=512"`
-	Type        string  `json:"type" binding:"omitempty,oneof=text image video audio"`
+	Type        string  `json:"type" binding:"omitempty,oneof=text image video audio 3d"`
 	ModelKey    string  `json:"modelKey" binding:"omitempty,max=128"`
 	Config      json.RawMessage `json:"config" binding:"omitempty"`
 	CategoryId  string  `json:"categoryId" binding:"omitempty"`
@@ -183,7 +183,7 @@ type AdminModelUpdateDTO struct {
 	Description *string `json:"description" binding:"omitempty,max=8192"`
 	CoverUrl    *string `json:"coverUrl" binding:"omitempty,max=512"`
 	Tags        *string `json:"tags" binding:"omitempty,max=512"`
-	Type        *string `json:"type" binding:"omitempty,oneof=text image video audio"`
+	Type        *string `json:"type" binding:"omitempty,oneof=text image video audio 3d"`
 	ModelKey    *string `json:"modelKey" binding:"omitempty,max=128"`
 	Config      json.RawMessage `json:"config" binding:"omitempty"`
 	CategoryId  *string `json:"categoryId" binding:"omitempty"`
@@ -432,7 +432,8 @@ func (h *modelsHandler) effectiveTypeOrder() []string {
 }
 
 // syncRelay pulls the upstream relay model catalog and upserts it into
-// market_model (add new / update existing by name), returning add/update counts.
+// market_model (add new / update existing by stable model_key), returning
+// add/update counts.
 // New rows are listed (status 1) and authored by the current admin.
 func (h *modelsHandler) syncRelay(c *gin.Context) {
 	// 未配置 ≠ 服务器故障：这是写给管理员的操作指引，用 500 会被统一话术抹成

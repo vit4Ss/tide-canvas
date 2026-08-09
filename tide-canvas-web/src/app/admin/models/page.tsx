@@ -69,6 +69,9 @@ const MODE_OPTIONS: Record<string, { v: string; l: string }[]> = {
     { v: "t2a", l: "音乐生成" },
     { v: "sfx", l: "音效生成" },
   ],
+  "3d": [
+    { v: "t2_3d", l: "3D 生成" },
+  ],
 };
 const QUALITY_OPTIONS = [
   { v: "low", l: "低画质" },
@@ -98,6 +101,7 @@ const TYPE_FILTERS: { label: string; type?: string }[] = [
   { label: "图片模型", type: "image" },
   { label: "视频模型", type: "video" },
   { label: "音频模型", type: "audio" },
+  { label: "3D 模型", type: "3d" },
 ];
 
 function statusTone(status: number): PillTone {
@@ -428,7 +432,7 @@ export default function AdminModelsPage() {
 
 /* ──────────────────────────────────────────────────────────────────────────
    TypeOrderModal — 模型选择器的类型顺序（sys_config market.typeOrder）。
-   上移/下移排列 文本/图片/视频/音频，保存后创作台与对话的模型下拉即时生效。
+   上移/下移排列 文本/图片/视频/音频/3D，保存后创作台与对话的模型下拉即时生效。
    ──────────────────────────────────────────────────────────────────────── */
 
 function TypeOrderModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -552,7 +556,7 @@ function TypeOrderModal({ open, onClose }: { open: boolean; onClose: () => void 
 }
 
 /** 出厂类型顺序 — 与后端 model.DefaultMarketTypeOrder 一致。 */
-const DEFAULT_TYPE_ORDER = ["text", "audio", "image", "video"] as const;
+const DEFAULT_TYPE_ORDER = ["text", "audio", "image", "video", "3d"] as const;
 
 /* ──────────────────────────────────────────────────────────────────────────
    Chips — labeled multi/single select chip group (value ≠ label), styled with
@@ -664,6 +668,10 @@ function ModelModal({
   const [status, setStatus] = useState<number>(model?.status ?? 1);
 
   const [cfg, setCfg] = useState<ModelConfig>({
+    // Preserve relay metadata and future config fields that this form does not
+    // render directly. Without this spread, merely opening and saving a synced
+    // model would erase operations/capabilities/price modifiers.
+    ...c0,
     provider: c0.provider ?? "",
     icon: c0.icon ?? "",
     costUsd: c0.costUsd ?? "",
@@ -697,7 +705,9 @@ function ModelModal({
   const isImage = type === "image";
   const isVideo = type === "video";
   const isText = type === "text";
+  const is3D = type === "3d";
   const showGen = isImage || isVideo;
+  const showPrompt = showGen || is3D;
 
   // price-matrix rows: image → qualities, video → durations; cols → resolutions.
   const matrixRows = isVideo
@@ -790,7 +800,7 @@ function ModelModal({
           </Field>
           <Field label="类型">
             <select value={type} onChange={(e) => setType(e.target.value)}>
-              {["image", "video", "text", "audio"].map((t) => (
+              {["image", "video", "text", "audio", "3d"].map((t) => (
                 <option key={t} value={t}>
                   {MODEL_TYPE_FORM_LABEL[t]}
                 </option>
@@ -989,7 +999,22 @@ function ModelModal({
         </FormCard>
       )}
 
-      {showGen && (
+      {is3D && (
+        <FormCard title="生成能力">
+          <FormSection
+            label="生成方式"
+            hint="Relay 的 t2_3d 端点会按请求内容自动识别文本、单图或多视图输入"
+          >
+            <Chips
+              options={modeOptions}
+              value={cfg.modes ?? []}
+              onChange={(next) => setC({ modes: next })}
+            />
+          </FormSection>
+        </FormCard>
+      )}
+
+      {showPrompt && (
         <FormCard title="提示词配置">
           <FormSection label="默认提示词" hint="创作台提示词框的默认内容；留空则用通用占位文案">
             <div className="fld">

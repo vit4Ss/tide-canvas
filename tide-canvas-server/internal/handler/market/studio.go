@@ -166,7 +166,7 @@ func (r *repo) studioModels(typ string) ([]model.MarketModel, error) {
 }
 
 // typeOrder returns the admin-configured media-type order (sys_config
-// market.typeOrder), falling back to the factory default（文本→音频→图片→视频）.
+// market.typeOrder), falling back to the factory default（文本→音频→图片→视频→3D）.
 func (r *repo) typeOrder() []string {
 	var row model.SysConfig
 	if err := r.db.Select("config_value").

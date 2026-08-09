@@ -57,8 +57,8 @@ export interface ModelLiteVO {
   authorId: string;
   name: string;
   coverUrl: string;
-  /** Media category (text | image | video | audio) — drives the marquee
-   *  deep-link target (创作台 image/video vs 对话 text). */
+  /** Media category (text | image | video | audio | 3d) — drives the marquee
+   *  deep-link target; 3d stays in the catalog until its workspace is wired. */
   type: string;
   tags: string[];
   /** Decimal price serialized as a string (e.g. "0", "29.00"). */

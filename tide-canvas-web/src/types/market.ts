@@ -26,7 +26,10 @@ export interface AuthorVO {
  *  type, ver, badge) are derived server-side from the stored name/tags columns. */
 export interface MarketModelVO {
   id: string;
+  /** Legacy generation subtype lifted from the stored `type:` pseudo-tag. */
   type: string;
+  /** Canonical media category from market_model.type. */
+  mediaType: string;
   nameCn: string;
   nameEn: string;
   base: string;

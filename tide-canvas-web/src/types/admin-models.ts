@@ -45,7 +45,7 @@ export interface ModelConfig {
    * "omniRef.imageCount" / "omniRef.videoSizeMB" 等；0 或未设 = 不限制。
    */
   refLimits?: Record<string, number>;
-  /** image: t2i,i2i · video: t2v,i2v,keyframe,omni_ref */
+  /** image: t2i,i2i · video: t2v,i2v,keyframe,omni_ref · 3d: relay-defined modes */
   modes?: string[];
   ratios?: string[];
   resolutions?: string[];
@@ -59,6 +59,8 @@ export interface ModelConfig {
   priceMatrix?: Record<string, Record<string, string>>;
   /** raw upstream price modifiers, kept for reference */
   priceModifiers?: unknown;
+  /** complete upstream params_schema, including modality-specific 3D options */
+  paramsSchema?: unknown;
   creditCost?: number;
   /** 音频(Suno)：本地音频「上传登记」任务的单次积分；空/0 = 按消耗积分计。
       后端 toNum 兼容数字与数字字符串，输入框直接存字符串。 */
@@ -72,7 +74,7 @@ export interface AdminModelVO {
   description: string;
   coverUrl: string;
   tags: string;
-  /** media category: text | image | video | audio */
+  /** media category: text | image | video | audio | 3d */
   type: string;
   /** upstream model id (模型ID) */
   modelKey: string;
@@ -110,7 +112,7 @@ export interface AdminModelQuery {
   status?: number;
   /** filter by category id */
   categoryId?: string;
-  /** media category: text | image | video | audio */
+  /** media category: text | image | video | audio | 3d */
   type?: string;
 }
 
@@ -120,7 +122,7 @@ export interface AdminModelCreateDTO {
   description?: string;
   coverUrl?: string;
   tags?: string;
-  /** media category: text | image | video | audio (defaults to image) */
+  /** media category: text | image | video | audio | 3d (defaults to image) */
   type?: string;
   modelKey?: string;
   config?: ModelConfig;
@@ -139,7 +141,7 @@ export interface AdminModelUpdateDTO {
   description?: string;
   coverUrl?: string;
   tags?: string;
-  /** media category: text | image | video | audio */
+  /** media category: text | image | video | audio | 3d */
   type?: string;
   modelKey?: string;
   config?: ModelConfig;
@@ -224,6 +226,7 @@ export const MODEL_TYPE_LABEL: Record<string, string> = {
   image: "图片",
   video: "视频",
   audio: "音频",
+  "3d": "3D",
 };
 
 /** Media-category value → label used in the create/edit form 类型 dropdown. */
@@ -232,4 +235,5 @@ export const MODEL_TYPE_FORM_LABEL: Record<string, string> = {
   video: "视频生成",
   text: "文本生成",
   audio: "音频生成",
+  "3d": "3D 生成",
 };

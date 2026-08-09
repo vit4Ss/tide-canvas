@@ -50,7 +50,7 @@ type MarketModel struct {
 	Config string `gorm:"column:config;type:text" json:"config"`
 
 	// Type is the media category that drives the admin 模型管理 category filter:
-	// text | image | video | audio. Empty string for rows created before this
+	// text | image | video | audio | 3d. Empty string for rows created before this
 	// column existed; BackfillMarketModelType derives those from the legacy
 	// "type:" pseudo-tag in Tags on startup.
 	Type string `gorm:"column:type;type:varchar(16);not null;default:'';index" json:"type"`
@@ -70,16 +70,16 @@ type MarketModel struct {
 func (MarketModel) TableName() string { return "market_model" }
 
 // MarketModelTypes are the recognized media categories for MarketModel.Type.
-var MarketModelTypes = []string{"text", "image", "video", "audio"}
+var MarketModelTypes = []string{"text", "image", "video", "audio", "3d"}
 
 // ConfigKeyMarketTypeOrder is the sys_config key holding the media-type order
-// of the model pickers as a comma list (e.g. "text,audio,image,video"). Edited
+// of the model pickers as a comma list (e.g. "text,audio,image,video,3d"). Edited
 // in the admin 模型管理「类型排序」; consumed by /api/market/studio-models.
 const ConfigKeyMarketTypeOrder = "market.typeOrder"
 
 // DefaultMarketTypeOrder is the factory picker order（2026-07-10 用户指定：
-// 文本 → 音频 → 图片 → 视频）, used when the config key is missing/invalid.
-var DefaultMarketTypeOrder = []string{"text", "audio", "image", "video"}
+// 文本 → 音频 → 图片 → 视频 → 3D）, used when the config key is missing/invalid.
+var DefaultMarketTypeOrder = []string{"text", "audio", "image", "video", "3d"}
 
 // ParseMarketTypeOrder parses the stored comma list into a valid, de-duplicated
 // type order. Unknown entries are dropped; types missing from the value are

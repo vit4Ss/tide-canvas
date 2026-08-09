@@ -6,6 +6,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { marketApi, type StudioModelVO } from "@/lib/market-api";
 import { swatchOf } from "../_components/chat-utils";
 
+// The chat send pipeline currently has explicit handlers for these four media
+// types. Other catalog types (notably 3d) stay available to dedicated/future
+// workspaces but must not fall through to the text-chat branch.
+const CHAT_MODEL_TYPES = new Set(["text", "image", "video", "audio"]);
+
 /** 模型列表 + 当前所选模型：加载 / focus·visibility 重拉 / 首页深链预选，
  *  以及按模型名 memo 的 swatch 解析（流式增量重渲染时不能对每个模型重跑正则）。 */
 export function useGenModels() {
@@ -23,7 +28,9 @@ export function useGenModels() {
       if (seq !== requestSeqRef.current) return;
       // 顺序由后端决定：类型顺序=后台「模型管理·类型排序」（sys_config
       // market.typeOrder），类型内=行内上移/下移（sort_order）。
-      const list = res.success && Array.isArray(res.data) ? res.data : [];
+      const list = res.success && Array.isArray(res.data)
+        ? res.data.filter((item) => CHAT_MODEL_TYPES.has(item.type))
+        : [];
       setGenModels(list);
       if (list.length) {
         setModel((cur) => (list.some((m) => m.name === cur) ? cur : list[0].name));

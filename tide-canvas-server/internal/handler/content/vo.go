@@ -37,9 +37,10 @@ type ModelLiteVO struct {
 	AuthorID idgen.ID `json:"authorId"`
 	Name     string   `json:"name"`
 	CoverUrl string   `json:"coverUrl"`
-	// Type is the media category (text | image | video | audio); the home
+	// Type is the media category (text | image | video | audio | 3d); the home
 	// marquee uses it to deep-link a model into the right workspace
-	// (创作台 image/video vs 对话 text).
+	// (创作台 image/video/audio vs 对话 text; 3d falls back to the catalog until
+	// its dedicated generation workspace is connected).
 	Type      string   `json:"type"`
 	Tags      []string `json:"tags"`
 	Price     string   `json:"price"`

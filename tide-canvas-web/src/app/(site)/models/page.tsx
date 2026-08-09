@@ -15,8 +15,9 @@
    to a deterministic mesh gradient when the cover URL is empty.
 
    Catalog reads are public, so no session is required. "立即生成" records the
-   use (best-effort, authed via ensureSession), stashes the model name in
-   sessionStorage and jumps to /studio.
+   use (best-effort, authed via ensureSession), stashes the model name and jumps
+   to the workspace for its canonical mediaType. Types without a workspace do
+   not fall through to an unrelated generator.
    ========================================================================== */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -25,6 +26,7 @@ import { useRouter } from "next/navigation";
 import { marketApi } from "@/lib/market-api";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { mesh } from "@/lib/mesh";
+import { toast } from "@/components/shared/toast";
 import SortSelect from "@/components/site/sort-select";
 import { useReveal } from "@/components/site/use-reveal";
 import type { ModelCategoryVO, MarketModelVO } from "@/types/market";
@@ -121,10 +123,21 @@ export default function ModelsPage() {
     return [{ id: ALL_SLUG, name: "全部", slug: ALL_SLUG, icon: "", sortOrder: 0 }];
   }, [cats]);
 
-  // "立即生成": record the use (best-effort), stash the model, jump to studio.
+  // "立即生成": route by canonical media type. 3D is managed/listed now, but
+  // its dedicated submit/poll/result workspace is a separate integration; do
+  // not silently send it to the image studio while that route is unavailable.
   const generate = useCallback(
     async (m: MarketModelVO) => {
       const name = m.nameCn || m.nameEn;
+      if (m.mediaType === "3d") {
+        toast.info("3D 模型已上架，生成入口尚未接入");
+        return;
+      }
+      const target = m.mediaType === "text"
+        ? "/chat"
+        : m.mediaType === "image" || m.mediaType === "video" || m.mediaType === "audio"
+          ? `/studio?type=${m.mediaType}&model=${encodeURIComponent(name)}`
+          : "/studio";
       try {
         sessionStorage.setItem("flux_model", name);
       } catch {
@@ -140,7 +153,7 @@ export default function ModelsPage() {
           /* ignore metric failure */
         }
       })();
-      router.push("/studio");
+      router.push(target);
     },
     [router],
   );
@@ -227,7 +240,9 @@ export default function ModelsPage() {
                       ) : (
                         badge && <span className="mbadge hot">{m.badge.toUpperCase()}</span>
                       )}
-                      <span className="mcard-use">立即生成 →</span>
+                      <span className="mcard-use">
+                        {m.mediaType === "3d" ? "生成入口待接入" : "立即生成 →"}
+                      </span>
                     </div>
                     <div className="mcard-body">
                       <div className="mrow">

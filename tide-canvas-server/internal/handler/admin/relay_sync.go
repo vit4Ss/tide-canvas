@@ -8,9 +8,9 @@ package admin
 //
 // On first import a model's Config (the GUI form settings: modes / ratios /
 // resolutions / qualities / durations / price modifiers …) is pre-filled from the
-// upstream schema. On a later re-sync the Config is left untouched if it is
-// already set, so an admin's manual tweaks in the form are preserved; only the
-// catalog-level fields (name key, type) are refreshed. Price is seeded on first
+// upstream schema. On a later re-sync, admin-editable settings are preserved
+// while relay-owned metadata (operations, capabilities, params schema and price
+// modifiers) is refreshed. Price is seeded on first
 // import only — re-syncs never overwrite an existing row's price, so admin
 // pricing edits survive.
 
@@ -46,7 +46,7 @@ var syncMu sync.Mutex
 type RelayModel struct {
 	ID           string          `json:"id"`
 	Name         string          `json:"name"`
-	Modality     string          `json:"modality"` // image | video | text | audio
+	Modality     string          `json:"modality"` // image | video | text | audio | 3d
 	CreditCost   float64         `json:"credit_cost"`
 	Operations   []string        `json:"operations"`
 	Capabilities []string        `json:"capabilities"`
@@ -64,6 +64,21 @@ type relayParams struct {
 	EditImages json.RawMessage `json:"edit_images"`
 	WebSearch  bool            `json:"web_search"`
 	FileUpload bool            `json:"file_upload"`
+	// Raw keeps the complete relay schema, including modality-specific fields
+	// such as 3D PBR/face-count/result-format options that this shared struct
+	// does not interpret yet.
+	Raw json.RawMessage `json:"-"`
+}
+
+func (p *relayParams) UnmarshalJSON(data []byte) error {
+	type paramsAlias relayParams
+	var decoded paramsAlias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*p = relayParams(decoded)
+	p.Raw = append(p.Raw[:0], data...)
+	return nil
 }
 
 // RelaySyncResult reports how many market_model rows were added vs. updated.
@@ -104,7 +119,7 @@ func FetchRelayModels(baseURL, key string) ([]RelayModel, error) {
 	}
 
 	var arr []RelayModel
-	if err := json.Unmarshal(body, &arr); err == nil && len(arr) > 0 {
+	if err := json.Unmarshal(body, &arr); err == nil && arr != nil {
 		return arr, nil
 	}
 	var wrapped struct {
@@ -112,6 +127,9 @@ func FetchRelayModels(baseURL, key string) ([]RelayModel, error) {
 	}
 	if err := json.Unmarshal(body, &wrapped); err != nil {
 		return nil, fmt.Errorf("parse relay models: %w", err)
+	}
+	if wrapped.Data == nil {
+		return nil, errors.New("parse relay models: expected an array or data array")
 	}
 	return wrapped.Data, nil
 }
@@ -161,10 +179,10 @@ func SyncRelayModels(db *gorm.DB, baseURL, key string, newStatus int, authorID i
 				"type":      typ,
 				"model_key": modelKey,
 			}
-			// Preserve admin-edited config; only seed it when still empty.
-			if strings.TrimSpace(existing.Config) == "" {
-				fields["config"] = cfg
-			}
+			// Preserve fields edited in the admin form, while refreshing metadata
+			// owned by the relay. This also backfills metadata introduced after a
+			// model was first imported (notably the complete 3D params schema).
+			fields["config"] = mergeRelayConfig(existing.Config, cfg)
 			if upErr := db.Model(&model.MarketModel{}).Where("id = ?", existing.ID).Updates(fields).Error; upErr != nil {
 				res.Failed++
 				continue
@@ -189,13 +207,53 @@ func SyncRelayModels(db *gorm.DB, baseURL, key string, newStatus int, authorID i
 		row.ID = idgen.Next()
 		row.CreateTime = time.Now()
 		row.UpdateTime = time.Now()
-		if crErr := db.Create(&row).Error; crErr != nil {
+		// MarketModel.Status has a database/GORM default of 1, which otherwise
+		// replaces an intentional zero value. Reuse the admin create helper so
+		// the requested status is force-written transactionally and reloaded.
+		if crErr := adminCreateRow(db, &row, map[string]any{"status": newStatus}); crErr != nil {
 			res.Failed++
 			continue
 		}
 		res.Created++
 	}
 	return res, nil
+}
+
+// relayOwnedConfigFields are catalog metadata, not admin form settings. They
+// must follow the relay on every sync; all other existing config keys are kept
+// so local display/generation customizations survive.
+var relayOwnedConfigFields = []string{
+	"capabilities",
+	"operations",
+	"priceModifiers",
+	"paramsSchema",
+}
+
+func mergeRelayConfig(existing, fresh string) string {
+	if strings.TrimSpace(existing) == "" {
+		return fresh
+	}
+
+	var existingObj map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(existing), &existingObj); err != nil || existingObj == nil {
+		// Never destroy a non-empty local config that we cannot safely merge.
+		return existing
+	}
+	var freshObj map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(fresh), &freshObj); err != nil || freshObj == nil {
+		return existing
+	}
+
+	for _, key := range relayOwnedConfigFields {
+		if value, ok := freshObj[key]; ok {
+			existingObj[key] = value
+		}
+	}
+	b, err := json.Marshal(existingObj)
+	if err != nil {
+		return existing
+	}
+	return string(b)
 }
 
 // buildStudioConfig maps a relay model's params_schema into the GUI form's config
@@ -240,6 +298,7 @@ func buildStudioConfig(m RelayModel) string {
 		"operations":        orEmpty(m.Operations),
 		"priceMatrix":       map[string]any{},
 		"priceModifiers":    rawObjOrEmpty(m.PriceMods),
+		"paramsSchema":      rawObjOrEmpty(m.ParamsSchema.Raw),
 		"creditCost":        m.CreditCost,
 	}
 	b, err := json.Marshal(cfg)
@@ -270,7 +329,7 @@ func rawObjOrEmpty(raw json.RawMessage) any {
 // relayModality maps the relay modality to a market_model.Type bucket.
 func relayModality(m string) string {
 	switch strings.ToLower(strings.TrimSpace(m)) {
-	case "image", "video", "audio", "text":
+	case "image", "video", "audio", "text", "3d":
 		return strings.ToLower(strings.TrimSpace(m))
 	default:
 		return "image"
