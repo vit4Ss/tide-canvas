@@ -807,6 +807,10 @@ function ModelModal({
           badges: (cfg.badges ?? [])
             .map((b) => ({ text: (b.text ?? "").trim(), tone: b.tone ?? ("hot" as const) }))
             .filter((b) => b.text),
+          // 「消耗积分」是管理员唯一可见的按次价格，写回 config.creditCost——
+          // 计费(resolveCost)与前端估价都是 creditCost 优先，不写回的话上游
+          // 同步预填的 credit_cost 会悄悄压过这里填的值（表单又不渲染它）。
+          creditCost: parseFloat(pointCost.trim()) || 0,
         },
       };
       const res = model
@@ -856,7 +860,7 @@ function ModelModal({
               ))}
             </select>
           </Field>
-          <Field label="消耗积分" hint="支持小数；运行所需积分">
+          <Field label="消耗积分" hint="按次扣费的积分（支持小数）；保存后即为计费与前台展示的权威价">
             <input value={pointCost} onChange={(e) => setPointCost(e.target.value)} placeholder="0.0" inputMode="decimal" />
           </Field>
           <Field label="成本价（USD）" hint="上游单次成本，仅后台参考，不对用户暴露">
