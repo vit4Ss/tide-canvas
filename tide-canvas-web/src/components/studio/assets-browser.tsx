@@ -151,6 +151,12 @@ function threeDPreviewOf(task: AiTaskVO): string | undefined {
   return undefined;
 }
 
+/** 3D 下载名：模型名 + 真实扩展名（GLB 少了后缀在本地基本打不开），与
+ *  downloadAsset 的 attachmentName 同一套补名逻辑。 */
+function threeDDownloadName(task: AiTaskVO, url: string): string {
+  return attachmentName(task.modelName || "3D 模型", url);
+}
+
 /** 3D 任务的主模型文件：resultUrl 缺失时回退 resultMeta.assets（优先 glb）——
  *  与创作台 histItemsFromTasks 的口径一致，防老数据只写了 assets 的情况。 */
 function threeDModelUrlOf(task: AiTaskVO): string | undefined {
@@ -225,19 +231,36 @@ interface OpenAsset {
   taskId?: string;
 }
 
-/** Force a download through the authenticated server proxy, which adds a
- *  Content-Disposition: attachment header (so cross-origin OSS files actually
- *  download instead of opening) and bypasses CORS. Same-origin /api path is
- *  rewritten to the backend by next.config. */
+/** a.download 的最终文件名：blob 对象链接下浏览器只认 download 属性（服务端
+ *  Content-Disposition 不生效），名字没带真实扩展名就从 URL 补上——模型名多含
+ *  "3.0" 这类点号，不能拿「有没有点」当补名判定。扩展名只从 URL 的 pathname
+ *  取（与服务端 path.Ext 同口径）：查询串里的签名（Signature=ab.cd）不能当后缀。 */
+function attachmentName(name: string, url: string): string {
+  const base = name || "download";
+  let pathname = url;
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    /* 非法 URL 按原串兜底 */
+  }
+  const ext = pathname.match(/\.([a-z0-9]{2,5})$/i)?.[1]?.toLowerCase();
+  if (!ext || base.toLowerCase().endsWith(`.${ext}`)) return base;
+  return `${base}.${ext}`;
+}
+
+/** Force a download through the authenticated server proxy (bypasses CORS;
+ *  same-origin /api path is rewritten to the backend by next.config), then
+ *  save the blob under a filename that keeps its real extension. */
 async function downloadAsset(url: string, name: string): Promise<void> {
   try {
-    const href = `/api/files/download?url=${encodeURIComponent(url)}&name=${encodeURIComponent(name || "download")}`;
+    const finalName = attachmentName(name, url);
+    const href = `/api/files/download?url=${encodeURIComponent(url)}&name=${encodeURIComponent(finalName)}`;
     const response = await fetchWithAuth(href);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const blobUrl = URL.createObjectURL(await response.blob());
     const a = document.createElement("a");
     a.href = blobUrl;
-    a.download = name || "download";
+    a.download = finalName;
     a.rel = "noopener";
     document.body.appendChild(a);
     a.click();
@@ -648,10 +671,16 @@ export function AssetsBrowser({
             : [],
         );
         if (!items.length) {
-          // 3D 的主文件可能只写在 resultMeta.assets（老数据），与卡片打开口径一致
-          const url =
-            HANDLER_MEDIA_KIND[task.handler] === "3d" ? threeDModelUrlOf(task) : task.resultUrl;
-          if (url) items.push({ url, name: task.modelName || "生成结果" });
+          // 3D 的主文件可能只写在 resultMeta.assets（老数据），与卡片打开口径一致；
+          // 下载名带真实扩展名（模型名含点号会绕过服务端的补后缀逻辑）
+          const is3d = HANDLER_MEDIA_KIND[task.handler] === "3d";
+          const url = is3d ? threeDModelUrlOf(task) : task.resultUrl;
+          if (url) {
+            items.push({
+              url,
+              name: is3d ? threeDDownloadName(task, url) : task.modelName || "生成结果",
+            });
+          }
         }
         if (items.length) urls.set(String(task.id), items);
       });
@@ -1143,7 +1172,7 @@ const TaskCard = memo(function TaskCard({
       onOpen?.({
         url: openUrl,
         kind,
-        name: task.modelName || "生成结果",
+        name: kind === "3d" ? threeDDownloadName(task, openUrl) : task.modelName || "生成结果",
         ...(kind === "3d"
           ? { taskId: String(task.id), ...(threeDPreview ? { cover: threeDPreview } : {}) }
           : {}),

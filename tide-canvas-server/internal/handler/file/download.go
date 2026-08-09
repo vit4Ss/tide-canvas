@@ -17,6 +17,20 @@ import (
 // filenameSanitizer strips characters that would break a Content-Disposition header.
 var filenameSanitizer = strings.NewReplacer("\"", "", "\\", "", "\r", "", "\n", "", "/", "_")
 
+// downloadFilename derives the attachment filename: append the URL path's
+// extension unless the name already ends with it. 判定不能用「名字里有没有点」：
+// 模型名普遍带版本点号（qwen-image-3.0-pro / Hunyuan 3D 3.1），旧判定会吞掉
+// 扩展名，存下来的文件（尤其 .glb）本地打不开。
+func downloadFilename(name, urlPath string) string {
+	if name == "" {
+		name = "download"
+	}
+	if ext := path.Ext(urlPath); ext != "" && !strings.EqualFold(path.Ext(name), ext) {
+		name += ext
+	}
+	return name
+}
+
 // download GET /api/files/download?url=...&name=...
 //
 // Server-side fetch-and-stream proxy: the browser hits this to download a
@@ -94,15 +108,7 @@ func (h *handler) download(c *gin.Context) {
 	if ct == "" {
 		ct = "application/octet-stream"
 	}
-	name := c.Query("name")
-	if name == "" {
-		name = "download"
-	}
-	if !strings.Contains(name, ".") {
-		if ext := path.Ext(u.Path); ext != "" {
-			name += ext
-		}
-	}
+	name := downloadFilename(c.Query("name"), u.Path)
 
 	c.Header("Content-Type", ct)
 	c.Header("Content-Disposition", "attachment; filename=\""+filenameSanitizer.Replace(name)+"\"")
