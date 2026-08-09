@@ -97,6 +97,14 @@ func g5FmtTime(t time.Time) string {
 	return t.Format(time.RFC3339)
 }
 
+// g5FmtTimePtr renders an optional time as RFC3339, or "" when nil/zero.
+func g5FmtTimePtr(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return g5FmtTime(*t)
+}
+
 // g5ParseTime parses an optional RFC3339 / common datetime string into a
 // time.Time, returning the zero time on nil/empty/unparseable input.
 func g5ParseTime(s *string) time.Time {

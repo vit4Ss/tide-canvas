@@ -17,6 +17,8 @@ export interface AdminNotification {
   /** 0 未读 / 1 已读 */
   isRead: number;
   createTime: string;
+  /** 截止时间（RFC3339）；空串 = 永不过期。过期后紧急横幅不再展示 */
+  expireTime: string;
 }
 
 /** g5NotifySendDTO — 发送请求体。target=all 广播 / user 按邮箱定向。 */
@@ -27,4 +29,6 @@ export interface AdminNotifySendDTO {
   type?: string;
   target: "all" | "user";
   email?: string;
+  /** 可选截止时间（datetime-local 值），过期后不再作为活跃通知展示 */
+  expireAt?: string;
 }

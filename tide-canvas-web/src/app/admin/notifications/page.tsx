@@ -55,6 +55,8 @@ interface SendForm {
   linkUrl: string;
   /** system = 只进铃铛；urgent = 铃铛 + 工作区顶部横幅（用户关闭前常驻） */
   type: "system" | "urgent";
+  /** 紧急提醒的截止时间（datetime-local 值）；空 = 不过期，仅 urgent 时展示 */
+  expireAt: string;
   target: "all" | "user";
   email: string;
 }
@@ -63,6 +65,7 @@ const emptySendForm = (): SendForm => ({
   content: "",
   linkUrl: "",
   type: "system",
+  expireAt: "",
   target: "all",
   email: "",
 });
@@ -125,11 +128,28 @@ export default function AdminNotificationsPage() {
   }, [load]);
 
   const send = async () => {
+    // 截止时间只对紧急提醒生效；切回系统通知时残留值不发送。
+    // datetime-local 不带时区，按管理员浏览器时区转成 ISO（带 Z）再发——
+    // 服务端 RFC3339 分支接住，服务器部署在什么时区都不会偏。
+    let expireAt: string | undefined;
+    if (sendForm.type === "urgent" && sendForm.expireAt) {
+      const ts = Date.parse(sendForm.expireAt);
+      if (Number.isNaN(ts)) {
+        toast.error("截止时间格式不正确");
+        return false;
+      }
+      if (ts <= Date.now()) {
+        toast.error("截止时间不能早于当前时间");
+        return false;
+      }
+      expireAt = new Date(ts).toISOString();
+    }
     const dto: AdminNotifySendDTO = {
       title: sendForm.title.trim(),
       content: sendForm.content.trim(),
       linkUrl: sendForm.linkUrl.trim(),
       type: sendForm.type,
+      ...(expireAt ? { expireAt } : {}),
       target: sendForm.target,
       ...(sendForm.target === "user" ? { email: sendForm.email.trim() } : {}),
     };
@@ -408,6 +428,19 @@ export default function AdminNotificationsPage() {
                 <option value="urgent">紧急提醒（顶部横幅）</option>
               </select>
             </Field>
+            {sendForm.type === "urgent" && (
+              <Field
+                label="截止时间"
+                span={2}
+                hint="可选；到点后横幅自动消失（未关闭的也不再显示），留空 = 用户关闭前一直显示"
+              >
+                <input
+                  type="datetime-local"
+                  value={sendForm.expireAt}
+                  onChange={(e) => setSendForm((f) => ({ ...f, expireAt: e.target.value }))}
+                />
+              </Field>
+            )}
             <Field label="发送对象" span={2}>
               <select
                 value={sendForm.target}

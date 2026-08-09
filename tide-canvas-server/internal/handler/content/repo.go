@@ -114,6 +114,11 @@ func (r *repo) listNotifications(userID idgen.ID, q *NotificationQuery) ([]model
 	if q.IsRead != nil {
 		tx = tx.Where("is_read = ?", *q.IsRead)
 	}
+	if q.ActiveOnly {
+		// 活跃过滤（紧急横幅用）：带截止时间的通知过期即不再返回；铃铛历史
+		// 列表不带此参数，过期项仍可回看。
+		tx = tx.Where("expire_time IS NULL OR expire_time > ?", time.Now())
+	}
 
 	var total int64
 	if err := tx.Count(&total).Error; err != nil {

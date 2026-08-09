@@ -13,6 +13,8 @@ type NotificationQuery struct {
 	Type     string `form:"type"`
 	// IsRead filters by read state: nil => all, 0 => unread, 1 => read.
 	IsRead *int `form:"isRead"`
+	// ActiveOnly：只要未过期的（expire_time 为空或在未来）；紧急横幅用。
+	ActiveOnly bool `form:"activeOnly"`
 }
 
 // normalize applies defaults and clamps for pagination.

@@ -12,7 +12,9 @@ package admin
 //	DELETE /notifications/:id    -> void
 
 import (
+	"errors"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -34,6 +36,8 @@ type g5NotifyVO struct {
 	LinkURL    string   `json:"linkUrl"`
 	IsRead     int      `json:"isRead"`
 	CreateTime string   `json:"createTime"`
+	// ExpireTime：空串 = 永不过期（紧急提醒横幅按此判定是否仍活跃）。
+	ExpireTime string `json:"expireTime"`
 }
 
 // g5NotifySendDTO is the send body. Target "all" broadcasts to every active
@@ -45,6 +49,23 @@ type g5NotifySendDTO struct {
 	Type    string `json:"type"`
 	Target  string `json:"target"` // "all" | "user"
 	Email   string `json:"email"`
+	// ExpireAt：可选截止时间（datetime-local 的 "2006-01-02T15:04" 或 RFC3339，
+	// 按服务器时区解释）。过期后不再作为活跃通知展示——紧急横幅到点自动消失。
+	ExpireAt string `json:"expireAt"`
+}
+
+// g5ParseExpireAt 解析可选截止时间；空串 = 不过期。
+func g5ParseExpireAt(raw string) (*time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	for _, layout := range []string{"2006-01-02T15:04", "2006-01-02T15:04:05", time.RFC3339} {
+		if t, err := time.ParseInLocation(layout, raw, time.Local); err == nil {
+			return &t, nil
+		}
+	}
+	return nil, errors.New("invalid expireAt")
 }
 
 // RegisterNotifications mounts the notification-admin routes on the
@@ -108,6 +129,7 @@ func RegisterNotifications(g *gin.RouterGroup, d *app.Deps) {
 				LinkURL:    r.LinkURL,
 				IsRead:     r.IsRead,
 				CreateTime: g5FmtTime(r.CreateTime),
+				ExpireTime: g5FmtTimePtr(r.ExpireTime),
 			})
 		}
 		response.Page(c, vos, total, q.PageNum, q.PageSize)
@@ -127,6 +149,15 @@ func RegisterNotifications(g *gin.RouterGroup, d *app.Deps) {
 		}
 		if dto.Type == "" {
 			dto.Type = "system"
+		}
+		expireAt, err := g5ParseExpireAt(dto.ExpireAt)
+		if err != nil {
+			response.Fail(c, response.CodeBadRequest, "截止时间格式不正确")
+			return
+		}
+		if expireAt != nil && expireAt.Before(time.Now()) {
+			response.Fail(c, response.CodeBadRequest, "截止时间不能早于当前时间")
+			return
 		}
 
 		var userIDs []idgen.ID
@@ -156,11 +187,12 @@ func RegisterNotifications(g *gin.RouterGroup, d *app.Deps) {
 		rows := make([]model.Notification, 0, len(userIDs))
 		for _, uid := range userIDs {
 			rows = append(rows, model.Notification{
-				UserID:  uid,
-				Type:    dto.Type,
-				Title:   dto.Title,
-				Content: dto.Content,
-				LinkURL: dto.LinkURL,
+				UserID:     uid,
+				Type:       dto.Type,
+				Title:      dto.Title,
+				Content:    dto.Content,
+				LinkURL:    dto.LinkURL,
+				ExpireTime: expireAt,
 			})
 		}
 		if err := db.CreateInBatches(rows, 200).Error; err != nil {

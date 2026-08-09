@@ -88,6 +88,8 @@ export interface NotificationVO {
   isRead: number;
   readTime: string;
   createTime: string;
+  /** 截止时间（RFC3339）；空串 = 永不过期。紧急横幅按它判定是否仍活跃 */
+  expireTime?: string;
 }
 
 /** Query params for GET /api/notifications. */
@@ -97,4 +99,6 @@ export interface NotificationQuery {
   type?: string;
   /** nil/undefined = all, 0 = unread, 1 = read. */
   isRead?: number;
+  /** true = 只要未过期的（expire_time 为空或在未来）；紧急横幅用 */
+  activeOnly?: boolean;
 }

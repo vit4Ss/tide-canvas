@@ -21,6 +21,8 @@ type Notification struct {
 	// IsRead: 0 未读 / 1 已读.
 	IsRead   int        `gorm:"column:is_read;type:tinyint;not null;default:0" json:"isRead"`
 	ReadTime *time.Time `gorm:"column:read_time" json:"readTime"`
+	// ExpireTime：过期后不再作为「活跃」通知展示（紧急横幅用）；nil = 永不过期。
+	ExpireTime *time.Time `gorm:"column:expire_time;index" json:"expireTime"`
 }
 
 // TableName overrides the default pluralization.

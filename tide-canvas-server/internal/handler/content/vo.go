@@ -60,6 +60,8 @@ type NotificationVO struct {
 	IsRead     int      `json:"isRead"`
 	ReadTime   string   `json:"readTime"`
 	CreateTime string   `json:"createTime"`
+	// ExpireTime：空串 = 永不过期；紧急横幅按它做客户端二次过滤。
+	ExpireTime string `json:"expireTime"`
 }
 
 // --- mappers ---
@@ -107,6 +109,7 @@ func toNotificationVO(n *model.Notification) NotificationVO {
 		IsRead:     n.IsRead,
 		ReadTime:   formatTimePtr(n.ReadTime),
 		CreateTime: formatTime(n.CreateTime),
+		ExpireTime: formatTimePtr(n.ExpireTime),
 	}
 }
 
