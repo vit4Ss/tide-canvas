@@ -1,6 +1,6 @@
 # Tide Canvas Server
 
-Go backend for Tide Canvas. Module path: `tidecanvas`. Go 1.23.
+Go backend for Tide Canvas. Module path: `tidecanvas`. Go 1.24.
 
 ## Architecture
 
@@ -49,8 +49,8 @@ shared dto/vo package (avoids cross-domain name collisions).
 
 ## Prerequisites
 
-- Go 1.23+
-- MySQL 8.x with a database named `tidecanvas`
+- Go 1.24+
+- MySQL 8.x (the configured `canvas` database is created automatically)
 - Redis 6+
 
 ## Setup & run
@@ -59,10 +59,9 @@ shared dto/vo package (avoids cross-domain name collisions).
 # 1. resolve dependencies (creates go.sum)
 go mod tidy
 
-# 2. configure datastores
-#    edit configs/config.yaml, or copy .env.example -> .env and export the vars
-#    (env vars use the TIDECANVAS_ prefix, e.g. TIDECANVAS_MYSQL_PASSWORD)
-mysql -e "CREATE DATABASE IF NOT EXISTS tidecanvas CHARACTER SET utf8mb4;"
+# 2. configure datastores. The server intentionally does not auto-load .env.
+cp .env.example .env
+set -a; . ./.env; set +a
 
 # 3. run (AutoMigrate runs on startup)
 go run ./cmd/api
@@ -87,8 +86,16 @@ Health check: `GET /healthz`.
 # 测试环境（缺省，等价于不设 TIDECANVAS_ENV）
 TIDECANVAS_RELAY_APIKEY=... go run ./cmd/api
 
-# 生产环境（JWT 或 Relay 密钥缺失时会拒绝启动）
-TIDECANVAS_ENV=prod TIDECANVAS_JWT_SECRET=... TIDECANVAS_RELAY_APIKEY=... go run ./cmd/api
+# 生产环境（JWT、Relay 或 SMTP 配置缺失时会拒绝启动）
+TIDECANVAS_ENV=prod \
+TIDECANVAS_JWT_SECRET=... \
+TIDECANVAS_RELAY_APIKEY=... \
+TIDECANVAS_EMAIL_ENABLED=true \
+TIDECANVAS_EMAIL_HOST=... \
+TIDECANVAS_EMAIL_USERNAME=... \
+TIDECANVAS_EMAIL_PASSWORD=... \
+TIDECANVAS_EMAIL_FROMADDRESS=... \
+go run ./cmd/api
 ```
 
 | Setting            | Env var                          |
@@ -100,7 +107,7 @@ TIDECANVAS_ENV=prod TIDECANVAS_JWT_SECRET=... TIDECANVAS_RELAY_APIKEY=... go run
 | `jwt.secret`       | `TIDECANVAS_JWT_SECRET`          |
 | `relay.apiKey`     | `TIDECANVAS_RELAY_APIKEY`        |
 
-> 生产环境密钥（JWT/MySQL/Redis/支付/Relay）一律走环境变量注入，
+> 生产环境密钥（JWT/MySQL/Redis/邮件/存储/支付/Relay）一律走环境变量注入，
 > 不要写进 `config.prod.yaml` 提交到仓库。
 > Relay 地址由环境固定：`prod` 使用 `https://relay.tcmzhan.com`，其他环境
 > 使用 `https://test-relay.tcmzhan.com`，避免配置串线。

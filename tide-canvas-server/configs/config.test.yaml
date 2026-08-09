@@ -1,37 +1,30 @@
-# 测试环境叠加配置（TIDECANVAS_ENV=test，缺省即为 test）。
-#
-# 加载顺序：config.yaml（基础） -> config.test.yaml（本文件覆盖） -> 环境变量。
-# 基础文件 config.yaml 里的连接串/密钥本身就是测试环境的值，所以这里只需要
-# 声明与测试环境强相关的差异项；将来测试环境要改什么，加到这里即可，
-# 不要直接改 config.yaml（那是两个环境共享的底座）。
+# Test environment overlay. Credentials are injected through TIDECANVAS_* vars.
 
 server:
-  mode: debug # 测试环境保留 gin 调试日志
-  # 端口说明：本地开发用默认 8080；部署到与 relay 同机的服务器时 8080 被
-  # relay-backend 占用，由 deploy/docker-compose.yml 以 TIDECANVAS_SERVER_PORT=8081 覆盖。
+  mode: debug
 
 cors:
   allowOrigins:
     - http://localhost:3000
-    - https://test-flowlight.tcmzhan.com # 测试站前端域名（2026-08-01 定:flowlight 主域名留给生产）
+    - https://test-flowlight.tcmzhan.com
 
-# relay 地址由运行环境强制固定；凭据不能提交到仓库。本地/测试部署通过
-# TIDECANVAS_RELAY_APIKEY 注入，生产环境同样必须显式注入自己的凭据。
 relay:
   baseUrl: https://test-relay.tcmzhan.com
   apiKey: ""
 
-# 支付回调必须是网关可访问的公网 https 地址；returnUrl 指向测试站前端。
 eliandapay:
+  enabled: false
   notifyUrl: https://test-flowlight.tcmzhan.com/api/billing/notify
   returnUrl: https://test-flowlight.tcmzhan.com/billing?pay_status=success
 
+email:
+  enabled: false
+
+# The shared test host uses OSS. Local/branch-preview Compose explicitly
+# overrides this to local storage so it remains self-contained.
 storage:
-  # 测试环境专用桶（与生产隔离）。注意：存储配置首启已种子进 sys_config，
-  # 之后以后台「配置管理」/数据库值为准——改这里的同时要同步更新测试库
-  # sys_config 里的 storage.ossBucket / storage.ossAccelerateDomain。
+  type: oss
+  endpoint: https://oss-cn-shanghai.aliyuncs.com
   bucket: flowlinght-test
-  # 传输加速：2026-07-13 已在阿里云控制台为该桶开启（此前未开时加速端点 400，
-  # 上游取参考图失败表现为「图片编辑需要至少一张参考图」）。若更换桶，记得
-  # 同步开启加速并更新测试库 sys_config 的 storage.ossAccelerateDomain。
+  prefix: canvas/uploads/
   accelerateDomain: flowlinght-test.oss-accelerate.aliyuncs.com
