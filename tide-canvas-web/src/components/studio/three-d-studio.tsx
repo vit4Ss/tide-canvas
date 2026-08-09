@@ -183,6 +183,8 @@ export default function ThreeDStudio() {
   const histLoadingRef = useRef(false);
   const histLoadedCountRef = useRef(0);
   const [histHasMore, setHistHasMore] = useState(false);
+  // 首页历史已返回（成败均置位）：深链 ?task= 的落位要等它，否则必然查不到
+  const [histReady, setHistReady] = useState(false);
   const fetchHistory = useCallback(
     async (page: number, append: boolean) => {
       if (histLoadingRef.current) return;
@@ -215,6 +217,7 @@ export default function ThreeDStudio() {
         if (!append) setHist([]);
       } finally {
         histLoadingRef.current = false;
+        if (!append) setHistReady(true);
       }
     },
     [ensureSession, setHist],
@@ -239,17 +242,21 @@ export default function ThreeDStudio() {
     };
   }, [ensureSession, refreshBalance]);
 
-  /* 深链：/three-d?tool=i2_3d&model=<名称>（创作台旧 3D 深链由 /studio 转发） */
+  /* 深链：/three-d?tool=i2_3d&model=<名称>&task=<任务ID>
+     （创作台旧 3D 深链由 /studio 转发；task 来自资产页「在 3D 工作台查看」） */
+  const pendingTaskRef = useRef<string | null>(null);
   useEffect(() => {
     try {
       const sp = new URLSearchParams(window.location.search);
       const tl = sp.get("tool");
       const m = sp.get("model");
+      const tk = sp.get("task");
       if (tl && (MODES_BY_TYPE["3d"] as string[]).includes(tl)) {
         // eslint-disable-next-line react-hooks/set-state-in-effect -- 挂载后一次性读 URL 落位
         setTool(tl as ToolKey);
       }
       if (m) deepModelRef.current = m;
+      if (tk) pendingTaskRef.current = tk;
     } catch {
       /* URL API unavailable */
     }
@@ -261,6 +268,36 @@ export default function ThreeDStudio() {
     () => (selId ? hist3d.find((h) => h.id === selId) ?? hist3d[0] : hist3d[0]) ?? null,
     [hist3d, selId],
   );
+  /* 深链 ?task= 落位：首页历史返回后，条带里有就直接选中；不在首页（老记录）
+     则单取该任务并入历史再选中。找不到/无 3D 结果时提示后保持默认展示。 */
+  useEffect(() => {
+    const target = pendingTaskRef.current;
+    if (!histReady || !target) return;
+    pendingTaskRef.current = null;
+    const run = `task-${target}`;
+    const found = hist3d.find((h) => h.run === run);
+    if (found) {
+      setSelId(found.id);
+      return;
+    }
+    (async () => {
+      try {
+        const res = await aiApi.getTask(target);
+        if (!res.success || !res.data) throw new Error(res.message);
+        const items = histItemsFromTasks([res.data]).filter((h) => h.type === "3d");
+        if (!items.length) {
+          toast.info("该记录暂无可展示的 3D 结果");
+          return;
+        }
+        // 追加到条带尾部（老记录本就该在后面），已存在同 run 时不重复
+        setHist((prev) => (prev.some((h) => h.run === run) ? prev : [...prev, ...items]));
+        setSelId(items[0].id);
+      } catch {
+        toast.error("未找到该 3D 生成记录");
+      }
+    })();
+  }, [histReady, hist3d, setHist]);
+
   // 生成完成（pushHistory 以 h- 前缀 id 置顶）→ viewport 跳到最新结果；
   // 服务端重拉/翻页的 task- id 不抢用户在条带上的锁定。
   const topIdRef = useRef<string | null>(null);

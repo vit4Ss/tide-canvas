@@ -53,6 +53,7 @@ const FILTERS: { f: FilterKey; label: string }[] = [
   { f: "image", label: "图片" },
   { f: "video", label: "视频" },
   { f: "audio", label: "音频" },
+  { f: "3d", label: "3D" }, // 生成历史专属（policy 的 UPLOAD_FILTER_KEYS 不含它）
   { f: "doc", label: "文档" },
 ];
 
@@ -62,6 +63,7 @@ const FILTER_TO_CATEGORY: Record<FilterKey, FileCategory> = {
   image: FileCategory.GENERAL,
   video: FileCategory.GENERAL,
   audio: FileCategory.GENERAL,
+  "3d": FileCategory.GENERAL, // 上传标签页不出现 3d；仅补全 Record 类型
   doc: FileCategory.GENERAL,
 };
 
@@ -72,6 +74,7 @@ const ACCEPT: Record<FilterKey, string> = {
   image: "image/*",
   video: "video/*",
   audio: "audio/*",
+  "3d": ".glb,.obj,.stl,.fbx,.usdz", // 上传标签页不出现 3d；仅补全 Record 类型
   doc: ".pdf,.doc,.docx,.txt,.md,.ppt,.pptx,.xls,.xlsx",
 };
 
@@ -81,6 +84,7 @@ const ACCEPT_HINT: Record<FilterKey, string> = {
   image: "仅支持图片",
   video: "仅支持视频",
   audio: "仅支持音频",
+  "3d": "仅支持 3D 模型文件",
   doc: "支持 PDF、Office 与文本文件",
 };
 
@@ -116,20 +120,53 @@ interface AudioTrack {
   duration?: number;
 }
 
+/** resultMeta（对象或 JSON 串）→ 宽松对象；解析失败按空处理。 */
+function metaObjectOf(task: AiTaskVO): Record<string, unknown> {
+  if (typeof task.resultMeta !== "string") {
+    return (task.resultMeta as Record<string, unknown> | null) ?? {};
+  }
+  try {
+    return JSON.parse(task.resultMeta || "{}") as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
 /** tracksOf 取音频任务 resultMeta.tracks 全部分轨(Suno 一次两首,缺一不可)。 */
 function tracksOf(task: AiTaskVO): AudioTrack[] {
-  const meta =
-    typeof task.resultMeta === "string"
-      ? (() => {
-          try {
-            return JSON.parse(task.resultMeta || "{}") as Record<string, unknown>;
-          } catch {
-            return {} as Record<string, unknown>;
-          }
-        })()
-      : (task.resultMeta as Record<string, unknown> | null) ?? {};
-  const tracks = (meta as { tracks?: AudioTrack[] }).tracks;
+  const tracks = (metaObjectOf(task) as { tracks?: AudioTrack[] }).tracks;
   return Array.isArray(tracks) ? tracks : [];
+}
+
+/** 3D 任务的封面：resultMeta.assets 里的 previewImageUrl（上游生成的模型截图）。 */
+function threeDPreviewOf(task: AiTaskVO): string | undefined {
+  const assets = (metaObjectOf(task) as {
+    assets?: Array<{ previewImageUrl?: unknown; preview_image_url?: unknown } | null>;
+  }).assets;
+  if (!Array.isArray(assets)) return undefined;
+  for (const asset of assets) {
+    const url = asset?.previewImageUrl ?? asset?.preview_image_url;
+    if (typeof url === "string" && /^https?:\/\//.test(url)) return url;
+  }
+  return undefined;
+}
+
+/** 3D 任务的主模型文件：resultUrl 缺失时回退 resultMeta.assets（优先 glb）——
+ *  与创作台 histItemsFromTasks 的口径一致，防老数据只写了 assets 的情况。 */
+function threeDModelUrlOf(task: AiTaskVO): string | undefined {
+  if (task.resultUrl) return task.resultUrl;
+  const assets = (metaObjectOf(task) as {
+    assets?: Array<{ type?: unknown; url?: unknown } | null>;
+  }).assets;
+  if (!Array.isArray(assets)) return undefined;
+  let first: string | undefined;
+  for (const asset of assets) {
+    const url = asset?.url;
+    if (typeof url !== "string" || !/^https?:\/\//.test(url)) continue;
+    if (String(asset?.type ?? "").toLowerCase() === "glb") return url;
+    first = first ?? url;
+  }
+  return first;
 }
 
 /** createTime "YYYY-MM-DDTHH:MM:SS" → design's "M 月 D 日" header. */
@@ -180,8 +217,12 @@ function fileMatchesFilter(file: FileVO, filter: FilterKey): boolean {
 /** A previewable / downloadable asset surfaced from a card click. */
 interface OpenAsset {
   url: string;
-  kind: MediaKind;
+  kind: MediaKind | "3d";
   name: string;
+  /** 3D 结果的预览截图（url 本身是模型文件，展示层用它）。 */
+  cover?: string;
+  /** 3D 结果的任务 ID（雪花字符串）：深链 /three-d?task= 精确落位到该模型。 */
+  taskId?: string;
 }
 
 /** Force a download through the authenticated server proxy, which adds a
@@ -372,7 +413,7 @@ export function AssetsBrowser({
         ? await aiApi.listTasks({
             pageNum: page,
             pageSize: PAGE_SIZE,
-            mediaType: isConceptFilter(filter) ? "image" : filter as "image" | "video" | "audio",
+            mediaType: isConceptFilter(filter) ? "image" : filter as "image" | "video" | "audio" | "3d",
             assetCategory: isConceptFilter(filter) ? filter : filter === "image" ? "general" : undefined,
             assetOnly: true,
             orderDirection: sortAsc ? "asc" : "desc",
@@ -382,7 +423,8 @@ export function AssetsBrowser({
         : await fileApi.list({
             pageNum: page,
             pageSize: PAGE_SIZE,
-            mediaKind: isConceptFilter(filter) ? "image" : filter,
+            // 上传标签页永远拿不到 "3d"（UPLOAD_FILTER_KEYS 不含），断言仅类型收窄
+            mediaKind: isConceptFilter(filter) ? "image" : (filter as MediaKind),
             category: FILTER_TO_CATEGORY[filter],
             orderDirection: sortAsc ? "asc" : "desc",
             startDate: startDate || undefined,
@@ -605,8 +647,11 @@ export function AssetsBrowser({
             ? [{ url: track.url, name: track.title || `${task.modelName || "生成音频"} ${index + 1}` }]
             : [],
         );
-        if (!items.length && task.resultUrl) {
-          items.push({ url: task.resultUrl, name: task.modelName || "生成结果" });
+        if (!items.length) {
+          // 3D 的主文件可能只写在 resultMeta.assets（老数据），与卡片打开口径一致
+          const url =
+            HANDLER_MEDIA_KIND[task.handler] === "3d" ? threeDModelUrlOf(task) : task.resultUrl;
+          if (url) items.push({ url, name: task.modelName || "生成结果" });
         }
         if (items.length) urls.set(String(task.id), items);
       });
@@ -707,7 +752,8 @@ export function AssetsBrowser({
       </div>
 
       <div className="asset-filter" id="asset-filter">
-        {FILTERS.filter((x) => visibleFilters.has(x.f)).map((x) => (
+        {/* 选取模式只收 image/video/audio 参考素材，3D 筛选是死路，不展示 */}
+        {FILTERS.filter((x) => visibleFilters.has(x.f) && !(pickMode && x.f === "3d")).map((x) => (
           <button
             key={x.f}
             type="button"
@@ -975,6 +1021,18 @@ export function AssetsBrowser({
                 <AudioPlayerCard src={preview.url} autoPlay />
               </div>
             )}
+            {/* 3D:url 是模型文件（下载按钮的目标），展示层用预览截图；
+                没有截图时给占位（交互式查看去 /three-d） */}
+            {preview.kind === "3d" &&
+              (preview.cover ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={preview.cover} alt={preview.name} />
+              ) : (
+                <div className="as-preview-audio">
+                  <span className="as-preview-audio-ic">◇</span>
+                  <b>{preview.name}</b>
+                </div>
+              ))}
           </div>
 
           {/* image-only quick actions: hand off to 创作台 */}
@@ -988,6 +1046,20 @@ export function AssetsBrowser({
               </button>
               <button type="button" onClick={() => sendToStudio("edit")}>
                 精细编辑
+              </button>
+            </div>
+          )}
+
+          {/* 3D:交互式旋转查看在 /three-d 工作台，带 task 深链精确落位到该模型 */}
+          {preview.kind === "3d" && !pickMode && (
+            <div className="as-preview-ops" onClick={(e) => e.stopPropagation()}>
+              <button
+                type="button"
+                onClick={() =>
+                  router.push(preview.taskId ? `/three-d?task=${preview.taskId}` : "/three-d")
+                }
+              >
+                在 3D 工作台查看
               </button>
             </div>
           )}
@@ -1019,9 +1091,15 @@ const TaskCard = memo(function TaskCard({
 }) {
   const kind = HANDLER_MEDIA_KIND[task.handler] ?? "image";
   const isVid = kind === "video";
+  // 3D 的 resultUrl 是模型文件,封面取 resultMeta.assets 的预览截图。
+  const threeDPreview = kind === "3d" ? threeDPreviewOf(task) : undefined;
+  // 3D 可打开/下载的主文件(resultUrl 缺失时回退 meta.assets,防老数据)。
+  const threeDUrl = kind === "3d" ? threeDModelUrlOf(task) : undefined;
+  const openUrl = kind === "3d" ? threeDUrl : task.resultUrl;
   // 卡片封面一律走降采样:原图动辄 2K~4K 几 MB,卡片才 ~340px(2x 余量取 640)。
   // 音频结果是 mp3,不能当封面图铺——改走 SongCard 歌曲行(见下)。
-  const coverUrl = task.resultUrl && kind === "image" ? (ossDisplayUrl(task.resultUrl, 640) ?? task.resultUrl) : undefined;
+  const coverSource = kind === "image" ? task.resultUrl : threeDPreview;
+  const coverUrl = coverSource ? (ossDisplayUrl(coverSource, 640) ?? coverSource) : undefined;
   const fallback = fallbackCover(task.id);
   // 音频分轨信息(歌名/封面/时长/地址)取自 resultMeta.tracks;Suno 一次两首,
   // 两轨都要成行,少了第二首就等于丢歌。
@@ -1049,6 +1127,11 @@ const TaskCard = memo(function TaskCard({
       return;
     }
     if (pickMode) {
+      // 参考素材选取只收 image/video/audio；3D 模型文件塞不进任何参考槽位。
+      if (kind === "3d") {
+        toast.info("3D 模型暂不支持选为参考素材");
+        return;
+      }
       if (task.resultUrl) {
         onPick?.({ url: task.resultUrl, name: task.modelName || "生成图", kind });
       } else {
@@ -1056,8 +1139,15 @@ const TaskCard = memo(function TaskCard({
       }
       return;
     }
-    if (task.resultUrl) {
-      onOpen?.({ url: task.resultUrl, kind, name: task.modelName || "生成结果" });
+    if (openUrl) {
+      onOpen?.({
+        url: openUrl,
+        kind,
+        name: task.modelName || "生成结果",
+        ...(kind === "3d"
+          ? { taskId: String(task.id), ...(threeDPreview ? { cover: threeDPreview } : {}) }
+          : {}),
+      });
     } else {
       toast.info("该生成暂无可预览的结果");
     }
@@ -1127,7 +1217,7 @@ const TaskCard = memo(function TaskCard({
           loading="lazy"
           decoding="async"
           onLoad={(event) => restoreOssDisplayImage(event.currentTarget)}
-          onError={(event) => fallbackOssDisplayImage(event.currentTarget, task.resultUrl)}
+          onError={(event) => fallbackOssDisplayImage(event.currentTarget, coverSource)}
         />
       ) : (
         <span className="cov" style={{ background: fallback }} />
@@ -1136,6 +1226,7 @@ const TaskCard = memo(function TaskCard({
       {batchMode && <SelectBadge selected={!!selected} />}
       {!!task.resultUrl && isVid && <span className="vbadge">▶</span>}
       {!!task.resultUrl && kind === "audio" && <span className="vbadge">♪</span>}
+      {!!threeDUrl && kind === "3d" && <span className="vbadge">◇</span>}
       {statusLabel && <span className="as-status">{statusLabel}</span>}
     </button>
   );

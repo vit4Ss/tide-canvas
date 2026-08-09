@@ -15,12 +15,17 @@ test("concept filters are available in both histories while documents stay uploa
 });
 
 test("both histories expose concept filters, while documents stay upload-only", () => {
-  assert.deepEqual(filtersForAssetTab("hist"), ["character", "scene", "image", "video", "audio"]);
+  assert.deepEqual(filtersForAssetTab("hist"), ["character", "scene", "image", "video", "audio", "3d"]);
   assert.deepEqual(filtersForAssetTab("upload"), ["character", "scene", "image", "video", "audio", "doc"]);
 });
 
 test("reference-to-video results are classified as video assets", () => {
   assert.equal(HANDLER_MEDIA_KIND.reference_to_video, "video");
+});
+
+test("3d generations are classified as 3d assets and stay history-only", () => {
+  assert.equal(HANDLER_MEDIA_KIND.generate_3d, "3d");
+  assert.ok(!filtersForAssetTab("upload").includes("3d"));
 });
 
 test("view cache keys isolate tab, filter, dates, and ordering", () => {
