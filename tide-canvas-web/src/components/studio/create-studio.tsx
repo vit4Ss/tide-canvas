@@ -91,7 +91,7 @@ import type {
   ToolKey,
   UploadFile,
 } from "./create-studio/types";
-import { audioToolOf, histItemsFromTasks, huesFromId, slotTypeOf } from "./create-studio/utils";
+import { audioToolOf, histItemsFromTasks, huesFromId, resolutionRank, slotTypeOf } from "./create-studio/utils";
 import { useStudioModels } from "./create-studio/use-studio-models";
 import { useSourceClip } from "./create-studio/use-source-clip";
 import { useHistory } from "./create-studio/use-history";
@@ -287,13 +287,16 @@ export default function CreateStudio() {
   // returned no models at all, fall back to the built-in defaults so the panel
   // is never empty. An empty configured list hides that control entirely.
   const ratioOpts = mCfg?.ratios?.length ? mCfg.ratios : noBackend ? [...RATIOS] : [];
-  const resOpts = mCfg?.resolutions?.length
-    ? mCfg.resolutions
+  // 展示按数值升序（上游同步的配置顺序常是 720p/480p/1080p 这种乱序）；
+  // 默认选中仍取配置首项（模型收敛 effect 读 mCfg.resolutions[0]，与时长同口径）。
+  const resOpts = (mCfg?.resolutions?.length
+    ? [...mCfg.resolutions]
     : noBackend
       ? isVideo
         ? [...VIDEO_RES]
         : [...IMG_RES]
-      : [];
+      : []
+  ).sort((a, b) => resolutionRank(a) - resolutionRank(b));
   const durOpts = (mCfg?.durations?.length ? [...mCfg.durations] : noBackend ? [...VIDEO_DUR] : []).sort(
     (a, b) => parseFloat(a) - parseFloat(b),
   );

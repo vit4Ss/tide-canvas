@@ -22,6 +22,7 @@ import {
   normalizeFormats,
   type RefPolicy,
 } from "../_components/chat-utils";
+import { resolutionRank } from "@/components/studio/create-studio/utils";
 import type { GenModelsApi } from "./use-gen-models";
 
 export function useComposerConfig(models: GenModelsApi) {
@@ -48,7 +49,10 @@ export function useComposerConfig(models: GenModelsApi) {
 
   const modeVals = mCfg?.modes ?? [];
   const ratioOpts = mCfg?.ratios ?? [];
-  const resOpts = mCfg?.resolutions ?? [];
+  // 展示按数值升序（上游同步的配置顺序常乱），默认选中逻辑不受影响
+  const resOpts = [...(mCfg?.resolutions ?? [])].sort(
+    (a, b) => resolutionRank(a) - resolutionRank(b),
+  );
   // 画质档位只对图片有意义：服务端 pricing.go 的图片单价按 [quality][clarity]
   // 查表，视频走 [duration][resolution]，音频按次计费。
   const qualOpts = selModel?.type === "image" ? mCfg?.qualities ?? [] : [];
@@ -125,7 +129,10 @@ export function useComposerConfig(models: GenModelsApi) {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- 换模型后把芯片选择收敛到该模型支持的取值，全部函数式更新
     setMode((m) => (modeVals.length ? (modeVals.includes(m) ? m : modeVals[0]) : ""));
     setRatio((r) => (ratioOpts.length ? (ratioOpts.includes(r) ? r : ratioOpts[0]) : ""));
-    setRes((r) => (resOpts.length ? (resOpts.includes(r) ? r : resOpts[0]) : ""));
+    // 默认档位取配置首项（管理员排的推荐档），resOpts 只是展示排序后的副本
+    setRes((r) =>
+      resOpts.length ? (resOpts.includes(r) ? r : mCfg.resolutions?.[0] ?? resOpts[0]) : "",
+    );
     setQuality((q) => (qualOpts.length ? (qualOpts.includes(q) ? q : qualOpts[0]) : ""));
     setDur((d) => (durOpts.length ? (durOpts.includes(d) ? d : durOpts[0]) : ""));
     setBatch((b) => Math.min(Math.max(1, b), batchMax));

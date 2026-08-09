@@ -56,6 +56,18 @@ export function ratioLabel(r: string): string {
   return r === "auto" ? "自适应" : r;
 }
 
+/** 清晰度/分辨率的展示排序权重：auto 最前，随后按像素规模升序
+ *  （K 档 ×1000：480p < 720p < 1080p < 1K < 2K < 4K）。上游同步预填的配置
+ *  顺序常是乱的（720p/480p/1080p），展示层统一排齐；识别不了的值权重
+ *  最大，靠 sort 稳定性维持原有相对顺序。 */
+export function resolutionRank(value: string): number {
+  const s = value.trim().toLowerCase();
+  if (s === "auto") return -1;
+  const m = /^(\d+(?:\.\d+)?)(k)?/.exec(s);
+  if (!m) return Number.MAX_SAFE_INTEGER;
+  return parseFloat(m[1]) * (m[2] ? 1000 : 1);
+}
+
 /** meta lookup by display name, optionally backed by the real models map. */
 export function metaOf(name: string, metaMap?: Record<string, ModelMeta>): ModelMeta {
   return metaMap?.[name] || MODEL_META[name] || DEFAULT_META;
