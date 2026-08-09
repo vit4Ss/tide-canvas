@@ -42,6 +42,7 @@ function fmtTime(s: string): string {
 
 const TYPE_LABEL: Record<string, string> = {
   system: "系统",
+  urgent: "紧急",
   like: "点赞",
   comment: "评论",
   follow: "关注",
@@ -52,6 +53,8 @@ interface SendForm {
   title: string;
   content: string;
   linkUrl: string;
+  /** system = 只进铃铛；urgent = 铃铛 + 工作区顶部横幅（用户关闭前常驻） */
+  type: "system" | "urgent";
   target: "all" | "user";
   email: string;
 }
@@ -59,6 +62,7 @@ const emptySendForm = (): SendForm => ({
   title: "",
   content: "",
   linkUrl: "",
+  type: "system",
   target: "all",
   email: "",
 });
@@ -125,7 +129,7 @@ export default function AdminNotificationsPage() {
       title: sendForm.title.trim(),
       content: sendForm.content.trim(),
       linkUrl: sendForm.linkUrl.trim(),
-      type: "system",
+      type: sendForm.type,
       target: sendForm.target,
       ...(sendForm.target === "user" ? { email: sendForm.email.trim() } : {}),
     };
@@ -319,7 +323,11 @@ export default function AdminNotificationsPage() {
               },
               {
                 header: "类型",
-                cell: (r) => <StatusPill tone="gray">{TYPE_LABEL[r.type] ?? r.type}</StatusPill>,
+                cell: (r) => (
+                  <StatusPill tone={r.type === "urgent" ? "amber" : "gray"}>
+                    {TYPE_LABEL[r.type] ?? r.type}
+                  </StatusPill>
+                ),
               },
               {
                 header: "状态",
@@ -380,6 +388,25 @@ export default function AdminNotificationsPage() {
                 value={sendForm.linkUrl}
                 onChange={(e) => setSendForm((f) => ({ ...f, linkUrl: e.target.value }))}
               />
+            </Field>
+            <Field
+              label="消息类型"
+              span={2}
+              hint={
+                sendForm.type === "urgent"
+                  ? "紧急提醒会在用户工作区顶部满宽横幅展示，用户关闭前常驻；适用于维护公告等"
+                  : "系统通知只进右上角铃铛面板"
+              }
+            >
+              <select
+                value={sendForm.type}
+                onChange={(e) =>
+                  setSendForm((f) => ({ ...f, type: e.target.value as "system" | "urgent" }))
+                }
+              >
+                <option value="system">系统通知</option>
+                <option value="urgent">紧急提醒（顶部横幅）</option>
+              </select>
             </Field>
             <Field label="发送对象" span={2}>
               <select

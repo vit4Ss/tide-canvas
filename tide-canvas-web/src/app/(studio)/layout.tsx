@@ -16,6 +16,7 @@ import "@/styles/liuguang/pages.css";
 import "@/styles/liuguang/studio.css";
 import "@/styles/liuguang/imini-theme.css"; // 正式主题（body.imini 由根布局直出）
 import StudioRail from "@/components/studio/studio-rail";
+import UrgentNoticeBanner from "@/components/shared/urgent-notice-banner";
 import styles from "./studio-shell.module.css";
 
 export default function StudioLayout({
@@ -23,8 +24,12 @@ export default function StudioLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <div className={styles.shell}>
-      <StudioRail />
-      <div className={styles.content}>{children}</div>
+      {/* 紧急提醒（type=urgent 未读通知）满宽压顶，出现时把工作区整体下推 */}
+      <UrgentNoticeBanner />
+      <div className={styles.row}>
+        <StudioRail />
+        <div className={styles.content}>{children}</div>
+      </div>
     </div>
   );
 }

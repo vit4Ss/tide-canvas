@@ -20,7 +20,6 @@ import {
   useCallback,
   useEffect,
   useId,
-  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -54,6 +53,12 @@ const TYPE_ICON: Record<string, React.ReactNode> = {
   system: (
     <path d="M12 2a7 7 0 0 0-7 7v3.5L3 16h18l-2-3.5V9a7 7 0 0 0-7-7Zm-2.3 17a2.5 2.5 0 0 0 4.6 0" />
   ),
+  urgent: (
+    <>
+      <path d="M12 3.5 22 20H2L12 3.5Z" />
+      <path d="M12 10v4.5M12 17.4v.6" />
+    </>
+  ),
   like: (
     <path d="M19 14c1.5-1.4 3-3.2 3-5.5A4.5 4.5 0 0 0 17.5 4c-1.7 0-3 .8-4 2-.9-1.2-2.3-2-4-2A4.5 4.5 0 0 0 5 8.5C5 10.8 6.5 12.6 8 14l4 4 4-4Z" />
   ),
@@ -74,6 +79,7 @@ const TYPE_ICON: Record<string, React.ReactNode> = {
 
 const TYPE_LABEL: Record<string, string> = {
   system: "系统通知",
+  urgent: "紧急提醒",
   like: "点赞",
   comment: "评论",
   follow: "关注",
@@ -88,8 +94,6 @@ interface Props {
     panelId: string;
     toggle: () => void;
   }) => React.ReactNode;
-  /** Dropdown horizontal anchor relative to the trigger. Default "right". */
-  align?: "left" | "right";
   /** Poll interval for the unread badge in ms (0 disables). Default 60s. */
   pollMs?: number;
   /** 面板色调。面板 portal 到 body，会继承 body 级主题令牌（如 imini 暗色）；
@@ -99,7 +103,6 @@ interface Props {
 
 export default function NotificationCenter({
   renderTrigger,
-  align = "right",
   pollMs = 60000,
   tone = "inherit",
 }: Props) {
@@ -111,10 +114,6 @@ export default function NotificationCenter({
   const [listError, setListError] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const panelRef = useFocusTrap<HTMLDivElement>(open);
-  // 面板通过 portal 渲染到 body 并用 fixed 定位，避免被宿主容器(如 studio 侧栏的
-  // overflow:auto、104px 窄栏)裁剪；据触发器位置决定向上/下弹与左右对齐。
-  const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
-  const [openUp, setOpenUp] = useState(false); // 向上弹出时用反向入场动画
   // 详情弹窗：点条目打开，展示完整正文；带链接的在弹窗内提供「前往查看」。
   const [detail, setDetail] = useState<NotificationVO | null>(null);
   const detailRef = useFocusTrap<HTMLDivElement>(Boolean(detail));
@@ -126,36 +125,6 @@ export default function NotificationCenter({
 
   const closePanel = useCallback(() => setOpen(false), []);
   const closeDetail = useCallback(() => setDetail(null), []);
-
-  const positionPanel = useCallback(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const gap = 10;
-    const margin = 8;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const openUp = r.bottom > vh * 0.6; // 触发器靠下半屏 → 向上弹，避免被视口/容器裁掉
-    const style: React.CSSProperties = { position: "fixed", zIndex: 300 };
-    if (openUp) {
-      style.bottom = Math.round(vh - r.top + gap);
-      style.top = "auto";
-      style.maxHeight = Math.max(160, Math.round(r.top - gap - margin));
-    } else {
-      style.top = Math.round(r.bottom + gap);
-      style.bottom = "auto";
-      style.maxHeight = Math.max(160, Math.round(vh - r.bottom - gap - margin));
-    }
-    // 水平方向统一夹紧到视口内：align 只表达锚定意图(left=左对齐触发器左缘, right=右对齐右缘)，
-    // 但触发器靠右/移动端 wrap 时仍需 clamp，否则 340px 面板会溢出视口右侧点不到。
-    const panelW = Math.min(340, vw - 24); // 与 CSS max-width 一致
-    const ideal = align === "left" ? r.left : r.right - panelW;
-    style.left = Math.round(Math.min(Math.max(margin, ideal), vw - panelW - margin));
-    style.right = "auto";
-    style.width = panelW;
-    setOpenUp(openUp);
-    setPanelStyle(style);
-  }, [align]);
 
   const refreshUnread = useCallback(async () => {
     const res = await notificationApi.unreadCount();
@@ -195,40 +164,17 @@ export default function NotificationCenter({
     return () => window.clearTimeout(id);
   }, [open, loadList]);
 
-  // Position the portaled panel on open, and keep it anchored on resize/scroll.
-  useLayoutEffect(() => {
-    if (!open) return;
-    positionPanel();
-    const onWin = () => positionPanel();
-    window.addEventListener("resize", onWin);
-    window.addEventListener("scroll", onWin, true); // capture: 跟随任意祖先滚动
-    return () => {
-      window.removeEventListener("resize", onWin);
-      window.removeEventListener("scroll", onWin, true);
-    };
-  }, [open, positionPanel]);
-
-  // Close on outside click / Escape. The panel is portaled outside wrapRef, so
-  // exempt both the trigger wrapper and the panel from the outside-click check.
+  // Esc 关闭面板（外部点击由居中蒙层的 onClick 承担）。
   useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (wrapRef.current?.contains(t) || panelRef.current?.contains(t)) return;
-      closePanel();
-    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       e.preventDefault();
       closePanel();
     };
-    document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [closePanel, open, panelRef]);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [closePanel, open]);
 
   // Esc 关闭详情弹窗（独立于面板的 Esc 处理）。
   useEffect(() => {
@@ -308,14 +254,19 @@ export default function NotificationCenter({
       {open && typeof document !== "undefined" &&
         createPortal(
           <div
+            className={`notif-mask${tone === "light" ? " tone-light" : ""}`}
+            onClick={closePanel}
+          >
+          <div
             id={panelId}
             ref={panelRef}
-            className={`notif-panel${openUp ? " up" : ""}${tone === "light" ? " tone-light" : ""}`}
+            className={`notif-panel${tone === "light" ? " tone-light" : ""}`}
             role="dialog"
+            aria-modal="true"
             aria-labelledby={panelTitleId}
             aria-busy={loading}
             tabIndex={-1}
-            style={panelStyle}
+            onClick={(e) => e.stopPropagation()}
           >
             <div className="notif-head">
               <h2 className="notif-title" id={panelTitleId}>
@@ -396,6 +347,7 @@ export default function NotificationCenter({
                 ))
               )}
             </div>
+          </div>
           </div>,
           document.body,
         )}

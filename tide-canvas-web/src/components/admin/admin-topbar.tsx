@@ -63,7 +63,6 @@ export function AdminTopbar({
       <div className="adm-top-spacer" />
 
       <NotificationCenter
-        align="right"
         tone="light"
         renderTrigger={({ unread, open, panelId, toggle }) => (
           <button

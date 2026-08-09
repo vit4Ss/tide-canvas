@@ -7,16 +7,33 @@
   display: inline-flex;
 }
 
-.notif-panel {
-  /* Positioned inline via JS (portaled to body, position:fixed) so the panel
-     escapes host overflow/clip contexts; these are fallbacks only. */
+/* 居中蒙层：面板不再锚在铃铛旁，portal 到 body 后屏幕居中展示 */
+.notif-mask {
   position: fixed;
-  width: 340px;
-  max-width: min(340px, calc(100vw - 24px));
-  z-index: 300;
+  inset: 0;
+  z-index: 1040;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.55);
+  animation: notif-fade 0.16s ease-out;
+}
+.notif-mask.tone-light {
+  background: rgba(0, 0, 0, 0.32);
+}
+@keyframes notif-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+.notif-panel {
+  width: min(440px, calc(100vw - 48px));
+  max-height: min(76vh, 640px);
   display: flex;
   flex-direction: column;
-  border-radius: 14px;
+  border-radius: 16px;
   overflow: hidden;
   background: var(--surface, #ffffff);
   border: 1px solid var(--border-strong, #d2d2d7);
@@ -37,27 +54,11 @@
   --accent-soft: #eff6ff;
   --shadow-pop: 0 4px 12px rgba(15, 23, 42, 0.06), 0 12px 32px rgba(15, 23, 42, 0.1);
 }
-.notif-panel.align-right {
-  right: 0;
-}
-.notif-panel.align-left {
-  left: 0;
-}
 @keyframes notif-pop {
   from {
     opacity: 0;
     transform: translateY(-6px);
   }
-}
-/* 向上弹出时从下方 6px 升起，方向与弹出一-*/
-@keyframes notif-pop-up {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-}
-.notif-panel.up {
-  animation-name: notif-pop-up;
 }
 
 .notif-head {
@@ -107,8 +108,7 @@
 
 .notif-list {
   flex: 1 1 auto;
-  min-height: 0; /* 允许在面-maxHeight 受限时收缩，内部滚动 */
-  max-height: 400px;
+  min-height: 0; /* 面板 maxHeight 受限时收缩，内部滚动 */
   overflow-y: auto;
 }
 .notif-empty {
@@ -286,11 +286,11 @@
 }
 .notif-detail {
   position: relative;
-  width: min(420px, calc(100vw - 48px));
-  max-height: min(72vh, 560px);
+  width: min(560px, calc(100vw - 48px));
+  max-height: min(78vh, 680px);
   display: flex;
   flex-direction: column;
-  padding: 22px;
+  padding: 24px;
   border-radius: 16px;
   background: var(--surface, #17171a);
   border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
@@ -334,7 +334,7 @@
 .nd-ht h2 {
   display: block;
   margin: 0;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   letter-spacing: -0.01em;
   line-height: 1.4;
@@ -349,14 +349,14 @@
 /* 正文放进弱底内嵌块：短内容也有结构，长内容内部滚动 */
 .nd-body {
   flex: 1 1 auto;
-  min-height: 0;
+  min-height: 96px; /* 短正文也撑出阅读区，弹窗不缩成一条 */
   overflow-y: auto;
   margin-top: 16px;
-  padding: 13px 14px;
+  padding: 14px 16px;
   border-radius: 10px;
   background: var(--panel, rgba(255, 255, 255, 0.05));
-  font-size: 13.5px;
-  line-height: 1.75;
+  font-size: 14px;
+  line-height: 1.8;
   color: var(--text-dim, rgba(255, 255, 255, 0.72));
   white-space: pre-wrap;
   word-break: break-word;
@@ -402,7 +402,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .notif-panel,
-  .notif-panel.up,
+  .notif-mask,
   .notif-dmask {
     animation: none;
   }

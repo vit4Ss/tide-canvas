@@ -223,7 +223,6 @@ export default function StudioRail() {
 
       {user && (
         <NotificationCenter
-          align="left"
           renderTrigger={({ unread, toggle, open }) => (
             <button
               className={`ws-tool${open ? " on" : ""}`}
