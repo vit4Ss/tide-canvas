@@ -227,8 +227,14 @@ export default function AdminDashboardPage() {
     [charts],
   );
   const pointHasSignal = pointAreaData.some((item) => item.value > 0);
-  const pointUserTop = charts?.pointUserTop ?? [];
-  const pointModelTop = charts?.pointModelTop ?? [];
+  // 积分排行的时间口径切换：近 14 天（默认）/ 今日（服务器时区零点起）。
+  // 两张卡独立切换；今日数据随 charts 一次性下发，与其余图表同刷新节奏。
+  const [userTopScope, setUserTopScope] = useState<"period" | "today">("period");
+  const [modelTopScope, setModelTopScope] = useState<"period" | "today">("period");
+  const pointUserTop =
+    (userTopScope === "today" ? charts?.pointUserTopToday : charts?.pointUserTop) ?? [];
+  const pointModelTop =
+    (modelTopScope === "today" ? charts?.pointModelTopToday : charts?.pointModelTop) ?? [];
   const recentPointConsumption = charts?.recentPointConsumption ?? [];
 
   const dayRange = useMemo(() => {
@@ -501,7 +507,22 @@ export default function AdminDashboardPage() {
           <div className="viz-h">
             <div>
               <h3>用户积分消耗排行</h3>
-              <div className="sub">近 14 天 · 按真实消费流水汇总</div>
+              <div className="sub">
+                {userTopScope === "today" ? "今日 · 按真实消费流水汇总" : "近 14 天 · 按真实消费流水汇总"}
+              </div>
+            </div>
+            <div className="adm-segment" role="group" aria-label="用户排行时间范围">
+              {([["period", "近 14 天"], ["today", "今日"]] as const).map(([v, l]) => (
+                <button
+                  key={v}
+                  type="button"
+                  className={`adm-chip${userTopScope === v ? " on" : ""}`}
+                  aria-pressed={userTopScope === v}
+                  onClick={() => setUserTopScope(v)}
+                >
+                  {l}
+                </button>
+              ))}
             </div>
           </div>
           <AdminTable<PointUserTopVO>
@@ -509,7 +530,7 @@ export default function AdminDashboardPage() {
             className="dashboard-compact-table"
             rows={pointUserTop}
             rowKey={(row) => row.userId}
-            empty="近 14 天暂无用户积分消费"
+            empty={userTopScope === "today" ? "今日暂无用户积分消费" : "近 14 天暂无用户积分消费"}
             columns={[
               {
                 header: "用户",
@@ -528,7 +549,22 @@ export default function AdminDashboardPage() {
           <div className="viz-h">
             <div>
               <h3>模型积分消耗排行</h3>
-              <div className="sub">近 14 天 · 按调用日志中的平台积分汇总</div>
+              <div className="sub">
+                {modelTopScope === "today" ? "今日 · 按调用日志中的平台积分汇总" : "近 14 天 · 按调用日志中的平台积分汇总"}
+              </div>
+            </div>
+            <div className="adm-segment" role="group" aria-label="模型排行时间范围">
+              {([["period", "近 14 天"], ["today", "今日"]] as const).map(([v, l]) => (
+                <button
+                  key={v}
+                  type="button"
+                  className={`adm-chip${modelTopScope === v ? " on" : ""}`}
+                  aria-pressed={modelTopScope === v}
+                  onClick={() => setModelTopScope(v)}
+                >
+                  {l}
+                </button>
+              ))}
             </div>
           </div>
           <AdminTable<PointModelTopVO>
@@ -536,7 +572,7 @@ export default function AdminDashboardPage() {
             className="dashboard-compact-table"
             rows={pointModelTop}
             rowKey={(row) => row.model}
-            empty="近 14 天暂无模型积分记录"
+            empty={modelTopScope === "today" ? "今日暂无模型积分记录" : "近 14 天暂无模型积分记录"}
             columns={[
               { header: "模型", width: "35%", className: "strong", cell: (row) => row.modelName || row.model },
               { header: "消耗积分", width: "19%", align: "right", className: "mono strong", cell: (row) => fmtNum(row.points) },

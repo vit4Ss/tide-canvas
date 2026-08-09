@@ -74,6 +74,12 @@ func TestDashboardPointConsumptionAggregates(t *testing.T) {
 		t.Fatalf("unexpected second top user: %+v", userTop[1])
 	}
 
+	// 今日口径（窗口起点 = 当天零点）复用同一实现：昨日/删除/退款行都不入。
+	todayUserTop := h.topPointUsers(today, 8)
+	if len(todayUserTop) != 1 || todayUserTop[0].UserID != userOne.String() || todayUserTop[0].Points != 8 {
+		t.Fatalf("unexpected today top users: %+v", todayUserTop)
+	}
+
 	recent := h.recentPointConsumption(3)
 	if len(recent) != 3 {
 		t.Fatalf("recent length = %d, want 3", len(recent))
@@ -108,5 +114,11 @@ func TestDashboardPointConsumptionAggregates(t *testing.T) {
 	}
 	if modelTop[1].Model != "model-a" || modelTop[1].Points != 20 || modelTop[1].Calls != 2 || modelTop[1].Success != 1 {
 		t.Fatalf("unexpected second top model: %+v", modelTop[1])
+	}
+
+	// 今日口径的模型排行：本用例的调用日志都发生在今天，应与 14 天窗口一致。
+	todayModelTop := h.topPointModels(today, 8)
+	if len(todayModelTop) != 2 || todayModelTop[0].Points != 30 || todayModelTop[1].Points != 20 {
+		t.Fatalf("unexpected today top models: %+v", todayModelTop)
 	}
 }

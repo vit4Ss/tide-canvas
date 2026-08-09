@@ -118,5 +118,9 @@ export interface AdminChartsVO {
   pointConsumption: PointConsumptionPoint[];
   pointUserTop: PointUserTopVO[];
   pointModelTop: PointModelTopVO[];
+  /** 今日（服务器时区零点起）口径的同两张排行，仪表盘「近14天/今日」切换用；
+   *  可选：新前端配旧服务端时字段缺失，展示层按空数组兜底 */
+  pointUserTopToday?: PointUserTopVO[];
+  pointModelTopToday?: PointModelTopVO[];
   recentPointConsumption: RecentPointConsumptionVO[];
 }

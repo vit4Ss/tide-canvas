@@ -133,10 +133,13 @@ type AdminChartsVO struct {
 	ModelTop []ModelTopVO `json:"modelTop"`
 	// PointConsumption / point leaderboards use the real point ledger and the
 	// point_cost stamped on model_call_log over the same trailing window.
-	PointSummary           PointSummaryVO             `json:"pointSummary"`
-	PointConsumption       []PointConsumptionPoint    `json:"pointConsumption"`
-	PointUserTop           []PointUserTopVO           `json:"pointUserTop"`
-	PointModelTop          []PointModelTopVO          `json:"pointModelTop"`
+	PointSummary     PointSummaryVO          `json:"pointSummary"`
+	PointConsumption []PointConsumptionPoint `json:"pointConsumption"`
+	PointUserTop     []PointUserTopVO        `json:"pointUserTop"`
+	PointModelTop    []PointModelTopVO       `json:"pointModelTop"`
+	// 今日（服务器本地时区零点起）口径的同两张排行，供仪表盘「近14天/今日」切换。
+	PointUserTopToday      []PointUserTopVO           `json:"pointUserTopToday"`
+	PointModelTopToday     []PointModelTopVO          `json:"pointModelTopToday"`
 	RecentPointConsumption []RecentPointConsumptionVO `json:"recentPointConsumption"`
 }
 
@@ -257,6 +260,8 @@ func (h *dashboardHandler) charts(c *gin.Context) {
 		PointConsumption:       make([]PointConsumptionPoint, 0, g1ChartDays),
 		PointUserTop:           h.topPointUsers(start, 8),
 		PointModelTop:          h.topPointModels(start, 8),
+		PointUserTopToday:      h.topPointUsers(startOfToday, 8),
+		PointModelTopToday:     h.topPointModels(startOfToday, 8),
 		RecentPointConsumption: h.recentPointConsumption(10),
 	}
 	for _, day := range days {
