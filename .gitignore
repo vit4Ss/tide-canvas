@@ -37,6 +37,7 @@ yarn-error.log*
 !.env.example
 !.env.development
 !.env.production
+deploy/*.env
 
 # Spring Boot config (use *-sample.yml as template)
 tide-canvas-server/src/main/resources/application.yml

@@ -1,0 +1,189 @@
+name: flowlight-preview
+
+on:
+  push:
+    branches:
+      - flowlight-20260809
+  workflow_dispatch:
+    inputs:
+      deploy_preview:
+        description: Deploy the published images to the flowlight preview environment
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: flowlight-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  PREVIEW_IMAGE_TAG: flowlight-20260809
+
+jobs:
+  web-check:
+    name: Web quality gate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tide-canvas-web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tide-canvas-web/package-lock.json
+
+      - run: npm ci
+      - run: npm run check
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://backend:8080
+
+  server-check:
+    name: Server tests and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tide-canvas-server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+          cache-dependency-path: tide-canvas-server/go.sum
+
+      - run: go test ./...
+      - run: go build ./cmd/api
+
+  publish:
+    name: Publish ${{ matrix.name }} image
+    needs:
+      - web-check
+      - server-check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            context: tide-canvas-server
+            image: tide-canvas-backend
+            build_args: ""
+          - name: frontend
+            context: tide-canvas-web
+            image: tide-canvas-frontend
+            build_args: |
+              NEXT_PUBLIC_API_BASE_URL=http://backend:8080
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=${{ env.PREVIEW_IMAGE_TAG }}
+            type=sha,prefix=${{ env.PREVIEW_IMAGE_TAG }}-
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: ${{ matrix.build_args }}
+          cache-from: type=gha,scope=flowlight-preview-${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=flowlight-preview-${{ matrix.name }}
+          provenance: mode=max
+          sbom: true
+
+  deploy-preview:
+    name: Deploy preview
+    needs:
+      - publish
+    if: >-
+      ${{
+        (github.event_name == 'push' && vars.FLOWLIGHT_PREVIEW_AUTO_DEPLOY == 'true') ||
+        (github.event_name == 'workflow_dispatch' && inputs.deploy_preview)
+      }}
+    runs-on: ubuntu-latest
+    environment: flowlight-preview
+    permissions:
+      contents: read
+      packages: read
+    env:
+      PREVIEW_DOCKER_HOST: ${{ secrets.PREVIEW_DOCKER_HOST }}
+      PREVIEW_SSH_PRIVATE_KEY: ${{ secrets.PREVIEW_SSH_PRIVATE_KEY }}
+      PREVIEW_SSH_KNOWN_HOSTS: ${{ secrets.PREVIEW_SSH_KNOWN_HOSTS }}
+      COMPOSE_PROJECT_NAME: ${{ vars.PREVIEW_COMPOSE_PROJECT || 'tide-canvas-flowlight-preview' }}
+      FRONTEND_PORT: ${{ vars.PREVIEW_FRONTEND_PORT || '3000' }}
+      BACKEND_PORT: ${{ vars.PREVIEW_BACKEND_PORT || '8081' }}
+      PUBLIC_API_ORIGIN: ${{ vars.PREVIEW_PUBLIC_API_ORIGIN || 'http://localhost:8081' }}
+      MYSQL_DATABASE: ${{ vars.PREVIEW_MYSQL_DATABASE || 'canvas' }}
+      MYSQL_ROOT_PASSWORD: ${{ secrets.PREVIEW_MYSQL_ROOT_PASSWORD }}
+      JWT_SECRET: ${{ secrets.PREVIEW_JWT_SECRET }}
+      RELAY_API_KEY: ${{ secrets.PREVIEW_RELAY_API_KEY }}
+      STORAGE_TYPE: ${{ vars.PREVIEW_STORAGE_TYPE || 'local' }}
+      STORAGE_ENDPOINT: ${{ vars.PREVIEW_STORAGE_ENDPOINT }}
+      STORAGE_BUCKET: ${{ vars.PREVIEW_STORAGE_BUCKET }}
+      STORAGE_ACCESS_KEY: ${{ secrets.PREVIEW_STORAGE_ACCESS_KEY }}
+      STORAGE_SECRET_KEY: ${{ secrets.PREVIEW_STORAGE_SECRET_KEY }}
+      STORAGE_PREFIX: ${{ vars.PREVIEW_STORAGE_PREFIX || 'canvas/uploads/' }}
+      STORAGE_CDN_DOMAIN: ${{ vars.PREVIEW_STORAGE_CDN_DOMAIN }}
+      STORAGE_ACCELERATE_DOMAIN: ${{ vars.PREVIEW_STORAGE_ACCELERATE_DOMAIN }}
+      IMAGE_TAG: flowlight-20260809
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate deployment configuration
+        shell: bash
+        run: |
+          missing=0
+          for key in PREVIEW_DOCKER_HOST PREVIEW_SSH_PRIVATE_KEY PREVIEW_SSH_KNOWN_HOSTS MYSQL_ROOT_PASSWORD JWT_SECRET; do
+            if [ -z "${!key:-}" ]; then
+              echo "::error::$key is required in the flowlight-preview GitHub Environment"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Configure SSH transport
+        shell: bash
+        run: |
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$PREVIEW_SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$PREVIEW_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Apply preview composition
+        shell: bash
+        run: |
+          export DOCKER_HOST="$PREVIEW_DOCKER_HOST"
+          export GHCR_OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          docker compose -f deploy/compose.flowlight-preview.yaml config --quiet
+          docker compose -f deploy/compose.flowlight-preview.yaml pull
+          docker compose -f deploy/compose.flowlight-preview.yaml up -d --remove-orphans --wait --wait-timeout 240
+          docker compose -f deploy/compose.flowlight-preview.yaml ps
