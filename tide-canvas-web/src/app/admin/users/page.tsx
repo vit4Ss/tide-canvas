@@ -108,6 +108,8 @@ interface EditForm {
   nickname: string;
   remark: string;
   role: number;
+  /** sys_role id（权限角色）；"" / "0" = 未指派。 */
+  roleId: string;
   status: number;
   vipLevel: number;
   apiQuota: number;
@@ -183,6 +185,9 @@ function AdminUsersPageInner() {
   // roles state
   const [roles, setRoles] = useState<RoleVO[]>([]);
   const [rolesLoading, setRolesLoading] = useState(true);
+  // 仅成功加载过角色列表后为 true:「已删除角色」的判断依赖它,
+  // 避免加载中/加载失败时把在用角色误标成已删除
+  const [rolesReady, setRolesReady] = useState(false);
 
   // user edit modal
   const [editUser, setEditUser] = useState<AdminUserVO | null>(null);
@@ -259,8 +264,10 @@ function AdminUsersPageInner() {
     try {
       await ensureSession();
       const res = await adminUsersApi.listRoles();
-      if (res.success && res.data) setRoles(res.data);
-      else setRoles([]);
+      if (res.success && res.data) {
+        setRoles(res.data);
+        setRolesReady(true);
+      } else setRoles([]);
     } catch {
       setRoles([]);
     } finally {
@@ -292,6 +299,7 @@ function AdminUsersPageInner() {
       nickname: u.nickname,
       remark: u.remark || "",
       role: u.role,
+      roleId: u.roleId && u.roleId !== "0" ? u.roleId : "",
       status: u.status,
       vipLevel: u.vipLevel,
       apiQuota: u.apiQuota,
@@ -306,8 +314,10 @@ function AdminUsersPageInner() {
       const dto: AdminUserUpdateDTO = {
         nickname: editForm.nickname,
         remark: editForm.remark.trim(),
-        // 角色字段仅超管可变更(服务端 requireSuper 同口径),运营不发该字段
-        ...(isSuper ? { role: editForm.role } : {}),
+        // 角色字段仅超管可变更(服务端 requireSuper 同口径),运营不发该字段。
+        // roleId 与 role 同口径始终下发,所见即所存:""=撤销指派(idgen.Parse("")
+        // 合法解析为 0),且避免「仅变更才发」把他人并发改掉的值静默保留
+        ...(isSuper ? { role: editForm.role, roleId: editForm.roleId } : {}),
         status: editForm.status,
         vipLevel: editForm.vipLevel,
         apiQuota: editForm.apiQuota,
@@ -606,6 +616,10 @@ function AdminUsersPageInner() {
     },
   ];
 
+  // 编辑弹窗内用户的原权限角色(规范化:"0"/缺省 → "" 未指派)。下拉框的
+  // 「已删除角色」兜底与停用角色是否可选都按原值判断,保证误选后可退回
+  const origRoleId = editUser && editUser.roleId !== "0" ? editUser.roleId || "" : "";
+
   const roleColumns: Column<RoleVO>[] = [
     {
       header: "角色",
@@ -814,6 +828,37 @@ function AdminUsersPageInner() {
                   {/* role=1(VIP) 死档已移除：会员身份走 vipLevel，由购买结算提升 */}
                   <option value={0}>普通用户</option>
                   <option value={9}>管理员</option>
+                </select>
+              </Field>
+              <Field
+                label="权限角色"
+                span={2}
+                hint={isSuper ? "对应下方「角色管理」,控制前台菜单与后台模块" : "仅超级管理员可变更"}
+              >
+                <select
+                  value={editForm.roleId}
+                  disabled={!isSuper}
+                  onChange={(e) => setEditForm({ ...editForm, roleId: e.target.value })}
+                >
+                  {/* ""=未指派,可主动选回即撤销指派(服务端 idgen.Parse("") 合法,写 role_id=0) */}
+                  <option value="">未指派</option>
+                  {/* 原角色不在列表时兜底:按「原值」常驻渲染,误选其他项后仍可退回;
+                      列表成功加载前不妄称「已删除」 */}
+                  {origRoleId !== "" && !roles.some((r) => r.id === origRoleId) ? (
+                    <option value={origRoleId}>{rolesReady ? "已删除角色" : "当前角色"}</option>
+                  ) : null}
+                  {roles.map((r) => (
+                    <option
+                      key={r.id}
+                      value={r.id}
+                      // 停用角色不可新指派:服务端对停用角色 fail-open 放开全部前台菜单,
+                      // 与配置意图相反;仅当它就是用户原角色时保持可选,便于误选后退回
+                      disabled={r.status !== 1 && r.id !== origRoleId}
+                    >
+                      {r.name}
+                      {r.status !== 1 ? "(已停用)" : ""}
+                    </option>
+                  ))}
                 </select>
               </Field>
               <Field label="VIP 等级" span={2}>
