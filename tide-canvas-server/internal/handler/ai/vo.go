@@ -154,9 +154,11 @@ func toModelVO(m *model.AiModel) AiModelVO {
 // cover 是 CoverHues 解码出的 [h1,h2,h3] 色相数组（解析失败为 null）；
 // extraParams 是解码后的参数对象（空/非法为 null）。
 type AiToolVO struct {
-	Key         string         `json:"key"`
-	Title       string         `json:"title"`
-	Desc        string         `json:"desc"`
+	Key   string `json:"key"`
+	Title string `json:"title"`
+	Desc  string `json:"desc"`
+	// Type 决定工具页收什么素材(image|video)。
+	Type        string         `json:"type"`
 	Handler     string         `json:"handler"`
 	NeedPrompt  bool           `json:"needPrompt"`
 	Hd          bool           `json:"hd"`
@@ -165,6 +167,15 @@ type AiToolVO struct {
 	Placeholder string         `json:"placeholder"`
 	ExtraParams map[string]any `json:"extraParams"`
 	SortOrder   int            `json:"sortOrder"`
+}
+
+// toolTypeOrDefault normalizes a stored ai_tools.type. 旧库在该列存在之前建的
+// 行为空串,按图片工具处理(既有工具全是图片形态),客户端因此永远拿到有效值。
+func toolTypeOrDefault(t string) string {
+	if t == model.AiToolTypeVideo {
+		return model.AiToolTypeVideo
+	}
+	return model.AiToolTypeImage
 }
 
 // decodeToolHues parses a stored cover_hues value ("[h1,h2,h3]") into an int
@@ -202,6 +213,7 @@ func toToolVO(t *model.AiTool) AiToolVO {
 		Key:         t.Key,
 		Title:       t.Title,
 		Desc:        t.Desc,
+		Type:        toolTypeOrDefault(t.Type),
 		Handler:     t.Handler,
 		NeedPrompt:  t.NeedPrompt,
 		Hd:          t.Hd,

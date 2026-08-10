@@ -344,6 +344,12 @@ func ensureBaselineFloors(db *gorm.DB) error {
 	return nil
 }
 
+// AiTool.Type values — 工具处理的素材形态。
+const (
+	AiToolTypeImage = "image"
+	AiToolTypeVideo = "video"
+)
+
 // CanonicalAiTools are the built-in one-click AI tools (智能工具). Handler 指向
 // 代码注册的生成能力（internal/handler/ai 的 handler registry）；行本身承载
 // 策略：服务端预设提示词（PresetPrompt，工程化英文指令，客户端永远拿不到）、
@@ -351,7 +357,7 @@ func ensureBaselineFloors(db *gorm.DB) error {
 // 编辑/排序/上下线，没有新建与删除。
 var CanonicalAiTools = []AiTool{
 	{
-		Key: "expand", Handler: "outpaint", Enabled: true, ShowPage: true,
+		Key: "expand", Handler: "outpaint", Type: AiToolTypeImage, Enabled: true, ShowPage: true,
 		Title: "智能扩图", Desc: "Outpainting 无缝向外补全画面。",
 		Icon: "⤢", CoverHues: "[28,48,8]", SortOrder: 1,
 		PresetPrompt: "Expand this image outward on all sides, naturally extending the existing scene, lighting, " +
@@ -360,13 +366,13 @@ var CanonicalAiTools = []AiTool{
 	},
 	{
 		// 局部重绘复用通用图生图能力：没有服务端预设指令，用户描述要改的部分。
-		Key: "inpaint", Handler: "image_to_image", Enabled: true, ShowPage: true,
+		Key: "inpaint", Handler: "image_to_image", Type: AiToolTypeImage, Enabled: true, ShowPage: true,
 		Title: "局部重绘", Desc: "上传图片并描述想修改的部分，AI 精准重绘。",
 		Icon: "✎", CoverHues: "[330,286,12]", SortOrder: 2, NeedPrompt: true,
 		Placeholder: "描述要修改的部分…\n例：把天空换成日落晚霞，保持其余不变",
 	},
 	{
-		Key: "rmbg", Handler: "remove_bg", Enabled: true, ShowPage: true,
+		Key: "rmbg", Handler: "remove_bg", Type: AiToolTypeImage, Enabled: true, ShowPage: true,
 		Title: "一键抠图", Desc: "智能移除背景与对象，输出干净主体。",
 		Icon: "⬡", CoverHues: "[95,140,70]", SortOrder: 3,
 		PresetPrompt: "Completely remove the background of this image. Keep the main foreground subject perfectly intact " +
@@ -376,7 +382,7 @@ var CanonicalAiTools = []AiTool{
 	{
 		// hd：前端优先选 4K 模型并展开附加参数。参数默认最高档，输出才真的
 		// 更大；set-if-empty 合并，客户端显式传参仍然生效。
-		Key: "upscale", Handler: "upscale", Enabled: true, ShowPage: true,
+		Key: "upscale", Handler: "upscale", Type: AiToolTypeImage, Enabled: true, ShowPage: true,
 		Title: "高清放大", Desc: "无损放大图片尺寸，智能重塑高清画质。",
 		Icon: "⤡", CoverHues: "[255,230,290]", SortOrder: 4, Hd: true,
 		ExtraParams: `{"resolution":"4k","clarity":"4k","quality":"high"}`,
@@ -385,7 +391,7 @@ var CanonicalAiTools = []AiTool{
 			"colors and style exactly — do not add, remove or alter any elements.",
 	},
 	{
-		Key: "rmobj", Handler: "remove_object", Enabled: true, ShowPage: false,
+		Key: "rmobj", Handler: "remove_object", Type: AiToolTypeImage, Enabled: true, ShowPage: true,
 		Title: "物体移除", Desc: "移除画面中的杂物、路人、文字与瑕疵。",
 		Icon: "⌫", CoverHues: "[200,230,170]", SortOrder: 5,
 		PresetPrompt: "Remove the unwanted and distracting elements from this image — stray people, clutter, text, " +
@@ -393,13 +399,22 @@ var CanonicalAiTools = []AiTool{
 			"Realistically reconstruct the area behind the removed elements so the result looks natural and seamless.",
 	},
 	{
-		Key: "relight", Handler: "relight", Enabled: true, ShowPage: false,
+		Key: "relight", Handler: "relight", Type: AiToolTypeImage, Enabled: true, ShowPage: true,
 		Title: "智能打光", Desc: "影视级重新打光，增强画面层次与氛围。",
 		Icon: "◐", CoverHues: "[40,60,260]", SortOrder: 6,
 		ExtraParams: `{"quality":"high"}`,
 		PresetPrompt: "Relight this image with professional, cinematic lighting. Improve the exposure, contrast and " +
 			"color balance, add soft natural highlights and gentle shadows, and enhance depth and atmosphere. " +
 			"Preserve the original subject, composition, colors and style — do not add, remove or move any elements.",
+	},
+	{
+		// 视频超分复用 video_upscale 生成能力(relay /v1/video/upscale):只收公网
+		// 视频 URL 与目标分辨率,不接收提示词,故无 PresetPrompt。ExtraParams 里的
+		// targetResolution 是用户未选档位时的默认值(工具页会让用户选)。
+		Key: "vupscale", Handler: "video_upscale", Type: AiToolTypeVideo, Enabled: true, ShowPage: true,
+		Title: "视频超分", Desc: "提升视频分辨率与清晰度，最高 4K。",
+		Icon: "◆", CoverHues: "[205,190,240]", SortOrder: 7,
+		ExtraParams: `{"targetResolution":"1080p"}`,
 	},
 }
 
@@ -424,7 +439,29 @@ func ensureBaselineTools(db *gorm.DB) error {
 			}
 		}
 	}
-	return nil
+
+	// 物体移除/智能打光原先只在创作台工具栏出现(show_page=false),现已改为
+	// 同样提供独立工具页。存量行不会被上面的基线播种改动,补一次;跑过之后
+	// 管理员再关掉不会被重新打开。
+	if err := runOnce(db,
+		"tools.showPage.rmobjRelight",
+		"物体移除/智能打光 开放独立工具页的一次性回填标记(勿删,删除会在重启时重新回填)",
+		func(db *gorm.DB) error {
+			return db.Model(&AiTool{}).Where("`key` IN ?", []string{"rmobj", "relight"}).
+				Update("show_page", true).Error
+		}); err != nil {
+		return err
+	}
+
+	// type 列是后加的:该列存在之前建的行为空串,按图片工具补齐(既有工具全是
+	// 图片形态)。只碰空值,不覆盖任何已有取值。
+	return runOnce(db,
+		"tools.type.backfill",
+		"智能工具 type 列的一次性回填标记(勿删,删除会在重启时重新回填)",
+		func(db *gorm.DB) error {
+			return db.Model(&AiTool{}).Where("COALESCE(`type`, '') = ''").
+				Update("type", AiToolTypeImage).Error
+		})
 }
 
 // fixupFreeTextColumns alters the mis-typed json columns to varchar. Idempotent:
@@ -560,7 +597,11 @@ type AiTool struct {
 	ID      idgen.ID `gorm:"primaryKey;autoIncrement:false" json:"id"`
 	Key     string   `gorm:"size:32;uniqueIndex" json:"key"` // URL slug（/tools/<key>）
 	Handler string   `gorm:"size:64;index" json:"handler"`   // registry handler name
-	Enabled bool     `gorm:"default:true" json:"enabled"`
+	// Type 决定工具处理的素材形态(AiToolTypeImage/AiToolTypeVideo):
+	// image 收图片、video 收视频。
+	// 独立工具页据此决定上传控件、可选模型与结果展示;由代码定死,后台只读。
+	Type    string `gorm:"size:16;default:image" json:"type"`
+	Enabled bool   `gorm:"default:true" json:"enabled"`
 	// ShowPage：是否有独立工具页与首页卡片（false 的工具只在创作台工具栏出现）。
 	ShowPage bool   `gorm:"default:true" json:"showPage"`
 	Title    string `gorm:"size:64" json:"title"`

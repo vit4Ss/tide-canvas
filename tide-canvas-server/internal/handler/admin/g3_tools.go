@@ -57,22 +57,24 @@ type toolsHandler struct {
 // extraParams text so the edit form round-trips cleanly. `cover` is the
 // decoded CoverHues hue triple (null when unparsable).
 type AdminToolVO struct {
-	ID           idgen.ID `json:"id"`
-	Key          string   `json:"key"`
-	Handler      string   `json:"handler"`
-	Enabled      bool     `json:"enabled"`
-	ShowPage     bool     `json:"showPage"`
-	Title        string   `json:"title"`
-	Desc         string   `json:"desc"`
-	PresetPrompt string   `json:"presetPrompt"`
-	ExtraParams  string   `json:"extraParams"`
-	NeedPrompt   bool     `json:"needPrompt"`
-	Hd           bool     `json:"hd"`
-	Icon         string   `json:"icon"`
-	Cover        []int    `json:"cover"`
-	Placeholder  string   `json:"placeholder"`
-	SortOrder    int      `json:"sortOrder"`
-	UpdateTime   string   `json:"updateTime"`
+	ID      idgen.ID `json:"id"`
+	Key     string   `json:"key"`
+	Handler string   `json:"handler"`
+	// Type 由代码定死(工具处理的素材形态 image|video),后台只读展示。
+	Type         string `json:"type"`
+	Enabled      bool   `json:"enabled"`
+	ShowPage     bool   `json:"showPage"`
+	Title        string `json:"title"`
+	Desc         string `json:"desc"`
+	PresetPrompt string `json:"presetPrompt"`
+	ExtraParams  string `json:"extraParams"`
+	NeedPrompt   bool   `json:"needPrompt"`
+	Hd           bool   `json:"hd"`
+	Icon         string `json:"icon"`
+	Cover        []int  `json:"cover"`
+	Placeholder  string `json:"placeholder"`
+	SortOrder    int    `json:"sortOrder"`
+	UpdateTime   string `json:"updateTime"`
 }
 
 // ---- DTOs ----
@@ -295,6 +297,7 @@ func toAdminToolVO(t *model.AiTool) AdminToolVO {
 		Handler:      t.Handler,
 		Enabled:      t.Enabled,
 		ShowPage:     t.ShowPage,
+		Type:         adminToolType(t.Type),
 		Title:        t.Title,
 		Desc:         t.Desc,
 		PresetPrompt: t.PresetPrompt,
@@ -316,6 +319,15 @@ func encodeToolCover(hues []int) string {
 		return ""
 	}
 	return string(b)
+}
+
+// adminToolType normalizes a stored ai_tools.type;该列存在之前建的旧行为空串,
+// 按图片工具展示(既有工具全是图片形态)。
+func adminToolType(t string) string {
+	if t == model.AiToolTypeVideo {
+		return model.AiToolTypeVideo
+	}
+	return model.AiToolTypeImage
 }
 
 // decodeToolCover parses the stored cover_hues JSON array; nil (serialized as

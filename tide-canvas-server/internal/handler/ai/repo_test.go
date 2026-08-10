@@ -74,17 +74,25 @@ func TestTaskMediaHandlersIncludesVideoUpscale(t *testing.T) {
 	}
 }
 
-// 「工具作品」桶收智能工具的专属 handler;局部重绘复用基础 image_to_image,
-// 与普通图生图无法区分,必须排除在外。
+// 「工具作品」桶收可归因到智能工具的 handler(含只有工具入口的视频超分);
+// 局部重绘复用创作台的通用图生图,无法与普通图生图区分,必须排除在外。
 func TestTaskMediaHandlersToolBucket(t *testing.T) {
-	got := strings.Join(taskMediaHandlers("tool"), ",")
-	for _, handler := range []string{"outpaint", "remove_bg", "upscale", "remove_object", "relight"} {
+	handlers := taskMediaHandlers("tool")
+	got := strings.Join(handlers, ",")
+	for _, handler := range []string{"outpaint", "remove_bg", "upscale", "remove_object", "relight", "video_upscale"} {
 		if !strings.Contains(got, handler) {
 			t.Fatalf("tool bucket is missing %q: %s", handler, got)
 		}
 	}
 	if strings.Contains(got, "image_to_image") {
-		t.Fatalf("tool bucket must not contain the base image_to_image handler: %s", got)
+		t.Fatalf("tool bucket must not contain the shared image_to_image handler: %s", got)
+	}
+	seen := map[string]bool{}
+	for _, h := range handlers {
+		if seen[h] {
+			t.Fatalf("tool bucket has a duplicate handler %q: %s", h, got)
+		}
+		seen[h] = true
 	}
 }
 

@@ -191,17 +191,40 @@ func builtinHandlers() []GenHandler {
 	return handlers
 }
 
-// presetToolHandlerNames returns the handlers that exist ONLY as one-click
-// preset tools(CanonicalAiTools 中带专属 handler 的行)。任务列表的「工具作品」
-// 筛选桶(mediaType=tool)用它;局部重绘复用基础 image_to_image,与普通图生图
-// 无法区分,刻意不计入。
-func presetToolHandlerNames() []string {
-	base := baseGenHandlerNames()
+// toolSharedHandlers are handlers a 智能工具 shares with a non-tool surface, so
+// a task carrying one cannot be attributed to the tool:局部重绘复用创作台的
+// 通用图生图。video_upscale 虽然也是基础能力,但目前只有「视频超分」工具这一个
+// 入口,故计入;将来若给它做了创作台入口,加进这里即可。
+var toolSharedHandlers = map[string]bool{"image_to_image": true}
+
+// isToolExclusiveHandler reports whether a handler belongs to exactly one
+// 智能工具(没有被创作台等非工具入口共用)。后台「工具管理」的上下线开关据此
+// 生效:handler 专属于某个工具时,下线它就该挡住生成;共用的(局部重绘的
+// image_to_image)绝不能挡,否则会连创作台的图生图一起废掉。
+func isToolExclusiveHandler(handler string) bool {
+	if toolSharedHandlers[handler] {
+		return false
+	}
+	for i := range model.CanonicalAiTools {
+		if model.CanonicalAiTools[i].Handler == handler {
+			return true
+		}
+	}
+	return false
+}
+
+// toolHandlerNames returns the handlers whose tasks can be attributed to a
+// 智能工具。任务列表的「工具作品」筛选桶(mediaType=tool)用它。
+func toolHandlerNames() []string {
+	seen := map[string]bool{}
 	out := make([]string, 0, len(model.CanonicalAiTools))
 	for i := range model.CanonicalAiTools {
-		if h := model.CanonicalAiTools[i].Handler; !base[h] {
-			out = append(out, h)
+		h := model.CanonicalAiTools[i].Handler
+		if toolSharedHandlers[h] || seen[h] {
+			continue
 		}
+		seen[h] = true
+		out = append(out, h)
 	}
 	return out
 }

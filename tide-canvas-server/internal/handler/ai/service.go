@@ -201,13 +201,16 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 		return nil, err
 	}
 
-	// 预设工具的服务端配置（ai_tools 行）——只对 presetEditHandler 生效，绝不
-	// 波及基础能力（下线「局部重绘」工具不能挡掉创作台的图生图）。后台下线
-	// (enabled=false) 直接拒绝；在线则把后台维护的提示词/附加参数带进执行。
-	// runTask 跑在 detached goroutine（context.Background()），所以配置必须在
-	// 这里用请求 context 预加载。行缺失时退回内建默认值（resilience）。
+	// 智能工具的服务端配置（ai_tools 行）——只对「handler 专属于该工具」的能力
+	// 生效，绝不波及被非工具入口共用的基础能力（下线「局部重绘」工具不能挡掉
+	// 创作台的图生图）。视频超分虽然直接跑基础 handler，但那个 handler 只有它
+	// 一个入口，所以同样受上下线约束——按类型断言判断会漏掉它，让「已下线」的
+	// 工具仍能被直接调用并扣费。后台下线 (enabled=false) 直接拒绝；在线则把后台
+	// 维护的提示词/附加参数带进执行。runTask 跑在 detached goroutine
+	// （context.Background()），所以配置必须在这里用请求 context 预加载。
+	// 行缺失时退回内建默认值（resilience）。
 	var tool *model.AiTool
-	if _, isPreset := gh.(presetEditHandler); isPreset {
+	if isToolExclusiveHandler(dto.Handler) {
 		row, err := s.repo.findToolByHandler(ctx, dto.Handler)
 		if err != nil {
 			return nil, err

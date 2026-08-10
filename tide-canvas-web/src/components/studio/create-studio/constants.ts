@@ -168,6 +168,9 @@ export const HIST_HANDLER_TYPE: Record<string, ArtworkType> = {
   remove_object: "image",
   upscale: "image",
   outpaint: "image",
+  relight: "image",
+  // 视频超分产出 mp4:漏掉它会走 ?? "image" 兜底，历史里按图片渲染成破图占位
+  video_upscale: "video",
 };
 
 /** backend generation handler → studio ToolKey (reverse of TOOL_TO_HANDLER). */
@@ -185,6 +188,10 @@ export const HIST_HANDLER_TOOL: Record<string, ToolKey> = {
   remove_object: "edit",
   upscale: "edit",
   outpaint: "edit",
+  relight: "edit",
+  // 视频超分没有创作台页签(入口是 /tools/vupscale)：落到最近的视频工具，
+  // 至少不会把 mp4 恢复进文生图的表单里。
+  video_upscale: "i2v",
 };
 
 /** one-click edit op → its backend handler name (per-result toolbar buttons). */

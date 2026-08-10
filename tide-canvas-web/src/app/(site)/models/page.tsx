@@ -40,7 +40,11 @@ const ALL_SLUG = "all";
  *  都以本表为准,接入后删一处即可(避免三处判断改不一致)。 */
 const PENDING_WORKSPACE_NOTICE: Record<string, string> = {
   "3d": "3D 模型已上架，生成入口尚未接入",
-  upscale: "超分模型已上架，生成入口尚未接入",
+};
+
+/** 已接入独立工作台的类目 → 目标路由（不再走「待接入」拦截）。 */
+const WORKSPACE_ROUTE: Record<string, string> = {
+  upscale: "/tools/vupscale",
 };
 
 /** Compact count formatter (4820 -> "4.8k", 12400 -> "12k", 980 -> "980").
@@ -142,11 +146,12 @@ export default function ModelsPage() {
         toast.info(pending);
         return;
       }
-      const target = m.mediaType === "text"
-        ? "/chat"
-        : m.mediaType === "image" || m.mediaType === "video" || m.mediaType === "audio"
-          ? `/studio?type=${m.mediaType}&model=${encodeURIComponent(name)}`
-          : "/studio";
+      const target = WORKSPACE_ROUTE[m.mediaType]
+        ?? (m.mediaType === "text"
+          ? "/chat"
+          : m.mediaType === "image" || m.mediaType === "video" || m.mediaType === "audio"
+            ? `/studio?type=${m.mediaType}&model=${encodeURIComponent(name)}`
+            : "/studio");
       try {
         sessionStorage.setItem("flux_model", name);
       } catch {

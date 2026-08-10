@@ -59,9 +59,23 @@
 }
 .toolBody h3 {
   margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 15px;
   font-weight: 600;
   color: var(--text);
+}
+
+/* 素材形态标记（图片 / 视频）——决定用户要准备什么文件 */
+.toolType {
+  padding: 1px 7px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-faint);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
 }
 .toolBody p {
   margin: 5px 0 0;
@@ -105,7 +119,8 @@
   aspect-ratio: 1 / 1;
   background: var(--surface-2);
 }
-.workStage img {
+.workStage img,
+.workStage video {
   width: 100%;
   height: 100%;
   object-fit: cover;

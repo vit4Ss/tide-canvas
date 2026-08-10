@@ -71,6 +71,8 @@ export interface AiToolVO {
   key: string;
   title: string;
   desc: string;
+  /** 工具处理的素材形态：image 收图片，video 收视频（视频超分） */
+  type: "image" | "video";
   /** 后端生成处理器名（handlerRegistry） */
   handler: string;
   /** 需要用户输入一句修改描述（如局部重绘） */

@@ -15,6 +15,8 @@ export interface AdminToolVO {
   key: string;
   /** Registry handler name, e.g. "outpaint". Immutable (code contract). */
   handler: string;
+  /** 工具处理的素材形态（image 收图片 / video 收视频）。由代码定死，只读。 */
+  type: "image" | "video";
   enabled: boolean;
   /** Has a standalone /tools/<key> page + homepage card. */
   showPage: boolean;

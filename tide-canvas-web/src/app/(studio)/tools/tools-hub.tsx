@@ -21,7 +21,12 @@ import { aiApi } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
 import { coverBg } from "@/lib/mesh";
 import { toast } from "@/components/shared/toast";
-import { FALLBACK_TOOLS, PRESET_TOOL_LABELS } from "@/lib/ai-tools-catalog";
+import {
+  FALLBACK_TOOLS,
+  PRESET_TOOL_LABELS,
+  TOOL_TYPE_LABEL,
+  VIDEO_TOOL_HANDLERS,
+} from "@/lib/ai-tools-catalog";
 import { AiTaskStatus, type AiTaskVO, type AiToolVO } from "@/types/ai";
 import styles from "./tools-hub.module.css";
 
@@ -160,7 +165,13 @@ export default function ToolsHub() {
                   {t.icon ? <span aria-hidden>{t.icon}</span> : null}
                 </div>
                 <div className={styles.toolBody}>
-                  <h3>{t.title}</h3>
+                  <h3>
+                    {t.title}
+                    {/* 素材形态差异会直接影响用户要准备什么文件,标在标题旁 */}
+                    <span className={styles.toolType}>
+                      {TOOL_TYPE_LABEL[t.type === "video" ? "video" : "image"]}
+                    </span>
+                  </h3>
                   <p>{t.desc}</p>
                 </div>
               </Link>
@@ -203,25 +214,39 @@ export default function ToolsHub() {
         ) : (
           <>
             <div className={styles.workGrid}>
-              {works.map((w) => (
+              {works.map((w) => {
+                const isVideo = VIDEO_TOOL_HANDLERS.has(w.handler);
+                return (
                 <a
                   key={w.id}
                   className={styles.workCard}
                   href={w.resultUrl}
                   target="_blank"
                   rel="noreferrer"
-                  title="查看原图"
+                  title={isVideo ? "查看原片" : "查看原图"}
                 >
                   <div className={styles.workStage}>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={w.resultUrl} alt={handlerTitle(w.handler)} loading="lazy" />
+                    {isVideo ? (
+                      // 视频产出不能塞进 img:用 video 元素只预载首帧,不自动播放
+                      <video
+                        src={w.resultUrl}
+                        preload="metadata"
+                        muted
+                        playsInline
+                        aria-label={handlerTitle(w.handler)}
+                      />
+                    ) : (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={w.resultUrl} alt={handlerTitle(w.handler)} loading="lazy" />
+                    )}
                   </div>
                   <div className={styles.workMeta}>
                     <span className={styles.workTool}>{handlerTitle(w.handler)}</span>
                     <span className={styles.workDate}>{fmtDay(w.createTime)}</span>
                   </div>
                 </a>
-              ))}
+                );
+              })}
             </div>
             {works.length < total && (
               <div className={styles.more}>

@@ -142,7 +142,11 @@ export function paramsFromTask(handler: string, modelName: string, input: unknow
   const strArr = (v: unknown) =>
     Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && !!x) : [];
   const type: ArtworkType = HIST_HANDLER_TYPE[handler] ?? "image";
-  const reso = str(inp.clarity) || str(inp.resolution);
+  // 视频超分的档位键是 targetResolution(该接口不收 clarity/resolution),
+  // 不认它历史卡会一律显示默认 1080p，与实际提交的档位对不上。
+  const isUpscale = handler === "video_upscale";
+  const reso =
+    str(inp.clarity) || str(inp.resolution) || str(inp.targetResolution) || str(inp.target_resolution);
   // 参考素材：任务 input 里持久化了 imageList/sourceImage 等，取回来恢复上传槽位。
   const imageRefs = strArr(inp.imageList);
   if (!imageRefs.length && str(inp.sourceImage)) imageRefs.push(str(inp.sourceImage));
@@ -182,7 +186,11 @@ export function paramsFromTask(handler: string, modelName: string, input: unknow
         : (HIST_HANDLER_TOOL[handler] ?? "t2i"),
     curType: type,
     // 音频无画面比例——留空，否则历史里的音频卡会顶着一枚假 "1:1" 徽标。
-    ratio: type === "audio" || type === "3d" ? "" : str(inp.aspectRatio) || str(inp.aspect_ratio) || str(inp.ratio) || "1:1",
+    // 超分同理：画面比例由源视频决定，任务入参里根本没有这一项。
+    ratio:
+      type === "audio" || type === "3d" || isUpscale
+        ? ""
+        : str(inp.aspectRatio) || str(inp.aspect_ratio) || str(inp.ratio) || "1:1",
     imgRes: type === "image" ? reso || "2K" : "2K",
     res: type === "video" ? reso || "1080p" : "1080p",
     dur: str(inp.duration) || "5s",

@@ -197,7 +197,7 @@ func taskMediaHandlers(mediaType string) []string {
 		return []string{"video_upscale"}
 	case "tool":
 		// 智能工具产出(工具中心页「工具作品」区)。
-		return presetToolHandlerNames()
+		return toolHandlerNames()
 	default:
 		return nil
 	}

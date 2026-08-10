@@ -146,7 +146,8 @@ body.imini .tool-page .tp-btn.ghost {
   overflow: hidden;
   background: var(--surface-2, rgba(255, 255, 255, 0.04));
 }
-.tool-page .tp-stage img {
+.tool-page .tp-stage img,
+.tool-page .tp-stage video {
   display: block;
   width: 100%;
   max-height: 56vh;
@@ -213,4 +214,38 @@ body.imini .tool-page .tp-btn.ghost {
   text-align: center;
   font-size: 12px;
   color: var(--text-faint);
+}
+
+/* 视频超分的目标分辨率档位选择（上传完成、开跑之前的一步） */
+.tool-page .tp-opts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+.tool-page .tp-opt {
+  height: 34px;
+  padding: 0 18px;
+  border-radius: var(--pill, 999px);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--panel-solid);
+  border: 1px solid var(--border);
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.tool-page .tp-opt:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.tool-page .tp-opt.on {
+  color: #fff;
+  background: var(--accent);
+  border-color: transparent;
+}
+/* 正式主题的 --accent 是浅色(#E8E8EA)，白字会糊在底色里——与 .tp-btn 同款反转 */
+body.imini .tool-page .tp-opt.on {
+  background: #fff;
+  color: #0a0a0b;
 }

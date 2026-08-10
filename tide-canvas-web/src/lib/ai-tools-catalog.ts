@@ -11,6 +11,9 @@
      - components/canvas/canvas-history-panel.tsx  历史面板的预设工具标签
    ========================================================================== */
 
+/** 工具处理的素材形态,决定工具页收什么文件、用哪类模型。 */
+export type ToolType = "image" | "video";
+
 export interface FallbackToolDef {
   /** URL slug,独立页为 /tools/<key>(与 ai_tools.key 一致)。 */
   key: string;
@@ -18,6 +21,7 @@ export interface FallbackToolDef {
   desc: string;
   /** 后端生成处理器名(handlerRegistry)。 */
   handler: string;
+  type: ToolType;
   /** 字形图标,如 ⤢。 */
   icon: string;
   /** mesh 封面色相三元组。 */
@@ -31,13 +35,23 @@ export interface FallbackToolDef {
   extra?: Record<string, unknown>;
 }
 
-/** 展示独立页的四个工具,按 CanonicalAiTools 的 SortOrder 排列。 */
+/** 视频超分的目标分辨率档位(relay /v1/video/upscale;ByteDance 模型不支持 720p,
+    由上游按模型校验)。工具页据此渲染档位选择。 */
+export const UPSCALE_RESOLUTIONS = ["720p", "1080p", "2k", "4k"] as const;
+
+export const TOOL_TYPE_LABEL: Record<ToolType, string> = {
+  image: "图片",
+  video: "视频",
+};
+
+/** 出厂工具,按 CanonicalAiTools 的 SortOrder 排列。 */
 export const FALLBACK_TOOLS: FallbackToolDef[] = [
   {
     key: "expand",
     title: "智能扩图",
     desc: "Outpainting 无缝向外补全画面。",
     handler: "outpaint",
+    type: "image",
     icon: "⤢",
     cover: [28, 48, 8],
   },
@@ -46,6 +60,7 @@ export const FALLBACK_TOOLS: FallbackToolDef[] = [
     title: "局部重绘",
     desc: "上传图片并描述想修改的部分，AI 精准重绘。",
     handler: "image_to_image",
+    type: "image",
     icon: "✎",
     cover: [330, 286, 12],
     needPrompt: true,
@@ -56,6 +71,7 @@ export const FALLBACK_TOOLS: FallbackToolDef[] = [
     title: "一键抠图",
     desc: "智能移除背景与对象，输出干净主体。",
     handler: "remove_bg",
+    type: "image",
     icon: "⬡",
     cover: [95, 140, 70],
   },
@@ -64,19 +80,52 @@ export const FALLBACK_TOOLS: FallbackToolDef[] = [
     title: "高清放大",
     desc: "无损放大图片尺寸，智能重塑高清画质。",
     handler: "upscale",
+    type: "image",
     icon: "⤡",
     cover: [255, 230, 290],
     hd: true,
     extra: { resolution: "4k", clarity: "4k", quality: "high" },
   },
+  {
+    key: "rmobj",
+    title: "物体移除",
+    desc: "移除画面中的杂物、路人、文字与瑕疵。",
+    handler: "remove_object",
+    type: "image",
+    icon: "⌫",
+    cover: [200, 230, 170],
+  },
+  {
+    key: "relight",
+    title: "智能打光",
+    desc: "影视级重新打光，增强画面层次与氛围。",
+    handler: "relight",
+    type: "image",
+    icon: "◐",
+    cover: [40, 60, 260],
+    extra: { quality: "high" },
+  },
+  {
+    key: "vupscale",
+    title: "视频超分",
+    desc: "提升视频分辨率与清晰度，最高 4K。",
+    handler: "video_upscale",
+    type: "video",
+    icon: "◆",
+    cover: [205, 190, 240],
+    extra: { targetResolution: "1080p" },
+  },
 ];
 
-/** 预设工具处理器 → 中文标签(含不展示独立页、只在结果悬浮工具栏出现的
-    rmobj/relight;它们的任务同样会进「工具作品」/历史面板)。 */
+/** 工具处理器 → 中文标签。工具中心的作品卡、画布历史面板共用一份。 */
 export const PRESET_TOOL_LABELS: Record<string, string> = {
   outpaint: "智能扩图",
   remove_bg: "一键抠图",
   upscale: "高清放大",
   remove_object: "物体移除",
   relight: "智能打光",
+  video_upscale: "视频超分",
 };
+
+/** 产出为视频的工具处理器——作品卡与结果展示要用 video 元素而非 img。 */
+export const VIDEO_TOOL_HANDLERS = new Set(["video_upscale"]);

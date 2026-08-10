@@ -11,7 +11,6 @@ import (
 	"errors"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"tidecanvas/internal/pkg/idgen"
 )
@@ -134,54 +133,44 @@ func ensureBaselineRoles(db *gorm.DB) error {
 }
 
 // backfillMenuKey appends a newly introduced front-menu key to every existing
-// sys_role row that lacks it, exactly once(以 sys_config 标记幂等)。跑过之后
-// 管理员再取消勾选不会被重新加回——重启只看标记,不再动角色行。
+// sys_role row that lacks it, exactly once。跑过之后管理员再取消勾选不会被重新
+// 加回——重启只看标记,不再动角色行。
 func backfillMenuKey(db *gorm.DB, key string) error {
-	markKey := "roles.menuBackfill." + key
-	var n int64
-	if err := db.Model(&SysConfig{}).Where("config_key = ?", markKey).Count(&n).Error; err != nil {
-		return err
-	}
-	if n > 0 {
-		return nil
-	}
-	var rows []SysRole
-	if err := db.Find(&rows).Error; err != nil {
-		return err
-	}
-	for i := range rows {
-		var perms []string
-		// 解析不了的 permissions 不动:MenusForUser 对这类行本就 fail-open 全量菜单。
-		if json.Unmarshal([]byte(rows[i].Permissions), &perms) != nil {
-			continue
-		}
-		has := false
-		for _, p := range perms {
-			if p == key {
-				has = true
-				break
+	return runOnce(db,
+		"roles.menuBackfill."+key,
+		"前台菜单键 "+key+" 的一次性角色回填标记(勿删,删除会在重启时重新回填)",
+		func(db *gorm.DB) error {
+			var rows []SysRole
+			if err := db.Find(&rows).Error; err != nil {
+				return err
 			}
-		}
-		if has {
-			continue
-		}
-		blob, err := json.Marshal(append(perms, key))
-		if err != nil {
-			return err
-		}
-		if err := db.Model(&SysRole{}).Where("id = ?", rows[i].ID).
-			Update("permissions", string(blob)).Error; err != nil {
-			return err
-		}
-	}
-	// 多实例同时启动会同时走到这里:config_key 唯一索引下第二次插入必冲突,
-	// 不吞掉就会让那个实例启动失败(回填本身幂等,标记重复插入无害)。
-	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&SysConfig{
-		ConfigKey:   markKey,
-		ConfigValue: "done",
-		Group:       ConfigGroupInternal, // 后台「配置管理」不展示,避免被当成可调设置误删
-		Description: "前台菜单键 " + key + " 的一次性角色回填标记(勿删,删除会在重启时重新回填)",
-	}).Error
+			for i := range rows {
+				var perms []string
+				// 解析不了的 permissions 不动:MenusForUser 对这类行本就 fail-open 全量菜单。
+				if json.Unmarshal([]byte(rows[i].Permissions), &perms) != nil {
+					continue
+				}
+				has := false
+				for _, p := range perms {
+					if p == key {
+						has = true
+						break
+					}
+				}
+				if has {
+					continue
+				}
+				blob, err := json.Marshal(append(perms, key))
+				if err != nil {
+					return err
+				}
+				if err := db.Model(&SysRole{}).Where("id = ?", rows[i].ID).
+					Update("permissions", string(blob)).Error; err != nil {
+					return err
+				}
+			}
+			return nil
+		})
 }
 
 // RoleIDByCode returns the sys_role id for a code, or 0 when missing.

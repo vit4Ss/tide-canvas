@@ -218,6 +218,8 @@ export default function AdminToolsPage() {
                     <div className="meta">
                       {(tool.showPage ? `/tools/${tool.key}` : "仅创作台") +
                         " · " +
+                        (tool.type === "video" ? "视频" : "图片") +
+                        " · " +
                         tool.handler +
                         (tool.needPrompt ? " · 需用户描述" : "")}
                     </div>
