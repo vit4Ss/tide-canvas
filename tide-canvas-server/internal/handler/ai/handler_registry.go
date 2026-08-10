@@ -143,6 +143,9 @@ func builtinHandlers() []GenHandler {
 		// 音频(TTS/音乐/音效共用 relay /v1/audio/speech,上游由模型决定)。
 		genHandler{name: "text_to_audio", op: "audio", isAsync: true},
 		genHandler{name: "generate_3d", op: "3d", isAsync: true},
+		// 视频超分(relay /v1/video/upscale,WaveSpeedAI/ByteDance):只收公网
+		// 视频 URL,不接收 prompt,operation 统一为 upscale。
+		genHandler{name: "video_upscale", op: "upscale", isAsync: true},
 		// 画布 AI 助手:runTask 特判该 handler 走 relay 文本模型(见 assistant_chat.go),
 		// 结果放 Meta["text"],不产出 URL。
 		genHandler{name: assistantChatHandler, op: "chat", isAsync: true},

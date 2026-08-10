@@ -101,6 +101,33 @@ func TestThreeDParamsMapsStudioInput(t *testing.T) {
 	}
 }
 
+func TestUpscaleParamsMapsStudioInput(t *testing.T) {
+	p := (&relayProviderClient{}).upscaleParams("wavespeed-ai/video-upscaler", map[string]any{
+		"videoUrl":         "https://example.com/input.mp4",
+		"targetResolution": "4k",
+	})
+	if p.Model != "wavespeed-ai/video-upscaler" || p.VideoURL != "https://example.com/input.mp4" || p.TargetResolution != "4k" {
+		t.Fatalf("upscaleParams = %+v", p)
+	}
+	// snake_case 键同样可用;通用 resolution 键刻意忽略(视频节点残留的 480p
+	// 会撞超分白名单,不带档位走上游默认 1080p 反而能成)。
+	p = (&relayProviderClient{}).upscaleParams("bytedance/video-upscaler", map[string]any{
+		"video_url":  "https://example.com/in.mp4",
+		"resolution": "480p",
+		"target_resolution": "2k",
+	})
+	if p.VideoURL != "https://example.com/in.mp4" || p.TargetResolution != "2k" {
+		t.Fatalf("upscaleParams (snake) = %+v", p)
+	}
+	p = (&relayProviderClient{}).upscaleParams("bytedance/video-upscaler", map[string]any{
+		"videoUrl":   "https://example.com/in.mp4",
+		"resolution": "480p",
+	})
+	if p.TargetResolution != "" {
+		t.Fatalf("generic resolution must be ignored, got %q", p.TargetResolution)
+	}
+}
+
 // 错误分级:输入类映射到具体可操作文案,其余一律系统异常统一口径。
 func TestUserFacingGenError(t *testing.T) {
 	sys := "系统异常，请联系客服"

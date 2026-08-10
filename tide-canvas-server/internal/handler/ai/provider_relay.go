@@ -23,8 +23,9 @@ import (
 )
 
 // rehostHC downloads relay-hosted result media so it can be re-uploaded to our
-// own storage; generous timeout for multi-MB images.
-var rehostHC = safefetch.NewClient(90*time.Second, nil)
+// own storage。超时按最大件(超分 4K 长视频,GB 级)预留:90 秒只够多 MB 图片,
+// 大视频下载中途被客户端超时掐断会回退到会过期的中转 URL,已付费的产出随后 404。
+var rehostHC = safefetch.NewClient(15*time.Minute, nil)
 
 // rehostSlots bounds relay-result downloads across all generation tasks in this
 // process. Each transfer may spool up to maxRehostBytes, so a per-run limit is
@@ -66,6 +67,7 @@ func (p *relayProviderClient) Type() string { return "relay" }
 //	start_end_to_video  -> …                               (mode first_last_frame)
 //	reference_to_video  -> …                               (mode multi_ref)
 //	generate_3d         -> POST /v1/3d/generations
+//	video_upscale       -> POST /v1/video/upscale
 func (p *relayProviderClient) Generate(ctx context.Context, req GenerateRequest) (GenerateResult, error) {
 	if req.Model == nil {
 		return GenerateResult{}, errNoModel
@@ -111,6 +113,9 @@ func (p *relayProviderClient) Generate(ctx context.Context, req GenerateRequest)
 		return p.result(ctx, res, err)
 	case "generate_3d":
 		res, err := p.c.Generate3D(ctx, p.threeDParams(model, req.Input))
+		return p.result(ctx, res, err)
+	case "video_upscale":
+		res, err := p.c.UpscaleVideo(ctx, p.upscaleParams(model, req.Input))
 		return p.result(ctx, res, err)
 	default:
 		return GenerateResult{}, errUnsupportedHandler
@@ -312,6 +317,19 @@ func (p *relayProviderClient) threeDParams(model string, in map[string]any) rela
 		FaceCount:       inputInt(in, "faceCount", "face_count"),
 		GenerateType:    inputStr(in, "generateType", "generate_type"),
 		ResultFormat:    inputStr(in, "resultFormat", "result_format"),
+	}
+}
+
+// upscaleParams maps the studio input to a video-upscale request。源视频 URL 走
+// upstreamURL 重写成境外 relay 可拉取的地址(WaveSpeedAI 从该地址取原视频)。
+// 档位只认 targetResolution(与 resolveCost 同口径):共用输入形态里残留的通用
+// resolution 可能是 480p 等超分不支持的档位,带上会让整个任务白白失败,
+// 忽略它则走上游默认 1080p。
+func (p *relayProviderClient) upscaleParams(model string, in map[string]any) relaymedia.UpscaleParams {
+	return relaymedia.UpscaleParams{
+		Model:            model,
+		VideoURL:         p.upstreamURL(inputStr(in, "videoUrl", "video_url", "video", "sourceVideo")),
+		TargetResolution: inputStr(in, "targetResolution", "target_resolution"),
 	}
 }
 
@@ -531,10 +549,12 @@ func fetchRemote(ctx context.Context, srcURL string) (*os.File, string, error) {
 	return nil, "", lastErr
 }
 
-// maxRehostBytes caps an in-memory rehost download. Generous enough for short AI
-// videos; images are far smaller. A body that exceeds it is treated as an error
-// (not silently truncated) so we never store a corrupt file under a SUCCESS URL.
-const maxRehostBytes int64 = 100 << 20
+// maxRehostBytes caps a rehost download(下载先落盘临时文件再上传,不占堆内存,
+// 上限只是失控兜底). 按超分 4K 长视频(WaveSpeed 收最长 10 分钟输入)预留 2GB;
+// 原 100MB 会让大件转存必失败、结果留在会过期的中转 URL 上。A body that exceeds
+// it is treated as an error (not silently truncated) so we never store a corrupt
+// file under a SUCCESS URL.
+const maxRehostBytes int64 = 2 << 30
 
 // fetchOnce performs a single download attempt.
 func fetchOnce(ctx context.Context, srcURL string) (*os.File, string, error) {

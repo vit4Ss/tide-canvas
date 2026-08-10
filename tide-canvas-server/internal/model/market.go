@@ -70,7 +70,7 @@ type MarketModel struct {
 func (MarketModel) TableName() string { return "market_model" }
 
 // MarketModelTypes are the recognized media categories for MarketModel.Type.
-var MarketModelTypes = []string{"text", "image", "video", "audio", "3d"}
+var MarketModelTypes = []string{"text", "image", "video", "audio", "3d", "upscale"}
 
 // ConfigKeyMarketTypeOrder is the sys_config key holding the media-type order
 // of the model pickers as a comma list (e.g. "text,audio,image,video,3d"). Edited
@@ -78,8 +78,9 @@ var MarketModelTypes = []string{"text", "image", "video", "audio", "3d"}
 const ConfigKeyMarketTypeOrder = "market.typeOrder"
 
 // DefaultMarketTypeOrder is the factory picker order（2026-07-10 用户指定：
-// 文本 → 音频 → 图片 → 视频 → 3D）, used when the config key is missing/invalid.
-var DefaultMarketTypeOrder = []string{"text", "audio", "image", "video", "3d"}
+// 文本 → 音频 → 图片 → 视频 → 3D；2026-08-10 追加超分殿后）, used when the
+// config key is missing/invalid.
+var DefaultMarketTypeOrder = []string{"text", "audio", "image", "video", "3d", "upscale"}
 
 // ParseMarketTypeOrder parses the stored comma list into a valid, de-duplicated
 // type order. Unknown entries are dropped; types missing from the value are

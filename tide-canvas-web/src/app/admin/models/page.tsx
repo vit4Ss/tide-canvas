@@ -74,6 +74,9 @@ const MODE_OPTIONS: Record<string, { v: string; l: string }[]> = {
   "3d": [
     { v: "t2_3d", l: "3D 生成" },
   ],
+  upscale: [
+    { v: "v_upscale", l: "视频超分" },
+  ],
 };
 const QUALITY_OPTIONS = [
   { v: "low", l: "低画质" },
@@ -84,6 +87,8 @@ const RESOLUTION_OPTIONS: Record<string, string[]> = {
   // auto = 交给模型自行决定输出尺寸（qwen 等上游支持并会同步预填进配置）
   image: ["auto", "1k", "2k", "4k"],
   video: ["480p", "720p", "1080p", "4k"],
+  // 超分目标分辨率(relay /v1/video/upscale 档位;ByteDance 模型不支持 720p)
+  upscale: ["720p", "1080p", "2k", "4k"],
 };
 const DURATION_OPTIONS = Array.from({ length: 30 }, (_, i) => `${i + 1}s`);
 const RATIO_OPTIONS = ["1:1", "3:2", "2:3", "16:9", "9:16", "4:3", "3:4", "21:9"];
@@ -105,6 +110,7 @@ const TYPE_FILTERS: { label: string; type?: string }[] = [
   { label: "视频模型", type: "video" },
   { label: "音频模型", type: "audio" },
   { label: "3D 模型", type: "3d" },
+  { label: "超分模型", type: "upscale" },
 ];
 
 function statusTone(status: number): PillTone {
@@ -733,8 +739,12 @@ function ModelModal({
   const isVideo = type === "video";
   const isText = type === "text";
   const is3D = type === "3d";
+  const isUpscale = type === "upscale";
   const showGen = isImage || isVideo;
   const showPrompt = showGen || is3D;
+  // 超分与图片/视频共用积分定价矩阵卡片:default 行 × 目标分辨率列
+  // (服务端 pricing.go 按 targetResolution 查 default 行)。
+  const showMatrix = showGen || isUpscale;
 
   // price-matrix rows: image → qualities, video → durations; cols → resolutions.
   // 图片不配画质档位时给一行「default」按清晰度单独定价（服务端 pricing.go
@@ -748,7 +758,7 @@ function ModelModal({
           key: q,
           label: QUALITY_OPTIONS.find((o) => o.v === q)?.l ?? q,
         }))
-      : [{ key: "default", label: "默认（不分画质）" }];
+      : [{ key: "default", label: isUpscale ? "单次积分" : "默认（不分画质）" }];
   const matrixCols = cfg.resolutions ?? [];
 
   const setCell = (row: string, col: string, val: string) =>
@@ -853,7 +863,7 @@ function ModelModal({
           </Field>
           <Field label="类型">
             <select value={type} onChange={(e) => setType(e.target.value)}>
-              {["image", "video", "text", "audio", "3d"].map((t) => (
+              {Object.keys(MODEL_TYPE_FORM_LABEL).map((t) => (
                 <option key={t} value={t}>
                   {MODEL_TYPE_FORM_LABEL[t]}
                 </option>
@@ -1116,6 +1126,31 @@ function ModelModal({
         </FormCard>
       )}
 
+      {isUpscale && (
+        <FormCard title="生成能力">
+          <FormSection
+            label="生成方式"
+            hint="视频超分只收公网视频 URL,不接收提示词"
+          >
+            <Chips
+              options={modeOptions}
+              value={cfg.modes ?? []}
+              onChange={(next) => setC({ modes: next })}
+            />
+          </FormSection>
+          <FormSection
+            label="目标分辨率"
+            hint="不勾选 = 全部档位;ByteDance 模型不支持 720p,请按上游能力勾选"
+          >
+            <Chips
+              options={(RESOLUTION_OPTIONS[type] ?? []).map((r) => ({ v: r, l: r.toUpperCase() }))}
+              value={cfg.resolutions ?? []}
+              onChange={(next) => setC({ resolutions: next })}
+            />
+          </FormSection>
+        </FormCard>
+      )}
+
       {showPrompt && (
         <FormCard title="提示词配置">
           <FormSection label="默认提示词" hint="创作台提示词框的默认内容；留空则用通用占位文案">
@@ -1164,12 +1199,22 @@ function ModelModal({
         </FormCard>
       )}
 
-      {showGen && (
-        <FormCard title={isVideo ? "积分定价（时长 × 清晰度）" : "积分定价（画质 × 清晰度）"}>
+      {showMatrix && (
+        <FormCard
+          title={
+            isVideo
+              ? "积分定价（时长 × 清晰度）"
+              : isUpscale
+                ? "积分定价（按目标分辨率）"
+                : "积分定价（画质 × 清晰度）"
+          }
+        >
           {matrixRows.length === 0 || matrixCols.length === 0 ? (
             <div className="fsec">
               <div className="hint">
-                请先在上方选择{isVideo ? "时长" : "画质"}与清晰度，再设置分档积分。
+                {isUpscale
+                  ? "请先在上方勾选目标分辨率，再设置分档积分。"
+                  : `请先在上方选择${isVideo ? "时长" : "画质"}与清晰度，再设置分档积分。`}
               </div>
             </div>
           ) : (
@@ -1179,7 +1224,7 @@ function ModelModal({
                 <table aria-label="模型分档积分矩阵">
                   <thead>
                     <tr>
-                      <th>{isVideo ? "时长 / 清晰度" : "画质 / 清晰度"}</th>
+                      <th>{isVideo ? "时长 / 清晰度" : isUpscale ? "目标分辨率" : "画质 / 清晰度"}</th>
                       {matrixCols.map((col) => (
                         <th key={col}>{col.toUpperCase()}</th>
                       ))}

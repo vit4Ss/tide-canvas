@@ -6,6 +6,7 @@
 //	POST {baseURL}/openapi/v1/generations — video (mode-driven: t2v/i2v/keyframe/multi_ref)
 //	POST {baseURL}/v1/audio/speech        — audio (TTS 与音乐/音效共用,由模型决定上游)
 //	POST {baseURL}/v1/3d/generations      — Hunyuan 3D 3.1 (text/image/multi-view)
+//	POST {baseURL}/v1/video/upscale       — WaveSpeedAI 视频超分(公网视频 URL)
 //	GET  {baseURL}/v1/tasks/{id}          — poll an async task
 //
 // All generation endpoints share one response contract: a synchronous 200
@@ -36,6 +37,7 @@ const (
 	pathVideoGenerations = "/openapi/v1/generations"
 	pathAudioSpeech      = "/v1/audio/speech"
 	path3DGenerations    = "/v1/3d/generations"
+	pathVideoUpscale     = "/v1/video/upscale"
 )
 
 // Tuning constants. The relay's synchronous image path can hold the connection
@@ -49,6 +51,9 @@ const (
 	videoPollDeadline  = 20 * time.Minute // videos are slower; stay under the 30m UI cap
 	audioPollDeadline  = 10 * time.Minute // TTS 通常同步秒回;Suno 音乐约 1–4 分钟(实测也会同步 200)
 	threeDPollDeadline = 25 * time.Minute // 3D 通常异步，留足网格与材质生成时间
+	// 超分按输入时长处理(WaveSpeed 单任务最长收 10 分钟视频),4k 长片会很慢，
+	// 与视频生成同口径留 20 分钟、保持在 30 分钟 UI 上限之内。
+	upscalePollDeadline = 20 * time.Minute
 )
 
 // maxRespBody caps a single relay response read. Generous enough to hold verbose
@@ -118,6 +123,15 @@ type AudioParams struct {
 	Voice        string         // TTS 音色 id;音乐模型忽略
 	Instructions string         // 情绪/风格;Suno 传 "instrumental" 生成纯音乐
 	Extras       map[string]any // 供应商透传参数(≤32 键/16KB),如 Suno lyrics/tags/title
+}
+
+// UpscaleParams is a normalized video-upscale request (POST /v1/video/upscale)。
+// 只做超分,不接收 prompt;VideoURL 必须是公网可访问的 http(s) 地址,且在任务
+// 提交与上游处理期间保持有效(WaveSpeedAI 从该地址拉取原视频)。
+type UpscaleParams struct {
+	Model            string
+	VideoURL         string
+	TargetResolution string // 720p | 1080p | 2k | 4k;空 = 上游默认 1080p
 }
 
 type ThreeDViewImage struct {
@@ -455,6 +469,33 @@ func (c *Client) Generate3D(ctx context.Context, p ThreeDParams) (Result, error)
 		}
 	}
 	return res, nil
+}
+
+// UpscaleVideo submits a WaveSpeedAI video upscale (POST /v1/video/upscale)。
+// 同步等待窗口内完成时 relay 直接 200 带 output_url/data[0].url;更常见的是
+// 202 + task id,由 submit 透明轮询 /v1/tasks/{id} 到终态。
+func (c *Client) UpscaleVideo(ctx context.Context, p UpscaleParams) (Result, error) {
+	if strings.TrimSpace(p.Model) == "" {
+		return Result{}, fmt.Errorf("relaymedia: model is required")
+	}
+	videoURL := strings.TrimSpace(p.VideoURL)
+	if videoURL == "" {
+		return Result{}, fmt.Errorf("relaymedia: upscale requires a video url")
+	}
+	if !strings.HasPrefix(videoURL, "http://") && !strings.HasPrefix(videoURL, "https://") {
+		return Result{}, fmt.Errorf("relaymedia: upscale video must be a public http(s) url")
+	}
+	resolution := strings.ToLower(strings.TrimSpace(p.TargetResolution))
+	switch resolution {
+	case "", "720p", "1080p", "2k", "4k":
+		// ByteDance 模型不支持 720p——各模型的档位差异交给 relay 校验,这里只拦
+		// 明显不合法的档位,避免一次注定失败的提交计入任务。
+	default:
+		return Result{}, fmt.Errorf("relaymedia: unsupported upscale target_resolution %q", p.TargetResolution)
+	}
+	body := map[string]any{"model": p.Model, "video": videoURL}
+	putNonEmpty(body, "target_resolution", resolution)
+	return c.submit(ctx, pathVideoUpscale, body, upscalePollDeadline)
 }
 
 func promoteURL(primary string, urls []string) []string {

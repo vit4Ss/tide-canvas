@@ -47,6 +47,12 @@ func resolveCost(m *model.AiModel, rawInput json.RawMessage) int {
 
 	isVideo := m.Type == "video"
 	resolution := strField(in, "resolution")
+	if m.Type == "upscale" {
+		// 超分档位只认 targetResolution(与 provider upscaleParams 同口径):
+		// 共用输入形态里残留的通用 resolution(如视频节点的 480p)既不发上游
+		// 也不参与计费,否则计费档与实际提交档可能背离。
+		resolution = inputStr(in, "targetResolution", "target_resolution")
+	}
 	clarity := strField(in, "clarity")
 	if clarity == "" {
 		clarity = resolution
@@ -107,8 +113,10 @@ func resolveCost(m *model.AiModel, rawInput json.RawMessage) int {
 		return 0
 	}
 
-	// Images honor the batch count; a video generation is a single clip.
-	if !isVideo {
+	// Images honor the batch count; a video generation is a single clip, and an
+	// upscale always produces exactly one output(共用输入形态里残留的 batchCount
+	// 不得放大计费).
+	if !isVideo && m.Type != "upscale" {
 		if n := batchCount(in); n > 1 {
 			base *= float64(n)
 		}

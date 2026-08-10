@@ -193,6 +193,8 @@ func taskMediaHandlers(mediaType string) []string {
 		return []string{"text_to_audio"}
 	case "3d":
 		return []string{"generate_3d"}
+	case "upscale":
+		return []string{"video_upscale"}
 	default:
 		return nil
 	}

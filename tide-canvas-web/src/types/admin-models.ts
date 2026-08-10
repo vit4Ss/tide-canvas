@@ -238,6 +238,7 @@ export const MODEL_TYPE_LABEL: Record<string, string> = {
   video: "视频",
   audio: "音频",
   "3d": "3D",
+  upscale: "超分",
 };
 
 /** Media-category value → label used in the create/edit form 类型 dropdown. */
@@ -247,4 +248,5 @@ export const MODEL_TYPE_FORM_LABEL: Record<string, string> = {
   text: "文本生成",
   audio: "音频生成",
   "3d": "3D 生成",
+  upscale: "视频超分",
 };

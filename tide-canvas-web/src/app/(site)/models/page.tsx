@@ -36,6 +36,13 @@ type SortKey = "runs" | "new" | "name";
 /** "全部" sentinel slug — the backend treats base="all"/"全部" as no filter. */
 const ALL_SLUG = "all";
 
+/** 已上架但生成工作台尚未接入的类目 → 点击提示文案。卡片按钮文案与点击拦截
+ *  都以本表为准,接入后删一处即可(避免三处判断改不一致)。 */
+const PENDING_WORKSPACE_NOTICE: Record<string, string> = {
+  "3d": "3D 模型已上架，生成入口尚未接入",
+  upscale: "超分模型已上架，生成入口尚未接入",
+};
+
 /** Compact count formatter (4820 -> "4.8k", 12400 -> "12k", 980 -> "980").
  *  Mirrors the design's `fmt`; kept local so we don't import mock data. */
 function fmt(n: number): string {
@@ -123,14 +130,16 @@ export default function ModelsPage() {
     return [{ id: ALL_SLUG, name: "全部", slug: ALL_SLUG, icon: "", sortOrder: 0 }];
   }, [cats]);
 
-  // "立即生成": route by canonical media type. 3D is managed/listed now, but
-  // its dedicated submit/poll/result workspace is a separate integration; do
-  // not silently send it to the image studio while that route is unavailable.
+  // "立即生成": route by canonical media type. 3D/超分 are managed/listed now,
+  // but their dedicated submit/poll/result workspaces are separate integrations;
+  // do not silently send them to the image studio while those routes are
+  // unavailable. 接入某类工作台时从此表删除对应项,卡片文案与点击行为同步恢复。
   const generate = useCallback(
     async (m: MarketModelVO) => {
       const name = m.nameCn || m.nameEn;
-      if (m.mediaType === "3d") {
-        toast.info("3D 模型已上架，生成入口尚未接入");
+      const pending = PENDING_WORKSPACE_NOTICE[m.mediaType];
+      if (pending) {
+        toast.info(pending);
         return;
       }
       const target = m.mediaType === "text"
@@ -241,7 +250,7 @@ export default function ModelsPage() {
                         badge && <span className="mbadge hot">{m.badge.toUpperCase()}</span>
                       )}
                       <span className="mcard-use">
-                        {m.mediaType === "3d" ? "生成入口待接入" : "立即生成 →"}
+                        {PENDING_WORKSPACE_NOTICE[m.mediaType] ? "生成入口待接入" : "立即生成 →"}
                       </span>
                     </div>
                     <div className="mcard-body">

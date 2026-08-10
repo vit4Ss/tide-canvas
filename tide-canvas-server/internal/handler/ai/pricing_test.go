@@ -50,6 +50,35 @@ func TestResolveCostImageFuzzyMatrix(t *testing.T) {
 	}
 }
 
+// 超分请求的档位键是 targetResolution(不发 resolution/clarity):必须兜底进
+// 清晰度轴,后台按目标分辨率配的 default 行才能命中;未配矩阵落模型固定价。
+func TestResolveCostUpscaleTargetResolution(t *testing.T) {
+	m := &model.AiModel{
+		Type:      "upscale",
+		PointCost: 50,
+		Config:    `{"pricing":{"default":{"1080p":30,"4k":120}}}`,
+	}
+	if got := resolveCost(m, json.RawMessage(`{"targetResolution":"4k","videoUrl":"https://x/in.mp4"}`)); got != 120 {
+		t.Errorf("targetResolution should hit the default row: got %d, want 120", got)
+	}
+	if got := resolveCost(m, json.RawMessage(`{"target_resolution":"1080p"}`)); got != 30 {
+		t.Errorf("snake_case target_resolution should also hit: got %d, want 30", got)
+	}
+	// 未配置的档位(上游默认 1080p 但请求未带档位)落模型固定价
+	if got := resolveCost(m, json.RawMessage(`{"videoUrl":"https://x/in.mp4"}`)); got != 50 {
+		t.Errorf("no resolution should fall back to point cost: got %d, want 50", got)
+	}
+	// 通用 resolution 键不参与超分计费(与 upscaleParams 同口径,双键并存时
+	// 以 targetResolution 为准,计费档=实际提交档)
+	if got := resolveCost(m, json.RawMessage(`{"resolution":"1080p","targetResolution":"4k"}`)); got != 120 {
+		t.Errorf("targetResolution must win over generic resolution: got %d, want 120", got)
+	}
+	// 残留的 batchCount 不得放大计费:超分永远单产出
+	if got := resolveCost(m, json.RawMessage(`{"targetResolution":"4k","batchCount":4}`)); got != 120 {
+		t.Errorf("batchCount must not multiply upscale cost: got %d, want 120", got)
+	}
+}
+
 // 图片模型不配画质档位时，矩阵以「default」单行按清晰度定价（画质留空的
 // 兼容形态）；请求带画质时不吃 default 行，行为与原先一致。
 func TestResolveCostImageDefaultQualityRow(t *testing.T) {

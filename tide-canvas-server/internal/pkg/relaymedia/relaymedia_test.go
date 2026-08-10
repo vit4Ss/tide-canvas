@@ -235,6 +235,73 @@ func TestGenerate3DRejectsConflictingAndDuplicateInputs(t *testing.T) {
 	}
 }
 
+// 超分走 202 + /v1/tasks/{id} 轮询;请求体只有 model/video/target_resolution,
+// 不带 prompt(该接口不接收)。成功后从 output_url / data[0].url 读输出视频。
+func TestUpscaleVideoAsyncPollsToOutputURL(t *testing.T) {
+	var submitted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == pathVideoUpscale:
+			if err := json.NewDecoder(r.Body).Decode(&submitted); err != nil {
+				t.Fatalf("decode submit body: %v", err)
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"id":"task_up","object":"video.upscale","status":"processing","model":"wavespeed-ai/video-upscaler"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tasks/task_up":
+			_, _ = w.Write([]byte(`{
+				"id":"task_up","object":"video.upscale","status":"succeeded",
+				"model":"wavespeed-ai/video-upscaler",
+				"output_url":"https://cdn/upscaled.mp4",
+				"data":[{"url":"https://cdn/upscaled.mp4"}]
+			}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := &Client{baseURL: srv.URL, apiKey: "k", hc: srv.Client()}
+	res, err := c.UpscaleVideo(context.Background(), UpscaleParams{
+		Model:            "wavespeed-ai/video-upscaler",
+		VideoURL:         "https://example.com/input.mp4",
+		TargetResolution: "4K", // 大小写归一后发 "4k"
+	})
+	if err != nil {
+		t.Fatalf("UpscaleVideo: %v", err)
+	}
+	if len(res.URLs) != 1 || res.URLs[0] != "https://cdn/upscaled.mp4" {
+		t.Fatalf("URLs = %v, want upscaled output", res.URLs)
+	}
+	if res.TaskID != "task_up" {
+		t.Fatalf("TaskID = %q", res.TaskID)
+	}
+	if submitted["model"] != "wavespeed-ai/video-upscaler" || submitted["video"] != "https://example.com/input.mp4" || submitted["target_resolution"] != "4k" {
+		t.Fatalf("submit body = %#v", submitted)
+	}
+	if _, has := submitted["prompt"]; has {
+		t.Fatal("upscale body must not carry a prompt")
+	}
+}
+
+func TestUpscaleVideoRejectsInvalidInput(t *testing.T) {
+	c := &Client{}
+	if _, err := c.UpscaleVideo(context.Background(), UpscaleParams{Model: "m"}); err == nil ||
+		!strings.Contains(err.Error(), "video url") {
+		t.Fatalf("missing video error = %v", err)
+	}
+	if _, err := c.UpscaleVideo(context.Background(), UpscaleParams{
+		Model: "m", VideoURL: "ftp://example.com/in.mp4",
+	}); err == nil || !strings.Contains(err.Error(), "http(s)") {
+		t.Fatalf("non-http video error = %v", err)
+	}
+	if _, err := c.UpscaleVideo(context.Background(), UpscaleParams{
+		Model: "m", VideoURL: "https://example.com/in.mp4", TargetResolution: "8k",
+	}); err == nil || !strings.Contains(err.Error(), "target_resolution") {
+		t.Fatalf("bad resolution error = %v", err)
+	}
+}
+
 func TestNewDefaultsToTestRelay(t *testing.T) {
 	c := New("", "test-key")
 	if c == nil {

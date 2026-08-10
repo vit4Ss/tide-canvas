@@ -1114,9 +1114,11 @@ func (s *service) writeLog(ctx context.Context, task *model.AiTask, gh GenHandle
 	if gh.Name() == assistantChatHandler {
 		return
 	}
+	// 不登记作品的模态(workTypeOf 返回空,如 3d/upscale/text)按自身 operation
+	// 记场景——逐个特判的名单谁漏加谁就被错归进 image,音频当年就栽过这坑。
 	scene := workTypeOf(gh.OperationType())
-	if gh.OperationType() == "3d" {
-		scene = "3d"
+	if scene == "" {
+		scene = gh.OperationType()
 	}
 	if scene == "" {
 		scene = "image"

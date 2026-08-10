@@ -90,7 +90,7 @@ export interface AiToolVO {
 export interface AiTaskQuery extends PageQuery {
   handler?: string;
   /** 资产页服务端媒体筛选，保证分页发生在类型过滤之后。 */
-  mediaType?: "image" | "video" | "audio" | "3d";
+  mediaType?: "image" | "video" | "audio" | "3d" | "upscale";
   /** Generated asset category; character/scene are image target types. */
   assetCategory?: "general" | "character" | "scene";
   /** 仅返回可进入资产库的任务（排除失败和已取消）。 */

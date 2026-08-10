@@ -21,6 +21,14 @@ func TestRelayModalityKeeps3DModelsOutOfImageBucket(t *testing.T) {
 	}
 }
 
+func TestRelayModalityRecognizesUpscale(t *testing.T) {
+	for _, input := range []string{"upscale", "Upscale", " UPSCALE "} {
+		if got := relayModality(input); got != "upscale" {
+			t.Fatalf("relayModality(%q) = %q, want upscale", input, got)
+		}
+	}
+}
+
 func TestRelayModalityUnknownStillFallsBackToImage(t *testing.T) {
 	if got := relayModality("unknown"); got != "image" {
 		t.Fatalf("relayModality(unknown) = %q, want image", got)

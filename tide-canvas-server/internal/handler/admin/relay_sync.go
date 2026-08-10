@@ -329,7 +329,7 @@ func rawObjOrEmpty(raw json.RawMessage) any {
 // relayModality maps the relay modality to a market_model.Type bucket.
 func relayModality(m string) string {
 	switch strings.ToLower(strings.TrimSpace(m)) {
-	case "image", "video", "audio", "text", "3d":
+	case "image", "video", "audio", "text", "3d", "upscale":
 		return strings.ToLower(strings.TrimSpace(m))
 	default:
 		return "image"

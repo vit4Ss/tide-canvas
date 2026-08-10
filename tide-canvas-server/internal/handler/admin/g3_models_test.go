@@ -105,7 +105,8 @@ func TestAdminModelTypeOrderPersists3D(t *testing.T) {
 	if err := db.Where("config_key = ?", model.ConfigKeyMarketTypeOrder).First(&row).Error; err != nil {
 		t.Fatalf("load type order: %v", err)
 	}
-	if row.ConfigValue != "3d,text,audio,image,video" {
+	// 未随请求提交的类型(upscale)按出厂顺序补到末尾,保证局部保存不藏分类。
+	if row.ConfigValue != "3d,text,audio,image,video,upscale" {
 		t.Fatalf("stored type order = %q", row.ConfigValue)
 	}
 }
