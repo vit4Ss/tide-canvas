@@ -70,6 +70,17 @@ var baselineConfigKeys = map[string]struct{}{
 	"points.signupBonus":                 {},
 }
 
+// adminVisibleConfig scopes a sys_config query to the rows the 配置管理 screen
+// should show, in its display order. Two kinds of rows are excluded:
+//   - 画布节点策略:整块 JSON 由「节点配置」专页维护,不该以裸文本行出现;
+//   - internal 分组:一次性迁移标记等内部记账,界面上看不出含义,被误编辑或
+//     删除会让迁移重跑(如新菜单键被重新塞回管理员刚取消的角色)。
+func adminVisibleConfig(db *gorm.DB) *gorm.DB {
+	return db.Where("config_key <> ?", model.ConfigKeyCanvasNodeFeatures).
+		Where("COALESCE(config_group, '') <> ?", model.ConfigGroupInternal).
+		Order("config_group ASC, config_key ASC")
+}
+
 // RegisterConfig mounts the config admin routes on the admin group.
 //
 //	GET    /config      -> []ConfigVO
@@ -80,8 +91,7 @@ func RegisterConfig(g *gin.RouterGroup, d *app.Deps) {
 
 	g.GET("/config", func(c *gin.Context) {
 		var rows []model.SysConfig
-		if err := db.Where("config_key <> ?", model.ConfigKeyCanvasNodeFeatures).
-			Order("config_group ASC, config_key ASC").Find(&rows).Error; err != nil {
+		if err := adminVisibleConfig(db).Find(&rows).Error; err != nil {
 			response.Fail(c, response.CodeServerError, "failed to load config")
 			return
 		}
@@ -179,8 +189,7 @@ func RegisterConfig(g *gin.RouterGroup, d *app.Deps) {
 		}
 
 		var rows []model.SysConfig
-		if err := db.Where("config_key <> ?", model.ConfigKeyCanvasNodeFeatures).
-			Order("config_group ASC, config_key ASC").Find(&rows).Error; err != nil {
+		if err := adminVisibleConfig(db).Find(&rows).Error; err != nil {
 			response.Fail(c, response.CodeServerError, "failed to reload config")
 			return
 		}

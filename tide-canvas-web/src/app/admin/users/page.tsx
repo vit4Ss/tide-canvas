@@ -131,6 +131,7 @@ const MENU_OPTIONS: { key: string; label: string }[] = [
   { key: "discover", label: "发现" },
   { key: "studio", label: "创作" },
   { key: "three_d", label: "3D模型" },
+  { key: "tools", label: "工具" },
   { key: "chat", label: "生成" },
   { key: "canvas", label: "画布" },
   { key: "explore", label: "作品广场" },

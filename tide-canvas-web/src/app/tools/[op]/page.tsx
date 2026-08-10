@@ -24,6 +24,7 @@ import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";
 import { AiTaskStatus, type AiToolVO } from "@/types/ai";
 import { coverBg } from "@/lib/mesh";
+import { FALLBACK_TOOLS } from "@/lib/ai-tools-catalog";
 import {
   commitAcceptedAiGeneration,
   isAmbiguousAiCreateCode,
@@ -47,37 +48,11 @@ interface ToolDef {
   extra?: Record<string, unknown>;
 }
 
-/** 出厂兜底：/api/ai/tools 未应答或失败时按此渲染，页面永不空白。 */
-const FALLBACK_OPS: Record<string, ToolDef> = {
-  upscale: {
-    title: "高清放大",
-    desc: "无损放大图片尺寸，智能重塑高清画质。",
-    handler: "upscale",
-    hd: true,
-    cover: [255, 230, 290],
-    extra: { resolution: "4k", clarity: "4k", quality: "high" },
-  },
-  rmbg: {
-    title: "一键抠图",
-    desc: "智能移除背景与对象，输出干净主体。",
-    handler: "remove_bg",
-    cover: [95, 140, 70],
-  },
-  expand: {
-    title: "智能扩图",
-    desc: "Outpainting 无缝向外补全画面。",
-    handler: "outpaint",
-    cover: [28, 48, 8],
-  },
-  inpaint: {
-    title: "局部重绘",
-    desc: "上传图片并描述想修改的部分，AI 精准重绘。",
-    handler: "image_to_image",
-    needPrompt: true,
-    cover: [330, 286, 12],
-    placeholder: "描述要修改的部分…\n例：把天空换成日落晚霞，保持其余不变",
-  },
-};
+/** 出厂兜底：/api/ai/tools 未应答或失败时按此渲染，页面永不空白。
+    数据源自 lib/ai-tools-catalog(与工具中心页共用,只维护一份)。 */
+const FALLBACK_OPS: Record<string, ToolDef> = Object.fromEntries(
+  FALLBACK_TOOLS.map((t) => [t.key, t]),
+);
 
 type Phase = "idle" | "uploading" | "prompt" | "running" | "done" | "failed";
 

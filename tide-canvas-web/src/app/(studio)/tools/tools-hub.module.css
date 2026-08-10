@@ -1,0 +1,191 @@
+/* 工具中心(/tools)。复用 .insp 页面骨架(滚动容器 + 标题排版,来自
+   liuguang/studio.css),本文件只补两块内容:工具入口卡与工具作品网格。
+   视觉语言与灵感页卡片同源:面板底色 + 弱边框 + hover 提边上浮。 */
+
+.fill {
+  flex: 1;
+  min-height: 0;
+}
+
+.sub {
+  margin: 6px 0 18px;
+  font-size: 14px;
+  color: var(--text-faint);
+}
+
+/* 顶部副标题:.insp 骨架的 h1 是居中 hero(30~46px 展示字),副标题必须
+   同轴居中,否则大标题悬在左对齐文案上方,页头明显错位 */
+.heroSub {
+  margin: -14px 0 30px;
+  font-size: 14px;
+  text-align: center;
+  color: var(--text-faint);
+}
+
+/* ── 工具入口卡 ─────────────────────────────────────────────────────────── */
+
+.toolGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.toolCard {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  background: var(--panel-solid);
+  border: 1px solid var(--border);
+  transition: border-color 0.18s, transform 0.18s;
+}
+.toolCard:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-2px);
+}
+
+/* mesh 封面 + 居中字形图标(与 /tools/[op] 的 tp-cover、首页核心能力卡同源) */
+.toolCover {
+  aspect-ratio: 16 / 9;
+  display: grid;
+  place-items: center;
+  font-size: 30px;
+  color: rgba(255, 255, 255, 0.92);
+  background-color: var(--surface-2);
+}
+
+.toolBody {
+  padding: 12px 14px 14px;
+}
+.toolBody h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.toolBody p {
+  margin: 5px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-faint);
+}
+
+/* ── 工具作品 ───────────────────────────────────────────────────────────── */
+
+.worksHead {
+  margin-top: 40px;
+}
+.worksHead h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.workGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.workCard {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-md, 10px);
+  overflow: hidden;
+  background: var(--panel-solid);
+  border: 1px solid var(--border);
+  transition: border-color 0.18s;
+}
+.workCard:hover {
+  border-color: var(--border-strong);
+}
+
+.workStage {
+  aspect-ratio: 1 / 1;
+  background: var(--surface-2);
+}
+.workStage img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.workMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.workTool {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.workDate {
+  color: var(--text-faint);
+}
+
+/* ── 加载 / 空态 / 登录引导(共用的居中态) ─────────────────────────────── */
+
+.state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 48px 0 56px;
+  color: var(--text-faint);
+  font-size: 14px;
+}
+.state p {
+  margin: 0;
+}
+
+.stateBtn {
+  height: 34px;
+  padding: 0 18px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--pill);
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+}
+
+.spin {
+  width: 22px;
+  height: 22px;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.more {
+  display: flex;
+  justify-content: center;
+  margin: 20px 0 8px;
+}
+.more button {
+  height: 34px;
+  padding: 0 20px;
+  border-radius: var(--pill);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--panel-solid);
+  border: 1px solid var(--border);
+  transition: all 0.15s;
+}
+.more button:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.more button:disabled {
+  opacity: 0.6;
+}

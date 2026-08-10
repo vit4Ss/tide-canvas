@@ -72,6 +72,17 @@ const NAV_TOP: NavItem[] = [
     ),
   },
   {
+    href: "/tools",
+    label: "工具",
+    key: "tools",
+    // 扳手（智能工具中心：抠图/扩图/放大等一键工具）
+    icon: (
+      <svg viewBox="0 0 24 24">
+        <path d="M14.7 6.3a4.5 4.5 0 0 0-6 5.7L3 17.7A2 2 0 0 0 5.8 20.5l5.7-5.7a4.5 4.5 0 0 0 5.7-6L14 12l-2-2z" />
+      </svg>
+    ),
+  },
+  {
     href: "/chat",
     label: "生成",
     key: "chat",

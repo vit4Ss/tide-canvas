@@ -130,10 +130,12 @@ func (r *handlerRegistry) get(name string) (GenHandler, bool) {
 	return h, ok
 }
 
-// builtinHandlers lists the stub capabilities. op classifies image vs. video for
-// the log's operation column (frontend OP_LABEL maps generation/edits/video).
-func builtinHandlers() []GenHandler {
-	handlers := []GenHandler{
+// baseGenHandlerList lists the built-in base capabilities (everything except the
+// preset one-click tools appended by builtinHandlers). op classifies image vs.
+// video for the log's operation column (frontend OP_LABEL maps
+// generation/edits/video).
+func baseGenHandlerList() []GenHandler {
+	return []GenHandler{
 		genHandler{name: "text_to_image", op: "generation", isAsync: true},
 		genHandler{name: "image_to_image", op: "edits", isAsync: true},
 		genHandler{name: "text_to_video", op: "video", isAsync: true},
@@ -151,10 +153,23 @@ func builtinHandlers() []GenHandler {
 		genHandler{name: assistantChatHandler, op: "chat", isAsync: true},
 		genHandler{name: skillTextCompletionHandler, op: "text", isAsync: true},
 	}
+}
+
+// baseGenHandlerNames returns the base-capability name set(builtinHandlers 与
+// presetToolHandlerNames 共用,避免两处循环各自维护)。
+func baseGenHandlerNames() map[string]bool {
 	base := map[string]bool{}
-	for _, h := range handlers {
+	for _, h := range baseGenHandlerList() {
 		base[h.Name()] = true
 	}
+	return base
+}
+
+// builtinHandlers lists every stub capability: the base list plus the preset
+// one-click tools derived from model.CanonicalAiTools.
+func builtinHandlers() []GenHandler {
+	handlers := baseGenHandlerList()
+	base := baseGenHandlerNames()
 
 	// One-click image-edit ops (per-result toolbar in 创作台 / 独立工具页). Each
 	// reuses the image-edit route with a fixed, server-owned instruction. 代码
@@ -174,4 +189,19 @@ func builtinHandlers() []GenHandler {
 		})
 	}
 	return handlers
+}
+
+// presetToolHandlerNames returns the handlers that exist ONLY as one-click
+// preset tools(CanonicalAiTools 中带专属 handler 的行)。任务列表的「工具作品」
+// 筛选桶(mediaType=tool)用它;局部重绘复用基础 image_to_image,与普通图生图
+// 无法区分,刻意不计入。
+func presetToolHandlerNames() []string {
+	base := baseGenHandlerNames()
+	out := make([]string, 0, len(model.CanonicalAiTools))
+	for i := range model.CanonicalAiTools {
+		if h := model.CanonicalAiTools[i].Handler; !base[h] {
+			out = append(out, h)
+		}
+	}
+	return out
 }

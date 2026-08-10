@@ -74,6 +74,20 @@ func TestTaskMediaHandlersIncludesVideoUpscale(t *testing.T) {
 	}
 }
 
+// 「工具作品」桶收智能工具的专属 handler;局部重绘复用基础 image_to_image,
+// 与普通图生图无法区分,必须排除在外。
+func TestTaskMediaHandlersToolBucket(t *testing.T) {
+	got := strings.Join(taskMediaHandlers("tool"), ",")
+	for _, handler := range []string{"outpaint", "remove_bg", "upscale", "remove_object", "relight"} {
+		if !strings.Contains(got, handler) {
+			t.Fatalf("tool bucket is missing %q: %s", handler, got)
+		}
+	}
+	if strings.Contains(got, "image_to_image") {
+		t.Fatalf("tool bucket must not contain the base image_to_image handler: %s", got)
+	}
+}
+
 func TestStaleTaskTerminalUpdatesUseActualCompletionTime(t *testing.T) {
 	terminalAt := time.Date(2026, 8, 2, 20, 30, 0, 0, time.UTC)
 	updates := staleTaskTerminalUpdates(statusFailed, "interrupted", terminalAt)

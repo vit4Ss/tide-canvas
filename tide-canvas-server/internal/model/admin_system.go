@@ -102,6 +102,11 @@ const ConfigKeyChatCompressAt = "llm.compressAtTokens"
 // WITHOUT a restart.
 const ConfigKeyRegisterClosed = "auth.registerClosed"
 
+// ConfigGroupInternal marks sys_config rows that are internal bookkeeping
+// (一次性迁移标记等),不是给管理员调的设置项。后台「配置管理」列表按此分组
+// 过滤掉它们:这类行被误编辑或删除会让迁移重跑,而界面上又看不出它的含义。
+const ConfigGroupInternal = "internal"
+
 // ConfigKeyServerErrorMessage is the sys_config key for the user-facing message
 // every 500 response carries (response.Fail 统一对外话术，不透内部错误细节)。
 // Seeded on boot; edited in the admin 配置管理 screen and read per failure by

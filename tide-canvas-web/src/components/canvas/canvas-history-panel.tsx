@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { aiApi } from "@/lib/api";
 import { useCanvasStore } from "@/stores/use-canvas-store";
 import { AiTaskStatus, type AiTaskVO, type AiGenerationLogVO } from "@/types/ai";
+import { PRESET_TOOL_LABELS } from "@/lib/ai-tools-catalog";
 import { X, RefreshCw, Loader2, CheckCircle2, XCircle, Inbox } from "lucide-react";
 
 const HANDLER_LABEL: Record<string, string> = {
@@ -14,12 +15,9 @@ const HANDLER_LABEL: Record<string, string> = {
   start_end_to_video: "首尾帧视频",
   text_to_audio: "音频生成",
   creative_desc: "创意描述",
-  // 服务端预设图像编辑能力（画布「高清」入口产生 upscale,其余来自创作台/工具页）
-  upscale: "高清放大",
-  outpaint: "智能扩图",
-  remove_bg: "一键抠图",
-  remove_object: "物体移除",
-  relight: "智能打光",
+  // 服务端预设图像编辑能力（画布「高清」入口产生 upscale,其余来自创作台/工具页），
+  // 标签与工具中心/工具页共用一份
+  ...PRESET_TOOL_LABELS,
 };
 const OP_LABEL: Record<string, string> = { generation: "文生图", edits: "图生图", video: "视频", audio: "音频" };
 

@@ -195,6 +195,9 @@ func taskMediaHandlers(mediaType string) []string {
 		return []string{"generate_3d"}
 	case "upscale":
 		return []string{"video_upscale"}
+	case "tool":
+		// 智能工具产出(工具中心页「工具作品」区)。
+		return presetToolHandlerNames()
 	default:
 		return nil
 	}
