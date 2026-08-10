@@ -11,6 +11,7 @@ import { copyText } from "@/lib/clipboard";
 import { AudioPlayerCard, SongCard } from "@/components/studio/audio-player-card";
 import { toast } from "@/components/shared/toast";
 import { AmbientFrame } from "./ambient-frame";
+import VideoResult from "./video-result";
 import { CELL_TOOLS, SLOT_ICON } from "./icons";
 import type { ArtworkType, HistRun, InflightRun, ResultCell, RunParams, ToolKey } from "./types";
 import { fmtTs, ratioLabel } from "./utils";
@@ -414,14 +415,8 @@ export function StageFeed({
                       >
                         {it.url ? (
                           it.type === "video" ? (
-                            <video
-                              className="done-img"
-                              src={it.url}
-                              controls
-                              playsInline
-                              preload="metadata"
-                              onClick={(e) => e.stopPropagation()}
-                            />
+                            // 自带「截取当前帧」:按原始分辨率导出 PNG 并入资产库
+                            <VideoResult className="done-img" src={it.url} />
                           ) : it.type === "audio" ? (
                             <AudioPlayerCard src={it.url} />
                           ) : (
