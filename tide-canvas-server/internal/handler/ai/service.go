@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"tidecanvas/internal/app"
+	"tidecanvas/internal/handler/asset"
 	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/cache"
@@ -328,6 +329,11 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 		_ = s.repo.db.Model(&model.Skill{}).Where("id = ? AND status = 1", directSkillID).
 			UpdateColumn("use_count", gorm.Expr("use_count + 1")).Error
 	}
+	if err := asset.EnsureGenerationPending(ctx, s.repo.db, task); err != nil {
+		// The task remains authoritative. History's owner-scoped lazy backfill can
+		// repair this best-effort projection without rejecting paid work.
+		logger.L().Warn("ai: create media history placeholder failed", zap.String("taskId", task.ID.String()), zap.Error(err))
+	}
 	s.writeTaskState(ctx, task)
 
 	// Execute in the background; the HTTP request returns the PROCESSING task.
@@ -520,6 +526,7 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 	// The CAS also stops a worker whose task was cancelled/deleted by another
 	// process. Local cancellation calls the same context immediately.
 	if !s.heartbeatProcessingTask(ctx, taskID) {
+		_ = asset.RemoveGeneration(context.Background(), s.repo.db, taskID)
 		refund("generation cancelled refund")
 		return
 	}
@@ -544,6 +551,7 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 	case s.sem <- struct{}{}:
 		defer func() { <-s.sem }()
 	case <-ctx.Done():
+		_ = asset.RemoveGeneration(context.Background(), s.repo.db, taskID)
 		refund("generation cancelled refund")
 		return
 	}
@@ -565,6 +573,7 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 			if _, err := s.repo.finalizeTask(context.Background(), t, statusProcessing); err != nil {
 				logger.L().Error("ai: finalize after panic failed", zap.String("taskId", taskID.String()), zap.Error(err))
 			}
+			_ = asset.RemoveGeneration(context.Background(), s.repo.db, taskID)
 			s.clearTaskState(context.Background(), taskID)
 			refund("生成异常退款")
 		}
@@ -578,10 +587,12 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 	if err != nil || task == nil {
 		logger.L().Warn("ai: runTask load failed", zap.String("taskId", taskID.String()), zap.Error(err))
 		// Task removed (cancelled/deleted) or unreadable before it ran: refund.
+		_ = asset.RemoveGeneration(context.Background(), s.repo.db, taskID)
 		refund("生成取消退款")
 		return
 	}
 	if !taskCanExecute(task) {
+		_ = asset.RemoveGeneration(context.Background(), s.repo.db, taskID)
 		refund("生成取消退款")
 		return
 	}
@@ -593,6 +604,7 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 		Where("id = ? AND status = ?", taskID, statusProcessing).
 		Updates(map[string]any{"progress": 30, "update_time": time.Now(), "heartbeat_seq": gorm.Expr("heartbeat_seq + 1")})
 	if started.Error != nil || started.RowsAffected != 1 {
+		_ = asset.RemoveGeneration(context.Background(), s.repo.db, taskID)
 		refund("generation cancelled refund")
 		return
 	}
@@ -674,10 +686,14 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 		// without writing Redis/audit state for an abandoned task, and refund.
 		logger.L().Info("ai: task no longer processing, dropping result", zap.String("taskId", taskID.String()))
 		s.clearTaskState(ctx, taskID)
+		_ = asset.RemoveGeneration(context.Background(), s.repo.db, taskID)
 		refund("生成取消退款")
 		return
 	}
 	s.writeTaskState(ctx, task)
+	if err := asset.FinalizeGeneration(context.Background(), s.repo.db, task); err != nil {
+		logger.L().Warn("ai: finalize media history failed", zap.String("taskId", task.ID.String()), zap.Error(err))
+	}
 
 	// Failed generation: give the charged points back.
 	if task.Status == statusFailed {
@@ -943,6 +959,9 @@ func (s *service) cancelTask(ctx context.Context, userID idgen.ID, id idgen.ID) 
 		}
 	}
 	if err := s.repo.deleteTask(ctx, id); err != nil {
+		return err
+	}
+	if err := asset.RemoveGeneration(ctx, s.repo.db, id); err != nil {
 		return err
 	}
 	s.clearTaskState(ctx, id)

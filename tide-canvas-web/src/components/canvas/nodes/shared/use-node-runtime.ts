@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { aiApi } from "@/lib/api";
 import { useAiGeneration } from "@/hooks/canvas/use-ai-generation";
 import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
@@ -29,15 +29,153 @@ export function useNodeRuntime(node: CanvasNode, isSelected: boolean, isDragging
   return { generate, isGenerating, generating, isMultiSelect, showAuxUI };
 }
 
-/** 把卡片实际渲染尺寸同步到 store，供连线层将端点锚定到卡片真实边缘中点（默认对节点居中）。
- *  updateNode 默认不记历史；条件守卫确保仅在值变化时写入，自然收敛、不会循环。 */
-export function useSyncContentSize(node: CanvasNode, w: number, h: number) {
-  const updateNode = useCanvasStore((s) => s.updateNode);
-  useEffect(() => {
-    if (node.contentW !== w || node.contentH !== h) {
-      updateNode(node.id, { contentW: w, contentH: h });
+const NODE_SIZE_TRANSITION_MS = 200;
+
+interface PendingCenteredResize {
+  startedAt: number;
+  startWidth: number;
+  startHeight: number;
+  centerY: number;
+  targetWidth: number;
+  targetHeight: number;
+}
+
+/**
+ * 比例切换专用的尺寸协调器。用同一条 200ms ease-out 时间线更新卡片宽高、
+ * 节点坐标和连线锚点，因此横竖比例切换时视觉中心固定，边线也不会脱离卡片。
+ */
+export function useCenteredNodeResize(node: CanvasNode, width: number, height: number) {
+  const [transitioning, setTransitioning] = useState(false);
+  const pendingRef = useRef<PendingCenteredResize | null>(null);
+  const frameRef = useRef<number | null>(null);
+  const animationStepRef = useRef<(timestamp: number) => void>(() => undefined);
+
+  const commitPendingResize = useCallback((resetVisualState: boolean): void => {
+    const pending = pendingRef.current;
+    if (!pending) return;
+    pendingRef.current = null;
+    if (frameRef.current !== null) {
+      cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
     }
-  }, [w, h, node.contentW, node.contentH, node.id, updateNode]);
+    const store = useCanvasStore.getState();
+    const current = store.nodes.find((item) => item.id === node.id);
+    if (current) {
+      store.updateNode(node.id, {
+        y: pending.centerY - pending.targetHeight / 2,
+        contentW: pending.targetWidth,
+        contentH: pending.targetHeight,
+      });
+    }
+    if (resetVisualState) setTransitioning(false);
+  }, [node.id]);
+
+  const animateResize = useCallback((timestamp: number): void => {
+    const pending = pendingRef.current;
+    if (!pending) return;
+    const progress = Math.min(1, Math.max(0, (timestamp - pending.startedAt) / NODE_SIZE_TRANSITION_MS));
+    const eased = 1 - Math.pow(1 - progress, 3);
+    const animatedWidth = pending.startWidth
+      + (pending.targetWidth - pending.startWidth) * eased;
+    const animatedHeight = pending.startHeight
+      + (pending.targetHeight - pending.startHeight) * eased;
+    const store = useCanvasStore.getState();
+    if (!store.nodes.some((item) => item.id === node.id)) {
+      pendingRef.current = null;
+      frameRef.current = null;
+      return;
+    }
+    store.updateNode(node.id, {
+      y: pending.centerY - animatedHeight / 2,
+      contentW: animatedWidth,
+      contentH: animatedHeight,
+    });
+    if (progress >= 1) {
+      pendingRef.current = null;
+      frameRef.current = null;
+      setTransitioning(false);
+      return;
+    }
+    frameRef.current = requestAnimationFrame(animationStepRef.current);
+  }, [node.id]);
+
+  useEffect(() => {
+    animationStepRef.current = animateResize;
+  }, [animateResize]);
+
+  const beginCenteredResize = useCallback((targetWidth: number, targetHeight: number): void => {
+    if (targetWidth === width && targetHeight === height) return;
+    const currentNode = useCanvasStore.getState().nodes.find((item) => item.id === node.id);
+    if (!currentNode) return;
+    const startWidth = currentNode.contentW ?? width;
+    const startHeight = currentNode.contentH ?? height;
+    if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+    pendingRef.current = {
+      startedAt: performance.now(),
+      startWidth,
+      startHeight,
+      centerY: currentNode.y + startHeight / 2,
+      targetWidth,
+      targetHeight,
+    };
+
+    const reduceMotion = typeof window !== "undefined"
+      && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) {
+      commitPendingResize(true);
+      return;
+    }
+    setTransitioning(true);
+    frameRef.current = requestAnimationFrame(animateResize);
+  }, [animateResize, commitPendingResize, height, node.id, width]);
+
+  // 初始化、图片自然比例变化等非手动切换仍要立即同步；手动切换由上面的事务收尾。
+  useEffect(() => {
+    const pending = pendingRef.current;
+    if (pending) {
+      if (pending.targetWidth !== width || pending.targetHeight !== height) {
+        const currentNode = useCanvasStore.getState().nodes.find((item) => item.id === node.id);
+        const startWidth = currentNode?.contentW ?? pending.startWidth;
+        const startHeight = currentNode?.contentH ?? pending.startHeight;
+        pending.startedAt = performance.now();
+        pending.startWidth = startWidth;
+        pending.startHeight = startHeight;
+        pending.centerY = (currentNode?.y ?? node.y) + startHeight / 2;
+        pending.targetWidth = width;
+        pending.targetHeight = height;
+        if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+        frameRef.current = requestAnimationFrame(animateResize);
+      }
+      return;
+    }
+    if (node.contentW !== width || node.contentH !== height) {
+      useCanvasStore.getState().updateNode(node.id, { contentW: width, contentH: height });
+    }
+  }, [animateResize, height, node.contentH, node.contentW, node.id, node.y, width]);
+
+  useEffect(() => () => {
+    if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+    // 组件在过渡中卸载时也提交最终几何，避免持久化 aspectRatio 与 contentH 不一致。
+    commitPendingResize(false);
+  }, [commitPendingResize]);
+
+  const displayWidth = transitioning ? node.contentW ?? width : width;
+  const displayHeight = transitioning ? node.contentH ?? height : height;
+
+  const containerStyle = useMemo<CSSProperties>(() => ({
+    left: "50%",
+    width: displayWidth,
+    transform: "translateX(-50%)",
+    willChange: transitioning ? "width" : undefined,
+  }), [displayWidth, transitioning]);
+
+  return {
+    beginCenteredResize,
+    containerStyle,
+    displayWidth,
+    displayHeight,
+    transitioning,
+  };
 }
 
 /** 已有结果却仍挂着 error 状态（如重发成功后旧标记残留）→ 收敛回 success */

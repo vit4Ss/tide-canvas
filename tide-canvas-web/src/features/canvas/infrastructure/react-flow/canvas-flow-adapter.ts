@@ -2,18 +2,28 @@ import type {
   CanvasNode,
   Connection,
 } from "../../domain/models/canvas-document";
+import { isImageCanvasNodeType } from "@/lib/canvas-node-types";
+import { nodeRenderRect } from "@/lib/canvas-helpers";
 import type { CanvasFlowEdge, CanvasFlowNode } from "./canvas-flow-types";
+
+const IMAGE_NODE_DRAG_HANDLE = "[data-canvas-node-drag-handle]";
 
 interface CanvasFlowNodeVariants {
   selected?: CanvasFlowNode;
   unselected?: CanvasFlowNode;
 }
 
+interface CanvasFlowEdgeCacheEntry {
+  edge: CanvasFlowEdge;
+  sourceNode?: CanvasNode;
+  targetNode?: CanvasNode;
+}
+
 interface CanvasFlowEdgeVariants {
-  idle?: CanvasFlowEdge;
-  related?: CanvasFlowEdge;
-  selected?: CanvasFlowEdge;
-  selectedRelated?: CanvasFlowEdge;
+  idle?: CanvasFlowEdgeCacheEntry;
+  related?: CanvasFlowEdgeCacheEntry;
+  selected?: CanvasFlowEdgeCacheEntry;
+  selectedRelated?: CanvasFlowEdgeCacheEntry;
 }
 
 // Domain 对象采用不可变更新。以对象身份缓存适配结果，可让 500 节点场景中一次
@@ -34,6 +44,9 @@ function toCanvasFlowNode(node: CanvasNode, selected: boolean): CanvasFlowNode {
     data: { node },
     selected,
     draggable: true,
+    // 图片、角色和场景节点只允许从主预览卡拖动。输入面板、端口和外置工具栏
+    // 均位于该句柄之外，避免第一次点击被节点拖拽手势吞掉。
+    dragHandle: isImageCanvasNodeType(node.type) ? IMAGE_NODE_DRAG_HANDLE : undefined,
     connectable: true,
     selectable: true,
     focusable: true,
@@ -61,13 +74,20 @@ function edgeVariantKey(selected: boolean, related: boolean): keyof CanvasFlowEd
 
 function toCanvasFlowEdge(
   connection: Connection,
+  sourceNode: CanvasNode | undefined,
+  targetNode: CanvasNode | undefined,
   selected: boolean,
   related: boolean,
 ): CanvasFlowEdge {
   const variants = edgeVariants.get(connection) ?? {};
   const key = edgeVariantKey(selected, related);
   const cached = variants[key];
-  if (cached) return cached;
+  if (cached && cached.sourceNode === sourceNode && cached.targetNode === targetNode) {
+    return cached.edge;
+  }
+
+  const sourceRect = sourceNode ? nodeRenderRect(sourceNode) : null;
+  const targetRect = targetNode ? nodeRenderRect(targetNode) : null;
 
   const flowEdge: CanvasFlowEdge = {
     id: connection.id,
@@ -80,10 +100,27 @@ function toCanvasFlowEdge(
     selectable: true,
     focusable: true,
     deletable: false,
+    // 当前领域命令未实现端点重连。显式关闭 React Flow 的默认能力，避免用户
+    // 拖动端点后受控 edges 原样回写，出现看似可操作但立即回弹的假交互。
+    reconnectable: false,
     interactionWidth: 20,
-    data: { relatedToSelection: related },
+    data: {
+      relatedToSelection: related,
+      ...(sourceRect ? {
+        sourceAnchor: {
+          x: sourceRect.x + sourceRect.w,
+          y: sourceRect.y + sourceRect.h / 2,
+        },
+      } : {}),
+      ...(targetRect ? {
+        targetAnchor: {
+          x: targetRect.x,
+          y: targetRect.y + targetRect.h / 2,
+        },
+      } : {}),
+    },
   };
-  variants[key] = flowEdge;
+  variants[key] = { edge: flowEdge, sourceNode, targetNode };
   edgeVariants.set(connection, variants);
   return flowEdge;
 }
@@ -97,12 +134,20 @@ export function toCanvasFlowNodes(
 
 export function toCanvasFlowEdges(
   connections: readonly Connection[],
+  nodes: readonly CanvasNode[],
   selectedNodeIds: ReadonlySet<string>,
   selectedConnectionId: string | null,
 ): CanvasFlowEdge[] {
-  return connections.map((connection) => toCanvasFlowEdge(
-    connection,
-    selectedConnectionId === connection.id,
-    selectedNodeIds.has(connection.sourceId) || selectedNodeIds.has(connection.targetId),
-  ));
+  const nodesById = new Map(nodes.map((node) => [node.id, node]));
+  return connections.map((connection) => {
+    const sourceNode = nodesById.get(connection.sourceId);
+    const targetNode = nodesById.get(connection.targetId);
+    return toCanvasFlowEdge(
+      connection,
+      sourceNode,
+      targetNode,
+      selectedConnectionId === connection.id,
+      selectedNodeIds.has(connection.sourceId) || selectedNodeIds.has(connection.targetId),
+    );
+  });
 }

@@ -14,6 +14,7 @@ import { defaultSkillInputValues, validateSkillRunInputValues } from "@/lib/skil
 import { clearCanvasLaunchJournal, type CanvasLaunchJournal } from "@/lib/canvas-launch";
 import { requestCanvasSave } from "@/lib/canvas-save";
 import { useCanvasStore } from "@/stores/use-canvas-store";
+import { currentCanvasUploadContext } from "@/features/canvas/application/media/canvas-upload-context";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { AiModelType, AiTaskStatus, type AiModelVO, type AiTaskVO } from "@/types/ai";
 import type { FileVO } from "@/types/file";
@@ -575,6 +576,7 @@ export function CanvasAssistantPanel({
         const result = await uploadFileSmart(file, (progress) => setUploadProgress(progress), {
           maxBytes: resolveModelReferenceLimitBytes(selectedModel, kind),
           label: kind === "video" ? "参考视频" : "参考文件",
+          ...currentCanvasUploadContext(),
         });
         if (result.success && result.data?.fileUrl) {
           uploaded.push(result.data);

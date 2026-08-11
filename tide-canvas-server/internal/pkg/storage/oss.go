@@ -229,6 +229,17 @@ func (o *OSSStorage) OwnsURL(u string) (string, bool) {
 	return canonicalObjectURL(o.publicBase, key)
 }
 
+// DeleteURL removes only an object whose URL is owned by this bucket/prefix.
+// Unknown or third-party URLs are ignored rather than becoming a delete oracle.
+func (o *OSSStorage) DeleteURL(ctx context.Context, raw string) error {
+	bases := append([]string{o.publicBase, o.regionalBase, o.accelerateBase}, o.legacyBases...)
+	key, ok := ownedObjectKey(raw, bases, o.prefix)
+	if !ok {
+		return nil
+	}
+	return o.Delete(ctx, key)
+}
+
 // PublicRewrites maps every host that may appear in persisted asset URLs onto
 // the current public base: the regional host, the acceleration host (chat 附件
 // 以它落日志), and any configured legacy hosts (老桶/老域名)。配了 CDN

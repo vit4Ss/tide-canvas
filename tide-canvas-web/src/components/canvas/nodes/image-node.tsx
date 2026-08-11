@@ -33,10 +33,11 @@ import { AiModelType } from "@/types/ai";
 import { toast } from "@/components/shared/toast";
 import { Loader2 } from "lucide-react";
 import type { CanvasNodeProps } from "./types/node-props";
-import { useAiModels, useMediaErrorRecovery, useNodePrompt, useNodeRuntime, useSyncContentSize } from "./shared/use-node-runtime";
+import { useAiModels, useCenteredNodeResize, useMediaErrorRecovery, useNodePrompt, useNodeRuntime } from "./shared/use-node-runtime";
 import { useMediaUpload } from "./shared/use-media-upload";
 import { useFileDownload } from "./shared/use-file-download";
 import { ConfigurableNodeToolbar, type ConfigurableNodeToolbarAction } from "./shared/configurable-node-toolbar";
+import { currentCanvasUploadContext } from "@/features/canvas/application/media/canvas-upload-context";
 import {
   PortraitFeaturePanel,
   preloadExpressionPreviewSprite,
@@ -46,7 +47,7 @@ import {
 } from "./shared/portrait-feature-panel";
 import { useCanvasNodeFeatures } from "@/stores/use-canvas-node-config-store";
 import { findRightColumnSpot, getIncomingSources, inlineIncomingTextRefs, parseModelConfig, stopEvent as stop, validateReferenceFileSizes } from "./shared/node-utils";
-import { NodeDimsBadge, NodeErrorBadge, NodeGeneratingOverlay, NodeMediaLightbox, NodeShell, NodeUploadingOverlay } from "./shared/node-overlays";
+import { NodeDimsBadge, NodeErrorBadge, NodeGeneratingOverlay, NodeMediaLightbox, NodeShell, NodeUploadButton, NodeUploadingOverlay } from "./shared/node-overlays";
 import { EditableImageNodeTitle } from "@/features/canvas/presentation/nodes/image/editable-image-node-title";
 import { ImageTransformMenu } from "@/features/canvas/presentation/nodes/image/image-transform-menu";
 import {
@@ -179,7 +180,10 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     }
     return null;
   });
-  const defaultRatio = (isStandardRatio(node.aspectRatio) ? node.aspectRatio : null) ?? upstreamRatio;
+  const persistedRatio = node.aspectRatio === "auto" || parseRatio(node.aspectRatio || "")
+    ? node.aspectRatio
+    : null;
+  const defaultRatio = persistedRatio ?? upstreamRatio;
   const [ratioTouched, setRatioTouched] = useState(false);
   const [qualityRatioState, setQualityRatio] = useState<QualityRatioValue>({
     quality: node.generationConfig?.quality ?? "standard",
@@ -408,8 +412,13 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const matrixCost = matrixPrice(formatConfig.pricing, keyVariants(qualityRatio.quality), keyVariants(qualityRatio.clarity));
   const pointCost = matrixCost ?? selectedModel?.pointCost ?? handlerCosts[node.imageSrc ? "image_to_image" : "text_to_image"] ?? 18;
 
-  // 把卡片实际渲染尺寸同步到 store，供连线层将端点锚定到卡片真实边缘中点（默认对节点居中）。
-  useSyncContentSize(node, cardW, cardH);
+  // 把卡片实际尺寸同步到 store；手动切换比例时保持视觉中心不漂移。
+  const {
+    beginCenteredResize,
+    containerStyle: cardContainerStyle,
+    displayHeight: displayCardH,
+    transitioning: cardSizeTransitioning,
+  } = useCenteredNodeResize(node, cardW, cardH);
 
   const handleGenerate = useCallback(() => {
     const st = useCanvasStore.getState();
@@ -539,7 +548,11 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       const dataUrl = panoApiRef.current?.capture();
       if (!dataUrl) { toast.error("截图失败，请重试"); return; }
       const blob = await (await fetch(dataUrl)).blob();
-      const res = await uploadFileSmart(new File([blob], "全景截图.png", { type: "image/png" }), undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
+      const res = await uploadFileSmart(new File([blob], "全景截图.png", { type: "image/png" }), undefined, {
+        maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"),
+        label: "参考图",
+        ...currentCanvasUploadContext(),
+      });
       if (!res.success || !res.data) { toast.error(res.message || "截图上传失败"); return; }
       const st = useCanvasStore.getState();
       const capH = Math.round(node.width / 2);
@@ -576,7 +589,11 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         // 单个视角 fetch/上传失败不应中断整批,也不产生未处理 rejection。
         try {
           const blob = await (await fetch(urls[i])).blob();
-          const res = await uploadFileSmart(new File([blob], `全景视角${i + 1}.png`, { type: "image/png" }), undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
+          const res = await uploadFileSmart(new File([blob], `全景视角${i + 1}.png`, { type: "image/png" }), undefined, {
+            maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"),
+            label: "参考图",
+            ...currentCanvasUploadContext(),
+          });
           if (!res.success || !res.data) continue;
           const nid = generateNodeId();
           st.addNode({ id: nid, type: derivativeNodeType, x: baseX + (i % 2) * (node.width + gapX), y: baseY + Math.floor(i / 2) * (capH + gapY), width: node.width, height: capH, contentW: node.width, contentH: capH, title: `全景视角 ${i + 1}`, imageSrc: res.data.fileUrl, status: "success", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType }, i === 0);
@@ -762,6 +779,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       const result = await uploadFileSmart(file, undefined, {
         maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"),
         label: "妆容参考图",
+        ...currentCanvasUploadContext(),
       });
       if (!result.success || !result.data?.fileUrl) {
         toast.error(result.message || "参考图上传失败");
@@ -904,7 +922,10 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       placed.forEach(async ({ nid, blobUrl, slice }) => {
         try {
           const up = await uploadFileSmart(
-            new File([slice.blob], `grid_${slice.cellIndex + 1}.png`, { type: "image/png" }));
+            new File([slice.blob], `grid_${slice.cellIndex + 1}.png`, { type: "image/png" }),
+            undefined,
+            currentCanvasUploadContext(),
+          );
           if (!up.success || !up.data?.fileUrl) throw new Error(up.message || "upload failed");
           useCanvasStore.getState().updateNode(nid, { imageSrc: up.data.fileUrl, fileSize: up.data.fileSize, fileType: up.data.fileType, mimeType: up.data.mimeType });
           // 延迟回收 blob，等 React 用远端地址完成重渲，避免替换瞬间闪裂
@@ -978,7 +999,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         [result.blob],
         `${node.title || "图片"}-${safeTitle}.${result.extension}`,
         { type: result.mimeType },
-      ));
+      ), undefined, currentCanvasUploadContext());
       if (!up.success || !up.data?.fileUrl) {
         toast.error(up.message || `${title}上传失败`);
         return;
@@ -1584,7 +1605,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   return (
     <NodeShell node={node} isSelected={isSelected} isDragging={isDragging} onNodeMouseDown={onNodeMouseDown}>
       {/* 卡片尺寸的定位容器（居中）；外置组件以卡片边缘为锚做恒定大小覆盖层 */}
-      <div className="relative mx-auto" style={{ width: cardW }}>
+      <div className="relative" style={cardContainerStyle}>
         {/* 标题：恒定大小，吸附卡片左上方 */}
         {showAuxUI && !node.imageSrc && configuredFeatures.includes("media.replace") && (
           <NodeChrome placement="top-left" gap={10}>
@@ -1598,19 +1619,12 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         )}
         {showAuxUI && !node.imageSrc && configuredFeatures.includes("media.replace") && (
           <NodeChrome placement="top-center" gap={8} zIndex={20}>
-            <div onMouseDown={stop} className="flex items-center gap-0.5 whitespace-nowrap rounded-[18px] border border-neutral-200/80 bg-white px-2 py-1.5 text-sm text-neutral-700 shadow-lg dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
-              <button
-                type="button"
-                onMouseDown={stop}
-                onClick={openFilePicker}
-                disabled={nodeUploading || generating}
-                title={generating ? "生成完成后可上传素材" : "上传图片"}
-                className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800"
-              >
-                {nodeUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                上传
-              </button>
-            </div>
+            <NodeUploadButton
+              loading={nodeUploading}
+              disabled={nodeUploading || generating}
+              title={generating ? "生成完成后可上传素材" : "上传图片"}
+              onClick={openFilePicker}
+            />
           </NodeChrome>
         )}
         {/* 已生成 + 非预览：顶部操作工具栏（恒定大小独立胶囊，吸附卡片左上方）。
@@ -1981,25 +1995,30 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         {groupImages && (
           <>
             <div className="absolute rounded-[12px] bg-white shadow-sm ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-800"
-                 style={{ left: 16, right: -16, top: 8, height: cardH - 16 }} />
+                 style={{ left: 16, right: -16, top: 8, height: displayCardH - 16 }} />
             <div className="absolute rounded-[12px] bg-white shadow-sm ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-800"
-                 style={{ left: 8, right: -8, top: 4, height: cardH - 8 }} />
+                 style={{ left: 8, right: -8, top: 4, height: displayCardH - 8 }} />
           </>
         )}
 
         {/* 主图片区 - 始终显示（作为容器内唯一在流元素，决定容器尺寸） */}
         <Paper
           component="div"
+          data-canvas-node-drag-handle="true"
           radius={10}
           shadow="none"
-          className={`relative overflow-hidden border bg-white transition-[border-color,box-shadow] dark:bg-neutral-950 ${
+          className={`relative overflow-hidden border bg-white transition-[border-color,box-shadow] duration-[160ms] ease-out dark:bg-neutral-950 ${isDragging ? "cursor-grabbing" : "cursor-grab"} ${
             isConnectTarget
               ? "border-blue-500 shadow-[0_0_0_1px_rgba(59,130,246,0.35)]"
               : isSelected
                 ? "border-neutral-400 shadow-[0_0_0_1px_rgba(115,115,115,0.28)] dark:border-neutral-500"
                 : "border-neutral-300 dark:border-neutral-700"
           }`}
-          style={{ width: cardW, height: cardH }}
+          style={{
+            width: "100%",
+            height: displayCardH,
+            willChange: cardSizeTransitioning ? "height" : undefined,
+          }}
           withBorder={false}
         >
           {/* 组图徽标：在「展开为多个节点 / 收起」之间切换 */}
@@ -2008,7 +2027,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
               onMouseDown={stop}
               onClick={(e) => { stop(e); if (isGroupExpanded) handleCollapseGroup(); else handleExpandGroup(); }}
               title={isGroupExpanded ? "收起展开的节点" : "展开为多个节点"}
-              className="absolute right-3 top-3 z-[7] flex items-center gap-1 rounded-lg bg-black/60 px-2.5 py-1.5 text-xs font-medium text-white backdrop-blur-sm transition-colors hover:bg-black/75"
+              className="nodrag nopan absolute right-3 top-3 z-[7] flex items-center gap-1 rounded-lg bg-black/60 px-2.5 py-1.5 text-xs font-medium text-white backdrop-blur-sm transition-colors hover:bg-black/75"
             >
               {isGroupExpanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
               {isGroupExpanded ? "收起" : `展开 ${groupImages.length} 张`}
@@ -2022,7 +2041,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
           {node.status === "error" && !generating && !node.imageSrc && <NodeErrorBadge />}
           {/* 宫格切分预览：网格线 + 可点选格子（选中则只切选中，不选则全部） */}
           {gridPreview && node.imageSrc && (
-            <div className="absolute inset-0 z-[4] overflow-hidden rounded-[12px]">
+            <div className="nodrag nopan absolute inset-0 z-[4] overflow-hidden rounded-[12px]">
               <div className="pointer-events-none absolute inset-0">
                 {Array.from({ length: gridPreview.cols - 1 }, (_, i) => (
                   <div key={`v${i}`} className="absolute inset-y-0 w-px bg-white/80 shadow-[0_0_2px_rgba(0,0,0,0.45)]" style={{ left: `${((i + 1) / gridPreview.cols) * 100}%` }} />
@@ -2084,7 +2103,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                 </ThemeIcon>
               </Center>
 
-              <Stack gap="sm" align="flex-start" style={{ position: "absolute", left: 28, top: "45%" }}>
+              <Stack className="nodrag nopan" gap="sm" align="flex-start" style={{ position: "absolute", left: 28, top: "45%" }}>
                 <Text size="sm" c="dimmed">尝试：</Text>
                 <Button
                   onMouseDown={stop}
@@ -2190,7 +2209,16 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                     value={qualityRatio}
                     onChange={(v) => {
                       // 用户手动改过比例后，不再跟随上游连接节点的默认比例
-                      if (v.ratio !== qualityRatio.ratio) setRatioTouched(true);
+                      if (v.ratio !== qualityRatio.ratio) {
+                        const parsed = parseRatio(v.ratio);
+                        const nextAspect = parsed
+                          ? parsed.w / parsed.h
+                          : node.imageSrc && imgAspect ? imgAspect : 1;
+                        const nextSize = fitCardSize(nextAspect, v.ratio);
+                        beginCenteredResize(nextSize.w, nextSize.h);
+                        setRatioTouched(true);
+                        useCanvasStore.getState().updateNode(node.id, { aspectRatio: v.ratio });
+                      }
                       setQualityRatio(v);
                     }}
                     qualities={formatConfig.qualities}

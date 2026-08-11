@@ -17,6 +17,7 @@ import { CHARACTER_NODE_TYPE, SCENE_NODE_TYPE } from "@/lib/canvas-node-types";
 import { useCanvasStore } from "@/stores/use-canvas-store";
 import { FileCategory, FileType, type FileVO } from "@/types/file";
 import { captureCanvasError } from "../../infrastructure/telemetry/canvas-telemetry";
+import { currentCanvasUploadContext } from "./canvas-upload-context";
 
 interface CanvasPoint {
   x: number;
@@ -115,6 +116,7 @@ export function useCanvasMediaTransfer({
         ? FileCategory.CHARACTER
         : node.type === SCENE_NODE_TYPE ? FileCategory.SCENE : FileCategory.GENERAL,
       originalName: node.title,
+      ...currentCanvasUploadContext(),
     });
     if (response.success) {
       toast.success("已保存到我的素材");
@@ -154,7 +156,7 @@ export function useCanvasMediaTransfer({
       try {
         const response = await uploadFileSmart(file, (progress) => {
           useCanvasStore.getState().updateNode(node.id, { uploadProgress: progress });
-        });
+        }, currentCanvasUploadContext());
         if (response.success && response.data?.fileUrl) {
           useCanvasStore.getState().updateNode(node.id, {
             ...(isVideo

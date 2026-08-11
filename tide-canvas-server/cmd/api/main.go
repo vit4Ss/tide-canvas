@@ -37,6 +37,7 @@ import (
 
 	"tidecanvas/internal/handler/admin"
 	"tidecanvas/internal/handler/ai"
+	"tidecanvas/internal/handler/asset"
 	"tidecanvas/internal/handler/auth"
 	"tidecanvas/internal/handler/billing"
 	"tidecanvas/internal/handler/canvasconfig"
@@ -245,6 +246,7 @@ func run() error {
 	project.Register(api, deps)
 	ai.Register(api, deps)
 	file.Register(api, deps)
+	asset.Register(api, deps)
 	chat.Register(api, deps)
 	community.Register(api, deps)
 	inspiration.Register(api, deps)

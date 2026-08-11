@@ -57,14 +57,12 @@ export function useCanvasKeyboard({ onEscape }: Options = {}) {
       } else if (store.selectedConnectionId) {
         e.preventDefault();
         store.removeConnection(store.selectedConnectionId);
-        store.selectConnection(null);
       }
     }
     // Esc 清除选择 + 关闭菜单
     if (e.key === "Escape") {
       onEscape?.();
       store.clearSelection();
-      store.selectConnection(null);
     }
   }, [onEscape]);
 

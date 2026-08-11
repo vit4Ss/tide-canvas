@@ -18,6 +18,7 @@ import { useCanvasNodeConfigStore } from "@/stores/use-canvas-node-config-store"
 import { useCanvasClipboard } from "@/hooks/canvas/use-canvas-clipboard";
 import { useCanvasKeyboard } from "@/hooks/canvas/use-canvas-keyboard";
 import { createNode, autoArrangeNodes } from "@/lib/canvas-helpers";
+import { requestCanvasSave } from "@/lib/canvas-save";
 import { CanvasEmptyState } from "./canvas-empty-state";
 import { CanvasGroupsLayer } from "./canvas-groups-layer";
 import { CanvasContextMenu, type ContextMenuState } from "./canvas-context-menu";
@@ -38,10 +39,12 @@ import type {
   CanvasFlowEdge,
   CanvasFlowNode,
 } from "@/features/canvas/infrastructure/react-flow/canvas-flow-types";
+import type { MediaAssetVO } from "@/types/media-asset";
 import { CanvasFlowNodeView } from "@/features/canvas/presentation/flow/canvas-flow-node";
 import { CanvasFlowEdgeView } from "@/features/canvas/presentation/flow/canvas-flow-edge";
 import { useCanvasFlowController } from "@/features/canvas/presentation/flow/use-canvas-flow-controller";
 import { useCanvasMediaTransfer } from "@/features/canvas/application/media/use-canvas-media-transfer";
+import { placeHistoryAssets } from "@/features/canvas/application/history/history-node-placement";
 import { getCanvasSelectionAnchor } from "@/features/canvas/application/selection/canvas-selection";
 import { CanvasGroupCreateButton } from "@/features/canvas/presentation/groups/canvas-group-create-button";
 import flowStyles from "@/features/canvas/presentation/flow/canvas-flow.module.css";
@@ -55,6 +58,8 @@ interface CanvasViewProps {
 const FLOW_NODE_TYPES: NodeTypes = { canvasNode: CanvasFlowNodeView };
 const FLOW_EDGE_TYPES: EdgeTypes = { canvasEdge: CanvasFlowEdgeView };
 const HIDE_REACT_FLOW_ATTRIBUTION = process.env.NEXT_PUBLIC_REACT_FLOW_PRO === "true";
+// React Flow 默认仅容忍 1px 位移；触控板和高 DPI 鼠标的自然抖动会被误判为画布拖动。
+const PANE_CLICK_DISTANCE_PX = 6;
 const MINI_MAP_COLORS: Record<string, string> = {
   character: "#60a5fa",
   scene: "#2dd4bf",
@@ -248,6 +253,34 @@ function CanvasViewContent({ launchJournal, persistenceReady = false, onLaunchCo
     void reactFlow.fitView({ padding: 0.12, maxZoom: 1.5, duration: 160 });
   }, [reactFlow]);
 
+  const handleUseHistoryAssets = useCallback(async (assets: MediaAssetVO[]) => {
+    const snapshot = useCanvasStore.getState();
+    const placement = placeHistoryAssets(assets, snapshot.nodes, getViewportCenter());
+    if (placement.nodes.length === 0) return;
+
+    // One store transaction = one undo step. Passing no selection id preserves
+    // the user's explicit choice not to auto-select restored history nodes.
+    snapshot.addNodesAndConnections(placement.nodes, [], undefined);
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        void reactFlow.fitView({
+          nodes: placement.nodes.map((node) => ({ id: node.id })),
+          padding: placement.nodes.length === 1 ? 0.24 : 0.16,
+          minZoom: 0.12,
+          maxZoom: 1.15,
+          duration: 200,
+        });
+      });
+    });
+
+    const currentProjectId = useCanvasStore.getState().currentProjectId;
+    if (currentProjectId) {
+      const saved = await requestCanvasSave(currentProjectId);
+      if (!saved) toast.info("节点已添加，画布将在连接恢复后自动保存");
+    }
+    toast.success(placement.nodes.length > 1 ? `已添加 ${placement.nodes.length} 个节点` : "已添加到画布");
+  }, [getViewportCenter, reactFlow]);
+
   const miniMapNodeColor = useCallback((node: CanvasFlowNode) => {
     return MINI_MAP_COLORS[node.data.node.type] || "#a1a1aa";
   }, []);
@@ -272,9 +305,11 @@ function CanvasViewContent({ launchJournal, persistenceReady = false, onLaunchCo
           nodeTypes={FLOW_NODE_TYPES}
           edgeTypes={FLOW_EDGE_TYPES}
           onNodesChange={flow.handleNodesChange}
-          onSelectionChange={flow.handleSelectionChange}
+          onEdgesChange={flow.handleEdgesChange}
           onNodeDragStart={flow.handleNodeDragStart}
           onNodeDragStop={flow.handleNodeDragStop}
+          nodeDragThreshold={4}
+          paneClickDistance={PANE_CLICK_DISTANCE_PX}
           onConnect={flow.handleConnect}
           onConnectEnd={flow.handleConnectEnd}
           onPaneClick={flow.handlePaneClick}
@@ -390,7 +425,11 @@ function CanvasViewContent({ launchJournal, persistenceReady = false, onLaunchCo
         onPick={addAssetToCanvas}
         refreshKey={assetsRefreshKey}
       />
-      <CanvasHistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />
+      <CanvasHistoryPanel
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        onUse={handleUseHistoryAssets}
+      />
 
       <CanvasAssistantPanel
         launchJournal={assistantLaunchJournal}

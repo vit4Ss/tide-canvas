@@ -2,7 +2,7 @@
 
 import { useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { ArrowUp, Loader2, X } from "lucide-react";
+import { ArrowUp, Loader2, Upload, X } from "lucide-react";
 import type { CanvasNode } from "@/stores/use-canvas-store";
 import { NodeChrome } from "../base/node-chrome";
 
@@ -74,6 +74,35 @@ export function NodeDimsBadge({ dims }: { dims: { w: number; h: number } }) {
     <NodeChrome placement="top-right" gap={4}>
       <span className="whitespace-nowrap px-1 text-xs text-neutral-400">{dims.w} × {dims.h}</span>
     </NodeChrome>
+  );
+}
+
+/** 空媒体节点顶部的紧凑上传入口：单层弱边框，不使用悬浮胶囊或重阴影。 */
+export function NodeUploadButton({
+  loading,
+  disabled,
+  title,
+  onClick,
+}: {
+  loading: boolean;
+  disabled: boolean;
+  title: string;
+  onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onMouseDown={(event) => event.stopPropagation()}
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-neutral-200 bg-white px-3 text-[13px] font-medium text-neutral-700 transition-colors duration-[160ms] ease-out hover:border-neutral-300 hover:bg-neutral-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:border-neutral-600 dark:hover:bg-neutral-800"
+    >
+      {loading
+        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        : <Upload className="h-3.5 w-3.5" />}
+      上传
+    </button>
   );
 }
 

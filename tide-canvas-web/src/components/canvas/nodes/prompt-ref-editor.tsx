@@ -74,6 +74,7 @@ export function PromptRefEditor({
   // 组字态：IME 组字期间外部写入绝不能重建 DOM（会打断输入法）。
   // document.activeElement 在 IME 下会瞬时漂移，所以用事件记而不是查 DOM。
   const composingRef = useRef(false);
+  const compositionCommitFrameRef = useRef<number | null>(null);
 
   // 引用以 prompt 文本为唯一数据源：该 token 是否已存在（N 后不接数字，避免
   // 「图片1」误命中「图片12」）。label 只含中文与数字，直接拼进正则是安全的。
@@ -148,6 +149,40 @@ export function PromptRefEditor({
     onChange(serializePromptEditor(editor));
     syncMentionFromCaret();
   }, [onChange, syncMentionFromCaret]);
+
+  const handlePromptInput = useCallback((event: React.FormEvent<HTMLDivElement>): void => {
+    // 中文、日文等输入法会连续派发携带中间候选文本的 input。中间态不能写入
+    // 外部 store，否则 React 回写 value 时会用旧候选覆盖浏览器刚提交的最终文字。
+    if (composingRef.current || (event.nativeEvent as InputEvent).isComposing) return;
+    updatePromptFromEditor();
+  }, [updatePromptFromEditor]);
+
+  const handleCompositionStart = useCallback((): void => {
+    composingRef.current = true;
+    if (compositionCommitFrameRef.current !== null) {
+      window.cancelAnimationFrame(compositionCommitFrameRef.current);
+      compositionCommitFrameRef.current = null;
+    }
+  }, []);
+
+  const handleCompositionEnd = useCallback((): void => {
+    // Safari、Firefox 与 Chromium 对 compositionend / 最后一次 input 的先后顺序
+    // 不完全一致。延迟到下一帧统一读取最终 DOM，并在此之前继续阻止 value 回写。
+    if (compositionCommitFrameRef.current !== null) {
+      window.cancelAnimationFrame(compositionCommitFrameRef.current);
+    }
+    compositionCommitFrameRef.current = window.requestAnimationFrame(() => {
+      compositionCommitFrameRef.current = null;
+      composingRef.current = false;
+      updatePromptFromEditor();
+    });
+  }, [updatePromptFromEditor]);
+
+  useEffect(() => () => {
+    if (compositionCommitFrameRef.current !== null) {
+      window.cancelAnimationFrame(compositionCommitFrameRef.current);
+    }
+  }, []);
 
   // 在光标处内联插入图片引用 token（点击缩略图或 @ 选择共用）；序列化时仍是「图片N」。
   const insertRefToken = useCallback((ref: RefItem) => {
@@ -390,14 +425,10 @@ export function PromptRefEditor({
           aria-label={ariaLabel}
           aria-multiline="true"
           suppressContentEditableWarning
-          onInput={updatePromptFromEditor}
+          onInput={handlePromptInput}
           onKeyDown={handlePromptKeyDown}
-          onCompositionStart={() => { composingRef.current = true; }}
-          onCompositionEnd={() => {
-            composingRef.current = false;
-            // 组字结束后补一次序列化：末次 input 可能早于 compositionend 到达
-            updatePromptFromEditor();
-          }}
+          onCompositionStart={handleCompositionStart}
+          onCompositionEnd={handleCompositionEnd}
           onPaste={(e) => {
             // 富文本粘贴降级为纯文本：外部 HTML 会把 <p>/<div>/<span style> 结构
             // 连同 font-size / white-space 一起注进编辑器（14px 的框里冒出 16px
@@ -438,6 +469,11 @@ export function PromptRefEditor({
             }
           }}
           onBlur={() => {
+            if (compositionCommitFrameRef.current !== null) {
+              window.cancelAnimationFrame(compositionCommitFrameRef.current);
+              compositionCommitFrameRef.current = null;
+            }
+            composingRef.current = false;
             const editor = promptEditorRef.current;
             if (editor) {
               const prompt = serializePromptEditor(editor);
@@ -448,7 +484,7 @@ export function PromptRefEditor({
             setMentionOpen(false);
           }}
           spellCheck={false}
-          className={editorClassName ?? "prompt-scroll relative block w-full overflow-y-auto whitespace-pre-wrap break-words border-0 bg-transparent pr-2 text-sm leading-6 text-neutral-900 caret-neutral-900 selection:bg-blue-200/60 focus:outline-none focus-visible:outline-none focus:ring-0 dark:text-neutral-100 dark:caret-neutral-100 dark:selection:bg-blue-500/40"}
+          className={`nodrag nopan ${editorClassName ?? "prompt-scroll relative block w-full overflow-y-auto whitespace-pre-wrap break-words border-0 bg-transparent pr-2 text-sm leading-6 text-neutral-900 caret-neutral-900 selection:bg-blue-200/60 focus:outline-none focus-visible:outline-none focus:ring-0 dark:text-neutral-100 dark:caret-neutral-100 dark:selection:bg-blue-500/40"}`}
           style={{
             ...(fill
               ? { ...editorStyleBase, minHeight: 0, flex: 1 }

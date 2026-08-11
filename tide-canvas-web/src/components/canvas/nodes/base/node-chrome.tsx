@@ -34,6 +34,7 @@ export function NodeChrome({ placement, gap = 8, zIndex = 10, damp = 1, children
   const inner: CSSProperties = {
     transform: `scale(${damp === 1 ? "var(--nc-inv, 1)" : "var(--nc-inv-damp, 1)"})`,
     pointerEvents: "auto",
+    cursor: "default",
   };
 
   switch (placement) {
@@ -65,7 +66,7 @@ export function NodeChrome({ placement, gap = 8, zIndex = 10, damp = 1, children
 
   return (
     <div style={outer}>
-      <div style={inner}>{children}</div>
+      <div className="nodrag nopan" style={inner}>{children}</div>
     </div>
   );
 }

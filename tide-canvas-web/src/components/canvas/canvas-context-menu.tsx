@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   Upload as UploadIcon, History,
   ChevronLeft, Trash2, Copy, Group,
+  type LucideIcon,
 } from "lucide-react";
 import { canvasNodeIcon } from "@/lib/canvas-node-config";
 import { useCanvasNodeConfigStore } from "@/stores/use-canvas-node-config-store";
@@ -21,6 +22,41 @@ const RESOURCE_TYPES = [
   { type: "upload", label: "上传", desc: "从本地上传文件", icon: UploadIcon },
   { type: "history", label: "从生成历史选择", desc: "复用历史生成结果", icon: History },
 ];
+
+interface CatalogItemButtonProps {
+  label: string;
+  description: string;
+  icon: LucideIcon;
+  onClick: () => void;
+}
+
+/**
+ * 节点与资源目录共用的固定行高条目。
+ * 52px = 36px 图标 + 上下各 8px；说明文字绝对定位，只做位移与透明度动画，
+ * 因此 hover / focus-visible 不会改变菜单高度或触发相邻条目重排。
+ */
+function CatalogItemButton({ label, description, icon: Icon, onClick }: CatalogItemButtonProps) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      className="group mx-2 flex h-[52px] w-[calc(100%-1rem)] items-center gap-3 rounded-xl px-2.5 text-sm transition-colors hover:bg-neutral-100 motion-reduce:transition-none dark:hover:bg-neutral-800"
+    >
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-600 transition-colors group-hover:bg-neutral-900 group-hover:text-white group-focus-visible:bg-neutral-900 group-focus-visible:text-white motion-reduce:transition-none dark:bg-neutral-800 dark:text-neutral-300 dark:group-hover:bg-white dark:group-hover:text-neutral-900 dark:group-focus-visible:bg-white dark:group-focus-visible:text-neutral-900">
+        <Icon className="h-4 w-4" aria-hidden />
+      </span>
+      <span className="relative h-9 min-w-0 flex-1 overflow-hidden text-left">
+        <span className="absolute inset-x-0 top-2 block truncate font-medium leading-5 transition-transform duration-200 ease-out group-hover:-translate-y-2 group-focus-visible:-translate-y-2 motion-reduce:transition-none">
+          {label}
+        </span>
+        <span className="absolute inset-x-0 bottom-0 block translate-y-1 truncate text-xs leading-4 text-neutral-400 opacity-0 transition-[opacity,transform] duration-200 ease-out group-hover:translate-y-0 group-hover:opacity-100 group-focus-visible:translate-y-0 group-focus-visible:opacity-100 motion-reduce:transition-none">
+          {description}
+        </span>
+      </span>
+    </button>
+  );
+}
 
 interface Props {
   menu: ContextMenuState | null;
@@ -142,45 +178,29 @@ export function CanvasContextMenu({
             {enabledNodeTypes.map((item) => {
               const Icon = canvasNodeIcon(item.key);
               return (
-                <button
+                <CatalogItemButton
                   key={item.key}
-                  type="button"
-                  role="menuitem"
+                  label={item.title}
+                  description={item.description}
+                  icon={Icon}
                   onClick={() => handleAddNode(item.key)}
-                  className="group mx-2 flex w-[calc(100%-1rem)] items-center gap-3 rounded-xl px-2.5 py-2 text-sm transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-800"
-                >
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-600 transition-colors group-hover:bg-neutral-900 group-hover:text-white dark:bg-neutral-800 dark:text-neutral-300 dark:group-hover:bg-white dark:group-hover:text-neutral-900">
-                    <Icon className="h-4 w-4" />
-                  </span>
-                  <span className="min-w-0 flex-1 text-left">
-                    <span className="block font-medium">{item.title}</span>
-                    <span className="block max-h-0 truncate text-xs leading-4 text-neutral-400 opacity-0 transition-all duration-200 group-hover:max-h-4 group-hover:opacity-100">{item.description}</span>
-                  </span>
-                </button>
+                />
               );
             })}
 
             <div className="mt-2 px-4 pb-2 pt-2 text-xs text-neutral-400">添加资源</div>
             {RESOURCE_TYPES.map((item) => (
-              <button
+              <CatalogItemButton
                 key={item.type}
-                type="button"
-                role="menuitem"
+                label={item.label}
+                description={item.desc}
+                icon={item.icon}
                 onClick={() => {
                   onClose();
                   if (item.type === "upload") onUpload?.();
                   else onOpenHistory?.();
                 }}
-                className="group mx-2 flex w-[calc(100%-1rem)] items-center gap-3 rounded-xl px-2.5 py-2 text-sm transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-800"
-              >
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-600 transition-colors group-hover:bg-neutral-900 group-hover:text-white dark:bg-neutral-800 dark:text-neutral-300 dark:group-hover:bg-white dark:group-hover:text-neutral-900">
-                  <item.icon className="h-4 w-4" />
-                </span>
-                <span className="min-w-0 flex-1 text-left">
-                  <span className="block font-medium">{item.label}</span>
-                  <span className="block max-h-0 truncate text-xs leading-4 text-neutral-400 opacity-0 transition-all duration-200 group-hover:max-h-4 group-hover:opacity-100">{item.desc}</span>
-                </span>
-              </button>
+              />
             ))}
           </>
         ) : (

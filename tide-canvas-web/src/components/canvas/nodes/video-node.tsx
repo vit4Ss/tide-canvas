@@ -19,13 +19,14 @@ import { VideoModeDropdown } from "./video-mode-dropdown";
 import { PromptRefEditor, PromptEditorModal } from "./prompt-ref-editor";
 import { type RefItem } from "./prompt-ref-utils";
 import type { CanvasNodeProps } from "./types/node-props";
-import { useAiModels, useMediaErrorRecovery, useNodePrompt, useNodeRuntime, useSyncContentSize } from "./shared/use-node-runtime";
+import { useAiModels, useCenteredNodeResize, useMediaErrorRecovery, useNodePrompt, useNodeRuntime } from "./shared/use-node-runtime";
 import { useMediaUpload } from "./shared/use-media-upload";
 import { useFileDownload } from "./shared/use-file-download";
 import { ConfigurableNodeToolbar, type ConfigurableNodeToolbarAction } from "./shared/configurable-node-toolbar";
 import { useCanvasNodeFeatures } from "@/stores/use-canvas-node-config-store";
 import { findRightColumnSpot, getIncomingSources, inlineIncomingTextRefs, parseModelConfig, stopEvent as stop, validateReferenceFileSizes } from "./shared/node-utils";
-import { GenerateSubmitButton, NodeDimsBadge, NodeErrorBadge, NodeGeneratingOverlay, NodeMediaLightbox, NodePanelChrome, NodeShell, NodeUploadingOverlay } from "./shared/node-overlays";
+import { GenerateSubmitButton, NodeDimsBadge, NodeErrorBadge, NodeGeneratingOverlay, NodeMediaLightbox, NodePanelChrome, NodeShell, NodeUploadButton, NodeUploadingOverlay } from "./shared/node-overlays";
+import { currentCanvasUploadContext } from "@/features/canvas/application/media/canvas-upload-context";
 
 // 各模式（Tab）对连接源节点的数量/类型限制：hover 时提示，生成时校验。文生视频无需连接。
 const TAB_LIMITS: Record<string, { hint: string; min: number; max: number; types: string[] }> = {
@@ -310,8 +311,23 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   const { w: cardW, h: cardHeight } = fitVideoCardSize(cardAspect);
   const promptPanelW = Math.max(640, cardW + 32);
 
-  // 卡片实际渲染尺寸同步 store（连线锚点、整理布局与图片节点一致对齐）
-  useSyncContentSize(node, cardW, cardHeight);
+  // 卡片实际尺寸同步 store；手动切换比例时保持视觉中心不漂移。
+  const {
+    beginCenteredResize,
+    containerStyle: cardContainerStyle,
+    displayHeight: displayCardHeight,
+    transitioning: cardSizeTransitioning,
+  } = useCenteredNodeResize(node, cardW, cardHeight);
+  const handleVideoParamChange = useCallback((next: VideoParamValue): void => {
+    if (next.ratio !== videoParam.ratio) {
+      const parsed = parseRatio(next.ratio);
+      const nextAspect = parsed ? parsed.w / parsed.h : 16 / 9;
+      const nextSize = fitVideoCardSize(nextAspect);
+      beginCenteredResize(nextSize.w, nextSize.h);
+      updateNode(node.id, { aspectRatio: next.ratio });
+    }
+    setVideoParam(next);
+  }, [beginCenteredResize, node.id, updateNode, videoParam.ratio]);
 
   // 换源时重置缓存解析；若本地已缓存则直接用 blob（刷新/重挂也免下载）
   useEffect(() => {
@@ -448,7 +464,11 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       if (!blob) { toast.error("截图失败：请为媒体源开启 GET 跨域(CORS)"); return; }
       const label = kind === "first" ? "视频首帧" : kind === "last" ? "视频尾帧" : "视频截图";
       const file = new File([blob], `frame_${time.toFixed(1)}s.png`, { type: "image/png" });
-      const res = await uploadFileSmart(file, undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
+      const res = await uploadFileSmart(file, undefined, {
+        maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"),
+        label: "参考图",
+        ...currentCanvasUploadContext(),
+      });
       if (!res.success || !res.data) { toast.error(res.message || "截图上传失败"); return; }
       const st = useCanvasStore.getState();
       const nid = generateNodeId();
@@ -616,13 +636,17 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
 
   return (
     <NodeShell node={node} isSelected={isSelected} isDragging={isDragging} onNodeMouseDown={onNodeMouseDown}>
-      <div className="relative mx-auto" style={{ width: cardW }}>
+      <div className="relative" style={cardContainerStyle}>
         <div
-          className={`relative overflow-hidden rounded-2xl bg-white shadow-sm ring-1 transition-all dark:bg-neutral-950 ${
+          className={`relative overflow-hidden rounded-2xl bg-white shadow-sm ring-1 transition-[box-shadow] duration-[160ms] ease-out dark:bg-neutral-950 ${
             isConnectTarget ? "ring-2 ring-blue-500/70" :
             isSelected ? "ring-2 ring-neutral-400 dark:ring-neutral-600" : "ring-neutral-200 hover:ring-neutral-300 dark:ring-neutral-800 dark:hover:ring-neutral-700"
           }`}
-          style={{ width: cardW, height: cardHeight }}
+          style={{
+            width: "100%",
+            height: displayCardHeight,
+            willChange: cardSizeTransitioning ? "height" : undefined,
+          }}
         >
           {generating && <NodeGeneratingOverlay label="AI 视频生成中..." />}
           {nodeUploading && <NodeUploadingOverlay pct={nodeUploadPct} previewSrc={uploadPreviewSrc} kind="video" />}
@@ -728,13 +752,12 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         )}
         {showAuxUI && !node.videoSrc && configuredFeatures.includes("media.replace") && (
           <NodeChrome placement="top-center" gap={8} zIndex={20}>
-            <div onMouseDown={stop} className="flex items-center gap-0.5 whitespace-nowrap rounded-[18px] border border-neutral-200/80 bg-white px-2 py-1.5 text-sm text-neutral-700 shadow-lg dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
-              <button onMouseDown={stop} onClick={openFilePicker} disabled={nodeUploading || generating}
-                title={generating ? "生成完成后可上传素材" : "上传视频"}
-                className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">
-                {nodeUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} 上传
-              </button>
-            </div>
+            <NodeUploadButton
+              loading={nodeUploading}
+              disabled={nodeUploading || generating}
+              title={generating ? "生成完成后可上传素材" : "上传视频"}
+              onClick={openFilePicker}
+            />
           </NodeChrome>
         )}
         {/* 已生成：顶部操作工具栏（恒定大小胶囊，与图片节点一致风格） */}
@@ -784,7 +807,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                   />
                   <VideoParamPicker
                     value={videoParam}
-                    onChange={setVideoParam}
+                    onChange={handleVideoParamChange}
                     resolutions={formatConfig.resolutions}
                     ratios={formatConfig.ratios}
                     durations={formatConfig.durations}

@@ -14,6 +14,8 @@ import (
 type FileUploadGrant struct {
 	ID               idgen.ID   `gorm:"primaryKey;autoIncrement:false" json:"id"`
 	OwnerID          idgen.ID   `gorm:"index:idx_file_upload_grant_owner_active,priority:1;not null" json:"ownerId"`
+	ProjectID        idgen.ID   `gorm:"column:project_id;default:0;index" json:"projectId"`
+	EntryPoint       string     `gorm:"column:entry_point;size:16;not null;default:'upload'" json:"entryPoint"`
 	StorageKey       string     `gorm:"size:512;uniqueIndex;not null" json:"storageKey"`
 	StorageScope     string     `gorm:"size:80;not null;default:'';index" json:"-"`
 	OriginalName     string     `gorm:"size:512;not null" json:"originalName"`

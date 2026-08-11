@@ -41,7 +41,25 @@ export const useCanvasStore = create<CanvasStoreState>((set, get) => ({
   undoStack: [],
   redoStack: [],
 
-  selectConnection: (id) => set({ selectedConnectionId: id }),
+  selectConnection: (id) => set((state) => {
+    if (id === null) {
+      return state.selectedConnectionId === null ? state : { selectedConnectionId: null };
+    }
+    if (
+      state.selectedConnectionId === id &&
+      state.selectedNodeIds.size === 0 &&
+      state.selectedNodeId === null
+    ) {
+      return state;
+    }
+    // 节点与连线选择互斥。把约束放在 Store，而不是依赖每个事件调用方
+    // 记得按正确顺序清理，避免受控 React Flow 出现两类元素同时高亮。
+    return {
+      selectedConnectionId: id,
+      selectedNodeIds: new Set(),
+      selectedNodeId: null,
+    };
+  }),
   setCurrentProjectId: (id) => set({ currentProjectId: id }),
 
   trackSkillRun: (runId) => set((state) => {
@@ -149,6 +167,7 @@ export const useCanvasStore = create<CanvasStoreState>((set, get) => ({
       connections: [...state.connections, ...nextConnections],
       selectedNodeId: canSelect ? selectNodeId! : state.selectedNodeId,
       selectedNodeIds: canSelect ? new Set([selectNodeId]) : state.selectedNodeIds,
+      selectedConnectionId: canSelect ? null : state.selectedConnectionId,
       undoStack: [...state.undoStack.slice(-MAX_CANVAS_HISTORY + 1), canvasHistorySnapshot(state)],
       redoStack: [],
     };
@@ -229,9 +248,10 @@ export const useCanvasStore = create<CanvasStoreState>((set, get) => ({
     };
   }),
 
-  selectNode: (id) => set(() => ({
+  selectNode: (id) => set((state) => ({
     selectedNodeId: id,
     selectedNodeIds: id ? new Set([id]) : new Set(),
+    selectedConnectionId: id ? null : state.selectedConnectionId,
   })),
 
   toggleSelectNode: (id) => set((state) => {
@@ -244,19 +264,32 @@ export const useCanvasStore = create<CanvasStoreState>((set, get) => ({
     return {
       selectedNodeIds: newSel,
       selectedNodeId: newSel.size === 1 ? Array.from(newSel)[0] : null,
+      selectedConnectionId: newSel.size > 0 ? null : state.selectedConnectionId,
     };
   }),
 
-  selectMany: (ids) => set(() => ({
-    selectedNodeIds: new Set(ids),
-    selectedNodeId: ids.length === 1 ? ids[0] : null,
-  })),
+  selectMany: (ids) => set((state) => {
+    const selectedNodeIds = new Set(ids);
+    return {
+      selectedNodeIds,
+      selectedNodeId: selectedNodeIds.size === 1
+        ? selectedNodeIds.values().next().value ?? null
+        : null,
+      // 空节点选择可能紧随“选择连线”事件到达，不能把刚选中的连线清掉。
+      selectedConnectionId: selectedNodeIds.size > 0 ? null : state.selectedConnectionId,
+    };
+  }),
 
-  clearSelection: () => set({ selectedNodeIds: new Set(), selectedNodeId: null }),
+  clearSelection: () => set({
+    selectedNodeIds: new Set(),
+    selectedNodeId: null,
+    selectedConnectionId: null,
+  }),
 
   selectAll: () => set((state) => ({
     selectedNodeIds: new Set(state.nodes.map((n) => n.id)),
     selectedNodeId: state.nodes.length === 1 ? state.nodes[0].id : null,
+    selectedConnectionId: null,
   })),
 
   addConnection: (conn, recordHistory = true) => set((state) => {
@@ -321,12 +354,18 @@ export const useCanvasStore = create<CanvasStoreState>((set, get) => ({
           .filter((node) => requested.has(node.id) && !hasRecoverableGeneration(node))
           .map((node) => node.id),
       );
+      const connections = state.connections.filter(
+        (connection) => !memberIds.has(connection.sourceId) && !memberIds.has(connection.targetId),
+      );
       return {
         nodes: state.nodes.filter((n) => !memberIds.has(n.id)),
-        connections: state.connections.filter((c) => !memberIds.has(c.sourceId) && !memberIds.has(c.targetId)),
+        connections,
         groups: state.groups.filter((g) => g.id !== id),
         selectedNodeIds: new Set(),
         selectedNodeId: null,
+        selectedConnectionId: connections.some((connection) => connection.id === state.selectedConnectionId)
+          ? state.selectedConnectionId
+          : null,
         undoStack: undo,
         redoStack: [],
       };

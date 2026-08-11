@@ -22,6 +22,8 @@ func fmtTime(t time.Time) string {
 type FileVO struct {
 	ID           idgen.ID `json:"id"`
 	OwnerID      idgen.ID `json:"ownerId"`
+	ProjectID    idgen.ID `json:"projectId"`
+	EntryPoint   string   `json:"entryPoint"`
 	OriginalName string   `json:"originalName"`
 	FileURL      string   `json:"fileUrl"`
 	FileSize     int64    `json:"fileSize"`
@@ -36,6 +38,8 @@ func toFileVO(f *model.File) FileVO {
 	return FileVO{
 		ID:           f.ID,
 		OwnerID:      f.OwnerID,
+		ProjectID:    f.ProjectID,
+		EntryPoint:   f.EntryPoint,
 		OriginalName: f.OriginalName,
 		FileURL:      f.FileUrl,
 		FileSize:     f.FileSize,

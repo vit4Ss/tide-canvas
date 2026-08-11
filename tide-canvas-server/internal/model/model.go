@@ -29,6 +29,7 @@ func Models() []any {
 		&AiGenerationLog{},
 		&File{},
 		&FileUploadGrant{},
+		&MediaAsset{},
 
 		// Extended-domain skeleton entities (see *.go in this package).
 		// Community.
@@ -677,6 +678,10 @@ func (AiGenerationLog) TableName() string { return "ai_generation_logs" }
 type File struct {
 	ID      idgen.ID `gorm:"primaryKey;autoIncrement:false" json:"id"`
 	OwnerID idgen.ID `gorm:"index" json:"ownerId"`
+	// ProjectID records the canvas that initiated the upload. Zero is a valid
+	// legacy/non-canvas scope and appears only in the user's all-history view.
+	ProjectID  idgen.ID `gorm:"column:project_id;default:0;index" json:"projectId"`
+	EntryPoint string   `gorm:"column:entry_point;size:16;not null;default:'upload';index" json:"entryPoint"`
 	// SourceArtifactID is set only for server-archived SkillRun outputs. Nullable
 	// uniqueness provides an idempotency key without constraining normal uploads.
 	SourceArtifactID *idgen.ID `gorm:"column:source_artifact_id;uniqueIndex" json:"sourceArtifactId,omitempty"`
@@ -693,3 +698,30 @@ type File struct {
 
 // TableName overrides the default pluralized table name.
 func (File) TableName() string { return "files" }
+
+// MediaAsset is the user-facing, per-output history index shared by generated
+// results and uploads. Source rows keep their original billing/storage duties;
+// this table owns ordering, canvas scoping and independent multi-output actions.
+type MediaAsset struct {
+	ID          idgen.ID `gorm:"primaryKey;autoIncrement:false" json:"id"`
+	OwnerID     idgen.ID `gorm:"column:owner_id;not null;index:idx_media_asset_owner_time,priority:1;index" json:"ownerId"`
+	ProjectID   idgen.ID `gorm:"column:project_id;not null;default:0;index" json:"projectId"`
+	SourceType  string   `gorm:"column:source_type;size:16;not null;uniqueIndex:idx_media_asset_source,priority:1;index" json:"sourceType"`
+	SourceID    idgen.ID `gorm:"column:source_id;not null;uniqueIndex:idx_media_asset_source,priority:2;index" json:"sourceId"`
+	OutputIndex int      `gorm:"column:output_index;not null;default:0;uniqueIndex:idx_media_asset_source,priority:3" json:"outputIndex"`
+	MediaType   string   `gorm:"column:media_type;size:16;not null;index" json:"mediaType"`
+	NodeType    string   `gorm:"column:node_type;size:32;not null" json:"nodeType"`
+	Name        string   `gorm:"size:255" json:"name"`
+	URL         string   `gorm:"column:url;size:1024" json:"url"`
+	Thumbnail   string   `gorm:"column:thumbnail;size:1024" json:"thumbnail"`
+	MimeType    string   `gorm:"column:mime_type;size:128" json:"mimeType"`
+	Status      int      `gorm:"not null;default:0;index" json:"status"` // 0 processing, 1 ready
+	// Removed is an explicit tombstone instead of GORM soft-delete. Keeping the
+	// source/index key prevents lazy backfill from resurrecting deleted outputs.
+	Removed    bool      `gorm:"column:removed;not null;default:false;index" json:"-"`
+	Metadata   string    `gorm:"type:text" json:"metadata"`
+	CreateTime time.Time `gorm:"column:create_time;autoCreateTime;index:idx_media_asset_owner_time,priority:2" json:"createTime"`
+	UpdateTime time.Time `gorm:"column:update_time;autoUpdateTime" json:"updateTime"`
+}
+
+func (MediaAsset) TableName() string { return "media_assets" }

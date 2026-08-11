@@ -12,11 +12,19 @@ import {
   type CanvasSaveReconciliation,
 } from "@/lib/canvas-save-reconcile";
 import { useCanvasStore } from "@/stores/use-canvas-store";
+import { useAuthStore } from "@/stores/use-auth-store";
+import {
+  acknowledgeCanvasRecoveryDraft,
+  hasCanvasRecoveryDraft,
+  stageCanvasRecoveryDraft,
+  type CanvasRecoverySnapshot,
+} from "../../infrastructure/persistence/canvas-recovery-draft";
 import { serializeCanvasDocument } from "../../infrastructure/persistence/serialize-canvas-document";
 import { sanitizeCanvasNodeForPersistence } from "../../infrastructure/persistence/sanitize-canvas-node";
 import {
   captureCanvasError,
   captureCanvasEvent,
+  captureCanvasWarning,
 } from "../../infrastructure/telemetry/canvas-telemetry";
 
 const AUTOSAVE_DELAY_MS = 3_000;
@@ -41,6 +49,12 @@ export interface CanvasPersistenceState {
   saving: boolean;
   lastSaved: string | null;
   persistenceReady: boolean;
+}
+
+interface CapturedCanvasSnapshot {
+  snapshot: CanvasRecoverySnapshot;
+  nodeCount: number;
+  connectionCount: number;
 }
 
 function isPersistableMediaUrl(url?: string): url is string {
@@ -76,56 +90,104 @@ export function useCanvasPersistence({
   const saveRetryAttemptsRef = useRef(0);
   const pendingSaveRef = useRef(false);
   const saveAcknowledgementsRef = useRef<Array<(saved: boolean) => void>>([]);
+  const activeSaveSnapshotRef = useRef<CanvasRecoverySnapshot | null>(null);
+  const recoveryStorageWarningRef = useRef(false);
+  const recoveryRetryProjectRef = useRef<string | null>(null);
+
+  const captureSnapshot = useCallback((): CapturedCanvasSnapshot | null => {
+    const expectedRevision = revisionRef.current;
+    if (!projectId || expectedRevision === null) return null;
+    const store = useCanvasStore.getState();
+    const canvasData = serializeCanvasDocument({
+      extensions: documentExtensionsRef.current,
+      sanitizeNode: sanitizeCanvasNodeForPersistence,
+      document: {
+        nodes: store.nodes,
+        connections: store.connections,
+        groups: store.groups,
+        skillRuns: {
+          trackedRunIds: store.trackedSkillRunIds,
+          materializedArtifactIds: store.materializedArtifactIds,
+        },
+      },
+    });
+    // data/blob 地址不能进入后端短字符串封面字段。
+    const cover = (isPersistableMediaUrl(thumbnail ?? undefined) ? thumbnail : null)
+      ?? store.nodes.find(
+        (node) => isImageCanvasNodeType(node.type) && isPersistableMediaUrl(node.imageSrc),
+      )?.imageSrc
+      ?? undefined;
+    return {
+      snapshot: {
+        expectedRevision,
+        canvasData,
+        ...(cover ? { thumbnail: cover } : {}),
+      },
+      nodeCount: store.nodes.length,
+      connectionCount: store.connections.length,
+    };
+  }, [documentExtensionsRef, projectId, revisionRef, thumbnail]);
+
+  const stageCapturedSnapshot = useCallback((
+    captured: CapturedCanvasSnapshot,
+    predecessor?: CanvasRecoverySnapshot | null,
+  ): void => {
+    if (!projectId) return;
+    const userId = useAuthStore.getState().user?.id;
+    const staged = stageCanvasRecoveryDraft({
+      projectId,
+      userId,
+      ...captured.snapshot,
+      predecessor,
+    });
+    if (!staged && !recoveryStorageWarningRef.current) {
+      recoveryStorageWarningRef.current = true;
+      captureCanvasWarning("canvas.persistence.recovery_draft_unavailable", { projectId });
+    }
+  }, [projectId]);
+
+  const stageCurrentSnapshot = useCallback((): void => {
+    const captured = captureSnapshot();
+    if (captured) stageCapturedSnapshot(captured, activeSaveSnapshotRef.current);
+  }, [captureSnapshot, stageCapturedSnapshot]);
+
+  const stageCurrentSnapshotRef = useRef(stageCurrentSnapshot);
+  useEffect(() => {
+    stageCurrentSnapshotRef.current = stageCurrentSnapshot;
+  }, [stageCurrentSnapshot]);
 
   const save = useCallback(async (silent = false): Promise<boolean> => {
     if (!projectId || saveConflictRef.current || revisionRef.current === null) return false;
     if (savingRef.current) {
       pendingSaveRef.current = true;
+      stageCurrentSnapshotRef.current();
       return false;
     }
+
+    const captured = captureSnapshot();
+    if (!captured) return false;
+    const attempt = captured.snapshot;
+    stageCapturedSnapshot(captured);
 
     const acknowledgements = saveAcknowledgementsRef.current.splice(0);
     let persisted = false;
     let reconciliation: CanvasSaveReconciliation | null = null;
     let retryAutomatically = false;
     savingRef.current = true;
+    activeSaveSnapshotRef.current = attempt;
     setSaving(true);
 
     try {
-      // 卸载 flush 可能早于 React 闭包更新，必须直接读取当前 store 快照。
-      const snapshot = useCanvasStore.getState();
-      const canvasData = serializeCanvasDocument({
-        extensions: documentExtensionsRef.current,
-        sanitizeNode: sanitizeCanvasNodeForPersistence,
-        document: {
-          nodes: snapshot.nodes,
-          connections: snapshot.connections,
-          groups: snapshot.groups,
-          skillRuns: {
-            trackedRunIds: snapshot.trackedSkillRunIds,
-            materializedArtifactIds: snapshot.materializedArtifactIds,
-          },
-        },
-      });
-
-      // data/blob 地址不能进入后端短字符串封面字段。
-      const cover = (isPersistableMediaUrl(thumbnail ?? undefined) ? thumbnail : null)
-        ?? snapshot.nodes.find(
-          (node) => isImageCanvasNodeType(node.type) && isPersistableMediaUrl(node.imageSrc),
-        )?.imageSrc
-        ?? null;
-      const expectedRevision = revisionRef.current;
-      const sentThumbnail = cover || undefined;
       const response = await projectApi.saveCanvas(projectId, {
-        canvasData,
-        expectedRevision,
-        ...(sentThumbnail ? { thumbnail: sentThumbnail } : {}),
+        canvasData: attempt.canvasData,
+        expectedRevision: attempt.expectedRevision,
+        ...(attempt.thumbnail ? { thumbnail: attempt.thumbnail } : {}),
       });
 
       if (
         response.success
         && Number.isSafeInteger(response.data?.revision)
-        && response.data.revision === expectedRevision + 1
+        && response.data.revision === attempt.expectedRevision + 1
       ) {
         revisionRef.current = response.data.revision;
         saveRetryAttemptsRef.current = 0;
@@ -135,7 +197,7 @@ export function useCanvasPersistence({
         // PUT 可能已提交但响应丢失；读取权威快照后再判断冲突。
         const remote = await projectApi.get(projectId);
         reconciliation = reconcileCanvasSave(
-          { expectedRevision, canvasData, thumbnail: sentThumbnail },
+          attempt,
           remote.success && remote.data
             ? {
                 revision: remote.data.revision,
@@ -166,11 +228,20 @@ export function useCanvasPersistence({
       }
 
       if (persisted) {
+        const acknowledgedRevision = revisionRef.current;
+        if (acknowledgedRevision !== null) {
+          acknowledgeCanvasRecoveryDraft({
+            projectId,
+            userId: useAuthStore.getState().user?.id,
+            snapshot: attempt,
+            revision: acknowledgedRevision,
+          });
+        }
         setLastSaved(new Date().toLocaleTimeString("zh-CN"));
         captureCanvasEvent("canvas.persistence.saved", {
           projectId,
-          nodeCount: snapshot.nodes.length,
-          connectionCount: snapshot.connections.length,
+          nodeCount: captured.nodeCount,
+          connectionCount: captured.connectionCount,
         });
         if (!silent) toast.success("已保存");
       }
@@ -182,6 +253,7 @@ export function useCanvasPersistence({
     } finally {
       acknowledgements.forEach((acknowledge) => acknowledge(persisted));
       savingRef.current = false;
+      if (activeSaveSnapshotRef.current === attempt) activeSaveSnapshotRef.current = null;
       setSaving(false);
 
       if (!saveConflictRef.current) {
@@ -209,7 +281,14 @@ export function useCanvasPersistence({
     }
 
     return persisted;
-  }, [documentExtensionsRef, projectId, revisionRef, saveConflictRef, setSaveConflict, thumbnail]);
+  }, [
+    captureSnapshot,
+    projectId,
+    revisionRef,
+    saveConflictRef,
+    setSaveConflict,
+    stageCapturedSnapshot,
+  ]);
 
   const saveRef = useRef(save);
   useEffect(() => {
@@ -225,6 +304,8 @@ export function useCanvasPersistence({
       const event = rawEvent as CustomEvent<CanvasSaveRequestDetail | undefined>;
       const detail = event.detail;
       if (detail?.projectId && detail.projectId !== projectId) return;
+      // 生成结果写入 store 后先同步留恢复快照，再开始/排队网络保存。
+      stageCurrentSnapshotRef.current();
       if (saveConflictRef.current) {
         if (detail) {
           detail.handled = true;
@@ -266,6 +347,25 @@ export function useCanvasPersistence({
     autosaveTimerRef.current = null;
     void saveRef.current(true);
   }, []);
+
+  // 刷新恢复出的草稿跳过 3 秒防抖，挂载后立即按当前服务端 revision 重试。
+  useEffect(() => {
+    if (!loaded || saveConflict || !projectId) {
+      recoveryRetryProjectRef.current = null;
+      return;
+    }
+    if (recoveryRetryProjectRef.current === projectId) return;
+    const userId = useAuthStore.getState().user?.id;
+    if (!hasCanvasRecoveryDraft(projectId, userId)) return;
+    recoveryRetryProjectRef.current = projectId;
+    queueMicrotask(() => {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+      void saveRef.current(true);
+    });
+  }, [loaded, projectId, saveConflict]);
 
   useEffect(() => {
     if (!loaded || saveConflict) return;

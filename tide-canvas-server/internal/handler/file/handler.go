@@ -115,6 +115,10 @@ func removeMultipartTempFiles(c *gin.Context) {
 
 // saveHeader opens a multipart file header and persists it.
 func (h *handler) saveHeader(c *gin.Context, uid idgen.ID, fh *multipart.FileHeader) (*FileVO, error) {
+	projectID, err := idgen.Parse(c.PostForm("projectId"))
+	if err != nil {
+		return nil, errInvalidProject
+	}
 	src, err := fh.Open()
 	if err != nil {
 		return nil, errEmptyFile
@@ -129,6 +133,8 @@ func (h *handler) saveHeader(c *gin.Context, uid idgen.ID, fh *multipart.FileHea
 		ContentType:  ct,
 		FileTypeHint: c.PostForm("fileType"),
 		CategoryHint: c.PostForm("category"),
+		ProjectID:    projectID,
+		EntryPoint:   c.PostForm("entryPoint"),
 		Size:         fh.Size,
 		Reader:       src,
 	})
@@ -250,6 +256,10 @@ func writeUploadErr(c *gin.Context, err error) {
 		response.Fail(c, response.CodeFileTypeNotAllowed, "file type is not allowed")
 	case errors.Is(err, errInvalidCategory):
 		response.Fail(c, response.CodeBadRequest, "invalid asset category")
+	case errors.Is(err, errInvalidProject), errors.Is(err, errInvalidEntryPoint):
+		response.Fail(c, response.CodeBadRequest, "invalid upload context")
+	case errors.Is(err, errProjectUnavailable):
+		response.Fail(c, response.CodeForbidden, "current canvas is unavailable")
 	case errors.Is(err, errEmptyFile):
 		response.Fail(c, response.CodeBadRequest, "empty file")
 	case errors.Is(err, errStorageInsufficient):

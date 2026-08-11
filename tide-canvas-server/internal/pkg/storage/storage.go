@@ -237,6 +237,17 @@ func (l *LocalStorage) OwnsURL(u string) (string, bool) {
 	return canonicalObjectURL(l.publicURL, key)
 }
 
+// DeleteURL removes an object only when the URL belongs to this configured
+// storage namespace. It is intentionally optional (not part of
+// StorageStrategy) so external test doubles and integrations remain compatible.
+func (l *LocalStorage) DeleteURL(ctx context.Context, raw string) error {
+	key, ok := ownedObjectKey(raw, []string{l.publicURL}, "")
+	if !ok {
+		return nil
+	}
+	return l.Delete(ctx, key)
+}
+
 // PublicRewrites returns nil: local assets are served from a single stable
 // prefix, nothing to normalize.
 func (l *LocalStorage) PublicRewrites() [][2]string { return nil }

@@ -4,6 +4,9 @@ export interface FileVO {
   id: string; // 后端雪花 ID 序列化为字符串
   /** 归属用户ID（团队共享时区分自己/队友的素材） */
   ownerId?: string;
+  /** Canvas that initiated this upload; "0" means a non-canvas/legacy source. */
+  projectId?: string;
+  entryPoint?: "upload" | "canvas" | "studio" | "chat" | "tool" | "assets";
   originalName: string;
   fileUrl: string;
   fileSize: number;

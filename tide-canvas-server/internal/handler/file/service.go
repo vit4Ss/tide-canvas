@@ -20,6 +20,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"tidecanvas/internal/app"
+	"tidecanvas/internal/handler/asset"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/logger"
@@ -51,6 +52,9 @@ var (
 	errStorageInsufficient = errors.New("storage quota is insufficient")
 	errUploadGrantInvalid  = errors.New("direct upload grant is invalid or expired")
 	errUploadMismatch      = errors.New("uploaded object does not match its grant")
+	errInvalidProject      = errors.New("invalid upload project")
+	errProjectUnavailable  = errors.New("upload project unavailable")
+	errInvalidEntryPoint   = errors.New("invalid upload entry point")
 )
 
 // service holds file domain business logic.
@@ -80,7 +84,9 @@ type uploadInput struct {
 	ContentType  string
 	FileTypeHint string // optional client hint ("image"|"video"|"other")
 	CategoryHint string // optional business category ("general"|"character"|"scene")
-	Size         int64  // -1 if unknown (streamed)
+	ProjectID    idgen.ID
+	EntryPoint   string
+	Size         int64 // -1 if unknown (streamed)
 	Reader       io.Reader
 }
 
@@ -91,6 +97,13 @@ func (s *service) upload(ctx context.Context, ownerID idgen.ID, in uploadInput) 
 	}
 	if in.Size > maxFileSize {
 		return nil, errFileTooLarge
+	}
+	entryPoint, err := normalizeEntryPoint(in.EntryPoint)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.validateUploadProject(ctx, ownerID, in.ProjectID); err != nil {
+		return nil, err
 	}
 
 	ct := normalizeContentType(in.ContentType, in.OriginalName)
@@ -128,6 +141,8 @@ func (s *service) upload(ctx context.Context, ownerID idgen.ID, in uploadInput) 
 	f := &model.File{
 		ID:           idgen.Next(),
 		OwnerID:      ownerID,
+		ProjectID:    in.ProjectID,
+		EntryPoint:   entryPoint,
 		OriginalName: fallbackName(in.OriginalName, ftype),
 		StorageKey:   key,
 		FileUrl:      url,
@@ -155,6 +170,13 @@ func (s *service) presign(ctx context.Context, ownerID idgen.ID, dto presignDTO)
 	}
 	if dto.Size > maxFileSize {
 		return nil, errFileTooLarge
+	}
+	entryPoint, err := normalizeEntryPoint(dto.EntryPoint)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.validateUploadProject(ctx, ownerID, dto.ProjectID); err != nil {
+		return nil, err
 	}
 	if len([]byte(strings.TrimSpace(dto.Filename))) > 512 {
 		return nil, errBadURL
@@ -191,6 +213,8 @@ func (s *service) presign(ctx context.Context, ownerID idgen.ID, dto presignDTO)
 	grant := &model.FileUploadGrant{
 		ID:           idgen.Next(),
 		OwnerID:      ownerID,
+		ProjectID:    dto.ProjectID,
+		EntryPoint:   entryPoint,
 		StorageKey:   key,
 		StorageScope: s.storageScope,
 		OriginalName: fallbackName(strings.TrimSpace(dto.Filename), ftype),
@@ -311,6 +335,8 @@ func (s *service) register(ctx context.Context, ownerID idgen.ID, dto registerDT
 		fileRow := &model.File{
 			ID:           idgen.Next(),
 			OwnerID:      ownerID,
+			ProjectID:    locked.ProjectID,
+			EntryPoint:   locked.EntryPoint,
 			OriginalName: locked.OriginalName,
 			StorageKey:   key,
 			FileUrl:      s.store.URL(key),
@@ -322,6 +348,9 @@ func (s *service) register(ctx context.Context, ownerID idgen.ID, dto registerDT
 			CreateTime:   time.Now(),
 		}
 		if err := tx.Create(fileRow).Error; err != nil {
+			return err
+		}
+		if err := asset.EnsureUpload(ctx, tx, fileRow); err != nil {
 			return err
 		}
 		if err := tx.Model(&model.User{}).Where("id = ?", ownerID).
@@ -356,6 +385,9 @@ func (s *service) createFileWithQuota(ctx context.Context, f *model.File) error 
 			return errStorageInsufficient
 		}
 		if err := tx.Create(f).Error; err != nil {
+			return err
+		}
+		if err := asset.EnsureUpload(ctx, tx, f); err != nil {
 			return err
 		}
 		return tx.Model(&model.User{}).Where("id = ?", f.OwnerID).
@@ -433,6 +465,8 @@ func (s *service) saveFromURL(ctx context.Context, ownerID idgen.ID, dto saveFro
 		ContentType:  ct,
 		FileTypeHint: dto.FileType,
 		CategoryHint: dto.Category,
+		ProjectID:    dto.ProjectID,
+		EntryPoint:   dto.EntryPoint,
 		Size:         resp.ContentLength,
 		Reader:       resp.Body,
 	})
@@ -676,18 +710,55 @@ func (s *service) delete(ctx context.Context, ownerID idgen.ID, id idgen.ID) err
 	if f.OwnerID != ownerID {
 		return errFileForbidden
 	}
-	if err := s.repo.delete(ctx, id); err != nil {
+	if err := s.repo.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(&model.File{}, "id = ? AND owner_id = ?", id, ownerID).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.MediaAsset{}).
+			Where("source_type = ? AND source_id = ? AND removed = ?", asset.SourceUpload, id, false).
+			Updates(map[string]any{"removed": true, "update_time": time.Now()}).Error; err != nil {
+			return err
+		}
+		if f.FileSize > 0 {
+			return tx.Model(&model.User{}).Where("id = ?", ownerID).
+				UpdateColumn("storage_used", gorm.Expr("GREATEST(storage_used - ?, 0)", f.FileSize)).Error
+		}
+		return nil
+	}); err != nil {
 		return err
 	}
 	if err := s.store.Delete(ctx, f.StorageKey); err != nil {
 		logger.L().Warn("file: storage delete failed", zap.String("key", f.StorageKey), zap.Error(err))
 	}
-	if f.FileSize > 0 {
-		if err := s.repo.addStorageUsed(ctx, ownerID, -f.FileSize); err != nil {
-			logger.L().Warn("file: decrement storage usage failed", zap.Error(err))
-		}
+	return nil
+}
+
+func (s *service) validateUploadProject(ctx context.Context, ownerID, projectID idgen.ID) error {
+	if projectID == 0 {
+		return nil
+	}
+	var count int64
+	if err := s.repo.db.WithContext(ctx).Model(&model.Project{}).
+		Where("id = ? AND owner_id = ?", projectID, ownerID).Count(&count).Error; err != nil {
+		return err
+	}
+	if count == 0 {
+		return errProjectUnavailable
 	}
 	return nil
+}
+
+func normalizeEntryPoint(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return "upload", nil
+	}
+	switch value {
+	case "upload", "canvas", "studio", "chat", "tool", "assets":
+		return value, nil
+	default:
+		return "", errInvalidEntryPoint
+	}
 }
 
 // ---- helpers ------------------------------------------------------------

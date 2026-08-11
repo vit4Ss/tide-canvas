@@ -13,6 +13,11 @@ import type {
   AiGenerationLogVO, AiGenerationLogQuery,
 } from "@/types/ai";
 import type { FileCategory, FileVO, FileQuery } from "@/types/file";
+import type {
+  MediaAssetBatchDeleteVO,
+  MediaAssetPageVO,
+  MediaAssetQuery,
+} from "@/types/media-asset";
 // 画布风格库所需类型
 import type {
   StylePresetQuery, StylePresetVO, StyleFavoriteToggleVO, StylePresetSaveDTO,
@@ -122,18 +127,27 @@ export const fileApi = {
     http.uploadProgress<FileVO>("/api/files/upload", file, onProgress),
   uploadBatch: (formData: FormData) =>
     http.upload<FileVO[]>("/api/files/upload/batch", formData),
-  presign: (data: { filename: string; contentType: string; size: number; fileType?: string; category?: FileCategory }) =>
+  presign: (data: { filename: string; contentType: string; size: number; fileType?: string; category?: FileCategory; projectId?: string; entryPoint?: string }) =>
     http.post<FilePresignVO>("/api/files/presign", data),
-  register: (data: { key: string; originalName: string; contentType: string; fileType?: string; category?: FileCategory }) =>
+  register: (data: { key: string; originalName: string; contentType: string; fileType?: string; category?: FileCategory; projectId?: string; entryPoint?: string }) =>
     http.post<FileVO>("/api/files/register", data),
   list: (query: FileQuery) =>
     http.get<PageResult<FileVO>["data"]>("/api/files", toParams(query)),
-  saveFromUrl: (data: { url: string; fileType?: string; category?: FileCategory; originalName?: string }) =>
+  saveFromUrl: (data: { url: string; fileType?: string; category?: FileCategory; originalName?: string; projectId?: string; entryPoint?: string }) =>
     http.post<FileVO>("/api/files/save-from-url", data),
   get: (id: string) =>
     http.get<FileVO>(`/api/files/detail/${id}`),
   delete: (id: string | number) =>
     http.delete<void>(`/api/files/detail/${id}`),
+};
+
+export const mediaAssetApi = {
+  list: (query: MediaAssetQuery) =>
+    http.get<MediaAssetPageVO>("/api/media-assets", toParams(query)),
+  delete: (id: string) =>
+    http.delete<void>(`/api/media-assets/${id}`),
+  batchDelete: (ids: string[]) =>
+    http.post<MediaAssetBatchDeleteVO>("/api/media-assets/batch-delete", { ids }),
 };
 
 /**
@@ -142,6 +156,8 @@ export const fileApi = {
  */
 export interface UploadFileSmartOptions extends UploadLimitOptions {
   category?: FileCategory;
+  projectId?: string;
+  entryPoint?: "upload" | "canvas" | "studio" | "chat" | "tool" | "assets";
 }
 
 function retryableUploadResult(result: Result<unknown>): boolean {
@@ -180,7 +196,17 @@ export async function uploadFileSmart(file: File, onProgress?: (pct: number) => 
   if (executable) return executable;
   const contentType = file.type || "application/octet-stream";
   try {
-    const pre = await fileApi.presign({ filename: file.name, contentType, size: file.size, category: options?.category });
+    const uploadContext = {
+      projectId: options?.projectId,
+      entryPoint: options?.entryPoint,
+    };
+    const pre = await fileApi.presign({
+      filename: file.name,
+      contentType,
+      size: file.size,
+      category: options?.category,
+      ...uploadContext,
+    });
     if (pre.success && pre.data?.direct && pre.data.uploadUrl && pre.data.key) {
       const putHeaders = {
         "Content-Type": pre.data.contentType || contentType,
@@ -192,6 +218,7 @@ export async function uploadFileSmart(file: File, onProgress?: (pct: number) => 
         originalName: file.name,
         contentType,
         category: options?.category,
+        ...uploadContext,
       };
       if (put.ok) {
         const registered = await fileApi.register(registration);
@@ -219,10 +246,12 @@ export async function uploadFileSmart(file: File, onProgress?: (pct: number) => 
   } catch {
     // presign 异常 → 回退中转上传
   }
-  if (options?.category) {
+  if (options?.category || options?.projectId || options?.entryPoint) {
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("category", options.category);
+    if (options?.category) formData.append("category", options.category);
+    if (options?.projectId) formData.append("projectId", options.projectId);
+    if (options?.entryPoint) formData.append("entryPoint", options.entryPoint);
     return http.uploadProgress<FileVO>("/api/files/upload", formData, onProgress);
   }
   return http.uploadProgress<FileVO>("/api/files/upload", file, onProgress);

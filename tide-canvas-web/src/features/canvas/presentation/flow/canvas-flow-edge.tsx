@@ -3,6 +3,7 @@
 import { memo } from "react";
 import { BaseEdge, type EdgeProps } from "@xyflow/react";
 import type { CanvasFlowEdge } from "../../infrastructure/react-flow/canvas-flow-types";
+import styles from "./canvas-flow.module.css";
 
 function bezierPath(sourceX: number, sourceY: number, targetX: number, targetY: number): string {
   const distance = Math.hypot(targetX - sourceX, targetY - sourceY);
@@ -23,7 +24,11 @@ export const CanvasFlowEdgeView = memo(function CanvasFlowEdgeView({
   data,
   interactionWidth,
 }: EdgeProps<CanvasFlowEdge>) {
-  const path = bezierPath(sourceX, sourceY, targetX, targetY);
+  const visibleSourceX = data?.sourceAnchor?.x ?? sourceX;
+  const visibleSourceY = data?.sourceAnchor?.y ?? sourceY;
+  const visibleTargetX = data?.targetAnchor?.x ?? targetX;
+  const visibleTargetY = data?.targetAnchor?.y ?? targetY;
+  const path = bezierPath(visibleSourceX, visibleSourceY, visibleTargetX, visibleTargetY);
   const related = data?.relatedToSelection === true;
   const highlighted = selected || related;
 
@@ -32,21 +37,28 @@ export const CanvasFlowEdgeView = memo(function CanvasFlowEdgeView({
       <BaseEdge
         path={path}
         interactionWidth={interactionWidth}
-        className={highlighted ? "stroke-blue-500" : "stroke-neutral-400 dark:stroke-neutral-500"}
-        style={{ fill: "none", strokeWidth: highlighted ? 3 : 2 }}
+        className={highlighted
+          ? "stroke-sky-500/80 dark:stroke-sky-400/80"
+          : "stroke-neutral-300 dark:stroke-neutral-600"}
+        style={{
+          fill: "none",
+          strokeWidth: highlighted ? 1.75 : 1.5,
+          strokeLinecap: "round",
+          transition: "stroke 160ms ease-out, stroke-width 160ms ease-out",
+          vectorEffect: "non-scaling-stroke",
+        }}
       />
       {related && (
         <path
           d={path}
           fill="none"
           stroke="currentColor"
-          strokeWidth={3}
+          strokeWidth={2}
           strokeLinecap="round"
-          strokeDasharray="16 200"
-          className="pointer-events-none text-sky-200 dark:text-sky-300"
-        >
-          <animate attributeName="stroke-dashoffset" from="216" to="0" dur="1.3s" repeatCount="indefinite" />
-        </path>
+          strokeDasharray="3 10"
+          vectorEffect="non-scaling-stroke"
+          className={`${styles.edgeFlow} pointer-events-none text-sky-500/95 dark:text-sky-300/90`}
+        />
       )}
     </>
   );

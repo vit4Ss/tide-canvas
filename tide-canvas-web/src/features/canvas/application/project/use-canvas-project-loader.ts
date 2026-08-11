@@ -8,7 +8,11 @@ import { readCanvasLaunchJournal, type CanvasLaunchJournal } from "@/lib/canvas-
 import { useAuthStore } from "@/stores/use-auth-store";
 import { useCanvasStore } from "@/stores/use-canvas-store";
 import { decodeCanvasDocument } from "../../domain/schemas/decode-canvas-document";
-import { captureCanvasWarning } from "../../infrastructure/telemetry/canvas-telemetry";
+import { resolveCanvasRecoveryDraft } from "../../infrastructure/persistence/canvas-recovery-draft";
+import {
+  captureCanvasEvent,
+  captureCanvasWarning,
+} from "../../infrastructure/telemetry/canvas-telemetry";
 
 interface MutableValue<T> {
   current: T;
@@ -87,18 +91,30 @@ export function useCanvasProjectLoader({
         return;
       }
 
-      setSaveConflict(false);
       const resolvedProjectId = String(response.data.id);
+      const remoteRevision = Number.isSafeInteger(response.data.revision) && response.data.revision >= 0
+        ? response.data.revision
+        : 0;
+      const recovery = resolveCanvasRecoveryDraft(
+        resolvedProjectId,
+        useAuthStore.getState().user?.id,
+        {
+          revision: remoteRevision,
+          canvasData: response.data.canvasData || "{}",
+          thumbnail: response.data.thumbnail || undefined,
+        },
+      );
+      const recoveredConflict = recovery.kind === "conflict";
+      saveConflictRef.current = recoveredConflict;
+      setSaveConflict(recoveredConflict);
       setProjectId(resolvedProjectId);
       setCurrentProjectId(resolvedProjectId);
       setProjectName(response.data.name);
       setThumbnail(response.data.thumbnail || null);
-      revisionRef.current = Number.isSafeInteger(response.data.revision) && response.data.revision >= 0
-        ? response.data.revision
-        : 0;
+      revisionRef.current = recovery.revision;
 
-      if (response.data.canvasData && response.data.canvasData !== "{}") {
-        const decoded = decodeCanvasDocument(response.data.canvasData);
+      if (recovery.canvasData && recovery.canvasData !== "{}") {
+        const decoded = decodeCanvasDocument(recovery.canvasData);
         documentExtensionsRef.current = decoded.extensions;
         loadCanvas(
           decoded.document.nodes,
@@ -112,10 +128,22 @@ export function useCanvasProjectLoader({
             warningCount: decoded.warnings.length,
           });
         }
-        resumeGeneration();
+        if (!recoveredConflict) resumeGeneration();
       } else {
         // Store 是跨路由单例；空项目必须显式清空，避免把上一个项目串入本项目。
         loadCanvas([], []);
+      }
+
+      if (recovery.kind === "recovered") {
+        toast.info("已恢复刷新前尚未保存的画布结果，正在自动重试");
+        captureCanvasEvent("canvas.persistence.recovery_draft_restored", {
+          projectId: resolvedProjectId,
+        });
+      } else if (recoveredConflict) {
+        toast.error("检测到其他窗口更新；已保留本页结果并暂停覆盖保存");
+        captureCanvasWarning("canvas.persistence.recovery_draft_conflict", {
+          projectId: resolvedProjectId,
+        });
       }
 
       if (requestedHandoffId && !useAuthStore.getState().user) {

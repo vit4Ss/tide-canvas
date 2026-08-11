@@ -1,37 +1,45 @@
 package file
 
+import "tidecanvas/internal/pkg/idgen"
+
 // presignDTO is the body of POST /api/files/presign.
 //
 // Matches the frontend fileApi.presign payload:
 //
 //	{ filename: string; contentType: string; size: number; fileType?: string }
 type presignDTO struct {
-	Filename    string `json:"filename"`
-	ContentType string `json:"contentType"`
-	Size        int64  `json:"size"`
-	FileType    string `json:"fileType"`
-	Category    string `json:"category"`
+	Filename    string   `json:"filename"`
+	ContentType string   `json:"contentType"`
+	Size        int64    `json:"size"`
+	FileType    string   `json:"fileType"`
+	Category    string   `json:"category"`
+	ProjectID   idgen.ID `json:"projectId"`
+	EntryPoint  string   `json:"entryPoint"`
 }
 
 // registerDTO is the body of POST /api/files/register (post direct-upload).
 //
 //	{ key: string; originalName: string; contentType: string; fileType?: string }
 type registerDTO struct {
-	Key          string `json:"key"`
-	OriginalName string `json:"originalName"`
-	ContentType  string `json:"contentType"`
-	FileType     string `json:"fileType"`
-	Category     string `json:"category"`
+	Key          string   `json:"key"`
+	OriginalName string   `json:"originalName"`
+	ContentType  string   `json:"contentType"`
+	FileType     string   `json:"fileType"`
+	Category     string   `json:"category"`
+	ProjectID    idgen.ID `json:"projectId"`
+	EntryPoint   string   `json:"entryPoint"`
 }
 
 // saveFromURLDTO is the body of POST /api/files/save-from-url.
 //
 //	{ url: string; fileType?: string; originalName?: string }
 type saveFromURLDTO struct {
-	URL          string `json:"url"`
-	FileType     string `json:"fileType"`
-	Category     string `json:"category"`
-	OriginalName string `json:"originalName"`
+	URL          string   `json:"url"`
+	FileType     string   `json:"fileType"`
+	Category     string   `json:"category"`
+	OriginalName string   `json:"originalName"`
+	ProjectID    idgen.ID `json:"projectId"`
+	EntryPoint   string   `json:"entryPoint"`
 }
 
 // fileQuery is the query string of GET /api/files (FileQuery).

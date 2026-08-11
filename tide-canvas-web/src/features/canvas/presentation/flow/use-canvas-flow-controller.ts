@@ -11,6 +11,7 @@ import {
 } from "react";
 import {
   type Connection as ReactFlowConnection,
+  type EdgeChange,
   type NodeChange,
   type OnConnectEnd,
   type ReactFlowInstance,
@@ -58,7 +59,7 @@ export interface CanvasFlowController {
   isNodeDragging: boolean;
   handleQuickAdd: (type: string) => void;
   handleNodesChange: (changes: NodeChange<CanvasFlowNode>[]) => void;
-  handleSelectionChange: (selection: { nodes: CanvasFlowNode[]; edges: CanvasFlowEdge[] }) => void;
+  handleEdgesChange: (changes: EdgeChange<CanvasFlowEdge>[]) => void;
   handleNodeDragStart: () => void;
   handleNodeDragStop: () => void;
   handleConnect: (connection: ReactFlowConnection) => void;
@@ -102,8 +103,8 @@ export function useCanvasFlowController({
     [nodes, selectedNodeIds],
   );
   const flowEdges = useMemo(
-    () => toCanvasFlowEdges(connections, selectedNodeIds, selectedConnectionId),
-    [connections, selectedConnectionId, selectedNodeIds],
+    () => toCanvasFlowEdges(connections, nodes, selectedNodeIds, selectedConnectionId),
+    [connections, nodes, selectedConnectionId, selectedNodeIds],
   );
 
   const handleQuickAdd = useCallback((type: string): void => {
@@ -126,23 +127,44 @@ export function useCanvasFlowController({
 
   const handleNodesChange = useCallback((changes: NodeChange<CanvasFlowNode>[]): void => {
     const updates: Array<{ id: string; x: number; y: number }> = [];
+    const selectionChanges = changes.filter((change) => change.type === "select");
     changes.forEach((change) => {
       if (change.type === "position" && change.position) {
         updates.push({ id: change.id, x: change.position.x, y: change.position.y });
       }
     });
-    if (updates.length > 0) useCanvasStore.getState().updateNodePositions(updates);
+
+    const store = useCanvasStore.getState();
+    if (updates.length > 0) store.updateNodePositions(updates);
+
+    // React Flow 当前使用受控 nodes：交互变更不会自动写回传入的 nodes，必须由
+    // onNodesChange 显式映射到领域 store。dimensions 只用于 React Flow 内部测量；
+    // add/remove/replace 由项目命令负责，当前交互配置不会从框架侧产生。
+    if (selectionChanges.length > 0) {
+      const nextSelectedIds = new Set(store.selectedNodeIds);
+      selectionChanges.forEach((change) => {
+        if (change.selected) nextSelectedIds.add(change.id);
+        else nextSelectedIds.delete(change.id);
+      });
+      if (!sameStringSet(store.selectedNodeIds, nextSelectedIds)) {
+        store.selectMany([...nextSelectedIds]);
+      }
+    }
   }, []);
 
-  const handleSelectionChange = useCallback((selection: {
-    nodes: CanvasFlowNode[];
-    edges: CanvasFlowEdge[];
-  }): void => {
+  const handleEdgesChange = useCallback((changes: EdgeChange<CanvasFlowEdge>[]): void => {
+    const selectionChanges = changes.filter((change) => change.type === "select");
+    if (selectionChanges.length === 0) return;
+
     const store = useCanvasStore.getState();
-    const nodeIds = new Set(selection.nodes.map((node) => node.id));
-    const edgeId = selection.edges[0]?.id ?? null;
-    if (!sameStringSet(store.selectedNodeIds, nodeIds)) store.selectMany([...nodeIds]);
-    if (store.selectedConnectionId !== edgeId) store.selectConnection(edgeId);
+    // 领域模型只支持单条连线选择。批量变化时优先采用本批次中新选中的连线；
+    // 若只是取消当前连线，则清空。其它边的取消通知不得误清当前选择。
+    const selectedChange = selectionChanges.find((change) => change.selected);
+    const currentDeselected = selectionChanges.some(
+      (change) => !change.selected && change.id === store.selectedConnectionId,
+    );
+    const nextSelectedId = selectedChange?.id ?? (currentDeselected ? null : store.selectedConnectionId);
+    if (nextSelectedId !== store.selectedConnectionId) store.selectConnection(nextSelectedId);
   }, []);
 
   const handleNodeDragStart = useCallback((): void => {
@@ -194,12 +216,19 @@ export function useCanvasFlowController({
   }, [screenToWorld]);
 
   const handlePaneClick = useCallback((): void => {
+    // 先触发编辑控件的 blur 提交，再清空受控选择，避免仅视觉取消选中但焦点仍被保留。
+    const activeElement = document.activeElement;
+    if (
+      activeElement instanceof HTMLElement &&
+      containerRef.current?.contains(activeElement)
+    ) {
+      activeElement.blur();
+    }
     closeTransientUi();
     setQuickAdd(null);
     const store = useCanvasStore.getState();
     store.clearSelection();
-    store.selectConnection(null);
-  }, [closeTransientUi]);
+  }, [closeTransientUi, containerRef]);
 
   const handleMove = useCallback((
     _event: MouseEvent | TouchEvent | null,
@@ -233,7 +262,7 @@ export function useCanvasFlowController({
     isNodeDragging,
     handleQuickAdd,
     handleNodesChange,
-    handleSelectionChange,
+    handleEdgesChange,
     handleNodeDragStart,
     handleNodeDragStop,
     handleConnect,

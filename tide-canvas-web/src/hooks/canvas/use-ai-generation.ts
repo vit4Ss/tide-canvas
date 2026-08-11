@@ -12,6 +12,7 @@ import type { AiTaskVO, AiGenerateInput } from "@/types/ai";
 import { AiTaskStatus } from "@/types/ai";
 import { toast } from "@/components/shared/toast";
 import { requestCanvasSave } from "@/lib/canvas-save";
+import { currentCanvasUploadContext } from "@/features/canvas/application/media/canvas-upload-context";
 import { isAmbiguousAiCreateCode } from "@/lib/ai-generation-idempotency";
 import {
   matchesCanvasGeneration,
@@ -149,7 +150,10 @@ async function sliceGridAndApply(nodeId: string, gridUrl: string) {
     let firstFile: { fileSize: number; fileType: string; mimeType: string } | null = null;
     for (const s of slices) {
       const up = await uploadFileSmart(
-          new File([s.blob], `grid-${s.cellIndex + 1}.png`, { type: "image/png" }));
+        new File([s.blob], `grid-${s.cellIndex + 1}.png`, { type: "image/png" }),
+        undefined,
+        currentCanvasUploadContext(),
+      );
       if (!up.success || !up.data?.fileUrl) throw new Error("upload failed");
       remote.push(up.data.fileUrl);
       if (!firstFile) firstFile = { fileSize: up.data.fileSize, fileType: up.data.fileType, mimeType: up.data.mimeType };
@@ -159,6 +163,7 @@ async function sliceGridAndApply(nodeId: string, gridUrl: string) {
       return;
     }
     useCanvasStore.getState().updateNode(nodeId, { images: remote, imageSrc: remote[0], ...(firstFile ? { fileSize: firstFile.fileSize, fileType: firstFile.fileType, mimeType: firstFile.mimeType } : {}) });
+    saveGenerationState();
     const toRevoke = blobUrls;
     blobUrls = [];
     setTimeout(() => toRevoke.forEach((u) => URL.revokeObjectURL(u)), 5000);
@@ -237,6 +242,7 @@ function pollTask(nodeId: string, taskId: string, startTime: number, input: Reco
         const unrecoverableLookup = !isAmbiguousAiCreateCode(res.code);
         if (unrecoverableLookup) {
           markGenerationFailed(nodeId, taskId);
+          saveGenerationState();
           finish(nodeId, taskId);
           toast.error(res.message || "生成失败");
           return;
@@ -268,6 +274,7 @@ function pollTask(nodeId: string, taskId: string, startTime: number, input: Reco
             toast.success("生成成功");
             onSuccess?.(text);
           }
+          saveGenerationState();
           finish(nodeId, taskId);
           return;
         }
@@ -309,13 +316,16 @@ function pollTask(nodeId: string, taskId: string, startTime: number, input: Reco
           toast.success("生成成功");
           onSuccess?.(primary);
         }
+        saveGenerationState();
         finish(nodeId, taskId);
       } else if (task.status === AiTaskStatus.FAILED) {
         markGenerationFailed(nodeId, taskId);
+        saveGenerationState();
         toast.error(task.errorMsg || "生成失败");
         finish(nodeId, taskId);
       } else if (task.status === AiTaskStatus.CANCELLED) {
         updateNode(nodeId, { status: "idle", taskId: undefined });
+        saveGenerationState();
         finish(nodeId, taskId);
       } else {
         // 仍在处理中，继续轮询
@@ -344,7 +354,7 @@ function pollTask(nodeId: string, taskId: string, startTime: number, input: Reco
   poll();
 }
 
-function saveGenerationState(projectId?: string) {
+function saveGenerationState(projectId = useCanvasStore.getState().currentProjectId || undefined) {
   if (projectId) void requestCanvasSave(projectId);
 }
 

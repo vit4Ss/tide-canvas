@@ -47,6 +47,7 @@ import {
   validateKnownFileSize,
 } from "@/lib/upload-limits";
 import { useCanvasStore, type CanvasNode, type Connection } from "@/stores/use-canvas-store";
+import { currentCanvasUploadContext } from "@/features/canvas/application/media/canvas-upload-context";
 import { AiModelType, type AiModelVO } from "@/types/ai";
 import { FileType, type FileVO } from "@/types/file";
 import { skillKindOf, skillOutputTypesOf, type SkillVO } from "@/types/skill";
@@ -725,6 +726,7 @@ export function CanvasQuickStart({
         }, {
           maxBytes: resolveModelReferenceLimitBytes(uploadModel, kind, uploadHandler),
           label: referenceLabel,
+          ...currentCanvasUploadContext(),
         });
         if (!isCurrent()) return;
         if (result.success && result.data) uploaded.push(result.data);

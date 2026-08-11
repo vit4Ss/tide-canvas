@@ -13,6 +13,7 @@ import {
   canCommitCanvasMediaUpload,
   canReplaceCanvasMedia,
 } from "@/lib/canvas-generation-guard";
+import { currentCanvasUploadContext } from "@/features/canvas/application/media/canvas-upload-context";
 
 export type UploadMediaKind = "image" | "video";
 
@@ -98,6 +99,7 @@ export function useMediaUpload(node: CanvasNode, kind: UploadMediaKind, selected
         maxBytes: resolveModelReferenceLimitBytes(selectedModel, kind),
         label: KIND_META[kind].label,
         category: assetCategory,
+        ...currentCanvasUploadContext(),
       });
       if (res.success) {
         const latest = useCanvasStore.getState().nodes.find((item) => item.id === node.id);

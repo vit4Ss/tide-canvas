@@ -9,6 +9,7 @@ import { uploadFileSmart } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/http";
 import { toast } from "@/components/shared/toast";
 import { CHARACTER_NODE_TYPE, SCENE_NODE_TYPE } from "@/lib/canvas-node-types";
+import { currentCanvasUploadContext } from "@/features/canvas/application/media/canvas-upload-context";
 import {
   buildMannequinFigure, buildSkinnedFigure, parseState, lightPositionFromAngles, makeLabelSprite, characterNameByIndex,
   LIGHT_NAMES, LIGHT_PRESETS, CHARACTER_COLORS, DEFAULT_ENV, POSE_SLIDER_GROUPS,
@@ -860,7 +861,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
       const blob = await apiRef.current.snapshot();
       if (!blob) { toast.error("截图失败，请重试"); return; }
       const file = new File([blob], `director_${Date.now()}.png`, { type: "image/png" });
-      const up = await uploadFileSmart(file);
+      const up = await uploadFileSmart(file, undefined, currentCanvasUploadContext());
       if (!up.success || !up.data) { toast.error(up.message || "截图上传失败"); return; }
       const url = up.data.fileUrl;
       persist();
