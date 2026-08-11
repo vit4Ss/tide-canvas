@@ -153,10 +153,14 @@ export const TOOL_TO_HANDLER: Record<ToolKey, string> = {
   mv2_3d: "generate_3d",
 };
 
+/** Derived frame asset handler. It belongs to Assets history, not replayable Studio runs. */
+export const CAPTURED_FRAME_HANDLER = "video_frame_capture";
+
 /** backend generation handler → media type for 生成历史 cards. */
 export const HIST_HANDLER_TYPE: Record<string, ArtworkType> = {
   text_to_image: "image",
   image_to_image: "image",
+  [CAPTURED_FRAME_HANDLER]: "image",
   text_to_video: "video",
   image_to_video: "video",
   start_end_to_video: "video",

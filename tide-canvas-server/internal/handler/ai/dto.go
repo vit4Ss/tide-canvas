@@ -51,6 +51,17 @@ type gridSplitDTO struct {
 	Cells    []int  `json:"cells"`
 }
 
+// capturedFrameDTO promotes a freshly uploaded PNG into generation history.
+// FileID is authoritative: the service verifies that the upload belongs to the
+// caller, creates a completed AiTask, then removes the ordinary upload record in
+// the same transaction so the frame appears in exactly one asset collection.
+type capturedFrameDTO struct {
+	FileID      idgen.ID `json:"fileId"`
+	CaptureTime float64  `json:"captureTime"`
+	Width       int      `json:"width"`
+	Height      int      `json:"height"`
+}
+
 // taskQuery is the query string of GET /api/ai/tasks (AiTaskQuery).
 type taskQuery struct {
 	PageNum        int    `form:"pageNum"`
@@ -65,9 +76,12 @@ type taskQuery struct {
 	AssetOnly     bool   `form:"assetOnly"`
 	// ExcludeTools keeps independent smart-tool output out of Studio history.
 	// Assets and the Tools hub omit this flag, so the same tasks remain visible there.
-	ExcludeTools bool     `form:"excludeTools"`
-	Status       *int     `form:"status"`
-	ProjectID    idgen.ID `form:"projectId"`
+	ExcludeTools bool `form:"excludeTools"`
+	// ExcludeCaptures keeps derived video frames in Assets · 生成历史 without
+	// rendering them as replayable model runs in the Studio timeline.
+	ExcludeCaptures bool     `form:"excludeCaptures"`
+	Status          *int     `form:"status"`
+	ProjectID       idgen.ID `form:"projectId"`
 	// NoProject=true 只返回不属于任何画布项目的任务（project_id=0，即创作台/对话页
 	// 发起的生成）；与 ProjectID 互斥，同时传时以 NoProject 为准。
 	NoProject bool `form:"noProject"`

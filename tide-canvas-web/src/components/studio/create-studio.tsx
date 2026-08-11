@@ -65,6 +65,7 @@ import { markRequiredField } from "@/lib/require-field";
 import styles from "@/app/(studio)/studio/create.module.css";
 import {
   activeRunStorageKey,
+  CAPTURED_FRAME_HANDLER,
   CREATE_MODELS,
   DUR_SEC,
   IDEAS,
@@ -552,12 +553,16 @@ export default function CreateStudio() {
         pageSize: HIST_PAGE_SIZE,
         noProject: true,
         excludeTools: true,
+        excludeCaptures: true,
       });
       const records = res.success && res.data ? res.data.records : [];
       const total = res.success && res.data ? res.data.total : 0;
       // 3D 产物归 /three-d 页展示（listTasks 无排除型过滤，客户端滤掉；
       // 分页按 records 数记账，不受此过滤影响）。
-      const items = histItemsFromTasks(records).filter((h) => h.type !== "3d");
+      // Client-side capture filtering preserves correct behavior during a
+      // rolling deploy against an older server that ignores excludeCaptures.
+      const replayableRecords = records.filter((task) => task.handler !== CAPTURED_FRAME_HANDLER);
+      const items = histItemsFromTasks(replayableRecords).filter((h) => h.type !== "3d");
       histPageRef.current = page;
       histLoadedCountRef.current = append ? histLoadedCountRef.current + records.length : records.length;
       setHistHasMore(histLoadedCountRef.current < total);

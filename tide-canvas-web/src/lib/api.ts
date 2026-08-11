@@ -9,7 +9,7 @@ import type {
   ProjectCreateDTO, ProjectUpdateDTO, CanvasSaveDTO, ProjectQuery,
 } from "@/types/canvas";
 import type {
-  AiTaskVO, AiModelVO, AiHandlerVO, AiToolVO, AiGenerateDTO, AiGenerateInput, AiTaskQuery,
+  AiTaskVO, AiModelVO, AiHandlerVO, AiToolVO, AiGenerateDTO, AiGenerateInput, AiTaskQuery, CapturedFrameDTO,
   AiGenerationLogVO, AiGenerationLogQuery,
 } from "@/types/ai";
 import type { FileCategory, FileVO, FileQuery } from "@/types/file";
@@ -86,6 +86,13 @@ export const aiApi = {
     http.get<{ cost: number }>("/api/ai/optimize-cost"),
   gridSplit: (imageUrl: string, rows: number, cols: number, cells?: number[]) =>
     http.post<string[]>("/api/ai/grid-split", { imageUrl, rows, cols, ...(cells && cells.length ? { cells } : {}) }),
+  /** Move an uploaded PNG into generation history. The endpoint is idempotent by fileId. */
+  registerCapturedFrame: async (data: CapturedFrameDTO) => {
+    const first = await http.post<AiTaskVO>("/api/ai/tasks/frame-capture", data);
+    return retryableUploadResult(first)
+      ? http.post<AiTaskVO>("/api/ai/tasks/frame-capture", data)
+      : first;
+  },
   // taskId 同为雪花 ID 字符串（>2^53，number 会丢精度）
   getTask: (taskId: string) =>
     http.get<AiTaskVO>(`/api/ai/tasks/${taskId}`),

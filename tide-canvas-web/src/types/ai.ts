@@ -39,6 +39,14 @@ export interface AiTaskVO {
   completeTime: string;
 }
 
+/** Promote a freshly uploaded video frame into generation history. */
+export interface CapturedFrameDTO {
+  fileId: string;
+  captureTime: number;
+  width: number;
+  height: number;
+}
+
 export interface AiModelVO {
   id: string;
   name: string;
@@ -100,6 +108,8 @@ export interface AiTaskQuery extends PageQuery {
   assetCategory?: "general" | "character" | "scene";
   /** 创作台历史专用：排除带智能工具来源的任务，资产与工具作品查询不受影响。 */
   excludeTools?: boolean;
+  /** 创作台历史专用：截帧留在资产生成历史，不作为可重新生成的模型任务展示。 */
+  excludeCaptures?: boolean;
   /** 仅返回可进入资产库的任务（排除失败和已取消）。 */
   assetOnly?: boolean;
   status?: AiTaskStatus;

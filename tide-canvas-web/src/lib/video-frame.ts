@@ -8,6 +8,7 @@
  */
 
 import { getAccessToken } from "@/lib/http";
+import { frameCaptureSeekTarget } from "@/lib/video-frame-policy";
 
 const SEEK_TIMEOUT_MS = 20_000;
 
@@ -112,9 +113,13 @@ async function captureFrameNow(videoUrl: string, timeSec: number): Promise<Captu
   video.preload = "auto";
 
   try {
-    const ready = onceEvent(video, "loadeddata", SEEK_TIMEOUT_MS);
+    // Metadata is enough to compute a safe target. Actual frame decoding is
+    // forced by the seek below; waiting only for loadeddata at time 0 is flaky
+    // on browsers that keep an unplayed, detached video metadata-only.
+    const metadataReady = onceEvent(video, "loadedmetadata", SEEK_TIMEOUT_MS);
     video.src = objUrl;
-    await ready;
+    video.load();
+    await metadataReady;
 
     const width = video.videoWidth;
     const height = video.videoHeight;
@@ -123,13 +128,16 @@ async function captureFrameNow(videoUrl: string, timeSec: number): Promise<Captu
     // 末尾处 seek 常常落不到有效帧(不同浏览器对 duration 边界处理不一致):
     // 往回让出一点点,取最后一个能解码出来的帧。
     const duration = Number.isFinite(video.duration) ? video.duration : 0;
-    const target = duration > 0 ? Math.min(Math.max(timeSec, 0), Math.max(0, duration - 0.02)) : 0;
+    const target = frameCaptureSeekTarget(timeSec, duration);
 
-    // currentTime 已经落在目标帧时不会再触发 seeked,直接画。
-    if (Math.abs(video.currentTime - target) > 0.001) {
+    // 0 秒会被规范化到一个极小的正数，确保从未播放过的视频也真正解码首帧。
+    if (Math.abs(video.currentTime - target) > 0.00001) {
       const seeked = onceEvent(video, "seeked", SEEK_TIMEOUT_MS);
       video.currentTime = target;
       await seeked;
+    }
+    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+      await onceEvent(video, "loadeddata", SEEK_TIMEOUT_MS);
     }
 
     const canvas = document.createElement("canvas");

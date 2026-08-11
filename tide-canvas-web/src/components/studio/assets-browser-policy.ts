@@ -20,6 +20,7 @@ export const UPLOAD_FILTER_KEYS: readonly AssetFilterKey[] = [
 export const HANDLER_MEDIA_KIND: Readonly<Record<string, GeneratedMediaKind>> = {
   text_to_image: "image",
   image_to_image: "image",
+  video_frame_capture: "image",
   outpaint: "image",
   remove_bg: "image",
   upscale: "image",

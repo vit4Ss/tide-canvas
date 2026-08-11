@@ -30,6 +30,10 @@ test("all video results, including video upscale, are classified as video assets
   assert.equal(HANDLER_MEDIA_KIND.video_upscale, "video");
 });
 
+test("captured video frames are classified as generated image assets", () => {
+  assert.equal(HANDLER_MEDIA_KIND.video_frame_capture, "image");
+});
+
 test("every smart tool result is classified into its asset media bucket", () => {
   for (const tool of FALLBACK_TOOLS) {
     assert.equal(HANDLER_MEDIA_KIND[tool.handler], tool.type, `${tool.handler} asset type`);

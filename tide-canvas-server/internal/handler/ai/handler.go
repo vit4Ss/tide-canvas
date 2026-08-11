@@ -123,6 +123,30 @@ func (h *handler) gridSplit(c *gin.Context) {
 	response.OK(c, urls)
 }
 
+// registerCapturedFrame POST /api/ai/tasks/frame-capture -> AiTaskVO
+func (h *handler) registerCapturedFrame(c *gin.Context) {
+	var dto capturedFrameDTO
+	if err := c.ShouldBindJSON(&dto); err != nil || dto.FileID == 0 {
+		response.Fail(c, response.CodeBadRequest, "invalid request body")
+		return
+	}
+	uid := middleware.CurrentUserID(c)
+	vo, err := h.svc.registerCapturedFrame(c.Request.Context(), uid, dto)
+	if err != nil {
+		switch {
+		case errors.Is(err, errCapturedFrameNotFound):
+			response.Fail(c, response.CodeNotFound, "uploaded frame not found")
+		case errors.Is(err, errCapturedFrameInvalid):
+			response.Fail(c, response.CodeBadRequest, "invalid captured frame")
+		default:
+			logger.L().Warn("ai: register captured frame failed", zap.String("detail", err.Error()))
+			response.Fail(c, response.CodeServerError, "failed to save captured frame")
+		}
+		return
+	}
+	response.OK(c, vo)
+}
+
 // getTask GET /api/ai/tasks/:id -> AiTaskVO
 func (h *handler) getTask(c *gin.Context) {
 	id, err := idgen.Parse(c.Param("id"))

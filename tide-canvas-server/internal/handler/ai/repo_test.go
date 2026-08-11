@@ -57,12 +57,12 @@ func TestStudioHistoryExcludesToolTasksBeforePagination(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	q := taskQuery{NoProject: true, ExcludeTools: true}
+	q := taskQuery{NoProject: true, ExcludeTools: true, ExcludeCaptures: true}
 	sql := db.ToSQL(func(tx *gorm.DB) *gorm.DB {
 		return applyTaskListFilters(tx.Model(&model.AiTask{}), 7, q).
 			Order(taskListOrder(q)).Offset(20).Limit(20).Find(&[]model.AiTask{})
 	})
-	for _, fragment := range []string{"NOT ((handler =", "outpaint", "expand", "image_to_image", "JSON_VALID", "$.toolKey", "inpaint", "project_id = 0", "LIMIT 20 OFFSET 20"} {
+	for _, fragment := range []string{"NOT ((handler =", "outpaint", "expand", "image_to_image", "JSON_VALID", "$.toolKey", "inpaint", capturedFrameHandler, "project_id = 0", "LIMIT 20 OFFSET 20"} {
 		if !strings.Contains(sql, fragment) {
 			t.Fatalf("studio history SQL is missing %q: %s", fragment, sql)
 		}
@@ -125,7 +125,7 @@ func TestTaskMediaHandlersIncludeEveryVideoMode(t *testing.T) {
 func TestTaskMediaHandlersIncludeEveryImageTool(t *testing.T) {
 	handlers := taskMediaHandlers("image")
 	got := strings.Join(handlers, ",")
-	for _, handler := range []string{"text_to_image", "image_to_image", "outpaint", "remove_bg", "upscale", "remove_object", "relight"} {
+	for _, handler := range []string{"text_to_image", "image_to_image", capturedFrameHandler, "outpaint", "remove_bg", "upscale", "remove_object", "relight"} {
 		if !strings.Contains(got, handler) {
 			t.Fatalf("image handler list is missing %q: %s", handler, got)
 		}

@@ -3,11 +3,11 @@
 /* 全站可复用的视频播放器 + 「截取当前帧」。
 
    按钮截的是播放器当前停留的那一时刻(currentTime),导出的是视频**原始分辨率**
-   的无损 PNG——与播放器被缩放到多大无关。图片经普通上传接口落到自己的 OSS、
-   由 CDN 分发,并因此出现在「资产 · 上传」里,可直接当垫图继续创作。 */
+   的无损 PNG——与播放器被缩放到多大无关。图片先直传自己的 OSS，再由服务端
+   原子登记为生成结果，因此只出现在「资产 · 生成历史」里。 */
 
 import { useCallback, useRef, useState, type VideoHTMLAttributes } from "react";
-import { uploadFileSmart } from "@/lib/api";
+import { aiApi, uploadFileSmart } from "@/lib/api";
 import { toast } from "@/components/shared/toast";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { captureVideoFrame, VideoFrameError } from "@/lib/video-frame";
@@ -46,7 +46,7 @@ export default function VideoResult({
     if (!el || shooting.current) return;
     shooting.current = true;
     // 先把时间点定下来:抓帧要下载视频,期间用户可能继续播放。
-    const at = el.currentTime;
+    const at = Number.isFinite(el.currentTime) ? Math.max(0, el.currentTime) : 0;
     setBusy(true);
     try {
       if (!(await useAuthStore.getState().ensureSession())) return; // 未登录会跳 /login
@@ -55,15 +55,38 @@ export default function VideoResult({
       // uploadFileSmart：体积预检 + 预签名直传 OSS。4K 原图 PNG 常有 10~25MB，
       // 走普通 multipart 会整个穿过我们自己的 API 服务器。
       const res = await uploadFileSmart(file);
-      if (res.success && res.data?.fileUrl) {
-        // 服务端已经登记 File 记录；同步让资产页丢弃旧缓存，返回资产页时能
-        // 立即在“上传历史 / 图片”看到，而不是仍显示截帧前的列表。
+      if (res.success && res.data?.fileUrl && res.data.id) {
+        const registered = await aiApi.registerCapturedFrame({
+          fileId: String(res.data.id),
+          captureTime: at,
+          width,
+          height,
+        });
+        if (!registered.success) {
+          // 4xx 是确定性未归档；网络/5xx 即使重试后仍可能是“服务端已提交、
+          // 响应丢失”，不能武断告诉用户图片一定在哪个 tab。
+          const uncertain =
+            !registered.code || registered.code === 408 || registered.code === 429 ||
+            (registered.code >= 500 && registered.code < 600);
+          notifyAssetLibraryChanged({
+            collection: uncertain ? "all" : "upload",
+            mediaKind: "image",
+            origin: "capture",
+          });
+          toast.error(
+            uncertain
+              ? "截帧已上传，保存状态暂未确认，请稍后在资产库查看"
+              : registered.message || "截帧已上传，但保存到生成历史失败，请重试",
+          );
+          return;
+        }
+        // 生成任务已落库；失效对应缓存，资产页无需整库刷新。
         notifyAssetLibraryChanged({
-          collection: "upload",
+          collection: "hist",
           mediaKind: "image",
           origin: "capture",
         });
-        toast.success(`已截取 ${width}×${height}，已保存至资产 · 上传历史 / 图片`);
+        toast.success(`已截取 ${width}×${height}，已保存至资产 · 生成历史 / 图片`);
       } else {
         toast.error(res.message || "截图上传失败，请重试");
       }
@@ -94,7 +117,7 @@ export default function VideoResult({
       <button
         type="button"
         className={styles.capture}
-        title="截取当前帧（原始分辨率，保存至资产的上传历史）"
+        title="截取当前帧（原始分辨率，保存至资产的生成历史）"
         aria-label="截取当前帧"
         disabled={busy}
         onClick={(e) => {

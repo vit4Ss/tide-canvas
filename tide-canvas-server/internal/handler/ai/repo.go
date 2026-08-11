@@ -165,6 +165,9 @@ func applyTaskListFilters(tx *gorm.DB, userID idgen.ID, q taskQuery) *gorm.DB {
 	if q.ExcludeTools {
 		tx = excludeToolTaskScope(tx)
 	}
+	if q.ExcludeCaptures {
+		tx = tx.Where("handler <> ?", capturedFrameHandler)
+	}
 	if q.AssetCategory != "" {
 		switch strings.ToLower(strings.TrimSpace(q.AssetCategory)) {
 		case "character", "scene":
@@ -235,7 +238,7 @@ func taskMediaHandlers(mediaType string) []string {
 	switch strings.ToLower(strings.TrimSpace(mediaType)) {
 	case "image":
 		return mergeHandlerNames(
-			[]string{"text_to_image", "image_to_image"},
+			[]string{"text_to_image", "image_to_image", capturedFrameHandler},
 			toolMediaHandlerNames(model.AiToolTypeImage),
 		)
 	case "video":
