@@ -17,7 +17,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
+  ArrowUpRight,
   Eraser,
+  ExternalLink,
   Loader2,
   Maximize2,
   Paintbrush,
@@ -66,6 +68,14 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
 
 function fmtDay(iso: string): string {
   return iso ? iso.slice(0, 10) : "";
+}
+
+function fmtDate(iso: string): string {
+  if (!iso) return "";
+  const day = fmtDay(iso);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+  if (!match) return day;
+  return `${match[1]}年${Number(match[2])}月${Number(match[3])}日`;
 }
 
 function toolResultUrl(task: AiTaskVO): string {
@@ -165,6 +175,8 @@ function ToolWorkPreview({
       ref={dialogRef}
       className={styles.previewDialog}
       aria-labelledby="tool-work-preview-title"
+      aria-describedby="tool-work-preview-description"
+      aria-modal="true"
       onCancel={(event) => {
         event.preventDefault();
         onCloseRef.current();
@@ -174,35 +186,72 @@ function ToolWorkPreview({
       }}
     >
       <div className={styles.previewShell}>
-        <header className={styles.previewHeader}>
-          <div className={styles.previewHeading}>
-            <strong id="tool-work-preview-title">{preview.title}</strong>
-            <span>{preview.isVideo ? "视频作品" : "图片作品"}{preview.date ? ` · ${preview.date}` : ""}</span>
+        <section className={styles.previewStage} aria-label="作品内容">
+          <div className={styles.previewStageBar}>
+            <span>作品预览</span>
+            <button
+              type="button"
+              className={styles.previewClose}
+              aria-label="关闭作品预览"
+              autoFocus
+              onClick={onClose}
+            >
+              <X aria-hidden />
+            </button>
           </div>
-          <button
-            type="button"
-            className={styles.previewClose}
-            aria-label="关闭作品预览"
-            autoFocus
-            onClick={onClose}
-          >
-            <X aria-hidden />
-          </button>
-        </header>
-        <div className={styles.previewStage}>
-          {preview.isVideo ? (
-            <CapturableVideo key={preview.url} src={preview.url} controls playsInline preload="metadata" />
-          ) : (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              key={preview.url}
-              src={preview.url}
-              alt={preview.title}
-              onLoad={(event) => restoreOssDisplayImage(event.currentTarget)}
-              onError={(event) => fallbackOssDisplayImage(event.currentTarget, preview.url)}
-            />
-          )}
-        </div>
+          <div className={styles.previewMedia}>
+            {preview.isVideo ? (
+              <CapturableVideo key={preview.url} src={preview.url} controls playsInline preload="metadata" />
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                key={preview.url}
+                src={preview.url}
+                alt={preview.title}
+                draggable={false}
+                onLoad={(event) => restoreOssDisplayImage(event.currentTarget)}
+                onError={(event) => fallbackOssDisplayImage(event.currentTarget, preview.url)}
+              />
+            )}
+          </div>
+          <div className={styles.previewStageFoot}>
+            <span>按 Esc 关闭</span>
+            <span>{preview.isVideo ? "视频" : "图片"}</span>
+          </div>
+        </section>
+
+        <aside className={styles.previewInfo}>
+          <div className={styles.previewInfoTop}>
+            <span className={styles.previewEyebrow}>工具作品</span>
+            <h2 id="tool-work-preview-title">{preview.title}</h2>
+            <p id="tool-work-preview-description">由智能工具处理完成，原文件已同步保存在资产中。</p>
+          </div>
+
+          <dl className={styles.previewFacts}>
+            <div>
+              <dt>文件类型</dt>
+              <dd>{preview.isVideo ? "视频作品" : "图片作品"}</dd>
+            </div>
+            {preview.date && (
+              <div>
+                <dt>创建时间</dt>
+                <dd>{preview.date}</dd>
+              </div>
+            )}
+            <div>
+              <dt>保存位置</dt>
+              <dd>工具作品 · 资产</dd>
+            </div>
+          </dl>
+
+          <div className={styles.previewActions}>
+            <a href={preview.url} target="_blank" rel="noreferrer">
+              查看原文件
+              <ExternalLink aria-hidden />
+            </a>
+            <p>原文件将在新窗口打开，可从浏览器保存到本地。</p>
+          </div>
+        </aside>
       </div>
     </dialog>
   );
@@ -355,158 +404,183 @@ export default function ToolsHub() {
 
   return (
     <main className={`insp ${styles.fill}`}>
-      <div className="insp-glow" aria-hidden="true" />
-      <div className="insp-in">
-        {/* .insp 骨架是居中 hero:副标题也居中,与标题同轴 */}
-        <h1>工具</h1>
-        <p className={styles.heroSub}>封装好的一键 AI 处理：上传素材，确认模型与积分后即可开始。</p>
+      <div className={`insp-in ${styles.page}`}>
+        <header className={styles.pageHeader}>
+          <span className={styles.eyebrow}>AI 工具箱</span>
+          <h1>工具</h1>
+          <p>上传一份素材，完成扩图、抠图、修复与画质增强。</p>
+        </header>
 
         {/* ── 工具入口 ── */}
-        {catalogState === "loading" ? (
-          <div className={styles.toolSkeletonGrid} role="status" aria-label="正在加载智能工具">
-            {[0, 1, 2].map((item) => <div key={item} className={styles.toolSkeleton} aria-hidden />)}
+        <section className={styles.section} aria-labelledby="tools-directory-title">
+          <div className={styles.sectionHead}>
+            <div>
+              <h2 id="tools-directory-title">选择处理方式</h2>
+              <p>每个工具都保留清晰的输入、消耗与结果预览。</p>
+            </div>
+            {catalogState !== "loading" && cards.length > 0 && (
+              <span className={styles.count}>{cards.length} 个工具</span>
+            )}
           </div>
-        ) : cards.length === 0 ? (
-          <div className={styles.state}>
-            <p>工具暂时全部下线，敬请期待。</p>
-          </div>
-        ) : (
-          <div className={styles.toolGrid}>
-            {cards.map((t) => {
-              const ToolIcon = TOOL_ICONS[t.key] ?? WandSparkles;
-              return (
-              <Link key={t.key} href={`/tools/${t.key}`} className={styles.toolCard}>
-                <div
-                  className={styles.toolCover}
-                  style={{ background: coverBg(t.cover ?? [220, 200, 260]) }}
-                >
-                  {t.resolvedCoverUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      key={t.resolvedCoverUrl}
-                      className={styles.toolCoverImage}
-                      src={t.resolvedCoverUrl}
-                      alt=""
-                      loading="lazy"
-                      decoding="async"
-                      onError={(event) => {
-                        event.currentTarget.hidden = true;
-                      }}
-                    />
-                  ) : null}
-                  <span className={styles.toolCoverIcon} aria-hidden>
-                    <ToolIcon />
-                  </span>
-                </div>
-                <div className={styles.toolBody}>
-                  <h3>
-                    {t.title}
-                    {/* 素材形态差异会直接影响用户要准备什么文件,标在标题旁 */}
-                    <span className={styles.toolType}>
-                      {TOOL_TYPE_LABEL[t.type === "video" ? "video" : "image"]}
-                    </span>
-                  </h3>
-                  <p>{t.desc}</p>
-                </div>
-              </Link>
-              );
-            })}
-          </div>
-        )}
 
-        {/* ── 工具作品 ── */}
-        <div className={styles.worksHead}>
-          <h2>工具作品</h2>
-          <p className={styles.sub}>用上面的工具处理成功的结果，会保留在工具作品与资产中，不混入创作台。</p>
-        </div>
-
-        {!initialized ? (
-          <div className={styles.state} role="status" aria-label="正在初始化账号">
-            <Loader2 className={styles.spin} aria-hidden />
-          </div>
-        ) : !loggedIn ? (
-          <div className={styles.state}>
-            <p>登录后可查看你的工具作品。</p>
-            <Link className={styles.stateBtn} href="/login?redirect=/tools">
-              去登录
-            </Link>
-          </div>
-        ) : worksError ? (
-          <div className={styles.state}>
-            <p>作品加载失败，请稍后重试。</p>
-            <button type="button" className={styles.stateBtn} onClick={retry}>
-              重试
-            </button>
-          </div>
-        ) : works === null ? (
-          <div className={styles.state} role="status" aria-label="正在加载工具作品">
-            <Loader2 className={styles.spin} aria-hidden />
-          </div>
-        ) : displayWorks.length === 0 ? (
-          <div className={styles.state}>
-            <p>还没有工具作品，从上面挑一个工具开始吧。</p>
-          </div>
-        ) : (
-          <>
-            <div className={styles.workGrid}>
-              {displayWorks.map(({ task: w, resultUrl }) => {
-                const isVideo = VIDEO_TOOL_HANDLERS.has(w.handler);
-                const toolTitle = smartToolOriginLabel(w.handler, w.input) ?? "智能工具作品";
+          {catalogState === "loading" ? (
+            <div className={styles.toolSkeletonGrid} role="status" aria-label="正在加载智能工具">
+              {[0, 1, 2].map((item) => <div key={item} className={styles.toolSkeleton} aria-hidden />)}
+            </div>
+          ) : cards.length === 0 ? (
+            <div className={styles.state}>
+              <p>工具暂时全部下线，敬请期待。</p>
+            </div>
+          ) : (
+            <div className={styles.toolGrid}>
+              {cards.map((t) => {
+                const ToolIcon = TOOL_ICONS[t.key] ?? WandSparkles;
                 return (
-                <button
-                  key={w.id}
-                  type="button"
-                  className={styles.workCard}
-                  title={isVideo ? "播放视频" : "预览图片"}
-                  aria-label={`${isVideo ? "播放" : "预览"}${toolTitle}`}
-                  onClick={() => setWorkPreview({
-                    url: resultUrl,
-                    isVideo,
-                    title: toolTitle,
-                    date: fmtDay(w.createTime),
-                  })}
-                >
-                  <div className={styles.workStage}>
-                    {isVideo ? (
-                      // 进入视口前不挂 src，避免作品列表一次性拉取全部视频元数据。
-                      <LazyToolVideo
-                        src={resultUrl}
-                        label={toolTitle}
-                      />
-                    ) : (
+                <Link key={t.key} href={`/tools/${t.key}`} className={styles.toolCard}>
+                  <div
+                    className={styles.toolCover}
+                    style={{ background: coverBg(t.cover ?? [220, 200, 260]) }}
+                  >
+                    {t.resolvedCoverUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
-                        src={ossDisplayUrl(resultUrl, 640) ?? resultUrl}
-                        alt={toolTitle}
+                        key={t.resolvedCoverUrl}
+                        className={styles.toolCoverImage}
+                        src={t.resolvedCoverUrl}
+                        alt=""
                         loading="lazy"
                         decoding="async"
-                        onLoad={(event) => restoreOssDisplayImage(event.currentTarget)}
-                        onError={(event) => fallbackOssDisplayImage(event.currentTarget, resultUrl)}
+                        onError={(event) => {
+                          event.currentTarget.hidden = true;
+                        }}
                       />
-                    )}
-                    {isVideo && (
-                      <span className={styles.workPlay} aria-hidden>
-                        <Play />
+                    ) : null}
+                    <span className={styles.toolCoverIcon} aria-hidden>
+                      <ToolIcon />
+                    </span>
+                    <span className={styles.toolOpen} aria-hidden>
+                      <ArrowUpRight />
+                    </span>
+                  </div>
+                  <div className={styles.toolBody}>
+                    <div className={styles.toolTitleRow}>
+                      <h3>{t.title}</h3>
+                      <span className={styles.toolType}>
+                        {TOOL_TYPE_LABEL[t.type === "video" ? "video" : "image"]}
                       </span>
-                    )}
+                    </div>
+                    <p>{t.desc}</p>
                   </div>
-                  <div className={styles.workMeta}>
-                    <span className={styles.workTool}>{toolTitle}</span>
-                    <span className={styles.workDate}>{fmtDay(w.createTime)}</span>
-                  </div>
-                </button>
+                </Link>
                 );
               })}
             </div>
-            {works.length < total && (
-              <div className={styles.more}>
-                <button type="button" onClick={() => void loadMore()} disabled={loadingMore}>
-                  {loadingMore ? "加载中…" : "加载更多"}
-                </button>
-              </div>
+          )}
+        </section>
+
+        {/* ── 工具作品 ── */}
+        <section className={`${styles.section} ${styles.worksSection}`} aria-labelledby="tool-works-title">
+          <div className={styles.sectionHead}>
+            <div>
+              <h2 id="tool-works-title">工具作品</h2>
+              <p>已完成的处理结果，同时保存在你的资产中。</p>
+            </div>
+            {loggedIn && works !== null && !worksError && (
+              <span className={styles.count}>{total} 件作品</span>
             )}
-          </>
-        )}
+          </div>
+
+          {!initialized ? (
+            <div className={styles.state} role="status" aria-label="正在初始化账号">
+              <Loader2 className={styles.spin} aria-hidden />
+            </div>
+          ) : !loggedIn ? (
+            <div className={styles.state}>
+              <p>登录后可查看你的工具作品。</p>
+              <Link className={styles.stateBtn} href="/login?redirect=/tools">
+                去登录
+              </Link>
+            </div>
+          ) : worksError ? (
+            <div className={styles.state}>
+              <p>作品加载失败，请稍后重试。</p>
+              <button type="button" className={styles.stateBtn} onClick={retry}>
+                重试
+              </button>
+            </div>
+          ) : works === null ? (
+            <div className={styles.state} role="status" aria-label="正在加载工具作品">
+              <Loader2 className={styles.spin} aria-hidden />
+            </div>
+          ) : displayWorks.length === 0 ? (
+            <div className={styles.state}>
+              <p>还没有工具作品，从上面挑一个工具开始吧。</p>
+            </div>
+          ) : (
+            <>
+              <div className={styles.workGrid}>
+                {displayWorks.map(({ task: w, resultUrl }) => {
+                  const isVideo = VIDEO_TOOL_HANDLERS.has(w.handler);
+                  const toolTitle = smartToolOriginLabel(w.handler, w.input) ?? "智能工具作品";
+                  return (
+                  <button
+                    key={w.id}
+                    type="button"
+                    className={styles.workCard}
+                    title={isVideo ? "播放视频" : "预览图片"}
+                    aria-label={`${isVideo ? "播放" : "预览"}${toolTitle}`}
+                    onClick={() => setWorkPreview({
+                      url: resultUrl,
+                      isVideo,
+                      title: toolTitle,
+                      date: fmtDate(w.createTime),
+                    })}
+                  >
+                    <div className={styles.workStage}>
+                      {isVideo ? (
+                        // 进入视口前不挂 src，避免作品列表一次性拉取全部视频元数据。
+                        <LazyToolVideo
+                          src={resultUrl}
+                          label={toolTitle}
+                        />
+                      ) : (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={ossDisplayUrl(resultUrl, 640) ?? resultUrl}
+                          alt={toolTitle}
+                          loading="lazy"
+                          decoding="async"
+                          onLoad={(event) => restoreOssDisplayImage(event.currentTarget)}
+                          onError={(event) => fallbackOssDisplayImage(event.currentTarget, resultUrl)}
+                        />
+                      )}
+                      {isVideo && (
+                        <span className={styles.workPlay} aria-hidden>
+                          <Play />
+                        </span>
+                      )}
+                      <span className={styles.workOpen} aria-hidden>
+                        查看作品 <ArrowUpRight />
+                      </span>
+                    </div>
+                    <div className={styles.workMeta}>
+                      <span className={styles.workTool}>{toolTitle}</span>
+                      <span className={styles.workDate}>{fmtDay(w.createTime)}</span>
+                    </div>
+                  </button>
+                  );
+                })}
+              </div>
+              {works.length < total && (
+                <div className={styles.more}>
+                  <button type="button" onClick={() => void loadMore()} disabled={loadingMore}>
+                    {loadingMore ? "加载中…" : "加载更多"}
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </section>
       </div>
       <ToolWorkPreview preview={workPreview} onClose={() => setWorkPreview(null)} />
     </main>

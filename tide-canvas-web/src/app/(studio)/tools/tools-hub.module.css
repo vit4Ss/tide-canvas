@@ -1,72 +1,144 @@
-/* 工具中心(/tools)。复用 .insp 页面骨架(滚动容器 + 标题排版,来自
-   liuguang/studio.css),本文件只补两块内容:工具入口卡与工具作品网格。
-   视觉语言与灵感页卡片同源:面板底色 + 弱边框 + hover 提边上浮。 */
+/* 工具中心：克制的工具目录、内容优先的作品画廊与沉浸式作品查看器。 */
 
 .fill {
   flex: 1;
   min-height: 0;
 }
 
-.sub {
-  margin: 6px 0 18px;
-  font-size: 14px;
+.page {
+  width: 100%;
+  max-width: 1240px;
+  padding-top: 48px;
+  padding-bottom: 80px;
+}
+
+.pageHeader {
+  max-width: 720px;
+  margin-bottom: 48px;
+}
+
+.eyebrow {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 600;
+  letter-spacing: 0.04em;
   color: var(--text-faint);
 }
 
-/* 顶部副标题:.insp 骨架的 h1 是居中 hero(30~46px 展示字),副标题必须
-   同轴居中,否则大标题悬在左对齐文案上方,页头明显错位 */
-.heroSub {
-  margin: -14px 0 30px;
-  font-size: 14px;
-  text-align: center;
+.pageHeader h1 {
+  margin: 0;
+  text-align: left;
+  font-family: inherit;
+  font-size: clamp(30px, 3.2vw, 40px);
+  line-height: 1.15;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  color: var(--text);
+}
+
+.pageHeader p {
+  max-width: 560px;
+  margin: 14px 0 0;
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text-dim);
+}
+
+.section {
+  width: 100%;
+}
+
+.sectionHead {
+  min-height: 44px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 20px;
+}
+
+.sectionHead h2 {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.35;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.sectionHead p {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.55;
   color: var(--text-faint);
 }
 
-/* ── 工具入口卡 ─────────────────────────────────────────────────────────── */
-
-.toolGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 16px;
+.count {
+  flex: none;
+  padding-top: 4px;
+  font-size: 12px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
 }
 
+/* ── 工具目录 ─────────────────────────────────────────────────────────── */
+
+.toolGrid,
 .toolSkeletonGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
 }
 
 .toolSkeleton {
-  min-height: 224px;
-  border-radius: var(--r-lg);
+  min-height: 264px;
+  border-radius: 12px;
   border: 1px solid var(--border);
   background:
-    linear-gradient(var(--surface-2), var(--surface-2)) top / 100% 142px no-repeat,
+    linear-gradient(var(--surface-2), var(--surface-2)) top / 100% 180px no-repeat,
     var(--panel-solid);
-  opacity: 0.72;
+  animation: skeletonPulse 1.4s ease-in-out infinite alternate;
+}
+
+@keyframes skeletonPulse {
+  from { opacity: 0.55; }
+  to { opacity: 0.82; }
 }
 
 .toolCard {
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  border-radius: var(--r-lg);
   overflow: hidden;
+  border-radius: 12px;
+  color: inherit;
   background: var(--panel-solid);
   border: 1px solid var(--border);
-  transition: border-color 0.18s, transform 0.18s;
+  transition: border-color 160ms ease-out, transform 160ms ease-out;
 }
+
 .toolCard:hover {
   border-color: var(--border-strong);
   transform: translateY(-2px);
 }
 
-/* 图片封面优先；公开作品不可用时保留 mesh。图标作为弱识别标记，不遮内容。 */
 .toolCover {
   position: relative;
-  aspect-ratio: 16 / 9;
+  aspect-ratio: 16 / 10;
   overflow: hidden;
   background-color: var(--surface-2);
 }
+
+.toolCover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(8, 8, 9, 0.18), transparent 44%, rgba(8, 8, 9, 0.1));
+}
+
 .toolCoverImage {
   position: absolute;
   inset: 0;
@@ -74,111 +146,182 @@
   height: 100%;
   display: block;
   object-fit: cover;
+  transition: transform 200ms ease-out;
 }
-.toolCoverIcon {
+
+.toolCard:hover .toolCoverImage {
+  transform: scale(1.015);
+}
+
+.toolCoverIcon,
+.toolOpen {
   position: absolute;
-  top: 12px;
-  left: 12px;
   z-index: 1;
-  width: 32px;
-  height: 32px;
   display: grid;
   place-items: center;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  color: rgba(255, 255, 255, 0.92);
-  background: rgba(10, 10, 11, 0.72);
+  color: rgba(255, 255, 255, 0.94);
+  background: rgba(8, 8, 9, 0.68);
+  border: 1px solid rgba(255, 255, 255, 0.16);
 }
-.toolCoverIcon svg {
+
+.toolCoverIcon {
+  top: 12px;
+  left: 12px;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+
+.toolOpen {
+  top: 12px;
+  right: 12px;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  opacity: 0;
+  transform: translateY(3px);
+  transition: opacity 160ms ease-out, transform 160ms ease-out;
+}
+
+.toolCard:hover .toolOpen,
+.toolCard:focus-visible .toolOpen {
+  opacity: 1;
+  transform: none;
+}
+
+.toolCoverIcon svg,
+.toolOpen svg {
   width: 16px;
   height: 16px;
   stroke-width: 1.8;
 }
 
 .toolBody {
-  padding: 12px 14px 14px;
+  flex: 1;
+  padding: 16px 16px 18px;
 }
-.toolBody h3 {
-  margin: 0;
+
+.toolTitleRow {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.toolTitleRow h3 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 15px;
+  line-height: 1.4;
   font-weight: 600;
   color: var(--text);
 }
 
-/* 素材形态标记（图片 / 视频）——决定用户要准备什么文件 */
 .toolType {
-  padding: 1px 7px;
+  flex: none;
+  padding: 2px 7px;
   border-radius: 6px;
-  font-size: 11.5px;
+  font-size: 11px;
+  line-height: 1.4;
   font-weight: 500;
-  color: var(--text-faint);
+  color: var(--text-dim);
   background: var(--surface-2);
   border: 1px solid var(--border);
 }
+
 .toolBody p {
-  margin: 5px 0 0;
+  display: -webkit-box;
+  min-height: 40px;
+  margin: 8px 0 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.55;
   color: var(--text-faint);
 }
 
-/* ── 工具作品 ───────────────────────────────────────────────────────────── */
+/* ── 工具作品 ─────────────────────────────────────────────────────────── */
 
-.worksHead {
-  margin-top: 40px;
-}
-.worksHead h2 {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--text);
+.worksSection {
+  margin-top: 64px;
+  padding-top: 40px;
+  border-top: 1px solid var(--border);
 }
 
 .workGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  column-gap: 16px;
+  row-gap: 28px;
 }
 
 .workCard {
+  min-width: 0;
   width: 100%;
-  display: flex;
-  flex-direction: column;
+  display: block;
   padding: 0;
   text-align: left;
   color: inherit;
-  border-radius: var(--r-md, 10px);
-  overflow: hidden;
-  background: var(--panel-solid);
-  border: 1px solid var(--border);
+  background: transparent;
+  border: 0;
   cursor: pointer;
-  transition: border-color 0.18s;
-}
-.workCard:hover {
-  border-color: var(--border-strong);
 }
 
 .workStage {
   position: relative;
-  aspect-ratio: 1 / 1;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: 10px;
   background: var(--surface-2);
+  border: 1px solid var(--border);
+  transition: border-color 160ms ease-out;
 }
+
+.workCard:hover .workStage {
+  border-color: var(--border-strong);
+}
+
+.workStage::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 34%;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(transparent, rgba(4, 4, 5, 0.54));
+  transition: opacity 160ms ease-out;
+}
+
+.workCard:hover .workStage::after,
+.workCard:focus-visible .workStage::after {
+  opacity: 1;
+}
+
 .workStage img,
 .workStage video {
   width: 100%;
   height: 100%;
-  object-fit: cover;
   display: block;
+  object-fit: cover;
+  transition: transform 200ms ease-out;
 }
+
 .workStage video {
   pointer-events: none;
 }
 
+.workCard:hover .workStage img,
+.workCard:hover .workStage video {
+  transform: scale(1.015);
+}
+
 .workPlay {
   position: absolute;
+  z-index: 1;
   inset: 50% auto auto 50%;
   width: 40px;
   height: 40px;
@@ -189,236 +332,552 @@
   color: rgba(255, 255, 255, 0.94);
   background: rgba(8, 8, 9, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.18);
-  transition: transform 160ms ease-out, background 160ms ease-out;
+  transition: background 160ms ease-out;
 }
+
 .workPlay svg {
-  width: 17px;
-  height: 17px;
+  width: 16px;
+  height: 16px;
   margin-left: 2px;
   fill: currentColor;
   stroke-width: 1.5;
 }
+
 .workCard:hover .workPlay {
-  transform: translate(-50%, -50%) scale(1.04);
-  background: rgba(8, 8, 9, 0.84);
+  background: rgba(8, 8, 9, 0.88);
+}
+
+.workOpen {
+  position: absolute;
+  z-index: 2;
+  right: 12px;
+  bottom: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  opacity: 0;
+  transform: translateY(3px);
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+  transition: opacity 160ms ease-out, transform 160ms ease-out;
+}
+
+.workOpen svg {
+  width: 13px;
+  height: 13px;
+}
+
+.workCard:hover .workOpen,
+.workCard:focus-visible .workOpen {
+  opacity: 1;
+  transform: none;
 }
 
 .workMeta {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
+  gap: 12px;
+  padding: 10px 2px 0;
   font-size: 12px;
 }
+
 .workTool {
-  color: var(--text-dim);
-  font-weight: 600;
-}
-.workDate {
-  color: var(--text-faint);
-}
-
-/* ── 当前页作品预览 ─────────────────────────────────────────────────────── */
-
-.previewDialog {
-  width: min(960px, calc(100vw - 32px));
-  max-width: none;
-  max-height: calc(100vh - 32px);
-  margin: auto;
-  padding: 0;
-  overflow: hidden;
-  color: var(--text);
-  background: var(--panel-solid);
-  border: 1px solid var(--border-strong);
-  border-radius: 16px;
-  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.42);
-}
-.previewDialog::backdrop {
-  background: rgba(0, 0, 0, 0.78);
-}
-
-.previewShell {
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-.previewHeader {
-  flex: none;
-  min-height: 64px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 10px 12px 10px 16px;
-  border-bottom: 1px solid var(--border);
-}
-.previewHeading {
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.previewHeading strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 14px;
-  line-height: 1.35;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-dim);
 }
-.previewHeading span {
-  font-size: 12px;
-  line-height: 1.35;
+
+.workDate {
+  flex: none;
   color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
 }
+
+/* ── 作品查看器 ───────────────────────────────────────────────────────── */
+
+.previewDialog {
+  width: min(1440px, calc(100vw - 32px));
+  max-width: none;
+  height: min(920px, calc(100dvh - 32px));
+  max-height: none;
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  color: var(--text);
+  background: #09090a;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 14px;
+  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.48);
+}
+
+.previewDialog[open] {
+  animation: previewIn 180ms ease-out;
+}
+
+.previewDialog::backdrop {
+  background: rgba(3, 3, 4, 0.84);
+  animation: backdropIn 160ms ease-out;
+}
+
+@keyframes previewIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.992);
+  }
+}
+
+@keyframes backdropIn {
+  from { opacity: 0; }
+}
+
+.previewShell {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 336px;
+}
+
+.previewStage {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 56px minmax(0, 1fr) 44px;
+  background: #09090a;
+}
+
+.previewStageBar,
+.previewStageFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: rgba(255, 255, 255, 0.44);
+}
+
+.previewStageBar {
+  padding: 0 16px 0 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.previewStageFoot {
+  padding: 0 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 11px;
+}
+
 .previewClose {
   flex: none;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   display: grid;
   place-items: center;
-  border-radius: 10px;
-  color: var(--text-dim);
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.66);
   border: 1px solid transparent;
   transition: color 160ms ease-out, border-color 160ms ease-out, background 160ms ease-out;
 }
+
 .previewClose:hover {
-  color: var(--text);
-  border-color: var(--border);
-  background: var(--surface-2);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
 }
+
 .previewClose svg {
   width: 18px;
   height: 18px;
 }
-.previewStage {
+
+.previewMedia {
   position: relative;
-  height: min(72vh, 720px);
-  min-height: 320px;
+  min-width: 0;
+  min-height: 0;
   display: grid;
   place-items: center;
-  padding: 16px;
-  background: #050506;
+  padding: 24px;
+  overflow: hidden;
 }
-.previewStage video,
-.previewStage img {
+
+.previewMedia img,
+.previewMedia video {
   display: block;
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
 }
-.previewStage video {
+
+.previewMedia img {
+  width: auto;
+  height: auto;
+  user-select: none;
+}
+
+.previewMedia video {
   width: 100%;
   height: 100%;
 }
 
-/* ── 加载 / 空态 / 登录引导(共用的居中态) ─────────────────────────────── */
+.previewInfo {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 36px 28px 28px;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+}
+
+.previewInfoTop {
+  padding-bottom: 28px;
+}
+
+.previewEyebrow {
+  display: block;
+  margin-bottom: 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: var(--text-faint);
+}
+
+.previewInfo h2 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 24px;
+  line-height: 1.3;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.previewInfoTop p {
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-faint);
+}
+
+.previewFacts {
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--border);
+}
+
+.previewFacts > div {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.previewFacts dt {
+  color: var(--text-faint);
+}
+
+.previewFacts dd {
+  margin: 0;
+  text-align: right;
+  color: var(--text-dim);
+}
+
+.previewActions {
+  margin-top: auto;
+  padding-top: 32px;
+}
+
+.previewActions a {
+  width: 100%;
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #0a0a0b;
+  background: #f5f5f7;
+  transition: background 160ms ease-out;
+}
+
+.previewActions a:hover {
+  background: #e8e8ea;
+}
+
+.previewActions a svg {
+  width: 15px;
+  height: 15px;
+}
+
+.previewActions p {
+  margin: 10px 4px 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-faint);
+}
+
+/* ── 加载、空态与分页 ─────────────────────────────────────────────────── */
 
 .state {
+  min-height: 180px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 48px 0 56px;
+  justify-content: center;
+  gap: 14px;
+  padding: 32px;
   color: var(--text-faint);
-  font-size: 14px;
+  font-size: 13px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
 }
+
 .state p {
   margin: 0;
 }
 
 .stateBtn {
-  height: 34px;
+  min-width: 88px;
+  height: 36px;
   padding: 0 18px;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   border-radius: var(--pill);
   font-size: 13px;
   font-weight: 600;
-  color: #fff;
-  background: var(--btn-grad);
-  box-shadow: var(--btn-shadow);
+  color: #0a0a0b;
+  background: #f5f5f7;
 }
 
-:global(body.imini) .stateBtn {
-  color: #0a0a0b;
+.spin {
+  width: 20px;
+  height: 20px;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.more {
+  display: flex;
+  justify-content: center;
+  margin: 32px 0 0;
+}
+
+.more button {
+  height: 36px;
+  padding: 0 20px;
+  border-radius: var(--pill);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  transition: color 150ms ease-out, background 150ms ease-out;
+}
+
+.more button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.more button:disabled {
+  opacity: 0.6;
 }
 
 .stateBtn:focus-visible,
 .more button:focus-visible,
 .toolCard:focus-visible,
 .workCard:focus-visible,
-.previewClose:focus-visible {
+.previewClose:focus-visible,
+.previewActions a:focus-visible {
   outline: 2px solid var(--text);
-  outline-offset: 2px;
+  outline-offset: 3px;
 }
 
-.spin {
-  width: 22px;
-  height: 22px;
-  animation: spin 0.9s linear infinite;
-}
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
+@media (max-width: 1080px) {
+  .toolGrid,
+  .toolSkeletonGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .workGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
-.more {
-  display: flex;
-  justify-content: center;
-  margin: 20px 0 8px;
+@media (max-width: 900px) {
+  .previewDialog {
+    overflow-y: auto;
+  }
+
+  .previewShell {
+    height: auto;
+    min-height: 100%;
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(460px, 62vh) auto;
+  }
+
+  .previewInfo {
+    min-height: 360px;
+    overflow: visible;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .previewActions {
+    margin-top: 32px;
+  }
 }
-.more button {
-  height: 34px;
-  padding: 0 20px;
-  border-radius: var(--pill);
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-dim);
-  background: var(--panel-solid);
-  border: 1px solid var(--border);
-  transition: color 150ms, border-color 150ms, background 150ms;
-}
-.more button:hover:not(:disabled) {
-  color: var(--text);
-  border-color: var(--border-strong);
-}
-.more button:disabled {
-  opacity: 0.6;
+
+@media (max-width: 680px) {
+  .page {
+    padding-top: 32px;
+    padding-bottom: 56px;
+  }
+
+  .pageHeader {
+    margin-bottom: 40px;
+  }
+
+  .pageHeader p {
+    font-size: 14px;
+  }
+
+  .sectionHead {
+    margin-bottom: 16px;
+  }
+
+  .sectionHead p {
+    max-width: 290px;
+  }
+
+  .toolGrid,
+  .toolSkeletonGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .toolSkeleton {
+    min-height: 250px;
+  }
+
+  .worksSection {
+    margin-top: 48px;
+    padding-top: 32px;
+  }
+
+  .workGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 24px 12px;
+  }
+
+  .workMeta {
+    display: block;
+  }
+
+  .workTool,
+  .workDate {
+    display: block;
+  }
+
+  .workDate {
+    margin-top: 3px;
+    font-size: 11px;
+  }
+
+  .previewDialog {
+    width: 100vw;
+    height: 100dvh;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .previewShell {
+    grid-template-rows: minmax(380px, 58dvh) auto;
+  }
+
+  .previewMedia {
+    padding: 12px;
+  }
+
+  .previewStageFoot {
+    display: none;
+  }
+
+  .previewStage {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .previewStageBar {
+    min-height: calc(52px + env(safe-area-inset-top));
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .previewInfo {
+    min-height: 42dvh;
+    padding: 28px 20px calc(24px + env(safe-area-inset-bottom));
+  }
+
+  .previewInfoTop {
+    padding-bottom: 24px;
+  }
+
+  .previewInfo h2 {
+    font-size: 21px;
+  }
 }
 
 @media (pointer: coarse) {
   .stateBtn,
   .more button,
-  .previewClose {
+  .previewClose,
+  .previewActions a {
     min-height: 44px;
   }
-}
 
-@media (max-width: 620px) {
-  .previewDialog {
-    width: calc(100vw - 16px);
-    max-height: calc(100vh - 16px);
-    border-radius: 12px;
+  .toolOpen {
+    opacity: 1;
+    transform: none;
   }
-  .previewHeader {
-    min-height: 56px;
-  }
-  .previewStage {
-    height: min(74vh, 620px);
-    min-height: 240px;
-    padding: 8px;
+
+  .workOpen {
+    display: none;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .toolCard,
-  .workCard,
-  .workPlay,
+  .toolCoverImage,
+  .toolOpen,
+  .workStage,
+  .workStage::after,
+  .workStage img,
+  .workStage video,
+  .workOpen,
+  .previewDialog,
+  .previewDialog::backdrop,
   .more button,
-  .previewClose {
+  .previewClose,
+  .previewActions a {
+    animation: none;
     transition: none;
+  }
+
+  .toolSkeleton {
+    animation: none;
   }
 }
