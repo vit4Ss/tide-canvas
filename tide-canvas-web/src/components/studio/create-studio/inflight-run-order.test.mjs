@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  isStudioTaskNewerOrEqual,
   orderStudioFeedRuns,
   upsertInflightRunNewestFirst,
 } from "./inflight-run-order.ts";
@@ -56,6 +57,18 @@ test("a newer completed task stays above an older task that is still generating"
   ]);
 });
 
+test("a newly clicked live task stays above an older completed result", () => {
+  const ordered = orderStudioFeedRuns(
+    [run("newest-live", 3_000)],
+    [{ run: "older-done", ts: new Date(2_000).toISOString(), items: [] }],
+  );
+
+  assert.deepEqual(ordered.map((item) => item.key), [
+    "inflight-newest-live",
+    "finished-older-done",
+  ]);
+});
+
 test("an older task completing later cannot jump above a newer task", () => {
   const ordered = orderStudioFeedRuns(
     [],
@@ -69,6 +82,45 @@ test("an older task completing later cannot jump above a newer task", () => {
     "finished-newer",
     "finished-older",
   ]);
+});
+
+test("server task ids break same-second timestamp ties newest first", () => {
+  const sameSecond = "2026-08-12T12:00:00.000Z";
+  const ordered = orderStudioFeedRuns(
+    [],
+    [
+      { run: "task-100", ts: sameSecond, items: [] },
+      { run: "task-200", ts: sameSecond, items: [] },
+    ],
+  );
+
+  assert.deepEqual(ordered.map((item) => item.key), [
+    "finished-task-200",
+    "finished-task-100",
+  ]);
+});
+
+test("an optimistic click wins an equal-time tie with history", () => {
+  const ordered = orderStudioFeedRuns(
+    [run("pending:new-click", 3_000)],
+    [{ run: "task-200", ts: new Date(3_000).toISOString(), items: [] }],
+  );
+
+  assert.deepEqual(ordered.map((item) => item.key), [
+    "inflight-pending:new-click",
+    "finished-task-200",
+  ]);
+});
+
+test("same-second recovery keeps the higher server task id in foreground", () => {
+  assert.equal(
+    isStudioTaskNewerOrEqual(run("200", 3_000), run("100", 3_000)),
+    true,
+  );
+  assert.equal(
+    isStudioTaskNewerOrEqual(run("100", 3_000), run("200", 3_000)),
+    false,
+  );
 });
 
 test("invalid legacy timestamps remain below valid current tasks", () => {

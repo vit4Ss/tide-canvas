@@ -191,10 +191,28 @@ export function StageFeed({
 }) {
   // 底部哨兵:进入视口提前量(rootMargin)就触发续页;组合层有加载中去重守卫。
   const sentinelRef = useRef<HTMLDivElement>(null);
+  const feedRef = useRef<HTMLDivElement>(null);
+  const newestRunRef = useRef<string | null>(null);
   const orderedFeedRuns = useMemo(
     () => orderStudioFeedRuns(inflightRuns, runs),
     [inflightRuns, runs],
   );
+  const newestRunIdentity = orderedFeedRuns[0]
+    ? orderedFeedRuns[0].state === "inflight"
+      ? orderedFeedRuns[0].run.taskId.startsWith("pending:")
+        ? orderedFeedRuns[0].run.taskId
+        : `task-${orderedFeedRuns[0].run.taskId}`
+      : orderedFeedRuns[0].run.run
+    : null;
+  useEffect(() => {
+    const previous = newestRunRef.current;
+    newestRunRef.current = newestRunIdentity;
+    if (previous && newestRunIdentity && previous !== newestRunIdentity && feedRef.current) {
+      // A paid submit must become visible immediately even when Chrome would
+      // otherwise preserve the old scroll anchor after prepending the card.
+      feedRef.current.scrollTop = 0;
+    }
+  }, [newestRunIdentity]);
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el || !hasMore || !onLoadMore) return;
@@ -302,14 +320,15 @@ export function StageFeed({
         {/* result feed — newest run on top; each run shows its images at their
             TRUE aspect ratio (no crop). Live and completed tasks share one
             creation-time order, so a status transition never moves a run down. */}
-        {(busy || runs.length > 0 || skillRunPanel) && (
-          <div className="ws-feed" id="feed">
+        {(busy || inflightRuns.length > 0 || runs.length > 0 || skillRunPanel) && (
+          <div className="ws-feed" id="feed" ref={feedRef} aria-live="polite">
             {skillRunPanel}
             {/* Live placeholders and completed results are interleaved by start time. */}
             {orderedFeedRuns.map((entry) => {
               if (entry.state === "inflight") {
                 const inflight = entry.run;
                 const { meta, cells: runCells, progs: runProgs } = inflight;
+                const isSubmitting = inflight.phase === "submitting";
                 return (
                   <div key={entry.key} className={`ws-run inflight${runCells.length <= 1 ? " single" : ""}${meta.kind === "audio" ? " audio" : ""}${meta.kind === "3d" ? " three-d" : ""}`}>
                     <div className="ws-run-head">
@@ -322,7 +341,7 @@ export function StageFeed({
                       {meta.ratio && (
                         <span className="ws-run-chip">{ratioLabel(meta.ratio)}</span>
                       )}
-                      <span className="ws-run-time">生成中…</span>
+                      <span className="ws-run-time">{isSubmitting ? "正在确认任务…" : "生成中…"}</span>
                     </div>
                     {meta.prompt && (
                       <div className="ws-run-prompt">
@@ -345,7 +364,11 @@ export function StageFeed({
                             />
                             <div className="shimmer" />
                             <div className="ph">
-                              生成中 · <span className="pct">{pct}%</span>
+                              {isSubmitting ? (
+                                "正在确认任务…"
+                              ) : (
+                                <>生成中 · <span className="pct">{pct}%</span></>
+                              )}
                             </div>
                             <div className="bar">
                               <i style={{ width: `${runProgs[cell.i] ?? 0}%` }} />

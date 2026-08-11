@@ -781,7 +781,7 @@
 /* ── result feed (run blocks; replaces ws-grid + 生成历史 strip) ─────── */
 /* fills the stage and scrolls; top padding clears the absolute ws-stage-top bar. */
 .ws-feed{position:absolute; inset:0; z-index:2; display:flex; flex-direction:column; gap:38px;
-  overflow-y:auto; overflow-x:hidden; padding:72px 28px 48px; overscroll-behavior:contain;}
+  overflow-y:auto; overflow-x:hidden; overflow-anchor:none; padding:72px 28px 48px; overscroll-behavior:contain;}
 .ws-feed::-webkit-scrollbar{width:9px;}
 .ws-feed::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14); border-radius:99px;}
 /* 懒加载哨兵:固定高度,加载中三点脉冲,消除「文字换行+高度跳动」的抽搐感 */

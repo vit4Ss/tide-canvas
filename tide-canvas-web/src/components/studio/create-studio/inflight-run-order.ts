@@ -4,6 +4,31 @@ function validTimestamp(value: number): number {
   return Number.isFinite(value) ? value : 0;
 }
 
+function numericId(raw: string): bigint | null {
+  if (!/^\d+$/.test(raw)) return null;
+  try {
+    return BigInt(raw);
+  } catch {
+    return null;
+  }
+}
+
+/** Decide which accepted task owns the foreground recovery pointer. The API
+ * timestamp has second precision, so equal timestamps must fall back to the
+ * chronological Snowflake id. */
+export function isStudioTaskNewerOrEqual(
+  next: Pick<InflightRun, "taskId" | "startedAt">,
+  current: Pick<InflightRun, "taskId" | "startedAt">,
+): boolean {
+  const nextTime = validTimestamp(next.startedAt);
+  const currentTime = validTimestamp(current.startedAt);
+  if (nextTime !== currentTime) return nextTime > currentTime;
+  const nextId = numericId(next.taskId);
+  const currentId = numericId(current.taskId);
+  if (nextId !== null && currentId !== null) return nextId >= currentId;
+  return true;
+}
+
 /** Keep every live Studio task visible exactly once, newest task first.
  * Sorting by the captured start time also makes refresh recovery deterministic:
  * an older journal resolved later must not jump above a newer task. */
@@ -18,6 +43,36 @@ export function upsertInflightRunNewestFirst(
 export type OrderedStudioFeedRun =
   | { state: "inflight"; key: string; startedAt: number; run: InflightRun }
   | { state: "finished"; key: string; startedAt: number; run: HistRun };
+
+function numericTaskId(entry: OrderedStudioFeedRun): bigint | null {
+  const raw = entry.state === "inflight"
+    ? entry.run.taskId
+    : /^task-(\d+)$/.exec(entry.run.run)?.[1];
+  return raw ? numericId(raw) : null;
+}
+
+function newestRunFirst(
+  left: OrderedStudioFeedRun,
+  right: OrderedStudioFeedRun,
+): number {
+  const timeOrder = right.startedAt - left.startedAt;
+  if (timeOrder !== 0) return timeOrder;
+
+  // The server serializes createTime only to seconds. Snowflake task IDs retain
+  // the missing sub-second order, so an older task finishing later cannot win a
+  // timestamp tie. A just-clicked optimistic row has no server ID yet and must
+  // stay above an equal-time historical row.
+  const leftPending = left.state === "inflight" && left.run.taskId.startsWith("pending:");
+  const rightPending = right.state === "inflight" && right.run.taskId.startsWith("pending:");
+  if (leftPending !== rightPending) return leftPending ? -1 : 1;
+
+  const leftId = numericTaskId(left);
+  const rightId = numericTaskId(right);
+  if (leftId !== null && rightId !== null && leftId !== rightId) {
+    return leftId > rightId ? -1 : 1;
+  }
+  return 0;
+}
 
 /** Interleave live and completed runs by creation time. Keeping them in two
  * separate render groups makes a newer completed task fall below an older task
@@ -45,5 +100,5 @@ export function orderStudioFeedRuns(
     }),
   ];
 
-  return entries.sort((left, right) => right.startedAt - left.startedAt);
+  return entries.sort(newestRunFirst);
 }

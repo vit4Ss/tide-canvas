@@ -139,8 +139,11 @@ export interface RunMeta {
  * cells so concurrent submissions never overwrite one another in the feed. */
 export interface InflightRun {
   taskId: string;
-  /** Captured when the backend task is accepted; used for newest-first feed order. */
+  /** Captured before the paid POST; used for stable newest-first feed order. */
   startedAt: number;
+  /** "submitting" is the optimistic card shown before the server returns a task id. */
+  phase?: "submitting" | "processing";
+  clientRequestId?: string;
   meta: RunMeta;
   cells: ResultCell[];
   progs: number[];

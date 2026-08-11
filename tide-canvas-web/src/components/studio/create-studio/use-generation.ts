@@ -48,7 +48,7 @@ import type {
 } from "./types";
 import { nextHistId, promptHue, refThumbsForRun, threeDAssetsFromMeta, tracksFromMeta } from "./utils";
 import { createSubmissionGate, type SubmissionGate } from "./submission-gate";
-import { upsertInflightRunNewestFirst } from "./inflight-run-order";
+import { isStudioTaskNewerOrEqual, upsertInflightRunNewestFirst } from "./inflight-run-order";
 
 export interface GenerationParams {
   /* panel state (fresh each render) */
@@ -261,6 +261,7 @@ export function useGeneration(p: GenerationParams) {
   const [runMeta, setRunMeta] = useState<RunMeta | null>(null);
   const [inflightRuns, setInflightRuns] = useState<InflightRun[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [recoveringRuns, setRecoveringRuns] = useState(true);
   // full settings of the last started run (for 重新编辑 / 再次生成) + a one-shot
   // flag that fires generate() after those settings are restored to the panel.
   const lastRunRef = useRef<RunParams | null>(null);
@@ -281,6 +282,7 @@ export function useGeneration(p: GenerationParams) {
   const runIdRef = useRef(0);
   const activeRunRef = useRef<ActiveRun | null>(null);
   const runControlsRef = useRef<Map<string, ConcurrentRunControl>>(new Map());
+  const pendingCreateIdsRef = useRef<Set<string>>(new Set());
   const createSeqRef = useRef(0);
 
   const releaseSubmissionGate = useCallback(() => {
@@ -308,7 +310,7 @@ export function useGeneration(p: GenerationParams) {
   /* Poll every accepted task independently. Every task also owns a separate
      feed entry; a newer submission must never replace an older loading card. */
   const driveRun = useCallback(
-    (run: ActiveRun, makeForeground = true) => {
+    (run: ActiveRun, makeForeground = true, replaceTaskId?: string) => {
       const currentUserId = useAuthStore.getState().user?.id ?? "";
       if (!run.ownerUserId || currentUserId !== run.ownerUserId) return;
 
@@ -329,6 +331,8 @@ export function useGeneration(p: GenerationParams) {
       runControlsRef.current.set(taskId, control);
       const isActive = () => runControlsRef.current.get(taskId)?.token === control.token;
       const isForeground = () => activeRunRef.current?.taskId === taskId;
+      const hasOngoingRuns = () =>
+        runControlsRef.current.size > 0 || pendingCreateIdsRef.current.size > 0;
 
       const newCells: ResultCell[] = hues.map((h, i) => ({ i, hues: h }));
       const PROG_FLOOR = 6;
@@ -341,10 +345,11 @@ export function useGeneration(p: GenerationParams) {
         setBusy(true);
       }
       setInflightRuns((prev) => upsertInflightRunNewestFirst(
-        prev,
+        replaceTaskId ? prev.filter((item) => item.taskId !== replaceTaskId) : prev,
         {
           taskId,
           startedAt,
+          phase: "processing",
           meta: { prompt: p, model: mdl, ratio: r, spec, count: n, label, isVid, kind, refThumbs: run.refThumbs, params: run.params },
           cells: newCells,
           progs: [...local],
@@ -376,7 +381,7 @@ export function useGeneration(p: GenerationParams) {
         if (isActive()) runControlsRef.current.delete(taskId);
         if (isForeground()) activeRunRef.current = null;
         setInflightRuns((prev) => prev.filter((item) => item.taskId !== taskId));
-        setBusy(runControlsRef.current.size > 0);
+        setBusy(hasOngoingRuns());
         if (!commit) return;
         removePersistedActiveRun(run);
         if (run.journalScope) {
@@ -400,7 +405,7 @@ export function useGeneration(p: GenerationParams) {
         if (foreground) {
           setProgs(new Array(outCells.length).fill(100));
           setCells(outCells.map((cell) => ({ ...cell, url: urls[cell.i] ?? urls[0] })));
-          setBusy(runControlsRef.current.size > 0);
+          setBusy(hasOngoingRuns());
         }
         const runKey = `task-${taskId}`;
         // Feed order is task-creation order, not provider completion order. An
@@ -446,7 +451,7 @@ export function useGeneration(p: GenerationParams) {
         if (!isActive()) return;
         const foreground = isForeground();
         clearActive();
-        if (foreground) setBusy(runControlsRef.current.size > 0);
+        if (foreground) setBusy(hasOngoingRuns());
         void refreshBalance();
         toast.error(msg || "生成失败");
       };
@@ -459,7 +464,7 @@ export function useGeneration(p: GenerationParams) {
         if ((useAuthStore.getState().user?.id ?? "") !== run.ownerUserId) {
           const foreground = isForeground();
           clearActive(false);
-          if (foreground) setBusy(false);
+          if (foreground) setBusy(hasOngoingRuns());
           return;
         }
         const maxMs = isVid || kind === "3d" ? 30 * 60 * 1000 : kind === "audio" ? 12 * 60 * 1000 : 7 * 60 * 1000;
@@ -474,7 +479,7 @@ export function useGeneration(p: GenerationParams) {
           if ((useAuthStore.getState().user?.id ?? "") !== run.ownerUserId) {
             const foreground = isForeground();
             clearActive(false);
-            if (foreground) setBusy(false);
+            if (foreground) setBusy(hasOngoingRuns());
             return;
           }
           if (!res.success || !res.data) {
@@ -517,7 +522,7 @@ export function useGeneration(p: GenerationParams) {
           } else if (task.status === AiTaskStatus.CANCELLED) {
             const foreground = isForeground();
             clearActive();
-            if (foreground) setBusy(runControlsRef.current.size > 0);
+            if (foreground) setBusy(hasOngoingRuns());
             void refreshBalance();
           } else {
             if (typeof task.progress === "number") {
@@ -566,6 +571,7 @@ export function useGeneration(p: GenerationParams) {
   useEffect(() => {
     mountedRef.current = true;
     const runControls = runControlsRef.current;
+    const pendingCreateIds = pendingCreateIdsRef.current;
     return () => {
       mountedRef.current = false;
       ticksRef.current.forEach((t) => clearInterval(t));
@@ -579,6 +585,7 @@ export function useGeneration(p: GenerationParams) {
         if (control.poll) clearTimeout(control.poll);
       }
       runControls.clear();
+      pendingCreateIds.clear();
       if (submissionReleaseTimerRef.current) clearTimeout(submissionReleaseTimerRef.current);
       submissionGateRef.current?.unlock();
       runIdRef.current += 1; // invalidate any in-flight poll
@@ -596,12 +603,28 @@ export function useGeneration(p: GenerationParams) {
       meta: Omit<ActiveRun, "taskId" | "startedAt" | "journalScope" | "ownerUserId">;
     }) => {
       const createSeq = (createSeqRef.current += 1);
+      const clientRequestId = studioClientRequestID();
+      const optimisticTaskId = `pending:${clientRequestId}`;
+      const startedAt = Date.now();
+      const optimisticCells: ResultCell[] = args.meta.hues.map((hues, i) => ({ i, hues }));
+      pendingCreateIdsRef.current.add(optimisticTaskId);
+      setInflightRuns((prev) => upsertInflightRunNewestFirst(prev, {
+        taskId: optimisticTaskId,
+        clientRequestId,
+        startedAt,
+        phase: "submitting",
+        meta: args.meta,
+        cells: optimisticCells,
+        progs: new Array(optimisticCells.length).fill(2),
+      }));
       // A rejected newer click must not hide an older task that is still the
       // foreground run. This matters most when the server rejects click N+1
       // because the configured concurrency cap is already full.
       const settleLatestCreate = () => {
+        pendingCreateIdsRef.current.delete(optimisticTaskId);
+        setInflightRuns((prev) => prev.filter((item) => item.taskId !== optimisticTaskId));
         if (createSeqRef.current === createSeq) {
-          setBusy(activeRunRef.current !== null);
+          setBusy(runControlsRef.current.size > 0 || pendingCreateIdsRef.current.size > 0);
         }
       };
       setBusy(true);
@@ -623,7 +646,7 @@ export function useGeneration(p: GenerationParams) {
           ...(typeof args.input.skillId === "string"
             ? { entryPoint: "studio" as const, targetType: args.meta.kind }
             : {}),
-          clientRequestId: studioClientRequestID(),
+          clientRequestId,
           input: args.input,
         };
         let res2: Awaited<ReturnType<typeof aiApi.generateIdempotent>>;
@@ -632,6 +655,7 @@ export function useGeneration(p: GenerationParams) {
           res2 = await aiApi.generateIdempotent(createInput, journalScope, {
             requireDurableJournal: true,
             retainAccepted: true,
+            dedupeActivePayload: true,
             recovery: args.meta,
             ownerUserId,
           });
@@ -652,8 +676,16 @@ export function useGeneration(p: GenerationParams) {
           ownerUserId,
           journalScope,
           ...args.meta,
-          startedAt: Date.now(),
+          startedAt,
         };
+        pendingCreateIdsRef.current.delete(optimisticTaskId);
+        void refreshBalance();
+        if (res2.reusedExisting && runControlsRef.current.has(run.taskId)) {
+          setInflightRuns((prev) => prev.filter((item) => item.taskId !== optimisticTaskId));
+          setBusy(true);
+          toast.info("相同任务已在生成中，已为你定位到现有任务");
+          return;
+        }
         const makeForeground = createSeqRef.current === createSeq;
         if (!makeForeground) {
           // A newer click already owns the foreground pointer. This task stays
@@ -667,13 +699,16 @@ export function useGeneration(p: GenerationParams) {
           // reachable if storage was revoked between preflight and response.
           toast.info("任务已启动，请保持当前页面打开以等待结果");
         }
-        driveRun(run, makeForeground);
+        if (res2.reusedExisting) {
+          toast.info("相同任务已在生成中，已恢复现有任务");
+        }
+        driveRun(run, makeForeground, optimisticTaskId);
       } catch {
         settleLatestCreate();
         toast.error("网络错误");
       }
     },
-    [ensureSession, driveRun],
+    [ensureSession, driveRun, refreshBalance],
   );
 
   /* One-click per-result edit op (移除背景 / 物体移除 / 高清放大 / 扩图). Fires a
@@ -683,6 +718,10 @@ export function useGeneration(p: GenerationParams) {
      model, which may be a video model), and 高清放大 prefers a 4K-capable one. */
   const oneClickEdit = useCallback(
     async (op: string, imageUrl: string, label: string) => {
+      if (recoveringRuns) {
+        toast.info("正在恢复生成任务，请稍候…");
+        return;
+      }
       if (busy || genInFlightRef.current || submissionGateRef.current?.isLocked()) {
         toast.info("正在生成中，请稍候…");
         return;
@@ -761,7 +800,7 @@ export function useGeneration(p: GenerationParams) {
         toast.error("网络错误，请重试");
       }
     },
-    [busy, ensureSession, model, runMeta, startGeneration],
+    [busy, ensureSession, model, recoveringRuns, runMeta, startGeneration],
   );
 
   /* ── generation ───────────────────────────────────────────────────────────
@@ -770,6 +809,10 @@ export function useGeneration(p: GenerationParams) {
      only when no backend model is available (studioList empty). */
 
   const generate = useCallback((options?: { requireBackendModel?: boolean; expectedModelId?: string }) => {
+    if (recoveringRuns) {
+      toast.info("正在恢复生成任务，请稍候…");
+      return;
+    }
     const selectedStudio = studioList.find((item) => item.name === model) ?? null;
     if (options?.expectedModelId && selectedStudio?.id !== options.expectedModelId) {
       toast.info("历史模型目录已变化，请确认当前模型后重新生成");
@@ -1077,142 +1120,166 @@ export function useGeneration(p: GenerationParams) {
       },
     }).finally(releaseSubmissionGate);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busy, prompt, count, tool, curType, ratio, model, res, dur, imgRes, quality, musicMode, sourceClipId, sourceIsUpload, continueAt, lyrics, songStyle, songTitle, instrumental, enablePbr, faceCount, generateType, resultFormat, slotData, studioList, ratioOpts, resOpts, durOpts, qualOpts, pushHistory, startGeneration, skill, isAudio, isSfx, is3D, promptRef, releaseSubmissionGate]);
+  }, [busy, recoveringRuns, prompt, count, tool, curType, ratio, model, res, dur, imgRes, quality, musicMode, sourceClipId, sourceIsUpload, continueAt, lyrics, songStyle, songTitle, instrumental, enablePbr, faceCount, generateType, resultFormat, slotData, studioList, ratioOpts, resOpts, durOpts, qualOpts, pushHistory, startGeneration, skill, isAudio, isSfx, is3D, promptRef, releaseSubmissionGate]);
 
   // Refresh-resume has two durable layers. ACTIVE_RUN_KEY is the normal pointer;
   // the accepted-create journal closes the response→ACTIVE_RUN_KEY crash window
   // and can replay an ambiguous create with the original clientRequestId.
   useEffect(() => {
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- paid submits stay locked until durable recovery is scanned
+    setRecoveringRuns(true);
     (async () => {
-      if (!(await ensureSession()) || cancelled) return;
-      const ownerUserId = useAuthStore.getState().user?.id ?? "";
-      // A paid create must not start or recover until /me has confirmed which
-      // account owns its local partition.
-      if (!ownerUserId) return;
+      try {
+        if (!(await ensureSession()) || cancelled) return;
+        const ownerUserId = useAuthStore.getState().user?.id ?? "";
+        // A paid create must not start or recover until /me has confirmed which
+        // account owns its local partition.
+        if (!ownerUserId) return;
 
-      const activeKey = activeRunStorageKey(ownerUserId);
-      let raw: string | null = null;
-      try {
-        raw = localStorage.getItem(activeKey);
-      } catch {
-        raw = null;
-      }
-      let saved: ActiveRun | null = null;
-      try {
-        saved = JSON.parse(raw || "null") as ActiveRun | null;
-      } catch {
-        saved = null;
-      }
-      // One-release migration for an already-running task written by the old
-      // global key. Never assign it by assumption: the authenticated detail
-      // endpoint must prove this account owns the task first. A 403 leaves the
-      // legacy row untouched so its real owner can migrate it later.
-      if (!saved && !raw) {
-        let legacyRaw: string | null = null;
+        const activeKey = activeRunStorageKey(ownerUserId);
+        let raw: string | null = null;
         try {
-          legacyRaw = localStorage.getItem(ACTIVE_RUN_KEY);
+          raw = localStorage.getItem(activeKey);
         } catch {
-          legacyRaw = null;
+          raw = null;
         }
-        let legacy: Partial<ActiveRun> | null = null;
+        let saved: ActiveRun | null = null;
         try {
-          legacy = JSON.parse(legacyRaw || "null") as Partial<ActiveRun> | null;
+          saved = JSON.parse(raw || "null") as ActiveRun | null;
         } catch {
-          legacy = null;
+          saved = null;
         }
-        if (
-          legacy &&
-          typeof legacy.taskId === "string" &&
-          !!legacy.taskId &&
-          Array.isArray(legacy.hues)
-        ) {
-          const ownership = await aiApi.getTask(legacy.taskId);
-          if (cancelled) return;
-          if (ownership.success && ownership.data) {
-            saved = { ...legacy, ownerUserId } as ActiveRun;
-            if (persistActiveRun(saved)) {
-              try {
-                const latest = JSON.parse(localStorage.getItem(ACTIVE_RUN_KEY) || "null") as Partial<ActiveRun> | null;
-                if (latest?.taskId === saved.taskId) localStorage.removeItem(ACTIVE_RUN_KEY);
-              } catch {
-                /* keep the legacy pointer */
+        // One-release migration for an already-running task written by the old
+        // global key. Never assign it by assumption: the authenticated detail
+        // endpoint must prove this account owns the task first. A 403 leaves the
+        // legacy row untouched so its real owner can migrate it later.
+        if (!saved && !raw) {
+          let legacyRaw: string | null = null;
+          try {
+            legacyRaw = localStorage.getItem(ACTIVE_RUN_KEY);
+          } catch {
+            legacyRaw = null;
+          }
+          let legacy: Partial<ActiveRun> | null = null;
+          try {
+            legacy = JSON.parse(legacyRaw || "null") as Partial<ActiveRun> | null;
+          } catch {
+            legacy = null;
+          }
+          if (
+            legacy &&
+            typeof legacy.taskId === "string" &&
+            !!legacy.taskId &&
+            Array.isArray(legacy.hues)
+          ) {
+            const ownership = await aiApi.getTask(legacy.taskId);
+            if (cancelled) return;
+            if (ownership.success && ownership.data) {
+              saved = { ...legacy, ownerUserId } as ActiveRun;
+              if (persistActiveRun(saved)) {
+                try {
+                  const latest = JSON.parse(localStorage.getItem(ACTIVE_RUN_KEY) || "null") as Partial<ActiveRun> | null;
+                  if (latest?.taskId === saved.taskId) localStorage.removeItem(ACTIVE_RUN_KEY);
+                } catch {
+                  /* keep the legacy pointer */
+                }
               }
             }
           }
         }
-      }
-      if (
-        !saved ||
-        saved.ownerUserId !== ownerUserId ||
-        typeof saved.taskId !== "string" ||
-        !saved.taskId ||
-        !Array.isArray(saved.hues)
-      ) {
-        try {
-          if (raw) localStorage.removeItem(activeKey);
-        } catch {
-          /* ignore */
+        if (
+          !saved ||
+          saved.ownerUserId !== ownerUserId ||
+          typeof saved.taskId !== "string" ||
+          !saved.taskId ||
+          !Array.isArray(saved.hues)
+        ) {
+          try {
+            if (raw) localStorage.removeItem(activeKey);
+          } catch {
+            /* ignore */
+          }
+          saved = null;
         }
-        saved = null;
-      }
-      const recoveredTaskIds = new Set<string>();
-      if (saved) {
-        recoveredTaskIds.add(saved.taskId);
-        driveRun(saved);
-      }
+        const recoveredTaskIds = new Set<string>();
+        if (saved) {
+          recoveredTaskIds.add(saved.taskId);
+          driveRun(saved);
+        }
 
-      for (;;) {
-        if (cancelled) return;
-        const candidates = STUDIO_GENERATION_SCOPES.flatMap((scope) =>
-          recoverableAiGenerations(scope, ownerUserId).map((entry) => ({ scope, entry })),
-        )
-          .filter(({ entry }) => !entry.taskId || !recoveredTaskIds.has(entry.taskId))
-          .sort((left, right) => left.entry.updatedAt - right.entry.updatedAt);
-        const candidate = candidates[0];
-        if (!candidate) return;
-        const { scope, entry } = candidate;
+        for (;;) {
+          if (cancelled) return;
+          const candidates = STUDIO_GENERATION_SCOPES.flatMap((scope) =>
+            recoverableAiGenerations(scope, ownerUserId).map((entry) => ({ scope, entry })),
+          )
+            .filter(({ entry }) => !entry.taskId || !recoveredTaskIds.has(entry.taskId))
+            .sort((left, right) => {
+              // Restore accepted tasks first so one ambiguous create cannot hide
+              // every newer task that already has a durable backend id.
+              if (!!left.entry.taskId !== !!right.entry.taskId) {
+                return left.entry.taskId ? -1 : 1;
+              }
+              return left.entry.updatedAt - right.entry.updatedAt;
+            });
+          const candidate = candidates[0];
+          if (!candidate) return;
+          const { scope, entry } = candidate;
 
-        const result = entry.taskId
-          ? await aiApi.getTask(entry.taskId)
-          : entry.payload
-            ? await aiApi.generateIdempotent(
-                { ...entry.payload, clientRequestId: entry.clientRequestId },
-                scope,
-                {
-                  requireDurableJournal: true,
-                  retainAccepted: true,
-                  recovery: entry.recovery,
-                  ownerUserId,
-                },
-              )
-            : null;
-        if (cancelled) return;
-        if (result?.success && result.data) {
-          const run = activeRunFromJournal(scope, entry, result.data, ownerUserId);
-          if (!run) {
-            await commitAcceptedAiGeneration(scope, result.data.id, ownerUserId);
+          const result = entry.taskId
+            ? await aiApi.getTask(entry.taskId)
+            : entry.payload
+              ? await aiApi.generateIdempotent(
+                  { ...entry.payload, clientRequestId: entry.clientRequestId },
+                  scope,
+                  {
+                    requireDurableJournal: true,
+                    retainAccepted: true,
+                    recovery: entry.recovery,
+                    ownerUserId,
+                  },
+                )
+              : null;
+          if (cancelled) return;
+          if (result?.success && result.data) {
+            const run = activeRunFromJournal(scope, entry, result.data, ownerUserId);
+            if (!run) {
+              await commitAcceptedAiGeneration(scope, result.data.id, ownerUserId);
+              continue;
+            }
+            // ACTIVE_RUN is the single foreground pointer. Accepted journals
+            // retain every other task, so an older recovered run must not
+            // overwrite a newer pointer merely because it was restored later.
+            const makeForeground = !activeRunRef.current || isStudioTaskNewerOrEqual(
+              run,
+              activeRunRef.current,
+            );
+            if (makeForeground) persistActiveRun(run);
+            recoveredTaskIds.add(run.taskId);
+            if (!cancelled) driveRun(run, makeForeground);
             continue;
           }
-          // ACTIVE_RUN is the single foreground pointer. Accepted journals
-          // retain every other task, so an older recovered run must not
-          // overwrite a newer pointer merely because it was restored later.
-          const currentStartedAt = activeRunRef.current?.startedAt ?? 0;
-          const makeForeground = !activeRunRef.current || run.startedAt >= currentStartedAt;
-          if (makeForeground) persistActiveRun(run);
-          recoveredTaskIds.add(run.taskId);
-          if (!cancelled) driveRun(run, makeForeground);
-          continue;
-        }
 
-        if (entry.taskId && result && (result.code === 404 || result.code === 400)) {
-          // A deleted/invalid task cannot be recovered and cannot still charge;
-          // retire it so an older valid journal can be considered.
-          await commitAcceptedAiGeneration(scope, entry.taskId, ownerUserId);
-          continue;
+          if (entry.taskId && result && !isAmbiguousAiCreateCode(result.code)) {
+            // Any definitive lookup response that was not a usable task above
+            // (403, 404, malformed success, etc.) cannot become recoverable by
+            // polling this pointer forever. Retire it and continue with others.
+            await commitAcceptedAiGeneration(scope, entry.taskId, ownerUserId);
+            continue;
+          }
+          if (result && !isAmbiguousAiCreateCode(result.code)) {
+            // generateIdempotent normally retires definitive creates itself. If
+            // durable storage is temporarily unavailable its row remains; wait
+            // instead of spinning a tight recovery loop.
+            const stillPending = recoverableAiGenerations(scope, ownerUserId).some(
+              (row) => row.fingerprint === entry.fingerprint,
+            );
+            if (!stillPending) continue;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 3_000));
         }
-        if (result && !isAmbiguousAiCreateCode(result.code)) continue;
-        await new Promise((resolve) => setTimeout(resolve, 3_000));
+      } finally {
+        if (!cancelled) setRecoveringRuns(false);
       }
     })();
     return () => {
@@ -1241,6 +1308,7 @@ export function useGeneration(p: GenerationParams) {
   return {
     busy,
     submitting,
+    recoveringRuns,
     cells,
     progs,
     runMeta,

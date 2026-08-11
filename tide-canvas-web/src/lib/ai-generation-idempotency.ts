@@ -1,10 +1,13 @@
 import { http } from "@/lib/http";
+import { findActiveGenerationByPayload } from "@/lib/active-generation-dedupe";
 import type { Result } from "@/types/api";
 import type { AiGenerateDTO, AiGenerateInput, AiTaskVO } from "@/types/ai";
 
 export interface PendingAiGeneration {
   clientRequestId: string;
   fingerprint: string;
+  /** Request payload hash without the click-specific request id. */
+  payloadFingerprint?: string;
   updatedAt: number;
   /** Account that owns this recovery pointer. Paid surfaces always set it. */
   ownerUserId?: string;
@@ -32,6 +35,13 @@ export interface AiGenerationJournalOptions {
   recovery?: unknown;
   /** Confirmed account id. Required whenever requireDurableJournal is enabled. */
   ownerUserId?: string;
+  /** Reuse an unresolved identical payload instead of creating another paid task. */
+  dedupeActivePayload?: boolean;
+}
+
+export interface IdempotentAiGenerationResult extends Result<AiTaskVO> {
+  /** Another click/tab already owns this unresolved payload and its request id. */
+  reusedExisting?: boolean;
 }
 
 function stableJSON(value: unknown): string {
@@ -87,6 +97,7 @@ function validPending(value: unknown, ownerUserId?: string): value is PendingAiG
   const owner = normalizedOwnerUserId(ownerUserId);
   return typeof row.clientRequestId === "string" &&
     typeof row.fingerprint === "string" &&
+    (row.payloadFingerprint === undefined || typeof row.payloadFingerprint === "string") &&
     typeof row.updatedAt === "number" &&
     Number.isFinite(row.updatedAt) &&
     Date.now() - row.updatedAt < (row.taskId ? ACCEPTED_TTL_MS : PENDING_TTL_MS) &&
@@ -190,7 +201,7 @@ function definitive(result: Result<unknown>): boolean {
   return result.success || !isAmbiguousAiCreateCode(result.code);
 }
 
-function journalUnavailableResult(): Result<AiTaskVO> {
+function journalUnavailableResult(): IdempotentAiGenerationResult {
   return {
     success: false,
     code: 409,
@@ -233,7 +244,7 @@ export async function generateAiTaskIdempotent(
   input: AiGenerateInput,
   scope: string,
   options: AiGenerationJournalOptions = {},
-): Promise<Result<AiTaskVO>> {
+): Promise<IdempotentAiGenerationResult> {
   const ownerUserId = normalizedOwnerUserId(options.ownerUserId);
   if (
     options.requireDurableJournal &&
@@ -244,31 +255,43 @@ export async function generateAiTaskIdempotent(
   const { clientRequestId: requestedId, ...payload } = input;
   const explicitRequestId = requestedId?.trim();
   const payloadFingerprint = await fingerprint(payload);
-  // Explicit request IDs identify distinct user clicks even when the prompt and
-  // model are identical. Keeping them in separate journal rows allows true
-  // concurrent submissions while retries of either click remain exactly-once.
+  // Most surfaces treat explicit request IDs as distinct user intents. Paid
+  // Studio submits opt into active-payload dedupe: while an identical payload
+  // remains unresolved, every tab adopts the winning request id instead of
+  // creating and charging another task.
   const journalFingerprint = explicitRequestId
     ? `${payloadFingerprint}:${explicitRequestId}`
     : payloadFingerprint;
   const prepared = await withScopeLock(scope, ownerUserId || undefined, () => {
     const rows = readPending(scope, ownerUserId || undefined);
-    const previous = rows.find((row) => row.fingerprint === journalFingerprint);
+    const exact = rows.find((row) => row.fingerprint === journalFingerprint);
+    const payloadMatch = options.dedupeActivePayload
+      ? findActiveGenerationByPayload(rows, payloadFingerprint)
+      : undefined;
+    const previous = exact ?? payloadMatch;
+    const reusedExisting = !!(
+      explicitRequestId &&
+      previous &&
+      previous.clientRequestId !== explicitRequestId
+    );
     const next: PendingAiGeneration =
       // Recovery callers persist their own request id beside the frozen DTO.
       // That persisted id is authoritative: an older, same-payload browser
       // journal must never substitute another task and attach its result to the
       // recovering node. Implicit callers still reuse the local journal.
-      previous && (!explicitRequestId || previous.clientRequestId === explicitRequestId)
+      previous && (!explicitRequestId || previous.clientRequestId === explicitRequestId || reusedExisting)
         ? {
             ...previous,
             payload,
+            payloadFingerprint,
             recovery: previous.recovery ?? options.recovery,
-            updatedAt: Date.now(),
+            updatedAt: reusedExisting ? previous.updatedAt : Date.now(),
             ...(!previous.taskId ? { storagePadding: TASK_ID_STORAGE_PADDING } : {}),
           }
         : {
             clientRequestId: explicitRequestId || requestId(),
             fingerprint: journalFingerprint,
+            payloadFingerprint,
             updatedAt: Date.now(),
             ...(ownerUserId ? { ownerUserId } : {}),
             payload,
@@ -277,16 +300,26 @@ export async function generateAiTaskIdempotent(
           };
     const durable = writePending(
       scope,
-      [...rows.filter((row) => row.fingerprint !== journalFingerprint), next],
+      [...rows.filter((row) => row.fingerprint !== next.fingerprint), next],
       ownerUserId || undefined,
     );
-    return { pending: next, durable };
+    return { pending: next, durable, reusedExisting };
   });
   if (options.requireDurableJournal && !prepared.durable) return journalUnavailableResult();
   const pending = prepared.pending;
 
   const dto: AiGenerateDTO = { ...payload, clientRequestId: pending.clientRequestId };
-  const result = await http.post<AiTaskVO>("/api/ai/generate", dto);
+  // The create endpoint normally returns immediately after its DB transaction.
+  // Bound a lost proxy response so the caller can retry this exact request id
+  // while its optimistic card continues to explain what is happening.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  let result: Result<AiTaskVO>;
+  try {
+    result = await http.post<AiTaskVO>("/api/ai/generate", dto, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
   if (definitive(result)) {
     await withScopeLock(scope, ownerUserId || undefined, () => {
       const rows = readPending(scope, ownerUserId || undefined);
@@ -321,5 +354,5 @@ export async function generateAiTaskIdempotent(
       }
     });
   }
-  return result;
+  return prepared.reusedExisting ? { ...result, reusedExisting: true } : result;
 }

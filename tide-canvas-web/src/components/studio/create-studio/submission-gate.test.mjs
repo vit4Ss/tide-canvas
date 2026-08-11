@@ -42,6 +42,6 @@ test("Studio paid submits acquire the gate before create and expose locked butto
   assert.ok(acquire >= 0, "the synchronous gate must guard Studio submissions");
   assert.ok(create > acquire, "the paid create must happen after gate acquisition");
   assert.ok(release > create, "the gate must release only after task creation settles");
-  assert.match(studio, /disabled=\{restoringRun \|\| submitting\}/);
+  assert.match(studio, /disabled=\{restoringRun \|\| recoveringRuns \|\| submitting\}/);
   assert.match(threeD, /disabled=\{submitting\}/);
 });

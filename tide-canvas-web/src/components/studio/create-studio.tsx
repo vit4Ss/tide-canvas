@@ -96,6 +96,7 @@ import { audioToolOf, histItemsFromTasks, huesFromId, resolutionRank, slotTypeOf
 import { useStudioModels } from "./create-studio/use-studio-models";
 import { useSourceClip } from "./create-studio/use-source-clip";
 import { useHistory } from "./create-studio/use-history";
+import { mergeInitialStudioHistory } from "./create-studio/history-merge";
 import { useUploadSlots } from "./create-studio/use-upload-slots";
 import { useGeneration } from "./create-studio/use-generation";
 import { TypeTabs } from "./create-studio/type-tabs";
@@ -355,6 +356,7 @@ export default function CreateStudio() {
   const {
     busy,
     submitting,
+    recoveringRuns,
     inflightRuns,
     setCells,
     setProgs,
@@ -579,7 +581,7 @@ export default function CreateStudio() {
         });
         return;
       }
-      setHist(items);
+      setHist((prev) => mergeInitialStudioHistory(prev, items));
 
       // First load only: if the user has past results and nothing is currently
       // generating / being resumed, show their most recent image in the stage
@@ -613,8 +615,9 @@ export default function CreateStudio() {
         }
       }
     } catch {
-      if (!append) setHist([]);
-      else setHistLoadError(true); // 续页失败:哨兵显示「点击重试」而不是静默
+      // Never erase a task that completed locally while this request was in
+      // flight. The existing feed is still truthful and a retry can merge later.
+      setHistLoadError(true);
     } finally {
       histLoadingRef.current = false;
       setHistLoadingMore(false);
@@ -1269,15 +1272,21 @@ export default function CreateStudio() {
           {/* footer */}
           <div className="ws-panel-foot">
             <button
-              className={`ws-gen${restoringRun || submitting ? " busy" : ""}`}
+              className={`ws-gen${restoringRun || recoveringRuns || submitting ? " busy" : ""}`}
               id="gen"
               type="button"
-              disabled={restoringRun || submitting}
-              aria-busy={submitting}
+              disabled={restoringRun || recoveringRuns || submitting}
+              aria-busy={recoveringRuns || submitting}
               onClick={() => generate()}
             >
               <span className="spark">✦</span>{" "}
-              {restoringRun ? "正在恢复历史参数…" : submitting ? "正在提交…" : "立即生成"}{" "}
+              {restoringRun
+                ? "正在恢复历史参数…"
+                : recoveringRuns
+                  ? "正在恢复生成任务…"
+                  : submitting
+                    ? "正在提交…"
+                    : "立即生成"}{" "}
               <span className="ws-gen-cost">
                 <>·&nbsp;<b id="cost">{cost}</b>&nbsp;积分</>
               </span>

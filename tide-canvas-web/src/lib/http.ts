@@ -314,8 +314,8 @@ export const http = {
   get: <T>(path: string, params?: QueryParams) =>
     request<T>(path, { method: "GET", params }),
 
-  post: <T>(path: string, body?: unknown) =>
-    request<T>(path, { method: "POST", body }),
+  post: <T>(path: string, body?: unknown, options: Omit<RequestOptions, "method" | "body"> = {}) =>
+    request<T>(path, { ...options, method: "POST", body }),
 
   put: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: "PUT", body }),
