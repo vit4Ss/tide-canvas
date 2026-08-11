@@ -6,7 +6,7 @@
    与创作台的区别：这里是「封装好的完整功能」——提示词由服务端 handler 预置
    （upscale / remove_bg / outpaint / remove_object / relight，与创作台结果卡的
    一键操作共用同一批后端处理器与模型解析策略），用户只需上传素材。
-   流程：上传 → 自动处理 → 原件/结果对照 → 下载；两个工具在开跑前多收一项：
+   流程：上传 → 确认模型与积分 → 处理 → 原件/结果对照 → 下载；其中：
      - 局部重绘（image_to_image）：一句修改描述；
      - 视频超分（video_upscale）：目标分辨率档位。
 
@@ -17,7 +17,8 @@
    （GET /api/ai/tools，公开接口）；接口未应答或失败时用 FALLBACK_OPS 出厂兜底，
    页面永不空白。
 
-   任务同样落在 /api/ai/tasks（工具中心的「工具作品」与生成历史里也能看到）。
+   任务同样落在 /api/ai/tasks，但只在工具中心的「工具作品」与资产中展示，
+   不混入创作台生成历史。
    ========================================================================== */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -32,6 +33,8 @@ import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";
 import { AiTaskStatus, type AiToolVO } from "@/types/ai";
 import { coverBg } from "@/lib/mesh";
+import { resolveImageToolPointCost, resolveUpscalePointCost } from "@/lib/price-matrix";
+import { notifyAssetLibraryChanged } from "@/lib/asset-library-events";
 import {
   FALLBACK_TOOLS,
   resolveToolCoverUrl,
@@ -73,9 +76,8 @@ const FALLBACK_OPS: Record<string, ToolDef> = Object.fromEntries(
   FALLBACK_TOOLS.map((t) => [t.key, t]),
 );
 
-/** prompt = 局部重绘的修改描述；options = 视频超分的目标分辨率。两者都是
-    「上传完成、开跑之前」收一项必要输入，其余工具上传即跑。 */
-type Phase = "idle" | "uploading" | "prompt" | "options" | "running" | "done" | "failed";
+/** 图片工具统一先确认模型价格；prompt 额外收局部重绘描述，options 收超分档位。 */
+type Phase = "idle" | "uploading" | "confirm" | "prompt" | "options" | "running" | "done" | "failed";
 
 /** 素材预览：视频工具用 video 元素（带控件，可直接播放确认），图片用 img。 */
 function ToolMedia({ src, alt, video }: { src: string; alt: string; video: boolean }) {
@@ -103,18 +105,41 @@ function sourceFromJournal(entry: PendingAiGeneration): string {
     : "";
 }
 
-/** 模型解析 —— 图片工具与创作台一键操作同策略：优先 edits/i2i 能力，
-    高清放大偏好 4K 模型，再退到 nano-banana-2 / gpt-image-2 / 首个。
-    视频工具取「超分」类目下的首个已上架模型（该类目只服务超分能力）。 */
+/** 模型列表读取失败与“确实没有已上架模型”必须区分，确认页才能给出正确恢复动作。 */
 async function listVideoModels(): Promise<StudioModelVO[]> {
   const r = await marketApi.studioModels("upscale");
-  return r.success && Array.isArray(r.data) ? r.data : [];
+  if (!r.success || !Array.isArray(r.data)) throw new Error(r.message || "模型读取失败");
+  return r.data;
 }
 
-async function pickModel(def: ToolDef): Promise<StudioModelVO | null> {
-  if (def.type === "video") return (await listVideoModels())[0] ?? null;
+async function listImageModels(): Promise<StudioModelVO[]> {
   const r = await marketApi.studioModels("image");
-  const models = r.success && Array.isArray(r.data) ? r.data : [];
+  if (!r.success || !Array.isArray(r.data)) throw new Error(r.message || "模型读取失败");
+  return r.data;
+}
+
+/** 后台可能没有配置档位，也可能残留超分接口不支持的值；只展示可提交档位。 */
+function upscaleResolutionsFor(model: StudioModelVO | null): string[] {
+  const allowed = UPSCALE_RESOLUTIONS as readonly string[];
+  const configured = (model?.config?.resolutions ?? [])
+    .map((resolution) => (typeof resolution === "string" ? resolution.toLowerCase() : ""))
+    .filter((resolution) => allowed.includes(resolution));
+  return configured.length ? Array.from(new Set(configured)) : [...UPSCALE_RESOLUTIONS];
+}
+
+/** 与服务端 resolveCost 同口径：矩阵档位价 → 模型覆盖价 → 模型固定价。 */
+function upscalePointCost(model: StudioModelVO | null, resolution: string): number {
+  if (!model || !resolution) return 0;
+  return resolveUpscalePointCost(model.config, resolution, model.pointCost);
+}
+
+function pointCostLabel(cost: number): string {
+  return cost > 0 ? `${cost} 积分` : "免费";
+}
+
+/** 图片工具与创作台一键操作同策略，但选择发生在确认页渲染前；执行时复用同一模型。 */
+function chooseImageModel(def: ToolDef | undefined, models: StudioModelVO[]): StudioModelVO | null {
+  if (!def || def.type !== "image") return null;
   const editable = models.filter(
     (m) =>
       (m.config?.operations?.includes("edits") ?? false) ||
@@ -132,20 +157,80 @@ async function pickModel(def: ToolDef): Promise<StudioModelVO | null> {
   );
 }
 
+function imageToolPointCost(model: StudioModelVO | null, def: ToolDef | undefined): number {
+  if (!model || !def) return 0;
+  return resolveImageToolPointCost(model.config, def.extra ?? {}, model.pointCost);
+}
+
+interface ModelDisclosureProps {
+  model: StudioModelVO | null;
+  pointCost: number;
+  loading: boolean;
+  error: string;
+  emptyLabel?: string;
+  onRetry: () => void;
+}
+
+function ModelDisclosure({
+  model,
+  pointCost,
+  loading,
+  error,
+  emptyLabel = "暂无可用的图像编辑模型",
+  onRetry,
+}: ModelDisclosureProps) {
+  if (loading) {
+    return (
+      <div className="tp-model-disclosure muted" role="status">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        <span>正在读取模型与价格…</span>
+      </div>
+    );
+  }
+  if (!model) {
+    return (
+      <div className="tp-model-disclosure muted" role={error ? "alert" : "status"}>
+        <span>{error || emptyLabel}</span>
+        <button type="button" className="tp-inline-retry" onClick={onRetry}>
+          重新加载
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="tp-model-disclosure">
+      <span className="tp-model-copy">
+        <strong>{model.name}</strong>
+        <small>本工具将调用此模型处理</small>
+      </span>
+      <strong className="tp-disclosure-price">{pointCostLabel(pointCost)}</strong>
+    </div>
+  );
+}
+
 export default function ToolPage() {
   const router = useRouter();
   const params = useParams<{ op: string }>();
 
-  // 后台「工具管理」配置：null = 接口未应答/失败（渲染 FALLBACK_OPS 出厂兜底）。
-  const [tools, setTools] = useState<AiToolVO[] | null>(null);
+  // loading 与 fallback 分开：接口未返回时不能先摆出可能已下线的兜底工具。
+  const [tools, setTools] = useState<AiToolVO[]>([]);
+  const [toolCatalogState, setToolCatalogState] = useState<"loading" | "ready" | "fallback">("loading");
   const [coverPool, setCoverPool] = useState<string[]>([]);
   useEffect(() => {
     let alive = true;
-    aiApi.tools().then((res) => {
-      if (alive && res.success && Array.isArray(res.data)) {
-        setTools(res.data);
-      }
-    });
+    aiApi.tools()
+      .then((res) => {
+        if (!alive) return;
+        if (res.success && Array.isArray(res.data)) {
+          setTools(res.data);
+          setToolCatalogState("ready");
+        } else {
+          setToolCatalogState("fallback");
+        }
+      })
+      .catch(() => {
+        if (alive) setToolCatalogState("fallback");
+      });
     loadToolCoverPool().then((covers) => {
       if (alive) setCoverPool(covers);
     });
@@ -157,7 +242,8 @@ export default function ToolPage() {
   /** 工具定义解析：接口已返回 → 按 key 匹配（匹配不到 = 已下线/不存在）；
       未返回 → 出厂兜底（封面缺失时借用兜底色相，再退中性三元组）。 */
   const def = useMemo<ToolDef | undefined>(() => {
-    if (tools !== null) {
+    if (toolCatalogState === "loading") return undefined;
+    if (toolCatalogState === "ready") {
       const vo = tools.find((t) => t.key === params.op);
       if (!vo) return undefined;
       const fb: ToolDef | undefined = FALLBACK_OPS[params.op];
@@ -180,7 +266,7 @@ export default function ToolPage() {
       };
     }
     return FALLBACK_OPS[params.op];
-  }, [tools, params.op]);
+  }, [tools, toolCatalogState, params.op]);
 
   const resolvedCoverUrl = useMemo(
     () => def ? resolveToolCoverUrl(def.key, def.coverUrl, coverPool) : "",
@@ -193,6 +279,8 @@ export default function ToolPage() {
   const [source, setSource] = useState("");
   const [result, setResult] = useState("");
   const [progress, setProgress] = useState(0);
+  // 任务创建后由服务端回填的实际积分；提交前展示的是同口径预估。
+  const [submittedPointCost, setSubmittedPointCost] = useState(0);
   const [background, setBackground] = useState(false);
   const [error, setError] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -224,6 +312,7 @@ export default function ToolPage() {
         if ((useAuthStore.getState().user?.id ?? "") !== ownerUserId) return;
         if (r.success && r.data) {
           const t = r.data;
+          if (typeof t.pointCost === "number") setSubmittedPointCost(t.pointCost);
           if (t.status === AiTaskStatus.SUCCESS) {
             // 单图任务结果在 resultUrl；批量任务在 resultMeta.urls[0] 兜底
             let url = t.resultUrl;
@@ -241,8 +330,15 @@ export default function ToolPage() {
             if (url) {
               setResult(url);
               setPhase("done");
+              // 工具结果只留在工具页展示，但它仍是资产。通知已缓存的资产页
+              // 重新取数，避免服务端已有记录而界面仍停留在旧列表。
+              notifyAssetLibraryChanged({
+                collection: "hist",
+                mediaKind: t.handler === "video_upscale" ? "video" : "image",
+                origin: "tool",
+              });
             } else {
-              fail("处理完成但未返回图片，请稍后在创作台的生成历史中查看");
+              fail("处理完成但未返回结果，请稍后到工具中心的工具作品中查看");
             }
             void commitAcceptedAiGeneration(journalScope, taskId, ownerUserId);
             return;
@@ -284,42 +380,101 @@ export default function ToolPage() {
   // 模型固定价扣费。超分类目下常有多个模型(标准/pro/字节)，各自的档位与
   // 定价都不同，所以整份列表都要,由用户选。
   const [videoModels, setVideoModels] = useState<StudioModelVO[]>([]);
+  const [videoModelsLoading, setVideoModelsLoading] = useState(true);
+  const [videoModelsError, setVideoModelsError] = useState("");
+  const [videoModelsRevision, setVideoModelsRevision] = useState(0);
   const [modelId, setModelId] = useState("");
   const isVideoDef = def?.type === "video";
   useEffect(() => {
     if (!isVideoDef) return;
     let alive = true;
-    void listVideoModels().then((list) => {
-      if (alive) setVideoModels(list);
-    });
+    void listVideoModels()
+      .then((list) => {
+        if (alive) {
+          setVideoModels(list);
+          setVideoModelsError("");
+        }
+      })
+      .catch((cause: unknown) => {
+        if (alive) {
+          setVideoModels([]);
+          setVideoModelsError(cause instanceof Error ? cause.message : "模型读取失败");
+        }
+      })
+      .finally(() => {
+        if (alive) setVideoModelsLoading(false);
+      });
     return () => {
       alive = false;
     };
-  }, [isVideoDef]);
+  }, [isVideoDef, videoModelsRevision]);
+
+  const retryVideoModels = useCallback(() => {
+    setVideoModelsLoading(true);
+    setVideoModelsError("");
+    setVideoModelsRevision((value) => value + 1);
+  }, []);
+
+  // 图片工具同样在执行前解析模型和价格。失败时停留在确认页，绝不以未知价格开跑。
+  const [imageModels, setImageModels] = useState<StudioModelVO[]>([]);
+  const [imageModelsLoading, setImageModelsLoading] = useState(true);
+  const [imageModelsError, setImageModelsError] = useState("");
+  const [imageModelsRevision, setImageModelsRevision] = useState(0);
+  const isImageDef = def?.type === "image";
+  useEffect(() => {
+    if (!isImageDef) return;
+    let alive = true;
+    void listImageModels()
+      .then((list) => {
+        if (alive) {
+          setImageModels(list);
+          setImageModelsError("");
+        }
+      })
+      .catch((cause: unknown) => {
+        if (alive) {
+          setImageModels([]);
+          setImageModelsError(cause instanceof Error ? cause.message : "模型读取失败");
+        }
+      })
+      .finally(() => {
+        if (alive) setImageModelsLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [isImageDef, imageModelsRevision]);
+
+  const retryImageModels = useCallback(() => {
+    setImageModelsLoading(true);
+    setImageModelsError("");
+    setImageModelsRevision((value) => value + 1);
+  }, []);
 
   /** 当前选中的超分模型;未选(或选中的已下架)时用列表首个。 */
   const videoModel = useMemo(
     () => videoModels.find((m) => m.id === modelId) ?? videoModels[0] ?? null,
     [videoModels, modelId],
   );
+  const imageModel = useMemo(() => chooseImageModel(def, imageModels), [def, imageModels]);
+  const imagePointCost = useMemo(
+    () => imageToolPointCost(imageModel, def),
+    [imageModel, def],
+  );
 
   /** 该模型后台配置的目标分辨率；未配置时退回超分接口的全部档位。
       还要与超分接口认的档位取交集:模型可能是从别的类型改过来的，配置里残留着
       480p 这类档位，摆出来只会让用户选到一个上游必拒的值。 */
   const resolutionOptions = useMemo(() => {
-    const allowed = UPSCALE_RESOLUTIONS as readonly string[];
-    // 统一小写:默认档位与选中态都靠字符串相等判断，配置里写成 "1080P" 会让
-    // 这些比较全部落空。服务端也按小写校验，发上去的值同样规范。
-    const configured = (videoModel?.config?.resolutions ?? [])
-      .map((r) => (typeof r === "string" ? r.toLowerCase() : ""))
-      .filter((r) => allowed.includes(r));
-    return configured.length ? configured : [...UPSCALE_RESOLUTIONS];
+    return upscaleResolutionsFor(videoModel);
   }, [videoModel]);
 
   /** 默认目标分辨率:工具配置的值在可选档位内才用，否则退到第一个可选档。 */
   const defaultResolution = useMemo(() => {
     const raw = def?.extra?.targetResolution;
-    const preferred = typeof raw === "string" && raw ? raw : "1080p";
+    const preferred = typeof raw === "string" && raw.trim()
+      ? raw.trim().toLowerCase()
+      : "1080p";
     return resolutionOptions.includes(preferred) ? preferred : resolutionOptions[0];
   }, [def, resolutionOptions]);
 
@@ -327,12 +482,17 @@ export default function ToolPage() {
   // 早先按全量档位定下的 resolution 可能是这个模型不支持的档。以可选范围为准，
   // 避免高亮消失、又把不支持的档提交上去。
   const activeResolution = resolutionOptions.includes(resolution) ? resolution : defaultResolution;
+  const activePointCost = useMemo(
+    () => upscalePointCost(videoModel, activeResolution),
+    [videoModel, activeResolution],
+  );
 
   const run = useCallback(
     async (srcUrl: string, promptText: string, targetResolution?: string) => {
       if (!def) return;
       setPhase("running");
       setProgress(0);
+      setSubmittedPointCost(0);
       setBackground(false);
       setError("");
       try {
@@ -345,11 +505,9 @@ export default function ToolPage() {
           fail("无法确认当前账号，任务尚未启动，请刷新后重试");
           return;
         }
-        // 视频工具在进选档步骤前就把模型取好了，直接复用，避免再查一次。
-        const pick =
-          def.type === "video"
-            ? videoModel ?? (await listVideoModels())[0] ?? null
-            : await pickModel(def);
+        // 确认页显示哪个模型，执行时就复用哪个模型；不能临提交再查一次导致
+        // 界面报价属于 A 模型、实际任务却调用 B 模型。
+        const pick = def.type === "video" ? videoModel : imageModel;
         if (!pick) {
           fail(def.type === "video" ? "没有可用的超分模型" : "没有可用的图像编辑模型");
           return;
@@ -394,6 +552,7 @@ export default function ToolPage() {
           });
           if (createGeneration !== pollGen.current) return;
           if (res.success && res.data?.id) {
+            if (typeof res.data.pointCost === "number") setSubmittedPointCost(res.data.pointCost);
             poll(res.data.id, ownerUserId);
             return;
           }
@@ -411,7 +570,7 @@ export default function ToolPage() {
         fail("网络错误，请重试");
       }
     },
-    [def, defaultResolution, ensureSession, fail, journalScope, params.op, poll, videoModel],
+    [def, defaultResolution, ensureSession, fail, imageModel, journalScope, params.op, poll, videoModel],
   );
 
   useEffect(() => {
@@ -440,7 +599,7 @@ export default function ToolPage() {
         return;
       }
       if (!entry.payload) {
-        fail("旧版任务缺少恢复信息，请到生成历史查看结果后重新处理");
+        fail("旧版任务缺少恢复信息，请到工具中心查看结果后重新处理");
         return;
       }
       const result = await aiApi.generateIdempotent(
@@ -455,6 +614,7 @@ export default function ToolPage() {
       );
       if (cancelled) return;
       if (result.success && result.data?.id) {
+        if (typeof result.data.pointCost === "number") setSubmittedPointCost(result.data.pointCost);
         poll(result.data.id, ownerUserId, entry.updatedAt);
         return;
       }
@@ -477,8 +637,7 @@ export default function ToolPage() {
     setPicking(true);
   }, [ensureSession]);
 
-  /** 拿到素材(上传完成 / 从资产库选中)后的统一分流:视频超分先选档位、
-      局部重绘先收一句描述、其余直接开跑。 */
+  /** 拿到素材后的统一分流：所有工具都先确认模型积分，避免上传即扣费。 */
   const applySource = useCallback(
     (url: string) => {
       if (!def) return;
@@ -489,10 +648,10 @@ export default function ToolPage() {
       } else if (def.needPrompt) {
         setPhase("prompt");
       } else {
-        void run(url, def.title);
+        setPhase("confirm");
       }
     },
-    [def, defaultResolution, run],
+    [def, defaultResolution],
   );
 
 
@@ -528,6 +687,7 @@ export default function ToolPage() {
     setPhase("idle");
     setSource("");
     setResult("");
+    setSubmittedPointCost(0);
     setPrompt("");
     setResolution("");
     setError("");
@@ -540,14 +700,13 @@ export default function ToolPage() {
   }, [router]);
 
   if (!def) {
-    // 接口未应答且无出厂兜底：先转 loading，避免在配置返回前闪现「未找到」。
-    if (tools === null) {
+    if (toolCatalogState === "loading") {
       return (
         <div className="tool-page">
-          <Loader2
-            className="h-6 w-6 animate-spin"
-            style={{ color: "var(--text-faint)" }}
-          />
+          <div className="tp-loading-state" role="status" aria-live="polite">
+            <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
+            <span>正在加载工具…</span>
+          </div>
         </div>
       );
     }
@@ -565,6 +724,11 @@ export default function ToolPage() {
   }
 
   const isVideoTool = def.type === "video";
+  const retryModel = isVideoTool ? videoModel : imageModel;
+  const retryPointCost = isVideoTool ? activePointCost : imagePointCost;
+  const retryModelsLoading = isVideoTool ? videoModelsLoading : imageModelsLoading;
+  const retryModelsError = isVideoTool ? videoModelsError : imageModelsError;
+  const retryModels = isVideoTool ? retryVideoModels : retryImageModels;
 
   return (
     <div className="tool-page">
@@ -641,87 +805,204 @@ export default function ToolPage() {
         />
       )}
 
-      {/* ── 局部重绘：修改描述 ── */}
-      {phase === "prompt" && (
-        <div className="tp-card">
-          <div className="tp-stage">
-            <ToolMedia src={source} alt="待处理图片" video={isVideoTool} />
-          </div>
-          <textarea
-            className="tp-prompt"
-            value={prompt}
-            placeholder={def.placeholder}
-            onChange={(e) => setPrompt(e.target.value)}
-            autoFocus
-          />
-          <div className="tp-actions">
-            <button type="button" className="tp-btn ghost" onClick={reset}>
-              重新选择
-            </button>
+      {/* ── 图片工具：执行前确认模型、积分；局部重绘同时收修改描述 ── */}
+      {(phase === "confirm" || phase === "prompt") && (
+        <div className="tp-card config image-config">
+          <section className="tp-preview-column" aria-label="源图片预览">
+            <div className="tp-stage">
+              <ToolMedia src={source} alt="待处理图片" video={false} />
+            </div>
+            <div className="tp-source-bar">
+              <div>
+                <strong>源图片</strong>
+                <span>确认图片后再开始处理</span>
+              </div>
+              <button type="button" className="tp-source-change" onClick={reset}>
+                更换图片
+              </button>
+            </div>
+          </section>
+
+          <section className="tp-config-panel">
+            <header className="tp-config-head">
+              <h1>{def.title}</h1>
+              <p>{def.desc}</p>
+            </header>
+
+            {phase === "prompt" && (
+              <div className="tp-prompt-field">
+                <label htmlFor="tool-edit-prompt">修改描述</label>
+                <textarea
+                  id="tool-edit-prompt"
+                  className="tp-prompt"
+                  value={prompt}
+                  placeholder={def.placeholder}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  autoFocus
+                />
+              </div>
+            )}
+
+            <div className="tp-model-field">
+              <span className="tp-field-label">处理模型</span>
+              <ModelDisclosure
+                model={imageModel}
+                pointCost={imagePointCost}
+                loading={imageModelsLoading}
+                error={imageModelsError}
+                onRetry={retryImageModels}
+              />
+            </div>
+
+            <div className="tp-cost-summary" aria-live="polite">
+              <div>
+                <span>本次预计消耗</span>
+                <p>工具不额外收费，积分仅由所选模型收取</p>
+              </div>
+              <strong>{imageModel ? pointCostLabel(imagePointCost) : "—"}</strong>
+            </div>
+
             <button
               type="button"
-              className="tp-btn"
-              disabled={!prompt.trim()}
-              onClick={() => void run(source, prompt.trim())}
+              className="tp-btn tp-submit"
+              disabled={
+                imageModelsLoading ||
+                !imageModel ||
+                (phase === "prompt" && !prompt.trim())
+              }
+              onClick={() => void run(source, phase === "prompt" ? prompt.trim() : def.title)}
             >
-              开始重绘
+              {imageModelsLoading
+                ? "正在读取价格…"
+                : imageModel
+                  ? `${phase === "prompt" ? "开始重绘" : `开始${def.title}`} · ${pointCostLabel(imagePointCost)}`
+                  : "暂无可用模型"}
             </button>
-          </div>
+          </section>
         </div>
       )}
 
       {/* ── 视频超分：选目标分辨率 ── */}
       {phase === "options" && (
-        <div className="tp-card">
-          <div className="tp-stage">
-            <ToolMedia src={source} alt="待处理视频" video={isVideoTool} />
-          </div>
-          {/* 多个超分模型时才让选:各家支持的档位与定价都不同，选完下面的档位
-              列表会跟着这个模型的后台配置刷新。只有一个模型时不给无谓的选择。 */}
-          {videoModels.length > 1 && (
-            <>
-              <p className="tp-optlabel">模型</p>
-              <div className="tp-opts" role="group" aria-label="超分模型">
-                {videoModels.map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    className={`tp-opt${videoModel?.id === m.id ? " on" : ""}`}
-                    onClick={() => setModelId(m.id)}
-                  >
-                    {m.name}
-                  </button>
-                ))}
+        <div className="tp-card config">
+          <section className="tp-preview-column" aria-label="源视频预览">
+            <div className="tp-stage">
+              <ToolMedia src={source} alt="待处理视频" video={isVideoTool} />
+            </div>
+            <div className="tp-source-bar">
+              <div>
+                <strong>源视频</strong>
+                <span>确认画面后选择右侧处理参数</span>
               </div>
-              <p className="tp-optlabel">目标分辨率</p>
-            </>
-          )}
-          <div className="tp-opts" role="group" aria-label="目标分辨率">
-            {resolutionOptions.map((r) => (
-              <button
-                key={r}
-                type="button"
-                className={`tp-opt${activeResolution === r ? " on" : ""}`}
-                onClick={() => setResolution(r)}
-              >
-                {r.toUpperCase()}
+              <button type="button" className="tp-source-change" onClick={reset}>
+                更换视频
               </button>
-            ))}
-          </div>
-          <p className="tp-meta">目标分辨率越高，处理越久、消耗积分也越多。</p>
-          <div className="tp-actions">
-            <button type="button" className="tp-btn ghost" onClick={reset}>
-              重新选择
-            </button>
+            </div>
+          </section>
+
+          <section className="tp-config-panel">
+            <header className="tp-config-head">
+              <h1>{def.title}</h1>
+              <p>选择处理模型与输出规格，积分随模型定价自动更新。</p>
+            </header>
+
+            <fieldset className="tp-fieldset">
+              <legend>处理模型</legend>
+              {videoModelsLoading ? (
+                <div className="tp-option-state" role="status">
+                  <Loader2 className="h-4 w-4 animate-spin" /> 正在读取模型与价格…
+                </div>
+              ) : videoModels.length ? (
+                <div className="tp-model-list" role="group" aria-label="超分模型">
+                  {videoModels.map((model) => {
+                    const modelResolutions = upscaleResolutionsFor(model);
+                    const modelResolution = modelResolutions.includes(activeResolution)
+                      ? activeResolution
+                      : modelResolutions.includes(defaultResolution)
+                        ? defaultResolution
+                        : modelResolutions[0];
+                    const modelCost = upscalePointCost(model, modelResolution);
+                    const selected = videoModel?.id === model.id;
+                    return (
+                      <button
+                        key={model.id}
+                        type="button"
+                        aria-pressed={selected}
+                        className={`tp-model-option${selected ? " on" : ""}`}
+                        onClick={() => {
+                          setModelId(model.id);
+                          setResolution(modelResolution);
+                        }}
+                      >
+                        <span className="tp-model-copy">
+                          <strong>{model.name}</strong>
+                          <small>{model.desc || `支持 ${modelResolutions.length} 个输出档位`}</small>
+                        </span>
+                        <span className="tp-model-price">
+                          <strong>{pointCostLabel(modelCost)}</strong>
+                          <small>{modelResolution.toUpperCase()}</small>
+                        </span>
+                        <span className="tp-radio-mark" aria-hidden="true" />
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="tp-option-state error" role="alert">
+                  <span>
+                    {videoModelsError || "暂无可用模型，请联系管理员检查模型上架状态。"}
+                  </span>
+                  <button type="button" className="tp-inline-retry" onClick={retryVideoModels}>
+                    重新加载
+                  </button>
+                </div>
+              )}
+            </fieldset>
+
+            <fieldset className="tp-fieldset">
+              <legend>目标分辨率</legend>
+              <div className="tp-resolution-list" role="group" aria-label="目标分辨率">
+                {resolutionOptions.map((target) => {
+                  const cost = upscalePointCost(videoModel, target);
+                  const selected = activeResolution === target;
+                  return (
+                    <button
+                      key={target}
+                      type="button"
+                      aria-pressed={selected}
+                      className={`tp-resolution-option${selected ? " on" : ""}`}
+                      disabled={!videoModel}
+                      onClick={() => setResolution(target)}
+                    >
+                      <strong>{target.toUpperCase()}</strong>
+                      <small>{videoModel ? pointCostLabel(cost) : "—"}</small>
+                    </button>
+                  );
+                })}
+              </div>
+            </fieldset>
+
+            <div className="tp-cost-summary" aria-live="polite">
+              <div>
+                <span>本次预计消耗</span>
+                <p>工具不额外收费，积分仅由所选模型收取</p>
+              </div>
+              <strong>{videoModel ? pointCostLabel(activePointCost) : "—"}</strong>
+            </div>
+
             <button
               type="button"
-              className="tp-btn"
-              disabled={!activeResolution}
+              className="tp-btn tp-submit"
+              disabled={!videoModel || !activeResolution || videoModelsLoading}
               onClick={() => void run(source, def.title, activeResolution)}
             >
-              开始超分
+              {videoModelsLoading
+                ? "正在读取价格…"
+                : videoModel
+                  ? `开始超分 · ${pointCostLabel(activePointCost)}`
+                  : "暂无可用模型"}
             </button>
-          </div>
+          </section>
         </div>
       )}
 
@@ -730,8 +1011,8 @@ export default function ToolPage() {
         <div className="tp-card">
           <div className="tp-stage">
             <ToolMedia src={source} alt="处理中" video={isVideoTool} />
-            <div className="tp-busy">
-              <Loader2 className="h-7 w-7 animate-spin" />
+            <div className="tp-busy" role="status" aria-live="polite" aria-atomic="true">
+              <Loader2 className="h-7 w-7 animate-spin" aria-hidden />
               <span>
                 {def.title}处理中{progress > 0 ? ` · ${progress}%` : "…"}
               </span>
@@ -739,6 +1020,7 @@ export default function ToolPage() {
           </div>
           <p className="tp-meta">
             {background ? "任务仍在后台处理中，本页会自动同步结果。" : "处理由 AI 模型完成，通常需要几十秒。"}
+            {submittedPointCost > 0 ? ` 本次模型调用已计 ${submittedPointCost} 积分。` : ""}
           </p>
         </div>
       )}
@@ -760,6 +1042,9 @@ export default function ToolPage() {
               <figcaption>{def.title}结果</figcaption>
             </figure>
           </div>
+          {submittedPointCost > 0 && (
+            <p className="tp-meta">本次模型调用已使用 {submittedPointCost} 积分，工具未额外收费。</p>
+          )}
           <div className="tp-actions">
             <button type="button" className="tp-btn ghost" onClick={reset}>
               {isVideoTool ? "再来一个" : "再来一张"}
@@ -769,14 +1054,14 @@ export default function ToolPage() {
             </a>
           </div>
           <p className="tp-meta">
-            结果已存入你的生成历史，可到{" "}
+            结果已保存在资产与{" "}
             <Link
-              href={isVideoTool ? "/tools" : "/studio?type=image"}
+              href="/tools"
               style={{ color: "var(--text-dim)", textDecoration: "underline" }}
             >
-              {isVideoTool ? "工具中心" : "创作台"}
+              工具中心
             </Link>{" "}
-            {isVideoTool ? "查看全部工具作品。" : "继续精修。"}
+            的工具作品中，不会出现在创作台。
           </p>
         </div>
       )}
@@ -786,6 +1071,25 @@ export default function ToolPage() {
         <div className="tp-card">
           <h1>{def.title}</h1>
           <p className="tp-err">{error}</p>
+          {source && (
+            <div className="tp-retry-block">
+              <span className="tp-field-label">重试计费</span>
+              <ModelDisclosure
+                model={retryModel}
+                pointCost={retryPointCost}
+                loading={retryModelsLoading}
+                error={retryModelsError}
+                emptyLabel={isVideoTool ? "暂无可用的超分模型" : undefined}
+                onRetry={retryModels}
+              />
+              <p>
+                {submittedPointCost > 0
+                  ? `上次失败任务的 ${submittedPointCost} 积分会自动退回；`
+                  : "失败任务如已扣费会自动退回；"}
+                重试会按当前模型重新计费。
+              </p>
+            </div>
+          )}
           <div className="tp-actions">
             <button type="button" className="tp-btn ghost" onClick={reset}>
               重新上传
@@ -794,6 +1098,7 @@ export default function ToolPage() {
               <button
                 type="button"
                 className="tp-btn"
+                disabled={retryModelsLoading || !retryModel}
                 onClick={() =>
                   void run(
                     source,
@@ -802,7 +1107,11 @@ export default function ToolPage() {
                   )
                 }
               >
-                重试
+                {retryModelsLoading
+                  ? "正在读取价格…"
+                  : retryModel
+                    ? `重试 · ${pointCostLabel(retryPointCost)}`
+                    : "暂无可用模型"}
               </button>
             )}
           </div>

@@ -158,7 +158,7 @@ export function resolveToolCoverUrl(
   return covers[hash % covers.length];
 }
 
-/** 工具处理器 → 中文标签。工具中心的作品卡、画布历史面板共用一份。 */
+/** 工具处理器 → 中文标签。只用于明确知道来源是 preset 操作的旧 UI。 */
 export const PRESET_TOOL_LABELS: Record<string, string> = {
   outpaint: "智能扩图",
   remove_bg: "一键抠图",
@@ -174,8 +174,8 @@ const TOOL_ORIGIN_BY_KEY = Object.fromEntries(
 
 /** 任务 → 智能工具来源标签。
  *
- * 专属 handler 的历史任务可直接识别；局部重绘复用通用 image_to_image，只有
- * 工具页写入 toolKey 后才能准确区分，不能把普通图生图误标为智能工具。toolKey
+ * 所有工具 handler 都可能被创作台复用，只有工具页写入 toolKey 后才能准确
+ * 区分，不能把创作台一键编辑误标为智能工具。toolKey
  * 还须与 handler 匹配，避免异常/手写请求显示错误来源。新任务同时保存生成时
  * 的 toolTitle，后台改名后历史记录仍保持当时的名称；老任务继续用内置名称。 */
 export function smartToolOriginLabel(handler: string, input: unknown): string | undefined {
@@ -189,7 +189,7 @@ export function smartToolOriginLabel(handler: string, input: unknown): string | 
         parsed = value as Record<string, unknown>;
       }
     } catch {
-      // Malformed legacy input still falls back to an exclusive handler label.
+      // Malformed legacy input cannot be safely attributed to a tool surface.
     }
   }
   const toolKey = typeof parsed.toolKey === "string" ? parsed.toolKey : "";
@@ -200,7 +200,7 @@ export function smartToolOriginLabel(handler: string, input: unknown): string | 
       : "";
     return recordedTitle || source.title;
   }
-  return PRESET_TOOL_LABELS[handler];
+  return undefined;
 }
 
 /** 产出为视频的工具处理器——作品卡与结果展示要用 video 元素而非 img。 */

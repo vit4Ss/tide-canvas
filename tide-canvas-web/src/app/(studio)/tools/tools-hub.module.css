@@ -30,6 +30,22 @@
   gap: 16px;
 }
 
+.toolSkeletonGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.toolSkeleton {
+  min-height: 224px;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border);
+  background:
+    linear-gradient(var(--surface-2), var(--surface-2)) top / 100% 142px no-repeat,
+    var(--panel-solid);
+  opacity: 0.72;
+}
+
 .toolCard {
   display: flex;
   flex-direction: column;
@@ -70,9 +86,13 @@
   place-items: center;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.14);
-  font-size: 16px;
   color: rgba(255, 255, 255, 0.92);
   background: rgba(10, 10, 11, 0.72);
+}
+.toolCoverIcon svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.8;
 }
 
 .toolBody {
@@ -188,7 +208,20 @@
   font-size: 13px;
   font-weight: 600;
   color: #fff;
-  background: var(--accent);
+  background: var(--btn-grad);
+  box-shadow: var(--btn-shadow);
+}
+
+:global(body.imini) .stateBtn {
+  color: #0a0a0b;
+}
+
+.stateBtn:focus-visible,
+.more button:focus-visible,
+.toolCard:focus-visible,
+.workCard:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
 }
 
 .spin {
@@ -216,7 +249,7 @@
   color: var(--text-dim);
   background: var(--panel-solid);
   border: 1px solid var(--border);
-  transition: all 0.15s;
+  transition: color 150ms, border-color 150ms, background 150ms;
 }
 .more button:hover:not(:disabled) {
   color: var(--text);
@@ -224,4 +257,19 @@
 }
 .more button:disabled {
   opacity: 0.6;
+}
+
+@media (pointer: coarse) {
+  .stateBtn,
+  .more button {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toolCard,
+  .workCard,
+  .more button {
+    transition: none;
+  }
 }

@@ -63,12 +63,17 @@ function ToastCard({ item, onRemove }: { item: ToastItem; onRemove: (id: number)
       className={`pointer-events-auto flex items-center rounded-lg border shadow-md ${COLORS[item.type]} ${
         isError
           ? "min-h-14 w-[min(760px,calc(100vw-32px))] gap-3 px-5 py-3.5 text-[15px]"
-          : "gap-2 px-4 py-2.5 text-sm"
+          : "min-h-11 w-fit max-w-[calc(100vw-32px)] gap-2 px-4 py-2.5 text-sm"
       }`}
     >
       <Icon className={isError ? "h-5 w-5 shrink-0" : "h-4 w-4 shrink-0"} aria-hidden />
-      <span className={isError ? "min-w-0 flex-1 break-words leading-6" : undefined}>{item.message}</span>
-      <button type="button" aria-label="关闭提示" onClick={() => onRemove(item.id)} className={`${isError ? "p-1" : "ml-2"} shrink-0 opacity-60 hover:opacity-100`}>
+      <span className={`min-w-0 flex-1 break-words ${isError ? "leading-6" : "leading-5"}`}>{item.message}</span>
+      <button
+        type="button"
+        aria-label="关闭提示"
+        onClick={() => onRemove(item.id)}
+        className={`${isError ? "-my-2 -mr-2" : "-my-2.5 -mr-3"} grid h-11 w-11 shrink-0 place-items-center opacity-60 transition-opacity hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-4px]`}
+      >
         <X className={isError ? "h-4 w-4" : "h-3.5 w-3.5"} aria-hidden />
       </button>
     </div>
@@ -95,7 +100,12 @@ export function ToastContainer() {
 
   // z 必须高于全部弹层（modal-zoom/lightbox/srcmask 均为 1000）：toast 是反馈层，任何时候都要可见
   return (
-    <div className="pointer-events-none fixed left-1/2 top-6 z-[1200] flex -translate-x-1/2 flex-col items-center gap-2" aria-live="polite" aria-label="操作反馈">
+    <div
+      className="pointer-events-none fixed left-1/2 z-[1200] flex -translate-x-1/2 flex-col items-center gap-2"
+      style={{ top: "max(1.5rem, calc(env(safe-area-inset-top) + 0.5rem))" }}
+      aria-live="polite"
+      aria-label="操作反馈"
+    >
       {items.map((item) => {
         return (
           <ToastCard key={item.id} item={item} onRemove={remove} />

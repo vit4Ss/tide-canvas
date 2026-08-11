@@ -21,6 +21,12 @@ import { fallbackOssDisplayImage, ossDisplayUrl, restoreOssDisplayImage } from "
 import { toast } from "@/components/shared/toast";
 import { confirmDialog } from "@/components/shared/confirm";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
+import {
+  ASSET_LIBRARY_CHANGED_EVENT,
+  assetLibraryChangesAffectView,
+  assetLibraryChangesSince,
+  assetLibraryRevision,
+} from "@/lib/asset-library-events";
 import { AudioPlayerCard, SongCard } from "@/components/studio/audio-player-card";
 import { smartToolOriginLabel } from "@/lib/ai-tools-catalog";
 import {
@@ -408,6 +414,7 @@ export function AssetsBrowser({
   const requestSeqRef = useRef(0);
   const activeRequestsRef = useRef(new Map<string, number>());
   const mountedRef = useRef(true);
+  const assetRevisionRef = useRef(assetLibraryRevision());
   const viewKey = useMemo(
     () => assetViewKey({ tab, filter, startDate, endDate, sortAsc }),
     [tab, filter, startDate, endDate, sortAsc],
@@ -416,9 +423,35 @@ export function AssetsBrowser({
   const currentView = viewStates[viewKey] ?? EMPTY_VIEW;
   const { tasks, files, loading, loadingMore, loadError, hasMore, multiPage } = currentView;
 
-  useEffect(() => () => {
-    mountedRef.current = false;
-    activeRequestsRef.current.clear();
+  useEffect(() => {
+    // React Strict Mode 会执行一次 setup → cleanup → setup。每次 setup 都恢复
+    // mounted 标记，避免第二次挂载后把所有合法响应误判为卸载后的迟到响应。
+    mountedRef.current = true;
+    const activeRequests = activeRequestsRef.current;
+    return () => {
+      mountedRef.current = false;
+      activeRequests.clear();
+    };
+  }, []);
+
+  // 外部入口新增资产时只失效对应 tab + 媒体类型，避免一次视频截帧把所有
+  // 日期/类型缓存都清空。revision 日志也覆盖路由缓存暂停后重新挂载的场景。
+  useEffect(() => {
+    const invalidateExternalAsset = () => {
+      const nextRevision = assetLibraryRevision();
+      if (nextRevision === assetRevisionRef.current) return;
+      const changes = assetLibraryChangesSince(assetRevisionRef.current);
+      assetRevisionRef.current = nextRevision;
+      for (const key of activeRequestsRef.current.keys()) {
+        if (assetLibraryChangesAffectView(key, changes)) activeRequestsRef.current.delete(key);
+      }
+      setViewStates((prev) => Object.fromEntries(
+        Object.entries(prev).filter(([key]) => !assetLibraryChangesAffectView(key, changes)),
+      ));
+    };
+    invalidateExternalAsset();
+    window.addEventListener(ASSET_LIBRARY_CHANGED_EVENT, invalidateExternalAsset);
+    return () => window.removeEventListener(ASSET_LIBRARY_CHANGED_EVENT, invalidateExternalAsset);
   }, []);
 
   const fetchView = useCallback(async (page: number, append: boolean, force = false) => {

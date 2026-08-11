@@ -68,6 +68,8 @@ export interface ModelConfig {
   operations?: string[];
   /** points per quality(or duration) × resolution cell, as decimal strings */
   priceMatrix?: Record<string, Record<string, string>>;
+  /** 旧模型价格矩阵字段；公开模型接口会补 priceMatrix，前端仍保留兼容。 */
+  pricing?: Record<string, Record<string, string | number>>;
   /** raw upstream price modifiers, kept for reference */
   priceModifiers?: unknown;
   /** complete upstream params_schema, including modality-specific 3D options */

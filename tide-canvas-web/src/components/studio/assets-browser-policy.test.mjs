@@ -36,9 +36,9 @@ test("every smart tool result is classified into its asset media bucket", () => 
   }
 });
 
-test("legacy smart-tool tasks keep safe labels without rewriting stored input", () => {
-  assert.equal(smartToolOriginLabel("outpaint", {}), "智能扩图");
-  assert.equal(smartToolOriginLabel("video_upscale", "not-json"), "视频超分");
+test("untagged legacy tasks are not guessed from a handler shared with Studio", () => {
+  assert.equal(smartToolOriginLabel("outpaint", {}), undefined);
+  assert.equal(smartToolOriginLabel("video_upscale", "not-json"), undefined);
   assert.equal(smartToolOriginLabel("image_to_image", {}), undefined);
 });
 

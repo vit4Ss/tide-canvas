@@ -201,24 +201,35 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 		return nil, err
 	}
 
-	// 智能工具的服务端配置（ai_tools 行）——只对「handler 专属于该工具」的能力
-	// 生效，绝不波及被非工具入口共用的基础能力（下线「局部重绘」工具不能挡掉
-	// 创作台的图生图）。视频超分虽然直接跑基础 handler，但那个 handler 只有它
-	// 一个入口，所以同样受上下线约束——按类型断言判断会漏掉它，让「已下线」的
-	// 工具仍能被直接调用并扣费。后台下线 (enabled=false) 直接拒绝；在线则把后台
-	// 维护的提示词/附加参数带进执行。runTask 跑在 detached goroutine
-	// （context.Background()），所以配置必须在这里用请求 context 预加载。
-	// 行缺失时退回内建默认值（resilience）。
+	// 智能工具策略只由精确的 handler + input.toolKey 标记触发。相同 handler 也会
+	// 被创作台结果工具栏复用，因此上下线不能再按 handler 粗暴拦截。独立工具请求
+	// 同时检查 enabled/show_page；数据库行缺失时以内建 canonical 配置兜底。
+	// 未打标的 preset handler 仍读取后台提示词，但不受独立工具页开关影响。
+	// runTask 跑在 detached goroutine，配置须在这里用请求 context 预加载。
 	var tool *model.AiTool
-	if isToolExclusiveHandler(dto.Handler) {
+	requestedTool, hasToolMarker := canonicalToolRequest(dto.Handler, dto.Input)
+	if hasToolMarker && requestedTool == nil {
+		return nil, skillPlacementError{message: "智能工具标识无效"}
+	}
+	if requestedTool != nil {
+		row, err := s.repo.findToolByKey(ctx, requestedTool.Key)
+		if err != nil {
+			return nil, err
+		}
+		if row != nil {
+			if !row.Enabled || !row.ShowPage {
+				return nil, errToolDisabled
+			}
+			tool = row
+		} else {
+			tool = requestedTool
+		}
+	} else if _, preset := gh.(presetEditHandler); preset {
 		row, err := s.repo.findToolByHandler(ctx, dto.Handler)
 		if err != nil {
 			return nil, err
 		}
 		if row != nil {
-			if !row.Enabled {
-				return nil, errToolDisabled
-			}
 			tool = row
 		}
 	}

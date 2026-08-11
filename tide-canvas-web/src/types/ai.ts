@@ -94,10 +94,12 @@ export interface AiToolVO {
 export interface AiTaskQuery extends PageQuery {
   handler?: string;
   /** 资产页服务端媒体筛选，保证分页发生在类型过滤之后。
-      "tool" = 智能工具产出(工具中心页「工具作品」区,按专属 handler 圈定)。 */
+      "tool" = 智能工具产出(工具中心页「工具作品」区,按 handler + toolKey 精确归因)。 */
   mediaType?: "image" | "video" | "audio" | "3d" | "upscale" | "tool";
   /** Generated asset category; character/scene are image target types. */
   assetCategory?: "general" | "character" | "scene";
+  /** 创作台历史专用：排除带智能工具来源的任务，资产与工具作品查询不受影响。 */
+  excludeTools?: boolean;
   /** 仅返回可进入资产库的任务（排除失败和已取消）。 */
   assetOnly?: boolean;
   status?: AiTaskStatus;

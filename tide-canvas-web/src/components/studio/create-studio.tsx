@@ -547,7 +547,12 @@ export default function CreateStudio() {
       await ensureSession();
       // setState 一律放在首个 await 之后(effect 同步路径不进 setState,过 lint)
       if (append) setHistLoadingMore(true);
-      const res = await aiApi.listTasks({ pageNum: page, pageSize: HIST_PAGE_SIZE, noProject: true });
+      const res = await aiApi.listTasks({
+        pageNum: page,
+        pageSize: HIST_PAGE_SIZE,
+        noProject: true,
+        excludeTools: true,
+      });
       const records = res.success && res.data ? res.data.records : [];
       const total = res.success && res.data ? res.data.total : 0;
       // 3D 产物归 /three-d 页展示（listTasks 无排除型过滤，客户端滤掉；

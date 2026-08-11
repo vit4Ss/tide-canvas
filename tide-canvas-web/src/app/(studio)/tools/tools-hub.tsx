@@ -4,28 +4,45 @@
    工具中心 — /tools(侧栏「工具」页签)。
 
    上半部:后台「工具管理」启用且展示独立页的智能工具(GET /api/ai/tools,
-   公开),卡片点击进 /tools/<key> 的全屏处理页。接口未应答或失败时用出厂
+   公开),卡片点击进 /tools/<key> 的全屏处理页。接口明确失败时用出厂
    兜底列表(lib/ai-tools-catalog,与 /tools/[op] 同源);接口成功但为空
    (管理员全部下线)则如实显示空态,绝不摆出点进去是死胡同的兜底卡。
 
    下半部:「工具作品」——当前账号用智能工具处理成功的结果图。数据走
-   GET /api/ai/tasks?mediaType=tool(服务端按工具专属 handler 圈定:抠图/
-   扩图/放大/物体移除/打光;局部重绘复用通用图生图,无法区分,不在其中),
+   GET /api/ai/tasks?mediaType=tool(服务端仅按 canonical handler + toolKey
+   精确归因；未打标的旧数据不猜测),
    分页在服务端完成。未登录只展示工具卡与登录引导,不发列表请求。
    ========================================================================== */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Loader2 } from "lucide-react";
+import {
+  Eraser,
+  Loader2,
+  Maximize2,
+  Paintbrush,
+  ScanLine,
+  Scissors,
+  SunMedium,
+  Video,
+  WandSparkles,
+  type LucideIcon,
+} from "lucide-react";
 import { aiApi } from "@/lib/api";
 import { loadToolCoverPool } from "@/lib/tool-cover-pool";
 import { useAuth } from "@/hooks/use-auth";
 import { coverBg } from "@/lib/mesh";
 import { toast } from "@/components/shared/toast";
 import {
+  ASSET_LIBRARY_CHANGED_EVENT,
+  assetLibraryChangesSince,
+  assetLibraryRevision,
+} from "@/lib/asset-library-events";
+import { fallbackOssDisplayImage, ossDisplayUrl, restoreOssDisplayImage } from "@/lib/oss-display";
+import {
   FALLBACK_TOOLS,
-  PRESET_TOOL_LABELS,
   resolveToolCoverUrl,
+  smartToolOriginLabel,
   TOOL_TYPE_LABEL,
   VIDEO_TOOL_HANDLERS,
 } from "@/lib/ai-tools-catalog";
@@ -34,21 +51,95 @@ import styles from "./tools-hub.module.css";
 
 const PAGE_SIZE = 18;
 
+const TOOL_ICONS: Record<string, LucideIcon> = {
+  expand: Maximize2,
+  inpaint: Paintbrush,
+  rmbg: Scissors,
+  upscale: ScanLine,
+  rmobj: Eraser,
+  relight: SunMedium,
+  vupscale: Video,
+};
+
 function fmtDay(iso: string): string {
   return iso ? iso.slice(0, 10) : "";
+}
+
+function toolResultUrl(task: AiTaskVO): string {
+  const direct = task.resultUrl?.trim();
+  if (direct) return direct;
+  let meta: unknown = task.resultMeta;
+  if (typeof meta === "string") {
+    try {
+      meta = JSON.parse(meta) as unknown;
+    } catch {
+      return "";
+    }
+  }
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return "";
+  const urls = (meta as Record<string, unknown>).urls;
+  return Array.isArray(urls) && typeof urls[0] === "string" ? urls[0].trim() : "";
+}
+
+function LazyToolVideo({ src, label }: { src: string; label: string }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const [visible, setVisible] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    if (typeof IntersectionObserver === "undefined") {
+      const timer = window.setTimeout(() => setVisible(true), 0);
+      return () => window.clearTimeout(timer);
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting) return;
+        setVisible(true);
+        observer.disconnect();
+      },
+      { rootMargin: "240px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <video
+      ref={ref}
+      src={visible && !failed ? src : undefined}
+      preload="metadata"
+      muted
+      playsInline
+      aria-label={label}
+      onError={() => setFailed(true)}
+    />
+  );
 }
 
 export default function ToolsHub() {
   const { user, initialized } = useAuth();
 
-  // 工具入口卡:null = 接口未应答/失败(渲染出厂兜底);[] = 成功但全部下线。
-  const [tools, setTools] = useState<AiToolVO[] | null>(null);
+  // 等待接口时不渲染兜底，避免慢网下短暂露出管理员已下线的工具。
+  const [tools, setTools] = useState<AiToolVO[]>([]);
+  const [catalogState, setCatalogState] = useState<"loading" | "ready" | "fallback">("loading");
   const [coverPool, setCoverPool] = useState<string[]>([]);
   useEffect(() => {
     let alive = true;
-    aiApi.tools().then((res) => {
-      if (alive && res.success && Array.isArray(res.data)) setTools(res.data);
-    });
+    aiApi.tools()
+      .then((res) => {
+        if (!alive) return;
+        if (res.success && Array.isArray(res.data)) {
+          setTools(res.data);
+          setCatalogState("ready");
+        } else {
+          setCatalogState("fallback");
+        }
+      })
+      .catch(() => {
+        if (alive) setCatalogState("fallback");
+      });
     loadToolCoverPool().then((covers) => {
       if (alive) setCoverPool(covers);
     });
@@ -58,23 +149,16 @@ export default function ToolsHub() {
   }, []);
 
   const cards = useMemo(() => {
-    const source = tools === null
-      ? FALLBACK_TOOLS
-      : [...tools].sort((a, b) => a.sortOrder - b.sortOrder);
+    const source = catalogState === "loading"
+      ? []
+      : catalogState === "fallback"
+        ? FALLBACK_TOOLS
+        : [...tools].sort((a, b) => a.sortOrder - b.sortOrder);
     return source.map((tool) => ({
       ...tool,
       resolvedCoverUrl: resolveToolCoverUrl(tool.key, tool.coverUrl, coverPool),
     }));
-  }, [tools, coverPool]);
-
-  /** handler → 工具标题(优先后台配置,其次内建兜底,最后原样)。 */
-  const handlerTitle = useCallback(
-    (handler: string) => {
-      const vo = tools?.find((t) => t.handler === handler);
-      return vo?.title ?? PRESET_TOOL_LABELS[handler] ?? handler;
-    },
-    [tools],
-  );
+  }, [catalogState, tools, coverPool]);
 
   // 工具作品:works=null 表示尚未加载完;worksError 区分「拉取失败」与「确实没有」。
   const [works, setWorks] = useState<AiTaskVO[] | null>(null);
@@ -88,6 +172,7 @@ export default function ToolsHub() {
   // 已加载到的页码。不由 works.length 反推:两次请求之间新生成的作品会把
   // DESC 列表整体前移,反推会重复请求同一页。
   const pageRef = useRef(0);
+  const worksRevisionRef = useRef(assetLibraryRevision());
 
   const loadWorks = useCallback(async (pageNum: number) => {
     const id = ++reqIdRef.current;
@@ -136,6 +221,24 @@ export default function ToolsHub() {
     return () => window.clearTimeout(timer);
   }, [initialized, userId, loadWorks]);
 
+  // 工具处理在独立页面完成时，若本页仍被路由缓存保留，立即刷新工具作品；
+  // 若本页重新挂载，账号初始化 effect 会正常拉取第一页。
+  useEffect(() => {
+    if (!initialized || !userId) return;
+    const refreshAfterGeneration = () => {
+      const nextRevision = assetLibraryRevision();
+      if (nextRevision === worksRevisionRef.current) return;
+      const changes = assetLibraryChangesSince(worksRevisionRef.current);
+      worksRevisionRef.current = nextRevision;
+      if (!changes.some((change) => change.collection === "all" || change.origin === "tool")) return;
+      pageRef.current = 0;
+      void loadWorks(1);
+    };
+    refreshAfterGeneration();
+    window.addEventListener(ASSET_LIBRARY_CHANGED_EVENT, refreshAfterGeneration);
+    return () => window.removeEventListener(ASSET_LIBRARY_CHANGED_EVENT, refreshAfterGeneration);
+  }, [initialized, userId, loadWorks]);
+
   const retry = useCallback(() => {
     setWorksError(false);
     void loadWorks(1);
@@ -151,6 +254,12 @@ export default function ToolsHub() {
   }, [loadWorks]);
 
   const loggedIn = initialized && !!userId;
+  const displayWorks = useMemo(
+    () => (works ?? [])
+      .map((task) => ({ task, resultUrl: toolResultUrl(task) }))
+      .filter((item) => item.resultUrl),
+    [works],
+  );
 
   return (
     <main className={`insp ${styles.fill}`}>
@@ -158,16 +267,22 @@ export default function ToolsHub() {
       <div className="insp-in">
         {/* .insp 骨架是居中 hero:副标题也居中,与标题同轴 */}
         <h1>工具</h1>
-        <p className={styles.heroSub}>封装好的一键 AI 处理：上传图片即出结果，无需编写提示词。</p>
+        <p className={styles.heroSub}>封装好的一键 AI 处理：上传素材，确认模型与积分后即可开始。</p>
 
         {/* ── 工具入口 ── */}
-        {cards.length === 0 ? (
+        {catalogState === "loading" ? (
+          <div className={styles.toolSkeletonGrid} role="status" aria-label="正在加载智能工具">
+            {[0, 1, 2].map((item) => <div key={item} className={styles.toolSkeleton} aria-hidden />)}
+          </div>
+        ) : cards.length === 0 ? (
           <div className={styles.state}>
             <p>工具暂时全部下线，敬请期待。</p>
           </div>
         ) : (
           <div className={styles.toolGrid}>
-            {cards.map((t) => (
+            {cards.map((t) => {
+              const ToolIcon = TOOL_ICONS[t.key] ?? WandSparkles;
+              return (
               <Link key={t.key} href={`/tools/${t.key}`} className={styles.toolCard}>
                 <div
                   className={styles.toolCover}
@@ -187,7 +302,9 @@ export default function ToolsHub() {
                       }}
                     />
                   ) : null}
-                  {t.icon ? <span className={styles.toolCoverIcon} aria-hidden>{t.icon}</span> : null}
+                  <span className={styles.toolCoverIcon} aria-hidden>
+                    <ToolIcon />
+                  </span>
                 </div>
                 <div className={styles.toolBody}>
                   <h3>
@@ -200,18 +317,19 @@ export default function ToolsHub() {
                   <p>{t.desc}</p>
                 </div>
               </Link>
-            ))}
+              );
+            })}
           </div>
         )}
 
         {/* ── 工具作品 ── */}
         <div className={styles.worksHead}>
           <h2>工具作品</h2>
-          <p className={styles.sub}>用上面的工具处理成功的结果，也会同步进你的生成历史与资产。</p>
+          <p className={styles.sub}>用上面的工具处理成功的结果，会保留在工具作品与资产中，不混入创作台。</p>
         </div>
 
         {!initialized ? (
-          <div className={styles.state}>
+          <div className={styles.state} role="status" aria-label="正在初始化账号">
             <Loader2 className={styles.spin} aria-hidden />
           </div>
         ) : !loggedIn ? (
@@ -229,44 +347,49 @@ export default function ToolsHub() {
             </button>
           </div>
         ) : works === null ? (
-          <div className={styles.state}>
+          <div className={styles.state} role="status" aria-label="正在加载工具作品">
             <Loader2 className={styles.spin} aria-hidden />
           </div>
-        ) : works.length === 0 ? (
+        ) : displayWorks.length === 0 ? (
           <div className={styles.state}>
             <p>还没有工具作品，从上面挑一个工具开始吧。</p>
           </div>
         ) : (
           <>
             <div className={styles.workGrid}>
-              {works.map((w) => {
+              {displayWorks.map(({ task: w, resultUrl }) => {
                 const isVideo = VIDEO_TOOL_HANDLERS.has(w.handler);
+                const toolTitle = smartToolOriginLabel(w.handler, w.input) ?? "智能工具作品";
                 return (
                 <a
                   key={w.id}
                   className={styles.workCard}
-                  href={w.resultUrl}
+                  href={resultUrl}
                   target="_blank"
                   rel="noreferrer"
                   title={isVideo ? "查看原片" : "查看原图"}
                 >
                   <div className={styles.workStage}>
                     {isVideo ? (
-                      // 视频产出不能塞进 img:用 video 元素只预载首帧,不自动播放
-                      <video
-                        src={w.resultUrl}
-                        preload="metadata"
-                        muted
-                        playsInline
-                        aria-label={handlerTitle(w.handler)}
+                      // 进入视口前不挂 src，避免作品列表一次性拉取全部视频元数据。
+                      <LazyToolVideo
+                        src={resultUrl}
+                        label={toolTitle}
                       />
                     ) : (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={w.resultUrl} alt={handlerTitle(w.handler)} loading="lazy" />
+                      <img
+                        src={ossDisplayUrl(resultUrl, 640) ?? resultUrl}
+                        alt={toolTitle}
+                        loading="lazy"
+                        decoding="async"
+                        onLoad={(event) => restoreOssDisplayImage(event.currentTarget)}
+                        onError={(event) => fallbackOssDisplayImage(event.currentTarget, resultUrl)}
+                      />
                     )}
                   </div>
                   <div className={styles.workMeta}>
-                    <span className={styles.workTool}>{handlerTitle(w.handler)}</span>
+                    <span className={styles.workTool}>{toolTitle}</span>
                     <span className={styles.workDate}>{fmtDay(w.createTime)}</span>
                   </div>
                 </a>

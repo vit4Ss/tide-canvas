@@ -49,3 +49,21 @@ func TestNormalizedStudioConfigRejectsInvalidJSON(t *testing.T) {
 		t.Fatalf("invalid config = %s, want nil", got)
 	}
 }
+
+func TestNormalizedStudioConfigAliasesLegacyPricing(t *testing.T) {
+	got := normalizedStudioConfig(`{"pricing":{"default":{"4k":120}},"resolutions":["1080p","4k"]}`)
+	var cfg map[string]json.RawMessage
+	if err := json.Unmarshal(got, &cfg); err != nil {
+		t.Fatalf("unmarshal normalized config: %v", err)
+	}
+	if string(cfg["priceMatrix"]) != string(cfg["pricing"]) {
+		t.Fatalf("priceMatrix alias = %s, pricing = %s", cfg["priceMatrix"], cfg["pricing"])
+	}
+}
+
+func TestNormalizedStudioConfigLeavesUnrelatedLegacyPayloadUntouched(t *testing.T) {
+	raw := `{ "creditCost": 12.5, "custom": [1, 2] }`
+	if got := string(normalizedStudioConfig(raw)); got != raw {
+		t.Fatalf("unrelated config changed: got %s, want %s", got, raw)
+	}
+}

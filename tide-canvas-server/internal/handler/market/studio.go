@@ -81,11 +81,10 @@ func (s *service) studioModels(typ string) ([]StudioModelVO, error) {
 	return vos, nil
 }
 
-// normalizedStudioConfig keeps the database payload untouched while returning
-// duration options in numeric order to every studio consumer. Relay-synced
-// models may provide values in an arbitrary order (for example 4s,15s,5s), and
-// the admin pricing table sorts only its presentation, which can otherwise hide
-// that raw ordering until the chat dropdown renders it.
+// normalizedStudioConfig returns the market config dialect every studio client
+// expects. It aliases legacy pricing → priceMatrix without mutating the database,
+// and sorts duration options numerically. This keeps old deployments readable
+// during rolling upgrades while the authoritative stored payload remains intact.
 func normalizedStudioConfig(raw string) json.RawMessage {
 	c := strings.TrimSpace(raw)
 	if c == "" || !json.Valid([]byte(c)) {
@@ -96,40 +95,50 @@ func normalizedStudioConfig(raw string) json.RawMessage {
 	if err := json.Unmarshal([]byte(c), &obj); err != nil || obj == nil {
 		return json.RawMessage(c)
 	}
-	encodedDurations, ok := obj["durations"]
-	if !ok {
-		return json.RawMessage(c)
-	}
-	var durations []json.RawMessage
-	if err := json.Unmarshal(encodedDurations, &durations); err != nil || len(durations) < 2 {
-		return json.RawMessage(c)
-	}
-
-	seconds := make([]float64, len(durations))
-	for i := range durations {
-		value, ok := studioDurationSeconds(durations[i])
-		if !ok {
-			return json.RawMessage(c)
+	changed := false
+	if _, exists := obj["priceMatrix"]; !exists {
+		if legacy, ok := obj["pricing"]; ok {
+			obj["priceMatrix"] = legacy
+			changed = true
 		}
-		seconds[i] = value
 	}
-	type durationEntry struct {
-		raw     json.RawMessage
-		seconds float64
+	encodedDurations, ok := obj["durations"]
+	if ok {
+		var durations []json.RawMessage
+		if err := json.Unmarshal(encodedDurations, &durations); err == nil && len(durations) >= 2 {
+			seconds := make([]float64, len(durations))
+			valid := true
+			for i := range durations {
+				value, parsed := studioDurationSeconds(durations[i])
+				if !parsed {
+					valid = false
+					break
+				}
+				seconds[i] = value
+			}
+			if valid {
+				type durationEntry struct {
+					raw     json.RawMessage
+					seconds float64
+				}
+				entries := make([]durationEntry, len(durations))
+				for i := range durations {
+					entries[i] = durationEntry{raw: durations[i], seconds: seconds[i]}
+				}
+				sort.SliceStable(entries, func(i, j int) bool { return entries[i].seconds < entries[j].seconds })
+				for i := range entries {
+					durations[i] = entries[i].raw
+				}
+				if sortedDurations, err := json.Marshal(durations); err == nil {
+					obj["durations"] = sortedDurations
+					changed = true
+				}
+			}
+		}
 	}
-	entries := make([]durationEntry, len(durations))
-	for i := range durations {
-		entries[i] = durationEntry{raw: durations[i], seconds: seconds[i]}
-	}
-	sort.SliceStable(entries, func(i, j int) bool { return entries[i].seconds < entries[j].seconds })
-	for i := range entries {
-		durations[i] = entries[i].raw
-	}
-	sortedDurations, err := json.Marshal(durations)
-	if err != nil {
+	if !changed {
 		return json.RawMessage(c)
 	}
-	obj["durations"] = sortedDurations
 	out, err := json.Marshal(obj)
 	if err != nil {
 		return json.RawMessage(c)

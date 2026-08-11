@@ -64,8 +64,8 @@ test("mixed-media references retain the composer's per-kind numbering", () => {
 });
 
 test("both in-flight and finished feed prompts render persisted reference pills", () => {
-  assert.match(stageFeedSource, /<RunPromptText prompt=\{meta\.prompt\} params=\{meta\.params\} \/>/);
-  assert.match(stageFeedSource, /<RunPromptText prompt=\{r\.prompt\} params=\{r\.params\} \/>/);
+  assert.match(stageFeedSource, /<RunPromptText prompt=\{meta\.prompt\} params=\{meta\.params\} onZoom=\{onZoom\} \/>/);
+  assert.match(stageFeedSource, /<RunPromptText prompt=\{r\.prompt\} params=\{r\.params\} onZoom=\{onZoom\} \/>/);
   assert.match(
     stageFeedSource,
     /function RunPromptMention[\s\S]*?fallbackOssDisplayImage\(event\.currentTarget, reference\.source\)/,

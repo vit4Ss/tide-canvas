@@ -2,7 +2,9 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 
 	"tidecanvas/internal/model"
 )
@@ -191,48 +193,38 @@ func builtinHandlers() []GenHandler {
 	return handlers
 }
 
-// toolSharedHandlers are handlers a 智能工具 shares with a non-tool surface, so
-// a task carrying one cannot be attributed to the tool:局部重绘复用创作台的
-// 通用图生图。video_upscale 虽然也是基础能力,但目前只有「视频超分」工具这一个
-// 入口,故计入;将来若给它做了创作台入口,加进这里即可。
-var toolSharedHandlers = map[string]bool{"image_to_image": true}
-
-// isToolExclusiveHandler reports whether a handler belongs to exactly one
-// 智能工具(没有被创作台等非工具入口共用)。后台「工具管理」的上下线开关据此
-// 生效:handler 专属于某个工具时,下线它就该挡住生成;共用的(局部重绘的
-// image_to_image)绝不能挡,否则会连创作台的图生图一起废掉。
-func isToolExclusiveHandler(handler string) bool {
-	if toolSharedHandlers[handler] {
-		return false
+// canonicalToolRequest attributes a request to the independent /tools surface.
+// A handler alone is never enough: the same preset handlers are also used by
+// Studio's per-result toolbar. Only an exact canonical handler + input.toolKey
+// pair is a tool-page request. marker=true with tool=nil means the caller sent
+// an invalid/mismatched marker and must not silently bypass tool policy.
+func canonicalToolRequest(handler string, raw json.RawMessage) (tool *model.AiTool, marker bool) {
+	var input map[string]json.RawMessage
+	if len(raw) == 0 || json.Unmarshal(raw, &input) != nil {
+		return nil, false
 	}
+	rawKey, ok := input["toolKey"]
+	if !ok {
+		return nil, false
+	}
+	marker = true
+	var key string
+	if json.Unmarshal(rawKey, &key) != nil {
+		return nil, marker
+	}
+	key = strings.TrimSpace(key)
 	for i := range model.CanonicalAiTools {
-		if model.CanonicalAiTools[i].Handler == handler {
-			return true
+		candidate := &model.CanonicalAiTools[i]
+		if candidate.Key == key && candidate.Handler == handler {
+			return candidate, marker
 		}
 	}
-	return false
-}
-
-// toolHandlerNames returns the handlers whose tasks can be attributed to a
-// 智能工具。任务列表的「工具作品」筛选桶(mediaType=tool)用它。
-func toolHandlerNames() []string {
-	seen := map[string]bool{}
-	out := make([]string, 0, len(model.CanonicalAiTools))
-	for i := range model.CanonicalAiTools {
-		h := model.CanonicalAiTools[i].Handler
-		if toolSharedHandlers[h] || seen[h] {
-			continue
-		}
-		seen[h] = true
-		out = append(out, h)
-	}
-	return out
+	return nil, marker
 }
 
 // toolMediaHandlerNames returns every canonical tool handler that produces the
-// requested media type. Unlike toolHandlerNames it intentionally keeps shared
-// handlers (such as image_to_image): asset history classifies the output media,
-// not whether the task can be attributed exclusively to the tools surface.
+// requested media type. Asset history classifies the output media, not the
+// surface that created it, so every canonical handler belongs here.
 func toolMediaHandlerNames(toolType string) []string {
 	seen := map[string]bool{}
 	out := make([]string, 0, len(model.CanonicalAiTools))

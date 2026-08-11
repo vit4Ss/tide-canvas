@@ -151,12 +151,19 @@ func applyTaskListFilters(tx *gorm.DB, userID idgen.ID, q taskQuery) *gorm.DB {
 		tx = tx.Where("handler = ?", q.Handler)
 	}
 	if q.MediaType != "" {
-		handlers := taskMediaHandlers(q.MediaType)
-		if len(handlers) == 0 {
-			tx = tx.Where("1 = 0")
+		if strings.EqualFold(strings.TrimSpace(q.MediaType), "tool") {
+			tx = toolTaskScope(tx)
 		} else {
-			tx = tx.Where("handler IN ?", handlers)
+			handlers := taskMediaHandlers(q.MediaType)
+			if len(handlers) == 0 {
+				tx = tx.Where("1 = 0")
+			} else {
+				tx = tx.Where("handler IN ?", handlers)
+			}
 		}
+	}
+	if q.ExcludeTools {
+		tx = excludeToolTaskScope(tx)
 	}
 	if q.AssetCategory != "" {
 		switch strings.ToLower(strings.TrimSpace(q.AssetCategory)) {
@@ -170,6 +177,9 @@ func applyTaskListFilters(tx *gorm.DB, userID idgen.ID, q taskQuery) *gorm.DB {
 	}
 	if q.AssetOnly {
 		tx = tx.Where("status NOT IN ?", []int{statusFailed, statusCancelled})
+		if strings.EqualFold(strings.TrimSpace(q.MediaType), "tool") {
+			tx = tx.Where(usableToolResultPredicate)
+		}
 	}
 	if q.Status != nil {
 		tx = tx.Where("status = ?", *q.Status)
@@ -182,6 +192,44 @@ func applyTaskListFilters(tx *gorm.DB, userID idgen.ID, q taskQuery) *gorm.DB {
 	tx = applyDateRange(tx, "create_time", q.StartDate, q.EndDate)
 	return tx
 }
+
+// toolTaskScope includes only requests carrying an exact canonical handler +
+// input.toolKey pair. Handlers are capabilities shared by /tools and Studio's
+// per-result toolbar, so handler-only attribution would move Studio work into
+// 工具作品 after refresh.
+func toolTaskScope(tx *gorm.DB) *gorm.DB {
+	predicate, args := taggedToolTaskPredicate()
+	return tx.Where("("+predicate+")", args...)
+}
+
+// excludeToolTaskScope is the exact inverse surface policy used by Studio.
+// Untagged legacy rows stay visible: old data must not be guessed from handler.
+func excludeToolTaskScope(tx *gorm.DB) *gorm.DB {
+	predicate, args := taggedToolTaskPredicate()
+	return tx.Where("NOT ("+predicate+")", args...)
+}
+
+// taggedToolTaskPredicate validates attribution against the canonical
+// registry. JSON extraction accepts historical whitespace/key ordering while an
+// exact value comparison rejects partial, unrelated and mismatched keys.
+func taggedToolTaskPredicate() (string, []any) {
+	parts := make([]string, 0, len(model.CanonicalAiTools))
+	args := make([]any, 0, len(model.CanonicalAiTools)*2)
+	for i := range model.CanonicalAiTools {
+		tool := &model.CanonicalAiTools[i]
+		parts = append(parts, "(handler = ? AND JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(COALESCE(input, '')), input, '{}'), '$.toolKey')) = ?)")
+		args = append(args, tool.Handler, tool.Key)
+	}
+	if len(parts) == 0 {
+		return "1 = 0", nil
+	}
+	return strings.Join(parts, " OR "), args
+}
+
+// Asset-only tool queries must never paginate blank cards. result_url is the
+// normal single-result path; result_meta.urls[0] retains compatibility with
+// historical multi-result tasks.
+const usableToolResultPredicate = "(NULLIF(TRIM(COALESCE(result_url, '')), '') IS NOT NULL OR NULLIF(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(COALESCE(result_meta, '')), result_meta, '{}'), '$.urls[0]')), '')), '') IS NOT NULL)"
 
 func taskMediaHandlers(mediaType string) []string {
 	switch strings.ToLower(strings.TrimSpace(mediaType)) {
@@ -201,9 +249,6 @@ func taskMediaHandlers(mediaType string) []string {
 		return []string{"generate_3d"}
 	case "upscale":
 		return []string{"video_upscale"}
-	case "tool":
-		// 智能工具产出(工具中心页「工具作品」区)。
-		return toolHandlerNames()
 	default:
 		return nil
 	}
@@ -370,6 +415,23 @@ func (r *repo) findToolByHandler(ctx context.Context, handler string) (*model.Ai
 	}
 	var t model.AiTool
 	err := r.db.WithContext(ctx).First(&t, "handler = ?", handler).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// findToolByKey resolves the policy row for an exact independent tool request.
+// Key lookup avoids ambiguity when multiple tools reuse the same capability.
+func (r *repo) findToolByKey(ctx context.Context, key string) (*model.AiTool, error) {
+	if key == "" {
+		return nil, nil
+	}
+	var t model.AiTool
+	err := r.db.WithContext(ctx).First(&t, "`key` = ?", key).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}

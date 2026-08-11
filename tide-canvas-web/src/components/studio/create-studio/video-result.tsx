@@ -11,6 +11,7 @@ import { uploadFileSmart } from "@/lib/api";
 import { toast } from "@/components/shared/toast";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { captureVideoFrame, VideoFrameError } from "@/lib/video-frame";
+import { notifyAssetLibraryChanged } from "@/lib/asset-library-events";
 
 /** 00:03.480 → "00-03-480",用作截图文件名的时间戳部分。 */
 function stampOf(seconds: number): string {
@@ -42,7 +43,14 @@ export default function VideoResult({ src, className }: { src: string; className
       // 走普通 multipart 会整个穿过我们自己的 API 服务器。
       const res = await uploadFileSmart(file);
       if (res.success && res.data?.fileUrl) {
-        toast.success(`已截取 ${width}×${height} 并存入资产库`);
+        // 服务端已经登记 File 记录；同步让资产页丢弃旧缓存，返回资产页时能
+        // 立即在“上传历史 / 图片”看到，而不是仍显示截帧前的列表。
+        notifyAssetLibraryChanged({
+          collection: "upload",
+          mediaKind: "image",
+          origin: "capture",
+        });
+        toast.success(`已截取 ${width}×${height}，已保存至资产 · 上传历史 / 图片`);
       } else {
         toast.error(res.message || "截图上传失败，请重试");
       }
@@ -69,7 +77,7 @@ export default function VideoResult({ src, className }: { src: string; className
       <button
         type="button"
         className="frame-shot"
-        title="截取当前帧（原始分辨率，存入资产库）"
+        title="截取当前帧（原始分辨率，保存至资产的上传历史）"
         aria-label="截取当前帧"
         disabled={busy}
         onClick={(e) => {

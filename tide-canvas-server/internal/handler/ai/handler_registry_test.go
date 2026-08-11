@@ -1,24 +1,34 @@
 package ai
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
 
-// 后台「工具管理」的上下线开关只能挡住 handler 专属于某个工具的能力。
-// 视频超分直接跑基础 handler(video_upscale),但那个 handler 只有它一个入口,
-// 必须同样受约束——否则「已下线」的工具仍能被直接调用并扣费。
-func TestIsToolExclusiveHandler(t *testing.T) {
-	for _, handler := range []string{"outpaint", "remove_bg", "upscale", "remove_object", "relight", "video_upscale"} {
-		if !isToolExclusiveHandler(handler) {
-			t.Errorf("handler %q should be tool-exclusive (下线该工具时必须挡住生成)", handler)
+	"tidecanvas/internal/model"
+)
+
+func TestCanonicalToolRequestRequiresExactPair(t *testing.T) {
+	for i := range model.CanonicalAiTools {
+		want := &model.CanonicalAiTools[i]
+		raw, err := json.Marshal(map[string]any{"toolKey": want.Key})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, marker := canonicalToolRequest(want.Handler, raw)
+		if !marker || got == nil || got.Key != want.Key {
+			t.Fatalf("canonical pair %s/%s was not recognized: marker=%v tool=%#v", want.Handler, want.Key, marker, got)
+		}
+		if mismatched, marker := canonicalToolRequest("text_to_image", raw); !marker || mismatched != nil {
+			t.Fatalf("mismatched pair for %s must be rejected: marker=%v tool=%#v", want.Key, marker, mismatched)
 		}
 	}
-	// 局部重绘复用创作台的通用图生图:下线这个工具绝不能连带废掉图生图。
-	if isToolExclusiveHandler("image_to_image") {
-		t.Error("image_to_image is shared with 创作台, must not be gated by the tool switch")
+}
+
+func TestCanonicalToolRequestDoesNotGuessLegacyRows(t *testing.T) {
+	if tool, marker := canonicalToolRequest("outpaint", json.RawMessage(`{"prompt":"legacy studio edit"}`)); marker || tool != nil {
+		t.Fatalf("untagged Studio request must stay unclassified: marker=%v tool=%#v", marker, tool)
 	}
-	// 与任何工具无关的基础能力同样不受工具开关影响。
-	for _, handler := range []string{"text_to_image", "text_to_video", "generate_3d", "text_to_audio"} {
-		if isToolExclusiveHandler(handler) {
-			t.Errorf("handler %q is not a tool handler, must not be gated", handler)
-		}
+	if tool, marker := canonicalToolRequest("outpaint", json.RawMessage(`{"toolKey":42}`)); !marker || tool != nil {
+		t.Fatalf("invalid marker must be visible and rejected: marker=%v tool=%#v", marker, tool)
 	}
 }
