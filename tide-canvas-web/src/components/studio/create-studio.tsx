@@ -354,6 +354,7 @@ export default function CreateStudio() {
 
   const {
     busy,
+    submitting,
     inflightRuns,
     setCells,
     setProgs,
@@ -1268,13 +1269,15 @@ export default function CreateStudio() {
           {/* footer */}
           <div className="ws-panel-foot">
             <button
-              className={`ws-gen${restoringRun ? " busy" : ""}`}
+              className={`ws-gen${restoringRun || submitting ? " busy" : ""}`}
               id="gen"
               type="button"
-              disabled={restoringRun}
+              disabled={restoringRun || submitting}
+              aria-busy={submitting}
               onClick={() => generate()}
             >
-              <span className="spark">✦</span> {restoringRun ? "正在恢复历史参数…" : "立即生成"}{" "}
+              <span className="spark">✦</span>{" "}
+              {restoringRun ? "正在恢复历史参数…" : submitting ? "正在提交…" : "立即生成"}{" "}
               <span className="ws-gen-cost">
                 <>·&nbsp;<b id="cost">{cost}</b>&nbsp;积分</>
               </span>

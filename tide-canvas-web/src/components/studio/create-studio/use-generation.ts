@@ -47,6 +47,7 @@ import type {
   ToolKey,
 } from "./types";
 import { nextHistId, promptHue, refThumbsForRun, threeDAssetsFromMeta, tracksFromMeta } from "./utils";
+import { createSubmissionGate, type SubmissionGate } from "./submission-gate";
 
 export interface GenerationParams {
   /* panel state (fresh each render) */
@@ -258,13 +259,18 @@ export function useGeneration(p: GenerationParams) {
   const [progs, setProgs] = useState<number[]>([]);
   const [runMeta, setRunMeta] = useState<RunMeta | null>(null);
   const [inflightRuns, setInflightRuns] = useState<InflightRun[]>([]);
+  const [submitting, setSubmitting] = useState(false);
   // full settings of the last started run (for 重新编辑 / 再次生成) + a one-shot
   // flag that fires generate() after those settings are restored to the panel.
   const lastRunRef = useRef<RunParams | null>(null);
-  // One-click edit operations keep their own short-lived latch. Normal panel
-  // generation intentionally has no client-side run lock: the server owns the
-  // cross-model per-user concurrency limit.
+  // One-click edits retain their run-level latch. Panel submissions use a
+  // separate short-lived gate below, blocking duplicate clicks without
+  // disabling intentional concurrent generations after task creation.
   const genInFlightRef = useRef(false);
+  const submissionGateRef = useRef<SubmissionGate | null>(null);
+  if (!submissionGateRef.current) submissionGateRef.current = createSubmissionGate();
+  const submissionReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = useRef(true);
 
   // Design-preview simulation still uses the legacy single foreground timers.
   const ticksRef = useRef<ReturnType<typeof setInterval>[]>([]);
@@ -275,6 +281,28 @@ export function useGeneration(p: GenerationParams) {
   const activeRunRef = useRef<ActiveRun | null>(null);
   const runControlsRef = useRef<Map<string, ConcurrentRunControl>>(new Map());
   const createSeqRef = useRef(0);
+
+  const releaseSubmissionGate = useCallback(() => {
+    const gate = submissionGateRef.current;
+    if (!gate) return;
+    if (submissionReleaseTimerRef.current) clearTimeout(submissionReleaseTimerRef.current);
+    if (!mountedRef.current) {
+      gate.unlock();
+      submissionReleaseTimerRef.current = null;
+      return;
+    }
+    const unlock = () => {
+      gate.unlock();
+      submissionReleaseTimerRef.current = null;
+      setSubmitting(false);
+    };
+    const delay = gate.releaseDelay();
+    if (delay > 0) {
+      submissionReleaseTimerRef.current = setTimeout(unlock, delay);
+    } else {
+      unlock();
+    }
+  }, []);
 
   /* Poll every accepted task independently. Every task also owns a separate
      feed entry; a newer submission must never replace an older loading card. */
@@ -525,23 +553,27 @@ export function useGeneration(p: GenerationParams) {
   // `poll` keeps re-arming after navigation, hits getTask forever, and on
   // completion runs setState on an unmounted component + pops a toast on whatever
   // page the user is now on.
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true;
+    const runControls = runControlsRef.current;
+    return () => {
+      mountedRef.current = false;
       ticksRef.current.forEach((t) => clearInterval(t));
       ticksRef.current = [];
       if (pollRef.current) {
         clearTimeout(pollRef.current);
         pollRef.current = null;
       }
-      for (const control of runControlsRef.current.values()) {
+      for (const control of runControls.values()) {
         control.ticks.forEach((timer) => clearInterval(timer));
         if (control.poll) clearTimeout(control.poll);
       }
-      runControlsRef.current.clear();
+      runControls.clear();
+      if (submissionReleaseTimerRef.current) clearTimeout(submissionReleaseTimerRef.current);
+      submissionGateRef.current?.unlock();
       runIdRef.current += 1; // invalidate any in-flight poll
-    },
-    [],
-  );
+    };
+  }, []);
 
   /* Create a backend task and hand the progress UI + polling to driveRun. Shared
      by the panel generate() and the one-click per-result edit ops, so both go
@@ -641,7 +673,7 @@ export function useGeneration(p: GenerationParams) {
      model, which may be a video model), and 高清放大 prefers a 4K-capable one. */
   const oneClickEdit = useCallback(
     async (op: string, imageUrl: string, label: string) => {
-      if (busy || genInFlightRef.current) {
+      if (busy || genInFlightRef.current || submissionGateRef.current?.isLocked()) {
         toast.info("正在生成中，请稍候…");
         return;
       }
@@ -835,9 +867,20 @@ export function useGeneration(p: GenerationParams) {
     }
     if (multiViewImages.length) refInput.multiViewImages = multiViewImages;
 
-    // All early-return guards passed. Do not lock the client until completion:
-    // each click is a distinct idempotent request and the backend enforces the
-    // configured cross-model per-user concurrency cap.
+    // All validation passed. Acquire synchronously before any state update or
+    // request so two click events cannot create two paid tasks. The gate is only
+    // held through task creation (+ a short double-click floor), preserving
+    // intentional concurrent generations after the first task is accepted.
+    const submissionGate = submissionGateRef.current;
+    if (genInFlightRef.current || !submissionGate || !submissionGate.tryAcquire()) {
+      toast.info("生成请求正在提交，请勿重复点击");
+      return;
+    }
+    if (submissionReleaseTimerRef.current) {
+      clearTimeout(submissionReleaseTimerRef.current);
+      submissionReleaseTimerRef.current = null;
+    }
+    setSubmitting(true);
     setBusy(true);
 
     const isVid = TOOLS[tool].mode === "t2v";
@@ -943,6 +986,7 @@ export function useGeneration(p: GenerationParams) {
         }, 90 + i * 40);
         ticksRef.current.push(tick);
       });
+      releaseSubmissionGate();
       return;
     }
 
@@ -1021,9 +1065,9 @@ export function useGeneration(p: GenerationParams) {
         refThumbs,
         params: lastRunRef.current ?? undefined,
       },
-    });
+    }).finally(releaseSubmissionGate);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busy, prompt, count, tool, curType, ratio, model, res, dur, imgRes, quality, musicMode, sourceClipId, sourceIsUpload, continueAt, lyrics, songStyle, songTitle, instrumental, enablePbr, faceCount, generateType, resultFormat, slotData, studioList, ratioOpts, resOpts, durOpts, qualOpts, pushHistory, startGeneration, skill, isAudio, isSfx, is3D, promptRef]);
+  }, [busy, prompt, count, tool, curType, ratio, model, res, dur, imgRes, quality, musicMode, sourceClipId, sourceIsUpload, continueAt, lyrics, songStyle, songTitle, instrumental, enablePbr, faceCount, generateType, resultFormat, slotData, studioList, ratioOpts, resOpts, durOpts, qualOpts, pushHistory, startGeneration, skill, isAudio, isSfx, is3D, promptRef, releaseSubmissionGate]);
 
   // Refresh-resume has two durable layers. ACTIVE_RUN_KEY is the normal pointer;
   // the accepted-create journal closes the response→ACTIVE_RUN_KEY crash window
@@ -1186,6 +1230,7 @@ export function useGeneration(p: GenerationParams) {
 
   return {
     busy,
+    submitting,
     cells,
     progs,
     runMeta,

@@ -141,7 +141,7 @@ export default function ThreeDStudio() {
   }, [slots, slotData]);
 
   /* ── 生成引擎（音频/图片专属参数给惰性默认值，不触发对应分支）──────────── */
-  const { inflightRuns, generate } = useGeneration({
+  const { inflightRuns, generate, submitting } = useGeneration({
     prompt,
     count: 1,
     tool,
@@ -454,9 +454,15 @@ export default function ThreeDStudio() {
           </div>
 
           <div className="ws-panel-foot">
-            {/* 与创作台同口径：不锁按钮——每次点击是独立幂等请求，并发上限由后端管 */}
-            <button className="ws-gen" id="gen" type="button" onClick={() => generate()}>
-              <span className="spark">✦</span> 立即生成{" "}
+            <button
+              className={`ws-gen${submitting ? " busy" : ""}`}
+              id="gen"
+              type="button"
+              disabled={submitting}
+              aria-busy={submitting}
+              onClick={() => generate()}
+            >
+              <span className="spark">✦</span> {submitting ? "正在提交…" : "立即生成"}{" "}
               <span className="ws-gen-cost">
                 ·&nbsp;<b id="cost">{cost}</b>&nbsp;积分
               </span>
