@@ -186,9 +186,22 @@ function ToolWorkPreview({
       }}
     >
       <div className={styles.previewShell}>
-        <section className={styles.previewStage} aria-label="作品内容">
-          <div className={styles.previewStageBar}>
-            <span>作品预览</span>
+        <header className={styles.previewHeader}>
+          <div className={styles.previewHeading}>
+            <span className={styles.previewEyebrow}>工具作品</span>
+            <div>
+              <h2 id="tool-work-preview-title">{preview.title}</h2>
+              <p id="tool-work-preview-description">
+                {preview.isVideo ? "视频作品" : "图片作品"}
+                {preview.date ? ` · ${preview.date}` : ""}
+              </p>
+            </div>
+          </div>
+          <div className={styles.previewHeaderActions}>
+            <a href={preview.url} target="_blank" rel="noreferrer">
+              原文件
+              <ExternalLink aria-hidden />
+            </a>
             <button
               type="button"
               className={styles.previewClose}
@@ -199,59 +212,23 @@ function ToolWorkPreview({
               <X aria-hidden />
             </button>
           </div>
-          <div className={styles.previewMedia}>
-            {preview.isVideo ? (
-              <CapturableVideo key={preview.url} src={preview.url} controls playsInline preload="metadata" />
-            ) : (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                key={preview.url}
-                src={preview.url}
-                alt={preview.title}
-                draggable={false}
-                onLoad={(event) => restoreOssDisplayImage(event.currentTarget)}
-                onError={(event) => fallbackOssDisplayImage(event.currentTarget, preview.url)}
-              />
-            )}
-          </div>
-          <div className={styles.previewStageFoot}>
-            <span>按 Esc 关闭</span>
-            <span>{preview.isVideo ? "视频" : "图片"}</span>
-          </div>
-        </section>
+        </header>
 
-        <aside className={styles.previewInfo}>
-          <div className={styles.previewInfoTop}>
-            <span className={styles.previewEyebrow}>工具作品</span>
-            <h2 id="tool-work-preview-title">{preview.title}</h2>
-            <p id="tool-work-preview-description">由智能工具处理完成，原文件已同步保存在资产中。</p>
-          </div>
-
-          <dl className={styles.previewFacts}>
-            <div>
-              <dt>文件类型</dt>
-              <dd>{preview.isVideo ? "视频作品" : "图片作品"}</dd>
-            </div>
-            {preview.date && (
-              <div>
-                <dt>创建时间</dt>
-                <dd>{preview.date}</dd>
-              </div>
-            )}
-            <div>
-              <dt>保存位置</dt>
-              <dd>工具作品 · 资产</dd>
-            </div>
-          </dl>
-
-          <div className={styles.previewActions}>
-            <a href={preview.url} target="_blank" rel="noreferrer">
-              查看原文件
-              <ExternalLink aria-hidden />
-            </a>
-            <p>原文件将在新窗口打开，可从浏览器保存到本地。</p>
-          </div>
-        </aside>
+        <div className={styles.previewMedia} aria-label="作品内容">
+          {preview.isVideo ? (
+            <CapturableVideo key={preview.url} src={preview.url} controls playsInline preload="metadata" />
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={preview.url}
+              src={preview.url}
+              alt={preview.title}
+              draggable={false}
+              onLoad={(event) => restoreOssDisplayImage(event.currentTarget)}
+              onError={(event) => fallbackOssDisplayImage(event.currentTarget, preview.url)}
+            />
+          )}
+        </div>
       </div>
     </dialog>
   );
