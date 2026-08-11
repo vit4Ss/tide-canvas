@@ -556,34 +556,37 @@
 }
 
 .previewMedia {
-  position: relative;
   min-width: 0;
   min-height: 0;
   display: grid;
-  place-items: center;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   padding: 20px;
   overflow: hidden;
   background: #09090a;
 }
 
-.previewMedia img,
-.previewMedia video {
+.previewViewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.previewViewport img,
+.previewViewport video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   display: block;
-  max-width: 100%;
-  max-height: 100%;
   border-radius: 6px;
   object-fit: contain;
 }
 
-.previewMedia img {
-  width: auto;
-  height: auto;
+.previewViewport img {
   user-select: none;
-}
-
-.previewMedia video {
-  width: 100%;
-  height: 100%;
 }
 
 /* ── 加载、空态与分页 ─────────────────────────────────────────────────── */

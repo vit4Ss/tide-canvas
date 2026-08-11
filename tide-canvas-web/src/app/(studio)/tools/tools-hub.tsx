@@ -215,19 +215,21 @@ function ToolWorkPreview({
         </header>
 
         <div className={styles.previewMedia} aria-label="作品内容">
-          {preview.isVideo ? (
-            <CapturableVideo key={preview.url} src={preview.url} controls playsInline preload="metadata" />
-          ) : (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              key={preview.url}
-              src={preview.url}
-              alt={preview.title}
-              draggable={false}
-              onLoad={(event) => restoreOssDisplayImage(event.currentTarget)}
-              onError={(event) => fallbackOssDisplayImage(event.currentTarget, preview.url)}
-            />
-          )}
+          <div className={styles.previewViewport}>
+            {preview.isVideo ? (
+              <CapturableVideo key={preview.url} src={preview.url} controls playsInline preload="metadata" />
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                key={preview.url}
+                src={preview.url}
+                alt={preview.title}
+                draggable={false}
+                onLoad={(event) => restoreOssDisplayImage(event.currentTarget)}
+                onError={(event) => fallbackOssDisplayImage(event.currentTarget, preview.url)}
+              />
+            )}
+          </div>
         </div>
       </div>
     </dialog>
