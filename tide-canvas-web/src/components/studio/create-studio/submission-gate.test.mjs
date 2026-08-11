@@ -1,29 +1,33 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { createSubmissionGate } from "./submission-gate.ts";
+import {
+  createSubmissionGate,
+  GENERATION_SUBMIT_HOLD_MS,
+} from "./submission-gate.ts";
 
 const here = new URL(".", import.meta.url);
 const read = (relative) => readFileSync(new URL(relative, here), "utf8");
 
 test("generation submission gate rejects rapid duplicate clicks synchronously", () => {
-  const gate = createSubmissionGate(1_200);
+  const gate = createSubmissionGate();
 
+  assert.equal(GENERATION_SUBMIT_HOLD_MS, 5_000);
   assert.equal(gate.tryAcquire(10_000), true);
   assert.equal(gate.tryAcquire(10_000), false);
   assert.equal(gate.tryAcquire(10_300), false);
-  assert.equal(gate.releaseDelay(10_300), 900);
+  assert.equal(gate.releaseDelay(10_300), 4_700);
 });
 
 test("generation submission gate can reopen after request settlement and hold window", () => {
-  const gate = createSubmissionGate(1_200);
+  const gate = createSubmissionGate();
 
   assert.equal(gate.tryAcquire(5_000), true);
-  assert.equal(gate.releaseDelay(6_500), 0);
-  assert.equal(gate.tryAcquire(6_500), false, "elapsed time alone must not unlock an unsettled request");
+  assert.equal(gate.releaseDelay(10_000), 0);
+  assert.equal(gate.tryAcquire(10_000), false, "elapsed time alone must not unlock an unsettled request");
   gate.unlock();
   assert.equal(gate.isLocked(), false);
-  assert.equal(gate.tryAcquire(6_500), true);
+  assert.equal(gate.tryAcquire(10_000), true);
 });
 
 test("Studio paid submits acquire the gate before create and expose locked button state", () => {

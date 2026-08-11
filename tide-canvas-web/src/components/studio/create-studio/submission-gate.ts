@@ -1,4 +1,4 @@
-export const GENERATION_SUBMIT_HOLD_MS = 1_200;
+export const GENERATION_SUBMIT_HOLD_MS = 5_000;
 
 /**
  * A synchronous gate for paid generation submits. React state updates are not
