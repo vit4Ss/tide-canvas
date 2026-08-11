@@ -554,10 +554,18 @@ func (c *Client) submit(ctx context.Context, path string, body map[string]any, d
 	if mr.Error != nil {
 		return res, upstreamError(status, mr, respBody)
 	}
+	if taskStatusFailed(mr.Status) {
+		return res, upstreamError(status, mr, respBody)
+	}
 
-	// A 2xx with the result already inline is a synchronous success.
+	// A 2xx with inline media is synchronous success only when the response is
+	// terminal (or has no status for legacy synchronous endpoints). A processing
+	// task may accidentally carry provisional provider URLs; never expose those
+	// before the relay finishes its own durable transfer.
 	if status >= 200 && status < 300 {
-		if urls := mediaURLs(mr); len(urls) > 0 {
+		urls := mediaURLs(mr)
+		inlineSuccess := len(urls) > 0 && (strings.TrimSpace(mr.Status) == "" || taskStatusSucceeded(mr.Status))
+		if inlineSuccess {
 			res.URLs = urls
 			res.Assets = mediaAssets(mr)
 			res.Tracks = mediaTracks(mr)
@@ -573,6 +581,9 @@ func (c *Client) submit(ctx context.Context, path string, body map[string]any, d
 		// path, and the occasional 200 that still carries only a task id). Poll it.
 		if mr.ID != "" {
 			return c.poll(ctx, mr.ID, res)
+		}
+		if len(urls) > 0 {
+			return res, fmt.Errorf("relaymedia: HTTP %d returned provisional media for non-terminal status %q without task id", status, mr.Status)
 		}
 		return res, fmt.Errorf("relaymedia: HTTP %d with neither media url nor task id", status)
 	}
@@ -590,6 +601,9 @@ func (c *Client) enrichAudio(ctx context.Context, taskID string, res *Result) {
 	}
 	var mr mediaResp
 	if json.Unmarshal(respBody, &mr) != nil || mr.Error != nil {
+		return
+	}
+	if strings.TrimSpace(mr.Status) != "" && !taskStatusSucceeded(mr.Status) {
 		return
 	}
 	urls := mediaURLs(mr)
@@ -639,8 +653,11 @@ func (c *Client) poll(ctx context.Context, taskID string, base Result) (Result, 
 			return base, upstreamError(status, mr, respBody)
 		}
 
-		switch strings.ToLower(mr.Status) {
-		case "succeeded", "success", "completed", "complete":
+		switch {
+		case taskStatusSucceeded(mr.Status):
+			if status < 200 || status >= 300 {
+				return base, upstreamError(status, mr, respBody)
+			}
 			urls := mediaURLs(mr)
 			if len(urls) == 0 {
 				return base, fmt.Errorf("relaymedia: task %s succeeded with no media url", taskID)
@@ -649,7 +666,7 @@ func (c *Client) poll(ctx context.Context, taskID string, base Result) (Result, 
 			base.Assets = mediaAssets(mr)
 			base.Tracks = mediaTracks(mr)
 			return base, nil
-		case "failed", "error", "cancelled", "canceled":
+		case taskStatusFailed(mr.Status):
 			return base, upstreamError(status, mr, respBody)
 		default:
 			// queued / processing / running … keep waiting. But a non-2xx HTTP
@@ -665,6 +682,24 @@ func (c *Client) poll(ctx context.Context, taskID string, base Result) (Result, 
 			return base, fmt.Errorf("relaymedia: task %s timed out: %w", taskID, ctx.Err())
 		case <-ticker.C:
 		}
+	}
+}
+
+func taskStatusSucceeded(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "succeeded", "success", "completed", "complete":
+		return true
+	default:
+		return false
+	}
+}
+
+func taskStatusFailed(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "failed", "error", "cancelled", "canceled":
+		return true
+	default:
+		return false
 	}
 }
 

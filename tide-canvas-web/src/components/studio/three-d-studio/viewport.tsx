@@ -21,6 +21,23 @@ export type ViewMode = "shaded" | "solid" | "wire";
  *  直连，免得每个模型都白等一次探测。HTTP 业务错（403/404）不记——代理本身可用。 */
 let preferDirectFetch = false;
 
+function isSignedAssetURL(raw: string): boolean {
+  try {
+    const keys = new Set(Array.from(new URL(raw).searchParams.keys(), (key) => key.toLowerCase()));
+    return [
+      "q-signature",
+      "q-sign-time",
+      "q-key-time",
+      "x-cos-security-token",
+      "x-amz-signature",
+      "x-oss-signature",
+      "signature",
+    ].some((key) => keys.has(key));
+  } catch {
+    return false;
+  }
+}
+
 interface ViewerApi {
   loadModel: (url: string | null) => void;
   setMode: (m: ViewMode) => void;
@@ -252,6 +269,7 @@ export function ThreeDViewport({
             onProgress(null); // 换通道重下，进度回到不定态
           }
         }
+        if (isSignedAssetURL(url)) throw new Error("模型文件链接已失效");
         throw firstErr ?? new Error("模型下载失败");
       };
 
@@ -334,6 +352,10 @@ export function ThreeDViewport({
             if (disposed || seq !== loadSeq) return;
             console.error("[3D 工作台] 模型加载失败:", url, err);
             setLoading(false);
+            if (err instanceof Error && err.message === "模型文件链接已失效") {
+              setError("模型文件链接已失效，请重新生成该作品");
+              return;
+            }
             const detail = err instanceof Error && err.message ? `（${err.message}）` : "";
             setError(`模型加载失败${detail}，可尝试直接下载源文件`);
           } finally {

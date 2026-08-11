@@ -3,8 +3,10 @@ package ai
 import (
 	"context"
 	"io"
+	"sync"
 	"testing"
 
+	"tidecanvas/internal/pkg/relaymedia"
 	"tidecanvas/internal/pkg/storage"
 )
 
@@ -15,7 +17,10 @@ type ownsURLStore struct {
 	ownURL     string
 	canonical  string
 	urlBase    string
+	ownedURLs  map[string]string
 	saveCalled bool
+	mu         sync.Mutex
+	ownsCalls  map[string]int
 }
 
 func (s *ownsURLStore) Save(context.Context, string, io.Reader, string) (string, error) {
@@ -41,6 +46,15 @@ func (s *ownsURLStore) Stat(context.Context, string) (storage.ObjectMeta, error)
 	return storage.ObjectMeta{}, nil
 }
 func (s *ownsURLStore) OwnsURL(u string) (string, bool) {
+	s.mu.Lock()
+	if s.ownsCalls == nil {
+		s.ownsCalls = make(map[string]int)
+	}
+	s.ownsCalls[u]++
+	s.mu.Unlock()
+	if canonical, ok := s.ownedURLs[u]; ok {
+		return canonical, true
+	}
 	if u == s.ownURL {
 		return s.canonical, true
 	}
@@ -114,5 +128,87 @@ func TestNormalizeRehostContentTypeRejectsActiveContent(t *testing.T) {
 	}
 	if ext := mediaExt("https://cdn.example.com/payload.html", "image/png"); ext != ".png" {
 		t.Fatalf("active URL extension survived rehost: %q", ext)
+	}
+}
+
+func TestNormalize3DRehostContentType(t *testing.T) {
+	tests := []struct {
+		raw       string
+		assetType string
+		want      string
+	}{
+		{"application/octet-stream", "GLB", "model/gltf-binary"},
+		{"text/plain; charset=utf-8", "obj", "model/obj"},
+		{"model/stl", ".STL", "model/stl"},
+		{"application/zip", "usdz", "model/vnd.usdz+zip"},
+		{"application/octet-stream", "fbx", "application/octet-stream"},
+	}
+	for _, test := range tests {
+		got, err := normalize3DRehostContentType(test.raw, "https://cdn.example/model", test.assetType)
+		if err != nil || got != test.want {
+			t.Errorf("normalize3DRehostContentType(%q, %q) = %q, %v; want %q", test.raw, test.assetType, got, err, test.want)
+		}
+	}
+	for _, test := range []struct {
+		raw       string
+		assetType string
+	}{
+		{"text/html", "glb"},
+		{"application/javascript", "obj"},
+		{"application/octet-stream", "dae"},
+	} {
+		if _, err := normalize3DRehostContentType(test.raw, "https://cdn.example/model", test.assetType); err == nil {
+			t.Errorf("normalize3DRehostContentType(%q, %q) accepted unsafe/unsupported input", test.raw, test.assetType)
+		}
+	}
+}
+
+func TestResultPersistsOwned3DAssets(t *testing.T) {
+	const (
+		sourceModel   = "https://relay.example/model.glb?q-sign=temporary"
+		sourceOBJ     = "https://relay.example/model.obj?q-sign=temporary"
+		sourcePreview = "https://relay.example/preview.png?q-sign=temporary"
+		storedModel   = "https://pub/canvas/uploads/u1/model.glb"
+		storedOBJ     = "https://pub/canvas/uploads/u1/model.obj"
+		storedPreview = "https://pub/canvas/uploads/u1/preview.png"
+	)
+	store := &ownsURLStore{
+		urlBase: "https://pub/canvas/uploads",
+		ownedURLs: map[string]string{
+			sourceModel:   storedModel,
+			sourceOBJ:     storedOBJ,
+			sourcePreview: storedPreview,
+		},
+	}
+	p := &relayProviderClient{store: store}
+	result, err := p.result(context.Background(), relaymedia.Result{
+		URLs: []string{sourceModel, sourceOBJ},
+		Assets: []relaymedia.Asset{
+			{Type: "glb", URL: sourceModel, PreviewImageURL: sourcePreview},
+			{Type: "obj", URL: sourceOBJ, PreviewImageURL: sourcePreview},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("result: %v", err)
+	}
+	if result.ResultURL != storedModel || len(result.URLs) != 2 || result.URLs[0] != storedModel || result.URLs[1] != storedOBJ {
+		t.Fatalf("durable primary URLs not mapped: ResultURL=%q URLs=%v", result.ResultURL, result.URLs)
+	}
+	assets, ok := result.Meta["assets"].([]map[string]any)
+	if !ok || len(assets) != 2 {
+		t.Fatalf("unexpected assets metadata: %#v", result.Meta["assets"])
+	}
+	if assets[0]["url"] != storedModel || assets[1]["url"] != storedOBJ ||
+		assets[0]["previewImageUrl"] != storedPreview || assets[1]["previewImageUrl"] != storedPreview {
+		t.Fatalf("3D asset URLs were not persisted: %#v", assets)
+	}
+	store.mu.Lock()
+	previewOwnsCalls := store.ownsCalls[sourcePreview]
+	store.mu.Unlock()
+	if previewOwnsCalls != 1 {
+		t.Fatalf("shared preview rehosted %d times, want exactly once", previewOwnsCalls)
+	}
+	if store.saveCalled {
+		t.Fatal("Save must not run for files already written to our storage")
 	}
 }

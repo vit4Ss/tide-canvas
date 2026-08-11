@@ -367,15 +367,27 @@ func (p *relayProviderClient) result(ctx context.Context, res relaymedia.Result,
 		return out, err
 	}
 	if len(res.Assets) > 0 {
-		// Relay mirrors the canonical GLB/requested format to persistent storage.
-		// Preserve model-file URLs directly: the image/video rehost pipeline rejects
-		// model MIME types and would otherwise discard format + preview metadata.
-		if len(res.URLs) > 0 {
-			out.ResultURL = res.URLs[0]
-			out.URLs = append([]string(nil), res.URLs...)
+		// 3D providers commonly return short-lived signed CDN URLs. Archive every
+		// model format and preview image before persisting the task, otherwise a
+		// successful work becomes unreadable as soon as the upstream signature expires.
+		durableAssets := p.rehost3DAssets(ctx, res.Assets)
+		rehostedBySource := make(map[string]string, len(durableAssets))
+		for i, asset := range durableAssets {
+			if i < len(res.Assets) && asset.URL != "" {
+				rehostedBySource[res.Assets[i].URL] = asset.URL
+			}
 		}
-		assets := make([]map[string]any, 0, len(res.Assets))
-		for _, asset := range res.Assets {
+		if len(res.URLs) > 0 {
+			out.URLs = append([]string(nil), res.URLs...)
+			for i, sourceURL := range out.URLs {
+				if savedURL := rehostedBySource[sourceURL]; savedURL != "" {
+					out.URLs[i] = savedURL
+				}
+			}
+			out.ResultURL = out.URLs[0]
+		}
+		assets := make([]map[string]any, 0, len(durableAssets))
+		for _, asset := range durableAssets {
 			row := map[string]any{"type": asset.Type, "url": asset.URL}
 			if asset.PreviewImageURL != "" {
 				row["previewImageUrl"] = asset.PreviewImageURL
@@ -453,6 +465,84 @@ func (p *relayProviderClient) rehost(ctx context.Context, urls []string) []strin
 	return out
 }
 
+// rehost3DAssets archives model files and their preview images while preserving
+// the provider's format metadata. Shared preview/model sources become one job;
+// failures keep the stable relay URL so an intermittent storage problem does not
+// fail a generation that the relay has already durably transferred.
+func (p *relayProviderClient) rehost3DAssets(ctx context.Context, assets []relaymedia.Asset) []relaymedia.Asset {
+	out := append([]relaymedia.Asset(nil), assets...)
+	if p.store == nil || len(out) == 0 {
+		return out
+	}
+
+	type transferJob struct {
+		sourceURL string
+		assetType string
+		preview   bool
+	}
+	jobs := make([]transferJob, 0, len(out)*2)
+	seen := make(map[transferJob]struct{}, len(out)*2)
+	addJob := func(job transferJob) {
+		if job.sourceURL == "" {
+			return
+		}
+		if _, ok := seen[job]; ok {
+			return
+		}
+		seen[job] = struct{}{}
+		jobs = append(jobs, job)
+	}
+	for _, asset := range out {
+		addJob(transferJob{sourceURL: asset.URL, assetType: asset.Type})
+		addJob(transferJob{sourceURL: asset.PreviewImageURL, preview: true})
+	}
+
+	savedURLs := make([]string, len(jobs))
+	var wg sync.WaitGroup
+	for i, job := range jobs {
+		i, job := i, job
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case rehostSlots <- struct{}{}:
+				defer func() { <-rehostSlots }()
+			case <-ctx.Done():
+				return
+			}
+			defer func() { _ = recover() }()
+
+			var saved string
+			var err error
+			if job.preview {
+				saved, err = p.saveRemote(ctx, job.sourceURL)
+			} else {
+				saved, err = p.save3DRemote(ctx, job.sourceURL, job.assetType)
+			}
+			if err == nil && saved != "" {
+				savedURLs[i] = saved
+			}
+		}()
+	}
+	wg.Wait()
+
+	savedByJob := make(map[transferJob]string, len(jobs))
+	for i, job := range jobs {
+		if savedURLs[i] != "" {
+			savedByJob[job] = savedURLs[i]
+		}
+	}
+	for i, asset := range out {
+		if saved := savedByJob[transferJob{sourceURL: asset.URL, assetType: asset.Type}]; saved != "" {
+			out[i].URL = saved
+		}
+		if saved := savedByJob[transferJob{sourceURL: asset.PreviewImageURL, preview: true}]; saved != "" {
+			out[i].PreviewImageURL = saved
+		}
+	}
+	return out
+}
+
 // rehostRetries is how many times a relay-media download is attempted before
 // giving up. The relay's result CDNs intermittently drop connections mid-transfer
 // ("connection forcibly closed"); a single attempt would then fall back to the
@@ -495,6 +585,52 @@ func (p *relayProviderClient) saveRemote(ctx context.Context, srcURL string) (st
 	return p.store.Save(ctx, key, spool, ct)
 }
 
+type threeDAssetSpec struct {
+	ext         string
+	contentType string
+}
+
+func threeDAssetSpecFor(rawType string) (threeDAssetSpec, bool) {
+	switch strings.TrimPrefix(strings.ToLower(strings.TrimSpace(rawType)), ".") {
+	case "glb":
+		return threeDAssetSpec{ext: ".glb", contentType: "model/gltf-binary"}, true
+	case "obj":
+		return threeDAssetSpec{ext: ".obj", contentType: "model/obj"}, true
+	case "stl":
+		return threeDAssetSpec{ext: ".stl", contentType: "model/stl"}, true
+	case "usdz":
+		return threeDAssetSpec{ext: ".usdz", contentType: "model/vnd.usdz+zip"}, true
+	case "fbx":
+		return threeDAssetSpec{ext: ".fbx", contentType: "application/octet-stream"}, true
+	default:
+		return threeDAssetSpec{}, false
+	}
+}
+
+func (p *relayProviderClient) save3DRemote(ctx context.Context, srcURL, assetType string) (string, error) {
+	spec, ok := threeDAssetSpecFor(assetType)
+	if !ok {
+		return "", fmt.Errorf("relay rehost: unsupported 3D asset type %q", assetType)
+	}
+	if p.store != nil {
+		if canonical, owned := strictOwnedRelayURL(p.store, srcURL); owned {
+			return canonical, nil
+		}
+	}
+	spool, ct, err := fetchRemoteWithNormalizer(ctx, srcURL, func(raw, sourceURL string) (string, error) {
+		return normalize3DRehostContentType(raw, sourceURL, assetType)
+	})
+	if err != nil {
+		return "", err
+	}
+	spoolName := spool.Name()
+	defer func() {
+		_ = spool.Close()
+		_ = os.Remove(spoolName)
+	}()
+	return p.store.Save(ctx, "gen/"+sha1Hex(srcURL)+spec.ext, spool, ct)
+}
+
 func strictOwnedRelayURL(store storage.StorageStrategy, raw string) (string, bool) {
 	canonical, owned := store.OwnsURL(strings.TrimSpace(raw))
 	if !owned {
@@ -525,12 +661,18 @@ func strictOwnedRelayURL(store storage.StorageStrategy, raw string) (string, boo
 // misbehaving upstream can't exhaust memory), retrying the whole fetch+read on
 // transient network/HTTP errors. Returns the bytes and the response Content-Type.
 func fetchRemote(ctx context.Context, srcURL string) (*os.File, string, error) {
+	return fetchRemoteWithNormalizer(ctx, srcURL, normalizeRehostContentType)
+}
+
+type rehostContentTypeNormalizer func(raw, srcURL string) (string, error)
+
+func fetchRemoteWithNormalizer(ctx context.Context, srcURL string, normalize rehostContentTypeNormalizer) (*os.File, string, error) {
 	if _, err := safefetch.ValidateURL(srcURL); err != nil {
 		return nil, "", err
 	}
 	var lastErr error
 	for attempt := 1; attempt <= rehostRetries; attempt++ {
-		spool, ct, err := fetchOnce(ctx, srcURL)
+		spool, ct, err := fetchOnce(ctx, srcURL, normalize)
 		if err == nil {
 			return spool, ct, nil
 		}
@@ -557,7 +699,7 @@ func fetchRemote(ctx context.Context, srcURL string) (*os.File, string, error) {
 const maxRehostBytes int64 = 2 << 30
 
 // fetchOnce performs a single download attempt.
-func fetchOnce(ctx context.Context, srcURL string) (*os.File, string, error) {
+func fetchOnce(ctx context.Context, srcURL string, normalize rehostContentTypeNormalizer) (*os.File, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srcURL, nil)
 	if err != nil {
 		return nil, "", err
@@ -595,7 +737,7 @@ func fetchOnce(ctx context.Context, srcURL string) (*os.File, string, error) {
 		cleanup()
 		return nil, "", fmt.Errorf("relay rehost: rewind spool: %w", err)
 	}
-	contentType, err := normalizeRehostContentType(resp.Header.Get("Content-Type"), srcURL)
+	contentType, err := normalize(resp.Header.Get("Content-Type"), srcURL)
 	if err != nil {
 		cleanup()
 		return nil, "", err
@@ -617,6 +759,30 @@ func normalizeRehostContentType(raw, srcURL string) (string, error) {
 		return contentType, nil
 	}
 	return "", errors.New("relay rehost: response is not a supported media type")
+}
+
+func normalize3DRehostContentType(raw, _ string, assetType string) (string, error) {
+	spec, ok := threeDAssetSpecFor(assetType)
+	if !ok {
+		return "", fmt.Errorf("relay rehost: unsupported 3D asset type %q", assetType)
+	}
+	contentType, _, err := mime.ParseMediaType(strings.TrimSpace(raw))
+	if err != nil {
+		contentType = ""
+	}
+	contentType = strings.ToLower(contentType)
+	switch {
+	case contentType == "", contentType == "application/octet-stream", contentType == "binary/octet-stream":
+		return spec.contentType, nil
+	case strings.HasPrefix(contentType, "model/"):
+		return spec.contentType, nil
+	case (spec.ext == ".obj" || spec.ext == ".stl") && contentType == "text/plain":
+		return spec.contentType, nil
+	case spec.ext == ".usdz" && (contentType == "application/zip" || contentType == "application/vnd.usdz+zip"):
+		return spec.contentType, nil
+	default:
+		return "", errors.New("relay rehost: response is not a supported 3D model type")
+	}
 }
 
 func parsedURLPath(raw string) string {

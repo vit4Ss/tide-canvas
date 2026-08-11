@@ -56,6 +56,15 @@ function glbUrlOf(h: HistItem | null): string | null {
   return h.url && /\.glb([?#]|$)/i.test(h.url) ? h.url : null;
 }
 
+function ThreeDHistoryThumbnail({ src, title }: { src?: string; title: string }) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) return <span aria-hidden>{SLOT_ICON["3d"]}</span>;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element -- 任务预览图来自可变的对象存储域名
+    <img src={src} alt={title} loading="lazy" onError={() => setFailed(true)} />
+  );
+}
+
 export default function ThreeDStudio() {
   /* ── panel state ───────────────────────────────────────────────────────── */
   const [tool, setTool] = useState<ToolKey>("t2_3d");
@@ -549,12 +558,11 @@ export default function ThreeDStudio() {
                   title={h.title}
                   onClick={() => setSelId(h.id)}
                 >
-                  {h.previewImageUrl ? (
-                    /* eslint-disable-next-line @next/next/no-img-element -- 外链缩略图 */
-                    <img src={h.previewImageUrl} alt={h.title} loading="lazy" />
-                  ) : (
-                    <span aria-hidden>{SLOT_ICON["3d"]}</span>
-                  )}
+                  <ThreeDHistoryThumbnail
+                    key={h.previewImageUrl ?? "fallback"}
+                    src={h.previewImageUrl}
+                    title={h.title}
+                  />
                 </button>
               ))}
               {histHasMore && (

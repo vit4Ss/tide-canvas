@@ -166,6 +166,7 @@ func TestSubmitAudioSyncKeepsInlineWhenDetailFails(t *testing.T) {
 
 func TestGenerate3DAsyncPreservesAssetsAndPromotesGLB(t *testing.T) {
 	var submitted map[string]any
+	pollCount := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer relay-key" {
 			t.Errorf("Authorization = %q", got)
@@ -176,8 +177,21 @@ func TestGenerate3DAsyncPreservesAssetsAndPromotesGLB(t *testing.T) {
 				t.Fatalf("decode submit body: %v", err)
 			}
 			w.WriteHeader(http.StatusAccepted)
-			_, _ = w.Write([]byte(`{"id":"task_3d","status":"processing","model":"hy-3d-3.1"}`))
+			// Even if a regressed relay leaks an upstream URL while processing, the
+			// client must ignore it and wait for the terminal durable result.
+			_, _ = w.Write([]byte(`{
+				"id":"task_3d","status":"processing","model":"hy-3d-3.1",
+				"output_url":"https://temporary.example/dog.glb?q-signature=expired"
+			}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tasks/task_3d":
+			pollCount++
+			if pollCount == 1 {
+				// The relay keeps the task processing while its own durable transfer
+				// is incomplete and deliberately exposes no temporary provider URL.
+				w.WriteHeader(http.StatusAccepted)
+				_, _ = w.Write([]byte(`{"id":"task_3d","status":"processing"}`))
+				return
+			}
 			_, _ = w.Write([]byte(`{
 				"id":"task_3d","status":"succeeded","output_url":"https://cdn/dog.glb",
 				"assets":[
