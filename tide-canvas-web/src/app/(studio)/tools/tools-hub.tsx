@@ -378,8 +378,10 @@ export default function ToolsHub() {
     <main className={`insp ${styles.fill}`}>
       <div className={`insp-in ${styles.page}`}>
         <header className={styles.pageHeader}>
-          <span className={styles.eyebrow}>AI 工具箱</span>
-          <h1>工具</h1>
+          <div className={styles.pageTitle}>
+            <span className={styles.eyebrow}>AI 工具箱</span>
+            <h1>工具</h1>
+          </div>
           <p>上传一份素材，完成扩图、抠图、修复与画质增强。</p>
         </header>
 
