@@ -26,6 +26,7 @@ import { ConfigurableNodeToolbar, type ConfigurableNodeToolbarAction } from "./s
 import { useCanvasNodeFeatures } from "@/stores/use-canvas-node-config-store";
 import { findRightColumnSpot, getIncomingSources, inlineIncomingTextRefs, parseModelConfig, stopEvent as stop, validateReferenceFileSizes } from "./shared/node-utils";
 import { GenerateSubmitButton, NodeDimsBadge, NodeErrorBadge, NodeGeneratingOverlay, NodeMediaLightbox, NodePanelChrome, NodeShell, NodeUploadingOverlay } from "./shared/node-overlays";
+import CapturableVideo from "@/components/studio/create-studio/video-result";
 
 // 各模式（Tab）对连接源节点的数量/类型限制：hover 时提示，生成时校验。文生视频无需连接。
 const TAB_LIMITS: Record<string, { hint: string; min: number; max: number; types: string[] }> = {
@@ -226,7 +227,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       if (isImageReferenceNodeType(src.type) && src.imageSrc) {
         images.push({ id: src.id, thumb: src.imageSrc, title: src.title || "", index: images.length + 1, kind: "image", src: src.imageSrc });
       } else if (src.type === "video" && src.videoSrc) {
-        // 视频没有可直接放进 <img> 的封面，thumb 留空走 ▶ 降级字形
+        // 视频没有可直接当图片封面使用的源，thumb 留空走 ▶ 降级字形
         videos.push({ id: src.id, thumb: "", title: src.title || "", index: videos.length + 1, kind: "video", src: src.videoSrc });
       } else if (src.type === "text" && src.content?.trim()) {
         texts.push({ id: src.id, thumb: "", title: src.title || "", index: texts.length + 1, kind: "text", text: src.content });
@@ -826,15 +827,17 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         {/* 查看大图：全屏 lightbox（Portal 到 body，脱离画布缩放层） */}
         {previewOpen && node.videoSrc && (
           <NodeMediaLightbox onClose={() => setPreviewOpen(false)}>
-            <video
-              src={node.videoSrc}
-              controls
-              autoPlay
-              disablePictureInPicture
-              controlsList="nodownload noremoteplayback"
-              className="max-h-[92vh] max-w-[92vw] rounded-xl shadow-2xl"
-              onClick={(e) => e.stopPropagation()}
-            />
+            <div className="relative">
+              <CapturableVideo
+                src={node.videoSrc}
+                controls
+                autoPlay
+                disablePictureInPicture
+                controlsList="nodownload noremoteplayback"
+                className="max-h-[92vh] max-w-[92vw] rounded-xl shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              />
+            </div>
           </NodeMediaLightbox>
         )}
       </div>

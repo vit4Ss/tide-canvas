@@ -39,8 +39,9 @@ func downloadFilename(name, urlPath string) string {
 // (image/video/panorama/scene-3d) and lib/image-slice.ts.
 //
 // The route is authenticated and accepts only a URL already owned by the
-// caller (File, AiTask result or SkillRun artifact). The shared remote client
-// validates redirects and every dialed IP, blocking private-network SSRF.
+// caller (File, AiTask result or SkillRun artifact), an authorized administrator,
+// or a published community/blog entry. The shared remote client validates
+// redirects and every dialed IP, blocking private-network SSRF.
 func (h *handler) download(c *gin.Context) {
 	raw := strings.TrimSpace(c.Query("url"))
 	if raw == "" {

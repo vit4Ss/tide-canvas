@@ -21,11 +21,13 @@ import {
   Loader2,
   Maximize2,
   Paintbrush,
+  Play,
   ScanLine,
   Scissors,
   SunMedium,
   Video,
   WandSparkles,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import { aiApi } from "@/lib/api";
@@ -39,6 +41,7 @@ import {
   assetLibraryRevision,
 } from "@/lib/asset-library-events";
 import { fallbackOssDisplayImage, ossDisplayUrl, restoreOssDisplayImage } from "@/lib/oss-display";
+import CapturableVideo from "@/components/studio/create-studio/video-result";
 import {
   FALLBACK_TOOLS,
   resolveToolCoverUrl,
@@ -118,6 +121,93 @@ function LazyToolVideo({ src, label }: { src: string; label: string }) {
   );
 }
 
+interface ToolWorkPreviewData {
+  url: string;
+  isVideo: boolean;
+  title: string;
+  date: string;
+}
+
+function ToolWorkPreview({
+  preview,
+  onClose,
+}: {
+  preview: ToolWorkPreviewData | null;
+  onClose: () => void;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!preview) return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      if (dialog.open) dialog.close();
+      previouslyFocused?.focus();
+    };
+  }, [preview]);
+
+  if (!preview) return null;
+  return (
+    <dialog
+      ref={dialogRef}
+      className={styles.previewDialog}
+      aria-labelledby="tool-work-preview-title"
+      onCancel={(event) => {
+        event.preventDefault();
+        onCloseRef.current();
+      }}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onCloseRef.current();
+      }}
+    >
+      <div className={styles.previewShell}>
+        <header className={styles.previewHeader}>
+          <div className={styles.previewHeading}>
+            <strong id="tool-work-preview-title">{preview.title}</strong>
+            <span>{preview.isVideo ? "视频作品" : "图片作品"}{preview.date ? ` · ${preview.date}` : ""}</span>
+          </div>
+          <button
+            type="button"
+            className={styles.previewClose}
+            aria-label="关闭作品预览"
+            autoFocus
+            onClick={onClose}
+          >
+            <X aria-hidden />
+          </button>
+        </header>
+        <div className={styles.previewStage}>
+          {preview.isVideo ? (
+            <CapturableVideo key={preview.url} src={preview.url} controls playsInline preload="metadata" />
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={preview.url}
+              src={preview.url}
+              alt={preview.title}
+              onLoad={(event) => restoreOssDisplayImage(event.currentTarget)}
+              onError={(event) => fallbackOssDisplayImage(event.currentTarget, preview.url)}
+            />
+          )}
+        </div>
+      </div>
+    </dialog>
+  );
+}
+
 export default function ToolsHub() {
   const { user, initialized } = useAuth();
 
@@ -165,6 +255,7 @@ export default function ToolsHub() {
   const [total, setTotal] = useState(0);
   const [worksError, setWorksError] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [workPreview, setWorkPreview] = useState<ToolWorkPreviewData | null>(null);
   const userId = user?.id ?? "";
   // reqId 守卫:切换账号/重试时作废在途请求——否则 A 账号迟到的响应会把
   // 作品列表渲染给刚登录的 B。
@@ -216,6 +307,7 @@ export default function ToolsHub() {
       setWorks(null);
       setWorksError(false);
       setTotal(0);
+      setWorkPreview(null);
       if (userId) void loadWorks(1);
     }, 0);
     return () => window.clearTimeout(timer);
@@ -361,13 +453,18 @@ export default function ToolsHub() {
                 const isVideo = VIDEO_TOOL_HANDLERS.has(w.handler);
                 const toolTitle = smartToolOriginLabel(w.handler, w.input) ?? "智能工具作品";
                 return (
-                <a
+                <button
                   key={w.id}
+                  type="button"
                   className={styles.workCard}
-                  href={resultUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  title={isVideo ? "查看原片" : "查看原图"}
+                  title={isVideo ? "播放视频" : "预览图片"}
+                  aria-label={`${isVideo ? "播放" : "预览"}${toolTitle}`}
+                  onClick={() => setWorkPreview({
+                    url: resultUrl,
+                    isVideo,
+                    title: toolTitle,
+                    date: fmtDay(w.createTime),
+                  })}
                 >
                   <div className={styles.workStage}>
                     {isVideo ? (
@@ -387,12 +484,17 @@ export default function ToolsHub() {
                         onError={(event) => fallbackOssDisplayImage(event.currentTarget, resultUrl)}
                       />
                     )}
+                    {isVideo && (
+                      <span className={styles.workPlay} aria-hidden>
+                        <Play />
+                      </span>
+                    )}
                   </div>
                   <div className={styles.workMeta}>
                     <span className={styles.workTool}>{toolTitle}</span>
                     <span className={styles.workDate}>{fmtDay(w.createTime)}</span>
                   </div>
-                </a>
+                </button>
                 );
               })}
             </div>
@@ -406,6 +508,7 @@ export default function ToolsHub() {
           </>
         )}
       </div>
+      <ToolWorkPreview preview={workPreview} onClose={() => setWorkPreview(null)} />
     </main>
   );
 }

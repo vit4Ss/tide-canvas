@@ -166,7 +166,7 @@ type AdminModelCreateDTO struct {
 	Description string  `json:"description" binding:"omitempty,max=8192"`
 	CoverUrl    string  `json:"coverUrl" binding:"omitempty,max=512"`
 	Tags        string  `json:"tags" binding:"omitempty,max=512"`
-	Type        string  `json:"type" binding:"omitempty,oneof=text image video audio 3d"`
+	Type        string  `json:"type" binding:"omitempty,oneof=text image video audio 3d upscale"`
 	ModelKey    string  `json:"modelKey" binding:"omitempty,max=128"`
 	Config      json.RawMessage `json:"config" binding:"omitempty"`
 	CategoryId  string  `json:"categoryId" binding:"omitempty"`
@@ -183,7 +183,7 @@ type AdminModelUpdateDTO struct {
 	Description *string `json:"description" binding:"omitempty,max=8192"`
 	CoverUrl    *string `json:"coverUrl" binding:"omitempty,max=512"`
 	Tags        *string `json:"tags" binding:"omitempty,max=512"`
-	Type        *string `json:"type" binding:"omitempty,oneof=text image video audio 3d"`
+	Type        *string `json:"type" binding:"omitempty,oneof=text image video audio 3d upscale"`
 	ModelKey    *string `json:"modelKey" binding:"omitempty,max=128"`
 	Config      json.RawMessage `json:"config" binding:"omitempty"`
 	CategoryId  *string `json:"categoryId" binding:"omitempty"`

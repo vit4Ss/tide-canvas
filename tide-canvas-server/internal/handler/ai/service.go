@@ -241,6 +241,9 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 	if m == nil || !m.Enabled {
 		return nil, errNoModel
 	}
+	if _, configured, valid := resolveUpscaleTimeCost(m, dto.Input); configured && !valid {
+		return nil, skillPlacementError{message: "无法读取源视频时长，请重新选择视频"}
+	}
 
 	now := time.Now()
 	concurrentLimit := generationConcurrentLimit(s.repo.db.WithContext(ctx))

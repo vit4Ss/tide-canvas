@@ -144,12 +144,17 @@
 }
 
 .workCard {
+  width: 100%;
   display: flex;
   flex-direction: column;
+  padding: 0;
+  text-align: left;
+  color: inherit;
   border-radius: var(--r-md, 10px);
   overflow: hidden;
   background: var(--panel-solid);
   border: 1px solid var(--border);
+  cursor: pointer;
   transition: border-color 0.18s;
 }
 .workCard:hover {
@@ -157,6 +162,7 @@
 }
 
 .workStage {
+  position: relative;
   aspect-ratio: 1 / 1;
   background: var(--surface-2);
 }
@@ -166,6 +172,35 @@
   height: 100%;
   object-fit: cover;
   display: block;
+}
+.workStage video {
+  pointer-events: none;
+}
+
+.workPlay {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.94);
+  background: rgba(8, 8, 9, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  transition: transform 160ms ease-out, background 160ms ease-out;
+}
+.workPlay svg {
+  width: 17px;
+  height: 17px;
+  margin-left: 2px;
+  fill: currentColor;
+  stroke-width: 1.5;
+}
+.workCard:hover .workPlay {
+  transform: translate(-50%, -50%) scale(1.04);
+  background: rgba(8, 8, 9, 0.84);
 }
 
 .workMeta {
@@ -182,6 +217,100 @@
 }
 .workDate {
   color: var(--text-faint);
+}
+
+/* ── 当前页作品预览 ─────────────────────────────────────────────────────── */
+
+.previewDialog {
+  width: min(960px, calc(100vw - 32px));
+  max-width: none;
+  max-height: calc(100vh - 32px);
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  color: var(--text);
+  background: var(--panel-solid);
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.42);
+}
+.previewDialog::backdrop {
+  background: rgba(0, 0, 0, 0.78);
+}
+
+.previewShell {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.previewHeader {
+  flex: none;
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.previewHeading {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.previewHeading strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  line-height: 1.35;
+  font-weight: 600;
+}
+.previewHeading span {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-faint);
+}
+.previewClose {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--text-dim);
+  border: 1px solid transparent;
+  transition: color 160ms ease-out, border-color 160ms ease-out, background 160ms ease-out;
+}
+.previewClose:hover {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--surface-2);
+}
+.previewClose svg {
+  width: 18px;
+  height: 18px;
+}
+.previewStage {
+  position: relative;
+  height: min(72vh, 720px);
+  min-height: 320px;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: #050506;
+}
+.previewStage video,
+.previewStage img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.previewStage video {
+  width: 100%;
+  height: 100%;
 }
 
 /* ── 加载 / 空态 / 登录引导(共用的居中态) ─────────────────────────────── */
@@ -219,7 +348,8 @@
 .stateBtn:focus-visible,
 .more button:focus-visible,
 .toolCard:focus-visible,
-.workCard:focus-visible {
+.workCard:focus-visible,
+.previewClose:focus-visible {
   outline: 2px solid var(--text);
   outline-offset: 2px;
 }
@@ -261,15 +391,34 @@
 
 @media (pointer: coarse) {
   .stateBtn,
-  .more button {
+  .more button,
+  .previewClose {
     min-height: 44px;
+  }
+}
+
+@media (max-width: 620px) {
+  .previewDialog {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+    border-radius: 12px;
+  }
+  .previewHeader {
+    min-height: 56px;
+  }
+  .previewStage {
+    height: min(74vh, 620px);
+    min-height: 240px;
+    padding: 8px;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .toolCard,
   .workCard,
-  .more button {
+  .workPlay,
+  .more button,
+  .previewClose {
     transition: none;
   }
 }

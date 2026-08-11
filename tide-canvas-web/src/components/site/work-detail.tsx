@@ -23,6 +23,7 @@ import type { PostDetailVO } from "@/types/community";
 import { toast } from "@/components/shared/toast";
 import { mesh } from "@/lib/mesh";
 import { grayscaleSwatch } from "@/lib/swatch";
+import CapturableVideo from "@/components/studio/create-studio/video-result";
 import "./work-viewer.css";
 
 /** Deterministic mesh-hue triplet seeded from a post id (cover fallback). */
@@ -91,7 +92,7 @@ export default function WorkDetailBody({
   };
 
   /* 作为垫图 / 生成视频：与资产库同一 studio_use_asset 交接 */
-  const useAsAsset = (op: "pad" | "video") => {
+  const sendToStudio = (op: "pad" | "video") => {
     if (!cover) return;
     try {
       sessionStorage.setItem("studio_use_asset", JSON.stringify({ url: cover, op }));
@@ -109,8 +110,7 @@ export default function WorkDetailBody({
       {/* ── 舞台 ── */}
       <div className="wv-stage">
         {isVid && detail.videoUrl ? (
-          // eslint-disable-next-line jsx-a11y/media-has-caption
-          <video src={detail.videoUrl} poster={cover || undefined} controls playsInline preload="metadata" />
+          <CapturableVideo src={detail.videoUrl} poster={cover || undefined} controls playsInline preload="metadata" />
         ) : cover ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={cover} alt={detail.title} />
@@ -221,10 +221,10 @@ export default function WorkDetailBody({
           </button>
           {!isVid && cover && (
             <div className="wv-sub">
-              <button type="button" className="wv-btn ghost" onClick={() => useAsAsset("pad")}>
+              <button type="button" className="wv-btn ghost" onClick={() => sendToStudio("pad")}>
                 作为垫图
               </button>
-              <button type="button" className="wv-btn ghost" onClick={() => useAsAsset("video")}>
+              <button type="button" className="wv-btn ghost" onClick={() => sendToStudio("video")}>
                 生成视频
               </button>
             </div>

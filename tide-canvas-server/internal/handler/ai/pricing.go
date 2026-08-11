@@ -14,12 +14,14 @@ import (
 // estimate; this is the value the balance is actually charged against.
 // Resolution order, per generation:
 //
-//	1. price matrix (config priceMatrix, aliased to pricing): spec-indexed unit
+//	1. upscale config pricePerSecond × source duration, rounded up. When the
+//	   field is absent, legacy upscale records continue through the rules below.
+//	2. price matrix (config priceMatrix, aliased to pricing): spec-indexed unit
 //	   price. image = [quality][clarity], video = [duration][resolution]. Looked
 //	   up in BOTH axis orders so either admin authoring orientation resolves.
-//	2. priceModifiers "duration@<res>"[duration] (video add-on tables).
-//	3. config creditCost (model-level flat override).
-//	4. model.PointCost (= MarketModel.Price integer part).
+//	3. priceModifiers "duration@<res>"[duration] (video add-on tables).
+//	4. config creditCost (model-level flat override).
+//	5. model.PointCost (= MarketModel.Price integer part).
 //
 // The base is then ×batchCount for images, rounding up.
 //（团队加价倍率已随团队功能整链下线,2026-08-01:倍率恒为 1,不再参与。）
@@ -27,6 +29,13 @@ import (
 // resolveCost returns the points to charge for one generation of model m given
 // the raw generate input.
 func resolveCost(m *model.AiModel, rawInput json.RawMessage) int {
+	if cost, configured, valid := resolveUpscaleTimeCost(m, rawInput); configured {
+		if !valid {
+			return 0
+		}
+		return cost
+	}
+
 	in := map[string]any{}
 	if len(rawInput) > 0 {
 		_ = json.Unmarshal(rawInput, &in)
@@ -123,6 +132,46 @@ func resolveCost(m *model.AiModel, rawInput json.RawMessage) int {
 	}
 
 	return int(math.Ceil(base))
+}
+
+// resolveUpscaleTimeCost resolves the new per-second pricing contract. The
+// booleans distinguish an unconfigured legacy model from a configured model
+// whose request is missing a usable source-video duration.
+func resolveUpscaleTimeCost(m *model.AiModel, rawInput json.RawMessage) (cost int, configured bool, valid bool) {
+	if m == nil || m.Type != "upscale" || strings.TrimSpace(m.Config) == "" {
+		return 0, false, false
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(m.Config), &cfg); err != nil {
+		return 0, false, false
+	}
+	rate := numField(cfg, "pricePerSecond")
+	if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
+		return 0, false, false
+	}
+
+	in := map[string]any{}
+	if len(rawInput) > 0 {
+		_ = json.Unmarshal(rawInput, &in)
+	}
+	duration := durationSeconds(in["duration"])
+	if duration <= 0 || math.IsNaN(duration) || math.IsInf(duration, 0) {
+		return 0, true, false
+	}
+	return int(math.Ceil(rate * duration)), true, true
+}
+
+func durationSeconds(v any) float64 {
+	if s, ok := v.(string); ok {
+		s = strings.TrimSpace(s)
+		s = strings.TrimSuffix(strings.ToLower(s), "s")
+		f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+		if err != nil {
+			return 0
+		}
+		return f
+	}
+	return toNum(v)
 }
 
 // isUploadTask reports whether the generate input carries Suno 的参考音频登记

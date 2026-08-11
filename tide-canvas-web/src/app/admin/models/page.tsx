@@ -8,10 +8,8 @@
 
    Keeps the liuguang admin markup/classes + the shared components
    (StatCardGrid / Panel / FilterBar / AdminTable / StatusPill / SwitchToggle /
-   RowActions / AdminModal / FormCard / FormGrid / Field). The rich design-mock
-   pricing-matrix form is replaced by the fields the market_model table actually
-   exposes (名称 / 描述 / 封面 / 标签 / 单次积分 / 关联生成模型 / 状态), since the
-   backend has no per-quality pricing matrix.
+   RowActions / AdminModal / FormCard / FormGrid / Field). Configuration follows
+   each model capability, including per-second pricing for video upscalers.
 
    Client component (filter state, switches, modal, CRUD).
    ============================================================================ */
@@ -121,6 +119,21 @@ function statusTone(status: number): PillTone {
 
 function statusLabel(status: number): string {
   return MODEL_STATUS_LABEL[status] ?? "未知";
+}
+
+function positiveNumber(value: unknown): number {
+  const parsed = Number(String(value ?? "").trim());
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function billingValue(model: AdminModelVO): number {
+  const rate = positiveNumber(model.config?.pricePerSecond);
+  return model.type === "upscale" && rate > 0 ? rate : positiveNumber(model.pointCost);
+}
+
+function billingLabel(model: AdminModelVO): string {
+  const rate = positiveNumber(model.config?.pricePerSecond);
+  return model.type === "upscale" && rate > 0 ? `${rate} /秒` : `${model.pointCost} /次`;
 }
 
 export default function AdminModelsPage() {
@@ -369,11 +382,11 @@ export default function AdminModelsPage() {
                 cell: (m) => MODEL_TYPE_LABEL[m.type] || "—",
               },
               {
-                header: "单次积分",
+                header: "计费",
                 className: "mono",
                 sortable: true,
-                sortValue: (m) => parseFloat(m.pointCost) || 0,
-                cell: (m) => m.pointCost,
+                sortValue: billingValue,
+                cell: billingLabel,
               },
               {
                 header: "调用量",
@@ -728,6 +741,7 @@ function ModelModal({
     batchOptions: c0.batchOptions ?? [],
     gridOutput: c0.gridOutput ?? false,
     priceMatrix: c0.priceMatrix ?? {},
+    pricePerSecond: c0.pricePerSecond ?? "",
     uploadCost: c0.uploadCost ?? "",
   });
   const setC = (patch: Partial<ModelConfig>) => setCfg((p) => ({ ...p, ...patch }));
@@ -742,9 +756,7 @@ function ModelModal({
   const isUpscale = type === "upscale";
   const showGen = isImage || isVideo;
   const showPrompt = showGen || is3D;
-  // 超分与图片/视频共用积分定价矩阵卡片:default 行 × 目标分辨率列
-  // (服务端 pricing.go 按 targetResolution 查 default 行)。
-  const showMatrix = showGen || isUpscale;
+  const showMatrix = showGen;
 
   // price-matrix rows: image → qualities, video → durations; cols → resolutions.
   // 图片不配画质档位时给一行「default」按清晰度单独定价（服务端 pricing.go
@@ -758,7 +770,7 @@ function ModelModal({
           key: q,
           label: QUALITY_OPTIONS.find((o) => o.v === q)?.l ?? q,
         }))
-      : [{ key: "default", label: isUpscale ? "单次积分" : "默认（不分画质）" }];
+      : [{ key: "default", label: "默认（不分画质）" }];
   const matrixCols = cfg.resolutions ?? [];
 
   const setCell = (row: string, col: string, val: string) =>
@@ -801,6 +813,17 @@ function ModelModal({
       setErr("请填写模型名称");
       return false;
     }
+    const pricePerSecond = positiveNumber(cfg.pricePerSecond);
+    const hadPerSecondPrice = positiveNumber(c0.pricePerSecond) > 0;
+    const enteredPerSecondPrice = String(cfg.pricePerSecond ?? "").trim() !== "";
+    if (
+      isUpscale &&
+      pricePerSecond <= 0 &&
+      (!model || model.type !== "upscale" || hadPerSecondPrice || enteredPerSecondPrice)
+    ) {
+      setErr("请填写大于 0 的每秒积分");
+      return false;
+    }
     setSaving(true);
     setErr(null);
     try {
@@ -821,6 +844,7 @@ function ModelModal({
           // 计费(resolveCost)与前端估价都是 creditCost 优先，不写回的话上游
           // 同步预填的 credit_cost 会悄悄压过这里填的值（表单又不渲染它）。
           creditCost: parseFloat(pointCost.trim()) || 0,
+          pricePerSecond: isUpscale ? pricePerSecond : cfg.pricePerSecond,
         },
       };
       const res = model
@@ -870,9 +894,29 @@ function ModelModal({
               ))}
             </select>
           </Field>
-          <Field label="消耗积分" hint="按次扣费的积分（支持小数）；保存后即为计费与前台展示的权威价">
-            <input value={pointCost} onChange={(e) => setPointCost(e.target.value)} placeholder="0.0" inputMode="decimal" />
-          </Field>
+          {isUpscale ? (
+            <Field
+              label="每秒积分"
+              required={!model || positiveNumber(c0.pricePerSecond) > 0}
+              hint={
+                model && positiveNumber(c0.pricePerSecond) <= 0
+                  ? "老模型留空仍按原价格计费；填写后改为每秒积分 × 视频秒数，并向上取整"
+                  : "按源视频实际时长计费；最终积分 = 每秒积分 × 视频秒数，并向上取整"
+              }
+            >
+              <input
+                value={cfg.pricePerSecond ?? ""}
+                onChange={(e) => setC({ pricePerSecond: e.target.value })}
+                placeholder="如：2.5"
+                inputMode="decimal"
+                aria-label="视频超分每秒积分"
+              />
+            </Field>
+          ) : (
+            <Field label="消耗积分" hint="按次扣费的积分（支持小数）；保存后即为计费与前台展示的权威价">
+              <input value={pointCost} onChange={(e) => setPointCost(e.target.value)} placeholder="0.0" inputMode="decimal" />
+            </Field>
+          )}
           <Field label="成本价（USD）" hint="上游单次成本，仅后台参考，不对用户暴露">
             <input value={cfg.costUsd ?? ""} onChange={(e) => setC({ costUsd: e.target.value })} placeholder="0.0000" inputMode="decimal" />
           </Field>
@@ -1201,20 +1245,12 @@ function ModelModal({
 
       {showMatrix && (
         <FormCard
-          title={
-            isVideo
-              ? "积分定价（时长 × 清晰度）"
-              : isUpscale
-                ? "积分定价（按目标分辨率）"
-                : "积分定价（画质 × 清晰度）"
-          }
+          title={isVideo ? "积分定价（时长 × 清晰度）" : "积分定价（画质 × 清晰度）"}
         >
           {matrixRows.length === 0 || matrixCols.length === 0 ? (
             <div className="fsec">
               <div className="hint">
-                {isUpscale
-                  ? "请先在上方勾选目标分辨率，再设置分档积分。"
-                  : `请先在上方选择${isVideo ? "时长" : "画质"}与清晰度，再设置分档积分。`}
+                {`请先在上方选择${isVideo ? "时长" : "画质"}与清晰度，再设置分档积分。`}
               </div>
             </div>
           ) : (
@@ -1224,7 +1260,7 @@ function ModelModal({
                 <table aria-label="模型分档积分矩阵">
                   <thead>
                     <tr>
-                      <th>{isVideo ? "时长 / 清晰度" : isUpscale ? "目标分辨率" : "画质 / 清晰度"}</th>
+                      <th>{isVideo ? "时长 / 清晰度" : "画质 / 清晰度"}</th>
                       {matrixCols.map((col) => (
                         <th key={col}>{col.toUpperCase()}</th>
                       ))}

@@ -265,12 +265,17 @@
   margin: 8px 0;
   display: block;
 }
+.blog-video-frame {
+  position: relative;
+  display: block;
+  margin: 8px 0 20px;
+}
 .blog-md video.blog-video {
   width: 100%;
   max-height: 78vh;
   border-radius: 10px;
   border: 1px solid var(--border);
-  margin: 8px 0 20px;
+  margin: 0;
   display: block;
   background: #000;
 }

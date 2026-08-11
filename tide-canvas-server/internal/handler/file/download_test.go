@@ -32,3 +32,19 @@ func TestDownloadFilename(t *testing.T) {
 		}
 	}
 }
+
+func TestTextContainsExactURL(t *testing.T) {
+	const target = "https://cdn.example.com/video.mp4"
+	for _, content := range []string{
+		`![video](https://cdn.example.com/video.mp4)`,
+		`![video](https://cdn.example.com/video.mp4 "poster")`,
+		`<video src="https://cdn.example.com/video.mp4">`,
+	} {
+		if !textContainsExactURL(content, target) {
+			t.Fatalf("expected exact URL in %q to match", content)
+		}
+	}
+	if textContainsExactURL(`![video](https://cdn.example.com/video.mp4?preview=1)`, target) {
+		t.Fatal("must not authorize a URL prefix inside a different URL")
+	}
+}

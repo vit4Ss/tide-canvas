@@ -439,8 +439,10 @@ func (s *service) saveFromURL(ctx context.Context, ownerID idgen.ID, dto saveFro
 }
 
 // ownsDownloadURL prevents the authenticated CORS/download proxy from becoming
-// a general-purpose public fetcher. DisplayURL may have rewritten an old OSS
-// base in the response, so both current and persisted base variants are tested.
+// a general-purpose public fetcher. Besides the caller's own media,后台用户可读
+// 已登记媒体，普通用户可读已发布到社区/博客的视频。DisplayURL may have
+// rewritten an old OSS base in the response, so both current and persisted base
+// variants are tested.
 func (s *service) ownsDownloadURL(ctx context.Context, ownerID idgen.ID, raw string) (bool, error) {
 	candidates := []string{strings.TrimSpace(raw)}
 	if s.store != nil {
@@ -469,25 +471,50 @@ func (s *service) ownsDownloadURL(ctx context.Context, ownerID idgen.ID, raw str
 	if len(unique) == 0 {
 		return false, nil
 	}
+	var viewer model.User
+	if err := s.repo.db.WithContext(ctx).
+		Select("role", "role_id", "status").Where("id = ?", ownerID).Take(&viewer).Error; err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, err
+		}
+	}
+	canInspectAll := false
+	for _, permission := range model.AdminPermsForUser(s.repo.db.WithContext(ctx), &viewer) {
+		if permission == "admin.generations" || permission == "admin.works" {
+			canInspectAll = true
+			break
+		}
+	}
 
 	var count int64
-	if err := s.repo.db.WithContext(ctx).Model(&model.File{}).
-		Where("owner_id = ? AND file_url IN ?", ownerID, unique).Count(&count).Error; err != nil {
+	fileQuery := s.repo.db.WithContext(ctx).Model(&model.File{}).Where("file_url IN ?", unique)
+	if !canInspectAll {
+		fileQuery = fileQuery.Where("owner_id = ?", ownerID)
+	}
+	if err := fileQuery.Count(&count).Error; err != nil {
 		return false, err
 	}
 	if count > 0 {
 		return true, nil
 	}
-	if err := s.repo.db.WithContext(ctx).Model(&model.AiTask{}).
-		Where("user_id = ? AND result_url IN ?", ownerID, unique).Count(&count).Error; err != nil {
+	taskQuery := s.repo.db.WithContext(ctx).Model(&model.AiTask{}).Where("result_url IN ?", unique)
+	if !canInspectAll {
+		taskQuery = taskQuery.Where("user_id = ?", ownerID)
+	}
+	if err := taskQuery.Count(&count).Error; err != nil {
 		return false, err
 	}
 	if count > 0 {
 		return true, nil
 	}
-	if err := s.repo.db.WithContext(ctx).Model(&model.SkillRunArtifact{}).
-		Joins("JOIN skill_run ON skill_run.id = skill_run_artifact.run_id AND skill_run.deleted IS NULL").
-		Where("skill_run.user_id = ? AND skill_run_artifact.url IN ?", ownerID, unique).Count(&count).Error; err != nil {
+	artifactQuery := s.repo.db.WithContext(ctx).Model(&model.SkillRunArtifact{}).
+		Where("skill_run_artifact.url IN ?", unique)
+	if !canInspectAll {
+		artifactQuery = artifactQuery.
+			Joins("JOIN skill_run ON skill_run.id = skill_run_artifact.run_id AND skill_run.deleted IS NULL").
+			Where("skill_run.user_id = ?", ownerID)
+	}
+	if err := artifactQuery.Count(&count).Error; err != nil {
 		return false, err
 	}
 	if count > 0 {
@@ -498,13 +525,51 @@ func (s *service) ownsDownloadURL(ctx context.Context, ownerID idgen.ID, raw str
 	// only a bounded prefilter; parsed JSON must contain an exact string match.
 	for _, candidate := range unique {
 		var tasks []model.AiTask
-		if err := s.repo.db.WithContext(ctx).Select("result_meta").
-			Where("user_id = ? AND result_meta <> '' AND result_meta LIKE ?", ownerID, "%"+candidate+"%").
-			Limit(100).Find(&tasks).Error; err != nil {
+		metaQuery := s.repo.db.WithContext(ctx).Select("result_meta").
+			Where("result_meta <> '' AND result_meta LIKE ?", "%"+candidate+"%")
+		if !canInspectAll {
+			metaQuery = metaQuery.Where("user_id = ?", ownerID)
+		}
+		if err := metaQuery.Limit(100).Find(&tasks).Error; err != nil {
 			return false, err
 		}
 		for i := range tasks {
 			if jsonContainsExactString(tasks[i].ResultMeta, candidate) {
+				return true, nil
+			}
+		}
+	}
+
+	// Public viewers may capture a frame from media the product already exposes
+	// in a published community post or blog article. LIKE only narrows candidates;
+	// exact JSON/string verification below is the authorization decision.
+	for _, candidate := range unique {
+		var posts []model.CommunityPost
+		postQuery := s.repo.db.WithContext(ctx).Select("content").
+			Where("content <> '' AND content LIKE ?", "%"+candidate+"%")
+		if !canInspectAll {
+			postQuery = postQuery.Where("status = ?", 1)
+		}
+		if err := postQuery.Limit(100).Find(&posts).Error; err != nil {
+			return false, err
+		}
+		for i := range posts {
+			if jsonContainsExactString(posts[i].Content, candidate) {
+				return true, nil
+			}
+		}
+
+		var blogs []model.BlogPost
+		blogQuery := s.repo.db.WithContext(ctx).Select("content").
+			Where("content <> '' AND content LIKE ?", "%"+candidate+"%")
+		if !canInspectAll {
+			blogQuery = blogQuery.Where("status = ?", model.BlogStatusPublished)
+		}
+		if err := blogQuery.Limit(100).Find(&blogs).Error; err != nil {
+			return false, err
+		}
+		for i := range blogs {
+			if textContainsExactURL(blogs[i].Content, candidate) {
 				return true, nil
 			}
 		}
@@ -538,6 +603,34 @@ func jsonContainsExactString(raw, target string) bool {
 		return false
 	}
 	return contains(value)
+}
+
+// textContainsExactURL accepts a URL embedded as a standalone Markdown/HTML
+// destination, but rejects a URL that is only a prefix of another URL. This
+// keeps the public-blog fallback from authorizing arbitrary paths on the same
+// storage host merely because their prefix appeared in an article.
+func textContainsExactURL(raw, target string) bool {
+	if target == "" {
+		return false
+	}
+	for rest, offset := raw, 0; ; {
+		relative := strings.Index(rest, target)
+		if relative < 0 {
+			return false
+		}
+		start := offset + relative
+		end := start + len(target)
+		beforeOK := start == 0 || strings.ContainsRune("(<'\" \t\r\n", rune(raw[start-1]))
+		afterOK := end == len(raw) || strings.ContainsRune(")>'\" \t\r\n", rune(raw[end]))
+		if beforeOK && afterOK {
+			return true
+		}
+		offset = start + len(target)
+		if offset >= len(raw) {
+			return false
+		}
+		rest = raw[offset:]
+	}
 }
 
 // newRemoteAssetClient creates a downloader that cannot be used as an SSRF

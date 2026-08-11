@@ -1,17 +1,18 @@
 "use client";
 
-/* 生成结果里的视频播放器 + 「截取当前帧」。
+/* 全站可复用的视频播放器 + 「截取当前帧」。
 
    按钮截的是播放器当前停留的那一时刻(currentTime),导出的是视频**原始分辨率**
    的无损 PNG——与播放器被缩放到多大无关。图片经普通上传接口落到自己的 OSS、
    由 CDN 分发,并因此出现在「资产 · 上传」里,可直接当垫图继续创作。 */
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, type VideoHTMLAttributes } from "react";
 import { uploadFileSmart } from "@/lib/api";
 import { toast } from "@/components/shared/toast";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { captureVideoFrame, VideoFrameError } from "@/lib/video-frame";
 import { notifyAssetLibraryChanged } from "@/lib/asset-library-events";
+import styles from "./video-result.module.css";
 
 /** 00:03.480 → "00-03-480",用作截图文件名的时间戳部分。 */
 function stampOf(seconds: number): string {
@@ -21,7 +22,19 @@ function stampOf(seconds: number): string {
   return `${mm}-${ss}-${String(ms % 1000).padStart(3, "0")}`;
 }
 
-export default function VideoResult({ src, className }: { src: string; className?: string }) {
+type VideoResultProps = Omit<VideoHTMLAttributes<HTMLVideoElement>, "src"> & {
+  src: string;
+};
+
+export default function VideoResult({
+  src,
+  className,
+  controls = true,
+  playsInline = true,
+  preload = "metadata",
+  onClick,
+  ...videoProps
+}: VideoResultProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [busy, setBusy] = useState(false);
   // 守卫用 ref 而不是 busy 状态:两次点击落在同一个渲染周期里时，disabled 还没
@@ -66,17 +79,21 @@ export default function VideoResult({ src, className }: { src: string; className
   return (
     <>
       <video
+        {...videoProps}
         ref={videoRef}
         className={className}
         src={src}
-        controls
-        playsInline
-        preload="metadata"
-        onClick={(e) => e.stopPropagation()}
+        controls={controls}
+        playsInline={playsInline}
+        preload={preload}
+        onClick={(event) => {
+          event.stopPropagation();
+          onClick?.(event);
+        }}
       />
       <button
         type="button"
-        className="frame-shot"
+        className={styles.capture}
         title="截取当前帧（原始分辨率，保存至资产的上传历史）"
         aria-label="截取当前帧"
         disabled={busy}
@@ -86,14 +103,14 @@ export default function VideoResult({ src, className }: { src: string; className
         }}
       >
         {busy ? (
-          <span className="frame-shot-spin" aria-hidden />
+          <span className={styles.spinner} aria-hidden />
         ) : (
           <svg viewBox="0 0 24 24" aria-hidden>
             <path d="M4 8a2 2 0 0 1 2-2h1.5l1-1.6h5l1 1.6H18a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
             <circle cx="12" cy="12.5" r="3.2" />
           </svg>
         )}
-        <span>{busy ? "截取中…" : "截取当前帧"}</span>
+        <span className={styles.label}>{busy ? "截取中…" : "截取当前帧"}</span>
       </button>
     </>
   );

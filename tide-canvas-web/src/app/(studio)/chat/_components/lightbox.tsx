@@ -4,6 +4,7 @@
 
 import { useEffect } from "react";
 import { fileNameFromUrl, isInlineDoc, type LightboxItem } from "./chat-utils";
+import CapturableVideo from "@/components/studio/create-studio/video-result";
 
 /** Fullscreen lightbox with Esc-close and ←/→ wrap-around navigation. */
 export function Lightbox({
@@ -65,7 +66,7 @@ export function Lightbox({
       )}
       <div className="lb-stage" onClick={(e) => e.stopPropagation()}>
         {cur.kind === "video" ? (
-          <video src={cur.url} controls autoPlay />
+          <CapturableVideo src={cur.url} controls autoPlay />
         ) : cur.kind === "audio" ? (
           <div className="lb-audio">
             <span className="lb-audio-ic" aria-hidden>

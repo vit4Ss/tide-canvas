@@ -33,6 +33,7 @@ import {
 } from "@/components/admin";
 import type { PillTone } from "@/components/admin/admin-constants";
 import { useAuthStore } from "@/stores/use-auth-store";
+import CapturableVideo from "@/components/studio/create-studio/video-result";
 import { adminWorksApi } from "@/lib/admin-works-api";
 import { confirmDialog } from "@/components/shared/confirm";
 import { toast } from "@/components/shared/toast";
@@ -169,21 +170,24 @@ function WorkPreview({ work }: { work: AdminWorkVO }) {
 
   if (work.type === "video" && work.videoUrl) {
     return (
-      // Generated videos store their playable URL in Content.videoUrl; cover is only a poster.
-      <video
-        src={work.videoUrl}
-        poster={work.cover || undefined}
-        controls
-        playsInline
-        preload="metadata"
+      <div
         style={{
           ...frameStyle,
-          display: "block",
+          position: "relative",
           width: "100%",
-          objectFit: "contain",
           background: "#0b0b0b",
         }}
-      />
+      >
+        {/* Generated videos store their playable URL in Content.videoUrl; cover is only a poster. */}
+        <CapturableVideo
+          src={work.videoUrl}
+          poster={work.cover || undefined}
+          controls
+          playsInline
+          preload="metadata"
+          style={{ display: "block", width: "100%", height: "100%", objectFit: "contain" }}
+        />
+      </div>
     );
   }
 

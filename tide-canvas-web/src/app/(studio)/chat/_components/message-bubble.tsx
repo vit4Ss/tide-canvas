@@ -22,6 +22,7 @@ import { skillRunApi } from "@/lib/skill-run-api";
 import type { SkillRunAction, SkillRunArtifactVO, SkillRunVO } from "@/types/skill-run";
 import { fileNameFromUrl, type LightboxItem, type LightboxKind } from "./chat-utils";
 import { isHiddenPricingRoute } from "@/lib/public-routes";
+import CapturableVideo from "@/components/studio/create-studio/video-result";
 
 /** Deterministic mesh-gradient fallback for an image-type message whose content
  *  URL is empty, seeded from the message id. */
@@ -285,7 +286,7 @@ export function Bubble({
               onClick={() => msg.content && onOpenLightbox([{ url: msg.content, kind: "image" as const }], 0)}
             />
           ) : isVideo && msg.content ? (
-            <video className="chat-gen-media" src={msg.content} controls />
+            <CapturableVideo className="chat-gen-media" src={msg.content} controls />
           ) : isMe ? (
             <span>{msg.content}</span>
           ) : (
@@ -513,7 +514,7 @@ function AssistantResult({
         </div>
       );
     } else if (isVideo) {
-      body = <video className="chat-gen-media" src={primaryUrl} controls />;
+      body = <CapturableVideo className="chat-gen-media" src={primaryUrl} controls />;
     } else if (urls.length > 1) {
       const items: LightboxItem[] = urls.map((u) => ({ url: u, kind: "image" as const }));
       body = (

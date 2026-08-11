@@ -35,6 +35,7 @@ import {
   type Column,
   type StatusPillProps,
 } from "@/components/admin";
+import CapturableVideo from "@/components/studio/create-studio/video-result";
 import { adminGenerationsApi } from "@/lib/admin-generations-api";
 import type {
   GenAsset,
@@ -172,14 +173,16 @@ function ResultBlock({ d }: { d: GenerationDetailVO }) {
     return (
       <div className="genr-media" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {results.map((r, i) => {
-          const key = r.url ?? String(i);
+          const url = r.url;
+          if (!url) return null;
+          const key = url;
           const caption = r.name ? (
             <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{r.name}</div>
           ) : null;
           if (r.kind === "video") {
             return (
-              <div key={key}>
-                <video controls preload="metadata" src={r.url} />
+              <div key={key} style={{ position: "relative" }}>
+                <CapturableVideo controls preload="metadata" src={url} />
                 {caption}
               </div>
             );
@@ -187,14 +190,14 @@ function ResultBlock({ d }: { d: GenerationDetailVO }) {
           if (r.kind === "audio") {
             return (
               <div key={key}>
-                <audio controls preload="metadata" src={r.url} />
+                <audio controls preload="metadata" src={url} />
                 {caption}
               </div>
             );
           }
           return (
-            <a key={key} href={r.url} target="_blank" rel="noreferrer">
-              <img src={r.url} alt={r.name ?? `生成结果 ${i + 1}`} loading="lazy" />
+            <a key={key} href={url} target="_blank" rel="noreferrer">
+              <img src={url} alt={r.name ?? `生成结果 ${i + 1}`} loading="lazy" />
             </a>
           );
         })}

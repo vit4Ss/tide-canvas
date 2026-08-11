@@ -79,6 +79,48 @@ func TestResolveCostUpscaleTargetResolution(t *testing.T) {
 	}
 }
 
+func TestResolveCostUpscalePerSecond(t *testing.T) {
+	m := &model.AiModel{
+		Type:      "upscale",
+		PointCost: 50,
+		Config:    `{"pricePerSecond":"1.25","pricing":{"default":{"4k":120}},"creditCost":80}`,
+	}
+
+	// 每秒价优先于旧矩阵、覆盖价和模型固定价，且与目标分辨率、batchCount 无关。
+	if got := resolveCost(m, json.RawMessage(`{"duration":4.2,"targetResolution":"4k","batchCount":4}`)); got != 6 {
+		t.Errorf("per-second price should take precedence and round up: got %d, want 6", got)
+	}
+	if got := resolveCost(m, json.RawMessage(`{"duration":"4s","targetResolution":"1080p"}`)); got != 5 {
+		t.Errorf("string duration should be accepted: got %d, want 5", got)
+	}
+	m.Config = `{"pricePerSecond":2.5}`
+	if got := resolveCost(m, json.RawMessage(`{"duration":4}`)); got != 10 {
+		t.Errorf("2.5 points per second × 4 seconds: got %d, want 10", got)
+	}
+
+	if cost, configured, valid := resolveUpscaleTimeCost(m, json.RawMessage(`{"targetResolution":"4k"}`)); cost != 0 || !configured || valid {
+		t.Errorf("missing duration = (%d, %v, %v), want (0, true, false)", cost, configured, valid)
+	}
+}
+
+func TestResolveCostUpscalePerSecondKeepsLegacyFallback(t *testing.T) {
+	m := &model.AiModel{
+		Type:      "upscale",
+		PointCost: 50,
+		Config:    `{"pricing":{"default":{"4k":120}}}`,
+	}
+	if cost, configured, valid := resolveUpscaleTimeCost(m, json.RawMessage(`{"targetResolution":"4k"}`)); cost != 0 || configured || valid {
+		t.Errorf("legacy model = (%d, %v, %v), want unconfigured", cost, configured, valid)
+	}
+	if got := resolveCost(m, json.RawMessage(`{"targetResolution":"4k"}`)); got != 120 {
+		t.Errorf("legacy matrix price changed: got %d, want 120", got)
+	}
+	m.Config = `{"pricePerSecond":"","pricing":{"default":{"4k":120}}}`
+	if got := resolveCost(m, json.RawMessage(`{"targetResolution":"4k"}`)); got != 120 {
+		t.Errorf("blank new field must keep legacy matrix price: got %d, want 120", got)
+	}
+}
+
 // 图片模型不配画质档位时，矩阵以「default」单行按清晰度定价（画质留空的
 // 兼容形态）；请求带画质时不吃 default 行，行为与原先一致。
 func TestResolveCostImageDefaultQualityRow(t *testing.T) {

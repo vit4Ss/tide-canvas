@@ -11,6 +11,8 @@ export interface PointPricingConfig {
   priceMatrix?: PriceMatrix;
   /** 服务端 resolveCost 长期兼容的旧字段。 */
   pricing?: PriceMatrix;
+  /** 视频超分每秒积分；配置后优先于所有旧版单次价格。 */
+  pricePerSecond?: number | string;
   creditCost?: number | string;
 }
 
@@ -45,7 +47,7 @@ export function matrixPrice(matrix: PriceMatrix, aKeys: string[], bKeys: string[
 }
 
 function positivePointValue(value: unknown): number {
-  const parsed = typeof value === "number" ? value : parseFloat(String(value ?? ""));
+  const parsed = typeof value === "number" ? value : Number(String(value ?? "").trim());
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
@@ -70,15 +72,26 @@ function imageBatchCount(input: Record<string, unknown>): number {
 }
 
 /**
- * 视频超分单次积分预估。服务端把 upscale 当作单输出媒体任务，按
- * priceMatrix[default][targetResolution] → creditCost → 模型固定价解析，
- * 最终向上取整。独立工具页复用这里，避免展示价与实际扣费口径漂移。
+ * 视频超分每秒积分。0 表示当前模型尚未配置新计费字段，应兼容旧版单次价。
+ */
+export function resolveUpscalePointRate(config: PointPricingConfig | null | undefined): number {
+  return positivePointValue(config?.pricePerSecond);
+}
+
+/**
+ * 视频超分积分预估。新模型按 pricePerSecond × 源视频秒数向上取整；未配置
+ * pricePerSecond 的历史模型继续走分辨率矩阵 → 覆盖价 → 模型固定价。
  */
 export function resolveUpscalePointCost(
   config: PointPricingConfig | null | undefined,
+  durationSeconds: number,
   resolution: string,
   modelPointCost?: number | string,
 ): number {
+  const rate = resolveUpscalePointRate(config);
+  if (rate > 0) {
+    return durationSeconds > 0 ? Math.ceil(rate * durationSeconds) : 0;
+  }
   const matrixCost = matrixPrice(configuredMatrix(config), keyVariants("default"), keyVariants(resolution));
   const base = matrixCost ?? fixedPointCost(config, modelPointCost);
   return base > 0 ? Math.ceil(base) : 0;

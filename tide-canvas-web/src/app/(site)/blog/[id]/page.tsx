@@ -8,7 +8,7 @@
    （720px 阅读宽度、1.85 行高）。来源（自建 / Telegram）不对外区分。
 
    视频约定：`![video](url "poster")` —— TG 同步的视频帖以此嵌入正文最前，
-   这里覆写 img 组件渲染成 <video controls>；视频帖不再重复渲染顶部封面
+   这里把视频图片标记渲染成带原生控件的截帧播放器；视频帖不再重复渲染顶部封面
    （封面即视频海报），与频道里“媒体在上、文字在下”的观感一致。
    ========================================================================== */
 
@@ -20,6 +20,7 @@ import remarkGfm from "remark-gfm";
 import { blogApi } from "@/lib/blog-api";
 import type { BlogPostVO } from "@/types/blog";
 import { isHiddenPricingRoute } from "@/lib/public-routes";
+import CapturableVideo from "@/components/studio/create-studio/video-result";
 import "../blog.css";
 
 function fmtDate(s: string): string {
@@ -112,14 +113,16 @@ export default function BlogDetailPage() {
                     a: markdownLink,
                     img: ({ src, alt, title }) =>
                       alt === "video" && typeof src === "string" ? (
-                        <video
-                          className="blog-video"
-                          src={src}
-                          poster={title || undefined}
-                          controls
-                          playsInline
-                          preload="metadata"
-                        />
+                        <span className="blog-video-frame">
+                          <CapturableVideo
+                            className="blog-video"
+                            src={src}
+                            poster={title || undefined}
+                            controls
+                            playsInline
+                            preload="metadata"
+                          />
+                        </span>
                       ) : (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img src={typeof src === "string" ? src : undefined} alt={alt || ""} />

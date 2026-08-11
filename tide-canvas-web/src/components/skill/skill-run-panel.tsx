@@ -6,6 +6,7 @@ import { defaultSkillInputValues, validateSkillInputValues } from "@/lib/skill-a
 import type { SkillRunAction, SkillRunArtifactVO, SkillRunVO } from "@/types/skill-run";
 import { isSkillRunActive, isSkillRunTerminal, skillRunError } from "@/types/skill-run";
 import { SkillInputFields } from "./skill-input-fields";
+import CapturableVideo from "@/components/studio/create-studio/video-result";
 import styles from "./skill-run-panel.module.css";
 
 const STATUS_LABEL: Record<SkillRunVO["status"], string> = {
@@ -202,7 +203,7 @@ export function SkillRunPanel({
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={artifact.url} alt={artifact.title || artifact.role || "技能产物"} loading="lazy" />
                 ) : artifact.type === "video" && artifact.url ? (
-                  <video src={artifact.url} controls preload="metadata" />
+                  <CapturableVideo src={artifact.url} controls preload="metadata" />
                 ) : artifact.type === "audio" && artifact.url ? (
                   <audio src={artifact.url} controls preload="metadata" />
                 ) : text ? (

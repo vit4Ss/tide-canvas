@@ -55,6 +55,32 @@ func TestAdminModelUpdateDTOAccepts3DType(t *testing.T) {
 	}
 }
 
+func TestAdminModelDTOsAcceptUpscaleType(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	createContext, _ := gin.CreateTestContext(httptest.NewRecorder())
+	createContext.Request = httptest.NewRequest("POST", "/", strings.NewReader(`{"name":"Video Upscaler","type":"upscale"}`))
+	createContext.Request.Header.Set("Content-Type", "application/json")
+	var createDTO AdminModelCreateDTO
+	if err := createContext.ShouldBindJSON(&createDTO); err != nil {
+		t.Fatalf("bind upscale model: %v", err)
+	}
+	if createDTO.Type != "upscale" {
+		t.Fatalf("create type = %q, want upscale", createDTO.Type)
+	}
+
+	updateContext, _ := gin.CreateTestContext(httptest.NewRecorder())
+	updateContext.Request = httptest.NewRequest("PUT", "/", strings.NewReader(`{"type":"upscale"}`))
+	updateContext.Request.Header.Set("Content-Type", "application/json")
+	var updateDTO AdminModelUpdateDTO
+	if err := updateContext.ShouldBindJSON(&updateDTO); err != nil {
+		t.Fatalf("bind upscale update: %v", err)
+	}
+	if updateDTO.Type == nil || *updateDTO.Type != "upscale" {
+		t.Fatalf("update type = %v, want upscale", updateDTO.Type)
+	}
+}
+
 func TestAdminModelCreatePersists3DTypeAndPendingStatus(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := openModelsTestDB(t)

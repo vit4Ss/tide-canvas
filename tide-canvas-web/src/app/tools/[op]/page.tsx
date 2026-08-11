@@ -26,6 +26,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { Images, Loader2, Plus, X } from "lucide-react";
 import { AssetPickerModal } from "@/components/studio/create-studio/asset-picker-modal";
+import CapturableVideo from "@/components/studio/create-studio/video-result";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { loadToolCoverPool } from "@/lib/tool-cover-pool";
 import { marketApi, type StudioModelVO } from "@/lib/market-api";
@@ -33,7 +34,11 @@ import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";
 import { AiTaskStatus, type AiToolVO } from "@/types/ai";
 import { coverBg } from "@/lib/mesh";
-import { resolveImageToolPointCost, resolveUpscalePointCost } from "@/lib/price-matrix";
+import {
+  resolveImageToolPointCost,
+  resolveUpscalePointCost,
+  resolveUpscalePointRate,
+} from "@/lib/price-matrix";
 import { notifyAssetLibraryChanged } from "@/lib/asset-library-events";
 import {
   FALLBACK_TOOLS,
@@ -78,11 +83,34 @@ const FALLBACK_OPS: Record<string, ToolDef> = Object.fromEntries(
 
 /** 图片工具统一先确认模型价格；prompt 额外收局部重绘描述，options 收超分档位。 */
 type Phase = "idle" | "uploading" | "confirm" | "prompt" | "options" | "running" | "done" | "failed";
+type VideoMetadataState = "idle" | "loading" | "ready" | "error";
 
 /** 素材预览：视频工具用 video 元素（带控件，可直接播放确认），图片用 img。 */
-function ToolMedia({ src, alt, video }: { src: string; alt: string; video: boolean }) {
+function ToolMedia({
+  src,
+  alt,
+  video,
+  onDuration,
+  onMetadataError,
+}: {
+  src: string;
+  alt: string;
+  video: boolean;
+  onDuration?: (seconds: number) => void;
+  onMetadataError?: () => void;
+}) {
   if (video) {
-    return <video src={src} controls playsInline preload="metadata" aria-label={alt} />;
+    return (
+      <CapturableVideo
+        src={src}
+        controls
+        playsInline
+        preload="metadata"
+        aria-label={alt}
+        onLoadedMetadata={(event) => onDuration?.(event.currentTarget.duration)}
+        onError={() => onMetadataError?.()}
+      />
+    );
   }
   // eslint-disable-next-line @next/next/no-img-element
   return <img src={src} alt={alt} />;
@@ -127,10 +155,28 @@ function upscaleResolutionsFor(model: StudioModelVO | null): string[] {
   return configured.length ? Array.from(new Set(configured)) : [...UPSCALE_RESOLUTIONS];
 }
 
-/** 与服务端 resolveCost 同口径：矩阵档位价 → 模型覆盖价 → 模型固定价。 */
-function upscalePointCost(model: StudioModelVO | null, resolution: string): number {
+function normalizeVideoDuration(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
+  // 统一到毫秒，且不向下截断计费时长，避免恰好跨过积分取整边界时少计。
+  return Number.isFinite(parsed) && parsed > 0 ? Math.ceil(parsed * 1_000) / 1_000 : 0;
+}
+
+function compactNumber(value: number): string {
+  return String(value);
+}
+
+function videoDurationLabel(seconds: number): string {
+  return `${compactNumber(seconds)} 秒`;
+}
+
+function pointRateLabel(rate: number): string {
+  return `${compactNumber(rate)} 积分/秒`;
+}
+
+/** 与服务端 resolveCost 同口径：新每秒价优先，旧模型才回退到矩阵与固定价。 */
+function upscalePointCost(model: StudioModelVO | null, durationSeconds: number, resolution: string): number {
   if (!model || !resolution) return 0;
-  return resolveUpscalePointCost(model.config, resolution, model.pointCost);
+  return resolveUpscalePointCost(model.config, durationSeconds, resolution, model.pointCost);
 }
 
 function pointCostLabel(cost: number): string {
@@ -165,6 +211,7 @@ function imageToolPointCost(model: StudioModelVO | null, def: ToolDef | undefine
 interface ModelDisclosureProps {
   model: StudioModelVO | null;
   pointCost: number;
+  priceLabel?: string;
   loading: boolean;
   error: string;
   emptyLabel?: string;
@@ -174,6 +221,7 @@ interface ModelDisclosureProps {
 function ModelDisclosure({
   model,
   pointCost,
+  priceLabel,
   loading,
   error,
   emptyLabel = "暂无可用的图像编辑模型",
@@ -203,7 +251,7 @@ function ModelDisclosure({
         <strong>{model.name}</strong>
         <small>本工具将调用此模型处理</small>
       </span>
-      <strong className="tp-disclosure-price">{pointCostLabel(pointCost)}</strong>
+      <strong className="tp-disclosure-price">{priceLabel ?? pointCostLabel(pointCost)}</strong>
     </div>
   );
 }
@@ -286,6 +334,8 @@ export default function ToolPage() {
   const [prompt, setPrompt] = useState("");
   // 视频超分的目标分辨率；默认取工具配置的 extra.targetResolution，否则 1080p
   const [resolution, setResolution] = useState("");
+  const [videoDuration, setVideoDuration] = useState(0);
+  const [videoMetadataState, setVideoMetadataState] = useState<VideoMetadataState>("idle");
   // 「从资产库选取」弹窗
   const [picking, setPicking] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -374,11 +424,8 @@ export default function ToolPage() {
     [fail, journalScope],
   );
 
-  // 视频工具的模型要在「选档位」之前就拿到:可选档位取自该模型后台配置的
-  // 支持清晰度(ByteDance 系不支持 720p),而积分定价矩阵也是按这份清晰度配的
-  // ——把四个档位写死会让用户选到上游必拒的档，或落进矩阵没有的格子而被按
-  // 模型固定价扣费。超分类目下常有多个模型(标准/pro/字节)，各自的档位与
-  // 定价都不同，所以整份列表都要,由用户选。
+  // 视频工具的模型要在「选档位」之前就拿到：可选档位取自各模型后台配置，
+  // 每秒积分也属于模型本身。整份列表交给用户选择，显示价与实际提交保持一致。
   const [videoModels, setVideoModels] = useState<StudioModelVO[]>([]);
   const [videoModelsLoading, setVideoModelsLoading] = useState(true);
   const [videoModelsError, setVideoModelsError] = useState("");
@@ -482,14 +529,24 @@ export default function ToolPage() {
   // 早先按全量档位定下的 resolution 可能是这个模型不支持的档。以可选范围为准，
   // 避免高亮消失、又把不支持的档提交上去。
   const activeResolution = resolutionOptions.includes(resolution) ? resolution : defaultResolution;
-  const activePointCost = useMemo(
-    () => upscalePointCost(videoModel, activeResolution),
-    [videoModel, activeResolution],
+  const activePointRate = useMemo(
+    () => resolveUpscalePointRate(videoModel?.config),
+    [videoModel],
   );
+  const activePointCost = useMemo(
+    () => upscalePointCost(videoModel, videoDuration, activeResolution),
+    [videoModel, videoDuration, activeResolution],
+  );
+  const requiresVideoDuration = activePointRate > 0;
+  const videoDurationReady = videoMetadataState === "ready" && videoDuration > 0;
 
   const run = useCallback(
     async (srcUrl: string, promptText: string, targetResolution?: string) => {
       if (!def) return;
+      if (def.type === "video" && resolveUpscalePointRate(videoModel?.config) > 0 && videoDuration <= 0) {
+        toast.error("无法读取源视频时长，请更换视频后重试");
+        return;
+      }
       setPhase("running");
       setProgress(0);
       setSubmittedPointCost(0);
@@ -522,6 +579,7 @@ export default function ToolPage() {
                 toolTitle: def.title,
                 videoUrl: srcUrl,
                 targetResolution: targetResolution || defaultResolution,
+                ...(videoDuration > 0 ? { duration: normalizeVideoDuration(videoDuration) } : {}),
               }
             : {
                 imageList: [srcUrl],
@@ -547,6 +605,7 @@ export default function ToolPage() {
               prompt: promptText,
               op: params.op,
               resolution: targetResolution || defaultResolution,
+              duration: videoDuration > 0 ? normalizeVideoDuration(videoDuration) : undefined,
             },
             ownerUserId,
           });
@@ -570,7 +629,7 @@ export default function ToolPage() {
         fail("网络错误，请重试");
       }
     },
-    [def, defaultResolution, ensureSession, fail, imageModel, journalScope, params.op, poll, videoModel],
+    [def, defaultResolution, ensureSession, fail, imageModel, journalScope, params.op, poll, videoDuration, videoModel],
   );
 
   useEffect(() => {
@@ -590,6 +649,13 @@ export default function ToolPage() {
       if (sourceUrl) setSource(sourceUrl);
       if (typeof recovery.prompt === "string") setPrompt(recovery.prompt);
       if (typeof recovery.resolution === "string") setResolution(recovery.resolution);
+      const recoveredDuration = normalizeVideoDuration(
+        recovery.duration ?? entry.payload?.input?.duration,
+      );
+      if (recoveredDuration > 0) {
+        setVideoDuration(recoveredDuration);
+        setVideoMetadataState("ready");
+      }
       setProgress(0);
       setBackground(Date.now() - entry.updatedAt > 7 * 60 * 1000);
       setError("");
@@ -643,6 +709,8 @@ export default function ToolPage() {
       if (!def) return;
       setSource(url);
       if (def.type === "video") {
+        setVideoDuration(0);
+        setVideoMetadataState("loading");
         setResolution(defaultResolution);
         setPhase("options");
       } else if (def.needPrompt) {
@@ -690,6 +758,8 @@ export default function ToolPage() {
     setSubmittedPointCost(0);
     setPrompt("");
     setResolution("");
+    setVideoDuration(0);
+    setVideoMetadataState("idle");
     setError("");
     setBackground(false);
   }, []);
@@ -887,12 +957,31 @@ export default function ToolPage() {
         <div className="tp-card config">
           <section className="tp-preview-column" aria-label="源视频预览">
             <div className="tp-stage">
-              <ToolMedia src={source} alt="待处理视频" video={isVideoTool} />
+              <ToolMedia
+                src={source}
+                alt="待处理视频"
+                video={isVideoTool}
+                onDuration={(seconds) => {
+                  const duration = normalizeVideoDuration(seconds);
+                  setVideoDuration(duration);
+                  setVideoMetadataState(duration > 0 ? "ready" : "error");
+                }}
+                onMetadataError={() => {
+                  setVideoDuration(0);
+                  setVideoMetadataState("error");
+                }}
+              />
             </div>
             <div className="tp-source-bar">
               <div>
                 <strong>源视频</strong>
-                <span>确认画面后选择右侧处理参数</span>
+                <span>
+                  {videoMetadataState === "ready"
+                    ? `已读取 · ${videoDurationLabel(videoDuration)}`
+                    : videoMetadataState === "error"
+                      ? "无法读取视频时长，请更换视频"
+                      : "正在读取视频时长…"}
+                </span>
               </div>
               <button type="button" className="tp-source-change" onClick={reset}>
                 更换视频
@@ -903,7 +992,7 @@ export default function ToolPage() {
           <section className="tp-config-panel">
             <header className="tp-config-head">
               <h1>{def.title}</h1>
-              <p>选择处理模型与输出规格，积分随模型定价自动更新。</p>
+              <p>选择处理模型与输出规格。价格按源视频时长计算，目标分辨率不改变单价。</p>
             </header>
 
             <fieldset className="tp-fieldset">
@@ -921,7 +1010,8 @@ export default function ToolPage() {
                       : modelResolutions.includes(defaultResolution)
                         ? defaultResolution
                         : modelResolutions[0];
-                    const modelCost = upscalePointCost(model, modelResolution);
+                    const modelRate = resolveUpscalePointRate(model.config);
+                    const modelCost = upscalePointCost(model, videoDuration, modelResolution);
                     const selected = videoModel?.id === model.id;
                     return (
                       <button
@@ -939,8 +1029,8 @@ export default function ToolPage() {
                           <small>{model.desc || `支持 ${modelResolutions.length} 个输出档位`}</small>
                         </span>
                         <span className="tp-model-price">
-                          <strong>{pointCostLabel(modelCost)}</strong>
-                          <small>{modelResolution.toUpperCase()}</small>
+                          <strong>{modelRate > 0 ? pointRateLabel(modelRate) : pointCostLabel(modelCost)}</strong>
+                          <small>{modelRate > 0 ? "按源视频时长计费" : "旧版单次价"}</small>
                         </span>
                         <span className="tp-radio-mark" aria-hidden="true" />
                       </button>
@@ -963,7 +1053,6 @@ export default function ToolPage() {
               <legend>目标分辨率</legend>
               <div className="tp-resolution-list" role="group" aria-label="目标分辨率">
                 {resolutionOptions.map((target) => {
-                  const cost = upscalePointCost(videoModel, target);
                   const selected = activeResolution === target;
                   return (
                     <button
@@ -975,7 +1064,7 @@ export default function ToolPage() {
                       onClick={() => setResolution(target)}
                     >
                       <strong>{target.toUpperCase()}</strong>
-                      <small>{videoModel ? pointCostLabel(cost) : "—"}</small>
+                      <small>输出规格</small>
                     </button>
                   );
                 })}
@@ -985,19 +1074,38 @@ export default function ToolPage() {
             <div className="tp-cost-summary" aria-live="polite">
               <div>
                 <span>本次预计消耗</span>
-                <p>工具不额外收费，积分仅由所选模型收取</p>
+                <p>
+                  {requiresVideoDuration
+                    ? videoDurationReady
+                      ? `${videoDurationLabel(videoDuration)} × ${pointRateLabel(activePointRate)}，最终积分向上取整`
+                      : videoMetadataState === "error"
+                        ? "未能读取源视频时长，暂时无法计算积分"
+                        : "读取源视频时长后，将自动计算最终积分"
+                    : "该模型尚未配置每秒积分，暂按旧版单次价格计费"}
+                </p>
               </div>
-              <strong>{videoModel ? pointCostLabel(activePointCost) : "—"}</strong>
+              <strong>
+                {videoModel && (!requiresVideoDuration || videoDurationReady)
+                  ? pointCostLabel(activePointCost)
+                  : "—"}
+              </strong>
             </div>
 
             <button
               type="button"
               className="tp-btn tp-submit"
-              disabled={!videoModel || !activeResolution || videoModelsLoading}
+              disabled={
+                !videoModel ||
+                !activeResolution ||
+                videoModelsLoading ||
+                (requiresVideoDuration && !videoDurationReady)
+              }
               onClick={() => void run(source, def.title, activeResolution)}
             >
               {videoModelsLoading
                 ? "正在读取价格…"
+                : requiresVideoDuration && !videoDurationReady
+                  ? videoMetadataState === "error" ? "请更换视频" : "正在读取视频时长…"
                 : videoModel
                   ? `开始超分 · ${pointCostLabel(activePointCost)}`
                   : "暂无可用模型"}
@@ -1077,6 +1185,11 @@ export default function ToolPage() {
               <ModelDisclosure
                 model={retryModel}
                 pointCost={retryPointCost}
+                priceLabel={
+                  isVideoTool && requiresVideoDuration && !videoDurationReady
+                    ? "待读取时长"
+                    : undefined
+                }
                 loading={retryModelsLoading}
                 error={retryModelsError}
                 emptyLabel={isVideoTool ? "暂无可用的超分模型" : undefined}
@@ -1098,7 +1211,11 @@ export default function ToolPage() {
               <button
                 type="button"
                 className="tp-btn"
-                disabled={retryModelsLoading || !retryModel}
+                disabled={
+                  retryModelsLoading ||
+                  !retryModel ||
+                  (isVideoTool && requiresVideoDuration && !videoDurationReady)
+                }
                 onClick={() =>
                   void run(
                     source,
@@ -1109,6 +1226,8 @@ export default function ToolPage() {
               >
                 {retryModelsLoading
                   ? "正在读取价格…"
+                  : isVideoTool && requiresVideoDuration && !videoDurationReady
+                    ? "请重新上传视频"
                   : retryModel
                     ? `重试 · ${pointCostLabel(retryPointCost)}`
                     : "暂无可用模型"}

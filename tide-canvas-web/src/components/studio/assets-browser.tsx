@@ -28,6 +28,7 @@ import {
   assetLibraryRevision,
 } from "@/lib/asset-library-events";
 import { AudioPlayerCard, SongCard } from "@/components/studio/audio-player-card";
+import CapturableVideo from "@/components/studio/create-studio/video-result";
 import { smartToolOriginLabel } from "@/lib/ai-tools-catalog";
 import {
   HANDLER_MEDIA_KIND,
@@ -1083,7 +1084,7 @@ export function AssetsBrowser({
               <img src={preview.url} alt={preview.name} />
             )}
             {preview.kind === "video" && (
-              <video src={preview.url} controls autoPlay playsInline />
+              <CapturableVideo src={preview.url} controls autoPlay playsInline />
             )}
             {preview.kind === "audio" && (
               <div className="as-preview-audio">

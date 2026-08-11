@@ -70,6 +70,8 @@ export interface ModelConfig {
   priceMatrix?: Record<string, Record<string, string>>;
   /** 旧模型价格矩阵字段；公开模型接口会补 priceMatrix，前端仍保留兼容。 */
   pricing?: Record<string, Record<string, string | number>>;
+  /** 视频超分每秒积分；最终按源视频时长相乘后向上取整。 */
+  pricePerSecond?: number | string;
   /** raw upstream price modifiers, kept for reference */
   priceModifiers?: unknown;
   /** complete upstream params_schema, including modality-specific 3D options */
@@ -87,7 +89,7 @@ export interface AdminModelVO {
   description: string;
   coverUrl: string;
   tags: string;
-  /** media category: text | image | video | audio | 3d */
+  /** media category: text | image | video | audio | 3d | upscale */
   type: string;
   /** upstream model id (模型ID) */
   modelKey: string;

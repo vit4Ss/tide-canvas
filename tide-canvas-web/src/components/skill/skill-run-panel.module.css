@@ -156,6 +156,7 @@
 }
 
 .artifact {
+  position: relative;
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--sr-border);
