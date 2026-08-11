@@ -16,17 +16,15 @@ func parseFloat(s string) (float64, error) {
 	return strconv.ParseFloat(strings.TrimSpace(s), 64)
 }
 
-// timeLayout matches the ISO-ish layout the frontend slices on (it does
-// `createTime.replace("T"," ").slice(...)`), so an RFC3339-ish value works.
-const timeLayout = "2006-01-02T15:04:05"
-
-// fmtTime formats a time for JSON. Zero times become "" so the frontend's
-// optional-chaining (`createTime?.replace`) is a no-op.
+// fmtTime formats a time for JSON with an explicit offset. The service and DB
+// connection run in Asia/Shanghai; omitting the zone made browsers elsewhere
+// interpret recent history as future local time and mis-sort Studio results.
+// Zero times remain "" so existing optional frontend formatting is unchanged.
 func fmtTime(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.Format(timeLayout)
+	return t.Format(time.RFC3339)
 }
 
 // fmtTimePtr formats a nullable time (nil/zero → empty string).

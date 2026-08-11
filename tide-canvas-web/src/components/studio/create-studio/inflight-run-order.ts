@@ -4,6 +4,19 @@ function validTimestamp(value: number): number {
   return Number.isFinite(value) ? value : 0;
 }
 
+const LEGACY_SERVER_TIME_OFFSET = "+08:00";
+
+/** Parse AI timestamps from both sides of a rolling deployment. New responses
+ * carry an RFC3339 offset; legacy responses are naive Asia/Shanghai wall time
+ * because the backend container and MySQL connection both use that timezone. */
+export function parseStudioTimestamp(value: string | undefined): number {
+  const normalized = value?.trim().replace(" ", "T") ?? "";
+  if (!normalized) return Number.NaN;
+  const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized);
+  const parsed = Date.parse(hasZone ? normalized : `${normalized}${LEGACY_SERVER_TIME_OFFSET}`);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
 function numericId(raw: string): bigint | null {
   if (!/^\d+$/.test(raw)) return null;
   try {
@@ -90,7 +103,7 @@ export function orderStudioFeedRuns(
       run,
     })),
     ...finishedRuns.filter((run) => !liveRunKeys.has(run.run)).map((run) => {
-      const parsed = run.ts ? Date.parse(run.ts) : Number.NaN;
+      const parsed = parseStudioTimestamp(run.ts);
       return {
         state: "finished" as const,
         key: `finished-${run.run}`,

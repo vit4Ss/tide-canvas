@@ -48,7 +48,11 @@ import type {
 } from "./types";
 import { nextHistId, promptHue, refThumbsForRun, threeDAssetsFromMeta, tracksFromMeta } from "./utils";
 import { createSubmissionGate, type SubmissionGate } from "./submission-gate";
-import { isStudioTaskNewerOrEqual, upsertInflightRunNewestFirst } from "./inflight-run-order";
+import {
+  isStudioTaskNewerOrEqual,
+  parseStudioTimestamp,
+  upsertInflightRunNewestFirst,
+} from "./inflight-run-order";
 
 export interface GenerationParams {
   /* panel state (fresh each render) */
@@ -163,7 +167,7 @@ function activeRunFromJournal(
     : entry.payload.handler.includes("audio")
       ? "audio"
       : "image";
-  const taskStartedAt = Date.parse(task.createTime);
+  const taskStartedAt = parseStudioTimestamp(task.createTime);
   const kind: ArtworkType = recovery.kind === "video" || recovery.kind === "audio" || recovery.kind === "image" || recovery.kind === "3d"
     ? recovery.kind
     : inferredKind;

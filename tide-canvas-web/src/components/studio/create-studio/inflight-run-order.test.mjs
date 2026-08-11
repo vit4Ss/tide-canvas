@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   isStudioTaskNewerOrEqual,
   orderStudioFeedRuns,
+  parseStudioTimestamp,
   upsertInflightRunNewestFirst,
 } from "./inflight-run-order.ts";
 
@@ -67,6 +68,34 @@ test("a newly clicked live task stays above an older completed result", () => {
     "inflight-newest-live",
     "finished-older-done",
   ]);
+});
+
+test("legacy Shanghai timestamps cannot turn recent history into future rows", () => {
+  assert.equal(
+    parseStudioTimestamp("2026-08-12T03:00:00"),
+    Date.parse("2026-08-12T03:00:00+08:00"),
+  );
+
+  const ordered = orderStudioFeedRuns(
+    [run("new-live", Date.parse("2026-08-11T20:00:00Z"))],
+    [{ run: "task-100", ts: "2026-08-12T03:00:00", items: [] }],
+  );
+  assert.deepEqual(ordered.map((item) => item.key), [
+    "inflight-new-live",
+    "finished-task-100",
+  ]);
+});
+
+test("RFC3339 timestamps with an explicit zone keep their own offset", () => {
+  assert.equal(
+    parseStudioTimestamp("2026-08-12T03:00:00Z"),
+    Date.parse("2026-08-12T03:00:00Z"),
+  );
+  assert.equal(
+    parseStudioTimestamp("2026-08-12T03:00:00+08:00"),
+    Date.parse("2026-08-11T19:00:00Z"),
+  );
+  assert.equal(Number.isNaN(parseStudioTimestamp("not-a-time")), true);
 });
 
 test("an older task completing later cannot jump above a newer task", () => {
