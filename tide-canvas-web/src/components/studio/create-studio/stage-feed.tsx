@@ -1,10 +1,10 @@
 /* 中央舞台：空状态 + 结果 feed（在飞 run 的进度占位 + 已完成 run 的历史流）—
    从 create-studio.tsx 抽出（纯移动，无逻辑改动）。
-   结果以真实宽高比竖向成流，最新 run 在顶；在飞 run 完成后并入下方历史。
+   结果以真实宽高比竖向成流，生成中与已完成 run 按创建时间统一倒序排列。
    复制提示词 / 整 run 下载是本块的自足行为，一并内聚；编辑 / 重新生成 / 删除 /
    单图工具条经 props 回调组合层。 */
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { mesh } from "@/lib/mesh";
 import { fallbackOssDisplayImage, ossDisplayUrl, restoreOssDisplayImage } from "@/lib/oss-display";
 import { copyText } from "@/lib/clipboard";
@@ -20,6 +20,7 @@ import {
   splitRunPrompt,
   type RunPromptReference,
 } from "./run-prompt-mentions";
+import { orderStudioFeedRuns } from "./inflight-run-order";
 
 const PROMPT_REFERENCE_GLYPH = { image: "图", video: "▶", audio: "♪" } as const;
 
@@ -190,6 +191,10 @@ export function StageFeed({
 }) {
   // 底部哨兵:进入视口提前量(rootMargin)就触发续页;组合层有加载中去重守卫。
   const sentinelRef = useRef<HTMLDivElement>(null);
+  const orderedFeedRuns = useMemo(
+    () => orderStudioFeedRuns(inflightRuns, runs),
+    [inflightRuns, runs],
+  );
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el || !hasMore || !onLoadMore) return;
@@ -295,66 +300,66 @@ export function StageFeed({
         )}
 
         {/* result feed — newest run on top; each run shows its images at their
-            TRUE aspect ratio (no crop). The in-flight run renders first; once it
-            finishes it joins the history feed below. Replaces the old cropped grid
-            + separate 生成历史 strip. */}
+            TRUE aspect ratio (no crop). Live and completed tasks share one
+            creation-time order, so a status transition never moves a run down. */}
         {(busy || runs.length > 0 || skillRunPanel) && (
           <div className="ws-feed" id="feed">
             {skillRunPanel}
-            {/* in-flight run (placeholders with progress) */}
-            {inflightRuns.map((inflight) => {
-              const { meta, cells: runCells, progs: runProgs } = inflight;
-              return (
-                <div key={inflight.taskId} className={`ws-run inflight${runCells.length <= 1 ? " single" : ""}${meta.kind === "audio" ? " audio" : ""}${meta.kind === "3d" ? " three-d" : ""}`}>
-                  <div className="ws-run-head">
-                    <span className="ws-run-kind">
-                      {SLOT_ICON[meta.kind ?? (meta.isVid ? "video" : "image")]}
-                      {meta.kind === "audio" ? "AI 音乐" : meta.kind === "3d" ? "AI 3D" : meta.isVid ? "AI 视频" : "AI 图片"}
-                    </span>
-                    <span className="ws-run-div" />
-                    {meta.model && <span className="ws-run-chip">{meta.model}</span>}
-                    {meta.ratio && (
-                      <span className="ws-run-chip">{ratioLabel(meta.ratio)}</span>
-                    )}
-                    <span className="ws-run-time">生成中…</span>
-                  </div>
-                  {meta.prompt && (
-                    <div className="ws-run-prompt">
-                      <RunPromptText prompt={meta.prompt} params={meta.params} onZoom={onZoom} />
+            {/* Live placeholders and completed results are interleaved by start time. */}
+            {orderedFeedRuns.map((entry) => {
+              if (entry.state === "inflight") {
+                const inflight = entry.run;
+                const { meta, cells: runCells, progs: runProgs } = inflight;
+                return (
+                  <div key={entry.key} className={`ws-run inflight${runCells.length <= 1 ? " single" : ""}${meta.kind === "audio" ? " audio" : ""}${meta.kind === "3d" ? " three-d" : ""}`}>
+                    <div className="ws-run-head">
+                      <span className="ws-run-kind">
+                        {SLOT_ICON[meta.kind ?? (meta.isVid ? "video" : "image")]}
+                        {meta.kind === "audio" ? "AI 音乐" : meta.kind === "3d" ? "AI 3D" : meta.isVid ? "AI 视频" : "AI 图片"}
+                      </span>
+                      <span className="ws-run-div" />
+                      {meta.model && <span className="ws-run-chip">{meta.model}</span>}
+                      {meta.ratio && (
+                        <span className="ws-run-chip">{ratioLabel(meta.ratio)}</span>
+                      )}
+                      <span className="ws-run-time">生成中…</span>
                     </div>
-                  )}
-                  <div className="ws-run-imgs">
-                    {runCells.map((cell) => {
-                      const [rw, rh] = meta.ratio.split(":").map(Number);
-                      const pct = Math.round(runProgs[cell.i] ?? 0);
-                      return (
-                        <div
-                          key={cell.i}
-                          className="ws-runimg loading"
-                          style={{ aspectRatio: `${rw || 1}/${rh || 1}` }}
-                        >
+                    {meta.prompt && (
+                      <div className="ws-run-prompt">
+                        <RunPromptText prompt={meta.prompt} params={meta.params} onZoom={onZoom} />
+                      </div>
+                    )}
+                    <div className="ws-run-imgs">
+                      {runCells.map((cell) => {
+                        const [rw, rh] = meta.ratio.split(":").map(Number);
+                        const pct = Math.round(runProgs[cell.i] ?? 0);
+                        return (
                           <div
-                            className="done-cov on"
-                            style={{ background: mesh(cell.hues[0], cell.hues[1], cell.hues[2]) }}
-                          />
-                          <div className="shimmer" />
-                          <div className="ph">
-                            生成中 · <span className="pct">{pct}%</span>
+                            key={cell.i}
+                            className="ws-runimg loading"
+                            style={{ aspectRatio: `${rw || 1}/${rh || 1}` }}
+                          >
+                            <div
+                              className="done-cov on"
+                              style={{ background: mesh(cell.hues[0], cell.hues[1], cell.hues[2]) }}
+                            />
+                            <div className="shimmer" />
+                            <div className="ph">
+                              生成中 · <span className="pct">{pct}%</span>
+                            </div>
+                            <div className="bar">
+                              <i style={{ width: `${runProgs[cell.i] ?? 0}%` }} />
+                            </div>
                           </div>
-                          <div className="bar">
-                            <i style={{ width: `${runProgs[cell.i] ?? 0}%` }} />
-                          </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-
-            {/* finished runs */}
-            {runs.map((r) => (
-              <div key={r.run} className={`ws-run${r.items.length <= 1 ? " single" : ""}`}>
+                );
+              }
+              const r = entry.run;
+              return (
+                <div key={entry.key} className={`ws-run${r.items.length <= 1 ? " single" : ""}`}>
                 <div className="ws-run-head">
                   <span className="ws-run-kind">
                     {SLOT_ICON[r.type]}
@@ -514,8 +519,9 @@ export function StageFeed({
                     删除
                   </button>
                 </div>
-              </div>
-            ))}
+                </div>
+              );
+            })}
 
             {/* 懒加载哨兵:到底提前触发续页;固定高度+三点脉冲,不跳版式;
                 失败给可点重试;翻过页才给到底提示 */}

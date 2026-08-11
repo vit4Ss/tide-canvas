@@ -48,6 +48,7 @@ import type {
 } from "./types";
 import { nextHistId, promptHue, refThumbsForRun, threeDAssetsFromMeta, tracksFromMeta } from "./utils";
 import { createSubmissionGate, type SubmissionGate } from "./submission-gate";
+import { upsertInflightRunNewestFirst } from "./inflight-run-order";
 
 export interface GenerationParams {
   /* panel state (fresh each render) */
@@ -313,6 +314,12 @@ export function useGeneration(p: GenerationParams) {
 
       const { taskId, prompt: p, model: mdl, ratio: r, spec, count: n, isVid, label, hues } = run;
       const kind: ArtworkType = run.kind ?? (isVid ? "video" : "image");
+      // Older persisted snapshots may lack a valid timestamp. Normalize once so
+      // feed sorting, timeout accounting and completion timestamps cannot become
+      // NaN/Invalid Date and strand an otherwise successful task in polling.
+      const startedAt = Number.isFinite(run.startedAt) && run.startedAt > 0
+        ? run.startedAt
+        : Date.now();
       const previous = runControlsRef.current.get(taskId);
       if (previous) {
         previous.ticks.forEach((timer) => clearInterval(timer));
@@ -327,21 +334,22 @@ export function useGeneration(p: GenerationParams) {
       const PROG_FLOOR = 6;
       const local = new Array(n).fill(PROG_FLOOR);
       if (makeForeground) {
-        activeRunRef.current = run;
+        activeRunRef.current = startedAt === run.startedAt ? run : { ...run, startedAt };
         setRunMeta({ prompt: p, model: mdl, ratio: r, spec, count: n, label, isVid, kind, refThumbs: run.refThumbs, params: run.params });
         setCells(newCells);
         setProgs([...local]);
         setBusy(true);
       }
-      setInflightRuns((prev) => [
-        ...prev.filter((item) => item.taskId !== taskId),
+      setInflightRuns((prev) => upsertInflightRunNewestFirst(
+        prev,
         {
           taskId,
+          startedAt,
           meta: { prompt: p, model: mdl, ratio: r, spec, count: n, label, isVid, kind, refThumbs: run.refThumbs, params: run.params },
           cells: newCells,
           progs: [...local],
         },
-      ]);
+      ));
       setBusy(true);
 
       newCells.forEach((_, i) => {
@@ -395,7 +403,9 @@ export function useGeneration(p: GenerationParams) {
           setBusy(runControlsRef.current.size > 0);
         }
         const runKey = `task-${taskId}`;
-        const ts = new Date().toISOString();
+        // Feed order is task-creation order, not provider completion order. An
+        // older slow task finishing last must not jump above a newer run.
+        const ts = new Date(startedAt).toISOString();
         const built = outCells.map((cell) => ({
           id: nextHistId(),
           run: runKey,
@@ -453,7 +463,7 @@ export function useGeneration(p: GenerationParams) {
           return;
         }
         const maxMs = isVid || kind === "3d" ? 30 * 60 * 1000 : kind === "audio" ? 12 * 60 * 1000 : 7 * 60 * 1000;
-        const beyondPollingBudget = Date.now() - run.startedAt > maxMs;
+        const beyondPollingBudget = Date.now() - startedAt > maxMs;
         if (beyondPollingBudget && !deadlineNoticeShown) {
           deadlineNoticeShown = true;
           toast.info("生成时间较长，仍在后台继续确认结果");

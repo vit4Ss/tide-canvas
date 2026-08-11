@@ -139,6 +139,8 @@ export interface RunMeta {
  * cells so concurrent submissions never overwrite one another in the feed. */
 export interface InflightRun {
   taskId: string;
+  /** Captured when the backend task is accepted; used for newest-first feed order. */
+  startedAt: number;
   meta: RunMeta;
   cells: ResultCell[];
   progs: number[];
