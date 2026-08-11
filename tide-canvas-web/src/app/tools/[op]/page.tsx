@@ -23,7 +23,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { Loader2, Plus, X } from "lucide-react";
+import { Images, Loader2, Plus, X } from "lucide-react";
+import { AssetPickerModal } from "@/components/studio/create-studio/asset-picker-modal";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { marketApi, type StudioModelVO } from "@/lib/market-api";
 import { useAuthStore } from "@/stores/use-auth-store";
@@ -95,14 +96,13 @@ function sourceFromJournal(entry: PendingAiGeneration): string {
 /** 模型解析 —— 图片工具与创作台一键操作同策略：优先 edits/i2i 能力，
     高清放大偏好 4K 模型，再退到 nano-banana-2 / gpt-image-2 / 首个。
     视频工具取「超分」类目下的首个已上架模型（该类目只服务超分能力）。 */
-async function pickVideoModel(): Promise<StudioModelVO | null> {
+async function listVideoModels(): Promise<StudioModelVO[]> {
   const r = await marketApi.studioModels("upscale");
-  const models = r.success && Array.isArray(r.data) ? r.data : [];
-  return models[0] ?? null;
+  return r.success && Array.isArray(r.data) ? r.data : [];
 }
 
 async function pickModel(def: ToolDef): Promise<StudioModelVO | null> {
-  if (def.type === "video") return pickVideoModel();
+  if (def.type === "video") return (await listVideoModels())[0] ?? null;
   const r = await marketApi.studioModels("image");
   const models = r.success && Array.isArray(r.data) ? r.data : [];
   const editable = models.filter(
@@ -177,6 +177,8 @@ export default function ToolPage() {
   const [prompt, setPrompt] = useState("");
   // 视频超分的目标分辨率；默认取工具配置的 extra.targetResolution，否则 1080p
   const [resolution, setResolution] = useState("");
+  // 「从资产库选取」弹窗
+  const [picking, setPicking] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   // 轮询取消：卸载 / 重开时置 true，滞后的响应直接丢弃
   const pollGen = useRef(0);
@@ -258,19 +260,27 @@ export default function ToolPage() {
   // 视频工具的模型要在「选档位」之前就拿到:可选档位取自该模型后台配置的
   // 支持清晰度(ByteDance 系不支持 720p),而积分定价矩阵也是按这份清晰度配的
   // ——把四个档位写死会让用户选到上游必拒的档，或落进矩阵没有的格子而被按
-  // 模型固定价扣费。
-  const [videoModel, setVideoModel] = useState<StudioModelVO | null>(null);
+  // 模型固定价扣费。超分类目下常有多个模型(标准/pro/字节)，各自的档位与
+  // 定价都不同，所以整份列表都要,由用户选。
+  const [videoModels, setVideoModels] = useState<StudioModelVO[]>([]);
+  const [modelId, setModelId] = useState("");
   const isVideoDef = def?.type === "video";
   useEffect(() => {
     if (!isVideoDef) return;
     let alive = true;
-    void pickVideoModel().then((m) => {
-      if (alive) setVideoModel(m);
+    void listVideoModels().then((list) => {
+      if (alive) setVideoModels(list);
     });
     return () => {
       alive = false;
     };
   }, [isVideoDef]);
+
+  /** 当前选中的超分模型;未选(或选中的已下架)时用列表首个。 */
+  const videoModel = useMemo(
+    () => videoModels.find((m) => m.id === modelId) ?? videoModels[0] ?? null,
+    [videoModels, modelId],
+  );
 
   /** 该模型后台配置的目标分辨率；未配置时退回超分接口的全部档位。
       还要与超分接口认的档位取交集:模型可能是从别的类型改过来的，配置里残留着
@@ -315,7 +325,10 @@ export default function ToolPage() {
           return;
         }
         // 视频工具在进选档步骤前就把模型取好了，直接复用，避免再查一次。
-        const pick = def.type === "video" ? videoModel ?? (await pickVideoModel()) : await pickModel(def);
+        const pick =
+          def.type === "video"
+            ? videoModel ?? (await listVideoModels())[0] ?? null
+            : await pickModel(def);
         if (!pick) {
           fail(def.type === "video" ? "没有可用的超分模型" : "没有可用的图像编辑模型");
           return;
@@ -433,6 +446,31 @@ export default function ToolPage() {
     };
   }, [authenticatedUserId, ensureSession, fail, journalScope, poll]);
 
+  /** 打开资产库选取。先确保会话:未登录时资产库只会是一片空白。 */
+  const openPicker = useCallback(async () => {
+    if (!(await ensureSession())) return; // 未登录会跳 /login
+    setPicking(true);
+  }, [ensureSession]);
+
+  /** 拿到素材(上传完成 / 从资产库选中)后的统一分流:视频超分先选档位、
+      局部重绘先收一句描述、其余直接开跑。 */
+  const applySource = useCallback(
+    (url: string) => {
+      if (!def) return;
+      setSource(url);
+      if (def.type === "video") {
+        setResolution(defaultResolution);
+        setPhase("options");
+      } else if (def.needPrompt) {
+        setPhase("prompt");
+      } else {
+        void run(url, def.title);
+      }
+    },
+    [def, defaultResolution, run],
+  );
+
+
   const onFile = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       if (!def) return;
@@ -455,18 +493,9 @@ export default function ToolPage() {
         toast.error(res.message || "上传失败，请重试");
         return;
       }
-      setSource(res.data.fileUrl);
-      // 一键工具直接开跑；局部重绘先收一句修改描述，视频超分先选目标分辨率
-      if (isVideoTool) {
-        setResolution(defaultResolution);
-        setPhase("options");
-      } else if (def.needPrompt) {
-        setPhase("prompt");
-      } else {
-        void run(res.data.fileUrl, def.title);
-      }
+      applySource(res.data.fileUrl);
     },
-    [def, defaultResolution, ensureSession, run],
+    [def, ensureSession, applySource],
   );
 
   const reset = useCallback(() => {
@@ -531,23 +560,47 @@ export default function ToolPage() {
           <div className="tp-cover" style={{ background: coverBg(def.cover) }} />
           <h1>{def.title}</h1>
           <p className="tp-desc">{def.desc}</p>
-          <button
-            type="button"
-            className="tp-btn"
-            disabled={phase === "uploading"}
-            onClick={() => fileRef.current?.click()}
-          >
-            {phase === "uploading" ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" /> 正在上传…
-              </>
-            ) : (
-              <>
-                <Plus className="h-4 w-4" /> {isVideoTool ? "上传视频" : "上传图片"}
-              </>
-            )}
-          </button>
+          <div className="tp-actions">
+            <button
+              type="button"
+              className="tp-btn ghost"
+              disabled={phase === "uploading"}
+              onClick={() => void openPicker()}
+            >
+              <Images className="h-4 w-4" /> 从资产库选取
+            </button>
+            <button
+              type="button"
+              className="tp-btn"
+              disabled={phase === "uploading"}
+              onClick={() => fileRef.current?.click()}
+            >
+              {phase === "uploading" ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" /> 正在上传…
+                </>
+              ) : (
+                <>
+                  <Plus className="h-4 w-4" /> {isVideoTool ? "上传视频" : "上传图片"}
+                </>
+              )}
+            </button>
+          </div>
         </div>
+      )}
+
+      {/* 从资产库选取:按工具类型锁死可选素材——图片工具只让选图，视频工具
+          只让选视频，选到不对的类型必定在上游失败。 */}
+      {picking && (
+        <AssetPickerModal
+          kind={isVideoTool ? "video" : "image"}
+          lockKind
+          onClose={() => setPicking(false)}
+          onPick={(a) => {
+            setPicking(false);
+            if (a.url) applySource(a.url);
+          }}
+        />
       )}
 
       {/* ── 局部重绘：修改描述 ── */}
@@ -585,6 +638,26 @@ export default function ToolPage() {
           <div className="tp-stage">
             <ToolMedia src={source} alt="待处理视频" video={isVideoTool} />
           </div>
+          {/* 多个超分模型时才让选:各家支持的档位与定价都不同，选完下面的档位
+              列表会跟着这个模型的后台配置刷新。只有一个模型时不给无谓的选择。 */}
+          {videoModels.length > 1 && (
+            <>
+              <p className="tp-optlabel">模型</p>
+              <div className="tp-opts" role="group" aria-label="超分模型">
+                {videoModels.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    className={`tp-opt${videoModel?.id === m.id ? " on" : ""}`}
+                    onClick={() => setModelId(m.id)}
+                  >
+                    {m.name}
+                  </button>
+                ))}
+              </div>
+              <p className="tp-optlabel">目标分辨率</p>
+            </>
+          )}
           <div className="tp-opts" role="group" aria-label="目标分辨率">
             {resolutionOptions.map((r) => (
               <button

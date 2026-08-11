@@ -330,6 +330,7 @@ export function AssetsBrowser({
   onPick,
   defaultTab = "hist",
   defaultFilter = "image",
+  allowedFilters,
 }: {
   /** when true, cards select instead of opening, and 批量/同步 actions are hidden */
   pickMode?: boolean;
@@ -338,6 +339,9 @@ export function AssetsBrowser({
   defaultTab?: TabKey;
   /** initial media filter (image | video | audio | doc) */
   defaultFilter?: FilterKey;
+  /** 限定可选的媒体类型(智能工具选素材:图片工具只让选图、视频工具只让选视频)。
+      省略 = 不限制，与资产页本身一致。 */
+  allowedFilters?: readonly FilterKey[];
 }) {
   const [tab, setTab] = useState<TabKey>(() => initialAssetTab(defaultTab, defaultFilter));
   const [historyFilter, setHistoryFilter] = useState<HistoryFilterKey>(() =>
@@ -345,7 +349,11 @@ export function AssetsBrowser({
   );
   const [uploadFilter, setUploadFilter] = useState<FilterKey>(defaultFilter);
   const filter: FilterKey = tab === "hist" ? historyFilter : uploadFilter;
-  const visibleFilters = useMemo(() => new Set(filtersForAssetTab(tab)), [tab]);
+  const visibleFilters = useMemo(() => {
+    const forTab = filtersForAssetTab(tab);
+    if (!allowedFilters?.length) return new Set(forTab);
+    return new Set(forTab.filter((f) => allowedFilters.includes(f)));
+  }, [tab, allowedFilters]);
   const [viewStates, setViewStates] = useState<Record<string, AssetViewState>>({});
   const [uploading, setUploading] = useState(false);
   // in-app preview overlay target (image/video/audio); docs never set this.

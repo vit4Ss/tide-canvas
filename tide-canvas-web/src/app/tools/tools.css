@@ -216,6 +216,18 @@ body.imini .tool-page .tp-btn.ghost {
   color: var(--text-faint);
 }
 
+/* 视频超分的选项分组标题（模型 / 目标分辨率，多个模型时才出现） */
+.tool-page .tp-optlabel {
+  margin: 16px 0 0;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-faint);
+}
+.tool-page .tp-optlabel + .tp-opts {
+  margin-top: 8px;
+}
+
 /* 视频超分的目标分辨率档位选择（上传完成、开跑之前的一步） */
 .tool-page .tp-opts {
   display: flex;

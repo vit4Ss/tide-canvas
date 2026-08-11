@@ -7,6 +7,9 @@
    ========================================================================== */
 
 import "@/styles/liuguang/flux.css";
+// 「从资产库选取」复用整个资产页 UI（.as-* / .ws-assetbox），那套样式住在
+// studio.css；它全部是类作用域，没有任何全局元素选择器，不会波及工具页本身。
+import "@/styles/liuguang/studio.css";
 import "@/styles/liuguang/imini-theme.css";
 import "./tools.css";
 
