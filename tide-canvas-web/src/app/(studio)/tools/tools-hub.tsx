@@ -19,7 +19,6 @@ import Link from "next/link";
 import {
   ArrowUpRight,
   Eraser,
-  ExternalLink,
   Loader2,
   Maximize2,
   Paintbrush,
@@ -197,21 +196,15 @@ function ToolWorkPreview({
               </p>
             </div>
           </div>
-          <div className={styles.previewHeaderActions}>
-            <a href={preview.url} target="_blank" rel="noreferrer">
-              原文件
-              <ExternalLink aria-hidden />
-            </a>
-            <button
-              type="button"
-              className={styles.previewClose}
-              aria-label="关闭作品预览"
-              autoFocus
-              onClick={onClose}
-            >
-              <X aria-hidden />
-            </button>
-          </div>
+          <button
+            type="button"
+            className={styles.previewClose}
+            aria-label="关闭作品预览"
+            autoFocus
+            onClick={onClose}
+          >
+            <X aria-hidden />
+          </button>
         </header>
 
         <div className={styles.previewMedia} aria-label="作品内容">

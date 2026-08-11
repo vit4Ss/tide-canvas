@@ -88,16 +88,16 @@
 .toolGrid,
 .toolSkeletonGrid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .toolSkeleton {
-  min-height: 264px;
+  min-height: 228px;
   border-radius: 12px;
   border: 1px solid var(--border);
   background:
-    linear-gradient(var(--surface-2), var(--surface-2)) top / 100% 180px no-repeat,
+    linear-gradient(var(--surface-2), var(--surface-2)) top / 100% 152px no-repeat,
     var(--panel-solid);
   animation: skeletonPulse 1.4s ease-in-out infinite alternate;
 }
@@ -126,7 +126,7 @@
 
 .toolCover {
   position: relative;
-  aspect-ratio: 16 / 10;
+  aspect-ratio: 16 / 9;
   overflow: hidden;
   background-color: var(--surface-2);
 }
@@ -165,18 +165,18 @@
 }
 
 .toolCoverIcon {
-  top: 12px;
-  left: 12px;
-  width: 32px;
-  height: 32px;
+  top: 10px;
+  left: 10px;
+  width: 30px;
+  height: 30px;
   border-radius: 8px;
 }
 
 .toolOpen {
-  top: 12px;
-  right: 12px;
-  width: 32px;
-  height: 32px;
+  top: 10px;
+  right: 10px;
+  width: 30px;
+  height: 30px;
   border-radius: 8px;
   opacity: 0;
   transform: translateY(3px);
@@ -198,7 +198,7 @@
 
 .toolBody {
   flex: 1;
-  padding: 16px 16px 18px;
+  padding: 12px 12px 14px;
 }
 
 .toolTitleRow {
@@ -214,7 +214,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1.4;
   font-weight: 600;
   color: var(--text);
@@ -234,13 +234,13 @@
 
 .toolBody p {
   display: -webkit-box;
-  min-height: 40px;
-  margin: 8px 0 0;
+  min-height: 38px;
+  margin: 6px 0 0;
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   font-size: 13px;
-  line-height: 1.55;
+  line-height: 1.45;
   color: var(--text-faint);
 }
 
@@ -499,39 +499,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-.previewHeaderActions {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.previewHeaderActions a {
-  height: 36px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  padding: 0 12px;
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.68);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  transition: color 160ms ease-out, border-color 160ms ease-out, background 160ms ease-out;
-}
-
-.previewHeaderActions a:hover {
-  color: #fff;
-  border-color: rgba(255, 255, 255, 0.2);
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.previewHeaderActions a svg {
-  width: 14px;
-  height: 14px;
-}
-
 .previewClose {
   flex: none;
   width: 36px;
@@ -664,24 +631,30 @@
 .more button:focus-visible,
 .toolCard:focus-visible,
 .workCard:focus-visible,
-.previewClose:focus-visible,
-.previewHeaderActions a:focus-visible {
+.previewClose:focus-visible {
   outline: 2px solid var(--text);
   outline-offset: 3px;
 }
 
-@media (max-width: 1080px) {
+@media (max-width: 1180px) {
   .toolGrid,
   .toolSkeletonGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+}
 
+@media (max-width: 1080px) {
   .workGrid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 900px) {
+  .toolGrid,
+  .toolSkeletonGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .previewDialog {
     width: calc(100vw - 32px);
     height: calc(100dvh - 32px);
@@ -772,23 +745,12 @@
     gap: 0;
   }
 
-  .previewHeaderActions a {
-    width: 36px;
-    padding: 0;
-    font-size: 0;
-  }
-
-  .previewHeaderActions a svg {
-    width: 15px;
-    height: 15px;
-  }
 }
 
 @media (pointer: coarse) {
   .stateBtn,
   .more button,
-  .previewClose,
-  .previewHeaderActions a {
+  .previewClose {
     min-height: 44px;
   }
 
@@ -814,8 +776,7 @@
   .previewDialog,
   .previewDialog::backdrop,
   .more button,
-  .previewClose,
-  .previewHeaderActions a {
+  .previewClose {
     animation: none;
     transition: none;
   }
