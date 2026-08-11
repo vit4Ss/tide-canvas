@@ -53,10 +53,27 @@ func TestAssetTaskFiltersRunBeforePagination(t *testing.T) {
 
 func TestTaskMediaHandlersIncludeEveryVideoMode(t *testing.T) {
 	got := strings.Join(taskMediaHandlers("video"), ",")
-	for _, handler := range []string{"text_to_video", "image_to_video", "start_end_to_video", "reference_to_video"} {
+	for _, handler := range []string{"text_to_video", "image_to_video", "start_end_to_video", "reference_to_video", "video_upscale"} {
 		if !strings.Contains(got, handler) {
 			t.Fatalf("video handler list is missing %q: %s", handler, got)
 		}
+	}
+}
+
+func TestTaskMediaHandlersIncludeEveryImageTool(t *testing.T) {
+	handlers := taskMediaHandlers("image")
+	got := strings.Join(handlers, ",")
+	for _, handler := range []string{"text_to_image", "image_to_image", "outpaint", "remove_bg", "upscale", "remove_object", "relight"} {
+		if !strings.Contains(got, handler) {
+			t.Fatalf("image handler list is missing %q: %s", handler, got)
+		}
+	}
+	seen := map[string]bool{}
+	for _, handler := range handlers {
+		if seen[handler] {
+			t.Fatalf("image handler list contains duplicate %q: %s", handler, got)
+		}
+		seen[handler] = true
 	}
 }
 

@@ -13,6 +13,7 @@ package admin
 import (
 	"encoding/json"
 	"errors"
+	"net/url"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -71,6 +72,7 @@ type AdminToolVO struct {
 	NeedPrompt   bool   `json:"needPrompt"`
 	Hd           bool   `json:"hd"`
 	Icon         string `json:"icon"`
+	CoverURL     string `json:"coverUrl"`
 	Cover        []int  `json:"cover"`
 	Placeholder  string `json:"placeholder"`
 	SortOrder    int    `json:"sortOrder"`
@@ -89,6 +91,7 @@ type AdminToolUpdateDTO struct {
 	NeedPrompt   *bool   `json:"needPrompt" binding:"omitempty"`
 	Hd           *bool   `json:"hd" binding:"omitempty"`
 	Icon         *string `json:"icon" binding:"omitempty,max=8"`
+	CoverURL     *string `json:"coverUrl" binding:"omitempty,max=1024"`
 	Cover        *[]int  `json:"cover" binding:"omitempty"`
 	Placeholder  *string `json:"placeholder" binding:"omitempty,max=255"`
 	SortOrder    *int    `json:"sortOrder" binding:"omitempty"`
@@ -169,6 +172,14 @@ func (h *toolsHandler) update(c *gin.Context) {
 	}
 	if dto.Icon != nil {
 		fields["icon"] = strings.TrimSpace(*dto.Icon)
+	}
+	if dto.CoverURL != nil {
+		coverURL := strings.TrimSpace(*dto.CoverURL)
+		if coverURL != "" && !validToolCoverURL(coverURL) {
+			response.Fail(c, response.CodeBadRequest, "coverUrl must be an http(s) URL or an absolute site path")
+			return
+		}
+		fields["cover_url"] = coverURL
 	}
 	if dto.Cover != nil {
 		hues := *dto.Cover
@@ -305,11 +316,22 @@ func toAdminToolVO(t *model.AiTool) AdminToolVO {
 		NeedPrompt:   t.NeedPrompt,
 		Hd:           t.Hd,
 		Icon:         t.Icon,
+		CoverURL:     t.CoverURL,
 		Cover:        decodeToolCover(t.CoverHues),
 		Placeholder:  t.Placeholder,
 		SortOrder:    t.SortOrder,
 		UpdateTime:   g3FmtTime(t.UpdateTime),
 	}
+}
+
+// validToolCoverURL keeps the admin field useful for both OSS/CDN URLs and
+// files served from this site while rejecting script/data schemes and //host.
+func validToolCoverURL(raw string) bool {
+	if strings.HasPrefix(raw, "/") && !strings.HasPrefix(raw, "//") {
+		return true
+	}
+	u, err := url.ParseRequestURI(raw)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 // encodeToolCover serializes a hue triple to the stored "[h1,h2,h3]" text.

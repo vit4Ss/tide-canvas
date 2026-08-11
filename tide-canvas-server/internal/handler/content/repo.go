@@ -72,6 +72,22 @@ func (r *repo) recentPosts(limit int) ([]model.CommunityPost, error) {
 	return rows, nil
 }
 
+// recentPostCovers returns only the usable cover URLs needed by smart-tool
+// cards. Keeping this projection separate from homeFeed avoids loading post
+// metadata and the unrelated model rail on every tools-page navigation.
+func (r *repo) recentPostCovers(limit int) ([]string, error) {
+	covers := make([]string, 0, limit)
+	err := recentPostCoversScope(r.db, limit).Pluck("cover_url", &covers).Error
+	return covers, err
+}
+
+func recentPostCoversScope(db *gorm.DB, limit int) *gorm.DB {
+	return db.Model(&model.CommunityPost{}).
+		Where("status = ? AND cover_url IS NOT NULL AND cover_url <> ''", postPublished).
+		Order("create_time DESC").
+		Limit(limit)
+}
+
 // hotPosts returns the hottest published community posts, ranked by a
 // like/view weighted score then recency (limit capped). 作品流「实时热度」内容源
 // 用它：热度 = 点赞*3 + 浏览，与 recentPosts（最新发布）并列为两个可选/可合并

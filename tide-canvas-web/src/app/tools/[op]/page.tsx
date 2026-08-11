@@ -26,12 +26,18 @@ import { useParams, useRouter } from "next/navigation";
 import { Images, Loader2, Plus, X } from "lucide-react";
 import { AssetPickerModal } from "@/components/studio/create-studio/asset-picker-modal";
 import { aiApi, uploadFileSmart } from "@/lib/api";
+import { loadToolCoverPool } from "@/lib/tool-cover-pool";
 import { marketApi, type StudioModelVO } from "@/lib/market-api";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";
 import { AiTaskStatus, type AiToolVO } from "@/types/ai";
 import { coverBg } from "@/lib/mesh";
-import { FALLBACK_TOOLS, UPSCALE_RESOLUTIONS, type ToolType } from "@/lib/ai-tools-catalog";
+import {
+  FALLBACK_TOOLS,
+  resolveToolCoverUrl,
+  UPSCALE_RESOLUTIONS,
+  type ToolType,
+} from "@/lib/ai-tools-catalog";
 import {
   commitAcceptedAiGeneration,
   isAmbiguousAiCreateCode,
@@ -40,6 +46,8 @@ import {
 } from "@/lib/ai-generation-idempotency";
 
 interface ToolDef {
+  /** stable ai_tools key; persisted on generated tasks for source attribution */
+  key: string;
   title: string;
   desc: string;
   /** backend generation handler (internal/handler/ai handlerRegistry) */
@@ -52,6 +60,8 @@ interface ToolDef {
   needPrompt?: boolean;
   /** mesh-gradient cover hues — 与首页核心能力卡同源（@/content/home CAPS） */
   cover: [number, number, number];
+  /** 后台固定封面；空值按工具 key 复用公开作品图。 */
+  coverUrl?: string;
   placeholder?: string;
   /** 额外生成参数——随请求原样下发（计费按这些原始入参解析，须由客户端发送） */
   extra?: Record<string, unknown>;
@@ -128,12 +138,16 @@ export default function ToolPage() {
 
   // 后台「工具管理」配置：null = 接口未应答/失败（渲染 FALLBACK_OPS 出厂兜底）。
   const [tools, setTools] = useState<AiToolVO[] | null>(null);
+  const [coverPool, setCoverPool] = useState<string[]>([]);
   useEffect(() => {
     let alive = true;
     aiApi.tools().then((res) => {
-      if (alive && res.success && Array.isArray(res.data) && res.data.length) {
+      if (alive && res.success && Array.isArray(res.data)) {
         setTools(res.data);
       }
+    });
+    loadToolCoverPool().then((covers) => {
+      if (alive) setCoverPool(covers);
     });
     return () => {
       alive = false;
@@ -148,6 +162,7 @@ export default function ToolPage() {
       if (!vo) return undefined;
       const fb: ToolDef | undefined = FALLBACK_OPS[params.op];
       return {
+        key: vo.key,
         title: vo.title,
         desc: vo.desc,
         handler: vo.handler,
@@ -159,12 +174,18 @@ export default function ToolPage() {
           Array.isArray(vo.cover) && vo.cover.length === 3
             ? vo.cover
             : (fb?.cover ?? [220, 200, 260]),
+        coverUrl: vo.coverUrl || undefined,
         placeholder: vo.placeholder || undefined,
         extra: vo.extraParams ?? undefined,
       };
     }
     return FALLBACK_OPS[params.op];
   }, [tools, params.op]);
+
+  const resolvedCoverUrl = useMemo(
+    () => def ? resolveToolCoverUrl(def.key, def.coverUrl, coverPool) : "",
+    [def, coverPool],
+  );
 
   const ensureSession = useAuthStore((s) => s.ensureSession);
   const authenticatedUserId = useAuthStore((s) => s.user?.id ?? "");
@@ -339,6 +360,8 @@ export default function ToolPage() {
           def.type === "video"
             ? {
                 ...(def.extra ?? {}),
+                toolKey: def.key,
+                toolTitle: def.title,
                 videoUrl: srcUrl,
                 targetResolution: targetResolution || defaultResolution,
               }
@@ -347,6 +370,8 @@ export default function ToolPage() {
                 sourceImage: srcUrl,
                 prompt: promptText,
                 ...(def.extra ?? {}),
+                toolKey: def.key,
+                toolTitle: def.title,
               };
         const createGeneration = ++pollGen.current;
         let reconnectNoticeShown = false;
@@ -557,7 +582,20 @@ export default function ToolPage() {
       {/* ── 入口：上传 ── */}
       {(phase === "idle" || phase === "uploading") && (
         <div className="tp-card">
-          <div className="tp-cover" style={{ background: coverBg(def.cover) }} />
+          <div className="tp-cover" style={{ background: coverBg(def.cover) }}>
+            {resolvedCoverUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                key={resolvedCoverUrl}
+                src={resolvedCoverUrl}
+                alt=""
+                decoding="async"
+                onError={(event) => {
+                  event.currentTarget.hidden = true;
+                }}
+              />
+            ) : null}
+          </div>
           <h1>{def.title}</h1>
           <p className="tp-desc">{def.desc}</p>
           <div className="tp-actions">

@@ -3326,6 +3326,9 @@ tr:hover .rowacts,
 }
 .adm-skill-cover-preview > .adm-btn { margin-left: auto; }
 .adm-skill-cover-preview.is-error { border-color: var(--danger-border, #f2b8b5); }
+@media (max-width: 760px), (pointer: coarse) {
+  .adm-tool-cover-action { min-height: 44px; }
+}
 .adm-skill-advanced {
   overflow: hidden;
   margin-top: 14px;

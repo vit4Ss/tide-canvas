@@ -24,7 +24,7 @@
    ============================================================================ */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { GripVertical, RefreshCw } from "lucide-react";
+import { GripVertical, RefreshCw, Upload } from "lucide-react";
 import {
   AdminModal,
   AdminAlert,
@@ -42,6 +42,7 @@ import {
 import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";
 import { adminToolsApi } from "@/lib/admin-tools-api";
+import { uploadFileSmart } from "@/lib/api";
 import type { AdminToolUpdateDTO, AdminToolVO } from "@/types/admin-tools";
 
 export default function AdminToolsPage() {
@@ -281,6 +282,17 @@ export default function AdminToolsPage() {
 
 const ON_OFF = ["开启", "关闭"];
 
+function validCoverUrl(raw: string): boolean {
+  if (raw.startsWith("/") && !raw.startsWith("//")) return true;
+  if (!raw.startsWith("http://") && !raw.startsWith("https://")) return false;
+  try {
+    const url = new URL(raw);
+    return !!url.host && (url.protocol === "http:" || url.protocol === "https:");
+  } catch {
+    return false;
+  }
+}
+
 function ToolModal({
   tool,
   onClose,
@@ -293,6 +305,12 @@ function ToolModal({
   const [title, setTitle] = useState(tool.title);
   const [desc, setDesc] = useState(tool.desc);
   const [icon, setIcon] = useState(tool.icon);
+  // `?? ""` also keeps a rolling deployment compatible with an older API
+  // response that has not started emitting coverUrl yet.
+  const [coverUrl, setCoverUrl] = useState(tool.coverUrl ?? "");
+  const [coverUploading, setCoverUploading] = useState(false);
+  const [coverPreviewFailed, setCoverPreviewFailed] = useState(false);
+  const coverInputRef = useRef<HTMLInputElement>(null);
   const [hues, setHues] = useState<string[]>(
     tool.cover ? tool.cover.map(String) : ["", "", ""],
   );
@@ -306,11 +324,45 @@ function ToolModal({
   const setHue = (i: number, val: string) =>
     setHues((prev) => prev.map((h, j) => (j === i ? val : h)));
 
+  const uploadCover = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!file.type.toLowerCase().startsWith("image/")) {
+      toast.error("封面只能上传图片文件");
+      return;
+    }
+    setCoverUploading(true);
+    try {
+      const res = await uploadFileSmart(file, undefined, {
+        maxBytes: 10 * 1024 * 1024,
+        label: "工具封面",
+      });
+      if (res.success && res.data?.fileUrl) {
+        setCoverUrl(res.data.fileUrl);
+        setCoverPreviewFailed(false);
+        toast.success("封面已上传");
+      } else {
+        toast.error(res.message || "封面上传失败");
+      }
+    } catch {
+      toast.error("封面上传失败，请稍后重试");
+    } finally {
+      setCoverUploading(false);
+    }
+  };
+
   // 校验/接口失败 return false → AdminModal 保持打开，用户输入不丢。
   const save = async (): Promise<boolean> => {
     const nextTitle = title.trim();
     if (!nextTitle) {
       toast.error("工具标题不能为空");
+      return false;
+    }
+
+    const nextCoverUrl = coverUrl.trim();
+    if (nextCoverUrl && !validCoverUrl(nextCoverUrl)) {
+      toast.error("封面地址需为 http(s) 链接或站内绝对路径");
       return false;
     }
 
@@ -350,6 +402,7 @@ function ToolModal({
     if (nextTitle !== tool.title) dto.title = nextTitle;
     if (desc.trim() !== tool.desc) dto.desc = desc.trim();
     if (icon.trim() !== tool.icon) dto.icon = icon.trim();
+    if (nextCoverUrl !== (tool.coverUrl ?? "")) dto.coverUrl = nextCoverUrl;
     if (JSON.stringify(cover) !== JSON.stringify(tool.cover ?? null)) dto.cover = cover;
     if (placeholder.trim() !== tool.placeholder) dto.placeholder = placeholder.trim();
     if (showPage !== tool.showPage) dto.showPage = showPage;
@@ -383,7 +436,7 @@ function ToolModal({
       size="lg"
       title={`编辑工具 · ${tool.title}`}
       subtitle={`${tool.key} · ${tool.handler}（key 与 handler 由代码注册，不可修改）`}
-      footNote="变更将在保存后作用于工具页与创作台"
+      footNote="变更将在保存后作用于首页、工具中心、工具页与创作台"
       onClose={onClose}
       onSave={save}
     >
@@ -423,6 +476,65 @@ function ToolModal({
                   onChange={(e) => setHue(i, e.target.value)}
                 />
               ))}
+            </div>
+          </Field>
+          <Field
+            label="封面图片"
+            span={4}
+            hint="三个工具入口共用；留空时复用公开作品图，作品不可用时显示上方色相封面"
+          >
+            {coverUrl ? (
+              <div className={`adm-skill-cover-preview${coverPreviewFailed ? " is-error" : ""}`}>
+                {coverPreviewFailed ? (
+                  <span>封面无法加载，请检查地址或重新上传。</span>
+                ) : (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={coverUrl}
+                    alt={`${title || tool.title}封面预览`}
+                    onError={() => setCoverPreviewFailed(true)}
+                  />
+                )}
+                <button
+                  type="button"
+                  className="adm-btn ghost adm-tool-cover-action"
+                  onClick={() => {
+                    setCoverUrl("");
+                    setCoverPreviewFailed(false);
+                  }}
+                >
+                  移除封面
+                </button>
+              </div>
+            ) : null}
+            <div className="adm-skill-cover-row">
+              <input
+                aria-label="封面图片地址"
+                maxLength={1024}
+                spellCheck={false}
+                value={coverUrl}
+                onChange={(event) => {
+                  setCoverUrl(event.target.value);
+                  setCoverPreviewFailed(false);
+                }}
+                placeholder="https://…（留空自动取公开作品）"
+              />
+              <button
+                type="button"
+                className="adm-btn ghost adm-tool-cover-action"
+                disabled={coverUploading}
+                onClick={() => coverInputRef.current?.click()}
+              >
+                <Upload aria-hidden size={14} />
+                {coverUploading ? "上传中…" : "上传图片"}
+              </button>
+              <input
+                ref={coverInputRef}
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={uploadCover}
+              />
             </div>
           </Field>
           <Field label="输入占位文案" span={4} hint="仅「需用户描述」的工具生效">

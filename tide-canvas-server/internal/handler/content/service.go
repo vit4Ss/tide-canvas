@@ -332,6 +332,17 @@ func (s *service) homeFeed() (*HomeFeedVO, error) {
 	return feed, nil
 }
 
+// homeWorkCovers is the lightweight fallback-image pool shared by the tool hub
+// and standalone tool pages. It intentionally returns a non-nil slice when no
+// published work has a cover so clients can fall back to their mesh artwork.
+func (s *service) homeWorkCovers() ([]string, error) {
+	covers, err := s.repo.recentPostCovers(homeWorksLimit)
+	if covers == nil {
+		covers = []string{}
+	}
+	return covers, err
+}
+
 // --- notifications ---
 
 func (s *service) listNotifications(userID idgen.ID, q *NotificationQuery) ([]NotificationVO, int64, error) {

@@ -228,3 +228,21 @@ func toolHandlerNames() []string {
 	}
 	return out
 }
+
+// toolMediaHandlerNames returns every canonical tool handler that produces the
+// requested media type. Unlike toolHandlerNames it intentionally keeps shared
+// handlers (such as image_to_image): asset history classifies the output media,
+// not whether the task can be attributed exclusively to the tools surface.
+func toolMediaHandlerNames(toolType string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(model.CanonicalAiTools))
+	for i := range model.CanonicalAiTools {
+		t := &model.CanonicalAiTools[i]
+		if t.Type != toolType || seen[t.Handler] {
+			continue
+		}
+		seen[t.Handler] = true
+		out = append(out, t.Handler)
+	}
+	return out
+}

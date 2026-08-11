@@ -59,6 +59,17 @@ func (h *handler) homeFeed(c *gin.Context) {
 	response.OK(c, feed)
 }
 
+// homeWorkCovers handles GET /api/home/work-covers (public). It is a narrow
+// projection for smart-tool card fallbacks and does not include model data.
+func (h *handler) homeWorkCovers(c *gin.Context) {
+	covers, err := h.svc.homeWorkCovers()
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "failed to load home work covers")
+		return
+	}
+	response.OK(c, covers)
+}
+
 // --- notifications (auth) ---
 
 // listNotifications handles GET /api/notifications (auth, paged).

@@ -19,6 +19,7 @@ import (
 //	GET    /api/site/floors                  -> []HomeFloorLiteVO               (public)
 //	GET    /api/site/home-config             -> HomeGlobalVO                    (public)
 //	GET    /api/home/feed                    -> HomeFeedVO                      (public)
+//	GET    /api/home/work-covers             -> []string                        (public)
 //	GET    /api/notifications                NotificationQuery -> PageData<...> (auth)
 //	GET    /api/notifications/unread-count    -> { count }                      (auth)
 //	POST   /api/notifications/items/:id/read  -> void                           (auth)
@@ -42,7 +43,8 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 
 	// Aggregated homepage feed (recent works + hot models).
 	home := api.Group("/home")
-	home.GET("/feed", h.homeFeed) // -> HomeFeedVO
+	home.GET("/feed", h.homeFeed)              // -> HomeFeedVO
+	home.GET("/work-covers", h.homeWorkCovers) // -> []string
 
 	// Blog（公开读取；写入面在后台 /admin/blog，自建 + Telegram 频道同步同表）。
 	blog := api.Group("/blog")
@@ -52,9 +54,9 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	// Authenticated notification center.
 	notif := api.Group("/notifications")
 	notif.Use(middleware.JWTAuth(d))
-	notif.GET("", h.listNotifications)                // paged -> PageData<NotificationVO>
-	notif.GET("/unread-count", h.unreadCount)         // -> { count }
-	notif.POST("/read-all", h.readAll)                // mark all read -> void
-	notif.POST("/items/:id/read", h.readOne)          // mark one read -> void
-	notif.DELETE("/items/:id", h.deleteOne)           // delete one -> void
+	notif.GET("", h.listNotifications)        // paged -> PageData<NotificationVO>
+	notif.GET("/unread-count", h.unreadCount) // -> { count }
+	notif.POST("/read-all", h.readAll)        // mark all read -> void
+	notif.POST("/items/:id/read", h.readOne)  // mark one read -> void
+	notif.DELETE("/items/:id", h.deleteOne)   // delete one -> void
 }

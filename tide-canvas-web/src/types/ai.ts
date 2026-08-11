@@ -81,6 +81,8 @@ export interface AiToolVO {
   hd: boolean;
   /** 字形图标，如 ⤢ */
   icon: string;
+  /** 可选固定封面；空值由前端复用公开作品图，再回退 mesh 色相封面。 */
+  coverUrl: string;
   /** mesh 封面色相三元组；后端 CoverHues 解析失败时为 null */
   cover: [number, number, number] | null;
   placeholder: string;

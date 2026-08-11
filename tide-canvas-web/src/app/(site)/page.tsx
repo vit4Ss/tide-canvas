@@ -22,12 +22,12 @@
    ========================================================================== */
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { CAPS, type Cap } from "@/content/home";
 import { coverBg, type MeshHues } from "@/lib/mesh";
 import { contentApi } from "@/lib/content-api";
 import { aiApi } from "@/lib/api";
+import { FALLBACK_TOOLS, resolveToolCoverUrl } from "@/lib/ai-tools-catalog";
 import type {
   PostLiteVO,
   ModelLiteVO,
@@ -74,9 +74,14 @@ const CAP_LINK: Record<string, string> = {
   高清放大: "/tools/upscale",
 };
 
-export default function HomePage() {
-  const router = useRouter();
+type CapCard = Cap & {
+  href: string;
+  /** 仅智能工具卡拥有；用于跨页面稳定解析同一张封面。 */
+  toolKey?: string;
+  coverUrl?: string;
+};
 
+export default function HomePage() {
   // Real home data. /api/home/feed is a PUBLIC read — no session needed.
   // Hero / capabilities / faq stay static design content.
   const [works, setWorks] = useState<PostLiteVO[]>([]);
@@ -113,7 +118,7 @@ export default function HomePage() {
       })
       .catch(() => alive && setHomeCfg(DEFAULT_HOME_GLOBAL));
     aiApi.tools().then((res) => {
-      if (alive && res.success && Array.isArray(res.data) && res.data.length) {
+      if (alive && res.success && Array.isArray(res.data)) {
         setTools(res.data);
       }
     });
@@ -139,11 +144,21 @@ export default function HomePage() {
   }, [floors]);
 
   // 能力卡列表：前 3 张（文生图/文生视频/图生图）固定为创作台入口；工具卡来自
-  // 后台「工具管理」（/tools/<key>），接口未应答/失败时回退出厂 CAPS 条目。
-  const capList = useMemo<(Cap & { href: string })[]>(() => {
+  // 后台「工具管理」（/tools/<key>），接口未应答/失败时回退共享工具目录。
+  const capList = useMemo<CapCard[]>(() => {
     const withLink = (c: Cap) => ({ ...c, href: CAP_LINK[c.t] ?? "/studio" });
     const studio = CAPS.slice(0, 3).map(withLink);
-    if (tools === null) return [...studio, ...CAPS.slice(3).map(withLink)];
+    const toolCard = (t: (typeof FALLBACK_TOOLS)[number]): CapCard => ({
+      t: t.title,
+      d: t.desc,
+      ico: t.icon || "✦",
+      size: "",
+      cover: t.cover,
+      href: `/tools/${t.key}`,
+      toolKey: t.key,
+      coverUrl: t.coverUrl,
+    });
+    if (tools === null) return [...studio, ...FALLBACK_TOOLS.map(toolCard)];
     return [
       ...studio,
       ...tools.map((t) => ({
@@ -155,6 +170,8 @@ export default function HomePage() {
           ? t.cover
           : [220, 200, 260]) as MeshHues,
         href: `/tools/${t.key}`,
+        toolKey: t.key,
+        coverUrl: t.coverUrl,
       })),
     ];
   }, [tools]);
@@ -228,15 +245,31 @@ export default function HomePage() {
               };
               return capList.map((c, i) => {
                 const isBig = c.size === "big";
-                const own = takeCovers(isBig ? 3 : 1);
+                const toolCover = c.toolKey
+                  ? resolveToolCoverUrl(c.toolKey, c.coverUrl, covers)
+                  : "";
+                const own = toolCover ? [] : takeCovers(isBig ? 3 : 1);
                 return (
-                  <article
-                    key={c.t}
+                  <Link
+                    key={c.toolKey ?? c.t}
+                    href={c.href}
                     className={`cap reveal-scale ${c.size}`}
                     style={{ ["--rd" as string]: `${(i % 4) * 0.05}s` }}
-                    onClick={() => router.push(c.href)}
                   >
-                    {own.length > 0 ? (
+                    {toolCover ? (
+                      <div className="cap-cover" style={{ background: coverBg(c.cover) }}>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={toolCover}
+                          alt=""
+                          loading="lazy"
+                          decoding="async"
+                          onError={(event) => {
+                            event.currentTarget.hidden = true;
+                          }}
+                        />
+                      </div>
+                    ) : own.length > 0 ? (
                       own.map((url, li) => (
                         <div
                           key={url}
@@ -262,7 +295,7 @@ export default function HomePage() {
                       <p>{c.d}</p>
                       <span className="cap-go">试一下 →</span>
                     </div>
-                  </article>
+                  </Link>
                 );
               });
             })()}

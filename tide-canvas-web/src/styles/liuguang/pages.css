@@ -97,10 +97,12 @@
 .cap{position:relative; border-radius:var(--r-lg); overflow:hidden; cursor:pointer; border:1px solid var(--border);
   box-shadow:var(--shadow-sm); transition:transform .3s var(--ease), box-shadow .3s var(--ease), border-color .3s;}
 .cap:hover{transform:translateY(-5px); border-color:var(--border-strong); box-shadow:var(--shadow-lg);}
+.cap:focus-visible{border-color:var(--border-strong); box-shadow:var(--shadow-lg);}
 .cap.big{grid-column:span 2; grid-row:span 2;}
 .cap.wide{grid-column:span 2;}
 @media(max-width:560px){.cap.big,.cap.wide{grid-column:span 1;} .cap.big{grid-row:span 2;}}
 .cap-cover{position:absolute; inset:0; background-size:cover; background-position:center; transition:transform .5s var(--ease);}
+.cap-cover img{width:100%; height:100%; display:block; object-fit:cover;}
 .cap:hover .cap-cover{transform:scale(1.06);}
 /* 大卡片的作品轮播层：13.5s 一轮，三层依次交叉淡入 */
 .cap-cover.xfade{opacity:0; animation:capXfade 13.5s linear infinite;}
@@ -121,6 +123,7 @@
   opacity:0; transform:translateY(10px); transition:opacity .28s var(--ease) .05s, transform .28s var(--ease) .05s;}
 .cap-body h3{transform:translateY(0); transition:transform .28s var(--ease);}
 .cap:hover .cap-body p, .cap:hover .cap-go{opacity:1; transform:none;}
+.cap:focus-visible .cap-body p, .cap:focus-visible .cap-go{opacity:1; transform:none;}
 @media (hover:none), (max-width:1040px){
   .cap-body p, .cap-go{opacity:1; transform:none;}
 }

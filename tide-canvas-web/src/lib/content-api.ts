@@ -15,6 +15,7 @@ import type {
  * tide-canvas-server/internal/handler/content.
  *
  *   GET    /api/home/feed                       -> HomeFeedVO { works[], models[] }
+ *   GET    /api/home/work-covers                -> string[]
  *   GET    /api/site/footer                     -> FooterColVO[]  (后台配置管理 site.footerLinks)
  *   GET    /api/notifications                    -> PageData<NotificationVO>   (auth)
  *   GET    /api/notifications/unread-count       -> { count }                  (auth)
@@ -24,6 +25,8 @@ import type {
  */
 export const contentApi = {
   homeFeed: () => http.get<HomeFeedVO>("/api/home/feed"),
+  /** 智能工具旧数据的轻量封面池；只返回公开作品图片地址。 */
+  homeWorkCovers: () => http.get<string[]>("/api/home/work-covers"),
   /** 页脚链接列 — 后台「配置管理」可编辑，服务端带出厂默认兜底。 */
   footer: () => http.get<FooterColVO[]>("/api/site/footer"),
   /** 首页楼层 — 后台「首页楼层」的启用/排序/数量驱动首页区块。 */

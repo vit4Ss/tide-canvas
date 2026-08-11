@@ -615,6 +615,9 @@ type AiTool struct {
 	// Hd：前端为该工具优先选择 4K 模型并展开附加参数。
 	Hd   bool   `json:"hd"`
 	Icon string `gorm:"size:8" json:"icon"` // glyph char（如 ⤢）
+	// CoverURL is the optional fixed image shared by 首页能力卡、工具中心与独立
+	// 工具页。旧行保持空串并继续走前端作品图/mesh 兜底，无需数据回填。
+	CoverURL string `gorm:"column:cover_url;size:1024" json:"coverUrl"`
 	// CoverHues is a JSON "[h1,h2,h3]" hue triple driving the generated cover art.
 	CoverHues   string    `gorm:"size:64" json:"coverHues"`
 	Placeholder string    `gorm:"size:255" json:"placeholder"`

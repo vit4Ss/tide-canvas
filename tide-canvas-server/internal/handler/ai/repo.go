@@ -186,9 +186,15 @@ func applyTaskListFilters(tx *gorm.DB, userID idgen.ID, q taskQuery) *gorm.DB {
 func taskMediaHandlers(mediaType string) []string {
 	switch strings.ToLower(strings.TrimSpace(mediaType)) {
 	case "image":
-		return []string{"text_to_image", "image_to_image"}
+		return mergeHandlerNames(
+			[]string{"text_to_image", "image_to_image"},
+			toolMediaHandlerNames(model.AiToolTypeImage),
+		)
 	case "video":
-		return []string{"text_to_video", "image_to_video", "start_end_to_video", "reference_to_video"}
+		return mergeHandlerNames(
+			[]string{"text_to_video", "image_to_video", "start_end_to_video", "reference_to_video"},
+			toolMediaHandlerNames(model.AiToolTypeVideo),
+		)
 	case "audio":
 		return []string{"text_to_audio"}
 	case "3d":
@@ -201,6 +207,23 @@ func taskMediaHandlers(mediaType string) []string {
 	default:
 		return nil
 	}
+}
+
+// mergeHandlerNames preserves display/query order while preventing a shared
+// tool handler (currently image_to_image) from appearing twice in an IN list.
+func mergeHandlerNames(groups ...[]string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0)
+	for _, group := range groups {
+		for _, handler := range group {
+			if handler == "" || seen[handler] {
+				continue
+			}
+			seen[handler] = true
+			out = append(out, handler)
+		}
+	}
+	return out
 }
 
 func taskListOrder(q taskQuery) string {

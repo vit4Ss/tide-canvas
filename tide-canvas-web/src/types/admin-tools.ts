@@ -32,6 +32,8 @@ export interface AdminToolVO {
   hd: boolean;
   /** Glyph char like ⤢ (single character). */
   icon: string;
+  /** Fixed image shared by the homepage, tool hub and standalone tool page. */
+  coverUrl: string;
   /** Three cover hues [h1,h2,h3] (0–360); null when unset/unparsable. */
   cover: number[] | null;
   placeholder: string;
@@ -51,6 +53,8 @@ export interface AdminToolUpdateDTO {
   needPrompt?: boolean;
   hd?: boolean;
   icon?: string;
+  /** Empty string clears the fixed cover. */
+  coverUrl?: string;
   /** Exactly 3 ints in 0..360 to set. null/缺省 = 未提供、保持不变（后端
    *  *[]int 对 null 不做清除，目前没有清除封面的通道）。 */
   cover?: number[] | null;

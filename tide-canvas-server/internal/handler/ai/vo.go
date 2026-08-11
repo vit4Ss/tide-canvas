@@ -151,8 +151,8 @@ func toModelVO(m *model.AiModel) AiModelVO {
 
 // AiToolVO mirrors AiToolVO in types/ai.ts — the public shape of a 智能工具
 // (config-driven one-click edit). PresetPrompt 是服务端资产，故意不外发。
-// cover 是 CoverHues 解码出的 [h1,h2,h3] 色相数组（解析失败为 null）；
-// extraParams 是解码后的参数对象（空/非法为 null）。
+// coverUrl 是三处前台共用的可选固定图片；cover 是 CoverHues 解码出的
+// [h1,h2,h3] 色相数组（解析失败为 null）；extraParams 是解码后的参数对象。
 type AiToolVO struct {
 	Key   string `json:"key"`
 	Title string `json:"title"`
@@ -163,6 +163,7 @@ type AiToolVO struct {
 	NeedPrompt  bool           `json:"needPrompt"`
 	Hd          bool           `json:"hd"`
 	Icon        string         `json:"icon"`
+	CoverURL    string         `json:"coverUrl"`
 	Cover       []int          `json:"cover"`
 	Placeholder string         `json:"placeholder"`
 	ExtraParams map[string]any `json:"extraParams"`
@@ -218,6 +219,7 @@ func toToolVO(t *model.AiTool) AiToolVO {
 		NeedPrompt:  t.NeedPrompt,
 		Hd:          t.Hd,
 		Icon:        t.Icon,
+		CoverURL:    t.CoverURL,
 		Cover:       decodeToolHues(t.CoverHues),
 		Placeholder: t.Placeholder,
 		ExtraParams: decodeToolExtra(t.ExtraParams),

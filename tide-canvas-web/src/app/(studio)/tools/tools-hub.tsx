@@ -18,12 +18,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { aiApi } from "@/lib/api";
+import { loadToolCoverPool } from "@/lib/tool-cover-pool";
 import { useAuth } from "@/hooks/use-auth";
 import { coverBg } from "@/lib/mesh";
 import { toast } from "@/components/shared/toast";
 import {
   FALLBACK_TOOLS,
   PRESET_TOOL_LABELS,
+  resolveToolCoverUrl,
   TOOL_TYPE_LABEL,
   VIDEO_TOOL_HANDLERS,
 } from "@/lib/ai-tools-catalog";
@@ -41,10 +43,14 @@ export default function ToolsHub() {
 
   // 工具入口卡:null = 接口未应答/失败(渲染出厂兜底);[] = 成功但全部下线。
   const [tools, setTools] = useState<AiToolVO[] | null>(null);
+  const [coverPool, setCoverPool] = useState<string[]>([]);
   useEffect(() => {
     let alive = true;
     aiApi.tools().then((res) => {
       if (alive && res.success && Array.isArray(res.data)) setTools(res.data);
+    });
+    loadToolCoverPool().then((covers) => {
+      if (alive) setCoverPool(covers);
     });
     return () => {
       alive = false;
@@ -52,9 +58,14 @@ export default function ToolsHub() {
   }, []);
 
   const cards = useMemo(() => {
-    if (tools === null) return FALLBACK_TOOLS;
-    return [...tools].sort((a, b) => a.sortOrder - b.sortOrder);
-  }, [tools]);
+    const source = tools === null
+      ? FALLBACK_TOOLS
+      : [...tools].sort((a, b) => a.sortOrder - b.sortOrder);
+    return source.map((tool) => ({
+      ...tool,
+      resolvedCoverUrl: resolveToolCoverUrl(tool.key, tool.coverUrl, coverPool),
+    }));
+  }, [tools, coverPool]);
 
   /** handler → 工具标题(优先后台配置,其次内建兜底,最后原样)。 */
   const handlerTitle = useCallback(
@@ -162,7 +173,21 @@ export default function ToolsHub() {
                   className={styles.toolCover}
                   style={{ background: coverBg(t.cover ?? [220, 200, 260]) }}
                 >
-                  {t.icon ? <span aria-hidden>{t.icon}</span> : null}
+                  {t.resolvedCoverUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      key={t.resolvedCoverUrl}
+                      className={styles.toolCoverImage}
+                      src={t.resolvedCoverUrl}
+                      alt=""
+                      loading="lazy"
+                      decoding="async"
+                      onError={(event) => {
+                        event.currentTarget.hidden = true;
+                      }}
+                    />
+                  ) : null}
+                  {t.icon ? <span className={styles.toolCoverIcon} aria-hidden>{t.icon}</span> : null}
                 </div>
                 <div className={styles.toolBody}>
                   <h3>

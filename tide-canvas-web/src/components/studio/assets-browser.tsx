@@ -22,6 +22,7 @@ import { toast } from "@/components/shared/toast";
 import { confirmDialog } from "@/components/shared/confirm";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { AudioPlayerCard, SongCard } from "@/components/studio/audio-player-card";
+import { smartToolOriginLabel } from "@/lib/ai-tools-catalog";
 import {
   HANDLER_MEDIA_KIND,
   assetViewKey,
@@ -1127,6 +1128,10 @@ const TaskCard = memo(function TaskCard({
   onToggle?: (id: string) => void;
 }) {
   const kind = HANDLER_MEDIA_KIND[task.handler] ?? "image";
+  const toolOriginLabel = smartToolOriginLabel(task.handler, task.input);
+  const accessibleName = toolOriginLabel
+    ? `${toolOriginLabel} · ${task.modelName || "生成结果"}`
+    : task.modelName || "生成结果";
   const isVid = kind === "video";
   // 3D 的 resultUrl 是模型文件,封面取 resultMeta.assets 的预览截图。
   const threeDPreview = kind === "3d" ? threeDPreviewOf(task) : undefined;
@@ -1238,8 +1243,8 @@ const TaskCard = memo(function TaskCard({
         outline: selected ? "3px solid var(--accent, #7c8cff)" : undefined,
         outlineOffset: -3,
       }}
-      title={task.modelName}
-      aria-label={`${batchMode ? selected ? "取消选择" : "选择" : pickMode ? "选取" : "打开"}${task.modelName || "生成结果"}`}
+      title={accessibleName}
+      aria-label={`${batchMode ? selected ? "取消选择" : "选择" : pickMode ? "选取" : "打开"}${accessibleName}`}
       onClick={onClick}
     >
       {/* 视频:背景图铺不了 mp4(浏览器不渲染),用 video 首帧做卡片视觉 */}
@@ -1258,6 +1263,12 @@ const TaskCard = memo(function TaskCard({
         />
       ) : (
         <span className="cov" style={{ background: fallback }} />
+      )}
+      {toolOriginLabel && (
+        <span className="as-tool-origin" aria-hidden>
+          <span className="as-tool-kind">工具</span>
+          <span className="as-tool-name">{toolOriginLabel}</span>
+        </span>
       )}
       {pickMode && <span className="pick" />}
       {batchMode && <SelectBadge selected={!!selected} />}
