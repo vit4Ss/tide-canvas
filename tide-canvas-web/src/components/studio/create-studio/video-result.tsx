@@ -24,6 +24,8 @@ function stampOf(seconds: number): string {
 
 type VideoResultProps = Omit<VideoHTMLAttributes<HTMLVideoElement>, "src"> & {
   src: string;
+  /** Upload/reference previews only need playback; generated results also expose frame capture. */
+  showFrameCapture?: boolean;
 };
 
 export default function VideoResult({
@@ -32,6 +34,7 @@ export default function VideoResult({
   controls = true,
   playsInline = true,
   preload = "metadata",
+  showFrameCapture = true,
   onClick,
   ...videoProps
 }: VideoResultProps) {
@@ -114,27 +117,29 @@ export default function VideoResult({
           onClick?.(event);
         }}
       />
-      <button
-        type="button"
-        className={styles.capture}
-        title="截取当前帧（原始分辨率，保存至资产的生成历史）"
-        aria-label="截取当前帧"
-        disabled={busy}
-        onClick={(e) => {
-          e.stopPropagation();
-          void shoot();
-        }}
-      >
-        {busy ? (
-          <span className={styles.spinner} aria-hidden />
-        ) : (
-          <svg viewBox="0 0 24 24" aria-hidden>
-            <path d="M4 8a2 2 0 0 1 2-2h1.5l1-1.6h5l1 1.6H18a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
-            <circle cx="12" cy="12.5" r="3.2" />
-          </svg>
-        )}
-        <span className={styles.label}>{busy ? "截取中…" : "截取当前帧"}</span>
-      </button>
+      {showFrameCapture && (
+        <button
+          type="button"
+          className={styles.capture}
+          title="截取当前帧（原始分辨率，保存至资产的生成历史）"
+          aria-label="截取当前帧"
+          disabled={busy}
+          onClick={(e) => {
+            e.stopPropagation();
+            void shoot();
+          }}
+        >
+          {busy ? (
+            <span className={styles.spinner} aria-hidden />
+          ) : (
+            <svg viewBox="0 0 24 24" aria-hidden>
+              <path d="M4 8a2 2 0 0 1 2-2h1.5l1-1.6h5l1 1.6H18a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
+              <circle cx="12" cy="12.5" r="3.2" />
+            </svg>
+          )}
+          <span className={styles.label}>{busy ? "截取中…" : "截取当前帧"}</span>
+        </button>
+      )}
     </>
   );
 }
