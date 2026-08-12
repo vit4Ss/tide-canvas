@@ -2,6 +2,7 @@ package ai
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -90,10 +91,37 @@ func (h *handler) generate(c *gin.Context) {
 			response.Fail(c, response.CodeQuotaInsufficient, "积分不足，请充值后再试")
 		case errors.Is(err, errConcurrentLimit):
 			response.Fail(c, response.CodeConcurrentLimit, "当前生成任务已达到并发上限，请等待任一任务完成后再试")
+		case errors.Is(err, errVideoProbeUnavailable):
+			logger.L().Warn("ai: video duration probe unavailable", zap.Error(err))
+			response.Fail(c, response.CodeServerError, "暂时无法核验视频时长，请稍后重试")
 		default:
 			logger.L().Warn("ai: start generation failed",
 				zap.String("handler", dto.Handler), zap.String("detail", err.Error()))
 			response.Fail(c, response.CodeServerError, "系统异常，请联系客服")
+		}
+		return
+	}
+	response.OK(c, vo)
+}
+
+// upscaleQuote POST /api/ai/upscale-quote -> upscaleQuoteVO
+func (h *handler) upscaleQuote(c *gin.Context) {
+	var dto upscaleQuoteDTO
+	if err := c.ShouldBindJSON(&dto); err != nil || strings.TrimSpace(dto.ModelID) == "" ||
+		strings.TrimSpace(dto.VideoURL) == "" || strings.TrimSpace(dto.TargetResolution) == "" {
+		response.Fail(c, response.CodeBadRequest, "视频、模型和目标分辨率均不能为空")
+		return
+	}
+	vo, err := h.svc.quoteUpscale(c.Request.Context(), middleware.CurrentUserID(c), dto)
+	if err != nil {
+		switch {
+		case func() bool { var placement skillPlacementError; return errors.As(err, &placement) }():
+			response.Fail(c, response.CodeBadRequest, err.Error())
+		case errors.Is(err, errNoModel):
+			response.Fail(c, response.CodeModelUnavailable, "所选模型不可用，请更换后重试")
+		default:
+			logger.L().Warn("ai: quote video upscale failed", zap.String("detail", err.Error()))
+			response.Fail(c, response.CodeServerError, "暂时无法核验视频时长，请稍后重试")
 		}
 		return
 	}

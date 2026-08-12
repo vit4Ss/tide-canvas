@@ -112,8 +112,8 @@ func TestUpscaleParamsMapsStudioInput(t *testing.T) {
 	// snake_case 键同样可用;通用 resolution 键刻意忽略(视频节点残留的 480p
 	// 会撞超分白名单,不带档位走上游默认 1080p 反而能成)。
 	p = (&relayProviderClient{}).upscaleParams("bytedance/video-upscaler", map[string]any{
-		"video_url":  "https://example.com/in.mp4",
-		"resolution": "480p",
+		"video_url":         "https://example.com/in.mp4",
+		"resolution":        "480p",
 		"target_resolution": "2k",
 	})
 	if p.VideoURL != "https://example.com/in.mp4" || p.TargetResolution != "2k" {
@@ -210,6 +210,18 @@ func TestUserFacingGenErrorUsesSelectedRelayBusinessMessages(t *testing.T) {
 	} {
 		if got := userFacingGenError(err); got != userFacingSafetyErr {
 			t.Errorf("code 5002: got %q, want %q", got, userFacingSafetyErr)
+		}
+	}
+
+	// 5009 is Relay's dedicated copyright restriction. Use stable, actionable
+	// product copy and never leak or depend on the provider's raw wording.
+	for _, err := range []error{
+		&relaymedia.UpstreamError{HTTPStatus: 422, Code: "5009", Type: "copyright_restriction", Message: "copyrighted audio detail"},
+		&relaymedia.UpstreamError{HTTPStatus: 422, Code: "5009"},
+		fmt.Errorf("provider failed: %w", &relaymedia.UpstreamError{Code: "5009", Message: "rate limit exceeded"}),
+	} {
+		if got := userFacingGenError(err); got != userFacingCopyrightErr {
+			t.Errorf("code 5009: got %q, want %q", got, userFacingCopyrightErr)
 		}
 	}
 

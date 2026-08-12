@@ -57,7 +57,7 @@ export default function SiteNav() {
   const router = useRouter();
   const navRef = useRef<HTMLElement>(null);
   const acctRef = useRef<HTMLDivElement>(null);
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, hasAdminAccess } = useAuth();
   const logout = useAuthStore((s) => s.logout);
   const [open, setOpen] = useState(false);
   // 移动端主导航抽屉（≤880px .nav-links 隐藏后的唯一入口）
@@ -194,7 +194,9 @@ export default function SiteNav() {
                   <div className="acct-id">
                     <div className="acct-nm">
                       {name}
-                      {isAdmin && <span className="acct-role">管理员</span>}
+                      {hasAdminAccess && (
+                        <span className="acct-role">{isAdmin ? "管理员" : "运营人员"}</span>
+                      )}
                     </div>
                     <div className="acct-em">{isPlaceholderEmail(user.email) ? "未绑定邮箱" : user.email}</div>
                   </div>
@@ -229,7 +231,7 @@ export default function SiteNav() {
                     </span>
                     创作台
                   </Link>
-                  {isAdmin && (
+                  {hasAdminAccess && (
                     <Link href="/admin" role="menuitem" className="admin">
                       <span className="mi">
                         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>

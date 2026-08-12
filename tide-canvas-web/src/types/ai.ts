@@ -17,6 +17,13 @@ export type AiGenerateInput = Omit<AiGenerateDTO, "clientRequestId"> & {
   clientRequestId?: string;
 };
 
+export interface UpscaleQuoteVO {
+  durationSeconds: number;
+  ratePerSecond: number;
+  pointCost: number;
+  resolution: string;
+}
+
 export interface AiTaskVO {
   id: string; // 后端雪花 ID 序列化为字符串
   handler: string;

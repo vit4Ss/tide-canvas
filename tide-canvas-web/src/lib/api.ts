@@ -9,7 +9,7 @@ import type {
   ProjectCreateDTO, ProjectUpdateDTO, CanvasSaveDTO, ProjectQuery,
 } from "@/types/canvas";
 import type {
-  AiTaskVO, AiModelVO, AiHandlerVO, AiToolVO, AiGenerateDTO, AiGenerateInput, AiTaskQuery, CapturedFrameDTO,
+  AiTaskVO, AiModelVO, AiHandlerVO, AiToolVO, AiGenerateDTO, AiGenerateInput, AiTaskQuery, CapturedFrameDTO, UpscaleQuoteVO,
   AiGenerationLogVO, AiGenerationLogQuery,
 } from "@/types/ai";
 import type { FileCategory, FileVO, FileQuery } from "@/types/file";
@@ -74,6 +74,8 @@ export const projectApi = {
 export const aiApi = {
   generate: (data: AiGenerateDTO) =>
     http.post<AiTaskVO>("/api/ai/generate", data),
+  upscaleQuote: (data: { modelId: string; videoUrl: string; targetResolution: string }) =>
+    http.post<UpscaleQuoteVO>("/api/ai/upscale-quote", data),
   generateIdempotent: (
     data: AiGenerateInput,
     scope: string,

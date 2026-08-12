@@ -14,7 +14,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/api ./c
 # ====== Stage 2: 运行 ======
 FROM alpine:3.20
 # ca-certificates: 出站 HTTPS（OSS/Relay/Anthropic/SMTP）；tzdata: DSN loc=Local 用上海时区
-RUN apk add --no-cache ca-certificates tzdata
+# ffmpeg 提供 ffprobe：视频超分提交前由服务端读取真实媒体时长，作为权威计费依据。
+RUN apk add --no-cache ca-certificates tzdata ffmpeg
 ENV TZ=Asia/Shanghai \
     TIDECANVAS_ENV=test
 WORKDIR /app

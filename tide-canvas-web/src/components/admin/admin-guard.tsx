@@ -14,9 +14,8 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuthStore } from "@/stores/use-auth-store";
+import { hasAdminAccess } from "@/lib/admin-access";
 import { ADMIN_NAV_ITEMS, canAccessAdminItem, findActive } from "./admin-sidebar";
-
-const ADMIN_ROLE = 9;
 
 export function AdminGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -42,7 +41,7 @@ export function AdminGuard({ children }: { children: React.ReactNode }) {
         window.location.href = `/login?redirect=${back}`;
         return;
       }
-      const allowed = u.role === ADMIN_ROLE || (u.adminPerms?.length ?? 0) > 0;
+      const allowed = hasAdminAccess(u);
       setState(allowed ? "ok" : "denied");
     })();
     return () => {

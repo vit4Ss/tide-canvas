@@ -127,13 +127,37 @@ function positiveNumber(value: unknown): number {
 }
 
 function billingValue(model: AdminModelVO): number {
-  const rate = positiveNumber(model.config?.pricePerSecond);
-  return model.type === "upscale" && rate > 0 ? rate : positiveNumber(model.pointCost);
+  if (model.type === "upscale") {
+    const rates = Object.values(model.config?.pricePerSecondByResolution ?? {})
+      .map(positiveNumber)
+      .filter((rate) => rate > 0);
+    const legacy = positiveNumber(model.config?.pricePerSecond);
+    return rates.length ? Math.min(...rates) : legacy;
+  }
+  return positiveNumber(model.pointCost);
+}
+
+function initialUpscaleRates(config: ModelConfig): Record<string, number | string> {
+  const configured = config.pricePerSecondByResolution ?? {};
+  if (Object.keys(configured).length) return configured;
+  const legacy = positiveNumber(config.pricePerSecond);
+  if (legacy <= 0) return {};
+  const resolutions = config.resolutions?.length ? config.resolutions : RESOLUTION_OPTIONS.upscale;
+  return Object.fromEntries(resolutions.map((resolution) => [resolution, legacy]));
 }
 
 function billingLabel(model: AdminModelVO): string {
-  const rate = positiveNumber(model.config?.pricePerSecond);
-  return model.type === "upscale" && rate > 0 ? `${rate} /秒` : `${model.pointCost} /次`;
+  if (model.type !== "upscale") return `${model.pointCost} /次`;
+  const rates = Object.values(model.config?.pricePerSecondByResolution ?? {})
+    .map(positiveNumber)
+    .filter((rate) => rate > 0);
+  if (rates.length) {
+    const low = Math.min(...rates);
+    const high = Math.max(...rates);
+    return `${low}${high !== low ? `–${high}` : ""} /秒`;
+  }
+  const legacy = positiveNumber(model.config?.pricePerSecond);
+  return legacy > 0 ? `${legacy} /秒 · 待迁移` : "未定价";
 }
 
 export default function AdminModelsPage() {
@@ -742,6 +766,8 @@ function ModelModal({
     gridOutput: c0.gridOutput ?? false,
     priceMatrix: c0.priceMatrix ?? {},
     pricePerSecond: c0.pricePerSecond ?? "",
+    // 旧模型的统一每秒价展开到每个可用档位，运营只需按档调整差价即可完成迁移。
+    pricePerSecondByResolution: initialUpscaleRates(c0),
     uploadCost: c0.uploadCost ?? "",
   });
   const setC = (patch: Partial<ModelConfig>) => setCfg((p) => ({ ...p, ...patch }));
@@ -772,6 +798,17 @@ function ModelModal({
         }))
       : [{ key: "default", label: "默认（不分画质）" }];
   const matrixCols = cfg.resolutions ?? [];
+
+  const upscaleRate = (resolution: string): string | number =>
+    cfg.pricePerSecondByResolution?.[resolution] ?? "";
+  const setUpscaleRate = (resolution: string, value: string) =>
+    setCfg((previous) => ({
+      ...previous,
+      pricePerSecondByResolution: {
+        ...(previous.pricePerSecondByResolution ?? {}),
+        [resolution]: value,
+      },
+    }));
 
   const setCell = (row: string, col: string, val: string) =>
     setCfg((p) => {
@@ -813,16 +850,17 @@ function ModelModal({
       setErr("请填写模型名称");
       return false;
     }
-    const pricePerSecond = positiveNumber(cfg.pricePerSecond);
-    const hadPerSecondPrice = positiveNumber(c0.pricePerSecond) > 0;
-    const enteredPerSecondPrice = String(cfg.pricePerSecond ?? "").trim() !== "";
-    if (
-      isUpscale &&
-      pricePerSecond <= 0 &&
-      (!model || model.type !== "upscale" || hadPerSecondPrice || enteredPerSecondPrice)
-    ) {
-      setErr("请填写大于 0 的每秒积分");
-      return false;
+    const upscaleResolutions = cfg.resolutions?.length
+      ? cfg.resolutions
+      : (RESOLUTION_OPTIONS.upscale ?? []);
+    if (isUpscale) {
+      const missingResolution = upscaleResolutions.find(
+        (resolution) => positiveNumber(cfg.pricePerSecondByResolution?.[resolution]) <= 0,
+      );
+      if (missingResolution) {
+        setErr(`请填写 ${missingResolution.toUpperCase()} 的每秒积分`);
+        return false;
+      }
     }
     setSaving(true);
     setErr(null);
@@ -844,7 +882,16 @@ function ModelModal({
           // 计费(resolveCost)与前端估价都是 creditCost 优先，不写回的话上游
           // 同步预填的 credit_cost 会悄悄压过这里填的值（表单又不渲染它）。
           creditCost: parseFloat(pointCost.trim()) || 0,
-          pricePerSecond: isUpscale ? pricePerSecond : cfg.pricePerSecond,
+          pricePerSecondByResolution: isUpscale
+            ? Object.fromEntries(
+                upscaleResolutions.map((resolution) => [
+                  resolution,
+                  positiveNumber(cfg.pricePerSecondByResolution?.[resolution]),
+                ]),
+              )
+            : cfg.pricePerSecondByResolution,
+          // 新表单不再写统一单价；保留字段值只服务滚动升级中的旧实例。
+          pricePerSecond: cfg.pricePerSecond,
         },
       };
       const res = model
@@ -896,21 +943,10 @@ function ModelModal({
           </Field>
           {isUpscale ? (
             <Field
-              label="每秒积分"
-              required={!model || positiveNumber(c0.pricePerSecond) > 0}
-              hint={
-                model && positiveNumber(c0.pricePerSecond) <= 0
-                  ? "老模型留空仍按原价格计费；填写后改为每秒积分 × 视频秒数，并向上取整"
-                  : "按源视频实际时长计费；最终积分 = 每秒积分 × 视频秒数，并向上取整"
-              }
+              label="计费方式"
+              hint="服务端确认源视频时长后，按所选目标分辨率的每秒单价计算并向上取整"
             >
-              <input
-                value={cfg.pricePerSecond ?? ""}
-                onChange={(e) => setC({ pricePerSecond: e.target.value })}
-                placeholder="如：2.5"
-                inputMode="decimal"
-                aria-label="视频超分每秒积分"
-              />
+              <input value="按分辨率 / 秒" readOnly aria-label="视频超分计费方式" />
             </Field>
           ) : (
             <Field label="消耗积分" hint="按次扣费的积分（支持小数）；保存后即为计费与前台展示的权威价">
@@ -1184,13 +1220,46 @@ function ModelModal({
           </FormSection>
           <FormSection
             label="目标分辨率"
-            hint="不勾选 = 全部档位;ByteDance 模型不支持 720p,请按上游能力勾选"
+            hint="不勾选 = 全部档位；每个可用档位都必须在下方配置每秒积分"
           >
             <Chips
               options={(RESOLUTION_OPTIONS[type] ?? []).map((r) => ({ v: r, l: r.toUpperCase() }))}
               value={cfg.resolutions ?? []}
               onChange={(next) => setC({ resolutions: next })}
             />
+          </FormSection>
+          <FormSection
+            label="每秒积分"
+            hint="最终积分 = ceil（服务端确认的视频时长 × 用户所选分辨率单价）"
+          >
+            <div className="fmatrix">
+              <div className="adm-table-wrap" role="region" aria-label="视频超分每秒积分" tabIndex={0}>
+                <table aria-label="视频超分每秒积分">
+                  <thead>
+                    <tr>
+                      <th>目标分辨率</th>
+                      <th>积分 / 秒</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(cfg.resolutions?.length ? cfg.resolutions : RESOLUTION_OPTIONS.upscale).map((resolution) => (
+                      <tr key={resolution}>
+                        <td>{resolution.toUpperCase()}</td>
+                        <td>
+                          <input
+                            placeholder="如：2.5"
+                            inputMode="decimal"
+                            value={upscaleRate(resolution)}
+                            onChange={(event) => setUpscaleRate(resolution, event.target.value)}
+                            aria-label={`${resolution.toUpperCase()} 每秒积分`}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </FormSection>
         </FormCard>
       )}

@@ -13,6 +13,8 @@ export interface PointPricingConfig {
   pricing?: PriceMatrix;
   /** 视频超分每秒积分；配置后优先于所有旧版单次价格。 */
   pricePerSecond?: number | string;
+  /** 视频超分按目标分辨率设置的每秒积分。 */
+  pricePerSecondByResolution?: Record<string, number | string>;
   creditCost?: number | string;
 }
 
@@ -72,15 +74,26 @@ function imageBatchCount(input: Record<string, unknown>): number {
 }
 
 /**
- * 视频超分每秒积分。0 表示当前模型尚未配置新计费字段，应兼容旧版单次价。
+ * 视频超分每秒积分。新配置按目标分辨率取价；旧版统一每秒价只用于滚动升级。
  */
-export function resolveUpscalePointRate(config: PointPricingConfig | null | undefined): number {
+export function resolveUpscalePointRate(
+  config: PointPricingConfig | null | undefined,
+  resolution: string,
+): number {
+  const target = String(resolution ?? "").trim().toLowerCase();
+  const rates = Object.entries(config?.pricePerSecondByResolution ?? {});
+  if (rates.length) {
+    for (const [key, value] of rates) {
+      if (key.trim().toLowerCase() === target) return positivePointValue(value);
+    }
+    return 0;
+  }
   return positivePointValue(config?.pricePerSecond);
 }
 
 /**
- * 视频超分积分预估。新模型按 pricePerSecond × 源视频秒数向上取整；未配置
- * pricePerSecond 的历史模型继续走分辨率矩阵 → 覆盖价 → 模型固定价。
+ * 视频超分积分预估。按目标分辨率每秒积分 × 浏览器读取的源视频秒数向上取整。
+ * 服务端会重新读取媒体时长并给出最终权威积分；前端结果仅用于提交前预估。
  */
 export function resolveUpscalePointCost(
   config: PointPricingConfig | null | undefined,
@@ -88,13 +101,9 @@ export function resolveUpscalePointCost(
   resolution: string,
   modelPointCost?: number | string,
 ): number {
-  const rate = resolveUpscalePointRate(config);
-  if (rate > 0) {
-    return durationSeconds > 0 ? Math.ceil(rate * durationSeconds) : 0;
-  }
-  const matrixCost = matrixPrice(configuredMatrix(config), keyVariants("default"), keyVariants(resolution));
-  const base = matrixCost ?? fixedPointCost(config, modelPointCost);
-  return base > 0 ? Math.ceil(base) : 0;
+  void modelPointCost;
+  const rate = resolveUpscalePointRate(config, resolution);
+  return rate > 0 && durationSeconds > 0 ? Math.ceil(rate * durationSeconds) : 0;
 }
 
 

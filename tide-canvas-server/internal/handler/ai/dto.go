@@ -39,6 +39,22 @@ type generateDTO struct {
 	PinnedSkillPrompt string   `json:"-"`
 }
 
+// upscaleQuoteDTO requests an authoritative pre-submit quote. The service
+// verifies video ownership and probes duration exactly like generate(); the
+// generation path still rechecks so a quote can never authorize a later debit.
+type upscaleQuoteDTO struct {
+	ModelID          string `json:"modelId"`
+	VideoURL         string `json:"videoUrl"`
+	TargetResolution string `json:"targetResolution"`
+}
+
+type upscaleQuoteVO struct {
+	DurationSeconds float64 `json:"durationSeconds"`
+	RatePerSecond   float64 `json:"ratePerSecond"`
+	PointCost       int     `json:"pointCost"`
+	Resolution      string  `json:"resolution"`
+}
+
 // gridSplitDTO is the body of POST /api/ai/grid-split.
 //
 // Matches the frontend aiApi.gridSplit payload:

@@ -14,6 +14,9 @@ package admin
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -82,28 +85,28 @@ type modelsHandler struct {
 // the model price (points cost to run / acquire). This is the same row the public
 // 模型市场 renders, just in its administrative shape.
 type AdminModelVO struct {
-	ID          idgen.ID  `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
+	ID          idgen.ID        `json:"id"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
 	CoverUrl    string          `json:"coverUrl"`
 	Tags        string          `json:"tags"`
 	Type        string          `json:"type"`     // media category: text | image | video | audio | 3d
 	ModelKey    string          `json:"modelKey"` // upstream model id
 	Config      json.RawMessage `json:"config"`   // per-model generation settings (object or null)
 	CategoryId  *idgen.ID       `json:"categoryId"`
-	AiModelId   *idgen.ID `json:"aiModelId"`
-	AuthorId    idgen.ID  `json:"authorId"`
-	AuthorName  string    `json:"authorName"`
-	Price       string    `json:"price"`     // decimal as string
-	PointCost   string    `json:"pointCost"` // alias of price (points to run)
-	Status      int       `json:"status"`    // 0 待审核 / 1 已上架 / 2 已下架
-	Enabled     bool      `json:"enabled"`   // Status == 1
-	SortOrder   int       `json:"sortOrder"` // 类型内顺序（小值在前）
-	UseCount    int       `json:"useCount"`
-	Usage       int       `json:"usage"` // alias of useCount
-	LikeCount   int       `json:"likeCount"`
-	CreateTime  string    `json:"createTime"`
-	UpdateTime  string    `json:"updateTime"`
+	AiModelId   *idgen.ID       `json:"aiModelId"`
+	AuthorId    idgen.ID        `json:"authorId"`
+	AuthorName  string          `json:"authorName"`
+	Price       string          `json:"price"`     // decimal as string
+	PointCost   string          `json:"pointCost"` // alias of price (points to run)
+	Status      int             `json:"status"`    // 0 待审核 / 1 已上架 / 2 已下架
+	Enabled     bool            `json:"enabled"`   // Status == 1
+	SortOrder   int             `json:"sortOrder"` // 类型内顺序（小值在前）
+	UseCount    int             `json:"useCount"`
+	Usage       int             `json:"usage"` // alias of useCount
+	LikeCount   int             `json:"likeCount"`
+	CreateTime  string          `json:"createTime"`
+	UpdateTime  string          `json:"updateTime"`
 }
 
 // AdminAiModelVO is the read-only generation-registry view of an ai_model.
@@ -162,35 +165,35 @@ func (q *AdminModelQuery) offset() int { return (q.PageNum - 1) * q.PageSize }
 
 // AdminModelCreateDTO creates a market_model row (immediately live on /models).
 type AdminModelCreateDTO struct {
-	Name        string  `json:"name" binding:"required,max=128"`
-	Description string  `json:"description" binding:"omitempty,max=8192"`
-	CoverUrl    string  `json:"coverUrl" binding:"omitempty,max=512"`
-	Tags        string  `json:"tags" binding:"omitempty,max=512"`
-	Type        string  `json:"type" binding:"omitempty,oneof=text image video audio 3d upscale"`
-	ModelKey    string  `json:"modelKey" binding:"omitempty,max=128"`
+	Name        string          `json:"name" binding:"required,max=128"`
+	Description string          `json:"description" binding:"omitempty,max=8192"`
+	CoverUrl    string          `json:"coverUrl" binding:"omitempty,max=512"`
+	Tags        string          `json:"tags" binding:"omitempty,max=512"`
+	Type        string          `json:"type" binding:"omitempty,oneof=text image video audio 3d upscale"`
+	ModelKey    string          `json:"modelKey" binding:"omitempty,max=128"`
 	Config      json.RawMessage `json:"config" binding:"omitempty"`
-	CategoryId  string  `json:"categoryId" binding:"omitempty"`
-	AiModelId   string  `json:"aiModelId" binding:"omitempty"`
-	AuthorId    string  `json:"authorId" binding:"omitempty"`
-	Price       *string `json:"price" binding:"omitempty"`
-	PointCost   *string `json:"pointCost" binding:"omitempty"` // alias for price
-	Status      *int    `json:"status" binding:"omitempty"`
+	CategoryId  string          `json:"categoryId" binding:"omitempty"`
+	AiModelId   string          `json:"aiModelId" binding:"omitempty"`
+	AuthorId    string          `json:"authorId" binding:"omitempty"`
+	Price       *string         `json:"price" binding:"omitempty"`
+	PointCost   *string         `json:"pointCost" binding:"omitempty"` // alias for price
+	Status      *int            `json:"status" binding:"omitempty"`
 }
 
 // AdminModelUpdateDTO is a partial update; nil fields are left unchanged.
 type AdminModelUpdateDTO struct {
-	Name        *string `json:"name" binding:"omitempty,max=128"`
-	Description *string `json:"description" binding:"omitempty,max=8192"`
-	CoverUrl    *string `json:"coverUrl" binding:"omitempty,max=512"`
-	Tags        *string `json:"tags" binding:"omitempty,max=512"`
-	Type        *string `json:"type" binding:"omitempty,oneof=text image video audio 3d upscale"`
-	ModelKey    *string `json:"modelKey" binding:"omitempty,max=128"`
+	Name        *string         `json:"name" binding:"omitempty,max=128"`
+	Description *string         `json:"description" binding:"omitempty,max=8192"`
+	CoverUrl    *string         `json:"coverUrl" binding:"omitempty,max=512"`
+	Tags        *string         `json:"tags" binding:"omitempty,max=512"`
+	Type        *string         `json:"type" binding:"omitempty,oneof=text image video audio 3d upscale"`
+	ModelKey    *string         `json:"modelKey" binding:"omitempty,max=128"`
 	Config      json.RawMessage `json:"config" binding:"omitempty"`
-	CategoryId  *string `json:"categoryId" binding:"omitempty"`
-	AiModelId   *string `json:"aiModelId" binding:"omitempty"`
-	Price       *string `json:"price" binding:"omitempty"`
-	PointCost   *string `json:"pointCost" binding:"omitempty"`
-	Status      *int    `json:"status" binding:"omitempty"`
+	CategoryId  *string         `json:"categoryId" binding:"omitempty"`
+	AiModelId   *string         `json:"aiModelId" binding:"omitempty"`
+	Price       *string         `json:"price" binding:"omitempty"`
+	PointCost   *string         `json:"pointCost" binding:"omitempty"`
+	Status      *int            `json:"status" binding:"omitempty"`
 }
 
 // AdminModelStatusDTO toggles publish state. Either status (0/1/2) or enabled may
@@ -284,6 +287,12 @@ func (h *modelsHandler) create(c *gin.Context) {
 	mType := strings.TrimSpace(dto.Type)
 	if mType == "" {
 		mType = "image"
+	}
+	if mType == "upscale" {
+		if err := validateUpscalePricingConfig(dto.Config); err != nil {
+			response.Fail(c, response.CodeBadRequest, err.Error())
+			return
+		}
 	}
 	m := &model.MarketModel{
 		Name:        strings.TrimSpace(dto.Name),
@@ -467,6 +476,33 @@ func (h *modelsHandler) update(c *gin.Context) {
 			return
 		}
 	}
+	// The UI sends type+config together, but the API also protects partial/manual
+	// updates so an upscaler can never be saved with an unpriced output tier.
+	if dto.Config != nil || dto.Type != nil {
+		var current model.MarketModel
+		if err := h.db.Select("type", "config").First(&current, "id = ?", id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				response.Fail(c, response.CodeNotFound, "model not found")
+			} else {
+				response.Fail(c, response.CodeServerError, "failed to load model")
+			}
+			return
+		}
+		effectiveType := current.Type
+		if dto.Type != nil {
+			effectiveType = strings.TrimSpace(*dto.Type)
+		}
+		effectiveConfig := json.RawMessage(current.Config)
+		if dto.Config != nil {
+			effectiveConfig = dto.Config
+		}
+		if effectiveType == "upscale" {
+			if err := validateUpscalePricingConfig(effectiveConfig); err != nil {
+				response.Fail(c, response.CodeBadRequest, err.Error())
+				return
+			}
+		}
+	}
 
 	fields := map[string]any{}
 	if dto.Name != nil {
@@ -543,6 +579,23 @@ func (h *modelsHandler) setStatus(c *gin.Context) {
 	if status < 0 {
 		response.Fail(c, response.CodeBadRequest, "status or enabled required")
 		return
+	}
+	if status == 1 {
+		var current model.MarketModel
+		if err := h.db.Select("type", "config").First(&current, "id = ?", id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				response.Fail(c, response.CodeNotFound, "model not found")
+			} else {
+				response.Fail(c, response.CodeServerError, "failed to load model")
+			}
+			return
+		}
+		if current.Type == "upscale" {
+			if err := validateUpscalePricingConfig(json.RawMessage(current.Config)); err != nil {
+				response.Fail(c, response.CodeBadRequest, err.Error())
+				return
+			}
+		}
 	}
 
 	res := h.db.Model(&model.MarketModel{}).Where("id = ?", id).Update("status", status)
@@ -740,6 +793,48 @@ func rawToString(raw json.RawMessage) string {
 		return ""
 	}
 	return string(raw)
+}
+
+var defaultUpscalePricingResolutions = []string{"720p", "1080p", "2k", "4k"}
+
+func validateUpscalePricingConfig(raw json.RawMessage) error {
+	if len(raw) == 0 || !json.Valid(raw) {
+		return errors.New("超分模型必须配置各目标分辨率的每秒积分")
+	}
+	var cfg struct {
+		Resolutions                []string                   `json:"resolutions"`
+		PricePerSecondByResolution map[string]json.RawMessage `json:"pricePerSecondByResolution"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return errors.New("超分模型定价配置无效")
+	}
+	resolutions := cfg.Resolutions
+	if len(resolutions) == 0 {
+		resolutions = defaultUpscalePricingResolutions
+	}
+	for _, resolution := range resolutions {
+		resolution = strings.ToLower(strings.TrimSpace(resolution))
+		if resolution == "" {
+			continue
+		}
+		rate := 0.0
+		for key, encoded := range cfg.PricePerSecondByResolution {
+			if !strings.EqualFold(strings.TrimSpace(key), resolution) {
+				continue
+			}
+			if err := json.Unmarshal(encoded, &rate); err != nil {
+				var text string
+				if json.Unmarshal(encoded, &text) == nil {
+					rate, _ = strconv.ParseFloat(strings.TrimSpace(text), 64)
+				}
+			}
+			break
+		}
+		if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
+			return fmt.Errorf("请配置 %s 的每秒积分", strings.ToUpper(resolution))
+		}
+	}
+	return nil
 }
 
 // stringToRaw returns the stored config as a JSON object for the VO, or nil

@@ -50,74 +50,50 @@ func TestResolveCostImageFuzzyMatrix(t *testing.T) {
 	}
 }
 
-// 超分请求的档位键是 targetResolution(不发 resolution/clarity):必须兜底进
-// 清晰度轴,后台按目标分辨率配的 default 行才能命中;未配矩阵落模型固定价。
-func TestResolveCostUpscaleTargetResolution(t *testing.T) {
+func TestResolveCostUpscaleRequiresResolutionRate(t *testing.T) {
 	m := &model.AiModel{
 		Type:      "upscale",
 		PointCost: 50,
 		Config:    `{"pricing":{"default":{"1080p":30,"4k":120}}}`,
 	}
-	if got := resolveCost(m, json.RawMessage(`{"targetResolution":"4k","videoUrl":"https://x/in.mp4"}`)); got != 120 {
-		t.Errorf("targetResolution should hit the default row: got %d, want 120", got)
-	}
-	if got := resolveCost(m, json.RawMessage(`{"target_resolution":"1080p"}`)); got != 30 {
-		t.Errorf("snake_case target_resolution should also hit: got %d, want 30", got)
-	}
-	// 未配置的档位(上游默认 1080p 但请求未带档位)落模型固定价
-	if got := resolveCost(m, json.RawMessage(`{"videoUrl":"https://x/in.mp4"}`)); got != 50 {
-		t.Errorf("no resolution should fall back to point cost: got %d, want 50", got)
-	}
-	// 通用 resolution 键不参与超分计费(与 upscaleParams 同口径,双键并存时
-	// 以 targetResolution 为准,计费档=实际提交档)
-	if got := resolveCost(m, json.RawMessage(`{"resolution":"1080p","targetResolution":"4k"}`)); got != 120 {
-		t.Errorf("targetResolution must win over generic resolution: got %d, want 120", got)
-	}
-	// 残留的 batchCount 不得放大计费:超分永远单产出
-	if got := resolveCost(m, json.RawMessage(`{"targetResolution":"4k","batchCount":4}`)); got != 120 {
-		t.Errorf("batchCount must not multiply upscale cost: got %d, want 120", got)
+	if got := resolveCost(m, json.RawMessage(`{"duration":10,"targetResolution":"4k"}`)); got != 0 {
+		t.Errorf("legacy matrix/fixed price must not bill upscale: got %d, want 0", got)
 	}
 }
 
-func TestResolveCostUpscalePerSecond(t *testing.T) {
+func TestResolveCostUpscalePerResolutionSecond(t *testing.T) {
 	m := &model.AiModel{
 		Type:      "upscale",
 		PointCost: 50,
-		Config:    `{"pricePerSecond":"1.25","pricing":{"default":{"4k":120}},"creditCost":80}`,
+		Config:    `{"pricePerSecondByResolution":{"1080p":"1.25","4K":2.5},"pricePerSecond":9,"pricing":{"default":{"4k":120}},"creditCost":80}`,
 	}
 
-	// 每秒价优先于旧矩阵、覆盖价和模型固定价，且与目标分辨率、batchCount 无关。
-	if got := resolveCost(m, json.RawMessage(`{"duration":4.2,"targetResolution":"4k","batchCount":4}`)); got != 6 {
-		t.Errorf("per-second price should take precedence and round up: got %d, want 6", got)
+	if got := resolveCost(m, json.RawMessage(`{"duration":4.2,"targetResolution":"4k","batchCount":4}`)); got != 11 {
+		t.Errorf("4k rate should be selected and rounded up: got %d, want 11", got)
 	}
 	if got := resolveCost(m, json.RawMessage(`{"duration":"4s","targetResolution":"1080p"}`)); got != 5 {
 		t.Errorf("string duration should be accepted: got %d, want 5", got)
 	}
-	m.Config = `{"pricePerSecond":2.5}`
-	if got := resolveCost(m, json.RawMessage(`{"duration":4}`)); got != 10 {
-		t.Errorf("2.5 points per second × 4 seconds: got %d, want 10", got)
+	if got := resolveUpscalePointRate(m, "4k"); got != 2.5 {
+		t.Errorf("resolution rate = %v, want 2.5", got)
 	}
 
 	if cost, configured, valid := resolveUpscaleTimeCost(m, json.RawMessage(`{"targetResolution":"4k"}`)); cost != 0 || !configured || valid {
 		t.Errorf("missing duration = (%d, %v, %v), want (0, true, false)", cost, configured, valid)
 	}
+	if cost, configured, valid := resolveUpscaleTimeCost(m, json.RawMessage(`{"duration":4,"targetResolution":"2k"}`)); cost != 0 || configured || valid {
+		t.Errorf("unpriced resolution = (%d, %v, %v), want (0, false, false)", cost, configured, valid)
+	}
 }
 
-func TestResolveCostUpscalePerSecondKeepsLegacyFallback(t *testing.T) {
+func TestResolveCostUpscaleKeepsUniformPerSecondRollingFallback(t *testing.T) {
 	m := &model.AiModel{
 		Type:      "upscale",
 		PointCost: 50,
-		Config:    `{"pricing":{"default":{"4k":120}}}`,
+		Config:    `{"pricePerSecond":"1.25","pricing":{"default":{"4k":120}}}`,
 	}
-	if cost, configured, valid := resolveUpscaleTimeCost(m, json.RawMessage(`{"targetResolution":"4k"}`)); cost != 0 || configured || valid {
-		t.Errorf("legacy model = (%d, %v, %v), want unconfigured", cost, configured, valid)
-	}
-	if got := resolveCost(m, json.RawMessage(`{"targetResolution":"4k"}`)); got != 120 {
-		t.Errorf("legacy matrix price changed: got %d, want 120", got)
-	}
-	m.Config = `{"pricePerSecond":"","pricing":{"default":{"4k":120}}}`
-	if got := resolveCost(m, json.RawMessage(`{"targetResolution":"4k"}`)); got != 120 {
-		t.Errorf("blank new field must keep legacy matrix price: got %d, want 120", got)
+	if got := resolveCost(m, json.RawMessage(`{"duration":4.2,"targetResolution":"4k"}`)); got != 6 {
+		t.Errorf("uniform rolling fallback: got %d, want 6", got)
 	}
 }
 

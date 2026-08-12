@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -78,6 +79,21 @@ func TestAdminModelDTOsAcceptUpscaleType(t *testing.T) {
 	}
 	if updateDTO.Type == nil || *updateDTO.Type != "upscale" {
 		t.Fatalf("update type = %v, want upscale", updateDTO.Type)
+	}
+}
+
+func TestValidateUpscalePricingConfig(t *testing.T) {
+	valid := json.RawMessage(`{"resolutions":["1080p","4k"],"pricePerSecondByResolution":{"1080P":"1.25","4k":2.5}}`)
+	if err := validateUpscalePricingConfig(valid); err != nil {
+		t.Fatalf("valid config rejected: %v", err)
+	}
+	missing := json.RawMessage(`{"resolutions":["1080p","4k"],"pricePerSecondByResolution":{"1080p":1.25}}`)
+	if err := validateUpscalePricingConfig(missing); err == nil || !strings.Contains(err.Error(), "4K") {
+		t.Fatalf("missing 4k rate error = %v", err)
+	}
+	legacy := json.RawMessage(`{"resolutions":["4k"],"pricePerSecond":2.5}`)
+	if err := validateUpscalePricingConfig(legacy); err == nil {
+		t.Fatal("legacy uniform rate must be migrated before save")
 	}
 }
 

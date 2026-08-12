@@ -123,6 +123,7 @@ func StartTaskReconciler(ctx context.Context, d *app.Deps) {
 // Frontend contract (tide-canvas-web/src/lib/api.ts -> aiApi):
 //
 //	POST   /api/ai/generate     AiGenerateDTO -> AiTaskVO                     (auth)
+//	POST   /api/ai/upscale-quote -> authoritative duration/rate/point quote    (auth)
 //	GET    /api/ai/optimize-cost -> {cost:int}                                (auth)
 //	POST   /api/ai/grid-split   {imageUrl,rows,cols,cells?} -> string[]       (auth)
 //	POST   /api/ai/tasks/frame-capture capturedFrameDTO -> AiTaskVO          (auth)
@@ -145,6 +146,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	authed := g.Group("")
 	authed.Use(middleware.JWTAuth(d))
 	authed.POST("/generate", h.generate)
+	authed.POST("/upscale-quote", h.upscaleQuote)
 	authed.POST("/optimize-prompt", h.optimizePrompt)
 	authed.GET("/optimize-cost", h.optimizeCost)
 	authed.POST("/grid-split", h.gridSplit)

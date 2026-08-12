@@ -547,6 +547,10 @@ body.imini .tool-page .tp-btn.ghost {
   line-height: 1.45;
   color: var(--text-dim);
 }
+.tool-page .tp-cost-summary .tp-inline-retry {
+  min-height: 32px;
+  margin-top: 8px;
+}
 .tool-page .tp-cost-summary > strong {
   flex: none;
   font-size: 20px;

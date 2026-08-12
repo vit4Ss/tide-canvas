@@ -26,3 +26,20 @@ func TestDirectGenerationFingerprintCanonicalizesJSON(t *testing.T) {
 		t.Fatal("different generation requests produced the same hash")
 	}
 }
+
+func TestDirectGenerationFingerprintIgnoresClientUpscaleDuration(t *testing.T) {
+	a := generateDTO{Handler: "video_upscale", ModelID: "upscale-1", Input: json.RawMessage(`{"videoUrl":"https://cdn/x.mp4","targetResolution":"4k","duration":1}`)}
+	b := a
+	b.Input = json.RawMessage(`{"videoUrl":"https://cdn/x.mp4","targetResolution":"4k","duration":999}`)
+	ha, err := directGenerationFingerprint(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hb, err := directGenerationFingerprint(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ha != hb {
+		t.Fatalf("client duration changed upscale idempotency key: %s != %s", ha, hb)
+	}
+}

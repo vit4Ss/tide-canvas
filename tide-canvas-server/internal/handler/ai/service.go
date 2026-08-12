@@ -52,6 +52,9 @@ type service struct {
 	systemPrompt string
 	// storage backs durable server-side artifacts (e.g. grid-split cells).
 	storage storage.StorageStrategy
+	// confirmUpscaleDuration verifies ownership and reads source media metadata
+	// server-side before any points are charged. It is injectable in tests.
+	confirmUpscaleDuration upscaleDurationConfirmer
 	// docHosts 是启动时存储策略 FetchHosts() 的本站资产 host 列表（CDN/区域/
 	// 加速域名）：画布 AI 助手转发文档附件时只允许抓取这些 host 或
 	// *.aliyuncs.com 的 URL（SSRF 防护，见 pkg/chatattach）。
@@ -81,6 +84,7 @@ func newService(d *app.Deps) *service {
 	if d.Storage != nil {
 		s.docHosts = d.Storage.FetchHosts()
 	}
+	s.confirmUpscaleDuration = s.confirmOwnedVideoDuration
 	return s
 }
 
@@ -241,8 +245,8 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 	if m == nil || !m.Enabled {
 		return nil, errNoModel
 	}
-	if _, configured, valid := resolveUpscaleTimeCost(m, dto.Input); configured && !valid {
-		return nil, skillPlacementError{message: "无法读取源视频时长，请重新选择视频"}
+	if err := s.prepareUpscalePricingInput(ctx, userID, &dto, m); err != nil {
+		return nil, err
 	}
 
 	now := time.Now()
@@ -387,6 +391,13 @@ func directGenerationFingerprint(dto generateDTO) (string, error) {
 	if len(dto.Input) > 0 && strings.TrimSpace(string(dto.Input)) != "" {
 		if err := json.Unmarshal(dto.Input, &input); err != nil {
 			return "", err
+		}
+	}
+	// The browser's duration is only a display estimate for video upscale. It
+	// cannot make two otherwise identical, server-priced requests distinct.
+	if strings.EqualFold(strings.TrimSpace(dto.Handler), "video_upscale") {
+		if obj, ok := input.(map[string]any); ok {
+			delete(obj, "duration")
 		}
 	}
 	payload := struct {
@@ -1279,8 +1290,9 @@ func errMessage(err error) string {
 // 原文(含上游 HTTP 细节、密钥路由等)一律不出站——详情进 zap 日志与
 // ai_generation_logs / model_call_log(admin 后台可查)。
 const (
-	userFacingGenErr    = "系统异常，请联系客服"
-	userFacingSafetyErr = "内容未通过安全审核，请调整后重试"
+	userFacingGenErr       = "系统异常，请联系客服"
+	userFacingSafetyErr    = "内容未通过安全审核，请调整后重试"
+	userFacingCopyrightErr = "提交的音频或创作内容涉及版权限制，请更换音频素材，或调整歌词与描述后重试"
 )
 
 // inputErrorRules 把「用户可自行修正的输入类」上游错误映射为具体、可操作的
@@ -1375,14 +1387,17 @@ func userFacingGenError(err error) string {
 	if err == nil {
 		return userFacingGenErr
 	}
-	// Relay 数字业务码优先于旧的 msg 关键词分类。5002（安全审核）统一
-	// 使用产品中文文案；5003（输入不合法）展示 Relay 给出的具体原因；
-	// 其余业务码保持旧逻辑，继续按 msg 规则映射或落到系统异常兜底。
+	// Relay 数字业务码优先于旧的 msg 关键词分类。5002（安全审核）与
+	// 5009（版权限制）使用稳定的产品中文文案；5003（输入不合法）展示
+	// Relay 给出的具体原因；其余业务码保持旧逻辑，继续按 msg 规则映射
+	// 或落到系统异常兜底。
 	var relayErr *relaymedia.UpstreamError
 	if errors.As(err, &relayErr) {
 		switch relayErr.Code {
 		case "5002":
 			return userFacingSafetyErr
+		case "5009":
+			return userFacingCopyrightErr
 		case "5003":
 			if message := strings.TrimSpace(relayErr.Message); message != "" {
 				return relayDirectUserMessage(message)

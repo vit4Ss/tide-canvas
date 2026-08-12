@@ -336,6 +336,17 @@ export default function ToolPage() {
   const [resolution, setResolution] = useState("");
   const [videoDuration, setVideoDuration] = useState(0);
   const [videoMetadataState, setVideoMetadataState] = useState<VideoMetadataState>("idle");
+  const [serverQuote, setServerQuote] = useState<{
+    durationSeconds: number;
+    ratePerSecond: number;
+    pointCost: number;
+    resolution: string;
+    modelId: string;
+    videoUrl: string;
+  } | null>(null);
+  const [serverQuoteState, setServerQuoteState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [serverQuoteError, setServerQuoteError] = useState("");
+  const [serverQuoteRevision, setServerQuoteRevision] = useState(0);
   // 「从资产库选取」弹窗
   const [picking, setPicking] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -530,21 +541,76 @@ export default function ToolPage() {
   // 避免高亮消失、又把不支持的档提交上去。
   const activeResolution = resolutionOptions.includes(resolution) ? resolution : defaultResolution;
   const activePointRate = useMemo(
-    () => resolveUpscalePointRate(videoModel?.config),
-    [videoModel],
+    () => resolveUpscalePointRate(videoModel?.config, activeResolution),
+    [videoModel, activeResolution],
   );
   const activePointCost = useMemo(
     () => upscalePointCost(videoModel, videoDuration, activeResolution),
     [videoModel, videoDuration, activeResolution],
   );
-  const requiresVideoDuration = activePointRate > 0;
+  const activeResolutionPriced = activePointRate > 0;
   const videoDurationReady = videoMetadataState === "ready" && videoDuration > 0;
+  const activeVideoModelId = videoModel?.modelKey || videoModel?.id || "";
+  const serverQuoteReady =
+    serverQuoteState === "ready" &&
+    serverQuote?.resolution.toLowerCase() === activeResolution.toLowerCase() &&
+    serverQuote?.modelId === activeVideoModelId &&
+    serverQuote?.videoUrl === source;
+
+  // 浏览器时长只用于即时预估；确认页随后向服务端申请权威报价。生成提交时
+  // 服务端还会再次探测，报价不能被当作绕过最终计费检查的凭证。
+  useEffect(() => {
+    if (!isVideoDef || !source || !videoModel || !activeResolutionPriced) {
+      setServerQuote(null);
+      setServerQuoteState("idle");
+      setServerQuoteError("");
+      return;
+    }
+    // Keep the accepted quote visible through running/failed states. reset()
+    // retires it when the user picks another source; generate() still reprobes.
+    if (phase !== "options" && phase !== "failed") return;
+    let alive = true;
+    setServerQuote(null);
+    setServerQuoteState("loading");
+    setServerQuoteError("");
+    void aiApi.upscaleQuote({
+      modelId: activeVideoModelId,
+      videoUrl: source,
+      targetResolution: activeResolution,
+    }).then((response) => {
+      if (!alive) return;
+      if (
+        response.success &&
+        response.data &&
+        response.data.durationSeconds > 0 &&
+        response.data.ratePerSecond > 0
+      ) {
+        setServerQuote({ ...response.data, modelId: activeVideoModelId, videoUrl: source });
+        setServerQuoteState("ready");
+        return;
+      }
+      setServerQuoteState("error");
+      setServerQuoteError(response.message || "服务端暂时无法核验视频时长");
+    }).catch(() => {
+      if (!alive) return;
+      setServerQuoteState("error");
+      setServerQuoteError("服务端暂时无法核验视频时长");
+    });
+    return () => {
+      alive = false;
+    };
+  }, [activeResolution, activeResolutionPriced, activeVideoModelId, isVideoDef, phase, serverQuoteRevision, source, videoModel]);
 
   const run = useCallback(
     async (srcUrl: string, promptText: string, targetResolution?: string) => {
       if (!def) return;
-      if (def.type === "video" && resolveUpscalePointRate(videoModel?.config) > 0 && videoDuration <= 0) {
-        toast.error("无法读取源视频时长，请更换视频后重试");
+      const submitResolution = targetResolution || defaultResolution;
+      if (def.type === "video" && resolveUpscalePointRate(videoModel?.config, submitResolution) <= 0) {
+        toast.error("所选分辨率尚未配置每秒积分，请更换模型或输出规格");
+        return;
+      }
+      if (def.type === "video" && !serverQuoteReady) {
+        toast.error("请等待服务端完成视频时长与积分核验");
         return;
       }
       setPhase("running");
@@ -629,7 +695,7 @@ export default function ToolPage() {
         fail("网络错误，请重试");
       }
     },
-    [def, defaultResolution, ensureSession, fail, imageModel, journalScope, params.op, poll, videoDuration, videoModel],
+    [def, defaultResolution, ensureSession, fail, imageModel, journalScope, params.op, poll, serverQuoteReady, videoDuration, videoModel],
   );
 
   useEffect(() => {
@@ -760,6 +826,9 @@ export default function ToolPage() {
     setResolution("");
     setVideoDuration(0);
     setVideoMetadataState("idle");
+    setServerQuote(null);
+    setServerQuoteState("idle");
+    setServerQuoteError("");
     setError("");
     setBackground(false);
   }, []);
@@ -926,7 +995,7 @@ export default function ToolPage() {
 
             <div className="tp-cost-summary" aria-live="polite">
               <div>
-                <span>本次预计消耗</span>
+                <span>{serverQuoteReady ? "本次核定消耗" : "本次预计消耗"}</span>
                 <p>工具不额外收费，积分仅由所选模型收取</p>
               </div>
               <strong>{imageModel ? pointCostLabel(imagePointCost) : "—"}</strong>
@@ -977,9 +1046,9 @@ export default function ToolPage() {
                 <strong>源视频</strong>
                 <span>
                   {videoMetadataState === "ready"
-                    ? `已读取 · ${videoDurationLabel(videoDuration)}`
+                    ? `浏览器预估 · ${videoDurationLabel(videoDuration)}`
                     : videoMetadataState === "error"
-                      ? "无法读取视频时长，请更换视频"
+                      ? "浏览器未读到时长，等待服务端核验"
                       : "正在读取视频时长…"}
                 </span>
               </div>
@@ -992,7 +1061,7 @@ export default function ToolPage() {
           <section className="tp-config-panel">
             <header className="tp-config-head">
               <h1>{def.title}</h1>
-              <p>选择处理模型与输出规格。价格按源视频时长计算，目标分辨率不改变单价。</p>
+              <p>选择处理模型与输出规格。不同目标分辨率按各自每秒单价计费。</p>
             </header>
 
             <fieldset className="tp-fieldset">
@@ -1010,7 +1079,7 @@ export default function ToolPage() {
                       : modelResolutions.includes(defaultResolution)
                         ? defaultResolution
                         : modelResolutions[0];
-                    const modelRate = resolveUpscalePointRate(model.config);
+                    const modelRate = resolveUpscalePointRate(model.config, modelResolution);
                     const modelCost = upscalePointCost(model, videoDuration, modelResolution);
                     const selected = videoModel?.id === model.id;
                     return (
@@ -1029,8 +1098,8 @@ export default function ToolPage() {
                           <small>{model.desc || `支持 ${modelResolutions.length} 个输出档位`}</small>
                         </span>
                         <span className="tp-model-price">
-                          <strong>{modelRate > 0 ? pointRateLabel(modelRate) : pointCostLabel(modelCost)}</strong>
-                          <small>{modelRate > 0 ? "按源视频时长计费" : "旧版单次价"}</small>
+                          <strong>{modelRate > 0 ? pointRateLabel(modelRate) : "未定价"}</strong>
+                          <small>{modelRate > 0 && videoDurationReady ? `预计 ${pointCostLabel(modelCost)}` : modelResolution.toUpperCase()}</small>
                         </span>
                         <span className="tp-radio-mark" aria-hidden="true" />
                       </button>
@@ -1053,6 +1122,7 @@ export default function ToolPage() {
               <legend>目标分辨率</legend>
               <div className="tp-resolution-list" role="group" aria-label="目标分辨率">
                 {resolutionOptions.map((target) => {
+                  const rate = resolveUpscalePointRate(videoModel?.config, target);
                   const selected = activeResolution === target;
                   return (
                     <button
@@ -1064,7 +1134,7 @@ export default function ToolPage() {
                       onClick={() => setResolution(target)}
                     >
                       <strong>{target.toUpperCase()}</strong>
-                      <small>输出规格</small>
+                      <small>{rate > 0 ? pointRateLabel(rate) : "未定价"}</small>
                     </button>
                   );
                 })}
@@ -1075,19 +1145,28 @@ export default function ToolPage() {
               <div>
                 <span>本次预计消耗</span>
                 <p>
-                  {requiresVideoDuration
-                    ? videoDurationReady
-                      ? `${videoDurationLabel(videoDuration)} × ${pointRateLabel(activePointRate)}，最终积分向上取整`
-                      : videoMetadataState === "error"
-                        ? "未能读取源视频时长，暂时无法计算积分"
-                        : "读取源视频时长后，将自动计算最终积分"
-                    : "该模型尚未配置每秒积分，暂按旧版单次价格计费"}
+                  {!activeResolutionPriced
+                    ? "该模型尚未配置此分辨率的每秒积分"
+                    : serverQuoteReady && serverQuote
+                      ? `服务端已确认 ${videoDurationLabel(serverQuote.durationSeconds)} × ${pointRateLabel(serverQuote.ratePerSecond)}；生成提交时将再次复核`
+                      : serverQuoteState === "error"
+                        ? serverQuoteError || "服务端暂时无法核验视频时长"
+                        : "服务端正在核验视频时长与最终积分…"}
                 </p>
+                {serverQuoteState === "error" && activeResolutionPriced && (
+                  <button
+                    type="button"
+                    className="tp-inline-retry"
+                    onClick={() => setServerQuoteRevision((revision) => revision + 1)}
+                  >
+                    重新核验
+                  </button>
+                )}
               </div>
               <strong>
-                {videoModel && (!requiresVideoDuration || videoDurationReady)
-                  ? pointCostLabel(activePointCost)
-                  : "—"}
+                {videoModel && serverQuoteReady && serverQuote
+                  ? pointCostLabel(serverQuote.pointCost)
+                  : "待核价"}
               </strong>
             </div>
 
@@ -1098,16 +1177,17 @@ export default function ToolPage() {
                 !videoModel ||
                 !activeResolution ||
                 videoModelsLoading ||
-                (requiresVideoDuration && !videoDurationReady)
+                !activeResolutionPriced ||
+                !serverQuoteReady
               }
               onClick={() => void run(source, def.title, activeResolution)}
             >
               {videoModelsLoading
                 ? "正在读取价格…"
-                : requiresVideoDuration && !videoDurationReady
-                  ? videoMetadataState === "error" ? "请更换视频" : "正在读取视频时长…"
-                : videoModel
-                  ? `开始超分 · ${pointCostLabel(activePointCost)}`
+                : videoModel && activeResolutionPriced
+                  ? serverQuoteReady && serverQuote
+                    ? `开始超分 · ${pointCostLabel(serverQuote.pointCost)}`
+                    : serverQuoteState === "error" ? "核价失败" : "服务端核价中…"
                   : "暂无可用模型"}
             </button>
           </section>
@@ -1186,8 +1266,8 @@ export default function ToolPage() {
                 model={retryModel}
                 pointCost={retryPointCost}
                 priceLabel={
-                  isVideoTool && requiresVideoDuration && !videoDurationReady
-                    ? "待读取时长"
+                  isVideoTool && activeResolutionPriced && !serverQuoteReady
+                    ? "服务端核价"
                     : undefined
                 }
                 loading={retryModelsLoading}
@@ -1214,7 +1294,7 @@ export default function ToolPage() {
                 disabled={
                   retryModelsLoading ||
                   !retryModel ||
-                  (isVideoTool && requiresVideoDuration && !videoDurationReady)
+                  (isVideoTool && (!activeResolutionPriced || !serverQuoteReady))
                 }
                 onClick={() =>
                   void run(
@@ -1226,10 +1306,10 @@ export default function ToolPage() {
               >
                 {retryModelsLoading
                   ? "正在读取价格…"
-                  : isVideoTool && requiresVideoDuration && !videoDurationReady
-                    ? "请重新上传视频"
-                  : retryModel
-                    ? `重试 · ${pointCostLabel(retryPointCost)}`
+                  : retryModel && (!isVideoTool || activeResolutionPriced)
+                    ? isVideoTool && serverQuote
+                      ? `重试 · ${pointCostLabel(serverQuote.pointCost)}`
+                      : `重试 · ${pointCostLabel(retryPointCost)}`
                     : "暂无可用模型"}
               </button>
             )}

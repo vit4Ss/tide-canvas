@@ -14,8 +14,9 @@ import (
 // estimate; this is the value the balance is actually charged against.
 // Resolution order, per generation:
 //
-//	1. upscale config pricePerSecond × source duration, rounded up. When the
-//	   field is absent, legacy upscale records continue through the rules below.
+//	1. upscale config pricePerSecondByResolution[targetResolution] × the
+//	   server-confirmed source duration, rounded up. The legacy uniform
+//	   pricePerSecond field is accepted only as a rolling-upgrade fallback.
 //	2. price matrix (config priceMatrix, aliased to pricing): spec-indexed unit
 //	   price. image = [quality][clarity], video = [duration][resolution]. Looked
 //	   up in BOTH axis orders so either admin authoring orientation resolves.
@@ -29,8 +30,12 @@ import (
 // resolveCost returns the points to charge for one generation of model m given
 // the raw generate input.
 func resolveCost(m *model.AiModel, rawInput json.RawMessage) int {
-	if cost, configured, valid := resolveUpscaleTimeCost(m, rawInput); configured {
-		if !valid {
+	if m != nil && m.Type == "upscale" {
+		cost, configured, valid := resolveUpscaleTimeCost(m, rawInput)
+		// Video upscale no longer has a flat-price fallback. A submit path must
+		// reject an unpriced resolution or unverified duration before charging;
+		// returning zero here keeps this pure helper safe for callers/tests.
+		if !configured || !valid {
 			return 0
 		}
 		return cost
@@ -134,19 +139,11 @@ func resolveCost(m *model.AiModel, rawInput json.RawMessage) int {
 	return int(math.Ceil(base))
 }
 
-// resolveUpscaleTimeCost resolves the new per-second pricing contract. The
-// booleans distinguish an unconfigured legacy model from a configured model
-// whose request is missing a usable source-video duration.
+// resolveUpscaleTimeCost resolves the per-resolution/per-second pricing
+// contract. The booleans distinguish an unpriced target resolution from a
+// priced request whose duration has not been confirmed yet.
 func resolveUpscaleTimeCost(m *model.AiModel, rawInput json.RawMessage) (cost int, configured bool, valid bool) {
 	if m == nil || m.Type != "upscale" || strings.TrimSpace(m.Config) == "" {
-		return 0, false, false
-	}
-	var cfg map[string]any
-	if err := json.Unmarshal([]byte(m.Config), &cfg); err != nil {
-		return 0, false, false
-	}
-	rate := numField(cfg, "pricePerSecond")
-	if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
 		return 0, false, false
 	}
 
@@ -154,11 +151,54 @@ func resolveUpscaleTimeCost(m *model.AiModel, rawInput json.RawMessage) (cost in
 	if len(rawInput) > 0 {
 		_ = json.Unmarshal(rawInput, &in)
 	}
+	resolution := inputStr(in, "targetResolution", "target_resolution")
+	rate := resolveUpscalePointRate(m, resolution)
+	if rate <= 0 {
+		return 0, false, false
+	}
 	duration := durationSeconds(in["duration"])
 	if duration <= 0 || math.IsNaN(duration) || math.IsInf(duration, 0) {
 		return 0, true, false
 	}
 	return int(math.Ceil(rate * duration)), true, true
+}
+
+// resolveUpscalePointRate returns the configured points/second for one target
+// resolution. New records use pricePerSecondByResolution; pricePerSecond keeps
+// already-published models billable while admins migrate them in a rolling
+// deployment. Resolution lookup is case-insensitive.
+func resolveUpscalePointRate(m *model.AiModel, resolution string) float64 {
+	if m == nil || m.Type != "upscale" || strings.TrimSpace(m.Config) == "" {
+		return 0
+	}
+	resolution = strings.ToLower(strings.TrimSpace(resolution))
+	if resolution == "" {
+		return 0
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(m.Config), &cfg); err != nil {
+		return 0
+	}
+	if rates, ok := cfg["pricePerSecondByResolution"].(map[string]any); ok && len(rates) > 0 {
+		if resolution != "" {
+			for key, value := range rates {
+				if strings.EqualFold(strings.TrimSpace(key), resolution) {
+					rate := toNum(value)
+					if rate > 0 && !math.IsNaN(rate) && !math.IsInf(rate, 0) {
+						return rate
+					}
+				}
+			}
+		}
+		// Once a resolution table exists, an absent/zero cell is deliberately
+		// unpriced and must not inherit the old uniform rate.
+		return 0
+	}
+	legacy := numField(cfg, "pricePerSecond")
+	if legacy > 0 && !math.IsNaN(legacy) && !math.IsInf(legacy, 0) {
+		return legacy
+	}
+	return 0
 }
 
 func durationSeconds(v any) float64 {

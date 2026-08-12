@@ -42,6 +42,7 @@ import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { toast } from "@/components/shared/toast";
 import { fmt } from "@/lib/utils";
 import { defaultAvatar } from "@/lib/default-avatar";
+import { hasAdminAccess } from "@/lib/admin-access";
 import type { UserVO } from "@/types/user";
 import { OrdersPanel, PointsPanel } from "./ledger-panels";
 import "./account.css";
@@ -398,6 +399,7 @@ export default function AccountPage() {
 
   const name = user.nickname || user.username;
   const isAdmin = user.role === 9;
+  const canEnterAdmin = hasAdminAccess(user);
   const plan = planLabel(user.vipLevel);
   const isFree = !user.vipLevel; // 0 / undefined → 免费版
   const avatarBg = `center / cover no-repeat url("${user.avatar || defaultAvatar(user.id)}")`;
@@ -574,20 +576,20 @@ export default function AccountPage() {
                   <span className="tick">✓</span>
                 )}
               </div>
-              <div className={`perm${!isAdmin ? " locked" : ""}`}>
+              <div className={`perm${!canEnterAdmin ? " locked" : ""}`}>
                 <span className="pic">⚙</span>
                 <div className="pt">
                   <b>管理后台</b>
                   <span>数据 · 用户 · 内容审核</span>
                 </div>
-                {isAdmin ? (
+                {canEnterAdmin ? (
                   <span className="tick">✓</span>
                 ) : (
                   <span className="lock">🔒</span>
                 )}
               </div>
 
-              {isAdmin ? (
+              {canEnterAdmin ? (
                 <div className="admin-cta">
                   <span className="ai">⚙</span>
                   <div className="at">
