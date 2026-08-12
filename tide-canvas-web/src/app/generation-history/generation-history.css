@@ -1,3 +1,46 @@
+/*
+ * 生成记录同时出现在独立页面和前台工作区弹窗中。它复用后台表格组件，
+ * 但不应继承后台的浅色工作台主题；在这里把后台组件令牌收敛到前台
+ * 已定稿的 imini 深色体系，避免维护第二套表格结构。
+ */
+.generation-history-modal,
+.user-history-body,
+.user-history-detail-portal {
+  --accent: #22d3ee;
+  --accent-strong: #67e8f9;
+  --accent-active: #06b6d4;
+  --accent-soft: rgba(34, 211, 238, 0.1);
+  --accent-border: rgba(34, 211, 238, 0.32);
+  --accent-ring: rgba(34, 211, 238, 0.18);
+  --accent-2: #a1a1aa;
+  --accent-2-soft: rgba(255, 255, 255, 0.07);
+
+  --bg: #0a0a0b;
+  --surface: #131316;
+  --surface-hover: #1d1d21;
+  --surface-2: #101013;
+  --panel: rgba(255, 255, 255, 0.06);
+  --border: rgba(255, 255, 255, 0.1);
+  --border-weak: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.18);
+
+  --text-title: #f5f5f7;
+  --text: rgba(255, 255, 255, 0.86);
+  --text-dim: rgba(255, 255, 255, 0.65);
+  --text-faint: rgba(255, 255, 255, 0.45);
+  --text-placeholder: rgba(255, 255, 255, 0.4);
+
+  --ok: #6fd69a;
+  --ok-soft: rgba(72, 187, 120, 0.12);
+  --warn: #e6b566;
+  --warn-soft: rgba(217, 151, 48, 0.12);
+  --danger: #f28b82;
+  --danger-soft: rgba(239, 104, 96, 0.12);
+
+  --shadow-pop: 0 24px 64px rgba(0, 0, 0, 0.56);
+  color-scheme: dark;
+}
+
 .user-history-body {
   min-height: 100vh;
   min-height: 100dvh;
@@ -24,7 +67,7 @@
   justify-content: center;
   padding: 32px;
   overflow: hidden;
-  background: rgba(9, 9, 11, 0.58);
+  background: rgba(0, 0, 0, 0.76);
   animation: generation-history-backdrop-in var(--dur) var(--ease) both;
 }
 
@@ -36,7 +79,7 @@
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 14px;
   background: var(--surface);
   box-shadow: var(--shadow-pop);
   animation: generation-history-dialog-in var(--dur) var(--ease) both;
@@ -66,7 +109,7 @@
   gap: 16px;
   padding: 12px 20px;
   border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  background: #131316;
 }
 
 .generation-history-dialog-head h2 {
@@ -108,6 +151,37 @@
   flex: 1;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+  scrollbar-width: thin;
+}
+
+.generation-history-dialog-body::-webkit-scrollbar,
+.user-history-detail-portal .adm-drawer-body::-webkit-scrollbar,
+.user-history-panel .adm-table-wrap::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.generation-history-dialog-body::-webkit-scrollbar-track,
+.user-history-detail-portal .adm-drawer-body::-webkit-scrollbar-track,
+.user-history-panel .adm-table-wrap::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.generation-history-dialog-body::-webkit-scrollbar-thumb,
+.user-history-detail-portal .adm-drawer-body::-webkit-scrollbar-thumb,
+.user-history-panel .adm-table-wrap::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.2);
+  background-clip: padding-box;
+}
+
+.generation-history-dialog-body::-webkit-scrollbar-thumb:hover,
+.user-history-detail-portal .adm-drawer-body::-webkit-scrollbar-thumb:hover,
+.user-history-panel .adm-table-wrap::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+  background-clip: padding-box;
 }
 
 .generation-history-dialog-body .adm-page {
@@ -120,6 +194,93 @@
   margin: 0;
   border: 0;
   border-radius: 0;
+}
+
+.generation-history-dialog-body .user-history-panel .adm-phead {
+  background: #131316;
+}
+
+.generation-history-dialog-body .user-history-panel .adm-filter-row {
+  border-bottom: 1px solid var(--border);
+  background: #101013;
+}
+
+.generation-history-modal .adm-search,
+.generation-history-modal .genr-date,
+.generation-history-modal .genr-select,
+.user-history-body .adm-search,
+.user-history-body .genr-date,
+.user-history-body .genr-select {
+  background: rgba(255, 255, 255, 0.035);
+  color-scheme: dark;
+}
+
+.generation-history-modal .genr-select option,
+.user-history-body .genr-select option {
+  background: #17171a;
+  color: var(--text);
+}
+
+.generation-history-modal .adm-btn.ghost,
+.user-history-body .adm-btn.ghost,
+.user-history-detail-portal .adm-btn.ghost {
+  background: transparent;
+}
+
+.generation-history-modal .adm-btn.ghost:hover,
+.user-history-body .adm-btn.ghost:hover,
+.user-history-detail-portal .adm-btn.ghost:hover {
+  background: var(--panel);
+}
+
+.generation-history-modal .adm-table tbody tr:hover,
+.user-history-body .adm-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.generation-history-modal .tag2.green,
+.user-history-body .tag2.green,
+.user-history-detail-portal .tag2.green {
+  color: #79d9a0;
+}
+
+.generation-history-modal .tag2.red,
+.user-history-body .tag2.red,
+.user-history-detail-portal .tag2.red {
+  color: #f28b82;
+}
+
+.generation-history-modal .tag2.amber,
+.user-history-body .tag2.amber,
+.user-history-detail-portal .tag2.amber {
+  color: #e6b566;
+}
+
+.generation-history-modal .tag2.blue,
+.user-history-body .tag2.blue,
+.user-history-detail-portal .tag2.blue {
+  color: #93c5c7;
+}
+
+.generation-history-modal .skel,
+.user-history-body .skel,
+.user-history-detail-portal .skel {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.generation-history-modal .skel::after,
+.user-history-body .skel::after,
+.user-history-detail-portal .skel::after {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.05), transparent);
+}
+
+.user-history-detail-portal .adm-mask {
+  background: rgba(0, 0, 0, 0.66);
+}
+
+.user-history-detail-portal .adm-drawer-body {
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+  scrollbar-width: thin;
 }
 
 .generation-history-dialog-body .user-history-panel .adm-table-wrap .adm-table {
@@ -141,7 +302,7 @@
   top: 0;
   z-index: var(--z-sticky);
   border-bottom: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.94);
+  background: #0a0a0b;
 }
 
 .user-history-topbar-inner {
@@ -175,8 +336,9 @@
   height: 24px;
   place-items: center;
   border-radius: 7px;
-  background: #171719;
-  color: #fff;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-title);
   font-size: 12px;
   font-weight: 600;
 }
