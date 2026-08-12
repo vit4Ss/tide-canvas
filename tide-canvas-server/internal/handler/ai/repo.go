@@ -252,6 +252,8 @@ func taskMediaHandlers(mediaType string) []string {
 		return []string{"generate_3d"}
 	case "upscale":
 		return []string{"video_upscale"}
+	case "text":
+		return []string{assistantChatHandler, skillTextCompletionHandler}
 	default:
 		return nil
 	}
@@ -464,9 +466,22 @@ func (r *repo) createLog(ctx context.Context, l *model.AiGenerationLog) error {
 // listLogs returns a page of generation logs filtered by the query, scoped to
 // the user unless they are an admin (adminScope=true lifts the user filter).
 func (r *repo) listLogs(ctx context.Context, userID idgen.ID, adminScope bool, q logQuery, offset, limit int) ([]model.AiGenerationLog, int64, error) {
-	tx := r.db.WithContext(ctx).Model(&model.AiGenerationLog{})
+	tx := applyLogListFilters(r.db.WithContext(ctx).Model(&model.AiGenerationLog{}), userID, adminScope, q)
+
+	var total int64
+	if err := tx.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var rows []model.AiGenerationLog
+	if err := tx.Order("create_time DESC").Offset(offset).Limit(limit).Find(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+	return rows, total, nil
+}
+
+func applyLogListFilters(tx *gorm.DB, userID idgen.ID, adminScope bool, q logQuery) *gorm.DB {
 	if !adminScope {
-		tx = tx.Where("user_id = ?", userID)
+		tx = visibleUserLogScope(tx.Where("user_id = ?", userID))
 	} else if q.UserID != 0 {
 		tx = tx.Where("user_id = ?", q.UserID)
 	}
@@ -482,19 +497,31 @@ func (r *repo) listLogs(ctx context.Context, userID idgen.ID, adminScope bool, q
 	if q.OperationType != "" {
 		tx = tx.Where("operation_type = ?", q.OperationType)
 	}
+	if q.MediaType != "" {
+		handlers := taskMediaHandlers(q.MediaType)
+		if len(handlers) == 0 {
+			tx = tx.Where("1 = 0")
+		} else {
+			tx = tx.Where("handler_name IN ?", handlers)
+		}
+	}
+	if keyword := strings.TrimSpace(q.Keyword); keyword != "" {
+		like := "%" + keyword + "%"
+		tx = tx.Where("model LIKE ? OR input_params LIKE ?", like, like)
+	}
 	if q.Success != nil {
 		tx = tx.Where("success = ?", *q.Success)
 	}
+	return applyDateRange(tx, "create_time", q.StartDate, q.EndDate)
+}
 
-	var total int64
-	if err := tx.Count(&total).Error; err != nil {
-		return nil, 0, err
-	}
-	var rows []model.AiGenerationLog
-	if err := tx.Order("create_time DESC").Offset(offset).Limit(limit).Find(&rows).Error; err != nil {
-		return nil, 0, err
-	}
-	return rows, total, nil
+// visibleUserLogScope mirrors visibleTaskHistoryScope for user-facing logs.
+// Existing audit rows whose task was deleted remain visible, but live internal
+// SkillRun planning/draft steps are hidden until promoted as a final work.
+func visibleUserLogScope(tx *gorm.DB) *gorm.DB {
+	const taskExists = "EXISTS (SELECT 1 FROM ai_tasks t WHERE t.id = ai_generation_logs.task_id)"
+	const visibleTask = "EXISTS (SELECT 1 FROM ai_tasks t WHERE t.id = ai_generation_logs.task_id AND ((t.origin IS NULL OR t.origin = '' OR t.origin = 'direct') OR (t.origin = 'skill_run' AND t.register_work = ? AND t.output_role = ?)))"
+	return tx.Where("NOT "+taskExists+" OR "+visibleTask, true, "final")
 }
 
 // ---- association helpers (log VO enrichment) ----------------------------
@@ -536,9 +563,10 @@ func (r *repo) projectNames(ctx context.Context, ids []idgen.ID) (map[idgen.ID]s
 }
 
 type taskLogState struct {
-	ID       idgen.ID
-	Status   int
-	ErrorMsg string
+	ID        idgen.ID
+	Status    int
+	ErrorMsg  string
+	PointCost int64
 }
 
 // taskLogStates returns the terminal display fields needed to enrich user-facing
@@ -550,7 +578,7 @@ func (r *repo) taskLogStates(ctx context.Context, ids []idgen.ID) (map[idgen.ID]
 	}
 	var rows []taskLogState
 	if err := r.db.WithContext(ctx).Model(&model.AiTask{}).
-		Select("id", "status", "error_msg").Where("id IN ?", ids).Find(&rows).Error; err != nil {
+		Select("id", "status", "error_msg", "point_cost").Where("id IN ?", ids).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	for i := range rows {

@@ -136,12 +136,14 @@ export interface AiGenerationLogVO {
   handlerName: string;
   operationType: string;
   model: string;
+  /** 用户可见 Prompt 摘要；服务端不会在列表返回完整任务输入。 */
+  prompt: string;
   operation: string;
   /** 仅管理员：非管理员调 /api/ai/logs 时后端置空（下同） */
   requestUrl: string;
   /** 仅管理员：上游请求体,后端实际发给供应商/中转站的 payload */
   requestBody: string;
-  /** 用户输入参数:前端发给后端的原始参数(仅详情接口返回) */
+  /** 兼容字段；列表接口不返回完整任务输入，详情通过归属校验后的任务接口读取。 */
   inputParams?: string;
   httpStatus: number;
   /** 仅管理员：上游响应原文 */
@@ -160,6 +162,8 @@ export interface AiGenerationLogVO {
   userName?: string;
   projectName?: string;
   taskStatus?: number;
+  /** 平台积分；失败/取消任务已按任务流程退款 */
+  pointCost?: number;
 }
 
 export interface AiGenerationLogQuery extends PageQuery {
@@ -169,7 +173,11 @@ export interface AiGenerationLogQuery extends PageQuery {
   projectId?: string | number;
   handlerName?: string;
   operationType?: string;
+  mediaType?: "image" | "video" | "audio" | "3d" | "text";
+  keyword?: string;
   success?: number;
+  startDate?: string;
+  endDate?: string;
 }
 
 export enum AiTaskStatus {

@@ -252,8 +252,10 @@ func toHandlerVO(h *model.AiHandler) AiHandlerVO {
 }
 
 // AiGenerationLogVO mirrors AiGenerationLogVO in types/ai.ts. Association display
-// fields (userName/projectName/taskStatus) are filled by the service. inputParams
-// is only populated on the detail path; cost is the upstream USD cost when known.
+// fields (userName/projectName/taskStatus/pointCost) are filled by the service.
+// User-facing lists expose only Prompt; inputParams is retained for wire
+// compatibility but intentionally omitted. cost is upstream USD cost and is
+// removed from user-facing responses.
 type AiGenerationLogVO struct {
 	ID             idgen.ID `json:"id"`
 	TaskID         idgen.ID `json:"taskId"`
@@ -262,6 +264,7 @@ type AiGenerationLogVO struct {
 	HandlerName    string   `json:"handlerName"`
 	OperationType  string   `json:"operationType"`
 	Model          string   `json:"model"`
+	Prompt         string   `json:"prompt"`
 	Operation      string   `json:"operation"`
 	RequestURL     string   `json:"requestUrl"`
 	RequestBody    string   `json:"requestBody"`
@@ -279,6 +282,7 @@ type AiGenerationLogVO struct {
 	UserName    string `json:"userName,omitempty"`
 	ProjectName string `json:"projectName,omitempty"`
 	TaskStatus  *int   `json:"taskStatus,omitempty"`
+	PointCost   *int64 `json:"pointCost,omitempty"`
 }
 
 func toLogVO(l *model.AiGenerationLog) AiGenerationLogVO {
@@ -290,6 +294,7 @@ func toLogVO(l *model.AiGenerationLog) AiGenerationLogVO {
 		HandlerName:    l.HandlerName,
 		OperationType:  l.OperationType,
 		Model:          l.Model,
+		Prompt:         generationPromptExcerpt(l.InputParams, 200),
 		Operation:      l.Operation,
 		RequestURL:     l.RequestUrl,
 		RequestBody:    l.RequestBody,
@@ -308,6 +313,47 @@ func toLogVO(l *model.AiGenerationLog) AiGenerationLogVO {
 		}
 	}
 	return vo
+}
+
+func generationPromptExcerpt(raw string, limit int) string {
+	var input map[string]any
+	if json.Unmarshal([]byte(strings.TrimSpace(raw)), &input) != nil {
+		return ""
+	}
+	for _, key := range []string{"prompt", "text", "description", "lyrics"} {
+		if value, ok := input[key].(string); ok && strings.TrimSpace(value) != "" {
+			return truncateRunes(strings.TrimSpace(value), limit)
+		}
+	}
+	messages, _ := input["messages"].([]any)
+	for i := len(messages) - 1; i >= 0; i-- {
+		message, _ := messages[i].(map[string]any)
+		if message["role"] != "user" {
+			continue
+		}
+		if content, ok := message["content"].(string); ok && strings.TrimSpace(content) != "" {
+			return truncateRunes(strings.TrimSpace(content), limit)
+		}
+		parts, _ := message["content"].([]any)
+		for _, item := range parts {
+			part, _ := item.(map[string]any)
+			if part["type"] != "text" {
+				continue
+			}
+			if text, ok := part["text"].(string); ok && strings.TrimSpace(text) != "" {
+				return truncateRunes(strings.TrimSpace(text), limit)
+			}
+		}
+	}
+	return ""
+}
+
+func truncateRunes(value string, limit int) string {
+	runes := []rune(value)
+	if limit <= 0 || len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit]) + "…"
 }
 
 // redactForUser 抹掉普通用户不该拿到的上游细节。

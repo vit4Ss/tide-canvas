@@ -1,0 +1,64 @@
+.generation-history-fab {
+  position: fixed;
+  right: 24px;
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  z-index: 65;
+  display: inline-flex;
+  height: 44px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  background: #171719;
+  color: #f5f5f7;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  font-family: var(--font-sans), "Noto Sans SC", system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  text-decoration: none;
+  transition:
+    background-color 160ms ease-out,
+    border-color 160ms ease-out,
+    transform 160ms ease-out;
+}
+
+.generation-history-fab:hover {
+  background: #232326;
+  border-color: rgba(255, 255, 255, 0.26);
+  transform: translateY(-1px);
+}
+
+.generation-history-fab:active {
+  transform: translateY(0);
+}
+
+.generation-history-fab:focus-visible {
+  outline: 2px solid #22d3ee;
+  outline-offset: 2px;
+}
+
+/* 工作台右下角已有画布助手或结果提示，悬浮入口向上排成一列。 */
+.generation-history-fab.is-workspace {
+  bottom: calc(88px + env(safe-area-inset-bottom));
+}
+
+@media (max-width: 640px) {
+  .generation-history-fab {
+    right: 16px;
+    bottom: calc(16px + env(safe-area-inset-bottom));
+    height: 44px;
+    padding-inline: 12px;
+  }
+
+  .generation-history-fab.is-workspace {
+    bottom: calc(80px + env(safe-area-inset-bottom));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .generation-history-fab {
+    transition: none;
+  }
+}

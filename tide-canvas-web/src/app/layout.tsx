@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { ToastContainer } from "@/components/shared/toast";
 import { ConfirmHost } from "@/components/shared/confirm";
+import { GenerationHistoryFab } from "@/components/shared/generation-history-fab";
 
 const inter = Inter({
   variable: "--font-sans",
@@ -47,6 +48,7 @@ export default function RootLayout({
         className="imini flex min-h-full flex-col bg-background font-sans text-foreground"
       >
         {children}
+        <GenerationHistoryFab />
         <ToastContainer />
         <ConfirmHost />
       </body>

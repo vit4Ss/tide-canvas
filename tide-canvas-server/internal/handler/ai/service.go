@@ -1086,6 +1086,8 @@ func (s *service) listLogs(ctx context.Context, userID idgen.ID, isAdmin bool, q
 func applyTaskLogState(vo *AiGenerationLogVO, state taskLogState, isAdmin bool) {
 	v := state.Status
 	vo.TaskStatus = &v
+	pointCost := state.PointCost
+	vo.PointCost = &pointCost
 	// AiTask.ErrorMsg is the already-classified user-facing message. Reuse it
 	// for non-admin history so structured Relay codes (notably 5002/5003) do not
 	// get lost when the raw audit error is converted back to a string.

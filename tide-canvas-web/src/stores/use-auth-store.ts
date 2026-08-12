@@ -6,6 +6,8 @@ import type { UserLoginDTO, UserRegisterDTO, RegisterLocalDTO } from "@/types/us
 
 /** 去重：并发调用 ensureSession 只发一次 fetchUser 请求。 */
 let ensureSessionPromise: Promise<boolean> | null = null;
+/** 全局悬浮入口、导航和工作台可能同时初始化登录态，底层请求也要单飞。 */
+let fetchUserPromise: Promise<void> | null = null;
 
 interface AuthState {
   user: UserVO | null;
@@ -106,28 +108,34 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  fetchUser: async () => {
-    const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
-    if (!token) {
-      set({ initialized: true });
-      return;
-    }
-    try {
-      const result = await authApi.me();
-      if (result.success) {
-        set({ user: result.data, initialized: true });
-      } else if (result.code === 401 || result.code === 403) {
-        // 仅在后端【明确拒绝】(token 失效/被吊销)时清凭据并置空用户。
-        clearTokens();
-        set({ user: null, initialized: true });
-      } else {
-        // 网络失败(fetchResult 归一为 code:0)/服务暂不可用(5xx/网关页)等暂时性失败：
-        // 保留 token、不置空用户，避免后端重启窗口把持有效凭据的用户误登出。
+  fetchUser: () => {
+    if (fetchUserPromise) return fetchUserPromise;
+    fetchUserPromise = (async () => {
+      const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+      if (!token) {
+        set({ initialized: true });
+        return;
+      }
+      try {
+        const result = await authApi.me();
+        if (result.success) {
+          set({ user: result.data, initialized: true });
+        } else if (result.code === 401 || result.code === 403) {
+          // 仅在后端【明确拒绝】(token 失效/被吊销)时清凭据并置空用户。
+          clearTokens();
+          set({ user: null, initialized: true });
+        } else {
+          // 网络失败(fetchResult 归一为 code:0)/服务暂不可用(5xx/网关页)等暂时性失败：
+          // 保留 token、不置空用户，避免后端重启窗口把持有效凭据的用户误登出。
+          set({ initialized: true });
+        }
+      } catch {
         set({ initialized: true });
       }
-    } catch {
-      set({ initialized: true });
-    }
+    })().finally(() => {
+      fetchUserPromise = null;
+    });
+    return fetchUserPromise;
   },
 
   setUser: (user) => set({ user }),

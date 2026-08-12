@@ -116,5 +116,9 @@ type logQuery struct {
 	ProjectID     idgen.ID `form:"projectId"`
 	HandlerName   string   `form:"handlerName"`
 	OperationType string   `form:"operationType"`
+	MediaType     string   `form:"mediaType"`
+	Keyword       string   `form:"keyword"`
 	Success       *int     `form:"success"`
+	StartDate     string   `form:"startDate"`
+	EndDate       string   `form:"endDate"`
 }

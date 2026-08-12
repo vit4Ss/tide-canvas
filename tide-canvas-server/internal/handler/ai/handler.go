@@ -239,13 +239,25 @@ func (h *handler) listTasks(c *gin.Context) {
 
 // listLogs GET /api/ai/logs -> PageData<AiGenerationLogVO>
 func (h *handler) listLogs(c *gin.Context) {
+	h.listLogsWithScope(c, authz.IsActiveAdministrator(c, h.svc.repo.db))
+}
+
+// listMyLogs GET /api/ai/my-logs -> PageData<AiGenerationLogVO>
+//
+// This endpoint deliberately never enables the administrator-wide scope. The
+// public "我的生成记录" page therefore has identical ownership semantics for
+// ordinary users, operators and administrators.
+func (h *handler) listMyLogs(c *gin.Context) {
+	h.listLogsWithScope(c, false)
+}
+
+func (h *handler) listLogsWithScope(c *gin.Context, isAdmin bool) {
 	var q logQuery
 	if err := c.ShouldBindQuery(&q); err != nil {
 		response.Fail(c, response.CodeBadRequest, "invalid query")
 		return
 	}
 	uid := middleware.CurrentUserID(c)
-	isAdmin := authz.IsActiveAdministrator(c, h.svc.repo.db)
 	offset, limit := pagination(q.PageNum, q.PageSize)
 	rows, total, err := h.svc.listLogs(c.Request.Context(), uid, isAdmin, q, offset, limit)
 	if err != nil {

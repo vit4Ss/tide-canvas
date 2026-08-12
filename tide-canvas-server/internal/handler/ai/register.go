@@ -134,6 +134,7 @@ func StartTaskReconciler(ctx context.Context, d *app.Deps) {
 //	GET    /api/ai/handlers      -> AiHandlerVO[]                            (public catalog)
 //	GET    /api/ai/tools         -> AiToolVO[]                               (public catalog; 启用且有独立页的智能工具)
 //	GET    /api/ai/logs          AiGenerationLogQuery -> PageData<AiGenerationLogVO> (auth; admins see all)
+//	GET    /api/ai/my-logs       AiGenerationLogQuery -> PageData<AiGenerationLogVO> (auth; caller only)
 func Register(api *gin.RouterGroup, d *app.Deps) {
 	h := newHandler(d)
 	g := api.Group("/ai")
@@ -157,4 +158,6 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	// Logs are auth-only; the service scopes results to the caller unless they
 	// are an admin (then optional userId filter applies).
 	authed.GET("/logs", h.listLogs)
+	// Public account history always stays caller-scoped, including for admins.
+	authed.GET("/my-logs", h.listMyLogs)
 }

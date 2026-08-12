@@ -112,6 +112,9 @@ export const aiApi = {
     http.get<AiToolVO[]>("/api/ai/tools"),
   canvasLogs: (query: AiGenerationLogQuery) =>
     http.get<PageData<AiGenerationLogVO>>("/api/ai/logs", toParams(query)),
+  /** 当前账号自己的生成记录；管理员身份也不会扩大为全站范围。 */
+  myLogs: (query: AiGenerationLogQuery) =>
+    http.get<PageData<AiGenerationLogVO>>("/api/ai/my-logs", toParams(query)),
 };
 
 interface FilePresignVO {

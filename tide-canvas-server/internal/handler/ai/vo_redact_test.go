@@ -3,6 +3,8 @@ package ai
 import (
 	"strings"
 	"testing"
+
+	"tidecanvas/internal/model"
 )
 
 // GET /api/ai/logs 只挂 JWTAuth,画布「历史」面板把 errorMsg 直接渲染给用户。
@@ -21,6 +23,7 @@ func TestRedactForUser(t *testing.T) {
 		ErrorMsg:       rawOpenAI,
 		RequestURL:     relayURL,
 		RequestBody:    `{"model":"gpt-image-1","prompt":"..."}`,
+		InputParams:    `{"prompt":"用户自己的提示词"}`,
 		ResponseBody:   rawOpenAI,
 		UpstreamTaskID: "task_abc123",
 		Cost:           &cost,
@@ -45,6 +48,9 @@ func TestRedactForUser(t *testing.T) {
 	}
 	if vo.Cost != nil {
 		t.Errorf("cost (上游成本) must not reach users, got %v", *vo.Cost)
+	}
+	if vo.InputParams != `{"prompt":"用户自己的提示词"}` {
+		t.Errorf("the owner's input params must survive redaction, got %q", vo.InputParams)
 	}
 
 	// 兜底:整个 VO 里不得残留任何供应商/内部标识。
@@ -88,8 +94,9 @@ func TestUserHistoryReusesTaskFacingRelayMessage(t *testing.T) {
 	vo := AiGenerationLogVO{ErrorMsg: "relaymedia: code 5002: raw audit copy"}
 	vo.redactForUser()
 	applyTaskLogState(&vo, taskLogState{
-		Status:   statusFailed,
-		ErrorMsg: "请调整图片内容后重试",
+		Status:    statusFailed,
+		ErrorMsg:  "请调整图片内容后重试",
+		PointCost: 840,
 	}, false)
 
 	if vo.ErrorMsg != "请调整图片内容后重试" {
@@ -97,5 +104,33 @@ func TestUserHistoryReusesTaskFacingRelayMessage(t *testing.T) {
 	}
 	if vo.TaskStatus == nil || *vo.TaskStatus != statusFailed {
 		t.Fatalf("history task status was not populated: %#v", vo.TaskStatus)
+	}
+	if vo.PointCost == nil || *vo.PointCost != 840 {
+		t.Fatalf("history point cost was not populated: %#v", vo.PointCost)
+	}
+}
+
+func TestGenerationPromptExcerptOnlyReturnsUserPrompt(t *testing.T) {
+	raw := `{"systemPrompt":"internal workflow instruction","messages":[{"role":"system","content":"secret"},{"role":"user","content":[{"type":"text","text":"请生成一段雨夜街景"},{"type":"image_url","image_url":{"url":"https://example.com/ref.png"}}]}]}`
+	if got := generationPromptExcerpt(raw, 200); got != "请生成一段雨夜街景" {
+		t.Fatalf("prompt excerpt = %q", got)
+	}
+	if got := generationPromptExcerpt(`{"systemPrompt":"internal only"}`, 200); got != "" {
+		t.Fatalf("system prompt must not be returned, got %q", got)
+	}
+	if got := generationPromptExcerpt(`{"prompt":"一二三四五六"}`, 4); got != "一二三四…" {
+		t.Fatalf("unicode excerpt = %q", got)
+	}
+}
+
+func TestLogListVOExposesExcerptButNotCompleteInput(t *testing.T) {
+	vo := toLogVO(&model.AiGenerationLog{
+		InputParams: `{"prompt":"可见摘要","systemPrompt":"internal instruction","token":"secret"}`,
+	})
+	if vo.Prompt != "可见摘要" {
+		t.Fatalf("prompt = %q", vo.Prompt)
+	}
+	if vo.InputParams != "" {
+		t.Fatalf("complete input must not be returned by list VO: %q", vo.InputParams)
 	}
 }
