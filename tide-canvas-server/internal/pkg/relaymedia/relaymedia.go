@@ -48,11 +48,11 @@ const (
 const (
 	pollInterval       = 2 * time.Second  // gap between task polls
 	imagePollDeadline  = 10 * time.Minute // overall budget for an image task (sync or polled)
-	videoPollDeadline  = 20 * time.Minute // videos are slower; stay under the 30m UI cap
+	videoPollDeadline  = 40 * time.Minute // 视频排队/生成较慢，提交与轮询共用 40 分钟总预算
 	audioPollDeadline  = 10 * time.Minute // TTS 通常同步秒回;Suno 音乐约 1–4 分钟(实测也会同步 200)
 	threeDPollDeadline = 25 * time.Minute // 3D 通常异步，留足网格与材质生成时间
 	// 超分按输入时长处理(WaveSpeed 单任务最长收 10 分钟视频),4k 长片会很慢，
-	// 与视频生成同口径留 20 分钟、保持在 30 分钟 UI 上限之内。
+	// 超分保持 20 分钟独立预算，不随普通视频生成的 40 分钟上限调整。
 	upscalePollDeadline = 20 * time.Minute
 )
 

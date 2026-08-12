@@ -17,9 +17,9 @@ import (
 
 // staleTaskCutoff bounds how long a task may sit in Processing without an update
 // before it's considered orphaned. Longer than the longest generation deadline
-// (video ≈ 20m) and equal to the Redis task-state TTL, so a live task is never
+// (video ≈ 40m) and equal to the Redis task-state TTL, so a live task is never
 // swept.
-const staleTaskCutoff = 30 * time.Minute
+const staleTaskCutoff = 50 * time.Minute
 const taskReconcileInterval = time.Minute
 
 // SweepStaleTasks reconciles tasks left in Processing by a prior crash/restart —

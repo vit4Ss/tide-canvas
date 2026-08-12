@@ -35,8 +35,10 @@ const (
 	statusCancelled  = 3
 )
 
-// taskStateTTL is how long transient task state lives in Redis.
-const taskStateTTL = 30 * time.Minute
+// taskStateTTL is how long transient task state lives in Redis. Keep it beyond
+// the longest provider deadline (video 40m) so long-running tasks retain their
+// fast-poll state through finalization.
+const taskStateTTL = 50 * time.Minute
 
 const maxRenderedSkillPromptBytes = 1 << 20
 
@@ -739,7 +741,7 @@ func (s *service) heartbeatProcessingTask(ctx context.Context, taskID idgen.ID) 
 	if result.Error != nil {
 		logger.L().Warn("ai: task heartbeat failed", zap.String("taskId", taskID.String()), zap.Error(result.Error))
 		// A transient DB failure should not cancel a paid provider operation. The
-		// stale sweeper uses a 30-minute cutoff, leaving ample time to recover.
+		// stale sweeper uses a 50-minute cutoff, leaving ample time to recover.
 		return true
 	}
 	return result.RowsAffected == 1

@@ -13,6 +13,19 @@ import (
 	"tidecanvas/internal/pkg/idgen"
 )
 
+func TestGenerationRetentionWindowsCoverLongVideo(t *testing.T) {
+	const videoBudget = 40 * time.Minute
+	if taskStateTTL <= videoBudget {
+		t.Fatalf("task state TTL = %s, must exceed video budget %s", taskStateTTL, videoBudget)
+	}
+	if staleTaskCutoff <= videoBudget {
+		t.Fatalf("stale cutoff = %s, must exceed video budget %s", staleTaskCutoff, videoBudget)
+	}
+	if taskStateTTL != staleTaskCutoff {
+		t.Fatalf("task state TTL %s and stale cutoff %s must stay aligned", taskStateTTL, staleTaskCutoff)
+	}
+}
+
 func TestGenerationConcurrentLimitConfig(t *testing.T) {
 	db := concurrencyTestDB(t)
 	if got := generationConcurrentLimit(db); got != model.DefaultAIUserConcurrentLimit {

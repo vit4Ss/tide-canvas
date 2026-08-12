@@ -72,6 +72,15 @@ func TestUpstreamErrorPreservesBusinessCode(t *testing.T) {
 	}
 }
 
+func TestMediaPollDeadlines(t *testing.T) {
+	if videoPollDeadline != 40*time.Minute {
+		t.Fatalf("video deadline = %s, want 40m", videoPollDeadline)
+	}
+	if upscalePollDeadline != 20*time.Minute {
+		t.Fatalf("upscale deadline = %s, want unchanged 20m", upscalePollDeadline)
+	}
+}
+
 func TestSubmitReturnsStructuredErrorFromHTTPResponses(t *testing.T) {
 	t.Parallel()
 

@@ -471,7 +471,13 @@ export function useGeneration(p: GenerationParams) {
           if (foreground) setBusy(hasOngoingRuns());
           return;
         }
-        const maxMs = isVid || kind === "3d" ? 30 * 60 * 1000 : kind === "audio" ? 12 * 60 * 1000 : 7 * 60 * 1000;
+        const maxMs = isVid
+          ? 45 * 60 * 1000
+          : kind === "3d"
+            ? 30 * 60 * 1000
+            : kind === "audio"
+              ? 12 * 60 * 1000
+              : 7 * 60 * 1000;
         const beyondPollingBudget = Date.now() - startedAt > maxMs;
         if (beyondPollingBudget && !deadlineNoticeShown) {
           deadlineNoticeShown = true;

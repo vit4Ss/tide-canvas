@@ -41,8 +41,10 @@ const POLL_INTERVAL = 2000; // 2 秒轮询
 // 后端允许图片上游最多运行 10 分钟，成功后还可能需要约 90 秒把结果转存到自有 OSS。
 // 前端必须覆盖完整后端预算，否则会在一个最终成功的任务上提前显示“生成失败”。
 const MAX_POLL_TIME = 15 * 60 * 1000;
-// 视频较慢（后端轮询可达 10min+），前端上限须 ≥ 后端，否则前端会先放弃、把已成功的任务误标失败、且不回填结果
-const MAX_POLL_TIME_VIDEO = 30 * 60 * 1000;
+// 视频后端最多等待 40 分钟；前端正常轮询多留 5 分钟收尾余量，之后只降低
+// 轮询频率，不会擅自把仍在服务端执行的任务判失败。
+const MAX_POLL_TIME_VIDEO = 45 * 60 * 1000;
+const MAX_POLL_TIME_AUDIO = 30 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
 // 画布级轮询单例
@@ -266,7 +268,7 @@ function pollTask(nodeId: string, taskId: string, startTime: number, input: Reco
       finish(nodeId, taskId);
       return;
     }
-    // 目标节点已被删除:静默停轮,否则会对着空节点空转最长 30 分钟,
+    // 目标节点已被删除:静默停轮,否则会对着空节点持续轮询,
     // 结束时还会给不存在的节点弹「生成成功/失败」
     if (!useCanvasStore.getState().nodes.some((n) => n.id === nodeId)) {
       finish(nodeId, taskId);
@@ -294,7 +296,7 @@ function pollTask(nodeId: string, taskId: string, startTime: number, input: Reco
       const updateNode = useCanvasStore.getState().updateNode;
       if (!res.success || !res.data) {
         // 查询失败 ≠ 任务失败:http 层把断网/网关 5xx 都归一为 success:false。
-        // 长任务(视频可达 30 分钟)期间一次 Wi-Fi 抖动/瞬时 502 不能把仍在
+        // 长任务(视频可达 40 分钟)期间一次 Wi-Fi 抖动/瞬时 502 不能把仍在
         // 执行且已扣积分的任务判死。401 可能只是 refresh 服务暂时失败；
         // 408/429 也不能证明任务不存在。明确业务拒绝或其它 4xx 则终止；
         // 尤其 400 表示持久化 taskId 已损坏，继续轮询只会永久转圈。
@@ -465,9 +467,11 @@ async function reconcilePendingGeneration(
       }, false);
       saveGenerationState(pending.projectId);
       const node = useCanvasStore.getState().nodes.find((item) => item.id === nodeId);
-      const maxPollMs = node?.type === "video" || node?.type === "audio"
+      const maxPollMs = node?.type === "video"
         ? MAX_POLL_TIME_VIDEO
-        : MAX_POLL_TIME;
+        : node?.type === "audio"
+          ? MAX_POLL_TIME_AUDIO
+          : MAX_POLL_TIME;
       pollTask(nodeId, taskId, Date.now(), pending.input, maxPollMs, pending.gridOutput, onSuccess);
       return { status: "started", taskId };
     }
@@ -655,7 +659,11 @@ export function resumeGeneration() {
   for (const node of nodes) {
     if (node.status !== "generating" || activeTasks.has(node.id)) continue;
     if (validTaskId(node.taskId)) {
-      const maxPollMs = node.type === "video" || node.type === "audio" ? MAX_POLL_TIME_VIDEO : MAX_POLL_TIME;
+      const maxPollMs = node.type === "video"
+        ? MAX_POLL_TIME_VIDEO
+        : node.type === "audio"
+          ? MAX_POLL_TIME_AUDIO
+          : MAX_POLL_TIME;
       track(node.id, node.taskId);
       // 画幅从节点已持久化的 aspectRatio 恢复;超时预算从当前时刻重新起算(有整体上限兜底)
       pollTask(node.id, node.taskId, Date.now(), node.aspectRatio ? { aspectRatio: node.aspectRatio } : {}, maxPollMs);
