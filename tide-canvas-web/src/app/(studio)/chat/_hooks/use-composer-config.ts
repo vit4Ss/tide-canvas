@@ -23,6 +23,7 @@ import {
   type RefPolicy,
 } from "../_components/chat-utils";
 import { resolutionRank } from "@/components/studio/create-studio/utils";
+import { configuredMatrix, durationVariants, keyVariants, matrixPrice } from "@/lib/price-matrix";
 import type { GenModelsApi } from "./use-gen-models";
 
 export function useComposerConfig(models: GenModelsApi) {
@@ -213,19 +214,19 @@ export function useComposerConfig(models: GenModelsApi) {
     };
     const flat = cellNum(mCfg?.creditCost) || parseFloat(selModel?.pointCost ?? "0") || 0;
     let base = 0;
-    const pm = mCfg?.priceMatrix;
+    const pm = configuredMatrix(mCfg);
     if (isVid && dur && res) {
-      base = cellNum(pm?.[dur]?.[res]) || cellNum(pm?.[res]?.[dur]);
+      base = matrixPrice(pm, durationVariants(dur), keyVariants(res)) ?? 0;
       if (!base) {
-        const mods = mCfg?.priceModifiers as Record<string, Record<string, unknown> | undefined> | undefined;
-        base = cellNum(mods?.[`duration@${res}`]?.[dur]);
+        const mods = mCfg?.priceModifiers as Record<string, Record<string, string | number>> | undefined;
+        base = matrixPrice(mods, keyVariants(`duration@${res}`), durationVariants(dur)) ?? 0;
       }
     } else if (selModel?.type === "image" && res) {
       // 图片按 [画质][清晰度] 查表，与服务端 pricing.go 同口径；两种轴序都试，
       // 后台矩阵横竖着写都能命中（漏查会静默落到模型固定价，4K 卖成 1K 的钱）。
       // 不配画质档位时（quality 为空）查 default 行——服务端同样如此。
       const q = quality || "default";
-      base = cellNum(pm?.[q]?.[res]) || cellNum(pm?.[res]?.[q]);
+      base = matrixPrice(pm, keyVariants(q), keyVariants(res)) ?? 0;
     }
     if (!base) base = flat;
     // 服务端按向上取整结算（见 pricing.go），展示同口径；仅图片批量 ×数量

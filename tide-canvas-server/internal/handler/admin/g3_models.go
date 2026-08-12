@@ -863,8 +863,11 @@ func validateReferenceVideoPricingConfig(raw json.RawMessage) error {
 		return errors.New("参考视频计费配置无效")
 	}
 	var cfg struct {
-		Enabled bool            `json:"referenceVideoBillingEnabled"`
-		Rate    json.RawMessage `json:"referenceVideoPricePerSecond"`
+		Enabled     bool                      `json:"referenceVideoBillingEnabled"`
+		Durations   []any                     `json:"durations"`
+		Resolutions []string                  `json:"resolutions"`
+		PriceMatrix map[string]map[string]any `json:"priceMatrix"`
+		Pricing     map[string]map[string]any `json:"pricing"`
 	}
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return errors.New("参考视频计费配置无效")
@@ -872,19 +875,75 @@ func validateReferenceVideoPricingConfig(raw json.RawMessage) error {
 	if !cfg.Enabled {
 		return nil
 	}
-	rate := 0.0
-	if len(cfg.Rate) > 0 {
-		if err := json.Unmarshal(cfg.Rate, &rate); err != nil {
-			var text string
-			if json.Unmarshal(cfg.Rate, &text) == nil {
-				rate, _ = strconv.ParseFloat(strings.TrimSpace(text), 64)
+	if len(cfg.Durations) == 0 || len(cfg.Resolutions) == 0 {
+		return errors.New("开启参考视频计费后，必须配置支持时长、清晰度和对应积分")
+	}
+	matrix := cfg.PriceMatrix
+	if len(matrix) == 0 {
+		matrix = cfg.Pricing
+	}
+	for _, rawDuration := range cfg.Durations {
+		duration := strings.TrimSpace(fmt.Sprint(rawDuration))
+		durationNumber := strings.TrimSpace(strings.TrimSuffix(strings.ToLower(duration), "s"))
+		seconds, parseErr := strconv.ParseFloat(durationNumber, 64)
+		if duration == "" || parseErr != nil || seconds <= 0 || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
+			return errors.New("参考视频支持时长配置无效")
+		}
+		for _, resolution := range cfg.Resolutions {
+			resolution = strings.TrimSpace(resolution)
+			if resolution == "" || referenceMatrixCell(matrix, duration, resolution) <= 0 {
+				return fmt.Errorf("开启参考视频计费后，请配置 %s / %s 的积分", duration, strings.ToUpper(resolution))
 			}
 		}
 	}
-	if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
-		return errors.New("开启参考视频计费后，必须配置大于 0 的每秒积分")
-	}
 	return nil
+}
+
+func referenceMatrixCell(matrix map[string]map[string]any, duration, resolution string) float64 {
+	lookup := func(rowKey, colKey string) float64 {
+		for key, row := range matrix {
+			if !strings.EqualFold(strings.TrimSpace(key), strings.TrimSpace(rowKey)) {
+				continue
+			}
+			for column, raw := range row {
+				if strings.EqualFold(strings.TrimSpace(column), strings.TrimSpace(colKey)) {
+					return referencePricingNumber(raw)
+				}
+			}
+		}
+		return 0
+	}
+	durations := []string{duration}
+	if strings.HasSuffix(strings.ToLower(duration), "s") {
+		durations = append(durations, strings.TrimSpace(duration[:len(duration)-1]))
+	} else {
+		durations = append(durations, duration+"s")
+	}
+	for _, candidate := range durations {
+		if value := lookup(candidate, resolution); value > 0 {
+			return value
+		}
+		if value := lookup(resolution, candidate); value > 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func referencePricingNumber(raw any) float64 {
+	var value float64
+	switch typed := raw.(type) {
+	case float64:
+		value = typed
+	case string:
+		value, _ = strconv.ParseFloat(strings.TrimSpace(typed), 64)
+	}
+	// 前端以 JSON number 传递积分；限制到 IEEE-754 可精确表示的整数范围，
+	// 避免保存成功后在实际计费阶段才因数值溢出而拒绝生成。
+	if value <= 0 || value > float64(1<<53-1) || math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0
+	}
+	return value
 }
 
 // stringToRaw returns the stored config as a JSON object for the VO, or nil

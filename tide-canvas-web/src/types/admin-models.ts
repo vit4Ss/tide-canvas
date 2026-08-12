@@ -66,8 +66,8 @@ export interface ModelConfig {
   gridOutput?: boolean;
   capabilities?: string[];
   operations?: string[];
-  /** points per quality(or duration) × resolution cell, as decimal strings */
-  priceMatrix?: Record<string, Record<string, string>>;
+  /** points per quality(or duration) × resolution cell; accepts numbers or numeric strings */
+  priceMatrix?: Record<string, Record<string, string | number>>;
   /** 旧模型价格矩阵字段；公开模型接口会补 priceMatrix，前端仍保留兼容。 */
   pricing?: Record<string, Record<string, string | number>>;
   /** 视频超分旧版统一每秒积分；仅用于滚动升级兼容。 */
@@ -76,8 +76,6 @@ export interface ModelConfig {
   pricePerSecondByResolution?: Record<string, number | string>;
   /** 视频模型：是否对随请求提交的参考视频按实际时长额外收费。 */
   referenceVideoBillingEnabled?: boolean;
-  /** 视频模型：参考视频额外收费的积分/秒；每段独立向上取整后求和，仅开关开启时生效。 */
-  referenceVideoPricePerSecond?: number | string;
   /** raw upstream price modifiers, kept for reference */
   priceModifiers?: unknown;
   /** complete upstream params_schema, including modality-specific 3D options */

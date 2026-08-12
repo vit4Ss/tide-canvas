@@ -77,7 +77,7 @@ export const aiApi = {
     http.post<AiTaskVO>("/api/ai/generate", data),
   upscaleQuote: (data: { modelId: string; videoUrl: string; targetResolution: string }) =>
     http.post<UpscaleQuoteVO>("/api/ai/upscale-quote", data),
-  referenceVideoQuote: (data: { modelId: string; videoUrls: string[] }) =>
+  referenceVideoQuote: (data: { modelId: string; resolution: string; videoUrls: string[] }) =>
     http.post<ReferenceVideoQuoteVO>("/api/ai/reference-video-quote", data),
   generateIdempotent: (
     data: AiGenerateInput,

@@ -34,6 +34,25 @@ func TestResolveCostVideoFuzzyMatrix(t *testing.T) {
 	}
 }
 
+func TestResolveCostMatrixAliasPriorityAndEmptyFallback(t *testing.T) {
+	legacyFallback := &model.AiModel{
+		Type:      "video",
+		PointCost: 999,
+		Config:    `{"priceMatrix":{},"pricing":{"7s":{"720p":49}}}`,
+	}
+	if got := resolveCost(legacyFallback, json.RawMessage(`{"duration":7,"resolution":"720P"}`)); got != 49 {
+		t.Fatalf("empty priceMatrix should fall back to pricing: got %d, want 49", got)
+	}
+	newPriority := &model.AiModel{
+		Type:      "video",
+		PointCost: 999,
+		Config:    `{"priceMatrix":{"7s":{"720p":70}},"pricing":{"7s":{"720p":49}}}`,
+	}
+	if got := resolveCost(newPriority, json.RawMessage(`{"duration":7,"resolution":"720P"}`)); got != 70 {
+		t.Fatalf("non-empty priceMatrix must win over stale pricing alias: got %d, want 70", got)
+	}
+}
+
 // 图片矩阵（画质×清晰度）的大小写容错：内置清晰度 "2K" 大写 vs 后台小写键。
 func TestResolveCostImageFuzzyMatrix(t *testing.T) {
 	m := &model.AiModel{

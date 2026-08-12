@@ -9,7 +9,7 @@ import { VideoParamPicker, normalizeDurations, type VideoParamValue } from "./vi
 import { ModelPicker } from "./model-picker";
 import { uploadFileSmart } from "@/lib/api";
 import { resolveModelReferenceLimitBytes } from "@/lib/upload-limits";
-import { matrixPrice, keyVariants, durationVariants } from "@/lib/price-matrix";
+import { configuredMatrix, durationVariants, keyVariants, matrixPrice } from "@/lib/price-matrix";
 import { isConceptCanvasNodeType, isImageReferenceNodeType } from "@/lib/canvas-node-types";
 import { AiModelType } from "@/types/ai";
 import { NodeHeader } from "./base/node-header";
@@ -300,10 +300,20 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   const referenceVideoQuote = useReferenceVideoQuote(
     selectedModel?.modelId || selectedModel?.id,
     rawConfig,
+    videoParam.resolution,
     referenceVideoUrls,
   );
-  const matrixCost = matrixPrice(formatConfig.pricing, durationVariants(videoParam.duration), keyVariants(videoParam.resolution));
-  const basePointCost = matrixCost ?? selectedModel?.pointCost ?? 135;
+  const matrixCost = matrixPrice(configuredMatrix(formatConfig), durationVariants(videoParam.duration), keyVariants(videoParam.resolution));
+  const modifierCost = matrixPrice(
+    formatConfig.priceModifiers as Record<string, Record<string, string | number>> | undefined,
+    keyVariants(`duration@${videoParam.resolution}`),
+    durationVariants(videoParam.duration),
+  );
+  const configuredFlatCost = Number(formatConfig.creditCost);
+  const flatCost = Number.isFinite(configuredFlatCost) && configuredFlatCost > 0
+    ? configuredFlatCost
+    : selectedModel?.pointCost ?? 135;
+  const basePointCost = matrixCost ?? modifierCost ?? flatCost;
   const pointCost = basePointCost + referenceVideoQuote.quote.pointCost;
 
   // 切换模型后当前比例/清晰度/时长不在该模型的可选档位 → 自动校正为其首个档位
@@ -829,7 +839,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                   <span
                     className="flex items-center gap-0.5 px-0.5"
                     title={referenceVideoQuote.quote.pointCost > 0
-                      ? `含参考视频 ${referenceVideoQuote.quote.durationSeconds.toFixed(1)} 秒，额外 ${referenceVideoQuote.quote.pointCost} 积分`
+                      ? `含参考视频 ${referenceVideoQuote.quote.videoCount} 个，共 ${referenceVideoQuote.quote.durationSeconds.toFixed(1)} 秒，额外 ${referenceVideoQuote.quote.pointCost} 积分`
                       : undefined}
                   >
                     <Zap className="h-3 w-3 text-neutral-900 dark:text-neutral-100" fill="currentColor" />

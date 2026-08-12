@@ -132,6 +132,7 @@ export function Composer({
   const referenceVideoQuote = useReferenceVideoQuote(
     selModel?.modelKey || selModel?.id,
     mCfg,
+    res,
     isVid && mode === "omni_ref"
       ? refs.filter((ref) => ref.kind === "video" && ref.url).map((ref) => ref.url as string)
       : [],
@@ -646,7 +647,7 @@ export function Composer({
           <span
             className="cm-pts"
             title={referenceVideoQuote.quote.pointCost > 0
-              ? `含参考视频 ${referenceVideoQuote.quote.durationSeconds.toFixed(1)} 秒，额外 ${referenceVideoQuote.quote.pointCost} 积分`
+              ? `含参考视频 ${referenceVideoQuote.quote.videoCount} 个，共 ${referenceVideoQuote.quote.durationSeconds.toFixed(1)} 秒，额外 ${referenceVideoQuote.quote.pointCost} 积分`
               : undefined}
           >
             {referenceVideoQuote.loading

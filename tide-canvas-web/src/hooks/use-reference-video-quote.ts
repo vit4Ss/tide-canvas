@@ -9,7 +9,7 @@ const EMPTY_QUOTE: ReferenceVideoQuoteVO = {
   billingEnabled: false,
   videoCount: 0,
   durationSeconds: 0,
-  ratePerSecond: 0,
+  resolution: "",
   pointCost: 0,
 };
 
@@ -27,6 +27,7 @@ type QuoteState = {
 export function useReferenceVideoQuote(
   modelId: string | null | undefined,
   config: ModelConfig | null | undefined,
+  resolution: string | null | undefined,
   videoUrls: string[],
 ) {
   // The catalog config is only a cache invalidation hint. Never use it to
@@ -36,12 +37,27 @@ export function useReferenceVideoQuote(
   // deployment that omitted these fields.
   const configRevision = JSON.stringify([
     config?.referenceVideoBillingEnabled,
-    config?.referenceVideoPricePerSecond,
+    config?.durations,
+    config?.resolutions,
+    config?.priceMatrix,
+    config?.pricing,
   ]);
   const urlsKey = JSON.stringify(videoUrls.map((url) => url.trim()).filter(Boolean));
   const normalizedUrls = useMemo<string[]>(() => JSON.parse(urlsKey) as string[], [urlsKey]);
+  // Older/direct clients may omit the field when a model exposes exactly one
+  // resolution. Mirror the server's unambiguous fallback so the UI still shows
+  // the surcharge instead of waiting until submit to discover it.
+  const normalizedResolution = resolution?.trim()
+    || (config?.resolutions?.length === 1 ? config.resolutions[0]?.trim() : "")
+    || "";
+  // Even while the local catalog is still loading (and resolution is empty),
+  // ask the server. It can select the sole configured resolution or return a
+  // safe validation error; silently skipping here would leave the old base
+  // price visible after a reference video was selected.
   const shouldQuote = !!modelId?.trim() && normalizedUrls.length > 0;
-  const requestKey = shouldQuote ? JSON.stringify([modelId?.trim(), configRevision, normalizedUrls]) : "";
+  const requestKey = shouldQuote
+    ? JSON.stringify([modelId?.trim(), normalizedResolution, configRevision, normalizedUrls])
+    : "";
   const [state, setState] = useState<QuoteState>({
     requestKey: "",
     quote: EMPTY_QUOTE,
@@ -56,7 +72,7 @@ export function useReferenceVideoQuote(
       };
     }
 
-    void aiApi.referenceVideoQuote({ modelId, videoUrls: normalizedUrls }).then((result) => {
+    void aiApi.referenceVideoQuote({ modelId, resolution: normalizedResolution, videoUrls: normalizedUrls }).then((result) => {
       if (!active) return;
       if (result.success && result.data) {
         setState({ requestKey, quote: result.data, failed: false });
@@ -68,22 +84,21 @@ export function useReferenceVideoQuote(
     return () => {
       active = false;
     };
-  }, [modelId, normalizedUrls, requestKey, shouldQuote, state.requestKey]);
+  }, [modelId, normalizedResolution, normalizedUrls, requestKey, shouldQuote, state.requestKey]);
 
   if (!shouldQuote) {
     return { applies: false, loading: false, failed: false, quote: EMPTY_QUOTE };
   }
-  // Effects run after render. Treat a changed model/rate/reference list as
+  // Effects run after render. Treat a changed model/matrix/reference list as
   // loading immediately so one render can never expose or submit an old quote.
   if (state.requestKey !== requestKey) {
     return { applies: true, loading: true, failed: false, quote: EMPTY_QUOTE };
   }
   return {
-    // rate/point fallbacks keep the UI correct during rolling deployment when
+    // point fallback keeps the UI correct during rolling deployment when
     // an older API instance may not yet include billingEnabled in its JSON.
     applies: state.failed
       || state.quote.billingEnabled
-      || state.quote.ratePerSecond > 0
       || state.quote.pointCost > 0,
     loading: false,
     failed: state.failed,

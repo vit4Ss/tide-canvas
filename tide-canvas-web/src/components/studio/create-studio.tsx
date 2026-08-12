@@ -63,6 +63,7 @@ import { toast } from "@/components/shared/toast";
 import { confirmDialog } from "@/components/shared/confirm";
 import { markRequiredField } from "@/lib/require-field";
 import { useReferenceVideoQuote } from "@/hooks/use-reference-video-quote";
+import { configuredMatrix, durationVariants, keyVariants, matrixPrice } from "@/lib/price-matrix";
 import styles from "@/app/(studio)/studio/create.module.css";
 import {
   activeRunStorageKey,
@@ -236,6 +237,7 @@ export default function CreateStudio() {
   const referenceVideoQuote = useReferenceVideoQuote(
     selModel?.modelKey || selModel?.id,
     mCfg,
+    res,
     referenceVideoUrls,
   );
   // Suno 音效卡与音乐卡用法不同（不吃歌词/风格/歌名，只按描述出短音效）。
@@ -342,27 +344,43 @@ export default function CreateStudio() {
   //   3) built-in fallback map (case-insensitive: 后台用 1k/2k/4k, 预览用 1K/2K/4K)
   const cost = useMemo(() => {
     let base: number;
+    const configuredFlat = Number(mCfg?.creditCost);
+    const modelFlat = parseFloat(selModel?.pointCost ?? "") || 0;
+    const flat = Number.isFinite(configuredFlat) && configuredFlat > 0 ? configuredFlat : modelFlat;
     // 音频按次计费（Suno 两首一次结算），无画质/清晰度矩阵与数量倍乘。
     if (isAudio || is3D) {
-      base = mCfg?.creditCost ?? (parseFloat(selModel?.pointCost ?? "") || 0);
-      return base;
+      return Math.ceil(flat);
     }
-    const pm = mCfg?.priceMatrix;
     // 图片不配画质档位时（quality 为空）矩阵查 default 行，与服务端同口径
     const row = isVideo ? dur : quality || "default";
     const col = isVideo ? res : imgRes;
-    const cell = pm?.[row]?.[col];
-    const per = cell != null ? parseFloat(cell) : NaN;
-    if (Number.isFinite(per)) {
+    const per = matrixPrice(
+      configuredMatrix(mCfg),
+      isVideo ? durationVariants(row) : keyVariants(row),
+      keyVariants(col),
+    );
+    if (per != null) {
       base = isVideo ? Math.ceil(per) : Math.ceil(per * count);
       return base + referenceVideoQuote.quote.pointCost;
     }
 
-    const flat = mCfg?.creditCost ?? (parseFloat(selModel?.pointCost ?? "") || 0);
+    if (isVideo && res) {
+      const modifiers = mCfg?.priceModifiers as Record<string, Record<string, string | number>> | undefined;
+      const modifier = matrixPrice(modifiers, keyVariants(`duration@${res}`), durationVariants(dur));
+      if (modifier != null) {
+        return Math.ceil(modifier) + referenceVideoQuote.quote.pointCost;
+      }
+    }
+
     if (flat > 0) {
       base = isVideo ? Math.ceil(flat) : Math.ceil(flat * count);
       return base + referenceVideoQuote.quote.pointCost;
     }
+
+    // Built-in prices only support the offline fallback model list. A real
+    // backend model whose configured/catalog price is zero is intentionally
+    // free and must not be shown as a paid generation.
+    if (!noBackend) return referenceVideoQuote.quote.pointCost;
 
     const fb = (m: Record<string, number>, k: string, d: number) =>
       m[k] ?? m[k.toUpperCase()] ?? m[k.toLowerCase()] ?? d;
@@ -370,7 +388,7 @@ export default function CreateStudio() {
       ? Math.round((fb(RES_COST, res, 50) * (DUR_SEC[dur] || 5)) / 5)
       : fb(IMG_RES_COST, imgRes, 14) * count;
     return base + referenceVideoQuote.quote.pointCost;
-  }, [mCfg, selModel, isVideo, isAudio, is3D, dur, res, imgRes, quality, count, referenceVideoQuote.quote.pointCost]);
+  }, [mCfg, selModel, isVideo, isAudio, is3D, noBackend, dur, res, imgRes, quality, count, referenceVideoQuote.quote.pointCost]);
 
   const {
     busy,
@@ -1318,7 +1336,7 @@ export default function CreateStudio() {
               {referenceVideoQuote.applies && !referenceVideoQuote.loading && (
                 referenceVideoQuote.failed
                   ? <>参考视频费用提交时核验 · </>
-                  : <>参考视频 {referenceVideoQuote.quote.durationSeconds.toFixed(1)} 秒，额外 {referenceVideoQuote.quote.pointCost} 积分 · </>
+                  : <>参考视频 {referenceVideoQuote.quote.videoCount} 个，共 {referenceVideoQuote.quote.durationSeconds.toFixed(1)} 秒，额外 {referenceVideoQuote.quote.pointCost} 积分 · </>
               )}
               {balance !== null ? `余额 ${balance.toLocaleString()} 积分` : "余额 —"}
             </div>

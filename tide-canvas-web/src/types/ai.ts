@@ -140,7 +140,7 @@ export interface ReferenceVideoQuoteVO {
   billingEnabled: boolean;
   videoCount: number;
   durationSeconds: number;
-  ratePerSecond: number;
+  resolution: string;
   pointCost: number;
 }
 

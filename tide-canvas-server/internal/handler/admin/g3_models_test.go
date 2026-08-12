@@ -102,8 +102,8 @@ func TestValidateReferenceVideoPricingConfig(t *testing.T) {
 		nil,
 		json.RawMessage(`{}`),
 		json.RawMessage(`{"referenceVideoBillingEnabled":false}`),
-		json.RawMessage(`{"referenceVideoBillingEnabled":true,"referenceVideoPricePerSecond":10}`),
-		json.RawMessage(`{"referenceVideoBillingEnabled":true,"referenceVideoPricePerSecond":"2.5"}`),
+		json.RawMessage(`{"referenceVideoBillingEnabled":true,"durations":["7s",8],"resolutions":["720p"],"priceMatrix":{"7s":{"720p":49},"8s":{"720p":"56"}}}`),
+		json.RawMessage(`{"referenceVideoBillingEnabled":true,"durations":["7s"],"resolutions":["720p"],"pricing":{"720P":{"7":49}}}`),
 	} {
 		if err := validateReferenceVideoPricingConfig(raw); err != nil {
 			t.Fatalf("config %s: %v", raw, err)
@@ -112,8 +112,11 @@ func TestValidateReferenceVideoPricingConfig(t *testing.T) {
 	for _, raw := range []json.RawMessage{
 		json.RawMessage(`{"referenceVideoBillingEnabled":`),
 		json.RawMessage(`{"referenceVideoBillingEnabled":true}`),
-		json.RawMessage(`{"referenceVideoBillingEnabled":true,"referenceVideoPricePerSecond":0}`),
-		json.RawMessage(`{"referenceVideoBillingEnabled":true,"referenceVideoPricePerSecond":"bad"}`),
+		json.RawMessage(`{"referenceVideoBillingEnabled":true,"durations":["seven"],"resolutions":["720p"],"priceMatrix":{"seven":{"720p":49}}}`),
+		json.RawMessage(`{"referenceVideoBillingEnabled":true,"durations":["7s"],"resolutions":["720p"],"priceMatrix":{"7s":{"720p":0}}}`),
+		json.RawMessage(`{"referenceVideoBillingEnabled":true,"durations":["7s","8s"],"resolutions":["720p"],"priceMatrix":{"7s":{"720p":49}}}`),
+		json.RawMessage(`{"referenceVideoBillingEnabled":true,"durations":["7s"],"resolutions":["720p","1080p"],"priceMatrix":{"7s":{"720p":49}}}`),
+		json.RawMessage(`{"referenceVideoBillingEnabled":true,"durations":["7s"],"resolutions":["720p"],"priceMatrix":{"7s":{"720p":1e308}}}`),
 	} {
 		if err := validateReferenceVideoPricingConfig(raw); err == nil {
 			t.Fatalf("config %s should be rejected", raw)

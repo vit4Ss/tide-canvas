@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -23,39 +25,37 @@ type referenceVideoCharge struct {
 	CanonicalURLs  []string
 	VideoCount     int
 	DurationSecond float64
-	RatePerSecond  float64
+	Resolution     string
 	PointCost      int
 }
 
 type referenceVideoQuoteDTO struct {
-	ModelID   string   `json:"modelId"`
-	VideoURLs []string `json:"videoUrls"`
+	ModelID    string   `json:"modelId"`
+	Resolution string   `json:"resolution"`
+	VideoURLs  []string `json:"videoUrls"`
 }
 
 type referenceVideoQuoteVO struct {
 	BillingEnabled  bool    `json:"billingEnabled"`
 	VideoCount      int     `json:"videoCount"`
 	DurationSeconds float64 `json:"durationSeconds"`
-	RatePerSecond   float64 `json:"ratePerSecond"`
+	Resolution      string  `json:"resolution"`
 	PointCost       int     `json:"pointCost"`
 }
 
-// referenceVideoPricing reads the per-model switch and points/second rate.
-// Keeping this in model config makes the surcharge opt-in: existing video
-// models remain unchanged until an administrator explicitly enables it.
-func referenceVideoPricing(m *model.AiModel) (enabled bool, rate float64) {
+// referenceVideoPricing reads the per-model switch. The surcharge itself uses
+// the model's existing duration × resolution price matrix; there is no second
+// independently maintained reference-video price.
+func referenceVideoPricing(m *model.AiModel) (enabled bool) {
 	if m == nil || m.Type != "video" || strings.TrimSpace(m.Config) == "" {
-		return false, 0
+		return false
 	}
 	var cfg map[string]any
 	if json.Unmarshal([]byte(m.Config), &cfg) != nil {
-		return false, 0
+		return false
 	}
 	enabled, _ = cfg["referenceVideoBillingEnabled"].(bool)
-	if !enabled {
-		return false, 0
-	}
-	return true, numField(cfg, "referenceVideoPricePerSecond")
+	return enabled
 }
 
 // prepareReferenceVideoPricingInput confirms every reference video before the
@@ -96,7 +96,7 @@ func (s *service) prepareReferenceVideoPricingInput(ctx context.Context, userID 
 		return 0, nil
 	}
 
-	enabled, rate := referenceVideoPricing(m)
+	enabled := referenceVideoPricing(m)
 	if !enabled {
 		if clientSuppliedBilling {
 			encoded, err := json.Marshal(input)
@@ -107,15 +107,21 @@ func (s *service) prepareReferenceVideoPricingInput(ctx context.Context, userID 
 		}
 		return 0, nil
 	}
-	if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
-		return 0, skillPlacementError{message: "该模型尚未配置参考视频每秒积分，请联系管理员"}
+	resolution := inputStr(input, "resolution", "clarity")
+	pricing, err := newReferenceVideoMatrixPricing(m, resolution)
+	if err != nil {
+		return 0, err
 	}
 
-	charge, err := s.confirmReferenceVideoCharge(ctx, userID, references, rate)
+	charge, err := s.confirmReferenceVideoCharge(ctx, userID, references, pricing)
 	if err != nil {
 		return 0, referenceVideoConfirmationError(err)
 	}
 	input["videoReferences"] = charge.CanonicalURLs
+	// When a single configured resolution supplied the unambiguous fallback,
+	// persist it into the normalized generation input too. Base pricing and the
+	// provider must use the same column as the reference-video surcharge.
+	input["resolution"] = charge.Resolution
 	delete(input, "video_urls")
 	encoded, err := json.Marshal(input)
 	if err != nil {
@@ -133,21 +139,22 @@ func (s *service) quoteReferenceVideos(ctx context.Context, userID idgen.ID, dto
 	if m == nil || !m.Enabled || m.Type != "video" {
 		return nil, errNoModel
 	}
-	enabled, rate := referenceVideoPricing(m)
+	enabled := referenceVideoPricing(m)
 	if !enabled {
 		return &referenceVideoQuoteVO{BillingEnabled: false}, nil
 	}
-	if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
-		return nil, skillPlacementError{message: "该模型尚未配置参考视频每秒积分，请联系管理员"}
+	pricing, err := newReferenceVideoMatrixPricing(m, dto.Resolution)
+	if err != nil {
+		return nil, err
 	}
 	references := cleanReferenceVideoURLs(dto.VideoURLs)
 	if len(references) == 0 {
-		return &referenceVideoQuoteVO{BillingEnabled: true, RatePerSecond: rate}, nil
+		return &referenceVideoQuoteVO{BillingEnabled: true, Resolution: pricing.resolution}, nil
 	}
 	if len(references) > maxReferenceVideoQuotes {
 		return nil, skillPlacementError{message: "参考视频数量过多，请减少后重试"}
 	}
-	charge, err := s.confirmReferenceVideoCharge(ctx, userID, references, rate)
+	charge, err := s.confirmReferenceVideoCharge(ctx, userID, references, pricing)
 	if err != nil {
 		return nil, referenceVideoConfirmationError(err)
 	}
@@ -155,12 +162,119 @@ func (s *service) quoteReferenceVideos(ctx context.Context, userID idgen.ID, dto
 		BillingEnabled:  true,
 		VideoCount:      charge.VideoCount,
 		DurationSeconds: charge.DurationSecond,
-		RatePerSecond:   charge.RatePerSecond,
+		Resolution:      charge.Resolution,
 		PointCost:       charge.PointCost,
 	}, nil
 }
 
-func (s *service) confirmReferenceVideoCharge(ctx context.Context, userID idgen.ID, references []string, rate float64) (referenceVideoCharge, error) {
+type referenceVideoDurationPrice struct {
+	duration float64
+	points   int
+}
+
+type referenceVideoMatrixPricing struct {
+	resolution string
+	prices     []referenceVideoDurationPrice
+}
+
+func newReferenceVideoMatrixPricing(m *model.AiModel, resolution string) (referenceVideoMatrixPricing, error) {
+	if m == nil || m.Type != "video" || strings.TrimSpace(m.Config) == "" {
+		return referenceVideoMatrixPricing{}, skillPlacementError{message: "该模型尚未配置参考视频积分定价，请联系管理员"}
+	}
+	var cfg map[string]any
+	if json.Unmarshal([]byte(m.Config), &cfg) != nil {
+		return referenceVideoMatrixPricing{}, skillPlacementError{message: "该模型的参考视频积分配置无效，请联系管理员"}
+	}
+	resolution = strings.TrimSpace(resolution)
+	configuredResolutions, ok := cfg["resolutions"].([]any)
+	if !ok || len(configuredResolutions) == 0 {
+		return referenceVideoMatrixPricing{}, skillPlacementError{message: "该模型尚未配置参考视频清晰度，请联系管理员"}
+	}
+	if resolution == "" {
+		if len(configuredResolutions) == 1 {
+			if candidate, ok := configuredResolutions[0].(string); ok {
+				resolution = strings.TrimSpace(candidate)
+			}
+		}
+	}
+	if resolution == "" {
+		return referenceVideoMatrixPricing{}, skillPlacementError{message: "请选择参考视频计费所需的清晰度"}
+	}
+	canonicalResolution := ""
+	for _, raw := range configuredResolutions {
+		candidate, valid := raw.(string)
+		candidate = strings.TrimSpace(candidate)
+		if !valid || candidate == "" {
+			return referenceVideoMatrixPricing{}, skillPlacementError{message: "该模型的参考视频清晰度配置无效，请联系管理员"}
+		}
+		if strings.EqualFold(candidate, resolution) {
+			canonicalResolution = candidate
+		}
+	}
+	if canonicalResolution == "" {
+		return referenceVideoMatrixPricing{}, skillPlacementError{message: "所选清晰度不在该模型的支持范围内，请重新选择"}
+	}
+	resolution = canonicalResolution
+	matrix := asMatrix(cfg["priceMatrix"])
+	if len(matrix) == 0 {
+		matrix = asMatrix(cfg["pricing"])
+	}
+	prices := make([]referenceVideoDurationPrice, 0)
+	seen := make(map[float64]struct{})
+	configured, ok := cfg["durations"].([]any)
+	if !ok || len(configured) == 0 {
+		return referenceVideoMatrixPricing{}, skillPlacementError{message: "该模型尚未配置参考视频支持时长，请联系管理员"}
+	}
+	for _, raw := range configured {
+		duration := durationSeconds(raw)
+		if duration <= 0 || math.IsNaN(duration) || math.IsInf(duration, 0) {
+			return referenceVideoMatrixPricing{}, skillPlacementError{message: "该模型的参考视频支持时长配置无效，请联系管理员"}
+		}
+		if _, exists := seen[duration]; exists {
+			continue
+		}
+		price := matrixLookupFuzzy(matrix, durationKeyVariants(strings.TrimSpace(formatDurationSeconds(duration))), keyVariants(resolution))
+		points, valid := referenceVideoMatrixPointCost(price)
+		if !valid {
+			return referenceVideoMatrixPricing{}, skillPlacementError{message: "当前清晰度的参考视频时长积分配置不完整，请联系管理员"}
+		}
+		seen[duration] = struct{}{}
+		prices = append(prices, referenceVideoDurationPrice{duration: duration, points: points})
+	}
+	if len(prices) == 0 {
+		return referenceVideoMatrixPricing{}, skillPlacementError{message: "当前清晰度没有可用的参考视频时长定价，请联系管理员"}
+	}
+	sort.Slice(prices, func(i, j int) bool { return prices[i].duration < prices[j].duration })
+	return referenceVideoMatrixPricing{resolution: resolution, prices: prices}, nil
+}
+
+func referenceVideoMatrixPointCost(price float64) (int, bool) {
+	rounded := math.Ceil(price)
+	limit := uint64(maxPointCost())
+	const maxExactFloatInteger uint64 = 1<<53 - 1
+	if limit > maxExactFloatInteger {
+		limit = maxExactFloatInteger
+	}
+	if rounded <= 0 || math.IsNaN(rounded) || math.IsInf(rounded, 0) || rounded > float64(limit) {
+		return 0, false
+	}
+	return int(rounded), true
+}
+
+func formatDurationSeconds(duration float64) string {
+	return strconv.FormatFloat(duration, 'f', -1, 64)
+}
+
+func (p referenceVideoMatrixPricing) pointsFor(duration float64) (int, error) {
+	for _, price := range p.prices {
+		if duration <= price.duration {
+			return price.points, nil
+		}
+	}
+	return 0, skillPlacementError{message: "参考视频时长超过该模型已配置的最大时长，请更换视频"}
+}
+
+func (s *service) confirmReferenceVideoCharge(ctx context.Context, userID idgen.ID, references []string, pricing referenceVideoMatrixPricing) (referenceVideoCharge, error) {
 	if len(references) > maxReferenceVideoQuotes {
 		return referenceVideoCharge{}, skillPlacementError{message: "参考视频数量过多，请减少后重试"}
 	}
@@ -169,8 +283,8 @@ func (s *service) confirmReferenceVideoCharge(ctx context.Context, userID idgen.
 			return referenceVideoCharge{}, skillPlacementError{message: "参考视频地址过长，请重新选择已上传的视频"}
 		}
 	}
-	if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
-		return referenceVideoCharge{}, skillPlacementError{message: "该模型的参考视频每秒积分配置无效，请联系管理员"}
+	if strings.TrimSpace(pricing.resolution) == "" || len(pricing.prices) == 0 {
+		return referenceVideoCharge{}, skillPlacementError{message: "该模型的参考视频积分配置无效，请联系管理员"}
 	}
 	if s == nil || s.confirmVideoDuration == nil {
 		return referenceVideoCharge{}, errVideoProbeUnavailable
@@ -243,14 +357,14 @@ func (s *service) confirmReferenceVideoCharge(ctx context.Context, userID idgen.
 	charge := referenceVideoCharge{
 		CanonicalURLs: make([]string, 0, len(references)),
 		VideoCount:    len(references),
-		RatePerSecond: rate,
+		Resolution:    pricing.resolution,
 	}
 	for _, index := range occurrences {
 		item := confirmed[index]
 		if strings.TrimSpace(item.canonical) == "" || item.duration <= 0 {
 			return referenceVideoCharge{}, errors.New("reference video confirmation incomplete")
 		}
-		points, err := referenceVideoPoints(item.duration, rate)
+		points, err := pricing.pointsFor(item.duration)
 		if err != nil {
 			return referenceVideoCharge{}, err
 		}
@@ -269,22 +383,6 @@ func (s *service) confirmReferenceVideoCharge(ctx context.Context, userID idgen.
 	}
 	charge.DurationSecond = math.Ceil(charge.DurationSecond*1000) / 1000
 	return charge, nil
-}
-
-// referenceVideoPoints converts a single video's floating-point quote into a
-// safe integer before totals are accumulated. Capping at the largest exactly
-// representable float integer also avoids architecture-dependent int overflow.
-func referenceVideoPoints(duration, rate float64) (int, error) {
-	raw := math.Ceil(duration * rate)
-	limit := uint64(maxPointCost())
-	const maxExactFloatInteger uint64 = 1<<53 - 1
-	if limit > maxExactFloatInteger {
-		limit = maxExactFloatInteger
-	}
-	if raw <= 0 || math.IsNaN(raw) || math.IsInf(raw, 0) || raw > float64(limit) {
-		return 0, skillPlacementError{message: "参考视频计费结果超出系统范围，请联系管理员"}
-	}
-	return int(raw), nil
 }
 
 func maxPointCost() int {

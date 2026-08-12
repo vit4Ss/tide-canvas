@@ -62,8 +62,9 @@ function fixedPointCost(config: PointPricingConfig | null | undefined, modelPoin
   return override || Math.trunc(positivePointValue(modelPointCost));
 }
 
-function configuredMatrix(config: PointPricingConfig | null | undefined): PriceMatrix {
-  return config?.priceMatrix ?? config?.pricing;
+export function configuredMatrix(config: PointPricingConfig | null | undefined): PriceMatrix {
+  const primary = config?.priceMatrix;
+  return primary && Object.keys(primary).length ? primary : config?.pricing;
 }
 
 function imageBatchCount(input: Record<string, unknown>): number {

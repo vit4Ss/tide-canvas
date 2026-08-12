@@ -90,7 +90,7 @@ func resolveCost(m *model.AiModel, rawInput json.RawMessage) int {
 	// 容错查表：后台矩阵键可能是 "4s"/"720p"，客户端参数可能是 "4"/"720P"——
 	// 时长带不带 s、大小写、行列轴序全部兼容，避免 miss 后静默落到模型固定价。
 	matrix := asMatrix(cfg["priceMatrix"])
-	if matrix == nil {
+	if len(matrix) == 0 {
 		matrix = asMatrix(cfg["pricing"])
 	}
 	if matrix != nil {

@@ -126,6 +126,31 @@ function positiveNumber(value: unknown): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
+function referenceMatrixValue(config: ModelConfig, duration: string, resolution: string): number {
+  const primary = config.priceMatrix as Record<string, Record<string, unknown>> | undefined;
+  const matrix = primary && Object.keys(primary).length
+    ? primary
+    : (config.pricing ?? {}) as Record<string, Record<string, unknown>>;
+  const durationNumber = Number(duration.trim().replace(/s$/i, ""));
+  const durationMatches = (candidate: string) => {
+    const parsed = Number(candidate.trim().replace(/s$/i, ""));
+    return Number.isFinite(durationNumber) && Number.isFinite(parsed) && parsed === durationNumber;
+  };
+  const resolutionMatches = (candidate: string) => candidate.trim().toLowerCase() === resolution.trim().toLowerCase();
+  for (const [rowKey, row] of Object.entries(matrix)) {
+    if (!row || typeof row !== "object") continue;
+    for (const [columnKey, value] of Object.entries(row)) {
+      if (
+        (durationMatches(rowKey) && resolutionMatches(columnKey))
+        || (resolutionMatches(rowKey) && durationMatches(columnKey))
+      ) {
+        return positiveNumber(value);
+      }
+    }
+  }
+  return 0;
+}
+
 function billingValue(model: AdminModelVO): number {
   if (model.type === "upscale") {
     const rates = Object.values(model.config?.pricePerSecondByResolution ?? {})
@@ -764,12 +789,13 @@ function ModelModal({
     durations: c0.durations ?? [],
     batchOptions: c0.batchOptions ?? [],
     gridOutput: c0.gridOutput ?? false,
-    priceMatrix: c0.priceMatrix ?? {},
+    priceMatrix: c0.priceMatrix && Object.keys(c0.priceMatrix).length
+      ? c0.priceMatrix
+      : c0.pricing ?? {},
     pricePerSecond: c0.pricePerSecond ?? "",
     // 旧模型的统一每秒价展开到每个可用档位，运营只需按档调整差价即可完成迁移。
     pricePerSecondByResolution: initialUpscaleRates(c0),
     referenceVideoBillingEnabled: c0.referenceVideoBillingEnabled ?? false,
-    referenceVideoPricePerSecond: c0.referenceVideoPricePerSecond ?? "",
     uploadCost: c0.uploadCost ?? "",
   });
   const setC = (patch: Partial<ModelConfig>) => setCfg((p) => ({ ...p, ...patch }));
@@ -814,7 +840,7 @@ function ModelModal({
 
   const setCell = (row: string, col: string, val: string) =>
     setCfg((p) => {
-      const pm: Record<string, Record<string, string>> = { ...(p.priceMatrix ?? {}) };
+      const pm: Record<string, Record<string, string | number>> = { ...(p.priceMatrix ?? {}) };
       pm[row] = { ...(pm[row] ?? {}), [col]: val };
       return { ...p, priceMatrix: pm };
     });
@@ -864,9 +890,21 @@ function ModelModal({
         return false;
       }
     }
-    if (isVideo && cfg.referenceVideoBillingEnabled && positiveNumber(cfg.referenceVideoPricePerSecond) <= 0) {
-      setErr("开启参考视频计费后，请填写大于 0 的每秒积分");
-      return false;
+    if (isVideo && cfg.referenceVideoBillingEnabled) {
+      const durations = cfg.durations ?? [];
+      const resolutions = cfg.resolutions ?? [];
+      if (!durations.length || !resolutions.length) {
+        setErr("开启参考视频计费后，请先选择支持时长和清晰度");
+        return false;
+      }
+      for (const duration of durations) {
+        for (const resolution of resolutions) {
+          if (referenceMatrixValue(cfg, duration, resolution) <= 0) {
+            setErr(`请填写 ${duration} / ${resolution.toUpperCase()} 的参考视频计费积分`);
+            return false;
+          }
+        }
+      }
     }
     setSaving(true);
     setErr(null);
@@ -898,9 +936,11 @@ function ModelModal({
             : cfg.pricePerSecondByResolution,
           // 新表单不再写统一单价；保留字段值只服务滚动升级中的旧实例。
           pricePerSecond: cfg.pricePerSecond,
-          referenceVideoPricePerSecond: isVideo
-            ? positiveNumber(cfg.referenceVideoPricePerSecond)
-            : cfg.referenceVideoPricePerSecond,
+          // priceMatrix 是后台唯一价格矩阵；公开模型接口会按需补出 pricing 别名。
+          // 清理旧值可避免两个字段并存且价格不一致时，旧画布读到过期价格。
+          pricing: showGen ? undefined : cfg.pricing,
+          // 参考视频改为复用下方时长 × 清晰度矩阵，保存时清理旧版独立秒价。
+          referenceVideoPricePerSecond: undefined,
         },
       };
       const res = model
@@ -1116,9 +1156,9 @@ function ModelModal({
           {isVideo && (
             <FormSection
               label="参考视频计费"
-              hint="开启后，服务端会在扣分前核验每个参考视频的真实时长；额外积分 = Σ ceil（单个参考视频秒数 × 每秒积分），逐个计算后相加。没有参考视频时不加收。"
+              hint="开启后，服务端会用每个参考视频的真实时长匹配行、当前输出清晰度匹配列，逐个计费后相加；非整秒向上匹配最近档位。没有参考视频时不加收。"
             >
-              <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <SwitchToggle
                     checked={cfg.referenceVideoBillingEnabled === true}
@@ -1127,18 +1167,6 @@ function ModelModal({
                   />
                   <span>{cfg.referenceVideoBillingEnabled ? "已开启" : "不收费"}</span>
                 </div>
-                {cfg.referenceVideoBillingEnabled && (
-                  <div className="fld" style={{ width: 180 }}>
-                    <input
-                      value={String(cfg.referenceVideoPricePerSecond ?? "")}
-                      onChange={(event) => setC({ referenceVideoPricePerSecond: event.target.value })}
-                      placeholder="如：10"
-                      inputMode="decimal"
-                      aria-label="参考视频每秒积分"
-                    />
-                    <span style={{ fontSize: 11.5, color: "var(--text-faint)" }}>积分 / 秒</span>
-                  </div>
-                )}
               </div>
             </FormSection>
           )}
@@ -1395,7 +1423,11 @@ function ModelModal({
                 </table>
                 </div>
               </div>
-              <div className="hint">不同档位可设不同积分；留空或 0 的格回退到上方「消耗积分」。</div>
+              <div className="hint">
+                {isVideo && cfg.referenceVideoBillingEnabled
+                  ? "不同档位可设不同积分；参考视频计费已开启，所有时长 × 清晰度格都必须填写大于 0 的积分。"
+                  : "不同档位可设不同积分；留空或 0 的格回退到上方「消耗积分」。"}
+              </div>
             </div>
           )}
         </FormCard>
