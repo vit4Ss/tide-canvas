@@ -128,51 +128,50 @@ export interface AiTaskQuery extends PageQuery {
   endDate?: string;
 }
 
-export interface AiGenerationLogVO {
+export interface UserHistoryAssetVO {
+  url: string;
+  kind: "image" | "video" | "audio" | "file";
+  name?: string;
+}
+
+export interface UserHistoryParameterVO {
+  key: string;
+  value: string;
+}
+
+/**
+ * 用户生成历史的公开白名单。这里不会出现请求/响应原文、HTTP 状态、
+ * 处理器、上游任务标识、原始错误、用户/项目/任务 ID 或供应商成本。
+ */
+export interface UserGenerationHistoryVO {
   id: string;
-  taskId: string;
-  userId: string;
-  projectId: string;
-  handlerName: string;
-  operationType: string;
+  mediaType: "image" | "video" | "audio" | "3d" | "text";
   model: string;
-  /** 用户可见 Prompt 摘要；服务端不会在列表返回完整任务输入。 */
   prompt: string;
-  operation: string;
-  /** 仅管理员：非管理员调 /api/ai/logs 时后端置空（下同） */
-  requestUrl: string;
-  /** 仅管理员：上游请求体,后端实际发给供应商/中转站的 payload */
-  requestBody: string;
-  /** 兼容字段；列表接口不返回完整任务输入，详情通过归属校验后的任务接口读取。 */
-  inputParams?: string;
-  httpStatus: number;
-  /** 仅管理员：上游响应原文 */
-  responseBody: string;
-  /** 仅管理员：供应商侧任务标识 */
-  upstreamTaskId: string;
   success: number;
-  resultUrl: string;
-  /** 非管理员拿到的是统一话术（与任务失败同源），不是上游原文 */
-  errorMsg: string;
+  resultUrl?: string;
   durationMs: number;
-  /** 仅管理员：上游成本（USD）；中转站无此字段时为空 */
-  cost?: number;
   createTime: string;
-  // 关联展示字段（后端按 id 回填）
-  userName?: string;
-  projectName?: string;
-  taskStatus?: number;
-  /** 平台积分；失败/取消任务已按任务流程退款 */
   pointCost?: number;
 }
 
-export interface AiGenerationLogQuery extends PageQuery {
-  // 雪花 ID（> 2^53），必须以字符串传递，用 Number() 会丢精度、匹配到错误/空结果。
-  taskId?: string | number;
-  userId?: string | number;
+export interface UserGenerationHistoryDetailVO {
+  mediaType: UserGenerationHistoryVO["mediaType"];
+  model: string;
+  prompt: string;
+  success: number;
+  durationMs: number;
+  createTime: string;
+  completeTime?: string;
+  pointCost?: number;
+  resultAssets: UserHistoryAssetVO[];
+  resultText?: string;
+  inputAssets: UserHistoryAssetVO[];
+  parameters: UserHistoryParameterVO[];
+}
+
+export interface UserGenerationHistoryQuery extends PageQuery {
   projectId?: string | number;
-  handlerName?: string;
-  operationType?: string;
   mediaType?: "image" | "video" | "audio" | "3d" | "text";
   keyword?: string;
   success?: number;

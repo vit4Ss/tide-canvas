@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { aiApi } from "@/lib/api";
 import { useCanvasStore } from "@/stores/use-canvas-store";
-import { AiTaskStatus, type AiTaskVO, type AiGenerationLogVO } from "@/types/ai";
+import { AiTaskStatus, type AiTaskVO, type UserGenerationHistoryVO } from "@/types/ai";
 import { PRESET_TOOL_LABELS } from "@/lib/ai-tools-catalog";
 import { X, RefreshCw, Loader2, CheckCircle2, XCircle, Inbox } from "lucide-react";
 
@@ -19,7 +19,13 @@ const HANDLER_LABEL: Record<string, string> = {
   // 标签与工具中心/工具页共用一份
   ...PRESET_TOOL_LABELS,
 };
-const OP_LABEL: Record<string, string> = { generation: "文生图", edits: "图生图", video: "视频", audio: "音频" };
+const MEDIA_LABEL: Record<UserGenerationHistoryVO["mediaType"], string> = {
+  image: "图片",
+  video: "视频",
+  audio: "音频",
+  "3d": "3D",
+  text: "文本",
+};
 
 interface Props {
   open: boolean;
@@ -30,7 +36,7 @@ interface Props {
 export function CanvasHistoryPanel({ open, onClose }: Props) {
   const projectId = useCanvasStore((s) => s.currentProjectId);
   const [tasks, setTasks] = useState<AiTaskVO[]>([]);
-  const [logs, setLogs] = useState<AiGenerationLogVO[]>([]);
+  const [logs, setLogs] = useState<UserGenerationHistoryVO[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -48,7 +54,7 @@ export function CanvasHistoryPanel({ open, onClose }: Props) {
     try {
       const [tRes, lRes] = await Promise.all([
         aiApi.listTasks({ pageNum: 1, pageSize: 50, status: AiTaskStatus.PROCESSING, ...(projectId ? { projectId } : {}) }),
-        aiApi.canvasLogs({ pageNum: 1, pageSize: 50, ...(projectId ? { projectId } : {}) }),
+        aiApi.myHistory({ pageNum: 1, pageSize: 50, ...(projectId ? { projectId } : {}) }),
       ]);
       if (!aliveRef.current) return; // 卸载后不 setState
       if (tRes.success && tRes.data) setTasks(tRes.data.records);
@@ -117,7 +123,7 @@ export function CanvasHistoryPanel({ open, onClose }: Props) {
                     <div key={t.id} className="rounded-lg border border-blue-100 bg-blue-50/50 p-2.5 dark:border-blue-900/40 dark:bg-blue-900/10">
                       <div className="flex items-center gap-2 text-xs">
                         <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500" />
-                        <span className="font-medium">{HANDLER_LABEL[t.handler] ?? t.handler}</span>
+                        <span className="font-medium">{HANDLER_LABEL[t.handler] ?? "生成任务"}</span>
                         <span className="ml-auto text-neutral-400">{t.createTime?.replace("T", " ").slice(5, 19)}</span>
                       </div>
                       <div className="mt-2 h-1 overflow-hidden rounded-full bg-blue-100 dark:bg-blue-900/40">
@@ -146,15 +152,16 @@ export function CanvasHistoryPanel({ open, onClose }: Props) {
                         className="flex w-full items-center gap-2 px-2.5 py-2 text-left text-xs"
                       >
                         {l.success === 1 ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-500" /> : <XCircle className="h-3.5 w-3.5 shrink-0 text-red-500" />}
-                        <span className="font-medium">{OP_LABEL[l.operation] ?? l.operation}</span>
+                        <span className="font-medium">{MEDIA_LABEL[l.mediaType]}</span>
                         <span className="truncate font-mono text-[10px] text-neutral-400">{l.model}</span>
                         <span className="ml-auto shrink-0 text-neutral-400">{l.durationMs != null ? `${(l.durationMs / 1000).toFixed(0)}s` : ""}</span>
                       </button>
                       {expandedId === l.id && (
                         <div className="space-y-1.5 border-t border-neutral-100 px-2.5 py-2 text-[11px] dark:border-neutral-800">
-                          <p className="text-neutral-400">{l.createTime?.replace("T", " ").slice(0, 19)} · HTTP {l.httpStatus}</p>
-                          {l.errorMsg ? (
-                            <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-all rounded bg-red-50 p-2 text-red-600 dark:bg-red-900/20 dark:text-red-300">{l.errorMsg}</pre>
+                          <p className="text-neutral-400">{l.createTime?.replace("T", " ").slice(0, 19)}</p>
+                          {l.prompt ? <p className="line-clamp-3 text-neutral-500 dark:text-neutral-400">{l.prompt}</p> : null}
+                          {l.success !== 1 ? (
+                            <p className="rounded bg-red-50 p-2 text-red-600 dark:bg-red-900/20 dark:text-red-300">生成未完成，本次积分已退回</p>
                           ) : l.resultUrl ? (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img src={l.resultUrl} alt="" className="max-h-32 rounded border border-neutral-200 object-contain dark:border-neutral-700" />

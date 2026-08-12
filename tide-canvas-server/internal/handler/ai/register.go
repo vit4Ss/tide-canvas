@@ -133,8 +133,9 @@ func StartTaskReconciler(ctx context.Context, d *app.Deps) {
 //	GET    /api/ai/models        -> AiModelVO[]                              (public catalog)
 //	GET    /api/ai/handlers      -> AiHandlerVO[]                            (public catalog)
 //	GET    /api/ai/tools         -> AiToolVO[]                               (public catalog; 启用且有独立页的智能工具)
-//	GET    /api/ai/logs          AiGenerationLogQuery -> PageData<AiGenerationLogVO> (auth; admins see all)
-//	GET    /api/ai/my-logs       AiGenerationLogQuery -> PageData<AiGenerationLogVO> (auth; caller only)
+//	GET    /api/ai/logs          AiGenerationLogQuery -> PageData<AiGenerationLogVO> (admin only)
+//	GET    /api/ai/history       UserHistoryQuery -> PageData<UserGenerationHistoryVO> (auth; caller only)
+//	GET    /api/ai/history/:id   -> UserGenerationHistoryDetailVO (auth; caller only)
 func Register(api *gin.RouterGroup, d *app.Deps) {
 	h := newHandler(d)
 	g := api.Group("/ai")
@@ -155,9 +156,10 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	authed.GET("/tasks", h.listTasks)
 	authed.GET("/tasks/:id", h.getTask)
 	authed.DELETE("/tasks/:id", h.cancelTask)
-	// Logs are auth-only; the service scopes results to the caller unless they
-	// are an admin (then optional userId filter applies).
+	// Audit logs are administrator-only. User-facing history uses the separate
+	// allowlisted /history contract below.
 	authed.GET("/logs", h.listLogs)
 	// Public account history always stays caller-scoped, including for admins.
-	authed.GET("/my-logs", h.listMyLogs)
+	authed.GET("/history", h.listMyHistory)
+	authed.GET("/history/:id", h.getMyHistory)
 }

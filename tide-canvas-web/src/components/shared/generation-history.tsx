@@ -8,9 +8,11 @@ import { GeistMono } from "geist/font/mono";
 import {
   ArrowLeft,
   Box,
+  ChevronDown,
   FileText,
   Image as ImageIcon,
   Music,
+  Play,
   RefreshCw,
   Search,
   Video,
@@ -29,18 +31,29 @@ import {
 } from "@/components/admin";
 import { aiApi } from "@/lib/api";
 import { useAuthStore } from "@/stores/use-auth-store";
-import type { AiGenerationLogVO, AiTaskVO } from "@/types/ai";
+import type {
+  UserGenerationHistoryDetailVO,
+  UserGenerationHistoryVO,
+  UserHistoryAssetVO,
+} from "@/types/ai";
 
 type PillTone = StatusPillProps["tone"];
 type MediaFilter = "" | "image" | "video" | "audio" | "3d" | "text";
 
-interface ResultAsset {
-  url: string;
-  kind: "image" | "video" | "audio" | "file";
-  name?: string;
-}
+type ResultAsset = UserHistoryAssetVO;
+type InputAsset = UserHistoryAssetVO;
 
-type InputAsset = ResultAsset;
+const INPUT_ASSET_PREVIEW_LIMIT = 8;
+
+const INPUT_ASSET_GROUPS: Array<{
+  kind: InputAsset["kind"];
+  label: string;
+}> = [
+  { kind: "image", label: "图片" },
+  { kind: "video", label: "视频" },
+  { kind: "audio", label: "音频" },
+  { kind: "file", label: "文件" },
+];
 
 const TYPE_OPTIONS: Array<{ label: string; value: MediaFilter }> = [
   { label: "全部", value: "" },
@@ -53,23 +66,13 @@ const TYPE_OPTIONS: Array<{ label: string; value: MediaFilter }> = [
 
 const STATUS_OPTIONS = ["全部", "成功", "失败"] as const;
 
-const OP_LABEL: Record<string, string> = {
-  generation: "图片",
-  edits: "图片",
-  video: "视频",
-  audio: "音频",
-  "3d": "3D",
-  upscale: "视频",
-  chat: "文本",
-  text: "文本",
-};
-
 const PARAM_LABEL: Record<string, string> = {
-  model: "模型",
-  prompt: "Prompt",
   ratio: "画面比例",
   aspectRatio: "画面比例",
+  aspect_ratio: "画面比例",
   resolution: "分辨率",
+  targetResolution: "目标分辨率",
+  target_resolution: "目标分辨率",
   duration: "时长",
   count: "生成数量",
   size: "尺寸",
@@ -78,48 +81,13 @@ const PARAM_LABEL: Record<string, string> = {
   seed: "随机种子",
   style: "风格",
   cameraFixed: "固定镜头",
+  camera_fixed: "固定镜头",
+  width: "宽度",
+  height: "高度",
+  steps: "生成步数",
+  cfgScale: "引导强度",
+  outputFormat: "输出格式",
 };
-
-const PARAM_DENY = new Set([
-  "prompt",
-  "model",
-  "systemPrompt",
-  "system_prompt",
-  "clientRequestId",
-  "toolKey",
-  "sourceImage",
-  "firstFrame",
-  "lastFrame",
-  "references",
-  "videoReferences",
-  "audioReferences",
-  "imageUrls",
-  "videoUrls",
-  "audioUrls",
-  "messages",
-  "files",
-]);
-
-function parseObject(value: unknown): Record<string, unknown> {
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  if (typeof value === "string") {
-    try {
-      const parsed: unknown = JSON.parse(value);
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? (parsed as Record<string, unknown>)
-        : {};
-    } catch {
-      return {};
-    }
-  }
-  return {};
-}
-
-function isHttpUrl(value: unknown): value is string {
-  return typeof value === "string" && /^https?:\/\//i.test(value.trim());
-}
 
 function kindForUrl(url: string, fallback: ResultAsset["kind"] = "image"): ResultAsset["kind"] {
   const clean = url.split(/[?#]/, 1)[0].toLowerCase();
@@ -130,86 +98,12 @@ function kindForUrl(url: string, fallback: ResultAsset["kind"] = "image"): Resul
   return fallback;
 }
 
-function uniqueAssets(assets: ResultAsset[]): ResultAsset[] {
-  const seen = new Set<string>();
-  return assets.filter((asset) => {
-    if (!asset.url || seen.has(asset.url)) return false;
-    seen.add(asset.url);
-    return true;
-  });
+function sceneLabel(row: Pick<UserGenerationHistoryVO, "mediaType">): string {
+  return TYPE_OPTIONS.find((item) => item.value === row.mediaType)?.label || "其他";
 }
 
-function resultAssets(task: AiTaskVO): ResultAsset[] {
-  const meta = parseObject(task.resultMeta);
-  const fallback = sceneKey(task.handler, "") === "video"
-    ? "video"
-    : sceneKey(task.handler, "") === "audio"
-      ? "audio"
-      : sceneKey(task.handler, "") === "3d"
-        ? "file"
-        : "image";
-  const out: ResultAsset[] = [];
-
-  const tracks = Array.isArray(meta.tracks) ? meta.tracks : [];
-  for (const raw of tracks) {
-    const track = parseObject(raw);
-    if (isHttpUrl(track.url)) {
-      out.push({ url: track.url, kind: "audio", name: typeof track.title === "string" ? track.title : undefined });
-    }
-  }
-
-  const assets = Array.isArray(meta.assets) ? meta.assets : [];
-  for (const raw of assets) {
-    const asset = parseObject(raw);
-    if (isHttpUrl(asset.url)) {
-      const type = typeof asset.type === "string" ? asset.type.toUpperCase() : undefined;
-      out.push({ url: asset.url, kind: "file", name: type });
-    }
-  }
-
-  const urls = Array.isArray(meta.urls) ? meta.urls : [];
-  for (const url of urls) {
-    if (isHttpUrl(url)) out.push({ url, kind: kindForUrl(url, fallback) });
-  }
-  if (isHttpUrl(task.resultUrl)) out.push({ url: task.resultUrl, kind: kindForUrl(task.resultUrl, fallback) });
-  return uniqueAssets(out);
-}
-
-function inputAssets(input: Record<string, unknown>): InputAsset[] {
-  const out: InputAsset[] = [];
-  const walk = (value: unknown, key = "") => {
-    if (isHttpUrl(value)) {
-      const hint = key.toLowerCase();
-      const fallback = hint.includes("video") ? "video" : hint.includes("audio") ? "audio" : "image";
-      out.push({ url: value, kind: kindForUrl(value, fallback) });
-      return;
-    }
-    if (Array.isArray(value)) {
-      value.forEach((item) => walk(item, key));
-      return;
-    }
-    if (value && typeof value === "object") {
-      Object.entries(value as Record<string, unknown>).forEach(([childKey, child]) => walk(child, childKey));
-    }
-  };
-  walk(input);
-  return uniqueAssets(out);
-}
-
-function sceneKey(handler: string, operation: string): MediaFilter {
-  if (handler === "text_to_audio" || operation === "audio") return "audio";
-  if (handler === "generate_3d" || operation === "3d") return "3d";
-  if (handler === "assistant_chat" || handler === "skill_text_completion" || operation === "chat" || operation === "text") return "text";
-  if (handler.includes("video") || operation === "video" || operation === "upscale") return "video";
-  return "image";
-}
-
-function sceneLabel(row: Pick<AiGenerationLogVO, "handlerName" | "operationType">): string {
-  return OP_LABEL[row.operationType] || TYPE_OPTIONS.find((item) => item.value === sceneKey(row.handlerName, row.operationType))?.label || "其他";
-}
-
-function sceneTone(row: Pick<AiGenerationLogVO, "handlerName" | "operationType">): PillTone {
-  switch (sceneKey(row.handlerName, row.operationType)) {
+function sceneTone(row: Pick<UserGenerationHistoryVO, "mediaType">): PillTone {
+  switch (row.mediaType) {
     case "video": return "green";
     case "image": return "blue";
     case "audio": return "amber";
@@ -234,55 +128,8 @@ function duration(ms: number): string {
   return `${Math.floor(seconds / 60)}分${seconds % 60}秒`;
 }
 
-function promptOf(input: Record<string, unknown>): string {
-  for (const key of ["prompt", "text", "description", "lyrics"]) {
-    const value = input[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  const messages = Array.isArray(input.messages) ? input.messages : [];
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const message = parseObject(messages[i]);
-    if (message.role !== "user") continue;
-    if (typeof message.content === "string") return message.content;
-  }
-  return "";
-}
-
-function promptForRow(row: AiGenerationLogVO): string {
+function promptForRow(row: UserGenerationHistoryVO): string {
   return row.prompt || "";
-}
-
-function displayValue(value: unknown): string | null {
-  if (typeof value === "string") {
-    const text = value.trim();
-    return text && !/^https?:\/\//i.test(text) ? text : null;
-  }
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  if (typeof value === "boolean") return value ? "是" : "否";
-  return null;
-}
-
-function parameterEntries(input: Record<string, unknown>): Array<{ key: string; value: string }> {
-  const entries: Array<{ key: string; value: string }> = [];
-  const push = (key: string, value: unknown) => {
-    if (PARAM_DENY.has(key) || entries.length >= 18) return;
-    const text = displayValue(value);
-    if (!text || text.length > 80) return;
-    entries.push({ key: PARAM_LABEL[key] || key, value: text });
-  };
-  Object.entries(input).sort(([a], [b]) => a.localeCompare(b)).forEach(([key, value]) => {
-    if (value && typeof value === "object" && !Array.isArray(value) && key === "extras") {
-      Object.entries(value as Record<string, unknown>).forEach(([childKey, child]) => push(childKey, child));
-    } else {
-      push(key, value);
-    }
-  });
-  return entries;
-}
-
-function textReply(task: AiTaskVO): string {
-  const meta = parseObject(task.resultMeta);
-  return typeof meta.text === "string" ? meta.text : "";
 }
 
 function Trunc({ text }: { text: string }) {
@@ -301,13 +148,20 @@ function AssetIcon({ kind }: { kind: ResultAsset["kind"] }) {
   return <FileText aria-hidden size={14} />;
 }
 
-function ResultBlock({ task, row, success, errorMsg }: { task: AiTaskVO | null; row: AiGenerationLogVO; success: boolean; errorMsg: string }) {
-  const assets = task
-    ? resultAssets(task)
-    : isHttpUrl(row.resultUrl)
-      ? [{ url: row.resultUrl, kind: kindForUrl(row.resultUrl, sceneKey(row.handlerName, row.operationType) === "video" ? "video" : sceneKey(row.handlerName, row.operationType) === "audio" ? "audio" : sceneKey(row.handlerName, row.operationType) === "3d" ? "file" : "image") }]
+function ResultBlock({ detail, row }: { detail: UserGenerationHistoryDetailVO | null; row: UserGenerationHistoryVO }) {
+  const fallbackKind: ResultAsset["kind"] = row.mediaType === "video"
+    ? "video"
+    : row.mediaType === "audio"
+      ? "audio"
+      : row.mediaType === "image"
+        ? "image"
+        : "file";
+  const assets = detail?.resultAssets.length
+    ? detail.resultAssets
+    : row.resultUrl
+      ? [{ url: row.resultUrl, kind: kindForUrl(row.resultUrl, fallbackKind) }]
       : [];
-  const reply = task ? textReply(task) : "";
+  const reply = detail?.resultText || "";
   if (assets.length > 0) {
     return (
       <div className="user-history-result-list">
@@ -336,33 +190,104 @@ function ResultBlock({ task, row, success, errorMsg }: { task: AiTaskVO | null; 
     );
   }
   if (reply) return <pre className="genr-reply">{reply}</pre>;
-  if (!success && errorMsg) return <div className="user-history-error">{errorMsg}</div>;
+  if (row.success !== 1) return <div className="user-history-error">生成未完成，本次消耗的积分已退回。</div>;
   return <div className="genr-media-empty">暂无可预览的生成结果，链接可能已过期。</div>;
 }
 
-function InputBlock({ input }: { input: Record<string, unknown> }) {
-  const assets = inputAssets(input);
+function InputBlock({ assets }: { assets: InputAsset[] }) {
   if (assets.length === 0) return <div className="genr-media-empty">无输入素材</div>;
   return (
-    <div className="genr-assets">
-      {assets.map((asset, index) => asset.kind === "image" ? (
-        <a className="user-history-input-link" key={asset.url} href={asset.url} target="_blank" rel="noreferrer" title="打开输入素材">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img className="thumb" src={asset.url} alt={`输入素材 ${index + 1}`} loading="lazy" />
-        </a>
-      ) : (
-        <a className="genr-file user-history-input-link" key={asset.url} href={asset.url} target="_blank" rel="noreferrer">
-          <AssetIcon kind={asset.kind} />
-          <span>输入素材 {index + 1}</span>
-        </a>
-      ))}
+    <div className="user-history-input-groups">
+      {INPUT_ASSET_GROUPS.map((group) => {
+        const groupAssets = assets.filter((asset) => asset.kind === group.kind);
+        return groupAssets.length > 0 ? (
+          <InputAssetGroup key={group.kind} kind={group.kind} label={group.label} assets={groupAssets} />
+        ) : null;
+      })}
     </div>
   );
 }
 
-function DetailDrawer({ row, onClose }: { row: AiGenerationLogVO; onClose: () => void }) {
+function InputAssetGroup({
+  kind,
+  label,
+  assets,
+}: {
+  kind: InputAsset["kind"];
+  label: string;
+  assets: InputAsset[];
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const canExpand = assets.length > INPUT_ASSET_PREVIEW_LIMIT;
+  const visibleAssets = expanded ? assets : assets.slice(0, INPUT_ASSET_PREVIEW_LIMIT);
+
+  return (
+    <div className="user-history-input-group">
+      <div className="user-history-input-group-head">
+        <span>{label}</span>
+        <span className="user-history-input-count">{assets.length}</span>
+      </div>
+
+      <div className={`user-history-input-grid${kind === "audio" || kind === "file" ? " is-file-list" : ""}`}>
+        {visibleAssets.map((asset, index) => kind === "image" ? (
+          <a
+            className="user-history-input-card"
+            key={asset.url}
+            href={asset.url}
+            target="_blank"
+            rel="noreferrer"
+            title={asset.name || `打开图片 ${index + 1}`}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={asset.url} alt={asset.name || `输入图片 ${index + 1}`} loading="lazy" />
+            <span className="user-history-input-card-label">图片 {index + 1}</span>
+          </a>
+        ) : kind === "video" ? (
+          <a
+            className="user-history-input-card is-video"
+            key={asset.url}
+            href={asset.url}
+            target="_blank"
+            rel="noreferrer"
+            title={asset.name || `打开视频 ${index + 1}`}
+          >
+            <video src={asset.url} muted playsInline preload="metadata" aria-label={asset.name || `输入视频 ${index + 1}`} />
+            <span className="user-history-input-play" aria-hidden><Play size={15} fill="currentColor" /></span>
+            <span className="user-history-input-card-label">视频 {index + 1}</span>
+          </a>
+        ) : (
+          <a
+            className="genr-file user-history-input-link"
+            key={asset.url}
+            href={asset.url}
+            target="_blank"
+            rel="noreferrer"
+            title={asset.name || asset.url}
+          >
+            <AssetIcon kind={asset.kind} />
+            <span>{asset.name || `${label} ${index + 1}`}</span>
+          </a>
+        ))}
+      </div>
+
+      {canExpand ? (
+        <button
+          type="button"
+          className="user-history-input-expand"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          <ChevronDown aria-hidden size={14} />
+          {expanded ? "收起" : `展开其余 ${assets.length - INPUT_ASSET_PREVIEW_LIMIT} 个`}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function DetailDrawer({ row, onClose }: { row: UserGenerationHistoryVO; onClose: () => void }) {
   const ensureSession = useAuthStore((state) => state.ensureSession);
-  const [task, setTask] = useState<AiTaskVO | null>(null);
+  const [detail, setDetail] = useState<UserGenerationHistoryDetailVO | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -371,23 +296,22 @@ function DetailDrawer({ row, onClose }: { row: AiGenerationLogVO; onClose: () =>
     void (async () => {
       const ok = await ensureSession();
       if (!ok) return;
-      const response = await aiApi.getTask(row.taskId);
+      const response = await aiApi.myHistoryDetail(row.id);
       if (!alive) return;
       if (response.success && response.data) {
-        setTask(response.data);
-      } else if (response.code !== 404) {
-        setError(response.message || "加载详情失败");
+        setDetail(response.data);
+      } else {
+        setError(response.code === 404 ? "这条记录已不可用。" : "暂时无法加载详情，请稍后重试。");
       }
       setLoaded(true);
     })();
     return () => { alive = false; };
-  }, [ensureSession, row.taskId]);
+  }, [ensureSession, row.id]);
 
-  const input = task ? parseObject(task.input) : {};
-  const prompt = task ? promptOf(input) : row.prompt;
-  const params = parameterEntries(input);
+  const prompt = detail?.prompt || row.prompt;
+  const params = detail?.parameters || [];
   const success = row.success === 1;
-  const pointCost = task?.pointCost ?? row.pointCost;
+  const pointCost = detail?.pointCost ?? row.pointCost;
 
   return (
     <AdminDrawer
@@ -410,14 +334,14 @@ function DetailDrawer({ row, onClose }: { row: AiGenerationLogVO; onClose: () =>
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <StatusPill tone={sceneTone(row)}>{sceneLabel(row)}</StatusPill>
-              <span className="strong" style={{ fontSize: 15, wordBreak: "break-all" }}>{task?.modelName || row.model || "—"}</span>
+              <span className="strong" style={{ fontSize: 15, wordBreak: "break-all" }}>{detail?.model || row.model || "—"}</span>
             </div>
             <div className="muted" style={{ fontSize: 12.5, marginTop: 6 }}>{fmtTime(row.createTime)}</div>
           </div>
 
           <section>
             <SectionTitle>生成结果</SectionTitle>
-            <ResultBlock task={task} row={row} success={success} errorMsg={task?.errorMsg || row.errorMsg} />
+            <ResultBlock detail={detail} row={row} />
           </section>
 
           <section>
@@ -425,7 +349,7 @@ function DetailDrawer({ row, onClose }: { row: AiGenerationLogVO; onClose: () =>
             <div className="genr-grid">
               {params.map((param) => (
                 <div className="genr-cell" key={param.key}>
-                  <div className="k">{param.key}</div>
+                  <div className="k">{PARAM_LABEL[param.key] || param.key}</div>
                   <div className="v">{param.value}</div>
                 </div>
               ))}
@@ -442,7 +366,7 @@ function DetailDrawer({ row, onClose }: { row: AiGenerationLogVO; onClose: () =>
 
           <section>
             <SectionTitle>输入素材</SectionTitle>
-            {task ? <InputBlock input={input} /> : <div className="genr-media-empty">原任务已删除，输入素材不可用</div>}
+            <InputBlock assets={detail?.inputAssets || []} />
           </section>
 
           <section>
@@ -450,17 +374,6 @@ function DetailDrawer({ row, onClose }: { row: AiGenerationLogVO; onClose: () =>
             {prompt ? <pre className="genr-prompt">{prompt}</pre> : <div className="genr-media-empty">本次生成没有 Prompt</div>}
           </section>
 
-          <section>
-            <SectionTitle>任务信息</SectionTitle>
-            <dl className="genr-tech">
-              <div><dt>任务 ID</dt><dd className="mono">{row.taskId}</dd></div>
-              <div><dt>类型</dt><dd>{sceneLabel(row)}</dd></div>
-              <div><dt>处理方式</dt><dd>{row.handlerName || "—"}</dd></div>
-              <div><dt>创建时间</dt><dd>{fmtTime(row.createTime)}</dd></div>
-              <div><dt>完成时间</dt><dd>{task ? fmtTime(task.completeTime) : "—"}</dd></div>
-              {!success && (task?.errorMsg || row.errorMsg) ? <div><dt>错误信息</dt><dd>{task?.errorMsg || row.errorMsg}</dd></div> : null}
-            </dl>
-          </section>
         </>
       )}
     </AdminDrawer>
@@ -474,7 +387,7 @@ export interface GenerationHistoryProps {
 
 export function GenerationHistory({ mode = "page", onDetailOpenChange }: GenerationHistoryProps) {
   const ensureSession = useAuthStore((state) => state.ensureSession);
-  const [rows, setRows] = useState<AiGenerationLogVO[]>([]);
+  const [rows, setRows] = useState<UserGenerationHistoryVO[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -484,7 +397,7 @@ export function GenerationHistory({ mode = "page", onDetailOpenChange }: Generat
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [page, setPage] = useState(1);
-  const [detail, setDetail] = useState<AiGenerationLogVO | null>(null);
+  const [detail, setDetail] = useState<UserGenerationHistoryVO | null>(null);
   const requestId = useRef(0);
   const PAGE_SIZE = 20;
 
@@ -494,7 +407,7 @@ export function GenerationHistory({ mode = "page", onDetailOpenChange }: Generat
     setError(null);
     const ok = await ensureSession();
     if (!ok) return;
-    const response = await aiApi.myLogs({
+    const response = await aiApi.myHistory({
       pageNum: page,
       pageSize: PAGE_SIZE,
       keyword: keyword.trim() || undefined,
@@ -510,7 +423,7 @@ export function GenerationHistory({ mode = "page", onDetailOpenChange }: Generat
     } else {
       setRows([]);
       setTotal(0);
-      setError(response.message || "加载生成记录失败");
+      setError("暂时无法加载生成记录，请稍后重试。");
     }
     setLoading(false);
   }, [ensureSession, endDate, keyword, mediaType, page, startDate, status]);
@@ -525,7 +438,7 @@ export function GenerationHistory({ mode = "page", onDetailOpenChange }: Generat
     setPage(1);
   };
 
-  const openDetail = useCallback((row: AiGenerationLogVO) => {
+  const openDetail = useCallback((row: UserGenerationHistoryVO) => {
     setDetail(row);
     onDetailOpenChange?.(true);
   }, [onDetailOpenChange]);
@@ -535,7 +448,7 @@ export function GenerationHistory({ mode = "page", onDetailOpenChange }: Generat
     onDetailOpenChange?.(false);
   }, [onDetailOpenChange]);
 
-  const columns: Column<AiGenerationLogVO>[] = useMemo(() => [
+  const columns: Column<UserGenerationHistoryVO>[] = useMemo(() => [
     {
       header: "#",
       width: 48,

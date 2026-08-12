@@ -479,6 +479,21 @@ func (r *repo) listLogs(ctx context.Context, userID idgen.ID, adminScope bool, q
 	return rows, total, nil
 }
 
+// getUserLog resolves one caller-owned visible record without returning any
+// audit fields directly to the HTTP layer.
+func (r *repo) getUserLog(ctx context.Context, userID, recordID idgen.ID) (*model.AiGenerationLog, error) {
+	var row model.AiGenerationLog
+	tx := visibleUserLogScope(r.db.WithContext(ctx).Model(&model.AiGenerationLog{}).
+		Where("user_id = ? AND id = ?", userID, recordID)).First(&row)
+	if errors.Is(tx.Error, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+	return &row, nil
+}
+
 func applyLogListFilters(tx *gorm.DB, userID idgen.ID, adminScope bool, q logQuery) *gorm.DB {
 	if !adminScope {
 		tx = visibleUserLogScope(tx.Where("user_id = ?", userID))

@@ -122,3 +122,17 @@ type logQuery struct {
 	StartDate     string   `form:"startDate"`
 	EndDate       string   `form:"endDate"`
 }
+
+// userHistoryQuery is intentionally narrower than logQuery. Public history
+// may filter product records but cannot query audit-only dimensions such as
+// user id, handler name, operation type or upstream task id.
+type userHistoryQuery struct {
+	PageNum   int      `form:"pageNum"`
+	PageSize  int      `form:"pageSize"`
+	ProjectID idgen.ID `form:"projectId"`
+	MediaType string   `form:"mediaType"`
+	Keyword   string   `form:"keyword"`
+	Success   *int     `form:"success"`
+	StartDate string   `form:"startDate"`
+	EndDate   string   `form:"endDate"`
+}

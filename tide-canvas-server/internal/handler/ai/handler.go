@@ -239,16 +239,53 @@ func (h *handler) listTasks(c *gin.Context) {
 
 // listLogs GET /api/ai/logs -> PageData<AiGenerationLogVO>
 func (h *handler) listLogs(c *gin.Context) {
-	h.listLogsWithScope(c, authz.IsActiveAdministrator(c, h.svc.repo.db))
+	if !authz.IsActiveAdministrator(c, h.svc.repo.db) {
+		response.Fail(c, response.CodeForbidden, "admin privileges required")
+		return
+	}
+	h.listLogsWithScope(c, true)
 }
 
-// listMyLogs GET /api/ai/my-logs -> PageData<AiGenerationLogVO>
+// listMyHistory GET /api/ai/history -> PageData<UserGenerationHistoryVO>
 //
 // This endpoint deliberately never enables the administrator-wide scope. The
 // public "我的生成记录" page therefore has identical ownership semantics for
 // ordinary users, operators and administrators.
-func (h *handler) listMyLogs(c *gin.Context) {
-	h.listLogsWithScope(c, false)
+func (h *handler) listMyHistory(c *gin.Context) {
+	var q userHistoryQuery
+	if err := c.ShouldBindQuery(&q); err != nil {
+		response.Fail(c, response.CodeBadRequest, "invalid query")
+		return
+	}
+	uid := middleware.CurrentUserID(c)
+	offset, limit := pagination(q.PageNum, q.PageSize)
+	rows, total, err := h.svc.listUserHistory(c.Request.Context(), uid, q, offset, limit)
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "failed to list history")
+		return
+	}
+	response.Page(c, rows, total, normPage(q.PageNum), limit)
+}
+
+// getMyHistory returns a caller-owned product detail assembled from an allowlist.
+// Raw generation-log and internal task fields never enter this response DTO.
+func (h *handler) getMyHistory(c *gin.Context) {
+	id, err := idgen.Parse(c.Param("id"))
+	if err != nil || id == 0 {
+		response.Fail(c, response.CodeBadRequest, "invalid history id")
+		return
+	}
+	uid := middleware.CurrentUserID(c)
+	vo, err := h.svc.getUserHistory(c.Request.Context(), uid, id)
+	if err != nil {
+		if errors.Is(err, errTaskNotFound) {
+			response.Fail(c, response.CodeNotFound, "history not found")
+		} else {
+			response.Fail(c, response.CodeServerError, "failed to load history")
+		}
+		return
+	}
+	response.OK(c, vo)
 }
 
 func (h *handler) listLogsWithScope(c *gin.Context, isAdmin bool) {

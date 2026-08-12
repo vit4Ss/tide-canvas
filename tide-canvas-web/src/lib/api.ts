@@ -10,7 +10,7 @@ import type {
 } from "@/types/canvas";
 import type {
   AiTaskVO, AiModelVO, AiHandlerVO, AiToolVO, AiGenerateDTO, AiGenerateInput, AiTaskQuery, CapturedFrameDTO, UpscaleQuoteVO,
-  AiGenerationLogVO, AiGenerationLogQuery,
+  UserGenerationHistoryDetailVO, UserGenerationHistoryQuery, UserGenerationHistoryVO,
 } from "@/types/ai";
 import type { FileCategory, FileVO, FileQuery } from "@/types/file";
 // 画布风格库所需类型
@@ -110,11 +110,11 @@ export const aiApi = {
   /** GET /api/ai/tools — 启用中的独立工具配置（公开）。 */
   tools: () =>
     http.get<AiToolVO[]>("/api/ai/tools"),
-  canvasLogs: (query: AiGenerationLogQuery) =>
-    http.get<PageData<AiGenerationLogVO>>("/api/ai/logs", toParams(query)),
-  /** 当前账号自己的生成记录；管理员身份也不会扩大为全站范围。 */
-  myLogs: (query: AiGenerationLogQuery) =>
-    http.get<PageData<AiGenerationLogVO>>("/api/ai/my-logs", toParams(query)),
+  /** 当前账号自己的产品级生成历史；响应为严格白名单，不含后端审计字段。 */
+  myHistory: (query: UserGenerationHistoryQuery) =>
+    http.get<PageData<UserGenerationHistoryVO>>("/api/ai/history", toParams(query)),
+  myHistoryDetail: (recordId: string) =>
+    http.get<UserGenerationHistoryDetailVO>(`/api/ai/history/${recordId}`),
 };
 
 interface FilePresignVO {
