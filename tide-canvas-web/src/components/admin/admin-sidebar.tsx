@@ -52,6 +52,7 @@ export const ADMIN_NAV: AdminNavEntry[] = [
   { label: "工具管理", href: "/admin/tools", icon: "toolkit", perm: "tools", description: "智能工具能力、提示词与入口配置" },
   { label: "节点配置", href: "/admin/canvas-nodes", icon: "nodes", perm: "canvas", description: "画布节点入口、顶部功能与展示顺序" },
   { group: "商业" },
+  { label: "激活码", href: "/admin/activation-codes", icon: "ticket", perm: "activation_codes", description: "批量生成、领取额度、到期与兑换追踪" },
   { label: "积分管理", href: "/admin/points", icon: "credit", perm: "points", description: "积分规则、流水与人工调整" },
   { label: "价格管理", href: "/admin/pricing", icon: "price", perm: "pricing", description: "套餐、权益、价格对比与常见问题" },
   { label: "支付管理", href: "/admin/payments", icon: "pay", perm: "payments", description: "订单流水、支付渠道与结算状态" },

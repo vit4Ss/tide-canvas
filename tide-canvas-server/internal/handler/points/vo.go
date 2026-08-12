@@ -49,6 +49,14 @@ type CheckinResultVO struct {
 	Rewarded       bool `json:"rewarded"`
 }
 
+// ActivationCodeRedeemVO reports the credited points and resulting balance.
+// It deliberately never echoes the submitted plaintext code.
+type ActivationCodeRedeemVO struct {
+	Points     int    `json:"points"`
+	Balance    int64  `json:"balance"`
+	RedeemedAt string `json:"redeemedAt"`
+}
+
 // toPointRecordVO maps a persisted ledger row to its VO.
 func toPointRecordVO(r *model.PointRecord) PointRecordVO {
 	return PointRecordVO{

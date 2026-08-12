@@ -73,6 +73,68 @@ func TestParseRequestGeneration(t *testing.T) {
 	}
 }
 
+func TestParseRequestSeparatesImageVideoAndAudioInputs(t *testing.T) {
+	body := `{
+		"prompt":"多模态参考",
+		"references":["https://cdn.example.com/ref.avif"],
+		"videoReferences":["https://cdn.example.com/ref.mp4?token=x"],
+		"audioReferences":["https://cdn.example.com/ref.aac", "https://cdn.example.com/ref.flac"]
+	}`
+	got := parseRequestBody(body, testHosts)
+	if len(got.Inputs) != 4 {
+		t.Fatalf("inputs: %+v", got.Inputs)
+	}
+	counts := map[string]int{}
+	for _, input := range got.Inputs {
+		counts[input.Kind]++
+	}
+	if counts["image"] != 1 || counts["video"] != 1 || counts["audio"] != 2 {
+		t.Fatalf("input kind counts = %+v; inputs=%+v", counts, got.Inputs)
+	}
+}
+
+func TestParseRequestUsesFieldAndPathForExtensionlessMedia(t *testing.T) {
+	body := `{
+		"image_urls":["https://media.external.test/opaque-image?id=1"],
+		"video_urls":["https://media.external.test/opaque-video?id=2"],
+		"audio_urls":["https://media.external.test/opaque-audio?id=3"],
+		"legacy":"https://cdn.example.com/canvas/uploads/video/opaque-id"
+	}`
+	got := parseRequestBody(body, testHosts)
+	counts := map[string]int{}
+	for _, input := range got.Inputs {
+		counts[input.Kind]++
+	}
+	if len(got.Inputs) != 4 || counts["image"] != 1 || counts["video"] != 2 || counts["audio"] != 1 {
+		t.Fatalf("extensionless inputs classified incorrectly: counts=%+v inputs=%+v", counts, got.Inputs)
+	}
+}
+
+func TestParseRequestUsesAssetObjectMetadataForOpaqueURL(t *testing.T) {
+	body := `{"references":[
+		{"url":"https://media.external.test/opaque-1","kind":"video","name":"clip"},
+		{"url":"https://media.external.test/opaque-2","mimeType":"audio/mpeg","name":"voice"}
+	]}`
+	got := parseRequestBody(body, testHosts)
+	counts := map[string]int{}
+	for _, input := range got.Inputs {
+		counts[input.Kind]++
+	}
+	if len(got.Inputs) != 2 || counts["video"] != 1 || counts["audio"] != 1 {
+		t.Fatalf("object metadata ignored: counts=%+v inputs=%+v", counts, got.Inputs)
+	}
+}
+
+func TestParseRequestDoesNotApplyTopLevelTypeToUnrelatedURL(t *testing.T) {
+	got := parseRequestBody(`{
+		"type":"video",
+		"callback":"https://external.example.test/callback/opaque"
+	}`, testHosts)
+	if len(got.Inputs) != 0 {
+		t.Fatalf("unrelated callback leaked into input assets: %+v", got.Inputs)
+	}
+}
+
 // eventlog 截断的请求体(非法 JSON)退回正则提取。
 func TestParseRequestTruncated(t *testing.T) {
 	body := `[{"role":"user","content":[{"type":"text","text":"分析这份文件"},` +

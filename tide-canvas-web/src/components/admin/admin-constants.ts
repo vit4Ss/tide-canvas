@@ -135,6 +135,7 @@ export const ADMIN_ICONS: Record<string, string> = {
   nodes: "M5 3h6v6H5zM13 15h6v6h-6zM5 15h6v6H5zM8 9v3h8v3M8 12h8",
   credit:
     "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM9.5 9.5a2.5 2.5 0 0 1 5 0M12 7v1M12 16v1M9 14h6",
+  ticket: "M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v3a2 2 0 0 0 0 4v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3a2 2 0 0 0 0-4zM13 5v2M13 10v4M13 17v2",
   price: "M20 12l-8 8-9-9V4h7zM7.5 7.5h.01",
   pay: "M2 7h20v12H2zM2 11h20M6 15h4",
   chart: "M3 3v18h18M7 14l3-4 3 3 4-6",

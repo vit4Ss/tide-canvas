@@ -69,9 +69,10 @@ type parsedResponse struct {
 
 // mediaKindByExt 按扩展名识别可预览媒体。
 var mediaKindByExt = map[string]string{
-	".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image", ".gif": "image",
+	".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image", ".gif": "image", ".avif": "image",
 	".mp4": "video", ".mov": "video", ".webm": "video",
 	".mp3": "audio", ".wav": "audio", ".m4a": "audio", ".ogg": "audio",
+	".aac": "audio", ".flac": "audio", ".opus": "audio",
 }
 
 // textScenes 是纯文本场景:响应体是裸文本回复而非 JSON。
@@ -86,14 +87,28 @@ func kindOfURL(u string) string {
 		p = p[:i]
 	}
 	dot := strings.LastIndex(p, ".")
-	if dot < 0 || dot+1 >= len(p) {
+	if dot >= 0 && dot+1 < len(p) {
+		ext := strings.ToLower(p[dot:])
+		if len(ext) <= 6 {
+			if kind := mediaKindByExt[ext]; kind != "" {
+				return kind
+			}
+		}
+	}
+	// Some durable storage URLs have no extension. Their canonical directory is
+	// still type-specific, so use path segments before falling back to a generic
+	// same-host image assumption.
+	lowerPath := strings.ToLower(strings.ReplaceAll(p, "\\", "/"))
+	switch {
+	case strings.Contains(lowerPath, "/video/"):
+		return "video"
+	case strings.Contains(lowerPath, "/audio/"):
+		return "audio"
+	case strings.Contains(lowerPath, "/image/"), strings.Contains(lowerPath, "/images/"):
+		return "image"
+	default:
 		return ""
 	}
-	ext := strings.ToLower(p[dot:])
-	if len(ext) > 6 {
-		return ""
-	}
-	return mediaKindByExt[ext]
 }
 
 func isHTTPURL(s string) bool {
@@ -258,6 +273,100 @@ func parseMessageParts(content any, hosts []string) (text string, atts []genAsse
 	return strings.Join(texts, "\n"), atts
 }
 
+// requestAssetKindByKey preserves media semantics when a signed/CDN URL has no
+// extension. Keys cover both the internal request shape and relay payloads kept
+// by older/newer audit rows.
+var requestAssetKindByKey = map[string]string{
+	"sourceimage": "image", "source_image": "image", "image": "image", "imageurl": "image", "image_url": "image",
+	"imagelist": "image", "imageurls": "image", "image_urls": "image",
+	"images": "image", "references": "image", "firstframe": "image", "first_frame": "image",
+	"lastframe": "image", "last_frame": "image", "startimageurl": "image", "start_image_url": "image",
+	"endimageurl": "image", "end_image_url": "image", "multiviewimages": "image",
+	"multi_view_images": "image", "viewimageurl": "image", "view_image_url": "image",
+	"videourl": "video", "video_url": "video", "videourls": "video", "video_urls": "video",
+	"videoreferences": "video", "video": "video", "sourcevideo": "video", "source_video": "video",
+	"audiourl": "audio", "audio_url": "audio", "audiourls": "audio", "audio_urls": "audio",
+	"audioreferences": "audio", "audio": "audio", "sourceaudio": "audio", "source_audio": "audio",
+	"files": "file", "file": "file", "documents": "file",
+}
+
+func requestAssetObjectHint(current map[string]any, fallback string) string {
+	// Object metadata only describes a media item when the object actually has
+	// an asset URL field. This avoids a top-level {type:"video", callback:"…"}
+	// request causing an unrelated callback URL to be treated as input media.
+	hasAssetURL := false
+	for _, key := range []string{"url", "src", "href", "source"} {
+		if value, _ := current[key].(string); isHTTPURL(value) {
+			hasAssetURL = true
+			break
+		}
+	}
+	if !hasAssetURL {
+		return fallback
+	}
+	for _, key := range []string{"kind", "type", "mimeType", "mime_type"} {
+		raw, _ := current[key].(string)
+		value := strings.ToLower(strings.TrimSpace(raw))
+		switch {
+		case strings.Contains(value, "video"):
+			return "video"
+		case strings.Contains(value, "audio"):
+			return "audio"
+		case strings.Contains(value, "image"), strings.Contains(value, "frame"):
+			return "image"
+		case strings.Contains(value, "file"), strings.Contains(value, "document"):
+			return "file"
+		}
+	}
+	for _, key := range []string{"name", "fileName", "filename"} {
+		if name, _ := current[key].(string); name != "" {
+			if kind := kindOfURL(name); kind != "" {
+				return kind
+			}
+		}
+	}
+	return fallback
+}
+
+func collectRequestAssets(value any, hint string, hosts []string, out *[]genAsset, seen map[string]bool) {
+	switch current := value.(type) {
+	case string:
+		if !isHTTPURL(current) || seen[current] {
+			return
+		}
+		kind := kindOfURL(current)
+		if kind == "" {
+			kind = hint
+		}
+		if kind == "" && onAnyHost(current, hosts) {
+			kind = "image" // legacy same-host, untyped references were images
+		}
+		if kind == "" {
+			return
+		}
+		seen[current] = true
+		*out = append(*out, genAsset{URL: current, Kind: kind})
+	case []any:
+		for _, item := range current {
+			collectRequestAssets(item, hint, hosts, out, seen)
+		}
+	case map[string]any:
+		objectHint := requestAssetObjectHint(current, hint)
+		keys := make([]string, 0, len(current))
+		for key := range current {
+			keys = append(keys, key)
+		}
+		sortStrings(keys)
+		for _, key := range keys {
+			nextHint := objectHint
+			if typed := requestAssetKindByKey[strings.ToLower(key)]; typed != "" {
+				nextHint = typed
+			}
+			collectRequestAssets(current[key], nextHint, hosts, out, seen)
+		}
+	}
+}
+
 // parseRequestBody 提取 prompt / 生成参数 / 输入素材。hosts 是本站存储域
 // （无扩展名的存储 URL 也能认出是输入素材）。
 func parseRequestBody(body string, hosts []string) parsedRequest {
@@ -306,20 +415,7 @@ func parseRequestBody(body string, hosts []string) parsedRequest {
 			}
 		}
 		out.Params = collectParams(obj)
-		seen := map[string]bool{}
-		walkStrings(v, func(s string) {
-			if !isHTTPURL(s) || seen[s] {
-				return
-			}
-			kind := kindOfURL(s)
-			if kind == "" && onAnyHost(s, hosts) {
-				kind = "image" // 本站存储无扩展名 URL 多为图片素材
-			}
-			if kind != "" {
-				seen[s] = true
-				out.Inputs = append(out.Inputs, genAsset{URL: s, Kind: kind})
-			}
-		})
+		collectRequestAssets(v, "", hosts, &out.Inputs, map[string]bool{})
 	}
 	return out
 }

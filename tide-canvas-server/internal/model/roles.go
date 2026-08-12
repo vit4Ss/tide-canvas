@@ -29,25 +29,26 @@ const PermAdminAccess = "admin.access"
 // admin-sidebar.tsx 的导航项一一对应(模型状态与中转站同步共用 admin.models,
 // 因为其接口挂在 /admin/models 之下)。新增后台模块时两端同步加键。
 var AdminModuleKeys = []string{
-	"admin.dashboard",     // 数据概览
-	"admin.users",         // 用户管理(含角色管理)
-	"admin.works",         // 作品管理
-	"admin.inspiration",   // 灵感管理
-	"admin.generations",   // 生成记录(每次模型调用的审计视图)
-	"admin.logs",          // 日志管理(访问/登录/业务/审计)
-	"admin.floors",        // 首页楼层
-	"admin.blog",          // 博客管理
-	"admin.styles",        // 风格管理
-	"admin.skills",        // 技能管理(技能广场)
-	"admin.models",        // 模型管理(含模型状态/中转站同步)
-	"admin.tools",         // 工具管理
-	"admin.canvas",        // 画布节点配置
-	"admin.points",        // 积分管理
-	"admin.pricing",       // 价格管理
-	"admin.payments",      // 支付管理
-	"admin.notifications", // 消息管理
-	"admin.config",        // 配置管理
-	"admin.email",         // 邮件配置
+	"admin.dashboard",        // 数据概览
+	"admin.users",            // 用户管理(含角色管理)
+	"admin.works",            // 作品管理
+	"admin.inspiration",      // 灵感管理
+	"admin.generations",      // 生成记录(每次模型调用的审计视图)
+	"admin.logs",             // 日志管理(访问/登录/业务/审计)
+	"admin.floors",           // 首页楼层
+	"admin.blog",             // 博客管理
+	"admin.styles",           // 风格管理
+	"admin.skills",           // 技能管理(技能广场)
+	"admin.models",           // 模型管理(含模型状态/中转站同步)
+	"admin.tools",            // 工具管理
+	"admin.canvas",           // 画布节点配置
+	"admin.activation_codes", // 激活码管理
+	"admin.points",           // 积分管理
+	"admin.pricing",          // 价格管理
+	"admin.payments",         // 支付管理
+	"admin.notifications",    // 消息管理
+	"admin.config",           // 配置管理
+	"admin.email",            // 邮件配置
 }
 
 // FrontMenuKeys are the studio-rail menu keys, 与前端 studio-rail.tsx 的

@@ -73,16 +73,18 @@ const CHANGE_TYPE_LABEL: Record<string, string> = {
   signup: "注册奖励",
   adjust: "手动调整",
   admin: "后台发放",
+  activation_code: "激活码",
 };
 
 /** 类型筛选 chips：label → changeType 值（「全部」不传）。 */
-const TX_TYPE_FILTERS = ["全部", "生成消耗", "充值", "退款", "签到", "注册奖励", "手动调整", "后台发放"] as const;
+const TX_TYPE_FILTERS = ["全部", "生成消耗", "充值", "退款", "签到", "激活码", "注册奖励", "手动调整", "后台发放"] as const;
 const TX_TYPE_VALUE: Record<string, string | undefined> = {
   全部: undefined,
   生成消耗: "consume",
   充值: "recharge",
   退款: "refund",
   签到: "checkin",
+  激活码: "activation_code",
   注册奖励: "signup",
   手动调整: "adjust",
   后台发放: "admin",

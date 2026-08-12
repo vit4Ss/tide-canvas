@@ -2,6 +2,7 @@ package points
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/activationcode"
 	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
 )
@@ -20,6 +22,16 @@ import (
 
 // changeTypeCheckin is the ledger ChangeType for daily check-in rewards.
 const changeTypeCheckin = "checkin"
+
+const changeTypeActivationCode = "activation_code"
+
+var (
+	ErrActivationCodeInvalid   = errors.New("points: activation code invalid")
+	ErrActivationCodeDisabled  = errors.New("points: activation code disabled")
+	ErrActivationCodeExpired   = errors.New("points: activation code expired")
+	ErrActivationCodeExhausted = errors.New("points: activation code exhausted")
+	ErrActivationCodeClaimed   = errors.New("points: activation code already claimed")
+)
 
 // checkinReward is the points granted per daily check-in.
 const checkinReward = 10
@@ -66,6 +78,25 @@ func (s *service) records(userID idgen.ID, q *RecordQuery) ([]PointRecordVO, int
 		vos = append(vos, toPointRecordVO(&rows[i]))
 	}
 	return vos, total, nil
+}
+
+func (s *service) redeemActivationCode(userID idgen.ID, code, clientIP, userAgent string) (*ActivationCodeRedeemVO, error) {
+	hash, err := activationcode.Hash(code)
+	if err != nil {
+		return nil, ErrActivationCodeInvalid
+	}
+	now := time.Now()
+	claim, balance, err := s.repo.redeemActivationCode(userID, hash, clientIP, userAgent, now)
+	if err != nil {
+		return nil, err
+	}
+	eventlog.Biz(&model.BizLog{
+		UserID: userID, Action: "activation_code_redeem", Summary: "兑换激活码",
+		Points: int64(claim.Points), RefID: claim.ID, RefType: "activation_code_claim",
+	})
+	return &ActivationCodeRedeemVO{
+		Points: claim.Points, Balance: balance, RedeemedAt: formatTime(claim.CreateTime),
+	}, nil
 }
 
 // checkinStatus reports whether the user has checked in today and the streak

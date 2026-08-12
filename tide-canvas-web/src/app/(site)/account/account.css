@@ -399,6 +399,16 @@
 .acc-page .p-head h2 {
   margin: 0;
 }
+@media (max-width: 680px) {
+  .acc-page .p-head {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .acc-page .p-head > span {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+}
 .acc-page .ledger-row {
   display: flex;
   align-items: center;
@@ -593,6 +603,11 @@
 .acc-modal .field input:focus {
   outline: none;
   border-color: var(--brand, #4f46e5);
+}
+.acc-modal .activation-code-field input {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 .acc-modal .modal-actions {
   display: flex;

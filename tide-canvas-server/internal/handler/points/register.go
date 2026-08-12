@@ -4,6 +4,8 @@
 package points
 
 import (
+	"time"
+
 	"github.com/gin-gonic/gin"
 
 	"tidecanvas/internal/app"
@@ -34,4 +36,5 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	g.GET("/records", h.records)
 	g.GET("/checkin", h.checkinStatus)
 	g.POST("/checkin", h.checkin)
+	g.POST("/activation-code/redeem", middleware.RateLimit(d, 10, time.Minute), h.redeemActivationCode)
 }

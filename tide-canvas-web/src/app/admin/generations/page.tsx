@@ -17,8 +17,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
+  ChevronDown,
+  ChevronUp,
   Copy,
   FileText,
+  Image as ImageIcon,
   Music,
   RefreshCw,
   Search,
@@ -219,32 +222,155 @@ function ResultBlock({ d }: { d: GenerationDetailVO }) {
 function AssetIcon({ kind }: { kind: string }) {
   if (kind === "video") return <Video aria-hidden size={14} />;
   if (kind === "audio") return <Music aria-hidden size={14} />;
+  if (kind === "image") return <ImageIcon aria-hidden size={14} />;
   return <FileText aria-hidden size={14} />;
 }
 
-/** 输入素材:图片给缩略图(点击看原图),文档/音视频给文件名 chip。 */
+type InputAssetKind = "image" | "video" | "audio" | "file";
+
+const INPUT_GROUPS: Array<{ kind: InputAssetKind; label: string; previewLimit: number }> = [
+  { kind: "image", label: "图片", previewLimit: 8 },
+  { kind: "video", label: "视频", previewLimit: 4 },
+  { kind: "audio", label: "音频", previewLimit: 6 },
+  { kind: "file", label: "文件", previewLimit: 6 },
+];
+
+function inputAssetKind(asset: GenAsset): InputAssetKind {
+  return asset.kind === "image" || asset.kind === "video" || asset.kind === "audio"
+    ? asset.kind
+    : "file";
+}
+
+/** 输入素材按图片 / 视频 / 音频 / 文件分别展示，各组独立控制长列表。 */
 function InputsBlock({ inputs }: { inputs: GenAsset[] }) {
   if (inputs.length === 0) {
     return <div className="genr-media-empty">无输入素材</div>;
   }
   return (
-    <div className="genr-assets">
-      {inputs.map((a, i) => {
-        const key = a.url ?? `${a.name}-${i}`;
-        if (a.kind === "image" && a.url) {
-          return (
-            <a key={key} href={a.url} target="_blank" rel="noreferrer" title={a.name || a.url}>
-              <img className="thumb" src={a.url} alt={a.name ?? `输入素材 ${i + 1}`} loading="lazy" />
-            </a>
-          );
-        }
-        return (
-          <span key={key} className="genr-file" title={a.name || a.url}>
-            <AssetIcon kind={a.kind} />
-            <span>{a.name || a.url || "附件"}</span>
-          </span>
-        );
+    <div className="genr-input-groups">
+      {INPUT_GROUPS.map((group) => {
+        const assets = inputs.filter((asset) => inputAssetKind(asset) === group.kind);
+        return assets.length > 0 ? (
+          <InputAssetGroup
+            key={group.kind}
+            kind={group.kind}
+            label={group.label}
+            previewLimit={group.previewLimit}
+            assets={assets}
+          />
+        ) : null;
       })}
+    </div>
+  );
+}
+
+function InputAssetGroup({
+  kind,
+  label,
+  previewLimit,
+  assets,
+}: {
+  kind: InputAssetKind;
+  label: string;
+  previewLimit: number;
+  assets: GenAsset[];
+}) {
+  const [visibleCount, setVisibleCount] = useState(previewLimit);
+  const expanded = visibleCount > previewLimit;
+  const hasMore = visibleCount < assets.length;
+  const visible = assets.slice(0, visibleCount);
+  const nextCount = Math.min(previewLimit, assets.length - visibleCount);
+
+  return (
+    <div className="genr-input-group">
+      <div className="genr-input-group-head">
+        <span className="genr-input-group-title"><AssetIcon kind={kind} />{label}</span>
+        <span className="genr-input-count">{assets.length}</span>
+      </div>
+
+      <div className={`genr-input-list is-${kind}${expanded ? " is-expanded" : ""}`}>
+        {visible.map((asset, index) => {
+          const key = asset.url ?? `${asset.name || label}-${index}`;
+          const itemLabel = asset.name || `${label} ${index + 1}`;
+
+          if (kind === "image" && asset.url) {
+            return (
+              <a
+                key={key}
+                className="genr-input-image"
+                href={asset.url}
+                target="_blank"
+                rel="noreferrer"
+                title={itemLabel}
+              >
+                <img src={asset.url} alt={itemLabel} loading="lazy" />
+                <span>{itemLabel}</span>
+              </a>
+            );
+          }
+
+          if (kind === "video" && asset.url) {
+            return (
+              <div className="genr-input-video" key={key}>
+                <video controls playsInline preload="metadata" src={asset.url} aria-label={itemLabel} />
+                <div className="genr-input-media-meta">
+                  <span title={itemLabel}>{itemLabel}</span>
+                  <a href={asset.url} target="_blank" rel="noreferrer">打开</a>
+                </div>
+              </div>
+            );
+          }
+
+          if (kind === "audio" && asset.url) {
+            return (
+              <div className="genr-input-audio" key={key}>
+                <div className="genr-input-media-meta">
+                  <span title={itemLabel}><Music aria-hidden size={14} />{itemLabel}</span>
+                  <a href={asset.url} target="_blank" rel="noreferrer">打开</a>
+                </div>
+                <audio controls preload="metadata" src={asset.url} aria-label={itemLabel} />
+              </div>
+            );
+          }
+
+          return asset.url ? (
+            <a className="genr-file" key={key} href={asset.url} target="_blank" rel="noreferrer" title={itemLabel}>
+              <AssetIcon kind="file" />
+              <span>{itemLabel}</span>
+            </a>
+          ) : (
+            <span className="genr-file" key={key} title={itemLabel}>
+              <AssetIcon kind="file" />
+              <span>{itemLabel}</span>
+            </span>
+          );
+        })}
+      </div>
+
+      {hasMore || expanded ? (
+        <div className="genr-input-actions">
+          {hasMore ? (
+            <button
+              type="button"
+              className="genr-input-expand"
+              aria-label={`再显示 ${nextCount} 个${label}`}
+              onClick={() => setVisibleCount((count) => Math.min(assets.length, count + previewLimit))}
+            >
+              <ChevronDown aria-hidden size={14} />
+              再显示 {nextCount} 个{label}
+            </button>
+          ) : null}
+          {expanded ? (
+            <button
+              type="button"
+              className="genr-input-expand"
+              onClick={() => setVisibleCount(previewLimit)}
+            >
+              <ChevronUp aria-hidden size={14} />收起
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -26,3 +26,8 @@ func (q *RecordQuery) normalize() {
 
 // offset returns the SQL offset for the current page.
 func (q *RecordQuery) offset() int { return (q.PageNum - 1) * q.PageSize }
+
+// ActivationCodeRedeemDTO is the authenticated user's voucher redemption body.
+type ActivationCodeRedeemDTO struct {
+	Code string `json:"code" binding:"required,max=96"`
+}

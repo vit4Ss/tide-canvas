@@ -258,10 +258,87 @@ const CHANGE_LABEL: Record<string, string> = {
   reward: "奖励",
   refund: "退款",
   adjust: "调整",
+  activation_code: "激活码",
 };
 
 const LEDGER_COMPACT = 5;
 const LEDGER_FULL = 15;
+
+function ActivationCodeModal({
+  open,
+  onClose,
+  onRedeemed,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onRedeemed: (points: number) => void;
+}) {
+  const [code, setCode] = useState("");
+  const [redeeming, setRedeeming] = useState(false);
+
+  if (!open) return null;
+
+  const submit = async () => {
+    const value = code.trim();
+    if (!value || redeeming) {
+      if (!value) toast.error("请输入激活码");
+      return;
+    }
+    setRedeeming(true);
+    try {
+      const res = await pointsApi.redeemActivationCode(value);
+      if (res.success && res.data) {
+        toast.success(`兑换成功，+${res.data.points} 积分`);
+        setCode("");
+        onRedeemed(res.data.points);
+        onClose();
+      } else {
+        toast.error(res.message || "兑换失败，请核对激活码");
+      }
+    } catch {
+      toast.error("兑换失败，请稍后重试");
+    } finally {
+      setRedeeming(false);
+    }
+  };
+
+  return (
+    <div
+      className="acc-modal-overlay"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !redeeming) onClose();
+      }}
+    >
+      <div className="acc-modal" role="dialog" aria-modal="true" aria-labelledby="activation-code-title">
+        <h3 id="activation-code-title">兑换激活码</h3>
+        <p className="sub">兑换成功后积分会立即到账，同一个激活码每位用户只能领取一次。</p>
+        <div className="field activation-code-field">
+          <label htmlFor="activation-code-input">激活码</label>
+          <input
+            id="activation-code-input"
+            autoFocus
+            autoComplete="off"
+            spellCheck={false}
+            maxLength={96}
+            value={code}
+            placeholder="FLOW-XXXX-XXXX-XXXX"
+            onChange={(event) => setCode(event.target.value.toUpperCase())}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void submit();
+              if (event.key === "Escape" && !redeeming) onClose();
+            }}
+          />
+        </div>
+        <div className="modal-actions">
+          <button type="button" className="m-btn ghost" disabled={redeeming} onClick={onClose}>取消</button>
+          <button type="button" className="m-btn pri" disabled={redeeming || !code.trim()} onClick={submit}>
+            {redeeming ? "兑换中…" : "确认兑换"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function PointsPanel({ full = false }: { full?: boolean }) {
   const fetchUser = useAuthStore((s) => s.fetchUser);
@@ -271,6 +348,7 @@ export function PointsPanel({ full = false }: { full?: boolean }) {
   const [loading, setLoading] = useState(true);
   const [checkin, setCheckin] = useState<CheckinStatusVO | null>(null);
   const [signing, setSigning] = useState(false);
+  const [redeemOpen, setRedeemOpen] = useState(false);
   const pageSize = full ? LEDGER_FULL : LEDGER_COMPACT;
 
   // 同 OrdersPanel：load 的 setState 全在 .then 回调里，事件侧刷新走 reload()。
@@ -329,6 +407,9 @@ export function PointsPanel({ full = false }: { full?: boolean }) {
       <div className="p-head">
         <h2>积分明细</h2>
         <span style={{ display: "inline-flex", gap: 8 }}>
+          <button type="button" className="ord-act ghost" onClick={() => setRedeemOpen(true)}>
+            兑换激活码
+          </button>
           <button
             type="button"
             className="ord-act"
@@ -396,6 +477,15 @@ export function PointsPanel({ full = false }: { full?: boolean }) {
               更多（共 {total} 条）
             </Link>
           )}
+
+      <ActivationCodeModal
+        open={redeemOpen}
+        onClose={() => setRedeemOpen(false)}
+        onRedeemed={() => {
+          void fetchUser();
+          reload(1);
+        }}
+      />
     </div>
   );
 }

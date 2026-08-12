@@ -4,8 +4,10 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
@@ -58,6 +60,82 @@ func (r *repo) listRecords(userID idgen.ID, q *RecordQuery) ([]model.PointRecord
 		return nil, 0, err
 	}
 	return rows, total, nil
+}
+
+// redeemActivationCode atomically locks and validates the voucher, increments
+// its usage, writes the immutable claim, credits the user, and appends the point
+// ledger row. Any failure rolls back all five effects.
+func (r *repo) redeemActivationCode(userID idgen.ID, hash, clientIP, userAgent string, now time.Time) (*model.ActivationCodeClaim, int64, error) {
+	var claim model.ActivationCodeClaim
+	var balance int64
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var code model.ActivationCode
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("code_hash = ?", hash).First(&code).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrActivationCodeInvalid
+		}
+		if err != nil {
+			return err
+		}
+		switch {
+		case code.Status != 1:
+			return ErrActivationCodeDisabled
+		case !code.ExpiresAt.After(now):
+			return ErrActivationCodeExpired
+		case code.UsedCount >= code.UsageLimit:
+			return ErrActivationCodeExhausted
+		}
+
+		var existing int64
+		if err := tx.Model(&model.ActivationCodeClaim{}).
+			Where("activation_code_id = ? AND user_id = ?", code.ID, userID).
+			Count(&existing).Error; err != nil {
+			return err
+		}
+		if existing > 0 {
+			return ErrActivationCodeClaimed
+		}
+		// Keep an atomic guard in addition to SELECT FOR UPDATE. MySQL's row lock
+		// serializes redemptions; the predicate also prevents an accidental
+		// over-claim if this code is exercised on a dialect without row locks.
+		usage := tx.Model(&model.ActivationCode{}).
+			Where("id = ? AND status = 1 AND expires_at > ? AND used_count < usage_limit", code.ID, now).
+			Updates(map[string]any{
+				"used_count":   gorm.Expr("used_count + 1"),
+				"last_used_at": now,
+			})
+		if usage.Error != nil {
+			return usage.Error
+		}
+		if usage.RowsAffected == 0 {
+			return ErrActivationCodeExhausted
+		}
+
+		claim = model.ActivationCodeClaim{
+			ActivationCodeID: code.ID, UserID: userID,
+			BatchName: code.BatchName, CodeHint: code.CodeHint,
+			Points: code.Points, ClientIP: clientIP, UserAgent: userAgent,
+		}
+		claim.ID = idgen.Next()
+		balance, err = mutate(tx, userID, code.Points, changeTypeActivationCode, "激活码兑换", claim.ID)
+		if err != nil {
+			return err
+		}
+		claim.Balance = int(balance)
+		claim.CreateTime = now
+		if err := tx.Create(&claim).Error; err != nil {
+			if errors.Is(err, gorm.ErrDuplicatedKey) {
+				return ErrActivationCodeClaimed
+			}
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	return &claim, balance, nil
 }
 
 // checkinDailyReward returns the admin-configured daily check-in grant

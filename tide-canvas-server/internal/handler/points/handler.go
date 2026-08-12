@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"tidecanvas/internal/middleware"
+	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/response"
 )
 
@@ -70,12 +71,38 @@ func (h *handler) checkin(c *gin.Context) {
 	response.OK(c, vo)
 }
 
+func (h *handler) redeemActivationCode(c *gin.Context) {
+	var dto ActivationCodeRedeemDTO
+	if err := c.ShouldBindJSON(&dto); err != nil {
+		response.Fail(c, response.CodeBadRequest, "请输入激活码")
+		return
+	}
+	vo, err := h.svc.redeemActivationCode(
+		middleware.CurrentUserID(c), dto.Code, c.ClientIP(), eventlog.Truncate(c.GetHeader("User-Agent"), 512),
+	)
+	if err != nil {
+		h.fail(c, err, "failed to redeem activation code")
+		return
+	}
+	response.OK(c, vo)
+}
+
 // fail maps service errors to the appropriate response code.
 func (h *handler) fail(c *gin.Context, err error, fallbackMsg string) {
 	var capped *checkinCappedError
 	switch {
 	case errors.Is(err, ErrNotFound):
 		response.Fail(c, response.CodeNotFound, "user not found")
+	case errors.Is(err, ErrActivationCodeInvalid):
+		response.Fail(c, response.CodeBadRequest, "激活码无效，请核对后重试")
+	case errors.Is(err, ErrActivationCodeDisabled):
+		response.Fail(c, response.CodeBadRequest, "该激活码已停用")
+	case errors.Is(err, ErrActivationCodeExpired):
+		response.Fail(c, response.CodeBadRequest, "该激活码已过期")
+	case errors.Is(err, ErrActivationCodeExhausted):
+		response.Fail(c, response.CodeBadRequest, "该激活码的领取次数已用完")
+	case errors.Is(err, ErrActivationCodeClaimed):
+		response.Fail(c, response.CodeConflict, "你已经领取过该激活码")
 	case errors.As(err, &capped):
 		// 月度上限业务提示：400 携带可读文案（500 统一话术不适用于业务拒绝）。
 		response.Fail(c, response.CodeBadRequest,

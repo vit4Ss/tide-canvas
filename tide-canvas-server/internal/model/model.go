@@ -41,6 +41,8 @@ func Models() []any {
 		&PointRecord{},
 		&PointRefundReceipt{},
 		&CheckinRecord{},
+		&ActivationCode{},
+		&ActivationCodeClaim{},
 		&Plan{},
 		&PointPackage{},
 		&Order{},

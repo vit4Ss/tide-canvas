@@ -40,10 +40,18 @@ export interface CheckinResultVO {
   rewarded: boolean;
 }
 
+export interface ActivationCodeRedeemVO {
+  points: number;
+  balance: number;
+  redeemedAt: string;
+}
+
 export const pointsApi = {
   balance: () => http.get<BalanceVO>("/api/points/balance"),
   records: (query: { pageNum?: number; pageSize?: number; changeType?: string }) =>
     http.get<PageData<PointRecordVO>>("/api/points/records", toParams(query)),
   checkinStatus: () => http.get<CheckinStatusVO>("/api/points/checkin"),
   checkin: () => http.post<CheckinResultVO>("/api/points/checkin"),
+  redeemActivationCode: (code: string) =>
+    http.post<ActivationCodeRedeemVO>("/api/points/activation-code/redeem", { code }),
 };
