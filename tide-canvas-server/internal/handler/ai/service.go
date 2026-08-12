@@ -1292,9 +1292,10 @@ func errMessage(err error) string {
 // 原文(含上游 HTTP 细节、密钥路由等)一律不出站——详情进 zap 日志与
 // ai_generation_logs / model_call_log(admin 后台可查)。
 const (
-	userFacingGenErr       = "系统异常，请联系客服"
-	userFacingSafetyErr    = "内容未通过安全审核，请调整后重试"
-	userFacingCopyrightErr = "提交的音频或创作内容涉及版权限制，请更换音频素材，或调整歌词与描述后重试"
+	userFacingGenErr           = "系统异常，请联系客服"
+	userFacingSafetyErr        = "内容未通过安全审核，请调整后重试"
+	userFacingReferenceRiskErr = "参考图未通过安全审核，请更换参考图后重试"
+	userFacingCopyrightErr     = "提交的音频或创作内容涉及版权限制，请更换音频素材，或调整歌词与描述后重试"
 )
 
 // inputErrorRules 把「用户可自行修正的输入类」上游错误映射为具体、可操作的
@@ -1318,6 +1319,9 @@ var inputErrorRules = []struct {
 		"prohibited content", "moderation", "nsfw", "flagged",
 		"内容违规", "内容审核", "违规内容", "敏感词",
 	}, userFacingSafetyErr},
+	{[]string{
+		"inputimagerisk", "input image risk",
+	}, userFacingReferenceRiskErr},
 	// 参考图版权要先于下面的通用版权规则:同样是审核,但用户该做的是「换图」而不是
 	// 「改描述」,给通用文案会把人指到错误的方向上。
 	{[]string{
@@ -1389,13 +1393,19 @@ func userFacingGenError(err error) string {
 	if err == nil {
 		return userFacingGenErr
 	}
-	// Relay 数字业务码优先于旧的 msg 关键词分类。5002（安全审核）与
-	// 5009（版权限制）使用稳定的产品中文文案；5003（输入不合法）展示
+	// Relay 数字业务码优先于旧的 msg 关键词分类。5001 + InputImageRisk
+	// （参考图风控）、5002（安全审核）与 5009（版权限制）使用稳定的
+	// 产品中文文案；5003（输入不合法）展示
 	// Relay 给出的具体原因；其余业务码保持旧逻辑，继续按 msg 规则映射
 	// 或落到系统异常兜底。
 	var relayErr *relaymedia.UpstreamError
 	if errors.As(err, &relayErr) {
 		switch relayErr.Code {
+		case "5001":
+			low := strings.ToLower(relayErr.Message)
+			if strings.Contains(low, "inputimagerisk") || strings.Contains(low, "input image risk") {
+				return userFacingReferenceRiskErr
+			}
 		case "5002":
 			return userFacingSafetyErr
 		case "5009":

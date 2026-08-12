@@ -199,6 +199,12 @@ type mediaResp struct {
 	Model   string       `json:"model"`
 	Data    []mediaAsset `json:"data"`
 	Assets  []mediaAsset `json:"assets"`
+	// 部分任务接口把失败信息平铺在顶层，而不是放进 OpenAI 风格的
+	// error 对象，例如 error_message="InputImageRisk (2039)"、
+	// error_code=5001。RawMessage 兼容数字与字符串业务码。
+	ErrorMessage string          `json:"error_message"`
+	ErrorType    string          `json:"error_type"`
+	ErrorCode    json.RawMessage `json:"error_code"`
 	// 音频任务的结果字段:/v1/audio/speech 同步 200 带 audio.url;/v1/tasks/{id}
 	// 上多输出(Suno 两首)的全集在 output_urls,单输出在 output_url。
 	OutputURL  string   `json:"output_url"`
@@ -838,10 +844,36 @@ func upstreamError(status int, mr mediaResp, raw []byte) error {
 			Code:       strings.TrimSpace(mr.Error.Code),
 		}
 	}
+	if message := strings.TrimSpace(mr.ErrorMessage); message != "" || len(mr.ErrorCode) > 0 || strings.TrimSpace(mr.ErrorType) != "" {
+		return &UpstreamError{
+			HTTPStatus: status,
+			Message:    message,
+			Type:       strings.TrimSpace(mr.ErrorType),
+			Code:       jsonScalarString(mr.ErrorCode),
+		}
+	}
 	if s := strings.TrimSpace(string(raw)); s != "" {
 		return fmt.Errorf("relaymedia: HTTP %d: %s", status, truncate(s, 300))
 	}
 	return fmt.Errorf("relaymedia: HTTP %d", status)
+}
+
+func jsonScalarString(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return ""
+	}
+	switch value := value.(type) {
+	case string:
+		return strings.TrimSpace(value)
+	case float64:
+		return fmt.Sprintf("%g", value)
+	default:
+		return ""
+	}
 }
 
 func truncate(s string, n int) string {

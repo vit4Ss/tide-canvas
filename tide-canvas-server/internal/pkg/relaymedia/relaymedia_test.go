@@ -118,6 +118,32 @@ func TestSubmitReturnsStructuredErrorFromHTTPResponses(t *testing.T) {
 	}
 }
 
+func TestSubmitReturnsStructuredErrorFromFlatFailedTask(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"task_1hkyj9z",
+			"status":"failed",
+			"error_message":"InputImageRisk (2039)",
+			"error_code":5001,
+			"error_type":"provider_rejection"
+		}`))
+	}))
+	defer server.Close()
+
+	client := &Client{baseURL: server.URL, hc: server.Client()}
+	_, err := client.submit(context.Background(), pathVideoGenerations, map[string]any{}, time.Second)
+	var upstream *UpstreamError
+	if !errors.As(err, &upstream) {
+		t.Fatalf("error type = %T, want *UpstreamError", err)
+	}
+	if upstream.HTTPStatus != http.StatusOK || upstream.Code != "5001" || upstream.Type != "provider_rejection" || upstream.Message != "InputImageRisk (2039)" {
+		t.Fatalf("unexpected upstream error: %#v", upstream)
+	}
+}
+
 // Suno 实测(2026-07-18)同步 200 的 data 只带主歌:两首全集与 clip_id 只在
 // /v1/tasks/{id}。同步成功后必须补查任务详情,否则第二首歌与延长/翻唱引用全丢。
 func TestSubmitAudioSyncEnrichesFromTaskDetail(t *testing.T) {

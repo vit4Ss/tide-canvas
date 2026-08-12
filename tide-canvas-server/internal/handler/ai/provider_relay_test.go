@@ -213,6 +213,20 @@ func TestUserFacingGenErrorUsesSelectedRelayBusinessMessages(t *testing.T) {
 		}
 	}
 
+	// 5001 is only an input-image safety rejection when the provider detail says
+	// InputImageRisk. Other 5001 failures remain internal system errors.
+	for _, err := range []error{
+		&relaymedia.UpstreamError{HTTPStatus: 200, Code: "5001", Message: "InputImageRisk (2039)"},
+		fmt.Errorf("provider failed: %w", &relaymedia.UpstreamError{Code: "5001", Message: "input image risk"}),
+	} {
+		if got := userFacingGenError(err); got != userFacingReferenceRiskErr {
+			t.Errorf("code 5001 InputImageRisk: got %q, want %q", got, userFacingReferenceRiskErr)
+		}
+	}
+	if got := userFacingGenError(&relaymedia.UpstreamError{Code: "5001", Message: "provider internal failure"}); got != userFacingGenErr {
+		t.Errorf("unrelated code 5001 must stay internal, got %q", got)
+	}
+
 	// 5009 is Relay's dedicated copyright restriction. Use stable, actionable
 	// product copy and never leak or depend on the provider's raw wording.
 	for _, err := range []error{
