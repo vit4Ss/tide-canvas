@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
@@ -9,6 +9,8 @@ import {
   ArrowLeft,
   Box,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   FileText,
   Image as ImageIcon,
   Music,
@@ -22,12 +24,7 @@ import {
   AdminAlert,
   AdminDrawer,
   AdminEmptyState,
-  AdminTable,
-  Panel,
   StatusPill,
-  TableSkeleton,
-  type Column,
-  type StatusPillProps,
 } from "@/components/admin";
 import { aiApi } from "@/lib/api";
 import { useAuthStore } from "@/stores/use-auth-store";
@@ -37,13 +34,13 @@ import type {
   UserHistoryAssetVO,
 } from "@/types/ai";
 
-type PillTone = StatusPillProps["tone"];
 type MediaFilter = "" | "image" | "video" | "audio" | "3d" | "text";
 
 type ResultAsset = UserHistoryAssetVO;
 type InputAsset = UserHistoryAssetVO;
 
 const INPUT_ASSET_PREVIEW_LIMIT = 8;
+const PAGE_SIZE = 20;
 
 const INPUT_ASSET_GROUPS: Array<{
   kind: InputAsset["kind"];
@@ -102,15 +99,6 @@ function sceneLabel(row: Pick<UserGenerationHistoryVO, "mediaType">): string {
   return TYPE_OPTIONS.find((item) => item.value === row.mediaType)?.label || "其他";
 }
 
-function sceneTone(row: Pick<UserGenerationHistoryVO, "mediaType">): PillTone {
-  switch (row.mediaType) {
-    case "video": return "green";
-    case "image": return "blue";
-    case "audio": return "amber";
-    default: return "gray";
-  }
-}
-
 function fmtTime(value: string): string {
   if (!value) return "—";
   const time = Date.parse(value);
@@ -128,15 +116,6 @@ function duration(ms: number): string {
   return `${Math.floor(seconds / 60)}分${seconds % 60}秒`;
 }
 
-function promptForRow(row: UserGenerationHistoryVO): string {
-  return row.prompt || "";
-}
-
-function Trunc({ text }: { text: string }) {
-  if (!text) return <>—</>;
-  return <span className="truncate" title={text}>{text}</span>;
-}
-
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h3 className="genr-sec-t">{children}</h3>;
 }
@@ -146,6 +125,48 @@ function AssetIcon({ kind }: { kind: ResultAsset["kind"] }) {
   if (kind === "audio") return <Music aria-hidden size={14} />;
   if (kind === "image") return <ImageIcon aria-hidden size={14} />;
   return <FileText aria-hidden size={14} />;
+}
+
+function mediaAssetKind(mediaType: UserGenerationHistoryVO["mediaType"]): ResultAsset["kind"] {
+  if (mediaType === "image" || mediaType === "video" || mediaType === "audio") return mediaType;
+  return "file";
+}
+
+function HistoryListSkeleton() {
+  return (
+    <div className="user-history-list-skeleton" aria-busy="true">
+      <span className="sr-only" role="status">正在加载生成记录</span>
+      {Array.from({ length: 7 }, (_, index) => (
+        <div className="user-history-skeleton-row" key={index}>
+          <span className="skel user-history-skeleton-kind" />
+          <span className="user-history-skeleton-copy">
+            <span className="skel" />
+            <span className="skel" />
+          </span>
+          <span className="skel user-history-skeleton-meta" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function HistoryPager({ page, total, onPage }: { page: number; total: number; onPage: (page: number) => void }) {
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (pageCount <= 1) return null;
+
+  return (
+    <nav className="user-history-pager" aria-label="生成记录分页">
+      <span>第 {page} / {pageCount} 页</span>
+      <div>
+        <button type="button" disabled={page <= 1} onClick={() => onPage(page - 1)} aria-label="上一页">
+          <ChevronLeft aria-hidden size={16} />
+        </button>
+        <button type="button" disabled={page >= pageCount} onClick={() => onPage(page + 1)} aria-label="下一页">
+          <ChevronRight aria-hidden size={16} />
+        </button>
+      </div>
+    </nav>
+  );
 }
 
 function ResultBlock({ detail, row }: { detail: UserGenerationHistoryDetailVO | null; row: UserGenerationHistoryVO }) {
@@ -333,7 +354,10 @@ function DetailDrawer({ row, onClose }: { row: UserGenerationHistoryVO; onClose:
         <>
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <StatusPill tone={sceneTone(row)}>{sceneLabel(row)}</StatusPill>
+              <span className="user-history-kind">
+                <AssetIcon kind={mediaAssetKind(row.mediaType)} />
+                {sceneLabel(row)}
+              </span>
               <span className="strong" style={{ fontSize: 15, wordBreak: "break-all" }}>{detail?.model || row.model || "—"}</span>
             </div>
             <div className="muted" style={{ fontSize: 12.5, marginTop: 6 }}>{fmtTime(row.createTime)}</div>
@@ -399,7 +423,6 @@ export function GenerationHistory({ mode = "page", onDetailOpenChange }: Generat
   const [page, setPage] = useState(1);
   const [detail, setDetail] = useState<UserGenerationHistoryVO | null>(null);
   const requestId = useRef(0);
-  const PAGE_SIZE = 20;
 
   const load = useCallback(async () => {
     const id = ++requestId.current;
@@ -448,62 +471,6 @@ export function GenerationHistory({ mode = "page", onDetailOpenChange }: Generat
     onDetailOpenChange?.(false);
   }, [onDetailOpenChange]);
 
-  const columns: Column<UserGenerationHistoryVO>[] = useMemo(() => [
-    {
-      header: "#",
-      width: 48,
-      className: "mono muted",
-      cell: (_row, index) => (page - 1) * PAGE_SIZE + index + 1,
-    },
-    {
-      header: "类型",
-      width: 92,
-      cell: (row) => <StatusPill tone={sceneTone(row)}>{sceneLabel(row)}</StatusPill>,
-    },
-    {
-      header: "模型",
-      width: 210,
-      className: "strong",
-      cell: (row) => <Trunc text={row.model} />,
-    },
-    {
-      header: "Prompt",
-      className: "muted",
-      cell: (row) => <Trunc text={promptForRow(row)} />,
-    },
-    {
-      header: "状态",
-      width: 76,
-      cell: (row) => <StatusPill tone={row.success === 1 ? "green" : "red"}>{row.success === 1 ? "成功" : "失败"}</StatusPill>,
-    },
-    {
-      header: "平台积分",
-      width: 84,
-      align: "right",
-      className: "mono",
-      cell: (row) => row.success === 1 && row.pointCost != null ? row.pointCost : "—",
-    },
-    {
-      header: "耗时",
-      width: 96,
-      align: "right",
-      className: "mono muted",
-      cell: (row) => duration(row.durationMs),
-    },
-    {
-      header: "创建时间",
-      width: 190,
-      className: "mono muted",
-      cell: (row) => fmtTime(row.createTime),
-    },
-    {
-      header: "操作",
-      width: 88,
-      align: "right",
-      cell: (row) => <button type="button" className="adm-btn ghost" aria-label={`查看 ${row.model || "该模型"} 的生成记录详情`} onClick={() => openDetail(row)}>详情</button>,
-    },
-  ], [openDetail, page]);
-
   const hasFilter = Boolean(keyword.trim() || mediaType || status !== "全部" || startDate || endDate);
   const detailDrawer = detail && typeof document !== "undefined"
     ? createPortal(
@@ -519,30 +486,32 @@ export function GenerationHistory({ mode = "page", onDetailOpenChange }: Generat
   }, [onDetailOpenChange]);
 
   const records = (
-    <div className="adm-page">
-      <Panel
-        className="user-history-panel"
-        title={mode === "modal" ? "全部记录" : "生成记录"}
-        sub={loading && rows.length === 0 ? "正在加载记录…" : `共 ${total.toLocaleString()} 条记录`}
-        tools={(
-          <>
-            <div className="adm-search" role="search">
-              <Search aria-hidden size={15} />
-              <input
-                aria-label="搜索 Prompt 或模型"
-                placeholder="搜索 Prompt / 模型关键词"
-                value={keyword}
-                onChange={(event) => applyFilter(setKeyword)(event.target.value)}
-              />
-            </div>
-            <button type="button" className="adm-btn ghost" onClick={() => void load()}>
-              <RefreshCw aria-hidden size={15} />
-              刷新
-            </button>
-          </>
-        )}
-      >
-        <div className="adm-filter-row">
+    <div className="user-history-panel">
+      <div className="user-history-panel-head">
+        <div className="user-history-panel-title">
+          <h2>{mode === "modal" ? "全部记录" : "生成记录"}</h2>
+          <span>{loading && rows.length === 0 ? "正在加载…" : `${total.toLocaleString()} 条`}</span>
+        </div>
+        <div className="user-history-panel-tools">
+          <div className="user-history-search" role="search">
+            <Search aria-hidden size={15} />
+            <input
+              aria-label="搜索 Prompt 或模型"
+              placeholder="搜索 Prompt / 模型"
+              value={keyword}
+              onChange={(event) => applyFilter(setKeyword)(event.target.value)}
+            />
+          </div>
+          <button type="button" className="user-history-refresh" onClick={() => void load()}>
+            <RefreshCw aria-hidden size={15} />
+            <span>刷新</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="user-history-filters">
+        <label>
+          <span className="sr-only">类型</span>
           <select
             className="genr-select"
             aria-label="类型筛选"
@@ -553,6 +522,9 @@ export function GenerationHistory({ mode = "page", onDetailOpenChange }: Generat
               <option key={option.value || "all"} value={option.value}>{option.value ? option.label : "类型：全部"}</option>
             ))}
           </select>
+        </label>
+        <label>
+          <span className="sr-only">状态</span>
           <select
             className="genr-select"
             aria-label="状态筛选"
@@ -561,66 +533,112 @@ export function GenerationHistory({ mode = "page", onDetailOpenChange }: Generat
           >
             {STATUS_OPTIONS.map((option) => <option key={option} value={option}>{option === "全部" ? "状态：全部" : option}</option>)}
           </select>
-          <input
-            type="date"
-            className="genr-date"
-            aria-label="开始日期"
-            value={startDate}
-            onChange={(event) => applyFilter(setStartDate)(event.target.value)}
-          />
-          <span className="muted" style={{ fontSize: 12 }}>至</span>
-          <input
-            type="date"
-            className="genr-date"
-            aria-label="结束日期"
-            value={endDate}
-            onChange={(event) => applyFilter(setEndDate)(event.target.value)}
-          />
+        </label>
+        <div className="user-history-date-range">
+          <label>
+            <span>从</span>
+            <input
+              type="date"
+              className="genr-date"
+              aria-label="开始日期"
+              value={startDate}
+              onChange={(event) => applyFilter(setStartDate)(event.target.value)}
+            />
+          </label>
+          <span aria-hidden>—</span>
+          <label>
+            <span>至</span>
+            <input
+              type="date"
+              className="genr-date"
+              aria-label="结束日期"
+              value={endDate}
+              onChange={(event) => applyFilter(setEndDate)(event.target.value)}
+            />
+          </label>
         </div>
+      </div>
 
-        {loading ? (
-          <TableSkeleton />
-        ) : error ? (
-          <div style={{ padding: 16 }}>
-            <AdminAlert
-              tone="error"
-              title="生成记录加载失败"
-              action={<button type="button" className="adm-btn ghost" onClick={() => void load()}><RefreshCw aria-hidden size={15} />重新加载</button>}
+      {loading ? (
+        <HistoryListSkeleton />
+      ) : error ? (
+        <div className="user-history-feedback">
+          <AdminAlert
+            tone="error"
+            title="生成记录加载失败"
+            action={<button type="button" className="adm-btn ghost" onClick={() => void load()}><RefreshCw aria-hidden size={15} />重新加载</button>}
+          >
+            {error}
+          </AdminAlert>
+        </div>
+      ) : rows.length === 0 ? (
+        <AdminEmptyState
+          title="没有找到生成记录"
+          description={hasFilter ? "尝试清除搜索或筛选条件。" : "完成一次生成后，记录会出现在这里。"}
+          action={hasFilter ? (
+            <button
+              type="button"
+              className="adm-btn ghost"
+              onClick={() => {
+                setKeyword("");
+                setMediaType("");
+                setStatus("全部");
+                setStartDate("");
+                setEndDate("");
+                setPage(1);
+              }}
             >
-              {error}
-            </AdminAlert>
+              清除筛选
+            </button>
+          ) : undefined}
+        />
+      ) : (
+        <>
+          <div className="user-history-list-head" aria-hidden>
+            <span>类型</span>
+            <span>模型与 Prompt</span>
+            <span>状态</span>
+            <span>积分</span>
+            <span>耗时</span>
+            <span>创建时间</span>
+            <span />
           </div>
-        ) : rows.length === 0 ? (
-          <AdminEmptyState
-            title="没有找到生成记录"
-            description={hasFilter ? "尝试清除搜索或筛选条件。" : "完成一次生成后，记录会出现在这里。"}
-            action={hasFilter ? (
-              <button
-                type="button"
-                className="adm-btn ghost"
-                onClick={() => {
-                  setKeyword("");
-                  setMediaType("");
-                  setStatus("全部");
-                  setStartDate("");
-                  setEndDate("");
-                  setPage(1);
-                }}
-              >
-                清除筛选
-              </button>
-            ) : undefined}
-          />
-        ) : (
-          <AdminTable
-            rows={rows}
-            rowKey={(row) => row.id}
-            columns={columns}
-            label="我的生成记录"
-            server={{ page, pageSize: PAGE_SIZE, total, onPage: setPage }}
-          />
-        )}
-      </Panel>
+          <ol className="user-history-list" aria-label="我的生成记录">
+            {rows.map((row) => (
+              <li key={row.id}>
+                <button
+                  type="button"
+                  className="user-history-row"
+                  aria-label={`查看 ${row.model || sceneLabel(row)} 的生成记录详情`}
+                  onClick={() => openDetail(row)}
+                >
+                  <span className="user-history-kind">
+                    <AssetIcon kind={mediaAssetKind(row.mediaType)} />
+                    {sceneLabel(row)}
+                  </span>
+                  <span className="user-history-summary">
+                    <strong title={row.model || undefined}>{row.model || "未知模型"}</strong>
+                    <span title={row.prompt || undefined}>{row.prompt || "无 Prompt"}</span>
+                  </span>
+                  <span className={`user-history-state ${row.success === 1 ? "is-success" : "is-failed"}`}>
+                    <i aria-hidden />
+                    {row.success === 1 ? "成功" : "失败"}
+                  </span>
+                  <span className="user-history-meta">
+                    <span className="user-history-points" data-label="积分">
+                      {row.success === 1 && row.pointCost != null ? row.pointCost : "—"}
+                    </span>
+                    <span className="user-history-duration" data-label="耗时">{duration(row.durationMs)}</span>
+                    <time className="user-history-created" dateTime={row.createTime}>{fmtTime(row.createTime)}</time>
+                  </span>
+                  <span className="user-history-row-arrow" aria-hidden><ChevronRight size={16} /></span>
+                </button>
+              </li>
+            ))}
+          </ol>
+          <HistoryPager page={page} total={total} onPage={setPage} />
+        </>
+      )}
     </div>
   );
 
@@ -651,7 +669,7 @@ export function GenerationHistory({ mode = "page", onDetailOpenChange }: Generat
       <main className="user-history-main">
         <div className="user-history-heading">
           <h1>我的生成记录</h1>
-          <p>仅展示当前账号发起的生成任务，包括成功结果、失败原因、耗时和积分。</p>
+          <p>仅展示当前账号发起的生成任务，包括生成结果、任务状态、耗时和积分。</p>
         </div>
 
         {records}

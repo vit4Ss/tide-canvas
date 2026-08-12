@@ -7,7 +7,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { GenerationHistoryDialog } from "./generation-history-dialog";
 import "./generation-history-fab.css";
 
-const WORKSPACE_PATHS = ["/canvas", "/studio", "/assets", "/projects", "/inspire", "/three-d", "/chat", "/tools"];
+const WORKSPACE_PATHS = ["/studio", "/assets", "/projects", "/inspire", "/three-d", "/chat", "/tools"];
 
 export function GenerationHistoryFab() {
   const pathname = usePathname() || "/";
@@ -15,7 +15,13 @@ export function GenerationHistoryFab() {
   const [openPath, setOpenPath] = useState<string | null>(null);
   const open = openPath === pathname;
 
-  if (!initialized || !user || pathname.startsWith("/admin") || pathname === "/generation-history") {
+  if (
+    !initialized
+    || !user
+    || pathname.startsWith("/admin")
+    || pathname.startsWith("/canvas")
+    || pathname === "/generation-history"
+  ) {
     return null;
   }
 
