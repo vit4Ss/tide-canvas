@@ -54,9 +54,10 @@ type service struct {
 	systemPrompt string
 	// storage backs durable server-side artifacts (e.g. grid-split cells).
 	storage storage.StorageStrategy
-	// confirmUpscaleDuration verifies ownership and reads source media metadata
-	// server-side before any points are charged. It is injectable in tests.
-	confirmUpscaleDuration upscaleDurationConfirmer
+	// confirmVideoDuration verifies ownership and reads source media metadata
+	// server-side before any points are charged. Video upscale and optional
+	// reference-video billing share the same verifier. It is injectable in tests.
+	confirmVideoDuration videoDurationConfirmer
 	// docHosts 是启动时存储策略 FetchHosts() 的本站资产 host 列表（CDN/区域/
 	// 加速域名）：画布 AI 助手转发文档附件时只允许抓取这些 host 或
 	// *.aliyuncs.com 的 URL（SSRF 防护，见 pkg/chatattach）。
@@ -86,7 +87,7 @@ func newService(d *app.Deps) *service {
 	if d.Storage != nil {
 		s.docHosts = d.Storage.FetchHosts()
 	}
-	s.confirmUpscaleDuration = s.confirmOwnedVideoDuration
+	s.confirmVideoDuration = s.confirmOwnedVideoDuration
 	return s
 }
 
@@ -250,6 +251,10 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 	if err := s.prepareUpscalePricingInput(ctx, userID, &dto, m); err != nil {
 		return nil, err
 	}
+	referenceVideoCost, err := s.prepareReferenceVideoPricingInput(ctx, userID, &dto, m)
+	if err != nil {
+		return nil, err
+	}
 
 	now := time.Now()
 	concurrentLimit := generationConcurrentLimit(s.repo.db.WithContext(ctx))
@@ -294,7 +299,10 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 	// rejects the generation before any task/row exists. cost==0 models are free.
 	// The cost is persisted on the task so a crash-recovery sweep can refund the
 	// exact amount; runTask refunds it on any non-success outcome too.
-	cost := resolveCost(m, dto.Input)
+	cost, err := combineGenerationPointCost(resolveCost(m, dto.Input), referenceVideoCost)
+	if err != nil {
+		return nil, err
+	}
 	task.PointCost = int64(cost)
 	if dto.SkillRunStepID != 0 {
 		key := "skill-run-step:" + dto.SkillRunStepID.String()

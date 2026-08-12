@@ -62,6 +62,7 @@ import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";
 import { confirmDialog } from "@/components/shared/confirm";
 import { markRequiredField } from "@/lib/require-field";
+import { useReferenceVideoQuote } from "@/hooks/use-reference-video-quote";
 import styles from "@/app/(studio)/studio/create.module.css";
 import {
   activeRunStorageKey,
@@ -228,6 +229,15 @@ export default function CreateStudio() {
     [currentStudioList, model],
   );
   const mCfg = selModel?.config ?? null;
+  const referenceVideoUrls = useMemo(
+    () => tool === "ref" ? (slotData.video ?? []).map((file) => file.url?.trim() ?? "").filter(Boolean) : [],
+    [slotData, tool],
+  );
+  const referenceVideoQuote = useReferenceVideoQuote(
+    selModel?.modelKey || selModel?.id,
+    mCfg,
+    referenceVideoUrls,
+  );
   // Suno 音效卡与音乐卡用法不同（不吃歌词/风格/歌名，只按描述出短音效）。
   // 页签拆分后以工具为准，modelKey 里的 sfx 作兜底（未配置 modes 的旧数据）。
   const isSfx = isAudio && (tool === "sfx" || /sfx/i.test(selModel?.modelKey ?? ""));
@@ -331,9 +341,11 @@ export default function CreateStudio() {
   //   2) 模型级固定积分 (config.creditCost, else the model's pointCost)
   //   3) built-in fallback map (case-insensitive: 后台用 1k/2k/4k, 预览用 1K/2K/4K)
   const cost = useMemo(() => {
+    let base: number;
     // 音频按次计费（Suno 两首一次结算），无画质/清晰度矩阵与数量倍乘。
     if (isAudio || is3D) {
-      return mCfg?.creditCost ?? (parseFloat(selModel?.pointCost ?? "") || 0);
+      base = mCfg?.creditCost ?? (parseFloat(selModel?.pointCost ?? "") || 0);
+      return base;
     }
     const pm = mCfg?.priceMatrix;
     // 图片不配画质档位时（quality 为空）矩阵查 default 行，与服务端同口径
@@ -341,17 +353,24 @@ export default function CreateStudio() {
     const col = isVideo ? res : imgRes;
     const cell = pm?.[row]?.[col];
     const per = cell != null ? parseFloat(cell) : NaN;
-    if (Number.isFinite(per)) return isVideo ? Math.round(per) : Math.round(per) * count;
+    if (Number.isFinite(per)) {
+      base = isVideo ? Math.ceil(per) : Math.ceil(per * count);
+      return base + referenceVideoQuote.quote.pointCost;
+    }
 
     const flat = mCfg?.creditCost ?? (parseFloat(selModel?.pointCost ?? "") || 0);
-    if (flat > 0) return isVideo ? flat : flat * count;
+    if (flat > 0) {
+      base = isVideo ? Math.ceil(flat) : Math.ceil(flat * count);
+      return base + referenceVideoQuote.quote.pointCost;
+    }
 
     const fb = (m: Record<string, number>, k: string, d: number) =>
       m[k] ?? m[k.toUpperCase()] ?? m[k.toLowerCase()] ?? d;
-    return isVideo
+    base = isVideo
       ? Math.round((fb(RES_COST, res, 50) * (DUR_SEC[dur] || 5)) / 5)
       : fb(IMG_RES_COST, imgRes, 14) * count;
-  }, [mCfg, selModel, isVideo, isAudio, is3D, dur, res, imgRes, quality, count]);
+    return base + referenceVideoQuote.quote.pointCost;
+  }, [mCfg, selModel, isVideo, isAudio, is3D, dur, res, imgRes, quality, count, referenceVideoQuote.quote.pointCost]);
 
   const {
     busy,
@@ -1272,11 +1291,11 @@ export default function CreateStudio() {
           {/* footer */}
           <div className="ws-panel-foot">
             <button
-              className={`ws-gen${restoringRun || recoveringRuns || submitting ? " busy" : ""}`}
+              className={`ws-gen${restoringRun || recoveringRuns || submitting || referenceVideoQuote.loading ? " busy" : ""}`}
               id="gen"
               type="button"
-              disabled={restoringRun || recoveringRuns || submitting}
-              aria-busy={recoveringRuns || submitting}
+              disabled={restoringRun || recoveringRuns || submitting || referenceVideoQuote.loading}
+              aria-busy={recoveringRuns || submitting || referenceVideoQuote.loading}
               onClick={() => generate()}
             >
               <span className="spark">✦</span>{" "}
@@ -1286,12 +1305,21 @@ export default function CreateStudio() {
                   ? "正在恢复生成任务…"
                   : submitting
                     ? "正在提交…"
-                    : "立即生成"}{" "}
+                    : referenceVideoQuote.loading
+                      ? "正在核验参考视频…"
+                      : "立即生成"}{" "}
               <span className="ws-gen-cost">
-                <>·&nbsp;<b id="cost">{cost}</b>&nbsp;积分</>
+                {referenceVideoQuote.failed
+                  ? <>·&nbsp;<b id="cost">待核验</b></>
+                  : <>·&nbsp;<b id="cost">{cost}</b>&nbsp;积分</>}
               </span>
             </button>
             <div className="ws-balance">
+              {referenceVideoQuote.applies && !referenceVideoQuote.loading && (
+                referenceVideoQuote.failed
+                  ? <>参考视频费用提交时核验 · </>
+                  : <>参考视频 {referenceVideoQuote.quote.durationSeconds.toFixed(1)} 秒，额外 {referenceVideoQuote.quote.pointCost} 积分 · </>
+              )}
               {balance !== null ? `余额 ${balance.toLocaleString()} 积分` : "余额 —"}
             </div>
           </div>

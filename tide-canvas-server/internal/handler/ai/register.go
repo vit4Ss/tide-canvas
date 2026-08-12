@@ -124,6 +124,7 @@ func StartTaskReconciler(ctx context.Context, d *app.Deps) {
 //
 //	POST   /api/ai/generate     AiGenerateDTO -> AiTaskVO                     (auth)
 //	POST   /api/ai/upscale-quote -> authoritative duration/rate/point quote    (auth)
+//	POST   /api/ai/reference-video-quote -> reference-video surcharge quote    (auth)
 //	GET    /api/ai/optimize-cost -> {cost:int}                                (auth)
 //	POST   /api/ai/grid-split   {imageUrl,rows,cols,cells?} -> string[]       (auth)
 //	POST   /api/ai/tasks/frame-capture capturedFrameDTO -> AiTaskVO          (auth)
@@ -149,6 +150,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	authed.Use(middleware.JWTAuth(d))
 	authed.POST("/generate", h.generate)
 	authed.POST("/upscale-quote", h.upscaleQuote)
+	authed.POST("/reference-video-quote", middleware.RateLimit(d, 60, time.Minute), h.referenceVideoQuote)
 	authed.POST("/optimize-prompt", h.optimizePrompt)
 	authed.GET("/optimize-cost", h.optimizeCost)
 	authed.POST("/grid-split", h.gridSplit)

@@ -27,6 +27,8 @@ import { useCanvasNodeFeatures } from "@/stores/use-canvas-node-config-store";
 import { findRightColumnSpot, getIncomingSources, inlineIncomingTextRefs, parseModelConfig, stopEvent as stop, validateReferenceFileSizes } from "./shared/node-utils";
 import { GenerateSubmitButton, NodeDimsBadge, NodeErrorBadge, NodeGeneratingOverlay, NodeMediaLightbox, NodePanelChrome, NodeShell, NodeUploadingOverlay } from "./shared/node-overlays";
 import CapturableVideo from "@/components/studio/create-studio/video-result";
+import { useReferenceVideoQuote } from "@/hooks/use-reference-video-quote";
+import type { ModelConfig } from "@/types/admin-models";
 
 // 各模式（Tab）对连接源节点的数量/类型限制：hover 时提示，生成时校验。文生视频无需连接。
 const TAB_LIMITS: Record<string, { hint: string; min: number; max: number; types: string[] }> = {
@@ -276,7 +278,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   const visibleTabs = ALL_TABS.filter(
     (t) => !modelHandlers || modelHandlers.length === 0 || modelHandlers.includes(TAB_HANDLER[t])
   );
-  const rawConfig = parseModelConfig<{ resolutions?: string[]; ratios?: string[]; durations?: (string | number)[]; audio?: boolean; pricing?: Record<string, Record<string, number>> }>(selectedModel);
+  const rawConfig = parseModelConfig<ModelConfig & { audio?: boolean }>(selectedModel);
   // 时长在后台存成带单位、可能乱序的字符串("4s")；规整成升序秒数供选择器/校正/生成
   // 统一按数字处理。durations 显式为空数组时保持"无此维度"语义(不回退默认档)。
   const formatConfig = {
@@ -286,8 +288,23 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   // 积分显示与服务端 resolveCost 同口径的容错查表：后台视频矩阵是「行=时长(带 s)、
   // 列=清晰度(常为小写)」，而选择器里是数字秒 + "720P" 大写——统一走 matrixPrice
   // 兼容，查不到才落模型固定价（服务端同规则）。
+  const referenceVideoUrls = useMemo(() => {
+    if (videoTab !== "全能参考") return [];
+    const state = useCanvasStore.getState();
+    return getIncomingSources(state, node.id)
+      .filter((source) => source.type === "video" && source.videoSrc)
+      .map((source) => source.videoSrc as string);
+    // refsSig intentionally invalidates this imperative store snapshot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refsSig, node.id, videoTab]);
+  const referenceVideoQuote = useReferenceVideoQuote(
+    selectedModel?.modelId || selectedModel?.id,
+    rawConfig,
+    referenceVideoUrls,
+  );
   const matrixCost = matrixPrice(formatConfig.pricing, durationVariants(videoParam.duration), keyVariants(videoParam.resolution));
-  const pointCost = matrixCost ?? selectedModel?.pointCost ?? 135;
+  const basePointCost = matrixCost ?? selectedModel?.pointCost ?? 135;
+  const pointCost = basePointCost + referenceVideoQuote.quote.pointCost;
 
   // 切换模型后当前比例/清晰度/时长不在该模型的可选档位 → 自动校正为其首个档位
   useEffect(() => {
@@ -761,7 +778,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                 refs={refs}
                 value={node.prompt || ""}
                 onChange={handlePromptChange}
-                onSubmit={() => { if (hasPromptSource && !generating && !nodeUploading) handleGenerate(); }}
+                onSubmit={() => { if (hasPromptSource && !generating && !nodeUploading && !referenceVideoQuote.loading) handleGenerate(); }}
                 placeholder="描述你想要生成的画面内容，@ 引用已连接素材（图片1/文本1…）"
               />
               <PromptEditorModal
@@ -809,15 +826,20 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                   >
                     <Maximize2 className="h-3.5 w-3.5" />
                   </button>
-                  <span className="flex items-center gap-0.5 px-0.5">
+                  <span
+                    className="flex items-center gap-0.5 px-0.5"
+                    title={referenceVideoQuote.quote.pointCost > 0
+                      ? `含参考视频 ${referenceVideoQuote.quote.durationSeconds.toFixed(1)} 秒，额外 ${referenceVideoQuote.quote.pointCost} 积分`
+                      : undefined}
+                  >
                     <Zap className="h-3 w-3 text-neutral-900 dark:text-neutral-100" fill="currentColor" />
-                    {Math.ceil(pointCost)}
+                    {referenceVideoQuote.loading ? "…" : referenceVideoQuote.failed ? "待核验" : Math.ceil(pointCost)}
                   </span>
                   <GenerateSubmitButton
-                    disabled={!hasPromptSource || generating || nodeUploading}
+                    disabled={!hasPromptSource || generating || nodeUploading || referenceVideoQuote.loading}
                     generating={generating}
-                    title={generating ? "生成中..." : nodeUploading ? "素材上传中..." : !hasPromptSource ? "先输入提示词" : "开始生成"}
-                    onClick={() => { if (hasPromptSource && !generating && !nodeUploading) handleGenerate(); }}
+                    title={generating ? "生成中..." : nodeUploading ? "素材上传中..." : referenceVideoQuote.loading ? "正在核验参考视频时长..." : !hasPromptSource ? "先输入提示词" : "开始生成"}
+                    onClick={() => { if (hasPromptSource && !generating && !nodeUploading && !referenceVideoQuote.loading) handleGenerate(); }}
                   />
                 </div>
               </div>

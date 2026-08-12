@@ -768,6 +768,8 @@ function ModelModal({
     pricePerSecond: c0.pricePerSecond ?? "",
     // 旧模型的统一每秒价展开到每个可用档位，运营只需按档调整差价即可完成迁移。
     pricePerSecondByResolution: initialUpscaleRates(c0),
+    referenceVideoBillingEnabled: c0.referenceVideoBillingEnabled ?? false,
+    referenceVideoPricePerSecond: c0.referenceVideoPricePerSecond ?? "",
     uploadCost: c0.uploadCost ?? "",
   });
   const setC = (patch: Partial<ModelConfig>) => setCfg((p) => ({ ...p, ...patch }));
@@ -862,6 +864,10 @@ function ModelModal({
         return false;
       }
     }
+    if (isVideo && cfg.referenceVideoBillingEnabled && positiveNumber(cfg.referenceVideoPricePerSecond) <= 0) {
+      setErr("开启参考视频计费后，请填写大于 0 的每秒积分");
+      return false;
+    }
     setSaving(true);
     setErr(null);
     try {
@@ -892,6 +898,9 @@ function ModelModal({
             : cfg.pricePerSecondByResolution,
           // 新表单不再写统一单价；保留字段值只服务滚动升级中的旧实例。
           pricePerSecond: cfg.pricePerSecond,
+          referenceVideoPricePerSecond: isVideo
+            ? positiveNumber(cfg.referenceVideoPricePerSecond)
+            : cfg.referenceVideoPricePerSecond,
         },
       };
       const res = model
@@ -1101,6 +1110,36 @@ function ModelModal({
               <RefPair label="参考图片" countKey="omniRef.imageCount" sizeKey="omniRef.imageSizeMB" get={refGet} set={setRef} />
               <RefPair label="参考视频" countKey="omniRef.videoCount" sizeKey="omniRef.videoSizeMB" get={refGet} set={setRef} />
               <RefPair label="参考音频" countKey="omniRef.audioCount" sizeKey="omniRef.audioSizeMB" get={refGet} set={setRef} />
+            </FormSection>
+          )}
+
+          {isVideo && (
+            <FormSection
+              label="参考视频计费"
+              hint="开启后，服务端会在扣分前核验每个参考视频的真实时长；额外积分 = Σ ceil（单个参考视频秒数 × 每秒积分），逐个计算后相加。没有参考视频时不加收。"
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <SwitchToggle
+                    checked={cfg.referenceVideoBillingEnabled === true}
+                    onChange={(next) => setC({ referenceVideoBillingEnabled: next })}
+                    aria-label="参考视频按秒计费"
+                  />
+                  <span>{cfg.referenceVideoBillingEnabled ? "已开启" : "不收费"}</span>
+                </div>
+                {cfg.referenceVideoBillingEnabled && (
+                  <div className="fld" style={{ width: 180 }}>
+                    <input
+                      value={String(cfg.referenceVideoPricePerSecond ?? "")}
+                      onChange={(event) => setC({ referenceVideoPricePerSecond: event.target.value })}
+                      placeholder="如：10"
+                      inputMode="decimal"
+                      aria-label="参考视频每秒积分"
+                    />
+                    <span style={{ fontSize: 11.5, color: "var(--text-faint)" }}>积分 / 秒</span>
+                  </div>
+                )}
+              </div>
             </FormSection>
           )}
 

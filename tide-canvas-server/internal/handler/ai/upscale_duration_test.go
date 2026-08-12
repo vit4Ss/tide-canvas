@@ -13,8 +13,44 @@ import (
 	"tidecanvas/internal/pkg/idgen"
 )
 
+func TestCappedProbeBufferRetainsBoundedPrefix(t *testing.T) {
+	buffer := cappedProbeBuffer{limit: 5}
+	if n, err := buffer.Write([]byte("1234567")); err != nil || n != 7 {
+		t.Fatalf("first write = (%d, %v), want (7, nil)", n, err)
+	}
+	if n, err := buffer.Write([]byte("89")); err != nil || n != 2 {
+		t.Fatalf("second write = (%d, %v), want (2, nil)", n, err)
+	}
+	if got := buffer.String(); got != "12345" {
+		t.Fatalf("buffer = %q, want bounded prefix", got)
+	}
+}
+
+func TestConfirmedProbeDurationUsesLongestVideoBoundary(t *testing.T) {
+	got, err := confirmedProbeDuration([]byte(`{
+		"streams":[{"duration":"7.001"},{"duration":"8.25"}],
+		"format":{"duration":"8.10"}
+	}`))
+	if err != nil || got != 8.25 {
+		t.Fatalf("duration = (%v, %v), want (8.25, nil)", got, err)
+	}
+	got, err = confirmedProbeDuration([]byte(`{"streams":[{}],"format":{"duration":"5.5"}}`))
+	if err != nil || got != 5.5 {
+		t.Fatalf("format fallback = (%v, %v), want (5.5, nil)", got, err)
+	}
+	for _, raw := range []string{
+		`{"streams":[],"format":{"duration":"5"}}`,
+		`{"streams":[{"duration":"N/A"}],"format":{"duration":"N/A"}}`,
+		`not-json`,
+	} {
+		if _, err := confirmedProbeDuration([]byte(raw)); err == nil {
+			t.Fatalf("invalid probe output accepted: %s", raw)
+		}
+	}
+}
+
 func TestPrepareUpscalePricingInputOverridesClientDuration(t *testing.T) {
-	s := &service{confirmUpscaleDuration: func(_ context.Context, userID idgen.ID, source string) (string, float64, error) {
+	s := &service{confirmVideoDuration: func(_ context.Context, userID idgen.ID, source string) (string, float64, error) {
 		if userID != 42 || source != "https://cdn.example/input.mp4" {
 			t.Fatalf("confirmer input = %s/%s", userID, source)
 		}
@@ -43,7 +79,7 @@ func TestPrepareUpscalePricingInputOverridesClientDuration(t *testing.T) {
 
 func TestPrepareUpscalePricingInputRejectsUnpricedResolution(t *testing.T) {
 	called := false
-	s := &service{confirmUpscaleDuration: func(context.Context, idgen.ID, string) (string, float64, error) {
+	s := &service{confirmVideoDuration: func(context.Context, idgen.ID, string) (string, float64, error) {
 		called = true
 		return "", 0, nil
 	}}
@@ -65,7 +101,7 @@ func TestResolveUpscalePointRateRequiresResolution(t *testing.T) {
 }
 
 func TestPrepareUpscalePricingInputSurfacesProbeUnavailable(t *testing.T) {
-	s := &service{confirmUpscaleDuration: func(context.Context, idgen.ID, string) (string, float64, error) {
+	s := &service{confirmVideoDuration: func(context.Context, idgen.ID, string) (string, float64, error) {
 		return "", 0, errVideoProbeUnavailable
 	}}
 	dto := generateDTO{Input: json.RawMessage(`{"videoUrl":"https://cdn.example/input.mp4","targetResolution":"4k"}`)}
@@ -90,7 +126,7 @@ func TestQuoteUpscaleReturnsConfirmedDurationAndCost(t *testing.T) {
 	}
 	s := &service{
 		repo: newRepo(db),
-		confirmUpscaleDuration: func(context.Context, idgen.ID, string) (string, float64, error) {
+		confirmVideoDuration: func(context.Context, idgen.ID, string) (string, float64, error) {
 			return "https://cdn.example/canonical.mp4", 4.2, nil
 		},
 	}

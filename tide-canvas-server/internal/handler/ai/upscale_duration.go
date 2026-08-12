@@ -18,9 +18,41 @@ import (
 
 var errVideoProbeUnavailable = errors.New("video duration probe is unavailable")
 
-const videoProbeTimeout = 45 * time.Second
+const (
+	videoProbeTimeout       = 45 * time.Second
+	maxConcurrentVideoProbe = 8
+	videoProbeStdoutLimit   = 4 << 10
+	videoProbeStderrLimit   = 64 << 10
+)
 
-type upscaleDurationConfirmer func(context.Context, idgen.ID, string) (canonicalURL string, durationSeconds float64, err error)
+// ffprobe starts an operating-system process and may hold a network connection
+// for tens of seconds. Keep one process-wide ceiling shared by quote, generate,
+// reference-video and upscale paths; the reference-video path also applies its
+// tighter per-request ceiling before reaching this gate.
+var videoProbeSlots = make(chan struct{}, maxConcurrentVideoProbe)
+
+// cappedProbeBuffer reports full writes to os/exec while retaining only a
+// bounded prefix. A malformed media file can otherwise make ffprobe emit an
+// unbounded amount of diagnostics before the timeout terminates the process.
+type cappedProbeBuffer struct {
+	bytes.Buffer
+	limit int
+}
+
+func (b *cappedProbeBuffer) Write(p []byte) (int, error) {
+	written := len(p)
+	remaining := b.limit - b.Len()
+	if remaining <= 0 {
+		return written, nil
+	}
+	if len(p) > remaining {
+		p = p[:remaining]
+	}
+	_, _ = b.Buffer.Write(p)
+	return written, nil
+}
+
+type videoDurationConfirmer func(context.Context, idgen.ID, string) (canonicalURL string, durationSeconds float64, err error)
 
 // prepareUpscalePricingInput replaces all client duration claims with media
 // metadata confirmed by this server. The normalized input is subsequently used
@@ -41,10 +73,10 @@ func (s *service) prepareUpscalePricingInput(ctx context.Context, userID idgen.I
 	if sourceURL == "" {
 		return skillPlacementError{message: "请选择需要超分的视频"}
 	}
-	if s.confirmUpscaleDuration == nil {
+	if s.confirmVideoDuration == nil {
 		return errVideoProbeUnavailable
 	}
-	canonical, duration, err := s.confirmUpscaleDuration(ctx, userID, sourceURL)
+	canonical, duration, err := s.confirmVideoDuration(ctx, userID, sourceURL)
 	if err != nil {
 		if errors.Is(err, errVideoProbeUnavailable) {
 			return err
@@ -184,15 +216,23 @@ func probeVideoDuration(ctx context.Context, sourceURL string) (float64, error) 
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, videoProbeTimeout)
 	defer cancel()
+	select {
+	case videoProbeSlots <- struct{}{}:
+		defer func() { <-videoProbeSlots }()
+	case <-probeCtx.Done():
+		return 0, fmt.Errorf("ffprobe queue timeout: %w", probeCtx.Err())
+	}
 	cmd := exec.CommandContext(probeCtx, binary,
 		"-v", "error",
 		"-protocol_whitelist", "http,https,tcp,tls",
 		"-rw_timeout", "30000000",
-		"-show_entries", "format=duration",
-		"-of", "default=noprint_wrappers=1:nokey=1",
+		"-select_streams", "v",
+		"-show_entries", "format=duration:stream=duration",
+		"-of", "json",
 		strings.TrimSpace(sourceURL),
 	)
-	var stdout, stderr bytes.Buffer
+	stdout := cappedProbeBuffer{limit: videoProbeStdoutLimit}
+	stderr := cappedProbeBuffer{limit: videoProbeStderrLimit}
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -201,9 +241,43 @@ func probeVideoDuration(ctx context.Context, sourceURL string) (float64, error) 
 		}
 		return 0, fmt.Errorf("ffprobe failed: %w (%s)", err, strings.TrimSpace(stderr.String()))
 	}
-	duration, err := strconv.ParseFloat(strings.TrimSpace(stdout.String()), 64)
-	if err != nil || duration <= 0 || math.IsNaN(duration) || math.IsInf(duration, 0) {
+	duration, err := confirmedProbeDuration(stdout.Bytes())
+	if err != nil {
 		return 0, errors.New("ffprobe returned an invalid duration")
 	}
 	return duration, nil
+}
+
+// confirmedProbeDuration uses the longest trustworthy duration reported for
+// the container or any video stream. Container-only duration can understate a
+// malformed or unusually muxed stream; charging the maximum fails closed while
+// still accepting ordinary files whose individual stream duration is absent.
+func confirmedProbeDuration(raw []byte) (float64, error) {
+	var payload struct {
+		Streams []struct {
+			Duration string `json:"duration"`
+		} `json:"streams"`
+		Format struct {
+			Duration string `json:"duration"`
+		} `json:"format"`
+	}
+	if json.Unmarshal(raw, &payload) != nil || len(payload.Streams) == 0 {
+		return 0, errors.New("no video stream duration")
+	}
+	longest := validProbeDuration(payload.Format.Duration)
+	for _, stream := range payload.Streams {
+		longest = math.Max(longest, validProbeDuration(stream.Duration))
+	}
+	if longest <= 0 || math.IsNaN(longest) || math.IsInf(longest, 0) {
+		return 0, errors.New("invalid video duration")
+	}
+	return longest, nil
+}
+
+func validProbeDuration(raw string) float64 {
+	duration, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || duration <= 0 || math.IsNaN(duration) || math.IsInf(duration, 0) {
+		return 0
+	}
+	return duration
 }

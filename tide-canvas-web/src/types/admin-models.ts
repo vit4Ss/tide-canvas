@@ -74,6 +74,10 @@ export interface ModelConfig {
   pricePerSecond?: number | string;
   /** 视频超分按目标分辨率配置的每秒积分。 */
   pricePerSecondByResolution?: Record<string, number | string>;
+  /** 视频模型：是否对随请求提交的参考视频按实际时长额外收费。 */
+  referenceVideoBillingEnabled?: boolean;
+  /** 视频模型：参考视频额外收费的积分/秒；每段独立向上取整后求和，仅开关开启时生效。 */
+  referenceVideoPricePerSecond?: number | string;
   /** raw upstream price modifiers, kept for reference */
   priceModifiers?: unknown;
   /** complete upstream params_schema, including modality-specific 3D options */

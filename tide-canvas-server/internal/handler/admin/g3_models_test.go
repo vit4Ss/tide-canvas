@@ -97,6 +97,94 @@ func TestValidateUpscalePricingConfig(t *testing.T) {
 	}
 }
 
+func TestValidateReferenceVideoPricingConfig(t *testing.T) {
+	for _, raw := range []json.RawMessage{
+		nil,
+		json.RawMessage(`{}`),
+		json.RawMessage(`{"referenceVideoBillingEnabled":false}`),
+		json.RawMessage(`{"referenceVideoBillingEnabled":true,"referenceVideoPricePerSecond":10}`),
+		json.RawMessage(`{"referenceVideoBillingEnabled":true,"referenceVideoPricePerSecond":"2.5"}`),
+	} {
+		if err := validateReferenceVideoPricingConfig(raw); err != nil {
+			t.Fatalf("config %s: %v", raw, err)
+		}
+	}
+	for _, raw := range []json.RawMessage{
+		json.RawMessage(`{"referenceVideoBillingEnabled":`),
+		json.RawMessage(`{"referenceVideoBillingEnabled":true}`),
+		json.RawMessage(`{"referenceVideoBillingEnabled":true,"referenceVideoPricePerSecond":0}`),
+		json.RawMessage(`{"referenceVideoBillingEnabled":true,"referenceVideoPricePerSecond":"bad"}`),
+	} {
+		if err := validateReferenceVideoPricingConfig(raw); err == nil {
+			t.Fatalf("config %s should be rejected", raw)
+		}
+	}
+}
+
+func TestAdminModelStatusRejectsInvalidReferenceVideoPricing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := openModelsTestDB(t)
+	row := model.MarketModel{
+		Name:     "Invalid reference billing",
+		ModelKey: "invalid-reference-billing",
+		Type:     "video",
+		Status:   2,
+		Config:   `{"referenceVideoBillingEnabled":true}`,
+	}
+	if err := db.Create(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Params = gin.Params{{Key: "id", Value: row.ID.String()}}
+	c.Request = httptest.NewRequest(http.MethodPut, "/admin/models/"+row.ID.String()+"/status", strings.NewReader(`{"enabled":true}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	(&modelsHandler{db: db}).setStatus(c)
+
+	if err := db.First(&row, "id = ?", row.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.Status != 2 {
+		t.Fatalf("invalid billing model status = %d, want 2", row.Status)
+	}
+	if !strings.Contains(recorder.Body.String(), "开启参考视频计费后") {
+		t.Fatalf("response = %s, want reference-video pricing validation error", recorder.Body.String())
+	}
+}
+
+func TestAdminModelUpdateCannotPublishInvalidReferenceVideoPricing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := openModelsTestDB(t)
+	row := model.MarketModel{
+		Name:     "Invalid reference billing update",
+		ModelKey: "invalid-reference-billing-update",
+		Type:     "video",
+		Status:   2,
+		Config:   `{"referenceVideoBillingEnabled":true}`,
+	}
+	if err := db.Create(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Params = gin.Params{{Key: "id", Value: row.ID.String()}}
+	c.Request = httptest.NewRequest(http.MethodPut, "/admin/models/"+row.ID.String(), strings.NewReader(`{"status":1}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	(&modelsHandler{db: db}).update(c)
+
+	if err := db.First(&row, "id = ?", row.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.Status != 2 {
+		t.Fatalf("invalid billing model status = %d, want 2", row.Status)
+	}
+	if !strings.Contains(recorder.Body.String(), "开启参考视频计费后") {
+		t.Fatalf("response = %s, want reference-video pricing validation error", recorder.Body.String())
+	}
+}
+
 func TestAdminModelCreatePersists3DTypeAndPendingStatus(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := openModelsTestDB(t)

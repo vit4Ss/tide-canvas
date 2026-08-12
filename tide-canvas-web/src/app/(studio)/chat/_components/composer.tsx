@@ -37,6 +37,7 @@ import {
 import type { GenModelsApi } from "../_hooks/use-gen-models";
 import type { ComposerConfigApi } from "../_hooks/use-composer-config";
 import type { ReferencesApi } from "../_hooks/use-references";
+import { useReferenceVideoQuote } from "@/hooks/use-reference-video-quote";
 
 export function Composer({
   models,
@@ -128,6 +129,14 @@ export function Composer({
     fileInputRef,
     openSrcMenu,
   } = refsApi;
+  const referenceVideoQuote = useReferenceVideoQuote(
+    selModel?.modelKey || selModel?.id,
+    mCfg,
+    isVid && mode === "omni_ref"
+      ? refs.filter((ref) => ref.kind === "video" && ref.url).map((ref) => ref.url as string)
+      : [],
+  );
+  const totalPoints = points + referenceVideoQuote.quote.pointCost;
 
   return (
     <div className="chat-composer">
@@ -197,7 +206,7 @@ export function Composer({
             value={draft}
             onChange={setDraft}
             refs={mentionRefs}
-            onSubmit={() => send()}
+            onSubmit={() => { if (!referenceVideoQuote.loading) send(); }}
             onPasteFiles={refPolicy ? attachFiles : undefined}
             placeholder={
               isMusicSel && musicMode === "custom"
@@ -634,7 +643,18 @@ export function Composer({
           </CmSelect>
           )}
           </div>
-          <span className="cm-pts">约 {points} 积分</span>
+          <span
+            className="cm-pts"
+            title={referenceVideoQuote.quote.pointCost > 0
+              ? `含参考视频 ${referenceVideoQuote.quote.durationSeconds.toFixed(1)} 秒，额外 ${referenceVideoQuote.quote.pointCost} 积分`
+              : undefined}
+          >
+            {referenceVideoQuote.loading
+              ? "正在核验参考视频…"
+              : referenceVideoQuote.failed
+                ? "参考视频费用提交时核验"
+                : `约 ${totalPoints} 积分`}
+          </span>
           <button
             className="cm-send"
             aria-label="发送"
@@ -642,6 +662,7 @@ export function Composer({
             onClick={() => send()}
             disabled={
               busy ||
+              referenceVideoQuote.loading ||
               (!draft.trim() && !musicNoDraftOk) ||
               (selModel?.type === "text" && !!ctxUsage?.full)
             }

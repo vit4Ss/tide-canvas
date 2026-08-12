@@ -25,6 +25,9 @@ import (
 //	5. model.PointCost (= MarketModel.Price integer part).
 //
 // The base is then ×batchCount for images, rounding up.
+// Optional reference-video billing is intentionally separate: generate() first
+// verifies owned media duration in reference_video_pricing.go, then adds that
+// server-confirmed surcharge to this base before charging and persisting cost.
 //（团队加价倍率已随团队功能整链下线,2026-08-01:倍率恒为 1,不再参与。）
 
 // resolveCost returns the points to charge for one generation of model m given

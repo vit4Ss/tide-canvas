@@ -294,6 +294,12 @@ func (h *modelsHandler) create(c *gin.Context) {
 			return
 		}
 	}
+	if mType == "video" {
+		if err := validateReferenceVideoPricingConfig(dto.Config); err != nil {
+			response.Fail(c, response.CodeBadRequest, err.Error())
+			return
+		}
+	}
 	m := &model.MarketModel{
 		Name:        strings.TrimSpace(dto.Name),
 		Description: strings.TrimSpace(dto.Description),
@@ -478,7 +484,7 @@ func (h *modelsHandler) update(c *gin.Context) {
 	}
 	// The UI sends type+config together, but the API also protects partial/manual
 	// updates so an upscaler can never be saved with an unpriced output tier.
-	if dto.Config != nil || dto.Type != nil {
+	if dto.Config != nil || dto.Type != nil || (dto.Status != nil && *dto.Status == 1) {
 		var current model.MarketModel
 		if err := h.db.Select("type", "config").First(&current, "id = ?", id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -498,6 +504,12 @@ func (h *modelsHandler) update(c *gin.Context) {
 		}
 		if effectiveType == "upscale" {
 			if err := validateUpscalePricingConfig(effectiveConfig); err != nil {
+				response.Fail(c, response.CodeBadRequest, err.Error())
+				return
+			}
+		}
+		if effectiveType == "video" {
+			if err := validateReferenceVideoPricingConfig(effectiveConfig); err != nil {
 				response.Fail(c, response.CodeBadRequest, err.Error())
 				return
 			}
@@ -592,6 +604,12 @@ func (h *modelsHandler) setStatus(c *gin.Context) {
 		}
 		if current.Type == "upscale" {
 			if err := validateUpscalePricingConfig(json.RawMessage(current.Config)); err != nil {
+				response.Fail(c, response.CodeBadRequest, err.Error())
+				return
+			}
+		}
+		if current.Type == "video" {
+			if err := validateReferenceVideoPricingConfig(json.RawMessage(current.Config)); err != nil {
 				response.Fail(c, response.CodeBadRequest, err.Error())
 				return
 			}
@@ -833,6 +851,38 @@ func validateUpscalePricingConfig(raw json.RawMessage) error {
 		if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
 			return fmt.Errorf("请配置 %s 的每秒积分", strings.ToUpper(resolution))
 		}
+	}
+	return nil
+}
+
+func validateReferenceVideoPricingConfig(raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	if !json.Valid(raw) {
+		return errors.New("参考视频计费配置无效")
+	}
+	var cfg struct {
+		Enabled bool            `json:"referenceVideoBillingEnabled"`
+		Rate    json.RawMessage `json:"referenceVideoPricePerSecond"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return errors.New("参考视频计费配置无效")
+	}
+	if !cfg.Enabled {
+		return nil
+	}
+	rate := 0.0
+	if len(cfg.Rate) > 0 {
+		if err := json.Unmarshal(cfg.Rate, &rate); err != nil {
+			var text string
+			if json.Unmarshal(cfg.Rate, &text) == nil {
+				rate, _ = strconv.ParseFloat(strings.TrimSpace(text), 64)
+			}
+		}
+	}
+	if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
+		return errors.New("开启参考视频计费后，必须配置大于 0 的每秒积分")
 	}
 	return nil
 }

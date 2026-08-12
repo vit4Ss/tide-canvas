@@ -128,6 +128,31 @@ func (h *handler) upscaleQuote(c *gin.Context) {
 	response.OK(c, vo)
 }
 
+// referenceVideoQuote POST /api/ai/reference-video-quote -> referenceVideoQuoteVO
+// The quote is informative only; generate() repeats ownership and duration
+// verification immediately before charging.
+func (h *handler) referenceVideoQuote(c *gin.Context) {
+	var dto referenceVideoQuoteDTO
+	if err := c.ShouldBindJSON(&dto); err != nil || strings.TrimSpace(dto.ModelID) == "" {
+		response.Fail(c, response.CodeBadRequest, "模型不能为空")
+		return
+	}
+	vo, err := h.svc.quoteReferenceVideos(c.Request.Context(), middleware.CurrentUserID(c), dto)
+	if err != nil {
+		switch {
+		case func() bool { var placement skillPlacementError; return errors.As(err, &placement) }():
+			response.Fail(c, response.CodeBadRequest, err.Error())
+		case errors.Is(err, errNoModel):
+			response.Fail(c, response.CodeModelUnavailable, "所选模型不可用，请更换后重试")
+		default:
+			logger.L().Warn("ai: quote reference video failed", zap.String("detail", err.Error()))
+			response.Fail(c, response.CodeServerError, "暂时无法核验参考视频时长，请稍后重试")
+		}
+		return
+	}
+	response.OK(c, vo)
+}
+
 // gridSplit POST /api/ai/grid-split -> string[]
 func (h *handler) gridSplit(c *gin.Context) {
 	var dto gridSplitDTO

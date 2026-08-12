@@ -134,6 +134,15 @@ export interface UserHistoryAssetVO {
   name?: string;
 }
 
+/** Authoritative surcharge quote for reference videos. Generation rechecks it
+ * immediately before charging; this response is for the pre-submit UI only. */
+export interface ReferenceVideoQuoteVO {
+  videoCount: number;
+  durationSeconds: number;
+  ratePerSecond: number;
+  pointCost: number;
+}
+
 export interface UserHistoryParameterVO {
   key: string;
   value: string;
