@@ -33,6 +33,7 @@ type referenceVideoQuoteDTO struct {
 }
 
 type referenceVideoQuoteVO struct {
+	BillingEnabled  bool    `json:"billingEnabled"`
 	VideoCount      int     `json:"videoCount"`
 	DurationSeconds float64 `json:"durationSeconds"`
 	RatePerSecond   float64 `json:"ratePerSecond"`
@@ -134,14 +135,14 @@ func (s *service) quoteReferenceVideos(ctx context.Context, userID idgen.ID, dto
 	}
 	enabled, rate := referenceVideoPricing(m)
 	if !enabled {
-		return &referenceVideoQuoteVO{}, nil
+		return &referenceVideoQuoteVO{BillingEnabled: false}, nil
 	}
 	if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
 		return nil, skillPlacementError{message: "该模型尚未配置参考视频每秒积分，请联系管理员"}
 	}
 	references := cleanReferenceVideoURLs(dto.VideoURLs)
 	if len(references) == 0 {
-		return &referenceVideoQuoteVO{RatePerSecond: rate}, nil
+		return &referenceVideoQuoteVO{BillingEnabled: true, RatePerSecond: rate}, nil
 	}
 	if len(references) > maxReferenceVideoQuotes {
 		return nil, skillPlacementError{message: "参考视频数量过多，请减少后重试"}
@@ -151,6 +152,7 @@ func (s *service) quoteReferenceVideos(ctx context.Context, userID idgen.ID, dto
 		return nil, referenceVideoConfirmationError(err)
 	}
 	return &referenceVideoQuoteVO{
+		BillingEnabled:  true,
 		VideoCount:      charge.VideoCount,
 		DurationSeconds: charge.DurationSecond,
 		RatePerSecond:   charge.RatePerSecond,

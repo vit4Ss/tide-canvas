@@ -87,6 +87,68 @@ func TestReferenceVideoChargeSumsEachVideoPrice(t *testing.T) {
 	}
 }
 
+func TestQuoteReferenceVideosReportsDisabledBillingAuthoritatively(t *testing.T) {
+	db := openPricingTestDB(t)
+	row := model.MarketModel{
+		BaseModel: model.BaseModel{ID: 102},
+		Name:      "Free references",
+		ModelKey:  "free-reference-video",
+		Type:      "video",
+		Status:    1,
+		Config:    `{"referenceVideoBillingEnabled":false,"referenceVideoPricePerSecond":10}`,
+	}
+	if err := db.Create(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	s := &service{repo: newRepo(db), confirmVideoDuration: func(context.Context, idgen.ID, string) (string, float64, error) {
+		t.Fatal("disabled billing must not probe reference videos")
+		return "", 0, nil
+	}}
+	quote, err := s.quoteReferenceVideos(context.Background(), 42, referenceVideoQuoteDTO{
+		ModelID: "free-reference-video", VideoURLs: []string{"https://cdn.example/video.mp4"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quote.BillingEnabled || quote.PointCost != 0 || quote.VideoCount != 0 {
+		t.Fatalf("disabled quote = %#v", quote)
+	}
+}
+
+func TestQuoteReferenceVideosReportsEnabledBillingAndSurcharge(t *testing.T) {
+	db := openPricingTestDB(t)
+	row := model.MarketModel{
+		BaseModel: model.BaseModel{ID: 103},
+		Name:      "Paid references",
+		ModelKey:  "paid-reference-video",
+		Type:      "video",
+		Status:    1,
+		Config:    `{"referenceVideoBillingEnabled":true,"referenceVideoPricePerSecond":10}`,
+	}
+	if err := db.Create(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	s := &service{repo: newRepo(db), confirmVideoDuration: func(_ context.Context, _ idgen.ID, source string) (string, float64, error) {
+		switch source {
+		case "video-7s":
+			return "canonical-7s", 7, nil
+		case "video-8s":
+			return "canonical-8s", 8, nil
+		default:
+			return "", 0, errors.New("unexpected video")
+		}
+	}}
+	quote, err := s.quoteReferenceVideos(context.Background(), 42, referenceVideoQuoteDTO{
+		ModelID: "paid-reference-video", VideoURLs: []string{"video-7s", "video-8s"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !quote.BillingEnabled || quote.VideoCount != 2 || quote.DurationSeconds != 15 || quote.RatePerSecond != 10 || quote.PointCost != 150 {
+		t.Fatalf("enabled quote = %#v", quote)
+	}
+}
+
 func TestReferenceVideoChargeBillsRepeatedSlotsSeparately(t *testing.T) {
 	probes := 0
 	s := &service{confirmVideoDuration: func(_ context.Context, _ idgen.ID, source string) (string, float64, error) {
