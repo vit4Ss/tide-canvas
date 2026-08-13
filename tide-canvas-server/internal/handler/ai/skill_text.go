@@ -76,17 +76,21 @@ func (s *service) runSkillTextCompletion(ctx context.Context, userID idgen.ID, m
 
 	started := time.Now()
 	reply, err := s.relay.Chat(ctx, modelKey, msgs)
+	if err == nil {
+		reply = strings.TrimSpace(reply)
+		if reply == "" {
+			err = errors.New("model returned empty response")
+		} else if in.StrictJSON {
+			reply = stripJSONFence(reply)
+			if !json.Valid([]byte(reply)) {
+				err = errors.New("model returned invalid JSON")
+			}
+		}
+	}
 	reqBody, _ := json.Marshal(msgs)
 	eventlog.ModelText(userID, "skill", modelKey, "/v1/chat/completions", eventlog.SanitizeDataURIs(string(reqBody)), reply, started, err, pointCost)
 	if err != nil {
 		return GenerateResult{}, err
-	}
-	reply = strings.TrimSpace(reply)
-	if in.StrictJSON {
-		reply = stripJSONFence(reply)
-		if !json.Valid([]byte(reply)) {
-			return GenerateResult{}, errors.New("model returned invalid JSON")
-		}
 	}
 	return GenerateResult{Meta: map[string]any{"text": reply}}, nil
 }

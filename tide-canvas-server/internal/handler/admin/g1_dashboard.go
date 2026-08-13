@@ -131,8 +131,8 @@ type AdminChartsVO struct {
 	ModelCalls []ModelCallPoint `json:"modelCalls"`
 	// ModelTop：近 14 天调用量 Top5 模型（含成功量与平均耗时）。
 	ModelTop []ModelTopVO `json:"modelTop"`
-	// PointConsumption / point leaderboards use the real point ledger and the
-	// point_cost stamped on model_call_log over the same trailing window.
+	// PointConsumption / point leaderboards use unrefunded point-ledger debits
+	// and successful model-call costs over the same trailing window.
 	PointSummary     PointSummaryVO          `json:"pointSummary"`
 	PointConsumption []PointConsumptionPoint `json:"pointConsumption"`
 	PointUserTop     []PointUserTopVO        `json:"pointUserTop"`
@@ -143,9 +143,8 @@ type AdminChartsVO struct {
 	RecentPointConsumption []RecentPointConsumptionVO `json:"recentPointConsumption"`
 }
 
-// PointSummaryVO is the gross consume-ledger summary for the dashboard window.
-// Refunds remain separate positive ledger rows and are intentionally not folded
-// into consumption activity.
+// PointSummaryVO is the unrefunded consume-ledger summary for the dashboard
+// window. A failed/cancelled call that was refunded is not real consumption.
 type PointSummaryVO struct {
 	TodayPoints   int64 `json:"todayPoints"`
 	PeriodPoints  int64 `json:"periodPoints"`
@@ -320,14 +319,28 @@ type g1CallRow struct {
 	OkN int64  `gorm:"column:okn"`
 }
 
+func dashboardModelCallScope(db *gorm.DB, since time.Time) *gorm.DB {
+	// Older builds mirrored skill_text_completion twice: the real "skill" row
+	// contains its relay endpoint and payload, while the generic "text" mirror
+	// is empty. Ignore only that exact legacy fingerprint so existing audit rows
+	// need not be deleted and any future real text-scene calls remain visible.
+	return db.Model(&model.ModelCallLog{}).
+		Where("create_time >= ?", since).
+		Where(`NOT (
+			COALESCE(scene, '') = 'text'
+			AND COALESCE(endpoint, '') = ''
+			AND COALESCE(request_body, '') = ''
+			AND COALESCE(response_body, '') = ''
+		)`)
+}
+
 // dailyModelCalls returns a map of YYYY-MM-DD -> {calls, successes} over
 // model_call_log（真实用户调用：chat/optimize/image/video）from `since` onward.
 func (h *dashboardHandler) dailyModelCalls(since time.Time) map[string]g1CallRow {
 	out := map[string]g1CallRow{}
 	var rows []g1CallRow
-	err := h.db.Model(&model.ModelCallLog{}).
+	err := dashboardModelCallScope(h.db, since).
 		Select("DATE_FORMAT(create_time, ?) AS day, COUNT(*) AS n, COALESCE(SUM(success), 0) AS okn", g1DayFmt).
-		Where("create_time >= ?", since).
 		Group("day").
 		Scan(&rows).Error
 	if err != nil {
@@ -350,10 +363,10 @@ func (h *dashboardHandler) topModelCalls(since time.Time, limit int) []ModelTopV
 	}
 	out := []ModelTopVO{}
 	// AVG 返回带小数的 DECIMAL，直接扫 int64 会整查询报错——ROUND+CAST 落整。
-	err := h.db.Model(&model.ModelCallLog{}).
-		Select("model, COUNT(*) AS n, COALESCE(SUM(success), 0) AS okn, "+
+	err := dashboardModelCallScope(h.db, since).
+		Select("model, COUNT(*) AS n, COALESCE(SUM(success), 0) AS okn, " +
 			"CAST(COALESCE(ROUND(AVG(duration_ms)), 0) AS SIGNED) AS avg_ms").
-		Where("create_time >= ? AND model <> ''", since).
+		Where("model <> ''").
 		Group("model").
 		Order("n DESC").
 		Limit(limit).
@@ -386,8 +399,32 @@ type g1PointDailyRow struct {
 }
 
 func pointConsumeScope(db *gorm.DB, since time.Time) *gorm.DB {
-	return db.Model(&model.PointRecord{}).
-		Where("create_time >= ? AND change_type = ? AND amount < 0", since, "consume")
+	// Refund receipts are the durable, exactly-once proof that a debit was
+	// returned. Excluding the original debit (instead of subtracting refunds by
+	// refund date) also handles cross-day refunds without creating a negative
+	// consumption day or leaving the failed task counted on its original day.
+	tx := db.Table("point_record AS pr").
+		Where("pr.deleted IS NULL AND pr.change_type = ? AND pr.amount < 0", "consume").
+		Where(`NOT EXISTS (
+			SELECT 1 FROM point_refund_receipt AS rr
+			WHERE rr.ref_id = pr.ref_id
+			  AND rr.user_id = pr.user_id
+			  AND rr.amount = -pr.amount
+		)`).
+		// Compatibility for refunds written by an older instance during a
+		// rolling deployment, after the startup receipt backfill already ran.
+		Where(`NOT EXISTS (
+			SELECT 1 FROM point_record AS refund_pr
+			WHERE refund_pr.deleted IS NULL
+			  AND refund_pr.change_type = 'refund'
+			  AND refund_pr.ref_id = pr.ref_id
+			  AND refund_pr.user_id = pr.user_id
+			  AND refund_pr.amount = -pr.amount
+		)`)
+	if !since.IsZero() {
+		tx = tx.Where("pr.create_time >= ?", since)
+	}
+	return tx
 }
 
 func (h *dashboardHandler) todayPointConsumption(c *gin.Context) {
@@ -397,7 +434,7 @@ func (h *dashboardHandler) todayPointConsumption(c *gin.Context) {
 		Points int64 `gorm:"column:points"`
 	}
 	if err := pointConsumeScope(h.db, today).
-		Select("COALESCE(SUM(-amount), 0) AS points").
+		Select("COALESCE(SUM(-pr.amount), 0) AS points").
 		Scan(&row).Error; err != nil {
 		response.Fail(c, response.CodeServerError, "failed to load today's point consumption")
 		return
@@ -409,8 +446,8 @@ func (h *dashboardHandler) dailyPointConsumption(since time.Time) map[string]g1P
 	out := map[string]g1PointDailyRow{}
 	var rows []g1PointDailyRow
 	err := pointConsumeScope(h.db, since).
-		Select("DATE_FORMAT(create_time, ?) AS day, COALESCE(SUM(-amount), 0) AS points, "+
-			"COUNT(DISTINCT user_id) AS users, COUNT(*) AS records", g1DayFmt).
+		Select("DATE_FORMAT(pr.create_time, ?) AS day, COALESCE(SUM(-pr.amount), 0) AS points, "+
+			"COUNT(DISTINCT pr.user_id) AS users, COUNT(*) AS records", g1DayFmt).
 		Group("day").
 		Scan(&rows).Error
 	if err != nil {
@@ -430,8 +467,8 @@ func (h *dashboardHandler) pointSummary(since, today time.Time) PointSummaryVO {
 		PeriodRecords int64 `gorm:"column:period_records"`
 	}
 	_ = pointConsumeScope(h.db, since).
-		Select("COALESCE(SUM(CASE WHEN create_time >= ? THEN -amount ELSE 0 END), 0) AS today_points, "+
-			"COALESCE(SUM(-amount), 0) AS period_points, COUNT(DISTINCT user_id) AS period_users, "+
+		Select("COALESCE(SUM(CASE WHEN pr.create_time >= ? THEN -pr.amount ELSE 0 END), 0) AS today_points, "+
+			"COALESCE(SUM(-pr.amount), 0) AS period_points, COUNT(DISTINCT pr.user_id) AS period_users, "+
 			"COUNT(*) AS period_records", today).
 		Scan(&row).Error
 	return PointSummaryVO(row)
@@ -439,12 +476,11 @@ func (h *dashboardHandler) pointSummary(since, today time.Time) PointSummaryVO {
 
 func (h *dashboardHandler) topPointUsers(since time.Time, limit int) []PointUserTopVO {
 	rows := []PointUserTopVO{}
-	err := h.db.Table("point_record AS pr").
-		Select("CAST(pr.user_id AS CHAR) AS user_id, COALESCE(u.username, '') AS username, "+
-			"COALESCE(u.nickname, '') AS nickname, COALESCE(SUM(-pr.amount), 0) AS points, "+
+	err := pointConsumeScope(h.db, since).
+		Select("CAST(pr.user_id AS CHAR) AS user_id, COALESCE(u.username, '') AS username, " +
+			"COALESCE(u.nickname, '') AS nickname, COALESCE(SUM(-pr.amount), 0) AS points, " +
 			"COUNT(*) AS records, MAX(pr.create_time) AS last_time").
 		Joins("LEFT JOIN users AS u ON u.id = pr.user_id AND u.deleted IS NULL").
-		Where("pr.deleted IS NULL AND pr.create_time >= ? AND pr.change_type = ? AND pr.amount < 0", since, "consume").
 		Group("pr.user_id, u.username, u.nickname").
 		Order("points DESC").
 		Limit(limit).
@@ -463,11 +499,12 @@ func (h *dashboardHandler) topPointModels(since time.Time, limit int) []PointMod
 		Users   int64  `gorm:"column:users"`
 		Success int64  `gorm:"column:success"`
 	}
-	err := h.db.Model(&model.ModelCallLog{}).
-		Select("model, COALESCE(SUM(point_cost), 0) AS points, COUNT(*) AS calls, "+
+	err := dashboardModelCallScope(h.db, since).
+		Select("model, COALESCE(SUM(CASE WHEN success = 1 THEN point_cost ELSE 0 END), 0) AS points, COUNT(*) AS calls, " +
 			"COUNT(DISTINCT user_id) AS users, COALESCE(SUM(success), 0) AS success").
-		Where("create_time >= ? AND point_cost > 0 AND model <> ''", since).
+		Where("point_cost > 0 AND model <> ''").
 		Group("model").
+		Having("COALESCE(SUM(CASE WHEN success = 1 THEN point_cost ELSE 0 END), 0) > 0").
 		Order("points DESC").
 		Limit(limit).
 		Scan(&rows).Error
@@ -491,12 +528,11 @@ func (h *dashboardHandler) topPointModels(since time.Time, limit int) []PointMod
 
 func (h *dashboardHandler) recentPointConsumption(limit int) []RecentPointConsumptionVO {
 	rows := []RecentPointConsumptionVO{}
-	err := h.db.Table("point_record AS pr").
-		Select("CAST(pr.id AS CHAR) AS id, CAST(pr.user_id AS CHAR) AS user_id, "+
-			"COALESCE(u.username, '') AS username, COALESCE(u.nickname, '') AS nickname, "+
+	err := pointConsumeScope(h.db, time.Time{}).
+		Select("CAST(pr.id AS CHAR) AS id, CAST(pr.user_id AS CHAR) AS user_id, " +
+			"COALESCE(u.username, '') AS username, COALESCE(u.nickname, '') AS nickname, " +
 			"-pr.amount AS points, pr.balance, pr.remark, pr.create_time").
 		Joins("LEFT JOIN users AS u ON u.id = pr.user_id AND u.deleted IS NULL").
-		Where("pr.deleted IS NULL AND pr.change_type = ? AND pr.amount < 0", "consume").
 		Order("pr.create_time DESC").
 		Limit(limit).
 		Scan(&rows).Error

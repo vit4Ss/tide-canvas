@@ -1149,9 +1149,10 @@ func (s *service) writeLog(ctx context.Context, task *model.AiTask, gh GenHandle
 	// Mirror the upstream relay call into the unified model-call log.
 	// 场景取自 handler 的 operation type：音频此前被归进 image，日志按场景
 	// 筛选时音乐/音效调用会混在图片里。
-	// 画布 AI 助手(assistant_chat)跳过镜像:它的调用在 runAssistantChat 里已用
-	// ModelText 记录(带完整请求/响应体与积分),镜像只会多一条空报文的重复行。
-	if gh.Name() == assistantChatHandler {
+	// Relay-backed text handlers log at the actual call site with their complete
+	// request/response bodies and point cost. Mirroring them here would create a
+	// second row for one paid call and inflate the model point leaderboard.
+	if handlerLogsModelCallDirectly(gh.Name()) {
 		return
 	}
 	// 不登记作品的模态(workTypeOf 返回空,如 3d/upscale/text)按自身 operation
@@ -1179,6 +1180,10 @@ func (s *service) writeLog(ctx context.Context, task *model.AiTask, gh GenHandle
 		Cost:           res.Cost,
 		PointCost:      task.PointCost,
 	})
+}
+
+func handlerLogsModelCallDirectly(handler string) bool {
+	return handler == assistantChatHandler || handler == skillTextCompletionHandler
 }
 
 // writeTaskState mirrors the task's progress/status into Redis for fast polling.

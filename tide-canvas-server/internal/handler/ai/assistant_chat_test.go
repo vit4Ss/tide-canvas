@@ -132,3 +132,20 @@ func TestLogFailureVerdictMatchesTaskVerdict(t *testing.T) {
 		}
 	}
 }
+
+func TestTaskTextHandlersAreNotMirroredIntoModelCallLog(t *testing.T) {
+	cases := []struct {
+		handler string
+		want    bool
+	}{
+		{assistantChatHandler, true},
+		{skillTextCompletionHandler, true},
+		{"text_to_image", false},
+		{"image_to_video", false},
+	}
+	for _, c := range cases {
+		if got := handlerLogsModelCallDirectly(c.handler); got != c.want {
+			t.Errorf("handler %q: direct log = %v, want %v", c.handler, got, c.want)
+		}
+	}
+}

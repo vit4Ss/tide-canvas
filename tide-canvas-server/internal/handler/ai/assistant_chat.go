@@ -142,6 +142,12 @@ func (s *service) runAssistantChat(ctx context.Context, userID idgen.ID, m *mode
 	// 净化后再落库,保留文件名/类型。
 	start := time.Now()
 	reply, err := s.relay.Chat(ctx, modelKey, msgs)
+	if err == nil {
+		reply = strings.TrimSpace(reply)
+		if reply == "" {
+			err = errors.New("AI 未返回内容")
+		}
+	}
 	turn := msgs
 	if n := len(msgs); n > 1 {
 		turn = msgs[n-1:]
@@ -150,10 +156,6 @@ func (s *service) runAssistantChat(ctx context.Context, userID idgen.ID, m *mode
 	eventlog.ModelText(userID, "assistant", modelKey, "/v1/chat/completions", eventlog.SanitizeDataURIs(string(reqBody)), reply, start, err, pointCost)
 	if err != nil {
 		return GenerateResult{}, err
-	}
-	reply = strings.TrimSpace(reply)
-	if reply == "" {
-		return GenerateResult{}, errors.New("AI 未返回内容")
 	}
 	return GenerateResult{Meta: map[string]any{"text": reply}}, nil
 }
