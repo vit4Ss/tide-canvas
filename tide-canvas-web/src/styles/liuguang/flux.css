@@ -2,7 +2,12 @@
    SCARECROWAI · 流光 (Flux) -shared base styles
    tokens · nav · hero · sections · feed · models · marquee · cta · footer
    ========================================================================== */
-:root{
+/* 全局规则一律圈进 :where(body.imini)：App Router 软导航不卸载路由 CSS，本表会驻留
+   进画布路由；画布挂载时摘除 body.imini（见 (canvas)/layout.tsx），这些规则随之失效，
+   不再压制画布的 Tailwind 工具类（Tailwind v4 分层，未分层规则恒胜 @layer utilities）。
+   :where() 特异性为 0，imini 各页面的层叠关系与原先完全一致。
+   变量从 :root 移到 body：全站元素都在 body 下，继承不受影响。 */
+:where(body.imini){
   --bg:#edeff4; --surface:#ffffff; --surface-2:#f6f7fa; --panel-solid:#ffffff;
   --panel:rgba(22,28,45,.055); --panel-hover:rgba(22,28,45,.095);
   --border:#dcdfe6; --border-strong:#c3c8d2;
@@ -32,13 +37,13 @@
 html,body{margin:0;}
 html{scroll-behavior:smooth;}
 @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto;}}
-body{
+body:where(.imini){
   font-family:var(--ui); background:var(--bg); color:var(--text);
   letter-spacing:-.011em; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
   overflow-x:hidden;
 }
-a{color:inherit; text-decoration:none;}
-button{font-family:inherit; cursor:pointer; border:none; background:none; color:inherit; touch-action:manipulation;}
+:where(body.imini) a{color:inherit; text-decoration:none;}
+:where(body.imini) button{font-family:inherit; cursor:pointer; border:none; background:none; color:inherit; touch-action:manipulation;}
 /* 触屏设备：把 34-38px 的小控件提到 44px 最小触控目标（WCAG 2.5.8 / HIG） */
 @media (pointer:coarse){
   .qchip,.filters .f,.seg button,.lb-foll,.modal-author .foll,.ratio,
@@ -46,9 +51,9 @@ button{font-family:inherit; cursor:pointer; border:none; background:none; color:
   .modal-x{width:44px; height:44px;}
   .see-all,.mq-more{display:inline-flex; align-items:center; min-height:44px;}
 }
-img{display:block; max-width:100%;}
-::selection{background:var(--accent); color:#fff;}
-:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+:where(body.imini) img{display:block; max-width:100%;}
+:where(body.imini) ::selection{background:var(--accent); color:#fff;}
+:where(body.imini) :focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
 .mono{font-family:var(--mono);}
 .disp{font-family:var(--disp);}
 .gtext{background:var(--grad); -webkit-background-clip:text; background-clip:text; color:transparent;}
@@ -134,8 +139,10 @@ img{display:block; max-width:100%;}
   animation:freshPop 1.5s var(--ease) forwards;}
 @keyframes freshPop{0%{opacity:0; transform:translateY(6px) scale(.9);} 14%{opacity:1; transform:none;} 78%{opacity:1;} 100%{opacity:0; transform:translateY(-2px);}}
 
-section.block{padding:clamp(56px,8vw,104px) 0;}
-section.block > .wrap{position:relative; z-index:2;}
+/* 裸元素选择器同样圈进 imini 作用域：画布组件用了语义化 <section>/<footer>，
+   软导航残留时会被这些规则命中（padding/margin 直接把面板布局挤乱） */
+:where(body.imini) section.block{padding:clamp(56px,8vw,104px) 0;}
+:where(body.imini) section.block > .wrap{position:relative; z-index:2;}
 .sec-head{display:flex; align-items:flex-end; justify-content:space-between; gap:24px; flex-wrap:wrap; margin-bottom:38px;}
 .sec-head.center{flex-direction:column; align-items:center; text-align:center; justify-content:center;}
 .sec-head.center .sec-title{max-width:24ch;}
@@ -386,7 +393,7 @@ section.block > .wrap{position:relative; z-index:2;}
 .cta-secondary:hover{background:rgba(255,255,255,.14);}
 
 /* ─── FOOTER ──────────────────────────────────────────────────────── */
-footer{border-top:1px solid var(--border); padding:54px 0 40px; margin-top:clamp(40px,6vw,80px);}
+:where(body.imini) footer{border-top:1px solid var(--border); padding:54px 0 40px; margin-top:clamp(40px,6vw,80px);}
 .foot-grid{display:grid; grid-template-columns:1.6fr 1fr 1fr 1fr; gap:34px;}
 @media(max-width:760px){.foot-grid{grid-template-columns:1fr 1fr;}}
 .foot-brand .brand{font-size:21px; margin-bottom:14px;}

@@ -630,12 +630,13 @@
 /* 首页定价：白色色带收尾 */
 #cta-sec{background:var(--surface); border-top:1px solid var(--border);}
 
-/* 页脚：超大描边字水印 */
-footer{overflow:hidden;}
-footer::after{content:'FLOWING LIGHT'; position:absolute; left:50%; bottom:-.14em; transform:translateX(-50%); z-index:0;
+/* 页脚：超大描边字水印。裸 footer 选择器圈进 imini 作用域：画布的妆容/风格面板
+   底栏也是 <footer>，软导航后本表驻留，会把水印和 overflow 漏进画布（同 flux.css 口径） */
+:where(body.imini) footer{overflow:hidden;}
+:where(body.imini) footer::after{content:'FLOWING LIGHT'; position:absolute; left:50%; bottom:-.14em; transform:translateX(-50%); z-index:0;
   font-family:var(--disp); font-weight:800; font-size:clamp(80px,13vw,190px); letter-spacing:-.02em; white-space:nowrap;
   color:transparent; -webkit-text-stroke:1px var(--border-strong); opacity:.45; pointer-events:none; user-select:none;}
-footer .wrap{position:relative; z-index:1;}
+:where(body.imini) footer .wrap{position:relative; z-index:1;}
 
 /* legal pages (服务条款 / 隐私政策) -see components/site/legal-doc.tsx.
    The inner hero/card are self-styled; this only gives the page bottom breathing
