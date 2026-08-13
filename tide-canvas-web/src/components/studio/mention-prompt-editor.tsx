@@ -109,12 +109,18 @@ export function extractMentionTokens(text: string): Set<string> {
   return out;
 }
 
-function createPillElement(ref: MentionRef): HTMLSpanElement {
+function syncPillPreviewState(pill: HTMLElement, ref: MentionRef, previewImages: boolean): void {
+  const previewable = previewImages && ref.kind === "image" && !!ref.thumb;
+  pill.classList.toggle("zoomable", previewable);
+  pill.title = previewable ? `${ref.label} · 点击放大` : ref.label;
+}
+
+function createPillElement(ref: MentionRef, previewImages = false): HTMLSpanElement {
   const pill = document.createElement("span");
   pill.contentEditable = "false";
   pill.dataset.mention = ref.label;
-  pill.title = ref.label;
   pill.className = "mention-pill";
+  syncPillPreviewState(pill, ref, previewImages);
   if (ref.kind === "image" && ref.thumb) {
     pill.appendChild(createPillImage(ref.thumb));
   } else {
@@ -143,6 +149,11 @@ function createPillImage(source: string): HTMLImageElement {
   image.addEventListener("error", () => {
     // 远程缩略图过期或暂时不可用时显示稳定字形，绝不把浏览器破图图标
     // 暴露在输入框里。后续 source 更新时同步函数会重新换回真实图片。
+    const pill = image.closest<HTMLElement>(".mention-pill");
+    if (pill) {
+      pill.classList.remove("zoomable");
+      pill.title = pill.dataset.mention ?? "";
+    }
     if (image.parentNode) image.replaceWith(createPillGlyph("image"));
   }, { once: true });
   return image;
@@ -153,15 +164,18 @@ function createPillImage(source: string): HTMLImageElement {
  * contentEditable，否则会打断输入法并把光标甩到末尾。这里只原位替换 pill
  * 的首个媒体节点；返回 false 表示存在增删引用，需要在失焦时完整重建。
  */
-function syncMentionPillMedia(editor: HTMLDivElement, refs: MentionRef[]): boolean {
+function syncMentionPillMedia(editor: HTMLDivElement, refs: MentionRef[], previewImages = false): boolean {
   const byLabel = new Map(refs.map((ref) => [ref.label, ref]));
   let complete = true;
   editor.querySelectorAll<HTMLElement>(".mention-pill[data-mention]").forEach((pill) => {
     const ref = byLabel.get(pill.dataset.mention ?? "");
     if (!ref) {
+      pill.classList.remove("zoomable");
+      pill.title = pill.dataset.mention ?? "";
       complete = false;
       return;
     }
+    syncPillPreviewState(pill, ref, previewImages);
     const current = pill.firstElementChild;
     if (ref.kind === "image" && ref.thumb) {
       if (current instanceof HTMLImageElement) {
@@ -187,7 +201,7 @@ function syncMentionPillMedia(editor: HTMLDivElement, refs: MentionRef[]): boole
 /** 把 prompt 文本渲染进编辑器：能匹配到素材的 token 变 pill，其余保持纯文本。
  *  换行统一渲染为 <br>（与 insertNewline 的模型一致——pre-wrap 下「文本尾 \n
  *  紧跟 <br>」的混合形态视觉行为不确定），结尾换行后补占位 <br> 使其可见。 */
-function syncEditorContent(editor: HTMLDivElement, prompt: string, refs: MentionRef[]) {
+function syncEditorContent(editor: HTMLDivElement, prompt: string, refs: MentionRef[], previewImages = false) {
   const byLabel = new Map(refs.map((r) => [r.label, r]));
   const nodes: ChildNode[] = [];
   const pushText = (str: string) => {
@@ -204,7 +218,7 @@ function syncEditorContent(editor: HTMLDivElement, prompt: string, refs: Mention
     if (m.index > last) pushText(prompt.slice(last, m.index));
     const ref = byLabel.get(m[0]);
     if (ref) {
-      nodes.push(createPillElement(ref));
+      nodes.push(createPillElement(ref, previewImages));
       // pill 后跟零宽空格：既是光标落点，也是「pill 之后」的 @ 触发边界
       // （AT_QUERY_RE 的 ASCII 排除类会把 pill 尾数字当非边界）——重建路径
       // 必须和 insertMention 插入路径产出同样的 DOM 形态。
@@ -379,6 +393,8 @@ interface Props {
   submitOnEnter?: boolean;
   /** 粘贴板里有文件时调用（生成页：粘贴图片直接挂参考素材）；未传则忽略文件 */
   onPasteFiles?: (files: FileList) => void;
+  /** 图片引用标签点击预览；未传时标签保持普通不可点击文本。 */
+  onPreviewRef?: (ref: MentionRef) => void;
   /** 编辑器 className（页面各自的字体/内边距/高度样式） */
   className?: string;
   id?: string;
@@ -386,7 +402,7 @@ interface Props {
 
 export const MentionPromptEditor = forwardRef<MentionEditorHandle, Props>(
   function MentionPromptEditor(
-    { value, onChange, refs, placeholder, onSubmit, submitOnEnter = true, onPasteFiles, className = "", id },
+    { value, onChange, refs, placeholder, onSubmit, submitOnEnter = true, onPasteFiles, onPreviewRef, className = "", id },
     handleRef,
   ) {
     const wrapRef = useRef<HTMLDivElement>(null);
@@ -417,9 +433,10 @@ export const MentionPromptEditor = forwardRef<MentionEditorHandle, Props>(
     const [menuIndex, setMenuIndex] = useState(0);
     const activeItemRef = useRef<HTMLButtonElement | null>(null);
 
+    const previewImages = !!onPreviewRef;
     const refsSig = useMemo(
-      () => refs.map((r) => `${r.label}|${r.kind}|${r.thumb ?? ""}`).join(","),
-      [refs],
+      () => `${previewImages ? "preview|" : ""}${refs.map((r) => `${r.label}|${r.kind}|${r.thumb ?? ""}`).join(",")}`,
+      [refs, previewImages],
     );
 
     // 同一素材允许 @ 多次（「把图片1的背景和图片1的主体分开处理」），
@@ -540,7 +557,7 @@ export const MentionPromptEditor = forwardRef<MentionEditorHandle, Props>(
             offset = (prev.textContent || "").length;
           }
         }
-        const pill = createPillElement(ref);
+        const pill = createPillElement(ref, previewImages);
         const caretText = document.createTextNode(ZERO_WIDTH_SPACE);
         range.insertNode(pill);
         pill.after(caretText);
@@ -550,7 +567,18 @@ export const MentionPromptEditor = forwardRef<MentionEditorHandle, Props>(
         saveSelection();
         emit(serializeEditor(editor));
       },
-      [closeMenu, saveSelection, emit],
+      [closeMenu, saveSelection, emit, previewImages],
+    );
+
+    const previewRefFromTarget = useCallback(
+      (target: EventTarget | null): MentionRef | null => {
+        if (!onPreviewRef || !(target instanceof Element)) return null;
+        const pill = target.closest<HTMLElement>(".mention-pill.zoomable[data-mention]");
+        if (!pill || !editorRef.current?.contains(pill)) return null;
+        const ref = refs.find((item) => item.label === pill.dataset.mention);
+        return ref?.kind === "image" && ref.thumb ? ref : null;
+      },
+      [onPreviewRef, refs],
     );
 
     // 纯文本插入（粘贴/拖放）：\r\n 归一化（Windows 剪贴板是 CRLF，\r 混进
@@ -708,10 +736,11 @@ export const MentionPromptEditor = forwardRef<MentionEditorHandle, Props>(
       [saveSelection, menuOpen, syncMenuFromCaret],
     );
 
-    const onEditorMouseUp = useCallback(() => {
+    const onEditorMouseUp = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+      if (previewRefFromTarget(e.target)) return;
       saveSelection();
       syncMenuFromCaret();
-    }, [saveSelection, syncMenuFromCaret]);
+    }, [previewRefFromTarget, saveSelection, syncMenuFromCaret]);
 
     // 外部 value/refs 同步。回声（value === 自己刚 emit 的值）且 refs 内容
     // 未变 → 不动 DOM，用户打字/组字永不被重建打断。真正的外部写入
@@ -733,13 +762,13 @@ export const MentionPromptEditor = forwardRef<MentionEditorHandle, Props>(
       }
       if (isEcho && sigSame) return;
       if (isEcho && !sigSame && focusedRef.current) {
-        const mediaComplete = syncMentionPillMedia(editor, refs);
+        const mediaComplete = syncMentionPillMedia(editor, refs, previewImages);
         if (mediaComplete && !hasUnpilledToken(editor, refs)) {
           lastRefsSigRef.current = refsSig;
         }
         return;
       }
-      syncEditorContent(editor, v, refs);
+      syncEditorContent(editor, v, refs, previewImages);
       lastEmittedRef.current = v;
       lastRefsSigRef.current = refsSig;
       if (focusedRef.current) {
@@ -803,6 +832,15 @@ export const MentionPromptEditor = forwardRef<MentionEditorHandle, Props>(
           onKeyDown={onKeyDown}
           onKeyUp={onEditorKeyUp}
           onMouseUp={onEditorMouseUp}
+          onMouseDown={(e) => {
+            // Keep the caret where it was; clicking a preview chip is an action,
+            // not an edit or text-selection gesture inside contentEditable.
+            if (previewRefFromTarget(e.target)) e.preventDefault();
+          }}
+          onClick={(e) => {
+            const ref = previewRefFromTarget(e.target);
+            if (ref) onPreviewRef?.(ref);
+          }}
           onPaste={onPaste}
           onDrop={onDrop}
           onCompositionStart={() => {
@@ -816,7 +854,7 @@ export const MentionPromptEditor = forwardRef<MentionEditorHandle, Props>(
             pendingExternalRef.current = null;
             const editor = editorRef.current;
             if (pending != null && editor) {
-              syncEditorContent(editor, pending, refs);
+              syncEditorContent(editor, pending, refs, previewImages);
               lastEmittedRef.current = pending;
               lastRefsSigRef.current = refsSig;
               pendingRefsSyncRef.current = false;
@@ -831,7 +869,7 @@ export const MentionPromptEditor = forwardRef<MentionEditorHandle, Props>(
             updateFromEditor();
             if (pendingRefsSyncRef.current && editor) {
               pendingRefsSyncRef.current = false;
-              const mediaComplete = syncMentionPillMedia(editor, refs);
+              const mediaComplete = syncMentionPillMedia(editor, refs, previewImages);
               if (mediaComplete && !hasUnpilledToken(editor, refs)) {
                 lastRefsSigRef.current = refsSig;
               }
@@ -841,7 +879,7 @@ export const MentionPromptEditor = forwardRef<MentionEditorHandle, Props>(
             focusedRef.current = true;
             const editor = editorRef.current;
             if (editor && !editor.childNodes.length && value) {
-              syncEditorContent(editor, value, refs);
+              syncEditorContent(editor, value, refs, previewImages);
             }
           }}
           onBlur={() => {
@@ -854,7 +892,7 @@ export const MentionPromptEditor = forwardRef<MentionEditorHandle, Props>(
               // （上传完成/增删素材）也补一次重建让缩略图跟上。两者都没有就
               // 不动 DOM，避免每次失焦都销毁重建 <img>。
               if (hasUnpilledToken(editor, refs) || refsSig !== lastRefsSigRef.current) {
-                syncEditorContent(editor, prompt, refs);
+                syncEditorContent(editor, prompt, refs, previewImages);
                 lastRefsSigRef.current = refsSig;
               }
             }

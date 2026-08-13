@@ -1,5 +1,4 @@
-/* 全图放大灯箱（点已完成图片放大；背板 / ✕ / Esc 关闭；含同款单图工具条）—
-   从 create-studio.tsx 抽出（纯移动，无逻辑改动）。 */
+/* 全图放大灯箱（背板 / ✕ / Esc 关闭）；生成结果可选配单图工具条。 */
 
 import { useEffect } from "react";
 import { CELL_TOOLS } from "./icons";
@@ -8,10 +7,12 @@ export function Lightbox({
   url,
   onClose,
   onTool,
+  alt = "生成结果预览",
 }: {
   url: string;
   onClose: () => void;
-  onTool: (act: string) => void;
+  onTool?: (act: string) => void;
+  alt?: string;
 }) {
   // close the image lightbox on Escape.
   useEffect(() => {
@@ -33,29 +34,30 @@ export function Lightbox({
         ✕
       </button>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={url} alt="生成结果预览" onClick={(e) => e.stopPropagation()} />
-      {/* same per-result edit toolbar, always visible in the zoom view */}
-      <div
-        className="gen-acts ws-lb-tools"
-        onClick={(e) => {
-          e.stopPropagation();
-          const btn = (e.target as HTMLElement).closest("button");
-          if (btn) onTool(btn.dataset.act || "");
-        }}
-      >
-        {CELL_TOOLS.map((t) => (
-          <button
-            key={t.act}
-            type="button"
-            data-act={t.act}
-            className={t.real ? undefined : "soon"}
-            title={t.label}
-            aria-label={t.label}
-          >
-            {t.icon}
-          </button>
-        ))}
-      </div>
+      <img src={url} alt={alt} onClick={(e) => e.stopPropagation()} />
+      {onTool && (
+        <div
+          className="gen-acts ws-lb-tools"
+          onClick={(e) => {
+            e.stopPropagation();
+            const btn = (e.target as HTMLElement).closest("button");
+            if (btn) onTool(btn.dataset.act || "");
+          }}
+        >
+          {CELL_TOOLS.map((t) => (
+            <button
+              key={t.act}
+              type="button"
+              data-act={t.act}
+              className={t.real ? undefined : "soon"}
+              title={t.label}
+              aria-label={t.label}
+            >
+              {t.icon}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

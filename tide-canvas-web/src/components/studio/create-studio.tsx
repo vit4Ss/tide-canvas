@@ -57,6 +57,7 @@ import {
   extractMentionTokens,
   type MentionEditorHandle,
   type MentionKind,
+  type MentionRef,
 } from "@/components/studio/mention-prompt-editor";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";
@@ -207,6 +208,12 @@ export default function CreateStudio() {
 
   /* full-image lightbox (click a finished result to zoom) */
   const [lightbox, setLightbox] = useState<string | null>(null);
+  const [referenceLightbox, setReferenceLightbox] = useState<{ url: string; label: string } | null>(null);
+  const previewReference = useCallback((ref: MentionRef) => {
+    if (ref.kind === "image" && ref.thumb) {
+      setReferenceLightbox({ url: ref.thumb, label: ref.label });
+    }
+  }, []);
   const promptRef = useRef<MentionEditorHandle>(null);
 
   /* ── derived (pre-hook basics) ─────────────────────────────────────────── */
@@ -1241,6 +1248,7 @@ export default function CreateStudio() {
                 onPromptChange={setPrompt}
                 promptRef={promptRef}
                 mentionRefs={mentionRefs}
+                onPreviewRef={previewReference}
                 placeholder={mCfg?.defaultPrompt || cfg.ph}
                 skill={skill}
                 onRemoveSkill={removeSkill}
@@ -1370,6 +1378,13 @@ export default function CreateStudio() {
 
       {/* full-image lightbox — click a finished result to zoom; backdrop / ✕ / Esc closes */}
       {lightbox && <Lightbox url={lightbox} onClose={() => setLightbox(null)} onTool={lightboxTool} />}
+      {referenceLightbox && (
+        <Lightbox
+          url={referenceLightbox.url}
+          alt={`${referenceLightbox.label}预览`}
+          onClose={() => setReferenceLightbox(null)}
+        />
+      )}
 
       {/* hidden input for 本地上传 */}
       <input ref={fileInputRef} type="file" multiple hidden onChange={onLocalFiles} />

@@ -16,6 +16,7 @@ export function PromptSection({
   onPromptChange,
   promptRef,
   mentionRefs,
+  onPreviewRef,
   placeholder,
   skill,
   onRemoveSkill,
@@ -31,6 +32,7 @@ export function PromptSection({
   onPromptChange: (v: string) => void;
   promptRef: RefObject<MentionEditorHandle | null>;
   mentionRefs: ReturnType<typeof buildMentionRefs>;
+  onPreviewRef?: (ref: ReturnType<typeof buildMentionRefs>[number]) => void;
   placeholder: string;
   skill: SkillVO | null;
   onRemoveSkill: () => void;
@@ -67,6 +69,7 @@ export function PromptSection({
             value={prompt}
             onChange={onPromptChange}
             refs={mentionRefs}
+            onPreviewRef={onPreviewRef}
             placeholder={placeholder}
             submitOnEnter={false}
           />
