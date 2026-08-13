@@ -382,7 +382,7 @@ export function StageFeed({
               }
               const r = entry.run;
               return (
-                <div key={entry.key} className={`ws-run${r.items.length <= 1 ? " single" : ""}`}>
+                <div key={entry.key} className={`ws-run${r.items.length <= 1 ? " single" : ""}${r.status === "failed" ? " failed" : ""}`}>
                 <div className="ws-run-head">
                   <span className="ws-run-kind">
                     {SLOT_ICON[r.type]}
@@ -391,6 +391,7 @@ export function StageFeed({
                   <span className="ws-run-div" />
                   {r.model && <span className="ws-run-chip">{r.model}</span>}
                   {r.ratio && <span className="ws-run-chip">{ratioLabel(r.ratio)}</span>}
+                  {r.status === "failed" && <span className="ws-run-status failed">生成失败</span>}
                   {r.ts && <span className="ws-run-time">{fmtTs(r.ts)}</span>}
                 </div>
                 {r.prompt && (
@@ -410,6 +411,22 @@ export function StageFeed({
                     </button>
                   </div>
                 )}
+                {r.status === "failed" ? (
+                  <div className="ws-run-failure" role="group" aria-label="生成失败">
+                    <span className="ws-run-failure-icon" aria-hidden>
+                      <svg viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="9" />
+                        <path d="M12 7v6" />
+                        <path d="M12 17h.01" />
+                      </svg>
+                    </span>
+                    <div className="ws-run-failure-copy">
+                      <span>失败原因</span>
+                      <strong>{r.errorMsg || "生成服务未返回具体失败原因，请稍后重试"}</strong>
+                      <p>本次任务没有生成可预览或下载的结果，可修改参数后重新生成。</p>
+                    </div>
+                  </div>
+                ) : (
                 <div className="ws-run-imgs">
                   {/* 音频：Suno/Udio 式歌曲行列表（封面+歌名+波形+时间），
                       两首纵向成列——不走通用的并排卡片。 */}
@@ -495,6 +512,7 @@ export function StageFeed({
                   })
                   )}
                 </div>
+                )}
                 <div className="ws-run-foot">
                   <button
                     type="button"
@@ -520,14 +538,16 @@ export function StageFeed({
                     </svg>
                     重新生成
                   </button>
-                  <button type="button" onClick={() => downloadRun(r)} title="下载">
-                    <svg viewBox="0 0 24 24">
-                      <path d="M12 3v12" />
-                      <path d="M7 10l5 5 5-5" />
-                      <path d="M4 21h16" />
-                    </svg>
-                    下载
-                  </button>
+                  {r.status !== "failed" && (
+                    <button type="button" onClick={() => downloadRun(r)} title="下载">
+                      <svg viewBox="0 0 24 24">
+                        <path d="M12 3v12" />
+                        <path d="M7 10l5 5 5-5" />
+                        <path d="M4 21h16" />
+                      </svg>
+                      下载
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="danger"

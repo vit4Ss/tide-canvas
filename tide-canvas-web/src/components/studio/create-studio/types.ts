@@ -92,6 +92,10 @@ export interface HistItem {
   model: string;
   /** real result image URL (real generations). */
   url?: string;
+  /** Failed tasks remain in the Studio feed even though they have no result URL. */
+  status?: "success" | "failed";
+  /** User-visible failure reason returned by the generation task. */
+  errorMsg?: string;
   /** 3D generation keeps every returned format on one history card. */
   assets?: ThreeDAsset[];
   previewImageUrl?: string;
@@ -116,6 +120,8 @@ export interface HistRun {
   prompt: string;
   model: string;
   type: ArtworkType;
+  status?: "success" | "failed";
+  errorMsg?: string;
   params?: RunParams;
   items: HistItem[];
 }

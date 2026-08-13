@@ -3,7 +3,7 @@
 
 import type { StudioModelVO } from "@/lib/market-api";
 import type { ModelConfig } from "@/types/admin-models";
-import type { AiTaskVO } from "@/types/ai";
+import { AiTaskStatus, type AiTaskVO } from "@/types/ai";
 import {
   DEFAULT_META,
   HIST_HANDLER_TOOL,
@@ -342,8 +342,8 @@ export function nextHistId(): string {
 }
 
 /** Convert the user's REAL generation tasks (aiApi.listTasks) into feed items:
- *  each SUCCESS task with a result URL becomes a card; a batch task
- *  (resultMeta.urls) expands into one card per image. No mock seed. */
+ *  each successful task with a result URL becomes one or more cards; failed
+ *  tasks become a single reason card so they do not disappear from history. */
 export function histItemsFromTasks(records: AiTaskVO[]): HistItem[] {
   const items: HistItem[] = [];
   for (const t of records) {
@@ -363,9 +363,8 @@ export function histItemsFromTasks(records: AiTaskVO[]): HistItem[] {
     const assets = threeDAssetsFromMeta(meta);
     if (!urls.length && isHttpUrl(t.resultUrl)) urls = [t.resultUrl];
     if (!urls.length && assets.length) urls = assets.map((asset) => asset.url);
-    if (!urls.length) continue; // skip failed / urlless tasks (real data only)
-
-    const type = HIST_HANDLER_TYPE[t.handler] ?? "image";
+    const mappedType = HIST_HANDLER_TYPE[t.handler];
+    const type = mappedType ?? "image";
     const params = paramsFromTask(t.handler, t.modelName || "", t.input, t.modelId);
     // Suno 分轨明细：clip_id 供延长/翻唱引用，trackTitle 是 Suno 起的歌名。
     const tracks = tracksFromMeta(meta);
@@ -381,6 +380,37 @@ export function histItemsFromTasks(records: AiTaskVO[]): HistItem[] {
     const title = params.prompt
       ? params.prompt.slice(0, 14) + (params.prompt.length > 14 ? "…" : "")
       : t.modelName || "我的创作";
+    const failed = t.status === AiTaskStatus.FAILED;
+    const missingResult = t.status === AiTaskStatus.SUCCESS && !urls.length;
+    if (failed || missingResult) {
+      // noProject history can also contain non-media text tasks. Those used to
+      // disappear naturally because they have no URL; do not relabel them as a
+      // failed AI image now that URL-less media failures are intentionally shown.
+      if (!mappedType) continue;
+      items.push({
+        id: `task-${t.id}-failed`,
+        run: `task-${t.id}`,
+        // Keep the same creation-time ordering as successful and in-flight runs.
+        ts: t.createTime,
+        ratio: params.ratio,
+        hues: huesFromId(`${t.id}-failed`),
+        type,
+        title,
+        prompt: params.prompt,
+        model: t.modelName || "",
+        status: "failed",
+        errorMsg: failed
+          ? t.errorMsg?.trim() || "生成服务未返回具体失败原因，请稍后重试"
+          : "任务已完成，但生成结果文件不可用",
+        params,
+      });
+      continue;
+    }
+    // A provider can populate a provisional URL before the task reaches a
+    // terminal state. Never render processing/cancelled rows as successful
+    // history merely because such a URL is present.
+    if (t.status !== AiTaskStatus.SUCCESS) continue;
+
     if (type === "3d") {
       const primary = isHttpUrl(t.resultUrl)
         ? t.resultUrl
@@ -398,6 +428,7 @@ export function histItemsFromTasks(records: AiTaskVO[]): HistItem[] {
         url: primary,
         assets,
         previewImageUrl: assets.find((asset) => asset.previewImageUrl)?.previewImageUrl,
+        status: "success",
         params,
       });
       continue;
@@ -414,6 +445,7 @@ export function histItemsFromTasks(records: AiTaskVO[]): HistItem[] {
         prompt: params.prompt,
         model: t.modelName || "",
         url,
+        status: "success",
         clipId: tracks[idx]?.clipId || undefined,
         clipUpload: clipUpload || undefined,
         trackTitle: tracks[idx]?.title || undefined,

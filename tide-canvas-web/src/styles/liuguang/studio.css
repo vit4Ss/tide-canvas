@@ -817,6 +817,9 @@
   border:1px solid rgba(255,255,255,.14); background:rgba(255,255,255,.05);
   font-size:11.5px; font-weight:600; color:rgba(255,255,255,.72); white-space:nowrap;}
 .ws-run-time{font-family:var(--mono); font-size:11.5px; color:rgba(255,255,255,.42); white-space:nowrap;}
+.ws-run-status{display:inline-flex; align-items:center; height:22px; padding:0 9px; border-radius:6px;
+  font-size:11.5px; font-weight:700; white-space:nowrap;}
+.ws-run-status.failed{color:#ff9b9f; border:1px solid rgba(229,72,77,.48); background:rgba(229,72,77,.13);}
 .ws-run-prompt{display:flex; align-items:center; gap:8px; min-width:0;}
 .ws-run-prompt .tx{display:block; flex:1 1 auto; min-width:0; font-size:14px; color:rgba(255,255,255,.88); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
 .ws-run-prompt .ws-run-mention{margin:0 4px 0 0; vertical-align:-6px;}
@@ -828,6 +831,18 @@
 .ws-run-imgs{display:flex; flex-wrap:wrap; gap:16px; align-items:center; justify-content:center;
   width:100%; padding:20px; border-radius:14px;
   background:rgba(255,255,255,.028); border:1px solid rgba(255,255,255,.07);}
+.ws-run-failure{position:relative; display:flex; align-items:flex-start; gap:16px; width:100%; min-height:132px;
+  padding:24px 26px; overflow:hidden; border-radius:12px; border:1px solid rgba(229,72,77,.42);
+  background:linear-gradient(90deg,rgba(229,72,77,.14),rgba(229,72,77,.045) 58%,rgba(255,255,255,.018));}
+.ws-run-failure::before{content:''; position:absolute; inset:0 auto 0 0; width:3px; background:#e5484d;}
+.ws-run-failure-icon{flex:none; display:grid; place-items:center; width:38px; height:38px; border-radius:10px;
+  color:#ff8e93; background:rgba(229,72,77,.16); border:1px solid rgba(229,72,77,.32);}
+.ws-run-failure-icon svg{width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.8;
+  stroke-linecap:round; stroke-linejoin:round;}
+.ws-run-failure-copy{display:flex; flex-direction:column; gap:5px; min-width:0; padding-top:1px;}
+.ws-run-failure-copy > span{font-size:11.5px; font-weight:700; letter-spacing:.04em; color:#ff8e93;}
+.ws-run-failure-copy strong{font-size:14px; line-height:1.55; font-weight:650; color:rgba(255,255,255,.94); overflow-wrap:anywhere;}
+.ws-run-failure-copy p{margin:2px 0 0; font-size:12.5px; line-height:1.55; color:rgba(255,255,255,.5);}
 /* 操作行（参考样式：小号描边按钮，图标+文字，常显） */
 .ws-run-foot{display:flex; align-items:center; gap:8px;}
 .ws-run-foot button{display:inline-flex; align-items:center; gap:6px; height:30px; padding:0 12px; border-radius:9px;
@@ -995,6 +1010,7 @@
   .ws-panel{border-right:none; border-bottom:1px solid var(--border);}
   .ws-panel-scroll{overflow:visible;}
   .ws-stage{min-height:70vh;}
+  .ws-run-failure{min-height:0; padding:20px;}
 }
 
 /* ============================================================================

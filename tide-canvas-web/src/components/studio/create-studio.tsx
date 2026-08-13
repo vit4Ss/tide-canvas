@@ -460,6 +460,8 @@ export default function CreateStudio() {
           prompt: h.prompt,
           model: h.model,
           type: h.type,
+          status: h.status,
+          errorMsg: h.errorMsg,
           params: h.params,
           items: [],
         };
@@ -560,8 +562,8 @@ export default function CreateStudio() {
   }, [deepModelRef, router]);
 
   // 生成历史: load the user's REAL generation tasks (persisted server-side). Each
-  // SUCCESS task with a result URL becomes a card; a batch task (resultMeta.urls)
-  // expands into one card per image. No mock seed — survives refresh.
+  // Successful tasks become result cards (batch URLs expand into several cards),
+  // while failed tasks become a reason card. No mock seed — survives refresh.
   // noProject 排除画布项目里的生成，创作台历史只展示创作台/对话页自己的产物；
   // 延长/翻唱的原曲候选不受影响（ClipPicker 自拉取仍是全量,画布生成的歌可选）。
   //

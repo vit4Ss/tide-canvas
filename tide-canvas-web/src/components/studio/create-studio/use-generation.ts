@@ -426,6 +426,7 @@ export function useGeneration(p: GenerationParams) {
           prompt: p,
           model: mdl,
           url: urls[cell.i] ?? urls[0],
+          status: "success" as const,
           ...(kind === "3d"
             ? {
                 assets,
@@ -454,10 +455,27 @@ export function useGeneration(p: GenerationParams) {
       const fail = (msg?: string) => {
         if (!isActive()) return;
         const foreground = isForeground();
+        const errorMsg = msg?.trim() || "生成服务未返回具体失败原因，请稍后重试";
+        const runKey = `task-${taskId}`;
+        const failedItem: HistItem = {
+          id: nextHistId(),
+          run: runKey,
+          ts: new Date(startedAt).toISOString(),
+          ratio: r,
+          hues: newCells[0]?.hues ?? ([0, 80, 200] as MeshHues),
+          type: kind,
+          title: p || mdl,
+          prompt: p,
+          model: mdl,
+          status: "failed",
+          errorMsg,
+          params: run.params,
+        };
         clearActive();
+        setHist((prev) => (prev.some((item) => item.run === runKey) ? prev : [failedItem, ...prev]));
         if (foreground) setBusy(hasOngoingRuns());
         void refreshBalance();
-        toast.error(msg || "生成失败");
+        toast.error(errorMsg);
       };
 
       let transientFailures = 0;
