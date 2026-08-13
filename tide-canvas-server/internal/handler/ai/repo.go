@@ -220,7 +220,11 @@ func taggedToolTaskPredicate() (string, []any) {
 	args := make([]any, 0, len(model.CanonicalAiTools)*2)
 	for i := range model.CanonicalAiTools {
 		tool := &model.CanonicalAiTools[i]
-		parts = append(parts, "(handler = ? AND JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(COALESCE(input, '')), input, '{}'), '$.toolKey')) = ?)")
+		// JSON_EXTRACT returns NULL when an ordinary Studio request has no
+		// toolKey. Keep the comparison two-valued: without COALESCE a shared
+		// handler such as image_to_image makes the whole OR expression NULL,
+		// and excludeToolTaskScope's NOT(NULL) silently removes that task.
+		parts = append(parts, "(handler = ? AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(COALESCE(input, '')), input, '{}'), '$.toolKey')), '') = ?)")
 		args = append(args, tool.Handler, tool.Key)
 	}
 	if len(parts) == 0 {
@@ -285,9 +289,10 @@ func taskListOrder(q taskQuery) string {
 
 func visibleTaskHistoryScope(tx *gorm.DB) *gorm.DB {
 	// Orchestration planning/draft tasks are internal implementation details.
-	// A SkillRun task appears in ordinary generation history only after it has
-	// been explicitly promoted to a final, registered output.
-	return tx.Where("(origin IS NULL OR origin = '' OR origin = 'direct') OR (origin = 'skill_run' AND register_work = ? AND output_role = ?)", true, "final")
+	// Successful SkillRun output appears after promotion. A failed final step
+	// cannot be promoted because it produced no work, but it is still the user's
+	// terminal generation attempt and must survive a history refresh.
+	return tx.Where("(origin IS NULL OR origin = '' OR origin = 'direct') OR (origin = 'skill_run' AND output_role = ? AND (register_work = ? OR status = ?))", "final", true, statusFailed)
 }
 
 // applyDateRange 追加 create_time 范围筛选:startDate 当天 00:00 起;endDate
@@ -532,11 +537,12 @@ func applyLogListFilters(tx *gorm.DB, userID idgen.ID, adminScope bool, q logQue
 
 // visibleUserLogScope mirrors visibleTaskHistoryScope for user-facing logs.
 // Existing audit rows whose task was deleted remain visible, but live internal
-// SkillRun planning/draft steps are hidden until promoted as a final work.
+// SkillRun planning/draft steps are hidden; failed final steps remain visible
+// even though a task without an artifact cannot be promoted to a work.
 func visibleUserLogScope(tx *gorm.DB) *gorm.DB {
 	const taskExists = "EXISTS (SELECT 1 FROM ai_tasks t WHERE t.id = ai_generation_logs.task_id)"
-	const visibleTask = "EXISTS (SELECT 1 FROM ai_tasks t WHERE t.id = ai_generation_logs.task_id AND ((t.origin IS NULL OR t.origin = '' OR t.origin = 'direct') OR (t.origin = 'skill_run' AND t.register_work = ? AND t.output_role = ?)))"
-	return tx.Where("NOT "+taskExists+" OR "+visibleTask, true, "final")
+	const visibleTask = "EXISTS (SELECT 1 FROM ai_tasks t WHERE t.id = ai_generation_logs.task_id AND ((t.origin IS NULL OR t.origin = '' OR t.origin = 'direct') OR (t.origin = 'skill_run' AND t.output_role = ? AND (t.register_work = ? OR t.status = ?))))"
+	return tx.Where("NOT "+taskExists+" OR "+visibleTask, "final", true, statusFailed)
 }
 
 // ---- association helpers (log VO enrichment) ----------------------------

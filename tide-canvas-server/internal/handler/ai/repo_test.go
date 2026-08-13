@@ -1,17 +1,19 @@
 package ai
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"gorm.io/driver/mysql"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	"tidecanvas/internal/model"
 )
 
-func TestVisibleTaskHistoryScopeHidesInternalSkillRunTasks(t *testing.T) {
+func TestVisibleTaskHistoryScopeKeepsFailedFinalSkillRunTasks(t *testing.T) {
 	db, err := gorm.Open(mysql.New(mysql.Config{DSN: "gorm:gorm@tcp(localhost:9911)/gorm?charset=utf8mb4&parseTime=True&loc=Local", SkipInitializeWithVersion: true}),
 		&gorm.Config{DryRun: true, DisableAutomaticPing: true})
 	if err != nil {
@@ -20,10 +22,115 @@ func TestVisibleTaskHistoryScopeHidesInternalSkillRunTasks(t *testing.T) {
 	sql := db.ToSQL(func(tx *gorm.DB) *gorm.DB {
 		return visibleTaskHistoryScope(tx.Model(&model.AiTask{}).Where("user_id = ?", 7)).Find(&[]model.AiTask{})
 	})
-	for _, fragment := range []string{"origin = 'direct'", "origin = 'skill_run'", "register_work = true", "output_role = 'final'"} {
+	for _, fragment := range []string{
+		"origin = 'direct'",
+		"origin = 'skill_run'",
+		"output_role = 'final' AND (register_work = true OR status = 2)",
+	} {
 		if !strings.Contains(sql, fragment) {
 			t.Fatalf("history scope SQL is missing %q: %s", fragment, sql)
 		}
+	}
+}
+
+func TestVisibleTaskHistoryScopeTruthTable(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE ai_tasks (
+		id INTEGER PRIMARY KEY,
+		origin TEXT,
+		output_role TEXT NOT NULL,
+		register_work INTEGER NOT NULL,
+		status INTEGER NOT NULL
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	rows := []struct {
+		id           int
+		origin       string
+		outputRole   string
+		registerWork bool
+		status       int
+	}{
+		{1, "direct", "final", false, statusFailed},
+		{2, "skill_run", "final", false, statusFailed},
+		{3, "skill_run", "final", true, statusSuccess},
+		{4, "skill_run", "final", false, statusSuccess},
+		{5, "skill_run", "intermediate", false, statusFailed},
+		{6, "skill_run", "final", false, statusCancelled},
+	}
+	for _, row := range rows {
+		if err := db.Exec(
+			"INSERT INTO ai_tasks (id, origin, output_role, register_work, status) VALUES (?, ?, ?, ?, ?)",
+			row.id, row.origin, row.outputRole, row.registerWork, row.status,
+		).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	var ids []int
+	if err := visibleTaskHistoryScope(db.Table("ai_tasks")).Order("id").Pluck("id", &ids).Error; err != nil {
+		t.Fatal(err)
+	}
+	if want := []int{1, 2, 3}; !reflect.DeepEqual(ids, want) {
+		t.Fatalf("visible task ids = %v, want %v", ids, want)
+	}
+}
+
+func TestVisibleUserLogScopeMatchesTaskHistoryTruthTable(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`CREATE TABLE ai_tasks (
+			id INTEGER PRIMARY KEY,
+			origin TEXT,
+			output_role TEXT NOT NULL,
+			register_work INTEGER NOT NULL,
+			status INTEGER NOT NULL
+		)`,
+		"CREATE TABLE ai_generation_logs (id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL)",
+	} {
+		if err := db.Exec(statement).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	tasks := []struct {
+		id           int
+		origin       string
+		outputRole   string
+		registerWork bool
+		status       int
+	}{
+		{2, "direct", "final", false, statusFailed},
+		{3, "skill_run", "final", false, statusFailed},
+		{4, "skill_run", "intermediate", false, statusFailed},
+		{5, "skill_run", "final", false, statusSuccess},
+		{6, "skill_run", "final", true, statusSuccess},
+	}
+	for _, task := range tasks {
+		if err := db.Exec(
+			"INSERT INTO ai_tasks (id, origin, output_role, register_work, status) VALUES (?, ?, ?, ?, ?)",
+			task.id, task.origin, task.outputRole, task.registerWork, task.status,
+		).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	// id=1 deliberately references no task: historical audit rows whose task was
+	// already deleted remain part of the user's history.
+	for id := 1; id <= 6; id++ {
+		if err := db.Exec("INSERT INTO ai_generation_logs (id, task_id) VALUES (?, ?)", id, id).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	var ids []int
+	if err := visibleUserLogScope(db.Table("ai_generation_logs")).Order("id").Pluck("id", &ids).Error; err != nil {
+		t.Fatal(err)
+	}
+	if want := []int{1, 2, 3, 6}; !reflect.DeepEqual(ids, want) {
+		t.Fatalf("visible log ids = %v, want %v", ids, want)
 	}
 }
 
@@ -62,7 +169,7 @@ func TestStudioHistoryExcludesToolTasksBeforePagination(t *testing.T) {
 		return applyTaskListFilters(tx.Model(&model.AiTask{}), 7, q).
 			Order(taskListOrder(q)).Offset(20).Limit(20).Find(&[]model.AiTask{})
 	})
-	for _, fragment := range []string{"NOT ((handler =", "outpaint", "expand", "image_to_image", "JSON_VALID", "$.toolKey", "inpaint", capturedFrameHandler, "project_id = 0", "LIMIT 20 OFFSET 20"} {
+	for _, fragment := range []string{"NOT ((handler =", "outpaint", "expand", "image_to_image", "JSON_VALID", "COALESCE(JSON_UNQUOTE", "$.toolKey", "inpaint", capturedFrameHandler, "project_id = 0", "LIMIT 20 OFFSET 20"} {
 		if !strings.Contains(sql, fragment) {
 			t.Fatalf("studio history SQL is missing %q: %s", fragment, sql)
 		}
@@ -97,6 +204,9 @@ func TestTaggedToolTaskPredicateUsesEveryCanonicalPair(t *testing.T) {
 	if !strings.Contains(predicate, "JSON_VALID") || !strings.Contains(predicate, "JSON_EXTRACT") {
 		t.Fatalf("tagged tool predicate must parse valid JSON exactly: %s", predicate)
 	}
+	if got := strings.Count(predicate, "COALESCE(JSON_UNQUOTE"); got != len(model.CanonicalAiTools) {
+		t.Fatalf("NULL-safe toolKey comparisons = %d, want %d: %s", got, len(model.CanonicalAiTools), predicate)
+	}
 	if len(args) != len(model.CanonicalAiTools)*2 {
 		t.Fatalf("tagged pairs = %d args, want %d: %#v", len(args), len(model.CanonicalAiTools)*2, args)
 	}
@@ -109,6 +219,55 @@ func TestTaggedToolTaskPredicateUsesEveryCanonicalPair(t *testing.T) {
 	for _, unsafe := range []string{"text_to_image", "toolKey\":%", "LIKE"} {
 		if strings.Contains(predicate, unsafe) {
 			t.Fatalf("tagged tool predicate contains unsafe fragment %q: %s", unsafe, predicate)
+		}
+	}
+}
+
+func TestTaggedToolTaskPredicateTruthTable(t *testing.T) {
+	predicate, args := taggedToolTaskPredicate()
+	// SQLite's JSON_EXTRACT already returns an unquoted scalar and names IF as
+	// IIF. The remaining expression has the same NULL/boolean semantics as MySQL,
+	// which lets this regression test execute the generated predicate locally.
+	sqlitePredicate := strings.ReplaceAll(predicate, "JSON_UNQUOTE(", "(")
+	sqlitePredicate = strings.ReplaceAll(sqlitePredicate, "IF(", "IIF(")
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("CREATE TABLE ai_tasks (id INTEGER PRIMARY KEY, handler TEXT NOT NULL, input TEXT)").Error; err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name         string
+		handler      string
+		input        string
+		wantTagged   int
+		wantInStudio int
+	}{
+		{name: "ordinary shared handler", handler: "image_to_image", input: `{"prompt":"edit"}`, wantInStudio: 1},
+		{name: "canonical tool", handler: "image_to_image", input: `{"toolKey":"inpaint"}`, wantTagged: 1},
+		{name: "mismatched marker", handler: "image_to_image", input: `{"toolKey":"expand"}`, wantInStudio: 1},
+		{name: "malformed legacy input", handler: "image_to_image", input: `{`, wantInStudio: 1},
+	}
+	for index, tc := range tests {
+		id := index + 1
+		if err := db.Exec("INSERT INTO ai_tasks (id, handler, input) VALUES (?, ?, ?)", id, tc.handler, tc.input).Error; err != nil {
+			t.Fatal(err)
+		}
+		var truth struct {
+			Tagged        int `gorm:"column:tagged"`
+			StudioVisible int `gorm:"column:studio_visible"`
+		}
+		queryArgs := append([]any{}, args...)
+		queryArgs = append(queryArgs, args...)
+		queryArgs = append(queryArgs, id)
+		query := "SELECT (" + sqlitePredicate + ") AS tagged, NOT (" + sqlitePredicate + ") AS studio_visible FROM ai_tasks WHERE id = ?"
+		if err := db.Raw(query, queryArgs...).Scan(&truth).Error; err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if truth.Tagged != tc.wantTagged || truth.StudioVisible != tc.wantInStudio {
+			t.Fatalf("%s: tagged/studio = %d/%d, want %d/%d", tc.name, truth.Tagged, truth.StudioVisible, tc.wantTagged, tc.wantInStudio)
 		}
 	}
 }
@@ -179,7 +338,7 @@ func TestUserLogFiltersKeepCallerScopeBeforePagination(t *testing.T) {
 	})
 	for _, fragment := range []string{
 		"user_id = 7", "handler_name IN", "reference_to_video", "input_params LIKE", "success = 0",
-		"NOT EXISTS", "origin = 'skill_run'", "register_work = true", "output_role = 'final'",
+		"NOT EXISTS", "origin = 'skill_run'", "t.output_role = 'final' AND (t.register_work = true OR t.status = 2)",
 		"create_time >=", "create_time <", "LIMIT 20 OFFSET 20",
 	} {
 		if !strings.Contains(sql, fragment) {
