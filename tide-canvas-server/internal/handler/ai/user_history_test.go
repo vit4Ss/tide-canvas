@@ -106,7 +106,7 @@ func TestPublicHistoryFailureReasonIsUsefulButNeverRaw(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := publicHistoryFailureReason(tc.raw); got != tc.want {
+			if got := publicGenerationFailureReason(tc.raw); got != tc.want {
 				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})

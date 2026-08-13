@@ -75,6 +75,16 @@ func rawJSONOrString(s string) json.RawMessage {
 }
 
 func toTaskVO(t *model.AiTask) AiTaskVO {
+	errorMsg := ""
+	switch t.Status {
+	case statusFailed:
+		// ai_tasks normally stores product-authored copy, but legacy/reconciled
+		// rows can contain provider or internal lifecycle text. Every user task
+		// endpoint goes through this allowlisted mapper before returning it.
+		errorMsg = publicGenerationFailureReason(t.ErrorMsg)
+	case statusCancelled:
+		errorMsg = userFacingCancelledErr
+	}
 	return AiTaskVO{
 		ID:           t.ID,
 		Handler:      t.Handler,
@@ -86,7 +96,7 @@ func toTaskVO(t *model.AiTask) AiTaskVO {
 		PointCost:    t.PointCost,
 		ResultURL:    t.ResultUrl,
 		ResultMeta:   rawJSONOrString(t.ResultMeta),
-		ErrorMsg:     t.ErrorMsg,
+		ErrorMsg:     errorMsg,
 		Input:        rawJSONOrString(t.Input),
 		CreateTime:   fmtTime(t.CreateTime),
 		CompleteTime: fmtTimePtr(t.CompleteTime),

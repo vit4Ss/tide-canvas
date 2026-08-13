@@ -165,7 +165,7 @@ func toUserHistoryDetail(log *model.AiGenerationLog, task *model.AiTask) UserGen
 		Parameters:   []UserHistoryParameterVO{},
 	}
 	if log.Success != 1 {
-		detail.FailureReason = publicHistoryFailureReason(log.ErrorMsg)
+		detail.FailureReason = publicGenerationFailureReason(log.ErrorMsg)
 	}
 
 	if task == nil {
@@ -185,10 +185,10 @@ func toUserHistoryDetail(log *model.AiGenerationLog, task *model.AiTask) UserGen
 		detail.FailureReason = ""
 	} else if task.Status == statusFailed {
 		detail.Success = 0
-		detail.FailureReason = publicHistoryFailureReason(task.ErrorMsg)
+		detail.FailureReason = publicGenerationFailureReason(task.ErrorMsg)
 	} else if task.Status == statusCancelled {
 		detail.Success = 0
-		detail.FailureReason = "任务已取消，未生成结果"
+		detail.FailureReason = userFacingCancelledErr
 	}
 	detail.ResultAssets, detail.ResultText = publicTaskResults(task, mediaType)
 	detail.InputAssets = publicInputAssets(task.Input)
@@ -196,13 +196,13 @@ func toUserHistoryDetail(log *model.AiGenerationLog, task *model.AiTask) UserGen
 	return detail
 }
 
-// publicHistoryFailureReason returns only product-authored failure copy. New
+// publicGenerationFailureReason returns only product-authored failure copy. New
 // tasks already persist userFacingGenError output, while old rows may contain
 // raw provider or relay details. Preserve exact messages emitted by our own
 // classifier, reclassify recognizable legacy errors, and fail closed for
 // everything else so credentials, internal URLs and provider payloads never
-// enter the user history contract.
-func publicHistoryFailureReason(raw string) string {
+// enter any user-facing generation response.
+func publicGenerationFailureReason(raw string) string {
 	message := strings.TrimSpace(raw)
 	if message == "" {
 		return userFacingGenErr

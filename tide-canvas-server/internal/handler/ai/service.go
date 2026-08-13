@@ -1096,11 +1096,11 @@ func applyTaskLogState(vo *AiGenerationLogVO, state taskLogState, isAdmin bool) 
 	vo.TaskStatus = &v
 	pointCost := state.PointCost
 	vo.PointCost = &pointCost
-	// AiTask.ErrorMsg is the already-classified user-facing message. Reuse it
-	// for non-admin history so structured Relay codes (notably 5002/5003) do not
-	// get lost when the raw audit error is converted back to a string.
+	// Prefer the task-side reason for non-admin history, but pass it through the
+	// public allowlist: tasks created before error redaction (and lifecycle
+	// reconciliation rows) may still contain provider or internal text.
 	if !isAdmin && state.ErrorMsg != "" {
-		vo.ErrorMsg = state.ErrorMsg
+		vo.ErrorMsg = publicGenerationFailureReason(state.ErrorMsg)
 	}
 }
 
@@ -1306,6 +1306,7 @@ const (
 	userFacingSafetyErr        = "内容未通过安全审核，请调整后重试"
 	userFacingReferenceRiskErr = "参考图未通过安全审核，请更换参考图后重试"
 	userFacingCopyrightErr     = "提交的音频或创作内容涉及版权限制，请更换音频素材，或调整歌词与描述后重试"
+	userFacingCancelledErr     = "任务已取消，未生成结果"
 )
 
 // inputErrorRules 把「用户可自行修正的输入类」上游错误映射为具体、可操作的

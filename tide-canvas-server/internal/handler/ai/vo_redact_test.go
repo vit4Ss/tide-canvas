@@ -95,11 +95,11 @@ func TestUserHistoryReusesTaskFacingRelayMessage(t *testing.T) {
 	vo.redactForUser()
 	applyTaskLogState(&vo, taskLogState{
 		Status:    statusFailed,
-		ErrorMsg:  "请调整图片内容后重试",
+		ErrorMsg:  "参考素材无法读取，请重新上传后重试",
 		PointCost: 840,
 	}, false)
 
-	if vo.ErrorMsg != "请调整图片内容后重试" {
+	if vo.ErrorMsg != "参考素材无法读取，请重新上传后重试" {
 		t.Fatalf("history error = %q, want persisted task-facing Relay message", vo.ErrorMsg)
 	}
 	if vo.TaskStatus == nil || *vo.TaskStatus != statusFailed {
@@ -107,6 +107,29 @@ func TestUserHistoryReusesTaskFacingRelayMessage(t *testing.T) {
 	}
 	if vo.PointCost == nil || *vo.PointCost != 840 {
 		t.Fatalf("history point cost was not populated: %#v", vo.PointCost)
+	}
+}
+
+func TestPublicTaskVOAlwaysSanitizesPersistedFailureText(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		raw    string
+		want   string
+	}{
+		{name: "legacy provider detail", status: statusFailed, raw: "relay HTTP 502 https://internal.example key=sk-secret", want: userFacingGenErr},
+		{name: "stale task lifecycle", status: statusFailed, raw: "generation interrupted (server restart)", want: userFacingGenErr},
+		{name: "known safe reason", status: statusFailed, raw: "参考素材无法读取，请重新上传后重试", want: "参考素材无法读取，请重新上传后重试"},
+		{name: "cancelled", status: statusCancelled, raw: "generation cancelled by skill run", want: userFacingCancelledErr},
+		{name: "success ignores stale error", status: statusSuccess, raw: "should not leave the server", want: ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			vo := toTaskVO(&model.AiTask{Status: tc.status, ErrorMsg: tc.raw})
+			if vo.ErrorMsg != tc.want {
+				t.Fatalf("errorMsg = %q, want %q", vo.ErrorMsg, tc.want)
+			}
+		})
 	}
 }
 
