@@ -88,6 +88,29 @@ func TestUserHistoryDetailDropsTaskAndAuditInternals(t *testing.T) {
 	if len(vo.Parameters) != 1 || vo.Parameters[0].Key != "resolution" || vo.Parameters[0].Value != "1080p" {
 		t.Fatalf("safe parameters = %#v", vo.Parameters)
 	}
+	if vo.FailureReason != userFacingGenErr {
+		t.Fatalf("unsafe legacy task error must fail closed, got %q", vo.FailureReason)
+	}
+}
+
+func TestPublicHistoryFailureReasonIsUsefulButNeverRaw(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "known product copy", raw: "参考素材无法读取，请重新上传后重试", want: "参考素材无法读取，请重新上传后重试"},
+		{name: "legacy safety error", raw: "provider 400: content policy violation; request_id=secret", want: userFacingSafetyErr},
+		{name: "internal provider detail", raw: "relay HTTP 502 https://internal.example key=sk-secret", want: userFacingGenErr},
+		{name: "empty", raw: "", want: userFacingGenErr},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := publicHistoryFailureReason(tc.raw); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
 }
 
 func TestPublicInputAssetsIgnoresURLsOutsideAllowedFields(t *testing.T) {

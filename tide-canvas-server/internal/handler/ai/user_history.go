@@ -9,6 +9,7 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -44,18 +45,19 @@ type UserGenerationHistoryVO struct {
 }
 
 type UserGenerationHistoryDetailVO struct {
-	MediaType    string                   `json:"mediaType"`
-	Model        string                   `json:"model"`
-	Prompt       string                   `json:"prompt"`
-	Success      int                      `json:"success"`
-	DurationMs   int64                    `json:"durationMs"`
-	CreateTime   string                   `json:"createTime"`
-	CompleteTime string                   `json:"completeTime,omitempty"`
-	PointCost    *int64                   `json:"pointCost,omitempty"`
-	ResultAssets []UserHistoryAssetVO     `json:"resultAssets"`
-	ResultText   string                   `json:"resultText,omitempty"`
-	InputAssets  []UserHistoryAssetVO     `json:"inputAssets"`
-	Parameters   []UserHistoryParameterVO `json:"parameters"`
+	MediaType     string                   `json:"mediaType"`
+	Model         string                   `json:"model"`
+	Prompt        string                   `json:"prompt"`
+	Success       int                      `json:"success"`
+	DurationMs    int64                    `json:"durationMs"`
+	CreateTime    string                   `json:"createTime"`
+	CompleteTime  string                   `json:"completeTime,omitempty"`
+	PointCost     *int64                   `json:"pointCost,omitempty"`
+	FailureReason string                   `json:"failureReason,omitempty"`
+	ResultAssets  []UserHistoryAssetVO     `json:"resultAssets"`
+	ResultText    string                   `json:"resultText,omitempty"`
+	InputAssets   []UserHistoryAssetVO     `json:"inputAssets"`
+	Parameters    []UserHistoryParameterVO `json:"parameters"`
 }
 
 func userHistoryMediaType(handler, operation string) string {
@@ -162,6 +164,9 @@ func toUserHistoryDetail(log *model.AiGenerationLog, task *model.AiTask) UserGen
 		InputAssets:  []UserHistoryAssetVO{},
 		Parameters:   []UserHistoryParameterVO{},
 	}
+	if log.Success != 1 {
+		detail.FailureReason = publicHistoryFailureReason(log.ErrorMsg)
+	}
 
 	if task == nil {
 		if url := strings.TrimSpace(log.ResultUrl); url != "" {
@@ -177,13 +182,51 @@ func toUserHistoryDetail(log *model.AiGenerationLog, task *model.AiTask) UserGen
 	detail.PointCost = &cost
 	if task.Status == statusSuccess {
 		detail.Success = 1
-	} else if task.Status == statusFailed || task.Status == statusCancelled {
+		detail.FailureReason = ""
+	} else if task.Status == statusFailed {
 		detail.Success = 0
+		detail.FailureReason = publicHistoryFailureReason(task.ErrorMsg)
+	} else if task.Status == statusCancelled {
+		detail.Success = 0
+		detail.FailureReason = "任务已取消，未生成结果"
 	}
 	detail.ResultAssets, detail.ResultText = publicTaskResults(task, mediaType)
 	detail.InputAssets = publicInputAssets(task.Input)
 	detail.Parameters = publicInputParameters(task.Input)
 	return detail
+}
+
+// publicHistoryFailureReason returns only product-authored failure copy. New
+// tasks already persist userFacingGenError output, while old rows may contain
+// raw provider or relay details. Preserve exact messages emitted by our own
+// classifier, reclassify recognizable legacy errors, and fail closed for
+// everything else so credentials, internal URLs and provider payloads never
+// enter the user history contract.
+func publicHistoryFailureReason(raw string) string {
+	message := strings.TrimSpace(raw)
+	if message == "" {
+		return userFacingGenErr
+	}
+	if isKnownUserFacingGenMessage(message) {
+		return message
+	}
+	if classified := userFacingGenError(errors.New(message)); classified != userFacingGenErr {
+		return classified
+	}
+	return userFacingGenErr
+}
+
+func isKnownUserFacingGenMessage(message string) bool {
+	switch message {
+	case userFacingGenErr, userFacingSafetyErr, userFacingReferenceRiskErr, userFacingCopyrightErr:
+		return true
+	}
+	for _, rule := range inputErrorRules {
+		if message == rule.message {
+			return true
+		}
+	}
+	return false
 }
 
 func publicTaskResults(task *model.AiTask, mediaType string) ([]UserHistoryAssetVO, string) {

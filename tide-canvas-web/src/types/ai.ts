@@ -151,7 +151,8 @@ export interface UserHistoryParameterVO {
 
 /**
  * 用户生成历史的公开白名单。这里不会出现请求/响应原文、HTTP 状态、
- * 处理器、上游任务标识、原始错误、用户/项目/任务 ID 或供应商成本。
+ * 处理器、上游任务标识、原始错误、用户/项目/任务 ID 或供应商成本；
+ * 失败详情只返回服务端归类后的安全文案。
  */
 export interface UserGenerationHistoryVO {
   id: string;
@@ -174,6 +175,7 @@ export interface UserGenerationHistoryDetailVO {
   createTime: string;
   completeTime?: string;
   pointCost?: number;
+  failureReason?: string;
   resultAssets: UserHistoryAssetVO[];
   resultText?: string;
   inputAssets: UserHistoryAssetVO[];

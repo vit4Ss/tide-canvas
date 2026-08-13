@@ -211,7 +211,18 @@ function ResultBlock({ detail, row }: { detail: UserGenerationHistoryDetailVO | 
     );
   }
   if (reply) return <pre className="genr-reply">{reply}</pre>;
-  if (row.success !== 1) return <div className="user-history-error">生成未完成，本次消耗的积分已退回。</div>;
+  if ((detail?.success ?? row.success) !== 1) {
+    const failureReason = detail?.failureReason?.trim() || "生成服务暂时异常，请稍后重试；若持续失败，请联系客服。";
+    return (
+      <div className="user-history-error" role="alert">
+        <div className="user-history-error-reason">
+          <span>失败原因</span>
+          <strong>{failureReason}</strong>
+        </div>
+        <div className="user-history-error-refund">生成未完成，本次消耗的积分已退回。</div>
+      </div>
+    );
+  }
   return <div className="genr-media-empty">暂无可预览的生成结果，链接可能已过期。</div>;
 }
 
@@ -331,7 +342,7 @@ function DetailDrawer({ row, onClose }: { row: UserGenerationHistoryVO; onClose:
 
   const prompt = detail?.prompt || row.prompt;
   const params = detail?.parameters || [];
-  const success = row.success === 1;
+  const success = (detail?.success ?? row.success) === 1;
   const pointCost = detail?.pointCost ?? row.pointCost;
 
   return (
