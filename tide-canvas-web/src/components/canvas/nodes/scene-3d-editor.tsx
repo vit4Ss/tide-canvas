@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { X, Loader2, RotateCcw, Camera, Video, PersonStanding, Plus, Trash2, Eye } from "lucide-react";
+import {
+  X, Loader2, RotateCcw, Camera, Video, PersonStanding, Plus, Trash2, Eye,
+  Move, RotateCw, Maximize2, Play, Pause, Route, SkipBack, Crosshair,
+} from "lucide-react";
 import type * as THREE_NS from "three";
 import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-canvas-store";
 import { uploadFileSmart } from "@/lib/api";
@@ -14,11 +17,25 @@ import {
   LIGHT_NAMES, LIGHT_PRESETS, CHARACTER_COLORS, DEFAULT_ENV, POSE_SLIDER_GROUPS,
   type Scene3DState, type Scene3DEnv, type Scene3DCharacter, type Scene3DRig, type Figure, type SkinnedAsset,
 } from "./scene-3d-rig";
+import {
+  DEFAULT_SCENE_3D_MOTION,
+  normalizeScene3DMotion,
+  normalizedScene3DMotionPoseAt,
+  sampleScene3DMotion,
+  scene3DMotionPresetPoses,
+  type Scene3DCameraPose,
+  type Scene3DMotionEasing,
+  type Scene3DMotionKeyframe,
+  type Scene3DMotionPreset,
+  type Scene3DMotionState,
+} from "./scene-3d-motion";
 
 interface Props {
   node: CanvasNode;
   onClose: () => void;
 }
+
+type TransformMode = "translate" | "rotate" | "scale";
 
 interface EditorApi {
   select: (kind: "char" | "rig", id: string) => void;
@@ -30,6 +47,7 @@ interface EditorApi {
   applyPose: (name: string) => void;
   resetPose: () => void;
   setPoseParam: (key: string, deg: number) => void;
+  setTransformMode: (mode: TransformMode) => void;
   addRig: () => void;
   removeRig: (id: string) => void;
   setRigFov: (id: string, fov: number) => void;
@@ -38,7 +56,12 @@ interface EditorApi {
   setView: (name: string) => void;
   setLight: (p: { preset?: string; azimuth?: number; elevation?: number; intensity?: number; ambient?: number }) => void;
   setEnv: (p: Partial<Scene3DEnv>) => void;
-  snapshot: () => Promise<Blob | null>;
+  setPilotMode: (enabled: boolean) => void;
+  setMotionPlaying: (playing: boolean) => void;
+  captureCameraPose: () => Scene3DCameraPose;
+  setCameraPose: (pose: Scene3DCameraPose) => void;
+  setMotionPath: (motion: Scene3DMotionState) => void;
+  snapshot: (aspect: number) => Promise<Blob | null>;
   getState: () => Scene3DState;
 }
 
@@ -55,6 +78,24 @@ const VIEW_NAMES = Object.keys(CAMERA_VIEWS);
 
 /** 截图落画布的图片节点基准宽度（与图片节点 IMAGE_CARD_BASE_WIDTH 一致） */
 const SHOT_CARD_WIDTH = 608;
+
+const SHOT_RATIOS = [
+  { label: "16:9", value: 16 / 9 },
+  { label: "9:16", value: 9 / 16 },
+  { label: "1:1", value: 1 },
+  { label: "4:3", value: 4 / 3 },
+  { label: "3:4", value: 3 / 4 },
+] as const;
+
+const MOTION_PRESETS: Array<{ key: Scene3DMotionPreset; label: string }> = [
+  { key: "pushIn", label: "推近" },
+  { key: "pullOut", label: "拉远" },
+  { key: "truckLeft", label: "左移" },
+  { key: "truckRight", label: "右移" },
+  { key: "orbitLeft", label: "左环绕" },
+  { key: "orbitRight", label: "右环绕" },
+  { key: "craneUp", label: "升镜" },
+];
 
 /** 新角色出生位（围绕原点左右交替展开，避免重叠） */
 function spawnX(index: number): number {
@@ -108,7 +149,13 @@ function SliderRow({ label, value, min, max, step = 1, onChange, labelClass = "w
 export function Scene3DEditor({ node, onClose }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<EditorApi | null>(null);
+  const editorAliveRef = useRef(true);
   const updateNode = useCanvasStore((s) => s.updateNode);
+
+  useEffect(() => {
+    editorAliveRef.current = true;
+    return () => { editorAliveRef.current = false; };
+  }, []);
 
   // 持久化状态只解析一次（v1 自动迁移 v2）；刻意只跟随 node.id，编辑期间的写回不重建场景
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -142,6 +189,19 @@ export function Scene3DEditor({ node, onClose }: Props) {
   const [poseNames, setPoseNames] = useState<string[]>([]);
   const [poseParams, setPoseParams] = useState<Record<string, number>>({});
   const [charTab, setCharTab] = useState<"属性" | "姿势">("姿势");
+  const [transformMode, setTransformModeState] = useState<TransformMode>("translate");
+  const [shotAspect, setShotAspect] = useState(16 / 9);
+
+  // 运镜：关键帧与播放时间由 React 管理，相机本体和轨迹线仍由 three.js 负责。
+  const [motionOpen, setMotionOpen] = useState(false);
+  const [motion, setMotionState] = useState<Scene3DMotionState>(() =>
+    normalizeScene3DMotion(initialState?.motion ?? DEFAULT_SCENE_3D_MOTION));
+  const motionRef = useRef(motion);
+  const [playhead, setPlayhead] = useState(0);
+  const playheadRef = useRef(0);
+  const [playing, setPlaying] = useState(false);
+  const [piloting, setPiloting] = useState(false);
+  const [selectedFrameId, setSelectedFrameId] = useState<string | null>(null);
 
   const [light, setLightState] = useState(() =>
     initialState?.light ?? { preset: "自然光", azimuth: 0.7, elevation: 0.9, intensity: 1.15, ambient: 0.55 });
@@ -153,11 +213,16 @@ export function Scene3DEditor({ node, onClose }: Props) {
   useEffect(() => { lightAnglesRef.current = light; }, [light]);
   const envRef = useRef(env);
   useEffect(() => { envRef.current = env; }, [env]);
+  useEffect(() => {
+    motionRef.current = motion;
+    apiRef.current?.setMotionPath(motion);
+  }, [motion]);
 
   // ===== three.js 场景 =====
   useEffect(() => {
     let disposed = false;
-    let cleanup = () => {};
+    let cleaned = false;
+    let cleanup = () => { cleaned = true; };
     const initial = initialState;
 
     (async () => {
@@ -168,6 +233,18 @@ export function Scene3DEditor({ node, onClose }: Props) {
         // Mixamo 人物模板（X Bot）：加载失败回退程序化木偶，不阻塞编辑器
         let xbotAsset: SkinnedAsset | null = null;
         let skClone: ((o: THREE_NS.Object3D) => THREE_NS.Object3D) | null = null;
+        const disposeXbotAsset = () => {
+          const asset = xbotAsset;
+          if (!asset) return;
+          xbotAsset = null;
+          asset.scene.traverse((obj) => {
+            const mesh = obj as THREE_NS.Mesh;
+            if (!mesh.isMesh) return;
+            mesh.geometry.dispose();
+            const materials = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
+            materials.forEach((material) => material.dispose());
+          });
+        };
         try {
           const [{ GLTFLoader }, sk] = await Promise.all([
             import("three/examples/jsm/loaders/GLTFLoader.js"),
@@ -184,14 +261,15 @@ export function Scene3DEditor({ node, onClose }: Props) {
         if (disposed || !mount) {
           // GLTF 加载期间编辑器已被关闭:这条早退路径走不到 cleanup,
           // 模板的几何/材质必须就地释放,否则快开快关一次泄漏一份
-          xbotAsset?.scene.traverse((obj) => {
-            const mesh = obj as THREE_NS.Mesh;
-            if (mesh.geometry) mesh.geometry.dispose();
-            const mats = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
-            mats.forEach((m) => m.dispose());
-          });
+          disposeXbotAsset();
           return;
         }
+
+        cleanup = () => {
+          if (cleaned) return;
+          cleaned = true;
+          disposeXbotAsset();
+        };
 
         const w = mount.clientWidth || 1, h = mount.clientHeight || 1;
         const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -202,6 +280,16 @@ export function Scene3DEditor({ node, onClose }: Props) {
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         renderer.domElement.style.touchAction = "none";
         mount.appendChild(renderer.domElement);
+        // 初始化中途抛错时至少立即归还 WebGL 上下文和已加载模板；完整清理器会在
+        // 事件/场景对象建好后接管，避免错误页背后残留不可见的 GPU 上下文。
+        cleanup = () => {
+          if (cleaned) return;
+          cleaned = true;
+          disposeXbotAsset();
+          renderer.dispose();
+          (renderer as unknown as { forceContextLoss?: () => void }).forceContextLoss?.();
+          if (renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement);
+        };
 
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(envRef.current.skyColor);
@@ -238,6 +326,50 @@ export function Scene3DEditor({ node, onClose }: Props) {
         scene.add(grid);
         ground.visible = envRef.current.showGround;
         grid.visible = envRef.current.showGround;
+
+        // ===== 运镜轨迹（导演视角辅助线；截图/成片预览时隐藏） =====
+        const motionGroup = new THREE.Group();
+        motionGroup.name = "director-motion-path";
+        scene.add(motionGroup);
+        const clearMotionPath = () => {
+          motionGroup.traverse((obj) => {
+            const mesh = obj as THREE_NS.Mesh;
+            if ((mesh as THREE_NS.InstancedMesh).isInstancedMesh) {
+              (mesh as THREE_NS.InstancedMesh).dispose();
+            }
+            mesh.geometry?.dispose();
+            const materials = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
+            materials.forEach((material) => material.dispose());
+          });
+          motionGroup.clear();
+        };
+        const updateMotionPath = (motionValue: Scene3DMotionState) => {
+          clearMotionPath();
+          const safeMotion = normalizeScene3DMotion(motionValue);
+          motionGroup.visible = safeMotion.showPath;
+          if (!safeMotion.showPath || !safeMotion.keyframes.length) return;
+
+          const samples = sampleScene3DMotion(safeMotion, 72);
+          if (samples.length > 1) {
+            const geometry = new THREE.BufferGeometry().setFromPoints(
+              samples.map((pose) => new THREE.Vector3(...pose.position)),
+            );
+            const material = new THREE.LineBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.9 });
+            motionGroup.add(new THREE.Line(geometry, material));
+          }
+          const markerGeometry = new THREE.SphereGeometry(0.065, 14, 10);
+          const markerMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+          const markers = new THREE.InstancedMesh(markerGeometry, markerMaterial, safeMotion.keyframes.length);
+          const matrix = new THREE.Matrix4();
+          safeMotion.keyframes.forEach((frame, index) => {
+            markers.setMatrixAt(index, matrix.makeTranslation(...frame.position));
+            markers.setColorAt(index, new THREE.Color(index === 0 ? 0xffffff : 0x22d3ee));
+          });
+          markers.instanceMatrix.needsUpdate = true;
+          if (markers.instanceColor) markers.instanceColor.needsUpdate = true;
+          markers.renderOrder = 998;
+          motionGroup.add(markers);
+        };
 
         // ===== 灯光（preset 不再接管背景色，背景由 env.skyColor / 全景球决定） =====
         const ambient = new THREE.AmbientLight(0xffffff, initial?.light.ambient ?? light.ambient);
@@ -367,6 +499,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
         const rigsM = new Map<string, RigEntry>();
         let rigSeq = 0;
         let activeRigId: string | null = null;
+        let selRigId: string | null = null;
         let savedDir: { pos: THREE_NS.Vector3; target: THREE_NS.Vector3 } | null = null;
 
         const buildRigViz = (id: string, fov: number, aspect: number) => {
@@ -428,16 +561,79 @@ export function Scene3DEditor({ node, onClose }: Props) {
         const tcHelper = (tc as unknown as { getHelper?: () => THREE_NS.Object3D }).getHelper?.() ?? (tc as unknown as THREE_NS.Object3D);
         scene.add(tcHelper);
         let tcDragging = false;
+        let currentTransformMode: TransformMode = "translate";
+        let motionPlaybackActive = false;
+        let pilotActive = false;
+        const pilotKeys = new Set<string>();
+        let pilotYaw = 0;
+        let pilotPitch = 0;
+        let pilotTargetDistance = 3;
+        const rigLastPosition = new THREE.Vector3();
+        let uniformScaleBefore = 1;
+
+        const canOrbit = () => !tcDragging && !motionPlaybackActive && !pilotActive;
         tc.addEventListener("dragging-changed", (e: { value: unknown }) => {
           tcDragging = !!e.value;
-          orbit.enabled = !e.value;
+          orbit.enabled = canOrbit();
+          if (tcDragging && selRigId) {
+            const selectedRig = rigsM.get(selRigId);
+            if (selectedRig) rigLastPosition.copy(selectedRig.cam.position);
+          }
+          if (tcDragging && selCharId) {
+            uniformScaleBefore = charsM.get(selCharId)?.figure.root.scale.x ?? 1;
+          }
         });
+
+        tc.addEventListener("objectChange", () => {
+          if (selRigId && currentTransformMode === "translate") {
+            const selectedRig = rigsM.get(selRigId);
+            if (selectedRig) {
+              const delta = selectedRig.cam.position.clone().sub(rigLastPosition);
+              selectedRig.target.add(delta);
+              selectedRig.cam.lookAt(selectedRig.target);
+              rigLastPosition.copy(selectedRig.cam.position);
+            }
+          }
+          if (selCharId && currentTransformMode === "scale") {
+            const selectedChar = charsM.get(selCharId);
+            if (selectedChar) {
+              const scale = selectedChar.figure.root.scale;
+              const candidates = [scale.x, scale.y, scale.z];
+              const next = candidates.reduce((best, value) =>
+                Math.abs(value - uniformScaleBefore) > Math.abs(best - uniformScaleBefore) ? value : best,
+              candidates[0]);
+              applyCharScale(selectedChar, next);
+              uniformScaleBefore = selectedChar.figure.root.scale.x;
+              setCharScaleState(Math.round(uniformScaleBefore * 100) / 100);
+            }
+          }
+          if (selCharId && currentTransformMode === "rotate") {
+            const selectedChar = charsM.get(selCharId);
+            if (selectedChar) {
+              setRotYDeg(Math.round(THREE.MathUtils.radToDeg(selectedChar.figure.root.rotation.y)));
+            }
+          }
+        });
+
+        const applyTransformMode = (mode: TransformMode) => {
+          currentTransformMode = mode;
+          if (selRigId) {
+            tc.setMode("translate");
+            tc.setSpace("world");
+            tc.showX = true; tc.showY = true; tc.showZ = true;
+            return;
+          }
+          tc.setMode(mode);
+          tc.setSpace(mode === "translate" ? "world" : "local");
+          tc.showX = mode !== "rotate";
+          tc.showY = true;
+          tc.showZ = mode !== "rotate";
+        };
 
         const attachRoot = (e: CharEntry) => {
           tc.attach(e.figure.root);
-          tc.setMode("translate");
-          tc.setSpace("world");
-          tc.showX = true; tc.showY = true; tc.showZ = true; // 三轴自由移动（绿色竖轴可抬离/贴合地面）
+          applyTransformMode(currentTransformMode);
+          uniformScaleBefore = e.figure.root.scale.x;
         };
 
         // ===== 选中逻辑（三维侧权威） =====
@@ -445,6 +641,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
           const e = charsM.get(id);
           if (!e) return;
           selCharId = id;
+          selRigId = null;
           attachRoot(e);
           setPosePreset("");
           setPoseNames(e.figure.poseNames);
@@ -457,12 +654,21 @@ export function Scene3DEditor({ node, onClose }: Props) {
           const r = rigsM.get(id);
           if (!r) return;
           selCharId = null;
-          tc.detach();
+          selRigId = id;
+          if (activeRigId === id) {
+            tc.detach();
+          } else {
+            tc.attach(r.cam);
+            rigLastPosition.copy(r.cam.position);
+            applyTransformMode("translate");
+          }
+          setTransformModeState("translate");
           setRigFovState(Math.round(r.cam.fov));
           setSel({ kind: "rig", id });
         };
         const deselectInternal = () => {
           selCharId = null;
+          selRigId = null;
           tc.detach();
           setSel(null);
         };
@@ -499,13 +705,114 @@ export function Scene3DEditor({ node, onClose }: Props) {
           setActiveCamera(dirCam, savedDir?.target ?? new THREE.Vector3(0, 0.95, 0));
           refreshRigViz();
           setViewMode("director");
+          if (selRigId) selectRigInternal(selRigId);
         };
+
+        const captureCameraPoseInternal = (): Scene3DCameraPose => ({
+          position: [activeCam.position.x, activeCam.position.y, activeCam.position.z],
+          target: [orbit.target.x, orbit.target.y, orbit.target.z],
+          fov: activeCam.fov,
+        });
+
+        const setCameraPoseInternal = (pose: Scene3DCameraPose) => {
+          if (activeRigId) exitRigViewInternal();
+          activeCam = dirCam;
+          dirCam.position.set(...pose.position);
+          dirCam.fov = pose.fov;
+          dirCam.updateProjectionMatrix();
+          orbit.object = dirCam;
+          orbit.target.set(...pose.target);
+          dirCam.lookAt(orbit.target);
+          orbit.update();
+        };
+
+        const syncPilotAngles = () => {
+          const pose = captureCameraPoseInternal();
+          const direction = new THREE.Vector3(...pose.target).sub(new THREE.Vector3(...pose.position));
+          pilotTargetDistance = Math.max(0.5, direction.length());
+          direction.normalize();
+          pilotYaw = Math.atan2(direction.x, direction.z);
+          pilotPitch = Math.asin(THREE.MathUtils.clamp(direction.y, -1, 1));
+        };
+        const applyPilotLook = () => {
+          const cosPitch = Math.cos(pilotPitch);
+          const direction = new THREE.Vector3(
+            Math.sin(pilotYaw) * cosPitch,
+            Math.sin(pilotPitch),
+            Math.cos(pilotYaw) * cosPitch,
+          );
+          orbit.target.copy(dirCam.position).addScaledVector(direction, pilotTargetDistance);
+          dirCam.lookAt(orbit.target);
+        };
+        const requestPilotPointerLock = () => {
+          try {
+            const request = renderer.domElement.requestPointerLock() as Promise<void> | undefined;
+            void request?.catch(() => { /* 用户拒绝时仍保留键盘掌镜，点击画面可重试 */ });
+          } catch { /* 旧浏览器不支持时仍保留键盘掌镜 */ }
+        };
+        const setPilotModeInternal = (enabled: boolean) => {
+          if (enabled) {
+            if (activeRigId) exitRigViewInternal();
+            motionPlaybackActive = false;
+            activeCam = dirCam;
+            orbit.object = dirCam;
+            pilotActive = true;
+            syncPilotAngles();
+            orbit.enabled = false;
+            tc.detach();
+            setPiloting(true);
+            requestPilotPointerLock();
+          } else {
+            pilotActive = false;
+            pilotKeys.clear();
+            orbit.enabled = canOrbit();
+            setPiloting(false);
+            if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
+            if (selCharId) {
+              const selectedChar = charsM.get(selCharId);
+              if (selectedChar) attachRoot(selectedChar);
+            } else if (selRigId) {
+              selectRigInternal(selRigId);
+            }
+          }
+        };
+        const isTypingTarget = (target: EventTarget | null) => {
+          const element = target as HTMLElement | null;
+          return !!element?.closest?.("input, textarea, select, [contenteditable='true']");
+        };
+        const onPilotKeyDown = (event: KeyboardEvent) => {
+          if (!pilotActive || isTypingTarget(event.target)) return;
+          if (["KeyW", "KeyA", "KeyS", "KeyD", "KeyQ", "KeyE", "ShiftLeft", "ShiftRight"].includes(event.code)) {
+            pilotKeys.add(event.code);
+            event.preventDefault();
+          }
+        };
+        const onPilotKeyUp = (event: KeyboardEvent) => pilotKeys.delete(event.code);
+        const onPilotPointerMove = (event: MouseEvent) => {
+          if (!pilotActive || document.pointerLockElement !== renderer.domElement) return;
+          pilotYaw -= event.movementX * 0.0022;
+          pilotPitch = THREE.MathUtils.clamp(pilotPitch - event.movementY * 0.0022, -1.45, 1.45);
+          applyPilotLook();
+        };
+        const onPilotCanvasClick = () => {
+          if (pilotActive && document.pointerLockElement !== renderer.domElement) {
+            requestPilotPointerLock();
+          }
+        };
+        const onPointerLockChange = () => {
+          if (pilotActive && document.pointerLockElement !== renderer.domElement) setPilotModeInternal(false);
+        };
+        window.addEventListener("keydown", onPilotKeyDown);
+        window.addEventListener("keyup", onPilotKeyUp);
+        window.addEventListener("mousemove", onPilotPointerMove);
+        renderer.domElement.addEventListener("click", onPilotCanvasClick);
+        document.addEventListener("pointerlockchange", onPointerLockChange);
 
         // ===== 点选（关节球 → 角色身体/机位机身 → 空白取消选择） =====
         const raycaster = new THREE.Raycaster();
         const ndc = new THREE.Vector2();
         const onPointerDown = (ev: PointerEvent) => {
-          if (tcDragging) return;
+          if (tcDragging || pilotActive || motionPlaybackActive) return;
           const rect = renderer.domElement.getBoundingClientRect();
           ndc.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
           ndc.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
@@ -536,6 +843,42 @@ export function Scene3DEditor({ node, onClose }: Props) {
           renderer.setSize(nw, nh);
         };
         window.addEventListener("resize", onResize);
+
+        let raf = 0;
+        cleanup = () => {
+          if (cleaned) return;
+          cleaned = true;
+          cancelAnimationFrame(raf);
+          renderer.domElement.removeEventListener("pointerdown", onPointerDown);
+          renderer.domElement.removeEventListener("click", onPilotCanvasClick);
+          window.removeEventListener("resize", onResize);
+          window.removeEventListener("keydown", onPilotKeyDown);
+          window.removeEventListener("keyup", onPilotKeyUp);
+          window.removeEventListener("mousemove", onPilotPointerMove);
+          document.removeEventListener("pointerlockchange", onPointerLockChange);
+          if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
+          tc.detach();
+          tc.dispose();
+          if (tcHelper.parent) tcHelper.parent.remove(tcHelper);
+          orbit.dispose();
+          for (const e of charsM.values()) { e.figure.dispose(); e.label.dispose(); }
+          for (const r of rigsM.values()) r.vizDispose();
+          // 皮肤模型模板：几何体/骨架被所有实例共享，统一在此释放。
+          disposeXbotAsset();
+          groundGeo.dispose();
+          groundMat.dispose();
+          grid.geometry.dispose();
+          (grid.material as THREE_NS.Material).dispose();
+          panoGeo.dispose();
+          panoTex?.dispose();
+          panoMat?.dispose();
+          clearMotionPath();
+          scene.remove(motionGroup);
+          renderer.dispose();
+          (renderer as unknown as { forceContextLoss?: () => void }).forceContextLoss?.();
+          if (renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement);
+          apiRef.current = null;
+        };
 
         // ===== 初始还原（v1 已被 parseState 迁移为单角色 v2）；新场景默认为空，从「+ 角色」开始搭建 =====
         if (initial) {
@@ -588,6 +931,10 @@ export function Scene3DEditor({ node, onClose }: Props) {
             if (!selCharId) return;
             charsM.get(selCharId)?.figure.setPoseParam(key, deg);
           },
+          setTransformMode: (mode) => {
+            setTransformModeState(mode);
+            applyTransformMode(mode);
+          },
           addRig: () => {
             const r = addRigInternal();
             syncLists();
@@ -597,6 +944,10 @@ export function Scene3DEditor({ node, onClose }: Props) {
             const r = rigsM.get(id);
             if (!r) return;
             if (activeRigId === id) exitRigViewInternal();
+            if (selRigId === id) {
+              tc.detach();
+              selRigId = null;
+            }
             scene.remove(r.cam);
             r.vizDispose();
             rigsM.delete(id);
@@ -682,7 +1033,22 @@ export function Scene3DEditor({ node, onClose }: Props) {
               orbit.update();
             }
           },
-          snapshot: () =>
+          setPilotMode: setPilotModeInternal,
+          setMotionPlaying: (value) => {
+            if (value && pilotActive) setPilotModeInternal(false);
+            motionPlaybackActive = value;
+            orbit.enabled = canOrbit();
+            motionGroup.visible = value ? false : motionRef.current.showPath;
+            if (value) tc.detach();
+            else if (selCharId) {
+              const selectedChar = charsM.get(selCharId);
+              if (selectedChar) attachRoot(selectedChar);
+            } else if (selRigId) selectRigInternal(selRigId);
+          },
+          captureCameraPose: captureCameraPoseInternal,
+          setCameraPose: setCameraPoseInternal,
+          setMotionPath: updateMotionPath,
+          snapshot: (aspect) =>
             new Promise<Blob | null>((resolve) => {
               tc.enabled = false;
               const hidden: Array<{ o: THREE_NS.Object3D; v: boolean }> = [];
@@ -694,12 +1060,43 @@ export function Scene3DEditor({ node, onClose }: Props) {
                 hide(e.label.sprite);
               }
               for (const r of rigsM.values()) hide(r.viz);
+              hide(motionGroup);
               renderer.render(scene, activeCam);
-              renderer.domElement.toBlob((blob) => {
-                tc.enabled = true;
-                for (const { o, v } of hidden) o.visible = v;
+              const source = renderer.domElement;
+              const sourceAspect = source.width / source.height;
+              const outputAspect = Number.isFinite(aspect) && aspect > 0 ? aspect : sourceAspect;
+              let sx = 0, sy = 0, sw = source.width, sh = source.height;
+              if (sourceAspect > outputAspect) {
+                sw = Math.round(source.height * outputAspect);
+                sx = Math.round((source.width - sw) / 2);
+              } else if (sourceAspect < outputAspect) {
+                sh = Math.round(source.width / outputAspect);
+                sy = Math.round((source.height - sh) / 2);
+              }
+              const output = document.createElement("canvas");
+              output.width = sw;
+              output.height = sh;
+              const finish = (blob: Blob | null) => {
+                if (!disposed) {
+                  tc.enabled = true;
+                  for (const { o, v } of hidden) o.visible = v;
+                }
+                // 主动归还截图临时位图，避免连续截图时等待 GC 才释放大块像素内存。
+                output.width = 0;
+                output.height = 0;
                 resolve(blob);
-              }, "image/png");
+              };
+              const context = output.getContext("2d");
+              if (!context) {
+                finish(null);
+                return;
+              }
+              try {
+                context.drawImage(source, sx, sy, sw, sh, 0, 0, sw, sh);
+                output.toBlob(finish, "image/png");
+              } catch {
+                finish(null);
+              }
             }),
           getState: () => {
             const characters: Scene3DCharacter[] = [...charsM.values()].map((e) => {
@@ -733,55 +1130,50 @@ export function Scene3DEditor({ node, onClose }: Props) {
               camera: { theta: round(sph.theta), phi: round(sph.phi), radius: round(sph.radius), target: [round(dirTgt.x), round(dirTgt.y), round(dirTgt.z)] },
               light: { azimuth: la.azimuth, elevation: la.elevation, intensity: round(dir.intensity), ambient: round(ambient.intensity), preset: la.preset },
               env: envRef.current,
+              motion: motionRef.current,
             };
           },
         };
+        updateMotionPath(motionRef.current);
 
-        let raf = 0;
-        const animate = () => {
+        let lastFrameAt = performance.now();
+        const animate = (now = performance.now()) => {
           raf = requestAnimationFrame(animate);
-          orbit.update();
+          const deltaSeconds = Math.min(0.05, Math.max(0, (now - lastFrameAt) / 1000));
+          lastFrameAt = now;
+          if (pilotActive) {
+            const cosPitch = Math.cos(pilotPitch);
+            const forward = new THREE.Vector3(
+              Math.sin(pilotYaw) * cosPitch,
+              Math.sin(pilotPitch),
+              Math.cos(pilotYaw) * cosPitch,
+            ).normalize();
+            const right = forward.clone().cross(UP_AXIS).normalize();
+            const velocity = new THREE.Vector3();
+            if (pilotKeys.has("KeyW")) velocity.add(forward);
+            if (pilotKeys.has("KeyS")) velocity.sub(forward);
+            if (pilotKeys.has("KeyD")) velocity.add(right);
+            if (pilotKeys.has("KeyA")) velocity.sub(right);
+            if (pilotKeys.has("KeyE")) velocity.y += 1;
+            if (pilotKeys.has("KeyQ")) velocity.y -= 1;
+            if (velocity.lengthSq() > 0) {
+              const boosted = pilotKeys.has("ShiftLeft") || pilotKeys.has("ShiftRight");
+              velocity.normalize().multiplyScalar((boosted ? 5 : 2.2) * deltaSeconds);
+              dirCam.position.add(velocity);
+              applyPilotLook();
+            }
+          }
+          if (orbit.enabled) orbit.update();
           renderer.render(scene, activeCam);
         };
         animate();
         if (!disposed) setLoading(false);
-
-        cleanup = () => {
-          cancelAnimationFrame(raf);
-          renderer.domElement.removeEventListener("pointerdown", onPointerDown);
-          window.removeEventListener("resize", onResize);
-          tc.detach();
-          tc.dispose();
-          if (tcHelper.parent) tcHelper.parent.remove(tcHelper);
-          orbit.dispose();
-          for (const e of charsM.values()) { e.figure.dispose(); e.label.dispose(); }
-          for (const r of rigsM.values()) r.vizDispose();
-          // 皮肤模型模板：几何体/骨架被所有实例共享，统一在此释放
-          if (xbotAsset) {
-            xbotAsset.scene.traverse((o) => {
-              const m = o as THREE_NS.Mesh;
-              if (m.isMesh) {
-                m.geometry.dispose();
-                (m.material as THREE_NS.Material)?.dispose();
-              }
-            });
-          }
-          groundGeo.dispose();
-          groundMat.dispose();
-          grid.geometry.dispose();
-          (grid.material as THREE_NS.Material).dispose();
-          panoGeo.dispose();
-          panoTex?.dispose();
-          panoMat?.dispose();
-          renderer.dispose();
-          (renderer as unknown as { forceContextLoss?: () => void }).forceContextLoss?.();
-          if (renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement);
-          apiRef.current = null;
-        };
       } catch (e) {
         if (!disposed) {
           setError(e instanceof Error ? e.message : "3D 编辑器初始化失败");
           setLoading(false);
+          disposed = true;
+          cleanup();
         }
       }
     })();
@@ -798,12 +1190,6 @@ export function Scene3DEditor({ node, onClose }: Props) {
   }, [node.id, updateNode]);
 
   const handleClose = useCallback(() => { persist(); onClose(); }, [persist, onClose]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") handleClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [handleClose]);
 
   // ===== React 侧操作封装 =====
   const setEnvPartial = (p: Partial<Scene3DEnv>) => {
@@ -829,13 +1215,196 @@ export function Scene3DEditor({ node, onClose }: Props) {
     apiRef.current?.enterRigView(id);
   };
 
+  const previewMotionAt = useCallback((seconds: number, source = motionRef.current, syncUi = true) => {
+    const safeTime = Math.min(source.duration, Math.max(0, seconds));
+    playheadRef.current = safeTime;
+    if (syncUi) setPlayhead(safeTime);
+    const pose = normalizedScene3DMotionPoseAt(source, safeTime);
+    if (pose) apiRef.current?.setCameraPose(pose);
+  }, []);
+
+  const patchMotionSettings = (patch: Partial<Pick<Scene3DMotionState, "easing" | "loop" | "showPath">>) => {
+    const next = normalizeScene3DMotion({ ...motionRef.current, ...patch });
+    motionRef.current = next;
+    setMotionState(next);
+  };
+
+  const recordMotionFrame = useCallback(() => {
+    const pose = apiRef.current?.captureCameraPose();
+    if (!pose) return;
+    setPlaying(false);
+    setMotionOpen(true);
+    const safe = normalizeScene3DMotion(motionRef.current);
+    if (safe.keyframes.length >= 120) {
+      toast.info("单条运镜最多记录 120 个镜头");
+      return;
+    }
+    const lastTime = safe.keyframes.at(-1)?.time ?? -1;
+    if (piloting && lastTime >= 60) {
+      toast.info("掌镜记录已达到 60 秒上限");
+      return;
+    }
+    const time = piloting
+      ? Math.min(60, Math.max(0, lastTime + 1))
+      : safe.keyframes.length === 0
+        ? 0
+        : safe.keyframes.length === 1
+          ? safe.duration
+          : Math.min(safe.duration, Math.max(0, playheadRef.current));
+    const nearby = piloting ? null : safe.keyframes.find((frame) => Math.abs(frame.time - time) < 0.04);
+    const id = nearby?.id ?? `motion_${Date.now()}_${safe.keyframes.length}`;
+    const frame: Scene3DMotionKeyframe = {
+      id,
+      name: nearby?.name ?? `镜头 ${safe.keyframes.length + 1}`,
+      time,
+      ...pose,
+    };
+    const keyframes = nearby
+      ? safe.keyframes.map((item) => item.id === nearby.id ? frame : item)
+      : [...safe.keyframes, frame];
+    const next = normalizeScene3DMotion({ ...safe, duration: Math.max(safe.duration, time), keyframes });
+    motionRef.current = next;
+    setMotionState(next);
+    setSelectedFrameId(id);
+    playheadRef.current = time;
+    setPlayhead(time);
+  }, [piloting]);
+
+  const deleteSelectedMotionFrame = useCallback(() => {
+    if (!selectedFrameId) return;
+    setPlaying(false);
+    const next = {
+      ...motionRef.current,
+      keyframes: motionRef.current.keyframes.filter((frame) => frame.id !== selectedFrameId),
+    };
+    motionRef.current = next;
+    setMotionState(next);
+    setSelectedFrameId(null);
+  }, [selectedFrameId]);
+
+  const changeMotionDuration = (duration: number) => {
+    setPlaying(false);
+    const current = motionRef.current;
+    const nextDuration = Math.min(60, Math.max(0.5, duration || 0.5));
+    const ratio = nextDuration / current.duration;
+    const next = normalizeScene3DMotion({
+      ...current,
+      duration: nextDuration,
+      keyframes: current.keyframes.map((frame) => ({ ...frame, time: frame.time * ratio })),
+    });
+    motionRef.current = next;
+    setMotionState(next);
+    previewMotionAt(0, next);
+  };
+
+  const applyMotionPreset = (preset: Scene3DMotionPreset) => {
+    const pose = apiRef.current?.captureCameraPose();
+    if (!pose) return;
+    const poses = scene3DMotionPresetPoses(preset, pose);
+    const names: Record<Scene3DMotionPreset, string> = {
+      pushIn: "推近", pullOut: "拉远", truckLeft: "左移", truckRight: "右移",
+      orbitLeft: "左环绕", orbitRight: "右环绕", craneUp: "升镜",
+    };
+    const keyframes: Scene3DMotionKeyframe[] = poses.map((item, index) => ({
+      id: `motion_preset_${preset}_${index}`,
+      name: index === 0 ? `${names[preset]} · 起点` : `${names[preset]} · 终点`,
+      time: index === 0 ? 0 : motionRef.current.duration,
+      ...item,
+    }));
+    const next = normalizeScene3DMotion({ ...motionRef.current, keyframes });
+    setPlaying(false);
+    setMotionOpen(true);
+    motionRef.current = next;
+    setMotionState(next);
+    setSelectedFrameId(keyframes[0].id);
+    previewMotionAt(0, next);
+  };
+
+  useEffect(() => {
+    if (!playing) {
+      apiRef.current?.setMotionPlaying(false);
+      return;
+    }
+    if (loading || !apiRef.current) {
+      setPlaying(false);
+      return;
+    }
+    const current = motionRef.current;
+    if (current.keyframes.length < 2) {
+      setPlaying(false);
+      toast.info("至少记录两个镜头才能预演运镜");
+      return;
+    }
+    setPiloting(false);
+    apiRef.current?.setMotionPlaying(true);
+    const startAt = playheadRef.current >= current.duration - 0.01 ? 0 : playheadRef.current;
+    previewMotionAt(startAt, current);
+    let startedAt = performance.now() - startAt * 1000;
+    let lastUiAt = 0;
+    let frameId = 0;
+    const tick = (now: number) => {
+      const latest = motionRef.current;
+      let nextTime = (now - startedAt) / 1000;
+      if (nextTime >= latest.duration) {
+        if (latest.loop) {
+          startedAt = now;
+          nextTime = 0;
+        } else {
+          previewMotionAt(latest.duration, latest);
+          setPlaying(false);
+          return;
+        }
+      }
+      previewMotionAt(nextTime, latest, false);
+      if (now - lastUiAt >= 50) {
+        lastUiAt = now;
+        setPlayhead(nextTime);
+      }
+      frameId = requestAnimationFrame(tick);
+    };
+    frameId = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(frameId);
+      apiRef.current?.setMotionPlaying(false);
+    };
+  }, [loading, playing, previewMotionAt]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const element = event.target as HTMLElement | null;
+      if (element?.closest?.("input, textarea, select, [contenteditable='true']")) return;
+      if (event.key === "Escape") {
+        if (piloting) apiRef.current?.setPilotMode(false);
+        else if (playing) setPlaying(false);
+        else handleClose();
+        return;
+      }
+      if (piloting && event.key === "Enter") {
+        if (event.repeat) return;
+        event.preventDefault();
+        recordMotionFrame();
+        return;
+      }
+      if (!loading && motionOpen && event.code === "Space" && motion.keyframes.length >= 2) {
+        event.preventDefault();
+        setPlaying((value) => !value);
+        return;
+      }
+      if (!piloting && (event.key.toLowerCase() === "v" || event.key.toLowerCase() === "r" || event.key.toLowerCase() === "s")) {
+        const mode: TransformMode = event.key.toLowerCase() === "v" ? "translate" : event.key.toLowerCase() === "r" ? "rotate" : "scale";
+        apiRef.current?.setTransformMode(mode);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [handleClose, loading, motion.keyframes.length, motionOpen, piloting, playing, recordMotionFrame]);
+
   /** 截图以图片节点形式落到导演台右侧（多张时向下排列）并自动连线，作为下游 AI 生成的参考素材 */
-  const spawnShotNode = (file: { fileUrl: string; fileSize: number; fileType: string; mimeType: string }) => {
+  const spawnShotNode = (file: { fileUrl: string; fileSize: number; fileType: string; mimeType: string }, aspect: number) => {
     const st = useCanvasStore.getState();
     const nid = generateNodeId();
     const cw = SHOT_CARD_WIDTH;
-    const mount = mountRef.current;
-    const ch = Math.round(cw * ((mount?.clientHeight || 9) / (mount?.clientWidth || 16)));
+    const ch = Math.round(cw / aspect);
     const targetX = node.x + node.width + 80;
     const colNodes = st.nodes.filter((n) => {
       const nw = n.contentW ?? n.width;
@@ -857,22 +1426,24 @@ export function Scene3DEditor({ node, onClose }: Props) {
     if (busy || !apiRef.current) return;
     setBusy(true);
     try {
-      const blob = await apiRef.current.snapshot();
+      const blob = await apiRef.current.snapshot(shotAspect);
+      if (!editorAliveRef.current) return;
       if (!blob) { toast.error("截图失败，请重试"); return; }
       const file = new File([blob], `director_${Date.now()}.png`, { type: "image/png" });
       const up = await uploadFileSmart(file);
+      if (!editorAliveRef.current) return;
       if (!up.success || !up.data) { toast.error(up.message || "截图上传失败"); return; }
       const url = up.data.fileUrl;
       persist();
       updateNode(node.id, { imageSrc: url, fileSize: up.data.fileSize, fileType: up.data.fileType, mimeType: up.data.mimeType }); // 导演台预览 = 最近一次截图
-      spawnShotNode(up.data);
+      spawnShotNode(up.data, shotAspect);
       setShotCount((c) => c + 1);
       toast.success("已截图，图片节点已放入画布");
     } catch {
       // 快照/上传异常:反馈并避免未处理 rejection。
-      toast.error("截图失败，请重试");
+      if (editorAliveRef.current) toast.error("截图失败，请重试");
     } finally {
-      setBusy(false);
+      if (editorAliveRef.current) setBusy(false);
     }
   };
 
@@ -880,6 +1451,8 @@ export function Scene3DEditor({ node, onClose }: Props) {
   const chip = (active: boolean) => `${btn} ${active ? "bg-white text-slate-900" : "bg-white/10 hover:bg-white/20"}`;
   const selChar = sel?.kind === "char" ? charList.find((c) => c.id === sel.id) : null;
   const selRig = sel?.kind === "rig" ? rigList.find((r) => r.id === sel.id) : null;
+  const selectedMotionFrame = motion.keyframes.find((frame) => frame.id === selectedFrameId) ?? null;
+  const formatMotionTime = (seconds: number) => `${seconds.toFixed(1)}s`;
 
   return createPortal(
     <div className="fixed inset-0 z-[200] bg-slate-950" onMouseDown={(e) => e.stopPropagation()}>
@@ -916,6 +1489,39 @@ export function Scene3DEditor({ node, onClose }: Props) {
           <X className="h-5 w-5" />
         </button>
       </div>
+
+      {/* 物体变换工具：与专业 3D 软件一致，V/R/S 可快速切换。 */}
+      <div className="absolute left-1/2 top-14 flex -translate-x-1/2 items-center gap-1 rounded-xl bg-black/50 p-1 text-white backdrop-blur-md">
+        {([
+          ["translate", "移动", Move, "V"],
+          ["rotate", "旋转", RotateCw, "R"],
+          ["scale", "缩放", Maximize2, "S"],
+        ] as const).map(([mode, label, Icon, shortcut]) => (
+          <button
+            key={mode}
+            onClick={() => apiRef.current?.setTransformMode(mode)}
+            disabled={!!selRig && mode !== "translate"}
+            title={`${label} (${shortcut})`}
+            className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition-colors ${
+              transformMode === mode ? "bg-white text-slate-900" : "text-white/70 hover:bg-white/10 hover:text-white"
+            } disabled:cursor-not-allowed disabled:opacity-30`}
+          >
+            <Icon className="h-3.5 w-3.5" /> {label}<kbd className="text-[9px] opacity-50">{shortcut}</kbd>
+          </button>
+        ))}
+      </div>
+
+      {piloting && (
+        <>
+          <div className="pointer-events-none absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2">
+            <span className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-white/80" />
+            <span className="absolute left-0 top-1/2 h-px w-full -translate-y-1/2 bg-white/80" />
+          </div>
+          <div className="pointer-events-none absolute left-1/2 top-24 -translate-x-1/2 rounded-lg bg-black/60 px-3 py-2 text-center text-xs text-white/80 backdrop-blur">
+            WASD 移动 · Q/E 升降 · Shift 加速 · 鼠标转向 · Enter 记录镜头 · Esc 退出掌镜
+          </div>
+        </>
+      )}
 
       {/* ===== 左侧：场景对象列表 ===== */}
       <div className="absolute bottom-24 left-4 top-14 flex w-52 flex-col rounded-2xl bg-black/50 p-3 text-white backdrop-blur-md">
@@ -1129,7 +1735,151 @@ export function Scene3DEditor({ node, onClose }: Props) {
         </div>
       </div>
 
-      {/* ===== 底部操作栏：预设机位 + 截图落画布 ===== */}
+      {/* ===== 运镜工作台：掌镜、关键帧、轨迹预演 ===== */}
+      {motionOpen && (
+        <div className="absolute bottom-20 left-1/2 w-[min(820px,calc(100vw-2rem))] -translate-x-1/2 rounded-2xl border border-white/10 bg-black/70 p-3 text-white shadow-2xl backdrop-blur-xl">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="mr-auto flex items-center gap-2">
+              <Route className="h-4 w-4 text-cyan-300" />
+              <span className="text-sm font-semibold">运镜工作台</span>
+              <span className="rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] text-white/55">{motion.keyframes.length} 个镜头</span>
+            </div>
+            <button
+              onClick={() => {
+                setPlaying(false);
+                apiRef.current?.setPilotMode(!piloting);
+              }}
+              className={`${btn} flex items-center gap-1.5 ${piloting ? "bg-cyan-400 text-slate-950" : "bg-white/10 hover:bg-white/20"}`}
+            >
+              <Crosshair className="h-3.5 w-3.5" /> {piloting ? "退出掌镜" : "开始掌镜"}
+            </button>
+            <button onClick={recordMotionFrame} className={`${btn} flex items-center gap-1.5 bg-white text-slate-900 hover:bg-neutral-200`}>
+              <Plus className="h-3.5 w-3.5" /> 记录镜头
+            </button>
+            <button
+              onClick={() => { setPlaying(false); apiRef.current?.setPilotMode(false); setMotionOpen(false); }}
+              className="rounded-lg p-1.5 text-white/50 hover:bg-white/10 hover:text-white"
+              title="收起运镜工作台"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <span className="mr-1 text-[11px] text-white/45">一键运镜</span>
+            {MOTION_PRESETS.map((preset) => (
+              <button key={preset.key} onClick={() => applyMotionPreset(preset.key)} className="rounded-md bg-white/8 px-2 py-1 text-[11px] text-white/75 hover:bg-white/15 hover:text-white">
+                {preset.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              onClick={() => { setPlaying(false); previewMotionAt(0); }}
+              className="rounded-lg p-2 text-white/70 hover:bg-white/10 hover:text-white"
+              title="回到开头"
+            >
+              <SkipBack className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => setPlaying((value) => !value)}
+              disabled={loading || motion.keyframes.length < 2}
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-slate-900 hover:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-35"
+              title={playing ? "暂停 (Space)" : "播放 (Space)"}
+            >
+              {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 fill-current" />}
+            </button>
+            <span className="w-9 text-right text-[11px] tabular-nums text-white/55">{formatMotionTime(playhead)}</span>
+            <div className="relative h-7 min-w-36 flex-1">
+              <input
+                type="range" min={0} max={motion.duration} step={0.01} value={playhead}
+                onChange={(event) => { setPlaying(false); previewMotionAt(Number(event.target.value)); }}
+                className="slider-line absolute inset-x-0 top-3 w-full"
+                aria-label="运镜时间轴"
+              />
+              {motion.keyframes.map((frame) => (
+                <button
+                  key={frame.id}
+                  onClick={() => { setPlaying(false); setSelectedFrameId(frame.id); previewMotionAt(frame.time); }}
+                  className={`absolute top-1 h-3 w-3 -translate-x-1/2 rounded-full border-2 transition-transform hover:scale-125 ${
+                    selectedFrameId === frame.id ? "border-cyan-200 bg-cyan-400" : "border-slate-800 bg-white"
+                  }`}
+                  style={{ left: `${(frame.time / motion.duration) * 100}%` }}
+                  title={`${frame.name} · ${formatMotionTime(frame.time)}`}
+                />
+              ))}
+            </div>
+            <span className="w-9 text-[11px] tabular-nums text-white/55">{formatMotionTime(motion.duration)}</span>
+          </div>
+
+          <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-white/10 pt-2 text-[11px] text-white/60">
+            <label className="flex items-center gap-1.5">
+              时长
+              <input
+                type="number" min={0.5} max={60} step={0.5} value={motion.duration}
+                onChange={(event) => changeMotionDuration(Number(event.target.value))}
+                className="w-14 rounded-md border border-white/15 bg-white/5 px-1.5 py-1 text-right text-white outline-none focus:border-cyan-400"
+              />
+              秒
+            </label>
+            <label className="flex items-center gap-1.5">
+              缓动
+              <select
+                value={motion.easing}
+                onChange={(event) => patchMotionSettings({ easing: event.target.value as Scene3DMotionEasing })}
+                className="rounded-md border border-white/15 bg-slate-900 px-1.5 py-1 text-white outline-none focus:border-cyan-400"
+              >
+                <option value="linear">匀速</option>
+                <option value="easeIn">渐快</option>
+                <option value="easeOut">渐慢</option>
+                <option value="easeInOut">平滑</option>
+              </select>
+            </label>
+            <button
+              onClick={() => patchMotionSettings({ loop: !motionRef.current.loop })}
+              className={`rounded-md px-2 py-1 ${motion.loop ? "bg-cyan-400 text-slate-950" : "bg-white/10 text-white/65 hover:bg-white/15"}`}
+            >
+              循环
+            </button>
+            <button
+              onClick={() => patchMotionSettings({ showPath: !motionRef.current.showPath })}
+              className={`rounded-md px-2 py-1 ${motion.showPath ? "bg-cyan-400 text-slate-950" : "bg-white/10 text-white/65 hover:bg-white/15"}`}
+            >
+              路线常亮
+            </button>
+            {selectedMotionFrame && (
+              <>
+                <span className="ml-auto truncate text-white/45">{selectedMotionFrame.name}</span>
+                <label className="flex items-center gap-1">
+                  时间
+                  <input
+                    type="number" min={0} max={motion.duration} step={0.1} value={selectedMotionFrame.time}
+                    onChange={(event) => {
+                      setPlaying(false);
+                      const time = Math.min(motion.duration, Math.max(0, Number(event.target.value) || 0));
+                      const current = motionRef.current;
+                      const next = normalizeScene3DMotion({
+                        ...current,
+                        keyframes: current.keyframes.map((frame) => frame.id === selectedMotionFrame.id ? { ...frame, time } : frame),
+                      });
+                      motionRef.current = next;
+                      setMotionState(next);
+                      previewMotionAt(time, next);
+                    }}
+                    className="w-14 rounded-md border border-white/15 bg-white/5 px-1.5 py-1 text-right text-white outline-none focus:border-cyan-400"
+                  />
+                </label>
+                <button onClick={deleteSelectedMotionFrame} className="rounded-md p-1.5 text-white/45 hover:bg-red-500/15 hover:text-red-300" title="删除当前镜头">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ===== 底部操作栏：预设机位 + 运镜 + 可选画幅截图 ===== */}
       <div className="absolute inset-x-0 bottom-6 flex justify-center px-4">
         <div className="flex items-center gap-2 rounded-2xl bg-black/55 p-2 text-white backdrop-blur-md">
           <span className="ml-1.5 shrink-0 text-xs font-medium text-white/60">视角</span>
@@ -1139,6 +1889,20 @@ export function Scene3DEditor({ node, onClose }: Props) {
             ))}
           </div>
           <div className="mx-1 h-5 w-px shrink-0 bg-white/15" />
+          <button
+            onClick={() => setMotionOpen((value) => !value)}
+            className={`${btn} flex items-center gap-1.5 ${motionOpen ? "bg-cyan-400 text-slate-950" : "bg-white/10 hover:bg-white/20"}`}
+          >
+            <Route className="h-3.5 w-3.5" /> 运镜{motion.keyframes.length ? ` ${motion.keyframes.length}` : ""}
+          </button>
+          <select
+            value={shotAspect}
+            onChange={(event) => setShotAspect(Number(event.target.value))}
+            className="rounded-lg border border-white/10 bg-slate-900 px-2 py-1.5 text-xs text-white outline-none focus:border-white/30"
+            title="截图画幅"
+          >
+            {SHOT_RATIOS.map((ratio) => <option key={ratio.label} value={ratio.value}>{ratio.label}</option>)}
+          </select>
           <button
             onClick={handleShot}
             disabled={busy}

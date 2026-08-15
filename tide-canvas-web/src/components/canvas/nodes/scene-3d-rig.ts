@@ -1,4 +1,9 @@
 import type * as THREE_NS from "three";
+import {
+  DEFAULT_SCENE_3D_MOTION,
+  normalizeScene3DMotion,
+  type Scene3DMotionState,
+} from "./scene-3d-motion";
 
 /** 角色（一具可摆姿的人物） */
 export interface Scene3DCharacter {
@@ -54,7 +59,7 @@ export function characterNameByIndex(i: number): string {
   return i < 26 ? `角色${String.fromCharCode(65 + i)}` : `角色${i + 1}`;
 }
 
-/** 导演台持久化状态 v2（存进 CanvasNode.scene3d 的 JSON）：多角色 + 机位 + 环境 */
+/** 导演台持久化状态 v2（存进 CanvasNode.scene3d 的 JSON）：多角色 + 机位 + 环境 + 运镜 */
 export interface Scene3DState {
   v: 2;
   characters: Scene3DCharacter[];
@@ -63,6 +68,8 @@ export interface Scene3DState {
   camera: { theta: number; phi: number; radius: number; target: [number, number, number] };
   light: { azimuth: number; elevation: number; intensity: number; ambient: number; preset: string };
   env: Scene3DEnv;
+  /** 可选是为了兼容早期 v2 存档；parseState 后始终补齐。 */
+  motion: Scene3DMotionState;
 }
 
 /** 旧版（单角色）状态，parseState 时自动迁移 */
@@ -637,14 +644,18 @@ export function makeLabelSprite(THREE: typeof THREE_NS, text: string): { sprite:
   return { sprite, dispose: () => { tex.dispose(); mat.dispose(); } };
 }
 
-/** 防御性解析持久化状态：v2 原样返回，v1 自动迁移为单角色 v2，其他返回 null */
+/** 防御性解析持久化状态：v2 补齐新字段，v1 自动迁移为单角色 v2，其他返回 null */
 export function parseState(json?: string): Scene3DState | null {
   if (!json) return null;
   try {
     const s = JSON.parse(json);
     if (!s || !s.camera || !s.light) return null;
     if (s.v === 2 && Array.isArray(s.characters) && Array.isArray(s.rigs)) {
-      return { ...s, env: { ...DEFAULT_ENV, ...(s.env ?? {}) } } as Scene3DState;
+      return {
+        ...s,
+        env: { ...DEFAULT_ENV, ...(s.env ?? {}) },
+        motion: normalizeScene3DMotion(s.motion),
+      } as Scene3DState;
     }
     if (s.v === 1 && s.joints) {
       const v1 = s as Scene3DStateV1;
@@ -662,6 +673,7 @@ export function parseState(json?: string): Scene3DState | null {
         camera: v1.camera,
         light: v1.light,
         env: { ...DEFAULT_ENV },
+        motion: { ...DEFAULT_SCENE_3D_MOTION, keyframes: [] },
       };
     }
     return null;
