@@ -550,6 +550,7 @@ export function AssetSkillWorkspace({
                 schema={skill.inputSchema}
                 values={values}
                 errors={errors}
+                selectTone="dark"
                 onChange={(key, value) => {
                   setValues((current) => ({ ...current, [key]: value }));
                   setErrors((current) => {
@@ -596,6 +597,7 @@ export function AssetSkillWorkspace({
               <SkillRunPanel
                 run={skillRun.run}
                 actionBusy={skillRun.actionBusy}
+                inputSelectTone="dark"
                 onAction={performAction}
               />
               {archiveMessage && (

@@ -2454,15 +2454,15 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
           {node.storyboardFrame && (
             <>
               <div className="pointer-events-none absolute inset-x-0 top-0 z-[6] flex items-center gap-1.5 bg-gradient-to-b from-black/75 to-transparent px-2.5 pb-5 pt-2 text-white">
-                <span className="truncate text-[11px] font-medium drop-shadow">{node.title}</span>
+                <span className="truncate text-[11px] font-medium">{node.title}</span>
                 {node.storyboardFrame.shotSize && (
-                  <span className="shrink-0 rounded bg-white/20 px-1.5 py-0.5 text-[10px] backdrop-blur-sm">
+                  <span className="shrink-0 rounded border border-white/10 bg-black/45 px-1.5 py-0.5 text-[10px] text-white/90">
                     {node.storyboardFrame.shotSize}
                   </span>
                 )}
                 {node.storyboardFrame.motion && (
-                  <span className="min-w-0 truncate rounded bg-cyan-500/30 px-1.5 py-0.5 text-[10px] backdrop-blur-sm">
-                    {node.storyboardFrame.motion}
+                  <span className="min-w-0 truncate text-[10px] text-white/70">
+                    · {node.storyboardFrame.motion}
                   </span>
                 )}
               </div>
@@ -2470,7 +2470,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                 <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[6] bg-gradient-to-t from-black/85 via-black/55 to-transparent px-2.5 pb-2 pt-7 text-[10px] leading-4 text-white">
                   {node.storyboardFrame.description && <p className="line-clamp-2">{node.storyboardFrame.description}</p>}
                   {node.storyboardFrame.musicCue && (
-                    <p className="mt-0.5 truncate text-cyan-100">音乐：{node.storyboardFrame.musicCue}</p>
+                    <p className="mt-0.5 truncate text-white/65">音乐：{node.storyboardFrame.musicCue}</p>
                   )}
                 </div>
               )}

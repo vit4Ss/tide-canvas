@@ -729,9 +729,9 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
           type="button"
           onMouseDown={stop}
           onClick={handleClipReshoot}
-          disabled={nodeUploading || generating}
-          title={generating ? "生成完成后可片段重拍" : "基于当前视频重拍指定时间段"}
-          className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-neutral-800"
+          disabled={!node.videoSrc || nodeUploading || generating}
+          title={!node.videoSrc || nodeUploading ? "视频就绪后可片段重拍" : generating ? "生成完成后可片段重拍" : "基于当前视频重拍指定时间段"}
+          className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 transition-colors duration-150 hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none dark:hover:bg-neutral-800 dark:focus-visible:ring-neutral-600"
         >
           <Clapperboard className="h-4 w-4" aria-hidden />
           <span>片段重拍</span>
@@ -746,9 +746,9 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
           type="button"
           onMouseDown={stop}
           onClick={handleFrameBreakdown}
-          disabled={nodeUploading || generating}
-          title={generating ? "生成完成后可逐帧拉片" : "提取代表帧并按分镜分组"}
-          className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-neutral-800"
+          disabled={!node.videoSrc || nodeUploading || generating}
+          title={!node.videoSrc || nodeUploading ? "视频就绪后可逐帧拉片" : generating ? "生成完成后可逐帧拉片" : "提取代表帧并按分镜分组"}
+          className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 transition-colors duration-150 hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none dark:hover:bg-neutral-800 dark:focus-visible:ring-neutral-600"
         >
           <ScanLine className="h-4 w-4" aria-hidden />
           <span>逐帧拉片</span>

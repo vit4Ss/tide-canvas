@@ -11,6 +11,8 @@ import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-ca
 import { uploadFileSmart } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/http";
 import { toast } from "@/components/shared/toast";
+import { PopoverSelect } from "@/components/shared/popover-select";
+import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { CHARACTER_NODE_TYPE, SCENE_NODE_TYPE } from "@/lib/canvas-node-types";
 import {
   buildMannequinFigure, buildSkinnedFigure, parseState, lightPositionFromAngles, makeLabelSprite, characterNameByIndex,
@@ -87,6 +89,18 @@ const SHOT_RATIOS = [
   { label: "3:4", value: 3 / 4 },
 ] as const;
 
+const SHOT_RATIO_OPTIONS = SHOT_RATIOS.map((ratio) => ({
+  value: String(ratio.value),
+  label: ratio.label,
+}));
+
+const MOTION_EASING_OPTIONS: Array<{ value: Scene3DMotionEasing; label: string }> = [
+  { value: "linear", label: "匀速" },
+  { value: "easeIn", label: "渐快" },
+  { value: "easeOut", label: "渐慢" },
+  { value: "easeInOut", label: "平滑" },
+];
+
 const MOTION_PRESETS: Array<{ key: Scene3DMotionPreset; label: string }> = [
   { key: "pushIn", label: "推近" },
   { key: "pullOut", label: "拉远" },
@@ -148,6 +162,7 @@ function SliderRow({ label, value, min, max, step = 1, onChange, labelClass = "w
 
 export function Scene3DEditor({ node, onClose }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useFocusTrap<HTMLDivElement>(true);
   const apiRef = useRef<EditorApi | null>(null);
   const editorAliveRef = useRef(true);
   const updateNode = useCanvasStore((s) => s.updateNode);
@@ -1379,6 +1394,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
         else handleClose();
         return;
       }
+      if (element?.closest?.("button, a[href], [role='button'], [role='listbox']")) return;
       if (piloting && event.key === "Enter") {
         if (event.repeat) return;
         event.preventDefault();
@@ -1447,7 +1463,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
     }
   };
 
-  const btn = "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors";
+  const btn = "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 motion-reduce:transition-none";
   const chip = (active: boolean) => `${btn} ${active ? "bg-white text-slate-900" : "bg-white/10 hover:bg-white/20"}`;
   const selChar = sel?.kind === "char" ? charList.find((c) => c.id === sel.id) : null;
   const selRig = sel?.kind === "rig" ? rigList.find((r) => r.id === sel.id) : null;
@@ -1455,7 +1471,15 @@ export function Scene3DEditor({ node, onClose }: Props) {
   const formatMotionTime = (seconds: number) => `${seconds.toFixed(1)}s`;
 
   return createPortal(
-    <div className="fixed inset-0 z-[200] bg-slate-950" onMouseDown={(e) => e.stopPropagation()}>
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="3D 导演台"
+      tabIndex={-1}
+      className="fixed inset-0 z-[200] bg-slate-950 outline-none"
+      onMouseDown={(e) => e.stopPropagation()}
+    >
       <div ref={mountRef} className="h-full w-full cursor-grab active:cursor-grabbing" />
 
       {loading && !error && (
@@ -1737,10 +1761,10 @@ export function Scene3DEditor({ node, onClose }: Props) {
 
       {/* ===== 运镜工作台：掌镜、关键帧、轨迹预演 ===== */}
       {motionOpen && (
-        <div className="absolute bottom-20 left-1/2 w-[min(820px,calc(100vw-2rem))] -translate-x-1/2 rounded-2xl border border-white/10 bg-black/70 p-3 text-white shadow-2xl backdrop-blur-xl">
+        <div className="absolute bottom-20 left-1/2 w-[min(820px,calc(100vw-2rem))] -translate-x-1/2 rounded-2xl border border-white/10 bg-neutral-950/95 p-3 text-white shadow-[0_12px_32px_rgba(0,0,0,0.38)]">
           <div className="flex flex-wrap items-center gap-2">
             <div className="mr-auto flex items-center gap-2">
-              <Route className="h-4 w-4 text-cyan-300" />
+              <Route className="h-4 w-4 text-white/65" />
               <span className="text-sm font-semibold">运镜工作台</span>
               <span className="rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] text-white/55">{motion.keyframes.length} 个镜头</span>
             </div>
@@ -1749,11 +1773,13 @@ export function Scene3DEditor({ node, onClose }: Props) {
                 setPlaying(false);
                 apiRef.current?.setPilotMode(!piloting);
               }}
-              className={`${btn} flex items-center gap-1.5 ${piloting ? "bg-cyan-400 text-slate-950" : "bg-white/10 hover:bg-white/20"}`}
+              disabled={loading}
+              aria-pressed={piloting}
+              className={`${btn} flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-40 ${piloting ? "bg-white/15 text-white" : "bg-white/10 text-white/80 hover:bg-white/15 hover:text-white"}`}
             >
               <Crosshair className="h-3.5 w-3.5" /> {piloting ? "退出掌镜" : "开始掌镜"}
             </button>
-            <button onClick={recordMotionFrame} className={`${btn} flex items-center gap-1.5 bg-white text-slate-900 hover:bg-neutral-200`}>
+            <button disabled={loading} onClick={recordMotionFrame} className={`${btn} flex items-center gap-1.5 bg-white text-slate-900 hover:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-40`}>
               <Plus className="h-3.5 w-3.5" /> 记录镜头
             </button>
             <button
@@ -1768,7 +1794,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <span className="mr-1 text-[11px] text-white/45">一键运镜</span>
             {MOTION_PRESETS.map((preset) => (
-              <button key={preset.key} onClick={() => applyMotionPreset(preset.key)} className="rounded-md bg-white/8 px-2 py-1 text-[11px] text-white/75 hover:bg-white/15 hover:text-white">
+              <button key={preset.key} disabled={loading} onClick={() => applyMotionPreset(preset.key)} className="rounded-md bg-white/8 px-2 py-1 text-[11px] text-white/75 transition-colors duration-150 hover:bg-white/15 hover:text-white disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none">
                 {preset.label}
               </button>
             ))}
@@ -1802,7 +1828,9 @@ export function Scene3DEditor({ node, onClose }: Props) {
                 <button
                   key={frame.id}
                   onClick={() => { setPlaying(false); setSelectedFrameId(frame.id); previewMotionAt(frame.time); }}
-                  className={`absolute top-1 h-3 w-3 -translate-x-1/2 rounded-full border-2 transition-transform hover:scale-125 ${
+                  aria-label={`${frame.name}，${formatMotionTime(frame.time)}`}
+                  aria-pressed={selectedFrameId === frame.id}
+                  className={`absolute top-1 h-3 w-3 -translate-x-1/2 rounded-full border-2 transition-transform duration-150 hover:scale-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/80 motion-reduce:transition-none ${
                     selectedFrameId === frame.id ? "border-cyan-200 bg-cyan-400" : "border-slate-800 bg-white"
                   }`}
                   style={{ left: `${(frame.time / motion.duration) * 100}%` }}
@@ -1825,26 +1853,27 @@ export function Scene3DEditor({ node, onClose }: Props) {
             </label>
             <label className="flex items-center gap-1.5">
               缓动
-              <select
+              <PopoverSelect
                 value={motion.easing}
-                onChange={(event) => patchMotionSettings({ easing: event.target.value as Scene3DMotionEasing })}
-                className="rounded-md border border-white/15 bg-slate-900 px-1.5 py-1 text-white outline-none focus:border-cyan-400"
-              >
-                <option value="linear">匀速</option>
-                <option value="easeIn">渐快</option>
-                <option value="easeOut">渐慢</option>
-                <option value="easeInOut">平滑</option>
-              </select>
+                options={MOTION_EASING_OPTIONS}
+                onChange={(value) => patchMotionSettings({ easing: value as Scene3DMotionEasing })}
+                label="运镜缓动方式"
+                tone="director"
+                minMenuWidth={116}
+                className="h-7 min-w-[88px] px-2 py-1 text-[11px] font-medium"
+              />
             </label>
             <button
               onClick={() => patchMotionSettings({ loop: !motionRef.current.loop })}
-              className={`rounded-md px-2 py-1 ${motion.loop ? "bg-cyan-400 text-slate-950" : "bg-white/10 text-white/65 hover:bg-white/15"}`}
+              aria-pressed={motion.loop}
+              className={`rounded-md px-2 py-1 transition-colors duration-150 motion-reduce:transition-none ${motion.loop ? "bg-white/15 text-white" : "bg-white/[0.08] text-white/65 hover:bg-white/[0.12]"}`}
             >
               循环
             </button>
             <button
               onClick={() => patchMotionSettings({ showPath: !motionRef.current.showPath })}
-              className={`rounded-md px-2 py-1 ${motion.showPath ? "bg-cyan-400 text-slate-950" : "bg-white/10 text-white/65 hover:bg-white/15"}`}
+              aria-pressed={motion.showPath}
+              className={`rounded-md px-2 py-1 transition-colors duration-150 motion-reduce:transition-none ${motion.showPath ? "bg-white/15 text-white" : "bg-white/[0.08] text-white/65 hover:bg-white/[0.12]"}`}
             >
               路线常亮
             </button>
@@ -1881,8 +1910,8 @@ export function Scene3DEditor({ node, onClose }: Props) {
 
       {/* ===== 底部操作栏：预设机位 + 运镜 + 可选画幅截图 ===== */}
       <div className="absolute inset-x-0 bottom-6 flex justify-center px-4">
-        <div className="flex items-center gap-2 rounded-2xl bg-black/55 p-2 text-white backdrop-blur-md">
-          <span className="ml-1.5 shrink-0 text-xs font-medium text-white/60">视角</span>
+        <div className="panel-scroll flex max-w-full items-center gap-2 overflow-x-auto rounded-2xl border border-white/10 bg-neutral-950/90 p-2 text-white shadow-[0_8px_24px_rgba(0,0,0,0.28)]">
+          <span className="ml-1.5 hidden shrink-0 text-xs font-medium text-white/60 lg:inline">视角</span>
           <div className="flex items-center gap-1.5">
             {VIEW_NAMES.map((v) => (
               <button key={v} onClick={() => apiRef.current?.setView(v)} className={`${btn} bg-white/10 hover:bg-white/20`}>{v}</button>
@@ -1891,27 +1920,31 @@ export function Scene3DEditor({ node, onClose }: Props) {
           <div className="mx-1 h-5 w-px shrink-0 bg-white/15" />
           <button
             onClick={() => setMotionOpen((value) => !value)}
-            className={`${btn} flex items-center gap-1.5 ${motionOpen ? "bg-cyan-400 text-slate-950" : "bg-white/10 hover:bg-white/20"}`}
+            disabled={loading}
+            aria-expanded={motionOpen}
+            className={`${btn} flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-40 ${motionOpen ? "bg-white text-slate-900" : "bg-white/10 hover:bg-white/20"}`}
           >
             <Route className="h-3.5 w-3.5" /> 运镜{motion.keyframes.length ? ` ${motion.keyframes.length}` : ""}
           </button>
-          <select
-            value={shotAspect}
-            onChange={(event) => setShotAspect(Number(event.target.value))}
-            className="rounded-lg border border-white/10 bg-slate-900 px-2 py-1.5 text-xs text-white outline-none focus:border-white/30"
-            title="截图画幅"
-          >
-            {SHOT_RATIOS.map((ratio) => <option key={ratio.label} value={ratio.value}>{ratio.label}</option>)}
-          </select>
+          <PopoverSelect
+            value={String(shotAspect)}
+            options={SHOT_RATIO_OPTIONS}
+            onChange={(value) => setShotAspect(Number(value))}
+            label="截图画幅"
+            tone="director"
+            minMenuWidth={108}
+            className="h-8 min-w-[96px] px-2.5 py-1.5 text-xs font-semibold tabular-nums"
+          />
           <button
             onClick={handleShot}
-            disabled={busy}
+            disabled={busy || loading}
+            title={shotCount > 0 ? `截图到画布（已截 ${shotCount} 张）` : "截图到画布"}
             className="flex shrink-0 items-center gap-1.5 rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition-colors hover:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}
             截图到画布
           </button>
-          {shotCount > 0 && <span className="mr-1.5 shrink-0 text-xs tabular-nums text-white/60">已截 {shotCount} 张</span>}
+          {shotCount > 0 && <span className="mr-1.5 hidden shrink-0 text-xs tabular-nums text-white/60 xl:inline">已截 {shotCount} 张</span>}
         </div>
       </div>
     </div>,

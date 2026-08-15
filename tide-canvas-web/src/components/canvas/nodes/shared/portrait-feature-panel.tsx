@@ -9,7 +9,8 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { Check, ChevronsUpDown, ImagePlus, Loader2 } from "lucide-react";
+import { Check, ImagePlus, Loader2 } from "lucide-react";
+import { PopoverSelect } from "@/components/shared/popover-select";
 import { fallbackOssDisplayImage, ossDisplayUrl, restoreOssDisplayImage } from "@/lib/oss-display";
 
 export type PortraitFeaturePanelMode = "makeup" | "expression" | "texture";
@@ -684,17 +685,18 @@ export function PortraitFeaturePanel({
 
         <div className="flex shrink-0 items-center gap-2">
           {availableResolutions.length > 0 ? (
-            <div className={`${resolutionWidthClass} relative h-10 shrink-0`}>
-              <select
-                value={activeResolution}
-                onChange={(event) => setResolution(event.target.value as PortraitFeatureResolution)}
-                className={`h-full w-full cursor-pointer appearance-none rounded-full border-0 pl-3 pr-7 text-xs font-medium text-neutral-600 outline-none ${mode === "expression" ? "bg-transparent hover:bg-neutral-50" : "bg-neutral-50 hover:bg-neutral-100"} dark:bg-white/5 dark:text-white/65 dark:hover:bg-white/8`}
-                aria-label="输出清晰度"
-              >
-                {availableResolutions.map((option) => <option key={option} value={option}>{option.toUpperCase()}</option>)}
-              </select>
-              <ChevronsUpDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-400" />
-            </div>
+            <PopoverSelect
+              value={activeResolution}
+              options={availableResolutions.map((option) => ({
+                value: option,
+                label: option.toUpperCase(),
+              }))}
+              onChange={(value) => setResolution(value as PortraitFeatureResolution)}
+              label="输出清晰度"
+              minMenuWidth={88}
+              className={`${resolutionWidthClass} h-10 shrink-0 rounded-full border-0 pl-3 pr-2 text-xs font-medium text-neutral-600 ${mode === "expression" ? "bg-transparent hover:bg-neutral-50" : "bg-neutral-50 hover:bg-neutral-100"} dark:bg-white/5 dark:text-white/65 dark:hover:bg-white/8`}
+              menuClassName="rounded-xl border-neutral-200 bg-white text-neutral-700 shadow-lg dark:border-white/10 dark:bg-neutral-950 dark:text-white/80"
+            />
           ) : null}
           <button
             type="button"

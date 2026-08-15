@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { AudioLines, Film, Loader2, Play, ScanLine } from "lucide-react";
+import { AudioLines, Film, Play, ScanLine, Square } from "lucide-react";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { captureVideoFrame, VideoFrameError } from "@/lib/video-frame";
 import { useAuthStore } from "@/stores/use-auth-store";
@@ -14,6 +14,7 @@ import {
 } from "@/stores/use-canvas-store";
 import { AiModelType, AiTaskStatus, type AiModelVO, type AiTaskVO } from "@/types/ai";
 import { toast } from "@/components/shared/toast";
+import CapturableVideo from "@/components/studio/create-studio/video-result";
 import { NodeHeader } from "./base/node-header";
 import { NodePorts } from "./base/node-ports";
 import { NodeShell } from "./shared/node-overlays";
@@ -237,6 +238,18 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
     patchBreakdownConfig({ analysisModes: next });
   }, [analysisModes, patchBreakdownConfig]);
 
+  const cancelBreakdown = useCallback(() => {
+    if (!analyzing) return;
+    runRef.current += 1;
+    const taskId = analysisTaskIdRef.current;
+    analysisTaskIdRef.current = null;
+    if (taskId) void aiApi.cancelTask(taskId).catch(() => undefined);
+    setAnalyzing(false);
+    setStage("frames");
+    setProgress({ done: 0, total: 0 });
+    toast.info("已停止逐帧拉片");
+  }, [analyzing]);
+
   const startBreakdown = useCallback(async () => {
     if (analyzing) return;
     if (!sourceVideoSrc || !sourceVideoId) {
@@ -351,6 +364,7 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
         toast.success(`拉片完成，已生成并分析 ${frames.length} 张分镜帧`);
       }
     } catch (error) {
+      if (!active()) return;
       const message = error instanceof VideoFrameError
         ? error.message
         : error instanceof Error && error.message
@@ -369,7 +383,7 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
     <NodeShell node={node} isSelected={isSelected} isDragging={isDragging} onNodeMouseDown={onNodeMouseDown}>
       <div className="relative" style={{ width: BREAKDOWN_NODE_WIDTH }}>
         <div
-          className={`relative overflow-hidden rounded-2xl bg-white shadow-sm ring-1 transition-all dark:bg-neutral-950 ${
+          className={`relative overflow-hidden rounded-2xl bg-white shadow-sm ring-1 transition-[box-shadow] duration-150 motion-reduce:transition-none dark:bg-neutral-950 ${
             isConnectTarget ? "ring-2 ring-blue-500/70"
               : isSelected ? "ring-2 ring-neutral-400 dark:ring-neutral-600"
                 : "ring-neutral-200 hover:ring-neutral-300 dark:ring-neutral-800 dark:hover:ring-neutral-700"
@@ -378,12 +392,13 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
         >
           <div className="h-[138px] bg-neutral-950">
             {sourceVideoSrc ? (
-              <video
+              <CapturableVideo
                 src={sourceVideoSrc}
                 muted
                 playsInline
                 preload="metadata"
                 controls
+                showFrameCapture={false}
                 disablePictureInPicture
                 controlsList="nodownload noremoteplayback"
                 className="h-full w-full object-contain"
@@ -391,9 +406,10 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
                 onMouseDown={stopInteraction}
                 onClick={stopInteraction}
                 onLoadedMetadata={(event) => {
+                  const mediaDuration = event.currentTarget.duration;
                   setVideoMeta({
                     src: sourceVideoSrc,
-                    duration: event.currentTarget.duration || 0,
+                    duration: Number.isFinite(mediaDuration) && mediaDuration > 0 ? mediaDuration : 0,
                     w: event.currentTarget.videoWidth,
                     h: event.currentTarget.videoHeight,
                   });
@@ -401,7 +417,7 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
               />
             ) : (
               <div className="flex h-full flex-col items-center justify-center gap-2 text-neutral-500">
-                <Play className="h-8 w-8" fill="currentColor" />
+                <Play className="h-8 w-8" fill="currentColor" aria-hidden />
                 <span className="text-xs">连接视频后开始拉片</span>
               </div>
             )}
@@ -416,62 +432,89 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
               </span>
               <span>{dims.w && dims.h ? `${dims.w} × ${dims.h}` : "原始分辨率"}</span>
             </div>
-            <div className="flex items-center justify-between rounded-lg bg-neutral-50 px-2 py-1 text-[11px] text-neutral-500 dark:bg-neutral-900 dark:text-neutral-400">
+            <div className="flex items-center justify-between border-t border-neutral-100 pt-1.5 text-[11px] text-neutral-500 dark:border-neutral-800 dark:text-neutral-400">
               <span className="flex min-w-0 items-center gap-1.5">
                 <AudioLines className="h-3.5 w-3.5 shrink-0" />
                 <span className="truncate">{audioInput.id ? audioInput.title || "已连接音频" : "未连接音频（音乐为画面配乐建议）"}</span>
               </span>
               {audioInput.count > 1 && <span className="shrink-0">1/{audioInput.count}</span>}
             </div>
-            <div className="flex items-center gap-1.5" role="group" aria-label="分析维度">
-              {ANALYSIS_MODES.map((mode) => {
-                const active = analysisModes.includes(mode.value);
-                return (
-                  <button
-                    key={mode.value}
-                    type="button"
-                    title={mode.title}
-                    onMouseDown={stopInteraction}
-                    onClick={(event) => { event.stopPropagation(); toggleAnalysisMode(mode.value); }}
-                    disabled={analyzing}
-                    className={`rounded-full px-2.5 py-1 text-[11px] transition-colors ${active
-                      ? "bg-cyan-100 text-cyan-700 dark:bg-cyan-950 dark:text-cyan-300"
-                      : "bg-neutral-100 text-neutral-500 dark:bg-neutral-900 dark:text-neutral-400"}`}
-                  >
-                    {mode.label}
-                  </button>
-                );
-              })}
+            <div className="flex items-center gap-2">
+              <span className="w-7 shrink-0 text-[11px] text-neutral-400 dark:text-neutral-500">分析</span>
+              <div className="flex min-w-0 flex-1 gap-0.5 rounded-lg bg-neutral-100 p-0.5 dark:bg-neutral-900" role="group" aria-label="分析维度">
+                {ANALYSIS_MODES.map((mode) => {
+                  const active = analysisModes.includes(mode.value);
+                  return (
+                    <button
+                      key={mode.value}
+                      type="button"
+                      title={mode.title}
+                      aria-pressed={active}
+                      onMouseDown={stopInteraction}
+                      onClick={(event) => { event.stopPropagation(); toggleAnalysisMode(mode.value); }}
+                      disabled={analyzing}
+                      className={`flex-1 rounded-md px-2 py-1 text-[11px] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none dark:focus-visible:ring-neutral-600 ${active
+                        ? "bg-white font-medium text-neutral-900 dark:bg-neutral-700 dark:text-white"
+                        : "text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-100"}`}
+                    >
+                      {mode.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            <div className="flex items-center gap-1.5" role="group" aria-label="拉片密度">
-              {DENSITIES.map((density) => (
-                <button
-                  key={density.count}
-                  type="button"
-                  onMouseDown={stopInteraction}
-                  onClick={(event) => { event.stopPropagation(); patchBreakdownConfig({ frameCount: density.count }); }}
-                  disabled={analyzing}
-                  className={`flex-1 rounded-lg border px-2 py-1 text-[11px] transition-colors ${
-                    frameCount === density.count
-                      ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
-                      : "border-neutral-200 text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
-                  }`}
-                >
-                  {density.label} · {density.count} 帧
-                </button>
-              ))}
+            <div className="flex items-center gap-2">
+              <span className="w-7 shrink-0 text-[11px] text-neutral-400 dark:text-neutral-500">密度</span>
+              <div className="flex min-w-0 flex-1 gap-1.5" role="group" aria-label="拉片密度">
+                {DENSITIES.map((density) => {
+                  const active = frameCount === density.count;
+                  return (
+                    <button
+                      key={density.count}
+                      type="button"
+                      aria-pressed={active}
+                      onMouseDown={stopInteraction}
+                      onClick={(event) => { event.stopPropagation(); patchBreakdownConfig({ frameCount: density.count }); }}
+                      disabled={analyzing}
+                      className={`flex-1 rounded-lg border px-2 py-1 text-[11px] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none dark:focus-visible:ring-neutral-600 ${
+                        active
+                          ? "border-neutral-900 bg-neutral-900 font-medium text-white dark:border-white dark:bg-white dark:text-neutral-900"
+                          : "border-neutral-200 text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+                      }`}
+                    >
+                      {density.label} · {density.count} 帧
+                    </button>
+                  );
+                })}
+              </div>
             </div>
             <button
               type="button"
               onMouseDown={stopInteraction}
-              onClick={(event) => { event.stopPropagation(); void startBreakdown(); }}
-              disabled={analyzing || !sourceVideoSrc}
-              className="flex h-8 w-full items-center justify-center gap-2 rounded-lg bg-neutral-900 text-xs font-medium text-white transition-colors hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+              onClick={(event) => {
+                event.stopPropagation();
+                if (analyzing) cancelBreakdown();
+                else void startBreakdown();
+              }}
+              disabled={!sourceVideoSrc}
+              aria-busy={analyzing}
+              className={`relative flex h-8 w-full items-center justify-center overflow-hidden rounded-lg text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none dark:focus-visible:ring-neutral-600 ${analyzing
+                ? "bg-neutral-700 text-white hover:bg-neutral-600 dark:bg-neutral-200 dark:text-neutral-900 dark:hover:bg-neutral-300"
+                : "bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"}`}
             >
-              {analyzing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ScanLine className="h-3.5 w-3.5" />}
-              {analyzing
-                ? stage === "analysis" ? "正在进行镜头语义分析…" : `正在截帧 ${progress.done}/${progress.total} · ${progressPct}%`
-                : `${node.videoBreakdown?.lastFrameCount ? "再次拉片" : "开始拉片"}${analysisPointCost != null ? ` · ⚡ ${Math.ceil(analysisPointCost)}` : ""}`}
+              <span className="relative z-[1] flex items-center gap-2" aria-live="polite">
+                {analyzing ? <Square className="h-3 w-3 fill-current" aria-hidden /> : <ScanLine className="h-3.5 w-3.5" aria-hidden />}
+                {analyzing
+                  ? stage === "analysis" ? "停止语义分析" : `停止拉片 · ${progress.done}/${progress.total} · ${progressPct}%`
+                  : `${node.videoBreakdown?.lastFrameCount ? "再次拉片" : "开始拉片"}${analysisPointCost != null ? ` · ${Math.ceil(analysisPointCost)} 积分` : ""}`}
+              </span>
+              {analyzing && (
+                <span
+                  className="absolute inset-x-0 bottom-0 h-0.5 origin-left bg-white/35 transition-transform duration-200 motion-reduce:transition-none dark:bg-neutral-900/30"
+                  style={{ transform: `scaleX(${progressPct / 100})` }}
+                  aria-hidden
+                />
+              )}
             </button>
           </div>
         </div>

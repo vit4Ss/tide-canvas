@@ -6,6 +6,7 @@ import { defaultSkillInputValues, validateSkillInputValues } from "@/lib/skill-a
 import type { SkillRunAction, SkillRunArtifactVO, SkillRunVO } from "@/types/skill-run";
 import { isSkillRunActive, isSkillRunTerminal, skillRunError } from "@/types/skill-run";
 import { SkillInputFields } from "./skill-input-fields";
+import type { PopoverSelectTone } from "@/components/shared/popover-select";
 import CapturableVideo from "@/components/studio/create-studio/video-result";
 import styles from "./skill-run-panel.module.css";
 
@@ -31,6 +32,7 @@ export interface SkillRunPanelProps {
     payload?: SkillRunPanelActionPayload,
   ) => void | Promise<unknown>;
   compact?: boolean;
+  inputSelectTone?: PopoverSelectTone;
   onArtifact?: (artifact: SkillRunArtifactVO) => void;
   artifactActionLabel?: string | ((artifact: SkillRunArtifactVO) => string);
   actionBusy?: boolean;
@@ -56,6 +58,7 @@ export function SkillRunPanel({
   run,
   onAction,
   compact = false,
+  inputSelectTone = "default",
   onArtifact,
   artifactActionLabel = "使用",
   actionBusy = false,
@@ -247,6 +250,7 @@ export function SkillRunPanel({
             errors={inputErrors}
             disabled={busy}
             compact={compact}
+            selectTone={inputSelectTone}
             onChange={(key, value) => {
               setInputDirty(true);
               setInputValues((current) => ({ ...current, [key]: value }));

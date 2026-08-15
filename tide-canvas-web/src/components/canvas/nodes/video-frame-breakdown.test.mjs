@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   buildStoryboardOutputs,
@@ -7,6 +8,8 @@ import {
   parseStoryboardAnalysis,
   sampleStoryboardTimes,
 } from "./video-frame-breakdown.ts";
+
+const read = (relative) => readFileSync(new URL(relative, import.meta.url), "utf8");
 
 test("storyboard sampling uses evenly spaced representative frames", () => {
   assert.deepEqual(sampleStoryboardTimes(12, 4), [1.5, 4.5, 7.5, 10.5]);
@@ -87,4 +90,26 @@ test("storyboard analysis prompt and parser keep frame indexes stable", () => {
   ] }), 2);
   assert.deepEqual(parsed.map((item) => item.index), [1, 2]);
   assert.deepEqual(parseStoryboardAnalysis("not-json", 2), []);
+});
+
+test("breakdown controls expose clear state and restrained progress feedback", () => {
+  const breakdownNode = read("./video-breakdown-node.tsx");
+  const imageNode = read("./image-node.tsx");
+  const editor = read("./scene-3d-editor.tsx");
+  const videoNode = read("./video-node.tsx");
+
+  assert.match(breakdownNode, /aria-pressed=\{active\}/);
+  assert.match(breakdownNode, /aria-busy=\{analyzing\}/);
+  assert.match(breakdownNode, /aria-live="polite"/);
+  assert.match(breakdownNode, /const cancelBreakdown = useCallback/);
+  assert.match(breakdownNode, /\} catch \(error\) \{\s*if \(!active\(\)\) return;\s*const message = error instanceof VideoFrameError/);
+  assert.match(breakdownNode, /if \(analyzing\) cancelBreakdown\(\)/);
+  assert.match(breakdownNode, /<CapturableVideo[\s\S]*showFrameCapture=\{false\}/);
+  assert.doesNotMatch(breakdownNode, /<video\b/);
+  assert.match(breakdownNode, /style=\{\{ transform: `scaleX\(\$\{progressPct \/ 100\}\)` \}\}/);
+  assert.doesNotMatch(breakdownNode, /⚡|rounded-full|bg-cyan/);
+  assert.match(imageNode, /storyboardFrame\.motion[\s\S]*text-white\/70/);
+  assert.match(editor, /aria-pressed=\{motion\.loop\}/);
+  assert.match(editor, /aria-expanded=\{motionOpen\}/);
+  assert.match(videoNode, /disabled=\{!node\.videoSrc \|\| nodeUploading \|\| generating\}/);
 });

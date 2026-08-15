@@ -2,7 +2,7 @@
 
 import { useId, useMemo, type CSSProperties } from "react";
 import { skillInputFields } from "@/lib/skill-api";
-import { PopoverSelect } from "@/components/shared/popover-select";
+import { PopoverSelect, type PopoverSelectTone } from "@/components/shared/popover-select";
 import type { SkillInputSchema } from "@/types/skill";
 import styles from "./skill-run-panel.module.css";
 
@@ -13,6 +13,7 @@ export function SkillInputFields({
   onChange,
   disabled = false,
   compact = false,
+  selectTone = "default",
   className,
   style,
 }: {
@@ -22,6 +23,7 @@ export function SkillInputFields({
   onChange: (key: string, value: unknown) => void;
   disabled?: boolean;
   compact?: boolean;
+  selectTone?: PopoverSelectTone;
   className?: string;
   style?: CSSProperties;
 }) {
@@ -62,6 +64,7 @@ export function SkillInputFields({
               </span>
             ) : field.type === "select" ? (
               <PopoverSelect
+                id={id}
                 value={typeof value === "string" || typeof value === "number" ? String(value) : ""}
                 options={[
                   { value: "", label: "请选择" },
@@ -72,7 +75,10 @@ export function SkillInputFields({
                   onChange(field.key, hit?.value ?? picked);
                 }}
                 label={field.label}
+                ariaDescribedBy={error ? errorId : undefined}
+                invalid={!!error}
                 disabled={disabled}
+                tone={selectTone}
                 className="min-h-9 w-full px-2.5 py-1.5 text-xs"
               />
             ) : field.type === "textarea" ? (

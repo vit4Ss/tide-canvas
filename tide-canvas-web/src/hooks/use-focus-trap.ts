@@ -41,12 +41,21 @@ export function useFocusTrap<T extends HTMLElement = HTMLDivElement>(active: boo
       const first = items[0];
       const last = items[items.length - 1];
       const activeEl = document.activeElement as HTMLElement | null;
+      // 自绘下拉等浮层会 portal 到 body。它们在 DOM 上不属于 dialog，但在交互上
+      // 仍由 dialog 内的触发器拥有；用锚点替代当前浮层焦点参与首尾判断。
+      const portal = activeEl?.closest<HTMLElement>("[data-focus-trap-portal]");
+      const portalId = portal?.dataset.focusTrapPortal;
+      const portalAnchor = portalId
+        ? Array.from(container.querySelectorAll<HTMLElement>("[data-focus-trap-anchor]"))
+            .find((element) => element.dataset.focusTrapAnchor === portalId) ?? null
+        : null;
+      const focusOrigin = container.contains(activeEl) ? activeEl : portalAnchor;
       if (e.shiftKey) {
-        if (activeEl === first || !container.contains(activeEl)) {
+        if (focusOrigin === first || !focusOrigin) {
           e.preventDefault();
           last.focus();
         }
-      } else if (activeEl === last || !container.contains(activeEl)) {
+      } else if (focusOrigin === last || !focusOrigin) {
         e.preventDefault();
         first.focus();
       }

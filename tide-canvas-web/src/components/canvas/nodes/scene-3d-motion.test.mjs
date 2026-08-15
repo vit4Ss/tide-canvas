@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   normalizedScene3DMotionPoseAt,
@@ -7,6 +8,8 @@ import {
   scene3DMotionPoseAt,
   scene3DMotionPresetPoses,
 } from "./scene-3d-motion.ts";
+
+const editorSource = readFileSync(new URL("./scene-3d-editor.tsx", import.meta.url), "utf8");
 
 const motion = {
   duration: 4,
@@ -91,4 +94,12 @@ test("motion presets produce useful push, truck and orbit endpoints", () => {
   const degenerateTruck = scene3DMotionPresetPoses("truckRight", degeneratePose);
   assert.notDeepEqual(degeneratePush[1].position, degeneratePush[0].position);
   assert.notDeepEqual(degenerateTruck[1].position, degenerateTruck[0].position);
+});
+
+test("director editor traps focus and isolates global shortcuts from controls", () => {
+  assert.match(editorSource, /useFocusTrap<HTMLDivElement>\(true\)/);
+  assert.match(editorSource, /role="dialog"[\s\S]*aria-modal="true"[\s\S]*aria-label="3D 导演台"/);
+  assert.match(editorSource, /closest\?\.\("button, a\[href\], \[role='button'\], \[role='listbox'\]"\)/);
+  assert.match(editorSource, /disabled=\{loading\}[\s\S]*aria-pressed=\{piloting\}/);
+  assert.match(editorSource, /max-w-full[\s\S]*overflow-x-auto/);
 });
