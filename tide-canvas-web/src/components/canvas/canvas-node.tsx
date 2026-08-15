@@ -8,6 +8,7 @@ import { TextNode } from "./nodes/text-node";
 import { ScriptNode } from "./nodes/script-node";
 import { Scene3DNode } from "./nodes/scene-3d-node";
 import { VideoComposeNode } from "./nodes/video-compose-node";
+import { VideoBreakdownNode } from "./nodes/video-breakdown-node";
 import { STYLE_REFERENCE_NODE_TYPE, StyleReferenceNode } from "./nodes/style-reference-node";
 import { DefaultNode } from "./nodes/components/default-node";
 import type { CanvasNodeProps } from "./nodes/types/node-props";
@@ -32,6 +33,8 @@ export const CanvasNodeComponent = memo(function CanvasNodeComponent(props: Canv
       return <Scene3DNode {...props} />;
     case "video_compose":
       return <VideoComposeNode {...props} />;
+    case "video_breakdown":
+      return <VideoBreakdownNode {...props} />;
     case STYLE_REFERENCE_NODE_TYPE:
       return <StyleReferenceNode {...props} />;
     default:

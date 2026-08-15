@@ -182,6 +182,48 @@ func TestStoredCanvasNodeFeaturesConfigPreservesCustomizedV3EmptyPolicy(t *testi
 	}
 }
 
+func TestStoredCanvasNodeFeaturesConfigMigratesV6DefaultVideoWithClipReshoot(t *testing.T) {
+	raw := `{"version":6,"nodeTypes":[{"key":"video","enabled":true,"sortOrder":5,"features":["media.replace","media.download","media.preview"]}]}`
+
+	got := StoredCanvasNodeFeaturesConfig(raw)
+	features := canvasNodeConfigByKey(got.NodeTypes)["video"].Features
+	if !reflect.DeepEqual(features, videoNodeDefaultFeatures) {
+		t.Fatalf("migrated V6 video features = %#v, want %#v", features, videoNodeDefaultFeatures)
+	}
+}
+
+func TestStoredCanvasNodeFeaturesConfigPreservesCustomizedV6VideoPolicy(t *testing.T) {
+	raw := `{"version":6,"nodeTypes":[{"key":"video","enabled":true,"sortOrder":5,"features":["media.preview"]}]}`
+
+	got := StoredCanvasNodeFeaturesConfig(raw)
+	features := canvasNodeConfigByKey(got.NodeTypes)["video"].Features
+	want := []string{"media.preview"}
+	if !reflect.DeepEqual(features, want) {
+		t.Fatalf("customized V6 video features = %#v, want %#v", features, want)
+	}
+}
+
+func TestStoredCanvasNodeFeaturesConfigMigratesV7DefaultVideoWithFrameBreakdown(t *testing.T) {
+	raw := `{"version":7,"nodeTypes":[{"key":"video","enabled":true,"sortOrder":5,"features":["video.clipReshoot","media.replace","media.download","media.preview"]}]}`
+
+	got := StoredCanvasNodeFeaturesConfig(raw)
+	features := canvasNodeConfigByKey(got.NodeTypes)["video"].Features
+	if !reflect.DeepEqual(features, videoNodeDefaultFeatures) {
+		t.Fatalf("migrated V7 video features = %#v, want %#v", features, videoNodeDefaultFeatures)
+	}
+}
+
+func TestStoredCanvasNodeFeaturesConfigPreservesCustomizedV7VideoPolicy(t *testing.T) {
+	raw := `{"version":7,"nodeTypes":[{"key":"video","enabled":true,"sortOrder":5,"features":["video.clipReshoot","media.preview"]}]}`
+
+	got := StoredCanvasNodeFeaturesConfig(raw)
+	features := canvasNodeConfigByKey(got.NodeTypes)["video"].Features
+	want := []string{"video.clipReshoot", "media.preview"}
+	if !reflect.DeepEqual(features, want) {
+		t.Fatalf("customized V7 video features = %#v, want %#v", features, want)
+	}
+}
+
 func TestCharacterOnlyReceivesNewImageFeaturesByDefault(t *testing.T) {
 	newFeatures := []string{
 		"image.subjectTurnaround",

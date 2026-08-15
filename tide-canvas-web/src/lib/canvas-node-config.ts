@@ -16,7 +16,7 @@ import type {
   CanvasNodeTypeConfigVO,
 } from "@/types/canvas-node-config";
 
-export const CANVAS_NODE_CONFIG_VERSION = 6;
+export const CANVAS_NODE_CONFIG_VERSION = 8;
 
 export const PORTRAIT_NODE_DEFAULT_FEATURES: CanvasNodeFeatureKey[] = [
   "image.subjectTurnaround",
@@ -47,6 +47,8 @@ export const IMAGE_NODE_DEFAULT_FEATURES: CanvasNodeFeatureKey[] = [
 ];
 
 export const VIDEO_NODE_FEATURES: CanvasNodeFeatureKey[] = [
+  "video.clipReshoot",
+  "video.frameBreakdown",
   "media.replace",
   "media.download",
   "media.preview",

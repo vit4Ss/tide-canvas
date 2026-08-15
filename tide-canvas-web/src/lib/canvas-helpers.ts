@@ -86,6 +86,7 @@ function layoutLayeredGrid(
   gaps: LayoutGaps,
   childrenMap: Map<string, string[]>,
   parentsMap: Map<string, string[]>,
+  groupOfNode: Map<string, string>,
 ): { pos: Map<string, { x: number; y: number }>; width: number; height: number } {
   const { layerGap, colGap, rowGap } = gaps;
   const realW = (n: CanvasNode) => n.contentW ?? n.width;
@@ -127,15 +128,36 @@ function layoutLayeredGrid(
     }
   }
 
-  // 每层按高度上限决定列数（小层单列），按重心顺序顺序填充
+  // 每层按高度上限决定列数（小层单列）。同组成员作为不可拆分单元装箱，避免
+  // 分镜组恰好跨过折列边界后被拉成横跨多列的巨大组框。
   const blocks = depths.map((d) => {
     const layerIds = order.get(d)!;
     const n = layerIds.length;
     const singleH = layerIds.reduce((s, id) => s + realH(nodeMap.get(id)!), 0) + rowGap * Math.max(0, n - 1);
     const nCols = Math.max(1, Math.min(n, Math.ceil(singleH / MAX_COL_H)));
-    const perCol = Math.ceil(n / nCols);
-    const subCols: string[][] = [];
-    for (let c = 0; c < nCols; c++) subCols.push(layerIds.slice(c * perCol, (c + 1) * perCol));
+    const unitByKey = new Map<string, string[]>();
+    const unitOrder: string[] = [];
+    for (const id of layerIds) {
+      const key = groupOfNode.get(id) ?? `node:${id}`;
+      if (!unitByKey.has(key)) {
+        unitByKey.set(key, []);
+        unitOrder.push(key);
+      }
+      unitByKey.get(key)!.push(id);
+    }
+    const subCols: string[][] = Array.from({ length: nCols }, () => []);
+    const packedHeights = new Array<number>(nCols).fill(0);
+    for (const key of unitOrder) {
+      const unit = unitByKey.get(key)!;
+      let targetCol = 0;
+      for (let col = 1; col < nCols; col++) {
+        if (packedHeights[col] < packedHeights[targetCol]) targetCol = col;
+      }
+      if (subCols[targetCol].length) packedHeights[targetCol] += rowGap;
+      subCols[targetCol].push(...unit);
+      packedHeights[targetCol] += unit.reduce((sum, id) => sum + realH(nodeMap.get(id)!), 0)
+        + rowGap * Math.max(0, unit.length - 1);
+    }
     const colW = Math.max(...layerIds.map((id) => realW(nodeMap.get(id)!)));
     const heights = subCols.map((col) => col.reduce((s, id) => s + realH(nodeMap.get(id)!), 0) + rowGap * Math.max(0, col.length - 1));
     const blockW = nCols * colW + colGap * (nCols - 1);
@@ -219,6 +241,12 @@ export function autoArrangeNodes(
   const gaps: LayoutGaps = { layerGap: 160, colGap: 40, rowGap: 40 };
   const bandGap = 140; // 不同连通分量（独立链路 / 孤立节点组）之间的竖向间距，强调彼此无关
   const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+  const groupOfNode = new Map<string, string>();
+  for (const group of groups) {
+    for (const id of group.nodeIds) {
+      if (nodeMap.has(id) && !groupOfNode.has(id)) groupOfNode.set(id, group.id);
+    }
+  }
   const realW = (n: CanvasNode) => n.contentW ?? n.width;
   const realH = (n: CanvasNode) => n.contentH ?? n.height;
 
@@ -308,7 +336,7 @@ export function autoArrangeNodes(
   // 组装各 band：每条链路（含成组的素材簇）一条，孤立节点素材网格垫底
   const bands: { ids: string[]; pos: Map<string, { x: number; y: number }>; height: number }[] = [];
   for (const comp of linked) {
-    const { pos, height } = layoutLayeredGrid(comp, depthOf, nodeMap, gaps, children, parents);
+    const { pos, height } = layoutLayeredGrid(comp, depthOf, nodeMap, gaps, children, parents, groupOfNode);
     bands.push({ ids: comp, pos, height });
   }
   if (singletons.length) {

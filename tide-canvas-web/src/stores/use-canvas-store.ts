@@ -55,6 +55,10 @@ export interface CanvasNode {
   /** 组图：一次生成的全部图片(如 Midjourney 一组 4 张)；imageSrc 始终等于其中的「主图」 */
   images?: string[];
   videoSrc?: string;
+  /** 浏览器从实际视频元数据读取的时长与像素尺寸；上传素材没有生成参数时仍可供派生功能使用。 */
+  mediaDuration?: number;
+  mediaWidth?: number;
+  mediaHeight?: number;
   fileSize?: number;
   fileType?: string;
   mimeType?: string;
@@ -86,6 +90,28 @@ export interface CanvasNode {
     resolution?: string;
     duration?: number;
     batchCount?: number;
+  };
+  /** 视频节点的派生创作场景；用于恢复对应模式与输入引导。 */
+  videoOperation?: "clip_reshoot";
+  /** 逐帧拉片节点的持久化参数与最近一次输出摘要。 */
+  videoBreakdown?: {
+    frameCount: number;
+    framesPerGroup: number;
+    lastFrameCount?: number;
+    runCount?: number;
+    analysisModes?: Array<"storyboard" | "motion" | "music">;
+  };
+  /** 拉片产出的紧凑分镜帧；仍按普通图片节点参与连接和后续创作。 */
+  storyboardFrame?: {
+    sourceVideoId: string;
+    processorId?: string;
+    timeSec: number;
+    index: number;
+    run?: number;
+    shotSize?: string;
+    motion?: string;
+    description?: string;
+    musicCue?: string;
   };
   /** 卡片实际渲染尺寸（按图片比例计算）；供连线层把端点锚定到卡片真实边缘中点，实现默认居中对齐 */
   contentW?: number;
@@ -155,7 +181,12 @@ interface CanvasState {
   // 节点操作
   addNode: (node: CanvasNode, recordHistory?: boolean) => void;
   /** Skill 多产物一次性落画布：单次 undo、单次 store 通知，避免自动保存中间态。 */
-  addNodesAndConnections: (nodes: CanvasNode[], connections: Connection[], selectNodeId?: string) => void;
+  addNodesAndConnections: (
+    nodes: CanvasNode[],
+    connections: Connection[],
+    selectNodeId?: string,
+    groups?: CanvasGroup[],
+  ) => void;
   updateNode: (id: string, data: Partial<CanvasNode>, recordHistory?: boolean) => void;
   /** 批量移动节点位置（拖拽多选时使用，单次 set，不记录历史） */
   updateNodePositions: (updates: Array<{ id: string; x: number; y: number }>) => void;
@@ -467,7 +498,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     };
   }),
 
-  addNodesAndConnections: (nodes, connections, selectNodeId) => set((state) => {
+  addNodesAndConnections: (nodes, connections, selectNodeId, groups = []) => set((state) => {
     const existingNodeIds = new Set(state.nodes.map((node) => node.id));
     const nextNodes = nodes.filter((node, index, list) =>
       !existingNodeIds.has(node.id) && list.findIndex((candidate) => candidate.id === node.id) === index,
@@ -484,12 +515,25 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         `${candidate.sourceId}\u0000${candidate.targetId}\u0000${candidate.targetSlot ?? ""}` === pair,
       ) === index;
     });
-    if (nextNodes.length === 0 && nextConnections.length === 0) return state;
+    const existingGroupIds = new Set(state.groups.map((group) => group.id));
+    const nextGroups = groups
+      .filter((group, index, list) =>
+        !existingGroupIds.has(group.id)
+        && list.findIndex((candidate) => candidate.id === group.id) === index,
+      )
+      .map((group) => ({
+        ...group,
+        nodeIds: [...new Set(group.nodeIds.filter((id) => availableNodeIds.has(id)))],
+      }))
+      .filter((group) => group.nodeIds.length > 0);
+    if (nextNodes.length === 0 && nextConnections.length === 0 && nextGroups.length === 0) return state;
 
     const canSelect = !!selectNodeId && availableNodeIds.has(selectNodeId);
+    const groupedNodeIds = new Set(nextGroups.flatMap((group) => group.nodeIds));
     return {
       nodes: [...state.nodes, ...nextNodes.map(normalizeNode)],
       connections: [...state.connections, ...nextConnections],
+      groups: [...pruneGroups(state.groups, groupedNodeIds), ...nextGroups],
       selectedNodeId: canSelect ? selectNodeId! : state.selectedNodeId,
       selectedNodeIds: canSelect ? new Set([selectNodeId]) : state.selectedNodeIds,
       undoStack: [...state.undoStack.slice(-MAX_HISTORY + 1), snapshot(state)],

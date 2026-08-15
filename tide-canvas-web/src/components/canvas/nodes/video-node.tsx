@@ -2,7 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCanvasStore, generateNodeId } from "@/stores/use-canvas-store";
-import { Video, Upload, Camera, Loader2, Play, Pause, Download, Maximize2, Zap, Layers, Sparkles, Copy } from "lucide-react";
+import { Video, Upload, Camera, Loader2, Play, Pause, Download, Maximize2, Zap, Layers, Sparkles, Copy, Clapperboard, ScanLine } from "lucide-react";
 import { toast } from "@/components/shared/toast";
 import { parseRatio } from "./quality-ratio-picker";
 import { VideoParamPicker, normalizeDurations, type VideoParamValue } from "./video-param-picker";
@@ -29,6 +29,13 @@ import { GenerateSubmitButton, NodeDimsBadge, NodeErrorBadge, NodeGeneratingOver
 import CapturableVideo from "@/components/studio/create-studio/video-result";
 import { useReferenceVideoQuote } from "@/hooks/use-reference-video-quote";
 import type { ModelConfig } from "@/types/admin-models";
+import {
+  buildClipReshootNode,
+  selectClipReshootModel,
+  supportsVideoReference,
+  validateClipReshootPrompt,
+} from "./video-clip-reshoot";
+import { BREAKDOWN_NODE_HEIGHT, BREAKDOWN_NODE_WIDTH } from "./video-frame-breakdown";
 
 // 各模式（Tab）对连接源节点的数量/类型限制：hover 时提示，生成时校验。文生视频无需连接。
 const TAB_LIMITS: Record<string, { hint: string; min: number; max: number; types: string[] }> = {
@@ -170,7 +177,12 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     AiModelType.VIDEO,
     node.generationConfig?.modelId,
   );
-  const [videoTab, setVideoTab] = useState("文生视频");
+  const isClipReshoot = node.videoOperation === "clip_reshoot";
+  const selectableVideoModels = isClipReshoot
+    ? videoModels.filter(supportsVideoReference)
+    : videoModels;
+  const clipReshootModelReady = !isClipReshoot || (!!selectedModel && supportsVideoReference(selectedModel));
+  const [videoTab, setVideoTab] = useState(isClipReshoot ? "全能参考" : "文生视频");
   const [previewOpen, setPreviewOpen] = useState(false);
   const { promptExpanded, setPromptExpanded, handlePromptChange } = useNodePrompt(node, node.videoSrc);
   const { downloading, download: handleDownload } = useFileDownload();
@@ -198,6 +210,13 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   const objUrlRef = useRef<string | null>(null);
   const resolvingRef = useRef(false);
   useMediaErrorRecovery(node, node.videoSrc, generating);
+
+  // 片段重拍只能走视频参考模型；恢复旧画布或后台调整模型能力后也自动收敛到可用模型。
+  useEffect(() => {
+    if (!isClipReshoot || supportsVideoReference(selectedModel ?? { supportedHandlers: [] })) return;
+    const replacement = selectClipReshootModel(videoModels, selectedModelId);
+    if (replacement && replacement.modelId !== selectedModelId) setSelectedModelId(replacement.modelId);
+  }, [isClipReshoot, selectedModel, selectedModelId, setSelectedModelId, videoModels]);
 
   // ===== 引用（@ 提及）系统：入边源节点 → 可内联引用的「图片N」/「视频N」 =====
   const refsSig = useCanvasStore((s) =>
@@ -275,9 +294,11 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   // 当前选中视频模型 → 解析 config（限定清晰度/比例/时长/音频）→ 差异化计费
   // 模型支持的模式 Tab：后台对模型勾选了 supportedHandlers 时只显示对应模式；未配置 = 全部
   const modelHandlers = selectedModel?.supportedHandlers;
-  const visibleTabs = ALL_TABS.filter(
-    (t) => !modelHandlers || modelHandlers.length === 0 || modelHandlers.includes(TAB_HANDLER[t])
-  );
+  const visibleTabs = isClipReshoot
+    ? (selectedModel && supportsVideoReference(selectedModel) ? ["全能参考"] : [])
+    : ALL_TABS.filter(
+        (t) => !modelHandlers || modelHandlers.length === 0 || modelHandlers.includes(TAB_HANDLER[t]),
+      );
   const rawConfig = parseModelConfig<ModelConfig & { audio?: boolean }>(selectedModel);
   // 时长在后台存成带单位、可能乱序的字符串("4s")；规整成升序秒数供选择器/校正/生成
   // 统一按数字处理。durations 显式为空数组时保持"无此维度"语义(不回退默认档)。
@@ -368,6 +389,10 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   // effect 互相打架(A 设「文生视频」→ B 发现不可见设回 → A 再设……),
   // 在仅支持 i2v 的模型 + 无连接素材时会进入 setState 死循环卡死页面。
   useEffect(() => {
+    if (isClipReshoot) {
+      if (videoTab !== "全能参考") setVideoTab("全能参考");
+      return;
+    }
     const lim = TAB_LIMITS[videoTab];
     if (!lim) return;
     let m = 0;
@@ -380,7 +405,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     }
     // visibleTabs 由 selectedModelId 派生(数组引用每次渲染变化),不列入依赖
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imgCount, vidCount, videoTab, selectedModelId]);
+  }, [imgCount, isClipReshoot, vidCount, videoTab, selectedModelId]);
 
   // 切换模型后当前模式不被该模型支持 → 回退到其第一个可用模式
   useEffect(() => {
@@ -527,17 +552,99 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     }
   }, [node.prompt]);
 
+  const handleClipReshoot = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    stop(event);
+    if (!node.videoSrc || nodeUploading || generating) return;
+
+    const referenceModel = selectClipReshootModel(videoModels, selectedModelId);
+    if (!referenceModel) {
+      toast.error("当前没有支持视频参考的模型，暂时无法片段重拍");
+      return;
+    }
+
+    const state = useCanvasStore.getState();
+    const newId = generateNodeId();
+    const { x, y } = findRightColumnSpot(state.nodes, node, cardW, cardW);
+    state.addNodesAndConnections(
+      [buildClipReshootNode({
+        source: node,
+        id: newId,
+        x,
+        y,
+        modelId: referenceModel.modelId,
+        ratio: videoParam.ratio,
+        resolution: videoParam.resolution,
+        duration: videoParam.duration,
+      })],
+      [{
+        id: `conn_${node.id}_${newId}`,
+        sourceId: node.id,
+        targetId: newId,
+      }],
+      newId,
+    );
+    toast.info("已创建片段重拍节点，请按时间段描述要重拍的画面");
+  }, [cardW, generating, node, nodeUploading, selectedModelId, videoModels, videoParam.duration, videoParam.ratio, videoParam.resolution]);
+
+  const handleFrameBreakdown = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    stop(event);
+    if (!node.videoSrc || nodeUploading || generating) return;
+    const state = useCanvasStore.getState();
+    const newId = generateNodeId();
+    const { x, y } = findRightColumnSpot(state.nodes, node, cardW, BREAKDOWN_NODE_WIDTH);
+    state.addNodesAndConnections(
+      [{
+        id: newId,
+        type: "video_breakdown",
+        x,
+        y,
+        width: BREAKDOWN_NODE_WIDTH,
+        height: BREAKDOWN_NODE_HEIGHT,
+        contentW: BREAKDOWN_NODE_WIDTH,
+        contentH: BREAKDOWN_NODE_HEIGHT,
+        title: "逐帧拉片",
+        videoBreakdown: {
+          frameCount: 12,
+          framesPerGroup: 4,
+          runCount: 0,
+          analysisModes: ["storyboard", "motion"],
+        },
+        status: "idle",
+      }],
+      [{ id: `conn_${node.id}_${newId}`, sourceId: node.id, targetId: newId }],
+      newId,
+    );
+    toast.info("已创建逐帧拉片节点，可选择密度后开始拉片");
+  }, [cardW, generating, node, nodeUploading]);
+
   const handleGenerate = () => {
+    if (!clipReshootModelReady) {
+      toast.error("当前没有支持视频参考的模型，暂时无法片段重拍");
+      return;
+    }
     const st = useCanvasStore.getState();
     const incoming = st.connections.filter((c) => c.targetId === node.id);
     const sources = getIncomingSources(st, node.id);
     if (!validateReferenceFileSizes(sources.filter((n) => n.imageSrc || n.videoSrc), selectedModel)) return;
-    const limit = TAB_LIMITS[videoTab];
+    const effectiveVideoTab = isClipReshoot ? "全能参考" : videoTab;
+    const limit = TAB_LIMITS[effectiveVideoTab];
     // 分别收集「真正有素材」的图片 / 视频参考 URL
     const imageUrls = sources.filter((n) => isImageReferenceNodeType(n.type) && n.imageSrc).map((n) => n.imageSrc as string);
     const videoUrls = sources.filter((n) => n.type === "video" && n.videoSrc).map((n) => n.videoSrc as string);
     // 文本节点没有独立下发通道，正文只能落进 prompt——顺序与 refs 的「文本N」编号同源
     const finalPrompt = inlineIncomingTextRefs(node.prompt || "", sources);
+    if (isClipReshoot) {
+      const sourceVideo = sources.find((source) => source.type === "video" && source.videoSrc);
+      const rangeError = validateClipReshootPrompt(finalPrompt, sourceVideo?.mediaDuration);
+      if (rangeError) {
+        toast.error(rangeError);
+        return;
+      }
+      if (!sourceVideo) {
+        toast.error("片段重拍需要连接一个已有视频");
+        return;
+      }
+    }
     // 校验基于实际可用素材数（排除连了但还没生成的空节点）
     const total = imageUrls.length + videoUrls.length;
     if (limit && (total < limit.min || total > limit.max)) {
@@ -555,18 +662,18 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     };
     let handler = "text_to_video";
     let input: Record<string, unknown> = base;
-    if (videoTab === "图生视频") {
+    if (effectiveVideoTab === "图生视频") {
       // 图作首帧
       handler = "image_to_video";
       input = { ...base, sourceImage: imageUrls[0] };
-    } else if (videoTab === "首尾帧") {
+    } else if (effectiveVideoTab === "首尾帧") {
       handler = "start_end_to_video";
       input = { ...base, firstFrame: imageUrls[0], lastFrame: imageUrls[1] ?? imageUrls[0] };
-    } else if (videoTab === "图片参考") {
+    } else if (effectiveVideoTab === "图片参考") {
       // 图作纯参考（无首帧）
       handler = "reference_to_video";
       input = { ...base, references: imageUrls };
-    } else if (videoTab === "全能参考") {
+    } else if (effectiveVideoTab === "全能参考") {
       // 图片 + 视频 + 文字多模态参考综合（图→reference_image、视频→reference_video）
       handler = "reference_to_video";
       input = { ...base, references: imageUrls, videoReferences: videoUrls };
@@ -590,6 +697,13 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         title: node.title || "视频节点",
         prompt: node.prompt,
         aspectRatio: node.aspectRatio,
+        generationConfig: {
+          ...node.generationConfig,
+          modelId: selectedModelId || node.generationConfig?.modelId,
+          resolution: videoParam.resolution,
+          duration: videoParam.duration,
+        },
+        videoOperation: node.videoOperation,
         status: "idle",
       }, true);
       // 克隆入边连线，使新节点拥有与原节点完全相同的参考输入
@@ -607,6 +721,40 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   };
 
   const topToolbarActions: ConfigurableNodeToolbarAction[] = [
+    {
+      key: "video.clipReshoot",
+      group: "creative",
+      content: (
+        <button
+          type="button"
+          onMouseDown={stop}
+          onClick={handleClipReshoot}
+          disabled={nodeUploading || generating}
+          title={generating ? "生成完成后可片段重拍" : "基于当前视频重拍指定时间段"}
+          className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-neutral-800"
+        >
+          <Clapperboard className="h-4 w-4" aria-hidden />
+          <span>片段重拍</span>
+        </button>
+      ),
+    },
+    {
+      key: "video.frameBreakdown",
+      group: "creative",
+      content: (
+        <button
+          type="button"
+          onMouseDown={stop}
+          onClick={handleFrameBreakdown}
+          disabled={nodeUploading || generating}
+          title={generating ? "生成完成后可逐帧拉片" : "提取代表帧并按分镜分组"}
+          className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-neutral-800"
+        >
+          <ScanLine className="h-4 w-4" aria-hidden />
+          <span>逐帧拉片</span>
+        </button>
+      ),
+    },
     {
       key: "media.replace",
       group: "media",
@@ -668,7 +816,24 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                 disablePictureInPicture
                 controlsList="nodownload noremoteplayback"
                 className="h-full w-full bg-black object-contain"
-                onLoadedMetadata={(e) => { setVideoDims({ w: e.currentTarget.videoWidth, h: e.currentTarget.videoHeight }); setDuration(e.currentTarget.duration || 0); }}
+                onLoadedMetadata={(e) => {
+                  const width = e.currentTarget.videoWidth;
+                  const height = e.currentTarget.videoHeight;
+                  const nextDuration = e.currentTarget.duration || 0;
+                  setVideoDims({ w: width, h: height });
+                  setDuration(nextDuration);
+                  if (node.videoSrc && (
+                    Math.abs((node.mediaDuration ?? 0) - nextDuration) > 0.01
+                    || node.mediaWidth !== width
+                    || node.mediaHeight !== height
+                  )) {
+                    updateNode(node.id, {
+                      mediaDuration: nextDuration,
+                      mediaWidth: width,
+                      mediaHeight: height,
+                    }, false);
+                  }
+                }}
                 onDurationChange={(e) => setDuration(e.currentTarget.duration || 0)}
                 onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
                 onPlay={() => setPlaying(true)}
@@ -788,8 +953,10 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                 refs={refs}
                 value={node.prompt || ""}
                 onChange={handlePromptChange}
-                onSubmit={() => { if (hasPromptSource && !generating && !nodeUploading && !referenceVideoQuote.loading) handleGenerate(); }}
-                placeholder="描述你想要生成的画面内容，@ 引用已连接素材（图片1/文本1…）"
+                onSubmit={() => { if (hasPromptSource && clipReshootModelReady && !generating && !nodeUploading && !referenceVideoQuote.loading) handleGenerate(); }}
+                placeholder={isClipReshoot
+                  ? "按时间段描述需要重拍的内容，例如：\n00:00–00:04 瞳孔改成红色\n00:03–00:06 慢慢从红色变为蓝色"
+                  : "描述你想要生成的画面内容，@ 引用已连接素材（图片1/文本1…）"}
               />
               <PromptEditorModal
                 open={promptExpanded}
@@ -797,12 +964,14 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                 value={node.prompt || ""}
                 onChange={handlePromptChange}
                 refs={refs}
-                placeholder="描述你想要生成的画面内容，@ 引用已连接素材（图片1/文本1…）"
+                placeholder={isClipReshoot
+                  ? "按时间段描述需要重拍的内容，例如：\n00:00–00:04 瞳孔改成红色\n00:03–00:06 慢慢从红色变为蓝色"
+                  : "描述你想要生成的画面内容，@ 引用已连接素材（图片1/文本1…）"}
               />
               {/* 底部栏(对齐参考产品):左 = 模型 · 模式 · 参数摘要;右 = 复制/展开 · 积分 · 发送 */}
               <div className="mt-2 flex items-center justify-between gap-2">
                 <div className="flex min-w-0 flex-nowrap items-center gap-0.5 text-xs text-neutral-600 dark:text-neutral-400">
-                  <ModelPicker models={videoModels} value={selectedModelId} onChange={setSelectedModelId} />
+                  <ModelPicker models={selectableVideoModels} value={selectedModelId} onChange={setSelectedModelId} />
                   <VideoModeDropdown
                     tabs={visibleTabs}
                     value={videoTab}
@@ -846,10 +1015,10 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                     {referenceVideoQuote.loading ? "…" : referenceVideoQuote.failed ? "待核验" : Math.ceil(pointCost)}
                   </span>
                   <GenerateSubmitButton
-                    disabled={!hasPromptSource || generating || nodeUploading || referenceVideoQuote.loading}
+                    disabled={!hasPromptSource || !clipReshootModelReady || generating || nodeUploading || referenceVideoQuote.loading}
                     generating={generating}
-                    title={generating ? "生成中..." : nodeUploading ? "素材上传中..." : referenceVideoQuote.loading ? "正在核验参考视频时长..." : !hasPromptSource ? "先输入提示词" : "开始生成"}
-                    onClick={() => { if (hasPromptSource && !generating && !nodeUploading && !referenceVideoQuote.loading) handleGenerate(); }}
+                    title={generating ? "生成中..." : nodeUploading ? "素材上传中..." : referenceVideoQuote.loading ? "正在核验参考视频时长..." : !clipReshootModelReady ? "没有支持视频参考的模型" : !hasPromptSource ? "先输入提示词" : "开始生成"}
+                    onClick={() => { if (hasPromptSource && clipReshootModelReady && !generating && !nodeUploading && !referenceVideoQuote.loading) handleGenerate(); }}
                   />
                 </div>
               </div>

@@ -67,7 +67,7 @@ type gridSplitDTO struct {
 	Cells    []int  `json:"cells"`
 }
 
-// capturedFrameDTO promotes a freshly uploaded PNG into generation history.
+// capturedFrameDTO promotes a freshly uploaded PNG/JPEG into generation history.
 // FileID is authoritative: the service verifies that the upload belongs to the
 // caller, creates a completed AiTask, then removes the ordinary upload record in
 // the same transaction so the frame appears in exactly one asset collection.

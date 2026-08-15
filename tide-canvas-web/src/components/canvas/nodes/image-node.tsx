@@ -722,7 +722,9 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const explicitRatio = node.aspectRatio || (!node.imageSrc ? qualityRatio.ratio : null);
   const ratioParsed = explicitRatio ? parseRatio(explicitRatio) : null;
   const cardAspect = ratioParsed ? ratioParsed.w / ratioParsed.h : (node.imageSrc && imgAspect ? imgAspect : 1);
-  const { w: cardW, h: cardH } = fitCardSize(cardAspect, explicitRatio);
+  const { w: cardW, h: cardH } = node.storyboardFrame
+    ? { w: 280, h: Math.max(120, Math.round(280 / cardAspect)) }
+    : fitCardSize(cardAspect, explicitRatio);
   const promptPanelW = Math.max(640, cardW + PANEL_EXTRA);
   const linkedStyleSig = useCanvasStore((s) =>
     s.connections
@@ -2448,6 +2450,32 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
           style={{ width: cardW, height: cardH }}
           withBorder={false}
         >
+          {/* 拉片分镜的编号与语义标签必须常驻，不能依赖节点选中态；否则成组浏览时无法识别镜头。 */}
+          {node.storyboardFrame && (
+            <>
+              <div className="pointer-events-none absolute inset-x-0 top-0 z-[6] flex items-center gap-1.5 bg-gradient-to-b from-black/75 to-transparent px-2.5 pb-5 pt-2 text-white">
+                <span className="truncate text-[11px] font-medium drop-shadow">{node.title}</span>
+                {node.storyboardFrame.shotSize && (
+                  <span className="shrink-0 rounded bg-white/20 px-1.5 py-0.5 text-[10px] backdrop-blur-sm">
+                    {node.storyboardFrame.shotSize}
+                  </span>
+                )}
+                {node.storyboardFrame.motion && (
+                  <span className="min-w-0 truncate rounded bg-cyan-500/30 px-1.5 py-0.5 text-[10px] backdrop-blur-sm">
+                    {node.storyboardFrame.motion}
+                  </span>
+                )}
+              </div>
+              {(node.storyboardFrame.description || node.storyboardFrame.musicCue) && (
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[6] bg-gradient-to-t from-black/85 via-black/55 to-transparent px-2.5 pb-2 pt-7 text-[10px] leading-4 text-white">
+                  {node.storyboardFrame.description && <p className="line-clamp-2">{node.storyboardFrame.description}</p>}
+                  {node.storyboardFrame.musicCue && (
+                    <p className="mt-0.5 truncate text-cyan-100">音乐：{node.storyboardFrame.musicCue}</p>
+                  )}
+                </div>
+              )}
+            </>
+          )}
           {/* 组图徽标：在「展开为多个节点 / 收起」之间切换 */}
           {groupImages && !generating && (
             <button

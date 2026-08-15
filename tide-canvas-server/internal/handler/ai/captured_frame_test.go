@@ -98,3 +98,31 @@ func TestRegisterCapturedFrameRejectsAnotherUsersUpload(t *testing.T) {
 		t.Fatalf("error = %v, want not found", err)
 	}
 }
+
+func TestRegisterCapturedFrameAcceptsCompressedJPEG(t *testing.T) {
+	db := capturedFrameTestDB(t)
+	ownerID := idgen.ID(74001)
+	fileID := idgen.ID(74002)
+	if err := db.Create(&model.User{
+		ID: ownerID, Username: "jpeg-owner", Email: "jpeg-owner@example.test",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	uploaded := model.File{
+		ID: fileID, OwnerID: ownerID, OriginalName: "storyboard.jpg",
+		FileUrl: "https://cdn.example.test/storyboard.jpg", FileSize: 2048, FileType: "image", MimeType: "image/jpeg",
+	}
+	if err := db.Create(&uploaded).Error; err != nil {
+		t.Fatal(err)
+	}
+	svc := &service{repo: newRepo(db)}
+	result, err := svc.registerCapturedFrame(context.Background(), ownerID, capturedFrameDTO{
+		FileID: fileID, CaptureTime: 1.5, Width: 1920, Height: 1080,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ResultURL != uploaded.FileUrl {
+		t.Fatalf("result URL = %q, want %q", result.ResultURL, uploaded.FileUrl)
+	}
+}

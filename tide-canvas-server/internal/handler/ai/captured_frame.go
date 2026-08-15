@@ -24,7 +24,7 @@ var (
 	errCapturedFrameInvalid  = errors.New("captured frame upload is invalid")
 )
 
-// registerCapturedFrame moves a newly uploaded PNG from upload history into a
+// registerCapturedFrame moves a newly uploaded PNG/JPEG from upload history into a
 // completed, zero-cost generation-history task. The File row is an upload-time
 // ownership receipt; once the AiTask exists it becomes the durable owner of the
 // same object URL, so deleting the File row does not delete the stored object.
@@ -103,7 +103,8 @@ func (s *service) registerCapturedFrame(ctx context.Context, userID idgen.ID, dt
 			}
 			return err
 		}
-		if uploaded.FileType != "image" || !strings.EqualFold(strings.TrimSpace(uploaded.MimeType), "image/png") ||
+		mimeType := strings.ToLower(strings.TrimSpace(uploaded.MimeType))
+		if uploaded.FileType != "image" || (mimeType != "image/png" && mimeType != "image/jpeg" && mimeType != "image/jpg") ||
 			strings.TrimSpace(uploaded.FileUrl) == "" {
 			return errCapturedFrameInvalid
 		}

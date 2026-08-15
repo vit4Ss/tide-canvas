@@ -91,7 +91,7 @@ export const aiApi = {
     http.get<{ cost: number }>("/api/ai/optimize-cost"),
   gridSplit: (imageUrl: string, rows: number, cols: number, cells?: number[]) =>
     http.post<string[]>("/api/ai/grid-split", { imageUrl, rows, cols, ...(cells && cells.length ? { cells } : {}) }),
-  /** Move an uploaded PNG into generation history. The endpoint is idempotent by fileId. */
+  /** Move an uploaded PNG/JPEG frame into generation history. The endpoint is idempotent by fileId. */
   registerCapturedFrame: async (data: CapturedFrameDTO) => {
     const first = await http.post<AiTaskVO>("/api/ai/tasks/frame-capture", data);
     return retryableUploadResult(first)

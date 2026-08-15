@@ -17,7 +17,7 @@ import (
 // registered features are enabled for each registered node type.
 const ConfigKeyCanvasNodeFeatures = "canvas.nodeFeatures.v1"
 
-const CanvasNodeFeaturesVersion = 6
+const CanvasNodeFeaturesVersion = 8
 
 const canvasNodeFeaturesV1 = 1
 
@@ -28,6 +28,10 @@ const canvasNodeFeaturesV3 = 3
 const canvasNodeFeaturesV4 = 4
 
 const canvasNodeFeaturesV5 = 5
+
+const canvasNodeFeaturesV6 = 6
+
+const canvasNodeFeaturesV7 = 7
 
 const canvasNodeFeaturesDescription = "Canvas node type and toolbar feature policy (versioned JSON)"
 
@@ -172,7 +176,9 @@ var canvasNodeV3VideoDefaultFeatures = []string{
 
 var canvasNodeV4VideoDefaultFeatures = append(cloneStrings(canvasNodeV3VideoDefaultFeatures), "skill.launcher")
 
-var videoNodeDefaultFeatures = cloneStrings(canvasNodeV3VideoDefaultFeatures)
+var canvasNodeV7VideoDefaultFeatures = append([]string{"video.clipReshoot"}, canvasNodeV3VideoDefaultFeatures...)
+
+var videoNodeDefaultFeatures = append([]string{"video.clipReshoot", "video.frameBreakdown"}, canvasNodeV3VideoDefaultFeatures...)
 
 var canvasNodeV4SkillLauncherOnlyDefaultFeatures = []string{"skill.launcher"}
 
@@ -299,6 +305,14 @@ var CanvasNodeFeatureCatalog = []CanvasNodeFeatureDefinition{
 	{
 		Key: "image.gridSplit", Title: "宫格切分", Description: "把宫格图片切分为独立素材",
 		Group: "image", SupportedRenderers: []string{"image"},
+	},
+	{
+		Key: "video.clipReshoot", Title: "片段重拍", Description: "基于当前视频创建可按时间段描述修改内容的参考视频节点",
+		Group: "video", SupportedRenderers: []string{"video"},
+	},
+	{
+		Key: "video.frameBreakdown", Title: "逐帧拉片", Description: "提取视频代表帧并按时间顺序生成分镜组",
+		Group: "video", SupportedRenderers: []string{"video"},
 	},
 	{
 		Key: "media.replace", Title: "重新上传", Description: "替换节点当前的媒体文件",
@@ -455,6 +469,12 @@ func StoredCanvasNodeFeaturesConfig(raw string) CanvasNodeFeaturesConfig {
 	if parsed.Version == canvasNodeFeaturesV5 {
 		parsed = migrateCanvasNodeFeaturesV5(parsed)
 	}
+	if parsed.Version == canvasNodeFeaturesV6 {
+		parsed = migrateCanvasNodeFeaturesV6(parsed)
+	}
+	if parsed.Version == canvasNodeFeaturesV7 {
+		parsed = migrateCanvasNodeFeaturesV7(parsed)
+	}
 	normalized, err := NormalizeCanvasNodeFeaturesConfig(parsed)
 	if err != nil {
 		return DefaultCanvasNodeFeaturesConfig()
@@ -565,7 +585,7 @@ func migrateCanvasNodeFeaturesV4(input CanvasNodeFeaturesConfig) CanvasNodeFeatu
 // feature catalog; otherwise a valid V5 document would be rejected wholesale
 // and replaced with defaults.
 func migrateCanvasNodeFeaturesV5(input CanvasNodeFeaturesConfig) CanvasNodeFeaturesConfig {
-	input.Version = CanvasNodeFeaturesVersion
+	input.Version = canvasNodeFeaturesV6
 	for i := range input.NodeTypes {
 		features := make([]string, 0, len(input.NodeTypes[i].Features))
 		for _, feature := range input.NodeTypes[i].Features {
@@ -575,6 +595,39 @@ func migrateCanvasNodeFeaturesV5(input CanvasNodeFeaturesConfig) CanvasNodeFeatu
 			features = append(features, feature)
 		}
 		input.NodeTypes[i].Features = features
+	}
+	return input
+}
+
+// migrateCanvasNodeFeaturesV6 enables clip reshoot for an untouched video
+// toolbar. Customized orders and explicit opt-outs stay unchanged; the new
+// feature remains available in the admin catalog for manual assignment.
+func migrateCanvasNodeFeaturesV6(input CanvasNodeFeaturesConfig) CanvasNodeFeaturesConfig {
+	input.Version = canvasNodeFeaturesV7
+	for i := range input.NodeTypes {
+		if strings.TrimSpace(input.NodeTypes[i].Key) != "video" {
+			continue
+		}
+		if sameTrimmedStrings(input.NodeTypes[i].Features, canvasNodeV3VideoDefaultFeatures) {
+			input.NodeTypes[i].Features = cloneStrings(canvasNodeV7VideoDefaultFeatures)
+		}
+		break
+	}
+	return input
+}
+
+// migrateCanvasNodeFeaturesV7 adds frame breakdown to an untouched V7 video
+// toolbar while preserving custom ordering and explicit opt-outs.
+func migrateCanvasNodeFeaturesV7(input CanvasNodeFeaturesConfig) CanvasNodeFeaturesConfig {
+	input.Version = CanvasNodeFeaturesVersion
+	for i := range input.NodeTypes {
+		if strings.TrimSpace(input.NodeTypes[i].Key) != "video" {
+			continue
+		}
+		if sameTrimmedStrings(input.NodeTypes[i].Features, canvasNodeV7VideoDefaultFeatures) {
+			input.NodeTypes[i].Features = cloneStrings(videoNodeDefaultFeatures)
+		}
+		break
 	}
 	return input
 }
