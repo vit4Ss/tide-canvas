@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, Sparkles } from "lucide-react";
+import { resolveModelSwatch } from "@/lib/model-brand";
 import type { AiModelVO } from "@/types/ai";
 
 interface Props {
@@ -83,15 +84,25 @@ function parseMeta(model: AiModelVO): ModelMeta {
   }
 }
 
-function ModelGlyph({ icon, className = "h-4 w-4" }: { icon?: string; className?: string }) {
-  if (icon && /^(https?:|data:image|\/)/.test(icon)) {
-    // eslint-disable-next-line @next/next/no-img-element
-    return <img src={icon} alt="" className={`${className} rounded object-cover`} />;
-  }
-  if (icon && !icon.includes("<svg")) {
-    return <span className="text-base leading-none">{icon}</span>;
-  }
-  return <Sparkles className={`${className} text-neutral-500 dark:text-neutral-300`} />;
+function ModelGlyph({ model, className = "h-4 w-4" }: {
+  model?: Pick<AiModelVO, "name" | "modelId" | "icon">;
+  className?: string;
+}) {
+  if (!model) return <Sparkles className={`${className} text-neutral-500 dark:text-neutral-300`} />;
+  const swatch = resolveModelSwatch({
+    name: model.name,
+    modelKey: model.modelId,
+    icon: model.icon,
+  });
+  return (
+    <span
+      aria-hidden
+      className={`${className} inline-flex shrink-0 items-center justify-center overflow-hidden font-semibold leading-none text-neutral-700`}
+      style={swatch.style}
+    >
+      {swatch.glyph}
+    </span>
+  );
 }
 
 function modelTypeLabel(type: string) {
@@ -264,7 +275,7 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
           }}
           className="flex h-8 max-w-[190px] items-center gap-1.5 rounded-lg px-2.5 text-[11px] text-neutral-800 transition-colors hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 dark:text-neutral-200 dark:hover:bg-white/8"
         >
-          <ModelGlyph icon={selected.icon} className="h-3.5 w-3.5" />
+          <ModelGlyph model={selected} className="h-3.5 w-3.5 rounded text-[9px]" />
           <span className="min-w-0 max-w-[134px] truncate font-normal">{selected.name || triggerLabel || "选择模型"}</span>
         </button>
       );
@@ -275,7 +286,7 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
         onMouseDown={stop}
         className="flex h-8 max-w-[190px] items-center gap-1.5 rounded-lg px-2.5 text-[11px] text-neutral-800 transition-colors hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 dark:text-neutral-200 dark:hover:bg-white/8"
       >
-        <ModelGlyph icon={selected?.icon} className="h-3.5 w-3.5" />
+        <ModelGlyph model={selected} className="h-3.5 w-3.5 rounded text-[9px]" />
         <span className="min-w-0 max-w-[134px] truncate font-normal">{selected?.name || triggerLabel || "选择模型"}</span>
         <span className="sr-only">当前模型：{selected?.name || "未选择"}</span>
       </span>
@@ -295,7 +306,7 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
         onClick={toggle}
         className="flex h-8 max-w-[190px] items-center gap-1.5 rounded-lg px-2.5 text-[11px] text-neutral-700 transition-colors hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 dark:text-neutral-300 dark:hover:bg-white/8"
       >
-        <ModelGlyph icon={selected?.icon} className="h-3.5 w-3.5" />
+        <ModelGlyph model={selected} className="h-3.5 w-3.5 rounded text-[9px]" />
         <span className="min-w-0 max-w-[134px] truncate font-normal">{selected?.name || triggerLabel || "选择模型"}</span>
         <ChevronDown className={`h-3 w-3 shrink-0 text-neutral-400 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
@@ -343,9 +354,7 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
                       : "text-neutral-900 hover:bg-neutral-50 focus-visible:bg-neutral-50 dark:text-neutral-100 dark:hover:bg-white/8 dark:focus-visible:bg-white/8"
                   }`}
                 >
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-50 text-neutral-700 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.02)] dark:bg-white/8 dark:text-neutral-200">
-                    <ModelGlyph icon={model.icon} className="h-[18px] w-[18px]" />
-                  </span>
+                  <ModelGlyph model={model} className="h-9 w-9 rounded-lg text-[12px]" />
                   <span className="min-w-0 flex-1">
                     <span className="flex min-w-0 items-center gap-1.5">
                       <span className="truncate text-[13px] font-semibold leading-5">{model.name}</span>

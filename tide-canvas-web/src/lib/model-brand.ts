@@ -77,7 +77,7 @@ const RULES: Array<[RegExp, string]> = [
   [/deepseek/i, "deepseek"],
   [/claude/i, "claude"],
   [/anthropic/i, "anthropic"],
-  [/grok|xai/i, "grok"],
+  [/grok|(?:^|[^a-z0-9])x[._ -]?ai(?:[^a-z0-9]|$)/i, "grok"],
 ];
 
 /** 按 modelKey / 名称自动匹配品牌图标 URL；无法识别时返回 null（调用方回退
@@ -89,11 +89,30 @@ export function matchBrandIcon(...keys: Array<string | undefined>): string | nul
   return null;
 }
 
-/* ── 共享 swatch 解析（chat / 创作台的模型选择器共用一份，防止漂移） ─────── */
+/* ── 共享 swatch 解析（Chat / 创作台 / 画布的模型选择器共用一份，防止漂移） ── */
 
 /** true when an icon value is an image URL (vs. an emoji / short glyph). */
 export function isIconUrl(icon: string): boolean {
-  return /^(https?:)?\/\//.test(icon) || icon.startsWith("/");
+  const value = icon.trim();
+  return /^(?:(?:https?:)?\/\/|\/|data:image\/)/i.test(value);
+}
+
+/** 过滤不受支持的原始 SVG 标记；data:image SVG 仍属于合法图片 URL。 */
+function configuredIconValue(icon?: string | null): string {
+  const value = icon?.trim() || "";
+  return value && (isIconUrl(value) || !/<svg(?:\s|>)/i.test(value)) ? value : "";
+}
+
+/** CSS url() 需要转义引号；对未编码的 SVG data URL 编码完整 payload。 */
+function cssImageUrl(url: string): string {
+  const comma = url.indexOf(",");
+  if (/^data:image\/svg\+xml(?:;[^,]*)?,/i.test(url) && comma >= 0) {
+    const payload = url.slice(comma + 1);
+    if (/<svg(?:\s|>)/i.test(payload)) {
+      return `${url.slice(0, comma + 1)}${encodeURIComponent(payload)}`;
+    }
+  }
+  return url.replace(/["\\\n\r\f]/g, (char) => encodeURIComponent(char));
 }
 
 /** 首字母字形（A-Z / CJK），无则 "A"。 */
@@ -110,11 +129,11 @@ const TILE_ICONS = new Set([brandIconUrl("suno")]);
 const brandPlate = (url: string): CSSProperties =>
   TILE_ICONS.has(url)
     ? {
-        background: `center/cover no-repeat url("${url}")`,
+        background: `center/cover no-repeat url("${cssImageUrl(url)}")`,
         boxShadow: "inset 0 0 0 1px rgba(255,255,255,.08)",
       }
     : {
-        background: `#fff center/66% no-repeat url("${url}")`,
+        background: `#fff center/66% no-repeat url("${cssImageUrl(url)}")`,
         boxShadow: "inset 0 0 0 1px rgba(22,28,45,.1)",
       };
 
@@ -128,12 +147,12 @@ export function resolveModelSwatch(m?: {
   icon?: string | null;
 }): { style: CSSProperties; glyph: string } {
   const name = m?.name || "";
-  const icon = m?.icon || "";
+  const icon = configuredIconValue(m?.icon);
   if (icon && isIconUrl(icon)) {
     return {
       style: icon.startsWith("/model-icons/")
         ? brandPlate(icon)
-        : { background: `center/cover no-repeat url("${icon}")` },
+        : { background: `center/cover no-repeat url("${cssImageUrl(icon)}")` },
       glyph: "",
     };
   }
