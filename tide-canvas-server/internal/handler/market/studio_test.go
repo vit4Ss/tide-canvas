@@ -61,6 +61,21 @@ func TestNormalizedStudioConfigAliasesLegacyPricing(t *testing.T) {
 	}
 }
 
+func TestNormalizedStudioConfigPreservesOmniReferenceCapabilities(t *testing.T) {
+	got := normalizedStudioConfig(`{"durations":["10s","5s"],"omniRefImageEnabled":false,"omniRefVideoEnabled":true,"omniRefAudioEnabled":false}`)
+	var cfg struct {
+		ImageEnabled bool `json:"omniRefImageEnabled"`
+		VideoEnabled bool `json:"omniRefVideoEnabled"`
+		AudioEnabled bool `json:"omniRefAudioEnabled"`
+	}
+	if err := json.Unmarshal(got, &cfg); err != nil {
+		t.Fatalf("unmarshal normalized config: %v", err)
+	}
+	if cfg.ImageEnabled || !cfg.VideoEnabled || cfg.AudioEnabled {
+		t.Fatalf("omni reference capabilities changed: %#v", cfg)
+	}
+}
+
 func TestNormalizedStudioConfigLeavesUnrelatedLegacyPayloadUntouched(t *testing.T) {
 	raw := `{ "creditCost": 12.5, "custom": [1, 2] }`
 	if got := string(normalizedStudioConfig(raw)); got != raw {

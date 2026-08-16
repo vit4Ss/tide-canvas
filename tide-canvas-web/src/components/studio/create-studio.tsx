@@ -65,6 +65,7 @@ import { confirmDialog } from "@/components/shared/confirm";
 import { markRequiredField } from "@/lib/require-field";
 import { useReferenceVideoQuote } from "@/hooks/use-reference-video-quote";
 import { configuredMatrix, keyVariants, matrixPrice, resolveVideoPointCost } from "@/lib/price-matrix";
+import { supportsOmniReference } from "@/lib/omni-reference";
 import styles from "@/app/(studio)/studio/create.module.css";
 import {
   activeRunStorageKey,
@@ -222,7 +223,6 @@ export default function CreateStudio() {
   const isVideo = curType === "video";
   const isAudio = curType === "audio";
   const is3D = curType === "3d";
-  const slots = UPLOADS[tool] ?? null;
 
   /* ── hooks ─────────────────────────────────────────────────────────────── */
 
@@ -237,9 +237,17 @@ export default function CreateStudio() {
     [currentStudioList, model],
   );
   const mCfg = selModel?.config ?? null;
+  const slots = useMemo(() => {
+    const configured = UPLOADS[tool] ?? null;
+    if (tool !== "ref" || !configured) return configured;
+    return configured.filter((slot) => supportsOmniReference(mCfg, slot.type));
+  }, [mCfg, tool]);
+  const supportsReferenceVideo = supportsOmniReference(mCfg, "video");
   const referenceVideoUrls = useMemo(
-    () => tool === "ref" ? (slotData.video ?? []).map((file) => file.url?.trim() ?? "").filter(Boolean) : [],
-    [slotData, tool],
+    () => tool === "ref" && supportsReferenceVideo
+      ? (slotData.video ?? []).map((file) => file.url?.trim() ?? "").filter(Boolean)
+      : [],
+    [slotData, supportsReferenceVideo, tool],
   );
   const referenceVideoQuote = useReferenceVideoQuote(
     selModel?.modelKey || selModel?.id,
@@ -744,6 +752,8 @@ export default function CreateStudio() {
     if (!nextModel || nextModel === model) return;
     skillRestoreSeqRef.current += 1;
     setSkill(null);
+    setPreview(null);
+    setReferenceLightbox(null);
     setModel(nextModel);
   }, [model]);
 
@@ -751,6 +761,8 @@ export default function CreateStudio() {
   const selectTool = (t: ToolKey) => {
     setTool(t);
     setSlotData({});
+    setPreview(null);
+    setReferenceLightbox(null);
     // 音频页签切换时把选中模型对齐到该页签的模型池（下拉只显示本池）。
     if ((t === "t2a" || t === "sfx") && currentStudioList.length) {
       const pool = currentStudioList.filter((m) => audioToolOf(m) === t);
@@ -790,6 +802,8 @@ export default function CreateStudio() {
       if (s.modelId) {
         const target = currentStudioList.find((m) => m.modelKey === s.modelId);
         if (target && target.type === curType && target.name !== model) {
+          setPreview(null);
+          setReferenceLightbox(null);
           setModel(target.name);
           toast.info(`已切换到技能模型「${target.name}」`);
         }
@@ -1373,7 +1387,12 @@ export default function CreateStudio() {
         />
       </div>
 
-      <PreviewModal preview={preview} slotData={slotData} slots={slots} onClose={() => setPreview(null)} />
+      <PreviewModal
+        preview={preview && slots?.some((slot) => slot.k === preview.k) ? preview : null}
+        slotData={slotData}
+        slots={slots}
+        onClose={() => setPreview(null)}
+      />
 
       {/* full-image lightbox — click a finished result to zoom; backdrop / ✕ / Esc closes */}
       {lightbox && <Lightbox url={lightbox} onClose={() => setLightbox(null)} onTool={lightboxTool} />}
@@ -1398,7 +1417,7 @@ export default function CreateStudio() {
       />
 
       {/* 参考素材来源选择：本地上传 / 资产库（按槽类型 图片/视频/音频 适配文案） */}
-      {srcMenu && (
+      {srcMenu && slots?.some((slot) => slot.k === srcMenu) && (
         <SrcMenu
           slotKey={srcMenu}
           pos={srcMenuPos}
@@ -1424,9 +1443,10 @@ export default function CreateStudio() {
       )}
 
       {/* 资产库弹窗：复用整个资产页 UI 作为选择器，按槽类型默认到对应筛选 */}
-      {assetPick && (
+      {assetPick && slots?.some((slot) => slot.k === assetPick) && (
         <AssetPickerModal
           kind={slotTypeOf(slots, assetPick)}
+          lockKind
           onPick={chooseAsset}
           onClose={() => setAssetPick(null)}
         />

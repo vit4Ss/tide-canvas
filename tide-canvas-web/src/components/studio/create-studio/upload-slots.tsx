@@ -183,7 +183,7 @@ export function UploadSlots({
     );
   };
 
-  if (!slots) return null;
+  if (!slots?.length) return null;
   if (tool === "flf") {
     const [rw, rh] = ratio.split(":");
     return (

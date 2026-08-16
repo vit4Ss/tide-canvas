@@ -24,6 +24,7 @@ import {
 } from "../_components/chat-utils";
 import { resolutionRank } from "@/components/studio/create-studio/utils";
 import { configuredMatrix, keyVariants, matrixPrice, resolveVideoPointCost } from "@/lib/price-matrix";
+import { supportedOmniReferenceKinds } from "@/lib/omni-reference";
 import type { GenModelsApi } from "./use-gen-models";
 
 export function useComposerConfig(models: GenModelsApi) {
@@ -82,7 +83,9 @@ export function useComposerConfig(models: GenModelsApi) {
       };
     }
     const p = REF_POLICY[mode];
-    return p ? { ...p, accept: acceptFor(p.kinds) } : undefined;
+    if (!p) return undefined;
+    const kinds = mode === "omni_ref" ? supportedOmniReferenceKinds(mCfg) : p.kinds;
+    return { ...p, kinds, max: kinds.length ? p.max : 0, accept: acceptFor(kinds) };
   }, [selModel, mode, mCfg]);
   // text-model uploads are OPTIONAL (a chat can be plain text); generation ref
   // modes (i2i/i2v/…) REQUIRE at least one reference before sending.

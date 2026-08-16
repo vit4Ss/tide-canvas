@@ -1023,16 +1023,21 @@ export function useSendMessage({
 
     // reference media (uploaded → hosted urls). A ref-mode requires at least one
     // usable ref and blocks while any is still uploading.
-    const refImageUrls = refs.filter((r) => r.kind === "image" && r.url).map((r) => r.url as string);
-    const refVideoUrls = refs.filter((r) => r.kind === "video" && r.url).map((r) => r.url as string);
-    const refAudioUrls = refs.filter((r) => r.kind === "audio" && r.url).map((r) => r.url as string);
+    // refPolicy disappearing means the newly selected mode/model accepts no
+    // references. Treat that synchronously as an empty set instead of waiting
+    // for useReferences' cleanup effect, otherwise a same-frame send can retain
+    // stale attachments in history even though they are absent from the request.
+    const allowedRefs = refPolicy ? refs.filter((r) => refPolicy.kinds.includes(r.kind)) : [];
+    const refImageUrls = allowedRefs.filter((r) => r.kind === "image" && r.url).map((r) => r.url as string);
+    const refVideoUrls = allowedRefs.filter((r) => r.kind === "video" && r.url).map((r) => r.url as string);
+    const refAudioUrls = allowedRefs.filter((r) => r.kind === "audio" && r.url).map((r) => r.url as string);
     if (refPolicy) {
-      if (refs.some((r) => r.uploading)) {
+      if (allowedRefs.some((r) => r.uploading)) {
         toast.info("文件上传中，请稍候");
         return;
       }
       // block on a failed upload so the user doesn't unknowingly send without it.
-      if (refs.some((r) => r.failed)) {
+      if (allowedRefs.some((r) => r.failed)) {
         toast.error("有文件上传失败，请移除后重试");
         return;
       }
@@ -1098,7 +1103,7 @@ export function useSendMessage({
     // the optimistic bubble flash thumbnails that vanish on reload.
     // 文本模型附件收全部类型（图片给模型做多模态,视频/音频/文档落库展示）
     const attachSnapshot = refOptional
-      ? refs.filter((r) => r.url).map((r) => ({ url: r.url as string, kind: r.kind }))
+      ? allowedRefs.filter((r) => r.url).map((r) => ({ url: r.url as string, kind: r.kind }))
       : [];
 
     // 用户气泡/落库的提示词：音乐模式描述可留空，兜底一句模式摘要（persistTurn

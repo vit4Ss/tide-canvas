@@ -32,6 +32,7 @@ import {
   type CanvasLaunchPlan,
 } from "@/lib/canvas-launch";
 import { requestCanvasSave } from "@/lib/canvas-save";
+import { supportsOmniReference, type OmniReferenceKind } from "@/lib/omni-reference";
 import {
   canvasLaunchCanSubmit,
   canvasLaunchKindFor,
@@ -52,6 +53,7 @@ import {
 } from "@/lib/upload-limits";
 import { useCanvasStore, type CanvasNode, type Connection } from "@/stores/use-canvas-store";
 import { AiModelType, type AiModelVO } from "@/types/ai";
+import type { ModelConfig } from "@/types/admin-models";
 import { FileType, type FileVO } from "@/types/file";
 import { skillKindOf, skillOutputTypesOf, type SkillVO } from "@/types/skill";
 import { ModelPicker } from "./nodes/model-picker";
@@ -119,6 +121,21 @@ function supportsHandler(model: AiModelVO, handler: string) {
   if (!configuredModes?.length) return true;
   const mode = HANDLER_CONFIG_MODES[handler];
   return mode ? configuredModes.includes(mode) : true;
+}
+
+type QuickReferenceCounts = Record<OmniReferenceKind, number>;
+
+function supportsQuickHandlerInput(
+  model: AiModelVO,
+  handler: string,
+  counts: QuickReferenceCounts,
+): boolean {
+  if (!supportsHandler(model, handler)) return false;
+  if (handler !== "reference_to_video") return true;
+  const config = parseModelConfig<ModelConfig>(model);
+  return (Object.keys(counts) as OmniReferenceKind[]).every(
+    (kind) => counts[kind] === 0 || supportsOmniReference(config, kind),
+  );
 }
 
 function quickModeFromModel(model?: AiModelVO): QuickStartMode | null {
@@ -860,6 +877,11 @@ export function CanvasQuickStart({
   const imageRefCount = usedRefs.filter((ref) => ref.kind === "image").length;
   const videoRefCount = usedRefs.filter((ref) => ref.kind === "video").length;
   const audioRefCount = usedRefs.filter((ref) => ref.kind === "audio").length;
+  const referenceCounts: QuickReferenceCounts = {
+    image: imageRefCount,
+    video: videoRefCount,
+    audio: audioRefCount,
+  };
   const hasSkillSelection = !!selectedSkill;
   const isAgentSelection = !!selectedSkill && skillKindOf(selectedSkill) === "agent";
   const preferredHandlerFor = (targetMode: QuickStartMode) => targetMode === "image"
@@ -877,21 +899,23 @@ export function CanvasQuickStart({
   const handler = preferredHandler === "image_to_video"
     && (
       requestedModel
-        ? !supportsHandler(requestedModel, preferredHandler) && supportsHandler(requestedModel, "reference_to_video")
+        ? !supportsHandler(requestedModel, preferredHandler)
+          && supportsQuickHandlerInput(requestedModel, "reference_to_video", referenceCounts)
         : !typeModels.some((model) => supportsHandler(model, preferredHandler))
-          && typeModels.some((model) => supportsHandler(model, "reference_to_video"))
+          && typeModels.some((model) => supportsQuickHandlerInput(model, "reference_to_video", referenceCounts))
     )
     ? "reference_to_video"
     : preferredHandler;
-  const compatibleModels = typeModels.filter((model) => supportsHandler(model, handler));
+  const compatibleModels = typeModels.filter((model) => supportsQuickHandlerInput(model, handler, referenceCounts));
   const selectableModels = models.filter((model) => {
     const candidateMode = quickModeFromModel(model);
     if (!candidateMode) return false;
     if (isLauncher && !canvasLauncherAllowsDirectModel(model)) return false;
     if (candidateMode === "image" && (videoRefCount > 0 || audioRefCount > 0)) return false;
     const candidateHandler = preferredHandlerFor(candidateMode);
-    return supportsHandler(model, candidateHandler)
-      || (candidateHandler === "image_to_video" && supportsHandler(model, "reference_to_video"));
+    return supportsQuickHandlerInput(model, candidateHandler, referenceCounts)
+      || (candidateHandler === "image_to_video"
+        && supportsQuickHandlerInput(model, "reference_to_video", referenceCounts));
   });
   const selectedModel = compatibleModels.find((model) => model.modelId === selectedModelId)
     ?? compatibleModels.find((model) => model.modelId === selectedSkill?.modelId)
@@ -1127,6 +1151,11 @@ export function CanvasQuickStart({
     const prospectiveImageCount = imageRefCount + accepted.filter((file) => file.type.startsWith("image/")).length;
     const prospectiveVideoCount = videoRefCount + accepted.filter((file) => file.type.startsWith("video/")).length;
     const prospectiveAudioCount = audioRefCount + accepted.filter((file) => file.type.startsWith("audio/")).length;
+    const prospectiveCounts: QuickReferenceCounts = {
+      image: prospectiveImageCount,
+      video: prospectiveVideoCount,
+      audio: prospectiveAudioCount,
+    };
     const preferredUploadHandler = uploadMode === "image"
       ? "image_to_image"
       : prospectiveVideoCount > 0 || prospectiveAudioCount > 0 || prospectiveImageCount > 1
@@ -1141,20 +1170,21 @@ export function CanvasQuickStart({
       ? undefined
       : uploadModels.find((model) => model.modelId === selectedModel?.modelId);
     let uploadHandler = preferredUploadHandler;
-    let uploadModel = currentUploadModel && supportsHandler(currentUploadModel, uploadHandler)
+    let uploadModel = currentUploadModel && supportsQuickHandlerInput(currentUploadModel, uploadHandler, prospectiveCounts)
       ? currentUploadModel
       : undefined;
     if (!skillHandoff && preferredUploadHandler === "image_to_video") {
-      if (!uploadModel && currentUploadModel && supportsHandler(currentUploadModel, "reference_to_video")) {
+      if (!uploadModel && currentUploadModel
+        && supportsQuickHandlerInput(currentUploadModel, "reference_to_video", prospectiveCounts)) {
         uploadHandler = "reference_to_video";
         uploadModel = currentUploadModel;
       } else if (!uploadModel) {
         uploadModel = uploadModels.find((model) => supportsHandler(model, "image_to_video"))
-          ?? uploadModels.find((model) => supportsHandler(model, "reference_to_video"));
+          ?? uploadModels.find((model) => supportsQuickHandlerInput(model, "reference_to_video", prospectiveCounts));
         if (uploadModel && !supportsHandler(uploadModel, "image_to_video")) uploadHandler = "reference_to_video";
       }
     } else if (!skillHandoff && !uploadModel) {
-      uploadModel = uploadModels.find((model) => supportsHandler(model, uploadHandler));
+      uploadModel = uploadModels.find((model) => supportsQuickHandlerInput(model, uploadHandler, prospectiveCounts));
     }
     if (!skillHandoff && modelsLoaded && !uploadModel) {
       toast.info("没有支持这些参考素材的可用模型");
@@ -1288,6 +1318,18 @@ export function CanvasQuickStart({
       if (mode === "image" && usedRefs.some((ref) => ref.kind === "video" || ref.kind === "audio")) {
         toast.info("图片模型仅支持图片参考，请切换视频模型或移除视频/音频引用");
         return;
+      }
+      if (handler === "reference_to_video") {
+        const omniConfig = parseModelConfig<ModelConfig>(selectedModel);
+        const unsupported = ([
+          ["image", imageRefCount, "参考图片"],
+          ["video", videoRefCount, "参考视频"],
+          ["audio", audioRefCount, "参考音频"],
+        ] as const).find(([kind, count]) => count > 0 && !supportsOmniReference(omniConfig, kind));
+        if (unsupported) {
+          toast.info(`${selectedModel.name} 不支持${unsupported[2]}，请移除或更换模型`);
+          return;
+        }
       }
       for (const [kind, count, label] of [
         ["image", imageRefCount, "参考图片"],

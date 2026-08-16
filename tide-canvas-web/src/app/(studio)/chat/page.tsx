@@ -305,7 +305,7 @@ export default function ChatPage() {
       )}
 
       {/* 参考素材来源选择：本地上传 / 资产库（复用 创作台 的来源菜单） */}
-      {refsApi.srcMenuPos && cfg.refPolicy && (
+      {refsApi.srcMenuPos && !!cfg.refPolicy?.kinds.length && (
         <SourceMenu
           pos={refsApi.srcMenuPos}
           menuRef={refsApi.srcMenuElRef}
@@ -331,8 +331,9 @@ export default function ChatPage() {
       />
 
       {/* 资产库弹窗：复用整个资产页 UI 作为选择器 */}
-      {refsApi.assetPickOpen && (
+      {refsApi.assetPickOpen && !!cfg.refPolicy?.kinds.length && (
         <AssetPickerDialog
+          key={cfg.refPolicy?.kinds.join(",") || "none"}
           refPolicy={cfg.refPolicy}
           onClose={() => refsApi.setAssetPickOpen(false)}
           onPick={refsApi.chooseAsset}

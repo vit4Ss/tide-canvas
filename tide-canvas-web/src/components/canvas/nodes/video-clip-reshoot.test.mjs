@@ -35,6 +35,18 @@ test("clip reshoot selects a reference-capable model", () => {
   assert.equal(selectClipReshootModel([textOnly, unrestrictedModel], "text-only")?.modelId, "omni");
 });
 
+test("clip reshoot excludes models whose omni video reference is disabled", () => {
+  const videoDisabled = {
+    ...unrestrictedModel,
+    id: "3",
+    modelId: "image-ref-only",
+    supportedHandlers: ["reference_to_video"],
+    config: JSON.stringify({ omniRefImageEnabled: true, omniRefVideoEnabled: false }),
+  };
+  assert.equal(supportsVideoReference(videoDisabled), false);
+  assert.equal(selectClipReshootModel([videoDisabled, unrestrictedModel], "image-ref-only")?.modelId, "omni");
+});
+
 test("clip reshoot keeps source settings and does not repeat the title suffix", () => {
   const source = {
     id: "source",

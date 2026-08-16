@@ -56,6 +56,12 @@ export interface ModelConfig {
    * "omniRef.imageCount" / "omniRef.videoSizeMB" 等；0 或未设 = 不限制。
    */
   refLimits?: Record<string, number>;
+  /** Omni reference image support. Unset means supported for legacy configs. */
+  omniRefImageEnabled?: boolean;
+  /** Omni reference video support. Unset means supported for legacy configs. */
+  omniRefVideoEnabled?: boolean;
+  /** Omni reference audio support. Unset means supported for legacy configs. */
+  omniRefAudioEnabled?: boolean;
   /** image: t2i,i2i · video: t2v,i2v,keyframe,omni_ref · 3d: relay-defined modes */
   modes?: string[];
   ratios?: string[];

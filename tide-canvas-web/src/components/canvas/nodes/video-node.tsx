@@ -28,6 +28,7 @@ import { findRightColumnSpot, getIncomingSources, inlineIncomingTextRefs, parseM
 import { GenerateSubmitButton, NodeDimsBadge, NodeErrorBadge, NodeGeneratingOverlay, NodeMediaLightbox, NodePanelChrome, NodeShell, NodeUploadingOverlay } from "./shared/node-overlays";
 import CapturableVideo from "@/components/studio/create-studio/video-result";
 import { useReferenceVideoQuote } from "@/hooks/use-reference-video-quote";
+import { supportsOmniReference } from "@/lib/omni-reference";
 import type { ModelConfig } from "@/types/admin-models";
 import {
   CLIP_RESHOOT_DEFAULT_SECONDS,
@@ -44,7 +45,7 @@ import { BREAKDOWN_NODE_HEIGHT, BREAKDOWN_NODE_WIDTH } from "./video-frame-break
 
 // 各模式（Tab）对连接源节点的数量/类型限制：hover 时提示，生成时校验。文生视频无需连接。
 const TAB_LIMITS: Record<string, { hint: string; min: number; max: number; types: string[] }> = {
-  "全能参考": { hint: "需要连接图片/视频节点（1~15 个）", min: 1, max: 15, types: ["image", "video"] },
+  "全能参考": { hint: "需要连接图片/视频/音频节点（1~15 个）", min: 1, max: 15, types: ["image", "video", "audio"] },
   "图生视频": { hint: "需要连接图片节点（1 个）", min: 1, max: 1, types: ["image"] },
   "首尾帧": { hint: "需要连接图片节点（1~2 个）", min: 1, max: 2, types: ["image"] },
   "图片参考": { hint: "需要连接图片节点（1~9 个）", min: 1, max: 9, types: ["image"] },
@@ -203,6 +204,10 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     AiModelType.VIDEO,
     node.generationConfig?.modelId,
   );
+  const rawConfig = parseModelConfig<ModelConfig & { audio?: boolean }>(selectedModel);
+  const omniImageSupported = supportsOmniReference(rawConfig, "image");
+  const omniVideoSupported = supportsOmniReference(rawConfig, "video");
+  const omniAudioSupported = supportsOmniReference(rawConfig, "audio");
   const selectableVideoModels = isClipReshoot
     ? videoModels.filter(supportsVideoReference)
     : videoModels;
@@ -241,7 +246,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
 
   // 片段重拍只能走视频参考模型；恢复旧画布或后台调整模型能力后也自动收敛到可用模型。
   useEffect(() => {
-    if (!isClipReshoot || supportsVideoReference(selectedModel ?? { supportedHandlers: [] })) return;
+    if (!isClipReshoot || (selectedModel && supportsVideoReference(selectedModel))) return;
     const replacement = selectClipReshootModel(videoModels, selectedModelId);
     if (replacement && replacement.modelId !== selectedModelId) setSelectedModelId(replacement.modelId);
   }, [isClipReshoot, selectedModel, selectedModelId, setSelectedModelId, videoModels]);
@@ -254,6 +259,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         const src = s.nodes.find((n) => n.id === c.sourceId);
         if (src && isImageReferenceNodeType(src.type) && src.imageSrc) return "i~" + src.id + "~" + src.imageSrc + "~" + (src.title || "");
         if (src && src.type === "video" && src.videoSrc) return "v~" + src.id + "~" + src.videoSrc + "~" + (src.title || "");
+        if (src && src.type === "audio" && src.audioSrc) return "a~" + src.id + "~" + src.audioSrc + "~" + (src.title || "");
         if (src && src.type === "text" && src.content) return "t~" + src.id + "~" + src.content + "~" + (src.title || "");
         return "";
       })
@@ -268,6 +274,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     // 「文本N」对齐第 N 个文本节点。
     const images: RefItem[] = [];
     const videos: RefItem[] = [];
+    const audios: RefItem[] = [];
     const texts: RefItem[] = [];
     for (const c of st.connections) {
       if (c.targetId !== node.id) continue;
@@ -285,6 +292,15 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
           kind: "video",
           src: src.videoSrc,
         });
+      } else if (src.type === "audio" && src.audioSrc) {
+        audios.push({
+          id: src.id,
+          thumb: "",
+          title: src.title || "",
+          index: audios.length + 1,
+          kind: "audio",
+          src: src.audioSrc,
+        });
       } else if (src.type === "text" && src.content?.trim()) {
         texts.push({ id: src.id, thumb: "", title: src.title || "", index: texts.length + 1, kind: "text", text: src.content });
       }
@@ -292,9 +308,16 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     // 只有「全能参考」会把 videoReferences 下发给模型；其余模式下入边视频根本不参与
     // 生成，给它编号等于让用户引用一个模型收不到的东西。
     // 文本不占模型的参考位（正文直接拼进 prompt），所以各模式一律可引用。
-    return [...images, ...(videoTab === "全能参考" ? videos : []), ...texts];
+    const visibleImages = videoTab === "图片参考"
+      ? omniImageSupported ? images : []
+      : videoTab === "全能参考"
+        ? omniImageSupported ? images : []
+        : images;
+    const visibleVideos = videoTab === "全能参考" && omniVideoSupported ? videos : [];
+    const visibleAudios = videoTab === "全能参考" && omniAudioSupported ? audios : [];
+    return [...visibleImages, ...visibleVideos, ...visibleAudios, ...texts];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clipSourceThumbnail, refsSig, node.id, videoTab]);
+  }, [clipSourceThumbnail, refsSig, node.id, omniAudioSupported, omniImageSupported, omniVideoSupported, videoTab]);
   const clipSourceRefIndex = refs.find((ref) => ref.kind === "video" && ref.id === clipSourceVideo?.id)?.index ?? 1;
   const hasConceptPrompt = useCanvasStore((s) =>
     s.connections.some((c) => {
@@ -309,33 +332,42 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   const connSig = useCanvasStore((s) => {
     let img = 0;
     let vid = 0;
+    let aud = 0;
     for (const c of s.connections) {
       if (c.targetId !== node.id) continue;
       const src = s.nodes.find((n) => n.id === c.sourceId);
       if (src && isImageReferenceNodeType(src.type) && src.imageSrc) img++;
       else if (src?.type === "video" && src.videoSrc) vid++;
+      else if (src?.type === "audio" && src.audioSrc) aud++;
     }
-    return `${img},${vid}`;
+    return `${img},${vid},${aud}`;
   });
-  const [imgCount, vidCount] = connSig.split(",").map(Number);
+  const [imgCount, vidCount, audCount] = connSig.split(",").map(Number);
   // 某模式 Tab 是否可选：连接的合格素材数落在 [min,max]（文生视频无需连接，恒可选）
   const tabEnabled = (t: string) => {
+    if (t === "图片参考" && !omniImageSupported) return false;
     const lim = TAB_LIMITS[t];
     if (!lim) return true;
     let m = 0;
-    if (lim.types.includes("image")) m += imgCount;
-    if (lim.types.includes("video")) m += vidCount;
+    if (lim.types.includes("image") && (t !== "全能参考" || omniImageSupported)) m += imgCount;
+    if (lim.types.includes("video") && (t !== "全能参考" || omniVideoSupported)) m += vidCount;
+    if (lim.types.includes("audio") && (t !== "全能参考" || omniAudioSupported)) m += audCount;
     return m >= lim.min && m <= lim.max;
   };
   // 当前选中视频模型 → 解析 config（限定清晰度/比例/时长/音频）→ 差异化计费
   // 模型支持的模式 Tab：后台对模型勾选了 supportedHandlers 时只显示对应模式；未配置 = 全部
   const modelHandlers = selectedModel?.supportedHandlers;
+  const modelCapabilitySignature = `${selectedModelId}:${modelHandlers?.join(",") ?? "*"}:${omniImageSupported}:${omniVideoSupported}:${omniAudioSupported}`;
   const visibleTabs = isClipReshoot
     ? (selectedModel && supportsVideoReference(selectedModel) ? ["全能参考"] : [])
     : ALL_TABS.filter(
-        (t) => !modelHandlers || modelHandlers.length === 0 || modelHandlers.includes(TAB_HANDLER[t]),
+        (t) => {
+          if (modelHandlers?.length && !modelHandlers.includes(TAB_HANDLER[t])) return false;
+          if (t === "图片参考") return omniImageSupported;
+          if (t === "全能参考") return omniImageSupported || omniVideoSupported || omniAudioSupported;
+          return true;
+        },
       );
-  const rawConfig = parseModelConfig<ModelConfig & { audio?: boolean }>(selectedModel);
   // 时长在后台存成带单位、可能乱序的字符串("4s")；规整成升序秒数供选择器/校正/生成
   // 统一按数字处理。durations 显式为空数组时保持"无此维度"语义(不回退默认档)。
   const formatConfig = {
@@ -345,14 +377,14 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   // 积分显示与服务端 resolveCost 同口径：按次模式只按清晰度取价且完全
   // 忽略时长；按时长模式继续查「时长 × 清晰度」矩阵和旧 modifier。
   const referenceVideoUrls = useMemo(() => {
-    if (videoTab !== "全能参考") return [];
+    if (videoTab !== "全能参考" || !omniVideoSupported) return [];
     const state = useCanvasStore.getState();
     return getIncomingSources(state, node.id)
       .filter((source) => source.type === "video" && source.videoSrc)
       .map((source) => source.videoSrc as string);
     // refsSig intentionally invalidates this imperative store snapshot.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clipSourceThumbnail, refsSig, node.id, videoTab]);
+  }, [clipSourceThumbnail, refsSig, node.id, omniVideoSupported, videoTab]);
   const referenceVideoQuote = useReferenceVideoQuote(
     selectedModel?.modelId || selectedModel?.id,
     rawConfig,
@@ -444,8 +476,9 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     const lim = TAB_LIMITS[videoTab];
     if (!lim) return;
     let m = 0;
-    if (lim.types.includes("image")) m += imgCount;
-    if (lim.types.includes("video")) m += vidCount;
+    if (lim.types.includes("image") && (videoTab !== "全能参考" || omniImageSupported)) m += imgCount;
+    if (lim.types.includes("video") && (videoTab !== "全能参考" || omniVideoSupported)) m += vidCount;
+    if (lim.types.includes("audio") && (videoTab !== "全能参考" || omniAudioSupported)) m += audCount;
     if (m < lim.min || m > lim.max) {
       const fallback = visibleTabs.find((t) => !TAB_LIMITS[t]);
       // 该模型没有任何无门槛模式时保持现状,仅靠发送按钮禁用挡住提交
@@ -453,7 +486,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     }
     // visibleTabs 由 selectedModelId 派生(数组引用每次渲染变化),不列入依赖
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imgCount, isClipReshoot, vidCount, videoTab, selectedModelId]);
+  }, [audCount, imgCount, isClipReshoot, modelCapabilitySignature, omniAudioSupported, omniImageSupported, omniVideoSupported, vidCount, videoTab]);
 
   // 切换模型后当前模式不被该模型支持 → 回退到其第一个可用模式
   useEffect(() => {
@@ -462,14 +495,16 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     }
     // visibleTabs 由 selectedModelId 派生，避免数组引用作为依赖反复触发
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedModelId, videoTab]);
+  }, [modelCapabilitySignature, videoTab]);
 
   // 上升沿自动升级：从「无连接素材」变为「有素材」时，若仍停留在默认的「文生视频」，自动切到
   // 「全能参考」——否则 text_to_video 不会把连上的参考图喂给上游，参考图形同虚设。仅在 0→有 的
   // 跳变时切换，故用户之后手动改回「文生视频」不会被反复纠正。
   const prevHasMaterialRef = useRef(false);
   useEffect(() => {
-    const material = imgCount + vidCount;
+    const material = (omniImageSupported ? imgCount : 0)
+      + (omniVideoSupported ? vidCount : 0)
+      + (omniAudioSupported ? audCount : 0);
     const hasMaterial = material > 0;
     if (hasMaterial && !prevHasMaterialRef.current && videoTab === "文生视频" && material <= 15
         && visibleTabs.includes("全能参考")) {
@@ -478,7 +513,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     prevHasMaterialRef.current = hasMaterial;
     // visibleTabs 为派生数组(引用每次渲染变化)，上升沿 guard 已防止重复切换，不列入依赖
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imgCount, vidCount, videoTab]);
+  }, [audCount, imgCount, omniAudioSupported, omniImageSupported, omniVideoSupported, vidCount, videoTab]);
 
   // 切换模型后，把视频参数收敛到该模型 config 允许的清晰度/比例/时长/音频，避免下发非法值
   useEffect(() => {
@@ -676,12 +711,33 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     const st = useCanvasStore.getState();
     const incoming = st.connections.filter((c) => c.targetId === node.id);
     const sources = getIncomingSources(st, node.id);
-    if (!validateReferenceFileSizes(sources.filter((n) => n.imageSrc || n.videoSrc), selectedModel)) return;
     const effectiveVideoTab = isClipReshoot ? "全能参考" : videoTab;
     const limit = TAB_LIMITS[effectiveVideoTab];
-    // 分别收集「真正有素材」的图片 / 视频参考 URL
-    const imageUrls = sources.filter((n) => isImageReferenceNodeType(n.type) && n.imageSrc).map((n) => n.imageSrc as string);
-    const videoUrls = sources.filter((n) => n.type === "video" && n.videoSrc).map((n) => n.videoSrc as string);
+    const imageSources = sources.filter((n) => isImageReferenceNodeType(n.type) && n.imageSrc);
+    const videoSources = sources.filter((n) => n.type === "video" && n.videoSrc);
+    const audioSources = sources.filter((n) => n.type === "audio" && n.audioSrc);
+    const isOmniMode = effectiveVideoTab === "图片参考" || effectiveVideoTab === "全能参考";
+    if (effectiveVideoTab === "图片参考" && !omniImageSupported) {
+      toast.error("所选模型不支持参考图片，请切换生成方式或更换模型");
+      return;
+    }
+    if (effectiveVideoTab === "全能参考" && !omniImageSupported && !omniVideoSupported && !omniAudioSupported) {
+      toast.error("所选模型在画布节点中没有可用的全能参考素材类型");
+      return;
+    }
+    const activeImageSources = isOmniMode && !omniImageSupported ? [] : imageSources;
+    const activeVideoSources = effectiveVideoTab === "全能参考" && omniVideoSupported ? videoSources : [];
+    const activeAudioSources = effectiveVideoTab === "全能参考" && omniAudioSupported ? audioSources : [];
+    const activeReferenceSources = effectiveVideoTab === "全能参考"
+      ? [...activeImageSources, ...activeVideoSources, ...activeAudioSources]
+      : effectiveVideoTab === "图片参考" || effectiveVideoTab === "图生视频" || effectiveVideoTab === "首尾帧"
+        ? activeImageSources
+        : [];
+    if (!validateReferenceFileSizes(activeReferenceSources, selectedModel, TAB_HANDLER[effectiveVideoTab])) return;
+    // 只收集当前模式真正会下发的素材；全能参考能力开关不影响图生视频/首尾帧。
+    const imageUrls = activeImageSources.map((n) => n.imageSrc as string);
+    const videoUrls = activeVideoSources.map((n) => n.videoSrc as string);
+    const audioUrls = activeAudioSources.map((n) => n.audioSrc as string);
     // 文本节点没有独立下发通道，正文只能落进 prompt——顺序与 refs 的「文本N」编号同源
     const promptWithRange = isClipReshoot
       ? `${buildClipReshootRangeInstruction(clipRanges, clipSourceDuration, `视频${clipSourceRefIndex}`)}\n${node.prompt || ""}`.trim()
@@ -702,7 +758,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       }
     }
     // 校验基于实际可用素材数（排除连了但还没生成的空节点）
-    const total = imageUrls.length + videoUrls.length;
+    const total = imageUrls.length + videoUrls.length + audioUrls.length;
     if (limit && (total < limit.min || total > limit.max)) {
       toast.error(limit.hint);
       return;
@@ -732,7 +788,12 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     } else if (effectiveVideoTab === "全能参考") {
       // 图片 + 视频 + 文字多模态参考综合（图→reference_image、视频→reference_video）
       handler = "reference_to_video";
-      input = { ...base, references: imageUrls, videoReferences: videoUrls };
+      input = {
+        ...base,
+        ...(imageUrls.length ? { references: imageUrls } : {}),
+        ...(videoUrls.length ? { videoReferences: videoUrls } : {}),
+        ...(audioUrls.length ? { audioReferences: audioUrls } : {}),
+      };
     }
 
     // 非破坏性「重新发送」：本节点已出过结果或失败过 → 克隆一模一样的新节点（同提示词、同入边参考、同画幅），

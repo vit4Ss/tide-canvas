@@ -295,6 +295,10 @@ func (h *modelsHandler) create(c *gin.Context) {
 		}
 	}
 	if mType == "video" {
+		if err := validateOmniReferenceConfig(dto.Config); err != nil {
+			response.Fail(c, response.CodeBadRequest, err.Error())
+			return
+		}
 		if err := validateVideoPricingConfig(dto.Config); err != nil {
 			response.Fail(c, response.CodeBadRequest, err.Error())
 			return
@@ -513,6 +517,10 @@ func (h *modelsHandler) update(c *gin.Context) {
 			}
 		}
 		if effectiveType == "video" {
+			if err := validateOmniReferenceConfig(effectiveConfig); err != nil {
+				response.Fail(c, response.CodeBadRequest, err.Error())
+				return
+			}
 			if err := validateVideoPricingConfig(effectiveConfig); err != nil {
 				response.Fail(c, response.CodeBadRequest, err.Error())
 				return
@@ -617,6 +625,10 @@ func (h *modelsHandler) setStatus(c *gin.Context) {
 			}
 		}
 		if current.Type == "video" {
+			if err := validateOmniReferenceConfig(json.RawMessage(current.Config)); err != nil {
+				response.Fail(c, response.CodeBadRequest, err.Error())
+				return
+			}
 			if err := validateVideoPricingConfig(json.RawMessage(current.Config)); err != nil {
 				response.Fail(c, response.CodeBadRequest, err.Error())
 				return
@@ -867,6 +879,40 @@ func validateUpscalePricingConfig(raw json.RawMessage) error {
 	return nil
 }
 
+func validateOmniReferenceConfig(raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	if !json.Valid(raw) {
+		return errors.New("全能参考素材支持配置无效")
+	}
+	var cfg struct {
+		Modes        []string `json:"modes"`
+		ImageEnabled *bool    `json:"omniRefImageEnabled"`
+		VideoEnabled *bool    `json:"omniRefVideoEnabled"`
+		AudioEnabled *bool    `json:"omniRefAudioEnabled"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return errors.New("全能参考素材支持配置无效")
+	}
+	// An empty modes list means all video modes are available in Studio.
+	omniEnabled := len(cfg.Modes) == 0
+	for _, mode := range cfg.Modes {
+		if strings.EqualFold(strings.TrimSpace(mode), "omni_ref") {
+			omniEnabled = true
+			break
+		}
+	}
+	if !omniEnabled {
+		return nil
+	}
+	disabled := func(value *bool) bool { return value != nil && !*value }
+	if disabled(cfg.ImageEnabled) && disabled(cfg.VideoEnabled) && disabled(cfg.AudioEnabled) {
+		return errors.New("全能参考至少需要支持一种参考素材")
+	}
+	return nil
+}
+
 func validateVideoPricingConfig(raw json.RawMessage) error {
 	if len(raw) == 0 {
 		return nil
@@ -927,16 +973,17 @@ func validateReferenceVideoPricingConfig(raw json.RawMessage) error {
 		return errors.New("参考视频计费配置无效")
 	}
 	var cfg struct {
-		Enabled     bool                      `json:"referenceVideoBillingEnabled"`
-		Durations   []any                     `json:"durations"`
-		Resolutions []string                  `json:"resolutions"`
-		PriceMatrix map[string]map[string]any `json:"priceMatrix"`
-		Pricing     map[string]map[string]any `json:"pricing"`
+		Enabled          bool                      `json:"referenceVideoBillingEnabled"`
+		OmniVideoEnabled *bool                     `json:"omniRefVideoEnabled"`
+		Durations        []any                     `json:"durations"`
+		Resolutions      []string                  `json:"resolutions"`
+		PriceMatrix      map[string]map[string]any `json:"priceMatrix"`
+		Pricing          map[string]map[string]any `json:"pricing"`
 	}
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return errors.New("参考视频计费配置无效")
 	}
-	if !cfg.Enabled {
+	if !cfg.Enabled || (cfg.OmniVideoEnabled != nil && !*cfg.OmniVideoEnabled) {
 		return nil
 	}
 	if len(cfg.Durations) == 0 || len(cfg.Resolutions) == 0 {

@@ -36,6 +36,7 @@ export function useReferenceVideoQuote(
   // authority even when the public model list is stale or came from an older
   // deployment that omitted these fields.
   const configRevision = JSON.stringify([
+    config?.omniRefVideoEnabled,
     config?.referenceVideoBillingEnabled,
     config?.durations,
     config?.resolutions,

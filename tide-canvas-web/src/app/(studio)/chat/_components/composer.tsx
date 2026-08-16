@@ -133,12 +133,13 @@ export function Composer({
     fileInputRef,
     openSrcMenu,
   } = refsApi;
+  const visibleRefs = refPolicy ? refs.filter((ref) => refPolicy.kinds.includes(ref.kind)) : [];
   const referenceVideoQuote = useReferenceVideoQuote(
     selModel?.modelKey || selModel?.id,
     mCfg,
     res,
-    isVid && mode === "omni_ref"
-      ? refs.filter((ref) => ref.kind === "video" && ref.url).map((ref) => ref.url as string)
+    isVid && mode === "omni_ref" && refPolicy?.kinds.includes("video")
+      ? visibleRefs.filter((ref) => ref.kind === "video" && ref.url).map((ref) => ref.url as string)
       : [],
   );
   const totalPoints = points + referenceVideoQuote.quote.pointCost;
@@ -174,9 +175,9 @@ export function Composer({
         onDrop={onDrop}
       >
         {dragOver && <div className="composer-drop">松开以添加参考素材</div>}
-        {refs.length > 0 && (
+        {visibleRefs.length > 0 && (
           <div className="ref-strip">
-            {refs.map((r) => (
+            {visibleRefs.map((r) => (
               <RefThumb
                 key={r.key}
                 item={r}
@@ -216,7 +217,7 @@ export function Composer({
             onChange={setDraft}
             refs={mentionRefs}
             onSubmit={() => submitCurrentDraft()}
-            onPasteFiles={refPolicy ? attachFiles : undefined}
+            onPasteFiles={refPolicy?.kinds.length ? attachFiles : undefined}
             placeholder={
               isMusicSel && musicMode === "custom"
                 ? "给这一轮写句备注（仅作记录，不参与生成）· 歌词请在下方填写"
@@ -336,7 +337,7 @@ export function Composer({
         )}
         <div className="composer-bar">
           <div className="cm-row">
-          {refPolicy && (
+          {!!refPolicy?.kinds.length && (
             <button
               className="cm-chip"
               title="添加参考素材（本地上传 / 资产库）"

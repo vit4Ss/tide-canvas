@@ -46,6 +46,23 @@ export function useUploadSlots({
   const localTargetRef = useRef<string | null>(null); // slot key awaiting a local file pick
   const uploadSeqRef = useRef(0); // 上传中占位的唯一 key 计数
 
+  // A model switch can remove a slot while its source menu/file picker is open.
+  // Close stale entry points so a disabled media kind cannot still be uploaded.
+  useEffect(() => {
+    const supportsSlot = (key: string | null) => !!key && !!slots?.some((slot) => slot.k === key);
+    if (srcMenu && !supportsSlot(srcMenu)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- capability changes close stale upload UI
+      setSrcMenu(null);
+      setSrcMenuPos(null);
+    }
+    if (assetPick && !supportsSlot(assetPick)) {
+      setAssetPick(null);
+    }
+    if (localTargetRef.current && !supportsSlot(localTargetRef.current)) {
+      localTargetRef.current = null;
+    }
+  }, [assetPick, slots, srcMenu]);
+
   /* ── typed reference uploads (create.js addFile / removeFile / swap) ──── */
 
   // adding a reference asset: every slot offers a source choice (本地上传 / 资产库).
@@ -103,6 +120,10 @@ export function useUploadSlots({
     const list = e.target.files;
     if (!k || !list || list.length === 0) return;
     const slot = slots?.find((s) => s.k === k);
+    if (!slot) {
+      e.target.value = "";
+      return;
+    }
     const isImg = slot?.type === "image";
     await ensureSession();
     // slotData 上某个占位项打补丁的小工具(按 key 定位;找不到=已被移除,静默跳过)

@@ -139,6 +139,13 @@ func (s *service) quoteReferenceVideos(ctx context.Context, userID idgen.ID, dto
 	if m == nil || !m.Enabled || m.Type != "video" {
 		return nil, errNoModel
 	}
+	references := cleanReferenceVideoURLs(dto.VideoURLs)
+	if !modelOmniReferenceSupport(m).video {
+		if len(references) > 0 {
+			return nil, skillPlacementError{message: "所选模型不支持参考视频，请移除后重试"}
+		}
+		return &referenceVideoQuoteVO{BillingEnabled: false}, nil
+	}
 	enabled := referenceVideoPricing(m)
 	if !enabled {
 		return &referenceVideoQuoteVO{BillingEnabled: false}, nil
@@ -147,7 +154,6 @@ func (s *service) quoteReferenceVideos(ctx context.Context, userID idgen.ID, dto
 	if err != nil {
 		return nil, err
 	}
-	references := cleanReferenceVideoURLs(dto.VideoURLs)
 	if len(references) == 0 {
 		return &referenceVideoQuoteVO{BillingEnabled: true, Resolution: pricing.resolution}, nil
 	}

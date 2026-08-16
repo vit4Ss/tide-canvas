@@ -1,8 +1,21 @@
 import type { CanvasNode } from "@/stores/use-canvas-store";
 import type { AiModelVO } from "@/types/ai";
 
-export function supportsVideoReference(model: Pick<AiModelVO, "supportedHandlers">): boolean {
-  return !model.supportedHandlers?.length || model.supportedHandlers.includes("reference_to_video");
+export function supportsVideoReference(
+  model: Pick<AiModelVO, "supportedHandlers" | "config">,
+): boolean {
+  if (model.supportedHandlers?.length && !model.supportedHandlers.includes("reference_to_video")) {
+    return false;
+  }
+  try {
+    const config: unknown = model.config ? JSON.parse(model.config) : {};
+    return !config || typeof config !== "object" || Array.isArray(config)
+      || (config as Record<string, unknown>).omniRefVideoEnabled !== false;
+  } catch {
+    // Keep legacy/invalid configs on the old permissive path. The service is
+    // still authoritative and admin validation prevents new invalid JSON.
+    return true;
+  }
 }
 
 export function selectClipReshootModel(

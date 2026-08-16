@@ -21,6 +21,7 @@ import type { MentionEditorHandle } from "@/components/studio/mention-prompt-edi
 import { toast } from "@/components/shared/toast";
 import { markRequiredField } from "@/lib/require-field";
 import { useAuthStore } from "@/stores/use-auth-store";
+import { supportsOmniReference } from "@/lib/omni-reference";
 import {
   ACTIVE_RUN_KEY,
   activeRunStorageKey,
@@ -847,6 +848,12 @@ export function useGeneration(p: GenerationParams) {
       return;
     }
     const selectedBackendModelId = selectedStudio?.modelKey || selectedStudio?.id || "";
+    const activeSlots = (UPLOADS[tool] ?? []).filter(
+      (slot) => tool !== "ref" || supportsOmniReference(selectedStudio?.config, slot.type),
+    );
+    const activeSlotData = Object.fromEntries(
+      activeSlots.map((slot) => [slot.k, slotData[slot.k] ?? []]),
+    ) as SlotData;
     if (is3D && !selectedBackendModelId) {
       toast.error("暂无可用的 3D 模型，请先在模型管理上架并启用模型");
       return;
@@ -884,14 +891,16 @@ export function useGeneration(p: GenerationParams) {
     }
 
     // 有参考素材仍在上传时先拦下:否则按「无 url」被当成没传,误报「请先上传参考图片」
-    if (Object.values(slotData).some((arr) => (arr || []).some((f) => f.uploading))) {
+    if (Object.values(activeSlotData).some((arr) => (arr || []).some((f) => f.uploading))) {
       toast.info("参考素材上传中，请稍候…");
       return;
     }
     // reference assets from the upload slots (real URLs from 本地上传 / 资产库).
     const slotUrls = (key: string) =>
       (slotData[key] || []).map((f) => f.url).filter((u): u is string => !!u);
-    const imageRefs = tool === "i2v"
+    const imageRefs = tool === "ref" && !supportsOmniReference(selectedStudio?.config, "image")
+      ? []
+      : tool === "i2v"
       ? slotUrls("first")
       : tool === "i2_3d"
         ? slotUrls("threeDImage")
@@ -905,9 +914,17 @@ export function useGeneration(p: GenerationParams) {
         })
       : [];
     // 全能参考 (ref) accepts image / video / audio references — any one is enough.
-    const vidRefs = tool === "ref" ? slotUrls("video") : [];
-    const audRefs = tool === "ref" ? slotUrls("audio") : [];
-    const needsRef = (UPLOADS[tool] ?? []).length > 0;
+    const vidRefs = tool === "ref" && supportsOmniReference(selectedStudio?.config, "video")
+      ? slotUrls("video")
+      : [];
+    const audRefs = tool === "ref" && supportsOmniReference(selectedStudio?.config, "audio")
+      ? slotUrls("audio")
+      : [];
+    if (tool === "ref" && activeSlots.length === 0) {
+      toast.error("该模型未启用任何全能参考素材，请联系管理员");
+      return;
+    }
+    const needsRef = activeSlots.length > 0;
     const hasAnyRef =
       imageRefs.length > 0 || !!firstFrame || !!lastFrame || vidRefs.length > 0 || audRefs.length > 0 || multiViewImages.length > 0;
     if (needsRef && !hasAnyRef) {
@@ -984,7 +1001,7 @@ export function useGeneration(p: GenerationParams) {
       { length: n },
       (_, i) => [hsh + i * 36, hsh + i * 36 + 80, hsh + i * 36 + 200] as MeshHues,
     );
-    const refThumbs = refThumbsForRun(slotData, hsh);
+    const refThumbs = refThumbsForRun(activeSlotData, hsh);
     const presetSkill =
       skill && skillKindOf(skill) === "preset" && skillSupportsOutput(skill, curType)
         ? skill

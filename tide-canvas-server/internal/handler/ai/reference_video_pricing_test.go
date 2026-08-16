@@ -242,6 +242,31 @@ func TestQuoteReferenceVideosReportsDisabledBillingAuthoritatively(t *testing.T)
 	}
 }
 
+func TestQuoteReferenceVideosRejectsUnsupportedVideoReferences(t *testing.T) {
+	db := openPricingTestDB(t)
+	row := model.MarketModel{
+		BaseModel: model.BaseModel{ID: 104},
+		Name:      "No video references",
+		ModelKey:  "no-video-references",
+		Type:      "video",
+		Status:    1,
+		Config:    `{"omniRefVideoEnabled":false,"referenceVideoBillingEnabled":true,"durations":["7s"],"resolutions":["720p"],"priceMatrix":{"7s":{"720p":49}}}`,
+	}
+	if err := db.Create(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	s := &service{repo: newRepo(db), confirmVideoDuration: func(context.Context, idgen.ID, string) (string, float64, error) {
+		t.Fatal("unsupported reference videos must not be probed")
+		return "", 0, nil
+	}}
+	_, err := s.quoteReferenceVideos(context.Background(), 42, referenceVideoQuoteDTO{
+		ModelID: "no-video-references", VideoURLs: []string{"https://cdn.example/video.mp4"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "不支持参考视频") {
+		t.Fatalf("error = %v, want unsupported reference video", err)
+	}
+}
+
 func TestQuoteReferenceVideosReportsEnabledBillingAndSurcharge(t *testing.T) {
 	db := openPricingTestDB(t)
 	row := model.MarketModel{

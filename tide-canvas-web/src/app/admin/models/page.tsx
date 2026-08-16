@@ -748,6 +748,47 @@ function RefPair({
   );
 }
 
+function OmniRefPair({
+  label,
+  enabled,
+  onEnabledChange,
+  countKey,
+  sizeKey,
+  get,
+  set,
+}: {
+  label: string;
+  enabled: boolean;
+  onEnabledChange: (enabled: boolean) => void;
+  countKey: string;
+  sizeKey: string;
+  get: (k: string) => number;
+  set: (k: string, v: number) => void;
+}) {
+  return (
+    <div style={{ display: "grid", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <SwitchToggle
+          checked={enabled}
+          onChange={onEnabledChange}
+          aria-label={`是否支持${label}`}
+        />
+        <span>{label}</span>
+        <span style={{ opacity: 0.65 }}>{enabled ? "支持" : "不支持"}</span>
+      </div>
+      {enabled && (
+        <RefPair
+          label={label}
+          countKey={countKey}
+          sizeKey={sizeKey}
+          get={get}
+          set={set}
+        />
+      )}
+    </div>
+  );
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
    ModelModal — 配置/新增模型. A full GUI form (no raw JSON): base fields map to
    market_model columns; the generation settings (modes / batch / qualities /
@@ -827,9 +868,11 @@ function ModelModal({
   const is3D = type === "3d";
   const isUpscale = type === "upscale";
   const isPerRequestVideo = isVideo && usesVideoPerRequestBilling(cfg);
+  const omniRefModeEnabled = isVideo && (!(cfg.modes?.length) || cfg.modes.includes("omni_ref"));
+  const omniRefVideoSupported = cfg.omniRefVideoEnabled !== false;
   const showGen = isImage || isVideo;
   const showPrompt = showGen || is3D;
-  const showMatrix = isImage || (isVideo && (!isPerRequestVideo || cfg.referenceVideoBillingEnabled));
+  const showMatrix = isImage || (isVideo && (!isPerRequestVideo || (omniRefVideoSupported && cfg.referenceVideoBillingEnabled)));
 
   // price-matrix rows: image → qualities, video → durations; cols → resolutions.
   // 图片不配画质档位时给一行「default」按清晰度单独定价（服务端 pricing.go
@@ -924,6 +967,15 @@ function ModelModal({
         return false;
       }
     }
+    if (
+      omniRefModeEnabled &&
+      cfg.omniRefImageEnabled === false &&
+      cfg.omniRefVideoEnabled === false &&
+      cfg.omniRefAudioEnabled === false
+    ) {
+      setErr("全能参考至少需要支持一种参考素材");
+      return false;
+    }
     if (isPerRequestVideo) {
       const resolutions = cfg.resolutions ?? [];
       if (!resolutions.length) {
@@ -938,7 +990,7 @@ function ModelModal({
         return false;
       }
     }
-    if (isVideo && cfg.referenceVideoBillingEnabled) {
+    if (isVideo && omniRefVideoSupported && cfg.referenceVideoBillingEnabled) {
       const durations = cfg.durations ?? [];
       const resolutions = cfg.resolutions ?? [];
       if (!durations.length || !resolutions.length) {
@@ -1214,15 +1266,39 @@ function ModelModal({
             </FormSection>
           )}
 
-          {isVideo && (cfg.modes ?? []).includes("omni_ref") && (
-            <FormSection label="全能参考 · 素材限制" hint="图片 / 视频 / 音频各自限制，不设置则不限制">
-              <RefPair label="参考图片" countKey="omniRef.imageCount" sizeKey="omniRef.imageSizeMB" get={refGet} set={setRef} />
-              <RefPair label="参考视频" countKey="omniRef.videoCount" sizeKey="omniRef.videoSizeMB" get={refGet} set={setRef} />
-              <RefPair label="参考音频" countKey="omniRef.audioCount" sizeKey="omniRef.audioSizeMB" get={refGet} set={setRef} />
+          {omniRefModeEnabled && (
+            <FormSection label="全能参考 · 素材能力与限制" hint="关闭后创作端不会展示或提交该类素材；已有数量和大小配置会保留">
+              <OmniRefPair
+                label="参考图片"
+                enabled={cfg.omniRefImageEnabled !== false}
+                onEnabledChange={(next) => setC({ omniRefImageEnabled: next })}
+                countKey="omniRef.imageCount"
+                sizeKey="omniRef.imageSizeMB"
+                get={refGet}
+                set={setRef}
+              />
+              <OmniRefPair
+                label="参考视频"
+                enabled={cfg.omniRefVideoEnabled !== false}
+                onEnabledChange={(next) => setC({ omniRefVideoEnabled: next })}
+                countKey="omniRef.videoCount"
+                sizeKey="omniRef.videoSizeMB"
+                get={refGet}
+                set={setRef}
+              />
+              <OmniRefPair
+                label="参考音频"
+                enabled={cfg.omniRefAudioEnabled !== false}
+                onEnabledChange={(next) => setC({ omniRefAudioEnabled: next })}
+                countKey="omniRef.audioCount"
+                sizeKey="omniRef.audioSizeMB"
+                get={refGet}
+                set={setRef}
+              />
             </FormSection>
           )}
 
-          {isVideo && (
+          {isVideo && omniRefVideoSupported && (
             <FormSection
               label="参考视频计费"
               hint="开启后，服务端会用每个参考视频的真实时长匹配行、当前输出清晰度匹配列，逐个计费后相加；非整秒向上匹配最近档位。没有参考视频时不加收。"
@@ -1543,7 +1619,7 @@ function ModelModal({
               <div className="hint">
                 {isPerRequestVideo
                   ? "这张表只用于已开启的参考视频附加计费；视频生成本身仍按上方清晰度价格扣一次。切回按时长后，这张表会继续作为生成价格。"
-                  : isVideo && cfg.referenceVideoBillingEnabled
+                  : isVideo && omniRefVideoSupported && cfg.referenceVideoBillingEnabled
                   ? "不同档位可设不同积分；参考视频计费已开启，所有时长 × 清晰度格都必须填写大于 0 的积分。"
                   : "不同档位可设不同积分；留空或 0 的格回退到上方「消耗积分」。"}
               </div>

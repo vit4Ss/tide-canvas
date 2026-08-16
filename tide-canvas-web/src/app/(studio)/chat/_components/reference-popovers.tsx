@@ -4,7 +4,15 @@
    渲染在 chat-wrap 顶层（fixed 定位，与创作台同一套 ws-srcmenu/ws-srcmask 结构）。 */
 
 import { AssetsBrowser, type PickedAsset } from "@/components/studio/assets-browser";
+import type { AssetFilterKey } from "@/components/studio/assets-browser-policy";
 import type { RefPolicy } from "./chat-utils";
+
+const FILTERS_BY_KIND: Record<RefPolicy["kinds"][number], readonly AssetFilterKey[]> = {
+  image: ["image", "character", "scene"],
+  video: ["video"],
+  audio: ["audio"],
+  file: ["doc"],
+};
 
 /** 参考素材来源选择：本地上传 / 资产库（复用 创作台 的来源菜单）。
  *  位置由调用方按锚点钳制后传入（见 useReferences 的 openSrcMenu/layout effect）。 */
@@ -60,6 +68,8 @@ export function AssetPickerDialog({
   onClose: () => void;
   onPick: (a: PickedAsset) => void;
 }) {
+  if (!refPolicy?.kinds.length) return null;
+  const allowedFilters = refPolicy?.kinds.flatMap((kind) => FILTERS_BY_KIND[kind]) ?? [];
   return (
     <div className="ws-srcmask" onClick={onClose}>
       <div className="ws-assetbox" onClick={(e) => e.stopPropagation()}>
@@ -75,6 +85,7 @@ export function AssetPickerDialog({
             onPick={onPick}
             defaultFilter={(refPolicy?.kinds[0] === "file" ? "doc" : refPolicy?.kinds[0]) ?? "image"}
             defaultTab={refPolicy?.kinds[0] === "audio" ? "upload" : "hist"}
+            allowedFilters={allowedFilters}
           />
         </div>
       </div>

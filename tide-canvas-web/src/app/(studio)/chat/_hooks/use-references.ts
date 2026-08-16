@@ -20,6 +20,7 @@ import {
 } from "../_components/chat-utils";
 
 export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined }) {
+  const acceptsReferences = !!refPolicy && refPolicy.kinds.length > 0 && refPolicy.max > 0;
   // reference media (P2): attached refs + drag state. refsRef mirrors refs for
   // race-guards (upload callbacks) and unmount revoke without stale closures.
   const [refs, setRefs] = useState<RefItem[]>([]);
@@ -47,10 +48,12 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
   // dismiss the 来源 menu / 资产库 dialog if the model stops supporting uploads
   // (switched to a no-upload model while one was open).
   useEffect(() => {
-    if (!refPolicy) {
+    if (!refPolicy || !refPolicy.kinds.length || refPolicy.max <= 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- 关闭浮层是对 refPolicy 消失的收敛动作，一次性且无级联
       setSrcMenuPos(null);
       setAssetPickOpen(false);
+      setDragOver(false);
+      dragDepth.current = 0;
     }
   }, [refPolicy]);
 
@@ -111,7 +114,7 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
   const attachFiles = useCallback(
     (files: FileList | File[]) => {
       const policy = refPolicy;
-      if (!policy) {
+      if (!policy || !policy.kinds.length || policy.max <= 0) {
         toast.info("当前模式不支持参考素材");
         return;
       }
@@ -218,7 +221,7 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
   const addAssetRef = useCallback(
     (url: string, kind: RefKind) => {
       const policy = refPolicy;
-      if (!policy) return;
+      if (!policy || !policy.kinds.length || policy.max <= 0) return;
       if (!policy.kinds.includes(kind)) {
         toast.info("当前模式不支持该类型素材");
         return;
@@ -251,7 +254,7 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
   const srcMenuElRef = useRef<HTMLDivElement>(null);
   const openSrcMenu = useCallback(
     (e: React.MouseEvent) => {
-      if (!refPolicy) return;
+      if (!acceptsReferences || !refPolicy) return;
       if (refCountRef.current >= refPolicy.max) {
         toast.info(`最多添加 ${refPolicy.max} 个文件`);
         return;
@@ -267,7 +270,7 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
       if (y < 12) y = r.bottom + gap; // not enough room above → drop below
       setSrcMenuPos({ x, y });
     },
-    [refPolicy],
+    [acceptsReferences, refPolicy],
   );
 
   // 首次定位用的是估算高度（H=168），实际菜单 ~200px，会盖住 ＋ 按钮/越出视口底；
@@ -320,37 +323,37 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
   // from nested dragenter/leave) + paste of files.
   const onDragEnter = useCallback(
     (e: React.DragEvent) => {
-      if (!refPolicy) return;
+      if (!acceptsReferences) return;
       e.preventDefault();
       dragDepth.current++;
       setDragOver(true);
     },
-    [refPolicy],
+    [acceptsReferences],
   );
   const onDragOver = useCallback(
     (e: React.DragEvent) => {
-      if (refPolicy) e.preventDefault();
+      if (acceptsReferences) e.preventDefault();
     },
-    [refPolicy],
+    [acceptsReferences],
   );
   const onDragLeave = useCallback(
     (e: React.DragEvent) => {
-      if (!refPolicy) return;
+      if (!acceptsReferences) return;
       e.preventDefault();
       dragDepth.current = Math.max(0, dragDepth.current - 1);
       if (dragDepth.current === 0) setDragOver(false);
     },
-    [refPolicy],
+    [acceptsReferences],
   );
   const onDrop = useCallback(
     (e: React.DragEvent) => {
-      if (!refPolicy) return;
+      if (!acceptsReferences) return;
       e.preventDefault();
       dragDepth.current = 0;
       setDragOver(false);
       if (e.dataTransfer.files?.length) attachFiles(e.dataTransfer.files);
     },
-    [refPolicy, attachFiles],
+    [acceptsReferences, attachFiles],
   );
 
   // restore reference media as url-only items (the originals are hosted; no
@@ -385,7 +388,7 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
     // 文档类("file")不参与 @ 引用：模型侧只接收图片，@文件N 无意义。
     // 先过滤再编号，编号与过滤后的数组对齐（buildMentionRefs 按 kind 分别计数，
     // 剔除 file 不影响 图片N/视频N/音频N 的序号）。
-    const mentionable = refs.filter((r) => r.kind !== "file");
+    const mentionable = refs.filter((r) => r.kind !== "file" && refPolicy.kinds.includes(r.kind));
     return buildMentionRefs(
       mentionable.map((r) => ({ key: r.key, kind: r.kind as Exclude<RefKind, "file">, thumb: r.url || r.blobUrl })),
     ).filter((_, i) => !!mentionable[i].url);

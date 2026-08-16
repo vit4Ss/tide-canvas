@@ -123,11 +123,35 @@ func TestValidateVideoPerRequestPricingConfig(t *testing.T) {
 	}
 }
 
+func TestValidateOmniReferenceConfig(t *testing.T) {
+	for _, raw := range []json.RawMessage{
+		nil,
+		json.RawMessage(`{}`),
+		json.RawMessage(`{"modes":["omni_ref"]}`),
+		json.RawMessage(`{"modes":["omni_ref"],"omniRefImageEnabled":false,"omniRefVideoEnabled":true,"omniRefAudioEnabled":false}`),
+		json.RawMessage(`{"modes":["t2v"],"omniRefImageEnabled":false,"omniRefVideoEnabled":false,"omniRefAudioEnabled":false}`),
+	} {
+		if err := validateOmniReferenceConfig(raw); err != nil {
+			t.Fatalf("config %s: %v", raw, err)
+		}
+	}
+	for _, raw := range []json.RawMessage{
+		json.RawMessage(`{"omniRefImageEnabled":false,"omniRefVideoEnabled":false,"omniRefAudioEnabled":false}`),
+		json.RawMessage(`{"modes":["omni_ref"],"omniRefImageEnabled":false,"omniRefVideoEnabled":false,"omniRefAudioEnabled":false}`),
+		json.RawMessage(`{"modes":["omni_ref"],"omniRefImageEnabled":"no"}`),
+	} {
+		if err := validateOmniReferenceConfig(raw); err == nil {
+			t.Fatalf("config %s should be rejected", raw)
+		}
+	}
+}
+
 func TestValidateReferenceVideoPricingConfig(t *testing.T) {
 	for _, raw := range []json.RawMessage{
 		nil,
 		json.RawMessage(`{}`),
 		json.RawMessage(`{"referenceVideoBillingEnabled":false}`),
+		json.RawMessage(`{"omniRefVideoEnabled":false,"referenceVideoBillingEnabled":true}`),
 		json.RawMessage(`{"referenceVideoBillingEnabled":true,"durations":["7s",8],"resolutions":["720p"],"priceMatrix":{"7s":{"720p":49},"8s":{"720p":"56"}}}`),
 		json.RawMessage(`{"referenceVideoBillingEnabled":true,"durations":["7s"],"resolutions":["720p"],"pricing":{"720P":{"7":49}}}`),
 	} {
