@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { useCanvasStore } from "@/stores/use-canvas-store";
 import { useCanvasViewStore } from "@/stores/use-canvas-view-store";
+import { canvasConnectionRule } from "@/lib/canvas-connection-rules";
+import { toast } from "@/components/shared/toast";
 
 export type PortSide = "input" | "output";
 
@@ -83,16 +85,21 @@ export function useCanvasConnection({ containerRef }: Options) {
     // 命中检测:按卡片实际渲染区域外扩一圈容差,拖到卡片边缘附近松手也算命中,
     // 避免差几像素落空弹出快捷新建
     const HIT_MARGIN = 28;
-    const hitTest = (world: { x: number; y: number }, sourceNodeId: string) => {
+    const hitTest = (world: { x: number; y: number }, connection: ConnectingState) => {
       const nodes = useCanvasStore.getState().nodes;
-      return nodes.find((n) => {
-        if (n.id === sourceNodeId) return false;
+      const node = nodes.find((n) => {
+        if (n.id === connection.sourceNodeId) return false;
         const cw = n.contentW ?? n.width;
         const ch = n.contentH ?? n.height;
         const left = n.x + (n.width - cw) / 2;
         return world.x >= left - HIT_MARGIN && world.x <= left + cw + HIT_MARGIN
           && world.y >= n.y - HIT_MARGIN && world.y <= n.y + ch + HIT_MARGIN;
       });
+      const origin = nodes.find((candidate) => candidate.id === connection.sourceNodeId);
+      if (!node || !origin) return null;
+      const source = connection.sourceSide === "output" ? origin : node;
+      const target = connection.sourceSide === "output" ? node : origin;
+      return { node, rule: canvasConnectionRule(source, target) };
     };
 
     // rAF 合帧:临时连线是 React state,直接逐 mousemove set 会让画布树按事件频率重渲染
@@ -102,8 +109,13 @@ export function useCanvasConnection({ containerRef }: Options) {
       const c = connectingRef.current;
       if (!c) return;
       const world = screenToWorld(e.clientX, e.clientY);
-      const hover = hitTest(world, c.sourceNodeId);
-      setConnecting({ ...c, currentWorldX: world.x, currentWorldY: world.y, hoverTargetNodeId: hover?.id ?? null });
+      const hit = hitTest(world, c);
+      setConnecting({
+        ...c,
+        currentWorldX: world.x,
+        currentWorldY: world.y,
+        hoverTargetNodeId: hit?.rule.allowed ? hit.node.id : null,
+      });
     };
     const onMove = (e: MouseEvent) => {
       lastEv = e;
@@ -125,12 +137,17 @@ export function useCanvasConnection({ containerRef }: Options) {
       }
       // 松手按事件坐标现算落点与命中:state 经 rAF 合帧,可能滞后不到一帧
       const world = screenToWorld(e.clientX, e.clientY);
-      const hover = hitTest(world, c.sourceNodeId);
-      if (hover) {
+      const hit = hitTest(world, c);
+      if (hit) {
+        if (!hit.rule.allowed) {
+          toast.info(hit.rule.reason || "这两个节点不能连接");
+          setConnecting(null);
+          return;
+        }
         // 落在某节点上 → 创建连接
         const store = useCanvasStore.getState();
-        const sourceId = c.sourceSide === "output" ? c.sourceNodeId : hover.id;
-        const targetId = c.sourceSide === "output" ? hover.id : c.sourceNodeId;
+        const sourceId = c.sourceSide === "output" ? c.sourceNodeId : hit.node.id;
+        const targetId = c.sourceSide === "output" ? hit.node.id : c.sourceNodeId;
         // 避免重复连接
         const exists = store.connections.some((conn) => conn.sourceId === sourceId && conn.targetId === targetId);
         if (!exists && sourceId !== targetId) {

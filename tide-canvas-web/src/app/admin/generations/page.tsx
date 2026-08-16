@@ -312,7 +312,14 @@ function InputAssetGroup({
           if (kind === "video" && asset.url) {
             return (
               <div className="genr-input-video" key={key}>
-                <video controls playsInline preload="metadata" src={asset.url} aria-label={itemLabel} />
+                <CapturableVideo
+                  controls
+                  playsInline
+                  preload="metadata"
+                  src={asset.url}
+                  aria-label={itemLabel}
+                  showFrameCapture={false}
+                />
                 <div className="genr-input-media-meta">
                   <span title={itemLabel}>{itemLabel}</span>
                   <a href={asset.url} target="_blank" rel="noreferrer">打开</a>

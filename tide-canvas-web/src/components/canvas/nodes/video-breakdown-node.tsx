@@ -1,8 +1,9 @@
 "use client";
 
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { AudioLines, Film, Play, ScanLine, Square } from "lucide-react";
-import { aiApi, uploadFileSmart } from "@/lib/api";
+import { Film, Loader2, Play, ScanLine, Square } from "lucide-react";
+import { aiApi, fileApi, uploadFileSmart } from "@/lib/api";
+import { notifyAssetLibraryChanged } from "@/lib/asset-library-events";
 import { captureVideoFrame, VideoFrameError } from "@/lib/video-frame";
 import { useAuthStore } from "@/stores/use-auth-store";
 import {
@@ -12,7 +13,7 @@ import {
   useCanvasStore,
   type CanvasNode,
 } from "@/stores/use-canvas-store";
-import { AiModelType, AiTaskStatus, type AiModelVO, type AiTaskVO } from "@/types/ai";
+import type { AiTaskVO } from "@/types/ai";
 import { toast } from "@/components/shared/toast";
 import CapturableVideo from "@/components/studio/create-studio/video-result";
 import { NodeHeader } from "./base/node-header";
@@ -27,10 +28,15 @@ import {
   formatStoryboardTime,
   parseStoryboardAnalysis,
   sampleStoryboardTimes,
+  selectStoryboardAnalysisModel,
   type StoryboardAnalysisMode,
   type StoryboardFrameAnalysis,
   type StoryboardUploadedFrame,
 } from "./video-frame-breakdown";
+import {
+  awaitStoryboardAnalysisTask,
+  cleanupStoryboardFrameTasks,
+} from "./storyboard-analysis-task";
 
 const DENSITIES = [
   { count: 6, label: "精简" },
@@ -44,8 +50,6 @@ const ANALYSIS_MODES: Array<{ value: StoryboardAnalysisMode; label: string; titl
   { value: "music", label: "音乐", title: "按画面情绪给出配乐建议" },
 ];
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
 function taskText(task: AiTaskVO): string {
   let meta: Record<string, unknown> = {};
   if (typeof task.resultMeta === "string") {
@@ -54,13 +58,6 @@ function taskText(task: AiTaskVO): string {
     meta = task.resultMeta;
   }
   return typeof meta.text === "string" ? meta.text : "";
-}
-
-function storyboardAnalysisModel(models: readonly AiModelVO[]): AiModelVO | undefined {
-  return models.find((candidate) =>
-    candidate.type === AiModelType.TEXT
-    && (!candidate.supportedHandlers?.length || candidate.supportedHandlers.includes("skill_text_completion")),
-  );
 }
 
 async function prepareStoryboardFrame(
@@ -98,10 +95,11 @@ async function analyzeStoryboardFrames(
   modes: readonly StoryboardAnalysisMode[],
   active: () => boolean,
   onTaskCreated: (taskId: string) => void,
+  onTaskReleased: (taskId: string) => void,
 ): Promise<StoryboardFrameAnalysis[]> {
   const modelsResponse = await aiApi.listModels();
-  const model = modelsResponse.success ? storyboardAnalysisModel(modelsResponse.data) : undefined;
-  if (!model) throw new Error("未配置支持视觉分析的文本模型");
+  const model = modelsResponse.success ? selectStoryboardAnalysisModel(modelsResponse.data) : undefined;
+  if (!model) throw new Error("未配置支持图片输入的文本模型，请联系管理员");
   if (!active()) return [];
 
   const created = await aiApi.generateIdempotent({
@@ -121,26 +119,21 @@ async function analyzeStoryboardFrames(
   }
 
   const taskId = String(created.data.id);
-  onTaskCreated(taskId);
-  const deadline = Date.now() + 5 * 60_000;
-  while (active() && Date.now() < deadline) {
-    const response = await aiApi.getTask(taskId).catch(() => null);
-    if (!response?.success || !response.data) {
-      await sleep(1500);
-      continue;
-    }
-    if (response.data.status === AiTaskStatus.SUCCESS) {
-      const analysis = parseStoryboardAnalysis(taskText(response.data), frames.length);
-      if (!analysis.length) throw new Error("镜头语义分析结果格式无效");
-      return analysis;
-    }
-    if (response.data.status === AiTaskStatus.FAILED || response.data.status === AiTaskStatus.CANCELLED) {
-      throw new Error(response.data.errorMsg || "镜头语义分析失败");
-    }
-    await sleep(1500);
-  }
-  if (active()) throw new Error("镜头语义分析等待超时");
-  return [];
+  const task = await awaitStoryboardAnalysisTask<AiTaskVO>({
+    taskId,
+    active,
+    getTask: async (id) => {
+      const response = await aiApi.getTask(id);
+      return response.success && response.data ? response.data : null;
+    },
+    cancelTask: (id) => aiApi.cancelTask(id),
+    onClaim: onTaskCreated,
+    onRelease: onTaskReleased,
+  });
+  if (!task) return [];
+  const analysis = parseStoryboardAnalysis(taskText(task), frames.length);
+  if (!analysis.length) throw new Error("镜头语义分析结果格式无效");
+  return analysis;
 }
 
 export const VideoBreakdownNode = memo(function VideoBreakdownNode({
@@ -160,16 +153,7 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
     const source = sources[0];
     return JSON.stringify({ id: source?.id ?? "", src: source?.videoSrc ?? "", count: sources.length });
   });
-  const audioInputJSON = useCanvasStore((state) => {
-    const sources = state.connections
-      .filter((connection) => connection.targetId === node.id)
-      .map((connection) => state.nodes.find((candidate) => candidate.id === connection.sourceId))
-      .filter((candidate) => candidate?.type === "audio" && candidate.audioSrc);
-    const source = sources[0];
-    return JSON.stringify({ id: source?.id ?? "", title: source?.title ?? "", count: sources.length });
-  });
   const videoInput = JSON.parse(videoInputJSON) as { id: string; src: string; count: number };
-  const audioInput = JSON.parse(audioInputJSON) as { id: string; title: string; count: number };
   const sourceVideoId = videoInput.id;
   const sourceVideoSrc = videoInput.src;
 
@@ -178,8 +162,10 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
   const [stage, setStage] = useState<"frames" | "analysis">("frames");
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [analysisPointCost, setAnalysisPointCost] = useState<number | null>(null);
+  const [analysisModelStatus, setAnalysisModelStatus] = useState<"loading" | "ready" | "unavailable" | "error">("loading");
   const runRef = useRef(0);
   const analysisTaskIdRef = useRef<string | null>(null);
+  const modelCheckRef = useRef(0);
   const frameCount = node.videoBreakdown?.frameCount ?? 12;
   const framesPerGroup = node.videoBreakdown?.framesPerGroup ?? 4;
   const analysisModes = node.videoBreakdown?.analysisModes?.length
@@ -191,15 +177,33 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
     ? { w: videoMeta.w, h: videoMeta.h }
     : { w: 0, h: 0 };
 
-  useEffect(() => {
-    let active = true;
-    void aiApi.listModels().then((response) => {
-      if (!active || !response.success) return;
-      const model = storyboardAnalysisModel(response.data);
-      setAnalysisPointCost(model ? Math.max(0, Number(model.pointCost) || 0) : null);
-    }).catch(() => undefined);
-    return () => { active = false; };
+  const refreshAnalysisModel = useCallback(async () => {
+    const check = ++modelCheckRef.current;
+    setAnalysisModelStatus("loading");
+    setAnalysisPointCost(null);
+    try {
+      const response = await aiApi.listModels();
+      if (modelCheckRef.current !== check) return;
+      if (!response.success) {
+        setAnalysisModelStatus("error");
+        return;
+      }
+      const model = selectStoryboardAnalysisModel(response.data);
+      if (!model) {
+        setAnalysisModelStatus("unavailable");
+        return;
+      }
+      setAnalysisPointCost(Math.max(0, Number(model.pointCost) || 0));
+      setAnalysisModelStatus("ready");
+    } catch {
+      if (modelCheckRef.current === check) setAnalysisModelStatus("error");
+    }
   }, []);
+
+  useEffect(() => {
+    void refreshAnalysisModel();
+    return () => { modelCheckRef.current += 1; };
+  }, [refreshAnalysisModel]);
 
   useEffect(() => {
     runRef.current += 1;
@@ -256,6 +260,12 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
       toast.error("请先连接一个已生成的视频节点");
       return;
     }
+    if (analysisModelStatus !== "ready") {
+      if (analysisModelStatus === "loading") toast.info("正在检查语义分析模型，请稍后");
+      else if (analysisModelStatus === "unavailable") toast.error("未配置支持图片输入的文本模型，请联系管理员");
+      else void refreshAnalysisModel();
+      return;
+    }
     if (!duration) {
       toast.info("视频信息仍在读取，请稍后再试");
       return;
@@ -279,6 +289,8 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
     setStage("frames");
     setProgress({ done: 0, total: times.length });
     const frames: StoryboardUploadedFrame[] = [];
+    const capturedTaskIds: string[] = [];
+    let outputsCommitted = false;
     let analysisWarning = "";
 
     try {
@@ -294,6 +306,24 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
         if (!uploaded.success || !uploaded.data) {
           throw new Error(uploaded.message || `第 ${index + 1} 帧上传失败`);
         }
+        if (!active()) {
+          await fileApi.delete(uploaded.data.id).catch(() => undefined);
+          return;
+        }
+        const registered = await aiApi.registerCapturedFrame({
+          fileId: uploaded.data.id,
+          captureTime: timeSec,
+          width: prepared.width,
+          height: prepared.height,
+        });
+        if (!registered.success || !registered.data?.id) {
+          // If registration really failed the upload is still a File row and can
+          // be removed. If the response was lost after commit, this is a harmless
+          // 404 because the server already transferred ownership to the task.
+          await fileApi.delete(uploaded.data.id).catch(() => undefined);
+          throw new Error(registered.message || `第 ${index + 1} 帧保存到生成历史失败`);
+        }
+        capturedTaskIds.push(String(registered.data.id));
         if (!active()) return;
         frames.push({
           url: uploaded.data.fileUrl,
@@ -305,12 +335,6 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
           timeSec,
         });
         setProgress({ done: index + 1, total: times.length });
-        void aiApi.registerCapturedFrame({
-          fileId: uploaded.data.id,
-          captureTime: timeSec,
-          width: prepared.width,
-          height: prepared.height,
-        }).catch(() => undefined);
       }
 
       if (!active()) return;
@@ -322,12 +346,13 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
           analysisModes,
           active,
           (taskId) => { analysisTaskIdRef.current = taskId; },
+          (taskId) => {
+            if (analysisTaskIdRef.current === taskId) analysisTaskIdRef.current = null;
+          },
         );
-        analysisTaskIdRef.current = null;
         const byIndex = new Map(analyses.map((item) => [item.index, item]));
         frames.forEach((frame, index) => { frame.analysis = byIndex.get(index + 1); });
       } catch (error) {
-        analysisTaskIdRef.current = null;
         analysisWarning = error instanceof Error ? error.message : "镜头语义分析不可用";
       }
 
@@ -358,6 +383,8 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
           analysisModes,
         },
       }, false);
+      outputsCommitted = true;
+      notifyAssetLibraryChanged({ collection: "hist", mediaKind: "image", origin: "capture" });
       if (analysisWarning) {
         toast.info(`已生成 ${frames.length} 张分镜帧；${analysisWarning}，本次未添加语义标注`);
       } else {
@@ -372,11 +399,33 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
           : "逐帧拉片失败，请重试";
       toast.error(message);
     } finally {
+      if (!outputsCommitted && capturedTaskIds.length) {
+        await cleanupStoryboardFrameTasks(capturedTaskIds, (taskId) => aiApi.cancelTask(taskId));
+        notifyAssetLibraryChanged({ collection: "hist", mediaKind: "image", origin: "capture" });
+      }
       if (runRef.current === run) setAnalyzing(false);
     }
-  }, [analysisModes, analyzing, duration, frameCount, framesPerGroup, node.id, sourceVideoId, sourceVideoSrc]);
+  }, [analysisModelStatus, analysisModes, analyzing, duration, frameCount, framesPerGroup, node.id, refreshAnalysisModel, sourceVideoId, sourceVideoSrc]);
 
   const progressPct = progress.total > 0 ? Math.round(progress.done / progress.total * 100) : 0;
+  const idleActionLabel = analysisModelStatus === "loading"
+    ? "正在检查语义模型"
+    : analysisModelStatus === "unavailable"
+      ? "未配置视觉模型"
+      : analysisModelStatus === "error"
+        ? "模型检查失败 · 重试"
+        : `${node.videoBreakdown?.lastFrameCount ? "再次拉片" : "开始拉片"}${analysisPointCost != null ? ` · ${Math.ceil(analysisPointCost)} 积分` : ""}`;
+  const actionDisabled = !sourceVideoSrc
+    || (!analyzing && (analysisModelStatus === "loading" || analysisModelStatus === "unavailable"));
+  const actionTitle = !sourceVideoSrc
+    ? "请先连接一个已生成的视频节点"
+    : analysisModelStatus === "loading"
+      ? "正在检查语义分析模型"
+      : analysisModelStatus === "unavailable"
+        ? "未配置支持图片输入的文本模型，请联系管理员"
+        : analysisModelStatus === "error"
+          ? "重新检查语义分析模型"
+          : undefined;
   const stopInteraction = (event: React.SyntheticEvent) => event.stopPropagation();
 
   return (
@@ -432,12 +481,8 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
               </span>
               <span>{dims.w && dims.h ? `${dims.w} × ${dims.h}` : "原始分辨率"}</span>
             </div>
-            <div className="flex items-center justify-between border-t border-neutral-100 pt-1.5 text-[11px] text-neutral-500 dark:border-neutral-800 dark:text-neutral-400">
-              <span className="flex min-w-0 items-center gap-1.5">
-                <AudioLines className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">{audioInput.id ? audioInput.title || "已连接音频" : "未连接音频（音乐为画面配乐建议）"}</span>
-              </span>
-              {audioInput.count > 1 && <span className="shrink-0">1/{audioInput.count}</span>}
+            <div className="border-t border-neutral-100 pt-1.5 text-[11px] text-neutral-500 dark:border-neutral-800 dark:text-neutral-400">
+              语义分析仅使用画面帧；配乐维度输出画面情绪建议
             </div>
             <div className="flex items-center gap-2">
               <span className="w-7 shrink-0 text-[11px] text-neutral-400 dark:text-neutral-500">分析</span>
@@ -494,21 +539,27 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
               onClick={(event) => {
                 event.stopPropagation();
                 if (analyzing) cancelBreakdown();
+                else if (analysisModelStatus === "error") void refreshAnalysisModel();
                 else void startBreakdown();
               }}
-              disabled={!sourceVideoSrc}
+              disabled={actionDisabled}
+              title={actionTitle}
               aria-busy={analyzing}
               className={`relative flex h-8 w-full items-center justify-center overflow-hidden rounded-lg text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none dark:focus-visible:ring-neutral-600 ${analyzing
                 ? "bg-neutral-700 text-white hover:bg-neutral-600 dark:bg-neutral-200 dark:text-neutral-900 dark:hover:bg-neutral-300"
                 : "bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"}`}
             >
               <span className="relative z-[1] flex items-center gap-2" aria-live="polite">
-                {analyzing ? <Square className="h-3 w-3 fill-current" aria-hidden /> : <ScanLine className="h-3.5 w-3.5" aria-hidden />}
                 {analyzing
-                  ? stage === "analysis" ? "停止语义分析" : `停止拉片 · ${progress.done}/${progress.total} · ${progressPct}%`
-                  : `${node.videoBreakdown?.lastFrameCount ? "再次拉片" : "开始拉片"}${analysisPointCost != null ? ` · ${Math.ceil(analysisPointCost)} 积分` : ""}`}
+                  ? stage === "analysis"
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden />
+                    : <Square className="h-3 w-3 fill-current" aria-hidden />
+                  : <ScanLine className="h-3.5 w-3.5" aria-hidden />}
+                {analyzing
+                  ? stage === "analysis" ? "语义分析中 · 点击停止" : `停止拉片 · ${progress.done}/${progress.total} · ${progressPct}%`
+                  : idleActionLabel}
               </span>
-              {analyzing && (
+              {analyzing && stage === "frames" && (
                 <span
                   className="absolute inset-x-0 bottom-0 h-0.5 origin-left bg-white/35 transition-transform duration-200 motion-reduce:transition-none dark:bg-neutral-900/30"
                   style={{ transform: `scaleX(${progressPct / 100})` }}
@@ -524,7 +575,7 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
           visible={isSelected && !isDragging}
           overlay
           onPortMouseDown={onPortMouseDown}
-          inputTitle="连接待拉片视频或音频"
+          inputTitle="连接待拉片视频"
           outputTitle="连接分镜帧"
         />
       </div>

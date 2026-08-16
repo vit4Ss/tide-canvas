@@ -729,6 +729,7 @@
 }
 
 .user-history-result {
+  position: relative;
   overflow: hidden;
   border: 1px solid var(--border-weak);
   border-radius: var(--r-sm);

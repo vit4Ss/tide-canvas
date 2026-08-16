@@ -23,6 +23,7 @@ import {
   DEFAULT_SCENE_3D_MOTION,
   normalizeScene3DMotion,
   normalizedScene3DMotionPoseAt,
+  rotateScene3DMotionAroundY,
   sampleScene3DMotion,
   scene3DMotionPresetPoses,
   type Scene3DCameraPose,
@@ -57,7 +58,7 @@ interface EditorApi {
   exitRigView: () => void;
   setView: (name: string) => void;
   setLight: (p: { preset?: string; azimuth?: number; elevation?: number; intensity?: number; ambient?: number }) => void;
-  setEnv: (p: Partial<Scene3DEnv>) => void;
+  setEnv: (p: Partial<Scene3DEnv>) => Scene3DMotionState | undefined;
   setPilotMode: (enabled: boolean) => void;
   setMotionPlaying: (playing: boolean) => void;
   captureCameraPose: () => Scene3DCameraPose;
@@ -720,7 +721,8 @@ export function Scene3DEditor({ node, onClose }: Props) {
           setActiveCamera(dirCam, savedDir?.target ?? new THREE.Vector3(0, 0.95, 0));
           refreshRigViz();
           setViewMode("director");
-          if (selRigId) selectRigInternal(selRigId);
+          if (selRigId && !motionPlaybackActive) selectRigInternal(selRigId);
+          else tc.detach();
         };
 
         const captureCameraPoseInternal = (): Scene3DCameraPose => ({
@@ -1008,6 +1010,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
             }
           },
           setEnv: (p) => {
+            let rotatedMotion: Scene3DMotionState | undefined;
             if (p.skyColor) scene.background = new THREE.Color(p.skyColor);
             if (p.showGround !== undefined) { ground.visible = p.showGround; grid.visible = p.showGround; }
             if (p.showLabels !== undefined) {
@@ -1035,6 +1038,9 @@ export function Scene3DEditor({ node, onClose }: Props) {
                     r.cam.lookAt(r.target);
                   }
                 }
+                rotatedMotion = rotateScene3DMotionAroundY(motionRef.current, delta);
+                motionRef.current = rotatedMotion;
+                updateMotionPath(rotatedMotion);
                 if (selCharId) {
                   const e = charsM.get(selCharId);
                   if (e) setRotYDeg(Math.round(THREE.MathUtils.radToDeg(e.figure.root.rotation.y)));
@@ -1047,6 +1053,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
               orbit.maxDistance = Math.min(30, Math.max(3, p.panoRadius * 0.85));
               orbit.update();
             }
+            return rotatedMotion;
           },
           setPilotMode: setPilotModeInternal,
           setMotionPlaying: (value) => {
@@ -1209,7 +1216,11 @@ export function Scene3DEditor({ node, onClose }: Props) {
   // ===== React 侧操作封装 =====
   const setEnvPartial = (p: Partial<Scene3DEnv>) => {
     setEnvState((s) => ({ ...s, ...p }));
-    apiRef.current?.setEnv(p);
+    const rotatedMotion = apiRef.current?.setEnv(p);
+    if (rotatedMotion) {
+      motionRef.current = rotatedMotion;
+      setMotionState(rotatedMotion);
+    }
   };
   const pickPose = (name: string) => {
     setPosePreset(name);

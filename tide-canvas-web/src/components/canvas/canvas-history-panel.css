@@ -281,6 +281,10 @@
   -webkit-line-clamp: 3;
 }
 
+.canvas-history-video-preview {
+  position: relative;
+}
+
 .canvas-history-preview {
   display: block;
   width: 100%;

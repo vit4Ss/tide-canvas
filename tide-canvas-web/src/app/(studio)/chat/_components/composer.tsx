@@ -138,6 +138,10 @@ export function Composer({
       : [],
   );
   const totalPoints = points + referenceVideoQuote.quote.pointCost;
+  const submitCurrentDraft = () => {
+    if (referenceVideoQuote.loading) return;
+    send();
+  };
 
   return (
     <div className="chat-composer">
@@ -207,7 +211,7 @@ export function Composer({
             value={draft}
             onChange={setDraft}
             refs={mentionRefs}
-            onSubmit={() => { if (!referenceVideoQuote.loading) send(); }}
+            onSubmit={() => submitCurrentDraft()}
             onPasteFiles={refPolicy ? attachFiles : undefined}
             placeholder={
               isMusicSel && musicMode === "custom"
@@ -660,7 +664,7 @@ export function Composer({
             className="cm-send"
             aria-label="发送"
             type="button"
-            onClick={() => send()}
+            onClick={() => submitCurrentDraft()}
             disabled={
               busy ||
               referenceVideoQuote.loading ||

@@ -37,7 +37,8 @@ test("startup recovery fences every paid Studio entry point", () => {
 
   assert.match(generation, /const \[recoveringRuns, setRecoveringRuns\] = useState\(true\)/);
   assert.match(generation, /if \(recoveringRuns\) \{[\s\S]*正在恢复生成任务/);
-  assert.match(studio, /disabled=\{restoringRun \|\| recoveringRuns \|\| submitting\}/);
+  assert.match(studio, /disabled=\{[^}]*restoringRun[^}]*recoveringRuns[^}]*submitting[^}]*\}/);
+  assert.match(studio, /disabled=\{[^}]*referenceVideoQuote\.loading[^}]*\}/);
 });
 
 test("new runs become visible and stale history cannot erase local completion", () => {

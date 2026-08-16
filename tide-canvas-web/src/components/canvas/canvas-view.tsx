@@ -12,6 +12,7 @@ import { useCanvasKeyboard } from "@/hooks/canvas/use-canvas-keyboard";
 import { useCanvasConnection } from "@/hooks/canvas/use-canvas-connection";
 import { useCanvasBoxSelect } from "@/hooks/canvas/use-canvas-box-select";
 import { createNode, autoArrangeNodes, nodeRenderRect } from "@/lib/canvas-helpers";
+import { canvasConnectionRule } from "@/lib/canvas-connection-rules";
 import { CanvasGridBackground } from "./canvas-grid-background";
 import { CanvasEmptyState } from "./canvas-empty-state";
 import { CanvasNodeComponent } from "./canvas-node";
@@ -280,15 +281,39 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
     const qa = connection.quickAdd;
     if (!qa) return;
     const node = createNode(type, qa.worldX, qa.worldY, nodes);
+    const origin = nodes.find((candidate) => candidate.id === qa.sourceNodeId);
+    if (!origin) {
+      connection.clearQuickAdd();
+      return;
+    }
+    const source = qa.sourceSide === "output" ? origin : node;
+    const target = qa.sourceSide === "output" ? node : origin;
+    const rule = canvasConnectionRule(source, target);
+    if (!rule.allowed) {
+      toast.info(rule.reason || "这两个节点不能连接");
+      connection.clearQuickAdd();
+      return;
+    }
     addNode(node);
-    const sourceId = qa.sourceSide === "output" ? qa.sourceNodeId : node.id;
-    const targetId = qa.sourceSide === "output" ? node.id : qa.sourceNodeId;
+    const sourceId = source.id;
+    const targetId = target.id;
     if (sourceId !== targetId) {
       addConnection({ id: `conn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, sourceId, targetId });
     }
     selectNode(node.id);
     connection.clearQuickAdd();
   }, [connection, nodes, addNode, addConnection, selectNode]);
+
+  const canQuickAddType = useCallback((type: string) => {
+    const qa = connection.quickAdd;
+    if (!qa) return true;
+    const origin = nodes.find((candidate) => candidate.id === qa.sourceNodeId);
+    if (!origin) return false;
+    const candidate = { type };
+    return qa.sourceSide === "output"
+      ? canvasConnectionRule(origin, candidate).allowed
+      : canvasConnectionRule(candidate, origin).allowed;
+  }, [connection.quickAdd, nodes]);
 
   // 从系统拖入文件到画布：上传图片/视频，并在落点生成对应节点（多文件错开排列）
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -491,6 +516,7 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
         menu={connection.quickAdd}
         onClose={connection.clearQuickAdd}
         onSelect={handleQuickAdd}
+        canSelect={canQuickAddType}
       />
 
       <CanvasContextMenu

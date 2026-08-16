@@ -30,8 +30,9 @@ test("history target guard executes before state changes, auth, and paid APIs", 
 });
 
 test("composer never forwards React submit or click events as history targets", () => {
-  assert.match(composer, /onSubmit=\{\(\) => send\(\)\}/);
-  assert.match(composer, /onClick=\{\(\) => send\(\)\}/);
+  assert.match(composer, /const submitCurrentDraft = \(\) => \{[\s\S]*send\(\);[\s\S]*\};/);
+  assert.match(composer, /onSubmit=\{\(\) => submitCurrentDraft\(\)\}/);
+  assert.match(composer, /onClick=\{\(\) => submitCurrentDraft\(\)\}/);
   assert.doesNotMatch(composer, /onSubmit=\{send\}/);
   assert.doesNotMatch(composer, /onClick=\{send\}/);
 });

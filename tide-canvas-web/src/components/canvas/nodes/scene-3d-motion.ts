@@ -206,6 +206,36 @@ export function sampleScene3DMotion(motion: Scene3DMotionState, count = 64): Sce
   return poses;
 }
 
+function rotatePointAroundY(
+  point: [number, number, number],
+  radians: number,
+): [number, number, number] {
+  const cosine = Math.cos(radians);
+  const sine = Math.sin(radians);
+  return [
+    point[0] * cosine + point[2] * sine,
+    point[1],
+    -point[0] * sine + point[2] * cosine,
+  ];
+}
+
+/** Keep recorded camera paths in the same panorama-local coordinate frame. */
+export function rotateScene3DMotionAroundY(
+  motionValue: Scene3DMotionState,
+  radians: number,
+): Scene3DMotionState {
+  const motion = normalizeScene3DMotion(motionValue);
+  if (!Number.isFinite(radians) || Math.abs(radians) < 1e-12 || !motion.keyframes.length) return motion;
+  return {
+    ...motion,
+    keyframes: motion.keyframes.map((frame) => ({
+      ...frame,
+      position: rotatePointAroundY(frame.position, radians),
+      target: rotatePointAroundY(frame.target, radians),
+    })),
+  };
+}
+
 function add(a: [number, number, number], b: [number, number, number], scale = 1): [number, number, number] {
   return [a[0] + b[0] * scale, a[1] + b[1] * scale, a[2] + b[2] * scale];
 }

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   normalizedScene3DMotionPoseAt,
   normalizeScene3DMotion,
+  rotateScene3DMotionAroundY,
   sampleScene3DMotion,
   scene3DMotionPoseAt,
   scene3DMotionPresetPoses,
@@ -73,6 +74,14 @@ test("interpolates camera position, target and FOV by keyframe time", () => {
   assert.equal(pose.fov, 45);
   assert.deepEqual(normalizedScene3DMotionPoseAt(normalizeScene3DMotion(motion), 2), pose);
   assert.equal(sampleScene3DMotion(motion, 5).length, 5);
+});
+
+test("panorama rotation keeps motion positions and targets in scene coordinates", () => {
+  const rotated = rotateScene3DMotionAroundY(motion, Math.PI / 2);
+  assert.ok(Math.abs(rotated.keyframes[0].position[0] - 4) < 1e-9);
+  assert.ok(Math.abs(rotated.keyframes[0].position[2]) < 1e-9);
+  assert.deepEqual(rotated.keyframes[0].target, [0, 1, 0]);
+  assert.equal(rotated.keyframes[0].fov, 50);
 });
 
 test("motion presets produce useful push, truck and orbit endpoints", () => {

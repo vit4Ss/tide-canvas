@@ -6,6 +6,7 @@ import { useCanvasStore } from "@/stores/use-canvas-store";
 import { AiTaskStatus, type AiTaskVO, type UserGenerationHistoryVO } from "@/types/ai";
 import { PRESET_TOOL_LABELS } from "@/lib/ai-tools-catalog";
 import { X, RefreshCw, Loader2, CheckCircle2, XCircle, Inbox, ExternalLink } from "lucide-react";
+import CapturableVideo from "@/components/studio/create-studio/video-result";
 import "./canvas-history-panel.css";
 
 const HANDLER_LABEL: Record<string, string> = {
@@ -40,7 +41,11 @@ function CanvasHistoryPreview({ record }: { record: UserGenerationHistoryVO }) {
   if (!record.resultUrl) return null;
 
   if (record.mediaType === "video") {
-    return <video className="canvas-history-preview" controls preload="metadata" src={record.resultUrl} />;
+    return (
+      <div className="canvas-history-video-preview">
+        <CapturableVideo className="canvas-history-preview" controls preload="metadata" src={record.resultUrl} />
+      </div>
+    );
   }
   if (record.mediaType === "audio") {
     return <audio className="canvas-history-audio" aria-label="生成音频" controls preload="metadata" src={record.resultUrl} />;

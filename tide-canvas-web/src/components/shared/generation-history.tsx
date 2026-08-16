@@ -20,6 +20,7 @@ import {
   Video,
 } from "lucide-react";
 import { Logo } from "@/components/flux/atoms";
+import CapturableVideo from "@/components/studio/create-studio/video-result";
 import {
   AdminAlert,
   AdminDrawer,
@@ -189,7 +190,7 @@ function ResultBlock({ detail, row }: { detail: UserGenerationHistoryDetailVO | 
         {assets.map((asset, index) => (
           <div className="user-history-result" key={asset.url}>
             {asset.kind === "video" ? (
-              <video controls preload="metadata" src={asset.url} />
+              <CapturableVideo controls preload="metadata" src={asset.url} />
             ) : asset.kind === "audio" ? (
               <audio aria-label={asset.name || `生成音频 ${index + 1}`} controls preload="metadata" src={asset.url} />
             ) : asset.kind === "image" ? (

@@ -1,4 +1,5 @@
 import type { CanvasGroup, CanvasNode, Connection } from "@/stores/use-canvas-store";
+import type { AiModelVO } from "@/types/ai";
 
 export const STORYBOARD_FRAME_WIDTH = 280;
 export const BREAKDOWN_NODE_WIDTH = 360;
@@ -23,6 +24,35 @@ export interface StoryboardUploadedFrame {
   height: number;
   timeSec: number;
   analysis?: StoryboardFrameAnalysis;
+}
+
+function storyboardVisionCapability(model: Pick<AiModelVO, "config">): boolean {
+  try {
+    const config = JSON.parse(model.config || "{}") as Record<string, unknown>;
+    if (config.vision === true || config.multimodal === true || config.imageInput === true) return true;
+    const capabilityValues = [config.capabilities, config.inputModalities, config.modalities]
+      .flatMap((value) => Array.isArray(value) ? value : [])
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim().toLowerCase().replace(/[\s_]+/g, "-"));
+    return capabilityValues.some((value) =>
+      value === "vision"
+      || value === "multimodal"
+      || value === "image"
+      || value === "image-input"
+      || value === "image-understanding"
+      || value === "visual-understanding");
+  } catch {
+    return false;
+  }
+}
+
+/** Pick only a text-completion model explicitly configured for image input. */
+export function selectStoryboardAnalysisModel(models: readonly AiModelVO[]): AiModelVO | undefined {
+  return models.find((candidate) =>
+    candidate.type === "text"
+    && (!candidate.supportedHandlers?.length || candidate.supportedHandlers.includes("skill_text_completion"))
+    && storyboardVisionCapability(candidate),
+  );
 }
 
 export function sampleStoryboardTimes(duration: number, frameCount: number): number[] {

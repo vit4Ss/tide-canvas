@@ -1,5 +1,6 @@
 import { generateNodeId, type CanvasNode, type CanvasGroup, type Connection } from "@/stores/use-canvas-store";
 import { CHARACTER_NODE_TYPE, SCENE_NODE_TYPE } from "@/lib/canvas-node-types";
+import { buildLayerLayoutUnits, packLayerLayoutUnits } from "@/lib/canvas-layout-units";
 
 export const NODE_TYPE_TITLES: Record<string, string> = {
   [CHARACTER_NODE_TYPE]: "角色",
@@ -89,8 +90,6 @@ function layoutLayeredGrid(
   groupOfNode: Map<string, string>,
 ): { pos: Map<string, { x: number; y: number }>; width: number; height: number } {
   const { layerGap, colGap, rowGap } = gaps;
-  const realW = (n: CanvasNode) => n.contentW ?? n.width;
-  const realH = (n: CanvasNode) => n.contentH ?? n.height;
   const MAX_COL_H = 1800; // 单列高度上限：超过才折多列；保证少量节点的层保持单列
 
   const idSet = new Set(ids);
@@ -128,41 +127,18 @@ function layoutLayeredGrid(
     }
   }
 
-  // 每层按高度上限决定列数（小层单列）。同组成员作为不可拆分单元装箱，避免
-  // 分镜组恰好跨过折列边界后被拉成横跨多列的巨大组框。
+  // 同组成员先排成紧凑的二维单元，再按单元高度折列。列数不超过单元数，
+  // 因此既不会把 2×2 分镜压成单列，也不会预留没有内容的空列。
   const blocks = depths.map((d) => {
     const layerIds = order.get(d)!;
-    const n = layerIds.length;
-    const singleH = layerIds.reduce((s, id) => s + realH(nodeMap.get(id)!), 0) + rowGap * Math.max(0, n - 1);
-    const nCols = Math.max(1, Math.min(n, Math.ceil(singleH / MAX_COL_H)));
-    const unitByKey = new Map<string, string[]>();
-    const unitOrder: string[] = [];
-    for (const id of layerIds) {
-      const key = groupOfNode.get(id) ?? `node:${id}`;
-      if (!unitByKey.has(key)) {
-        unitByKey.set(key, []);
-        unitOrder.push(key);
-      }
-      unitByKey.get(key)!.push(id);
-    }
-    const subCols: string[][] = Array.from({ length: nCols }, () => []);
-    const packedHeights = new Array<number>(nCols).fill(0);
-    for (const key of unitOrder) {
-      const unit = unitByKey.get(key)!;
-      let targetCol = 0;
-      for (let col = 1; col < nCols; col++) {
-        if (packedHeights[col] < packedHeights[targetCol]) targetCol = col;
-      }
-      if (subCols[targetCol].length) packedHeights[targetCol] += rowGap;
-      subCols[targetCol].push(...unit);
-      packedHeights[targetCol] += unit.reduce((sum, id) => sum + realH(nodeMap.get(id)!), 0)
-        + rowGap * Math.max(0, unit.length - 1);
-    }
-    const colW = Math.max(...layerIds.map((id) => realW(nodeMap.get(id)!)));
-    const heights = subCols.map((col) => col.reduce((s, id) => s + realH(nodeMap.get(id)!), 0) + rowGap * Math.max(0, col.length - 1));
-    const blockW = nCols * colW + colGap * (nCols - 1);
+    const units = buildLayerLayoutUnits(layerIds, nodeMap, groupOfNode, colGap, rowGap);
+    const columns = packLayerLayoutUnits(units, MAX_COL_H, rowGap);
+    const colW = Math.max(...units.map((unit) => unit.width));
+    const heights = columns.map((column) => column.reduce((sum, unit) => sum + unit.height, 0)
+      + rowGap * Math.max(0, column.length - 1));
+    const blockW = columns.length * colW + colGap * (columns.length - 1);
     const blockH = Math.max(0, ...heights);
-    return { subCols, colW, blockW, blockH };
+    return { columns, colW, blockW, blockH };
   });
   const maxH = Math.max(0, ...blocks.map((b) => b.blockH));
 
@@ -170,15 +146,18 @@ function layoutLayeredGrid(
   let x = 0;
   for (const b of blocks) {
     const blockTop = (maxH - b.blockH) / 2;
-    for (let ci = 0; ci < b.subCols.length; ci++) {
+    for (let ci = 0; ci < b.columns.length; ci++) {
       const colX = x + ci * (b.colW + colGap);
       let y = blockTop;
-      for (const id of b.subCols[ci]) {
-        const node = nodeMap.get(id)!;
-        const w = realW(node);
-        // 卡片在列宽内水平居中，并补偿卡片相对 node.width 容器的居中偏移
-        pos.set(id, { x: colX + (b.colW - w) / 2 - (node.width - w) / 2, y });
-        y += realH(node) + rowGap;
+      for (const unit of b.columns[ci]) {
+        const unitX = colX + (b.colW - unit.width) / 2;
+        for (const member of unit.members) {
+          pos.set(member.id, {
+            x: unitX + member.x - member.containerOffsetX,
+            y: y + member.y,
+          });
+        }
+        y += unit.height + rowGap;
       }
     }
     x += b.blockW + layerGap;

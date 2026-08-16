@@ -7,6 +7,7 @@ import {
   formatStoryboardTime,
   parseStoryboardAnalysis,
   sampleStoryboardTimes,
+  selectStoryboardAnalysisModel,
 } from "./video-frame-breakdown.ts";
 
 const read = (relative) => readFileSync(new URL(relative, import.meta.url), "utf8");
@@ -92,6 +93,22 @@ test("storyboard analysis prompt and parser keep frame indexes stable", () => {
   assert.deepEqual(parseStoryboardAnalysis("not-json", 2), []);
 });
 
+test("storyboard analysis only selects an explicitly vision-capable text model", () => {
+  const base = {
+    id: "1",
+    name: "model",
+    icon: "",
+    type: "text",
+    supportedHandlers: ["skill_text_completion"],
+    pointCost: 1,
+  };
+  const textOnly = { ...base, modelId: "text-only", config: JSON.stringify({ capabilities: ["text"] }) };
+  const vision = { ...base, id: "2", modelId: "vision", config: JSON.stringify({ inputModalities: ["text", "image"] }) };
+  assert.equal(selectStoryboardAnalysisModel([textOnly, vision])?.modelId, "vision");
+  assert.equal(selectStoryboardAnalysisModel([textOnly]), undefined);
+  assert.equal(selectStoryboardAnalysisModel([{ ...vision, supportedHandlers: ["assistant_chat"] }]), undefined);
+});
+
 test("breakdown controls expose clear state and restrained progress feedback", () => {
   const breakdownNode = read("./video-breakdown-node.tsx");
   const imageNode = read("./image-node.tsx");
@@ -101,15 +118,24 @@ test("breakdown controls expose clear state and restrained progress feedback", (
   assert.match(breakdownNode, /aria-pressed=\{active\}/);
   assert.match(breakdownNode, /aria-busy=\{analyzing\}/);
   assert.match(breakdownNode, /aria-live="polite"/);
+  assert.match(breakdownNode, /analysisModelStatus === "unavailable"/);
+  assert.match(breakdownNode, /模型检查失败 · 重试/);
   assert.match(breakdownNode, /const cancelBreakdown = useCallback/);
+  assert.match(breakdownNode, /const registered = await aiApi\.registerCapturedFrame/);
+  assert.match(breakdownNode, /analysisTaskIdRef\.current === taskId/);
+  assert.doesNotMatch(breakdownNode, /audioInput|AudioLines|视频或音频/);
+  assert.match(breakdownNode, /inputTitle="连接待拉片视频"/);
   assert.match(breakdownNode, /\} catch \(error\) \{\s*if \(!active\(\)\) return;\s*const message = error instanceof VideoFrameError/);
   assert.match(breakdownNode, /if \(analyzing\) cancelBreakdown\(\)/);
   assert.match(breakdownNode, /<CapturableVideo[\s\S]*showFrameCapture=\{false\}/);
   assert.doesNotMatch(breakdownNode, /<video\b/);
   assert.match(breakdownNode, /style=\{\{ transform: `scaleX\(\$\{progressPct \/ 100\}\)` \}\}/);
+  assert.match(breakdownNode, /analyzing && stage === "frames"/);
+  assert.match(breakdownNode, /语义分析中 · 点击停止/);
   assert.doesNotMatch(breakdownNode, /⚡|rounded-full|bg-cyan/);
   assert.match(imageNode, /storyboardFrame\.motion[\s\S]*text-white\/70/);
   assert.match(editor, /aria-pressed=\{motion\.loop\}/);
   assert.match(editor, /aria-expanded=\{motionOpen\}/);
+  assert.match(editor, /selRigId && !motionPlaybackActive/);
   assert.match(videoNode, /disabled=\{!node\.videoSrc \|\| nodeUploading \|\| generating\}/);
 });

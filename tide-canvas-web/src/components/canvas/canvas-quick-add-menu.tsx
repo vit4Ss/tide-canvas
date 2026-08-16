@@ -8,13 +8,14 @@ interface Props {
   menu: { clientX: number; clientY: number } | null;
   onClose: () => void;
   onSelect: (type: string) => void;
+  canSelect?: (type: string) => boolean;
 }
 
 /** 从端口拖出连线、在空白处松手时弹出：选择类型即新建节点并自动连线 */
-export function CanvasQuickAddMenu({ menu, onClose, onSelect }: Props) {
+export function CanvasQuickAddMenu({ menu, onClose, onSelect, canSelect }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const nodeTypes = useCanvasNodeConfigStore((state) => state.nodeTypes);
-  const enabledNodeTypes = nodeTypes.filter((item) => item.enabled);
+  const enabledNodeTypes = nodeTypes.filter((item) => item.enabled && (!canSelect || canSelect(item.key)));
 
   useEffect(() => {
     if (!menu) return;
@@ -58,6 +59,9 @@ export function CanvasQuickAddMenu({ menu, onClose, onSelect }: Props) {
       style={{ left, top, maxHeight: "calc(100vh - 16px)" }}
     >
       <div className="px-3 pb-1 text-xs text-neutral-400">新建并连接</div>
+      {enabledNodeTypes.length === 0 && (
+        <div className="px-3 py-2 text-xs text-neutral-500 dark:text-neutral-400">暂无可连接的节点类型</div>
+      )}
       {enabledNodeTypes.map((item) => {
         const Icon = canvasNodeIcon(item.key);
         return (

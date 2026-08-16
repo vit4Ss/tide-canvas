@@ -5,10 +5,11 @@ import { Ungroup, Palette, Check } from "lucide-react";
 import { useCanvasStore, GROUP_COLORS, type CanvasGroup, type CanvasNode } from "@/stores/use-canvas-store";
 import { useCanvasViewStore } from "@/stores/use-canvas-view-store";
 import { nodeRenderRect } from "@/lib/canvas-helpers";
+import { CANVAS_GROUP_FRAME_PAD, CANVAS_GROUP_TITLE_HEIGHT } from "@/lib/canvas-layout-units";
 
 // 边框相对成员包围盒的内边距 / 标题栏高度（世界坐标，随画布缩放）
-const PAD = 28;
-const TITLE_H = 34;
+const PAD = CANVAS_GROUP_FRAME_PAD;
+const TITLE_H = CANVAS_GROUP_TITLE_HEIGHT;
 const DRAG_THRESHOLD = 4;
 
 interface LayerProps {
