@@ -221,11 +221,13 @@ func (p *relayProviderClient) batchImages(ctx context.Context, n int, gen func(c
 // media fields are filled by the caller.
 func (p *relayProviderClient) videoParams(model, mode string, in map[string]any) relaymedia.VideoParams {
 	return relaymedia.VideoParams{
-		Model:      model,
-		Mode:       mode,
-		Prompt:     inputStr(in, "prompt"),
-		Ratio:      normalizeVideoRatio(inputStr(in, "aspect_ratio", "aspectRatio", "ratio")),
-		Resolution: strings.ToLower(inputStr(in, "resolution")), // 480p/720p/1080p
+		Model:  model,
+		Mode:   mode,
+		Prompt: inputStr(in, "prompt"),
+		Ratio:  normalizeVideoRatio(inputStr(in, "aspect_ratio", "aspectRatio", "ratio")),
+		// resolution is canonical for new requests; clarity keeps already-persisted
+		// legacy video tasks dispatchable during a rolling deployment.
+		Resolution: strings.ToLower(inputStr(in, "resolution", "clarity")), // 480p/720p/1080p
 		Duration:   inputInt(in, "duration"),
 	}
 }

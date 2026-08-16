@@ -97,6 +97,32 @@ func TestValidateUpscalePricingConfig(t *testing.T) {
 	}
 }
 
+func TestValidateVideoPerRequestPricingConfig(t *testing.T) {
+	for _, raw := range []json.RawMessage{
+		nil,
+		json.RawMessage(`{}`),
+		json.RawMessage(`{"videoBillingMode":"duration"}`),
+		json.RawMessage(`{"videoBillingMode":"per_request","resolutions":["720p","1080p"],"pricePerRequestByResolution":{"720P":"12.5","1080p":25}}`),
+	} {
+		if err := validateVideoPricingConfig(raw); err != nil {
+			t.Fatalf("config %s: %v", raw, err)
+		}
+	}
+	for _, raw := range []json.RawMessage{
+		json.RawMessage(`{"videoBillingMode":"unknown"}`),
+		json.RawMessage(`{"videoBillingMode":"per_request"}`),
+		json.RawMessage(`{"videoBillingMode":"per_request","resolutions":["720p"],"pricePerRequestByResolution":{}}`),
+		json.RawMessage(`{"videoBillingMode":"per_request","resolutions":["720p","720P"],"pricePerRequestByResolution":{"720p":10}}`),
+		json.RawMessage(`{"videoBillingMode":"per_request","resolutions":["720p"],"pricePerRequestByResolution":{"720p":0}}`),
+		json.RawMessage(`{"videoBillingMode":"per_request","resolutions":["720p"],"pricePerRequestByResolution":{"720p":1e308}}`),
+		json.RawMessage(`{"videoBillingMode":"per_request","resolutions":["720p"],"pricePerRequestByResolution":{"720p":10,"720P":11}}`),
+	} {
+		if err := validateVideoPricingConfig(raw); err == nil {
+			t.Fatalf("config %s should be rejected", raw)
+		}
+	}
+}
+
 func TestValidateReferenceVideoPricingConfig(t *testing.T) {
 	for _, raw := range []json.RawMessage{
 		nil,

@@ -49,6 +49,8 @@ interface Props {
   leading?: React.ReactNode;
   /** 缩略图行右侧按钮（如展开） */
   trailing?: React.ReactNode;
+  /** 缩略图与正文编辑器之间的结构化上下文（如片段重拍的来源时间段）。 */
+  editorContext?: React.ReactNode;
 }
 
 const stop = (e: React.MouseEvent) => e.stopPropagation();
@@ -59,7 +61,7 @@ const stop = (e: React.MouseEvent) => e.stopPropagation();
  */
 export function PromptRefEditor({
   value, onChange, refs, placeholder, ariaLabel, onSubmit,
-  fill = false, showThumbs = true, editorClassName, editorStyle, leading, trailing,
+  fill = false, showThumbs = true, editorClassName, editorStyle, leading, trailing, editorContext,
 }: Props) {
   const promptEditorRef = useRef<HTMLDivElement>(null);
   const promptRangeRef = useRef<Range | null>(null);
@@ -375,9 +377,13 @@ export function PromptRefEditor({
         </div>
       )}
 
+      {editorContext && (
+        <div className={showThumbs ? "mt-3" : ""}>{editorContext}</div>
+      )}
+
       {/* 富文本编辑器 + @ 下拉 */}
-      {/* mt-3 只是与上方缩略图行的间距——助手面板不渲染那行，也就不要这段留白 */}
-      <div className={`relative ${showThumbs ? "mt-3" : ""} ${fill ? "flex min-h-0 flex-1 flex-col" : ""}`}>
+      {/* 与缩略图或结构化上下文保持一档间距；两者都没有时贴合宿主面板排版。 */}
+      <div className={`relative ${showThumbs || editorContext ? "mt-3" : ""} ${fill ? "flex min-h-0 flex-1 flex-col" : ""}`}>
         {!value && (
           <span className="pointer-events-none absolute left-0 top-0 text-sm leading-6 text-neutral-500 dark:text-neutral-400">
             {placeholder}

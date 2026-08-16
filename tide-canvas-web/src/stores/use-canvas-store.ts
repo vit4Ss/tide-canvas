@@ -93,6 +93,13 @@ export interface CanvasNode {
   };
   /** 视频节点的派生创作场景；用于恢复对应模式与输入引导。 */
   videoOperation?: "clip_reshoot";
+  /** 片段重拍的主来源视频节点；与其它角色/风格参考视频区分。 */
+  clipReshootSourceId?: string;
+  /** 片段重拍在来源视频上选中的时间区间；最多 5 段，随画布持久化。 */
+  clipReshootRanges?: Array<{
+    start: number;
+    end: number;
+  }>;
   /** 逐帧拉片节点的持久化参数与最近一次输出摘要。 */
   videoBreakdown?: {
     frameCount: number;
@@ -272,6 +279,100 @@ function restoredSkillRunState(
 /** 分组默认配色（按现有分组数轮转，相邻分组颜色不同） */
 export const GROUP_COLORS = ["#3b82f6", "#22c55e", "#f59e0b", "#ec4899", "#8b5cf6", "#06b6d4", "#ef4444"];
 
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function finiteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+/** Canvas JSON is persisted user data, so salvage valid rows instead of letting one bad row crash the page. */
+function normalizeLoadedNodes(value: unknown): CanvasNode[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const restored: CanvasNode[] = [];
+  for (const candidate of value) {
+    const row = recordValue(candidate);
+    const id = typeof row?.id === "string" ? row.id.trim() : "";
+    const type = typeof row?.type === "string" ? row.type.trim() : "";
+    if (
+      !row || !id || !type || seen.has(id)
+      || !finiteNumber(row.x) || !finiteNumber(row.y)
+      || !finiteNumber(row.width) || row.width <= 0
+      || !finiteNumber(row.height) || row.height <= 0
+    ) continue;
+    seen.add(id);
+    restored.push(reviveNode(normalizeNode({
+      ...row,
+      id,
+      type,
+      x: row.x,
+      y: row.y,
+      width: row.width,
+      height: row.height,
+      title: typeof row.title === "string" ? row.title : type,
+    } as CanvasNode), { keepResumable: true }));
+  }
+  return restored;
+}
+
+function normalizeLoadedConnections(value: unknown, nodeIds: ReadonlySet<string>): Connection[] {
+  if (!Array.isArray(value)) return [];
+  const ids = new Set<string>();
+  const pairs = new Set<string>();
+  const restored: Connection[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const row = recordValue(value[index]);
+    const sourceId = typeof row?.sourceId === "string" ? row.sourceId : "";
+    const targetId = typeof row?.targetId === "string" ? row.targetId : "";
+    if (!row || !nodeIds.has(sourceId) || !nodeIds.has(targetId) || sourceId === targetId) continue;
+    const targetSlot = typeof row.targetSlot === "string" ? row.targetSlot : undefined;
+    const sourceOutput = typeof row.sourceOutput === "string" ? row.sourceOutput : undefined;
+    const pair = `${sourceId}\u0000${targetId}\u0000${targetSlot ?? ""}`;
+    if (pairs.has(pair)) continue;
+    let id = typeof row.id === "string" && row.id.trim()
+      ? row.id.trim()
+      : `conn_loaded_${index}_${sourceId}_${targetId}`;
+    if (ids.has(id)) id = `${id}_${index}`;
+    ids.add(id);
+    pairs.add(pair);
+    restored.push({ id, sourceId, targetId, ...(targetSlot ? { targetSlot } : {}), ...(sourceOutput ? { sourceOutput } : {}) });
+  }
+  return restored;
+}
+
+function normalizeLoadedGroups(value: unknown, nodeIds: ReadonlySet<string>): CanvasGroup[] {
+  if (!Array.isArray(value)) return [];
+  const groupIds = new Set<string>();
+  const assignedNodeIds = new Set<string>();
+  const restored: CanvasGroup[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const row = recordValue(value[index]);
+    if (!row || !Array.isArray(row.nodeIds)) continue;
+    let id = typeof row.id === "string" && row.id.trim() ? row.id.trim() : `group_loaded_${index}`;
+    if (groupIds.has(id)) id = `${id}_${index}`;
+    const memberIds = [...new Set(row.nodeIds.filter((memberId): memberId is string =>
+      typeof memberId === "string" && nodeIds.has(memberId) && !assignedNodeIds.has(memberId),
+    ))];
+    if (memberIds.length === 0) continue;
+    const color = typeof row.color === "string" && /^#[0-9a-f]{6}$/i.test(row.color)
+      ? row.color
+      : GROUP_COLORS[restored.length % GROUP_COLORS.length];
+    groupIds.add(id);
+    memberIds.forEach((memberId) => assignedNodeIds.add(memberId));
+    restored.push({
+      id,
+      title: typeof row.title === "string" && row.title.trim() ? row.title : "未命名分组",
+      color,
+      nodeIds: memberIds,
+    });
+  }
+  return restored;
+}
+
 function normalizePromptText(value: string): string {
   if (!value.includes("\\u")) return value;
   let decoded = value;
@@ -417,7 +518,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   undoStack: [],
   redoStack: [],
 
-  selectConnection: (id) => set({ selectedConnectionId: id }),
+  selectConnection: (id) => set(id
+    ? { selectedConnectionId: id, selectedNodeIds: new Set(), selectedNodeId: null }
+    : { selectedConnectionId: null }),
   setCurrentProjectId: (id) => set({ currentProjectId: id }),
 
   trackSkillRun: (runId) => set((state) => {
@@ -490,6 +593,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   canRedo: () => get().redoStack.length > 0,
 
   addNode: (node, recordHistory = true) => set((state) => {
+    if (!node.id || state.nodes.some((candidate) => candidate.id === node.id)) return state;
     const undo = recordHistory ? [...state.undoStack.slice(-MAX_HISTORY + 1), snapshot(state)] : state.undoStack;
     return {
       nodes: [...state.nodes, normalizeNode(node)],
@@ -500,6 +604,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   addNodesAndConnections: (nodes, connections, selectNodeId, groups = []) => set((state) => {
     const existingNodeIds = new Set(state.nodes.map((node) => node.id));
+    const collidedNodeIds = new Set(nodes
+      .map((node) => node.id)
+      .filter((id) => existingNodeIds.has(id)));
     const nextNodes = nodes.filter((node, index, list) =>
       !existingNodeIds.has(node.id) && list.findIndex((candidate) => candidate.id === node.id) === index,
     );
@@ -507,8 +614,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const existingConnectionIds = new Set(state.connections.map((connection) => connection.id));
     const existingPairs = new Set(state.connections.map((connection) => `${connection.sourceId}\u0000${connection.targetId}\u0000${connection.targetSlot ?? ""}`));
     const nextConnections = connections.filter((connection, index, list) => {
+      if (connection.sourceId === connection.targetId) return false;
+      if (collidedNodeIds.has(connection.sourceId) || collidedNodeIds.has(connection.targetId)) return false;
       if (!availableNodeIds.has(connection.sourceId) || !availableNodeIds.has(connection.targetId)) return false;
       if (existingConnectionIds.has(connection.id)) return false;
+      if (list.findIndex((candidate) => candidate.id === connection.id) !== index) return false;
       const pair = `${connection.sourceId}\u0000${connection.targetId}\u0000${connection.targetSlot ?? ""}`;
       if (existingPairs.has(pair)) return false;
       return list.findIndex((candidate) =>
@@ -542,6 +652,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   }),
 
   updateNode: (id, data, recordHistory = false) => set((state) => {
+    // 上传/生成等异步回调可能晚于节点删除返回。不存在的目标必须是严格
+    // no-op，否则一次迟到的成功回调会凭空压入撤销历史并清空 redo。
+    if (!state.nodes.some((node) => node.id === id)) return state;
     // 拖拽更新太频繁，默认不记录历史
     const undo = recordHistory ? [...state.undoStack.slice(-MAX_HISTORY + 1), snapshot(state)] : state.undoStack;
     return {
@@ -611,6 +724,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   selectNode: (id) => set(() => ({
     selectedNodeId: id,
     selectedNodeIds: id ? new Set([id]) : new Set(),
+    ...(id ? { selectedConnectionId: null } : {}),
   })),
 
   toggleSelectNode: (id) => set((state) => {
@@ -623,22 +737,42 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     return {
       selectedNodeIds: newSel,
       selectedNodeId: newSel.size === 1 ? Array.from(newSel)[0] : null,
+      selectedConnectionId: null,
     };
   }),
 
   selectMany: (ids) => set(() => ({
     selectedNodeIds: new Set(ids),
     selectedNodeId: ids.length === 1 ? ids[0] : null,
+    selectedConnectionId: null,
   })),
 
-  clearSelection: () => set({ selectedNodeIds: new Set(), selectedNodeId: null }),
+  clearSelection: () => set({
+    selectedNodeIds: new Set(),
+    selectedNodeId: null,
+    selectedConnectionId: null,
+  }),
 
   selectAll: () => set((state) => ({
     selectedNodeIds: new Set(state.nodes.map((n) => n.id)),
     selectedNodeId: state.nodes.length === 1 ? state.nodes[0].id : null,
+    selectedConnectionId: null,
   })),
 
   addConnection: (conn, recordHistory = true) => set((state) => {
+    if (
+      conn.sourceId === conn.targetId
+      || !state.nodes.some((node) => node.id === conn.sourceId)
+      || !state.nodes.some((node) => node.id === conn.targetId)
+      || state.connections.some((candidate) =>
+        candidate.id === conn.id
+        || (
+          candidate.sourceId === conn.sourceId
+          && candidate.targetId === conn.targetId
+          && (candidate.targetSlot ?? "") === (conn.targetSlot ?? "")
+        ),
+      )
+    ) return state;
     const undo = recordHistory ? [...state.undoStack.slice(-MAX_HISTORY + 1), snapshot(state)] : state.undoStack;
     return {
       connections: [...state.connections, conn],
@@ -661,7 +795,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   createGroup: (nodeIds, title) => {
     const state = get();
-    const valid = nodeIds.filter((id) => state.nodes.some((n) => n.id === id));
+    const valid = [...new Set(nodeIds.filter((id) => state.nodes.some((n) => n.id === id)))];
     if (valid.length === 0) return null;
     const idSet = new Set(valid);
     const id = generateGroupId();
@@ -677,14 +811,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     return id;
   },
 
-  updateGroup: (id, data) => set((state) => ({
-    groups: state.groups.map((g) => (g.id === id ? { ...g, ...data } : g)),
-    undoStack: [...state.undoStack.slice(-MAX_HISTORY + 1), snapshot(state)],
-    redoStack: [],
-  })),
+  updateGroup: (id, data) => set((state) => {
+    if (!state.groups.some((group) => group.id === id)) return state;
+    return {
+      groups: state.groups.map((g) => (g.id === id ? { ...g, ...data } : g)),
+      undoStack: [...state.undoStack.slice(-MAX_HISTORY + 1), snapshot(state)],
+      redoStack: [],
+    };
+  }),
 
   removeGroup: (id, deleteNodes = false) => set((state) => {
     const group = state.groups.find((g) => g.id === id);
+    if (!group) return state;
     const undo = [...state.undoStack.slice(-MAX_HISTORY + 1), snapshot(state)];
     if (group && deleteNodes) {
       const requested = new Set(group.nodeIds);
@@ -699,6 +837,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         groups: state.groups.filter((g) => g.id !== id),
         selectedNodeIds: new Set(),
         selectedNodeId: null,
+        selectedConnectionId: state.connections.some((connection) =>
+          connection.id === state.selectedConnectionId
+          && !memberIds.has(connection.sourceId)
+          && !memberIds.has(connection.targetId),
+        ) ? state.selectedConnectionId : null,
         undoStack: undo,
         redoStack: [],
       };
@@ -711,12 +854,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   }),
 
   loadCanvas: (nodes, connections, groups = [], skillRuns) => {
-    const restoredNodes = nodes.map((n) => reviveNode(normalizeNode(n), { keepResumable: true }));
+    const restoredNodes = normalizeLoadedNodes(nodes);
+    const restoredNodeIds = new Set(restoredNodes.map((node) => node.id));
+    const restoredConnections = normalizeLoadedConnections(connections, restoredNodeIds);
+    const restoredGroups = normalizeLoadedGroups(groups, restoredNodeIds);
     const restoredRuns = restoredSkillRunState(restoredNodes, skillRuns);
     set({
       nodes: restoredNodes,
-      connections,
-      groups: (groups || []).filter((g) => g && Array.isArray(g.nodeIds) && g.nodeIds.length > 0),
+      connections: restoredConnections,
+      groups: restoredGroups,
       trackedSkillRunIds: restoredRuns.trackedRunIds,
       materializedArtifactIds: restoredRuns.materializedArtifactIds,
       selectedNodeIds: new Set(),

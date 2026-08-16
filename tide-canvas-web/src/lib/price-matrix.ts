@@ -11,6 +11,12 @@ export interface PointPricingConfig {
   priceMatrix?: PriceMatrix;
   /** 服务端 resolveCost 长期兼容的旧字段。 */
   pricing?: PriceMatrix;
+  /** 普通视频缺省按时长矩阵计费；per_request 时完全忽略 duration。 */
+  videoBillingMode?: "duration" | "per_request" | string;
+  /** 普通视频按输出分辨率配置的单次积分。 */
+  pricePerRequestByResolution?: Record<string, number | string>;
+  resolutions?: string[];
+  priceModifiers?: unknown;
   /** 视频超分每秒积分；配置后优先于所有旧版单次价格。 */
   pricePerSecond?: number | string;
   /** 视频超分按目标分辨率设置的每秒积分。 */
@@ -65,6 +71,92 @@ function fixedPointCost(config: PointPricingConfig | null | undefined, modelPoin
 export function configuredMatrix(config: PointPricingConfig | null | undefined): PriceMatrix {
   const primary = config?.priceMatrix;
   return primary && Object.keys(primary).length ? primary : config?.pricing;
+}
+
+export function usesVideoPerRequestBilling(config: PointPricingConfig | null | undefined): boolean {
+  return String(config?.videoBillingMode ?? "").trim().toLowerCase() === "per_request";
+}
+
+/** Case-insensitive resolution lookup. Duplicate case variants fail closed. */
+export function videoPerRequestRate(
+  config: PointPricingConfig | null | undefined,
+  resolution: string,
+): number {
+  const target = String(resolution ?? "").trim().toLowerCase();
+  if (!target) return 0;
+  const supported = config?.resolutions ?? [];
+  if (!supported.length || !supported.some(
+    (item) => typeof item === "string" && item.trim().toLowerCase() === target,
+  )) return 0;
+  let found = false;
+  let rate = 0;
+  for (const [key, value] of Object.entries(config?.pricePerRequestByResolution ?? {})) {
+    if (key.trim().toLowerCase() !== target) continue;
+    if (found) return 0;
+    found = true;
+    rate = positivePointValue(value);
+    if (rate > Number.MAX_SAFE_INTEGER) return 0;
+  }
+  return rate;
+}
+
+export interface VideoPerRequestPointRange {
+  min: number;
+  max: number;
+}
+
+/** Complete, rounded price range for a per-request video model. Invalid or
+ * partially priced configs return null instead of falling back to pointCost. */
+export function videoPerRequestPointRange(
+  config: PointPricingConfig | null | undefined,
+): VideoPerRequestPointRange | null {
+  if (!usesVideoPerRequestBilling(config)) return null;
+  const resolutions = config?.resolutions ?? [];
+  if (!resolutions.length) return null;
+
+  const seen = new Set<string>();
+  const rates: number[] = [];
+  for (const resolution of resolutions) {
+    const key = String(resolution ?? "").trim().toLowerCase();
+    if (!key || seen.has(key)) return null;
+    seen.add(key);
+    const rate = videoPerRequestRate(config, resolution);
+    if (rate <= 0) return null;
+    rates.push(Math.ceil(rate));
+  }
+  return { min: Math.min(...rates), max: Math.max(...rates) };
+}
+
+/**
+ * 普通视频积分预估，与服务端 resolveCost 顺序一致。按次模式只按分辨率
+ * 取价，不读取也不乘 duration；按时长模式继续保留旧矩阵和 modifier 回退。
+ */
+export function resolveVideoPointCost(
+  config: PointPricingConfig | null | undefined,
+  duration: string | number,
+  resolution: string,
+  modelPointCost?: number | string,
+): number {
+  if (usesVideoPerRequestBilling(config)) {
+    const rate = videoPerRequestRate(config, resolution);
+    return rate > 0 ? Math.ceil(rate) : 0;
+  }
+
+  let base = matrixPrice(
+    configuredMatrix(config),
+    durationVariants(duration),
+    keyVariants(resolution),
+  );
+  if (base == null && resolution) {
+    const modifiers = config?.priceModifiers as PriceMatrix;
+    base = matrixPrice(
+      modifiers,
+      keyVariants(`duration@${resolution}`),
+      durationVariants(duration),
+    );
+  }
+  base ??= fixedPointCost(config, modelPointCost);
+  return base > 0 ? Math.ceil(base) : 0;
 }
 
 function imageBatchCount(input: Record<string, unknown>): number {

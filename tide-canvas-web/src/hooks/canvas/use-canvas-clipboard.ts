@@ -1,41 +1,39 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { useCanvasStore, generateNodeId, reviveNode, type CanvasNode } from "@/stores/use-canvas-store";
+import { useCanvasStore, generateNodeId, reviveNode } from "@/stores/use-canvas-store";
+import {
+  captureCanvasNodeClipboard,
+  materializeCanvasNodeClipboard,
+  type CanvasNodeClipboardSnapshot,
+} from "@/lib/canvas-clipboard";
 
 export function useCanvasClipboard() {
   // 选择器订阅，避免订阅整个 store 导致消费组件被无关变更频繁重渲染
-  const addNode = useCanvasStore((s) => s.addNode);
-  const selectNode = useCanvasStore((s) => s.selectNode);
-  const [clipboard, setClipboard] = useState<CanvasNode | null>(null);
+  const addNodesAndConnections = useCanvasStore((s) => s.addNodesAndConnections);
+  const [clipboard, setClipboard] = useState<CanvasNodeClipboardSnapshot | null>(null);
 
   const copyNode = useCallback((nodeId: string) => {
-    const node = useCanvasStore.getState().nodes.find((n) => n.id === nodeId);
+    const state = useCanvasStore.getState();
+    const node = state.nodes.find((n) => n.id === nodeId);
     if (!node) return;
-    setClipboard(node);
-    // reviveNode:克隆"生成中/上传中"的节点必须清洗瞬态状态——轮询/上传器
-    // 只指向原节点,克隆体带着 generating 会永久转圈且按钮永久禁用
-    const newNode: CanvasNode = {
-      ...reviveNode(node),
-      id: generateNodeId(),
-      x: node.x + 30,
-      y: node.y + 30,
-    };
-    addNode(newNode);
-    selectNode(newNode.id);
-  }, [addNode, selectNode]);
+    // Copy stores a safe snapshot only. Duplication happens on paste, matching
+    // the context-menu labels and the Cmd/Ctrl+C, Cmd/Ctrl+V contract.
+    setClipboard(captureCanvasNodeClipboard(reviveNode(node), state.connections));
+  }, []);
 
-  const pasteNode = useCallback((worldX: number, worldY: number) => {
+  const pasteNode = useCallback((worldX?: number, worldY?: number) => {
     if (!clipboard) return;
-    const newNode: CanvasNode = {
-      ...reviveNode(clipboard),
-      id: generateNodeId(),
-      x: worldX - clipboard.width / 2,
-      y: worldY - clipboard.height / 2,
-    };
-    addNode(newNode);
-    selectNode(newNode.id);
-  }, [clipboard, addNode, selectNode]);
+    const state = useCanvasStore.getState();
+    const next = materializeCanvasNodeClipboard({
+      snapshot: clipboard,
+      newNodeId: generateNodeId(),
+      availableNodeIds: new Set(state.nodes.map((node) => node.id)),
+      worldX,
+      worldY,
+    });
+    addNodesAndConnections([next.node], next.connections, next.node.id);
+  }, [clipboard, addNodesAndConnections]);
 
   return { clipboard, copyNode, pasteNode, canPaste: !!clipboard };
 }

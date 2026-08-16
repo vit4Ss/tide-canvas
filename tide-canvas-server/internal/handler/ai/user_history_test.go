@@ -101,6 +101,7 @@ func TestPublicHistoryFailureReasonIsUsefulButNeverRaw(t *testing.T) {
 	}{
 		{name: "known product copy", raw: "参考素材无法读取，请重新上传后重试", want: "参考素材无法读取，请重新上传后重试"},
 		{name: "legacy safety error", raw: "provider 400: content policy violation; request_id=secret", want: userFacingSafetyErr},
+		{name: "Gemini image safety", raw: "relaymedia: code 5001: Gemini returned text only: unknown finish reason: [IMAGE_SAFETY]", want: userFacingSafetyErr},
 		{name: "internal provider detail", raw: "relay HTTP 502 https://internal.example key=sk-secret", want: userFacingGenErr},
 		{name: "empty", raw: "", want: userFacingGenErr},
 	}
@@ -110,6 +111,19 @@ func TestPublicHistoryFailureReasonIsUsefulButNeverRaw(t *testing.T) {
 				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestUserHistoryUsesClassifiedAuditReasonForLegacyGenericTask(t *testing.T) {
+	log := &model.AiGenerationLog{
+		Success:  0,
+		ErrorMsg: "relaymedia: code 5001: Gemini returned text only: unknown finish reason: [IMAGE_SAFETY]",
+	}
+	task := &model.AiTask{Status: statusFailed, ErrorMsg: userFacingGenErr}
+
+	detail := toUserHistoryDetail(log, task)
+	if detail.FailureReason != userFacingSafetyErr {
+		t.Fatalf("failure reason = %q, want %q", detail.FailureReason, userFacingSafetyErr)
 	}
 }
 

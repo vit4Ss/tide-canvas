@@ -4,12 +4,15 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 import { useCanvasStore } from "@/stores/use-canvas-store";
 import { useCanvasViewStore } from "@/stores/use-canvas-view-store";
 import { nodeRenderRect } from "@/lib/canvas-helpers";
+import { exceedsScreenDragThreshold } from "@/lib/canvas-hit-testing";
 
 interface BoxSelectState {
   startWorldX: number;
   startWorldY: number;
   currentWorldX: number;
   currentWorldY: number;
+  startClientX: number;
+  startClientY: number;
 }
 
 interface Options {
@@ -19,7 +22,9 @@ interface Options {
 export function useCanvasBoxSelect({ containerRef }: Options) {
   const [box, setBox] = useState<BoxSelectState | null>(null);
   const boxRef = useRef<BoxSelectState | null>(null);
-  boxRef.current = box;
+  useEffect(() => {
+    boxRef.current = box;
+  }, [box]);
 
   const screenToWorld = useCallback((sx: number, sy: number) => {
     const rect = containerRef.current?.getBoundingClientRect();
@@ -37,6 +42,7 @@ export function useCanvasBoxSelect({ containerRef }: Options) {
     setBox({
       startWorldX: world.x, startWorldY: world.y,
       currentWorldX: world.x, currentWorldY: world.y,
+      startClientX: clientX, startClientY: clientY,
     });
   }, [screenToWorld]);
 
@@ -68,7 +74,11 @@ export function useCanvasBoxSelect({ containerRef }: Options) {
       const maxY = Math.max(b.startWorldY, b.currentWorldY);
 
       // 只有当框有实际大小时才选择
-      if (Math.abs(maxX - minX) > 5 || Math.abs(maxY - minY) > 5) {
+      if (exceedsScreenDragThreshold(
+        { x: b.startClientX, y: b.startClientY },
+        { x: e.clientX, y: e.clientY },
+        5,
+      )) {
         const nodes = useCanvasStore.getState().nodes;
         // 命中测试用实际渲染矩形:名义 x/width/height 与可见卡片错位,
         // 框住宽图伸出左侧的可见部分选不中、框住竖图右侧的空白反而选中

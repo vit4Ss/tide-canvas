@@ -17,12 +17,14 @@ import (
 //	1. upscale config pricePerSecondByResolution[targetResolution] × the
 //	   server-confirmed source duration, rounded up. The legacy uniform
 //	   pricePerSecond field is accepted only as a rolling-upgrade fallback.
-//	2. price matrix (config priceMatrix, aliased to pricing): spec-indexed unit
+//	2. video per-request config pricePerRequestByResolution[resolution] when
+//	   videoBillingMode == "per_request". Duration is deliberately ignored.
+//	3. price matrix (config priceMatrix, aliased to pricing): spec-indexed unit
 //	   price. image = [quality][clarity], video = [duration][resolution]. Looked
 //	   up in BOTH axis orders so either admin authoring orientation resolves.
-//	3. priceModifiers "duration@<res>"[duration] (video add-on tables).
-//	4. config creditCost (model-level flat override).
-//	5. model.PointCost (= MarketModel.Price integer part).
+//	4. priceModifiers "duration@<res>"[duration] (video add-on tables).
+//	5. config creditCost (model-level flat override).
+//	6. model.PointCost (= MarketModel.Price integer part).
 //
 // The base is then ×batchCount for images, rounding up.
 // Optional reference-video billing is intentionally separate: generate() first
@@ -39,6 +41,15 @@ func resolveCost(m *model.AiModel, rawInput json.RawMessage) int {
 		// reject an unpriced resolution or unverified duration before charging;
 		// returning zero here keeps this pure helper safe for callers/tests.
 		if !configured || !valid {
+			return 0
+		}
+		return cost
+	}
+	if cost, configured, valid := resolveVideoPerRequestCost(m, rawInput); configured {
+		// A request in per-request mode is never allowed to fall through to the
+		// duration matrix or flat price. The submit path rejects invalid specs;
+		// returning zero here keeps this pure helper fail-closed for other callers.
+		if !valid {
 			return 0
 		}
 		return cost
@@ -140,6 +151,118 @@ func resolveCost(m *model.AiModel, rawInput json.RawMessage) int {
 	}
 
 	return int(math.Ceil(base))
+}
+
+// resolveVideoPerRequestCost resolves the selected resolution's price for one
+// video generation. It intentionally never reads duration: 4s and 20s cost the
+// same when the model is configured for per-request billing.
+func resolveVideoPerRequestCost(m *model.AiModel, rawInput json.RawMessage) (cost int, configured bool, valid bool) {
+	_, cost, configured, valid = resolveVideoPerRequestSpec(m, rawInput)
+	return cost, configured, valid
+}
+
+// resolveVideoPerRequestSpec returns the canonical configured resolution as
+// well as its single-request price. Callers that dispatch a generation must
+// write this resolution back to input so billing, the task receipt and the
+// provider request cannot disagree when a legacy clarity alias (or the sole
+// configured-resolution fallback) was used.
+func resolveVideoPerRequestSpec(m *model.AiModel, rawInput json.RawMessage) (resolution string, cost int, configured bool, valid bool) {
+	if m == nil || m.Type != "video" || strings.TrimSpace(m.Config) == "" {
+		return "", 0, false, false
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(m.Config), &cfg); err != nil {
+		return "", 0, false, false
+	}
+	if !strings.EqualFold(strings.TrimSpace(strField(cfg, "videoBillingMode")), "per_request") {
+		return "", 0, false, false
+	}
+
+	in := map[string]any{}
+	if len(rawInput) > 0 {
+		if err := json.Unmarshal(rawInput, &in); err != nil {
+			return "", 0, true, false
+		}
+	}
+	requested := strings.TrimSpace(inputStr(in, "resolution", "clarity"))
+	configuredResolutions, _ := cfg["resolutions"].([]any)
+	canonical := ""
+	for _, rawResolution := range configuredResolutions {
+		candidate, _ := rawResolution.(string)
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if requested == "" {
+			if canonical != "" {
+				// Multiple supported resolutions require an explicit user choice.
+				return "", 0, true, false
+			}
+			canonical = candidate
+			continue
+		}
+		if strings.EqualFold(candidate, requested) {
+			canonical = candidate
+			break
+		}
+	}
+	if canonical == "" {
+		return "", 0, true, false
+	}
+
+	rates, ok := cfg["pricePerRequestByResolution"].(map[string]any)
+	if !ok || len(rates) == 0 {
+		return "", 0, true, false
+	}
+	matched := false
+	rate := 0.0
+	for key, rawRate := range rates {
+		if !strings.EqualFold(strings.TrimSpace(key), canonical) {
+			continue
+		}
+		// Case-variant duplicate keys would make a Go-map lookup order-dependent.
+		if matched {
+			return "", 0, true, false
+		}
+		matched = true
+		rate = toNum(rawRate)
+	}
+	maxRate := float64((1 << 53) - 1)
+	if platformMax := float64(maxPointCost()); platformMax < maxRate {
+		maxRate = platformMax
+	}
+	if !matched || rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) || rate > maxRate {
+		return "", 0, true, false
+	}
+	return canonical, int(math.Ceil(rate)), true, true
+}
+
+// prepareVideoPerRequestPricingInput makes resolution the canonical wire field
+// before the price is charged and the task input is persisted. Duration and all
+// unrelated input fields remain untouched.
+func prepareVideoPerRequestPricingInput(dto *generateDTO, m *model.AiModel) (configured bool, valid bool) {
+	canonical, _, configured, valid := resolveVideoPerRequestSpec(m, dto.Input)
+	if !configured || !valid {
+		return configured, valid
+	}
+
+	in := map[string]any{}
+	if len(dto.Input) > 0 {
+		// resolveVideoPerRequestSpec already proved this is a JSON object.
+		if err := json.Unmarshal(dto.Input, &in); err != nil {
+			return true, false
+		}
+	}
+	if in == nil {
+		in = map[string]any{}
+	}
+	in["resolution"] = canonical
+	normalized, err := json.Marshal(in)
+	if err != nil {
+		return true, false
+	}
+	dto.Input = normalized
+	return true, true
 }
 
 // resolveUpscaleTimeCost resolves the per-resolution/per-second pricing

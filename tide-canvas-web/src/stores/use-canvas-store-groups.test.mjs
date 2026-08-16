@@ -28,3 +28,26 @@ test("nodes, connections and generated groups land in one undoable transaction",
   assert.equal(undone.groups.length, 0);
   useCanvasStore.getState().clearCanvas();
 });
+
+test("batch insertion cannot attach data to a collided node or duplicate connection ids", () => {
+  const store = useCanvasStore.getState();
+  store.loadCanvas(
+    [{ id: "existing", type: "image", x: 0, y: 0, width: 100, height: 100, title: "原节点" }],
+    [],
+  );
+  store.addNodesAndConnections(
+    [
+      { id: "existing", type: "image", x: 50, y: 50, width: 100, height: 100, title: "冲突节点" },
+      { id: "new", type: "image", x: 200, y: 0, width: 100, height: 100, title: "新节点" },
+    ],
+    [
+      { id: "same", sourceId: "existing", targetId: "new" },
+      { id: "same", sourceId: "new", targetId: "existing" },
+      { id: "self", sourceId: "new", targetId: "new" },
+    ],
+  );
+
+  const state = useCanvasStore.getState();
+  assert.deepEqual(state.nodes.map((node) => node.title), ["原节点", "新节点"]);
+  assert.deepEqual(state.connections, []);
+});

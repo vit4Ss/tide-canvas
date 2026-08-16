@@ -23,6 +23,7 @@ import {
   readCanvasLaunchJournal,
   type CanvasLaunchJournal,
 } from "@/lib/canvas-launch";
+import { parseCanvasDocument } from "@/lib/canvas-document";
 
 const AUTOSAVE_DELAY = 3000; // 3 秒无变化触发自动保存
 
@@ -69,6 +70,7 @@ export default function CanvasEditorPage() {
   const [loaded, setLoaded] = useState(false);
   const [thumbnail, setThumbnail] = useState<string | null>(null);
   const [saveConflict, setSaveConflict] = useState(false);
+  const [loadFailure, setLoadFailure] = useState(false);
   const [launchJournal, setLaunchJournal] = useState<CanvasLaunchJournal | null>(null);
   const [persistenceReadyProjectId, setPersistenceReadyProjectId] = useState<string | null>(null);
   const [pendingHandoff, setPendingHandoff] = useState<{
@@ -95,6 +97,10 @@ export default function CanvasEditorPage() {
   const revisionRef = useRef<number | null>(null);
   const saveConflictRef = useRef(false);
   const saveRetryAttemptsRef = useRef(0);
+  // Loading a project populates the same store observed by autosave. That
+  // hydration is not a user edit and must not increment the remote revision or
+  // persist a salvaged/normalized document just because the project was opened.
+  const skipHydrationAutosaveRef = useRef(false);
   // 保存在途时又触发保存(慢网络下防抖计时器到点):不能直接丢弃——那可能是
   // 用户的最后一次编辑,之后再无触发源,改动会永远不落盘。记 pending,在途
   // 请求结束后补跑一次。
@@ -112,6 +118,7 @@ export default function CanvasEditorPage() {
   // 加载项目（按 url token；不存在/无权限 → 404）
   useEffect(() => {
     let cancelled = false;
+    skipHydrationAutosaveRef.current = true;
     revisionRef.current = null;
     saveConflictRef.current = false;
     const requestedHandoffId = handoffIdRef.current;
@@ -120,6 +127,7 @@ export default function CanvasEditorPage() {
       const res = await projectApi.getByToken(token);
       if (cancelled) return;
       if (res.success && res.data) {
+        setLoadFailure(false);
         setSaveConflict(false);
         const resolvedProjectId = String(res.data.id);
         setProjectId(resolvedProjectId);
@@ -131,17 +139,23 @@ export default function CanvasEditorPage() {
           : 0;
         if (res.data.canvasData && res.data.canvasData !== "{}") {
           try {
-            const data = JSON.parse(res.data.canvasData);
+            const data = parseCanvasDocument(res.data.canvasData);
             loadCanvas(
-              data.nodes || [],
-              data.connections || [],
-              data.groups || [],
-              data.skillRuns || data.skillRunState,
+              data.nodes,
+              data.connections,
+              data.groups,
+              data.skillRuns,
             );
             // 上次会话遗留的生成中节点（带 taskId）：任务仍在后端执行，按任务号续轮回填结果
             resumeGeneration();
           } catch {
             loadCanvas([], []);
+            // Never autosave the empty fallback over a malformed remote canvas.
+            // Keep the project read-only until a reload or server-side repair.
+            saveConflictRef.current = true;
+            setLoadFailure(true);
+            setSaveConflict(true);
+            toast.error("画布数据读取失败，已暂停保存以保护原始数据");
           }
         } else {
           // 空项目必须显式清空:store 是全局单例,不清则上一个项目的节点残留在此项目里
@@ -429,6 +443,10 @@ export default function CanvasEditorPage() {
   // 自动保存：除画布图结构外，也持久化 SkillRun 恢复/消费状态。
   useEffect(() => {
     if (!loaded || saveConflict) return;
+    if (skipHydrationAutosaveRef.current) {
+      skipHydrationAutosaveRef.current = false;
+      return;
+    }
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     autosaveTimerRef.current = setTimeout(() => {
       autosaveTimerRef.current = null; // mark flushed so the unmount flush won't re-save
@@ -540,7 +558,9 @@ export default function CanvasEditorPage() {
           className="absolute left-1/2 top-4 z-40 flex -translate-x-1/2 items-center gap-3 rounded-xl border border-amber-200 bg-white px-4 py-2.5 text-sm text-neutral-700 shadow-sm dark:border-amber-900/70 dark:bg-neutral-900 dark:text-neutral-200"
         >
           <TriangleAlert className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-          <span>此画布已在其他窗口更新，当前窗口已暂停保存。</span>
+          <span>{loadFailure
+            ? "画布数据读取失败，当前窗口已暂停保存以避免覆盖原始数据。"
+            : "此画布已在其他窗口更新，当前窗口已暂停保存。"}</span>
           <button
             type="button"
             onClick={() => window.location.reload()}

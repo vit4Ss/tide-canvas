@@ -70,6 +70,10 @@ export interface ModelConfig {
   priceMatrix?: Record<string, Record<string, string | number>>;
   /** 旧模型价格矩阵字段；公开模型接口会补 priceMatrix，前端仍保留兼容。 */
   pricing?: Record<string, Record<string, string | number>>;
+  /** 视频生成计费方式；缺省/旧数据继续使用时长 × 清晰度矩阵。 */
+  videoBillingMode?: "duration" | "per_request";
+  /** 视频按次计费时，各输出清晰度的一次生成积分；与时长矩阵并存、互不覆盖。 */
+  pricePerRequestByResolution?: Record<string, number | string>;
   /** 视频超分旧版统一每秒积分；仅用于滚动升级兼容。 */
   pricePerSecond?: number | string;
   /** 视频超分按目标分辨率配置的每秒积分。 */

@@ -64,7 +64,7 @@ import { toast } from "@/components/shared/toast";
 import { confirmDialog } from "@/components/shared/confirm";
 import { markRequiredField } from "@/lib/require-field";
 import { useReferenceVideoQuote } from "@/hooks/use-reference-video-quote";
-import { configuredMatrix, durationVariants, keyVariants, matrixPrice } from "@/lib/price-matrix";
+import { configuredMatrix, keyVariants, matrixPrice, resolveVideoPointCost } from "@/lib/price-matrix";
 import styles from "@/app/(studio)/studio/create.module.css";
 import {
   activeRunStorageKey,
@@ -346,9 +346,10 @@ export default function CreateStudio() {
       : MODES_BY_TYPE[curType];
 
   // cost — honor the 后台模型配置 first, then fall back to the built-in map:
-  //   1) priceMatrix（后台「积分定价」）: image = 画质 × 清晰度, video = 时长 × 清晰度
-  //   2) 模型级固定积分 (config.creditCost, else the model's pointCost)
-  //   3) built-in fallback map (case-insensitive: 后台用 1k/2k/4k, 预览用 1K/2K/4K)
+  //   1) 视频按次模式 = pricePerRequestByResolution[清晰度]，完全不读时长
+  //   2) 其它模式 priceMatrix：image = 画质 × 清晰度, video = 时长 × 清晰度
+  //   3) 模型级固定积分 (config.creditCost, else the model's pointCost)
+  //   4) built-in fallback map (case-insensitive: 后台用 1k/2k/4k, 预览用 1K/2K/4K)
   const cost = useMemo(() => {
     let base: number;
     const configuredFlat = Number(mCfg?.creditCost);
@@ -358,29 +359,27 @@ export default function CreateStudio() {
     if (isAudio || is3D) {
       return Math.ceil(flat);
     }
+    if (isVideo) {
+      const videoCost = resolveVideoPointCost(mCfg, dur, res, selModel?.pointCost);
+      if (videoCost > 0 || !noBackend) {
+        return videoCost + referenceVideoQuote.quote.pointCost;
+      }
+    }
     // 图片不配画质档位时（quality 为空）矩阵查 default 行，与服务端同口径
-    const row = isVideo ? dur : quality || "default";
-    const col = isVideo ? res : imgRes;
+    const row = quality || "default";
+    const col = imgRes;
     const per = matrixPrice(
       configuredMatrix(mCfg),
-      isVideo ? durationVariants(row) : keyVariants(row),
+      keyVariants(row),
       keyVariants(col),
     );
     if (per != null) {
-      base = isVideo ? Math.ceil(per) : Math.ceil(per * count);
+      base = Math.ceil(per * count);
       return base + referenceVideoQuote.quote.pointCost;
     }
 
-    if (isVideo && res) {
-      const modifiers = mCfg?.priceModifiers as Record<string, Record<string, string | number>> | undefined;
-      const modifier = matrixPrice(modifiers, keyVariants(`duration@${res}`), durationVariants(dur));
-      if (modifier != null) {
-        return Math.ceil(modifier) + referenceVideoQuote.quote.pointCost;
-      }
-    }
-
     if (flat > 0) {
-      base = isVideo ? Math.ceil(flat) : Math.ceil(flat * count);
+      base = Math.ceil(flat * count);
       return base + referenceVideoQuote.quote.pointCost;
     }
 

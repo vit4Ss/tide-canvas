@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 import { useCanvasStore } from "@/stores/use-canvas-store";
 import { useCanvasViewStore } from "@/stores/use-canvas-view-store";
 import { canvasConnectionRule } from "@/lib/canvas-connection-rules";
+import { exceedsScreenDragThreshold, findTopmostCanvasNodeAt } from "@/lib/canvas-hit-testing";
 import { toast } from "@/components/shared/toast";
 
 export type PortSide = "input" | "output";
@@ -13,6 +14,8 @@ interface ConnectingState {
   sourceSide: PortSide;
   startWorldX: number;
   startWorldY: number;
+  startClientX: number;
+  startClientY: number;
   currentWorldX: number;
   currentWorldY: number;
   hoverTargetNodeId: string | null;
@@ -69,6 +72,8 @@ export function useCanvasConnection({ containerRef }: Options) {
       sourceSide: side,
       startWorldX: portWorldX,
       startWorldY: portWorldY,
+      startClientX: clientX,
+      startClientY: clientY,
       currentWorldX: cur.x,
       currentWorldY: cur.y,
       hoverTargetNodeId: null,
@@ -84,16 +89,13 @@ export function useCanvasConnection({ containerRef }: Options) {
 
     // 命中检测:按卡片实际渲染区域外扩一圈容差,拖到卡片边缘附近松手也算命中,
     // 避免差几像素落空弹出快捷新建
-    const HIT_MARGIN = 28;
+    const HIT_MARGIN_SCREEN_PX = 28;
     const hitTest = (world: { x: number; y: number }, connection: ConnectingState) => {
       const nodes = useCanvasStore.getState().nodes;
-      const node = nodes.find((n) => {
-        if (n.id === connection.sourceNodeId) return false;
-        const cw = n.contentW ?? n.width;
-        const ch = n.contentH ?? n.height;
-        const left = n.x + (n.width - cw) / 2;
-        return world.x >= left - HIT_MARGIN && world.x <= left + cw + HIT_MARGIN
-          && world.y >= n.y - HIT_MARGIN && world.y <= n.y + ch + HIT_MARGIN;
+      const node = findTopmostCanvasNodeAt(nodes, world, {
+        excludeNodeId: connection.sourceNodeId,
+        marginScreenPixels: HIT_MARGIN_SCREEN_PX,
+        zoom: useCanvasViewStore.getState().transform.k,
       });
       const origin = nodes.find((candidate) => candidate.id === connection.sourceNodeId);
       if (!node || !origin) return null;
@@ -159,8 +161,11 @@ export function useCanvasConnection({ containerRef }: Options) {
         }
       } else {
         // 落在空白处且确实拖动过 → 弹出快捷新建菜单（新建节点并自动连线）
-        const dist = Math.hypot(world.x - c.startWorldX, world.y - c.startWorldY);
-        if (dist > 24) {
+        if (exceedsScreenDragThreshold(
+          { x: c.startClientX, y: c.startClientY },
+          { x: e.clientX, y: e.clientY },
+          24,
+        )) {
           setQuickAdd({
             sourceNodeId: c.sourceNodeId,
             sourceSide: c.sourceSide,

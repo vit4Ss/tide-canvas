@@ -34,6 +34,125 @@ func TestResolveCostVideoFuzzyMatrix(t *testing.T) {
 	}
 }
 
+func TestResolveCostVideoPerRequestUsesResolutionAndIgnoresDuration(t *testing.T) {
+	m := &model.AiModel{
+		Type:      "video",
+		PointCost: 999,
+		Config: `{
+			"videoBillingMode":"per_request",
+			"resolutions":["720p","1080p"],
+			"pricePerRequestByResolution":{"720P":"12.1","1080p":25},
+			"priceMatrix":{"4s":{"720p":4},"20s":{"720p":20}},
+			"creditCost":88
+		}`,
+	}
+	for _, input := range []string{
+		`{"duration":4,"resolution":"720p"}`,
+		`{"duration":20,"resolution":"720P"}`,
+	} {
+		if got := resolveCost(m, json.RawMessage(input)); got != 13 {
+			t.Fatalf("per-request 720p cost for %s = %d, want 13", input, got)
+		}
+	}
+	if got := resolveCost(m, json.RawMessage(`{"duration":4,"resolution":"1080P"}`)); got != 25 {
+		t.Fatalf("per-request 1080p cost = %d, want 25", got)
+	}
+	if got := resolveCost(m, json.RawMessage(`{"duration":4,"resolution":"4k"}`)); got != 0 {
+		t.Fatalf("unsupported resolution must fail closed, got %d", got)
+	}
+	if got := resolveCost(m, json.RawMessage(`{"duration":4}`)); got != 0 {
+		t.Fatalf("multiple resolutions without an explicit choice must fail closed, got %d", got)
+	}
+
+	m.Config = `{"videoBillingMode":"per_request","resolutions":["720p"],"pricePerRequestByResolution":{"720p":10,"720P":11},"creditCost":88}`
+	if got := resolveCost(m, json.RawMessage(`{"resolution":"720p"}`)); got != 0 {
+		t.Fatalf("ambiguous case-variant rates must fail closed, got %d", got)
+	}
+
+	m.Config = `{"videoBillingMode":"per_request","resolutions":["720p"],"pricePerRequestByResolution":{"720p":"9223372036854775808"}}`
+	if got := resolveCost(m, json.RawMessage(`{"resolution":"720p"}`)); got != 0 {
+		t.Fatalf("an unsafe point value must fail closed before integer conversion, got %d", got)
+	}
+}
+
+func TestResolveCostVideoPerRequestSingleResolutionFallback(t *testing.T) {
+	m := &model.AiModel{
+		Type:   "video",
+		Config: `{"videoBillingMode":"per_request","resolutions":["720p"],"pricePerRequestByResolution":{"720p":9}}`,
+	}
+	if got := resolveCost(m, json.RawMessage(`{"duration":99}`)); got != 9 {
+		t.Fatalf("single-resolution request cost = %d, want 9", got)
+	}
+
+	m.Config = `{"videoBillingMode":"duration","resolutions":["720p"],"pricePerRequestByResolution":{"720p":9},"priceMatrix":{"4s":{"720p":4}}}`
+	if got := resolveCost(m, json.RawMessage(`{"duration":4,"resolution":"720p"}`)); got != 4 {
+		t.Fatalf("switching back must retain and use duration matrix: got %d, want 4", got)
+	}
+}
+
+func TestPrepareVideoPerRequestPricingInputCanonicalizesProviderResolution(t *testing.T) {
+	m := &model.AiModel{
+		Type:   "video",
+		Config: `{"videoBillingMode":"per_request","resolutions":["720P","1080p"],"pricePerRequestByResolution":{"720p":9,"1080p":15}}`,
+	}
+	dto := generateDTO{Input: json.RawMessage(`{"clarity":"1080P","duration":20,"prompt":"keep me"}`)}
+	configured, valid := prepareVideoPerRequestPricingInput(&dto, m)
+	if !configured || !valid {
+		t.Fatalf("legacy clarity input should normalize, got configured=%v valid=%v", configured, valid)
+	}
+	var input map[string]any
+	if err := json.Unmarshal(dto.Input, &input); err != nil {
+		t.Fatalf("normalized input is invalid JSON: %v", err)
+	}
+	if input["resolution"] != "1080p" {
+		t.Fatalf("canonical resolution = %#v, want 1080p", input["resolution"])
+	}
+	if input["clarity"] != "1080P" || input["duration"] != float64(20) || input["prompt"] != "keep me" {
+		t.Fatalf("normalization changed unrelated input: %#v", input)
+	}
+	if got := resolveCost(m, dto.Input); got != 15 {
+		t.Fatalf("normalized cost = %d, want 15", got)
+	}
+	params := (&relayProviderClient{}).videoParams("video-model", "text_to_video", input)
+	if params.Resolution != "1080p" {
+		t.Fatalf("provider resolution = %q, want 1080p", params.Resolution)
+	}
+	legacyParams := (&relayProviderClient{}).videoParams(
+		"video-model",
+		"text_to_video",
+		map[string]any{"clarity": "720P"},
+	)
+	if legacyParams.Resolution != "720p" {
+		t.Fatalf("legacy provider resolution = %q, want 720p", legacyParams.Resolution)
+	}
+}
+
+func TestPrepareVideoPerRequestPricingInputInjectsSoleResolution(t *testing.T) {
+	m := &model.AiModel{
+		Type:   "video",
+		Config: `{"videoBillingMode":"per_request","resolutions":["720P"],"pricePerRequestByResolution":{"720p":9}}`,
+	}
+	dto := generateDTO{Input: json.RawMessage(`{"duration":99}`)}
+	configured, valid := prepareVideoPerRequestPricingInput(&dto, m)
+	if !configured || !valid {
+		t.Fatalf("sole resolution fallback should normalize, got configured=%v valid=%v", configured, valid)
+	}
+	var input map[string]any
+	if err := json.Unmarshal(dto.Input, &input); err != nil {
+		t.Fatalf("normalized input is invalid JSON: %v", err)
+	}
+	if input["resolution"] != "720P" {
+		t.Fatalf("canonical resolution = %#v, want 720P", input["resolution"])
+	}
+	if got := resolveCost(m, dto.Input); got != 9 {
+		t.Fatalf("normalized cost = %d, want 9", got)
+	}
+	params := (&relayProviderClient{}).videoParams("video-model", "text_to_video", input)
+	if params.Resolution != "720p" {
+		t.Fatalf("provider resolution = %q, want 720p", params.Resolution)
+	}
+}
+
 func TestResolveCostMatrixAliasPriorityAndEmptyFallback(t *testing.T) {
 	legacyFallback := &model.AiModel{
 		Type:      "video",

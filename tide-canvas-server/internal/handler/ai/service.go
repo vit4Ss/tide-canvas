@@ -251,6 +251,9 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 	if err := s.prepareUpscalePricingInput(ctx, userID, &dto, m); err != nil {
 		return nil, err
 	}
+	if configured, valid := prepareVideoPerRequestPricingInput(&dto, m); configured && !valid {
+		return nil, skillPlacementError{message: "所选清晰度尚未配置按次积分，请更换模型或输出规格"}
+	}
 	referenceVideoCost, err := s.prepareReferenceVideoPricingInput(ctx, userID, &dto, m)
 	if err != nil {
 		return nil, err
@@ -1332,7 +1335,7 @@ var inputErrorRules = []struct {
 	// —— 安全审核 ——
 	{[]string{
 		"content policy", "content_policy", "sensitive content", "safety system",
-		"prohibited content", "moderation", "nsfw", "flagged",
+		"prohibited content", "moderation", "nsfw", "flagged", "image_safety",
 		"内容违规", "内容审核", "违规内容", "敏感词",
 	}, userFacingSafetyErr},
 	{[]string{

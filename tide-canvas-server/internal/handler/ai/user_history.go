@@ -153,6 +153,7 @@ func (s *service) getUserHistory(ctx context.Context, userID, recordID idgen.ID)
 
 func toUserHistoryDetail(log *model.AiGenerationLog, task *model.AiTask) UserGenerationHistoryDetailVO {
 	mediaType := userHistoryMediaType(log.HandlerName, log.OperationType)
+	logFailureReason := publicGenerationFailureReason(log.ErrorMsg)
 	detail := UserGenerationHistoryDetailVO{
 		MediaType:    mediaType,
 		Model:        log.Model,
@@ -165,7 +166,7 @@ func toUserHistoryDetail(log *model.AiGenerationLog, task *model.AiTask) UserGen
 		Parameters:   []UserHistoryParameterVO{},
 	}
 	if log.Success != 1 {
-		detail.FailureReason = publicGenerationFailureReason(log.ErrorMsg)
+		detail.FailureReason = logFailureReason
 	}
 
 	if task == nil {
@@ -185,7 +186,17 @@ func toUserHistoryDetail(log *model.AiGenerationLog, task *model.AiTask) UserGen
 		detail.FailureReason = ""
 	} else if task.Status == statusFailed {
 		detail.Success = 0
-		detail.FailureReason = publicGenerationFailureReason(task.ErrorMsg)
+		taskFailureReason := publicGenerationFailureReason(task.ErrorMsg)
+		// Older tasks may have persisted the generic system fallback before a new
+		// provider safety signature was classified. The linked audit row retains
+		// the raw cause; use it only after the same public allowlist has converted
+		// it to product-authored copy, so historical records improve without ever
+		// exposing provider details.
+		if taskFailureReason == userFacingGenErr && logFailureReason != userFacingGenErr {
+			detail.FailureReason = logFailureReason
+		} else {
+			detail.FailureReason = taskFailureReason
+		}
 	} else if task.Status == statusCancelled {
 		detail.Success = 0
 		detail.FailureReason = userFacingCancelledErr

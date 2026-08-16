@@ -295,6 +295,10 @@ func (h *modelsHandler) create(c *gin.Context) {
 		}
 	}
 	if mType == "video" {
+		if err := validateVideoPricingConfig(dto.Config); err != nil {
+			response.Fail(c, response.CodeBadRequest, err.Error())
+			return
+		}
 		if err := validateReferenceVideoPricingConfig(dto.Config); err != nil {
 			response.Fail(c, response.CodeBadRequest, err.Error())
 			return
@@ -509,6 +513,10 @@ func (h *modelsHandler) update(c *gin.Context) {
 			}
 		}
 		if effectiveType == "video" {
+			if err := validateVideoPricingConfig(effectiveConfig); err != nil {
+				response.Fail(c, response.CodeBadRequest, err.Error())
+				return
+			}
 			if err := validateReferenceVideoPricingConfig(effectiveConfig); err != nil {
 				response.Fail(c, response.CodeBadRequest, err.Error())
 				return
@@ -609,6 +617,10 @@ func (h *modelsHandler) setStatus(c *gin.Context) {
 			}
 		}
 		if current.Type == "video" {
+			if err := validateVideoPricingConfig(json.RawMessage(current.Config)); err != nil {
+				response.Fail(c, response.CodeBadRequest, err.Error())
+				return
+			}
 			if err := validateReferenceVideoPricingConfig(json.RawMessage(current.Config)); err != nil {
 				response.Fail(c, response.CodeBadRequest, err.Error())
 				return
@@ -850,6 +862,58 @@ func validateUpscalePricingConfig(raw json.RawMessage) error {
 		}
 		if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
 			return fmt.Errorf("请配置 %s 的每秒积分", strings.ToUpper(resolution))
+		}
+	}
+	return nil
+}
+
+func validateVideoPricingConfig(raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	if !json.Valid(raw) {
+		return errors.New("视频模型计费配置无效")
+	}
+	var cfg struct {
+		Mode        string         `json:"videoBillingMode"`
+		Resolutions []string       `json:"resolutions"`
+		Rates       map[string]any `json:"pricePerRequestByResolution"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return errors.New("视频模型计费配置无效")
+	}
+	mode := strings.ToLower(strings.TrimSpace(cfg.Mode))
+	if mode == "" || mode == "duration" {
+		return nil
+	}
+	if mode != "per_request" {
+		return errors.New("视频模型计费方式无效")
+	}
+	if len(cfg.Resolutions) == 0 {
+		return errors.New("按次计费必须先配置支持清晰度")
+	}
+	seenResolutions := make(map[string]struct{}, len(cfg.Resolutions))
+	for _, resolution := range cfg.Resolutions {
+		resolution = strings.TrimSpace(resolution)
+		normalized := strings.ToLower(resolution)
+		if normalized == "" {
+			return errors.New("视频模型清晰度配置无效")
+		}
+		if _, duplicate := seenResolutions[normalized]; duplicate {
+			return fmt.Errorf("视频模型清晰度 %s 重复", strings.ToUpper(resolution))
+		}
+		seenResolutions[normalized] = struct{}{}
+
+		matches := 0
+		price := 0.0
+		for key, rawRate := range cfg.Rates {
+			if strings.EqualFold(strings.TrimSpace(key), resolution) {
+				matches++
+				price = referencePricingNumber(rawRate)
+			}
+		}
+		if matches != 1 || price <= 0 || price > float64(^uint(0)>>1) {
+			return fmt.Errorf("请配置 %s 的按次积分", strings.ToUpper(resolution))
 		}
 	}
 	return nil

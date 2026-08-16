@@ -5,6 +5,9 @@ import { useCanvasStore } from "@/stores/use-canvas-store";
 
 interface Options {
   onEscape?: () => void;
+  onCopyNode?: (nodeId: string) => void;
+  onPaste?: () => void;
+  canPaste?: boolean;
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -15,7 +18,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return !!target.closest('[contenteditable="true"], [role="textbox"]');
 }
 
-export function useCanvasKeyboard({ onEscape }: Options = {}) {
+export function useCanvasKeyboard({ onEscape, onCopyNode, onPaste, canPaste = false }: Options = {}) {
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (isEditableTarget(e.target)) return;
 
@@ -38,6 +41,20 @@ export function useCanvasKeyboard({ onEscape }: Options = {}) {
     if (ctrl && e.key.toLowerCase() === "a") {
       e.preventDefault();
       store.selectAll();
+      return;
+    }
+    if (ctrl && e.key.toLowerCase() === "c") {
+      if (store.selectedNodeId && onCopyNode) {
+        e.preventDefault();
+        onCopyNode(store.selectedNodeId);
+      }
+      return;
+    }
+    if (ctrl && e.key.toLowerCase() === "v") {
+      if (canPaste && onPaste) {
+        e.preventDefault();
+        onPaste();
+      }
       return;
     }
     // Ctrl+G 把当前多选(≥2)创建为分组
@@ -66,7 +83,7 @@ export function useCanvasKeyboard({ onEscape }: Options = {}) {
       store.clearSelection();
       store.selectConnection(null);
     }
-  }, [onEscape]);
+  }, [canPaste, onCopyNode, onEscape, onPaste]);
 
   useEffect(() => {
     window.addEventListener("keydown", handleKeyDown);

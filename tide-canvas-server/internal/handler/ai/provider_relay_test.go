@@ -144,6 +144,7 @@ func TestUserFacingGenError(t *testing.T) {
 		// 审核类优先于输入类:回执带 prompt 字样也不能被「提示词」规则截胡。
 		{"relaymedia: your prompt was flagged by our moderation system", "内容未通过安全审核，请调整后重试"},
 		{"relaymedia: NSFW content detected", "内容未通过安全审核，请调整后重试"},
+		{"relaymedia: code 5001: Gemini returned text only: unknown finish reason: [IMAGE_SAFETY]", "内容未通过安全审核，请调整后重试"},
 		// OpenAI 安审真实回执(经中转站透传):含 request ID 与 help.openai.com,
 		// 一个字都不能出站,只认 "safety system" 特征。
 		{`relaymedia: HTTP 400: {"error":{"message":"Your request was rejected by the ` +
@@ -213,8 +214,8 @@ func TestUserFacingGenErrorUsesSelectedRelayBusinessMessages(t *testing.T) {
 		}
 	}
 
-	// 5001 is only an input-image safety rejection when the provider detail says
-	// InputImageRisk. Other 5001 failures remain internal system errors.
+	// 5001 is an actionable safety rejection only when the provider detail has a
+	// recognized signature. Other 5001 failures remain internal system errors.
 	for _, err := range []error{
 		&relaymedia.UpstreamError{HTTPStatus: 200, Code: "5001", Message: "InputImageRisk (2039)"},
 		fmt.Errorf("provider failed: %w", &relaymedia.UpstreamError{Code: "5001", Message: "input image risk"}),
@@ -225,6 +226,12 @@ func TestUserFacingGenErrorUsesSelectedRelayBusinessMessages(t *testing.T) {
 	}
 	if got := userFacingGenError(&relaymedia.UpstreamError{Code: "5001", Message: "provider internal failure"}); got != userFacingGenErr {
 		t.Errorf("unrelated code 5001 must stay internal, got %q", got)
+	}
+	if got := userFacingGenError(&relaymedia.UpstreamError{
+		Code:    "5001",
+		Message: "Gemini returned text only: unknown finish reason: [IMAGE_SAFETY]",
+	}); got != userFacingSafetyErr {
+		t.Errorf("code 5001 IMAGE_SAFETY: got %q, want %q", got, userFacingSafetyErr)
 	}
 
 	// 5009 is Relay's dedicated copyright restriction. Use stable, actionable

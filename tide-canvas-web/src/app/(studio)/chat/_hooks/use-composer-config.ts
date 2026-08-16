@@ -23,7 +23,7 @@ import {
   type RefPolicy,
 } from "../_components/chat-utils";
 import { resolutionRank } from "@/components/studio/create-studio/utils";
-import { configuredMatrix, durationVariants, keyVariants, matrixPrice } from "@/lib/price-matrix";
+import { configuredMatrix, keyVariants, matrixPrice, resolveVideoPointCost } from "@/lib/price-matrix";
 import type { GenModelsApi } from "./use-gen-models";
 
 export function useComposerConfig(models: GenModelsApi) {
@@ -201,8 +201,8 @@ export function useComposerConfig(models: GenModelsApi) {
 
   // approx points cost — 与服务端权威计费(pricing.go resolveCost)同序解析，
   // 分辨率/时长切换要联动:
-  //   video: priceMatrix[时长][分辨率]（两个轴序都试）→ priceModifiers
-  //          ["duration@分辨率"][时长] → creditCost → pointCost；单条不乘数量
+  //   video per_request: pricePerRequestByResolution[分辨率]，不读时长
+  //   video duration: priceMatrix[时长][分辨率] → priceModifiers → 固定价
   //   image: priceMatrix[画质||default][清晰度]（两个轴序都试；不配画质档位
   //          时服务端与此处同查 default 行）→ creditCost → pointCost × 批量
   //   audio: 按次计费（Suno 一次两首一并结算）
@@ -213,15 +213,12 @@ export function useComposerConfig(models: GenModelsApi) {
       return Number.isFinite(n) && n > 0 ? n : 0;
     };
     const flat = cellNum(mCfg?.creditCost) || parseFloat(selModel?.pointCost ?? "0") || 0;
+    if (isVid) {
+      return resolveVideoPointCost(mCfg, dur, res, selModel?.pointCost);
+    }
     let base = 0;
     const pm = configuredMatrix(mCfg);
-    if (isVid && dur && res) {
-      base = matrixPrice(pm, durationVariants(dur), keyVariants(res)) ?? 0;
-      if (!base) {
-        const mods = mCfg?.priceModifiers as Record<string, Record<string, string | number>> | undefined;
-        base = matrixPrice(mods, keyVariants(`duration@${res}`), durationVariants(dur)) ?? 0;
-      }
-    } else if (selModel?.type === "image" && res) {
+    if (selModel?.type === "image" && res) {
       // 图片按 [画质][清晰度] 查表，与服务端 pricing.go 同口径；两种轴序都试，
       // 后台矩阵横竖着写都能命中（漏查会静默落到模型固定价，4K 卖成 1K 的钱）。
       // 不配画质档位时（quality 为空）查 default 行——服务端同样如此。

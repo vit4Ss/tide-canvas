@@ -49,6 +49,116 @@ export interface ClipReshootRange {
   end: number;
 }
 
+export const CLIP_RESHOOT_MAX_RANGES = 5;
+export const CLIP_RESHOOT_DEFAULT_SECONDS = 5;
+export const CLIP_RESHOOT_MIN_SECONDS = 0.5;
+
+type ClipReshootSelectionRange = Pick<ClipReshootRange, "start" | "end">;
+
+export function normalizeClipReshootRanges(
+  ranges: ReadonlyArray<Pick<ClipReshootRange, "start" | "end">> | undefined,
+  duration: number,
+): ClipReshootSelectionRange[] {
+  const safeDuration = positiveFinite(duration) ?? CLIP_RESHOOT_DEFAULT_SECONDS;
+  const candidates = (ranges ?? [])
+    .flatMap((range) => {
+      const start = Math.max(0, Math.min(safeDuration, Number(range.start)));
+      const end = Math.max(0, Math.min(safeDuration, Number(range.end)));
+      return Number.isFinite(start) && Number.isFinite(end) && end - start >= CLIP_RESHOOT_MIN_SECONDS
+        ? [{ start, end }]
+        : [];
+    })
+    .sort((a, b) => a.start - b.start);
+  const normalized: ClipReshootSelectionRange[] = [];
+  for (const candidate of candidates) {
+    const start = Math.max(candidate.start, normalized.at(-1)?.end ?? 0);
+    if (candidate.end - start < CLIP_RESHOOT_MIN_SECONDS) continue;
+    normalized.push({ start, end: candidate.end });
+    if (normalized.length >= CLIP_RESHOOT_MAX_RANGES) break;
+  }
+  return normalized.length > 0
+    ? normalized
+    : [{ start: 0, end: Math.min(CLIP_RESHOOT_DEFAULT_SECONDS, safeDuration) }];
+}
+
+export function addClipReshootRange(
+  ranges: ReadonlyArray<ClipReshootSelectionRange> | undefined,
+  duration: number,
+  at: number,
+): { ranges: ClipReshootSelectionRange[]; activeIndex: number; changed: boolean } {
+  const safeDuration = positiveFinite(duration) ?? CLIP_RESHOOT_DEFAULT_SECONDS;
+  const normalized = normalizeClipReshootRanges(ranges, safeDuration);
+  const time = Math.max(0, Math.min(safeDuration, Number(at) || 0));
+  const existingIndex = normalized.findIndex((range) => time >= range.start && time <= range.end);
+  if (existingIndex >= 0) return { ranges: normalized, activeIndex: existingIndex, changed: false };
+  if (normalized.length >= CLIP_RESHOOT_MAX_RANGES) {
+    return { ranges: normalized, activeIndex: -1, changed: false };
+  }
+
+  const previous = [...normalized].reverse().find((range) => range.end <= time);
+  const nextRange = normalized.find((range) => range.start >= time);
+  const gapStart = previous?.end ?? 0;
+  const gapEnd = nextRange?.start ?? safeDuration;
+  const length = Math.min(CLIP_RESHOOT_DEFAULT_SECONDS, gapEnd - gapStart);
+  if (length < CLIP_RESHOOT_MIN_SECONDS) {
+    return { ranges: normalized, activeIndex: -1, changed: false };
+  }
+
+  let start = Math.max(gapStart, time - length / 2);
+  const end = Math.min(gapEnd, start + length);
+  start = Math.max(gapStart, end - length);
+  const next = normalizeClipReshootRanges([...normalized, { start, end }], safeDuration);
+  return {
+    ranges: next,
+    activeIndex: next.findIndex((range) => Math.abs(range.start - start) < 0.01),
+    changed: true,
+  };
+}
+
+export function resizeClipReshootRange(
+  ranges: ReadonlyArray<ClipReshootSelectionRange> | undefined,
+  duration: number,
+  index: number,
+  edge: "start" | "end",
+  at: number,
+): ClipReshootSelectionRange[] {
+  const safeDuration = positiveFinite(duration) ?? CLIP_RESHOOT_DEFAULT_SECONDS;
+  const next = normalizeClipReshootRanges(ranges, safeDuration).map((range) => ({ ...range }));
+  const target = next[index];
+  if (!target) return next;
+  const time = Math.max(0, Math.min(safeDuration, Number(at) || 0));
+  const previousEnd = next[index - 1]?.end ?? 0;
+  const nextStart = next[index + 1]?.start ?? safeDuration;
+  if (edge === "start") {
+    target.start = Math.max(previousEnd, Math.min(time, target.end - CLIP_RESHOOT_MIN_SECONDS));
+  } else {
+    target.end = Math.min(nextStart, Math.max(time, target.start + CLIP_RESHOOT_MIN_SECONDS));
+  }
+  return normalizeClipReshootRanges(next, safeDuration);
+}
+
+export function formatClipReshootTime(seconds: number): string {
+  const safeSeconds = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
+  const roundedTenths = Math.round(safeSeconds * 10);
+  const minutes = Math.floor(roundedTenths / 600);
+  const rounded = (roundedTenths - minutes * 600) / 10;
+  const secondsText = Number.isInteger(rounded)
+    ? String(rounded).padStart(2, "0")
+    : rounded.toFixed(1).padStart(4, "0");
+  return `${String(minutes).padStart(2, "0")}:${secondsText}`;
+}
+
+export function buildClipReshootRangeInstruction(
+  ranges: ReadonlyArray<Pick<ClipReshootRange, "start" | "end">> | undefined,
+  duration: number,
+  sourceLabel = "参考视频",
+): string {
+  const normalized = normalizeClipReshootRanges(ranges, duration);
+  return `仅重拍${sourceLabel}中的以下片段：${normalized
+    .map((range) => `${formatClipReshootTime(range.start)}–${formatClipReshootTime(range.end)}`)
+    .join("、")}。未选中的画面保持不变。`;
+}
+
 export function extractClipReshootRanges(prompt: string): Array<ClipReshootRange | { raw: string; invalid: true }> {
   const ranges: Array<ClipReshootRange | { raw: string; invalid: true }> = [];
   const pattern = /(\d+(?::\d+){1,2}(?:\.\d+)?)\s*(?:-|–|—|~|～|至|到)\s*(\d+(?::\d+){1,2}(?:\.\d+)?)/g;
@@ -110,6 +220,11 @@ export function buildClipReshootNode(input: {
       duration: Math.max(1, Math.round(actualDuration)),
     },
     videoOperation: "clip_reshoot",
+    clipReshootSourceId: source.id,
+    clipReshootRanges: [{
+      start: 0,
+      end: Math.min(CLIP_RESHOOT_DEFAULT_SECONDS, actualDuration),
+    }],
     status: "idle",
   };
 }

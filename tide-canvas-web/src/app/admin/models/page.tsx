@@ -41,6 +41,7 @@ import { toast } from "@/components/shared/toast";
 import { confirmDialog } from "@/components/shared/confirm";
 import { adminModelsApi } from "@/lib/admin-models-api";
 import { BRAND_ICONS, brandIconUrl, resolveModelSwatch } from "@/lib/model-brand";
+import { usesVideoPerRequestBilling, videoPerRequestRate } from "@/lib/price-matrix";
 import {
   MODEL_STATUS_LABEL,
   MODEL_TYPE_LABEL,
@@ -159,6 +160,12 @@ function billingValue(model: AdminModelVO): number {
     const legacy = positiveNumber(model.config?.pricePerSecond);
     return rates.length ? Math.min(...rates) : legacy;
   }
+  if (model.type === "video" && usesVideoPerRequestBilling(model.config)) {
+    const rates = (model.config?.resolutions ?? [])
+      .map((resolution) => Math.ceil(videoPerRequestRate(model.config, resolution)))
+      .filter((rate) => rate > 0);
+    return rates.length ? Math.min(...rates) : 0;
+  }
   return positiveNumber(model.pointCost);
 }
 
@@ -172,6 +179,15 @@ function initialUpscaleRates(config: ModelConfig): Record<string, number | strin
 }
 
 function billingLabel(model: AdminModelVO): string {
+  if (model.type === "video" && usesVideoPerRequestBilling(model.config)) {
+    const rates = (model.config?.resolutions ?? [])
+      .map((resolution) => Math.ceil(videoPerRequestRate(model.config, resolution)))
+      .filter((rate) => rate > 0);
+    if (!rates.length) return "按次 · 未定价";
+    const low = Math.min(...rates);
+    const high = Math.max(...rates);
+    return `${low}${high !== low ? `–${high}` : ""} /次 · 按清晰度`;
+  }
   if (model.type !== "upscale") return `${model.pointCost} /次`;
   const rates = Object.values(model.config?.pricePerSecondByResolution ?? {})
     .map(positiveNumber)
@@ -792,6 +808,8 @@ function ModelModal({
     priceMatrix: c0.priceMatrix && Object.keys(c0.priceMatrix).length
       ? c0.priceMatrix
       : c0.pricing ?? {},
+    videoBillingMode: c0.videoBillingMode ?? "duration",
+    pricePerRequestByResolution: c0.pricePerRequestByResolution ?? {},
     pricePerSecond: c0.pricePerSecond ?? "",
     // 旧模型的统一每秒价展开到每个可用档位，运营只需按档调整差价即可完成迁移。
     pricePerSecondByResolution: initialUpscaleRates(c0),
@@ -808,9 +826,10 @@ function ModelModal({
   const isText = type === "text";
   const is3D = type === "3d";
   const isUpscale = type === "upscale";
+  const isPerRequestVideo = isVideo && usesVideoPerRequestBilling(cfg);
   const showGen = isImage || isVideo;
   const showPrompt = showGen || is3D;
-  const showMatrix = showGen;
+  const showMatrix = isImage || (isVideo && (!isPerRequestVideo || cfg.referenceVideoBillingEnabled));
 
   // price-matrix rows: image → qualities, video → durations; cols → resolutions.
   // 图片不配画质档位时给一行「default」按清晰度单独定价（服务端 pricing.go
@@ -834,6 +853,21 @@ function ModelModal({
       ...previous,
       pricePerSecondByResolution: {
         ...(previous.pricePerSecondByResolution ?? {}),
+        [resolution]: value,
+      },
+    }));
+
+  const requestRate = (resolution: string): string | number => {
+    const entry = Object.entries(cfg.pricePerRequestByResolution ?? {})
+      .find(([key]) => key.trim().toLowerCase() === resolution.trim().toLowerCase());
+    return entry?.[1] ?? "";
+  };
+  const setRequestRate = (resolution: string, value: string) =>
+    setCfg((previous) => ({
+      ...previous,
+      pricePerRequestByResolution: {
+        ...Object.fromEntries(Object.entries(previous.pricePerRequestByResolution ?? {})
+          .filter(([key]) => key.trim().toLowerCase() !== resolution.trim().toLowerCase())),
         [resolution]: value,
       },
     }));
@@ -890,6 +924,20 @@ function ModelModal({
         return false;
       }
     }
+    if (isPerRequestVideo) {
+      const resolutions = cfg.resolutions ?? [];
+      if (!resolutions.length) {
+        setErr("按次计费必须先选择支持清晰度");
+        return false;
+      }
+      const missingResolution = resolutions.find(
+        (resolution) => videoPerRequestRate(cfg, resolution) <= 0,
+      );
+      if (missingResolution) {
+        setErr(`请填写 ${missingResolution.toUpperCase()} 的按次积分`);
+        return false;
+      }
+    }
     if (isVideo && cfg.referenceVideoBillingEnabled) {
       const durations = cfg.durations ?? [];
       const resolutions = cfg.resolutions ?? [];
@@ -922,9 +970,9 @@ function ModelModal({
           badges: (cfg.badges ?? [])
             .map((b) => ({ text: (b.text ?? "").trim(), tone: b.tone ?? ("hot" as const) }))
             .filter((b) => b.text),
-          // 「消耗积分」是管理员唯一可见的按次价格，写回 config.creditCost——
-          // 计费(resolveCost)与前端估价都是 creditCost 优先，不写回的话上游
-          // 同步预填的 credit_cost 会悄悄压过这里填的值（表单又不渲染它）。
+          // 固定/兜底积分写回 creditCost。普通模型以它为权威固定价，视频
+          // 按时长时用于矩阵 miss 回退；视频按次模式明确跳过该字段，只读
+          // pricePerRequestByResolution，避免旧值干扰当前扣费。
           creditCost: parseFloat(pointCost.trim()) || 0,
           pricePerSecondByResolution: isUpscale
             ? Object.fromEntries(
@@ -998,7 +1046,12 @@ function ModelModal({
               <input value="按分辨率 / 秒" readOnly aria-label="视频超分计费方式" />
             </Field>
           ) : (
-            <Field label="消耗积分" hint="按次扣费的积分（支持小数）；保存后即为计费与前台展示的权威价">
+            <Field
+              label={isVideo ? "兜底积分" : "消耗积分"}
+              hint={isVideo
+                ? "仅按时长模式中未命中价格矩阵时使用；按次模式始终以清晰度价格表为准"
+                : "按次扣费的积分（支持小数）；保存后即为计费与前台展示的权威价"}
+            >
               <input value={pointCost} onChange={(e) => setPointCost(e.target.value)} placeholder="0.0" inputMode="decimal" />
             </Field>
           )}
@@ -1109,6 +1162,22 @@ function ModelModal({
               onChange={(next) => setC({ modes: next })}
             />
           </FormSection>
+
+          {isVideo && (
+            <FormSection
+              label="视频生成计费"
+              hint="开启按次后，只按输出清晰度收取一次积分，生成时长不参与计算；关闭后恢复时长 × 清晰度分档，切换不会删除任一套价格。"
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <SwitchToggle
+                  checked={isPerRequestVideo}
+                  onChange={(next) => setC({ videoBillingMode: next ? "per_request" : "duration" })}
+                  aria-label="视频按次计费"
+                />
+                <span>{isPerRequestVideo ? "按次计费" : "按时长计费"}</span>
+              </div>
+            </FormSection>
+          )}
 
           {(cfg.modes ?? []).includes("i2i") && (
             <FormSection label="图生图参数">
@@ -1379,9 +1448,57 @@ function ModelModal({
         </FormCard>
       )}
 
+      {isPerRequestVideo && (
+        <FormCard title="积分定价（按次 × 清晰度）">
+          {matrixCols.length === 0 ? (
+            <div className="fsec">
+              <div className="hint">请先在上方选择支持清晰度，再设置每次生成积分。</div>
+            </div>
+          ) : (
+            <div className="fsec">
+              <div className="fmatrix">
+                <div className="adm-table-wrap" role="region" aria-label="视频按次积分" tabIndex={0}>
+                  <table aria-label="视频按次积分">
+                    <thead>
+                      <tr>
+                        <th>输出清晰度</th>
+                        <th>积分 / 次</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {matrixCols.map((resolution) => (
+                        <tr key={resolution}>
+                          <td>{resolution.toUpperCase()}</td>
+                          <td>
+                            <input
+                              placeholder="如：25"
+                              inputMode="decimal"
+                              value={requestRate(resolution)}
+                              onChange={(event) => setRequestRate(resolution, event.target.value)}
+                              aria-label={`${resolution.toUpperCase()} 按次积分`}
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div className="hint">
+                每个清晰度必须填写大于 0 的积分；服务端按所选清晰度扣一次，视频时长不参与计算，小数积分按现有规则向上取整。
+              </div>
+            </div>
+          )}
+        </FormCard>
+      )}
+
       {showMatrix && (
         <FormCard
-          title={isVideo ? "积分定价（时长 × 清晰度）" : "积分定价（画质 × 清晰度）"}
+          title={isVideo
+            ? isPerRequestVideo
+              ? "参考视频附加积分（时长 × 清晰度）"
+              : "积分定价（时长 × 清晰度）"
+            : "积分定价（画质 × 清晰度）"}
         >
           {matrixRows.length === 0 || matrixCols.length === 0 ? (
             <div className="fsec">
@@ -1424,7 +1541,9 @@ function ModelModal({
                 </div>
               </div>
               <div className="hint">
-                {isVideo && cfg.referenceVideoBillingEnabled
+                {isPerRequestVideo
+                  ? "这张表只用于已开启的参考视频附加计费；视频生成本身仍按上方清晰度价格扣一次。切回按时长后，这张表会继续作为生成价格。"
+                  : isVideo && cfg.referenceVideoBillingEnabled
                   ? "不同档位可设不同积分；参考视频计费已开启，所有时长 × 清晰度格都必须填写大于 0 的积分。"
                   : "不同档位可设不同积分；留空或 0 的格回退到上方「消耗积分」。"}
               </div>

@@ -62,11 +62,11 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
   const selectedNodeIds = useCanvasStore((s) => s.selectedNodeIds);
   const selectedConnectionId = useCanvasStore((s) => s.selectedConnectionId);
   const addNode = useCanvasStore((s) => s.addNode);
+  const addNodesAndConnections = useCanvasStore((s) => s.addNodesAndConnections);
   const removeNode = useCanvasStore((s) => s.removeNode);
   const selectNode = useCanvasStore((s) => s.selectNode);
   const clearSelection = useCanvasStore((s) => s.clearSelection);
   const selectConnection = useCanvasStore((s) => s.selectConnection);
-  const addConnection = useCanvasStore((s) => s.addConnection);
   const undo = useCanvasStore((s) => s.undo);
   const redo = useCanvasStore((s) => s.redo);
   const canUndo = useCanvasStore((s) => s.undoStack.length > 0);
@@ -90,7 +90,12 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
   const connection = useCanvasConnection({ containerRef });
   const boxSelect = useCanvasBoxSelect({ containerRef });
 
-  useCanvasKeyboard({ onEscape: () => setContextMenu(null) });
+  useCanvasKeyboard({
+    onEscape: () => setContextMenu(null),
+    onCopyNode: clipboard.copyNode,
+    onPaste: () => clipboard.pasteNode(),
+    canPaste: clipboard.canPaste,
+  });
 
   // 节点能力属于平台配置，不写入 canvas_data/undo。画布只加载一份；回到页面
   // 时强制重验，后台刚保存的开关无需刷新整个项目即可生效。
@@ -294,15 +299,17 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
       connection.clearQuickAdd();
       return;
     }
-    addNode(node);
     const sourceId = source.id;
     const targetId = target.id;
-    if (sourceId !== targetId) {
-      addConnection({ id: `conn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, sourceId, targetId });
-    }
-    selectNode(node.id);
+    addNodesAndConnections(
+      [node],
+      sourceId === targetId
+        ? []
+        : [{ id: `conn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, sourceId, targetId }],
+      node.id,
+    );
     connection.clearQuickAdd();
-  }, [connection, nodes, addNode, addConnection, selectNode]);
+  }, [addNodesAndConnections, connection, nodes]);
 
   const canQuickAddType = useCallback((type: string) => {
     const qa = connection.quickAdd;

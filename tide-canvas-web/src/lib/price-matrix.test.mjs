@@ -8,6 +8,9 @@ import {
   resolveImageToolPointCost,
   resolveUpscalePointCost,
   resolveUpscalePointRate,
+  resolveVideoPointCost,
+  videoPerRequestPointRange,
+  videoPerRequestRate,
 } from "./price-matrix.ts";
 
 test("upscale pricing selects the target-resolution rate and rounds the final cost", () => {
@@ -57,4 +60,64 @@ test("video matrix lookup tolerates duration suffix, resolution case, and flippe
   });
   assert.equal(matrixPrice(matrix, durationVariants(7), keyVariants("720P")), 49);
   assert.equal(matrixPrice(matrix, durationVariants("8"), keyVariants("720P")), 56);
+});
+
+test("video per-request pricing uses resolution and never multiplies duration", () => {
+  const config = {
+    videoBillingMode: "per_request",
+    resolutions: ["720p", "1080p"],
+    pricePerRequestByResolution: { "720P": "12.1", "1080p": 25 },
+    priceMatrix: { "4s": { "720p": 4 }, "20s": { "720p": 20 } },
+    creditCost: 88,
+  };
+  assert.equal(resolveVideoPointCost(config, 4, "720p", 999), 13);
+  assert.equal(resolveVideoPointCost(config, 20, "720P", 999), 13);
+  assert.equal(resolveVideoPointCost(config, 4, "1080P", 999), 25);
+  assert.equal(resolveVideoPointCost(config, 4, "4k", 999), 0);
+});
+
+test("switching video billing mode retains the duration matrix", () => {
+  const config = {
+    videoBillingMode: "duration",
+    resolutions: ["720p"],
+    pricePerRequestByResolution: { "720p": 9 },
+    priceMatrix: { "4s": { "720p": 4 }, "8s": { "720p": 7 } },
+  };
+  assert.equal(resolveVideoPointCost(config, 4, "720p", 99), 4);
+  assert.equal(resolveVideoPointCost(config, 8, "720p", 99), 7);
+});
+
+test("case-variant duplicate per-request rates fail closed", () => {
+  assert.equal(videoPerRequestRate({
+    resolutions: ["720p"],
+    pricePerRequestByResolution: { "720p": 10, "720P": 11 },
+  }, "720p"), 0);
+});
+
+test("video per-request range rounds every resolution and rejects partial pricing", () => {
+  assert.deepEqual(videoPerRequestPointRange({
+    videoBillingMode: "per_request",
+    resolutions: ["720p", "1080P"],
+    pricePerRequestByResolution: { "720P": "12.1", "1080p": 25 },
+  }), { min: 13, max: 25 });
+  assert.deepEqual(videoPerRequestPointRange({
+    videoBillingMode: "per_request",
+    resolutions: ["720p"],
+    pricePerRequestByResolution: { "720p": 9 },
+  }), { min: 9, max: 9 });
+  assert.equal(videoPerRequestPointRange({
+    videoBillingMode: "per_request",
+    resolutions: ["720p", "1080p"],
+    pricePerRequestByResolution: { "720p": 9 },
+  }), null);
+  assert.equal(videoPerRequestPointRange({
+    videoBillingMode: "duration",
+    resolutions: ["720p"],
+    pricePerRequestByResolution: { "720p": 9 },
+  }), null);
+  assert.equal(videoPerRequestPointRange({
+    videoBillingMode: "per_request",
+    resolutions: ["720p"],
+    pricePerRequestByResolution: { "720p": "9223372036854775808" },
+  }), null);
 });

@@ -38,6 +38,10 @@ import type { GenModelsApi } from "../_hooks/use-gen-models";
 import type { ComposerConfigApi } from "../_hooks/use-composer-config";
 import type { ReferencesApi } from "../_hooks/use-references";
 import { useReferenceVideoQuote } from "@/hooks/use-reference-video-quote";
+import {
+  usesVideoPerRequestBilling,
+  videoPerRequestPointRange,
+} from "@/lib/price-matrix";
 
 export function Composer({
   models,
@@ -384,7 +388,18 @@ export function Composer({
               {genModels.map((m) => {
                 const est = m.config?.estSeconds ?? 0;
                 const cost = parseFloat(m.pointCost) || 0;
-                const tag = est > 0 ? `~${est}s` : cost > 0 ? `${cost}积分` : typeTag(m.type);
+                const perRequest = m.type === "video" && usesVideoPerRequestBilling(m.config);
+                const perRequestRange = perRequest ? videoPerRequestPointRange(m.config) : null;
+                const perRequestTag = perRequestRange
+                  ? `${perRequestRange.min}${perRequestRange.max !== perRequestRange.min ? `–${perRequestRange.max}` : ""}积分/次`
+                  : "按次未定价";
+                const tag = perRequest
+                  ? perRequestTag
+                  : est > 0
+                    ? `~${est}s`
+                    : cost > 0
+                      ? `${cost}积分`
+                      : typeTag(m.type);
                 const desc =
                   m.desc || (m.config?.capabilities?.length ? m.config.capabilities.join(" · ") : "高质量生成");
                 return (

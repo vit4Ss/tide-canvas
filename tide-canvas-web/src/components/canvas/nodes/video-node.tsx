@@ -9,7 +9,7 @@ import { VideoParamPicker, normalizeDurations, type VideoParamValue } from "./vi
 import { ModelPicker } from "./model-picker";
 import { uploadFileSmart } from "@/lib/api";
 import { resolveModelReferenceLimitBytes } from "@/lib/upload-limits";
-import { configuredMatrix, durationVariants, keyVariants, matrixPrice } from "@/lib/price-matrix";
+import { resolveVideoPointCost } from "@/lib/price-matrix";
 import { isConceptCanvasNodeType, isImageReferenceNodeType } from "@/lib/canvas-node-types";
 import { AiModelType } from "@/types/ai";
 import { NodeHeader } from "./base/node-header";
@@ -30,11 +30,16 @@ import CapturableVideo from "@/components/studio/create-studio/video-result";
 import { useReferenceVideoQuote } from "@/hooks/use-reference-video-quote";
 import type { ModelConfig } from "@/types/admin-models";
 import {
+  CLIP_RESHOOT_DEFAULT_SECONDS,
+  buildClipReshootRangeInstruction,
   buildClipReshootNode,
+  formatClipReshootTime,
+  normalizeClipReshootRanges,
   selectClipReshootModel,
   supportsVideoReference,
   validateClipReshootPrompt,
 } from "./video-clip-reshoot";
+import { VideoClipReshootTimeline } from "./video-clip-reshoot-timeline";
 import { BREAKDOWN_NODE_HEIGHT, BREAKDOWN_NODE_WIDTH } from "./video-frame-breakdown";
 
 // 各模式（Tab）对连接源节点的数量/类型限制：hover 时提示，生成时校验。文生视频无需连接。
@@ -167,6 +172,27 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   const configuredFeatures = useCanvasNodeFeatures(node.type);
   const updateNode = useCanvasStore((s) => s.updateNode);
   const { generate, generating, showAuxUI } = useNodeRuntime(node, isSelected, isDragging);
+  const isClipReshoot = node.videoOperation === "clip_reshoot";
+  const clipSourceVideo = useCanvasStore((state) => {
+    if (!isClipReshoot) return undefined;
+    if (node.clipReshootSourceId) {
+      const connected = state.connections.some((candidate) =>
+        candidate.targetId === node.id && candidate.sourceId === node.clipReshootSourceId
+      );
+      if (!connected) return undefined;
+      return state.nodes.find((source) =>
+        source.id === node.clipReshootSourceId && source.type === "video" && source.videoSrc
+      );
+    }
+    const connection = state.connections.find((candidate) =>
+      candidate.targetId === node.id
+      && state.nodes.some((source) => source.id === candidate.sourceId && source.type === "video" && source.videoSrc),
+    );
+    return connection
+      ? state.nodes.find((source) => source.id === connection.sourceId && source.type === "video" && source.videoSrc)
+      : undefined;
+  });
+  const playerVideoSrc = node.videoSrc || clipSourceVideo?.videoSrc || "";
   const [videoParam, setVideoParam] = useState<VideoParamValue>({
     ratio: node.aspectRatio ?? "16:9",
     resolution: node.generationConfig?.resolution ?? "720P",
@@ -177,13 +203,14 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     AiModelType.VIDEO,
     node.generationConfig?.modelId,
   );
-  const isClipReshoot = node.videoOperation === "clip_reshoot";
   const selectableVideoModels = isClipReshoot
     ? videoModels.filter(supportsVideoReference)
     : videoModels;
   const clipReshootModelReady = !isClipReshoot || (!!selectedModel && supportsVideoReference(selectedModel));
+  const clipReshootSourceReady = !isClipReshoot || !!clipSourceVideo;
   const [videoTab, setVideoTab] = useState(isClipReshoot ? "全能参考" : "文生视频");
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [clipSourceThumbnail, setClipSourceThumbnail] = useState<{ src: string; thumbnail: string } | null>(null);
   const { promptExpanded, setPromptExpanded, handlePromptChange } = useNodePrompt(node, node.videoSrc);
   const { downloading, download: handleDownload } = useFileDownload();
   const {
@@ -204,11 +231,12 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   const [duration, setDuration] = useState(0);
   const [capturing, setCapturing] = useState(false);
   // 本地缓存：首次播放下载一次写入 Cache Storage，之后从本地 blob 播放，省流量
-  const [srcToUse, setSrcToUse] = useState<string>(node.videoSrc ?? "");
+  const [srcToUse, setSrcToUse] = useState<string>(playerVideoSrc);
   const [resolved, setResolved] = useState<null | "blob" | "native">(null);
   const [hovering, setHovering] = useState(false);
   const objUrlRef = useRef<string | null>(null);
   const resolvingRef = useRef(false);
+  const playerVideoSrcRef = useRef(playerVideoSrc);
   useMediaErrorRecovery(node, node.videoSrc, generating);
 
   // 片段重拍只能走视频参考模型；恢复旧画布或后台调整模型能力后也自动收敛到可用模型。
@@ -248,8 +276,15 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       if (isImageReferenceNodeType(src.type) && src.imageSrc) {
         images.push({ id: src.id, thumb: src.imageSrc, title: src.title || "", index: images.length + 1, kind: "image", src: src.imageSrc });
       } else if (src.type === "video" && src.videoSrc) {
-        // 视频没有可直接当图片封面使用的源，thumb 留空走 ▶ 降级字形
-        videos.push({ id: src.id, thumb: "", title: src.title || "", index: videos.length + 1, kind: "video", src: src.videoSrc });
+        // 片段重拍复用时间轴抽取的首张帧；其它视频没有封面时走 ▶ 降级字形。
+        videos.push({
+          id: src.id,
+          thumb: clipSourceThumbnail?.src === src.videoSrc ? clipSourceThumbnail.thumbnail : "",
+          title: src.title || "",
+          index: videos.length + 1,
+          kind: "video",
+          src: src.videoSrc,
+        });
       } else if (src.type === "text" && src.content?.trim()) {
         texts.push({ id: src.id, thumb: "", title: src.title || "", index: texts.length + 1, kind: "text", text: src.content });
       }
@@ -259,7 +294,8 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     // 文本不占模型的参考位（正文直接拼进 prompt），所以各模式一律可引用。
     return [...images, ...(videoTab === "全能参考" ? videos : []), ...texts];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refsSig, node.id, videoTab]);
+  }, [clipSourceThumbnail, refsSig, node.id, videoTab]);
+  const clipSourceRefIndex = refs.find((ref) => ref.kind === "video" && ref.id === clipSourceVideo?.id)?.index ?? 1;
   const hasConceptPrompt = useCanvasStore((s) =>
     s.connections.some((c) => {
       if (c.targetId !== node.id) return false;
@@ -306,9 +342,8 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     ...rawConfig,
     durations: rawConfig.durations ? normalizeDurations(rawConfig.durations) : undefined,
   };
-  // 积分显示与服务端 resolveCost 同口径的容错查表：后台视频矩阵是「行=时长(带 s)、
-  // 列=清晰度(常为小写)」，而选择器里是数字秒 + "720P" 大写——统一走 matrixPrice
-  // 兼容，查不到才落模型固定价（服务端同规则）。
+  // 积分显示与服务端 resolveCost 同口径：按次模式只按清晰度取价且完全
+  // 忽略时长；按时长模式继续查「时长 × 清晰度」矩阵和旧 modifier。
   const referenceVideoUrls = useMemo(() => {
     if (videoTab !== "全能参考") return [];
     const state = useCanvasStore.getState();
@@ -317,24 +352,19 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       .map((source) => source.videoSrc as string);
     // refsSig intentionally invalidates this imperative store snapshot.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refsSig, node.id, videoTab]);
+  }, [clipSourceThumbnail, refsSig, node.id, videoTab]);
   const referenceVideoQuote = useReferenceVideoQuote(
     selectedModel?.modelId || selectedModel?.id,
     rawConfig,
     videoParam.resolution,
     referenceVideoUrls,
   );
-  const matrixCost = matrixPrice(configuredMatrix(formatConfig), durationVariants(videoParam.duration), keyVariants(videoParam.resolution));
-  const modifierCost = matrixPrice(
-    formatConfig.priceModifiers as Record<string, Record<string, string | number>> | undefined,
-    keyVariants(`duration@${videoParam.resolution}`),
-    durationVariants(videoParam.duration),
+  const basePointCost = resolveVideoPointCost(
+    formatConfig,
+    videoParam.duration,
+    videoParam.resolution,
+    selectedModel?.pointCost ?? 135,
   );
-  const configuredFlatCost = Number(formatConfig.creditCost);
-  const flatCost = Number.isFinite(configuredFlatCost) && configuredFlatCost > 0
-    ? configuredFlatCost
-    : selectedModel?.pointCost ?? 135;
-  const basePointCost = matrixCost ?? modifierCost ?? flatCost;
   const pointCost = basePointCost + referenceVideoQuote.quote.pointCost;
 
   // 切换模型后当前比例/清晰度/时长不在该模型的可选档位 → 自动校正为其首个档位
@@ -358,23 +388,41 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   const cardAspect = ratioParsed ? ratioParsed.w / ratioParsed.h : 16 / 9;
   const { w: cardW, h: cardHeight } = fitVideoCardSize(cardAspect);
   const promptPanelW = Math.max(640, cardW + 32);
+  const clipTimelineVisible = isClipReshoot && !!clipSourceVideo?.videoSrc;
+  const clipSourceDuration = clipSourceVideo?.mediaDuration
+    ?? (node.videoSrc ? undefined : duration)
+    ?? clipSourceVideo?.generationConfig?.duration
+    ?? node.generationConfig?.duration
+    ?? CLIP_RESHOOT_DEFAULT_SECONDS;
+  const clipRanges = useMemo(
+    () => normalizeClipReshootRanges(node.clipReshootRanges, clipSourceDuration),
+    [clipSourceDuration, node.clipReshootRanges],
+  );
+  const mediaContentHeight = cardHeight + (clipTimelineVisible ? 86 : 0);
+  const handleClipSourceThumbnail = useCallback((thumbnail: string) => {
+    if (!clipSourceVideo?.videoSrc) return;
+    setClipSourceThumbnail({ src: clipSourceVideo.videoSrc, thumbnail });
+  }, [clipSourceVideo?.videoSrc]);
 
   // 卡片实际渲染尺寸同步 store（连线锚点、整理布局与图片节点一致对齐）
-  useSyncContentSize(node, cardW, cardHeight);
+  useSyncContentSize(node, cardW, mediaContentHeight);
 
   // 换源时重置缓存解析；若本地已缓存则直接用 blob（刷新/重挂也免下载）
   useEffect(() => {
     if (objUrlRef.current) { URL.revokeObjectURL(objUrlRef.current); objUrlRef.current = null; }
-    setSrcToUse(node.videoSrc ?? "");
+    playerVideoSrcRef.current = playerVideoSrc;
+    setSrcToUse(playerVideoSrc);
+    setDuration(0);
+    setCurrentTime(0);
     setResolved(null);
-    if (!node.videoSrc) return;
+    if (!playerVideoSrc) return;
     let cancelled = false;
-    void matchCachedVideo(node.videoSrc).then((blobUrl) => {
+    void matchCachedVideo(playerVideoSrc).then((blobUrl) => {
       if (cancelled) { if (blobUrl) URL.revokeObjectURL(blobUrl); return; }
       if (blobUrl) { objUrlRef.current = blobUrl; setSrcToUse(blobUrl); setResolved("blob"); }
     });
     return () => { cancelled = true; };
-  }, [node.videoSrc]);
+  }, [playerVideoSrc]);
 
   // 卸载回收 blob URL
   useEffect(() => () => { if (objUrlRef.current) URL.revokeObjectURL(objUrlRef.current); }, []);
@@ -449,21 +497,20 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
 
   // 首次需要播放时：查/建本地缓存→用 blob；跨域不可用则回退原生 src。解析完成由 effect 触发播放。
   const ensureResolved = useCallback(async () => {
-    if (resolved || resolvingRef.current || !node.videoSrc) return;
+    if (resolved || resolvingRef.current || !playerVideoSrc) return;
     resolvingRef.current = true;
-    const requestedSrc = node.videoSrc;
+    const requestedSrc = playerVideoSrc;
     const blobUrl = await fetchAndCacheVideo(requestedSrc);
     resolvingRef.current = false;
     // 竞态守卫:下载期间节点换源(重新生成)或已卸载,旧结果不能落地——
     // 否则节点从此播放旧视频(resolved 已置位,新源永不解析),blob 也永不回收
-    const currentSrc = useCanvasStore.getState().nodes.find((n) => n.id === node.id)?.videoSrc;
-    if (!mountedRef.current || currentSrc !== requestedSrc) {
+    if (!mountedRef.current || playerVideoSrcRef.current !== requestedSrc) {
       if (blobUrl) URL.revokeObjectURL(blobUrl);
       return;
     }
     if (blobUrl) { objUrlRef.current = blobUrl; setSrcToUse(blobUrl); setResolved("blob"); }
     else setResolved("native");
-  }, [resolved, node.videoSrc, node.id, mountedRef]);
+  }, [resolved, playerVideoSrc, mountedRef]);
 
   // hover 自动播放（优先带声；被自动播放策略拦截则静音重试），离开暂停
   const handleVidEnter = useCallback(() => {
@@ -583,7 +630,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       }],
       newId,
     );
-    toast.info("已创建片段重拍节点，请按时间段描述要重拍的画面");
+    toast.info("已创建片段重拍节点，请在时间轴选择片段并描述要修改的画面");
   }, [cardW, generating, node, nodeUploading, selectedModelId, videoModels, videoParam.duration, videoParam.ratio, videoParam.resolution]);
 
   const handleFrameBreakdown = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
@@ -622,6 +669,10 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       toast.error("当前没有支持视频参考的模型，暂时无法片段重拍");
       return;
     }
+    if (!clipReshootSourceReady) {
+      toast.error("片段重拍的来源视频已断开，请重新连接原视频");
+      return;
+    }
     const st = useCanvasStore.getState();
     const incoming = st.connections.filter((c) => c.targetId === node.id);
     const sources = getIncomingSources(st, node.id);
@@ -632,9 +683,14 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     const imageUrls = sources.filter((n) => isImageReferenceNodeType(n.type) && n.imageSrc).map((n) => n.imageSrc as string);
     const videoUrls = sources.filter((n) => n.type === "video" && n.videoSrc).map((n) => n.videoSrc as string);
     // 文本节点没有独立下发通道，正文只能落进 prompt——顺序与 refs 的「文本N」编号同源
-    const finalPrompt = inlineIncomingTextRefs(node.prompt || "", sources);
+    const promptWithRange = isClipReshoot
+      ? `${buildClipReshootRangeInstruction(clipRanges, clipSourceDuration, `视频${clipSourceRefIndex}`)}\n${node.prompt || ""}`.trim()
+      : node.prompt || "";
+    const finalPrompt = inlineIncomingTextRefs(promptWithRange, sources);
     if (isClipReshoot) {
-      const sourceVideo = sources.find((source) => source.type === "video" && source.videoSrc);
+      const sourceVideo = node.clipReshootSourceId
+        ? sources.find((source) => source.id === node.clipReshootSourceId && source.type === "video" && source.videoSrc)
+        : sources.find((source) => source.type === "video" && source.videoSrc);
       const rangeError = validateClipReshootPrompt(finalPrompt, sourceVideo?.mediaDuration);
       if (rangeError) {
         toast.error(rangeError);
@@ -704,6 +760,8 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
           duration: videoParam.duration,
         },
         videoOperation: node.videoOperation,
+        clipReshootSourceId: node.clipReshootSourceId,
+        clipReshootRanges: node.clipReshootRanges,
         status: "idle",
       }, true);
       // 克隆入边连线，使新节点拥有与原节点完全相同的参考输入
@@ -804,7 +862,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
           {nodeUploading && <NodeUploadingOverlay pct={nodeUploadPct} previewSrc={uploadPreviewSrc} kind="video" />}
           {node.status === "error" && !generating && !node.videoSrc && <NodeErrorBadge />}
 
-          {node.videoSrc ? (
+          {playerVideoSrc ? (
             <div className="relative h-full w-full cursor-grab" onMouseEnter={handleVidEnter} onMouseLeave={handleVidLeave}>
               <video
                 ref={videoRef}
@@ -822,12 +880,15 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                   const nextDuration = e.currentTarget.duration || 0;
                   setVideoDims({ w: width, h: height });
                   setDuration(nextDuration);
-                  if (node.videoSrc && (
-                    Math.abs((node.mediaDuration ?? 0) - nextDuration) > 0.01
-                    || node.mediaWidth !== width
-                    || node.mediaHeight !== height
+                  const metadataNode = isClipReshoot && !node.videoSrc && clipSourceVideo
+                    ? clipSourceVideo
+                    : node;
+                  if (playerVideoSrc && (
+                    Math.abs((metadataNode.mediaDuration ?? 0) - nextDuration) > 0.01
+                    || metadataNode.mediaWidth !== width
+                    || metadataNode.mediaHeight !== height
                   )) {
-                    updateNode(node.id, {
+                    updateNode(metadataNode.id, {
                       mediaDuration: nextDuration,
                       mediaWidth: width,
                       mediaHeight: height,
@@ -912,14 +973,31 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
 
         </div>
 
+        {clipTimelineVisible && clipSourceVideo?.videoSrc && (
+          <div style={{ width: promptPanelW, marginLeft: (cardW - promptPanelW) / 2 }}>
+            <VideoClipReshootTimeline
+              src={clipSourceVideo.videoSrc}
+              duration={clipSourceDuration}
+              ranges={clipRanges}
+              currentTime={currentTime}
+              onChange={(nextRanges) => updateNode(node.id, { clipReshootRanges: nextRanges })}
+              onSeek={(time) => {
+                if (videoRef.current) videoRef.current.currentTime = time;
+                setCurrentTime(time);
+              }}
+              onThumbnailReady={handleClipSourceThumbnail}
+            />
+          </div>
+        )}
+
         {/* 外置组件：恒定大小·跟随节点（按 1/zoom 反向缩放，吸附卡片边缘） */}
         <NodeHeader icon={Video} title={node.title || "视频节点"} visible={showAuxUI} overlay />
         {/* 尺寸标签只在确有视频(上传成功/已生成)时显示——探测是异步的，上传失败后
             probe 可能仍晚回填一次 videoDims，用 node.videoSrc 兜底避免残留孤立标签 */}
-        {showAuxUI && videoDims && node.videoSrc && (
+        {showAuxUI && videoDims && playerVideoSrc && (
           <NodeDimsBadge dims={videoDims} />
         )}
-        {showAuxUI && !node.videoSrc && configuredFeatures.includes("media.replace") && (
+        {showAuxUI && !node.videoSrc && !isClipReshoot && configuredFeatures.includes("media.replace") && (
           <NodeChrome placement="top-center" gap={8} zIndex={20}>
             <div onMouseDown={stop} className="flex items-center gap-0.5 whitespace-nowrap rounded-[18px] border border-neutral-200/80 bg-white px-2 py-1.5 text-sm text-neutral-700 shadow-lg dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
               <button onMouseDown={stop} onClick={openFilePicker} disabled={nodeUploading || generating}
@@ -953,9 +1031,33 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                 refs={refs}
                 value={node.prompt || ""}
                 onChange={handlePromptChange}
-                onSubmit={() => { if (hasPromptSource && clipReshootModelReady && !generating && !nodeUploading && !referenceVideoQuote.loading) handleGenerate(); }}
+                onSubmit={() => { if (hasPromptSource && clipReshootModelReady && clipReshootSourceReady && !generating && !nodeUploading && !referenceVideoQuote.loading) handleGenerate(); }}
+                editorContext={isClipReshoot && clipSourceVideo ? (
+                  <div className="flex min-h-7 flex-wrap items-center gap-1.5 text-sm text-neutral-600 dark:text-neutral-300">
+                    <span>把</span>
+                    <span className="inline-flex items-center gap-1 rounded-md bg-neutral-100 px-1.5 py-1 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200">
+                      {clipSourceThumbnail && clipSourceThumbnail.src === clipSourceVideo.videoSrc ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={clipSourceThumbnail.thumbnail} alt="" className="h-4 w-4 rounded-sm object-cover" />
+                      ) : (
+                        <Video className="h-3.5 w-3.5" />
+                      )}
+                      视频{clipSourceRefIndex}
+                    </span>
+                    <span>中</span>
+                    {clipRanges.map((range, index) => (
+                      <span
+                        key={`${range.start}-${range.end}-${index}`}
+                        className="inline-flex items-center gap-1 rounded-md bg-neutral-100 px-1.5 py-1 text-xs tabular-nums text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"
+                      >
+                        <Video className="h-3.5 w-3.5" />
+                        {formatClipReshootTime(range.start)}–{formatClipReshootTime(range.end)}
+                      </span>
+                    ))}
+                  </div>
+                ) : undefined}
                 placeholder={isClipReshoot
-                  ? "按时间段描述需要重拍的内容，例如：\n00:00–00:04 瞳孔改成红色\n00:03–00:06 慢慢从红色变为蓝色"
+                  ? "描述选中片段里需要改变的画面，例如：把瞳孔改成红色，并逐渐变为蓝色"
                   : "描述你想要生成的画面内容，@ 引用已连接素材（图片1/文本1…）"}
               />
               <PromptEditorModal
@@ -965,7 +1067,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                 onChange={handlePromptChange}
                 refs={refs}
                 placeholder={isClipReshoot
-                  ? "按时间段描述需要重拍的内容，例如：\n00:00–00:04 瞳孔改成红色\n00:03–00:06 慢慢从红色变为蓝色"
+                  ? "描述选中片段里需要改变的画面，例如：把瞳孔改成红色，并逐渐变为蓝色"
                   : "描述你想要生成的画面内容，@ 引用已连接素材（图片1/文本1…）"}
               />
               {/* 底部栏(对齐参考产品):左 = 模型 · 模式 · 参数摘要;右 = 复制/展开 · 积分 · 发送 */}
@@ -1015,10 +1117,10 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                     {referenceVideoQuote.loading ? "…" : referenceVideoQuote.failed ? "待核验" : Math.ceil(pointCost)}
                   </span>
                   <GenerateSubmitButton
-                    disabled={!hasPromptSource || !clipReshootModelReady || generating || nodeUploading || referenceVideoQuote.loading}
+                    disabled={!hasPromptSource || !clipReshootModelReady || !clipReshootSourceReady || generating || nodeUploading || referenceVideoQuote.loading}
                     generating={generating}
-                    title={generating ? "生成中..." : nodeUploading ? "素材上传中..." : referenceVideoQuote.loading ? "正在核验参考视频时长..." : !clipReshootModelReady ? "没有支持视频参考的模型" : !hasPromptSource ? "先输入提示词" : "开始生成"}
-                    onClick={() => { if (hasPromptSource && clipReshootModelReady && !generating && !nodeUploading && !referenceVideoQuote.loading) handleGenerate(); }}
+                    title={generating ? "生成中..." : nodeUploading ? "素材上传中..." : referenceVideoQuote.loading ? "正在核验参考视频时长..." : !clipReshootModelReady ? "没有支持视频参考的模型" : !clipReshootSourceReady ? "片段重拍的来源视频已断开" : !hasPromptSource ? "先输入提示词" : "开始生成"}
+                    onClick={() => { if (hasPromptSource && clipReshootModelReady && clipReshootSourceReady && !generating && !nodeUploading && !referenceVideoQuote.loading) handleGenerate(); }}
                   />
                 </div>
               </div>
@@ -1026,11 +1128,11 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         )}
 
         {/* 查看大图：全屏 lightbox（Portal 到 body，脱离画布缩放层） */}
-        {previewOpen && node.videoSrc && (
+        {previewOpen && playerVideoSrc && (
           <NodeMediaLightbox onClose={() => setPreviewOpen(false)}>
             <div className="relative">
               <CapturableVideo
-                src={node.videoSrc}
+                src={playerVideoSrc}
                 controls
                 autoPlay
                 disablePictureInPicture
