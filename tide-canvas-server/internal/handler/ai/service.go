@@ -248,6 +248,9 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 	if m == nil || !m.Enabled {
 		return nil, errNoModel
 	}
+	if !modelSupportsHandler(m, dto.Handler) {
+		return nil, skillPlacementError{message: "所选模型不支持当前生成方式，请切换模型或生成模式"}
+	}
 	if err := validateOmniReferenceInput(&dto, m); err != nil {
 		return nil, err
 	}
@@ -260,6 +263,9 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 	referenceVideoCost, err := s.prepareReferenceVideoPricingInput(ctx, userID, &dto, m)
 	if err != nil {
 		return nil, err
+	}
+	if requested, configured, allowed := modelVideoDurationAllowed(m, dto.Handler, dto.Input); configured && !allowed {
+		return nil, skillPlacementError{message: fmt.Sprintf("所选模型不支持 %g 秒视频，请选择模型支持的时长", requested)}
 	}
 
 	now := time.Now()
