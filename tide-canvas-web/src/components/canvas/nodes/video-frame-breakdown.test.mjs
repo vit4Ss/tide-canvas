@@ -19,7 +19,7 @@ import {
 const read = (relative) => readFileSync(new URL(relative, import.meta.url), "utf8");
 
 test("storyboard sampling uses evenly spaced representative frames", () => {
-  assert.deepEqual([BREAKDOWN_NODE_WIDTH, BREAKDOWN_NODE_HEIGHT], [380, 396]);
+  assert.deepEqual([BREAKDOWN_NODE_WIDTH, BREAKDOWN_NODE_HEIGHT], [380, 424]);
   assert.deepEqual(sampleStoryboardTimes(12, 4), [1.5, 4.5, 7.5, 10.5]);
   assert.deepEqual(sampleStoryboardTimes(0, 4), []);
   assert.equal(sampleStoryboardTimes(12, 100).length, 24);
@@ -199,7 +199,11 @@ test("breakdown controls expose clear state and restrained progress feedback", (
   assert.match(breakdownNode, /analyzing \|\| breakdownBusyRef\.current/);
   assert.match(breakdownNode, /onError=\{\(\) => setVideoLoadError\(true\)\}/);
   assert.match(breakdownNode, /视频读取失败，请检查源视频后重试/);
-  assert.match(breakdownNode, /flex min-h-0 flex-1 flex-col gap-3/);
+  assert.match(breakdownNode, /aspect-video shrink-0 bg-neutral-950/);
+  assert.match(breakdownNode, /flex min-h-0 flex-1 flex-col gap-2 p-3/);
+  assert.match(breakdownNode, /flex h-8 min-w-0 gap-0\.5/);
+  assert.match(breakdownNode, /grid h-8 min-w-0 grid-cols-3/);
+  assert.match(breakdownNode, /items-center justify-center gap-1 whitespace-nowrap/);
   assert.match(breakdownNode, /开始拉片"\} · \$\{frameCount\} 帧/);
   assert.match(breakdownNode, /const source = sources\.at\(-1\)/);
   assert.match(breakdownNode, /requestCanvasFocusPoint\(\{/);

@@ -4,7 +4,7 @@ import {
   addClipReshootRange,
   buildClipReshootRangeInstruction,
   buildClipReshootNode,
-  clipReshootOutputDuration,
+  clipReshootProviderDuration,
   extractClipReshootRanges,
   formatClipReshootTime,
   normalizeClipReshootRanges,
@@ -142,8 +142,8 @@ test("clip reshoot normalizes and formats visual timeline ranges", () => {
     buildClipReshootRangeInstruction([{ start: 0, end: 5 }], 6, "视频2"),
     "重拍视频2中的全部画面。该参考视频已按时间轴裁出选中片段；输出仅包含这些片段，并按参考视频顺序连续生成。",
   );
-  assert.equal(clipReshootOutputDuration([{ start: 4, end: 7 }], 11), 3);
-  assert.equal(clipReshootOutputDuration([{ start: 1, end: 2.2 }, { start: 8, end: 9.1 }], 11), 3);
+  assert.equal(clipReshootProviderDuration([{ start: 4, end: 7 }], 11), 3);
+  assert.equal(clipReshootProviderDuration([{ start: 1, end: 2.2 }, { start: 8, end: 9.1 }], 11), 3);
 });
 
 test("clip reshoot timeline adds only inside free gaps and keeps ranges apart", () => {

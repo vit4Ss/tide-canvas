@@ -34,7 +34,7 @@ import {
   CLIP_RESHOOT_DEFAULT_SECONDS,
   buildClipReshootRangeInstruction,
   buildClipReshootNode,
-  clipReshootOutputDuration,
+  clipReshootProviderDuration,
   formatClipReshootTime,
   normalizeClipReshootRanges,
   selectClipReshootModel,
@@ -386,7 +386,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     [clipSourceDuration, node.clipReshootRanges],
   );
   const generationDuration = isClipReshoot
-    ? clipReshootOutputDuration(clipRanges, clipSourceDuration)
+    ? clipReshootProviderDuration(clipRanges, clipSourceDuration)
     : videoParam.duration;
   const providerGenerationDuration = isClipReshoot && formatConfig.durations?.length
     ? formatConfig.durations.find((candidate) => candidate >= generationDuration) ?? generationDuration
@@ -1063,7 +1063,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                 clipReshootRanges: nextRanges,
                 generationConfig: {
                   ...node.generationConfig,
-                  duration: clipReshootOutputDuration(nextRanges, clipSourceDuration),
+                  duration: clipReshootProviderDuration(nextRanges, clipSourceDuration),
                 },
               })}
               onSeek={(time) => {

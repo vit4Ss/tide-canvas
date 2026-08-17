@@ -3,7 +3,7 @@ import type { AiModelVO } from "@/types/ai";
 
 export const STORYBOARD_FRAME_WIDTH = 280;
 export const BREAKDOWN_NODE_WIDTH = 380;
-export const BREAKDOWN_NODE_HEIGHT = 396;
+export const BREAKDOWN_NODE_HEIGHT = 424;
 export const STORYBOARD_FRAME_COUNTS = [6, 12, 20] as const;
 
 export type StoryboardAnalysisMode = "storyboard" | "motion" | "music";

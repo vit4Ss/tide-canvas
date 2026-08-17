@@ -684,8 +684,8 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 	} else {
 		res, genErr = gh.Execute(ctx, s.provider, req)
 	}
-	if genErr == nil && clipReshoot != nil && res.ResultURL != "" {
-		res, genErr = s.trimClipReshootResult(ctx, userID, res, *clipReshoot)
+	if genErr == nil && clipReshoot != nil && (res.ResultURL != "" || len(res.URLs) > 0) {
+		res, genErr = s.composeClipReshootResult(ctx, userID, res, *clipReshoot)
 	}
 	// Stop and join the status watcher before finalizing. Otherwise its next
 	// tick can observe our own terminal transition, cancel the shared provider

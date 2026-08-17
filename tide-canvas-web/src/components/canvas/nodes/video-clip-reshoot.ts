@@ -95,10 +95,11 @@ export function normalizeClipReshootRanges(
 }
 
 /**
- * The relay accepts whole-second output durations. Sum every selected range
- * and round upward so a fractional final frame is never cut off.
+ * The relay accepts whole-second generation durations. This is only the
+ * temporary replacement clip length; the server later puts that clip back
+ * into the source timeline, so it is not the final video's duration.
  */
-export function clipReshootOutputDuration(
+export function clipReshootProviderDuration(
   ranges: ReadonlyArray<Pick<ClipReshootRange, "start" | "end">> | undefined,
   sourceDuration: number,
 ): number {
@@ -245,7 +246,7 @@ export function buildClipReshootNode(input: {
       ...source.generationConfig,
       modelId,
       resolution: source.generationConfig?.resolution ?? resolution,
-      duration: clipReshootOutputDuration([initialRange], actualDuration),
+      duration: clipReshootProviderDuration([initialRange], actualDuration),
     },
     videoOperation: "clip_reshoot",
     clipReshootSourceId: source.id,

@@ -492,7 +492,7 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
           }`}
           style={{ width: BREAKDOWN_NODE_WIDTH, height: BREAKDOWN_NODE_HEIGHT }}
         >
-          <div className="h-[168px] shrink-0 bg-neutral-950">
+          <div className="aspect-video shrink-0 bg-neutral-950">
             {sourceVideoSrc ? (
               <CapturableVideo
                 src={sourceVideoSrc}
@@ -527,8 +527,8 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
             )}
           </div>
 
-          <div className="flex min-h-0 flex-1 flex-col gap-3 p-3.5">
-            <div className="flex shrink-0 items-center justify-between gap-3 text-[11px] text-neutral-500 dark:text-neutral-400">
+          <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
+            <div className="flex shrink-0 items-center justify-between gap-3 text-[11px] leading-none text-neutral-500 dark:text-neutral-400">
               <span className="flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap" title={videoInput.count > 1 ? "连接了多个视频，使用最近连接的一个" : undefined}>
                 <Film className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
                 <span className="font-medium text-neutral-700 dark:text-neutral-200">
@@ -557,62 +557,61 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
               </button>
             </div>
 
-            <div className="shrink-0 space-y-2.5 rounded-xl border border-neutral-200/80 bg-neutral-50/80 p-2.5 dark:border-neutral-800 dark:bg-neutral-900/60">
-              <div className="flex items-center gap-2.5">
-                <span className="w-14 shrink-0 text-[11px] font-medium text-neutral-500 dark:text-neutral-400">分析维度</span>
-                <div className="flex min-w-0 flex-1 gap-0.5 rounded-lg bg-neutral-200/60 p-0.5 dark:bg-neutral-950" role="group" aria-label="分析维度">
-                {ANALYSIS_MODES.map((mode) => {
-                  const active = analysisModes.includes(mode.value);
-                  return (
-                    <button
-                      key={mode.value}
-                      type="button"
-                      title={mode.title}
-                      aria-pressed={active}
-                      onMouseDown={stopInteraction}
-                      onClick={(event) => { event.stopPropagation(); toggleAnalysisMode(mode.value); }}
-                      disabled={analyzing}
-                      className={`flex-1 rounded-md px-2 py-1.5 text-[11px] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none dark:focus-visible:ring-neutral-600 ${active
-                        ? "bg-white font-medium text-neutral-900 shadow-sm dark:bg-neutral-700 dark:text-white"
-                        : "text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-100"}`}
-                    >
-                      {mode.label}
-                    </button>
-                  );
-                })}
+            <div className="shrink-0 overflow-hidden rounded-xl border border-neutral-200/80 bg-neutral-50/70 dark:border-neutral-800 dark:bg-neutral-900/50">
+              <div className="grid grid-cols-[56px_minmax(0,1fr)] items-center gap-3 px-3 py-1">
+                <span className="w-14 shrink-0 text-[11px] font-medium leading-none text-neutral-500 dark:text-neutral-400">分析维度</span>
+                <div className="flex h-8 min-w-0 gap-0.5 rounded-lg bg-neutral-200/60 p-0.5 dark:bg-neutral-950" role="group" aria-label="分析维度">
+                  {ANALYSIS_MODES.map((mode) => {
+                    const active = analysisModes.includes(mode.value);
+                    return (
+                      <button
+                        key={mode.value}
+                        type="button"
+                        title={mode.title}
+                        aria-pressed={active}
+                        onMouseDown={stopInteraction}
+                        onClick={(event) => { event.stopPropagation(); toggleAnalysisMode(mode.value); }}
+                        disabled={analyzing}
+                        className={`min-w-0 flex-1 whitespace-nowrap rounded-md px-1.5 text-[11px] leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none dark:focus-visible:ring-neutral-600 ${active
+                          ? "bg-white font-medium text-neutral-900 shadow-sm ring-1 ring-black/[0.04] dark:bg-neutral-700 dark:text-white dark:ring-white/10"
+                          : "text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-100"}`}
+                      >
+                        {mode.label}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
-              <div className="flex items-center gap-2.5">
-                <span className="w-14 shrink-0 text-[11px] font-medium text-neutral-500 dark:text-neutral-400">抽帧数量</span>
-                <div className="grid min-w-0 flex-1 grid-cols-3 gap-1.5" role="group" aria-label="拉片密度">
-                {DENSITIES.map((density) => {
-                  const active = frameCount === density.count;
-                  return (
-                    <button
-                      key={density.count}
-                      type="button"
-                      aria-pressed={active}
-                      onMouseDown={stopInteraction}
-                      onClick={(event) => { event.stopPropagation(); patchBreakdownConfig({ frameCount: density.count }); }}
-                      disabled={analyzing}
-                      className={`rounded-lg border px-2 py-1.5 text-[11px] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none dark:focus-visible:ring-neutral-600 ${
-                        active
-                          ? "border-neutral-900 bg-neutral-900 font-medium text-white dark:border-white dark:bg-white dark:text-neutral-900"
-                          : "border-neutral-200 text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
-                      }`}
-                    >
-                      <span className="font-medium">{density.count} 帧</span>
-                      <span className={`ml-1 ${active ? "text-white/65 dark:text-neutral-500" : "text-neutral-400"}`}>{density.label}</span>
-                    </button>
-                  );
-                })}
+              <div className="grid grid-cols-[56px_minmax(0,1fr)] items-center gap-3 border-t border-neutral-200/70 px-3 py-1 dark:border-neutral-800">
+                <span className="w-14 shrink-0 text-[11px] font-medium leading-none text-neutral-500 dark:text-neutral-400">抽帧数量</span>
+                <div className="grid h-8 min-w-0 grid-cols-3 gap-0.5 rounded-lg bg-neutral-200/60 p-0.5 dark:bg-neutral-950" role="group" aria-label="拉片密度">
+                  {DENSITIES.map((density) => {
+                    const active = frameCount === density.count;
+                    return (
+                      <button
+                        key={density.count}
+                        type="button"
+                        aria-pressed={active}
+                        onMouseDown={stopInteraction}
+                        onClick={(event) => { event.stopPropagation(); patchBreakdownConfig({ frameCount: density.count }); }}
+                        disabled={analyzing}
+                        className={`flex min-w-0 items-center justify-center gap-1 whitespace-nowrap rounded-md px-1 text-[11px] leading-none transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none dark:focus-visible:ring-neutral-600 ${
+                          active
+                            ? "bg-white font-medium text-neutral-900 shadow-sm ring-1 ring-black/[0.04] dark:bg-neutral-700 dark:text-white dark:ring-white/10"
+                            : "text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-100"
+                        }`}
+                      >
+                        <span className="font-medium tabular-nums">{density.count} 帧</span>
+                        <span className={active ? "text-neutral-500 dark:text-neutral-300" : "text-neutral-400 dark:text-neutral-500"}>{density.label}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
-            </div>
-
-            <div className="flex shrink-0 items-center justify-between px-0.5 text-[10px] text-neutral-400 dark:text-neutral-500">
-              <span>均匀抽取，不改变源视频</span>
-              <span>每 {framesPerGroup} 帧自动成组</span>
+              <div className="flex items-center justify-between border-t border-neutral-200/70 px-3 py-1 text-[10px] leading-none text-neutral-400 dark:border-neutral-800 dark:text-neutral-500">
+                <span>均匀取帧 · 不改动源视频</span>
+                <span>每 {framesPerGroup} 帧一组</span>
+              </div>
             </div>
             <button
               type="button"
