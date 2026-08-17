@@ -17,6 +17,11 @@ export type AiGenerateInput = Omit<AiGenerateDTO, "clientRequestId"> & {
   clientRequestId?: string;
 };
 
+export interface ClipReshootRequest {
+  sourceUrl: string;
+  ranges: Array<{ start: number; end: number }>;
+}
+
 export interface UpscaleQuoteVO {
   durationSeconds: number;
   ratePerSecond: number;

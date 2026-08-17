@@ -4,6 +4,7 @@ import {
   addClipReshootRange,
   buildClipReshootRangeInstruction,
   buildClipReshootNode,
+  clipReshootOutputDuration,
   extractClipReshootRanges,
   formatClipReshootTime,
   normalizeClipReshootRanges,
@@ -76,7 +77,7 @@ test("clip reshoot keeps source settings and does not repeat the title suffix", 
   assert.equal(first.videoOperation, "clip_reshoot");
   assert.equal(first.clipReshootSourceId, "source");
   assert.deepEqual(first.clipReshootRanges, [{ start: 0, end: 5 }]);
-  assert.deepEqual(first.generationConfig, { modelId: "omni", resolution: "1080P", duration: 8 });
+  assert.deepEqual(first.generationConfig, { modelId: "omni", resolution: "1080P", duration: 5 });
 
   const repeated = buildClipReshootNode({
     source: first,
@@ -116,7 +117,7 @@ test("clip reshoot prefers actual media metadata for uploaded videos", () => {
     duration: 5,
   });
   assert.equal(result.aspectRatio, "16:9");
-  assert.equal(result.generationConfig.duration, 6);
+  assert.equal(result.generationConfig.duration, 5);
   assert.deepEqual(result.clipReshootRanges, [{ start: 0, end: 5 }]);
 });
 
@@ -135,12 +136,14 @@ test("clip reshoot normalizes and formats visual timeline ranges", () => {
   assert.equal(formatClipReshootTime(59.96), "01:00");
   assert.equal(
     buildClipReshootRangeInstruction([{ start: 0, end: 5 }], 6),
-    "仅重拍参考视频中的以下片段：00:00–00:05。未选中的画面保持不变。",
+    "重拍参考视频中的全部画面。该参考视频已按时间轴裁出选中片段；输出仅包含这些片段，并按参考视频顺序连续生成。",
   );
   assert.equal(
     buildClipReshootRangeInstruction([{ start: 0, end: 5 }], 6, "视频2"),
-    "仅重拍视频2中的以下片段：00:00–00:05。未选中的画面保持不变。",
+    "重拍视频2中的全部画面。该参考视频已按时间轴裁出选中片段；输出仅包含这些片段，并按参考视频顺序连续生成。",
   );
+  assert.equal(clipReshootOutputDuration([{ start: 4, end: 7 }], 11), 3);
+  assert.equal(clipReshootOutputDuration([{ start: 1, end: 2.2 }, { start: 8, end: 9.1 }], 11), 3);
 });
 
 test("clip reshoot timeline adds only inside free gaps and keeps ranges apart", () => {

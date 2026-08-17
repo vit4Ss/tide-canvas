@@ -648,10 +648,11 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 	// 客户端,是为了让落库的 input 保持用户原文——作品标题、日志、「重新编辑」
 	// 读的都是它,客户端先拼好的话它们看到的全是技能模板开头。
 	input := decodeInput(dto.Input)
-	if strings.TrimSpace(dto.PinnedSkillPrompt) != "" {
+	clipReshoot, clipReshootErr := s.prepareClipReshootProviderInput(ctx, userID, input)
+	if clipReshootErr == nil && strings.TrimSpace(dto.PinnedSkillPrompt) != "" {
 		delete(input, "skillId")
 		input = applyPromptTemplate(input, strings.TrimSpace(dto.PinnedSkillPrompt))
-	} else {
+	} else if clipReshootErr == nil {
 		input = s.applySkill(input, gh)
 	}
 	promptErr := validateGenerationPromptSize(input)
@@ -670,7 +671,9 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 
 	var res GenerateResult
 	var genErr error
-	if promptErr != nil {
+	if clipReshootErr != nil {
+		genErr = clipReshootErr
+	} else if promptErr != nil {
 		genErr = promptErr
 	} else if gh.Name() == assistantChatHandler {
 		// 画布 AI 助手:走 relay 文本对话,回复在 Meta["text"](无 URL 结果)。
@@ -680,6 +683,9 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 		res, genErr = s.runSkillTextCompletion(ctx, task.UserID, m, input, task.PointCost)
 	} else {
 		res, genErr = gh.Execute(ctx, s.provider, req)
+	}
+	if genErr == nil && clipReshoot != nil && res.ResultURL != "" {
+		res, genErr = s.trimClipReshootResult(ctx, userID, res, *clipReshoot)
 	}
 	// Stop and join the status watcher before finalizing. Otherwise its next
 	// tick can observe our own terminal transition, cancel the shared provider

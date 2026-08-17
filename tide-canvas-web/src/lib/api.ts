@@ -10,7 +10,7 @@ import type {
 } from "@/types/canvas";
 import type {
   AiTaskVO, AiModelVO, AiHandlerVO, AiToolVO, AiGenerateDTO, AiGenerateInput, AiTaskQuery, CapturedFrameDTO, UpscaleQuoteVO,
-  ReferenceVideoQuoteVO,
+  ClipReshootRequest, ReferenceVideoQuoteVO,
   UserGenerationHistoryDetailVO, UserGenerationHistoryQuery, UserGenerationHistoryVO,
 } from "@/types/ai";
 import type { FileCategory, FileVO, FileQuery } from "@/types/file";
@@ -77,7 +77,7 @@ export const aiApi = {
     http.post<AiTaskVO>("/api/ai/generate", data),
   upscaleQuote: (data: { modelId: string; videoUrl: string; targetResolution: string }) =>
     http.post<UpscaleQuoteVO>("/api/ai/upscale-quote", data),
-  referenceVideoQuote: (data: { modelId: string; resolution: string; videoUrls: string[] }) =>
+  referenceVideoQuote: (data: { modelId: string; resolution: string; videoUrls: string[]; clipReshoot?: ClipReshootRequest }) =>
     http.post<ReferenceVideoQuoteVO>("/api/ai/reference-video-quote", data),
   generateIdempotent: (
     data: AiGenerateInput,

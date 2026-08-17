@@ -94,6 +94,19 @@ export function normalizeClipReshootRanges(
     : [{ start: 0, end: Math.min(CLIP_RESHOOT_DEFAULT_SECONDS, safeDuration) }];
 }
 
+/**
+ * The relay accepts whole-second output durations. Sum every selected range
+ * and round upward so a fractional final frame is never cut off.
+ */
+export function clipReshootOutputDuration(
+  ranges: ReadonlyArray<Pick<ClipReshootRange, "start" | "end">> | undefined,
+  sourceDuration: number,
+): number {
+  const total = normalizeClipReshootRanges(ranges, sourceDuration)
+    .reduce((seconds, range) => seconds + range.end - range.start, 0);
+  return Math.max(1, Math.ceil(total - 1e-9));
+}
+
 export function addClipReshootRange(
   ranges: ReadonlyArray<ClipReshootSelectionRange> | undefined,
   duration: number,
@@ -166,10 +179,8 @@ export function buildClipReshootRangeInstruction(
   duration: number,
   sourceLabel = "参考视频",
 ): string {
-  const normalized = normalizeClipReshootRanges(ranges, duration);
-  return `仅重拍${sourceLabel}中的以下片段：${normalized
-    .map((range) => `${formatClipReshootTime(range.start)}–${formatClipReshootTime(range.end)}`)
-    .join("、")}。未选中的画面保持不变。`;
+  const count = normalizeClipReshootRanges(ranges, duration).length;
+  return `重拍${sourceLabel}中的全部画面。该参考视频已按时间轴裁出${count > 1 ? `${count}个` : ""}选中片段；输出仅包含这些片段，并按参考视频顺序连续生成。`;
 }
 
 export function extractClipReshootRanges(prompt: string): Array<ClipReshootRange | { raw: string; invalid: true }> {
@@ -212,6 +223,10 @@ export function buildClipReshootNode(input: {
     ?? positiveFinite(source.generationConfig?.duration)
     ?? positiveFinite(duration)
     ?? 5;
+  const initialRange = {
+    start: 0,
+    end: Math.min(CLIP_RESHOOT_DEFAULT_SECONDS, actualDuration),
+  };
   return {
     id,
     type: "video",
@@ -230,14 +245,11 @@ export function buildClipReshootNode(input: {
       ...source.generationConfig,
       modelId,
       resolution: source.generationConfig?.resolution ?? resolution,
-      duration: Math.max(1, Math.round(actualDuration)),
+      duration: clipReshootOutputDuration([initialRange], actualDuration),
     },
     videoOperation: "clip_reshoot",
     clipReshootSourceId: source.id,
-    clipReshootRanges: [{
-      start: 0,
-      end: Math.min(CLIP_RESHOOT_DEFAULT_SECONDS, actualDuration),
-    }],
+    clipReshootRanges: [initialRange],
     status: "idle",
   };
 }

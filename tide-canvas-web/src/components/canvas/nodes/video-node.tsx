@@ -11,7 +11,7 @@ import { uploadFileSmart } from "@/lib/api";
 import { resolveModelReferenceLimitBytes } from "@/lib/upload-limits";
 import { resolveVideoPointCost } from "@/lib/price-matrix";
 import { isConceptCanvasNodeType, isImageReferenceNodeType } from "@/lib/canvas-node-types";
-import { AiModelType } from "@/types/ai";
+import { AiModelType, type ClipReshootRequest } from "@/types/ai";
 import { NodeHeader } from "./base/node-header";
 import { NodePorts } from "./base/node-ports";
 import { NodeChrome } from "./base/node-chrome";
@@ -34,6 +34,7 @@ import {
   CLIP_RESHOOT_DEFAULT_SECONDS,
   buildClipReshootRangeInstruction,
   buildClipReshootNode,
+  clipReshootOutputDuration,
   formatClipReshootTime,
   normalizeClipReshootRanges,
   selectClipReshootModel,
@@ -374,6 +375,27 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     ...rawConfig,
     durations: rawConfig.durations ? normalizeDurations(rawConfig.durations) : undefined,
   };
+  const clipTimelineVisible = isClipReshoot && !!clipSourceVideo?.videoSrc;
+  const clipSourceDuration = clipSourceVideo?.mediaDuration
+    ?? (node.videoSrc ? undefined : duration)
+    ?? clipSourceVideo?.generationConfig?.duration
+    ?? node.generationConfig?.duration
+    ?? CLIP_RESHOOT_DEFAULT_SECONDS;
+  const clipRanges = useMemo(
+    () => normalizeClipReshootRanges(node.clipReshootRanges, clipSourceDuration),
+    [clipSourceDuration, node.clipReshootRanges],
+  );
+  const generationDuration = isClipReshoot
+    ? clipReshootOutputDuration(clipRanges, clipSourceDuration)
+    : videoParam.duration;
+  const providerGenerationDuration = isClipReshoot && formatConfig.durations?.length
+    ? formatConfig.durations.find((candidate) => candidate >= generationDuration) ?? generationDuration
+    : generationDuration;
+  const clipReshootRequest = useMemo<ClipReshootRequest | undefined>(() => (
+    isClipReshoot && clipSourceVideo?.videoSrc
+      ? { sourceUrl: clipSourceVideo.videoSrc, ranges: clipRanges }
+      : undefined
+  ), [clipRanges, clipSourceVideo?.videoSrc, isClipReshoot]);
   // 积分显示与服务端 resolveCost 同口径：按次模式只按清晰度取价且完全
   // 忽略时长；按时长模式继续查「时长 × 清晰度」矩阵和旧 modifier。
   const referenceVideoUrls = useMemo(() => {
@@ -390,10 +412,11 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     rawConfig,
     videoParam.resolution,
     referenceVideoUrls,
+    clipReshootRequest,
   );
   const basePointCost = resolveVideoPointCost(
     formatConfig,
-    videoParam.duration,
+    providerGenerationDuration,
     videoParam.resolution,
     selectedModel?.pointCost ?? 135,
   );
@@ -420,16 +443,6 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   const cardAspect = ratioParsed ? ratioParsed.w / ratioParsed.h : 16 / 9;
   const { w: cardW, h: cardHeight } = fitVideoCardSize(cardAspect);
   const promptPanelW = Math.max(640, cardW + 32);
-  const clipTimelineVisible = isClipReshoot && !!clipSourceVideo?.videoSrc;
-  const clipSourceDuration = clipSourceVideo?.mediaDuration
-    ?? (node.videoSrc ? undefined : duration)
-    ?? clipSourceVideo?.generationConfig?.duration
-    ?? node.generationConfig?.duration
-    ?? CLIP_RESHOOT_DEFAULT_SECONDS;
-  const clipRanges = useMemo(
-    () => normalizeClipReshootRanges(node.clipReshootRanges, clipSourceDuration),
-    [clipSourceDuration, node.clipReshootRanges],
-  );
   const mediaContentHeight = cardHeight + (clipTimelineVisible ? 86 : 0);
   const handleClipSourceThumbnail = useCallback((thumbnail: string) => {
     if (!clipSourceVideo?.videoSrc) return;
@@ -738,15 +751,17 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     const imageUrls = activeImageSources.map((n) => n.imageSrc as string);
     const videoUrls = activeVideoSources.map((n) => n.videoSrc as string);
     const audioUrls = activeAudioSources.map((n) => n.audioSrc as string);
+    const sourceVideo = isClipReshoot
+      ? node.clipReshootSourceId
+        ? sources.find((source) => source.id === node.clipReshootSourceId && source.type === "video" && source.videoSrc)
+        : sources.find((source) => source.type === "video" && source.videoSrc)
+      : undefined;
     // 文本节点没有独立下发通道，正文只能落进 prompt——顺序与 refs 的「文本N」编号同源
     const promptWithRange = isClipReshoot
       ? `${buildClipReshootRangeInstruction(clipRanges, clipSourceDuration, `视频${clipSourceRefIndex}`)}\n${node.prompt || ""}`.trim()
       : node.prompt || "";
     const finalPrompt = inlineIncomingTextRefs(promptWithRange, sources);
     if (isClipReshoot) {
-      const sourceVideo = node.clipReshootSourceId
-        ? sources.find((source) => source.id === node.clipReshootSourceId && source.type === "video" && source.videoSrc)
-        : sources.find((source) => source.type === "video" && source.videoSrc);
       const rangeError = validateClipReshootPrompt(finalPrompt, sourceVideo?.mediaDuration);
       if (rangeError) {
         toast.error(rangeError);
@@ -769,7 +784,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       prompt: finalPrompt,
       ...(!formatConfig.ratios || formatConfig.ratios.length ? { aspectRatio: videoParam.ratio } : {}),
       ...(!formatConfig.resolutions || formatConfig.resolutions.length ? { resolution: videoParam.resolution } : {}),
-      ...(!formatConfig.durations || formatConfig.durations.length ? { duration: videoParam.duration } : {}),
+      ...(!formatConfig.durations || formatConfig.durations.length || isClipReshoot ? { duration: providerGenerationDuration } : {}),
       ...(formatConfig.audio !== false ? { audio: videoParam.audio } : {}),
     };
     let handler = "text_to_video";
@@ -793,6 +808,9 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         ...(imageUrls.length ? { references: imageUrls } : {}),
         ...(videoUrls.length ? { videoReferences: videoUrls } : {}),
         ...(audioUrls.length ? { audioReferences: audioUrls } : {}),
+        ...(isClipReshoot && sourceVideo?.videoSrc
+          ? { clipReshoot: { sourceUrl: sourceVideo.videoSrc, ranges: clipRanges } satisfies ClipReshootRequest }
+          : {}),
       };
     }
 
@@ -818,7 +836,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
           ...node.generationConfig,
           modelId: selectedModelId || node.generationConfig?.modelId,
           resolution: videoParam.resolution,
-          duration: videoParam.duration,
+          duration: generationDuration,
         },
         videoOperation: node.videoOperation,
         clipReshootSourceId: node.clipReshootSourceId,
@@ -1041,7 +1059,13 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
               duration={clipSourceDuration}
               ranges={clipRanges}
               currentTime={currentTime}
-              onChange={(nextRanges) => updateNode(node.id, { clipReshootRanges: nextRanges })}
+              onChange={(nextRanges) => updateNode(node.id, {
+                clipReshootRanges: nextRanges,
+                generationConfig: {
+                  ...node.generationConfig,
+                  duration: clipReshootOutputDuration(nextRanges, clipSourceDuration),
+                },
+              })}
               onSeek={(time) => {
                 if (videoRef.current) videoRef.current.currentTime = time;
                 setCurrentTime(time);
@@ -1143,11 +1167,11 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                     hintOf={(t) => TAB_LIMITS[t]?.hint}
                   />
                   <VideoParamPicker
-                    value={videoParam}
+                    value={isClipReshoot ? { ...videoParam, duration: generationDuration } : videoParam}
                     onChange={setVideoParam}
                     resolutions={formatConfig.resolutions}
                     ratios={formatConfig.ratios}
-                    durations={formatConfig.durations}
+                    durations={isClipReshoot ? [generationDuration] : formatConfig.durations}
                     allowAudio={formatConfig.audio}
                   />
                 </div>

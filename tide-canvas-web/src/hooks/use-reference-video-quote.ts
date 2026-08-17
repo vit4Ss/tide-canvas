@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { aiApi } from "@/lib/api";
 import type { ModelConfig } from "@/types/admin-models";
-import type { ReferenceVideoQuoteVO } from "@/types/ai";
+import type { ClipReshootRequest, ReferenceVideoQuoteVO } from "@/types/ai";
 
 const EMPTY_QUOTE: ReferenceVideoQuoteVO = {
   billingEnabled: false,
@@ -29,6 +29,7 @@ export function useReferenceVideoQuote(
   config: ModelConfig | null | undefined,
   resolution: string | null | undefined,
   videoUrls: string[],
+  clipReshoot?: ClipReshootRequest,
 ) {
   // The catalog config is only a cache invalidation hint. Never use it to
   // decide whether to request a quote: the generation endpoint reads the
@@ -45,6 +46,11 @@ export function useReferenceVideoQuote(
   ]);
   const urlsKey = JSON.stringify(videoUrls.map((url) => url.trim()).filter(Boolean));
   const normalizedUrls = useMemo<string[]>(() => JSON.parse(urlsKey) as string[], [urlsKey]);
+  const clipReshootKey = JSON.stringify(clipReshoot ?? null);
+  const normalizedClipReshoot = useMemo<ClipReshootRequest | undefined>(
+    () => (JSON.parse(clipReshootKey) as ClipReshootRequest | null) ?? undefined,
+    [clipReshootKey],
+  );
   // Older/direct clients may omit the field when a model exposes exactly one
   // resolution. Mirror the server's unambiguous fallback so the UI still shows
   // the surcharge instead of waiting until submit to discover it.
@@ -57,7 +63,7 @@ export function useReferenceVideoQuote(
   // price visible after a reference video was selected.
   const shouldQuote = !!modelId?.trim() && normalizedUrls.length > 0;
   const requestKey = shouldQuote
-    ? JSON.stringify([modelId?.trim(), normalizedResolution, configRevision, normalizedUrls])
+    ? JSON.stringify([modelId?.trim(), normalizedResolution, configRevision, normalizedUrls, normalizedClipReshoot])
     : "";
   const [state, setState] = useState<QuoteState>({
     requestKey: "",
@@ -73,7 +79,12 @@ export function useReferenceVideoQuote(
       };
     }
 
-    void aiApi.referenceVideoQuote({ modelId, resolution: normalizedResolution, videoUrls: normalizedUrls }).then((result) => {
+    void aiApi.referenceVideoQuote({
+      modelId,
+      resolution: normalizedResolution,
+      videoUrls: normalizedUrls,
+      ...(normalizedClipReshoot ? { clipReshoot: normalizedClipReshoot } : {}),
+    }).then((result) => {
       if (!active) return;
       if (result.success && result.data) {
         setState({ requestKey, quote: result.data, failed: false });
@@ -85,7 +96,7 @@ export function useReferenceVideoQuote(
     return () => {
       active = false;
     };
-  }, [modelId, normalizedResolution, normalizedUrls, requestKey, shouldQuote, state.requestKey]);
+  }, [modelId, normalizedClipReshoot, normalizedResolution, normalizedUrls, requestKey, shouldQuote, state.requestKey]);
 
   if (!shouldQuote) {
     return { applies: false, loading: false, failed: false, quote: EMPTY_QUOTE };

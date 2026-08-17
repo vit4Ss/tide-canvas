@@ -30,9 +30,10 @@ type referenceVideoCharge struct {
 }
 
 type referenceVideoQuoteDTO struct {
-	ModelID    string   `json:"modelId"`
-	Resolution string   `json:"resolution"`
-	VideoURLs  []string `json:"videoUrls"`
+	ModelID     string           `json:"modelId"`
+	Resolution  string           `json:"resolution"`
+	VideoURLs   []string         `json:"videoUrls"`
+	ClipReshoot *clipReshootSpec `json:"clipReshoot,omitempty"`
 }
 
 type referenceVideoQuoteVO struct {
@@ -72,8 +73,12 @@ func (s *service) prepareReferenceVideoPricingInput(ctx context.Context, userID 
 	// handlers/models where reference-video billing does not apply.
 	_, clientSuppliedBilling := input[referenceVideoBillingKey]
 	delete(input, referenceVideoBillingKey)
+	_, clientSuppliedClipReshoot := input[clipReshootInputKey]
 
 	if m == nil || m.Type != "video" || !strings.EqualFold(strings.TrimSpace(dto.Handler), "reference_to_video") {
+		if clientSuppliedClipReshoot {
+			return 0, skillPlacementError{message: "片段重拍仅支持视频参考生成"}
+		}
 		if clientSuppliedBilling {
 			encoded, err := json.Marshal(input)
 			if err != nil {
@@ -86,6 +91,9 @@ func (s *service) prepareReferenceVideoPricingInput(ctx context.Context, userID 
 
 	references := inputStrings(input, "videoReferences", "video_urls")
 	if len(references) == 0 {
+		if clientSuppliedClipReshoot {
+			return 0, skillPlacementError{message: "片段重拍需要连接来源视频"}
+		}
 		if clientSuppliedBilling {
 			encoded, err := json.Marshal(input)
 			if err != nil {
@@ -96,9 +104,27 @@ func (s *service) prepareReferenceVideoPricingInput(ctx context.Context, userID 
 		return 0, nil
 	}
 
+	clipReshoot, err := s.confirmClipReshoot(ctx, userID, references, input[clipReshootInputKey])
+	if err != nil {
+		return 0, err
+	}
+	if clipReshoot != nil {
+		providerDuration, durationErr := clipReshootProviderDuration(m, clipReshoot.Spec.OutputDuration)
+		if durationErr != nil {
+			return 0, durationErr
+		}
+		clipReshoot.Spec.ProviderDuration = providerDuration
+		references = append([]string(nil), references...)
+		references[clipReshoot.SourceIndex] = clipReshoot.Spec.SourceURL
+		input["videoReferences"] = references
+		input[clipReshootInputKey] = clipReshoot.Spec
+		input["duration"] = clipReshoot.Spec.ProviderDuration
+		delete(input, "video_urls")
+	}
+
 	enabled := referenceVideoPricing(m)
 	if !enabled {
-		if clientSuppliedBilling {
+		if clientSuppliedBilling || clipReshoot != nil {
 			encoded, err := json.Marshal(input)
 			if err != nil {
 				return 0, err
@@ -113,7 +139,7 @@ func (s *service) prepareReferenceVideoPricingInput(ctx context.Context, userID 
 		return 0, err
 	}
 
-	charge, err := s.confirmReferenceVideoCharge(ctx, userID, references, pricing)
+	charge, err := s.confirmReferenceVideoChargeWithClip(ctx, userID, references, pricing, clipReshoot)
 	if err != nil {
 		return 0, referenceVideoConfirmationError(err)
 	}
@@ -160,7 +186,14 @@ func (s *service) quoteReferenceVideos(ctx context.Context, userID idgen.ID, dto
 	if len(references) > maxReferenceVideoQuotes {
 		return nil, skillPlacementError{message: "参考视频数量过多，请减少后重试"}
 	}
-	charge, err := s.confirmReferenceVideoCharge(ctx, userID, references, pricing)
+	clipReshoot, err := s.confirmClipReshoot(ctx, userID, references, dto.ClipReshoot)
+	if err != nil {
+		return nil, err
+	}
+	if clipReshoot != nil {
+		references[clipReshoot.SourceIndex] = clipReshoot.Spec.SourceURL
+	}
+	charge, err := s.confirmReferenceVideoChargeWithClip(ctx, userID, references, pricing, clipReshoot)
 	if err != nil {
 		return nil, referenceVideoConfirmationError(err)
 	}
@@ -278,6 +311,61 @@ func (p referenceVideoMatrixPricing) pointsFor(duration float64) (int, error) {
 		}
 	}
 	return 0, skillPlacementError{message: "参考视频时长超过该模型已配置的最大时长，请更换视频"}
+}
+
+// confirmReferenceVideoChargeWithClip bills the primary reshoot reference by
+// the verified selected duration. Other reference slots keep their ordinary
+// full-duration charge. The primary source was already probed while validating
+// its ranges, so this also avoids downloading and probing it twice.
+func (s *service) confirmReferenceVideoChargeWithClip(
+	ctx context.Context,
+	userID idgen.ID,
+	references []string,
+	pricing referenceVideoMatrixPricing,
+	clip *confirmedClipReshoot,
+) (referenceVideoCharge, error) {
+	if clip == nil {
+		return s.confirmReferenceVideoCharge(ctx, userID, references, pricing)
+	}
+	if clip.SourceIndex < 0 || clip.SourceIndex >= len(references) {
+		return referenceVideoCharge{}, errors.New("clip reshoot source index is invalid")
+	}
+	primaryPoints, err := pricing.pointsFor(clip.Spec.DurationSeconds)
+	if err != nil {
+		return referenceVideoCharge{}, err
+	}
+	otherReferences := make([]string, 0, len(references)-1)
+	otherIndexes := make([]int, 0, len(references)-1)
+	for index, reference := range references {
+		if index == clip.SourceIndex {
+			continue
+		}
+		otherReferences = append(otherReferences, reference)
+		otherIndexes = append(otherIndexes, index)
+	}
+	otherCharge, err := s.confirmReferenceVideoCharge(ctx, userID, otherReferences, pricing)
+	if err != nil {
+		return referenceVideoCharge{}, err
+	}
+	if otherCharge.PointCost > maxPointCost()-primaryPoints {
+		return referenceVideoCharge{}, skillPlacementError{message: "参考视频计费结果超出系统范围，请联系管理员"}
+	}
+	canonicalURLs := make([]string, len(references))
+	canonicalURLs[clip.SourceIndex] = clip.Spec.SourceURL
+	for offset, index := range otherIndexes {
+		canonicalURLs[index] = otherCharge.CanonicalURLs[offset]
+	}
+	duration := math.Ceil((clip.Spec.DurationSeconds+otherCharge.DurationSecond)*1000) / 1000
+	if math.IsNaN(duration) || math.IsInf(duration, 0) {
+		return referenceVideoCharge{}, skillPlacementError{message: "参考视频时长超出系统范围，请重新选择视频"}
+	}
+	return referenceVideoCharge{
+		CanonicalURLs:  canonicalURLs,
+		VideoCount:     len(references),
+		DurationSecond: duration,
+		Resolution:     pricing.resolution,
+		PointCost:      primaryPoints + otherCharge.PointCost,
+	}, nil
 }
 
 func (s *service) confirmReferenceVideoCharge(ctx context.Context, userID idgen.ID, references []string, pricing referenceVideoMatrixPricing) (referenceVideoCharge, error) {
