@@ -13,6 +13,7 @@ import { useCanvasConnection } from "@/hooks/canvas/use-canvas-connection";
 import { useCanvasBoxSelect } from "@/hooks/canvas/use-canvas-box-select";
 import { createNode, autoArrangeNodes, nodeRenderRect } from "@/lib/canvas-helpers";
 import { canvasConnectionRule } from "@/lib/canvas-connection-rules";
+import { CANVAS_FOCUS_POINT_EVENT, type CanvasFocusPoint } from "@/lib/canvas-navigation";
 import { CanvasGridBackground } from "./canvas-grid-background";
 import { CanvasEmptyState } from "./canvas-empty-state";
 import { CanvasNodeComponent } from "./canvas-node";
@@ -85,10 +86,24 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
   const [containerOrigin, setContainerOrigin] = useState({ left: 0, top: 0 });
 
   const panZoom = useCanvasPanZoom({ containerRef });
+  const centerCanvasOn = panZoom.centerOn;
   const nodeDrag = useCanvasNodeDrag({ gridSnap });
   const clipboard = useCanvasClipboard();
   const connection = useCanvasConnection({ containerRef });
   const boxSelect = useCanvasBoxSelect({ containerRef });
+
+  // Long-running node actions may materialize outputs outside the current
+  // viewport. Let them reveal the result without coupling node code to the
+  // canvas container geometry or directly mutating the view transform.
+  useEffect(() => {
+    const focusPoint = (rawEvent: Event) => {
+      const point = (rawEvent as CustomEvent<CanvasFocusPoint>).detail;
+      if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+      centerCanvasOn(point.x, point.y);
+    };
+    window.addEventListener(CANVAS_FOCUS_POINT_EVENT, focusPoint);
+    return () => window.removeEventListener(CANVAS_FOCUS_POINT_EVENT, focusPoint);
+  }, [centerCanvasOn]);
 
   useCanvasKeyboard({
     onEscape: () => setContextMenu(null),

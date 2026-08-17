@@ -109,9 +109,11 @@ type Client struct {
 	idleCheck   time.Duration
 }
 
-// defaultStreamDeadline caps a stream whose caller context carries no deadline,
-// so a stalled relay can never hang a request forever.
-const defaultStreamDeadline = 5 * time.Minute
+// defaultStreamDeadline caps a stream whose caller context carries no deadline.
+// Frontier reasoning models may spend a long time before and between visible
+// deltas, so keep a generous hard ceiling; the idle watchdog remains the faster
+// failure detector for a genuinely silent/dead relay.
+const defaultStreamDeadline = 60 * time.Minute
 
 // streamIdleTimeout aborts a stream that stops producing bytes. 流式生成不能按
 // 总时长掐:只要还在吐字就说明上游活着,长回复本来就该允许跑久。真正的故障
@@ -119,7 +121,10 @@ const defaultStreamDeadline = 5 * time.Minute
 //
 // 之前只有总时长上限(180s),一个还在正常输出的长回复会被拦腰截断——用户看到
 // 半截答案,上游那侧则报 Broken pipe(它下一次 flush 写到我们已关闭的 socket)。
-const streamIdleTimeout = 90 * time.Second
+// Relay now emits a lightweight SSE heartbeat while the model is reasoning; the
+// 15-minute allowance also protects deployments during rolling upgrades where
+// an older relay instance may not emit that heartbeat yet.
+const streamIdleTimeout = 15 * time.Minute
 
 // streamIdleCheck is how often the watchdog compares now against the last read.
 // 粒度取 5s:比空闲阈值小一个量级,又不至于空转太频繁。
@@ -151,9 +156,10 @@ func New(baseURL, apiKey string) *Client {
 			ForceAttemptHTTP2:   true,
 			DialContext:         (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
 			TLSHandshakeTimeout: 10 * time.Second,
-			// 首字节前的等待上限。推理型模型(gpt-5.4 等)会先想很久才开口，
-			// 60s 会把正常的长思考判成失败(实测两条都卡在 60s 整)。
-			ResponseHeaderTimeout: 180 * time.Second,
+			// 首字节前的等待上限。推理型模型(gpt-5.6-sol 等)会先想很久才
+			// 开口；relay 心跳通常会更早提交响应头，这里仍保留 15 分钟兜底，
+			// 兼容尚未升级心跳的实例。
+			ResponseHeaderTimeout: 15 * time.Minute,
 			MaxIdleConns:          100,
 			IdleConnTimeout:       90 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,

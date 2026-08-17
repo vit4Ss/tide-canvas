@@ -997,11 +997,16 @@ func leadingInt(s string) (int, bool) {
 	return n, true
 }
 
-// inputStrings collects string elements from the first present array-valued key.
+// inputStrings collects string elements from the first non-empty array-valued
+// key. JSON request bodies decode arrays as []any, while server-side preparation
+// (for example clip-reshoot rendering) may write a native []string back into the
+// same input map, so both representations must remain valid provider input.
 func inputStrings(in map[string]any, keys ...string) []string {
 	for _, k := range keys {
-		if arr, ok := in[k].([]any); ok {
-			out := make([]string, 0, len(arr))
+		var out []string
+		switch arr := in[k].(type) {
+		case []any:
+			out = make([]string, 0, len(arr))
 			for _, v := range arr {
 				if s, ok := v.(string); ok {
 					if s = strings.TrimSpace(s); s != "" {
@@ -1009,9 +1014,16 @@ func inputStrings(in map[string]any, keys ...string) []string {
 					}
 				}
 			}
-			if len(out) > 0 {
-				return out
+		case []string:
+			out = make([]string, 0, len(arr))
+			for _, s := range arr {
+				if s = strings.TrimSpace(s); s != "" {
+					out = append(out, s)
+				}
 			}
+		}
+		if len(out) > 0 {
+			return out
 		}
 	}
 	return nil

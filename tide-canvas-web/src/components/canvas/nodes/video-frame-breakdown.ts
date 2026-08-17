@@ -2,10 +2,63 @@ import type { CanvasGroup, CanvasNode, Connection } from "@/stores/use-canvas-st
 import type { AiModelVO } from "@/types/ai";
 
 export const STORYBOARD_FRAME_WIDTH = 280;
-export const BREAKDOWN_NODE_WIDTH = 360;
-export const BREAKDOWN_NODE_HEIGHT = 326;
+export const BREAKDOWN_NODE_WIDTH = 380;
+export const BREAKDOWN_NODE_HEIGHT = 396;
+export const STORYBOARD_FRAME_COUNTS = [6, 12, 20] as const;
 
 export type StoryboardAnalysisMode = "storyboard" | "motion" | "music";
+
+export interface StoryboardBreakdownConfig {
+  frameCount: (typeof STORYBOARD_FRAME_COUNTS)[number];
+  framesPerGroup: number;
+  lastFrameCount?: number;
+  runCount: number;
+  analysisModes: StoryboardAnalysisMode[];
+}
+
+const STORYBOARD_ANALYSIS_MODES: readonly StoryboardAnalysisMode[] = ["storyboard", "motion", "music"];
+const DEFAULT_STORYBOARD_ANALYSIS_MODES: StoryboardAnalysisMode[] = ["storyboard", "motion"];
+
+function boundedInteger(value: unknown, fallback: number, min: number, max: number): number {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(min, Math.min(max, Math.round(number))) : fallback;
+}
+
+/** Defensively normalize persisted/legacy node config before it reaches controls or run numbering. */
+export function normalizeStoryboardBreakdownConfig(input: unknown): StoryboardBreakdownConfig {
+  const raw = input && typeof input === "object" ? input as Record<string, unknown> : {};
+  const requestedFrameCount = Number(raw.frameCount);
+  const frameCount = STORYBOARD_FRAME_COUNTS.includes(requestedFrameCount as StoryboardBreakdownConfig["frameCount"])
+    ? requestedFrameCount as StoryboardBreakdownConfig["frameCount"]
+    : 12;
+  const requestedModes = Array.isArray(raw.analysisModes) ? raw.analysisModes : [];
+  const analysisModes = [...new Set(requestedModes.filter((mode): mode is StoryboardAnalysisMode =>
+    typeof mode === "string" && STORYBOARD_ANALYSIS_MODES.includes(mode as StoryboardAnalysisMode),
+  ))];
+  const lastFrameCount = raw.lastFrameCount == null
+    ? undefined
+    : boundedInteger(raw.lastFrameCount, 0, 0, 24) || undefined;
+  return {
+    frameCount,
+    framesPerGroup: boundedInteger(raw.framesPerGroup, 4, 1, 8),
+    lastFrameCount,
+    runCount: boundedInteger(raw.runCount, 0, 0, 1_000_000),
+    analysisModes: analysisModes.length ? analysisModes : [...DEFAULT_STORYBOARD_ANALYSIS_MODES],
+  };
+}
+
+export function isStoryboardBreakdownConfigNormalized(input: unknown): boolean {
+  if (!input || typeof input !== "object") return false;
+  const raw = input as Record<string, unknown>;
+  const normalized = normalizeStoryboardBreakdownConfig(raw);
+  return raw.frameCount === normalized.frameCount
+    && raw.framesPerGroup === normalized.framesPerGroup
+    && (raw.lastFrameCount ?? undefined) === normalized.lastFrameCount
+    && raw.runCount === normalized.runCount
+    && Array.isArray(raw.analysisModes)
+    && raw.analysisModes.length === normalized.analysisModes.length
+    && raw.analysisModes.every((mode, index) => mode === normalized.analysisModes[index]);
+}
 
 export interface StoryboardFrameAnalysis {
   index: number;
@@ -26,14 +79,23 @@ export interface StoryboardUploadedFrame {
   analysis?: StoryboardFrameAnalysis;
 }
 
+function storyboardModelConfigValues(model: Pick<AiModelVO, "config">, keys: readonly string[]): string[] {
+  try {
+    const config = JSON.parse(model.config || "{}") as Record<string, unknown>;
+    return keys
+      .flatMap((key) => Array.isArray(config[key]) ? config[key] as unknown[] : [])
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim().toLowerCase().replace(/[\s_]+/g, "-"));
+  } catch {
+    return [];
+  }
+}
+
 function storyboardVisionCapability(model: Pick<AiModelVO, "config">): boolean {
   try {
     const config = JSON.parse(model.config || "{}") as Record<string, unknown>;
     if (config.vision === true || config.multimodal === true || config.imageInput === true) return true;
-    const capabilityValues = [config.capabilities, config.inputModalities, config.modalities]
-      .flatMap((value) => Array.isArray(value) ? value : [])
-      .filter((value): value is string => typeof value === "string")
-      .map((value) => value.trim().toLowerCase().replace(/[\s_]+/g, "-"));
+    const capabilityValues = storyboardModelConfigValues(model, ["capabilities", "inputModalities", "modalities"]);
     return capabilityValues.some((value) =>
       value === "vision"
       || value === "multimodal"
@@ -46,13 +108,29 @@ function storyboardVisionCapability(model: Pick<AiModelVO, "config">): boolean {
   }
 }
 
-/** Pick only a text-completion model explicitly configured for image input. */
+export type StoryboardAnalysisModelConfidence = "vision" | "chat-fallback";
+
+/**
+ * Relay catalogs do not all advertise image input even when their chat endpoint
+ * accepts OpenAI-style image parts. Keep explicit vision metadata authoritative,
+ * then allow a chat-capable fallback whose failure safely degrades to plain frames.
+ */
+export function storyboardAnalysisModelConfidence(
+  model: Pick<AiModelVO, "config">,
+): StoryboardAnalysisModelConfidence | null {
+  if (storyboardVisionCapability(model)) return "vision";
+  const operations = storyboardModelConfigValues(model, ["operations"]);
+  return operations.includes("chat") ? "chat-fallback" : null;
+}
+
+/** Pick an explicit vision model first; use a relay chat model only as a probe-safe fallback. */
 export function selectStoryboardAnalysisModel(models: readonly AiModelVO[]): AiModelVO | undefined {
-  return models.find((candidate) =>
+  const eligible = models.filter((candidate) =>
     candidate.type === "text"
     && (!candidate.supportedHandlers?.length || candidate.supportedHandlers.includes("skill_text_completion"))
-    && storyboardVisionCapability(candidate),
   );
+  return eligible.find((candidate) => storyboardAnalysisModelConfidence(candidate) === "vision")
+    ?? eligible.find((candidate) => storyboardAnalysisModelConfidence(candidate) === "chat-fallback");
 }
 
 export function sampleStoryboardTimes(duration: number, frameCount: number): number[] {
@@ -117,6 +195,12 @@ export function parseStoryboardAnalysis(text: string, frameCount: number): Story
   } catch {
     return [];
   }
+}
+
+export function storyboardAnalysisCoverageWarning(analyzedCount: number, frameCount: number): string {
+  const total = Math.max(0, Math.round(Number(frameCount) || 0));
+  const completed = Math.max(0, Math.min(total, Math.round(Number(analyzedCount) || 0)));
+  return total > 0 && completed < total ? `AI 标注仅完成 ${completed}/${total} 帧` : "";
 }
 
 export function buildStoryboardOutputs(input: {

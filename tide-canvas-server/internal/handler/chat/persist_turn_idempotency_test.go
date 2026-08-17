@@ -27,7 +27,7 @@ func openPersistTurnTestDB(t *testing.T) *gorm.DB {
 		}
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := db.AutoMigrate(&model.AiTask{}, &model.IMConversation{}, &model.IMMessage{}); err != nil {
+	if err := db.AutoMigrate(&model.AiTask{}, &model.IMConversation{}, &model.IMConversationMember{}, &model.IMMessage{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	sqlDB, err := db.DB()

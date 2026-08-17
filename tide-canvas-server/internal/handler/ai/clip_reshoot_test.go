@@ -24,6 +24,14 @@ type clipReshootTestStorage struct {
 	saved   []byte
 }
 
+func TestDecodeClipReshootSpecTreatsTypedNilAsAbsent(t *testing.T) {
+	var spec *clipReshootSpec
+	decoded, err := decodeClipReshootSpec(spec)
+	if err != nil || decoded != nil {
+		t.Fatalf("typed nil decoded as %#v, err=%v", decoded, err)
+	}
+}
+
 func (s *clipReshootTestStorage) Save(_ context.Context, _ string, reader io.Reader, _ string) (string, error) {
 	data, err := io.ReadAll(reader)
 	if err != nil {

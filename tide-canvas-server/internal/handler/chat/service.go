@@ -128,17 +128,18 @@ func textTurnRetryAfter(err error) time.Duration {
 
 // llmReplyTimeout is the OUTER bound on one upstream generation — a backstop for
 // a provider that hangs without ever closing the connection, not the liveness
-// check. 判活由 relaychat 的空闲看门狗做（连续 90s 没有新字节才断）。
+// check. 判活由 relaychat 的空闲看门狗做；relay 的 SSE 心跳会在模型长时间思考
+// 时持续续命，因此这里给慢推理模型完整的一小时硬上限。
 //
 // 原值 180s 是拿总时长当判活用的，长回复正在正常输出也会被拦腰截断（实测一条
-// 已收 29KB 仍被掐，上游随即报 Broken pipe）。放宽到 10 分钟：还在吐字就让它
-// 写完，真卡死则由空闲看门狗在 90s 内结束，不必等到这个上限。
-const llmReplyTimeout = 10 * time.Minute
+// 已收 29KB 仍被掐，上游随即报 Broken pipe）。还在吐字或收到心跳就让它写完，
+// 真卡死则由空闲看门狗结束，不必等到这个上限。
+const llmReplyTimeout = 60 * time.Minute
 
 // textTurnLeaseDuration is deliberately longer than the provider's hard
 // timeout. An active instance therefore cannot be overtaken, while a crashed
 // instance leaves a request that another process can eventually reclaim.
-const textTurnLeaseDuration = llmReplyTimeout + 2*time.Minute
+const textTurnLeaseDuration = llmReplyTimeout + 5*time.Minute
 
 // ── 上下文自动压缩（compaction）────────────────────────────────────────────
 // 会话估算 token 越过阈值（默认=上限的 70%，sys_config llm.compressAtTokens

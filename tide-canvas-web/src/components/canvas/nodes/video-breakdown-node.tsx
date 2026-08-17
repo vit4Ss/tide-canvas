@@ -1,9 +1,10 @@
 "use client";
 
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Film, Loader2, Play, ScanLine, Square } from "lucide-react";
 import { aiApi, fileApi, uploadFileSmart } from "@/lib/api";
 import { notifyAssetLibraryChanged } from "@/lib/asset-library-events";
+import { requestCanvasFocusPoint } from "@/lib/canvas-navigation";
 import { captureVideoFrame, VideoFrameError } from "@/lib/video-frame";
 import { useAuthStore } from "@/stores/use-auth-store";
 import {
@@ -23,12 +24,17 @@ import type { CanvasNodeProps } from "./types/node-props";
 import {
   BREAKDOWN_NODE_HEIGHT,
   BREAKDOWN_NODE_WIDTH,
+  STORYBOARD_FRAME_COUNTS,
   buildStoryboardAnalysisPrompt,
   buildStoryboardOutputs,
   formatStoryboardTime,
+  isStoryboardBreakdownConfigNormalized,
+  normalizeStoryboardBreakdownConfig,
   parseStoryboardAnalysis,
   sampleStoryboardTimes,
   selectStoryboardAnalysisModel,
+  storyboardAnalysisModelConfidence,
+  storyboardAnalysisCoverageWarning,
   type StoryboardAnalysisMode,
   type StoryboardFrameAnalysis,
   type StoryboardUploadedFrame,
@@ -38,11 +44,12 @@ import {
   cleanupStoryboardFrameTasks,
 } from "./storyboard-analysis-task";
 
-const DENSITIES = [
-  { count: 6, label: "精简" },
-  { count: 12, label: "标准" },
-  { count: 20, label: "细致" },
-] as const;
+const DENSITY_LABELS = {
+  6: "精简",
+  12: "标准",
+  20: "细致",
+} as const satisfies Record<(typeof STORYBOARD_FRAME_COUNTS)[number], string>;
+const DENSITIES = STORYBOARD_FRAME_COUNTS.map((count) => ({ count, label: DENSITY_LABELS[count] }));
 
 const ANALYSIS_MODES: Array<{ value: StoryboardAnalysisMode; label: string; title: string }> = [
   { value: "storyboard", label: "分镜", title: "分析景别与画面内容" },
@@ -150,7 +157,10 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
       .filter((connection) => connection.targetId === node.id)
       .map((connection) => state.nodes.find((candidate) => candidate.id === connection.sourceId))
       .filter((candidate) => candidate?.type === "video" && candidate.videoSrc);
-    const source = sources[0];
+    // Connections are appended chronologically. If a legacy canvas contains
+    // more than one input, the most recently connected video is the user's
+    // latest intent; choosing the oldest makes a replacement look ineffective.
+    const source = sources.at(-1);
     return JSON.stringify({ id: source?.id ?? "", src: source?.videoSrc ?? "", count: sources.length });
   });
   const videoInput = JSON.parse(videoInputJSON) as { id: string; src: string; count: number };
@@ -158,19 +168,22 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
   const sourceVideoSrc = videoInput.src;
 
   const [videoMeta, setVideoMeta] = useState({ src: "", duration: 0, w: 0, h: 0 });
+  const [videoLoadError, setVideoLoadError] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [stage, setStage] = useState<"frames" | "analysis">("frames");
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [analysisPointCost, setAnalysisPointCost] = useState<number | null>(null);
+  const [analysisModelConfidence, setAnalysisModelConfidence] = useState<"vision" | "chat-fallback" | null>(null);
   const [analysisModelStatus, setAnalysisModelStatus] = useState<"loading" | "ready" | "unavailable" | "error">("loading");
   const runRef = useRef(0);
+  const breakdownBusyRef = useRef(false);
   const analysisTaskIdRef = useRef<string | null>(null);
   const modelCheckRef = useRef(0);
-  const frameCount = node.videoBreakdown?.frameCount ?? 12;
-  const framesPerGroup = node.videoBreakdown?.framesPerGroup ?? 4;
-  const analysisModes = node.videoBreakdown?.analysisModes?.length
-    ? node.videoBreakdown.analysisModes
-    : ["storyboard", "motion"] satisfies StoryboardAnalysisMode[];
+  const breakdownConfig = useMemo(
+    () => normalizeStoryboardBreakdownConfig(node.videoBreakdown),
+    [node.videoBreakdown],
+  );
+  const { frameCount, framesPerGroup, analysisModes } = breakdownConfig;
 
   const duration = videoMeta.src === sourceVideoSrc ? videoMeta.duration : 0;
   const dims = videoMeta.src === sourceVideoSrc
@@ -181,6 +194,7 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
     const check = ++modelCheckRef.current;
     setAnalysisModelStatus("loading");
     setAnalysisPointCost(null);
+    setAnalysisModelConfidence(null);
     try {
       const response = await aiApi.listModels();
       if (modelCheckRef.current !== check) return;
@@ -194,6 +208,7 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
         return;
       }
       setAnalysisPointCost(Math.max(0, Number(model.pointCost) || 0));
+      setAnalysisModelConfidence(storyboardAnalysisModelConfidence(model));
       setAnalysisModelStatus("ready");
     } catch {
       if (modelCheckRef.current === check) setAnalysisModelStatus("error");
@@ -205,17 +220,44 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
     return () => { modelCheckRef.current += 1; };
   }, [refreshAnalysisModel]);
 
+  // 同步旧画布里持久化的历史尺寸与参数：避免卡片扩容后端口仍停留在旧区域，
+  // 也防止异常 JSON 让密度无选中态、分组越界或重复拉片编号拼成字符串。
+  useEffect(() => {
+    const sizeChanged = node.width !== BREAKDOWN_NODE_WIDTH
+      || node.height !== BREAKDOWN_NODE_HEIGHT
+      || node.contentW !== BREAKDOWN_NODE_WIDTH
+      || node.contentH !== BREAKDOWN_NODE_HEIGHT;
+    const configChanged = !isStoryboardBreakdownConfigNormalized(node.videoBreakdown);
+    if (sizeChanged || configChanged) {
+      updateNode(node.id, {
+        width: BREAKDOWN_NODE_WIDTH,
+        height: BREAKDOWN_NODE_HEIGHT,
+        contentW: BREAKDOWN_NODE_WIDTH,
+        contentH: BREAKDOWN_NODE_HEIGHT,
+        ...(configChanged ? {
+          videoBreakdown: {
+            ...node.videoBreakdown,
+            ...breakdownConfig,
+          },
+        } : {}),
+      }, false);
+    }
+  }, [breakdownConfig, node.contentH, node.contentW, node.height, node.id, node.videoBreakdown, node.width, updateNode]);
+
   useEffect(() => {
     runRef.current += 1;
     if (analysisTaskIdRef.current) void aiApi.cancelTask(analysisTaskIdRef.current).catch(() => undefined);
     analysisTaskIdRef.current = null;
+    breakdownBusyRef.current = false;
     setAnalyzing(false);
     setProgress({ done: 0, total: 0 });
     setVideoMeta({ src: "", duration: 0, w: 0, h: 0 });
+    setVideoLoadError(false);
   }, [sourceVideoId, sourceVideoSrc]);
 
   useEffect(() => () => {
     runRef.current += 1;
+    breakdownBusyRef.current = false;
     if (analysisTaskIdRef.current) void aiApi.cancelTask(analysisTaskIdRef.current).catch(() => undefined);
     analysisTaskIdRef.current = null;
   }, []);
@@ -223,13 +265,12 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
   const patchBreakdownConfig = useCallback((patch: Partial<NonNullable<CanvasNode["videoBreakdown"]>>) => {
     updateNode(node.id, {
       videoBreakdown: {
-        frameCount,
-        framesPerGroup,
         ...node.videoBreakdown,
+        ...breakdownConfig,
         ...patch,
       },
     }, true);
-  }, [frameCount, framesPerGroup, node.id, node.videoBreakdown, updateNode]);
+  }, [breakdownConfig, node.id, node.videoBreakdown, updateNode]);
 
   const toggleAnalysisMode = useCallback((mode: StoryboardAnalysisMode) => {
     const next = analysisModes.includes(mode)
@@ -247,6 +288,7 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
     runRef.current += 1;
     const taskId = analysisTaskIdRef.current;
     analysisTaskIdRef.current = null;
+    breakdownBusyRef.current = false;
     if (taskId) void aiApi.cancelTask(taskId).catch(() => undefined);
     setAnalyzing(false);
     setStage("frames");
@@ -255,26 +297,21 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
   }, [analyzing]);
 
   const startBreakdown = useCallback(async () => {
-    if (analyzing) return;
+    if (analyzing || breakdownBusyRef.current) return;
     if (!sourceVideoSrc || !sourceVideoId) {
       toast.error("请先连接一个已生成的视频节点");
       return;
     }
-    if (analysisModelStatus !== "ready") {
-      if (analysisModelStatus === "loading") toast.info("正在检查语义分析模型，请稍后");
-      else if (analysisModelStatus === "unavailable") toast.error("未配置支持图片输入的文本模型，请联系管理员");
-      else void refreshAnalysisModel();
-      return;
-    }
     if (!duration) {
-      toast.info("视频信息仍在读取，请稍后再试");
+      if (videoLoadError) toast.error("视频读取失败，请检查源视频后重试");
+      else toast.info("视频信息仍在读取，请稍后再试");
       return;
     }
-    if (!(await useAuthStore.getState().ensureSession())) return;
 
     const times = sampleStoryboardTimes(duration, frameCount);
     if (times.length === 0) return;
     const run = ++runRef.current;
+    breakdownBusyRef.current = true;
     const sourceAtStart = sourceVideoSrc;
     const active = () => {
       if (runRef.current !== run) return false;
@@ -294,6 +331,9 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
     let analysisWarning = "";
 
     try {
+      if (!(await useAuthStore.getState().ensureSession())) return;
+      if (!active()) return;
+
       for (let index = 0; index < times.length; index += 1) {
         if (!active()) return;
         const timeSec = times[index];
@@ -338,6 +378,8 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
       }
 
       if (!active()) return;
+      // 每次运行都重新确认一次模型：管理员可能在节点创建后才启用视觉模型。
+      // 分析失败只降级为纯帧输出，不回滚已经成功提取的画面。
       setStage("analysis");
       try {
         const analyses = await analyzeStoryboardFrames(
@@ -352,15 +394,21 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
         );
         const byIndex = new Map(analyses.map((item) => [item.index, item]));
         frames.forEach((frame, index) => { frame.analysis = byIndex.get(index + 1); });
+        analysisWarning = storyboardAnalysisCoverageWarning(analyses.length, frames.length);
       } catch (error) {
         analysisWarning = error instanceof Error ? error.message : "镜头语义分析不可用";
+        if (active()) {
+          setAnalysisModelStatus("error");
+          setAnalysisPointCost(null);
+        }
       }
+      if (active() && analysisModelStatus !== "ready") void refreshAnalysisModel();
 
       if (!active()) return;
       const state = useCanvasStore.getState();
       const processor = state.nodes.find((candidate) => candidate.id === node.id);
       if (!processor) return;
-      const runNumber = (processor.videoBreakdown?.runCount ?? 0) + 1;
+      const runNumber = normalizeStoryboardBreakdownConfig(processor.videoBreakdown).runCount + 1;
       const outputs = buildStoryboardOutputs({
         processor,
         sourceVideoId,
@@ -373,7 +421,8 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
         makeNodeId: generateNodeId,
         makeGroupId: generateGroupId,
       });
-      state.addNodesAndConnections(outputs.nodes, outputs.connections, node.id, outputs.groups);
+      const firstOutput = outputs.nodes[0];
+      state.addNodesAndConnections(outputs.nodes, outputs.connections, firstOutput?.id ?? node.id, outputs.groups);
       state.updateNode(node.id, {
         videoBreakdown: {
           frameCount,
@@ -385,8 +434,14 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
       }, false);
       outputsCommitted = true;
       notifyAssetLibraryChanged({ collection: "hist", mediaKind: "image", origin: "capture" });
+      if (firstOutput) {
+        requestCanvasFocusPoint({
+          x: firstOutput.x + firstOutput.width / 2,
+          y: firstOutput.y + firstOutput.height / 2,
+        });
+      }
       if (analysisWarning) {
-        toast.info(`已生成 ${frames.length} 张分镜帧；${analysisWarning}，本次未添加语义标注`);
+        toast.success(`已提取 ${frames.length} 张分镜帧；${analysisWarning}`);
       } else {
         toast.success(`拉片完成，已生成并分析 ${frames.length} 张分镜帧`);
       }
@@ -403,43 +458,41 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
         await cleanupStoryboardFrameTasks(capturedTaskIds, (taskId) => aiApi.cancelTask(taskId));
         notifyAssetLibraryChanged({ collection: "hist", mediaKind: "image", origin: "capture" });
       }
-      if (runRef.current === run) setAnalyzing(false);
+      if (runRef.current === run) {
+        breakdownBusyRef.current = false;
+        setAnalyzing(false);
+      }
     }
-  }, [analysisModelStatus, analysisModes, analyzing, duration, frameCount, framesPerGroup, node.id, refreshAnalysisModel, sourceVideoId, sourceVideoSrc]);
+  }, [analysisModelStatus, analysisModes, analyzing, duration, frameCount, framesPerGroup, node.id, refreshAnalysisModel, sourceVideoId, sourceVideoSrc, videoLoadError]);
 
   const progressPct = progress.total > 0 ? Math.round(progress.done / progress.total * 100) : 0;
-  const idleActionLabel = analysisModelStatus === "loading"
-    ? "正在检查语义模型"
-    : analysisModelStatus === "unavailable"
-      ? "未配置视觉模型"
-      : analysisModelStatus === "error"
-        ? "模型检查失败 · 重试"
-        : `${node.videoBreakdown?.lastFrameCount ? "再次拉片" : "开始拉片"}${analysisPointCost != null ? ` · ${Math.ceil(analysisPointCost)} 积分` : ""}`;
-  const actionDisabled = !sourceVideoSrc
-    || (!analyzing && (analysisModelStatus === "loading" || analysisModelStatus === "unavailable"));
+  const idleActionLabel = `${node.videoBreakdown?.lastFrameCount ? "重新拉片" : "开始拉片"} · ${frameCount} 帧`;
+  const analysisStatusLabel = analysisModelStatus === "loading"
+    ? "正在检测 AI 标注"
+    : analysisModelStatus === "ready"
+      ? `${analysisModelConfidence === "chat-fallback" ? "尝试 AI 标注" : "AI 标注可用"}${analysisPointCost != null ? ` · ${Math.ceil(analysisPointCost)} 积分` : ""}`
+      : analysisModelStatus === "unavailable"
+        ? "无视觉模型 · 重试"
+        : "AI 标注失败 · 重试";
+  const analysisStatusRetryable = analysisModelStatus === "unavailable" || analysisModelStatus === "error";
+  const actionDisabled = !sourceVideoSrc;
   const actionTitle = !sourceVideoSrc
     ? "请先连接一个已生成的视频节点"
-    : analysisModelStatus === "loading"
-      ? "正在检查语义分析模型"
-      : analysisModelStatus === "unavailable"
-        ? "未配置支持图片输入的文本模型，请联系管理员"
-        : analysisModelStatus === "error"
-          ? "重新检查语义分析模型"
-          : undefined;
+    : `均匀提取 ${frameCount} 帧并生成分镜组`;
   const stopInteraction = (event: React.SyntheticEvent) => event.stopPropagation();
 
   return (
     <NodeShell node={node} isSelected={isSelected} isDragging={isDragging} onNodeMouseDown={onNodeMouseDown}>
       <div className="relative" style={{ width: BREAKDOWN_NODE_WIDTH }}>
         <div
-          className={`relative overflow-hidden rounded-2xl bg-white shadow-sm ring-1 transition-[box-shadow] duration-150 motion-reduce:transition-none dark:bg-neutral-950 ${
+          className={`relative flex flex-col overflow-hidden rounded-[18px] bg-white shadow-sm ring-1 transition-[box-shadow] duration-150 motion-reduce:transition-none dark:bg-neutral-950 ${
             isConnectTarget ? "ring-2 ring-blue-500/70"
               : isSelected ? "ring-2 ring-neutral-400 dark:ring-neutral-600"
                 : "ring-neutral-200 hover:ring-neutral-300 dark:ring-neutral-800 dark:hover:ring-neutral-700"
           }`}
           style={{ width: BREAKDOWN_NODE_WIDTH, height: BREAKDOWN_NODE_HEIGHT }}
         >
-          <div className="h-[138px] bg-neutral-950">
+          <div className="h-[168px] shrink-0 bg-neutral-950">
             {sourceVideoSrc ? (
               <CapturableVideo
                 src={sourceVideoSrc}
@@ -456,6 +509,7 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
                 onClick={stopInteraction}
                 onLoadedMetadata={(event) => {
                   const mediaDuration = event.currentTarget.duration;
+                  setVideoLoadError(false);
                   setVideoMeta({
                     src: sourceVideoSrc,
                     duration: Number.isFinite(mediaDuration) && mediaDuration > 0 ? mediaDuration : 0,
@@ -463,6 +517,7 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
                     h: event.currentTarget.videoHeight,
                   });
                 }}
+                onError={() => setVideoLoadError(true)}
               />
             ) : (
               <div className="flex h-full flex-col items-center justify-center gap-2 text-neutral-500">
@@ -472,21 +527,40 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
             )}
           </div>
 
-          <div className="space-y-2 p-3">
-            <div className="flex items-center justify-between text-[11px] text-neutral-500 dark:text-neutral-400">
-              <span className="flex min-w-0 items-center gap-1.5" title={videoInput.count > 1 ? "连接了多个视频，仅使用第一个" : undefined}>
-                <Film className="h-3.5 w-3.5 shrink-0" />
-                {duration > 0 ? formatStoryboardTime(duration) : "等待视频"}
-                {videoInput.count > 1 ? ` · 使用第 1/${videoInput.count} 个` : ""}
+          <div className="flex min-h-0 flex-1 flex-col gap-3 p-3.5">
+            <div className="flex shrink-0 items-center justify-between gap-3 text-[11px] text-neutral-500 dark:text-neutral-400">
+              <span className="flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap" title={videoInput.count > 1 ? "连接了多个视频，使用最近连接的一个" : undefined}>
+                <Film className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
+                <span className="font-medium text-neutral-700 dark:text-neutral-200">
+                  {duration > 0 ? formatStoryboardTime(duration) : videoLoadError ? "视频读取失败" : "正在读取视频"}
+                </span>
+                <span className="text-neutral-300 dark:text-neutral-700">/</span>
+                <span>{dims.w && dims.h ? `${dims.w} × ${dims.h}` : "原始分辨率"}</span>
+                {videoInput.count > 1 ? <span>· 最近连接 / {videoInput.count}</span> : null}
               </span>
-              <span>{dims.w && dims.h ? `${dims.w} × ${dims.h}` : "原始分辨率"}</span>
+              <button
+                type="button"
+                onMouseDown={stopInteraction}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (analysisStatusRetryable) void refreshAnalysisModel();
+                }}
+                disabled={!analysisStatusRetryable}
+                title={analysisStatusRetryable
+                  ? "重新检测 AI 标注模型"
+                  : analysisModelConfidence === "chat-fallback"
+                    ? "模型目录未声明图片能力，将尝试分析；不支持时仍会保留抽取的帧"
+                    : analysisStatusLabel}
+                className="shrink-0 whitespace-nowrap text-[10px] text-neutral-400 disabled:cursor-default dark:text-neutral-500"
+              >
+                {analysisStatusLabel}
+              </button>
             </div>
-            <div className="border-t border-neutral-100 pt-1.5 text-[11px] text-neutral-500 dark:border-neutral-800 dark:text-neutral-400">
-              语义分析仅使用画面帧；配乐维度输出画面情绪建议
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-7 shrink-0 text-[11px] text-neutral-400 dark:text-neutral-500">分析</span>
-              <div className="flex min-w-0 flex-1 gap-0.5 rounded-lg bg-neutral-100 p-0.5 dark:bg-neutral-900" role="group" aria-label="分析维度">
+
+            <div className="shrink-0 space-y-2.5 rounded-xl border border-neutral-200/80 bg-neutral-50/80 p-2.5 dark:border-neutral-800 dark:bg-neutral-900/60">
+              <div className="flex items-center gap-2.5">
+                <span className="w-14 shrink-0 text-[11px] font-medium text-neutral-500 dark:text-neutral-400">分析维度</span>
+                <div className="flex min-w-0 flex-1 gap-0.5 rounded-lg bg-neutral-200/60 p-0.5 dark:bg-neutral-950" role="group" aria-label="分析维度">
                 {ANALYSIS_MODES.map((mode) => {
                   const active = analysisModes.includes(mode.value);
                   return (
@@ -498,19 +572,19 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
                       onMouseDown={stopInteraction}
                       onClick={(event) => { event.stopPropagation(); toggleAnalysisMode(mode.value); }}
                       disabled={analyzing}
-                      className={`flex-1 rounded-md px-2 py-1 text-[11px] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none dark:focus-visible:ring-neutral-600 ${active
-                        ? "bg-white font-medium text-neutral-900 dark:bg-neutral-700 dark:text-white"
+                      className={`flex-1 rounded-md px-2 py-1.5 text-[11px] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none dark:focus-visible:ring-neutral-600 ${active
+                        ? "bg-white font-medium text-neutral-900 shadow-sm dark:bg-neutral-700 dark:text-white"
                         : "text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-100"}`}
                     >
                       {mode.label}
                     </button>
                   );
                 })}
+                </div>
               </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-7 shrink-0 text-[11px] text-neutral-400 dark:text-neutral-500">密度</span>
-              <div className="flex min-w-0 flex-1 gap-1.5" role="group" aria-label="拉片密度">
+              <div className="flex items-center gap-2.5">
+                <span className="w-14 shrink-0 text-[11px] font-medium text-neutral-500 dark:text-neutral-400">抽帧数量</span>
+                <div className="grid min-w-0 flex-1 grid-cols-3 gap-1.5" role="group" aria-label="拉片密度">
                 {DENSITIES.map((density) => {
                   const active = frameCount === density.count;
                   return (
@@ -521,17 +595,24 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
                       onMouseDown={stopInteraction}
                       onClick={(event) => { event.stopPropagation(); patchBreakdownConfig({ frameCount: density.count }); }}
                       disabled={analyzing}
-                      className={`flex-1 rounded-lg border px-2 py-1 text-[11px] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none dark:focus-visible:ring-neutral-600 ${
+                      className={`rounded-lg border px-2 py-1.5 text-[11px] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none dark:focus-visible:ring-neutral-600 ${
                         active
                           ? "border-neutral-900 bg-neutral-900 font-medium text-white dark:border-white dark:bg-white dark:text-neutral-900"
                           : "border-neutral-200 text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
                       }`}
                     >
-                      {density.label} · {density.count} 帧
+                      <span className="font-medium">{density.count} 帧</span>
+                      <span className={`ml-1 ${active ? "text-white/65 dark:text-neutral-500" : "text-neutral-400"}`}>{density.label}</span>
                     </button>
                   );
                 })}
+                </div>
               </div>
+            </div>
+
+            <div className="flex shrink-0 items-center justify-between px-0.5 text-[10px] text-neutral-400 dark:text-neutral-500">
+              <span>均匀抽取，不改变源视频</span>
+              <span>每 {framesPerGroup} 帧自动成组</span>
             </div>
             <button
               type="button"
@@ -539,13 +620,12 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
               onClick={(event) => {
                 event.stopPropagation();
                 if (analyzing) cancelBreakdown();
-                else if (analysisModelStatus === "error") void refreshAnalysisModel();
                 else void startBreakdown();
               }}
               disabled={actionDisabled}
               title={actionTitle}
               aria-busy={analyzing}
-              className={`relative flex h-8 w-full items-center justify-center overflow-hidden rounded-lg text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none dark:focus-visible:ring-neutral-600 ${analyzing
+              className={`relative mt-auto flex h-10 w-full shrink-0 items-center justify-center overflow-hidden rounded-xl text-xs font-semibold transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 disabled:cursor-not-allowed disabled:opacity-45 motion-reduce:transition-none dark:focus-visible:ring-neutral-600 ${analyzing
                 ? "bg-neutral-700 text-white hover:bg-neutral-600 dark:bg-neutral-200 dark:text-neutral-900 dark:hover:bg-neutral-300"
                 : "bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"}`}
             >

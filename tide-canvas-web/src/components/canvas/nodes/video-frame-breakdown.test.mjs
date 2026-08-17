@@ -2,17 +2,24 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  BREAKDOWN_NODE_HEIGHT,
+  BREAKDOWN_NODE_WIDTH,
   buildStoryboardOutputs,
   buildStoryboardAnalysisPrompt,
   formatStoryboardTime,
+  isStoryboardBreakdownConfigNormalized,
+  normalizeStoryboardBreakdownConfig,
   parseStoryboardAnalysis,
   sampleStoryboardTimes,
   selectStoryboardAnalysisModel,
+  storyboardAnalysisModelConfidence,
+  storyboardAnalysisCoverageWarning,
 } from "./video-frame-breakdown.ts";
 
 const read = (relative) => readFileSync(new URL(relative, import.meta.url), "utf8");
 
 test("storyboard sampling uses evenly spaced representative frames", () => {
+  assert.deepEqual([BREAKDOWN_NODE_WIDTH, BREAKDOWN_NODE_HEIGHT], [380, 396]);
   assert.deepEqual(sampleStoryboardTimes(12, 4), [1.5, 4.5, 7.5, 10.5]);
   assert.deepEqual(sampleStoryboardTimes(0, 4), []);
   assert.equal(sampleStoryboardTimes(12, 100).length, 24);
@@ -20,6 +27,32 @@ test("storyboard sampling uses evenly spaced representative frames", () => {
   assert.equal(formatStoryboardTime(59.96), "01:00.0");
   assert.equal(formatStoryboardTime(119.99), "02:00.0");
   assert.equal(sampleStoryboardTimes(0.01, 20).length, 1);
+});
+
+test("legacy storyboard config is normalized before controls and run numbering use it", () => {
+  assert.deepEqual(normalizeStoryboardBreakdownConfig(undefined), {
+    frameCount: 12,
+    framesPerGroup: 4,
+    lastFrameCount: undefined,
+    runCount: 0,
+    analysisModes: ["storyboard", "motion"],
+  });
+  const normalized = normalizeStoryboardBreakdownConfig({
+    frameCount: "20",
+    framesPerGroup: 99,
+    lastFrameCount: -5,
+    runCount: "2",
+    analysisModes: ["music", "music", "invalid"],
+  });
+  assert.deepEqual(normalized, {
+    frameCount: 20,
+    framesPerGroup: 8,
+    lastFrameCount: undefined,
+    runCount: 2,
+    analysisModes: ["music"],
+  });
+  assert.equal(isStoryboardBreakdownConfigNormalized(normalized), true);
+  assert.equal(isStoryboardBreakdownConfigNormalized({ ...normalized, runCount: "2" }), false);
 });
 
 test("storyboard outputs compact image nodes in connected groups", () => {
@@ -51,6 +84,37 @@ test("storyboard outputs compact image nodes in connected groups", () => {
   assert.equal(result.connections[0].sourceId, "processor");
   assert.equal(result.nodes[1].x - result.nodes[0].x, 328);
   assert.ok(result.groups[1].title.startsWith("分镜组 02"));
+});
+
+test("the detailed 20-frame run creates five non-overlapping four-frame groups", () => {
+  let nodeSeq = 0;
+  let groupSeq = 0;
+  const result = buildStoryboardOutputs({
+    processor: { id: "processor", type: "video_breakdown", x: 0, y: 0, width: 380, height: 396, title: "逐帧拉片" },
+    sourceVideoId: "source",
+    frames: Array.from({ length: 20 }, (_, index) => ({
+      url: `https://cdn.example/frame-${index}.jpg`,
+      width: 1080,
+      height: 1920,
+      timeSec: index + 0.5,
+    })),
+    framesPerGroup: 4,
+    existingGroupCount: 0,
+    colors: ["#111111"],
+    makeNodeId: () => `frame-${++nodeSeq}`,
+    makeGroupId: () => `group-${++groupSeq}`,
+  });
+
+  assert.equal(result.nodes.length, 20);
+  assert.deepEqual(result.groups.map((group) => group.nodeIds.length), [4, 4, 4, 4, 4]);
+  assert.equal(new Set(result.nodes.map((node) => node.id)).size, 20);
+  for (let index = 1; index < result.groups.length; index += 1) {
+    const previousNodes = result.nodes.filter((node) => result.groups[index - 1].nodeIds.includes(node.id));
+    const currentNodes = result.nodes.filter((node) => result.groups[index].nodeIds.includes(node.id));
+    const previousBottom = Math.max(...previousNodes.map((node) => node.y + node.height));
+    const currentTop = Math.min(...currentNodes.map((node) => node.y));
+    assert.ok(currentTop > previousBottom);
+  }
 });
 
 test("repeated storyboard runs are placed below prior outputs and labeled", () => {
@@ -91,9 +155,11 @@ test("storyboard analysis prompt and parser keep frame indexes stable", () => {
   ] }), 2);
   assert.deepEqual(parsed.map((item) => item.index), [1, 2]);
   assert.deepEqual(parseStoryboardAnalysis("not-json", 2), []);
+  assert.equal(storyboardAnalysisCoverageWarning(parsed.length, 2), "");
+  assert.equal(storyboardAnalysisCoverageWarning(17, 20), "AI 标注仅完成 17/20 帧");
 });
 
-test("storyboard analysis only selects an explicitly vision-capable text model", () => {
+test("storyboard analysis prefers explicit vision and cautiously falls back to chat metadata", () => {
   const base = {
     id: "1",
     name: "model",
@@ -103,10 +169,14 @@ test("storyboard analysis only selects an explicitly vision-capable text model",
     pointCost: 1,
   };
   const textOnly = { ...base, modelId: "text-only", config: JSON.stringify({ capabilities: ["text"] }) };
+  const chatFallback = { ...base, id: "3", modelId: "chat", config: JSON.stringify({ capabilities: ["reasoning"], operations: ["chat"] }) };
   const vision = { ...base, id: "2", modelId: "vision", config: JSON.stringify({ inputModalities: ["text", "image"] }) };
-  assert.equal(selectStoryboardAnalysisModel([textOnly, vision])?.modelId, "vision");
+  assert.equal(selectStoryboardAnalysisModel([chatFallback, vision])?.modelId, "vision");
+  assert.equal(selectStoryboardAnalysisModel([textOnly, chatFallback])?.modelId, "chat");
   assert.equal(selectStoryboardAnalysisModel([textOnly]), undefined);
   assert.equal(selectStoryboardAnalysisModel([{ ...vision, supportedHandlers: ["assistant_chat"] }]), undefined);
+  assert.equal(storyboardAnalysisModelConfidence(vision), "vision");
+  assert.equal(storyboardAnalysisModelConfidence(chatFallback), "chat-fallback");
 });
 
 test("breakdown controls expose clear state and restrained progress feedback", () => {
@@ -119,7 +189,21 @@ test("breakdown controls expose clear state and restrained progress feedback", (
   assert.match(breakdownNode, /aria-busy=\{analyzing\}/);
   assert.match(breakdownNode, /aria-live="polite"/);
   assert.match(breakdownNode, /analysisModelStatus === "unavailable"/);
-  assert.match(breakdownNode, /模型检查失败 · 重试/);
+  assert.match(breakdownNode, /无视觉模型 · 重试/);
+  assert.match(breakdownNode, /尝试 AI 标注/);
+  assert.match(breakdownNode, /const actionDisabled = !sourceVideoSrc/);
+  assert.doesNotMatch(breakdownNode, /if \(analysisModelStatus !== "ready"\) \{/);
+  assert.doesNotMatch(breakdownNode, /if \(analysisModelStatus === "unavailable"\) \{\s*analysisWarning/);
+  assert.match(breakdownNode, /每次运行都重新确认一次模型/);
+  assert.match(breakdownNode, /active\(\) && analysisModelStatus !== "ready"\) void refreshAnalysisModel/);
+  assert.match(breakdownNode, /analyzing \|\| breakdownBusyRef\.current/);
+  assert.match(breakdownNode, /onError=\{\(\) => setVideoLoadError\(true\)\}/);
+  assert.match(breakdownNode, /视频读取失败，请检查源视频后重试/);
+  assert.match(breakdownNode, /flex min-h-0 flex-1 flex-col gap-3/);
+  assert.match(breakdownNode, /开始拉片"\} · \$\{frameCount\} 帧/);
+  assert.match(breakdownNode, /const source = sources\.at\(-1\)/);
+  assert.match(breakdownNode, /requestCanvasFocusPoint\(\{/);
+  assert.match(breakdownNode, /firstOutput\?\.id \?\? node\.id/);
   assert.match(breakdownNode, /const cancelBreakdown = useCallback/);
   assert.match(breakdownNode, /const registered = await aiApi\.registerCapturedFrame/);
   assert.match(breakdownNode, /analysisTaskIdRef\.current === taskId/);

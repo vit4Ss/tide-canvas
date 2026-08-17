@@ -2,11 +2,47 @@ package ai
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
 	"tidecanvas/internal/pkg/relaymedia"
 )
+
+func TestInputStringsAcceptsJSONAndServerNativeSlices(t *testing.T) {
+	tests := []struct {
+		name string
+		in   map[string]any
+		want []string
+	}{
+		{
+			name: "json decoded slice",
+			in:   map[string]any{"videoReferences": []any{" first.mp4 ", 42, "", "second.mp4"}},
+			want: []string{"first.mp4", "second.mp4"},
+		},
+		{
+			name: "clip reshoot native slice",
+			in:   map[string]any{"videoReferences": []string{" rendered-clip.mp4 "}},
+			want: []string{"rendered-clip.mp4"},
+		},
+		{
+			name: "empty primary falls back to alias",
+			in: map[string]any{
+				"videoReferences": []string{},
+				"video_urls":      []any{"legacy.mp4"},
+			},
+			want: []string{"legacy.mp4"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := inputStrings(tt.in, "videoReferences", "video_urls"); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("inputStrings() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
 
 // Suno 延长/翻唱的歌曲描述必须走「顶层 prompt」(实测 extras 内无效)。
 // audioParams 应据 task 与歌词/描述是否为空,正确决定顶层 Prompt。

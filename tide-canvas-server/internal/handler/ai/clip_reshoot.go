@@ -57,6 +57,13 @@ func decodeClipReshootSpec(raw any) (*clipReshootSpec, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A nil *clipReshootSpec stored in an interface is not equal to nil. The
+	// quote DTO passes exactly that shape when ordinary reference-video pricing
+	// has no reshoot selection; JSON encodes it as null, which must stay absent
+	// instead of becoming a zero-valued (and therefore invalid) reshoot spec.
+	if string(encoded) == "null" {
+		return nil, nil
+	}
 	var spec clipReshootSpec
 	if err := json.Unmarshal(encoded, &spec); err != nil {
 		return nil, err

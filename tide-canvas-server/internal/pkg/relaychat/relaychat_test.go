@@ -55,6 +55,26 @@ func TestNewDefaultsToTestRelay(t *testing.T) {
 	}
 }
 
+func TestNewUsesGenerousReasoningTimeouts(t *testing.T) {
+	c := New("https://relay.example", "test-key")
+	if c == nil {
+		t.Fatal("New returned nil with a key set")
+	}
+	if c.idleTimeout != 15*time.Minute {
+		t.Fatalf("idle timeout = %s, want 15m", c.idleTimeout)
+	}
+	transport, ok := c.hc.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport type = %T, want *http.Transport", c.hc.Transport)
+	}
+	if transport.ResponseHeaderTimeout != 15*time.Minute {
+		t.Fatalf("response header timeout = %s, want 15m", transport.ResponseHeaderTimeout)
+	}
+	if defaultStreamDeadline != 60*time.Minute {
+		t.Fatalf("default stream deadline = %s, want 60m", defaultStreamDeadline)
+	}
+}
+
 func testClient(t *testing.T, url string) *Client {
 	t.Helper()
 	c := New(url, "test-key")
@@ -83,7 +103,7 @@ func TestStreamAbortsWhenIdle(t *testing.T) {
 	srv := sseServer(t, 10, 10*time.Millisecond, 3)
 	defer srv.Close()
 
-	// 把阈值压到毫秒级，否则这条用例要跑满 90 秒。改的是本用例自己的 client
+	// 把阈值压到毫秒级，否则这条用例要跑满默认的 15 分钟。改的是本用例自己的 client
 	// 实例，不碰包级常量，避免与其它用例仍在运行的看门狗抢同一个变量。
 	cli := testClient(t, srv.URL)
 	cli.idleTimeout, cli.idleCheck = 300*time.Millisecond, 50*time.Millisecond
