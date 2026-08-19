@@ -49,6 +49,7 @@ import type {
 } from "./types";
 import { nextHistId, promptHue, refThumbsForRun, threeDAssetsFromMeta, tracksFromMeta } from "./utils";
 import { createSubmissionGate, type SubmissionGate } from "./submission-gate";
+import { studioReferenceIssue, uploadedFileUrls } from "./required-reference";
 import {
   isStudioTaskNewerOrEqual,
   parseStudioTimestamp,
@@ -865,6 +866,17 @@ export function useGeneration(p: GenerationParams) {
     // 普通单图生 3D 与 prompt 互斥；切换页签后保留在面板 state 里的旧提示词
     // 既不发送，也不写入本轮历史。
     const p = tool === "i2_3d" ? "" : prompt.trim();
+    // 引用类模式的素材校验优先于提示词，两者都为空时优先说明当前
+    // 模式必须上传什么；且只检查当前模型真正启用的槽位。
+    const referenceIssue = studioReferenceIssue(tool, activeSlotData, activeSlots.length);
+    if (referenceIssue) {
+      if (referenceIssue.severity === "error") toast.error(referenceIssue.message);
+      else toast.info(referenceIssue.message);
+      if (referenceIssue.markRequired) {
+        markRequiredField("#dropFiles");
+      }
+      return;
+    }
     // 音乐创作模式互斥（对齐上游 API）：灵感=只看描述;自定义=歌词必填、描述不发;
     // 延长/翻唱=原曲 clip 必选、歌词选填。旧版"风格需搭配歌词"歧义由模式结构消除。
     const musicCustom = isAudio && !isSfx && musicMode === "custom";
@@ -890,14 +902,8 @@ export function useGeneration(p: GenerationParams) {
       return;
     }
 
-    // 有参考素材仍在上传时先拦下:否则按「无 url」被当成没传,误报「请先上传参考图片」
-    if (Object.values(activeSlotData).some((arr) => (arr || []).some((f) => f.uploading))) {
-      toast.info("参考素材上传中，请稍候…");
-      return;
-    }
     // reference assets from the upload slots (real URLs from 本地上传 / 资产库).
-    const slotUrls = (key: string) =>
-      (slotData[key] || []).map((f) => f.url).filter((u): u is string => !!u);
+    const slotUrls = (key: string) => uploadedFileUrls(slotData[key] || []);
     const imageRefs = tool === "ref" && !supportsOmniReference(selectedStudio?.config, "image")
       ? []
       : tool === "i2v"
@@ -920,10 +926,6 @@ export function useGeneration(p: GenerationParams) {
     const audRefs = tool === "ref" && supportsOmniReference(selectedStudio?.config, "audio")
       ? slotUrls("audio")
       : [];
-    if (tool === "ref" && activeSlots.length === 0) {
-      toast.error("该模型未启用任何全能参考素材，请联系管理员");
-      return;
-    }
     const needsRef = activeSlots.length > 0;
     const hasAnyRef =
       imageRefs.length > 0 || !!firstFrame || !!lastFrame || vidRefs.length > 0 || audRefs.length > 0 || multiViewImages.length > 0;
@@ -935,13 +937,6 @@ export function useGeneration(p: GenerationParams) {
             ? "请至少上传一个视角图片"
             : "请先上传参考图片",
       );
-      markRequiredField("#dropFiles");
-      return;
-    }
-    // 首尾帧模式两帧都必填:只传其一时缺的那帧会被静默省略、上游必拒,
-    // 在这里就地拦下(画布视频节点缺尾帧是回退首帧,创作台按显式必填口径)。
-    if (tool === "flf" && (!firstFrame || !lastFrame)) {
-      toast.info(!firstFrame ? "首尾帧模式需要上传首帧 ✦" : "首尾帧模式需要上传尾帧 ✦");
       markRequiredField("#dropFiles");
       return;
     }
