@@ -116,6 +116,7 @@ export function ClipPicker({
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const pageRef = useRef(0);
+  const [loadedPage, setLoadedPage] = useState(0);
   const fetchSeqRef = useRef(0);
   // 检索:歌名客户端过滤。后端不支持按标题搜(歌名在 resultMeta JSON 里),
   // 所以输入关键字时把后续页在后台拉进来(见下方 effect),让检索覆盖全部历史。
@@ -131,6 +132,7 @@ export function ClipPicker({
     const { options: opts, hasMore: more } = await fetchClipOptionsPage(page);
     if (seq !== fetchSeqRef.current) return;
     pageRef.current = page;
+    setLoadedPage(page);
     setFetched((prev) => {
       const base = prev ?? [];
       return [...base, ...opts.filter((o) => !base.some((b) => b.clipId === o.clipId))];
@@ -148,10 +150,13 @@ export function ClipPicker({
     if (!open || !selfFetch) return;
     const seq = ++fetchSeqRef.current;
     pageRef.current = 0;
+    /* eslint-disable react-hooks/set-state-in-effect -- opening the picker starts a fresh paginated request and must discard every prior session-local filter/result. */
+    setLoadedPage(0);
     setFetched(null);
     setHasMore(false);
     setLoadingMore(false);
     setQuery("");
+    /* eslint-enable react-hooks/set-state-in-effect */
     void loadPage(1, seq);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, selfFetch]);
@@ -182,7 +187,7 @@ export function ClipPicker({
           )
         : list;
   // 检索覆盖不到的历史:有关键字且后端还有下一页且未到上限,后台继续拉
-  const searchExhausted = selfFetch && q !== "" && (!hasMore || pageRef.current >= SEARCH_PAGE_CAP);
+  const searchExhausted = selfFetch && q !== "" && (!hasMore || loadedPage >= SEARCH_PAGE_CAP);
 
   // 滚动到底自动加载(无关键字时);IntersectionObserver 命中列表底部哨兵即翻页
   useEffect(() => {

@@ -42,6 +42,7 @@ export default function WorkModal({ postId, onClose, onPrev, onNext }: WorkModal
   // fetch the detail whenever the target post changes. 翻页时保留上一件的
   // detail 以免整屏闪白 —— 加载新详情期间只叠加载指示。
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- postId is the request key: close clears stale detail, while navigation keeps the previous detail under a loading overlay. */
     if (!postId) {
       setDetail(null);
       return;
@@ -60,6 +61,7 @@ export default function WorkModal({ postId, onClose, onPrev, onNext }: WorkModal
     return () => {
       cancelled = true;
     };
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [postId]);
 
   if (!postId) return null;

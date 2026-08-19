@@ -417,9 +417,9 @@ function App() {
   const [authed, setAuthed] = uS(false);
   const [annoVisible, setAnnoVisible] = uS(() => { try { return !localStorage.getItem('scarecrowai_anno_closed'); } catch(e) { return true; } });
 
-  uE(() => { document.documentElement.dataset.theme = theme; }, [theme]);
-  uE(() => { document.documentElement.dataset.style = style; }, [style]);
-  uE(() => { document.documentElement.lang = lang === 'cn' ? 'zh' : 'en'; }, [lang]);
+  uE(() => { document.documentElement.setAttribute('data-theme', theme); }, [theme]);
+  uE(() => { document.documentElement.setAttribute('data-style', style); }, [style]);
+  uE(() => { document.documentElement.setAttribute('lang', lang === 'cn' ? 'zh' : 'en'); }, [lang]);
 
   const closeAnno = () => { setAnnoVisible(false); try { localStorage.setItem('scarecrowai_anno_closed','1'); } catch(e) {} };
   const openStudio = () => { setDetail(null); setPage('studio'); };

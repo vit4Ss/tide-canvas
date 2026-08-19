@@ -99,6 +99,7 @@ export default function ModelsPage() {
   // doesn't refetch on every keystroke. Public read → no session.
   useEffect(() => {
     let alive = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- filter changes immediately mark the current model result as stale while the debounced request starts.
     setLoading(true);
     const t = window.setTimeout(async () => {
       const res = await marketApi.list({

@@ -25,6 +25,7 @@ export default function WorkDetailPage() {
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- a route-id change must synchronously replace the previous request state with its loading state.
     setState("loading");
     communityApi.get(id).then((res) => {
       if (cancelled) return;

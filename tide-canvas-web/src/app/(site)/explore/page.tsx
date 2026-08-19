@@ -123,6 +123,7 @@ export default function ExplorePage() {
   }, [queryFor]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- filter changes intentionally start a replacement request and expose its loading state immediately.
     reload();
   }, [reload]);
 

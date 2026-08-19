@@ -5,6 +5,20 @@ import nextTs from "eslint-config-next/typescript";
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
+  {
+    files: ["design-ref/**/*.{js,jsx}"],
+    rules: {
+      // design-ref contains standalone browser prototypes. Their named globals
+      // and dormant reference components are intentionally consumed by HTML
+      // entrypoints rather than module imports, so production unused-symbol
+      // analysis does not apply to this directory.
+      "@typescript-eslint/no-unused-vars": "off",
+      "@typescript-eslint/no-unused-expressions": [
+        "warn",
+        { allowShortCircuit: true, allowTernary: true },
+      ],
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:

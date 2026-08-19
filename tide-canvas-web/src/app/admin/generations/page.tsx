@@ -200,6 +200,7 @@ function ResultBlock({ d }: { d: GenerationDetailVO }) {
           }
           return (
             <a key={key} href={url} target="_blank" rel="noreferrer">
+              {/* eslint-disable-next-line @next/next/no-img-element -- admin diagnostics must preview arbitrary provider URLs outside the Next image allowlist. */}
               <img src={url} alt={r.name ?? `生成结果 ${i + 1}`} loading="lazy" />
             </a>
           );
@@ -303,6 +304,7 @@ function InputAssetGroup({
                 rel="noreferrer"
                 title={itemLabel}
               >
+                {/* eslint-disable-next-line @next/next/no-img-element -- input diagnostics must preview arbitrary historical/provider URLs without optimizer rejection. */}
                 <img src={asset.url} alt={itemLabel} loading="lazy" />
                 <span>{itemLabel}</span>
               </a>

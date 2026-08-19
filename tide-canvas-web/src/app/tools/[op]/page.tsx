@@ -560,6 +560,7 @@ export default function ToolPage() {
   // 浏览器时长只用于即时预估；确认页随后向服务端申请权威报价。生成提交时
   // 服务端还会再次探测，报价不能被当作绕过最终计费检查的凭证。
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- quote inputs form an external request key; changing it must invalidate any accepted quote before another submission can use it. */
     if (!isVideoDef || !source || !videoModel || !activeResolutionPriced) {
       setServerQuote(null);
       setServerQuoteState("idle");
@@ -599,6 +600,7 @@ export default function ToolPage() {
     return () => {
       alive = false;
     };
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [activeResolution, activeResolutionPriced, activeVideoModelId, isVideoDef, phase, serverQuoteRevision, source, videoModel]);
 
   const run = useCallback(

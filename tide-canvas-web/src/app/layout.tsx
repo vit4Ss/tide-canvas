@@ -34,6 +34,7 @@ export default function RootLayout({
         {/* 流光设计字体：Sora / Space Grotesk / JetBrains Mono / Noto Sans SC（site/studio/admin 的 liuguang 样式按名引用） */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        {/* eslint-disable-next-line @next/next/no-page-custom-font -- this is the App Router root layout, so the stylesheet is already global across every route. */}
         <link
           href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Sora:wght@600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600;700;900&display=swap"
           rel="stylesheet"

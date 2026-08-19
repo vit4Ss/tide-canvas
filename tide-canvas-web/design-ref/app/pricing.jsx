@@ -62,8 +62,11 @@ const PRICING_FAQS_EN = [
 ];
 
 // ── countdown ──────────────────────────────────────────────────────────
-function useCountdown(target) {
-  const [rem, setRem] = pS(() => Math.max(0, target - Date.now()));
+const COUNTDOWN_DURATION_MS = 8 * 86400000 + 15 * 3600000 + 13 * 60000 + 40000;
+
+function useCountdown() {
+  const [target] = pS(() => Date.now() + COUNTDOWN_DURATION_MS);
+  const [rem, setRem] = pS(COUNTDOWN_DURATION_MS);
   pE(() => {
     const t = setInterval(() => setRem(Math.max(0, target - Date.now())), 1000);
     return () => clearInterval(t);
@@ -156,8 +159,7 @@ function PlanCard({ plan, annual, lang }) {
 function PricingPage({ lang, onCreate }) {
   const [annual, setAnnual] = pS(true);
   const [faqOpen, setFaqOpen] = pS(0);
-  const deadline = Date.now() + 8 * 86400000 + 15 * 3600000 + 13 * 60000 + 40000;
-  const { d, h, m, s } = useCountdown(deadline);
+  const { d, h, m, s } = useCountdown();
   const plans = lang === 'cn' ? PLANS_CN : PLANS_EN;
   const faqs = lang === 'cn' ? PRICING_FAQS_CN : PRICING_FAQS_EN;
   const featRows = lang === 'cn' ? PLAN_FEATS_CN : PLAN_FEATS_EN;

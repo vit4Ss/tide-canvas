@@ -42,6 +42,7 @@ export default function AuthorPage() {
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- an author-id change must synchronously replace the previous profile request state.
     setState("loading");
     communityApi.authorProfile(id).then((res) => {
       if (cancelled) return;
@@ -88,6 +89,7 @@ export default function AuthorPage() {
 
   useEffect(() => {
     worksReq.current++; // invalidate any in-flight page from the previous author
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- changing authors must clear the previous author's tiles before starting page one.
     setPosts([]);
     loadPage(1);
   }, [loadPage]);

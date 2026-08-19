@@ -19,6 +19,7 @@ function Masonry({ items, lang, onOpen, minCol = 248, gap = 16 }) {
     for (const it of items) { let mi = 0; for (let i = 1; i < cols; i++) if (hs[i] < hs[mi]) mi = i; cs[mi].push(it); hs[mi] += it.h + 0.32; }
     return cs;
   }, [items, cols]);
+  // eslint-disable-next-line react-hooks/refs -- createElement stores the ref for commit; it does not read ref.current during render.
   return el('div', { ref, style: { display: 'flex', gap, alignItems: 'flex-start' } },
     buckets.map((col, ci) => el('div', { key: ci, style: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap } },
       col.map((a) => el(ArtTile, { key: a.id, art: a, lang, onOpen })))));
