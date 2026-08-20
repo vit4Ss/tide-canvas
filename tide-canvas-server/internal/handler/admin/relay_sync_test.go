@@ -80,10 +80,38 @@ func TestBuildStudioConfigPreservesComplete3DParamsSchema(t *testing.T) {
 	}
 }
 
+func TestBuildStudioConfigSeedsAdminDurationsForNewModel(t *testing.T) {
+	var relayModel RelayModel
+	if err := json.Unmarshal([]byte(`{
+		"id":"seedance-2-vip",
+		"name":"Seedance 2.0 VIP",
+		"modality":"video",
+		"params_schema":{"duration":["5s","10s"]}
+	}`), &relayModel); err != nil {
+		t.Fatalf("unmarshal relay model: %v", err)
+	}
+
+	var cfg struct {
+		Durations    []string       `json:"durations"`
+		ParamsSchema map[string]any `json:"paramsSchema"`
+	}
+	if err := json.Unmarshal([]byte(buildStudioConfig(relayModel)), &cfg); err != nil {
+		t.Fatalf("unmarshal studio config: %v", err)
+	}
+	if len(cfg.Durations) != 2 || cfg.Durations[0] != "5s" || cfg.Durations[1] != "10s" {
+		t.Fatalf("durations = %v, want relay seed [5s 10s]", cfg.Durations)
+	}
+	paramsDurations, ok := cfg.ParamsSchema["duration"].([]any)
+	if !ok || len(paramsDurations) != 2 || paramsDurations[0] != "5s" || paramsDurations[1] != "10s" {
+		t.Fatalf("paramsSchema.duration = %v, want preserved raw relay metadata", cfg.ParamsSchema["duration"])
+	}
+}
+
 func TestMergeRelayConfigRefreshesMetadataAndPreservesAdminSettings(t *testing.T) {
 	existing := `{
 		"icon":"cube",
 		"modes":["manual-mode"],
+		"durations":["8s"],
 		"futureLocalSetting":true,
 		"capabilities":["stale"],
 		"operations":["stale"],
@@ -94,6 +122,7 @@ func TestMergeRelayConfigRefreshesMetadataAndPreservesAdminSettings(t *testing.T
 	fresh := `{
 		"icon":"",
 		"modes":["t2_3d"],
+		"durations":["5s","10s"],
 		"capabilities":["text-to-3d","PBR"],
 		"operations":["generation"],
 		"priceModifiers":{"enable_pbr":2},
@@ -111,6 +140,10 @@ func TestMergeRelayConfigRefreshesMetadataAndPreservesAdminSettings(t *testing.T
 	modes, _ := got["modes"].([]any)
 	if len(modes) != 1 || modes[0] != "manual-mode" {
 		t.Fatalf("modes = %v, want local manual-mode", modes)
+	}
+	durations, _ := got["durations"].([]any)
+	if len(durations) != 1 || durations[0] != "8s" {
+		t.Fatalf("durations = %v, want preserved admin duration 8s", durations)
 	}
 	operations, _ := got["operations"].([]any)
 	if len(operations) != 1 || operations[0] != "generation" {

@@ -221,7 +221,9 @@ func SyncRelayModels(db *gorm.DB, baseURL, key string, newStatus int, authorID i
 
 // relayOwnedConfigFields are catalog metadata, not admin form settings. They
 // must follow the relay on every sync; all other existing config keys are kept
-// so local display/generation customizations survive.
+// so local display/generation customizations survive. In particular, durations
+// is intentionally absent: paramsSchema.duration seeds it only in
+// buildStudioConfig for a brand-new model and can never overwrite it later.
 var relayOwnedConfigFields = []string{
 	"capabilities",
 	"operations",
@@ -257,9 +259,10 @@ func mergeRelayConfig(existing, fresh string) string {
 }
 
 // buildStudioConfig maps a relay model's params_schema into the GUI form's config
-// shape (the same JSON the admin 配置 form reads/writes). Fields the relay does
-// not provide (provider / icon / costUsd / estSeconds / batch sizes / grid output
-// / price matrix) get sensible defaults for the admin to refine.
+// shape (the same JSON the admin 配置 form reads/writes). It runs for new rows;
+// duration is copied into the admin-owned top-level durations field only here.
+// Fields the relay does not provide (provider / icon / costUsd / estSeconds /
+// batch sizes / grid output / price matrix) get sensible defaults to refine.
 func buildStudioConfig(m RelayModel) string {
 	resolutions := m.ParamsSchema.Resolution
 	if len(resolutions) == 0 {

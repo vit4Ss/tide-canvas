@@ -977,6 +977,11 @@ export function useGeneration(p: GenerationParams) {
     setBusy(true);
 
     const isVid = TOOLS[tool].mode === "t2v";
+    // History restore and skill defaults can write a stale duration after the
+    // model-config effect has already run. Treat the current catalog options as
+    // authoritative again at submission time so only an admin-configured value
+    // reaches the API.
+    const generationDur = durOpts.includes(dur) ? dur : durOpts[0] ?? "";
     // video/audio tools always produce a single result; only image batches honor
     // 生成数量 (the count slider is image-only, but `count` persists across type
     // switches — without this a leftover count>1 would spawn N duplicate cells).
@@ -990,7 +995,7 @@ export function useGeneration(p: GenerationParams) {
       : is3D
         ? `${enablePbr ? "PBR" : "标准材质"} · ${faceCount.toLocaleString()} 面 · ${resultFormat || "OBJ + GLB"}`
         : isVid
-          ? `${r} · ${res} · ${dur}`
+          ? `${r} · ${res} · ${generationDur}`
           : `${r} · ${imgRes}`;
     const hues: MeshHues[] = Array.from(
       { length: n },
@@ -1005,7 +1010,7 @@ export function useGeneration(p: GenerationParams) {
     // snapshot the exact settings of this run for 重新编辑 / 再次生成.
     lastRunRef.current = {
       prompt: p, model: mdl, ...(selectedStudio?.id ? { modelId: selectedStudio.id } : {}),
-      tool, curType, ratio: r, imgRes, res, dur, quality, count: n,
+      tool, curType, ratio: r, imgRes, res, dur: generationDur, quality, count: n,
       ...(presetSkill ? { skill: { id: presetSkill.id, title: presetSkill.title } } : {}),
       imageRefs, firstFrame, lastFrame, videoRefs: vidRefs, audioRefs: audRefs,
       ...(is3D
@@ -1133,7 +1138,7 @@ export function useGeneration(p: GenerationParams) {
           ...(isVid
             ? {
                 ...(resOpts.length ? { resolution: res } : {}),
-                ...(durOpts.length ? { duration: dur } : {}),
+                ...(generationDur ? { duration: generationDur } : {}),
               }
             : {
                 ...(resOpts.length ? { clarity: imgRes, resolution: imgRes } : {}),

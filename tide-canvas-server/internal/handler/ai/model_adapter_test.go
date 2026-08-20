@@ -83,21 +83,30 @@ func TestMarketToAiModelPublishesDerivedHandlers(t *testing.T) {
 	}
 }
 
-func TestModelVideoDurationAllowedUsesRelaySchema(t *testing.T) {
-	m := &model.AiModel{Config: `{"durations":["9s"],"paramsSchema":{"duration":["15s"]}}`}
+func TestModelVideoDurationAllowedUsesOnlyAdminConfig(t *testing.T) {
+	m := &model.AiModel{Config: `{
+		"durations":["4s","5s","6s","7s","8s","9s","10s","11s","12s","13s","14s","15s"],
+		"paramsSchema":{"duration":["5s","10s"]}
+	}`}
 
-	requested, configured, allowed := modelVideoDurationAllowed(m, "text_to_video", json.RawMessage(`{"duration":15}`))
-	if requested != 15 || !configured || !allowed {
-		t.Fatalf("15 second support = (%v, %v, %v), want (15, true, true)", requested, configured, allowed)
+	requested, configured, allowed := modelVideoDurationAllowed(m, "text_to_video", json.RawMessage(`{"duration":8}`))
+	if requested != 8 || !configured || !allowed {
+		t.Fatalf("8 second admin support = (%v, %v, %v), want (8, true, true)", requested, configured, allowed)
 	}
-	requested, configured, allowed = modelVideoDurationAllowed(m, "text_to_video", json.RawMessage(`{"duration":9}`))
-	if requested != 9 || !configured || allowed {
-		t.Fatalf("9 second support = (%v, %v, %v), want (9, true, false)", requested, configured, allowed)
+	requested, configured, allowed = modelVideoDurationAllowed(m, "text_to_video", json.RawMessage(`{"duration":16}`))
+	if requested != 16 || !configured || allowed {
+		t.Fatalf("16 second admin support = (%v, %v, %v), want (16, true, false)", requested, configured, allowed)
 	}
 
-	rangeSchema := &model.AiModel{Config: `{"paramsSchema":{"duration":["1-15"]}}`}
-	requested, configured, allowed = modelVideoDurationAllowed(rangeSchema, "text_to_video", json.RawMessage(`{"duration":9}`))
-	if requested != 9 || configured || !allowed {
-		t.Fatalf("range schema support = (%v, %v, %v), want (9, false, true)", requested, configured, allowed)
+	legacyNumeric := &model.AiModel{Config: `{"durations":[8,"10s"]}`}
+	requested, configured, allowed = modelVideoDurationAllowed(legacyNumeric, "text_to_video", json.RawMessage(`{"duration":"8s"}`))
+	if requested != 8 || !configured || !allowed {
+		t.Fatalf("numeric admin duration = (%v, %v, %v), want (8, true, true)", requested, configured, allowed)
+	}
+
+	relayOnly := &model.AiModel{Config: `{"paramsSchema":{"duration":["8s"]}}`}
+	requested, configured, allowed = modelVideoDurationAllowed(relayOnly, "text_to_video", json.RawMessage(`{"duration":8}`))
+	if requested != 8 || configured || !allowed {
+		t.Fatalf("relay-only duration = (%v, %v, %v), want (8, false, true)", requested, configured, allowed)
 	}
 }

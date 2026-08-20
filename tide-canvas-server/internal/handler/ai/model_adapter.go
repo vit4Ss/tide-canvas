@@ -177,18 +177,11 @@ func modelVideoDurationAllowed(m *model.AiModel, handler string, input json.RawM
 		return requested, false, true
 	}
 
-	// Prefer the relay-owned schema so a resync immediately follows upstream
-	// routing changes even when the editable top-level catalog field is stale.
-	var rawDurations []string
-	if params, ok := cfg["paramsSchema"].(map[string]any); ok {
-		rawDurations = configStrings(params["duration"])
-		if len(rawDurations) == 0 {
-			rawDurations = configStrings(params["durations"])
-		}
-	}
-	if len(rawDurations) == 0 {
-		rawDurations = configStrings(cfg["durations"])
-	}
+	// Generation uses only the admin-maintained catalog field. Relay
+	// paramsSchema.duration is an import seed for a brand-new model (see
+	// buildStudioConfig); after creation, the admin's explicit selection is the
+	// sole source of truth and later relay syncs must not override it.
+	rawDurations := configDurationValues(cfg["durations"])
 	if len(rawDurations) == 0 {
 		return requested, false, true
 	}
@@ -208,6 +201,25 @@ func modelVideoDurationAllowed(m *model.AiModel, handler string, input json.RawM
 		return requested, false, true
 	}
 	return requested, true, false
+}
+
+// configDurationValues preserves numeric entries from older/admin-authored
+// configs. configStrings intentionally drops non-strings because it is also
+// used for handler metadata, but durationSeconds accepts both JSON numbers and
+// strings such as "8s".
+func configDurationValues(value any) []any {
+	if values, ok := value.([]any); ok {
+		return values
+	}
+	stringsOnly := configStrings(value)
+	if len(stringsOnly) == 0 {
+		return nil
+	}
+	values := make([]any, len(stringsOnly))
+	for i, item := range stringsOnly {
+		values[i] = item
+	}
+	return values
 }
 
 // translateModelConfig returns (config, icon). The market config object uses the
