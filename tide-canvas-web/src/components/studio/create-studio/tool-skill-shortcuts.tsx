@@ -1,8 +1,8 @@
-import { ChevronRight } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { skillToolIcon } from "@/components/skill/skill-tool-icon";
 import type { SkillVO } from "@/types/skill";
 
-const MAX_VISIBLE_TOOLS = 8;
+const MAX_VISIBLE_TOOLS = 3;
 
 export function ToolSkillShortcuts({
   skills,
@@ -21,30 +21,21 @@ export function ToolSkillShortcuts({
 
   return (
     <section className="ws-tool-shortcuts" aria-labelledby="ws-tool-shortcuts-title">
-      <div className="ws-tool-shortcuts-head">
-        <div>
-          <strong id="ws-tool-shortcuts-title">创作与分析</strong>
-          <span>生成文件或分析内容</span>
-        </div>
-        <button type="button" className="ws-tool-shortcuts-all" onClick={onOpenAll}>
-          全部工具 <ChevronRight aria-hidden />
-        </button>
-      </div>
+      <div className="ws-tool-shortcuts-row">
+        <h3 id="ws-tool-shortcuts-title" className="ws-tool-shortcuts-label">为你推荐</h3>
 
-      {skills === null && !failed ? (
-        <div className="ws-tool-shortcuts-grid" role="status" aria-label="正在加载快捷工具">
-          {Array.from({ length: 8 }, (_, index) => (
-            <span key={index} className="ws-tool-shortcut-skeleton" aria-hidden />
-          ))}
-        </div>
-      ) : failed ? (
-        <div className="ws-tool-shortcuts-state">
-          <span>快捷工具暂未加载</span>
-          <button type="button" onClick={onRetry}>重试</button>
-        </div>
-      ) : visibleSkills.length ? (
-        <div className="ws-tool-shortcuts-grid">
-          {visibleSkills.map((tool) => {
+        {skills === null && !failed ? (
+          <div className="ws-tool-shortcuts-loading" role="status" aria-label="正在加载快捷工具">
+            {Array.from({ length: MAX_VISIBLE_TOOLS }, (_, index) => (
+              <span key={index} className="ws-tool-shortcut-skeleton" aria-hidden />
+            ))}
+          </div>
+        ) : failed ? (
+          <button type="button" className="ws-tool-shortcuts-state" onClick={onRetry}>
+            加载失败，重试
+          </button>
+        ) : visibleSkills.length ? (
+          visibleSkills.map((tool) => {
             const ToolIcon = skillToolIcon(tool.title);
             return (
               <button
@@ -58,11 +49,15 @@ export function ToolSkillShortcuts({
                 <span>{tool.title}</span>
               </button>
             );
-          })}
-        </div>
-      ) : (
-        <div className="ws-tool-shortcuts-state"><span>暂无已启用的快捷工具</span></div>
-      )}
+          })
+        ) : (
+          <span className="ws-tool-shortcuts-empty">暂无快捷工具</span>
+        )}
+
+        <button type="button" className="ws-tool-shortcuts-all" onClick={onOpenAll}>
+          更多技能 <ChevronDown aria-hidden />
+        </button>
+      </div>
     </section>
   );
 }

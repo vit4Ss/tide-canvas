@@ -394,29 +394,27 @@
 .ws-pclear{margin-left:auto; height:30px; padding:0 11px; border-radius:var(--pill); font-size:12px; color:var(--text-faint); transition:color .15s;}
 .ws-pclear:hover{color:var(--text-dim);}
 
-/* 提示词下方的技能工具快捷区：七个内置能力保持一屏可见，不与主生成按钮争夺视觉焦点。 */
+/* 提示词下方的技能工具快捷区：参考输入框快捷建议，采用轻量横向胶囊而非卡片宫格。 */
 .ws-tool-shortcuts{margin-top:16px;}
-.ws-tool-shortcuts-head{display:flex; align-items:flex-end; justify-content:space-between; gap:12px; margin-bottom:9px;}
-.ws-tool-shortcuts-head > div{display:flex; min-width:0; align-items:baseline; gap:7px;}
-.ws-tool-shortcuts-head strong{font-size:12.5px; line-height:1.4; font-weight:700; color:var(--text-dim);}
-.ws-tool-shortcuts-head span{font-size:11px; color:var(--text-faint); white-space:nowrap;}
-.ws-tool-shortcuts-all{display:inline-flex; flex:none; align-items:center; gap:2px; padding:2px 0; color:var(--text-faint); font-size:11px; transition:color .15s var(--ease);}
-.ws-tool-shortcuts-all:hover{color:var(--text);}
-.ws-tool-shortcuts-all:focus-visible{outline:2px solid var(--accent); outline-offset:3px; border-radius:6px;}
+.ws-tool-shortcuts-row{display:flex; flex-wrap:wrap; align-items:center; gap:8px;}
+.ws-tool-shortcuts-label{display:inline-flex; flex:none; align-items:center; height:34px; margin:0; padding:0 14px; border-radius:var(--pill);
+  color:var(--surface); background:var(--text); font-size:12px; line-height:1; font-weight:700; white-space:nowrap;}
+.ws-tool-shortcut,.ws-tool-shortcuts-all,.ws-tool-shortcuts-state{display:inline-flex; flex:none; align-items:center; justify-content:center; height:34px; border:1px solid var(--border); border-radius:var(--pill);
+  color:var(--text-dim); background:var(--surface); font-size:12px; line-height:1; white-space:nowrap;
+  transition:color .15s var(--ease), border-color .15s var(--ease), background .15s var(--ease);}
+.ws-tool-shortcut{max-width:148px; gap:7px; padding:0 13px;}
+.ws-tool-shortcut:hover,.ws-tool-shortcuts-all:hover,.ws-tool-shortcuts-state:hover{color:var(--text); border-color:var(--border-strong); background:var(--panel);}
+.ws-tool-shortcut:focus-visible,.ws-tool-shortcuts-all:focus-visible,.ws-tool-shortcuts-state:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+.ws-tool-shortcut svg{width:15px; height:15px; flex:none; stroke-width:1.7;}
+.ws-tool-shortcut span{min-width:0; overflow:hidden; text-overflow:ellipsis;}
+.ws-tool-shortcuts-all{gap:4px; padding:0 12px;}
 .ws-tool-shortcuts-all svg{width:13px; height:13px; stroke-width:1.8;}
-.ws-tool-shortcuts-grid{display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px;}
-.ws-tool-shortcut,.ws-tool-shortcut-skeleton{min-width:0; min-height:64px; border:1px solid var(--border); border-radius:10px; background:var(--surface-2);}
-.ws-tool-shortcut{display:flex; flex-direction:column; align-items:center; justify-content:center; gap:7px; padding:8px 4px 7px; color:var(--text-dim); text-align:center; transition:color .15s var(--ease), border-color .15s var(--ease), background .15s var(--ease), transform .15s var(--ease);}
-.ws-tool-shortcut:hover{color:var(--text); border-color:var(--border-strong); background:var(--panel); transform:translateY(-1px);}
-.ws-tool-shortcut:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
-.ws-tool-shortcut svg{width:17px; height:17px; flex:none; stroke-width:1.7;}
-.ws-tool-shortcut span{display:-webkit-box; width:100%; overflow:hidden; -webkit-box-orient:vertical; -webkit-line-clamp:2; font-size:11px; line-height:1.25;}
-.ws-tool-shortcut-skeleton{display:block; opacity:.58; animation:ws-tool-shortcut-pulse 1.2s ease-in-out infinite alternate;}
+.ws-tool-shortcuts-loading{display:contents;}
+.ws-tool-shortcut-skeleton{display:block; flex:none; width:88px; height:34px; border:1px solid var(--border); border-radius:var(--pill); background:var(--surface-2); opacity:.58; animation:ws-tool-shortcut-pulse 1.2s ease-in-out infinite alternate;}
 @keyframes ws-tool-shortcut-pulse{to{opacity:.9;}}
 @media(prefers-reduced-motion:reduce){.ws-tool-shortcut-skeleton{animation:none;}}
-.ws-tool-shortcuts-state{min-height:64px; display:flex; align-items:center; justify-content:center; gap:8px; border:1px dashed var(--border); border-radius:10px; color:var(--text-faint); font-size:11.5px;}
-.ws-tool-shortcuts-state button{padding:4px 7px; border-radius:6px; color:var(--text-dim); background:var(--surface-2); border:1px solid var(--border);}
-.ws-tool-shortcuts-state button:hover{color:var(--text); border-color:var(--border-strong);}
+.ws-tool-shortcuts-state{padding:0 12px; color:var(--text-faint); border-style:dashed;}
+.ws-tool-shortcuts-empty{display:inline-flex; align-items:center; height:34px; color:var(--text-faint); font-size:12px; white-space:nowrap;}
 
 /* ── @ 引用（创作台 / 生成页共用）：内联 pill + 光标处候选菜单 ────────────
    编辑器是 contentEditable div：页面把各自的字体/内边距 class 传给它，

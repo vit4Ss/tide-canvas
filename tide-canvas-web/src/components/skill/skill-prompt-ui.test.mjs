@@ -46,5 +46,8 @@ test("生成面板在提示词框下方展示技能工具并复用既有运行�
   assert.match(studio, /onPickTool=\{pickSkill\}/);
   assert.match(studio, /skills=\{studioToolSkills \?\? \(toolSkill \? \[toolSkill\] : \[\]\)\}/);
   assert.match(studioToolShortcuts, /onClick=\{\(\) => onPick\(tool\)\}/);
-  assert.match(studioStyles, /\.ws-tool-shortcuts-grid\{[^}]*grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/);
+  assert.match(studioToolShortcuts, /为你推荐/);
+  assert.match(studioToolShortcuts, /更多技能/);
+  assert.match(studioStyles, /\.ws-tool-shortcuts-row\{[^}]*display:flex;[^}]*flex-wrap:wrap/);
+  assert.match(studioStyles, /\.ws-tool-shortcuts-label\{[^}]*border-radius:var\(--pill\)/);
 });
