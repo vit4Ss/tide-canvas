@@ -15,6 +15,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, Loader2, Search, Sparkles, X } from "lucide-react";
 import { skillApi } from "@/lib/skill-api";
+import { skillCoverUrl } from "@/components/skill/skill-cover";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
 import {
   SKILL_CATEGORIES,
@@ -318,6 +319,7 @@ export function SkillPicker({ open, onClose, onPick, outputType, currentId, kind
               {visibleRows.map((s) => {
                 const selected = currentId === s.id;
                 const kind = skillKindOf(s);
+                const coverUrl = skillCoverUrl(s);
                 const outputLabel = skillOutputTypesOf(s)
                   .map((type) => SKILL_OUTPUT_LABEL[type] ?? type)
                   .join(" / ");
@@ -344,10 +346,10 @@ export function SkillPicker({ open, onClose, onPick, outputType, currentId, kind
                   >
                     {/* 无封面时整块不渲染:一排空灰盒比没有图更碍眼,让文字占满卡片。
                         模态角标随之落到底部信息行,信息不丢。 */}
-                    {s.coverUrl && (
+                    {coverUrl && (
                       <span className={`relative h-[92px] w-[132px] shrink-0 overflow-hidden rounded-lg max-[360px]:h-[76px] max-[360px]:w-[104px] ${dark ? "bg-neutral-800" : "bg-muted"}`}>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={s.coverUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+                        <img src={coverUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
                         <span className="absolute right-1.5 top-1.5 rounded bg-black/60 px-1 text-[10px] leading-4 text-white/90 backdrop-blur-sm">
                           {outputLabel}
                         </span>
@@ -365,7 +367,7 @@ export function SkillPicker({ open, onClose, onPick, outputType, currentId, kind
                         </span>
                       )}
                       <span className={`mt-auto flex items-center gap-1.5 pt-2 text-[11px] ${dark ? "text-neutral-400" : "text-muted-foreground"}`}>
-                        {!s.coverUrl && (
+                        {!coverUrl && (
                           <>
                             <span>{outputLabel}</span>
                             <span>·</span>

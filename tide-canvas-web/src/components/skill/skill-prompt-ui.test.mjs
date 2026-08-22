@@ -8,6 +8,8 @@ const studio = read("../studio/create-studio.tsx");
 const studioPrompt = read("../studio/create-studio/prompt-section.tsx");
 const studioToolShortcuts = read("../studio/create-studio/tool-skill-shortcuts.tsx");
 const studioStyles = read("../../styles/liuguang/studio.css");
+const skillPicker = read("./skill-picker.tsx");
+const skillCover = read("./skill-cover.ts");
 const chatPage = read("../../app/(studio)/chat/page.tsx");
 const chatComposer = read("../../app/(studio)/chat/_components/composer.tsx");
 const chatConfig = read("../../app/(studio)/chat/_hooks/use-composer-config.ts");
@@ -66,4 +68,13 @@ test("对话输入框下方的技能工具直接附着输入框并从当前会�
   assert.match(chatSend, /skillRunApi\.createIdempotent\(\{[\s\S]*?entryPoint: "studio"[\s\S]*?conversationId: id/);
   assert.match(chatSend, /message\.skillRunId === started\.data!\.id/);
   assert.match(chatConfig, /toolSkill[\s\S]*?"x-asset-types"[\s\S]*?accept: acceptFor\(kinds\)/);
+});
+
+test("内置技能工具在后台未配置封面时使用项目位图", () => {
+  assert.match(skillPicker, /const coverUrl = skillCoverUrl\(s\)/);
+  assert.match(skillPicker, /<img src=\{coverUrl\}/);
+  for (const name of ["tool-pptx.webp", "tool-xlsx.webp", "tool-docx.webp", "tool-markdown.webp", "tool-video-analysis.webp", "tool-audio-analysis.webp", "tool-web-analysis.webp"]) {
+    assert.match(skillCover, new RegExp(name.replace(".", "\\.")));
+  }
+  assert.match(skillCover, /if \(configured\) return configured/);
 });
