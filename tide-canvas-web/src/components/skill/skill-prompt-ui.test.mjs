@@ -15,6 +15,8 @@ const chatComposer = read("../../app/(studio)/chat/_components/composer.tsx");
 const chatConfig = read("../../app/(studio)/chat/_hooks/use-composer-config.ts");
 const chatSend = read("../../app/(studio)/chat/_hooks/use-send-message.ts");
 const chatApi = read("../../lib/chat-api.ts");
+const chatBubble = read("../../app/(studio)/chat/_components/message-bubble.tsx");
+const runPanel = read("./skill-run-panel.tsx");
 const quickStart = read("../canvas/canvas-quick-start.tsx");
 const assistant = read("../canvas/canvas-assistant-panel.tsx");
 const chipStyles = read("./skill-prompt-chip.module.css");
@@ -83,6 +85,7 @@ test("内置技能工具在后台未配置封面时使用项目位图", () => {
 test("办公技能保留参考文件与联网并把两者传入执行链路", () => {
   assert.match(chatComposer, /\{webSearchAvail && \(/);
   assert.match(chatConfig, /kinds: \["image", "file"\]/);
+  assert.match(chatConfig, /max: Math\.min\(cfgMax, 8\)/);
   assert.match(chatConfig, /Math\.min\(mCfg\.maxFileSizeMB[\s\S]*?: 15, 15\)/);
   assert.match(chatConfig, /image\/\*,\.pdf,\.doc,\.docx,\.xls,\.xlsx,\.csv,\.txt,\.md/);
   assert.match(chatSend, /\(\["image", "file"\] as RefItem\["kind"\]\[\]\)/);
@@ -91,4 +94,15 @@ test("办公技能保留参考文件与联网并把两者传入执行链路", ()
   assert.match(chatSend, /selModel\?\.modelKey \|\| selModel\?\.id/);
   assert.match(chatSend, /webSearch: payload\.webSearch/);
   assert.match(chatApi, /\{ webSearch: true \}/);
+});
+
+test("聊天技能结果隐藏中间 JSON 并突出最终可下载文件", () => {
+  assert.match(chatBubble, /function presentableSkillRun/);
+  assert.match(chatBubble, /artifact\.role !== "intermediate"/);
+  assert.match(chatBubble, /run=\{presentableSkillRun\(run\)\}/);
+  assert.match(chatBubble, /artifact\.type === "file" \? "下载"/);
+  assert.match(chatBubble, /finalFiles\.length > 0/);
+  assert.match(chatBubble, /className="chat-skill-files"/);
+  assert.match(runPanel, /<FileDown aria-hidden/);
+  assert.match(runPanel, /terminal \? STATUS_LABEL\[run\.status\]/);
 });

@@ -2,6 +2,7 @@ package skill
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -68,5 +69,23 @@ func TestPublicInputSchemaKeepsReservedRequirements(t *testing.T) {
 	required, _ := schema["required"].([]any)
 	if len(required) != 3 {
 		t.Fatalf("reserved requirements were removed: %#v", required)
+	}
+}
+
+func TestPPTSeedUsesCommercialNarrativeSchemaV2(t *testing.T) {
+	if baselineToolVersion("tool-pptx") != 2 {
+		t.Fatal("PPT seed must upgrade existing official v1 snapshots")
+	}
+	var ppt seedToolSkill
+	for _, definition := range baselineToolSkills {
+		if definition.key == "tool-pptx" {
+			ppt = definition
+			break
+		}
+	}
+	for _, required := range []string{"imageIndex", "metrics", "comparison", "timeline", "closing", "参考图"} {
+		if !strings.Contains(ppt.manifest, required) {
+			t.Fatalf("PPT commercial prompt is missing %q", required)
+		}
 	}
 }

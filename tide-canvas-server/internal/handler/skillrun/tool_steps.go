@@ -6,6 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"net/http"
 	"net/url"
@@ -272,7 +276,11 @@ func (s *service) executeRenderToolStep(
 	prompt string,
 	registerWork bool,
 ) (*stepResult, error) {
-	stepInput := map[string]any{"handler": spec.Handler, "prompt": prompt, "parameters": input.Parameters}
+	presentationImages := []toolartifact.PresentationImage{}
+	if spec.Handler == "render_pptx" {
+		presentationImages = s.loadPresentationImages(ctx, input.Assets)
+	}
+	stepInput := map[string]any{"handler": spec.Handler, "prompt": prompt, "parameters": input.Parameters, "imageCount": len(presentationImages)}
 	step, done, err := s.ensureStep(run, spec.Key, sequence, "tool", stepInput, registerWork)
 	if err != nil {
 		return nil, err
@@ -280,7 +288,7 @@ func (s *service) executeRenderToolStep(
 	if done {
 		return s.completedStepResult(step)
 	}
-	file, err := renderToolFile(spec.Handler, prompt, input.Parameters)
+	file, err := renderToolFile(spec.Handler, prompt, input.Parameters, presentationImages...)
 	if err != nil {
 		s.failStep(run, step.ID, err.Error())
 		if resetErr := s.invalidatePriorToolInputs(run, sequence); resetErr != nil {
@@ -415,7 +423,7 @@ func (s *service) invalidatePriorToolInputs(run *model.SkillRun, sequence int) e
 	})
 }
 
-func renderToolFile(handler, raw string, parameters map[string]any) (renderedToolFile, error) {
+func renderToolFile(handler, raw string, parameters map[string]any, presentationImages ...toolartifact.PresentationImage) (renderedToolFile, error) {
 	raw = stripToolJSONFence(raw)
 	if len([]byte(raw)) > maxToolSource {
 		return renderedToolFile{}, errors.New("待渲染内容超过 8MB")
@@ -430,6 +438,7 @@ func renderToolFile(handler, raw string, parameters map[string]any) (renderedToo
 		if len(deck.Slides) > 60 {
 			return renderedToolFile{}, errors.New("PPT 最多支持 60 页")
 		}
+		deck.Images = presentationImages
 		data, err := toolartifact.RenderPPTX(deck)
 		return renderedToolFile{Data: data, Name: generatedName(fileName, deck.Title, ".pptx"), MimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation"}, err
 	case "render_xlsx":
@@ -473,6 +482,81 @@ func renderToolFile(handler, raw string, parameters map[string]any) (renderedToo
 	default:
 		return renderedToolFile{}, errors.New("未知文件渲染工具")
 	}
+}
+
+func (s *service) loadPresentationImages(ctx context.Context, assets []AssetInput) []toolartifact.PresentationImage {
+	if s.deps == nil || s.deps.Storage == nil {
+		return nil
+	}
+	images := make([]toolartifact.PresentationImage, 0, 8)
+	for _, asset := range assets {
+		if len(images) >= 8 || !strings.EqualFold(strings.TrimSpace(asset.Type), "image") {
+			continue
+		}
+		canonical, owned := s.deps.Storage.OwnsURL(strings.TrimSpace(asset.URL))
+		if !owned {
+			continue
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, canonical, nil)
+		if err != nil {
+			continue
+		}
+		resp, err := (&http.Client{Timeout: 30 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return errors.New("PPT 参考图下载不允许重定向")
+		}}).Do(req)
+		if err != nil {
+			continue
+		}
+		data, readErr := io.ReadAll(io.LimitReader(resp.Body, 10<<20+1))
+		_ = resp.Body.Close()
+		if readErr != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 || len(data) == 0 || len(data) > 10<<20 {
+			continue
+		}
+		extension, contentType := presentationImageFormat(asset.Name, canonical, resp.Header.Get("Content-Type"))
+		if extension == "" {
+			continue
+		}
+		width, height := 0, 0
+		if cfg, _, decodeErr := image.DecodeConfig(bytes.NewReader(data)); decodeErr == nil {
+			width, height = cfg.Width, cfg.Height
+		}
+		images = append(images, toolartifact.PresentationImage{
+			Data: data, Extension: extension, ContentType: contentType,
+			Name: asset.Name, Width: width, Height: height,
+		})
+	}
+	return images
+}
+
+func presentationImageFormat(name, rawURL, contentType string) (string, string) {
+	extension := strings.ToLower(path.Ext(strings.TrimSpace(name)))
+	if extension == "" {
+		if parsed, err := url.Parse(rawURL); err == nil {
+			extension = strings.ToLower(path.Ext(parsed.Path))
+		}
+	}
+	contentType = strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	switch contentType {
+	case "image/jpeg":
+		return "jpeg", "image/jpeg"
+	case "image/png":
+		return "png", "image/png"
+	case "image/gif":
+		return "gif", "image/gif"
+	case "image/webp":
+		return "webp", "image/webp"
+	}
+	switch extension {
+	case ".jpg", ".jpeg":
+		return "jpeg", "image/jpeg"
+	case ".png":
+		return "png", "image/png"
+	case ".gif":
+		return "gif", "image/gif"
+	case ".webp":
+		return "webp", "image/webp"
+	}
+	return "", ""
 }
 
 func stripToolJSONFence(value string) string {

@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { FileDown } from "lucide-react";
 import { AiTaskStatus } from "@/types/ai";
 import type { MessageVO, MessageTaskVO } from "@/types/chat";
 import { mesh } from "@/lib/mesh";
@@ -320,6 +321,16 @@ function runArtifacts(run: SkillRunVO): SkillRunArtifactVO[] {
   });
 }
 
+function presentableSkillRun(run: SkillRunVO): SkillRunVO {
+  const keep = (artifact: SkillRunArtifactVO) =>
+    artifact.isFinal !== false && artifact.role !== "intermediate" && artifact.role !== "draft";
+  return {
+    ...run,
+    artifacts: run.artifacts?.filter(keep),
+    steps: run.steps?.map((step) => ({ ...step, artifacts: step.artifacts?.filter(keep) })),
+  };
+}
+
 function AssistantSkillRun({
   message,
   onAction,
@@ -400,6 +411,10 @@ function AssistantSkillRun({
       return;
     }
     if (!artifact.url) return;
+    if (artifact.type === "file") {
+      await downloadMedia(artifact.url, artifact.title?.trim() || fileNameFromUrl(artifact.url) || "技能产物");
+      return;
+    }
     if (artifact.type === "image") {
       const images = run
         ? runArtifacts(run).filter(
@@ -419,13 +434,32 @@ function AssistantSkillRun({
     onOpenLightbox([{ url: artifact.url, kind, name: artifact.title }], 0);
   };
 
+  const finalFiles = run?.status === "succeeded"
+    ? runArtifacts(presentableSkillRun(run)).filter(
+        (artifact): artifact is SkillRunArtifactVO & { url: string } => artifact.type === "file" && !!artifact.url,
+      )
+    : [];
+
   return (
     <div className="msg ai">
       <span className="av" />
       <div className="bubble">
-        {run ? (
+        {finalFiles.length > 0 ? (
+          <div className="chat-skill-files" aria-label="生成文件">
+            {finalFiles.map((artifact) => (
+              <button key={artifact.id} type="button" onClick={() => void openArtifact(artifact)}>
+                <span className="ic"><FileDown aria-hidden /></span>
+                <span className="copy">
+                  <strong>{artifact.title || fileNameFromUrl(artifact.url) || "生成文件"}</strong>
+                  <small>可编辑文件 · 点击下载</small>
+                </span>
+                <span className="act">下载</span>
+              </button>
+            ))}
+          </div>
+        ) : run ? (
           <SkillRunPanel
-            run={run}
+            run={presentableSkillRun(run)}
             compact
             onAction={async (action, payload) => {
               await onAction(run.id, action, payload, run.revision);
@@ -433,7 +467,7 @@ function AssistantSkillRun({
               if (result.success && result.data) acceptRun(result.data);
             }}
             onArtifact={(artifact) => void openArtifact(artifact)}
-            artifactActionLabel={(artifact) => (artifact.type === "text" ? "复制" : "查看")}
+            artifactActionLabel={(artifact) => (artifact.type === "text" ? "复制" : artifact.type === "file" ? "下载" : "查看")}
           />
         ) : (
           <div className={`chat-gen-state${loadFailed ? " err" : ""}`}>

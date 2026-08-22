@@ -10,14 +10,44 @@ import (
 )
 
 type Slide struct {
-	Title   string   `json:"title"`
-	Bullets []string `json:"bullets"`
-	Notes   string   `json:"notes"`
+	Kind       string               `json:"kind"`
+	Kicker     string               `json:"kicker"`
+	Title      string               `json:"title"`
+	Subtitle   string               `json:"subtitle"`
+	Takeaway   string               `json:"takeaway"`
+	Bullets    []string             `json:"bullets"`
+	Metrics    []PresentationMetric `json:"metrics"`
+	Columns    []PresentationColumn `json:"columns"`
+	ImageIndex int                  `json:"imageIndex"`
+	Notes      string               `json:"notes"`
 }
 
 type Presentation struct {
-	Title  string  `json:"title"`
-	Slides []Slide `json:"slides"`
+	Title    string              `json:"title"`
+	Subtitle string              `json:"subtitle"`
+	Accent   string              `json:"accent"`
+	Slides   []Slide             `json:"slides"`
+	Images   []PresentationImage `json:"-"`
+}
+
+type PresentationMetric struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+type PresentationColumn struct {
+	Heading string   `json:"heading"`
+	Body    string   `json:"body"`
+	Bullets []string `json:"bullets"`
+}
+
+type PresentationImage struct {
+	Data        []byte
+	Extension   string
+	ContentType string
+	Name        string
+	Width       int
+	Height      int
 }
 
 type DocumentSection struct {
@@ -249,21 +279,52 @@ func RenderPPTX(deck Presentation) ([]byte, error) {
 		deck.Title = "生成演示文稿"
 	}
 	if len(deck.Slides) == 0 {
-		deck.Slides = []Slide{{Title: deck.Title, Bullets: []string{"暂无内容"}}}
+		deck.Slides = []Slide{{Kind: "cover", Title: deck.Title, Subtitle: deck.Subtitle}}
 	}
+	if strings.TrimSpace(deck.Slides[0].Title) == "" {
+		deck.Slides[0].Title = deck.Title
+	}
+	if strings.TrimSpace(deck.Slides[0].Subtitle) == "" {
+		deck.Slides[0].Subtitle = deck.Subtitle
+	}
+	accent := cleanPPTColor(deck.Accent, "3D8DFF")
 	files := map[string]string{}
-	var overrides, slideIDs, presentationRels strings.Builder
+	var overrides, slideIDs, presentationRels, imageTypes strings.Builder
+	seenImageTypes := map[string]bool{}
+	for index, image := range deck.Images {
+		extension, contentType := presentationImageType(image)
+		if len(image.Data) == 0 || extension == "" {
+			continue
+		}
+		files[fmt.Sprintf("ppt/media/image%d.%s", index+1, extension)] = string(image.Data)
+		if !seenImageTypes[extension] {
+			seenImageTypes[extension] = true
+			imageTypes.WriteString(fmt.Sprintf(`<Default Extension="%s" ContentType="%s"/>`, extension, contentType))
+		}
+	}
 	for i, slide := range deck.Slides {
 		id := i + 1
 		overrides.WriteString(fmt.Sprintf(`<Override PartName="/ppt/slides/slide%d.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>`, id))
 		slideIDs.WriteString(fmt.Sprintf(`<p:sldId id="%d" r:id="rId%d"/>`, 255+id, id))
 		presentationRels.WriteString(fmt.Sprintf(`<Relationship Id="rId%d" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide%d.xml"/>`, id, id))
-		files[fmt.Sprintf("ppt/slides/slide%d.xml", id)] = slideXML(slide)
-		files[fmt.Sprintf("ppt/slides/_rels/slide%d.xml.rels", id)] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/></Relationships>`
+		imageIndex := presentationSlideImageIndex(slide, i, len(deck.Images))
+		var image *PresentationImage
+		if imageIndex > 0 && imageIndex <= len(deck.Images) && len(deck.Images[imageIndex-1].Data) > 0 {
+			image = &deck.Images[imageIndex-1]
+		}
+		files[fmt.Sprintf("ppt/slides/slide%d.xml", id)] = presentationSlideXML(slide, i, len(deck.Slides), accent, image)
+		rels := `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>`
+		if image != nil {
+			extension, _ := presentationImageType(*image)
+			if extension != "" {
+				rels += fmt.Sprintf(`<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image%d.%s"/>`, imageIndex, extension)
+			}
+		}
+		files[fmt.Sprintf("ppt/slides/_rels/slide%d.xml.rels", id)] = rels + `</Relationships>`
 	}
 	masterRelID := len(deck.Slides) + 1
 	presentationRels.WriteString(fmt.Sprintf(`<Relationship Id="rId%d" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="slideMasters/slideMaster1.xml"/>`, masterRelID))
-	files["[Content_Types].xml"] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/><Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/><Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/><Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/><Override PartName="/ppt/presProps.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presProps+xml"/><Override PartName="/ppt/viewProps.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.viewProps+xml"/><Override PartName="/ppt/tableStyles.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.tableStyles+xml"/>` + overrides.String() + `</Types>`
+	files["[Content_Types].xml"] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>` + imageTypes.String() + `<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/><Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/><Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/><Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/><Override PartName="/ppt/presProps.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presProps+xml"/><Override PartName="/ppt/viewProps.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.viewProps+xml"/><Override PartName="/ppt/tableStyles.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.tableStyles+xml"/>` + overrides.String() + `</Types>`
 	files["_rels/.rels"] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/></Relationships>`
 	files["ppt/presentation.xml"] = fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId%d"/></p:sldMasterIdLst><p:sldIdLst>%s</p:sldIdLst><p:sldSz cx="12192000" cy="6858000" type="screen16x9"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>`, masterRelID, slideIDs.String())
 	files["ppt/_rels/presentation.xml.rels"] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` + presentationRels.String() + `</Relationships>`
@@ -278,27 +339,288 @@ func RenderPPTX(deck Presentation) ([]byte, error) {
 	return zipFiles(files)
 }
 
-func slideXML(slide Slide) string {
-	title := strings.TrimSpace(slide.Title)
+const (
+	pptSlideWidth  = 12192000
+	pptSlideHeight = 6858000
+)
+
+func presentationSlideImageIndex(slide Slide, index, imageCount int) int {
+	if slide.ImageIndex > 0 && slide.ImageIndex <= imageCount {
+		return slide.ImageIndex
+	}
+	kind := strings.ToLower(strings.TrimSpace(slide.Kind))
+	if imageCount > 0 && (kind == "cover" || kind == "image" || kind == "visual") {
+		return index%imageCount + 1
+	}
+	return 0
+}
+
+func presentationImageType(image PresentationImage) (string, string) {
+	extension := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(image.Extension)), ".")
+	contentType := strings.ToLower(strings.TrimSpace(image.ContentType))
+	switch {
+	case extension == "jpg" || extension == "jpeg" || strings.Contains(contentType, "jpeg"):
+		return "jpeg", "image/jpeg"
+	case extension == "png" || strings.Contains(contentType, "png"):
+		return "png", "image/png"
+	case extension == "gif" || strings.Contains(contentType, "gif"):
+		return "gif", "image/gif"
+	case extension == "webp" || strings.Contains(contentType, "webp"):
+		return "webp", "image/webp"
+	}
+	return "", ""
+}
+
+func cleanPPTColor(value, fallback string) string {
+	value = strings.TrimPrefix(strings.ToUpper(strings.TrimSpace(value)), "#")
+	if len(value) != 6 {
+		return fallback
+	}
+	for _, r := range value {
+		if !((r >= '0' && r <= '9') || (r >= 'A' && r <= 'F')) {
+			return fallback
+		}
+	}
+	return value
+}
+
+func presentationSlideXML(slide Slide, index, total int, accent string, image *PresentationImage) string {
+	hasImage := image != nil
+	imageWidth, imageHeight := 0, 0
+	if image != nil {
+		imageWidth, imageHeight = image.Width, image.Height
+	}
+	kind := strings.ToLower(strings.TrimSpace(slide.Kind))
+	if index == 0 {
+		kind = "cover"
+	} else if index == total-1 && (kind == "" || kind == "content") {
+		kind = "closing"
+	}
+	if kind == "" {
+		if hasImage {
+			kind = "image"
+		} else {
+			kind = "content"
+		}
+	}
+	titleLimit := 54
+	if kind == "cover" {
+		titleLimit = 36
+	} else if kind == "section" || kind == "closing" {
+		titleLimit = 46
+	}
+	title := presentationText(slide.Title, titleLimit)
 	if title == "" {
 		title = "未命名页面"
 	}
-	var paragraphs strings.Builder
-	for _, bullet := range slide.Bullets {
-		bullet = strings.TrimSpace(bullet)
-		if bullet == "" {
-			continue
+	subtitle := presentationText(slide.Subtitle, 100)
+	takeaway := presentationText(slide.Takeaway, 100)
+	kicker := presentationText(slide.Kicker, 48)
+	shapes := []string{}
+	nextID := 2
+	add := func(value string) { shapes = append(shapes, value); nextID++ }
+	addText := func(name string, x, y, cx, cy, size int, color string, bold bool, text string) {
+		if strings.TrimSpace(text) == "" {
+			return
 		}
-		paragraphs.WriteString(`<a:p><a:pPr marL="342900" indent="-285750"><a:buChar char="•"/></a:pPr><a:r><a:rPr lang="zh-CN" sz="2000"/><a:t>` + xmlText(bullet) + `</a:t></a:r><a:endParaRPr lang="zh-CN"/></a:p>`)
+		add(pptTextBox(nextID, name, x, y, cx, cy, pptParagraph(text, size, color, bold, false, "l"), "", "t"))
 	}
-	if paragraphs.Len() == 0 {
-		paragraphs.WriteString(`<a:p><a:r><a:t></a:t></a:r></a:p>`)
+	addFooter := func(color string) {
+		addText("Page", 10950000, 6460000, 550000, 180000, 950, color, false, fmt.Sprintf("%02d", index+1))
+		addText("Footer", 700000, 6460000, 2400000, 180000, 900, color, false, "FLOWINGLIGHT · PRESENTATION")
 	}
-	return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>` + pptShape(2, "Title", 685800, 457200, 10820400, 1066800, `<a:p><a:r><a:rPr lang="zh-CN" sz="3000" b="1"/><a:t>`+xmlText(title)+`</a:t></a:r><a:endParaRPr lang="zh-CN"/></a:p>`) + pptShape(3, "Content", 914400, 1828800, 10210800, 3886200, paragraphs.String()) + `</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`
+
+	switch kind {
+	case "cover":
+		add(pptRect(nextID, "Background", 0, 0, pptSlideWidth, pptSlideHeight, "101114", ""))
+		add(pptRect(nextID, "Accent", 650000, 700000, 90000, 5150000, accent, ""))
+		addText("Kicker", 950000, 770000, 6100000, 300000, 1200, accent, true, nonEmptyText(kicker, "COMMERCIAL PRESENTATION"))
+		addText("Title", 950000, 1280000, 6100000, 2300000, 5000, "FFFFFF", true, title)
+		addText("Subtitle", 970000, 3800000, 5600000, 1150000, 2200, "B8BCC4", false, subtitle)
+		if hasImage {
+			add(pptPicture(nextID, "Reference image", 7450000, 650000, 4100000, 5450000, "rId2", imageWidth, imageHeight))
+		} else {
+			add(pptRect(nextID, "Visual field", 7700000, 900000, 3600000, 4700000, "20242B", ""))
+			add(pptRect(nextID, "Visual accent", 8200000, 1450000, 2550000, 120000, accent, ""))
+		}
+		addFooter("6F7580")
+	case "section":
+		add(pptRect(nextID, "Background", 0, 0, pptSlideWidth, pptSlideHeight, "F4F5F6", ""))
+		add(pptRect(nextID, "Section band", 0, 0, 2300000, pptSlideHeight, accent, ""))
+		addText("Section number", 550000, 750000, 1200000, 800000, 4200, "FFFFFF", true, fmt.Sprintf("%02d", index))
+		addText("Kicker", 2950000, 1150000, 7600000, 350000, 1300, accent, true, kicker)
+		addText("Title", 2950000, 1750000, 7600000, 1800000, 4000, "111317", true, title)
+		addText("Subtitle", 2980000, 3900000, 7000000, 900000, 1900, "555B65", false, subtitle)
+		addFooter("7B8088")
+	case "statement", "quote":
+		add(pptRect(nextID, "Background", 0, 0, pptSlideWidth, pptSlideHeight, "FFFFFF", ""))
+		addText("Kicker", 850000, 700000, 2400000, 300000, 1200, accent, true, kicker)
+		claim := title
+		addText("Statement", 850000, 1450000, 10100000, 2700000, 3800, "111317", true, claim)
+		add(pptRect(nextID, "Rule", 850000, 4550000, 1850000, 75000, accent, ""))
+		addText("Support", 850000, 4850000, 7800000, 850000, 1800, "555B65", false, nonEmptyText(takeaway, subtitle))
+		addFooter("8A8F98")
+	case "metrics":
+		add(pptRect(nextID, "Background", 0, 0, pptSlideWidth, pptSlideHeight, "FFFFFF", ""))
+		addText("Kicker", 750000, 420000, 2600000, 260000, 1100, accent, true, kicker)
+		addText("Title", 750000, 760000, 10300000, 850000, 3500, "111317", true, title)
+		metrics := slide.Metrics
+		if len(metrics) > 3 {
+			metrics = metrics[:3]
+		}
+		for i, metric := range metrics {
+			x := 750000 + i*3650000
+			add(pptRect(nextID, fmt.Sprintf("Metric rule %d", i+1), x, 2100000, 2900000, 65000, accent, ""))
+			addText(fmt.Sprintf("Metric value %d", i+1), x, 2420000, 3100000, 1050000, 3900, "111317", true, presentationText(metric.Value, 24))
+			addText(fmt.Sprintf("Metric label %d", i+1), x, 3600000, 3000000, 760000, 1600, "555B65", false, presentationText(metric.Label, 80))
+		}
+		addText("Takeaway", 750000, 5050000, 10100000, 600000, 1800, "30343A", true, takeaway)
+		addFooter("8A8F98")
+	case "comparison":
+		add(pptRect(nextID, "Background", 0, 0, pptSlideWidth, pptSlideHeight, "FFFFFF", ""))
+		addText("Title", 750000, 650000, 10300000, 800000, 3500, "111317", true, title)
+		columns := slide.Columns
+		if len(columns) > 2 {
+			columns = columns[:2]
+		}
+		for i, column := range columns {
+			x := 750000 + i*5650000
+			fill := "F1F2F4"
+			if i == 1 {
+				fill = "EAF3FF"
+			}
+			add(pptRect(nextID, fmt.Sprintf("Column background %d", i+1), x, 1800000, 5000000, 3650000, fill, ""))
+			addText(fmt.Sprintf("Column title %d", i+1), x+350000, 2150000, 4250000, 550000, 2400, "111317", true, presentationText(column.Heading, 48))
+			addText(fmt.Sprintf("Column body %d", i+1), x+350000, 2850000, 4250000, 650000, 1700, "555B65", false, presentationText(column.Body, 80))
+			add(pptTextBox(nextID, fmt.Sprintf("Column bullets %d", i+1), x+350000, 3650000, 4250000, 1450000, pptBullets(column.Bullets, 1600, "30343A", 4), "", "t"))
+			nextID++
+		}
+		addFooter("8A8F98")
+	case "timeline", "process":
+		add(pptRect(nextID, "Background", 0, 0, pptSlideWidth, pptSlideHeight, "FFFFFF", ""))
+		addText("Title", 750000, 650000, 10300000, 800000, 3500, "111317", true, title)
+		steps := slide.Bullets
+		if len(steps) > 4 {
+			steps = steps[:4]
+		}
+		add(pptRect(nextID, "Timeline", 1050000, 3200000, 9900000, 50000, "C8CCD2", ""))
+		for i, step := range steps {
+			x := 900000 + i*2750000
+			add(pptRect(nextID, fmt.Sprintf("Step marker %d", i+1), x, 2980000, 480000, 480000, accent, ""))
+			addText(fmt.Sprintf("Step number %d", i+1), x+120000, 3050000, 240000, 210000, 1200, "FFFFFF", true, fmt.Sprintf("%d", i+1))
+			addText(fmt.Sprintf("Step %d", i+1), x, 3650000, 2350000, 1250000, 1600, "30343A", true, presentationText(step, 100))
+		}
+		addText("Takeaway", 750000, 5350000, 10200000, 500000, 1700, "555B65", false, takeaway)
+		addFooter("8A8F98")
+	case "closing":
+		add(pptRect(nextID, "Background", 0, 0, pptSlideWidth, pptSlideHeight, "101114", ""))
+		addText("Kicker", 850000, 850000, 3000000, 300000, 1200, accent, true, nonEmptyText(kicker, "NEXT STEP"))
+		addText("Title", 850000, 1550000, 9100000, 1600000, 4300, "FFFFFF", true, title)
+		addText("Takeaway", 870000, 3400000, 8500000, 1000000, 2200, "D3D6DB", false, takeaway)
+		add(pptTextBox(nextID, "Actions", 870000, 4650000, 7700000, 950000, pptBullets(slide.Bullets, 1700, "FFFFFF", 3), "", "t"))
+		nextID++
+		add(pptRect(nextID, "Closing accent", 10050000, 1050000, 1050000, 4400000, accent, ""))
+		addFooter("6F7580")
+	default: // content / image / visual
+		add(pptRect(nextID, "Background", 0, 0, pptSlideWidth, pptSlideHeight, "FFFFFF", ""))
+		addText("Kicker", 750000, 420000, 2600000, 260000, 1100, accent, true, kicker)
+		addText("Title", 750000, 780000, 10300000, 850000, 3500, "111317", true, title)
+		textWidth := 10100000
+		if hasImage {
+			textWidth = 5150000
+			add(pptPicture(nextID, "Reference image", 6900000, 1650000, 4550000, 4250000, "rId2", imageWidth, imageHeight))
+		}
+		if takeaway != "" {
+			addText("Takeaway", 750000, 1780000, textWidth, 650000, 2100, "30343A", true, takeaway)
+		}
+		add(pptTextBox(nextID, "Content", 750000, 2650000, textWidth, 3000000, pptBullets(slide.Bullets, 1800, "30343A", 5), "", "t"))
+		nextID++
+		addFooter("8A8F98")
+	}
+
+	return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>` + strings.Join(shapes, "") + `</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`
 }
 
-func pptShape(id int, name string, x, y, cx, cy int, paragraphs string) string {
-	return fmt.Sprintf(`<p:sp><p:nvSpPr><p:cNvPr id="%d" name="%s"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr wrap="square"/><a:lstStyle/>%s</p:txBody></p:sp>`, id, xmlText(name), x, y, cx, cy, paragraphs)
+func presentationText(value string, maxRunes int) string {
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if maxRunes > 0 && len(runes) > maxRunes {
+		return string(runes[:maxRunes-1]) + "…"
+	}
+	return value
+}
+
+func nonEmptyText(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func pptParagraph(text string, size int, color string, bold, bullet bool, align string) string {
+	properties := `<a:pPr algn="` + align + `"`
+	if bullet {
+		properties += ` marL="300000" indent="-220000"><a:buChar char="•"/></a:pPr>`
+	} else {
+		properties += `><a:buNone/></a:pPr>`
+	}
+	boldValue := "0"
+	if bold {
+		boldValue = "1"
+	}
+	return `<a:p>` + properties + `<a:r><a:rPr lang="zh-CN" sz="` + strconv.Itoa(size) + `" b="` + boldValue + `"><a:solidFill><a:srgbClr val="` + cleanPPTColor(color, "111317") + `"/></a:solidFill><a:latin typeface="Arial"/><a:ea typeface="Microsoft YaHei"/></a:rPr><a:t>` + xmlText(text) + `</a:t></a:r><a:endParaRPr lang="zh-CN" sz="` + strconv.Itoa(size) + `"/></a:p>`
+}
+
+func pptBullets(values []string, size int, color string, limit int) string {
+	var out strings.Builder
+	count := 0
+	for _, value := range values {
+		value = presentationText(value, 60)
+		if value == "" {
+			continue
+		}
+		out.WriteString(pptParagraph(value, size, color, false, true, "l"))
+		count++
+		if limit > 0 && count >= limit {
+			break
+		}
+	}
+	if out.Len() == 0 {
+		out.WriteString(pptParagraph("", size, color, false, false, "l"))
+	}
+	return out.String()
+}
+
+func pptTextBox(id int, name string, x, y, cx, cy int, paragraphs, fill, anchor string) string {
+	fillXML := `<a:noFill/>`
+	if fill != "" {
+		fillXML = `<a:solidFill><a:srgbClr val="` + cleanPPTColor(fill, "FFFFFF") + `"/></a:solidFill>`
+	}
+	return fmt.Sprintf(`<p:sp><p:nvSpPr><p:cNvPr id="%d" name="%s"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>%s<a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr wrap="square" anchor="%s" lIns="0" rIns="0" tIns="0" bIns="0"/><a:lstStyle/>%s</p:txBody></p:sp>`, id, xmlText(name), x, y, cx, cy, fillXML, anchor, paragraphs)
+}
+
+func pptRect(id int, name string, x, y, cx, cy int, fill, line string) string {
+	lineXML := `<a:ln><a:noFill/></a:ln>`
+	if line != "" {
+		lineXML = `<a:ln w="12700"><a:solidFill><a:srgbClr val="` + cleanPPTColor(line, "B8BCC4") + `"/></a:solidFill></a:ln>`
+	}
+	return fmt.Sprintf(`<p:sp><p:nvSpPr><p:cNvPr id="%d" name="%s"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="%s"/></a:solidFill>%s</p:spPr></p:sp>`, id, xmlText(name), x, y, cx, cy, cleanPPTColor(fill, "FFFFFF"), lineXML)
+}
+
+func pptPicture(id int, name string, x, y, cx, cy int, relID string, sourceWidth, sourceHeight int) string {
+	srcRect := ""
+	if sourceWidth > 0 && sourceHeight > 0 && cx > 0 && cy > 0 {
+		sourceAspect := float64(sourceWidth) / float64(sourceHeight)
+		targetAspect := float64(cx) / float64(cy)
+		if sourceAspect > targetAspect {
+			crop := int((1-targetAspect/sourceAspect)*50000 + 0.5)
+			srcRect = fmt.Sprintf(`<a:srcRect l="%d" r="%d"/>`, crop, crop)
+		} else if sourceAspect < targetAspect {
+			crop := int((1-sourceAspect/targetAspect)*50000 + 0.5)
+			srcRect = fmt.Sprintf(`<a:srcRect t="%d" b="%d"/>`, crop, crop)
+		}
+	}
+	return fmt.Sprintf(`<p:pic><p:nvPicPr><p:cNvPr id="%d" name="%s"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="%s"/>%s<a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:ln><a:noFill/></a:ln></p:spPr></p:pic>`, id, xmlText(name), relID, srcRect, x, y, cx, cy)
 }
 
 const themeXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="FlowingLight"><a:themeElements><a:clrScheme name="FlowingLight"><a:dk1><a:srgbClr val="171717"/></a:dk1><a:lt1><a:srgbClr val="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="262626"/></a:dk2><a:lt2><a:srgbClr val="F5F5F5"/></a:lt2><a:accent1><a:srgbClr val="4F46E5"/></a:accent1><a:accent2><a:srgbClr val="0F766E"/></a:accent2><a:accent3><a:srgbClr val="B45309"/></a:accent3><a:accent4><a:srgbClr val="7C3AED"/></a:accent4><a:accent5><a:srgbClr val="0369A1"/></a:accent5><a:accent6><a:srgbClr val="BE123C"/></a:accent6><a:hlink><a:srgbClr val="0563C1"/></a:hlink><a:folHlink><a:srgbClr val="954F72"/></a:folHlink></a:clrScheme><a:fontScheme name="FlowingLight"><a:majorFont><a:latin typeface="Arial"/><a:ea typeface="Microsoft YaHei"/><a:cs typeface="Arial"/></a:majorFont><a:minorFont><a:latin typeface="Arial"/><a:ea typeface="Microsoft YaHei"/><a:cs typeface="Arial"/></a:minorFont></a:fontScheme><a:fmtScheme name="FlowingLight"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst><a:lnStyleLst><a:ln w="9525"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln></a:lnStyleLst><a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst><a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst></a:fmtScheme></a:themeElements></a:theme>`

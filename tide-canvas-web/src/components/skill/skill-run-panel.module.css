@@ -175,6 +175,11 @@
 
 .artifact > audio { width: calc(100% - 20px); margin: 14px 10px; }
 .artifact > p { max-height: 220px; margin: 0; overflow: auto; padding: 12px; font-size: 12px; line-height: 1.65; white-space: pre-wrap; }
+.fileArtifact { display: flex; min-height: 92px; align-items: center; gap: 12px; padding: 16px; }
+.fileArtifact > svg { width: 30px; height: 30px; color: var(--sr-muted); }
+.fileArtifact > span { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.fileArtifact strong { font-size: 13px; font-weight: 650; }
+.fileArtifact small { color: var(--sr-muted); font-size: 11px; }
 .artifact footer { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-top: 1px solid var(--sr-border); }
 .artifact footer > span { display: flex; min-width: 0; flex: 1; flex-direction: column; }
 .artifact footer b { overflow: hidden; font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }

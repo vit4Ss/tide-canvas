@@ -39,6 +39,13 @@ func TestRenderToolFileProducesOfficeAndMarkdownFiles(t *testing.T) {
 	}
 }
 
+func TestPresentationImageFormatPrefersVerifiedContentType(t *testing.T) {
+	extension, contentType := presentationImageFormat("misleading.png", "https://cdn.test/object", "image/jpeg; charset=binary")
+	if extension != "jpeg" || contentType != "image/jpeg" {
+		t.Fatalf("verified content type did not win: %s %s", extension, contentType)
+	}
+}
+
 func TestRenderToolFileRejectsUnboundedSpreadsheetWidth(t *testing.T) {
 	cells := make([]string, 513)
 	for i := range cells {

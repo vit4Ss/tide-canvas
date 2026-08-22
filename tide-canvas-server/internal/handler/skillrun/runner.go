@@ -1255,10 +1255,18 @@ func (s *service) addSkillTextAttachments(ctx context.Context, command map[strin
 		return
 	}
 	attachments := make([]chatattach.Attach, 0, len(assets))
+	imageNames := make([]string, 0, len(assets))
 	for _, asset := range assets {
 		attachments = append(attachments, chatattach.Attach{
 			URL: strings.TrimSpace(asset.URL), Kind: strings.TrimSpace(asset.Type), Name: strings.TrimSpace(asset.Name),
 		})
+		if strings.EqualFold(strings.TrimSpace(asset.Type), "image") && strings.TrimSpace(asset.URL) != "" {
+			name := strings.TrimSpace(asset.Name)
+			if name == "" {
+				name = fmt.Sprintf("参考图%d", len(imageNames)+1)
+			}
+			imageNames = append(imageNames, name)
+		}
 	}
 	files, note := (chatattach.Extractor{Store: s.deps.Storage}).FileParts(ctx, attachments)
 	if len(files) > 0 {
@@ -1268,9 +1276,13 @@ func (s *service) addSkillTextAttachments(ctx context.Context, command map[strin
 		}
 		command["files"] = encoded
 	}
-	if note != "" {
+	imageNote := ""
+	if len(imageNames) > 0 {
+		imageNote = fmt.Sprintf("本条任务附带 %d 张参考图，按上传顺序编号为参考图1至参考图%d（%s）。规划 PPT 时可通过 imageIndex 使用对应图片；只在内容相关时使用，每张图默认不重复。", len(imageNames), len(imageNames), strings.Join(imageNames, "、"))
+	}
+	if note != "" || imageNote != "" {
 		prompt, _ := command["prompt"].(string)
-		command["prompt"] = strings.TrimSpace(prompt + "\n\n" + note)
+		command["prompt"] = strings.TrimSpace(prompt + "\n\n" + strings.TrimSpace(imageNote+"\n"+note))
 	}
 }
 

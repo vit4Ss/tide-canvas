@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronRight, CircleAlert, Clock3, ExternalLink, Loader2, RotateCcw, X } from "lucide-react";
+import { Check, ChevronRight, CircleAlert, Clock3, ExternalLink, FileDown, Loader2, RotateCcw, X } from "lucide-react";
 import { defaultSkillInputValues, validateSkillInputValues } from "@/lib/skill-api";
 import type { SkillRunAction, SkillRunArtifactVO, SkillRunVO } from "@/types/skill-run";
 import { isSkillRunActive, isSkillRunTerminal, skillRunError } from "@/types/skill-run";
@@ -77,6 +77,7 @@ export function SkillRunPanel({
   const artifacts = useMemo(() => allArtifacts(run), [run]);
   const busy = actionBusy || localBusy;
   const progress = Math.max(0, Math.min(100, Number.isFinite(run.progress) ? run.progress : 0));
+  const terminal = isSkillRunTerminal(run.status);
 
   const pendingStepIdentity = run.currentStep
     || run.steps?.find((step) => step.status === "waiting")?.id
@@ -165,7 +166,7 @@ export function SkillRunPanel({
         <span className={`${styles.statusIcon} ${styles[run.status]}`}>{statusIcon}</span>
         <span className={styles.heading}>
           <strong>{run.skillTitle || "技能运行"}</strong>
-          <small>{run.currentStepTitle || run.currentStep || STATUS_LABEL[run.status]}</small>
+          <small>{terminal ? STATUS_LABEL[run.status] : run.currentStepTitle || run.currentStep || STATUS_LABEL[run.status]}</small>
         </span>
         <span className={`${styles.status} ${styles[run.status]}`}>{STATUS_LABEL[run.status]}</span>
       </header>
@@ -209,6 +210,11 @@ export function SkillRunPanel({
                   <CapturableVideo src={artifact.url} controls preload="metadata" />
                 ) : artifact.type === "audio" && artifact.url ? (
                   <audio src={artifact.url} controls preload="metadata" />
+                ) : artifact.type === "file" && artifact.url ? (
+                  <div className={styles.fileArtifact}>
+                    <FileDown aria-hidden />
+                    <span><strong>文件已生成</strong><small>可下载并继续编辑</small></span>
+                  </div>
                 ) : text ? (
                   <p>{text}</p>
                 ) : (

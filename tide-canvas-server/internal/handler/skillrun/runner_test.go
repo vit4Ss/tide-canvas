@@ -2,6 +2,7 @@ package skillrun
 
 import (
 	"context"
+	"encoding/base64"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -77,6 +78,25 @@ func TestGenerationInputKeepsMultipleReferenceImages(t *testing.T) {
 	urls, ok := command["imageUrls"].([]string)
 	if !ok || len(urls) != 2 || urls[0] != "https://cdn.test/one.png" || urls[1] != "https://cdn.test/two.png" {
 		t.Fatalf("reference images were not preserved: %#v", command["imageUrls"])
+	}
+}
+
+func TestPresentationImagesLoadFromOwnedStorage(t *testing.T) {
+	imageData, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(imageData)
+	}))
+	defer srv.Close()
+	svc := &service{deps: &app.Deps{Storage: attachmentTestStorage{baseURL: srv.URL}}}
+	images := svc.loadPresentationImages(context.Background(), []AssetInput{{
+		Type: "image", URL: srv.URL + "/bucket/opaque-image", Name: "reference.png",
+	}})
+	if len(images) != 1 || images[0].Extension != "png" || images[0].Width != 1 || images[0].Height != 1 {
+		t.Fatalf("reference image was not prepared for PPT embedding: %#v", images)
 	}
 }
 

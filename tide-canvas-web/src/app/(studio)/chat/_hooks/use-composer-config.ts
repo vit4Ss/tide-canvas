@@ -83,7 +83,7 @@ export function useComposerConfig(models: GenModelsApi, toolSkill: SkillVO | nul
         const exts = normalizeFormats(mCfg.uploadFormats);
         return {
           kinds: ["image", "file"],
-          max: Math.min(cfgMax, MAX_ATTACHMENTS),
+          max: Math.min(cfgMax, 8),
           maxSizeMB: Math.min(mCfg.maxFileSizeMB && mCfg.maxFileSizeMB > 0 ? mCfg.maxFileSizeMB : 15, 15),
           exts,
           accept: exts ? exts.map((extension) => `.${extension}`).join(",") : "image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.md",

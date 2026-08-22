@@ -3,6 +3,7 @@ package skill
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"time"
 
 	"gorm.io/gorm"
@@ -17,11 +18,11 @@ type seedToolSkill struct {
 var baselineToolSkills = []seedToolSkill{
 	{
 		key: "tool-pptx", title: "生成 PPT", category: "办公文档", primaryOutput: "file",
-		description:   "根据主题、受众和页数生成可编辑的 PowerPoint 演示文稿",
-		inputSchema:   `{"type":"object","required":["prompt"],"properties":{"prompt":{"type":"string","title":"内容要求","description":"说明演示主题、重点与期望结构","minLength":2,"maxLength":8000,"x-ui-widget":"textarea"},"audience":{"type":"string","title":"目标受众","placeholder":"例如：管理层、客户、学生","default":"通用受众","maxLength":120},"pageCount":{"type":"integer","title":"页数","minimum":3,"maximum":30,"default":10},"fileName":{"type":"string","title":"文件名","placeholder":"留空将根据标题生成","maxLength":80}}}`,
-		manifest:      `{"kind":"tool","steps":[{"key":"outline","title":"规划演示内容","type":"text","handler":"skill_text_completion","outputType":"text","outputRole":"intermediate","strictJson":true,"prompt":"请根据以下要求生成 PPT 数据。用户要求：{{prompt}}\n目标受众：{{input.audience}}\n页数：{{input.pageCount}}。只返回严格 JSON：{\"title\":\"演示标题\",\"slides\":[{\"title\":\"页面标题\",\"bullets\":[\"要点\"]}]}。slides 数量应与页数一致，每页 2-6 个要点，内容具体，不要输出代码围栏。"},{"key":"render","title":"生成 PPT 文件","type":"tool","handler":"render_pptx","outputType":"file","outputRole":"final","prompt":"{{previous}}"}]}`,
-		instructions:  "你是资深演示文稿策划。先建立清晰叙事，再压缩为适合投影阅读的页面内容。避免空话、重复和大段正文；数据不确定时不得编造。",
-		defaultParams: `{"audience":"通用受众","pageCount":10}`,
+		description:   "根据主题、受众与参考资料生成叙事完整、版式专业、可商用编辑的 PowerPoint 演示文稿",
+		inputSchema:   `{"type":"object","required":["prompt"],"properties":{"prompt":{"type":"string","title":"内容要求","description":"说明演示主题、核心目标、重点内容与期望结论；可同时上传参考图和资料","minLength":2,"maxLength":12000,"x-ui-widget":"textarea"},"audience":{"type":"string","title":"目标受众","placeholder":"例如：管理层、客户、投资人、学生","default":"通用受众","maxLength":120},"pageCount":{"type":"integer","title":"页数","minimum":3,"maximum":30,"default":10},"style":{"type":"string","title":"视觉风格","enum":["商务极简","品牌发布","科技深色","咨询报告"],"default":"商务极简"},"fileName":{"type":"string","title":"文件名","placeholder":"留空将根据标题生成","maxLength":80}}}`,
+		manifest:      `{"kind":"tool","steps":[{"key":"outline","title":"策划叙事与版式","type":"text","handler":"skill_text_completion","outputType":"text","outputRole":"intermediate","strictJson":true,"prompt":"你是顶级商业演示文稿策略师和信息设计师。请把用户资料转化为可直接面对受众的高质量 PPT 数据。\n\n沟通任务：先判断这份演示要让目标受众理解、相信、选择或采取什么行动，再建立逐页递进的叙事。不要把议程当叙事，不要重复同一观点。\n用户要求：{{prompt}}\n目标受众：{{input.audience}}\n目标页数：{{input.pageCount}}\n视觉风格：{{input.style}}\n\n质量要求：\n1. slides 数量必须等于目标页数；第 1 页为 cover，最后一页为 closing；需要时加入 1-2 页 section。\n2. 每页只有一个叙事任务。title 应是可直接说出口的结论或观点，不是泛泛栏目名。\n3. 正文低密度、高价值：每页最多 5 个 bullets，每条尽量不超过 38 个汉字；优先事实、证据、含义和行动，删除套话。\n4. kind 只能从 cover、section、content、image、statement、metrics、comparison、timeline、closing 中选择一个；根据内容交替使用，避免连续重复同一种版式。\n5. metrics 仅用于用户资料中真实存在的数字；不得编造数据。comparison 用两个 columns；timeline 用 3-4 个有先后关系的 bullets。\n6. 若附带参考图，按提示中的参考图编号设置 imageIndex（从 1 开始），只在内容相关时使用，每张图默认不重复；图片既是内容证据也是视觉依据。\n7. 不暴露策划过程、提示词或占位说明；不写“谢谢观看”式空洞结尾。最后一页必须给出明确结论、下一步或决策。\n8. 缺失事实必须保持克制，可使用定性表达，不得虚构客户、数据、案例或引用。\n\n只返回严格 JSON，不要代码围栏。结构：{\"title\":\"整份演示标题\",\"subtitle\":\"一句副标题\",\"accent\":\"3D8DFF\",\"slides\":[{\"kind\":\"content\",\"kicker\":\"短眉题\",\"title\":\"本页核心观点\",\"subtitle\":\"补充说明\",\"takeaway\":\"本页最重要结论\",\"bullets\":[\"要点\"],\"metrics\":[{\"value\":\"数字\",\"label\":\"含义\"}],\"columns\":[{\"heading\":\"列标题\",\"body\":\"解释\",\"bullets\":[\"要点\"]}],\"imageIndex\":1,\"notes\":\"演讲者备注\"}]}。没有内容的字段省略，不要输出 null。"},{"key":"render","title":"生成商业级 PPT 文件","type":"tool","handler":"render_pptx","outputType":"file","outputRole":"final","prompt":"{{previous}}"}]}`,
+		instructions:  "你是资深商业演示文稿策略师。以受众决策为中心建立叙事，每页只表达一个核心观点；优先使用用户上传的事实、文件和参考图。语言自然、具体、克制，禁止套话、编造数据和堆砌段落。输出必须适合正式汇报、客户提案、产品发布或管理层决策，并能继续编辑。",
+		defaultParams: `{"audience":"通用受众","pageCount":10,"style":"商务极简"}`,
 	},
 	{
 		key: "tool-xlsx", title: "生成 XLSX", category: "办公文档", primaryOutput: "file",
@@ -68,8 +69,9 @@ var baselineToolSkills = []seedToolSkill{
 	},
 }
 
-// ensureBaselineToolSkills only inserts a missing seed. Once an administrator
-// edits, unpublishes or deletes it, boot-time seeding never overwrites/revives it.
+// ensureBaselineToolSkills inserts missing seeds and applies narrowly-scoped
+// version upgrades to untouched official snapshots. Administrator-created
+// versions, unpublishing and deletion remain authoritative.
 func ensureBaselineToolSkills(db *gorm.DB) error {
 	for index := range baselineToolSkills {
 		definition := baselineToolSkills[index]
@@ -78,6 +80,9 @@ func ensureBaselineToolSkills(db *gorm.DB) error {
 			return err
 		}
 		if count > 0 {
+			if err := upgradeBaselineToolSkill(db, definition, index); err != nil {
+				return err
+			}
 			continue
 		}
 		if err := db.Transaction(func(tx *gorm.DB) error {
@@ -101,7 +106,7 @@ func ensureBaselineToolSkills(db *gorm.DB) error {
 				outputTypes = `["text","file"]`
 			}
 			version := model.SkillVersion{
-				SkillID: skill.ID, Version: 1, Kind: model.SkillKindTool, Status: model.SkillVersionPublished,
+				SkillID: skill.ID, Version: baselineToolVersion(definition.key), Kind: model.SkillKindTool, Status: model.SkillVersionPublished,
 				EntryPoints: `["studio"]`, PrimaryOutputType: definition.primaryOutput,
 				OutputTypes: outputTypes, InputSchema: definition.inputSchema,
 				ManifestJSON: definition.manifest, PromptTemplate: definition.instructions, DefaultParams: defaultParams,
@@ -127,6 +132,75 @@ func ensureBaselineToolSkills(db *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+func baselineToolVersion(key string) int {
+	if key == "tool-pptx" {
+		return 2
+	}
+	return 1
+}
+
+// upgradeBaselineToolSkill upgrades only the original official v1 snapshot.
+// If an administrator has already published v2+, their version wins and this
+// function becomes a no-op.
+func upgradeBaselineToolSkill(db *gorm.DB, definition seedToolSkill, index int) error {
+	targetVersion := baselineToolVersion(definition.key)
+	if targetVersion <= 1 {
+		return nil
+	}
+	var skill model.Skill
+	if err := db.Where("seed_key = ?", definition.key).First(&skill).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	if skill.Kind != model.SkillKindTool || skill.AuthorName != "官方" || skill.CurrentVersionID == 0 {
+		return nil
+	}
+	var current model.SkillVersion
+	if err := db.First(&current, "id = ? AND skill_id = ?", skill.CurrentVersionID, skill.ID).Error; err != nil {
+		return err
+	}
+	if current.Version >= targetVersion || current.Version != 1 {
+		return nil
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		now := time.Now()
+		defaultParams := definition.defaultParams
+		if defaultParams == "" {
+			defaultParams = "{}"
+		}
+		bindings := `[{"surface":"studio","targetType":"*","enabled":true,"sortOrder":` + itoaSmall(index) + `,"defaults":{}}]`
+		outputTypes := `["` + definition.primaryOutput + `"]`
+		if definition.primaryOutput == "file" {
+			outputTypes = `["text","file"]`
+		}
+		version := model.SkillVersion{
+			SkillID: skill.ID, Version: targetVersion, Kind: model.SkillKindTool, Status: model.SkillVersionPublished,
+			EntryPoints: `["studio"]`, PrimaryOutputType: definition.primaryOutput,
+			OutputTypes: outputTypes, InputSchema: definition.inputSchema,
+			ManifestJSON: definition.manifest, PromptTemplate: definition.instructions, DefaultParams: defaultParams,
+			BindingsJSON: bindings, PrimaryFilePath: "SKILL.md", PublishedAt: &now,
+		}
+		version.ContentHash = seedToolHash(definition.inputSchema, definition.manifest, definition.instructions, defaultParams, bindings)
+		if err := tx.Create(&version).Error; err != nil {
+			return err
+		}
+		fileHash := sha256.Sum256([]byte(definition.instructions))
+		file := model.SkillFile{SkillVersionID: version.ID, Path: "SKILL.md", Content: definition.instructions,
+			MimeType: "text/markdown; charset=utf-8", Size: int64(len([]byte(definition.instructions))), SHA256: hex.EncodeToString(fileHash[:])}
+		if err := tx.Create(&file).Error; err != nil {
+			return err
+		}
+		return tx.Model(&model.Skill{}).Where("id = ?", skill.ID).Updates(map[string]any{
+			"current_version_id": version.ID,
+			"description":        definition.description,
+			"prompt_template":    definition.instructions,
+			"default_params":     defaultParams,
+		}).Error
+	})
 }
 
 func seedToolHash(parts ...string) string {
