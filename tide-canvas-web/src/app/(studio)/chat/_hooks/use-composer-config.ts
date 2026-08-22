@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "@/components/shared/toast";
-import { parseSkillParams } from "@/lib/skill-api";
+import { parseSkillInputSchema, parseSkillParams } from "@/lib/skill-api";
 import { skillKindOf, type SkillVO } from "@/types/skill";
 import {
   DEFAULT_MUSIC_PARAMS,
@@ -27,7 +27,7 @@ import { configuredMatrix, keyVariants, matrixPrice, resolveVideoPointCost } fro
 import { supportedOmniReferenceKinds } from "@/lib/omni-reference";
 import type { GenModelsApi } from "./use-gen-models";
 
-export function useComposerConfig(models: GenModelsApi) {
+export function useComposerConfig(models: GenModelsApi, toolSkill: SkillVO | null = null) {
   const { genModels, model, setModel, selModel, mCfg, isVid, webSearchAvail } = models;
 
   // composer chips — driven by the selected model's 模型管理 config
@@ -67,6 +67,24 @@ export function useComposerConfig(models: GenModelsApi) {
   // 模型管理 config (fileUpload on → 图片附件，数量 maxFileCount、单文件 maxFileSizeMB)；
   // for image/video models it is the per-mode REF_POLICY (t2i / t2v take none).
   const refPolicy = useMemo<RefPolicy | undefined>(() => {
+    if (toolSkill && skillKindOf(toolSkill) === "tool") {
+      const schema = parseSkillInputSchema(toolSkill.inputSchema);
+      const rawKinds = schema?.["x-asset-types"];
+      const kinds = Array.isArray(rawKinds)
+        ? rawKinds.filter((kind): kind is RefPolicy["kinds"][number] =>
+            kind === "image" || kind === "video" || kind === "audio" || kind === "file",
+          )
+        : [];
+      if (!kinds.length) return undefined;
+      const assetSpec = schema?.properties?.assets;
+      const configuredMax = typeof assetSpec?.maxItems === "number" ? assetSpec.maxItems : 1;
+      return {
+        kinds,
+        max: Math.max(1, Math.min(MAX_ATTACHMENTS, configuredMax)),
+        maxSizeMB: 100,
+        accept: acceptFor(kinds),
+      };
+    }
     if (!selModel) return undefined;
     if (selModel.type === "text") {
       if (!mCfg?.fileUpload) return undefined;
@@ -86,10 +104,15 @@ export function useComposerConfig(models: GenModelsApi) {
     if (!p) return undefined;
     const kinds = mode === "omni_ref" ? supportedOmniReferenceKinds(mCfg) : p.kinds;
     return { ...p, kinds, max: kinds.length ? p.max : 0, accept: acceptFor(kinds) };
-  }, [selModel, mode, mCfg]);
+  }, [toolSkill, selModel, mode, mCfg]);
   // text-model uploads are OPTIONAL (a chat can be plain text); generation ref
   // modes (i2i/i2v/…) REQUIRE at least one reference before sending.
-  const refOptional = selModel?.type === "text";
+  const toolRequiresAssets = useMemo(() => {
+    if (!toolSkill || skillKindOf(toolSkill) !== "tool") return false;
+    const required = parseSkillInputSchema(toolSkill.inputSchema)?.required;
+    return Array.isArray(required) && required.includes("assets");
+  }, [toolSkill]);
+  const refOptional = toolSkill ? !toolRequiresAssets : selModel?.type === "text";
 
   // 音频模型分流：音乐（四创作模式）vs 音效（只吃描述），判定与创作台一致
   //（后台「生成方式」勾 sfx，modelKey 含 sfx 兜底）。

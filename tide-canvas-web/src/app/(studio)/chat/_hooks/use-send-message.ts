@@ -9,12 +9,19 @@ import { useCallback, useEffect } from "react";
 import { chatApi, streamMessage } from "@/lib/chat-api";
 import { aiApi } from "@/lib/api";
 import { getAccessToken } from "@/lib/http";
+import {
+  defaultSkillInputValues,
+  parseSkillInputSchema,
+  validateSkillRunInputValues,
+} from "@/lib/skill-api";
+import { skillRunApi } from "@/lib/skill-run-api";
 import { toast } from "@/components/shared/toast";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { buildMusicInput, validateMusicParams, type MusicParams } from "@/lib/music-modes";
 import type { AiGenerateDTO } from "@/types/ai";
 import type { StudioModelVO } from "@/lib/market-api";
 import { skillKindOf, skillSupportsOutput, type SkillVO } from "@/types/skill";
+import type { SkillRunInput } from "@/types/skill-run";
 import type { ContextUsageVO, ConversationVO, MessageAttachment, MessageVO } from "@/types/chat";
 import { musicTurnSummary, type RefItem, type RefPolicy } from "../_components/chat-utils";
 import { arbitratePendingTurn, removePendingTurnIfOwned } from "./pending-turn-arbitration";
@@ -110,6 +117,42 @@ function chatRequestId(): string {
     return `chat-${crypto.randomUUID()}`;
   }
   return `chat-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** Build the complete tool input from the chat composer. Tool defaults stay
+ * server-compatible, while a pasted public URL is promoted to the conventional
+ * `url` parameter used by webpage-analysis skills. */
+function chatToolRunInput(
+  skill: SkillVO,
+  prompt: string,
+  refs: readonly RefItem[],
+): SkillRunInput {
+  const parameters = defaultSkillInputValues(skill.inputSchema, skill.defaultParams);
+  const schema = parseSkillInputSchema(skill.inputSchema);
+  const rawAssetTypes = schema?.["x-asset-types"];
+  const assetTypes = new Set(
+    Array.isArray(rawAssetTypes)
+      ? rawAssetTypes.filter((value): value is RefItem["kind"] =>
+          value === "image" || value === "video" || value === "audio" || value === "file",
+        )
+      : [],
+  );
+  if (schema?.properties?.url && parameters.url === undefined) {
+    const match = prompt.match(/https?:\/\/[^\s<>{}\[\]"']+/i)?.[0];
+    if (match) parameters.url = match.replace(/[),.;!?，。；！？]+$/, "");
+  }
+  return {
+    prompt,
+    assets: refs
+      .filter((ref): ref is RefItem & { url: string } => !!ref.url && assetTypes.has(ref.kind))
+      .map((ref) => ({
+        type: ref.kind,
+        url: ref.url,
+        ...(ref.name ? { name: ref.name } : {}),
+      })),
+    sourceNodeIds: [],
+    parameters,
+  };
 }
 
 function validComposerSnapshot(value: unknown): value is ComposerSnapshot {
@@ -579,6 +622,7 @@ export function useSendMessage({
   isMusicSel,
   musicNoDraftOk,
   skill,
+  toolSkill,
   setStreaming,
   chatAbortRef,
   activeIdRef,
@@ -620,6 +664,7 @@ export function useSendMessage({
   isMusicSel: boolean;
   musicNoDraftOk: boolean;
   skill: SkillVO | null;
+  toolSkill: SkillVO | null;
   setStreaming: React.Dispatch<React.SetStateAction<string | null>>;
   chatAbortRef: React.RefObject<AbortController | null>;
   activeIdRef: React.RefObject<string | null>;
@@ -974,13 +1019,16 @@ export function useSendMessage({
   ]);
 
   const send = useCallback(async (candidate?: unknown) => {
+    const selectedTool = toolSkill && skillKindOf(toolSkill) === "tool" ? toolSkill : null;
     const expected = isHistorySendTarget(candidate) ? candidate : undefined;
     if (expected) {
-      const effectiveSkillId = skill && selModel
-        && skillKindOf(skill) === "preset"
-        && skillSupportsOutput(skill, selModel.type)
-        ? skill.id
-        : null;
+      const effectiveSkillId = selectedTool?.id ?? (
+        skill && selModel
+          && skillKindOf(skill) === "preset"
+          && skillSupportsOutput(skill, selModel.type)
+          ? skill.id
+          : null
+      );
       const targetStillCurrent = historySendTargetMatches(expected, {
         conversationId: activeId,
         draft,
@@ -1005,8 +1053,8 @@ export function useSendMessage({
     const v = draft.trim();
     if (busy || textRecovering) return;
     // 音乐的自定义/延长/翻唱不强制描述；其余（含灵感模式/音效）仍需文字。
-    if (!v && !musicNoDraftOk) return;
-    if (isMusicSel) {
+    if (!v && !musicNoDraftOk && !selectedTool) return;
+    if (!selectedTool && isMusicSel) {
       const musicErr = validateMusicParams(v, music);
       if (musicErr) {
         toast.info(musicErr);
@@ -1016,7 +1064,7 @@ export function useSendMessage({
 
     // text-model sends are blocked once the conversation's context is full
     // (the server enforces the same cap; this just fails fast with guidance).
-    if (selModel?.type === "text" && ctxUsage?.full) {
+    if (!selectedTool && selModel?.type === "text" && ctxUsage?.full) {
       toast.error("当前会话上下文已达上限，请开启新会话");
       return;
     }
@@ -1027,7 +1075,11 @@ export function useSendMessage({
     // references. Treat that synchronously as an empty set instead of waiting
     // for useReferences' cleanup effect, otherwise a same-frame send can retain
     // stale attachments in history even though they are absent from the request.
-    const allowedRefs = refPolicy ? refs.filter((r) => refPolicy.kinds.includes(r.kind)) : [];
+    const allowedRefs = selectedTool
+      ? refs
+      : refPolicy
+        ? refs.filter((r) => refPolicy.kinds.includes(r.kind))
+        : [];
     const refImageUrls = allowedRefs.filter((r) => r.kind === "image" && r.url).map((r) => r.url as string);
     const refVideoUrls = allowedRefs.filter((r) => r.kind === "video" && r.url).map((r) => r.url as string);
     const refAudioUrls = allowedRefs.filter((r) => r.kind === "audio" && r.url).map((r) => r.url as string);
@@ -1045,12 +1097,23 @@ export function useSendMessage({
       // omni_ref 的策略允许纯音频参考（音频驱动的视频生成），音频也算数——
       // 否则界面明示「音频已添加、可 @ 引用」，发送却被拦，自相矛盾。
       if (
+        !selectedTool &&
         !refOptional &&
         refImageUrls.length === 0 &&
         refVideoUrls.length === 0 &&
         refAudioUrls.length === 0
       ) {
         toast.error("当前模式需要先添加参考素材");
+        return;
+      }
+    }
+
+    const toolInput = selectedTool ? chatToolRunInput(selectedTool, v, allowedRefs) : null;
+    if (selectedTool && toolInput) {
+      const errors = validateSkillRunInputValues(selectedTool.inputSchema, toolInput);
+      const message = errors.prompt || errors.assets || errors.parameters || Object.values(errors)[0];
+      if (message) {
+        toast.info(message);
         return;
       }
     }
@@ -1096,6 +1159,54 @@ export function useSendMessage({
       draft,
       refs: refs.map(({ key, kind, url, name }) => ({ key, kind, url, name })),
     };
+
+    const bump = (cid: string) =>
+      setConvos((prev) => {
+        const idx = prev.findIndex((conversation) => conversation.id === cid);
+        if (idx <= 0) return prev;
+        const copy = prev.slice();
+        const [conversation] = copy.splice(idx, 1);
+        copy.unshift(conversation);
+        return copy;
+      });
+
+    // 技能工具直接从输入框启动，不打开额外参数弹窗。服务端会原子写入用户
+    // 消息和 skill_run 助手消息，聊天线程继续负责轮询进度与展示产物。
+    if (selectedTool && toolInput) {
+      const createScope = `chat-tool:${ownerKey}:${id}:${selectedTool.id}`;
+      try {
+        const started = await skillRunApi.createIdempotent({
+          skillId: selectedTool.id,
+          entryPoint: "studio",
+          conversationId: id,
+          input: toolInput,
+        }, createScope);
+        if (!started.success || !started.data) {
+          toast.error(started.message || "技能启动失败，请重试");
+          return;
+        }
+        await skillRunApi.commitCreate(createScope, started.data.id);
+        setDraft((current) => current === composerSnapshot.draft ? "" : current);
+        clearRefsIfUnchanged(composerSnapshot.refs);
+        bump(id);
+        void refreshCtxUsage(id);
+        const stillVisible = activeIdRef.current === id || (!activeId && activeIdRef.current === null);
+        if (stillVisible) {
+          const visible = await loadMessages(
+            id,
+            (records) => records.some((message) => message.skillRunId === started.data!.id),
+          );
+          if (!visible) toast.info("技能已启动，正在同步消息列表");
+          forceBottom();
+        }
+      } catch {
+        toast.error("技能启动连接失败，输入已保留，请重试");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     setDraft("");
 
     // attachments snapshot — TEXT models only. Generation turns persist their
@@ -1123,16 +1234,6 @@ export function useSendMessage({
     setMsgs((prev) => [...prev, optimistic]);
     setTyping(true);
     forceBottom();
-
-    const bump = (cid: string) =>
-      setConvos((prev) => {
-        const idx = prev.findIndex((c) => c.id === cid);
-        if (idx <= 0) return prev;
-        const copy = prev.slice();
-        const [c] = copy.splice(idx, 1);
-        copy.unshift(c);
-        return copy;
-      });
 
     // 选图片/视频/音频模型 → 真实生成（一个 turn，助手消息只指向 task）；文本模型 → 文字对话。
     const wantImage = selModel?.type === "image";
@@ -1495,7 +1596,7 @@ export function useSendMessage({
       setTyping(false);
       setBusy(false);
     }
-  }, [draft, busy, textRecovering, activeId, ensureSession, loadMessages, selModel, mode, ratio, res, quality, dur, batch, refs, refPolicy, refOptional, clearRefsIfUnchanged, restoreRefsIfEmpty, forceBottom, scrollEnd, ctxUsage, refreshCtxUsage, music, isMusicSel, musicNoDraftOk, skill, activeIdRef, chatAbortRef, nearBottomRef, setActiveId, setBusy, setConvos, setDraft, setMsgs, setStreaming, setTextRecovering, setTyping]);
+  }, [draft, busy, textRecovering, activeId, ensureSession, loadMessages, selModel, mode, ratio, res, quality, dur, batch, refs, refPolicy, refOptional, clearRefsIfUnchanged, restoreRefsIfEmpty, forceBottom, scrollEnd, ctxUsage, refreshCtxUsage, music, isMusicSel, musicNoDraftOk, skill, toolSkill, activeIdRef, chatAbortRef, nearBottomRef, setActiveId, setBusy, setConvos, setDraft, setMsgs, setStreaming, setTextRecovering, setTyping]);
 
   return send;
 }

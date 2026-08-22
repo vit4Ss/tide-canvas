@@ -33,12 +33,10 @@
 import "@/styles/liuguang/chat.css";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { SkillPicker } from "@/components/skill/skill-picker";
-import { promptAfterSkillPick } from "@/lib/skill-prompt";
+import { promptAfterSkillPick, visibleSkillPrompt } from "@/lib/skill-prompt";
 import type { SkillRunPanelActionPayload } from "@/components/skill/skill-run-panel";
-import { ToolSkillWorkspace } from "@/components/studio/tool-skill-workspace";
 import { toast } from "@/components/shared/toast";
 import type { MentionEditorHandle } from "@/components/studio/mention-prompt-editor";
 import { skillApi } from "@/lib/skill-api";
@@ -63,12 +61,15 @@ import { useTurnActions } from "./_hooks/use-turn-actions";
 import { useTaskPolling } from "./_hooks/use-task-polling";
 import { useResumeStream } from "./_hooks/use-resume-stream";
 
+function promptAfterToolPick(current: string, previous: SkillVO | null): string {
+  const previousStarter = visibleSkillPrompt(previous);
+  return previousStarter && current.trim() === previousStarter ? "" : current;
+}
+
 /* ── component ────────────────────────────────────────────────────────────── */
 
 export default function ChatPage() {
-  const router = useRouter();
   const ensureSession = useAuthStore((s) => s.ensureSession);
-  const ownerUserId = useAuthStore((s) => s.user?.id ?? "");
 
   // cross-cutting state shared by several hooks (送出态 / 输入草稿 / typing 圆点)
   const [draft, setDraft] = useState("");
@@ -79,10 +80,10 @@ export default function ChatPage() {
   const [toolSkillsFailed, setToolSkillsFailed] = useState(false);
   const [toolSkillsReload, setToolSkillsReload] = useState(0);
   const [toolSkill, setToolSkill] = useState<SkillVO | null>(null);
-  const [toolWorkspaceOpen, setToolWorkspaceOpen] = useState(false);
+  const [toolPickerOpen, setToolPickerOpen] = useState(false);
 
   const models = useGenModels();
-  const cfg = useComposerConfig(models);
+  const cfg = useComposerConfig(models, toolSkill);
   const refsApi = useReferences({ refPolicy: cfg.refPolicy });
   const streamingApi = useStreaming();
   const conv = useConversations({
@@ -163,6 +164,7 @@ export default function ChatPage() {
     isMusicSel: cfg.isMusicSel,
     musicNoDraftOk: cfg.musicNoDraftOk,
     skill: cfg.skill,
+    toolSkill,
     setStreaming: streamingApi.setStreaming,
     chatAbortRef: streamingApi.chatAbortRef,
     activeIdRef: conv.activeIdRef,
@@ -338,11 +340,15 @@ export default function ChatPage() {
           toolSkills={toolSkills}
           toolSkillsFailed={toolSkillsFailed}
           onPickTool={(nextSkill) => {
+            setDraft((current) => promptAfterToolPick(current, cfg.skill ?? toolSkill));
+            cfg.removeSkill();
             setToolSkill(nextSkill);
-            setToolWorkspaceOpen(true);
+            window.setTimeout(() => taRef.current?.focus(), 0);
           }}
           onRetryTools={() => setToolSkillsReload((value) => value + 1)}
-          onOpenAllTools={() => router.push("/tools")}
+          onOpenAllTools={() => setToolPickerOpen(true)}
+          toolSkill={toolSkill}
+          onRemoveTool={() => setToolSkill(null)}
         />
       </main>
 
@@ -371,7 +377,8 @@ export default function ChatPage() {
         open={cfg.skillPickerOpen}
         onClose={() => cfg.setSkillPickerOpen(false)}
         onPick={(nextSkill) => {
-          setDraft((current) => promptAfterSkillPick(current, nextSkill, cfg.skill));
+          setDraft((current) => promptAfterSkillPick(current, nextSkill, toolSkill ?? cfg.skill));
+          setToolSkill(null);
           cfg.pickSkill(nextSkill);
         }}
         kinds={["preset"]}
@@ -381,13 +388,20 @@ export default function ChatPage() {
         currentId={cfg.skill?.id}
       />
 
-      <ToolSkillWorkspace
-        key={ownerUserId || "guest"}
-        open={toolWorkspaceOpen}
-        skill={toolSkill}
-        skills={toolSkills ?? (toolSkill ? [toolSkill] : [])}
-        onRequestOpen={() => setToolWorkspaceOpen(true)}
-        onRequestClose={() => setToolWorkspaceOpen(false)}
+      {/* 更多技能只负责选择；选中后仍以内联 chip 回到当前输入框。 */}
+      <SkillPicker
+        open={toolPickerOpen}
+        onClose={() => setToolPickerOpen(false)}
+        onPick={(nextSkill) => {
+          setDraft((current) => promptAfterToolPick(current, cfg.skill ?? toolSkill));
+          cfg.removeSkill();
+          setToolSkill(nextSkill);
+          setToolPickerOpen(false);
+          window.setTimeout(() => taRef.current?.focus(), 0);
+        }}
+        kinds={["tool"]}
+        entryPoint="studio"
+        currentId={toolSkill?.id}
       />
 
       {/* 资产库弹窗：复用整个资产页 UI 作为选择器 */}

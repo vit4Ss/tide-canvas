@@ -2,6 +2,7 @@
 
 import clsx from "clsx";
 import { Sparkles, X } from "lucide-react";
+import { SkillToolGlyph } from "@/components/skill/skill-tool-icon";
 import type { SkillVO } from "@/types/skill";
 import styles from "./skill-prompt-chip.module.css";
 
@@ -16,7 +17,9 @@ export function SkillPromptChip({
 }) {
   return (
     <span className={clsx(styles.root, className)} title={skill.description || skill.title}>
-      <Sparkles aria-hidden className={styles.icon} />
+      {skill.kind === "tool"
+        ? <SkillToolGlyph title={skill.title} aria-hidden className={styles.icon} />
+        : <Sparkles aria-hidden className={styles.icon} />}
       <span className={styles.label}>{skill.title}</span>
       <button
         type="button"

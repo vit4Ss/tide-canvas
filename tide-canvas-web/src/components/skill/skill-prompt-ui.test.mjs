@@ -10,6 +10,8 @@ const studioToolShortcuts = read("../studio/create-studio/tool-skill-shortcuts.t
 const studioStyles = read("../../styles/liuguang/studio.css");
 const chatPage = read("../../app/(studio)/chat/page.tsx");
 const chatComposer = read("../../app/(studio)/chat/_components/composer.tsx");
+const chatConfig = read("../../app/(studio)/chat/_hooks/use-composer-config.ts");
+const chatSend = read("../../app/(studio)/chat/_hooks/use-send-message.ts");
 const quickStart = read("../canvas/canvas-quick-start.tsx");
 const assistant = read("../canvas/canvas-assistant-panel.tsx");
 const chipStyles = read("./skill-prompt-chip.module.css");
@@ -23,7 +25,7 @@ test("四个技能入口都把技能标签渲染在输入区域内", () => {
 
 test("四个入口选择技能时都应用公开起始提示且保留已有草稿", () => {
   assert.match(studio, /setPrompt\(\(current\) => promptAfterSkillPick\(current, s, skill\)\)/);
-  assert.match(chatPage, /setDraft\(\(current\) => promptAfterSkillPick\(current, nextSkill, cfg\.skill\)\)/);
+  assert.match(chatPage, /setDraft\(\(current\) => promptAfterSkillPick\(current, nextSkill, toolSkill \?\? cfg\.skill\)\)/);
   assert.match(quickStart, /promptAfterSkillPick\(current, skill, selectedSkill\)/);
   assert.match(assistant, /setMessage\(\(current\) => promptAfterSkillPick\(current, skill, selectedSkill\)\)/);
 });
@@ -52,9 +54,16 @@ test("生成面板在提示词框下方展示技能工具并复用既有运行�
   assert.match(studioStyles, /\.ws-tool-shortcuts-label\{[^}]*border-radius:var\(--pill\)/);
 });
 
-test("对话输入框下方展示技能工具快捷区并打开工具工作台", () => {
+test("对话输入框下方的技能工具直接附着输入框并从当前会话发送", () => {
   assert.match(chatComposer, /<div className="chat-tool-shortcuts">[\s\S]*?<ToolSkillShortcuts/);
+  assert.match(chatComposer, /skill=\{activeSkill\}[\s\S]*?onRemove=\{toolSkill \? onRemoveTool : removeSkill\}/);
+  assert.match(chatComposer, /currentId=\{toolSkill\?\.id\}/);
   assert.match(chatPage, /skillApi\.list\(\{ kind: "tool", entryPoint: "studio", pageNum: 1, pageSize: 100 \}\)/);
-  assert.match(chatPage, /<Composer[\s\S]*?toolSkills=\{toolSkills\}[\s\S]*?onPickTool=/);
-  assert.match(chatPage, /<ToolSkillWorkspace[\s\S]*?skill=\{toolSkill\}[\s\S]*?skills=\{toolSkills/);
+  assert.match(chatPage, /onPickTool=\{\(nextSkill\) => \{[\s\S]*?setToolSkill\(nextSkill\)[\s\S]*?taRef\.current\?\.focus/);
+  assert.doesNotMatch(chatPage, /ToolSkillWorkspace/);
+  assert.match(chatPage, /open=\{toolPickerOpen\}[\s\S]*?kinds=\{\["tool"\]\}[\s\S]*?entryPoint="studio"/);
+  assert.match(chatPage, /promptAfterToolPick\(current, cfg\.skill \?\? toolSkill\)/);
+  assert.match(chatSend, /skillRunApi\.createIdempotent\(\{[\s\S]*?entryPoint: "studio"[\s\S]*?conversationId: id/);
+  assert.match(chatSend, /message\.skillRunId === started\.data!\.id/);
+  assert.match(chatConfig, /toolSkill[\s\S]*?"x-asset-types"[\s\S]*?accept: acceptFor\(kinds\)/);
 });

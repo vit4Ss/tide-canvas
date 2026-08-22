@@ -23,6 +23,7 @@ import {
   clipDisplayLabel,
   findClipModel,
 } from "@/lib/music-modes";
+import { parseSkillInputSchema } from "@/lib/skill-api";
 import type { ContextUsageVO } from "@/types/chat";
 import type { SkillVO } from "@/types/skill";
 import { CmSelect, RatioBox } from "./cm-select";
@@ -62,6 +63,8 @@ export function Composer({
   onPickTool,
   onRetryTools,
   onOpenAllTools,
+  toolSkill,
+  onRemoveTool,
 }: {
   models: GenModelsApi;
   cfg: ComposerConfigApi;
@@ -79,6 +82,8 @@ export function Composer({
   onPickTool: (skill: SkillVO) => void;
   onRetryTools: () => void;
   onOpenAllTools: () => void;
+  toolSkill: SkillVO | null;
+  onRemoveTool: () => void;
 }) {
   const {
     genModels,
@@ -132,6 +137,7 @@ export function Composer({
     selectModel,
     points,
   } = cfg;
+  const activeSkill = toolSkill ?? skill;
   const {
     refs,
     removeRef,
@@ -146,6 +152,22 @@ export function Composer({
     openSrcMenu,
   } = refsApi;
   const visibleRefs = refPolicy ? refs.filter((ref) => refPolicy.kinds.includes(ref.kind)) : [];
+  const toolSchema = toolSkill ? parseSkillInputSchema(toolSkill.inputSchema) : null;
+  const toolRequiredFields = new Set(Array.isArray(toolSchema?.required) ? toolSchema.required : []);
+  const toolRequiresDraft = !!toolSkill && [...toolRequiredFields].some(
+    (field) => field !== "assets" && field !== "sourceNodeIds",
+  );
+  const toolRequiresAssets = !!toolSkill && toolRequiredFields.has("assets");
+  const toolHasReadyAsset = visibleRefs.some((ref) => !!ref.url && !ref.uploading && !ref.failed);
+  const toolInputBlocked = !!toolSkill && (
+    (toolRequiresDraft && !draft.trim()) ||
+    (toolRequiresAssets && !toolHasReadyAsset)
+  );
+  const toolBlockReason = toolRequiresDraft && !draft.trim()
+    ? "先填写任务要求"
+    : toolRequiresAssets && !toolHasReadyAsset
+      ? "先添加所需素材"
+      : "";
   const referenceVideoQuote = useReferenceVideoQuote(
     selModel?.modelKey || selModel?.id,
     mCfg,
@@ -156,7 +178,7 @@ export function Composer({
   );
   const totalPoints = points + referenceVideoQuote.quote.pointCost;
   const submitCurrentDraft = () => {
-    if (referenceVideoQuote.loading) return;
+    if (!toolSkill && referenceVideoQuote.loading) return;
     send();
   };
 
@@ -164,10 +186,10 @@ export function Composer({
     <div className="chat-composer">
       {/* 已压缩且余量健康时给个安静的说明；仍逼近上限（压缩后依旧 ≥80%）
           则继续走下方的警示条 */}
-      {selModel?.type === "text" && ctxUsage?.compressed && ctxUsage.percent < 80 && (
+      {!toolSkill && selModel?.type === "text" && ctxUsage?.compressed && ctxUsage.percent < 80 && (
         <div className="chat-ctx-note">较早的对话已自动压缩为摘要，模型仍保有前文关键信息</div>
       )}
-      {selModel?.type === "text" && ctxUsage && ctxUsage.percent >= 80 && (
+      {!toolSkill && selModel?.type === "text" && ctxUsage && ctxUsage.percent >= 80 && (
         <div className={`chat-ctx-warn${ctxUsage.full ? " full" : ""}`}>
           <span>
             {ctxUsage.full
@@ -204,10 +226,10 @@ export function Composer({
           </div>
         )}
         <div className="composer-head">
-          {skill && (
+          {activeSkill && (
             <SkillPromptChip
-              skill={skill}
-              onRemove={removeSkill}
+              skill={activeSkill}
+              onRemove={toolSkill ? onRemoveTool : removeSkill}
               className="composer-skill-chip"
             />
           )}
@@ -231,7 +253,9 @@ export function Composer({
             onSubmit={() => submitCurrentDraft()}
             onPasteFiles={refPolicy?.kinds.length ? attachFiles : undefined}
             placeholder={
-              isMusicSel && musicMode === "custom"
+              toolSkill
+                ? `告诉「${toolSkill.title}」需要完成什么，直接发送即可`
+                : isMusicSel && musicMode === "custom"
                 ? "给这一轮写句备注（仅作记录，不参与生成）· 歌词请在下方填写"
                 : isMusicSel && musicMode !== "inspire"
                   ? "给这一轮写句备注（仅作记录，不参与生成）· 原曲在下方选择"
@@ -243,7 +267,7 @@ export function Composer({
         </div>
 
         {/* 音乐四模式的参数区（自定义歌词/延长/翻唱时展开；灵感模式无额外字段） */}
-        {isMusicSel && musicMode !== "inspire" && (
+        {!toolSkill && isMusicSel && musicMode !== "inspire" && (
           <div className="cm-music">
             {(musicMode === "extend" || musicMode === "cover") && (
               <div className="cm-music-row">
@@ -363,17 +387,17 @@ export function Composer({
           {/* 对话生成只使用单输出预设；智能技能从画布入口启动。 */}
           {selModel && (
             <button
-              className={`cm-chip${skill ? " on" : ""}`}
-              title={skill ? `当前技能：${skill.title}，点击选择更多技能` : "选择预设技能"}
+              className={`cm-chip${activeSkill ? " on" : ""}`}
+              title={activeSkill ? `当前技能：${activeSkill.title}，点击选择更多技能` : "选择预设技能"}
               type="button"
-              onClick={() => setSkillPickerOpen(true)}
+              onClick={() => toolSkill ? onOpenAllTools() : setSkillPickerOpen(true)}
             >
               <Sparkles size={14} aria-hidden />
               技能
-              {skill && <span className="cm-skill-count">1</span>}
+              {activeSkill && <span className="cm-skill-count">1</span>}
             </button>
           )}
-          {webSearchAvail && (
+          {!toolSkill && webSearchAvail && (
             <button
               className={`cm-chip ${web ? "on" : ""}`}
               type="button"
@@ -450,7 +474,7 @@ export function Composer({
             </CmSelect>
           )}
 
-          {modeVals.length > 0 && (
+          {!toolSkill && modeVals.length > 0 && (
             <CmSelect
               open={openSel === "mode"}
               onToggle={() => toggleSel("mode")}
@@ -482,7 +506,7 @@ export function Composer({
           )}
 
           {/* 音乐创作模式（对齐创作台：灵感 / 自定义歌词 / 延长 / 翻唱） */}
-          {isMusicSel && (
+          {!toolSkill && isMusicSel && (
             <CmSelect
               open={openSel === "musicMode"}
               onToggle={() => toggleSel("musicMode")}
@@ -514,7 +538,7 @@ export function Composer({
           )}
 
           {/* 人声/纯音乐开关（上游 make_instrumental，各创作模式通吃） */}
-          {isMusicSel && (
+          {!toolSkill && isMusicSel && (
             <button
               className={`cm-chip ${music.instrumental ? "on" : ""}`}
               type="button"
@@ -530,7 +554,7 @@ export function Composer({
             </button>
           )}
 
-          {ratioOpts.length > 0 && (
+          {!toolSkill && ratioOpts.length > 0 && (
             <CmSelect
               open={openSel === "ratio"}
               onToggle={() => toggleSel("ratio")}
@@ -560,7 +584,7 @@ export function Composer({
             </CmSelect>
           )}
 
-          {resOpts.length > 0 && (
+          {!toolSkill && resOpts.length > 0 && (
             <CmSelect
               open={openSel === "res"}
               onToggle={() => toggleSel("res")}
@@ -588,7 +612,7 @@ export function Composer({
             </CmSelect>
           )}
 
-          {qualOpts.length > 0 && (
+          {!toolSkill && qualOpts.length > 0 && (
             <CmSelect
               open={openSel === "qual"}
               onToggle={() => toggleSel("qual")}
@@ -616,7 +640,7 @@ export function Composer({
             </CmSelect>
           )}
 
-          {durOpts.length > 0 && (
+          {!toolSkill && durOpts.length > 0 && (
             <CmSelect
               open={openSel === "dur"}
               onToggle={() => toggleSel("dur")}
@@ -646,7 +670,7 @@ export function Composer({
 
           {/* 数量仅图片批量适用（batchCount 只随图片请求发出，与创作台同口径）：
               音频一次即整曲、文本按条对话、视频单段生成 */}
-          {selModel?.type === "image" && (
+          {!toolSkill && selModel?.type === "image" && (
           <CmSelect
             open={openSel === "count"}
             onToggle={() => toggleSel("count")}
@@ -678,11 +702,13 @@ export function Composer({
           </div>
           <span
             className="cm-pts"
-            title={referenceVideoQuote.quote.pointCost > 0
+            title={!toolSkill && referenceVideoQuote.quote.pointCost > 0
               ? `含参考视频 ${referenceVideoQuote.quote.videoCount} 个，共 ${referenceVideoQuote.quote.durationSeconds.toFixed(1)} 秒，额外 ${referenceVideoQuote.quote.pointCost} 积分`
               : undefined}
           >
-            {referenceVideoQuote.loading
+            {toolSkill
+              ? "按实际扣费"
+              : referenceVideoQuote.loading
               ? "正在核验参考视频…"
               : referenceVideoQuote.failed
                 ? "参考视频费用提交时核验"
@@ -695,16 +721,18 @@ export function Composer({
             onClick={() => submitCurrentDraft()}
             disabled={
               busy ||
-              referenceVideoQuote.loading ||
-              (!draft.trim() && !musicNoDraftOk) ||
-              (selModel?.type === "text" && !!ctxUsage?.full)
+              (!toolSkill && referenceVideoQuote.loading) ||
+              (toolSkill ? toolInputBlocked : !draft.trim() && !musicNoDraftOk) ||
+              (!toolSkill && selModel?.type === "text" && !!ctxUsage?.full)
             }
             title={
               busy
                 ? "处理中…"
-                : selModel?.type === "text" && ctxUsage?.full
+                : toolSkill && toolBlockReason
+                  ? toolBlockReason
+                : !toolSkill && selModel?.type === "text" && ctxUsage?.full
                   ? "会话上下文已满，请开启新会话"
-                  : !draft.trim() && !musicNoDraftOk
+                  : !toolSkill && !draft.trim() && !musicNoDraftOk
                     ? "先输入内容"
                     : "发送"
             }
@@ -721,6 +749,7 @@ export function Composer({
           onPick={onPickTool}
           onRetry={onRetryTools}
           onOpenAll={onOpenAllTools}
+          currentId={toolSkill?.id}
         />
       </div>
       <div className="chat-hint">Enter 发送 · Shift+Enter 换行 · 可拖拽 / 粘贴添加参考</div>

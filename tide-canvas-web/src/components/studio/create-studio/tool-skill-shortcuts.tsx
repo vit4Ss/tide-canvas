@@ -10,12 +10,14 @@ export function ToolSkillShortcuts({
   onPick,
   onRetry,
   onOpenAll,
+  currentId,
 }: {
   skills: SkillVO[] | null;
   failed: boolean;
   onPick: (skill: SkillVO) => void;
   onRetry: () => void;
   onOpenAll: () => void;
+  currentId?: string;
 }) {
   const visibleSkills = skills?.slice(0, MAX_VISIBLE_TOOLS) ?? [];
 
@@ -41,8 +43,9 @@ export function ToolSkillShortcuts({
               <button
                 key={tool.id}
                 type="button"
-                className="ws-tool-shortcut"
+                className={`ws-tool-shortcut${currentId === tool.id ? " on" : ""}`}
                 title={tool.description || tool.title}
+                aria-pressed={currentId === tool.id}
                 onClick={() => onPick(tool)}
               >
                 <ToolIcon aria-hidden />
