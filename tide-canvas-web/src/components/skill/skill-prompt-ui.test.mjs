@@ -51,3 +51,10 @@ test("生成面板在提示词框下方展示技能工具并复用既有运行�
   assert.match(studioStyles, /\.ws-tool-shortcuts-row\{[^}]*display:flex;[^}]*flex-wrap:wrap/);
   assert.match(studioStyles, /\.ws-tool-shortcuts-label\{[^}]*border-radius:var\(--pill\)/);
 });
+
+test("对话输入框下方展示技能工具快捷区并打开工具工作台", () => {
+  assert.match(chatComposer, /<div className="chat-tool-shortcuts">[\s\S]*?<ToolSkillShortcuts/);
+  assert.match(chatPage, /skillApi\.list\(\{ kind: "tool", entryPoint: "studio", pageNum: 1, pageSize: 100 \}\)/);
+  assert.match(chatPage, /<Composer[\s\S]*?toolSkills=\{toolSkills\}[\s\S]*?onPickTool=/);
+  assert.match(chatPage, /<ToolSkillWorkspace[\s\S]*?skill=\{toolSkill\}[\s\S]*?skills=\{toolSkills/);
+});

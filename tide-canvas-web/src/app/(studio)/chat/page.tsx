@@ -32,14 +32,18 @@
 
 import "@/styles/liuguang/chat.css";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { SkillPicker } from "@/components/skill/skill-picker";
 import { promptAfterSkillPick } from "@/lib/skill-prompt";
 import type { SkillRunPanelActionPayload } from "@/components/skill/skill-run-panel";
+import { ToolSkillWorkspace } from "@/components/studio/tool-skill-workspace";
 import { toast } from "@/components/shared/toast";
 import type { MentionEditorHandle } from "@/components/studio/mention-prompt-editor";
+import { skillApi } from "@/lib/skill-api";
 import { skillRunApi } from "@/lib/skill-run-api";
+import type { SkillVO } from "@/types/skill";
 import type { SkillRunAction } from "@/types/skill-run";
 import { type LightboxItem } from "./_components/chat-utils";
 import { Lightbox } from "./_components/lightbox";
@@ -62,13 +66,20 @@ import { useResumeStream } from "./_hooks/use-resume-stream";
 /* ── component ────────────────────────────────────────────────────────────── */
 
 export default function ChatPage() {
+  const router = useRouter();
   const ensureSession = useAuthStore((s) => s.ensureSession);
+  const ownerUserId = useAuthStore((s) => s.user?.id ?? "");
 
   // cross-cutting state shared by several hooks (送出态 / 输入草稿 / typing 圆点)
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [textRecovering, setTextRecovering] = useState(false);
   const [typing, setTyping] = useState(false);
+  const [toolSkills, setToolSkills] = useState<SkillVO[] | null>(null);
+  const [toolSkillsFailed, setToolSkillsFailed] = useState(false);
+  const [toolSkillsReload, setToolSkillsReload] = useState(0);
+  const [toolSkill, setToolSkill] = useState<SkillVO | null>(null);
+  const [toolWorkspaceOpen, setToolWorkspaceOpen] = useState(false);
 
   const models = useGenModels();
   const cfg = useComposerConfig(models);
@@ -86,6 +97,38 @@ export default function ChatPage() {
   const scroll = useAutoScroll({ msgs: conv.msgs, typing, activeId: conv.activeId });
 
   const taRef = useRef<MentionEditorHandle>(null);
+
+  // 对话输入框下方展示全局技能工具。工具运行协议当前以 studio 为执行面，
+  // 因此目录与工作台都复用同一入口；它不依赖当前聊天模型的输出类型。
+  useEffect(() => {
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      setToolSkills(null);
+      setToolSkillsFailed(false);
+      void ensureSession()
+        .then((ready) => ready
+          ? skillApi.list({ kind: "tool", entryPoint: "studio", pageNum: 1, pageSize: 100 })
+          : null)
+        .then((result) => {
+          if (!alive || !result) return;
+          if (result.success && result.data) {
+            setToolSkills(result.data.records);
+            return;
+          }
+          setToolSkills([]);
+          setToolSkillsFailed(true);
+        })
+        .catch(() => {
+          if (!alive) return;
+          setToolSkills([]);
+          setToolSkillsFailed(true);
+        });
+    }, 0);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [ensureSession, toolSkillsReload]);
 
   const send = useSendMessage({
     draft,
@@ -292,6 +335,14 @@ export default function ChatPage() {
           ctxUsage={ctxUsage}
           newChat={conv.newChat}
           openLightbox={openLightbox}
+          toolSkills={toolSkills}
+          toolSkillsFailed={toolSkillsFailed}
+          onPickTool={(nextSkill) => {
+            setToolSkill(nextSkill);
+            setToolWorkspaceOpen(true);
+          }}
+          onRetryTools={() => setToolSkillsReload((value) => value + 1)}
+          onOpenAllTools={() => router.push("/tools")}
         />
       </main>
 
@@ -328,6 +379,15 @@ export default function ChatPage() {
         outputType={models.selModel?.type}
         targetType={models.selModel?.type ?? "text"}
         currentId={cfg.skill?.id}
+      />
+
+      <ToolSkillWorkspace
+        key={ownerUserId || "guest"}
+        open={toolWorkspaceOpen}
+        skill={toolSkill}
+        skills={toolSkills ?? (toolSkill ? [toolSkill] : [])}
+        onRequestOpen={() => setToolWorkspaceOpen(true)}
+        onRequestClose={() => setToolWorkspaceOpen(false)}
       />
 
       {/* 资产库弹窗：复用整个资产页 UI 作为选择器 */}

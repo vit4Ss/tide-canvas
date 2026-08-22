@@ -8,6 +8,7 @@
 import { Plus, Sparkles } from "lucide-react";
 import { toast } from "@/components/shared/toast";
 import { SkillPromptChip } from "@/components/skill/skill-prompt-chip";
+import { ToolSkillShortcuts } from "@/components/studio/create-studio/tool-skill-shortcuts";
 import {
   MentionPromptEditor,
   type MentionEditorHandle,
@@ -23,6 +24,7 @@ import {
   findClipModel,
 } from "@/lib/music-modes";
 import type { ContextUsageVO } from "@/types/chat";
+import type { SkillVO } from "@/types/skill";
 import { CmSelect, RatioBox } from "./cm-select";
 import { RefThumb } from "./ref-thumb";
 import {
@@ -55,6 +57,11 @@ export function Composer({
   ctxUsage,
   newChat,
   openLightbox,
+  toolSkills,
+  toolSkillsFailed,
+  onPickTool,
+  onRetryTools,
+  onOpenAllTools,
 }: {
   models: GenModelsApi;
   cfg: ComposerConfigApi;
@@ -67,6 +74,11 @@ export function Composer({
   ctxUsage: ContextUsageVO | null;
   newChat: () => void;
   openLightbox: (items: LightboxItem[], index: number) => void;
+  toolSkills: SkillVO[] | null;
+  toolSkillsFailed: boolean;
+  onPickTool: (skill: SkillVO) => void;
+  onRetryTools: () => void;
+  onOpenAllTools: () => void;
 }) {
   const {
     genModels,
@@ -700,6 +712,16 @@ export function Composer({
             ↑
           </button>
         </div>
+      </div>
+
+      <div className="chat-tool-shortcuts">
+        <ToolSkillShortcuts
+          skills={toolSkills}
+          failed={toolSkillsFailed}
+          onPick={onPickTool}
+          onRetry={onRetryTools}
+          onOpenAll={onOpenAllTools}
+        />
       </div>
       <div className="chat-hint">Enter 发送 · Shift+Enter 换行 · 可拖拽 / 粘贴添加参考</div>
     </div>

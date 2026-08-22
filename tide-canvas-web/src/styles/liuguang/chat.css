@@ -175,6 +175,8 @@
 .cm-send{width:36px; height:36px; border-radius:11px; display:grid; place-items:center; color:#fff; background:var(--accent); transition:filter .15s, transform .12s;}
 .cm-send:hover{filter:brightness(1.07);} .cm-send:active{transform:scale(.94);}
 .cm-send:disabled{opacity:.4; cursor:default;}
+.chat-tool-shortcuts{max-width:var(--chat-col); margin:12px auto 0;}
+.chat-tool-shortcuts .ws-tool-shortcuts{margin-top:0;}
 .chat-hint{max-width:var(--chat-col); margin:8px auto 0; text-align:center; font-size:11px; color:var(--text-faint);}
 
 /* 上下文用量提醒：≥80% 建议开新会话；full 时发送被禁止 */
