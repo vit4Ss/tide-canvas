@@ -18,11 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowUpRight,
-  AudioLines,
-  Braces,
   Eraser,
-  FileText,
-  Globe2,
   Loader2,
   Maximize2,
   Paintbrush,
@@ -30,9 +26,7 @@ import {
   ScanLine,
   Scissors,
   SunMedium,
-  Table2,
   Video,
-  Presentation,
   WandSparkles,
   X,
   type LucideIcon,
@@ -60,6 +54,7 @@ import { AiTaskStatus, type AiTaskVO, type AiToolVO } from "@/types/ai";
 import { skillApi } from "@/lib/skill-api";
 import { SKILL_OUTPUT_LABEL, type SkillVO } from "@/types/skill";
 import { ToolSkillWorkspace } from "@/components/studio/tool-skill-workspace";
+import { skillToolIcon } from "@/components/skill/skill-tool-icon";
 import styles from "./tools-hub.module.css";
 
 const PAGE_SIZE = 18;
@@ -73,17 +68,6 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
   relight: SunMedium,
   vupscale: Video,
 };
-
-function skillToolIcon(title: string): LucideIcon {
-  if (title.includes("PPT")) return Presentation;
-  if (title.includes("XLSX")) return Table2;
-  if (title.includes("Word")) return FileText;
-  if (title.includes("Markdown")) return Braces;
-  if (title.includes("视频")) return Video;
-  if (title.includes("音频")) return AudioLines;
-  if (title.includes("网页")) return Globe2;
-  return WandSparkles;
-}
 
 function fmtDay(iso: string): string {
   return iso ? iso.slice(0, 10) : "";

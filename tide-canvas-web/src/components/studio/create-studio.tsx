@@ -163,6 +163,9 @@ export default function CreateStudio() {
   const [toolSkill, setToolSkill] = useState<SkillVO | null>(null);
   const [toolTargetType, setToolTargetType] = useState("");
   const [toolWorkspaceOpen, setToolWorkspaceOpen] = useState(false);
+  const [studioToolSkills, setStudioToolSkills] = useState<SkillVO[] | null>(null);
+  const [studioToolSkillsFailed, setStudioToolSkillsFailed] = useState(false);
+  const [studioToolSkillsReload, setStudioToolSkillsReload] = useState(0);
   const skillRestoreSeqRef = useRef(0);
   const [lyrics, setLyrics] = useState("");
   const [songStyle, setSongStyle] = useState("");
@@ -186,6 +189,7 @@ export default function CreateStudio() {
   // 「AI 优化」单次扣费（后端实算，含团队倍率）；0 = 免费/未配置，不显示角标
   const [optCost, setOptCost] = useState(0);
   const ensureSession = useAuthStore((s) => s.ensureSession);
+  const authInitialized = useAuthStore((s) => s.initialized);
   const ownerUserId = useAuthStore((s) => s.user?.id ?? "");
 
   // 真实积分余额（替代原硬编码假数据）。生成结算后刷新——扣减/退款在后端完成。
@@ -748,6 +752,40 @@ export default function CreateStudio() {
     };
   }, [ensureSession, refreshBalance]);
 
+  // 提示词框下方的快捷工具与工具中心使用同一份已发布目录。
+  useEffect(() => {
+    if (!authInitialized) return;
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      if (!ownerUserId) {
+        setStudioToolSkills([]);
+        setStudioToolSkillsFailed(false);
+        return;
+      }
+      setStudioToolSkills(null);
+      setStudioToolSkillsFailed(false);
+      void skillApi.list({ kind: "tool", entryPoint: "studio", pageNum: 1, pageSize: 100 })
+        .then((result) => {
+          if (!alive) return;
+          if (result.success && result.data) {
+            setStudioToolSkills(result.data.records);
+            return;
+          }
+          setStudioToolSkills([]);
+          setStudioToolSkillsFailed(true);
+        })
+        .catch(() => {
+          if (!alive) return;
+          setStudioToolSkills([]);
+          setStudioToolSkillsFailed(true);
+        });
+    }, 0);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [authInitialized, ownerUserId, studioToolSkillsReload]);
+
   /* ── panel handlers ──────────────────────────────────────────────────── */
 
   // 用户主动切换模型时清除预设技能。已发布技能可能固定另一张模型卡，服务端
@@ -1281,6 +1319,15 @@ export default function CreateStudio() {
                 optCost={optCost}
                 onOptimize={aiOptimize}
                 onOpenSkillPicker={() => setSkillPickerOpen(true)}
+                toolSkills={studioToolSkills}
+                toolSkillsFailed={studioToolSkillsFailed}
+                onPickTool={pickSkill}
+                onRetryTools={() => {
+                  setStudioToolSkills(null);
+                  setStudioToolSkillsFailed(false);
+                  setStudioToolSkillsReload((value) => value + 1);
+                }}
+                onOpenAllTools={() => router.push("/tools")}
                 ideaOpts={ideaOpts}
                 allowSkills={!is3D}
                 label={tool === "mv2_3d" ? "提示词（可选）" : "提示词"}
@@ -1458,7 +1505,7 @@ export default function CreateStudio() {
         key={ownerUserId || "guest"}
         open={toolWorkspaceOpen}
         skill={toolSkill}
-        skills={toolSkill ? [toolSkill] : []}
+        skills={studioToolSkills ?? (toolSkill ? [toolSkill] : [])}
         targetType={toolTargetType}
         onRequestOpen={() => setToolWorkspaceOpen(true)}
         onRequestClose={() => setToolWorkspaceOpen(false)}

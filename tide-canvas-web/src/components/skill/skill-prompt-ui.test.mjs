@@ -6,6 +6,8 @@ const read = (relativeUrl) => readFileSync(new URL(relativeUrl, import.meta.url)
 
 const studio = read("../studio/create-studio.tsx");
 const studioPrompt = read("../studio/create-studio/prompt-section.tsx");
+const studioToolShortcuts = read("../studio/create-studio/tool-skill-shortcuts.tsx");
+const studioStyles = read("../../styles/liuguang/studio.css");
 const chatPage = read("../../app/(studio)/chat/page.tsx");
 const chatComposer = read("../../app/(studio)/chat/_components/composer.tsx");
 const quickStart = read("../canvas/canvas-quick-start.tsx");
@@ -36,4 +38,13 @@ test("选择入口保留在工具栏，已选状态显示数量而不是重复�
 test("技能标签在暗色画布可读，移除按钮满足最小触控热区", () => {
   assert.match(chipStyles, /:global\(\.dark\) \.root \{[\s\S]*?color: var\(--text, #f5f5f7\);/);
   assert.match(chipStyles, /\.remove \{[\s\S]*?width: 24px;[\s\S]*?height: 24px;/);
+});
+
+test("生成面板在提示词框下方展示技能工具并复用既有运行工作台", () => {
+  assert.match(studioPrompt, /<ToolSkillShortcuts[\s\S]*?skills=\{toolSkills\}[\s\S]*?onPick=\{onPickTool\}/);
+  assert.match(studio, /skillApi\.list\(\{ kind: "tool", entryPoint: "studio", pageNum: 1, pageSize: 100 \}\)/);
+  assert.match(studio, /onPickTool=\{pickSkill\}/);
+  assert.match(studio, /skills=\{studioToolSkills \?\? \(toolSkill \? \[toolSkill\] : \[\]\)\}/);
+  assert.match(studioToolShortcuts, /onClick=\{\(\) => onPick\(tool\)\}/);
+  assert.match(studioStyles, /\.ws-tool-shortcuts-grid\{[^}]*grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/);
 });
