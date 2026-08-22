@@ -62,7 +62,7 @@ test("对话输入框下方的技能工具直接附着输入框并从当前会�
   assert.match(chatPage, /onPickTool=\{\(nextSkill\) => \{[\s\S]*?setToolSkill\(nextSkill\)[\s\S]*?taRef\.current\?\.focus/);
   assert.doesNotMatch(chatPage, /ToolSkillWorkspace/);
   assert.match(chatPage, /open=\{toolPickerOpen\}[\s\S]*?kinds=\{\["tool"\]\}[\s\S]*?entryPoint="studio"/);
-  assert.match(chatPage, /promptAfterToolPick\(current, cfg\.skill \?\? toolSkill\)/);
+  assert.match(chatPage, /promptAfterSkillPick\(current, nextSkill, cfg\.skill \?\? toolSkill\)/);
   assert.match(chatSend, /skillRunApi\.createIdempotent\(\{[\s\S]*?entryPoint: "studio"[\s\S]*?conversationId: id/);
   assert.match(chatSend, /message\.skillRunId === started\.data!\.id/);
   assert.match(chatConfig, /toolSkill[\s\S]*?"x-asset-types"[\s\S]*?accept: acceptFor\(kinds\)/);

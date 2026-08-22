@@ -35,7 +35,7 @@ import "@/styles/liuguang/chat.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { SkillPicker } from "@/components/skill/skill-picker";
-import { promptAfterSkillPick, visibleSkillPrompt } from "@/lib/skill-prompt";
+import { promptAfterSkillPick } from "@/lib/skill-prompt";
 import type { SkillRunPanelActionPayload } from "@/components/skill/skill-run-panel";
 import { toast } from "@/components/shared/toast";
 import type { MentionEditorHandle } from "@/components/studio/mention-prompt-editor";
@@ -60,11 +60,6 @@ import { useSendMessage } from "./_hooks/use-send-message";
 import { useTurnActions } from "./_hooks/use-turn-actions";
 import { useTaskPolling } from "./_hooks/use-task-polling";
 import { useResumeStream } from "./_hooks/use-resume-stream";
-
-function promptAfterToolPick(current: string, previous: SkillVO | null): string {
-  const previousStarter = visibleSkillPrompt(previous);
-  return previousStarter && current.trim() === previousStarter ? "" : current;
-}
 
 /* ── component ────────────────────────────────────────────────────────────── */
 
@@ -340,7 +335,7 @@ export default function ChatPage() {
           toolSkills={toolSkills}
           toolSkillsFailed={toolSkillsFailed}
           onPickTool={(nextSkill) => {
-            setDraft((current) => promptAfterToolPick(current, cfg.skill ?? toolSkill));
+            setDraft((current) => promptAfterSkillPick(current, nextSkill, cfg.skill ?? toolSkill));
             cfg.removeSkill();
             setToolSkill(nextSkill);
             window.setTimeout(() => taRef.current?.focus(), 0);
@@ -393,7 +388,7 @@ export default function ChatPage() {
         open={toolPickerOpen}
         onClose={() => setToolPickerOpen(false)}
         onPick={(nextSkill) => {
-          setDraft((current) => promptAfterToolPick(current, cfg.skill ?? toolSkill));
+          setDraft((current) => promptAfterSkillPick(current, nextSkill, cfg.skill ?? toolSkill));
           cfg.removeSkill();
           setToolSkill(nextSkill);
           setToolPickerOpen(false);

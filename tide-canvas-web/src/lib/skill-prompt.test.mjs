@@ -40,6 +40,17 @@ test("缺少 howTo 的旧媒体预设会得到与输出类型匹配的可编辑�
   );
 });
 
+test("工具技能会带入与用途匹配的可编辑任务描述", () => {
+  assert.equal(
+    visibleSkillPrompt(skill({ kind: "tool", title: "生成 PPT", outputType: "file", howTo: "" })),
+    "制作一份【主题】PPT，面向【目标受众】，重点介绍【主要内容】，约 10 页。",
+  );
+  assert.equal(
+    visibleSkillPrompt(skill({ kind: "tool", title: "网页分析", outputType: "text", howTo: "" })),
+    "分析这个网页：【粘贴公开网页地址】，重点总结【核心观点、论据和风险】。",
+  );
+});
+
 test("空输入框会带入技能引导，已有草稿不会被覆盖", () => {
   const next = skill({ howTo: "帮我清洗这篇文章：【粘贴正文】" });
   assert.equal(promptAfterSkillPick("", next), next.howTo);

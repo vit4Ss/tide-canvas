@@ -6,11 +6,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { marketApi, type StudioModelVO } from "@/lib/market-api";
 import { swatchOf } from "../_components/chat-utils";
 
-// The chat send pipeline currently has explicit handlers for these four media
-// types. Other catalog types (notably 3d) stay available to dedicated/future
-// workspaces but must not fall through to the text-chat branch.
-const CHAT_MODEL_TYPES = new Set(["text", "image", "video", "audio"]);
-
 /** 模型列表 + 当前所选模型：加载 / focus·visibility 重拉 / 首页深链预选，
  *  以及按模型名 memo 的 swatch 解析（流式增量重渲染时不能对每个模型重跑正则）。 */
 export function useGenModels() {
@@ -18,8 +13,8 @@ export function useGenModels() {
   const [model, setModel] = useState("");
   const requestSeqRef = useRef(0);
 
-  // load every studio model (text + image + video). Text models drive the chat
-  // assistant and may expose the 联网 toggle when their config enables webSearch.
+  // 对话页只提供文本模型。图片、视频、音频模型继续留在创作台等专属入口，
+  // 不进入这里的下拉、默认选中或历史恢复候选。
   // Refetch on focus/visibility so 模型管理 edits reflect without a manual refresh.
   const reloadGenModels = useCallback(async () => {
     const seq = ++requestSeqRef.current;
@@ -29,7 +24,7 @@ export function useGenModels() {
       // 顺序由后端决定：类型顺序=后台「模型管理·类型排序」（sys_config
       // market.typeOrder），类型内=行内上移/下移（sort_order）。
       const list = res.success && Array.isArray(res.data)
-        ? res.data.filter((item) => CHAT_MODEL_TYPES.has(item.type))
+        ? res.data.filter((item) => item.type === "text")
         : [];
       setGenModels(list);
       if (list.length) {
