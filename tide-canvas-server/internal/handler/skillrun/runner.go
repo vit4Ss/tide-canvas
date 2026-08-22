@@ -146,6 +146,12 @@ func (s *service) execute(runID idgen.ID) {
 		} else {
 			err = s.runAgent(ctx, &run, &version, input)
 		}
+	case model.SkillKindTool:
+		if !agentManifestHasSteps(version.ManifestJSON) {
+			err = errors.New("tool manifest has no executable steps")
+		} else {
+			err = s.runAgentSteps(ctx, &run, &version, input)
+		}
 	default:
 		err = errors.New("unsupported skill kind")
 	}
@@ -295,6 +301,30 @@ func (s *service) runAgentSteps(ctx context.Context, run *model.SkillRun, versio
 		if strings.TrimSpace(prompt) == "" {
 			prompt = input.Prompt
 		}
+		if step.Type == "tool" {
+			step.Handler = strings.TrimSpace(step.Handler)
+			if step.OutputRole == "" {
+				if index == len(manifest.Steps)-1 {
+					step.OutputRole = "final"
+				} else {
+					step.OutputRole = "intermediate"
+				}
+			}
+			registerWork := step.OutputRole == "final"
+			if step.RegisterWork != nil {
+				registerWork = *step.RegisterWork
+			}
+			result, err := s.executeToolStep(ctx, run, version, step, index, len(manifest.Steps), input, prompt, previous, registerWork)
+			if err != nil {
+				return err
+			}
+			if result.Text != "" {
+				previous = result.Text
+			} else if len(result.Artifacts) > 0 {
+				previous = result.Artifacts[len(result.Artifacts)-1].URL
+			}
+			continue
+		}
 		expectedModelType := outputType
 		if step.Type == "text" {
 			expectedModelType = "text"
@@ -421,12 +451,14 @@ func (s *service) executeGenerationStep(ctx context.Context, run *model.SkillRun
 			Updates(map[string]any{"lease_expires_at": time.Now().Add(45 * time.Second)}).Error
 		snapshot, err := s.ai.Get(ctx, run.UserID, step.AiTaskID)
 		if err != nil {
+			s.failStep(run, step.ID, "generation task is unavailable")
 			return nil, errors.New("generation task is unavailable")
 		}
 		switch snapshot.Status {
 		case ai.TaskSuccess:
 			artifacts, text, err := s.persistArtifacts(run, step, snapshot, spec, version, sequence, total)
 			if err != nil {
+				s.failStep(run, step.ID, err.Error())
 				return nil, err
 			}
 			output, _ := json.Marshal(map[string]any{"text": text, "artifactCount": len(artifacts)})

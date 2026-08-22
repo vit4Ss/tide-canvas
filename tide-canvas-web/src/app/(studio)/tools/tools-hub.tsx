@@ -18,7 +18,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowUpRight,
+  AudioLines,
+  Braces,
   Eraser,
+  FileText,
+  Globe2,
   Loader2,
   Maximize2,
   Paintbrush,
@@ -26,7 +30,9 @@ import {
   ScanLine,
   Scissors,
   SunMedium,
+  Table2,
   Video,
+  Presentation,
   WandSparkles,
   X,
   type LucideIcon,
@@ -51,6 +57,9 @@ import {
   VIDEO_TOOL_HANDLERS,
 } from "@/lib/ai-tools-catalog";
 import { AiTaskStatus, type AiTaskVO, type AiToolVO } from "@/types/ai";
+import { skillApi } from "@/lib/skill-api";
+import { SKILL_OUTPUT_LABEL, type SkillVO } from "@/types/skill";
+import { ToolSkillWorkspace } from "@/components/studio/tool-skill-workspace";
 import styles from "./tools-hub.module.css";
 
 const PAGE_SIZE = 18;
@@ -64,6 +73,17 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
   relight: SunMedium,
   vupscale: Video,
 };
+
+function skillToolIcon(title: string): LucideIcon {
+  if (title.includes("PPT")) return Presentation;
+  if (title.includes("XLSX")) return Table2;
+  if (title.includes("Word")) return FileText;
+  if (title.includes("Markdown")) return Braces;
+  if (title.includes("视频")) return Video;
+  if (title.includes("音频")) return AudioLines;
+  if (title.includes("网页")) return Globe2;
+  return WandSparkles;
+}
 
 function fmtDay(iso: string): string {
   return iso ? iso.slice(0, 10) : "";
@@ -278,6 +298,46 @@ export default function ToolsHub() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [workPreview, setWorkPreview] = useState<ToolWorkPreviewData | null>(null);
   const userId = user?.id ?? "";
+  const [skillTools, setSkillTools] = useState<SkillVO[] | null>(null);
+  const [skillToolsError, setSkillToolsError] = useState(false);
+  const [skillToolsReload, setSkillToolsReload] = useState(0);
+  const [selectedSkillTool, setSelectedSkillTool] = useState<SkillVO | null>(null);
+  const [skillWorkspaceOpen, setSkillWorkspaceOpen] = useState(false);
+
+  useEffect(() => {
+    if (!initialized) return;
+    if (!userId) {
+      const timer = window.setTimeout(() => {
+        setSkillTools([]);
+        setSkillToolsError(false);
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      setSkillTools(null);
+      setSkillToolsError(false);
+      void skillApi.list({ kind: "tool", entryPoint: "studio", pageNum: 1, pageSize: 100 })
+        .then((result) => {
+          if (!alive) return;
+          if (result.success && result.data) {
+            setSkillTools(result.data.records);
+            return;
+          }
+          setSkillTools([]);
+          setSkillToolsError(true);
+        })
+        .catch(() => {
+          if (!alive) return;
+          setSkillTools([]);
+          setSkillToolsError(true);
+        });
+    }, 0);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [initialized, skillToolsReload, userId]);
   // reqId 守卫:切换账号/重试时作废在途请求——否则 A 账号迟到的响应会把
   // 作品列表渲染给刚登录的 B。
   const reqIdRef = useRef(0);
@@ -382,11 +442,64 @@ export default function ToolsHub() {
             <span className={styles.eyebrow}>AI 工具箱</span>
             <h1>工具</h1>
           </div>
-          <p>上传一份素材，完成扩图、抠图、修复与画质增强。</p>
+          <p>生成办公文件，分析视频、音频与网页，也可以继续处理图片和视频素材。</p>
         </header>
 
+        <section className={styles.section} aria-labelledby="skill-tools-title">
+          <div className={styles.sectionHead}>
+            <div>
+              <h2 id="skill-tools-title">创作与分析</h2>
+              <p>填写要求后直接运行；文件可下载，分析结果可复制。</p>
+            </div>
+            {skillTools && skillTools.length > 0 ? <span className={styles.count}>{skillTools.length} 个工具</span> : null}
+          </div>
+
+          {!initialized || (userId && skillTools === null) ? (
+            <div className={styles.skillToolGrid} role="status" aria-label="正在加载技能工具">
+              {[0, 1, 2, 3].map((item) => <div key={item} className={styles.skillToolSkeleton} aria-hidden />)}
+            </div>
+          ) : !userId ? (
+            <div className={styles.state}>
+              <p>登录后可使用文件生成与内容分析工具。</p>
+              <Link className={styles.stateBtn} href="/login?redirect=/tools">去登录</Link>
+            </div>
+          ) : skillToolsError ? (
+            <div className={styles.state}>
+              <p>技能工具加载失败，请稍后重试。</p>
+              <button type="button" className={styles.stateBtn} onClick={() => setSkillToolsReload((value) => value + 1)}>重试</button>
+            </div>
+          ) : skillTools?.length ? (
+            <div className={styles.skillToolGrid}>
+              {skillTools.map((tool) => {
+                const ToolIcon = skillToolIcon(tool.title);
+                return (
+                  <button
+                    key={tool.id}
+                    type="button"
+                    className={styles.skillToolCard}
+                    onClick={() => {
+                      setSelectedSkillTool(tool);
+                      setSkillWorkspaceOpen(true);
+                    }}
+                  >
+                    <span className={styles.skillToolIcon}><ToolIcon aria-hidden /></span>
+                    <span className={styles.skillToolCopy}>
+                      <strong>{tool.title}</strong>
+                      <small>{tool.description}</small>
+                    </span>
+                    <span className={styles.skillToolType}>{SKILL_OUTPUT_LABEL[tool.outputType] || tool.outputType}</span>
+                    <ArrowUpRight className={styles.skillToolArrow} aria-hidden />
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className={styles.state}><p>技能工具暂未启用。</p></div>
+          )}
+        </section>
+
         {/* ── 工具入口 ── */}
-        <section className={styles.section} aria-labelledby="tools-directory-title">
+        <section className={`${styles.section} ${styles.processingSection}`} aria-labelledby="tools-directory-title">
           <div className={styles.sectionHead}>
             <div>
               <h2 id="tools-directory-title">选择处理方式</h2>
@@ -557,6 +670,14 @@ export default function ToolsHub() {
         </section>
       </div>
       <ToolWorkPreview preview={workPreview} onClose={() => setWorkPreview(null)} />
+      <ToolSkillWorkspace
+        key={userId || "guest"}
+        open={skillWorkspaceOpen}
+        skill={selectedSkillTool}
+        skills={skillTools ?? []}
+        onRequestOpen={() => setSkillWorkspaceOpen(true)}
+        onRequestClose={() => setSkillWorkspaceOpen(false)}
+      />
     </main>
   );
 }

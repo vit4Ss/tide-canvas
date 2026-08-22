@@ -1303,6 +1303,11 @@ export function CanvasQuickStart({
       toast.info("画布仍在加载，请稍后再试");
       return;
     }
+    const launchKind = isLauncher ? canvasLaunchKindFor(selectedSkill) : null;
+    if (isLauncher && (!launchKind || !canvasLaunchCanSubmit(selectedSkill, directModelId))) {
+      toast.error(selectedSkill ? "当前技能不支持从画布入口启动" : "请选择可用的视频模型");
+      return;
+    }
     const state = useCanvasStore.getState();
     const existingSources = usedRefs
       .flatMap((ref) => ref.sourceNodeId ? state.nodes.filter((node) => node.id === ref.sourceNodeId) : []);
@@ -1371,7 +1376,7 @@ export function CanvasQuickStart({
       setSubmitting(true);
       try {
         const launched = await onLaunch({
-          launchKind: canvasLaunchKindFor(selectedSkill),
+          launchKind: launchKind!,
           prompt: trimmedPrompt,
           mode,
           modelId: hasSkillSelection ? "" : directModelId,

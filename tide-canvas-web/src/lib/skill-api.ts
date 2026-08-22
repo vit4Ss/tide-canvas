@@ -15,18 +15,19 @@ import { normalizeSkillKind } from "@/types/skill";
 import type { SkillRunInput } from "@/types/skill-run";
 
 const PRESET_ENTRY_POINTS: readonly SkillEntryPoint[] = ["studio", "chat", "canvas"];
+const TOOL_ENTRY_POINTS: readonly SkillEntryPoint[] = ["studio", "api"];
 
 function normalizeSkill(skill: SkillVO): SkillVO {
   const kind = normalizeSkillKind((skill as { kind?: unknown }).kind);
+  const allowedEntries = kind === "tool" ? TOOL_ENTRY_POINTS : PRESET_ENTRY_POINTS;
+  const fallbackEntries = kind === "tool" ? (["studio"] as const) : PRESET_ENTRY_POINTS;
   const entryPoints = kind === "agent"
     ? ["canvas" as const]
-    : [...new Set((skill.entryPoints ?? PRESET_ENTRY_POINTS).filter((entry) =>
-        PRESET_ENTRY_POINTS.includes(entry),
-      ))];
+    : [...new Set((skill.entryPoints ?? fallbackEntries).filter((entry) => allowedEntries.includes(entry)))];
   return {
     ...skill,
     kind,
-    entryPoints: entryPoints.length ? entryPoints : [...PRESET_ENTRY_POINTS],
+    entryPoints: entryPoints.length ? entryPoints : [...fallbackEntries],
     outputTypes: kind === "preset"
       ? [skill.outputType as SkillOutputType]
       : skill.outputTypes,

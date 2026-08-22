@@ -1,8 +1,12 @@
 export type CanvasLaunchExecutionKind = "direct" | "preset" | "agent";
 
-export function canvasLaunchKindFor(skill: { kind?: unknown } | null | undefined): CanvasLaunchExecutionKind {
+export function canvasLaunchKindFor(
+  skill: { kind?: unknown } | null | undefined,
+): CanvasLaunchExecutionKind | null {
   if (!skill) return "direct";
-  return skill.kind === "agent" || skill.kind === "workflow" ? "agent" : "preset";
+  if (skill.kind === "preset") return "preset";
+  if (skill.kind === "agent" || skill.kind === "workflow") return "agent";
+  return null;
 }
 
 export function canvasLaunchNeedsDirectModel(skill: { kind?: unknown } | null | undefined): boolean {
@@ -24,6 +28,8 @@ export function canvasLaunchCanSubmit(
   skill: { kind?: unknown } | null | undefined,
   directModelId: unknown,
 ): boolean {
-  return !canvasLaunchNeedsDirectModel(skill)
+  const launchKind = canvasLaunchKindFor(skill);
+  if (!launchKind) return false;
+  return launchKind !== "direct"
     || (typeof directModelId === "string" && directModelId.trim().length > 0);
 }

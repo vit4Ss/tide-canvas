@@ -388,3 +388,49 @@ func TestValidateSkillManifestRejectsInvalidWaitingStepSchema(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateSkillManifestAcceptsRegisteredToolPipeline(t *testing.T) {
+	raw := json.RawMessage(`{"kind":"tool","steps":[{"key":"prepare","type":"text","handler":"skill_text_completion","outputType":"text","outputRole":"intermediate"},{"key":"render","type":"tool","handler":"render_docx","outputType":"file","outputRole":"final"}]}`)
+	if err := validateSkillManifest(raw, model.SkillKindTool, "file", []string{"text", "file"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateSkillManifestRejectsUnsafeOrMismatchedTools(t *testing.T) {
+	invalid := []json.RawMessage{
+		json.RawMessage(`{"kind":"tool","steps":[{"type":"tool","handler":"run_shell","outputType":"file","outputRole":"final"}]}`),
+		json.RawMessage(`{"kind":"tool","steps":[{"type":"tool","handler":"render_pptx","outputType":"text","outputRole":"final"}]}`),
+		json.RawMessage(`{"kind":"tool","steps":[{"type":"tool","handler":"analyze_video","outputType":"file","outputRole":"final"}]}`),
+	}
+	for _, raw := range invalid {
+		if err := validateSkillManifest(raw, model.SkillKindTool, "file", []string{"text", "file"}); err == nil {
+			t.Fatalf("invalid tool manifest was accepted: %s", raw)
+		}
+	}
+}
+
+func TestValidateSkillKindContractRestrictsToolProductsAndSurfaces(t *testing.T) {
+	valid := &model.SkillVersion{Kind: model.SkillKindTool, PrimaryOutputType: "file", OutputTypes: `["text","file"]`, EntryPoints: `["studio","api"]`, BindingsJSON: `[{"surface":"api","targetType":"*","enabled":true}]`}
+	if err := validateSkillKindContract(valid); err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []*model.SkillVersion{
+		{Kind: model.SkillKindTool, PrimaryOutputType: "image", OutputTypes: `["image"]`, EntryPoints: `["studio"]`},
+		{Kind: model.SkillKindTool, PrimaryOutputType: "text", OutputTypes: `["text"]`, EntryPoints: `["canvas"]`},
+	} {
+		if err := validateSkillKindContract(version); err == nil {
+			t.Fatalf("invalid tool contract was accepted: %#v", version)
+		}
+	}
+}
+
+func TestNormalizeSkillBindingSnapshotsAcceptsToolAPISurface(t *testing.T) {
+	enabled := true
+	bindings, err := normalizeSkillBindingSnapshots([]AdminSkillBindingDTO{{Surface: "api", TargetType: "*", Enabled: &enabled}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bindings) != 1 || bindings[0].Surface != "api" {
+		t.Fatalf("unexpected bindings: %#v", bindings)
+	}
+}

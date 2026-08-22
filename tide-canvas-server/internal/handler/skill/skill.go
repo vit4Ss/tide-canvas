@@ -65,6 +65,9 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	if err := model.BackfillSkillVersions(d.DB); err != nil {
 		panic(fmt.Errorf("backfill skill versions: %w", err))
 	}
+	if err := ensureBaselineToolSkills(d.DB); err != nil {
+		panic(fmt.Errorf("seed tool skills: %w", err))
+	}
 	h := &handler{db: d.DB}
 	g := api.Group("/skills")
 	g.Use(middleware.JWTAuth(d))
@@ -351,6 +354,9 @@ func publicSkillEntryPoints(kind string, values []string) []string {
 		return []string{"canvas"}
 	}
 	allowed := map[string]bool{"chat": true, "studio": true, "canvas": true}
+	if kind == model.SkillKindTool {
+		allowed = map[string]bool{"studio": true, "api": true}
+	}
 	out := make([]string, 0, len(values))
 	seen := map[string]bool{}
 	for _, value := range values {
@@ -416,16 +422,9 @@ func publicInputSchema(raw string) json.RawMessage {
 		delete(properties, "assets")
 		delete(properties, "sourceNodeIds")
 	}
-	if required, ok := schema["required"].([]any); ok {
-		filtered := make([]any, 0, len(required))
-		for _, item := range required {
-			name, _ := item.(string)
-			if name != "prompt" && name != "assets" && name != "sourceNodeIds" {
-				filtered = append(filtered, item)
-			}
-		}
-		schema["required"] = filtered
-	}
+	// Keep reserved field names in required. Their definitions stay private,
+	// while every product surface already renders prompt/assets/sourceNodeIds
+	// explicitly and needs the requirement bits for client-side validation.
 	encoded, _ := json.Marshal(schema)
 	return encoded
 }

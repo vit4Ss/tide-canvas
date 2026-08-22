@@ -18,6 +18,7 @@ import {
   defaultAdminSkillEntryPoints,
   defaultAdminSkillOutputTypes,
   defaultAdminSkillTarget,
+  starterAdminSkillInputSchema,
   starterAdminSkillManifest,
 } from "@/lib/admin-skill-defaults";
 import {
@@ -242,7 +243,7 @@ function emptyForm(skill: AdminSkillVO): VersionForm {
     outputTypes: defaultAdminSkillOutputTypes(kind, output),
     // The schema describes input.parameters only. Prompt and source assets are
     // stable top-level run fields rendered by every product surface already.
-    inputSchema: JSON.stringify({ type: "object", properties: {} }, null, 2),
+    inputSchema: JSON.stringify(starterAdminSkillInputSchema(kind, output), null, 2),
     manifest: JSON.stringify(starterAdminSkillManifest(kind, output), null, 2),
     promptTemplate: kind === "preset" ? skill.promptTemplate || "" : "",
     modelId: kind === "preset" ? skill.modelId || "" : "",
@@ -555,6 +556,8 @@ export function SkillVersionModal({
 
   const toggleEntry = (key: SkillEntryPoint) => {
     if (form.kind === "agent") return;
+    if (form.kind === "preset" && key === "api") return;
+    if (form.kind === "tool" && key !== "studio" && key !== "api") return;
     bindingHydrationRef.current += 1;
     setBindingErrors({});
     setForm((current) => {
@@ -992,29 +995,39 @@ export function SkillVersionModal({
                     form.kind,
                     form.primaryOutputType,
                   ) &&
-                  !window.confirm("切换执行形态会重置当前自定义 Manifest，确认继续吗？")
+                  !window.confirm("切换执行形态会重置当前自定义 Manifest 与输入 Schema，确认继续吗？")
                 ) {
                   return;
                 }
                 setForm((current) => {
                   if (!current || current.kind === kind) return current;
                   const entryPoints = defaultAdminSkillEntryPoints(kind);
+                  const primaryOutputType = kind === "tool" && current.primaryOutputType !== "text" && current.primaryOutputType !== "file"
+                    ? "file"
+                    : current.primaryOutputType;
                   return {
                     ...current,
                     kind,
                     entryPoints,
+                    primaryOutputType,
+                    modelId: kind === "tool" ? "" : current.modelId,
                     outputTypes: defaultAdminSkillOutputTypes(
                       kind,
-                      current.primaryOutputType,
+                      primaryOutputType,
                     ),
                     bindings: constrainBindingRows(
                       kind,
                       entryPoints,
-                      current.primaryOutputType,
+                      primaryOutputType,
                       current.bindings,
                     ),
+                    inputSchema: JSON.stringify(
+                      starterAdminSkillInputSchema(kind, primaryOutputType),
+                      null,
+                      2,
+                    ),
                     manifest: JSON.stringify(
-                      starterAdminSkillManifest(kind, current.primaryOutputType, current.modelId),
+                      starterAdminSkillManifest(kind, primaryOutputType, kind === "tool" ? "" : current.modelId),
                       null,
                       2,
                     ),
@@ -1024,6 +1037,7 @@ export function SkillVersionModal({
             >
               <option value="preset">预设 · 单次生成兼容链路</option>
               <option value="agent">智能技能 · 画布对话与跨节点执行</option>
+              <option value="tool">技能工具 · 文件生成与内容分析</option>
             </select>
           </Field>
           <Field label="主输出" required span={2}>
@@ -1038,7 +1052,7 @@ export function SkillVersionModal({
                     form.kind,
                     form.primaryOutputType,
                   ) &&
-                  !window.confirm("切换主输出会重置当前自定义 Manifest 和可能输出，确认继续吗？")
+                  !window.confirm("切换主输出会重置当前自定义 Manifest、输入 Schema 和可能输出，确认继续吗？")
                 ) {
                   return;
                 }
@@ -1049,6 +1063,11 @@ export function SkillVersionModal({
                     primaryOutputType: value,
                     modelId: "",
                     outputTypes: defaultAdminSkillOutputTypes(current.kind, value),
+                    inputSchema: JSON.stringify(
+                      starterAdminSkillInputSchema(current.kind, value),
+                      null,
+                      2,
+                    ),
                     manifest: JSON.stringify(
                       starterAdminSkillManifest(current.kind, value),
                       null,
@@ -1064,7 +1083,7 @@ export function SkillVersionModal({
                 });
               }}
             >
-              {OUTPUT_TYPES.map((type) => (
+              {(form.kind === "tool" ? OUTPUT_TYPES.filter((type) => type === "text" || type === "file") : OUTPUT_TYPES).map((type) => (
                 <option key={type} value={type}>{SKILL_OUTPUT_LABEL[type]}</option>
               ))}
             </select>
@@ -1076,7 +1095,7 @@ export function SkillVersionModal({
                   <input
                     type="checkbox"
                     checked={form.entryPoints.includes(entry.key)}
-                    disabled={form.kind === "agent"}
+                    disabled={form.kind === "agent" || (form.kind === "preset" && entry.key === "api") || (form.kind === "tool" && entry.key !== "studio" && entry.key !== "api")}
                     onChange={() => toggleEntry(entry.key)}
                   />
                   {entry.label}
@@ -1091,10 +1110,12 @@ export function SkillVersionModal({
             group
             hint={form.kind === "preset"
               ? "预设技能始终只生成主输出这一种内容。"
-              : "智能技能可以在画布中产生多种节点，主输出必须包含在其中。"}
+              : form.kind === "tool"
+                ? "技能工具可声明中间文本和最终文件；主输出必须包含在其中。"
+                : "智能技能可以在画布中产生多种节点，主输出必须包含在其中。"}
           >
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {OUTPUT_TYPES.map((type) => (
+              {(form.kind === "tool" ? OUTPUT_TYPES.filter((type) => type === "text" || type === "file") : OUTPUT_TYPES).map((type) => (
                 <label key={type} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <input
                     type="checkbox"

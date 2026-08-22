@@ -1002,6 +1002,13 @@ func (s *service) cancelTask(ctx context.Context, userID idgen.ID, id idgen.ID) 
 			return err
 		}
 	}
+	// A queued skill-text task can be cancelled before its handler starts, so
+	// the handler's normal defer never gets a chance to remove analysis media.
+	// Cleanup is idempotent and user-prefix fenced, making it safe if a running
+	// handler already removed the same objects.
+	if task.Handler == skillTextCompletionHandler {
+		s.cleanupSkillTextTemporaryInput(task.UserID, task.Input)
+	}
 	if err := s.repo.deleteTask(ctx, id); err != nil {
 		return err
 	}

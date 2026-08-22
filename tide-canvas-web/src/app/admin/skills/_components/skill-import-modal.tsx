@@ -20,6 +20,7 @@ import {
   defaultAdminSkillBindings,
   defaultAdminSkillEntryPoints,
   defaultAdminSkillOutputTypes,
+  starterAdminSkillInputSchema,
   starterAdminSkillManifest,
 } from "@/lib/admin-skill-defaults";
 
@@ -180,6 +181,8 @@ export function SkillImportModal({
 
   const toggleEntry = (entry: SkillEntryPoint) => {
     if (kind === "agent") return;
+    if (kind === "preset" && entry === "api") return;
+    if (kind === "tool" && entry !== "studio" && entry !== "api") return;
     setEntryPoints((current) => current.includes(entry)
       ? current.filter((item) => item !== entry)
       : [...current, entry]);
@@ -212,10 +215,7 @@ export function SkillImportModal({
       entryPoints: normalizedEntryPoints,
       primaryOutputType: "text",
       outputTypes: defaultAdminSkillOutputTypes(kind, "text"),
-      inputSchema: {
-        type: "object",
-        properties: {},
-      },
+      inputSchema: starterAdminSkillInputSchema(kind, "text"),
       manifest: starterAdminSkillManifest(kind, "text"),
       defaultParams: {},
       bindings: defaultAdminSkillBindings(normalizedEntryPoints, "text"),
@@ -309,7 +309,7 @@ export function SkillImportModal({
 
       <FormCard title="导入策略">
         <FormGrid>
-          <Field label="执行形态" required span={2} hint="预设技能单次生成一种内容；智能技能在画布中通过对话跨节点执行。">
+          <Field label="执行形态" required span={2} hint="预设技能单次生成；智能技能在画布执行；技能工具在创作台或 API 执行。">
             <select
               value={kind}
               onChange={(event) => {
@@ -320,6 +320,7 @@ export function SkillImportModal({
             >
               <option value="preset">预设技能</option>
               <option value="agent">智能技能</option>
+              <option value="tool">技能工具</option>
             </select>
           </Field>
           <Field label="分类" span={2}>
@@ -340,7 +341,7 @@ export function SkillImportModal({
                   <input
                     type="checkbox"
                     checked={entryPoints.includes(entry.key)}
-                    disabled={kind === "agent"}
+                    disabled={kind === "agent" || (kind === "preset" && entry.key === "api") || (kind === "tool" && entry.key !== "studio" && entry.key !== "api")}
                     onChange={() => toggleEntry(entry.key)}
                   />
                   {entry.label}

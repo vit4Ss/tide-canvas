@@ -11,7 +11,7 @@
    ============================================================================ */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bot, Plus, RefreshCw, Search, Sparkles, Upload } from "lucide-react";
+import { Bot, Plus, RefreshCw, Search, Sparkles, Upload, Wrench } from "lucide-react";
 import {
   AdminAlert,
   AdminEmptyState,
@@ -49,6 +49,7 @@ import {
   defaultAdminSkillBindings,
   defaultAdminSkillEntryPoints,
   defaultAdminSkillOutputTypes,
+  starterAdminSkillInputSchema,
   starterAdminSkillManifest,
 } from "@/lib/admin-skill-defaults";
 import { isOperatorEditablePresetVersion } from "@/lib/admin-skill-operator-compat";
@@ -60,7 +61,7 @@ import {
 } from "./_components/operator-skill-content-editor";
 
 const PAGE_SIZE = 20;
-const OUTPUT_OPTIONS: readonly SkillOutputType[] = ["image", "video", "audio", "text"];
+const OUTPUT_OPTIONS: readonly SkillOutputType[] = ["image", "video", "audio", "text", "file"];
 
 const KIND_OPTIONS: Array<{
   key: SkillKind;
@@ -79,6 +80,12 @@ const KIND_OPTIONS: Array<{
     title: "智能技能",
     description: "在画布中与用户持续沟通，可跨图片、视频、音频等节点完成任务。",
     icon: Bot,
+  },
+  {
+    key: "tool",
+    title: "技能工具",
+    description: "在创作台或 API 中生成文件、分析媒体与网页，由受控工具执行。",
+    icon: Wrench,
   },
 ];
 
@@ -159,7 +166,7 @@ export default function AdminSkillsPage() {
   const defaultParamsInputRef = useRef<HTMLInputElement>(null);
   const [contentAccess, setContentAccess] = useState<"editable" | "checking" | "locked">("editable");
   const [coverPreviewFailed, setCoverPreviewFailed] = useState(false);
-  const editingVersionedSkill = !!editing && editing.kind === "agent";
+  const editingVersionedSkill = !!editing && editing.kind !== "preset";
 
   // 关联模型下拉：全部启用模型，按表单 outputType 过滤同模态的卡
   const [models, setModels] = useState<AiModelVO[]>([]);
@@ -310,6 +317,8 @@ export default function AdminSkillsPage() {
   const toggleEntryPoint = (entryPoint: SkillEntryPoint) => {
     setForm((current) => {
       if (current.kind === "agent") return current;
+      if (current.kind === "preset" && entryPoint === "api") return current;
+      if (current.kind === "tool" && entryPoint !== "studio" && entryPoint !== "api") return current;
       return {
         ...current,
         entryPoints: current.entryPoints.includes(entryPoint)
@@ -477,7 +486,7 @@ export default function AdminSkillsPage() {
           entryPoints,
           primaryOutputType,
           outputTypes,
-          inputSchema: { type: "object", properties: {} },
+          inputSchema: starterAdminSkillInputSchema(form.kind, primaryOutputType),
           manifest: starterAdminSkillManifest(form.kind, primaryOutputType, form.modelId),
           promptTemplate: prepared.dto.promptTemplate,
           modelId: form.modelId,
@@ -616,7 +625,10 @@ export default function AdminSkillsPage() {
   ];
 
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const formModels = models.filter((m) => m.type === form.outputType);
+  // Tool files are planned/analyzed by a text model; the deterministic
+  // renderer itself has no market-model modality.
+  const formModelType = form.kind === "tool" ? "text" : form.outputType;
+  const formModels = models.filter((m) => m.type === formModelType);
 
   return (
     <div className="adm-page">
@@ -743,6 +755,9 @@ export default function AdminSkillsPage() {
                       ...current,
                       kind: option.key,
                       entryPoints: defaultAdminSkillEntryPoints(option.key),
+                      outputType: option.key === "tool" ? "file" : current.outputType === "file" ? "image" : current.outputType,
+                      category: option.key === "tool" ? "办公文档" : current.category,
+                      modelId: "",
                     }))}
                   >
                     <span className="adm-skill-kind-icon"><Icon aria-hidden size={18} /></span>
@@ -857,7 +872,7 @@ export default function AdminSkillsPage() {
                     modelId: "",
                   }))}
                 >
-                  {OUTPUT_OPTIONS.map((type) => (
+                  {(form.kind === "tool" ? OUTPUT_OPTIONS.filter((type) => type === "text" || type === "file") : OUTPUT_OPTIONS.filter((type) => type !== "file")).map((type) => (
                     <option key={type} value={type}>{SKILL_OUTPUT_LABEL[type]}</option>
                   ))}
                 </select>
@@ -916,7 +931,7 @@ export default function AdminSkillsPage() {
         {editingVersionedSkill ? (
           <FormCard title="运行配置受版本保护">
             <p className="muted" style={{ margin: 0, lineHeight: 1.7 }}>
-              智能技能的 Manifest、输入 Schema、模型与文件均属于不可变版本，
+              {form.kind === "tool" ? "技能工具" : "智能技能"}的 Manifest、输入 Schema、模型与文件均属于不可变版本，
               不会在资料编辑中被覆盖。关闭此窗口后，请使用列表中的“版本与运行配置”。
             </p>
           </FormCard>
@@ -939,7 +954,9 @@ export default function AdminSkillsPage() {
                   group
                   hint={form.kind === "agent"
                     ? "智能技能只在画布中运行，通过对话跨多种节点生成内容"
-                    : "预设技能可用于创作台、生成页和画布，每次只输出一种内容"}
+                    : form.kind === "tool"
+                      ? "技能工具只在创作台或 API 中运行"
+                      : "预设技能可用于创作台、生成页和画布，每次只输出一种内容"}
                 >
                   <div className="adm-skill-entry-list">
                     {ADMIN_SKILL_ENTRY_POINTS.map((entry) => (
@@ -947,7 +964,7 @@ export default function AdminSkillsPage() {
                         <input
                           type="checkbox"
                           checked={form.entryPoints.includes(entry.key)}
-                          disabled={form.kind === "agent"}
+                          disabled={form.kind === "agent" || (form.kind === "preset" && entry.key === "api") || (form.kind === "tool" && entry.key !== "studio" && entry.key !== "api")}
                           onChange={() => toggleEntryPoint(entry.key)}
                         />
                         {entry.label}

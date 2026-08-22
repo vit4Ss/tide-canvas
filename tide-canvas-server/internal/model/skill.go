@@ -24,7 +24,7 @@ type Skill struct {
 	// Category:专业影视/商业广告/短剧漫剧/动漫游戏/音乐MV/自媒体创作/通用技能…
 	// 自由串,前后台用同一份推荐目录(web types/skill.ts SKILL_CATEGORIES)。
 	Category string `gorm:"column:category;size:32;index" json:"category"`
-	// OutputType:image | video | audio | text——卡片角标 + 各入口按模态过滤
+	// OutputType:image | video | audio | text | file——卡片角标 + 各入口按模态过滤
 	// (图片节点只列 image 技能)。
 	OutputType string `gorm:"column:output_type;size:16;index" json:"outputType"`
 	// PromptTemplate 为技能的核心提示词;发送时与用户描述合并(模板在前)。

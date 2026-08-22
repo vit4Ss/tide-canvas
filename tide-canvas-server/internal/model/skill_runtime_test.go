@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-func TestValidSkillKindHasOnlyTwoPublicKinds(t *testing.T) {
-	if !ValidSkillKind(SkillKindPreset) || !ValidSkillKind(SkillKindAgent) {
-		t.Fatal("preset and agent must remain valid")
+func TestValidSkillKindHasThreePublicKinds(t *testing.T) {
+	if !ValidSkillKind(SkillKindPreset) || !ValidSkillKind(SkillKindAgent) || !ValidSkillKind(SkillKindTool) {
+		t.Fatal("preset, agent and tool must remain valid")
 	}
 	if ValidSkillKind("workflow") || ValidSkillKind("") {
 		t.Fatal("legacy or empty kind was accepted")

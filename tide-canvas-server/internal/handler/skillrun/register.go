@@ -395,6 +395,9 @@ func (s *service) createRun(ctx context.Context, userID idgen.ID, dto CreateDTO)
 	if version.Kind == model.SkillKindAgent && entryPoint != "canvas" {
 		return nil, false, invalid("agent skills can only run on canvas")
 	}
+	if version.Kind == model.SkillKindTool && entryPoint != "studio" && entryPoint != "api" {
+		return nil, false, invalid("tool skills can only run in studio or api")
+	}
 	if version.Kind == model.SkillKindPreset {
 		if entryPoint != "chat" && entryPoint != "studio" && entryPoint != "canvas" {
 			return nil, false, invalid("preset skills can only run in chat, studio or canvas")
@@ -1063,14 +1066,18 @@ func (s *service) toVO(run *model.SkillRun) (RunVO, error) {
 func artifactVO(row *model.SkillRunArtifact) ArtifactVO {
 	meta := rawObject(row.Metadata)
 	preferred := ""
+	title := row.Role
 	if len(meta) > 0 {
 		var object map[string]any
 		if json.Unmarshal(meta, &object) == nil {
 			preferred, _ = object["preferredNodeType"].(string)
+			if filename, _ := object["filename"].(string); strings.TrimSpace(filename) != "" {
+				title = strings.TrimSpace(filename)
+			}
 		}
 	}
 	return ArtifactVO{ID: row.ID, RunID: row.RunID, StepID: row.StepID, Type: row.Type,
-		Role: row.Role, Title: row.Role, URL: row.URL, Text: row.Text, Content: row.Text,
+		Role: row.Role, Title: title, URL: row.URL, Text: row.Text, Content: row.Text,
 		TaskID: row.TaskID, FileID: row.FileID, IsFinal: row.IsFinal, PreferredNodeType: preferred,
 		Metadata: meta, CreateTime: formatTime(row.CreateTime)}
 }

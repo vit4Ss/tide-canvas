@@ -50,9 +50,11 @@ const fmtCount = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : Strin
 export function SkillPicker({ open, onClose, onPick, outputType, currentId, kinds, entryPoint, targetType }: Props) {
   const dialogRef = useFocusTrap<HTMLElement>(open);
   const kindsKey = kinds?.join(",") ?? "";
-  // Agent can span image/video/audio/text in one canvas run. A launcher's
-  // current single-output mode should only narrow Presets, never hide Agents.
-  const requestOutputType = kindsKey.includes("agent") ? undefined : outputType;
+  const mixedPresetTool = kindsKey.split(",").includes("preset") && kindsKey.split(",").includes("tool");
+  // Agent and Tool runs are not tied to the launcher's current media tab. The
+  // single-output filter narrows Presets only, otherwise Studio would hide file
+  // and analysis tools while the user is on an image/video/audio tab.
+  const requestOutputType = kindsKey.includes("agent") || kindsKey.includes("tool") ? undefined : outputType;
   const [category, setCategory] = useState("");
   const [keyword, setKeyword] = useState("");
   const [rows, setRows] = useState<SkillVO[] | null>(null);
@@ -66,16 +68,21 @@ export function SkillPicker({ open, onClose, onPick, outputType, currentId, kind
   useEffect(() => {
     if (!open) return;
     let alive = true;
-    skillApi
-      .categories(
-        requestOutputType,
-        entryPoint,
-        kindsKey ? (kindsKey.split(",") as SkillKind[]) : undefined,
-        targetType,
-      )
-      .then((res) => {
+    const requests = mixedPresetTool
+      ? [
+          skillApi.categories(outputType, entryPoint, ["preset"], targetType),
+          skillApi.categories(undefined, entryPoint, ["tool"], targetType),
+        ]
+      : [skillApi.categories(
+          requestOutputType,
+          entryPoint,
+          kindsKey ? (kindsKey.split(",") as SkillKind[]) : undefined,
+          targetType,
+        )];
+    Promise.all(requests)
+      .then((results) => {
         if (!alive) return;
-        const have = new Set(res.success && res.data ? res.data : []);
+        const have = new Set(results.flatMap((res) => res.success && res.data ? res.data : []));
         // 排序以 SKILL_CATEGORIES 为准（推荐目录的既定次序），
         // 后台自定义的分类是自由串、不在目录里，接在后面而不是被丢掉。
         const known = SKILL_CATEGORIES.filter((c) => have.has(c));
@@ -93,7 +100,7 @@ export function SkillPicker({ open, onClose, onPick, outputType, currentId, kind
     return () => {
       alive = false;
     };
-  }, [open, requestOutputType, entryPoint, kindsKey, targetType]);
+  }, [open, requestOutputType, outputType, entryPoint, kindsKey, mixedPresetTool, targetType]);
 
   // seq 守卫:切分类/搜索的旧响应后到不覆盖新结果;关窗后丢弃。
   // 置 loading(rows=null)放在异步回调里,不在 effect 体内同步 setState。
@@ -108,37 +115,50 @@ export function SkillPicker({ open, onClose, onPick, outputType, currentId, kind
     const timer = setTimeout(() => {
       setRows(null);
       setLoadFailed(false);
-      skillApi
-        .list({
-          pageNum: 1,
-          pageSize: 60,
-          category: category || undefined,
-          keyword: keyword.trim() || undefined,
-          outputType: requestOutputType,
-          entryPoint,
-          targetType,
-          ...(kindsKey.includes(",")
-            ? { kinds: kindsKey }
-            : kindsKey
-              ? { kind: kindsKey as SkillKind }
-              : {}),
-        })
-        .then((res) => {
+      const baseQuery = {
+        pageNum: 1,
+        pageSize: 60,
+        category: category || undefined,
+        keyword: keyword.trim() || undefined,
+        entryPoint,
+        targetType,
+      };
+      const requests = mixedPresetTool
+        ? [
+            skillApi.list({ ...baseQuery, outputType, kind: "preset" }),
+            skillApi.list({ ...baseQuery, kind: "tool" }),
+          ]
+        : [skillApi.list({
+            ...baseQuery,
+            outputType: requestOutputType,
+            ...(kindsKey.includes(",")
+              ? { kinds: kindsKey }
+              : kindsKey
+                ? { kind: kindsKey as SkillKind }
+                : {}),
+          })];
+      Promise.all(requests)
+        .then((results) => {
           if (seq !== seqRef.current) return;
-          if (!res.success || !res.data) {
+          const successful = results.filter((result) => result.success && result.data);
+          if (!successful.length) {
             setRows([]);
             setLoadFailed(true);
             setLoadedQueryKey(queryKey);
             return;
           }
-          const records = res.data.records;
+          const byID = new Map<string, SkillVO>();
+          for (const result of successful) {
+            for (const record of result.data!.records) byID.set(record.id, record);
+          }
+          const records = [...byID.values()].sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id));
           const kindSet = new Set(kindsKey ? (kindsKey.split(",") as SkillKind[]) : []);
           setRows(
             records.filter(
               (skill) =>
                 (!kindSet.size || kindSet.has(skillKindOf(skill))) &&
                 skillSupportsEntryPoint(skill, entryPoint) &&
-                (skillKindOf(skill) === "agent" || skillSupportsOutput(skill, outputType)),
+                (skillKindOf(skill) !== "preset" || skillSupportsOutput(skill, outputType)),
             ),
           );
           setLoadedQueryKey(queryKey);
@@ -155,7 +175,7 @@ export function SkillPicker({ open, onClose, onPick, outputType, currentId, kind
       clearTimeout(timer);
       if (seqRef.current === seq) seqRef.current += 1;
     };
-  }, [open, category, keyword, outputType, requestOutputType, entryPoint, kindsKey, targetType, queryKey]);
+  }, [open, category, keyword, outputType, requestOutputType, entryPoint, kindsKey, mixedPresetTool, targetType, queryKey]);
 
   useEffect(() => {
     if (!open) return;

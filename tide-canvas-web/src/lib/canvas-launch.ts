@@ -110,7 +110,7 @@ function isCanvasLaunchJournal(value: unknown): value is CanvasLaunchJournal {
     || journal.launchKind === "agent";
   const launchTargetValid = launchKind === "direct"
     ? journal.selectedSkill === null && canvasLaunchCanSubmit(null, journal.modelId)
-    : !!journal.selectedSkill
+    : launchKind !== null && !!journal.selectedSkill
       && canvasLaunchKindFor(journal.selectedSkill) === launchKind
       && canvasLaunchCanSubmit(journal.selectedSkill, journal.modelId);
 
@@ -187,6 +187,10 @@ export function readCanvasLaunchJournal(id: string): CanvasLaunchJournal | null 
       return null;
     }
     const launchKind = canvasLaunchKindFor(parsed.selectedSkill);
+    if (!launchKind) {
+      safeRemove(storageKey(id));
+      return null;
+    }
     return parsed.launchKind === launchKind ? parsed : { ...parsed, launchKind };
   } catch {
     return null;

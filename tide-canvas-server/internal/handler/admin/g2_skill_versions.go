@@ -403,15 +403,17 @@ func buildSkillVersion(_ *gorm.DB, skill *model.Skill, dto AdminSkillVersionCrea
 		kind = model.SkillKindPreset
 	}
 	if !model.ValidSkillKind(kind) {
-		return nil, nil, errors.New("kind must be preset or agent")
+		return nil, nil, errors.New("kind must be preset, agent or tool")
 	}
-	entryPoints, err := strictEnumList("entryPoints", dto.EntryPoints, map[string]bool{"chat": true, "studio": true, "canvas": true})
+	entryPoints, err := strictEnumList("entryPoints", dto.EntryPoints, map[string]bool{"chat": true, "studio": true, "canvas": true, "api": true})
 	if err != nil {
 		return nil, nil, err
 	}
 	if len(entryPoints) == 0 {
 		if kind == model.SkillKindAgent {
 			entryPoints = []string{"canvas"}
+		} else if kind == model.SkillKindTool {
+			entryPoints = []string{"studio"}
 		} else {
 			entryPoints = []string{"chat", "studio", "canvas"}
 		}
@@ -423,6 +425,13 @@ func buildSkillVersion(_ *gorm.DB, skill *model.Skill, dto AdminSkillVersionCrea
 		for _, entryPoint := range entryPoints {
 			if entryPoint != "chat" && entryPoint != "studio" && entryPoint != "canvas" {
 				return nil, nil, errors.New("preset entryPoints may only contain chat, studio or canvas")
+			}
+		}
+	}
+	if kind == model.SkillKindTool {
+		for _, entryPoint := range entryPoints {
+			if entryPoint != "studio" && entryPoint != "api" {
+				return nil, nil, errors.New("tool entryPoints may only contain studio or api")
 			}
 		}
 	}
@@ -839,7 +848,7 @@ func replaceSkillBindingsTx(tx *gorm.DB, skillID idgen.ID, input []AdminSkillBin
 		}
 		return nil
 	}
-	validSurfaces := map[string]bool{"chat": true, "studio": true, "canvas": true}
+	validSurfaces := map[string]bool{"chat": true, "studio": true, "canvas": true, "api": true}
 	normalized := make([]model.SkillSurfaceBinding, 0, len(input))
 	seen := map[string]bool{}
 	for _, item := range input {
@@ -887,7 +896,7 @@ func replaceSkillBindingsTx(tx *gorm.DB, skillID idgen.ID, input []AdminSkillBin
 }
 
 func normalizeSkillBindingSnapshots(input []AdminSkillBindingDTO) ([]skillBindingSnapshot, error) {
-	validSurfaces := map[string]bool{"chat": true, "studio": true, "canvas": true}
+	validSurfaces := map[string]bool{"chat": true, "studio": true, "canvas": true, "api": true}
 	out := make([]skillBindingSnapshot, 0, len(input))
 	seen := map[string]bool{}
 	for _, item := range input {
@@ -952,12 +961,22 @@ func validateSkillKindBindings(kind string, bindings []skillBindingSnapshot) err
 			}
 		}
 	}
+	if kind == model.SkillKindTool {
+		if len(bindings) == 0 {
+			return errors.New("tool must have at least one studio or api binding")
+		}
+		for i := range bindings {
+			if bindings[i].Surface != "studio" && bindings[i].Surface != "api" {
+				return errors.New("tool bindings may only use studio or api")
+			}
+		}
+	}
 	return nil
 }
 
 func validateSkillKindContract(version *model.SkillVersion) error {
 	if version == nil || !model.ValidSkillKind(version.Kind) {
-		return errors.New("kind must be preset or agent")
+		return errors.New("kind must be preset, agent or tool")
 	}
 	primary := strings.ToLower(strings.TrimSpace(version.PrimaryOutputType))
 	outputs := model.JSONStrings(version.OutputTypes, nil)
@@ -975,10 +994,30 @@ func validateSkillKindContract(version *model.SkillVersion) error {
 				return errors.New("preset entryPoints may only contain chat, studio or canvas")
 			}
 		}
-	} else {
+	} else if version.Kind == model.SkillKindAgent {
 		entryPoints := model.JSONStrings(version.EntryPoints, nil)
 		if len(entryPoints) != 1 || strings.ToLower(strings.TrimSpace(entryPoints[0])) != "canvas" {
 			return errors.New("agent entryPoints must contain canvas only")
+		}
+	} else {
+		if primary != "text" && primary != "file" {
+			return errors.New("tool primaryOutputType must be text or file")
+		}
+		for _, output := range outputs {
+			output = strings.ToLower(strings.TrimSpace(output))
+			if output != "text" && output != "file" {
+				return errors.New("tool outputTypes may only contain text or file")
+			}
+		}
+		entryPoints := model.JSONStrings(version.EntryPoints, nil)
+		if len(entryPoints) == 0 {
+			return errors.New("tool must declare at least one entry point")
+		}
+		for _, entryPoint := range entryPoints {
+			entryPoint = strings.ToLower(strings.TrimSpace(entryPoint))
+			if entryPoint != "studio" && entryPoint != "api" {
+				return errors.New("tool entryPoints may only contain studio or api")
+			}
 		}
 	}
 	if strings.TrimSpace(version.BindingsJSON) != "" {
@@ -1419,15 +1458,22 @@ func validateSkillManifest(
 	if !ok || len(steps) == 0 || len(steps) > 64 {
 		return errors.New("manifest.steps must be a non-empty array with at most 64 items")
 	}
-	validTypes := map[string]bool{"text": true, "generate": true, "approval": true, "input": true}
+	validTypes := map[string]bool{"text": true, "generate": true, "tool": true, "approval": true, "input": true}
 	validHandlers := map[string]bool{
 		"": true, "skill_text_completion": true, "assistant_chat": true,
 		"text_to_image": true, "image_to_image": true, "text_to_video": true,
 		"image_to_video": true, "start_end_to_video": true, "reference_to_video": true,
 		"text_to_audio": true,
+		"render_pptx":   true, "render_xlsx": true, "render_docx": true, "render_markdown": true,
+		"analyze_video": true, "analyze_audio": true, "analyze_webpage": true,
+	}
+	toolHandlers := map[string]bool{
+		"render_pptx": true, "render_xlsx": true, "render_docx": true, "render_markdown": true,
+		"analyze_video": true, "analyze_audio": true, "analyze_webpage": true,
 	}
 	seen := map[string]bool{}
 	finalOutputTypes := map[string]bool{}
+	hasToolStep := false
 	for index, item := range steps {
 		step, ok := item.(map[string]any)
 		if !ok {
@@ -1454,6 +1500,14 @@ func validateSkillManifest(
 		handler = strings.TrimSpace(handler)
 		if !validHandlers[handler] {
 			return fmt.Errorf("manifest.steps[%d].handler is unsupported", index)
+		}
+		if typeName == "tool" {
+			hasToolStep = true
+			if !toolHandlers[handler] {
+				return fmt.Errorf("manifest.steps[%d] tool handler is required and must be registered", index)
+			}
+		} else if toolHandlers[handler] {
+			return fmt.Errorf("manifest.steps[%d] registered tool handler requires type tool", index)
 		}
 		if (typeName == "approval" || typeName == "input") && handler != "" {
 			return fmt.Errorf("manifest.steps[%d] approval/input cannot declare handler", index)
@@ -1516,14 +1570,22 @@ func validateSkillManifest(
 		if outputType == "" && typeName == "text" {
 			outputType = "text"
 		}
-		if typeName == "generate" && outputType == "" {
-			return fmt.Errorf("manifest.steps[%d].outputType is required for generate", index)
+		if (typeName == "generate" || typeName == "tool") && outputType == "" {
+			return fmt.Errorf("manifest.steps[%d].outputType is required for %s", index, typeName)
 		}
 		if typeName == "text" && outputType != "text" && outputType != "file" {
 			return fmt.Errorf("manifest.steps[%d] text outputType must be text or file", index)
 		}
 		if typeName == "generate" && outputType != "image" && outputType != "video" && outputType != "audio" {
 			return fmt.Errorf("manifest.steps[%d] generate outputType must be image, video, or audio", index)
+		}
+		if typeName == "tool" {
+			if strings.HasPrefix(handler, "render_") && outputType != "file" {
+				return fmt.Errorf("manifest.steps[%d] render tool outputType must be file", index)
+			}
+			if strings.HasPrefix(handler, "analyze_") && outputType != "text" {
+				return fmt.Errorf("manifest.steps[%d] analysis tool outputType must be text", index)
+			}
 		}
 		if outputType != "" && !containsAdminString(outputTypes, outputType) {
 			return fmt.Errorf("manifest.steps[%d].outputType is not declared by the version", index)
@@ -1557,7 +1619,7 @@ func validateSkillManifest(
 		if registerWork && !effectiveFinal {
 			return fmt.Errorf("manifest.steps[%d].registerWork requires a final output", index)
 		}
-		if effectiveFinal && (typeName == "text" || typeName == "generate") {
+		if effectiveFinal && (typeName == "text" || typeName == "generate" || typeName == "tool") {
 			finalOutputTypes[outputType] = true
 		}
 		if rawSchema, ok := step["schema"]; ok {
@@ -1579,13 +1641,16 @@ func validateSkillManifest(
 			}
 		}
 	}
-	if kind == model.SkillKindAgent {
+	if kind == model.SkillKindTool && !hasToolStep {
+		return errors.New("tool skills must contain at least one registered tool step")
+	}
+	if kind == model.SkillKindAgent || kind == model.SkillKindTool {
 		if len(finalOutputTypes) == 0 {
-			return errors.New("agent steps must declare a final output or an approval-finalized draft")
+			return errors.New("multi-step skills must declare a final output or an approval-finalized draft")
 		}
 		primary := strings.ToLower(strings.TrimSpace(primaryOutputType))
 		if !finalOutputTypes[primary] {
-			return errors.New("agent final outputs must include primaryOutputType")
+			return errors.New("final outputs must include primaryOutputType")
 		}
 	}
 	return nil

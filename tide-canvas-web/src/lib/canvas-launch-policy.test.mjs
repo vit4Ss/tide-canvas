@@ -23,6 +23,13 @@ test("legacy workflow Skills use the agent handoff", () => {
   assert.equal(canvasLaunchNeedsDirectModel({ kind: "workflow" }), false);
 });
 
+test("tool and unknown Skills cannot leak into the canvas launch flow", () => {
+  assert.equal(canvasLaunchKindFor({ kind: "tool" }), null);
+  assert.equal(canvasLaunchKindFor({ kind: "other" }), null);
+  assert.equal(canvasLaunchNeedsDirectModel({ kind: "tool" }), false);
+  assert.equal(canvasLaunchCanSubmit({ kind: "tool" }, "video-model"), false);
+});
+
 test("the project launcher only exposes explicit video models for direct generation", () => {
   assert.equal(canvasLauncherAllowsDirectModel({ type: "video" }), true);
   assert.equal(canvasLauncherAllowsDirectModel({ type: "image" }), false);

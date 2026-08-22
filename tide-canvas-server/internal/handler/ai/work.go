@@ -100,12 +100,12 @@ func (s *service) applySkill(input map[string]any, gh GenHandler) map[string]any
 		return input
 	}
 	var sk model.Skill
-	if err := s.repo.db.Select("prompt_template", "output_type").
+	if err := s.repo.db.Select("prompt_template", "output_type", "kind").
 		Where("id = ? AND status = 1", id).First(&sk).Error; err != nil {
 		return input
 	}
 	tmpl := strings.TrimSpace(sk.PromptTemplate)
-	if tmpl == "" || sk.OutputType != skillOutputTypeOf(gh) {
+	if sk.Kind != model.SkillKindPreset || tmpl == "" || sk.OutputType != skillOutputTypeOf(gh) {
 		return input
 	}
 	return applyPromptTemplate(input, tmpl)

@@ -21,6 +21,8 @@ interface UseSkillRunOptions {
   storageKey?: string;
   /** Confirmed account id used to partition pointers and request journals. */
   ownerUserId?: string;
+  /** Keep the most recent terminal run restorable until the caller clears it. */
+  retainTerminalPointer?: boolean;
   pollIntervalMs?: number;
   onUpdate?: (run: SkillRunVO) => void;
   onTerminal?: (run: SkillRunVO) => void;
@@ -78,9 +80,30 @@ function removeStoredRunId(key: string, id: string): Promise<boolean> {
   return mutateStoredRunIds(key, (ids) => ids.filter((value) => value !== id));
 }
 
+function storedTerminalRunId(key: string): string {
+  if (typeof window === "undefined") return "";
+  try {
+    return localStorage.getItem(key)?.trim() || "";
+  } catch {
+    return "";
+  }
+}
+
+function writeStoredTerminalRunId(key: string, id: string): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    if (id) localStorage.setItem(key, id);
+    else localStorage.removeItem(key);
+    return storedTerminalRunId(key) === id;
+  } catch {
+    return false;
+  }
+}
+
 export function useSkillRun({
   storageKey,
   ownerUserId,
+  retainTerminalPointer = false,
   pollIntervalMs = 1500,
   onUpdate,
   onTerminal,
@@ -88,6 +111,9 @@ export function useSkillRun({
   const owner = ownerUserId?.trim() ?? "";
   const scopedStorageKey = storageKey && owner
     ? `${storageKey}:user:${encodeURIComponent(owner)}`
+    : undefined;
+  const terminalStorageKey = retainTerminalPointer && scopedStorageKey
+    ? `${scopedStorageKey}:terminal`
     : undefined;
   const [run, setRun] = useState<SkillRunVO | null>(null);
   const [loading, setLoading] = useState(false);
@@ -138,10 +164,19 @@ export function useSkillRun({
       if (scopedStorageKey && typeof window !== "undefined") {
         if (next && isSkillRunActive(next.status)) {
           durablePointer = await addStoredRunId(scopedStorageKey, next.id);
+          if (terminalStorageKey && storedTerminalRunId(terminalStorageKey) === next.id) {
+            writeStoredTerminalRunId(terminalStorageKey, "");
+          }
+        } else if (next && retainTerminalPointer && terminalStorageKey) {
+          await removeStoredRunId(scopedStorageKey, next.id);
+          durablePointer = writeStoredTerminalRunId(terminalStorageKey, next.id);
         } else if (next) {
           await removeStoredRunId(scopedStorageKey, next.id);
         } else if (previousId) {
           await removeStoredRunId(scopedStorageKey, previousId);
+          if (terminalStorageKey && storedTerminalRunId(terminalStorageKey) === previousId) {
+            writeStoredTerminalRunId(terminalStorageKey, "");
+          }
         }
       }
       if (next && isSkillRunTerminal(next.status) && lastTerminalRef.current !== next.id) {
@@ -150,7 +185,7 @@ export function useSkillRun({
       }
       return durablePointer;
     },
-    [scopedStorageKey],
+    [retainTerminalPointer, scopedStorageKey, terminalStorageKey],
   );
 
   const resume = useCallback(
@@ -287,10 +322,13 @@ export function useSkillRun({
     setLoading(false);
     setActionBusy(false);
     setError("");
-    void persist(null);
     // A second tab may have appended another active run while this hook was
-    // displaying a terminal one. Trigger a fresh storage scan after dismiss.
-    setRestoreGeneration((value) => value + 1);
+    // displaying a terminal one. Wait until the displayed pointer is removed,
+    // then trigger a fresh storage scan; otherwise the scan can immediately
+    // restore the same result that the user just dismissed.
+    void persist(null).finally(() => {
+      setRestoreGeneration((value) => value + 1);
+    });
   }, [persist]);
 
   // Refresh-resume: active IDs are stored as a bounded list so independent tabs
@@ -307,7 +345,8 @@ export function useSkillRun({
         await addStoredRunId(scopedStorageKey, id);
       }
       const ids = storedRunIds(scopedStorageKey);
-      const id = ids.at(-1) ?? resolvedIds.at(-1);
+      const terminalId = terminalStorageKey ? storedTerminalRunId(terminalStorageKey) : "";
+      const id = ids.at(-1) ?? resolvedIds.at(-1) ?? terminalId;
       if (cancelled || !id || currentRunIdRef.current) return;
       const restored = await resume(id, quiet);
       if (cancelled || restored) return;
@@ -330,7 +369,7 @@ export function useSkillRun({
       void restore(false);
     }, 0);
     const onStorage = (event: StorageEvent) => {
-      if (event.key !== scopedStorageKey || currentRunIdRef.current || timer) return;
+      if ((event.key !== scopedStorageKey && event.key !== terminalStorageKey) || currentRunIdRef.current || timer) return;
       backoff = 1_000;
       timer = setTimeout(() => {
         timer = null;
@@ -343,7 +382,7 @@ export function useSkillRun({
       if (timer) clearTimeout(timer);
       window.removeEventListener("storage", onStorage);
     };
-  }, [resume, restoreGeneration, scopedStorageKey]);
+  }, [resume, restoreGeneration, scopedStorageKey, terminalStorageKey]);
 
   useEffect(() => {
     if (!runId || !isSkillRunActive(runStatus)) return;

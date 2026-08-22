@@ -18,6 +18,7 @@ import (
 const (
 	SkillKindPreset = "preset"
 	SkillKindAgent  = "agent"
+	SkillKindTool   = "tool"
 
 	// legacySkillKindWorkflow is a persisted compatibility value only. It is
 	// normalized to agent during startup and is deliberately not accepted by
@@ -187,7 +188,7 @@ func (SkillSurfaceBinding) TableName() string { return "skill_surface_binding" }
 
 func ValidSkillKind(kind string) bool {
 	switch kind {
-	case SkillKindPreset, SkillKindAgent:
+	case SkillKindPreset, SkillKindAgent, SkillKindTool:
 		return true
 	}
 	return false
@@ -206,13 +207,14 @@ type normalizedSkillBinding struct {
 // manifests remain intact and are still executed by the Agent runner. The same
 // pass enforces the current product contract on persisted snapshots:
 //   - preset has exactly one declared output;
-//   - agent is placed on canvas only.
+//   - agent is placed on canvas only;
+//   - tool keeps its explicit product placements (normally studio/api).
 //
 // It is idempotent and runs after the legacy preset-version backfill.
 func NormalizeSkillKinds(db *gorm.DB) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		var versions []SkillVersion
-		if err := tx.Where("kind IN ?", []string{SkillKindPreset, SkillKindAgent, legacySkillKindWorkflow}).
+		if err := tx.Where("kind IN ?", []string{SkillKindPreset, SkillKindAgent, SkillKindTool, legacySkillKindWorkflow}).
 			Order("id ASC").Find(&versions).Error; err != nil {
 			return err
 		}

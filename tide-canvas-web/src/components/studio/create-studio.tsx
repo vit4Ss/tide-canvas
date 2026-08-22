@@ -44,6 +44,7 @@ import { aiApi } from "@/lib/api";
 import { marketApi } from "@/lib/market-api";
 import { pointsApi } from "@/lib/points-api";
 import { SkillPicker } from "@/components/skill/skill-picker";
+import { ToolSkillWorkspace } from "@/components/studio/tool-skill-workspace";
 import { parseSkillParams, skillApi } from "@/lib/skill-api";
 import { promptAfterSkillPick } from "@/lib/skill-prompt";
 import {
@@ -159,6 +160,9 @@ export default function CreateStudio() {
   /* 技能：以内联 chip 附着到提示词框；执行模板由服务端按 skillId 解析。 */
   const [skill, setSkill] = useState<SkillVO | null>(null);
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
+  const [toolSkill, setToolSkill] = useState<SkillVO | null>(null);
+  const [toolTargetType, setToolTargetType] = useState("");
+  const [toolWorkspaceOpen, setToolWorkspaceOpen] = useState(false);
   const skillRestoreSeqRef = useRef(0);
   const [lyrics, setLyrics] = useState("");
   const [songStyle, setSongStyle] = useState("");
@@ -182,6 +186,7 @@ export default function CreateStudio() {
   // 「AI 优化」单次扣费（后端实算，含团队倍率）；0 = 免费/未配置，不显示角标
   const [optCost, setOptCost] = useState(0);
   const ensureSession = useAuthStore((s) => s.ensureSession);
+  const ownerUserId = useAuthStore((s) => s.user?.id ?? "");
 
   // 真实积分余额（替代原硬编码假数据）。生成结算后刷新——扣减/退款在后端完成。
   const [balance, setBalance] = useState<number | null>(null);
@@ -792,6 +797,13 @@ export default function CreateStudio() {
   const pickSkill = useCallback(
     (s: SkillVO) => {
       skillRestoreSeqRef.current += 1;
+      if (skillKindOf(s) === "tool") {
+        setToolSkill(s);
+        setToolTargetType(curType);
+        setSkillPickerOpen(false);
+        setToolWorkspaceOpen(true);
+        return;
+      }
       if (skillKindOf(s) !== "preset") {
         toast.info("智能技能请在画布中使用");
         return;
@@ -1437,10 +1449,20 @@ export default function CreateStudio() {
           outputType={curType}
           targetType={curType}
           currentId={skill?.id}
-          kinds={["preset"]}
+          kinds={["preset", "tool"]}
           entryPoint="studio"
         />
       )}
+
+      <ToolSkillWorkspace
+        key={ownerUserId || "guest"}
+        open={toolWorkspaceOpen}
+        skill={toolSkill}
+        skills={toolSkill ? [toolSkill] : []}
+        targetType={toolTargetType}
+        onRequestOpen={() => setToolWorkspaceOpen(true)}
+        onRequestClose={() => setToolWorkspaceOpen(false)}
+      />
 
       {/* 资产库弹窗：复用整个资产页 UI 作为选择器，按槽类型默认到对应筛选 */}
       {assetPick && slots?.some((slot) => slot.k === assetPick) && (

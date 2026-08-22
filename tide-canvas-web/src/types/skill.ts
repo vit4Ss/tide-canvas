@@ -1,9 +1,9 @@
 // ============================================================================
-// 技能(Skill)只有两种产品形态：preset 是单一输出的预设生成；
-// agent 由 SkillRun 执行器在画布中持续对话与编排，可跨多个节点和输出类型。
+// 技能(Skill)有三种产品形态：preset 是单一输出的预设生成；
+// agent 在画布中持续对话与编排；tool 是创作台/API 中受控执行的工具能力。
 // ============================================================================
 
-export type SkillKind = "preset" | "agent";
+export type SkillKind = "preset" | "agent" | "tool";
 
 export type SkillEntryPoint = "studio" | "chat" | "canvas" | "asset" | "api";
 
@@ -122,6 +122,8 @@ export const SKILL_CATEGORIES = [
   "音乐MV",
   "自媒体创作",
   "通用技能",
+  "办公文档",
+  "内容分析",
 ] as const;
 
 export const SKILL_OUTPUT_LABEL: Record<string, string> = {
@@ -135,13 +137,15 @@ export const SKILL_OUTPUT_LABEL: Record<string, string> = {
 export const SKILL_KIND_LABEL: Record<SkillKind, string> = {
   preset: "预设",
   agent: "智能技能",
+  tool: "技能工具",
 };
 
 /**
  * 数据迁移期可能仍收到历史 workflow。它已是智能技能的旧名，
- * 只在边界归一，不再向产品层暴露第三种类型。
+ * 只在边界归一，不再向产品层暴露 workflow 这一历史类型。
  */
 export function normalizeSkillKind(kind: unknown): SkillKind {
+  if (kind === "tool") return "tool";
   return kind === "agent" || kind === "workflow" ? "agent" : "preset";
 }
 
@@ -168,7 +172,13 @@ export function skillSupportsEntryPoint(
   entryPoint?: SkillEntryPoint,
 ): boolean {
   if (!entryPoint) return true;
-  if (skillKindOf(skill) === "agent") return entryPoint === "canvas";
+  const kind = skillKindOf(skill);
+  if (kind === "agent") return entryPoint === "canvas";
+  if (kind === "tool") {
+    if (entryPoint !== "studio" && entryPoint !== "api") return false;
+    if (!Array.isArray(skill.entryPoints) || skill.entryPoints.length === 0) return entryPoint === "studio";
+    return skill.entryPoints.includes(entryPoint);
+  }
   if (entryPoint !== "studio" && entryPoint !== "chat" && entryPoint !== "canvas") return false;
   if (!Array.isArray(skill.entryPoints) || skill.entryPoints.length === 0) return true;
   return skill.entryPoints.includes(entryPoint);
