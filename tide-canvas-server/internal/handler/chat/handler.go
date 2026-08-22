@@ -236,7 +236,7 @@ func (h *handler) streamMessage(c *gin.Context) {
 		}
 	}
 
-	vo, err := h.svc.streamMessage(c.Request.Context(), id, ownerID, dto.Content, dto.Attachments, dto.Model, dto.SkillID, dto.ClientRequestID, func(delta string) {
+	vo, err := h.svc.streamMessage(c.Request.Context(), id, ownerID, dto.Content, dto.Attachments, dto.Model, dto.SkillID, dto.WebSearch, dto.ClientRequestID, func(delta string) {
 		frame(map[string]string{"delta": delta})
 	})
 	if err != nil {

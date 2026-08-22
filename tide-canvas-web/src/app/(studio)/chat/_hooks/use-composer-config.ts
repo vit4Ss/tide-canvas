@@ -75,7 +75,20 @@ export function useComposerConfig(models: GenModelsApi, toolSkill: SkillVO | nul
             kind === "image" || kind === "video" || kind === "audio" || kind === "file",
           )
         : [];
-      if (!kinds.length) return undefined;
+      if (!kinds.length) {
+        // 办公工具没有强制素材类型，但应继续继承当前文本模型的上传能力，
+        // 让用户用多张参考图、PDF、Word、Excel 等资料驱动文档生成。
+        if (!mCfg?.fileUpload) return undefined;
+        const cfgMax = mCfg.maxFileCount && mCfg.maxFileCount > 0 ? mCfg.maxFileCount : MAX_ATTACHMENTS;
+        const exts = normalizeFormats(mCfg.uploadFormats);
+        return {
+          kinds: ["image", "file"],
+          max: Math.min(cfgMax, MAX_ATTACHMENTS),
+          maxSizeMB: Math.min(mCfg.maxFileSizeMB && mCfg.maxFileSizeMB > 0 ? mCfg.maxFileSizeMB : 15, 15),
+          exts,
+          accept: exts ? exts.map((extension) => `.${extension}`).join(",") : "image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.md",
+        };
+      }
       const assetSpec = schema?.properties?.assets;
       const configuredMax = typeof assetSpec?.maxItems === "number" ? assetSpec.maxItems : 1;
       return {

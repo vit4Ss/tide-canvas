@@ -36,6 +36,9 @@ type SendMessageDTO struct {
 	// SkillID pins an optional published text preset for this turn. The server
 	// validates chat/text placement and never trusts a client-supplied prompt.
 	SkillID string `json:"skillId" binding:"omitempty,max=32"`
+	// WebSearch maps to the relay's native web_search option. The selected
+	// model still has to advertise support before the frontend exposes it.
+	WebSearch bool `json:"webSearch"`
 }
 
 // MessageAttach is one composer attachment: a hosted file URL plus its kind

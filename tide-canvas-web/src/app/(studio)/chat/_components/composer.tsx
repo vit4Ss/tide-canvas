@@ -397,7 +397,7 @@ export function Composer({
               {activeSkill && <span className="cm-skill-count">1</span>}
             </button>
           )}
-          {!toolSkill && webSearchAvail && (
+          {webSearchAvail && (
             <button
               className={`cm-chip ${web ? "on" : ""}`}
               type="button"

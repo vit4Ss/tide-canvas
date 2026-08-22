@@ -3,6 +3,7 @@ package relaychat
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,26 @@ import (
 	"testing"
 	"time"
 )
+
+func TestWebSearchOptionIsForwarded(t *testing.T) {
+	var received chatRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	got, err := testClient(t, srv.URL).ChatWithWebSearch(context.Background(), "m", []Msg{TextMsg("user", "hi")}, true)
+	if err != nil || got != "ok" {
+		t.Fatalf("ChatWithWebSearch = %q, %v", got, err)
+	}
+	if !received.WebSearch {
+		t.Fatal("web_search=true was not forwarded to relay")
+	}
+}
 
 // 流式判活的两条口径，用一个假上游锁住：
 //   1. 持续吐字的长回复不能被掐断（哪怕总时长超过任何单条 chunk 的间隔）

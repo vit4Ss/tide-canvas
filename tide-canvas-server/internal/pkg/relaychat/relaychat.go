@@ -168,9 +168,10 @@ func New(baseURL, apiKey string) *Client {
 }
 
 type chatRequest struct {
-	Model    string `json:"model"`
-	Messages []Msg  `json:"messages"`
-	Stream   bool   `json:"stream"`
+	Model     string `json:"model"`
+	Messages  []Msg  `json:"messages"`
+	Stream    bool   `json:"stream"`
+	WebSearch bool   `json:"web_search,omitempty"`
 }
 
 // chunk is one SSE frame (chat.completion.chunk) from the streaming response.
@@ -187,19 +188,30 @@ type chunk struct {
 // non-streaming path is unreliable, so streaming is used and collapsed to a
 // single string here.
 func (c *Client) Chat(ctx context.Context, model string, msgs []Msg) (string, error) {
-	return c.stream(ctx, model, msgs, nil)
+	return c.stream(ctx, model, msgs, false, nil)
+}
+
+// ChatWithWebSearch enables the relay's native web_search option for one
+// completion while preserving Chat's default behavior for existing callers.
+func (c *Client) ChatWithWebSearch(ctx context.Context, model string, msgs []Msg, webSearch bool) (string, error) {
+	return c.stream(ctx, model, msgs, webSearch, nil)
 }
 
 // ChatStream is like Chat but invokes onDelta for every token as it arrives,
 // returning the full accumulated reply when the stream ends. Pass a context with
 // a deadline to bound a long generation.
 func (c *Client) ChatStream(ctx context.Context, model string, msgs []Msg, onDelta func(string)) (string, error) {
-	return c.stream(ctx, model, msgs, onDelta)
+	return c.stream(ctx, model, msgs, false, onDelta)
+}
+
+// ChatStreamWithWebSearch is the streaming equivalent of ChatWithWebSearch.
+func (c *Client) ChatStreamWithWebSearch(ctx context.Context, model string, msgs []Msg, webSearch bool, onDelta func(string)) (string, error) {
+	return c.stream(ctx, model, msgs, webSearch, onDelta)
 }
 
 // stream performs the SSE request, accumulating the reply and (when onDelta is
 // non-nil) forwarding each delta as it arrives.
-func (c *Client) stream(ctx context.Context, model string, msgs []Msg, onDelta func(string)) (string, error) {
+func (c *Client) stream(ctx context.Context, model string, msgs []Msg, webSearch bool, onDelta func(string)) (string, error) {
 	if model == "" {
 		return "", errors.New("relaychat: model is required")
 	}
@@ -216,7 +228,7 @@ func (c *Client) stream(ctx context.Context, model string, msgs []Msg, onDelta f
 	ctx, cancelStream := context.WithCancel(ctx)
 	defer cancelStream()
 
-	payload, err := json.Marshal(chatRequest{Model: model, Messages: msgs, Stream: true})
+	payload, err := json.Marshal(chatRequest{Model: model, Messages: msgs, Stream: true, WebSearch: webSearch})
 	if err != nil {
 		return "", err
 	}

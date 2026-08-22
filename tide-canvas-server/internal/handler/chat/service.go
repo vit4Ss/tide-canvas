@@ -672,7 +672,7 @@ func (s *service) sendMessage(ctx context.Context, conversationID, ownerID idgen
 	// A failure to store the reply must not fail the user's send, so it is
 	// best-effort. 空回复（请求被取消时 generateReply 返回 ""）不落库——
 	// 否则断开的请求会往会话里塞一条空/占位气泡。
-	reply := s.generateReply(ctx, conv, ownerID, userMsg.ID, content, docNote, docFiles, imageURLs, dto.Model, skillPrompt, charge)
+	reply := s.generateReply(ctx, conv, ownerID, userMsg.ID, content, docNote, docFiles, imageURLs, dto.Model, skillPrompt, dto.WebSearch, charge)
 	at := time.Now()
 	if strings.TrimSpace(reply) != "" {
 		aiMsg := &model.IMMessage{
@@ -733,7 +733,7 @@ func (s *service) claimTextRequestRecovery(userMsg *model.IMMessage, conversatio
 // assistant message VO. Ownership is enforced. When no relay text model is
 // available it emits the canned reply as a single delta so the round-trip still
 // completes.
-func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idgen.ID, content string, attachments []MessageAttach, requestedModel, skillID, clientRequestID string, onDelta func(string)) (*MessageVO, error) {
+func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idgen.ID, content string, attachments []MessageAttach, requestedModel, skillID string, webSearch bool, clientRequestID string, onDelta func(string)) (*MessageVO, error) {
 	if err := validateClientRequestID(clientRequestID); err != nil {
 		return nil, err
 	}
@@ -782,6 +782,7 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 				requestedModel = snapshot.Model
 				skillID = snapshot.SkillID
 				skillPrompt = snapshot.SkillPrompt
+				webSearch = snapshot.WebSearch
 			}
 			charge = textChargeFromMessage(existing, ownerID)
 		}
@@ -861,6 +862,7 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 				Model:       requestedModel,
 				SkillID:     skillID,
 				SkillPrompt: skillPrompt,
+				WebSearch:   webSearch,
 			})
 			if s.relay != nil {
 				charge = s.prepareTextCharge(ownerID, requestedModel)
@@ -922,7 +924,7 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 	// 都会终结订阅者的等待。
 	lr := s.liveStart(conversationID, clientRequestID)
 	defer s.liveEnd(conversationID, clientRequestID, lr)
-	reply, refundRequired := s.streamReply(ctx, conv, ownerID, userMsg.ID, content, docNote, docFiles, imageURLs, requestedModel, skillPrompt, func(d string) {
+	reply, refundRequired := s.streamReply(ctx, conv, ownerID, userMsg.ID, content, docNote, docFiles, imageURLs, requestedModel, skillPrompt, webSearch, func(d string) {
 		lr.append(d)
 		if onDelta != nil {
 			onDelta(d)
@@ -983,7 +985,7 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 // no relay text model is configured) it falls back to the canned reply, emitted
 // as one delta so the client still renders something. 上下文 = system 提示词 +
 // 压缩摘要（如有）+ 摘要之后的原文消息。
-func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, ownerID, userMessageID idgen.ID, userContent string, docNote string, docFiles []relaychat.FileAttachment, imageURLs []string, requestedModel, skillPrompt string, onDelta func(string), charge *textCharge) (string, bool) {
+func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, ownerID, userMessageID idgen.ID, userContent string, docNote string, docFiles []relaychat.FileAttachment, imageURLs []string, requestedModel, skillPrompt string, webSearch bool, onDelta func(string), charge *textCharge) (string, bool) {
 	// 客户端断开不中止生成：前端切页面/切会话都会 abort SSE，请求上下文随之
 	// 取消；若生成跟着停，回复只落库半截。分离请求上下文让上游把回复生成完整
 	// 并落库，用户切回来能看到全文；llmReplyTimeout 仍然兜底。断开后 onDelta
@@ -1032,7 +1034,7 @@ func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, o
 				// 降级回复——否则客户端看到「半截真回复 + 占位文案」，而落库的又是
 				// 另一份内容，三方不一致。
 				var streamed strings.Builder
-				reply, err := s.relay.ChatStream(cctx, model, msgs, func(d string) {
+				reply, err := s.relay.ChatStreamWithWebSearch(cctx, model, msgs, webSearch, func(d string) {
 					streamed.WriteString(d)
 					if onDelta != nil {
 						onDelta(d)
@@ -1153,6 +1155,7 @@ type textRequestSnapshot struct {
 	Model       string          `json:"model,omitempty"`
 	SkillID     string          `json:"skillId,omitempty"`
 	SkillPrompt string          `json:"skillPrompt,omitempty"`
+	WebSearch   bool            `json:"webSearch,omitempty"`
 }
 
 func encodeTextRequestSnapshot(snapshot textRequestSnapshot) string {
@@ -1226,7 +1229,7 @@ func (s *service) appendMessage(conversationID, ownerID idgen.ID, dto AppendMess
 // relay is unconfigured) it falls back to the canned placeholder so the chat
 // round-trip always completes. 上下文 = system 提示词 + 压缩摘要（如有）+
 // 摘要之后的原文消息。
-func (s *service) generateReply(ctx context.Context, conv *model.IMConversation, ownerID, userMessageID idgen.ID, userContent string, docNote string, docFiles []relaychat.FileAttachment, imageURLs []string, requestedModel, skillPrompt string, charge *textCharge) string {
+func (s *service) generateReply(ctx context.Context, conv *model.IMConversation, ownerID, userMessageID idgen.ID, userContent string, docNote string, docFiles []relaychat.FileAttachment, imageURLs []string, requestedModel, skillPrompt string, webSearch bool, charge *textCharge) string {
 	if s.relay == nil {
 		return s.buildReply(userContent)
 	}
@@ -1274,7 +1277,7 @@ func (s *service) generateReply(ctx context.Context, conv *model.IMConversation,
 			cctx, cancel := context.WithTimeout(ctx, llmReplyTimeout)
 			defer cancel()
 			start := time.Now()
-			reply, err := s.relay.Chat(cctx, model, msgs)
+			reply, err := s.relay.ChatWithWebSearch(cctx, model, msgs, webSearch)
 			// 日志只记当前轮（最后一条即当前 user 消息）,附件 base64 净化;
 			// 积分随 charge 落 point_cost。
 			turn := msgs

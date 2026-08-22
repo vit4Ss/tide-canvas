@@ -61,6 +61,7 @@ interface TextTurnPayload {
   attachments: MessageAttachment[];
   model?: string;
   skillId?: string;
+  webSearch?: boolean;
 }
 
 interface PendingTextTurn {
@@ -126,6 +127,8 @@ function chatToolRunInput(
   skill: SkillVO,
   prompt: string,
   refs: readonly RefItem[],
+  webSearch: boolean,
+  textModelId?: string,
 ): SkillRunInput {
   const parameters = defaultSkillInputValues(skill.inputSchema, skill.defaultParams);
   const schema = parseSkillInputSchema(skill.inputSchema);
@@ -135,8 +138,10 @@ function chatToolRunInput(
       ? rawAssetTypes.filter((value): value is RefItem["kind"] =>
           value === "image" || value === "video" || value === "audio" || value === "file",
         )
-      : [],
+      : (["image", "file"] as RefItem["kind"][]),
   );
+  if (webSearch) parameters.webSearch = true;
+  if (textModelId) parameters.textModelId = textModelId;
   if (schema?.properties?.url && parameters.url === undefined) {
     const match = prompt.match(/https?:\/\/[^\s<>{}\[\]"']+/i)?.[0];
     if (match) parameters.url = match.replace(/[),.;!?，。；！？]+$/, "");
@@ -228,6 +233,7 @@ function validPendingTextTurn(value: unknown): value is PendingTextTurn {
     ) &&
     (payload.model === undefined || typeof payload.model === "string") &&
     (payload.skillId === undefined || typeof payload.skillId === "string") &&
+    (payload.webSearch === undefined || typeof payload.webSearch === "boolean") &&
     row.requestKey === mediaRequestKey(payload) &&
     validComposerSnapshot(row.composer);
 }
@@ -623,6 +629,7 @@ export function useSendMessage({
   musicNoDraftOk,
   skill,
   toolSkill,
+  web,
   setStreaming,
   chatAbortRef,
   activeIdRef,
@@ -665,6 +672,7 @@ export function useSendMessage({
   musicNoDraftOk: boolean;
   skill: SkillVO | null;
   toolSkill: SkillVO | null;
+  web: boolean;
   setStreaming: React.Dispatch<React.SetStateAction<string | null>>;
   chatAbortRef: React.RefObject<AbortController | null>;
   activeIdRef: React.RefObject<string | null>;
@@ -927,6 +935,7 @@ export function useSendMessage({
           attachments: row.payload.attachments,
           model: row.payload.model,
           skillId: row.payload.skillId,
+          webSearch: row.payload.webSearch,
           clientRequestId: row.clientRequestId,
           onDelta: (delta) => {
             clearTimeout(thinkingTimer);
@@ -1108,7 +1117,9 @@ export function useSendMessage({
       }
     }
 
-    const toolInput = selectedTool ? chatToolRunInput(selectedTool, v, allowedRefs) : null;
+    const toolInput = selectedTool
+      ? chatToolRunInput(selectedTool, v, allowedRefs, web, selModel?.modelKey || selModel?.id)
+      : null;
     if (selectedTool && toolInput) {
       const errors = validateSkillRunInputValues(selectedTool.inputSchema, toolInput);
       const message = errors.prompt || errors.assets || errors.parameters || Object.values(errors)[0];
@@ -1462,6 +1473,7 @@ export function useSendMessage({
           ...(skill && skillKindOf(skill) === "preset" && skillSupportsOutput(skill, "text")
             ? { skillId: skill.id }
             : {}),
+          ...(web ? { webSearch: true } : {}),
         };
         const requestKey = mediaRequestKey(payload);
         const candidate: PendingTextTurn = {
@@ -1509,6 +1521,7 @@ export function useSendMessage({
           attachments: payload.attachments,
           model: payload.model,
           skillId: payload.skillId,
+          webSearch: payload.webSearch,
           clientRequestId: textTurnPending.clientRequestId,
           onDelta: (d) => {
             acc += d;
@@ -1596,7 +1609,7 @@ export function useSendMessage({
       setTyping(false);
       setBusy(false);
     }
-  }, [draft, busy, textRecovering, activeId, ensureSession, loadMessages, selModel, mode, ratio, res, quality, dur, batch, refs, refPolicy, refOptional, clearRefsIfUnchanged, restoreRefsIfEmpty, forceBottom, scrollEnd, ctxUsage, refreshCtxUsage, music, isMusicSel, musicNoDraftOk, skill, toolSkill, activeIdRef, chatAbortRef, nearBottomRef, setActiveId, setBusy, setConvos, setDraft, setMsgs, setStreaming, setTextRecovering, setTyping]);
+  }, [draft, busy, textRecovering, activeId, ensureSession, loadMessages, selModel, mode, ratio, res, quality, dur, batch, refs, refPolicy, refOptional, clearRefsIfUnchanged, restoreRefsIfEmpty, forceBottom, scrollEnd, ctxUsage, refreshCtxUsage, music, isMusicSel, musicNoDraftOk, skill, toolSkill, web, activeIdRef, chatAbortRef, nearBottomRef, setActiveId, setBusy, setConvos, setDraft, setMsgs, setStreaming, setTextRecovering, setTyping]);
 
   return send;
 }

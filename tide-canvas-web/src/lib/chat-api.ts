@@ -86,6 +86,8 @@ export async function streamMessage(
     model?: string;
     /** Optional public preset. The server resolves its template and defaults. */
     skillId?: string;
+    /** Enable the relay's web search capability for this turn. */
+    webSearch?: boolean;
     /** Stable retry key for a text turn. The server stores it on both message
      * rows and fences concurrent/replayed requests before charging again. */
     clientRequestId?: string;
@@ -103,6 +105,7 @@ export async function streamMessage(
           ...(handlers.attachments?.length ? { attachments: handlers.attachments } : {}),
           ...(handlers.model ? { model: handlers.model } : {}),
           ...(handlers.skillId ? { skillId: handlers.skillId } : {}),
+          ...(handlers.webSearch ? { webSearch: true } : {}),
           ...(handlers.clientRequestId ? { clientRequestId: handlers.clientRequestId } : {}),
         }),
       },

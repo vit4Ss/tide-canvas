@@ -18,6 +18,7 @@ import (
 	filehandler "tidecanvas/internal/handler/file"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/boundedtext"
+	"tidecanvas/internal/pkg/chatattach"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/logger"
 )
@@ -374,6 +375,7 @@ func (s *service) runAgentSteps(ctx context.Context, run *model.SkillRun, versio
 		}
 		commandInput := buildGenerationInput(version.DefaultParams, input, prompt)
 		if step.Type == "text" {
+			s.addSkillTextAttachments(ctx, commandInput, input.Assets)
 			systemPrompt, err := s.expandSkillTemplate(version, agentStepSystemPrompt(step.SystemPrompt, s.primarySkillText(version)))
 			if err != nil {
 				return err
@@ -1242,6 +1244,34 @@ func buildGenerationInput(defaultsJSON string, input RunInput, prompt string) ma
 		result["sourceImage"] = imageURLs[0]
 	}
 	return result
+}
+
+// addSkillTextAttachments reuses the hardened chat attachment extractor so
+// office tools can consume the same uploaded images and documents as normal
+// text chat. Only URLs owned by configured storage are fetched; unsupported,
+// oversized or untrusted files become an explicit note instead of disappearing.
+func (s *service) addSkillTextAttachments(ctx context.Context, command map[string]any, assets []AssetInput) {
+	if len(assets) == 0 {
+		return
+	}
+	attachments := make([]chatattach.Attach, 0, len(assets))
+	for _, asset := range assets {
+		attachments = append(attachments, chatattach.Attach{
+			URL: strings.TrimSpace(asset.URL), Kind: strings.TrimSpace(asset.Type), Name: strings.TrimSpace(asset.Name),
+		})
+	}
+	files, note := (chatattach.Extractor{Store: s.deps.Storage}).FileParts(ctx, attachments)
+	if len(files) > 0 {
+		encoded := make([]map[string]string, 0, len(files))
+		for _, file := range files {
+			encoded = append(encoded, map[string]string{"filename": file.Filename, "dataUri": file.DataURI})
+		}
+		command["files"] = encoded
+	}
+	if note != "" {
+		prompt, _ := command["prompt"].(string)
+		command["prompt"] = strings.TrimSpace(prompt + "\n\n" + note)
+	}
 }
 
 // withAgentConversationContext turns recent assistant history into one explicit

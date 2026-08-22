@@ -160,6 +160,7 @@ export default function ChatPage() {
     musicNoDraftOk: cfg.musicNoDraftOk,
     skill: cfg.skill,
     toolSkill,
+    web: cfg.web,
     setStreaming: streamingApi.setStreaming,
     chatAbortRef: streamingApi.chatAbortRef,
     activeIdRef: conv.activeIdRef,

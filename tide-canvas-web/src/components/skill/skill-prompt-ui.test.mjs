@@ -14,6 +14,7 @@ const chatPage = read("../../app/(studio)/chat/page.tsx");
 const chatComposer = read("../../app/(studio)/chat/_components/composer.tsx");
 const chatConfig = read("../../app/(studio)/chat/_hooks/use-composer-config.ts");
 const chatSend = read("../../app/(studio)/chat/_hooks/use-send-message.ts");
+const chatApi = read("../../lib/chat-api.ts");
 const quickStart = read("../canvas/canvas-quick-start.tsx");
 const assistant = read("../canvas/canvas-assistant-panel.tsx");
 const chipStyles = read("./skill-prompt-chip.module.css");
@@ -77,4 +78,17 @@ test("内置技能工具在后台未配置封面时使用项目位图", () => {
     assert.match(skillCover, new RegExp(name.replace(".", "\\.")));
   }
   assert.match(skillCover, /if \(configured\) return configured/);
+});
+
+test("办公技能保留参考文件与联网并把两者传入执行链路", () => {
+  assert.match(chatComposer, /\{webSearchAvail && \(/);
+  assert.match(chatConfig, /kinds: \["image", "file"\]/);
+  assert.match(chatConfig, /Math\.min\(mCfg\.maxFileSizeMB[\s\S]*?: 15, 15\)/);
+  assert.match(chatConfig, /image\/\*,\.pdf,\.doc,\.docx,\.xls,\.xlsx,\.csv,\.txt,\.md/);
+  assert.match(chatSend, /\(\["image", "file"\] as RefItem\["kind"\]\[\]\)/);
+  assert.match(chatSend, /if \(webSearch\) parameters\.webSearch = true/);
+  assert.match(chatSend, /parameters\.textModelId = textModelId/);
+  assert.match(chatSend, /selModel\?\.modelKey \|\| selModel\?\.id/);
+  assert.match(chatSend, /webSearch: payload\.webSearch/);
+  assert.match(chatApi, /\{ webSearch: true \}/);
 });

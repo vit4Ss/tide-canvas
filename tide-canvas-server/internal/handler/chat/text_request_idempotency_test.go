@@ -187,7 +187,7 @@ func TestClientRequestIDMustBeCanonical(t *testing.T) {
 		}
 		// Validation is the first service operation; an invalid non-empty key
 		// cannot reach a nil repo and silently degrade to the legacy path.
-		if _, err := (&service{}).streamMessage(context.Background(), 1, 1, "hello", nil, "", "", value, nil); !errors.Is(err, errInvalidClientRequestID) {
+		if _, err := (&service{}).streamMessage(context.Background(), 1, 1, "hello", nil, "", "", false, value, nil); !errors.Is(err, errInvalidClientRequestID) {
 			t.Fatalf("streamMessage(%q) = %v, want errInvalidClientRequestID", value, err)
 		}
 	}
@@ -239,7 +239,7 @@ func TestStreamMessageReplayReturnsPersistedAssistant(t *testing.T) {
 	requestID := "chat-request-replay"
 	var firstDeltas int
 	first, err := svc.streamMessage(
-		context.Background(), conversationID, ownerID, "hello", nil, "", "", requestID,
+		context.Background(), conversationID, ownerID, "hello", nil, "", "", false, requestID,
 		func(string) { firstDeltas++ },
 	)
 	if err != nil {
@@ -251,7 +251,7 @@ func TestStreamMessageReplayReturnsPersistedAssistant(t *testing.T) {
 
 	var replayDeltas int
 	replayed, err := svc.streamMessage(
-		context.Background(), conversationID, ownerID, "different payload is ignored for the same key", nil, "", "", requestID,
+		context.Background(), conversationID, ownerID, "different payload is ignored for the same key", nil, "", "", false, requestID,
 		func(string) { replayDeltas++ },
 	)
 	if err != nil {
@@ -272,6 +272,14 @@ func TestStreamMessageReplayReturnsPersistedAssistant(t *testing.T) {
 	}
 	if count != 2 {
 		t.Fatalf("message count = %d, want one user and one assistant", count)
+	}
+}
+
+func TestTextRequestSnapshotPreservesWebSearch(t *testing.T) {
+	raw := encodeTextRequestSnapshot(textRequestSnapshot{Version: 1, Model: "gpt", WebSearch: true})
+	got, ok := parseTextRequestSnapshot(raw)
+	if !ok || !got.WebSearch {
+		t.Fatalf("web search was lost in recovery snapshot: %#v, ok=%v", got, ok)
 	}
 }
 
@@ -308,7 +316,7 @@ func TestStreamMessageRetryJoinsPersistedUser(t *testing.T) {
 		live:          make(map[liveReplyKey]*liveReply),
 	}
 	_, err := svc.streamMessage(
-		context.Background(), conversationID, ownerID, "retry", nil, "", "", requestID, nil,
+		context.Background(), conversationID, ownerID, "retry", nil, "", "", false, requestID, nil,
 	)
 	if !errors.Is(err, errTextTurnInProgress) {
 		t.Fatalf("retry error = %v, want errTextTurnInProgress", err)
@@ -496,7 +504,7 @@ func TestExpiredTextLeaseIsRecoveredOnceAcrossInstances(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			_, err := svc.streamMessage(context.Background(), conversationID, ownerID, "ignored retry body", nil, "", "", requestID, func(string) {
+			_, err := svc.streamMessage(context.Background(), conversationID, ownerID, "ignored retry body", nil, "", "", false, requestID, func(string) {
 				generated.Add(1)
 			})
 			errs <- err
@@ -887,6 +895,7 @@ func TestPaidFallbackBeforeProviderRequestsAtomicRefund(t *testing.T) {
 		nil,
 		"missing-model",
 		"",
+		false,
 		nil,
 		charge,
 	)
@@ -923,7 +932,7 @@ func TestAssistantPersistenceFailureDoesNotReturnPhantomDone(t *testing.T) {
 
 	svc := &service{repo: newRepo(db), historyLimit: 20, ctxTokenLimit: 32000, live: make(map[liveReplyKey]*liveReply)}
 	requestID := "chat-request-no-phantom"
-	vo, err := svc.streamMessage(context.Background(), conversationID, ownerID, "hello", nil, "", "", requestID, nil)
+	vo, err := svc.streamMessage(context.Background(), conversationID, ownerID, "hello", nil, "", "", false, requestID, nil)
 	if vo != nil {
 		t.Fatalf("persistence failure returned phantom message %s", vo.ID.String())
 	}
@@ -954,7 +963,7 @@ func TestAssistantPersistenceFailureDoesNotReturnPhantomDone(t *testing.T) {
 	if err := db.Callback().Create().Remove(callbackName); err != nil {
 		t.Fatalf("remove failure callback: %v", err)
 	}
-	recovered, err := svc.streamMessage(context.Background(), conversationID, ownerID, "hello", nil, "", "", requestID, nil)
+	recovered, err := svc.streamMessage(context.Background(), conversationID, ownerID, "hello", nil, "", "", false, requestID, nil)
 	if err != nil {
 		t.Fatalf("retry after released lease: %v", err)
 	}

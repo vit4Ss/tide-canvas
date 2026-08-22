@@ -57,6 +57,7 @@ var trustedStorageClient = &http.Client{
 type Attach struct {
 	URL  string
 	Kind string
+	Name string
 }
 
 // ImageURLs 挑出可直接给模型的图片 URL。只有绝对 URL（或 data:）能被上游取到，
@@ -98,7 +99,10 @@ func (e Extractor) FileParts(ctx context.Context, atts []Attach) (files []relayc
 	for _, a := range atts {
 		kind := strings.TrimSpace(a.Kind)
 		u := strings.TrimSpace(a.URL)
-		name := FileName(u)
+		name := strings.TrimSpace(a.Name)
+		if name == "" {
+			name = FileName(u)
+		}
 		switch kind {
 		case "video":
 			notes = append(notes, fmt.Sprintf("用户还上传了视频「%s」，当前文本对话无法观看视频内容，请如实告知", name))

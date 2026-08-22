@@ -29,6 +29,7 @@ type skillTextInput struct {
 	SystemPrompt string `json:"systemPrompt"`
 	Prompt       string `json:"prompt"`
 	StrictJSON   bool   `json:"strictJson"`
+	WebSearch    bool   `json:"webSearch"`
 	Messages     []struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
@@ -110,7 +111,7 @@ func (s *service) runSkillTextCompletion(ctx context.Context, userID idgen.ID, m
 	}
 
 	started := time.Now()
-	reply, err := s.relay.Chat(ctx, modelKey, msgs)
+	reply, err := s.relay.ChatWithWebSearch(ctx, modelKey, msgs, in.WebSearch)
 	if err == nil {
 		reply = strings.TrimSpace(reply)
 		if reply == "" {
