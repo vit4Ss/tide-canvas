@@ -14,6 +14,23 @@ export interface SkillModelSupport {
   reason?: string;
 }
 
+export type ToolAssetKind = "image" | "video" | "audio" | "file";
+export interface ToolAssetRequirement {
+  kinds: ToolAssetKind[];
+  required: boolean;
+  builtin: boolean;
+}
+
+const BUILTIN_TOOL_ASSETS: Readonly<Record<string, Omit<ToolAssetRequirement, "builtin">>> = {
+  "生成 PPT": { kinds: ["image", "file"], required: false },
+  "生成 XLSX": { kinds: ["image", "file"], required: false },
+  "生成 Word": { kinds: ["image", "file"], required: false },
+  "生成 Markdown": { kinds: ["image", "file"], required: false },
+  "视频分析": { kinds: ["video"], required: true },
+  "音频分析": { kinds: ["audio"], required: true },
+  "网页分析": { kinds: [], required: false },
+};
+
 function assetSchema(inputSchema: SkillVO["inputSchema"]): AssetSchema | null {
   if (!inputSchema) return null;
   if (typeof inputSchema === "object") return inputSchema as AssetSchema;
@@ -22,6 +39,20 @@ function assetSchema(inputSchema: SkillVO["inputSchema"]): AssetSchema | null {
   } catch {
     return null;
   }
+}
+
+export function toolAssetRequirement(skill: SkillVO | null | undefined): ToolAssetRequirement {
+  const builtin = BUILTIN_TOOL_ASSETS[skill?.title?.trim() || ""];
+  if (builtin) return { ...builtin, kinds: [...builtin.kinds], builtin: true };
+  const schema = assetSchema(skill?.inputSchema);
+  const rawKinds = schema?.["x-asset-types"];
+  const kinds = Array.isArray(rawKinds)
+    ? rawKinds.filter((kind): kind is ToolAssetKind =>
+        kind === "image" || kind === "video" || kind === "audio" || kind === "file")
+    : [];
+  const required = Array.isArray(schema?.required) && schema.required.includes("assets");
+  const minItems = schema?.properties?.assets?.minItems;
+  return { kinds, required: required || (typeof minItems === "number" && minItems > 0), builtin: false };
 }
 
 export function modelSupportsFileInput(model: StudioModelVO | null | undefined): boolean {
@@ -34,8 +65,7 @@ export function modelSupportsFileInput(model: StudioModelVO | null | undefined):
 }
 
 export function toolNeedsMediaAnalysisModel(skill: SkillVO | null | undefined): boolean {
-  const kinds = assetSchema(skill?.inputSchema)?.["x-asset-types"];
-  return Array.isArray(kinds) && kinds.some((kind) => kind === "video" || kind === "audio");
+  return toolAssetRequirement(skill).kinds.some((kind) => kind === "video" || kind === "audio");
 }
 
 export function supportsMediaAnalysis(model: StudioModelVO, requiresVideoFrames: boolean): boolean {
@@ -59,14 +89,9 @@ export function skillModelSupport(
     return { supported: false, acceptsAssets: false, reason: "当前模型不在此技能的支持范围内" };
   }
 
-  const schema = assetSchema(skill.inputSchema);
-  const rawKinds = schema?.["x-asset-types"];
-  const kinds = Array.isArray(rawKinds)
-    ? rawKinds.filter((kind): kind is string => typeof kind === "string")
-    : [];
-  const required = Array.isArray(schema?.required) && schema.required.includes("assets");
-  const minItems = schema?.properties?.assets?.minItems;
-  const requiresAssets = required || (typeof minItems === "number" && minItems > 0);
+  const requirement = toolAssetRequirement(skill);
+  const kinds = requirement.kinds;
+  const requiresAssets = requirement.required;
   if (!kinds.length) return { supported: true, acceptsAssets: false };
 
   const acceptsFiles = modelSupportsFileInput(model);

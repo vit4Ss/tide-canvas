@@ -60,6 +60,7 @@ export function Composer({
   openLightbox,
   toolSkills,
   toolSkillsFailed,
+  toolSkillsEmptyLabel,
   onPickTool,
   onRetryTools,
   onOpenAllTools,
@@ -79,6 +80,7 @@ export function Composer({
   openLightbox: (items: LightboxItem[], index: number) => void;
   toolSkills: SkillVO[] | null;
   toolSkillsFailed: boolean;
+  toolSkillsEmptyLabel?: string;
   onPickTool: (skill: SkillVO) => void;
   onRetryTools: () => void;
   onOpenAllTools: () => void;
@@ -765,6 +767,7 @@ export function Composer({
         <ToolSkillShortcuts
           skills={toolSkills}
           failed={toolSkillsFailed}
+          emptyLabel={toolSkillsEmptyLabel}
           onPick={onPickTool}
           onRetry={onRetryTools}
           onOpenAll={onOpenAllTools}

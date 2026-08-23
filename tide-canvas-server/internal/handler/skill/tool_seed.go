@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/idgen"
 )
 
 type seedToolSkill struct {
@@ -81,6 +82,9 @@ func ensureBaselineToolSkills(db *gorm.DB) error {
 			return err
 		}
 		if count > 0 {
+			if err := repairLegacyBaselineToolSkill(db, definition, index); err != nil {
+				return err
+			}
 			if err := upgradeBaselineToolSkill(db, definition, index); err != nil {
 				return err
 			}
@@ -133,6 +137,121 @@ func ensureBaselineToolSkills(db *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+// repairLegacyBaselineToolSkill fixes official tool rows that predate the
+// versioned Tool runtime. BackfillSkillVersions classified those rows as preset
+// v1; the seed_key existence check then skipped them forever and production had
+// no rows matching kind=tool + entryPoint=studio.
+func repairLegacyBaselineToolSkill(db *gorm.DB, definition seedToolSkill, index int) error {
+	var skill model.Skill
+	if err := db.Where("seed_key = ?", definition.key).First(&skill).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil // soft-deleted seeds remain administrator-owned
+		}
+		return err
+	}
+	if skill.AuthorName != "官方" {
+		return nil
+	}
+
+	var current model.SkillVersion
+	if skill.CurrentVersionID != 0 {
+		err := db.First(&current, "id = ? AND skill_id = ?", skill.CurrentVersionID, skill.ID).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+	}
+	if current.ID != 0 && current.Kind == model.SkillKindTool {
+		if skill.Kind != model.SkillKindTool || skill.OutputType != current.PrimaryOutputType {
+			if err := db.Model(&model.Skill{}).Where("id = ?", skill.ID).Updates(map[string]any{
+				"kind": model.SkillKindTool, "output_type": current.PrimaryOutputType,
+			}).Error; err != nil {
+				return err
+			}
+		}
+		return ensureBaselineToolStudioBinding(db, skill.ID, index)
+	}
+	// Only repair the generated legacy preset (or a row without a usable
+	// version). Any other published kind/version is administrator-authored.
+	if current.ID != 0 && (current.Kind != model.SkillKindPreset || current.Version != 1) {
+		return nil
+	}
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		versionNo := baselineToolVersion(definition.key)
+		var target model.SkillVersion
+		err := tx.Where("skill_id = ? AND version_no = ?", skill.ID, versionNo).First(&target).Error
+		if err == nil && target.Kind != model.SkillKindTool {
+			var maxVersion int
+			if err := tx.Model(&model.SkillVersion{}).Where("skill_id = ?", skill.ID).
+				Select("COALESCE(MAX(version_no), 0)").Scan(&maxVersion).Error; err != nil {
+				return err
+			}
+			versionNo = maxVersion + 1
+			target = model.SkillVersion{}
+			err = gorm.ErrRecordNotFound
+		}
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		if target.ID == 0 {
+			now := time.Now()
+			defaultParams := definition.defaultParams
+			if defaultParams == "" {
+				defaultParams = "{}"
+			}
+			bindings := "[{\"surface\":\"studio\",\"targetType\":\"*\",\"enabled\":true,\"sortOrder\":" +
+				itoaSmall(index) + ",\"defaults\":{}}]"
+			outputTypes := "[\"" + definition.primaryOutput + "\"]"
+			if definition.primaryOutput == "file" {
+				outputTypes = "[\"text\",\"file\"]"
+			}
+			target = model.SkillVersion{
+				SkillID: skill.ID, Version: versionNo, Kind: model.SkillKindTool, Status: model.SkillVersionPublished,
+				EntryPoints: "[\"studio\"]", PrimaryOutputType: definition.primaryOutput,
+				OutputTypes: outputTypes, InputSchema: definition.inputSchema,
+				ManifestJSON: definition.manifest, PromptTemplate: definition.instructions, DefaultParams: defaultParams,
+				BindingsJSON: bindings, PrimaryFilePath: "SKILL.md", PublishedAt: &now,
+			}
+			target.ContentHash = seedToolHash(definition.inputSchema, definition.manifest, definition.instructions, defaultParams, bindings)
+			if err := tx.Create(&target).Error; err != nil {
+				return err
+			}
+			fileHash := sha256.Sum256([]byte(definition.instructions))
+			file := model.SkillFile{
+				SkillVersionID: target.ID, Path: "SKILL.md", Content: definition.instructions,
+				MimeType: "text/markdown; charset=utf-8", Size: int64(len([]byte(definition.instructions))),
+				SHA256: hex.EncodeToString(fileHash[:]),
+			}
+			if err := tx.Create(&file).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Model(&model.Skill{}).Where("id = ?", skill.ID).Updates(map[string]any{
+			"kind": model.SkillKindTool, "output_type": definition.primaryOutput, "current_version_id": target.ID,
+		}).Error; err != nil {
+			return err
+		}
+		return ensureBaselineToolStudioBinding(tx, skill.ID, index)
+	})
+}
+
+func ensureBaselineToolStudioBinding(db *gorm.DB, skillID idgen.ID, index int) error {
+	var binding model.SkillSurfaceBinding
+	err := db.Unscoped().Where(
+		"skill_id = ? AND surface = ? AND target_type = ?", skillID, "studio", "*",
+	).First(&binding).Error
+	if err == nil {
+		return nil // preserve enabled as well as administrator-disabled/deleted rows
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	return db.Create(&model.SkillSurfaceBinding{
+		SkillID: skillID, Surface: "studio", TargetType: "*",
+		Enabled: true, SortOrder: index, Defaults: "{}",
+	}).Error
 }
 
 func baselineToolVersion(key string) int {

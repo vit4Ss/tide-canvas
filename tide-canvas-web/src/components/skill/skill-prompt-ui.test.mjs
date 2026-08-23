@@ -76,7 +76,8 @@ test("对话输入框下方的技能工具直接附着输入框并从当前会�
   assert.match(chatPage, /promptAfterSkillPick\(current, nextSkill, cfg\.skill \?\? toolSkill\)/);
   assert.match(chatSend, /skillRunApi\.createIdempotent\(\{[\s\S]*?entryPoint: "studio"[\s\S]*?conversationId: id/);
   assert.match(chatSend, /message\.skillRunId === started\.data!\.id/);
-  assert.match(chatConfig, /toolSkill[\s\S]*?"x-asset-types"[\s\S]*?accept: acceptFor\(kinds\)/);
+  assert.match(chatConfig, /toolAssetRequirement\(toolSkill\)/);
+  assert.match(chatConfig, /accept: modelFormats \?[\s\S]*?: acceptFor\(kinds\)/);
 });
 
 test("内置技能工具在后台未配置封面时使用项目位图", () => {

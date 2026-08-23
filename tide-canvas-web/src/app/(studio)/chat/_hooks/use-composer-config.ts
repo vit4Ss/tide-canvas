@@ -26,7 +26,7 @@ import { resolutionRank } from "@/components/studio/create-studio/utils";
 import { configuredMatrix, keyVariants, matrixPrice, resolveVideoPointCost } from "@/lib/price-matrix";
 import { supportedOmniReferenceKinds } from "@/lib/omni-reference";
 import type { GenModelsApi } from "./use-gen-models";
-import { skillModelSupport, toolNeedsMediaAnalysisModel } from "./tool-analysis-model";
+import { skillModelSupport, toolAssetRequirement, toolNeedsMediaAnalysisModel } from "./tool-analysis-model";
 
 export function useComposerConfig(models: GenModelsApi, toolSkill: SkillVO | null = null) {
   const { genModels, model, setModel, selModel, mCfg, isVid, webSearchAvail } = models;
@@ -71,6 +71,10 @@ export function useComposerConfig(models: GenModelsApi, toolSkill: SkillVO | nul
     () => toolNeedsMediaAnalysisModel(toolSkill),
     [toolSkill],
   );
+  const toolAssets = useMemo(
+    () => toolAssetRequirement(toolSkill),
+    [toolSkill],
+  );
 
   // reference policy for the current model/mode. For a 文本模型 it is driven by
   // 模型管理 config (fileUpload on → 图片附件，数量 maxFileCount、单文件 maxFileSizeMB)；
@@ -78,12 +82,7 @@ export function useComposerConfig(models: GenModelsApi, toolSkill: SkillVO | nul
   const refPolicy = useMemo<RefPolicy | undefined>(() => {
     if (toolSkill && skillKindOf(toolSkill) === "tool") {
       const schema = parseSkillInputSchema(toolSkill.inputSchema);
-      const rawKinds = schema?.["x-asset-types"];
-      const kinds = Array.isArray(rawKinds)
-        ? rawKinds.filter((kind): kind is RefPolicy["kinds"][number] =>
-            kind === "image" || kind === "video" || kind === "audio" || kind === "file",
-          )
-        : [];
+      const kinds = toolAssets.kinds;
       if (!kinds.length) {
         // 办公工具没有强制素材类型，但应继续继承当前文本模型的上传能力，
         // 让用户用多张参考图、PDF、Word、Excel 等资料驱动文档生成。
@@ -133,14 +132,12 @@ export function useComposerConfig(models: GenModelsApi, toolSkill: SkillVO | nul
     if (!p) return undefined;
     const kinds = mode === "omni_ref" ? supportedOmniReferenceKinds(mCfg) : p.kinds;
     return { ...p, kinds, max: kinds.length ? p.max : 0, accept: acceptFor(kinds) };
-  }, [toolSkill, toolModelSupport.acceptsAssets, toolUsesMediaPreprocessing, selModel, mode, mCfg]);
+  }, [toolSkill, toolAssets.kinds, toolModelSupport.acceptsAssets, toolUsesMediaPreprocessing, selModel, mode, mCfg]);
   // text-model uploads are OPTIONAL (a chat can be plain text); generation ref
   // modes (i2i/i2v/…) REQUIRE at least one reference before sending.
   const toolRequiresAssets = useMemo(() => {
-    if (!toolSkill || skillKindOf(toolSkill) !== "tool") return false;
-    const required = parseSkillInputSchema(toolSkill.inputSchema)?.required;
-    return Array.isArray(required) && required.includes("assets");
-  }, [toolSkill]);
+    return !!toolSkill && skillKindOf(toolSkill) === "tool" && toolAssets.required;
+  }, [toolAssets.required, toolSkill]);
   const refOptional = toolSkill ? !toolRequiresAssets : selModel?.type === "text";
 
   // 音频模型分流：音乐（四创作模式）vs 音效（只吃描述），判定与创作台一致

@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   skillModelSupport,
   supportsMediaAnalysis,
+  toolAssetRequirement,
   toolNeedsMediaAnalysisModel,
 } from "./tool-analysis-model.ts";
 
@@ -47,6 +48,27 @@ test("a required-asset skill is unavailable on an incompatible selected model", 
   assert.deepEqual(skillModelSupport(videoSkill, capable), { supported: true, acceptsAssets: true });
 });
 
+test("official media-analysis tools remain strict when a legacy public schema is incomplete", () => {
+  const text = model("DeepSeek", false);
+  const legacyVideo = { title: "视频分析", inputSchema: { type: "object" } };
+  const legacyAudio = { title: "音频分析", inputSchema: null };
+  assert.equal(toolNeedsMediaAnalysisModel(legacyVideo), true);
+  assert.equal(skillModelSupport(legacyVideo, text).supported, false);
+  assert.equal(skillModelSupport(legacyAudio, text).supported, false);
+});
+
+test("official Office tools override stale production schemas and remain text-capable", () => {
+  const text = model("DeepSeek", false);
+  const staleOffice = {
+    title: "生成 PPT",
+    inputSchema: { "x-asset-types": ["image", "file"], required: ["assets"] },
+  };
+  assert.deepEqual(toolAssetRequirement(staleOffice), {
+    kinds: ["image", "file"], required: false, builtin: true,
+  });
+  assert.deepEqual(skillModelSupport(staleOffice, text), { supported: true, acceptsAssets: false });
+});
+
 test("optional-reference document skills remain usable but cannot attach files", () => {
   const text = model("Text", false);
   const documentSkill = skill(["image", "file"]);
@@ -63,6 +85,7 @@ test("every chat tool entry point enforces the selected model capability", () =>
   const page = readFileSync(new URL("../page.tsx", import.meta.url), "utf8");
   const send = readFileSync(new URL("./use-send-message.ts", import.meta.url), "utf8");
   const config = readFileSync(new URL("./use-composer-config.ts", import.meta.url), "utf8");
+  const composer = readFileSync(new URL("../_components/composer.tsx", import.meta.url), "utf8");
   const picker = readFileSync(new URL("../../../../components/skill/skill-picker.tsx", import.meta.url), "utf8");
   assert.match(page, /toolSkills\?\.filter\(\(candidate\) => skillModelSupport\(candidate, models\.selModel\)\.supported\)/);
   assert.match(page, /skillUnavailableReason=\{toolUnavailableReason\}/);
@@ -70,4 +93,6 @@ test("every chat tool entry point enforces the selected model capability", () =>
   assert.match(send, /selectedTool && !selectedToolSupport\.supported/);
   assert.match(config, /if \(!toolModelSupport\.acceptsAssets\) return undefined/);
   assert.match(picker, /aria-disabled=\{!!unavailableReason\}/);
+  assert.match(page, /当前模型暂无兼容快捷工具/);
+  assert.match(composer, /emptyLabel=\{toolSkillsEmptyLabel\}/);
 });

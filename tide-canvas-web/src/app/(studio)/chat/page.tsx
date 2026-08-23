@@ -358,6 +358,9 @@ export default function ChatPage() {
           openLightbox={openLightbox}
           toolSkills={availableToolSkills}
           toolSkillsFailed={toolSkillsFailed}
+          toolSkillsEmptyLabel={toolSkills && toolSkills.length > 0 && availableToolSkills?.length === 0
+            ? "当前模型暂无兼容快捷工具"
+            : undefined}
           onPickTool={(nextSkill) => {
             const support = skillModelSupport(nextSkill, models.selModel);
             if (!support.supported) {

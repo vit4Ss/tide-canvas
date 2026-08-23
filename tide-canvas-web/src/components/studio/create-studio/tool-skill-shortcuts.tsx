@@ -15,6 +15,7 @@ export function ToolSkillShortcuts({
   onRetry,
   onOpenAll,
   currentId,
+  emptyLabel = "暂无快捷工具",
 }: {
   skills: SkillVO[] | null;
   failed: boolean;
@@ -22,6 +23,7 @@ export function ToolSkillShortcuts({
   onRetry: () => void;
   onOpenAll: () => void;
   currentId?: string;
+  emptyLabel?: string;
 }) {
   const [visibleCount, setVisibleCount] = useState(0);
   const rowRef = useRef<HTMLDivElement>(null);
@@ -99,7 +101,7 @@ export function ToolSkillShortcuts({
             );
           })
         ) : (
-          <span className="ws-tool-shortcuts-empty">暂无快捷工具</span>
+          <span className="ws-tool-shortcuts-empty">{emptyLabel}</span>
         )}
 
         <button ref={moreRef} type="button" className="ws-tool-shortcuts-all" onClick={onOpenAll}>
