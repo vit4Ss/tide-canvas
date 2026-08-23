@@ -10,7 +10,6 @@ import {
 } from "@/components/studio/mention-prompt-editor";
 import { SkillPromptChip } from "@/components/skill/skill-prompt-chip";
 import type { SkillVO } from "@/types/skill";
-import { ToolSkillShortcuts } from "./tool-skill-shortcuts";
 
 export function PromptSection({
   prompt,
@@ -25,11 +24,6 @@ export function PromptSection({
   optCost,
   onOptimize,
   onOpenSkillPicker,
-  toolSkills = null,
-  toolSkillsFailed = false,
-  onPickTool,
-  onRetryTools,
-  onOpenAllTools,
   ideaOpts,
   allowSkills = true,
   label = "提示词",
@@ -46,11 +40,6 @@ export function PromptSection({
   optCost: number;
   onOptimize: () => void;
   onOpenSkillPicker: () => void;
-  toolSkills?: SkillVO[] | null;
-  toolSkillsFailed?: boolean;
-  onPickTool?: (skill: SkillVO) => void;
-  onRetryTools?: () => void;
-  onOpenAllTools?: () => void;
   ideaOpts: string[];
   allowSkills?: boolean;
   label?: string;
@@ -98,16 +87,6 @@ export function PromptSection({
           {/* 提示词「清空」按钮已按用户要求移除（2026-07-08）：全选删除足够 */}
         </div>
       </div>
-
-      {allowSkills && onPickTool && onRetryTools && onOpenAllTools && (
-        <ToolSkillShortcuts
-          skills={toolSkills}
-          failed={toolSkillsFailed}
-          onPick={onPickTool}
-          onRetry={onRetryTools}
-          onOpenAll={onOpenAllTools}
-        />
-      )}
 
       {/* idea chips (only when the model configures 灵感提示词) */}
       {ideaOpts.length > 0 && (

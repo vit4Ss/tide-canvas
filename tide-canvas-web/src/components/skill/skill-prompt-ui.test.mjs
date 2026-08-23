@@ -49,11 +49,11 @@ test("技能标签在暗色画布可读，移除按钮满足最小触控热区",
   assert.match(chipStyles, /\.remove \{[\s\S]*?width: 24px;[\s\S]*?height: 24px;/);
 });
 
-test("生成面板在提示词框下方展示技能工具并复用既有运行工作台", () => {
-  assert.match(studioPrompt, /<ToolSkillShortcuts[\s\S]*?skills=\{toolSkills\}[\s\S]*?onPick=\{onPickTool\}/);
-  assert.match(studio, /skillApi\.list\(\{ kind: "tool", entryPoint: "studio", pageNum: 1, pageSize: 100 \}\)/);
-  assert.match(studio, /onPickTool=\{pickSkill\}/);
-  assert.match(studio, /skills=\{studioToolSkills \?\? \(toolSkill \? \[toolSkill\] : \[\]\)\}/);
+test("工具技能只出现在生成页，不进入创作台", () => {
+  assert.doesNotMatch(studioPrompt, /ToolSkillShortcuts|toolSkills|onPickTool|onOpenAllTools/);
+  assert.doesNotMatch(studio, /ToolSkillWorkspace|studioToolSkills|kind: "tool"|onPickTool/);
+  assert.match(studio, /kinds=\{\["preset"\]\}[\s\S]*?entryPoint="studio"/);
+  assert.match(chatComposer, /<div className="chat-tool-shortcuts">[\s\S]*?<ToolSkillShortcuts/);
   assert.match(studioToolShortcuts, /onClick=\{\(\) => onPick\(tool\)\}/);
   assert.match(studioToolShortcuts, /为你推荐/);
   assert.match(studioToolShortcuts, /更多技能/);
