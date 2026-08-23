@@ -102,6 +102,12 @@ func (s *service) executeToolStep(
 		if reusable {
 			return s.executeGenerationStep(ctx, run, version, aiSpec, sequence, total, map[string]any{}, "", registerWork)
 		}
+		configuredModel := configuredAnalysisModel(version, spec)
+		modelID, err := s.resolveAnalysisModel(spec.Handler, configuredModel, requestedTextModel(input.Parameters))
+		if err != nil {
+			return nil, err
+		}
+		aiSpec.ModelID = modelID
 		preparing := s.db.Model(&model.SkillRun{}).
 			Where("id = ? AND revision = ? AND worker_id = ? AND status = ?", run.ID, run.Revision, s.workerID, model.SkillRunRunning).
 			Updates(map[string]any{
@@ -137,12 +143,6 @@ func (s *service) executeToolStep(
 			base, _ := commandInput["systemPrompt"].(string)
 			commandInput["systemPrompt"] = strings.TrimSpace(base) + "\n\n当前技能的补充要求：\n" + skillSystemPrompt
 		}
-		configuredModel := configuredAnalysisModel(version, spec)
-		modelID, err := s.resolveAnalysisModel(spec.Handler, configuredModel, requestedTextModel(input.Parameters))
-		if err != nil {
-			return nil, err
-		}
-		aiSpec.ModelID = modelID
 		result, executeErr := s.executeGenerationStep(ctx, run, version, aiSpec, sequence, total, commandInput, "", registerWork)
 		if errors.Is(executeErr, errRunSuperseded) || s.analysisStepHasDurableTask(run, spec.Key) {
 			// The task owns cleanup from this point. This also protects a task
@@ -176,13 +176,13 @@ func analysisModelSupports(handler string, row model.MarketModel) bool {
 		return true
 	}
 	var cfg struct {
-		FileUpload    bool     `json:"fileUpload"`
+		FileUpload    *bool    `json:"fileUpload"`
 		UploadFormats []string `json:"uploadFormats"`
 		ParamsSchema  struct {
 			FileUpload bool `json:"file_upload"`
 		} `json:"paramsSchema"`
 	}
-	if json.Unmarshal([]byte(strings.TrimSpace(row.Config)), &cfg) != nil || (!cfg.FileUpload && !cfg.ParamsSchema.FileUpload) {
+	if json.Unmarshal([]byte(strings.TrimSpace(row.Config)), &cfg) != nil || !configuredTextFileUpload(cfg.FileUpload, cfg.ParamsSchema.FileUpload) {
 		return false
 	}
 	if handler != "analyze_video" || len(cfg.UploadFormats) == 0 {
@@ -195,6 +195,51 @@ func analysisModelSupports(handler string, row model.MarketModel) bool {
 		}
 	}
 	return false
+}
+
+func textModelSupportsAssets(row model.MarketModel, assets []AssetInput) bool {
+	if len(assets) == 0 {
+		return true
+	}
+	var cfg struct {
+		FileUpload    *bool    `json:"fileUpload"`
+		UploadFormats []string `json:"uploadFormats"`
+		ParamsSchema  struct {
+			FileUpload bool `json:"file_upload"`
+		} `json:"paramsSchema"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(row.Config)), &cfg) != nil || !configuredTextFileUpload(cfg.FileUpload, cfg.ParamsSchema.FileUpload) {
+		return false
+	}
+	if len(cfg.UploadFormats) == 0 {
+		return true
+	}
+	allowed := make(map[string]bool, len(cfg.UploadFormats))
+	for _, format := range cfg.UploadFormats {
+		if format = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(format)), "."); format != "" {
+			allowed[format] = true
+		}
+	}
+	for _, asset := range assets {
+		name := strings.TrimSpace(asset.Name)
+		extension := strings.TrimPrefix(strings.ToLower(path.Ext(name)), ".")
+		if extension == "" {
+			if parsed, err := url.Parse(strings.TrimSpace(asset.URL)); err == nil {
+				extension = strings.TrimPrefix(strings.ToLower(path.Ext(parsed.Path)), ".")
+			}
+		}
+		if extension == "" || !allowed[extension] {
+			return false
+		}
+	}
+	return true
+}
+
+func configuredTextFileUpload(explicit *bool, relayFallback bool) bool {
+	if explicit != nil {
+		return *explicit
+	}
+	return relayFallback
 }
 
 func (s *service) resolveAnalysisModel(handler, configured, requested string) (string, error) {
@@ -224,9 +269,14 @@ func (s *service) resolveAnalysisModel(handler, configured, requested string) (s
 		return row.ModelKey, nil
 	}
 	if requested != "" {
-		if row, err := find(requested); err == nil && analysisModelSupports(handler, row) {
-			return row.ModelKey, nil
+		row, err := find(requested)
+		if err != nil {
+			return "", runUserError{message: "所选文本模型已不可用，请重新选择模型"}
 		}
+		if !analysisModelSupports(handler, row) {
+			return "", runUserError{message: "当前文本模型未开启文件上传或不支持此技能所需的媒体输入，请切换模型后重试"}
+		}
+		return row.ModelKey, nil
 	}
 	var rows []model.MarketModel
 	if err := s.db.Where("status = 1 AND type = ? AND model_key <> ''", "text").

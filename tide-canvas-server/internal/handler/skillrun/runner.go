@@ -200,7 +200,7 @@ func (s *service) runAgent(ctx context.Context, run *model.SkillRun, version *mo
 		return err
 	}
 	if outputType == "text" || outputType == "file" {
-		modelID, err := s.resolveModel(version.ModelID, requestedModel(input.Parameters), "text")
+		modelID, err := s.resolveTextModelForAssets(version.ModelID, requestedModel(input.Parameters), input.Assets)
 		if err != nil {
 			return err
 		}
@@ -213,7 +213,7 @@ func (s *service) runAgent(ctx context.Context, run *model.SkillRun, version *mo
 		return err
 	}
 
-	textModel, err := s.resolveModel("", requestedTextModel(input.Parameters), "text")
+	textModel, err := s.resolveTextModelForAssets("", requestedTextModel(input.Parameters), input.Assets)
 	if err != nil {
 		return err
 	}
@@ -343,7 +343,12 @@ func (s *service) runAgentSteps(ctx context.Context, run *model.SkillRun, versio
 			configuredModel = version.ModelID
 		}
 		requested := requestedAgentStepModel(input.Parameters, step.Type, versionModelType)
-		modelID, err := s.resolveModel(configuredModel, requested, expectedModelType)
+		var modelID string
+		if step.Type == "text" {
+			modelID, err = s.resolveTextModelForAssets(configuredModel, requested, input.Assets)
+		} else {
+			modelID, err = s.resolveModel(configuredModel, requested, expectedModelType)
+		}
 		if err != nil {
 			return err
 		}
@@ -812,6 +817,27 @@ func (s *service) resolveModel(configured, requested, outputType string) (string
 	if err := s.db.Where("status = 1 AND type = ? AND model_key <> ''", typeName).
 		Order("sort_order ASC, id ASC").First(&row).Error; err != nil {
 		return "", fmt.Errorf("no available %s model", typeName)
+	}
+	return row.ModelKey, nil
+}
+
+func (s *service) resolveTextModelForAssets(configured, requested string, assets []AssetInput) (string, error) {
+	resolved, err := s.resolveModel(configured, requested, "text")
+	if err != nil || len(assets) == 0 {
+		return resolved, err
+	}
+	var row model.MarketModel
+	query := s.db.Where("status = 1 AND type = ? AND model_key <> ''", "text")
+	if id, parseErr := idgen.Parse(resolved); parseErr == nil {
+		query = query.Where("model_key = ? OR id = ?", resolved, id)
+	} else {
+		query = query.Where("model_key = ?", resolved)
+	}
+	if err := query.First(&row).Error; err != nil {
+		return "", errors.New("selected text model is unavailable")
+	}
+	if !textModelSupportsAssets(row, assets) {
+		return "", runUserError{message: "当前文本模型不支持此技能使用的附件，请移除附件或切换支持文件上传的模型"}
 	}
 	return row.ModelKey, nil
 }

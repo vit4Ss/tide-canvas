@@ -60,6 +60,7 @@ import { useSendMessage } from "./_hooks/use-send-message";
 import { useTurnActions } from "./_hooks/use-turn-actions";
 import { useTaskPolling } from "./_hooks/use-task-polling";
 import { useResumeStream } from "./_hooks/use-resume-stream";
+import { skillModelSupport } from "./_hooks/tool-analysis-model";
 
 /* ── component ────────────────────────────────────────────────────────────── */
 
@@ -79,6 +80,17 @@ export default function ChatPage() {
 
   const models = useGenModels();
   const cfg = useComposerConfig(models, toolSkill);
+  const availableToolSkills = useMemo(
+    () => toolSkills?.filter((candidate) => skillModelSupport(candidate, models.selModel).supported) ?? toolSkills,
+    [models.selModel, toolSkills],
+  );
+  const toolUnavailableReason = useCallback(
+    (candidate: SkillVO) => {
+      const support = skillModelSupport(candidate, models.selModel);
+      return support.supported ? undefined : support.reason || "当前模型不支持此技能";
+    },
+    [models.selModel],
+  );
   const refsApi = useReferences({ refPolicy: cfg.refPolicy });
   const streamingApi = useStreaming();
   const conv = useConversations({
@@ -94,8 +106,18 @@ export default function ChatPage() {
 
   const taRef = useRef<MentionEditorHandle>(null);
 
+  useEffect(() => {
+    if (!toolSkill || !models.selModel) return;
+    const support = skillModelSupport(toolSkill, models.selModel);
+    if (support.supported) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- a catalog capability change invalidates the selected tool
+    setToolSkill(null);
+    toast.info(support.reason || "当前模型不支持已选择的技能");
+  }, [models.selModel, toolSkill]);
+
   // 对话输入框下方展示全局技能工具。工具运行协议当前以 studio 为执行面，
-  // 因此目录与工作台都复用同一入口；它不依赖当前聊天模型的输出类型。
+  // 因此目录与工作台复用同一入口；目录不按输出类型裁剪，但附件能力与固定模型
+  // 约束必须服从当前文本模型，不兼容项只在完整目录中以禁用态解释原因。
   useEffect(() => {
     let alive = true;
     const timer = window.setTimeout(() => {
@@ -334,9 +356,14 @@ export default function ChatPage() {
           ctxUsage={ctxUsage}
           newChat={conv.newChat}
           openLightbox={openLightbox}
-          toolSkills={toolSkills}
+          toolSkills={availableToolSkills}
           toolSkillsFailed={toolSkillsFailed}
           onPickTool={(nextSkill) => {
+            const support = skillModelSupport(nextSkill, models.selModel);
+            if (!support.supported) {
+              toast.info(support.reason || "当前模型不支持此技能");
+              return;
+            }
             setDraft((current) => promptAfterSkillPick(current, nextSkill, cfg.skill ?? toolSkill));
             cfg.removeSkill();
             setToolSkill(nextSkill);
@@ -390,6 +417,11 @@ export default function ChatPage() {
         open={toolPickerOpen}
         onClose={() => setToolPickerOpen(false)}
         onPick={(nextSkill) => {
+          const support = skillModelSupport(nextSkill, models.selModel);
+          if (!support.supported) {
+            toast.info(support.reason || "当前模型不支持此技能");
+            return;
+          }
           setDraft((current) => promptAfterSkillPick(current, nextSkill, cfg.skill ?? toolSkill));
           cfg.removeSkill();
           setToolSkill(nextSkill);
@@ -399,6 +431,7 @@ export default function ChatPage() {
         kinds={["tool"]}
         entryPoint="studio"
         currentId={toolSkill?.id}
+        skillUnavailableReason={toolUnavailableReason}
       />
 
       {/* 资产库弹窗：复用整个资产页 UI 作为选择器 */}

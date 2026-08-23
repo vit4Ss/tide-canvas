@@ -44,11 +44,13 @@ interface Props {
   entryPoint?: SkillEntryPoint;
   /** 当前入口的具体落点，如画布节点类型或资产分类。 */
   targetType?: string;
+  /** 当前模型不支持某项技能时返回原因；该卡片保留可见但不可选择。 */
+  skillUnavailableReason?: (skill: SkillVO) => string | undefined;
 }
 
 const fmtCount = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 
-export function SkillPicker({ open, onClose, onPick, outputType, currentId, kinds, entryPoint, targetType }: Props) {
+export function SkillPicker({ open, onClose, onPick, outputType, currentId, kinds, entryPoint, targetType, skillUnavailableReason }: Props) {
   const dialogRef = useFocusTrap<HTMLElement>(open);
   const kindsKey = kinds?.join(",") ?? "";
   const mixedPresetTool = kindsKey.split(",").includes("preset") && kindsKey.split(",").includes("tool");
@@ -318,6 +320,7 @@ export function SkillPicker({ open, onClose, onPick, outputType, currentId, kind
             <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,300px),1fr))] gap-3 sm:gap-4">
               {visibleRows.map((s) => {
                 const selected = currentId === s.id;
+                const unavailableReason = skillUnavailableReason?.(s);
                 const kind = skillKindOf(s);
                 const coverUrl = skillCoverUrl(s);
                 const outputLabel = skillOutputTypesOf(s)
@@ -334,12 +337,15 @@ export function SkillPicker({ open, onClose, onPick, outputType, currentId, kind
                   <button
                     key={s.id}
                     type="button"
-                    onClick={() => onPick(s)}
-                    title={guidanceSummary || undefined}
-                    aria-label={accessibleSummary}
+                    onClick={() => { if (!unavailableReason) onPick(s); }}
+                    title={unavailableReason || guidanceSummary || undefined}
+                    aria-label={[accessibleSummary, unavailableReason].filter(Boolean).join("。")}
+                    aria-disabled={!!unavailableReason}
                     aria-pressed={selected}
                     className={`group flex gap-3 rounded-xl border p-2.5 text-left transition-colors ${focusRing} ${
-                      selected
+                      unavailableReason
+                        ? (dark ? "cursor-not-allowed border-white/6 bg-white/[0.02] opacity-55" : "cursor-not-allowed border-border bg-muted/35 opacity-60")
+                        : selected
                         ? (dark ? "border-white/35 bg-white/8 ring-1 ring-inset ring-white/20" : "border-foreground/40 bg-accent ring-1 ring-inset ring-foreground/15")
                         : (dark ? "border-white/8 bg-white/[0.03] hover:border-white/20 hover:bg-white/6" : "border-border bg-card hover:border-foreground/25 hover:bg-accent/60")
                     }`}
@@ -361,7 +367,11 @@ export function SkillPicker({ open, onClose, onPick, outputType, currentId, kind
                         {selected && <Check aria-hidden className={`h-3.5 w-3.5 shrink-0 ${dark ? "text-neutral-100" : "text-foreground"}`} />}
                       </span>
                       <span className={`mt-1 line-clamp-2 text-xs leading-5 ${dark ? "text-neutral-400" : "text-muted-foreground"}`}>{s.description}</span>
-                      {s.usageScenario && (
+                      {unavailableReason ? (
+                        <span className={`mt-1 line-clamp-2 text-[11px] leading-4 ${dark ? "text-amber-300/85" : "text-amber-700"}`}>
+                          {unavailableReason}
+                        </span>
+                      ) : s.usageScenario && (
                         <span className={`mt-0.5 line-clamp-1 text-[11px] leading-4 ${dark ? "text-neutral-400" : "text-muted-foreground"}`}>
                           适用：{s.usageScenario}
                         </span>

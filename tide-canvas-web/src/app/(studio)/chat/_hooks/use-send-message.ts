@@ -26,6 +26,7 @@ import type { ContextUsageVO, ConversationVO, MessageAttachment, MessageVO } fro
 import { musicTurnSummary, type RefItem, type RefPolicy } from "../_components/chat-utils";
 import { arbitratePendingTurn, removePendingTurnIfOwned } from "./pending-turn-arbitration";
 import { historySendTargetMatches, isHistorySendTarget } from "./history-send-target";
+import { skillModelSupport } from "./tool-analysis-model";
 
 type ComposerRefSnapshot = Pick<RefItem, "key" | "id" | "kind" | "url" | "name">;
 
@@ -1036,6 +1037,11 @@ export function useSendMessage({
 
   const send = useCallback(async (candidate?: unknown) => {
     const selectedTool = toolSkill && skillKindOf(toolSkill) === "tool" ? toolSkill : null;
+    const selectedToolSupport = skillModelSupport(selectedTool, selModel);
+    if (selectedTool && !selectedToolSupport.supported) {
+      toast.error(selectedToolSupport.reason || "当前模型不支持此技能");
+      return;
+    }
     const expected = isHistorySendTarget(candidate) ? candidate : undefined;
     if (expected) {
       const effectiveSkillId = selectedTool?.id ?? (
@@ -1095,7 +1101,7 @@ export function useSendMessage({
     // for useReferences' cleanup effect, otherwise a same-frame send can retain
     // stale attachments in history even though they are absent from the request.
     const selectAllowedRefs = (source: RefItem[]) => selectedTool
-      ? source
+      ? selectedToolSupport.acceptsAssets ? source : []
       : refPolicy
         ? source.filter((r) => refPolicy.kinds.includes(r.kind))
         : [];

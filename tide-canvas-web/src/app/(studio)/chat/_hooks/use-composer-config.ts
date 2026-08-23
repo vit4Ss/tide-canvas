@@ -26,7 +26,7 @@ import { resolutionRank } from "@/components/studio/create-studio/utils";
 import { configuredMatrix, keyVariants, matrixPrice, resolveVideoPointCost } from "@/lib/price-matrix";
 import { supportedOmniReferenceKinds } from "@/lib/omni-reference";
 import type { GenModelsApi } from "./use-gen-models";
-import { preferredMediaAnalysisModel, toolNeedsMediaAnalysisModel } from "./tool-analysis-model";
+import { skillModelSupport, toolNeedsMediaAnalysisModel } from "./tool-analysis-model";
 
 export function useComposerConfig(models: GenModelsApi, toolSkill: SkillVO | null = null) {
   const { genModels, model, setModel, selModel, mCfg, isVid, webSearchAvail } = models;
@@ -63,20 +63,14 @@ export function useComposerConfig(models: GenModelsApi, toolSkill: SkillVO | nul
   const countOpts = mCfg?.batchOptions?.length ? mCfg.batchOptions : [1, 2, 3, 4];
   const batchMax = Math.max(...countOpts);
   const toggleSel = (k: string) => setOpenSel((cur) => (cur === k ? null : k));
-  const needsMediaAnalysisModel = useMemo(
+  const toolModelSupport = useMemo(
+    () => skillModelSupport(toolSkill, selModel),
+    [selModel, toolSkill],
+  );
+  const toolUsesMediaPreprocessing = useMemo(
     () => toolNeedsMediaAnalysisModel(toolSkill),
     [toolSkill],
   );
-  const mediaAnalysisModel = useMemo(
-    () => preferredMediaAnalysisModel(genModels, selModel, toolSkill),
-    [genModels, selModel, toolSkill],
-  );
-
-  useEffect(() => {
-    if (!needsMediaAnalysisModel || !mediaAnalysisModel || mediaAnalysisModel.name === model) return;
-    setModel(mediaAnalysisModel.name);
-    toast.info(`已切换到支持媒体分析的模型「${mediaAnalysisModel.name}」`);
-  }, [mediaAnalysisModel, model, needsMediaAnalysisModel, setModel]);
 
   // reference policy for the current model/mode. For a 文本模型 it is driven by
   // 模型管理 config (fileUpload on → 图片附件，数量 maxFileCount、单文件 maxFileSizeMB)；
@@ -106,11 +100,15 @@ export function useComposerConfig(models: GenModelsApi, toolSkill: SkillVO | nul
       }
       const assetSpec = schema?.properties?.assets;
       const configuredMax = typeof assetSpec?.maxItems === "number" ? assetSpec.maxItems : 1;
+      if (!toolModelSupport.acceptsAssets) return undefined;
+      const modelFormats = toolUsesMediaPreprocessing ? undefined : normalizeFormats(mCfg?.uploadFormats);
+      const configuredSize = mCfg?.maxFileSizeMB && mCfg.maxFileSizeMB > 0 ? mCfg.maxFileSizeMB : 15;
       return {
         kinds,
         max: Math.max(1, Math.min(MAX_ATTACHMENTS, configuredMax)),
-        maxSizeMB: 100,
-        accept: acceptFor(kinds),
+        maxSizeMB: toolUsesMediaPreprocessing ? 100 : Math.min(configuredSize, 15),
+        exts: modelFormats,
+        accept: modelFormats ? modelFormats.map((extension) => `.${extension}`).join(",") : acceptFor(kinds),
       };
     }
     if (!selModel) return undefined;
@@ -135,7 +133,7 @@ export function useComposerConfig(models: GenModelsApi, toolSkill: SkillVO | nul
     if (!p) return undefined;
     const kinds = mode === "omni_ref" ? supportedOmniReferenceKinds(mCfg) : p.kinds;
     return { ...p, kinds, max: kinds.length ? p.max : 0, accept: acceptFor(kinds) };
-  }, [toolSkill, selModel, mode, mCfg]);
+  }, [toolSkill, toolModelSupport.acceptsAssets, toolUsesMediaPreprocessing, selModel, mode, mCfg]);
   // text-model uploads are OPTIONAL (a chat can be plain text); generation ref
   // modes (i2i/i2v/…) REQUIRE at least one reference before sending.
   const toolRequiresAssets = useMemo(() => {
@@ -333,6 +331,7 @@ export function useComposerConfig(models: GenModelsApi, toolSkill: SkillVO | nul
     pickSkill,
     selectModel,
     points,
+    toolModelSupport,
   };
 }
 

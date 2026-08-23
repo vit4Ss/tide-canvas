@@ -133,6 +133,7 @@ func TestMediaAnalysisModelsMustSupportTheirPreparedAttachments(t *testing.T) {
 	documents := model.MarketModel{Config: `{"fileUpload":true,"uploadFormats":["pdf","docx"]}`}
 	vision := model.MarketModel{Config: `{"fileUpload":true,"uploadFormats":["jpg","png"]}`}
 	legacyFileModel := model.MarketModel{Config: `{"paramsSchema":{"file_upload":true}}`}
+	explicitlyDisabled := model.MarketModel{Config: `{"fileUpload":false,"paramsSchema":{"file_upload":true},"uploadFormats":["jpg"]}`}
 	if analysisModelSupports("analyze_video", plain) {
 		t.Fatal("plain text model was accepted for video analysis")
 	}
@@ -145,12 +146,30 @@ func TestMediaAnalysisModelsMustSupportTheirPreparedAttachments(t *testing.T) {
 	if !analysisModelSupports("analyze_audio", legacyFileModel) {
 		t.Fatal("relay file_upload capability was ignored for audio analysis")
 	}
+	if analysisModelSupports("analyze_video", explicitlyDisabled) {
+		t.Fatal("explicit fileUpload=false was overridden by relay metadata")
+	}
 	if !analysisModelSupports("analyze_webpage", plain) {
 		t.Fatal("webpage analysis should not require file input")
 	}
+	if textModelSupportsAssets(plain, []AssetInput{{Type: "file", URL: "https://example.test/a.pdf"}}) {
+		t.Fatal("plain text model accepted a document attachment")
+	}
+	if textModelSupportsAssets(documents, []AssetInput{{Type: "image", URL: "https://example.test/a.jpg"}}) {
+		t.Fatal("document-only model accepted an image attachment")
+	}
+	if !textModelSupportsAssets(vision, []AssetInput{{Type: "image", Name: "a.jpg", URL: "https://example.test/a.jpg"}}) {
+		t.Fatal("vision model rejected an image attachment")
+	}
+	if textModelSupportsAssets(documents, []AssetInput{{Type: "file", Name: "notes.txt", URL: "https://example.test/notes.txt"}}) {
+		t.Fatal("model accepted an attachment extension outside uploadFormats")
+	}
+	if !textModelSupportsAssets(plain, nil) {
+		t.Fatal("attachment-free text skill was rejected")
+	}
 }
 
-func TestResolveAnalysisModelFallsBackFromAnIncompatibleSelection(t *testing.T) {
+func TestResolveAnalysisModelRejectsAnIncompatibleExplicitSelection(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+strings.ReplaceAll(t.Name(), "/", "-")+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "cgo") {
@@ -171,12 +190,28 @@ func TestResolveAnalysisModelFallsBackFromAnIncompatibleSelection(t *testing.T) 
 		}
 	}
 	service := &service{db: db}
-	resolved, err := service.resolveAnalysisModel("analyze_video", "", "plain")
+	if _, err := service.resolveAnalysisModel("analyze_video", "", "plain"); err == nil {
+		t.Fatal("incompatible explicitly selected analysis model was silently replaced")
+	}
+	resolved, err := service.resolveAnalysisModel("analyze_video", "", "")
 	if err != nil || resolved != "vision" {
-		t.Fatalf("resolveAnalysisModel() = %q, %v; want vision fallback", resolved, err)
+		t.Fatalf("resolveAnalysisModel() = %q, %v; want vision default", resolved, err)
+	}
+	resolved, err = service.resolveAnalysisModel("analyze_video", "", "vision")
+	if err != nil || resolved != "vision" {
+		t.Fatalf("compatible explicit selection = %q, %v; want vision", resolved, err)
 	}
 	if _, err := service.resolveAnalysisModel("analyze_video", "plain", ""); err == nil {
 		t.Fatal("explicitly configured incompatible analysis model was accepted")
+	}
+	if _, err := service.resolveTextModelForAssets("", "plain", []AssetInput{{Type: "file", URL: "https://example.test/a.pdf"}}); err == nil {
+		t.Fatal("generic text skill accepted attachments on a model without file input")
+	}
+	if resolved, err := service.resolveTextModelForAssets("", "plain", nil); err != nil || resolved != "plain" {
+		t.Fatalf("attachment-free text skill = %q, %v; want plain", resolved, err)
+	}
+	if resolved, err := service.resolveTextModelForAssets("", "vision", []AssetInput{{Type: "image", URL: "https://example.test/a.jpg"}}); err != nil || resolved != "vision" {
+		t.Fatalf("compatible text skill = %q, %v; want vision", resolved, err)
 	}
 }
 
