@@ -2,6 +2,8 @@ package file
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -110,10 +112,14 @@ func (s *service) upload(ctx context.Context, ownerID idgen.ID, in uploadInput) 
 
 	// Wrap with a hard size limit so streamed uploads can't exceed the cap.
 	limited := io.LimitReader(in.Reader, maxFileSize+1)
-	counter := &countingReader{r: limited}
+	hasher := sha256.New()
+	counter := &countingReader{r: io.TeeReader(limited, hasher)}
 
 	url, err := s.store.Save(ctx, key, counter, ct)
 	if err != nil {
+		// Some backends can fail after creating a partial object. The key is
+		// request-unique, so best-effort cleanup cannot affect an existing asset.
+		_ = s.store.Delete(ctx, key)
 		return nil, fmt.Errorf("store save: %w", err)
 	}
 	if counter.n > maxFileSize {
@@ -125,10 +131,12 @@ func (s *service) upload(ctx context.Context, ownerID idgen.ID, in uploadInput) 
 		return nil, errEmptyFile
 	}
 
+	contentHash := hex.EncodeToString(hasher.Sum(nil))
 	f := &model.File{
 		ID:           idgen.Next(),
 		OwnerID:      ownerID,
 		OriginalName: fallbackName(in.OriginalName, ftype),
+		ContentHash:  &contentHash,
 		StorageKey:   key,
 		FileUrl:      url,
 		FileSize:     counter.n,
@@ -138,11 +146,30 @@ func (s *service) upload(ctx context.Context, ownerID idgen.ID, in uploadInput) 
 		StorageType:  s.store.Type(),
 		CreateTime:   time.Now(),
 	}
-	if err := s.createFileWithQuota(ctx, f); err != nil {
-		_ = s.store.Delete(ctx, key)
-		return nil, err
+	persisted, reused, err := s.createFileWithQuota(ctx, f)
+	if err != nil {
+		// A commit acknowledgement can be lost after the transaction became
+		// durable. Recover by the unique owner/hash key before deleting storage;
+		// otherwise an ambiguous DB error could leave a committed File broken.
+		var recovered model.File
+		if lookupErr := s.repo.db.WithContext(ctx).
+			Where("owner_id = ? AND content_hash = ?", ownerID, contentHash).First(&recovered).Error; lookupErr == nil {
+			persisted = &recovered
+			reused = recovered.StorageKey != key
+			err = nil
+		}
+		if err != nil {
+			_ = s.store.Delete(ctx, key)
+			return nil, err
+		}
 	}
-	vo := toFileVO(f)
+	if reused {
+		if err := s.store.Delete(ctx, key); err != nil {
+			logger.L().Warn("file: duplicate upload cleanup failed", zap.String("key", key), zap.Error(err))
+		}
+	}
+	vo := toFileVO(persisted)
+	vo.Reused = reused
 	return &vo, nil
 }
 
@@ -174,11 +201,27 @@ func (s *service) presign(ctx context.Context, ownerID idgen.ID, dto presignDTO)
 	if err != nil {
 		return nil, err
 	}
-	key := buildKey(ownerID, ftype, dto.Filename)
+	contentHash, validHash := normalizeContentHash(dto.ContentHash)
+	if strings.TrimSpace(dto.ContentHash) != "" && !validHash {
+		return nil, errUploadMismatch
+	}
+	if contentHash != "" {
+		var existing model.File
+		err := s.repo.db.WithContext(ctx).Where("owner_id = ? AND content_hash = ?", ownerID, contentHash).First(&existing).Error
+		if err == nil {
+			vo := toFileVO(&existing)
+			vo.Reused = true
+			return &FilePresignVO{ExistingFile: &vo}, nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+	}
 
 	// Local storage deliberately returns Direct=false and uses the normal
 	// multipart path; it does not need a durable direct-upload grant.
 	if s.store.Type() != "oss" {
+		key := buildKey(ownerID, ftype, dto.Filename)
 		res, err := s.store.Presign(ctx, key, ct, dto.Size)
 		if err != nil {
 			return nil, err
@@ -188,12 +231,13 @@ func (s *service) presign(ctx context.Context, ownerID idgen.ID, dto presignDTO)
 	}
 
 	now := time.Now()
-	grant := &model.FileUploadGrant{
+	candidate := &model.FileUploadGrant{
 		ID:           idgen.Next(),
 		OwnerID:      ownerID,
-		StorageKey:   key,
+		StorageKey:   buildKey(ownerID, ftype, dto.Filename),
 		StorageScope: s.storageScope,
 		OriginalName: fallbackName(strings.TrimSpace(dto.Filename), ftype),
+		ContentHash:  contentHash,
 		ExpectedSize: dto.Size,
 		FileType:     ftype,
 		Category:     category,
@@ -201,31 +245,95 @@ func (s *service) presign(ctx context.Context, ownerID idgen.ID, dto presignDTO)
 		ExpiresAt:    now.Add(directUploadGrantTTL),
 		CreateTime:   now,
 	}
-	if err := s.repo.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	grant := candidate
+	var existingFile *model.File
+	transactionReady := false
+	transactionErr := s.repo.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var user model.User
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&user, "id = ?", ownerID).Error; err != nil {
 			return err
 		}
-		if user.StorageQuota > 0 {
-			var reserved int64
-			if err := tx.Model(&model.FileUploadGrant{}).
-				Where("owner_id = ? AND consumed_at IS NULL AND expires_at > ?", ownerID, now).
-				Select("COALESCE(SUM(expected_size), 0)").Scan(&reserved).Error; err != nil {
+		if contentHash != "" {
+			var existing model.File
+			err := tx.Where("owner_id = ? AND content_hash = ?", ownerID, contentHash).First(&existing).Error
+			if err == nil {
+				existingFile = &existing
+				transactionReady = true
+				return nil
+			}
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
 				return err
+			}
+			var active model.FileUploadGrant
+			err = tx.Where("owner_id = ? AND content_hash = ? AND expected_size = ? AND consumed_at IS NULL AND expires_at > ?", ownerID, contentHash, dto.Size, now).
+				Order("create_time DESC").First(&active).Error
+			if err == nil {
+				// Each call mints a fresh signed URL. Extend the durable expiry to
+				// match the newest signature; otherwise cleanup could delete this key
+				// while a later URL is still valid.
+				active.ExpiresAt = now.Add(directUploadGrantTTL)
+				extended := tx.Model(&model.FileUploadGrant{}).Where("id = ? AND consumed_at IS NULL", active.ID).
+					Update("expires_at", active.ExpiresAt)
+				if extended.Error != nil {
+					return extended.Error
+				}
+				if extended.RowsAffected != 1 {
+					return errUploadGrantInvalid
+				}
+				grant = &active
+				transactionReady = true
+				return nil
+			}
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+		}
+		if user.StorageQuota > 0 {
+			reserved, reserveErr := ReservedUploadBytes(tx, ownerID, s.storageScope, 0)
+			if reserveErr != nil {
+				return reserveErr
 			}
 			if dto.Size > user.StorageQuota-user.StorageUsed-reserved {
 				return errStorageInsufficient
 			}
 		}
-		return tx.Create(grant).Error
-	}); err != nil {
-		return nil, err
+		if err := tx.Create(candidate).Error; err != nil {
+			return err
+		}
+		transactionReady = true
+		return nil
+	})
+	if transactionErr != nil {
+		if !transactionReady {
+			return nil, transactionErr
+		}
+		if existingFile == nil {
+			// The callback completed, so this may only be a lost COMMIT
+			// acknowledgement. Continue only when the exact durable grant exists.
+			var recovered model.FileUploadGrant
+			if lookupErr := s.repo.db.WithContext(ctx).
+				Where("id = ? AND owner_id = ? AND consumed_at IS NULL AND storage_scope = ?", grant.ID, ownerID, s.storageScope).
+				First(&recovered).Error; lookupErr != nil {
+				return nil, transactionErr
+			}
+			if grant.ID != candidate.ID && recovered.ExpiresAt.Before(grant.ExpiresAt.Add(-time.Second)) {
+				return nil, transactionErr
+			}
+			grant = &recovered
+		}
+	}
+	if existingFile != nil {
+		vo := toFileVO(existingFile)
+		vo.Reused = true
+		return &FilePresignVO{ExistingFile: &vo}, nil
 	}
 
-	res, err := s.store.Presign(ctx, key, ct, dto.Size)
+	res, err := s.store.Presign(ctx, grant.StorageKey, grant.ContentType, grant.ExpectedSize)
 	if err != nil {
 		// No usable signed URL escaped, so the reservation can be removed now.
-		_ = s.repo.db.WithContext(ctx).Delete(&model.FileUploadGrant{}, "id = ? AND consumed_at IS NULL", grant.ID).Error
+		if grant.ID == candidate.ID {
+			_ = s.repo.db.WithContext(ctx).Delete(&model.FileUploadGrant{}, "id = ? AND consumed_at IS NULL", grant.ID).Error
+		}
 		return nil, err
 	}
 	vo := toPresignVO(res)
@@ -251,6 +359,7 @@ func (s *service) register(ctx context.Context, ownerID idgen.ID, dto registerDT
 	if grant.ConsumedAt != nil && grant.RegisteredFileID != 0 {
 		if existing, err := s.repo.get(ctx, grant.RegisteredFileID); err == nil && existing != nil && existing.OwnerID == ownerID {
 			vo := toFileVO(existing)
+			vo.Reused = grant.CleanupObject
 			return &vo, nil
 		}
 	}
@@ -278,9 +387,24 @@ func (s *service) register(ctx context.Context, ownerID idgen.ID, dto registerDT
 	if actualContentType != grant.ContentType {
 		return nil, errUploadMismatch
 	}
+	actualHash, err := s.hashStoredObject(ctx, key)
+	if err != nil {
+		return nil, errUploadMismatch
+	}
+	if grant.ContentHash != "" && grant.ContentHash != actualHash {
+		return nil, errUploadMismatch
+	}
 
 	var registered *model.File
+	reused := false
 	err = s.repo.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Keep the same lock order as presign/createFileWithQuota: user first,
+		// then grant. Reversing these two locks can deadlock concurrent presign
+		// and register requests for the same account.
+		var user model.User
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&user, "id = ?", ownerID).Error; err != nil {
+			return err
+		}
 		var locked model.FileUploadGrant
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&locked, "id = ? AND owner_id = ?", grant.ID, ownerID).Error; err != nil {
 			return errUploadGrantInvalid
@@ -294,24 +418,44 @@ func (s *service) register(ctx context.Context, ownerID idgen.ID, dto registerDT
 				return err
 			}
 			registered = &existing
+			reused = locked.CleanupObject
 			return nil
 		}
 		if time.Now().After(locked.ExpiresAt) || locked.StorageScope == "" || locked.StorageScope != s.storageScope || locked.ExpectedSize != meta.Size || locked.ContentType != actualContentType {
 			return errUploadGrantInvalid
 		}
 
-		var user model.User
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&user, "id = ?", ownerID).Error; err != nil {
-			return err
+		var existing model.File
+		findErr := tx.Where("owner_id = ? AND content_hash = ?", ownerID, actualHash).First(&existing).Error
+		if findErr == nil {
+			registered = &existing
+			cleanupObject := existing.StorageKey != locked.StorageKey
+			reused = cleanupObject
+			consumed := time.Now()
+			return tx.Model(&model.FileUploadGrant{}).Where("id = ? AND consumed_at IS NULL", locked.ID).
+				Updates(map[string]any{
+					"consumed_at": consumed, "registered_file_id": existing.ID, "cleanup_object": cleanupObject,
+				}).Error
 		}
-		if user.StorageQuota > 0 && meta.Size > user.StorageQuota-user.StorageUsed {
-			return errStorageInsufficient
+		if !errors.Is(findErr, gorm.ErrRecordNotFound) {
+			return findErr
+		}
+		if user.StorageQuota > 0 {
+			reserved, reserveErr := ReservedUploadBytes(tx, ownerID, s.storageScope, locked.ID)
+			if reserveErr != nil {
+				return reserveErr
+			}
+			if meta.Size > user.StorageQuota-user.StorageUsed-reserved {
+				return errStorageInsufficient
+			}
 		}
 
+		contentHash := actualHash
 		fileRow := &model.File{
 			ID:           idgen.Next(),
 			OwnerID:      ownerID,
 			OriginalName: locked.OriginalName,
+			ContentHash:  &contentHash,
 			StorageKey:   key,
 			FileUrl:      s.store.URL(key),
 			FileSize:     meta.Size,
@@ -340,27 +484,109 @@ func (s *service) register(ctx context.Context, ownerID idgen.ID, dto registerDT
 		return nil, err
 	}
 	vo := toFileVO(registered)
+	vo.Reused = reused
 	return &vo, nil
 }
 
 // createFileWithQuota persists file metadata and storage accounting in one
-// transaction. Locking the user row makes concurrent uploads unable to race
-// past the configured quota.
-func (s *service) createFileWithQuota(ctx context.Context, f *model.File) error {
-	return s.repo.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+// transaction. Locking the user row serializes same-user uploads, so a content
+// hash check and quota update remain atomic even when identical files arrive at
+// the same time. The returned bool reports that an existing asset was reused.
+func (s *service) createFileWithQuota(ctx context.Context, f *model.File) (*model.File, bool, error) {
+	var persisted *model.File
+	reused := false
+	err := s.repo.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var user model.User
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&user, "id = ?", f.OwnerID).Error; err != nil {
 			return err
 		}
-		if user.StorageQuota > 0 && f.FileSize > user.StorageQuota-user.StorageUsed {
-			return errStorageInsufficient
+		if f.ContentHash != nil && *f.ContentHash != "" {
+			var existing model.File
+			err := tx.Where("owner_id = ? AND content_hash = ?", f.OwnerID, *f.ContentHash).First(&existing).Error
+			if err == nil {
+				persisted = &existing
+				reused = true
+				return nil
+			}
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+		}
+		if user.StorageQuota > 0 {
+			reserved, reserveErr := ReservedUploadBytes(tx, f.OwnerID, s.storageScope, 0)
+			if reserveErr != nil {
+				return reserveErr
+			}
+			if f.FileSize > user.StorageQuota-user.StorageUsed-reserved {
+				return errStorageInsufficient
+			}
 		}
 		if err := tx.Create(f).Error; err != nil {
 			return err
 		}
-		return tx.Model(&model.User{}).Where("id = ?", f.OwnerID).
-			UpdateColumn("storage_used", gorm.Expr("storage_used + ?", f.FileSize)).Error
+		if err := tx.Model(&model.User{}).Where("id = ?", f.OwnerID).
+			UpdateColumn("storage_used", gorm.Expr("storage_used + ?", f.FileSize)).Error; err != nil {
+			return err
+		}
+		persisted = f
+		return nil
 	})
+	return persisted, reused, err
+}
+
+// ReservedUploadBytes includes both unfinished direct uploads and duplicate
+// objects waiting for cleanup. A reservation is released only when its grant is
+// consumed normally or the janitor actually removes/reconciles it; an expired
+// object whose OSS deletion failed must continue to count. Storage scope keeps
+// grants from a retired physical namespace from blocking the current backend.
+// Callers must hold the owner's User row lock through their quota mutation.
+func ReservedUploadBytes(tx *gorm.DB, ownerID idgen.ID, storageScope string, excludeGrantID idgen.ID) (int64, error) {
+	query := tx.Model(&model.FileUploadGrant{}).
+		Where("owner_id = ? AND storage_scope = ? AND (consumed_at IS NULL OR cleanup_object = ?)",
+			ownerID, storageScope, true)
+	if excludeGrantID != 0 {
+		query = query.Where("id <> ?", excludeGrantID)
+	}
+	var reserved int64
+	if err := query.Select("COALESCE(SUM(expected_size), 0)").Scan(&reserved).Error; err != nil {
+		return 0, err
+	}
+	return reserved, nil
+}
+
+func normalizeContentHash(value string) (string, bool) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return "", true
+	}
+	if len(value) != sha256.Size*2 {
+		return "", false
+	}
+	if _, err := hex.DecodeString(value); err != nil {
+		return "", false
+	}
+	return value, true
+}
+
+func (s *service) hashStoredObject(ctx context.Context, key string) (string, error) {
+	readerStore, ok := s.store.(storage.ObjectReader)
+	if !ok {
+		return "", storage.ErrUnsupported
+	}
+	stream, err := readerStore.Open(ctx, key)
+	if err != nil {
+		return "", err
+	}
+	defer stream.Close()
+	hasher := sha256.New()
+	written, err := io.Copy(hasher, io.LimitReader(stream, maxFileSize+1))
+	if err != nil {
+		return "", err
+	}
+	if written <= 0 || written > maxFileSize {
+		return "", errUploadMismatch
+	}
+	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
 // ownedStorageKey accepts only keys minted by buildKey for this account. A
@@ -759,26 +985,45 @@ func (s *service) get(ctx context.Context, ownerID idgen.ID, id idgen.ID) (*File
 }
 
 func (s *service) delete(ctx context.Context, ownerID idgen.ID, id idgen.ID) error {
-	f, err := s.repo.get(ctx, id)
+	var deleted model.File
+	err := s.repo.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Match upload/register lock order and serialize quota accounting. Without
+		// this fence two concurrent deletes can both read one File and subtract its
+		// size twice from the account.
+		var user model.User
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id", "storage_used").First(&user, "id = ?", ownerID).Error; err != nil {
+			return err
+		}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&deleted, "id = ?", id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return errFileNotFound
+			}
+			return err
+		}
+		if deleted.OwnerID != ownerID {
+			return errFileForbidden
+		}
+		removed := tx.Where("id = ? AND owner_id = ?", id, ownerID).Delete(&model.File{})
+		if removed.Error != nil {
+			return removed.Error
+		}
+		if removed.RowsAffected != 1 {
+			return errFileNotFound
+		}
+		if deleted.FileSize > 0 {
+			return tx.Model(&model.User{}).Where("id = ?", ownerID).
+				UpdateColumn("storage_used", gorm.Expr(
+					"CASE WHEN storage_used > ? THEN storage_used - ? ELSE 0 END",
+					deleted.FileSize, deleted.FileSize,
+				)).Error
+		}
+		return nil
+	})
 	if err != nil {
 		return err
 	}
-	if f == nil {
-		return errFileNotFound
-	}
-	if f.OwnerID != ownerID {
-		return errFileForbidden
-	}
-	if err := s.repo.delete(ctx, id); err != nil {
-		return err
-	}
-	if err := s.store.Delete(ctx, f.StorageKey); err != nil {
-		logger.L().Warn("file: storage delete failed", zap.String("key", f.StorageKey), zap.Error(err))
-	}
-	if f.FileSize > 0 {
-		if err := s.repo.addStorageUsed(ctx, ownerID, -f.FileSize); err != nil {
-			logger.L().Warn("file: decrement storage usage failed", zap.Error(err))
-		}
+	if err := s.store.Delete(ctx, deleted.StorageKey); err != nil {
+		logger.L().Warn("file: storage delete failed", zap.String("key", deleted.StorageKey), zap.Error(err))
 	}
 	return nil
 }

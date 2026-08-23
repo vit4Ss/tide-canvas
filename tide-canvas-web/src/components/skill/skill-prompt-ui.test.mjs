@@ -16,6 +16,7 @@ const chatConfig = read("../../app/(studio)/chat/_hooks/use-composer-config.ts")
 const chatSend = read("../../app/(studio)/chat/_hooks/use-send-message.ts");
 const chatApi = read("../../lib/chat-api.ts");
 const chatBubble = read("../../app/(studio)/chat/_components/message-bubble.tsx");
+const chatSkillPresentation = read("../../app/(studio)/chat/_components/skill-run-presentation.ts");
 const runPanel = read("./skill-run-panel.tsx");
 const quickStart = read("../canvas/canvas-quick-start.tsx");
 const assistant = read("../canvas/canvas-assistant-panel.tsx");
@@ -55,7 +56,11 @@ test("生成面板在提示词框下方展示技能工具并复用既有运行�
   assert.match(studioToolShortcuts, /onClick=\{\(\) => onPick\(tool\)\}/);
   assert.match(studioToolShortcuts, /为你推荐/);
   assert.match(studioToolShortcuts, /更多技能/);
-  assert.match(studioStyles, /\.ws-tool-shortcuts-row\{[^}]*display:flex;[^}]*flex-wrap:wrap/);
+  assert.match(studioToolShortcuts, /new ResizeObserver\(measure\)/);
+  assert.match(studioToolShortcuts, /index >= visibleCount/);
+  assert.doesNotMatch(studioToolShortcuts, /MAX_VISIBLE_TOOLS/);
+  assert.match(studioStyles, /\.ws-tool-shortcuts-row\{[^}]*display:flex;[^}]*flex-wrap:nowrap/);
+  assert.match(studioStyles, /\.ws-tool-shortcuts-all\{[^}]*margin-left:auto/);
   assert.match(studioStyles, /\.ws-tool-shortcuts-label\{[^}]*border-radius:var\(--pill\)/);
 });
 
@@ -98,12 +103,20 @@ test("办公技能保留参考文件与联网并把两者传入执行链路", ()
 });
 
 test("聊天技能结果隐藏中间 JSON 并突出最终可下载文件", () => {
-  assert.match(chatBubble, /function presentableSkillRun/);
-  assert.match(chatBubble, /artifact\.role !== "intermediate"/);
+  assert.match(chatSkillPresentation, /function presentableSkillRun/);
+  assert.match(chatSkillPresentation, /artifact\.role !== "intermediate"/);
   assert.match(chatBubble, /run=\{presentableSkillRun\(run\)\}/);
   assert.match(chatBubble, /artifact\.type === "file" \? "下载"/);
   assert.match(chatBubble, /finalFiles\.length > 0/);
   assert.match(chatBubble, /className="chat-skill-files"/);
   assert.match(runPanel, /<FileDown aria-hidden/);
   assert.match(runPanel, /terminal \? STATUS_LABEL\[run\.status\]/);
+});
+
+test("聊天里的纯文本工具结果使用普通 Markdown 回复而不是 SkillRun 卡片", () => {
+  assert.match(chatSkillPresentation, /function finalTextSkillResult/);
+  assert.match(chatSkillPresentation, /presentable\.some\(\(artifact\) => artifact\.type !== "text"\)/);
+  assert.match(chatBubble, /const finalText = run \? finalTextSkillResult\(run\) : ""/);
+  assert.match(chatBubble, /<ReactMarkdown[\s\S]*\{finalText\}<\/ReactMarkdown>/);
+  assert.match(chatBubble, /<CopyBtn text=\{finalText\} \/>/);
 });

@@ -347,7 +347,9 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
           throw new Error(uploaded.message || `第 ${index + 1} 帧上传失败`);
         }
         if (!active()) {
-          await fileApi.delete(uploaded.data.id).catch(() => undefined);
+          if (!uploaded.data.reused) {
+            await fileApi.delete(uploaded.data.id).catch(() => undefined);
+          }
           return;
         }
         const registered = await aiApi.registerCapturedFrame({
@@ -355,18 +357,24 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
           captureTime: timeSec,
           width: prepared.width,
           height: prepared.height,
+          moveOriginal: !uploaded.data.reused,
         });
         if (!registered.success || !registered.data?.id) {
-          // If registration really failed the upload is still a File row and can
-          // be removed. If the response was lost after commit, this is a harmless
-          // 404 because the server already transferred ownership to the task.
-          await fileApi.delete(uploaded.data.id).catch(() => undefined);
+          // Only a newly-created temporary File can be cleaned up here. A reused
+          // row belongs to the user's existing library; the server clones it for
+          // generation history and must remain its sole lifecycle authority.
+          if (!uploaded.data.reused) {
+            await fileApi.delete(uploaded.data.id).catch(() => undefined);
+          }
           throw new Error(registered.message || `第 ${index + 1} 帧保存到生成历史失败`);
         }
         capturedTaskIds.push(String(registered.data.id));
         if (!active()) return;
         frames.push({
-          url: uploaded.data.fileUrl,
+          // Reused uploads are cloned for generation-history ownership. Use
+          // that durable URL so deleting the original library asset cannot
+          // break storyboard output nodes.
+          url: registered.data.resultUrl || uploaded.data.fileUrl,
           fileSize: uploaded.data.fileSize,
           fileType: uploaded.data.fileType,
           mimeType: uploaded.data.mimeType,

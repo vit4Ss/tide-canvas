@@ -152,6 +152,11 @@ export function Composer({
     openSrcMenu,
   } = refsApi;
   const visibleRefs = refPolicy ? refs.filter((ref) => refPolicy.kinds.includes(ref.kind)) : [];
+  const uploadingRefs = visibleRefs.filter((ref) => ref.uploading);
+  const failedRefs = visibleRefs.filter((ref) => ref.failed);
+  const uploadProgress = uploadingRefs.length
+    ? Math.round(uploadingRefs.reduce((sum, ref) => sum + (ref.progress ?? 0), 0) / uploadingRefs.length)
+    : 100;
   const toolSchema = toolSkill ? parseSkillInputSchema(toolSkill.inputSchema) : null;
   const toolRequiredFields = new Set(Array.isArray(toolSchema?.required) ? toolSchema.required : []);
   const toolRequiresDraft = !!toolSkill && [...toolRequiredFields].some(
@@ -210,20 +215,34 @@ export function Composer({
       >
         {dragOver && <div className="composer-drop">松开以添加参考素材</div>}
         {visibleRefs.length > 0 && (
-          <div className="ref-strip">
-            {visibleRefs.map((r) => (
-              <RefThumb
-                key={r.key}
-                item={r}
-                onRemove={() => removeRef(r.key)}
-                onOpen={() => {
-                  const src = r.url || r.blobUrl;
-                  // RefKind 的 "file" 在灯箱里按文档("doc")预览
-                  if (src) openLightbox([{ url: src, kind: r.kind === "file" ? "doc" : r.kind, name: r.name }], 0);
-                }}
-              />
-            ))}
-          </div>
+          <>
+            <div className="ref-strip">
+              {visibleRefs.map((r) => (
+                <RefThumb
+                  key={r.key}
+                  item={r}
+                  onRemove={() => removeRef(r.key)}
+                  onOpen={() => {
+                    const src = r.url || r.blobUrl;
+                    // RefKind 的 "file" 在灯箱里按文档("doc")预览
+                    if (src) openLightbox([{ url: src, kind: r.kind === "file" ? "doc" : r.kind, name: r.name }], 0);
+                  }}
+                />
+              ))}
+            </div>
+            {uploadingRefs.length > 0 && (
+              <div className="ref-upload-status" role="status" aria-live="polite">
+                <span className="ref-upload-status-dot" aria-hidden />
+                <span>正在上传 {uploadingRefs.length} 个文件 · {uploadProgress > 0 ? `${uploadProgress}%` : "准备中"}</span>
+                <span className="ref-upload-status-hint">现在发送会等待上传完成</span>
+              </div>
+            )}
+            {failedRefs.length > 0 && (
+              <div className="ref-upload-status failed" role="alert">
+                有 {failedRefs.length} 个文件上传失败，请移除后重试
+              </div>
+            )}
+          </>
         )}
         <div className="composer-head">
           {activeSkill && (

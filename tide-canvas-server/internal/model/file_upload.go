@@ -17,6 +17,7 @@ type FileUploadGrant struct {
 	StorageKey       string     `gorm:"size:512;uniqueIndex;not null" json:"storageKey"`
 	StorageScope     string     `gorm:"size:80;not null;default:'';index" json:"-"`
 	OriginalName     string     `gorm:"size:512;not null" json:"originalName"`
+	ContentHash      string     `gorm:"column:content_hash;size:64;not null;default:''" json:"-"`
 	ExpectedSize     int64      `gorm:"not null" json:"expectedSize"`
 	FileType         string     `gorm:"size:32;not null" json:"fileType"`
 	Category         string     `gorm:"size:32;not null" json:"category"`
@@ -24,6 +25,9 @@ type FileUploadGrant struct {
 	ExpiresAt        time.Time  `gorm:"index:idx_file_upload_grant_owner_active,priority:2;not null" json:"expiresAt"`
 	ConsumedAt       *time.Time `gorm:"index" json:"consumedAt,omitempty"`
 	RegisteredFileID idgen.ID   `gorm:"default:0;index" json:"registeredFileId"`
+	// CleanupObject marks a consumed duplicate-upload key. Its signed PUT URL
+	// may still be valid, so the janitor deletes the object only after expiry.
+	CleanupObject    bool       `gorm:"not null;default:false;index" json:"-"`
 	CleanupClaimedAt *time.Time `gorm:"index:idx_file_upload_grant_cleanup,priority:1" json:"-"`
 	CleanupWorkerID  string     `gorm:"size:64;index:idx_file_upload_grant_cleanup,priority:2" json:"-"`
 	CreateTime       time.Time  `gorm:"autoCreateTime" json:"createTime"`

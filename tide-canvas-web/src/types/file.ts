@@ -13,6 +13,8 @@ export interface FileVO {
   mimeType: string;
   storageType: StorageType;
   createTime: string;
+  /** 本次上传命中了同用户的相同内容，返回的是既有资产。 */
+  reused?: boolean;
 }
 
 export interface FileQuery extends PageQuery {

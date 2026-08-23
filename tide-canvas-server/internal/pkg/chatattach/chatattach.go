@@ -38,6 +38,8 @@ const (
 	fileTotalBytes = 20 << 20 // 多文件合计上限
 )
 
+var errAttachmentTooLarge = errors.New("chatattach: file too large")
+
 var trustedStorageClient = &http.Client{
 	Timeout: fetchTimeout,
 	Transport: &http.Transport{
@@ -123,8 +125,12 @@ func (e Extractor) FileParts(ctx context.Context, atts []Attach) (files []relayc
 			notes = append(notes, fmt.Sprintf("「%s」不在本站存储，未能读取", name))
 			continue
 		}
-		data, err := fetch(ctx, client, fetchURL)
+		data, err := e.readAttachment(ctx, u, fetchURL, client)
 		if err != nil {
+			if errors.Is(err, errAttachmentTooLarge) {
+				notes = append(notes, fmt.Sprintf("「%s」体积超过 15MB，未能附上内容", name))
+				continue
+			}
 			notes = append(notes, fmt.Sprintf("「%s」读取失败，未能附上内容", name))
 			continue
 		}
@@ -148,6 +154,28 @@ func (e Extractor) FileParts(ctx context.Context, atts []Attach) (files []relayc
 		note = "（" + strings.Join(parts, "；") + "）"
 	}
 	return files, note
+}
+
+// readAttachment prefers authenticated storage access for URLs in the current
+// namespace. Public HTTP remains a compatibility fallback for older/custom
+// storage implementations, but first-party local/OSS reads do not depend on CDN
+// propagation or hotlink policy immediately after upload.
+func (e Extractor) readAttachment(ctx context.Context, rawURL, fallbackURL string, client *http.Client) ([]byte, error) {
+	if reader, ok := e.Store.(storage.OwnedURLReader); ok {
+		stream, err := reader.OpenURL(ctx, rawURL)
+		if err == nil {
+			defer stream.Close()
+			data, readErr := io.ReadAll(io.LimitReader(stream, filePerBytes+1))
+			if readErr != nil {
+				return nil, readErr
+			}
+			if len(data) > filePerBytes {
+				return nil, errAttachmentTooLarge
+			}
+			return data, nil
+		}
+	}
+	return fetch(ctx, client, fallbackURL)
 }
 
 // hostAllowed 限定服务端抓取范围：本站存储 host（CDN/区域/加速域名）或阿里云
@@ -304,14 +332,14 @@ func fetch(ctx context.Context, client *http.Client, u string) ([]byte, error) {
 		return nil, fmt.Errorf("chatattach: status %d", resp.StatusCode)
 	}
 	if resp.ContentLength > filePerBytes {
-		return nil, fmt.Errorf("chatattach: file too large")
+		return nil, errAttachmentTooLarge
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, filePerBytes+1))
 	if err != nil {
 		return nil, err
 	}
 	if len(data) > filePerBytes {
-		return nil, fmt.Errorf("chatattach: file too large")
+		return nil, errAttachmentTooLarge
 	}
 	return data, nil
 }

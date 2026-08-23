@@ -21,6 +21,7 @@ import (
 	"tidecanvas/internal/pkg/chatattach"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/logger"
+	"tidecanvas/internal/pkg/storage"
 )
 
 var errRunPaused = errors.New("skill run paused")
@@ -1116,6 +1117,23 @@ func (s *service) bindPreparedArchivesTx(tx *gorm.DB, run *model.SkillRun, prepa
 		Select("id", "storage_quota", "storage_used").First(&user, "id = ?", run.UserID).Error; err != nil {
 		return err
 	}
+	var remainingBytes int64
+	quotaUnavailable := false
+	if user.StorageQuota > 0 {
+		storageScope := ""
+		if s.deps != nil && s.deps.Cfg != nil {
+			storageScope = storage.ScopeID(s.deps.Cfg.Storage)
+		}
+		reservedBytes, err := filehandler.ReservedUploadBytes(tx, run.UserID, storageScope, 0)
+		if err != nil {
+			return err
+		}
+		if user.StorageUsed > user.StorageQuota || reservedBytes > user.StorageQuota-user.StorageUsed {
+			quotaUnavailable = true
+		} else {
+			remainingBytes = user.StorageQuota - user.StorageUsed - reservedBytes
+		}
+	}
 	var addedBytes int64
 	for i := range artifacts {
 		if artifacts[i].FileID != 0 {
@@ -1129,9 +1147,9 @@ func (s *service) bindPreparedArchivesTx(tx *gorm.DB, run *model.SkillRun, prepa
 		err := tx.Where("source_artifact_id = ? AND owner_id = ?", artifacts[i].ID, run.UserID).First(&file).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			file = archive.File
-			if file.FileSize < 0 || (user.StorageQuota > 0 &&
-				(user.StorageUsed > user.StorageQuota || addedBytes > user.StorageQuota-user.StorageUsed ||
-					file.FileSize > user.StorageQuota-user.StorageUsed-addedBytes)) {
+			insufficientQuota := user.StorageQuota > 0 &&
+				(quotaUnavailable || addedBytes > remainingBytes || file.FileSize > remainingBytes-addedBytes)
+			if file.FileSize < 0 || insufficientQuota {
 				return filehandler.PermanentArchiveError(errors.New("storage quota is insufficient"))
 			}
 			if err := tx.Create(&file).Error; err != nil {

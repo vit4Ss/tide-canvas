@@ -64,6 +64,7 @@ export default function VideoResult({
           captureTime: at,
           width,
           height,
+          moveOriginal: !res.data.reused,
         });
         if (!registered.success) {
           // 4xx 是确定性未归档；网络/5xx 即使重试后仍可能是“服务端已提交、

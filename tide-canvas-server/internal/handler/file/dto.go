@@ -4,10 +4,11 @@ package file
 //
 // Matches the frontend fileApi.presign payload:
 //
-//	{ filename: string; contentType: string; size: number; fileType?: string }
+//	{ filename: string; contentType: string; size: number; contentHash?: string; fileType?: string }
 type presignDTO struct {
 	Filename    string `json:"filename"`
 	ContentType string `json:"contentType"`
+	ContentHash string `json:"contentHash"`
 	Size        int64  `json:"size"`
 	FileType    string `json:"fileType"`
 	Category    string `json:"category"`

@@ -113,6 +113,13 @@ type ObjectReader interface {
 	Open(ctx context.Context, key string) (io.ReadCloser, error)
 }
 
+// OwnedURLReader resolves and opens a public URL only when it belongs to this
+// storage namespace. Chat attachments use it to bypass CDN propagation,
+// hotlink protection and public-network round trips after an upload completes.
+type OwnedURLReader interface {
+	OpenURL(ctx context.Context, rawURL string) (io.ReadCloser, error)
+}
+
 // ErrUnsupported is returned by operations a backend cannot perform.
 var ErrUnsupported = errors.New("storage: operation not supported")
 
@@ -192,6 +199,16 @@ func (l *LocalStorage) Open(ctx context.Context, key string) (io.ReadCloser, err
 		return nil, errors.New("storage: empty key")
 	}
 	return os.Open(filepath.Join(l.baseDir, filepath.FromSlash(rel)))
+}
+
+// OpenURL validates a local public URL and opens the underlying object without
+// making an HTTP request back into this server.
+func (l *LocalStorage) OpenURL(ctx context.Context, rawURL string) (io.ReadCloser, error) {
+	key, ok := ownedObjectKey(rawURL, []string{l.publicURL}, "")
+	if !ok {
+		return nil, ErrUnsupported
+	}
+	return l.Open(ctx, key)
 }
 
 // Delete removes the file for key; a non-existent file is treated as success.

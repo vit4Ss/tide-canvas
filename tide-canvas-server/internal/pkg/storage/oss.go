@@ -139,6 +139,20 @@ func (o *OSSStorage) Open(ctx context.Context, key string) (io.ReadCloser, error
 	return stream, nil
 }
 
+// OpenURL validates a URL against every current/legacy serving host, converts
+// it back to the relative object key, and reads it with authenticated OSS access.
+func (o *OSSStorage) OpenURL(ctx context.Context, rawURL string) (io.ReadCloser, error) {
+	bases := append([]string{o.publicBase, o.regionalBase, o.accelerateBase}, o.legacyBases...)
+	key, ok := ownedObjectKey(rawURL, bases, o.prefix)
+	if !ok {
+		return nil, ErrUnsupported
+	}
+	if o.prefix != "" {
+		key = strings.TrimPrefix(key, o.prefix+"/")
+	}
+	return o.Open(ctx, key)
+}
+
 // Delete removes the object; a missing object is treated as success.
 func (o *OSSStorage) Delete(ctx context.Context, key string) error {
 	rel := cleanKey(key)

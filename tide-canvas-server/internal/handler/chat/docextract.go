@@ -16,7 +16,9 @@ import (
 func toAttaches(atts []MessageAttach) []chatattach.Attach {
 	out := make([]chatattach.Attach, 0, len(atts))
 	for _, a := range atts {
-		out = append(out, chatattach.Attach{URL: strings.TrimSpace(a.URL), Kind: strings.TrimSpace(a.Kind)})
+		out = append(out, chatattach.Attach{
+			URL: strings.TrimSpace(a.URL), Kind: strings.TrimSpace(a.Kind), Name: strings.TrimSpace(a.Name),
+		})
 	}
 	return out
 }

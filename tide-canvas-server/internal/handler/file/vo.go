@@ -30,6 +30,7 @@ type FileVO struct {
 	MimeType     string   `json:"mimeType"`
 	StorageType  string   `json:"storageType"`
 	CreateTime   string   `json:"createTime"`
+	Reused       bool     `json:"reused,omitempty"`
 }
 
 func toFileVO(f *model.File) FileVO {
@@ -57,6 +58,9 @@ type FilePresignVO struct {
 	FileURL     string            `json:"fileUrl,omitempty"`
 	ContentType string            `json:"contentType,omitempty"`
 	Headers     map[string]string `json:"headers,omitempty"`
+	// ExistingFile short-circuits duplicate uploads before browser PUT. It is
+	// scoped to the authenticated owner and keyed by the supplied content hash.
+	ExistingFile *FileVO `json:"existingFile,omitempty"`
 }
 
 func toPresignVO(p storage.PresignResult) FilePresignVO {

@@ -396,22 +396,23 @@
 
 /* 提示词下方的技能工具快捷区：参考输入框快捷建议，采用轻量横向胶囊而非卡片宫格。 */
 .ws-tool-shortcuts{margin-top:16px;}
-.ws-tool-shortcuts-row{display:flex; flex-wrap:wrap; align-items:center; gap:8px;}
+.ws-tool-shortcuts-row{position:relative; display:flex; width:100%; min-width:0; flex-wrap:nowrap; align-items:center; gap:8px; overflow:hidden;}
 .ws-tool-shortcuts-label{display:inline-flex; flex:none; align-items:center; height:34px; margin:0; padding:0 14px; border:1px solid var(--border); border-radius:var(--pill);
   color:var(--text-dim); background:var(--surface); font-size:12px; line-height:1; font-weight:600; white-space:nowrap;}
 .ws-tool-shortcut,.ws-tool-shortcuts-all,.ws-tool-shortcuts-state{display:inline-flex; flex:none; align-items:center; justify-content:center; height:34px; border:1px solid var(--border); border-radius:var(--pill);
   color:var(--text-dim); background:var(--surface); font-size:12px; line-height:1; white-space:nowrap;
   transition:color .15s var(--ease), border-color .15s var(--ease), background .15s var(--ease);}
 .ws-tool-shortcut{max-width:148px; gap:7px; padding:0 13px;}
+.ws-tool-shortcut.measure-only{position:absolute; left:0; top:0; width:max-content; visibility:hidden; pointer-events:none;}
 .ws-tool-shortcut:hover,.ws-tool-shortcuts-all:hover,.ws-tool-shortcuts-state:hover{color:var(--text); border-color:var(--border-strong); background:var(--panel);}
 .ws-tool-shortcut.on{color:var(--surface); border-color:var(--text); background:var(--text);}
 .ws-tool-shortcut.on:hover{color:var(--surface); border-color:var(--text); background:var(--text);}
 .ws-tool-shortcut:focus-visible,.ws-tool-shortcuts-all:focus-visible,.ws-tool-shortcuts-state:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
 .ws-tool-shortcut svg{width:15px; height:15px; flex:none; stroke-width:1.7;}
 .ws-tool-shortcut span{min-width:0; overflow:hidden; text-overflow:ellipsis;}
-.ws-tool-shortcuts-all{gap:4px; padding:0 12px;}
+.ws-tool-shortcuts-all{gap:4px; margin-left:auto; padding:0 12px;}
 .ws-tool-shortcuts-all svg{width:13px; height:13px; stroke-width:1.8;}
-.ws-tool-shortcuts-loading{display:contents;}
+.ws-tool-shortcuts-loading{display:flex; min-width:0; flex:1; gap:8px; overflow:hidden;}
 .ws-tool-shortcut-skeleton{display:block; flex:none; width:88px; height:34px; border:1px solid var(--border); border-radius:var(--pill); background:var(--surface-2); opacity:.58; animation:ws-tool-shortcut-pulse 1.2s ease-in-out infinite alternate;}
 @keyframes ws-tool-shortcut-pulse{to{opacity:.9;}}
 @media(prefers-reduced-motion:reduce){.ws-tool-shortcut-skeleton{animation:none;}}

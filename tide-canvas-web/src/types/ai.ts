@@ -57,6 +57,8 @@ export interface CapturedFrameDTO {
   captureTime: number;
   width: number;
   height: number;
+  /** Explicitly move a newly-created temporary upload; omitted/false preserves it. */
+  moveOriginal?: boolean;
 }
 
 export interface AiModelVO {

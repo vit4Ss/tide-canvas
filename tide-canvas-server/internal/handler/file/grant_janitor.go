@@ -28,8 +28,9 @@ const (
 )
 
 // StartUploadGrantJanitor removes objects uploaded with an expired direct-upload
-// grant but never registered as a File. Without this reconciler a caller could
-// repeatedly PUT objects and let grants expire, bypassing storage_used accounting.
+// grant but never registered as a File, plus consumed duplicate-upload objects
+// retained until their signed PUT URLs can no longer be replayed. Without this
+// reconciler a caller could repeatedly PUT objects and bypass storage accounting.
 // The first pass runs immediately; later passes run once a minute until ctx ends.
 func StartUploadGrantJanitor(ctx context.Context, d *app.Deps) {
 	if d == nil || d.DB == nil || d.Storage == nil || d.Cfg == nil || d.Storage.Type() != "oss" {
@@ -82,10 +83,18 @@ func sweepExpiredUploadGrants(ctx context.Context, d *app.Deps, workerID string)
 			// an object that is already visible in the user's asset library.
 			var registered model.File
 			if err := d.DB.WithContext(ctx).Select("id").Where("storage_key = ?", grant.StorageKey).First(&registered).Error; err == nil {
-				now := time.Now()
+				updates := map[string]any{
+					"registered_file_id": registered.ID,
+					"cleanup_object":     false,
+					"cleanup_claimed_at": nil,
+					"cleanup_worker_id":  "",
+				}
+				if grant.ConsumedAt == nil {
+					updates["consumed_at"] = time.Now()
+				}
 				_ = d.DB.WithContext(ctx).Model(&model.FileUploadGrant{}).
 					Where("id = ? AND cleanup_worker_id = ?", grant.ID, workerID).
-					Updates(map[string]any{"consumed_at": now, "registered_file_id": registered.ID, "cleanup_claimed_at": nil, "cleanup_worker_id": ""}).Error
+					Updates(updates).Error
 				continue
 			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 				return removed, err
@@ -97,15 +106,15 @@ func sweepExpiredUploadGrants(ctx context.Context, d *app.Deps, workerID string)
 				// Let this process retry promptly; a crashed process is recovered by
 				// the stale-claim TTL instead.
 				_ = d.DB.WithContext(ctx).Model(&model.FileUploadGrant{}).
-					Where("id = ? AND cleanup_worker_id = ? AND consumed_at IS NULL", grant.ID, workerID).
+					Where("id = ? AND cleanup_worker_id = ?", grant.ID, workerID).
 					Updates(map[string]any{"cleanup_claimed_at": nil, "cleanup_worker_id": ""}).Error
 				logger.L().Warn("file: delete expired direct upload failed",
 					zap.String("key", grant.StorageKey), zap.Error(err))
 				continue
 			}
 			result := d.DB.WithContext(ctx).Where(
-				"id = ? AND cleanup_worker_id = ? AND consumed_at IS NULL AND registered_file_id = 0 AND storage_scope = ? AND expires_at < ?",
-				grant.ID, workerID, storageScope, time.Now(),
+				"id = ? AND cleanup_worker_id = ? AND storage_scope = ? AND expires_at < ? AND ((consumed_at IS NULL AND registered_file_id = 0) OR cleanup_object = ?)",
+				grant.ID, workerID, storageScope, time.Now(), true,
 			).Delete(&model.FileUploadGrant{})
 			if result.Error != nil {
 				return removed, result.Error
@@ -124,7 +133,7 @@ func claimExpiredUploadGrants(ctx context.Context, db *gorm.DB, workerID, storag
 	expiredBefore := uploadGrantCleanupCutoff(now)
 	var candidates []model.FileUploadGrant
 	if err := db.WithContext(ctx).
-		Where("consumed_at IS NULL AND registered_file_id = 0 AND storage_scope = ? AND expires_at < ? AND (cleanup_claimed_at IS NULL OR cleanup_claimed_at < ?)", storageScope, expiredBefore, staleBefore).
+		Where("storage_scope = ? AND expires_at < ? AND ((consumed_at IS NULL AND registered_file_id = 0) OR cleanup_object = ?) AND (cleanup_claimed_at IS NULL OR cleanup_claimed_at < ?)", storageScope, expiredBefore, true, staleBefore).
 		Order("expires_at ASC").Limit(uploadGrantCleanupBatch).Find(&candidates).Error; err != nil {
 		return nil, err
 	}
@@ -133,8 +142,8 @@ func claimExpiredUploadGrants(ctx context.Context, db *gorm.DB, workerID, storag
 	for i := range candidates {
 		candidate := candidates[i]
 		result := db.WithContext(ctx).Model(&model.FileUploadGrant{}).
-			Where("id = ? AND consumed_at IS NULL AND registered_file_id = 0 AND storage_scope = ? AND expires_at < ? AND (cleanup_claimed_at IS NULL OR cleanup_claimed_at < ?)",
-				candidate.ID, storageScope, expiredBefore, staleBefore).
+			Where("id = ? AND storage_scope = ? AND expires_at < ? AND ((consumed_at IS NULL AND registered_file_id = 0) OR cleanup_object = ?) AND (cleanup_claimed_at IS NULL OR cleanup_claimed_at < ?)",
+				candidate.ID, storageScope, expiredBefore, true, staleBefore).
 			Updates(map[string]any{"cleanup_claimed_at": now, "cleanup_worker_id": workerID})
 		if result.Error != nil {
 			return claimed, result.Error

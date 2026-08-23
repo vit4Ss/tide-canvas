@@ -109,6 +109,9 @@ export function useComposerConfig(models: GenModelsApi, toolSkill: SkillVO | nul
         kinds: ["image", "video", "audio", "file"],
         max: Math.min(cfgMax, MAX_ATTACHMENTS),
         maxSizeMB: mCfg.maxFileSizeMB ?? 0,
+        // 文本文档会由服务端转成 relay file part，单文件硬上限 15MB；
+        // 图片仍遵循模型自己的 maxFileSizeMB，避免无谓压低多模态图片上限。
+        maxSizeByKind: { file: 15 },
         exts,
         accept: exts ? exts.map((e) => `.${e}`).join(",") : undefined,
       };

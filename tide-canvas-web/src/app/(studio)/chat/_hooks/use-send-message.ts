@@ -5,7 +5,7 @@
    文本模型 → streamMessage SSE 流式。乐观气泡 / 回滚 / 送出中暂停轮询、
    activeIdRef 防切对话覆盖等语义全部保持原样。 */
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { chatApi, streamMessage } from "@/lib/chat-api";
 import { aiApi } from "@/lib/api";
 import { getAccessToken } from "@/lib/http";
@@ -616,7 +616,8 @@ export function useSendMessage({
   quality,
   dur,
   batch,
-  refs,
+  getLatestRefs,
+  waitForCurrentUploads,
   refPolicy,
   refOptional,
   clearRefsIfUnchanged,
@@ -659,7 +660,8 @@ export function useSendMessage({
   quality: string;
   dur: string;
   batch: number;
-  refs: RefItem[];
+  getLatestRefs: () => RefItem[];
+  waitForCurrentUploads: (keys: readonly string[]) => Promise<RefItem[]>;
   refPolicy: RefPolicy | undefined;
   refOptional: boolean;
   clearRefsIfUnchanged: (snapshot: readonly ComposerRefSnapshot[]) => void;
@@ -681,6 +683,9 @@ export function useSendMessage({
   textRecovering: boolean;
   setTextRecovering: React.Dispatch<React.SetStateAction<boolean>>;
 }) {
+  // State updates from file-picker events may not have rendered before a fast
+  // Enter/click. This lock prevents two sends from both waiting on one upload.
+  const uploadSendWaitRef = useRef(false);
   // A media task can be created and billed even when the following /turn
   // response is lost. Recover these journals on mount/conversation switch, not
   // only when the user happens to send the exact same prompt again.
@@ -1062,7 +1067,10 @@ export function useSendMessage({
       }
     }
     const v = draft.trim();
-    if (busy || textRecovering) return;
+    if (busy || textRecovering || uploadSendWaitRef.current) {
+      if (uploadSendWaitRef.current) toast.info("正在等待文件上传完成，请稍候");
+      return;
+    }
     // 音乐的自定义/延长/翻唱不强制描述；其余（含灵感模式/音效）仍需文字。
     if (!v && !musicNoDraftOk && !selectedTool) return;
     if (!selectedTool && isMusicSel) {
@@ -1086,24 +1094,48 @@ export function useSendMessage({
     // references. Treat that synchronously as an empty set instead of waiting
     // for useReferences' cleanup effect, otherwise a same-frame send can retain
     // stale attachments in history even though they are absent from the request.
-    const allowedRefs = selectedTool
-      ? refs
+    const selectAllowedRefs = (source: RefItem[]) => selectedTool
+      ? source
       : refPolicy
-        ? refs.filter((r) => refPolicy.kinds.includes(r.kind))
+        ? source.filter((r) => refPolicy.kinds.includes(r.kind))
         : [];
+    let allowedRefs = selectAllowedRefs(getLatestRefs());
+    if (allowedRefs.some((r) => r.uploading)) {
+      uploadSendWaitRef.current = true;
+      setBusy(true);
+      toast.info("文件仍在上传，上传完成后将自动发送");
+      try {
+        const ready = await waitForCurrentUploads(allowedRefs.map((ref) => ref.key));
+        allowedRefs = selectAllowedRefs(ready);
+      } catch {
+        toast.error("等待文件上传失败，请重试");
+        setBusy(false);
+        uploadSendWaitRef.current = false;
+        return;
+      }
+      uploadSendWaitRef.current = false;
+      if (activeIdRef.current !== activeId) {
+        toast.info("文件已上传，但当前对话已切换，请在目标对话中重新发送");
+        setBusy(false);
+        return;
+      }
+    }
+    if (allowedRefs.some((r) => r.uploading)) {
+      toast.error("文件上传状态异常，请稍后重试或移除文件后重新上传");
+      setBusy(false);
+      return;
+    }
     const refImageUrls = allowedRefs.filter((r) => r.kind === "image" && r.url).map((r) => r.url as string);
     const refVideoUrls = allowedRefs.filter((r) => r.kind === "video" && r.url).map((r) => r.url as string);
     const refAudioUrls = allowedRefs.filter((r) => r.kind === "audio" && r.url).map((r) => r.url as string);
+    // Block on a failed upload so text, generation and tool sends can never
+    // silently discard a file after the user has attached it.
+    if (allowedRefs.some((r) => r.failed)) {
+      toast.error("有文件上传失败，请移除后重试");
+      setBusy(false);
+      return;
+    }
     if (refPolicy) {
-      if (allowedRefs.some((r) => r.uploading)) {
-        toast.info("文件上传中，请稍候");
-        return;
-      }
-      // block on a failed upload so the user doesn't unknowingly send without it.
-      if (allowedRefs.some((r) => r.failed)) {
-        toast.error("有文件上传失败，请移除后重试");
-        return;
-      }
       // text-model uploads are optional; generation ref-modes require one.
       // omni_ref 的策略允许纯音频参考（音频驱动的视频生成），音频也算数——
       // 否则界面明示「音频已添加、可 @ 引用」，发送却被拦，自相矛盾。
@@ -1115,6 +1147,7 @@ export function useSendMessage({
         refAudioUrls.length === 0
       ) {
         toast.error("当前模式需要先添加参考素材");
+        setBusy(false);
         return;
       }
     }
@@ -1127,6 +1160,7 @@ export function useSendMessage({
       const message = errors.prompt || errors.assets || errors.parameters || Object.values(errors)[0];
       if (message) {
         toast.info(message);
+        setBusy(false);
         return;
       }
     }
@@ -1170,7 +1204,7 @@ export function useSendMessage({
     }
     const composerSnapshot: ComposerSnapshot = {
       draft,
-      refs: refs.map(({ key, id, kind, url, name }) => ({ key, id, kind, url, name })),
+      refs: allowedRefs.map(({ key, id, kind, url, name }) => ({ key, id, kind, url, name })),
     };
 
     const bump = (cid: string) =>
@@ -1227,7 +1261,7 @@ export function useSendMessage({
     // the optimistic bubble flash thumbnails that vanish on reload.
     // 文本模型附件收全部类型（图片给模型做多模态,视频/音频/文档落库展示）
     const attachSnapshot = refOptional
-      ? allowedRefs.filter((r) => r.url).map((r) => ({ url: r.url as string, kind: r.kind }))
+      ? allowedRefs.filter((r) => r.url).map((r) => ({ url: r.url as string, kind: r.kind, name: r.name }))
       : [];
 
     // 用户气泡/落库的提示词：音乐模式描述可留空，兜底一句模式摘要（persistTurn
@@ -1611,7 +1645,7 @@ export function useSendMessage({
       setTyping(false);
       setBusy(false);
     }
-  }, [draft, busy, textRecovering, activeId, ensureSession, loadMessages, selModel, mode, ratio, res, quality, dur, batch, refs, refPolicy, refOptional, clearRefsIfUnchanged, restoreRefsIfEmpty, forceBottom, scrollEnd, ctxUsage, refreshCtxUsage, music, isMusicSel, musicNoDraftOk, skill, toolSkill, web, activeIdRef, chatAbortRef, nearBottomRef, setActiveId, setBusy, setConvos, setDraft, setMsgs, setStreaming, setTextRecovering, setTyping]);
+  }, [draft, busy, textRecovering, activeId, ensureSession, loadMessages, selModel, mode, ratio, res, quality, dur, batch, getLatestRefs, waitForCurrentUploads, refPolicy, refOptional, clearRefsIfUnchanged, restoreRefsIfEmpty, forceBottom, scrollEnd, ctxUsage, refreshCtxUsage, music, isMusicSel, musicNoDraftOk, skill, toolSkill, web, activeIdRef, chatAbortRef, nearBottomRef, setActiveId, setBusy, setConvos, setDraft, setMsgs, setStreaming, setTextRecovering, setTyping]);
 
   return send;
 }

@@ -25,10 +25,11 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
   // race-guards (upload callbacks) and unmount revoke without stale closures.
   const [refs, setRefs] = useState<RefItem[]>([]);
   const refsRef = useRef<RefItem[]>([]);
-  // synchronous count of accepted refs — authoritative across same-tick attaches
-  // (refsRef only catches up via an effect). Re-synced from refs on every commit.
+  // synchronous count of accepted refs — authoritative across same-tick attaches.
   const refCountRef = useRef(0);
   const refSeq = useRef(0);
+  const pendingUploadsRef = useRef(new Map<string, Promise<void>>());
+  const removalWaitersRef = useRef(new Map<string, Set<() => void>>());
   const [dragOver, setDragOver] = useState(false);
   const dragDepth = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -38,12 +39,27 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
   const [srcMenuPos, setSrcMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [assetPickOpen, setAssetPickOpen] = useState(false);
 
-  // keep refsRef + the synchronous count in sync for stale-closure-free access
-  // in callbacks/cleanup (re-syncs the count after adds/removals/dedup drops).
-  useEffect(() => {
-    refsRef.current = refs;
-    refCountRef.current = refs.length;
-  }, [refs]);
+  // React state drives rendering, while refsRef is the same-tick authority used
+  // by send(). A file picker change and Enter/click can happen before React has
+  // rendered once; keeping both stores in one commit closes that attachment-loss
+  // window without waiting for another render.
+  const commitRefs = useCallback((update: (current: RefItem[]) => RefItem[]) => {
+    const current = refsRef.current;
+    const next = update(current);
+    if (next === current) return current;
+    const nextKeys = new Set(next.map((ref) => ref.key));
+    for (const ref of current) {
+      if (nextKeys.has(ref.key)) continue;
+      const waiters = removalWaitersRef.current.get(ref.key);
+      if (!waiters) continue;
+      removalWaitersRef.current.delete(ref.key);
+      for (const release of waiters) release();
+    }
+    refsRef.current = next;
+    refCountRef.current = next.length;
+    setRefs(next);
+    return next;
+  }, []);
 
   // dismiss the 来源 menu / 资产库 dialog if the model stops supporting uploads
   // (switched to a no-upload model while one was open).
@@ -77,21 +93,32 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
   // drop references that the current mode no longer accepts (e.g. switching from
   // an image-ref mode to t2v); revoke their blobs.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- 按新策略收敛已挂素材，函数式更新且带 no-op 短路，无级联
-    setRefs((prev) => {
+    commitRefs((prev) => {
       if (!prev.length) return prev;
       const keep = refPolicy ? prev.filter((r) => refPolicy.kinds.includes(r.kind)) : [];
       if (keep.length === prev.length) return prev;
       for (const r of prev) if (!keep.includes(r)) URL.revokeObjectURL(r.blobUrl);
       return keep;
     });
-  }, [refPolicy]);
+  }, [commitRefs, refPolicy]);
 
   // upload one reference: hosted URL replaces the blob on success; race-guard
   // drops the result if the ref was removed mid-flight; dedup collapses same-url.
   const uploadRef = useCallback(async (key: string, file: File, blobUrl: string) => {
-    const res = await uploadFileSmart(file).catch(() => null);
-    setRefs((cur) => {
+    const res = await uploadFileSmart(file, (value) => {
+      const progress = Math.max(0, Math.min(100, Math.round(value)));
+      commitRefs((cur) => {
+        const idx = cur.findIndex((r) => r.key === key);
+        if (idx < 0 || !cur[idx].uploading || cur[idx].progress === progress) return cur;
+        const next = cur.slice();
+        next[idx] = { ...next[idx], progress };
+        return next;
+      });
+    }).catch(() => null);
+    if (res?.success && res.data?.reused) {
+      toast.info("相同文件已在资产库中，已复用原资产");
+    }
+    commitRefs((cur) => {
       const idx = cur.findIndex((r) => r.key === key);
       if (idx < 0) {
         URL.revokeObjectURL(blobUrl); // removed while uploading
@@ -104,11 +131,11 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
       }
       const next = cur.slice();
       next[idx] = url
-        ? { ...next[idx], id: String(res?.data?.id ?? "") || undefined, uploading: false, url }
+        ? { ...next[idx], id: String(res?.data?.id ?? "") || undefined, uploading: false, progress: 100, url }
         : { ...next[idx], uploading: false, failed: true };
       return next;
     });
-  }, []);
+  }, [commitRefs]);
 
   // route picked/dropped/pasted files into the current mode's reference slots.
   const attachFiles = useCallback(
@@ -122,10 +149,14 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
       // use the synchronous counter (not the effect-lagged refsRef) so two attaches
       // in the same tick can't both read a stale length and exceed policy.max.
       let count = refCountRef.current;
-      const sizeCap = policy.maxSizeMB && policy.maxSizeMB > 0 ? policy.maxSizeMB : 0;
+      const configuredSizeCap = policy.maxSizeMB && policy.maxSizeMB > 0 ? policy.maxSizeMB : 0;
       for (const file of Array.from(files)) {
         const kind = fileKind(file);
         if (!policy.kinds.includes(kind)) continue;
+        const kindSizeCap = policy.maxSizeByKind?.[kind] ?? 0;
+        const sizeCap = configuredSizeCap > 0 && kindSizeCap > 0
+          ? Math.min(configuredSizeCap, kindSizeCap)
+          : configuredSizeCap || kindSizeCap;
         // 后台配置了格式白名单 → 扩展名不在列直接拒收并提示
         if (policy.exts && !policy.exts.includes(extOf(file.name))) {
           toast.info(`「${file.name}」格式不支持，允许：${policy.exts.join(" / ")}`);
@@ -140,38 +171,46 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
           continue;
         }
         const blobUrl = URL.createObjectURL(file);
-        fresh.push({ item: { key: `r${refSeq.current++}`, kind, blobUrl, name: file.name, uploading: true }, file });
+        fresh.push({ item: { key: `r${refSeq.current++}`, kind, blobUrl, name: file.name, uploading: true, progress: 0 }, file });
         count++;
       }
       if (!fresh.length) return;
-      refCountRef.current = count; // commit synchronously before the next call reads it
-      setRefs((prev) => [...prev, ...fresh.map((f) => f.item)]);
-      for (const { item, file } of fresh) void uploadRef(item.key, file, item.blobUrl);
+      commitRefs((prev) => [...prev, ...fresh.map((f) => f.item)]);
+      for (const { item, file } of fresh) {
+        const task = uploadRef(item.key, file, item.blobUrl);
+        pendingUploadsRef.current.set(item.key, task);
+        const release = () => {
+          if (pendingUploadsRef.current.get(item.key) === task) {
+            pendingUploadsRef.current.delete(item.key);
+          }
+        };
+        void task.then(release, release);
+      }
     },
-    [refPolicy, uploadRef],
+    [commitRefs, refPolicy, uploadRef],
   );
 
   const removeRef = useCallback((key: string) => {
-    setRefs((prev) => {
+    commitRefs((prev) => {
       const r = prev.find((x) => x.key === key);
       if (r) URL.revokeObjectURL(r.blobUrl);
       return prev.filter((x) => x.key !== key);
     });
-  }, []);
+  }, [commitRefs]);
 
   const clearRefs = useCallback(() => {
-    setRefs((prev) => {
+    commitRefs((prev) => {
       for (const r of prev) URL.revokeObjectURL(r.blobUrl);
       return [];
     });
-  }, []);
+  }, [commitRefs]);
 
   /** Clear only the exact set consumed by a completed request. Users may start
    * preparing the next prompt while a request is in flight; a blanket clear at
    * completion would otherwise delete newly-added references. */
   const clearRefsIfUnchanged = useCallback(
     (snapshot: readonly Pick<RefItem, "key" | "kind" | "url">[]) => {
-      setRefs((prev) => {
+      commitRefs((prev) => {
         const unchanged =
           prev.length === snapshot.length &&
           prev.every((ref, index) => {
@@ -183,7 +222,7 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
         return [];
       });
     },
-    [],
+    [commitRefs],
   );
 
   /** Restore a retry journal's hosted references only when the composer is
@@ -191,7 +230,7 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
    * a reload; it never replaces files the user has since attached. */
   const restoreRefsIfEmpty = useCallback(
     (snapshot: readonly Pick<RefItem, "key" | "id" | "kind" | "url" | "name">[]) => {
-      setRefs((prev) => {
+      commitRefs((prev) => {
         if (prev.length) return prev;
         const restored = snapshot
           .filter((ref): ref is typeof ref & { url: string } => typeof ref.url === "string" && !!ref.url)
@@ -214,7 +253,7 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
         return restored;
       });
     },
-    [],
+    [commitRefs],
   );
 
   // add an already-hosted asset (picked from 资产库) directly as a reference — no
@@ -240,14 +279,13 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
         toast.info(`最多添加 ${policy.max} 个文件`);
         return false;
       }
-      refCountRef.current += 1; // commit synchronously before any follow-up add
-      setRefs((prev) => [
+      commitRefs((prev) => [
         ...prev,
         { key: `r${refSeq.current++}`, id, kind, blobUrl: "", url, name: name || fileNameFromUrl(url), uploading: false },
       ]);
       return true;
     },
-    [refPolicy],
+    [commitRefs, refPolicy],
   );
 
   // open the 来源 menu (本地上传 / 资产库) anchored above the ＋ button. Flips to
@@ -377,11 +415,41 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
           const id = typeof (r as { id?: unknown }).id === "string" ? (r as { id: string }).id : undefined;
           restored.push({ key: `r${refSeq.current++}`, id, kind, blobUrl: "", url, uploading: false });
         }
-        if (restored.length) setRefs(restored);
+        if (restored.length) commitRefs(() => restored);
       }
     },
-    [clearRefs],
+    [clearRefs, commitRefs],
   );
+
+  const getLatestRefs = useCallback(() => refsRef.current.slice(), []);
+
+  /** Wait for the exact references present at send-click time. Newly attached
+   * files remain in the composer for the next turn; removed files are omitted. */
+  const waitForCurrentUploads = useCallback(async (keys: readonly string[]) => {
+    const uniqueKeys = [...new Set(keys)];
+    await Promise.all(uniqueKeys.map((key) => {
+      const task = pendingUploadsRef.current.get(key);
+      if (!task) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        let settled = false;
+        const release = () => {
+          if (settled) return;
+          settled = true;
+          const waiters = removalWaitersRef.current.get(key);
+          waiters?.delete(release);
+          if (waiters?.size === 0) removalWaitersRef.current.delete(key);
+          resolve();
+        };
+        const waiters = removalWaitersRef.current.get(key) ?? new Set<() => void>();
+        waiters.add(release);
+        removalWaitersRef.current.set(key, waiters);
+        void task.then(release, release);
+        if (!refsRef.current.some((ref) => ref.key === key)) release();
+      });
+    }));
+    const selected = new Set(uniqueKeys);
+    return refsRef.current.filter((ref) => selected.has(ref.key));
+  }, []);
 
   // ── @ 引用（富文本 pill 版，与创作台共用 MentionPromptEditor）────────────────
   // 输入 @ 弹出已挂参考素材的候选菜单，选中在光标处插入带缩略图的内联 pill，
@@ -426,6 +494,8 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
     assetPickOpen,
     setAssetPickOpen,
     chooseAssets,
+    getLatestRefs,
+    waitForCurrentUploads,
   };
 }
 

@@ -94,11 +94,9 @@ func (h *handler) uploadBatch(c *gin.Context) {
 	for _, fh := range files {
 		vo, err := h.saveHeader(c, uid, fh)
 		if err != nil {
-			// Batch is all-or-nothing from the caller's perspective. Remove any
-			// assets already persisted before the first failure.
-			for _, saved := range out {
-				_ = h.svc.delete(c.Request.Context(), uid, saved.ID)
-			}
+			// Keep earlier successes. Once a hashed File row is visible, another
+			// concurrent upload may already have reused it; rolling it back here
+			// would invalidate that successful request and delete its object.
 			writeUploadErr(c, err)
 			return
 		}

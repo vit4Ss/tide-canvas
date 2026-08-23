@@ -24,6 +24,7 @@ import type { SkillRunAction, SkillRunArtifactVO, SkillRunVO } from "@/types/ski
 import { fileNameFromUrl, type LightboxItem, type LightboxKind } from "./chat-utils";
 import { isHiddenPricingRoute } from "@/lib/public-routes";
 import CapturableVideo from "@/components/studio/create-studio/video-result";
+import { finalTextSkillResult, presentableSkillRun, runArtifacts } from "./skill-run-presentation";
 
 /** Deterministic mesh-gradient fallback for an image-type message whose content
  *  URL is empty, seeded from the message id. */
@@ -156,19 +157,24 @@ const MdLink: Components["a"] = ({ href, children, ...props }) =>
 export const MD_COMPONENTS: Components = { pre: MdPre, a: MdLink };
 
 /** Read the composer attachments snapshotted on a user message's params
- *  ({attachments:[{url,kind}]}), filtering to entries with a usable URL. */
-function messageAttachments(msg: MessageVO): { url: string; kind: string }[] {
+ *  ({attachments:[{url,kind,name?}]}), filtering to entries with a usable URL. */
+function messageAttachments(msg: MessageVO): { url: string; kind: string; name?: string }[] {
   const raw = (msg.params as { attachments?: unknown } | undefined)?.attachments;
   if (!Array.isArray(raw)) return [];
-  const out: { url: string; kind: string }[] = [];
+  const out: { url: string; kind: string; name?: string }[] = [];
   for (const x of raw) {
     if (x && typeof x === "object") {
       const url = (x as { url?: unknown }).url;
       const kind = (x as { kind?: unknown }).kind;
+      const name = (x as { name?: unknown }).name;
       if (typeof url === "string" && url) {
         // normalize empty/unknown kind to "image" (mirrors the backend, which
         // treats ""/"image" alike) so it renders as a thumbnail, not a file chip.
-        out.push({ url, kind: typeof kind === "string" && kind ? kind : "image" });
+        out.push({
+          url,
+          kind: typeof kind === "string" && kind ? kind : "image",
+          ...(typeof name === "string" && name ? { name } : {}),
+        });
       }
     }
   }
@@ -254,7 +260,7 @@ export function Bubble({
                         attImages.map((x) => ({ url: x.url, kind: "image" as const })),
                         attImages.findIndex((x) => x.url === a.url),
                       )
-                  : () => onOpenLightbox([{ url: a.url, kind: lbKind, name: fileNameFromUrl(a.url) }], 0);
+                  : () => onOpenLightbox([{ url: a.url, kind: lbKind, name: a.name || fileNameFromUrl(a.url) }], 0);
               return a.kind === "image" ? (
                 <button
                   key={i}
@@ -265,9 +271,11 @@ export function Bubble({
                   onClick={open}
                 />
               ) : (
-                <button key={i} type="button" className="chat-msg-file" title="点击预览" onClick={open}>
+                <button key={i} type="button" className="chat-msg-file" title={a.name ? `${a.name} · 点击预览` : "点击预览"} onClick={open}>
                   {a.kind === "video" ? "🎬" : a.kind === "audio" ? "🎵" : "📎"}{" "}
-                  {a.kind === "video" ? "视频" : a.kind === "audio" ? "音频" : "文件"}
+                  <span className="chat-msg-file-name">
+                    {a.name || (a.kind === "video" ? "视频" : a.kind === "audio" ? "音频" : "文件")}
+                  </span>
                 </button>
               );
             })}
@@ -310,27 +318,6 @@ export function Bubble({
 /** AssistantResult renders a 生成台 result bubble from its task's live state:
  *  processing / failed / cancelled / expired(no task) / success(image|video).
  *  Multi-URL results (MJ 4-up) render a grid; clicking any opens the lightbox. */
-function runArtifacts(run: SkillRunVO): SkillRunArtifactVO[] {
-  const rows = [...(run.artifacts ?? []), ...(run.steps ?? []).flatMap((step) => step.artifacts ?? [])];
-  const seen = new Set<string>();
-  return rows.filter((artifact) => {
-    const key = artifact.id || `${artifact.type}:${artifact.url || artifact.text || artifact.content || ""}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-function presentableSkillRun(run: SkillRunVO): SkillRunVO {
-  const keep = (artifact: SkillRunArtifactVO) =>
-    artifact.isFinal !== false && artifact.role !== "intermediate" && artifact.role !== "draft";
-  return {
-    ...run,
-    artifacts: run.artifacts?.filter(keep),
-    steps: run.steps?.map((step) => ({ ...step, artifacts: step.artifacts?.filter(keep) })),
-  };
-}
-
 function AssistantSkillRun({
   message,
   onAction,
@@ -439,6 +426,25 @@ function AssistantSkillRun({
         (artifact): artifact is SkillRunArtifactVO & { url: string } => artifact.type === "file" && !!artifact.url,
       )
     : [];
+  const finalText = run ? finalTextSkillResult(run) : "";
+
+  if (finalText) {
+    return (
+      <div className="msg ai">
+        <span className="av" />
+        <div className="msg-col">
+          <div className="bubble">
+            <div className="md">
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{finalText}</ReactMarkdown>
+            </div>
+          </div>
+          <div className="bubble-acts">
+            <CopyBtn text={finalText} />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="msg ai">

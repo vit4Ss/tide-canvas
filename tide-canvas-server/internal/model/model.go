@@ -722,19 +722,24 @@ func (AiGenerationLog) TableName() string { return "ai_generation_logs" }
 // File is an uploaded asset.
 type File struct {
 	ID      idgen.ID `gorm:"primaryKey;autoIncrement:false" json:"id"`
-	OwnerID idgen.ID `gorm:"index" json:"ownerId"`
+	OwnerID idgen.ID `gorm:"index;uniqueIndex:idx_file_owner_content_hash,priority:1" json:"ownerId"`
 	// SourceArtifactID is set only for server-archived SkillRun outputs. Nullable
 	// uniqueness provides an idempotency key without constraining normal uploads.
 	SourceArtifactID *idgen.ID `gorm:"column:source_artifact_id;uniqueIndex" json:"sourceArtifactId,omitempty"`
 	OriginalName     string    `gorm:"size:512" json:"originalName"`
-	StorageKey       string    `gorm:"size:512" json:"storageKey"`
-	FileUrl          string    `gorm:"size:1024" json:"fileUrl"`
-	FileSize         int64     `gorm:"default:0" json:"fileSize"`
-	FileType         string    `gorm:"size:32" json:"fileType"`                                // image|video|other
-	Category         string    `gorm:"size:32;not null;index;default:general" json:"category"` // general|character|scene
-	MimeType         string    `gorm:"size:128" json:"mimeType"`
-	StorageType      string    `gorm:"size:32" json:"storageType"` // local|oss
-	CreateTime       time.Time `gorm:"autoCreateTime" json:"createTime"`
+	// ContentHash is populated only for uploads created after content-dedup was
+	// introduced. Historical rows stay NULL and are deliberately not backfilled.
+	// MySQL permits multiple NULLs in this unique index, so legacy duplicates do
+	// not block migration while new same-user duplicates are prevented.
+	ContentHash *string   `gorm:"column:content_hash;size:64;uniqueIndex:idx_file_owner_content_hash,priority:2" json:"-"`
+	StorageKey  string    `gorm:"size:512" json:"storageKey"`
+	FileUrl     string    `gorm:"size:1024" json:"fileUrl"`
+	FileSize    int64     `gorm:"default:0" json:"fileSize"`
+	FileType    string    `gorm:"size:32" json:"fileType"`                                // image|video|other
+	Category    string    `gorm:"size:32;not null;index;default:general" json:"category"` // general|character|scene
+	MimeType    string    `gorm:"size:128" json:"mimeType"`
+	StorageType string    `gorm:"size:32" json:"storageType"` // local|oss
+	CreateTime  time.Time `gorm:"autoCreateTime" json:"createTime"`
 }
 
 // TableName overrides the default pluralized table name.

@@ -1,12 +1,18 @@
 package chatattach
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
+
+	"tidecanvas/internal/config"
+	"tidecanvas/internal/pkg/storage"
 )
 
 func TestImageURLs(t *testing.T) {
@@ -163,6 +169,49 @@ func TestFilePartsForwardsAllowedDoc(t *testing.T) {
 	}
 	if !strings.Contains(note, "report.pdf") {
 		t.Errorf("note should list the forwarded file: %q", note)
+	}
+}
+
+func TestFilePartsReadsOwnedLocalObjectWithoutPublicHTTP(t *testing.T) {
+	store, err := storage.NewLocalStorage(config.StorageConfig{
+		LocalDir: t.TempDir(), PublicURL: "https://cdn.invalid.example/assets",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("freshly-uploaded-docx")
+	url, err := store.Save(context.Background(), "uploads/other/fresh.docx", bytes.NewReader(data), mimeOf("fresh.docx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, note := (Extractor{Store: store}).FileParts(context.Background(), []Attach{
+		{URL: url, Kind: "file", Name: "原始镜头提示词.docx"},
+	})
+	if len(files) != 1 {
+		t.Fatalf("owned object was not read directly: files=%#v note=%q", files, note)
+	}
+	if files[0].Filename != "原始镜头提示词.docx" {
+		t.Fatalf("filename = %q", files[0].Filename)
+	}
+	wantDataURI := "data:" + mimeOf("fresh.docx") + ";base64," + base64.StdEncoding.EncodeToString(data)
+	if files[0].DataURI != wantDataURI {
+		t.Fatalf("data URI = %q, want %q", files[0].DataURI, wantDataURI)
+	}
+}
+
+func TestFilePartsExplainsPerFileSizeLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(filePerBytes+1))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	files, note := (Extractor{Hosts: []string{u.Host}, httpClient: srv.Client()}).FileParts(
+		context.Background(),
+		[]Attach{{URL: srv.URL + "/oversized.docx", Kind: "file", Name: "超大文档.docx"}},
+	)
+	if len(files) != 0 || !strings.Contains(note, "15MB") || !strings.Contains(note, "超大文档.docx") {
+		t.Fatalf("size-limit result files=%#v note=%q", files, note)
 	}
 }
 

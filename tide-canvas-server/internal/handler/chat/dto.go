@@ -49,6 +49,7 @@ type MessageAttach struct {
 	// won't be sent to the model rather than failing the whole message.
 	URL  string `json:"url" binding:"required,max=2048"`
 	Kind string `json:"kind" binding:"omitempty,oneof=image video audio file"`
+	Name string `json:"name" binding:"omitempty,max=512"`
 }
 
 // AppendMessageDTO is the body for POST /api/im/conversations/:id/messages/append.

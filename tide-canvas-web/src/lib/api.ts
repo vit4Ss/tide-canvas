@@ -91,7 +91,7 @@ export const aiApi = {
     http.get<{ cost: number }>("/api/ai/optimize-cost"),
   gridSplit: (imageUrl: string, rows: number, cols: number, cells?: number[]) =>
     http.post<string[]>("/api/ai/grid-split", { imageUrl, rows, cols, ...(cells && cells.length ? { cells } : {}) }),
-  /** Move an uploaded PNG/JPEG frame into generation history. The endpoint is idempotent by fileId. */
+  /** Promote an uploaded PNG/JPEG frame into generation history. The endpoint is idempotent by fileId. */
   registerCapturedFrame: async (data: CapturedFrameDTO) => {
     const first = await http.post<AiTaskVO>("/api/ai/tasks/frame-capture", data);
     return retryableUploadResult(first)
@@ -128,6 +128,7 @@ interface FilePresignVO {
   contentType?: string;
   /** Headers covered by the storage signature; forward them unchanged. */
   headers?: Record<string, string>;
+  existingFile?: FileVO;
 }
 
 export const fileApi = {
@@ -137,7 +138,7 @@ export const fileApi = {
     http.uploadProgress<FileVO>("/api/files/upload", file, onProgress),
   uploadBatch: (formData: FormData) =>
     http.upload<FileVO[]>("/api/files/upload/batch", formData),
-  presign: (data: { filename: string; contentType: string; size: number; fileType?: string; category?: FileCategory }) =>
+  presign: (data: { filename: string; contentType: string; size: number; contentHash?: string; fileType?: string; category?: FileCategory }) =>
     http.post<FilePresignVO>("/api/files/presign", data),
   register: (data: { key: string; originalName: string; contentType: string; fileType?: string; category?: FileCategory }) =>
     http.post<FileVO>("/api/files/register", data),
@@ -157,6 +158,12 @@ export const fileApi = {
  */
 export interface UploadFileSmartOptions extends UploadLimitOptions {
   category?: FileCategory;
+}
+
+async function uploadedFileSHA256(file: File): Promise<string | undefined> {
+  if (!globalThis.crypto?.subtle) return undefined;
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function retryableUploadResult(result: Result<unknown>): boolean {
@@ -194,8 +201,13 @@ export async function uploadFileSmart(file: File, onProgress?: (pct: number) => 
   const executable = executableUploadResult<FileVO>(file);
   if (executable) return executable;
   const contentType = file.type || "application/octet-stream";
+  const contentHash = await uploadedFileSHA256(file).catch(() => undefined);
   try {
-    const pre = await fileApi.presign({ filename: file.name, contentType, size: file.size, category: options?.category });
+    const pre = await fileApi.presign({ filename: file.name, contentType, size: file.size, contentHash, category: options?.category });
+    if (pre.success && pre.data?.existingFile) {
+      onProgress?.(100);
+      return { ...pre, data: { ...pre.data.existingFile, reused: true } };
+    }
     if (pre.success && pre.data?.direct && pre.data.uploadUrl && pre.data.key) {
       const putHeaders = {
         "Content-Type": pre.data.contentType || contentType,

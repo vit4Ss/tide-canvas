@@ -19,10 +19,6 @@ type repo struct {
 
 func newRepo(db *gorm.DB) *repo { return &repo{db: db} }
 
-func (r *repo) create(ctx context.Context, f *model.File) error {
-	return r.db.WithContext(ctx).Create(f).Error
-}
-
 // get fetches a file by id. Returns (nil, nil) when not found.
 func (r *repo) get(ctx context.Context, id idgen.ID) (*model.File, error) {
 	var f model.File
@@ -34,10 +30,6 @@ func (r *repo) get(ctx context.Context, id idgen.ID) (*model.File, error) {
 		return nil, err
 	}
 	return &f, nil
-}
-
-func (r *repo) delete(ctx context.Context, id idgen.ID) error {
-	return r.db.WithContext(ctx).Delete(&model.File{}, "id = ?", id).Error
 }
 
 // list returns a page of the owner's files filtered by the query.
@@ -122,14 +114,4 @@ func parseFlexDate(s string) time.Time {
 		}
 	}
 	return time.Time{}
-}
-
-// addStorageUsed atomically increments the user's storage usage counter.
-func (r *repo) addStorageUsed(ctx context.Context, ownerID idgen.ID, delta int64) error {
-	if delta == 0 {
-		return nil
-	}
-	return r.db.WithContext(ctx).Model(&model.User{}).
-		Where("id = ?", ownerID).
-		UpdateColumn("storage_used", gorm.Expr("GREATEST(storage_used + ?, 0)", delta)).Error
 }

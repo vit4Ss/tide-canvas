@@ -765,6 +765,7 @@ export function AssetsBrowser({
     try {
       await ensureSession();
       let ok = 0;
+      let reused = 0;
       const category = FILTER_TO_CATEGORY[filter];
       // Three concurrent uploads keep multi-file batches responsive without
       // saturating the browser, OSS connection pool, or server fallback path.
@@ -773,11 +774,17 @@ export function AssetsBrowser({
           pickedFiles.slice(i, i + 3).map((file) => uploadFileSmart(file, undefined, { category })),
         );
         ok += results.filter((result) => result.success).length;
+        reused += results.filter((result) => result.success && result.data?.reused).length;
       }
       const failed = pickedFiles.length - ok + rejected;
+      const created = ok - reused;
       toast[ok > 0 ? "success" : "error"](
         ok > 0
-          ? failed > 0 ? `已上传 ${ok} 个，${failed} 个失败` : `已上传 ${ok} 个文件`
+          ? reused > 0
+            ? failed > 0
+              ? `新增 ${created} 个，复用 ${reused} 个相同文件，${failed} 个失败`
+              : `新增 ${created} 个，复用 ${reused} 个相同文件`
+            : failed > 0 ? `已上传 ${ok} 个，${failed} 个失败` : `已上传 ${ok} 个文件`
           : "上传失败，请稍后重试",
       );
       if (ok > 0) {

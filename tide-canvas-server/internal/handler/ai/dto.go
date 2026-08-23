@@ -67,15 +67,18 @@ type gridSplitDTO struct {
 	Cells    []int  `json:"cells"`
 }
 
-// capturedFrameDTO promotes a freshly uploaded PNG/JPEG into generation history.
-// FileID is authoritative: the service verifies that the upload belongs to the
-// caller, creates a completed AiTask, then removes the ordinary upload record in
-// the same transaction so the frame appears in exactly one asset collection.
+// capturedFrameDTO promotes an owned PNG/JPEG into generation history. FileID is
+// authoritative. A new temporary upload can be moved; a missing move capability
+// preserves the existing asset and gives history an independent object copy.
 type capturedFrameDTO struct {
 	FileID      idgen.ID `json:"fileId"`
 	CaptureTime float64  `json:"captureTime"`
 	Width       int      `json:"width"`
 	Height      int      `json:"height"`
+	// MoveOriginal is an explicit capability from the upload response: only a
+	// newly-created temporary File may be moved. Missing/false is fail-safe for
+	// old or cached clients and clones the object without deleting the asset.
+	MoveOriginal bool `json:"moveOriginal"`
 }
 
 // taskQuery is the query string of GET /api/ai/tasks (AiTaskQuery).

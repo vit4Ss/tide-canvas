@@ -94,6 +94,7 @@ export interface CreateConversationDTO {
 export interface MessageAttachment {
   url: string;
   kind: "image" | "video" | "audio" | "file";
+  name?: string;
 }
 
 /** Body for POST /api/im/conversations/:id/messages (and /stream). Type defaults

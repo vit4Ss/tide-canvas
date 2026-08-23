@@ -81,6 +81,8 @@ export interface RefItem {
   url?: string; // hosted URL after upload (sent to the backend)
   name?: string; // 原始文件名(预览标题用)
   uploading: boolean;
+  /** 0-100 upload progress; 0 also covers local hashing/presign preparation. */
+  progress?: number;
   failed?: boolean;
 }
 
@@ -90,6 +92,8 @@ export interface RefPolicy {
   max: number;
   /** per-file size limit in MB (0 / undefined = unlimited). */
   maxSizeMB?: number;
+  /** Optional stricter limits for individual attachment kinds. */
+  maxSizeByKind?: Partial<Record<RefKind, number>>;
   /** allowed file extensions (lowercase, no dot); undefined/empty = any. */
   exts?: string[];
   /** file-picker accept attribute; undefined = no restriction. */
