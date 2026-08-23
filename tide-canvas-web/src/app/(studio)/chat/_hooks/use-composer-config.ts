@@ -26,6 +26,7 @@ import { resolutionRank } from "@/components/studio/create-studio/utils";
 import { configuredMatrix, keyVariants, matrixPrice, resolveVideoPointCost } from "@/lib/price-matrix";
 import { supportedOmniReferenceKinds } from "@/lib/omni-reference";
 import type { GenModelsApi } from "./use-gen-models";
+import { preferredMediaAnalysisModel, toolNeedsMediaAnalysisModel } from "./tool-analysis-model";
 
 export function useComposerConfig(models: GenModelsApi, toolSkill: SkillVO | null = null) {
   const { genModels, model, setModel, selModel, mCfg, isVid, webSearchAvail } = models;
@@ -62,6 +63,20 @@ export function useComposerConfig(models: GenModelsApi, toolSkill: SkillVO | nul
   const countOpts = mCfg?.batchOptions?.length ? mCfg.batchOptions : [1, 2, 3, 4];
   const batchMax = Math.max(...countOpts);
   const toggleSel = (k: string) => setOpenSel((cur) => (cur === k ? null : k));
+  const needsMediaAnalysisModel = useMemo(
+    () => toolNeedsMediaAnalysisModel(toolSkill),
+    [toolSkill],
+  );
+  const mediaAnalysisModel = useMemo(
+    () => preferredMediaAnalysisModel(genModels, selModel, toolSkill),
+    [genModels, selModel, toolSkill],
+  );
+
+  useEffect(() => {
+    if (!needsMediaAnalysisModel || !mediaAnalysisModel || mediaAnalysisModel.name === model) return;
+    setModel(mediaAnalysisModel.name);
+    toast.info(`已切换到支持媒体分析的模型「${mediaAnalysisModel.name}」`);
+  }, [mediaAnalysisModel, model, needsMediaAnalysisModel, setModel]);
 
   // reference policy for the current model/mode. For a 文本模型 it is driven by
   // 模型管理 config (fileUpload on → 图片附件，数量 maxFileCount、单文件 maxFileSizeMB)；

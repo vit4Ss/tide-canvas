@@ -34,6 +34,7 @@ import type {
   UserGenerationHistoryVO,
   UserHistoryAssetVO,
 } from "@/types/ai";
+import { shouldShowGenerationResult } from "@/lib/generation-result-visibility";
 
 type MediaFilter = "" | "image" | "video" | "audio" | "3d" | "text";
 
@@ -375,10 +376,12 @@ function DetailDrawer({ row, onClose }: { row: UserGenerationHistoryVO; onClose:
             <div className="muted" style={{ fontSize: 12.5, marginTop: 6 }}>{fmtTime(row.createTime)}</div>
           </div>
 
-          <section>
-            <SectionTitle>生成结果</SectionTitle>
-            <ResultBlock detail={detail} row={row} />
-          </section>
+          {shouldShowGenerationResult(row.mediaType, detail?.mediaType) && (
+            <section>
+              <SectionTitle>生成结果</SectionTitle>
+              <ResultBlock detail={detail} row={row} />
+            </section>
+          )}
 
           <section>
             <SectionTitle>生成参数</SectionTitle>

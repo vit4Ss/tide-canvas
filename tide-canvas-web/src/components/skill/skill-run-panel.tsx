@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronRight, CircleAlert, Clock3, ExternalLink, FileDown, Loader2, RotateCcw, X } from "lucide-react";
 import { defaultSkillInputValues, validateSkillInputValues } from "@/lib/skill-api";
 import type { SkillRunAction, SkillRunArtifactVO, SkillRunVO } from "@/types/skill-run";
-import { isSkillRunActive, isSkillRunTerminal, skillRunError } from "@/types/skill-run";
+import { isSkillRunTerminal, skillRunError } from "@/types/skill-run";
 import { SkillInputFields } from "./skill-input-fields";
 import type { PopoverSelectTone } from "@/components/shared/popover-select";
 import CapturableVideo from "@/components/studio/create-studio/video-result";
@@ -172,9 +172,15 @@ export function SkillRunPanel({
       </header>
 
       {(run.status === "queued" || run.status === "running") && (
-        <div className={styles.progress} aria-label={`执行进度 ${Math.round(progress)}%`}>
+        <div
+          className={styles.progress}
+          role="progressbar"
+          aria-label="执行进度"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(progress)}
+        >
           <i style={{ transform: `scaleX(${Math.max(0.02, progress / 100)})` }} />
-          <span>{Math.round(progress)}%</span>
         </div>
       )}
 
@@ -323,11 +329,14 @@ export function SkillRunPanel({
         </div>
       )}
 
-      {isSkillRunActive(run.status) && run.status !== "waiting_input" && run.status !== "waiting_confirmation" && onAction && (
-        <div className={styles.quietActions}>
-          <button type="button" disabled={busy} onClick={() => void dispatch("cancel")}>
-            取消运行
-          </button>
+      {(run.status === "queued" || run.status === "running") && (
+        <div className={styles.activeActions}>
+          <span aria-live="polite">{Math.round(progress)}%</span>
+          {onAction && (
+            <button type="button" disabled={busy} onClick={() => void dispatch("cancel")}>
+              取消运行
+            </button>
+          )}
         </div>
       )}
 

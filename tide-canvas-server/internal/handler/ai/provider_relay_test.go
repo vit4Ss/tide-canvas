@@ -233,6 +233,13 @@ func TestUserFacingGenError(t *testing.T) {
 	}
 }
 
+func TestUserFacingGenErrorExplainsUnsupportedAudioInput(t *testing.T) {
+	want := "当前文本模型不支持音频输入，请在后台配置支持音频理解或转写的模型"
+	if got := userFacingGenError(errStr("shell api error: this model does not support audio input")); got != want {
+		t.Fatalf("unsupported audio input = %q, want %q", got, want)
+	}
+}
+
 func TestUserFacingGenErrorUsesSelectedRelayBusinessMessages(t *testing.T) {
 	t.Parallel()
 

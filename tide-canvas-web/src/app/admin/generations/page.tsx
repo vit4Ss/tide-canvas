@@ -47,6 +47,7 @@ import type {
 } from "@/types/admin-generations";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { UserRole } from "@/types/user";
+import { shouldShowGenerationResult } from "@/lib/generation-result-visibility";
 
 type PillTone = StatusPillProps["tone"];
 
@@ -454,10 +455,12 @@ function GenerationDetailDrawer({ id, onClose }: { id: string; onClose: () => vo
             </div>
           </div>
 
-          <section>
-            <SecTitle>生成结果</SecTitle>
-            <ResultBlock d={d} />
-          </section>
+          {shouldShowGenerationResult(d.scene) && (
+            <section>
+              <SecTitle>生成结果</SecTitle>
+              <ResultBlock d={d} />
+            </section>
+          )}
 
           <section>
             <SecTitle>生成参数</SecTitle>

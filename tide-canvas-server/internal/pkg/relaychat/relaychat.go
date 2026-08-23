@@ -33,10 +33,11 @@ type Msg struct {
 
 // Part is one block of a multimodal message content array.
 type Part struct {
-	Type     string    `json:"type"` // "text" | "image_url" | "file"
-	Text     string    `json:"text,omitempty"`
-	ImageURL *ImageURL `json:"image_url,omitempty"`
-	File     *FileData `json:"file,omitempty"`
+	Type       string      `json:"type"` // "text" | "image_url" | "file" | "input_audio"
+	Text       string      `json:"text,omitempty"`
+	ImageURL   *ImageURL   `json:"image_url,omitempty"`
+	File       *FileData   `json:"file,omitempty"`
+	InputAudio *InputAudio `json:"input_audio,omitempty"`
 }
 
 // ImageURL is the OpenAI image reference (a hosted URL or a data: URI).
@@ -57,6 +58,18 @@ type FileAttachment struct {
 	DataURI  string
 }
 
+// InputAudio is the OpenAI-compatible audio content block. Unlike file_data,
+// Data is raw base64 without a data-URL prefix; Format is currently mp3 or wav.
+type InputAudio struct {
+	Data   string `json:"data"`
+	Format string `json:"format"`
+}
+
+type AudioAttachment struct {
+	Data   string
+	Format string
+}
+
 // TextMsg builds a plain text message (content is a string).
 func TextMsg(role, text string) Msg {
 	return Msg{Role: role, Content: text}
@@ -73,10 +86,17 @@ func UserMultimodal(text string, imageURLs []string) Msg {
 // document files as OpenAI content parts. With no attachments it degrades to a
 // plain text message so the wire shape stays minimal.
 func UserWithAttachments(text string, imageURLs []string, files []FileAttachment) Msg {
-	if len(imageURLs) == 0 && len(files) == 0 {
+	return UserWithMediaAttachments(text, imageURLs, files, nil)
+}
+
+// UserWithMediaAttachments extends UserWithAttachments with dedicated audio
+// parts. Audio must never be sent through file_data: upstream document parsers
+// reject audio MIME types before the selected model sees the request.
+func UserWithMediaAttachments(text string, imageURLs []string, files []FileAttachment, audios []AudioAttachment) Msg {
+	if len(imageURLs) == 0 && len(files) == 0 && len(audios) == 0 {
 		return TextMsg("user", text)
 	}
-	parts := make([]Part, 0, len(imageURLs)+len(files)+1)
+	parts := make([]Part, 0, len(imageURLs)+len(files)+len(audios)+1)
 	if strings.TrimSpace(text) != "" {
 		parts = append(parts, Part{Type: "text", Text: text})
 	}
@@ -94,6 +114,14 @@ func UserWithAttachments(text string, imageURLs []string, files []FileAttachment
 			name = "附件"
 		}
 		parts = append(parts, Part{Type: "file", File: &FileData{Filename: name, FileData: f.DataURI}})
+	}
+	for _, audio := range audios {
+		data := strings.TrimSpace(audio.Data)
+		format := strings.ToLower(strings.TrimSpace(audio.Format))
+		if data == "" || (format != "mp3" && format != "wav") {
+			continue
+		}
+		parts = append(parts, Part{Type: "input_audio", InputAudio: &InputAudio{Data: data, Format: format}})
 	}
 	return Msg{Role: "user", Content: parts}
 }

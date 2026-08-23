@@ -86,7 +86,7 @@
 .progress {
   position: relative;
   height: 3px;
-  overflow: visible;
+  overflow: hidden;
   background: rgba(127, 127, 127, 0.16);
 }
 
@@ -96,14 +96,6 @@
   transform-origin: left;
   background: currentColor;
   transition: transform 240ms ease-out;
-}
-
-.progress span {
-  position: absolute;
-  top: 9px;
-  right: 14px;
-  color: var(--sr-muted);
-  font-size: 10px;
 }
 
 .steps {
@@ -188,6 +180,7 @@
 .artifact a,
 .actions button,
 .failure button,
+.activeActions button,
 .quietActions button {
   display: inline-flex;
   min-height: 30px;
@@ -211,6 +204,7 @@
 .artifact svg,
 .actions svg,
 .failure svg,
+.activeActions svg,
 .quietActions svg { width: 12px; height: 12px; }
 
 .decision,
@@ -258,6 +252,7 @@
 .actions button:disabled,
 .artifact button:disabled,
 .failure button:disabled,
+.activeActions button:disabled,
 .quietActions button:disabled { opacity: 0.48; cursor: not-allowed; }
 
 .fields {
@@ -277,6 +272,9 @@
 
 .failure { color: var(--sr-danger); }
 .failure button { align-self: flex-start; }
+.activeActions { display: flex; min-height: 38px; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 14px 10px; }
+.activeActions > span { color: var(--sr-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.activeActions button { min-height: 26px; color: var(--sr-muted); border: 0; }
 .quietActions { display: flex; justify-content: flex-end; gap: 6px; padding: 0 14px 12px; }
 .quietActions button { min-height: 26px; color: var(--sr-muted); border: 0; }
 .cost { padding: 0 14px 12px; text-align: right; }

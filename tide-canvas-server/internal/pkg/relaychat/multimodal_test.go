@@ -39,6 +39,20 @@ func TestUserMultimodalNoImages(t *testing.T) {
 	}
 }
 
+func TestUserMediaAttachmentsUseDedicatedAudioPart(t *testing.T) {
+	b, err := json.Marshal(UserWithMediaAttachments("转写", nil, nil, []AudioAttachment{{Data: "YWJj", Format: "mp3"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(b)
+	if !strings.Contains(got, `"type":"input_audio"`) || !strings.Contains(got, `"input_audio":{"data":"YWJj","format":"mp3"}`) {
+		t.Fatalf("audio input wire shape mismatch: %s", got)
+	}
+	if strings.Contains(got, `"type":"file"`) || strings.Contains(got, "file_data") || strings.Contains(got, "data:audio/") {
+		t.Fatalf("audio leaked through generic file_data: %s", got)
+	}
+}
+
 // TestLastUserTargeting mirrors streamReply's logic: build a transcript as text
 // messages, then replace the LAST user message with the multimodal variant. The
 // system prompt and assistant turns must be untouched; only the final user turn

@@ -1403,6 +1403,12 @@ var inputErrorRules = []struct {
 		"file too large", "file size exceeds", "resolution too high",
 	}, "参考素材体积或分辨率超限，请压缩后重试"},
 
+	{[]string{
+		"does not support audio input", "audio input is not supported",
+		"input_audio is not supported", "unsupported input_audio",
+	}, "当前文本模型不支持音频输入，请在后台配置支持音频理解或转写的模型"},
+	{[]string{"analysis response incomplete"}, "当前模型未能完成完整分析，请重试；如仍失败，请在后台配置支持文件输入的文本模型"},
+
 	// —— 提示词 ——
 	{[]string{
 		"prompt is too long", "prompt too long", "exceeds maximum length",

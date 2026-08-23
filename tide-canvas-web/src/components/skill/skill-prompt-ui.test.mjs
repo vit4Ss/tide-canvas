@@ -18,6 +18,7 @@ const chatApi = read("../../lib/chat-api.ts");
 const chatBubble = read("../../app/(studio)/chat/_components/message-bubble.tsx");
 const chatSkillPresentation = read("../../app/(studio)/chat/_components/skill-run-presentation.ts");
 const runPanel = read("./skill-run-panel.tsx");
+const runPanelStyles = read("./skill-run-panel.module.css");
 const quickStart = read("../canvas/canvas-quick-start.tsx");
 const assistant = read("../canvas/canvas-assistant-panel.tsx");
 const chipStyles = read("./skill-prompt-chip.module.css");
@@ -119,4 +120,13 @@ test("聊天里的纯文本工具结果使用普通 Markdown 回复而不是 Ski
   assert.match(chatBubble, /const finalText = run \? finalTextSkillResult\(run\) : ""/);
   assert.match(chatBubble, /<ReactMarkdown[\s\S]*\{finalText\}<\/ReactMarkdown>/);
   assert.match(chatBubble, /<CopyBtn text=\{finalText\} \/>/);
+});
+
+test("运行中的技能卡片将进度百分比与取消操作分隔显示", () => {
+  assert.match(runPanel, /role="progressbar"/);
+  assert.match(runPanel, /aria-valuenow=\{Math\.round\(progress\)\}/);
+  assert.match(runPanel, /className=\{styles\.activeActions\}[\s\S]*?<span aria-live="polite">\{Math\.round\(progress\)\}%<\/span>/);
+  assert.match(runPanel, /\{onAction && \([\s\S]*?dispatch\("cancel"\)/);
+  assert.match(runPanelStyles, /\.activeActions\s*\{[^}]*justify-content:\s*space-between/);
+  assert.doesNotMatch(runPanelStyles, /\.progress span/);
 });

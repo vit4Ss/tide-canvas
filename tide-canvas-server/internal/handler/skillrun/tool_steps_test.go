@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"golang.org/x/net/html"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 
 	"tidecanvas/internal/model"
 )
@@ -126,6 +128,58 @@ func TestConfiguredAnalysisModelUsesStepThenVersionDefault(t *testing.T) {
 	}
 }
 
+func TestMediaAnalysisModelsMustSupportTheirPreparedAttachments(t *testing.T) {
+	plain := model.MarketModel{Config: `{"fileUpload":false}`}
+	documents := model.MarketModel{Config: `{"fileUpload":true,"uploadFormats":["pdf","docx"]}`}
+	vision := model.MarketModel{Config: `{"fileUpload":true,"uploadFormats":["jpg","png"]}`}
+	legacyFileModel := model.MarketModel{Config: `{"paramsSchema":{"file_upload":true}}`}
+	if analysisModelSupports("analyze_video", plain) {
+		t.Fatal("plain text model was accepted for video analysis")
+	}
+	if analysisModelSupports("analyze_video", documents) {
+		t.Fatal("document-only model was accepted for video frames")
+	}
+	if !analysisModelSupports("analyze_video", vision) {
+		t.Fatal("vision file model was rejected for video analysis")
+	}
+	if !analysisModelSupports("analyze_audio", legacyFileModel) {
+		t.Fatal("relay file_upload capability was ignored for audio analysis")
+	}
+	if !analysisModelSupports("analyze_webpage", plain) {
+		t.Fatal("webpage analysis should not require file input")
+	}
+}
+
+func TestResolveAnalysisModelFallsBackFromAnIncompatibleSelection(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+strings.ReplaceAll(t.Name(), "/", "-")+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "cgo") {
+			t.Skip("sqlite driver requires CGO in this environment")
+		}
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.MarketModel{}); err != nil {
+		t.Fatal(err)
+	}
+	rows := []model.MarketModel{
+		{Name: "Plain", ModelKey: "plain", Type: "text", Status: 1, SortOrder: 0, Config: `{"fileUpload":false}`},
+		{Name: "Vision", ModelKey: "vision", Type: "text", Status: 1, SortOrder: 1, Config: `{"fileUpload":true,"uploadFormats":["jpg"]}`},
+	}
+	for index := range rows {
+		if err := db.Create(&rows[index]).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	service := &service{db: db}
+	resolved, err := service.resolveAnalysisModel("analyze_video", "", "plain")
+	if err != nil || resolved != "vision" {
+		t.Fatalf("resolveAnalysisModel() = %q, %v; want vision fallback", resolved, err)
+	}
+	if _, err := service.resolveAnalysisModel("analyze_video", "plain", ""); err == nil {
+		t.Fatal("explicitly configured incompatible analysis model was accepted")
+	}
+}
+
 func TestReusableAnalysisStepRequiresCompletedStepOrDurableTask(t *testing.T) {
 	tests := []struct {
 		name string
@@ -171,6 +225,11 @@ func TestAnalysisPromptsRequireEvidenceAndActionableStructure(t *testing.T) {
 	}
 	if formatMediaTimestamp(65.2) != "01:05" {
 		t.Fatalf("unexpected timestamp: %s", formatMediaTimestamp(65.2))
+	}
+	for _, handler := range []string{"analyze_video", "analyze_audio"} {
+		if !strings.Contains(analysisSystemPrompt(handler), "不要只给计划") {
+			t.Fatalf("%s prompt still permits a planning-only response", handler)
+		}
 	}
 }
 

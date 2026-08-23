@@ -135,7 +135,7 @@ func Truncate(s string, n int) string {
 // JSON 结构一起切掉,生成记录详情将无法展示「用户传了什么」。非 JSON 或
 // 无 data URI 时原样返回。
 func SanitizeDataURIs(body string) string {
-	if !strings.Contains(body, "data:") {
+	if !strings.Contains(body, "data:") && !strings.Contains(body, `"input_audio"`) {
 		return body
 	}
 	var v any
@@ -154,6 +154,12 @@ func SanitizeDataURIs(body string) string {
 func scrubDataURIs(v any) {
 	switch t := v.(type) {
 	case map[string]any:
+		if data, ok := t["data"].(string); ok && len(data) > 256 {
+			format, _ := t["format"].(string)
+			if format = strings.ToLower(strings.TrimSpace(format)); format == "mp3" || format == "wav" {
+				t["data"] = "…(base64 omitted, " + strconv.Itoa(len(data)) + " bytes)"
+			}
+		}
 		for k, val := range t {
 			if s, ok := val.(string); ok && strings.HasPrefix(s, "data:") && len(s) > 256 {
 				t[k] = "data:…(base64 omitted, " + strconv.Itoa(len(s)) + " bytes)"

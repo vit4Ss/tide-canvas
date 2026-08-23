@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 
@@ -30,6 +31,7 @@ type skillTextInput struct {
 	Prompt       string `json:"prompt"`
 	StrictJSON   bool   `json:"strictJson"`
 	WebSearch    bool   `json:"webSearch"`
+	AnalysisKind string `json:"analysisKind"`
 	Messages     []struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
@@ -90,6 +92,7 @@ func (s *service) runSkillTextCompletion(ctx context.Context, userID idgen.ID, m
 			}
 		}
 		files := make([]relaychat.FileAttachment, 0, len(in.Files))
+		audios := make([]relaychat.AudioAttachment, 0, 1)
 		for _, file := range in.Files {
 			dataURI := strings.TrimSpace(file.DataURI)
 			if dataURI == "" && strings.TrimSpace(file.URL) != "" {
@@ -102,9 +105,17 @@ func (s *service) runSkillTextCompletion(ctx context.Context, userID idgen.ID, m
 			if dataURI == "" {
 				continue
 			}
+			audio, isAudio, audioErr := inputAudioAttachment(dataURI, file.MimeType)
+			if audioErr != nil {
+				return GenerateResult{}, audioErr
+			}
+			if isAudio {
+				audios = append(audios, audio)
+				continue
+			}
 			files = append(files, relaychat.FileAttachment{Filename: strings.TrimSpace(file.Filename), DataURI: dataURI})
 		}
-		msgs = append(msgs, relaychat.UserWithAttachments(prompt, urls, files))
+		msgs = append(msgs, relaychat.UserWithMediaAttachments(prompt, urls, files, audios))
 	}
 	if len(msgs) == 0 {
 		return GenerateResult{}, errors.New("text completion prompt is required")
@@ -121,6 +132,8 @@ func (s *service) runSkillTextCompletion(ctx context.Context, userID idgen.ID, m
 			if !json.Valid([]byte(reply)) {
 				err = errors.New("model returned invalid JSON")
 			}
+		} else if !analysisResponseComplete(in.AnalysisKind, reply) {
+			err = errors.New("analysis response incomplete")
 		}
 	}
 	reqBody, _ := json.Marshal(msgs)
@@ -129,6 +142,68 @@ func (s *service) runSkillTextCompletion(ctx context.Context, userID idgen.ID, m
 		return GenerateResult{}, err
 	}
 	return GenerateResult{Meta: map[string]any{"text": reply}}, nil
+}
+
+func inputAudioAttachment(dataURI, mimeType string) (relaychat.AudioAttachment, bool, error) {
+	dataURI = strings.TrimSpace(dataURI)
+	mimeType = strings.ToLower(strings.TrimSpace(mimeType))
+	lower := strings.ToLower(dataURI)
+	isAudio := strings.HasPrefix(mimeType, "audio/") || strings.HasPrefix(lower, "data:audio/")
+	if !isAudio {
+		return relaychat.AudioAttachment{}, false, nil
+	}
+	separator := strings.IndexByte(dataURI, ',')
+	if separator <= 0 || separator == len(dataURI)-1 {
+		return relaychat.AudioAttachment{}, true, errors.New("audio input data is invalid")
+	}
+	header := strings.ToLower(strings.TrimSpace(dataURI[:separator]))
+	format := ""
+	switch header {
+	case "data:audio/mpeg;base64", "data:audio/mp3;base64":
+		format = "mp3"
+	case "data:audio/wav;base64", "data:audio/x-wav;base64", "data:audio/wave;base64":
+		format = "wav"
+	default:
+		return relaychat.AudioAttachment{}, true, errors.New("audio input format is unsupported")
+	}
+	data := strings.TrimSpace(dataURI[separator+1:])
+	if _, err := base64.StdEncoding.Strict().DecodeString(data); err != nil {
+		return relaychat.AudioAttachment{}, true, errors.New("audio input base64 is invalid")
+	}
+	return relaychat.AudioAttachment{Data: data, Format: format}, true, nil
+}
+
+var analysisTimestampPattern = regexp.MustCompile(`\[(?:\d{1,2}:)?\d{1,3}:\d{2}\]`)
+
+func analysisResponseComplete(kind, value string) bool {
+	kind = strings.TrimSpace(kind)
+	if kind != "analyze_video" && kind != "analyze_audio" {
+		return true
+	}
+	value = strings.TrimSpace(value)
+	minimumRunes := 180
+	if kind == "analyze_video" {
+		minimumRunes = 240
+	}
+	if len([]rune(value)) < minimumRunes || !analysisTimestampPattern.MatchString(value) {
+		return false
+	}
+	lower := strings.ToLower(value)
+	hasAny := func(values ...string) bool {
+		for _, candidate := range values {
+			if strings.Contains(lower, strings.ToLower(candidate)) {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasAny("转写", "asr", "transcript") {
+		return false
+	}
+	if kind == "analyze_audio" {
+		return hasAny("行动项", "待办", "决定", "action item")
+	}
+	return hasAny("叙事结构", "结构") && hasAny("镜头节奏", "节奏") && hasAny("改进", "建议", "优化")
 }
 
 const maxSkillTextTemporaryFileBytes = 16 << 20

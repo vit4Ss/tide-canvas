@@ -26,6 +26,18 @@ func TestSanitizeDataURIs(t *testing.T) {
 	}
 }
 
+func TestSanitizeInputAudioBase64(t *testing.T) {
+	payload := strings.Repeat("A", 5000)
+	body := `[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"` + payload + `","format":"mp3"}}]}]`
+	got := SanitizeDataURIs(body)
+	if strings.Contains(got, payload) || !strings.Contains(got, "base64 omitted") {
+		t.Fatalf("raw input_audio payload was not scrubbed: %s", got)
+	}
+	if !strings.Contains(got, `"format":"mp3"`) {
+		t.Fatalf("audio metadata was lost: %s", got)
+	}
+}
+
 // 无 data URI / 非 JSON 输入原样返回。
 func TestSanitizeDataURIsPassthrough(t *testing.T) {
 	plain := `{"prompt":"没有附件"}`
