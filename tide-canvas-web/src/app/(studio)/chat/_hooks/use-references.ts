@@ -222,29 +222,30 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
   const addAssetRef = useCallback(
     (url: string, kind: RefKind, name?: string, id?: string) => {
       const policy = refPolicy;
-      if (!policy || !policy.kinds.length || policy.max <= 0) return;
+      if (!policy || !policy.kinds.length || policy.max <= 0) return false;
       if (!policy.kinds.includes(kind)) {
         toast.info("当前模式不支持该类型素材");
-        return;
+        return false;
       }
       // 与本地上传同口径:后台配置了格式白名单则校验扩展名
       if (policy.exts && !policy.exts.includes(extOf(name || fileNameFromUrl(url)))) {
         toast.info(`该素材格式不支持，允许：${policy.exts.join(" / ")}`);
-        return;
+        return false;
       }
       if (refsRef.current.some((r) => r.url === url)) {
         toast.info("该素材已添加");
-        return;
+        return false;
       }
       if (refCountRef.current >= policy.max) {
         toast.info(`最多添加 ${policy.max} 个文件`);
-        return;
+        return false;
       }
       refCountRef.current += 1; // commit synchronously before any follow-up add
       setRefs((prev) => [
         ...prev,
         { key: `r${refSeq.current++}`, id, kind, blobUrl: "", url, name: name || fileNameFromUrl(url), uploading: false },
       ]);
+      return true;
     },
     [refPolicy],
   );
@@ -303,19 +304,23 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
     setAssetPickOpen(true);
   }, []);
 
-  // an asset chosen from 资产库 → add it as a hosted reference. 文档("doc")映射为
+  // assets chosen from 资产库 → add them as one bounded batch. 文档("doc")映射为
   // RefKind "file"：文本模型（kinds 含 file）可挂文档附件；媒体生成模式仍会被
   // addAssetRef 的 kinds 校验拒绝，不会把文档 URL 当图片发给模型。
-  const chooseAsset = useCallback(
-    (a: PickedAsset) => {
+  const chooseAssets = useCallback(
+    (assets: PickedAsset[]) => {
       setAssetPickOpen(false);
-      const kind: RefKind | null =
-        a.kind === "image" || a.kind === "video" || a.kind === "audio" ? a.kind : a.kind === "doc" ? "file" : null;
-      if (!kind) {
-        toast.info("当前模式不支持该类型素材");
-        return;
+      let added = 0;
+      for (const asset of assets) {
+        const kind: RefKind | null =
+          asset.kind === "image" || asset.kind === "video" || asset.kind === "audio"
+            ? asset.kind
+            : asset.kind === "doc"
+              ? "file"
+              : null;
+        if (kind && addAssetRef(asset.url, kind, asset.name, asset.id)) added++;
       }
-      addAssetRef(a.url, kind, a.name, a.id);
+      if (added > 1) toast.success(`已添加 ${added} 个参考素材`);
     },
     [addAssetRef],
   );
@@ -420,7 +425,7 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
     openAssets,
     assetPickOpen,
     setAssetPickOpen,
-    chooseAsset,
+    chooseAssets,
   };
 }
 

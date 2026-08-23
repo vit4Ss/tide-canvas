@@ -405,8 +405,12 @@ export default function ChatPage() {
         <AssetPickerDialog
           key={cfg.refPolicy?.kinds.join(",") || "none"}
           refPolicy={cfg.refPolicy}
+          existingUrls={refsApi.refs.flatMap((ref) =>
+            cfg.refPolicy?.kinds.includes(ref.kind) && ref.url ? [ref.url] : [],
+          )}
+          existingCount={refsApi.refs.filter((ref) => cfg.refPolicy?.kinds.includes(ref.kind)).length}
           onClose={() => refsApi.setAssetPickOpen(false)}
-          onPick={refsApi.chooseAsset}
+          onPick={refsApi.chooseAssets}
         />
       )}
     </div>

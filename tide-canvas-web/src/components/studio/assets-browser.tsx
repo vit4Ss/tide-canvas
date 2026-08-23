@@ -336,14 +336,21 @@ function groupByDate<T>(rows: T[], getTime: (r: T) => string): Group<T>[] {
 
 export function AssetsBrowser({
   pickMode = false,
+  multiPick = false,
   onPick,
+  pickedUrls,
+  disabledPickUrls,
   defaultTab = "hist",
   defaultFilter = "image",
   allowedFilters,
 }: {
   /** when true, cards select instead of opening, and 批量/同步 actions are hidden */
   pickMode?: boolean;
+  /** pickMode 下允许连续勾选，由调用方集中确认。 */
+  multiPick?: boolean;
   onPick?: (asset: PickedAsset) => void;
+  pickedUrls?: ReadonlySet<string>;
+  disabledPickUrls?: ReadonlySet<string>;
   /** initial tab; unsupported generation filters are normalized to 上传历史 */
   defaultTab?: TabKey;
   /** initial media filter (image | video | audio | doc) */
@@ -984,7 +991,10 @@ export function AssetsBrowser({
                       key={t.id}
                       task={t}
                       pickMode={pickMode}
+                      multiPick={multiPick}
                       onPick={onPick}
+                      pickedUrls={pickedUrls}
+                      disabledPickUrls={disabledPickUrls}
                       onOpen={openAsset}
                       batchMode={batchMode}
                       selected={selected.has(String(t.id))}
@@ -1021,7 +1031,10 @@ export function AssetsBrowser({
                       key={f.id}
                       file={f}
                       pickMode={pickMode}
+                      multiPick={multiPick}
                       onPick={onPick}
+                      pickedUrls={pickedUrls}
+                      disabledPickUrls={disabledPickUrls}
                       onOpen={openAsset}
                       batchMode={batchMode}
                       selected={selected.has(String(f.id))}
@@ -1148,7 +1161,10 @@ export function AssetsBrowser({
 const TaskCard = memo(function TaskCard({
   task,
   pickMode,
+  multiPick,
   onPick,
+  pickedUrls,
+  disabledPickUrls,
   onOpen,
   batchMode,
   selected,
@@ -1156,7 +1172,10 @@ const TaskCard = memo(function TaskCard({
 }: {
   task: AiTaskVO;
   pickMode?: boolean;
+  multiPick?: boolean;
   onPick?: (asset: PickedAsset) => void;
+  pickedUrls?: ReadonlySet<string>;
+  disabledPickUrls?: ReadonlySet<string>;
   onOpen?: (asset: OpenAsset) => void;
   batchMode?: boolean;
   selected?: boolean;
@@ -1188,6 +1207,10 @@ const TaskCard = memo(function TaskCard({
       ? [{ url: task.resultUrl, title: task.modelName || "未命名" }]
       : [];
   }, [tracks, task.resultUrl, task.modelName]);
+  const pickUrl = kind === "audio" ? audioRows[0]?.url : task.resultUrl;
+  const pickSelected = !!multiPick && !!pickUrl && !!pickedUrls?.has(pickUrl);
+  const pickDisabled = !!pickUrl && !!disabledPickUrls?.has(pickUrl);
+  const visuallySelected = batchMode ? !!selected : pickSelected;
   // 非成功任务没有结果可看,兜底卡上标出状态,免得看起来像加载失败的空白图。
   const statusLabel =
     task.status === AiTaskStatus.PROCESSING
@@ -1209,8 +1232,10 @@ const TaskCard = memo(function TaskCard({
         toast.info("3D 模型暂不支持选为参考素材");
         return;
       }
-      if (task.resultUrl) {
-        onPick?.({ url: task.resultUrl, name: task.modelName || "生成图", kind });
+      if (pickDisabled) {
+        toast.info("该素材已经添加到输入框");
+      } else if (pickUrl) {
+        onPick?.({ url: pickUrl, name: task.modelName || "生成图", kind });
       } else {
         toast.info("该生成暂无可选取的结果");
       }
@@ -1261,9 +1286,16 @@ const TaskCard = memo(function TaskCard({
           <button
             type="button"
             className="as-songrow-pick"
-            onClick={() => onPick?.({ url: audioRows[0].url, name: audioRows[0].title || "生成音乐", kind })}
+            aria-pressed={multiPick ? pickSelected : undefined}
+            onClick={() => {
+              if (pickDisabled) {
+                toast.info("该素材已经添加到输入框");
+                return;
+              }
+              onPick?.({ url: audioRows[0].url, name: audioRows[0].title || "生成音乐", kind });
+            }}
           >
-            选取
+            {pickDisabled ? "已添加" : pickSelected ? "已选择" : "选择"}
           </button>
         )}
       </div>
@@ -1275,11 +1307,13 @@ const TaskCard = memo(function TaskCard({
       type="button"
       className="as-card"
       style={{
-        outline: selected ? "3px solid var(--accent, #7c8cff)" : undefined,
+        outline: visuallySelected ? "3px solid var(--accent, #7c8cff)" : undefined,
         outlineOffset: -3,
+        opacity: pickDisabled ? 0.5 : undefined,
       }}
       title={accessibleName}
-      aria-label={`${batchMode ? selected ? "取消选择" : "选择" : pickMode ? "选取" : "打开"}${accessibleName}`}
+      aria-label={`${batchMode ? selected ? "取消选择" : "选择" : pickMode ? pickDisabled ? "已添加" : pickSelected ? "取消选择" : "选择" : "打开"}${accessibleName}`}
+      aria-pressed={pickMode && multiPick ? pickSelected : undefined}
       onClick={onClick}
     >
       {/* 视频:背景图铺不了 mp4(浏览器不渲染),用 video 首帧做卡片视觉 */}
@@ -1305,7 +1339,8 @@ const TaskCard = memo(function TaskCard({
           <span className="as-tool-name">{toolOriginLabel}</span>
         </span>
       )}
-      {pickMode && <span className="pick" />}
+      {pickMode && !multiPick && <span className="pick" />}
+      {pickMode && multiPick && <SelectBadge selected={pickSelected} />}
       {batchMode && <SelectBadge selected={!!selected} />}
       {!!task.resultUrl && isVid && <span className="vbadge">▶</span>}
       {!!task.resultUrl && kind === "audio" && <span className="vbadge">♪</span>}
@@ -1379,7 +1414,10 @@ function SelectBadge({ selected }: { selected: boolean }) {
 const UploadCard = memo(function UploadCard({
   file,
   pickMode,
+  multiPick,
   onPick,
+  pickedUrls,
+  disabledPickUrls,
   onOpen,
   batchMode,
   selected,
@@ -1387,7 +1425,10 @@ const UploadCard = memo(function UploadCard({
 }: {
   file: FileVO;
   pickMode?: boolean;
+  multiPick?: boolean;
   onPick?: (asset: PickedAsset) => void;
+  pickedUrls?: ReadonlySet<string>;
+  disabledPickUrls?: ReadonlySet<string>;
   onOpen?: (asset: OpenAsset) => void;
   batchMode?: boolean;
   selected?: boolean;
@@ -1395,6 +1436,9 @@ const UploadCard = memo(function UploadCard({
 }) {
   const kind = fileMediaKind(file);
   const isImg = kind === "image";
+  const pickSelected = !!multiPick && !!file.fileUrl && !!pickedUrls?.has(file.fileUrl);
+  const pickDisabled = !!file.fileUrl && !!disabledPickUrls?.has(file.fileUrl);
+  const visuallySelected = batchMode ? !!selected : pickSelected;
 
   const onClick = () => {
     if (batchMode) {
@@ -1402,7 +1446,9 @@ const UploadCard = memo(function UploadCard({
       return;
     }
     if (pickMode) {
-      if (file.fileUrl) {
+      if (pickDisabled) {
+        toast.info("该素材已经添加到输入框");
+      } else if (file.fileUrl) {
         onPick?.({ id: String(file.id), url: file.fileUrl, name: file.originalName || "文件", kind });
       } else {
         toast.info("该文件暂无可选取的内容");
@@ -1440,9 +1486,16 @@ const UploadCard = memo(function UploadCard({
           <button
             type="button"
             className="as-songrow-pick"
-            onClick={() => onPick?.({ id: String(file.id), url: file.fileUrl!, name: file.originalName || "音频", kind })}
+            aria-pressed={multiPick ? pickSelected : undefined}
+            onClick={() => {
+              if (pickDisabled) {
+                toast.info("该素材已经添加到输入框");
+                return;
+              }
+              onPick?.({ id: String(file.id), url: file.fileUrl!, name: file.originalName || "音频", kind });
+            }}
           >
-            选取
+            {pickDisabled ? "已添加" : pickSelected ? "已选择" : "选择"}
           </button>
         )}
       </div>
@@ -1454,14 +1507,17 @@ const UploadCard = memo(function UploadCard({
       type="button"
       className="as-card as-up"
       style={{
-        outline: selected ? "3px solid var(--accent, #7c8cff)" : undefined,
+        outline: visuallySelected ? "3px solid var(--accent, #7c8cff)" : undefined,
         outlineOffset: -3,
+        opacity: pickDisabled ? 0.5 : undefined,
       }}
       title={file.originalName}
-      aria-label={`${batchMode ? selected ? "取消选择" : "选择" : pickMode ? "选取" : "打开"}${file.originalName || "文件"}`}
+      aria-label={`${batchMode ? selected ? "取消选择" : "选择" : pickMode ? pickDisabled ? "已添加" : pickSelected ? "取消选择" : "选择" : "打开"}${file.originalName || "文件"}`}
+      aria-pressed={pickMode && multiPick ? pickSelected : undefined}
       onClick={onClick}
     >
       {batchMode && <SelectBadge selected={!!selected} />}
+      {pickMode && multiPick && <SelectBadge selected={pickSelected} />}
       {isImg && file.fileUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
@@ -1484,7 +1540,7 @@ const UploadCard = memo(function UploadCard({
           <span className="as-file-ic">{FILE_GLYPH[kind] || "▤"}</span>
         </span>
       )}
-      {pickMode && <span className="pick" />}
+      {pickMode && !multiPick && <span className="pick" />}
       <span className="as-up-badge">
         {file.category === FileCategory.CHARACTER
           ? "角色"
