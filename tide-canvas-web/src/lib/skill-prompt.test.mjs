@@ -43,11 +43,11 @@ test("缺少 howTo 的旧媒体预设会得到与输出类型匹配的可编辑�
 test("工具技能会带入与用途匹配的可编辑任务描述", () => {
   assert.equal(
     visibleSkillPrompt(skill({ kind: "tool", title: "生成 PPT", outputType: "file", howTo: "" })),
-    "制作一份【主题】PPT，面向【目标受众】，重点介绍【主要内容】，约 10 页。",
+    "制作一份关于【主题】的商业级 PPT，面向【目标受众】，希望受众最终【理解、相信或决定什么】，约 10 页。请结合我上传的参考图和资料，提炼具体内容、构图与配色。",
   );
   assert.equal(
     visibleSkillPrompt(skill({ kind: "tool", title: "网页分析", outputType: "text", howTo: "" })),
-    "分析这个网页：【粘贴公开网页地址】，重点总结【核心观点、论据和风险】。",
+    "分析这个网页：【粘贴公开网页地址】，围绕【具体问题】整理页面主张、证据、含义、风险和缺失信息。",
   );
 });
 

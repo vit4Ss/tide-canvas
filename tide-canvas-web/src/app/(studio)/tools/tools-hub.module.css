@@ -94,126 +94,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 文件生成与分析工具使用紧凑目录行，不引入无意义封面。 */
-.skillToolGrid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-}
-
-.skillToolCard,
-.skillToolSkeleton {
-  min-height: 84px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-
-.skillToolCard:nth-child(n + 3),
-.skillToolSkeleton:nth-child(n + 3) {
-  border-top: 1px solid var(--border);
-}
-
-.skillToolCard:nth-child(odd),
-.skillToolSkeleton:nth-child(odd) {
-  border-right: 1px solid var(--border);
-}
-
-.skillToolSkeleton {
-  background: var(--surface-2);
-  animation: skeletonPulse 1.4s ease-in-out infinite alternate;
-}
-
-.skillToolCard {
-  position: relative;
-  display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  padding: 16px;
-  text-align: left;
-  color: inherit;
-  cursor: pointer;
-  transition: border-color 160ms ease-out, background 160ms ease-out;
-}
-
-.skillToolCard:hover {
-  background: var(--surface-2);
-}
-
-.skillToolIcon {
-  width: 40px;
-  height: 40px;
-  display: grid;
-  place-items: center;
-  color: var(--text-dim);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-}
-
-.skillToolIcon svg,
-.skillToolArrow {
-  width: 17px;
-  height: 17px;
-  stroke-width: 1.8;
-}
-
-.skillToolCopy {
-  min-width: 0;
-}
-
-.skillToolCopy strong,
-.skillToolCopy small {
-  display: block;
-}
-
-.skillToolCopy strong {
-  font-size: 14px;
-  line-height: 1.4;
-  font-weight: 600;
-}
-
-.skillToolCopy small {
-  margin-top: 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  color: var(--text-faint);
-}
-
-.skillToolType {
-  margin-right: 20px;
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 12px;
-  color: var(--text-faint);
-}
-
-.skillToolArrow {
-  position: absolute;
-  right: 16px;
-  color: var(--text-faint);
-  opacity: 0;
-  transform: translateX(-4px);
-  transition: opacity 160ms ease-out, transform 160ms ease-out;
-}
-
-.skillToolCard:hover .skillToolArrow,
-.skillToolCard:focus-visible .skillToolArrow {
-  opacity: 1;
-  transform: none;
-}
-
-.processingSection {
-  margin-top: 48px;
-  padding-top: 32px;
-  border-top: 1px solid var(--border);
-}
-
 /* ── 工具目录 ─────────────────────────────────────────────────────────── */
 
 .toolGrid,
@@ -762,7 +642,6 @@
 .stateBtn:focus-visible,
 .more button:focus-visible,
 .toolCard:focus-visible,
-.skillToolCard:focus-visible,
 .workCard:focus-visible,
 .previewClose:focus-visible {
   outline: 2px solid var(--text);
@@ -820,19 +699,8 @@
   }
 
   .toolGrid,
-  .toolSkeletonGrid,
-  .skillToolGrid {
+  .toolSkeletonGrid {
     grid-template-columns: 1fr;
-  }
-
-  .skillToolCard:nth-child(n + 2),
-  .skillToolSkeleton:nth-child(n + 2) {
-    border-top: 1px solid var(--border);
-  }
-
-  .skillToolCard:nth-child(odd),
-  .skillToolSkeleton:nth-child(odd) {
-    border-right: 0;
   }
 
   .toolSkeleton {
@@ -913,7 +781,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .toolCard,
-  .skillToolCard,
   .toolCoverImage,
   .toolOpen,
   .workStage,
@@ -929,8 +796,7 @@
     transition: none;
   }
 
-  .toolSkeleton,
-  .skillToolSkeleton {
+  .toolSkeleton {
     animation: none;
   }
 }

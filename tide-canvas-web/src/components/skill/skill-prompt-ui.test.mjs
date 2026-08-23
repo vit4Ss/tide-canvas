@@ -91,6 +91,7 @@ test("办公技能保留参考文件与联网并把两者传入执行链路", ()
   assert.match(chatSend, /\(\["image", "file"\] as RefItem\["kind"\]\[\]\)/);
   assert.match(chatSend, /if \(webSearch\) parameters\.webSearch = true/);
   assert.match(chatSend, /parameters\.textModelId = textModelId/);
+  assert.match(chatSend, /ref\.id \? \{ id: ref\.id \}/);
   assert.match(chatSend, /selModel\?\.modelKey \|\| selModel\?\.id/);
   assert.match(chatSend, /webSearch: payload\.webSearch/);
   assert.match(chatApi, /\{ webSearch: true \}/);

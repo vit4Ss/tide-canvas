@@ -68,6 +68,7 @@ var baselineConfigKeys = map[string]struct{}{
 	"points.checkinMonthlyCap":           {},
 	"points.inviteReward":                {},
 	"points.signupBonus":                 {},
+	"storage.ossAccelerateEnabled":       {},
 }
 
 // adminVisibleConfig scopes a sys_config query to the rows the 配置管理 screen
@@ -123,6 +124,10 @@ func RegisterConfig(g *gin.RouterGroup, d *app.Deps) {
 					response.Fail(c, response.CodeBadRequest, "单用户生成并发上限必须是 1-100 的整数")
 					return
 				}
+			}
+			if key == "storage.ossAccelerateEnabled" && items[i].ConfigValue != "0" && items[i].ConfigValue != "1" {
+				response.Fail(c, response.CodeBadRequest, "OSS 传输加速开关必须是 0 或 1")
+				return
 			}
 		}
 

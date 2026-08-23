@@ -72,9 +72,9 @@ func TestPublicInputSchemaKeepsReservedRequirements(t *testing.T) {
 	}
 }
 
-func TestPPTSeedUsesCommercialNarrativeSchemaV2(t *testing.T) {
-	if baselineToolVersion("tool-pptx") != 2 {
-		t.Fatal("PPT seed must upgrade existing official v1 snapshots")
+func TestPPTSeedUsesCommercialNarrativeSchemaV3(t *testing.T) {
+	if baselineToolVersion("tool-pptx") != 3 {
+		t.Fatal("PPT seed must upgrade untouched official v1/v2 snapshots")
 	}
 	var ppt seedToolSkill
 	for _, definition := range baselineToolSkills {
@@ -83,9 +83,35 @@ func TestPPTSeedUsesCommercialNarrativeSchemaV2(t *testing.T) {
 			break
 		}
 	}
-	for _, required := range []string{"imageIndex", "metrics", "comparison", "timeline", "closing", "参考图"} {
+	for _, required := range []string{"imageIndexes", "metrics", "comparison", "timeline", "closing", "参考图", "polish", "AUTO", "智能匹配"} {
 		if !strings.Contains(ppt.manifest, required) {
 			t.Fatalf("PPT commercial prompt is missing %q", required)
+		}
+	}
+}
+
+func TestOtherToolSeedsUseReviewedV2Workflows(t *testing.T) {
+	for _, definition := range baselineToolSkills {
+		if definition.key == "tool-pptx" {
+			continue
+		}
+		if baselineToolVersion(definition.key) != 2 {
+			t.Fatalf("%s must publish the reviewed v2 workflow", definition.key)
+		}
+	}
+	checks := map[string][]string{
+		"tool-xlsx":           {"audit", "formula", "freezeRows", "autoFilter"},
+		"tool-docx":           {"edit", "numbered", "callout", "table"},
+		"tool-markdown":       {"edit", "标题层级", "代码围栏"},
+		"tool-video-analysis": {"analyze_video"},
+		"tool-audio-analysis": {"analyze_audio"},
+		"tool-web-analysis":   {"analyze_webpage"},
+	}
+	for _, definition := range baselineToolSkills {
+		for _, required := range checks[definition.key] {
+			if !strings.Contains(definition.manifest+definition.instructions, required) {
+				t.Fatalf("%s v2 workflow is missing %q", definition.key, required)
+			}
 		}
 	}
 }

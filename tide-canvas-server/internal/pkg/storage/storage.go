@@ -104,6 +104,15 @@ type StorageStrategy interface {
 	PublicRewrites() [][2]string
 }
 
+// ObjectReader is an optional capability implemented by first-party storage
+// backends. Server-side artifact builders use it to read an already-owned
+// object directly from storage instead of round-tripping through a public CDN.
+// Keeping it separate from StorageStrategy preserves compatibility with small
+// test and third-party implementations that only need the core contract.
+type ObjectReader interface {
+	Open(ctx context.Context, key string) (io.ReadCloser, error)
+}
+
 // ErrUnsupported is returned by operations a backend cannot perform.
 var ErrUnsupported = errors.New("storage: operation not supported")
 
@@ -173,6 +182,16 @@ func (l *LocalStorage) Save(ctx context.Context, key string, r io.Reader, conten
 		return "", err
 	}
 	return l.URL(rel), nil
+}
+
+// Open returns an owned local object for server-side processing.
+func (l *LocalStorage) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+	_ = ctx
+	rel := cleanKey(key)
+	if rel == "" {
+		return nil, errors.New("storage: empty key")
+	}
+	return os.Open(filepath.Join(l.baseDir, filepath.FromSlash(rel)))
 }
 
 // Delete removes the file for key; a non-existent file is treated as success.

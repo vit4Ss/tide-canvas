@@ -28,6 +28,25 @@ func TestLoadDefaultsToTestEnv(t *testing.T) {
 	if cfg.Relay.BaseURL != testRelayBaseURL {
 		t.Errorf("Relay.BaseURL = %q, want environment-pinned test relay %q", cfg.Relay.BaseURL, testRelayBaseURL)
 	}
+	if !cfg.Storage.AccelerateEnabled {
+		t.Error("test overlay should preserve existing transfer acceleration by default")
+	}
+}
+
+func TestLoadAllowsDisablingStorageAccelerationFromEnv(t *testing.T) {
+	t.Setenv("TIDECANVAS_ENV", "test")
+	t.Setenv("TIDECANVAS_STORAGE_ACCELERATEENABLED", "false")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Storage.AccelerateEnabled {
+		t.Fatal("storage acceleration env switch was ignored")
+	}
+	if cfg.Storage.AccelerateDomain == "" {
+		t.Fatal("disabling acceleration must retain the configured domain for legacy URL recognition")
+	}
 }
 
 func TestLoadProdRequiresJWTSecret(t *testing.T) {
@@ -66,6 +85,9 @@ func TestLoadProdAppliesOverlay(t *testing.T) {
 	}
 	if cfg.Relay.APIKey != "unit-test-prod-relay-key" {
 		t.Errorf("Relay.APIKey did not use the production environment override")
+	}
+	if !cfg.Storage.AccelerateEnabled || cfg.Storage.AccelerateDomain != "flowlinght.oss-accelerate.aliyuncs.com" {
+		t.Errorf("production storage acceleration = %v, %q", cfg.Storage.AccelerateEnabled, cfg.Storage.AccelerateDomain)
 	}
 }
 

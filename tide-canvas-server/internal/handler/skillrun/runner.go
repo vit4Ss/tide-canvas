@@ -1278,7 +1278,7 @@ func (s *service) addSkillTextAttachments(ctx context.Context, command map[strin
 	}
 	imageNote := ""
 	if len(imageNames) > 0 {
-		imageNote = fmt.Sprintf("本条任务附带 %d 张参考图，按上传顺序编号为参考图1至参考图%d（%s）。规划 PPT 时可通过 imageIndex 使用对应图片；只在内容相关时使用，每张图默认不重复。", len(imageNames), len(imageNames), strings.Join(imageNames, "、"))
+		imageNote = fmt.Sprintf("本条任务附带 %d 张参考图，按上传顺序编号为参考图1至参考图%d（%s）。请逐张读取，只陈述画面中可见的信息，并让图片影响内容判断与视觉建议；若当前输出协议包含 imageIndex 或 imageIndexes，可按编号安排图片，否则仅把它们作为内容与风格依据。", len(imageNames), len(imageNames), strings.Join(imageNames, "、"))
 	}
 	if note != "" || imageNote != "" {
 		prompt, _ := command["prompt"].(string)

@@ -19,10 +19,11 @@ import (
 // namespaced under a configurable project prefix (e.g. "canvas/uploads/") so a
 // bucket shared across projects never collides. Public URLs are built from the
 // CDN domain when set, else the bucket's regional virtual-host. When a
-// transfer-acceleration host is configured it is used for (a) server-side
-// uploads and direct-upload presigns (cross-border upload speedup) and (b)
-// rewriting URLs handed to overseas upstream suppliers (UpstreamURL) so
-// cross-border downloads do not time out.
+// transfer-acceleration host is configured and enabled it is used for (a)
+// server-side uploads and direct-upload presigns and (b) URLs handed to
+// overseas suppliers. When disabled, writes use the regional endpoint and
+// upstream reads stay on the public CDN; the configured host remains recognized
+// so older persisted URLs continue to work.
 
 // presignTTL bounds a direct-upload signed URL.
 const presignTTL = 10 * time.Minute
@@ -35,6 +36,7 @@ type OSSStorage struct {
 	publicBase     string   // base for frontend-facing URLs (CDN or regional)
 	regionalBase   string   // bucket virtual-host on the regional endpoint
 	accelerateBase string   // bucket host on the transfer-acceleration endpoint
+	accelerateOn   bool     // whether writes/presigns/upstream reads use acceleration
 	legacyBases    []string // 历史存储域名(老数据遗留),读时一并改写为 publicBase
 }
 
@@ -58,7 +60,7 @@ func NewOSSStorage(cfg config.StorageConfig) (*OSSStorage, error) {
 	// 展示 URL 不受影响,仍由 publicBase(CDN 优先)决定。
 	clientEndpoint := endpoint
 	var clientOpts []oss.ClientOption
-	if accelerateBase != "" {
+	if cfg.AccelerateEnabled && accelerateBase != "" {
 		clientEndpoint, clientOpts = accelerateClient(accelerateBase, bucketName)
 	}
 	client, err := oss.New(clientEndpoint, cfg.AccessKey, cfg.SecretKey, clientOpts...)
@@ -76,6 +78,7 @@ func NewOSSStorage(cfg config.StorageConfig) (*OSSStorage, error) {
 		publicBase:     publicBase,
 		regionalBase:   regionalBase,
 		accelerateBase: accelerateBase,
+		accelerateOn:   cfg.AccelerateEnabled && accelerateBase != "",
 		legacyBases:    parseLegacyHosts(cfg.LegacyHosts),
 	}, nil
 }
@@ -120,6 +123,22 @@ func (o *OSSStorage) Save(ctx context.Context, key string, r io.Reader, contentT
 	return o.URL(key), nil
 }
 
+// Open reads an owned object through the authenticated OSS client. Artifact
+// builders should prefer this path over fetching a public/CDN URL: CDN redirects,
+// hotlink policies and propagation delay must not silently drop source media.
+func (o *OSSStorage) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+	_ = ctx
+	rel := cleanKey(key)
+	if rel == "" {
+		return nil, errors.New("storage: empty key")
+	}
+	stream, err := o.bucket.GetObject(o.objectKey(rel))
+	if err != nil {
+		return nil, fmt.Errorf("storage: oss get: %w", err)
+	}
+	return stream, nil
+}
+
 // Delete removes the object; a missing object is treated as success.
 func (o *OSSStorage) Delete(ctx context.Context, key string) error {
 	rel := cleanKey(key)
@@ -137,8 +156,8 @@ func (o *OSSStorage) URL(key string) string {
 	return o.publicBase + "/" + o.objectKey(key)
 }
 
-// Presign returns a direct-to-OSS upload grant (a signed PUT URL). The frontend
-// PUTs the bytes straight to OSS, then registers the file by Key/FileURL.
+// Presign returns a direct-to-OSS upload grant. Its host follows the client
+// selected at startup: acceleration when enabled, regional OSS when disabled.
 
 func (o *OSSStorage) Presign(ctx context.Context, key, contentType string, expectedSize int64) (PresignResult, error) {
 	_ = ctx
@@ -184,13 +203,21 @@ func (o *OSSStorage) Stat(ctx context.Context, key string) (ObjectMeta, error) {
 	return ObjectMeta{Size: size, ContentType: strings.TrimSpace(meta.Get("Content-Type"))}, nil
 }
 
-// UpstreamURL rewrites a public asset URL to the transfer-acceleration host so an
-// overseas upstream supplier can fetch it cross-border without timing out. URLs
-// on any of this bucket's known hosts (public/regional/acceleration/legacy) are
-// rewritten; anything else (e.g. a relay-hosted generated image) is returned
-// unchanged.
+// UpstreamURL applies the configured transfer policy. With acceleration on,
+// owned URLs are rewritten to the accelerate host. With it off, regional,
+// accelerate and legacy variants are normalized to the public CDN. Foreign URLs
+// are returned unchanged in both modes.
 func (o *OSSStorage) UpstreamURL(u string) string {
-	if o.accelerateBase == "" || u == "" {
+	if u == "" {
+		return u
+	}
+	if !o.accelerateOn || o.accelerateBase == "" {
+		bases := append([]string{o.regionalBase, o.accelerateBase}, o.legacyBases...)
+		for _, base := range bases {
+			if base != "" && o.publicBase != "" && strings.HasPrefix(u, base+"/") {
+				return o.publicBase + strings.TrimPrefix(u, base)
+			}
+		}
 		return u
 	}
 	bases := append([]string{o.publicBase, o.regionalBase}, o.legacyBases...)

@@ -34,4 +34,5 @@ storage:
   # 传输加速：2026-07-13 已在阿里云控制台为该桶开启（此前未开时加速端点 400，
   # 上游取参考图失败表现为「图片编辑需要至少一张参考图」）。若更换桶，记得
   # 同步开启加速并更新测试库 sys_config 的 storage.ossAccelerateDomain。
+  accelerateEnabled: true
   accelerateDomain: flowlinght-test.oss-accelerate.aliyuncs.com

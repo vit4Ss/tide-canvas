@@ -104,7 +104,7 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
       }
       const next = cur.slice();
       next[idx] = url
-        ? { ...next[idx], uploading: false, url }
+        ? { ...next[idx], id: String(res?.data?.id ?? "") || undefined, uploading: false, url }
         : { ...next[idx], uploading: false, failed: true };
       return next;
     });
@@ -190,13 +190,14 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
    * still empty. This is used after a definitive text-turn rejection following
    * a reload; it never replaces files the user has since attached. */
   const restoreRefsIfEmpty = useCallback(
-    (snapshot: readonly Pick<RefItem, "key" | "kind" | "url" | "name">[]) => {
+    (snapshot: readonly Pick<RefItem, "key" | "id" | "kind" | "url" | "name">[]) => {
       setRefs((prev) => {
         if (prev.length) return prev;
         const restored = snapshot
           .filter((ref): ref is typeof ref & { url: string } => typeof ref.url === "string" && !!ref.url)
           .map((ref) => ({
             key: ref.key,
+            id: ref.id,
             kind: ref.kind,
             blobUrl: "",
             url: ref.url,
@@ -219,7 +220,7 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
   // add an already-hosted asset (picked from 资产库) directly as a reference — no
   // upload needed; honors the policy kinds/max and dedups by url.
   const addAssetRef = useCallback(
-    (url: string, kind: RefKind) => {
+    (url: string, kind: RefKind, name?: string, id?: string) => {
       const policy = refPolicy;
       if (!policy || !policy.kinds.length || policy.max <= 0) return;
       if (!policy.kinds.includes(kind)) {
@@ -227,7 +228,7 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
         return;
       }
       // 与本地上传同口径:后台配置了格式白名单则校验扩展名
-      if (policy.exts && !policy.exts.includes(extOf(fileNameFromUrl(url)))) {
+      if (policy.exts && !policy.exts.includes(extOf(name || fileNameFromUrl(url)))) {
         toast.info(`该素材格式不支持，允许：${policy.exts.join(" / ")}`);
         return;
       }
@@ -242,7 +243,7 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
       refCountRef.current += 1; // commit synchronously before any follow-up add
       setRefs((prev) => [
         ...prev,
-        { key: `r${refSeq.current++}`, kind, blobUrl: "", url, name: fileNameFromUrl(url), uploading: false },
+        { key: `r${refSeq.current++}`, id, kind, blobUrl: "", url, name: name || fileNameFromUrl(url), uploading: false },
       ]);
     },
     [refPolicy],
@@ -314,7 +315,7 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
         toast.info("当前模式不支持该类型素材");
         return;
       }
-      addAssetRef(a.url, kind);
+      addAssetRef(a.url, kind, a.name, a.id);
     },
     [addAssetRef],
   );
@@ -368,7 +369,8 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
           if (typeof url !== "string" || !url) continue;
           const k = (r as { kind?: unknown }).kind;
           const kind: RefKind = k === "video" ? "video" : k === "audio" ? "audio" : k === "file" ? "file" : "image";
-          restored.push({ key: `r${refSeq.current++}`, kind, blobUrl: "", url, uploading: false });
+          const id = typeof (r as { id?: unknown }).id === "string" ? (r as { id: string }).id : undefined;
+          restored.push({ key: `r${refSeq.current++}`, id, kind, blobUrl: "", url, uploading: false });
         }
         if (restored.length) setRefs(restored);
       }

@@ -10,22 +10,27 @@ import (
 )
 
 type Slide struct {
-	Kind       string               `json:"kind"`
-	Kicker     string               `json:"kicker"`
-	Title      string               `json:"title"`
-	Subtitle   string               `json:"subtitle"`
-	Takeaway   string               `json:"takeaway"`
-	Bullets    []string             `json:"bullets"`
-	Metrics    []PresentationMetric `json:"metrics"`
-	Columns    []PresentationColumn `json:"columns"`
-	ImageIndex int                  `json:"imageIndex"`
-	Notes      string               `json:"notes"`
+	Kind         string               `json:"kind"`
+	Tone         string               `json:"tone"`
+	Kicker       string               `json:"kicker"`
+	Title        string               `json:"title"`
+	Subtitle     string               `json:"subtitle"`
+	Takeaway     string               `json:"takeaway"`
+	Caption      string               `json:"caption"`
+	Bullets      []string             `json:"bullets"`
+	Metrics      []PresentationMetric `json:"metrics"`
+	Columns      []PresentationColumn `json:"columns"`
+	ImageIndex   int                  `json:"imageIndex"`
+	ImageIndexes []int                `json:"imageIndexes"`
+	Notes        string               `json:"notes"`
 }
 
 type Presentation struct {
 	Title    string              `json:"title"`
 	Subtitle string              `json:"subtitle"`
+	Theme    string              `json:"theme"`
 	Accent   string              `json:"accent"`
+	Accent2  string              `json:"accent2"`
 	Slides   []Slide             `json:"slides"`
 	Images   []PresentationImage `json:"-"`
 }
@@ -51,24 +56,51 @@ type PresentationImage struct {
 }
 
 type DocumentSection struct {
-	Heading    string   `json:"heading"`
-	Paragraphs []string `json:"paragraphs"`
-	Bullets    []string `json:"bullets"`
+	Heading    string         `json:"heading"`
+	Level      int            `json:"level"`
+	Lead       string         `json:"lead"`
+	Paragraphs []string       `json:"paragraphs"`
+	Bullets    []string       `json:"bullets"`
+	Numbered   []string       `json:"numbered"`
+	Callout    string         `json:"callout"`
+	Table      *DocumentTable `json:"table"`
 }
 
 type Document struct {
 	Title    string            `json:"title"`
 	Subtitle string            `json:"subtitle"`
+	Author   string            `json:"author"`
+	Date     string            `json:"date"`
+	Summary  string            `json:"summary"`
+	Accent   string            `json:"accent"`
 	Sections []DocumentSection `json:"sections"`
 }
 
+type DocumentTable struct {
+	Caption string     `json:"caption"`
+	Headers []string   `json:"headers"`
+	Rows    [][]string `json:"rows"`
+}
+
+type SheetColumn struct {
+	Header string  `json:"header"`
+	Type   string  `json:"type"`
+	Format string  `json:"format"`
+	Width  float64 `json:"width"`
+}
+
 type Sheet struct {
-	Name string  `json:"name"`
-	Rows [][]any `json:"rows"`
+	Name       string        `json:"name"`
+	Purpose    string        `json:"purpose"`
+	Columns    []SheetColumn `json:"columns"`
+	Rows       [][]any       `json:"rows"`
+	FreezeRows int           `json:"freezeRows"`
+	AutoFilter *bool         `json:"autoFilter"`
 }
 
 type Workbook struct {
 	Title  string  `json:"title"`
+	Accent string  `json:"accent"`
 	Sheets []Sheet `json:"sheets"`
 }
 
@@ -117,7 +149,7 @@ func sortedPartNames(files map[string]string) []string {
 	return names
 }
 
-func RenderDOCX(doc Document) ([]byte, error) {
+func renderLegacyDOCX(doc Document) ([]byte, error) {
 	if strings.TrimSpace(doc.Title) == "" {
 		doc.Title = "生成文档"
 	}
@@ -161,7 +193,7 @@ func paragraph(value, style string) string {
 	return `<w:p>` + styleXML + `<w:r><w:t xml:space="preserve">` + xmlText(value) + `</w:t></w:r></w:p>`
 }
 
-func RenderXLSX(book Workbook) ([]byte, error) {
+func renderLegacyXLSX(book Workbook) ([]byte, error) {
 	if len(book.Sheets) == 0 {
 		book.Sheets = []Sheet{{Name: "Sheet1", Rows: [][]any{{"暂无数据"}}}}
 	}
@@ -274,7 +306,7 @@ func columnName(value int) string {
 	return name
 }
 
-func RenderPPTX(deck Presentation) ([]byte, error) {
+func renderLegacyPPTX(deck Presentation) ([]byte, error) {
 	if strings.TrimSpace(deck.Title) == "" {
 		deck.Title = "生成演示文稿"
 	}

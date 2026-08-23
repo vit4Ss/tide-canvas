@@ -53,8 +53,9 @@ func main() {
 	}
 
 	updates := map[string]string{
-		"storage.ossBucket":           "flowlinght-test",
-		"storage.ossAccelerateDomain": "flowlinght-test.oss-accelerate.aliyuncs.com",
+		"storage.ossBucket":            "flowlinght-test",
+		"storage.ossAccelerateEnabled": "1",
+		"storage.ossAccelerateDomain":  "flowlinght-test.oss-accelerate.aliyuncs.com",
 	}
 	for k, v := range updates {
 		res, err := db.Exec(`UPDATE sys_config SET config_value = ? WHERE config_key = ?`, v, k)

@@ -1554,7 +1554,14 @@ func messageAttachmentParams(assets []AssetInput) string {
 		if kind == "text" {
 			kind = "file"
 		}
-		attachments = append(attachments, map[string]string{"url": url, "kind": kind})
+		row := map[string]string{"url": url, "kind": kind}
+		if id := strings.TrimSpace(asset.ID); id != "" {
+			row["id"] = id
+		}
+		if name := strings.TrimSpace(asset.Name); name != "" {
+			row["name"] = name
+		}
+		attachments = append(attachments, row)
 	}
 	if len(attachments) == 0 {
 		return ""

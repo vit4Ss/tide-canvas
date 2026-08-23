@@ -81,6 +81,34 @@ func TestGenerationInputKeepsMultipleReferenceImages(t *testing.T) {
 	}
 }
 
+func TestSkillImageNoteIsGenericAcrossOfficeTools(t *testing.T) {
+	command := map[string]any{"prompt": "create a document"}
+	svc := &service{deps: &app.Deps{Storage: attachmentTestStorage{baseURL: "https://cdn.test"}}}
+	svc.addSkillTextAttachments(context.Background(), command, []AssetInput{{
+		Type: "image", URL: "https://cdn.test/bucket/reference.png", Name: "reference.png",
+	}})
+	prompt, _ := command["prompt"].(string)
+	for _, required := range []string{"参考图1", "只陈述画面中可见的信息", "imageIndexes"} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("generic reference note is missing %q: %s", required, prompt)
+		}
+	}
+	if strings.Contains(prompt, "规划 PPT 时") {
+		t.Fatalf("non-PPT tools still receive a PPT-only reference instruction: %s", prompt)
+	}
+}
+
+func TestMessageAttachmentParamsPreserveOwnedFileIdentity(t *testing.T) {
+	params := messageAttachmentParams([]AssetInput{{
+		ID: "123", Type: "image", URL: "https://cdn.test/reference.png", Name: "reference.png",
+	}})
+	for _, fragment := range []string{`"id":"123"`, `"name":"reference.png"`, `"kind":"image"`} {
+		if !strings.Contains(params, fragment) {
+			t.Fatalf("message attachment params lost %s: %s", fragment, params)
+		}
+	}
+}
+
 func TestPresentationImagesLoadFromOwnedStorage(t *testing.T) {
 	imageData, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=")
 	if err != nil {
@@ -92,9 +120,12 @@ func TestPresentationImagesLoadFromOwnedStorage(t *testing.T) {
 	}))
 	defer srv.Close()
 	svc := &service{deps: &app.Deps{Storage: attachmentTestStorage{baseURL: srv.URL}}}
-	images := svc.loadPresentationImages(context.Background(), []AssetInput{{
+	images, loadErr := svc.loadPresentationImages(context.Background(), 1, []AssetInput{{
 		Type: "image", URL: srv.URL + "/bucket/opaque-image", Name: "reference.png",
 	}})
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
 	if len(images) != 1 || images[0].Extension != "png" || images[0].Width != 1 || images[0].Height != 1 {
 		t.Fatalf("reference image was not prepared for PPT embedding: %#v", images)
 	}

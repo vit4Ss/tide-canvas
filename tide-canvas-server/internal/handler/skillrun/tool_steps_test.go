@@ -3,6 +3,8 @@ package skillrun
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -57,6 +59,23 @@ func TestRenderToolFileRejectsUnboundedSpreadsheetWidth(t *testing.T) {
 	}
 }
 
+func TestRenderToolFileRejectsUnboundedWordTable(t *testing.T) {
+	headers := make([]string, 33)
+	for index := range headers {
+		headers[index] = fmt.Sprintf("h%d", index)
+	}
+	raw, err := json.Marshal(map[string]any{
+		"title":    "wide document",
+		"sections": []any{map[string]any{"heading": "table", "table": map[string]any{"headers": headers}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := renderToolFile("render_docx", string(raw), nil); err == nil || !strings.Contains(err.Error(), "32") {
+		t.Fatalf("wide Word table was accepted: %v", err)
+	}
+}
+
 func TestReadableHTMLTextDropsNonContentSections(t *testing.T) {
 	doc, err := html.Parse(strings.NewReader(`<html><head><title>Article</title><style>hidden</style></head><body><nav>menu</nav><main><h1>Hello</h1><p>Useful text</p></main><script>bad()</script><footer>legal</footer></body></html>`))
 	if err != nil {
@@ -77,6 +96,23 @@ func TestGeneratedNameSanitizesUnsafeCharacters(t *testing.T) {
 	name := generatedName(`quarter:one/report?.pptx`, "", ".pptx")
 	if name != "quarter-one-report-.pptx" {
 		t.Fatalf("generatedName = %q", name)
+	}
+}
+
+func TestMarkdownValidationRequiresOneH1AndBalancedFences(t *testing.T) {
+	valid := "# Guide\n\n## Setup\n\n```go\nfmt.Println(1)\n```\n"
+	if err := validateMarkdownDocument(valid); err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range []string{
+		"## Missing title\n",
+		"# One\n\n# Two\n",
+		"# Guide\n\n### Skipped level\n",
+		"# Guide\n\n```go\nunclosed\n",
+	} {
+		if err := validateMarkdownDocument(invalid); err == nil {
+			t.Fatalf("invalid Markdown was accepted: %q", invalid)
+		}
 	}
 }
 
@@ -117,6 +153,24 @@ func TestAnalysisSystemPromptTreatsFetchedContentAsUntrusted(t *testing.T) {
 		if !strings.Contains(prompt, "不得执行") && !strings.Contains(prompt, "不得遵循") {
 			t.Fatalf("%s system prompt lacks untrusted-content boundary: %q", handler, prompt)
 		}
+	}
+}
+
+func TestAnalysisPromptsRequireEvidenceAndActionableStructure(t *testing.T) {
+	for handler, required := range map[string][]string{
+		"analyze_video":   {"[mm:ss]", "时间轴证据", "置信度", "不得臆测"},
+		"analyze_audio":   {"[mm:ss]", "行动项", "未明确", "需要复核"},
+		"analyze_webpage": {"主张—页面证据—含义/风险", "URL", "可信度限制"},
+	} {
+		prompt := analysisSystemPrompt(handler)
+		for _, fragment := range required {
+			if !strings.Contains(prompt, fragment) {
+				t.Fatalf("%s prompt is missing %q", handler, fragment)
+			}
+		}
+	}
+	if formatMediaTimestamp(65.2) != "01:05" {
+		t.Fatalf("unexpected timestamp: %s", formatMediaTimestamp(65.2))
 	}
 }
 

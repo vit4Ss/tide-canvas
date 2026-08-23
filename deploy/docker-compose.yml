@@ -27,6 +27,7 @@ services:
       # OSS 密钥不进镜像，在这里注入或在后台「配置管理→存储配置」录入：
       # TIDECANVAS_STORAGE_ACCESSKEY: ""
       # TIDECANVAS_STORAGE_SECRETKEY: ""
+      # TIDECANVAS_STORAGE_ACCELERATEENABLED: "false" # 上传走地域 OSS；模型取图走 CDN（未配置则地域 OSS）
     volumes:
       - uploads-data:/app/data/uploads   # local 存储模式的上传目录（oss 模式下备而不用）
 

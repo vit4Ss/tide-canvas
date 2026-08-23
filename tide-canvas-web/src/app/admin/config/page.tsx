@@ -95,6 +95,10 @@ const MANAGED_ELSEWHERE: Record<string, { hint: string; href: string }> = {
    附各自的状态文案。存的仍是 "1"/"0" 字符串，与后端读取口径一致。 */
 const BOOL_KEYS: Record<string, { on: string; off: string }> = {
   "auth.registerClosed": { on: "已关闭注册：新用户无法自助注册", off: "开放注册：用户可自助注册" },
+  "storage.ossAccelerateEnabled": {
+    on: "已开启：上传与上游取图使用 OSS 传输加速；重启后端生效",
+    off: "已关闭：上传使用地域 OSS，模型取图使用 CDN（未配置则地域 OSS）；重启后端生效",
+  },
 };
 
 const NUMBER_KEYS: Record<string, { min: number; max: number }> = {
@@ -117,6 +121,7 @@ const BASELINE_KEYS = new Set([
   "points.checkinMonthlyCap",
   "points.inviteReward",
   "points.signupBonus",
+  "storage.ossAccelerateEnabled",
 ]);
 
 /* ── 页脚链接（site.footerLinks）结构化编辑 ──────────────────────────── */

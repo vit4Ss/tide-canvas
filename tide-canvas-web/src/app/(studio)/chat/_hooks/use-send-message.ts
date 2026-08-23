@@ -27,7 +27,7 @@ import { musicTurnSummary, type RefItem, type RefPolicy } from "../_components/c
 import { arbitratePendingTurn, removePendingTurnIfOwned } from "./pending-turn-arbitration";
 import { historySendTargetMatches, isHistorySendTarget } from "./history-send-target";
 
-type ComposerRefSnapshot = Pick<RefItem, "key" | "kind" | "url" | "name">;
+type ComposerRefSnapshot = Pick<RefItem, "key" | "id" | "kind" | "url" | "name">;
 
 interface ComposerSnapshot {
   draft: string;
@@ -151,6 +151,7 @@ function chatToolRunInput(
     assets: refs
       .filter((ref): ref is RefItem & { url: string } => !!ref.url && assetTypes.has(ref.kind))
       .map((ref) => ({
+        ...(ref.id ? { id: ref.id } : {}),
         type: ref.kind,
         url: ref.url,
         ...(ref.name ? { name: ref.name } : {}),
@@ -168,6 +169,7 @@ function validComposerSnapshot(value: unknown): value is ComposerSnapshot {
     snapshot.refs.every((ref) =>
       !!ref && typeof ref === "object" &&
       typeof ref.key === "string" &&
+      (ref.id === undefined || typeof ref.id === "string") &&
       (ref.kind === "image" || ref.kind === "video" || ref.kind === "audio" || ref.kind === "file") &&
       (ref.url === undefined || typeof ref.url === "string") &&
       (ref.name === undefined || typeof ref.name === "string"),
@@ -1168,7 +1170,7 @@ export function useSendMessage({
     }
     const composerSnapshot: ComposerSnapshot = {
       draft,
-      refs: refs.map(({ key, kind, url, name }) => ({ key, kind, url, name })),
+      refs: refs.map(({ key, id, kind, url, name }) => ({ key, id, kind, url, name })),
     };
 
     const bump = (cid: string) =>

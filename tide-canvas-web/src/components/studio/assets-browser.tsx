@@ -45,6 +45,7 @@ import {
 
 /** A picked asset handed back to the caller in pick mode. */
 export interface PickedAsset {
+  id?: string;
   url: string;
   name: string;
   kind: MediaKind;
@@ -1402,7 +1403,7 @@ const UploadCard = memo(function UploadCard({
     }
     if (pickMode) {
       if (file.fileUrl) {
-        onPick?.({ url: file.fileUrl, name: file.originalName || "文件", kind });
+        onPick?.({ id: String(file.id), url: file.fileUrl, name: file.originalName || "文件", kind });
       } else {
         toast.info("该文件暂无可选取的内容");
       }
@@ -1439,7 +1440,7 @@ const UploadCard = memo(function UploadCard({
           <button
             type="button"
             className="as-songrow-pick"
-            onClick={() => onPick?.({ url: file.fileUrl!, name: file.originalName || "音频", kind })}
+            onClick={() => onPick?.({ id: String(file.id), url: file.fileUrl!, name: file.originalName || "音频", kind })}
           >
             选取
           </button>

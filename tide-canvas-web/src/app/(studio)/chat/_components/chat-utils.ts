@@ -75,6 +75,7 @@ export type RefKind = "image" | "video" | "audio" | "file";
 /** A composer reference: local blob preview while uploading, hosted url after. */
 export interface RefItem {
   key: string; // stable local key (race-guard + revoke)
+  id?: string; // owned File id when the reference came from upload storage
   kind: RefKind;
   blobUrl: string; // local object URL for instant preview
   url?: string; // hosted URL after upload (sent to the backend)

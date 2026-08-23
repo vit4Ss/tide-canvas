@@ -52,5 +52,6 @@ storage:
   bucket: flowlinght
   # 传输加速域名=跨境上传与上游取图。⚠️ 上线前先在阿里云控制台为 flowlinght
   # 桶开启传输加速（参照测试桶 2026-07-13 的操作），否则加速端点 400。
+  accelerateEnabled: true
   accelerateDomain: flowlinght.oss-accelerate.aliyuncs.com
   publicURL: https://flowlight.tcmzhan.com/static # 仅 local 存储模式使用（生产走 OSS 用不到）

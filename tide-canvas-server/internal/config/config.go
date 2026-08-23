@@ -150,11 +150,11 @@ type StorageConfig struct {
 	// (e.g. https://cdn.example.com) instead of the regional OSS endpoint.
 	CDNDomain string `mapstructure:"cdnDomain"`
 	// AccelerateDomain is the OSS Transfer-Acceleration host. When set, the OSS
-	// client uses it for uploads/deletes/presigns (cross-border speedup), and URLs
-	// sent to OVERSEAS upstream suppliers (the relay) are rewritten from the
-	// regional host to this global host so cross-border downloads stop timing
-	// out; the frontend display keeps the regional/CDN host.
-	AccelerateDomain string `mapstructure:"accelerateDomain"`
+	// client uses it only when AccelerateEnabled is true. When disabled, storage
+	// writes/presigns use the regional endpoint and upstream reads stay on the
+	// public CDN host. The configured domain is still recognized for legacy URLs.
+	AccelerateDomain  string `mapstructure:"accelerateDomain"`
+	AccelerateEnabled bool   `mapstructure:"accelerateEnabled"`
 	// LegacyHosts 是历史存储域名（逗号分隔，可含 scheme 也可裸 host）——老数据
 	// 里遗留的前任桶/加速域名。配了 CDN 时,响应层把这些 host 上的 URL 也统一
 	// 改写为当前 publicBase（对象已按同 key 迁入当前桶的前提）。
@@ -312,6 +312,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("storage.type", "local")
 	v.SetDefault("storage.localDir", "./data/uploads")
 	v.SetDefault("storage.publicURL", "http://localhost:8080/static")
+	v.SetDefault("storage.accelerateEnabled", true)
 
 	v.SetDefault("cors.allowOrigins", []string{"http://localhost:3000"})
 
