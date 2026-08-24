@@ -2,17 +2,22 @@ package admin
 
 import (
 	"errors"
+	"math"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	gormlogger "gorm.io/gorm/logger"
 
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/response"
 )
+
+const supplierConfigSecretMask = "••••••••"
 
 // g5_config.go: admin system configuration (model.SysConfig). GET returns the
 // full list of config entries; PUT upserts one or more keys by configKey.
@@ -27,10 +32,14 @@ type ConfigVO struct {
 }
 
 func toConfigVO(m *model.SysConfig) ConfigVO {
+	value := m.ConfigValue
+	if model.IsSupplierBalanceSecretConfigKey(m.ConfigKey) && strings.TrimSpace(value) != "" {
+		value = supplierConfigSecretMask
+	}
 	return ConfigVO{
 		ID:          m.ID,
 		ConfigKey:   m.ConfigKey,
-		ConfigValue: m.ConfigValue,
+		ConfigValue: value,
 		Group:       m.Group,
 		Description: m.Description,
 	}
@@ -53,23 +62,29 @@ type ConfigUpsertDTO struct {
 // baselineConfigKeys are the must-exist sys_config keys seeded by
 // model.AutoMigrate / boot wiring. They drive live pages (页脚/首页/定价/聊天
 // 上下文/积分策略), so the delete endpoint refuses to remove them.
-var baselineConfigKeys = map[string]struct{}{
-	model.ConfigKeyFooterLinks:           {},
-	model.ConfigKeyHomeGlobal:            {},
-	model.ConfigKeyRegisterClosed:        {},
-	model.ConfigKeyPricingCompare:        {},
-	model.ConfigKeyPricingFaq:            {},
-	model.ConfigKeyChatContextTokenLimit: {},
-	model.ConfigKeyChatCompressAt:        {},
-	model.ConfigKeyMarketTypeOrder:       {},
-	model.ConfigKeyCanvasNodeFeatures:    {},
-	model.ConfigKeyAIUserConcurrentLimit: {},
-	"points.checkinDaily":                {},
-	"points.checkinMonthlyCap":           {},
-	"points.inviteReward":                {},
-	"points.signupBonus":                 {},
-	"storage.ossAccelerateEnabled":       {},
-}
+var baselineConfigKeys = func() map[string]struct{} {
+	keys := map[string]struct{}{
+		model.ConfigKeyFooterLinks:           {},
+		model.ConfigKeyHomeGlobal:            {},
+		model.ConfigKeyRegisterClosed:        {},
+		model.ConfigKeyPricingCompare:        {},
+		model.ConfigKeyPricingFaq:            {},
+		model.ConfigKeyChatContextTokenLimit: {},
+		model.ConfigKeyChatCompressAt:        {},
+		model.ConfigKeyMarketTypeOrder:       {},
+		model.ConfigKeyCanvasNodeFeatures:    {},
+		model.ConfigKeyAIUserConcurrentLimit: {},
+		"points.checkinDaily":                {},
+		"points.checkinMonthlyCap":           {},
+		"points.inviteReward":                {},
+		"points.signupBonus":                 {},
+		"storage.ossAccelerateEnabled":       {},
+	}
+	for _, key := range model.SupplierBalanceConfigKeys {
+		keys[key] = struct{}{}
+	}
+	return keys
+}()
 
 // adminVisibleConfig scopes a sys_config query to the rows the 配置管理 screen
 // should show, in its display order. Two kinds of rows are excluded:
@@ -129,6 +144,17 @@ func RegisterConfig(g *gin.RouterGroup, d *app.Deps) {
 				response.Fail(c, response.CodeBadRequest, "OSS 传输加速开关必须是 0 或 1")
 				return
 			}
+			if isSupplierBalanceEnabledKey(key) && items[i].ConfigValue != "0" && items[i].ConfigValue != "1" {
+				response.Fail(c, response.CodeBadRequest, "供应商余额监控开关必须是 0 或 1")
+				return
+			}
+			if isSupplierBalanceThresholdKey(key) {
+				value, parseErr := strconv.ParseFloat(strings.TrimSpace(items[i].ConfigValue), 64)
+				if parseErr != nil || value < 0 || math.IsInf(value, 0) || math.IsNaN(value) {
+					response.Fail(c, response.CodeBadRequest, "供应商余额预警线必须是大于或等于 0 的数字")
+					return
+				}
+			}
 		}
 
 		// The flat-map convenience shape is update-only: any JSON object would
@@ -173,13 +199,37 @@ func RegisterConfig(g *gin.RouterGroup, d *app.Deps) {
 				if key == "" {
 					continue
 				}
+				value := it.ConfigValue
+				secret := model.IsSupplierBalanceSecretConfigKey(key)
+				if secret && value == supplierConfigSecretMask {
+					var storedValue string
+					result := tx.Model(&model.SysConfig{}).Where("config_key = ?", key).
+						Pluck("config_value", &storedValue)
+					if result.Error != nil {
+						return result.Error
+					}
+					if result.RowsAffected > 0 {
+						value = storedValue
+					} else {
+						value = ""
+					}
+				}
+				if secret {
+					value = strings.TrimSpace(value)
+				}
 				row := model.SysConfig{
 					ConfigKey:   key,
-					ConfigValue: it.ConfigValue,
+					ConfigValue: value,
 					Group:       it.Group,
 					Description: it.Description,
 				}
-				if err := tx.Clauses(clause.OnConflict{
+				writeDB := tx
+				if secret {
+					// GORM's warning logger expands SQL parameters on slow/error
+					// statements. Never let a supplier token reach service logs.
+					writeDB = tx.Session(&gorm.Session{Logger: gormlogger.Discard})
+				}
+				if err := writeDB.Clauses(clause.OnConflict{
 					Columns:   []clause.Column{{Name: "config_key"}},
 					DoUpdates: clause.AssignmentColumns(assign),
 				}).Create(&row).Error; err != nil {
@@ -231,6 +281,30 @@ func RegisterConfig(g *gin.RouterGroup, d *app.Deps) {
 		}
 		response.OK[any](c, nil)
 	})
+}
+
+func isSupplierBalanceEnabledKey(key string) bool {
+	switch key {
+	case model.ConfigKeyBalanceMikotoEnabled,
+		model.ConfigKeyBalanceCCGOEnabled,
+		model.ConfigKeyBalanceCCGO2Enabled,
+		model.ConfigKeyBalanceDimensioEnabled:
+		return true
+	default:
+		return false
+	}
+}
+
+func isSupplierBalanceThresholdKey(key string) bool {
+	switch key {
+	case model.ConfigKeyBalanceMikotoLowBalance,
+		model.ConfigKeyBalanceCCGOLowBalance,
+		model.ConfigKeyBalanceCCGO2LowBalance,
+		model.ConfigKeyBalanceDimensioLowBalance:
+		return true
+	default:
+		return false
+	}
 }
 
 // bindConfigItems accepts three request shapes: {items:[...]}, a bare [...] array

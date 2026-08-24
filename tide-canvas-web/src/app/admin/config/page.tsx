@@ -54,9 +54,21 @@ const GROUP_LABEL: Record<string, string> = {
   mail: "邮件",
   pricing: "定价页",
   points: "积分",
+  供应商余额: "供应商余额",
   存储配置: "存储配置",
 };
-const GROUP_ORDER = ["site", "home", "auth", "ai", "AI 对话", "mail", "pricing", "points", "存储配置"];
+const GROUP_ORDER = [
+  "site",
+  "home",
+  "auth",
+  "ai",
+  "AI 对话",
+  "mail",
+  "pricing",
+  "points",
+  "供应商余额",
+  "存储配置",
+];
 const GROUP_DESCRIPTION: Record<string, string> = {
   site: "站点名称、品牌信息与公共页面内容",
   home: "首页展示与内容入口",
@@ -66,6 +78,7 @@ const GROUP_DESCRIPTION: Record<string, string> = {
   mail: "邮件发送服务与发件身份",
   pricing: "公开定价页的基础信息",
   points: "积分规则与默认额度",
+  供应商余额: "供应商监控开关、访问令牌与低余额预警线；保存后下一次刷新生效",
   存储配置: "文件存储与访问地址",
 };
 const groupLabel = (g: string) => GROUP_LABEL[g] ?? g;
@@ -99,11 +112,27 @@ const BOOL_KEYS: Record<string, { on: string; off: string }> = {
     on: "已开启：上传与上游取图使用 OSS 传输加速；重启后端生效",
     off: "已关闭：上传使用地域 OSS，模型取图使用 CDN（未配置则地域 OSS）；重启后端生效",
   },
+  "balance.mikoto.enabled": { on: "已启用 Mikoto 余额监控", off: "已停用 Mikoto 余额监控" },
+  "balance.ccgo.enabled": { on: "已启用 CCGO 余额监控", off: "已停用 CCGO 余额监控" },
+  "balance.ccgo2.enabled": { on: "已启用 CCGO2 余额监控", off: "已停用 CCGO2 余额监控" },
+  "balance.dimensio.enabled": { on: "已启用 Dimensio 余额监控", off: "已停用 Dimensio 余额监控" },
 };
 
-const NUMBER_KEYS: Record<string, { min: number; max: number }> = {
-  "ai.userConcurrentLimit": { min: 1, max: 100 },
+const NUMBER_KEYS: Record<string, { min: number; max?: number; step?: number | "any" }> = {
+  "ai.userConcurrentLimit": { min: 1, max: 100, step: 1 },
+  "balance.mikoto.lowBalance": { min: 0, step: "any" },
+  "balance.ccgo.lowBalance": { min: 0, step: "any" },
+  "balance.ccgo2.lowBalance": { min: 0, step: "any" },
+  "balance.dimensio.lowBalance": { min: 0, step: "any" },
 };
+
+const SUPPLIER_BALANCE_SECRET_MASK = "••••••••";
+const SUPPLIER_BALANCE_SECRET_KEYS = new Set([
+  "balance.mikoto.accessToken",
+  "balance.ccgo.accessToken",
+  "balance.ccgo2.accessToken",
+  "balance.dimensio.accessToken",
+]);
 
 /* 基线键（页面/策略消费方仍在读，后端同样拒绝删除）——不展示删除入口。
    与 g5_config.go 的 baselineConfigKeys 保持一致。 */
@@ -122,6 +151,18 @@ const BASELINE_KEYS = new Set([
   "points.inviteReward",
   "points.signupBonus",
   "storage.ossAccelerateEnabled",
+  "balance.mikoto.enabled",
+  "balance.mikoto.accessToken",
+  "balance.mikoto.lowBalance",
+  "balance.ccgo.enabled",
+  "balance.ccgo.accessToken",
+  "balance.ccgo.lowBalance",
+  "balance.ccgo2.enabled",
+  "balance.ccgo2.accessToken",
+  "balance.ccgo2.lowBalance",
+  "balance.dimensio.enabled",
+  "balance.dimensio.accessToken",
+  "balance.dimensio.lowBalance",
 ]);
 
 /* ── 页脚链接（site.footerLinks）结构化编辑 ──────────────────────────── */
@@ -606,7 +647,9 @@ export default function AdminConfigPage() {
                       const isFooterLinks = it.configKey === "site.footerLinks";
                       const boolCfg = BOOL_KEYS[it.configKey];
                       const numberCfg = NUMBER_KEYS[it.configKey];
-                      const secret = /secret|password|access[_-]?key|api[_-]?key/i.test(it.configKey);
+                      const secret =
+                        SUPPLIER_BALANCE_SECRET_KEYS.has(it.configKey) ||
+                        /secret|password|access[_-]?key|api[_-]?key/i.test(it.configKey);
                       const block =
                         !managed && !isFooterLinks && !boolCfg && !numberCfg && !secret && isBlockValue(it.configValue);
                       const fl = isFooterLinks ? parseFooterLinks(valueOf(it)) : null;
@@ -681,12 +724,23 @@ export default function AdminConfigPage() {
                               type={secret ? "password" : numberCfg ? "number" : "text"}
                               value={valueOf(it)}
                               onChange={(e) => onEdit(it, e.target.value)}
+                              onFocus={secret ? (e) => {
+                                if (e.currentTarget.value === SUPPLIER_BALANCE_SECRET_MASK) {
+                                  e.currentTarget.select();
+                                }
+                              } : undefined}
+                              onClick={secret ? (e) => {
+                                if (e.currentTarget.value === SUPPLIER_BALANCE_SECRET_MASK) {
+                                  e.currentTarget.select();
+                                }
+                              } : undefined}
                               aria-label={controlLabel}
                               min={numberCfg?.min}
                               max={numberCfg?.max}
-                              step={numberCfg ? 1 : undefined}
-                              inputMode={numberCfg ? "numeric" : undefined}
+                              step={numberCfg?.step}
+                              inputMode={numberCfg ? "decimal" : undefined}
                               autoComplete={secret ? "new-password" : undefined}
+                              placeholder={secret ? "粘贴新的 JWT" : undefined}
                               spellCheck={false}
                             />
                           )}

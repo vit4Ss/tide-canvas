@@ -84,7 +84,8 @@ relay:
   # Local/test default. Production overrides this in config.prod.yaml.
   baseUrl: https://test-relay.tcmzhan.com
 
-# 后台「供应商余额」监控。认证令牌绝不写入 YAML，统一通过环境变量注入。
+# 后台「供应商余额」监控。DLAPI 凭据由环境变量注入；Mikoto、CCGO、CCGO2、
+# Dimensio 的开关、JWT 与预警线由 sys_config 保存，在后台配置管理维护。
 # DLAPI 是 New API 协议：GET /api/user/self 返回的 data.quota / 500000 = USD 余额。
 balanceMonitor:
   refreshSeconds: 30
@@ -97,34 +98,26 @@ balanceMonitor:
     currency: USD
     lowBalance: 20
   mikoto:
-    enabled: true
     name: Mikoto
     baseUrl: https://api.mikoto.vip
     timezone: Asia/Shanghai
     currency: USD
-    lowBalance: 20
   ccgo:
-    enabled: true
     name: CCGO
     baseUrl: https://www.ccgoai.com
     timezone: Asia/Shanghai
     currency: USD
-    lowBalance: 20
     uiRequest: true
   ccgo2:
-    enabled: true
     name: CCGO2
     baseUrl: https://www.ccgoai.com
     timezone: Asia/Shanghai
     currency: USD
-    lowBalance: 20
     uiRequest: true
   dimensio:
-    enabled: true
     name: Dimensio
     baseUrl: https://jimeng.dimensio.cn
     unit: 积分
-    lowBalance: 50000
 
 # 易联达Pay (eliandapay / api.ndow.cn) 聚合收银台 —— 一个接口同时支持支付宝 + 微信，
 # MD5 签名。下单在 /api/orders 生成 submit.php 跳转 URL；网关异步回调打到

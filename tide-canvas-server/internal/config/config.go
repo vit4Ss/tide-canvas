@@ -41,9 +41,9 @@ type Config struct {
 	LLM        LLMConfig        `mapstructure:"llm"`
 	Relay      RelayConfig      `mapstructure:"relay"`
 	Eliandapay EliandapayConfig `mapstructure:"eliandapay"`
-	// BalanceMonitor contains server-only supplier credentials used by the
-	// admin balance dashboard. Secrets in this section must be supplied through
-	// environment variables and are never returned by an API.
+	// BalanceMonitor contains the supplier endpoints and DLAPI deployment
+	// credential. The four JWT-backed supplier credentials are stored in
+	// sys_config and overlaid by the admin balance monitor at request time.
 	BalanceMonitor BalanceMonitorConfig `mapstructure:"balanceMonitor"`
 }
 
@@ -417,36 +417,24 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("balanceMonitor.dlapi.quotaPerUnit", 500000)
 	v.SetDefault("balanceMonitor.dlapi.currency", "USD")
 	v.SetDefault("balanceMonitor.dlapi.lowBalance", 20)
-	v.SetDefault("balanceMonitor.mikoto.enabled", true)
 	v.SetDefault("balanceMonitor.mikoto.name", "Mikoto")
 	v.SetDefault("balanceMonitor.mikoto.baseUrl", "https://api.mikoto.vip")
-	v.SetDefault("balanceMonitor.mikoto.accessToken", "")
 	v.SetDefault("balanceMonitor.mikoto.timezone", "Asia/Shanghai")
 	v.SetDefault("balanceMonitor.mikoto.currency", "USD")
-	v.SetDefault("balanceMonitor.mikoto.lowBalance", 20)
 	v.SetDefault("balanceMonitor.mikoto.uiRequest", false)
-	v.SetDefault("balanceMonitor.ccgo.enabled", true)
 	v.SetDefault("balanceMonitor.ccgo.name", "CCGO")
 	v.SetDefault("balanceMonitor.ccgo.baseUrl", "https://www.ccgoai.com")
-	v.SetDefault("balanceMonitor.ccgo.accessToken", "")
 	v.SetDefault("balanceMonitor.ccgo.timezone", "Asia/Shanghai")
 	v.SetDefault("balanceMonitor.ccgo.currency", "USD")
-	v.SetDefault("balanceMonitor.ccgo.lowBalance", 20)
 	v.SetDefault("balanceMonitor.ccgo.uiRequest", true)
-	v.SetDefault("balanceMonitor.ccgo2.enabled", true)
 	v.SetDefault("balanceMonitor.ccgo2.name", "CCGO2")
 	v.SetDefault("balanceMonitor.ccgo2.baseUrl", "https://www.ccgoai.com")
-	v.SetDefault("balanceMonitor.ccgo2.accessToken", "")
 	v.SetDefault("balanceMonitor.ccgo2.timezone", "Asia/Shanghai")
 	v.SetDefault("balanceMonitor.ccgo2.currency", "USD")
-	v.SetDefault("balanceMonitor.ccgo2.lowBalance", 20)
 	v.SetDefault("balanceMonitor.ccgo2.uiRequest", true)
-	v.SetDefault("balanceMonitor.dimensio.enabled", true)
 	v.SetDefault("balanceMonitor.dimensio.name", "Dimensio")
 	v.SetDefault("balanceMonitor.dimensio.baseUrl", "https://jimeng.dimensio.cn")
-	v.SetDefault("balanceMonitor.dimensio.accessToken", "")
 	v.SetDefault("balanceMonitor.dimensio.unit", "积分")
-	v.SetDefault("balanceMonitor.dimensio.lowBalance", 50000)
 
 	v.SetDefault("eliandapay.enabled", true)
 	v.SetDefault("eliandapay.gateway", "https://api.ndow.cn/")
@@ -490,6 +478,13 @@ func normalize(cfg *Config) {
 	if cfg.BalanceMonitor.RefreshSeconds < 10 {
 		cfg.BalanceMonitor.RefreshSeconds = 30
 	}
+	// Mikoto/CCGO/CCGO2/Dimensio dynamic values are database-owned. Explicitly
+	// discard anything decoded from legacy YAML/environment variables so these
+	// fields have exactly one runtime source: sys_config in the admin UI.
+	cfg.BalanceMonitor.Mikoto.Enabled, cfg.BalanceMonitor.Mikoto.AccessToken, cfg.BalanceMonitor.Mikoto.LowBalance = false, "", 0
+	cfg.BalanceMonitor.CCGO.Enabled, cfg.BalanceMonitor.CCGO.AccessToken, cfg.BalanceMonitor.CCGO.LowBalance = false, "", 0
+	cfg.BalanceMonitor.CCGO2.Enabled, cfg.BalanceMonitor.CCGO2.AccessToken, cfg.BalanceMonitor.CCGO2.LowBalance = false, "", 0
+	cfg.BalanceMonitor.Dimensio.Enabled, cfg.BalanceMonitor.Dimensio.AccessToken, cfg.BalanceMonitor.Dimensio.LowBalance = false, "", 0
 	if strings.TrimSpace(cfg.BalanceMonitor.DLAPI.Name) == "" {
 		cfg.BalanceMonitor.DLAPI.Name = "DLAPI"
 	}

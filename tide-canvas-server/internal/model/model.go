@@ -298,6 +298,7 @@ func ensureBaselineConfig(db *gorm.DB) error {
 			Description: canvasNodeFeaturesDescription,
 		},
 	}
+	baseline = append(baseline, SupplierBalanceBaselineConfigs()...)
 	for i := range baseline {
 		var row SysConfig
 		if err := db.Where(SysConfig{ConfigKey: baseline[i].ConfigKey}).

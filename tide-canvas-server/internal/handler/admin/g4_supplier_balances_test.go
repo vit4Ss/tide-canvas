@@ -4,10 +4,15 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync/atomic"
 	"testing"
 
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+
 	"tidecanvas/internal/config"
+	"tidecanvas/internal/model"
 )
 
 func TestNewAPIBalanceCheckerConvertsQuotaAndSendsCredentials(t *testing.T) {
@@ -151,11 +156,15 @@ func TestBearerAuthorizationAcceptsRawOrPrefixedToken(t *testing.T) {
 
 func TestSupplierBalanceMonitorKeepsCCGOAccountsSeparate(t *testing.T) {
 	monitor := newSupplierBalanceMonitorWithClient(config.BalanceMonitorConfig{}, http.DefaultClient)
-	keys := make(map[string]bool, len(monitor.checkers))
-	for _, checker := range monitor.checkers {
+	checkers, err := monitor.currentCheckers()
+	if err != nil {
+		t.Fatalf("current checkers: %v", err)
+	}
+	keys := make(map[string]bool, len(checkers))
+	for _, checker := range checkers {
 		keys[checker.key()] = true
 	}
-	if !keys["ccgo"] || !keys["ccgo2"] || len(keys) != len(monitor.checkers) {
+	if !keys["ccgo"] || !keys["ccgo2"] || len(keys) != len(checkers) {
 		t.Fatalf("checker keys = %v, want unique ccgo and ccgo2 rows", keys)
 	}
 }
@@ -205,5 +214,124 @@ func TestSupplierBalanceMonitorReportsMissingTokenWithoutRequest(t *testing.T) {
 	}
 	if row.Message != "缺少访问令牌" {
 		t.Errorf("message = %q, want missing-token message", row.Message)
+	}
+}
+
+func TestSupplierBalanceMonitorReloadsDatabaseTokenForEverySnapshot(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		balance := 50.0
+		switch r.Header.Get("Authorization") {
+		case "Bearer first-token":
+		case "Bearer second-token":
+			balance = 22
+		default:
+			http.Error(w, "unexpected token", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"balance":` +
+			strconv.FormatFloat(balance, 'f', -1, 64) + `}}`))
+	}))
+	defer server.Close()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&model.SysConfig{}); err != nil {
+		t.Fatalf("migrate sys_config: %v", err)
+	}
+	rows := []model.SysConfig{
+		{ConfigKey: model.ConfigKeyBalanceMikotoEnabled, ConfigValue: "1"},
+		{ConfigKey: model.ConfigKeyBalanceMikotoAccessToken, ConfigValue: "first-token"},
+		{ConfigKey: model.ConfigKeyBalanceMikotoLowBalance, ConfigValue: "25"},
+	}
+	if err := db.Create(&rows).Error; err != nil {
+		t.Fatalf("seed supplier config: %v", err)
+	}
+
+	cfg := config.BalanceMonitorConfig{RefreshSeconds: 30, Mikoto: config.BearerProfileBalanceConfig{
+		Enabled: false, Name: "Mikoto", BaseURL: server.URL, AccessToken: "legacy-env-token",
+		Timezone: "Asia/Shanghai", Currency: "USD",
+	}}
+	monitor := newSupplierBalanceMonitorWithDBAndClient(db, cfg, server.Client())
+
+	first := monitor.snapshot(context.Background()).Suppliers[1]
+	if first.State != "healthy" || first.Balance == nil || *first.Balance != 50 {
+		t.Fatalf("first snapshot = %+v, want live DB token with balance 50", first)
+	}
+	if err := db.Model(&model.SysConfig{}).
+		Where("config_key = ?", model.ConfigKeyBalanceMikotoAccessToken).
+		Update("config_value", "second-token").Error; err != nil {
+		t.Fatalf("rotate token: %v", err)
+	}
+
+	second := monitor.snapshot(context.Background()).Suppliers[1]
+	if second.State != "low" || second.Balance == nil || *second.Balance != 22 {
+		t.Fatalf("second snapshot = %+v, want rotated token with low balance 22", second)
+	}
+	if err := db.Model(&model.SysConfig{}).
+		Where("config_key = ?", model.ConfigKeyBalanceMikotoAccessToken).
+		Update("config_value", "invalid-new-account-token").Error; err != nil {
+		t.Fatalf("replace token with invalid account: %v", err)
+	}
+	third := monitor.snapshot(context.Background()).Suppliers[1]
+	if third.State != "error" || third.Stale || third.Balance != nil {
+		t.Fatalf("third snapshot = %+v, must not reuse another credential's cached balance", third)
+	}
+}
+
+func TestSupplierBalanceMonitorNeverFallsBackToLegacyEnvironmentCredentials(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&model.SysConfig{}); err != nil {
+		t.Fatalf("migrate sys_config: %v", err)
+	}
+
+	legacy := config.BalanceMonitorConfig{
+		Mikoto:   config.BearerProfileBalanceConfig{Enabled: true, AccessToken: "legacy-mikoto", LowBalance: 10},
+		CCGO:     config.BearerProfileBalanceConfig{Enabled: true, AccessToken: "legacy-ccgo", LowBalance: 10},
+		CCGO2:    config.BearerProfileBalanceConfig{Enabled: true, AccessToken: "legacy-ccgo2", LowBalance: 10},
+		Dimensio: config.DimensioBalanceConfig{Enabled: true, AccessToken: "legacy-dimensio", LowBalance: 10},
+	}
+	live, err := loadLiveSupplierBalanceConfig(db, legacy)
+	if err != nil {
+		t.Fatalf("load live config: %v", err)
+	}
+	if live.Mikoto.Enabled || live.Mikoto.AccessToken != "" || live.Mikoto.LowBalance != 0 ||
+		live.CCGO.Enabled || live.CCGO.AccessToken != "" || live.CCGO.LowBalance != 0 ||
+		live.CCGO2.Enabled || live.CCGO2.AccessToken != "" || live.CCGO2.LowBalance != 0 ||
+		live.Dimensio.Enabled || live.Dimensio.AccessToken != "" || live.Dimensio.LowBalance != 0 {
+		t.Fatalf("legacy dynamic values survived database overlay: %+v", live)
+	}
+}
+
+func TestSupplierBalanceMonitorReportsDatabaseConfigFailureAccurately(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&model.SysConfig{}); err != nil {
+		t.Fatalf("migrate sys_config: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get sql db: %v", err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatalf("close sql db: %v", err)
+	}
+
+	monitor := newSupplierBalanceMonitorWithDBAndClient(db, config.BalanceMonitorConfig{}, http.DefaultClient)
+	rows := monitor.snapshot(context.Background()).Suppliers
+	if len(rows) != 5 {
+		t.Fatalf("supplier rows = %d, want 5", len(rows))
+	}
+	for _, row := range rows[1:] {
+		if row.State != "error" || row.Message != "无法读取监控配置" || row.Balance != nil || row.Stale {
+			t.Errorf("database failure row = %+v", row)
+		}
 	}
 }

@@ -9,20 +9,25 @@ package admin
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/config"
+	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/response"
 )
 
@@ -72,18 +77,21 @@ type supplierBalanceChecker interface {
 	key() string
 	name() string
 	source() string
+	cacheIdentity() [sha256.Size]byte
 	lowBalance() float64
 	configurationIssue() (state, message string)
 	read(context.Context, *http.Client) (supplierBalanceReading, error)
 }
 
 type supplierLastSuccess struct {
-	Reading supplierBalanceReading
-	At      time.Time
+	Reading  supplierBalanceReading
+	Identity [sha256.Size]byte
+	At       time.Time
 }
 
 type supplierBalanceMonitor struct {
-	checkers       []supplierBalanceChecker
+	db             *gorm.DB
+	baseConfig     config.BalanceMonitorConfig
 	client         *http.Client
 	refreshSeconds int
 
@@ -91,23 +99,22 @@ type supplierBalanceMonitor struct {
 	last map[string]supplierLastSuccess
 }
 
-func newSupplierBalanceMonitor(cfg config.BalanceMonitorConfig) *supplierBalanceMonitor {
-	return newSupplierBalanceMonitorWithClient(cfg, &http.Client{Timeout: supplierBalanceTimeout + 2*time.Second})
+func newSupplierBalanceMonitor(db *gorm.DB, cfg config.BalanceMonitorConfig) *supplierBalanceMonitor {
+	return newSupplierBalanceMonitorWithDBAndClient(db, cfg, &http.Client{Timeout: supplierBalanceTimeout + 2*time.Second})
 }
 
 func newSupplierBalanceMonitorWithClient(cfg config.BalanceMonitorConfig, client *http.Client) *supplierBalanceMonitor {
+	return newSupplierBalanceMonitorWithDBAndClient(nil, cfg, client)
+}
+
+func newSupplierBalanceMonitorWithDBAndClient(db *gorm.DB, cfg config.BalanceMonitorConfig, client *http.Client) *supplierBalanceMonitor {
 	refreshSeconds := cfg.RefreshSeconds
 	if refreshSeconds < 10 {
 		refreshSeconds = 30
 	}
 	return &supplierBalanceMonitor{
-		checkers: []supplierBalanceChecker{
-			&newAPIBalanceChecker{providerKey: "dlapi", cfg: cfg.DLAPI},
-			&balanceProfileChecker{providerKey: "mikoto", cfg: cfg.Mikoto},
-			&balanceProfileChecker{providerKey: "ccgo", cfg: cfg.CCGO},
-			&balanceProfileChecker{providerKey: "ccgo2", cfg: cfg.CCGO2},
-			&dimensioBalanceChecker{providerKey: "dimensio", cfg: cfg.Dimensio},
-		},
+		db:             db,
+		baseConfig:     cfg,
 		client:         client,
 		refreshSeconds: refreshSeconds,
 		last:           make(map[string]supplierLastSuccess),
@@ -115,22 +122,117 @@ func newSupplierBalanceMonitorWithClient(cfg config.BalanceMonitorConfig, client
 }
 
 func (m *supplierBalanceMonitor) snapshot(ctx context.Context) SupplierBalancesVO {
-	rows := make([]SupplierBalanceVO, len(m.checkers))
+	checkers, configErr := m.currentCheckers()
+	rows := make([]SupplierBalanceVO, len(checkers))
 	var wg sync.WaitGroup
-	for i := range m.checkers {
+	for i := range checkers {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
-			rows[index] = m.check(ctx, m.checkers[index])
+			rows[index] = m.check(ctx, checkers[index])
 		}(i)
 	}
 	wg.Wait()
+	if configErr != nil {
+		for i := range rows {
+			if rows[i].Key == "dlapi" {
+				continue
+			}
+			rows[i].State = "error"
+			rows[i].Balance = nil
+			rows[i].LowBalance = nil
+			rows[i].Details = []SupplierBalanceDetailVO{}
+			rows[i].CheckedAt = ""
+			rows[i].LastSuccessAt = ""
+			rows[i].LatencyMs = 0
+			rows[i].Stale = false
+			rows[i].Message = "无法读取监控配置"
+		}
+	}
 
 	return SupplierBalancesVO{
 		Suppliers:      rows,
 		RefreshedAt:    time.Now().UTC().Format(time.RFC3339),
 		RefreshSeconds: m.refreshSeconds,
 	}
+}
+
+func (m *supplierBalanceMonitor) currentCheckers() ([]supplierBalanceChecker, error) {
+	cfg := m.baseConfig
+	var err error
+	if m.db != nil {
+		cfg, err = loadLiveSupplierBalanceConfig(m.db, cfg)
+	}
+	return []supplierBalanceChecker{
+		&newAPIBalanceChecker{providerKey: "dlapi", cfg: cfg.DLAPI},
+		&balanceProfileChecker{providerKey: "mikoto", cfg: cfg.Mikoto},
+		&balanceProfileChecker{providerKey: "ccgo", cfg: cfg.CCGO},
+		&balanceProfileChecker{providerKey: "ccgo2", cfg: cfg.CCGO2},
+		&dimensioBalanceChecker{providerKey: "dimensio", cfg: cfg.Dimensio},
+	}, err
+}
+
+// loadLiveSupplierBalanceConfig overlays the four JWT-backed suppliers from
+// sys_config for every snapshot. A blank stored token intentionally clears any
+// legacy environment value. DLAPI is left on the deployment configuration.
+func loadLiveSupplierBalanceConfig(db *gorm.DB, cfg config.BalanceMonitorConfig) (config.BalanceMonitorConfig, error) {
+	// These values have a single source of truth: sys_config. Clear any values
+	// Viper may have accepted from legacy environment variables before reading
+	// the database, so missing rows or a transient DB error can never revive an
+	// old credential behind the administrator's back.
+	cfg.Mikoto.Enabled, cfg.Mikoto.AccessToken, cfg.Mikoto.LowBalance = false, "", 0
+	cfg.CCGO.Enabled, cfg.CCGO.AccessToken, cfg.CCGO.LowBalance = false, "", 0
+	cfg.CCGO2.Enabled, cfg.CCGO2.AccessToken, cfg.CCGO2.LowBalance = false, "", 0
+	cfg.Dimensio.Enabled, cfg.Dimensio.AccessToken, cfg.Dimensio.LowBalance = false, "", 0
+
+	var rows []model.SysConfig
+	if err := db.Where("config_key IN ?", model.SupplierBalanceConfigKeys).Find(&rows).Error; err != nil {
+		return cfg, err
+	}
+	values := make(map[string]string, len(rows))
+	for i := range rows {
+		values[rows[i].ConfigKey] = rows[i].ConfigValue
+	}
+
+	overlayProfileBalanceConfig(values, model.ConfigKeyBalanceMikotoEnabled, model.ConfigKeyBalanceMikotoAccessToken, model.ConfigKeyBalanceMikotoLowBalance, &cfg.Mikoto)
+	overlayProfileBalanceConfig(values, model.ConfigKeyBalanceCCGOEnabled, model.ConfigKeyBalanceCCGOAccessToken, model.ConfigKeyBalanceCCGOLowBalance, &cfg.CCGO)
+	overlayProfileBalanceConfig(values, model.ConfigKeyBalanceCCGO2Enabled, model.ConfigKeyBalanceCCGO2AccessToken, model.ConfigKeyBalanceCCGO2LowBalance, &cfg.CCGO2)
+	if value, ok := values[model.ConfigKeyBalanceDimensioEnabled]; ok {
+		cfg.Dimensio.Enabled = parseSupplierBalanceEnabled(value)
+	}
+	if value, ok := values[model.ConfigKeyBalanceDimensioAccessToken]; ok {
+		cfg.Dimensio.AccessToken = strings.TrimSpace(value)
+	}
+	if value, ok := parseSupplierBalanceThreshold(values, model.ConfigKeyBalanceDimensioLowBalance); ok {
+		cfg.Dimensio.LowBalance = value
+	}
+	return cfg, nil
+}
+
+func overlayProfileBalanceConfig(values map[string]string, enabledKey, tokenKey, thresholdKey string, cfg *config.BearerProfileBalanceConfig) {
+	if value, ok := values[enabledKey]; ok {
+		cfg.Enabled = parseSupplierBalanceEnabled(value)
+	}
+	if value, ok := values[tokenKey]; ok {
+		cfg.AccessToken = strings.TrimSpace(value)
+	}
+	if value, ok := parseSupplierBalanceThreshold(values, thresholdKey); ok {
+		cfg.LowBalance = value
+	}
+}
+
+func parseSupplierBalanceEnabled(value string) bool {
+	value = strings.TrimSpace(value)
+	return value == "1" || strings.EqualFold(value, "true")
+}
+
+func parseSupplierBalanceThreshold(values map[string]string, key string) (float64, bool) {
+	raw, exists := values[key]
+	if !exists {
+		return 0, false
+	}
+	value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	return value, err == nil && value >= 0 && !math.IsInf(value, 0) && !math.IsNaN(value)
 }
 
 func (m *supplierBalanceMonitor) check(parent context.Context, checker supplierBalanceChecker) SupplierBalanceVO {
@@ -160,7 +262,7 @@ func (m *supplierBalanceMonitor) check(parent context.Context, checker supplierB
 	if err != nil {
 		row.State = "error"
 		row.Message = err.Error()
-		if last, ok := m.loadLast(checker.key()); ok {
+		if last, ok := m.loadLast(checker.key()); ok && last.Identity == checker.cacheIdentity() {
 			row.Balance = float64Ptr(last.Reading.Balance)
 			row.Currency = last.Reading.Currency
 			row.Details = cloneBalanceDetails(last.Reading.Details)
@@ -180,7 +282,9 @@ func (m *supplierBalanceMonitor) check(parent context.Context, checker supplierB
 		row.State = "low"
 		row.Message = fmt.Sprintf("余额已低于 %.2f %s 的预警线", threshold, reading.Currency)
 	}
-	m.storeLast(checker.key(), supplierLastSuccess{Reading: reading, At: checkedAt})
+	m.storeLast(checker.key(), supplierLastSuccess{
+		Reading: reading, Identity: checker.cacheIdentity(), At: checkedAt,
+	})
 	return row
 }
 
@@ -210,7 +314,7 @@ func cloneBalanceDetails(details []SupplierBalanceDetailVO) []SupplierBalanceDet
 //
 //	GET /admin/supplier-balances -> SupplierBalancesVO
 func RegisterSupplierBalances(g *gin.RouterGroup, d *app.Deps) {
-	monitor := newSupplierBalanceMonitor(d.Cfg.BalanceMonitor)
+	monitor := newSupplierBalanceMonitor(d.DB, d.Cfg.BalanceMonitor)
 	g.GET("/supplier-balances", func(c *gin.Context) {
 		response.OK(c, monitor.snapshot(c.Request.Context()))
 	})
@@ -239,6 +343,10 @@ func (c *newAPIBalanceChecker) source() string {
 		return u.Hostname()
 	}
 	return strings.TrimSpace(c.cfg.BaseURL)
+}
+
+func (c *newAPIBalanceChecker) cacheIdentity() [sha256.Size]byte {
+	return supplierBalanceIdentity(c.providerKey, c.cfg.BaseURL, c.cfg.UserID, c.cfg.AccessToken)
 }
 
 func (c *newAPIBalanceChecker) lowBalance() float64 { return c.cfg.LowBalance }
@@ -362,6 +470,10 @@ func (c *balanceProfileChecker) source() string {
 	return strings.TrimSpace(c.cfg.BaseURL)
 }
 
+func (c *balanceProfileChecker) cacheIdentity() [sha256.Size]byte {
+	return supplierBalanceIdentity(c.providerKey, c.cfg.BaseURL, c.cfg.AccessToken)
+}
+
 func (c *balanceProfileChecker) lowBalance() float64 { return c.cfg.LowBalance }
 
 func (c *balanceProfileChecker) configurationIssue() (string, string) {
@@ -483,6 +595,10 @@ func (c *dimensioBalanceChecker) source() string {
 	return strings.TrimSpace(c.cfg.BaseURL)
 }
 
+func (c *dimensioBalanceChecker) cacheIdentity() [sha256.Size]byte {
+	return supplierBalanceIdentity(c.providerKey, c.cfg.BaseURL, c.cfg.AccessToken)
+}
+
 func (c *dimensioBalanceChecker) lowBalance() float64 { return c.cfg.LowBalance }
 
 func (c *dimensioBalanceChecker) configurationIssue() (string, string) {
@@ -564,6 +680,10 @@ func bearerAuthorization(token string) string {
 		return token
 	}
 	return "Bearer " + token
+}
+
+func supplierBalanceIdentity(parts ...string) [sha256.Size]byte {
+	return sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 }
 
 func compactUpstreamMessage(message string) string {

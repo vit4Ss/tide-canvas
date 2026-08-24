@@ -258,7 +258,7 @@ export default function AdminBalancesPage() {
         ) : error && !snapshot ? null : rows.length === 0 ? (
           <AdminEmptyState
             title="暂无供应商"
-            description="在服务端余额监控配置中加入供应商后，会自动显示在这里。"
+            description="请先在后台配置管理的「供应商余额」分组中启用并填写访问令牌。"
           />
         ) : (
           <>
