@@ -36,6 +36,7 @@ function isGroup(e: AdminNavEntry): e is { group: string } {
 export const ADMIN_NAV: AdminNavEntry[] = [
   { group: "总览" },
   { label: "数据概览", href: "/admin", icon: "dash", perm: "dashboard", description: "核心指标、增长趋势与今日运营状态" },
+  { label: "供应商余额", href: "/admin/balances", icon: "wallet", perm: "balances", description: "上游供应商余额、预警与查询状态" },
   { group: "运营" },
   { label: "用户管理", href: "/admin/users", icon: "users", perm: "users", description: "账号、角色、套餐与积分余额" },
   { label: "作品管理", href: "/admin/works", icon: "works", perm: "works", description: "作品审核、精选与内容处置" },
@@ -56,7 +57,6 @@ export const ADMIN_NAV: AdminNavEntry[] = [
   { label: "积分管理", href: "/admin/points", icon: "credit", perm: "points", description: "积分规则、流水与人工调整" },
   { label: "价格管理", href: "/admin/pricing", icon: "price", perm: "pricing", description: "套餐、权益、价格对比与常见问题" },
   { label: "支付管理", href: "/admin/payments", icon: "pay", perm: "payments", description: "订单流水、支付渠道与结算状态" },
-  { label: "供应商余额", href: "/admin/balances", icon: "wallet", perm: "balances", description: "上游供应商余额、预警与查询状态" },
   { group: "系统" },
   { label: "消息管理", href: "/admin/notifications", icon: "bell", perm: "notifications", description: "站内通知、受众与触达记录" },
   { label: "配置管理", href: "/admin/config", icon: "cog", perm: "config", description: "站点、存储、注册与系统参数" },
