@@ -41,6 +41,66 @@ type Config struct {
 	LLM        LLMConfig        `mapstructure:"llm"`
 	Relay      RelayConfig      `mapstructure:"relay"`
 	Eliandapay EliandapayConfig `mapstructure:"eliandapay"`
+	// BalanceMonitor contains server-only supplier credentials used by the
+	// admin balance dashboard. Secrets in this section must be supplied through
+	// environment variables and are never returned by an API.
+	BalanceMonitor BalanceMonitorConfig `mapstructure:"balanceMonitor"`
+}
+
+// BalanceMonitorConfig groups the upstream accounts shown on the admin
+// supplier-balance dashboard. Each supplier keeps its own typed configuration
+// because authentication and response formats differ between vendors.
+type BalanceMonitorConfig struct {
+	RefreshSeconds int                        `mapstructure:"refreshSeconds"`
+	DLAPI          NewAPIBalanceConfig        `mapstructure:"dlapi"`
+	Mikoto         BearerProfileBalanceConfig `mapstructure:"mikoto"`
+	CCGO           BearerProfileBalanceConfig `mapstructure:"ccgo"`
+	CCGO2          BearerProfileBalanceConfig `mapstructure:"ccgo2"`
+	Dimensio       DimensioBalanceConfig      `mapstructure:"dimensio"`
+}
+
+// NewAPIBalanceConfig configures a New API compatible GET /api/user/self
+// account. QuotaPerUnit converts the raw integer quota returned by New API into
+// the displayed currency amount (DLAPI currently publishes 500000 units/USD).
+type NewAPIBalanceConfig struct {
+	Enabled      bool    `mapstructure:"enabled"`
+	Name         string  `mapstructure:"name"`
+	BaseURL      string  `mapstructure:"baseUrl"`
+	UserID       string  `mapstructure:"userId"`
+	AccessToken  string  `mapstructure:"accessToken"`
+	QuotaPerUnit float64 `mapstructure:"quotaPerUnit"`
+	Currency     string  `mapstructure:"currency"`
+	LowBalance   float64 `mapstructure:"lowBalance"`
+}
+
+// BearerProfileBalanceConfig configures suppliers exposing the common
+// GET /api/v1/auth/me profile envelope (currently Mikoto and CCGO). The access
+// token is a JWT and is sent as a Bearer credential. UIRequest adds the
+// x-user-ui-request header required by CCGO.
+type BearerProfileBalanceConfig struct {
+	Enabled     bool    `mapstructure:"enabled"`
+	Name        string  `mapstructure:"name"`
+	BaseURL     string  `mapstructure:"baseUrl"`
+	AccessToken string  `mapstructure:"accessToken"`
+	Timezone    string  `mapstructure:"timezone"`
+	Currency    string  `mapstructure:"currency"`
+	LowBalance  float64 `mapstructure:"lowBalance"`
+	UIRequest   bool    `mapstructure:"uiRequest"`
+}
+
+// MikotoBalanceConfig is kept as a source-compatible name for focused tests
+// and any package constructing the original Mikoto configuration directly.
+type MikotoBalanceConfig = BearerProfileBalanceConfig
+
+// DimensioBalanceConfig configures GET /api/auth/me. The available credit
+// balance is calculated as credit_budget - membership_usage_credits.
+type DimensioBalanceConfig struct {
+	Enabled     bool    `mapstructure:"enabled"`
+	Name        string  `mapstructure:"name"`
+	BaseURL     string  `mapstructure:"baseUrl"`
+	AccessToken string  `mapstructure:"accessToken"`
+	Unit        string  `mapstructure:"unit"`
+	LowBalance  float64 `mapstructure:"lowBalance"`
 }
 
 // EliandapayConfig holds the 易联达Pay (eliandapay / api.ndow.cn) aggregator
@@ -346,6 +406,48 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("relay.baseUrl", testRelayBaseURL)
 	v.SetDefault("relay.apiKey", "")
 
+	// Supplier balance monitor. The access token deliberately has no file
+	// default: inject it as TIDECANVAS_BALANCEMONITOR_DLAPI_ACCESSTOKEN.
+	v.SetDefault("balanceMonitor.refreshSeconds", 30)
+	v.SetDefault("balanceMonitor.dlapi.enabled", true)
+	v.SetDefault("balanceMonitor.dlapi.name", "DLAPI")
+	v.SetDefault("balanceMonitor.dlapi.baseUrl", "https://api.dlapi.xyz")
+	v.SetDefault("balanceMonitor.dlapi.userId", "245")
+	v.SetDefault("balanceMonitor.dlapi.accessToken", "")
+	v.SetDefault("balanceMonitor.dlapi.quotaPerUnit", 500000)
+	v.SetDefault("balanceMonitor.dlapi.currency", "USD")
+	v.SetDefault("balanceMonitor.dlapi.lowBalance", 20)
+	v.SetDefault("balanceMonitor.mikoto.enabled", true)
+	v.SetDefault("balanceMonitor.mikoto.name", "Mikoto")
+	v.SetDefault("balanceMonitor.mikoto.baseUrl", "https://api.mikoto.vip")
+	v.SetDefault("balanceMonitor.mikoto.accessToken", "")
+	v.SetDefault("balanceMonitor.mikoto.timezone", "Asia/Shanghai")
+	v.SetDefault("balanceMonitor.mikoto.currency", "USD")
+	v.SetDefault("balanceMonitor.mikoto.lowBalance", 20)
+	v.SetDefault("balanceMonitor.mikoto.uiRequest", false)
+	v.SetDefault("balanceMonitor.ccgo.enabled", true)
+	v.SetDefault("balanceMonitor.ccgo.name", "CCGO")
+	v.SetDefault("balanceMonitor.ccgo.baseUrl", "https://www.ccgoai.com")
+	v.SetDefault("balanceMonitor.ccgo.accessToken", "")
+	v.SetDefault("balanceMonitor.ccgo.timezone", "Asia/Shanghai")
+	v.SetDefault("balanceMonitor.ccgo.currency", "USD")
+	v.SetDefault("balanceMonitor.ccgo.lowBalance", 20)
+	v.SetDefault("balanceMonitor.ccgo.uiRequest", true)
+	v.SetDefault("balanceMonitor.ccgo2.enabled", true)
+	v.SetDefault("balanceMonitor.ccgo2.name", "CCGO2")
+	v.SetDefault("balanceMonitor.ccgo2.baseUrl", "https://www.ccgoai.com")
+	v.SetDefault("balanceMonitor.ccgo2.accessToken", "")
+	v.SetDefault("balanceMonitor.ccgo2.timezone", "Asia/Shanghai")
+	v.SetDefault("balanceMonitor.ccgo2.currency", "USD")
+	v.SetDefault("balanceMonitor.ccgo2.lowBalance", 20)
+	v.SetDefault("balanceMonitor.ccgo2.uiRequest", true)
+	v.SetDefault("balanceMonitor.dimensio.enabled", true)
+	v.SetDefault("balanceMonitor.dimensio.name", "Dimensio")
+	v.SetDefault("balanceMonitor.dimensio.baseUrl", "https://jimeng.dimensio.cn")
+	v.SetDefault("balanceMonitor.dimensio.accessToken", "")
+	v.SetDefault("balanceMonitor.dimensio.unit", "积分")
+	v.SetDefault("balanceMonitor.dimensio.lowBalance", 50000)
+
 	v.SetDefault("eliandapay.enabled", true)
 	v.SetDefault("eliandapay.gateway", "https://api.ndow.cn/")
 	v.SetDefault("eliandapay.merchantId", "1052")
@@ -384,6 +486,51 @@ func normalize(cfg *Config) {
 	}
 	if cfg.Storage.Type == "" {
 		cfg.Storage.Type = "local"
+	}
+	if cfg.BalanceMonitor.RefreshSeconds < 10 {
+		cfg.BalanceMonitor.RefreshSeconds = 30
+	}
+	if strings.TrimSpace(cfg.BalanceMonitor.DLAPI.Name) == "" {
+		cfg.BalanceMonitor.DLAPI.Name = "DLAPI"
+	}
+	if cfg.BalanceMonitor.DLAPI.QuotaPerUnit <= 0 {
+		cfg.BalanceMonitor.DLAPI.QuotaPerUnit = 500000
+	}
+	if strings.TrimSpace(cfg.BalanceMonitor.DLAPI.Currency) == "" {
+		cfg.BalanceMonitor.DLAPI.Currency = "USD"
+	}
+	if strings.TrimSpace(cfg.BalanceMonitor.Mikoto.Name) == "" {
+		cfg.BalanceMonitor.Mikoto.Name = "Mikoto"
+	}
+	if strings.TrimSpace(cfg.BalanceMonitor.Mikoto.Timezone) == "" {
+		cfg.BalanceMonitor.Mikoto.Timezone = "Asia/Shanghai"
+	}
+	if strings.TrimSpace(cfg.BalanceMonitor.Mikoto.Currency) == "" {
+		cfg.BalanceMonitor.Mikoto.Currency = "USD"
+	}
+	if strings.TrimSpace(cfg.BalanceMonitor.CCGO.Name) == "" {
+		cfg.BalanceMonitor.CCGO.Name = "CCGO"
+	}
+	if strings.TrimSpace(cfg.BalanceMonitor.CCGO.Timezone) == "" {
+		cfg.BalanceMonitor.CCGO.Timezone = "Asia/Shanghai"
+	}
+	if strings.TrimSpace(cfg.BalanceMonitor.CCGO.Currency) == "" {
+		cfg.BalanceMonitor.CCGO.Currency = "USD"
+	}
+	if strings.TrimSpace(cfg.BalanceMonitor.CCGO2.Name) == "" {
+		cfg.BalanceMonitor.CCGO2.Name = "CCGO2"
+	}
+	if strings.TrimSpace(cfg.BalanceMonitor.CCGO2.Timezone) == "" {
+		cfg.BalanceMonitor.CCGO2.Timezone = "Asia/Shanghai"
+	}
+	if strings.TrimSpace(cfg.BalanceMonitor.CCGO2.Currency) == "" {
+		cfg.BalanceMonitor.CCGO2.Currency = "USD"
+	}
+	if strings.TrimSpace(cfg.BalanceMonitor.Dimensio.Name) == "" {
+		cfg.BalanceMonitor.Dimensio.Name = "Dimensio"
+	}
+	if strings.TrimSpace(cfg.BalanceMonitor.Dimensio.Unit) == "" {
+		cfg.BalanceMonitor.Dimensio.Unit = "积分"
 	}
 
 	// Email policy guards: fall back to sane defaults when values are missing or

@@ -49,6 +49,48 @@ func TestLoadAllowsDisablingStorageAccelerationFromEnv(t *testing.T) {
 	}
 }
 
+func TestLoadSupplierBalanceCredentialFromEnv(t *testing.T) {
+	t.Setenv("TIDECANVAS_ENV", "test")
+	t.Setenv("TIDECANVAS_BALANCEMONITOR_DLAPI_ACCESSTOKEN", "unit-test-dlapi-token")
+	t.Setenv("TIDECANVAS_BALANCEMONITOR_DLAPI_LOWBALANCE", "12.5")
+	t.Setenv("TIDECANVAS_BALANCEMONITOR_MIKOTO_ACCESSTOKEN", "unit-test-mikoto-token")
+	t.Setenv("TIDECANVAS_BALANCEMONITOR_CCGO_ACCESSTOKEN", "unit-test-ccgo-token")
+	t.Setenv("TIDECANVAS_BALANCEMONITOR_CCGO2_ACCESSTOKEN", "unit-test-ccgo2-token")
+	t.Setenv("TIDECANVAS_BALANCEMONITOR_DIMENSIO_ACCESSTOKEN", "unit-test-dimensio-token")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.BalanceMonitor.DLAPI.AccessToken != "unit-test-dlapi-token" {
+		t.Fatal("DLAPI access token environment override was ignored")
+	}
+	if cfg.BalanceMonitor.DLAPI.UserID != "245" {
+		t.Errorf("DLAPI user id = %q, want 245", cfg.BalanceMonitor.DLAPI.UserID)
+	}
+	if cfg.BalanceMonitor.DLAPI.LowBalance != 12.5 {
+		t.Errorf("DLAPI low balance = %v, want 12.5", cfg.BalanceMonitor.DLAPI.LowBalance)
+	}
+	if cfg.BalanceMonitor.Mikoto.AccessToken != "unit-test-mikoto-token" {
+		t.Fatal("Mikoto access token environment override was ignored")
+	}
+	if cfg.BalanceMonitor.Mikoto.Timezone != "Asia/Shanghai" {
+		t.Errorf("Mikoto timezone = %q, want Asia/Shanghai", cfg.BalanceMonitor.Mikoto.Timezone)
+	}
+	if cfg.BalanceMonitor.CCGO.AccessToken != "unit-test-ccgo-token" || !cfg.BalanceMonitor.CCGO.UIRequest {
+		t.Fatal("CCGO credential or UI request header setting was ignored")
+	}
+	if cfg.BalanceMonitor.CCGO2.AccessToken != "unit-test-ccgo2-token" || cfg.BalanceMonitor.CCGO2.Name != "CCGO2" {
+		t.Fatal("CCGO2 independent account configuration was ignored")
+	}
+	if cfg.BalanceMonitor.Dimensio.AccessToken != "unit-test-dimensio-token" {
+		t.Fatal("Dimensio access token environment override was ignored")
+	}
+	if cfg.BalanceMonitor.Dimensio.Unit != "积分" {
+		t.Errorf("Dimensio unit = %q, want 积分", cfg.BalanceMonitor.Dimensio.Unit)
+	}
+}
+
 func TestLoadProdRequiresJWTSecret(t *testing.T) {
 	t.Setenv("TIDECANVAS_ENV", "prod")
 	t.Setenv("TIDECANVAS_JWT_SECRET", "")

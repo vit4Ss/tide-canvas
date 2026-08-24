@@ -41,6 +41,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	RegisterCanvasNodes(mod("canvas"), d)
 	RegisterPricing(mod("pricing"), d)
 	RegisterPayments(mod("payments"), d)
+	RegisterSupplierBalances(mod("balances"), d)
 	RegisterActivationCodes(mod("activation_codes"), d)
 	RegisterPoints(mod("points"), d)
 	RegisterLogs(mod("logs"), d)
