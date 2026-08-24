@@ -222,19 +222,38 @@ export default function AdminBalancesPage() {
       </section>
 
       <style>{`
-        .balance-page { gap: 18px; }
+        .balance-page {
+          --balance-violet: #7868ff;
+          --balance-indigo: #4f5ee8;
+          --balance-mint: #49e3a2;
+          gap: 18px;
+        }
         .balance-command {
           position: relative;
           overflow: hidden;
           padding: 26px;
-          border: 1px solid #292d39;
-          border-top: 3px solid #7891ff;
+          border: 1px solid #252b49;
+          border-top: 3px solid #8a7cff;
           border-radius: 16px;
-          background: #171922;
+          background: #101426;
           color: #f7f8fc;
-          box-shadow: 0 18px 44px rgba(20, 22, 31, .14);
+          box-shadow: 0 20px 50px rgba(42, 46, 103, .2), 0 2px 8px rgba(15, 18, 38, .1);
+        }
+        .balance-command::after {
+          position: absolute;
+          top: -142px;
+          right: -82px;
+          width: 310px;
+          height: 310px;
+          border: 1px solid rgba(138, 124, 255, .13);
+          border-radius: 50%;
+          box-shadow: 0 0 0 44px rgba(138, 124, 255, .025), 0 0 0 88px rgba(138, 124, 255, .018);
+          content: "";
+          pointer-events: none;
         }
         .balance-command-top {
+          position: relative;
+          z-index: 1;
           display: flex;
           align-items: flex-start;
           justify-content: space-between;
@@ -245,7 +264,7 @@ export default function AdminBalancesPage() {
           display: inline-flex;
           align-items: center;
           gap: 8px;
-          color: #aeb7d0;
+          color: #b9c3ed;
           font-family: var(--mono);
           font-size: 10px;
           font-weight: 600;
@@ -255,8 +274,8 @@ export default function AdminBalancesPage() {
           width: 6px;
           height: 6px;
           border-radius: 50%;
-          background: #4ade80;
-          box-shadow: 0 0 0 4px rgba(74, 222, 128, .12);
+          background: var(--balance-mint);
+          box-shadow: 0 0 0 4px rgba(73, 227, 162, .13), 0 0 14px rgba(73, 227, 162, .45);
         }
         .balance-command h1 {
           margin: 12px 0 7px;
@@ -268,7 +287,7 @@ export default function AdminBalancesPage() {
         }
         .balance-command-copy p {
           margin: 0;
-          color: #9fa7ba;
+          color: #a6b0ce;
           font-size: 13px;
           line-height: 1.7;
         }
@@ -280,24 +299,32 @@ export default function AdminBalancesPage() {
           justify-content: center;
           gap: 7px;
           padding: 0 14px;
-          border: 1px solid #f4f5f8;
+          border: 1px solid #8b7cff;
           border-radius: 9px;
-          background: #f4f5f8;
-          color: #171922;
+          background: #7c6df2;
+          color: #fff;
           font-size: 12.5px;
           font-weight: 600;
           cursor: pointer;
           transition: transform .15s var(--ease), background .15s var(--ease);
         }
-        .balance-refresh:hover { background: #fff; transform: translateY(-1px); }
+        .balance-refresh:hover {
+          border-color: #9b90ff;
+          background: #8b7cff;
+          box-shadow: 0 8px 22px rgba(124, 109, 242, .28);
+          transform: translateY(-1px);
+        }
         .balance-refresh:disabled { opacity: .6; cursor: not-allowed; transform: none; }
         .balance-command-grid {
           display: grid;
           grid-template-columns: minmax(250px, 1.7fr) repeat(4, minmax(92px, .62fr)) minmax(160px, 1fr);
           margin-top: 24px;
-          border: 1px solid #303441;
+          position: relative;
+          z-index: 1;
+          border: 1px solid #2b3458;
           border-radius: 12px;
-          background: #1d202a;
+          background: #151a30;
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, .025);
         }
         .balance-total {
           display: flex;
@@ -305,7 +332,7 @@ export default function AdminBalancesPage() {
           align-items: center;
           gap: 13px;
           padding: 18px 20px;
-          border-right: 1px solid #303441;
+          border-right: 1px solid #2b3458;
         }
         .balance-total-icon {
           display: grid;
@@ -313,16 +340,17 @@ export default function AdminBalancesPage() {
           height: 42px;
           flex: none;
           place-items: center;
-          border: 1px solid #3b4050;
+          border: 1px solid #7369da;
           border-radius: 10px;
-          background: #252936;
-          color: #95a8ff;
+          background: #29264f;
+          color: #b7b1ff;
+          box-shadow: inset 0 0 0 1px rgba(183, 177, 255, .05);
         }
         .balance-total span,
         .balance-command-metric span,
         .balance-sync-time span {
           display: block;
-          color: #8f97aa;
+          color: #8f9bbe;
           font-size: 10px;
           letter-spacing: .08em;
         }
@@ -342,7 +370,7 @@ export default function AdminBalancesPage() {
         .balance-sync-time small {
           display: block;
           margin-top: 5px;
-          color: #767f93;
+          color: #7885a9;
           font-size: 10px;
           white-space: nowrap;
         }
@@ -352,7 +380,7 @@ export default function AdminBalancesPage() {
           flex-direction: column;
           justify-content: center;
           padding: 17px 16px;
-          border-right: 1px solid #303441;
+          border-right: 1px solid #2b3458;
         }
         .balance-command-metric strong {
           margin-top: 6px;
@@ -362,9 +390,9 @@ export default function AdminBalancesPage() {
           font-weight: 600;
           font-variant-numeric: tabular-nums;
         }
-        .balance-command-metric.is-ok strong { color: #4ade80; }
-        .balance-command-metric.is-warn strong { color: #fbbf24; }
-        .balance-command-metric.is-danger strong { color: #fb7185; }
+        .balance-command-metric.is-ok strong { color: #51e6a5; }
+        .balance-command-metric.is-warn strong { color: #ffc65c; }
+        .balance-command-metric.is-danger strong { color: #ff6d8a; }
         .balance-sync-time {
           position: relative;
           display: flex;
@@ -377,12 +405,12 @@ export default function AdminBalancesPage() {
           position: absolute;
           top: 19px;
           left: 18px;
-          color: #7f8ba6;
+          color: #8996bd;
         }
         .balance-sync-time strong {
           overflow: hidden;
           margin-top: 6px;
-          color: #dfe3ed;
+          color: #e4e8f8;
           font-family: var(--mono);
           font-size: 11px;
           font-weight: 500;
@@ -392,9 +420,10 @@ export default function AdminBalancesPage() {
         }
         .balance-ledger {
           padding: 22px;
-          border: 1px solid var(--border);
+          border: 1px solid #d8deed;
           border-radius: 16px;
-          background: #f0f1f4;
+          background: #eef1f8;
+          box-shadow: 0 12px 34px rgba(46, 54, 93, .07);
         }
         .balance-ledger-head {
           display: flex;
@@ -405,7 +434,7 @@ export default function AdminBalancesPage() {
           padding: 0 2px;
         }
         .balance-ledger-head span {
-          color: var(--text-faint);
+          color: #6c63d9;
           font-family: var(--mono);
           font-size: 9.5px;
           font-weight: 600;
@@ -422,40 +451,50 @@ export default function AdminBalancesPage() {
           display: inline-flex;
           align-items: center;
           gap: 6px;
-          color: var(--text-faint);
+          padding: 7px 10px;
+          border: 1px solid #d8deed;
+          border-radius: 8px;
+          background: rgba(255, 255, 255, .68);
+          color: #68718b;
           font-size: 11px;
         }
-        .balance-ledger-security svg { color: var(--ok); }
+        .balance-ledger-security svg { color: #16a873; }
         .balance-card-grid {
           display: grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
           gap: 14px;
         }
         .balance-card {
-          --card-state: #a1a1aa;
+          --card-state: #9aa4bc;
+          --card-accent: #7868ff;
+          --card-tint: #f1efff;
           position: relative;
           display: flex;
           min-width: 0;
           min-height: 285px;
           flex-direction: column;
           overflow: hidden;
-          border: 1px solid #dddfe5;
-          border-top: 3px solid var(--card-state);
+          border: 1px solid #d9deeb;
+          border-top: 3px solid var(--card-accent);
           border-radius: 13px;
-          background: var(--surface);
-          box-shadow: 0 8px 24px rgba(25, 28, 38, .06);
+          background: #fff;
+          box-shadow: 0 10px 26px rgba(35, 43, 78, .075);
           transition: transform .18s var(--ease), box-shadow .18s var(--ease), border-color .18s var(--ease);
         }
         .balance-card:hover {
           transform: translateY(-2px);
-          border-color: #cfd2da;
-          box-shadow: 0 14px 32px rgba(25, 28, 38, .09);
+          border-color: var(--card-accent);
+          box-shadow: 0 18px 38px rgba(35, 43, 78, .13);
         }
-        .balance-card.is-healthy { --card-state: #22a35a; }
+        .balance-card:nth-child(2) { --card-accent: #3f7ee8; --card-tint: #edf5ff; }
+        .balance-card:nth-child(3) { --card-accent: #12a87a; --card-tint: #ebfaf5; }
+        .balance-card:nth-child(4) { --card-accent: #0899b5; --card-tint: #ebf9fc; }
+        .balance-card:nth-child(5) { --card-accent: #df7541; --card-tint: #fff2eb; }
+        .balance-card.is-healthy { --card-state: #14a36f; }
         .balance-card.is-low { --card-state: #e59a19; }
-        .balance-card.is-error { --card-state: #df4b5f; }
+        .balance-card.is-error { --card-state: #e34f68; }
         .balance-card.is-disabled,
-        .balance-card.is-unconfigured { --card-state: #a4a8b2; background: #fbfbfc; }
+        .balance-card.is-unconfigured { --card-state: #9aa4bc; }
         .balance-card-head {
           display: flex;
           align-items: center;
@@ -469,8 +508,8 @@ export default function AdminBalancesPage() {
           flex: none;
           place-items: center;
           border-radius: 10px;
-          background: #1c1f29;
-          color: #f7f8fc;
+          background: var(--card-accent);
+          color: #fff;
           font-family: var(--mono);
           font-size: 10px;
           font-weight: 700;
@@ -503,9 +542,9 @@ export default function AdminBalancesPage() {
           align-items: center;
           gap: 7px;
           padding: 6px 8px;
-          border: 1px solid #e5e6ea;
+          border: 1px solid #e1e5ef;
           border-radius: 7px;
-          background: #fafafb;
+          background: #f8f9fc;
         }
         .balance-card-status i {
           width: 6px;
@@ -520,9 +559,12 @@ export default function AdminBalancesPage() {
           font-size: 8px;
           letter-spacing: .06em;
         }
+        .balance-card.is-healthy .balance-card-status { border-color: #c7ecdd; background: #effaf5; }
+        .balance-card.is-low .balance-card-status { border-color: #f2deb3; background: #fff8e8; }
+        .balance-card.is-error .balance-card-status { border-color: #f1cbd2; background: #fff2f4; }
         .balance-card-main { padding: 24px 17px 18px; }
         .balance-card-main > span {
-          color: var(--text-faint);
+          color: var(--card-accent);
           font-size: 10px;
           font-weight: 500;
           letter-spacing: .06em;
@@ -538,7 +580,7 @@ export default function AdminBalancesPage() {
           font-variant-numeric: tabular-nums;
         }
         .balance-card.is-low .balance-card-value { color: #b86f06; }
-        .balance-card-value.is-empty { color: #9a9da7; font-family: var(--ui); font-size: 22px; letter-spacing: -.02em; }
+        .balance-card-value.is-empty { color: #626b82; font-family: var(--ui); font-size: 22px; letter-spacing: -.02em; }
         .balance-card-sub {
           display: flex;
           min-height: 18px;
@@ -558,12 +600,12 @@ export default function AdminBalancesPage() {
           overflow: hidden;
           border: 1px solid var(--border-weak);
           border-radius: 9px;
-          background: var(--border-weak);
+          background: #e4e8f1;
         }
         .balance-card-fact {
           min-width: 0;
           padding: 10px 11px;
-          background: #fafafb;
+          background: var(--card-tint);
         }
         .balance-card-fact span { display: block; color: var(--text-faint); font-size: 9.5px; }
         .balance-card-fact strong {
@@ -605,11 +647,11 @@ export default function AdminBalancesPage() {
           gap: 8px;
           padding: 10px 17px;
           border-top: 1px solid var(--border-weak);
-          background: #fafafb;
-          color: var(--text-faint);
+          background: var(--card-tint);
+          color: #677087;
           font-size: 10.5px;
         }
-        .balance-card-foot svg { flex: none; color: var(--card-state); }
+        .balance-card-foot svg { flex: none; color: var(--card-accent); }
         .balance-card-foot span {
           overflow: hidden;
           text-overflow: ellipsis;
@@ -626,7 +668,7 @@ export default function AdminBalancesPage() {
         @keyframes balanceSpin { to { transform: rotate(360deg); } }
         @media (max-width: 1240px) {
           .balance-command-grid { grid-template-columns: minmax(240px, 1.5fr) repeat(4, minmax(82px, .6fr)); }
-          .balance-sync-time { grid-column: 1 / -1; min-height: 60px; border-top: 1px solid #303441; }
+          .balance-sync-time { grid-column: 1 / -1; min-height: 60px; border-top: 1px solid #2b3458; }
           .balance-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         }
         @media (max-width: 820px) {
@@ -634,7 +676,7 @@ export default function AdminBalancesPage() {
           .balance-command-top { flex-direction: column; }
           .balance-refresh { width: 100%; }
           .balance-command-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-          .balance-total { grid-column: 1 / -1; border-right: 0; border-bottom: 1px solid #303441; }
+          .balance-total { grid-column: 1 / -1; border-right: 0; border-bottom: 1px solid #2b3458; }
           .balance-command-metric:nth-of-type(odd) { border-right: 0; }
           .balance-sync-time { grid-column: 1 / -1; }
           .balance-card-grid { grid-template-columns: 1fr; }
