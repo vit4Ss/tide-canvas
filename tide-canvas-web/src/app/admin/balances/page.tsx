@@ -155,7 +155,7 @@ export default function AdminBalancesPage() {
     <div className="adm-page balance-page">
       <header className="balance-page-head">
         <div>
-          <h1>供应商余额</h1>
+          <h1>余额</h1>
           <p>查看上游账户余额与认证状态，异常账户不会影响其他供应商查询。</p>
         </div>
         <button
@@ -519,7 +519,7 @@ export default function AdminBalancesPage() {
         }
         .balance-account {
           --account-state: var(--border-strong);
-          --account-state-strong: var(--text-faint);
+          --account-state-strong: var(--text-dim);
           position: relative;
           display: flex;
           min-width: 0;
@@ -630,7 +630,7 @@ export default function AdminBalancesPage() {
         .balance-account-main { padding: 24px 0 18px; }
         .balance-account-main > span {
           display: block;
-          color: var(--text-faint);
+          color: var(--text-dim);
           font-size: 11px;
         }
         .balance-account-value {
@@ -647,16 +647,16 @@ export default function AdminBalancesPage() {
         .balance-account.is-low .balance-account-value { color: var(--warn-strong); }
         .balance-account.is-error .balance-account-value.is-empty { color: var(--danger-strong); }
         .balance-account-value.is-empty {
-          color: var(--text-faint);
+          color: var(--text-dim);
           font-family: var(--ui);
           font-size: 20px;
-          font-weight: 500;
+          font-weight: 550;
           letter-spacing: -.01em;
         }
         .balance-account-sub {
           min-height: 18px;
           margin-top: 7px;
-          color: var(--text-faint);
+          color: var(--text-dim);
           font-size: 11px;
         }
         .balance-account-sub b {
@@ -679,7 +679,7 @@ export default function AdminBalancesPage() {
         .balance-account-fact { min-width: 0; }
         .balance-account-fact span {
           display: block;
-          color: var(--text-faint);
+          color: var(--text-dim);
           font-size: 10px;
         }
         .balance-account-fact strong {

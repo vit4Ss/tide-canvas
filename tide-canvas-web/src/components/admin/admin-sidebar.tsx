@@ -36,7 +36,7 @@ function isGroup(e: AdminNavEntry): e is { group: string } {
 export const ADMIN_NAV: AdminNavEntry[] = [
   { group: "总览" },
   { label: "数据概览", href: "/admin", icon: "dash", perm: "dashboard", description: "核心指标、增长趋势与今日运营状态" },
-  { label: "供应商余额", href: "/admin/balances", icon: "wallet", perm: "balances", description: "上游供应商余额、预警与查询状态" },
+  { label: "余额", href: "/admin/balances", icon: "wallet", perm: "balances", description: "上游供应商余额、预警与查询状态" },
   { group: "运营" },
   { label: "用户管理", href: "/admin/users", icon: "users", perm: "users", description: "账号、角色、套餐与积分余额" },
   { label: "作品管理", href: "/admin/works", icon: "works", perm: "works", description: "作品审核、精选与内容处置" },
