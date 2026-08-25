@@ -9,11 +9,10 @@
    ============================================================================ */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Clock3, RefreshCw, ShieldCheck, WalletCards } from "lucide-react";
+import { Activity, Clock3, RefreshCw, ShieldCheck } from "lucide-react";
 import {
   AdminAlert,
   AdminEmptyState,
-  TableSkeleton,
 } from "@/components/admin";
 import { adminBalancesApi } from "@/lib/admin-balances-api";
 import { useAuthStore } from "@/stores/use-auth-store";
@@ -25,12 +24,12 @@ import type {
 
 const DEFAULT_REFRESH_SECONDS = 30;
 
-const STATE_META: Record<SupplierBalanceState, { label: string; code: string }> = {
-  healthy: { label: "运行正常", code: "ONLINE" },
-  low: { label: "余额预警", code: "LOW" },
-  error: { label: "查询异常", code: "ERROR" },
-  unconfigured: { label: "等待接入", code: "PENDING" },
-  disabled: { label: "监控停用", code: "OFFLINE" },
+const STATE_META: Record<SupplierBalanceState, { label: string }> = {
+  healthy: { label: "运行正常" },
+  low: { label: "余额预警" },
+  error: { label: "查询异常" },
+  unconfigured: { label: "等待接入" },
+  disabled: { label: "监控停用" },
 };
 
 function formatMoney(value: number | null, currency: string): string {
@@ -139,16 +138,12 @@ export default function AdminBalancesPage() {
       <section className="balance-command" aria-labelledby="balance-title">
         <div className="balance-command-top">
           <div className="balance-command-copy">
-            <span className="balance-eyebrow">
-              <i aria-hidden />
-              LIVE TREASURY CONTROL
-            </span>
-            <h1 id="balance-title">供应商资金监控</h1>
+            <h1 id="balance-title">供应商余额</h1>
             <p>集中观察上游账户余额、额度健康度与认证状态，异常账户不会阻塞其他供应商。</p>
           </div>
           <button
             type="button"
-            className="balance-refresh"
+            className="adm-btn balance-refresh"
             disabled={refreshing}
             onClick={() => void load()}
           >
@@ -157,16 +152,15 @@ export default function AdminBalancesPage() {
           </button>
         </div>
 
-        <div className="balance-command-grid" aria-label="资金监控概况">
+        <div className="balance-command-grid" role="group" aria-label="资金监控概况">
           <div className="balance-total">
-            <div className="balance-total-icon" aria-hidden><WalletCards size={19} /></div>
             <div>
               <span>在线美元余额</span>
               <strong>{liveUSD == null ? "—" : formatMoney(liveUSD, "USD")}</strong>
               <small>{counts.connected} / {rows.length || "—"} 个账户已连接</small>
             </div>
           </div>
-          <CommandMetric label="健康账户" value={counts.healthy} tone="ok" />
+          <CommandMetric label="健康账户" value={counts.healthy} />
           <CommandMetric label="余额预警" value={counts.low} tone="warn" />
           <CommandMetric label="查询异常" value={counts.errors} tone="danger" />
           <CommandMetric label="未在监控" value={counts.inactive} />
@@ -196,8 +190,8 @@ export default function AdminBalancesPage() {
       <section className="balance-ledger" aria-labelledby="balance-ledger-title">
         <header className="balance-ledger-head">
           <div>
-            <span>ACCOUNT MATRIX</span>
             <h2 id="balance-ledger-title">供应商账户</h2>
+            <p>余额与状态来自最近一次服务端查询。</p>
           </div>
           <div className="balance-ledger-security">
             <ShieldCheck aria-hidden size={15} />
@@ -206,7 +200,7 @@ export default function AdminBalancesPage() {
         </header>
 
         {loading && !snapshot ? (
-          <div className="balance-loading"><TableSkeleton rows={4} cols={4} /></div>
+          <BalanceListSkeleton />
         ) : error && !snapshot ? null : rows.length === 0 ? (
           <div className="balance-empty">
             <AdminEmptyState
@@ -215,163 +209,95 @@ export default function AdminBalancesPage() {
             />
           </div>
         ) : (
-          <div className="balance-card-grid">
-            {rows.map((row) => <SupplierBalanceCard key={row.key} row={row} />)}
+          <div className="balance-account-list">
+            <BalanceAccountHeader />
+            {rows.map((row) => <SupplierBalanceRow key={row.key} row={row} />)}
           </div>
         )}
       </section>
 
       <style>{`
         .balance-page {
-          --balance-violet: #7868ff;
-          --balance-indigo: #4f5ee8;
-          --balance-mint: #49e3a2;
-          gap: 18px;
+          gap: 24px;
         }
         .balance-command {
-          position: relative;
-          overflow: hidden;
-          padding: 26px;
-          border: 1px solid #252b49;
-          border-top: 3px solid #8a7cff;
-          border-radius: 16px;
-          background: #101426;
-          color: #f7f8fc;
-          box-shadow: 0 20px 50px rgba(42, 46, 103, .2), 0 2px 8px rgba(15, 18, 38, .1);
-        }
-        .balance-command::after {
-          position: absolute;
-          top: -142px;
-          right: -82px;
-          width: 310px;
-          height: 310px;
-          border: 1px solid rgba(138, 124, 255, .13);
-          border-radius: 50%;
-          box-shadow: 0 0 0 44px rgba(138, 124, 255, .025), 0 0 0 88px rgba(138, 124, 255, .018);
-          content: "";
-          pointer-events: none;
+          padding: 24px;
+          border: 1px solid var(--border);
+          border-radius: var(--r-lg);
+          background: var(--surface);
         }
         .balance-command-top {
-          position: relative;
-          z-index: 1;
           display: flex;
           align-items: flex-start;
           justify-content: space-between;
-          gap: 28px;
+          gap: 24px;
         }
         .balance-command-copy { max-width: 700px; }
-        .balance-eyebrow {
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          color: #b9c3ed;
-          font-family: var(--mono);
-          font-size: 10px;
-          font-weight: 600;
-          letter-spacing: .16em;
-        }
-        .balance-eyebrow i {
-          width: 6px;
-          height: 6px;
-          border-radius: 50%;
-          background: var(--balance-mint);
-          box-shadow: 0 0 0 4px rgba(73, 227, 162, .13), 0 0 14px rgba(73, 227, 162, .45);
-        }
         .balance-command h1 {
-          margin: 12px 0 7px;
-          color: #fff;
-          font-size: 26px;
-          font-weight: 650;
-          letter-spacing: -.035em;
-          line-height: 1.2;
+          margin: 0;
+          color: var(--text-title);
+          font-size: 24px;
+          font-weight: 600;
+          letter-spacing: -.02em;
+          line-height: 1.3;
+          text-wrap: balance;
         }
         .balance-command-copy p {
-          margin: 0;
-          color: #a6b0ce;
+          max-width: 68ch;
+          margin: 8px 0 0;
+          color: var(--text-faint);
           font-size: 13px;
-          line-height: 1.7;
+          line-height: 1.6;
+          text-wrap: pretty;
         }
         .balance-refresh {
-          display: flex;
-          height: 38px;
           flex: none;
-          align-items: center;
-          justify-content: center;
-          gap: 7px;
-          padding: 0 14px;
-          border: 1px solid #8b7cff;
-          border-radius: 9px;
-          background: #7c6df2;
-          color: #fff;
-          font-size: 12.5px;
-          font-weight: 600;
-          cursor: pointer;
-          transition: transform .15s var(--ease), background .15s var(--ease);
+          min-width: 112px;
         }
-        .balance-refresh:hover {
-          border-color: #9b90ff;
-          background: #8b7cff;
-          box-shadow: 0 8px 22px rgba(124, 109, 242, .28);
-          transform: translateY(-1px);
-        }
-        .balance-refresh:disabled { opacity: .6; cursor: not-allowed; transform: none; }
         .balance-command-grid {
           display: grid;
-          grid-template-columns: minmax(250px, 1.7fr) repeat(4, minmax(92px, .62fr)) minmax(160px, 1fr);
+          grid-template-columns: minmax(240px, 1.6fr) repeat(4, minmax(88px, .58fr)) minmax(168px, 1fr);
           margin-top: 24px;
-          position: relative;
-          z-index: 1;
-          border: 1px solid #2b3458;
-          border-radius: 12px;
-          background: #151a30;
-          box-shadow: inset 0 1px 0 rgba(255, 255, 255, .025);
+          overflow: hidden;
+          border: 1px solid var(--border);
+          border-radius: var(--r);
+          background: var(--surface-2);
         }
         .balance-total {
           display: flex;
           min-width: 0;
           align-items: center;
-          gap: 13px;
-          padding: 18px 20px;
-          border-right: 1px solid #2b3458;
-        }
-        .balance-total-icon {
-          display: grid;
-          width: 42px;
-          height: 42px;
-          flex: none;
-          place-items: center;
-          border: 1px solid #7369da;
-          border-radius: 10px;
-          background: #29264f;
-          color: #b7b1ff;
-          box-shadow: inset 0 0 0 1px rgba(183, 177, 255, .05);
+          padding: 16px 20px;
+          border-right: 1px solid var(--border);
+          background: var(--surface);
         }
         .balance-total span,
         .balance-command-metric span,
         .balance-sync-time span {
           display: block;
-          color: #8f9bbe;
-          font-size: 10px;
-          letter-spacing: .08em;
+          color: var(--text-faint);
+          font-size: 12px;
+          font-weight: 400;
         }
         .balance-total strong {
           display: block;
           overflow: hidden;
-          margin-top: 4px;
-          color: #fff;
+          margin-top: 8px;
+          color: var(--text-title);
           font-family: var(--mono);
-          font-size: 23px;
+          font-size: 24px;
           font-weight: 600;
-          letter-spacing: -.04em;
+          letter-spacing: -.025em;
+          font-variant-numeric: tabular-nums;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
         .balance-total small,
         .balance-sync-time small {
           display: block;
-          margin-top: 5px;
-          color: #7885a9;
-          font-size: 10px;
+          margin-top: 4px;
+          color: var(--text-faint);
+          font-size: 11px;
           white-space: nowrap;
         }
         .balance-command-metric {
@@ -379,313 +305,380 @@ export default function AdminBalancesPage() {
           min-width: 0;
           flex-direction: column;
           justify-content: center;
-          padding: 17px 16px;
-          border-right: 1px solid #2b3458;
+          padding: 16px;
+          border-right: 1px solid var(--border);
+          background: var(--surface-2);
         }
         .balance-command-metric strong {
-          margin-top: 6px;
-          color: #f7f8fc;
+          margin-top: 8px;
+          color: var(--text-title);
           font-family: var(--mono);
-          font-size: 21px;
+          font-size: 20px;
           font-weight: 600;
           font-variant-numeric: tabular-nums;
         }
-        .balance-command-metric.is-ok strong { color: #51e6a5; }
-        .balance-command-metric.is-warn strong { color: #ffc65c; }
-        .balance-command-metric.is-danger strong { color: #ff6d8a; }
+        .balance-command-metric.is-warn {
+          background: var(--warn-soft);
+        }
+        .balance-command-metric.is-warn span,
+        .balance-command-metric.is-warn strong { color: var(--warn-strong); }
+        .balance-command-metric.is-danger {
+          background: var(--danger-soft);
+        }
+        .balance-command-metric.is-danger span,
+        .balance-command-metric.is-danger strong { color: var(--danger-strong); }
         .balance-sync-time {
           position: relative;
           display: flex;
           min-width: 0;
           flex-direction: column;
           justify-content: center;
-          padding: 17px 18px 17px 41px;
+          padding: 16px 16px 16px 40px;
+          background: var(--surface);
         }
         .balance-sync-time > svg {
           position: absolute;
-          top: 19px;
-          left: 18px;
-          color: #8996bd;
+          top: 18px;
+          left: 16px;
+          color: var(--text-faint);
         }
         .balance-sync-time strong {
           overflow: hidden;
-          margin-top: 6px;
-          color: #e4e8f8;
+          margin-top: 8px;
+          color: var(--text-dim);
           font-family: var(--mono);
-          font-size: 11px;
+          font-size: 11.5px;
           font-weight: 500;
           font-variant-numeric: tabular-nums;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
         .balance-ledger {
-          padding: 22px;
-          border: 1px solid #d8deed;
-          border-radius: 16px;
-          background: #eef1f8;
-          box-shadow: 0 12px 34px rgba(46, 54, 93, .07);
+          min-width: 0;
         }
         .balance-ledger-head {
           display: flex;
-          align-items: flex-end;
+          align-items: center;
           justify-content: space-between;
-          gap: 18px;
-          margin-bottom: 17px;
-          padding: 0 2px;
-        }
-        .balance-ledger-head span {
-          color: #6c63d9;
-          font-family: var(--mono);
-          font-size: 9.5px;
-          font-weight: 600;
-          letter-spacing: .16em;
+          gap: 16px;
+          margin-bottom: 16px;
         }
         .balance-ledger-head h2 {
-          margin: 5px 0 0;
+          margin: 0;
           color: var(--text-title);
-          font-size: 18px;
-          font-weight: 650;
-          letter-spacing: -.02em;
+          font-size: 17px;
+          font-weight: 600;
+          letter-spacing: -.01em;
+        }
+        .balance-ledger-head p {
+          margin: 4px 0 0;
+          color: var(--text-faint);
+          font-size: 12px;
+          line-height: 1.5;
         }
         .balance-ledger-security {
           display: inline-flex;
           align-items: center;
-          gap: 6px;
-          padding: 7px 10px;
-          border: 1px solid #d8deed;
-          border-radius: 8px;
-          background: rgba(255, 255, 255, .68);
-          color: #68718b;
-          font-size: 11px;
+          gap: 8px;
+          color: var(--text-faint);
+          font-size: 12px;
         }
-        .balance-ledger-security svg { color: #16a873; }
-        .balance-card-grid {
+        .balance-ledger-security svg { color: var(--ok); }
+        .balance-account-list {
+          overflow: hidden;
+          border: 1px solid var(--border);
+          border-radius: var(--r-lg);
+          background: var(--surface);
+        }
+        .balance-account-head,
+        .balance-account-row {
           display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 14px;
+          grid-template-columns: minmax(176px, 1.35fr) minmax(168px, 1.1fr) minmax(128px, .8fr) minmax(144px, 1fr) minmax(88px, .55fr) minmax(108px, .7fr);
+          column-gap: 16px;
         }
-        .balance-card {
-          --card-state: #9aa4bc;
-          --card-accent: #7868ff;
-          --card-tint: #f1efff;
-          position: relative;
+        .balance-account-head {
+          min-height: 40px;
+          align-items: center;
+          padding: 0 16px;
+          border-bottom: 1px solid var(--border);
+          background: var(--surface-2);
+          color: var(--text-faint);
+          font-size: 11px;
+          font-weight: 500;
+        }
+        .balance-account-row {
+          --account-state: var(--text-faint);
+          --account-status-bg: var(--surface-2);
+          --account-status-border: var(--border);
+          --account-status-text: var(--text-dim);
+          align-items: center;
+          padding: 16px;
+          border-bottom: 1px solid var(--border-weak);
+        }
+        .balance-account-row:last-child { border-bottom: 0; }
+        .balance-account-row.is-healthy {
+          --account-state: var(--ok);
+          --account-status-bg: var(--ok-soft);
+          --account-status-border: color-mix(in oklab, var(--ok) 24%, var(--border));
+          --account-status-text: var(--ok-strong);
+        }
+        .balance-account-row.is-low {
+          --account-state: var(--warn);
+          --account-status-bg: var(--warn-soft);
+          --account-status-border: color-mix(in oklab, var(--warn) 32%, var(--border));
+          --account-status-text: var(--warn-strong);
+          background: color-mix(in oklab, var(--warn-soft) 58%, var(--surface));
+        }
+        .balance-account-row.is-error {
+          --account-state: var(--danger);
+          --account-status-bg: var(--danger-soft);
+          --account-status-border: color-mix(in oklab, var(--danger) 28%, var(--border));
+          --account-status-text: var(--danger-strong);
+          background: color-mix(in oklab, var(--danger-soft) 58%, var(--surface));
+        }
+        .balance-account-provider {
           display: flex;
           min-width: 0;
-          min-height: 285px;
-          flex-direction: column;
-          overflow: hidden;
-          border: 1px solid #d9deeb;
-          border-top: 3px solid var(--card-accent);
-          border-radius: 13px;
-          background: #fff;
-          box-shadow: 0 10px 26px rgba(35, 43, 78, .075);
-          transition: transform .18s var(--ease), box-shadow .18s var(--ease), border-color .18s var(--ease);
-        }
-        .balance-card:hover {
-          transform: translateY(-2px);
-          border-color: var(--card-accent);
-          box-shadow: 0 18px 38px rgba(35, 43, 78, .13);
-        }
-        .balance-card:nth-child(2) { --card-accent: #3f7ee8; --card-tint: #edf5ff; }
-        .balance-card:nth-child(3) { --card-accent: #12a87a; --card-tint: #ebfaf5; }
-        .balance-card:nth-child(4) { --card-accent: #0899b5; --card-tint: #ebf9fc; }
-        .balance-card:nth-child(5) { --card-accent: #df7541; --card-tint: #fff2eb; }
-        .balance-card.is-healthy { --card-state: #14a36f; }
-        .balance-card.is-low { --card-state: #e59a19; }
-        .balance-card.is-error { --card-state: #e34f68; }
-        .balance-card.is-disabled,
-        .balance-card.is-unconfigured { --card-state: #9aa4bc; }
-        .balance-card-head {
-          display: flex;
           align-items: center;
-          gap: 11px;
-          padding: 16px 17px 0;
+          gap: 12px;
         }
-        .balance-card-avatar {
+        .balance-account-avatar {
           display: grid;
-          width: 40px;
-          height: 40px;
+          width: 36px;
+          height: 36px;
           flex: none;
           place-items: center;
-          border-radius: 10px;
-          background: var(--card-accent);
-          color: #fff;
+          border: 1px solid var(--border);
+          border-radius: var(--r);
+          background: var(--surface-2);
+          color: var(--text-dim);
           font-family: var(--mono);
           font-size: 10px;
-          font-weight: 700;
-          letter-spacing: .04em;
+          font-weight: 600;
         }
-        .balance-card-provider { min-width: 0; }
-        .balance-card-provider strong {
+        .balance-account-provider-copy { min-width: 0; }
+        .balance-account-provider-copy strong,
+        .balance-account-provider-copy small {
           display: block;
           overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .balance-account-provider-copy strong {
           color: var(--text-title);
           font-size: 14px;
-          font-weight: 650;
-          text-overflow: ellipsis;
-          white-space: nowrap;
+          font-weight: 600;
         }
-        .balance-card-provider small {
-          display: block;
-          overflow: hidden;
-          margin-top: 3px;
-          color: var(--text-faint);
-          font-family: var(--mono);
-          font-size: 9.5px;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-        .balance-card-status {
-          display: flex;
-          margin-left: auto;
-          flex: none;
-          align-items: center;
-          gap: 7px;
-          padding: 6px 8px;
-          border: 1px solid #e1e5ef;
-          border-radius: 7px;
-          background: #f8f9fc;
-        }
-        .balance-card-status i {
-          width: 6px;
-          height: 6px;
-          border-radius: 50%;
-          background: var(--card-state);
-        }
-        .balance-card-status span { color: var(--text-dim); font-size: 10.5px; font-weight: 600; }
-        .balance-card-status small {
-          color: var(--text-faint);
-          font-family: var(--mono);
-          font-size: 8px;
-          letter-spacing: .06em;
-        }
-        .balance-card.is-healthy .balance-card-status { border-color: #c7ecdd; background: #effaf5; }
-        .balance-card.is-low .balance-card-status { border-color: #f2deb3; background: #fff8e8; }
-        .balance-card.is-error .balance-card-status { border-color: #f1cbd2; background: #fff2f4; }
-        .balance-card-main { padding: 24px 17px 18px; }
-        .balance-card-main > span {
-          color: var(--card-accent);
-          font-size: 10px;
-          font-weight: 500;
-          letter-spacing: .06em;
-        }
-        .balance-card-value {
-          margin-top: 6px;
-          color: var(--text-title);
-          font-family: var(--mono);
-          font-size: 28px;
-          font-weight: 620;
-          letter-spacing: -.055em;
-          line-height: 1.15;
-          font-variant-numeric: tabular-nums;
-        }
-        .balance-card.is-low .balance-card-value { color: #b86f06; }
-        .balance-card-value.is-empty { color: #626b82; font-family: var(--ui); font-size: 22px; letter-spacing: -.02em; }
-        .balance-card-sub {
-          display: flex;
-          min-height: 18px;
-          align-items: center;
-          gap: 7px;
-          margin-top: 8px;
-          color: var(--text-faint);
-          font-size: 10.5px;
-        }
-        .balance-card-sub b { color: var(--text-dim); font-family: var(--mono); font-weight: 500; }
-        .balance-card-sub .is-stale { color: var(--warn); font-weight: 600; }
-        .balance-card-facts {
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 1px;
-          margin: 0 17px 16px;
-          overflow: hidden;
-          border: 1px solid var(--border-weak);
-          border-radius: 9px;
-          background: #e4e8f1;
-        }
-        .balance-card-fact {
-          min-width: 0;
-          padding: 10px 11px;
-          background: var(--card-tint);
-        }
-        .balance-card-fact span { display: block; color: var(--text-faint); font-size: 9.5px; }
-        .balance-card-fact strong {
-          display: block;
-          overflow: hidden;
+        .balance-account-provider-copy small {
           margin-top: 4px;
-          color: var(--text-dim);
+          color: var(--text-faint);
           font-family: var(--mono);
           font-size: 10px;
-          font-weight: 550;
-          text-overflow: ellipsis;
+        }
+        .balance-account-cell { min-width: 0; }
+        .balance-cell-label {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          overflow: hidden;
+          margin: -1px;
+          padding: 0;
+          border: 0;
+          clip: rect(0, 0, 0, 0);
           white-space: nowrap;
+          color: var(--text-faint);
+          font-size: 11px;
         }
-        .balance-card-details {
-          display: flex;
-          gap: 14px;
-          margin: -4px 17px 15px;
-          padding-top: 11px;
-          border-top: 1px solid var(--border-weak);
-        }
-        .balance-card-detail { min-width: 0; }
-        .balance-card-detail span { display: block; color: var(--text-faint); font-size: 9px; }
-        .balance-card-detail strong {
+        .balance-account-cell > strong {
           display: block;
           overflow: hidden;
-          margin-top: 3px;
           color: var(--text-dim);
           font-family: var(--mono);
-          font-size: 10.5px;
-          font-weight: 550;
+          font-size: 12px;
+          font-weight: 500;
+          font-variant-numeric: tabular-nums;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
-        .balance-card-foot {
+        .balance-account-amount > strong {
+          color: var(--text-title);
+          font-size: 16px;
+          font-weight: 600;
+          letter-spacing: -.015em;
+        }
+        .balance-account-row.is-low .balance-account-amount > strong,
+        .balance-account-row.is-error .balance-account-amount > strong.is-empty {
+          color: var(--account-status-text);
+        }
+        .balance-account-amount > strong.is-empty {
+          font-family: var(--ui);
+          font-size: 13px;
+          letter-spacing: 0;
+        }
+        .balance-account-stale {
+          display: block;
+          margin-top: 4px;
+          color: var(--warn-strong);
+          font-size: 11px;
+          font-weight: 600;
+        }
+        .balance-account-details {
           display: flex;
-          min-height: 42px;
-          margin-top: auto;
+          min-width: 0;
+          flex-wrap: wrap;
+          gap: 4px 12px;
+          margin-top: 6px;
+        }
+        .balance-account-details span {
+          min-width: 0;
+          color: var(--text-faint);
+          font-size: 10px;
+        }
+        .balance-account-details b {
+          color: var(--text-dim);
+          font-family: var(--mono);
+          font-weight: 500;
+        }
+        .balance-account-status {
+          display: inline-flex;
+          width: fit-content;
           align-items: center;
           gap: 8px;
-          padding: 10px 17px;
-          border-top: 1px solid var(--border-weak);
-          background: var(--card-tint);
-          color: #677087;
-          font-size: 10.5px;
-        }
-        .balance-card-foot svg { flex: none; color: var(--card-accent); }
-        .balance-card-foot span {
-          overflow: hidden;
-          text-overflow: ellipsis;
+          padding: 5px 8px;
+          border: 1px solid var(--account-status-border);
+          border-radius: var(--r-sm);
+          background: var(--account-status-bg);
+          color: var(--account-status-text);
+          font-size: 11px;
+          font-weight: 600;
           white-space: nowrap;
         }
-        .balance-loading,
+        .balance-account-status i {
+          width: 6px;
+          height: 6px;
+          flex: none;
+          border-radius: 50%;
+          background: var(--account-state);
+        }
+        .balance-account-message {
+          display: flex;
+          grid-column: 1 / -1;
+          align-items: flex-start;
+          gap: 8px;
+          margin-top: 12px;
+          padding-top: 12px;
+          border-top: 1px solid var(--border-weak);
+          color: var(--text-dim);
+          font-size: 11px;
+          line-height: 1.5;
+          overflow-wrap: anywhere;
+        }
+        .balance-account-message svg {
+          flex: none;
+          margin-top: 2px;
+          color: var(--account-state);
+        }
+        .balance-account-row.is-low .balance-account-message,
+        .balance-account-row.is-error .balance-account-message {
+          color: var(--account-status-text);
+        }
+        .balance-skeleton-row { min-height: 96px; }
+        .balance-skeleton-provider {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+        .balance-skeleton-copy {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .balance-skeleton-avatar { width: 36px; height: 36px; border-radius: var(--r); }
+        .balance-skeleton-name { width: 88px; height: 12px; }
+        .balance-skeleton-source { width: 112px; height: 10px; }
+        .balance-skeleton-value { width: 120px; height: 16px; }
+        .balance-skeleton-cell { width: 96px; height: 12px; }
+        .balance-skeleton-short { width: 56px; height: 12px; }
+        .balance-skeleton-status { width: 72px; height: 24px; border-radius: var(--r-sm); }
+        .balance-skeleton-message {
+          grid-column: 1 / -1;
+          width: min(420px, 72%);
+          height: 10px;
+          margin-top: 12px;
+        }
         .balance-empty {
           overflow: hidden;
           border: 1px solid var(--border);
-          border-radius: 12px;
+          border-radius: var(--r-lg);
           background: var(--surface);
         }
         .balance-spin { animation: balanceSpin .8s linear infinite; }
         @keyframes balanceSpin { to { transform: rotate(360deg); } }
         @media (max-width: 1240px) {
-          .balance-command-grid { grid-template-columns: minmax(240px, 1.5fr) repeat(4, minmax(82px, .6fr)); }
-          .balance-sync-time { grid-column: 1 / -1; min-height: 60px; border-top: 1px solid #2b3458; }
-          .balance-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+          .balance-command-grid { grid-template-columns: minmax(232px, 1.5fr) repeat(4, minmax(80px, .6fr)); }
+          .balance-sync-time { grid-column: 1 / -1; min-height: 64px; border-top: 1px solid var(--border); }
+        }
+        @media (max-width: 1100px) {
+          .balance-account-head { display: none; }
+          .balance-account-row {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 16px 24px;
+          }
+          .balance-account-provider,
+          .balance-account-status,
+          .balance-account-message,
+          .balance-skeleton-provider,
+          .balance-skeleton-message { grid-column: 1 / -1; }
+          .balance-cell-label {
+            position: static;
+            display: block;
+            width: auto;
+            height: auto;
+            overflow: visible;
+            margin-bottom: 4px;
+            clip: auto;
+            white-space: normal;
+          }
+          .balance-account-message { margin-top: 0; }
         }
         @media (max-width: 820px) {
           .balance-command { padding: 20px; }
           .balance-command-top { flex-direction: column; }
-          .balance-refresh { width: 100%; }
+          .balance-refresh { width: 100%; min-height: 44px; }
           .balance-command-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-          .balance-total { grid-column: 1 / -1; border-right: 0; border-bottom: 1px solid #2b3458; }
-          .balance-command-metric:nth-of-type(odd) { border-right: 0; }
-          .balance-sync-time { grid-column: 1 / -1; }
-          .balance-card-grid { grid-template-columns: 1fr; }
+          .balance-total {
+            grid-column: 1 / -1;
+            border-right: 0;
+            border-bottom: 1px solid var(--border);
+          }
+          .balance-command-metric {
+            border-right: 0;
+            border-bottom: 1px solid var(--border);
+          }
+          .balance-command-metric:nth-child(even) { border-right: 1px solid var(--border); }
+          .balance-sync-time { grid-column: 1 / -1; border-top: 0; }
+          .balance-account-provider-copy small,
+          .balance-cell-label,
+          .balance-account-stale,
+          .balance-account-details span,
+          .balance-account-status,
+          .balance-account-message { font-size: 12px; }
         }
         @media (max-width: 560px) {
-          .balance-command h1 { font-size: 23px; }
-          .balance-ledger { padding: 16px; }
+          .balance-command h1 { font-size: 22px; }
           .balance-ledger-head { align-items: flex-start; flex-direction: column; }
-          .balance-card-status small { display: none; }
+          .balance-ledger-security { font-size: 11px; }
+        }
+        @media (max-width: 480px) {
+          .balance-account-row { grid-template-columns: 1fr; }
+          .balance-account-provider,
+          .balance-account-status,
+          .balance-account-message,
+          .balance-skeleton-provider,
+          .balance-skeleton-message { grid-column: 1; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .balance-spin { animation: none; }
         }
       `}</style>
     </div>
@@ -699,17 +692,57 @@ function CommandMetric({
 }: {
   label: string;
   value: number;
-  tone?: "ok" | "warn" | "danger";
+  tone?: "warn" | "danger";
 }) {
+  const emphasized = tone && value > 0;
   return (
-    <div className={`balance-command-metric${tone ? ` is-${tone}` : ""}`}>
+    <div className={`balance-command-metric${emphasized ? ` is-${tone}` : ""}`}>
       <span>{label}</span>
       <strong>{value.toLocaleString("zh-CN").padStart(2, "0")}</strong>
     </div>
   );
 }
 
-function SupplierBalanceCard({ row }: { row: SupplierBalanceVO }) {
+function BalanceAccountHeader() {
+  return (
+    <div className="balance-account-head" aria-hidden>
+      <span>供应商</span>
+      <span>可用余额</span>
+      <span>预警阈值</span>
+      <span>最近成功</span>
+      <span>响应耗时</span>
+      <span>状态</span>
+    </div>
+  );
+}
+
+function BalanceListSkeleton() {
+  return (
+    <div className="balance-account-list" aria-busy="true">
+      <span className="sr-only" role="status">正在加载供应商余额</span>
+      <BalanceAccountHeader />
+      {Array.from({ length: 5 }, (_, index) => (
+        <div className="balance-account-row balance-skeleton-row" aria-hidden key={index}>
+          <div className="balance-skeleton-provider">
+            <span className="skel balance-skeleton-avatar" />
+            <span className="balance-skeleton-copy">
+              <span className="skel balance-skeleton-name" />
+              <span className="skel balance-skeleton-source" />
+            </span>
+          </div>
+          <span className="skel balance-skeleton-value" />
+          <span className="skel balance-skeleton-cell" />
+          <span className="skel balance-skeleton-cell" />
+          <span className="skel balance-skeleton-short" />
+          <span className="skel balance-skeleton-status" />
+          <span className="skel balance-skeleton-message" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SupplierBalanceRow({ row }: { row: SupplierBalanceVO }) {
   const meta = STATE_META[row.state] ?? STATE_META.error;
   const connected = row.balance != null;
   const emptyBalanceLabel = row.state === "error"
@@ -719,61 +752,54 @@ function SupplierBalanceCard({ row }: { row: SupplierBalanceVO }) {
       : "尚未接入";
 
   return (
-    <article className={`balance-card is-${row.state}`}>
-      <header className="balance-card-head">
-        <span className="balance-card-avatar" aria-hidden>{supplierInitial(row.name)}</span>
-        <div className="balance-card-provider">
+    <article
+      className={`balance-account-row is-${row.state}`}
+      aria-label={`${row.name}：${meta.label}`}
+    >
+      <div className="balance-account-provider">
+        <span className="balance-account-avatar" aria-hidden>{supplierInitial(row.name)}</span>
+        <div className="balance-account-provider-copy">
           <strong>{row.name}</strong>
-          <small>{row.source || "NO ENDPOINT"}</small>
+          <small title={row.source}>{row.source || "未配置地址"}</small>
         </div>
-        <div className="balance-card-status" title={row.message}>
-          <i aria-hidden />
-          <span>{meta.label}</span>
-          <small>{meta.code}</small>
-        </div>
-      </header>
+      </div>
 
-      <div className="balance-card-main">
-        <span>AVAILABLE BALANCE</span>
-        <div className={`balance-card-value${connected ? "" : " is-empty"}`}>
+      <div className="balance-account-cell balance-account-amount">
+        <span className="balance-cell-label">可用余额</span>
+        <strong className={connected ? undefined : "is-empty"}>
           {connected ? formatMoney(row.balance, row.currency) : emptyBalanceLabel}
-        </div>
-        <div className="balance-card-sub">
-          {row.stale ? <span className="is-stale">最近成功值 · 非实时</span> : (
-            <>
-              <span>预警阈值</span>
-              <b>{row.lowBalance == null ? "未设置" : formatMoney(row.lowBalance, row.currency)}</b>
-            </>
-          )}
-        </div>
+        </strong>
+        {row.stale ? <span className="balance-account-stale">最近成功值 · 非实时</span> : null}
+        {row.details.length > 0 ? (
+          <div className="balance-account-details">
+            {row.details.slice(0, 2).map((detail) => (
+              <span key={detail.label}>{detail.label} <b>{formatMoney(detail.value, detail.currency)}</b></span>
+            ))}
+          </div>
+        ) : null}
       </div>
 
-      <div className="balance-card-facts">
-        <div className="balance-card-fact">
-          <span>最近成功</span>
-          <strong>{formatDateTime(row.lastSuccessAt)}</strong>
-        </div>
-        <div className="balance-card-fact">
-          <span>响应耗时</span>
-          <strong>{row.checkedAt ? `${row.latencyMs.toLocaleString()} ms` : "—"}</strong>
-        </div>
+      <div className="balance-account-cell">
+        <span className="balance-cell-label">预警阈值</span>
+        <strong>{row.lowBalance == null ? "未设置" : formatMoney(row.lowBalance, row.currency)}</strong>
+      </div>
+      <div className="balance-account-cell">
+        <span className="balance-cell-label">最近成功</span>
+        <strong title={formatDateTime(row.lastSuccessAt)}>{formatDateTime(row.lastSuccessAt)}</strong>
+      </div>
+      <div className="balance-account-cell">
+        <span className="balance-cell-label">响应耗时</span>
+        <strong>{row.checkedAt ? `${row.latencyMs.toLocaleString()} ms` : "—"}</strong>
+      </div>
+      <div className="balance-account-status">
+        <i aria-hidden />
+        <span>{meta.label}</span>
       </div>
 
-      {row.details.length > 0 ? (
-        <div className="balance-card-details">
-          {row.details.slice(0, 2).map((detail) => (
-            <div className="balance-card-detail" key={detail.label}>
-              <span>{detail.label}</span>
-              <strong>{formatMoney(detail.value, detail.currency)}</strong>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      <footer className="balance-card-foot">
+      <div className="balance-account-message">
         <Activity aria-hidden size={13} />
-        <span title={row.message}>{row.message || "等待下一次查询"}</span>
-      </footer>
+        <span>{row.message || "等待下一次查询"}</span>
+      </div>
     </article>
   );
 }
