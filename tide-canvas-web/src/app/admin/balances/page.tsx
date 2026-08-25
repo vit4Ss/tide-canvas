@@ -6,10 +6,13 @@
    Credentials remain in the Go service. This page polls the aggregate admin
    endpoint and presents current/last-known balances without ever calling a
    supplier from the browser.
+
+   视觉语言：延续 admin「calm ops console」体系（发丝边、白面板、墨蓝点缀），
+   用状态分布条、实时刷新倒计时、终端式日志条提供监控页应有的「活着」的感觉。
    ============================================================================ */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Clock3, RefreshCw, ShieldCheck } from "lucide-react";
+import { RefreshCw, ShieldCheck } from "lucide-react";
 import { AdminAlert, AdminEmptyState } from "@/components/admin";
 import { adminBalancesApi } from "@/lib/admin-balances-api";
 import { useAuthStore } from "@/stores/use-auth-store";
@@ -68,6 +71,9 @@ export default function AdminBalancesPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
+  // 初始 null：SSR/水合首帧与服务端输出保持一致（倒计时文案确定），挂载后才开始走秒
+  const [now, setNow] = useState<number | null>(null);
   const requestId = useRef(0);
 
   const load = useCallback(
@@ -81,6 +87,7 @@ export default function AdminBalancesPage() {
         if (id !== requestId.current) return;
         if (result.success && result.data) {
           setSnapshot(result.data);
+          setLastSyncAt(Date.now());
         } else {
           setError(result.message || "供应商余额加载失败");
         }
@@ -110,6 +117,16 @@ export default function AdminBalancesPage() {
     return () => window.clearInterval(timer);
   }, [load, refreshSeconds]);
 
+  // 刷新倒计时：每秒走一格，让「每 N 秒自动刷新」可见
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setNow(Date.now()));
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearInterval(timer);
+    };
+  }, []);
+
   const rows = useMemo(() => snapshot?.suppliers ?? [], [snapshot?.suppliers]);
   const counts = useMemo(() => {
     const healthy = rows.filter((row) => row.state === "healthy").length;
@@ -130,6 +147,10 @@ export default function AdminBalancesPage() {
     return connected.reduce((sum, row) => sum + (row.balance ?? 0), 0);
   }, [rows]);
 
+  const elapsed = lastSyncAt == null || now == null ? 0 : Math.max(0, (now - lastSyncAt) / 1000);
+  const remaining = Math.max(0, Math.ceil(refreshSeconds - elapsed));
+  const syncProgress = Math.min(1, elapsed / refreshSeconds);
+
   return (
     <div className="adm-page balance-page">
       <header className="balance-page-head">
@@ -149,22 +170,47 @@ export default function AdminBalancesPage() {
       </header>
 
       <section className="balance-summary" aria-label="资金监控概况">
-        <div className="balance-summary-primary">
-          <span>在线美元余额</span>
-          <strong>{liveUSD == null ? "—" : formatMoney(liveUSD, "USD")}</strong>
-          <small>{counts.connected} / {rows.length || "—"} 个账户已连接</small>
+        <div className="balance-hero">
+          <span className="balance-hero-eyebrow">
+            在线美元余额<em>TOTAL / USD</em>
+          </span>
+          <strong className="balance-hero-value">{liveUSD == null ? "—" : formatMoney(liveUSD, "USD")}</strong>
+          <div
+            className="balance-hero-meter"
+            role="img"
+            aria-label={`账户状态分布：健康 ${counts.healthy}、预警 ${counts.low}、异常 ${counts.errors}、未监控 ${counts.inactive}`}
+          >
+            {rows.map((row) => (
+              <i
+                key={row.key}
+                className={`seg is-${row.state}`}
+                title={`${row.name} · ${STATE_META[row.state]?.label ?? row.state}`}
+              />
+            ))}
+            {rows.length === 0 ? <i className="seg" /> : null}
+          </div>
+          <small className="balance-hero-note">
+            <b>{counts.connected}</b> / {rows.length || "—"} 个账户已连接
+          </small>
         </div>
-        <SummaryMetric label="健康账户" value={counts.healthy} />
+
+        <SummaryMetric label="健康账户" value={counts.healthy} tone="ok" />
         <SummaryMetric label="余额预警" value={counts.low} tone="warn" />
         <SummaryMetric label="查询异常" value={counts.errors} tone="danger" />
-        <SummaryMetric label="未在监控" value={counts.inactive} />
-        <div className="balance-summary-sync">
-          <Clock3 aria-hidden size={14} />
-          <div>
+        <SummaryMetric label="未在监控" value={counts.inactive} tone="muted" />
+
+        <div className="balance-sync">
+          <span className="balance-sync-live"><i aria-hidden />实时监控</span>
+          <div className="balance-sync-block">
             <span>最近同步</span>
             <strong>{formatDateTime(snapshot?.refreshedAt || "")}</strong>
-            <small>每 {refreshSeconds} 秒自动刷新</small>
           </div>
+          <small className="balance-sync-next">
+            {remaining > 0 ? `${remaining} 秒后自动刷新` : "即将刷新…"}
+          </small>
+          <span className="balance-sync-progress" aria-hidden>
+            <i style={{ transform: `scaleX(${syncProgress})` }} />
+          </span>
         </div>
       </section>
 
@@ -189,7 +235,7 @@ export default function AdminBalancesPage() {
             <p>余额与状态来自最近一次服务端查询。</p>
           </div>
           <div className="balance-ledger-security">
-            <ShieldCheck aria-hidden size={15} />
+            <ShieldCheck aria-hidden size={14} />
             凭据仅由服务端读取
           </div>
         </header>
@@ -211,7 +257,7 @@ export default function AdminBalancesPage() {
       </section>
 
       <style>{`
-        .balance-page { gap: 24px; }
+        .balance-page { gap: 26px; }
         .balance-page-head {
           display: flex;
           align-items: flex-start;
@@ -238,93 +284,199 @@ export default function AdminBalancesPage() {
         }
         .balance-refresh { min-width: 112px; flex: none; }
 
+        /* ---------- 概况带 ---------- */
         .balance-summary {
           display: grid;
-          grid-template-columns: minmax(240px, 1.6fr) repeat(4, minmax(88px, .58fr)) minmax(176px, 1fr);
+          grid-template-columns: minmax(300px, 1.7fr) repeat(4, minmax(92px, .55fr)) minmax(200px, 1.05fr);
           gap: 1px;
           overflow: hidden;
           border: 1px solid var(--border);
-          border-radius: var(--r-lg);
+          border-radius: 14px;
           background: var(--border-weak);
+          box-shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 12px 28px -16px rgba(15, 23, 42, .12);
         }
-        .balance-summary-primary,
-        .balance-summary-metric,
-        .balance-summary-sync {
+        .balance-hero,
+        .balance-metric,
+        .balance-sync {
           min-width: 0;
           background: var(--surface);
         }
-        .balance-summary-primary { padding: 20px; }
-        .balance-summary-primary span,
-        .balance-summary-metric span,
-        .balance-summary-sync span {
-          display: block;
+
+        .balance-hero { position: relative; padding: 22px 22px 18px; }
+        .balance-hero::after {
+          content: "";
+          position: absolute;
+          top: -40px;
+          right: -50px;
+          width: 180px;
+          height: 180px;
+          border-radius: 50%;
+          background: radial-gradient(closest-side, rgba(59, 91, 219, .07), transparent);
+          pointer-events: none;
+        }
+        .balance-hero-eyebrow {
+          display: flex;
+          align-items: baseline;
+          gap: 10px;
           color: var(--text-faint);
           font-size: 12px;
-          font-weight: 400;
         }
-        .balance-summary-primary strong {
+        .balance-hero-eyebrow em {
+          font-family: var(--mono);
+          font-size: 9px;
+          font-style: normal;
+          letter-spacing: .12em;
+          opacity: .72;
+        }
+        .balance-hero-value {
           display: block;
           overflow: hidden;
-          margin-top: 8px;
+          margin-top: 10px;
           color: var(--text-title);
           font-family: var(--mono);
-          font-size: 24px;
+          font-size: 34px;
           font-weight: 650;
-          letter-spacing: -.03em;
+          letter-spacing: -.045em;
+          line-height: 1.15;
           font-variant-numeric: tabular-nums;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
-        .balance-summary-primary small,
-        .balance-summary-sync small {
+        .balance-hero-meter {
+          display: flex;
+          gap: 4px;
+          margin-top: 16px;
+        }
+        .balance-hero-meter .seg {
+          height: 6px;
+          min-width: 14px;
+          flex: 1;
+          border-radius: 99px;
+          background: var(--border-strong);
+        }
+        .balance-hero-meter .seg.is-healthy { background: var(--ok); }
+        .balance-hero-meter .seg.is-low { background: var(--warn); }
+        .balance-hero-meter .seg.is-error { background: var(--danger); }
+        .balance-hero-meter .seg.is-unconfigured,
+        .balance-hero-meter .seg.is-disabled { opacity: .45; }
+        .balance-hero-note {
           display: block;
-          margin-top: 5px;
+          margin-top: 10px;
           color: var(--text-faint);
           font-size: 11px;
           white-space: nowrap;
         }
-        .balance-summary-metric {
+        .balance-hero-note b {
+          color: var(--text-dim);
+          font-family: var(--mono);
+          font-weight: 600;
+        }
+
+        .balance-metric {
           display: flex;
           flex-direction: column;
           justify-content: center;
-          padding: 16px;
+          padding: 16px 18px;
         }
-        .balance-summary-metric strong {
-          margin-top: 8px;
+        .balance-metric-label {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          color: var(--text-faint);
+          font-size: 12px;
+        }
+        .balance-metric-label i {
+          width: 6px;
+          height: 6px;
+          flex: none;
+          border-radius: 50%;
+          background: var(--border-strong);
+        }
+        .balance-metric-label i[data-tone="ok"] { background: var(--ok); }
+        .balance-metric-label i[data-tone="warn"] { background: var(--warn); }
+        .balance-metric-label i[data-tone="danger"] { background: var(--danger); }
+        .balance-metric strong {
+          margin-top: 9px;
           color: var(--text-title);
           font-family: var(--mono);
-          font-size: 20px;
+          font-size: 22px;
           font-weight: 600;
           font-variant-numeric: tabular-nums;
         }
-        .balance-summary-metric.is-warn span,
-        .balance-summary-metric.is-warn strong { color: var(--warn-strong); }
-        .balance-summary-metric.is-danger span,
-        .balance-summary-metric.is-danger strong { color: var(--danger-strong); }
-        .balance-summary-sync {
+        .balance-metric.is-warn .balance-metric-label,
+        .balance-metric.is-warn strong { color: var(--warn-strong); }
+        .balance-metric.is-danger .balance-metric-label,
+        .balance-metric.is-danger strong { color: var(--danger-strong); }
+
+        .balance-sync {
+          position: relative;
           display: flex;
-          align-items: flex-start;
+          flex-direction: column;
+          justify-content: center;
           gap: 10px;
-          padding: 18px 16px;
+          padding: 18px 18px 22px;
         }
-        .balance-summary-sync > svg {
+        .balance-sync-live {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          color: var(--ok-strong);
+          font-size: 11px;
+          font-weight: 600;
+          letter-spacing: .04em;
+        }
+        .balance-sync-live i {
+          width: 7px;
+          height: 7px;
           flex: none;
-          margin-top: 1px;
-          color: var(--text-faint);
+          border-radius: 50%;
+          background: var(--ok);
+          animation: balancePulse 2s var(--ease) infinite;
         }
-        .balance-summary-sync strong {
+        @keyframes balancePulse {
+          0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, .38); }
+          70% { box-shadow: 0 0 0 7px rgba(22, 163, 74, 0); }
+          100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); }
+        }
+        .balance-sync-block span {
+          display: block;
+          color: var(--text-faint);
+          font-size: 11px;
+        }
+        .balance-sync-block strong {
           display: block;
           overflow: hidden;
-          margin-top: 7px;
+          margin-top: 4px;
           color: var(--text-dim);
           font-family: var(--mono);
-          font-size: 11.5px;
+          font-size: 12px;
           font-weight: 500;
           font-variant-numeric: tabular-nums;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
+        .balance-sync-next {
+          color: var(--text-faint);
+          font-size: 11px;
+          white-space: nowrap;
+        }
+        .balance-sync-progress {
+          position: absolute;
+          right: 0;
+          bottom: 0;
+          left: 0;
+          height: 2px;
+          background: var(--border-weak);
+        }
+        .balance-sync-progress i {
+          display: block;
+          height: 100%;
+          background: var(--accent);
+          transform-origin: left;
+          transition: transform 1s linear;
+        }
 
+        /* ---------- 账户卡 ---------- */
         .balance-ledger { min-width: 0; }
         .balance-ledger-head {
           display: flex;
@@ -348,54 +500,69 @@ export default function AdminBalancesPage() {
         }
         .balance-ledger-security {
           display: inline-flex;
+          flex: none;
           align-items: center;
-          gap: 8px;
+          gap: 7px;
+          padding: 5px 11px;
+          border: 1px solid var(--border);
+          border-radius: 999px;
+          background: var(--surface);
           color: var(--text-faint);
-          font-size: 12px;
+          font-size: 11px;
         }
         .balance-ledger-security svg { color: var(--ok-strong); }
 
         .balance-account-board {
           display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 1px;
-          overflow: hidden;
-          border: 1px solid var(--border);
-          border-radius: var(--r-lg);
-          background: var(--border-weak);
+          grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr));
+          gap: 16px;
         }
         .balance-account {
-          --account-state: var(--text-faint);
-          --account-status-bg: var(--surface-2);
-          --account-status-border: var(--border);
-          --account-status-text: var(--text-dim);
+          --account-state: var(--border-strong);
+          --account-state-strong: var(--text-faint);
+          position: relative;
           display: flex;
           min-width: 0;
           min-height: 252px;
           flex-direction: column;
-          padding: 20px;
+          padding: 21px 20px 20px;
+          border: 1px solid var(--border);
+          border-radius: 14px;
           background: var(--surface);
+          transition:
+            transform var(--dur) var(--ease),
+            border-color var(--dur) var(--ease),
+            box-shadow var(--dur) var(--ease);
         }
-        .balance-account:last-child:nth-child(odd) { grid-column: 1 / -1; }
-        .balance-account.is-healthy {
-          --account-state: var(--ok);
-          --account-status-bg: var(--ok-soft);
-          --account-status-border: color-mix(in oklab, var(--ok) 24%, var(--border));
-          --account-status-text: var(--ok-strong);
+        .balance-account:hover {
+          transform: translateY(-2px);
+          border-color: var(--border-strong);
+          box-shadow: 0 2px 4px rgba(15, 23, 42, .04), 0 18px 36px -18px rgba(15, 23, 42, .18);
         }
+        .balance-account::before {
+          content: "";
+          position: absolute;
+          top: -1px;
+          right: 22px;
+          left: 22px;
+          height: 2px;
+          border-radius: 0 0 3px 3px;
+          background: var(--account-state);
+          opacity: 0;
+        }
+        .balance-account.is-healthy { --account-state: var(--ok); --account-state-strong: var(--ok-strong); }
+        .balance-account.is-healthy::before,
+        .balance-account.is-low::before,
+        .balance-account.is-error::before { opacity: 1; }
         .balance-account.is-low {
           --account-state: var(--warn);
-          --account-status-bg: var(--warn-soft);
-          --account-status-border: color-mix(in oklab, var(--warn) 30%, var(--border));
-          --account-status-text: var(--warn-strong);
-          background: color-mix(in oklab, var(--warn-soft) 34%, var(--surface));
+          --account-state-strong: var(--warn-strong);
+          background: color-mix(in oklab, var(--warn-soft) 30%, var(--surface));
         }
         .balance-account.is-error {
           --account-state: var(--danger);
-          --account-status-bg: var(--danger-soft);
-          --account-status-border: color-mix(in oklab, var(--danger) 26%, var(--border));
-          --account-status-text: var(--danger-strong);
-          background: color-mix(in oklab, var(--danger-soft) 34%, var(--surface));
+          --account-state-strong: var(--danger-strong);
+          background: color-mix(in oklab, var(--danger-soft) 30%, var(--surface));
         }
         .balance-account-head {
           display: flex;
@@ -405,17 +572,18 @@ export default function AdminBalancesPage() {
         }
         .balance-account-avatar {
           display: grid;
-          width: 38px;
-          height: 38px;
+          width: 40px;
+          height: 40px;
           flex: none;
           place-items: center;
-          border: 1px solid var(--border);
-          border-radius: var(--r);
-          background: var(--surface-2);
-          color: var(--text-dim);
+          border: 1px solid color-mix(in oklab, var(--account-state) 28%, var(--border));
+          border-radius: 10px;
+          background: color-mix(in oklab, var(--account-state) 9%, var(--surface));
+          color: var(--account-state-strong);
           font-family: var(--mono);
           font-size: 10px;
           font-weight: 650;
+          letter-spacing: .04em;
         }
         .balance-account-provider { min-width: 0; }
         .balance-account-provider strong,
@@ -442,11 +610,11 @@ export default function AdminBalancesPage() {
           margin-left: auto;
           align-items: center;
           gap: 7px;
-          padding: 5px 8px;
-          border: 1px solid var(--account-status-border);
+          padding: 5px 10px;
+          border: 1px solid color-mix(in oklab, var(--account-state) 24%, var(--border));
           border-radius: var(--r-sm);
-          background: var(--account-status-bg);
-          color: var(--account-status-text);
+          background: color-mix(in oklab, var(--account-state) 8%, var(--surface));
+          color: var(--account-state-strong);
           font-size: 11px;
           font-weight: 600;
           white-space: nowrap;
@@ -457,6 +625,7 @@ export default function AdminBalancesPage() {
           flex: none;
           border-radius: 50%;
           background: var(--account-state);
+          box-shadow: 0 0 0 3px color-mix(in oklab, var(--account-state) 16%, transparent);
         }
         .balance-account-main { padding: 24px 0 18px; }
         .balance-account-main > span {
@@ -469,18 +638,19 @@ export default function AdminBalancesPage() {
           margin-top: 7px;
           color: var(--text-title);
           font-family: var(--mono);
-          font-size: 28px;
+          font-size: 30px;
           font-weight: 650;
-          letter-spacing: -.04em;
+          letter-spacing: -.045em;
           line-height: 1.2;
           font-variant-numeric: tabular-nums;
         }
         .balance-account.is-low .balance-account-value { color: var(--warn-strong); }
         .balance-account.is-error .balance-account-value.is-empty { color: var(--danger-strong); }
         .balance-account-value.is-empty {
-          color: var(--text-dim);
+          color: var(--text-faint);
           font-family: var(--ui);
           font-size: 20px;
+          font-weight: 500;
           letter-spacing: -.01em;
         }
         .balance-account-sub {
@@ -495,14 +665,16 @@ export default function AdminBalancesPage() {
           font-family: var(--mono);
           font-weight: 500;
         }
-        .balance-account-sub .is-stale { color: var(--warn-strong); font-weight: 600; }
+        .balance-account-sub .is-stale {
+          color: var(--warn-strong);
+          font-weight: 600;
+        }
         .balance-account-facts {
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
           gap: 16px;
           padding: 14px 0;
           border-top: 1px solid var(--border-weak);
-          border-bottom: 1px solid var(--border-weak);
         }
         .balance-account-fact { min-width: 0; }
         .balance-account-fact span {
@@ -525,46 +697,57 @@ export default function AdminBalancesPage() {
         .balance-account-details {
           display: flex;
           flex-wrap: wrap;
-          gap: 6px 18px;
+          gap: 6px;
           padding-top: 12px;
         }
         .balance-account-detail {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          padding: 3px 9px;
+          border: 1px solid var(--border-weak);
+          border-radius: 6px;
+          background: var(--surface-2);
           color: var(--text-faint);
           font-size: 10.5px;
         }
         .balance-account-detail b {
-          margin-left: 5px;
           color: var(--text-dim);
           font-family: var(--mono);
           font-weight: 500;
         }
-        .balance-account-message {
+        .balance-account-console {
           display: flex;
-          align-items: flex-start;
+          align-items: center;
           gap: 8px;
           margin-top: auto;
-          padding-top: 14px;
-          color: var(--text-dim);
-          font-size: 11px;
-          line-height: 1.55;
-          overflow-wrap: anywhere;
+          padding: 9px 12px;
+          border-radius: 8px;
+          background: #141419;
+          color: #9c9ca6;
+          font-family: var(--mono);
+          font-size: 10.5px;
+          line-height: 1.5;
         }
-        .balance-account-message svg {
+        .balance-account-console i {
+          width: 6px;
+          height: 6px;
           flex: none;
-          margin-top: 2px;
-          color: var(--account-state);
+          border-radius: 50%;
+          background: var(--account-state);
         }
-        .balance-account.is-low .balance-account-message,
-        .balance-account.is-error .balance-account-message { color: var(--account-status-text); }
+        .balance-account-console span { overflow-wrap: anywhere; }
 
+        /* ---------- 骨架屏 ---------- */
         .balance-account-skeleton { min-height: 252px; }
+        .balance-account-skeleton:hover { transform: none; box-shadow: none; border-color: var(--border); }
         .balance-skeleton-head { display: flex; align-items: center; gap: 12px; }
-        .balance-skeleton-avatar { width: 38px; height: 38px; border-radius: var(--r); }
+        .balance-skeleton-avatar { width: 40px; height: 40px; border-radius: 10px; }
         .balance-skeleton-copy { display: flex; flex-direction: column; gap: 8px; }
         .balance-skeleton-name { width: 88px; height: 12px; }
         .balance-skeleton-source { width: 116px; height: 9px; }
         .balance-skeleton-status { width: 74px; height: 24px; margin-left: auto; border-radius: var(--r-sm); }
-        .balance-skeleton-value { width: 164px; height: 24px; margin-top: 28px; }
+        .balance-skeleton-value { width: 164px; height: 26px; margin-top: 28px; }
         .balance-skeleton-sub { width: 124px; height: 10px; margin-top: 10px; }
         .balance-skeleton-facts {
           display: flex;
@@ -574,40 +757,42 @@ export default function AdminBalancesPage() {
           border-top: 1px solid var(--border-weak);
         }
         .balance-skeleton-fact { width: 112px; height: 10px; }
-        .balance-skeleton-message { width: min(320px, 76%); height: 10px; margin-top: auto; }
+        .balance-skeleton-message { width: 100%; height: 28px; margin-top: auto; border-radius: 8px; }
         .balance-empty {
           overflow: hidden;
           border: 1px solid var(--border);
-          border-radius: var(--r-lg);
+          border-radius: 14px;
           background: var(--surface);
         }
         .balance-spin { animation: balanceSpin .8s linear infinite; }
         @keyframes balanceSpin { to { transform: rotate(360deg); } }
 
         @media (max-width: 1240px) {
-          .balance-summary { grid-template-columns: minmax(232px, 1.5fr) repeat(4, minmax(80px, .6fr)); }
-          .balance-summary-sync { grid-column: 1 / -1; }
+          .balance-summary { grid-template-columns: minmax(260px, 1.5fr) repeat(4, minmax(84px, .6fr)); }
+          .balance-sync { grid-column: 1 / -1; }
         }
         @media (max-width: 820px) {
           .balance-page-head { flex-direction: column; }
           .balance-refresh { width: 100%; min-height: 44px; }
           .balance-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-          .balance-summary-primary,
-          .balance-summary-sync { grid-column: 1 / -1; }
-          .balance-account-board { grid-template-columns: 1fr; }
-          .balance-account:last-child:nth-child(odd) { grid-column: auto; }
+          .balance-hero,
+          .balance-sync { grid-column: 1 / -1; }
         }
         @media (max-width: 560px) {
           .balance-page { gap: 20px; }
           .balance-page-head h1 { font-size: 22px; }
           .balance-ledger-head { align-items: flex-start; flex-direction: column; }
-          .balance-ledger-security { font-size: 11px; }
-          .balance-account { min-height: 0; padding: 16px; }
+          .balance-account { min-height: 0; padding: 18px 16px 16px; }
           .balance-account-main { padding-top: 20px; }
-          .balance-account-value { font-size: 24px; }
+          .balance-account-value { font-size: 26px; }
+          .balance-hero-value { font-size: 28px; }
         }
         @media (prefers-reduced-motion: reduce) {
-          .balance-spin { animation: none; }
+          .balance-spin,
+          .balance-sync-live i { animation: none; }
+          .balance-account,
+          .balance-sync-progress i { transition: none; }
+          .balance-account:hover { transform: none; }
         }
       `}</style>
     </div>
@@ -621,12 +806,15 @@ function SummaryMetric({
 }: {
   label: string;
   value: number;
-  tone?: "warn" | "danger";
+  tone: "ok" | "warn" | "danger" | "muted";
 }) {
-  const emphasized = tone && value > 0;
+  const emphasized = (tone === "warn" || tone === "danger") && value > 0;
   return (
-    <div className={`balance-summary-metric${emphasized ? ` is-${tone}` : ""}`}>
-      <span>{label}</span>
+    <div className={`balance-metric${emphasized ? ` is-${tone}` : ""}`}>
+      <span className="balance-metric-label">
+        <i data-tone={tone} aria-hidden />
+        {label}
+      </span>
       <strong>{value.toLocaleString("zh-CN").padStart(2, "0")}</strong>
     </div>
   );
@@ -718,8 +906,8 @@ function SupplierBalanceAccount({ row }: { row: SupplierBalanceVO }) {
         </div>
       ) : null}
 
-      <footer className="balance-account-message">
-        <Activity aria-hidden size={13} />
+      <footer className="balance-account-console">
+        <i aria-hidden />
         <span>{row.message || "等待下一次查询"}</span>
       </footer>
     </article>
