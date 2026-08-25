@@ -10,10 +10,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Activity, Clock3, RefreshCw, ShieldCheck } from "lucide-react";
-import {
-  AdminAlert,
-  AdminEmptyState,
-} from "@/components/admin";
+import { AdminAlert, AdminEmptyState } from "@/components/admin";
 import { adminBalancesApi } from "@/lib/admin-balances-api";
 import { useAuthStore } from "@/stores/use-auth-store";
 import type {
@@ -135,40 +132,38 @@ export default function AdminBalancesPage() {
 
   return (
     <div className="adm-page balance-page">
-      <section className="balance-command" aria-labelledby="balance-title">
-        <div className="balance-command-top">
-          <div className="balance-command-copy">
-            <h1 id="balance-title">供应商余额</h1>
-            <p>集中观察上游账户余额、额度健康度与认证状态，异常账户不会阻塞其他供应商。</p>
-          </div>
-          <button
-            type="button"
-            className="adm-btn balance-refresh"
-            disabled={refreshing}
-            onClick={() => void load()}
-          >
-            <RefreshCw aria-hidden size={15} className={refreshing ? "balance-spin" : undefined} />
-            {refreshing ? "同步中" : "立即同步"}
-          </button>
+      <header className="balance-page-head">
+        <div>
+          <h1>供应商余额</h1>
+          <p>查看上游账户余额与认证状态，异常账户不会影响其他供应商查询。</p>
         </div>
+        <button
+          type="button"
+          className="adm-btn balance-refresh"
+          disabled={refreshing}
+          onClick={() => void load()}
+        >
+          <RefreshCw aria-hidden size={15} className={refreshing ? "balance-spin" : undefined} />
+          {refreshing ? "同步中" : "立即同步"}
+        </button>
+      </header>
 
-        <div className="balance-command-grid" role="group" aria-label="资金监控概况">
-          <div className="balance-total">
-            <div>
-              <span>在线美元余额</span>
-              <strong>{liveUSD == null ? "—" : formatMoney(liveUSD, "USD")}</strong>
-              <small>{counts.connected} / {rows.length || "—"} 个账户已连接</small>
-            </div>
-          </div>
-          <CommandMetric label="健康账户" value={counts.healthy} />
-          <CommandMetric label="余额预警" value={counts.low} tone="warn" />
-          <CommandMetric label="查询异常" value={counts.errors} tone="danger" />
-          <CommandMetric label="未在监控" value={counts.inactive} />
-          <div className="balance-sync-time">
-            <Clock3 aria-hidden size={14} />
+      <section className="balance-summary" aria-label="资金监控概况">
+        <div className="balance-summary-primary">
+          <span>在线美元余额</span>
+          <strong>{liveUSD == null ? "—" : formatMoney(liveUSD, "USD")}</strong>
+          <small>{counts.connected} / {rows.length || "—"} 个账户已连接</small>
+        </div>
+        <SummaryMetric label="健康账户" value={counts.healthy} />
+        <SummaryMetric label="余额预警" value={counts.low} tone="warn" />
+        <SummaryMetric label="查询异常" value={counts.errors} tone="danger" />
+        <SummaryMetric label="未在监控" value={counts.inactive} />
+        <div className="balance-summary-sync">
+          <Clock3 aria-hidden size={14} />
+          <div>
             <span>最近同步</span>
             <strong>{formatDateTime(snapshot?.refreshedAt || "")}</strong>
-            <small>自动刷新 · {refreshSeconds}s</small>
+            <small>每 {refreshSeconds} 秒自动刷新</small>
           </div>
         </div>
       </section>
@@ -200,7 +195,7 @@ export default function AdminBalancesPage() {
         </header>
 
         {loading && !snapshot ? (
-          <BalanceListSkeleton />
+          <BalanceBoardSkeleton />
         ) : error && !snapshot ? null : rows.length === 0 ? (
           <div className="balance-empty">
             <AdminEmptyState
@@ -209,40 +204,31 @@ export default function AdminBalancesPage() {
             />
           </div>
         ) : (
-          <div className="balance-account-list">
-            <BalanceAccountHeader />
-            {rows.map((row) => <SupplierBalanceRow key={row.key} row={row} />)}
+          <div className="balance-account-board">
+            {rows.map((row) => <SupplierBalanceAccount key={row.key} row={row} />)}
           </div>
         )}
       </section>
 
       <style>{`
-        .balance-page {
-          gap: 24px;
-        }
-        .balance-command {
-          padding: 24px;
-          border: 1px solid var(--border);
-          border-radius: var(--r-lg);
-          background: var(--surface);
-        }
-        .balance-command-top {
+        .balance-page { gap: 24px; }
+        .balance-page-head {
           display: flex;
           align-items: flex-start;
           justify-content: space-between;
           gap: 24px;
+          padding-top: 4px;
         }
-        .balance-command-copy { max-width: 700px; }
-        .balance-command h1 {
+        .balance-page-head h1 {
           margin: 0;
           color: var(--text-title);
           font-size: 24px;
-          font-weight: 600;
-          letter-spacing: -.02em;
+          font-weight: 650;
+          letter-spacing: -.025em;
           line-height: 1.3;
           text-wrap: balance;
         }
-        .balance-command-copy p {
+        .balance-page-head p {
           max-width: 68ch;
           margin: 8px 0 0;
           color: var(--text-faint);
@@ -250,66 +236,60 @@ export default function AdminBalancesPage() {
           line-height: 1.6;
           text-wrap: pretty;
         }
-        .balance-refresh {
-          flex: none;
-          min-width: 112px;
-        }
-        .balance-command-grid {
+        .balance-refresh { min-width: 112px; flex: none; }
+
+        .balance-summary {
           display: grid;
-          grid-template-columns: minmax(240px, 1.6fr) repeat(4, minmax(88px, .58fr)) minmax(168px, 1fr);
-          margin-top: 24px;
+          grid-template-columns: minmax(240px, 1.6fr) repeat(4, minmax(88px, .58fr)) minmax(176px, 1fr);
+          gap: 1px;
           overflow: hidden;
           border: 1px solid var(--border);
-          border-radius: var(--r);
-          background: var(--surface-2);
+          border-radius: var(--r-lg);
+          background: var(--border-weak);
         }
-        .balance-total {
-          display: flex;
+        .balance-summary-primary,
+        .balance-summary-metric,
+        .balance-summary-sync {
           min-width: 0;
-          align-items: center;
-          padding: 16px 20px;
-          border-right: 1px solid var(--border);
           background: var(--surface);
         }
-        .balance-total span,
-        .balance-command-metric span,
-        .balance-sync-time span {
+        .balance-summary-primary { padding: 20px; }
+        .balance-summary-primary span,
+        .balance-summary-metric span,
+        .balance-summary-sync span {
           display: block;
           color: var(--text-faint);
           font-size: 12px;
           font-weight: 400;
         }
-        .balance-total strong {
+        .balance-summary-primary strong {
           display: block;
           overflow: hidden;
           margin-top: 8px;
           color: var(--text-title);
           font-family: var(--mono);
           font-size: 24px;
-          font-weight: 600;
-          letter-spacing: -.025em;
+          font-weight: 650;
+          letter-spacing: -.03em;
           font-variant-numeric: tabular-nums;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
-        .balance-total small,
-        .balance-sync-time small {
+        .balance-summary-primary small,
+        .balance-summary-sync small {
           display: block;
-          margin-top: 4px;
+          margin-top: 5px;
           color: var(--text-faint);
           font-size: 11px;
           white-space: nowrap;
         }
-        .balance-command-metric {
+        .balance-summary-metric {
           display: flex;
-          min-width: 0;
           flex-direction: column;
           justify-content: center;
           padding: 16px;
-          border-right: 1px solid var(--border);
-          background: var(--surface-2);
         }
-        .balance-command-metric strong {
+        .balance-summary-metric strong {
           margin-top: 8px;
           color: var(--text-title);
           font-family: var(--mono);
@@ -317,34 +297,25 @@ export default function AdminBalancesPage() {
           font-weight: 600;
           font-variant-numeric: tabular-nums;
         }
-        .balance-command-metric.is-warn {
-          background: var(--warn-soft);
-        }
-        .balance-command-metric.is-warn span,
-        .balance-command-metric.is-warn strong { color: var(--warn-strong); }
-        .balance-command-metric.is-danger {
-          background: var(--danger-soft);
-        }
-        .balance-command-metric.is-danger span,
-        .balance-command-metric.is-danger strong { color: var(--danger-strong); }
-        .balance-sync-time {
-          position: relative;
+        .balance-summary-metric.is-warn span,
+        .balance-summary-metric.is-warn strong { color: var(--warn-strong); }
+        .balance-summary-metric.is-danger span,
+        .balance-summary-metric.is-danger strong { color: var(--danger-strong); }
+        .balance-summary-sync {
           display: flex;
-          min-width: 0;
-          flex-direction: column;
-          justify-content: center;
-          padding: 16px 16px 16px 40px;
-          background: var(--surface);
+          align-items: flex-start;
+          gap: 10px;
+          padding: 18px 16px;
         }
-        .balance-sync-time > svg {
-          position: absolute;
-          top: 18px;
-          left: 16px;
+        .balance-summary-sync > svg {
+          flex: none;
+          margin-top: 1px;
           color: var(--text-faint);
         }
-        .balance-sync-time strong {
+        .balance-summary-sync strong {
+          display: block;
           overflow: hidden;
-          margin-top: 8px;
+          margin-top: 7px;
           color: var(--text-dim);
           font-family: var(--mono);
           font-size: 11.5px;
@@ -353,9 +324,8 @@ export default function AdminBalancesPage() {
           text-overflow: ellipsis;
           white-space: nowrap;
         }
-        .balance-ledger {
-          min-width: 0;
-        }
+
+        .balance-ledger { min-width: 0; }
         .balance-ledger-head {
           display: flex;
           align-items: center;
@@ -383,60 +353,51 @@ export default function AdminBalancesPage() {
           color: var(--text-faint);
           font-size: 12px;
         }
-        .balance-ledger-security svg { color: var(--ok); }
-        .balance-account-list {
+        .balance-ledger-security svg { color: var(--ok-strong); }
+
+        .balance-account-board {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 1px;
           overflow: hidden;
           border: 1px solid var(--border);
           border-radius: var(--r-lg);
-          background: var(--surface);
+          background: var(--border-weak);
         }
-        .balance-account-head,
-        .balance-account-row {
-          display: grid;
-          grid-template-columns: minmax(176px, 1.35fr) minmax(168px, 1.1fr) minmax(128px, .8fr) minmax(144px, 1fr) minmax(88px, .55fr) minmax(108px, .7fr);
-          column-gap: 16px;
-        }
-        .balance-account-head {
-          min-height: 40px;
-          align-items: center;
-          padding: 0 16px;
-          border-bottom: 1px solid var(--border);
-          background: var(--surface-2);
-          color: var(--text-faint);
-          font-size: 11px;
-          font-weight: 500;
-        }
-        .balance-account-row {
+        .balance-account {
           --account-state: var(--text-faint);
           --account-status-bg: var(--surface-2);
           --account-status-border: var(--border);
           --account-status-text: var(--text-dim);
-          align-items: center;
-          padding: 16px;
-          border-bottom: 1px solid var(--border-weak);
+          display: flex;
+          min-width: 0;
+          min-height: 252px;
+          flex-direction: column;
+          padding: 20px;
+          background: var(--surface);
         }
-        .balance-account-row:last-child { border-bottom: 0; }
-        .balance-account-row.is-healthy {
+        .balance-account:last-child:nth-child(odd) { grid-column: 1 / -1; }
+        .balance-account.is-healthy {
           --account-state: var(--ok);
           --account-status-bg: var(--ok-soft);
           --account-status-border: color-mix(in oklab, var(--ok) 24%, var(--border));
           --account-status-text: var(--ok-strong);
         }
-        .balance-account-row.is-low {
+        .balance-account.is-low {
           --account-state: var(--warn);
           --account-status-bg: var(--warn-soft);
-          --account-status-border: color-mix(in oklab, var(--warn) 32%, var(--border));
+          --account-status-border: color-mix(in oklab, var(--warn) 30%, var(--border));
           --account-status-text: var(--warn-strong);
-          background: color-mix(in oklab, var(--warn-soft) 58%, var(--surface));
+          background: color-mix(in oklab, var(--warn-soft) 34%, var(--surface));
         }
-        .balance-account-row.is-error {
+        .balance-account.is-error {
           --account-state: var(--danger);
           --account-status-bg: var(--danger-soft);
-          --account-status-border: color-mix(in oklab, var(--danger) 28%, var(--border));
+          --account-status-border: color-mix(in oklab, var(--danger) 26%, var(--border));
           --account-status-text: var(--danger-strong);
-          background: color-mix(in oklab, var(--danger-soft) 58%, var(--surface));
+          background: color-mix(in oklab, var(--danger-soft) 34%, var(--surface));
         }
-        .balance-account-provider {
+        .balance-account-head {
           display: flex;
           min-width: 0;
           align-items: center;
@@ -444,8 +405,8 @@ export default function AdminBalancesPage() {
         }
         .balance-account-avatar {
           display: grid;
-          width: 36px;
-          height: 36px;
+          width: 38px;
+          height: 38px;
           flex: none;
           place-items: center;
           border: 1px solid var(--border);
@@ -454,96 +415,33 @@ export default function AdminBalancesPage() {
           color: var(--text-dim);
           font-family: var(--mono);
           font-size: 10px;
-          font-weight: 600;
+          font-weight: 650;
         }
-        .balance-account-provider-copy { min-width: 0; }
-        .balance-account-provider-copy strong,
-        .balance-account-provider-copy small {
+        .balance-account-provider { min-width: 0; }
+        .balance-account-provider strong,
+        .balance-account-provider small {
           display: block;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
-        .balance-account-provider-copy strong {
+        .balance-account-provider strong {
           color: var(--text-title);
           font-size: 14px;
           font-weight: 600;
         }
-        .balance-account-provider-copy small {
+        .balance-account-provider small {
           margin-top: 4px;
           color: var(--text-faint);
           font-family: var(--mono);
           font-size: 10px;
-        }
-        .balance-account-cell { min-width: 0; }
-        .balance-cell-label {
-          position: absolute;
-          width: 1px;
-          height: 1px;
-          overflow: hidden;
-          margin: -1px;
-          padding: 0;
-          border: 0;
-          clip: rect(0, 0, 0, 0);
-          white-space: nowrap;
-          color: var(--text-faint);
-          font-size: 11px;
-        }
-        .balance-account-cell > strong {
-          display: block;
-          overflow: hidden;
-          color: var(--text-dim);
-          font-family: var(--mono);
-          font-size: 12px;
-          font-weight: 500;
-          font-variant-numeric: tabular-nums;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-        .balance-account-amount > strong {
-          color: var(--text-title);
-          font-size: 16px;
-          font-weight: 600;
-          letter-spacing: -.015em;
-        }
-        .balance-account-row.is-low .balance-account-amount > strong,
-        .balance-account-row.is-error .balance-account-amount > strong.is-empty {
-          color: var(--account-status-text);
-        }
-        .balance-account-amount > strong.is-empty {
-          font-family: var(--ui);
-          font-size: 13px;
-          letter-spacing: 0;
-        }
-        .balance-account-stale {
-          display: block;
-          margin-top: 4px;
-          color: var(--warn-strong);
-          font-size: 11px;
-          font-weight: 600;
-        }
-        .balance-account-details {
-          display: flex;
-          min-width: 0;
-          flex-wrap: wrap;
-          gap: 4px 12px;
-          margin-top: 6px;
-        }
-        .balance-account-details span {
-          min-width: 0;
-          color: var(--text-faint);
-          font-size: 10px;
-        }
-        .balance-account-details b {
-          color: var(--text-dim);
-          font-family: var(--mono);
-          font-weight: 500;
         }
         .balance-account-status {
           display: inline-flex;
           width: fit-content;
+          margin-left: auto;
           align-items: center;
-          gap: 8px;
+          gap: 7px;
           padding: 5px 8px;
           border: 1px solid var(--account-status-border);
           border-radius: var(--r-sm);
@@ -560,17 +458,95 @@ export default function AdminBalancesPage() {
           border-radius: 50%;
           background: var(--account-state);
         }
+        .balance-account-main { padding: 24px 0 18px; }
+        .balance-account-main > span {
+          display: block;
+          color: var(--text-faint);
+          font-size: 11px;
+        }
+        .balance-account-value {
+          overflow-wrap: anywhere;
+          margin-top: 7px;
+          color: var(--text-title);
+          font-family: var(--mono);
+          font-size: 28px;
+          font-weight: 650;
+          letter-spacing: -.04em;
+          line-height: 1.2;
+          font-variant-numeric: tabular-nums;
+        }
+        .balance-account.is-low .balance-account-value { color: var(--warn-strong); }
+        .balance-account.is-error .balance-account-value.is-empty { color: var(--danger-strong); }
+        .balance-account-value.is-empty {
+          color: var(--text-dim);
+          font-family: var(--ui);
+          font-size: 20px;
+          letter-spacing: -.01em;
+        }
+        .balance-account-sub {
+          min-height: 18px;
+          margin-top: 7px;
+          color: var(--text-faint);
+          font-size: 11px;
+        }
+        .balance-account-sub b {
+          margin-left: 6px;
+          color: var(--text-dim);
+          font-family: var(--mono);
+          font-weight: 500;
+        }
+        .balance-account-sub .is-stale { color: var(--warn-strong); font-weight: 600; }
+        .balance-account-facts {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 16px;
+          padding: 14px 0;
+          border-top: 1px solid var(--border-weak);
+          border-bottom: 1px solid var(--border-weak);
+        }
+        .balance-account-fact { min-width: 0; }
+        .balance-account-fact span {
+          display: block;
+          color: var(--text-faint);
+          font-size: 10px;
+        }
+        .balance-account-fact strong {
+          display: block;
+          overflow: hidden;
+          margin-top: 5px;
+          color: var(--text-dim);
+          font-family: var(--mono);
+          font-size: 11px;
+          font-weight: 500;
+          font-variant-numeric: tabular-nums;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .balance-account-details {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px 18px;
+          padding-top: 12px;
+        }
+        .balance-account-detail {
+          color: var(--text-faint);
+          font-size: 10.5px;
+        }
+        .balance-account-detail b {
+          margin-left: 5px;
+          color: var(--text-dim);
+          font-family: var(--mono);
+          font-weight: 500;
+        }
         .balance-account-message {
           display: flex;
-          grid-column: 1 / -1;
           align-items: flex-start;
           gap: 8px;
-          margin-top: 12px;
-          padding-top: 12px;
-          border-top: 1px solid var(--border-weak);
+          margin-top: auto;
+          padding-top: 14px;
           color: var(--text-dim);
           font-size: 11px;
-          line-height: 1.5;
+          line-height: 1.55;
           overflow-wrap: anywhere;
         }
         .balance-account-message svg {
@@ -578,34 +554,27 @@ export default function AdminBalancesPage() {
           margin-top: 2px;
           color: var(--account-state);
         }
-        .balance-account-row.is-low .balance-account-message,
-        .balance-account-row.is-error .balance-account-message {
-          color: var(--account-status-text);
-        }
-        .balance-skeleton-row { min-height: 96px; }
-        .balance-skeleton-provider {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-        }
-        .balance-skeleton-copy {
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-        }
-        .balance-skeleton-avatar { width: 36px; height: 36px; border-radius: var(--r); }
+        .balance-account.is-low .balance-account-message,
+        .balance-account.is-error .balance-account-message { color: var(--account-status-text); }
+
+        .balance-account-skeleton { min-height: 252px; }
+        .balance-skeleton-head { display: flex; align-items: center; gap: 12px; }
+        .balance-skeleton-avatar { width: 38px; height: 38px; border-radius: var(--r); }
+        .balance-skeleton-copy { display: flex; flex-direction: column; gap: 8px; }
         .balance-skeleton-name { width: 88px; height: 12px; }
-        .balance-skeleton-source { width: 112px; height: 10px; }
-        .balance-skeleton-value { width: 120px; height: 16px; }
-        .balance-skeleton-cell { width: 96px; height: 12px; }
-        .balance-skeleton-short { width: 56px; height: 12px; }
-        .balance-skeleton-status { width: 72px; height: 24px; border-radius: var(--r-sm); }
-        .balance-skeleton-message {
-          grid-column: 1 / -1;
-          width: min(420px, 72%);
-          height: 10px;
-          margin-top: 12px;
+        .balance-skeleton-source { width: 116px; height: 9px; }
+        .balance-skeleton-status { width: 74px; height: 24px; margin-left: auto; border-radius: var(--r-sm); }
+        .balance-skeleton-value { width: 164px; height: 24px; margin-top: 28px; }
+        .balance-skeleton-sub { width: 124px; height: 10px; margin-top: 10px; }
+        .balance-skeleton-facts {
+          display: flex;
+          gap: 16px;
+          margin-top: 24px;
+          padding-top: 14px;
+          border-top: 1px solid var(--border-weak);
         }
+        .balance-skeleton-fact { width: 112px; height: 10px; }
+        .balance-skeleton-message { width: min(320px, 76%); height: 10px; margin-top: auto; }
         .balance-empty {
           overflow: hidden;
           border: 1px solid var(--border);
@@ -614,68 +583,28 @@ export default function AdminBalancesPage() {
         }
         .balance-spin { animation: balanceSpin .8s linear infinite; }
         @keyframes balanceSpin { to { transform: rotate(360deg); } }
+
         @media (max-width: 1240px) {
-          .balance-command-grid { grid-template-columns: minmax(232px, 1.5fr) repeat(4, minmax(80px, .6fr)); }
-          .balance-sync-time { grid-column: 1 / -1; min-height: 64px; border-top: 1px solid var(--border); }
-        }
-        @media (max-width: 1100px) {
-          .balance-account-head { display: none; }
-          .balance-account-row {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 16px 24px;
-          }
-          .balance-account-provider,
-          .balance-account-status,
-          .balance-account-message,
-          .balance-skeleton-provider,
-          .balance-skeleton-message { grid-column: 1 / -1; }
-          .balance-cell-label {
-            position: static;
-            display: block;
-            width: auto;
-            height: auto;
-            overflow: visible;
-            margin-bottom: 4px;
-            clip: auto;
-            white-space: normal;
-          }
-          .balance-account-message { margin-top: 0; }
+          .balance-summary { grid-template-columns: minmax(232px, 1.5fr) repeat(4, minmax(80px, .6fr)); }
+          .balance-summary-sync { grid-column: 1 / -1; }
         }
         @media (max-width: 820px) {
-          .balance-command { padding: 20px; }
-          .balance-command-top { flex-direction: column; }
+          .balance-page-head { flex-direction: column; }
           .balance-refresh { width: 100%; min-height: 44px; }
-          .balance-command-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-          .balance-total {
-            grid-column: 1 / -1;
-            border-right: 0;
-            border-bottom: 1px solid var(--border);
-          }
-          .balance-command-metric {
-            border-right: 0;
-            border-bottom: 1px solid var(--border);
-          }
-          .balance-command-metric:nth-child(even) { border-right: 1px solid var(--border); }
-          .balance-sync-time { grid-column: 1 / -1; border-top: 0; }
-          .balance-account-provider-copy small,
-          .balance-cell-label,
-          .balance-account-stale,
-          .balance-account-details span,
-          .balance-account-status,
-          .balance-account-message { font-size: 12px; }
+          .balance-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+          .balance-summary-primary,
+          .balance-summary-sync { grid-column: 1 / -1; }
+          .balance-account-board { grid-template-columns: 1fr; }
+          .balance-account:last-child:nth-child(odd) { grid-column: auto; }
         }
         @media (max-width: 560px) {
-          .balance-command h1 { font-size: 22px; }
+          .balance-page { gap: 20px; }
+          .balance-page-head h1 { font-size: 22px; }
           .balance-ledger-head { align-items: flex-start; flex-direction: column; }
           .balance-ledger-security { font-size: 11px; }
-        }
-        @media (max-width: 480px) {
-          .balance-account-row { grid-template-columns: 1fr; }
-          .balance-account-provider,
-          .balance-account-status,
-          .balance-account-message,
-          .balance-skeleton-provider,
-          .balance-skeleton-message { grid-column: 1; }
+          .balance-account { min-height: 0; padding: 16px; }
+          .balance-account-main { padding-top: 20px; }
+          .balance-account-value { font-size: 24px; }
         }
         @media (prefers-reduced-motion: reduce) {
           .balance-spin { animation: none; }
@@ -685,7 +614,7 @@ export default function AdminBalancesPage() {
   );
 }
 
-function CommandMetric({
+function SummaryMetric({
   label,
   value,
   tone,
@@ -696,45 +625,33 @@ function CommandMetric({
 }) {
   const emphasized = tone && value > 0;
   return (
-    <div className={`balance-command-metric${emphasized ? ` is-${tone}` : ""}`}>
+    <div className={`balance-summary-metric${emphasized ? ` is-${tone}` : ""}`}>
       <span>{label}</span>
       <strong>{value.toLocaleString("zh-CN").padStart(2, "0")}</strong>
     </div>
   );
 }
 
-function BalanceAccountHeader() {
+function BalanceBoardSkeleton() {
   return (
-    <div className="balance-account-head" aria-hidden>
-      <span>供应商</span>
-      <span>可用余额</span>
-      <span>预警阈值</span>
-      <span>最近成功</span>
-      <span>响应耗时</span>
-      <span>状态</span>
-    </div>
-  );
-}
-
-function BalanceListSkeleton() {
-  return (
-    <div className="balance-account-list" aria-busy="true">
+    <div className="balance-account-board" aria-busy="true">
       <span className="sr-only" role="status">正在加载供应商余额</span>
-      <BalanceAccountHeader />
       {Array.from({ length: 5 }, (_, index) => (
-        <div className="balance-account-row balance-skeleton-row" aria-hidden key={index}>
-          <div className="balance-skeleton-provider">
+        <div className="balance-account balance-account-skeleton" aria-hidden key={index}>
+          <div className="balance-skeleton-head">
             <span className="skel balance-skeleton-avatar" />
             <span className="balance-skeleton-copy">
               <span className="skel balance-skeleton-name" />
               <span className="skel balance-skeleton-source" />
             </span>
+            <span className="skel balance-skeleton-status" />
           </div>
           <span className="skel balance-skeleton-value" />
-          <span className="skel balance-skeleton-cell" />
-          <span className="skel balance-skeleton-cell" />
-          <span className="skel balance-skeleton-short" />
-          <span className="skel balance-skeleton-status" />
+          <span className="skel balance-skeleton-sub" />
+          <span className="balance-skeleton-facts">
+            <span className="skel balance-skeleton-fact" />
+            <span className="skel balance-skeleton-fact" />
+          </span>
           <span className="skel balance-skeleton-message" />
         </div>
       ))}
@@ -742,7 +659,7 @@ function BalanceListSkeleton() {
   );
 }
 
-function SupplierBalanceRow({ row }: { row: SupplierBalanceVO }) {
+function SupplierBalanceAccount({ row }: { row: SupplierBalanceVO }) {
   const meta = STATE_META[row.state] ?? STATE_META.error;
   const connected = row.balance != null;
   const emptyBalanceLabel = row.state === "error"
@@ -752,54 +669,59 @@ function SupplierBalanceRow({ row }: { row: SupplierBalanceVO }) {
       : "尚未接入";
 
   return (
-    <article
-      className={`balance-account-row is-${row.state}`}
-      aria-label={`${row.name}：${meta.label}`}
-    >
-      <div className="balance-account-provider">
+    <article className={`balance-account is-${row.state}`} aria-label={`${row.name}：${meta.label}`}>
+      <header className="balance-account-head">
         <span className="balance-account-avatar" aria-hidden>{supplierInitial(row.name)}</span>
-        <div className="balance-account-provider-copy">
+        <div className="balance-account-provider">
           <strong>{row.name}</strong>
           <small title={row.source}>{row.source || "未配置地址"}</small>
         </div>
-      </div>
+        <div className="balance-account-status">
+          <i aria-hidden />
+          <span>{meta.label}</span>
+        </div>
+      </header>
 
-      <div className="balance-account-cell balance-account-amount">
-        <span className="balance-cell-label">可用余额</span>
-        <strong className={connected ? undefined : "is-empty"}>
+      <div className="balance-account-main">
+        <span>可用余额</span>
+        <div className={`balance-account-value${connected ? "" : " is-empty"}`}>
           {connected ? formatMoney(row.balance, row.currency) : emptyBalanceLabel}
-        </strong>
-        {row.stale ? <span className="balance-account-stale">最近成功值 · 非实时</span> : null}
-        {row.details.length > 0 ? (
-          <div className="balance-account-details">
-            {row.details.slice(0, 2).map((detail) => (
-              <span key={detail.label}>{detail.label} <b>{formatMoney(detail.value, detail.currency)}</b></span>
-            ))}
-          </div>
-        ) : null}
+        </div>
+        <div className="balance-account-sub">
+          {row.stale ? <span className="is-stale">最近成功值 · 非实时</span> : (
+            <>
+              <span>预警阈值</span>
+              <b>{row.lowBalance == null ? "未设置" : formatMoney(row.lowBalance, row.currency)}</b>
+            </>
+          )}
+        </div>
       </div>
 
-      <div className="balance-account-cell">
-        <span className="balance-cell-label">预警阈值</span>
-        <strong>{row.lowBalance == null ? "未设置" : formatMoney(row.lowBalance, row.currency)}</strong>
-      </div>
-      <div className="balance-account-cell">
-        <span className="balance-cell-label">最近成功</span>
-        <strong title={formatDateTime(row.lastSuccessAt)}>{formatDateTime(row.lastSuccessAt)}</strong>
-      </div>
-      <div className="balance-account-cell">
-        <span className="balance-cell-label">响应耗时</span>
-        <strong>{row.checkedAt ? `${row.latencyMs.toLocaleString()} ms` : "—"}</strong>
-      </div>
-      <div className="balance-account-status">
-        <i aria-hidden />
-        <span>{meta.label}</span>
+      <div className="balance-account-facts">
+        <div className="balance-account-fact">
+          <span>最近成功</span>
+          <strong title={formatDateTime(row.lastSuccessAt)}>{formatDateTime(row.lastSuccessAt)}</strong>
+        </div>
+        <div className="balance-account-fact">
+          <span>响应耗时</span>
+          <strong>{row.checkedAt ? `${row.latencyMs.toLocaleString()} ms` : "—"}</strong>
+        </div>
       </div>
 
-      <div className="balance-account-message">
+      {row.details.length > 0 ? (
+        <div className="balance-account-details">
+          {row.details.slice(0, 2).map((detail) => (
+            <span className="balance-account-detail" key={detail.label}>
+              {detail.label}<b>{formatMoney(detail.value, detail.currency)}</b>
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      <footer className="balance-account-message">
         <Activity aria-hidden size={13} />
         <span>{row.message || "等待下一次查询"}</span>
-      </div>
+      </footer>
     </article>
   );
 }
