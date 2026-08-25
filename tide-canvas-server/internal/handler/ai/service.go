@@ -1338,7 +1338,7 @@ const (
 	userFacingGenErr           = "系统异常，请联系客服"
 	userFacingSafetyErr        = "内容未通过安全审核，请调整后重试"
 	userFacingReferenceRiskErr = "参考图未通过安全审核，请更换参考图后重试"
-	userFacingCopyrightErr     = "提交的音频或创作内容涉及版权限制，请更换音频素材，或调整歌词与描述后重试"
+	userFacingCopyrightErr     = "提交的素材或创作内容涉及版权限制，请更换素材，或调整描述后重试"
 	userFacingCancelledErr     = "任务已取消，未生成结果"
 )
 
