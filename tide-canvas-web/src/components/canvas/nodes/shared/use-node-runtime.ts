@@ -66,7 +66,15 @@ export function useAiModels(type: AiModelType, preferredModelId?: string) {
             if (preferredModelId && filtered.some((model) => model.modelId === preferredModelId)) {
               return preferredModelId;
             }
-            return filtered[0].modelId;
+            // 全局图片生成主模型优先于列表首个（仅图片类目会配置该标记）
+            const primary = filtered.find((model) => {
+              try {
+                return (JSON.parse(model.config || "{}") as { imagePrimary?: boolean }).imagePrimary === true;
+              } catch {
+                return false;
+              }
+            });
+            return (primary ?? filtered[0]).modelId;
           });
         } else {
           setModelId("");

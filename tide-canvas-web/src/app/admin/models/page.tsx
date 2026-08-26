@@ -278,6 +278,12 @@ export default function AdminModelsPage() {
     return r ? { id: r.id, name: r.name } : null;
   }, [rows]);
 
+  // the model currently flagged as the global image primary (if any in view).
+  const imagePrimaryRow = useMemo(() => {
+    const r = rows.find((m) => m.config?.imagePrimary);
+    return r ? { id: r.id, name: r.name } : null;
+  }, [rows]);
+
   const openEdit = (m: AdminModelVO) => {
     setEditing(m);
     setModalOpen(true);
@@ -507,6 +513,7 @@ export default function AdminModelsPage() {
         open={modalOpen}
         model={editing}
         aiPrimary={aiPrimary}
+        imagePrimary={imagePrimaryRow}
         onClose={() => setModalOpen(false)}
         onSaved={() => {
           setModalOpen(false);
@@ -802,12 +809,14 @@ function ModelModal({
   open,
   model,
   aiPrimary,
+  imagePrimary,
   onClose,
   onSaved,
 }: {
   open: boolean;
   model: AdminModelVO | null;
   aiPrimary: { id: string; name: string } | null;
+  imagePrimary: { id: string; name: string } | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -842,6 +851,7 @@ function ModelModal({
     maxFileSizeMB: c0.maxFileSizeMB ?? 0,
     uploadFormats: c0.uploadFormats ?? [],
     aiOptimizePrimary: c0.aiOptimizePrimary ?? false,
+    imagePrimary: c0.imagePrimary ?? false,
     refLimits: c0.refLimits ?? {},
     modes: c0.modes ?? [],
     ratios: c0.ratios ?? [],
@@ -1114,7 +1124,15 @@ function ModelModal({
             <input placeholder="如：gpt-image-2" value={modelKey} onChange={(e) => setModelKey(e.target.value)} />
           </Field>
           <Field label="类型">
-            <select value={type} onChange={(e) => setType(e.target.value)}>
+            <select
+              value={type}
+              onChange={(e) => {
+                const next = e.target.value;
+                setType(next);
+                // 主模型标记只在图片类目内有意义；切走类型时清掉，避免残留影响其他类目的默认解析
+                if (next !== "image") setC({ imagePrimary: false });
+              }}
+            >
               {Object.keys(MODEL_TYPE_FORM_LABEL).map((t) => (
                 <option key={t} value={t}>
                   {MODEL_TYPE_FORM_LABEL[t]}
@@ -1345,6 +1363,30 @@ function ModelModal({
                   <span>{cfg.referenceVideoBillingEnabled ? "已开启" : "不收费"}</span>
                 </div>
               </div>
+            </FormSection>
+          )}
+
+          {isImage && (
+            <FormSection
+              label="全局图片生成主模型"
+              hint="全局唯一；开启后画布的图片类功能（生成、多角度、打光、特写、九宫格等）默认使用此模型，积分仍按该模型自身价格扣除"
+            >
+              <Chips
+                single
+                options={[
+                  { v: "yes", l: "设为主模型" },
+                  { v: "no", l: "否" },
+                ]}
+                value={[cfg.imagePrimary ? "yes" : "no"]}
+                onChange={(next) => {
+                  const on = next[0] === "yes";
+                  if (on && imagePrimary && imagePrimary.id !== model?.id) {
+                    toast.info(`已有全局图片生成主模型「${imagePrimary.name}」，请先解除后再选择`);
+                    return;
+                  }
+                  setC({ imagePrimary: on });
+                }}
+              />
             </FormSection>
           )}
 

@@ -284,6 +284,12 @@ func (h *modelsHandler) create(c *gin.Context) {
 			return
 		}
 	}
+	if configMarksImagePrimary(dto.Config) {
+		if name, ok := h.otherImagePrimaryName(0); ok {
+			response.Fail(c, response.CodeBadRequest, "已有全局图片生成主模型「"+name+"」，请先解除后再选择")
+			return
+		}
+	}
 
 	mType := strings.TrimSpace(dto.Type)
 	if mType == "" {
@@ -494,6 +500,12 @@ func (h *modelsHandler) update(c *gin.Context) {
 	if dto.Config != nil && configMarksPrimary(dto.Config) {
 		if name, ok := h.otherPrimaryName(id); ok {
 			response.Fail(c, response.CodeBadRequest, "已有 AI 优化主模型「"+name+"」，请先解除后再选择")
+			return
+		}
+	}
+	if dto.Config != nil && configMarksImagePrimary(dto.Config) {
+		if name, ok := h.otherImagePrimaryName(id); ok {
+			response.Fail(c, response.CodeBadRequest, "已有全局图片生成主模型「"+name+"」，请先解除后再选择")
 			return
 		}
 	}
@@ -832,11 +844,39 @@ func configMarksPrimary(raw json.RawMessage) bool {
 	return c.AiOptimizePrimary
 }
 
+// configMarksImagePrimary reports whether an inbound config object sets the
+// imagePrimary flag (全局图片生成主模型：画布图片类功能的默认模型).
+func configMarksImagePrimary(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var c struct {
+		ImagePrimary bool `json:"imagePrimary"`
+	}
+	_ = json.Unmarshal(raw, &c)
+	return c.ImagePrimary
+}
+
 // otherPrimaryName returns the name of any OTHER model already flagged as the
 // AI-optimization primary (excluding excludeID). Used to enforce a single primary.
 func (h *modelsHandler) otherPrimaryName(excludeID idgen.ID) (string, bool) {
 	var rows []model.MarketModel
 	if err := h.db.Where("config LIKE ?", `%"aiOptimizePrimary":true%`).Find(&rows).Error; err != nil {
+		return "", false
+	}
+	for i := range rows {
+		if rows[i].ID != excludeID {
+			return rows[i].Name, true
+		}
+	}
+	return "", false
+}
+
+// otherImagePrimaryName returns the name of any OTHER model already flagged as
+// the global image primary (excluding excludeID). Used to enforce a single primary.
+func (h *modelsHandler) otherImagePrimaryName(excludeID idgen.ID) (string, bool) {
+	var rows []model.MarketModel
+	if err := h.db.Where("config LIKE ?", `%"imagePrimary":true%`).Find(&rows).Error; err != nil {
 		return "", false
 	}
 	for i := range rows {

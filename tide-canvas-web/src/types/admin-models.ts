@@ -59,6 +59,8 @@ export interface ModelConfig {
   uploadFormats?: string[];
   /** 文本模型：是否作为「AI 优化」主模型（全局唯一，创作台 AI 优化按钮走此模型） */
   aiOptimizePrimary?: boolean;
+  /** 图片模型：是否作为「全局图片生成主模型」（全局唯一，画布图片类功能默认走此模型，积分按该模型价格扣除） */
+  imagePrimary?: boolean;
   /**
    * 视频模型按生成方式的参考素材限制（数量 / 单个大小 MB）。键形如
    * "i2v.imageCount" / "i2v.imageSizeMB" / "keyframe.imageCount" /

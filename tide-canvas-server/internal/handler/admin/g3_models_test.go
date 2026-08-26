@@ -319,3 +319,38 @@ func TestAdminModelTypeOrderPersists3D(t *testing.T) {
 		t.Fatalf("stored type order = %q", row.ConfigValue)
 	}
 }
+
+func TestConfigMarksImagePrimary(t *testing.T) {
+	if !configMarksImagePrimary(json.RawMessage(`{"imagePrimary":true}`)) {
+		t.Fatal(`config {"imagePrimary":true} should mark the global image primary`)
+	}
+	for _, raw := range []json.RawMessage{nil, json.RawMessage(`{}`), json.RawMessage(`{"imagePrimary":false}`), json.RawMessage(`{"aiOptimizePrimary":true}`)} {
+		if configMarksImagePrimary(raw) {
+			t.Fatalf("config %s should not mark the image primary", raw)
+		}
+	}
+}
+
+func TestOtherImagePrimaryName(t *testing.T) {
+	db := openModelsTestDB(t)
+	h := &modelsHandler{db: db}
+
+	primary := model.MarketModel{Name: "Nano Banana 2", Type: "image", Config: `{"imagePrimary":true}`, Status: 1}
+	if err := db.Create(&primary).Error; err != nil {
+		t.Fatalf("seed image primary: %v", err)
+	}
+	if name, ok := h.otherImagePrimaryName(0); !ok || name != primary.Name {
+		t.Fatalf("otherImagePrimaryName(0) = %q, %v; want %q, true", name, ok, primary.Name)
+	}
+	if name, ok := h.otherImagePrimaryName(primary.ID); ok || name != "" {
+		t.Fatalf("excluding the primary itself should find no other, got %q, %v", name, ok)
+	}
+
+	other := model.MarketModel{Name: "GPT Image 2", Type: "image", Config: `{"imagePrimary":true}`, Status: 1}
+	if err := db.Create(&other).Error; err != nil {
+		t.Fatalf("seed second flagged model: %v", err)
+	}
+	if name, ok := h.otherImagePrimaryName(other.ID); !ok || name != primary.Name {
+		t.Fatalf("with a second flagged row, otherImagePrimaryName(second) = %q, %v; want %q, true", name, ok, primary.Name)
+	}
+}
