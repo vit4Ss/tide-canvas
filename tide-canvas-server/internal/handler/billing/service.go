@@ -491,8 +491,12 @@ func (s *service) settleNotify(raw map[string]string) bool {
 		return false
 	}
 	if s.alerts != nil {
-		_ = s.alerts.Resolve(context.Background(), "payment.callback.settlement_failed:"+res.OutTradeNo,
-			"支付到账结算恢复", "订单已完成结算和权益发放。", nil)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		if err := s.alerts.Resolve(ctx, "payment.callback.settlement_failed:"+res.OutTradeNo,
+			"支付到账结算恢复", "订单已完成结算和权益发放。", nil); err != nil {
+			logger.L().Warn("billing: resolve settlement alert failed", zap.Error(err))
+		}
+		cancel()
 	}
 	return true
 }
@@ -500,6 +504,9 @@ func (s *service) settleNotify(raw map[string]string) bool {
 func (s *service) publishPaymentAlert(eventType, severity, orderNo, title, content string, details map[string]any) {
 	if s.alerts == nil {
 		return
+	}
+	if details == nil {
+		details = map[string]any{}
 	}
 	details["orderNo"] = orderNo
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

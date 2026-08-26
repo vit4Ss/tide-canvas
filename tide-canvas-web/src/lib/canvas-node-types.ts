@@ -14,6 +14,11 @@ export function isImageCanvasNodeType(type?: string): boolean {
   return !!type && IMAGE_CANVAS_NODE_TYPES.has(type);
 }
 
+/** 已连接的全景产物可以是普通图片，也可以保留角色/场景语义。 */
+export function isPanoramaCanvasNode(node?: { type?: string; is360?: boolean }): boolean {
+  return !!node?.is360 && isImageCanvasNodeType(node.type);
+}
+
 /** 能作为图片素材输入的节点；导演台截图/背景同样按图片处理。 */
 export function isImageReferenceNodeType(type?: string): boolean {
   return isImageCanvasNodeType(type) || type === "scene_3d";

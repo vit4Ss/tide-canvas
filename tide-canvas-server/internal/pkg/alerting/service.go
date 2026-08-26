@@ -208,20 +208,22 @@ func (s *Service) UpdateRule(ctx context.Context, id idgen.ID, in RuleInput) (Ru
 	if err != nil {
 		return RuleView{}, err
 	}
+	// Read first instead of treating an UPDATE with zero affected rows as a
+	// missing record. MySQL reports zero when every submitted value is unchanged,
+	// and saving an untouched rule must remain a successful idempotent operation.
+	var row model.AlertRule
+	if err := s.db.WithContext(ctx).First(&row, "id = ?", id).Error; err != nil {
+		return RuleView{}, err
+	}
 	patterns, _ := json.Marshal(in.EventPatterns)
 	channels, _ := json.Marshal(in.ChannelIDs)
-	res := s.db.WithContext(ctx).Model(&model.AlertRule{}).Where("id = ?", id).Updates(map[string]any{
+	if err := s.db.WithContext(ctx).Model(&row).Updates(map[string]any{
 		"name": in.Name, "enabled": in.Enabled, "event_patterns": string(patterns), "min_severity": in.MinSeverity,
 		"channel_ids": string(channels), "cooldown_seconds": in.CooldownSeconds,
 		"aggregate_seconds": in.AggregateSeconds, "send_recovery": in.SendRecovery,
-	})
-	if res.Error != nil || res.RowsAffected == 0 {
-		if res.Error != nil {
-			return RuleView{}, res.Error
-		}
-		return RuleView{}, gorm.ErrRecordNotFound
+	}).Error; err != nil {
+		return RuleView{}, err
 	}
-	var row model.AlertRule
 	if err := s.db.WithContext(ctx).First(&row, "id = ?", id).Error; err != nil {
 		return RuleView{}, err
 	}
@@ -242,8 +244,8 @@ func (s *Service) DeleteRule(ctx context.Context, id idgen.ID) error {
 func normalizeRuleInput(in RuleInput) (RuleInput, error) {
 	in.Name = strings.TrimSpace(in.Name)
 	in.MinSeverity = normalizeSeverity(in.MinSeverity)
-	if in.Name == "" {
-		return in, errors.New("规则名称不能为空")
+	if in.Name == "" || len([]rune(in.Name)) > 128 {
+		return in, errors.New("规则名称不能为空且最多 128 个字符")
 	}
 	if !validSeverity(in.MinSeverity) {
 		return in, errors.New("无效的最低告警级别")
@@ -258,12 +260,28 @@ func normalizeRuleInput(in RuleInput) (RuleInput, error) {
 		if p == "" || strings.ContainsAny(p, " \t\r\n") {
 			return in, errors.New("事件匹配模式无效")
 		}
+		if strings.Contains(p, "*") && p != "*" && (strings.Count(p, "*") != 1 || !strings.HasSuffix(p, ".*") || len(p) <= 2) {
+			return in, errors.New("事件匹配模式仅支持 * 或 ai.* 形式的前缀通配")
+		}
 		if !seen[p] {
 			seen[p] = true
 			patterns = append(patterns, p)
 		}
 	}
 	in.EventPatterns = patterns
+	seenChannels := map[idgen.ID]bool{}
+	channelIDs := make([]string, 0, len(in.ChannelIDs))
+	for _, raw := range in.ChannelIDs {
+		id, err := idgen.Parse(strings.TrimSpace(raw))
+		if err != nil || id <= 0 {
+			return in, errors.New("通知渠道 ID 无效")
+		}
+		if !seenChannels[id] {
+			seenChannels[id] = true
+			channelIDs = append(channelIDs, id.String())
+		}
+	}
+	in.ChannelIDs = channelIDs
 	if in.CooldownSeconds < 0 || in.CooldownSeconds > 86400 {
 		return in, errors.New("冷却时间应在 0 到 86400 秒之间")
 	}
@@ -560,7 +578,9 @@ func (s *Service) ListDeliveries(ctx context.Context, eventID idgen.ID) ([]Deliv
 
 func (s *Service) RetryDelivery(ctx context.Context, id idgen.ID) error {
 	res := s.db.WithContext(ctx).Model(&model.AlertDelivery{}).Where("id = ? AND status IN ?", id, []string{"failed", "retry"}).Updates(map[string]any{
-		"status": "pending", "next_attempt_at": time.Now(), "locked_by": "", "locked_at": nil, "error_message": "",
+		"status": "pending", "attempt_count": 0, "next_attempt_at": time.Now(),
+		"locked_by": "", "locked_at": nil, "http_status": 0,
+		"response_excerpt": "", "error_message": "", "sent_at": nil,
 	})
 	if res.Error != nil {
 		return res.Error
@@ -632,14 +652,41 @@ func patternsMatch(patterns []string, event string) bool {
 func sanitizeDetails(details map[string]any) map[string]any {
 	out := map[string]any{}
 	for k, v := range details {
-		low := strings.ToLower(k)
-		if strings.Contains(low, "token") || strings.Contains(low, "secret") || strings.Contains(low, "password") || strings.Contains(low, "authorization") || strings.Contains(low, "prompt") {
-			out[k] = "[已隐藏]"
-			continue
-		}
-		out[k] = truncateRunes(redactText(fmt.Sprint(v)), 500)
+		out[k] = sanitizeDetailValue(k, v, 0)
 	}
 	return out
+}
+
+func sanitizeDetailValue(key string, value any, depth int) any {
+	low := strings.ToLower(key)
+	compactKey := strings.NewReplacer("_", "", "-", "", " ", "").Replace(low)
+	if strings.Contains(compactKey, "token") || strings.Contains(compactKey, "secret") ||
+		strings.Contains(compactKey, "password") || strings.Contains(compactKey, "authorization") ||
+		strings.Contains(compactKey, "prompt") || strings.Contains(compactKey, "apikey") ||
+		strings.Contains(compactKey, "accesskey") || strings.Contains(compactKey, "privatekey") ||
+		strings.Contains(compactKey, "credential") {
+		return "[已隐藏]"
+	}
+	// Details normally stay shallow. Recursing through JSON-shaped values keeps
+	// nested request payloads safe without allowing adversarial input to create
+	// unbounded traversal.
+	if depth < 8 {
+		switch typed := value.(type) {
+		case map[string]any:
+			out := make(map[string]any, len(typed))
+			for nestedKey, nestedValue := range typed {
+				out[nestedKey] = sanitizeDetailValue(nestedKey, nestedValue, depth+1)
+			}
+			return out
+		case []any:
+			out := make([]any, len(typed))
+			for i, nestedValue := range typed {
+				out[i] = sanitizeDetailValue("", nestedValue, depth+1)
+			}
+			return out
+		}
+	}
+	return truncateRunes(redactText(fmt.Sprint(value)), 500)
 }
 
 var (

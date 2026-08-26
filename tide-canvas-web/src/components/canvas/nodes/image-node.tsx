@@ -30,7 +30,7 @@ import { sliceImageGrid, transformImageRaster, type RasterTransform } from "@/li
 import { disableOssDisplayProcessing, fallbackOssDisplayImage, ossDisplayUrl, restoreOssDisplayImage } from "@/lib/oss-display";
 import { matrixPrice, keyVariants } from "@/lib/price-matrix";
 import { getImageCardSizeForRatio } from "@/lib/image-card-size";
-import { CHARACTER_NODE_TYPE, SCENE_NODE_TYPE, isConceptCanvasNodeType, isVisualReferenceNodeType } from "@/lib/canvas-node-types";
+import { CHARACTER_NODE_TYPE, SCENE_NODE_TYPE, isConceptCanvasNodeType, isPanoramaCanvasNode, isVisualReferenceNodeType } from "@/lib/canvas-node-types";
 import { AiModelType } from "@/types/ai";
 import { toast } from "@/components/shared/toast";
 import { Loader2 } from "lucide-react";
@@ -49,6 +49,7 @@ import {
 import { useCanvasNodeFeatures } from "@/stores/use-canvas-node-config-store";
 import { findRightColumnSpot, getIncomingSources, inlineIncomingTextRefs, parseModelConfig, stopEvent as stop, validateReferenceFileSizes } from "./shared/node-utils";
 import { NodeDimsBadge, NodeErrorBadge, NodeGeneratingOverlay, NodeMediaLightbox, NodeShell, NodeUploadingOverlay } from "./shared/node-overlays";
+import { buildImageDerivativeMetadata, imageDerivativeTitle } from "./image-node-derivation";
 
 // 自定义宫格选择器的最大行列（N×N 网格）
 const CUSTOM_MAX = 8;
@@ -644,7 +645,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     const conn = st.connections.find((c) => {
       if (c.sourceId !== node.id) return false;
       const target = st.nodes.find((n) => n.id === c.targetId);
-      return target?.type === "image" && target.is360;
+      return isPanoramaCanvasNode(target);
     });
     return conn ? st.nodes.find((n) => n.id === conn.targetId) : undefined;
   }, [node.id, panoramaSig]);
@@ -1057,10 +1058,23 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     const st = useCanvasStore.getState();
     const nid = generateNodeId();
     const { x: targetX, y: targetY } = findRightColumnSpot(st.nodes, node, cardW, cardW);
+    const outputType = opts?.outputNodeType ?? derivativeNodeType;
+    const generationInput = {
+      prompt,
+      imageList: [node.imageSrc],
+      sourceImage: node.imageSrc,
+      aspectRatio: outRatio,
+      aspect_ratio: outRatio,
+      ratio: outRatio,
+      quality: qualityRatio.quality,
+      clarity: qualityRatio.clarity,
+      resolution: qualityRatio.clarity,
+      ...opts?.input,
+    };
 
     st.addNode({
       id: nid,
-      type: opts?.outputNodeType ?? derivativeNodeType,
+      type: outputType,
       x: targetX,
       y: targetY,
       width: cardW,
@@ -1070,6 +1084,12 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       title,
       status: "idle",
       aspectRatio: outRatio,
+      ...buildImageDerivativeMetadata({
+        source: node,
+        outputType,
+        modelId: selectedModelId,
+        generationInput,
+      }),
     }, true);
     st.addConnection({ id: `conn_${node.id}_${nid}`, sourceId: node.id, targetId: nid }, false);
     st.selectNode(nid);
@@ -1077,18 +1097,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       nodeId: nid,
       handler: opts?.handler ?? "image_to_image",
       modelId: selectedModelId || "default",
-      input: {
-        prompt,
-        imageList: [node.imageSrc],
-        sourceImage: node.imageSrc,
-        aspectRatio: outRatio,
-        aspect_ratio: outRatio,
-        ratio: outRatio,
-        quality: qualityRatio.quality,
-        clarity: qualityRatio.clarity,
-        resolution: qualityRatio.clarity,
-        ...opts?.input,
-      },
+      input: generationInput,
     });
   }, [cardH, cardW, derivativeNodeType, generate, multiAngleRatio, node, qualityRatio.clarity, qualityRatio.quality, selectedModelId]);
 
@@ -1119,7 +1128,9 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     directPortraitActionAtRef.current = Date.now();
     setPortraitPanel(null);
     generateEdited(
-      node.type === CHARACTER_NODE_TYPE ? "角色特写图" : "主体特写图",
+      node.type === CHARACTER_NODE_TYPE
+        ? imageDerivativeTitle(node.title, "角色特写图")
+        : "主体特写图",
       [
         "以参考图中的核心主体为唯一身份与造型基准，生成高质量近距离特写图。",
         "如果主体是人物，使用胸像到面部的 85mm 人像构图，严格保持五官骨相、脸型、年龄、发型发色、肤色、服饰与饰品关键特征；如果主体是物体，则保持产品造型、材质、配色与标识细节。",
@@ -1129,10 +1140,10 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       // 其他模型仍按后台配置依次选择最合适的竖幅，避免预设绕过模型能力。
       {
         ratio: resolvePresetRatio(["2:3", "3:4", "9:16", "1:1"], ratioValues),
-        outputNodeType: "image",
+        outputNodeType: node.type === CHARACTER_NODE_TYPE ? CHARACTER_NODE_TYPE : "image",
       },
     );
-  }, [generateEdited, node.type, ratioValues]);
+  }, [generateEdited, node.title, node.type, ratioValues]);
 
   const handleGenerateExpressionGrid = useCallback(() => {
     if (Date.now() - directPortraitActionAtRef.current < 800) return;

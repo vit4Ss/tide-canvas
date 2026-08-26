@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  X, Loader2, RotateCcw, Camera, Video, PersonStanding, Plus, Trash2, Eye,
+  X, Loader2, Camera, Video, PersonStanding, Plus, Trash2, Eye,
   Move, RotateCw, Maximize2, Play, Pause, Route, SkipBack, Crosshair,
+  Layers3, Search, Box, ImagePlus,
 } from "lucide-react";
 import type * as THREE_NS from "three";
 import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-canvas-store";
@@ -192,6 +193,8 @@ export function Scene3DEditor({ node, onClose }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [shotCount, setShotCount] = useState(0);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sceneQuery, setSceneQuery] = useState("");
 
   // 场景对象与选中态（三维侧为权威，通过 setter 同步到 React）
   const [charList, setCharList] = useState<Array<{ id: string; name: string; color: string }>>([]);
@@ -860,6 +863,10 @@ export function Scene3DEditor({ node, onClose }: Props) {
           renderer.setSize(nw, nh);
         };
         window.addEventListener("resize", onResize);
+        // 侧栏展开/收起会在 150ms 内连续改变容器宽度，监听容器本身才能让
+        // WebGL 画幅、射线点击与截图尺寸在动画结束后仍精确一致。
+        const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(onResize);
+        resizeObserver?.observe(mount);
 
         let raf = 0;
         cleanup = () => {
@@ -869,6 +876,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
           renderer.domElement.removeEventListener("pointerdown", onPointerDown);
           renderer.domElement.removeEventListener("click", onPilotCanvasClick);
           window.removeEventListener("resize", onResize);
+          resizeObserver?.disconnect();
           window.removeEventListener("keydown", onPilotKeyDown);
           window.removeEventListener("keyup", onPilotKeyUp);
           window.removeEventListener("mousemove", onPilotPointerMove);
@@ -1478,6 +1486,13 @@ export function Scene3DEditor({ node, onClose }: Props) {
   const chip = (active: boolean) => `${btn} ${active ? "bg-white text-slate-900" : "bg-white/10 hover:bg-white/20"}`;
   const selChar = sel?.kind === "char" ? charList.find((c) => c.id === sel.id) : null;
   const selRig = sel?.kind === "rig" ? rigList.find((r) => r.id === sel.id) : null;
+  const normalizedSceneQuery = sceneQuery.trim().toLocaleLowerCase("zh-CN");
+  const visibleRigList = normalizedSceneQuery
+    ? rigList.filter((rig) => rig.name.toLocaleLowerCase("zh-CN").includes(normalizedSceneQuery))
+    : rigList;
+  const visibleCharList = normalizedSceneQuery
+    ? charList.filter((character) => character.name.toLocaleLowerCase("zh-CN").includes(normalizedSceneQuery))
+    : charList;
   const selectedMotionFrame = motion.keyframes.find((frame) => frame.id === selectedFrameId) ?? null;
   const formatMotionTime = (seconds: number) => `${seconds.toFixed(1)}s`;
 
@@ -1491,7 +1506,11 @@ export function Scene3DEditor({ node, onClose }: Props) {
       className="fixed inset-0 z-[200] bg-slate-950 outline-none"
       onMouseDown={(e) => e.stopPropagation()}
     >
-      <div ref={mountRef} className="h-full w-full cursor-grab active:cursor-grabbing" />
+      <div
+        ref={mountRef}
+        onTransitionEnd={() => window.dispatchEvent(new Event("resize"))}
+        className={`h-full cursor-grab transition-[margin,width] duration-150 active:cursor-grabbing motion-reduce:transition-none ${sidebarOpen ? "ml-[276px] w-[calc(100%-276px)]" : "w-full"}`}
+      />
 
       {loading && !error && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-white">
@@ -1500,33 +1519,89 @@ export function Scene3DEditor({ node, onClose }: Props) {
       )}
       {error && <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-white/80">{error}</div>}
 
-      {/* ===== 顶栏：标题 + 视角切换 + 关闭 ===== */}
-      <div className="absolute inset-x-0 top-0 flex h-12 items-center justify-between bg-gradient-to-b from-black/60 to-transparent px-4">
-        <div className="flex items-center gap-3">
-          <span className="text-sm font-semibold text-white">3D 导演台</span>
-          <span className="hidden text-xs text-white/40 xl:block">点选角色拖动摆位 · 右侧「姿势」面板调节动作 · 拖空白转视角 · 滚轮缩放</span>
-        </div>
-        <div className="absolute left-1/2 flex -translate-x-1/2 rounded-full bg-white/10 p-0.5 backdrop-blur">
-          <button
-            onClick={() => apiRef.current?.exitRigView()}
-            className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${viewMode === "director" ? "bg-white text-slate-900" : "text-white/80 hover:text-white"}`}
-          >
-            导演视角
+      {/* ===== 左侧应用框架：对齐导演台参考 UI，标题栏与功能轨固定停靠 ===== */}
+      {sidebarOpen ? (
+        <>
+          <div className="absolute left-0 top-0 z-20 flex h-[60px] w-[276px] items-center border-b border-r border-white/10 bg-[#171717] text-white">
+            <button
+              onClick={handleClose}
+              title="关闭 (Esc)"
+              aria-label="关闭 3D 导演台"
+              className="ml-2 flex h-10 w-7 items-center justify-center text-white/80 transition-colors hover:text-white"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            <span className="ml-1 text-[15px] font-semibold tracking-tight">3D导演台</span>
+            <button
+              onClick={() => setSidebarOpen(false)}
+              title="收起侧栏"
+              aria-label="收起侧栏"
+              className="ml-auto mr-2 flex h-8 w-8 items-center justify-center rounded-md text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+            >
+              <span className="relative h-4 w-4 rounded-[3px] border border-current">
+                <span className="absolute bottom-0 left-[7px] top-0 w-px bg-current" />
+              </span>
+            </button>
+          </div>
+
+          <nav aria-label="导演台工具" className="absolute bottom-0 left-0 top-[60px] z-20 flex w-12 flex-col items-center gap-3 border-r border-white/10 bg-[#171717] py-3 text-white/65">
+            <button type="button" aria-current="page" title="场景" className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white">
+              <Layers3 className="h-[18px] w-[18px]" />
+            </button>
+            <button type="button" onClick={() => apiRef.current?.addCharacter()} title="添加角色" className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-white/10 hover:text-white">
+              <PersonStanding className="h-[18px] w-[18px]" />
+            </button>
+            <button type="button" onClick={() => apiRef.current?.addRig()} title="添加机位" className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-white/10 hover:text-white">
+              <Video className="h-[18px] w-[18px]" />
+            </button>
+            <button type="button" onClick={() => apiRef.current?.setTransformMode("translate")} title="物体变换" className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-white/10 hover:text-white">
+              <Box className="h-[18px] w-[18px]" />
+            </button>
+            <button type="button" onClick={() => setMotionOpen((open) => !open)} title="运镜工作台" className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-white/10 hover:text-white ${motionOpen ? "bg-white/10 text-white" : ""}`}>
+              <Route className="h-[18px] w-[18px]" />
+            </button>
+            <button type="button" onClick={() => void handleShot()} disabled={busy || loading} title="生成截图" className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-35">
+              <ImagePlus className="h-[18px] w-[18px]" />
+            </button>
+          </nav>
+        </>
+      ) : (
+        <div className="absolute left-2 top-2 z-20 flex items-center rounded-lg border border-white/10 bg-[#171717] p-1 text-white shadow-lg">
+          <button onClick={handleClose} title="关闭 (Esc)" aria-label="关闭 3D 导演台" className="flex h-8 w-8 items-center justify-center rounded-md text-white/70 hover:bg-white/10 hover:text-white">
+            <X className="h-4 w-4" />
           </button>
-          <button
-            onClick={enterRigMode}
-            className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${viewMode === "rig" ? "bg-white text-slate-900" : "text-white/80 hover:text-white"}`}
-          >
-            机位视角
+          <button onClick={() => setSidebarOpen(true)} title="展开侧栏" aria-label="展开侧栏" className="flex h-8 w-8 items-center justify-center rounded-md text-white/70 hover:bg-white/10 hover:text-white">
+            <span className="relative h-4 w-4 rounded-[3px] border border-current">
+              <span className="absolute bottom-0 left-[7px] top-0 w-px bg-current" />
+            </span>
           </button>
         </div>
-        <button onClick={handleClose} title="关闭 (Esc)" className="rounded-full bg-white/10 p-2 text-white transition-colors hover:bg-white/20">
-          <X className="h-5 w-5" />
+      )}
+
+      {/* 视角切换保留在画布上方，侧栏展开时以可用画布区域为中心。 */}
+      <div
+        className="absolute top-3 flex -translate-x-1/2 rounded-full bg-black/50 p-0.5 text-white backdrop-blur-md"
+        style={{ left: sidebarOpen ? "calc(50% + 138px)" : "50%" }}
+      >
+        <button
+          onClick={() => apiRef.current?.exitRigView()}
+          className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${viewMode === "director" ? "bg-white text-slate-900" : "text-white/80 hover:text-white"}`}
+        >
+          导演视角
+        </button>
+        <button
+          onClick={enterRigMode}
+          className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${viewMode === "rig" ? "bg-white text-slate-900" : "text-white/80 hover:text-white"}`}
+        >
+          机位视角
         </button>
       </div>
 
       {/* 物体变换工具：与专业 3D 软件一致，V/R/S 可快速切换。 */}
-      <div className="absolute left-1/2 top-14 flex -translate-x-1/2 items-center gap-1 rounded-xl bg-black/50 p-1 text-white backdrop-blur-md">
+      <div
+        className="absolute top-14 flex -translate-x-1/2 items-center gap-1 rounded-xl bg-black/50 p-1 text-white backdrop-blur-md"
+        style={{ left: sidebarOpen ? "calc(50% + 138px)" : "50%" }}
+      >
         {([
           ["translate", "移动", Move, "V"],
           ["rotate", "旋转", RotateCw, "R"],
@@ -1548,64 +1623,82 @@ export function Scene3DEditor({ node, onClose }: Props) {
 
       {piloting && (
         <>
-          <div className="pointer-events-none absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2">
+          <div
+            className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2"
+            style={{ left: sidebarOpen ? "calc(50% + 138px)" : "50%" }}
+          >
             <span className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-white/80" />
             <span className="absolute left-0 top-1/2 h-px w-full -translate-y-1/2 bg-white/80" />
           </div>
-          <div className="pointer-events-none absolute left-1/2 top-24 -translate-x-1/2 rounded-lg bg-black/60 px-3 py-2 text-center text-xs text-white/80 backdrop-blur">
+          <div
+            className="pointer-events-none absolute top-24 -translate-x-1/2 rounded-lg bg-black/60 px-3 py-2 text-center text-xs text-white/80 backdrop-blur"
+            style={{ left: sidebarOpen ? "calc(50% + 138px)" : "50%" }}
+          >
             WASD 移动 · Q/E 升降 · Shift 加速 · 鼠标转向 · Enter 记录镜头 · Esc 退出掌镜
           </div>
         </>
       )}
 
-      {/* ===== 左侧：场景对象列表 ===== */}
-      <div className="absolute bottom-24 left-4 top-14 flex w-52 flex-col rounded-2xl bg-black/50 p-3 text-white backdrop-blur-md">
-        <div className="mb-2 text-xs font-medium text-white/60">场景</div>
-        <div className="panel-scroll flex-1 space-y-1 overflow-y-auto">
-          {rigList.map((r) => (
-            <div
-              key={r.id}
-              onClick={() => apiRef.current?.select("rig", r.id)}
-              onDoubleClick={() => apiRef.current?.enterRigView(r.id)}
-              className={`group flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-colors ${sel?.id === r.id ? "bg-white/20" : "hover:bg-white/10"}`}
-              title="双击进入机位视角"
-            >
-              <Video className="h-3.5 w-3.5 shrink-0 text-amber-400" />
-              <span className="min-w-0 flex-1 truncate">{r.name}</span>
-              <button
-                onClick={(e) => { e.stopPropagation(); apiRef.current?.removeRig(r.id); }}
-                className="hidden shrink-0 text-white/40 hover:text-red-400 group-hover:block"
+      {/* ===== 左侧：与参考图一致的停靠式场景层级 ===== */}
+      {sidebarOpen && (
+        <section className="absolute bottom-0 left-12 top-[60px] z-20 flex w-[228px] flex-col border-r border-white/10 bg-[#171717] pl-2 pr-1 pt-5 text-white">
+          <h2 className="px-1 text-xs font-semibold text-violet-300">场景</h2>
+          <label className="mt-3.5 flex h-8 items-center gap-2 rounded-md bg-[#292929] px-3 text-white/45 ring-1 ring-inset ring-white/[0.04] focus-within:ring-violet-400/50">
+            <input
+              value={sceneQuery}
+              onChange={(event) => setSceneQuery(event.target.value)}
+              placeholder="请输入搜索内容"
+              aria-label="搜索场景对象"
+              className="min-w-0 flex-1 bg-transparent text-xs text-white outline-none placeholder:text-white/35"
+            />
+            <Search className="h-3.5 w-3.5 shrink-0 text-white/65" />
+          </label>
+
+          <div className="panel-scroll mt-3 flex-1 space-y-0.5 overflow-y-auto pb-4">
+            {visibleRigList.map((rig) => (
+              <div
+                key={rig.id}
+                onClick={() => apiRef.current?.select("rig", rig.id)}
+                onDoubleClick={() => apiRef.current?.enterRigView(rig.id)}
+                className={`group flex h-6 cursor-pointer items-center gap-2 rounded-[3px] pl-6 pr-2 text-xs transition-colors ${sel?.id === rig.id ? "bg-[#303030]" : "hover:bg-white/[0.06]"}`}
+                title="双击进入机位视角"
               >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          ))}
-          {charList.map((c) => (
-            <div
-              key={c.id}
-              onClick={() => apiRef.current?.select("char", c.id)}
-              className={`group flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-colors ${sel?.id === c.id ? "bg-white/20" : "hover:bg-white/10"}`}
-            >
-              <PersonStanding className="h-3.5 w-3.5 shrink-0" style={{ color: c.color }} />
-              <span className="min-w-0 flex-1 truncate">{c.name}</span>
-              <button
-                onClick={(e) => { e.stopPropagation(); apiRef.current?.removeCharacter(c.id); }}
-                className="hidden shrink-0 text-white/40 hover:text-red-400 group-hover:block"
+                <Video className="h-3.5 w-3.5 shrink-0 text-white/75" />
+                <span className="min-w-0 flex-1 truncate font-medium text-violet-300">{rig.name}</span>
+                <button
+                  onClick={(event) => { event.stopPropagation(); apiRef.current?.removeRig(rig.id); }}
+                  aria-label={`删除${rig.name}`}
+                  className="hidden shrink-0 text-white/35 hover:text-red-400 group-hover:block"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+            {visibleCharList.map((character) => (
+              <div
+                key={character.id}
+                onClick={() => apiRef.current?.select("char", character.id)}
+                className={`group flex h-6 cursor-pointer items-center gap-2 rounded-[3px] pl-6 pr-2 text-xs transition-colors ${sel?.id === character.id ? "bg-[#303030]" : "hover:bg-white/[0.06]"}`}
               >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          ))}
-        </div>
-        <div className="mt-2 grid grid-cols-2 gap-2">
-          <button onClick={() => apiRef.current?.addCharacter()} className={`${btn} flex items-center justify-center gap-1 bg-white/10 hover:bg-white/20`}>
-            <Plus className="h-3 w-3" /> 角色
-          </button>
-          <button onClick={() => apiRef.current?.addRig()} className={`${btn} flex items-center justify-center gap-1 bg-white/10 hover:bg-white/20`}>
-            <Plus className="h-3 w-3" /> 机位
-          </button>
-        </div>
-      </div>
+                <PersonStanding className="h-3.5 w-3.5 shrink-0 text-white/75" />
+                <span className="min-w-0 flex-1 truncate font-medium text-violet-300">{character.name}</span>
+                <button
+                  onClick={(event) => { event.stopPropagation(); apiRef.current?.removeCharacter(character.id); }}
+                  aria-label={`删除${character.name}`}
+                  className="hidden shrink-0 text-white/35 hover:text-red-400 group-hover:block"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+            {visibleRigList.length === 0 && visibleCharList.length === 0 && (
+              <div className="px-3 py-5 text-center text-[11px] text-white/30">
+                {normalizedSceneQuery ? "没有匹配的场景对象" : "点击左侧图标添加角色或机位"}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* ===== 右侧：选中对象属性 / 灯光 / 场景设置 ===== */}
       <div className="panel-scroll absolute bottom-24 right-4 top-14 w-72 space-y-4 overflow-y-auto rounded-2xl bg-black/50 p-3 text-white backdrop-blur-md">
@@ -1648,9 +1741,6 @@ export function Scene3DEditor({ node, onClose }: Props) {
                   {poseNames.map((p) => (
                     <button key={p} onClick={() => pickPose(p)} className={chip(posePreset === p)}>{p}</button>
                   ))}
-                  <button onClick={() => { setPosePreset(""); apiRef.current?.resetPose(); }} className={`${btn} flex items-center gap-1 bg-white/10 hover:bg-white/20`}>
-                    <RotateCcw className="h-3 w-3" /> T 型
-                  </button>
                 </div>
 
                 <div className="mt-3 mb-1.5 text-xs font-medium text-white/60">姿势调节</div>
@@ -1772,7 +1862,13 @@ export function Scene3DEditor({ node, onClose }: Props) {
 
       {/* ===== 运镜工作台：掌镜、关键帧、轨迹预演 ===== */}
       {motionOpen && (
-        <div className="absolute bottom-20 left-1/2 w-[min(820px,calc(100vw-2rem))] -translate-x-1/2 rounded-2xl border border-white/10 bg-neutral-950/95 p-3 text-white shadow-[0_12px_32px_rgba(0,0,0,0.38)]">
+        <div
+          className="absolute bottom-20 -translate-x-1/2 rounded-2xl border border-white/10 bg-neutral-950/95 p-3 text-white shadow-[0_12px_32px_rgba(0,0,0,0.38)]"
+          style={{
+            left: sidebarOpen ? "calc(50% + 138px)" : "50%",
+            width: sidebarOpen ? "min(820px, calc(100vw - 308px))" : "min(820px, calc(100vw - 2rem))",
+          }}
+        >
           <div className="flex flex-wrap items-center gap-2">
             <div className="mr-auto flex items-center gap-2">
               <Route className="h-4 w-4 text-white/65" />
@@ -1920,7 +2016,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
       )}
 
       {/* ===== 底部操作栏：预设机位 + 运镜 + 可选画幅截图 ===== */}
-      <div className="absolute inset-x-0 bottom-6 flex justify-center px-4">
+      <div className="absolute bottom-6 right-0 flex justify-center px-4" style={{ left: sidebarOpen ? 276 : 0 }}>
         <div className="panel-scroll flex max-w-full items-center gap-2 overflow-x-auto rounded-2xl border border-white/10 bg-neutral-950/90 p-2 text-white shadow-[0_8px_24px_rgba(0,0,0,0.28)]">
           <span className="ml-1.5 hidden shrink-0 text-xs font-medium text-white/60 lg:inline">视角</span>
           <div className="flex items-center gap-1.5">

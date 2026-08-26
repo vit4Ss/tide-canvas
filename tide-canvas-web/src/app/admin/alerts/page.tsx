@@ -34,6 +34,7 @@ export default function AdminAlertsPage() {
   const [events, setEvents] = useState<AlertEvent[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
+  const [eventFilters, setEventFilters] = useState<{ keyword?: string; level?: string; status?: string }>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -48,17 +49,19 @@ export default function AdminAlertsPage() {
 
   const loadEvents = useCallback(async (target = 1, filters?: { keyword?: string; level?: string; status?: string }) => {
     setLoading(true); setError(""); await ensureSession();
-    const res = await adminAlertApi.events({ pageNum: target, pageSize: 30, ...filters });
+    const activeFilters = filters ?? eventFilters;
+    if (filters) setEventFilters(filters);
+    const res = await adminAlertApi.events({ pageNum: target, pageSize: 30, ...activeFilters });
     if (res.success && res.data) { setEvents(res.data.records ?? []); setTotal(res.data.total); setPage(target); }
     else setError(res.message || "告警记录加载失败");
     setLoading(false);
-  }, [ensureSession]);
+  }, [ensureSession, eventFilters]);
 
   useEffect(() => { const id = requestAnimationFrame(() => void loadBase()); return () => cancelAnimationFrame(id); }, [loadBase]);
 
   const switchTab = (next: Tab) => {
     setTab(next); setError("");
-    if (next === "events") void loadEvents(1); else void loadBase();
+    if (next === "events") void loadEvents(1, {}); else void loadBase();
   };
 
   return (
@@ -111,7 +114,7 @@ function ChannelsTab({ loading, channels, onReload }: { loading: boolean; channe
     if (!selected || !(await confirmDialog({ title: "删除通知渠道", message: `确认删除「${selected.name}」？尚未发送的投递任务也会一并取消。`, confirmText: "删除" }))) return;
     const res = await adminAlertApi.deleteChannel(selected.id); if (!res.success) return toast.error(res.message || "删除失败"); toast.success("渠道已删除"); setSelectedId(""); await onReload();
   };
-  const test = async () => { if (!selected) return; setTesting(true); const res = await adminAlertApi.testChannel(selected.id); setTesting(false); if (res.success) toast.success("测试消息已发送"); else toast.error(res.message || "测试发送失败"); if (res.success) await onReload(); };
+  const test = async () => { if (!selected) return; setTesting(true); const res = await adminAlertApi.testChannel(selected.id); setTesting(false); if (res.success) toast.success("测试消息已发送"); else toast.error(res.message || "测试发送失败"); await onReload(); };
 
   if (loading) return <div className="alert-loading"><TableSkeleton /></div>;
   return <div className="alert-master-detail">

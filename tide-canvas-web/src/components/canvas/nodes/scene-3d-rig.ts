@@ -4,6 +4,13 @@ import {
   normalizeScene3DMotion,
   type Scene3DMotionState,
 } from "./scene-3d-motion";
+import {
+  POSE_NAMES,
+  POSE_PARAM_PRESETS,
+  SKINNED_ANIMATION_POSES,
+} from "./scene-3d-poses";
+
+export { POSE_NAMES } from "./scene-3d-poses";
 
 /** 角色（一具可摆姿的人物） */
 export interface Scene3DCharacter {
@@ -210,7 +217,7 @@ export function buildMannequin(THREE: typeof THREE_NS, color = 0xc7d2dc): Manneq
 
 /** 姿态预设：关节欧拉角(弧度)。未列出的关节归零。可用 gizmo 进一步微调。 */
 export const POSE_PRESETS: Record<string, Record<string, [number, number, number]>> = {
-  "T-Pose": {},
+  "T型": {},
   "站立": {
     upperArmL: [0, 0, -1.45], upperArmR: [0, 0, 1.45],
     forearmL: [0, 0, -0.12], forearmR: [0, 0, 0.12],
@@ -222,15 +229,14 @@ export const POSE_PRESETS: Record<string, Record<string, [number, number, number
     upperArmL: [-0.5, 0, -1.4], forearmL: [-0.3, 0, -0.1],
     upperArmR: [0.5, 0, 1.4], forearmR: [-0.3, 0, 0.1],
   },
-  "坐": {
-    thighL: [-1.5, 0, 0.05], shinL: [1.5, 0, 0],
-    thighR: [-1.5, 0, -0.05], shinR: [1.5, 0, 0],
-    upperArmL: [0, 0, -1.3], forearmL: [-0.5, 0, -0.1],
-    upperArmR: [0, 0, 1.3], forearmR: [-0.5, 0, 0.1],
+  "跑步": {
+    spine: [0.12, 0.08, 0], chest: [0.08, 0, 0],
+    thighL: [0.92, 0, 0], shinL: [-0.72, 0, 0],
+    thighR: [-0.78, 0, 0], shinR: [-0.42, 0, 0],
+    upperArmL: [-0.85, 0, -1.32], forearmL: [-0.8, 0, -0.08],
+    upperArmR: [0.85, 0, 1.32], forearmR: [-0.8, 0, 0.08],
   },
 };
-
-export const POSE_NAMES = ["站立", "行走", "坐", "T-Pose"] as const;
 
 /** 应用姿态预设到关节（未列出的归零）。 */
 export function applyPose(joints: Map<string, THREE_NS.Group>, name: string) {
@@ -395,6 +401,14 @@ function makePoseEngine(THREE: typeof THREE_NS, joints: Map<string, THREE_NS.Obj
   return {
     captureBase,
     setParam: (key: string, deg: number) => { params[key] = deg; apply(); },
+    setParams: (values: Record<string, number>) => {
+      for (const key of Object.keys(params)) params[key] = 0;
+      for (const { def } of entries) {
+        const value = values[def.key];
+        if (Number.isFinite(value)) params[def.key] = value;
+      }
+      apply();
+    },
     getParams: () => ({ ...params }),
   };
 }
@@ -410,6 +424,17 @@ export function buildMannequinFigure(THREE: typeof THREE_NS, color?: number): Fi
   });
   const engine = makePoseEngine(THREE, joints);
   engine.captureBase();
+  const applyPosePreset = (name: string) => {
+    if (!(POSE_NAMES as readonly string[]).includes(name)) return;
+    const base = name === "T型" ? "T型" : name === "行走" || name === "跑步" ? name : "站立";
+    applyPose(man.joints, base);
+    engine.captureBase();
+    const params = POSE_PARAM_PRESETS[name as keyof typeof POSE_PARAM_PRESETS];
+    if (params) {
+      engine.setParams(params);
+      engine.captureBase();
+    }
+  };
   return {
     root: man.root,
     model: "mannequin",
@@ -417,8 +442,8 @@ export function buildMannequinFigure(THREE: typeof THREE_NS, color?: number): Fi
     jointBalls: man.jointBalls,
     meshes,
     poseNames: [...POSE_NAMES],
-    applyPosePreset: (name) => { applyPose(man.joints, name); engine.captureBase(); },
-    resetPose: () => { applyPose(man.joints, "T-Pose"); engine.captureBase(); },
+    applyPosePreset,
+    resetPose: () => { applyPose(man.joints, "T型"); engine.captureBase(); },
     setPoseParam: engine.setParam,
     getPoseParams: engine.getParams,
     collectRotations: () => {
@@ -455,15 +480,6 @@ const MIXAMO_JOINT_MAP: Record<string, string> = {
   upperArmR: "RightArm", forearmR: "RightForeArm", handR: "RightHand",
   thighL: "LeftUpLeg", shinL: "LeftLeg", footL: "LeftFoot",
   thighR: "RightUpLeg", shinR: "RightLeg", footR: "RightFoot",
-};
-
-/** 皮肤模型姿态预设：采样模型内置动画的某一帧（Xbot 自带 idle/walk/run/sad_pose/sneak_pose） */
-const SKINNED_POSE_PRESETS: Record<string, { clip: string; at: number }> = {
-  "站立": { clip: "idle", at: 0 },
-  "行走": { clip: "walk", at: 0.45 },
-  "奔跑": { clip: "run", at: 0.3 },
-  "低落": { clip: "sad_pose", at: 0.5 },
-  "潜行": { clip: "sneak_pose", at: 0.5 },
 };
 
 export interface SkinnedAsset {
@@ -554,23 +570,40 @@ export function buildSkinnedFigure(
   // 动画帧采样：每次用一次性 mixer 写入目标帧后直接丢弃 ——
   // 刻意不调 stop()/uncache()（停用动作可能触发绑定还原“原始状态”，把姿势部分回滚成畸形），
   // 采样后恢复骨骼位置与缩放（行走等剪辑带髋部位移，个别导出还带缩放轨），只保留旋转。
+  const restoreBindPose = () => {
+    for (const [b, bp] of bindPose) { b.position.copy(bp.p); b.quaternion.copy(bp.q); b.scale.copy(bp.s); }
+  };
   const restoreBindPosScale = () => {
     for (const [b, bp] of bindPose) { b.position.copy(bp.p); b.scale.copy(bp.s); }
   };
   const engine = makePoseEngine(THREE, joints);
   engine.captureBase();
   const applyPosePreset = (name: string) => {
-    const def = SKINNED_POSE_PRESETS[name];
+    if (!(POSE_NAMES as readonly string[]).includes(name)) return;
+    if (name === "T型") {
+      restoreBindPose();
+      engine.captureBase();
+      return;
+    }
+    const def = SKINNED_ANIMATION_POSES[name as keyof typeof SKINNED_ANIMATION_POSES]
+      ?? SKINNED_ANIMATION_POSES["站立"];
     const clip = def ? asset.animations.find((c) => c.name === def.clip) : null;
-    if (!def || !clip) return;
-    const mixer = new THREE.AnimationMixer(model);
-    mixer.clipAction(clip).play();
-    mixer.update(clip.duration * def.at);
-    restoreBindPosScale();
+    restoreBindPose();
+    if (def && clip) {
+      const mixer = new THREE.AnimationMixer(model);
+      mixer.clipAction(clip).play();
+      mixer.update(clip.duration * def.at);
+      restoreBindPosScale();
+    }
     engine.captureBase();
+    const params = POSE_PARAM_PRESETS[name as keyof typeof POSE_PARAM_PRESETS];
+    if (params) {
+      engine.setParams(params);
+      engine.captureBase();
+    }
   };
   const resetPose = () => {
-    for (const [b, bp] of bindPose) { b.position.copy(bp.p); b.quaternion.copy(bp.q); b.scale.copy(bp.s); }
+    restoreBindPose();
     engine.captureBase();
   };
 
@@ -580,7 +613,7 @@ export function buildSkinnedFigure(
     joints,
     jointBalls,
     meshes: [proxy],
-    poseNames: Object.keys(SKINNED_POSE_PRESETS),
+    poseNames: [...POSE_NAMES],
     applyPosePreset,
     resetPose,
     setPoseParam: engine.setParam,

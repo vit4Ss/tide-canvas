@@ -157,7 +157,11 @@ func (s *service) emailCode(ctx context.Context, email, ip string) error {
 			return errSendFailed
 		}
 		if s.alerts != nil {
-			_ = s.alerts.Resolve(context.Background(), "mail.smtp.send_failed", "邮件发送服务恢复", "验证码邮件已恢复正常发送。", nil)
+			alertCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			if err := s.alerts.Resolve(alertCtx, "mail.smtp.send_failed", "邮件发送服务恢复", "验证码邮件已恢复正常发送。", nil); err != nil {
+				logger.L().Warn("auth: resolve mail alert failed", zap.Error(err))
+			}
+			cancel()
 		}
 	} else {
 		// Dev fallback: surface the code in the server log when SMTP is off.
