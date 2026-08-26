@@ -53,7 +53,13 @@ function isGlbAsset(asset: CanvasThreeDAsset): boolean {
 /** A Director scene must be GLB; OBJ/STL/FBX/USDZ remain downloadable outputs. */
 export function canvasThreeDGlbUrl(node?: Pick<CanvasNode, "modelSrc" | "modelAssets"> | null): string | null {
   if (!node) return null;
-  const asset = node.modelAssets?.find(isGlbAsset);
+  const candidates = node.modelAssets?.filter(isGlbAsset) || [];
+  // Marble's exact `glb` entry is its lightweight collider. Other providers
+  // keep their declared order because a glb-hq entry may be the primary mesh.
+  const hasSpz = node.modelAssets?.some(isSpzAsset) ?? false;
+  const asset = hasSpz
+    ? candidates.find((candidate) => candidate.type.toLowerCase() === "glb") || candidates[0]
+    : candidates[0];
   if (asset?.url) return asset.url;
   return node.modelSrc && HTTP_URL.test(node.modelSrc) && /\.glb(?:[?#]|$)/i.test(node.modelSrc)
     ? node.modelSrc
@@ -105,31 +111,25 @@ export function canvasThreeDSpzAsset(node?: Pick<CanvasNode, "modelSrc" | "model
     : null;
 }
 
-/** Resolve a canvas 3D node into a Director-loadable mesh or Marble world. */
+/** Resolve a canvas 3D node into a Director-loadable white model.
+ *  Every GLB starts with a neutral material. Marble additionally provides a
+ *  photographic SPZ, but the Director uses its collider GLB for blocking. */
 export function canvasThreeDSceneAssetFromNode(
   node?: Pick<CanvasNode, "id" | "title" | "modelSrc" | "modelAssets"> | null,
 ): CanvasThreeDSceneAsset | null {
   if (!node) return null;
   const spz = canvasThreeDSpzAsset(node);
   const colliderUrl = canvasThreeDGlbUrl(node) || undefined;
-  if (spz) {
+  if (colliderUrl) {
     return {
-      url: spz.url,
-      format: "spz",
-      ...(colliderUrl ? { colliderUrl } : {}),
-      ...(spz.metricScaleFactor ? { metricScaleFactor: spz.metricScaleFactor } : {}),
-      ...(spz.groundPlaneOffset !== undefined ? { groundPlaneOffset: spz.groundPlaneOffset } : {}),
-      title: node.title || "Marble 3D 场景",
+      url: colliderUrl,
+      format: "glb",
+      materialMode: "solid",
+      ...(spz ? { colliderUrl } : {}),
+      title: node.title || (spz ? "Marble 白膜场景" : "已连接 3D 场景"),
       sourceNodeId: node.id,
       source: "connected",
     };
   }
-  if (!colliderUrl) return null;
-  return {
-    url: colliderUrl,
-    format: "glb",
-    title: node.title || "已连接 3D 场景",
-    sourceNodeId: node.id,
-    source: "connected",
-  };
+  return null;
 }

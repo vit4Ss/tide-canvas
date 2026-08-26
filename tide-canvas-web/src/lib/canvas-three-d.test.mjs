@@ -47,6 +47,24 @@ test("Director selects GLB independently from the primary download format", () =
   };
   assert.equal(canvasThreeDGlbUrl(node), "https://cdn.example.com/model.glb");
   assert.equal(canvasThreeDPreviewUrl(node), "https://cdn.example.com/preview.png");
+  assert.deepEqual(canvasThreeDSceneAssetFromNode({ id: "model_1", title: "摄影棚", ...node }), {
+    url: "https://cdn.example.com/model.glb",
+    format: "glb",
+    materialMode: "solid",
+    title: "摄影棚",
+    sourceNodeId: "model_1",
+    source: "connected",
+  });
+});
+
+test("ordinary providers keep their preferred GLB order instead of being treated as Marble", () => {
+  const node = {
+    modelAssets: [
+      { type: "glb-hq", url: "https://cdn.example.com/model-hq.glb" },
+      { type: "glb", url: "https://cdn.example.com/model-lite.glb" },
+    ],
+  };
+  assert.equal(canvasThreeDGlbUrl(node), "https://cdn.example.com/model-hq.glb");
 });
 
 test("non-GLB output is not offered to the Director", () => {
@@ -56,7 +74,7 @@ test("non-GLB output is not offered to the Director", () => {
   assert.equal(canvasThreeDPreviewUrl({ modelPreviewSrc: "javascript:alert(1)" }), null);
 });
 
-test("Marble SPZ is preferred as the Director visual scene while retaining collider GLB", () => {
+test("Marble collider GLB is preferred as the Director white model while SPZ stays downloadable", () => {
   const node = {
     id: "world_1",
     title: "森林场景",
@@ -68,15 +86,20 @@ test("Marble SPZ is preferred as the Director visual scene while retaining colli
   };
   assert.equal(canvasThreeDSpzAsset(node)?.type, "spz-500k");
   assert.deepEqual(canvasThreeDSceneAssetFromNode(node), {
-    url: "https://cdn.example.com/world-500k.spz",
-    format: "spz",
+    url: "https://cdn.example.com/collider.glb",
+    format: "glb",
     colliderUrl: "https://cdn.example.com/collider.glb",
-    metricScaleFactor: 1.25,
-    groundPlaneOffset: 0.4,
+    materialMode: "solid",
     title: "森林场景",
     sourceNodeId: "world_1",
     source: "connected",
   });
+});
+
+test("SPZ-only output is not connected to the blocking Director", () => {
+  assert.equal(canvasThreeDSceneAssetFromNode({
+    modelAssets: [{ type: "spz-500k", url: "https://cdn.example.com/world.spz" }],
+  }), null);
 });
 
 test("Director falls back to lightweight SPZ before full resolution", () => {

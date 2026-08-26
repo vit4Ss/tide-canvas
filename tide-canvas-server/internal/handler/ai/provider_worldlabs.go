@@ -202,6 +202,11 @@ func (p *worldLabsProviderClient) generationPayload(modelID string, input map[st
 		}
 		worldPrompt["type"] = "image"
 		worldPrompt["image_prompt"] = map[string]string{"source": "uri", "uri": rewritten}
+		if isPano, _ := inputBool(input, "isPano", "is_pano", "is360"); isPano {
+			// is_pano belongs to the ImagePrompt object (world_prompt), not
+			// inside the nested URI content object.
+			worldPrompt["is_pano"] = true
+		}
 		if prompt != "" {
 			worldPrompt["text_prompt"] = prompt
 		}

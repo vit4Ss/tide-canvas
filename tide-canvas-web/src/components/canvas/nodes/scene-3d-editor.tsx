@@ -94,6 +94,7 @@ interface EditorApi {
   setLight: (p: { preset?: string; azimuth?: number; elevation?: number; intensity?: number; ambient?: number }) => void;
   setEnv: (p: Partial<Scene3DEnv>) => Scene3DMotionState | undefined;
   setPanorama: (url: string | null) => void;
+  setSceneAssetMaterialMode: (mode: "original" | "solid") => void;
   setFrameAspect: (aspect: number) => void;
   importBlocking: (blocking: RecognizedBlocking, mode: ImportMode) => void;
   setPilotMode: (enabled: boolean) => void;
@@ -296,8 +297,17 @@ export function Scene3DEditor({ node, onClose }: Props) {
       panoSource: "connected",
     };
   });
-  const [sceneAsset] = useState<CanvasThreeDSceneAsset | null>(initialSceneAsset);
+  const [sceneAsset, setSceneAsset] = useState<CanvasThreeDSceneAsset | null>(initialSceneAsset);
   const sceneAssetRef = useRef<CanvasThreeDSceneAsset | null>(initialSceneAsset);
+
+  const setSceneAssetMaterialMode = useCallback((materialMode: "original" | "solid") => {
+    const current = sceneAssetRef.current;
+    if (!current || current.format !== "glb" || current.materialMode === materialMode) return;
+    const next = { ...current, materialMode };
+    sceneAssetRef.current = next;
+    setSceneAsset(next);
+    apiRef.current?.setSceneAssetMaterialMode(materialMode);
+  }, []);
 
   // 最新值给三维副作用内的命令式 API 读取（避免闭包过期）。须在三维副作用之前声明。
   const lightAnglesRef = useRef(light);
@@ -543,6 +553,14 @@ export function Scene3DEditor({ node, onClose }: Props) {
         let sceneAssetModel: THREE_NS.Object3D | null = null;
         let sparkRenderer: (THREE_NS.Object3D & { dispose?: () => void }) | null = null;
         let sceneAssetLoadVersion = 0;
+        let sceneAssetMaterialMode: "original" | "solid" = sceneAssetRef.current?.materialMode ?? "original";
+        const sceneAssetOriginalMaterials = new Map<THREE_NS.Mesh, THREE_NS.Material | THREE_NS.Material[]>();
+        const sceneAssetSolidMaterial = new THREE.MeshStandardMaterial({
+          color: 0xc4c8cf,
+          roughness: 0.92,
+          metalness: 0,
+          side: THREE.DoubleSide,
+        });
         const disposeSceneAssetGroup = (group: THREE_NS.Object3D) => {
           const geometries = new Set<THREE_NS.BufferGeometry>();
           const materials = new Set<THREE_NS.Material>();
@@ -567,14 +585,31 @@ export function Scene3DEditor({ node, onClose }: Props) {
         };
         const disposeSceneAssetModel = () => {
           if (!sceneAssetModel) return;
+          // Restore owned GLTF materials before disposal. The white material is
+          // shared by every mesh and lives for the editor's whole lifetime.
+          sceneAssetOriginalMaterials.forEach((material, mesh) => { mesh.material = material; });
+          sceneAssetOriginalMaterials.clear();
           scene.remove(sceneAssetModel);
           disposeSceneAssetGroup(sceneAssetModel);
           sceneAssetModel = null;
+        };
+        const applySceneAssetMaterialMode = (mode: "original" | "solid") => {
+          sceneAssetMaterialMode = mode;
+          if (!sceneAssetModel || sceneAssetOriginalMaterials.size === 0) return;
+          sceneAssetOriginalMaterials.forEach((material, mesh) => {
+            if (mode === "solid") {
+              if (!mesh.geometry.attributes.normal) mesh.geometry.computeVertexNormals();
+              mesh.material = sceneAssetSolidMaterial;
+            } else {
+              mesh.material = material;
+            }
+          });
         };
         const setSceneAssetInternal = async (asset: CanvasThreeDSceneAsset | null) => {
           const loadVersion = ++sceneAssetLoadVersion;
           disposeSceneAssetModel();
           if (!asset) return;
+          sceneAssetMaterialMode = asset.materialMode ?? "original";
           let objectUrl = "";
           let pendingGroup: THREE_NS.Object3D | null = null;
           try {
@@ -646,11 +681,13 @@ export function Scene3DEditor({ node, onClose }: Props) {
             group.traverse((object) => {
               const mesh = object as THREE_NS.Mesh;
               if (!mesh.isMesh) return;
+              sceneAssetOriginalMaterials.set(mesh, mesh.material);
               mesh.receiveShadow = true;
               mesh.castShadow = true;
             });
             sceneAssetModel = group;
             pendingGroup = null;
+            applySceneAssetMaterialMode(sceneAssetMaterialMode);
             scene.add(group);
           } catch (err) {
             if (pendingGroup) disposeSceneAssetGroup(pendingGroup);
@@ -1206,6 +1243,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
           panoGeo.dispose();
           sceneAssetLoadVersion += 1;
           disposeSceneAssetModel();
+          sceneAssetSolidMaterial.dispose();
           if (sparkRenderer) {
             scene.remove(sparkRenderer);
             sparkRenderer.dispose?.();
@@ -1404,6 +1442,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
             return rotatedMotion;
           },
           setPanorama: (url) => { void setPanoramaInternal(url); },
+          setSceneAssetMaterialMode: applySceneAssetMaterialMode,
           setFrameAspect: (aspect) => {
             rigPreviewAspect = aspect > 0 ? aspect : (mount.clientWidth || 1) / (mount.clientHeight || 1);
             for (const rig of rigsM.values()) rebuildRigViz(rig);
@@ -2915,13 +2954,40 @@ export function Scene3DEditor({ node, onClose }: Props) {
         <div>
           <div className="mb-1.5 text-xs font-medium text-white/60">3D 场景</div>
           {sceneAsset ? (
-            <div className="mb-3 flex items-center gap-2 rounded-lg border border-cyan-300/15 bg-cyan-300/[0.05] px-2.5 py-2">
+            <div className="mb-3 flex items-start gap-2 rounded-lg border border-cyan-300/15 bg-cyan-300/[0.05] px-2.5 py-2">
               <Layers3 className="h-4 w-4 shrink-0 text-cyan-300" />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-xs font-medium text-white/85">{sceneAsset.title}</div>
                 <div className="mt-0.5 text-[10px] text-white/35">
-                  {sceneAsset.format === "spz" ? "画布连接 · Marble SPZ 真实场景" : "画布连接 · GLB 几何场景"}
+                  {sceneAsset.materialMode === "solid"
+                    ? "画布连接 · GLB 白模场景"
+                    : sceneAsset.format === "spz"
+                      ? "画布连接 · Marble SPZ 兼容场景"
+                      : "画布连接 · GLB 原材质场景"}
                 </div>
+                {sceneAsset.format === "glb" ? (
+                  <div className="mt-2 flex rounded-md bg-black/20 p-0.5" role="group" aria-label="场景材质">
+                    {([[
+                      "solid", "白模",
+                    ], [
+                      "original", "原材质",
+                    ]] as const).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        aria-pressed={sceneAsset.materialMode === value}
+                        onClick={() => setSceneAssetMaterialMode(value)}
+                        className={`flex-1 rounded px-2 py-1 text-[10px] transition-colors ${
+                          sceneAsset.materialMode === value
+                            ? "bg-white/15 text-white"
+                            : "text-white/45 hover:text-white/75"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             </div>
           ) : (

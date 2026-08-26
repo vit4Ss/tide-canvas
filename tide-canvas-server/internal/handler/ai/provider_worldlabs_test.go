@@ -124,6 +124,27 @@ func TestWorldLabsMultiImagePayloadMapsViewAzimuths(t *testing.T) {
 	}
 }
 
+func TestWorldLabsPanoramaImagePayloadSetsIsPanoOnWorldPrompt(t *testing.T) {
+	provider := &worldLabsProviderClient{}
+	payload, err := provider.generationPayload("marble-1.1", map[string]any{
+		"imageUrl": "https://cdn.example.com/lobby-360.jpg",
+		"isPano":   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload.WorldPrompt["type"] != "image" || payload.WorldPrompt["is_pano"] != true {
+		t.Fatalf("world prompt = %#v", payload.WorldPrompt)
+	}
+	imagePrompt, ok := payload.WorldPrompt["image_prompt"].(map[string]string)
+	if !ok || imagePrompt["uri"] != "https://cdn.example.com/lobby-360.jpg" {
+		t.Fatalf("image prompt = %#v", payload.WorldPrompt["image_prompt"])
+	}
+	if _, nested := imagePrompt["is_pano"]; nested {
+		t.Fatalf("is_pano must not be nested inside image_prompt content: %#v", imagePrompt)
+	}
+}
+
 func TestWorldLabsPollingRetriesTransportFailureWithoutResubmitting(t *testing.T) {
 	var submissions atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

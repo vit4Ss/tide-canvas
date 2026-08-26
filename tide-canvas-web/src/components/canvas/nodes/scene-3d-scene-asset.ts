@@ -1,6 +1,9 @@
 import type { CanvasThreeDSceneAsset } from "@/types/canvas-three-d";
 
-/** Persisted Director assets accept regular GLB meshes and Marble SPZ worlds. */
+/** Persisted Director assets accept regular GLB meshes and legacy Marble SPZ worlds.
+ *  Older projects saved SPZ as the primary URL with a collider alongside it;
+ *  migrate those records to the collider so reopening a project also gets the
+ *  intended white blocking model. */
 export function normalizeScene3DSceneAsset(value: unknown): CanvasThreeDSceneAsset | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const raw = value as Partial<CanvasThreeDSceneAsset>;
@@ -13,6 +16,16 @@ export function normalizeScene3DSceneAsset(value: unknown): CanvasThreeDSceneAss
     && /\.glb(?:[?#]|$)/i.test(raw.colliderUrl.trim())
     ? raw.colliderUrl.trim()
     : undefined;
+  const migrateMarbleToCollider = format === "spz" && !!colliderUrl;
+  const normalizedUrl = migrateMarbleToCollider ? colliderUrl : url;
+  const normalizedFormat = migrateMarbleToCollider ? "glb" : format;
+  const materialMode = migrateMarbleToCollider
+    ? "solid"
+    : raw.materialMode === "solid" || raw.materialMode === "original"
+      ? raw.materialMode
+      : normalizedFormat === "glb"
+        ? "solid"
+        : undefined;
   const metricScaleFactor = Number(raw.metricScaleFactor);
   const groundPlaneOffset = Number(raw.groundPlaneOffset);
   const title = typeof raw.title === "string" && raw.title.trim()
@@ -23,12 +36,13 @@ export function normalizeScene3DSceneAsset(value: unknown): CanvasThreeDSceneAss
     : undefined;
   const source = raw.source === "connected" || raw.source === "restored" ? raw.source : undefined;
   return {
-    url,
+    url: normalizedUrl,
     title,
-    format,
+    format: normalizedFormat,
+    ...(materialMode ? { materialMode } : {}),
     ...(colliderUrl ? { colliderUrl } : {}),
-    ...(Number.isFinite(metricScaleFactor) && metricScaleFactor > 0 ? { metricScaleFactor } : {}),
-    ...(Number.isFinite(groundPlaneOffset) ? { groundPlaneOffset } : {}),
+    ...(normalizedFormat === "spz" && Number.isFinite(metricScaleFactor) && metricScaleFactor > 0 ? { metricScaleFactor } : {}),
+    ...(normalizedFormat === "spz" && Number.isFinite(groundPlaneOffset) ? { groundPlaneOffset } : {}),
     ...(sourceNodeId ? { sourceNodeId } : {}),
     ...(source ? { source } : {}),
   };

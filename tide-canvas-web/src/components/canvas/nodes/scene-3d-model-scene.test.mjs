@@ -4,8 +4,9 @@ import test from "node:test";
 import { normalizeScene3DSceneAsset } from "./scene-3d-scene-asset.ts";
 
 const editorSource = readFileSync(new URL("./scene-3d-editor.tsx", import.meta.url), "utf8");
+const viewportSource = readFileSync(new URL("../../studio/three-d-studio/viewport.tsx", import.meta.url), "utf8");
 
-test("persisted Director scene accepts GLB and Marble SPZ URLs", () => {
+test("persisted Director scene accepts GLB and migrates Marble SPZ to its collider white model", () => {
   assert.deepEqual(normalizeScene3DSceneAsset({
     url: " https://cdn.example.com/stage.glb?token=1 ",
     title: "摄影棚",
@@ -15,6 +16,7 @@ test("persisted Director scene accepts GLB and Marble SPZ URLs", () => {
     url: "https://cdn.example.com/stage.glb?token=1",
     title: "摄影棚",
     format: "glb",
+    materialMode: "solid",
     sourceNodeId: "node_3d",
     source: "connected",
   });
@@ -25,13 +27,16 @@ test("persisted Director scene accepts GLB and Marble SPZ URLs", () => {
     metricScaleFactor: 1.2,
     groundPlaneOffset: 0.3,
   }), {
-    url: "https://cdn.example.com/world.spz?token=1",
+    url: "https://cdn.example.com/collider.glb",
     title: "3D 场景",
-    format: "spz",
+    format: "glb",
+    materialMode: "solid",
     colliderUrl: "https://cdn.example.com/collider.glb",
-    metricScaleFactor: 1.2,
-    groundPlaneOffset: 0.3,
   });
+  assert.equal(normalizeScene3DSceneAsset({
+    url: "https://cdn.example.com/textured.glb",
+    materialMode: "original",
+  })?.materialMode, "original");
   assert.equal(normalizeScene3DSceneAsset({ url: "https://cdn.example.com/stage.fbx" }), undefined);
   assert.equal(normalizeScene3DSceneAsset({ url: "javascript:alert(1).glb" }), undefined);
 });
@@ -42,9 +47,22 @@ test("Director loads, disposes and persists connected GLB and SPZ scenes", () =>
   assert.match(editorSource, /new SplatMesh\(\{ fileBytes: new Uint8Array\(bytes\) \}\)/);
   assert.match(editorSource, /splat\.rotation\.x = Math\.PI/);
   assert.match(editorSource, /group\.name = "connected-3d-scene"/);
+  assert.match(editorSource, /sceneAssetMaterialMode = asset\.materialMode \?\? "original"/);
+  assert.match(editorSource, /setSceneAssetMaterialMode/);
+  assert.match(editorSource, /setSceneAssetMaterialMode: applySceneAssetMaterialMode/);
+  assert.match(editorSource, /sceneAssetOriginalMaterials\.forEach/);
+  assert.match(editorSource, /"solid", "白模"/);
+  assert.match(editorSource, /"original", "原材质"/);
+  assert.match(editorSource, /side: THREE\.DoubleSide/);
   assert.match(editorSource, /if \(bounds\.isEmpty\(\)\) throw new Error/);
   assert.match(editorSource, /const textures = new Set<THREE_NS\.Texture>\(\)/);
   assert.match(editorSource, /if \(pendingGroup\) disposeSceneAssetGroup\(pendingGroup\)/);
   assert.match(editorSource, /disposeSceneAssetModel\(\)/);
   assert.match(editorSource, /sceneAsset: sceneAssetRef\.current/);
+});
+
+test("newly selected 3D assets reset to the configured default material mode", () => {
+  assert.match(viewportSource, /const defaultMode = initialModeRef\.current/);
+  assert.match(viewportSource, /setMode\(defaultMode\)/);
+  assert.match(viewportSource, /setMode\(defaultMode\);\s*apiRef\.current\?\.loadModel\(glbUrl\)/);
 });

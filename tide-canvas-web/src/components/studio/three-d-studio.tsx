@@ -497,7 +497,12 @@ export default function ThreeDStudio() {
             </div>
           )}
 
-          <ThreeDViewport glbUrl={generating ? null : glbUrl} onStats={setStats} />
+          <ThreeDViewport
+            key="model-solid"
+            glbUrl={generating ? null : glbUrl}
+            onStats={setStats}
+            initialMode="solid"
+          />
 
           {/* 生成中：viewport 上的进度覆盖层 */}
           {generating && (

@@ -14,6 +14,8 @@ export interface CanvasThreeDSceneAsset {
   url: string;
   title: string;
   format?: "glb" | "spz";
+  /** Director GLB meshes default to an untextured blocking model; original materials remain optional. */
+  materialMode?: "original" | "solid";
   colliderUrl?: string;
   metricScaleFactor?: number;
   groundPlaneOffset?: number;

@@ -76,6 +76,7 @@ export function ThreeDViewport({
   glbUrl,
   onStats,
   compact = false,
+  initialMode = "shaded",
 }: {
   /** 当前展示的 GLB 地址；null = 清空场景（外层负责空态/占位展示）。 */
   glbUrl: string | null;
@@ -83,15 +84,18 @@ export function ThreeDViewport({
   onStats?: (stats: MeshStats | null) => void;
   /** Canvas cards hide secondary controls and keep only direct orbit interaction. */
   compact?: boolean;
+  /** Models start as a white blocking model; the toolbar can restore embedded materials. */
+  initialMode?: ViewMode;
 }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const apiRef = useRef<ViewerApi | null>(null);
+  const initialModeRef = useRef(initialMode);
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(false);
   /** 下载进度 0–99；null = 长度未知（不定态，只转圈不报数）。 */
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [mode, setMode] = useState<ViewMode>("shaded");
+  const [mode, setMode] = useState<ViewMode>(() => initialModeRef.current);
   const [grid, setGrid] = useState(true);
   // onStats 给最新引用，三维副作用内异步回调不吃闭包过期
   const onStatsRef = useRef(onStats);
@@ -155,7 +159,7 @@ export function ThreeDViewport({
       const originals = new Map<THREE_NS.Mesh, THREE_NS.Material | THREE_NS.Material[]>();
       const solidMat = new THREE.MeshStandardMaterial({ color: 0xd6d6da, roughness: 0.75, metalness: 0.05 });
       const wireMat = new THREE.MeshBasicMaterial({ color: 0x9a9aa4, wireframe: true });
-      let curMode: ViewMode = "shaded";
+      let curMode: ViewMode = initialModeRef.current;
 
       const applyMode = (m: ViewMode) => {
         curMode = m;
@@ -430,7 +434,13 @@ export function ThreeDViewport({
 
   /* ── 外部状态 → 三维侧 ─────────────────────────────────────────────────── */
   useEffect(() => {
-    if (ready) apiRef.current?.loadModel(glbUrl);
+    if (!ready) return;
+    // A newly selected/generated asset always starts in the requested default
+    // mode instead of inheriting the previous model's toolbar selection.
+    const defaultMode = initialModeRef.current;
+    setMode(defaultMode);
+    apiRef.current?.setMode(defaultMode);
+    apiRef.current?.loadModel(glbUrl);
   }, [glbUrl, ready]);
   useEffect(() => {
     apiRef.current?.setMode(mode);

@@ -141,9 +141,12 @@ export const ThreeDNode = memo(function ThreeDNode({
           viewImageUrl: source.imageSrc as string,
         }))
       : undefined;
+    const singleImageIsPanorama = mode === "i2_3d"
+      && (referenceImages[0].is360 === true || referenceImages[0].aspectRatio === "2:1");
     const input: Record<string, unknown> = {
       ...((mode === "t2_3d" || isWorldModel) && prompt ? { prompt } : {}),
       ...(mode === "i2_3d" ? { imageUrl: referenceImages[0].imageSrc } : {}),
+      ...(singleImageIsPanorama ? { isPano: true } : {}),
       ...(multiViewImages?.length ? { multiViewImages } : {}),
       ...(!isWorldModel ? {
         enablePbr,
@@ -182,7 +185,12 @@ export const ThreeDNode = memo(function ThreeDNode({
         {node.modelSrc ? (
           glbUrl && isSelected ? (
             <div className="h-full w-full cursor-orbit" onMouseDown={stop}>
-              <ThreeDViewport glbUrl={glbUrl} compact />
+              <ThreeDViewport
+                key="model-solid"
+                glbUrl={glbUrl}
+                compact
+                initialMode="solid"
+              />
             </div>
           ) : previewUrl ? (
             // eslint-disable-next-line @next/next/no-img-element -- provider-owned 3D preview image
@@ -239,7 +247,7 @@ export const ThreeDNode = memo(function ThreeDNode({
         visible={showAuxUI}
         overlay
         inputTitle="连接图片作为 3D 参考"
-        outputTitle={hasRenderableModel ? "连接到 3D 导演台作为场景" : "生成可渲染的 GLB / SPZ 后可连接到导演台"}
+        outputTitle={hasRenderableModel ? "连接到 3D 导演台作为白膜场景" : "生成可渲染的 GLB 后可连接到导演台"}
         onPortMouseDown={onPortMouseDown}
       />
 
@@ -293,7 +301,7 @@ export const ThreeDNode = memo(function ThreeDNode({
               {isWorldModel ? (
                 <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-3 leading-5 text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900/70 dark:text-neutral-400">
                   <div className="font-medium text-neutral-800 dark:text-neutral-200">Marble 世界输出</div>
-                  <p className="mt-1">生成 SPZ 真实场景、碰撞 GLB、全景图和缩略图。SPZ 可直接连接到 3D 导演台漫游和布置角色。</p>
+                  <p className="mt-1">生成碰撞 GLB 白膜、SPZ、全景图和缩略图。导演台只连接 GLB 白膜，SPZ 仅作为附加文件下载。</p>
                   <p className="mt-2 text-[10px] text-neutral-400">场景质量由所选 Marble 模型决定，无需设置面数、PBR 或导出格式。</p>
                 </div>
               ) : <>
