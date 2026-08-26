@@ -14,6 +14,7 @@ import (
 
 	"tidecanvas/internal/config"
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/alerting"
 	"tidecanvas/internal/pkg/epay"
 	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
@@ -44,12 +45,13 @@ const payTTL = 30 * time.Minute
 func payDeadline(t time.Time) time.Time { return t.Add(payTTL) }
 
 type service struct {
-	repo *repo
-	cfg  *config.Config
-	pay  *epay.Client
+	repo   *repo
+	cfg    *config.Config
+	pay    *epay.Client
+	alerts *alerting.Service
 }
 
-func newService(db *gorm.DB, cfg *config.Config) *service {
+func newService(db *gorm.DB, cfg *config.Config, alertServices ...*alerting.Service) *service {
 	pc := epay.New(epay.Config{
 		Enabled:    cfg.Eliandapay.Enabled,
 		Gateway:    cfg.Eliandapay.Gateway,
@@ -58,7 +60,11 @@ func newService(db *gorm.DB, cfg *config.Config) *service {
 		NotifyURL:  cfg.Eliandapay.NotifyURL,
 		ReturnURL:  cfg.Eliandapay.ReturnURL,
 	}, nil)
-	return &service{repo: newRepo(db), cfg: cfg, pay: pc}
+	var alerts *alerting.Service
+	if len(alertServices) > 0 {
+		alerts = alertServices[0]
+	}
+	return &service{repo: newRepo(db), cfg: cfg, pay: pc, alerts: alerts}
 }
 
 // payType maps the frontend payChannel to an epay pay method. WeChat has several
@@ -471,14 +477,40 @@ func (s *service) settleNotify(raw map[string]string) bool {
 			zap.String("orderNo", res.OutTradeNo),
 			zap.String("paid", epay.Money(res.Money)),
 			zap.String("expected", epay.Money(o.Amount)))
+		s.publishPaymentAlert("payment.callback.amount_mismatch", alerting.SeverityCritical, res.OutTradeNo,
+			"支付回调金额不一致", "网关回调金额与订单金额不一致，已拒绝结算。",
+			map[string]any{"paid": epay.Money(res.Money), "expected": epay.Money(o.Amount)})
 		return false
 	}
 
 	if _, err := s.repo.settleOrder(o.ID, grant.points, grant.vipLevel, grant.name, res.TradeNo, time.Now()); err != nil {
 		logger.L().Error("billing: settle failed", zap.String("orderNo", res.OutTradeNo), zap.Error(err))
+		s.publishPaymentAlert("payment.callback.settlement_failed", alerting.SeverityCritical, res.OutTradeNo,
+			"支付到账结算失败", "支付已通过校验，但订单结算或权益发放失败。",
+			map[string]any{"error": err.Error(), "tradeNo": res.TradeNo})
 		return false
 	}
+	if s.alerts != nil {
+		_ = s.alerts.Resolve(context.Background(), "payment.callback.settlement_failed:"+res.OutTradeNo,
+			"支付到账结算恢复", "订单已完成结算和权益发放。", nil)
+	}
 	return true
+}
+
+func (s *service) publishPaymentAlert(eventType, severity, orderNo, title, content string, details map[string]any) {
+	if s.alerts == nil {
+		return
+	}
+	details["orderNo"] = orderNo
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := s.alerts.Publish(ctx, alerting.EventInput{
+		EventType: eventType, Category: "payment", Severity: severity,
+		Fingerprint: eventType + ":" + orderNo, Title: title, Content: content,
+		Source: "handler/billing", Details: details,
+	}); err != nil {
+		logger.L().Warn("billing: publish payment alert failed", zap.Error(err))
+	}
 }
 
 // VerifyResult reports whether an order is paid and whether this call granted it.

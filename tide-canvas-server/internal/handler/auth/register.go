@@ -28,7 +28,7 @@ import (
 //	PUT  /api/auth/password     UpdatePasswordDTO       -> void   (auth)
 //	PUT  /api/auth/profile      UpdateProfileDTO        -> UserVO (auth)
 func Register(api *gin.RouterGroup, d *app.Deps) {
-	svc := newService(d.DB, d.RDB, d.Cfg.Email)
+	svc := newService(d.DB, d.RDB, d.Cfg.Email, d.Alerts)
 	h := newHandler(svc)
 
 	g := api.Group("/auth")

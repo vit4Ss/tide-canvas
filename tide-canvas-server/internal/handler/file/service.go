@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -23,6 +24,7 @@ import (
 
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/alerting"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/logger"
 	"tidecanvas/internal/pkg/storage"
@@ -57,10 +59,12 @@ var (
 
 // service holds file domain business logic.
 type service struct {
-	repo         *repo
-	store        storage.StorageStrategy
-	storageScope string
-	httpcli      *http.Client
+	repo            *repo
+	store           storage.StorageStrategy
+	storageScope    string
+	httpcli         *http.Client
+	alerts          *alerting.Service
+	storageAlerting atomic.Bool
 }
 
 func newService(d *app.Deps) *service {
@@ -73,6 +77,7 @@ func newService(d *app.Deps) *service {
 		store:        d.Storage,
 		storageScope: storageScope,
 		httpcli:      newRemoteAssetClient(),
+		alerts:       d.Alerts,
 	}
 }
 
@@ -117,11 +122,13 @@ func (s *service) upload(ctx context.Context, ownerID idgen.ID, in uploadInput) 
 
 	url, err := s.store.Save(ctx, key, counter, ct)
 	if err != nil {
+		s.publishStorageFailure("save", err)
 		// Some backends can fail after creating a partial object. The key is
 		// request-unique, so best-effort cleanup cannot affect an existing asset.
 		_ = s.store.Delete(ctx, key)
 		return nil, fmt.Errorf("store save: %w", err)
 	}
+	s.resolveStorageFailure("save")
 	if counter.n > maxFileSize {
 		_ = s.store.Delete(ctx, key)
 		return nil, errFileTooLarge

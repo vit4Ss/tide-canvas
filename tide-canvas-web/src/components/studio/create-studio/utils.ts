@@ -2,13 +2,15 @@
    只依赖 types/constants 与 lib 类型，不含 React / 组件状态。 */
 
 import type { StudioModelVO } from "@/lib/market-api";
-import type { ModelConfig } from "@/types/admin-models";
+import { MAX_SINGLE_UPLOAD_BYTES, validateKnownFileSize } from "@/lib/upload-limits";
+import { MAX_3D_MULTI_VIEW_IMAGES, type ModelConfig } from "@/types/admin-models";
 import { AiTaskStatus, type AiTaskVO } from "@/types/ai";
 import {
   DEFAULT_META,
   HIST_HANDLER_TOOL,
   HIST_HANDLER_TYPE,
   MODEL_META,
+  THREE_D_VIEW_SLOTS,
 } from "./constants";
 import type {
   ArtworkType,
@@ -284,6 +286,7 @@ export function slotTypeOf(slots: SlotDef[] | null, k: string): SlotType {
 //   i2i 图生图 → top-level maxRefImages/maxRefImageSizeMB
 //   i2v 图生视频 → refLimits i2v.*
 //   ref 全能参考 → refLimits omniRef.{image|video|audio}*
+//   i2_3d / mv2_3d → top-level max3DImageSizeMB
 // (flf 首尾帧 uses fixed first/last boxes, so its config isn't applied here.)
 export function refLimitFor(mCfg: ModelConfig | null, tool: ToolKey, s: SlotDef): { count: number; size: number } {
   const rl = mCfg?.refLimits ?? {};
@@ -298,7 +301,48 @@ export function refLimitFor(mCfg: ModelConfig | null, tool: ToolKey, s: SlotDef)
     if (s.type === "video") return { count: rl["omniRef.videoCount"] ?? 0, size: rl["omniRef.videoSizeMB"] ?? 0 };
     if (s.type === "audio") return { count: rl["omniRef.audioCount"] ?? 0, size: rl["omniRef.audioSizeMB"] ?? 0 };
   }
+  if ((tool === "i2_3d" || tool === "mv2_3d") && s.type === "image") {
+    return { count: 0, size: mCfg?.max3DImageSizeMB ?? 0 };
+  }
   return { count: 0, size: 0 };
+}
+
+/** Model-specific multi-view total, clamped to the Relay protocol's eight views. */
+export function threeDMultiViewLimit(mCfg: ModelConfig | null | undefined): number {
+  const configured = Number(mCfg?.max3DMultiViewImages);
+  if (!Number.isFinite(configured) || configured < 1) return MAX_3D_MULTI_VIEW_IMAGES;
+  return Math.min(MAX_3D_MULTI_VIEW_IMAGES, Math.floor(configured));
+}
+
+/** Revalidate retained 3D references against the currently selected model.
+ *  References intentionally survive model switches, so upload-time validation
+ *  alone is insufficient when the next model has a smaller per-image limit.
+ *  Restored/history URLs have no trustworthy byte count and must be reselected. */
+export function threeDReferenceSizeIssue(
+  mCfg: ModelConfig | null | undefined,
+  tool: ToolKey,
+  slotData: SlotData,
+): string | null {
+  if (tool !== "i2_3d" && tool !== "mv2_3d") return null;
+  const keys = tool === "i2_3d"
+    ? ["threeDImage"]
+    : THREE_D_VIEW_SLOTS.map(({ key }) => key);
+  const files = keys.flatMap((key) => slotData[key] ?? []).filter((file) => !!file.url);
+  const maxBytes = mCfg?.max3DImageSizeMB && mCfg.max3DImageSizeMB > 0
+    ? mCfg.max3DImageSizeMB * 1024 * 1024
+    : MAX_SINGLE_UPLOAD_BYTES;
+
+  for (const file of files) {
+    if (!Number.isFinite(file.sizeBytes) || !file.sizeBytes || file.sizeBytes <= 0) {
+      return `「${file.n || "参考图"}」无法确认文件大小，请重新选择或通过本地上传后重试`;
+    }
+    const issue = validateKnownFileSize(file.sizeBytes, file.n, {
+      maxBytes,
+      label: "3D 参考图",
+    });
+    if (issue) return `${issue}，请更换图片或切换模型后重试`;
+  }
+  return null;
 }
 
 export function slotMax(mCfg: ModelConfig | null, tool: ToolKey, s: SlotDef): number {

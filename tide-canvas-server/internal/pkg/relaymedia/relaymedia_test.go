@@ -274,6 +274,26 @@ func TestGenerate3DRejectsConflictingAndDuplicateInputs(t *testing.T) {
 		t.Fatalf("prompt + image error = %v", err)
 	}
 	if _, err := c.Generate3D(context.Background(), ThreeDParams{
+		Model: "hy-3d-3.1", Prompt: "dog",
+		MultiViewImages: []ThreeDViewImage{{ViewType: "front", ViewImageURL: "https://cdn/front.png"}},
+	}); err == nil || !strings.Contains(err.Error(), "cannot be used together") {
+		t.Fatalf("prompt + multi-view error = %v", err)
+	}
+	if _, err := c.Generate3D(context.Background(), ThreeDParams{
+		Model: "hy-3d-3.1", ImageURL: "https://cdn/dog.png",
+		MultiViewImages: []ThreeDViewImage{{ViewType: "front", ViewImageURL: "https://cdn/front.png"}},
+	}); err == nil || !strings.Contains(err.Error(), "cannot be used together") {
+		t.Fatalf("image + multi-view error = %v", err)
+	}
+	if _, err := c.Generate3D(context.Background(), ThreeDParams{
+		Model: "hy-3d-3.1",
+		MultiViewImages: []ThreeDViewImage{{
+			ViewType: "front", ViewImageURL: "https://cdn/front.png", ViewImageBase64: "data",
+		}},
+	}); err == nil || !strings.Contains(err.Error(), "exactly one image source") {
+		t.Fatalf("two view image sources error = %v", err)
+	}
+	if _, err := c.Generate3D(context.Background(), ThreeDParams{
 		Model: "hy-3d-3.1",
 		MultiViewImages: []ThreeDViewImage{
 			{ViewType: "front", ViewImageURL: "https://cdn/front.png"},
@@ -281,6 +301,18 @@ func TestGenerate3DRejectsConflictingAndDuplicateInputs(t *testing.T) {
 		},
 	}); err == nil || !strings.Contains(err.Error(), "duplicate") {
 		t.Fatalf("duplicate view error = %v", err)
+	}
+	tooMany := make([]ThreeDViewImage, MaxThreeDMultiViewImages+1)
+	for i := range tooMany {
+		tooMany[i] = ThreeDViewImage{
+			ViewType:     fmt.Sprintf("view-%d", i),
+			ViewImageURL: fmt.Sprintf("https://cdn/view-%d.png", i),
+		}
+	}
+	if _, err := c.Generate3D(context.Background(), ThreeDParams{
+		Model: "hy-3d-3.1", MultiViewImages: tooMany,
+	}); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("at most %d", MaxThreeDMultiViewImages)) {
+		t.Fatalf("multi-view limit error = %v", err)
 	}
 }
 

@@ -47,7 +47,15 @@ import type {
   ThreeDViewImage,
   ToolKey,
 } from "./types";
-import { nextHistId, promptHue, refThumbsForRun, threeDAssetsFromMeta, tracksFromMeta } from "./utils";
+import {
+  nextHistId,
+  promptHue,
+  refThumbsForRun,
+  threeDAssetsFromMeta,
+  threeDMultiViewLimit,
+  threeDReferenceSizeIssue,
+  tracksFromMeta,
+} from "./utils";
 import { createSubmissionGate, type SubmissionGate } from "./submission-gate";
 import { studioReferenceIssue, uploadedFileUrls } from "./required-reference";
 import {
@@ -863,9 +871,9 @@ export function useGeneration(p: GenerationParams) {
       toast.info("历史模型当前不可用，已停止重新生成");
       return;
     }
-    // 普通单图生 3D 与 prompt 互斥；切换页签后保留在面板 state 里的旧提示词
+    // 图片类 3D 与 prompt 互斥；切换页签后保留在面板 state 里的旧提示词
     // 既不发送，也不写入本轮历史。
-    const p = tool === "i2_3d" ? "" : prompt.trim();
+    const p = tool === "i2_3d" || tool === "mv2_3d" ? "" : prompt.trim();
     // 引用类模式的素材校验优先于提示词，两者都为空时优先说明当前
     // 模式必须上传什么；且只检查当前模型真正启用的槽位。
     const referenceIssue = studioReferenceIssue(tool, activeSlotData, activeSlots.length);
@@ -919,6 +927,18 @@ export function useGeneration(p: GenerationParams) {
           return viewImageUrl ? [{ viewType, viewImageUrl }] : [];
         })
       : [];
+    const multiViewLimit = threeDMultiViewLimit(selectedStudio?.config);
+    if (multiViewImages.length > multiViewLimit) {
+      toast.info(`多视图最多上传 ${multiViewLimit} 张图片，请移除多余图片后重试`);
+      markRequiredField("#dropFiles");
+      return;
+    }
+    const referenceSizeIssue = threeDReferenceSizeIssue(selectedStudio?.config, tool, activeSlotData);
+    if (referenceSizeIssue) {
+      toast.info(referenceSizeIssue);
+      markRequiredField("#dropFiles");
+      return;
+    }
     // 全能参考 (ref) accepts image / video / audio references — any one is enough.
     const vidRefs = tool === "ref" && supportsOmniReference(selectedStudio?.config, "video")
       ? slotUrls("video")

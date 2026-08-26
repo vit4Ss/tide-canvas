@@ -1,11 +1,11 @@
-/* 参考素材上传槽位（图片网格 / 音视频列表 / 首尾帧双框）— 从 create-studio.tsx
-   的 renderSlotCard / renderFlfBox / renderUploads 抽出（纯移动，无逻辑改动）。 */
+/* 参考素材上传槽位（图片网格 / 音视频列表 / 首尾帧双框）。
+   展示每个槽位的容量，并在 3D 多视图模式补充跨视角的总数量反馈。 */
 
 import type { CSSProperties } from "react";
 import type { ModelConfig } from "@/types/admin-models";
 import { SLOT_ICON } from "./icons";
 import type { SlotData, SlotDef, ToolKey } from "./types";
-import { slotHint, slotMax, thumbBg } from "./utils";
+import { slotHint, slotMax, threeDMultiViewLimit, thumbBg } from "./utils";
 
 export function UploadSlots({
   tool,
@@ -56,9 +56,11 @@ export function UploadSlots({
               {files.length}/{maxOf(s)}
             </span>
           </label>
-          <button className="ws-up-act" type="button" onClick={(e) => onAdd(s.k, e)}>
-            ⤓ 上传
-          </button>
+          {files.length < maxOf(s) && (
+            <button className="ws-up-act" type="button" onClick={(e) => onAdd(s.k, e)}>
+              ⤓ 上传
+            </button>
+          )}
         </div>
         {s.type === "image" ? (
           <div className="ws-up-grid">
@@ -214,8 +216,20 @@ export function UploadSlots({
       </div>
     );
   }
+  const multiViewCount = tool === "mv2_3d"
+    ? slots.reduce((sum, slot) => sum + (slotData[slot.k] || []).length, 0)
+    : 0;
+  const multiViewLimit = threeDMultiViewLimit(mCfg);
   return (
     <div className="ws-reffiles" id="dropFiles" style={{ display: "block" }}>
+      {tool === "mv2_3d" && (
+        <div className="ws-up">
+          <div className="ws-up-head">
+            <label>多视图参考图</label>
+            <span className="ws-up-tip">已上传 {multiViewCount} / {multiViewLimit} 张，可任选视角</span>
+          </div>
+        </div>
+      )}
       {slots.map(renderSlotCard)}
     </div>
   );

@@ -40,6 +40,9 @@ const (
 	pathVideoUpscale     = "/v1/video/upscale"
 )
 
+// MaxThreeDMultiViewImages is the protocol-level cap accepted by Relay's 3D endpoint.
+const MaxThreeDMultiViewImages = 8
+
 // Tuning constants. The relay's synchronous image path can hold the connection
 // for well over a minute (the model runs inline); videos are almost always async
 // and can run for several minutes. Each call runs under the per-medium context
@@ -393,8 +396,18 @@ func (c *Client) Generate3D(ctx context.Context, p ThreeDParams) (Result, error)
 	if prompt == "" && imageURL == "" && len(p.MultiViewImages) == 0 {
 		return Result{}, fmt.Errorf("relaymedia: 3d requires prompt, image_url, or multi_view_images")
 	}
-	if prompt != "" && imageURL != "" {
-		return Result{}, fmt.Errorf("relaymedia: 3d prompt and single image cannot be used together")
+	inputModes := 0
+	if prompt != "" {
+		inputModes++
+	}
+	if imageURL != "" {
+		inputModes++
+	}
+	if len(p.MultiViewImages) > 0 {
+		inputModes++
+	}
+	if inputModes > 1 {
+		return Result{}, fmt.Errorf("relaymedia: 3d prompt, single image, and multi-view images cannot be used together")
 	}
 	if len([]rune(prompt)) > 1024 {
 		return Result{}, fmt.Errorf("relaymedia: 3d prompt is too long (maximum 1024 characters)")
@@ -420,8 +433,8 @@ func (c *Client) Generate3D(ctx context.Context, p ThreeDParams) (Result, error)
 		"front": true, "left": true, "right": true, "back": true,
 		"top": true, "bottom": true, "left_front": true, "right_front": true,
 	}
-	if len(p.MultiViewImages) > 8 {
-		return Result{}, fmt.Errorf("relaymedia: 3d multi_view_images supports at most 8 views")
+	if len(p.MultiViewImages) > MaxThreeDMultiViewImages {
+		return Result{}, fmt.Errorf("relaymedia: 3d multi_view_images supports at most %d views", MaxThreeDMultiViewImages)
 	}
 	seen := map[string]bool{}
 	views := make([]map[string]any, 0, len(p.MultiViewImages))
@@ -435,10 +448,15 @@ func (c *Client) Generate3D(ctx context.Context, p ThreeDParams) (Result, error)
 		}
 		seen[viewType] = true
 		row := map[string]any{"view_type": viewType}
-		if value := strings.TrimSpace(view.ViewImageURL); value != "" {
-			row["view_image_url"] = value
-		} else if value := strings.TrimSpace(view.ViewImageBase64); value != "" {
-			row["view_image_base64"] = value
+		imageURL := strings.TrimSpace(view.ViewImageURL)
+		imageBase64 := strings.TrimSpace(view.ViewImageBase64)
+		if imageURL != "" && imageBase64 != "" {
+			return Result{}, fmt.Errorf("relaymedia: 3d view %q must contain exactly one image source", viewType)
+		}
+		if imageURL != "" {
+			row["view_image_url"] = imageURL
+		} else if imageBase64 != "" {
+			row["view_image_base64"] = imageBase64
 		} else {
 			return Result{}, fmt.Errorf("relaymedia: 3d view %q requires an image", viewType)
 		}

@@ -26,6 +26,7 @@ import (
 	"tidecanvas/internal/db"
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/alerting"
 	"tidecanvas/internal/pkg/cache"
 	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
@@ -187,9 +188,22 @@ func run() error {
 	// Mailer: register SMTP config so verification emails can be sent.
 	mailer.Init(cfg.Email)
 
-	deps := &app.Deps{DB: gdb, RDB: rdb, Cfg: cfg, Storage: store}
+	alertService := alerting.New(gdb, cfg.Env, cfg.JWT.Secret)
+	deps := &app.Deps{DB: gdb, RDB: rdb, Cfg: cfg, Storage: store, Alerts: alertService}
 	workerCtx, stopWorkers := context.WithCancel(context.Background())
 	defer stopWorkers()
+	alertService.Start(workerCtx)
+	admin.StartSupplierBalanceMonitor(workerCtx, deps)
+	if err := alertService.EnsureDefaultRules(context.Background()); err != nil {
+		logger.L().Warn("alerting: seed default rules failed", zap.Error(err))
+	}
+	if err := alertService.Publish(context.Background(), alerting.EventInput{
+		EventType: "system.started", Category: "system", Severity: alerting.SeverityInfo,
+		Fingerprint: "system.started:" + cfg.Env, Title: "服务已启动",
+		Content: "TideCanvas API 服务已完成启动", Source: "cmd/api",
+	}); err != nil {
+		logger.L().Warn("alerting: publish startup event failed", zap.Error(err))
+	}
 	file.StartUploadGrantJanitor(workerCtx, deps)
 
 	// Reconcile AI tasks stranded by a prior crash/restart in the background.
@@ -215,7 +229,7 @@ func run() error {
 	r := gin.New()
 	r.Use(
 		middleware.RequestID(),
-		middleware.Recovery(),
+		middleware.Recovery(deps),
 		middleware.ZapLogger(),
 		middleware.AccessLog(),
 		middleware.CORS(deps),

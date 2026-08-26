@@ -28,6 +28,7 @@ import (
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/config"
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/alerting"
 	"tidecanvas/internal/pkg/response"
 )
 
@@ -94,6 +95,7 @@ type supplierBalanceMonitor struct {
 	baseConfig     config.BalanceMonitorConfig
 	client         *http.Client
 	refreshSeconds int
+	alerts         *alerting.Service
 
 	mu   sync.RWMutex
 	last map[string]supplierLastSuccess
@@ -269,6 +271,7 @@ func (m *supplierBalanceMonitor) check(parent context.Context, checker supplierB
 			row.LastSuccessAt = last.At.UTC().Format(time.RFC3339)
 			row.Stale = true
 		}
+		m.publishBalanceAlert(checker, row)
 		return row
 	}
 
@@ -282,6 +285,7 @@ func (m *supplierBalanceMonitor) check(parent context.Context, checker supplierB
 		row.State = "low"
 		row.Message = fmt.Sprintf("余额已低于 %.2f %s 的预警线", threshold, reading.Currency)
 	}
+	m.publishBalanceAlert(checker, row)
 	m.storeLast(checker.key(), supplierLastSuccess{
 		Reading: reading, Identity: checker.cacheIdentity(), At: checkedAt,
 	})
@@ -315,9 +319,54 @@ func cloneBalanceDetails(details []SupplierBalanceDetailVO) []SupplierBalanceDet
 //	GET /admin/supplier-balances -> SupplierBalancesVO
 func RegisterSupplierBalances(g *gin.RouterGroup, d *app.Deps) {
 	monitor := newSupplierBalanceMonitor(d.DB, d.Cfg.BalanceMonitor)
+	monitor.alerts = d.Alerts
 	g.GET("/supplier-balances", func(c *gin.Context) {
 		response.OK(c, monitor.snapshot(c.Request.Context()))
 	})
+}
+
+// StartSupplierBalanceMonitor performs checks independently of the dashboard,
+// so alerts continue even when no administrator has the page open.
+func StartSupplierBalanceMonitor(ctx context.Context, d *app.Deps) {
+	if d == nil || d.Alerts == nil {
+		return
+	}
+	monitor := newSupplierBalanceMonitor(d.DB, d.Cfg.BalanceMonitor)
+	monitor.alerts = d.Alerts
+	go func() {
+		ticker := time.NewTicker(time.Duration(monitor.refreshSeconds) * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				_ = monitor.snapshot(ctx)
+			}
+		}
+	}()
+}
+
+func (m *supplierBalanceMonitor) publishBalanceAlert(checker supplierBalanceChecker, row SupplierBalanceVO) {
+	if m.alerts == nil {
+		return
+	}
+	lowFP := "supplier.balance.low:" + checker.key()
+	errorFP := "supplier.balance.query_failed:" + checker.key()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	switch row.State {
+	case "low":
+		_ = m.alerts.Resolve(ctx, errorFP, "供应商余额查询恢复", checker.name()+" 余额接口已恢复", nil)
+		_ = m.alerts.Publish(ctx, alerting.EventInput{EventType: "supplier.balance.low", Category: "supplier", Severity: alerting.SeverityWarning, Fingerprint: lowFP,
+			Title: "供应商余额不足", Content: row.Message, Source: "admin/balances", Details: map[string]any{"supplier": checker.name(), "balance": fmt.Sprint(*row.Balance), "currency": row.Currency, "threshold": fmt.Sprint(*row.LowBalance)}})
+	case "error":
+		_ = m.alerts.Publish(ctx, alerting.EventInput{EventType: "supplier.balance.query_failed", Category: "supplier", Severity: alerting.SeverityError, Fingerprint: errorFP,
+			Title: "供应商余额查询失败", Content: row.Message, Source: "admin/balances", Details: map[string]any{"supplier": checker.name(), "source": checker.source(), "stale": row.Stale}})
+	case "healthy":
+		_ = m.alerts.Resolve(ctx, errorFP, "供应商余额查询恢复", checker.name()+" 余额接口已恢复", nil)
+		_ = m.alerts.Resolve(ctx, lowFP, "供应商余额恢复", checker.name()+" 当前余额已高于预警线", map[string]any{"balance": fmt.Sprint(*row.Balance), "currency": row.Currency})
+	}
 }
 
 // newAPIBalanceChecker reads the standard New API user profile envelope.

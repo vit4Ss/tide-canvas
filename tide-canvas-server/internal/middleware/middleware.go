@@ -4,6 +4,8 @@
 package middleware
 
 import (
+	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,6 +16,7 @@ import (
 
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/alerting"
 	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/logger"
@@ -81,7 +84,11 @@ func RequestID() gin.HandlerFunc {
 }
 
 // Recovery recovers from panics and responds with a 500 failure envelope.
-func Recovery() gin.HandlerFunc {
+func Recovery(deps ...*app.Deps) gin.HandlerFunc {
+	var alerts *alerting.Service
+	if len(deps) > 0 && deps[0] != nil {
+		alerts = deps[0].Alerts
+	}
 	return func(c *gin.Context) {
 		defer func() {
 			if r := recover(); r != nil {
@@ -90,6 +97,16 @@ func Recovery() gin.HandlerFunc {
 					zap.String("path", c.FullPath()),
 					zap.String("requestID", c.GetString(CtxRequestID)),
 				)
+				if alerts != nil {
+					ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+					_ = alerts.Publish(ctx, alerting.EventInput{
+						EventType: "system.http.panic", Category: "system", Severity: alerting.SeverityCritical,
+						Fingerprint: "system.http.panic:" + c.FullPath(), Title: "API 请求发生未恢复异常",
+						Content: "服务已拦截请求处理过程中的 panic，请管理员检查服务端日志。", Source: "middleware/recovery",
+						Details: map[string]any{"method": c.Request.Method, "path": c.FullPath(), "requestId": c.GetString(CtxRequestID), "panic": fmt.Sprint(r)},
+					})
+					cancel()
+				}
 				if !c.Writer.Written() {
 					response.Fail(c, response.CodeServerError, "internal server error")
 				}

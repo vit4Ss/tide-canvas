@@ -56,6 +56,32 @@ func TestAdminModelUpdateDTOAccepts3DType(t *testing.T) {
 	}
 }
 
+func TestValidate3DReferenceConfig(t *testing.T) {
+	valid := []json.RawMessage{
+		nil,
+		json.RawMessage(`{}`),
+		json.RawMessage(`{"max3DImageSizeMB":10,"max3DMultiViewImages":4}`),
+		json.RawMessage(`{"max3DImageSizeMB":0,"max3DMultiViewImages":8}`),
+	}
+	for _, raw := range valid {
+		if err := validate3DReferenceConfig(raw); err != nil {
+			t.Fatalf("valid config %s rejected: %v", raw, err)
+		}
+	}
+
+	invalid := []json.RawMessage{
+		json.RawMessage(`{"max3DImageSizeMB":-1}`),
+		json.RawMessage(`{"max3DImageSizeMB":51}`),
+		json.RawMessage(`{"max3DMultiViewImages":0}`),
+		json.RawMessage(`{"max3DMultiViewImages":9}`),
+	}
+	for _, raw := range invalid {
+		if err := validate3DReferenceConfig(raw); err == nil {
+			t.Fatalf("invalid config %s was accepted", raw)
+		}
+	}
+}
+
 func TestAdminModelDTOsAcceptUpscaleType(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

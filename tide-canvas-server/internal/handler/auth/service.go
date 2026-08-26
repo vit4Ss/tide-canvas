@@ -17,6 +17,7 @@ import (
 	"tidecanvas/internal/config"
 	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/alerting"
 	"tidecanvas/internal/pkg/cache"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/logger"
@@ -75,13 +76,18 @@ func (s *service) registerClosed() bool {
 }
 
 type service struct {
-	repo  *repo
-	rdb   *redis.Client
-	email config.EmailConfig
+	repo   *repo
+	rdb    *redis.Client
+	email  config.EmailConfig
+	alerts *alerting.Service
 }
 
-func newService(db *gorm.DB, rdb *redis.Client, email config.EmailConfig) *service {
-	return &service{repo: newRepo(db), rdb: rdb, email: email}
+func newService(db *gorm.DB, rdb *redis.Client, email config.EmailConfig, alertServices ...*alerting.Service) *service {
+	var alerts *alerting.Service
+	if len(alertServices) > 0 {
+		alerts = alertServices[0]
+	}
+	return &service{repo: newRepo(db), rdb: rdb, email: email, alerts: alerts}
 }
 
 // emailCode generates, stores and sends a verification code for the given email,
@@ -146,8 +152,12 @@ func (s *service) emailCode(ctx context.Context, email, ip string) error {
 				zap.String("email", email),
 				zap.Error(err),
 			)
+			s.publishMailFailure(err)
 			// Do not set the cooldown when sending failed so the user can retry.
 			return errSendFailed
+		}
+		if s.alerts != nil {
+			_ = s.alerts.Resolve(context.Background(), "mail.smtp.send_failed", "邮件发送服务恢复", "验证码邮件已恢复正常发送。", nil)
 		}
 	} else {
 		// Dev fallback: surface the code in the server log when SMTP is off.
@@ -163,6 +173,17 @@ func (s *service) emailCode(ctx context.Context, email, ip string) error {
 	}
 
 	return nil
+}
+
+func (s *service) publishMailFailure(cause error) {
+	if s.alerts == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := s.alerts.Publish(ctx, alerting.EventInput{EventType: "mail.smtp.send_failed", Category: "mail", Severity: alerting.SeverityError, Fingerprint: "mail.smtp.send_failed", Title: "验证码邮件发送失败", Content: "SMTP 未能完成验证码邮件投递，用户可能无法注册或登录。", Source: "handler/auth", Details: map[string]any{"error": cause.Error()}}); err != nil {
+		logger.L().Warn("auth: publish mail alert failed", zap.Error(err))
+	}
 }
 
 // verifyEmailCode checks the submitted code against the stored one and consumes

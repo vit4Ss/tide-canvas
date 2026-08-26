@@ -112,7 +112,11 @@ func (p *relayProviderClient) Generate(ctx context.Context, req GenerateRequest)
 		res, err := p.c.GenerateAudio(ctx, audioParams(model, req.Input))
 		return p.result(ctx, res, err)
 	case "generate_3d":
-		res, err := p.c.Generate3D(ctx, p.threeDParams(model, req.Input))
+		params := p.threeDParams(model, req.Input)
+		if limit := configured3DMultiViewLimit(req.Model.Config); len(params.MultiViewImages) > limit {
+			return GenerateResult{}, fmt.Errorf("3D 多视图最多支持上传 %d 张图片", limit)
+		}
+		res, err := p.c.Generate3D(ctx, params)
 		return p.result(ctx, res, err)
 	case "video_upscale":
 		res, err := p.c.UpscaleVideo(ctx, p.upscaleParams(model, req.Input))
@@ -290,7 +294,7 @@ func audioParams(model string, in map[string]any) relaymedia.AudioParams {
 }
 
 func (p *relayProviderClient) threeDParams(model string, in map[string]any) relaymedia.ThreeDParams {
-	views := make([]relaymedia.ThreeDViewImage, 0, 8)
+	views := make([]relaymedia.ThreeDViewImage, 0, relaymedia.MaxThreeDMultiViewImages)
 	for _, key := range []string{"multiViewImages", "multi_view_images"} {
 		raw, ok := in[key].([]any)
 		if !ok {

@@ -43,6 +43,7 @@ export interface UploadFile {
   g?: string; // thumbnail: a CSS gradient (mock) OR a real image URL (上传中=本地 blob 预览)
   n: string; // name
   s?: string; // size label (image)
+  sizeBytes?: number; // exact size for authoritative revalidation after switching models
   d?: string; // duration label (video/audio)
   url?: string; // real asset URL (local upload / 资产库) sent to the backend as a reference
   key?: string; // 稳定标识:上传中占位→完成/失败的定位;缺省回退 url/name

@@ -1,15 +1,17 @@
-/* 参考素材上传槽位 hook — 从 create-studio.tsx 抽出（纯移动，无逻辑改动）。
-   负责：槽位文件的增删换（本地上传带进度占位 / 资产库选取）、来源选择菜单
-   （srcMenu）与资产库弹窗（assetPick）的开合。slotData 本身由组合层持有
-   （生成引擎 / @ 引用 / 参数恢复都要读），这里只收 setter 与当前值。 */
+/* 参考素材上传槽位 hook。
+   负责：槽位文件的增删换（本地上传带进度占位 / 资产库选取）、模型级大小与
+   数量限制、来源选择菜单（srcMenu）与资产库弹窗（assetPick）的开合。
+   slotData 本身由组合层持有（生成引擎 / @ 引用 / 参数恢复都要读），这里只收
+   setter 与当前值。 */
 
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { uploadFileSmart } from "@/lib/api";
+import { validateKnownFileSize } from "@/lib/upload-limits";
 import type { ModelConfig } from "@/types/admin-models";
 import type { PickedAsset } from "@/components/studio/assets-browser";
 import { toast } from "@/components/shared/toast";
 import type { SlotData, SlotDef, ToolKey, UploadFile } from "./types";
-import { slotMax } from "./utils";
+import { refLimitFor, slotMax, threeDMultiViewLimit } from "./utils";
 
 export function useUploadSlots({
   slots,
@@ -46,6 +48,23 @@ export function useUploadSlots({
   const localTargetRef = useRef<string | null>(null); // slot key awaiting a local file pick
   const uploadSeqRef = useRef(0); // 上传中占位的唯一 key 计数
 
+  const totalUploadedCount = (data: SlotData): number =>
+    (slots ?? []).reduce((sum, slot) => sum + (data[slot.k] || []).length, 0);
+
+  const capacityIssue = (data: SlotData, slot: SlotDef): string | null => {
+    const perSlotLimit = slotMax(mCfg, tool, slot);
+    if ((data[slot.k] || []).length >= perSlotLimit) {
+      return tool === "mv2_3d"
+        ? `${slot.label}仅支持上传 ${perSlotLimit} 张图片`
+        : `${slot.label}最多 ${perSlotLimit} 个`;
+    }
+    if (tool === "mv2_3d") {
+      const totalLimit = threeDMultiViewLimit(mCfg);
+      if (totalUploadedCount(data) >= totalLimit) return `多视图最多上传 ${totalLimit} 张图片`;
+    }
+    return null;
+  };
+
   // A model switch can remove a slot while its source menu/file picker is open.
   // Close stale entry points so a disabled media kind cannot still be uploaded.
   useEffect(() => {
@@ -69,8 +88,9 @@ export function useUploadSlots({
   const addFile = (k: string, e?: React.MouseEvent) => {
     const slot = slots?.find((s) => s.k === k);
     if (!slot) return;
-    if ((slotData[k] || []).length >= slotMax(mCfg, tool, slot)) {
-      toast.info(slot.label + "最多 " + slotMax(mCfg, tool, slot) + " 个");
+    const issue = capacityIssue(slotData, slot);
+    if (issue) {
+      toast.info(issue);
       return;
     }
     // anchor the 来源 menu just to the right of the clicked trigger (flips left if it would overflow)
@@ -89,18 +109,37 @@ export function useUploadSlots({
   };
 
   // push a real asset (uploaded or picked from 资产库) into a slot, honoring its max.
-  const addRealFile = (k: string, file: { url: string; name?: string; size?: string }) => {
+  const addRealFile = (k: string, file: { url: string; name?: string; size?: string; sizeBytes?: number }): boolean => {
     const slot = slots?.find((s) => s.k === k);
-    if (!slot) return;
+    if (!slot) return false;
+    const issue = capacityIssue(slotData, slot);
+    if (issue) {
+      toast.info(issue);
+      return false;
+    }
+    const sizeMB = refLimitFor(mCfg, tool, slot).size;
+    if ((tool === "i2_3d" || tool === "mv2_3d") && (!Number.isFinite(file.sizeBytes) || !file.sizeBytes || file.sizeBytes <= 0)) {
+      toast.info("无法确认该素材的文件大小，请下载后通过本地上传添加");
+      return false;
+    }
+    const sizeIssue = validateKnownFileSize(file.sizeBytes, file.name, {
+      maxBytes: sizeMB > 0 ? sizeMB * 1024 * 1024 : undefined,
+      label: slot.label,
+    });
+    if (sizeIssue) {
+      toast.info(sizeIssue);
+      return false;
+    }
     setSlotData((prev) => {
       const arr = prev[k] || [];
-      if (arr.length >= slotMax(mCfg, tool, slot)) return prev; // silently cap (already warned on open)
+      if (capacityIssue(prev, slot)) return prev;
       const uf: UploadFile =
         slot.type === "image"
-          ? { g: file.url, url: file.url, n: file.name || "参考图", s: file.size || "" }
+          ? { g: file.url, url: file.url, n: file.name || "参考图", s: file.size || "", sizeBytes: file.sizeBytes }
           : { n: file.name || (slot.type === "video" ? "video.mp4" : "audio.mp3"), d: "", url: file.url };
       return { ...prev, [k]: [...arr, uf] };
     });
+    return true;
   };
 
   // 本地上传: open the OS file picker for the slot, then upload each chosen file.
@@ -125,7 +164,10 @@ export function useUploadSlots({
       return;
     }
     const isImg = slot?.type === "image";
-    await ensureSession();
+    if (!(await ensureSession())) {
+      e.target.value = "";
+      return;
+    }
     // slotData 上某个占位项打补丁的小工具(按 key 定位;找不到=已被移除,静默跳过)
     const patch = (key: string, fn: (f: UploadFile) => UploadFile) =>
       setSlotData((prev) => ({ ...prev, [k]: (prev[k] || []).map((f) => (f.key === key ? fn(f) : f)) }));
@@ -134,27 +176,48 @@ export function useUploadSlots({
 
     // 上限用本地计数判定:不能依赖 setSlotData 更新函数里的标志(那是异步/渲染期
     // 执行的,同步读取拿不到结果)。以当前 slotData 长度起算,每加一个自增。
-    const cap = slot ? slotMax(mCfg, tool, slot) : Infinity;
-    let curCount = (slotData[k] || []).length;
+    const perSlotCap = slotMax(mCfg, tool, slot);
+    const totalCap = tool === "mv2_3d" ? threeDMultiViewLimit(mCfg) : Infinity;
+    let currentSlotCount = (slotData[k] || []).length;
+    let currentTotalCount = tool === "mv2_3d" ? totalUploadedCount(slotData) : currentSlotCount;
+    const sizeMB = refLimitFor(mCfg, tool, slot).size;
     for (const file of Array.from(list)) {
-      if (curCount >= cap) {
-        toast.info(slot ? `${slot.label}最多 ${cap} 个` : "已达上限");
+      if (currentSlotCount >= perSlotCap) {
+        toast.info(tool === "mv2_3d" ? `${slot.label}仅支持上传 ${perSlotCap} 张图片` : `${slot.label}最多 ${perSlotCap} 个`);
         break;
       }
-      curCount++;
+      if (currentTotalCount >= totalCap) {
+        toast.info(`多视图最多上传 ${totalCap} 张图片`);
+        break;
+      }
+      const sizeIssue = validateKnownFileSize(file.size, file.name, {
+        maxBytes: sizeMB > 0 ? sizeMB * 1024 * 1024 : undefined,
+        label: slot.label,
+      });
+      if (sizeIssue) {
+        toast.info(sizeIssue);
+        continue;
+      }
+      currentSlotCount++;
+      currentTotalCount++;
       const sizeLabel = (file.size / 1024 / 1024).toFixed(1) + " MB";
       const blobUrl = isImg ? URL.createObjectURL(file) : "";
       const tkey = `up_${uploadSeqRef.current++}`;
       // 立刻插入「上传中」占位:图片带本地预览,让用户马上有反馈,不再以为没传上
       setSlotData((prev) => {
         const uf: UploadFile = isImg
-          ? { key: tkey, g: blobUrl, n: file.name, s: sizeLabel, uploading: true, progress: 0 }
+          ? { key: tkey, g: blobUrl, n: file.name, s: sizeLabel, sizeBytes: file.size, uploading: true, progress: 0 }
           : { key: tkey, n: file.name, d: "", uploading: true, progress: 0 };
         return { ...prev, [k]: [...(prev[k] || []), uf] };
       });
       try {
-        const res = await uploadFileSmart(file, (pct) =>
-          patch(tkey, (f) => ({ ...f, progress: Math.max(0, Math.min(100, Math.round(pct))) })),
+        const res = await uploadFileSmart(
+          file,
+          (pct) => patch(tkey, (f) => ({ ...f, progress: Math.max(0, Math.min(100, Math.round(pct))) })),
+          {
+            maxBytes: sizeMB > 0 ? sizeMB * 1024 * 1024 : undefined,
+            label: slot.label,
+          },
         );
         if (res.success && res.data?.fileUrl) {
           const url = res.data.fileUrl;
@@ -188,8 +251,9 @@ export function useUploadSlots({
 
   const chooseAsset = (a: PickedAsset) => {
     const k = assetPick;
-    setAssetPick(null);
-    if (k) addRealFile(k, { url: a.url, name: a.name });
+    if (k && addRealFile(k, { url: a.url, name: a.name, sizeBytes: a.sizeBytes })) {
+      setAssetPick(null);
+    }
   };
 
   const removeFile = (k: string, i: number) =>

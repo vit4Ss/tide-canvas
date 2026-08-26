@@ -11,6 +11,9 @@
 /** 模型标签的配色档：hot 红底（热门类）/ new 青底（新品类）/ info 灰字（说明类）。 */
 export type ModelBadgeTone = "hot" | "new" | "info";
 
+/** Relay 3D protocol hard limit; shared by admin validation and the studio. */
+export const MAX_3D_MULTI_VIEW_IMAGES = 8;
+
 /** 模型选择列表名称旁的小标签（后台模型管理配置；空 = 不显示）。 */
 export interface ModelBadge {
   text: string;
@@ -37,6 +40,10 @@ export interface ModelConfig {
   maxRefImages?: number;
   /** 图生图：单张参考图大小上限（MB） */
   maxRefImageSizeMB?: number;
+  /** 3D：图生 3D / 多视图模式的单张图片大小上限（MB）；0 / 未设 = 平台通用限制 */
+  max3DImageSizeMB?: number;
+  /** 3D：多视图模式最多上传的图片数量；未设 = Relay 协议上限 */
+  max3DMultiViewImages?: number;
   /** 文本模型：是否支持联网搜索 */
   webSearch?: boolean;
   /** 文本模型：是否支持文件上传 */

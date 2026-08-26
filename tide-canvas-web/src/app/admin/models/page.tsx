@@ -42,10 +42,12 @@ import { confirmDialog } from "@/components/shared/confirm";
 import { adminModelsApi } from "@/lib/admin-models-api";
 import { BRAND_ICONS, brandIconUrl, resolveModelSwatch } from "@/lib/model-brand";
 import { usesVideoPerRequestBilling, videoPerRequestRate } from "@/lib/price-matrix";
+import { MAX_SINGLE_UPLOAD_MB } from "@/lib/upload-limits";
 import {
   MODEL_STATUS_LABEL,
   MODEL_TYPE_LABEL,
   MODEL_TYPE_FORM_LABEL,
+  MAX_3D_MULTI_VIEW_IMAGES,
   type AdminModelVO,
   type ModelBadge,
   type ModelBadgeTone,
@@ -832,6 +834,8 @@ function ModelModal({
     ideas: c0.ideas ?? [],
     maxRefImages: c0.maxRefImages ?? 0,
     maxRefImageSizeMB: c0.maxRefImageSizeMB ?? 0,
+    max3DImageSizeMB: c0.max3DImageSizeMB ?? 0,
+    max3DMultiViewImages: c0.max3DMultiViewImages ?? MAX_3D_MULTI_VIEW_IMAGES,
     webSearch: c0.webSearch ?? false,
     fileUpload: c0.fileUpload ?? false,
     maxFileCount: c0.maxFileCount ?? 0,
@@ -861,12 +865,28 @@ function ModelModal({
 
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const threeDImageSizeRef = useRef<HTMLInputElement>(null);
+  const threeDMultiViewCountRef = useRef<HTMLInputElement>(null);
 
   const isImage = type === "image";
   const isVideo = type === "video";
   const isText = type === "text";
   const is3D = type === "3d";
   const isUpscale = type === "upscale";
+  const threeDImageSize = Number(cfg.max3DImageSizeMB ?? 0);
+  const threeDMultiViewCount = Number(cfg.max3DMultiViewImages ?? MAX_3D_MULTI_VIEW_IMAGES);
+  const threeDImageSizeError = is3D && (
+    !Number.isFinite(threeDImageSize) || threeDImageSize < 0 || threeDImageSize > MAX_SINGLE_UPLOAD_MB
+  )
+    ? `请输入 0–${MAX_SINGLE_UPLOAD_MB} MB 之间的数值`
+    : undefined;
+  const threeDMultiViewCountError = is3D && (
+    !Number.isInteger(threeDMultiViewCount)
+    || threeDMultiViewCount < 1
+    || threeDMultiViewCount > MAX_3D_MULTI_VIEW_IMAGES
+  )
+    ? `请输入 1–${MAX_3D_MULTI_VIEW_IMAGES} 之间的整数`
+    : undefined;
   const isPerRequestVideo = isVideo && usesVideoPerRequestBilling(cfg);
   const omniRefModeEnabled = isVideo && (!(cfg.modes?.length) || cfg.modes.includes("omni_ref"));
   const omniRefVideoSupported = cfg.omniRefVideoEnabled !== false;
@@ -975,6 +995,18 @@ function ModelModal({
     ) {
       setErr("全能参考至少需要支持一种参考素材");
       return false;
+    }
+    if (is3D) {
+      if (threeDImageSizeError) {
+        setErr(`3D 单张图片大小上限必须在 0–${MAX_SINGLE_UPLOAD_MB} MB 之间`);
+        threeDImageSizeRef.current?.focus();
+        return false;
+      }
+      if (threeDMultiViewCountError) {
+        setErr(`3D 多视图图片数量必须是 1–${MAX_3D_MULTI_VIEW_IMAGES} 的整数`);
+        threeDMultiViewCountRef.current?.focus();
+        return false;
+      }
     }
     if (isPerRequestVideo) {
       const resolutions = cfg.resolutions ?? [];
@@ -1414,6 +1446,55 @@ function ModelModal({
               value={cfg.modes ?? []}
               onChange={(next) => setC({ modes: next })}
             />
+          </FormSection>
+          <FormSection
+            label="参考图片限制"
+            hint={`同时用于图生 3D 与多视图生成；多视图数量不能超过 Relay 的 ${MAX_3D_MULTI_VIEW_IMAGES} 张硬上限`}
+          >
+            <FormGrid>
+              <Field
+                label="单张图片大小上限（MB）"
+                span={2}
+                hint={`0 = 沿用平台通用限制（${MAX_SINGLE_UPLOAD_MB} MB）`}
+                error={threeDImageSizeError}
+              >
+                <input
+                  ref={threeDImageSizeRef}
+                  type="number"
+                  min="0"
+                  max={MAX_SINGLE_UPLOAD_MB}
+                  step="0.1"
+                  inputMode="decimal"
+                  value={String(cfg.max3DImageSizeMB ?? 0)}
+                  onChange={(e) => {
+                    setErr(null);
+                    setC({ max3DImageSizeMB: Number(e.target.value) || 0 });
+                  }}
+                  placeholder="如：10"
+                />
+              </Field>
+              <Field
+                label="多视图最大图片数量"
+                span={2}
+                hint={`允许 1–${MAX_3D_MULTI_VIEW_IMAGES} 张；用户可在支持的视角中任选`}
+                error={threeDMultiViewCountError}
+              >
+                <input
+                  ref={threeDMultiViewCountRef}
+                  type="number"
+                  min="1"
+                  max={MAX_3D_MULTI_VIEW_IMAGES}
+                  step="1"
+                  inputMode="numeric"
+                  value={String(cfg.max3DMultiViewImages ?? MAX_3D_MULTI_VIEW_IMAGES)}
+                  onChange={(e) => {
+                    setErr(null);
+                    setC({ max3DMultiViewImages: Number(e.target.value) || 0 });
+                  }}
+                  placeholder={String(MAX_3D_MULTI_VIEW_IMAGES)}
+                />
+              </Field>
+            </FormGrid>
           </FormSection>
         </FormCard>
       )}

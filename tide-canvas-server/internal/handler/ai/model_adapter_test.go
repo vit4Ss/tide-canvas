@@ -83,6 +83,27 @@ func TestMarketToAiModelPublishesDerivedHandlers(t *testing.T) {
 	}
 }
 
+func TestMarketToAiModelPreservesThreeDReferenceLimits(t *testing.T) {
+	got := marketToAiModel(&model.MarketModel{
+		Type:   "3d",
+		Config: `{"max3DImageSizeMB":12,"max3DMultiViewImages":3}`,
+		Status: marketModelListed,
+	})
+	var cfg struct {
+		MaxImageSizeMB     int `json:"max3DImageSizeMB"`
+		MaxMultiViewImages int `json:"max3DMultiViewImages"`
+	}
+	if err := json.Unmarshal([]byte(got.Config), &cfg); err != nil {
+		t.Fatalf("translated config is invalid: %v", err)
+	}
+	if cfg.MaxImageSizeMB != 12 || cfg.MaxMultiViewImages != 3 {
+		t.Fatalf("3D reference limits = %+v", cfg)
+	}
+	if limit := configured3DMultiViewLimit(got.Config); limit != 3 {
+		t.Fatalf("configured multi-view limit = %d, want 3", limit)
+	}
+}
+
 func TestModelVideoDurationAllowedUsesOnlyAdminConfig(t *testing.T) {
 	m := &model.AiModel{Config: `{
 		"durations":["4s","5s","6s","7s","8s","9s","10s","11s","12s","13s","14s","15s"],

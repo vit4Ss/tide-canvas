@@ -49,6 +49,8 @@ export interface PickedAsset {
   url: string;
   name: string;
   kind: MediaKind;
+  /** Known for uploaded files; generated assets may not expose a byte size. */
+  sizeBytes?: number;
 }
 
 const TABS: { t: TabKey; label: string }[] = [
@@ -1456,7 +1458,13 @@ const UploadCard = memo(function UploadCard({
       if (pickDisabled) {
         toast.info("该素材已经添加到输入框");
       } else if (file.fileUrl) {
-        onPick?.({ id: String(file.id), url: file.fileUrl, name: file.originalName || "文件", kind });
+        onPick?.({
+          id: String(file.id),
+          url: file.fileUrl,
+          name: file.originalName || "文件",
+          kind,
+          sizeBytes: file.fileSize,
+        });
       } else {
         toast.info("该文件暂无可选取的内容");
       }
@@ -1499,7 +1507,13 @@ const UploadCard = memo(function UploadCard({
                 toast.info("该素材已经添加到输入框");
                 return;
               }
-              onPick?.({ id: String(file.id), url: file.fileUrl!, name: file.originalName || "音频", kind });
+              onPick?.({
+                id: String(file.id),
+                url: file.fileUrl!,
+                name: file.originalName || "音频",
+                kind,
+                sizeBytes: file.fileSize,
+              });
             }}
           >
             {pickDisabled ? "已添加" : pickSelected ? "已选择" : "选择"}

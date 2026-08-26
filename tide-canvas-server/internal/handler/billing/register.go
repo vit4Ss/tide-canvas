@@ -23,7 +23,7 @@ import (
 //	POST   /api/orders/:id/cancel    -> void                           (auth)
 //	POST   /api/orders/:id/verify    -> VerifyResult{paid,granted}     (auth)
 func Register(api *gin.RouterGroup, d *app.Deps) {
-	svc := newService(d.DB, d.Cfg)
+	svc := newService(d.DB, d.Cfg, d.Alerts)
 	h := newHandler(svc)
 
 	// Public pricing catalog + payment-gateway webhook. All routes are static

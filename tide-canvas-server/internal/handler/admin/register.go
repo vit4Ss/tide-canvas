@@ -49,4 +49,5 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	RegisterConfig(mod("config"), d)
 	RegisterEmail(mod("email"), d)
 	RegisterNotifications(mod("notifications"), d)
+	RegisterAlerts(mod("alerts"), d)
 }

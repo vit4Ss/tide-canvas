@@ -56,6 +56,10 @@ func Models() []any {
 		// System / misc.
 		&Notification{},
 		&SysRole{},
+		&AlertChannel{},
+		&AlertRule{},
+		&AlertEvent{},
+		&AlertDelivery{},
 
 		// Blog（前台 /blog + 后台「博客管理」；来源=自建 self / Telegram 频道同步）.
 		&BlogPost{},

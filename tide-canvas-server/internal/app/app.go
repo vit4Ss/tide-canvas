@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 
 	"tidecanvas/internal/config"
+	"tidecanvas/internal/pkg/alerting"
 	"tidecanvas/internal/pkg/storage"
 )
 
@@ -16,4 +17,5 @@ type Deps struct {
 	RDB     *redis.Client
 	Cfg     *config.Config
 	Storage storage.StorageStrategy
+	Alerts  *alerting.Service
 }

@@ -29,6 +29,7 @@ import (
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
+	"tidecanvas/internal/pkg/relaymedia"
 	"tidecanvas/internal/pkg/response"
 )
 
@@ -308,6 +309,12 @@ func (h *modelsHandler) create(c *gin.Context) {
 			return
 		}
 	}
+	if mType == "3d" {
+		if err := validate3DReferenceConfig(dto.Config); err != nil {
+			response.Fail(c, response.CodeBadRequest, err.Error())
+			return
+		}
+	}
 	m := &model.MarketModel{
 		Name:        strings.TrimSpace(dto.Name),
 		Description: strings.TrimSpace(dto.Description),
@@ -530,6 +537,12 @@ func (h *modelsHandler) update(c *gin.Context) {
 				return
 			}
 		}
+		if effectiveType == "3d" {
+			if err := validate3DReferenceConfig(effectiveConfig); err != nil {
+				response.Fail(c, response.CodeBadRequest, err.Error())
+				return
+			}
+		}
 	}
 
 	fields := map[string]any{}
@@ -634,6 +647,12 @@ func (h *modelsHandler) setStatus(c *gin.Context) {
 				return
 			}
 			if err := validateReferenceVideoPricingConfig(json.RawMessage(current.Config)); err != nil {
+				response.Fail(c, response.CodeBadRequest, err.Error())
+				return
+			}
+		}
+		if current.Type == "3d" {
+			if err := validate3DReferenceConfig(json.RawMessage(current.Config)); err != nil {
 				response.Fail(c, response.CodeBadRequest, err.Error())
 				return
 			}
@@ -909,6 +928,30 @@ func validateOmniReferenceConfig(raw json.RawMessage) error {
 	disabled := func(value *bool) bool { return value != nil && !*value }
 	if disabled(cfg.ImageEnabled) && disabled(cfg.VideoEnabled) && disabled(cfg.AudioEnabled) {
 		return errors.New("全能参考至少需要支持一种参考素材")
+	}
+	return nil
+}
+
+func validate3DReferenceConfig(raw json.RawMessage) error {
+	const maximumImageSizeMB = 50
+	if len(raw) == 0 {
+		return nil
+	}
+	if !json.Valid(raw) {
+		return errors.New("3D 参考图片配置无效")
+	}
+	var cfg struct {
+		MaxImageSizeMB     *float64 `json:"max3DImageSizeMB"`
+		MaxMultiViewImages *int     `json:"max3DMultiViewImages"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return errors.New("3D 参考图片配置无效")
+	}
+	if cfg.MaxImageSizeMB != nil && (*cfg.MaxImageSizeMB < 0 || *cfg.MaxImageSizeMB > maximumImageSizeMB || math.IsNaN(*cfg.MaxImageSizeMB) || math.IsInf(*cfg.MaxImageSizeMB, 0)) {
+		return fmt.Errorf("3D 单张图片大小上限必须在 0–%d MB 之间", maximumImageSizeMB)
+	}
+	if cfg.MaxMultiViewImages != nil && (*cfg.MaxMultiViewImages < 1 || *cfg.MaxMultiViewImages > relaymedia.MaxThreeDMultiViewImages) {
+		return fmt.Errorf("3D 多视图图片数量必须是 1–%d 的整数", relaymedia.MaxThreeDMultiViewImages)
 	}
 	return nil
 }

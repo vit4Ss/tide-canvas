@@ -137,6 +137,27 @@ func TestThreeDParamsMapsStudioInput(t *testing.T) {
 	}
 }
 
+func TestConfigured3DMultiViewLimit(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want int
+	}{
+		{name: "configured", raw: `{"max3DMultiViewImages":4}`, want: 4},
+		{name: "missing", raw: `{}`, want: 8},
+		{name: "invalid", raw: `{"max3DMultiViewImages":0}`, want: 8},
+		{name: "clamped to relay maximum", raw: `{"max3DMultiViewImages":12}`, want: 8},
+		{name: "malformed", raw: `{`, want: 8},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := configured3DMultiViewLimit(tt.raw); got != tt.want {
+				t.Fatalf("configured3DMultiViewLimit(%q) = %d, want %d", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestUpscaleParamsMapsStudioInput(t *testing.T) {
 	p := (&relayProviderClient{}).upscaleParams("wavespeed-ai/video-upscaler", map[string]any{
 		"videoUrl":         "https://example.com/input.mp4",

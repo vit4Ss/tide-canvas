@@ -48,6 +48,7 @@ var AdminModuleKeys = []string{
 	"admin.payments",         // 支付管理
 	"admin.balances",         // 供应商余额监控
 	"admin.notifications",    // 消息管理
+	"admin.alerts",           // 管理员异常告警通知
 	"admin.config",           // 配置管理
 	"admin.email",            // 邮件配置
 }

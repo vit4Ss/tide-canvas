@@ -18,6 +18,7 @@ import (
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/alerting"
 	"tidecanvas/internal/pkg/cache"
 	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
@@ -54,6 +55,7 @@ type service struct {
 	systemPrompt string
 	// storage backs durable server-side artifacts (e.g. grid-split cells).
 	storage storage.StorageStrategy
+	alerts  *alerting.Service
 	// confirmVideoDuration verifies ownership and reads source media metadata
 	// server-side before any points are charged. Video upscale and optional
 	// reference-video billing share the same verifier. It is injectable in tests.
@@ -82,6 +84,7 @@ func newService(d *app.Deps) *service {
 		relay:        relaychat.New(d.Cfg.Relay.BaseURL, d.Cfg.Relay.APIKey),
 		systemPrompt: d.Cfg.LLM.SystemPrompt,
 		storage:      d.Storage,
+		alerts:       d.Alerts,
 		sem:          make(chan struct{}, maxConcurrentGenerations),
 	}
 	if d.Storage != nil {
@@ -252,6 +255,9 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 		return nil, skillPlacementError{message: "所选模型不支持当前生成方式，请切换模型或生成模式"}
 	}
 	if err := validateRequiredReferenceInput(&dto); err != nil {
+		return nil, err
+	}
+	if err := validate3DReferenceInput(&dto, m); err != nil {
 		return nil, err
 	}
 	if err := validateOmniReferenceInput(&dto, m); err != nil {
@@ -565,6 +571,7 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 		}
 		if err := refundTaskOnce(s.repo.db, taskID, reason); err != nil {
 			logger.L().Error("ai: refund failed", zap.String("taskId", taskID.String()), zap.Error(err))
+			s.publishRefundFailure(taskID, cost, reason, err)
 			return
 		}
 		refunded = true
@@ -621,6 +628,7 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 			}
 			s.clearTaskState(context.Background(), taskID)
 			refund("生成异常退款")
+			s.publishGenerationFailure(taskID, gh.Name(), m, fmt.Errorf("panic: %v", r), cost, refunded)
 		}
 	}()
 
@@ -742,6 +750,7 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 	// Failed generation: give the charged points back.
 	if task.Status == statusFailed {
 		refund("生成失败退款")
+		s.publishGenerationFailure(taskID, gh.Name(), m, genErr, cost, refunded)
 	}
 
 	// 生成成功 → 登记成一条未发布作品（后台「作品管理」的数据源）。放在

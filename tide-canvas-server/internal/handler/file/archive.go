@@ -160,8 +160,10 @@ func PrepareRemoteArchive(ctx context.Context, d *app.Deps, ownerID, sourceArtif
 	counter := &countingReader{r: io.LimitReader(resp.Body, maxFileSize+1)}
 	storedURL, err := s.store.Save(ctx, key, counter, contentType)
 	if err != nil {
+		s.publishStorageFailure("save", err)
 		return nil, fmt.Errorf("store archive: %w", err)
 	}
+	s.resolveStorageFailure("save")
 	if counter.n > maxFileSize {
 		_ = s.store.Delete(ctx, key)
 		return nil, permanentArchive(errFileTooLarge)

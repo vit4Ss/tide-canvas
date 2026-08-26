@@ -59,6 +59,7 @@ export const ADMIN_NAV: AdminNavEntry[] = [
   { label: "支付管理", href: "/admin/payments", icon: "pay", perm: "payments", description: "订单流水、支付渠道与结算状态" },
   { group: "系统" },
   { label: "消息管理", href: "/admin/notifications", icon: "bell", perm: "notifications", description: "站内通知、受众与触达记录" },
+  { label: "告警通知", href: "/admin/alerts", icon: "alert", perm: "alerts", description: "管理员异常通知、渠道、规则与投递记录" },
   { label: "配置管理", href: "/admin/config", icon: "cog", perm: "config", description: "站点、存储、注册与系统参数" },
   { label: "邮件配置", href: "/admin/email", icon: "mail", perm: "email", description: "邮件模板、发送配置与 API 密钥" },
 ];
