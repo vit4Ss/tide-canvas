@@ -2,6 +2,10 @@
 
 import { memo } from "react";
 import type { CanvasNode, Connection } from "@/stores/use-canvas-store";
+import {
+  canvasConnectionGeometry,
+  canvasConnectionLayerBounds,
+} from "@/lib/canvas-connection-geometry";
 
 interface TempConnection {
   startWorldX: number;
@@ -24,31 +28,53 @@ function bezierPath(sx: number, sy: number, tx: number, ty: number): string {
   // 控制点偏移：水平间距的一半（水平长线保持接近直线），但垂直落差大、水平间距小时
   // 只按水平算会让中段近乎竖直、两端急弯——用直线距离兜底抬高偏移；上限压到 160，
   // 否则「横向很近、纵向很远」的连线（如源节点右侧竖排的多个结果）会甩出向左的大回环。
-  const dist = Math.hypot(tx - sx, ty - sy);
-  const dx = Math.max(Math.abs(tx - sx) * 0.5, Math.min(dist * 0.3, 160), 50);
-  return `M ${sx} ${sy} C ${sx + dx} ${sy}, ${tx - dx} ${ty}, ${tx} ${ty}`;
+  return canvasConnectionGeometry(sx, sy, tx, ty).path;
 }
 
 export const ConnectionsLayer = memo(function ConnectionsLayer({ nodes, connections, temp, selectedConnectionId, selectedNodeIds, onConnectionClick }: Props) {
   const nodeMap = new Map(nodes.map((n) => [n.id, n]));
 
+  const renderedConnections = connections.flatMap((connection) => {
+    const source = nodeMap.get(connection.sourceId);
+    const target = nodeMap.get(connection.targetId);
+    if (!source || !target) return [];
+    const sourceWidth = source.contentW ?? source.width;
+    const sourceHeight = source.contentH ?? source.height;
+    const targetWidth = target.contentW ?? target.width;
+    const targetHeight = target.contentH ?? target.height;
+    const geometry = canvasConnectionGeometry(
+      source.x + (source.width + sourceWidth) / 2,
+      source.y + sourceHeight / 2,
+      target.x + (target.width - targetWidth) / 2,
+      target.y + targetHeight / 2,
+    );
+    return [{ connection, geometry }];
+  });
+  const tempGeometry = temp
+    ? canvasConnectionGeometry(temp.startWorldX, temp.startWorldY, temp.currentWorldX, temp.currentWorldY)
+    : null;
+  const layerBounds = canvasConnectionLayerBounds([
+    ...renderedConnections.map(({ geometry }) => geometry),
+    ...(tempGeometry ? [tempGeometry] : []),
+  ]);
+
+  if (!layerBounds) return null;
+
   return (
-    <svg className="absolute inset-0" style={{ overflow: "visible", pointerEvents: "none" }}>
-      {connections.map((conn) => {
-        const source = nodeMap.get(conn.sourceId);
-        const target = nodeMap.get(conn.targetId);
-        if (!source || !target) return null;
-        // 端点锚定到「卡片」真实边缘中点：卡片按图片比例渲染为 contentW×contentH，
-        // 在 node.width 容器内水平居中、垂直自 node.y 起。非图片节点回退用名义尺寸。
-        const sCW = source.contentW ?? source.width;
-        const sCH = source.contentH ?? source.height;
-        const tCW = target.contentW ?? target.width;
-        const tCH = target.contentH ?? target.height;
-        const sx = source.x + (source.width + sCW) / 2; // 源卡片右边缘
-        const sy = source.y + sCH / 2;                  // 源卡片垂直中心
-        const tx = target.x + (target.width - tCW) / 2; // 目标卡片左边缘
-        const ty = target.y + tCH / 2;                  // 目标卡片垂直中心
-        const path = bezierPath(sx, sy, tx, ty);
+    <svg
+      className="absolute"
+      width={layerBounds.width}
+      height={layerBounds.height}
+      viewBox={layerBounds.viewBox}
+      style={{
+        left: layerBounds.left,
+        top: layerBounds.top,
+        overflow: "hidden",
+        pointerEvents: "none",
+      }}
+    >
+      {renderedConnections.map(({ connection: conn, geometry }) => {
+        const path = geometry.path;
         const isSelected = selectedConnectionId === conn.id;
         // 与选中节点相连（入边/出边）→ 高亮 + 流光
         const related = !!selectedNodeIds && (selectedNodeIds.has(conn.sourceId) || selectedNodeIds.has(conn.targetId));
