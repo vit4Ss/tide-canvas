@@ -906,10 +906,10 @@ function SupplierBalanceAccount({ row }: { row: SupplierBalanceVO }) {
         </div>
       ) : null}
 
-      <footer className="balance-account-console">
+      <div className="balance-account-console">
         <i aria-hidden />
         <span>{row.message || "等待下一次查询"}</span>
-      </footer>
+      </div>
     </article>
   );
 }
