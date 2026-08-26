@@ -895,12 +895,15 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     {
       key: "media.replace",
       group: "media",
+      overflowLabel: "替换视频",
       content: (
         <button
+          type="button"
           onMouseDown={stop}
           onClick={openFilePicker}
           disabled={nodeUploading || generating}
           title={generating ? "生成完成后可替换素材" : "重新上传"}
+          aria-label={generating ? "生成完成后可替换素材" : "替换视频"}
           className="rounded-xl p-2 hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-neutral-800"
         >
           <Upload className="h-4 w-4" />
@@ -910,8 +913,9 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     {
       key: "media.download",
       group: "media",
+      overflowLabel: "下载视频",
       content: (
-        <button onMouseDown={stop} onClick={(e) => handleDownload(e, node.videoSrc, node.title || "video", "mp4")} disabled={downloading} title="下载" className="rounded-xl p-2 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">
+        <button type="button" onMouseDown={stop} onClick={(e) => handleDownload(e, node.videoSrc, node.title || "video", "mp4")} disabled={downloading} title="下载" aria-label="下载视频" className="rounded-xl p-2 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">
           {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
         </button>
       ),
@@ -919,8 +923,9 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     {
       key: "media.preview",
       group: "media",
+      overflowLabel: "查看视频",
       content: (
-        <button onMouseDown={stop} onClick={(e) => { stop(e); setPreviewOpen(true); }} title="查看视频" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800">
+        <button type="button" onMouseDown={stop} onClick={(e) => { stop(e); setPreviewOpen(true); }} title="查看视频" aria-label="查看视频" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800">
           <Maximize2 className="h-4 w-4" />
         </button>
       ),

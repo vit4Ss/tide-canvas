@@ -97,14 +97,17 @@ export function BatchCountDropdown({ value, options, open, onOpenChange, onChang
               ref={menuRef}
               role="menu"
               aria-label="图片张数"
-              className="fixed z-[90] rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-lg"
+              className="fixed z-[90] animate-in rounded-2xl border border-border/80 bg-popover/95 p-1.5 text-popover-foreground shadow-[0_18px_50px_rgba(15,23,42,0.18)] backdrop-blur-xl duration-100 fade-in-0 zoom-in-95 motion-reduce:animate-none"
               style={{
                 left: pos.left,
                 width: MENU_WIDTH,
                 ...(pos.up ? { bottom: window.innerHeight - pos.top + 4 } : { top: pos.top + 4 }),
               }}
             >
-              <div className="px-2 py-1 text-xs font-semibold text-muted-foreground">图片张数</div>
+              <div className="flex items-center justify-between px-2.5 pb-1.5 pt-1 text-[11px] font-medium text-muted-foreground">
+                <span>图片张数</span>
+                <span className="font-normal opacity-70">一次生成</span>
+              </div>
               {normalizedOptions.map((count) => (
                 <button
                   key={count}
@@ -115,12 +118,12 @@ export function BatchCountDropdown({ value, options, open, onOpenChange, onChang
                     close();
                   }}
                   className={cn(
-                    "flex h-8 w-full items-center justify-between rounded-md px-2 text-[13px] font-medium transition-colors hover:bg-accent",
-                    effectiveValue === count && "bg-primary text-primary-foreground hover:bg-primary",
+                    "flex h-9 w-full items-center justify-between rounded-xl px-2.5 text-[13px] font-medium transition-colors hover:bg-accent/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40",
+                    effectiveValue === count && "bg-accent/80 text-popover-foreground",
                   )}
                 >
                   <span>{count}张</span>
-                  {effectiveValue === count && <Check className="h-3.5 w-3.5" />}
+                  {effectiveValue === count && <Check className="h-3.5 w-3.5 text-blue-500" />}
                 </button>
               ))}
             </div>,

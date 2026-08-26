@@ -467,7 +467,7 @@ export function PromptRefEditor({
         {mentionOpen && mentionList.length > 0 && mentionPos && (
           <div
             ref={mentionMenuRef}
-            className="prompt-scroll absolute z-30 max-h-48 overflow-auto rounded-xl border border-neutral-200 bg-white p-1 shadow-[0_16px_40px_rgba(15,23,42,0.16)] dark:border-white/12 dark:bg-[#1c1c20] dark:shadow-black/35"
+            className="prompt-scroll absolute z-30 max-h-48 animate-in overflow-auto rounded-2xl border border-neutral-200/80 bg-white/95 p-1.5 shadow-[0_18px_50px_rgba(15,23,42,0.18)] backdrop-blur-xl duration-100 fade-in-0 zoom-in-95 motion-reduce:animate-none dark:border-white/10 dark:bg-neutral-900/95 dark:shadow-black/55"
             style={{
               left: mentionPos.left,
               width: MENTION_MENU_W,
@@ -484,10 +484,10 @@ export function PromptRefEditor({
                 ref={i === Math.min(mentionIndex, mentionList.length - 1) ? activeItemRef : null}
                 onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); selectMention(ref.id); }}
                 onMouseEnter={() => setMentionIndex(i)}
-                className={`flex min-h-11 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors ${
+                className={`flex min-h-11 w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/35 ${
                   i === Math.min(mentionIndex, mentionList.length - 1)
-                    ? "bg-neutral-100 dark:bg-neutral-800"
-                    : "hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                    ? "bg-neutral-100/85 dark:bg-white/10"
+                    : "hover:bg-neutral-100/65 dark:hover:bg-white/[0.07]"
                 }`}
               >
                 {ref.thumb ? (

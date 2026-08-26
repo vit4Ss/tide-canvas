@@ -262,7 +262,7 @@ export function PopoverSelect({
         onClick={() => (menuOpen ? close() : openMenu())}
         onKeyDown={onTriggerKeyDown}
         className={cn(
-          "inline-flex items-center justify-between gap-1.5 rounded-lg border px-2.5 py-1.5 text-sm transition-[background-color,border-color,box-shadow,color] duration-150 ease-out motion-reduce:transition-none",
+          "inline-flex items-center justify-between gap-1.5 rounded-xl border px-2.5 py-1.5 text-sm transition-[background-color,border-color,box-shadow,color] duration-150 ease-out motion-reduce:transition-none",
           tone === "director"
             ? "border-white/10 bg-white/[0.08] text-white hover:border-white/20 hover:bg-white/[0.12] focus-visible:ring-cyan-300/60"
             : tone === "dark"
@@ -292,12 +292,12 @@ export function PopoverSelect({
               onMouseDown={(event) => event.stopPropagation()}
               onWheel={(event) => event.stopPropagation()}
               className={cn(
-                "fixed overscroll-contain overflow-y-auto rounded-xl border p-1.5 outline-none",
+                "fixed animate-in overscroll-contain overflow-y-auto rounded-2xl border p-1.5 outline-none duration-100 fade-in-0 zoom-in-95 motion-reduce:animate-none",
                 tone === "director"
                   ? "z-[260] border-white/10 bg-slate-950 text-white shadow-[0_12px_32px_rgba(0,0,0,0.38)] [scrollbar-color:rgba(255,255,255,0.18)_transparent] [scrollbar-width:thin]"
                   : tone === "dark"
                     ? "z-[260] border-white/10 bg-[#1c1c1f] text-neutral-100 shadow-[0_12px_32px_rgba(0,0,0,0.36)] [scrollbar-color:rgba(255,255,255,0.18)_transparent] [scrollbar-width:thin]"
-                  : "z-[260] border-border bg-popover text-popover-foreground shadow-md",
+                  : "z-[260] border-border/80 bg-popover text-popover-foreground shadow-[0_18px_50px_rgba(15,23,42,0.18)]",
                 menuClassName,
               )}
               style={{
@@ -318,7 +318,7 @@ export function PopoverSelect({
                   onPointerMove={() => { if (!opt.disabled) setActive(i); }}
                   onClick={() => pick(i)}
                   className={cn(
-                    "flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm transition-colors duration-150 motion-reduce:transition-none",
+                    "flex cursor-pointer items-center gap-2 rounded-xl px-2.5 py-2 text-sm transition-colors duration-150 motion-reduce:transition-none",
                     tone === "director"
                       ? opt.value === value
                         ? "bg-white/[0.12] text-white"
@@ -327,14 +327,16 @@ export function PopoverSelect({
                         ? opt.value === value
                           ? "bg-white/[0.14] text-white"
                           : i === effectiveActive ? "bg-white/[0.09] text-white" : "text-neutral-300"
-                      : i === effectiveActive && "bg-accent",
+                      : opt.value === value
+                        ? "bg-accent/80 text-popover-foreground"
+                        : i === effectiveActive && "bg-accent/55",
                     opt.disabled && "cursor-not-allowed opacity-50",
                   )}
                 >
                   <Check className={cn(
                     "h-3.5 w-3.5 shrink-0",
                     opt.value === value
-                      ? tone === "director" ? "text-cyan-300 opacity-100" : "opacity-100"
+                      ? tone === "director" ? "text-cyan-300 opacity-100" : "text-blue-500 opacity-100"
                       : "opacity-0",
                   )} aria-hidden />
                   <span className="truncate">{opt.label}</span>

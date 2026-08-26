@@ -27,7 +27,7 @@ func TestDefaultCanvasNodeFeaturesConfig(t *testing.T) {
 	if !reflect.DeepEqual(byKey["video"].Features, videoNodeDefaultFeatures) {
 		t.Errorf("video features = %#v, want %#v", byKey["video"].Features, videoNodeDefaultFeatures)
 	}
-	for _, key := range []string{"scene_3d", "text", "audio", "script"} {
+	for _, key := range []string{"3d", "scene_3d", "text", "audio", "script"} {
 		if features := byKey[key].Features; features == nil || len(features) != 0 {
 			t.Errorf("%s features = %#v, want explicit empty", key, features)
 		}

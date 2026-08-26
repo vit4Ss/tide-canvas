@@ -5,6 +5,7 @@ import { buildLayerLayoutUnits, packLayerLayoutUnits } from "@/lib/canvas-layout
 export const NODE_TYPE_TITLES: Record<string, string> = {
   [CHARACTER_NODE_TYPE]: "角色",
   [SCENE_NODE_TYPE]: "场景",
+  "3d": "3D",
   text: "文本",
   image: "图片",
   video: "视频",
@@ -21,6 +22,7 @@ const NODE_TYPE_SIZES: Record<string, { width: number; height: number }> = {
   image: { width: 608, height: 342 },
   video: { width: 608, height: 342 },
   video_compose: { width: 720, height: 580 },
+  "3d": { width: 608, height: 342 },
   scene_3d: { width: 720, height: 360 },
   text: { width: 440, height: 440 },
   audio: { width: 360, height: 200 },

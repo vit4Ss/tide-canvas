@@ -1,16 +1,17 @@
-/* 中文注释：画布节点和首页创作框共用的参数下拉样式，避免在 TSX 中重复堆叠长 className。
-   颜色一律 shadcn 令牌（--popover/--border/--muted 等）；阴影为 Tailwind shadow-lg / shadow-sm 标准值，
-   不写自定义 rgba 阴影。画布无 .dark 切换，令牌随主题自动适配，无需额外 dark 覆盖。 */
+/* 中文注释：画布节点和首页创作框共用的参数下拉样式。浮层用微透的令牌色、
+   克制的描边和两段式阴影建立层次，选项以留白和轻状态区分，避免大块灰底的塑料感。 */
 .panel {
   width: min(420px, calc(100vw - 24px));
   max-width: calc(100vw - 24px);
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  background: var(--popover);
+  border-radius: 16px;
+  border: 1px solid color-mix(in oklab, var(--border) 82%, transparent);
+  background: color-mix(in oklab, var(--popover) 96%, transparent);
   color: var(--popover-foreground);
-  padding: 16px;
+  padding: 14px;
   text-align: left;
-  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1); /* Tailwind shadow-lg */
+  box-shadow: 0 24px 64px -28px rgb(15 23 42 / 0.42), 0 8px 24px -16px rgb(15 23 42 / 0.22);
+  backdrop-filter: blur(18px) saturate(1.12);
+  -webkit-backdrop-filter: blur(18px) saturate(1.12);
 }
 
 .panelInner {
@@ -18,80 +19,84 @@
 }
 
 .section + .section {
-  margin-top: 18px;
+  margin-top: 16px;
 }
 
 .sectionTitle {
-  margin-bottom: 8px;
+  margin-bottom: 7px;
+  padding-left: 2px;
   color: var(--muted-foreground);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
-  line-height: 19px;
+  line-height: 18px;
 }
 
 .segmentedRow {
   display: grid;
-  border-radius: 8px;
-  background: var(--muted);
-  padding: 5px;
+  gap: 3px;
+  border: 1px solid color-mix(in oklab, var(--border) 72%, transparent);
+  border-radius: 11px;
+  background: color-mix(in oklab, var(--muted) 48%, transparent);
+  padding: 3px;
 }
 
 .segmentButton {
   display: flex;
-  height: 36px;
+  height: 34px;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 0 10px;
   color: var(--muted-foreground);
   font-size: 13px;
   font-weight: 500;
-  transition: color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+  transition: color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
 }
 
 .segmentButton:hover {
+  background: color-mix(in oklab, var(--popover) 62%, transparent);
   color: var(--popover-foreground);
 }
 
 .segmentButtonActive {
   background: var(--popover);
   color: var(--popover-foreground);
-  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1); /* Tailwind shadow-sm */
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.08), 0 0 0 1px color-mix(in oklab, var(--border) 58%, transparent);
 }
 
 .ratioGrid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 10px 6px;
-  border-radius: 8px;
-  background: var(--muted);
-  padding: 10px;
+  gap: 5px;
 }
 
 .ratioTile {
   display: flex;
-  height: 54px;
+  height: 58px;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 4px;
-  border-radius: 6px;
+  border: 1px solid transparent;
+  border-radius: 10px;
   color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 500;
   line-height: 15px;
-  transition: color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+  transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
 }
 
 .ratioTile:hover {
-  background: color-mix(in oklab, var(--popover) 70%, transparent);
+  border-color: color-mix(in oklab, var(--border) 68%, transparent);
+  background: color-mix(in oklab, var(--muted) 52%, transparent);
   color: var(--popover-foreground);
 }
 
 .ratioTileActive {
-  background: var(--popover);
+  border-color: color-mix(in oklab, var(--ring) 40%, var(--border));
+  background: color-mix(in oklab, var(--accent) 78%, transparent);
   color: var(--popover-foreground);
-  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1); /* Tailwind shadow-sm */
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.06);
 }
 
 .ratioShapeWrap {
@@ -104,7 +109,7 @@
 .ratioShape {
   display: block;
   border: 1px solid currentColor;
-  border-radius: 2px;
+  border-radius: 3px;
 }
 
 .trigger {
@@ -113,18 +118,21 @@
   max-width: 280px;
   align-items: center;
   gap: 8px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--popover);
-  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in oklab, var(--border) 78%, transparent);
+  background: color-mix(in oklab, var(--popover) 92%, transparent);
+  padding: 0 10px;
   color: var(--popover-foreground);
   font-size: 12px;
   font-weight: 400;
-  transition: background-color 160ms ease, border-color 160ms ease;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.04);
+  transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
 }
 
 .trigger:hover {
-  background: var(--accent);
+  border-color: color-mix(in oklab, var(--border) 100%, var(--foreground) 14%);
+  background: color-mix(in oklab, var(--accent) 58%, var(--popover));
+  box-shadow: 0 2px 6px rgb(15 23 42 / 0.06);
 }
 
 .triggerCompact {

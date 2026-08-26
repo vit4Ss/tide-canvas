@@ -8,6 +8,7 @@
 export type CanvasNodeRenderer =
   | "image"
   | "video"
+  | "3d"
   | "scene_3d"
   | "text"
   | "audio"

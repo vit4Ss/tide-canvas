@@ -28,6 +28,7 @@ import type {
 const RENDERER_LABELS: Record<CanvasNodeRenderer, string> = {
   image: "图像",
   video: "视频",
+  "3d": "3D 模型",
   scene_3d: "3D 场景",
   text: "文本",
   audio: "音频",

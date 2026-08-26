@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { useCanvasStore } from "./use-canvas-store.ts";
+import { reviveNode, useCanvasStore } from "./use-canvas-store.ts";
 
 const node = (id, extra = {}) => ({
   id,
@@ -53,4 +53,34 @@ test("invalid connection and stale group operations do not pollute history", () 
   store.addConnection({ id: "ab-copy", sourceId: "a", targetId: "b" });
   assert.equal(useCanvasStore.getState().connections.length, 1);
   assert.equal(useCanvasStore.getState().undoStack.length, 1);
+});
+
+test("3D generation results survive recovery and undo reconciliation", () => {
+  const modelAssets = [{ type: "glb", url: "https://cdn.example.com/scene.glb" }];
+  const recovered = reviveNode(node("model", {
+    type: "3d",
+    status: "generating",
+    modelSrc: modelAssets[0].url,
+    modelPreviewSrc: "https://cdn.example.com/scene.png",
+    modelAssets,
+  }));
+  assert.equal(recovered.status, "success");
+
+  const store = useCanvasStore.getState();
+  store.loadCanvas([node("model", { type: "3d", title: "before" })], []);
+  store.pushHistory();
+  store.updateNode("model", {
+    status: "generating",
+    taskId: "task-3d",
+    modelSrc: modelAssets[0].url,
+    modelPreviewSrc: "https://cdn.example.com/scene.png",
+    modelAssets,
+  });
+  store.undo();
+
+  const restored = useCanvasStore.getState().nodes[0];
+  assert.equal(restored.status, "generating");
+  assert.equal(restored.modelSrc, modelAssets[0].url);
+  assert.equal(restored.modelPreviewSrc, "https://cdn.example.com/scene.png");
+  assert.deepEqual(restored.modelAssets, modelAssets);
 });

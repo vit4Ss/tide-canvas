@@ -1,10 +1,13 @@
 "use client";
 
 import {
+  cloneElement,
   Fragment,
+  isValidElement,
   useEffect,
   useRef,
   useState,
+  type ReactElement,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEventHandler,
   type ReactNode,
@@ -21,6 +24,8 @@ export interface ConfigurableNodeToolbarAction {
    * 否则 React 会在二级菜单收到点击后立刻卸载它。
    */
   closeOverflowOnSelect?: boolean;
+  /** 纯图标动作进入“更多”后显示的文字标签。 */
+  overflowLabel?: string;
   content: ReactNode;
 }
 
@@ -125,6 +130,21 @@ export function ConfigurableNodeToolbar({
     buttons[nextIndex]?.focus();
   };
 
+  const renderOverflowContent = (action: ConfigurableNodeToolbarAction) => {
+    if (!action.overflowLabel || !isValidElement(action.content)) {
+      return action.content;
+    }
+    const element = action.content as ReactElement<{ children?: ReactNode }>;
+    return cloneElement(
+      element,
+      undefined,
+      <>
+        {element.props.children}
+        <span className="truncate">{action.overflowLabel}</span>
+      </>,
+    );
+  };
+
   if (ordered.length === 0) return null;
 
   return (
@@ -170,22 +190,22 @@ export function ConfigurableNodeToolbar({
               data-toolbar-overflow
               onMouseDown={(event) => event.stopPropagation()}
               onKeyDown={handleOverflowKeyDown}
-              className="absolute right-0 top-full z-50 mt-2 w-52 rounded-xl border border-neutral-200 bg-white p-1.5 shadow-[0_12px_40px_rgba(15,23,42,0.16)] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/45"
+              className="absolute right-0 top-full z-50 mt-2 w-44 animate-in overflow-visible rounded-2xl border border-neutral-200/80 bg-white/95 p-1.5 shadow-[0_18px_50px_rgba(15,23,42,0.18)] backdrop-blur-xl duration-100 fade-in-0 zoom-in-95 motion-reduce:animate-none dark:border-white/10 dark:bg-neutral-900/95 dark:shadow-black/55"
             >
               {overflowActions.map((action, index) => (
                 <Fragment key={action.key}>
                   {index > 0 && overflowActions[index - 1].group !== action.group ? (
-                    <div className="mx-2 my-1 h-px bg-neutral-200 dark:bg-neutral-700" aria-hidden />
+                    <div className="mx-2 my-1.5 h-px bg-neutral-200/80 dark:bg-neutral-700/80" aria-hidden />
                   ) : null}
                   <div
-                    className="w-full [&>button]:w-full [&>button]:justify-start [&>div]:w-full [&>div>button]:w-full [&>div>button]:justify-start"
+                    className="w-full [&_svg]:shrink-0 [&>button]:flex [&>button]:h-9 [&>button]:w-full [&>button]:items-center [&>button]:justify-start [&>button]:gap-2.5 [&>button]:rounded-xl [&>button]:px-2.5 [&>button]:py-0 [&>button]:text-[13px] [&>button]:transition-colors [&>button]:focus-visible:outline-none [&>button]:focus-visible:ring-2 [&>button]:focus-visible:ring-blue-500/35 [&>div]:w-full [&>div>button]:flex [&>div>button]:h-9 [&>div>button]:w-full [&>div>button]:items-center [&>div>button]:justify-start [&>div>button]:rounded-xl [&>div>button]:px-2.5 [&>div>button]:py-0 [&>div>button]:text-[13px]"
                     onClickCapture={() => {
                       if (action.closeOverflowOnSelect !== false) {
                         setOverflowState({ open: false, signature: overflowSignature });
                       }
                     }}
                   >
-                    {action.content}
+                    {renderOverflowContent(action)}
                   </div>
                 </Fragment>
               ))}

@@ -199,33 +199,38 @@ var CanonicalCanvasNodeTypes = []CanvasNodeTypeDefinition{
 		DefaultFeatures: imageNodeDefaultFeatures,
 	},
 	{
+		Key: "3d", Title: "3D", Description: "3D 模型生成与预览",
+		Renderer: "3d", Icon: "box", DefaultEnabled: true, DefaultSortOrder: 2,
+		DefaultFeatures: emptyNodeDefaultFeatures,
+	},
+	{
 		Key: "scene_3d", Title: "3D 导演台", Description: "角色动作与空间编排",
-		Renderer: "scene_3d", Icon: "layers", DefaultEnabled: true, DefaultSortOrder: 2,
+		Renderer: "scene_3d", Icon: "layers", DefaultEnabled: true, DefaultSortOrder: 3,
 		DefaultFeatures: emptyNodeDefaultFeatures,
 	},
 	{
 		Key: "text", Title: "文本", Description: "提示词、脚本说明",
-		Renderer: "text", Icon: "align-left", DefaultEnabled: true, DefaultSortOrder: 3,
+		Renderer: "text", Icon: "align-left", DefaultEnabled: true, DefaultSortOrder: 4,
 		DefaultFeatures: emptyNodeDefaultFeatures,
 	},
 	{
 		Key: "image", Title: "图片", Description: "图像生成、参考图编辑",
-		Renderer: "image", Icon: "image", DefaultEnabled: true, DefaultSortOrder: 4,
+		Renderer: "image", Icon: "image", DefaultEnabled: true, DefaultSortOrder: 5,
 		DefaultFeatures: imageNodeDefaultFeatures,
 	},
 	{
 		Key: "video", Title: "视频", Description: "视频生成、镜头创作",
-		Renderer: "video", Icon: "video", DefaultEnabled: true, DefaultSortOrder: 5,
+		Renderer: "video", Icon: "video", DefaultEnabled: true, DefaultSortOrder: 6,
 		DefaultFeatures: videoNodeDefaultFeatures,
 	},
 	{
 		Key: "audio", Title: "音频", Description: "音色、配乐与旁白",
-		Renderer: "audio", Icon: "audio-lines", DefaultEnabled: true, DefaultSortOrder: 6,
+		Renderer: "audio", Icon: "audio-lines", DefaultEnabled: true, DefaultSortOrder: 7,
 		DefaultFeatures: emptyNodeDefaultFeatures,
 	},
 	{
 		Key: "script", Title: "脚本", Description: "分镜和内容结构",
-		Renderer: "script", Icon: "clapperboard", DefaultEnabled: true, DefaultSortOrder: 7,
+		Renderer: "script", Icon: "clapperboard", DefaultEnabled: true, DefaultSortOrder: 8,
 		DefaultFeatures: emptyNodeDefaultFeatures,
 	},
 }

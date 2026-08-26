@@ -24,6 +24,7 @@ const NODE_COLORS: Record<string, string> = {
   image: "#34d399",
   video: "#fb923c",
   video_compose: "#f472b6",
+  "3d": "#38bdf8",
   scene_3d: "#a78bfa",
   audio: "#c084fc",
   script: "#94a3b8",

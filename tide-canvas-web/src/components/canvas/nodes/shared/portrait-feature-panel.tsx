@@ -695,7 +695,7 @@ export function PortraitFeaturePanel({
               label="输出清晰度"
               minMenuWidth={88}
               className={`${resolutionWidthClass} h-10 shrink-0 rounded-full border-0 pl-3 pr-2 text-xs font-medium text-neutral-600 ${mode === "expression" ? "bg-transparent hover:bg-neutral-50" : "bg-neutral-50 hover:bg-neutral-100"} dark:bg-white/5 dark:text-white/65 dark:hover:bg-white/8`}
-              menuClassName="rounded-xl border-neutral-200 bg-white text-neutral-700 shadow-lg dark:border-white/10 dark:bg-neutral-950 dark:text-white/80"
+              menuClassName="text-neutral-700 dark:text-white/80"
             />
           ) : null}
           <button

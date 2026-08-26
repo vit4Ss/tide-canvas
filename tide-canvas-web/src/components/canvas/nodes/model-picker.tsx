@@ -304,7 +304,7 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
         aria-label={`${triggerLabel || "模型"}，当前 ${selected?.name || "未选择"}`}
         title={`${triggerLabel || "模型"}：${selected?.name || "未选择"}`}
         onClick={toggle}
-        className="flex h-8 max-w-[190px] items-center gap-1.5 rounded-lg px-2.5 text-[11px] text-neutral-700 transition-colors hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 dark:text-neutral-300 dark:hover:bg-white/8"
+        className="flex h-8 max-w-[190px] items-center gap-1.5 rounded-xl px-2.5 text-[11px] text-neutral-700 transition-colors hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/35 dark:text-neutral-300 dark:hover:bg-white/8"
       >
         <ModelGlyph model={selected} className="h-3.5 w-3.5 rounded text-[9px]" />
         <span className="min-w-0 max-w-[134px] truncate font-normal">{selected?.name || triggerLabel || "选择模型"}</span>
@@ -317,10 +317,10 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
           ref={panelRef}
           role="listbox"
           aria-label={triggerLabel ? `选择${triggerLabel}` : "选择模型"}
-          className={`fixed z-[90] w-[360px] max-w-[calc(100vw-24px)] rounded-xl border p-1.5 text-left ${
+          className={`fixed z-[90] w-[360px] max-w-[calc(100vw-24px)] rounded-2xl border p-1.5 text-left ${
             tone === "dark"
-              ? "dark border-white/12 bg-[#1c1c20] text-white shadow-[0_16px_44px_rgba(0,0,0,0.34)]"
-              : "border-border bg-popover text-popover-foreground shadow-lg dark:border-white/12 dark:bg-[#1c1c20] dark:text-white dark:shadow-black/35"
+              ? "dark border-white/10 bg-[#1c1c20]/95 text-white shadow-[0_18px_50px_rgba(0,0,0,0.44)] backdrop-blur-xl"
+              : "border-border/80 bg-popover/95 text-popover-foreground shadow-[0_18px_50px_rgba(15,23,42,0.18)] backdrop-blur-xl dark:border-white/10 dark:bg-[#1c1c20]/95 dark:text-white dark:shadow-black/55"
           } ${openUp ? "-translate-y-full" : ""}`}
           style={{ left: panelPos.left, top: panelPos.top }}
           onMouseDown={stop}
@@ -348,10 +348,10 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
                     setOpen(false);
                     requestAnimationFrame(() => triggerRef.current?.focus());
                   }}
-                  className={`group flex min-h-[56px] w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-cyan-400/60 focus-visible:ring-inset ${
+                  className={`group flex min-h-[56px] w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-blue-500/35 focus-visible:ring-inset ${
                     isSelected
-                      ? "bg-neutral-100 text-neutral-950 dark:bg-white/12 dark:text-white"
-                      : "text-neutral-900 hover:bg-neutral-50 focus-visible:bg-neutral-50 dark:text-neutral-100 dark:hover:bg-white/8 dark:focus-visible:bg-white/8"
+                      ? "bg-neutral-100/85 text-neutral-950 dark:bg-white/10 dark:text-white"
+                      : "text-neutral-900 hover:bg-neutral-100/60 focus-visible:bg-neutral-100/60 dark:text-neutral-100 dark:hover:bg-white/[0.07] dark:focus-visible:bg-white/[0.07]"
                   }`}
                 >
                   <ModelGlyph model={model} className="h-9 w-9 rounded-lg text-[12px]" />
@@ -373,7 +373,7 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
                         {estSeconds}s
                       </span>
                     )}
-                    {isSelected && <Check aria-hidden className="h-4 w-4 text-neutral-900 dark:text-white" />}
+                    {isSelected && <Check aria-hidden className="h-4 w-4 text-blue-500 dark:text-blue-400" />}
                   </span>
                 </button>
               );

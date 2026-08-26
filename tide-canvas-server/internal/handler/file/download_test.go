@@ -1,6 +1,28 @@
 package file
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"io"
+	"strings"
+	"testing"
+
+	"tidecanvas/internal/pkg/storage"
+)
+
+type ownedURLReaderStub struct {
+	body string
+	err  error
+	url  string
+}
+
+func (s *ownedURLReaderStub) OpenURL(_ context.Context, raw string) (io.ReadCloser, error) {
+	s.url = raw
+	if s.err != nil {
+		return nil, s.err
+	}
+	return io.NopCloser(strings.NewReader(s.body)), nil
+}
 
 // 下载名补扩展名：按「结尾是否已是 URL 的扩展名」判定——模型名带版本点号
 // （qwen-image-3.0-pro / Hunyuan 3D 3.1）时旧的「无点才补」会吞掉扩展名。
@@ -46,5 +68,52 @@ func TestTextContainsExactURL(t *testing.T) {
 	}
 	if textContainsExactURL(`![video](https://cdn.example.com/video.mp4?preview=1)`, target) {
 		t.Fatal("must not authorize a URL prefix inside a different URL")
+	}
+}
+
+func TestOpenOwnedStorageURLBypassesRemoteResolution(t *testing.T) {
+	const raw = "https://test-cdn.example/uploads/panorama.png"
+	store := &ownedURLReaderStub{body: "panorama-bytes"}
+	body, handled, err := openOwnedStorageURL(context.Background(), store, raw)
+	if err != nil {
+		t.Fatalf("openOwnedStorageURL() error = %v", err)
+	}
+	if !handled {
+		t.Fatal("openOwnedStorageURL() handled = false, want true")
+	}
+	defer body.Close()
+	got, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("read owned body: %v", err)
+	}
+	if string(got) != store.body {
+		t.Fatalf("owned body = %q, want %q", got, store.body)
+	}
+	if store.url != raw {
+		t.Fatalf("OpenURL raw = %q, want %q", store.url, raw)
+	}
+}
+
+func TestOpenOwnedStorageURLFallsBackOnlyForUnsupportedURL(t *testing.T) {
+	store := &ownedURLReaderStub{err: storage.ErrUnsupported}
+	body, handled, err := openOwnedStorageURL(context.Background(), store, "https://third-party.example/image.png")
+	if body != nil || handled || err != nil {
+		t.Fatalf("unsupported result = (%v, %v, %v), want (nil, false, nil)", body, handled, err)
+	}
+
+	readErr := errors.New("oss unavailable")
+	store.err = readErr
+	body, handled, err = openOwnedStorageURL(context.Background(), store, "https://test-cdn.example/image.png")
+	if body != nil || !handled || !errors.Is(err, readErr) {
+		t.Fatalf("owned read failure = (%v, %v, %v), want (nil, true, %v)", body, handled, err, readErr)
+	}
+}
+
+func TestContentTypeForDownload(t *testing.T) {
+	if got := contentTypeForDownload("/uploads/panorama.png"); got != "image/png" {
+		t.Fatalf("PNG content type = %q, want image/png", got)
+	}
+	if got := contentTypeForDownload("/uploads/file.unknown-extension"); got != "application/octet-stream" {
+		t.Fatalf("unknown content type = %q, want application/octet-stream", got)
 	}
 }

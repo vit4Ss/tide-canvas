@@ -70,11 +70,14 @@ function disposeObject(root: THREE_NS.Object3D) {
 export function ThreeDViewport({
   glbUrl,
   onStats,
+  compact = false,
 }: {
   /** 当前展示的 GLB 地址；null = 清空场景（外层负责空态/占位展示）。 */
   glbUrl: string | null;
   /** 加载完成后回传实测网格统计（null = 无模型/加载失败）。 */
   onStats?: (stats: MeshStats | null) => void;
+  /** Canvas cards hide secondary controls and keep only direct orbit interaction. */
+  compact?: boolean;
 }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const apiRef = useRef<ViewerApi | null>(null);
@@ -426,11 +429,11 @@ export function ThreeDViewport({
   }, [grid, ready]);
 
   return (
-    <div className="t3d-viewport">
-      <div ref={mountRef} className="t3d-canvas" />
+    <div className="t3d-viewport relative h-full min-h-0 w-full overflow-hidden">
+      <div ref={mountRef} className="t3d-canvas absolute inset-0 [&>canvas]:block" />
 
       {/* 地面网格开关（右上，复用面板的开关件语言） */}
-      <div className="t3d-gridrow">
+      {!compact && <div className="t3d-gridrow">
         <span>地面网格</span>
         <button
           type="button"
@@ -441,10 +444,10 @@ export function ThreeDViewport({
         >
           <i />
         </button>
-      </div>
+      </div>}
 
       {/* 查看模式（底部居中工具条） */}
-      {glbUrl && !loading && !error && (
+      {!compact && glbUrl && !loading && !error && (
         <div className="t3d-toolbar" role="group" aria-label="查看模式">
           {([
             ["shaded", "贴图"],
@@ -464,12 +467,12 @@ export function ThreeDViewport({
       )}
 
       {loading && (
-        <div className="t3d-note">
-          <span className="t3d-spin" aria-hidden />
+        <div className="t3d-note absolute left-1/2 top-1/2 z-[3] flex -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-lg bg-black/55 px-3 py-2 text-xs text-white/80 backdrop-blur">
+          <span className="t3d-spin h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/20 border-t-white/80" aria-hidden />
           正在加载模型…{progress !== null ? ` ${progress}%` : ""}
         </div>
       )}
-      {error && <div className="t3d-note">{error}</div>}
+      {error && <div className="t3d-note absolute left-1/2 top-1/2 z-[3] w-[80%] -translate-x-1/2 -translate-y-1/2 rounded-lg bg-black/55 px-3 py-2 text-center text-xs text-white/80 backdrop-blur">{error}</div>}
     </div>
   );
 }

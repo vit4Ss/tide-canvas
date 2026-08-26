@@ -133,7 +133,9 @@ export function VideoParamPicker({ value, onChange, resolutions, ratios, duratio
         ref={triggerRef}
         type="button"
         onClick={toggle}
-        className="flex h-8 max-w-[250px] items-center gap-1.5 rounded-lg px-2 text-[11px] text-neutral-700 transition-colors hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-400/60 dark:text-neutral-300 dark:hover:bg-neutral-800"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        className="flex h-8 max-w-[250px] items-center gap-1.5 rounded-xl px-2 text-[11px] text-neutral-700 transition-colors hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/35 dark:text-neutral-300 dark:hover:bg-neutral-800"
       >
         <Monitor className="h-3.5 w-3.5 shrink-0" />
         <span className="truncate">{summary}</span>
@@ -144,7 +146,9 @@ export function VideoParamPicker({ value, onChange, resolutions, ratios, duratio
       {open && typeof document !== "undefined" && createPortal(
         <div
           ref={panelRef}
-          className={`fixed z-[90] w-[372px] max-w-[calc(100vw-24px)] rounded-xl border border-border bg-popover p-4 text-left text-popover-foreground shadow-lg dark:border-white/10 dark:bg-[#25262b] dark:shadow-black/35 ${openUp ? "-translate-y-full" : ""}`}
+          role="dialog"
+          aria-label="视频参数"
+          className={`fixed z-[90] w-[372px] max-w-[calc(100vw-24px)] rounded-2xl border border-border/80 bg-popover/95 p-4 text-left text-popover-foreground shadow-[0_18px_50px_rgba(15,23,42,0.18)] backdrop-blur-xl dark:border-white/10 dark:bg-neutral-900/95 dark:shadow-black/55 ${openUp ? "-translate-y-full" : ""}`}
           style={{ left: panelPos.left, top: panelPos.top }}
           onMouseDown={stop}
         >
@@ -231,10 +235,10 @@ function StaticValue({ children }: { children: ReactNode }) {
   return <span className="text-[13px] font-medium tabular-nums text-neutral-900 dark:text-white/90">{children}</span>;
 }
 
-// 选中态：细黑描边（安静、不抢内容）；未选中：弱边框轮廓。全面板统一这一套状态。
-const chipActive = "border-neutral-900 text-neutral-950 dark:border-white/80 dark:text-white";
+// 选中态用低饱和强调底色与细描边，避免硬黑框带来的塑料按钮感。
+const chipActive = "border-blue-500/35 bg-blue-500/[0.06] text-neutral-950 shadow-[0_1px_2px_rgba(15,23,42,0.05)] dark:border-blue-400/35 dark:bg-blue-400/10 dark:text-white";
 const chipRest =
-  "border-neutral-200 text-neutral-500 hover:border-neutral-300 hover:text-neutral-900 dark:border-white/12 dark:text-white/60 dark:hover:border-white/25 dark:hover:text-white/90";
+  "border-neutral-200/80 text-neutral-500 hover:border-neutral-300 hover:bg-neutral-100/55 hover:text-neutral-900 dark:border-white/10 dark:text-white/60 dark:hover:border-white/20 dark:hover:bg-white/[0.06] dark:hover:text-white/90";
 
 // 时长选项多(>6)时按钮挤不下，改用细轨道滑块（样式同图片节点的 .slider-thin），
 // 当前值显示在标题行右侧。选项可能不连续(如 4,6,8,12)，滑块走索引再映射回秒数。

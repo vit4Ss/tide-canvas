@@ -1,4 +1,10 @@
 import { create } from "zustand";
+import type {
+  CanvasThreeDAsset,
+  CanvasThreeDGenerateType,
+  CanvasThreeDMode,
+  CanvasThreeDResultFormat,
+} from "@/types/canvas-three-d";
 
 export interface CanvasPendingGeneration {
   version: 1;
@@ -54,6 +60,12 @@ export interface CanvasNode {
   imageSrc?: string;
   /** 组图：一次生成的全部图片(如 Midjourney 一组 4 张)；imageSrc 始终等于其中的「主图」 */
   images?: string[];
+  /** 3D 节点的主输出；可能是 GLB/OBJ/STL/USDZ/FBX，具体格式以 modelAssets 为准。 */
+  modelSrc?: string;
+  /** 3D 供应商返回的封面截图；只用于轻量卡片预览，不替代真实模型。 */
+  modelPreviewSrc?: string;
+  /** 一次 3D 生成返回的全部可下载格式。导演台会从中优先选择 GLB。 */
+  modelAssets?: CanvasThreeDAsset[];
   videoSrc?: string;
   /** 浏览器从实际视频元数据读取的时长与像素尺寸；上传素材没有生成参数时仍可供派生功能使用。 */
   mediaDuration?: number;
@@ -90,6 +102,11 @@ export interface CanvasNode {
     resolution?: string;
     duration?: number;
     batchCount?: number;
+    threeDMode?: CanvasThreeDMode;
+    enablePbr?: boolean;
+    faceCount?: number;
+    generateType?: CanvasThreeDGenerateType;
+    resultFormat?: CanvasThreeDResultFormat;
   };
   /** 视频节点的派生创作场景；用于恢复对应模式与输入引导。 */
   videoOperation?: "clip_reshoot";
@@ -421,7 +438,7 @@ export function reviveNode(node: CanvasNode, opts?: { keepResumable?: boolean })
     return node.uploading ? { ...node, uploading: false, uploadProgress: undefined } : node;
   }
   if (!stuckGenerating && !node.uploading && !node.taskId && !node.pendingGeneration && !clonedActiveSkillRun) return node;
-  const hasResult = !!(node.imageSrc || node.videoSrc || node.audioSrc || node.content);
+  const hasResult = !!(node.imageSrc || node.videoSrc || node.audioSrc || node.modelSrc || node.content);
   return {
     ...node,
     status: stuckGenerating ? (hasResult ? "success" : "idle") : node.status,
@@ -464,6 +481,9 @@ function keepGenerationState(historical: CanvasNode, current: CanvasNode): Canva
     videoSrc: current.videoSrc,
     audioSrc: current.audioSrc,
     audioTracks: current.audioTracks,
+    modelSrc: current.modelSrc,
+    modelPreviewSrc: current.modelPreviewSrc,
+    modelAssets: current.modelAssets,
     content: current.content,
     fileSize: current.fileSize,
     fileType: current.fileType,

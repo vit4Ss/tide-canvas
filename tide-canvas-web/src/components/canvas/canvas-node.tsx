@@ -7,6 +7,7 @@ import { AudioNode } from "./nodes/audio-node";
 import { TextNode } from "./nodes/text-node";
 import { ScriptNode } from "./nodes/script-node";
 import { Scene3DNode } from "./nodes/scene-3d-node";
+import { ThreeDNode } from "./nodes/three-d-node";
 import { VideoComposeNode } from "./nodes/video-compose-node";
 import { VideoBreakdownNode } from "./nodes/video-breakdown-node";
 import { STYLE_REFERENCE_NODE_TYPE, StyleReferenceNode } from "./nodes/style-reference-node";
@@ -31,6 +32,8 @@ export const CanvasNodeComponent = memo(function CanvasNodeComponent(props: Canv
       return <ScriptNode {...props} />;
     case "scene_3d":
       return <Scene3DNode {...props} />;
+    case "3d":
+      return <ThreeDNode {...props} />;
     case "video_compose":
       return <VideoComposeNode {...props} />;
     case "video_breakdown":

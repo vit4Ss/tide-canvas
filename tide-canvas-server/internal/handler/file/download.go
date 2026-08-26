@@ -1,7 +1,10 @@
 package file
 
 import (
+	"context"
+	"errors"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"path"
@@ -12,6 +15,7 @@ import (
 
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/pkg/response"
+	"tidecanvas/internal/pkg/storage"
 )
 
 // filenameSanitizer strips characters that would break a Content-Disposition header.
@@ -29,6 +33,53 @@ func downloadFilename(name, urlPath string) string {
 		name += ext
 	}
 	return name
+}
+
+// openOwnedStorageURL reads a first-party storage URL without routing it back
+// through the public CDN. Besides avoiding an unnecessary network hop, this is
+// required on developer machines whose proxy/VPN maps public hostnames into a
+// synthetic address range (for example 198.18.0.0/15): the remote downloader
+// must continue rejecting those addresses for SSRF safety, while the storage
+// SDK can still read an object that belongs to this service.
+//
+// handled is false only when the configured storage does not recognize raw.
+// A recognized URL whose object cannot be read is handled with an error so it
+// cannot silently fall back to the less trusted public downloader.
+func openOwnedStorageURL(ctx context.Context, candidate any, raw string) (body io.ReadCloser, handled bool, err error) {
+	reader, ok := candidate.(storage.OwnedURLReader)
+	if !ok {
+		return nil, false, nil
+	}
+	body, err = reader.OpenURL(ctx, raw)
+	if errors.Is(err, storage.ErrUnsupported) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, true, err
+	}
+	return body, true, nil
+}
+
+func contentTypeForDownload(urlPath string) string {
+	if contentType := mime.TypeByExtension(path.Ext(urlPath)); contentType != "" {
+		return contentType
+	}
+	return "application/octet-stream"
+}
+
+func streamDownload(c *gin.Context, body io.Reader, contentType, name string, contentLength int64) {
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	c.Header("Content-Type", contentType)
+	c.Header("Content-Disposition", "attachment; filename=\""+filenameSanitizer.Replace(name)+"\"")
+	if contentLength >= 0 {
+		c.Header("Content-Length", strconv.FormatInt(contentLength, 10))
+	}
+	c.Status(http.StatusOK)
+	// Unknown/chunked bodies are still hard-capped; a dishonest origin cannot
+	// turn this endpoint into an unbounded bandwidth relay.
+	_, _ = io.Copy(c.Writer, io.LimitReader(body, maxFileSize+1))
 }
 
 // download GET /api/files/download?url=...&name=...
@@ -62,15 +113,20 @@ func (h *handler) download(c *gin.Context) {
 		response.Fail(c, response.CodeForbidden, "not allowed to download this url")
 		return
 	}
-	localOwned := false
-	if h.svc.store != nil && h.svc.store.Type() == "local" {
-		_, localOwned = h.svc.store.OwnsURL(raw)
-	}
-	if !localOwned {
-		if _, err := validateRemoteAssetURL(raw); err != nil {
-			response.Fail(c, response.CodeBadRequest, "invalid url")
+	name := downloadFilename(c.Query("name"), u.Path)
+	if body, handled, err := openOwnedStorageURL(c.Request.Context(), h.svc.store, raw); handled {
+		if err != nil {
+			response.Fail(c, response.CodeServerError, "failed to read stored file")
 			return
 		}
+		defer body.Close()
+		streamDownload(c, body, contentTypeForDownload(u.Path), name, -1)
+		return
+	}
+
+	if _, err := validateRemoteAssetURL(raw); err != nil {
+		response.Fail(c, response.CodeBadRequest, "invalid url")
+		return
 	}
 
 	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, raw, nil)
@@ -78,19 +134,7 @@ func (h *handler) download(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, "invalid url")
 		return
 	}
-	client := h.svc.httpcli
-	if localOwned {
-		// Local development stores are commonly served from 127.0.0.1:8080.
-		// This exception is safe only after the exact URL ownership check above,
-		// and redirects are refused so it cannot escape the static namespace.
-		client = &http.Client{
-			Timeout: saveFromURLTimeout,
-			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		}
-	}
-	resp, err := client.Do(req)
+	resp, err := h.svc.httpcli.Do(req)
 	if err != nil {
 		response.Fail(c, response.CodeServerError, "failed to fetch remote file")
 		return
@@ -105,19 +149,5 @@ func (h *handler) download(c *gin.Context) {
 		return
 	}
 
-	ct := resp.Header.Get("Content-Type")
-	if ct == "" {
-		ct = "application/octet-stream"
-	}
-	name := downloadFilename(c.Query("name"), u.Path)
-
-	c.Header("Content-Type", ct)
-	c.Header("Content-Disposition", "attachment; filename=\""+filenameSanitizer.Replace(name)+"\"")
-	if cl := resp.Header.Get("Content-Length"); cl != "" && resp.ContentLength >= 0 {
-		c.Header("Content-Length", cl)
-	}
-	c.Status(http.StatusOK)
-	// Unknown/chunked bodies are still hard-capped; a dishonest origin cannot
-	// turn this endpoint into an unbounded bandwidth relay.
-	_, _ = io.Copy(c.Writer, io.LimitReader(resp.Body, maxFileSize+1))
+	streamDownload(c, resp.Body, resp.Header.Get("Content-Type"), name, resp.ContentLength)
 }

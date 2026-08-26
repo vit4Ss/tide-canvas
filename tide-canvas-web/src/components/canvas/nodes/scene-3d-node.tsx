@@ -7,6 +7,7 @@ import { NodeHeader } from "./base/node-header";
 import { NodePorts } from "./base/node-ports";
 import { Scene3DEditor } from "./scene-3d-editor";
 import { CHARACTER_NODE_TYPE } from "@/lib/canvas-node-types";
+import { canvasThreeDGlbUrl } from "@/lib/canvas-three-d";
 
 interface Props {
   node: CanvasNode;
@@ -26,6 +27,13 @@ export const Scene3DNode = memo(function Scene3DNode({ node, isSelected, isDragg
       const src = s.nodes.find((n) => n.id === c.sourceId);
       return !!src?.imageSrc && !src.videoSrc && src.type !== CHARACTER_NODE_TYPE;
     })
+  );
+  const sceneConnected = useCanvasStore((s) =>
+    s.connections.some((connection) => {
+      if (connection.targetId !== node.id) return false;
+      const source = s.nodes.find((candidate) => candidate.id === connection.sourceId);
+      return source?.type === "3d" && !!canvasThreeDGlbUrl(source);
+    }),
   );
   const [editorOpen, setEditorOpen] = useState(false);
 
@@ -78,6 +86,11 @@ export const Scene3DNode = memo(function Scene3DNode({ node, isSelected, isDragg
               {panoConnected && (
                 <span className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> 已连接全景背景
+                </span>
+              )}
+              {sceneConnected && (
+                <span className="flex items-center gap-1.5 text-xs text-cyan-600 dark:text-cyan-400">
+                  <span className="h-1.5 w-1.5 rounded-full bg-cyan-500" /> 已连接 3D 场景
                 </span>
               )}
               <button

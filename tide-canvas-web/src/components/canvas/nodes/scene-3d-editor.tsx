@@ -13,6 +13,7 @@ import type * as THREE_NS from "three";
 import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-canvas-store";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/http";
+import { canvasThreeDGlbUrl } from "@/lib/canvas-three-d";
 import { toast } from "@/components/shared/toast";
 import { PopoverSelect } from "@/components/shared/popover-select";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
@@ -20,6 +21,7 @@ import { useAiGeneration } from "@/hooks/canvas/use-ai-generation";
 import { useAiModels } from "./shared/use-node-runtime";
 import { CHARACTER_NODE_TYPE, SCENE_NODE_TYPE } from "@/lib/canvas-node-types";
 import { AiModelType, type AiTaskVO, type UserGenerationHistoryVO } from "@/types/ai";
+import type { CanvasThreeDSceneAsset } from "@/types/canvas-three-d";
 import {
   buildMannequinFigure, buildSkinnedFigure, parseState, lightPositionFromAngles, makeLabelSprite, characterNameByIndex,
   LIGHT_NAMES, LIGHT_PRESETS, CHARACTER_COLORS, DEFAULT_ENV, POSE_SLIDER_GROUPS,
@@ -221,6 +223,20 @@ export function Scene3DEditor({ node, onClose }: Props) {
     return ins.find((n) => n.is360) ?? ins.find((n) => n.type === SCENE_NODE_TYPE) ?? ins[0] ?? null;
   }, [node.id]);
 
+  // 入边 3D 节点只把可渲染的 GLB 作为场景；其它导出格式仍保留在 3D 节点下载。
+  const connectedSceneAsset = useMemo<CanvasThreeDSceneAsset | null>(() => {
+    const st = useCanvasStore.getState();
+    const source = st.connections
+      .filter((connection) => connection.targetId === node.id)
+      .map((connection) => st.nodes.find((candidate) => candidate.id === connection.sourceId))
+      .find((candidate) => candidate?.type === "3d" && !!canvasThreeDGlbUrl(candidate));
+    const url = canvasThreeDGlbUrl(source);
+    return source && url
+      ? { url, title: source.title || "已连接 3D 场景", sourceNodeId: source.id, source: "connected" }
+      : null;
+  }, [node.id]);
+  const initialSceneAsset = connectedSceneAsset ?? initialState?.sceneAsset ?? null;
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -283,6 +299,8 @@ export function Scene3DEditor({ node, onClose }: Props) {
       panoSource: "connected",
     };
   });
+  const [sceneAsset] = useState<CanvasThreeDSceneAsset | null>(initialSceneAsset);
+  const sceneAssetRef = useRef<CanvasThreeDSceneAsset | null>(initialSceneAsset);
 
   // 最新值给三维副作用内的命令式 API 读取（避免闭包过期）。须在三维副作用之前声明。
   const lightAnglesRef = useRef(light);
@@ -306,6 +324,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
         const THREE = await import("three");
         const { OrbitControls } = await import("three/examples/jsm/controls/OrbitControls.js");
         const { TransformControls } = await import("three/examples/jsm/controls/TransformControls.js");
+        const { GLTFLoader } = await import("three/examples/jsm/loaders/GLTFLoader.js");
         // Mixamo 人物模板（X Bot）：加载失败回退程序化木偶，不阻塞编辑器
         let xbotAsset: SkinnedAsset | null = null;
         let skClone: ((o: THREE_NS.Object3D) => THREE_NS.Object3D) | null = null;
@@ -322,10 +341,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
           });
         };
         try {
-          const [{ GLTFLoader }, sk] = await Promise.all([
-            import("three/examples/jsm/loaders/GLTFLoader.js"),
-            import("three/examples/jsm/utils/SkeletonUtils.js"),
-          ]);
+          const sk = await import("three/examples/jsm/utils/SkeletonUtils.js");
           const gltf = await new GLTFLoader().loadAsync("/models/xbot.glb");
           xbotAsset = { scene: gltf.scene, animations: gltf.animations };
           skClone = sk.clone;
@@ -525,6 +541,86 @@ export function Scene3DEditor({ node, onClose }: Props) {
           }
         };
         void setPanoramaInternal(envRef.current.panoUrl ?? null);
+
+        // ===== 连接的 GLB 场景（真实几何环境，可与角色/机位共同渲染和截图） =====
+        let sceneAssetModel: THREE_NS.Group | null = null;
+        let sceneAssetLoadVersion = 0;
+        const disposeSceneAssetGroup = (group: THREE_NS.Group) => {
+          group.traverse((object) => {
+            const mesh = object as THREE_NS.Mesh;
+            if (!mesh.isMesh) return;
+            mesh.geometry?.dispose();
+            const materials = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
+            materials.forEach((material) => {
+              const record = material as unknown as Record<string, unknown>;
+              for (const key of ["map", "normalMap", "roughnessMap", "metalnessMap", "aoMap", "emissiveMap"]) {
+                const texture = record[key] as THREE_NS.Texture | undefined;
+                texture?.dispose();
+              }
+              material.dispose();
+            });
+          });
+        };
+        const disposeSceneAssetModel = () => {
+          if (!sceneAssetModel) return;
+          scene.remove(sceneAssetModel);
+          disposeSceneAssetGroup(sceneAssetModel);
+          sceneAssetModel = null;
+        };
+        const setSceneAssetInternal = async (asset: CanvasThreeDSceneAsset | null) => {
+          const loadVersion = ++sceneAssetLoadVersion;
+          disposeSceneAssetModel();
+          if (!asset) return;
+          let objectUrl = "";
+          try {
+            let response: Response;
+            try {
+              response = await fetchWithAuth(`/api/files/download?url=${encodeURIComponent(asset.url)}`);
+              if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            } catch {
+              response = await fetch(asset.url, { mode: "cors", credentials: "omit" });
+              if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            }
+            const bytes = await response.arrayBuffer();
+            if (disposed || loadVersion !== sceneAssetLoadVersion) return;
+            if (bytes.byteLength < 4 || new DataView(bytes).getUint32(0, true) !== 0x46546c67) {
+              throw new Error("文件不是 GLB 格式");
+            }
+            objectUrl = URL.createObjectURL(new Blob([bytes], { type: "model/gltf-binary" }));
+            const gltf = await new GLTFLoader().loadAsync(objectUrl);
+            if (disposed || loadVersion !== sceneAssetLoadVersion) {
+              disposeSceneAssetGroup(gltf.scene);
+              return;
+            }
+            const group = gltf.scene;
+            const bounds = new THREE.Box3().setFromObject(group);
+            const size = bounds.getSize(new THREE.Vector3());
+            const longest = Math.max(size.x, size.y, size.z) || 1;
+            // 导演台角色约 1.7 米高；把外部场景最长边收敛到 12 米，既能容纳多人也不压缩成道具。
+            const scale = 12 / longest;
+            group.scale.setScalar(scale);
+            const scaled = new THREE.Box3().setFromObject(group);
+            const center = scaled.getCenter(new THREE.Vector3());
+            group.position.set(-center.x, -scaled.min.y, -center.z);
+            group.name = "connected-3d-scene";
+            group.traverse((object) => {
+              const mesh = object as THREE_NS.Mesh;
+              if (!mesh.isMesh) return;
+              mesh.receiveShadow = true;
+              mesh.castShadow = true;
+            });
+            sceneAssetModel = group;
+            scene.add(group);
+          } catch (err) {
+            if (!disposed && loadVersion === sceneAssetLoadVersion) {
+              console.error("[导演台] 3D 场景加载失败:", asset.url, err);
+              toast.error("3D 场景加载失败，请检查源节点是否仍有可用的 GLB 文件");
+            }
+          } finally {
+            if (objectUrl) URL.revokeObjectURL(objectUrl);
+          }
+        };
+        void setSceneAssetInternal(sceneAssetRef.current);
 
         // ===== 角色管理 =====
         interface CharEntry {
@@ -1066,6 +1162,8 @@ export function Scene3DEditor({ node, onClose }: Props) {
           panoLoadVersion += 1;
           disposePanoramaSurface();
           panoGeo.dispose();
+          sceneAssetLoadVersion += 1;
+          disposeSceneAssetModel();
           clearMotionPath();
           scene.remove(motionGroup);
           renderer.dispose();
@@ -1421,6 +1519,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
               camera: { theta: round(sph.theta), phi: round(sph.phi), radius: round(sph.radius), target: [round(dirTgt.x), round(dirTgt.y), round(dirTgt.z)] },
               light: { azimuth: la.azimuth, elevation: la.elevation, intensity: round(dir.intensity), ambient: round(ambient.intensity), preset: la.preset },
               env: envRef.current,
+              ...(sceneAssetRef.current ? { sceneAsset: sceneAssetRef.current } : {}),
               motion: motionRef.current,
             };
           },
@@ -2129,6 +2228,9 @@ export function Scene3DEditor({ node, onClose }: Props) {
   const visiblePropList = normalizedSceneQuery
     ? propList.filter((prop) => prop.name.toLocaleLowerCase("zh-CN").includes(normalizedSceneQuery))
     : propList;
+  const visibleSceneAsset = sceneAsset && (!normalizedSceneQuery || sceneAsset.title.toLocaleLowerCase("zh-CN").includes(normalizedSceneQuery))
+    ? sceneAsset
+    : null;
   const activePanoramaUrl = env.panoUrl ?? null;
   const activePanoramaTitle = env.panoTitle || connectedPano?.title || "全景图";
   const aiPanoramaBusy = !!aiPanoramaNodeId && isGenerating(aiPanoramaNodeId);
@@ -2331,6 +2433,16 @@ export function Scene3DEditor({ node, onClose }: Props) {
               </label>
 
               <div className="panel-scroll mt-3 flex-1 space-y-0.5 overflow-y-auto pb-4">
+                {visibleSceneAsset && (
+                  <div
+                    className="flex h-7 items-center gap-2 rounded-[3px] bg-white/[0.04] pl-3 pr-2 text-xs"
+                    title="由画布 3D 节点连接并作为真实场景加载"
+                  >
+                    <Layers3 className="h-3.5 w-3.5 shrink-0 text-cyan-300" />
+                    <span className="min-w-0 flex-1 truncate font-medium text-cyan-200">{visibleSceneAsset.title}</span>
+                    <span className="shrink-0 text-[9px] uppercase text-white/35">GLB</span>
+                  </div>
+                )}
                 {visibleRigList.map((rig) => (
                   <div
                     key={`rig:${rig.id}`}
@@ -2384,9 +2496,9 @@ export function Scene3DEditor({ node, onClose }: Props) {
                     </button>
                   </div>
                 ))}
-                {visibleRigList.length === 0 && visibleCharList.length === 0 && visiblePropList.length === 0 && (
+                {!visibleSceneAsset && visibleRigList.length === 0 && visibleCharList.length === 0 && visiblePropList.length === 0 && (
                   <div className="px-3 py-5 text-center text-[11px] text-white/30">
-                    {normalizedSceneQuery ? "没有匹配的场景对象" : "点击左侧图标添加角色或机位"}
+                    {normalizedSceneQuery ? "没有匹配的场景对象" : "连接 3D 节点，或从左侧添加角色和机位"}
                   </div>
                 )}
               </div>
@@ -2754,6 +2866,20 @@ export function Scene3DEditor({ node, onClose }: Props) {
 
         {/* 场景环境 */}
         <div>
+          <div className="mb-1.5 text-xs font-medium text-white/60">3D 场景</div>
+          {sceneAsset ? (
+            <div className="mb-3 flex items-center gap-2 rounded-lg border border-cyan-300/15 bg-cyan-300/[0.05] px-2.5 py-2">
+              <Layers3 className="h-4 w-4 shrink-0 text-cyan-300" />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-xs font-medium text-white/85">{sceneAsset.title}</div>
+                <div className="mt-0.5 text-[10px] text-white/35">画布连接 · GLB 几何场景</div>
+              </div>
+            </div>
+          ) : (
+            <div className="mb-3 rounded-lg border border-dashed border-white/15 p-2.5 text-[11px] leading-4 text-white/40">
+              将画布中的 3D 节点连接到导演台，即可加载为可拍摄的真实场景
+            </div>
+          )}
           <div className="mb-1.5 text-xs font-medium text-white/60">全景背景</div>
           {activePanoramaUrl ? (
             <>

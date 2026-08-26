@@ -1,4 +1,4 @@
-import { AlignLeft, AudioLines, Clapperboard, Image as ImageIcon, Layers, Mountain, Scissors, UserRound, Video } from "lucide-react";
+import { AlignLeft, AudioLines, Box, Clapperboard, Image as ImageIcon, Layers, Mountain, Scissors, UserRound, Video } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { CHARACTER_NODE_TYPE, SCENE_NODE_TYPE } from "@/lib/canvas-node-types";
 
@@ -10,6 +10,7 @@ const NODE_TYPE_ICONS: Record<string, LucideIcon> = {
   image: ImageIcon,
   video: Video,
   video_compose: Scissors,
+  "3d": Box,
   scene_3d: Layers,
   audio: AudioLines,
   script: Clapperboard,

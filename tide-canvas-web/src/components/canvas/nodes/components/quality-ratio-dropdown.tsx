@@ -113,7 +113,7 @@ export function QualityRatioDropdown({
       withinPortal
       floatingStrategy="fixed"
       zIndex={90}
-      radius={12}
+      radius={16}
       shadow="none"
       middlewares={{ flip: true, shift: { padding: 12 }, inline: true }}
       positionDependencies={[value.quality, value.clarity, value.ratio, qualityOptions.length, clarityOptions.length, ratioOptions.length]}
@@ -127,6 +127,7 @@ export function QualityRatioDropdown({
             onOpenChange(!open);
           }}
           className={cn(styles.trigger, compact && styles.triggerCompact)}
+          aria-haspopup="dialog"
           aria-expanded={open}
           title="选择图片参数"
         >
@@ -136,7 +137,7 @@ export function QualityRatioDropdown({
         </button>
       </Popover.Target>
 
-      <Popover.Dropdown className={styles.panel}>
+      <Popover.Dropdown role="dialog" aria-label="图片参数" className={styles.panel}>
         {dropdownPanel}
       </Popover.Dropdown>
     </Popover>

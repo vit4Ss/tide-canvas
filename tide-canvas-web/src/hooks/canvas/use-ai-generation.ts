@@ -14,6 +14,7 @@ import { toast } from "@/components/shared/toast";
 import { getImageCardSizeForRatio } from "@/lib/image-card-size";
 import { requestCanvasSave } from "@/lib/canvas-save";
 import { isAmbiguousAiCreateCode } from "@/lib/ai-generation-idempotency";
+import { canvasThreeDAssetsFromMeta } from "@/lib/canvas-three-d";
 import {
   matchesCanvasGeneration,
   pendingGenerationIdentity,
@@ -45,6 +46,7 @@ const MAX_POLL_TIME = 15 * 60 * 1000;
 // 轮询频率，不会擅自把仍在服务端执行的任务判失败。
 const MAX_POLL_TIME_VIDEO = 45 * 60 * 1000;
 const MAX_POLL_TIME_AUDIO = 30 * 60 * 1000;
+const MAX_POLL_TIME_3D = 45 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
 // 画布级轮询单例
@@ -239,7 +241,7 @@ function markGenerationFailed(nodeId: string, expectedIdentity?: string) {
   const store = useCanvasStore.getState();
   const node = store.nodes.find((n) => n.id === nodeId);
   if (expectedIdentity && !matchesCanvasGeneration(node, expectedIdentity)) return false;
-  const nextStatus: CanvasNode["status"] = node?.imageSrc || node?.videoSrc || node?.audioSrc || node?.content ? "success" : "error";
+  const nextStatus: CanvasNode["status"] = node?.imageSrc || node?.videoSrc || node?.audioSrc || node?.modelSrc || node?.content ? "success" : "error";
   store.updateNode(nodeId, {
     status: nextStatus,
     taskId: undefined,
@@ -337,7 +339,12 @@ function pollTask(nodeId: string, taskId: string, startTime: number, input: Reco
         // 校验 URL：只接受 http(s):// 或 data: 开头的合法地址
         const isValid = (u?: string): u is string =>
           !!u && (u.startsWith("https://") || u.startsWith("http://") || u.startsWith("data:"));
-        const primary = task.resultUrl;
+        const taskMeta = parseTaskMeta(task.resultMeta);
+        const isThreeD = node?.type === "3d";
+        const modelAssets = isThreeD ? canvasThreeDAssetsFromMeta(taskMeta) : [];
+        const primary = isThreeD
+          ? (isValid(task.resultUrl) ? task.resultUrl : modelAssets[0]?.url)
+          : task.resultUrl;
         if (!isValid(primary)) {
           markGenerationFailed(nodeId, taskId);
           toast.error("生成结果无效，可能未配置 AI 供应商");
@@ -347,10 +354,9 @@ function pollTask(nodeId: string, taskId: string, startTime: number, input: Reco
           const requestedAspect = input.aspectRatio ?? input.aspect_ratio ?? input.ratio;
           const imageSize = node ? imageSizeForAspect(node, requestedAspect) : {};
           // 批量多图(如 Midjourney 一组 4 张)：全部存入本节点 images，节点内组图交互展示
-          const taskMeta = parseTaskMeta(task.resultMeta);
           const rawUrls = taskMeta.urls;
           const urls = Array.isArray(rawUrls) ? rawUrls.filter((u): u is string => isValid(u as string)) : [];
-          const isBatch = !isVideo && !isAudio && urls.length > 1;
+          const isBatch = !isVideo && !isAudio && !isThreeD && urls.length > 1;
           // 音乐分轨（Suno 一次两首）：url 与 resultMeta.tracks 同序，写入节点内切换
           const audioTracks = isAudio && urls.length > 1
             ? urls.map((u, i) => {
@@ -359,15 +365,23 @@ function pollTask(nodeId: string, taskId: string, startTime: number, input: Reco
                 return { url: u, title: s(tr?.title), clipId: s(tr?.clipId) };
               })
             : undefined;
-          // 视频写 videoSrc、音频写 audioSrc(+分轨 audioTracks)、图片写 imageSrc(+组图 images)
+          const previewImage = modelAssets.find((asset) => asset.previewImageUrl)?.previewImageUrl;
+          // 视频写 videoSrc、音频写 audioSrc、3D 写 modelSrc/modelAssets，其余写 imageSrc。
           updateNode(
             nodeId,
             isVideo ? { status: "success", videoSrc: primary, taskId: undefined }
               : isAudio ? { status: "success", audioSrc: primary, audioTracks, taskId: undefined }
+              : isThreeD ? {
+                  status: "success",
+                  modelSrc: primary,
+                  modelAssets: modelAssets.length ? modelAssets : [{ type: "model", url: primary }],
+                  modelPreviewSrc: previewImage,
+                  taskId: undefined,
+                }
               : { status: "success", imageSrc: primary, images: isBatch ? urls : undefined, taskId: undefined, ...imageSize },
           );
           // 四宫格模型(如 Midjourney)返回单张合图：异步切成 4 张独立图后升级为组图
-          if (!isVideo && !isAudio && gridOutput && urls.length <= 1) {
+          if (!isVideo && !isAudio && !isThreeD && gridOutput && urls.length <= 1) {
             void sliceGridAndApply(nodeId, primary);
           }
           toast.success("生成成功");
@@ -471,7 +485,9 @@ async function reconcilePendingGeneration(
         ? MAX_POLL_TIME_VIDEO
         : node?.type === "audio"
           ? MAX_POLL_TIME_AUDIO
-          : MAX_POLL_TIME;
+          : node?.type === "3d"
+            ? MAX_POLL_TIME_3D
+            : MAX_POLL_TIME;
       pollTask(nodeId, taskId, Date.now(), pending.input, maxPollMs, pending.gridOutput, onSuccess);
       return { status: "started", taskId };
     }
@@ -515,7 +531,11 @@ async function startGeneration({ nodeId, handler, modelId, input, clientRequestI
   // 音乐的自定义歌词/延长/翻唱模式不发描述（歌词/原曲 clip 才是主输入），
   // 带 lyrics 或 extras 的音频请求豁免空提示词校验。
   const audioAltInput = handler === "text_to_audio" && (!!input.lyrics || !!input.extras);
-  if ((!input.prompt || String(input.prompt).trim().length === 0) && !audioAltInput) {
+  const threeDReferenceInput = handler === "generate_3d" && (
+    (typeof input.imageUrl === "string" && input.imageUrl.trim().length > 0)
+    || (Array.isArray(input.multiViewImages) && input.multiViewImages.length > 0)
+  );
+  if ((!input.prompt || String(input.prompt).trim().length === 0) && !audioAltInput && !threeDReferenceInput) {
     toast.error("请先输入提示词");
     return { status: "rejected" };
   }
@@ -554,6 +574,10 @@ async function startGeneration({ nodeId, handler, modelId, input, clientRequestI
         if (t === "cover") return has(ex.cover_clip_id) ? null : "翻唱模式需先选择原曲";
         return null;
       }
+      case "generate_3d":
+        return has(input.prompt) || has(input.imageUrl) || has(input.multiViewImages)
+          ? null
+          : "3D 生成需要提示词或参考图片";
       default:
         return null;
     }
@@ -639,7 +663,7 @@ async function startGeneration({ nodeId, handler, modelId, input, clientRequestI
   if (activeTasks.get(nodeId) !== marker) return { status: "ambiguous" };
   if (!recoverySaved) {
     const current = useCanvasStore.getState().nodes.find((node) => node.id === nodeId);
-    const hasResult = !!(current?.imageSrc || current?.videoSrc || current?.audioSrc || current?.content);
+    const hasResult = !!(current?.imageSrc || current?.videoSrc || current?.audioSrc || current?.modelSrc || current?.content);
     useCanvasStore.getState().updateNode(nodeId, {
       status: hasResult ? "success" : "idle",
       pendingGeneration: undefined,
@@ -663,7 +687,9 @@ export function resumeGeneration() {
         ? MAX_POLL_TIME_VIDEO
         : node.type === "audio"
           ? MAX_POLL_TIME_AUDIO
-          : MAX_POLL_TIME;
+          : node.type === "3d"
+            ? MAX_POLL_TIME_3D
+            : MAX_POLL_TIME;
       track(node.id, node.taskId);
       // 画幅从节点已持久化的 aspectRatio 恢复;超时预算从当前时刻重新起算(有整体上限兜底)
       pollTask(node.id, node.taskId, Date.now(), node.aspectRatio ? { aspectRatio: node.aspectRatio } : {}, maxPollMs);

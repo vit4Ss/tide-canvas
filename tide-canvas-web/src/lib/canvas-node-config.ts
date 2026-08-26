@@ -1,6 +1,7 @@
 import {
   AlignLeft,
   AudioLines,
+  Box,
   Clapperboard,
   Image as ImageIcon,
   Layers,
@@ -67,6 +68,7 @@ const KNOWN_FEATURES = new Set<CanvasNodeFeatureKey>([
 const RENDERER_FEATURES: Record<CanvasNodeRenderer, ReadonlySet<CanvasNodeFeatureKey>> = {
   image: new Set(IMAGE_RENDERER_FEATURES),
   video: new Set(VIDEO_NODE_FEATURES),
+  "3d": new Set<CanvasNodeFeatureKey>(),
   scene_3d: new Set<CanvasNodeFeatureKey>(),
   text: new Set<CanvasNodeFeatureKey>(),
   audio: new Set<CanvasNodeFeatureKey>(),
@@ -100,6 +102,13 @@ const NODE_PRESENTATION: Record<
     renderer: "image",
     iconKey: "mountain",
     icon: Mountain,
+  },
+  "3d": {
+    title: "3D",
+    description: "3D 模型生成与预览",
+    renderer: "3d",
+    iconKey: "box",
+    icon: Box,
   },
   scene_3d: {
     title: "3D 导演台",
@@ -148,6 +157,7 @@ const NODE_PRESENTATION: Record<
 const DEFAULT_ORDER = [
   "character",
   "scene",
+  "3d",
   "scene_3d",
   "text",
   "image",

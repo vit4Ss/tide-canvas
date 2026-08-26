@@ -785,21 +785,25 @@ export const AudioNode = memo(function AudioNode({
                         onMouseDown={stop}
                         onWheelCapture={(e) => e.stopPropagation()}
                         onWheel={(e) => e.stopPropagation()}
-                        className="absolute left-0 top-[calc(100%+8px)] z-20 w-[126px] rounded-xl border border-neutral-200 bg-white p-1.5 shadow-xl shadow-neutral-900/12 dark:border-neutral-800 dark:bg-neutral-950 dark:shadow-black/30"
+                        className="absolute left-0 top-[calc(100%+8px)] z-20 w-[138px] animate-in rounded-2xl border border-neutral-200/80 bg-white/95 p-1.5 shadow-[0_18px_50px_rgba(15,23,42,0.18)] backdrop-blur-xl duration-100 fade-in-0 zoom-in-95 motion-reduce:animate-none dark:border-white/10 dark:bg-neutral-900/95 dark:shadow-black/55"
                       >
+                        <div className="flex items-center justify-between px-2.5 pb-1.5 pt-1 text-[11px] font-medium text-neutral-500 dark:text-neutral-400">
+                          <span>停顿时长</span>
+                          <span className="font-normal text-neutral-400 dark:text-neutral-500">秒</span>
+                        </div>
                         {PAUSE_OPTIONS.map((item) => (
                           <button
                             key={item.token}
                             type="button"
                             onMouseDown={keepPanelFocus}
                             onClick={(e) => { stop(e); insertPromptToken(item.token); setActiveTokenMenu(null); }}
-                            className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-sky-600 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:hover:text-sky-300"
+                            className="block h-9 w-full rounded-xl px-2.5 text-left text-xs font-medium text-neutral-700 transition-colors hover:bg-neutral-100/85 hover:text-neutral-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/35 dark:text-neutral-300 dark:hover:bg-white/[0.07] dark:hover:text-white"
                           >
                             {item.label}
                           </button>
                         ))}
-                        <div className="mt-1 border-t border-neutral-100 pt-1 dark:border-neutral-800">
-                          <div className="px-3 py-1 text-xs font-medium text-neutral-500 dark:text-neutral-400">自定义</div>
+                        <div className="mx-1 mt-1 border-t border-neutral-200/70 pt-1.5 dark:border-white/10">
+                          <div className="px-2 py-1 text-[11px] font-medium text-neutral-500 dark:text-neutral-400">自定义</div>
                           <div className="flex items-center gap-1 px-2 pb-1">
                             <input
                               value={customPauseValue}
@@ -839,15 +843,16 @@ export const AudioNode = memo(function AudioNode({
                         onMouseDown={keepPanelFocus}
                         onWheelCapture={(e) => e.stopPropagation()}
                         onWheel={(e) => e.stopPropagation()}
-                        className="absolute left-0 top-[calc(100%+8px)] z-20 max-h-[238px] w-[128px] overflow-y-auto rounded-xl border border-neutral-200 bg-white p-1.5 shadow-xl shadow-neutral-900/12 dark:border-neutral-800 dark:bg-neutral-950 dark:shadow-black/30"
+                        className="absolute left-0 top-[calc(100%+8px)] z-20 max-h-[250px] w-[148px] animate-in overflow-y-auto rounded-2xl border border-neutral-200/80 bg-white/95 p-1.5 shadow-[0_18px_50px_rgba(15,23,42,0.18)] backdrop-blur-xl duration-100 fade-in-0 zoom-in-95 motion-reduce:animate-none dark:border-white/10 dark:bg-neutral-900/95 dark:shadow-black/55"
                       >
+                        <div className="px-2.5 pb-1.5 pt-1 text-[11px] font-medium text-neutral-500 dark:text-neutral-400">选择语气词</div>
                         {TONE_OPTIONS.map((item) => (
                           <button
                             key={item.token}
                             type="button"
                             onMouseDown={keepPanelFocus}
                             onClick={(e) => { stop(e); insertPromptToken(item.token); setActiveTokenMenu(null); }}
-                            className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-neutral-950 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:hover:text-white"
+                            className="block h-9 w-full rounded-xl px-2.5 text-left text-xs font-medium text-neutral-700 transition-colors hover:bg-neutral-100/85 hover:text-neutral-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/35 dark:text-neutral-300 dark:hover:bg-white/[0.07] dark:hover:text-white"
                           >
                             {item.label}
                           </button>

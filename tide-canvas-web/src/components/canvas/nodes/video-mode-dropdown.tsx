@@ -64,7 +64,7 @@ export function VideoModeDropdown({ tabs, value, onChange, enabledOf, hintOf }: 
         aria-haspopup="listbox"
         aria-expanded={open}
         title="生成模式"
-        className="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-xs text-neutral-700 transition-colors hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
+        className="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-xl px-2 text-xs text-neutral-700 transition-colors hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/35 dark:text-neutral-300 dark:hover:bg-neutral-800"
       >
         <Clapperboard className="h-3.5 w-3.5 shrink-0" />
         <span>{value}</span>
@@ -74,10 +74,14 @@ export function VideoModeDropdown({ tabs, value, onChange, enabledOf, hintOf }: 
       {open && typeof document !== "undefined" && createPortal(
         <div
           ref={panelRef}
-          className={`fixed z-50 w-[236px] rounded-xl border border-black/[0.06] bg-white p-1.5 text-left shadow-[0_22px_70px_rgba(15,23,42,0.18)] dark:border-white/10 dark:bg-[#25262b] dark:shadow-black/35 ${openUp ? "-translate-y-full" : ""}`}
+          className={`fixed z-50 w-[236px] rounded-2xl border border-neutral-200/80 bg-white/95 p-1.5 text-left shadow-[0_18px_50px_rgba(15,23,42,0.18)] backdrop-blur-xl dark:border-white/10 dark:bg-neutral-900/95 dark:shadow-black/55 ${openUp ? "-translate-y-full" : ""}`}
           style={{ left: panelPos.left, top: panelPos.top }}
           onMouseDown={stop}
         >
+          <div className="flex items-center justify-between px-2.5 pb-1.5 pt-1 text-[11px] font-medium text-neutral-500 dark:text-neutral-400">
+            <span>生成模式</span>
+            <span className="font-normal text-neutral-400 dark:text-neutral-500">选择工作流</span>
+          </div>
           {tabs.map((t) => {
             const enabled = enabledOf(t);
             const hint = hintOf(t);
@@ -87,8 +91,10 @@ export function VideoModeDropdown({ tabs, value, onChange, enabledOf, hintOf }: 
                 type="button"
                 disabled={!enabled}
                 onClick={(e) => { stop(e); onChange(t); setOpen(false); }}
-                className={`flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition-colors ${
-                  enabled ? "hover:bg-neutral-100 dark:hover:bg-white/8" : "cursor-not-allowed opacity-45"
+                className={`flex w-full items-start gap-2 rounded-xl px-2.5 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/35 ${
+                  enabled
+                    ? t === value ? "bg-neutral-100/85 dark:bg-white/10" : "hover:bg-neutral-100/65 dark:hover:bg-white/[0.07]"
+                    : "cursor-not-allowed opacity-45"
                 }`}
               >
                 <span className="min-w-0 flex-1">
@@ -99,7 +105,7 @@ export function VideoModeDropdown({ tabs, value, onChange, enabledOf, hintOf }: 
                     <span className="mt-0.5 block text-[11px] leading-4 text-neutral-400">{hint}</span>
                   )}
                 </span>
-                {t === value && <Check className="mt-1 h-3.5 w-3.5 shrink-0 text-neutral-900 dark:text-white" />}
+                {t === value && <Check className="mt-1 h-3.5 w-3.5 shrink-0 text-blue-500 dark:text-blue-400" />}
               </button>
             );
           })}

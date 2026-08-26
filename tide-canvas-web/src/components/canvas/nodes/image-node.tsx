@@ -315,12 +315,12 @@ const COMMON_RATIOS = [
 const closestRatioLabel = (aspect: number) =>
   COMMON_RATIOS.reduce((best, item) => (Math.abs(item.value - aspect) < Math.abs(best.value - aspect) ? item : best), COMMON_RATIOS[0]).label;
 
-const CROP_OPTIONS: { ratio: string; aspect: number }[] = [
-  { ratio: "1:1", aspect: 1 },
-  { ratio: "3:4", aspect: 3 / 4 },
-  { ratio: "4:3", aspect: 4 / 3 },
-  { ratio: "9:16", aspect: 9 / 16 },
-  { ratio: "16:9", aspect: 16 / 9 },
+const CROP_OPTIONS: { ratio: string; aspect: number; name: string }[] = [
+  { ratio: "1:1", aspect: 1, name: "正方形" },
+  { ratio: "3:4", aspect: 3 / 4, name: "竖版人像" },
+  { ratio: "4:3", aspect: 4 / 3, name: "横版画幅" },
+  { ratio: "9:16", aspect: 9 / 16, name: "手机竖屏" },
+  { ratio: "16:9", aspect: 16 / 9, name: "宽屏画幅" },
 ];
 
 const ROTATE_OPTIONS: { label: string; degrees: -90 | 90 | 180 }[] = [
@@ -328,6 +328,36 @@ const ROTATE_OPTIONS: { label: string; degrees: -90 | 90 | 180 }[] = [
   { label: "向右旋转 90°", degrees: 90 },
   { label: "旋转 180°", degrees: 180 },
 ];
+
+const TOOLBAR_MENU_SURFACE = "animate-in fade-in-0 zoom-in-95 rounded-2xl border border-neutral-200/80 bg-white/95 p-1.5 text-neutral-800 shadow-[0_18px_50px_rgba(15,23,42,0.18)] backdrop-blur-xl duration-100 motion-reduce:animate-none dark:border-white/10 dark:bg-neutral-900/95 dark:text-neutral-100 dark:shadow-black/55";
+const TOOLBAR_MENU_ITEM = "group flex w-full items-center rounded-xl text-left transition-colors duration-150 hover:bg-neutral-100/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/35 motion-reduce:transition-none dark:hover:bg-white/[0.07]";
+
+function RatioPreview({ aspect }: { aspect: number }) {
+  const width = aspect >= 1 ? 22 : Math.max(8, Math.round(22 * aspect));
+  const height = aspect >= 1 ? Math.max(8, Math.round(22 / aspect)) : 22;
+  return (
+    <span className="flex h-8 w-9 shrink-0 items-center justify-center rounded-[10px] bg-neutral-100/90 ring-1 ring-inset ring-neutral-200/60 dark:bg-white/[0.06] dark:ring-white/10" aria-hidden>
+      <span
+        className="rounded-[3px] border border-neutral-400/80 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.08)] dark:border-neutral-500 dark:bg-neutral-800"
+        style={{ width, height }}
+      />
+    </span>
+  );
+}
+
+function GridPreview({ size }: { size: number }) {
+  return (
+    <span
+      className="grid h-8 w-9 shrink-0 gap-[2px] rounded-[10px] bg-neutral-100/90 p-2 ring-1 ring-inset ring-neutral-200/60 dark:bg-white/[0.06] dark:ring-white/10"
+      style={{ gridTemplateColumns: `repeat(${size}, minmax(0, 1fr))` }}
+      aria-hidden
+    >
+      {Array.from({ length: size * size }, (_, index) => (
+        <span key={index} className="min-h-0 min-w-0 rounded-[1px] bg-neutral-400/75 dark:bg-neutral-500" />
+      ))}
+    </span>
+  );
+}
 
 function resolvePresetRatio(preferred: readonly string[], configured?: readonly string[]) {
   if (!configured?.length) return preferred[0];
@@ -386,8 +416,8 @@ function ImageTransformMenu({
     if (!open) return;
     const rect = triggerRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const menuWidth = 160;
-    const estHeight = (isCrop ? 5 : 3) * 36 + 12;
+    const menuWidth = 192;
+    const estHeight = (isCrop ? 5 : 3) * 44 + 42;
     const below = window.innerHeight - rect.bottom;
     const up = below < estHeight && rect.top > below;
     setPos({ left: Math.max(8, rect.right - menuWidth), top: up ? rect.top : rect.bottom, up });
@@ -435,23 +465,31 @@ function ImageTransformMenu({
             <div
               ref={menuRef}
               role="menu"
-              className="fixed z-[90] w-40 rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-lg"
+              aria-label={isCrop ? "裁剪比例" : "旋转方式"}
+              className={`fixed z-[90] w-48 ${TOOLBAR_MENU_SURFACE}`}
               style={{
                 left: pos.left,
-                ...(pos.up ? { bottom: window.innerHeight - pos.top + 4 } : { top: pos.top + 4 }),
+                ...(pos.up ? { bottom: window.innerHeight - pos.top + 8 } : { top: pos.top + 8 }),
               }}
             >
+              <div className="flex items-center justify-between px-2.5 pb-1.5 pt-1 text-[11px] font-medium text-neutral-500 dark:text-neutral-400">
+                <span>{isCrop ? "裁剪比例" : "旋转方式"}</span>
+                {isCrop ? <span className="font-normal text-neutral-400 dark:text-neutral-500">居中裁剪</span> : null}
+              </div>
               {isCrop
-                ? CROP_OPTIONS.map(({ ratio, aspect }) => (
+                ? CROP_OPTIONS.map(({ ratio, aspect, name }) => (
                     <button
                       type="button"
                       role="menuitem"
                       key={ratio}
                       onClick={() => pickCrop(ratio, aspect)}
-                      className="flex h-9 w-full items-center justify-between rounded-md px-2.5 text-[13px] text-popover-foreground transition-colors hover:bg-accent"
+                      className={`${TOOLBAR_MENU_ITEM} h-11 gap-2.5 px-2`}
                     >
-                      <span>裁剪为 {ratio}</span>
-                      <span className="text-[11px] text-muted-foreground">居中</span>
+                      <RatioPreview aspect={aspect} />
+                      <span className="min-w-0">
+                        <span className="block text-[13px] font-medium leading-4 text-neutral-800 dark:text-neutral-100">{ratio}</span>
+                        <span className="block text-[11px] leading-4 text-neutral-400 dark:text-neutral-500">{name}</span>
+                      </span>
                     </button>
                   ))
                 : ROTATE_OPTIONS.map(({ label, degrees }) => (
@@ -460,9 +498,12 @@ function ImageTransformMenu({
                       role="menuitem"
                       key={degrees}
                       onClick={() => pickRotate(degrees)}
-                      className="flex h-9 w-full items-center rounded-md px-2.5 text-[13px] text-popover-foreground transition-colors hover:bg-accent"
+                      className={`${TOOLBAR_MENU_ITEM} h-11 gap-2.5 px-2`}
                     >
-                      {label}
+                      <span className="flex h-8 w-9 shrink-0 items-center justify-center rounded-[10px] bg-neutral-100/90 text-neutral-500 ring-1 ring-inset ring-neutral-200/60 transition-colors group-hover:text-neutral-800 dark:bg-white/[0.06] dark:text-neutral-400 dark:ring-white/10 dark:group-hover:text-neutral-100">
+                        {degrees < 0 ? <RotateCcw className="h-4 w-4" /> : <RotateCw className="h-4 w-4" />}
+                      </span>
+                      <span className="text-[13px] font-medium">{label}</span>
                     </button>
                   ))}
             </div>,
@@ -1682,20 +1723,29 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       closeOverflowOnSelect: false,
       content: (
         <div className="relative" ref={gridGenMenuRef}>
-          <button onMouseDown={stop} onClick={(e) => { stop(e); setGridGenMenuOpen((v) => !v); }} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800">
-            <LayoutGrid className="h-4 w-4" /> 九宫格 <ChevronDown className="h-3.5 w-3.5 text-neutral-400" />
+          <button type="button" onMouseDown={stop} onClick={(e) => { stop(e); setGridGenMenuOpen((v) => !v); }} aria-haspopup="menu" aria-expanded={gridGenMenuOpen} className={`flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 transition-colors ${gridGenMenuOpen ? "bg-neutral-100 dark:bg-neutral-800" : "hover:bg-neutral-100 dark:hover:bg-neutral-800"}`}>
+            <LayoutGrid className="h-4 w-4" /> 九宫格 <ChevronDown className={`h-3.5 w-3.5 text-neutral-400 transition-transform ${gridGenMenuOpen ? "rotate-180" : ""}`} />
           </button>
           {gridGenMenuOpen && (
-            <div onMouseDown={stop} className="thin-scroll absolute left-0 top-full z-30 mt-1.5 max-h-96 w-52 overflow-y-auto rounded-xl border border-neutral-200 bg-white p-1.5 shadow-[0_12px_40px_rgba(15,23,42,0.12)] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40">
+            <div role="menu" aria-label="九宫格生成预设" onMouseDown={stop} className={`thin-scroll absolute left-0 top-full z-30 mt-2 max-h-96 w-56 overflow-y-auto ${TOOLBAR_MENU_SURFACE}`}>
+              <div className="flex items-center justify-between px-2.5 pb-1.5 pt-1 text-[11px] font-medium text-neutral-500 dark:text-neutral-400">
+                <span>生成预设</span>
+                <span className="font-normal text-neutral-400 dark:text-neutral-500">基于当前图片</span>
+              </div>
               {GRID_GEN_PRESETS.map((preset) => (
                 <button
                   key={preset.label}
+                  type="button"
+                  role="menuitem"
                   onMouseDown={stop}
                   onClick={(e) => { stop(e); handleGridGen(preset); }}
-                  className="flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-left text-[13px] text-neutral-700 transition-colors hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                  className={`${TOOLBAR_MENU_ITEM} h-10 gap-2.5 px-2`}
                 >
-                  <preset.icon className="h-4 w-4 shrink-0 text-neutral-400" />
-                  {preset.label}
+                  <span className="flex h-7 w-8 shrink-0 items-center justify-center rounded-lg bg-neutral-100/90 text-neutral-500 ring-1 ring-inset ring-neutral-200/60 transition-colors group-hover:text-neutral-800 dark:bg-white/[0.06] dark:text-neutral-400 dark:ring-white/10 dark:group-hover:text-neutral-100">
+                    <preset.icon className="h-3.5 w-3.5" />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{preset.label}</span>
+                  {preset.ratio ? <span className="rounded-md bg-neutral-100 px-1.5 py-0.5 text-[10px] text-neutral-400 dark:bg-white/[0.06] dark:text-neutral-500">{preset.ratio}</span> : null}
                 </button>
               ))}
             </div>
@@ -1709,25 +1759,37 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       closeOverflowOnSelect: false,
       content: (
         <div className="relative" ref={hdMenuRef}>
-          <button onMouseDown={stop} onClick={(e) => { stop(e); setHdMenuOpen((v) => !v); }} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800">
+          <button type="button" onMouseDown={stop} onClick={(e) => { stop(e); setHdMenuOpen((v) => !v); }} aria-haspopup="menu" aria-expanded={hdMenuOpen} className={`flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 transition-colors ${hdMenuOpen ? "bg-neutral-100 dark:bg-neutral-800" : "hover:bg-neutral-100 dark:hover:bg-neutral-800"}`}>
             <span className="flex h-4 items-center rounded bg-neutral-200 px-1 text-[10px] font-medium leading-none text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300">HD</span>
-            超分 <Gem className="-ml-1 h-3 w-3 fill-violet-400 text-violet-500" /> <ChevronDown className="h-3.5 w-3.5 text-neutral-400" />
+            超分 <Gem className="-ml-1 h-3 w-3 fill-violet-400 text-violet-500" /> <ChevronDown className={`h-3.5 w-3.5 text-neutral-400 transition-transform ${hdMenuOpen ? "rotate-180" : ""}`} />
           </button>
           {hdMenuOpen && (
-            <div onMouseDown={stop} className="absolute left-0 top-full z-30 mt-1.5 w-48 rounded-xl border border-neutral-200 bg-white p-1.5 shadow-[0_12px_40px_rgba(15,23,42,0.12)] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40">
+            <div role="menu" aria-label="输出清晰度" onMouseDown={stop} className={`absolute left-0 top-full z-30 mt-2 w-56 ${TOOLBAR_MENU_SURFACE}`}>
+              <div className="flex items-center justify-between px-2.5 pb-1.5 pt-1 text-[11px] font-medium text-neutral-500 dark:text-neutral-400">
+                <span>输出清晰度</span>
+                <span className="font-normal text-neutral-400 dark:text-neutral-500">消耗积分</span>
+              </div>
               {([
-                { res: "2k", label: "超分至 2K" },
-                { res: "4k", label: "超分至 4K" },
+                { res: "2k", label: "超分至 2K", description: "适合屏幕与社媒" },
+                { res: "4k", label: "超分至 4K", description: "适合高清交付" },
               ] as const).map((option) => (
                 <button
                   key={option.res}
+                  type="button"
+                  role="menuitem"
                   onMouseDown={stop}
                   onClick={(e) => { stop(e); handleUpscale(option.res); }}
-                  className="flex h-9 w-full items-center justify-between rounded-md px-2.5 text-left text-[13px] text-neutral-700 transition-colors hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                  className={`${TOOLBAR_MENU_ITEM} h-12 gap-2.5 px-2`}
                 >
-                  {option.label}
-                  <span className="flex items-center gap-0.5 text-xs text-neutral-400">
-                    <Zap className="h-3 w-3" fill="currentColor" />
+                  <span className="flex h-8 w-9 shrink-0 items-center justify-center rounded-[10px] bg-violet-50 text-[11px] font-semibold text-violet-600 ring-1 ring-inset ring-violet-100 dark:bg-violet-500/10 dark:text-violet-300 dark:ring-violet-400/15">
+                    {option.res.toUpperCase()}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[13px] font-medium leading-4">{option.label}</span>
+                    <span className="block text-[11px] leading-4 text-neutral-400 dark:text-neutral-500">{option.description}</span>
+                  </span>
+                  <span className="flex items-center gap-0.5 rounded-lg bg-neutral-100 px-1.5 py-1 text-[11px] font-medium text-neutral-500 dark:bg-white/[0.06] dark:text-neutral-400">
+                    <Zap className="h-3 w-3 text-amber-500" fill="currentColor" />
                     {Math.ceil(matrixPrice(formatConfig.pricing, keyVariants("high"), keyVariants(option.res)) ?? selectedModel?.pointCost ?? 18)}
                   </span>
                 </button>
@@ -1767,40 +1829,52 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       closeOverflowOnSelect: false,
       content: (
         <div className="relative" ref={gridMenuRef}>
-          <button onMouseDown={stop} onClick={(e) => { stop(e); setGridMenuOpen((v) => !v); }} disabled={splitting} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">
+          <button type="button" onMouseDown={stop} onClick={(e) => { stop(e); setGridMenuOpen((v) => !v); }} disabled={splitting} aria-haspopup="menu" aria-expanded={gridMenuOpen} className={`flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 transition-colors disabled:opacity-60 ${gridMenuOpen ? "bg-neutral-100 dark:bg-neutral-800" : "hover:bg-neutral-100 dark:hover:bg-neutral-800"}`}>
             {splitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Table className="h-4 w-4" />}
-            宫格切分 <ChevronDown className="h-3.5 w-3.5 text-neutral-400" />
+            宫格切分 <ChevronDown className={`h-3.5 w-3.5 text-neutral-400 transition-transform ${gridMenuOpen ? "rotate-180" : ""}`} />
           </button>
           {gridMenuOpen && (
-            <div onMouseDown={stop} className="absolute left-0 top-full z-30 mt-1.5 w-44 rounded-xl border border-neutral-200 bg-white p-1.5 shadow-[0_12px_40px_rgba(15,23,42,0.12)] dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/40">
-              {[{ label: "4宫格 (2×2)", n: 2 }, { label: "9宫格 (3×3)", n: 3 }, { label: "16宫格 (4×4)", n: 4 }, { label: "25宫格 (5×5)", n: 5 }].map((option) => (
+            <div role="menu" aria-label="宫格切分布局" onMouseDown={stop} className={`absolute left-0 top-full z-30 mt-2 w-52 ${TOOLBAR_MENU_SURFACE}`}>
+              <div className="flex items-center justify-between px-2.5 pb-1.5 pt-1 text-[11px] font-medium text-neutral-500 dark:text-neutral-400">
+                <span>宫格切分</span>
+                <span className="font-normal text-neutral-400 dark:text-neutral-500">选择布局</span>
+              </div>
+              {[{ label: "4 宫格", n: 2 }, { label: "9 宫格", n: 3 }, { label: "16 宫格", n: 4 }, { label: "25 宫格", n: 5 }].map((option) => (
                 <button
                   key={option.label}
+                  type="button"
+                  role="menuitem"
                   onMouseDown={stop}
                   onClick={(e) => { stop(e); enterGridPreview(option.n, option.n); }}
-                  className="flex h-9 w-full items-center rounded-md px-2.5 text-left text-[13px] text-neutral-700 transition-colors hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                  className={`${TOOLBAR_MENU_ITEM} h-10 gap-2.5 px-2`}
                 >
-                  {option.label}
+                  <GridPreview size={option.n} />
+                  <span className="flex-1 text-[13px] font-medium">{option.label}</span>
+                  <span className="text-[11px] tabular-nums text-neutral-400 dark:text-neutral-500">{option.n} × {option.n}</span>
                 </button>
               ))}
-              <div className="mx-2.5 my-1 h-px bg-neutral-200 dark:bg-neutral-700" />
+              <div className="mx-2 my-1.5 h-px bg-neutral-200/80 dark:bg-white/10" />
               <div
                 className="relative"
                 onMouseEnter={() => setCustomHover((hover) => hover ?? { r: 1, c: 1 })}
                 onMouseLeave={() => setCustomHover(null)}
               >
-                <button onMouseDown={stop} className="flex h-9 w-full items-center justify-between rounded-md px-2.5 text-left text-[13px] text-neutral-700 transition-colors hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-800">
-                  自定义 <ChevronRight className="h-3.5 w-3.5 text-neutral-400" />
+                <button type="button" role="menuitem" aria-haspopup="grid" onMouseDown={stop} className={`${TOOLBAR_MENU_ITEM} h-10 gap-2.5 px-2`}>
+                  <span className="flex h-8 w-9 shrink-0 items-center justify-center rounded-[10px] bg-neutral-100/90 text-neutral-500 ring-1 ring-inset ring-neutral-200/60 dark:bg-white/[0.06] dark:text-neutral-400 dark:ring-white/10">
+                    <LayoutGrid className="h-4 w-4" />
+                  </span>
+                  <span className="flex-1 text-[13px] font-medium">自定义布局</span>
+                  <ChevronRight className="h-3.5 w-3.5 text-neutral-400" />
                 </button>
                 {customHover && (
-                  <div onMouseDown={stop} className="absolute left-full top-0 ml-1 rounded-xl border border-neutral-200 bg-white p-3 shadow-xl dark:border-neutral-700 dark:bg-neutral-900">
-                    <div className="mb-2 flex items-center justify-between gap-8">
-                      <span className="font-medium text-neutral-700 dark:text-neutral-200">自定义宫格</span>
-                      <span className="text-neutral-400">{customHover.c} x {customHover.r}</span>
+                  <div role="grid" aria-label="自定义宫格布局" onMouseDown={stop} className={`absolute left-full top-0 ml-2 p-3 ${TOOLBAR_MENU_SURFACE}`}>
+                    <div className="mb-2.5 flex items-center justify-between gap-8 px-0.5">
+                      <span className="text-[12px] font-medium text-neutral-700 dark:text-neutral-200">自定义布局</span>
+                      <span className="rounded-md bg-neutral-100 px-1.5 py-0.5 text-[11px] tabular-nums text-neutral-500 dark:bg-white/[0.07] dark:text-neutral-400">{customHover.c} × {customHover.r}</span>
                     </div>
                     <div className="flex flex-col gap-1">
                       {Array.from({ length: CUSTOM_MAX }, (_, rowIndex) => (
-                        <div key={rowIndex} className="flex gap-1">
+                        <div key={rowIndex} role="row" className="flex gap-1">
                           {Array.from({ length: CUSTOM_MAX }, (_, columnIndex) => {
                             const row = rowIndex + 1;
                             const column = columnIndex + 1;
@@ -1808,10 +1882,13 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                             return (
                               <button
                                 key={columnIndex}
+                                type="button"
+                                role="gridcell"
+                                aria-label={`${column} 列 × ${row} 行`}
                                 onMouseDown={stop}
                                 onMouseEnter={() => setCustomHover({ r: row, c: column })}
                                 onClick={(e) => { stop(e); enterGridPreview(row, column); }}
-                                className={`h-5 w-5 rounded-sm border transition-colors ${active ? "border-blue-400 bg-blue-300 dark:border-blue-400 dark:bg-blue-500" : "border-neutral-200 bg-neutral-100 dark:border-neutral-700 dark:bg-neutral-800"}`}
+                                className={`h-5 w-5 rounded-[4px] border transition-all duration-100 ${active ? "border-blue-400/80 bg-blue-500 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.18)] dark:border-blue-400 dark:bg-blue-500" : "border-neutral-200/80 bg-neutral-100 hover:border-neutral-300 dark:border-white/10 dark:bg-white/[0.06] dark:hover:border-white/20"}`}
                               />
                             );
                           })}
@@ -1829,12 +1906,15 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     {
       key: "media.replace",
       group: "media",
+      overflowLabel: "替换图片",
       content: (
         <button
+          type="button"
           onMouseDown={stop}
           onClick={openFilePicker}
           disabled={nodeUploading || generating}
           title={generating ? "生成完成后可替换素材" : "重新上传 / 图生图"}
+          aria-label={generating ? "生成完成后可替换素材" : "替换图片"}
           className="rounded-xl p-2 hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-neutral-800"
         >
           <Brush className="h-4 w-4" />
@@ -1854,8 +1934,9 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     {
       key: "media.download",
       group: "media",
+      overflowLabel: "下载图片",
       content: (
-        <button onMouseDown={stop} onClick={(e) => handleDownload(e, node.imageSrc, node.title || "image", "png")} disabled={downloading} title="下载" className="rounded-xl p-2 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">
+        <button type="button" onMouseDown={stop} onClick={(e) => handleDownload(e, node.imageSrc, node.title || "image", "png")} disabled={downloading} title="下载" aria-label="下载图片" className="rounded-xl p-2 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">
           {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
         </button>
       ),
@@ -1863,8 +1944,9 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     {
       key: "media.preview",
       group: "media",
+      overflowLabel: "查看大图",
       content: (
-        <button onMouseDown={stop} onClick={(e) => { stop(e); setPreviewOpen(true); }} title="查看大图" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800">
+        <button type="button" onMouseDown={stop} onClick={(e) => { stop(e); setPreviewOpen(true); }} title="查看大图" aria-label="查看大图" className="rounded-xl p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800">
           <Maximize2 className="h-4 w-4" />
         </button>
       ),
@@ -1882,6 +1964,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     {
       key: "image.panoramaCapture",
       group: "process",
+      overflowLabel: "当前视角截图",
       content: (
         <button
           type="button"
@@ -1903,6 +1986,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     {
       key: "image.panoramaCaptureGrid",
       group: "process",
+      overflowLabel: "4 大视角截图",
       content: (
         <button
           type="button"
@@ -1924,6 +2008,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     {
       key: "image.panoramaGuide",
       group: "process",
+      overflowLabel: panoGrid ? "隐藏参考线" : "显示参考线",
       content: (
         <button
           type="button"
@@ -1944,6 +2029,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     {
       key: "image.panoramaReset",
       group: "process",
+      overflowLabel: "复位视角",
       content: (
         <button
           type="button"
@@ -1965,6 +2051,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       // screen panorama rather than a flat image lightbox.
       key: "media.preview",
       group: "media",
+      overflowLabel: "全屏查看",
       content: (
         <button
           type="button"
@@ -1984,6 +2071,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     {
       key: "media.download",
       group: "media",
+      overflowLabel: "下载全景图",
       content: (
         <button
           type="button"

@@ -1,4 +1,6 @@
 import type * as THREE_NS from "three";
+import type { CanvasThreeDSceneAsset } from "@/types/canvas-three-d";
+import { normalizeScene3DSceneAsset } from "./scene-3d-scene-asset";
 import {
   DEFAULT_SCENE_3D_MOTION,
   normalizeScene3DMotion,
@@ -73,6 +75,8 @@ export interface Scene3DState {
   camera: { theta: number; phi: number; radius: number; target: [number, number, number] };
   light: { azimuth: number; elevation: number; intensity: number; ambient: number; preset: string };
   env: Scene3DEnv;
+  /** 连接进导演台并作为真实几何环境加载的 GLB 场景。 */
+  sceneAsset?: CanvasThreeDSceneAsset;
   /** 可选是为了兼容早期 v2 存档；parseState 后始终补齐。 */
   motion: Scene3DMotionState;
 }
@@ -712,6 +716,7 @@ export function parseState(json?: string): Scene3DState | null {
         ...s,
         props,
         env: normalizeScene3DEnv(s.env),
+        sceneAsset: normalizeScene3DSceneAsset(s.sceneAsset),
         motion: normalizeScene3DMotion(s.motion),
       } as Scene3DState;
     }
