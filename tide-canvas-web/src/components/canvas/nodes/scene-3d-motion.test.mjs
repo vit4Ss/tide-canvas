@@ -106,7 +106,8 @@ test("motion presets produce useful push, truck and orbit endpoints", () => {
 });
 
 test("director editor traps focus and isolates global shortcuts from controls", () => {
-  assert.match(editorSource, /useFocusTrap<HTMLDivElement>\(true\)/);
+  assert.match(editorSource, /useFocusTrap<HTMLDivElement>\(!recognitionOpen\)/);
+  assert.match(editorSource, /useFocusTrap<HTMLElement>\(recognitionOpen\)/);
   assert.match(editorSource, /role="dialog"[\s\S]*aria-modal="true"[\s\S]*aria-label="3D 导演台"/);
   assert.match(editorSource, /closest\?\.\("button, a\[href\], \[role='button'\], \[role='listbox'\]"\)/);
   assert.match(editorSource, /disabled=\{loading\}[\s\S]*aria-pressed=\{piloting\}/);

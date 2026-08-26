@@ -9,8 +9,10 @@ import {
   POSE_PARAM_PRESETS,
   SKINNED_ANIMATION_POSES,
 } from "./scene-3d-poses";
+import { DEFAULT_ENV, normalizeScene3DEnv, type Scene3DEnv } from "./scene-3d-env";
 
 export { POSE_NAMES } from "./scene-3d-poses";
+export { DEFAULT_ENV, type Scene3DEnv } from "./scene-3d-env";
 
 /** 角色（一具可摆姿的人物） */
 export interface Scene3DCharacter {
@@ -25,6 +27,8 @@ export interface Scene3DCharacter {
   scale?: number;
   /** 模型类型：缺省视为 mannequin（兼容旧存档） */
   model?: "mannequin" | "xbot";
+  /** 添加角色面板中的体型预设；旧存档缺省为标准男性。 */
+  preset?: string;
   /** 关节欧拉角 XYZ(弧度)：木偶用标准关节名，皮肤模型用骨骼名 */
   joints: Record<string, [number, number, number]>;
 }
@@ -36,27 +40,19 @@ export interface Scene3DRig {
   pos: [number, number, number];
   target: [number, number, number];
   fov: number;
+  /** 镜头绕视线轴旋转（弧度），用于荷兰角等构图。 */
+  roll?: number;
 }
 
-/** 场景环境设置 */
-export interface Scene3DEnv {
-  /** 全景球水平旋转（角度 0~360） */
-  panoRotY: number;
-  /** 全景球半径（米） */
-  panoRadius: number;
-  /** 无全景时的天空颜色（#rrggbb） */
-  skyColor: string;
-  showLabels: boolean;
-  showGround: boolean;
+export interface Scene3DProp {
+  id: string;
+  name: string;
+  kind: "box" | "sphere" | "cylinder";
+  color: number;
+  pos: [number, number, number];
+  rot: [number, number, number];
+  scale: [number, number, number];
 }
-
-export const DEFAULT_ENV: Scene3DEnv = {
-  panoRotY: 0,
-  panoRadius: 50,
-  skyColor: "#1e293b",
-  showLabels: true,
-  showGround: true,
-};
 
 /** 角色配色（按添加顺序轮换；与参考产品一致蓝/红/绿打头） */
 export const CHARACTER_COLORS = [0x4f7df7, 0xef4444, 0x22c55e, 0xf59e0b, 0xa855f7, 0xec4899, 0x14b8a6, 0x94a3b8];
@@ -71,6 +67,8 @@ export interface Scene3DState {
   v: 2;
   characters: Scene3DCharacter[];
   rigs: Scene3DRig[];
+  /** 几何模型是独立可变换场景物体；旧存档可缺省。 */
+  props?: Scene3DProp[];
   /** 导演视角相机（球坐标） */
   camera: { theta: number; phi: number; radius: number; target: [number, number, number] };
   light: { azimuth: number; elevation: number; intensity: number; ambient: number; preset: string };
@@ -684,9 +682,36 @@ export function parseState(json?: string): Scene3DState | null {
     const s = JSON.parse(json);
     if (!s || !s.camera || !s.light) return null;
     if (s.v === 2 && Array.isArray(s.characters) && Array.isArray(s.rigs)) {
+      const propIds = new Set<string>();
+      const props = Array.isArray(s.props)
+        ? s.props.slice(0, 100).flatMap((value: unknown, index: number): Scene3DProp[] => {
+            if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+            const prop = value as Partial<Scene3DProp>;
+            if (prop.kind !== "box" && prop.kind !== "sphere" && prop.kind !== "cylinder") return [];
+            const vec = (candidate: unknown, fallback: [number, number, number]) =>
+              Array.isArray(candidate) && candidate.length === 3 && candidate.every(Number.isFinite)
+                ? candidate.map((number) => Math.min(10_000, Math.max(-10_000, number))) as [number, number, number]
+                : fallback;
+            const baseId = typeof prop.id === "string" && prop.id ? prop.id.slice(0, 100) : `p_restored_${index}`;
+            let id = baseId;
+            let suffix = 2;
+            while (propIds.has(id)) id = `${baseId}_${suffix++}`;
+            propIds.add(id);
+            return [{
+              id,
+              name: typeof prop.name === "string" && prop.name ? prop.name.slice(0, 80) : "几何模型",
+              kind: prop.kind,
+              color: Number.isInteger(prop.color) ? Math.min(0xffffff, Math.max(0, prop.color!)) : 0x60a5fa,
+              pos: vec(prop.pos, [0, 0.45, 0]),
+              rot: vec(prop.rot, [0, 0, 0]),
+              scale: vec(prop.scale, [1, 1, 1]).map((number) => Math.min(20, Math.max(0.05, Math.abs(number)))) as [number, number, number],
+            }];
+          })
+        : [];
       return {
         ...s,
-        env: { ...DEFAULT_ENV, ...(s.env ?? {}) },
+        props,
+        env: normalizeScene3DEnv(s.env),
         motion: normalizeScene3DMotion(s.motion),
       } as Scene3DState;
     }
