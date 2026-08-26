@@ -25,6 +25,9 @@ test("Director loads, disposes and persists the connected GLB scene", () => {
   assert.match(editorSource, /candidate\?\.type === "3d"/);
   assert.match(editorSource, /new GLTFLoader\(\)\.loadAsync\(objectUrl\)/);
   assert.match(editorSource, /group\.name = "connected-3d-scene"/);
+  assert.match(editorSource, /if \(bounds\.isEmpty\(\)\) throw new Error/);
+  assert.match(editorSource, /const textures = new Set<THREE_NS\.Texture>\(\)/);
+  assert.match(editorSource, /if \(pendingGroup\) disposeSceneAssetGroup\(pendingGroup\)/);
   assert.match(editorSource, /disposeSceneAssetModel\(\)/);
   assert.match(editorSource, /sceneAsset: sceneAssetRef\.current/);
 });

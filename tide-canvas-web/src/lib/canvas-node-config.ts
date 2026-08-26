@@ -17,7 +17,7 @@ import type {
   CanvasNodeTypeConfigVO,
 } from "@/types/canvas-node-config";
 
-export const CANVAS_NODE_CONFIG_VERSION = 8;
+export const CANVAS_NODE_CONFIG_VERSION = 9;
 
 export const PORTRAIT_NODE_DEFAULT_FEATURES: CanvasNodeFeatureKey[] = [
   "image.subjectTurnaround",

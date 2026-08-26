@@ -17,7 +17,7 @@ import (
 // registered features are enabled for each registered node type.
 const ConfigKeyCanvasNodeFeatures = "canvas.nodeFeatures.v1"
 
-const CanvasNodeFeaturesVersion = 8
+const CanvasNodeFeaturesVersion = 9
 
 const canvasNodeFeaturesV1 = 1
 
@@ -32,6 +32,8 @@ const canvasNodeFeaturesV5 = 5
 const canvasNodeFeaturesV6 = 6
 
 const canvasNodeFeaturesV7 = 7
+
+const canvasNodeFeaturesV8 = 8
 
 const canvasNodeFeaturesDescription = "Canvas node type and toolbar feature policy (versioned JSON)"
 
@@ -480,6 +482,9 @@ func StoredCanvasNodeFeaturesConfig(raw string) CanvasNodeFeaturesConfig {
 	if parsed.Version == canvasNodeFeaturesV7 {
 		parsed = migrateCanvasNodeFeaturesV7(parsed)
 	}
+	if parsed.Version == canvasNodeFeaturesV8 {
+		parsed = migrateCanvasNodeFeaturesV8(parsed)
+	}
 	normalized, err := NormalizeCanvasNodeFeaturesConfig(parsed)
 	if err != nil {
 		return DefaultCanvasNodeFeaturesConfig()
@@ -624,7 +629,7 @@ func migrateCanvasNodeFeaturesV6(input CanvasNodeFeaturesConfig) CanvasNodeFeatu
 // migrateCanvasNodeFeaturesV7 adds frame breakdown to an untouched V7 video
 // toolbar while preserving custom ordering and explicit opt-outs.
 func migrateCanvasNodeFeaturesV7(input CanvasNodeFeaturesConfig) CanvasNodeFeaturesConfig {
-	input.Version = CanvasNodeFeaturesVersion
+	input.Version = canvasNodeFeaturesV8
 	for i := range input.NodeTypes {
 		if strings.TrimSpace(input.NodeTypes[i].Key) != "video" {
 			continue
@@ -634,6 +639,40 @@ func migrateCanvasNodeFeaturesV7(input CanvasNodeFeaturesConfig) CanvasNodeFeatu
 		}
 		break
 	}
+	return input
+}
+
+// migrateCanvasNodeFeaturesV8 inserts the generated 3D node immediately before
+// the Director while preserving every existing node's relative order and policy.
+// Moving the Director and later rows by one avoids a duplicate sortOrder in
+// persisted V8 documents, which did not know about the new node type.
+func migrateCanvasNodeFeaturesV8(input CanvasNodeFeaturesConfig) CanvasNodeFeaturesConfig {
+	input.Version = CanvasNodeFeaturesVersion
+	for _, item := range input.NodeTypes {
+		if strings.TrimSpace(item.Key) == "3d" {
+			return input
+		}
+	}
+
+	insertOrder := 2
+	foundDirector := false
+	for _, item := range input.NodeTypes {
+		if strings.TrimSpace(item.Key) == "scene_3d" {
+			insertOrder = item.SortOrder
+			foundDirector = true
+			break
+		}
+	}
+	if foundDirector {
+		for i := range input.NodeTypes {
+			if input.NodeTypes[i].SortOrder >= insertOrder {
+				input.NodeTypes[i].SortOrder++
+			}
+		}
+	}
+	input.NodeTypes = append(input.NodeTypes, CanvasNodeTypeConfig{
+		Key: "3d", Enabled: true, SortOrder: insertOrder, Features: []string{},
+	})
 	return input
 }
 

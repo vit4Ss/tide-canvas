@@ -11,6 +11,7 @@ import type {
 } from "@/types/canvas-three-d";
 import type { ModelConfig } from "@/types/admin-models";
 import { canvasThreeDGlbUrl, canvasThreeDPreviewUrl } from "@/lib/canvas-three-d";
+import { MAX_SINGLE_UPLOAD_BYTES, resolveUploadLimitBytes, validateKnownFileSize } from "@/lib/upload-limits";
 import { THREE_D_VIEW_SLOTS } from "@/components/studio/create-studio/constants";
 import { threeDMultiViewLimit } from "@/components/studio/create-studio/utils";
 import { ThreeDViewport } from "@/components/studio/three-d-studio/viewport";
@@ -123,11 +124,15 @@ export const ThreeDNode = memo(function ThreeDNode({
     }
     const configuredMaxBytes = Number(modelConfig.max3DImageSizeMB) > 0
       ? Number(modelConfig.max3DImageSizeMB) * 1024 * 1024
-      : 0;
-    if (configuredMaxBytes > 0) {
-      const oversized = referenceImages.find((source) => Number(source.fileSize) > configuredMaxBytes);
-      if (oversized) {
-        toast.error(`「${oversized.title || "参考图"}」超过当前 3D 模型的单图大小限制`);
+      : MAX_SINGLE_UPLOAD_BYTES;
+    const maxReferenceBytes = resolveUploadLimitBytes(configuredMaxBytes);
+    for (const source of referenceImages) {
+      const sizeIssue = validateKnownFileSize(source.fileSize, source.title, {
+        maxBytes: maxReferenceBytes,
+        label: "3D 参考图",
+      });
+      if (sizeIssue) {
+        toast.error(`${sizeIssue}，请更换图片或切换模型后重试`);
         return;
       }
     }
@@ -231,7 +236,7 @@ export const ThreeDNode = memo(function ThreeDNode({
           visible={showAuxUI}
           overlay
           inputTitle="连接图片作为 3D 参考"
-          outputTitle="连接到 3D 导演台作为场景"
+          outputTitle={hasRenderableModel ? "连接到 3D 导演台作为场景" : "生成含 GLB 的结果后可连接到导演台"}
           onPortMouseDown={onPortMouseDown}
         />
       </div>
@@ -322,6 +327,11 @@ export const ThreeDNode = memo(function ThreeDNode({
                   label="输出格式"
                 />
               </div>
+              {resultFormat && (
+                <p className="-mt-1 text-[10px] leading-4 text-amber-600 dark:text-amber-400">
+                  3D 导演台只加载 GLB；当前格式生成后仍可下载，但不能作为导演台场景。
+                </p>
+              )}
               <div className="flex items-center justify-between">
                 <span><strong className="font-medium text-neutral-700 dark:text-neutral-200">PBR 材质</strong><small className="ml-1.5 text-neutral-400">物理渲染贴图</small></span>
                 <button

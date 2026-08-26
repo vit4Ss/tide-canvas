@@ -52,19 +52,24 @@ export interface MeshStats {
 
 /** dispose a model subtree's geometries + materials + textures. */
 function disposeObject(root: THREE_NS.Object3D) {
+  const geometries = new Set<THREE_NS.BufferGeometry>();
+  const materials = new Set<THREE_NS.Material>();
+  const textures = new Set<THREE_NS.Texture>();
   root.traverse((obj) => {
     const mesh = obj as THREE_NS.Mesh;
-    if (mesh.geometry) mesh.geometry.dispose();
+    if (mesh.geometry) geometries.add(mesh.geometry);
     const mats = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
     mats.forEach((m) => {
-      const rec = m as unknown as Record<string, unknown>;
-      for (const key of ["map", "normalMap", "roughnessMap", "metalnessMap", "aoMap", "emissiveMap"]) {
-        const tex = rec[key] as THREE_NS.Texture | undefined;
-        if (tex && typeof tex.dispose === "function") tex.dispose();
-      }
-      m.dispose();
+      materials.add(m);
+      Object.values(m as unknown as Record<string, unknown>).forEach((value) => {
+        const texture = value as THREE_NS.Texture | undefined;
+        if (texture?.isTexture) textures.add(texture);
+      });
     });
   });
+  textures.forEach((texture) => texture.dispose());
+  materials.forEach((material) => material.dispose());
+  geometries.forEach((geometry) => geometry.dispose());
 }
 
 export function ThreeDViewport({
@@ -303,6 +308,7 @@ export function ThreeDViewport({
         setError(null);
         (async () => {
           let blobUrl = "";
+          let pendingGroup: THREE_NS.Group | null = null;
           try {
             const buf = await fetchModelBytes(url, signal, (pct) => {
               if (!disposed && seq === loadSeq) setProgress(pct);
@@ -317,9 +323,12 @@ export function ThreeDViewport({
 
             // 归一化：置于原点、底面落在网格上、最长边缩放到 ~1.9 单位
             const group = gltf.scene;
+            pendingGroup = group;
             const box = new THREE.Box3().setFromObject(group);
+            if (box.isEmpty()) throw new Error("GLB 不含可渲染几何体");
             const size = box.getSize(new THREE.Vector3());
-            const maxDim = Math.max(size.x, size.y, size.z) || 1;
+            const maxDim = Math.max(size.x, size.y, size.z);
+            if (!Number.isFinite(maxDim) || maxDim <= 0) throw new Error("GLB 几何尺寸无效");
             const scale = 1.9 / maxDim;
             group.scale.setScalar(scale);
             const scaled = new THREE.Box3().setFromObject(group);
@@ -342,6 +351,7 @@ export function ThreeDViewport({
             });
 
             model = group;
+            pendingGroup = null;
             scene.add(group);
             applyMode(curMode);
             // 视角回到默认取景（换模型后镜头不带旧姿态）
@@ -352,6 +362,7 @@ export function ThreeDViewport({
             onStatsRef.current?.({ tris: Math.round(tris), verts });
             setLoading(false);
           } catch (err) {
+            if (pendingGroup) disposeObject(pendingGroup);
             if (disposed || seq !== loadSeq) return;
             console.error("[3D 工作台] 模型加载失败:", url, err);
             setLoading(false);

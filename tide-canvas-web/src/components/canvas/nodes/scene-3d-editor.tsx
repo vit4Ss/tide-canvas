@@ -546,20 +546,25 @@ export function Scene3DEditor({ node, onClose }: Props) {
         let sceneAssetModel: THREE_NS.Group | null = null;
         let sceneAssetLoadVersion = 0;
         const disposeSceneAssetGroup = (group: THREE_NS.Group) => {
+          const geometries = new Set<THREE_NS.BufferGeometry>();
+          const materials = new Set<THREE_NS.Material>();
+          const textures = new Set<THREE_NS.Texture>();
           group.traverse((object) => {
             const mesh = object as THREE_NS.Mesh;
             if (!mesh.isMesh) return;
-            mesh.geometry?.dispose();
-            const materials = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
-            materials.forEach((material) => {
-              const record = material as unknown as Record<string, unknown>;
-              for (const key of ["map", "normalMap", "roughnessMap", "metalnessMap", "aoMap", "emissiveMap"]) {
-                const texture = record[key] as THREE_NS.Texture | undefined;
-                texture?.dispose();
-              }
-              material.dispose();
+            if (mesh.geometry) geometries.add(mesh.geometry);
+            const meshMaterials = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
+            meshMaterials.forEach((material) => {
+              materials.add(material);
+              Object.values(material as unknown as Record<string, unknown>).forEach((value) => {
+                const texture = value as THREE_NS.Texture | undefined;
+                if (texture?.isTexture) textures.add(texture);
+              });
             });
           });
+          textures.forEach((texture) => texture.dispose());
+          materials.forEach((material) => material.dispose());
+          geometries.forEach((geometry) => geometry.dispose());
         };
         const disposeSceneAssetModel = () => {
           if (!sceneAssetModel) return;
@@ -572,6 +577,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
           disposeSceneAssetModel();
           if (!asset) return;
           let objectUrl = "";
+          let pendingGroup: THREE_NS.Group | null = null;
           try {
             let response: Response;
             try {
@@ -593,9 +599,12 @@ export function Scene3DEditor({ node, onClose }: Props) {
               return;
             }
             const group = gltf.scene;
+            pendingGroup = group;
             const bounds = new THREE.Box3().setFromObject(group);
+            if (bounds.isEmpty()) throw new Error("GLB 不含可渲染几何体");
             const size = bounds.getSize(new THREE.Vector3());
-            const longest = Math.max(size.x, size.y, size.z) || 1;
+            const longest = Math.max(size.x, size.y, size.z);
+            if (!Number.isFinite(longest) || longest <= 0) throw new Error("GLB 几何尺寸无效");
             // 导演台角色约 1.7 米高；把外部场景最长边收敛到 12 米，既能容纳多人也不压缩成道具。
             const scale = 12 / longest;
             group.scale.setScalar(scale);
@@ -610,8 +619,10 @@ export function Scene3DEditor({ node, onClose }: Props) {
               mesh.castShadow = true;
             });
             sceneAssetModel = group;
+            pendingGroup = null;
             scene.add(group);
           } catch (err) {
+            if (pendingGroup) disposeSceneAssetGroup(pendingGroup);
             if (!disposed && loadVersion === sceneAssetLoadVersion) {
               console.error("[导演台] 3D 场景加载失败:", asset.url, err);
               toast.error("3D 场景加载失败，请检查源节点是否仍有可用的 GLB 文件");

@@ -224,6 +224,37 @@ func TestStoredCanvasNodeFeaturesConfigPreservesCustomizedV7VideoPolicy(t *testi
 	}
 }
 
+func TestStoredCanvasNodeFeaturesConfigMigratesV8ByInserting3DBeforeDirector(t *testing.T) {
+	raw := `{"version":8,"nodeTypes":[` +
+		`{"key":"character","enabled":true,"sortOrder":0,"features":[]},` +
+		`{"key":"scene","enabled":true,"sortOrder":1,"features":[]},` +
+		`{"key":"scene_3d","enabled":false,"sortOrder":2,"features":[]},` +
+		`{"key":"text","enabled":true,"sortOrder":3,"features":[]},` +
+		`{"key":"image","enabled":true,"sortOrder":4,"features":[]},` +
+		`{"key":"video","enabled":true,"sortOrder":5,"features":["media.preview"]},` +
+		`{"key":"audio","enabled":true,"sortOrder":6,"features":[]},` +
+		`{"key":"script","enabled":true,"sortOrder":7,"features":[]}` +
+		`]}`
+
+	got := StoredCanvasNodeFeaturesConfig(raw)
+	byKey := canvasNodeConfigByKey(got.NodeTypes)
+	wantOrder := map[string]int{
+		"character": 0, "scene": 1, "3d": 2, "scene_3d": 3,
+		"text": 4, "image": 5, "video": 6, "audio": 7, "script": 8,
+	}
+	for key, want := range wantOrder {
+		if byKey[key].SortOrder != want {
+			t.Errorf("%s sort order = %d, want %d", key, byKey[key].SortOrder, want)
+		}
+	}
+	if byKey["scene_3d"].Enabled {
+		t.Error("V8 Director enabled policy was not preserved")
+	}
+	if !reflect.DeepEqual(byKey["video"].Features, []string{"media.preview"}) {
+		t.Errorf("V8 video policy changed: %#v", byKey["video"].Features)
+	}
+}
+
 func TestCharacterOnlyReceivesNewImageFeaturesByDefault(t *testing.T) {
 	newFeatures := []string{
 		"image.subjectTurnaround",

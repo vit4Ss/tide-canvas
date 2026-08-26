@@ -41,4 +41,7 @@ test("Director selects GLB independently from the primary download format", () =
 
 test("non-GLB output is not offered to the Director", () => {
   assert.equal(canvasThreeDGlbUrl({ modelSrc: "https://cdn.example.com/model.stl" }), null);
+  assert.equal(canvasThreeDGlbUrl({ modelSrc: "javascript:alert(1).glb" }), null);
+  assert.equal(canvasThreeDGlbUrl({ modelAssets: [{ type: "glb", url: "javascript:alert(1)" }] }), null);
+  assert.equal(canvasThreeDPreviewUrl({ modelPreviewSrc: "javascript:alert(1)" }), null);
 });

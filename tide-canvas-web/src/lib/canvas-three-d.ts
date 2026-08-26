@@ -37,7 +37,8 @@ export function canvasThreeDAssetsFromMeta(meta: unknown): CanvasThreeDAsset[] {
 }
 
 function isGlbAsset(asset: CanvasThreeDAsset): boolean {
-  return asset.type.toLowerCase() === "glb" || /\.glb(?:[?#]|$)/i.test(asset.url);
+  return HTTP_URL.test(asset.url)
+    && (asset.type.toLowerCase() === "glb" || /\.glb(?:[?#]|$)/i.test(asset.url));
 }
 
 /** A Director scene must be GLB; OBJ/STL/FBX/USDZ remain downloadable outputs. */
@@ -45,10 +46,13 @@ export function canvasThreeDGlbUrl(node?: Pick<CanvasNode, "modelSrc" | "modelAs
   if (!node) return null;
   const asset = node.modelAssets?.find(isGlbAsset);
   if (asset?.url) return asset.url;
-  return node.modelSrc && /\.glb(?:[?#]|$)/i.test(node.modelSrc) ? node.modelSrc : null;
+  return node.modelSrc && HTTP_URL.test(node.modelSrc) && /\.glb(?:[?#]|$)/i.test(node.modelSrc)
+    ? node.modelSrc
+    : null;
 }
 
 export function canvasThreeDPreviewUrl(node?: Pick<CanvasNode, "modelPreviewSrc" | "modelAssets"> | null): string | null {
   if (!node) return null;
-  return node.modelPreviewSrc || node.modelAssets?.find((asset) => asset.previewImageUrl)?.previewImageUrl || null;
+  if (node.modelPreviewSrc && HTTP_URL.test(node.modelPreviewSrc)) return node.modelPreviewSrc;
+  return node.modelAssets?.find((asset) => asset.previewImageUrl && HTTP_URL.test(asset.previewImageUrl))?.previewImageUrl || null;
 }
