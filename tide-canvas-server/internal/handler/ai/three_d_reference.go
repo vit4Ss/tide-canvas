@@ -43,20 +43,23 @@ func validate3DReferenceInput(dto *generateDTO, m *model.AiModel) error {
 		return skillPlacementError{message: "3D 多视图参数格式无效，请重新上传视角图片"}
 	}
 
-	modes := 0
-	if prompt != "" {
-		modes++
-	}
+	sourceModes := 0
 	if imageURL != "" {
-		modes++
+		sourceModes++
 	}
 	if len(views) > 0 {
-		modes++
+		sourceModes++
 	}
-	if modes == 0 {
+	if sourceModes == 0 && prompt == "" {
 		return skillPlacementError{message: "3D 生成需要填写提示词，或上传单张参考图、多视图图片"}
 	}
-	if modes > 1 {
+	if sourceModes > 1 {
+		return skillPlacementError{message: "3D 生成一次只能使用提示词、单张参考图或多视图图片中的一种"}
+	}
+	// Marble accepts an optional text_prompt alongside image and multi-image
+	// input. Existing object generators keep their mutually-exclusive contract.
+	isWorld := m != nil && isWorldLabsModelConfig(m.ModelID, m.Config)
+	if !isWorld && prompt != "" && sourceModes > 0 {
 		return skillPlacementError{message: "3D 生成一次只能使用提示词、单张参考图或多视图图片中的一种"}
 	}
 
@@ -88,6 +91,9 @@ func validate3DReferenceInput(dto *generateDTO, m *model.AiModel) error {
 		}
 		if strings.TrimSpace(view.imageBase64) != "" {
 			sources++
+		}
+		if isWorld && strings.TrimSpace(view.imageBase64) != "" {
+			return skillPlacementError{message: "World Labs 多视图图片需要先完成上传，请勿直接提交 Base64 图片"}
 		}
 		if sources != 1 {
 			return skillPlacementError{message: fmt.Sprintf("3D 多视图中的 %s 视角必须且只能包含一张图片", viewType)}

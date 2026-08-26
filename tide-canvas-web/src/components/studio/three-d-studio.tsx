@@ -95,6 +95,7 @@ export default function ThreeDStudio() {
     [currentStudioList, model],
   );
   const mCfg = selModel?.config ?? null;
+  const isWorldModel = mCfg?.threeDKind === "world" || mCfg?.provider?.toLowerCase() === "worldlabs";
   const modelNames = useMemo(() => currentStudioList.map((m) => m.name), [currentStudioList]);
 
   const { hist, setHist, pushHistory } = useHistory(NO_CLIPS);
@@ -385,7 +386,7 @@ export default function ThreeDStudio() {
         <aside className="ws-panel">
           <div className="ws-panel-scroll">
             <div className="ws-phead">
-              <span className="spark">✦</span> 3D 模型
+              <span className="spark">✦</span> {isWorldModel ? "3D 场景" : "3D 模型"}
             </div>
 
             {/* 模式页签：文生 3D / 图生 3D / 多视图 */}
@@ -421,8 +422,8 @@ export default function ThreeDStudio() {
               onPreview={setPreview}
             />
 
-            {/* 图生 3D 模式不同时使用提示词（上游语义），整块隐藏 */}
-            {tool !== "i2_3d" && (
+            {/* Marble 支持参考图 + 可选文字引导；普通物体模型保持输入互斥。 */}
+            {(tool !== "i2_3d" || isWorldModel) && (
               <PromptSection
                 prompt={prompt}
                 onPromptChange={setPrompt}
@@ -441,16 +442,25 @@ export default function ThreeDStudio() {
               />
             )}
 
-            <ThreeDOptions
-              enablePbr={enablePbr}
-              onEnablePbrChange={setEnablePbr}
-              faceCount={faceCount}
-              onFaceCountChange={setFaceCount}
-              generateType={generateType}
-              onGenerateTypeChange={setGenerateType}
-              resultFormat={resultFormat}
-              onResultFormatChange={setResultFormat}
-            />
+            {isWorldModel ? (
+              <div className="ws-field">
+                <div className="ws-field-label">场景输出</div>
+                <p className="text-xs leading-5 text-neutral-500">
+                  Marble 将生成 SPZ 真实场景、碰撞 GLB、全景图和缩略图。生成后可在画布中连接到 3D 导演台。
+                </p>
+              </div>
+            ) : (
+              <ThreeDOptions
+                enablePbr={enablePbr}
+                onEnablePbrChange={setEnablePbr}
+                faceCount={faceCount}
+                onFaceCountChange={setFaceCount}
+                generateType={generateType}
+                onGenerateTypeChange={setGenerateType}
+                resultFormat={resultFormat}
+                onResultFormatChange={setResultFormat}
+              />
+            )}
           </div>
 
           <div className="ws-panel-foot">

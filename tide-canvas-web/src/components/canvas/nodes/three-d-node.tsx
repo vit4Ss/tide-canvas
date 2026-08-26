@@ -10,7 +10,12 @@ import type {
   CanvasThreeDResultFormat,
 } from "@/types/canvas-three-d";
 import type { ModelConfig } from "@/types/admin-models";
-import { canvasThreeDGlbUrl, canvasThreeDPreviewUrl } from "@/lib/canvas-three-d";
+import {
+  canvasThreeDAssetExtension,
+  canvasThreeDGlbUrl,
+  canvasThreeDPreviewUrl,
+  canvasThreeDSceneAssetFromNode,
+} from "@/lib/canvas-three-d";
 import { MAX_SINGLE_UPLOAD_BYTES, resolveUploadLimitBytes, validateKnownFileSize } from "@/lib/upload-limits";
 import { THREE_D_VIEW_SLOTS } from "@/components/studio/create-studio/constants";
 import { threeDMultiViewLimit } from "@/components/studio/create-studio/utils";
@@ -51,15 +56,6 @@ function clampFaceCount(value: number) {
   return Math.min(1_500_000, Math.max(3_000, Math.round(value / 1_000) * 1_000));
 }
 
-function fileExtension(url: string, fallback: string) {
-  try {
-    const match = new URL(url).pathname.match(/\.([a-z0-9]{2,6})$/i);
-    return match?.[1]?.toLowerCase() || fallback.toLowerCase();
-  } catch {
-    return fallback.toLowerCase();
-  }
-}
-
 export const ThreeDNode = memo(function ThreeDNode({
   node,
   isSelected,
@@ -81,6 +77,7 @@ export const ThreeDNode = memo(function ThreeDNode({
     node.generationConfig?.modelId,
   );
   const modelConfig = useMemo(() => parseModelConfig<ModelConfig>(selectedModel), [selectedModel]);
+  const isWorldModel = modelConfig.threeDKind === "world" || modelConfig.provider?.toLowerCase() === "worldlabs";
   const [mode, setMode] = useState<CanvasThreeDMode>(node.generationConfig?.threeDMode ?? "t2_3d");
   const [enablePbr, setEnablePbr] = useState(node.generationConfig?.enablePbr ?? false);
   const [faceCount, setFaceCount] = useState(() => clampFaceCount(node.generationConfig?.faceCount ?? 500_000));
@@ -89,6 +86,7 @@ export const ThreeDNode = memo(function ThreeDNode({
   const { downloading, download } = useFileDownload();
 
   const glbUrl = canvasThreeDGlbUrl(node);
+  const directorSceneAsset = canvasThreeDSceneAssetFromNode(node);
   const previewUrl = canvasThreeDPreviewUrl(node);
   const multiViewLimit = threeDMultiViewLimit(modelConfig);
   const referenceImages = mode === "i2_3d"
@@ -98,7 +96,7 @@ export const ThreeDNode = memo(function ThreeDNode({
       : [];
   const cost = modelConfig.creditCost ?? selectedModel?.pointCost ?? 0;
   const cardHeight = Math.round(node.width * 9 / 16);
-  const hasRenderableModel = !!glbUrl;
+  const hasRenderableModel = !!directorSceneAsset;
 
   const handleGenerate = () => {
     const prompt = node.prompt?.trim() || "";
@@ -107,7 +105,7 @@ export const ThreeDNode = memo(function ThreeDNode({
       return;
     }
     if (mode === "t2_3d" && !prompt) {
-      toast.info("请先描述要生成的 3D 模型");
+      toast.info(isWorldModel ? "请先描述要生成的 3D 场景" : "请先描述要生成的 3D 模型");
       return;
     }
     if (mode === "i2_3d" && referenceImages.length < 1) {
@@ -144,13 +142,15 @@ export const ThreeDNode = memo(function ThreeDNode({
         }))
       : undefined;
     const input: Record<string, unknown> = {
-      ...(mode !== "i2_3d" && prompt ? { prompt } : {}),
+      ...((mode === "t2_3d" || isWorldModel) && prompt ? { prompt } : {}),
       ...(mode === "i2_3d" ? { imageUrl: referenceImages[0].imageSrc } : {}),
       ...(multiViewImages?.length ? { multiViewImages } : {}),
-      enablePbr,
-      faceCount,
-      generateType,
-      ...(resultFormat ? { resultFormat } : {}),
+      ...(!isWorldModel ? {
+        enablePbr,
+        faceCount,
+        generateType,
+        ...(resultFormat ? { resultFormat } : {}),
+      } : {}),
     };
     updateNode(node.id, {
       generationConfig: {
@@ -168,7 +168,7 @@ export const ThreeDNode = memo(function ThreeDNode({
 
   return (
     <NodeShell node={node} isSelected={isSelected} isDragging={isDragging} onNodeMouseDown={onNodeMouseDown}>
-      <NodeHeader icon={Box} title={node.title || "3D 节点"} visible={showAuxUI} overlay />
+      <NodeHeader icon={Box} title={node.title || (isWorldModel ? "3D 场景节点" : "3D 节点")} visible={showAuxUI} overlay />
       <div
         className={`relative overflow-hidden rounded-2xl border bg-[#16181d] transition-all ${
           isConnectTarget
@@ -180,7 +180,7 @@ export const ThreeDNode = memo(function ThreeDNode({
         style={{ height: cardHeight }}
       >
         {node.modelSrc ? (
-          hasRenderableModel && isSelected ? (
+          glbUrl && isSelected ? (
             <div className="h-full w-full cursor-orbit" onMouseDown={stop}>
               <ThreeDViewport glbUrl={glbUrl} compact />
             </div>
@@ -191,8 +191,8 @@ export const ThreeDNode = memo(function ThreeDNode({
             <div className="flex h-full flex-col items-center justify-center gap-3 text-white/55">
               <Layers3 className="h-12 w-12" />
               <div className="text-center">
-                <p className="text-sm font-medium text-white/80">3D 模型已生成</p>
-                <p className="mt-1 text-xs">{hasRenderableModel ? "选中节点后可旋转查看" : "当前输出格式不可在线预览"}</p>
+                <p className="text-sm font-medium text-white/80">{isWorldModel ? "3D 场景已生成" : "3D 模型已生成"}</p>
+                <p className="mt-1 text-xs">{hasRenderableModel ? "可连接到 3D 导演台继续编辑" : "当前输出格式不可在线预览"}</p>
               </div>
             </div>
           )
@@ -200,7 +200,7 @@ export const ThreeDNode = memo(function ThreeDNode({
           <div className="flex h-full flex-col items-center justify-center gap-3 text-white/45">
             <Box className="h-12 w-12" />
             <div className="text-center">
-              <p className="text-sm font-medium text-white/75">生成 3D 模型</p>
+              <p className="text-sm font-medium text-white/75">{isWorldModel ? "生成可漫游 3D 场景" : "生成 3D 模型"}</p>
               <p className="mt-1 text-xs">支持文生、图生和多视图</p>
             </div>
           </div>
@@ -218,7 +218,7 @@ export const ThreeDNode = memo(function ThreeDNode({
                   event,
                   asset.url,
                   `${node.title || "3D模型"}-${asset.type || index + 1}`,
-                  fileExtension(asset.url, asset.type || "glb"),
+                  canvasThreeDAssetExtension(asset.type, asset.url),
                 )}
                 className="flex h-7 items-center gap-1 rounded-md px-2 text-[10px] font-medium uppercase text-white/80 transition-colors hover:bg-white/15 disabled:opacity-50"
                 title={`下载 ${asset.type.toUpperCase()} 文件`}
@@ -229,17 +229,19 @@ export const ThreeDNode = memo(function ThreeDNode({
           </div>
         ) : null}
 
-        {generating && <NodeGeneratingOverlay label="正在生成 3D 模型..." />}
+        {generating && <NodeGeneratingOverlay label={isWorldModel ? "正在生成 Marble 3D 场景..." : "正在生成 3D 模型..."} />}
         {node.status === "error" && !generating && !node.modelSrc && <NodeErrorBadge />}
-        <NodePorts
-          nodeId={node.id}
-          visible={showAuxUI}
-          overlay
-          inputTitle="连接图片作为 3D 参考"
-          outputTitle={hasRenderableModel ? "连接到 3D 导演台作为场景" : "生成含 GLB 的结果后可连接到导演台"}
-          onPortMouseDown={onPortMouseDown}
-        />
       </div>
+
+      {/* 端口必须与 overflow-hidden 卡片同级：端口锚在卡片外，放卡片内会被整体裁掉 */}
+      <NodePorts
+        nodeId={node.id}
+        visible={showAuxUI}
+        overlay
+        inputTitle="连接图片作为 3D 参考"
+        outputTitle={hasRenderableModel ? "连接到 3D 导演台作为场景" : "生成可渲染的 GLB / SPZ 后可连接到导演台"}
+        onPortMouseDown={onPortMouseDown}
+      />
 
       {showAuxUI && (
         <NodePanelChrome width={700} height={330}>
@@ -252,7 +254,7 @@ export const ThreeDNode = memo(function ThreeDNode({
                 onClick={(event) => { stop(event); setMode(option.value); }}
                 className={`h-8 flex-1 rounded-md text-xs font-medium transition-colors ${mode === option.value ? "bg-white text-neutral-950 shadow-sm dark:bg-neutral-800 dark:text-white" : "text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200"}`}
               >
-                {option.label}
+                {isWorldModel ? option.label.replace("3D", "3D 场景") : option.label}
               </button>
             ))}
           </div>
@@ -288,6 +290,13 @@ export const ThreeDNode = memo(function ThreeDNode({
             </div>
 
             <div className="space-y-3 text-xs">
+              {isWorldModel ? (
+                <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-3 leading-5 text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900/70 dark:text-neutral-400">
+                  <div className="font-medium text-neutral-800 dark:text-neutral-200">Marble 世界输出</div>
+                  <p className="mt-1">生成 SPZ 真实场景、碰撞 GLB、全景图和缩略图。SPZ 可直接连接到 3D 导演台漫游和布置角色。</p>
+                  <p className="mt-2 text-[10px] text-neutral-400">场景质量由所选 Marble 模型决定，无需设置面数、PBR 或导出格式。</p>
+                </div>
+              ) : <>
               <div>
                 <div className="mb-1.5 text-neutral-500">生成类型</div>
                 <div className="grid grid-cols-2 gap-1 rounded-lg bg-neutral-100 p-1 dark:bg-neutral-900">
@@ -345,6 +354,7 @@ export const ThreeDNode = memo(function ThreeDNode({
                   <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all dark:bg-neutral-950 ${enablePbr ? "left-[18px]" : "left-0.5"}`} />
                 </button>
               </div>
+              </>}
             </div>
           </div>
 

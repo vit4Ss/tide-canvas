@@ -13,7 +13,7 @@ import type * as THREE_NS from "three";
 import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-canvas-store";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/http";
-import { canvasThreeDGlbUrl } from "@/lib/canvas-three-d";
+import { canvasThreeDSceneAssetFromNode } from "@/lib/canvas-three-d";
 import { toast } from "@/components/shared/toast";
 import { PopoverSelect } from "@/components/shared/popover-select";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
@@ -223,17 +223,14 @@ export function Scene3DEditor({ node, onClose }: Props) {
     return ins.find((n) => n.is360) ?? ins.find((n) => n.type === SCENE_NODE_TYPE) ?? ins[0] ?? null;
   }, [node.id]);
 
-  // 入边 3D 节点只把可渲染的 GLB 作为场景；其它导出格式仍保留在 3D 节点下载。
+  // 入边 3D 节点可提供普通 GLB 场景，也可提供 Marble SPZ 世界。
   const connectedSceneAsset = useMemo<CanvasThreeDSceneAsset | null>(() => {
     const st = useCanvasStore.getState();
     const source = st.connections
       .filter((connection) => connection.targetId === node.id)
       .map((connection) => st.nodes.find((candidate) => candidate.id === connection.sourceId))
-      .find((candidate) => candidate?.type === "3d" && !!canvasThreeDGlbUrl(candidate));
-    const url = canvasThreeDGlbUrl(source);
-    return source && url
-      ? { url, title: source.title || "已连接 3D 场景", sourceNodeId: source.id, source: "connected" }
-      : null;
+      .find((candidate) => candidate?.type === "3d" && !!canvasThreeDSceneAssetFromNode(candidate));
+    return canvasThreeDSceneAssetFromNode(source);
   }, [node.id]);
   const initialSceneAsset = connectedSceneAsset ?? initialState?.sceneAsset ?? null;
 
@@ -542,10 +539,11 @@ export function Scene3DEditor({ node, onClose }: Props) {
         };
         void setPanoramaInternal(envRef.current.panoUrl ?? null);
 
-        // ===== 连接的 GLB 场景（真实几何环境，可与角色/机位共同渲染和截图） =====
-        let sceneAssetModel: THREE_NS.Group | null = null;
+        // ===== 连接的 3D 场景：普通 GLB 或 World Labs Marble SPZ =====
+        let sceneAssetModel: THREE_NS.Object3D | null = null;
+        let sparkRenderer: (THREE_NS.Object3D & { dispose?: () => void }) | null = null;
         let sceneAssetLoadVersion = 0;
-        const disposeSceneAssetGroup = (group: THREE_NS.Group) => {
+        const disposeSceneAssetGroup = (group: THREE_NS.Object3D) => {
           const geometries = new Set<THREE_NS.BufferGeometry>();
           const materials = new Set<THREE_NS.Material>();
           const textures = new Set<THREE_NS.Texture>();
@@ -565,6 +563,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
           textures.forEach((texture) => texture.dispose());
           materials.forEach((material) => material.dispose());
           geometries.forEach((geometry) => geometry.dispose());
+          (group as THREE_NS.Object3D & { dispose?: () => void }).dispose?.();
         };
         const disposeSceneAssetModel = () => {
           if (!sceneAssetModel) return;
@@ -577,7 +576,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
           disposeSceneAssetModel();
           if (!asset) return;
           let objectUrl = "";
-          let pendingGroup: THREE_NS.Group | null = null;
+          let pendingGroup: THREE_NS.Object3D | null = null;
           try {
             let response: Response;
             try {
@@ -589,6 +588,38 @@ export function Scene3DEditor({ node, onClose }: Props) {
             }
             const bytes = await response.arrayBuffer();
             if (disposed || loadVersion !== sceneAssetLoadVersion) return;
+            const format = asset.format || (/\.spz(?:[?#]|$)/i.test(asset.url) ? "spz" : "glb");
+            if (format === "spz") {
+              if (bytes.byteLength < 16) throw new Error("SPZ 文件内容为空或已损坏");
+              const { SparkRenderer, SplatMesh } = await import("@sparkjsdev/spark");
+              if (disposed || loadVersion !== sceneAssetLoadVersion) return;
+              if (!sparkRenderer) {
+                const nextSparkRenderer = new SparkRenderer({ renderer });
+                sparkRenderer = nextSparkRenderer;
+                scene.add(nextSparkRenderer);
+              }
+              const splat = new SplatMesh({ fileBytes: new Uint8Array(bytes) });
+              pendingGroup = splat;
+              await splat.initialized;
+              if (disposed || loadVersion !== sceneAssetLoadVersion) {
+                splat.dispose();
+                return;
+              }
+              // Marble SPZ uses its raw OpenCV frame. The official conversion is
+              // uniform metric scale, ground offset, then 180° around X for Three.js.
+              const metricScale = Number.isFinite(asset.metricScaleFactor) && asset.metricScaleFactor! > 0
+                ? asset.metricScaleFactor!
+                : 1;
+              const groundOffset = Number.isFinite(asset.groundPlaneOffset) ? asset.groundPlaneOffset! : 0;
+              splat.scale.setScalar(metricScale);
+              splat.rotation.x = Math.PI;
+              splat.position.y = groundOffset;
+              splat.name = "connected-marble-spz-scene";
+              sceneAssetModel = splat;
+              pendingGroup = null;
+              scene.add(splat);
+              return;
+            }
             if (bytes.byteLength < 4 || new DataView(bytes).getUint32(0, true) !== 0x46546c67) {
               throw new Error("文件不是 GLB 格式");
             }
@@ -625,7 +656,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
             if (pendingGroup) disposeSceneAssetGroup(pendingGroup);
             if (!disposed && loadVersion === sceneAssetLoadVersion) {
               console.error("[导演台] 3D 场景加载失败:", asset.url, err);
-              toast.error("3D 场景加载失败，请检查源节点是否仍有可用的 GLB 文件");
+              toast.error("3D 场景加载失败，请检查源节点是否仍有可用的 GLB / SPZ 文件");
             }
           } finally {
             if (objectUrl) URL.revokeObjectURL(objectUrl);
@@ -1175,6 +1206,11 @@ export function Scene3DEditor({ node, onClose }: Props) {
           panoGeo.dispose();
           sceneAssetLoadVersion += 1;
           disposeSceneAssetModel();
+          if (sparkRenderer) {
+            scene.remove(sparkRenderer);
+            sparkRenderer.dispose?.();
+            sparkRenderer = null;
+          }
           clearMotionPath();
           scene.remove(motionGroup);
           renderer.dispose();
@@ -2883,7 +2919,9 @@ export function Scene3DEditor({ node, onClose }: Props) {
               <Layers3 className="h-4 w-4 shrink-0 text-cyan-300" />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-xs font-medium text-white/85">{sceneAsset.title}</div>
-                <div className="mt-0.5 text-[10px] text-white/35">画布连接 · GLB 几何场景</div>
+                <div className="mt-0.5 text-[10px] text-white/35">
+                  {sceneAsset.format === "spz" ? "画布连接 · Marble SPZ 真实场景" : "画布连接 · GLB 几何场景"}
+                </div>
               </div>
             </div>
           ) : (

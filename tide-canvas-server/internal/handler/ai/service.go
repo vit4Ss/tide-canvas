@@ -80,7 +80,7 @@ func newService(d *app.Deps) *service {
 		repo:         newRepo(d.DB),
 		rdb:          d.RDB,
 		registry:     newHandlerRegistry(),
-		provider:     newProviderClient(d.Cfg.Relay.BaseURL, d.Cfg.Relay.APIKey, d.Storage),
+		provider:     newProviderClient(d.Cfg.Relay.BaseURL, d.Cfg.Relay.APIKey, d.Cfg.WorldLabs, d.Storage),
 		relay:        relaychat.New(d.Cfg.Relay.BaseURL, d.Cfg.Relay.APIKey),
 		systemPrompt: d.Cfg.LLM.SystemPrompt,
 		storage:      d.Storage,

@@ -6,11 +6,17 @@ export interface CanvasThreeDAsset {
   type: string;
   url: string;
   previewImageUrl?: string;
+  metricScaleFactor?: number;
+  groundPlaneOffset?: number;
 }
 
 export interface CanvasThreeDSceneAsset {
   url: string;
   title: string;
+  format?: "glb" | "spz";
+  colliderUrl?: string;
+  metricScaleFactor?: number;
+  groundPlaneOffset?: number;
   sourceNodeId?: string;
   source?: "connected" | "restored";
 }

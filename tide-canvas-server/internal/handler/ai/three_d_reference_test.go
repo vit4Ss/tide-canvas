@@ -81,3 +81,33 @@ func TestValidate3DReferenceInputIgnoresOtherHandlers(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestValidate3DReferenceInputAllowsMarbleImageWithTextGuidance(t *testing.T) {
+	raw, err := json.Marshal(map[string]any{
+		"prompt":   "保留石板路和暖色灯光",
+		"imageUrl": "https://cdn.example.com/street.jpg",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	marble := &model.AiModel{ModelID: "marble-1.1", Config: `{"provider":"worldlabs"}`}
+	if err := validate3DReferenceInput(&generateDTO{Handler: "generate_3d", Input: raw}, marble); err != nil {
+		t.Fatalf("Marble image guidance should be valid: %v", err)
+	}
+}
+
+func TestValidate3DReferenceInputRejectsMarbleInlineMultiImageBeforeCharging(t *testing.T) {
+	raw, err := json.Marshal(map[string]any{
+		"multiViewImages": []any{
+			map[string]any{"viewType": "front", "viewImageBase64": "aGVsbG8="},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	marble := &model.AiModel{ModelID: "marble-1.1", Config: `{"provider":"worldlabs"}`}
+	err = validate3DReferenceInput(&generateDTO{Handler: "generate_3d", Input: raw}, marble)
+	if err == nil || !strings.Contains(err.Error(), "Base64") {
+		t.Fatalf("error = %v", err)
+	}
+}

@@ -43,7 +43,7 @@ var errUnsupportedHandler = errors.New("unsupported generation handler")
 // newProviderClient returns the relay-backed media provider when a relay API key
 // is configured, otherwise the no-credentials stub so the server stays runnable.
 // store is used to rewrite reference-asset URLs to the cross-border upstream host.
-func newProviderClient(baseURL, apiKey string, store storage.StorageStrategy) AiProviderClient {
+func newRelayProviderClient(baseURL, apiKey string, store storage.StorageStrategy) AiProviderClient {
 	if c := relaymedia.New(baseURL, apiKey); c != nil {
 		return &relayProviderClient{c: c, store: store}
 	}
@@ -598,7 +598,7 @@ type threeDAssetSpec struct {
 
 func threeDAssetSpecFor(rawType string) (threeDAssetSpec, bool) {
 	switch strings.TrimPrefix(strings.ToLower(strings.TrimSpace(rawType)), ".") {
-	case "glb":
+	case "glb", "glb-hq", "glb-full":
 		return threeDAssetSpec{ext: ".glb", contentType: "model/gltf-binary"}, true
 	case "obj":
 		return threeDAssetSpec{ext: ".obj", contentType: "model/obj"}, true
@@ -608,6 +608,8 @@ func threeDAssetSpecFor(rawType string) (threeDAssetSpec, bool) {
 		return threeDAssetSpec{ext: ".usdz", contentType: "model/vnd.usdz+zip"}, true
 	case "fbx":
 		return threeDAssetSpec{ext: ".fbx", contentType: "application/octet-stream"}, true
+	case "spz", "spz-full", "spz-500k", "spz-100k":
+		return threeDAssetSpec{ext: ".spz", contentType: "application/octet-stream"}, true
 	default:
 		return threeDAssetSpec{}, false
 	}
@@ -779,6 +781,8 @@ func normalize3DRehostContentType(raw, _ string, assetType string) (string, erro
 	contentType = strings.ToLower(contentType)
 	switch {
 	case contentType == "", contentType == "application/octet-stream", contentType == "binary/octet-stream":
+		return spec.contentType, nil
+	case spec.ext == ".spz" && (contentType == "application/gzip" || contentType == "application/x-gzip"):
 		return spec.contentType, nil
 	case strings.HasPrefix(contentType, "model/"):
 		return spec.contentType, nil

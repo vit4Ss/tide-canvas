@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // Load() searches "../../configs" from this package directory, so these tests
@@ -30,6 +31,24 @@ func TestLoadDefaultsToTestEnv(t *testing.T) {
 	}
 	if !cfg.Storage.AccelerateEnabled {
 		t.Error("test overlay should preserve existing transfer acceleration by default")
+	}
+}
+
+func TestLoadWorldLabsCredentialAndPollingPolicyFromEnv(t *testing.T) {
+	t.Setenv("TIDECANVAS_ENV", "test")
+	t.Setenv("TIDECANVAS_WORLDLABS_APIKEY", "unit-test-world-key")
+	t.Setenv("TIDECANVAS_WORLDLABS_POLLINTERVAL", "2s")
+	t.Setenv("TIDECANVAS_WORLDLABS_TIMEOUT", "9m")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.WorldLabs.APIKey != "unit-test-world-key" || cfg.WorldLabs.BaseURL != "https://api.worldlabs.ai" {
+		t.Fatalf("World Labs config = %+v", cfg.WorldLabs)
+	}
+	if cfg.WorldLabs.PollInterval != 2*time.Second || cfg.WorldLabs.Timeout != 9*time.Minute {
+		t.Fatalf("World Labs polling config = %+v", cfg.WorldLabs)
 	}
 }
 

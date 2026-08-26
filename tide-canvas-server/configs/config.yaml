@@ -84,6 +84,14 @@ relay:
   # Local/test default. Production overrides this in config.prod.yaml.
   baseUrl: https://test-relay.tcmzhan.com
 
+# World Labs Marble world generation. Keep the API key in the environment:
+# TIDECANVAS_WORLDLABS_APIKEY. Generated SPZ/GLB assets are copied to configured
+# storage when available; the World ID is retained for recovery and auditing.
+worldLabs:
+  baseUrl: https://api.worldlabs.ai
+  pollInterval: 5s
+  timeout: 20m
+
 # 后台「供应商余额」监控。DLAPI 凭据由环境变量注入；Mikoto、CCGO、CCGO2、
 # Dimensio 的开关、JWT 与预警线由 sys_config 保存，在后台配置管理维护。
 # DLAPI 是 New API 协议：GET /api/user/self 返回的 data.quota / 500000 = USD 余额。

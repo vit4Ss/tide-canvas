@@ -121,6 +121,15 @@ func run() error {
 			logger.L().Warn("seed: billing", zap.Error(err))
 		}
 	}
+	// Supplier-owned catalog entries are seeded only when the credential exists;
+	// this avoids advertising an unusable Marble model on deployments that have
+	// not enabled World Labs. Existing admin edits are preserved.
+	if err := ai.SeedCatalog(gdb); err != nil {
+		logger.L().Warn("seed: AI handlers", zap.Error(err))
+	}
+	if err := ai.SeedWorldLabsModels(gdb, cfg.WorldLabs); err != nil {
+		logger.L().Warn("seed: World Labs models", zap.Error(err))
+	}
 
 	// 500 统一对外话术：首启种入 sys_config（后台「配置管理」可改），response.Fail
 	// 每次失败时实时读取，保存即生效；DB 不可用等读取失败时回退包内兜底值。
@@ -183,6 +192,10 @@ func run() error {
 		logger.L().Warn("local storage with relay configured: reference-based generation " +
 			"(image_to_image / image_to_video / first_last_frame / multi_ref) will FAIL because " +
 			"the overseas relay cannot fetch localhost-hosted reference URLs; enable OSS in production")
+	}
+	if !strings.EqualFold(store.Type(), "oss") && strings.TrimSpace(cfg.WorldLabs.APIKey) != "" {
+		logger.L().Warn("local storage with World Labs configured: image-based Marble generation will fail because " +
+			"World Labs cannot fetch localhost-hosted reference images; enable OSS or use text generation")
 	}
 
 	// Mailer: register SMTP config so verification emails can be sent.

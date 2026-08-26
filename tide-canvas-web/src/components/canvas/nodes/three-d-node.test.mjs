@@ -13,10 +13,12 @@ test("canvas 3D node uses the standalone model catalog, pricing and generation p
   assert.match(source, /handler: "generate_3d"/);
   assert.match(source, /THREE_D_VIEW_SLOTS\[index\]\.viewType/);
   assert.match(source, /resolveUploadLimitBytes\(configuredMaxBytes\)/);
+  assert.match(source, /mode === "t2_3d" \|\| isWorldModel/);
 });
 
-test("canvas 3D node keeps GLB output connectable to the Director", () => {
+test("canvas 3D node keeps GLB and Marble SPZ output connectable to the Director", () => {
   assert.match(source, /const glbUrl = canvasThreeDGlbUrl\(node\)/);
+  assert.match(source, /canvasThreeDSceneAssetFromNode\(node\)/);
   assert.match(source, /3D 导演台只加载 GLB/);
-  assert.match(source, /outputTitle=\{hasRenderableModel/);
+  assert.match(source, /生成可渲染的 GLB \/ SPZ 后可连接到导演台/);
 });

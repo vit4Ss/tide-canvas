@@ -273,7 +273,20 @@ export function threeDAssetsFromMeta(meta: unknown): ThreeDAsset[] {
     if (!isHttpUrl(url)) return [];
     const type = (value("type") || "model").toLowerCase();
     const previewImageUrl = value("previewImageUrl") || value("preview_image_url");
-    return [{ type, url, ...(isHttpUrl(previewImageUrl) ? { previewImageUrl } : {}) }];
+    const numberValue = (camelKey: string, snakeKey: string) => {
+      const candidate = row[camelKey] ?? row[snakeKey];
+      const parsed = typeof candidate === "number" ? candidate : typeof candidate === "string" ? Number(candidate) : Number.NaN;
+      return Number.isFinite(parsed) ? parsed : undefined;
+    };
+    const metricScaleFactor = numberValue("metricScaleFactor", "metric_scale_factor");
+    const groundPlaneOffset = numberValue("groundPlaneOffset", "ground_plane_offset");
+    return [{
+      type,
+      url,
+      ...(isHttpUrl(previewImageUrl) ? { previewImageUrl } : {}),
+      ...(metricScaleFactor !== undefined && metricScaleFactor > 0 ? { metricScaleFactor } : {}),
+      ...(groundPlaneOffset !== undefined ? { groundPlaneOffset } : {}),
+    }];
   });
 }
 

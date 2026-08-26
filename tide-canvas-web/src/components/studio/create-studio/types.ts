@@ -66,6 +66,8 @@ export interface ThreeDAsset {
   type: string;
   url: string;
   previewImageUrl?: string;
+  metricScaleFactor?: number;
+  groundPlaneOffset?: number;
 }
 
 /* ── result / history models (hue triplets back the mesh placeholders) ───── */

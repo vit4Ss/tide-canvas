@@ -109,26 +109,39 @@
 
 .cv-create-blank {
   display: inline-flex;
-  min-height: 32px;
+  min-height: 38px;
   align-items: center;
   gap: 8px;
   margin: 0;
-  color: var(--text-dim);
+  padding: 0 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--pill);
+  background: color-mix(in oklab, var(--surface) 72%, transparent);
+  color: var(--text);
   font-size: 13px;
   font-weight: 600;
   text-decoration: none;
-  transition: color 160ms ease-out;
+  transition: border-color 160ms ease-out, background 160ms ease-out, color 160ms ease-out;
 }
 
-.cv-create-blank span {
+.cv-create-blank .plus {
+  color: var(--text-dim);
+  font-size: 17px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.cv-create-blank .arr {
   transition: transform 160ms ease-out;
 }
 
 .cv-create-blank:hover {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 14%, var(--surface));
   color: var(--text);
 }
 
-.cv-create-blank:hover span {
+.cv-create-blank:hover .arr {
   transform: translateX(2px);
 }
 

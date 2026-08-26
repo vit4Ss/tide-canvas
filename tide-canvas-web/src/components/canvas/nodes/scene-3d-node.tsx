@@ -7,7 +7,7 @@ import { NodeHeader } from "./base/node-header";
 import { NodePorts } from "./base/node-ports";
 import { Scene3DEditor } from "./scene-3d-editor";
 import { CHARACTER_NODE_TYPE } from "@/lib/canvas-node-types";
-import { canvasThreeDGlbUrl } from "@/lib/canvas-three-d";
+import { canvasThreeDSceneAssetFromNode } from "@/lib/canvas-three-d";
 
 interface Props {
   node: CanvasNode;
@@ -32,7 +32,7 @@ export const Scene3DNode = memo(function Scene3DNode({ node, isSelected, isDragg
     s.connections.some((connection) => {
       if (connection.targetId !== node.id) return false;
       const source = s.nodes.find((candidate) => candidate.id === connection.sourceId);
-      return source?.type === "3d" && !!canvasThreeDGlbUrl(source);
+      return source?.type === "3d" && !!canvasThreeDSceneAssetFromNode(source);
     }),
   );
   const [editorOpen, setEditorOpen] = useState(false);
@@ -103,8 +103,10 @@ export const Scene3DNode = memo(function Scene3DNode({ node, isSelected, isDragg
             </div>
           )}
 
-          <NodePorts nodeId={node.id} visible={showAuxUI} overlay onPortMouseDown={onPortMouseDown} />
         </div>
+
+        {/* 端口必须与 overflow-hidden 卡片同级：端口锚在卡片外，放卡片内会被整体裁掉 */}
+        <NodePorts nodeId={node.id} visible={showAuxUI} overlay onPortMouseDown={onPortMouseDown} />
       </div>
 
       {editorOpen && <Scene3DEditor node={node} onClose={() => setEditorOpen(false)} />}

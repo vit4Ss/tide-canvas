@@ -44,6 +44,8 @@ export interface ModelConfig {
   max3DImageSizeMB?: number;
   /** 3D：多视图模式最多上传的图片数量；未设 = Relay 协议上限 */
   max3DMultiViewImages?: number;
+  /** 3D world providers (for example World Labs Marble) emit an environment, not an isolated object. */
+  threeDKind?: "object" | "world";
   /** 文本模型：是否支持联网搜索 */
   webSearch?: boolean;
   /** 文本模型：是否支持文件上传 */

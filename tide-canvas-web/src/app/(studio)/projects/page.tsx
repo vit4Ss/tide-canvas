@@ -363,7 +363,9 @@ export default function ProjectsPage() {
                 </div>
               </div>
               <Link className="cv-create-blank" href="/canvas/new">
-                从空白画布开始 <span aria-hidden>→</span>
+                <span aria-hidden className="plus">+</span>
+                从空白画布开始
+                <span aria-hidden className="arr">→</span>
               </Link>
               <span className="sr-only" aria-live="polite" aria-atomic="true">
                 {filledExampleAnnouncement && (
@@ -403,6 +405,17 @@ export default function ProjectsPage() {
           </div>
 
           <div className="cv-grid" id="cvGrid">
+            {!loading && (
+              <Link href="/canvas/new" className="cv-card cv-new" aria-label="开启新画布">
+                <div className="cv-thumb">
+                  <span className="np">
+                    <span className="plus" aria-hidden>+</span>
+                    <b>开启新画布</b>
+                    <small>从空白画布开始创作</small>
+                  </span>
+                </div>
+              </Link>
+            )}
             {!loading &&
               shown.map((p) => {
                 const cover = p.thumbnail

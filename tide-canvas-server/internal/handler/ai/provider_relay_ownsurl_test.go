@@ -142,6 +142,7 @@ func TestNormalize3DRehostContentType(t *testing.T) {
 		{"model/stl", ".STL", "model/stl"},
 		{"application/zip", "usdz", "model/vnd.usdz+zip"},
 		{"application/octet-stream", "fbx", "application/octet-stream"},
+		{"application/gzip", "spz-500k", "application/octet-stream"},
 	}
 	for _, test := range tests {
 		got, err := normalize3DRehostContentType(test.raw, "https://cdn.example/model", test.assetType)

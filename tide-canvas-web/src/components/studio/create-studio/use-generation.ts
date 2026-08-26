@@ -857,6 +857,10 @@ export function useGeneration(p: GenerationParams) {
       return;
     }
     const selectedBackendModelId = selectedStudio?.modelKey || selectedStudio?.id || "";
+    const isWorld3D = is3D && (
+      selectedStudio?.config?.threeDKind === "world"
+      || selectedStudio?.config?.provider?.toLowerCase() === "worldlabs"
+    );
     const activeSlots = (UPLOADS[tool] ?? []).filter(
       (slot) => tool !== "ref" || supportsOmniReference(selectedStudio?.config, slot.type),
     );
@@ -873,7 +877,7 @@ export function useGeneration(p: GenerationParams) {
     }
     // 图片类 3D 与 prompt 互斥；切换页签后保留在面板 state 里的旧提示词
     // 既不发送，也不写入本轮历史。
-    const p = tool === "i2_3d" || tool === "mv2_3d" ? "" : prompt.trim();
+    const p = !isWorld3D && (tool === "i2_3d" || tool === "mv2_3d") ? "" : prompt.trim();
     // 引用类模式的素材校验优先于提示词，两者都为空时优先说明当前
     // 模式必须上传什么；且只检查当前模型真正启用的槽位。
     const referenceIssue = studioReferenceIssue(tool, activeSlotData, activeSlots.length);
@@ -1013,7 +1017,9 @@ export function useGeneration(p: GenerationParams) {
     const spec = isAudio
       ? ""
       : is3D
-        ? `${enablePbr ? "PBR" : "标准材质"} · ${faceCount.toLocaleString()} 面 · ${resultFormat || "OBJ + GLB"}`
+        ? isWorld3D
+          ? "SPZ 场景 · 碰撞 GLB · 全景图"
+          : `${enablePbr ? "PBR" : "标准材质"} · ${faceCount.toLocaleString()} 面 · ${resultFormat || "OBJ + GLB"}`
         : isVid
           ? `${r} · ${res} · ${generationDur}`
           : `${r} · ${imgRes}`;
@@ -1033,9 +1039,9 @@ export function useGeneration(p: GenerationParams) {
       tool, curType, ratio: r, imgRes, res, dur: generationDur, quality, count: n,
       ...(presetSkill ? { skill: { id: presetSkill.id, title: presetSkill.title } } : {}),
       imageRefs, firstFrame, lastFrame, videoRefs: vidRefs, audioRefs: audRefs,
-      ...(is3D
+      ...(is3D && !isWorld3D
         ? { multiViewImages, enablePbr, faceCount, generateType, resultFormat }
-        : {}),
+        : is3D ? { multiViewImages } : {}),
       ...(isAudio && !isSfx
         ? {
             lyrics: audLyrics || undefined,
@@ -1116,12 +1122,14 @@ export function useGeneration(p: GenerationParams) {
     const skillInput = presetSkill ? { skillId: presetSkill.id } : {};
     const input: Record<string, unknown> = is3D
       ? {
-          ...(tool !== "i2_3d" && p ? { prompt: genPrompt } : {}),
+          ...((tool !== "i2_3d" || isWorld3D) && p ? { prompt: genPrompt } : {}),
           ...refInput,
-          enablePbr,
-          faceCount,
-          generateType,
-          ...(resultFormat ? { resultFormat } : {}),
+          ...(!isWorld3D ? {
+            enablePbr,
+            faceCount,
+            generateType,
+            ...(resultFormat ? { resultFormat } : {}),
+          } : {}),
         }
       : isAudio
       ? {

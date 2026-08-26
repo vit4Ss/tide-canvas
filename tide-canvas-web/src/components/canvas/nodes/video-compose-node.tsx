@@ -131,8 +131,10 @@ export const VideoComposeNode = memo(function VideoComposeNode({ node, isSelecte
             </div>
           </div>
 
-          <NodePorts nodeId={node.id} visible={showAuxUI} onPortMouseDown={onPortMouseDown} />
         </div>
+
+        {/* 端口必须与 overflow-hidden 卡片同级：端口锚在卡片外，放卡片内会被整体裁掉 */}
+        <NodePorts nodeId={node.id} visible={showAuxUI} onPortMouseDown={onPortMouseDown} />
       </div>
     </div>
   );

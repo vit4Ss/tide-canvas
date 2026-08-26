@@ -87,6 +87,9 @@ Health check: `GET /healthz`.
 # 测试环境（缺省，等价于不设 TIDECANVAS_ENV）
 TIDECANVAS_RELAY_APIKEY=... go run ./cmd/api
 
+# 启用 World Labs Marble 3D 世界生成（可与 Relay 同时配置）
+TIDECANVAS_WORLDLABS_APIKEY=... go run ./cmd/api
+
 # 生产环境（JWT 或 Relay 密钥缺失时会拒绝启动）
 TIDECANVAS_ENV=prod TIDECANVAS_JWT_SECRET=... TIDECANVAS_RELAY_APIKEY=... go run ./cmd/api
 ```
@@ -99,8 +102,9 @@ TIDECANVAS_ENV=prod TIDECANVAS_JWT_SECRET=... TIDECANVAS_RELAY_APIKEY=... go run
 | `redis.addr`       | `TIDECANVAS_REDIS_ADDR`          |
 | `jwt.secret`       | `TIDECANVAS_JWT_SECRET`          |
 | `relay.apiKey`     | `TIDECANVAS_RELAY_APIKEY`        |
+| `worldLabs.apiKey` | `TIDECANVAS_WORLDLABS_APIKEY`    |
 
-> 生产环境密钥（JWT/MySQL/Redis/支付/Relay）一律走环境变量注入，
+> 生产环境密钥（JWT/MySQL/Redis/支付/Relay/World Labs）一律走环境变量注入，
 > 不要写进 `config.prod.yaml` 提交到仓库。
 > Relay 地址由环境固定：`prod` 使用 `https://relay.tcmzhan.com`，其他环境
 > 使用 `https://test-relay.tcmzhan.com`，避免配置串线。

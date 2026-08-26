@@ -21,6 +21,11 @@ import (
 // filenameSanitizer strips characters that would break a Content-Disposition header.
 var filenameSanitizer = strings.NewReplacer("\"", "", "\\", "", "\r", "", "\n", "", "/", "_")
 
+// Generated 3D worlds can be substantially larger than the 100 MiB upload
+// limit. Downloads stream without buffering, so allow the same 2 GiB ceiling
+// used by generation-result archival while retaining a hard abuse cap.
+const maxDownloadSize int64 = 2 << 30
+
 // downloadFilename derives the attachment filename: append the URL path's
 // extension unless the name already ends with it. 判定不能用「名字里有没有点」：
 // 模型名普遍带版本点号（qwen-image-3.0-pro / Hunyuan 3D 3.1），旧判定会吞掉
@@ -79,7 +84,7 @@ func streamDownload(c *gin.Context, body io.Reader, contentType, name string, co
 	c.Status(http.StatusOK)
 	// Unknown/chunked bodies are still hard-capped; a dishonest origin cannot
 	// turn this endpoint into an unbounded bandwidth relay.
-	_, _ = io.Copy(c.Writer, io.LimitReader(body, maxFileSize+1))
+	_, _ = io.Copy(c.Writer, io.LimitReader(body, maxDownloadSize+1))
 }
 
 // download GET /api/files/download?url=...&name=...
@@ -144,7 +149,7 @@ func (h *handler) download(c *gin.Context) {
 		response.Fail(c, response.CodeServerError, "remote returned status "+strconv.Itoa(resp.StatusCode))
 		return
 	}
-	if resp.ContentLength > maxFileSize {
+	if resp.ContentLength > maxDownloadSize {
 		response.Fail(c, response.CodeBadRequest, "remote file exceeds size limit")
 		return
 	}

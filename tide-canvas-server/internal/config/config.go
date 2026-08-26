@@ -40,6 +40,7 @@ type Config struct {
 	Email      EmailConfig      `mapstructure:"email"`
 	LLM        LLMConfig        `mapstructure:"llm"`
 	Relay      RelayConfig      `mapstructure:"relay"`
+	WorldLabs  WorldLabsConfig  `mapstructure:"worldLabs"`
 	Eliandapay EliandapayConfig `mapstructure:"eliandapay"`
 	// BalanceMonitor contains the supplier endpoints and DLAPI deployment
 	// credential. The four JWT-backed supplier credentials are stored in
@@ -125,6 +126,15 @@ type EliandapayConfig struct {
 type RelayConfig struct {
 	BaseURL string `mapstructure:"baseUrl"`
 	APIKey  string `mapstructure:"apiKey"`
+}
+
+// WorldLabsConfig holds the server-side World Labs Marble API credential and
+// polling policy. APIKey must never be exposed to the browser.
+type WorldLabsConfig struct {
+	BaseURL      string        `mapstructure:"baseUrl"`
+	APIKey       string        `mapstructure:"apiKey"`
+	PollInterval time.Duration `mapstructure:"pollInterval"`
+	Timeout      time.Duration `mapstructure:"timeout"`
 }
 
 // LLMConfig holds the chat assistant's prompt/context settings（对话走 relay
@@ -405,6 +415,10 @@ func setDefaults(v *viper.Viper) {
 	// never send local development traffic to the production relay.
 	v.SetDefault("relay.baseUrl", testRelayBaseURL)
 	v.SetDefault("relay.apiKey", "")
+	v.SetDefault("worldLabs.baseUrl", "https://api.worldlabs.ai")
+	v.SetDefault("worldLabs.apiKey", "")
+	v.SetDefault("worldLabs.pollInterval", "5s")
+	v.SetDefault("worldLabs.timeout", "20m")
 
 	// Supplier balance monitor. The access token deliberately has no file
 	// default: inject it as TIDECANVAS_BALANCEMONITOR_DLAPI_ACCESSTOKEN.
@@ -474,6 +488,16 @@ func normalize(cfg *Config) {
 	}
 	if cfg.Storage.Type == "" {
 		cfg.Storage.Type = "local"
+	}
+	cfg.WorldLabs.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.WorldLabs.BaseURL), "/")
+	if cfg.WorldLabs.BaseURL == "" {
+		cfg.WorldLabs.BaseURL = "https://api.worldlabs.ai"
+	}
+	if cfg.WorldLabs.PollInterval <= 0 {
+		cfg.WorldLabs.PollInterval = 5 * time.Second
+	}
+	if cfg.WorldLabs.Timeout <= 0 {
+		cfg.WorldLabs.Timeout = 20 * time.Minute
 	}
 	if cfg.BalanceMonitor.RefreshSeconds < 10 {
 		cfg.BalanceMonitor.RefreshSeconds = 30

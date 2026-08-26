@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { mesh } from "@/lib/mesh";
 import { fallbackOssDisplayImage, ossDisplayUrl, restoreOssDisplayImage } from "@/lib/oss-display";
 import { copyText } from "@/lib/clipboard";
+import { canvasThreeDAssetExtension } from "@/lib/canvas-three-d";
 import { AudioPlayerCard, SongCard } from "@/components/studio/audio-player-card";
 import { toast } from "@/components/shared/toast";
 import { AmbientFrame } from "./ambient-frame";
@@ -235,7 +236,10 @@ export function StageFeed({
   // download every image of a run (cross-origin URLs fall back to opening a tab).
   const downloadRun = async (r: HistRun) => {
     const rawFiles = r.type === "3d"
-      ? r.items.flatMap((item) => item.assets?.map((asset) => ({ url: asset.url, ext: asset.type })) ?? (item.url ? [{ url: item.url, ext: "glb" }] : []))
+      ? r.items.flatMap((item) => item.assets?.map((asset) => ({
+          url: asset.url,
+          ext: canvasThreeDAssetExtension(asset.type, asset.url),
+        })) ?? (item.url ? [{ url: item.url, ext: canvasThreeDAssetExtension("model", item.url) }] : []))
       : r.items.flatMap((item) => item.url ? [{ url: item.url, ext: "" }] : []);
     const seen = new Set<string>();
     const files = rawFiles.filter((file) => {
