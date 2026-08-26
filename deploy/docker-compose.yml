@@ -24,6 +24,11 @@ services:
     environment:
       TIDECANVAS_ENV: test        # 选择 configs/config.test.yaml 叠加层
       TIDECANVAS_SERVER_PORT: "8081" # 8080 被同机 relay-backend 占用
+      # World Labs Marble 凭据只在运行时注入，不写入镜像或仓库。
+      # 可在 deploy/.env 或执行 docker compose 前的宿主机环境中设置。
+      TIDECANVAS_WORLDLABS_APIKEY: "${TIDECANVAS_WORLDLABS_APIKEY:-}"
+      TIDECANVAS_WORLDLABS_POLLINTERVAL: "${TIDECANVAS_WORLDLABS_POLLINTERVAL:-5s}"
+      TIDECANVAS_WORLDLABS_TIMEOUT: "${TIDECANVAS_WORLDLABS_TIMEOUT:-20m}"
       # OSS 密钥不进镜像，在这里注入或在后台「配置管理→存储配置」录入：
       # TIDECANVAS_STORAGE_ACCESSKEY: ""
       # TIDECANVAS_STORAGE_SECRETKEY: ""
