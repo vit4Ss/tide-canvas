@@ -9,6 +9,7 @@ import {
 import {
   POSE_NAMES,
   POSE_PARAM_PRESETS,
+  POSE_ROOT_DROP,
   SKINNED_POSE_PARAM_PRESETS,
   SKINNED_ANIMATION_POSES,
 } from "./scene-3d-poses";
@@ -295,6 +296,10 @@ export interface Figure {
 
 const round4 = (n: number) => Math.round(n * 1e4) / 1e4;
 
+/** 存档里髋部下沉量的保留键（坐/蹲/跪落地）。不是骨骼名：旧版本读到会
+ *  因查不到骨骼而安全跳过，新版本据此恢复自定义姿势的下沉。 */
+export const ROOT_DROP_ARCHIVE_KEY = "__rootDrop";
+
 // ===== 语义姿势滑杆（参考竞品「姿势调节」面板）：按部位分组，轴为绑定期世界方向 =====
 // 角色绑定朝向 +Z（正面）、上方 +Y、左手侧 +X；木偶与 Mixamo 骨架同约定，共用一张表。
 
@@ -420,8 +425,10 @@ function makePoseEngine(THREE: typeof THREE_NS, joints: Map<string, THREE_NS.Obj
 }
 
 /** 木偶 Figure：包装 buildMannequin + 欧拉姿态预设表 */
-export function buildMannequinFigure(THREE: typeof THREE_NS, color?: number): Figure {
+export function buildMannequinFigure(THREE: typeof THREE_NS, color?: number, headScale = 1): Figure {
   const man = buildMannequin(THREE, color);
+  // 头身比在构建期定型（体型预设的儿童/二头身用），姿势系统不再触碰缩放
+  if (headScale !== 1) man.joints.get("head")?.scale.setScalar(headScale);
   const joints = new Map<string, THREE_NS.Object3D>(man.joints);
   const meshes: THREE_NS.Mesh[] = [];
   man.root.traverse((o) => {
@@ -431,9 +438,18 @@ export function buildMannequinFigure(THREE: typeof THREE_NS, color?: number): Fi
   const engine = makePoseEngine(THREE, joints);
   let currentPoseName = "T型";
   engine.captureBase();
+  // 髋部下沉（坐/蹲/跪落地）：引擎只旋转关节，下沉直接位移 hips 组
+  const hips = man.joints.get("hips");
+  const hipsBaseY = hips ? hips.position.y : 0;
+  let rootDrop = 0;
+  const setRootDrop = (drop: number) => {
+    rootDrop = Math.max(0, drop);
+    if (hips) hips.position.y = hipsBaseY - rootDrop;
+  };
   const applyPosePreset = (name: string) => {
     if (!(POSE_NAMES as readonly string[]).includes(name)) return;
     currentPoseName = name;
+    setRootDrop(POSE_ROOT_DROP[name as keyof typeof POSE_ROOT_DROP] ?? 0);
     const base = name === "T型" ? "T型" : name === "行走" || name === "跑步" ? name : "站立";
     applyPose(man.joints, base);
     engine.captureBase();
@@ -452,7 +468,7 @@ export function buildMannequinFigure(THREE: typeof THREE_NS, color?: number): Fi
     poseNames: [...POSE_NAMES],
     applyPosePreset,
     getPoseName: () => currentPoseName,
-    resetPose: () => { currentPoseName = "T型"; applyPose(man.joints, "T型"); engine.captureBase(); },
+    resetPose: () => { currentPoseName = "T型"; setRootDrop(0); applyPose(man.joints, "T型"); engine.captureBase(); },
     setPoseParam: (key, deg) => { currentPoseName = "custom"; engine.setParam(key, deg); },
     getPoseParams: engine.getParams,
     collectRotations: () => {
@@ -461,12 +477,15 @@ export function buildMannequinFigure(THREE: typeof THREE_NS, color?: number): Fi
         const g = man.joints.get(j);
         if (g) rec[j] = [round4(g.rotation.x), round4(g.rotation.y), round4(g.rotation.z)];
       }
+      if (rootDrop > 0) rec[ROOT_DROP_ARCHIVE_KEY] = [round4(rootDrop), 0, 0];
       return rec;
     },
     applyRotations: (rec) => {
       let applied = 0;
+      setRootDrop(0);
       for (const [k, r] of Object.entries(rec)) {
         if (!isFiniteEuler(r)) continue;
+        if (k === ROOT_DROP_ARCHIVE_KEY) { setRootDrop(r[0]); continue; }
         const g = man.joints.get(k);
         if (g) { g.rotation.set(r[0], r[1], r[2]); applied++; }
       }
@@ -507,6 +526,7 @@ export function buildSkinnedFigure(
   cloneFn: (root: THREE_NS.Object3D) => THREE_NS.Object3D,
   asset: SkinnedAsset,
   color = 0xc7d2dc,
+  headScale = 1,
 ): Figure {
   const root = new THREE.Group();
   const model = cloneFn(asset.scene) as THREE_NS.Group;
@@ -518,6 +538,9 @@ export function buildSkinnedFigure(
     const b = o as THREE_NS.Bone;
     if (b.isBone) bones.set(b.name.replace(/^mixamorig:?/i, ""), b);
   });
+
+  // 头身比在绑定快照之前定型（体型预设的儿童/二头身），姿势重置不会把它抹掉
+  if (headScale !== 1) bones.get("Head")?.scale.setScalar(headScale);
 
   // 统一身高 ~1.7m：用头顶骨的世界 Y 测真实渲染身高。
   // 不能用几何包围盒（Box3.setFromObject）——蒙皮网格的包围盒取自绑定空间顶点，
@@ -589,9 +612,17 @@ export function buildSkinnedFigure(
   const engine = makePoseEngine(THREE, joints);
   let currentPoseName = "T型";
   engine.captureBase();
+  // 髋部下沉（坐/蹲/跪落地）：整体位移模型与点选代理，角色 root 仍锚在地面
+  let rootDrop = 0;
+  const setRootDrop = (drop: number) => {
+    rootDrop = Math.max(0, drop);
+    model.position.y = -rootDrop;
+    proxy.position.y = 0.88 - rootDrop;
+  };
   const applyPosePreset = (name: string) => {
     if (!(POSE_NAMES as readonly string[]).includes(name)) return;
     currentPoseName = name;
+    setRootDrop(POSE_ROOT_DROP[name as keyof typeof POSE_ROOT_DROP] ?? 0);
     if (name === "T型") {
       restoreBindPose();
       engine.captureBase();
@@ -618,6 +649,7 @@ export function buildSkinnedFigure(
   };
   const resetPose = () => {
     currentPoseName = "T型";
+    setRootDrop(0);
     restoreBindPose();
     engine.captureBase();
   };
@@ -637,12 +669,15 @@ export function buildSkinnedFigure(
     collectRotations: () => {
       const rec: Record<string, [number, number, number]> = {};
       for (const [key, b] of bones) rec[key] = [round4(b.rotation.x), round4(b.rotation.y), round4(b.rotation.z)];
+      if (rootDrop > 0) rec[ROOT_DROP_ARCHIVE_KEY] = [round4(rootDrop), 0, 0];
       return rec;
     },
     applyRotations: (rec) => {
       let applied = 0;
+      setRootDrop(0);
       for (const [k, r] of Object.entries(rec)) {
         if (!isFiniteEuler(r)) continue;
+        if (k === ROOT_DROP_ARCHIVE_KEY) { setRootDrop(r[0]); continue; }
         // 只认骨骼名（皮肤模型存档）。旧木偶存档的关节键不迁移：两套骨架轴系不同，硬套会出畸形姿势，
         // 跳过即保持绑定姿势，位置/朝向/颜色仍按存档还原（调用方按返回 0 兜底应用默认站姿）。
         const target = bones.get(k.replace(/^mixamorig:?/i, ""));

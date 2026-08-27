@@ -744,8 +744,8 @@ export function Scene3DEditor({ node, onClose }: Props) {
           const color = cs?.color ?? (cs?.preset ? preset.color : CHARACTER_COLORS[idx % CHARACTER_COLORS.length]);
           // 模板可用就统一用 Mixamo 模型（旧木偶存档一并升级外观；其关节数据因骨架不同不迁移，回到绑定姿势）
           const figure = xbotAsset && skClone
-            ? buildSkinnedFigure(THREE, skClone, xbotAsset, color)
-            : buildMannequinFigure(THREE, color);
+            ? buildSkinnedFigure(THREE, skClone, xbotAsset, color, preset.headScale ?? 1)
+            : buildMannequinFigure(THREE, color, preset.headScale ?? 1);
           if (preset.bodyScale.some((value) => value !== 1)) {
             const modelRoot = figure.root;
             modelRoot.scale.set(...preset.bodyScale);

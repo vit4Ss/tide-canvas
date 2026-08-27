@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   POSE_NAMES,
   POSE_PARAM_PRESETS,
+  POSE_ROOT_DROP,
   SKINNED_POSE_PARAM_PRESETS,
   SKINNED_ANIMATION_POSES,
 } from "./scene-3d-poses.ts";
@@ -72,4 +74,28 @@ test("procedural pose attributes match real sliders and stay within their limits
 
 test("the native XBot clips are reserved for walking and running", () => {
   assert.deepEqual(Object.keys(SKINNED_ANIMATION_POSES), ["行走", "跑步"]);
+});
+
+test("grounded poses sink the hips so feet/knees land on the floor", () => {
+  assert.deepEqual(Object.keys(POSE_ROOT_DROP), ["坐姿", "蹲下", "单膝跪", "双膝跪"]);
+  for (const [pose, drop] of Object.entries(POSE_ROOT_DROP)) {
+    assert.ok(POSE_NAMES.includes(pose), `${pose} is not a catalog pose`);
+    assert.ok(drop > 0.2 && drop < 0.8, `${pose} drop ${drop} is not a plausible hip sink`);
+  }
+});
+
+test("figures apply, persist and restore the hip drop and per-preset head scale", () => {
+  const rigSource = readFileSync(new URL("./scene-3d-rig.ts", import.meta.url), "utf8");
+  assert.match(rigSource, /export const ROOT_DROP_ARCHIVE_KEY = "__rootDrop"/);
+  // 两种 Figure 都要：预设应用下沉、存档写入、恢复读取
+  assert.equal((rigSource.match(/setRootDrop\(POSE_ROOT_DROP\[name as keyof typeof POSE_ROOT_DROP\] \?\? 0\)/g) ?? []).length, 2);
+  assert.equal((rigSource.match(/rec\[ROOT_DROP_ARCHIVE_KEY\] = \[round4\(rootDrop\), 0, 0\]/g) ?? []).length, 2);
+  assert.equal((rigSource.match(/if \(k === ROOT_DROP_ARCHIVE_KEY\) \{ setRootDrop\(r\[0\]\); continue; \}/g) ?? []).length, 2);
+  // 头身比在绑定快照前定型，姿势重置不会抹掉
+  assert.match(rigSource, /headScale = 1,?\r?\n\): Figure/);
+  assert.match(rigSource, /bones\.get\("Head"\)\?\.scale\.setScalar\(headScale\)/);
+  assert.match(rigSource, /man\.joints\.get\("head"\)\?\.scale\.setScalar\(headScale\)/);
+  const editorSource = readFileSync(new URL("./scene-3d-editor.tsx", import.meta.url), "utf8");
+  assert.match(editorSource, /buildSkinnedFigure\(THREE, skClone, xbotAsset, color, preset\.headScale \?\? 1\)/);
+  assert.match(editorSource, /buildMannequinFigure\(THREE, color, preset\.headScale \?\? 1\)/);
 });
