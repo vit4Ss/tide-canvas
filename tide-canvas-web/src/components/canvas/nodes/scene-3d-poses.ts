@@ -28,12 +28,12 @@ export const POSE_PARAM_PRESETS: Partial<Record<Scene3DPoseName, Record<string, 
   },
   "单膝跪": {
     chestPitch: -6,
-    legLFwd: -72, kneeL: 78, legRFwd: 10, kneeR: 100,
+    legLFwd: -88, kneeL: 90, legRFwd: 10, kneeR: 100,
     armLFwd: -14, armRFwd: -6, elbowL: 28, elbowR: 12,
   },
   "双膝跪": {
     chestPitch: -3,
-    legLFwd: 8, legRFwd: 8, kneeL: 96, kneeR: 96,
+    legLFwd: 8, legRFwd: 8, kneeL: 78, kneeR: 78,
     armLFwd: -6, armRFwd: -6, elbowL: 22, elbowR: 22,
   },
   "叉腰": {
@@ -108,9 +108,10 @@ export const POSE_PARAM_PRESETS: Partial<Record<Scene3DPoseName, Record<string, 
  * 木偶与 XBot 身高相近（1.65 / 1.7m），共用一张表。
  */
 export const POSE_ROOT_DROP: Partial<Record<Scene3DPoseName, number>> = {
-  "坐姿": 0.45,
-  "蹲下": 0.56,
-  "单膝跪": 0.46,
+  // 按 XBot 实测校准：站立时脚踝自然高度 0.081m，以下取值让接触点正好贴地
+  "坐姿": 0.37,
+  "蹲下": 0.54,
+  "单膝跪": 0.44,
   "双膝跪": 0.47,
 };
 
@@ -134,30 +135,30 @@ export const SKINNED_POSE_PARAM_PRESETS: Partial<Record<Scene3DPoseName, Record<
     elbowL: 9, elbowR: 9,
   },
   "坐姿": {
-    // 椅面高度坐姿（配合下沉 0.45m 落地），双手搭在大腿上
+    // 椅面高度坐姿（配合下沉 0.37m 落地），双手搭在大腿上
     hipsPitch: -4, chestPitch: 3,
     legLFwd: -85, legRFwd: -85, legLAbd: 5, legRAbd: 5, kneeL: 88, kneeR: 88,
     armLAbd: -72, armRAbd: -72, armLFwd: -12, armRFwd: -12,
     armLTwist: 12, armRTwist: -12, elbowL: 42, elbowR: 42,
   },
   "蹲下": {
-    // 深蹲（下沉 0.56m），膝盖外开、前臂搭膝
+    // 深蹲（下沉 0.54m），膝盖外开、前臂搭膝
     hipsPitch: -6, chestPitch: -16,
     legLFwd: -84, legRFwd: -84, legLAbd: 15, legRAbd: 15, kneeL: 132, kneeR: 132,
     armLAbd: -56, armRAbd: -56, armLFwd: -32, armRFwd: -32,
     elbowL: 46, elbowR: 46, headPitch: 6,
   },
   "单膝跪": {
-    // 右膝着地、左脚在前踩实（下沉 0.46m）
+    // 右膝着地、左大腿近水平前脚踩实（下沉 0.44m）
     chestPitch: -6,
-    legLFwd: -72, kneeL: 78, legRFwd: 10, kneeR: 100,
+    legLFwd: -88, kneeL: 90, legRFwd: 10, kneeR: 100,
     armLAbd: -66, armLFwd: -16, elbowL: 34, armLTwist: 10,
     armRAbd: -76, armRFwd: -6, elbowR: 12,
   },
   "双膝跪": {
-    // 直身跪（下沉 0.47m）：大腿近垂直、小腿贴地
+    // 直身跪（下沉 0.47m）：大腿近垂直、膝弯放平小腿贴地
     chestPitch: -3,
-    legLFwd: 8, legRFwd: 8, kneeL: 96, kneeR: 96,
+    legLFwd: 8, legRFwd: 8, kneeL: 78, kneeR: 78,
     armLAbd: -76, armRAbd: -76, armLFwd: -6, armRFwd: -6,
     elbowL: 22, elbowR: 22,
   },
