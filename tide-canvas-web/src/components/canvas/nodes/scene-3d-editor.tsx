@@ -55,6 +55,7 @@ import {
   parseRecognizedBlocking,
   parseRecognizedWhitebox,
   recognitionTaskText,
+  selectRecognitionModel,
   whiteboxPropPlacement,
   type RecognizedBlocking,
 } from "./scene-3d-recognition";
@@ -1997,7 +1998,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
     setRecognitionStep(whitebox ? 1 : 0);
     try {
       const modelsResponse = await aiApi.listModels();
-      const model = modelsResponse.success ? selectStoryboardAnalysisModel(modelsResponse.data) : undefined;
+      const model = modelsResponse.success ? selectRecognitionModel(modelsResponse.data, selectStoryboardAnalysisModel) : undefined;
       if (!model) throw new Error("未配置支持图片输入的文本模型，请联系管理员");
       if (!editorAliveRef.current || recognitionRunRef.current !== runId) return;
       const created = await aiApi.generateIdempotent({

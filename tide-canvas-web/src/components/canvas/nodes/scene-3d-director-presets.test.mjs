@@ -14,9 +14,12 @@ import {
   parseRecognizedBlocking,
   parseRecognizedWhitebox,
   recognitionTaskText,
+  selectRecognitionModel,
   whiteboxPropPlacement,
   WHITEBOX_PROP_COLOR,
 } from "./scene-3d-recognition.ts";
+
+import { selectStoryboardAnalysisModel } from "./video-frame-breakdown.ts";
 
 const editorSource = readFileSync(new URL("./scene-3d-editor.tsx", import.meta.url), "utf8");
 const rigSource = readFileSync(new URL("./scene-3d-rig.ts", import.meta.url), "utf8");
@@ -162,6 +165,37 @@ test("whitebox generation wires prompt, prop import and forced replace into the 
   assert.match(prompt, /只返回一个JSON对象/);
   assert.match(prompt, /kind只能是box、sphere、cylinder/);
   assert.match(prompt, /不要虚构/);
+  // 全景图输入必须按方位角环绕摆放，否则环绕场景会被摊平成一面墙
+  assert.match(prompt, /等距柱状全景图/);
+  assert.match(prompt, /围合出房间/);
+  assert.match(prompt, /不得穿插重叠/);
+  // 换算公式 + 算例 + 分段清点 + 贴边朝向，缺一都会显著劣化全景布局
+  assert.match(prompt, /x=距离×sin\(θ\)，z=-距离×cos\(θ\)/);
+  assert.match(prompt, /u=0\.75、距离4米 → 右侧x=4、z=0/);
+  assert.match(prompt, /不要漏掉画面边缘的身后区域/);
+  assert.match(prompt, /rotation取负的方位角/);
+  assert.match(buildBlockingRecognitionPrompt(), /等距柱状全景图/);
+});
+
+test("recognition prefers the backend-configured primary text model", () => {
+  const vision = { modelId: "m-vision", type: "text", config: JSON.stringify({ vision: true }) };
+  const primary = { modelId: "m-primary", type: "text", config: JSON.stringify({ aiOptimizePrimary: true }) };
+  // 主模型优先于启发式挑中的视觉模型
+  assert.equal(selectRecognitionModel([vision, primary], selectStoryboardAnalysisModel).modelId, "m-primary");
+  // 非文本类目 / 不支持识图 handler / 配置损坏的主模型标记一律无效，回退启发式
+  const imagePrimary = { modelId: "m-img", type: "image", config: JSON.stringify({ aiOptimizePrimary: true }) };
+  const wrongHandler = {
+    modelId: "m-handler", type: "text",
+    config: JSON.stringify({ aiOptimizePrimary: true }),
+    supportedHandlers: ["other_handler"],
+  };
+  const broken = { modelId: "m-broken", type: "text", config: "{not json" };
+  assert.equal(
+    selectRecognitionModel([imagePrimary, wrongHandler, broken, vision], selectStoryboardAnalysisModel).modelId,
+    "m-vision",
+  );
+  assert.equal(selectRecognitionModel([], selectStoryboardAnalysisModel), undefined);
+  assert.match(editorSource, /selectRecognitionModel\(modelsResponse\.data, selectStoryboardAnalysisModel\)/);
   assert.match(editorSource, /parseRecognizedWhitebox\(resultText\)/);
   assert.match(editorSource, /blocking\.props \?\? \[\]\)\.forEach|for \(const prop of blocking\.props \?\? \[\]\) addPropInternal\(whiteboxPropPlacement\(prop\)\)/);
   assert.match(editorSource, /whitebox \? "replace" : recognitionMode/);
