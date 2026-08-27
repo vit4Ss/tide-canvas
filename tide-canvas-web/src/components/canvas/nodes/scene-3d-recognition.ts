@@ -361,7 +361,11 @@ function solveAnnotatedObject(
   };
 }
 
-function parseAnnotatedCharacters(value: unknown, cameraHeight: number): RecognizedBlockingCharacter[] {
+function parseAnnotatedCharacters(
+  value: unknown,
+  cameraHeight: number,
+  shell: readonly ShellVertex[],
+): RecognizedBlockingCharacter[] {
   const rows = Array.isArray(value) ? value.slice(0, 18) : [];
   return rows.flatMap((row, index): RecognizedBlockingCharacter[] => {
     if (!row || typeof row !== "object" || Array.isArray(row)) return [];
@@ -371,8 +375,14 @@ function parseAnnotatedCharacters(value: unknown, cameraHeight: number): Recogni
     if (Number.isFinite(u) && Number.isFinite(v)) {
       const ground = solvePanoGround(u, v, cameraHeight);
       if (!ground) return [];
-      const x = Math.min(8, Math.max(-8, ground.x));
-      const z = Math.min(8, Math.max(-8, ground.z));
+      // 脚点标注偏高会把距离解到墙外：有房间壳时把人物按住在墙内侧
+      let distance = ground.distance;
+      if (shell.length) {
+        const wallDistance = shellDistanceAt(ground.azimuth, shell);
+        if (wallDistance !== null) distance = Math.min(distance, Math.max(0.5, wallDistance - 0.6));
+      }
+      const x = Math.min(8, Math.max(-8, distance * Math.sin(ground.azimuth)));
+      const z = Math.min(8, Math.max(-8, -distance * Math.cos(ground.azimuth)));
       return [{
         ...characterBase(record, index),
         x,
@@ -401,7 +411,7 @@ function solveAnnotatedScene(raw: Record<string, unknown>): RecognizedBlocking |
     const solved = solveAnnotatedObject(row, cameraHeight, shell);
     if (solved) props.push(solved);
   }
-  const characters = parseAnnotatedCharacters(raw.characters, cameraHeight);
+  const characters = parseAnnotatedCharacters(raw.characters, cameraHeight, shell);
   if (!characters.length && !props.length) return null;
   return { characters: resolveCharacterPropCollisions(characters, props), props, ...cameraPresetField(raw) };
 }

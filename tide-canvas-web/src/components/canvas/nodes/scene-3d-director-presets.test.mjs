@@ -260,6 +260,25 @@ test("floor-line annotation builds a closed wall shell around the origin", () =>
   }
 });
 
+test("annotated characters are held inside the wall shell", () => {
+  // 脚点标得太靠近地平线会解出10米开外，人物必须被按回墙内侧（墙距-0.6米）。
+  // u=0.375 正对一段墙的中点（方位角-45°），远离墙角，期望值不受碰撞消解影响。
+  const floorLine = [0, 0.25, 0.5, 0.75].map((u) => ({ u, v: 0.625 }));
+  const parsed = parseRecognizedWhitebox(JSON.stringify({
+    imageType: "panorama",
+    room: { wallHeight: 3, floorLine },
+    objects: [],
+    characters: [{ name: "角色A", preset: "standard-male", u: 0.375, v: 0.55 }],
+  }));
+  assert.ok(parsed);
+  const vertexDistance = 1.6 / Math.tan(0.125 * Math.PI);
+  const wallDistance = vertexDistance * Math.cos(Math.PI / 4);
+  const held = (wallDistance - 0.6) / Math.SQRT2;
+  const character = parsed.characters[0];
+  assert.ok(Math.abs(character.x + held) < 1e-3);
+  assert.ok(Math.abs(character.z + held) < 1e-3);
+});
+
 test("door prior recalibrates camera height so the whole scene rescales", () => {
   // 门顶 v=0.25（仰角45°）在默认相机高下解出3.2米高，触发按2.1米门高的整体缩放
   const parsed = parseRecognizedWhitebox(JSON.stringify({
