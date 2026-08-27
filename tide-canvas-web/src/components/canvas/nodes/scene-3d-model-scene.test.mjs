@@ -32,6 +32,10 @@ test("persisted Director scene accepts GLB and migrates Marble SPZ to its collid
     format: "glb",
     materialMode: "solid",
     colliderUrl: "https://cdn.example.com/collider.glb",
+    // Marble meshes share the SPZ frame — the migrated collider keeps the
+    // metric semantics so the Director renders it at room scale.
+    metricScaleFactor: 1.2,
+    groundPlaneOffset: 0.3,
   });
   assert.equal(normalizeScene3DSceneAsset({
     url: "https://cdn.example.com/textured.glb",

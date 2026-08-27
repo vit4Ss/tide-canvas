@@ -671,12 +671,25 @@ export function Scene3DEditor({ node, onClose }: Props) {
             const size = bounds.getSize(new THREE.Vector3());
             const longest = Math.max(size.x, size.y, size.z);
             if (!Number.isFinite(longest) || longest <= 0) throw new Error("GLB 几何尺寸无效");
-            // 导演台角色约 1.7 米高；把外部场景最长边收敛到 12 米，既能容纳多人也不压缩成道具。
-            const scale = 12 / longest;
-            group.scale.setScalar(scale);
-            const scaled = new THREE.Box3().setFromObject(group);
-            const center = scaled.getCenter(new THREE.Vector3());
-            group.position.set(-center.x, -scaled.min.y, -center.z);
+            const marbleMetricScale = Number.isFinite(asset.metricScaleFactor) && asset.metricScaleFactor! > 0
+              ? asset.metricScaleFactor!
+              : 0;
+            if (marbleMetricScale > 0) {
+              // Marble 白膜与 SPZ 共用同一 OpenCV 原始坐标系：真实米制缩放、
+              // 绕 X 轴翻 180°、按地面偏移落地。人物（约 1.7 米）可直接走进场景，
+              // 白膜与 SPZ 完全对齐。绝不做道具式归一化，否则整个大堂被压成摆件。
+              const groundOffset = Number.isFinite(asset.groundPlaneOffset) ? asset.groundPlaneOffset! : 0;
+              group.scale.setScalar(marbleMetricScale);
+              group.rotation.x = Math.PI;
+              group.position.y = groundOffset;
+            } else {
+              // 通用 GLB 道具/无语义场景：最长边收敛到 12 米并落地居中。
+              const scale = 12 / longest;
+              group.scale.setScalar(scale);
+              const scaled = new THREE.Box3().setFromObject(group);
+              const center = scaled.getCenter(new THREE.Vector3());
+              group.position.set(-center.x, -scaled.min.y, -center.z);
+            }
             group.name = "connected-3d-scene";
             group.traverse((object) => {
               const mesh = object as THREE_NS.Mesh;

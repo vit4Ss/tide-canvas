@@ -85,11 +85,15 @@ test("Marble collider GLB is preferred as the Director white model while SPZ sta
     ],
   };
   assert.equal(canvasThreeDSpzAsset(node)?.type, "spz-500k");
+  // The collider GLB shares the SPZ raw frame: metric semantics ride along
+  // (inherited from the SPZ row here) so the Director keeps room scale.
   assert.deepEqual(canvasThreeDSceneAssetFromNode(node), {
     url: "https://cdn.example.com/collider.glb",
     format: "glb",
     colliderUrl: "https://cdn.example.com/collider.glb",
     materialMode: "solid",
+    metricScaleFactor: 1.25,
+    groundPlaneOffset: 0.4,
     title: "森林场景",
     sourceNodeId: "world_1",
     source: "connected",

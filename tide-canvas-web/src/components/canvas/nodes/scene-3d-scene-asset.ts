@@ -41,8 +41,10 @@ export function normalizeScene3DSceneAsset(value: unknown): CanvasThreeDSceneAss
     format: normalizedFormat,
     ...(materialMode ? { materialMode } : {}),
     ...(colliderUrl ? { colliderUrl } : {}),
-    ...(normalizedFormat === "spz" && Number.isFinite(metricScaleFactor) && metricScaleFactor > 0 ? { metricScaleFactor } : {}),
-    ...(normalizedFormat === "spz" && Number.isFinite(groundPlaneOffset) ? { groundPlaneOffset } : {}),
+    // Marble GLB meshes share the SPZ raw frame, so the metric semantics apply
+    // to both formats — dropping them would leave the white model at prop size.
+    ...(Number.isFinite(metricScaleFactor) && metricScaleFactor > 0 ? { metricScaleFactor } : {}),
+    ...(Number.isFinite(groundPlaneOffset) ? { groundPlaneOffset } : {}),
     ...(sourceNodeId ? { sourceNodeId } : {}),
     ...(source ? { source } : {}),
   };

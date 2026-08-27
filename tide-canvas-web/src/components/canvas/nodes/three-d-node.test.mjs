@@ -12,7 +12,11 @@ test("canvas 3D node uses the standalone model catalog, pricing and generation p
   }
   assert.match(source, /handler: "generate_3d"/);
   assert.match(source, /THREE_D_VIEW_SLOTS\[index\]\.viewType/);
-  assert.match(source, /referenceImages\[0\]\.is360 === true/);
+  // Panorama detection: in-app 360 nodes are flagged, uploaded photos are
+  // measured by real pixel ratio (~2:1), and the operator can override both.
+  assert.match(source, /referenceImages\[0\]\?\.is360 === true/);
+  assert.match(source, /ratio >= 1\.9 && ratio <= 2\.1/);
+  assert.match(source, /panoOverride \?\? \(i2SourceFlagged \|\| panoAutoDetected\)/);
   assert.match(source, /singleImageIsPanorama \? \{ isPano: true \}/);
   assert.match(source, /resolveUploadLimitBytes\(configuredMaxBytes\)/);
   assert.match(source, /mode === "t2_3d" \|\| isWorldModel/);

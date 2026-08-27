@@ -288,6 +288,24 @@ export function useGeneration(p: GenerationParams) {
   const submissionReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
 
+  // 图生 3D 场景的全景识别：上传的照片没有任何全景标记，上传完成后在后台
+  // 探测真实像素比例（equirectangular ≈ 2:1），提交时同步读取。不带 is_pano
+  // 提交时 Marble 会把全景当普通透视照片重建，产出的世界和场景对不上。
+  const panoProbeRef = useRef(new Map<string, boolean>());
+  const threeDImageUrl = uploadedFileUrls(slotData.threeDImage || [])[0] || "";
+  useEffect(() => {
+    if (!threeDImageUrl || panoProbeRef.current.has(threeDImageUrl)) return;
+    let cancelled = false;
+    const probe = new window.Image();
+    probe.onload = () => {
+      if (cancelled || !probe.naturalHeight) return;
+      const ratio = probe.naturalWidth / probe.naturalHeight;
+      panoProbeRef.current.set(threeDImageUrl, ratio >= 1.9 && ratio <= 2.1);
+    };
+    probe.src = threeDImageUrl;
+    return () => { cancelled = true; };
+  }, [threeDImageUrl]);
+
   // Design-preview simulation still uses the legacy single foreground timers.
   const ticksRef = useRef<ReturnType<typeof setInterval>[]>([]);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -968,6 +986,7 @@ export function useGeneration(p: GenerationParams) {
     if (imageRefs.length) {
       if (tool === "i2_3d") {
         refInput.imageUrl = imageRefs[0];
+        if (isWorld3D && panoProbeRef.current.get(imageRefs[0])) refInput.isPano = true;
       } else {
         refInput.imageList = imageRefs;
         refInput.sourceImage = imageRefs[0];
@@ -992,6 +1011,10 @@ export function useGeneration(p: GenerationParams) {
     if (genInFlightRef.current || !submissionGate || !submissionGate.tryAcquire()) {
       toast.info("生成请求正在提交，请勿重复点击");
       return;
+    }
+    if (refInput.isPano === true) {
+      // 提示放在防重复闸门之后，双击不会弹两次。
+      toast.info("参考图为 2:1 全景比例，将按 360° 全景重建");
     }
     if (submissionReleaseTimerRef.current) {
       clearTimeout(submissionReleaseTimerRef.current);

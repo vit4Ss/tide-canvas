@@ -51,7 +51,7 @@ function isGlbAsset(asset: CanvasThreeDAsset): boolean {
 }
 
 /** A Director scene must be GLB; OBJ/STL/FBX/USDZ remain downloadable outputs. */
-export function canvasThreeDGlbUrl(node?: Pick<CanvasNode, "modelSrc" | "modelAssets"> | null): string | null {
+export function canvasThreeDGlbAsset(node?: Pick<CanvasNode, "modelSrc" | "modelAssets"> | null): CanvasThreeDAsset | null {
   if (!node) return null;
   const candidates = node.modelAssets?.filter(isGlbAsset) || [];
   // Marble's exact `glb` entry is its lightweight collider. Other providers
@@ -60,10 +60,14 @@ export function canvasThreeDGlbUrl(node?: Pick<CanvasNode, "modelSrc" | "modelAs
   const asset = hasSpz
     ? candidates.find((candidate) => candidate.type.toLowerCase() === "glb") || candidates[0]
     : candidates[0];
-  if (asset?.url) return asset.url;
+  if (asset?.url) return asset;
   return node.modelSrc && HTTP_URL.test(node.modelSrc) && /\.glb(?:[?#]|$)/i.test(node.modelSrc)
-    ? node.modelSrc
+    ? { type: "glb", url: node.modelSrc }
     : null;
+}
+
+export function canvasThreeDGlbUrl(node?: Pick<CanvasNode, "modelSrc" | "modelAssets"> | null): string | null {
+  return canvasThreeDGlbAsset(node)?.url || null;
 }
 
 export function canvasThreeDPreviewUrl(node?: Pick<CanvasNode, "modelPreviewSrc" | "modelAssets"> | null): string | null {
@@ -113,19 +117,26 @@ export function canvasThreeDSpzAsset(node?: Pick<CanvasNode, "modelSrc" | "model
 
 /** Resolve a canvas 3D node into a Director-loadable white model.
  *  Every GLB starts with a neutral material. Marble additionally provides a
- *  photographic SPZ, but the Director uses its collider GLB for blocking. */
+ *  photographic SPZ, but the Director uses its collider GLB for blocking.
+ *  Marble meshes share the SPZ raw frame, so the metric scale and ground
+ *  offset ride along (falling back to the SPZ row on older records) — without
+ *  them the Director would shrink a room-scale scene into a tabletop prop. */
 export function canvasThreeDSceneAssetFromNode(
   node?: Pick<CanvasNode, "id" | "title" | "modelSrc" | "modelAssets"> | null,
 ): CanvasThreeDSceneAsset | null {
   if (!node) return null;
   const spz = canvasThreeDSpzAsset(node);
-  const colliderUrl = canvasThreeDGlbUrl(node) || undefined;
-  if (colliderUrl) {
+  const glb = canvasThreeDGlbAsset(node);
+  if (glb) {
+    const metricScaleFactor = glb.metricScaleFactor ?? spz?.metricScaleFactor;
+    const groundPlaneOffset = glb.groundPlaneOffset ?? spz?.groundPlaneOffset;
     return {
-      url: colliderUrl,
+      url: glb.url,
       format: "glb",
       materialMode: "solid",
-      ...(spz ? { colliderUrl } : {}),
+      ...(spz ? { colliderUrl: glb.url } : {}),
+      ...(metricScaleFactor !== undefined && metricScaleFactor > 0 ? { metricScaleFactor } : {}),
+      ...(groundPlaneOffset !== undefined ? { groundPlaneOffset } : {}),
       title: node.title || (spz ? "Marble 白膜场景" : "已连接 3D 场景"),
       sourceNodeId: node.id,
       source: "connected",

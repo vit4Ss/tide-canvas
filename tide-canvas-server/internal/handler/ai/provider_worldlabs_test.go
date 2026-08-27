@@ -124,7 +124,7 @@ func TestWorldLabsMultiImagePayloadMapsViewAzimuths(t *testing.T) {
 	}
 }
 
-func TestWorldLabsPanoramaImagePayloadSetsIsPanoOnWorldPrompt(t *testing.T) {
+func TestWorldLabsPanoramaImagePayloadSetsIsPanoOnImagePrompt(t *testing.T) {
 	provider := &worldLabsProviderClient{}
 	payload, err := provider.generationPayload("marble-1.1", map[string]any{
 		"imageUrl": "https://cdn.example.com/lobby-360.jpg",
@@ -133,15 +133,37 @@ func TestWorldLabsPanoramaImagePayloadSetsIsPanoOnWorldPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if payload.WorldPrompt["type"] != "image" || payload.WorldPrompt["is_pano"] != true {
+	if payload.WorldPrompt["type"] != "image" {
 		t.Fatalf("world prompt = %#v", payload.WorldPrompt)
 	}
-	imagePrompt, ok := payload.WorldPrompt["image_prompt"].(map[string]string)
+	// Per the World API reference, is_pano is an ImagePrompt field; a copy on
+	// the world_prompt level is ignored by the API and must not be emitted.
+	if _, misplaced := payload.WorldPrompt["is_pano"]; misplaced {
+		t.Fatalf("is_pano must not sit on world_prompt: %#v", payload.WorldPrompt)
+	}
+	imagePrompt, ok := payload.WorldPrompt["image_prompt"].(map[string]interface{})
 	if !ok || imagePrompt["uri"] != "https://cdn.example.com/lobby-360.jpg" {
 		t.Fatalf("image prompt = %#v", payload.WorldPrompt["image_prompt"])
 	}
-	if _, nested := imagePrompt["is_pano"]; nested {
-		t.Fatalf("is_pano must not be nested inside image_prompt content: %#v", imagePrompt)
+	if imagePrompt["is_pano"] != true {
+		t.Fatalf("image prompt must carry is_pano: %#v", imagePrompt)
+	}
+}
+
+func TestWorldLabsRegularImagePayloadOmitsIsPano(t *testing.T) {
+	provider := &worldLabsProviderClient{}
+	payload, err := provider.generationPayload("marble-1.1", map[string]any{
+		"imageUrl": "https://cdn.example.com/lobby.jpg",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	imagePrompt, ok := payload.WorldPrompt["image_prompt"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("image prompt = %#v", payload.WorldPrompt["image_prompt"])
+	}
+	if _, present := imagePrompt["is_pano"]; present {
+		t.Fatalf("regular photos must not claim to be panoramas: %#v", imagePrompt)
 	}
 }
 

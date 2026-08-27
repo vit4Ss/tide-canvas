@@ -200,13 +200,16 @@ func (p *worldLabsProviderClient) generationPayload(modelID string, input map[st
 		if err != nil {
 			return worldLabsGenerateRequest{}, err
 		}
-		worldPrompt["type"] = "image"
-		worldPrompt["image_prompt"] = map[string]string{"source": "uri", "uri": rewritten}
+		imagePrompt := map[string]interface{}{"source": "uri", "uri": rewritten}
 		if isPano, _ := inputBool(input, "isPano", "is_pano", "is360"); isPano {
-			// is_pano belongs to the ImagePrompt object (world_prompt), not
-			// inside the nested URI content object.
-			worldPrompt["is_pano"] = true
+			// Per the World API reference, is_pano is a field of the
+			// ImagePrompt object itself: world_prompt.image_prompt.is_pano.
+			// On the world_prompt level it is silently ignored and the
+			// panorama gets reconstructed as a perspective photo.
+			imagePrompt["is_pano"] = true
 		}
+		worldPrompt["type"] = "image"
+		worldPrompt["image_prompt"] = imagePrompt
 		if prompt != "" {
 			worldPrompt["text_prompt"] = prompt
 		}

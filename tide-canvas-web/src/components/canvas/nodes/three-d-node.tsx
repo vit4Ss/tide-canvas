@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { Box, Download, Image as ImageIcon, Layers3, Zap } from "lucide-react";
 import { useCanvasStore } from "@/stores/use-canvas-store";
 import { AiModelType } from "@/types/ai";
@@ -98,6 +98,33 @@ export const ThreeDNode = memo(function ThreeDNode({
   const cardHeight = Math.round(node.width * 9 / 16);
   const hasRenderableModel = !!directorSceneAsset;
 
+  // 图生 3D 的全景识别：站内全景节点带 is360/2:1 标记；用户上传的全景照片
+  // 没有任何标记，按真实像素比例（equirectangular ≈ 2:1）识别。误判可用
+  // 面板上的开关手动纠正。不带 is_pano 提交时 Marble 会把全景当普通透视
+  // 照片重建，产出的世界和场景完全对不上。
+  const i2SourceUrl = mode === "i2_3d" ? referenceImages[0]?.imageSrc || "" : "";
+  const i2SourceFlagged = mode === "i2_3d"
+    && (referenceImages[0]?.is360 === true || referenceImages[0]?.aspectRatio === "2:1");
+  const [panoAutoDetected, setPanoAutoDetected] = useState(false);
+  const [panoOverride, setPanoOverride] = useState<boolean | null>(null);
+  useEffect(() => {
+    setPanoAutoDetected(false);
+    setPanoOverride(null);
+    if (!i2SourceUrl || i2SourceFlagged) return;
+    let cancelled = false;
+    const probe = new window.Image();
+    probe.onload = () => {
+      if (cancelled || !probe.naturalHeight) return;
+      const ratio = probe.naturalWidth / probe.naturalHeight;
+      if (ratio >= 1.9 && ratio <= 2.1) setPanoAutoDetected(true);
+    };
+    probe.src = i2SourceUrl;
+    return () => { cancelled = true; };
+  }, [i2SourceUrl, i2SourceFlagged]);
+  // 仅 World 类模型（Marble）理解 is_pano；物体类 3D 模型不受全景识别影响。
+  const singleImageIsPanorama = mode === "i2_3d" && isWorldModel && referenceImages.length > 0
+    && (panoOverride ?? (i2SourceFlagged || panoAutoDetected));
+
   const handleGenerate = () => {
     const prompt = node.prompt?.trim() || "";
     if (!modelId) {
@@ -141,8 +168,6 @@ export const ThreeDNode = memo(function ThreeDNode({
           viewImageUrl: source.imageSrc as string,
         }))
       : undefined;
-    const singleImageIsPanorama = mode === "i2_3d"
-      && (referenceImages[0].is360 === true || referenceImages[0].aspectRatio === "2:1");
     const input: Record<string, unknown> = {
       ...((mode === "t2_3d" || isWorldModel) && prompt ? { prompt } : {}),
       ...(mode === "i2_3d" ? { imageUrl: referenceImages[0].imageSrc } : {}),
@@ -279,6 +304,21 @@ export const ThreeDNode = memo(function ThreeDNode({
                     </span>
                   ) : (
                     <span>从图片节点连线到此节点作为参考</span>
+                  )}
+                  {mode === "i2_3d" && isWorldModel && referenceImages.length > 0 && (
+                    <label
+                      className="ml-auto flex shrink-0 cursor-pointer items-center gap-1.5 text-neutral-600 dark:text-neutral-300"
+                      onMouseDown={stop}
+                      title="360° 全景图（宽高比约 2:1）按全景模式重建；普通照片请保持关闭"
+                    >
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5 accent-neutral-800 dark:accent-neutral-200"
+                        checked={singleImageIsPanorama}
+                        onChange={(event) => setPanoOverride(event.target.checked)}
+                      />
+                      360° 全景图
+                    </label>
                   )}
                 </div>
               )}
