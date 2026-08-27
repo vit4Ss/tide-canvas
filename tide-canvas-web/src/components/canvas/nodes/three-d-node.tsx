@@ -106,10 +106,14 @@ export const ThreeDNode = memo(function ThreeDNode({
   const i2SourceFlagged = mode === "i2_3d"
     && (referenceImages[0]?.is360 === true || referenceImages[0]?.aspectRatio === "2:1");
   const [panoAutoDetected, setPanoAutoDetected] = useState(false);
-  const [panoOverride, setPanoOverride] = useState<boolean | null>(null);
+  // 手动勾选持久化在节点配置里：组件态在面板收起/重开时会整个丢失，之前
+  // 用户勾了框、重开面板后静默弹回，生成又跑成透视模式。
+  const panoOverride = node.generationConfig?.isPano ?? null;
+  const setPanoOverride = (next: boolean) => {
+    updateNode(node.id, { generationConfig: { ...node.generationConfig, isPano: next } });
+  };
   useEffect(() => {
     setPanoAutoDetected(false);
-    setPanoOverride(null);
     if (!i2SourceUrl || i2SourceFlagged) return;
     let cancelled = false;
     const probe = new window.Image();
@@ -171,7 +175,15 @@ export const ThreeDNode = memo(function ThreeDNode({
     const input: Record<string, unknown> = {
       ...((mode === "t2_3d" || isWorldModel) && prompt ? { prompt } : {}),
       ...(mode === "i2_3d" ? { imageUrl: referenceImages[0].imageSrc } : {}),
-      ...(singleImageIsPanorama ? { isPano: true } : {}),
+      // 三态：手动勾/取消 → 显式 true/false（服务端尊重显式值）；未干预且
+      // 识别为全景 → true；其余不传，由服务端按图片真实比例兜底判定。
+      ...(mode === "i2_3d" && isWorldModel
+        ? panoOverride !== null
+          ? { isPano: panoOverride }
+          : singleImageIsPanorama
+            ? { isPano: true }
+            : {}
+        : {}),
       ...(multiViewImages?.length ? { multiViewImages } : {}),
       ...(!isWorldModel ? {
         enablePbr,

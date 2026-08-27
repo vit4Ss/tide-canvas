@@ -1,9 +1,12 @@
 package ai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -147,6 +150,51 @@ func TestWorldLabsPanoramaImagePayloadSetsIsPanoOnImagePrompt(t *testing.T) {
 	}
 	if imagePrompt["is_pano"] != true {
 		t.Fatalf("image prompt must carry is_pano: %#v", imagePrompt)
+	}
+}
+
+func TestWorldLabsAutoPanoProbeMeasuresRealPixelRatio(t *testing.T) {
+	encodePNG := func(w, h int) []byte {
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, image.NewGray(image.Rect(0, 0, w, h))); err != nil {
+			t.Fatal(err)
+		}
+		return buf.Bytes()
+	}
+	pano := encodePNG(200, 100)
+	photo := encodePNG(160, 90)
+	var probes atomic.Int32
+	provider := &worldLabsProviderClient{
+		// The real path goes through the SSRF-guarded safeFetchImage, which
+		// (correctly) refuses loopback test servers — stub the download only.
+		fetchImage: func(_ context.Context, srcURL string) ([]byte, string, error) {
+			probes.Add(1)
+			if strings.HasSuffix(srcURL, "/pano.png") {
+				return pano, "image/png", nil
+			}
+			return photo, "image/png", nil
+		},
+	}
+	// 2:1 equirectangular without an explicit flag → auto-marked as panorama.
+	out := provider.withAutoPanoFlag(context.Background(), map[string]any{"imageUrl": "https://cdn.example.com/pano.png"})
+	if out["isPano"] != true {
+		t.Fatalf("2:1 image must be auto-marked as panorama: %#v", out)
+	}
+	// 16:9 photo stays untouched.
+	out = provider.withAutoPanoFlag(context.Background(), map[string]any{"imageUrl": "https://cdn.example.com/photo.png"})
+	if _, present := out["isPano"]; present {
+		t.Fatalf("16:9 photo must not be marked as panorama: %#v", out)
+	}
+	// An explicit client decision is respected without probing.
+	out = provider.withAutoPanoFlag(context.Background(), map[string]any{
+		"imageUrl": "https://cdn.example.com/pano.png",
+		"isPano":   false,
+	})
+	if out["isPano"] != false {
+		t.Fatalf("explicit isPano=false must be respected: %#v", out)
+	}
+	if got := probes.Load(); got != 2 {
+		t.Fatalf("probe count = %d, want 2 (explicit flag skips the download)", got)
 	}
 }
 

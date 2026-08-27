@@ -107,6 +107,9 @@ export interface CanvasNode {
     faceCount?: number;
     generateType?: CanvasThreeDGenerateType;
     resultFormat?: CanvasThreeDResultFormat;
+    /** 图生 3D 场景的「360° 全景图」手动选择；未设置时按图片比例自动识别。
+     *  必须持久化：组件态在面板收起/重开时会丢，导致勾选静默失效。 */
+    isPano?: boolean;
   };
   /** 视频节点的派生创作场景；用于恢复对应模式与输入引导。 */
   videoOperation?: "clip_reshoot";

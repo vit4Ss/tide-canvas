@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/jpeg" // pano-probe dimension decoding
+	_ "image/png"  // pano-probe dimension decoding
 	"io"
 	"net/http"
 	"net/url"
@@ -71,6 +74,10 @@ type worldLabsProviderClient struct {
 	timeout      time.Duration
 	httpClient   *http.Client
 	store        storage.StorageStrategy
+	// fetchImage downloads a user-supplied image for the pano-aspect probe.
+	// Defaults to the SSRF-guarded safeFetchImage; tests inject a stub because
+	// the guard (correctly) refuses loopback addresses.
+	fetchImage func(ctx context.Context, srcURL string) ([]byte, string, error)
 }
 
 func newWorldLabsProviderClient(cfg config.WorldLabsConfig, store storage.StorageStrategy) *worldLabsProviderClient {
@@ -108,7 +115,7 @@ func (p *worldLabsProviderClient) Generate(ctx context.Context, req GenerateRequ
 	if req.Handler != "generate_3d" {
 		return GenerateResult{}, errUnsupportedHandler
 	}
-	payload, err := p.generationPayload(req.Model.ModelID, req.Input)
+	payload, err := p.generationPayload(req.Model.ModelID, p.withAutoPanoFlag(ctx, req.Input))
 	if err != nil {
 		return GenerateResult{}, err
 	}
@@ -170,6 +177,47 @@ type worldLabsGenerateRequest struct {
 	DisplayName string                 `json:"display_name"`
 	Model       string                 `json:"model"`
 	WorldPrompt map[string]interface{} `json:"world_prompt"`
+}
+
+// withAutoPanoFlag is the server-side panorama safety net for single-image
+// world generation. When the caller did not state isPano explicitly, the image
+// is fetched through the shared SSRF guard and treated as an equirectangular
+// panorama when its pixel ratio is ~2:1. A panorama submitted without is_pano
+// reconstructs as a useless one-sided perspective frustum, and the UI checkbox
+// has proven too easy to lose — the server measures the file itself. An
+// explicit isPano (true or false) from the client is always respected.
+func (p *worldLabsProviderClient) withAutoPanoFlag(ctx context.Context, input map[string]any) map[string]any {
+	if _, present := inputBool(input, "isPano", "is_pano", "is360"); present {
+		return input
+	}
+	imageURL := inputStr(input, "imageUrl", "image_url", "sourceImage")
+	if imageURL == "" {
+		return input
+	}
+	fetch := p.fetchImage
+	if fetch == nil {
+		fetch = safeFetchImage
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	data, _, err := fetch(probeCtx, imageURL)
+	if err != nil {
+		return input
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || cfg.Height <= 0 {
+		return input
+	}
+	ratio := float64(cfg.Width) / float64(cfg.Height)
+	if ratio < 1.9 || ratio > 2.1 {
+		return input
+	}
+	next := make(map[string]any, len(input)+1)
+	for key, value := range input {
+		next[key] = value
+	}
+	next["isPano"] = true
+	return next
 }
 
 func (p *worldLabsProviderClient) generationPayload(modelID string, input map[string]any) (worldLabsGenerateRequest, error) {
