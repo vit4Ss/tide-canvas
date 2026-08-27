@@ -900,3 +900,18 @@ func TestNewAPIBalanceCheckerUsesLoginAccessTokenWhenPanelIssuesJWT(t *testing.T
 		t.Errorf("login count after cached read = %d, want still 1", loginCount.Load())
 	}
 }
+
+func TestDecodeSupplierLoginFailureBacksOffLongOnRateLimit(t *testing.T) {
+	resp := &http.Response{StatusCode: http.StatusTooManyRequests, Body: http.NoBody}
+	err := decodeSupplierLoginFailure(resp)
+	loginErr, ok := err.(*supplierLoginError)
+	if !ok {
+		t.Fatalf("error type = %T, want *supplierLoginError", err)
+	}
+	if !loginErr.credentialRejected {
+		t.Error("429 must take the long backoff, or every 1-minute retry renews the rate-limit window")
+	}
+	if !strings.Contains(loginErr.message, "限流") {
+		t.Errorf("message = %q, want rate-limit wording", loginErr.message)
+	}
+}

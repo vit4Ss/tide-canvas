@@ -269,12 +269,16 @@ func decodeSupplierLoginFailure(resp *http.Response) error {
 	}
 	_ = json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&envelope)
 	message := compactUpstreamMessage(envelope.Message)
-	rejected := resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden
 	if message == "" {
 		message = fmt.Sprintf("HTTP %d", resp.StatusCode)
 	}
-	if rejected {
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		return &supplierLoginError{message: "登录失败：账号或密码被拒绝（" + message + "）", credentialRejected: true}
+	case resp.StatusCode == http.StatusTooManyRequests:
+		// 登录接口被限流：必须走长退避等窗口重置——1 分钟一次的常规重试
+		// 会把限流窗口不断续期，永远恢复不了。
+		return &supplierLoginError{message: "登录失败：登录接口被限流，已暂停重试等待恢复（" + message + "）", credentialRejected: true}
 	}
 	return &supplierLoginError{message: "登录失败：" + message}
 }
