@@ -133,7 +133,9 @@ test("whitebox parser accepts prop-only scenes, caps rows and clamps block dimen
   const parsed = parseRecognizedWhitebox(`\`\`\`json\n${JSON.stringify({ props, characters: [] })}\n\`\`\``);
   assert.ok(parsed);
   assert.equal(parsed.characters.length, 0);
-  assert.equal(parsed.props.length, 40);
+  // 模型行上限40，外加程序生成的地板
+  assert.equal(parsed.props.length, 41);
+  assert.equal(parsed.props.at(-1).name, "地板");
   assert.equal(parsed.props[0].kind, "cylinder");
   assert.equal(parsed.props[1].kind, "box");
   assert.equal(parsed.props[0].x, 8);
@@ -170,9 +172,13 @@ test("whitebox generation wires prompt, prop import and forced replace into the 
   assert.match(prompt, /等距柱状全景图/);
   assert.match(prompt, /标注模式/);
   assert.match(prompt, /不要自己估算米数/);
-  assert.match(prompt, /floorLine/);
+  // 分段墙：开口留空、组间不闭合；地板由程序生成；空旷区域不填体块
+  assert.match(prompt, /wallRuns/);
+  assert.match(prompt, /组与组之间不要连接闭合/);
+  assert.match(prompt, /每根立柱单独标一个体块/);
   assert.match(prompt, /vBottom为接地点/);
-  assert.match(prompt, /不要输出地面、天花板/);
+  assert.match(prompt, /地板由程序自动生成/);
+  assert.match(prompt, /空旷区域保持空白/);
   assert.match(prompt, /不得穿插重叠/);
   assert.match(buildBlockingRecognitionPrompt(), /等距柱状全景图/);
 });
@@ -239,25 +245,37 @@ test("pano annotation back-projects ground points into exact metric placement", 
   })), null);
 });
 
-test("floor-line annotation builds a closed wall shell around the origin", () => {
-  const floorLine = [0, 0.25, 0.5, 0.75].map((u) => ({ u, v: 0.625 }));
+test("wall runs build segmented walls with real gaps and a generated floor slab", () => {
+  const v = 0.625; // 俯角22.5° → 墙脚距离 = 1.6/tan(22.5°)
   const parsed = parseRecognizedWhitebox(JSON.stringify({
     imageType: "panorama",
-    room: { wallHeight: 3, floorLine },
+    room: {
+      wallHeight: 3,
+      wallRuns: [
+        [{ u: 0.25, v }, { u: 0.375, v }, { u: 0.5, v }],
+        [{ u: 0.7, v }, { u: 0.8, v }],
+      ],
+    },
     objects: [],
     characters: [],
   }));
   assert.ok(parsed);
-  // 四个方位的墙脚点 → 首尾闭合的4段墙
+  // 两组墙只产生 2+1 段：组内相邻点连线，组间开口不被闭合
+  const walls = parsed.props.filter((prop) => prop.name.startsWith("墙"));
+  assert.equal(walls.length, 3);
   assert.equal(parsed.props.length, 4);
-  const d = 1.6 / Math.tan(0.125 * Math.PI); // v=0.625 → 俯角22.5°
-  for (const wall of parsed.props) {
-    assert.match(wall.name, /^墙/);
-    assert.ok(Math.abs(wall.w - Math.SQRT2 * d) < 1e-6);
-    assert.equal(wall.h, 3);
-    assert.equal(wall.y, 1.5);
-    assert.equal(wall.d, 0.15);
-  }
+  const d = 1.6 / Math.tan(0.125 * Math.PI);
+  const chord45 = 2 * d * Math.sin(Math.PI / 8);
+  assert.ok(Math.abs(walls[0].w - chord45) < 1e-6);
+  assert.equal(walls[0].h, 3);
+  assert.equal(walls[0].y, 1.5);
+  assert.equal(walls[0].d, 0.15);
+  // 地板由程序生成：覆盖所有体块占地的薄板，顶面略高于舞台地面
+  const slab = parsed.props.at(-1);
+  assert.equal(slab.name, "地板");
+  assert.equal(slab.h, 0.1);
+  assert.ok(slab.y < 0.05);
+  assert.ok(slab.w >= 4 && slab.d >= 4);
 });
 
 test("annotated characters are held inside the wall shell", () => {
