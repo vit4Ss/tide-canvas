@@ -44,6 +44,8 @@ export interface GenerationDetailVO extends GenerationRowVO {
   endpoint: string;
   /** 上游成本(供应商侧,非平台积分) */
   cost: string;
+  /** 失败时用户实际看到的提示(服务端格式化后的产品文案);成功记录不返回 */
+  userErrorMsg?: string;
   params: GenParam[];
   inputs: GenAsset[];
   results: GenAsset[];

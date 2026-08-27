@@ -24,6 +24,7 @@ import (
 	"gorm.io/gorm"
 
 	"tidecanvas/internal/app"
+	"tidecanvas/internal/handler/ai"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/authz"
 	"tidecanvas/internal/pkg/idgen"
@@ -657,9 +658,12 @@ type GenerationRowVO struct {
 // GenerationDetailVO 是生成记录详情（结构化解析 + 原始报文）。
 type GenerationDetailVO struct {
 	GenerationRowVO
-	StartTime    string     `json:"startTime"`
-	Endpoint     string     `json:"endpoint"`
-	Cost         string     `json:"cost"` // 上游成本（供应商侧,非平台积分）
+	StartTime string `json:"startTime"`
+	Endpoint  string `json:"endpoint"`
+	Cost      string `json:"cost"` // 上游成本（供应商侧,非平台积分）
+	// UserErrorMsg 是失败时用户实际看到的提示（与用户侧历史/任务 VO 同走
+	// ai.PublicGenerationFailureReason,口径不分叉）;成功记录为空。
+	UserErrorMsg string     `json:"userErrorMsg,omitempty"`
 	Params       []genParam `json:"params"`
 	Inputs       []genAsset `json:"inputs"`
 	Results      []genAsset `json:"results"`
@@ -815,6 +819,9 @@ func generationDetail(c *gin.Context, d *app.Deps) {
 		Inputs:    req.Inputs,
 		Results:   resp.Results,
 		Reply:     resp.Reply,
+	}
+	if r.Success != 1 {
+		vo.UserErrorMsg = ai.PublicGenerationFailureReason(r.ErrorMsg)
 	}
 	if authz.IsActiveAdministrator(c, db) {
 		vo.RequestBody = r.RequestBody

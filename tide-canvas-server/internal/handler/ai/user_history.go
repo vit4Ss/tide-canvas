@@ -153,7 +153,7 @@ func (s *service) getUserHistory(ctx context.Context, userID, recordID idgen.ID)
 
 func toUserHistoryDetail(log *model.AiGenerationLog, task *model.AiTask) UserGenerationHistoryDetailVO {
 	mediaType := userHistoryMediaType(log.HandlerName, log.OperationType)
-	logFailureReason := publicGenerationFailureReason(log.ErrorMsg)
+	logFailureReason := PublicGenerationFailureReason(log.ErrorMsg)
 	detail := UserGenerationHistoryDetailVO{
 		MediaType:    mediaType,
 		Model:        log.Model,
@@ -186,7 +186,7 @@ func toUserHistoryDetail(log *model.AiGenerationLog, task *model.AiTask) UserGen
 		detail.FailureReason = ""
 	} else if task.Status == statusFailed {
 		detail.Success = 0
-		taskFailureReason := publicGenerationFailureReason(task.ErrorMsg)
+		taskFailureReason := PublicGenerationFailureReason(task.ErrorMsg)
 		// Older tasks may have persisted the generic system fallback before a new
 		// provider safety signature was classified. The linked audit row retains
 		// the raw cause; use it only after the same public allowlist has converted
@@ -207,13 +207,16 @@ func toUserHistoryDetail(log *model.AiGenerationLog, task *model.AiTask) UserGen
 	return detail
 }
 
-// publicGenerationFailureReason returns only product-authored failure copy. New
+// PublicGenerationFailureReason returns only product-authored failure copy. New
 // tasks already persist userFacingGenError output, while old rows may contain
 // raw provider or relay details. Preserve exact messages emitted by our own
 // classifier, reclassify recognizable legacy errors, and fail closed for
 // everything else so credentials, internal URLs and provider payloads never
 // enter any user-facing generation response.
-func publicGenerationFailureReason(raw string) string {
+//
+// Exported for admin/g7_generations: 详情页展示「这条失败记录用户看到的提示」,
+// 必须与用户侧同一口径,不允许另写一份映射。
+func PublicGenerationFailureReason(raw string) string {
 	message := strings.TrimSpace(raw)
 	if message == "" {
 		return userFacingGenErr

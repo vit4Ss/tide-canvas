@@ -216,7 +216,7 @@ function ResultBlock({ d }: { d: GenerationDetailVO }) {
     <div className="genr-media-empty">
       {d.success === 1
         ? "无在线结果(异步任务未回传或链接已过期)"
-        : d.errorMsg || "调用失败,无生成结果"}
+        : d.userErrorMsg || d.errorMsg || "调用失败,无生成结果"}
     </div>
   );
 }
@@ -522,7 +522,8 @@ function GenerationDetailDrawer({ id, onClose }: { id: string; onClose: () => vo
               <TechRow k="端点" mono>{d.endpoint || "—"}</TechRow>
               <TechRow k="开始时间">{fmtTime(d.startTime)}</TechRow>
               <TechRow k="创建时间">{fmtTime(d.createTime)}</TechRow>
-              {d.success !== 1 && d.errorMsg ? <TechRow k="错误信息">{d.errorMsg}</TechRow> : null}
+              {d.success !== 1 ? <TechRow k="用户看到的提示">{d.userErrorMsg || "—"}</TechRow> : null}
+              {d.success !== 1 && d.errorMsg ? <TechRow k="原始错误" mono>{d.errorMsg}</TechRow> : null}
             </dl>
           </section>
 

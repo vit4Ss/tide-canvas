@@ -1140,7 +1140,7 @@ func applyTaskLogState(vo *AiGenerationLogVO, state taskLogState, isAdmin bool) 
 	// public allowlist: tasks created before error redaction (and lifecycle
 	// reconciliation rows) may still contain provider or internal text.
 	if !isAdmin && state.ErrorMsg != "" {
-		vo.ErrorMsg = publicGenerationFailureReason(state.ErrorMsg)
+		vo.ErrorMsg = PublicGenerationFailureReason(state.ErrorMsg)
 	}
 }
 

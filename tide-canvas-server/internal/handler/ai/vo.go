@@ -81,7 +81,7 @@ func toTaskVO(t *model.AiTask) AiTaskVO {
 		// ai_tasks normally stores product-authored copy, but legacy/reconciled
 		// rows can contain provider or internal lifecycle text. Every user task
 		// endpoint goes through this allowlisted mapper before returning it.
-		errorMsg = publicGenerationFailureReason(t.ErrorMsg)
+		errorMsg = PublicGenerationFailureReason(t.ErrorMsg)
 	case statusCancelled:
 		errorMsg = userFacingCancelledErr
 	}
