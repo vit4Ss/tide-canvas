@@ -908,8 +908,8 @@ func TestDecodeSupplierLoginFailureBacksOffLongOnRateLimit(t *testing.T) {
 	if !ok {
 		t.Fatalf("error type = %T, want *supplierLoginError", err)
 	}
-	if !loginErr.credentialRejected {
-		t.Error("429 must take the long backoff, or every 1-minute retry renews the rate-limit window")
+	if !loginErr.rateLimited {
+		t.Error("429 must take the 20-minute backoff, or every 1-minute retry renews the rate-limit window")
 	}
 	if !strings.Contains(loginErr.message, "限流") {
 		t.Errorf("message = %q, want rate-limit wording", loginErr.message)

@@ -158,6 +158,7 @@ type supplierLoginResult struct {
 type supplierLoginError struct {
 	message            string
 	credentialRejected bool
+	rateLimited        bool
 }
 
 func (e *supplierLoginError) Error() string { return e.message }
@@ -165,6 +166,8 @@ func (e *supplierLoginError) Error() string { return e.message }
 const (
 	supplierLoginRetryBackoff      = time.Minute
 	supplierLoginCredentialBackoff = 10 * time.Minute
+	// 429 退避比凭证拒绝更长：限流窗口按 IP 计数，重试太密只会不断续期。
+	supplierLoginRateLimitBackoff = 20 * time.Minute
 )
 
 // acquireSupplierLoginToken returns a cached session token or performs one
@@ -202,8 +205,13 @@ func acquireSupplierLoginToken(ctx context.Context, entry *supplierTokenEntry, i
 		entry.failMessage = err.Error()
 		backoff := supplierLoginRetryBackoff
 		var loginErr *supplierLoginError
-		if errors.As(err, &loginErr) && loginErr.credentialRejected {
-			backoff = supplierLoginCredentialBackoff
+		if errors.As(err, &loginErr) {
+			switch {
+			case loginErr.rateLimited:
+				backoff = supplierLoginRateLimitBackoff
+			case loginErr.credentialRejected:
+				backoff = supplierLoginCredentialBackoff
+			}
 		}
 		entry.failedUntil = time.Now().Add(backoff)
 		return "", err
@@ -278,7 +286,7 @@ func decodeSupplierLoginFailure(resp *http.Response) error {
 	case resp.StatusCode == http.StatusTooManyRequests:
 		// 登录接口被限流：必须走长退避等窗口重置——1 分钟一次的常规重试
 		// 会把限流窗口不断续期，永远恢复不了。
-		return &supplierLoginError{message: "登录失败：登录接口被限流，已暂停重试等待恢复（" + message + "）", credentialRejected: true}
+		return &supplierLoginError{message: "登录失败：登录接口被限流，20 分钟后自动重试（" + message + "）", rateLimited: true}
 	}
 	return &supplierLoginError{message: "登录失败：" + message}
 }
