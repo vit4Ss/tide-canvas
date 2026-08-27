@@ -71,11 +71,16 @@ type BalanceMonitorConfig struct {
 // NewAPIBalanceConfig configures a New API compatible GET /api/user/self
 // account. QuotaPerUnit converts the raw integer quota returned by New API into
 // the displayed currency amount (DLAPI currently publishes 500000 units/USD).
+// With Username and Password set the monitor logs in via POST /api/user/login
+// and reads the profile with the session cookie; AccessToken is the manual
+// fallback sent verbatim in the Authorization header.
 type NewAPIBalanceConfig struct {
 	Enabled      bool    `mapstructure:"enabled"`
 	Name         string  `mapstructure:"name"`
 	BaseURL      string  `mapstructure:"baseUrl"`
 	UserID       string  `mapstructure:"userId"`
+	Username     string  `mapstructure:"username"`
+	Password     string  `mapstructure:"password"`
 	AccessToken  string  `mapstructure:"accessToken"`
 	QuotaPerUnit float64 `mapstructure:"quotaPerUnit"`
 	Currency     string  `mapstructure:"currency"`
@@ -539,8 +544,10 @@ func normalize(cfg *Config) {
 	cfg.BalanceMonitor.Dimensio.Username, cfg.BalanceMonitor.Dimensio.Password = "", ""
 	cfg.BalanceMonitor.Uniart.Enabled, cfg.BalanceMonitor.Uniart.AccessToken, cfg.BalanceMonitor.Uniart.LowBalance = false, "", 0
 	cfg.BalanceMonitor.Uniart.UserID = ""
+	cfg.BalanceMonitor.Uniart.Username, cfg.BalanceMonitor.Uniart.Password = "", ""
 	cfg.BalanceMonitor.Wxart.Enabled, cfg.BalanceMonitor.Wxart.AccessToken, cfg.BalanceMonitor.Wxart.LowBalance = false, "", 0
 	cfg.BalanceMonitor.Wxart.UserID = ""
+	cfg.BalanceMonitor.Wxart.Username, cfg.BalanceMonitor.Wxart.Password = "", ""
 	cfg.BalanceMonitor.SecureSkill.Enabled, cfg.BalanceMonitor.SecureSkill.AccessToken, cfg.BalanceMonitor.SecureSkill.LowBalance = false, "", 0
 	cfg.BalanceMonitor.SecureSkill.Email, cfg.BalanceMonitor.SecureSkill.Password = "", ""
 	if strings.TrimSpace(cfg.BalanceMonitor.DLAPI.Name) == "" {

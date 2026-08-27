@@ -404,8 +404,8 @@ func TestSupplierBalanceMonitorReportsMissingTokenWithoutRequest(t *testing.T) {
 	if row.State != "unconfigured" {
 		t.Fatalf("state = %q, want unconfigured", row.State)
 	}
-	if row.Message != "缺少访问令牌" {
-		t.Errorf("message = %q, want missing-token message", row.Message)
+	if row.Message != "缺少账号密码或访问令牌" {
+		t.Errorf("message = %q, want missing-credential message", row.Message)
 	}
 }
 
@@ -560,7 +560,9 @@ func TestSupplierBalanceMonitorReadsDLAPIFromDatabase(t *testing.T) {
 			t.Errorf("New-Api-User = %q, want 245", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"success":true,"data":{"quota":6250000}}`))
+		// 25_000_000 / 500_000 = 50 USD，须高于下面 seeded 的 20 USD 预警线，
+		// 否则快照状态是 low 而非 healthy。
+		_, _ = w.Write([]byte(`{"success":true,"data":{"quota":25000000}}`))
 	}))
 	defer server.Close()
 
@@ -587,8 +589,8 @@ func TestSupplierBalanceMonitorReadsDLAPIFromDatabase(t *testing.T) {
 	monitor := newSupplierBalanceMonitorWithDBAndClient(db, cfg, server.Client())
 
 	row := monitor.snapshot(context.Background()).Suppliers[0]
-	if row.Key != "dlapi" || row.State != "healthy" || row.Balance == nil || *row.Balance != 12.5 {
-		t.Fatalf("snapshot = %+v, want healthy DLAPI balance 12.5 via sys_config credentials", row)
+	if row.Key != "dlapi" || row.State != "healthy" || row.Balance == nil || *row.Balance != 50 {
+		t.Fatalf("snapshot = %+v, want healthy DLAPI balance 50 via sys_config credentials", row)
 	}
 }
 
@@ -724,5 +726,122 @@ func TestSupplierBalanceMonitorReportsDatabaseConfigFailureAccurately(t *testing
 		if row.State != "error" || row.Message != "无法读取监控配置" || row.Balance != nil || row.Stale {
 			t.Errorf("database failure row = %+v", row)
 		}
+	}
+}
+
+func TestSupplierBalanceMonitorLogsInUniartWithDatabaseAccount(t *testing.T) {
+	var loginCount atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/user/login":
+			loginCount.Add(1)
+			var body struct{ Username, Password string }
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			w.Header().Set("Content-Type", "application/json")
+			if body.Username != "ops-uniart" || body.Password != "uniart-pass" {
+				_, _ = w.Write([]byte(`{"success":false,"message":"Username or password is incorrect"}`))
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "uniart-sess", MaxAge: 3600})
+			_, _ = w.Write([]byte(`{"success":true,"data":{"id":42,"username":"ops-uniart"}}`))
+		case "/api/user/self":
+			w.Header().Set("Content-Type", "application/json")
+			cookie, err := r.Cookie("session")
+			if err != nil || cookie.Value != "uniart-sess" {
+				_, _ = w.Write([]byte(`{"success":false,"message":"无权进行此操作，未登录且未提供 access token"}`))
+				return
+			}
+			if got := r.Header.Get("New-Api-User"); got != "42" {
+				t.Errorf("New-Api-User = %q, want 42 from the login response id", got)
+			}
+			if got := r.Header.Get("Authorization"); got != "" {
+				t.Errorf("Authorization = %q, want empty on the session path", got)
+			}
+			_, _ = w.Write([]byte(`{"success":true,"data":{"quota":210000000,"used_quota":55000000}}`))
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&model.SysConfig{}); err != nil {
+		t.Fatalf("migrate sys_config: %v", err)
+	}
+	// userId 故意留空：会话路径应直接使用登录响应里的 id。
+	rows := []model.SysConfig{
+		{ConfigKey: model.ConfigKeyBalanceUniartEnabled, ConfigValue: "1"},
+		{ConfigKey: model.ConfigKeyBalanceUniartUsername, ConfigValue: "ops-uniart"},
+		{ConfigKey: model.ConfigKeyBalanceUniartPassword, ConfigValue: "uniart-pass"},
+		{ConfigKey: model.ConfigKeyBalanceUniartLowBalance, ConfigValue: "100"},
+	}
+	if err := db.Create(&rows).Error; err != nil {
+		t.Fatalf("seed supplier config: %v", err)
+	}
+
+	cfg := config.BalanceMonitorConfig{RefreshSeconds: 30, Uniart: config.NewAPIBalanceConfig{
+		Name: "Uniart", BaseURL: server.URL, QuotaPerUnit: 500000, Currency: "USD",
+	}}
+	monitor := newSupplierBalanceMonitorWithDBAndClient(db, cfg, server.Client())
+
+	row := monitor.snapshot(context.Background()).Suppliers[5]
+	if row.Key != "uniart" || row.State != "healthy" || row.Balance == nil || *row.Balance != 420 {
+		t.Fatalf("snapshot = %+v, want healthy Uniart balance 420 via database account login", row)
+	}
+	if loginCount.Load() != 1 {
+		t.Errorf("login count = %d, want exactly one login", loginCount.Load())
+	}
+
+	// 第二次快照必须复用缓存的会话，而不是重新登录。
+	row = monitor.snapshot(context.Background()).Suppliers[5]
+	if row.State != "healthy" {
+		t.Fatalf("second snapshot state = %q, want healthy from cached session", row.State)
+	}
+	if loginCount.Load() != 1 {
+		t.Errorf("login count after cached snapshot = %d, want still 1", loginCount.Load())
+	}
+}
+
+func TestNewAPIBalanceCheckerReloginsOnceAfterSessionRevoked(t *testing.T) {
+	// New API 把失效会话报成 HTTP 200 {success:false}（部分分支报 401），
+	// 两种拒绝都应丢弃缓存会话并恰好重登一次。
+	var loginCount atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/user/login":
+			n := loginCount.Add(1)
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "sess-" + strconv.FormatInt(n, 10), MaxAge: 3600})
+			_, _ = w.Write([]byte(`{"success":true,"data":{"id":7}}`))
+		case "/api/user/self":
+			cookie, err := r.Cookie("session")
+			if err != nil || cookie.Value != "sess-2" {
+				_, _ = w.Write([]byte(`{"success":false,"message":"Unauthorized, invalid access token"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"success":true,"data":{"quota":500000}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	checker := &newAPIBalanceChecker{providerKey: "uniart", cfg: config.NewAPIBalanceConfig{
+		Enabled: true, BaseURL: server.URL, Username: "ops", Password: "pw", QuotaPerUnit: 500000,
+	}, tokens: newSupplierTokenCache()}
+
+	reading, err := checker.read(context.Background(), server.Client())
+	if err != nil {
+		t.Fatalf("read after revoked session: %v", err)
+	}
+	if reading.Balance != 1 {
+		t.Errorf("balance = %v, want 1", reading.Balance)
+	}
+	if loginCount.Load() != 2 {
+		t.Errorf("login count = %d, want 2 (initial + one relogin)", loginCount.Load())
 	}
 }

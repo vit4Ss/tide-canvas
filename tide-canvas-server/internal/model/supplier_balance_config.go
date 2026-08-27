@@ -12,9 +12,13 @@ package model
 const ConfigGroupSupplierBalances = "供应商余额"
 
 const (
-	// DLAPI is a New API panel; its sk- account token never expires.
+	// DLAPI is a New API panel. Username+password auto-login is the primary
+	// integration (the console rejects relay sk- API keys); the access-token
+	// row accepts a console-generated system access token as manual fallback.
 	ConfigKeyBalanceDLAPIEnabled     = "balance.dlapi.enabled"
 	ConfigKeyBalanceDLAPIUserID      = "balance.dlapi.userId"
+	ConfigKeyBalanceDLAPIUsername    = "balance.dlapi.username"
+	ConfigKeyBalanceDLAPIPassword    = "balance.dlapi.password"
 	ConfigKeyBalanceDLAPIAccessToken = "balance.dlapi.accessToken"
 	ConfigKeyBalanceDLAPILowBalance  = "balance.dlapi.lowBalance"
 
@@ -42,17 +46,24 @@ const (
 	ConfigKeyBalanceDimensioAccessToken = "balance.dimensio.accessToken"
 	ConfigKeyBalanceDimensioLowBalance  = "balance.dimensio.lowBalance"
 
-	// Uniart is a New API panel: its system access token never expires, so no
-	// login credentials are needed — token plus the numeric user id suffice.
+	// Uniart is a New API panel. With username+password configured the monitor
+	// logs in via POST /api/user/login and keeps the session cookie fresh; the
+	// system access token remains a manual fallback.
 	ConfigKeyBalanceUniartEnabled     = "balance.uniart.enabled"
 	ConfigKeyBalanceUniartUserID      = "balance.uniart.userId"
+	ConfigKeyBalanceUniartUsername    = "balance.uniart.username"
+	ConfigKeyBalanceUniartPassword    = "balance.uniart.password"
 	ConfigKeyBalanceUniartAccessToken = "balance.uniart.accessToken"
 	ConfigKeyBalanceUniartLowBalance  = "balance.uniart.lowBalance"
 
-	// Wxart is a one-api panel (quota_per_unit 100, shown as "R"): the system
-	// access token never expires and no New-Api-User header is required.
+	// Wxart runs a custom "x deal" console that mimics the New API surface
+	// (quota_per_unit 100, shown as "R"). Its web console is cookie-session
+	// only, so username+password auto-login is the primary integration; the
+	// access-token row is kept in case its API-key auth starts working.
 	ConfigKeyBalanceWxartEnabled     = "balance.wxart.enabled"
 	ConfigKeyBalanceWxartUserID      = "balance.wxart.userId"
+	ConfigKeyBalanceWxartUsername    = "balance.wxart.username"
+	ConfigKeyBalanceWxartPassword    = "balance.wxart.password"
 	ConfigKeyBalanceWxartAccessToken = "balance.wxart.accessToken"
 	ConfigKeyBalanceWxartLowBalance  = "balance.wxart.lowBalance"
 
@@ -70,6 +81,8 @@ const (
 var SupplierBalanceConfigKeys = []string{
 	ConfigKeyBalanceDLAPIEnabled,
 	ConfigKeyBalanceDLAPIUserID,
+	ConfigKeyBalanceDLAPIUsername,
+	ConfigKeyBalanceDLAPIPassword,
 	ConfigKeyBalanceDLAPIAccessToken,
 	ConfigKeyBalanceDLAPILowBalance,
 	ConfigKeyBalanceMikotoEnabled,
@@ -94,10 +107,14 @@ var SupplierBalanceConfigKeys = []string{
 	ConfigKeyBalanceDimensioLowBalance,
 	ConfigKeyBalanceUniartEnabled,
 	ConfigKeyBalanceUniartUserID,
+	ConfigKeyBalanceUniartUsername,
+	ConfigKeyBalanceUniartPassword,
 	ConfigKeyBalanceUniartAccessToken,
 	ConfigKeyBalanceUniartLowBalance,
 	ConfigKeyBalanceWxartEnabled,
 	ConfigKeyBalanceWxartUserID,
+	ConfigKeyBalanceWxartUsername,
+	ConfigKeyBalanceWxartPassword,
 	ConfigKeyBalanceWxartAccessToken,
 	ConfigKeyBalanceWxartLowBalance,
 	ConfigKeyBalanceSecureSkillEnabled,
@@ -108,6 +125,7 @@ var SupplierBalanceConfigKeys = []string{
 }
 
 var supplierBalanceSecretKeys = map[string]struct{}{
+	ConfigKeyBalanceDLAPIPassword:          {},
 	ConfigKeyBalanceDLAPIAccessToken:       {},
 	ConfigKeyBalanceMikotoPassword:         {},
 	ConfigKeyBalanceMikotoAccessToken:      {},
@@ -117,7 +135,9 @@ var supplierBalanceSecretKeys = map[string]struct{}{
 	ConfigKeyBalanceCCGO2AccessToken:       {},
 	ConfigKeyBalanceDimensioPassword:       {},
 	ConfigKeyBalanceDimensioAccessToken:    {},
+	ConfigKeyBalanceUniartPassword:         {},
 	ConfigKeyBalanceUniartAccessToken:      {},
+	ConfigKeyBalanceWxartPassword:          {},
 	ConfigKeyBalanceWxartAccessToken:       {},
 	ConfigKeyBalanceSecureSkillPassword:    {},
 	ConfigKeyBalanceSecureSkillAccessToken: {},
@@ -136,8 +156,10 @@ func IsSupplierBalanceSecretConfigKey(key string) bool {
 func SupplierBalanceBaselineConfigs() []SysConfig {
 	return []SysConfig{
 		{ConfigKey: ConfigKeyBalanceDLAPIEnabled, ConfigValue: "1", Group: ConfigGroupSupplierBalances, Description: "DLAPI 余额监控开关；保存后即时生效"},
-		{ConfigKey: ConfigKeyBalanceDLAPIUserID, ConfigValue: "245", Group: ConfigGroupSupplierBalances, Description: "DLAPI 用户 ID（数字，控制台个人设置里可查看，随访问令牌一起校验）"},
-		{ConfigKey: ConfigKeyBalanceDLAPIAccessToken, ConfigValue: "", Group: ConfigGroupSupplierBalances, Description: "DLAPI 系统访问令牌（sk- 开头原样粘贴，控制台生成，长期有效，无需账号密码）"},
+		{ConfigKey: ConfigKeyBalanceDLAPIUserID, ConfigValue: "245", Group: ConfigGroupSupplierBalances, Description: "DLAPI 用户 ID（数字；已配置账号密码时可留空，自动取登录返回的 ID）"},
+		{ConfigKey: ConfigKeyBalanceDLAPIUsername, ConfigValue: "", Group: ConfigGroupSupplierBalances, Description: "DLAPI 登录用户名；与登录密码一起填写后自动登录续期，无需再维护访问令牌"},
+		{ConfigKey: ConfigKeyBalanceDLAPIPassword, ConfigValue: "", Group: ConfigGroupSupplierBalances, Description: "DLAPI 登录密码；保存后脱敏显示，清空可移除"},
+		{ConfigKey: ConfigKeyBalanceDLAPIAccessToken, ConfigValue: "", Group: ConfigGroupSupplierBalances, Description: "DLAPI 系统访问令牌（控制台个人设置生成，手动兜底；调生图的 sk- API Key 无效）"},
 		{ConfigKey: ConfigKeyBalanceDLAPILowBalance, ConfigValue: "20", Group: ConfigGroupSupplierBalances, Description: "DLAPI 低余额预警线（USD）"},
 
 		{ConfigKey: ConfigKeyBalanceMikotoEnabled, ConfigValue: "1", Group: ConfigGroupSupplierBalances, Description: "Mikoto 余额监控开关；保存后即时生效"},
@@ -165,13 +187,17 @@ func SupplierBalanceBaselineConfigs() []SysConfig {
 		{ConfigKey: ConfigKeyBalanceDimensioLowBalance, ConfigValue: "50000", Group: ConfigGroupSupplierBalances, Description: "Dimensio 低余额预警线（积分）"},
 
 		{ConfigKey: ConfigKeyBalanceUniartEnabled, ConfigValue: "1", Group: ConfigGroupSupplierBalances, Description: "Uniart 余额监控开关；保存后即时生效"},
-		{ConfigKey: ConfigKeyBalanceUniartUserID, ConfigValue: "", Group: ConfigGroupSupplierBalances, Description: "Uniart 用户 ID（必填，数字，控制台个人设置里可查看，随访问令牌一起校验）"},
-		{ConfigKey: ConfigKeyBalanceUniartAccessToken, ConfigValue: "", Group: ConfigGroupSupplierBalances, Description: "Uniart 系统访问令牌（控制台「个人设置 → 系统访问令牌」生成，长期有效，无需账号密码）"},
+		{ConfigKey: ConfigKeyBalanceUniartUserID, ConfigValue: "", Group: ConfigGroupSupplierBalances, Description: "Uniart 用户 ID（数字；已配置账号密码时可留空，自动取登录返回的 ID）"},
+		{ConfigKey: ConfigKeyBalanceUniartUsername, ConfigValue: "", Group: ConfigGroupSupplierBalances, Description: "Uniart 登录用户名；与登录密码一起填写后自动登录续期，无需再维护访问令牌"},
+		{ConfigKey: ConfigKeyBalanceUniartPassword, ConfigValue: "", Group: ConfigGroupSupplierBalances, Description: "Uniart 登录密码；保存后脱敏显示，清空可移除"},
+		{ConfigKey: ConfigKeyBalanceUniartAccessToken, ConfigValue: "", Group: ConfigGroupSupplierBalances, Description: "Uniart 系统访问令牌（手动兜底；已配置账号密码时留空即可）"},
 		{ConfigKey: ConfigKeyBalanceUniartLowBalance, ConfigValue: "100", Group: ConfigGroupSupplierBalances, Description: "Uniart 低余额预警线（USD，面板额度按 500000 quota = 1 折算）"},
 
 		{ConfigKey: ConfigKeyBalanceWxartEnabled, ConfigValue: "1", Group: ConfigGroupSupplierBalances, Description: "wxart 余额监控开关；保存后即时生效"},
-		{ConfigKey: ConfigKeyBalanceWxartUserID, ConfigValue: "", Group: ConfigGroupSupplierBalances, Description: "wxart 用户 ID（可留空；one-api 面板通常不校验，面板要求时再填写）"},
-		{ConfigKey: ConfigKeyBalanceWxartAccessToken, ConfigValue: "", Group: ConfigGroupSupplierBalances, Description: "wxart 系统访问令牌（控制台「个人设置 → 生成访问令牌」，长期有效，无需账号密码）"},
+		{ConfigKey: ConfigKeyBalanceWxartUserID, ConfigValue: "", Group: ConfigGroupSupplierBalances, Description: "wxart 用户 ID（数字；已配置账号密码时可留空，自动取登录返回的 ID）"},
+		{ConfigKey: ConfigKeyBalanceWxartUsername, ConfigValue: "", Group: ConfigGroupSupplierBalances, Description: "wxart 登录用户名；与登录密码一起填写后自动登录续期（该面板控制台只认登录会话）"},
+		{ConfigKey: ConfigKeyBalanceWxartPassword, ConfigValue: "", Group: ConfigGroupSupplierBalances, Description: "wxart 登录密码；保存后脱敏显示，清空可移除"},
+		{ConfigKey: ConfigKeyBalanceWxartAccessToken, ConfigValue: "", Group: ConfigGroupSupplierBalances, Description: "wxart 访问令牌（手动兜底；该面板控制台以账号密码登录为准）"},
 		{ConfigKey: ConfigKeyBalanceWxartLowBalance, ConfigValue: "50", Group: ConfigGroupSupplierBalances, Description: "wxart 低余额预警线（R，面板额度按 100 quota = 1 R 折算）"},
 
 		{ConfigKey: ConfigKeyBalanceSecureSkillEnabled, ConfigValue: "1", Group: ConfigGroupSupplierBalances, Description: "secure-skill 余额监控开关；保存后即时生效"},
