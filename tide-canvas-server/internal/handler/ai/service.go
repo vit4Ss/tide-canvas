@@ -263,6 +263,9 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 	if err := validateOmniReferenceInput(&dto, m); err != nil {
 		return nil, err
 	}
+	if err := validateReferenceCountInput(&dto, m); err != nil {
+		return nil, err
+	}
 	if err := s.prepareUpscalePricingInput(ctx, userID, &dto, m); err != nil {
 		return nil, err
 	}

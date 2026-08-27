@@ -2,6 +2,7 @@ import type { Result } from "@/types/api";
 import { ResultCode } from "@/types/api";
 import type { AiModelVO } from "@/types/ai";
 import { isImageReferenceNodeType } from "@/lib/canvas-node-types";
+import { referenceCountLimitOf, type ReferenceCountKind } from "@/lib/reference-count";
 
 const BYTES_PER_MB = 1024 * 1024;
 
@@ -31,6 +32,12 @@ function parseConfig(modelOrConfig: ModelLike): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function refLimitsOf(config: Record<string, unknown>): Record<string, unknown> {
+  return config.refLimits && typeof config.refLimits === "object" && !Array.isArray(config.refLimits)
+    ? config.refLimits as Record<string, unknown>
+    : {};
 }
 
 function clampToSingleUploadLimit(bytes: number): number {
@@ -66,9 +73,7 @@ export function resolveModelReferenceLimitBytes(modelOrConfig: ModelLike, kind: 
   const nested = config.referenceLimits && typeof config.referenceLimits === "object" && !Array.isArray(config.referenceLimits)
     ? config.referenceLimits as Record<string, unknown>
     : {};
-  const currentRefLimits = config.refLimits && typeof config.refLimits === "object" && !Array.isArray(config.refLimits)
-    ? config.refLimits as Record<string, unknown>
-    : {};
+  const currentRefLimits = refLimitsOf(config);
   const currentLimitMB = handler === "image_to_image" && kind === "image"
     ? config.maxRefImageSizeMB
     : handler === "image_to_video" && kind === "image"
@@ -116,6 +121,16 @@ export function resolveModelReferenceLimitBytes(modelOrConfig: ModelLike, kind: 
         : limitFromCandidates([config.maxFileSizeMB, ...common]);
 
   return clampToSingleUploadLimit(bytes ?? MAX_SINGLE_UPLOAD_BYTES);
+}
+
+/** 后台「模型管理」为该模式配置的参考素材数量上限（0 / 未配置 = 不限制）。
+ *  规则全部落在 lib/reference-count.ts，这里只负责把模型解析成 config。 */
+export function resolveModelReferenceCountLimit(
+  modelOrConfig: ModelLike,
+  kind: ReferenceCountKind,
+  handler?: string,
+): number | undefined {
+  return referenceCountLimitOf(parseConfig(modelOrConfig), kind, handler);
 }
 
 export function referenceKindFromFile(file: Pick<File, "type">): ReferenceFileKind {

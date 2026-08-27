@@ -43,6 +43,7 @@ import { adminModelsApi } from "@/lib/admin-models-api";
 import { BRAND_ICONS, brandIconUrl, resolveModelSwatch } from "@/lib/model-brand";
 import { usesVideoPerRequestBilling, videoPerRequestRate } from "@/lib/price-matrix";
 import { MAX_SINGLE_UPLOAD_MB } from "@/lib/upload-limits";
+import { normalizeVideoModes, type VideoMode } from "@/lib/video-modes";
 import {
   MODEL_STATUS_LABEL,
   MODEL_TYPE_LABEL,
@@ -898,7 +899,15 @@ function ModelModal({
     ? `请输入 1–${MAX_3D_MULTI_VIEW_IMAGES} 之间的整数`
     : undefined;
   const isPerRequestVideo = isVideo && usesVideoPerRequestBilling(cfg);
-  const omniRefModeEnabled = isVideo && (!(cfg.modes?.length) || cfg.modes.includes("omni_ref"));
+  // 各模式配置区块的显示判定必须与服务端 marketSupportedHandlers 同口径：它优先读
+  // paramsSchema.modes 并做别名归一（multi_ref / first_frame …），只认字面量的话会出现
+  // 「服务端认为模型支持、创作端也能用，但这里的限制填不进去」。取两者并集，只增不减。
+  const declaredVideoModes = normalizeVideoModes(
+    cfg.modes,
+    (cfg.paramsSchema as { modes?: unknown } | undefined)?.modes,
+  );
+  const hasVideoMode = (mode: VideoMode) => declaredVideoModes.includes(mode);
+  const omniRefModeEnabled = isVideo && (!declaredVideoModes.length || hasVideoMode("omni_ref"));
   const omniRefVideoSupported = cfg.omniRefVideoEnabled !== false;
   const showGen = isImage || isVideo;
   const showPrompt = showGen || is3D;
@@ -1304,13 +1313,13 @@ function ModelModal({
             </FormSection>
           )}
 
-          {isVideo && (cfg.modes ?? []).includes("i2v") && (
+          {isVideo && hasVideoMode("i2v") && (
             <FormSection label="图生视频 · 参考图" hint="不设置则不限制">
               <RefPair label="参考图" countKey="i2v.imageCount" sizeKey="i2v.imageSizeMB" get={refGet} set={setRef} />
             </FormSection>
           )}
 
-          {isVideo && (cfg.modes ?? []).includes("keyframe") && (
+          {isVideo && hasVideoMode("keyframe") && (
             <FormSection label="首尾帧 · 参考图" hint="不设置则不限制">
               <RefPair label="参考图" countKey="keyframe.imageCount" sizeKey="keyframe.imageSizeMB" get={refGet} set={setRef} />
             </FormSection>

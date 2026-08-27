@@ -2,6 +2,7 @@
    只依赖 types/constants 与 lib 类型，不含 React / 组件状态。 */
 
 import type { StudioModelVO } from "@/lib/market-api";
+import { referenceCountIssue, referenceCountLimitOf } from "@/lib/reference-count";
 import { MAX_SINGLE_UPLOAD_BYTES, validateKnownFileSize } from "@/lib/upload-limits";
 import { MAX_3D_MULTI_VIEW_IMAGES, type ModelConfig } from "@/types/admin-models";
 import { AiTaskStatus, type AiTaskVO } from "@/types/ai";
@@ -302,22 +303,50 @@ export function slotTypeOf(slots: SlotDef[] | null, k: string): SlotType {
 //   i2_3d / mv2_3d → top-level max3DImageSizeMB
 // (flf 首尾帧 uses fixed first/last boxes, so its config isn't applied here.)
 export function refLimitFor(mCfg: ModelConfig | null, tool: ToolKey, s: SlotDef): { count: number; size: number } {
+  return refLimitByKind(mCfg, tool, s.type);
+}
+
+// 创作台模式 → 数量配置所属的 handler。未列出的模式不套用数量配置：flf 用固定的
+// 首/尾帧框，i2_3d / mv2_3d 只配大小（多视图总数走 threeDMultiViewLimit）。
+const COUNT_HANDLER: Partial<Record<ToolKey, string>> = {
+  i2i: "image_to_image",
+  i2v: "image_to_video",
+  ref: "reference_to_video",
+};
+
+function refLimitByKind(
+  mCfg: ModelConfig | null | undefined,
+  tool: ToolKey,
+  kind: SlotType,
+): { count: number; size: number } {
   const rl = mCfg?.refLimits ?? {};
-  if (tool === "i2i" && s.type === "image") {
-    return { count: mCfg?.maxRefImages ?? 0, size: mCfg?.maxRefImageSizeMB ?? 0 };
+  const count = referenceCountLimitOf(mCfg, kind, COUNT_HANDLER[tool]) ?? 0;
+  if (tool === "i2i" && kind === "image") {
+    return { count, size: mCfg?.maxRefImageSizeMB ?? 0 };
   }
-  if (tool === "i2v" && s.type === "image") {
-    return { count: rl["i2v.imageCount"] ?? 0, size: rl["i2v.imageSizeMB"] ?? 0 };
+  if (tool === "i2v" && kind === "image") {
+    return { count, size: rl["i2v.imageSizeMB"] ?? 0 };
   }
   if (tool === "ref") {
-    if (s.type === "image") return { count: rl["omniRef.imageCount"] ?? 0, size: rl["omniRef.imageSizeMB"] ?? 0 };
-    if (s.type === "video") return { count: rl["omniRef.videoCount"] ?? 0, size: rl["omniRef.videoSizeMB"] ?? 0 };
-    if (s.type === "audio") return { count: rl["omniRef.audioCount"] ?? 0, size: rl["omniRef.audioSizeMB"] ?? 0 };
+    if (kind === "image") return { count, size: rl["omniRef.imageSizeMB"] ?? 0 };
+    if (kind === "video") return { count, size: rl["omniRef.videoSizeMB"] ?? 0 };
+    if (kind === "audio") return { count, size: rl["omniRef.audioSizeMB"] ?? 0 };
   }
-  if ((tool === "i2_3d" || tool === "mv2_3d") && s.type === "image") {
+  if ((tool === "i2_3d" || tool === "mv2_3d") && kind === "image") {
     return { count: 0, size: mCfg?.max3DImageSizeMB ?? 0 };
   }
   return { count: 0, size: 0 };
+}
+
+/** 提交前按当前模型复检参考素材数量。上传时的槽位校验不够：参考素材是故意跨模型
+ *  切换保留的，「重新编辑 / 再次生成」也会按历史 URL 原样回填，两种路径都可能让
+ *  数量停留在上一个模型的上限上。0 / 未配置 = 不限制。 */
+export function studioReferenceCountIssue(
+  mCfg: ModelConfig | null | undefined,
+  tool: ToolKey,
+  counts: Partial<Record<SlotType, number>>,
+): string | null {
+  return referenceCountIssue(mCfg, COUNT_HANDLER[tool], counts);
 }
 
 /** Model-specific multi-view total, clamped to the Relay protocol's eight views. */

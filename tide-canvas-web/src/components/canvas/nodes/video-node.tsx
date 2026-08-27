@@ -8,7 +8,7 @@ import { parseRatio } from "./quality-ratio-picker";
 import { VideoParamPicker, normalizeDurations, type VideoParamValue } from "./video-param-picker";
 import { ModelPicker } from "./model-picker";
 import { uploadFileSmart } from "@/lib/api";
-import { resolveModelReferenceLimitBytes } from "@/lib/upload-limits";
+import { resolveModelReferenceCountLimit, resolveModelReferenceLimitBytes } from "@/lib/upload-limits";
 import { resolveVideoPointCost } from "@/lib/price-matrix";
 import { isConceptCanvasNodeType, isImageReferenceNodeType } from "@/lib/canvas-node-types";
 import { AiModelType, type ClipReshootRequest } from "@/types/ai";
@@ -45,11 +45,21 @@ import { VideoClipReshootTimeline } from "./video-clip-reshoot-timeline";
 import { BREAKDOWN_NODE_HEIGHT, BREAKDOWN_NODE_WIDTH } from "./video-frame-breakdown";
 
 // 各模式（Tab）对连接源节点的数量/类型限制：hover 时提示，生成时校验。文生视频无需连接。
+// max 只是没有后台配置时的兜底；模型在「模型管理」里配了参考素材数量时以配置为准
+// （见 refCountOverflow），否则后台改了限制画布节点也不会跟着变。
 const TAB_LIMITS: Record<string, { hint: string; min: number; max: number; types: string[] }> = {
   "全能参考": { hint: "需要连接图片/视频/音频节点（1~15 个）", min: 1, max: 15, types: ["image", "video", "audio"] },
   "图生视频": { hint: "需要连接图片节点（1 个）", min: 1, max: 1, types: ["image"] },
   "首尾帧": { hint: "需要连接图片节点（1~2 个）", min: 1, max: 2, types: ["image"] },
   "图片参考": { hint: "需要连接图片节点（1~9 个）", min: 1, max: 9, types: ["image"] },
+};
+
+type RefCountKind = "image" | "video" | "audio";
+const REF_COUNT_KINDS: RefCountKind[] = ["image", "video", "audio"];
+const REF_KIND_LABELS: Record<RefCountKind, string> = {
+  image: "参考图片",
+  video: "参考视频",
+  audio: "参考音频",
 };
 
 // 全部模式 Tab 及其对应后端 handler；模型在后台勾选了 supportedHandlers 时只显示对应 Tab
@@ -344,7 +354,37 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     return `${img},${vid},${aud}`;
   });
   const [imgCount, vidCount, audCount] = connSig.split(",").map(Number);
-  // 某模式 Tab 是否可选：连接的合格素材数落在 [min,max]（文生视频无需连接，恒可选）
+  // 该模式下某类素材是否被模型关闭（关掉的类型根本不下发，不参与数量校验）
+  const refKindEnabled = (t: string, kind: RefCountKind) => {
+    if (t !== "全能参考" && t !== "图片参考") return true;
+    return kind === "image" ? omniImageSupported : kind === "video" ? omniVideoSupported : omniAudioSupported;
+  };
+  // 数量以后台「模型管理」配置为准：返回第一个超出该模型上限的素材类型。
+  // 未配置（0）时返回 null，由 TAB_LIMITS 的协议兜底继续生效。
+  const refCountOverflow = (
+    t: string,
+    counts: Record<RefCountKind, number>,
+  ): { label: string; limit: number; count: number } | null => {
+    const lim = TAB_LIMITS[t];
+    if (!lim) return null;
+    for (const kind of REF_COUNT_KINDS) {
+      if (!lim.types.includes(kind) || !refKindEnabled(t, kind)) continue;
+      const limit = resolveModelReferenceCountLimit(selectedModel, kind, TAB_HANDLER[t]);
+      if (limit && counts[kind] > limit) {
+        return { label: REF_KIND_LABELS[kind], limit, count: counts[kind] };
+      }
+    }
+    return null;
+  };
+  const connectedRefCounts: Record<RefCountKind, number> = { image: imgCount, video: vidCount, audio: audCount };
+  // 模式不可选时的原因提示：被模型配置挡住就说清是哪一类超了，别再显示协议兜底区间
+  const tabHint = (t: string) => {
+    const overflow = refCountOverflow(t, connectedRefCounts);
+    if (overflow) return `所选模型最多支持 ${overflow.limit} 个${overflow.label}（已连接 ${overflow.count} 个）`;
+    return TAB_LIMITS[t]?.hint;
+  };
+  // 某模式 Tab 是否可选：连接的合格素材数落在 [min,max] 且不超过模型配置的数量上限
+  //（文生视频无需连接，恒可选）
   const tabEnabled = (t: string) => {
     if (t === "图片参考" && !omniImageSupported) return false;
     const lim = TAB_LIMITS[t];
@@ -353,7 +393,8 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     if (lim.types.includes("image") && (t !== "全能参考" || omniImageSupported)) m += imgCount;
     if (lim.types.includes("video") && (t !== "全能参考" || omniVideoSupported)) m += vidCount;
     if (lim.types.includes("audio") && (t !== "全能参考" || omniAudioSupported)) m += audCount;
-    return m >= lim.min && m <= lim.max;
+    if (m < lim.min || m > lim.max) return false;
+    return !refCountOverflow(t, connectedRefCounts);
   };
   // 当前选中视频模型 → 解析 config（限定清晰度/比例/时长/音频）→ 差异化计费
   // 模型支持的模式 Tab：后台对模型勾选了 supportedHandlers 时只显示对应模式；未配置 = 全部
@@ -492,7 +533,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     if (lim.types.includes("image") && (videoTab !== "全能参考" || omniImageSupported)) m += imgCount;
     if (lim.types.includes("video") && (videoTab !== "全能参考" || omniVideoSupported)) m += vidCount;
     if (lim.types.includes("audio") && (videoTab !== "全能参考" || omniAudioSupported)) m += audCount;
-    if (m < lim.min || m > lim.max) {
+    if (m < lim.min || m > lim.max || refCountOverflow(videoTab, connectedRefCounts)) {
       const fallback = visibleTabs.find((t) => !TAB_LIMITS[t]);
       // 该模型没有任何无门槛模式时保持现状,仅靠发送按钮禁用挡住提交
       if (fallback && fallback !== videoTab) setVideoTab(fallback);
@@ -776,6 +817,18 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     const total = imageUrls.length + videoUrls.length + audioUrls.length;
     if (limit && (total < limit.min || total > limit.max)) {
       toast.error(limit.hint);
+      return;
+    }
+    // 数量上限以后台模型配置为准（服务端 validateReferenceCountInput 同源兜底）
+    const overflow = refCountOverflow(effectiveVideoTab, {
+      image: imageUrls.length,
+      video: videoUrls.length,
+      audio: audioUrls.length,
+    });
+    if (overflow) {
+      toast.error(
+        `${selectedModel?.name ?? "所选模型"}最多支持 ${overflow.limit} 个${overflow.label}，当前为 ${overflow.count} 个`,
+      );
       return;
     }
 
@@ -1169,7 +1222,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                     value={videoTab}
                     onChange={setVideoTab}
                     enabledOf={tabEnabled}
-                    hintOf={(t) => TAB_LIMITS[t]?.hint}
+                    hintOf={tabHint}
                   />
                   <VideoParamPicker
                     value={isClipReshoot ? { ...videoParam, duration: generationDuration } : videoParam}

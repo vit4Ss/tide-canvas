@@ -25,7 +25,7 @@ import { type RefItem } from "./prompt-ref-utils";
 import { NodeChrome } from "./base/node-chrome";
 import { NodePorts } from "./base/node-ports";
 import { aiApi, uploadFileSmart } from "@/lib/api";
-import { resolveModelReferenceLimitBytes } from "@/lib/upload-limits";
+import { resolveModelReferenceCountLimit, resolveModelReferenceLimitBytes } from "@/lib/upload-limits";
 import { sliceImageGrid, transformImageRaster, type RasterTransform } from "@/lib/image-slice";
 import { disableOssDisplayProcessing, fallbackOssDisplayImage, ossDisplayUrl, restoreOssDisplayImage } from "@/lib/oss-display";
 import { matrixPrice, keyVariants } from "@/lib/price-matrix";
@@ -878,6 +878,14 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     const ownImage = node.imageSrc || "";
     const imageList = ownImage ? [ownImage, ...refImages] : refImages;
     const hasImage = imageList.length > 0;
+    // 数量以后台模型配置为准。maxRefImages 限的是 imageList 总长（本节点图 + 入边参考），
+    // 与 allowReferenceUpload 的「< 2 就不给加参考图」同一口径；入边连接数此前不受限，
+    // 超了只能等上游报错。服务端 validateReferenceCountInput 是同源兜底。
+    const imageLimit = resolveModelReferenceCountLimit(selectedModel, "image", "image_to_image");
+    if (hasImage && imageLimit && imageList.length > imageLimit) {
+      toast.error(`${selectedModel?.name ?? "所选模型"}最多支持 ${imageLimit} 张输入图片，当前为 ${imageList.length} 张`);
+      return;
+    }
     const stylePrompt = selectedStylePrompt.trim();
     // 文本节点没有独立下发通道，正文只能落进 prompt——顺序与 refs 的「文本N」编号同源
     const promptWithText = inlineIncomingTextRefs(node.prompt || "", incomingSources);

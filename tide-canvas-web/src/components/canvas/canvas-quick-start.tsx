@@ -48,6 +48,7 @@ import { parseSkillParams } from "@/lib/skill-api";
 import { promptAfterSkillPick } from "@/lib/skill-prompt";
 import {
   referenceKindFromFile,
+  resolveModelReferenceCountLimit,
   resolveModelReferenceLimitBytes,
   validateKnownFileSize,
 } from "@/lib/upload-limits";
@@ -168,25 +169,8 @@ function safeModelConfig(model?: AiModelVO): QuickModelConfig {
   };
 }
 
-function positiveLimit(value: unknown): number | undefined {
-  const parsed = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
-}
-
 function referenceCountLimit(model: AiModelVO, handler: string, kind: "image" | "video" | "audio") {
-  const config = parseModelConfig<Record<string, unknown>>(model);
-  if (handler === "image_to_image" && kind === "image") return positiveLimit(config.maxRefImages);
-  const refLimits = config.refLimits && typeof config.refLimits === "object" && !Array.isArray(config.refLimits)
-    ? config.refLimits as Record<string, unknown>
-    : {};
-  const key = handler === "image_to_video"
-    ? kind === "image" ? "i2v.imageCount" : ""
-    : handler === "start_end_to_video"
-      ? kind === "image" ? "keyframe.imageCount" : ""
-      : handler === "reference_to_video"
-        ? `omniRef.${kind}Count`
-        : "";
-  return key ? positiveLimit(refLimits[key]) : undefined;
+  return resolveModelReferenceCountLimit(model, kind, handler);
 }
 
 function tokenPattern(label: string) {

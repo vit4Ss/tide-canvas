@@ -51,6 +51,7 @@ import {
   nextHistId,
   promptHue,
   refThumbsForRun,
+  studioReferenceCountIssue,
   threeDAssetsFromMeta,
   threeDMultiViewLimit,
   threeDReferenceSizeIssue,
@@ -968,6 +969,18 @@ export function useGeneration(p: GenerationParams) {
     const audRefs = tool === "ref" && supportsOmniReference(selectedStudio?.config, "audio")
       ? slotUrls("audio")
       : [];
+    // 数量以后台模型配置为准：素材跨模型切换保留、历史回填都可能超出当前模型的
+    // 上限，上传时的槽位校验挡不住（服务端 validateReferenceCountInput 同源兜底）。
+    const countIssue = studioReferenceCountIssue(selectedStudio?.config, tool, {
+      image: imageRefs.length,
+      video: vidRefs.length,
+      audio: audRefs.length,
+    });
+    if (countIssue) {
+      toast.info(countIssue);
+      markRequiredField("#dropFiles");
+      return;
+    }
     const needsRef = activeSlots.length > 0;
     const hasAnyRef =
       imageRefs.length > 0 || !!firstFrame || !!lastFrame || vidRefs.length > 0 || audRefs.length > 0 || multiViewImages.length > 0;
