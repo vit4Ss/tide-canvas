@@ -22,10 +22,12 @@ import { toast } from "@/components/shared/toast";
 import { markRequiredField } from "@/lib/require-field";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { supportsOmniReference } from "@/lib/omni-reference";
+import { nearestAspectRatio } from "@/lib/aspect-ratio";
 import {
   ACTIVE_RUN_KEY,
   activeRunStorageKey,
   EDIT_OP_HANDLER,
+  RATIOS,
   TOOL_TO_HANDLER,
   TOOLS,
   THREE_D_VIEW_SLOTS,
@@ -64,6 +66,33 @@ import {
   parseStudioTimestamp,
   upsertInflightRunNewestFirst,
 } from "./inflight-run-order";
+
+/** 量结果图的真实像素宽高（一键编辑吸附比例用）。图已在 feed 里展示过，
+ *  通常命中缓存立即返回；未缓存则最多等 4s，量不出返回 null（不阻塞生成）。 */
+function measureImageSize(url: string): Promise<{ width: number; height: number } | null> {
+  return new Promise((resolve) => {
+    if (typeof Image === "undefined" || !url) {
+      resolve(null);
+      return;
+    }
+    const img = new Image();
+    let settled = false;
+    const done = (value: { width: number; height: number } | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => done(null), 4_000);
+    img.onload = () => done(
+      img.naturalWidth > 0 && img.naturalHeight > 0
+        ? { width: img.naturalWidth, height: img.naturalHeight }
+        : null,
+    );
+    img.onerror = () => done(null);
+    img.src = url;
+  });
+}
 
 export interface GenerationParams {
   /* panel state (fresh each render) */
@@ -821,6 +850,14 @@ export function useGeneration(p: GenerationParams) {
           toast.error("没有可用的图像编辑模型");
           return;
         }
+        // 源图真实比例：扩图请求不带比例时上游按模型默认画布出图，横向图会被
+        // 扩成竖图（用户反馈"扩图改比例"）。量出源图宽高吸附到所选模型支持的
+        // 档位随请求下发；其余编辑操作上游本就跟随源图尺寸，强行吸附反而会把
+        // 非标准比例（如 2:1 长图）改掉，故只用于占位卡形状。测量失败回退原行为。
+        const sourceSize = await measureImageSize(imageUrl);
+        const ratioPool = pick?.config?.ratios?.length ? pick.config.ratios : RATIOS;
+        const snappedRatio = sourceSize ? nearestAspectRatio(sourceSize.width, sourceSize.height, ratioPool) : null;
+        const expandRatio = op === "expand" ? snappedRatio : null;
         // input carries only the source image (+ a human label under prompt for
         // history display; the backend overrides it with the engineered prompt)
         // and, for 高清放大, the 4K resolution hint.
@@ -829,6 +866,7 @@ export function useGeneration(p: GenerationParams) {
           sourceImage: imageUrl,
           prompt: label,
           ...(op === "hd" ? { resolution: "4k", clarity: "4k", quality: "high" } : {}),
+          ...(expandRatio ? { aspectRatio: expandRatio, aspect_ratio: expandRatio, ratio: expandRatio } : {}),
         };
         const hsh = promptHue(imageUrl);
         const hues: MeshHues[] = [[hsh, (hsh + 80) % 360, (hsh + 200) % 360]];
@@ -843,7 +881,8 @@ export function useGeneration(p: GenerationParams) {
           meta: {
             prompt: label,
             model: pick?.name || model,
-            ratio: runMeta?.ratio ?? "1:1",
+            // 占位卡形状跟随源图（编辑结果与源图同比例），量不出时才退回上次面板值
+            ratio: snappedRatio ?? runMeta?.ratio ?? "1:1",
             spec: label,
             count: 1,
             isVid: false,
