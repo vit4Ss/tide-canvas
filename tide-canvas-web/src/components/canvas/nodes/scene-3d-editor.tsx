@@ -79,7 +79,7 @@ interface EditorApi {
   removeCharacter: (id: string) => void;
   setCharRotY: (id: string, deg: number) => void;
   setCharScale: (id: string, scale: number) => void;
-  applyPose: (name: string) => void;
+  applyPose: (name: string) => boolean;
   resetPose: () => void;
   setPoseParam: (key: string, deg: number) => void;
   setTransformMode: (mode: TransformMode) => void;
@@ -755,9 +755,14 @@ export function Scene3DEditor({ node, onClose }: Props) {
           }
           figure.root.position.set(...(cs?.pos ?? [spawnX(idx), 0, 0] as [number, number, number]));
           figure.root.rotation.y = cs?.rotY ?? 0;
-          // 新角色 / 旧存档关节匹配不上（木偶存档升级为皮肤模型）时，默认自然站姿而非 T-Pose
-          const applied = cs?.joints ? figure.applyRotations(cs.joints) : 0;
-          if (applied === 0) figure.applyPosePreset("站立");
+          // 新存档优先按姿势预设恢复，保证模型更换后仍使用对应模型的校准参数；
+          // custom 或旧存档则恢复关节旋转，旧木偶存档升级皮肤模型时再回退到站姿。
+          const savedPose = typeof cs?.pose === "string" && figure.poseNames.includes(cs.pose) ? cs.pose : "";
+          if (savedPose) figure.applyPosePreset(savedPose);
+          else {
+            const applied = cs?.joints ? figure.applyRotations(cs.joints) : 0;
+            if (applied === 0) figure.applyPosePreset("站立");
+          }
           // 姿势改由右侧滑杆面板调节，场景内不再显示关节球
           figure.jointBalls.forEach((b) => (b.visible = false));
           for (const m of figure.meshes) m.userData.charId = id;
@@ -995,7 +1000,8 @@ export function Scene3DEditor({ node, onClose }: Props) {
           selRigId = null;
           selPropId = null;
           attachRoot(e);
-          setPosePreset("");
+          const selectedPose = e.figure.getPoseName();
+          setPosePreset(selectedPose === "custom" ? "" : selectedPose);
           setPoseNames(e.figure.poseNames);
           setPoseParams(e.figure.getPoseParams());
           setRotYDeg(Math.round(THREE.MathUtils.radToDeg(e.figure.root.rotation.y)));
@@ -1315,18 +1321,26 @@ export function Scene3DEditor({ node, onClose }: Props) {
             if (e) applyCharScale(e, scale);
           },
           applyPose: (name) => {
-            if (!selCharId) return;
-            charsM.get(selCharId)?.figure.applyPosePreset(name);
-            setPoseParams({});
+            if (!selCharId) return false;
+            const entry = charsM.get(selCharId);
+            if (!entry || !entry.figure.poseNames.includes(name)) return false;
+            entry.figure.applyPosePreset(name);
+            setPoseParams(entry.figure.getPoseParams());
+            return true;
           },
           resetPose: () => {
             if (!selCharId) return;
-            charsM.get(selCharId)?.figure.resetPose();
-            setPoseParams({});
+            const entry = charsM.get(selCharId);
+            entry?.figure.resetPose();
+            setPoseParams(entry?.figure.getPoseParams() ?? {});
+            setPosePreset(entry?.figure.getPoseName() === "custom" ? "" : entry?.figure.getPoseName() ?? "");
           },
           setPoseParam: (key, deg) => {
             if (!selCharId) return;
-            charsM.get(selCharId)?.figure.setPoseParam(key, deg);
+            const entry = charsM.get(selCharId);
+            if (!entry) return;
+            entry.figure.setPoseParam(key, deg);
+            setPosePreset("");
           },
           setTransformMode: (mode) => {
             setTransformModeState(mode);
@@ -1584,6 +1598,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
                 scale: round(e.figure.root.scale.x),
                 model: e.figure.model,
                 preset: e.preset,
+                pose: e.figure.getPoseName(),
                 joints: e.figure.collectRotations(),
               };
             });
@@ -2053,8 +2068,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
     apiRef.current?.setFrameAspect(frameAspect(key).value);
   }, []);
   const pickPose = (name: string) => {
-    setPosePreset(name);
-    apiRef.current?.applyPose(name);
+    if (apiRef.current?.applyPose(name)) setPosePreset(name);
   };
   const pickLight = (preset: string) => {
     const p = LIGHT_PRESETS[preset];

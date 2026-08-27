@@ -9,6 +9,7 @@ import {
 import {
   POSE_NAMES,
   POSE_PARAM_PRESETS,
+  SKINNED_POSE_PARAM_PRESETS,
   SKINNED_ANIMATION_POSES,
 } from "./scene-3d-poses";
 import { DEFAULT_ENV, normalizeScene3DEnv, type Scene3DEnv } from "./scene-3d-env";
@@ -31,6 +32,8 @@ export interface Scene3DCharacter {
   model?: "mannequin" | "xbot";
   /** 添加角色面板中的体型预设；旧存档缺省为标准男性。 */
   preset?: string;
+  /** 最近一次应用的姿势预设；custom 表示用户用滑杆做过自定义调整。 */
+  pose?: string;
   /** 关节欧拉角 XYZ(弧度)：木偶用标准关节名，皮肤模型用骨骼名 */
   joints: Record<string, [number, number, number]>;
 }
@@ -278,6 +281,7 @@ export interface Figure {
   meshes: THREE_NS.Mesh[];
   poseNames: string[];
   applyPosePreset: (name: string) => void;
+  getPoseName: () => string;
   resetPose: () => void;
   /** 语义姿势滑杆：以最近一次预设/还原为基底叠加角度（度） */
   setPoseParam: (key: string, deg: number) => void;
@@ -333,7 +337,7 @@ export const POSE_SLIDER_GROUPS: PoseSliderGroup[] = [
   ] },
   { title: "右肩", items: [
     { key: "armRFwd", label: "前举", joint: "upperArmR", axis: [0, -1, 0], min: -90, max: 90 },
-    { key: "armRAbd", label: "外展", joint: "upperArmR", axis: [0, 0, -1], min: -90, max: 45 },
+    { key: "armRAbd", label: "外展", joint: "upperArmR", axis: [0, 0, -1], min: -90, max: 90 },
     { key: "armRTwist", label: "扭转", joint: "upperArmR", axis: [-1, 0, 0], min: -80, max: 80 },
   ] },
   { title: "左肘", items: [
@@ -425,9 +429,11 @@ export function buildMannequinFigure(THREE: typeof THREE_NS, color?: number): Fi
     if (m.isMesh && !man.jointBalls.includes(m)) meshes.push(m);
   });
   const engine = makePoseEngine(THREE, joints);
+  let currentPoseName = "T型";
   engine.captureBase();
   const applyPosePreset = (name: string) => {
     if (!(POSE_NAMES as readonly string[]).includes(name)) return;
+    currentPoseName = name;
     const base = name === "T型" ? "T型" : name === "行走" || name === "跑步" ? name : "站立";
     applyPose(man.joints, base);
     engine.captureBase();
@@ -445,8 +451,9 @@ export function buildMannequinFigure(THREE: typeof THREE_NS, color?: number): Fi
     meshes,
     poseNames: [...POSE_NAMES],
     applyPosePreset,
-    resetPose: () => { applyPose(man.joints, "T型"); engine.captureBase(); },
-    setPoseParam: engine.setParam,
+    getPoseName: () => currentPoseName,
+    resetPose: () => { currentPoseName = "T型"; applyPose(man.joints, "T型"); engine.captureBase(); },
+    setPoseParam: (key, deg) => { currentPoseName = "custom"; engine.setParam(key, deg); },
     getPoseParams: engine.getParams,
     collectRotations: () => {
       const rec: Record<string, [number, number, number]> = {};
@@ -463,6 +470,7 @@ export function buildMannequinFigure(THREE: typeof THREE_NS, color?: number): Fi
         const g = man.joints.get(k);
         if (g) { g.rotation.set(r[0], r[1], r[2]); applied++; }
       }
+      currentPoseName = "custom";
       engine.captureBase();
       return applied;
     },
@@ -579,16 +587,17 @@ export function buildSkinnedFigure(
     for (const [b, bp] of bindPose) { b.position.copy(bp.p); b.scale.copy(bp.s); }
   };
   const engine = makePoseEngine(THREE, joints);
+  let currentPoseName = "T型";
   engine.captureBase();
   const applyPosePreset = (name: string) => {
     if (!(POSE_NAMES as readonly string[]).includes(name)) return;
+    currentPoseName = name;
     if (name === "T型") {
       restoreBindPose();
       engine.captureBase();
       return;
     }
-    const def = SKINNED_ANIMATION_POSES[name as keyof typeof SKINNED_ANIMATION_POSES]
-      ?? SKINNED_ANIMATION_POSES["站立"];
+    const def = SKINNED_ANIMATION_POSES[name as keyof typeof SKINNED_ANIMATION_POSES];
     const clip = def ? asset.animations.find((c) => c.name === def.clip) : null;
     restoreBindPose();
     if (def && clip) {
@@ -598,13 +607,17 @@ export function buildSkinnedFigure(
       restoreBindPosScale();
     }
     engine.captureBase();
-    const params = POSE_PARAM_PRESETS[name as keyof typeof POSE_PARAM_PRESETS];
+    // XBot 静态姿势不能复用木偶的角度：两套骨骼的绑定姿势不同，
+    // 且右臂镜像扭转方向相反。若步行动画缺失，则回到可识别的站姿。
+    const params = SKINNED_POSE_PARAM_PRESETS[name as keyof typeof SKINNED_POSE_PARAM_PRESETS]
+      ?? (!clip ? SKINNED_POSE_PARAM_PRESETS["站立"] : undefined);
     if (params) {
       engine.setParams(params);
       engine.captureBase();
     }
   };
   const resetPose = () => {
+    currentPoseName = "T型";
     restoreBindPose();
     engine.captureBase();
   };
@@ -617,8 +630,9 @@ export function buildSkinnedFigure(
     meshes: [proxy],
     poseNames: [...POSE_NAMES],
     applyPosePreset,
+    getPoseName: () => currentPoseName,
     resetPose,
-    setPoseParam: engine.setParam,
+    setPoseParam: (key, deg) => { currentPoseName = "custom"; engine.setParam(key, deg); },
     getPoseParams: engine.getParams,
     collectRotations: () => {
       const rec: Record<string, [number, number, number]> = {};
@@ -634,6 +648,7 @@ export function buildSkinnedFigure(
         const target = bones.get(k.replace(/^mixamorig:?/i, ""));
         if (target) { target.rotation.set(r[0], r[1], r[2]); applied++; }
       }
+      currentPoseName = "custom";
       engine.captureBase();
       return applied;
     },
