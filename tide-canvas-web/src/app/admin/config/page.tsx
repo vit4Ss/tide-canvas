@@ -78,7 +78,7 @@ const GROUP_DESCRIPTION: Record<string, string> = {
   mail: "邮件发送服务与发件身份",
   pricing: "公开定价页的基础信息",
   points: "积分规则与默认额度",
-  供应商余额: "供应商监控开关、登录账号密码（配置后自动登录续期）、手动令牌兜底与低余额预警线；保存后下一次刷新生效",
+  供应商余额: "供应商接入已收纳到余额监控页，按供应商就地配置开关、凭证与预警线",
   存储配置: "文件存储与访问地址",
 };
 const groupLabel = (g: string) => GROUP_LABEL[g] ?? g;
@@ -678,6 +678,24 @@ export default function AdminConfigPage() {
                       {groupDirty > 0 ? `${groupDirty} 项待保存` : `${rows.length} 项`}
                     </span>
                   </div>
+                  {group === "供应商余额" ? (
+                    /* 供应商接入项数量多且成组出现，收纳为跳转入口：
+                       在余额监控页按供应商就地编辑，避免本页 30+ 行的平铺。 */
+                    <div className="set-list">
+                      <div className="set-row">
+                        <div className="lab">
+                          <span className="config-label-line">
+                            <span>按供应商分组维护开关、凭证与低余额预警线</span>
+                          </span>
+                          <span className="key">balance.*（{rows.length} 项）</span>
+                        </div>
+                        <Link href="/admin/balances" className="set-link" aria-label="在余额监控页配置供应商接入">
+                          在余额监控中编辑
+                          <ArrowUpRight aria-hidden size={13} />
+                        </Link>
+                      </div>
+                    </div>
+                  ) : (
                   <div className="set-list">
                     {rows.map((it) => {
                       const managed = MANAGED_ELSEWHERE[it.configKey];
@@ -791,6 +809,7 @@ export default function AdminConfigPage() {
                       );
                     })}
                   </div>
+                  )}
                 </section>
               );
             })}

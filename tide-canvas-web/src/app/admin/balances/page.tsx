@@ -12,10 +12,13 @@
    ============================================================================ */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw, ShieldCheck } from "lucide-react";
-import { AdminAlert, AdminEmptyState } from "@/components/admin";
+import { RefreshCw, Settings2, ShieldCheck, X } from "lucide-react";
+import { AdminAlert, AdminEmptyState, SwitchToggle } from "@/components/admin";
 import { adminBalancesApi } from "@/lib/admin-balances-api";
+import { adminConfigApi } from "@/lib/admin-config-api";
+import { toast } from "@/components/shared/toast";
 import { useAuthStore } from "@/stores/use-auth-store";
+import type { ConfigItemDTO, ConfigVO } from "@/types/admin-config";
 import type {
   SupplierBalancesVO,
   SupplierBalanceState,
@@ -23,6 +26,20 @@ import type {
 } from "@/types/admin-balances";
 
 const DEFAULT_REFRESH_SECONDS = 30;
+
+/* 每家供应商的接入配置就地维护：sys_config 的 balance.<供应商>.<字段> 键在
+   本页按供应商聚合编辑，配置管理页的「供应商余额」分组收纳为跳转入口。
+   字段标签按键名后缀映射，新供应商的键自动出现，无需改这里以外的前端。 */
+const SUPPLIER_CONFIG_MASK = "••••••••";
+const SUPPLIER_CONFIG_FIELD: Record<string, { label: string; order: number }> = {
+  enabled: { label: "余额监控", order: 0 },
+  email: { label: "登录邮箱", order: 1 },
+  username: { label: "登录用户名", order: 1 },
+  userId: { label: "用户 ID", order: 1 },
+  password: { label: "登录密码", order: 2 },
+  accessToken: { label: "访问令牌", order: 3 },
+  lowBalance: { label: "低余额预警线", order: 4 },
+};
 
 const STATE_META: Record<SupplierBalanceState, { label: string }> = {
   healthy: { label: "运行正常" },
@@ -76,6 +93,11 @@ export default function AdminBalancesPage() {
   const [now, setNow] = useState<number | null>(null);
   const requestId = useRef(0);
 
+  // 供应商接入配置面板：懒加载 sys_config 列表，一次打开一家。
+  const [configRows, setConfigRows] = useState<ConfigVO[] | null>(null);
+  const [configLoadError, setConfigLoadError] = useState<string | null>(null);
+  const [configFor, setConfigFor] = useState<string | null>(null);
+
   const load = useCallback(
     async (silent = false) => {
       const id = ++requestId.current;
@@ -128,6 +150,27 @@ export default function AdminBalancesPage() {
   }, []);
 
   const rows = useMemo(() => snapshot?.suppliers ?? [], [snapshot?.suppliers]);
+
+  const openConfig = useCallback(async (supplierKey: string) => {
+    setConfigFor((prev) => (prev === supplierKey ? null : supplierKey));
+    if (configRows) return;
+    try {
+      await ensureSession();
+      const res = await adminConfigApi.list();
+      if (res.success && res.data) {
+        setConfigRows(res.data);
+        setConfigLoadError(null);
+      } else {
+        setConfigLoadError(res.message || "接入配置加载失败");
+      }
+    } catch {
+      setConfigLoadError("接入配置加载失败，请稍后重试");
+    }
+  }, [configRows, ensureSession]);
+  const configSupplier = useMemo(
+    () => (configFor ? rows.find((row) => row.key === configFor) ?? null : null),
+    [configFor, rows],
+  );
   const counts = useMemo(() => {
     const healthy = rows.filter((row) => row.state === "healthy").length;
     const low = rows.filter((row) => row.state === "low").length;
@@ -246,13 +289,33 @@ export default function AdminBalancesPage() {
           <div className="balance-empty">
             <AdminEmptyState
               title="暂无供应商"
-              description="请先在后台配置管理的「供应商余额」分组中启用并填写访问令牌。"
+              description="接口未返回任何供应商，请检查服务端配置是否完整。"
             />
           </div>
         ) : (
           <div className="balance-account-board">
-            {rows.map((row) => <SupplierBalanceAccount key={row.key} row={row} />)}
+            {rows.map((row) => (
+              <SupplierBalanceAccount
+                key={row.key}
+                row={row}
+                configuring={configFor === row.key}
+                onConfigure={() => void openConfig(row.key)}
+              />
+            ))}
           </div>
+        )}
+
+        {configSupplier && (
+          <SupplierConfigPanel
+            supplier={configSupplier}
+            rows={configRows}
+            loadError={configLoadError}
+            onClose={() => setConfigFor(null)}
+            onSaved={(next) => {
+              setConfigRows(next);
+              void load(true);
+            }}
+          />
         )}
       </section>
 
@@ -767,6 +830,106 @@ export default function AdminBalancesPage() {
         .balance-spin { animation: balanceSpin .8s linear infinite; }
         @keyframes balanceSpin { to { transform: rotate(360deg); } }
 
+        /* ---------- 供应商接入配置面板 ---------- */
+        .balance-account-config {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          flex: none;
+          margin-left: 4px;
+          padding: 5px 10px;
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          background: transparent;
+          color: var(--text-dim);
+          font-size: 11.5px;
+          cursor: pointer;
+          transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+        }
+        .balance-account-config:hover { border-color: var(--border-strong); color: var(--text-title); }
+        .balance-account.is-configuring { border-color: var(--border-strong); }
+        .balance-config {
+          margin-top: 16px;
+          border: 1px solid var(--border);
+          border-radius: 14px;
+          background: var(--surface);
+        }
+        .balance-config-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+          padding: 16px 20px;
+          border-bottom: 1px solid var(--border);
+        }
+        .balance-config-head h3 {
+          margin: 0;
+          color: var(--text-title);
+          font-size: 14.5px;
+          font-weight: 600;
+        }
+        .balance-config-head p {
+          margin: 3px 0 0;
+          color: var(--text-faint);
+          font-size: 12px;
+        }
+        .balance-config-note {
+          margin: 0;
+          padding: 20px;
+          color: var(--text-faint);
+          font-size: 13px;
+        }
+        .balance-config-note.is-error { color: var(--danger, #b3403a); }
+        .balance-config-list { padding: 4px 20px; }
+        .balance-config-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 24px;
+          min-height: 52px;
+          padding: 8px 0;
+          border-bottom: 1px solid var(--border-weak, var(--border));
+        }
+        .balance-config-row:last-child { border-bottom: none; }
+        .balance-config-label { min-width: 0; }
+        .balance-config-label span {
+          display: block;
+          color: var(--text-dim);
+          font-size: 13px;
+        }
+        .balance-config-row.is-dirty .balance-config-label span { color: var(--text-title); }
+        .balance-config-label small {
+          display: block;
+          margin-top: 2px;
+          color: var(--text-faint);
+          font-family: var(--mono);
+          font-size: 10.5px;
+        }
+        .balance-config-row input {
+          width: min(360px, 46%);
+          flex: none;
+          padding: 8px 12px;
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          background: transparent;
+          color: var(--text-title);
+          font-size: 13px;
+          text-align: right;
+          outline: none;
+          transition: border-color var(--dur) var(--ease);
+        }
+        .balance-config-row input:focus { border-color: var(--border-strong); }
+        .balance-config-foot {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+          padding: 12px 20px;
+          border-top: 1px solid var(--border);
+          color: var(--text-faint);
+          font-size: 12px;
+        }
+
         @media (max-width: 1240px) {
           .balance-summary { grid-template-columns: minmax(260px, 1.5fr) repeat(4, minmax(84px, .6fr)); }
           .balance-sync { grid-column: 1 / -1; }
@@ -777,6 +940,13 @@ export default function AdminBalancesPage() {
           .balance-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
           .balance-hero,
           .balance-sync { grid-column: 1 / -1; }
+          .balance-config-row {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 8px;
+            padding: 12px 0;
+          }
+          .balance-config-row input { width: 100%; text-align: left; }
         }
         @media (max-width: 560px) {
           .balance-page { gap: 20px; }
@@ -847,7 +1017,15 @@ function BalanceBoardSkeleton() {
   );
 }
 
-function SupplierBalanceAccount({ row }: { row: SupplierBalanceVO }) {
+function SupplierBalanceAccount({
+  row,
+  configuring,
+  onConfigure,
+}: {
+  row: SupplierBalanceVO;
+  configuring: boolean;
+  onConfigure: () => void;
+}) {
   const meta = STATE_META[row.state] ?? STATE_META.error;
   const connected = row.balance != null;
   const emptyBalanceLabel = row.state === "error"
@@ -857,7 +1035,10 @@ function SupplierBalanceAccount({ row }: { row: SupplierBalanceVO }) {
       : "尚未接入";
 
   return (
-    <article className={`balance-account is-${row.state}`} aria-label={`${row.name}：${meta.label}`}>
+    <article
+      className={`balance-account is-${row.state}${configuring ? " is-configuring" : ""}`}
+      aria-label={`${row.name}：${meta.label}`}
+    >
       <header className="balance-account-head">
         <span className="balance-account-avatar" aria-hidden>{supplierInitial(row.name)}</span>
         <div className="balance-account-provider">
@@ -868,6 +1049,16 @@ function SupplierBalanceAccount({ row }: { row: SupplierBalanceVO }) {
           <i aria-hidden />
           <span>{meta.label}</span>
         </div>
+        <button
+          type="button"
+          className="balance-account-config"
+          onClick={onConfigure}
+          aria-expanded={configuring}
+          aria-label={`配置 ${row.name} 接入`}
+        >
+          <Settings2 aria-hidden size={13} />
+          配置
+        </button>
       </header>
 
       <div className="balance-account-main">
@@ -911,5 +1102,163 @@ function SupplierBalanceAccount({ row }: { row: SupplierBalanceVO }) {
         <span>{row.message || "等待下一次查询"}</span>
       </div>
     </article>
+  );
+}
+
+/* 单个供应商的接入配置：sys_config 的 balance.<key>.* 行按后缀渲染成
+   开关/文本/密文/数字，只提交改动项；密文行显示服务端脱敏值，原样保留
+   即不修改。保存走通用配置接口，监控在下一次刷新读取新值。 */
+function SupplierConfigPanel({
+  supplier,
+  rows,
+  loadError,
+  onClose,
+  onSaved,
+}: {
+  supplier: SupplierBalanceVO;
+  rows: ConfigVO[] | null;
+  loadError: string | null;
+  onClose: () => void;
+  onSaved: (rows: ConfigVO[]) => void;
+}) {
+  const ensureSession = useAuthStore((state) => state.ensureSession);
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  // 切换供应商时丢弃未保存修改（官方「props 变化调整 state」渲染期模式）。
+  const [editsFor, setEditsFor] = useState(supplier.key);
+  if (editsFor !== supplier.key) {
+    setEditsFor(supplier.key);
+    setEdits({});
+  }
+
+  const fields = useMemo(() => {
+    if (!rows) return [];
+    const prefix = `balance.${supplier.key}.`;
+    return rows
+      .filter((row) => row.configKey.startsWith(prefix))
+      .map((row) => {
+        const suffix = row.configKey.slice(prefix.length);
+        const meta = SUPPLIER_CONFIG_FIELD[suffix];
+        return {
+          row,
+          suffix,
+          secret: suffix === "password" || suffix === "accessToken",
+          label: meta?.label ?? suffix,
+          order: meta?.order ?? 9,
+        };
+      })
+      .sort((a, b) => a.order - b.order || a.suffix.localeCompare(b.suffix));
+  }, [rows, supplier.key]);
+
+  const valueOf = (row: ConfigVO) => edits[row.configKey] ?? row.configValue;
+  const setValue = (row: ConfigVO, next: string) => {
+    setEdits((prev) => {
+      const copy = { ...prev };
+      if (next === row.configValue) delete copy[row.configKey];
+      else copy[row.configKey] = next;
+      return copy;
+    });
+  };
+  const dirtyCount = Object.keys(edits).length;
+
+  const save = async () => {
+    if (dirtyCount === 0 || saving) return;
+    setSaving(true);
+    try {
+      await ensureSession();
+      const payload: ConfigItemDTO[] = fields
+        .filter(({ row }) => row.configKey in edits)
+        .map(({ row }) => ({
+          configKey: row.configKey,
+          configValue: edits[row.configKey],
+          group: row.group,
+          description: row.description,
+        }));
+      const res = await adminConfigApi.save(payload);
+      if (res.success && res.data) {
+        setEdits({});
+        onSaved(res.data);
+        toast.success(`已保存 ${supplier.name} 接入配置`);
+      } else {
+        toast.error(res.message || "保存接入配置失败");
+      }
+    } catch {
+      toast.error("保存接入配置失败，请稍后重试");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="balance-config" aria-label={`${supplier.name} 接入配置`}>
+      <header className="balance-config-head">
+        <div>
+          <h3>{supplier.name} 接入配置</h3>
+          <p>保存后下一次刷新生效；凭证仅保存在服务端，页面显示脱敏值。</p>
+        </div>
+        <button type="button" className="adm-btn ghost" onClick={onClose}>
+          <X aria-hidden size={14} />
+          收起
+        </button>
+      </header>
+
+      {!rows ? (
+        <p className={`balance-config-note${loadError ? " is-error" : ""}`}>
+          {loadError || "接入配置加载中…"}
+        </p>
+      ) : fields.length === 0 ? (
+        <p className="balance-config-note">该供应商暂无可编辑的接入配置项。</p>
+      ) : (
+        <>
+          <div className="balance-config-list">
+            {fields.map(({ row, suffix, secret, label }) => {
+              const value = valueOf(row);
+              const dirty = row.configKey in edits;
+              return (
+                <div className={`balance-config-row${dirty ? " is-dirty" : ""}`} key={row.configKey}>
+                  <div className="balance-config-label">
+                    <span title={row.description}>{label}</span>
+                    <small>{row.configKey}</small>
+                  </div>
+                  {suffix === "enabled" ? (
+                    <SwitchToggle
+                      checked={value.trim() === "1"}
+                      onChange={(next) => setValue(row, next ? "1" : "0")}
+                      aria-label={`${supplier.name} ${label}`}
+                    />
+                  ) : (
+                    <input
+                      type={secret ? "password" : suffix === "lowBalance" ? "number" : "text"}
+                      value={value}
+                      min={suffix === "lowBalance" ? 0 : undefined}
+                      step={suffix === "lowBalance" ? "any" : undefined}
+                      onChange={(event) => setValue(row, event.target.value)}
+                      onFocus={secret ? (event) => {
+                        if (event.currentTarget.value === SUPPLIER_CONFIG_MASK) event.currentTarget.select();
+                      } : undefined}
+                      autoComplete={secret ? "new-password" : undefined}
+                      placeholder={secret ? "粘贴新值可替换，清空可移除" : undefined}
+                      spellCheck={false}
+                      aria-label={`${supplier.name} ${label}`}
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <footer className="balance-config-foot">
+            <span>{dirtyCount > 0 ? `${dirtyCount} 项待保存` : "修改后在此保存"}</span>
+            <button
+              type="button"
+              className="adm-btn"
+              onClick={() => void save()}
+              disabled={dirtyCount === 0 || saving}
+            >
+              {saving ? "保存中…" : "保存"}
+            </button>
+          </footer>
+        </>
+      )}
+    </section>
   );
 }
