@@ -77,6 +77,7 @@ export function ThreeDViewport({
   onStats,
   compact = false,
   initialMode = "shaded",
+  frameInterior = false,
 }: {
   /** 当前展示的 GLB 地址；null = 清空场景（外层负责空态/占位展示）。 */
   glbUrl: string | null;
@@ -86,10 +87,17 @@ export function ThreeDViewport({
   compact?: boolean;
   /** Models start as a white blocking model; the toolbar can restore embedded materials. */
   initialMode?: ViewMode;
+  /** 场景类资产（Marble 白膜等室内壳体）：加载后相机进入内部环视。
+   *  大堂这类又宽又矮的房间归一化后只是个压扁的盒子，从外部环绕读不出空间。 */
+  frameInterior?: boolean;
 }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const apiRef = useRef<ViewerApi | null>(null);
   const initialModeRef = useRef(initialMode);
+  const frameInteriorRef = useRef(frameInterior);
+  useEffect(() => {
+    frameInteriorRef.current = frameInterior;
+  }, [frameInterior]);
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(false);
   /** 下载进度 0–99；null = 长度未知（不定态，只转圈不报数）。 */
@@ -152,13 +160,17 @@ export function ThreeDViewport({
       const gridMajor = new THREE.GridHelper(40, 40, 0x3c3c46, 0x26262e);
       (gridMajor.material as THREE_NS.Material).transparent = true;
       (gridMajor.material as THREE_NS.Material).opacity = 0.55;
+      // 略低于 y=0：场景白膜的地板正好落在 0 平面，共面会和网格 z-fighting
+      gridMajor.position.y = -0.002;
       scene.add(gridMajor);
 
       let model: THREE_NS.Group | null = null;
       /** mesh → 原始材质（贴图模式还原用）。 */
       const originals = new Map<THREE_NS.Mesh, THREE_NS.Material | THREE_NS.Material[]>();
-      const solidMat = new THREE.MeshStandardMaterial({ color: 0xd6d6da, roughness: 0.75, metalness: 0.05 });
-      const wireMat = new THREE.MeshBasicMaterial({ color: 0x9a9aa4, wireframe: true });
+      // 白膜/线框必须双面：Marble 场景 collider 这类内表面网格法线朝内，
+      // 单面材质从外部环绕视角会被背面剔除到只剩碎片（与导演台白膜同款处理）
+      const solidMat = new THREE.MeshStandardMaterial({ color: 0xd6d6da, roughness: 0.75, metalness: 0.05, side: THREE.DoubleSide });
+      const wireMat = new THREE.MeshBasicMaterial({ color: 0x9a9aa4, wireframe: true, side: THREE.DoubleSide });
       let curMode: ViewMode = initialModeRef.current;
 
       const applyMode = (m: ViewMode) => {
@@ -348,7 +360,14 @@ export function ThreeDViewport({
               const mesh = obj as THREE_NS.Mesh;
               if (!mesh.isMesh) return;
               originals.set(mesh, mesh.material);
+              // 场景壳体连原始材质也置双面，切回「贴图」模式不再被背面剔除
+              if (frameInteriorRef.current) {
+                const mats = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
+                mats.forEach((material) => { material.side = THREE.DoubleSide; });
+              }
               const geo = mesh.geometry;
+              // collider 白膜常不带法线，标准材质没法线会渲染成黑块/碎片
+              if (geo && !geo.attributes.normal) geo.computeVertexNormals();
               if (geo?.index) tris += geo.index.count / 3;
               else if (geo?.attributes?.position) tris += geo.attributes.position.count / 3;
               if (geo?.attributes?.position) verts += geo.attributes.position.count;
@@ -359,9 +378,22 @@ export function ThreeDViewport({
             scene.add(group);
             applyMode(curMode);
             // 视角回到默认取景（换模型后镜头不带旧姿态）
-            const h2 = (scaled.max.y - scaled.min.y) / 2;
-            orbit.target.set(0, Math.max(0.4, h2), 0);
-            camera.position.set(2.6, 1.9, 3.4);
+            const sizeScaled = scaled.getSize(new THREE.Vector3());
+            if (frameInteriorRef.current) {
+              // 室内壳体：相机放到房间中心附近环视，仍可滚轮拉远变「剖面盒」
+              const eyeY = Math.min(Math.max(sizeScaled.y * 0.45, 0.1), Math.max(sizeScaled.y - 0.05, 0.1));
+              const radius = Math.max(0.08, Math.min(sizeScaled.x, sizeScaled.z) * 0.25);
+              camera.fov = 65;
+              orbit.target.set(0, eyeY, 0);
+              camera.position.set(radius * 0.6, eyeY + sizeScaled.y * 0.08, radius);
+              orbit.minDistance = 0.1; // 与近裁剪面(0.05)留出余量，贴脸缩放不穿模
+            } else {
+              camera.fov = 45;
+              orbit.target.set(0, Math.max(0.4, sizeScaled.y / 2), 0);
+              camera.position.set(2.6, 1.9, 3.4);
+              orbit.minDistance = 0.6;
+            }
+            camera.updateProjectionMatrix();
             orbit.update();
             onStatsRef.current?.({ tris: Math.round(tris), verts });
             setLoading(false);

@@ -65,6 +65,21 @@ test("Director loads, disposes and persists connected GLB and SPZ scenes", () =>
   assert.match(editorSource, /sceneAsset: sceneAssetRef\.current/);
 });
 
+test("viewport white/wire materials render both faces so interior scene meshes stay visible", () => {
+  assert.match(viewportSource, /roughness: 0\.75, metalness: 0\.05, side: THREE\.DoubleSide/);
+  assert.match(viewportSource, /wireframe: true, side: THREE\.DoubleSide/);
+  assert.match(viewportSource, /if \(geo && !geo\.attributes\.normal\) geo\.computeVertexNormals\(\)/);
+});
+
+test("Marble scene collider previews frame the camera inside the room", () => {
+  assert.match(viewportSource, /frameInterior = false/);
+  assert.match(viewportSource, /if \(frameInteriorRef\.current\)/);
+  assert.match(viewportSource, /camera\.fov = 65/);
+  assert.match(viewportSource, /gridMajor\.position\.y = -0\.002/);
+  const nodeSource = readFileSync(new URL("./three-d-node.tsx", import.meta.url), "utf8");
+  assert.match(nodeSource, /frameInterior=\{!!directorSceneAsset\?\.colliderUrl\}/);
+});
+
 test("newly selected 3D assets reset to the configured default material mode", () => {
   assert.match(viewportSource, /const defaultMode = initialModeRef\.current/);
   assert.match(viewportSource, /setMode\(defaultMode\)/);

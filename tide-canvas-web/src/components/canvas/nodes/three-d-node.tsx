@@ -227,6 +227,7 @@ export const ThreeDNode = memo(function ThreeDNode({
                 glbUrl={glbUrl}
                 compact
                 initialMode="solid"
+                frameInterior={!!directorSceneAsset?.colliderUrl}
               />
             </div>
           ) : previewUrl ? (

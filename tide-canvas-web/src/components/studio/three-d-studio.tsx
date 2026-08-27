@@ -320,6 +320,8 @@ export default function ThreeDStudio() {
     }
   }, [hist3d]);
   const glbUrl = glbUrlOf(current);
+  // Marble 世界（伴生 SPZ）：collider 白膜是室内壳体，viewport 需进内部环视
+  const isSceneWorld = !!current?.assets?.some((asset) => asset.type?.toLowerCase().startsWith("spz"));
   const [stats, setStats] = useState<MeshStats | null>(null);
 
   /* ── handlers ──────────────────────────────────────────────────────────── */
@@ -502,6 +504,7 @@ export default function ThreeDStudio() {
             glbUrl={generating ? null : glbUrl}
             onStats={setStats}
             initialMode="solid"
+            frameInterior={isSceneWorld}
           />
 
           {/* 生成中：viewport 上的进度覆盖层 */}
