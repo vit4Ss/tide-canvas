@@ -33,11 +33,8 @@ services:
       # TIDECANVAS_STORAGE_ACCESSKEY: ""
       # TIDECANVAS_STORAGE_SECRETKEY: ""
       # TIDECANVAS_STORAGE_ACCELERATEENABLED: "false" # 上传走地域 OSS；模型取图走 CDN（未配置则地域 OSS）
-      # DLAPI 余额监控凭据仍由服务端环境注入。Mikoto、CCGO、CCGO2 与
-      # Dimensio 在后台「配置管理 → 供应商余额」维护，保存后实时生效：
-      TIDECANVAS_BALANCEMONITOR_DLAPI_ACCESSTOKEN: "${TIDECANVAS_BALANCEMONITOR_DLAPI_ACCESSTOKEN:-}"
-      TIDECANVAS_BALANCEMONITOR_DLAPI_USERID: "${TIDECANVAS_BALANCEMONITOR_DLAPI_USERID:-245}"
-      TIDECANVAS_BALANCEMONITOR_DLAPI_LOWBALANCE: "${TIDECANVAS_BALANCEMONITOR_DLAPI_LOWBALANCE:-20}"
+      # 供应商余额监控凭据（含 DLAPI）全部在后台「配置管理 → 供应商余额」
+      # 维护，保存后实时生效；旧的 TIDECANVAS_BALANCEMONITOR_* 环境变量已废弃。
     volumes:
       - uploads-data:/app/data/uploads   # local 存储模式的上传目录（oss 模式下备而不用）
 

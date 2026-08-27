@@ -78,7 +78,7 @@ const GROUP_DESCRIPTION: Record<string, string> = {
   mail: "邮件发送服务与发件身份",
   pricing: "公开定价页的基础信息",
   points: "积分规则与默认额度",
-  供应商余额: "供应商监控开关、访问令牌与低余额预警线；保存后下一次刷新生效",
+  供应商余额: "供应商监控开关、登录账号密码（配置后自动登录续期）、手动令牌兜底与低余额预警线；保存后下一次刷新生效",
   存储配置: "文件存储与访问地址",
 };
 const groupLabel = (g: string) => GROUP_LABEL[g] ?? g;
@@ -112,26 +112,38 @@ const BOOL_KEYS: Record<string, { on: string; off: string }> = {
     on: "已开启：上传与上游取图使用 OSS 传输加速；重启后端生效",
     off: "已关闭：上传使用地域 OSS，模型取图使用 CDN（未配置则地域 OSS）；重启后端生效",
   },
+  "balance.dlapi.enabled": { on: "已启用 DLAPI 余额监控", off: "已停用 DLAPI 余额监控" },
   "balance.mikoto.enabled": { on: "已启用 Mikoto 余额监控", off: "已停用 Mikoto 余额监控" },
   "balance.ccgo.enabled": { on: "已启用 CCGO 余额监控", off: "已停用 CCGO 余额监控" },
   "balance.ccgo2.enabled": { on: "已启用 CCGO2 余额监控", off: "已停用 CCGO2 余额监控" },
   "balance.dimensio.enabled": { on: "已启用 Dimensio 余额监控", off: "已停用 Dimensio 余额监控" },
+  "balance.uniart.enabled": { on: "已启用 Uniart 余额监控", off: "已停用 Uniart 余额监控" },
+  "balance.wxart.enabled": { on: "已启用 wxart 余额监控", off: "已停用 wxart 余额监控" },
+  "balance.secureskill.enabled": { on: "已启用 secure-skill 余额监控", off: "已停用 secure-skill 余额监控" },
 };
 
 const NUMBER_KEYS: Record<string, { min: number; max?: number; step?: number | "any" }> = {
   "ai.userConcurrentLimit": { min: 1, max: 100, step: 1 },
+  "balance.dlapi.lowBalance": { min: 0, step: "any" },
   "balance.mikoto.lowBalance": { min: 0, step: "any" },
   "balance.ccgo.lowBalance": { min: 0, step: "any" },
   "balance.ccgo2.lowBalance": { min: 0, step: "any" },
   "balance.dimensio.lowBalance": { min: 0, step: "any" },
+  "balance.uniart.lowBalance": { min: 0, step: "any" },
+  "balance.wxart.lowBalance": { min: 0, step: "any" },
+  "balance.secureskill.lowBalance": { min: 0, step: "any" },
 };
 
 const SUPPLIER_BALANCE_SECRET_MASK = "••••••••";
 const SUPPLIER_BALANCE_SECRET_KEYS = new Set([
+  "balance.dlapi.accessToken",
   "balance.mikoto.accessToken",
   "balance.ccgo.accessToken",
   "balance.ccgo2.accessToken",
   "balance.dimensio.accessToken",
+  "balance.uniart.accessToken",
+  "balance.wxart.accessToken",
+  "balance.secureskill.accessToken",
 ]);
 
 /* 基线键（页面/策略消费方仍在读，后端同样拒绝删除）——不展示删除入口。
@@ -151,18 +163,43 @@ const BASELINE_KEYS = new Set([
   "points.inviteReward",
   "points.signupBonus",
   "storage.ossAccelerateEnabled",
+  "balance.dlapi.enabled",
+  "balance.dlapi.userId",
+  "balance.dlapi.accessToken",
+  "balance.dlapi.lowBalance",
   "balance.mikoto.enabled",
+  "balance.mikoto.email",
+  "balance.mikoto.password",
   "balance.mikoto.accessToken",
   "balance.mikoto.lowBalance",
   "balance.ccgo.enabled",
+  "balance.ccgo.email",
+  "balance.ccgo.password",
   "balance.ccgo.accessToken",
   "balance.ccgo.lowBalance",
   "balance.ccgo2.enabled",
+  "balance.ccgo2.email",
+  "balance.ccgo2.password",
   "balance.ccgo2.accessToken",
   "balance.ccgo2.lowBalance",
   "balance.dimensio.enabled",
+  "balance.dimensio.username",
+  "balance.dimensio.password",
   "balance.dimensio.accessToken",
   "balance.dimensio.lowBalance",
+  "balance.uniart.enabled",
+  "balance.uniart.userId",
+  "balance.uniart.accessToken",
+  "balance.uniart.lowBalance",
+  "balance.wxart.enabled",
+  "balance.wxart.userId",
+  "balance.wxart.accessToken",
+  "balance.wxart.lowBalance",
+  "balance.secureskill.enabled",
+  "balance.secureskill.email",
+  "balance.secureskill.password",
+  "balance.secureskill.accessToken",
+  "balance.secureskill.lowBalance",
 ]);
 
 /* ── 页脚链接（site.footerLinks）结构化编辑 ──────────────────────────── */
@@ -740,7 +777,13 @@ export default function AdminConfigPage() {
                               step={numberCfg?.step}
                               inputMode={numberCfg ? "decimal" : undefined}
                               autoComplete={secret ? "new-password" : undefined}
-                              placeholder={secret ? "粘贴新的 JWT" : undefined}
+                              placeholder={
+                                secret
+                                  ? SUPPLIER_BALANCE_SECRET_KEYS.has(it.configKey)
+                                    ? "粘贴新令牌"
+                                    : "输入新值"
+                                  : undefined
+                              }
                               spellCheck={false}
                             />
                           )}

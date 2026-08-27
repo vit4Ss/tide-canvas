@@ -2,14 +2,19 @@ package admin
 
 // g4_supplier_balances.go — 后台「供应商余额」实时查询。
 //
-// 浏览器只调用本服务的 /api/admin/supplier-balances；供应商令牌始终留在
+// 浏览器只调用本服务的 /api/admin/supplier-balances；供应商凭证始终留在
 // 服务端配置中。每个供应商实现一个 checker，查询并发执行，单个上游失败不会
 // 让整个页面失败。进程内保留最近一次成功值，短暂故障时可展示带 stale 标记的
 // 旧余额和最后成功时间（不落库，重启后自然清空）。
+//
+// Mikoto/CCGO/CCGO2/Dimensio 支持配置账号密码：监控器自行调用供应商登录接口
+// 换取会话 JWT，缓存到过期前自动续期，令牌被上游提前吊销时按 401 重登一次。
+// 登录失败会按错误类型退避，避免密码错误时每次刷新都撞登录接口锁账号。
 
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -96,9 +101,179 @@ type supplierBalanceMonitor struct {
 	client         *http.Client
 	refreshSeconds int
 	alerts         *alerting.Service
+	tokens         *supplierTokenCache
 
 	mu   sync.RWMutex
 	last map[string]supplierLastSuccess
+}
+
+// supplierTokenCache holds the session JWTs the monitor obtained by logging in
+// with configured supplier accounts. Entries are keyed by provider and carry
+// the credential identity, so rotating the account in 配置管理 discards the
+// cached session immediately. Failed logins are cached too (with a deadline)
+// so a wrong password cannot hammer the supplier's login endpoint every
+// refresh tick.
+type supplierTokenCache struct {
+	mu      sync.Mutex
+	entries map[string]*supplierTokenEntry
+}
+
+type supplierTokenEntry struct {
+	// mu serializes login attempts for one provider so concurrent snapshots
+	// (dashboard request + background alert loop) reuse a single session.
+	mu          sync.Mutex
+	identity    [sha256.Size]byte
+	token       string
+	expiresAt   time.Time
+	failedUntil time.Time
+	failMessage string
+}
+
+func newSupplierTokenCache() *supplierTokenCache {
+	return &supplierTokenCache{entries: make(map[string]*supplierTokenEntry)}
+}
+
+func (c *supplierTokenCache) entry(key string) *supplierTokenEntry {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[key]
+	if !ok {
+		e = &supplierTokenEntry{}
+		c.entries[key] = e
+	}
+	return e
+}
+
+// supplierLoginResult is what a provider-specific login call returns on
+// success. CredentialRejected marks failures that will not heal on their own
+// (wrong password, 2FA enabled) and therefore back off longer.
+type supplierLoginResult struct {
+	Token     string
+	ExpiresAt time.Time
+}
+
+type supplierLoginError struct {
+	message            string
+	credentialRejected bool
+}
+
+func (e *supplierLoginError) Error() string { return e.message }
+
+const (
+	supplierLoginRetryBackoff      = time.Minute
+	supplierLoginCredentialBackoff = 10 * time.Minute
+)
+
+// acquireSupplierLoginToken returns a cached session token or performs one
+// login. rejectedToken names a cached token the profile endpoint just refused
+// with 401/403 despite not being expired yet: it is discarded only when still
+// cached, so a concurrent snapshot that already renewed the session is reused
+// instead of triggering a second login.
+func acquireSupplierLoginToken(ctx context.Context, entry *supplierTokenEntry, identity [sha256.Size]byte, rejectedToken string, login func(context.Context) (supplierLoginResult, error)) (string, error) {
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+
+	now := time.Now()
+	if entry.identity != identity {
+		// Field-by-field reset: assigning a whole struct would clobber the
+		// mutex this goroutine is holding.
+		entry.identity = identity
+		entry.token = ""
+		entry.expiresAt = time.Time{}
+		entry.failedUntil = time.Time{}
+		entry.failMessage = ""
+	}
+	if rejectedToken != "" && entry.token == rejectedToken {
+		entry.token = ""
+	}
+	if entry.token != "" && now.Before(entry.expiresAt) {
+		return entry.token, nil
+	}
+	if entry.failMessage != "" && now.Before(entry.failedUntil) {
+		return "", errors.New(entry.failMessage)
+	}
+
+	result, err := login(ctx)
+	if err != nil {
+		entry.token = ""
+		entry.failMessage = err.Error()
+		backoff := supplierLoginRetryBackoff
+		var loginErr *supplierLoginError
+		if errors.As(err, &loginErr) && loginErr.credentialRejected {
+			backoff = supplierLoginCredentialBackoff
+		}
+		entry.failedUntil = time.Now().Add(backoff)
+		return "", err
+	}
+	entry.token = result.Token
+	entry.expiresAt = result.ExpiresAt
+	entry.failMessage = ""
+	entry.failedUntil = time.Time{}
+	return result.Token, nil
+}
+
+// supplierSessionExpiry derives when a fresh session token should be renewed:
+// the supplier-declared lifetime when present, otherwise the JWT exp claim,
+// otherwise a conservative 10 minutes. A safety margin keeps the monitor from
+// using a token during its final seconds.
+func supplierSessionExpiry(now time.Time, expiresInSeconds float64, token string) time.Time {
+	var exp time.Time
+	switch {
+	case expiresInSeconds > 0:
+		exp = now.Add(time.Duration(expiresInSeconds * float64(time.Second)))
+	default:
+		claim, ok := decodeJWTExpiry(token)
+		if !ok {
+			return now.Add(10 * time.Minute)
+		}
+		exp = claim
+	}
+	const margin = time.Minute
+	if exp.After(now.Add(2 * margin)) {
+		return exp.Add(-margin)
+	}
+	if exp.After(now) {
+		return now.Add(exp.Sub(now) / 2)
+	}
+	return now
+}
+
+// decodeJWTExpiry extracts the exp claim without verifying the signature —
+// the monitor only needs a renewal hint, authenticity is the supplier's job.
+func decodeJWTExpiry(token string) (time.Time, bool) {
+	parts := strings.Split(strings.TrimSpace(token), ".")
+	if len(parts) != 3 {
+		return time.Time{}, false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+	if err != nil {
+		return time.Time{}, false
+	}
+	var claims struct {
+		Exp float64 `json:"exp"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil || claims.Exp <= 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(int64(claims.Exp), 0), true
+}
+
+// decodeSupplierLoginFailure turns a non-2xx login response into a typed
+// error, reading the shared {code,message} envelope when present.
+func decodeSupplierLoginFailure(resp *http.Response) error {
+	var envelope struct {
+		Message string `json:"message"`
+	}
+	_ = json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&envelope)
+	message := compactUpstreamMessage(envelope.Message)
+	rejected := resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden
+	if message == "" {
+		message = fmt.Sprintf("HTTP %d", resp.StatusCode)
+	}
+	if rejected {
+		return &supplierLoginError{message: "登录失败：账号或密码被拒绝（" + message + "）", credentialRejected: true}
+	}
+	return &supplierLoginError{message: "登录失败：" + message}
 }
 
 func newSupplierBalanceMonitor(db *gorm.DB, cfg config.BalanceMonitorConfig) *supplierBalanceMonitor {
@@ -119,6 +294,7 @@ func newSupplierBalanceMonitorWithDBAndClient(db *gorm.DB, cfg config.BalanceMon
 		baseConfig:     cfg,
 		client:         client,
 		refreshSeconds: refreshSeconds,
+		tokens:         newSupplierTokenCache(),
 		last:           make(map[string]supplierLastSuccess),
 	}
 }
@@ -136,10 +312,9 @@ func (m *supplierBalanceMonitor) snapshot(ctx context.Context) SupplierBalancesV
 	}
 	wg.Wait()
 	if configErr != nil {
+		// Every supplier's credentials are database-owned, so none of the
+		// readings can be trusted when the configuration failed to load.
 		for i := range rows {
-			if rows[i].Key == "dlapi" {
-				continue
-			}
 			rows[i].State = "error"
 			rows[i].Balance = nil
 			rows[i].LowBalance = nil
@@ -167,25 +342,41 @@ func (m *supplierBalanceMonitor) currentCheckers() ([]supplierBalanceChecker, er
 	}
 	return []supplierBalanceChecker{
 		&newAPIBalanceChecker{providerKey: "dlapi", cfg: cfg.DLAPI},
-		&balanceProfileChecker{providerKey: "mikoto", cfg: cfg.Mikoto},
-		&balanceProfileChecker{providerKey: "ccgo", cfg: cfg.CCGO},
-		&balanceProfileChecker{providerKey: "ccgo2", cfg: cfg.CCGO2},
-		&dimensioBalanceChecker{providerKey: "dimensio", cfg: cfg.Dimensio},
+		&balanceProfileChecker{providerKey: "mikoto", cfg: cfg.Mikoto, tokens: m.tokens},
+		&balanceProfileChecker{providerKey: "ccgo", cfg: cfg.CCGO, tokens: m.tokens},
+		&balanceProfileChecker{providerKey: "ccgo2", cfg: cfg.CCGO2, tokens: m.tokens},
+		&dimensioBalanceChecker{providerKey: "dimensio", cfg: cfg.Dimensio, tokens: m.tokens},
+		&newAPIBalanceChecker{providerKey: "uniart", cfg: cfg.Uniart},
+		&newAPIBalanceChecker{providerKey: "wxart", cfg: cfg.Wxart},
+		&balanceProfileChecker{providerKey: "secureskill", cfg: cfg.SecureSkill, tokens: m.tokens},
 	}, err
 }
 
-// loadLiveSupplierBalanceConfig overlays the four JWT-backed suppliers from
-// sys_config for every snapshot. A blank stored token intentionally clears any
-// legacy environment value. DLAPI is left on the deployment configuration.
+// loadLiveSupplierBalanceConfig overlays the database-owned suppliers from
+// sys_config for every snapshot. A blank stored credential intentionally
+// clears any legacy environment value. Only endpoint shape (base URL, quota
+// conversion, currency) stays on the deployment configuration.
 func loadLiveSupplierBalanceConfig(db *gorm.DB, cfg config.BalanceMonitorConfig) (config.BalanceMonitorConfig, error) {
 	// These values have a single source of truth: sys_config. Clear any values
 	// Viper may have accepted from legacy environment variables before reading
 	// the database, so missing rows or a transient DB error can never revive an
 	// old credential behind the administrator's back.
+	cfg.DLAPI.Enabled, cfg.DLAPI.AccessToken, cfg.DLAPI.LowBalance = false, "", 0
+	cfg.DLAPI.UserID = ""
 	cfg.Mikoto.Enabled, cfg.Mikoto.AccessToken, cfg.Mikoto.LowBalance = false, "", 0
+	cfg.Mikoto.Email, cfg.Mikoto.Password = "", ""
 	cfg.CCGO.Enabled, cfg.CCGO.AccessToken, cfg.CCGO.LowBalance = false, "", 0
+	cfg.CCGO.Email, cfg.CCGO.Password = "", ""
 	cfg.CCGO2.Enabled, cfg.CCGO2.AccessToken, cfg.CCGO2.LowBalance = false, "", 0
+	cfg.CCGO2.Email, cfg.CCGO2.Password = "", ""
 	cfg.Dimensio.Enabled, cfg.Dimensio.AccessToken, cfg.Dimensio.LowBalance = false, "", 0
+	cfg.Dimensio.Username, cfg.Dimensio.Password = "", ""
+	cfg.Uniart.Enabled, cfg.Uniart.AccessToken, cfg.Uniart.LowBalance = false, "", 0
+	cfg.Uniart.UserID = ""
+	cfg.Wxart.Enabled, cfg.Wxart.AccessToken, cfg.Wxart.LowBalance = false, "", 0
+	cfg.Wxart.UserID = ""
+	cfg.SecureSkill.Enabled, cfg.SecureSkill.AccessToken, cfg.SecureSkill.LowBalance = false, "", 0
+	cfg.SecureSkill.Email, cfg.SecureSkill.Password = "", ""
 
 	var rows []model.SysConfig
 	if err := db.Where("config_key IN ?", model.SupplierBalanceConfigKeys).Find(&rows).Error; err != nil {
@@ -196,11 +387,42 @@ func loadLiveSupplierBalanceConfig(db *gorm.DB, cfg config.BalanceMonitorConfig)
 		values[rows[i].ConfigKey] = rows[i].ConfigValue
 	}
 
-	overlayProfileBalanceConfig(values, model.ConfigKeyBalanceMikotoEnabled, model.ConfigKeyBalanceMikotoAccessToken, model.ConfigKeyBalanceMikotoLowBalance, &cfg.Mikoto)
-	overlayProfileBalanceConfig(values, model.ConfigKeyBalanceCCGOEnabled, model.ConfigKeyBalanceCCGOAccessToken, model.ConfigKeyBalanceCCGOLowBalance, &cfg.CCGO)
-	overlayProfileBalanceConfig(values, model.ConfigKeyBalanceCCGO2Enabled, model.ConfigKeyBalanceCCGO2AccessToken, model.ConfigKeyBalanceCCGO2LowBalance, &cfg.CCGO2)
+	if value, ok := values[model.ConfigKeyBalanceDLAPIEnabled]; ok {
+		cfg.DLAPI.Enabled = parseSupplierBalanceEnabled(value)
+	}
+	if value, ok := values[model.ConfigKeyBalanceDLAPIUserID]; ok {
+		cfg.DLAPI.UserID = strings.TrimSpace(value)
+	}
+	if value, ok := values[model.ConfigKeyBalanceDLAPIAccessToken]; ok {
+		cfg.DLAPI.AccessToken = strings.TrimSpace(value)
+	}
+	if value, ok := parseSupplierBalanceThreshold(values, model.ConfigKeyBalanceDLAPILowBalance); ok {
+		cfg.DLAPI.LowBalance = value
+	}
+	overlayProfileBalanceConfig(values, profileBalanceConfigKeys{
+		enabled: model.ConfigKeyBalanceMikotoEnabled, email: model.ConfigKeyBalanceMikotoEmail, password: model.ConfigKeyBalanceMikotoPassword,
+		token: model.ConfigKeyBalanceMikotoAccessToken, threshold: model.ConfigKeyBalanceMikotoLowBalance,
+	}, &cfg.Mikoto)
+	overlayProfileBalanceConfig(values, profileBalanceConfigKeys{
+		enabled: model.ConfigKeyBalanceCCGOEnabled, email: model.ConfigKeyBalanceCCGOEmail, password: model.ConfigKeyBalanceCCGOPassword,
+		token: model.ConfigKeyBalanceCCGOAccessToken, threshold: model.ConfigKeyBalanceCCGOLowBalance,
+	}, &cfg.CCGO)
+	overlayProfileBalanceConfig(values, profileBalanceConfigKeys{
+		enabled: model.ConfigKeyBalanceCCGO2Enabled, email: model.ConfigKeyBalanceCCGO2Email, password: model.ConfigKeyBalanceCCGO2Password,
+		token: model.ConfigKeyBalanceCCGO2AccessToken, threshold: model.ConfigKeyBalanceCCGO2LowBalance,
+	}, &cfg.CCGO2)
+	overlayProfileBalanceConfig(values, profileBalanceConfigKeys{
+		enabled: model.ConfigKeyBalanceSecureSkillEnabled, email: model.ConfigKeyBalanceSecureSkillEmail, password: model.ConfigKeyBalanceSecureSkillPassword,
+		token: model.ConfigKeyBalanceSecureSkillAccessToken, threshold: model.ConfigKeyBalanceSecureSkillLowBalance,
+	}, &cfg.SecureSkill)
 	if value, ok := values[model.ConfigKeyBalanceDimensioEnabled]; ok {
 		cfg.Dimensio.Enabled = parseSupplierBalanceEnabled(value)
+	}
+	if value, ok := values[model.ConfigKeyBalanceDimensioUsername]; ok {
+		cfg.Dimensio.Username = strings.TrimSpace(value)
+	}
+	if value, ok := values[model.ConfigKeyBalanceDimensioPassword]; ok {
+		cfg.Dimensio.Password = strings.TrimSpace(value)
 	}
 	if value, ok := values[model.ConfigKeyBalanceDimensioAccessToken]; ok {
 		cfg.Dimensio.AccessToken = strings.TrimSpace(value)
@@ -208,17 +430,51 @@ func loadLiveSupplierBalanceConfig(db *gorm.DB, cfg config.BalanceMonitorConfig)
 	if value, ok := parseSupplierBalanceThreshold(values, model.ConfigKeyBalanceDimensioLowBalance); ok {
 		cfg.Dimensio.LowBalance = value
 	}
+	if value, ok := values[model.ConfigKeyBalanceUniartEnabled]; ok {
+		cfg.Uniart.Enabled = parseSupplierBalanceEnabled(value)
+	}
+	if value, ok := values[model.ConfigKeyBalanceUniartUserID]; ok {
+		cfg.Uniart.UserID = strings.TrimSpace(value)
+	}
+	if value, ok := values[model.ConfigKeyBalanceUniartAccessToken]; ok {
+		cfg.Uniart.AccessToken = strings.TrimSpace(value)
+	}
+	if value, ok := parseSupplierBalanceThreshold(values, model.ConfigKeyBalanceUniartLowBalance); ok {
+		cfg.Uniart.LowBalance = value
+	}
+	if value, ok := values[model.ConfigKeyBalanceWxartEnabled]; ok {
+		cfg.Wxart.Enabled = parseSupplierBalanceEnabled(value)
+	}
+	if value, ok := values[model.ConfigKeyBalanceWxartUserID]; ok {
+		cfg.Wxart.UserID = strings.TrimSpace(value)
+	}
+	if value, ok := values[model.ConfigKeyBalanceWxartAccessToken]; ok {
+		cfg.Wxart.AccessToken = strings.TrimSpace(value)
+	}
+	if value, ok := parseSupplierBalanceThreshold(values, model.ConfigKeyBalanceWxartLowBalance); ok {
+		cfg.Wxart.LowBalance = value
+	}
 	return cfg, nil
 }
 
-func overlayProfileBalanceConfig(values map[string]string, enabledKey, tokenKey, thresholdKey string, cfg *config.BearerProfileBalanceConfig) {
-	if value, ok := values[enabledKey]; ok {
+type profileBalanceConfigKeys struct {
+	enabled, email, password, token, threshold string
+}
+
+func overlayProfileBalanceConfig(values map[string]string, keys profileBalanceConfigKeys, cfg *config.BearerProfileBalanceConfig) {
+	if value, ok := values[keys.enabled]; ok {
 		cfg.Enabled = parseSupplierBalanceEnabled(value)
 	}
-	if value, ok := values[tokenKey]; ok {
+	if value, ok := values[keys.email]; ok {
+		cfg.Email = strings.TrimSpace(value)
+	}
+	if value, ok := values[keys.password]; ok {
+		cfg.Password = strings.TrimSpace(value)
+	}
+	if value, ok := values[keys.token]; ok {
 		cfg.AccessToken = strings.TrimSpace(value)
 	}
-	if value, ok := parseSupplierBalanceThreshold(values, thresholdKey); ok {
+	if value, ok := parseSupplierBalanceThreshold(values, keys.threshold); ok {
 		cfg.LowBalance = value
 	}
 }
@@ -314,12 +570,32 @@ func cloneBalanceDetails(details []SupplierBalanceDetailVO) []SupplierBalanceDet
 	return append([]SupplierBalanceDetailVO(nil), details...)
 }
 
+// supplierBalanceMonitorFor returns the one monitor instance shared by the
+// dashboard endpoint and the background alert loop. Sharing matters since the
+// auto-login feature: one instance means one session-token cache, so the two
+// callers renew a single supplier session instead of racing each other.
+var (
+	sharedBalanceMonitorsMu sync.Mutex
+	sharedBalanceMonitors   = map[*app.Deps]*supplierBalanceMonitor{}
+)
+
+func supplierBalanceMonitorFor(d *app.Deps) *supplierBalanceMonitor {
+	sharedBalanceMonitorsMu.Lock()
+	defer sharedBalanceMonitorsMu.Unlock()
+	if monitor, ok := sharedBalanceMonitors[d]; ok {
+		return monitor
+	}
+	monitor := newSupplierBalanceMonitor(d.DB, d.Cfg.BalanceMonitor)
+	monitor.alerts = d.Alerts
+	sharedBalanceMonitors[d] = monitor
+	return monitor
+}
+
 // RegisterSupplierBalances mounts the read-only supplier dashboard endpoint.
 //
 //	GET /admin/supplier-balances -> SupplierBalancesVO
 func RegisterSupplierBalances(g *gin.RouterGroup, d *app.Deps) {
-	monitor := newSupplierBalanceMonitor(d.DB, d.Cfg.BalanceMonitor)
-	monitor.alerts = d.Alerts
+	monitor := supplierBalanceMonitorFor(d)
 	g.GET("/supplier-balances", func(c *gin.Context) {
 		response.OK(c, monitor.snapshot(c.Request.Context()))
 	})
@@ -331,8 +607,7 @@ func StartSupplierBalanceMonitor(ctx context.Context, d *app.Deps) {
 	if d == nil || d.Alerts == nil {
 		return
 	}
-	monitor := newSupplierBalanceMonitor(d.DB, d.Cfg.BalanceMonitor)
-	monitor.alerts = d.Alerts
+	monitor := supplierBalanceMonitorFor(d)
 	go func() {
 		ticker := time.NewTicker(time.Duration(monitor.refreshSeconds) * time.Second)
 		defer ticker.Stop()
@@ -404,12 +679,12 @@ func (c *newAPIBalanceChecker) configurationIssue() (string, string) {
 	if !c.cfg.Enabled {
 		return "disabled", "监控已停用"
 	}
-	missing := make([]string, 0, 3)
+	// UserID is optional: New API panels require the New-Api-User header,
+	// one-api panels (e.g. wxart) ignore it. When the panel needs it and it is
+	// missing, the upstream auth error surfaces on the dashboard row.
+	missing := make([]string, 0, 2)
 	if strings.TrimSpace(c.cfg.BaseURL) == "" {
 		missing = append(missing, "请求地址")
-	}
-	if strings.TrimSpace(c.cfg.UserID) == "" {
-		missing = append(missing, "用户 ID")
 	}
 	if strings.TrimSpace(c.cfg.AccessToken) == "" {
 		missing = append(missing, "访问令牌")
@@ -435,7 +710,9 @@ func (c *newAPIBalanceChecker) read(ctx context.Context, client *http.Client) (s
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", strings.TrimSpace(c.cfg.AccessToken))
-	req.Header.Set("New-Api-User", strings.TrimSpace(c.cfg.UserID))
+	if userID := strings.TrimSpace(c.cfg.UserID); userID != "" {
+		req.Header.Set("New-Api-User", userID)
+	}
 	req.Header.Set("User-Agent", "TideCanvas-BalanceMonitor/1.0")
 
 	resp, err := client.Do(req)
@@ -496,10 +773,14 @@ func (c *newAPIBalanceChecker) read(ctx context.Context, client *http.Client) (s
 // balanceProfileChecker reads the authenticated profile envelope shared by
 // Mikoto and CCGO. Browser cookies and fetch metadata are intentionally omitted;
 // the Bearer credential is the authentication material. CCGO additionally
-// requires x-user-ui-request: 1, controlled by cfg.UIRequest.
+// requires x-user-ui-request: 1, controlled by cfg.UIRequest. With Email and
+// Password configured the checker logs in via POST /api/v1/auth/login and
+// renews the session token itself; a manually pasted AccessToken is only used
+// when no account is configured.
 type balanceProfileChecker struct {
 	providerKey string
 	cfg         config.BearerProfileBalanceConfig
+	tokens      *supplierTokenCache
 }
 
 func (c *balanceProfileChecker) key() string { return c.providerKey }
@@ -520,32 +801,157 @@ func (c *balanceProfileChecker) source() string {
 }
 
 func (c *balanceProfileChecker) cacheIdentity() [sha256.Size]byte {
-	return supplierBalanceIdentity(c.providerKey, c.cfg.BaseURL, c.cfg.AccessToken)
+	return supplierBalanceIdentity(c.providerKey, c.cfg.BaseURL, c.cfg.AccessToken, c.cfg.Email, c.cfg.Password)
 }
 
 func (c *balanceProfileChecker) lowBalance() float64 { return c.cfg.LowBalance }
+
+func (c *balanceProfileChecker) hasLoginCredentials() bool {
+	return strings.TrimSpace(c.cfg.Email) != "" && strings.TrimSpace(c.cfg.Password) != ""
+}
 
 func (c *balanceProfileChecker) configurationIssue() (string, string) {
 	if !c.cfg.Enabled {
 		return "disabled", "监控已停用"
 	}
-	missing := make([]string, 0, 2)
 	if strings.TrimSpace(c.cfg.BaseURL) == "" {
-		missing = append(missing, "请求地址")
+		return "unconfigured", "缺少请求地址"
 	}
-	if strings.TrimSpace(c.cfg.AccessToken) == "" {
-		missing = append(missing, "访问令牌")
-	}
-	if len(missing) > 0 {
-		return "unconfigured", "缺少" + strings.Join(missing, "、")
+	if issue := supplierCredentialIssue(c.cfg.Email, c.cfg.Password, c.cfg.AccessToken, "登录邮箱"); issue != "" {
+		return "unconfigured", issue
 	}
 	return "", ""
 }
 
-func (c *balanceProfileChecker) read(ctx context.Context, client *http.Client) (supplierBalanceReading, error) {
+// supplierCredentialIssue validates the credential pair shared by the
+// login-capable checkers: either a complete account or a manual token must be
+// present. accountLabel names the identifier field in operator-facing text.
+func supplierCredentialIssue(account, password, token, accountLabel string) string {
+	account, password, token = strings.TrimSpace(account), strings.TrimSpace(password), strings.TrimSpace(token)
+	switch {
+	case account != "" && password != "":
+		return ""
+	case account != "":
+		return "已填写" + accountLabel + "但缺少登录密码"
+	case password != "":
+		return "已填写登录密码但缺少" + accountLabel
+	case token != "":
+		return ""
+	default:
+		return "缺少账号密码或访问令牌"
+	}
+}
+
+// login exchanges the configured account for a session JWT.
+func (c *balanceProfileChecker) login(ctx context.Context, client *http.Client) (supplierLoginResult, error) {
 	base, err := url.Parse(strings.TrimRight(strings.TrimSpace(c.cfg.BaseURL), "/"))
 	if err != nil || base.Scheme == "" || base.Host == "" {
-		return supplierBalanceReading{}, errors.New("供应商请求地址无效")
+		return supplierLoginResult{}, errors.New("供应商请求地址无效")
+	}
+	base.Path = strings.TrimRight(base.Path, "/") + "/api/v1/auth/login"
+	base.RawQuery = ""
+	base.Fragment = ""
+
+	body, err := json.Marshal(map[string]string{
+		"email":    strings.TrimSpace(c.cfg.Email),
+		"password": strings.TrimSpace(c.cfg.Password),
+	})
+	if err != nil {
+		return supplierLoginResult{}, errors.New("无法创建登录请求")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base.String(), strings.NewReader(string(body)))
+	if err != nil {
+		return supplierLoginResult{}, errors.New("无法创建登录请求")
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	if c.cfg.UIRequest {
+		req.Header.Set("X-User-UI-Request", "1")
+	}
+	req.Header.Set("User-Agent", "TideCanvas-BalanceMonitor/1.0")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return supplierLoginResult{}, errors.New("登录失败：查询超时")
+		}
+		return supplierLoginResult{}, errors.New("登录失败：无法连接供应商")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return supplierLoginResult{}, decodeSupplierLoginFailure(resp)
+	}
+
+	// The platform wraps successful bodies as {code:0,data:{access_token,...}}
+	// (its web client unwraps this in an axios interceptor); accept a bare
+	// top-level access_token too in case a deployment answers unwrapped.
+	var payload struct {
+		Code        *int    `json:"code"`
+		Message     string  `json:"message"`
+		AccessToken string  `json:"access_token"`
+		ExpiresIn   float64 `json:"expires_in"`
+		Data        struct {
+			AccessToken string  `json:"access_token"`
+			ExpiresIn   float64 `json:"expires_in"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
+		return supplierLoginResult{}, errors.New("登录失败：供应商响应格式无效")
+	}
+	if payload.Code != nil && *payload.Code != 0 {
+		message := compactUpstreamMessage(payload.Message)
+		if message == "" {
+			message = "未返回原因"
+		}
+		return supplierLoginResult{}, &supplierLoginError{message: "登录失败：" + message}
+	}
+	token := strings.TrimSpace(payload.Data.AccessToken)
+	expiresIn := payload.Data.ExpiresIn
+	if token == "" {
+		token = strings.TrimSpace(payload.AccessToken)
+		expiresIn = payload.ExpiresIn
+	}
+	if token == "" {
+		return supplierLoginResult{}, &supplierLoginError{
+			message:            "登录失败：响应缺少令牌（账号可能启用了两步验证，请改用手动访问令牌）",
+			credentialRejected: true,
+		}
+	}
+	return supplierLoginResult{Token: token, ExpiresAt: supplierSessionExpiry(time.Now(), expiresIn, token)}, nil
+}
+
+func (c *balanceProfileChecker) sessionToken(ctx context.Context, client *http.Client, rejectedToken string) (string, error) {
+	return acquireSupplierLoginToken(ctx, c.tokens.entry(c.providerKey), c.cacheIdentity(), rejectedToken,
+		func(ctx context.Context) (supplierLoginResult, error) { return c.login(ctx, client) })
+}
+
+func (c *balanceProfileChecker) read(ctx context.Context, client *http.Client) (supplierBalanceReading, error) {
+	token := c.cfg.AccessToken
+	viaLogin := c.hasLoginCredentials() && c.tokens != nil
+	if viaLogin {
+		var err error
+		if token, err = c.sessionToken(ctx, client, ""); err != nil {
+			return supplierBalanceReading{}, err
+		}
+	}
+	reading, status, err := c.fetchProfile(ctx, client, token)
+	if err != nil && viaLogin && (status == http.StatusUnauthorized || status == http.StatusForbidden) {
+		// The cached session was revoked upstream before its expiry hint;
+		// discard it and retry exactly once with a fresh login.
+		if token, err = c.sessionToken(ctx, client, token); err != nil {
+			return supplierBalanceReading{}, err
+		}
+		reading, _, err = c.fetchProfile(ctx, client, token)
+	}
+	return reading, err
+}
+
+// fetchProfile performs the authenticated profile request. The returned status
+// is the HTTP status code when a response was received, 0 otherwise.
+func (c *balanceProfileChecker) fetchProfile(ctx context.Context, client *http.Client, token string) (supplierBalanceReading, int, error) {
+	base, err := url.Parse(strings.TrimRight(strings.TrimSpace(c.cfg.BaseURL), "/"))
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		return supplierBalanceReading{}, 0, errors.New("供应商请求地址无效")
 	}
 	base.Path = strings.TrimRight(base.Path, "/") + "/api/v1/auth/me"
 	query := base.Query()
@@ -555,10 +961,10 @@ func (c *balanceProfileChecker) read(ctx context.Context, client *http.Client) (
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base.String(), nil)
 	if err != nil {
-		return supplierBalanceReading{}, errors.New("无法创建供应商请求")
+		return supplierBalanceReading{}, 0, errors.New("无法创建供应商请求")
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", bearerAuthorization(c.cfg.AccessToken))
+	req.Header.Set("Authorization", bearerAuthorization(token))
 	if c.cfg.UIRequest {
 		req.Header.Set("X-User-UI-Request", "1")
 	}
@@ -567,14 +973,14 @@ func (c *balanceProfileChecker) read(ctx context.Context, client *http.Client) (
 	resp, err := client.Do(req)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return supplierBalanceReading{}, errors.New("查询超时")
+			return supplierBalanceReading{}, 0, errors.New("查询超时")
 		}
-		return supplierBalanceReading{}, errors.New("无法连接供应商")
+		return supplierBalanceReading{}, 0, errors.New("无法连接供应商")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-		return supplierBalanceReading{}, fmt.Errorf("供应商返回 HTTP %d", resp.StatusCode)
+		return supplierBalanceReading{}, resp.StatusCode, fmt.Errorf("供应商返回 HTTP %d", resp.StatusCode)
 	}
 
 	var envelope struct {
@@ -588,17 +994,17 @@ func (c *balanceProfileChecker) read(ctx context.Context, client *http.Client) (
 	}
 	decoder := json.NewDecoder(io.LimitReader(resp.Body, 1<<20))
 	if err := decoder.Decode(&envelope); err != nil {
-		return supplierBalanceReading{}, errors.New("供应商响应格式无效")
+		return supplierBalanceReading{}, resp.StatusCode, errors.New("供应商响应格式无效")
 	}
 	if envelope.Code != nil && *envelope.Code != 0 {
 		message := compactUpstreamMessage(envelope.Message)
 		if message == "" {
 			message = "未返回原因"
 		}
-		return supplierBalanceReading{}, errors.New("供应商拒绝请求：" + message)
+		return supplierBalanceReading{}, resp.StatusCode, errors.New("供应商拒绝请求：" + message)
 	}
 	if envelope.Data.Balance == nil {
-		return supplierBalanceReading{}, errors.New("供应商响应缺少余额字段")
+		return supplierBalanceReading{}, resp.StatusCode, errors.New("供应商响应缺少余额字段")
 	}
 
 	currency := strings.ToUpper(strings.TrimSpace(c.cfg.Currency))
@@ -616,15 +1022,18 @@ func (c *balanceProfileChecker) read(ctx context.Context, client *http.Client) (
 			Label: "累计充值", Value: *envelope.Data.TotalRecharged, Currency: currency,
 		})
 	}
-	return reading, nil
+	return reading, resp.StatusCode, nil
 }
 
-// dimensioBalanceChecker reads Dimensio's user membership quota. Its response
-// has no envelope: the remaining balance is derived from the total membership
-// credit budget minus credits already consumed in the current membership span.
+// dimensioBalanceChecker reads Dimensio's user dashboard (GET
+// /api/user/dashboard). Its response has no envelope: the remaining balance is
+// creditBudget minus creditUsed. With Username and Password configured the
+// checker logs in via POST /api/auth/login and renews the session token
+// itself.
 type dimensioBalanceChecker struct {
 	providerKey string
 	cfg         config.DimensioBalanceConfig
+	tokens      *supplierTokenCache
 }
 
 func (c *dimensioBalanceChecker) key() string { return c.providerKey }
@@ -645,68 +1054,147 @@ func (c *dimensioBalanceChecker) source() string {
 }
 
 func (c *dimensioBalanceChecker) cacheIdentity() [sha256.Size]byte {
-	return supplierBalanceIdentity(c.providerKey, c.cfg.BaseURL, c.cfg.AccessToken)
+	return supplierBalanceIdentity(c.providerKey, c.cfg.BaseURL, c.cfg.AccessToken, c.cfg.Username, c.cfg.Password)
 }
 
 func (c *dimensioBalanceChecker) lowBalance() float64 { return c.cfg.LowBalance }
+
+func (c *dimensioBalanceChecker) hasLoginCredentials() bool {
+	return strings.TrimSpace(c.cfg.Username) != "" && strings.TrimSpace(c.cfg.Password) != ""
+}
 
 func (c *dimensioBalanceChecker) configurationIssue() (string, string) {
 	if !c.cfg.Enabled {
 		return "disabled", "监控已停用"
 	}
-	missing := make([]string, 0, 2)
 	if strings.TrimSpace(c.cfg.BaseURL) == "" {
-		missing = append(missing, "请求地址")
+		return "unconfigured", "缺少请求地址"
 	}
-	if strings.TrimSpace(c.cfg.AccessToken) == "" {
-		missing = append(missing, "访问令牌")
-	}
-	if len(missing) > 0 {
-		return "unconfigured", "缺少" + strings.Join(missing, "、")
+	if issue := supplierCredentialIssue(c.cfg.Username, c.cfg.Password, c.cfg.AccessToken, "登录用户名"); issue != "" {
+		return "unconfigured", issue
 	}
 	return "", ""
 }
 
-func (c *dimensioBalanceChecker) read(ctx context.Context, client *http.Client) (supplierBalanceReading, error) {
+// login exchanges the configured account for a session token. Dimensio returns
+// the token at the top level of the response body with no envelope.
+func (c *dimensioBalanceChecker) login(ctx context.Context, client *http.Client) (supplierLoginResult, error) {
 	base, err := url.Parse(strings.TrimRight(strings.TrimSpace(c.cfg.BaseURL), "/"))
 	if err != nil || base.Scheme == "" || base.Host == "" {
-		return supplierBalanceReading{}, errors.New("供应商请求地址无效")
+		return supplierLoginResult{}, errors.New("供应商请求地址无效")
 	}
-	base.Path = strings.TrimRight(base.Path, "/") + "/api/auth/me"
+	base.Path = strings.TrimRight(base.Path, "/") + "/api/auth/login"
 	base.RawQuery = ""
 	base.Fragment = ""
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base.String(), nil)
+	body, err := json.Marshal(map[string]string{
+		"username": strings.TrimSpace(c.cfg.Username),
+		"password": strings.TrimSpace(c.cfg.Password),
+	})
 	if err != nil {
-		return supplierBalanceReading{}, errors.New("无法创建供应商请求")
+		return supplierLoginResult{}, errors.New("无法创建登录请求")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base.String(), strings.NewReader(string(body)))
+	if err != nil {
+		return supplierLoginResult{}, errors.New("无法创建登录请求")
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", bearerAuthorization(c.cfg.AccessToken))
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "TideCanvas-BalanceMonitor/1.0")
 
 	resp, err := client.Do(req)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return supplierBalanceReading{}, errors.New("查询超时")
+			return supplierLoginResult{}, errors.New("登录失败：查询超时")
 		}
-		return supplierBalanceReading{}, errors.New("无法连接供应商")
+		return supplierLoginResult{}, errors.New("登录失败：无法连接供应商")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return supplierLoginResult{}, decodeSupplierLoginFailure(resp)
+	}
+
+	var payload struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
+		return supplierLoginResult{}, errors.New("登录失败：供应商响应格式无效")
+	}
+	token := strings.TrimSpace(payload.Token)
+	if token == "" {
+		return supplierLoginResult{}, &supplierLoginError{message: "登录失败：响应缺少令牌", credentialRejected: true}
+	}
+	return supplierLoginResult{Token: token, ExpiresAt: supplierSessionExpiry(time.Now(), 0, token)}, nil
+}
+
+func (c *dimensioBalanceChecker) sessionToken(ctx context.Context, client *http.Client, rejectedToken string) (string, error) {
+	return acquireSupplierLoginToken(ctx, c.tokens.entry(c.providerKey), c.cacheIdentity(), rejectedToken,
+		func(ctx context.Context) (supplierLoginResult, error) { return c.login(ctx, client) })
+}
+
+func (c *dimensioBalanceChecker) read(ctx context.Context, client *http.Client) (supplierBalanceReading, error) {
+	token := c.cfg.AccessToken
+	viaLogin := c.hasLoginCredentials() && c.tokens != nil
+	if viaLogin {
+		var err error
+		if token, err = c.sessionToken(ctx, client, ""); err != nil {
+			return supplierBalanceReading{}, err
+		}
+	}
+	reading, status, err := c.fetchProfile(ctx, client, token)
+	if err != nil && viaLogin && (status == http.StatusUnauthorized || status == http.StatusForbidden) {
+		if token, err = c.sessionToken(ctx, client, token); err != nil {
+			return supplierBalanceReading{}, err
+		}
+		reading, _, err = c.fetchProfile(ctx, client, token)
+	}
+	return reading, err
+}
+
+// fetchProfile performs the authenticated dashboard request. The returned
+// status is the HTTP status code when a response was received, 0 otherwise.
+// The dashboard body also carries trend and generation-record arrays with very
+// long prompts, hence the generous read limit.
+func (c *dimensioBalanceChecker) fetchProfile(ctx context.Context, client *http.Client, token string) (supplierBalanceReading, int, error) {
+	base, err := url.Parse(strings.TrimRight(strings.TrimSpace(c.cfg.BaseURL), "/"))
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		return supplierBalanceReading{}, 0, errors.New("供应商请求地址无效")
+	}
+	base.Path = strings.TrimRight(base.Path, "/") + "/api/user/dashboard"
+	base.RawQuery = ""
+	base.Fragment = ""
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base.String(), nil)
+	if err != nil {
+		return supplierBalanceReading{}, 0, errors.New("无法创建供应商请求")
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", bearerAuthorization(token))
+	req.Header.Set("User-Agent", "TideCanvas-BalanceMonitor/1.0")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return supplierBalanceReading{}, 0, errors.New("查询超时")
+		}
+		return supplierBalanceReading{}, 0, errors.New("无法连接供应商")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-		return supplierBalanceReading{}, fmt.Errorf("供应商返回 HTTP %d", resp.StatusCode)
+		return supplierBalanceReading{}, resp.StatusCode, fmt.Errorf("供应商返回 HTTP %d", resp.StatusCode)
 	}
 
-	var profile struct {
-		CreditBudget           *float64 `json:"credit_budget"`
-		MembershipUsageCredits *float64 `json:"membership_usage_credits"`
+	var dashboard struct {
+		CreditBudget *float64 `json:"creditBudget"`
+		CreditUsed   *float64 `json:"creditUsed"`
 	}
-	decoder := json.NewDecoder(io.LimitReader(resp.Body, 1<<20))
-	if err := decoder.Decode(&profile); err != nil {
-		return supplierBalanceReading{}, errors.New("供应商响应格式无效")
+	decoder := json.NewDecoder(io.LimitReader(resp.Body, 8<<20))
+	if err := decoder.Decode(&dashboard); err != nil {
+		return supplierBalanceReading{}, resp.StatusCode, errors.New("供应商响应格式无效")
 	}
-	if profile.CreditBudget == nil || profile.MembershipUsageCredits == nil {
-		return supplierBalanceReading{}, errors.New("供应商响应缺少额度字段")
+	if dashboard.CreditBudget == nil || dashboard.CreditUsed == nil {
+		return supplierBalanceReading{}, resp.StatusCode, errors.New("供应商响应缺少额度字段")
 	}
 
 	unit := strings.TrimSpace(c.cfg.Unit)
@@ -714,13 +1202,13 @@ func (c *dimensioBalanceChecker) read(ctx context.Context, client *http.Client) 
 		unit = "积分"
 	}
 	return supplierBalanceReading{
-		Balance:  *profile.CreditBudget - *profile.MembershipUsageCredits,
+		Balance:  *dashboard.CreditBudget - *dashboard.CreditUsed,
 		Currency: unit,
 		Details: []SupplierBalanceDetailVO{
-			{Label: "总额度", Value: *profile.CreditBudget, Currency: unit},
-			{Label: "已使用", Value: *profile.MembershipUsageCredits, Currency: unit},
+			{Label: "总额度", Value: *dashboard.CreditBudget, Currency: unit},
+			{Label: "已使用", Value: *dashboard.CreditUsed, Currency: unit},
 		},
-	}, nil
+	}, resp.StatusCode, nil
 }
 
 func bearerAuthorization(token string) string {

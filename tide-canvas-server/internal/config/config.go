@@ -58,6 +58,14 @@ type BalanceMonitorConfig struct {
 	CCGO           BearerProfileBalanceConfig `mapstructure:"ccgo"`
 	CCGO2          BearerProfileBalanceConfig `mapstructure:"ccgo2"`
 	Dimensio       DimensioBalanceConfig      `mapstructure:"dimensio"`
+	// Uniart is a second New API panel. Unlike DLAPI its credentials are
+	// database-owned (sys_config), only the endpoint shape lives here.
+	Uniart NewAPIBalanceConfig `mapstructure:"uniart"`
+	// Wxart is a one-api panel (quota_per_unit 100, custom currency "R").
+	// Credentials are database-owned like Uniart's.
+	Wxart NewAPIBalanceConfig `mapstructure:"wxart"`
+	// SecureSkill runs the same platform software as Mikoto/CCGO.
+	SecureSkill BearerProfileBalanceConfig `mapstructure:"secureskill"`
 }
 
 // NewAPIBalanceConfig configures a New API compatible GET /api/user/self
@@ -75,13 +83,17 @@ type NewAPIBalanceConfig struct {
 }
 
 // BearerProfileBalanceConfig configures suppliers exposing the common
-// GET /api/v1/auth/me profile envelope (currently Mikoto and CCGO). The access
-// token is a JWT and is sent as a Bearer credential. UIRequest adds the
+// GET /api/v1/auth/me profile envelope (currently Mikoto and CCGO). When Email
+// and Password are set the monitor obtains a session JWT itself through
+// POST /api/v1/auth/login and renews it on expiry; AccessToken is a manual
+// fallback JWT sent as a Bearer credential. UIRequest adds the
 // x-user-ui-request header required by CCGO.
 type BearerProfileBalanceConfig struct {
 	Enabled     bool    `mapstructure:"enabled"`
 	Name        string  `mapstructure:"name"`
 	BaseURL     string  `mapstructure:"baseUrl"`
+	Email       string  `mapstructure:"email"`
+	Password    string  `mapstructure:"password"`
 	AccessToken string  `mapstructure:"accessToken"`
 	Timezone    string  `mapstructure:"timezone"`
 	Currency    string  `mapstructure:"currency"`
@@ -94,11 +106,15 @@ type BearerProfileBalanceConfig struct {
 type MikotoBalanceConfig = BearerProfileBalanceConfig
 
 // DimensioBalanceConfig configures GET /api/auth/me. The available credit
-// balance is calculated as credit_budget - membership_usage_credits.
+// balance is calculated as credit_budget - membership_usage_credits. When
+// Username and Password are set the monitor logs in via POST /api/auth/login
+// and renews the session token itself; AccessToken is a manual fallback.
 type DimensioBalanceConfig struct {
 	Enabled     bool    `mapstructure:"enabled"`
 	Name        string  `mapstructure:"name"`
 	BaseURL     string  `mapstructure:"baseUrl"`
+	Username    string  `mapstructure:"username"`
+	Password    string  `mapstructure:"password"`
 	AccessToken string  `mapstructure:"accessToken"`
 	Unit        string  `mapstructure:"unit"`
 	LowBalance  float64 `mapstructure:"lowBalance"`
@@ -420,17 +436,22 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("worldLabs.pollInterval", "5s")
 	v.SetDefault("worldLabs.timeout", "20m")
 
-	// Supplier balance monitor. The access token deliberately has no file
-	// default: inject it as TIDECANVAS_BALANCEMONITOR_DLAPI_ACCESSTOKEN.
+	// Supplier balance monitor. Only endpoint shape lives here; every
+	// supplier's switches, credentials, and thresholds are sys_config-owned
+	// (admin UI 配置管理 → 供应商余额) and cleared from env/YAML below.
 	v.SetDefault("balanceMonitor.refreshSeconds", 30)
-	v.SetDefault("balanceMonitor.dlapi.enabled", true)
 	v.SetDefault("balanceMonitor.dlapi.name", "DLAPI")
 	v.SetDefault("balanceMonitor.dlapi.baseUrl", "https://api.dlapi.xyz")
-	v.SetDefault("balanceMonitor.dlapi.userId", "245")
-	v.SetDefault("balanceMonitor.dlapi.accessToken", "")
 	v.SetDefault("balanceMonitor.dlapi.quotaPerUnit", 500000)
 	v.SetDefault("balanceMonitor.dlapi.currency", "USD")
-	v.SetDefault("balanceMonitor.dlapi.lowBalance", 20)
+	v.SetDefault("balanceMonitor.uniart.name", "Uniart")
+	v.SetDefault("balanceMonitor.uniart.baseUrl", "https://uniart.fun")
+	v.SetDefault("balanceMonitor.uniart.quotaPerUnit", 500000)
+	v.SetDefault("balanceMonitor.uniart.currency", "USD")
+	v.SetDefault("balanceMonitor.wxart.name", "wxart")
+	v.SetDefault("balanceMonitor.wxart.baseUrl", "https://wxart.space")
+	v.SetDefault("balanceMonitor.wxart.quotaPerUnit", 100)
+	v.SetDefault("balanceMonitor.wxart.currency", "R")
 	v.SetDefault("balanceMonitor.mikoto.name", "Mikoto")
 	v.SetDefault("balanceMonitor.mikoto.baseUrl", "https://api.mikoto.vip")
 	v.SetDefault("balanceMonitor.mikoto.timezone", "Asia/Shanghai")
@@ -502,13 +523,26 @@ func normalize(cfg *Config) {
 	if cfg.BalanceMonitor.RefreshSeconds < 10 {
 		cfg.BalanceMonitor.RefreshSeconds = 30
 	}
-	// Mikoto/CCGO/CCGO2/Dimensio dynamic values are database-owned. Explicitly
-	// discard anything decoded from legacy YAML/environment variables so these
-	// fields have exactly one runtime source: sys_config in the admin UI.
+	// Supplier-balance dynamic values (switches, credentials, thresholds) are
+	// database-owned. Explicitly discard anything decoded from legacy
+	// YAML/environment variables so these fields have exactly one runtime
+	// source: sys_config in the admin UI.
+	cfg.BalanceMonitor.DLAPI.Enabled, cfg.BalanceMonitor.DLAPI.AccessToken, cfg.BalanceMonitor.DLAPI.LowBalance = false, "", 0
+	cfg.BalanceMonitor.DLAPI.UserID = ""
 	cfg.BalanceMonitor.Mikoto.Enabled, cfg.BalanceMonitor.Mikoto.AccessToken, cfg.BalanceMonitor.Mikoto.LowBalance = false, "", 0
+	cfg.BalanceMonitor.Mikoto.Email, cfg.BalanceMonitor.Mikoto.Password = "", ""
 	cfg.BalanceMonitor.CCGO.Enabled, cfg.BalanceMonitor.CCGO.AccessToken, cfg.BalanceMonitor.CCGO.LowBalance = false, "", 0
+	cfg.BalanceMonitor.CCGO.Email, cfg.BalanceMonitor.CCGO.Password = "", ""
 	cfg.BalanceMonitor.CCGO2.Enabled, cfg.BalanceMonitor.CCGO2.AccessToken, cfg.BalanceMonitor.CCGO2.LowBalance = false, "", 0
+	cfg.BalanceMonitor.CCGO2.Email, cfg.BalanceMonitor.CCGO2.Password = "", ""
 	cfg.BalanceMonitor.Dimensio.Enabled, cfg.BalanceMonitor.Dimensio.AccessToken, cfg.BalanceMonitor.Dimensio.LowBalance = false, "", 0
+	cfg.BalanceMonitor.Dimensio.Username, cfg.BalanceMonitor.Dimensio.Password = "", ""
+	cfg.BalanceMonitor.Uniart.Enabled, cfg.BalanceMonitor.Uniart.AccessToken, cfg.BalanceMonitor.Uniart.LowBalance = false, "", 0
+	cfg.BalanceMonitor.Uniart.UserID = ""
+	cfg.BalanceMonitor.Wxart.Enabled, cfg.BalanceMonitor.Wxart.AccessToken, cfg.BalanceMonitor.Wxart.LowBalance = false, "", 0
+	cfg.BalanceMonitor.Wxart.UserID = ""
+	cfg.BalanceMonitor.SecureSkill.Enabled, cfg.BalanceMonitor.SecureSkill.AccessToken, cfg.BalanceMonitor.SecureSkill.LowBalance = false, "", 0
+	cfg.BalanceMonitor.SecureSkill.Email, cfg.BalanceMonitor.SecureSkill.Password = "", ""
 	if strings.TrimSpace(cfg.BalanceMonitor.DLAPI.Name) == "" {
 		cfg.BalanceMonitor.DLAPI.Name = "DLAPI"
 	}
@@ -517,6 +551,24 @@ func normalize(cfg *Config) {
 	}
 	if strings.TrimSpace(cfg.BalanceMonitor.DLAPI.Currency) == "" {
 		cfg.BalanceMonitor.DLAPI.Currency = "USD"
+	}
+	if strings.TrimSpace(cfg.BalanceMonitor.Uniart.Name) == "" {
+		cfg.BalanceMonitor.Uniart.Name = "Uniart"
+	}
+	if cfg.BalanceMonitor.Uniart.QuotaPerUnit <= 0 {
+		cfg.BalanceMonitor.Uniart.QuotaPerUnit = 500000
+	}
+	if strings.TrimSpace(cfg.BalanceMonitor.Uniart.Currency) == "" {
+		cfg.BalanceMonitor.Uniart.Currency = "USD"
+	}
+	if strings.TrimSpace(cfg.BalanceMonitor.Wxart.Name) == "" {
+		cfg.BalanceMonitor.Wxart.Name = "wxart"
+	}
+	if cfg.BalanceMonitor.Wxart.QuotaPerUnit <= 0 {
+		cfg.BalanceMonitor.Wxart.QuotaPerUnit = 100
+	}
+	if strings.TrimSpace(cfg.BalanceMonitor.Wxart.Currency) == "" {
+		cfg.BalanceMonitor.Wxart.Currency = "R"
 	}
 	if strings.TrimSpace(cfg.BalanceMonitor.Mikoto.Name) == "" {
 		cfg.BalanceMonitor.Mikoto.Name = "Mikoto"

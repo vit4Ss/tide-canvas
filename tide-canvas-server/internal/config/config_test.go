@@ -68,23 +68,24 @@ func TestLoadAllowsDisablingStorageAccelerationFromEnv(t *testing.T) {
 	}
 }
 
-func TestLoadDLAPIBalanceCredentialFromEnv(t *testing.T) {
+func TestLoadIgnoresLegacyDLAPIEnvironmentCredentials(t *testing.T) {
+	// DLAPI dynamic values migrated to sys_config (admin UI); legacy
+	// environment variables must be discarded like every other supplier's.
 	t.Setenv("TIDECANVAS_ENV", "test")
 	t.Setenv("TIDECANVAS_BALANCEMONITOR_DLAPI_ACCESSTOKEN", "unit-test-dlapi-token")
+	t.Setenv("TIDECANVAS_BALANCEMONITOR_DLAPI_USERID", "245")
 	t.Setenv("TIDECANVAS_BALANCEMONITOR_DLAPI_LOWBALANCE", "12.5")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.BalanceMonitor.DLAPI.AccessToken != "unit-test-dlapi-token" {
-		t.Fatal("DLAPI access token environment override was ignored")
+	if cfg.BalanceMonitor.DLAPI.Enabled || cfg.BalanceMonitor.DLAPI.AccessToken != "" ||
+		cfg.BalanceMonitor.DLAPI.UserID != "" || cfg.BalanceMonitor.DLAPI.LowBalance != 0 {
+		t.Fatalf("legacy DLAPI environment values survived normalization: %+v", cfg.BalanceMonitor.DLAPI)
 	}
-	if cfg.BalanceMonitor.DLAPI.UserID != "245" {
-		t.Errorf("DLAPI user id = %q, want 245", cfg.BalanceMonitor.DLAPI.UserID)
-	}
-	if cfg.BalanceMonitor.DLAPI.LowBalance != 12.5 {
-		t.Errorf("DLAPI low balance = %v, want 12.5", cfg.BalanceMonitor.DLAPI.LowBalance)
+	if cfg.BalanceMonitor.DLAPI.BaseURL == "" || cfg.BalanceMonitor.DLAPI.QuotaPerUnit != 500000 {
+		t.Errorf("DLAPI endpoint shape lost: %+v", cfg.BalanceMonitor.DLAPI)
 	}
 }
 

@@ -2,11 +2,15 @@ package admin
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -116,8 +120,8 @@ func TestCCGOBalanceCheckerAddsUIRequestHeader(t *testing.T) {
 
 func TestDimensioBalanceCheckerCalculatesRemainingCredits(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/auth/me" {
-			t.Errorf("request = %s %s, want GET /api/auth/me", r.Method, r.URL.Path)
+		if r.Method != http.MethodGet || r.URL.Path != "/api/user/dashboard" {
+			t.Errorf("request = %s %s, want GET /api/user/dashboard", r.Method, r.URL.Path)
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer dimensio-jwt" {
 			t.Errorf("Authorization = %q, want Bearer dimensio-jwt", got)
@@ -126,7 +130,7 @@ func TestDimensioBalanceCheckerCalculatesRemainingCredits(t *testing.T) {
 			t.Errorf("Referer = %q, want no browser metadata", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":113,"status":"active","credit_budget":410100,"membership_usage_credits":265018}`))
+		_, _ = w.Write([]byte(`{"creditBudget":560100,"creditUsed":519891,"trend":[{"date":"2026-08-20","images":0,"videos":21}],"recentRecords":[],"announcement":""}`))
 	}))
 	defer server.Close()
 
@@ -137,11 +141,199 @@ func TestDimensioBalanceCheckerCalculatesRemainingCredits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	if reading.Balance != 145082 {
-		t.Errorf("balance = %v, want 145082", reading.Balance)
+	if reading.Balance != 40209 {
+		t.Errorf("balance = %v, want 40209 (creditBudget-creditUsed)", reading.Balance)
 	}
-	if len(reading.Details) != 2 || reading.Details[0].Value != 410100 || reading.Details[1].Value != 265018 {
+	if len(reading.Details) != 2 || reading.Details[0].Value != 560100 || reading.Details[1].Value != 519891 {
 		t.Errorf("details = %+v, want budget and used credits", reading.Details)
+	}
+}
+
+func TestBalanceProfileCheckerLogsInAndCachesSession(t *testing.T) {
+	var loginCount atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			loginCount.Add(1)
+			if r.Method != http.MethodPost {
+				t.Errorf("login method = %s, want POST", r.Method)
+			}
+			if got := r.Header.Get("X-User-UI-Request"); got != "1" {
+				t.Errorf("login X-User-UI-Request = %q, want 1", got)
+			}
+			var body struct{ Email, Password string }
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil ||
+				body.Email != "ops@example.com" || body.Password != "s3cret" {
+				t.Errorf("login body = %+v (err %v), want configured account", body, err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			// Real platform shape: body enveloped as {code,data}, the web
+			// client unwraps it in an axios interceptor.
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"access_token":"session-jwt","refresh_token":"r","expires_in":3600,"user":{}}}`))
+		case "/api/v1/auth/me":
+			if got := r.Header.Get("Authorization"); got != "Bearer session-jwt" {
+				t.Errorf("Authorization = %q, want session token, never the stale manual token", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"balance":66.5}}`))
+		default:
+			t.Errorf("unexpected request path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	checker := &balanceProfileChecker{providerKey: "ccgo", tokens: newSupplierTokenCache(), cfg: config.BearerProfileBalanceConfig{
+		Enabled: true, Name: "CCGO", BaseURL: server.URL, Email: "ops@example.com", Password: "s3cret",
+		AccessToken: "stale-manual-token", Timezone: "Asia/Shanghai", Currency: "USD", UIRequest: true,
+	}}
+	for i := 0; i < 2; i++ {
+		reading, err := checker.read(context.Background(), server.Client())
+		if err != nil {
+			t.Fatalf("read %d: %v", i, err)
+		}
+		if reading.Balance != 66.5 {
+			t.Errorf("read %d balance = %v, want 66.5", i, reading.Balance)
+		}
+	}
+	if got := loginCount.Load(); got != 1 {
+		t.Errorf("login count = %d, want a single cached login for both reads", got)
+	}
+}
+
+func TestBalanceProfileCheckerRetriesOnceAfterSessionRevoked(t *testing.T) {
+	var loginCount atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			n := loginCount.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			// Bare top-level shape: covers the fallback parse path for
+			// deployments that answer without the {code,data} envelope.
+			_, _ = w.Write([]byte(`{"access_token":"session-` + strconv.FormatInt(n, 10) + `","expires_in":3600}`))
+		case "/api/v1/auth/me":
+			if r.Header.Get("Authorization") == "Bearer session-1" {
+				http.Error(w, `{"code":401,"message":"token revoked"}`, http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"balance":12}}`))
+		}
+	}))
+	defer server.Close()
+
+	checker := &balanceProfileChecker{providerKey: "mikoto", tokens: newSupplierTokenCache(), cfg: config.BearerProfileBalanceConfig{
+		Enabled: true, BaseURL: server.URL, Email: "ops@example.com", Password: "s3cret",
+		Timezone: "Asia/Shanghai", Currency: "USD",
+	}}
+	reading, err := checker.read(context.Background(), server.Client())
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if reading.Balance != 12 {
+		t.Errorf("balance = %v, want 12 after one forced re-login", reading.Balance)
+	}
+	if got := loginCount.Load(); got != 2 {
+		t.Errorf("login count = %d, want exactly 2 (initial + forced refresh)", got)
+	}
+}
+
+func TestBalanceProfileCheckerBacksOffAfterCredentialRejection(t *testing.T) {
+	var loginCount atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/auth/login" {
+			t.Errorf("unexpected request path %s, profile must not be queried without a session", r.URL.Path)
+		}
+		loginCount.Add(1)
+		http.Error(w, `{"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}`, http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	checker := &balanceProfileChecker{providerKey: "mikoto", tokens: newSupplierTokenCache(), cfg: config.BearerProfileBalanceConfig{
+		Enabled: true, BaseURL: server.URL, Email: "ops@example.com", Password: "wrong",
+		Timezone: "Asia/Shanghai", Currency: "USD",
+	}}
+	for i := 0; i < 3; i++ {
+		_, err := checker.read(context.Background(), server.Client())
+		if err == nil || !strings.Contains(err.Error(), "登录失败") {
+			t.Fatalf("read %d error = %v, want login failure", i, err)
+		}
+	}
+	if got := loginCount.Load(); got != 1 {
+		t.Errorf("login count = %d, want 1 — rejected credentials must back off, not hammer the login endpoint", got)
+	}
+}
+
+func TestDimensioBalanceCheckerLogsInWithUsername(t *testing.T) {
+	var loginCount atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/auth/login":
+			loginCount.Add(1)
+			var body struct{ Username, Password string }
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil ||
+				body.Username != "dim-user" || body.Password != "dim-pass" {
+				t.Errorf("login body = %+v (err %v), want configured account", body, err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"token":"dim-session"}`))
+		case "/api/user/dashboard":
+			if got := r.Header.Get("Authorization"); got != "Bearer dim-session" {
+				t.Errorf("Authorization = %q, want session token", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"creditBudget":1000,"creditUsed":250}`))
+		}
+	}))
+	defer server.Close()
+
+	checker := &dimensioBalanceChecker{providerKey: "dimensio", tokens: newSupplierTokenCache(), cfg: config.DimensioBalanceConfig{
+		Enabled: true, BaseURL: server.URL, Username: "dim-user", Password: "dim-pass", Unit: "积分",
+	}}
+	for i := 0; i < 2; i++ {
+		reading, err := checker.read(context.Background(), server.Client())
+		if err != nil {
+			t.Fatalf("read %d: %v", i, err)
+		}
+		if reading.Balance != 750 {
+			t.Errorf("read %d balance = %v, want 750", i, reading.Balance)
+		}
+	}
+	if got := loginCount.Load(); got != 1 {
+		t.Errorf("login count = %d, want a single cached login", got)
+	}
+}
+
+func TestSupplierCredentialIssueRequiresAccountOrToken(t *testing.T) {
+	cases := []struct {
+		account, password, token, want string
+	}{
+		{"", "", "", "缺少账号密码或访问令牌"},
+		{"a@b.c", "", "", "已填写登录邮箱但缺少登录密码"},
+		{"", "pw", "", "已填写登录密码但缺少登录邮箱"},
+		{"", "", "jwt", ""},
+		{"a@b.c", "pw", "", ""},
+		{"a@b.c", "pw", "jwt", ""},
+	}
+	for _, tc := range cases {
+		if got := supplierCredentialIssue(tc.account, tc.password, tc.token, "登录邮箱"); got != tc.want {
+			t.Errorf("supplierCredentialIssue(%q,%q,%q) = %q, want %q", tc.account, tc.password, tc.token, got, tc.want)
+		}
+	}
+}
+
+func TestSupplierSessionExpiryPrefersDeclaredLifetimeThenJWTClaim(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	if got := supplierSessionExpiry(now, 3600, "opaque"); got != now.Add(time.Hour-time.Minute) {
+		t.Errorf("declared lifetime expiry = %v, want one hour minus safety margin", got)
+	}
+	exp := now.Add(30 * time.Minute)
+	payload, _ := json.Marshal(map[string]int64{"exp": exp.Unix()})
+	jwt := "h." + base64.RawURLEncoding.EncodeToString(payload) + ".s"
+	if got := supplierSessionExpiry(now, 0, jwt); got != exp.Add(-time.Minute) {
+		t.Errorf("jwt claim expiry = %v, want claim minus safety margin", got)
+	}
+	if got := supplierSessionExpiry(now, 0, "not-a-jwt"); got != now.Add(10*time.Minute) {
+		t.Errorf("fallback expiry = %v, want conservative 10 minutes", got)
 	}
 }
 
@@ -291,20 +483,219 @@ func TestSupplierBalanceMonitorNeverFallsBackToLegacyEnvironmentCredentials(t *t
 	}
 
 	legacy := config.BalanceMonitorConfig{
-		Mikoto:   config.BearerProfileBalanceConfig{Enabled: true, AccessToken: "legacy-mikoto", LowBalance: 10},
-		CCGO:     config.BearerProfileBalanceConfig{Enabled: true, AccessToken: "legacy-ccgo", LowBalance: 10},
-		CCGO2:    config.BearerProfileBalanceConfig{Enabled: true, AccessToken: "legacy-ccgo2", LowBalance: 10},
-		Dimensio: config.DimensioBalanceConfig{Enabled: true, AccessToken: "legacy-dimensio", LowBalance: 10},
+		DLAPI:       config.NewAPIBalanceConfig{Enabled: true, AccessToken: "legacy-dlapi", UserID: "245", LowBalance: 10},
+		Mikoto:      config.BearerProfileBalanceConfig{Enabled: true, AccessToken: "legacy-mikoto", Email: "legacy@a", Password: "legacy", LowBalance: 10},
+		CCGO:        config.BearerProfileBalanceConfig{Enabled: true, AccessToken: "legacy-ccgo", Email: "legacy@a", Password: "legacy", LowBalance: 10},
+		CCGO2:       config.BearerProfileBalanceConfig{Enabled: true, AccessToken: "legacy-ccgo2", Email: "legacy@a", Password: "legacy", LowBalance: 10},
+		Dimensio:    config.DimensioBalanceConfig{Enabled: true, AccessToken: "legacy-dimensio", Username: "legacy", Password: "legacy", LowBalance: 10},
+		Uniart:      config.NewAPIBalanceConfig{Enabled: true, AccessToken: "legacy-uniart", UserID: "1", LowBalance: 10},
+		Wxart:       config.NewAPIBalanceConfig{Enabled: true, AccessToken: "legacy-wxart", UserID: "1", LowBalance: 10},
+		SecureSkill: config.BearerProfileBalanceConfig{Enabled: true, AccessToken: "legacy-secureskill", Email: "legacy@a", Password: "legacy", LowBalance: 10},
 	}
 	live, err := loadLiveSupplierBalanceConfig(db, legacy)
 	if err != nil {
 		t.Fatalf("load live config: %v", err)
 	}
-	if live.Mikoto.Enabled || live.Mikoto.AccessToken != "" || live.Mikoto.LowBalance != 0 ||
+	if live.DLAPI.Enabled || live.DLAPI.AccessToken != "" || live.DLAPI.LowBalance != 0 ||
+		live.DLAPI.UserID != "" ||
+		live.Mikoto.Enabled || live.Mikoto.AccessToken != "" || live.Mikoto.LowBalance != 0 ||
+		live.Mikoto.Email != "" || live.Mikoto.Password != "" ||
 		live.CCGO.Enabled || live.CCGO.AccessToken != "" || live.CCGO.LowBalance != 0 ||
+		live.CCGO.Email != "" || live.CCGO.Password != "" ||
 		live.CCGO2.Enabled || live.CCGO2.AccessToken != "" || live.CCGO2.LowBalance != 0 ||
-		live.Dimensio.Enabled || live.Dimensio.AccessToken != "" || live.Dimensio.LowBalance != 0 {
+		live.CCGO2.Email != "" || live.CCGO2.Password != "" ||
+		live.Dimensio.Enabled || live.Dimensio.AccessToken != "" || live.Dimensio.LowBalance != 0 ||
+		live.Dimensio.Username != "" || live.Dimensio.Password != "" ||
+		live.Uniart.Enabled || live.Uniart.AccessToken != "" || live.Uniart.LowBalance != 0 ||
+		live.Uniart.UserID != "" ||
+		live.Wxart.Enabled || live.Wxart.AccessToken != "" || live.Wxart.LowBalance != 0 ||
+		live.Wxart.UserID != "" ||
+		live.SecureSkill.Enabled || live.SecureSkill.AccessToken != "" || live.SecureSkill.LowBalance != 0 ||
+		live.SecureSkill.Email != "" || live.SecureSkill.Password != "" {
 		t.Fatalf("legacy dynamic values survived database overlay: %+v", live)
+	}
+}
+
+func TestWxartBalanceCheckerConvertsQuotaWithoutUserIDHeader(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/user/self" {
+			t.Errorf("request path = %s, want /api/user/self", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "wxart-system-token" {
+			t.Errorf("Authorization = %q, want exact configured token", got)
+		}
+		if _, present := r.Header["New-Api-User"]; present {
+			t.Error("New-Api-User header must be omitted when no user id is configured")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"data":{"quota":27795,"used_quota":2205}}`))
+	}))
+	defer server.Close()
+
+	checker := &newAPIBalanceChecker{providerKey: "wxart", cfg: config.NewAPIBalanceConfig{
+		Enabled: true, Name: "wxart", BaseURL: server.URL,
+		AccessToken: "wxart-system-token", QuotaPerUnit: 100, Currency: "R",
+	}}
+	reading, err := checker.read(context.Background(), server.Client())
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if reading.Balance != 277.95 {
+		t.Errorf("balance = %v, want 277.95 (quota/100)", reading.Balance)
+	}
+	if reading.Currency != "R" {
+		t.Errorf("currency = %q, want R", reading.Currency)
+	}
+	if len(reading.Details) != 1 || reading.Details[0].Value != 22.05 {
+		t.Errorf("details = %+v, want cumulative usage 22.05", reading.Details)
+	}
+}
+
+func TestSupplierBalanceMonitorReadsDLAPIFromDatabase(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "sk-dlapi-db-token" {
+			t.Errorf("Authorization = %q, want exact configured token", got)
+		}
+		if got := r.Header.Get("New-Api-User"); got != "245" {
+			t.Errorf("New-Api-User = %q, want 245", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"data":{"quota":6250000}}`))
+	}))
+	defer server.Close()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&model.SysConfig{}); err != nil {
+		t.Fatalf("migrate sys_config: %v", err)
+	}
+	rows := []model.SysConfig{
+		{ConfigKey: model.ConfigKeyBalanceDLAPIEnabled, ConfigValue: "1"},
+		{ConfigKey: model.ConfigKeyBalanceDLAPIUserID, ConfigValue: "245"},
+		{ConfigKey: model.ConfigKeyBalanceDLAPIAccessToken, ConfigValue: "sk-dlapi-db-token"},
+		{ConfigKey: model.ConfigKeyBalanceDLAPILowBalance, ConfigValue: "20"},
+	}
+	if err := db.Create(&rows).Error; err != nil {
+		t.Fatalf("seed supplier config: %v", err)
+	}
+
+	cfg := config.BalanceMonitorConfig{RefreshSeconds: 30, DLAPI: config.NewAPIBalanceConfig{
+		Name: "DLAPI", BaseURL: server.URL, QuotaPerUnit: 500000, Currency: "USD",
+	}}
+	monitor := newSupplierBalanceMonitorWithDBAndClient(db, cfg, server.Client())
+
+	row := monitor.snapshot(context.Background()).Suppliers[0]
+	if row.Key != "dlapi" || row.State != "healthy" || row.Balance == nil || *row.Balance != 12.5 {
+		t.Fatalf("snapshot = %+v, want healthy DLAPI balance 12.5 via sys_config credentials", row)
+	}
+}
+
+func TestSupplierBalanceMonitorReadsUniartFromDatabase(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/user/self" {
+			t.Errorf("request path = %s, want /api/user/self", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "uniart-system-token" {
+			t.Errorf("Authorization = %q, want exact configured token", got)
+		}
+		if got := r.Header.Get("New-Api-User"); got != "42" {
+			t.Errorf("New-Api-User = %q, want 42", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"data":{"quota":237000000,"used_quota":55000000}}`))
+	}))
+	defer server.Close()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&model.SysConfig{}); err != nil {
+		t.Fatalf("migrate sys_config: %v", err)
+	}
+	rows := []model.SysConfig{
+		{ConfigKey: model.ConfigKeyBalanceUniartEnabled, ConfigValue: "1"},
+		{ConfigKey: model.ConfigKeyBalanceUniartUserID, ConfigValue: "42"},
+		{ConfigKey: model.ConfigKeyBalanceUniartAccessToken, ConfigValue: "uniart-system-token"},
+		{ConfigKey: model.ConfigKeyBalanceUniartLowBalance, ConfigValue: "100"},
+	}
+	if err := db.Create(&rows).Error; err != nil {
+		t.Fatalf("seed supplier config: %v", err)
+	}
+
+	cfg := config.BalanceMonitorConfig{RefreshSeconds: 30, Uniart: config.NewAPIBalanceConfig{
+		Name: "Uniart", BaseURL: server.URL, QuotaPerUnit: 500000, Currency: "USD",
+	}}
+	monitor := newSupplierBalanceMonitorWithDBAndClient(db, cfg, server.Client())
+
+	row := monitor.snapshot(context.Background()).Suppliers[5]
+	if row.Key != "uniart" {
+		t.Fatalf("supplier key = %q, want uniart as the last row", row.Key)
+	}
+	if row.State != "healthy" || row.Balance == nil || *row.Balance != 474 {
+		t.Fatalf("snapshot = %+v, want healthy balance 474 (quota/quotaPerUnit)", row)
+	}
+	if row.LowBalance == nil || *row.LowBalance != 100 {
+		t.Errorf("lowBalance = %v, want 100 from sys_config", row.LowBalance)
+	}
+}
+
+func TestSupplierBalanceMonitorLogsInWithDatabaseAccount(t *testing.T) {
+	var loginCount atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			loginCount.Add(1)
+			var body struct{ Email, Password string }
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body.Email != "db@example.com" || body.Password != "db-pass" {
+				http.Error(w, `{"code":401,"message":"invalid email or password"}`, http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"access_token":"db-session","expires_in":3600}}`))
+		case "/api/v1/auth/me":
+			if r.Header.Get("Authorization") != "Bearer db-session" {
+				http.Error(w, "unexpected token", http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"balance":77}}`))
+		}
+	}))
+	defer server.Close()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&model.SysConfig{}); err != nil {
+		t.Fatalf("migrate sys_config: %v", err)
+	}
+	rows := []model.SysConfig{
+		{ConfigKey: model.ConfigKeyBalanceMikotoEnabled, ConfigValue: "1"},
+		{ConfigKey: model.ConfigKeyBalanceMikotoEmail, ConfigValue: "db@example.com"},
+		{ConfigKey: model.ConfigKeyBalanceMikotoPassword, ConfigValue: "db-pass"},
+	}
+	if err := db.Create(&rows).Error; err != nil {
+		t.Fatalf("seed supplier config: %v", err)
+	}
+
+	cfg := config.BalanceMonitorConfig{RefreshSeconds: 30, Mikoto: config.BearerProfileBalanceConfig{
+		Name: "Mikoto", BaseURL: server.URL, Timezone: "Asia/Shanghai", Currency: "USD",
+	}}
+	monitor := newSupplierBalanceMonitorWithDBAndClient(db, cfg, server.Client())
+
+	for i := 0; i < 2; i++ {
+		row := monitor.snapshot(context.Background()).Suppliers[1]
+		if row.State != "healthy" || row.Balance == nil || *row.Balance != 77 {
+			t.Fatalf("snapshot %d = %+v, want healthy balance 77 via auto-login", i, row)
+		}
+	}
+	if got := loginCount.Load(); got != 1 {
+		t.Errorf("login count = %d, want session reused across snapshots", got)
 	}
 }
 
@@ -326,10 +717,10 @@ func TestSupplierBalanceMonitorReportsDatabaseConfigFailureAccurately(t *testing
 
 	monitor := newSupplierBalanceMonitorWithDBAndClient(db, config.BalanceMonitorConfig{}, http.DefaultClient)
 	rows := monitor.snapshot(context.Background()).Suppliers
-	if len(rows) != 5 {
-		t.Fatalf("supplier rows = %d, want 5", len(rows))
+	if len(rows) != 8 {
+		t.Fatalf("supplier rows = %d, want 8", len(rows))
 	}
-	for _, row := range rows[1:] {
+	for _, row := range rows {
 		if row.State != "error" || row.Message != "无法读取监控配置" || row.Balance != nil || row.Stale {
 			t.Errorf("database failure row = %+v", row)
 		}
