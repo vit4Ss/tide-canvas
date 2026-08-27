@@ -11,6 +11,7 @@ import {
 import {
   buildBlockingRecognitionPrompt,
   buildWhiteboxRecognitionPrompt,
+  inferWhiteboxCategory,
   parseRecognizedBlocking,
   parseRecognizedWhitebox,
   recognitionTaskText,
@@ -179,6 +180,9 @@ test("whitebox generation wires prompt, prop import and forced replace into the 
   assert.match(prompt, /vBottom为接地点/);
   assert.match(prompt, /地板由程序自动生成/);
   assert.match(prompt, /空旷区域保持空白/);
+  // 类别驱动模板展开：模型给整体外包，组合白膜由程序细化
+  assert.match(prompt, /每个物体给category/);
+  assert.match(prompt, /组合白膜/);
   assert.match(prompt, /不得穿插重叠/);
   assert.match(buildBlockingRecognitionPrompt(), /等距柱状全景图/);
 });
@@ -335,6 +339,57 @@ test("characters are pushed out of blocking props but not rugs or beams", () => 
     characters: [{ name: "角色A", preset: "standard-male", x: 0.1, z: 0, rotation: 0, scale: 1 }],
   }));
   assert.ok(Math.hypot(parsed.characters[0].x, parsed.characters[0].z) >= 0.84);
+});
+
+test("category inference maps Chinese names with the right precedence", () => {
+  assert.equal(inferWhiteboxCategory("接待台"), "counter");
+  assert.equal(inferWhiteboxCategory("柜台"), "counter");
+  assert.equal(inferWhiteboxCategory("书柜"), "cabinet");
+  assert.equal(inferWhiteboxCategory("长椅"), "sofa");
+  assert.equal(inferWhiteboxCategory("餐椅"), "chair");
+  assert.equal(inferWhiteboxCategory("大理石柱"), "column");
+  assert.equal(inferWhiteboxCategory("落地玻璃"), "window");
+  assert.equal(inferWhiteboxCategory("吊灯"), "lamp");
+  assert.equal(inferWhiteboxCategory("石雕"), "generic");
+});
+
+test("category templates expand blocks into demo-grade compound whiteboxes", () => {
+  const parsed = parseRecognizedWhitebox(JSON.stringify({
+    props: [
+      { name: "沙发", kind: "box", x: 0, y: 0.4, z: 2, rotation: 90, w: 2, h: 0.8, d: 0.9 },
+      { name: "餐桌", kind: "box", x: 3, y: 0.375, z: 0, rotation: 0, w: 1.6, h: 0.75, d: 0.9 },
+      { name: "绿植", kind: "cylinder", x: -3, y: 1, z: 0, rotation: 0, w: 0.8, h: 2, d: 0.8 },
+    ],
+    characters: [],
+  }));
+  assert.ok(parsed);
+  const names = parsed.props.map((prop) => prop.name);
+  assert.ok(names.includes("沙发·座") && names.includes("沙发·靠背") && names.includes("沙发·扶手"));
+  assert.ok(names.includes("餐桌·桌面"));
+  assert.equal(names.filter((name) => name === "餐桌·桌腿").length, 4);
+  assert.ok(names.includes("绿植·花盆") && names.includes("绿植·枝干") && names.includes("绿植·叶冠"));
+  // 桌面顶在桌高处、桌腿落地
+  const top = parsed.props.find((prop) => prop.name === "餐桌·桌面");
+  assert.ok(Math.abs(top.y + top.h / 2 - 0.75) < 1e-9);
+  const leg = parsed.props.find((prop) => prop.name === "餐桌·桌腿");
+  assert.ok(Math.abs(leg.y - leg.h / 2) < 1e-9);
+  // 部件跟随体块旋转：rotation=90 的沙发，靠背的局部 -z 偏移变成世界 -x
+  const back = parsed.props.find((prop) => prop.name === "沙发·靠背");
+  assert.ok(Math.abs(back.x + 0.35) < 1e-9);
+  assert.ok(Math.abs(back.z - 2) < 1e-9);
+  assert.equal(back.rotation, 90);
+});
+
+test("template expansion respects the persisted scene prop budget", () => {
+  const props = Array.from({ length: 40 }, (_, index) => ({
+    name: `椅子${index}`, kind: "box", x: index * 0.5, y: 0.45, z: 0, rotation: 0, w: 0.45, h: 0.9, d: 0.45,
+  }));
+  const parsed = parseRecognizedWhitebox(JSON.stringify({ props, characters: [] }));
+  assert.ok(parsed);
+  // 40把椅子×6件超预算：预算内展开，其余退回单体块，总量不超过持久化上限
+  assert.ok(parsed.props.length <= 97);
+  assert.ok(parsed.props.some((prop) => prop.name.includes("·")));
+  assert.ok(parsed.props.some((prop) => !prop.name.includes("·") && prop.name.startsWith("椅子")));
 });
 
 test("restored geometry ids cannot create unreachable duplicate scene objects", () => {

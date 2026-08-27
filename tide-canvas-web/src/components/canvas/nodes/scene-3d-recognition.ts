@@ -30,10 +30,16 @@ export interface RecognizedBlockingCharacter {
   scale: number;
 }
 
+export type WhiteboxCategory =
+  | "table" | "chair" | "sofa" | "stool" | "counter" | "cabinet" | "shelf"
+  | "plant" | "lamp" | "column" | "door" | "window" | "generic";
+
 /** 白膜物体：米制真实尺寸与放置变换，导入时换算为道具几何的缩放。 */
 export interface RecognizedWhiteboxProp {
   name: string;
   kind: "box" | "sphere" | "cylinder";
+  /** 类别驱动模板展开（桌面+桌腿等组合白膜）；缺省按名字推断。 */
+  category?: WhiteboxCategory;
   x: number;
   /** 物体中心离地高度（米）；落地物体为 h/2。 */
   y: number;
@@ -111,16 +117,46 @@ function parseCharacterRows(value: unknown): RecognizedBlockingCharacter[] {
   });
 }
 
+const WHITEBOX_CATEGORY_SET = new Set<string>([
+  "table", "chair", "sofa", "stool", "counter", "cabinet", "shelf",
+  "plant", "lamp", "column", "door", "window", "generic",
+]);
+
+/** 模型没给类别时按名字关键词推断。顺序有讲究：长椅先于椅、柜台先于柜。 */
+export function inferWhiteboxCategory(name: string): WhiteboxCategory {
+  if (/窗|玻璃/.test(name)) return "window";
+  if (/灯/.test(name)) return "lamp";
+  if (/植|盆栽|树/.test(name)) return "plant";
+  if (/柱/.test(name)) return "column";
+  if (/门/.test(name)) return "door";
+  if (/沙发|卡座|长椅/.test(name)) return "sofa";
+  if (/椅/.test(name)) return "chair";
+  if (/凳/.test(name)) return "stool";
+  if (/吧台|前台|接待|柜台|服务台|收银|台子/.test(name)) return "counter";
+  if (/书架|货架|置物架|层架/.test(name)) return "shelf";
+  if (/柜/.test(name)) return "cabinet";
+  if (/桌/.test(name)) return "table";
+  return "generic";
+}
+
+function categoryOf(record: Record<string, unknown>, name: string): WhiteboxCategory {
+  return typeof record.category === "string" && WHITEBOX_CATEGORY_SET.has(record.category)
+    ? record.category as WhiteboxCategory
+    : inferWhiteboxCategory(name);
+}
+
 function parsePropRows(value: unknown): RecognizedWhiteboxProp[] {
   const rows = Array.isArray(value) ? value.slice(0, 40) : [];
   return rows.flatMap((row, index): RecognizedWhiteboxProp[] => {
     if (!row || typeof row !== "object" || Array.isArray(row)) return [];
     const record = row as Record<string, unknown>;
     const kind = record.kind === "sphere" || record.kind === "cylinder" ? record.kind : "box";
+    const name = typeof record.name === "string" && record.name.trim() ? record.name.trim().slice(0, 40) : `物体${index + 1}`;
     const h = finite(record.h, 0.5, 0.05, 10);
     return [{
-      name: typeof record.name === "string" && record.name.trim() ? record.name.trim().slice(0, 40) : `物体${index + 1}`,
+      name,
       kind,
+      category: categoryOf(record, name),
       x: finite(record.x, 0, -8, 8),
       y: finite(record.y, h / 2, 0.02, 8),
       z: finite(record.z, 0, -8, 8),
@@ -403,6 +439,7 @@ function solveAnnotatedObject(
   return {
     name: row.name,
     kind: row.kind,
+    category: categoryOf(row.record, row.name),
     x: distance * Math.sin(azimuth),
     y,
     z: -distance * Math.cos(azimuth),
@@ -459,18 +496,175 @@ function solveAnnotatedScene(raw: Record<string, unknown>): RecognizedBlocking |
   const cameraHeight = calibrateCameraHeight(objects, initialHeight);
   const shell = solveWallSegments(room, cameraHeight);
   const wallHeight = finite(room.wallHeight, 3.2, 2.5, 6);
-  const props: RecognizedWhiteboxProp[] = shellWalls(shell, wallHeight);
+  const walls = shellWalls(shell, wallHeight);
+  const blocks: RecognizedWhiteboxProp[] = [];
   for (const row of objects) {
     const solved = solveAnnotatedObject(row, cameraHeight, shell);
-    if (solved) props.push(solved);
+    if (solved) blocks.push(solved);
   }
   const characters = parseAnnotatedCharacters(raw.characters, cameraHeight, shell);
-  if (!characters.length && !props.length) return null;
+  if (!characters.length && !walls.length && !blocks.length) return null;
+  // 碰撞消解用整体外包体块（人物应被整张桌子推开，而不是只避开桌腿）
+  const resolved = resolveCharacterPropCollisions(characters, [...walls, ...blocks]);
+  const props = [...walls, ...expandWhiteboxObjects(blocks, MAX_SCENE_PROPS - walls.length - 1)];
   return {
-    characters: resolveCharacterPropCollisions(characters, props),
+    characters: resolved,
     props: appendFloorSlab(props),
     ...cameraPresetField(raw),
   };
+}
+
+// ===== 类别模板：把单个外包体块展开为组合白膜 =====
+// 模型只负责"类别 + 整体外包尺寸"，桌面桌腿、座面靠背这类细化由代码
+// 确定性生成——精致度由模板保证，不依赖模型的空间想象力。
+
+/** 持久化解析上限 100，留余量给舞台上既有道具。 */
+const MAX_SCENE_PROPS = 96;
+
+/** 在体块局部坐标系里放一个部件（局部 +x 沿体块朝向），转回世界坐标。 */
+function templatePart(
+  block: RecognizedWhiteboxProp,
+  suffix: string,
+  kind: RecognizedWhiteboxProp["kind"],
+  lx: number,
+  centerY: number,
+  lz: number,
+  w: number,
+  h: number,
+  d: number,
+): RecognizedWhiteboxProp {
+  const alpha = block.rotation * DEG;
+  const cos = Math.cos(alpha);
+  const sin = Math.sin(alpha);
+  return {
+    name: `${block.name}·${suffix}`,
+    kind,
+    x: block.x + lx * cos + lz * sin,
+    y: centerY,
+    z: block.z - lx * sin + lz * cos,
+    rotation: block.rotation,
+    w,
+    h,
+    d,
+  };
+}
+
+function expandTemplate(block: RecognizedWhiteboxProp): RecognizedWhiteboxProp[] {
+  const { w, h, d } = block;
+  const base = block.y - h / 2;
+  const P = (suffix: string, kind: RecognizedWhiteboxProp["kind"], lx: number, cy: number, lz: number, pw: number, ph: number, pd: number) =>
+    templatePart(block, suffix, kind, lx, cy, lz, pw, ph, pd);
+  switch (block.category ?? "generic") {
+    case "table": {
+      const topT = Math.min(0.08, Math.max(0.04, h * 0.1));
+      const legH = h - topT;
+      const parts = [P("桌面", block.kind === "cylinder" ? "cylinder" : "box", 0, base + h - topT / 2, 0, w, topT, d)];
+      if (block.kind === "cylinder" || Math.min(w, d) < 0.9) {
+        const pole = Math.max(0.06, Math.min(w, d) * 0.12);
+        parts.push(P("桌腿", "cylinder", 0, base + legH / 2, 0, pole, legH, pole));
+        parts.push(P("底座", "cylinder", 0, base + 0.02, 0, Math.min(w, d) * 0.5, 0.04, Math.min(w, d) * 0.5));
+      } else {
+        for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const)
+          parts.push(P("桌腿", "box", sx * (w / 2 - 0.1), base + legH / 2, sz * (d / 2 - 0.1), 0.07, legH, 0.07));
+      }
+      return parts;
+    }
+    case "chair": {
+      const seatH = Math.min(0.5, Math.max(0.3, h * 0.55));
+      const backD = Math.min(0.08, Math.max(0.04, d * 0.15));
+      const parts = [
+        P("座面", "box", 0, base + seatH - 0.025, 0, w, 0.05, d),
+        P("靠背", "box", 0, base + seatH + (h - seatH) / 2, -(d / 2 - backD / 2), w, Math.max(0.1, h - seatH), backD),
+      ];
+      for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const)
+        parts.push(P("椅腿", "box", sx * (w / 2 - 0.05), base + (seatH - 0.05) / 2, sz * (d / 2 - 0.05), 0.05, seatH - 0.05, 0.05));
+      return parts;
+    }
+    case "sofa": {
+      const seatH = Math.min(0.45, Math.max(0.3, h * 0.5));
+      const backD = Math.min(0.2, Math.max(0.1, d * 0.3));
+      const parts = [
+        P("座", "box", 0, base + seatH / 2, 0, w, seatH, d),
+        P("靠背", "box", 0, base + seatH + (h - seatH) / 2, -(d / 2 - backD / 2), w, Math.max(0.1, h - seatH), backD),
+      ];
+      if (w > 1.6) {
+        for (const side of [-1, 1] as const)
+          parts.push(P("扶手", "box", side * (w / 2 - 0.09), base + (seatH + 0.15) / 2, 0.02, 0.18, seatH + 0.15, Math.max(0.2, d - 0.04)));
+      }
+      return parts;
+    }
+    case "counter":
+      return [
+        P("柜体", "box", 0, base + (h - 0.05) / 2, 0, w, h - 0.05, Math.max(0.2, d * 0.8)),
+        P("台面", "box", 0, base + h - 0.025, 0, w + 0.08, 0.05, d),
+      ];
+    case "cabinet":
+      return [
+        P("柜体", "box", 0, base + (h - 0.04) / 2, 0, w, h - 0.04, d),
+        P("顶板", "box", 0, base + h - 0.02, 0, w + 0.04, 0.04, d + 0.04),
+      ];
+    case "shelf": {
+      const parts: RecognizedWhiteboxProp[] = [];
+      for (const side of [-1, 1] as const)
+        parts.push(P("侧板", "box", side * (w / 2 - 0.02), base + h / 2, 0, 0.04, h, d));
+      for (const t of [0.2, 0.5, 0.8])
+        parts.push(P("层板", "box", 0, base + h * t, 0, Math.max(0.1, w - 0.08), 0.04, d));
+      return parts;
+    }
+    case "plant": {
+      const potH = Math.max(0.12, h * 0.18);
+      const crownH = Math.max(0.2, h * 0.5);
+      const trunkH = Math.max(0.05, h - potH - crownH);
+      return [
+        P("花盆", "cylinder", 0, base + potH / 2, 0, Math.max(0.15, w * 0.45), potH, Math.max(0.15, w * 0.45)),
+        P("枝干", "cylinder", 0, base + potH + trunkH / 2, 0, 0.06, trunkH, 0.06),
+        P("叶冠", "sphere", 0, base + h - crownH / 2, 0, w, crownH, d),
+      ];
+    }
+    case "lamp": {
+      const top = block.y + h / 2;
+      const shadeH = Math.max(0.1, h * 0.4);
+      const cordH = Math.max(0.05, h - shadeH);
+      return [
+        P("吊线", "cylinder", 0, top - cordH / 2, 0, 0.02, cordH, 0.02),
+        P("灯罩", "cylinder", 0, top - cordH - shadeH / 2, 0, w, shadeH, d),
+      ];
+    }
+    case "window": {
+      if (h < 1.6 || w < 0.8) return [block];
+      const frameD = Math.max(0.1, Math.min(0.2, d));
+      const sillH = Math.min(0.85, h * 0.3);
+      const headH = 0.2;
+      const glassH = h - sillH - headH;
+      const parts = [
+        P("窗台", "box", 0, base + sillH / 2, 0, w, sillH, frameD),
+        P("横梁", "box", 0, base + h - headH / 2, 0, w, headH, frameD),
+        P("玻璃", "box", 0, base + sillH + glassH / 2, 0, w, glassH, 0.04),
+      ];
+      const mullions = Math.min(5, Math.max(2, Math.round(w / 1.6)));
+      for (let index = 0; index < mullions; index += 1) {
+        const lx = -w / 2 + 0.04 + ((w - 0.08) * index) / (mullions - 1);
+        parts.push(P("立梃", "box", lx, base + sillH + glassH / 2, 0, 0.08, glassH, frameD));
+      }
+      return parts;
+    }
+    case "door":
+      // 白膜里门就是一片薄板；限制进深防止模型把门标成一间小屋
+      return [{ ...block, d: Math.min(block.d, 0.15) }];
+    default:
+      return [block];
+  }
+}
+
+/** 按顺序展开模板并控制总量：超预算的物体保持单体块，绝不静默丢弃靠前的物体。 */
+function expandWhiteboxObjects(blocks: readonly RecognizedWhiteboxProp[], budget: number): RecognizedWhiteboxProp[] {
+  const result: RecognizedWhiteboxProp[] = [];
+  for (const block of blocks) {
+    const parts = expandTemplate(block);
+    if (result.length + parts.length <= budget) result.push(...parts);
+    else if (result.length < budget) result.push(block);
+  }
+  return result;
 }
 
 // ===== 人物与体块的碰撞消解 =====
@@ -548,11 +742,11 @@ export function parseRecognizedWhitebox(text: string): RecognizedBlocking | null
     return solveAnnotatedScene(raw);
   }
   const characters = parseCharacterRows(raw.characters);
-  const props = parsePropRows(raw.props);
-  if (!characters.length && !props.length) return null;
+  const blocks = parsePropRows(raw.props);
+  if (!characters.length && !blocks.length) return null;
   return {
-    characters: resolveCharacterPropCollisions(characters, props),
-    props: appendFloorSlab(props),
+    characters: resolveCharacterPropCollisions(characters, blocks),
+    props: appendFloorSlab(expandWhiteboxObjects(blocks, MAX_SCENE_PROPS - 1)),
     ...cameraPresetField(raw),
   };
 }
@@ -574,13 +768,14 @@ export function buildWhiteboxRecognitionPrompt(): string {
     "分析这张场景图，把画面中的主要物体简化为3D白膜体块（blockout），并提取人物站位，生成3D导演台场景。",
     "只返回一个JSON对象，不要Markdown和解释。先判断图片类型，两种类型使用不同的返回格式。",
     "类型A·360°等距柱状全景图（画面横向环绕一周、直线呈弧形弯曲，宽高比约2:1或16:9）——使用标注模式：只在图上标归一化坐标（u:0=最左、1=最右；v:0=顶、1=底），不要自己估算米数，三维坐标由程序按全景几何解算。返回：",
-    "{\"imageType\":\"panorama\",\"cameraHeight\":1.6,\"room\":{\"wallHeight\":3.5,\"wallRuns\":[[{\"u\":0.03,\"v\":0.58},{\"u\":0.15,\"v\":0.60}]]},\"objects\":[{\"name\":\"接待台\",\"kind\":\"box\",\"u1\":0.68,\"u2\":0.79,\"vBottom\":0.62,\"vTop\":0.47,\"grounded\":true,\"againstWall\":true,\"depth\":0.6}],\"characters\":[{\"name\":\"角色A\",\"preset\":\"standard-male\",\"u\":0.3,\"v\":0.7}],\"cameraPreset\":\"front-medium\"}",
+    "{\"imageType\":\"panorama\",\"cameraHeight\":1.6,\"room\":{\"wallHeight\":3.5,\"wallRuns\":[[{\"u\":0.03,\"v\":0.58},{\"u\":0.15,\"v\":0.60}]]},\"objects\":[{\"name\":\"接待台\",\"kind\":\"box\",\"category\":\"counter\",\"u1\":0.68,\"u2\":0.79,\"vBottom\":0.62,\"vTop\":0.47,\"grounded\":true,\"againstWall\":true,\"depth\":0.6}],\"characters\":[{\"name\":\"角色A\",\"preset\":\"standard-male\",\"u\":0.3,\"v\":0.7}],\"cameraPreset\":\"front-medium\"}",
     "wallRuns：只在真实存在连续实体墙面的地方标墙段——每一段连续墙作为一组，组内沿墙脚（墙面与地面交线）按顺序标2到8个点（拐角必须有点，v必须大于0.55）；走廊、门洞、电梯口、通道、大面积玻璃开口处不要标，留空，组与组之间不要连接闭合；没有明显实体墙时wallRuns为空数组。wallHeight为墙高（米）。",
     "objects：标8到25个主要物体（立柱、家具、门、大型陈设、绿植）。每根立柱单独标一个体块（kind用cylinder或box），不要把多根柱子并成一面墙。u1/u2为物体左右边缘；vBottom为接地点（物体与地面接触处的v，标点务必精确，它决定距离）；vTop为顶部；grounded为接地点是否可见（被遮挡标false）；againstWall为是否贴墙；depth为进深米数（可凭常识估）。",
+    "每个物体给category，从 table、chair、sofa、stool、counter、cabinet、shelf、plant、lamp、column、door、window、generic 中选最接近的一类——程序会按类别把体块细化成桌面桌腿、座面靠背、花盆叶冠等组合白膜，所以标注范围取物体的整体外包。",
     "characters：图中真实人物脚下接地点的u/v。",
     "类型B·普通透视照片——使用直出模式，返回：",
-    "{\"imageType\":\"perspective\",\"props\":[{\"name\":\"沙发\",\"kind\":\"box\",\"x\":-1.2,\"y\":0.4,\"z\":0.6,\"rotation\":0,\"w\":2,\"h\":0.8,\"d\":0.9}],\"characters\":[{\"name\":\"角色A\",\"preset\":\"standard-male\",\"x\":-0.8,\"z\":0.2,\"rotation\":0,\"scale\":1}],\"cameraPreset\":\"front-medium\"}",
-    "直出模式坐标：画面左侧为负x、右侧为正x；前景为正z、远景为负z；x/z范围-8到8；w/h/d为真实尺寸（米），y为中心离地高度（落地取h/2），rotation为绕竖直轴角度。",
+    "{\"imageType\":\"perspective\",\"props\":[{\"name\":\"沙发\",\"kind\":\"box\",\"category\":\"sofa\",\"x\":-1.2,\"y\":0.4,\"z\":0.6,\"rotation\":0,\"w\":2,\"h\":0.8,\"d\":0.9}],\"characters\":[{\"name\":\"角色A\",\"preset\":\"standard-male\",\"x\":-0.8,\"z\":0.2,\"rotation\":0,\"scale\":1}],\"cameraPreset\":\"front-medium\"}",
+    "直出模式坐标：画面左侧为负x、右侧为正x；前景为正z、远景为负z；x/z范围-8到8；w/h/d为真实尺寸（米），y为中心离地高度（落地取h/2），rotation为绕竖直轴角度；category规则与标注模式相同。",
     "通用规则：kind只能是box、sphere、cylinder，圆柱仅用于立柱、圆桌等真圆物；地板由程序自动生成，不要输出地面、天花板、整铺地毯、灯带；空旷区域保持空白，不要用体块填充；成排成组的小物合并为一个体块；体块之间不得穿插重叠；尺寸符合常识（桌高约0.75米、座面约0.45米、门高约2.1米、层高2.7到4米）。",
     "characters的preset只能是 standard-male、standard-female、athletic、slim、teen、child、broad、chibi；画面中没有人物时characters返回空数组，不要虚构。",
   ].join("\n");
