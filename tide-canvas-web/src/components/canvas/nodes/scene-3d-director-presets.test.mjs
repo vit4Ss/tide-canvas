@@ -10,8 +10,12 @@ import {
 } from "./scene-3d-director-presets.ts";
 import {
   buildBlockingRecognitionPrompt,
+  buildWhiteboxRecognitionPrompt,
   parseRecognizedBlocking,
+  parseRecognizedWhitebox,
   recognitionTaskText,
+  whiteboxPropPlacement,
+  WHITEBOX_PROP_COLOR,
 } from "./scene-3d-recognition.ts";
 
 const editorSource = readFileSync(new URL("./scene-3d-editor.tsx", import.meta.url), "utf8");
@@ -104,11 +108,68 @@ test("recognition modal owns focus while it is open", () => {
 });
 
 test("replace recognition clears stale panorama inputs and camera motion", () => {
-  assert.match(editorSource, /if \(recognitionMode === "replace"\)/);
+  assert.match(editorSource, /if \(mode === "replace"\)/);
   assert.match(editorSource, /delete nextEnv\.panoUrl/);
   assert.match(editorSource, /setPanorama\(null\)/);
-  assert.match(editorSource, /panoramaConnections\.forEach[\s\S]*?removeConnection/);
+  assert.match(editorSource, /staleConnections\.forEach[\s\S]*?removeConnection/);
   assert.match(editorSource, /DEFAULT_SCENE_3D_MOTION, keyframes: \[\]/);
+});
+
+test("whitebox parser accepts prop-only scenes, caps rows and clamps block dimensions", () => {
+  const props = Array.from({ length: 50 }, (_, index) => ({
+    name: `物${index}`,
+    kind: index === 0 ? "cylinder" : "cube",
+    x: index === 0 ? 99 : -1,
+    z: index === 0 ? -99 : 0,
+    rotation: 999,
+    w: 99,
+    h: 0.001,
+    d: 2,
+  }));
+  const parsed = parseRecognizedWhitebox(`\`\`\`json\n${JSON.stringify({ props, characters: [] })}\n\`\`\``);
+  assert.ok(parsed);
+  assert.equal(parsed.characters.length, 0);
+  assert.equal(parsed.props.length, 40);
+  assert.equal(parsed.props[0].kind, "cylinder");
+  assert.equal(parsed.props[1].kind, "box");
+  assert.equal(parsed.props[0].x, 8);
+  assert.equal(parsed.props[0].z, -8);
+  assert.equal(parsed.props[0].rotation, 180);
+  assert.equal(parsed.props[0].w, 10);
+  assert.equal(parsed.props[0].h, 0.05);
+  // y 缺省为限幅后的 h/2，落地物体不会插进地面
+  assert.equal(parsed.props[0].y, 0.025);
+  assert.equal(parseRecognizedWhitebox(JSON.stringify({ props: [], characters: [] })), null);
+  assert.equal(parseRecognizedWhitebox("not json"), null);
+});
+
+test("whitebox placement converts meters into base-geometry prop transforms", () => {
+  const placement = whiteboxPropPlacement({ name: "沙发", kind: "box", x: -1.2, y: 0.4, z: 0.6, rotation: 90, w: 2, h: 0.8, d: 0.9 });
+  assert.deepEqual(placement.pos, [-1.2, 0.4, 0.6]);
+  assert.ok(Math.abs(placement.rot[1] - Math.PI / 2) < 1e-9);
+  assert.deepEqual(placement.scale, [2 / 0.8, 1, 0.9 / 0.8]);
+  assert.equal(placement.color, WHITEBOX_PROP_COLOR);
+  const cylinder = whiteboxPropPlacement({ name: "杯", kind: "cylinder", x: 0, y: 0.8, z: 0, rotation: 0, w: 0.1, h: 0.1, d: 0.1 });
+  assert.deepEqual(cylinder.scale, [0.125, 0.1 / 0.9, 0.125]);
+  // 基准尺寸必须与编辑器 addPropInternal 创建的几何一致
+  assert.match(editorSource, /BoxGeometry\(0\.8, 0\.8, 0\.8\)/);
+  assert.match(editorSource, /SphereGeometry\(0\.45, 32, 20\)/);
+  assert.match(editorSource, /CylinderGeometry\(0\.4, 0\.4, 0\.9, 32\)/);
+});
+
+test("whitebox generation wires prompt, prop import and forced replace into the editor", () => {
+  const prompt = buildWhiteboxRecognitionPrompt();
+  assert.match(prompt, /只返回一个JSON对象/);
+  assert.match(prompt, /kind只能是box、sphere、cylinder/);
+  assert.match(prompt, /不要虚构/);
+  assert.match(editorSource, /parseRecognizedWhitebox\(resultText\)/);
+  assert.match(editorSource, /blocking\.props \?\? \[\]\)\.forEach|for \(const prop of blocking\.props \?\? \[\]\) addPropInternal\(whiteboxPropPlacement\(prop\)\)/);
+  assert.match(editorSource, /whitebox \? "replace" : recognitionMode/);
+  assert.match(editorSource, /WHITEBOX_FLOW_STEPS = \["识别场景物品与人物", "生成白膜体块", "摆放人物站位", "覆盖当前导演台"\]/);
+  // 白膜覆盖必须连场景资产及其 3D 入边一起清掉，否则体块与旧场景几何叠加
+  assert.match(editorSource, /clearSceneAsset: \(\) => \{ void setSceneAssetInternal\(null\); \}/);
+  assert.match(editorSource, /apiRef\.current\?\.clearSceneAsset\(\);\s*sceneAssetRef\.current = null;\s*setSceneAsset\(null\);/);
+  assert.match(editorSource, /whitebox && candidate\.type === "3d"/);
 });
 
 test("restored geometry ids cannot create unreachable duplicate scene objects", () => {

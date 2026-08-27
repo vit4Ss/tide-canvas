@@ -7,7 +7,7 @@ import {
   Move, RotateCw, Maximize2, Play, Pause, Route, SkipBack, Crosshair,
   Layers3, Search, GalleryHorizontal, ImagePlus, Upload, History, WandSparkles,
   ChevronLeft, ChevronRight, RefreshCw, Box, Circle, Cylinder,
-  RectangleHorizontal,
+  RectangleHorizontal, Check,
 } from "lucide-react";
 import type * as THREE_NS from "three";
 import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-canvas-store";
@@ -49,7 +49,15 @@ import {
   type CharacterPresetKey,
   type FrameAspectKey,
 } from "./scene-3d-director-presets";
-import { buildBlockingRecognitionPrompt, parseRecognizedBlocking, recognitionTaskText, type RecognizedBlocking } from "./scene-3d-recognition";
+import {
+  buildBlockingRecognitionPrompt,
+  buildWhiteboxRecognitionPrompt,
+  parseRecognizedBlocking,
+  parseRecognizedWhitebox,
+  recognitionTaskText,
+  whiteboxPropPlacement,
+  type RecognizedBlocking,
+} from "./scene-3d-recognition";
 import { selectStoryboardAnalysisModel } from "./video-frame-breakdown";
 import { awaitStoryboardAnalysisTask } from "./storyboard-analysis-task";
 
@@ -62,7 +70,11 @@ type TransformMode = "translate" | "rotate" | "scale";
 type SidebarTab = "scene" | "characters" | "rigs" | "panorama" | "aspect";
 type PanoramaPanel = "menu" | "history" | "ai";
 type ImportMode = "insert" | "replace";
+type RecognitionKind = "blocking" | "whitebox";
 type GeometryKind = "box" | "sphere" | "cylinder";
+
+/** 白膜生成的智能执行流程（第 1 步覆盖整个识图任务，其余在结果返回后依次落地） */
+const WHITEBOX_FLOW_STEPS = ["识别场景物品与人物", "生成白膜体块", "摆放人物站位", "覆盖当前导演台"] as const;
 
 interface CharacterAddOptions {
   preset?: CharacterPresetKey;
@@ -95,6 +107,7 @@ interface EditorApi {
   setEnv: (p: Partial<Scene3DEnv>) => Scene3DMotionState | undefined;
   setPanorama: (url: string | null) => void;
   setSceneAssetMaterialMode: (mode: "original" | "solid") => void;
+  clearSceneAsset: () => void;
   setFrameAspect: (aspect: number) => void;
   importBlocking: (blocking: RecognizedBlocking, mode: ImportMode) => void;
   setPilotMode: (enabled: boolean) => void;
@@ -271,6 +284,9 @@ export function Scene3DEditor({ node, onClose }: Props) {
   const [recognitionUploading, setRecognitionUploading] = useState(false);
   const [recognitionBusy, setRecognitionBusy] = useState(false);
   const [recognitionMode, setRecognitionMode] = useState<ImportMode>("replace");
+  const [recognitionKind, setRecognitionKind] = useState<RecognitionKind>("blocking");
+  /** 白膜流程进行到第几步（1 起步；0 表示未在执行） */
+  const [recognitionStep, setRecognitionStep] = useState(0);
   const shotAspect = frameAspect(frameAspectKey).value;
 
   // 运镜：关键帧与播放时间由 React 管理，相机本体和轨迹线仍由 three.js 负责。
@@ -1470,6 +1486,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
           },
           setPanorama: (url) => { void setPanoramaInternal(url); },
           setSceneAssetMaterialMode: applySceneAssetMaterialMode,
+          clearSceneAsset: () => { void setSceneAssetInternal(null); },
           setFrameAspect: (aspect) => {
             rigPreviewAspect = aspect > 0 ? aspect : (mount.clientWidth || 1) / (mount.clientHeight || 1);
             for (const rig of rigsM.values()) rebuildRigViz(rig);
@@ -1499,6 +1516,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
               selPropId = null;
               activeRigId = null;
             }
+            for (const prop of blocking.props ?? []) addPropInternal(whiteboxPropPlacement(prop));
             let lastCharacter: CharEntry | null = null;
             for (const character of blocking.characters) {
               lastCharacter = addCharInternal({
@@ -1972,7 +1990,11 @@ export function Scene3DEditor({ node, onClose }: Props) {
   const generateBlockingReference = useCallback(async () => {
     if (!recognitionSource || recognitionBusy) return;
     const runId = ++recognitionRunRef.current;
+    const whitebox = recognitionKind === "whitebox";
+    // 白膜生成会重建整个舞台，只支持覆盖导入。
+    const mode = whitebox ? "replace" : recognitionMode;
     setRecognitionBusy(true);
+    setRecognitionStep(whitebox ? 1 : 0);
     try {
       const modelsResponse = await aiApi.listModels();
       const model = modelsResponse.success ? selectStoryboardAnalysisModel(modelsResponse.data) : undefined;
@@ -1985,12 +2007,14 @@ export function Scene3DEditor({ node, onClose }: Props) {
         entryPoint: "canvas",
         targetType: "text",
         input: {
-          systemPrompt: "你是专业影视导演和场面调度师。严格依据输入图片提取人物站位，只输出合法JSON。",
-          prompt: buildBlockingRecognitionPrompt(),
+          systemPrompt: whitebox
+            ? "你是专业影视美术指导和场面调度师。严格依据输入图片把场景物体简化为白膜体块并提取人物站位，只输出合法JSON。"
+            : "你是专业影视导演和场面调度师。严格依据输入图片提取人物站位，只输出合法JSON。",
+          prompt: whitebox ? buildWhiteboxRecognitionPrompt() : buildBlockingRecognitionPrompt(),
           imageUrls: [recognitionSource.url],
           strictJson: true,
         },
-      }, `director-recognition:${node.id}:${runId}:${Date.now()}`);
+      }, `director-recognition:${recognitionKind}:${node.id}:${runId}:${Date.now()}`);
       if (!created.success || !created.data?.id) throw new Error(created.message || "识图任务创建失败");
       const task = await awaitStoryboardAnalysisTask<AiTaskVO>({
         taskId: String(created.data.id),
@@ -2006,9 +2030,11 @@ export function Scene3DEditor({ node, onClose }: Props) {
         },
       });
       if (!task || !editorAliveRef.current || recognitionRunRef.current !== runId) return;
-      const blocking = parseRecognizedBlocking(recognitionTaskText(task.resultMeta));
-      if (!blocking) throw new Error("未能从图片中识别出有效人物站位");
-      if (recognitionMode === "replace") {
+      const resultText = recognitionTaskText(task.resultMeta);
+      const blocking = whitebox ? parseRecognizedWhitebox(resultText) : parseRecognizedBlocking(resultText);
+      if (!blocking) throw new Error(whitebox ? "未能从图片中识别出有效场景物体" : "未能从图片中识别出有效人物站位");
+      if (whitebox) setRecognitionStep(2);
+      if (mode === "replace") {
         apiRef.current?.setMotionPlaying(false);
         setPlaying(false);
         const resetMotion = normalizeScene3DMotion({ ...DEFAULT_SCENE_3D_MOTION, keyframes: [] });
@@ -2027,27 +2053,45 @@ export function Scene3DEditor({ node, onClose }: Props) {
         setEnvState(nextEnv);
         apiRef.current?.setPanorama(null);
 
-        // 覆盖模式必须同时断开旧图片环境输入，否则下次打开会从入边自动恢复旧全景。
+        if (whitebox) {
+          // 白膜重建整个舞台：连同已加载的 GLB/SPZ 场景资产一起清掉，
+          // 否则生成的白膜体块会和旧场景几何叠在一起。
+          apiRef.current?.clearSceneAsset();
+          sceneAssetRef.current = null;
+          setSceneAsset(null);
+        }
+
+        // 覆盖模式必须同时断开旧环境输入（图片全景；白膜还包括 3D 场景节点），
+        // 否则下次打开会从入边自动恢复旧环境。
         const store = useCanvasStore.getState();
-        const panoramaSourceIds = new Set(store.nodes
-          .filter((candidate) => !!candidate.imageSrc && !candidate.videoSrc && candidate.type !== CHARACTER_NODE_TYPE)
+        const staleSourceIds = new Set(store.nodes
+          .filter((candidate) =>
+            (!!candidate.imageSrc && !candidate.videoSrc && candidate.type !== CHARACTER_NODE_TYPE)
+            || (whitebox && candidate.type === "3d"))
           .map((candidate) => candidate.id));
-        const panoramaConnections = store.connections.filter((connection) =>
-          connection.targetId === node.id && panoramaSourceIds.has(connection.sourceId));
-        panoramaConnections.forEach((connection, index) => store.removeConnection(connection.id, index === 0));
+        const staleConnections = store.connections.filter((connection) =>
+          connection.targetId === node.id && staleSourceIds.has(connection.sourceId));
+        staleConnections.forEach((connection, index) => store.removeConnection(connection.id, index === 0));
       }
-      apiRef.current?.importBlocking(blocking, recognitionMode);
+      if (whitebox) setRecognitionStep(3);
+      apiRef.current?.importBlocking(blocking, mode);
+      if (whitebox) setRecognitionStep(4);
       persist();
       setRecognitionOpen(false);
-      toast.success(`已导入 ${blocking.characters.length} 个角色站位`);
+      toast.success(whitebox
+        ? `已生成 ${blocking.props?.length ?? 0} 个白膜体块、${blocking.characters.length} 个角色站位并覆盖导演台`
+        : `已导入 ${blocking.characters.length} 个角色站位`);
     } catch (error) {
       if (editorAliveRef.current && recognitionRunRef.current === runId) {
         toast.error(error instanceof Error ? error.message : "AI 识图失败，请重试");
       }
     } finally {
-      if (editorAliveRef.current && recognitionRunRef.current === runId) setRecognitionBusy(false);
+      if (editorAliveRef.current && recognitionRunRef.current === runId) {
+        setRecognitionBusy(false);
+        setRecognitionStep(0);
+      }
     }
-  }, [currentProjectId, node.id, persist, recognitionBusy, recognitionMode, recognitionSource]);
+  }, [currentProjectId, node.id, persist, recognitionBusy, recognitionKind, recognitionMode, recognitionSource]);
 
   const addCrowd = useCallback(() => {
     const spacing = 0.85;
@@ -3354,17 +3398,73 @@ export function Scene3DEditor({ node, onClose }: Props) {
                 </div>
               )}
 
-              <div className="mt-3 text-xs font-medium text-white/65">选择是否覆盖场景</div>
+              <div className="mt-3 text-xs font-medium text-white/65">生成内容</div>
               <div className="mt-2 grid grid-cols-2 gap-2">
                 {([[
-                  "insert", "插入当前导演台", "作为站位参考插入，不覆盖当前场景、角色和机位",
+                  "blocking", "站位参考", "识别人物站位、朝向和机位，生成参考小人",
                 ], [
-                  "replace", "覆盖当前导演台", "作为站位参考层插入，覆盖当前场景、角色和机位",
+                  "whitebox", "3D白膜生成", "识别场景物品生成白膜体块，并摆放人物站位",
                 ]] as const).map(([value, title, description]) => (
                   <button
                     key={value}
                     type="button"
                     disabled={recognitionBusy}
+                    onClick={() => {
+                      setRecognitionKind(value);
+                      if (value === "whitebox") setRecognitionMode("replace");
+                    }}
+                    className={`flex min-h-[52px] items-start gap-2 rounded-lg border p-2 text-left disabled:cursor-not-allowed disabled:opacity-50 ${recognitionKind === value ? "border-white/35 bg-white/[0.06]" : "border-white/10"}`}
+                  >
+                    <span className={`mt-0.5 h-3.5 w-3.5 shrink-0 rounded-full border p-[3px] ${recognitionKind === value ? "border-white" : "border-white/30"}`}>
+                      {recognitionKind === value && <span className="block h-full w-full rounded-full bg-white" />}
+                    </span>
+                    <span>
+                      <span className="block text-[11px] font-medium text-white/85">{title}</span>
+                      <span className="mt-0.5 block text-[10px] leading-4 text-white/35">{description}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              {recognitionKind === "whitebox" && (
+                <div className="mt-3 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+                  <div className="text-[11px] font-medium text-white/65">智能执行流程</div>
+                  <ol className="mt-2 space-y-1.5">
+                    {WHITEBOX_FLOW_STEPS.map((label, index) => {
+                      const stepNo = index + 1;
+                      const done = recognitionStep > stepNo;
+                      const active = recognitionStep === stepNo;
+                      return (
+                        <li key={label} className={`flex items-center gap-2 text-[11px] ${active ? "text-white/85" : done ? "text-white/55" : "text-white/35"}`}>
+                          <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+                            {active ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : done ? (
+                              <Check className="h-3.5 w-3.5" />
+                            ) : (
+                              <span className="text-[10px] tabular-nums">{stepNo}</span>
+                            )}
+                          </span>
+                          {label}
+                        </li>
+                      );
+                    })}
+                  </ol>
+                </div>
+              )}
+
+              <div className="mt-3 text-xs font-medium text-white/65">选择是否覆盖场景</div>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                {([
+                  ["insert", "插入当前导演台", "作为站位参考插入，不覆盖当前场景、角色和机位"],
+                  ["replace", "覆盖当前导演台", recognitionKind === "whitebox"
+                    ? "以生成的白膜场景和人物站位覆盖当前场景、角色和机位"
+                    : "作为站位参考层插入，覆盖当前场景、角色和机位"],
+                ] as Array<[ImportMode, string, string]>).map(([value, title, description]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    disabled={recognitionBusy || (recognitionKind === "whitebox" && value === "insert")}
                     onClick={() => setRecognitionMode(value)}
                     className={`flex min-h-[52px] items-start gap-2 rounded-lg border p-2 text-left disabled:cursor-not-allowed disabled:opacity-50 ${recognitionMode === value ? "border-white/35 bg-white/[0.06]" : "border-white/10"}`}
                   >
@@ -3378,10 +3478,17 @@ export function Scene3DEditor({ node, onClose }: Props) {
                   </button>
                 ))}
               </div>
+              {recognitionKind === "whitebox" && (
+                <div className="mt-2 text-[10px] text-white/35">3D白膜生成会重建整个舞台，仅支持覆盖导入</div>
+              )}
             </div>
 
             <footer className="flex h-13 shrink-0 items-center border-t border-white/10 px-4 py-3">
-              <span className="text-[10px] text-white/35">关闭不会中断已提交的识图任务，生成站位参考后自动导入导演台</span>
+              <span className="text-[10px] text-white/35">
+                {recognitionKind === "whitebox"
+                  ? "关闭不会中断已提交的识图任务，生成白膜场景后自动覆盖导演台"
+                  : "关闭不会中断已提交的识图任务，生成站位参考后自动导入导演台"}
+              </span>
               <button
                 type="button"
                 onClick={() => void generateBlockingReference()}
@@ -3389,7 +3496,9 @@ export function Scene3DEditor({ node, onClose }: Props) {
                 className="ml-auto flex h-8 shrink-0 items-center gap-2 rounded-md bg-white px-3 text-xs font-medium text-neutral-900 hover:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {recognitionBusy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {recognitionBusy ? "识图中" : "生成站位参考"}
+                {recognitionBusy
+                  ? (recognitionKind === "whitebox" ? "生成中" : "识图中")
+                  : (recognitionKind === "whitebox" ? "生成3D白膜" : "生成站位参考")}
               </button>
             </footer>
           </section>
