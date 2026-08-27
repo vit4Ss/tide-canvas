@@ -14,6 +14,7 @@ import {
   parseRecognizedBlocking,
   parseRecognizedWhitebox,
   recognitionTaskText,
+  resolveCharacterPropCollisions,
   selectRecognitionModel,
   whiteboxPropPlacement,
   WHITEBOX_PROP_COLOR,
@@ -165,15 +166,14 @@ test("whitebox generation wires prompt, prop import and forced replace into the 
   assert.match(prompt, /只返回一个JSON对象/);
   assert.match(prompt, /kind只能是box、sphere、cylinder/);
   assert.match(prompt, /不要虚构/);
-  // 全景图输入必须按方位角环绕摆放，否则环绕场景会被摊平成一面墙
+  // 全景走标注模式：模型只在图上标点，米数由代码几何解算
   assert.match(prompt, /等距柱状全景图/);
-  assert.match(prompt, /围合出房间/);
+  assert.match(prompt, /标注模式/);
+  assert.match(prompt, /不要自己估算米数/);
+  assert.match(prompt, /floorLine/);
+  assert.match(prompt, /vBottom为接地点/);
+  assert.match(prompt, /不要输出地面、天花板/);
   assert.match(prompt, /不得穿插重叠/);
-  // 换算公式 + 算例 + 分段清点 + 贴边朝向，缺一都会显著劣化全景布局
-  assert.match(prompt, /x=距离×sin\(θ\)，z=-距离×cos\(θ\)/);
-  assert.match(prompt, /u=0\.75、距离4米 → 右侧x=4、z=0/);
-  assert.match(prompt, /不要漏掉画面边缘的身后区域/);
-  assert.match(prompt, /rotation取负的方位角/);
   assert.match(buildBlockingRecognitionPrompt(), /等距柱状全景图/);
 });
 
@@ -204,6 +204,100 @@ test("recognition prefers the backend-configured primary text model", () => {
   assert.match(editorSource, /clearSceneAsset: \(\) => \{ void setSceneAssetInternal\(null\); \}/);
   assert.match(editorSource, /apiRef\.current\?\.clearSceneAsset\(\);\s*sceneAssetRef\.current = null;\s*setSceneAsset\(null\);/);
   assert.match(editorSource, /whitebox && candidate\.type === "3d"/);
+});
+
+test("pano annotation back-projects ground points into exact metric placement", () => {
+  // 圆凳：uc=0.75（正右方），接地点 v=0.75（俯角45°）→ 距离=默认相机高1.6米
+  const parsed = parseRecognizedWhitebox(JSON.stringify({
+    imageType: "panorama",
+    objects: [{ name: "圆凳", kind: "cylinder", u1: 0.7, u2: 0.8, vBottom: 0.75, vTop: 0.5, grounded: true }],
+    characters: [],
+  }));
+  assert.ok(parsed);
+  const stool = parsed.props[0];
+  assert.ok(Math.abs(stool.x - 1.6) < 1e-6);
+  assert.ok(Math.abs(stool.z) < 1e-6);
+  // vTop=0.5 为地平线 → 顶高=相机高1.6，y=h/2
+  assert.ok(Math.abs(stool.h - 1.6) < 1e-6);
+  assert.ok(Math.abs(stool.y - 0.8) < 1e-6);
+  // 宽度 = 2·d·tan(水平张角/2)，张角=0.1×2π
+  assert.ok(Math.abs(stool.w - 2 * 1.6 * Math.tan(0.1 * Math.PI)) < 1e-6);
+
+  // 跨接缝物体（u1=0.95→u2=0.05）落在正后方 +z
+  const seam = parseRecognizedWhitebox(JSON.stringify({
+    imageType: "panorama",
+    objects: [{ name: "后墙柜", kind: "box", u1: 0.95, u2: 1.05, vBottom: 0.75, vTop: 0.4, grounded: true }],
+    characters: [],
+  }));
+  assert.ok(Math.abs(seam.props[0].z - 1.6) < 1e-4);
+
+  // 接地点在地平线以上无解 → 该物体被丢弃而不是放到无穷远
+  assert.equal(parseRecognizedWhitebox(JSON.stringify({
+    imageType: "panorama",
+    objects: [{ name: "吊灯", kind: "box", u1: 0.4, u2: 0.6, vBottom: 0.45, vTop: 0.2, grounded: true }],
+    characters: [],
+  })), null);
+});
+
+test("floor-line annotation builds a closed wall shell around the origin", () => {
+  const floorLine = [0, 0.25, 0.5, 0.75].map((u) => ({ u, v: 0.625 }));
+  const parsed = parseRecognizedWhitebox(JSON.stringify({
+    imageType: "panorama",
+    room: { wallHeight: 3, floorLine },
+    objects: [],
+    characters: [],
+  }));
+  assert.ok(parsed);
+  // 四个方位的墙脚点 → 首尾闭合的4段墙
+  assert.equal(parsed.props.length, 4);
+  const d = 1.6 / Math.tan(0.125 * Math.PI); // v=0.625 → 俯角22.5°
+  for (const wall of parsed.props) {
+    assert.match(wall.name, /^墙/);
+    assert.ok(Math.abs(wall.w - Math.SQRT2 * d) < 1e-6);
+    assert.equal(wall.h, 3);
+    assert.equal(wall.y, 1.5);
+    assert.equal(wall.d, 0.15);
+  }
+});
+
+test("door prior recalibrates camera height so the whole scene rescales", () => {
+  // 门顶 v=0.25（仰角45°）在默认相机高下解出3.2米高，触发按2.1米门高的整体缩放
+  const parsed = parseRecognizedWhitebox(JSON.stringify({
+    imageType: "panorama",
+    objects: [{ name: "电梯门", kind: "box", u1: 0.45, u2: 0.55, vBottom: 0.75, vTop: 0.25, grounded: true }],
+    characters: [],
+  }));
+  assert.ok(parsed);
+  const door = parsed.props[0];
+  // 缩放系数被限幅到0.75 → 相机高1.2米 → 距离1.2、门高2.4
+  assert.ok(Math.abs(door.z + 1.2) < 1e-6);
+  assert.ok(Math.abs(door.h - 2.4) < 1e-6);
+});
+
+test("characters are pushed out of blocking props but not rugs or beams", () => {
+  const moved = resolveCharacterPropCollisions(
+    [
+      { name: "A", preset: "standard-male", x: 0.1, z: 0, rotation: 0, scale: 1 },
+      { name: "B", preset: "standard-male", x: 5, z: 0, rotation: 0, scale: 1 },
+      { name: "C", preset: "standard-male", x: -5, z: 0, rotation: 0, scale: 1 },
+    ],
+    [
+      { name: "圆台", kind: "cylinder", x: 0, y: 0.55, z: 0, rotation: 0, w: 1, h: 1.1, d: 1 },
+      { name: "横梁", kind: "box", x: 5, y: 2.7, z: 0, rotation: 0, w: 4, h: 0.4, d: 0.4 },
+      { name: "地毯", kind: "box", x: -5, y: 0.025, z: 0, rotation: 0, w: 4, h: 0.05, d: 4 },
+    ],
+  );
+  // 人物被推出圆台脚印（半径0.5+人物间距0.35）
+  assert.ok(Math.hypot(moved[0].x, moved[0].z) >= 0.84);
+  // 高处横梁下能走人、贴地地毯上能站人：不动
+  assert.equal(moved[1].x, 5);
+  assert.equal(moved[2].x, -5);
+  // 直出模式解析后同样做碰撞消解
+  const parsed = parseRecognizedWhitebox(JSON.stringify({
+    props: [{ name: "台子", kind: "cylinder", x: 0, y: 0.55, z: 0, rotation: 0, w: 1, h: 1.1, d: 1 }],
+    characters: [{ name: "角色A", preset: "standard-male", x: 0.1, z: 0, rotation: 0, scale: 1 }],
+  }));
+  assert.ok(Math.hypot(parsed.characters[0].x, parsed.characters[0].z) >= 0.84);
 });
 
 test("restored geometry ids cannot create unreachable duplicate scene objects", () => {

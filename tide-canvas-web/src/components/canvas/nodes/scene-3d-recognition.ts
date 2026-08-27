@@ -30,7 +30,7 @@ export interface RecognizedBlockingCharacter {
   scale: number;
 }
 
-/** 白膜物体：模型给出米制真实尺寸与地面落点，导入时换算为道具几何的缩放。 */
+/** 白膜物体：米制真实尺寸与放置变换，导入时换算为道具几何的缩放。 */
 export interface RecognizedWhiteboxProp {
   name: string;
   kind: "box" | "sphere" | "cylinder";
@@ -55,9 +55,19 @@ const PRESETS = new Set<CharacterPresetKey>([
   "standard-male", "standard-female", "athletic", "slim", "teen", "child", "broad", "chibi",
 ]);
 
+const DEG = Math.PI / 180;
+
 function finite(value: unknown, fallback: number, min: number, max: number): number {
   const number = Number(value);
   return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
+}
+
+function wrap01(u: number): number {
+  return ((u % 1) + 1) % 1;
+}
+
+function wrapDeg(deg: number): number {
+  return ((deg + 180) % 360 + 360) % 360 - 180;
 }
 
 function extractJsonObject(text: string): Record<string, unknown> | null {
@@ -72,21 +82,31 @@ function extractJsonObject(text: string): Record<string, unknown> | null {
   }
 }
 
+function characterBase(record: Record<string, unknown>, index: number): {
+  name: string;
+  preset: CharacterPresetKey;
+  scale: number;
+} {
+  const preset = typeof record.preset === "string" && PRESETS.has(record.preset as CharacterPresetKey)
+    ? record.preset as CharacterPresetKey
+    : "standard-male";
+  return {
+    name: typeof record.name === "string" && record.name.trim() ? record.name.trim().slice(0, 40) : `角色${index + 1}`,
+    preset,
+    scale: finite(record.scale, 1, 0.5, 1.8),
+  };
+}
+
 function parseCharacterRows(value: unknown): RecognizedBlockingCharacter[] {
   const rows = Array.isArray(value) ? value.slice(0, 18) : [];
   return rows.flatMap((row, index): RecognizedBlockingCharacter[] => {
     if (!row || typeof row !== "object" || Array.isArray(row)) return [];
     const record = row as Record<string, unknown>;
-    const preset = typeof record.preset === "string" && PRESETS.has(record.preset as CharacterPresetKey)
-      ? record.preset as CharacterPresetKey
-      : "standard-male";
     return [{
-      name: typeof record.name === "string" && record.name.trim() ? record.name.trim().slice(0, 40) : `角色${index + 1}`,
-      preset,
+      ...characterBase(record, index),
       x: finite(record.x, 0, -4, 4),
       z: finite(record.z, 0, -4, 4),
       rotation: finite(record.rotation, 0, -180, 180),
-      scale: finite(record.scale, 1, 0.5, 1.8),
     }];
   });
 }
@@ -116,6 +136,333 @@ function cameraPresetField(raw: Record<string, unknown>): { cameraPreset?: strin
   return typeof raw.cameraPreset === "string" ? { cameraPreset: raw.cameraPreset.slice(0, 50) } : {};
 }
 
+// ===== 等距柱状全景反投影 =====
+// 全景图的像素位置直接对应视线角度：水平 u → 方位角，垂直 v → 俯仰角。
+// 已知相机离地高度后，任何接地点的水平距离都是解析解 d = h / tan(俯角)，
+// 因此模型只负责在图上标归一化坐标，所有米数由这里的确定性几何计算。
+
+const PANO_MIN_GROUND_PITCH = 3 * DEG; // 地平线附近距离发散，禁用
+const PANO_MAX_PITCH = 85 * DEG;
+const PANO_MIN_DISTANCE = 0.3;
+const PANO_MAX_DISTANCE = 12;
+const DEFAULT_CAMERA_HEIGHT = 1.6;
+const DOOR_HEIGHT_METERS = 2.1;
+const WALL_THICKNESS = 0.15;
+
+/** u（0=最左）→ 方位角弧度；画面水平中心为正前方 -z。 */
+function panoAzimuthRad(u: number): number {
+  return (wrap01(u) - 0.5) * 2 * Math.PI;
+}
+
+/** v（0=顶）→ 俯角弧度（正=地平线以下）。 */
+function panoPitchRad(v: number): number {
+  const pitch = (v - 0.5) * Math.PI;
+  return Math.min(PANO_MAX_PITCH, Math.max(-PANO_MAX_PITCH, pitch));
+}
+
+interface PanoGround { x: number; z: number; distance: number; azimuth: number }
+
+/** 接地点反投影：v 必须在地平线以下（v>0.5+ε），否则返回 null。 */
+function solvePanoGround(u: number, v: number, cameraHeight: number): PanoGround | null {
+  const pitch = panoPitchRad(v);
+  if (pitch < PANO_MIN_GROUND_PITCH) return null;
+  const azimuth = panoAzimuthRad(u);
+  const distance = Math.min(PANO_MAX_DISTANCE, Math.max(PANO_MIN_DISTANCE, cameraHeight / Math.tan(pitch)));
+  return { x: distance * Math.sin(azimuth), z: -distance * Math.cos(azimuth), distance, azimuth };
+}
+
+/** 距观察点 distance 处、像素行 v 对应的离地高度（米）。 */
+function panoHeightAt(v: number, distance: number, cameraHeight: number): number {
+  return cameraHeight - distance * Math.tan(panoPitchRad(v));
+}
+
+/** 物体左右边缘（含跨接缝环绕）→ 中心 u 与水平张角（弧度）。 */
+function panoSpan(u1: number, u2: number): { center: number; spanRad: number } {
+  const a = wrap01(u1);
+  let b = wrap01(u2);
+  if (b < a) b += 1;
+  const span = Math.min(0.5, Math.max(0.002, b - a));
+  return { center: wrap01(a + span / 2), spanRad: span * 2 * Math.PI };
+}
+
+interface ShellVertex { x: number; z: number }
+
+/** 原点出发沿方位角的射线与房间轮廓多边形的最近交点距离。 */
+function shellDistanceAt(azimuth: number, vertices: readonly ShellVertex[]): number | null {
+  const dirX = Math.sin(azimuth);
+  const dirZ = -Math.cos(azimuth);
+  let best: number | null = null;
+  for (let index = 0; index < vertices.length; index += 1) {
+    const p = vertices[index];
+    const q = vertices[(index + 1) % vertices.length];
+    const ex = q.x - p.x;
+    const ez = q.z - p.z;
+    const det = ex * dirZ - ez * dirX;
+    if (Math.abs(det) < 1e-9) continue;
+    const t = (ex * p.z - ez * p.x) / det;
+    const s = (dirX * p.z - dirZ * p.x) / det;
+    if (t > 0.05 && s >= -0.02 && s <= 1.02 && (best === null || t < best)) best = t;
+  }
+  return best;
+}
+
+/** 墙脚线标注 → 按方位角排序的轮廓顶点（≥3 个才有效）。 */
+function solveShellVertices(value: unknown, cameraHeight: number): ShellVertex[] {
+  const rows = Array.isArray(value) ? value.slice(0, 20) : [];
+  const solved: Array<PanoGround> = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object" || Array.isArray(row)) continue;
+    const record = row as Record<string, unknown>;
+    const u = Number(record.u);
+    const v = Number(record.v);
+    if (!Number.isFinite(u) || !Number.isFinite(v)) continue;
+    const ground = solvePanoGround(u, v, cameraHeight);
+    if (!ground || ground.distance < 1) continue;
+    solved.push(ground);
+  }
+  solved.sort((a, b) => a.azimuth - b.azimuth);
+  // 相邻方位角过近的点合并（保留更近的墙脚），避免退化墙段
+  const vertices: PanoGround[] = [];
+  for (const point of solved) {
+    const last = vertices[vertices.length - 1];
+    if (last && point.azimuth - last.azimuth < 4 * DEG) {
+      if (point.distance < last.distance) vertices[vertices.length - 1] = point;
+      continue;
+    }
+    vertices.push(point);
+  }
+  return vertices.length >= 3 ? vertices.map(({ x, z }) => ({ x, z })) : [];
+}
+
+/** 轮廓顶点 → 首尾闭合的墙段体块（长度沿段方向，厚度统一）。 */
+function shellWalls(vertices: readonly ShellVertex[], wallHeight: number): RecognizedWhiteboxProp[] {
+  const walls: RecognizedWhiteboxProp[] = [];
+  for (let index = 0; index < vertices.length && walls.length < 16; index += 1) {
+    const p = vertices[index];
+    const q = vertices[(index + 1) % vertices.length];
+    const dx = q.x - p.x;
+    const dz = q.z - p.z;
+    const length = Math.hypot(dx, dz);
+    if (length < 0.3) continue;
+    walls.push({
+      name: `墙${walls.length + 1}`,
+      kind: "box",
+      x: (p.x + q.x) / 2,
+      y: wallHeight / 2,
+      z: (p.z + q.z) / 2,
+      // rotation.y=α 把体块局部 +x 转到 (cosα, -sinα)，对齐段方向需 α=atan2(-dz, dx)
+      rotation: wrapDeg(Math.atan2(-dz, dx) / DEG),
+      w: length,
+      h: wallHeight,
+      d: WALL_THICKNESS,
+    });
+  }
+  return walls;
+}
+
+interface AnnotatedObjectRow {
+  record: Record<string, unknown>;
+  kind: RecognizedWhiteboxProp["kind"];
+  name: string;
+  center: number;
+  spanRad: number;
+  vBottom: number;
+  vTop: number;
+  grounded: boolean;
+  againstWall: boolean;
+}
+
+function readAnnotatedObjectRows(value: unknown): AnnotatedObjectRow[] {
+  const rows = Array.isArray(value) ? value.slice(0, 25) : [];
+  return rows.flatMap((row, index): AnnotatedObjectRow[] => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return [];
+    const record = row as Record<string, unknown>;
+    const u1 = Number(record.u1);
+    const u2 = Number(record.u2);
+    const vBottom = Number(record.vBottom);
+    const vTop = Number(record.vTop);
+    if (!Number.isFinite(u1) || !Number.isFinite(u2) || !Number.isFinite(vBottom) || !Number.isFinite(vTop)) return [];
+    const { center, spanRad } = panoSpan(u1, u2);
+    return [{
+      record,
+      kind: record.kind === "sphere" || record.kind === "cylinder" ? record.kind : "box",
+      name: typeof record.name === "string" && record.name.trim() ? record.name.trim().slice(0, 40) : `物体${index + 1}`,
+      center,
+      spanRad,
+      vBottom,
+      vTop,
+      grounded: record.grounded !== false,
+      againstWall: record.againstWall === true,
+    }];
+  });
+}
+
+/** 用门高先验反推相机高度：解算出的门高与 2.1 米的比值即整体尺度误差。 */
+function calibrateCameraHeight(objects: readonly AnnotatedObjectRow[], initialHeight: number): number {
+  const factors: number[] = [];
+  for (const row of objects) {
+    if (!row.grounded || !/门/.test(row.name)) continue;
+    const ground = solvePanoGround(row.center, row.vBottom, initialHeight);
+    if (!ground) continue;
+    const doorHeight = panoHeightAt(row.vTop, ground.distance, initialHeight);
+    if (doorHeight > 0.8 && doorHeight < 6) factors.push(DOOR_HEIGHT_METERS / doorHeight);
+  }
+  if (!factors.length) return initialHeight;
+  const factor = Math.min(1.35, Math.max(0.75, factors.reduce((sum, value) => sum + value, 0) / factors.length));
+  return Math.min(2.4, Math.max(1.0, initialHeight * factor));
+}
+
+function solveAnnotatedObject(
+  row: AnnotatedObjectRow,
+  cameraHeight: number,
+  shell: readonly ShellVertex[],
+): RecognizedWhiteboxProp | null {
+  const azimuth = panoAzimuthRad(row.center);
+  let distance: number | null = null;
+  if (row.grounded) {
+    const ground = solvePanoGround(row.center, row.vBottom, cameraHeight);
+    if (ground) distance = ground.distance;
+  }
+  const wallDistance = row.againstWall && shell.length ? shellDistanceAt(azimuth, shell) : null;
+  const depthHint = finite(row.record.depth, 0, 0.05, 10);
+  // 贴墙物体吸附到墙内侧：把"同一面墙同一距离"变成结构保证；
+  // 接地点被遮挡的物体只能靠墙距落位，没有墙就跳过。
+  if (wallDistance !== null) {
+    const depthGuess = depthHint || 0.6;
+    distance = Math.min(PANO_MAX_DISTANCE, Math.max(PANO_MIN_DISTANCE, wallDistance - WALL_THICKNESS / 2 - depthGuess / 2 - 0.02));
+  }
+  if (distance === null) return null;
+  const w = Math.min(10, Math.max(0.05, 2 * distance * Math.tan(row.spanRad / 2)));
+  const depth = row.kind === "box"
+    ? (depthHint || Math.min(1.5, Math.max(0.2, w * 0.45)))
+    : w;
+  let y: number;
+  let h: number;
+  if (row.grounded) {
+    h = Math.min(10, Math.max(0.05, panoHeightAt(row.vTop, distance, cameraHeight)));
+    y = h / 2;
+  } else {
+    const bottom = Math.max(0, panoHeightAt(row.vBottom, distance, cameraHeight));
+    const top = panoHeightAt(row.vTop, distance, cameraHeight);
+    h = Math.min(10, Math.max(0.05, top - bottom));
+    y = Math.min(8, Math.max(0.02, bottom + h / 2));
+  }
+  return {
+    name: row.name,
+    kind: row.kind,
+    x: distance * Math.sin(azimuth),
+    y,
+    z: -distance * Math.cos(azimuth),
+    // 默认沿环绕切线（贴墙/长条物的自然朝向）；模型可用 rotation 字段覆盖
+    rotation: finite(row.record.rotation, wrapDeg(-azimuth / DEG), -180, 180),
+    w: row.kind === "box" ? w : Math.max(w, 0.05),
+    h,
+    d: depth,
+  };
+}
+
+function parseAnnotatedCharacters(value: unknown, cameraHeight: number): RecognizedBlockingCharacter[] {
+  const rows = Array.isArray(value) ? value.slice(0, 18) : [];
+  return rows.flatMap((row, index): RecognizedBlockingCharacter[] => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return [];
+    const record = row as Record<string, unknown>;
+    const u = Number(record.u);
+    const v = Number(record.v);
+    if (Number.isFinite(u) && Number.isFinite(v)) {
+      const ground = solvePanoGround(u, v, cameraHeight);
+      if (!ground) return [];
+      const x = Math.min(8, Math.max(-8, ground.x));
+      const z = Math.min(8, Math.max(-8, ground.z));
+      return [{
+        ...characterBase(record, index),
+        x,
+        z,
+        // 缺省面向场景中心（全景观察点），模型可用 rotation 覆盖
+        rotation: finite(record.rotation, wrapDeg(Math.atan2(-x, -z) / DEG), -180, 180),
+      }];
+    }
+    // 防御：标注模式里混入 x/z 行时按直出规则读取
+    return parseCharacterRows([record]);
+  });
+}
+
+/** 标注模式解算：墙脚线→房间壳，物体包围框→反投影体块。 */
+function solveAnnotatedScene(raw: Record<string, unknown>): RecognizedBlocking | null {
+  const room = raw.room && typeof raw.room === "object" && !Array.isArray(raw.room)
+    ? raw.room as Record<string, unknown>
+    : {};
+  const objects = readAnnotatedObjectRows(raw.objects);
+  const initialHeight = finite(raw.cameraHeight, DEFAULT_CAMERA_HEIGHT, 1.0, 2.2);
+  const cameraHeight = calibrateCameraHeight(objects, initialHeight);
+  const shell = solveShellVertices(room.floorLine, cameraHeight);
+  const wallHeight = finite(room.wallHeight, 3.2, 2.5, 6);
+  const props: RecognizedWhiteboxProp[] = shellWalls(shell, wallHeight);
+  for (const row of objects) {
+    const solved = solveAnnotatedObject(row, cameraHeight, shell);
+    if (solved) props.push(solved);
+  }
+  const characters = parseAnnotatedCharacters(raw.characters, cameraHeight);
+  if (!characters.length && !props.length) return null;
+  return { characters: resolveCharacterPropCollisions(characters, props), props, ...cameraPresetField(raw) };
+}
+
+// ===== 人物与体块的碰撞消解 =====
+// 识别结果里人物和家具经常落在同一位置，人物会被体块吞掉半个身子。
+// 导入前把人物从占位体块的水平投影里推出去（只考虑与站立人物身高带
+// 相交的体块：横梁下可以走人，地毯上可以站人）。
+
+const CHARACTER_CLEARANCE = 0.35;
+
+export function resolveCharacterPropCollisions(
+  characters: readonly RecognizedBlockingCharacter[],
+  props: readonly RecognizedWhiteboxProp[],
+): RecognizedBlockingCharacter[] {
+  const blockers = props.filter((prop) => prop.y + prop.h / 2 > 0.4 && prop.y - prop.h / 2 < 1.6);
+  return characters.map((character) => {
+    let { x, z } = character;
+    for (let pass = 0; pass < 4; pass += 1) {
+      let moved = false;
+      for (const prop of blockers) {
+        if (prop.kind === "box") {
+          const alpha = prop.rotation * DEG;
+          const cos = Math.cos(alpha);
+          const sin = Math.sin(alpha);
+          const worldX = x - prop.x;
+          const worldZ = z - prop.z;
+          // rotation.y=α 的逆变换：世界偏移 → 体块局部坐标
+          const localX = worldX * cos - worldZ * sin;
+          const localZ = worldX * sin + worldZ * cos;
+          const halfW = prop.w / 2 + CHARACTER_CLEARANCE;
+          const halfD = prop.d / 2 + CHARACTER_CLEARANCE;
+          const penetrationX = halfW - Math.abs(localX);
+          const penetrationZ = halfD - Math.abs(localZ);
+          if (penetrationX <= 0 || penetrationZ <= 0) continue;
+          // 沿穿透量小的轴推出到最近边缘
+          let outX = localX;
+          let outZ = localZ;
+          if (penetrationX < penetrationZ) outX = (localX >= 0 ? 1 : -1) * halfW;
+          else outZ = (localZ >= 0 ? 1 : -1) * halfD;
+          x = prop.x + outX * cos + outZ * sin;
+          z = prop.z - outX * sin + outZ * cos;
+          moved = true;
+        } else {
+          const radius = Math.max(prop.w, prop.d) / 2 + CHARACTER_CLEARANCE;
+          const dx = x - prop.x;
+          const dz = z - prop.z;
+          const dist = Math.hypot(dx, dz);
+          if (dist >= radius) continue;
+          const scale = dist < 1e-6 ? 0 : radius / dist;
+          x = dist < 1e-6 ? prop.x + radius : prop.x + dx * scale;
+          z = dist < 1e-6 ? prop.z : prop.z + dz * scale;
+          moved = true;
+        }
+      }
+      if (!moved) break;
+    }
+    return { ...character, x, z };
+  });
+}
+
 /** 从文本模型响应中提取安全、有限的站位数据。 */
 export function parseRecognizedBlocking(text: string): RecognizedBlocking | null {
   const raw = extractJsonObject(text);
@@ -125,14 +472,18 @@ export function parseRecognizedBlocking(text: string): RecognizedBlocking | null
   return { characters, ...cameraPresetField(raw) };
 }
 
-/** 白膜生成结果：允许纯物体的空场景，但物体和人物不能同时为空。 */
+/** 白膜生成结果：全景标注模式（objects/room）走几何反投影，
+ *  透视直出模式（props）沿用米制直读；两种都允许纯物体的空人物场景。 */
 export function parseRecognizedWhitebox(text: string): RecognizedBlocking | null {
   const raw = extractJsonObject(text);
   if (!raw) return null;
+  if (Array.isArray(raw.objects) || (raw.room && typeof raw.room === "object")) {
+    return solveAnnotatedScene(raw);
+  }
   const characters = parseCharacterRows(raw.characters);
   const props = parsePropRows(raw.props);
   if (!characters.length && !props.length) return null;
-  return { characters, props, ...cameraPresetField(raw) };
+  return { characters: resolveCharacterPropCollisions(characters, props), props, ...cameraPresetField(raw) };
 }
 
 export function buildBlockingRecognitionPrompt(): string {
@@ -150,16 +501,17 @@ export function buildBlockingRecognitionPrompt(): string {
 export function buildWhiteboxRecognitionPrompt(): string {
   return [
     "分析这张场景图，把画面中的主要物体简化为3D白膜体块（blockout），并提取人物站位，生成3D导演台场景。",
-    "只返回一个JSON对象，不要Markdown和解释。",
-    "格式：{\"props\":[{\"name\":\"沙发\",\"kind\":\"box\",\"x\":-1.2,\"y\":0.4,\"z\":0.6,\"rotation\":0,\"w\":2,\"h\":0.8,\"d\":0.9}],\"characters\":[{\"name\":\"角色A\",\"preset\":\"standard-male\",\"x\":-0.8,\"z\":0.2,\"rotation\":0,\"scale\":1}],\"cameraPreset\":\"front-medium\"}",
-    "props是场景物体清单：kind只能是box、sphere、cylinder，用最接近的基本体近似复杂物体；w/h/d是物体真实尺寸（米），x/z是物体中心的地面坐标，y是物体中心离地高度（落地物体取h/2，挂墙物体按实际高度），rotation为绕竖直轴的角度。",
-    "先判断图片类型再定坐标：",
-    "A. 普通透视照片（观察者在场景一侧）：画面左侧为负x、右侧为正x；前景为正z、远景为负z。",
-    "B. 360°等距柱状全景图（画面横向环绕一周、直线呈弧形弯曲、宽高比通常2:1或16:9）：观察点位于原点(0,0)，物体按其在图中的水平位置换算方位角环绕摆放；再用物体在图中的大小和地面透视估算它到观察点的距离（一般2到7米）；墙体、立柱、门要按方位角围绕原点围合出房间，不要摊平到同一侧。",
-    "全景换算方法：水平位置u取0到1，方位角θ=(u-0.5)×360°，x=距离×sin(θ)，z=-距离×cos(θ)。算例：u=0.5、距离5米 → 正前方x=0、z=-5；u=0.75、距离4米 → 右侧x=4、z=0；u=0.25 → 左侧x为负；u接近0或1 → 身后z为正。按水平分段逐段清点物体（边缘=身后、1/4=左、中心=正前、3/4=右），不要漏掉画面边缘的身后区域。",
-    "布局硬约束：体块之间不得穿插重叠；成排成组的小物（一排椅子、一组柜子）合并为一个体块；墙体厚度取0.1到0.3米；贴边的墙体、柜台、背景板长边沿环绕切线方向，rotation取负的方位角（右侧90°方位的墙 rotation=-90），同一面墙及其上物体用相同距离；场景中央留出人物活动空间。",
-    "props的x/z范围-8到8，尺寸0.05到10米；识别8到30个主要物体（家具、墙面构件、大型陈设、绿植），忽略细小杂物；落地家具必须落地，尺寸符合常识（桌高约0.75米、座面约0.45米、门高约2.1米、室内墙高2.7到4米）。",
-    "characters规则：preset只能是 standard-male、standard-female、athletic、slim、teen、child、broad、chibi；x/z范围-4到4，全景图时同样按方位角环绕摆放，rotation取人物实际朝向；画面中没有人物时characters返回空数组，不要虚构。",
+    "只返回一个JSON对象，不要Markdown和解释。先判断图片类型，两种类型使用不同的返回格式。",
+    "类型A·360°等距柱状全景图（画面横向环绕一周、直线呈弧形弯曲，宽高比约2:1或16:9）——使用标注模式：只在图上标归一化坐标（u:0=最左、1=最右；v:0=顶、1=底），不要自己估算米数，三维坐标由程序按全景几何解算。返回：",
+    "{\"imageType\":\"panorama\",\"cameraHeight\":1.6,\"room\":{\"wallHeight\":3.5,\"floorLine\":[{\"u\":0.05,\"v\":0.58}]},\"objects\":[{\"name\":\"接待台\",\"kind\":\"box\",\"u1\":0.68,\"u2\":0.79,\"vBottom\":0.62,\"vTop\":0.47,\"grounded\":true,\"againstWall\":true,\"depth\":0.6}],\"characters\":[{\"name\":\"角色A\",\"preset\":\"standard-male\",\"u\":0.3,\"v\":0.7}],\"cameraPreset\":\"front-medium\"}",
+    "floorLine：沿墙面与地面的交线均匀标8到16个点（每个拐角必须有点，覆盖整圈水平方向），只标可见墙脚，v必须大于0.55；wallHeight为墙高（米）。",
+    "objects：标8到25个主要物体（家具、立柱、门、大型陈设、绿植）。u1/u2为物体左右边缘；vBottom为接地点（物体与地面接触处的v，标点务必精确，它决定距离）；vTop为顶部；grounded为接地点是否可见（被遮挡标false）；againstWall为是否贴墙；depth为进深米数（可凭常识估）。",
+    "characters：图中真实人物脚下接地点的u/v。",
+    "类型B·普通透视照片——使用直出模式，返回：",
+    "{\"imageType\":\"perspective\",\"props\":[{\"name\":\"沙发\",\"kind\":\"box\",\"x\":-1.2,\"y\":0.4,\"z\":0.6,\"rotation\":0,\"w\":2,\"h\":0.8,\"d\":0.9}],\"characters\":[{\"name\":\"角色A\",\"preset\":\"standard-male\",\"x\":-0.8,\"z\":0.2,\"rotation\":0,\"scale\":1}],\"cameraPreset\":\"front-medium\"}",
+    "直出模式坐标：画面左侧为负x、右侧为正x；前景为正z、远景为负z；x/z范围-8到8；w/h/d为真实尺寸（米），y为中心离地高度（落地取h/2），rotation为绕竖直轴角度。",
+    "通用规则：kind只能是box、sphere、cylinder，圆柱仅用于立柱、圆桌等真圆物；不要输出地面、天花板、整铺地毯、灯带；成排成组的小物合并为一个体块；体块之间不得穿插重叠；尺寸符合常识（桌高约0.75米、座面约0.45米、门高约2.1米、层高2.7到4米）。",
+    "characters的preset只能是 standard-male、standard-female、athletic、slim、teen、child、broad、chibi；画面中没有人物时characters返回空数组，不要虚构。",
   ].join("\n");
 }
 
