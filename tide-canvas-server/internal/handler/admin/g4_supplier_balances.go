@@ -727,20 +727,34 @@ func (c *newAPIBalanceChecker) configurationIssue() (string, string) {
 	return "", ""
 }
 
+// New API panels answer a console login in one of two shapes: legacy builds
+// (and wxart's x deal) set a session cookie, while current new-api issues a
+// short-lived Bearer JWT in data.access_token (~15 min) plus a path-scoped
+// refresh cookie that is useless for /api/user/self. The session credential
+// records which scheme the panel used.
+const (
+	newAPICredentialCookie = "cookie"
+	newAPICredentialBearer = "bearer"
+)
+
 // newAPISessionCredential packs the login-derived state into the token-cache
-// string: "<numeric user id>\x00<Cookie header value>". The id rides along so
+// string: "<numeric user id>\x00<scheme>\x00<value>". The id rides along so
 // the profile request can send New-Api-User for the exact account that owns
 // the session, even when the operator left UserID blank.
-func newAPISessionCredential(userID, cookieHeader string) string {
-	return userID + "\x00" + cookieHeader
+func newAPISessionCredential(userID, scheme, value string) string {
+	return userID + "\x00" + scheme + "\x00" + value
 }
 
-func splitNewAPISessionCredential(credential string) (userID, cookieHeader string) {
-	userID, cookieHeader, ok := strings.Cut(credential, "\x00")
+func splitNewAPISessionCredential(credential string) (userID, scheme, value string) {
+	userID, rest, ok := strings.Cut(credential, "\x00")
 	if !ok {
-		return "", credential
+		return "", newAPICredentialCookie, credential
 	}
-	return userID, cookieHeader
+	scheme, value, ok = strings.Cut(rest, "\x00")
+	if !ok {
+		return userID, newAPICredentialCookie, rest
+	}
+	return userID, scheme, value
 }
 
 // login performs the New API console login and returns the session cookies.
@@ -788,7 +802,12 @@ func (c *newAPIBalanceChecker) login(ctx context.Context, client *http.Client) (
 		Success bool   `json:"success"`
 		Message string `json:"message"`
 		Data    struct {
-			ID int64 `json:"id"`
+			ID              int64   `json:"id"`
+			AccessToken     string  `json:"access_token"`
+			AccessExpiresAt float64 `json:"access_expires_at"` // unix seconds
+			User            struct {
+				ID int64 `json:"id"`
+			} `json:"user"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
@@ -804,9 +823,29 @@ func (c *newAPIBalanceChecker) login(ctx context.Context, client *http.Client) (
 		// mistyped password must not hammer the login endpoint every refresh.
 		return supplierLoginResult{}, &supplierLoginError{message: "登录失败：" + message, credentialRejected: true}
 	}
+	// x deal returns the user object at data top level, current new-api nests
+	// it under data.user — either way the id feeds New-Api-User.
+	userID := strings.TrimSpace(c.cfg.UserID)
+	if payload.Data.ID > 0 {
+		userID = strconv.FormatInt(payload.Data.ID, 10)
+	} else if payload.Data.User.ID > 0 {
+		userID = strconv.FormatInt(payload.Data.User.ID, 10)
+	}
+	now := time.Now()
+
+	// Current new-api: console auth is the short-lived JWT from the login
+	// body; the only cookie is a refresh token scoped to /api/user/auth that
+	// /api/user/self rejects. Prefer the JWT whenever present.
+	if token := strings.TrimSpace(payload.Data.AccessToken); token != "" {
+		expiresIn := payload.Data.AccessExpiresAt - float64(now.Unix())
+		return supplierLoginResult{
+			Token:     newAPISessionCredential(userID, newAPICredentialBearer, token),
+			ExpiresAt: supplierSessionExpiry(now, expiresIn, token),
+		}, nil
+	}
+
 	cookies := resp.Cookies()
 	pairs := make([]string, 0, len(cookies))
-	now := time.Now()
 	expiresAt := now.Add(6 * time.Hour)
 	for _, ck := range cookies {
 		if ck.Name == "" {
@@ -824,7 +863,7 @@ func (c *newAPIBalanceChecker) login(ctx context.Context, client *http.Client) (
 		}
 	}
 	if len(pairs) == 0 {
-		return supplierLoginResult{}, &supplierLoginError{message: "登录失败：面板未下发会话 Cookie"}
+		return supplierLoginResult{}, &supplierLoginError{message: "登录失败：面板未下发会话凭证"}
 	}
 	const margin = time.Minute
 	if expiresAt.After(now.Add(2 * margin)) {
@@ -834,12 +873,8 @@ func (c *newAPIBalanceChecker) login(ctx context.Context, client *http.Client) (
 	} else {
 		expiresAt = now
 	}
-	userID := strings.TrimSpace(c.cfg.UserID)
-	if payload.Data.ID > 0 {
-		userID = strconv.FormatInt(payload.Data.ID, 10)
-	}
 	return supplierLoginResult{
-		Token:     newAPISessionCredential(userID, strings.Join(pairs, "; ")),
+		Token:     newAPISessionCredential(userID, newAPICredentialCookie, strings.Join(pairs, "; ")),
 		ExpiresAt: expiresAt,
 	}, nil
 }
@@ -881,11 +916,16 @@ func (c *newAPIBalanceChecker) tokenAuth() func(*http.Request) {
 	}
 }
 
-// sessionAuth authenticates with a login session: cookie plus New-Api-User.
+// sessionAuth authenticates with a login session — Bearer JWT or cookie,
+// whichever the panel issued — plus New-Api-User.
 func (c *newAPIBalanceChecker) sessionAuth(credential string) func(*http.Request) {
 	return func(req *http.Request) {
-		userID, cookieHeader := splitNewAPISessionCredential(credential)
-		req.Header.Set("Cookie", cookieHeader)
+		userID, scheme, value := splitNewAPISessionCredential(credential)
+		if scheme == newAPICredentialBearer {
+			req.Header.Set("Authorization", "Bearer "+value)
+		} else {
+			req.Header.Set("Cookie", value)
+		}
 		if userID != "" {
 			req.Header.Set("New-Api-User", userID)
 		}

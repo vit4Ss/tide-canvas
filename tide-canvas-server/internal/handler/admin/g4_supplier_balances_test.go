@@ -845,3 +845,58 @@ func TestNewAPIBalanceCheckerReloginsOnceAfterSessionRevoked(t *testing.T) {
 		t.Errorf("login count = %d, want 2 (initial + one relogin)", loginCount.Load())
 	}
 }
+
+func TestNewAPIBalanceCheckerUsesLoginAccessTokenWhenPanelIssuesJWT(t *testing.T) {
+	// 现行 new-api 的登录不下发会话 Cookie：凭证是 data.access_token 里的
+	// 短时 JWT（附带的 new_api_refresh Cookie 仅限 /api/user/auth 路径，
+	// /api/user/self 不认）。监控必须改用 Bearer JWT，用户 id 在 data.user 下。
+	var loginCount atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/user/login":
+			loginCount.Add(1)
+			http.SetCookie(w, &http.Cookie{Name: "new_api_refresh", Value: "refresh-only", Path: "/api/user/auth", MaxAge: 2591999})
+			_, _ = w.Write([]byte(`{"success":true,"data":{"access_token":"panel-jwt","access_expires_at":` +
+				strconv.FormatInt(time.Now().Add(15*time.Minute).Unix(), 10) +
+				`,"token_type":"Bearer","user":{"id":44,"username":"ops"}}}`))
+		case "/api/user/self":
+			if got := r.Header.Get("Authorization"); got != "Bearer panel-jwt" {
+				t.Errorf("Authorization = %q, want Bearer panel-jwt from the login body", got)
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"success":false,"message":"unauthorized"}`))
+				return
+			}
+			if got := r.Header.Get("New-Api-User"); got != "44" {
+				t.Errorf("New-Api-User = %q, want 44 from data.user.id", got)
+			}
+			_, _ = w.Write([]byte(`{"success":true,"data":{"quota":213000000}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	checker := &newAPIBalanceChecker{providerKey: "uniart", cfg: config.NewAPIBalanceConfig{
+		Enabled: true, BaseURL: server.URL, Username: "ops", Password: "pw", QuotaPerUnit: 500000,
+	}, tokens: newSupplierTokenCache()}
+
+	reading, err := checker.read(context.Background(), server.Client())
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if reading.Balance != 426 {
+		t.Errorf("balance = %v, want 426", reading.Balance)
+	}
+	if loginCount.Load() != 1 {
+		t.Errorf("login count = %d, want 1", loginCount.Load())
+	}
+
+	// 缓存的 JWT 未过期时第二次读取不得重新登录。
+	if _, err := checker.read(context.Background(), server.Client()); err != nil {
+		t.Fatalf("second read: %v", err)
+	}
+	if loginCount.Load() != 1 {
+		t.Errorf("login count after cached read = %d, want still 1", loginCount.Load())
+	}
+}
