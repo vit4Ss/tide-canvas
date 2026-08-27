@@ -26,6 +26,8 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { Images, Loader2, Plus, X } from "lucide-react";
 import { AssetPickerModal } from "@/components/studio/create-studio/asset-picker-modal";
+import { RATIOS } from "@/components/studio/create-studio/constants";
+import { measureImageSize, nearestAspectRatio } from "@/lib/aspect-ratio";
 import CapturableVideo from "@/components/studio/create-studio/video-result";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { loadToolCoverPool } from "@/lib/tool-cover-pool";
@@ -637,6 +639,16 @@ export default function ToolPage() {
           fail(def.type === "video" ? "没有可用的超分模型" : "没有可用的图像编辑模型");
           return;
         }
+        // 智能扩图必须随带源图比例：不传时上游按模型默认画布出图，横向图会被
+        // 扩成竖图（与创作台一键扩图同一根因）。量出源图宽高吸附到所选模型
+        // 支持的档位；量不出则回退原行为。其余图片工具上游跟随源图尺寸，不传。
+        const expandRatio = def.type !== "video" && def.handler === "outpaint"
+          ? await (async () => {
+              const size = await measureImageSize(srcUrl);
+              const ratioPool = pick.config?.ratios?.length ? pick.config.ratios : RATIOS;
+              return size ? nearestAspectRatio(size.width, size.height, ratioPool) : null;
+            })()
+          : null;
         // 视频超分只收视频 URL 与目标分辨率——该接口不接收 prompt，图片工具
         // 的 imageList/sourceImage 也无从谈起，故两类入参完全分开构造。
         const input: Record<string, unknown> =
@@ -654,6 +666,7 @@ export default function ToolPage() {
                 sourceImage: srcUrl,
                 prompt: promptText,
                 ...(def.extra ?? {}),
+                ...(expandRatio ? { aspectRatio: expandRatio, aspect_ratio: expandRatio, ratio: expandRatio } : {}),
                 toolKey: def.key,
                 toolTitle: def.title,
               };

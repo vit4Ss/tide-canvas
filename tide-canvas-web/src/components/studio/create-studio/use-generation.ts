@@ -22,7 +22,7 @@ import { toast } from "@/components/shared/toast";
 import { markRequiredField } from "@/lib/require-field";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { supportsOmniReference } from "@/lib/omni-reference";
-import { nearestAspectRatio } from "@/lib/aspect-ratio";
+import { measureImageSize, nearestAspectRatio } from "@/lib/aspect-ratio";
 import {
   ACTIVE_RUN_KEY,
   activeRunStorageKey,
@@ -66,33 +66,6 @@ import {
   parseStudioTimestamp,
   upsertInflightRunNewestFirst,
 } from "./inflight-run-order";
-
-/** 量结果图的真实像素宽高（一键编辑吸附比例用）。图已在 feed 里展示过，
- *  通常命中缓存立即返回；未缓存则最多等 4s，量不出返回 null（不阻塞生成）。 */
-function measureImageSize(url: string): Promise<{ width: number; height: number } | null> {
-  return new Promise((resolve) => {
-    if (typeof Image === "undefined" || !url) {
-      resolve(null);
-      return;
-    }
-    const img = new Image();
-    let settled = false;
-    const done = (value: { width: number; height: number } | null) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(value);
-    };
-    const timer = setTimeout(() => done(null), 4_000);
-    img.onload = () => done(
-      img.naturalWidth > 0 && img.naturalHeight > 0
-        ? { width: img.naturalWidth, height: img.naturalHeight }
-        : null,
-    );
-    img.onerror = () => done(null);
-    img.src = url;
-  });
-}
 
 export interface GenerationParams {
   /* panel state (fresh each render) */

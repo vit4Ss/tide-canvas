@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { nearestAspectRatio } from "./aspect-ratio.ts";
+import { measureImageSize, nearestAspectRatio } from "./aspect-ratio.ts";
 
 const POOL = ["1:1", "3:4", "4:3", "16:9", "9:16"];
 
@@ -17,6 +17,11 @@ test("portrait and square sources snap symmetrically", () => {
   assert.equal(nearestAspectRatio(1024, 1024, POOL), "1:1");
   // 微横的近方图归 1:1，不被推去 4:3
   assert.equal(nearestAspectRatio(1100, 1000, POOL), "1:1");
+});
+
+test("measureImageSize degrades to null outside the browser (caller keeps old behavior)", async () => {
+  assert.equal(await measureImageSize("https://cdn.example.com/a.png"), null);
+  assert.equal(await measureImageSize(""), null);
 });
 
 test("invalid input or candidates fall back to null (caller omits the ratio)", () => {
